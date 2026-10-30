@@ -418,3 +418,65 @@ test('dispatch entrypoint checks the complete bounded run estate before POST', (
   assert.match(workflow, /group: protected-workflow-dispatch-mailbox-\$\{\{ github\.event\.comment\.user\.login/);
   assert.doesNotMatch(workflow, /group: protected-workflow-dispatch-mailbox-\$\{\{ github\.event\.comment\.id/);
 });
+
+
+function readOnlyRetryFixture(attempts = 1) {
+  const repository = 'Cheekyfellastef/stephan-os';
+  const id = 38967178500;
+  const title = 'Protected operator merge ' + baseCommand.expectedHead;
+  const run = { id, run_attempt: attempts, workflow_id: 12345, name: title, display_title: title,
+    event: 'workflow_dispatch', head_sha: baseCommand.expectedBase, head_branch: 'main',
+    repository: { full_name: repository }, path: '.github/workflows/operator-merge-approval-gate.yml',
+    triggering_actor: { login: 'github-actions[bot]', id: 41898282 },
+    status: 'completed', conclusion: 'failure' };
+  const jobs = Array.from({ length: attempts }, (_, index) => {
+    const attempt = index + 1;
+    return [
+      ['personal-repository-evidence', 'failure'],
+      ['operator-personal-repository-approval', 'skipped'],
+      ['operator-personal-repository-squash-merge', 'skipped'],
+    ].map(([name, conclusion], offset) => {
+      const jobId = attempt * 100 + offset + 1;
+      return { id: jobId, run_id: id, run_attempt: attempt, workflow_name: title,
+        head_branch: 'main', head_sha: baseCommand.expectedBase, name, status: 'completed', conclusion,
+        url: 'https://api.github.com/repos/' + repository + '/actions/jobs/' + jobId,
+        run_url: 'https://api.github.com/repos/' + repository + '/actions/runs/' + id,
+        check_run_url: 'https://api.github.com/repos/' + repository + '/check-runs/' + jobId,
+        html_url: 'https://github.com/' + repository + '/actions/runs/' + id + '/job/' + jobId };
+    });
+  }).flat();
+  return { run, jobs, priorRunJobSets: [{ runId: id, jobs }] };
+}
+
+test('mailbox shares the executor read-only failure proof and admits no other replay', () => {
+  const inspect = duplicateGuard.inspectProtectedWorkflowDuplicateDispatchRuns;
+  const fixture = readOnlyRetryFixture(2);
+  assert.equal(inspect([fixture.run], baseCommand).ok, false);
+  const accepted = inspect([fixture.run], baseCommand, { priorRunJobSets: fixture.priorRunJobSets });
+  assert.equal(accepted.ok, true, JSON.stringify(accepted));
+  assert.equal(accepted.retryablePriorFailures[0].runAttempt, 2);
+  for (const mutate of [
+    f => { f.jobs = f.jobs.filter(j => j.run_attempt === 2); },
+    f => { f.jobs[2].conclusion = 'success'; },
+    f => { f.jobs[1].status = 'in_progress'; },
+    f => { f.jobs[0].run_id += 1; },
+    f => { f.jobs[0].head_sha = 'f'.repeat(40); },
+    f => { f.jobs[0].url += '/forged'; },
+    f => { f.jobs.push({ ...f.jobs[0] }); },
+    f => { f.run.conclusion = 'success'; },
+    f => { f.run.status = 'waiting'; },
+    f => { f.run.path = '.github/workflows/other.yml'; },
+    f => { f.run.repository.full_name = 'other/repository'; },
+    f => { f.run.triggering_actor.id = 999; },
+    f => { f.run.run_attempt = 9; },
+  ]) {
+    const hostile = readOnlyRetryFixture(2);
+    mutate(hostile);
+    assert.equal(inspect([hostile.run], baseCommand,
+      { priorRunJobSets: [{ runId: hostile.run.id, jobs: hostile.jobs }] }).ok, false);
+  }
+  assert.equal(inspect([fixture.run], baseCommand,
+    { priorRunJobSets: [...fixture.priorRunJobSets, ...fixture.priorRunJobSets] }).ok, false);
+  assert.equal(inspect(Array.from({length: 9}, (_, n) => ({ ...fixture.run, id: fixture.run.id + n })),
+    baseCommand, { priorRunJobSets: fixture.priorRunJobSets }).ok, false);
+});

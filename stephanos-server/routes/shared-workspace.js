@@ -1,16 +1,33 @@
 import express from 'express';
 import { readCanonicalVrResearchAnswer, VR_RESEARCH_QA_ROUTE } from '../services/vrResearchCanonicalQaService.js';
-import { readBackendSharedWorkspaceDashboardFeed } from '../services/sharedWorkspaceDashboardFeedService.js';
+import { readBackendSharedWorkspaceDashboardFeed, validateSharedWorkspaceFeedConfig } from '../services/sharedWorkspaceDashboardFeedService.js';
+import { readSharedWorkspaceDashboardFeed } from '../../shared/agents/shared-workspace-dashboard-feed.mjs';
+import { projectSharedWorkspaceProofIndex } from '../../shared/agents/sharedWorkspaceProofIndexV1.mjs';
 import { readVrCapabilityFeed } from '../services/vrCapabilityFeedService.js';
 import { readVrPlaytestFeed } from '../services/vrPlaytestFeedService.js';
 import { publishSupportSnapshotWorkspaceObservation } from '../services/supportSnapshotSharedWorkspaceBridgeService.js';
 import { publishSpatialWorkspaceTelemetry, readSpatialWorkspaceTelemetryFeed } from '../services/spatialWorkspaceTelemetryService.js';
 import { readWorkspaceHydrationBundle } from '../services/workspaceHydrationService.js';
+import { throwIfWorkspaceReadAborted } from '../../shared/runtime/workspaceReadCancellation.mjs';
+
+export function withWorkspaceReadRequest(handler) {
+  return async (req, res) => {
+    const controller = new AbortController();
+    const onClose = () => { if (!res.writableEnded) controller.abort(); };
+    res.once('close', onClose);
+    try {
+      if (req.aborted || res.destroyed) controller.abort();
+      await handler(req, res, controller.signal);
+    } finally {
+      res.removeListener('close', onClose);
+    }
+  };
+}
 
 export function createSharedWorkspaceRouter({ env = process.env, repoRoot = process.cwd(), nowMs, staleAfterMs } = {}) {
   const router = express.Router();
 
-  router.get('/hydrate', async (req, res) => {
+  router.get('/hydrate', withWorkspaceReadRequest(async (req, res, signal) => {
     res.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate',
       Pragma: 'no-cache',
@@ -30,7 +47,9 @@ export function createSharedWorkspaceRouter({ env = process.env, repoRoot = proc
         repoRoot,
         nowMs: Number.isFinite(nowMs) ? nowMs : Date.now(),
         staleAfterMs,
+        signal,
       });
+      throwIfWorkspaceReadAborted(signal);
       const statusCode = bundle.reason === 'WORKSPACE_ID_REQUIRED'
         ? 400
         : bundle.state === 'unavailable'
@@ -38,6 +57,7 @@ export function createSharedWorkspaceRouter({ env = process.env, repoRoot = proc
           : 200;
       res.status(statusCode).json(bundle);
     } catch (error) {
+      if (signal.aborted) return;
       res.status(503).json({
         schemaVersion: 'stephanos.workspace-hydration.v1',
         route: '/api/shared-workspace/hydrate',
@@ -50,9 +70,9 @@ export function createSharedWorkspaceRouter({ env = process.env, repoRoot = proc
         errors: [String(error?.message || 'WORKSPACE_HYDRATION_UNAVAILABLE')],
       });
     }
-  });
+  }));
 
-  router.get('/dashboard-feed', async (req, res) => {
+  router.get('/dashboard-feed', withWorkspaceReadRequest(async (req, res, signal) => {
     res.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate',
       Pragma: 'no-cache',
@@ -68,10 +88,12 @@ export function createSharedWorkspaceRouter({ env = process.env, repoRoot = proc
         nowMs,
         staleAfterMs,
         recordScope,
+        signal,
       });
-
+      throwIfWorkspaceReadAborted(signal);
       res.status(feed.state === 'unavailable' ? 503 : 200).json(feed);
     } catch (_error) {
+      if (signal.aborted) return;
       res.status(503).json({
         schemaVersion: 'stephanos.backend.shared-workspace-dashboard-feed.v1',
         route: '/api/shared-workspace/dashboard-feed',
@@ -81,6 +103,42 @@ export function createSharedWorkspaceRouter({ env = process.env, repoRoot = proc
         workspaceRoot: 'UNKNOWN',
         exactNextAction: 'Inspect Shared Workspace configuration and rerun the local Battle Bridge proof commands before claiming live health.',
         errors: ['SHARED_WORKSPACE_DASHBOARD_FEED_UNAVAILABLE'],
+      });
+    }
+  }));
+
+  // Bounded cross-participant evidence DISCOVERY. The trusted proof remains at its original source.
+  router.get('/proof-index', async (req, res) => {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    try {
+      const configuration = await validateSharedWorkspaceFeedConfig({ env, repoRoot });
+      const feed = configuration.ok
+        ? await readSharedWorkspaceDashboardFeed({
+          root: configuration.root,
+          repoRoot,
+          nowMs: Number.isFinite(nowMs) ? nowMs : Date.now(),
+          staleAfterMs,
+          recordScope: req.query?.scope === 'full-history' ? 'full-history' : 'current-state',
+        })
+        : { state: 'unavailable', records: {} };
+      const index = projectSharedWorkspaceProofIndex({
+        feed,
+        goal: req.query?.goal ?? '',
+        pr: req.query?.pr ?? '',
+        head: req.query?.head ?? '',
+        limit: 20,
+        nowMs: Number.isFinite(nowMs) ? nowMs : Date.now(),
+      });
+      const httpStatus = index.state === 'INVALID_FILTER' ? 400 : index.state === 'INACCESSIBLE' ? 503 : 200;
+      res.status(httpStatus).json({ route: '/api/shared-workspace/proof-index', ...index });
+    } catch {
+      res.status(503).json({
+        route: '/api/shared-workspace/proof-index',
+        ...projectSharedWorkspaceProofIndex({ feed: { state: 'unavailable' } }),
       });
     }
   });

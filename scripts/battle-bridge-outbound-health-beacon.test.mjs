@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {
+  buildSovereignCommanderRepairReport,
+  SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE,
+} from '../shared/agents/sovereignCommanderRepairReportV1.mjs';
 
 import {
   BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE,
@@ -783,6 +787,173 @@ test('Sovereign repair proof is bounded and strips unsafe path-like material', (
   assert.doesNotMatch(serialized, /C:\/|C:\\\\|private\/path|token\.txt/i);
   assert.equal(projected.rawPathsReturned, false);
   assert.equal(projected.secretMaterialIncluded, false);
+});
+
+const REPAIR_OBSERVED_AT = '2026-10-30T15:00:00.000Z';
+const REPAIR_NOW = new Date('2026-10-30T15:00:30.000Z');
+
+function qualifiedMaintenanceReport(repairOverrides = {}) {
+  return buildSovereignCommanderRepairReport({
+    cycleId: 'qualified-maintenance-beacon', completedAtUtc: REPAIR_OBSERVED_AT,
+    repair: {
+      scope: SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE, ok: true, blocker: '', sourceHead: HEAD,
+      maintenance: {
+        actionId: 'repair-goal-builder-flow', profile: 'MAINTENANCE_GOAL_BUILDER_V1',
+        operationOk: true, terminalProven: true,
+        terminalEvidenceSha256: 'b'.repeat(64), proofHash: 'c'.repeat(64),
+      },
+      steps: [{ actionId: 'repair-goal-builder-flow', ok: true,
+        finalVerdict: 'SOVEREIGN_QUALIFIED_MAINTENANCE_COMPLETED', blocker: '' }],
+      ...repairOverrides,
+    },
+  }).status;
+}
+
+test('actual qualified maintenance report reaches the public beacon with bounded evidence and no whole-system health', () => {
+  const report = qualifiedMaintenanceReport();
+  const withoutRepair = buildBattleBridgeOutboundBeacon({ sourceHead: HEAD, now: REPAIR_NOW });
+  const beacon = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD, now: REPAIR_NOW,
+    statusRecords: { sovereignRepair: {
+      ...report, rawLog: 'PRIVATE_NATIVE_LOG',
+      verification: { ...report.verification, privatePath: 'C:/private/native-receipt.json' },
+    } },
+  });
+  const facts = beacon.sovereignRepair;
+  assert.equal(facts.available, true);
+  assert.equal(facts.state, 'MAINTENANCE_COMPLETED');
+  assert.equal(facts.outcome, 'MAINTENANCE_COMPLETED');
+  assert.equal(facts.status, 'OBSERVED');
+  assert.equal(facts.trafficLight, 'AMBER');
+  assert.equal(facts.finalVerdict, 'SOVEREIGN_MAINTENANCE_PROOF_OBSERVED');
+  assert.equal(facts.blocker, '');
+  assert.equal(facts.exactHeadMatch, true);
+  assert.equal(facts.scope, SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE);
+  assert.equal(facts.sourceHead, HEAD);
+  assert.equal(facts.fullStephanosRepairProven, false);
+  assert.deepEqual(facts.actions, report.actions);
+  assert.deepEqual(facts.verification, report.verification);
+  assert.equal('awake' in facts.verification, false);
+  assert.equal(facts.verification.readiness, 'UNPROVEN');
+  assert.equal(facts.verification.runtimeQualificationGranted, false);
+  assert.deepEqual(beacon.telemetry, withoutRepair.telemetry);
+  assert.equal(beacon.completeStateAnswerable, withoutRepair.completeStateAnswerable);
+  const body = buildBattleBridgeOutboundBeaconBody(beacon);
+  assert.match(body, /MAINTENANCE_COMPLETED/);
+  assert.match(body, /QUALIFIED_GOAL_BUILDER_MAINTENANCE/);
+  assert.match(body, new RegExp('b'.repeat(64)));
+  assert.match(body, new RegExp('c'.repeat(64)));
+  assert.doesNotMatch(body, /PRIVATE_NATIVE_LOG|private\/native-receipt/);
+});
+
+test('actual blocked maintenance and prelaunch denial retain scope and faults without inventing source or terminal proof', () => {
+  for (const sourceHead of [HEAD, '']) {
+    const report = qualifiedMaintenanceReport({
+      ok: false, blocker: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD', sourceHead,
+      maintenance: undefined,
+      steps: [{ actionId: 'repair-goal-builder-flow', ok: false,
+        finalVerdict: 'SOVEREIGN_QUALIFIED_MAINTENANCE_BLOCKED',
+        blocker: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD' }],
+    });
+    const facts = projectSovereignRepairBeaconFacts(report, HEAD, REPAIR_NOW.getTime());
+    assert.equal(facts.available, true);
+    assert.equal(facts.outcome, 'BLOCKED');
+    assert.equal(facts.status, 'ATTENTION_REQUIRED');
+    assert.equal(facts.state, sourceHead ? 'BLOCKED' : 'UNPROVEN');
+    assert.equal(facts.trafficLight, sourceHead ? 'RED' : 'AMBER');
+    assert.equal(facts.exactHeadMatch, Boolean(sourceHead));
+    assert.equal(facts.scope, SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE);
+    assert.equal(facts.blocker, 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+    assert.equal(facts.sourceHead, sourceHead);
+    assert.deepEqual(facts.actions, report.actions);
+    assert.deepEqual(facts.verification, report.verification);
+    assert.equal(facts.verification.operationCompleted, false);
+    assert.equal(facts.verification.terminalEvidenceSha256, '');
+    assert.equal(facts.verification.proofHash, '');
+    assert.equal(facts.verification.runtimeQualificationGranted, false);
+  }
+});
+
+test('scoped report contract rejects malformed identities, missing scope and wider success claims', () => {
+  const report = qualifiedMaintenanceReport();
+  const verificationVariants = [
+    { sourceHead: 'd'.repeat(40) }, { sourceHead: [HEAD] }, { sourceHead: `${HEAD}extra` },
+    { maintenanceActionId: 'repair-stephanos' }, { maintenanceProfile: 'SOURCE_TASK_V1' },
+    { operationCompleted: false }, { operationCompleted: 'true' },
+    { readiness: 'READY' }, { fullStephanosRepairProven: true },
+    { runtimeQualificationGranted: true }, { runtimeQualificationGranted: 'false' },
+    { terminalEvidenceSha256: '' }, { terminalEvidenceSha256: 'private/path' },
+    { terminalEvidenceSha256: 'b'.repeat(65) }, { terminalEvidenceSha256: ['b'.repeat(64)] },
+    { proofHash: '' }, { proofHash: 'c'.repeat(63) }, { proofHash: 'c'.repeat(65) },
+  ];
+  const variants = [
+    { scope: undefined }, { scope: null }, { scope: 'ALL_STEPHANOS_REPAIRED' },
+    { outcome: 'HEALTHY', status: 'READY' }, { outcome: 'REPAIRED', status: 'READY' },
+    { status: 'READY' }, { status: 'ATTENTION_REQUIRED' },
+    { sourceHead: '' }, { sourceHead: [HEAD] }, { sourceHead: `${HEAD}extra` },
+    { sourceHead: `${HEAD}extra`, verification: { ...report.verification, sourceHead: `${HEAD}extra` } },
+    { fullStephanosRepairProven: true }, { fullStephanosRepairProven: undefined },
+    { arbitraryShellAllowed: true }, { sourceMutationAllowed: true }, { mergeAuthority: true },
+    { detectedFaults: ['UNRESOLVED_FAULT'] }, { actions: [] }, { actions: undefined }, { actions: [null] },
+    { actions: [{ ...report.actions[0], ok: false }] },
+    { actions: [{ ...report.actions[0], ok: 'true' }] },
+    { actions: [{ ...report.actions[0], blocker: 'UNRESOLVED_FAULT' }] },
+    { actions: [{ ...report.actions[0], blocker: ' ' }] },
+    { actions: [{ ...report.actions[0], blocker: undefined }] },
+    { actions: [{ ...report.actions[0], finalVerdict: 'STEPHANOS_ALL_HEALTHY' }] },
+    { actions: [{ ...report.actions[0], actionId: 'repair-stephanos' }] },
+    { verification: null },
+    ...verificationVariants.map(patch => ({ verification: { ...report.verification, ...patch } })),
+    { scope: undefined, fullStephanosRepairProven: undefined, outcome: 'HEALTHY', status: 'READY' },
+  ];
+  for (const patch of variants) {
+    const facts = projectSovereignRepairBeaconFacts({ ...report, ...patch }, HEAD, REPAIR_NOW.getTime());
+    assert.equal(facts.available, false, JSON.stringify(patch));
+    assert.equal(facts.blocker, 'SOVEREIGN_REPAIR_REPORT_INVALID', JSON.stringify(patch));
+    assert.notEqual(facts.trafficLight, 'GREEN');
+  }
+});
+
+test('stale, future-dated and other-head maintenance evidence remains visible without current proof', () => {
+  const report = qualifiedMaintenanceReport();
+  const variants = [
+    { record: { ...report, timestampUtc: '2026-10-30T14:50:00.000Z' }, expectedHead: HEAD, state: 'STALE' },
+    { record: { ...report, timestampUtc: '2026-10-30T15:10:00.000Z' }, expectedHead: HEAD, state: 'STALE' },
+    { record: report, expectedHead: 'd'.repeat(40), state: 'HEAD_MISMATCH' },
+    { record: report, expectedHead: `${HEAD}extra`, state: 'HEAD_MISMATCH' },
+    { record: report, expectedHead: [HEAD], state: 'HEAD_MISMATCH' },
+  ];
+  for (const variant of variants) {
+    const facts = projectSovereignRepairBeaconFacts(variant.record, variant.expectedHead, REPAIR_NOW.getTime());
+    assert.equal(facts.available, true);
+    assert.equal(facts.state, variant.state);
+    assert.equal(facts.trafficLight, 'AMBER');
+    assert.equal(facts.finalVerdict, 'SOVEREIGN_REPAIR_PROOF_UNPROVEN');
+    assert.equal(facts.scope, SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE);
+    assert.deepEqual(facts.verification, report.verification);
+    assert.ok(facts.blocker);
+  }
+});
+
+test('actual legacy report outcomes retain their health semantics and unknown heartbeat age', () => {
+  const cases = [
+    { repair: { ok: true }, outcome: 'HEALTHY', trafficLight: 'GREEN' },
+    { repair: { ok: true, steps: [{ actionId: 'caretaker', ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_RESTARTED' }] }, outcome: 'REPAIRED', trafficLight: 'GREEN' },
+    { repair: { ok: false }, outcome: 'NEEDS_REPAIR', trafficLight: 'RED' },
+    { repair: { ok: false, blocker: 'CORE_HEARTBEAT_UNPROVEN' }, outcome: 'BLOCKED', trafficLight: 'RED' },
+  ];
+  for (const fixture of cases) {
+    const report = buildSovereignCommanderRepairReport({
+      repair: { ...fixture.repair, sourceHead: HEAD }, cycleId: 'legacy-beacon',
+      completedAtUtc: REPAIR_OBSERVED_AT,
+    }).status;
+    const facts = projectSovereignRepairBeaconFacts(report, HEAD, REPAIR_NOW.getTime());
+    assert.equal(facts.available, true);
+    assert.equal(facts.outcome, fixture.outcome);
+    assert.equal(facts.trafficLight, fixture.trafficLight);
+    assert.equal(facts.verification.heartbeatAgeSeconds, null);
+    assert.equal('scope' in facts, false);
+  }
 });
 
 

@@ -1,11 +1,81 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
+import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
+import { claimNextMissionWorkerItem } from './missionOrchestratorWorkerConsumer.js';
 import {
   ensureElasticGoalMissions,
   planElasticGoalMissionAdmissions,
 } from './elasticGoalMissionAdmissionService.js';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
+
+function acceptanceGoalRecord(requiredTests, overrides = {}) {
+  return { schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.goal',
+    goalId: 'goal-2314', issueNumber: 2314, repository: REPOSITORY, source: 'github-goal-estate-mirror',
+    mirrorSchema: 'stephanos.github-goal-mirror.v1', mirrorIssueNumber: 2314,
+    mirrorRepository: REPOSITORY, mirrorBuildPickupAllowed: true, githubAdmissionState: 'ADMISSION_PROVEN',
+    requiredTests, resourceIds: ['repo:cheekyfellastef/stephan-os:path:shared/agents/source.mjs'], ...overrides };
+}
+
+test('admitted owner tests stay independent of mutation scope and survive worktree phase and actual queue claim', async () => {
+  const command = 'node --test scripts/sovereign-goal-builder-worker-evidence.test.mjs';
+  const record = acceptanceGoalRecord(['npm run stephanos:verify', command]);
+  const plan = planElasticGoalMissionAdmissions(scheduler([goal(2314, record.resourceIds)]), [], { goalRecords: [record] });
+  assert.equal(plan.admitted.length, 1);
+  const input = plan.admitted[0].missionInput;
+  assert.deepEqual(input.requiredTests, ['npm run stephanos:verify', command]);
+  assert.equal(input.allowedFiles.some(path => path.startsWith('scripts/')), false);
+  const temporary = await mkdtemp(join(tmpdir(), 'goal-acceptance-claim-'));
+  const options = { root: join(temporary, 'missions'), queueRoot: join(temporary, 'queue'), env: {},
+    capacityRouting: { nowUtc: new Date().toISOString(), codexStatus: {
+      schemaVersion: 'shared-agent-workspace-record.v1', statusId: 'codex-capacity-current', truthState: 'CURRENT',
+      meterTruthUsable: true, observedAtUtc: new Date(Date.now() - 1000).toISOString(), remainingPercent: 90,
+      availability: 'AVAILABLE', confidence: 'high', naturalResetAtUtc: '',
+    } } };
+  try {
+    await createMissionRecord(input, options);
+    const ready = await appendMissionEvent(input.missionId, { eventId: 'acceptance-worktree', eventType: 'WORKTREE_READY',
+      worktreePath: join(temporary, 'worktree'), clean: true,
+      receipt: { receiptId: 'acceptance-worktree-proof', requirement: 'isolated worktree', source: 'fixture',
+        evidenceType: 'command-output', verified: true, exitCode: 0 } }, options);
+    const published = await publishMissionWorkerAction(ready.state, options);
+    assert.equal(published.published, true, JSON.stringify({ reason: published.reason, blockers: published.blockers }));
+    const queued = JSON.parse(await readFile(published.path, 'utf8'));
+    assert.deepEqual(queued.payload.requiredTests, input.requiredTests);
+    const claim = await claimNextMissionWorkerItem(published.adapter, options);
+    assert.ok(claim);
+    assert.deepEqual(claim.item.payload.requiredTests, input.requiredTests);
+    const after = (await readMissionRecord(input.missionId, options)).state;
+    assert.deepEqual(after.requiredTests, input.requiredTests);
+    assert.equal(after.dispatch.status, 'running');
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
+
+test('explicit invalid or foreign test plans hold only the affected new goal', () => {
+  for (const record of [acceptanceGoalRecord([]), acceptanceGoalRecord(['npm run arbitrary']),
+    acceptanceGoalRecord(['node --test scripts/a.test.mjs'], { mirrorIssueNumber: 9 }),
+    acceptanceGoalRecord(['node --test scripts/a.test.mjs'], { source: 'caller' }),
+    acceptanceGoalRecord(['node --test scripts/a.test.mjs'], { kind: 'status' }),
+    acceptanceGoalRecord(['node --test scripts/a.test.mjs'], { issue: 2314, issueNumber: 9 }),
+    acceptanceGoalRecord(['node --test scripts/a.test.mjs'], { mirrorBuildPickupAllowed: false })]) {
+    const good = goal(2315, ['repo:cheekyfellastef/stephan-os:path:shared/agents/other.mjs']);
+    const plan = planElasticGoalMissionAdmissions(scheduler([goal(2314, record.resourceIds), good]), [], { goalRecords: [record] });
+    assert.deepEqual(plan.admitted.map(a => a.issueNumber), [2315]);
+    assert.ok(plan.held.some(h => h.issueNumber === 2314 && h.reason === 'GOAL_REQUIRED_TEST_PLAN_UNPROVEN'));
+  }
+});
+
+test('changed goal acceptance never rewrites an existing consumed mission or its required tests', () => {
+  const record = acceptanceGoalRecord(['node --test scripts/a.test.mjs']);
+  const old = { missionId: 'critical-2314-elastic-goal', currentPhase: 'VERIFYING', requiredTests: ['npm run stephanos:verify'], dispatch: { status: 'complete' } };
+  const plan = planElasticGoalMissionAdmissions(scheduler([goal(2314, record.resourceIds)]), [old], { goalRecords: [record] });
+  assert.equal(plan.admitted[0].mission, old);
+  assert.deepEqual(old.requiredTests, ['npm run stephanos:verify']);
+});
 
 function goal(issue, resourceIds, overrides = {}) {
   return {
@@ -428,4 +498,114 @@ test('operator containment removes an already-created mission from runnable and 
   assert.equal(result.activeMissions.length, 0);
   assert.equal(result.selectedMission, null);
   assert.ok(result.held.some(({ issueNumber, reason }) => issueNumber === 51 && reason === 'OPERATOR_LANE_CONTAINED'));
+});
+
+test('unintegrated source scopes reserve paths without occupying unrelated builder slots', () => {
+  const path = 'shared/runtime/goalConveyorFleetCareSeedV1.mjs';
+  const overlap = goal(3034, ['repo:cheekyfellastef/stephan-os:path:' + path]);
+  const disjoint = goal(4001, ['repo:cheekyfellastef/stephan-os:path:shared/agents/functionalRepair.mjs']);
+  const retained = { missionId: 'critical-3031-elastic-goal', currentPhase: 'AWAITING_OPERATOR_APPROVAL',
+    repository: REPOSITORY, git: { branch: 'openclaw/elastic-goal-3031' },
+    allowedFiles: [path, path + '/**'], pullRequest: { number: 3224, headSha: 'a'.repeat(40) },
+    sourcePublication: { artifactSha256: 'b'.repeat(64) }, dispatch: { status: 'complete' } };
+  const before = JSON.stringify(retained);
+  const result = planElasticGoalMissionAdmissions(scheduler([overlap, disjoint]), [retained]);
+  assert.deepEqual(result.admitted.map(x => x.issueNumber), [4001]);
+  assert.ok(result.held.some(x => x.issueNumber === 3034 && x.reason === 'RETAINED_SOURCE_SCOPE_RESERVED'));
+  assert.equal(JSON.stringify(retained), before);
+});
+
+test('a parked source artifact keeps its exact scope reserved while unrelated scope remains admissible', () => {
+  const heldPath = 'shared/runtime/fullSovereigntySeedV1.mjs';
+  const goals = [goal(4002, ['repo:cheekyfellastef/stephan-os:path:' + heldPath]),
+    goal(4003, ['repo:cheekyfellastef/stephan-os:path:shared/agents/otherRepair.mjs'])];
+  const retained = { missionId: 'critical-3030-elastic-goal', currentPhase: 'BLOCKED',
+    repository: REPOSITORY, git: { branch: 'openclaw/elastic-goal-3030' },
+    allowedFiles: [heldPath, heldPath + '/**'], sourcePublication: { artifactSha256: 'c'.repeat(64) },
+    dispatch: { status: 'complete' } };
+  const result = planElasticGoalMissionAdmissions(scheduler(goals), [retained]);
+  assert.deepEqual(result.admitted.map(x => x.issueNumber), [4003]);
+});
+
+test('projected candidates retain source exclusion even when the portfolio omits their row', () => {
+  const path = 'shared/agents/retained.mjs';
+  const input = scheduler([goal(4010, ['repo:cheekyfellastef/stephan-os:path:' + path])]);
+  input.portfolio = [];
+  const owner = { missionId: 'critical-3031-elastic-goal', repository: REPOSITORY,
+    currentPhase: 'AWAITING_OPERATOR_APPROVAL', allowedFiles: [path],
+    pullRequest: { number: 3224, headSha: 'a'.repeat(40) } };
+  assert.equal(planElasticGoalMissionAdmissions(input, [owner]).admitted.length, 0);
+});
+
+test('malformed retained scope holds its own repository while the original owner remains eligible', () => {
+  const owner = { missionId: 'critical-3031-elastic-goal', repository: REPOSITORY,
+    currentPhase: 'REPAIR_REQUIRED', allowedFiles: ['../outside'],
+    pullRequest: { number: 3224, headSha: 'a'.repeat(40) }, dispatch: { status: 'pending' } };
+  const input = scheduler([goal(4011, ['repo:cheekyfellastef/stephan-os:path:shared/agents/x.mjs']),
+    goal(4012, ['repo:other/project:path:shared/agents/x.mjs'])]);
+  const result = planElasticGoalMissionAdmissions(input, [owner]);
+  assert.deepEqual(result.admitted.map(x => x.issueNumber), [4012]);
+  assert.equal(result.runnableMissions.some(x => x.missionId === owner.missionId), true);
+});
+
+test('retained scope exclusion transfers across parent paths, casing, repository width and foreign repositories', async t => {
+  for (const [name,ownerPath,targetResource,expected] of [
+    ['child path','shared/runtime','repo:cheekyfellastef/stephan-os:path:shared/runtime/x.mjs',false],
+    ['parent path','shared/runtime/x.mjs','repo:cheekyfellastef/stephan-os:path:shared',false],
+    ['case identity','shared/runtime/X.mjs','repo:cheekyfellastef/stephan-os:path:SHARED/runtime/x.mjs',false],
+    ['repository scope','shared/runtime/x.mjs','repo:cheekyfellastef/stephan-os',false],
+    ['different repository','shared/runtime/x.mjs','repo:other/project:path:shared/runtime/x.mjs',true],
+  ]) await t.test(name, () => {
+    const owner={missionId:'critical-3031-elastic-goal',repository:REPOSITORY,currentPhase:'AWAITING_OPERATOR_APPROVAL',
+      allowedFiles:[ownerPath,ownerPath+'/**'],pullRequest:{number:3224,headSha:'a'.repeat(40)}};
+    const result=planElasticGoalMissionAdmissions(scheduler([goal(4004,[targetResource])]),[owner]);
+    assert.equal(result.admitted.length,expected?1:0);
+    assert.equal(result.mergeAuthority,false);
+  });
+});
+
+test('completed or cancelled source missions do not invent permanent scope reservations', () => {
+  for (const currentPhase of ['COMPLETE','CANCELLED']) {
+    const owner={missionId:'critical-3031-elastic-goal',repository:REPOSITORY,currentPhase,
+      allowedFiles:['shared/agents/x.mjs'],pullRequest:{number:3224,headSha:'a'.repeat(40)}};
+    const result=planElasticGoalMissionAdmissions(scheduler([goal(4005,['repo:cheekyfellastef/stephan-os:path:shared/agents/x.mjs'])]),[owner]);
+    assert.equal(result.admitted.length,1);
+  }
+});
+
+test('existing pending source and raced reservations are checked again before selection without changing claims', async () => {
+  const target='shared/runtime/goalConveyorFleetCareSeedV1.mjs';
+  const owner={missionId:'critical-3031-elastic-goal',repository:REPOSITORY,currentPhase:'AWAITING_OPERATOR_APPROVAL',
+    allowedFiles:[target],pullRequest:{number:3224,headSha:'a'.repeat(40)},dispatch:{status:'complete'}};
+  for (const race of [false,true]) {
+    const pending={missionId:'critical-4006-elastic-goal',repository:REPOSITORY,currentPhase:'AGENT_IMPLEMENTATION',
+      allowedFiles:[target,target+'/**'],git:{branch:'openclaw/elastic-goal-4006'},dispatch:{status:'pending'}};
+    const before=JSON.stringify([owner,pending]);
+    let reads=0,creates=0;
+    const result=await ensureElasticGoalMissions({scheduler:scheduler([goal(4006,['repo:cheekyfellastef/stephan-os:path:'+target])])},{
+      testOnly:true,env:{},dependencies:{
+        listMissionRecords:async()=>++reads===1&&race?[pending]:[owner,pending],
+        createMissionRecord:async()=>{creates++;throw Error('must not create a replacement');},
+      }});
+    assert.equal(result.selectedMission,null);
+    assert.equal(result.runnableMissions.some(s=>s.missionId===pending.missionId),false);
+    assert.equal(creates,0);
+    assert.equal(JSON.stringify([owner,pending]),before);
+    assert.ok(result.held.some(h=>h.issueNumber===4006&&h.reason==='RETAINED_SOURCE_SCOPE_RESERVED'));
+  }
+});
+
+test('retained overlap does not stop an existing read-only verification or already running claim', async () => {
+  const target='shared/agents/x.mjs';
+  for (const [phase,status] of [['VERIFYING','complete'],['AGENT_IMPLEMENTATION','running']]) {
+    const owner={missionId:'critical-3031-elastic-goal',repository:REPOSITORY,currentPhase:'AWAITING_OPERATOR_APPROVAL',
+      allowedFiles:[target],pullRequest:{number:3224,headSha:'a'.repeat(40)}};
+    const existing={missionId:'critical-4007-elastic-goal',repository:REPOSITORY,currentPhase:phase,
+      allowedFiles:[target],git:{branch:'openclaw/elastic-goal-4007'},dispatch:{status}};
+    const result=await ensureElasticGoalMissions({scheduler:scheduler([goal(4007,['repo:cheekyfellastef/stephan-os:path:'+target])])},
+      {testOnly:true,env:{},dependencies:{listMissionRecords:async()=>[owner,existing]}});
+    assert.equal(result.activeMissions.some(s=>s.missionId===existing.missionId),true);
+    assert.equal(result.selectedMission?.missionId,existing.missionId);
+    assert.equal(existing.dispatch.status,status);
+  }
 });

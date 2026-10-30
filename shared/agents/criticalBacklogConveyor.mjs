@@ -25,6 +25,59 @@ const TERMINAL_PHASES = new Set(['COMPLETE', 'CANCELLED']);
 const APPROVAL_PARKED_PHASES = new Set(['AWAITING_OPERATOR_APPROVAL', 'MERGE_PULL_REQUEST']);
 const BLOCKER_PARKING_STATUSES = new Set(['PARKED_BLOCKED', 'REENTRY_READY']);
 
+function executionData(value, key) {
+  try {
+    const descriptor = value && typeof value === 'object' && Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined;
+  } catch { return undefined; }
+}
+
+function executionIdentity(mission) {
+  const missionId = executionData(mission, 'missionId');
+  const revision = executionData(mission, 'revision');
+  const phase = executionData(mission, 'currentPhase');
+  const dispatch = executionData(mission, 'dispatch');
+  const adapter = executionData(dispatch, 'adapter');
+  const status = executionData(dispatch, 'status');
+  const parking = executionData(executionData(mission, 'continuity'), 'parkingStatus');
+  if (typeof missionId !== 'string' || !/^critical-[1-9]\d*-elastic-goal$/.test(missionId)
+      || !Number.isSafeInteger(revision) || revision < 1
+      || typeof phase !== 'string' || typeof adapter !== 'string' || !adapter
+      || typeof status !== 'string' || typeof parking !== 'string') return '';
+  return JSON.stringify([missionId, revision, phase, adapter, status, parking]);
+}
+
+// Admission may select an occupied fallback solely to retain observation/custody.
+// This projection describes an execution obligation; it grants no execution or
+// completion authority. Unknown evidence conservatively retains the obligation.
+export function projectElasticMissionExecutionObligation(admission, observedMission) {
+  const selected = executionData(admission, 'selectedMission');
+  const identity = executionIdentity(selected);
+  const runnable = executionData(admission, 'runnableMissions');
+  const active = executionData(admission, 'activeMissions');
+  const inventory = executionData(admission, 'elasticMissions');
+  const result = state => Object.freeze({ state, materialProgressRequired: state !== 'OCCUPIED',
+    missionId: executionData(selected, 'missionId') || '' });
+  if (!identity || executionData(admission, 'ok') !== true
+      || executionData(admission, 'schemaVersion') !== 'stephanos.elastic-goal-mission-admission.v1'
+      || !Array.isArray(runnable) || !Array.isArray(active) || !Array.isArray(inventory)
+      || (observedMission !== undefined && executionIdentity(observedMission) !== identity)) return result('UNKNOWN');
+  const exactlySelected = rows => rows.filter(row => executionData(row, 'missionId') === executionData(selected, 'missionId'));
+  const activeSelected = exactlySelected(active);
+  const inventorySelected = exactlySelected(inventory);
+  if (activeSelected.length !== 1 || inventorySelected.length !== 1
+      || executionIdentity(activeSelected[0]) !== identity
+      || executionIdentity(inventorySelected[0]) !== identity) return result('UNKNOWN');
+  if (runnable.some(row => executionIdentity(row) === identity)) return result('RUNNABLE');
+  const sourcePhase = ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED', 'LIVE_RUNTIME_INVESTIGATION']
+    .includes(executionData(selected, 'currentPhase'));
+  if (runnable.length === 0 && sourcePhase
+      && executionData(admission, 'classification') === 'ELASTIC_GOAL_MISSIONS_OCCUPIED'
+      && executionData(executionData(selected, 'dispatch'), 'status') === 'running'
+      && executionData(executionData(selected, 'continuity'), 'parkingStatus') === 'ACTIVE') return result('OCCUPIED');
+  return result('UNKNOWN');
+}
+
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
   return normalized || fallback;
