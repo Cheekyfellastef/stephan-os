@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createFixedSyncAndRefreshAdapter,
+  SYNC_AND_REFRESH_CHILD_BUDGET_MS,
+  SYNC_AND_REFRESH_MIN_REMAINING_MS,
+  SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS,
   projectSyncAndRefreshStatus,
   runBattleBridgeSyncAndRefresh,
 } from './battle-bridge-github-sync-and-refresh.mjs';
@@ -384,4 +387,84 @@ test('default transport launches only fixed Node scripts without a shell and use
   assert.match(source, /platform !== 'win32'/);
   assert.match(source, /shell: false/);
   assert.doesNotMatch(source, /reset --hard|git clean|git checkout|git push|Invoke-Expression|cmd\.exe/i);
+});
+
+test('fixed Windows sync task and coordinator leave a positive bounded cleanup window', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const script = await readFile(new URL('./windows/install-battle-bridge-github-sync.ps1', import.meta.url), 'utf8');
+  const match = script.match(/-ExecutionTimeLimit \(New-TimeSpan -Minutes (\d+)\)/);
+  assert.ok(match, 'scheduled-task outer deadline must remain explicit');
+  assert.ok(Number(match[1]) * 60_000 - SYNC_AND_REFRESH_CHILD_BUDGET_MS >= 120_000,
+    'the cumulative child budget must preserve two minutes for status/cleanup and other host work');
+  assert.equal(SYNC_AND_REFRESH_MIN_REMAINING_MS, 5_000);
+});
+
+test('default adapter caps every fixed child and treats a timed-out refresh as failure even with forged success stdout', () => {
+  const observed = [];
+  const adapter = createFixedSyncAndRefreshAdapter({
+    spawnSyncFn: (_node, args, options) => {
+      observed.push({ script: args[0], timeout: options.timeout });
+      if (args[0] === 'refresh-script') {
+        return { status: null, error: { code: 'ETIMEDOUT' },
+          stdout: 'POST_SYNC_REFRESH_RESULT=' + JSON.stringify({ ok: true }) };
+      }
+      return { status: 0, stdout: JSON.stringify({ ok: true, evaluation: { classification: 'SYNC_NO_CHANGE' }, facts: { localHead: B, remoteHead: B } }) };
+    },
+  });
+  const p = { repoRoot: '/canonical/repo', syncExecutor: 'sync-script', refreshCoordinator: 'refresh-script', mailboxRunner: 'mailbox-script' };
+  assert.equal(adapter.runSync(p, { timeoutMs: 900_000 }).ok, true);
+  assert.equal(adapter.runRefresh({ paths: p, beforeHead: A, afterHead: B, timeoutMs: 900_000 }).blocker, 'POST_SYNC_REFRESH_TIMEOUT');
+  adapter.runMailboxPulse(p, { timeoutMs: 900_000 });
+  assert.deepEqual(observed.map(x => x.timeout), [
+    SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.sync,
+    SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.refresh,
+    SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.mailbox,
+  ]);
+  assert.equal(adapter.runSync(p, { timeoutMs: 0 }).blocker, 'SYNC_AND_REFRESH_CHILD_BUDGET_MISSING');
+  assert.equal(adapter.runMailboxPulse(p, { timeoutMs: 0 }).blocker, 'SYNC_AND_REFRESH_CHILD_BUDGET_MISSING');
+});
+
+test('a slow sync does not launch a 15-minute post-sync refresh after the parent budget is exhausted', async () => {
+  let clock = 0, refreshCalls = 0, syncCalls = 0;
+  const result = await runBattleBridgeSyncAndRefresh({
+    paths, expectedPaths: paths, nowMs: () => clock, ...nonWindowsRepairArgs(),
+    pendingReader: async () => null,
+    adapter: {
+      runSync(_paths, { timeoutMs }) {
+        syncCalls += 1;
+        assert.ok(timeoutMs <= SYNC_AND_REFRESH_CHILD_BUDGET_MS);
+        clock = SYNC_AND_REFRESH_CHILD_BUDGET_MS;
+        return { ok: true, result: updated() };
+      },
+      runRefresh() { refreshCalls += 1; throw Error('must not run after budget'); },
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SYNC_AND_REFRESH_PARENT_BUDGET_EXHAUSTED');
+  assert.equal(result.budgetPhase, 'POST_SYNC');
+  assert.equal(syncCalls, 1);
+  assert.equal(refreshCalls, 0);
+});
+
+test('an over-budget goal-discovery callback does not trigger mailbox or maintenance writes or claim READY', async () => {
+  let clock = 0, repairCalls = 0, pulseCalls = 0;
+  const result = await runBattleBridgeSyncAndRefresh({
+    paths, expectedPaths: paths, nowMs: () => clock, platform: 'win32',
+    pendingReader: async () => null,
+    adapter: {
+      runSync() { return { ok: true, result: noChange() }; },
+      runMailboxPulse() { pulseCalls += 1; },
+      runRefresh() { throw Error('unexpected refresh'); },
+    },
+    controlPlaneReconciler() { repairCalls += 1; },
+    goalDiscoveryHeartbeat: async () => {
+      clock = SYNC_AND_REFRESH_CHILD_BUDGET_MS;
+      return { ok: true };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SYNC_AND_REFRESH_PARENT_BUDGET_EXHAUSTED');
+  assert.equal(result.budgetPhase, 'POST_GOAL_DISCOVERY');
+  assert.equal(repairCalls, 0);
+  assert.equal(pulseCalls, 0);
 });

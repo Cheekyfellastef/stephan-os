@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, SOVEREIGN_MAINTENANCE_OWNER_VERSION } from './sovereignMaintenanceAdmissionV1.mjs';
+import vm from 'node:vm';
+import { SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, SOVEREIGN_MAINTENANCE_OWNER_VERSION,
+  unqualifiedCoreWindowsRepairV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 import { callSovereignMaintenanceOwnerV1 } from './sovereignCommanderRemoteMailboxV1.mjs';
 import { executeSovereignCommanderCommandV1 } from './sovereignCommanderV1.mjs';
 import { buildStephanosExecutionCommandEnvelopeV1, buildStephanosExecutionSurfaceCatalogV1, STEPHANOS_EXECUTION_SURFACE } from './stephanosExecutionCommandFabricV1.mjs';
@@ -11,6 +13,88 @@ import { createSovereignCommanderHttpServer, startSovereignCommanderContinuousRe
 
 const root = 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os';
 const idle = { enabled: true, running: false, timeoutCustodyHeld: false };
+
+function coreMaintenanceFunction(name, nextName, overrides = {}) {
+  const source = readFileSync(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf(`async function ${name}(`);
+  const end = source.indexOf(`\nasync function ${nextName}(`, start);
+  assert.ok(start >= 0 && end > start);
+  const context = vm.createContext({
+    projectStephanosCoreDaemonState: value => value,
+    readCanonicalMissionWorkerHeartbeatAgeMs: () => 0,
+    coreWorkerDependentWorkAllowed: () => true,
+    unqualifiedCoreWindowsRepairV1,
+    repoRoot: root, workspaceRoot: 'C:\\fixture\\workspace',
+    lastOctopusSelfHealAttemptCount: 1, lastDependencySelfHealAttemptCount: 1,
+    OCTOPUS_SELF_HEAL_RELATED_ISSUE: '#2961', RELATED_ISSUE: '#2961', PROOF_REF: 'fixture-proof',
+    STEPHANOS_EXECUTION_SURFACE: { SOVEREIGN_COMMANDER: 'sovereign-commander' },
+    SOVEREIGN_COMMANDER_OPERATION: { MAINTENANCE_ACTION: 'MAINTENANCE_ACTION' },
+    buildStephanosExecutionSurfaceCatalogV1: () => ({}),
+    buildStephanosExecutionCommandEnvelopeV1: value => value,
+    ...overrides,
+  });
+  vm.runInContext(source.slice(start, end), context);
+  return context[name];
+}
+
+test('actual Core automatic initial, escalation and retry cannot enter manual owner admission without native custody', async () => {
+  for (const [actionId, phase] of [
+    ['repair-goal-builder-flow', 'goal-builder'],
+    ['repair-control-plane', 'control-plane'],
+    ['repair-goal-builder-flow', 'goal-builder-retry'],
+  ]) {
+    let automaticCalls = 0;
+    const guardian = startSovereignCommanderContinuousRepairGuardian({
+      spawnImpl: () => assert.fail('manual fixture must not spawn'),
+      setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl() {},
+    });
+    const run = coreMaintenanceFunction('runBoundedOctopusMaintenance', 'runBoundedOctopusSelfHeal', {
+      executeSovereignCommanderCommandV1: envelope => {
+        automaticCalls++;
+        return guardian.withMaintenanceOwner({ plan: { processId: actionId } }, async () => ({
+          ok: false, structuredContent: { status: null, errorCode: 'ETIMEDOUT' },
+        }));
+      },
+    });
+    try {
+      const result = await run(actionId, 'a'.repeat(40), phase);
+      assert.equal(automaticCalls, 0, phase);
+      assert.equal(result.blocker, 'SOVEREIGN_CORE_WINDOWS_JOB_CUSTODY_UNAVAILABLE');
+      assert.equal(result.executionState, 'NOT_STARTED');
+      assert.equal(result.maintenanceReservationCreated, false);
+      assert.equal(result.nativeCustodyQualified, false);
+      assert.equal(guardian.status().timeoutCustodyHeld, false);
+      let manualCalls = 0;
+      const manual = await guardian.withMaintenanceOwner({ plan: { processId: 'repair-ui-4173' } }, async () => {
+        manualCalls++;
+        return { ok: true, structuredContent: { status: 0, stdout: '' } };
+      });
+      assert.equal(manualCalls, 1);
+      assert.equal(manual.ok, true);
+    } finally { guardian.stop(); }
+  }
+});
+
+test('Core still checks worker custody before considering automatic broad maintenance', async () => {
+  const run = coreMaintenanceFunction('runBoundedOctopusMaintenance', 'runBoundedOctopusSelfHeal', {
+    coreWorkerDependentWorkAllowed: () => false,
+    unqualifiedCoreWindowsRepairV1() { assert.fail('invalid worker reached later admission'); },
+    executeSovereignCommanderCommandV1() { assert.fail('invalid worker reached owner'); },
+  });
+  const result = await run('repair-goal-builder-flow', 'a'.repeat(40), 'goal-builder');
+  assert.equal(result.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+});
+
+test('the separate existing backend dependency action retains its original owner route', async () => {
+  const calls = [];
+  const run = coreMaintenanceFunction('runBoundedDependencyMaintenance', 'maybeRepairCoreDependencies', {
+    unqualifiedCoreWindowsRepairV1() { assert.fail('dependency-specific action acquired broad-repair policy'); },
+    executeSovereignCommanderCommandV1(envelope) { calls.push(envelope.payload.actionId); return { ok: true }; },
+  });
+  const result = await run('repair-battle-bridge', 'a'.repeat(40), 'stephanos-core-backend-self-heal');
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ['repair-battle-bridge']);
+});
 function envelope(actionId, operation = 'MAINTENANCE_ACTION') {
   return buildStephanosExecutionCommandEnvelopeV1({
     catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: root }),
@@ -196,7 +280,8 @@ test('completed wrapper exits retain nested timeout custody in scheduled and bot
     ]) {
       for (const operation of ['MAINTENANCE_ACTION', 'START_PROCESS']) {
         const guardian = startSovereignCommanderContinuousRepairGuardian({
-          setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl() {},
+          spawnImpl: () => assert.fail('manual fixture must not spawn'),
+      setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl() {},
         });
         try {
           const command = { operation, plan: { kind: 'fixed-process', processId: actionId } };
@@ -278,6 +363,7 @@ test('actual bare-JSON control-plane protocol holds the real manual owner after 
   assert.equal(held({ status: 0 }, { repair: { tasks: [{ status: 0, executionEvidence: [{ status: null, errorCode: 'ETIMEDOUT' }] }] } }), true);
   for (const operation of ['MAINTENANCE_ACTION', 'START_PROCESS']) {
     const guardian = startSovereignCommanderContinuousRepairGuardian({
+      spawnImpl: () => assert.fail('manual fixture must not spawn'),
       setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl() {},
     });
     try {
@@ -328,4 +414,30 @@ test('terminal protocol is bound to the requested wrapper, exact format and fina
       assert.equal(held({ status }, read(wrongFormat, processId), processId), true);
     }
   }
+});
+
+
+test('Core reopens only its fixed goal repair after current actual qualification and owner routing', async () => {
+  const calls=[];
+  const run=coreMaintenanceFunction('runBoundedOctopusMaintenance','runBoundedOctopusSelfHeal',{
+    inspectFixedRuntimeQualificationV1:()=>({ok:true,sourceHead:'a'.repeat(40),profiles:['MAINTENANCE_GOAL_BUILDER_V1']}),
+    executeSovereignCommanderCommandV1:envelope=>{calls.push(envelope);return {ok:false,blocker:'OWNER_INDEPENDENT_ADMISSION_REQUIRED'};},
+  });
+  assert.equal((await run('repair-goal-builder-flow','a'.repeat(40),'goal-builder')).blocker,'OWNER_INDEPENDENT_ADMISSION_REQUIRED');
+  assert.equal(calls.length,1);assert.equal(calls[0].payload.actionId,'repair-goal-builder-flow');
+  assert.equal(Object.hasOwn(calls[0].payload,'qualified'),false);
+  await run('repair-control-plane','a'.repeat(40),'control-plane');
+  await run('repair-goal-builder-flow','b'.repeat(40),'goal-builder');
+  assert.equal(calls.length,1,'unsupported profile and source drift never reach owner');
+});
+
+
+test('default Windows owner cannot reserve or run an unsupported profile', {skip:process.platform!=='win32'}, async () => {
+  const guardian=startSovereignCommanderContinuousRepairGuardian({setTimeoutImpl:()=>({unref(){}}),clearTimeoutImpl(){}});
+  try {
+    const result=await guardian.withMaintenanceOwner({plan:{processId:'repair-control-plane'}},()=>assert.fail('unsupported child launched'));
+    assert.equal(result.blocker,'FIXED_RUNTIME_PROFILE_NOT_QUALIFIED');
+    assert.equal(guardian.status().timeoutCustodyHeld,false);
+    assert.equal(guardian.status().maintenanceInFlight,false);
+  } finally {guardian.stop();}
 });

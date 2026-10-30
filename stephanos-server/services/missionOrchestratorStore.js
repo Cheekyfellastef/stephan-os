@@ -483,7 +483,7 @@ export async function appendMissionEvent(missionId, event, options = {}) {
         } } : {}),
       });
       // A result collector may have waited for the mission lock/audit I/O.
-      if (options.assertResultCustody) options.assertResultCustody();
+      if (options.assertResultCustody) options.assertResultCustody(current, preparedEvent);
       if (text(preparedEvent.eventType).toUpperCase() === 'AGENT_DISPATCHED' && options.assertClaimCustody)
         options.assertClaimCustody();
       await atomicWriteJson(paths.statePath, next);

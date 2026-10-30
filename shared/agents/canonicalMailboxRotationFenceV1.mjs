@@ -15,7 +15,8 @@ const positive = n => Number.isSafeInteger(n) && n > 0;
 export function buildMailboxRotationFence(record, { commandCommentId, receiptCommentId = 0, receiptIssue = 0 } = {}) {
   const value = {};
   for (const key of ['transitionId', 'phase', 'predecessorIssue', 'successorIssue', 'cutoverPrNumber',
-    'cutoverHead', 'preparationHead', 'freezeCommentId', 'drained']) value[key] = record[key];
+    'cutoverHead', 'preparationHead', 'freezeCommentId', 'drained',
+    'actionPendingAggregateCount','actionBlockingCount','actionsQuiescenceDigest']) value[key] = record[key];
   Object.assign(value, { commandCommentId, receiptCommentId, receiptIssue });
   return `${MAILBOX_ROTATION_FENCE_MARKER}\n\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\`\nDeny-only migration fence. Protected source remains the sole command authority.\n`;
 }
@@ -71,6 +72,12 @@ export function validateMailboxRotationFenceProof(value, proofs) {
     || p.predecessorIssue !== value.predecessorIssue || p.successorIssue !== value.successorIssue
     || (value.phase === 'FROZEN' && (p.drained !== true || value.drained !== true))) {
     throw new Error('MAILBOX_ROTATION_GLOBAL_RECEIPT_INVALID');
+  }
+  if(value.phase==='FROZEN'&&(value.actionPendingAggregateCount!==undefined||p.actionPendingAggregateCount!==undefined)){
+    if(!Number.isSafeInteger(value.actionPendingAggregateCount)||value.actionPendingAggregateCount<0
+      ||p.actionPendingAggregateCount!==value.actionPendingAggregateCount||value.actionBlockingCount!==0||p.actionBlockingCount!==0
+      ||(value.actionPendingAggregateCount>0&&(!/^[a-f0-9]{64}$/.test(value.actionsQuiescenceDigest||'')||p.actionsQuiescenceDigest!==value.actionsQuiescenceDigest)))
+      throw Error('MAILBOX_ROTATION_GLOBAL_EXECUTION_EVIDENCE_INVALID');
   }
   return value;
 }
