@@ -10,6 +10,7 @@ import { readLiveGoalProjection } from './liveGoalProjectionService.js';
 import { readSharedConversationUpliftV1 } from './sharedConversationUpliftService.js';
 import { lstat, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { throwIfWorkspaceReadAborted, waitForWorkspaceRead } from '../../shared/runtime/workspaceReadCancellation.mjs';
 import {
   projectGoalBuildConveyorV1,
   projectGoalBuildJourneyV1,
@@ -265,15 +266,18 @@ function enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate, bui
 }
 
 export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
+  throwIfWorkspaceReadAborted(input.signal);
   const validation = await validateSharedWorkspaceFeedConfig(input);
+  throwIfWorkspaceReadAborted(input.signal);
   if (!validation.ok) return unavailableFeed(validation);
 
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const goalGateTrust = await loadCommissionedGoalGateTrust(input);
+  throwIfWorkspaceReadAborted(input.signal);
   // These independent read models share the same observation clock. A slow
   // optional GitHub overlay must not add its entire latency after the history
   // scan; its existing unavailable/error semantics remain unchanged.
-  const [feed, live, conversationUplift] = await Promise.all([
+  const [feed, live, conversationUplift] = await waitForWorkspaceRead(Promise.all([
     readSharedWorkspaceDashboardFeed({
       ...input,
       goalGateTrust,
@@ -282,7 +286,8 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
     }),
     resolveLiveProjection(input, nowMs),
     resolveConversationUplift(input, validation.root, nowMs),
-  ]);
+  ]), input.signal);
+  throwIfWorkspaceReadAborted(input.signal);
   const records = feed.records || {};
   const goalEstate = buildGoalDashboardEstateSummary({
     goalRecords: records.goalRecords,

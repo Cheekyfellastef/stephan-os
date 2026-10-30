@@ -184,6 +184,7 @@
     "shared/runtime/aiMindRegistry.mjs",
     "shared/runtime/autonomousProjectStewardshipSeedV1.mjs",
     "shared/runtime/backendClient.mjs",
+    "shared/runtime/workspaceReadCancellation.mjs",
     "shared/runtime/caravanMode.mjs",
     "shared/runtime/conversationalIntelligenceSeedV1.mjs",
     "shared/runtime/fullSovereigntySeedV1.mjs",
