@@ -14,6 +14,7 @@ import {
   readSharedWorkspaceRecordDirectory,
 } from './shared-workspace-dashboard-feed.mjs';
 import { SPECIALIZED_NON_DASHBOARD_STATUS_FILES } from './sharedWorkspaceSpecializedStatusRegistryV1.mjs';
+import { claimFrontendBootAttempt } from '../../scripts/sovereign-frontend-autostart.mjs';
 import {
   createAgentCapabilityRecord,
   createSharedWorkspaceProofRecord,
@@ -85,6 +86,33 @@ test('abandoning a directory read does not free any unfinished global I/O slots'
   release();
   assert.equal((await next).records.length, 1);
   assert.equal(peak, 16);
+});
+
+test('real frontend boot reservation never becomes dashboard authority and remains exclusive after scans', async () => {
+  const root = await tempWorkspace();
+  const now = '2026-10-30T11:23:07.500Z';
+  const input = { workspaceRoot: root, expectedHead: 'd'.repeat(40),
+    witness: { machineHash: 'a'.repeat(64), bootStartedAtUtc: now } };
+  await writeJson(root, 'status', 'current.json', createSharedWorkspaceStatusRecord({
+    statusId: 'current', timestampUtc: now, status: 'CURRENT',
+  }));
+  assert.equal(claimFrontendBootAttempt(input), true);
+  const name = (await readdir(join(root, 'status'))).find(name => name.startsWith('frontend-boot-attempt-'));
+  const before = await readFile(join(root, 'status', name));
+  for (let scan = 0; scan < 2; scan++) {
+    const feed = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now) });
+    assert.equal(feed.state, DASHBOARD_FEED_STATES.READY);
+    assert.deepEqual(feed.errors, []);
+    assert.deepEqual(feed.records.statusRecords.map(row => row.statusId), ['current']);
+    assert.equal(claimFrontendBootAttempt(input), false);
+    assert.deepEqual(await readFile(join(root, 'status', name)), before);
+  }
+  await writeFile(join(root, 'status', `frontend-boot-attempt-${'a'.repeat(63)}.json`), before);
+  const rejected = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now) });
+  assert.equal(rejected.state, DASHBOARD_FEED_STATES.ERROR);
+  assert.ok(rejected.errors.some(error => error.includes(`frontend-boot-attempt-${'a'.repeat(63)}.json`)));
+  assert.equal(claimFrontendBootAttempt(input), false);
+  assert.deepEqual(await readFile(join(root, 'status', name)), before);
 });
 
 test('history reads overlap within a fixed bound without losing validation, order or fresh changes', async () => {

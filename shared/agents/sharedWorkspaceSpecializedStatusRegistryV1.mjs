@@ -15,6 +15,15 @@ function record({ fileName, schemaIds, sourcePaths, role }) {
 export const SHARED_WORKSPACE_SPECIALIZED_STATUS_PATTERNS = Object.freeze([
   Object.freeze({
     directory: 'status',
+    fileNamePattern: '^frontend-boot-attempt-[0-9a-f]{64}\\.json$',
+    schemaIds: Object.freeze(['stephanos.frontend-autostart.v1']),
+    sourcePaths: Object.freeze(['scripts/sovereign-frontend-autostart.mjs']),
+    role: 'frontend-immutable-boot-attempt-reservation',
+    dashboardAuthority: false,
+    authority: 'specialized-consumer-only',
+  }),
+  Object.freeze({
+    directory: 'status',
     fileNamePattern: '^mission-orchestrator-worker-launch-identity-[0-9a-f]{64}\\.json$',
     schemaIds: Object.freeze(['stephanos.mission-worker-launch-identity.v1']),
     sourcePaths: Object.freeze([
