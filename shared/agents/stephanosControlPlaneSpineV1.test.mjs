@@ -34,7 +34,7 @@ test('control-plane spine only declares AWAKE with healthy dependencies and comp
       flywheelLastCycleFinishedAtUtc: '2026-10-04T10:30:00.000Z',
       refillStatus: 'READY',
       refillMaterialActionsSucceeded: 2,
-      refillSafeEligibleWorkRemaining: 1,
+      refillSafeEligibleWorkRemaining: 0,
       refillProvenSafeFreeLanes: 3,
       octopusBuildVerdict: 'BUILDING',
       octopusNeedsRepair: false,
@@ -43,6 +43,32 @@ test('control-plane spine only declares AWAKE with healthy dependencies and comp
   assert.equal(projected.wakeState, 'AWAKE');
   assert.equal(projected.awake, true);
   assert.equal(projected.repairRequired, false);
+  assert.equal(projected.safeEligibleWorkRemaining, 0);
+  assert.equal(projected.provenSafeFreeLanes, 3);
+});
+
+test('partly built work cannot conceal remaining safe tasks and free lanes', () => {
+  const projected = projectStephanosControlPlaneSpine({
+    coreState: healthyCore,
+    flywheelStatus: {
+      flywheelCycleRunning: false,
+      flywheelLastCycleFinishedAtUtc: '2026-10-20T14:00:00.000Z',
+      refillStatus: 'READY',
+      refillMaterialActionsSucceeded: 2,
+      refillSafeEligibleWorkRemaining: 4,
+      refillProvenSafeFreeLanes: 5,
+      octopusBuildVerdict: 'BUILDING',
+      octopusNeedsRepair: false,
+    },
+  });
+  assert.equal(projected.safeEligibleWorkRemaining, 4);
+  assert.equal(projected.provenSafeFreeLanes, 5);
+  assert.equal(projected.materialActionsLastCycle, 2);
+  assert.equal(projected.strandedCapacity, true);
+  assert.equal(projected.repairRequired, true);
+  assert.equal(projected.repairReason, 'SAFE_WORK_STRANDED_WITH_FREE_CAPACITY');
+  assert.equal(projected.wakeState, 'DEGRADED');
+  assert.equal(projected.awake, false);
 });
 
 test('control-plane spine degrades instead of narrating when a core dependency is unhealthy', () => {
@@ -98,6 +124,27 @@ test('control-plane spine reports DEGRADED immediately when startup dependencies
   assert.equal(projected.controlPlaneFinalVerdict, 'STEPHANOS_CONTROL_PLANE_REPAIR_REQUIRED');
 });
 
+
+test('proven no-work exact-grant wait is not falsely sent to self-repair', () => {
+  const flywheelStatus = {
+    flywheelLastCycleFinishedAtUtc: '2026-10-09T09:55:45.921Z',
+    flywheelLastStatus: 'HOLD', flywheelLastBlockerCount: 1,
+    flywheelLastIdleGrantWait: true, flywheelLastError: '',
+    refillStatus: 'READY', refillNoRunnableSourceWorkProven: true,
+    refillSafeEligibleWorkRemaining: 0, refillProvenSafeFreeLanes: 0,
+    octopusBuildVerdict: 'IDLE_PROVEN', octopusNeedsRepair: false,
+  };
+  const idle = projectStephanosControlPlaneSpine({ coreState: healthyCore, flywheelStatus });
+  assert.equal(idle.idleGrantWaitProven, true);
+  assert.equal(idle.flywheelReconciliationBlocked, false);
+  assert.equal(idle.repairRequired, false);
+  assert.equal(idle.materialActionsLastCycle, 0);
+  const unproven = projectStephanosControlPlaneSpine({ coreState: healthyCore, flywheelStatus: { ...flywheelStatus, refillNoRunnableSourceWorkProven: false } });
+  assert.equal(unproven.flywheelReconciliationBlocked, true);
+  assert.equal(unproven.repairRequired, true);
+  const realFault = projectStephanosControlPlaneSpine({ coreState: healthyCore, flywheelStatus: { ...flywheelStatus, flywheelLastBlockerCount: 2 } });
+  assert.equal(realFault.flywheelReconciliationBlocked, true);
+});
 
 test('control-plane spine refuses AWAKE after a blocked Flywheel reconciliation', () => {
   const projected = projectStephanosControlPlaneSpine({

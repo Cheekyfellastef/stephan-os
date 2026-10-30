@@ -15,6 +15,8 @@ import {
   createSanitizedMailboxReceiptProjection,
   createSanitizedCriticalBacklogStatusProjection,
   createSanitizedProgrammeAuthorityStatusProjection,
+  readNativeCapacityProgrammeTelemetry,
+  readNativeCapacityPublisherHeadDiagnosticV1,
   createWindowsSafeMailboxReceiptFilename,
   flushMailboxReceiptPublicationOutbox,
   ensureProgrammeAuthorityTerminalTelemetry,
@@ -87,7 +89,7 @@ function forgeM2Receipt(overrides = {}) {
     requestId: 'forge-m2-install-ready-001',
     operation: 'INSTALL_FORGE_SHADOW_M2',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 3149,
     branch: 'main',
     expectedHead: FORGE_HEAD,
     forgejoVersion: '15.0.6',
@@ -294,7 +296,7 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.doesNotMatch(installer, /New-ScheduledTaskAction -Execute \$(?:node|nodeExe|npm)/);
 
   const mailboxSource = await readFile(mailboxSourcePath, 'utf8');
-  assert.match(mailboxSource, /selectBattleBridgeGitHubCommandBatch\(comments/);
+  assert.match(mailboxSource, /selectBattleBridgeGitHubCommandBatch\(rotationPoll\.comments/);
   assert.match(mailboxSource, /executeBattleBridgeGitHubCommandBatch\(batch/);
   assert.match(mailboxSource, /beforeExecute:\s*async \(selected\)/);
   assert.match(mailboxSource, /onTerminal:\s*async \(selected, execution\)/);
@@ -308,7 +310,9 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.match(mailboxSource, /generationBoundaryDeferredCount/);
   assert.match(mailboxSource, /checkpointTerminalMailboxReceipt\(state, receipt\)/);
   assert.doesNotMatch(mailboxSource, /for \(const selected of batch\.commands\) \{[\s\S]{0,500}state: 'ACCEPTED'/);
-  assert.match(mailboxSource, /maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH/);
+  assert.match(mailboxSource, /maxBatch: 1/);
+  assert.match(mailboxSource, /const currentHead = readGitHubMainHead\(\)/);
+  assert.match(mailboxSource, /currentHead,/);
   assert.match(mailboxSource, /const totalDeferredCount = batch\.deferredCount \+ generationBoundaryDeferredCount/);
   assert.match(mailboxSource, /updateStephanosFromChat\(\{[\s\S]{0,180}expectedHead: command\.expectedHead/);
   assert.doesNotMatch(mailboxSource, /BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE\s*=\s*[^1]*2|issueNumber:\s*1508/);
@@ -589,7 +593,7 @@ test('Sovereign Commander remote receipts preserve bounded mobile proof metadata
     requestId: 'sovereign-mobile-proof-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 3149,
     branch: 'main',
     expectedHead: head,
     state: 'DONE',
@@ -674,6 +678,67 @@ test('Sovereign Commander remote receipts preserve bounded mobile proof metadata
   assert.equal(Object.hasOwn(serialized.result.result.coreDaemonStatus, 'localPath'), false);
 });
 
+test('Sovereign status mailbox carries only bounded guardian cycle proof, never claims material repair', () => {
+  const head = 'c'.repeat(40);
+  const guardian = {
+    available: true, enabled: true, running: false, scheduled: true,
+    cycleCount: 13, successCount: 0, failureCount: 13, lastOk: false,
+    lastStartedAtUtc: '2026-10-20T22:45:00.000Z',
+    lastCompletedAtUtc: '2026-10-20T22:46:00.000Z',
+    lastBlocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+    lastFinalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_BLOCKED',
+    loopState: 'CYCLES_OBSERVED', autonomousMaterialRepairProven: true,
+    readOnly: true, secretMaterialReturned: false,
+    rawStdout: 'C:\\Users\\Secret\\raw.txt', privateToken: 'do-not-publish',
+  };
+  const makeReceipt = (remoteAction, value = guardian) => ({
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'sovereign-guardian-status-proof-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 3149,
+    branch: 'main', expectedHead: head, state: 'DONE',
+    result: {
+      ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'sovereign-guardian-status-proof-001',
+      result: {
+        ok: true, remoteAction,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_STATUS_COMPLETE',
+        sourceHead: head, publicReceiptSafe: true, secretMaterialReturned: false,
+        continuousRepairGuardian: value,
+      },
+    },
+  });
+  const receipt = makeReceipt('status');
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.deepEqual(projected.operationResult.continuousRepairGuardian, {
+    available: true, enabled: true, running: false, scheduled: true,
+    cycleCount: 13, successCount: 0, failureCount: 13, lastOk: false,
+    lastStartedAtUtc: '2026-10-20T22:45:00.000Z',
+    lastCompletedAtUtc: '2026-10-20T22:46:00.000Z',
+    lastBlocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+    lastFinalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_BLOCKED',
+    loopState: 'CYCLES_OBSERVED',
+    autonomousMaterialRepairProven: false,
+    readOnly: true, secretMaterialReturned: false,
+  });
+  const serialized = serializeBoundedReceiptJson(receipt);
+  const compact = JSON.parse(serialized).result.result.continuousRepairGuardian;
+  assert.equal(compact.failureCount, 13);
+  assert.equal(compact.autonomousMaterialRepairProven, false);
+  assert.doesNotMatch(serialized, /raw\.txt|do-not-publish|C:\\Users/i);
+
+  const other = createSanitizedMailboxReceiptProjection(makeReceipt('meter-status'));
+  assert.equal(Object.hasOwn(other.operationResult, 'continuousRepairGuardian'), false);
+  const malformed = createSanitizedMailboxReceiptProjection(makeReceipt('status', {
+    ...guardian, cycleCount: '100', loopState: 'CYCLES_OBSERVED',
+    lastBlocker: 'C:\\Users\\private',
+  }));
+  assert.equal(malformed.operationResult.continuousRepairGuardian.available, false);
+  assert.equal(malformed.operationResult.continuousRepairGuardian.loopState, 'UNKNOWN');
+  assert.equal(malformed.operationResult.continuousRepairGuardian.cycleCount, null);
+});
+
 test('Sovereign Commander blocked receipts preserve only bounded failure diagnostics', () => {
   const head = 'c'.repeat(40);
   const receipt = {
@@ -681,7 +746,7 @@ test('Sovereign Commander blocked receipts preserve only bounded failure diagnos
     requestId: 'sovereign-mobile-failure-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 3149,
     branch: 'main',
     expectedHead: head,
     state: 'BLOCKED',
@@ -724,6 +789,35 @@ test('Sovereign Commander blocked receipts preserve only bounded failure diagnos
   assert.doesNotMatch(JSON.stringify(serialized), /PRIVATE RAW|secret-path/i);
 });
 
+test('native Windows calibration denial preserves the exact bounded exit status in the public mailbox', () => {
+  const head='a'.repeat(40);
+  const receipt={
+    schemaVersion:'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId:'sovereign-reviewer-denial-3199',
+    operation:'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository:'Cheekyfellastef/stephan-os',
+    issueNumber:3149,branch:'main',expectedHead:head,state:'BLOCKED',
+    blocker:'SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID',
+    result:{
+      ok:false,verdict:'BLOCKED',operation:'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId:'sovereign-reviewer-denial-3199',
+      blocker:'SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID',
+      remoteAction:'sovereign-windows-reviewer-calibration',
+      status:2,errorCode:'REVIEWER_RUNNER_EXIT_2',executionBlocker:'',
+      publicReceiptSafe:true,secretMaterialReturned:false,
+      stdout:'PRIVATE_NATIVE_OUTPUT',stderr:'PRIVATE_NATIVE_STDERR',
+    },
+  };
+  const result=createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(result.operationResult.maintenanceStatus,2);
+  assert.equal(result.operationResult.errorCode,'REVIEWER_RUNNER_EXIT_2');
+  assert.equal(result.operationResult.remoteAction,'sovereign-windows-reviewer-calibration');
+  const publicReceipt=JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(publicReceipt.result.result.maintenanceStatus,2);
+  assert.equal(publicReceipt.result.result.errorCode,'REVIEWER_RUNNER_EXIT_2');
+  assert.doesNotMatch(JSON.stringify(publicReceipt),/PRIVATE_NATIVE_OUTPUT|PRIVATE_NATIVE_STDERR/);
+});
+
 test('mailbox receipt preserves bounded project search paths and strips private preview data', () => {
   const head = 'c'.repeat(40);
   const query = 'Remote Commander';
@@ -733,7 +827,7 @@ test('mailbox receipt preserves bounded project search paths and strips private 
     requestId: 'project-scan-readback-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 3149,
     branch: 'main',
     expectedHead: head,
     state: 'DONE',
@@ -788,7 +882,7 @@ test('mailbox receipt preserves only bounded parity summary', () => {
     requestId: 'parity-readback-proof-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 3149,
     branch: 'main',
     expectedHead: head,
     state: 'DONE',
@@ -975,8 +1069,8 @@ test('programme authority telemetry preserves bounded scheduler, capacity, heart
           lifecycle: 'BLOCKED',
           continuityState: 'PARKED',
           route: 'STEPHANOS_NATIVE',
-          hostControllerId: '6a9bb24c04748191ada675a686f3b3fa',
-          hostControllerTitle: 'Stephanos Elastic Product Build',
+          hostControllerId: '6ac3999164b88191a1c866c70ab51bd7',
+          hostControllerTitle: 'Stephanos Continuous Foreman',
           selectedForAdmission: false,
           resourceIds: [],
         },
@@ -1734,7 +1828,7 @@ test('oversized public receipt falls back to bounded core evidence instead of cr
     requestId: 'oversized-public-receipt-core-fallback-0001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 3149,
     branch: 'main',
     state: 'DONE',
     completedAt: '2026-10-02T18:01:00.000Z',
@@ -1985,7 +2079,7 @@ test('public mailbox receipt preserves only bounded Battle Bridge observation fa
     requestId: 'battle-bridge-observe-proof-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 3149,
     branch: 'main',
     state: 'DONE',
     acceptedAt: '2026-10-02T10:54:00.000Z',
@@ -2041,7 +2135,7 @@ test('core status projection strips private fields while preserving bounded heal
     requestId: 'core-health-projection-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 3149,
     branch: 'main',
     state: 'DONE',
     acceptedAt: '2026-10-02T11:00:00.000Z',
@@ -2167,7 +2261,7 @@ test('mailbox receipt preserves bounded meter glass and strips private meter dat
     requestId: 'meter-glass-readback-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 3149,
     branch: 'main',
     expectedHead: head,
     state: 'DONE',
@@ -2282,7 +2376,7 @@ test('mailbox receipt preserves controller lane glass and strips private control
     requestId: 'controller-lane-glass-readback-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 3149,
     branch: 'main',
     expectedHead: head,
     state: 'DONE',
@@ -2327,7 +2421,7 @@ test('mailbox receipt preserves bounded VR acceptance verdict without raw output
     requestId: 'vr-acceptance-public-proof-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 3149,
     branch: 'main',
     expectedHead: head,
     processSourceHead: head,
@@ -2402,7 +2496,7 @@ test('mailbox receipt preserves bounded Starfield VR preflight proof without raw
     requestId: 'starfield-vr-preflight-public-proof-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 3149,
     branch: 'main',
     expectedHead: head,
     processSourceHead: head,
@@ -2537,7 +2631,7 @@ test('fast mailbox receipt preserves bounded Starfield VR telemetry headline wit
     requestId: 'starfield-vr-telemetry-readback-test-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 3149,
     branch: 'main',
     expectedHead: head,
     processSourceHead: head,
@@ -2823,7 +2917,7 @@ test('mailbox receipt preserves Sovereign visibility headline and strips private
     requestId: 'visibility-snapshot-public-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 3149,
     branch: 'main',
     state: 'DONE',
     acceptedAt: '2026-10-04T12:00:00.000Z',
@@ -2905,4 +2999,757 @@ test('mailbox receipt preserves Sovereign visibility headline and strips private
 
   const encoded = JSON.stringify(projected);
   assert.doesNotMatch(encoded, /MUST_NOT_ESCAPE|privateHeadSync|C:\\\\secret|localPath|\"secret\":/);
+});
+
+test('oversized Programme Authority receipt retains precise HOLD diagnosis while discarding raw lane payload', () => {
+  const head = 'a'.repeat(40);
+  const packet = {
+    programmeStatus: 'HOLD',
+    programmeFinalVerdict: 'PROGRAMME_AUTHORITY_HOLD',
+    programmeBlockers: [
+      'source:NO_EXECUTION_RECEIPTS',
+      'controller-heartbeat-invalid-or-missing',
+      'private C:\\Users\\Operator\\secret.txt',
+    ],
+    schedulerFailClosed: true,
+    schedulerProgrammeStatus: 'HOLD',
+    schedulerDecisionStatus: 'BLOCKED',
+    schedulerSelectedIssue: 2956,
+    elasticCapacityStatus: 'PAUSED',
+    elasticDesiredWidth: 15,
+    elasticRemainingAdmissionSlots: 0,
+    controllerValid: false,
+    controllerFresh: false,
+    workerValid: true,
+    workerFresh: true,
+    criticalBacklogDecision: 'PARKED_BLOCKERS_ONLY',
+    sourceReadRepositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+    sourceReadControllerHeartbeat: 'CONTROLLER_HEARTBEAT_STALE',
+    sourceReadWorkerHeartbeat: 'MISSION_WORKER_HEARTBEAT_CURRENT',
+    sourceReadGithubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
+    logicalGoalLanes: Array.from({ length: 59 }, (_, index) => ({
+      issueNumber: index + 2500,
+      continuityState: 'TRACKING',
+      controllerId: 'logical-goal-' + index,
+    })),
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'programme-overlarge-diagnostic-001',
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 3149,
+    branch: 'main', state: 'DONE', expectedHead: head,
+    result: {
+      ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+      requestId: 'programme-overlarge-diagnostic-001',
+      result: {
+        ok: true,
+        finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+        sourceHead: head,
+        programmeAuthorityTelemetry: true,
+        programmeAuthority: packet,
+        codexLastMessage: 'ignored large raw payload '.repeat(300),
+      },
+    },
+  };
+  const maxBytes = 4600;
+  const compactJson = serializeBoundedReceiptJson(receipt, maxBytes);
+  assert.ok(Buffer.byteLength(compactJson, 'utf8') <= maxBytes);
+  const result = JSON.parse(compactJson);
+  const summary = result.result.result;
+  assert.equal(result.githubProjectionTruncated, true);
+  assert.equal(summary.programmeStatus, 'HOLD');
+  assert.equal(summary.schedulerFailClosed, true);
+  assert.deepEqual(summary.programmeBlockers, [
+    'SOURCE:NO_EXECUTION_RECEIPTS', 'CONTROLLER-HEARTBEAT-INVALID-OR-MISSING',
+  ]);
+  assert.equal(summary.criticalBacklogDecision, 'PARKED_BLOCKERS_ONLY');
+  assert.equal(summary.sourceReadRepositoryHead, 'CANONICAL_REPOSITORY_HEAD_READ');
+  assert.equal(summary.sourceReadGithubGoalEstate, 'GITHUB_GOAL_ESTATE_FETCHED');
+  assert.equal(summary.originalProgrammeLaneListOmitted, true);
+  assert.equal(summary.logicalGoalLanes, undefined);
+  assert.doesNotMatch(compactJson, /Users|secret\.txt|ignored large raw payload/i);
+});
+
+test('double-serialized 32KB Programme Authority HOLD retains original blockers at the real 9KB public limit', () => {
+  const sha = 'a'.repeat(40);
+  const rawDiagnostic = {
+    programmeStatus: 'HOLD',
+    programmeFinalVerdict: 'PROGRAMME_AUTHORITY_HOLD',
+    programmeBlockers: [
+      'source:NO_EXECUTION_RECEIPTS',
+      'lane:elastic-mission-phase-binding-unproven',
+      'controller-heartbeat-active-lane-mismatch',
+    ],
+    schedulerFailClosed: true,
+    schedulerProgrammeStatus: 'HOLD',
+    schedulerDecisionStatus: 'BLOCKED',
+    schedulerSelectedIssue: 2956,
+    elasticCapacityStatus: 'PAUSED',
+    elasticDesiredWidth: 15,
+    elasticRemainingAdmissionSlots: 0,
+    workerValid: true, workerFresh: true,
+    controllerValid: false, controllerFresh: false,
+    criticalBacklogDecision: 'PARKED_BLOCKERS_ONLY',
+    sourceReadRepositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+    sourceReadControllerHeartbeat: 'CONTROLLER_HEARTBEAT_STALE',
+    sourceReadWorkerHeartbeat: 'MISSION_WORKER_HEARTBEAT_CURRENT',
+    sourceReadGithubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
+    logicalGoalLanes: Array.from({ length: 59 }, (_, index) => ({
+      issueNumber: 2600 + index,
+      continuityState: 'TRACKING',
+      proofRefs: ['private C:\\Users\\operator\\secret.txt'],
+      hostControllerTitle: 'canonical goal controller ' + index,
+    })),
+  };
+  const full = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'elastic-authority-double-publication-proof-001',
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 3149,
+    branch: 'main', state: 'DONE', expectedHead: sha, processSourceHead: sha,
+    result: {
+      ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+      requestId: 'elastic-authority-double-publication-proof-001',
+      result: {
+        ok: true, finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+        sourceHead: sha, programmeAuthorityTelemetry: true,
+        programmeAuthority: rawDiagnostic,
+      },
+    },
+  };
+  const locallyCheckpointed = JSON.parse(serializeBoundedReceiptJson(full, 256 * 1024));
+  assert.equal(locallyCheckpointed.result.result.programmeStatus, 'HOLD');
+  assert.equal(locallyCheckpointed.result.result.programmeAuthority, undefined);
+  const githubJson = serializeBoundedReceiptJson(locallyCheckpointed);
+  assert.ok(Buffer.byteLength(githubJson, 'utf8') <= 9 * 1024);
+  const publicReceipt = JSON.parse(githubJson);
+  assert.equal(publicReceipt.result.result.programmeStatus, 'HOLD');
+  assert.equal(publicReceipt.result.result.programmeFinalVerdict, 'PROGRAMME_AUTHORITY_HOLD');
+  assert.deepEqual(publicReceipt.result.result.programmeBlockers, [
+    'SOURCE:NO_EXECUTION_RECEIPTS',
+    'LANE:ELASTIC-MISSION-PHASE-BINDING-UNPROVEN',
+    'CONTROLLER-HEARTBEAT-ACTIVE-LANE-MISMATCH',
+  ]);
+  assert.equal(publicReceipt.result.result.workerFresh, true);
+  assert.equal(publicReceipt.result.result.controllerFresh, false);
+  assert.equal(publicReceipt.result.result.criticalBacklogDecision, 'PARKED_BLOCKERS_ONLY');
+  assert.equal(publicReceipt.result.result.sourceReadGithubGoalEstate, 'GITHUB_GOAL_ESTATE_FETCHED');
+  assert.doesNotMatch(githubJson, /operator|secret\.txt|hostControllerTitle/i);
+});
+
+test('second-pass Programme Authority packet is never reconstructed from an incomplete success marker', () => {
+  const incomplete = {
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS', state: 'DONE',
+    requestId: 'elastic-incomplete-authority-proof-001',
+    result: { ok: true, result: {
+      ok: true, finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+      programmeStatus: 'HOLD',
+      programmeBlockers: ['source:NO_EXECUTION_RECEIPTS'],
+      // No repository-head or GitHub-estate source receipts.
+    } },
+  };
+  const projection = JSON.parse(serializeBoundedReceiptJson(incomplete));
+  assert.equal(projection.result.result.programmeStatus, undefined);
+  assert.equal(projection.result.result.programmeBlockers, undefined);
+  assert.equal(projection.result.result.finalVerdict, 'PROGRAMME_AUTHORITY_STATUS_READY');
+});
+
+test('read-only programme receipt exposes observed original lease identity without dispatch authority', () => {
+  const packet = createSanitizedProgrammeAuthorityStatusProjection({
+    status: 'HOLD',
+    finalVerdict: 'AUTHORITATIVE_PROGRAMME_PROJECTION_HOLD',
+    blockers: ['LANE:ELASTIC-LEASE-EXPIRED-OR-NOT-ACTIVE'],
+    mutationLease: { leaseId: 'critical-2956-elastic-goal-r6-lease' },
+    lane: { elasticMissionPhaseBinding: {
+      valid: false, blocker: 'ELASTIC_MISSION_REVISION_BINDING_NOT_PROVEN',
+      observedUniqueOriginal: true, observedRevision: 7,
+      observedPhase: 'GITHUB_COMMIT', observedDispatchStatus: 'complete',
+      releaseLeaseAllowed: false, mutationAuthority: false,
+    } },
+  });
+  assert.equal(packet.elasticLeaseId, 'critical-2956-elastic-goal-r6-lease');
+  assert.equal(packet.elasticLeaseRevision, 6);
+  assert.equal(packet.elasticBindingValid, false);
+  assert.equal(packet.elasticOriginalMissionUnique, true);
+  assert.equal(packet.elasticObservedMissionRevision, 7);
+  assert.equal(packet.elasticObservedMissionPhase, 'GITHUB_COMMIT');
+  assert.equal(packet.elasticObservedDispatchStatus, 'COMPLETE');
+  assert.equal(Object.hasOwn(packet, 'releaseLeaseAllowed'), false);
+  assert.equal(Object.hasOwn(packet, 'mutationAuthority'), false);
+  const unknown = createSanitizedProgrammeAuthorityStatusProjection({});
+  assert.equal(unknown.elasticLeaseId, '');
+  assert.equal(unknown.elasticObservedMissionPhase, '');
+  assert.equal(unknown.elasticOriginalMissionUnique, false);
+});
+
+
+test('gate-13 publisher head diagnostics distinguish stale unsigned claims without granting native capacity', async () => {
+  const target = 'a'.repeat(40), stale = 'b'.repeat(40);
+  const status = sourceHead => JSON.stringify({
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    statusId: 'stephanos-native-capacity-current',
+    capacityReceipt: { payload: { sourceHead, privateKeyPem: 'CANARY_SECRET' } },
+  });
+  const mismatch = readNativeCapacityPublisherHeadDiagnosticV1({
+    expectedHead: target, readStatus: () => status(stale),
+  });
+  assert.equal(mismatch.nativePublisherDiagnosticOnly, true);
+  assert.equal(mismatch.nativePublisherObservedHead, stale);
+  assert.equal(mismatch.nativePublisherHeadMatchesExpected, false);
+  assert.equal(mismatch.nativePublisherDiagnosticReason, 'NATIVE_PUBLISHER_STALE_SOURCE_HEAD');
+  assert.equal(mismatch.nativePublisherDiagnosticBinding, 'UNBOUND_UNSIGNED_STATUS');
+  assert.doesNotMatch(JSON.stringify(mismatch), /CANARY_SECRET/);
+  const sameUnsigned = readNativeCapacityPublisherHeadDiagnosticV1({
+    expectedHead: target, readStatus: () => status(target),
+  });
+  assert.equal(sameUnsigned.nativePublisherDiagnosticReason, 'NATIVE_PUBLISHER_HEAD_MATCH_BUT_NOT_VERIFIED');
+  assert.equal(sameUnsigned.nativePublisherHeadMatchesExpected, true);
+  const verifiedGateStillFails = await readNativeCapacityProgrammeTelemetry({
+    expectedHead: target,
+    verifier: async () => ({ ok: false, reason: 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID' }),
+    diagnosticReader: () => sameUnsigned,
+  });
+  assert.equal(verifiedGateStillFails.nativeCapacityVerified, false);
+  assert.equal(verifiedGateStillFails.nativeCapacitySourceHead, '');
+  assert.equal(verifiedGateStillFails.nativePublisherHeadMatchesExpected, true);
+  assert.equal(verifiedGateStillFails.nativePublisherDiagnosticBinding, 'UNBOUND_UNSIGNED_STATUS');
+  // A publisher update between the verifier read and a separate file read
+  // must not generate contradictory "signed green + stale unsigned head".
+  let unsignedCalls = 0;
+  const signedResult = await readNativeCapacityProgrammeTelemetry({
+    expectedHead: target,
+    verifier: async () => ({
+      ok: true,
+      candidate: {
+        sourceHead: target,
+        repository: 'Cheekyfellastef/stephan-os',
+        taskClass: 'FOCUSED_REPAIR',
+        sourceMutationAllowed: true,
+        mergeAuthority: false,
+        leaseSeizureAllowed: false,
+        model: 'qwen-test', capacityReceiptId: 'signed-test',
+      },
+    }),
+    diagnosticReader: () => {
+      unsignedCalls += 1;
+      return mismatch;
+    },
+  });
+  assert.equal(signedResult.nativeCapacityVerified, true);
+  assert.equal(signedResult.nativePublisherObservedHead, target);
+  assert.equal(signedResult.nativePublisherHeadMatchesExpected, true);
+  assert.equal(signedResult.nativePublisherDiagnosticBinding, 'SIGNED_VERIFIER_CANDIDATE');
+  assert.equal(signedResult.nativePublisherDiagnosticReason, 'NATIVE_PUBLISHER_VERIFIED_CANDIDATE_HEAD');
+  assert.equal(unsignedCalls, 0);
+  const invalid = readNativeCapacityPublisherHeadDiagnosticV1({
+    expectedHead: target, readStatus: () => status('not-a-sha'),
+  });
+  assert.equal(invalid.nativePublisherObservedHead, '');
+  assert.equal(invalid.nativePublisherDiagnosticReason, 'NATIVE_PUBLISHER_PAYLOAD_HEAD_UNPROVEN');
+  const absent = readNativeCapacityPublisherHeadDiagnosticV1({
+    expectedHead: target, readStatus: () => { const e = new Error('absent'); e.code = 'ENOENT'; throw e; },
+  });
+  assert.equal(absent.nativePublisherDiagnosticReason, 'NATIVE_PUBLISHER_STATUS_MISSING');
+});
+
+test('native programme proof checks the signed router and exposes only exact-head bounded truth', async () => {
+  const head = 'a'.repeat(40);
+  const observed = [];
+  const result = await readNativeCapacityProgrammeTelemetry({
+    expectedHead: head,
+    nowUtc: '2026-10-11T00:00:00.000Z',
+    verifier: async (options) => {
+      observed.push(options);
+      return {
+        ok: true,
+        reason: 'STEPHANOS_NATIVE_ROUTING_CANDIDATE_VERIFIED',
+        candidate: {
+          repository: 'Cheekyfellastef/stephan-os',
+          sourceHead: head,
+          taskClass: 'FOCUSED_REPAIR',
+          model: 'qwen3.5:27b',
+          capacityReceiptId: 'native-capacity-valid-20261011',
+          sourceMutationAllowed: true,
+          mergeAuthority: false,
+          leaseSeizureAllowed: false,
+        },
+      };
+    },
+  });
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].sourceHead, head);
+  assert.equal(observed[0].taskClass, 'FOCUSED_REPAIR');
+  assert.equal(result.nativeCapacityVerified, true);
+  assert.equal(result.nativeCapacitySourceHead, head);
+  assert.equal(result.nativeCapacityModel, 'qwen3.5:27b');
+  assert.equal(result.nativeCapacityReceiptId, 'native-capacity-valid-20261011');
+  assert.equal(JSON.stringify(result).includes('privateKey'), false);
+
+  const packet = createSanitizedMailboxReceiptProjection({
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    requestId: 'native-capacity-verify-programme-0001',
+    state: 'DONE',
+    expectedHead: head,
+    result: { ok: true, result: {
+      ok: true,
+      programmeAuthorityTelemetry: true,
+      programmeAuthority: {
+        programmeStatus: 'HOLD',
+        programmeFinalVerdict: 'AUTHORITATIVE_PROGRAMME_PROJECTION_HOLD',
+        sourceReadRepositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+        sourceReadGithubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
+        ...result,
+      },
+    } },
+  });
+  assert.equal(packet.operationResult.nativeCapacityVerified, true);
+  assert.equal(packet.operationResult.nativeCapacitySourceHead, head);
+  assert.equal(packet.operationResult.nativeCapacityReceiptId, 'native-capacity-valid-20261011');
+  // Native capacity verification must never turn a separately held source lease green.
+  assert.equal(packet.operationResult.programmeStatus, 'HOLD');
+});
+
+test('native programme proof fails closed for missing, unverifiable, mismatched and over-authorized capacity', async () => {
+  const head = 'b'.repeat(40);
+  const base = { repository: 'Cheekyfellastef/stephan-os', sourceHead: head,
+    taskClass: 'FOCUSED_REPAIR', model: 'qwen3.5:27b',
+    capacityReceiptId: 'native-capacity-valid-20261011',
+    sourceMutationAllowed: true, mergeAuthority: false, leaseSeizureAllowed: false };
+  const inputs = [
+    { ok: false, reason: 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING', candidate: null },
+    { ok: true, candidate: { ...base, sourceHead: 'c'.repeat(40) } },
+    { ok: true, candidate: { ...base, mergeAuthority: true } },
+    { ok: true, candidate: { ...base, leaseSeizureAllowed: true } },
+    { ok: true, candidate: { ...base, sourceMutationAllowed: false } },
+  ];
+  for (const input of inputs) {
+    const observed = await readNativeCapacityProgrammeTelemetry({ expectedHead: head,
+      verifier: async () => input });
+    assert.equal(observed.nativeCapacityVerified, false);
+    assert.equal(observed.nativeCapacityModel, '');
+    assert.equal(observed.nativeCapacityReceiptId, '');
+    assert.equal(observed.nativeCapacitySourceHead, '');
+  }
+  const thrown = await readNativeCapacityProgrammeTelemetry({ expectedHead: head,
+    verifier: async () => { throw new Error('secret-error-path'); } });
+  assert.equal(thrown.nativeCapacityReason, 'NATIVE_CAPACITY_VERIFIER_FAILED');
+  assert.equal(JSON.stringify(thrown).includes('secret-error-path'), false);
+  const badHead = await readNativeCapacityProgrammeTelemetry({expectedHead: 'not-a-head',
+    verifier: async () => { throw new Error('should-not-reach'); }});
+  assert.equal(badHead.nativeCapacityReason, 'NATIVE_CAPACITY_EXPECTED_HEAD_INVALID');
+});
+
+
+test('native signed capacity survives double serialization and the bounded 9 KiB core receipt', () => {
+  const head = 'c'.repeat(40);
+  const original = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'native-capacity-overflow-proof-20261011',
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 3149, branch: 'main', state: 'DONE',
+    expectedHead: head, processSourceHead: head,
+    result: { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+      requestId: 'native-capacity-overflow-proof-20261011',
+      result: { ok: true, finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+        sourceHead: head, programmeAuthorityTelemetry: true,
+        programmeAuthority: {
+          programmeStatus: 'HOLD',
+          programmeFinalVerdict: 'AUTHORITATIVE_PROGRAMME_PROJECTION_HOLD',
+          programmeBlockers: ['LANE:ELASTIC-LEASE-EXPIRED-OR-NOT-ACTIVE'],
+          sourceReadRepositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+          sourceReadGithubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
+          nativeCapacityVerified: true,
+          nativeCapacityReason: 'STEPHANOS_NATIVE_ROUTING_CANDIDATE_VERIFIED',
+          nativeCapacityModel: 'qwen3.5:27b',
+          nativeCapacitySourceHead: head,
+          nativeCapacityReceiptId: 'native-capacity-valid-20261011',
+          logicalGoalLanes: Array.from({ length: 59 }, (_, index) => ({
+            issueNumber: 2600 + index,
+            continuityState: 'TRACKING',
+            title: 'bounded eligible source-goal '.repeat(10),
+            hostControllerTitle: 'Canonical builder worker '.repeat(8),
+            proofRefs: ['C:\\Users\\operator\\hidden\\key.txt'],
+          })),
+        },
+      },
+    },
+  };
+  const checkpoint = JSON.parse(serializeBoundedReceiptJson(original, 256 * 1024));
+  const posted = serializeBoundedReceiptJson(checkpoint, 9 * 1024);
+  const result = JSON.parse(posted);
+  assert.equal(result.githubProjectionTruncated, true);
+  assert.equal(result.result.result.originalProgrammeLaneListOmitted, true);
+  assert.equal(result.result.result.programmeStatus, 'HOLD');
+  assert.equal(result.result.result.nativeCapacityVerified, true);
+  assert.equal(result.result.result.nativeCapacityModel, 'qwen3.5:27b');
+  assert.equal(result.result.result.nativeCapacitySourceHead, head);
+  assert.equal(result.result.result.nativeCapacityReceiptId, 'native-capacity-valid-20261011');
+  assert.ok(Buffer.byteLength(posted, 'utf8') <= 9 * 1024);
+  assert.doesNotMatch(posted, /operator|hidden|key\.txt|hostControllerTitle/i);
+});
+
+test('native capacity public projection rejects unverifiable head and untrusted model paths', () => {
+  const head = 'c'.repeat(40);
+  const make = (native) => ({
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'native-capacity-negative-proof-20261011',
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 3149, branch: 'main', state: 'DONE',
+    expectedHead: head, processSourceHead: head,
+    result: { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+      requestId: 'native-capacity-negative-proof-20261011',
+      result: { ok: true, finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+        sourceHead: head, programmeAuthorityTelemetry: true,
+        programmeAuthority: {
+          programmeStatus: 'HOLD',
+          programmeFinalVerdict: 'AUTHORITATIVE_PROGRAMME_PROJECTION_HOLD',
+          sourceReadRepositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+          sourceReadGithubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
+          ...native,
+          logicalGoalLanes: Array.from({ length: 59 }, (_, index) => ({
+            issueNumber: index + 2000, continuityState: 'TRACKING',
+            title: 'long text '.repeat(55), hostControllerTitle: 'private'.repeat(20),
+          })),
+        },
+      },
+    },
+  });
+  const baseline = {
+    nativeCapacityVerified: true,
+    nativeCapacityReason: 'STEPHANOS_NATIVE_ROUTING_CANDIDATE_VERIFIED',
+    nativeCapacityModel: 'qwen3.5:27b',
+    nativeCapacitySourceHead: head,
+    nativeCapacityReceiptId: 'native-capacity-valid-20261011',
+  };
+  for (const mutation of [
+    { nativeCapacitySourceHead: 'd'.repeat(40) },
+    { nativeCapacityReceiptId: '' },
+    { nativeCapacityVerified: false },
+    { nativeCapacityModel: 'C:\\Users\\Operator\\private-model' },
+  ]) {
+    const original = make({ ...baseline, ...mutation });
+    const checkpoint = JSON.parse(serializeBoundedReceiptJson(original, 256 * 1024));
+    const posted = JSON.parse(serializeBoundedReceiptJson(checkpoint, 9 * 1024));
+    assert.equal(posted.result.result.programmeStatus, 'HOLD');
+    assert.equal(posted.result.result.nativeCapacityVerified, false);
+    assert.equal(posted.result.result.nativeCapacityModel, '');
+    assert.equal(posted.result.result.nativeCapacitySourceHead, '');
+    assert.equal(posted.result.result.nativeCapacityReceiptId, '');
+    assert.doesNotMatch(JSON.stringify(posted), /Users|private-model/i);
+  }
+});
+
+test('Island physical readback survives normal and core public mailbox projection without writer authority', () => {
+  const sha = 'a'.repeat(40);
+  const scope = {
+    schemaVersion: 'stephanos.rescue-island-boundary-probe.v1',
+    ok: true, observedPathCount: 3,
+    physicalScopeReadback: 'LOCAL_OS_SCOPE_OBSERVED',
+    finalVerdict: 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED',
+    readOnly: true,
+    sourceMutationAllowed: false,
+    workerStartAllowed: false,
+    independentOwnershipAuthenticated: false,
+    gamingBudgetAuthenticated: false,
+    originalSourceLeaseReleaseAllowed: false,
+    seedForgeQueueAccessAllowed: false,
+    mergeAllowed: false, publicReceiptSafe: true, secretMaterialReturned: false,
+    privatePath: 'PRIVATE_ISLAND_PATH_NEVER_PUBLISH',
+  };
+  const inner = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED',
+    remoteAction: 'rescue-island-readonly-boundary',
+    sourceHead: sha, proofHash: 'b'.repeat(64),
+    sourceMutationAllowed: false, originalSourceLeaseReleaseAllowed: false,
+    mergeAuthority: false, publicReceiptSafe: true, secretMaterialReturned: false,
+    rescueIslandBoundary: scope, codexLastMessage: 'noise-'.repeat(1800),
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'island-readback-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 3149,
+    branch: 'main', state: 'DONE', expectedHead: sha,
+    acceptedAt: '2026-10-16T20:20:00.000Z',
+    heartbeatAt: '2026-10-16T20:20:02.000Z',
+    completedAt: '2026-10-16T20:20:02.000Z', proofRefs: [],
+    result: {
+      ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'island-readback-001', result: inner,
+    },
+  };
+  for (const limit of [65_536, 4_500]) {
+    const out = JSON.parse(serializeBoundedReceiptJson(receipt, limit));
+    const observed = out.result.result.rescueIslandBoundary;
+    assert.equal(observed?.finalVerdict, 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED', String(limit));
+    assert.equal(observed.readOnly, true);
+    assert.equal(observed.workerStartAllowed, false);
+    assert.equal(observed.originalSourceLeaseReleaseAllowed, false);
+    assert.equal(observed.gamingBudgetAuthenticated, false);
+    assert.doesNotMatch(JSON.stringify(out), /PRIVATE_ISLAND_PATH_NEVER_PUBLISH/);
+  }
+  inner.rescueIslandBoundary = { ...scope, workerStartAllowed: true };
+  const forged = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(forged.result.result.rescueIslandBoundary, null);
+  inner.rescueIslandBoundary = scope;
+  inner.originalSourceLeaseReleaseAllowed = true;
+  const escalated = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(escalated.result.result.rescueIslandBoundary, null);
+});
+
+test('census redaction holds with a fixed reason when Windows process visibility is not safe to project', () => {
+  const head = 'a'.repeat(40);
+  const observation = {
+    originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+    inspectedAtUtc: '2026-10-17T22:20:00.000Z',
+    checkoutPresent: true, aclReadable: true,
+    candidateProcessCount: 0, stephanosScheduledTaskCount: 6,
+    blockers: [
+      'CIM_PROCESS_COMMAND_LINE_UNOBSERVED',
+      'INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED',
+      'INDEPENDENT_OPERATOR_APPROVAL_NOT_PROVEN',
+    ],
+    historicalExecutionOutcome: 'UNKNOWN',
+    independentWindowsExclusionProven: false, independentOperatorApprovalProven: false,
+    leaseReleaseAuthorized: false, sourceMutationAuthorized: false,
+    finalVerdict: 'ORIGINAL_SOURCE_CUSTODY_HOLD',
+  };
+  const inner = {
+    ok: true, remoteAction: 'original-source-custody-census',
+    finalVerdict: 'SOVEREIGN_CUSTODY_CENSUS_OBSERVED_HOLD',
+    sourceHead: head, proofHash: 'b'.repeat(64),
+    originalLeaseReleased: false, privilegedWindowsWitnessCommissioned: false,
+    sourceMutationAllowed: false, arbitraryShellAllowed: false,
+    publicReceiptSafe: true, secretMaterialReturned: false,
+    inspection: observation,
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'census-diagnostic-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 2808,
+    branch: 'main', state: 'DONE', expectedHead: head,
+    acceptedAt: '2026-10-17T22:20:00.000Z',
+    heartbeatAt: '2026-10-17T22:20:02.000Z',
+    completedAt: '2026-10-17T22:20:02.000Z',
+    result: { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'census-diagnostic-001', result: inner },
+  };
+  for (const limit of [65_536, 4_500]) {
+    const safe = JSON.parse(serializeBoundedReceiptJson(receipt, limit));
+    const projected = safe.result.result;
+    assert.equal(projected.originalSourceCustodyCensus.candidateProcessCount, 0);
+    assert.equal(projected.originalSourceCustodyProjectionDiagnostic.status, 'SAFE_CENSUS_SUMMARY_VISIBLE');
+    assert.equal(projected.originalSourceCustodyProjectionDiagnostic.leaseReleaseAuthorized, false);
+    assert.equal(projected.originalSourceCustodyProjectionDiagnostic.mergeAuthority, false);
+  }
+  inner.inspection = { ...observation, blockers: [...observation.blockers, 'PRIVATE-PID-1234'] };
+  let held = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(held.result.result.originalSourceCustodyCensus, null);
+  assert.equal(held.result.result.originalSourceCustodyProjectionDiagnostic.status, 'CENSUS_BLOCKERS_UNQUALIFIED');
+  assert.doesNotMatch(JSON.stringify(held), /PRIVATE-PID-1234/);
+  inner.inspection = { ...observation, candidateProcessCount: 'PID=1234' };
+  held = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(held.result.result.originalSourceCustodyCensus, null);
+  assert.equal(held.result.result.originalSourceCustodyProjectionDiagnostic.status, 'CENSUS_COUNTS_UNQUALIFIED');
+  assert.doesNotMatch(JSON.stringify(held), /PID=1234/);
+  delete inner.inspection;
+  held = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(held.result.result.originalSourceCustodyProjectionDiagnostic.status, 'CENSUS_DETAIL_MISSING');
+  assert.equal(held.result.result.originalSourceCustodyProjectionDiagnostic.safeCountSummaryAvailable, false);
+});
+
+test('mobile custody census survives normal and core public receipt projections without secrets', () => {
+  const head = 'a'.repeat(40);
+  const inspection = {
+    originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+    inspectedAtUtc: '2026-10-15T15:30:00.000Z',
+    checkoutPresent: true, aclReadable: true,
+    candidateProcessCount: 0, stephanosScheduledTaskCount: 6,
+    blockers: ['INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED', 'INDEPENDENT_OPERATOR_APPROVAL_NOT_PROVEN'],
+    historicalExecutionOutcome: 'UNKNOWN',
+    independentWindowsExclusionProven: false, independentOperatorApprovalProven: false,
+    leaseReleaseAuthorized: false, sourceMutationAuthorized: false,
+    finalVerdict: 'ORIGINAL_SOURCE_CUSTODY_HOLD',
+    rawPrivateHostPath: 'PRIVATE_CUSTODY_HOST_PATH',
+  };
+  const inner = {
+    ok: true, remoteAction: 'original-source-custody-census',
+    finalVerdict: 'SOVEREIGN_CUSTODY_CENSUS_OBSERVED_HOLD',
+    sourceHead: head, proofHash: 'b'.repeat(64),
+    originalLeaseReleased: false, privilegedWindowsWitnessCommissioned: false,
+    sourceMutationAllowed: false, arbitraryShellAllowed: false,
+    publicReceiptSafe: true, secretMaterialReturned: false,
+    inspection, codexLastMessage: 'noise-'.repeat(1800),
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'mobile-custody-census-receipt-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 3149, branch: 'main', state: 'DONE', expectedHead: head,
+    acceptedAt: '2026-10-15T15:30:00.000Z',
+    heartbeatAt: '2026-10-15T15:30:02.000Z',
+    completedAt: '2026-10-15T15:30:02.000Z', proofRefs: [],
+    result: { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'mobile-custody-census-receipt-001', result: inner },
+  };
+  for (const limit of [65_536, 4_500]) {
+    const publicReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, limit));
+    const projected = publicReceipt.result.result.originalSourceCustodyCensus;
+    assert.ok(projected, 'custody census missing at limit ' + limit);
+    assert.equal(projected.finalVerdict, 'ORIGINAL_SOURCE_CUSTODY_HOLD');
+    assert.equal(projected.candidateProcessCount, 0);
+    assert.equal(projected.stephanosScheduledTaskCount, 6);
+    assert.equal(projected.leaseReleaseAuthorized, false);
+    assert.deepEqual(projected.blockers, inspection.blockers);
+    assert.doesNotMatch(JSON.stringify(publicReceipt), /PRIVATE_CUSTODY_HOST_PATH/);
+  }
+  inner.inspection = { ...inspection, leaseReleaseAuthorized: true };
+  const forged = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(forged.result.result.originalSourceCustodyCensus, null);
+  inner.inspection = { ...inspection, candidateProcessCount: 1_000_001 };
+  const unbounded = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(unbounded.result.result.originalSourceCustodyCensus, null);
+  inner.inspection = { ...inspection, blockers: [...inspection.blockers, 'SECRET_PATH_C:\\private'] };
+  const injected = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(injected.result.result.originalSourceCustodyCensus, null);
+  assert.doesNotMatch(JSON.stringify(injected), /SECRET_PATH_C:/);
+});
+
+test('native Windows reviewer exam survives bounded public receipt without identity or authority', async()=>{
+  const {projectWindowsCalibrationForRemoteV1:project}=await import('../shared/agents/sovereignWindowsCalibrationRemoteV1.mjs');
+  const denial=Object.fromEntries(Object.entries(project()).filter(([,v])=>v===false));
+  const calibration=project({status:'WINDOWS_CALIBRATION_HELD',reason:'EXACT_LOCAL_SOURCE_UNPROVEN',...denial});
+  const receipt={requestId:'windows-calibration-public-1',operation:'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    state:'BLOCKED',expectedHead:'a'.repeat(40),result:{
+      remoteAction:'sovereign-windows-reviewer-calibration',calibration,contentText:'PRIVATE',
+    }};
+  const safe=createSanitizedMailboxReceiptProjection(receipt);
+  assert.ok(JSON.stringify(safe).includes('EXACT_LOCAL_SOURCE_UNPROVEN'));
+  assert.doesNotMatch(JSON.stringify(safe),/PRIVATE/);
+  const unsafe=createSanitizedMailboxReceiptProjection({...receipt,result:{...receipt.result,
+    calibration:{...calibration,reviewerPrincipal:'PRIVATE'}}});
+  assert.doesNotMatch(JSON.stringify(unsafe),/PRIVATE/);
+  assert.ok(!JSON.stringify(unsafe).includes('EXACT_LOCAL_SOURCE_UNPROVEN'));
+});
+
+
+test('canonical Git worktree inspection survives bounded mailbox publication without raw host detail', () => {
+  const head = 'a'.repeat(40);
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'git-worktree-inspect-1001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    state: 'DONE',
+    expectedHead: head,
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'git-worktree-inspect-1001',
+      result: {
+        ok: true,
+        finalVerdict: 'CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_REPAIR_ELIGIBLE',
+        remoteAction: 'inspect-canonical-git-worktree-config',
+        sourceHead: head,
+        expectedHeadMatch: true,
+        gitConfigurationMutationPerformed: false,
+        canonicalGitWorktreeConfigInspection: {
+          schemaVersion: 'stephanos.canonical-git-worktree-config-inspection.v1',
+          inspectionComplete: true,
+          sourceHead: head,
+          canonicalTopologyProven: true,
+          canonicalGitConfigurationValid: false,
+          originCount: 'ONE',
+          originMatch: 'CANONICAL',
+          riskCategories: ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG', 'PRIVATE_RISK'],
+          extensionValueCount: 1,
+          extensionValueState: 'TRUE',
+          registeredWorktreeCount: 1,
+          linkedWorktreeCount: 0,
+          lockedWorktreeCount: 0,
+          prunableWorktreeCount: 0,
+          worktreeConfigFileCount: 0,
+          nonEmptyWorktreeConfigFileCount: 0,
+          worktreeConfigEntryCount: 0,
+          allWorktreeConfigsObserved: true,
+          safeForFixedUnset: true,
+          finalVerdict: 'CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_REPAIR_ELIGIBLE',
+          rawPath: 'C:\\Users\\Operator\\PRIVATE',
+          rawConfigValue: 'SECRET',
+        },
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  const evidence = projected.operationResult.canonicalGitWorktreeConfigInspection;
+  assert.equal(evidence.safeForFixedUnset, true);
+  assert.equal(evidence.registeredWorktreeCount, 1);
+  assert.equal(evidence.linkedWorktreeCount, 0);
+  assert.deepEqual(evidence.riskCategories, ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG']);
+  assert.equal(projected.operationResult.gitConfigurationMutationPerformed, false);
+
+  const serialized = serializeBoundedReceiptJson(receipt);
+  const compact = JSON.parse(serialized).result.result;
+  assert.equal(compact.canonicalGitWorktreeConfigInspection.safeForFixedUnset, true);
+  assert.equal(compact.canonicalGitWorktreeConfigInspection.extensionValueState, 'TRUE');
+  assert.deepEqual(compact.canonicalGitWorktreeConfigInspection.riskCategories,
+    ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG']);
+  assert.doesNotMatch(serialized, /C:\\\\Users|PRIVATE_RISK|rawConfigValue|SECRET/);
+});
+
+test('canonical Git repair publication preserves completed mutation on failed postcondition', () => {
+  const head = 'b'.repeat(40);
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'git-worktree-repair-1001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    state: 'BLOCKED',
+    expectedHead: head,
+    blocker: 'CANONICAL_GIT_WORKTREE_CONFIG_POSTCONDITION_UNPROVEN',
+    result: {
+      ok: false,
+      verdict: 'COMMAND_EXECUTION_BLOCKED',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'git-worktree-repair-1001',
+      result: {
+        ok: false,
+        blocker: 'CANONICAL_GIT_WORKTREE_CONFIG_POSTCONDITION_UNPROVEN',
+        remoteAction: 'repair-canonical-git-worktree-config',
+        sourceHead: head,
+        expectedHeadMatch: true,
+        gitConfigurationMutationPerformed: true,
+        gitConfigurationMutationScope: 'extensions.worktreeConfig-only',
+        riskCategoriesBefore: ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG', 'PRIVATE_RISK'],
+        canonicalGitConfigurationValid: false,
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt).operationResult;
+  assert.equal(projected.gitConfigurationMutationPerformed, true);
+  assert.equal(projected.gitConfigurationMutationScope, 'extensions.worktreeConfig-only');
+  assert.deepEqual(projected.riskCategoriesBefore, ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG']);
+  assert.equal(projected.canonicalGitConfigurationValid, false);
+
+  const serialized = serializeBoundedReceiptJson(receipt);
+  const compact = JSON.parse(serialized).result.result;
+  assert.equal(compact.gitConfigurationMutationPerformed, true);
+  assert.equal(compact.gitConfigurationMutationScope, 'extensions.worktreeConfig-only');
+  assert.deepEqual(compact.riskCategoriesBefore, ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG']);
+  assert.equal(compact.canonicalGitConfigurationValid, false);
+  assert.doesNotMatch(serialized, /PRIVATE_RISK/);
 });

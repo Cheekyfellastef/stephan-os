@@ -21,10 +21,84 @@ $telemetryReportScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'report-st
 $physicalVerdictPromptScript = Join-Path $PSScriptRoot 'starfield-vr-physical-verdict-prompt.ps1'
 $powershellExecutable = Join-Path $PSHOME 'powershell.exe'
 $flightRecorderScript = Join-Path $PSScriptRoot 'starfield-vr-flight-recorder.ps1'
+$runtimeMetricsProducerScript = Join-Path $PSScriptRoot 'starfield-vr-runtime-metrics-producer.ps1'
 if (-not (Test-Path -LiteralPath $flightRecorderScript -PathType Leaf)) {
     throw 'Starfield VR flight recorder helper is missing.'
 }
+if (-not (Test-Path -LiteralPath $runtimeMetricsProducerScript -PathType Leaf)) {
+    throw 'Starfield VR runtime metrics producer is missing.'
+}
 . $flightRecorderScript
+
+function Set-VrProcessPriority {
+    param(
+        [int]$ProcessId,
+        [System.Diagnostics.ProcessPriorityClass]$Priority,
+        [hashtable]$OriginalPriorities
+    )
+    if ($ProcessId -le 0) { return $false }
+    try {
+        $process = Get-Process -Id $ProcessId -ErrorAction Stop
+        $key = [string]$ProcessId
+        if (-not $OriginalPriorities.ContainsKey($key)) {
+            $OriginalPriorities[$key] = [pscustomobject]@{
+                processId = $ProcessId
+                processName = [string]$process.ProcessName
+                priorityClass = [string]$process.PriorityClass
+            }
+        }
+        if ($process.PriorityClass -ne $Priority) {
+            $process.PriorityClass = $Priority
+            return $true
+        }
+    } catch {}
+    return $false
+}
+
+function Apply-StarfieldVrPriorityBoost {
+    param(
+        [int]$GameProcessId,
+        [hashtable]$OriginalPriorities
+    )
+    $changed = 0
+    if (Set-VrProcessPriority -ProcessId $GameProcessId -Priority High -OriginalPriorities $OriginalPriorities) {
+        $changed += 1
+    }
+    foreach ($process in @(Get-Process -Name 'OVRServer_x64' -ErrorAction SilentlyContinue)) {
+        if (Set-VrProcessPriority -ProcessId $process.Id -Priority High -OriginalPriorities $OriginalPriorities) {
+            $changed += 1
+        }
+    }
+    foreach ($process in @(Get-Process -Name 'OculusDash' -ErrorAction SilentlyContinue)) {
+        if (Set-VrProcessPriority -ProcessId $process.Id -Priority AboveNormal -OriginalPriorities $OriginalPriorities) {
+            $changed += 1
+        }
+    }
+    return $changed
+}
+
+function Restore-StarfieldVrPriorities {
+    param([hashtable]$OriginalPriorities)
+    $restored = 0
+    foreach ($entry in @($OriginalPriorities.Values)) {
+        try {
+            $process = Get-Process -Id ([int]$entry.processId) -ErrorAction Stop
+            if (-not [string]::Equals([string]$process.ProcessName, [string]$entry.processName, [StringComparison]::OrdinalIgnoreCase)) {
+                continue
+            }
+            $target = [System.Enum]::Parse(
+                [System.Diagnostics.ProcessPriorityClass],
+                [string]$entry.priorityClass,
+                $true
+            )
+            if ($process.PriorityClass -ne $target) {
+                $process.PriorityClass = $target
+            }
+            $restored += 1
+        } catch {}
+    }
+    return $restored
+}
 
 function Get-IniScalar {
     param([string]$Raw, [string]$Key)
@@ -205,14 +279,20 @@ function Restore-Session {
     $audioRestore = Restore-AudioState -Session $Session
     $gamingResourceReconcile = Invoke-GamingResourceReconcile
 
-    if ($Session.ollama.appWasRunning -and $Session.ollama.appPath -and (Test-Path -LiteralPath $Session.ollama.appPath)) {
-        if (-not (Get-Process -Name 'ollama app' -ErrorAction SilentlyContinue)) {
-            Start-Process -FilePath $Session.ollama.appPath | Out-Null
+    # A Starfield exit does not necessarily mean VR has ended. If Air Link or
+    # the gaming governor is still active, restoring Ollama here immediately
+    # fights the governor and can refill VRAM while the headset is still live.
+    $ollamaRestoreDeferred = [bool]$gamingResourceReconcile.active
+    if (-not $ollamaRestoreDeferred) {
+        if ($Session.ollama.appWasRunning -and $Session.ollama.appPath -and (Test-Path -LiteralPath $Session.ollama.appPath)) {
+            if (-not (Get-Process -Name 'ollama app' -ErrorAction SilentlyContinue)) {
+                Start-Process -FilePath $Session.ollama.appPath | Out-Null
+            }
         }
-    }
-    elseif ($Session.ollama.serveWasRunning -and $Session.ollama.servePath -and (Test-Path -LiteralPath $Session.ollama.servePath)) {
-        if (-not (Get-Process -Name 'ollama' -ErrorAction SilentlyContinue)) {
-            Start-Process -FilePath $Session.ollama.servePath -ArgumentList 'serve' -WindowStyle Hidden | Out-Null
+        elseif ($Session.ollama.serveWasRunning -and $Session.ollama.servePath -and (Test-Path -LiteralPath $Session.ollama.servePath)) {
+            if (-not (Get-Process -Name 'ollama' -ErrorAction SilentlyContinue)) {
+                Start-Process -FilePath $Session.ollama.servePath -ArgumentList 'serve' -WindowStyle Hidden | Out-Null
+            }
         }
     }
     return [pscustomobject]@{
@@ -227,6 +307,7 @@ function Restore-Session {
         gamingResourceReconciled = [bool]$gamingResourceReconcile.reconciled
         gamingResourcePhase = [string]$gamingResourceReconcile.phase
         gamingResourceActive = [bool]$gamingResourceReconcile.active
+        ollamaRestoreDeferred = [bool]$ollamaRestoreDeferred
         gamingResourceReconcileError = [string]$gamingResourceReconcile.error
     }
 }
@@ -591,7 +672,8 @@ if ($Action -eq 'Enter') {
         configurationFingerprint = $configurationFingerprint
         runtimeMetricsContract = [ordered]@{
             path = Join-Path $WorkspaceRoot 'vr\starfield-vr-runtime-metrics-current.json'
-            freshnessSeconds = 15
+            source = 'META_OCULUS_PERFLOG_XRS_STATS'
+            freshnessSeconds = 75
             failClosedOnIdentityMismatch = $true
         }
         telemetryPath = $telemetryPath
@@ -656,7 +738,9 @@ if ($Action -eq 'StartGuard') {
 
     $guardArguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -Action Guard -SessionPath "' + $SessionPath + '" -GameProcessId ' + [string]$GameProcessId
     $guardian = Start-Process -FilePath $powershellExecutable -ArgumentList $guardArguments -WindowStyle Hidden -PassThru
-    $deadline = (Get-Date).AddSeconds(12)
+    # Guard allows up to 30 seconds for Starfield's launcher-to-game PID handoff.
+    # The startup proof window must be longer than that or a healthy handoff is killed as a false failure.
+    $deadline = (Get-Date).AddSeconds(45)
     $lastLifecycle = $null
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Milliseconds 250
@@ -762,7 +846,34 @@ $terminationKind = ''
 $lastGameProcess = $null
 $gameExitCode = $null
 $adaptiveCaptureCount = 0
+$priorityOriginals = @{}
+$priorityBoostChangeCount = 0
+$priorityRestoreCount = 0
+$runtimeMetricsProducer = $null
+$runtimeMetricsProducerError = ''
+$runtimeMetricsFreshnessSeconds = 75
+try {
+    if ($session.runtimeMetricsContract -and $session.runtimeMetricsContract.PSObject.Properties['freshnessSeconds']) {
+        $runtimeMetricsFreshnessSeconds = [Math]::Max(15, [int]$session.runtimeMetricsContract.freshnessSeconds)
+    }
+} catch {}
+try {
+    $producerArgs = @(
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', ('"{0}"' -f $runtimeMetricsProducerScript),
+        '-WorkspaceRoot', ('"{0}"' -f $WorkspaceRoot),
+        '-LaunchSessionId', ('"{0}"' -f [string]$session.routeIdentity.launchSessionId),
+        '-Provider', ('"{0}"' -f [string]$session.routeIdentity.provider),
+        '-SessionStartedAtUtc', ('"{0}"' -f [string]$session.enteredAtUtc),
+        '-GameProcessId', [string]$currentGameProcessId
+    )
+    $runtimeMetricsProducer = Start-Process -FilePath $powershellExecutable -ArgumentList $producerArgs -WindowStyle Hidden -PassThru
+}
+catch {
+    $runtimeMetricsProducerError = $_.Exception.Message
+}
 Set-SessionLifecycle -Session $session -Status 'GUARDING' -SessionPath $SessionPath -SampleCount 0 -CurrentGameProcessId $currentGameProcessId
+$priorityBoostChangeCount += [int](Apply-StarfieldVrPriorityBoost -GameProcessId $currentGameProcessId -OriginalPriorities $priorityOriginals)
 
 try {
 while ($true) {
@@ -797,6 +908,7 @@ while ($true) {
 
     $handoffDeadline = $null
     $lastGameProcess = $game
+    $priorityBoostChangeCount += [int](Apply-StarfieldVrPriorityBoost -GameProcessId $currentGameProcessId -OriginalPriorities $priorityOriginals)
     $sampledAt = Get-Date
     $gpu = Get-NvidiaSample
     $storage = Get-GameDriveSample -Root ([string]$session.gameRoot)
@@ -851,7 +963,7 @@ while ($true) {
         [math]::Round(($gpu.gpuMemoryUsedMiB / $gpu.gpuMemoryTotalMiB) * 100, 1)
     } else { $null }
 
-    $runtimeMetrics = Get-StarfieldVrRuntimeMetricSample -WorkspaceRoot $WorkspaceRoot -LaunchSessionId ([string]$session.routeIdentity.launchSessionId) -Provider ([string]$session.routeIdentity.provider)
+    $runtimeMetrics = Get-StarfieldVrRuntimeMetricSample -WorkspaceRoot $WorkspaceRoot -LaunchSessionId ([string]$session.routeIdentity.launchSessionId) -Provider ([string]$session.routeIdentity.provider) -MaxAgeSeconds $runtimeMetricsFreshnessSeconds
     $controller = Get-StarfieldVrControllerSample -GameProcessId $currentGameProcessId
     $llamaServerCount = @((Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue)).Count
     $adaptiveCaptureReason = ''
@@ -959,7 +1071,40 @@ try {
 } catch {}
 $crashEvidence = @(Get-StarfieldCrashEvidence -SinceUtc $startedAt.ToUniversalTime().AddMinutes(-1))
 $sessionOutcome = if ($guardFailure) { 'GUARD_FAILED' } elseif ($crashEvidence.Count -gt 0) { 'CRASHED' } else { 'EXITED' }
-$restored = Restore-Session -Session $session
+if ($runtimeMetricsProducer) {
+    try {
+        $runtimeMetricsProducer.Refresh()
+        if (-not $runtimeMetricsProducer.HasExited) {
+            if (-not $runtimeMetricsProducer.WaitForExit(4000)) {
+                $runtimeMetricsProducer.Kill()
+                $runtimeMetricsProducer.WaitForExit()
+            }
+        }
+    } catch {}
+}
+$priorityRestoreCount = Restore-StarfieldVrPriorities -OriginalPriorities $priorityOriginals
+$restoreFailure = ''
+try {
+    $restored = Restore-Session -Session $session
+}
+catch {
+    $restoreFailure = $_.Exception.Message
+    $restored = [pscustomobject]@{
+        prefsRestored = $false
+        mutarConfigRestored = $false
+        audioRestored = $false
+        audioRestoreAttempts = 0
+        audioStableConfirmations = 0
+        audioFinalEndpointId = ''
+        audioFinalEndpoints = $null
+        audioRestoreError = $restoreFailure
+        gamingResourceReconciled = $false
+        gamingResourcePhase = ''
+        gamingResourceActive = $false
+        ollamaRestoreDeferred = $false
+        gamingResourceReconcileError = $restoreFailure
+    }
+}
 $endedAt = Get-Date
 $summaryPath = [System.IO.Path]::ChangeExtension([string]$session.telemetryPath, '.summary.json')
 $gpuSamples = @($samples | Where-Object { $null -ne $_.gpuUtilPct })
@@ -994,7 +1139,7 @@ $summary = [ordered]@{
     gameProcessId = $GameProcessId
     finalGameProcessId = $currentGameProcessId
     processHandoffCount = $handoffCount
-    observedGameProcessIds = @($observedGameProcessIds)
+    observedGameProcessIds = $observedGameProcessIds.ToArray()
     startedAtUtc = $startedAt.ToUniversalTime().ToString('o')
     endedAtUtc = $endedAt.ToUniversalTime().ToString('o')
     runtimeSeconds = [math]::Round(($endedAt - $startedAt).TotalSeconds, 1)
@@ -1002,6 +1147,12 @@ $summary = [ordered]@{
     terminationKind = $terminationKind
     partialTelemetry = [bool]($sessionOutcome -in @('CRASHED','GUARD_FAILED'))
     guardFailure = $guardFailure
+    runtimeMetricsProducerProcessId = if ($runtimeMetricsProducer) { [int]$runtimeMetricsProducer.Id } else { 0 }
+    runtimeMetricsProducerError = $runtimeMetricsProducerError
+    priorityBoostChangeCount = $priorityBoostChangeCount
+    priorityTrackedProcessCount = $priorityOriginals.Count
+    priorityRestoreCount = $priorityRestoreCount
+    restoreFailure = $restoreFailure
     gameExitCode = $gameExitCode
     crashEvidence = @($crashEvidence)
     sampleCount = $samples.Count
@@ -1072,7 +1223,7 @@ $summary = [ordered]@{
         error = [string]$restored.audioRestoreError
     }
 }
-$summary['telemetryCompleteness'] = Get-StarfieldVrTelemetryCompleteness -Samples @($samples) -Summary ([pscustomobject]$summary)
+$summary['telemetryCompleteness'] = Get-StarfieldVrTelemetryCompleteness -Samples $samples.ToArray() -Summary ([pscustomobject]$summary)
 Write-JsonNoBom -Path $summaryPath -Value $summary
 $lastSampleAtUtc = if ($samples.Count) { [string]$samples[-1].timestampUtc } else { '' }
 Set-SessionLifecycle -Session $session -Status $sessionOutcome -SessionPath $SessionPath -SampleCount $samples.Count -CurrentGameProcessId $currentGameProcessId -LastSampleAtUtc $lastSampleAtUtc -ErrorText $guardFailure

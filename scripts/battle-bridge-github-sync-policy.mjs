@@ -256,3 +256,178 @@ export const buildSharedWorkspaceHeartbeat = (evaluation, heads, proofRefs) => b
 export const buildSharedWorkspacePlan = (evaluation, heads, proofRefs) => boundedRecord('battle-bridge-github-sync-plan', evaluation, heads, proofRefs);
 export const buildSharedWorkspaceBlocker = (evaluation, heads, proofRefs) => boundedRecord('battle-bridge-github-sync-blocker', evaluation, heads, proofRefs);
 export const buildSharedWorkspaceReceipt = (evaluation, heads, proofRefs) => boundedRecord('battle-bridge-github-sync-receipt', evaluation, heads, proofRefs);
+
+// Refresh debt belongs to the existing sync and refresh owners. These helpers
+// only interpret their records; they perform no IO and grant no native action.
+export const POST_SYNC_REFRESH_DEBT_SCHEMA = 'stephanos.post-sync-refresh-debt.v1';
+const REFRESH_TARGETS = Object.freeze([
+  'stephanos-ui-4173', 'vr-capability-atlas-browser-proof', 'stephanos-backend-8787',
+  'mission-orchestrator-worker', 'github-command-mailbox', 'sovereign-commander', 'natural-reload',
+]);
+const REFRESH_MAX_SPANS = 4;
+const debtFailure = blocker => Object.freeze({ ok: false, blocker });
+const debtHead = value => typeof value === 'string' && /^[0-9a-f]{40}$/i.test(value) ? value.toLowerCase() : '';
+const debtObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const targetSetValid = value => Array.isArray(value) && value.length <= REFRESH_TARGETS.length
+  && new Set(value).size === value.length && value.every(id => REFRESH_TARGETS.includes(id));
+
+function refreshSpan(value) {
+  const beforeHead = debtHead(value?.beforeHead), afterHead = debtHead(value?.afterHead);
+  return beforeHead && afterHead && beforeHead !== afterHead ? Object.freeze({ beforeHead, afterHead }) : null;
+}
+
+export function pendingPostSyncRefreshDebt(spans = [], requiredTargetIds = [], blocker = '') {
+  const normalized = Array.isArray(spans) ? spans.map(refreshSpan) : [];
+  const unique = [...new Map(normalized.filter(Boolean).map(span => [`${span.beforeHead}:${span.afterHead}`, span])).values()];
+  if (!Array.isArray(spans) || normalized.some(span => !span) || unique.length > REFRESH_MAX_SPANS || !targetSetValid(requiredTargetIds)) {
+    return Object.freeze({ schemaVersion: POST_SYNC_REFRESH_DEBT_SCHEMA, state: 'HELD', blocker: 'PENDING_POST_SYNC_DEBT_INVALID', spans: [], requiredTargetIds: [] });
+  }
+  if (blocker) return Object.freeze({ schemaVersion: POST_SYNC_REFRESH_DEBT_SCHEMA, state: 'HELD', blocker: 'PENDING_POST_SYNC_EVIDENCE_INVALID', spans: unique, requiredTargetIds: [...requiredTargetIds] });
+  return unique.length ? Object.freeze({ schemaVersion: POST_SYNC_REFRESH_DEBT_SCHEMA, state: 'PENDING', spans: unique, requiredTargetIds: [...requiredTargetIds] }) : null;
+}
+
+function recordOwner(record, statusId) {
+  return debtObject(record) && record.schemaVersion === 'shared-agent-workspace-record.v1'
+    && record.kind === 'stephanos.shared_workspace.status' && record.statusId === statusId;
+}
+
+export function inspectPendingPostSyncRefreshDebt(retained) {
+  if (retained === null || retained === undefined) return Object.freeze({ ok: true, spans: [], requiredTargetIds: [] });
+  if (!debtObject(retained) || retained.schemaVersion !== POST_SYNC_REFRESH_DEBT_SCHEMA
+    || retained.state !== 'PENDING' || !Array.isArray(retained.spans) || !retained.spans.length
+    || retained.spans.length > REFRESH_MAX_SPANS || !retained.spans.every(refreshSpan)
+    || !targetSetValid(retained.requiredTargetIds)) return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
+  return Object.freeze({ ok: true, spans: retained.spans.map(refreshSpan), requiredTargetIds: [...retained.requiredTargetIds] });
+}
+
+export function inspectPostSyncRefreshCompletion(record) {
+  const span = refreshSpan(record);
+  if (!span || record?.phase !== 'complete' || record.finalVerdict !== 'POST_SYNC_RUNTIME_REFRESH_PASS'
+    || record.exactHeadProofOk !== true || record.blocker !== '' || !targetSetValid(record.targetIds)
+    || !Array.isArray(record.resultTargets) || record.resultTargets.length !== record.targetIds.length
+    || record.pluginHostActivationRequired !== false) return debtFailure('PENDING_POST_SYNC_COMPLETION_UNPROVEN');
+  for (const key of ['changedPathCount', 'noRuntimePathCount', 'unknownPathCount', 'unsafePathCount', 'openClawPathCount']) {
+    if (!Number.isSafeInteger(record[key]) || record[key] < 0) return debtFailure('PENDING_POST_SYNC_COMPLETION_UNPROVEN');
+  }
+  if (record.unknownPathCount || record.unsafePathCount || record.openClawPathCount
+    || record.noRuntimePathCount > record.changedPathCount) return debtFailure('PENDING_POST_SYNC_COMPLETION_UNPROVEN');
+  const resultIds = record.resultTargets.map(result => result?.targetId);
+  if (!targetSetValid(resultIds) || record.targetIds.some(id => !resultIds.includes(id))
+    || record.resultTargets.some(result => result.ok !== true || result.exactHeadProofOk !== true
+      || debtHead(result.sourceHead) !== span.afterHead || result.blocker !== '')) return debtFailure('PENDING_POST_SYNC_COMPLETION_UNPROVEN');
+  const noRuntime = record.classification === 'NO_RUNTIME_REFRESH_REQUIRED' && !record.targetIds.length
+    && record.changedPathCount === record.noRuntimePathCount;
+  const refreshed = record.classification === 'REFRESH_COMPLETE' && record.targetIds.length > 0
+    && record.changedPathCount > record.noRuntimePathCount;
+  return noRuntime || refreshed ? Object.freeze({ ok: true, ...span, targetIds: [...record.targetIds] })
+    : debtFailure('PENDING_POST_SYNC_COMPLETION_UNPROVEN');
+}
+
+export function collectPostSyncRefreshDebt({ syncRecord = null, refreshRecord = null } = {}) {
+  const spans = [], targets = new Set();
+  if (syncRecord !== null) {
+    if (!recordOwner(syncRecord, 'battle-bridge-github-sync-current') || !Object.values(SYNC_CLASSIFICATIONS).includes(syncRecord.classification)) return debtFailure('PENDING_POST_SYNC_SYNC_RECORD_INVALID');
+    const retained = syncRecord.pendingRefresh;
+    if (retained !== undefined && retained !== null) {
+      const inspected = inspectPendingPostSyncRefreshDebt(retained);
+      if (!inspected.ok) return inspected;
+      spans.push(...inspected.spans);
+      inspected.requiredTargetIds.forEach(id => targets.add(id));
+    }
+    if (syncRecord.classification === 'BLOCKED_POST_SYNC_REFRESH_REQUIRED') {
+      const legacy = refreshSpan({ beforeHead: syncRecord.localHeadBefore, afterHead: syncRecord.localHeadAfter || syncRecord.remoteHeadObserved });
+      if (!legacy) return debtFailure('PENDING_POST_SYNC_HEADS_INVALID');
+      spans.push(legacy);
+    }
+  }
+  let completion = null;
+  if (refreshRecord !== null) {
+    if (!recordOwner(refreshRecord, 'post-sync-runtime-refresh-current') || !refreshSpan(refreshRecord)
+      || typeof refreshRecord.phase !== 'string' || !/^(?:plan|blocked|complete|checkpoint-[1-7])$/.test(refreshRecord.phase)
+      || !targetSetValid(refreshRecord.targetIds)) return debtFailure('PENDING_POST_SYNC_RUNTIME_RECORD_INVALID');
+    if (refreshRecord.phase === 'complete') {
+      const inspected = inspectPostSyncRefreshCompletion(refreshRecord);
+      if (!inspected.ok) return inspected;
+      completion = inspected;
+    } else {
+      if (!['NO_RUNTIME_REFRESH_REQUIRED', 'REFRESH_READY', 'REFRESH_COMPLETE', 'APPROVAL_REQUIRED_OPENCLAW',
+        'BLOCKED_UNSAFE_CHANGED_PATH', 'BLOCKED_UNCLASSIFIED_RUNTIME_PATH', 'BLOCKED_REFRESH_FAILED'].includes(refreshRecord.classification)
+        || refreshRecord.finalVerdict !== 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' || refreshRecord.exactHeadProofOk !== false
+        || typeof refreshRecord.blocker !== 'string' || refreshRecord.blocker.length > 240
+        || !Array.isArray(refreshRecord.resultTargets) || !targetSetValid(refreshRecord.resultTargets.map(result => result?.targetId))
+        || typeof refreshRecord.pluginHostActivationRequired !== 'boolean'
+        || ['changedPathCount', 'noRuntimePathCount', 'unknownPathCount', 'unsafePathCount', 'openClawPathCount'].some(key => !Number.isSafeInteger(refreshRecord[key]) || refreshRecord[key] < 0)
+        || refreshRecord.noRuntimePathCount > refreshRecord.changedPathCount
+        || refreshRecord.resultTargets.some(result => !refreshRecord.targetIds.includes(result.targetId)
+          || typeof result.ok !== 'boolean' || typeof result.exactHeadProofOk !== 'boolean'
+          || typeof result.blocker !== 'string' || result.blocker.length > 240
+          || (result.sourceHead !== '' && !debtHead(result.sourceHead)))) return debtFailure('PENDING_POST_SYNC_RUNTIME_RECORD_INVALID');
+      spans.push(refreshSpan(refreshRecord));
+      refreshRecord.targetIds.forEach(id => targets.add(id));
+    }
+  }
+  const requiredTargetIds = REFRESH_TARGETS.filter(id => targets.has(id));
+  const pending = pendingPostSyncRefreshDebt(spans, requiredTargetIds);
+  if (pending?.state === 'HELD') return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
+  return Object.freeze({ ok: true, spans: pending?.spans || [], requiredTargetIds, completion });
+}
+
+export function resolvePostSyncRefreshDebt({ spans = [], requestedSpans = [], requiredTargetIds = [], completion = null,
+  currentHead = '', requireCurrentCoverage = true, isAncestor } = {}) {
+  if (!Array.isArray(spans) || !Array.isArray(requestedSpans)) return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
+  const pending = pendingPostSyncRefreshDebt([...spans, ...requestedSpans], requiredTargetIds);
+  if (pending?.state === 'HELD') return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
+  const uniqueSpans = pending?.spans || [];
+  if (!uniqueSpans.length && !completion) return Object.freeze({ ok: true, debt: null, discharged: false });
+  const current = debtHead(currentHead);
+  if (!current) return debtFailure('PENDING_POST_SYNC_CURRENT_HEAD_INVALID');
+  const endpoints = [...new Set([...uniqueSpans.flatMap(span => [span.beforeHead, span.afterHead]),
+    ...(completion ? [completion.beforeHead, completion.afterHead] : []), current])];
+  if (endpoints.length > 11 || endpoints.some(head => !debtHead(head))) return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
+  const cache = new Map();
+  let calls = 0;
+  const ancestor = (before, after) => {
+    if (before === after) return true;
+    const key = `${before}:${after}`;
+    if (cache.has(key)) return cache.get(key);
+    if (++calls > 64) throw new Error('PENDING_POST_SYNC_ANCESTRY_BUDGET_EXHAUSTED');
+    const result = typeof isAncestor === 'function' ? isAncestor(before, after) : null;
+    if (result?.ok !== true || typeof result.ancestor !== 'boolean') throw new Error('PENDING_POST_SYNC_ANCESTRY_UNPROVEN');
+    cache.set(key, result.ancestor);
+    return result.ancestor;
+  };
+  try {
+    endpoints.sort((left, right) => {
+      if (left === right) return 0;
+      if (ancestor(left, right)) return -1;
+      if (ancestor(right, left)) return 1;
+      throw new Error('PENDING_POST_SYNC_SPANS_UNRELATED');
+    });
+    for (let index = 1; index < endpoints.length; index += 1) {
+      if (!ancestor(endpoints[index - 1], endpoints[index])) return debtFailure('PENDING_POST_SYNC_SPANS_UNRELATED');
+    }
+    const position = head => endpoints.indexOf(head);
+    if (uniqueSpans.some(span => position(span.beforeHead) >= position(span.afterHead))) return debtFailure('PENDING_POST_SYNC_SPAN_REVERSED');
+    if (completion && (position(completion.beforeHead) >= position(completion.afterHead)
+      || position(completion.afterHead) > position(current))) return debtFailure('PENDING_POST_SYNC_COMPLETION_HEAD_UNPROVEN');
+    const covered = (span, targets) => Boolean(completion && position(completion.beforeHead) <= position(span.beforeHead)
+      && position(span.afterHead) <= position(completion.afterHead) && targets.every(id => completion.targetIds.includes(id)));
+    // Pay covered old spans before adding a newer source delta. Otherwise a
+    // reverted file can disappear from the net old-before/new-after diff even
+    // though a completed intermediate version is still loaded by its owner.
+    const retained = spans.map(refreshSpan).filter(span => !covered(span, requiredTargetIds));
+    const requested = requestedSpans.map(refreshSpan).filter(span => !covered(span, []));
+    const remaining = [...retained, ...requested];
+    if (!remaining.length) return Object.freeze({ ok: true, debt: null, discharged: uniqueSpans.length > 0 });
+    const beforeHead = endpoints[Math.min(...remaining.map(span => position(span.beforeHead)))];
+    const afterHead = endpoints[Math.max(...remaining.map(span => position(span.afterHead)))];
+    if (requireCurrentCoverage && position(afterHead) > position(current)) return debtFailure('PENDING_POST_SYNC_RETAINED_HEAD_NOT_CURRENT');
+    const targets = new Set(retained.length ? requiredTargetIds : []);
+    if (completion && position(beforeHead) < position(completion.afterHead) && position(completion.afterHead) <= position(afterHead)) {
+      completion.targetIds.forEach(id => targets.add(id));
+    }
+    return Object.freeze({ ok: true, debt: Object.freeze({ beforeHead, afterHead, requiredTargetIds: REFRESH_TARGETS.filter(id => targets.has(id)) }), discharged: false });
+  } catch (error) {
+    return debtFailure(/^PENDING_POST_SYNC_[A-Z_]+$/.test(error?.message || '') ? error.message : 'PENDING_POST_SYNC_ANCESTRY_UNPROVEN');
+  }
+}

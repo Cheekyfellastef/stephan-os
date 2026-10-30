@@ -1,6 +1,6 @@
 import {
   readPersistedStephanosHomeNode,
-  readPersistedStephanosHostedExecutionBridgeUrl,
+  resolveStephanosHostedExecutionBridgeUrl,
   readPersistedStephanosLastKnownNode,
   resolveStephanosBackendBaseUrl,
   validateStephanosBackendTargetUrl,
@@ -59,7 +59,6 @@ function resolveBackendBaseUrl(runtimeContext = {}) {
   const frontendOrigin = resolveFrontendOrigin(runtimeContext);
   const manualNode = runtimeContext.manualNode || readPersistedStephanosHomeNode(storage);
   const lastKnownNode = runtimeContext.lastKnownNode || readPersistedStephanosLastKnownNode(storage);
-  const persistedHostedExecutionBridgeUrl = readPersistedStephanosHostedExecutionBridgeUrl(storage, { frontendOrigin });
   let hostedSession = false;
   try {
     const frontend = new URL(frontendOrigin);
@@ -68,10 +67,15 @@ function resolveBackendBaseUrl(runtimeContext = {}) {
     hostedSession = false;
   }
   const directBridgeUrl = runtimeContext.homeNodeBridge?.backendUrl || runtimeContext.bridgeUrl || '';
-  const hostedExecutionBridgeUrl = runtimeContext.hostedExecutionBridgeUrl
-    || runtimeContext.homeNodeBridge?.executionUrl
-    || persistedHostedExecutionBridgeUrl
-    || '';
+  const hostedExecutionBridgeUrl = resolveStephanosHostedExecutionBridgeUrl({
+    frontendOrigin,
+    storage,
+    candidates: [
+      runtimeContext.hostedExecutionBridgeUrl,
+      runtimeContext.homeNodeBridge?.executionUrl,
+      directBridgeUrl,
+    ],
+  });
 
   if (hostedSession) {
     const safeHostedExecutionOrigin = normalizeHostedExecutionOrigin(
@@ -113,11 +117,14 @@ function createAbortController(timeoutMs, externalSignal) {
     controller.abort();
   }, resolvedTimeout);
 
-  if (externalSignal && typeof externalSignal.addEventListener === 'function') {
-    externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
-  }
-
-  return { controller, timeoutId };
+  const onAbort = () => controller.abort(externalSignal.reason);
+  externalSignal?.addEventListener('abort', onAbort, { once: true });
+  if (externalSignal?.aborted) onAbort();
+  const cleanup = () => {
+    clearTimeout(timeoutId);
+    externalSignal?.removeEventListener('abort', onAbort);
+  };
+  return { controller, cleanup };
 }
 
 function joinBackendUrl(baseUrl, path) {
@@ -169,7 +176,8 @@ export async function requestStephanosBackend({
     requestHeaders['Content-Type'] = 'application/json';
   }
 
-  const { controller, timeoutId } = createAbortController(timeoutMs, signal);
+  signal?.throwIfAborted();
+  const { controller, cleanup } = createAbortController(timeoutMs, signal);
 
   try {
     const response = await fetchImpl(url, {
@@ -223,6 +231,7 @@ export async function requestStephanosBackend({
       url,
     };
   } catch (error) {
+    signal?.throwIfAborted();
     diagnostics?.({
       ok: false,
       method,
@@ -242,7 +251,7 @@ export async function requestStephanosBackend({
     }
     throw error;
   } finally {
-    clearTimeout(timeoutId);
+    cleanup();
   }
 }
 

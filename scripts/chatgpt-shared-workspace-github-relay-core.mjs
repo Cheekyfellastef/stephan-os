@@ -425,7 +425,7 @@ export function renderChatGptSharedWorkspaceResponse(payload = {}) {
 ## ChatGPT Shared Workspace Response Outbox
 
 \`\`\`json
-${JSON.stringify(safePayload, null, 2)}
+${JSON.stringify(safePayload, null, 1)}
 \`\`\`
 
 The Shared Agent Workspace remains authoritative. This is a bounded sanitized projection and audit handoff only.`;
@@ -624,6 +624,16 @@ function eventIdFor(receiptId) {
 }
 
 function readProjectionForOperation(operation, projection) {
+  if (operation === 'READ_PROOF_INDEX') {
+    const index = projection.proofIndex || null;
+    return Object.freeze({
+      projectionKind: 'proof-index-projection',
+      proofIndex: index,
+      freshnessUtc: projection.freshnessUtc,
+      aggregationOk: projection.aggregationOk !== false && index?.sourceAvailable === true,
+      aggregationReason: index?.sourceAvailable === true ? projection.aggregationReason : 'PROOF_INDEX_SOURCE_UNAVAILABLE',
+    });
+  }
   if (operation === 'READ_LATEST_PROOF') {
     return Object.freeze({
       projectionKind: 'latest-proof-projection',

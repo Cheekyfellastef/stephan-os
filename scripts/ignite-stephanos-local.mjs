@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, copyFileSync, cpSync, existsSync, lstatSync, opendirSync, rmSync, writeFileSync, renameSync } from 'node:fs';
-import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, relative, resolve, win32 as pathWin32 } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readLocalBuildState, probeExistingLocalServer } from './stephanos-ignition-preflight.mjs';
 import { projectIgnitionCockpit } from './ignition-cockpit-model.mjs';
@@ -8,10 +8,10 @@ import { projectGitBranchIntelligence } from './git-branch-intelligence.mjs';
 import { runIgnitionPlan } from './ignite-stephanos-local-lib.mjs';
 import {
   OPENCLAW_WORKSPACE_DIRT_PATHS,
+  normalizeOpenClawWorkspacePath,
   buildOpenClawWorkspaceHygieneProjection,
   isOpenClawWorkspaceDirtPath,
   isSanctionedOpenClawWorkspacePath,
-  normalizeOpenClawWorkspacePath,
   resolveOpenClawWorkspaceRepairPath,
 } from '../shared/agents/openClawWorkspaceHygiene.mjs';
 import {
@@ -149,6 +149,236 @@ export async function evaluateOpenClawRuntimeAutostartWithDeps({
   return status;
 }
 
+const DEFAULT_OLLAMA_IGNITION_BASE_URL = 'http://127.0.0.1:11434';
+const DEFAULT_OLLAMA_IGNITION_MODEL = 'qwen:14b';
+
+function normalizeOllamaIgnitionBaseUrl(value = '') {
+  let normalized = String(value || '').trim();
+  if (!normalized) normalized = DEFAULT_OLLAMA_IGNITION_BASE_URL;
+  if (!/^https?:\/\//i.test(normalized)) normalized = `http://${normalized}`;
+  try {
+    const parsed = new URL(normalized);
+    if (['0.0.0.0', '::', '[::]'].includes(parsed.hostname)) parsed.hostname = '127.0.0.1';
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    throw new Error(`blocked for safety: invalid Ollama base URL (${normalized}).`);
+  }
+}
+
+export function resolveOllamaIgnitionConfig({
+  env = process.env,
+  platform = process.platform,
+  existsFn = existsSync,
+} = {}) {
+  const baseURL = normalizeOllamaIgnitionBaseUrl(
+    env.STEPHANOS_OLLAMA_BASE_URL || env.OLLAMA_BASE_URL || env.OLLAMA_HOST || DEFAULT_OLLAMA_IGNITION_BASE_URL,
+  );
+  const requiredModel = String(
+    env.STEPHANOS_OLLAMA_IGNITION_MODEL || env.OLLAMA_MODEL || DEFAULT_OLLAMA_IGNITION_MODEL,
+  ).trim() || DEFAULT_OLLAMA_IGNITION_MODEL;
+  const explicitExecutable = String(env.STEPHANOS_OLLAMA_EXECUTABLE || env.OLLAMA_EXECUTABLE || '').trim();
+  if (explicitExecutable) {
+    return Object.freeze({ baseURL, requiredModel, executable: explicitExecutable, executableSource: 'environment' });
+  }
+
+  if (platform === 'win32') {
+    const candidates = [
+      env.LOCALAPPDATA ? pathWin32.resolve(env.LOCALAPPDATA, 'Programs', 'Ollama', 'ollama.exe') : '',
+      env.ProgramFiles ? pathWin32.resolve(env.ProgramFiles, 'Ollama', 'ollama.exe') : '',
+    ].filter(Boolean);
+    const installed = candidates.find((candidate) => existsFn(candidate));
+    if (installed) {
+      return Object.freeze({ baseURL, requiredModel, executable: installed, executableSource: 'installed-path' });
+    }
+    return Object.freeze({ baseURL, requiredModel, executable: 'ollama.exe', executableSource: 'path-fallback' });
+  }
+
+  return Object.freeze({ baseURL, requiredModel, executable: 'ollama', executableSource: 'path-fallback' });
+}
+
+async function readOllamaJsonResponse(response) {
+  if (typeof response?.json === 'function') return response.json();
+  if (typeof response?.text === 'function') {
+    const raw = await response.text();
+    return raw ? JSON.parse(raw) : {};
+  }
+  return {};
+}
+
+async function probeOllamaReadiness({
+  fetchFn = globalThis.fetch,
+  baseURL,
+  requiredModel,
+  probeTimeoutMs = 2500,
+} = {}) {
+  const url = `${String(baseURL || '').replace(/\/$/, '')}/api/tags`;
+  try {
+    const options = { headers: { Accept: 'application/json' } };
+    if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function' && probeTimeoutMs > 0) {
+      options.signal = AbortSignal.timeout(probeTimeoutMs);
+    }
+    const response = await fetchFn(url, options);
+    if (!response?.ok) {
+      return { healthy: false, reachable: true, apiReady: false, modelReady: false, url, reason: `http-${response?.status || 'unknown'}`, models: [] };
+    }
+    const body = await readOllamaJsonResponse(response);
+    const models = Array.isArray(body?.models)
+      ? body.models.map((model) => String(model?.name || model?.model || '').trim()).filter(Boolean)
+      : [];
+    const requiredLower = String(requiredModel || '').toLowerCase();
+    const modelReady = models.some((model) => model.toLowerCase() === requiredLower);
+    return {
+      healthy: modelReady,
+      reachable: true,
+      apiReady: true,
+      modelReady,
+      url,
+      reason: modelReady ? 'ready' : 'required-model-missing',
+      models,
+    };
+  } catch (error) {
+    return {
+      healthy: false,
+      reachable: false,
+      apiReady: false,
+      modelReady: false,
+      url,
+      reason: String(error?.message || 'endpoint-unreachable'),
+      models: [],
+    };
+  }
+}
+
+async function awaitOllamaSpawnOutcome(child) {
+  if (!child || typeof child.once !== 'function') return child;
+  await new Promise((resolveSpawn, rejectSpawn) => {
+    let settled = false;
+    const cleanup = () => {
+      if (typeof child.removeListener === 'function') {
+        child.removeListener('spawn', onSpawn);
+        child.removeListener('error', onError);
+      }
+    };
+    const onSpawn = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolveSpawn();
+    };
+    const onError = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      rejectSpawn(error);
+    };
+    child.once('spawn', onSpawn);
+    child.once('error', onError);
+  });
+  return child;
+}
+
+export async function evaluateOllamaRuntimeAutostartWithDeps({
+  fetchFn = globalThis.fetch,
+  spawnFn = spawn,
+  env = process.env,
+  platform = process.platform,
+  existsFn = existsSync,
+  log = (message) => console.log(message),
+  readinessTimeoutMs = 15000,
+  retryIntervalMs = 500,
+  probeTimeoutMs = 2500,
+} = {}) {
+  const config = resolveOllamaIgnitionConfig({ env, platform, existsFn });
+  const before = await probeOllamaReadiness({
+    fetchFn,
+    baseURL: config.baseURL,
+    requiredModel: config.requiredModel,
+    probeTimeoutMs,
+  });
+  if (before.healthy) {
+    const status = {
+      state: 'ollama-reused-existing-runtime',
+      ignitionPhase: 'ollama-local-ai-startup',
+      healthy: true,
+      autostartAttempted: false,
+      duplicateStartAvoided: true,
+      baseURL: config.baseURL,
+      requiredModel: config.requiredModel,
+      models: before.models,
+    };
+    log(`[IGNITION] ollama-autostart-status=${JSON.stringify(status)}`);
+    return status;
+  }
+
+  if (before.apiReady && !before.modelReady) {
+    const status = {
+      state: 'ollama-required-model-missing',
+      ignitionPhase: 'ollama-local-ai-startup',
+      healthy: false,
+      autostartAttempted: false,
+      baseURL: config.baseURL,
+      requiredModel: config.requiredModel,
+      models: before.models,
+      reason: before.reason,
+    };
+    log(`[IGNITION] ollama-autostart-status=${JSON.stringify(status)}`);
+    throw new Error(`blocked for safety: Ollama is reachable at ${config.baseURL}, but required model ${config.requiredModel} is not installed. Installed models: ${before.models.join(', ') || 'none'}.`);
+  }
+
+  let child;
+  try {
+    child = spawnFn(config.executable, ['serve'], {
+      cwd: process.cwd(),
+      detached: true,
+      stdio: 'ignore',
+      shell: false,
+      windowsHide: true,
+      env: { ...env },
+    });
+    await awaitOllamaSpawnOutcome(child);
+    if (typeof child?.unref === 'function') child.unref();
+  } catch (error) {
+    throw new Error(`blocked for safety: Ollama was not reachable and Ignition could not start ${config.executable} serve (${error?.message || error}).`);
+  }
+
+  const startedAt = Date.now();
+  let after = before;
+  let attempts = 0;
+  while (true) {
+    attempts += 1;
+    after = await probeOllamaReadiness({
+      fetchFn,
+      baseURL: config.baseURL,
+      requiredModel: config.requiredModel,
+      probeTimeoutMs,
+    });
+    if (after.healthy) break;
+    if (after.apiReady && !after.modelReady) break;
+    if (Date.now() - startedAt >= Math.max(0, readinessTimeoutMs)) break;
+    if (retryIntervalMs > 0) await new Promise((resolvePromise) => setTimeout(resolvePromise, retryIntervalMs));
+  }
+
+  const status = {
+    state: after.healthy ? 'ollama-autostart-verified' : (after.apiReady ? 'ollama-required-model-missing' : 'ollama-autostart-unverified'),
+    ignitionPhase: 'ollama-local-ai-startup',
+    healthy: after.healthy,
+    autostartAttempted: true,
+    processStartResult: { pid: Number(child?.pid || 0) || null, executable: config.executable, executableSource: config.executableSource },
+    baseURL: config.baseURL,
+    requiredModel: config.requiredModel,
+    models: after.models,
+    probeAttempts: attempts,
+    reason: after.reason,
+  };
+  log(`[IGNITION] ollama-autostart-status=${JSON.stringify(status)}`);
+  if (!after.healthy) {
+    if (after.apiReady && !after.modelReady) {
+      throw new Error(`blocked for safety: Ollama started and answered at ${config.baseURL}, but required model ${config.requiredModel} is not installed. Installed models: ${after.models.join(', ') || 'none'}.`);
+    }
+    throw new Error(`blocked for safety: Ollama local AI did not become ready at ${config.baseURL} after Ignition started ${config.executable} serve (${after.reason}).`);
+  }
+  return status;
+}
 
 
 function formatStep(label, command, commandArgs) {
@@ -197,12 +427,13 @@ export function resolveStepExecution(command, commandArgs, platform = process.pl
   };
 }
 
-function runStep(label, command, commandArgs) {
+function runStep(label, command, commandArgs, { env = process.env } = {}) {
   console.log(formatStep(label, command, commandArgs));
   const execution = resolveStepExecution(command, commandArgs);
   const result = spawnSync(execution.command, execution.commandArgs, {
     cwd: process.cwd(),
     stdio: 'inherit',
+    env,
   });
 
   if (result.error || result.status !== 0) {
@@ -731,7 +962,12 @@ export function runApprovedLocalMergeRecoveryWithDeps({
 
   runStepFn('git-fetch-approved-local-merge', 'git', ['fetch', '--prune', '--tags', 'origin']);
   try {
-    runStepFn('git-merge-origin-main-approved', 'git', ['merge', '--no-edit', 'origin/main']);
+    runStepFn(
+      'git-merge-origin-main-approved',
+      'git',
+      ['merge', '--no-edit', 'origin/main'],
+      { env: { ...process.env, STEPHANOS_APPROVED_LOCAL_MERGE_RECOVERY: '1' } },
+    );
   } catch (error) {
     const conflictPaths = splitLines(captureStep('git-unmerged-conflict-paths', 'git', ['diff', '--name-only', '--diff-filter=U']).stdout);
     const nonDistConflicts = conflictPaths.filter((path) => !isApprovedGeneratedDistPath(path));
@@ -884,57 +1120,13 @@ export async function ensureLocalStaticServerRestartWithDeps({
 
   report.serverStarted = true;
   report.restartRequired = true;
-  if (verifyServedAfterStart && report.previousServerStatus === 'running') {
-    let servedHealth = null;
-    try {
-      const servedResponse = await fetchFn(healthUrl, { headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' } });
-      if (!servedResponse?.ok) {
-        throw new Error(`health endpoint returned ${servedResponse?.status || 'unknown'}`);
-      }
-      servedHealth = await servedResponse.json();
-    } catch (error) {
-      const packet = createIgnitionRepairPacket({
-        reason: 'static-server-start-verification-failed',
-        expectedSourceCommit: expectedCommit || 'unknown',
-        sourceFingerprint: expectedSourceFingerprint || 'unknown',
-        buildTimestamp: expectedBuildTimestamp || 'unknown',
-        nextSafeAction: `Restart the 4173 server manually and rerun the localhost health/source-truth probes. Verification failure: ${error.message}`,
-      });
-      log(`[IGNITION] static-server-restart=${JSON.stringify({ ...report, repairPacket: packet })}`);
-      throw new Error(`blocked for safety: ${packet.reason}. ${packet.nextSafeAction}`);
-    }
-    report.servedCommit = servedHealth?.gitCommit || null;
-    report.servedBuildTimestamp = servedHealth?.buildTimestamp || null;
-    report.servedSourceFingerprint = servedHealth?.sourceFingerprint || null;
-    const metadataMatchesExpected = Boolean(expectedRuntimeMarker) && servedHealth?.runtimeMarker === expectedRuntimeMarker;
-    report.moduleMimeChecks = await probeIgnitionModuleMimeChecks(fetchFn, servedUrl);
-    report.moduleMimeChecksPass = report.moduleMimeChecks.ok;
-    report.servedRuntimeMatchesExpectedDistMetadata = metadataMatchesExpected && report.moduleMimeChecksPass;
-    if (!metadataMatchesExpected) {
-      const packet = createIgnitionRepairPacket({
-        reason: 'served-runtime-metadata-mismatch',
-        servedCommit: report.servedCommit || 'unknown',
-        expectedSourceCommit: expectedCommit || 'unknown',
-        sourceFingerprint: expectedSourceFingerprint || 'unknown',
-        buildTimestamp: expectedBuildTimestamp || 'unknown',
-        nextSafeAction: 'Stop the stale 4173 server, restart ignition, and hard-refresh the browser only after served metadata matches dist.',
-      });
-      log(`[IGNITION] static-server-restart=${JSON.stringify({ ...report, repairPacket: packet })}`);
-      throw new Error(`blocked for safety: ${packet.reason}. ${packet.nextSafeAction}`);
-    }
-    if (!report.moduleMimeChecksPass) {
-      const packet = createIgnitionRepairPacket({
-        reason: 'served-runtime-module-mime-mismatch',
-        servedCommit: report.servedCommit || 'unknown',
-        expectedSourceCommit: expectedCommit || 'unknown',
-        sourceFingerprint: expectedSourceFingerprint || 'unknown',
-        buildTimestamp: expectedBuildTimestamp || 'unknown',
-        nextSafeAction: 'Stop the stale 4173 server, restart ignition, and hard-refresh the browser only after served module MIME checks pass.',
-      });
-      log(`[IGNITION] static-server-restart=${JSON.stringify({ ...report, repairPacket: packet })}`);
-      throw new Error(`blocked for safety: ${packet.reason}. ${packet.nextSafeAction}`);
-    }
-  }
+  // The restart endpoint intentionally shuts the current 4173 server down. The
+  // replacement server is started by the immediately-following serve handoff,
+  // so probing here races the shutdown/start boundary and can only produce a
+  // false negative. Exact served-runtime proof belongs after the new listener
+  // is live (the supervisor/UI repair path performs that proof).
+  report.postStartVerificationRequested = Boolean(verifyServedAfterStart);
+  report.postStartVerificationDeferred = Boolean(verifyServedAfterStart);
   log(`[IGNITION] static-server-restart=${JSON.stringify(report)}`);
   return report;
 }
@@ -962,7 +1154,9 @@ const KNOWN_SOURCE_FILES = new Set(['package.json', 'package-lock.json']);
 const APPROVED_IGNORED_LOCAL_PATHS = new Set([
   '.stephanos/build-concierge/',
   '.stephanos/local-state-checkpoints/',
+  'VR-Research-Lab/local-manifests/',
   'package-lock.json',
+  'VR-Research-Lab/internal/',
   'stephanos-server/data/durable-memory.json',
   'stephanos-server/data/local-rag/',
   'stephanos-server/data/provider-secrets.json',
@@ -973,6 +1167,7 @@ const APPROVED_IGNORED_LOCAL_PATHS = new Set([
 const APPROVED_IGNORED_LOCAL_AGGREGATE_PATHS = new Set([
   '.stephanos/build-concierge/',
   '.stephanos/local-state-checkpoints/',
+  'VR-Research-Lab/local-manifests/',
   'stephanos-server/data/local-rag/',
 ]);
 
@@ -2208,6 +2403,7 @@ export async function run() {
     runIgnitionHousekeep({ dryRun: false, compact: true, debug: debugEnabled });
   }
   let publicationTruth = null;
+  let ollamaIgnitionStatus = null;
 
   if (args.has('--probe-existing-server')) {
     const probe = await probeExistingLocalServer({
@@ -2261,9 +2457,10 @@ export async function run() {
       }
 
       if (ignitionMode === 'NORMAL_IGNITION' && process.platform === 'win32') {
+        ollamaIgnitionStatus = await evaluateOllamaRuntimeAutostartWithDeps();
         await evaluateOpenClawRuntimeAutostartWithDeps();
       } else if (ignitionMode === 'NORMAL_IGNITION') {
-        console.log('[IGNITION] OpenClaw startup connect recovery skipped (non-Windows desktop service probe unavailable).');
+        console.log('[IGNITION] Ollama/OpenClaw startup supervision skipped (non-Windows Battle Bridge path).');
       }
 
       console.log('[IGNITION] launcher guardrail starting');
@@ -2370,6 +2567,7 @@ export async function run() {
         expectedMetadata: refreshedState.distMetadata || refreshedState.expectedMetadata,
         verifyServedAfterStart: true,
       });
+      const localAiRequired = ignitionMode === 'NORMAL_IGNITION' && process.platform === 'win32';
       const cockpit = projectIgnitionCockpit({
         buildPassed: buildAction.startsWith('passed'),
         verifyPassed: verifyResult === 'passed',
@@ -2389,6 +2587,7 @@ export async function run() {
           { id: 'source-update', label: 'Source update', status: 'complete', detail: `state=${publicationTruth?.publicationState || 'unknown'} behind=${publicationTruth?.behindCount ?? 'unknown'} before=${publicationTruth?.beforeCommit || 'unknown'} after=${publicationTruth?.afterCommit || expectedSourceCommit}` },
           { id: 'build-output', label: 'Build Output', status: buildAction.startsWith('passed') ? 'passed' : 'pending', detail: buildAction },
           { id: 'verify', label: 'Verify', status: verifyResult === 'passed' ? 'passed' : 'pending', detail: verifyResult },
+          { id: 'local-ai', label: 'Local AI', status: localAiRequired ? (ollamaIgnitionStatus?.healthy ? 'passed' : 'pending') : 'not-needed', detail: ollamaIgnitionStatus ? `state=${ollamaIgnitionStatus.state}; model=${ollamaIgnitionStatus.requiredModel}; endpoint=${ollamaIgnitionStatus.baseURL}` : (localAiRequired ? 'Ollama readiness not yet proven' : 'Ollama supervision not required on this ignition path') },
           { id: 'runtime', label: 'Runtime', status: restartReport.servedRuntimeMatchesExpectedDistMetadata ? 'passed' : 'pending', detail: `restart=${restartReport.serverStarted}; markerAndMime=${restartReport.servedRuntimeMatchesExpectedDistMetadata}; mime=${restartReport.moduleMimeChecksPass}` },
         ],
       });
@@ -2402,6 +2601,7 @@ export async function run() {
         buildTimestamp,
         sourceFingerprint,
         staticServerRestart: restartReport,
+        ollamaIgnitionStatus,
         StartupDecision: cockpit.readyToEnterStephanos ? 'START_READY' : 'START_PROOF_PENDING',
         ignitionCockpit: cockpit,
       };

@@ -52,6 +52,19 @@ test('current Starfield VR AER Observe launcher is specialist eligible and clean
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_SPECIALIST_CLEAN');
 });
 
+test('reviewer rejects an isolation helper that sets the compatibility disable flag to zero', async () => {
+  const content = (await readFile(new URL('../../scripts/windows/run-starfield-aer-stabilizer-observe.ps1', import.meta.url), 'utf8'))
+    .replace(/\r\n/g, '\n');
+  const disabled = content.replace(
+    "            '1',\n            'Process'",
+    "            '0',\n            'Process'",
+  );
+  assert.notEqual(disabled, content);
+  const result = analyzeWindowsAuthorityStarfieldVrAerObserveReviewV1(input(disabled));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'starfield-aer-process-estate-widened'));
+});
+
 test('reviewer rejects widened process authority and dynamic execution', async () => {
   const content = await readFile(new URL('../../scripts/windows/run-starfield-aer-stabilizer-observe.ps1', import.meta.url), 'utf8');
   const widened = `${content}\nStart-Process -FilePath $env:ComSpec\nInvoke-Expression $env:PAYLOAD\n`;

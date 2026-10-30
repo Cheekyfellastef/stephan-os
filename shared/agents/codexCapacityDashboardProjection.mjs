@@ -21,12 +21,14 @@ export function buildCodexCapacityDashboardProjection(input = {}) {
     readOnly: true,
     meter: Object.freeze({
       availability: capacity.observation.availability,
-      remainingPercent: rounded(capacity.observation.remainingPercent),
+      remainingPercent: capacity.observation.remainingPercent, // Preserve null
+      remainingPercentObserved: capacity.observation.remainingPercentObserved,
       safelySchedulablePercent: rounded(capacity.safelySchedulablePercent),
       reservedPercent: rounded(capacity.reservedPercent),
       naturalResetAtUtc: capacity.observation.naturalResetAtUtc,
       observedAtUtc: capacity.observation.observedAtUtc,
       confidence: capacity.observation.confidence,
+      visibilityState: capacity.observation.visibilityState || 'UNKNOWN', // Add visibility state
     }),
     bankedResets: Object.freeze({
       count: capacity.observation.bankedResets.length,

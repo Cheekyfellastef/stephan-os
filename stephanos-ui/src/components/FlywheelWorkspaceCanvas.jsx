@@ -1,3 +1,6 @@
+import FlywheelSeedCanopy from './FlywheelSeedCanopy.jsx';
+import ConversationLearningJourney from './ConversationLearningJourney.jsx';
+
 const DIMENSION_LABELS = Object.freeze({
   'reasoning-quality': 'Reason',
   'execution-reliability': 'Execute',
@@ -40,7 +43,7 @@ function HeatCell({ dimension }) {
   );
 }
 
-export default function FlywheelWorkspaceCanvas({ view }) {
+export default function FlywheelWorkspaceCanvas({ view, conversationUplift = null, conversationFeedState = 'unavailable' }) {
   const participants = Array.isArray(view?.participants) ? view.participants : [];
   const timeline = Array.isArray(view?.timeline) ? view.timeline : [];
   const stats = view?.stats || {};
@@ -91,6 +94,14 @@ export default function FlywheelWorkspaceCanvas({ view }) {
           <small>{stats.actionableLearningEvents ?? 0} actionable gap event(s) · history is not a 1:1 goal count</small>
         </article>
       </div>
+
+      <FlywheelSeedCanopy seeds={view?.outcomeSeeds} />
+
+      <ConversationLearningJourney
+        placement="flywheel"
+        uplift={conversationUplift}
+        feedState={conversationFeedState}
+      />
 
       <section className="uplift-deck-card outcome-seed-observatory" data-testid="flywheel-outcome-seed-growth">
         <div className="uplift-section-heading">

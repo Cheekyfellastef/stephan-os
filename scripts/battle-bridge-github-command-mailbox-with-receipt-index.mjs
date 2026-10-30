@@ -26,10 +26,14 @@ const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const EXACT_GIT_HEAD_PATTERN = /^[0-9a-f]{40}$/i;
 const SELF_UPDATE_OPERATION = 'UPDATE_STEPHANOS_FROM_CHAT';
 
-// The installed mailbox Scheduled Task has a 15-minute execution ceiling. Give a
-// running instance a fixed five-minute reclamation margin, then fail closed rather
-// than preserving ACCEPTED ownership forever after an executor disappears.
-export const MAILBOX_ACCEPTED_LEASE_MS = 20 * 60 * 1000;
+// ACCEPTED ownership is heartbeat-assisted, but fixed Commander maintenance
+// can occupy the mailbox while its timer cannot advance. A remote plan can last
+// eight minutes and the outbox-guarded child can run for up to fifteen minutes.
+// Do not terminalize its accepted ownership while that child may still execute:
+// reclaim only after the guarded child's deadline plus a one-minute margin.
+// This is not a replay grant, and reconciliation still consumes the request
+// without authorizing a second writer or mutating the original source lease.
+export const MAILBOX_ACCEPTED_LEASE_MS = 16 * 60 * 1000;
 export const MAILBOX_ACCEPTED_LEASE_EXPIRED_BLOCKER = 'MAILBOX_ACCEPTED_LEASE_EXPIRED';
 export const MAILBOX_SELF_UPDATE_GENERATION_ORPHANED_BLOCKER = 'MAILBOX_SELF_UPDATE_GENERATION_ORPHANED';
 
@@ -340,8 +344,22 @@ export function reconcileStaleAcceptedMailboxReceipts({
       continue;
     }
 
+    // The outbox guard hard-stops its one mailbox child after 15 minutes.
+    // A heartbeat refreshed by the index/status sidecar is *not* evidence
+    // that the original guarded child still exists after the 16-minute
+    // recovery boundary. Bound ACCEPTED ownership by its immutable original
+    // acceptedAt timestamp, not only the most recently published heartbeat.
+    // If the original admission timestamp is unavailable or in the future,
+    // retain the conservative heartbeat-based path instead of guessing.
+    const acceptedAtMs = Date.parse(String(localReceipt?.acceptedAt || ''));
+    const originalAcceptanceExpired = Number.isFinite(acceptedAtMs)
+      && acceptedAtMs <= nowMs
+      && nowMs - acceptedAtMs > leaseMs;
     const heartbeatMs = Date.parse(String(localReceipt?.heartbeatAt || localReceipt?.acceptedAt || ''));
-    if (Number.isFinite(heartbeatMs) && nowMs - heartbeatMs <= leaseMs) {
+    const heartbeatFresh = Number.isFinite(heartbeatMs)
+      && heartbeatMs <= nowMs + 60_000
+      && nowMs - heartbeatMs <= leaseMs;
+    if (!originalAcceptanceExpired && heartbeatFresh) {
       freshCount += 1;
       continue;
     }
