@@ -26,6 +26,7 @@ const SHA_40 = /^[0-9a-f]{40}$/;
 const MAX_GIT_STATUS_BYTES = 64 * 1024;
 const PROGRESS_RECHECK_INTERVAL_MS = 250;
 const MAX_CONSECUTIVE_PROGRESS_RECHECKS = 8;
+const MAX_EMPTY_CONTROLLER_DELAY_MS = 15_000;
 const MAX_SURFACE_FAILURE_HISTORY = 16;
 const DURABLE_SURFACE_FAILURE_WINDOW_MS = 60 * 60 * 1000;
 export const MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD = 4;
@@ -455,6 +456,7 @@ export function carryCompletionGuardianFailure(tickVerdict, completionGuardianFa
 export async function runSupervisedMissionWorker({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, bootstrapMailbox = ensureBattleBridgeGitHubCommandMailbox, runControllerCycle = runDurableFlywheelStartupCycle, launchCalibrationLane = launchRecurringCalibrationLane, loadCapacityRoutingInput = readMissionControllerCapacityRoutingInput, runTick = runMissionWorkerTick, readMissionState = (missionId, options = {}) => readMissionRecord(missionId, options), listMissionState = (options = {}) => listMissionRecords(options), appendMissionStateEvent = appendMissionEvent, writeHeartbeat = writeMissionWorkerHeartbeat, readActiveClaim = readMissionWorkerActiveClaim, inspectRepositoryIdentity = inspectMissionWorkerRepositoryIdentity, runCompletionGuardianCycle = runCompletionGuardian, sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), sleepActiveClaimProbe = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), activeClaimProbeIntervalMs = MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, setIntervalFn = setInterval, clearIntervalFn = clearInterval, now = () => new Date().toISOString() } = {}) {
   const once = argv.includes('--once'); const intervalMs = Number.parseInt(env.STEPHANOS_MISSION_WORKER_INTERVAL_MS || '2000', 10); const heartbeatIntervalMs = Math.max(Number.parseInt(env.STEPHANOS_MISSION_WORKER_HEARTBEAT_INTERVAL_MS || '30000', 10) || 30000, 1000); const claimProbeIntervalMs = Math.max(Number.isFinite(activeClaimProbeIntervalMs) ? activeClaimProbeIntervalMs : MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, 1); const completionGuardianEnabled = env.STEPHANOS_COMPLETION_GUARDIAN_ENABLED === '1' || env.STEPHANOS_MISSION_WORKER_TASK_NAME === 'Stephanos Mission Orchestrator Worker'; const completionGuardianIntervalMs = Math.max(Number.parseInt(env.STEPHANOS_COMPLETION_GUARDIAN_INTERVAL_MS || '60000', 10) || 60000, 10_000); const calibrationLaunchIntervalMs = Math.max(Number.parseInt(env.STEPHANOS_CALIBRATION_LAUNCH_INTERVAL_MS || '300000', 10) || 300000, 30_000);
   let exitCode = 0; let lastControllerLogSignature = ''; let lastRepositoryLogSignature = ''; let lastTickLogSignature = ''; let repositoryDriftObserved = false; let consecutiveProgressRechecks = 0; let mailboxBootstrapPending = true; let activeActionGrant; let carriedExecutionDefect = ''; let surfaceFailures = []; let attemptedSurfaceId = ''; let attemptedMissionId = ''; let adapterInvocationStarted = false; let pendingExternalHandoff = null; let lastCompletionGuardianAtMs = 0; let completionGuardianFailureActive = false; let lastCalibrationLaunchSignature = ''; let lastCalibrationLaunchAtMs = 0;
+  let consecutiveEmptyCycles = 0;
   const sidelineStalledMission = async (
     missionId,
     failureHistory,
@@ -511,7 +513,7 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
     const repositoryLog = createMissionWorkerRepositoryLogProjection(identity, checkedAt, reloadRequired); const repositoryLogSignature = stableLogSignature(repositoryLog); if (once || repositoryLogSignature !== lastRepositoryLogSignature) { stdout.write(`${JSON.stringify(repositoryLog)}\n`); lastRepositoryLogSignature = repositoryLogSignature; }
     if (reloadRequired) { stderr.write(`${JSON.stringify({ schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA, event: 'worker-reload', checkedAt, finalVerdict: 'MISSION_WORKER_CANONICAL_RELOAD_REQUIRED', exitCode: MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE })}\n`); return MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE; }
     if (identityValid && !identityCanonical) repositoryDriftObserved = true;
-    if (!identityCanonical) { consecutiveProgressRechecks = 0; if (once) return 0; await sleep(Math.max(Number.isFinite(intervalMs) ? intervalMs : 2000, 250)); continue; }
+    if (!identityCanonical) { consecutiveProgressRechecks = 0; consecutiveEmptyCycles = 0; if (once) return 0; await sleep(Math.max(Number.isFinite(intervalMs) ? intervalMs : 2000, 250)); continue; }
     if (pendingExternalHandoff) {
       try {
         const durable = await readMissionState(pendingExternalHandoff.missionId, { env });
@@ -534,6 +536,7 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
       }
     }
     let lastTickVerdict = carriedExecutionDefect || 'MISSION_WORKER_TICK_PASS'; let heartbeatWriteFailed = false; let heartbeatWrites = Promise.resolve(); let tickHadActivity = false; let materialProgressRequired = false;
+    let emptyControllerCycle = false;
     const queueHeartbeat = (lastTickVerdictValue, timestampUtc = now()) => { const heartbeatActionGrant = activeActionGrant; heartbeatWrites = heartbeatWrites.then(async () => { try { return await writeHeartbeat({ env, timestampUtc, lastTickVerdict: lastTickVerdictValue, activeActionGrant: heartbeatActionGrant }); } catch (error) { heartbeatWriteFailed = true; stderr.write(`${JSON.stringify({ checkedAt: timestampUtc, finalVerdict: 'MISSION_WORKER_HEARTBEAT_WRITE_FAILED', error: error.message })}\n`); } }); return heartbeatWrites; };
     const authoritativeHeartbeatVerdict = () => carriedExecutionDefect || 'MISSION_WORKER_TICK_RUNNING';
     await queueHeartbeat(authoritativeHeartbeatVerdict(), checkedAt); const heartbeatTimer = setIntervalFn(() => { void queueHeartbeat(authoritativeHeartbeatVerdict()); }, heartbeatIntervalMs);
@@ -556,6 +559,9 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
         sourceRevision: env.STEPHANOS_MISSION_WORKER_HEAD_SHA,
         controllerLivenessEvidence: livenessEvidence(effectiveSurfaceFailures),
       }); const controllerLog = createMissionWorkerControllerLogProjection(controller, checkedAt); const controllerLogSignature = stableLogSignature(controllerLog); if (once || controllerLogSignature !== lastControllerLogSignature) { stdout.write(`${JSON.stringify(controllerLog)}\n`); lastControllerLogSignature = controllerLogSignature; }
+      emptyControllerCycle = ownData(controller, 'boundedMutationSteps') === 0
+        && ownData(controller, 'allowWorkerTick') === false
+        && !ownData(controller, 'workerActionGrant');
       const calibrationDueIds = recurringCalibrationDueParticipantIds(controller);
       const calibrationSignature = calibrationDueIds.join(',');
       const calibrationCheckedAtMs = Date.parse(checkedAt);
@@ -571,6 +577,7 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
         try {
           const calibrationLane = await launchCalibrationLane({ controller, env, checkedAt });
           if (calibrationLane?.launched === true) {
+            emptyControllerCycle = false;
             lastCalibrationLaunchSignature = calibrationSignature;
             lastCalibrationLaunchAtMs = Number.isFinite(calibrationCheckedAtMs) ? calibrationCheckedAtMs : Date.now();
             stdout.write(`${JSON.stringify({
@@ -794,7 +801,25 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
       }
     }
     await queueHeartbeat(carryCompletionGuardianFailure(lastTickVerdict, completionGuardianFailureActive)); if (heartbeatWriteFailed && once) exitCode = 1;
-    if (!once) { const steadyDelayMs = Math.max(Number.isFinite(intervalMs) ? intervalMs : 2000, 250); let delayMs = steadyDelayMs; if (tickHadActivity && consecutiveProgressRechecks < MAX_CONSECUTIVE_PROGRESS_RECHECKS) { consecutiveProgressRechecks += 1; delayMs = PROGRESS_RECHECK_INTERVAL_MS; } else { consecutiveProgressRechecks = 0; } await sleep(delayMs); }
+    if (!once) {
+      const steadyDelayMs = Math.max(Number.isFinite(intervalMs) ? intervalMs : 2000, 250);
+      const canBackOff = emptyControllerCycle && !tickHadActivity && !materialProgressRequired
+        && !pendingExternalHandoff && !activeActionGrant && !heartbeatWriteFailed
+        && !completionGuardianFailureActive && lastTickVerdict === 'MISSION_WORKER_TICK_PASS';
+      consecutiveEmptyCycles = canBackOff ? Math.min(consecutiveEmptyCycles + 1, 8) : 0;
+      // Every cycle still reads fresh canonical evidence. Only explicitly
+      // non-mutating cycles back off; active grants and progress retain their
+      // existing cadence. Avoid reopening the entire history every two seconds
+      // while held/idle, which otherwise drives thousands of Defender checks.
+      let delayMs = canBackOff
+        ? Math.max(steadyDelayMs, Math.min(MAX_EMPTY_CONTROLLER_DELAY_MS, steadyDelayMs * (2 ** consecutiveEmptyCycles)))
+        : steadyDelayMs;
+      if (tickHadActivity && consecutiveProgressRechecks < MAX_CONSECUTIVE_PROGRESS_RECHECKS) {
+        consecutiveProgressRechecks += 1;
+        delayMs = PROGRESS_RECHECK_INTERVAL_MS;
+      } else { consecutiveProgressRechecks = 0; }
+      await sleep(delayMs);
+    }
   } while (!once);
   return exitCode;
 }

@@ -102,6 +102,7 @@ const NATURAL_EXACT = new Set([
   'scripts/battle-bridge-outbound-health-beacon.mjs',
   'scripts/sovereign-commander-stephanos-repair.mjs',
   'scripts/chatgpt-shared-workspace-github-relay.mjs',
+  'scripts/chatgpt-shared-workspace-github-relay-core.mjs',
   'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
   'scripts/windows/probe-battle-bridge-recovery-mesh.ps1',
   'scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1',
@@ -171,7 +172,11 @@ const NO_RUNTIME_EXACT = new Set([
   'shared/agents/codexBankedResetTelemetryMirror.mjs',
   'scripts/operator-protected-personal-repository-merge.mjs',
   'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+  // The existing guarded ignition invocation loads these sources afresh.
+  // Classifying source adoption does not request another ignition or start AI.
   'scripts/ignite-stephanos-local.mjs',
+  'scripts/ignition-cockpit-model.mjs',
+  'scripts/run-battle-bridge-ignition.mjs',
   'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
 ]);
 
