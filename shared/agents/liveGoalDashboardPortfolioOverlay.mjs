@@ -147,14 +147,20 @@ function effectiveChecksStatus(pr = {}, workflows = []) {
   if (direct === 'failed' || fromWorkflows === 'failed') return 'failed';
   if (direct === 'pending' || fromWorkflows === 'pending') return 'pending';
   if (!exactPrHead(pr)) return 'unknown';
-  if (direct === 'passed' || fromWorkflows === 'passed') return 'passed';
+  if (direct === 'passed') return 'passed';
+  // A received check-batch observation is authoritative about its own gaps.
+  // Older workflow summaries cannot erase rejected, empty, stale or partial
+  // rollup evidence. Legacy rows without a batch observation retain fallback.
+  if (pr.checkBatchObserved === true) return 'unknown';
+  if (fromWorkflows === 'passed') return 'passed';
   return 'unknown';
 }
 
 function prState(pr = {}) {
   const checks = text(pr.checksStatus, 'unknown').toLowerCase();
-  if (pr.draft === true) return 'BUILDING';
   if (checks === 'failed') return 'BLOCKED';
+  // A draft is source preparation, not evidence of a live worker heartbeat.
+  if (pr.draft === true) return 'VERIFYING';
   if (checks === 'pending') return 'VERIFYING';
   if (checks === 'passed' && /approval/i.test(text(pr.mergeReadiness))) return 'APPROVAL_REQUIRED';
   if (checks === 'passed') return 'VERIFYING';
@@ -211,6 +217,11 @@ export function overlayGoalDashboardWithLivePortfolio(input = {}) {
   const baseProjection = input.baseProjection || {};
   const liveProjection = input.liveProjection || {};
   const githubTelemetry = liveProjection.githubTelemetry || {};
+  const observedGithubPrCount = githubTelemetry.adapterAvailable === true
+    ? list(githubTelemetry.pullRequests).length : 0;
+  const totalOpenPullRequestCount = Number.isSafeInteger(githubTelemetry.totalOpenPullRequestCount)
+    && githubTelemetry.totalOpenPullRequestCount >= observedGithubPrCount
+    ? githubTelemetry.totalOpenPullRequestCount : null;
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : 60 * 60 * 1000;
   const githubFreshness = githubTelemetry.adapterAvailable === true
@@ -273,7 +284,13 @@ export function overlayGoalDashboardWithLivePortfolio(input = {}) {
     sourceTruth: dynamicTruth,
     goals,
     liveGithubPrCount: githubTelemetry.adapterAvailable === true
-      ? (githubTelemetry.totalOpenPullRequestCount ?? list(githubTelemetry.pullRequests).length) : 0,
+      // The REST adapter observes at most one 100-row page. All existing
+      // consumers display this value as text; a saturated page is a lower
+      // bound until the independent repository total is available.
+      ? (totalOpenPullRequestCount ?? (observedGithubPrCount >= 100 ? `${observedGithubPrCount}+` : observedGithubPrCount)) : 0,
+    observedGithubPrCount,
+    githubPrCountIsExact: githubTelemetry.adapterAvailable === true
+      && (totalOpenPullRequestCount !== null || observedGithubPrCount < 100),
     renderedGithubPrCount: githubCards.length,
     liveWorkspaceGoalCount: workspaceCards.length,
     operatorAttention,

@@ -1,8 +1,10 @@
 import { requestStephanosBackend } from './backendClient.mjs';
+import { throwIfWorkspaceReadAborted } from './workspaceReadCancellation.mjs';
 
 export const WORKSPACE_HYDRATION_SCHEMA_V1 = 'stephanos.workspace-hydration.v1';
 export const WORKSPACE_HYDRATION_REQUEST_MESSAGE_V1 = 'stephanos:workspace-hydration:request:v1';
 export const WORKSPACE_HYDRATION_RESPONSE_MESSAGE_V1 = 'stephanos:workspace-hydration:response:v1';
+export const WORKSPACE_HYDRATION_CANCEL_MESSAGE_V1 = 'stephanos:workspace-hydration:cancel:v1';
 export const WORKSPACE_HYDRATION_AVAILABLE_MESSAGE_V1 = 'stephanos:workspace-hydration:available:v1';
 
 const DEFAULT_TIMEOUT_MS = 10000;
@@ -47,7 +49,9 @@ export async function hydrateWorkspaceFromBackend({
   fetchImpl = globalThis?.fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   diagnostics,
+  signal,
 } = {}) {
+  throwIfWorkspaceReadAborted(signal);
   const normalizedWorkspaceId = normalizeWorkspaceId(workspaceId);
   if (!normalizedWorkspaceId) {
     const error = new Error('workspaceId is required for workspace hydration.');
@@ -62,6 +66,7 @@ export async function hydrateWorkspaceFromBackend({
     fetchImpl,
     timeoutMs,
     diagnostics,
+    signal,
   });
 
   return result.json;
@@ -100,8 +105,15 @@ export function installWorkspaceHydrationParentBridge({
     return Object.freeze({ installed: false, dispose() {} });
   }
 
+  const pending = new Map();
   const handler = async (event) => {
     const message = event?.data;
+    if (message?.type === WORKSPACE_HYDRATION_CANCEL_MESSAGE_V1) {
+      const owned = pending.get(text(message.requestId));
+      // An unmounted frame may cancel only its own previously admitted request.
+      if (event.origin === text(windowRef.location?.origin) && owned?.source === event.source) owned.controller.abort();
+      return;
+    }
     if (!message || message.type !== WORKSPACE_HYDRATION_REQUEST_MESSAGE_V1) return;
 
     const iframe = getActiveIframe?.();
@@ -135,6 +147,10 @@ export function installWorkspaceHydrationParentBridge({
       return;
     }
 
+    const requestId = text(message.requestId);
+    if (!requestId || pending.has(requestId)) return;
+    const owned = { source: event.source, controller: new AbortController() };
+    pending.set(requestId, owned);
     try {
       const payload = await hydrateWorkspaceFromBackend({
         workspaceId: effectiveWorkspaceId,
@@ -142,7 +158,9 @@ export function installWorkspaceHydrationParentBridge({
         runtimeContext,
         fetchImpl,
         timeoutMs,
+        signal: owned.controller.signal,
       });
+      throwIfWorkspaceReadAborted(owned.controller.signal);
       postHydrationResponse({
         targetWindow: event.source,
         targetOrigin: shellOrigin,
@@ -152,6 +170,7 @@ export function installWorkspaceHydrationParentBridge({
         payload,
       });
     } catch (error) {
+      if (owned.controller.signal.aborted) return;
       postHydrationResponse({
         targetWindow: event.source,
         targetOrigin: shellOrigin,
@@ -160,7 +179,7 @@ export function installWorkspaceHydrationParentBridge({
         ok: false,
         error: text(error?.code || error?.message, 'workspace-hydration-failed'),
       });
-    }
+    } finally { if (pending.get(requestId) === owned) pending.delete(requestId); }
   };
 
   windowRef.addEventListener('message', handler);
@@ -168,6 +187,8 @@ export function installWorkspaceHydrationParentBridge({
     installed: true,
     dispose() {
       windowRef.removeEventListener?.('message', handler);
+      for (const owned of pending.values()) owned.controller.abort();
+      pending.clear();
     },
   });
 }
@@ -202,8 +223,10 @@ function requestViaParent({
   datasets = [],
   windowRef,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal,
 } = {}) {
   return new Promise((resolve, reject) => {
+    throwIfWorkspaceReadAborted(signal);
     const requestId = `hydration-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     const origin = text(windowRef?.location?.origin);
     if (!origin || !sameOriginFrame(windowRef)) {
@@ -213,19 +236,29 @@ function requestViaParent({
       return;
     }
 
-    const timer = windowRef.setTimeout(() => {
+    let timer;
+    function cleanup() {
+      windowRef.clearTimeout(timer);
       windowRef.removeEventListener('message', onMessage);
+      signal?.removeEventListener('abort', onAbort);
+    }
+    function cancel(error) {
+      cleanup();
+      windowRef.parent.postMessage({ type: WORKSPACE_HYDRATION_CANCEL_MESSAGE_V1, requestId }, origin);
+      reject(error);
+    }
+    function onAbort() { cancel(signal.reason ?? new DOMException('Workspace read cancelled', 'AbortError')); }
+    timer = windowRef.setTimeout(() => {
       const error = new Error('workspace hydration parent bridge timed out.');
       error.code = 'workspace-hydration-parent-timeout';
-      reject(error);
+      cancel(error);
     }, timeoutMs);
 
     function onMessage(event) {
       const message = event?.data;
       if (event.source !== windowRef.parent || event.origin !== origin) return;
       if (message?.type !== WORKSPACE_HYDRATION_RESPONSE_MESSAGE_V1 || message?.requestId !== requestId) return;
-      windowRef.clearTimeout(timer);
-      windowRef.removeEventListener('message', onMessage);
+      cleanup();
       if (message.ok) {
         resolve(message.payload);
         return;
@@ -236,6 +269,7 @@ function requestViaParent({
     }
 
     windowRef.addEventListener('message', onMessage);
+    signal?.addEventListener('abort', onAbort, { once: true });
     windowRef.parent.postMessage({
       type: WORKSPACE_HYDRATION_REQUEST_MESSAGE_V1,
       schemaVersion: WORKSPACE_HYDRATION_SCHEMA_V1,
@@ -243,6 +277,7 @@ function requestViaParent({
       workspaceId: normalizeWorkspaceId(workspaceId),
       datasets: normalizeDatasets(datasets),
     }, origin);
+    if (signal?.aborted) onAbort();
   });
 }
 
@@ -255,7 +290,9 @@ export async function requestWorkspaceHydration({
   windowRef = globalThis?.window,
   preferParentBridge = true,
   diagnostics,
+  signal,
 } = {}) {
+  throwIfWorkspaceReadAborted(signal);
   const normalizedWorkspaceId = normalizeWorkspaceId(workspaceId);
   if (!normalizedWorkspaceId) {
     const error = new Error('workspaceId is required for workspace hydration.');
@@ -270,8 +307,10 @@ export async function requestWorkspaceHydration({
         datasets,
         windowRef,
         timeoutMs,
+        signal,
       });
     } catch (error) {
+      throwIfWorkspaceReadAborted(signal);
       diagnostics?.({
         ok: false,
         transport: 'parent-bridge',
@@ -288,6 +327,7 @@ export async function requestWorkspaceHydration({
     fetchImpl,
     timeoutMs,
     diagnostics,
+    signal,
   });
 }
 

@@ -1,5 +1,6 @@
 import {
   AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
+  projectElasticMissionPhaseBindingV1,
 } from './programmeAuthorityV1.mjs';
 import {
   SHARED_WORKSPACE_RECORD_KINDS,
@@ -40,8 +41,11 @@ import {
 } from '../../stephanos-server/services/flywheelLearningGoalBridgeService.js';
 import {
   buildMissionWorkerAction,
+  createMissionWorkerActionGrantV1,
   projectMissionWorkerActionState,
 } from './missionOrchestratorWorker.mjs';
+
+import { readMissionRecord } from '../../stephanos-server/services/missionOrchestratorStore.js';
 
 export const DURABLE_FLYWHEEL_CONTROLLER_SCHEMA = 'stephanos.durable-flywheel-controller.vnext';
 export const DURABLE_FLYWHEEL_CYCLE_RECEIPT_SCHEMA = 'stephanos.durable-flywheel-cycle-receipt.vnext';
@@ -297,7 +301,38 @@ function buildMissionEngineeringMemoryPack(projection = {}, mission = {}) {
   }
 }
 
-function createExactWorkerActionGrant(
+async function exactPublishedReviewGrantProjection(projection, readCurrentMission, options) {
+  const lane = projection?.lane;
+  const lease = projection?.mutationLease;
+  const binding = lane?.elasticMissionPhaseBinding;
+  if (projection?.status !== 'IDLE' || lane?.valid !== true || lane?.active !== false
+      || lane?.reviewPending !== true || lane?.status !== 'REVIEW_PENDING'
+      || projection?.criticalBacklog?.activeMission
+      || binding?.valid !== true || binding?.reviewOnly !== true
+      || binding?.phase !== 'CHECK_PULL_REQUEST'
+      || !/^critical-[1-9][0-9]*-elastic-goal$/.test(text(binding?.missionId))
+      || lane?.mutationLeaseIdentity?.active !== true || lane?.mutationLeaseIdentity?.stale !== false
+      || lane?.mutationLeaseIdentity?.leaseId !== lease?.leaseId
+      || lease?.ownerId !== 'mission-worker'
+      || lease?.repository !== lane.repository || lease?.branch !== lane.branch
+      || lease?.headSha !== lane.headSha || lease?.prNumber !== lane.prNumber
+      || lease?.issueNumber !== lane.issueNumber || binding.issueNumber !== lane.issueNumber)
+    return null;
+  let mission;
+  try { mission = (await readCurrentMission(binding.missionId, { env: options.env }))?.state; }
+  catch { return null; }
+  const currentBinding = projectElasticMissionPhaseBindingV1(lease, [mission]);
+  if (!currentBinding.valid || !currentBinding.reviewOnly
+      || currentBinding.missionId !== binding.missionId || currentBinding.revision !== binding.revision
+      || mission?.continuity?.parkingStatus !== 'ACTIVE' || mission?.cancelled === true
+      || mission?.dispatch?.status === 'running' || mission?.storeMetadata?.originalSourceAttemptFence)
+    return null;
+  // A projection adapter for one exact read-only action; it never creates or
+  // replaces the legacy mission slot, the persisted owner, or the source lease.
+  return { ...projection, criticalBacklog: { ...projection.criticalBacklog, activeMission: mission } };
+}
+
+export function createExactWorkerActionGrant(
   projection = {},
   sourceRevision = '',
   capacityRouting = null,
@@ -338,7 +373,7 @@ function createExactWorkerActionGrant(
   const identity = resolveMissionWorkerGrantIdentity(actionState, projectionIdentity(projection));
   if (!identity?.laneId || !identity?.repository || !identity?.issueNumber || !identity?.branch) return null;
   const engineeringMemoryPack = buildMissionEngineeringMemoryPack(projection, activeMission);
-  return freeze({
+  return freeze(createMissionWorkerActionGrantV1({
     schemaVersion: 'stephanos.mission-worker-action-grant.v1',
     grantId: `grant-${actionId}`.slice(0, 80),
     controllerId: DURABLE_FLYWHEEL_CONTROLLER_ID,
@@ -350,6 +385,7 @@ function createExactWorkerActionGrant(
     actionKind: text(action.actionKind),
     adapter,
     operation: text(action.operation),
+    providerRouteIntent: text(actionState.providerRouteIntent, 'AUTO').toUpperCase(),
     capacityRoute: text(action.capacityRoute),
     capacityReceiptId: text(action.capacityReceiptId) || null,
     capacityProofRefs: freeze(list(action.capacityProofRefs)),
@@ -365,7 +401,7 @@ function createExactWorkerActionGrant(
     boundedActionCount: 1,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
-  });
+  }));
 }
 
 export const CONTROLLER_LIVENESS_DECISION_SCHEMA = 'stephanos.controller-liveness-decision.v1';
@@ -900,6 +936,7 @@ function productionMachinery(overrides = {}) {
           growthStage: 'SEEDED',
           finalVerdict: 'STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_TEST_SEAM',
         })),
+    readMissionRecord: overrides.readMissionRecord ?? readMissionRecord,
     loadAuthoritativeProjection: overrides.loadAuthoritativeProjection ?? readAuthoritativeProgrammeProjection,
     closeReadyGoal: overrides.closeReadyGoal ?? closeCanonicalGoalFromProgrammeProjection,
     finalizeTerminalLane: overrides.finalizeTerminalLane ?? finalizeTerminalImplementationLane,
@@ -940,7 +977,7 @@ function shouldAttemptOrphanRecovery(projection = {}) {
 
 export async function runDurableFlywheelStartupCycle(machinery = {}, options = {}) {
   const deps = productionMachinery(machinery);
-  const nowUtc = safeNow(options.nowUtc) || new Date().toISOString();
+  let nowUtc = safeNow(options.nowUtc) || new Date().toISOString();
   const env = options.env ?? process.env;
   const sourceRevision = sha(options.sourceRevision ?? env.STEPHANOS_MISSION_WORKER_HEAD_SHA);
   const cycleReceiptId = receiptId(nowUtc);
@@ -1081,7 +1118,25 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     });
   }
 
-  const loadProjection = requiredFunction(deps.loadAuthoritativeProjection, 'loadAuthoritativeProjection');
+  // Preparation may outlive the skew window. Bookkeeping time is not a live
+  // authority observation override; explicit deterministic snapshots stay fixed.
+  if (options.nowUtc === undefined) {
+    nowUtc = new Date().toISOString();
+    serviceOptions.nowUtc = nowUtc;
+    const refreshedHeartbeat = await publishHeartbeat(heartbeatInput({
+      state: 'RECONCILING', sourceRevision, nowUtc,
+    }), serviceOptions);
+    if (refreshedHeartbeat?.ok !== true) {
+      const result = holdResult('controller-heartbeat:observation-refresh-failed', { observedAtUtc: nowUtc, sourceRevision });
+      const receipt = createCycleReceipt(result, null, nowUtc);
+      const publication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
+      return freeze({ ...result, heartbeatPublication: refreshedHeartbeat, cycleReceipt: receipt, receiptPublication: publication });
+    }
+  }
+  const readProjection = requiredFunction(deps.loadAuthoritativeProjection, 'loadAuthoritativeProjection');
+  const loadProjection = settings => readProjection({
+    ...settings, nowUtc: options.nowUtc === undefined ? undefined : settings.nowUtc,
+  });
   let transitionAuthorityReceipt = null;
   let transitionAuthorityReceiptPublication = null;
   let transitionAuthorityHeartbeatPublication = null;
@@ -1306,6 +1361,35 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
         activeLane: projection.lane,
       });
     }
+  } else if (result.status === 'IDLE' && projection?.lane?.reviewPending === true) {
+    // A published elastic lane is deliberately not material ACTIVE work.
+    // Re-read its exact lease-bound mission and allow only the existing PR
+    // inspection adapter, without waiting for a legacy backlog mission.
+    const grantProjection = await exactPublishedReviewGrantProjection(
+      projection, deps.readMissionRecord, serviceOptions,
+    );
+    const blockDecision = controllerLivenessBlockDecision(options);
+    let workerActionGrant = grantProjection
+      ? createExactWorkerActionGrant(grantProjection, sourceRevision, null, deps.resolveCapacityCandidates)
+      : null;
+    if (workerActionGrant?.adapter !== 'openclaw-github-readonly'
+        || workerActionGrant?.actionKind !== 'github-inspection'
+        || workerActionGrant?.operation !== 'check-pr'
+        || list(blockDecision?.blockedSurfaceIds).includes('openclaw-github-readonly'))
+      workerActionGrant = null;
+    controllerLivenessDecision = controllerLivenessDecisionForAdjudicatedGrant(
+      options, blockDecision, workerActionGrant,
+    );
+    result = workerActionGrant ? freeze({
+      ...result, action: 'INSPECT_EXISTING_ELASTIC_REVIEW',
+      allowWorkerTick: true, boundedMutationSteps: 1,
+      workerActionGrant, controllerLivenessDecision,
+      nextAction: 'Inspect the exact published PR through the existing read-only worker adapter.',
+    }) : freeze({
+      ...holdResult('mission-worker:exact-review-action-grant-unavailable', {
+        observedAtUtc: nowUtc, sourceRevision, activeLane: projection.lane,
+      }), controllerLivenessDecision,
+    });
   } else if (result.status === 'ACTIVE') {
     const capacityRouting = await requiredFunction(
       deps.loadCapacityRoutingInput,

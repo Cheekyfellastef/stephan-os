@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { answerLiveTelemetryQuestion, classifyGithubNotification, normalizeGithubTelemetry, readGithubTelemetry } from '../stephanos-server/services/githubTelemetryService.js';
 import { resolveGithubAuth } from '../stephanos-server/services/githubAuthResolver.js';
-import { fetchGithubPrEvidence } from '../stephanos-server/services/githubPrEvidenceService.js';
+import { fetchGithubPrEvidence, fetchGithubGoalIssues } from '../stephanos-server/services/githubPrEvidenceService.js';
 import { buildLiveGoalProjection } from '../stephanos-server/services/liveGoalProjectionService.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -163,7 +163,7 @@ test('GitHub telemetry reuses the successful gh CLI fallback after a primary 403
   assert.equal(first.status, 'live');
   assert.equal(first.authAuthority, 'gh-cli');
   assert.equal(second.status, 'live');
-  assert.equal(calls.length, 6);
+  assert.equal(calls.length, 4, 'one denied serial read, then the three successful fallback reads; the next refresh uses cache');
 });
 
 test('GitHub telemetry cache is partitioned by non-secret credential fingerprint', async () => {
@@ -181,6 +181,97 @@ test('GitHub telemetry cache is partitioned by non-secret credential fingerprint
   assert.equal(calls.length, 6);
 });
 
+test('concurrent Goal Dashboard refreshes share a single GitHub request flight', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    if (url.includes('/pulls?')) return okJson([{ number: 22, title: 'Concurrent PR' }]);
+    if (url.includes('/actions/runs')) return okJson({ workflow_runs: [] });
+    if (url.includes('/notifications')) return okJson([]);
+    throw new Error('unexpected request');
+  };
+  const args = {
+    env: { GITHUB_REPOSITORY: 'anti-hammer-test-owner/single-flight-repo', GITHUB_TOKEN: 'single-flight-token' },
+    secretStoreToken: '', fetchImpl, cacheEnabled: true,
+  };
+  const [one, two, three] = await Promise.all([
+    readGithubTelemetry(args), readGithubTelemetry(args), readGithubTelemetry(args),
+  ]);
+  assert.equal(one.status, 'live');
+  assert.equal(two.status, 'live');
+  assert.equal(three.status, 'live');
+  assert.equal(calls.length, 3, 'one 3-endpoint sequence across three concurrent consumers');
+  assert.equal(one.pullRequests.length, 1);
+});
+
+test('rate-limited telemetry shares a durable HOLD with other Battle Bridge workers and skips fallback', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-telemetry-rate-limit-'));
+  let calls = 0;
+  let fallbackAttempts = 0;
+  const repo = 'anti-hammer-test-owner/anti-hammer-test-repo';
+  const fetchImpl = async () => {
+    calls++;
+    return {
+      ok: false, status: 403,
+      headers: { get: (name) => name === 'x-ratelimit-remaining' ? '0'
+        : name === 'retry-after' ? '120' : null },
+      json: async () => ({ message: 'API rate limit exceeded for user ID 123' }),
+    };
+  };
+  try {
+    const args = {
+      env: { GITHUB_REPOSITORY: repo, GITHUB_TOKEN: 'private-telemetry-token' },
+      secretStoreToken: '', workspaceRoot, fetchImpl,
+      ghTokenProvider: async () => { fallbackAttempts++; return 'unused-gh-token'; },
+    };
+    const first = await readGithubTelemetry(args);
+    const repeated = await readGithubTelemetry(args);
+    assert.equal(first.status, 'adapter_error');
+    assert.deepEqual(first.blockers, ['github_rate_limit_backoff']);
+    assert.equal(first.rateLimitHold.reasonCode, 'GITHUB_RATE_LIMIT_BACKOFF');
+    assert.equal(repeated.rateLimitHold.retryAfterUtc, first.rateLimitHold.retryAfterUtc);
+    assert.equal(calls, 1, 'stop at the first rate-limited endpoint; do not launch the other two');
+    assert.equal(fallbackAttempts, 0);
+    assert.equal(first.adapterAvailable, false);
+    assert.equal(first.pullRequests.length, 0);
+    const shared = readBrokeredGithubRateLimitHold({ repository: repo, workspaceRoot });
+    assert.equal(shared?.source, 'SHARED_GITHUB_RATE_LIMIT_HOLD');
+    const pr = await fetchGithubPrEvidence({
+      owner: 'anti-hammer-test-owner', repo: 'anti-hammer-test-repo', prNumber: 42,
+      auth: { token: 'other-token', configured: true, authority: 'environment' }, workspaceRoot,
+      fetchImpl: async () => { throw new Error('must not make a PR API request during shared HOLD'); },
+    });
+    assert.equal(pr.reasonCode, 'GITHUB_PR_RATE_LIMIT_BACKOFF');
+    assert.equal(JSON.stringify([first, repeated, pr]).includes('private-telemetry-token'), false);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('telemetry 429 Retry-After records the shared HOLD without credential fallback', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-telemetry-429-'));
+  let fallbackAttempts = 0;
+  try {
+    const result = await readGithubTelemetry({
+      env: { GITHUB_REPOSITORY: 'anti-hammer-test-owner/telemetry-429-repo', GITHUB_TOKEN: 'token' },
+      secretStoreToken: '', workspaceRoot,
+      ghTokenProvider: async () => { fallbackAttempts++; return 'other-token'; },
+      fetchImpl: async () => ({
+        ok: false, status: 429,
+        headers: { get: (name) => name === 'retry-after' ? '90' : null },
+        json: async () => ({ message: 'Too many requests' }),
+      }),
+    });
+    const delay = Date.parse(result.rateLimitHold.retryAfterUtc) - Date.now();
+    assert.equal(result.status, 'adapter_error');
+    assert.ok(delay > 75_000 && delay < 100_000);
+    assert.equal(fallbackAttempts, 0);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
 test('GitHub telemetry fails closed within a bounded time when the optional adapter stalls', async () => {
   const startedAt = Date.now();
   const telemetry = await readGithubTelemetry({
@@ -194,6 +285,87 @@ test('GitHub telemetry fails closed within a bounded time when the optional adap
   assert.match(telemetry.blockers[0], /GitHub telemetry request timed out/);
   assert.equal(Date.now() - startedAt < 500, true);
   assert.equal(JSON.stringify(telemetry).includes('bounded-token'), false);
+});
+
+test('paginated goal estate drains already-started reads after the first 403 and does not start another scan', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-goal-estate-403-'));
+  let calls = 0;
+  let fallbackCalls = 0;
+  const owner = 'anti-hammer-test-owner';
+  const repo = 'goal-estate-repo';
+  const fetchImpl = async (url) => {
+    calls++;
+    if (url.includes('/issues?')) return okJson([
+      {
+        number: 2954, state: 'open', title: 'Observed owner goal',
+        labels: [{ name: 'goal' }], user: { login: owner },
+        author_association: 'OWNER', comments: 1, body: 'durable goal',
+      },
+      {
+        number: 2955, state: 'open', title: 'Another owner goal',
+        labels: [{ name: 'goal' }], user: { login: owner },
+        author_association: 'OWNER', comments: 1, body: 'durable goal',
+      },
+    ]);
+    if (url.includes('/events?')) return {
+      ok: false, status: 403,
+      headers: { get: (name) => name === 'retry-after' ? '120' : null },
+      json: async () => ({ message: 'You have exceeded a secondary rate limit' }),
+    };
+    throw new Error('must not inspect more goal/comment pages after quota HOLD');
+  };
+  try {
+    const args = {
+      owner, repo, auth: { token: 'private-goal-token', authority: 'environment', configured: true },
+      fetchImpl, workspaceRoot, cacheEnabled: false,
+      ghTokenProvider: async () => { fallbackCalls++; return 'unused-gh-token'; },
+    };
+    const first = await fetchGithubGoalIssues(args);
+    assert.equal(first.status, 'error');
+    assert.equal(first.reasonCode, 'GITHUB_GOAL_ESTATE_RATE_LIMIT_BACKOFF');
+    assert.equal(first.issues.length, 0);
+    assert.equal(first.discoveredIssues.length, 0);
+    assert.equal(calls, 3, 'one list and two already-started event reads are drained, then stop');
+    assert.equal(fallbackCalls, 0);
+    const shared = readBrokeredGithubRateLimitHold({ repository: `${owner}/${repo}`, workspaceRoot });
+    assert.equal(shared?.source, 'SHARED_GITHUB_RATE_LIMIT_HOLD');
+    const second = await fetchGithubGoalIssues(args);
+    assert.equal(second.reasonCode, 'GITHUB_GOAL_ESTATE_RATE_LIMIT_BACKOFF');
+    assert.equal(calls, 3, 'no new upstream call during shared hold');
+    assert.equal(JSON.stringify([first, second]).includes('private-goal-token'), false);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('secondary-limit 403 with nonzero core remaining holds both telemetry and PR evidence', async () => {
+  const secondaryLimit = async () => ({
+    ok: false, status: 403,
+    headers: { get: (name) => name === 'x-ratelimit-remaining' ? '3200' : null },
+    json: async () => ({ message: 'You have exceeded a secondary rate limit. Please wait a few minutes.' }),
+  });
+  let fallbackCalls = 0;
+  let telemetryCalls = 0;
+  const result = await readGithubTelemetry({
+    env: { GITHUB_REPOSITORY: 'anti-hammer-test-owner/secondary-limit-repo', GITHUB_TOKEN: 'secondary-token' },
+    secretStoreToken: '',
+    ghTokenProvider: async () => { fallbackCalls++; return 'unused-token'; },
+    fetchImpl: async () => { telemetryCalls++; return secondaryLimit(); },
+  });
+  assert.equal(result.status, 'adapter_error');
+  assert.deepEqual(result.blockers, ['github_rate_limit_backoff']);
+  assert.equal(telemetryCalls, 1);
+  assert.equal(fallbackCalls, 0);
+  let prCalls = 0;
+  const pr = await fetchGithubPrEvidence({
+    owner: 'anti-hammer-test-owner', repo: 'secondary-limit-pr-repo', prNumber: 12,
+    auth: { token: 'pr-token', configured: true, authority: 'environment' },
+    ghTokenProvider: async () => { fallbackCalls++; return 'unused-token'; },
+    fetchImpl: async () => { prCalls++; return secondaryLimit(); },
+  });
+  assert.equal(pr.reasonCode, 'GITHUB_PR_RATE_LIMIT_BACKOFF');
+  assert.equal(prCalls, 1);
+  assert.equal(fallbackCalls, 0);
 });
 
 test('PR evidence uses shared resolver authority and gh CLI fallback after explicit 403', async () => {

@@ -25,14 +25,15 @@ import {
 import { readVerifiedStephanosNativeRoutingCandidate } from '../../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
 import { readSourceMutationLease } from './programmeAuthorityService.js';
 
+import { resolveStephanosNativeFocusedSourceFile, parseStephanosNativeFocusedTestCommand,
+  STEPHANOS_NATIVE_VERIFY_COMMAND, nativeVerifyPackageContractMatches } from '../../shared/agents/stephanosNativeFocusedTaskV1.mjs';
+export { parseStephanosNativeFocusedTestCommand } from '../../shared/agents/stephanosNativeFocusedTaskV1.mjs';
+
 export const STEPHANOS_NATIVE_MISSION_EXECUTOR_SCHEMA = 'stephanos.native-mission-executor.v1';
 export const STEPHANOS_NATIVE_FOCUSED_TASK_CLASS = 'FOCUSED_REPAIR';
 
 const SHA40 = /^[0-9a-f]{40}$/;
 const SAFE_MODEL = /^[a-z0-9][a-z0-9._:@/-]{2,239}$/i;
-const SAFE_SOURCE_PATH = /^(?!\/)(?![A-Za-z]:\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._@+ -]+(?:\/[A-Za-z0-9._@+ -]+)*$/;
-const FORBIDDEN_PATH = /(^|\/)(?:\.git|node_modules|runtime|runtime-data|stephanos-server\/data)(?:\/|$)|(^|\/)\.env(?:\.|$)|\.(?:pem|pfx|key)$/i;
-const DIRECT_NODE_TEST = /^node --test ([A-Za-z0-9._/@+-]+(?: [A-Za-z0-9._/@+-]+)*)$/;
 const MAX_SOURCE_BYTES = 256 * 1024;
 const MAX_PROMPT_BYTES = 768 * 1024;
 
@@ -43,11 +44,6 @@ function nowUtc(options = {}) { return options.now instanceof Date ? options.now
 function within(parent, child) {
   const rel = relative(parent, child);
   return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
-}
-function safeSourcePath(value) {
-  const normalized = text(value).replace(/\\/g, '/').replace(/^\.\/+/, '');
-  if (!SAFE_SOURCE_PATH.test(normalized) || FORBIDDEN_PATH.test(normalized) || /[*?\[\]]/.test(normalized)) return '';
-  return normalized;
 }
 function defaultRun(executable, args, options = {}) {
   return spawnSync(executable, args, {
@@ -63,29 +59,6 @@ function gitText(run, worktreePath, args, env, label) {
   const result = run('git.exe', ['-C', worktreePath, ...args], { cwd: worktreePath, env });
   if (!successful(result)) throw new Error(`${label}:${text(result?.error?.message || result?.stderr || result?.status)}`);
   return text(result.stdout);
-}
-
-export function parseStephanosNativeFocusedTestCommand(command) {
-  const normalized = text(command);
-  const matched = DIRECT_NODE_TEST.exec(normalized);
-  if (!matched) return frozen({ ok: false, reason: 'STEPHANOS_NATIVE_TEST_COMMAND_NOT_ALLOWLISTED', command: normalized, args: frozen([]), testId: '' });
-  const paths = matched[1].split(' ').map(safeSourcePath).filter(Boolean);
-  if (!paths.length || paths.length !== matched[1].split(' ').length) {
-    return frozen({ ok: false, reason: 'STEPHANOS_NATIVE_TEST_PATH_INVALID', command: normalized, args: frozen([]), testId: '' });
-  }
-  return frozen({
-    ok: true,
-    reason: 'STEPHANOS_NATIVE_TEST_COMMAND_ALLOWED',
-    command: normalized,
-    args: frozen(['--test', ...paths]),
-    testId: `test-${sha256(normalized).slice(0, 24)}`,
-  });
-}
-
-function exactAllowedFile(action = {}) {
-  const values = Array.isArray(action.allowedFiles) ? action.allowedFiles.map(safeSourcePath).filter(Boolean) : [];
-  if (values.length !== 1 || values.length !== action.allowedFiles?.length) return '';
-  return values[0];
 }
 
 function focusedTests(action = {}) {
@@ -266,7 +239,7 @@ export async function executeStephanosNativeAction(action, claim, options = {}) 
   const identity = executionBinding(claim);
   if (!identity) throw new Error('STEPHANOS_NATIVE_EXECUTION_BINDING_INVALID');
   const worktreePath = resolve(text(action.worktreePath));
-  const allowedFile = exactAllowedFile(action);
+  const allowedFile = resolveStephanosNativeFocusedSourceFile(action.allowedFiles);
   const tests = focusedTests(action);
   if (!text(action.repository) || !text(action.branch) || !text(action.missionId) || !text(action.actionId)
     || !worktreePath || !allowedFile || !tests) throw new Error('STEPHANOS_NATIVE_ACTION_IDENTITY_INVALID');
@@ -308,6 +281,14 @@ export async function executeStephanosNativeAction(action, claim, options = {}) 
   const exactBranch = gitText(run, worktreePath, ['rev-parse', '--abbrev-ref', 'HEAD'], env, 'STEPHANOS_NATIVE_GIT_BRANCH');
   const dirty = gitText(run, worktreePath, ['status', '--porcelain'], env, 'STEPHANOS_NATIVE_GIT_STATUS');
   if (exactHead !== identity.sourceHead || exactBranch !== action.branch || dirty) throw new Error('STEPHANOS_NATIVE_WORKTREE_NOT_EXACT_CLEAN_HEAD');
+
+  if (tests.some(test => test.command === STEPHANOS_NATIVE_VERIFY_COMMAND)) {
+    let packageJson;
+    try { packageJson = JSON.parse(await readFile(resolve(worktreePath, 'package.json'), 'utf8')); }
+    catch { throw new Error('STEPHANOS_NATIVE_VERIFY_CONTRACT_INVALID'); }
+    if (!nativeVerifyPackageContractMatches(packageJson, allowedFile))
+      throw new Error('STEPHANOS_NATIVE_VERIFY_CONTRACT_INVALID');
+  }
 
   const absoluteFile = resolve(worktreePath, allowedFile);
   if (!within(worktreePath, absoluteFile)) throw new Error('STEPHANOS_NATIVE_SOURCE_PATH_ESCAPE_BLOCKED');

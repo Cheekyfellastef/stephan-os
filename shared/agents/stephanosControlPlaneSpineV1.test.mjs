@@ -34,7 +34,7 @@ test('control-plane spine only declares AWAKE with healthy dependencies and comp
       flywheelLastCycleFinishedAtUtc: '2026-10-04T10:30:00.000Z',
       refillStatus: 'READY',
       refillMaterialActionsSucceeded: 2,
-      refillSafeEligibleWorkRemaining: 1,
+      refillSafeEligibleWorkRemaining: 0,
       refillProvenSafeFreeLanes: 3,
       octopusBuildVerdict: 'BUILDING',
       octopusNeedsRepair: false,
@@ -43,6 +43,32 @@ test('control-plane spine only declares AWAKE with healthy dependencies and comp
   assert.equal(projected.wakeState, 'AWAKE');
   assert.equal(projected.awake, true);
   assert.equal(projected.repairRequired, false);
+  assert.equal(projected.safeEligibleWorkRemaining, 0);
+  assert.equal(projected.provenSafeFreeLanes, 3);
+});
+
+test('partly built work cannot conceal remaining safe tasks and free lanes', () => {
+  const projected = projectStephanosControlPlaneSpine({
+    coreState: healthyCore,
+    flywheelStatus: {
+      flywheelCycleRunning: false,
+      flywheelLastCycleFinishedAtUtc: '2026-10-20T14:00:00.000Z',
+      refillStatus: 'READY',
+      refillMaterialActionsSucceeded: 2,
+      refillSafeEligibleWorkRemaining: 4,
+      refillProvenSafeFreeLanes: 5,
+      octopusBuildVerdict: 'BUILDING',
+      octopusNeedsRepair: false,
+    },
+  });
+  assert.equal(projected.safeEligibleWorkRemaining, 4);
+  assert.equal(projected.provenSafeFreeLanes, 5);
+  assert.equal(projected.materialActionsLastCycle, 2);
+  assert.equal(projected.strandedCapacity, true);
+  assert.equal(projected.repairRequired, true);
+  assert.equal(projected.repairReason, 'SAFE_WORK_STRANDED_WITH_FREE_CAPACITY');
+  assert.equal(projected.wakeState, 'DEGRADED');
+  assert.equal(projected.awake, false);
 });
 
 test('control-plane spine degrades instead of narrating when a core dependency is unhealthy', () => {

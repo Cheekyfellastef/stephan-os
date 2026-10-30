@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+// Ensure the new public wake-truth regressions execute in hosted resilience CI.
+import '../shared/agents/controlTowerBuildBeaconFactsV1.test.mjs';
 import { readFile } from 'node:fs/promises';
 
 import {

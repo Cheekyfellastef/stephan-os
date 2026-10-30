@@ -9,10 +9,12 @@ import {
   DEFAULT_CRITICAL_BACKLOG,
   buildCriticalBacklogMissionInput,
   buildCriticalBacklogProjection,
+  projectElasticMissionExecutionObligation,
 } from '../../shared/agents/criticalBacklogConveyor.mjs';
 import { MAXIMUM_BUILD_LANES } from '../../shared/agents/elasticBuildCapacityV1.mjs';
 import {
   buildMissionWorkerAction,
+  createMissionWorkerActionGrantV1,
   projectMissionWorkerActionState,
 } from '../../shared/agents/missionOrchestratorWorker.mjs';
 import {
@@ -114,6 +116,7 @@ function elasticControllerProjection(admission = {}) {
   const mission = admission.selectedMission;
   const issueNumber = elasticIssueNumber(mission);
   if (!mission || !issueNumber) return null;
+  const executionObligation = projectElasticMissionExecutionObligation(admission);
   return Object.freeze({
     schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SCHEMA,
     validation: Object.freeze({ valid: true, errors: Object.freeze([]), finalVerdict: 'CRITICAL_BACKLOG_PASS' }),
@@ -126,10 +129,15 @@ function elasticControllerProjection(admission = {}) {
       mission,
     }),
     activeMission: mission,
+    executionObligation,
     completedItemIds: Object.freeze([]),
     remainingItemIds: Object.freeze([]),
     elasticMissionIds: Object.freeze((admission.elasticMissions || []).map((item) => text(item.missionId)).filter(Boolean)),
-    exactNextAction: `Advance scheduler-admitted elastic goal mission ${text(mission.missionId)} by one bounded Mission Worker action.`,
+    exactNextAction: executionObligation.state === 'OCCUPIED'
+      ? `Observe the existing external execution of ${text(mission.missionId)} and reconcile its authentic result; no new worker action is owed.`
+      : executionObligation.state === 'RUNNABLE'
+        ? `Advance scheduler-admitted elastic goal mission ${text(mission.missionId)} by one bounded Mission Worker action.`
+        : `Resolve incomplete execution-obligation evidence for ${text(mission.missionId)} before claiming worker readiness.`,
     oneActiveMissionEnforced: false,
     elasticGoalMissionsUseSchedulerCapacity: true,
     duplicateCodexDispatchAllowed: false,
@@ -226,7 +234,7 @@ function defaultExternalCapacityCandidates(mission, capacityRouting, sourceRevis
   ));
 }
 
-function exactElasticExternalGrant(mission, candidate, sourceRevision, now) {
+export function exactElasticExternalGrant(mission, candidate, sourceRevision, now) {
   if (!prePrElasticMission(mission) || !SHA_40.test(sourceRevision)) return null;
   const issueNumber = elasticIssueNumber(mission);
   const actionState = projectMissionWorkerActionState(mission, { now });
@@ -252,7 +260,7 @@ function exactElasticExternalGrant(mission, candidate, sourceRevision, now) {
   const actionId = text(action.actionId).toLowerCase();
   const branch = text(actionState.git?.branch || actionState.branch);
   if (!missionId || !actionId || !branch) return null;
-  return Object.freeze({
+  return createMissionWorkerActionGrantV1({
     schemaVersion: 'stephanos.mission-worker-action-grant.v1',
     grantId: `grant-${actionId}`.slice(0, 80),
     controllerId: 'durable-flywheel-controller',
@@ -666,7 +674,8 @@ export async function ensureCriticalBacklogMission({
     // in-flight work. Never remove a lease based on timeout alone.
     if (text(authoritative?.status).toUpperCase() === 'HOLD'
         && Array.isArray(authoritative?.blockers)
-        && authoritative.blockers.includes('lane:elastic-lease-expired-or-not-active')
+        && (authoritative.blockers.includes('lane:elastic-lease-expired-or-not-active')
+          || authoritative.blockers.includes('lane:elastic-mission-phase-binding-unproven'))
         && SHA_40.test(sourceRevision)) {
       const originalMissions = await listMissions({
         root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env,

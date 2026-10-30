@@ -1,5 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { runInNewContext } from 'node:vm';
+import {
+  buildSovereignCommanderRepairReport,
+  SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE,
+} from '../shared/agents/sovereignCommanderRepairReportV1.mjs';
 
 import {
   BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE,
@@ -16,6 +26,9 @@ import {
   readRecentMailboxComments,
   projectMailboxPulseFacts,
   projectSovereignRepairBeaconFacts,
+  projectSovereignRepairContinuity,
+  readSovereignRepairCycleTail,
+  mirrorBattleBridgeCompleteStateToSharedWorkspace,
 } from './battle-bridge-outbound-health-beacon.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -47,7 +60,7 @@ function commandComment({
       requestId,
       operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
       repository,
-      issueNumber: 2808,
+      issueNumber: 3149,
       branch: 'main',
       operatorApproval: 'operator-approved',
       expectedHead,
@@ -71,7 +84,7 @@ function receiptComment({
       requestId,
       operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
       repository: 'Cheekyfellastef/stephan-os',
-      issueNumber: 2808,
+      issueNumber: 3149,
       branch: 'main',
       expectedHead,
       state: 'ACCEPTED',
@@ -785,6 +798,173 @@ test('Sovereign repair proof is bounded and strips unsafe path-like material', (
   assert.equal(projected.secretMaterialIncluded, false);
 });
 
+const REPAIR_OBSERVED_AT = '2026-10-30T15:00:00.000Z';
+const REPAIR_NOW = new Date('2026-10-30T15:00:30.000Z');
+
+function qualifiedMaintenanceReport(repairOverrides = {}) {
+  return buildSovereignCommanderRepairReport({
+    cycleId: 'qualified-maintenance-beacon', completedAtUtc: REPAIR_OBSERVED_AT,
+    repair: {
+      scope: SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE, ok: true, blocker: '', sourceHead: HEAD,
+      maintenance: {
+        actionId: 'repair-goal-builder-flow', profile: 'MAINTENANCE_GOAL_BUILDER_V1',
+        operationOk: true, terminalProven: true,
+        terminalEvidenceSha256: 'b'.repeat(64), proofHash: 'c'.repeat(64),
+      },
+      steps: [{ actionId: 'repair-goal-builder-flow', ok: true,
+        finalVerdict: 'SOVEREIGN_QUALIFIED_MAINTENANCE_COMPLETED', blocker: '' }],
+      ...repairOverrides,
+    },
+  }).status;
+}
+
+test('actual qualified maintenance report reaches the public beacon with bounded evidence and no whole-system health', () => {
+  const report = qualifiedMaintenanceReport();
+  const withoutRepair = buildBattleBridgeOutboundBeacon({ sourceHead: HEAD, now: REPAIR_NOW });
+  const beacon = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD, now: REPAIR_NOW,
+    statusRecords: { sovereignRepair: {
+      ...report, rawLog: 'PRIVATE_NATIVE_LOG',
+      verification: { ...report.verification, privatePath: 'C:/private/native-receipt.json' },
+    } },
+  });
+  const facts = beacon.sovereignRepair;
+  assert.equal(facts.available, true);
+  assert.equal(facts.state, 'MAINTENANCE_COMPLETED');
+  assert.equal(facts.outcome, 'MAINTENANCE_COMPLETED');
+  assert.equal(facts.status, 'OBSERVED');
+  assert.equal(facts.trafficLight, 'AMBER');
+  assert.equal(facts.finalVerdict, 'SOVEREIGN_MAINTENANCE_PROOF_OBSERVED');
+  assert.equal(facts.blocker, '');
+  assert.equal(facts.exactHeadMatch, true);
+  assert.equal(facts.scope, SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE);
+  assert.equal(facts.sourceHead, HEAD);
+  assert.equal(facts.fullStephanosRepairProven, false);
+  assert.deepEqual(facts.actions, report.actions);
+  assert.deepEqual(facts.verification, report.verification);
+  assert.equal('awake' in facts.verification, false);
+  assert.equal(facts.verification.readiness, 'UNPROVEN');
+  assert.equal(facts.verification.runtimeQualificationGranted, false);
+  assert.deepEqual(beacon.telemetry, withoutRepair.telemetry);
+  assert.equal(beacon.completeStateAnswerable, withoutRepair.completeStateAnswerable);
+  const body = buildBattleBridgeOutboundBeaconBody(beacon);
+  assert.match(body, /MAINTENANCE_COMPLETED/);
+  assert.match(body, /QUALIFIED_GOAL_BUILDER_MAINTENANCE/);
+  assert.match(body, new RegExp('b'.repeat(64)));
+  assert.match(body, new RegExp('c'.repeat(64)));
+  assert.doesNotMatch(body, /PRIVATE_NATIVE_LOG|private\/native-receipt/);
+});
+
+test('actual blocked maintenance and prelaunch denial retain scope and faults without inventing source or terminal proof', () => {
+  for (const sourceHead of [HEAD, '']) {
+    const report = qualifiedMaintenanceReport({
+      ok: false, blocker: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD', sourceHead,
+      maintenance: undefined,
+      steps: [{ actionId: 'repair-goal-builder-flow', ok: false,
+        finalVerdict: 'SOVEREIGN_QUALIFIED_MAINTENANCE_BLOCKED',
+        blocker: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD' }],
+    });
+    const facts = projectSovereignRepairBeaconFacts(report, HEAD, REPAIR_NOW.getTime());
+    assert.equal(facts.available, true);
+    assert.equal(facts.outcome, 'BLOCKED');
+    assert.equal(facts.status, 'ATTENTION_REQUIRED');
+    assert.equal(facts.state, sourceHead ? 'BLOCKED' : 'UNPROVEN');
+    assert.equal(facts.trafficLight, sourceHead ? 'RED' : 'AMBER');
+    assert.equal(facts.exactHeadMatch, Boolean(sourceHead));
+    assert.equal(facts.scope, SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE);
+    assert.equal(facts.blocker, 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+    assert.equal(facts.sourceHead, sourceHead);
+    assert.deepEqual(facts.actions, report.actions);
+    assert.deepEqual(facts.verification, report.verification);
+    assert.equal(facts.verification.operationCompleted, false);
+    assert.equal(facts.verification.terminalEvidenceSha256, '');
+    assert.equal(facts.verification.proofHash, '');
+    assert.equal(facts.verification.runtimeQualificationGranted, false);
+  }
+});
+
+test('scoped report contract rejects malformed identities, missing scope and wider success claims', () => {
+  const report = qualifiedMaintenanceReport();
+  const verificationVariants = [
+    { sourceHead: 'd'.repeat(40) }, { sourceHead: [HEAD] }, { sourceHead: `${HEAD}extra` },
+    { maintenanceActionId: 'repair-stephanos' }, { maintenanceProfile: 'SOURCE_TASK_V1' },
+    { operationCompleted: false }, { operationCompleted: 'true' },
+    { readiness: 'READY' }, { fullStephanosRepairProven: true },
+    { runtimeQualificationGranted: true }, { runtimeQualificationGranted: 'false' },
+    { terminalEvidenceSha256: '' }, { terminalEvidenceSha256: 'private/path' },
+    { terminalEvidenceSha256: 'b'.repeat(65) }, { terminalEvidenceSha256: ['b'.repeat(64)] },
+    { proofHash: '' }, { proofHash: 'c'.repeat(63) }, { proofHash: 'c'.repeat(65) },
+  ];
+  const variants = [
+    { scope: undefined }, { scope: null }, { scope: 'ALL_STEPHANOS_REPAIRED' },
+    { outcome: 'HEALTHY', status: 'READY' }, { outcome: 'REPAIRED', status: 'READY' },
+    { status: 'READY' }, { status: 'ATTENTION_REQUIRED' },
+    { sourceHead: '' }, { sourceHead: [HEAD] }, { sourceHead: `${HEAD}extra` },
+    { sourceHead: `${HEAD}extra`, verification: { ...report.verification, sourceHead: `${HEAD}extra` } },
+    { fullStephanosRepairProven: true }, { fullStephanosRepairProven: undefined },
+    { arbitraryShellAllowed: true }, { sourceMutationAllowed: true }, { mergeAuthority: true },
+    { detectedFaults: ['UNRESOLVED_FAULT'] }, { actions: [] }, { actions: undefined }, { actions: [null] },
+    { actions: [{ ...report.actions[0], ok: false }] },
+    { actions: [{ ...report.actions[0], ok: 'true' }] },
+    { actions: [{ ...report.actions[0], blocker: 'UNRESOLVED_FAULT' }] },
+    { actions: [{ ...report.actions[0], blocker: ' ' }] },
+    { actions: [{ ...report.actions[0], blocker: undefined }] },
+    { actions: [{ ...report.actions[0], finalVerdict: 'STEPHANOS_ALL_HEALTHY' }] },
+    { actions: [{ ...report.actions[0], actionId: 'repair-stephanos' }] },
+    { verification: null },
+    ...verificationVariants.map(patch => ({ verification: { ...report.verification, ...patch } })),
+    { scope: undefined, fullStephanosRepairProven: undefined, outcome: 'HEALTHY', status: 'READY' },
+  ];
+  for (const patch of variants) {
+    const facts = projectSovereignRepairBeaconFacts({ ...report, ...patch }, HEAD, REPAIR_NOW.getTime());
+    assert.equal(facts.available, false, JSON.stringify(patch));
+    assert.equal(facts.blocker, 'SOVEREIGN_REPAIR_REPORT_INVALID', JSON.stringify(patch));
+    assert.notEqual(facts.trafficLight, 'GREEN');
+  }
+});
+
+test('stale, future-dated and other-head maintenance evidence remains visible without current proof', () => {
+  const report = qualifiedMaintenanceReport();
+  const variants = [
+    { record: { ...report, timestampUtc: '2026-10-30T14:50:00.000Z' }, expectedHead: HEAD, state: 'STALE' },
+    { record: { ...report, timestampUtc: '2026-10-30T15:10:00.000Z' }, expectedHead: HEAD, state: 'STALE' },
+    { record: report, expectedHead: 'd'.repeat(40), state: 'HEAD_MISMATCH' },
+    { record: report, expectedHead: `${HEAD}extra`, state: 'HEAD_MISMATCH' },
+    { record: report, expectedHead: [HEAD], state: 'HEAD_MISMATCH' },
+  ];
+  for (const variant of variants) {
+    const facts = projectSovereignRepairBeaconFacts(variant.record, variant.expectedHead, REPAIR_NOW.getTime());
+    assert.equal(facts.available, true);
+    assert.equal(facts.state, variant.state);
+    assert.equal(facts.trafficLight, 'AMBER');
+    assert.equal(facts.finalVerdict, 'SOVEREIGN_REPAIR_PROOF_UNPROVEN');
+    assert.equal(facts.scope, SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE);
+    assert.deepEqual(facts.verification, report.verification);
+    assert.ok(facts.blocker);
+  }
+});
+
+test('actual legacy report outcomes retain their health semantics and unknown heartbeat age', () => {
+  const cases = [
+    { repair: { ok: true }, outcome: 'HEALTHY', trafficLight: 'GREEN' },
+    { repair: { ok: true, steps: [{ actionId: 'caretaker', ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_RESTARTED' }] }, outcome: 'REPAIRED', trafficLight: 'GREEN' },
+    { repair: { ok: false }, outcome: 'NEEDS_REPAIR', trafficLight: 'RED' },
+    { repair: { ok: false, blocker: 'CORE_HEARTBEAT_UNPROVEN' }, outcome: 'BLOCKED', trafficLight: 'RED' },
+  ];
+  for (const fixture of cases) {
+    const report = buildSovereignCommanderRepairReport({
+      repair: { ...fixture.repair, sourceHead: HEAD }, cycleId: 'legacy-beacon',
+      completedAtUtc: REPAIR_OBSERVED_AT,
+    }).status;
+    const facts = projectSovereignRepairBeaconFacts(report, HEAD, REPAIR_NOW.getTime());
+    assert.equal(facts.available, true);
+    assert.equal(facts.outcome, fixture.outcome);
+    assert.equal(facts.trafficLight, fixture.trafficLight);
+    assert.equal(facts.verification.heartbeatAgeSeconds, null);
+    assert.equal('scope' in facts, false);
+  }
+});
+
 
 test('controller lane proof exposes bounded red physical and logical blockers without paths', () => {
   const projected = projectControllerLaneBeaconFacts({
@@ -1106,4 +1286,238 @@ test('beacon fails closed on materially future-dated core heartbeat', () => {
   assert.equal(record.autonomy.state, 'STALE');
   assert.equal(record.autonomy.ageMs, null);
   assert.equal(record.autonomy.blocker, 'CORE_STATUS_FUTURE_DATED');
+});
+
+function maintenanceCycle(id, completedAtUtc, digest = 'd', repairOverrides = {}) {
+  return buildSovereignCommanderRepairReport({
+    cycleId: id,
+    startedAtUtc: new Date(Date.parse(completedAtUtc) - 10_000).toISOString(),
+    completedAtUtc,
+    repair: {
+      scope: SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE, ok: true, blocker: '', sourceHead: HEAD,
+      maintenance: {
+        actionId: 'repair-goal-builder-flow', profile: 'MAINTENANCE_GOAL_BUILDER_V1',
+        operationOk: true, terminalProven: true,
+        terminalEvidenceSha256: digest.repeat(64), proofHash: 'c'.repeat(64),
+      },
+      steps: [{ actionId: 'repair-goal-builder-flow', ok: true,
+        finalVerdict: 'SOVEREIGN_QUALIFIED_MAINTENANCE_COMPLETED', blocker: '' }],
+      ...repairOverrides,
+    },
+  });
+}
+
+const CONTINUITY_NOW = Date.parse('2026-10-30T15:03:00.000Z');
+const PREVIOUS_CYCLE = maintenanceCycle('previous-cycle', '2026-10-30T15:01:00.000Z', 'd');
+const LATEST_CYCLE = maintenanceCycle('latest-cycle', '2026-10-30T15:02:00.000Z', 'e');
+
+function continuity(events = [PREVIOUS_CYCLE.event, LATEST_CYCLE.event], overrides = {}) {
+  return projectSovereignRepairContinuity({
+    currentRecord: LATEST_CYCLE.status, history: { readOk: true, events },
+    expectedHead: HEAD, nowMs: CONTINUITY_NOW, ...overrides,
+  });
+}
+
+test('two distinct qualified guardian completions are visible without claiming whole-system repair', () => {
+  const result = continuity();
+  assert.equal(result.state, 'REPEATED_MAINTENANCE_OBSERVED');
+  assert.equal(result.twoDistinctMaintenanceCompletionsObserved, true);
+  assert.deepEqual(result.cycles.map(cycle => cycle.cycleId), ['latest-cycle', 'previous-cycle']);
+  assert.equal(result.currentMatchesLatest, true);
+  assert.equal(result.fullStephanosRepairProven, false);
+  assert.equal(result.physicalWorkerPickupProven, false);
+  assert.equal(result.runtimeQualificationGranted, false);
+  assert.equal(result.sourceMutationAllowed, false);
+  const beacon = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD, now: new Date(CONTINUITY_NOW),
+    statusRecords: { sovereignRepair: LATEST_CYCLE.status },
+    sovereignRepairHistory: { readOk: true, events: [PREVIOUS_CYCLE.event, LATEST_CYCLE.event] },
+  });
+  assert.deepEqual(beacon.sovereignRepairContinuity, result);
+  assert.match(buildBattleBridgeOutboundBeaconBody(beacon), /REPEATED_MAINTENANCE_OBSERVED/);
+});
+
+test('duplicates, replayed terminal evidence and overlapping cycles never establish two completions', () => {
+  const duplicate = continuity([LATEST_CYCLE.event, LATEST_CYCLE.event]);
+  assert.equal(duplicate.distinctGuardianCyclesObserved, 1);
+  assert.equal(duplicate.twoDistinctMaintenanceCompletionsObserved, false);
+  const reused = maintenanceCycle('latest-cycle', '2026-10-30T15:02:00.000Z', 'd');
+  assert.equal(continuity([PREVIOUS_CYCLE.event, reused.event], {
+    currentRecord: reused.status,
+  }).twoDistinctMaintenanceCompletionsObserved, false);
+  const overlapping = { ...LATEST_CYCLE.event, cycleStartedAtUtc: '2026-10-30T15:00:55.000Z' };
+  assert.equal(continuity([PREVIOUS_CYCLE.event, overlapping]).twoDistinctMaintenanceCompletionsObserved, false);
+});
+
+test('stale, wrong-head, future, corrupt or mismatched journal evidence cannot prove continuing repair', () => {
+  assert.equal(continuity(undefined, { nowMs: CONTINUITY_NOW + 600_000 }).state, 'STALE');
+  assert.equal(continuity(undefined, { expectedHead: 'f'.repeat(40) }).state, 'HEAD_MISMATCH');
+  const future = { ...LATEST_CYCLE.event, timestampUtc: '2026-10-30T15:04:00.000Z' };
+  const corrupt = { ...LATEST_CYCLE.event, verification: { ...LATEST_CYCLE.event.verification, proofHash: '' } };
+  for (const event of [future, corrupt, null, { ...LATEST_CYCLE.event, eventKind: 'foreign' }]) {
+    const result = continuity([PREVIOUS_CYCLE.event, event]);
+    assert.equal(result.state, 'UNPROVEN');
+    assert.equal(result.twoDistinctMaintenanceCompletionsObserved, false);
+  }
+  assert.equal(continuity(undefined, { currentRecord: PREVIOUS_CYCLE.status }).currentMatchesLatest, false);
+  assert.equal(continuity(undefined, { history: { readOk: false, events: [PREVIOUS_CYCLE.event, LATEST_CYCLE.event] } }).state, 'UNPROVEN');
+});
+
+test('a recent failed cycle remains visible instead of selecting two older successes', () => {
+  const blocked = maintenanceCycle('blocked-cycle', '2026-10-30T15:02:30.000Z', 'f', {
+    ok: false, blocker: 'NATIVE_OPERATION_BLOCKED',
+    maintenance: { operationOk: false, terminalProven: false },
+    steps: [{ actionId: 'repair-goal-builder-flow', ok: false,
+      finalVerdict: 'SOVEREIGN_QUALIFIED_MAINTENANCE_BLOCKED', blocker: 'NATIVE_OPERATION_BLOCKED' }],
+  });
+  const result = continuity([PREVIOUS_CYCLE.event, LATEST_CYCLE.event, blocked.event], {
+    currentRecord: blocked.status,
+  });
+  assert.equal(result.state, 'ATTENTION_REQUIRED');
+  assert.equal(result.cycles[0].cycleId, 'blocked-cycle');
+  assert.equal(result.cycles[0].blocker, 'NATIVE_OPERATION_BLOCKED');
+  assert.equal(result.twoDistinctMaintenanceCompletionsObserved, false);
+});
+
+test('manual cycles, contradictory duplicate IDs and private event fields do not become recurring proof', () => {
+  const manual = { ...LATEST_CYCLE.event, source: 'operator-request' };
+  assert.equal(continuity([PREVIOUS_CYCLE.event, manual]).twoDistinctMaintenanceCompletionsObserved, false);
+  const conflicting = { ...LATEST_CYCLE.event, cycleStartedAtUtc: '2026-10-30T15:01:49.000Z' };
+  assert.equal(continuity([PREVIOUS_CYCLE.event, LATEST_CYCLE.event, conflicting]).historyValid, false);
+  const privateEvent = { ...LATEST_CYCLE.event, rawLog: 'PRIVATE_NATIVE_LOG', privatePath: 'C:/secrets/token' };
+  assert.doesNotMatch(JSON.stringify(continuity([PREVIOUS_CYCLE.event, privateEvent])), /PRIVATE_NATIVE_LOG|secrets\/token/);
+});
+
+test('repair history reads a bounded journal tail and rejects malformed or linked files', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sovereign-beacon-tail-'));
+  try {
+    const workspace = join(root, 'workspace');
+    const repo = join(root, 'repo');
+    const eventsDir = join(workspace, 'events');
+    mkdirSync(eventsDir, { recursive: true });
+    const path = join(eventsDir, 'sovereign-commander-repair-cycles.ndjson');
+    // The invalid old prefix is larger than the entire permitted read window.
+    writeFileSync(path, 'PRIVATE_OLD_LOG'.repeat(10_000) + '\n'
+      + [PREVIOUS_CYCLE.event, LATEST_CYCLE.event].map(event => JSON.stringify(event)).join('\n') + '\n');
+    const history = readSovereignRepairCycleTail(workspace, repo);
+    assert.equal(history.readOk, true);
+    assert.equal(history.events.length, 2);
+    assert.equal(continuity(undefined, { history }).twoDistinctMaintenanceCompletionsObserved, true);
+    writeFileSync(path, JSON.stringify(LATEST_CYCLE.event) + '\n{partial');
+    assert.equal(readSovereignRepairCycleTail(workspace, repo).readOk, false);
+    writeFileSync(path, 'x'.repeat(70_000));
+    assert.equal(readSovereignRepairCycleTail(workspace, repo).readOk, false);
+    rmSync(path);
+    const outside = join(root, 'outside.json');
+    writeFileSync(outside, JSON.stringify(LATEST_CYCLE.event) + '\n');
+    try {
+      symlinkSync(outside, path);
+      assert.equal(readSovereignRepairCycleTail(workspace, repo).readOk, false);
+    } catch (error) {
+      if (error.code !== 'EPERM') throw error; // Windows without symlink privilege.
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+function productionFunction(source, name) {
+  const match = source.match(new RegExp(`(?:export )?function ${name}\\([\\s\\S]*?\\n\\}`));
+  assert.ok(match, `production function ${name} exists`);
+  return match[0].replace(/^export /, '');
+}
+
+for (const file of ['battle-bridge-outbound-health-beacon.mjs', 'battle-bridge-outbound-health-beacon-core.mjs']) {
+  for (const existingId of [0, 123]) {
+    test(`${file} publishes ${existingId ? 'PATCH' : 'POST'} large Unicode JSON through stdin`, () => {
+      const source = readFileSync(new URL(file, import.meta.url), 'utf8');
+      const body = 'repair telemetry \ud83d\udfe2 \u6e2c\u8a66\n'.repeat(20_000);
+      let captured = null;
+      let invalidations = 0;
+      const constants = {
+        BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY, BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE,
+        buildBattleBridgeOutboundBeaconMaterialBody: value => value,
+      };
+      const context = {
+        ...constants, core: constants, MAX_GITHUB_BYTES: 512 * 1024,
+        BATTLE_BRIDGE_WINDOWS_HOST: { githubCli: 'FIXED_GH' },
+        text: value => String(value || ''), existingBeaconCommentId: () => existingId,
+        invalidateBrokeredGithubObservation: () => { invalidations += 1; },
+        publishBrokeredGithubMutation: options => ({ ...options.publish(options.body), published: true }),
+        spawnSync: (executable, args, options) => {
+          captured = { executable, args, options };
+          assert.equal(executable, 'FIXED_GH');
+          assert.equal(args.some(arg => arg.includes(body)), false);
+          assert.deepEqual(Array.from(args.slice(-2)), ['--input', '-']);
+          assert.equal(options.shell, false);
+          assert.equal(options.windowsHide, true);
+          assert.equal(JSON.parse(options.input).body, body);
+          // Exercise the real child-process stdin channel, with no GitHub or shell.
+          const child = spawnSync(process.execPath, ['-e',
+            "let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',v=>input+=v);process.stdin.on('end',()=>process.stdout.write(require('node:crypto').createHash('sha256').update(JSON.parse(input).body).digest('hex')));"], {
+            input: options.input, encoding: 'utf8', shell: false, timeout: 5_000,
+          });
+          assert.equal(child.status, 0, child.stderr);
+          assert.equal(child.stdout, createHash('sha256').update(body).digest('hex'));
+          return child;
+        },
+        body,
+      };
+      const result = runInNewContext(productionFunction(source, 'runFixed') + '\n'
+        + productionFunction(source, 'publishBeacon') + "\npublishBeacon('/repo', body)", context);
+      assert.equal(result, existingId ? 'UPDATED' : 'CREATED');
+      assert.equal(captured.args[2], existingId ? 'PATCH' : 'POST');
+      assert.equal(captured.args[3], existingId
+        ? `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/comments/${existingId}`
+        : `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments`);
+      assert.equal(invalidations, existingId ? 0 : 1);
+      context.spawnSync = () => ({ status: 1, stderr: 'PRIVATE_FAILURE_DETAIL' });
+      assert.throws(() => runInNewContext(productionFunction(source, 'runFixed') + '\n'
+        + productionFunction(source, 'publishBeacon') + "\npublishBeacon('/repo', body)", context),
+      /OUTBOUND_BEACON_GITHUB_PUBLISH_FAILED/);
+    });
+  }
+}
+
+test('complete sovereign local telemetry is saved before an external publication failure', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sovereign-beacon-local-'));
+  try {
+    const workspace = join(root, 'workspace');
+    const source = readFileSync(new URL('battle-bridge-outbound-health-beacon.mjs', import.meta.url), 'utf8');
+    const base = buildBattleBridgeOutboundBeacon({ sourceHead: HEAD, now: new Date(CONTINUITY_NOW) });
+    const context = {
+      process, resolve, join, homedir: () => root,
+      core: {
+        runBattleBridgeOutboundHealthBeacon: options => {
+          assert.equal(options.publish(), 'CAPTURED_FOR_WATCHDOG_AUGMENTATION');
+          return { ok: true, record: base };
+        },
+        buildBattleBridgeOutboundBeaconBody,
+      },
+      readJsonBounded: () => null,
+      WORKER_WATCHDOG_SPEC: { path: 'status/watchdog.json' },
+      SOVEREIGN_REPAIR_SPEC: { path: 'status/repair.json' },
+      CONTROLLER_LANE_STATUS_SPEC: { path: 'status/lanes.json' },
+      SOVEREIGN_RELAY_STATUS_PATH: 'status/relay.json',
+      augmentRecordWithWorkerWatchdog: record => record,
+      projectControlTowerBuildBeaconFactsV1: () => ({}),
+      projectPublicGoalGateObservatoryV1: () => ({}),
+      readCommissionedGateLedger: () => null,
+      projectSovereignRepairContinuity, readSovereignRepairCycleTail,
+      options: {
+        env: { USERPROFILE: root, STEPHANOS_SHARED_AGENT_WORKSPACE: workspace },
+        mirror: mirrorBattleBridgeCompleteStateToSharedWorkspace,
+        publish: () => {
+          const local = JSON.parse(readFileSync(join(workspace, 'status', 'battle-bridge-complete-state-current.json'), 'utf8'));
+          assert.equal(local.sourceHead, HEAD);
+          assert.equal(local.observedAtUtc, new Date(CONTINUITY_NOW).toISOString());
+          assert.equal(local.finalVerdict, 'BATTLE_BRIDGE_OUTBOUND_HEALTH_OBSERVATION_READY');
+          assert.doesNotMatch(local.finalVerdict, /PUBLISHED/);
+          assert.equal(local.sovereignRepairContinuity.twoDistinctMaintenanceCompletionsObserved, false);
+          throw new Error('GITHUB_UNAVAILABLE_TEST');
+        },
+      },
+    };
+    assert.throws(() => runInNewContext(productionFunction(source, 'runBattleBridgeOutboundHealthBeacon')
+      + '\nrunBattleBridgeOutboundHealthBeacon(options)', context), /GITHUB_UNAVAILABLE_TEST/);
+    assert.equal(JSON.parse(readFileSync(join(workspace, 'status', 'battle-bridge-complete-state-current.json'), 'utf8')).sourceHead, HEAD);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

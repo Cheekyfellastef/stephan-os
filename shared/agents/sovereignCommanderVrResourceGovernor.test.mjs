@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import { SOVEREIGN_COMMANDER_REMOTE_ACTIONS } from './sovereignCommanderRemoteMailboxV1.mjs';
+import { coreGamingProtectionFromGovernor } from './stephanosCoreDaemonV1.mjs';
 
 const governor = await readFile(new URL('../../scripts/windows/run-vr-resource-governor.ps1', import.meta.url), 'utf8');
 const qwen35Canary = await readFile(new URL('../../scripts/qwen35-canary.mjs', import.meta.url), 'utf8');
@@ -25,6 +26,38 @@ const server = await readFile(new URL('../../stephanos-server/server.js', import
 const gamingTile = await readFile(new URL('../../stephanos-ui/src/components/GamingResourceTile.jsx', import.meta.url), 'utf8');
 const aiClient = await readFile(new URL('../../stephanos-ui/src/ai/aiClient.js', import.meta.url), 'utf8');
 const app = await readFile(new URL('../../stephanos-ui/src/App.jsx', import.meta.url), 'utf8');
+
+test('idle VR governor refreshes its verified state before consumer freshness budgets expire', () => {
+  assert.match(governor, /\$idleHeartbeatDue = \$false/);
+  assert.match(governor, /if \(-not \$effective\.active\)/);
+  assert.match(governor, /\$idleHeartbeatDue = \(\$now\.ToUniversalTime\(\) - \$observedUtc\)\.TotalSeconds -ge 5/);
+  assert.match(governor, /\$guardDue -or \$idleHeartbeatDue/);
+  assert.match(governor, /Get-GamingSignal -ThrottleFlatGameScan/);
+  assert.match(governor, /Start-Sleep -Milliseconds \$poll/);
+});
+
+test('idle publisher cadence leaves Core fresh through observation latency but never masks a stopped governor', () => {
+  const match = governor.match(/\$idleHeartbeatDue = \(\$now\.ToUniversalTime\(\) - \$observedUtc\)\.TotalSeconds -ge (\d+)/);
+  assert.ok(match, 'Read the actual publisher cadence, not a duplicate test setting');
+  const intervalMs = Number(match[1]) * 1000;
+  assert.ok(intervalMs >= 1000, 'Idle reconciliation must remain bounded');
+  const start = Date.parse('2026-10-26T12:00:00Z');
+  const normal = { schemaVersion: 'stephanos.vr-resource-governor.v1', governorVersion: 3,
+    active: false, phase: 'NORMAL', flatGameActive: false, airLinkActive: false,
+    realAirLinkActive: false, virtualAirLinkTestActive: false, prepareLeaseActive: false };
+  for (const observationDelayMs of [0, 2500, 5000]) {
+    const period = intervalMs + observationDelayMs;
+    for (let elapsed = 0; elapsed < period * 3; elapsed += 250) {
+      const publishedAt = start + Math.floor(elapsed / period) * period;
+      assert.equal(coreGamingProtectionFromGovernor({ ...normal,
+        updatedAtUtc: new Date(publishedAt).toISOString() }, start + elapsed), false,
+      `Idle evidence expired at cadence ${intervalMs}ms plus ${observationDelayMs}ms observation delay`);
+    }
+  }
+  const stopped = { ...normal, updatedAtUtc: new Date(start).toISOString() };
+  assert.equal(coreGamingProtectionFromGovernor(stopped, start + 15001), true);
+  assert.equal(coreGamingProtectionFromGovernor({ ...stopped, active: true }, start), true);
+});
 
 test('gaming resource governor detects VR and flat-game sessions and parks non-lightweight Ollama models', () => {
   assert.match(governor, /'vrcompositor', 'vrdashboard'/);

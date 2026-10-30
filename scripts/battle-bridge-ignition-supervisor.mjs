@@ -28,6 +28,9 @@ import {
   validateBattleBridgeLocalGitConfiguration,
 } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
+import { projectMaintenanceSourceDiagnosticV1 } from '../shared/agents/sovereignMaintenanceSourceDiagnosticV1.mjs';
+import { createBattleBridgeGitProbeContextV1, isBattleBridgeGitProbeContextV1,
+  validateBattleBridgeGitProbeConfigurationV1 } from '../shared/agents/battleBridgeGitProbeContextV1.mjs';
 
 export const BATTLE_BRIDGE_IGNITION_SUPERVISOR_SCHEMA = 'stephanos.battle-bridge-ignition-supervisor.v1';
 export const BATTLE_BRIDGE_IGNITION_PHASES = Object.freeze([
@@ -75,6 +78,27 @@ export function evaluateBattleBridgeMutationHeadBinding({ expectedHead = '', obs
   });
 }
 
+export function projectUiRepairObservation(result, code) {
+  const row = result && typeof result === 'object' && !Array.isArray(result) ? result : null;
+  const id = value => typeof value === 'string' && /^[a-z0-9_-]{1,96}$/i.test(value) ? value : 'UNPROVEN';
+  const number = value => Number.isSafeInteger(value) ? value : null;
+  const blockers = Array.isArray(row?.blockers) ? row.blockers.slice(0, 12).map(item => ({ id: id(item?.id) })) : [];
+  return Object.freeze({ receiptParsed: row !== null, action: id(row?.action),
+    exitCode: number(code), started: row?.started === true, readyClaimed: row?.ready === true,
+    pid: number(row?.pid) > 0 ? row.pid : null,
+    expectedHead: SHA40.test(row?.expectedHead || '') ? row.expectedHead : '',
+    observedHead: SHA40.test(row?.observedHead || '') ? row.observedHead : '',
+    spawnErrorCode: row?.spawnError ? id(row.spawnError.code) : '',
+    childExitCode: number(row?.exit?.code), blockers,
+    runtimeActivationGranted: false,
+  });
+}
+
+function retainUiRepairObservation(status, result, code) {
+  const previous = Array.isArray(status.uiRepairObservations) ? status.uiRepairObservations : [];
+  status.uiRepairObservations = [...previous.slice(-1), projectUiRepairObservation(result, code)];
+}
+
 function structuredSourceTruthBlocker({
   id = 'source-truth-unproven',
   code = 'CANONICAL_SOURCE_TRUTH_UNPROVEN',
@@ -88,6 +112,8 @@ function structuredSourceTruthBlocker({
   behindCount = 0,
   workingTreeDirty = false,
   statusAssessment = null,
+  sourceStep = '',
+  sourceConfiguration,
   extra = {},
 } = {}) {
   return Object.freeze({
@@ -108,6 +134,10 @@ function structuredSourceTruthBlocker({
     blocker: Object.freeze({
       id,
       code,
+      ...(code === 'FIXED_AUTHORITY_GIT_FAILED'
+        ? { sourceStep: projectMaintenanceSourceDiagnosticV1(code, sourceStep).sourceStep } : {}),
+      ...(['CANONICAL_GIT_CONFIGURATION_INVALID', 'CANONICAL_GIT_CONFIGURATION_CHANGED'].includes(code)
+        ? { sourceConfiguration: projectMaintenanceSourceDiagnosticV1(code, undefined, sourceConfiguration).sourceConfiguration } : {}),
       detail,
       nextOperatorAction: 'Use the bounded Battle Bridge source-recovery route to restore a clean canonical main checkout, then retry Ignition.',
     }),
@@ -120,9 +150,15 @@ function sameStableGitTopology(left = {}, right = {}) {
 }
 
 function evaluateTrackedVisibility(output = '') {
-  const hidden = String(output || '').split(/\r?\n/).filter((line) => (
+  const lines = String(output || '').split(/\r?\n/);
+  const hidden = lines.filter((line) => (
     /^S\s/.test(line) || /^[a-z]\s/.test(line)
   ));
+  // A nested checkout has its own configuration/bootstrap namespace. A later
+  // status command must not enter it using this root's isolation qualification.
+  if (lines.some(line => /^[A-Za-z?]\s+160000\s/.test(line))) return Object.freeze({
+    ok: false, blocker: 'CANONICAL_GIT_PROBE_SUBMODULE_UNSUPPORTED', hiddenCount: hidden.length,
+  });
   return Object.freeze({
     ok: hidden.length === 0,
     blocker: hidden.length === 0 ? '' : 'HIDDEN_TRACKED_PATHS_PRESENT',
@@ -130,7 +166,35 @@ function evaluateTrackedVisibility(output = '') {
   });
 }
 
-export function collectCanonicalIgnitionSourceTruth({
+export function collectCanonicalIgnitionSourceTruth(options = {}) {
+  let context;
+  try {
+    const root = options.cwd ?? defaultRepoRoot;
+    const topology = (options.inspectTopologyFn || inspectBattleBridgeGitTopology)(root, { stabilizeIndex: true });
+    if (!topology?.ok) return structuredSourceTruthBlocker({
+      code: topology?.blocker || 'CANONICAL_GIT_TOPOLOGY_UNPROVEN',
+      detail: 'Canonical repository topology could not be proven before source inspection.',
+      extra: { topology: topology || null },
+    });
+    // Native isolation is the production default. The explicit factory seam
+    // keeps deterministic collector fixtures separate from native proof.
+    context = (options.createGitProbeContextFn || createBattleBridgeGitProbeContextV1)(root);
+    if (context && !isBattleBridgeGitProbeContextV1(context, root))
+      throw Object.assign(new Error('CANONICAL_GIT_PROBE_CONTEXT_UNPROVEN'), { code: 'CANONICAL_GIT_PROBE_CONTEXT_UNPROVEN' });
+    const result = collectCanonicalIgnitionSourceTruthInContext(options, context, topology);
+    context?.assert();
+    context?.close();
+    return result;
+  } catch (error) {
+    try { context?.close(); } catch { /* Unknown owned metadata is retained. */ }
+    const code = /^CANONICAL_GIT_PROBE_[A-Z_]+$/.test(error?.code || '')
+      ? error.code : 'CANONICAL_GIT_PROBE_CONTEXT_UNPROVEN';
+    return structuredSourceTruthBlocker({ code,
+      detail: 'Bootstrap-isolated canonical Git metadata could not be qualified.' });
+  }
+}
+
+function collectCanonicalIgnitionSourceTruthInContext({
   cwd = defaultRepoRoot,
   environment = process.env,
   platform = process.platform,
@@ -139,8 +203,7 @@ export function collectCanonicalIgnitionSourceTruth({
   validateConfigurationFn = validateBattleBridgeLocalGitConfiguration,
   evaluateStatusFn = evaluateGitStatusForIgnition,
   scanIgnoredRuntimeAggregatePathsFn = scanIgnoredRuntimeAggregatePathsForBlockers,
-} = {}) {
-  const topologyBefore = inspectTopologyFn(cwd, { stabilizeIndex: true });
+} = {}, gitProbeContext = null, topologyBefore = null) {
   if (!topologyBefore?.ok) {
     return structuredSourceTruthBlocker({
       code: topologyBefore?.blocker || 'CANONICAL_GIT_TOPOLOGY_UNPROVEN',
@@ -151,10 +214,11 @@ export function collectCanonicalIgnitionSourceTruth({
 
   let gitExecution = null;
   const capture = (label, args, { allowFailure = false } = {}) => {
+    gitProbeContext?.assert();
     gitExecution ||= resolveBattleBridgeGitExecution({ platform, environment });
     const fixedArgs = [
       ...gitExecution.fixedConfigArgs,
-      ...battleBridgeCanonicalRepositoryArgs(cwd),
+      ...(gitProbeContext ? gitProbeContext.repositoryArgs() : battleBridgeCanonicalRepositoryArgs(cwd)),
       ...args,
     ];
     const result = spawnSyncFn(gitExecution.executable, fixedArgs, {
@@ -169,6 +233,7 @@ export function collectCanonicalIgnitionSourceTruth({
       if (allowFailure) return null;
       const error = new Error(`${label}:${result?.error?.message || result?.status || 'UNKNOWN_FIXED_GIT_FAILURE'}`);
       error.code = 'FIXED_AUTHORITY_GIT_FAILED';
+      error.sourceStep = label;
       throw error;
     }
     return String(result?.stdout || '');
@@ -186,14 +251,19 @@ export function collectCanonicalIgnitionSourceTruth({
 
   try {
     const configurationBefore = capture('source-config-before-fetch', ['config', '--local', '--null', '--list']);
-    const configurationProof = validateConfigurationFn(configurationBefore);
+    const configurationProof = validateBattleBridgeGitProbeConfigurationV1(configurationBefore,
+      { gitProbeContext, repoRoot: cwd, validateBase: validateConfigurationFn });
     if (!configurationProof?.ok) {
       return structuredSourceTruthBlocker({
         code: configurationProof?.blocker || 'CANONICAL_GIT_CONFIGURATION_INVALID',
         detail: 'Local Git configuration or origin identity is outside the canonical closed-world policy.',
+        sourceConfiguration: { ...configurationProof?.diagnostic, stage: 'BEFORE_FETCH' },
         extra: { configurationProof: configurationProof || null },
       });
     }
+    if (configurationProof.worktreeConfigurationIsolated
+      && capture('source-isolated-config-before-fetch', ['config', '--worktree', '--null', '--list']) !== '')
+      throw Object.assign(new Error('CANONICAL_GIT_PROBE_CONFIGURATION_NOT_EMPTY'), { code: 'CANONICAL_GIT_PROBE_CONFIGURATION_NOT_EMPTY' });
 
     const trackedVisibilityBeforeOutput = capture('source-tracked-visibility-before-fetch', ['ls-files', '--stage', '-v', '--']);
     const trackedVisibilityBefore = evaluateTrackedVisibility(trackedVisibilityBeforeOutput);
@@ -281,7 +351,11 @@ export function collectCanonicalIgnitionSourceTruth({
     const statusAfterOutput = captureSourceStatus('source-status-after-fetch');
     const statusAfter = evaluateStatusFn(statusAfterOutput);
     const configurationAfter = capture('source-config-after-fetch', ['config', '--local', '--null', '--list']);
-    const configurationAfterProof = validateConfigurationFn(configurationAfter);
+    const configurationAfterProof = validateBattleBridgeGitProbeConfigurationV1(configurationAfter,
+      { gitProbeContext, repoRoot: cwd, validateBase: validateConfigurationFn });
+    if (configurationAfterProof.worktreeConfigurationIsolated
+      && capture('source-isolated-config-after-fetch', ['config', '--worktree', '--null', '--list']) !== '')
+      throw Object.assign(new Error('CANONICAL_GIT_PROBE_CONFIGURATION_NOT_EMPTY'), { code: 'CANONICAL_GIT_PROBE_CONFIGURATION_NOT_EMPTY' });
     const branchAfter = capture('source-branch-after-fetch', ['branch', '--show-current']).trim();
     const upstreamAfter = String(capture(
       'source-upstream-after-fetch',
@@ -308,6 +382,7 @@ export function collectCanonicalIgnitionSourceTruth({
       return structuredSourceTruthBlocker({
         code: configurationAfterProof?.blocker || 'CANONICAL_GIT_CONFIGURATION_CHANGED',
         detail: 'Canonical Git configuration changed during source proof.',
+        sourceConfiguration: { ...configurationAfterProof?.diagnostic, stage: 'AFTER_FETCH' },
         branch: branchAfter,
         upstreamBranch: upstreamAfter,
         head: headAfter,
@@ -472,6 +547,7 @@ export function collectCanonicalIgnitionSourceTruth({
   } catch (error) {
     return structuredSourceTruthBlocker({
       code: error?.code || 'CANONICAL_SOURCE_TRUTH_UNPROVEN',
+      sourceStep: error?.sourceStep,
       detail: `Canonical source truth could not be proven through fixed Git (${error?.message || 'unknown failure'}).`,
       extra: { error: error?.message || String(error) },
     });
@@ -1279,8 +1355,9 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     const code = mutation.value;
     let repairResult = null;
     try { repairResult = JSON.parse(repairOutput.chunks); } catch {}
-    const uiBlocker = repairResult?.ready ? null : requiredServiceBlocker('stephanos-ui-4173-missing', 'Stephanos UI 4173 did not pass readiness proof after guarded repair.', repairResult?.nextOperatorAction || `Inspect UI repair logs, then rerun proof. Approved command: ${UI_4173_REPAIR_AUTHORITY ? 'npm run stephanos:ignite:launcher-root' : 'source adapter required'}`);
-    status = projectBattleBridgeSupervisorStatus({ status, phase: 'Stephanos UI 4173', phaseState: repairResult?.ready ? 'ready' : (code === 0 ? 'blocked' : 'failed'), blocker: uiBlocker, logPath: repairResult?.logs?.logPath || '' }); await persist();
+    retainUiRepairObservation(status, repairResult, code);
+    const uiBlocker = repairResult?.ready === true ? null : requiredServiceBlocker('stephanos-ui-4173-missing', 'Stephanos UI 4173 did not pass readiness proof after guarded repair.', repairResult?.nextOperatorAction || `Inspect UI repair logs, then rerun proof. Approved command: ${UI_4173_REPAIR_AUTHORITY ? 'npm run stephanos:ignite:launcher-root' : 'source adapter required'}`);
+    status = projectBattleBridgeSupervisorStatus({ status, phase: 'Stephanos UI 4173', phaseState: repairResult?.ready === true ? 'ready' : (code === 0 ? 'blocked' : 'failed'), blocker: uiBlocker, logPath: repairResult?.logs?.logPath || '' }); await persist();
     await publisherFn({ sharedWorkspace });
   }
   const proofFacts = await collectFacts({ sharedWorkspace });
@@ -1304,6 +1381,7 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
       const code = mutation.value;
       let repairResult = null;
       try { repairResult = JSON.parse(repairOutput.chunks); } catch {}
+      retainUiRepairObservation(status, repairResult, code);
       await publisherFn({ sharedWorkspace });
       const repairedFacts = await collectFacts({ sharedWorkspace });
       const repairedReport = plannerFn(repairedFacts);

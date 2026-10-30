@@ -1,6 +1,11 @@
+import '../../../shared/skill-forge/gateRepairSkillIntakeV1.test.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+
+import { deriveConversationLearningJourneyV1 } from '../../../shared/runtime/conversationLearningJourneyV1.mjs';
+// Reuse the existing surface/Skill Forge test lane; do not create another GitHub authority workflow.
+import '../../../shared/skill-forge/pinnedGithubSkillIntakeV2.test.mjs';
 
 const flywheelUrl = new URL('./FlywheelPanel.jsx', import.meta.url);
 const flywheelCanvasUrl = new URL('./FlywheelWorkspaceCanvas.jsx', import.meta.url);
@@ -147,4 +152,114 @@ test('fleet care marker stays asserted in the existing trusted UI test suite', a
   const source = await readFile(flywheelSeedCanopyUrl, 'utf8');
   assert.match(source, /goal-conveyor-fleet-care/);
   assert.match(source, /Conveyor & Fleet Care/);
+});
+
+
+const skillForgeUrl = new URL('./SkillForgeTile.jsx', import.meta.url);
+const skillForgeStylesUrl = new URL('./SkillForgeObservatory.css', import.meta.url);
+const stephanosOverviewUrl = new URL('./StephanosCommandObservatory.jsx', import.meta.url);
+const stephanosOverviewStylesUrl = new URL('./StephanosCommandObservatory.css', import.meta.url);
+const skillForgeModelUrl = new URL('../../../shared/skill-forge/skillGrowthProjectionV1.mjs', import.meta.url);
+
+test('dedicated Skill Forge workspace and parent Stephanos command observatory are truth-linked', async () => {
+  const [app, forge, forgeCss, overview, overviewCss, model] = await Promise.all([
+    readFile(appUrl, 'utf8'),
+    readFile(skillForgeUrl, 'utf8'),
+    readFile(skillForgeStylesUrl, 'utf8'),
+    readFile(stephanosOverviewUrl, 'utf8'),
+    readFile(stephanosOverviewStylesUrl, 'utf8'),
+    readFile(skillForgeModelUrl, 'utf8'),
+  ]);
+  assert.match(app, /if \(skillForgeSurfaceMode\)/);
+  assert.match(app, /SKILL FORGE SURFACE/);
+  assert.match(app, /<SkillForgeTile[\s\S]*forcePanelOpen/);
+  assert.match(app, /<StephanosCommandObservatory/);
+  assert.match(forge, /dashboard-feed\?scope=full-history/);
+  assert.match(forge, /Capability Genesis Observatory/);
+  assert.match(forge, /Cross-agent qualification gate/);
+  assert.match(forge, /Skill blueprint vault/);
+  assert.match(forge, /forcePanelOpen/);
+  assert.match(forgeCss, /\.skill-observatory__hero/);
+  assert.match(overview, /Command Observatory/);
+  assert.match(overview, /Shared Workspace/);
+  assert.match(overview, /Skill Forge/);
+  assert.match(overviewCss, /\.stephanos-ops-metrics/);
+  assert.match(model, /autoGrant: false/);
+  assert.match(model, /activated: false/);
+});
+
+test('skill provenance never infers activation from an exam or static seed', async () => {
+  const { deriveSkillGrowthObservatoryV1, buildSkillTransferAssessmentV1 } = await import(skillForgeModelUrl);
+  const lesson = {
+    schemaVersion:'stephanos.closed-loop-learning.v1',
+    eventId:'capability-diagnostic',
+    capabilityId:'diagnostics',
+    teacherId:'openclaw-local',
+    state:'RETRY_READY',
+    learningCandidate:{lessonId:'diagnostics'},
+    exam:{passed:true,proofRefs:['exam:1']},
+    verification:{passed:true,proofRefs:['runtime:1']},
+  };
+  const view = deriveSkillGrowthObservatoryV1({
+    seedSkills:[{id:'seed',status:'ACTIVE'}],
+    payload:{state:'ready',records:{eventRecords:[{eventId:'capability-diagnostic',closedLoopLearning:lesson}]}}
+  });
+  assert.equal(view.summary.proposals, 2); // one seed and one conjured, still uninstalled
+  assert.equal(view.summary.verifiedLessons, 1);
+  assert.equal(view.summary.provenActiveTargets, 0);
+  const transfer = buildSkillTransferAssessmentV1({
+    learning:lesson,sourceActor:'openclaw-local',targetActor:'openclaw-standalone',
+  });
+  assert.equal(transfer.activated,false);
+  assert.equal(transfer.eligibleForExistingApprovedActivationRoute,false);
+  assert.ok(transfer.blockers.includes('operatorApprovalPresent'));
+});
+
+
+test('Flywheel and Skill Forge both render one shared, truth-gated conversation improvement journey', async () => {
+  const [panel, canvas, forge, component, css] = await Promise.all([
+    readFile(flywheelUrl, 'utf8'),
+    readFile(flywheelCanvasUrl, 'utf8'),
+    readFile(skillForgeUrl, 'utf8'),
+    readFile(new URL('./ConversationLearningJourney.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('./ConversationLearningJourney.css', import.meta.url), 'utf8'),
+  ]);
+  assert.match(panel, /conversationUplift=\{telemetry\.payload\?\.conversationUplift \|\| null\}/);
+  assert.match(panel, /conversationFeedState=\{telemetry\.state === 'unreachable'/);
+  assert.match(canvas, /<ConversationLearningJourney[\s\S]*placement="flywheel"/);
+  assert.match(forge, /<ConversationLearningJourney[\s\S]*placement="skill-forge"/);
+  assert.match(forge, /feedState=\{refreshState === 'RECEIVED'/);
+  assert.match(component, /Conversation Intelligence · Improvement Journey/);
+  assert.match(component, /KNOWLEDGE → CAPABILITY → PROOF/);
+  assert.match(component, /UNKNOWN/);
+  assert.match(component, /builder and runtime evidence/);
+  assert.match(component, /view\.provenanceNote/);
+  assert.match(css, /max-width: 760px/);
+});
+
+test('conversation journey never promotes unverified conversation hints into builder completions', () => {
+  const uplift = {
+    state: 'ready', turnCount: 301,
+    candidates: [{
+      id: 'goal-conveyor', title: 'Investigate conveyor',
+      classification: 'CONVERSATION_HINT_REVIEW_REQUIRED',
+      provenCapabilityFailure: false, eligibleForBoundedInvestigation: true,
+      mentionCount: 4, sourceTurnRefs: ['workspace://one', 'workspace://two'],
+    }],
+  };
+  const ready = deriveConversationLearningJourneyV1({ uplift, feedState: 'ready' });
+  assert.equal(ready.indexedTurns, 301);
+  assert.equal(ready.investigationEligible, 1);
+  assert.equal(ready.admittedGoals, null);
+  assert.equal(ready.builderPickups, null);
+  assert.equal(ready.provenImprovements, null);
+  assert.equal(JSON.stringify(ready).includes('workspace://one'), false);
+
+  for (const state of ['unavailable', 'connecting']) {
+    const result = deriveConversationLearningJourneyV1({ uplift, feedState: state });
+    assert.equal(result.indexedTurns, null);
+    assert.equal(result.provenImprovements, null);
+    assert.notEqual(result.state, 'REPORTED');
+  }
+  assert.equal(deriveConversationLearningJourneyV1({ uplift, feedState: 'stale' }).indexedTurns, 301);
 });

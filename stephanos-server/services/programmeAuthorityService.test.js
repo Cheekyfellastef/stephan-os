@@ -533,6 +533,31 @@ test('production composition reads real Shared Workspace, receipt, heartbeat, sc
     assert.equal(projection.projectionReceipt.components.some(({ componentId }) => componentId === 'critical-backlog-conveyor'), true);
     assert.deepEqual(calls, ['github-auth', 'github-pr-evidence']);
 
+    const silentWorker = await readAuthoritativeProgrammeProjection({
+      root, home, repoRoot, nowUtc: '2026-07-30T10:31:00.000Z', env: {}, testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => ({ configured: true, token: 'not-published', authority: 'test-only' }),
+        fetchGithubPrEvidence: async () => githubOpen(),
+        readRepositoryHead: async () => ({ ok: true, reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+          branch: 'main', headSha: HEAD }),
+        listMissionRecords: async () => [{ missionId: LANE_ID, issueNumber: 1497,
+          repository: REPOSITORY, git: { branch: BRANCH }, pullRequest: { number: 1617 },
+          currentPhase: 'AGENT_IMPLEMENTATION' }],
+      },
+    });
+    assert.equal(silentWorker.productionSourcesConstructed, true);
+    assert.equal(silentWorker.status, 'HOLD');
+    assert.equal(silentWorker.lane.active, false);
+    assert.equal(silentWorker.lane.pickupPending, false);
+    assert.equal(silentWorker.executionReceipt.leaseKey, LEASE_ID);
+    assert.equal(silentWorker.stallDiagnosis.stalled, true);
+    for (const blocker of ['controller-heartbeat-not-fresh', 'worker-heartbeat-not-fresh',
+      'execution-receipt-heartbeat-expired', 'active-lane-progress-stale']) {
+      assert.ok(silentWorker.stallDiagnosis.blockers.includes(blocker), blocker);
+    }
+    assert.equal(silentWorker.stallDiagnosis.sourceMutationAllowed, false);
+    assert.equal(silentWorker.stallDiagnosis.dispatchAllowed, false);
+
     const staleProcesses = await readAuthoritativeProgrammeProjection({
       root,
       home,
@@ -817,7 +842,8 @@ test('production composition can discover exact GitHub lane truth before lease a
     assert.equal(projection.lane.valid, true);
     assert.equal(projection.lane.prNumber, 1617);
     assert.equal(projection.lane.headSha, HEAD);
-    assert.ok(projection.blockers.includes('active-lane-without-source-mutation-lease'));
+    assert.equal(projection.lane.active, false);
+    assert.equal(projection.lane.executionStartedOnLease, false);
     assert.equal(projection.sourceReads.laneSelector, 'complete');
     assert.equal(projection.projectionReceipt.sourceConstructionMode, 'production-contracts');
     assert.equal(projection.projectionReceipt.authorityInjectedByCaller, false);
@@ -1614,6 +1640,24 @@ test('GitHub goal close adapter emits only the canonical completed-state PATCH',
 });
 
 
+test('canonical mirror refresh carries, replaces and removes only current admitted acceptance tests', () => {
+  const commands = ['node --test scripts/sovereign-goal-builder-worker-evidence.test.mjs'];
+  const live = requiredTests => ({ ok: true, retrievedAt: NOW, issues: [{ issueNumber: 2314, repository: REPOSITORY,
+    title: 'Bounded acceptance task', retrievedAt: NOW, admission: {
+      resourceIds: ['repo:cheekyfellastef/stephan-os:path:shared/agents/source.mjs'],
+      ...(requiredTests === undefined ? {} : { requiredTests }),
+    } }], discoveredIssues: [{ issueNumber: 2314 }] });
+  const first = buildGithubGoalMirrorEstate([], live(commands), NOW);
+  assert.deepEqual(first.records[0].requiredTests, commands);
+  assert.equal(first.records[0].mirrorBuildPickupAllowed, true);
+  assert.deepEqual(first.records[0].resourceIds, ['repo:cheekyfellastef/stephan-os:path:shared/agents/source.mjs']);
+  const second = buildGithubGoalMirrorEstate(first.records, live(['node --test scripts/other.test.mjs']), NOW);
+  assert.deepEqual(second.records[0].requiredTests, ['node --test scripts/other.test.mjs']);
+  const removed = buildGithubGoalMirrorEstate(second.records, live(undefined), NOW);
+  assert.equal(removed.records[0].requiredTests, undefined);
+  assert.deepEqual(first.records[0].requiredTests, commands, 'prior observations remain immutable');
+});
+
 test('GitHub goal estate is mirrored durably with a bounded outage lease', async () => {
   const goalEstate = {
     ok: true,
@@ -2175,5 +2219,43 @@ test('canonical guarded release can reconcile an exact expired lease without sei
     assert.equal(after.ok, true);
     assert.equal(after.present, false);
     assert.equal(after.reason, 'SOURCE_MUTATION_LEASE_NOT_CLAIMED');
+  });
+});
+
+
+test('live authority brackets heartbeat reads after asynchronous workspace work without accepting future evidence', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
+  await fixture(async ({ root, home, repoRoot }) => {
+    await publishControllerHeartbeat(root, repoRoot);
+    await publishWorkerHeartbeat(home);
+    let advanced = false;
+    const dependencies = {
+      readRepositoryHead: async () => ({ ok: true, reason: 'CANONICAL_REPOSITORY_HEAD_READ', branch: 'main', headSha: HEAD }),
+      listMissionRecords: async () => [],
+      readWorkspaceFeed: async () => {
+        if (!advanced) {
+          advanced = true;
+          t.mock.timers.tick(90000);
+          await publishWorkerHeartbeat(home, { timestampUtc: new Date().toISOString() });
+        }
+        return { state: 'ready', records: { goalRecords: [], statusRecords: [], proofRecords: [], receiptRecords: [] } };
+      },
+      resolveGithubTokenConfig: async () => ({ configured: false }),
+    };
+    const options = { root, home, repoRoot, env: {}, testOnly: true, dependencies };
+    const live = await readAuthoritativeProgrammeProjection(options);
+    assert.equal(live.workerHeartbeat.valid, true, JSON.stringify(live.workerHeartbeat.errors));
+    assert.equal(live.workerHeartbeat.fresh, true);
+    assert.ok(Date.parse(live.observedAtUtc) >= Date.parse(live.workerHeartbeat.timestampUtc));
+    const expired = await readAuthoritativeProgrammeProjection({ ...options, dependencies: {
+      ...dependencies, buildCapabilityRegistry: () => {
+        t.mock.timers.tick(125000); return {};
+      },
+    } });
+    assert.equal(expired.workerHeartbeat.fresh, false, 'an initially valid heartbeat must age out during later reads');
+    assert.equal(expired.status, 'HOLD');
+    await publishWorkerHeartbeat(home, { timestampUtc: new Date(Date.now() + 90000).toISOString() });
+    const future = await readAuthoritativeProgrammeProjection(options);
+    assert.equal(future.workerHeartbeat.valid, false, 'genuine future heartbeat must remain invalid');
   });
 });
