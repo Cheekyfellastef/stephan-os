@@ -481,3 +481,27 @@ actual source/epoch identities, original historical evidence and native producer
 and acquire the original exclusive guard/ledger before effects. No owner approval
 comment, request, network call, native reservation or rotation effect was issued by
 this implementation checkpoint.
+
+### Owner-control observation binding
+
+The candidate parser now has a separate bounded observation binder in the SAME
+owner-control module. It binds the original activation PR 3268, transition and
+phase, all installed/protected source identities, activation head/base/tree/merge
+identities, predecessor/successor epoch, inventory barrier and preparation identity.
+The observation uses the closed schema
+`stephanos.canonical-mailbox-rotation-owner-observation.v2`; its timestamp must be
+within 120 seconds. Extra fields, getters, proxies, stale/future observations,
+substituted identities and impossible pre-merge epoch/source states are refused.
+The original five-by-five phase model remains the shared structural authority;
+this adapter introduces no second phase table or operation allowlist.
+
+A matching pre-merge or cancelled historical candidate retains the original
+request ID and still grants NO API authentication, native producer qualification,
+original guard, reservation, execution, freeze, merge, sync or epoch authority.
+The actual API read/re-read and original exclusive transaction remain unimplemented.
+Post-merge bridge and verification candidates remain blocked as
+`ORIGINAL_FROZEN_NATIVE_PROOF_REQUIRED`: a matching claimed artifact digest is
+never converted into authenticated original FROZEN proof. This bounded binding
+step does not implement or persist a durable phase checkpoint and does not enroll
+the still-unqualified producer. Those original transaction and commissioning
+requirements remain in the delivery order above.

@@ -4,7 +4,10 @@ import { createHash } from 'node:crypto';
 import { MAILBOX_ROTATION_OWNER_CONTROL_SCHEMA_V2 as schema,
   encodeMailboxRotationOwnerControlV2 as encode, decodeMailboxRotationOwnerControlV2 as decode } from './canonicalMailboxNativeEvidenceCodecV2.mjs';
 import { formatMailboxRotationOwnerControlV2 as format,
-  parseMailboxRotationOwnerControlCandidateV2 as parse } from './canonicalMailboxRotationOwnerControlV2.mjs';
+  parseMailboxRotationOwnerControlCandidateV2 as parse,
+  bindMailboxRotationOwnerControlCandidateV2 as bind,
+  MAILBOX_ROTATION_OWNER_OBSERVATION_SCHEMA_V2 as observationSchema } from './canonicalMailboxRotationOwnerControlV2.mjs';
+import { ROTATION_V2_STATES, ROTATION_V2_OPERATIONS, ROTATION_V2_STRUCTURAL_MATRIX } from './canonicalMailboxSaturatedPhaseModelV2.mjs';
 const git = char => char.repeat(40), sha = char => char.repeat(64);
 const clone = value => JSON.parse(JSON.stringify(value));
 function consent() {
@@ -132,4 +135,93 @@ test('parsed claims cannot prove phase, source generation, guard or API authenti
   const result = parse(comment(value)); assert.equal(result.candidate, true); noAuthority(result);
   assert.equal(Object.hasOwn(result, 'selectedCommentId'), false);
   assert.equal(Object.hasOwn(result.origin, 'barrierCommentId'), false);
+});
+
+function observation(value = consent()) {
+  return { schemaVersion: observationSchema, repository: value.repository,
+    transitionId: value.transitionId, state: value.state, source: clone(value.source),
+    activation: { ...value.activation, state: value.activation.mergeCommitSha ? 'MERGED' : 'OPEN' },
+    epoch: { ...value.epoch, activeIssue: value.source.sourceRole === 'ADOPTED' ? 3258 : 3149,
+      retiredPredecessor: value.source.sourceRole === 'ADOPTED' },
+    barrier: clone(value.barrier), preparation: clone(value.preparation),
+    observedAtUtc: new Date(Date.now() - 5).toISOString() };
+}
+test('one current phase binding retains the original stable request identity and grants no authority', () => {
+  const value = consent(), input = comment(value), actual = observation(value), result = bind(input, actual);
+  assert.equal(result.ok, true); assert.equal(result.observationFieldsMatch, true);
+  assert.equal(result.requestId, parse(input).requestId);
+  assert.equal(result.structuralMode, 'PRE_MERGE_EFFECT_CANDIDATE');
+  noAuthority(result);
+  for (const key of ['apiTransportAuthenticated', 'nativeProducerQualified', 'originalGuardHeld']) assert.equal(result[key], false);
+  actual.source.installedHead = git('f');
+  assert.equal(result.consent.source.installedHead, git('a'));
+});
+for (const [section, keys] of Object.entries({
+  source: ['protectedMainHead', 'protectedMainTreeSha', 'installedHead', 'installedTreeSha', 'installedClosureSha256', 'sourceRole'],
+  activation: ['prNumber', 'headSha', 'baseSha', 'treeSha', 'mergeCommitSha', 'mergeTreeSha'],
+  epoch: ['predecessorIssue', 'successorIssue'],
+  barrier: ['highestCommandCommentId', 'inventorySha256', 'commentCount'],
+  preparation: ['headSha', 'treeSha', 'closureSha256', 'originalFrozenArtifactSha256'],
+})) for (const key of keys) test(`fresh owner consent cannot substitute observed ${section}.${key}`, () => {
+  const value = consent(), actual = observation(value), previous = actual[section][key];
+  actual[section][key] = typeof previous === 'number' ? previous + 1 : previous === null ? sha('1') : previous + 'x';
+  const result = bind(comment(value), actual);
+  assert.equal(result.blocker, 'OWNER_CONTROL_' + section.toUpperCase() + '_BINDING_MISMATCH'); noAuthority(result);
+});
+for (const [name, change, blocker] of [
+  ['future observation', v => { v.observedAtUtc = new Date(Date.now() + 60000).toISOString(); }, 'OWNER_CONTROL_OBSERVATION_NOT_FRESH'],
+  ['stale observation', v => { v.observedAtUtc = new Date(Date.now() - 120001).toISOString(); }, 'OWNER_CONTROL_OBSERVATION_NOT_FRESH'],
+  ['wrong schema', v => { v.schemaVersion += '-other'; }, 'OWNER_CONTROL_TRANSITION_IDENTITY_MISMATCH'],
+  ['different repository', v => { v.repository = 'other/repo'; }, 'OWNER_CONTROL_TRANSITION_IDENTITY_MISMATCH'],
+  ['different transition', v => { v.transitionId += '-other'; }, 'OWNER_CONTROL_TRANSITION_IDENTITY_MISMATCH'],
+  ['different claimed phase', v => { v.state = 'ADOPTED_NOT_VERIFIED'; }, 'OWNER_CONTROL_TRANSITION_IDENTITY_MISMATCH'],
+  ['retired predecessor before merge', v => { v.epoch.retiredPredecessor = true; }, 'SOURCE_STATE_UNPROVEN'],
+  ['inactive predecessor', v => { v.epoch.activeIssue = 3258; }, 'SOURCE_STATE_UNPROVEN'],
+  ['coerced retirement', v => { v.epoch.retiredPredecessor = 'false'; }, 'OWNER_CONTROL_OBSERVATION_INVALID'],
+  ['merged state without merge identity', v => { v.activation.state = 'MERGED'; }, 'SOURCE_STATE_UNPROVEN'],
+  ['injected authority', v => { v.nativeProducerQualified = true; }, 'OWNER_CONTROL_OBSERVATION_INVALID'],
+  ['injected frozen proof boolean', v => { v.preparation.originalFrozenAuthenticated = true; }, 'OWNER_CONTROL_OBSERVATION_INVALID'],
+]) test(name, () => {
+  const value = consent(), actual = observation(value); change(actual);
+  const result = bind(comment(value), actual); assert.equal(result.blocker, blocker); noAuthority(result);
+});
+test('only the existing activation PR can enter the observation binding', () => {
+  const value = consent(); value.activation.prNumber = 9999;
+  const input = comment(value);
+  input.issue_url = input.issue_url.replace('3268', '9999'); input.html_url = input.html_url.replace('3268', '9999');
+  assert.equal(parse(input).candidate, true);
+  assert.equal(bind(input, observation(value)).blocker, 'OWNER_CONTROL_TRANSITION_IDENTITY_MISMATCH');
+});
+for (const state of ROTATION_V2_STATES) for (const operation of ROTATION_V2_OPERATIONS) test(`bound ${state}/${operation} cannot bypass native proof or the phase matrix`, () => {
+  const value = consent(); value.state = state; value.rotationAction = operation;
+  if (operation === 'VERIFY') value.probeRequestIds = ['fixture-probe-deployment', 'fixture-probe-capability'];
+  const postMerge = ['MERGED_NOT_ADOPTED', 'ADOPTED_NOT_VERIFIED', 'VERIFIED'].includes(state);
+  if (postMerge) {
+    value.activation.mergeCommitSha = value.source.protectedMainHead = git('f');
+    value.activation.mergeTreeSha = value.source.protectedMainTreeSha = git('1');
+    value.preparation.originalFrozenArtifactSha256 = sha('2');
+    if (state !== 'MERGED_NOT_ADOPTED') {
+      value.source.installedHead = git('f'); value.source.installedTreeSha = git('1'); value.source.sourceRole = 'ADOPTED';
+    }
+  }
+  const result = bind(comment(value), observation(value)), mode = ROTATION_V2_STRUCTURAL_MATRIX[state][operation];
+  if (mode === 'DENY') assert.equal(result.blocker, 'ROTATION_OPERATION_DENIED_FOR_PHASE');
+  else if (postMerge) assert.equal(result.blocker, 'ORIGINAL_FROZEN_NATIVE_PROOF_REQUIRED');
+  else { assert.equal(result.ok, true); assert.equal(result.structuralMode, mode); }
+  noAuthority(result);
+});
+test('observation accessors and proxies execute no code and cannot change identity between reads', () => {
+  let effects = 0;
+  const input = comment();
+  for (const section of [null, 'source', 'activation', 'epoch', 'barrier', 'preparation']) {
+    const actual = observation(), target = section ? actual[section] : actual;
+    const key = Object.keys(target)[0];
+    Object.defineProperty(target, key, { enumerable: true, get() { effects++; throw Error(); } });
+    assert.equal(bind(input, actual).ok, false);
+    const wrapped = observation();
+    if (section) wrapped[section] = new Proxy(wrapped[section], { ownKeys() { effects++; throw Error(); } });
+    else { assert.equal(bind(input, new Proxy(wrapped, { ownKeys() { effects++; throw Error(); } })).ok, false); continue; }
+    assert.equal(bind(input, wrapped).ok, false);
+  }
+  assert.equal(effects, 0);
 });

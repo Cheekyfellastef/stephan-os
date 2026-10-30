@@ -34,6 +34,26 @@ export const MIN_DASHBOARD_FEED_POLL_INTERVAL_MS = 15_000;
 export const DEFAULT_DASHBOARD_FEED_POLL_INTERVAL_MS = 30_000;
 const RECORD_READ_CONCURRENCY = 16;
 const directoryReadFlights = new WeakMap();
+const readerBudgets = new WeakMap();
+
+// Share the I/O allowance across directories and overlapping consumers. A slow
+// file occupies one slot, never an entire batch; FIFO admission prevents a
+// large history scan from continually overtaking another waiting directory.
+async function withinReaderBudget(reader, operation) {
+  let budget = readerBudgets.get(reader);
+  if (!budget) {
+    budget = { active: 0, waiting: [] };
+    readerBudgets.set(reader, budget);
+  }
+  if (budget.active < RECORD_READ_CONCURRENCY) budget.active += 1;
+  else await new Promise(resolve => budget.waiting.push(resolve));
+  try { return await operation(); }
+  finally {
+    const next = budget.waiting.shift();
+    if (next) next();
+    else budget.active -= 1;
+  }
+}
 
 const DIRECTORY_BY_KIND = Object.freeze({
   goals: 'goalRecords',
@@ -183,12 +203,17 @@ async function readDirectorySnapshot(path, directory, reader) {
       return { error: `${directory}/${name}:PARSE_FAILED:${error?.message || 'unknown'}` };
     }
   };
-  for (let offset = 0; offset < selectedNames.length; offset += RECORD_READ_CONCURRENCY) {
-    const batch = await Promise.all(selectedNames.slice(offset, offset + RECORD_READ_CONCURRENCY).map(readRecord));
-    for (const result of batch) {
-      if (result.entry) entries.push(result.entry);
-      if (result.error) errors.push(result.error);
+  const results = new Array(selectedNames.length);
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: Math.min(RECORD_READ_CONCURRENCY, selectedNames.length) }, async () => {
+    while (nextIndex < selectedNames.length) {
+      const index = nextIndex++;
+      results[index] = await withinReaderBudget(reader, () => readRecord(selectedNames[index]));
     }
+  }));
+  for (const result of results) {
+    if (result.entry) entries.push(result.entry);
+    if (result.error) errors.push(result.error);
   }
   return { entries, errors };
 }
@@ -343,12 +368,18 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
   const records = emptyRecords();
   const errors = [];
   if (resolved.ok) {
-    for (const [directory, key] of Object.entries(DIRECTORY_BY_KIND)) {
-      if (
-        recordScope === SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE
-        && HISTORICAL_DIRECTORIES.has(directory)
-      ) continue;
-      const result = await readSharedWorkspaceRecordDirectory(resolved.root, directory, { repoRoot: input.repoRoot, nowMs, staleAfterMs });
+    const directories = Object.entries(DIRECTORY_BY_KIND).filter(([directory]) => !(
+      recordScope === SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE
+      && HISTORICAL_DIRECTORIES.has(directory)
+    ));
+    // Enumerations can overlap, while all generic record reads still share the
+    // same bounded allowance. Collect in canonical directory order, not finish order.
+    const results = await Promise.all(directories.map(([directory]) =>
+      readSharedWorkspaceRecordDirectory(resolved.root, directory, {
+        repoRoot: input.repoRoot, nowMs, staleAfterMs, readFile: input.readFile,
+      })));
+    for (const [index, [, key]] of directories.entries()) {
+      const result = results[index];
       records[key] = result.records;
       errors.push(...result.errors);
     }
