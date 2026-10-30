@@ -7,10 +7,54 @@ import { collectBattleBridgeObservation } from './battle-bridge-observation.mjs'
 import { collectSovereignControllerLaneStatus } from './sovereign-controller-lane-status.mjs';
 import { collectSovereignMeterStatus } from './sovereign-meter-status.mjs';
 import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
+import { projectMaintenanceCustodyVisibilityV1, maintenanceCustodyVisibilityLightV1 } from '../shared/agents/maintenanceCustodyVisibilityV1.mjs';
 
 export const SOVEREIGN_VISIBILITY_SNAPSHOT_SCHEMA = 'stephanos.sovereign-visibility-snapshot.v1';
 export const SOVEREIGN_VISIBILITY_SNAPSHOT_MARKER = 'SOVEREIGN_COMMANDER_VISIBILITY_SNAPSHOT_RESULT=';
 export const SOVEREIGN_VISIBILITY_SNAPSHOT_MAX_BYTES = 12 * 1024;
+
+// The Core heartbeat is a separate process projection. It cannot speak for
+// the maintenance executor's live timeout hold, even at the same source head.
+export async function collectMaintenanceCustodyVisibility({ fetchFn = fetch } = {}) {
+  const unknown = Object.freeze({ available: false, state: 'UNKNOWN',
+    blocker: 'LIVE_MAINTENANCE_CUSTODY_UNPROVEN', executionAuthority: false });
+  try {
+    const response = await fetchFn('http://127.0.0.1:18791/health', {
+      method: 'GET', redirect: 'error', signal: AbortSignal.timeout(1500),
+      headers: { accept: 'application/json' },
+    });
+    if (!response.ok || !response.body?.getReader) return unknown;
+    const reader = response.body.getReader();
+    const chunks = []; let size = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > 64 * 1024) return unknown;
+        chunks.push(Buffer.from(value));
+      }
+    } finally { await reader.cancel().catch(() => {}); }
+    const health = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const guardian = health?.continuousRepairGuardian;
+    const persistent = guardian?.persistentCustody;
+    if (health?.service !== 'stephanos-sovereign-commander' || health.ok !== true
+      || typeof guardian?.timeoutCustodyHeld !== 'boolean'
+      || typeof guardian.running !== 'boolean' || typeof guardian.maintenanceInFlight !== 'boolean'
+      || typeof persistent?.held !== 'boolean' || typeof persistent.blocker !== 'string'
+      || !/^[A-Z0-9_]{0,120}$/.test(persistent.blocker)) return unknown;
+    const held = guardian.timeoutCustodyHeld || persistent.held;
+    const blocker = state(persistent.blocker, 120);
+    return projectMaintenanceCustodyVisibilityV1({ available: true,
+      state: held ? 'HELD' : blocker ? 'UNKNOWN' : 'NOT_HELD_REPORTED',
+      timeoutCustodyHeld: guardian.timeoutCustodyHeld, persistentHeld: persistent.held,
+      running: guardian.running, maintenanceInFlight: guardian.maintenanceInFlight,
+      lastCycleId: /^[a-zA-Z0-9._:-]{1,120}$/.test(guardian.lastCycleId || '') ? guardian.lastCycleId : '',
+      blocker: blocker || (held ? state(guardian.lastBlocker, 120) || 'MAINTENANCE_CUSTODY_HELD' : ''),
+      evidenceSource: 'LIVE_MAINTENANCE_OWNER_HEALTH', executionAuthority: false,
+    });
+  } catch { return unknown; }
+}
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
@@ -75,8 +119,17 @@ export function collectRepositoryVisibility({ spawnSyncFn = spawnSync, root = re
   const headResult = run(spawnSyncFn, git, ['-C', root, 'rev-parse', 'HEAD']);
   const branchResult = run(spawnSyncFn, git, ['-C', root, 'rev-parse', '--abbrev-ref', 'HEAD']);
   const statusResult = run(spawnSyncFn, git, ['-C', root, 'status', '--porcelain=v1', '--untracked-files=normal']);
+  const remoteMainResult = run(
+    spawnSyncFn,
+    git,
+    ['-C', root, 'ls-remote', '--heads', 'origin', 'refs/heads/main'],
+    5_000,
+  );
   const head = headResult.ok ? sha(headResult.stdout) : '';
   const branch = branchResult.ok ? text(branchResult.stdout, 120) : '';
+  const remoteMainHead = remoteMainResult.ok
+    ? sha(String(remoteMainResult.stdout || '').trim().split(/\s+/)[0])
+    : '';
   const statusLines = statusResult.ok
     ? statusResult.stdout.split(/\r?\n/).filter((line) => line.length >= 2)
     : [];
@@ -90,7 +143,66 @@ export function collectRepositoryVisibility({ spawnSyncFn = spawnSync, root = re
     changedEntryCount: statusLines.length,
     trackedChangeCount,
     untrackedCount,
+    remoteMainAvailable: Boolean(remoteMainHead),
+    remoteMainHead,
     rawPathsReturned: false,
+  });
+}
+
+export function buildHeadSyncVisibility({ repository = {}, core = {} } = {}) {
+  const canonicalMainHead = sha(repository?.remoteMainHead);
+  const repositoryHead = sha(repository?.head);
+  const runtimeHead = sha(core?.sourceHead);
+  const remoteMainAvailable = repository?.remoteMainAvailable === true && Boolean(canonicalMainHead);
+  const repositoryMatchesMain = Boolean(remoteMainAvailable && repositoryHead && repositoryHead === canonicalMainHead);
+  const runtimeMatchesRepository = Boolean(runtimeHead && repositoryHead && runtimeHead === repositoryHead);
+  const runtimeMatchesMain = Boolean(remoteMainAvailable && runtimeHead && runtimeHead === canonicalMainHead);
+
+  let syncState = 'REMOTE_MAIN_UNKNOWN';
+  let trafficLight = 'AMBER';
+  let exactNextAction = 'REFRESH_REMOTE_MAIN_PROOF';
+
+  if (remoteMainAvailable && !repositoryHead) {
+    syncState = 'REPOSITORY_HEAD_UNKNOWN';
+    trafficLight = 'RED';
+    exactNextAction = 'REPAIR_REPOSITORY_VISIBILITY';
+  } else if (remoteMainAvailable && repositoryHead !== canonicalMainHead) {
+    syncState = 'REPOSITORY_DRIFT';
+    trafficLight = 'RED';
+    exactNextAction = 'SYNC_REPOSITORY_TO_MAIN';
+  } else if (remoteMainAvailable && repositoryMatchesMain && !runtimeHead) {
+    syncState = 'RUNTIME_HEAD_UNKNOWN';
+    trafficLight = 'RED';
+    exactNextAction = 'REPAIR_RUNTIME_HEAD_VISIBILITY';
+  } else if (remoteMainAvailable && repositoryMatchesMain && runtimeHead !== canonicalMainHead) {
+    syncState = 'RUNTIME_DRIFT';
+    trafficLight = 'RED';
+    exactNextAction = 'RELOAD_RUNTIME_AT_REPOSITORY_HEAD';
+  } else if (remoteMainAvailable && repositoryMatchesMain && runtimeMatchesMain) {
+    syncState = 'CURRENT';
+    trafficLight = 'GREEN';
+    exactNextAction = 'NONE';
+  }
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-head-sync.v1',
+    canonicalMainHead,
+    repositoryHead,
+    runtimeHead,
+    remoteMainAvailable,
+    repositoryMatchesMain,
+    runtimeMatchesRepository,
+    runtimeMatchesMain,
+    exactHeadChainProven: syncState === 'CURRENT',
+    mainChangedSinceRepository: Boolean(remoteMainAvailable && repositoryHead && !repositoryMatchesMain),
+    mainChangedSinceRuntime: Boolean(remoteMainAvailable && runtimeHead && !runtimeMatchesMain),
+    syncState,
+    trafficLight,
+    exactNextAction,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    unknownMeansGreen: false,
+    finalVerdict: `SOVEREIGN_HEAD_SYNC_${syncState}`,
   });
 }
 
@@ -106,8 +218,11 @@ export function collectCoreDaemonVisibility({ spawnSyncFn = spawnSync } = {}) {
   return Object.freeze({
     schemaVersion: 'stephanos.core-daemon-status.v1',
     available: true,
-    ok: parsed.ok === true,
-    processCount: integer(parsed.processCount, 100),
+    ok: parsed.ok === true && parsed.processInventoryComplete === true && parsed.processCount === 1,
+    processCount: parsed.processInventoryComplete === true && typeof parsed.processCount === 'number'
+      ? integer(parsed.processCount, 100) : null,
+    processInventoryComplete: parsed.processInventoryComplete === true,
+    processObservationBlocker: state(parsed.processObservationBlocker, 120),
     daemonHealthy: parsed.daemonHealthy === true,
     readiness: state(parsed.readiness, 40) || 'UNKNOWN',
     wakeState: state(parsed.wakeState, 40) || 'UNKNOWN',
@@ -143,6 +258,12 @@ export async function collectSelfHealVisibility(options = {}) {
     : [];
   return Object.freeze({
     available: true,
+    outerBridgeRunCount: integer(parsed.outerBridgeRunCount, 1_000_000),
+    outerBridgeInFlight: parsed.outerBridgeInFlight === true,
+    outerBridgeLastPublicationOk: parsed.outerBridgeLastPublicationOk === true,
+    outerBridgeLastStage: state(parsed.outerBridgeLastStage, 80) || 'NOT_OBSERVED',
+    outerBridgeLastBlocker: state(parsed.outerBridgeLastBlocker, 120) || 'NOT_OBSERVED',
+    outerBridgeLastVerdict: state(parsed.outerBridgeLastVerdict, 120) || 'NOT_RUN',
     dependencySelfHealEnabled: parsed.dependencySelfHealEnabled === true,
     dependencySelfHealLastAttemptAtUtc: timestamp(parsed.dependencySelfHealLastAttemptAtUtc),
     dependencySelfHealAttemptCount: integer(parsed.dependencySelfHealAttemptCount, 1_000_000),
@@ -163,9 +284,61 @@ export async function collectSelfHealVisibility(options = {}) {
   });
 }
 
+// Observe the already-running Core Daemon bridge without creating a
+// recovery task, touching the original source lease or exposing raw workspace.
+export async function collectSovereignOuterBridgeVisibility(options = {}) {
+  const parsed = await readWorkspaceStatusFile('sovereign-outer-bridge-current.json', options);
+  const bridge = parsed?.bridge;
+  const unknown = Object.freeze({
+    available: false, current: false, exactHeadMatch: false, cycleAgeSeconds: null,
+    sourceHead: '', stage: 'UNVERIFIED', rescueBlocker: 'OUTER_BRIDGE_STATUS_NOT_PROVEN',
+    canonicalLeaseReleaseProven: false, physicalPickupProven: false,
+    twoUnattendedRefillsProven: false, canonicalHandbackEligible: false,
+    oneCanonicalLeaseAuthority: true, readOnly: true,
+  });
+  if (parsed?.statusId !== 'sovereign-outer-bridge-current'
+    || parsed?.participantId !== 'stephanos-core-daemon'
+    || parsed?.status !== 'HELD'
+    || bridge?.schemaVersion !== 'stephanos.sovereign-outer-bridge.v1'
+    || bridge?.sourceMutationAllowed !== false
+    || bridge?.leaseSeizureAllowed !== false
+    || bridge?.duplicateSchedulerAllowed !== false
+    || bridge?.mergeAuthority !== false) return unknown;
+  const observedAtUtc = timestamp(bridge.observedAtUtc);
+  const statusTimestampUtc = timestamp(parsed.timestampUtc);
+  const nowMs = options?.now instanceof Date ? options.now.getTime() : Date.now();
+  const ageMs = observedAtUtc ? nowMs - Date.parse(observedAtUtc) : NaN;
+  const current = Boolean(statusTimestampUtc && observedAtUtc
+    && statusTimestampUtc === observedAtUtc && Number.isFinite(ageMs)
+    && ageMs >= 0 && ageMs <= 3 * 60_000);
+  const sourceHead = sha(bridge.sourceHead);
+  const stage = state(bridge.stage, 80);
+  const known = ['OUTER_BRIDGE_WIDE','OUTER_BRIDGE_NARROWING_LEASE',
+    'OUTER_BRIDGE_NARROWING_PICKUP','CANONICAL_REJOIN_READY'];
+  const allowedStage = known.includes(stage) ? stage : 'UNVERIFIED';
+  return Object.freeze({
+    available: true, current,
+    observedAtUtc, cycleAgeSeconds: Number.isFinite(ageMs) && ageMs >= 0
+      ? Math.floor(ageMs / 1000) : null,
+    sourceHead, exactHeadMatch: false, // proven only by the caller's exact local source
+    stage: allowedStage,
+    rescueBlocker: state(bridge.rescueBlocker, 120) || 'OUTER_BRIDGE_BLOCKER_UNVERIFIED',
+    // Be conservative: local source and current cycle are independently required.
+    canonicalLeaseReleaseProven: current && bridge.canonicalLeaseReleaseProven === true,
+    physicalPickupProven: false,
+    twoUnattendedRefillsProven: false,
+    canonicalHandbackEligible: false,
+    oneCanonicalLeaseAuthority: bridge.oneCanonicalLeaseAuthority === true,
+    readOnly: true,
+  });
+}
+
 export async function collectRelayVisibility(options = {}) {
   const parsed = await readWorkspaceStatusFile('sovereign-relay-current.json', options);
-  if (!parsed || parsed.schemaVersion !== 'stephanos.sovereign-relay-daemon.v1') {
+  if (!parsed || ![
+    parsed.schema,
+    parsed.schemaVersion,
+  ].includes('stephanos.sovereign-relay-daemon.v1')) {
     return Object.freeze({ available: false, daemonHealthy: false, carrierHealthy: false });
   }
   const heartbeatAtUtc = timestamp(parsed.heartbeatAtUtc);
@@ -372,14 +545,40 @@ export function buildSovereignVisibilitySnapshot({
   controllers = {},
   meters = {},
   relay = {},
+  outerBridge = {},
+  maintenanceCustody = {},
 } = {}) {
   const compactObservationValue = compactObservation(observation);
   const compactControllersValue = compactControllers(controllers);
   const compactMetersValue = compactMeters(meters);
+  const projectedMaintenanceCustody = projectMaintenanceCustodyVisibilityV1(maintenanceCustody);
+  const headSync = buildHeadSyncVisibility({ repository, core });
+  const headMatchedBridge = outerBridge?.available === true
+    && outerBridge?.current === true
+    && sha(outerBridge.sourceHead) === sha(repository.head)
+    && sha(outerBridge.sourceHead) === sha(core.sourceHead)
+    && headSync.exactHeadChainProven === true;
+  const projectedOuterBridge = Object.freeze({
+    available: outerBridge?.available === true,
+    current: headMatchedBridge,
+    exactHeadMatch: headMatchedBridge,
+    sourceHead: headMatchedBridge ? sha(outerBridge.sourceHead) : '',
+    observedAtUtc: timestamp(outerBridge?.observedAtUtc),
+    cycleAgeSeconds: integer(outerBridge?.cycleAgeSeconds, 31_536_000),
+    stage: headMatchedBridge ? state(outerBridge?.stage, 80) : 'UNVERIFIED',
+    rescueBlocker: state(outerBridge?.rescueBlocker, 120) || 'OUTER_BRIDGE_STATUS_NOT_PROVEN',
+    canonicalLeaseReleaseProven: headMatchedBridge && outerBridge?.canonicalLeaseReleaseProven === true,
+    physicalPickupProven: false,
+    twoUnattendedRefillsProven: false,
+    canonicalHandbackEligible: false,
+    readOnly: true, sourceMutationAllowed: false, mergeAuthority: false,
+  });
   const repositoryLight = !repository?.available
     ? 'RED'
     : (repository?.branch !== 'main' || repository?.dirty === true ? 'AMBER' : 'GREEN');
   const coreLight = core?.available === true
+    && core?.processInventoryComplete === true
+    && core?.processCount === 1
     && core?.ok === true
     && core?.daemonHealthy === true
     && core?.readiness === 'READY'
@@ -401,7 +600,9 @@ export function buildSovereignVisibilitySnapshot({
     && relay.heartbeatAgeSeconds <= 30
     ? (relay?.carrierHealthy === true ? 'GREEN' : 'AMBER')
     : 'AMBER';
-  const lights = [repositoryLight, coreLight, servicesLight, lanesLight, transportLight];
+  const headSyncLight = headSync.trafficLight;
+  const maintenanceLight = maintenanceCustodyVisibilityLightV1(projectedMaintenanceCustody);
+  const lights = [repositoryLight, coreLight, headSyncLight, servicesLight, lanesLight, transportLight, maintenanceLight];
   const finalVerdict = lights.includes('RED')
     ? 'SOVEREIGN_VISIBILITY_SNAPSHOT_ATTENTION_REQUIRED'
     : (lights.some((light) => light !== 'GREEN')
@@ -415,16 +616,21 @@ export function buildSovereignVisibilitySnapshot({
     repository,
     observation: compactObservationValue,
     core,
+    headSync,
     selfHeal,
+    maintenanceCustody: projectedMaintenanceCustody,
     controllers: compactControllersValue,
     meters: compactMetersValue,
     relay,
+    outerBridge: projectedOuterBridge,
     health: Object.freeze({
       repository: repositoryLight,
       core: coreLight,
+      headSync: headSyncLight,
       services: servicesLight,
       laneRefill: lanesLight,
       transport: transportLight,
+      maintenanceCustody: maintenanceLight,
     }),
     readOnly: true,
     sourceMutationAllowed: false,
@@ -449,14 +655,17 @@ export async function collectSovereignVisibilitySnapshot({
   battleBridgeCollector = collectBattleBridgeObservation,
   controllerCollector = collectSovereignControllerLaneStatus,
   meterCollector = collectSovereignMeterStatus,
+  fetchFn = fetch,
 } = {}) {
   const current = now();
-  const [observation, controllers, meters, selfHeal, relay] = await Promise.all([
+  const [observation, controllers, meters, selfHeal, relay, outerBridge, maintenanceCustody] = await Promise.all([
     battleBridgeCollector({ spawnSyncFn, env, now: () => current }),
     controllerCollector({ env, now: () => current }),
     meterCollector({ env, spawnSyncFn, now: () => current }),
     collectSelfHealVisibility({ env, readFileFn, now: current }),
     collectRelayVisibility({ env, readFileFn, now: current }),
+    collectSovereignOuterBridgeVisibility({ env, readFileFn, now: current }),
+    collectMaintenanceCustodyVisibility({ fetchFn }),
   ]);
   const repository = collectRepositoryVisibility({ spawnSyncFn });
   const core = collectCoreDaemonVisibility({ spawnSyncFn });
@@ -469,6 +678,8 @@ export async function collectSovereignVisibilitySnapshot({
     controllers,
     meters,
     relay,
+    outerBridge,
+    maintenanceCustody,
   });
 }
 

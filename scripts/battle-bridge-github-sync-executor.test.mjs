@@ -6,19 +6,60 @@ import path from 'node:path';
 import process from 'node:process';
 import {
   BATTLE_BRIDGE_SYNC_HOUSEKEEPER_COMMAND,
+  createFixedGitAdapter,
   FIXED_SYNC_GIT_COMMANDS,
   SYNC_LOCK_STALE_AFTER_MS,
-  runBattleBridgeGitHubSync,
+  runBattleBridgeGitHubSync as runSyncWithRealRotationAdmission,
   runBoundedSyncHousekeeper,
   validateCanonicalSyncPaths,
 } from './battle-bridge-github-sync-executor.mjs';
 import { SYNC_CLASSIFICATIONS } from './battle-bridge-github-sync-policy.mjs';
+import { readPendingPostSyncRefresh } from './battle-bridge-github-sync-and-refresh.mjs';
+import { runBattleBridgePostSyncRefresh } from './battle-bridge-post-sync-refresh.mjs';
+const runBattleBridgeGitHubSync = options => runSyncWithRealRotationAdmission({
+  rotationPreflightFn: () => ({ok:true,required:false}), ...options,
+});
 
 const A = 'a'.repeat(40);
 const B = 'b'.repeat(40);
 
+test('fixed sync adapter pins the reviewed SHA and rejects arbitrary targets or target injection into reads',()=>{
+  const calls=[];const git=createFixedGitAdapter({spawnSyncFn:(exe,args,options)=>{calls.push({exe,args,options});return {status:0,stdout:'',stderr:''};}});
+  git.run(FIXED_SYNC_GIT_COMMANDS.mergeFfOnlyOriginMain.id,'fixed-root',{expectedHead:B});
+  assert.deepEqual(calls[0].args,['merge','--ff-only',B]);assert.equal(calls[0].options.shell,false);
+  for(const expectedHead of ['origin/main','main','; unsafe',B+'x']) assert.throws(()=>git.run(FIXED_SYNC_GIT_COMMANDS.mergeFfOnlyOriginMain.id,'fixed-root',{expectedHead}),/EXACT_TARGET/);
+  assert.throws(()=>git.run(FIXED_SYNC_GIT_COMMANDS.localHead.id,'fixed-root',{expectedHead:B}),/EXACT_TARGET/);
+});
+
+test('unattended epoch adoption uses the same outer mailbox guard and rechecks its frozen proof before pinned merge',async t=>{
+  const f=await fixture();t.after(()=>rm(f.root,{recursive:true,force:true}));const git=fakeGit({remote:B}),events=[];
+  const raw=git.run.bind(git);git.run=(id,cwd,options)=>{if(id===FIXED_SYNC_GIT_COMMANDS.mergeFfOnlyOriginMain.id)events.push({kind:'merge',options});return raw(id,cwd,options)};
+  const result=await runBattleBridgeGitHubSync({paths:f.paths,expectedPaths:f.expectedPaths,git,
+    rotationPreflightFn: input=>{events.push({kind:'preflight',input});return {ok:true,required:true,sourceHead:B}},
+    rotationGuardFn:(run)=>{events.push({kind:'lock'});const result=run({token:'fixed-test-token'});events.push({kind:'unlock'});return result;}});
+  assert.equal(result.sourceUpdated,true);assert.deepEqual(events.map(e=>e.kind),['preflight','lock','preflight','merge','unlock']);
+  assert.equal(events[2].input.guardToken,'fixed-test-token');assert.equal(events[3].options.expectedHead,B);
+});
+
+test('unattended sync fails before fast-forward on missing freeze, pending drain, lost locked admission or changed source',async t=>{
+  for(const blocker of ['MAILBOX_ROTATION_SYNC_TRANSITION_REQUIRED','MAILBOX_ROTATION_SYNC_PREDECESSOR_PENDING','MAILBOX_ROTATION_SYNC_ACTIONS_PENDING']) {
+    const f=await fixture();t.after(()=>rm(f.root,{recursive:true,force:true}));const git=fakeGit({remote:B});
+    const result=await runBattleBridgeGitHubSync({paths:f.paths,expectedPaths:f.expectedPaths,git,rotationPreflightFn:()=>({ok:false,blocker})});
+    assert.equal(result.ok,false);assert.match(result.error,new RegExp(blocker));assert.equal(git.calls.includes(FIXED_SYNC_GIT_COMMANDS.mergeFfOnlyOriginMain.id),false);
+  }
+  const f=await fixture();t.after(()=>rm(f.root,{recursive:true,force:true}));const git=fakeGit({remote:B});let probes=0;
+  const result=await runBattleBridgeGitHubSync({paths:f.paths,expectedPaths:f.expectedPaths,git,
+    rotationPreflightFn:()=>++probes===1?{ok:true,required:true,sourceHead:B}:{ok:false,blocker:'MAILBOX_ROTATION_SYNC_PREDECESSOR_PENDING'},rotationGuardFn:fn=>fn({token:'fixed-test-token'})});
+  assert.equal(result.ok,false);assert.equal(git.calls.includes(FIXED_SYNC_GIT_COMMANDS.mergeFfOnlyOriginMain.id),false);
+  const changed=await fixture();t.after(()=>rm(changed.root,{recursive:true,force:true}));const moved=fakeGit({remote:B}),original=moved.run.bind(moved);let remoteReads=0;
+  moved.run=(id,...rest)=>{const result=original(id,...rest);return id===FIXED_SYNC_GIT_COMMANDS.remoteHead.id&&++remoteReads>1?{...result,stdout:'c'.repeat(40)}:result;};
+  const held=await runBattleBridgeGitHubSync({paths:changed.paths,expectedPaths:changed.expectedPaths,git:moved});
+  assert.equal(held.ok,false);assert.match(held.error,/SOURCE_CHANGED_BEFORE_FAST_FORWARD/);assert.equal(moved.calls.includes(FIXED_SYNC_GIT_COMMANDS.mergeFfOnlyOriginMain.id),false);
+});
+
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'bb-sync-'));
+  assert.ok(path.resolve(root).startsWith(path.resolve(os.tmpdir())+path.sep));
   const home = path.join(root, 'home');
   const repoRoot = path.join(home, 'Documents', 'GitHub', 'stephan-os');
   const workspaceRoot = path.join(home, 'Documents', 'Stephanos-openclaw-workspace');
@@ -55,6 +96,7 @@ function fakeGit({
   };
   return {
     calls,
+    isAncestor(before, after) { return { ok: true, ancestor: before <= after }; },
     run(id) {
       calls.push(id);
       const result = outputs[id]?.();
@@ -88,6 +130,69 @@ function housekeeperObservation({ state = 'READY', sourceDirtCount = 0, hardBloc
 async function readStatus(workspaceRoot) {
   return JSON.parse(await readFile(path.join(workspaceRoot, 'status', 'battle-bridge-github-sync-current.json'), 'utf8'));
 }
+
+test('real sync writer retains admitted debt through no-change and failures before any refresh plan', async t => {
+  const fx = await fixture(); t.after(() => rm(fx.root, { recursive: true, force: true }));
+  const initial = await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths, git: fakeGit({ remote: B }) });
+  assert.equal(initial.sourceUpdated, true);
+  const before = (await readStatus(fx.workspaceRoot)).pendingRefresh;
+  assert.deepEqual(before.spans, [{ beforeHead: A, afterHead: B }]);
+  const lockPath = path.join(fx.workspaceRoot, 'locks', 'post-sync-runtime-refresh.lock');
+  await writeFile(lockPath, JSON.stringify({ pid: process.pid, acquiredAtUtc: new Date().toISOString() }));
+  const held = await runBattleBridgePostSyncRefresh({ beforeHead: A, afterHead: B, paths: fx.paths, expectedPaths: fx.paths,
+    adapter: { inspectHeads() { throw new Error('must not inspect while original refresh owner holds lock'); } } });
+  assert.equal(held.blocker, 'POST_SYNC_REFRESH_ALREADY_RUNNING');
+  for (const mode of ['no-change', 'fetch-failure', 'exception']) {
+    const git = fakeGit({ localBefore: B, remote: B, mergeBase: B, fetchOk: mode !== 'fetch-failure' });
+    if (mode === 'exception') {
+      const run = git.run.bind(git);
+      git.run = id => { if (id === FIXED_SYNC_GIT_COMMANDS.fetchOriginMain.id) throw new Error('fixture transport exception'); return run(id); };
+    }
+    await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths, git });
+    assert.deepEqual((await readStatus(fx.workspaceRoot)).pendingRefresh, before, mode);
+    assert.deepEqual((await readPendingPostSyncRefresh(fx.paths)).spans, before.spans, mode);
+  }
+  await assert.rejects(readFile(path.join(fx.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json')), { code: 'ENOENT' });
+});
+
+test('sync lock loser leaves durable current status byte-for-byte unchanged', async t => {
+  const fx = await fixture(); t.after(() => rm(fx.root, { recursive: true, force: true }));
+  await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths, git: fakeGit({ remote: B }) });
+  const statusPath = path.join(fx.workspaceRoot, 'status', 'battle-bridge-github-sync-current.json');
+  const before = await readFile(statusPath);
+  await writeFile(path.join(fx.workspaceRoot, 'locks', 'battle-bridge-github-sync.lock'), JSON.stringify({ pid: process.pid, acquiredAtUtc: new Date().toISOString() }));
+  const result = await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths, git: fakeGit({ localBefore: B, remote: B, mergeBase: B }), processIsAliveFn: () => true });
+  assert.equal(result.ok, false);
+  assert.equal(result.publication, null);
+  assert.deepEqual(await readFile(statusPath), before);
+});
+
+test('sync preserves malformed debt as a typed hold while allowing protected source-forward', async t => {
+  const fx = await fixture(); t.after(() => rm(fx.root, { recursive: true, force: true }));
+  await mkdir(path.join(fx.workspaceRoot, 'status'), { recursive: true });
+  await writeFile(path.join(fx.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json'), '{broken');
+  const result = await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths, git: fakeGit({ remote: B }) });
+  assert.equal(result.sourceUpdated, true);
+  assert.equal((await readStatus(fx.workspaceRoot)).pendingRefresh.state, 'HELD');
+  assert.equal((await readPendingPostSyncRefresh(fx.paths)).ok, false);
+});
+
+test('fixed ancestry uses bounded read-only argv and distinguishes unrelated history from probe errors', () => {
+  const calls = [];
+  let status = 1, error;
+  const adapter = createFixedGitAdapter({ spawnSyncFn: (command, args, options) => { calls.push({ command, args, options }); return { status, error, stdout: '', stderr: '' }; } });
+  assert.deepEqual(adapter.isAncestor(A, B, '/fixture'), { ok: true, ancestor: false });
+  status = 2;
+  assert.equal(adapter.isAncestor(A, B, '/fixture').ok, false);
+  status = 0; error = { code: 'ETIMEDOUT' };
+  assert.equal(adapter.isAncestor(A, B, '/fixture').ok, false);
+  for (const value of [[A], A.toUpperCase(), ` ${A}`, 'main']) assert.equal(adapter.isAncestor(value, B, '/fixture').ok, false);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[0].args, ['merge-base', '--is-ancestor', A, B]);
+  assert.equal(calls[0].options.shell, false);
+  assert.ok(calls[0].options.timeout > 0 && calls[0].options.timeout <= 1000);
+  assert.equal(calls[0].options.maxBuffer, 64 * 1024);
+});
 
 test('canonical path validator rejects arbitrary repository and overlapping workspace', () => {
   const expectedPaths = { repoRoot: '/home/u/Documents/GitHub/stephan-os', workspaceRoot: '/home/u/Documents/Stephanos-openclaw-workspace' };
@@ -254,7 +359,7 @@ test('bounded Housekeeper subprocess uses the exact-head runner, minimal Git env
   assert.equal(BATTLE_BRIDGE_SYNC_HOUSEKEEPER_COMMAND.exactHeadBound, true);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].command, process.execPath);
-  assert.deepEqual(calls[0].argv, ['/canonical/repo/scripts/battle-bridge-sync-housekeeper-runner.mjs']);
+  assert.deepEqual(calls[0].argv, [path.resolve('/canonical/repo/scripts/battle-bridge-sync-housekeeper-runner.mjs')]);
   assert.equal(calls[0].options.cwd, '/canonical/repo');
   assert.equal(calls[0].options.shell, false);
   assert.equal(calls[0].options.env.PATH, '/usr/bin:/bin');

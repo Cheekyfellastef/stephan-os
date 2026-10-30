@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "sovereign-commander",
-  "version": "1.0.2",
+  "version": "1.0.8",
   "description": "Use the existing guarded Stephanos Sovereign Commander on the Battle Bridge through local MCP when available and the guarded GitHub relay from cloud chats.",
   "author": {
     "name": "Stephanos"

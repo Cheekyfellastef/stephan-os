@@ -60,7 +60,11 @@ function normalizeChangedFiles(values) {
   ))) return null;
   const paths = normalized.map((entry) => entry.path);
   if (new Set(paths).size !== paths.length) return null;
-  return Object.freeze([...normalized].sort((left, right) => left.path.localeCompare(right.path)));
+  // Use the same case-sensitive code-unit order as normalizePaths. Locale
+  // collation would make an identical mixed-case path estate compare unequal.
+  return Object.freeze([...normalized].sort((left, right) => (
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0
+  )));
 }
 
 function filePaths(files) {
@@ -97,8 +101,13 @@ function exactForwardComparison(comparison = {}, baseSha, headSha, { allowIdenti
   const behind = Number(comparison.behind_by);
   const observedBase = exactSha(comparison?.base_commit?.sha);
   const mergeBase = exactSha(comparison?.merge_base_commit?.sha);
+  const commits = Array.isArray(comparison?.commits) ? comparison.commits : [];
   const headCommitPresent = Object.prototype.hasOwnProperty.call(comparison || {}, 'head_commit');
-  const observedHead = exactSha(comparison?.head_commit?.sha);
+  const observedHead = exactSha(
+    headCommitPresent
+      ? comparison?.head_commit?.sha
+      : (commits.at(-1)?.sha ?? (status === 'identical' ? comparison?.base_commit?.sha : '')),
+  );
 
   if (allowIdentical && baseSha === headSha) {
     if (status !== 'identical') blockers.push('comparison-status-not-identical');
@@ -112,11 +121,7 @@ function exactForwardComparison(comparison = {}, baseSha, headSha, { allowIdenti
 
   if (observedBase !== baseSha) blockers.push('comparison-base-mismatch');
   if (mergeBase !== baseSha) blockers.push('comparison-merge-base-mismatch');
-  if (allowIdentical && baseSha === headSha) {
-    if (headCommitPresent && observedHead !== headSha) blockers.push('comparison-head-mismatch');
-  } else if (observedHead !== headSha) {
-    blockers.push('comparison-head-mismatch');
-  }
+  if (observedHead !== headSha) blockers.push('comparison-head-mismatch');
 
   return Object.freeze({ valid: blockers.length === 0, blockers: Object.freeze(blockers) });
 }

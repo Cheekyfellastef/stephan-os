@@ -261,6 +261,13 @@ test('status page shows OpenClaw startup state from ignition child logs', async 
   assert.match(script, /openClawStartupState/, 'status payload must include OpenClaw startup state');
 });
 
+test('launcher final readiness does not require OpenClaw and presents it as optional degradation', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.doesNotMatch(script, /\$SupervisorRecord\.services\.openClaw18789\.ready -eq \$true -and/m, 'OpenClaw readiness must not gate the final Stephanos supervisor contract');
+  assert.match(script, /openClawStartupState = if \(\$SupervisorRecord\.services\.openClaw18789\.ready\) \{ 'ready' \} else \{ 'degraded' \}/m, 'missing OpenClaw must be projected as degraded rather than pending\/blocked');
+  assert.match(script, /OpenClaw startup \(optional\):/m, 'ignition UI must make the optional contract explicit');
+});
+
 
 test('visual ignition cockpit contains traffic lights progress proof cards and no script injection', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');

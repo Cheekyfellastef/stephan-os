@@ -102,3 +102,27 @@ test('approval, terminal, and blocked phases do not execute automatically', () =
     assert.equal(action.executable, false);
   }
 });
+
+test('Forge GITHUB_COMMIT uses a dedicated signed escrow publication lane', () => {
+  const state = {
+    ...base, currentPhase: 'GITHUB_COMMIT',
+    dispatch: { adapter: 'foundry-forge', status: 'complete' },
+    pullRequest: { number: null, headSha: '' },
+    sourcePublication: {
+      artifactSha256: 'c'.repeat(64),
+      outboxId: 'offline-publication-' + 'd'.repeat(24),
+      canonicalBranch: base.git.branch,
+      exactParentHead: 'a'.repeat(40),
+      exactResultTree: 'b'.repeat(40),
+    },
+  };
+  const action = buildMissionWorkerAction(state, { now });
+  assert.equal(action.executable, true);
+  assert.equal(action.actionKind, 'forge-escrow-publication');
+  assert.equal(action.adapter, 'forge-publication');
+  assert.equal(action.operation, 'publish-forge-escrow');
+  assert.equal(action.artifactSha256, state.sourcePublication.artifactSha256);
+  const invalid = buildMissionWorkerAction({ ...state, sourcePublication: null }, { now });
+  assert.equal(invalid.executable, false);
+  assert.match(invalid.blockers.join(' '), /escrow/i);
+});

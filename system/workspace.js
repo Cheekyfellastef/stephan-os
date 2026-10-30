@@ -5,6 +5,7 @@ import { recordStartupLaunchTrigger } from "../shared/runtime/startupLaunchDiagn
 import { createCommandDeckReturnButton } from "../shared/runtime/commandDeckReturnButton.mjs";
 import { STEPHANOS_LAW_IDS } from "../shared/runtime/stephanosLaws.mjs";
 import { withCommandDeckDestination } from "../shared/runtime/commandDeckDestination.mjs";
+import { announceWorkspaceHydrationBridgeToFrame, installWorkspaceHydrationParentBridge } from "../shared/runtime/workspaceHydrationBridge.mjs";
 
 
 const CANON_MUSIC_TILE_ID = 'music-tile';
@@ -150,6 +151,13 @@ export function createWorkspaceRuntimeState() {
 
 const workspaceRuntimeState = createWorkspaceRuntimeState();
 
+const workspaceHydrationParentBridge = installWorkspaceHydrationParentBridge({
+  windowRef: globalThis?.window,
+  getActiveIframe: () => workspaceRuntimeState.activeIframe,
+  getActiveWorkspaceId: () => workspaceRuntimeState.activeProjectKey,
+});
+
+
 function pushWorkspaceLaunchLog(runtimeState, entry) {
   runtimeState.launchLog.unshift({
     timestamp: Date.now(),
@@ -248,6 +256,7 @@ function recordWorkspaceIframeCreation(project, sessionId, runtimeState = worksp
 export function getWorkspaceRuntimeDebugState() {
   return {
     ...workspaceRuntimeState,
+    hydrationBridgeInstalled: workspaceHydrationParentBridge.installed === true,
     launchLog: workspaceRuntimeState.launchLog.map((entry) => ({ ...entry })),
   };
 }
@@ -459,6 +468,15 @@ export const workspace = {
       entry: stephanosLaunchTarget || effectiveProject?.entry,
     });
 
+    // Cockpit is a first-class runtime surface, like Stephanos itself. Opening
+    // its redirect stub inside a fixed-height iframe creates a second shell.
+    const cockpitSurface = String(effectiveProject?.folder || effectiveProject?.id || '').toLowerCase() === 'cockpit';
+    if (cockpitSurface) {
+      const cockpitUrl = new URL('apps/stephanos/dist/index.html?surface=cockpit', window.location.href);
+      window.location.assign(withCommandDeckDestination(cockpitUrl.href, window));
+      return;
+    }
+
     if (isStephanosProject(project) && resolvedEntryUrl) {
       recordStartupLaunchTrigger({
         sourceModule: "system/workspace.js",
@@ -610,6 +628,12 @@ export const workspace = {
         logWorkspaceEvent("Workspace iframe loaded", {
           sessionId: launch.sessionId,
           projectKey: launch.projectKey,
+        });
+
+        announceWorkspaceHydrationBridgeToFrame({
+          iframe,
+          workspaceId: launch.projectKey,
+          windowRef: globalThis?.window,
         });
 
         if (isStephanosProject(project)) {

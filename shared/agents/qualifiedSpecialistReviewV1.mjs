@@ -152,6 +152,16 @@ function commentBody(comment = {}) {
   return text(comment?.body);
 }
 
+// Preserve the full raw authenticated GitHub comment in digest-bound receipts.
+// Only normalize this one canonical, fixed Codex bot preamble for matching.
+// Reviewer App identity, immutable timestamps, exact HEAD and scoped operator
+// request are still independently mandatory before any specialist admission.
+function canonicalCodexReviewText(body = '') {
+  const original = text(body);
+  const receiptPreamble = /^<!-- codex-review-receipt:v1 -->(?:\r?\n){2}(?=Codex Review:)/;
+  return original.replace(receiptPreamble, '');
+}
+
 function commentActor(comment = {}) {
   return comment?.user && typeof comment.user === 'object'
     ? comment.user
@@ -215,7 +225,7 @@ export function qualifiedSpecialistCommentHeadRef(comment = {}) {
 }
 
 function responseMatches(comment = {}, options = {}) {
-  const body = commentBody(comment);
+  const body = canonicalCodexReviewText(commentBody(comment));
   const createdAtMs = commentCreatedAtMs(comment);
   const updatedAtMs = commentUpdatedAtMs(comment);
   const reviewedCommitRef = qualifiedSpecialistCommentHeadRef(comment);
@@ -451,7 +461,7 @@ function providerNeutralArtifactCandidates(comments = [], options = {}) {
       commentComesAfter(comment, request)
       && (!nextInvocation || commentComesBefore(comment, nextInvocation))
       && isTrustedProviderResponse(comment)
-      && /^Codex Review:/i.test(commentBody(comment))
+      && /^Codex Review:/i.test(canonicalCodexReviewText(commentBody(comment)))
     ));
     if (providerResults.length !== 1 || !responseMatches(providerResults[0], options)) continue;
     const artifact = buildQualifiedSpecialistReviewArtifact(request, providerResults[0], options);

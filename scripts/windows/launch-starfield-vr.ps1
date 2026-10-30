@@ -21,6 +21,7 @@ $decisionScript = Join-Path $repositoryRoot 'scripts\starfield-vr-launch-decisio
 $performanceModeScript = Join-Path $repositoryRoot 'scripts\windows\starfield-vr-performance-mode.ps1'
 $gamingResourceGovernorScript = Join-Path $repositoryRoot 'scripts\windows\run-vr-resource-governor.ps1'
 $powershellExecutable = Join-Path $PSHOME 'powershell.exe'
+$virtualDesktopOculusCompatibilityDisableEnvironment = 'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY'
 if (-not $NodeExecutablePath) {
     $nodeCommand = Get-Command -Name 'node.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($nodeCommand) {
@@ -135,6 +136,37 @@ function Get-ActiveOpenXrRuntimePath {
     }
     catch {
         return ''
+    }
+}
+
+function Start-StarfieldWithMetaAirLinkIsolation {
+    param(
+        [Parameter(Mandatory)][string]$ExecutablePath,
+        [Parameter(Mandatory)][string]$WorkingDirectory
+    )
+
+    # Virtual Desktop registers an implicit Oculus-compatibility OpenXR layer
+    # system-wide. Meta Air Link does not need that layer, and crash evidence
+    # shows it loaded alongside Meta's runtime. Use the layer's own supported
+    # disable environment only for the Starfield child process.
+    $previous = [Environment]::GetEnvironmentVariable(
+        $virtualDesktopOculusCompatibilityDisableEnvironment,
+        'Process'
+    )
+    try {
+        [Environment]::SetEnvironmentVariable(
+            $virtualDesktopOculusCompatibilityDisableEnvironment,
+            '1',
+            'Process'
+        )
+        return Start-Process -FilePath $ExecutablePath -WorkingDirectory $WorkingDirectory -PassThru
+    }
+    finally {
+        [Environment]::SetEnvironmentVariable(
+            $virtualDesktopOculusCompatibilityDisableEnvironment,
+            $previous,
+            'Process'
+        )
     }
 }
 
@@ -437,7 +469,7 @@ if ($decision.action -eq 'LAUNCH_VORPX') {
 }
 
 try {
-    $gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru
+    $gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory
 }
 catch {
     if ($performanceMode -and $performanceMode.sessionPath) {
@@ -478,6 +510,8 @@ $receiptPath = Write-LaunchReceipt `
         performanceMode = $performanceMode
         performanceGuardianProcessId = $performanceGuardianProcessId
         resourceGovernor = $resourceGuard
+        virtualDesktopOculusCompatibilityLayerDisabled = $true
+        virtualDesktopOculusCompatibilityDisableEnvironment = $virtualDesktopOculusCompatibilityDisableEnvironment
     }
 
 [ordered]@{
@@ -488,5 +522,6 @@ $receiptPath = Write-LaunchReceipt `
     performanceMode = $performanceMode
     performanceGuardianProcessId = $performanceGuardianProcessId
     resourceGovernorPhase = if ($resourceGuard) { [string]$resourceGuard.phase } else { '' }
+    virtualDesktopOculusCompatibilityLayerDisabled = $true
     receiptPath = $receiptPath
 } | ConvertTo-Json -Depth 6

@@ -1,5 +1,5 @@
-import { lstat, mkdir, readFile, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { buildClosedLoopLearningPlanV1 } from './closedLoopLearningV1.mjs';
 import { getDefaultSharedWorkspaceRoot } from './sharedWorkspaceRuntimeConfig.mjs';
@@ -63,15 +63,52 @@ function isWithin(parent, child) {
   return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
 }
 
-function assertNoSecrets(value, path = []) {
-  if (Array.isArray(value)) return value.flatMap((item, index) => assertNoSecrets(item, [...path, String(index)]));
+function isBoundedCoreLaneTelemetry(record, key, value) {
+  if (record?.schemaVersion !== SHARED_WORKSPACE_RECORD_SCHEMA_VERSION
+    || record?.participantId !== 'stephanos-core') return false;
+  const coreStatus = record.kind === SHARED_WORKSPACE_RECORD_KINDS.STATUS
+    && record.statusId === 'stephanos-core-daemon-current';
+  const coreProof = record.kind === SHARED_WORKSPACE_RECORD_KINDS.PROOF
+    && record.proofId === 'stephanos-core-daemon-current';
+  if (!coreStatus && !coreProof) return false;
+  if (key === 'logicalLaneTruth') return value === 'CURRENT' || value === 'UNKNOWN';
+  if (key === 'logicalLaneDeficitToTarget' && value === null) return true;
+  if (![
+    'logicalControllerCount',
+    'logicalActiveLaneCount',
+    'logicalTrackingLaneCount',
+    'logicalParkedLaneCount',
+    'logicalSelectedForAdmissionCount',
+    'logicalLaneDeficitToTarget',
+  ].includes(key)) return false;
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function isAllowedBuildTruthTelemetryField(root, path, key) {
+  return key === 'logicalLaneId'
+    && root?.schemaVersion === SHARED_WORKSPACE_RECORD_SCHEMA_VERSION
+    && root?.kind === SHARED_WORKSPACE_RECORD_KINDS.STATUS
+    && root?.statusId === 'stephanos-build-truth-current'
+    && root?.stephanosBuildTruth?.schemaVersion === 'stephanos.sovereign-build-truth.v1'
+    && path.length === 3
+    && path[0] === 'stephanosBuildTruth'
+    && path[1] === 'goals'
+    && /^\d+$/.test(path[2]);
+}
+
+function assertNoSecrets(value, path = [], root = value) {
+  if (Array.isArray(value)) return value.flatMap((item, index) => assertNoSecrets(item, [...path, String(index)], root));
   if (!value || typeof value !== 'object') {
     return typeof value === 'string' && FORBIDDEN_VALUE.test(value) ? [`forbidden-secret-value:${path.join('.') || 'value'}`] : [];
   }
   const errors = [];
   for (const [key, child] of Object.entries(value)) {
-    if (FORBIDDEN_KEY.test(key)) errors.push(`forbidden-secret-field:${[...path, key].join('.')}`);
-    errors.push(...assertNoSecrets(child, [...path, key]));
+    if (FORBIDDEN_KEY.test(key)
+      && !(path.length === 0 && isBoundedCoreLaneTelemetry(value, key, child))
+      && !isAllowedBuildTruthTelemetryField(root, path, key)) {
+      errors.push(`forbidden-secret-field:${[...path, key].join('.')}`);
+    }
+    errors.push(...assertNoSecrets(child, [...path, key], root));
   }
   return errors;
 }
@@ -286,12 +323,38 @@ function isTransientAtomicRenameError(error) {
   return ATOMIC_RENAME_RETRY_CODES.includes(String(error?.code || '').toUpperCase());
 }
 
+async function replaceAtomicJsonInPlaceOnWindows(sourcePath, targetPath, options = {}) {
+  const openFn = typeof options.openFn === 'function' ? options.openFn : open;
+  const lstatFn = typeof options.lstatFn === 'function' ? options.lstatFn : lstat;
+  const readFileFn = typeof options.readFileFn === 'function' ? options.readFileFn : readFile;
+  const unlinkFn = typeof options.unlinkFn === 'function' ? options.unlinkFn : unlink;
+  const observed = await lstatFn(targetPath);
+  const safeFile = (info) => info.isFile() && !info.isSymbolicLink() && info.nlink === 1;
+  const sameFile = (info) => safeFile(info) && info.dev === observed.dev && info.ino === observed.ino;
+  if (!safeFile(observed)) throw new Error('WORKSPACE_PINNED_TARGET_UNSAFE');
+  const payload = await readFileFn(sourcePath);
+  let handle;
+  try {
+    handle = await openFn(targetPath, 'r+');
+    if (!sameFile(await handle.stat()) || !sameFile(await lstatFn(targetPath))) {
+      throw new Error('WORKSPACE_PINNED_TARGET_CHANGED');
+    }
+    await handle.writeFile(payload);
+    await handle.truncate(payload.length);
+    await handle.sync();
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+  await unlinkFn(sourcePath);
+}
+
 export async function renameAtomicJsonWithRetry(sourcePath, targetPath, options = {}) {
   const renameFn = typeof options.renameFn === 'function' ? options.renameFn : rename;
   const sleepFn = typeof options.sleepFn === 'function' ? options.sleepFn : waitForAtomicRenameRetry;
   const retryDelaysMs = Array.isArray(options.atomicRenameRetryDelaysMs)
     ? options.atomicRenameRetryDelaysMs
     : DEFAULT_ATOMIC_RENAME_RETRY_DELAYS_MS;
+  const platform = String(options.platform || process.platform).toLowerCase();
   let attempts = 0;
   while (true) {
     attempts += 1;
@@ -299,12 +362,20 @@ export async function renameAtomicJsonWithRetry(sourcePath, targetPath, options 
       await renameFn(sourcePath, targetPath);
       return attempts;
     } catch (error) {
+      const transient = isTransientAtomicRenameError(error);
       const delayMs = Number(retryDelaysMs[attempts - 1]);
-      if (!isTransientAtomicRenameError(error) || !Number.isFinite(delayMs) || delayMs < 0) {
-        if (error && typeof error === 'object') error.atomicRenameAttempts = attempts;
-        throw error;
+      if (transient && Number.isFinite(delayMs) && delayMs >= 0) {
+        await sleepFn(delayMs);
+        continue;
       }
-      await sleepFn(delayMs);
+      const pinnedStatus = basename(dirname(targetPath)) === 'status'
+        && ['controller-lane-status-current.json', 'stephanos-build-truth-current.json'].includes(basename(targetPath));
+      if (transient && platform === 'win32' && pinnedStatus) {
+        await replaceAtomicJsonInPlaceOnWindows(sourcePath, targetPath, options);
+        return attempts;
+      }
+      if (error && typeof error === 'object') error.atomicRenameAttempts = attempts;
+      throw error;
     }
   }
 }
@@ -320,7 +391,7 @@ export async function writeAtomicJson(rootInput, segments, record, options = {})
   const tempPath = `${resolved.path}.${process.pid}.${randomUUID()}.tmp`;
   const payload = `${JSON.stringify(record, null, 2)}\n`;
   try {
-    await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600 });
+    await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600, ...(options.durable ? { flush: true } : {}) });
     const publicationAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
     if (!publicationAncestors.ok) {
       try { await unlink(tempPath); } catch {}

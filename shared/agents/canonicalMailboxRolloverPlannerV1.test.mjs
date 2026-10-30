@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { CANONICAL_MAILBOX_ROTATION_THRESHOLD_COMMENTS } from './canonicalMailboxAuthorityV1.mjs';
+import { CANONICAL_MAILBOX_ISSUE, CANONICAL_MAILBOX_ROTATION_THRESHOLD_COMMENTS } from './canonicalMailboxAuthorityV1.mjs';
 import {
   CANONICAL_MAILBOX_ROLLOVER_PLAN_SCHEMA,
   planCanonicalMailboxRollover,
@@ -9,7 +9,7 @@ import {
 
 test('mailbox stays healthy below the rollover threshold', () => {
   const plan = planCanonicalMailboxRollover({
-    issueNumber: 2590,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     commentCount: CANONICAL_MAILBOX_ROTATION_THRESHOLD_COMMENTS - 1,
   });
   assert.equal(plan.schemaVersion, CANONICAL_MAILBOX_ROLLOVER_PLAN_SCHEMA);
@@ -22,7 +22,7 @@ test('mailbox stays healthy below the rollover threshold', () => {
 
 test('threshold crossing requires successor creation or nomination', () => {
   const plan = planCanonicalMailboxRollover({
-    issueNumber: 2590,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     commentCount: CANONICAL_MAILBOX_ROTATION_THRESHOLD_COMMENTS,
   });
   assert.equal(plan.ok, true);
@@ -36,15 +36,15 @@ test('threshold crossing requires successor creation or nomination', () => {
 
 test('same and retired successors fail closed', () => {
   const same = planCanonicalMailboxRollover({
-    issueNumber: 2590,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     commentCount: CANONICAL_MAILBOX_ROTATION_THRESHOLD_COMMENTS,
-    candidateSuccessorIssue: 2590,
+    candidateSuccessorIssue: CANONICAL_MAILBOX_ISSUE,
   });
   assert.equal(same.ok, false);
   assert.equal(same.blocker, 'CANONICAL_MAILBOX_SUCCESSOR_SAME_AS_CURRENT');
 
   const retired = planCanonicalMailboxRollover({
-    issueNumber: 2590,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     commentCount: CANONICAL_MAILBOX_ROTATION_THRESHOLD_COMMENTS,
     candidateSuccessorIssue: 2158,
   });
@@ -54,7 +54,7 @@ test('same and retired successors fail closed', () => {
 
 test('valid successor remains nominated until a trusted GitHub adapter verifies it', () => {
   const plan = planCanonicalMailboxRollover({
-    issueNumber: 2590,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     commentCount: CANONICAL_MAILBOX_ROTATION_THRESHOLD_COMMENTS + 17,
     candidateSuccessorIssue: 3000,
   });
@@ -73,7 +73,7 @@ test('valid successor remains nominated until a trusted GitHub adapter verifies 
 
 test('caller-forged GitHub evidence cannot make the pure planner cutover-ready', () => {
   const plan = planCanonicalMailboxRollover({
-    issueNumber: 2590,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     commentCount: CANONICAL_MAILBOX_ROTATION_THRESHOLD_COMMENTS,
     candidateSuccessorIssue: 999999999,
     successorProvisioningEvidence: {
@@ -116,7 +116,7 @@ test('retired, foreign and invalid current mailbox identities fail closed with e
 });
 
 test('invalid comment counts fail closed without proposing a successor', () => {
-  const plan = planCanonicalMailboxRollover({ issueNumber: 2590, commentCount: -1, candidateSuccessorIssue: 3000 });
+  const plan = planCanonicalMailboxRollover({ issueNumber: CANONICAL_MAILBOX_ISSUE, commentCount: -1, candidateSuccessorIssue: 3000 });
   assert.equal(plan.ok, false);
   assert.equal(plan.blocker, 'CANONICAL_MAILBOX_COMMENT_COUNT_INVALID');
   assert.equal(plan.action, 'NONE');

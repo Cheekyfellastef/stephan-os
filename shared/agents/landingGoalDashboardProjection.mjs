@@ -185,6 +185,47 @@ function projectLogicalGoalControllers(input = {}) {
   });
 }
 
+
+function projectStephanosBuildTruth(statusRecords = [], nowMs, staleAfterMs) {
+  const record = list(statusRecords)
+    .filter((candidate) => candidate?.stephanosBuildTruth?.schemaVersion === 'stephanos.sovereign-build-truth.v1')
+    .sort((a, b) => (ms(b?.timestampUtc) || 0) - (ms(a?.timestampUtc) || 0))[0] || null;
+  if (!record) {
+    return Object.freeze({
+      schemaVersion: 'stephanos.sovereign-build-truth.v1',
+      truth: UNKNOWN,
+      state: 'UNKNOWN',
+      trafficLight: 'GREY',
+      autonomous: false,
+      activeGoalCount: 0,
+      buildingGoalCount: 0,
+      activeMaterialLaneCount: 0,
+      targetMaterialLaneCount: 15,
+      lastMaterialProgressAtUtc: '',
+      goals: Object.freeze([]),
+      blockers: Object.freeze(['STEPHANOS_BUILD_TRUTH_MISSING']),
+      nextAction: 'Run the Sovereign Commander lane-status cycle and publish canonical Stephanos build truth.',
+      observedAtUtc: '',
+    });
+  }
+  const current = freshness(record, nowMs, staleAfterMs);
+  const truth = record.stephanosBuildTruth || {};
+  const stale = current.truth !== CURRENT;
+  return Object.freeze({
+    ...truth,
+    truth: current.truth,
+    state: stale ? 'STALE' : text(truth.state, 'UNKNOWN').toUpperCase(),
+    trafficLight: stale ? 'GREY' : text(truth.trafficLight, 'GREY').toUpperCase(),
+    goals: Object.freeze(list(truth.goals)),
+    blockers: Object.freeze(stale
+      ? [...new Set(['STEPHANOS_BUILD_TRUTH_STALE', ...list(truth.blockers)])]
+      : [...new Set(list(truth.blockers))]),
+    nextAction: stale ? current.exactNextAction : text(truth.nextAction, 'Continue through the canonical autonomous build flow.'),
+    observedAtUtc: text(truth.observedAtUtc || record.timestampUtc),
+    ageMs: current.ageMs,
+  });
+}
+
 export function buildLandingGoalDashboardProjection(input = {}) {
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : 60 * 60 * 1000;
@@ -206,6 +247,7 @@ export function buildLandingGoalDashboardProjection(input = {}) {
   });
   const openClaw = input.openClawProjection || projectOpenClawOperatorAutomation({ timestampUtc: input.timestampUtc || 'pending' });
   const controllerFleet = projectControllerFleetTelemetry({ statusRecords: input.statusRecords, proofRecords: input.proofRecords, nowMs, staleAfterMs });
+  const stephanosBuildTruth = projectStephanosBuildTruth(input.statusRecords, nowMs, staleAfterMs);
   const logicalGoalControllers = projectLogicalGoalControllers(input);
   const missions = logicalGoalControllers.truth === 'CURRENT'
     ? Object.freeze(logicalGoalControllers.controllers
@@ -283,6 +325,7 @@ export function buildLandingGoalDashboardProjection(input = {}) {
     battleBridgeSupervisor: Object.freeze({ services: supervisorHealth, overallState: supervisorHealth.some((s) => ['STALE', 'UNKNOWN', 'FAILED', 'DEGRADED'].includes(s.state)) ? 'ATTENTION_REQUIRED' : 'CURRENT' }),
     openClawCapabilityLadder: Object.freeze({ canRunNow: openClaw.canRunNow, needsApproval: openClaw.needsApproval, blocked: openClaw.blocked, exactNextAction: openClaw.exactNextAction, guardrails: openClaw.guardrails }),
     controllerFleet,
+    stephanosBuildTruth,
     logicalGoalControllers,
     captainsBridge: captainBridge,
     operatorAttention,
