@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
@@ -670,4 +670,92 @@ test('completed source result replays only missing evidence after interrupted qu
   await assert.rejects(() => collectAgentWorkerResult({
     ...result, receipt: proof('codex result', 'forged-receipt'),
   }, options), /no active agent dispatch/);
+});
+
+test('result custody is rechecked before both mission events with safe exact-result replay', async () => {
+  for (const expireOn of [1, 2, 3, 4]) {
+    const options = await runtime(); options.capacityRouting = freshCodexCapacityRouting();
+    const created = await createMissionRecord(intent, options);
+    await publishMissionWorkerAction(created.state, options);
+    const ready = await appendMissionEvent(intent.missionId, { eventId: 'custody-worktree', eventType: 'WORKTREE_READY',
+      worktreePath: intent.worktreePath, clean: true, receipt: proof('isolated worktree', 'custody-worktree') }, options);
+    const dispatch = await publishMissionWorkerAction(ready.state, options);
+    assert.ok(await claimNextMissionWorkerItem('codex', options));
+    const result = { missionId: intent.missionId, actionId: dispatch.action.actionId, adapter: 'codex', success: true,
+      changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'custody-result'),
+      evidenceReceipts: [proof('focused test output', 'custody-evidence')] };
+    const before = (await readMissionRecord(intent.missionId, options)).state;
+    let samples = 0;
+    await assert.rejects(collectAgentWorkerResult(result, { ...options,
+      assertResultCustody: () => { if (++samples === expireOn) throw new Error('MISSION_WORKER_CUSTODY_UNPROVEN'); },
+    }), /MISSION_WORKER_CUSTODY_UNPROVEN/);
+    const held = (await readMissionRecord(intent.missionId, options)).state;
+    assert.equal(samples, expireOn);
+    assert.equal(held.evidenceReceipts.some(r => r.receiptId === 'custody-evidence'), false);
+    if (expireOn <= 2) assert.equal(held.revision, before.revision);
+    const resumed = await collectAgentWorkerResult(result, options);
+    assert.equal(resumed.state.currentPhase, 'GITHUB_COMMIT');
+    assert.equal(resumed.state.storeMetadata.processedEventIds.filter(id => id === `result-${dispatch.action.actionId}`).length, 1);
+  }
+});
+
+test('failed result replay is atomically identity-bound and never recollects or changes a failure', async () => {
+  const options = await runtime(); options.capacityRouting = freshCodexCapacityRouting();
+  const created = await createMissionRecord(intent, options);
+  await publishMissionWorkerAction(created.state, options);
+  const ready = await appendMissionEvent(intent.missionId, { eventId: 'failed-replay-worktree', eventType: 'WORKTREE_READY',
+    worktreePath: intent.worktreePath, clean: true, receipt: proof('isolated worktree', 'failed-replay-worktree') }, options);
+  const dispatch = await publishMissionWorkerAction(ready.state, options);
+  assert.ok(await claimNextMissionWorkerItem('codex', options));
+  const result = { missionId: intent.missionId, actionId: dispatch.action.actionId, adapter: 'codex', success: false,
+    resultId: 'failed-replay-result', changedFiles: [], error: 'bounded execution failed', evidenceReceipts: [] };
+  const failed = await collectAgentWorkerResult(result, options);
+  assert.equal(failed.state.dispatch.status, 'failed');
+  const stored = await readMissionRecord(intent.missionId, options);
+  assert.match(stored.state.storeMetadata.lastFailedWorkerResultIdentityV1, /^[a-f0-9]{64}$/);
+  for (const alteration of [ {actionId:'different-action'}, {adapter:'chatgpt-github'}, {resultId:'different-result'},
+    {error:'different error'}, {success:true}, {changedFiles:['shared/agents/other.mjs']},
+    {receipt:{receiptId:'foreign'}}, {sourceArtifactEscrow:{foreign:true}},
+    {offlinePublicationOutbox:{foreign:true}}, {evidenceReceipts:[proof('unrelated','unrelated')]},
+  ]) await assert.rejects(collectAgentWorkerResult({...result,...alteration}, options));
+  await assert.rejects(collectAgentWorkerResult(result, { ...options,
+    assertResultCustody: () => { throw new Error('MISSION_WORKER_CUSTODY_UNPROVEN'); },
+  }), /MISSION_WORKER_CUSTODY_UNPROVEN/);
+  const unbound = structuredClone(stored.state); delete unbound.storeMetadata.lastFailedWorkerResultIdentityV1;
+  await writeFile(stored.statePath, JSON.stringify(unbound));
+  await assert.rejects(collectAgentWorkerResult(result, options));
+  await writeFile(stored.statePath, JSON.stringify(stored.state));
+  const replay = await collectAgentWorkerResult(result, options);
+  assert.equal(replay.duplicate, true); assert.equal(replay.state.revision, failed.state.revision);
+  const current = await readMissionRecord(intent.missionId, options);
+  assert.equal(current.state.revision, failed.state.revision);
+  assert.equal(current.state.storeMetadata.processedEventIds.filter(id => id === `result-${dispatch.action.actionId}`).length, 1);
+});
+
+
+test('result custody receives original and own-result states at each locked event commit', async () => {
+  const options=await runtime();options.capacityRouting=freshCodexCapacityRouting();
+  const created=await createMissionRecord(intent,options);
+  await publishMissionWorkerAction(created.state,options);
+  const ready=await appendMissionEvent(intent.missionId,{eventId:'state-callback-worktree',eventType:'WORKTREE_READY',
+    worktreePath:intent.worktreePath,clean:true,receipt:proof('isolated worktree','state-callback-worktree')},options);
+  const dispatch=await publishMissionWorkerAction(ready.state,options);
+  assert.ok(await claimNextMissionWorkerItem('codex',options));
+  const original=(await readMissionRecord(intent.missionId,options)).state;
+  const samples=[];
+  const result={missionId:intent.missionId,actionId:dispatch.action.actionId,adapter:'codex',success:true,
+    resultId:dispatch.action.actionId,changedFiles:['shared/agents/example.mjs'],
+    receipt:proof('codex result','state-callback-result'),
+    evidenceReceipts:[proof('focused test output','state-callback-evidence')]};
+  const collected=await collectAgentWorkerResult(result,{...options,assertResultCustody:(state,event)=>{
+    assert.equal(state.missionId,intent.missionId);
+    samples.push({revision:state.revision,status:state.dispatch.status,event:event.eventType});
+  }});
+  assert.deepEqual(samples,[
+    {revision:original.revision,status:'running',event:'AGENT_RESULT_RECEIVED'},
+    {revision:original.revision,status:'running',event:'AGENT_RESULT_RECEIVED'},
+    {revision:original.revision+1,status:'complete',event:'EVIDENCE_RECORDED'},
+    {revision:original.revision+1,status:'complete',event:'EVIDENCE_RECORDED'},
+  ]);
+  assert.equal(collected.state.revision,original.revision+2);
 });

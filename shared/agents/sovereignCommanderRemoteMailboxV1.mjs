@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
+import { projectMaintenanceCustodyVisibilityV1, maintenanceCustodyVisibilityLightV1 } from './maintenanceCustodyVisibilityV1.mjs';
 import { parseWindowsCalibrationRemoteV1 } from './sovereignWindowsCalibrationRemoteV1.mjs';
 import { validateSovereignWindowsReviewIdentityV1 } from './sovereignCommanderV1.mjs';
+import { existsSync, lstatSync, opendirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -10,6 +12,10 @@ import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 import { inspectOriginalSourceCustodyCensusV1 } from './originalSourceCustodyInspectionV1.mjs';
 import { projectOriginalR7WitnessCommissioningAuditV1 } from './originalR7WitnessCommissioningAuditV1.mjs';
 import { parseRescueIslandBoundaryStdoutV1, parseRescueIslandBoundaryHeldStdoutV1 } from './rescueIslandBoundaryReceiptV1.mjs';
+import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, readSovereignMaintenanceTerminalReceiptV1,
+  sovereignMaintenanceCustodyUnprovenV1 } from './sovereignMaintenanceAdmissionV1.mjs';
+import { FLEET_SUPERVISOR_ACTION, projectFleetSupervisorReceiptV1 } from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
+import { battleBridgeCanonicalRepositoryArgs, inspectBattleBridgeGitTopology, resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from './battleBridgeExecutionBoundaryV1.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
@@ -24,6 +30,8 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'meter-status',
   'controller-lane-status',
   'visibility-snapshot',
+  'inspect-canonical-git-worktree-config',
+  'repair-canonical-git-worktree-config',
   'rescue-island-readonly-boundary',
   'cpu-pressure-snapshot',
   'publish-controller-activity',
@@ -440,6 +448,57 @@ async function postMcp(fetchFn, token, message, sessionId = '', timeoutMs = SOVE
     body,
     transportTimedOut: false,
   });
+}
+
+// Private local callers reuse the existing bounded authenticated MCP transport.
+// No health snapshot grants admission, no local child fallback, and no attempt
+// to start/recycle an unavailable owner is permitted on this delegation path.
+export async function callSovereignMaintenanceOwnerV1(request, options = {}) {
+  const fetchFn = options.fetchFn || globalThis.fetch;
+  const readFileFn = options.readFileFn || readFile;
+  let token = '', sessionId = '';
+  try {
+    const healthExchange = await fetchTextWithDeadline(fetchFn, HEALTH_URL, { method: 'GET' }, 3_000);
+    const health = JSON.parse(healthExchange.bodyText || 'null');
+    if (!healthExchange.response.ok || health?.ok !== true || health.service !== 'stephanos-sovereign-commander'
+        || health.maintenanceOwnerAdmissionVersion !== SOVEREIGN_MAINTENANCE_OWNER_VERSION) {
+      return fail('SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED');
+    }
+    token = text(await readFileFn(fixedTokenPath(options.env || process.env), 'utf8'));
+    if (token.length < 32) return fail('SOVEREIGN_MAINTENANCE_OWNER_TOKEN_UNAVAILABLE');
+    const init = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'sovereign-existing-owner-delegation', version: '1' } } }, '', 3_000);
+    if (!init.ok || !init.sessionId || init.body?.error) return fail('SOVEREIGN_MAINTENANCE_OWNER_INITIALIZE_FAILED');
+    sessionId = init.sessionId;
+    const initialized = await postMcp(fetchFn, token, { jsonrpc: '2.0', method: 'notifications/initialized' }, init.sessionId, 3_000);
+    const listed = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, init.sessionId, 3_000);
+    if (!initialized.ok || !listed.ok || !listed.body?.result?.tools?.some(tool => tool.name === 'maintenance_action')) {
+      return fail('SOVEREIGN_MAINTENANCE_OWNER_TOOL_UNAVAILABLE');
+    }
+    const timeoutMs = Number.isSafeInteger(request.timeoutMs) ? Math.min(285_000, request.timeoutMs + 15_000) : 285_000;
+    const called = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 3, method: 'tools/call',
+      params: { name: 'maintenance_action', arguments: { ...request.arguments, actionId: request.actionId } } }, init.sessionId, timeoutMs);
+    const result = called.body?.result?.structuredContent;
+    if (!called.ok || !result || result.command?.plan?.processId !== request.actionId) {
+      return fail('SOVEREIGN_MAINTENANCE_OWNER_RECEIPT_INVALID');
+    }
+    if (result.ok === true) {
+      const expected = createHash('sha256').update(JSON.stringify({ commandId: result.command.commandId,
+        missionId: result.command.missionId, operation: result.command.operation, plan: result.command.plan,
+        contentText: result.contentText, structuredContent: result.structuredContent })).digest('hex');
+      if (result.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' || result.proofHash !== expected) {
+        return fail('SOVEREIGN_MAINTENANCE_OWNER_RECEIPT_INVALID');
+      }
+    }
+    return result;
+  } catch { return fail('SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE'); }
+  finally {
+    if (sessionId && token) {
+      try { await fetchTextWithDeadline(fetchFn, MCP_URL, { method: 'DELETE', headers: {
+        authorization: `Bearer ${token}`, 'mcp-session-id': sessionId,
+      } }, 3_000); } catch {}
+    }
+  }
 }
 
 function safeAiCommanderAcceptanceProjection(value = {}, processId = '') {
@@ -1275,6 +1334,8 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
     const candidate = safeState(input, 20);
     return ['GREEN', 'AMBER', 'RED', 'GREY'].includes(candidate) ? candidate : 'GREY';
   };
+  const maintenanceCustody = projectMaintenanceCustodyVisibilityV1(parsed.maintenanceCustody);
+  const maintenanceLight = maintenanceCustodyVisibilityLightV1(maintenanceCustody);
   const health = Object.freeze({
     repository: safeLight(parsed?.health?.repository),
     core: safeLight(parsed?.health?.core),
@@ -1282,6 +1343,7 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
     services: safeLight(parsed?.health?.services),
     laneRefill: safeLight(parsed?.health?.laneRefill),
     transport: safeLight(parsed?.health?.transport),
+    maintenanceCustody: maintenanceLight,
   });
   const capturedAtUtc = safeTime(parsed.capturedAtUtc);
   const finalVerdict = safeState(parsed.finalVerdict, 120);
@@ -1304,6 +1366,7 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
     core,
     headSync,
     selfHeal,
+    maintenanceCustody,
     controllers,
     meters,
     relay,
@@ -1319,7 +1382,9 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
     pcRestartAuthority: false,
     remoteCommanderRequired: false,
     unknownMeansGreen: false,
-    finalVerdict,
+    finalVerdict: maintenanceLight === 'RED' ? 'SOVEREIGN_VISIBILITY_SNAPSHOT_ATTENTION_REQUIRED'
+      : maintenanceLight === 'AMBER' && finalVerdict === 'SOVEREIGN_VISIBILITY_SNAPSHOT_READY'
+        ? 'SOVEREIGN_VISIBILITY_SNAPSHOT_DEGRADED_OR_INCOMPLETE' : finalVerdict,
   });
 }
 
@@ -1728,6 +1793,74 @@ function safeMaintenanceProjection(value = {}) {
   });
 }
 
+const FLEET_MAINTENANCE_OWNER_BLOCKERS = new Set([
+  SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER,
+  'SOVEREIGN_MAINTENANCE_OWNER_BUSY',
+  'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE',
+]);
+
+function safeFleetMaintenanceFailureProjection(value = {}, expectedAction = '') {
+  if (expectedAction !== FLEET_SUPERVISOR_ACTION) return null;
+  let source = value;
+  for (let depth = 0; depth < 5; depth += 1) {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
+    // Wrappers may nest, but another command cannot lend its child's identity.
+    if (Object.hasOwn(source, 'command')) break;
+    source = depth < 4 ? source.structuredContent : null;
+  }
+  const command = source?.command;
+  if (source?.ok !== false || command?.dispatchAllowed !== true
+    || command.operation !== 'MAINTENANCE_ACTION'
+    || command.plan?.kind !== 'fixed-process'
+    || command.plan.processId !== expectedAction) return null;
+  const execution = source.structuredContent;
+  let errorCode = '';
+  let executionBlocker;
+  if (source.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED') {
+    if (!FLEET_MAINTENANCE_OWNER_BLOCKERS.has(source.blocker)) return null;
+    // A pre-launch owner denial has no execution output. A post-execution
+    // custody hold is distinct: it must carry the canonical negative evidence,
+    // and never supplies a successful fleet terminal receipt or custody release.
+    if (Object.hasOwn(source, 'structuredContent')) {
+      if (source.blocker !== SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER
+        || !execution || typeof execution !== 'object' || Array.isArray(execution)
+        || typeof execution.ok !== 'boolean'
+        || !(execution.status === null || Number.isInteger(execution.status))
+        || typeof execution.signal !== 'string' || typeof execution.errorCode !== 'string'
+        || execution.ok !== (execution.status === 0 && !execution.signal && !execution.errorCode)
+        || typeof execution.stdout !== 'string' || typeof execution.stderr !== 'string'
+        || !sovereignMaintenanceCustodyUnprovenV1(execution,
+          readSovereignMaintenanceTerminalReceiptV1(execution.stdout, expectedAction), expectedAction)) return null;
+      if (['ETIMEDOUT', 'ABORT_ERR'].includes(execution.errorCode)) errorCode = execution.errorCode;
+    } else if (Object.hasOwn(source, 'status')) return null;
+    executionBlocker = source.blocker;
+  } else if (source.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED') {
+    if (!execution || execution.ok !== false || execution.status !== null
+      || !['ETIMEDOUT', 'ABORT_ERR'].includes(execution.errorCode)
+      || typeof execution.stdout !== 'string' || typeof execution.stderr !== 'string') return null;
+    errorCode = execution.errorCode;
+    executionBlocker = SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER;
+  } else return null;
+  return Object.freeze({ processId: expectedAction, status: null, errorCode, executionBlocker });
+}
+
+function safeFleetSupervisorExecutionProjection(value = {}) {
+  const source = findMaintenanceExecutionEnvelope(value);
+  const execution = source?.structuredContent;
+  if (source?.command?.plan?.processId !== FLEET_SUPERVISOR_ACTION
+    || !execution || ![0, 2].includes(execution.status)
+    || execution.ok !== (execution.status === 0)
+    || (execution.signal !== undefined && execution.signal !== '')
+    || (execution.errorCode !== undefined && execution.errorCode !== '')
+    || source.ok !== (execution.status === 0)
+    || source.finalVerdict !== (source.ok
+      ? 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' : 'SOVEREIGN_COMMANDER_EXECUTION_FAILED')
+    || (source.ok && !PROOF_HASH_PATTERN.test(text(source.proofHash)))) return null;
+  const receipt = readSovereignMaintenanceTerminalReceiptV1(execution.stdout, FLEET_SUPERVISOR_ACTION);
+  if (sovereignMaintenanceCustodyUnprovenV1(execution, receipt, FLEET_SUPERVISOR_ACTION)) return null;
+  return projectFleetSupervisorReceiptV1(receipt, execution.status);
+}
+
 function findMaintenanceExecutionEnvelope(value = {}) {
   let candidate = value;
   for (let depth = 0; depth < 5; depth += 1) {
@@ -1960,10 +2093,14 @@ function safeCoreDaemonStatusProjection(value = {}) {
   const heartbeatAgeSeconds = Number(parsed.heartbeatAgeSeconds);
   return Object.freeze({
     available: true,
-    ok: parsed.ok === true,
-    processCount: Number.isSafeInteger(Number(parsed.processCount)) && Number(parsed.processCount) >= 0 && Number(parsed.processCount) <= 100
-      ? Number(parsed.processCount)
+    ok: parsed.ok === true && parsed.processInventoryComplete === true && parsed.processCount === 1,
+    processCount: parsed.processInventoryComplete === true
+      && Number.isSafeInteger(parsed.processCount) && parsed.processCount >= 0 && parsed.processCount <= 100
+      ? parsed.processCount
       : null,
+    processInventoryComplete: parsed.processInventoryComplete === true,
+    processObservationBlocker: /^[A-Z0-9_:-]{0,120}$/.test(text(parsed.processObservationBlocker))
+      ? text(parsed.processObservationBlocker) : '',
     daemonHealthy: parsed.daemonHealthy === true,
     reportedDaemonHealthy: parsed.reportedDaemonHealthy === true,
     // Public projection contains only bounded custody verdicts, never PIDs,
@@ -2085,6 +2222,8 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
       || actionId === 'controller-lane-status'
       || actionId === 'cpu-pressure-snapshot'
       || actionId === 'publish-controller-activity'
+      || actionId === CANONICAL_GIT_WORKTREE_CONFIG_INSPECT_ACTION
+      || actionId === CANONICAL_GIT_WORKTREE_CONFIG_ACTION
       || actionId === 'preservation-converge-pr-branch'
       || !SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(actionId)
     ));
@@ -2345,6 +2484,422 @@ export function diagnoseRescueIslandNativeReceiptInvalidV1({
   return 'ISLAND_NATIVE_BOUNDARY_INCONSISTENT';
 }
 
+
+const CANONICAL_GIT_WORKTREE_CONFIG_INSPECT_ACTION = 'inspect-canonical-git-worktree-config';
+const CANONICAL_GIT_WORKTREE_CONFIG_ACTION = 'repair-canonical-git-worktree-config';
+
+// A registration namespace is not a registration. Inspect at most one entry
+// under the already-authenticated canonical .git directory; never resolve or
+// expose linked paths, delete metadata, or infer writer/lease ownership.
+export function inspectCanonicalLinkedWorktreeMetadataV1(repositoryRoot, {
+  lstatFn = lstatSync,
+  openDirectoryFn = opendirSync,
+} = {}) {
+  const metadataPath = resolve(repositoryRoot, '.git', 'worktrees');
+  const result = state => Object.freeze({ state,
+    linkedWorktreesExcluded: state === 'ABSENT' || state === 'EMPTY' });
+  let before;
+  try { before = lstatFn(metadataPath); }
+  catch (error) { return result(error?.code === 'ENOENT' ? 'ABSENT' : 'UNPROVEN'); }
+  if (!before.isDirectory() || before.isSymbolicLink()) return result('UNPROVEN');
+  let directory;
+  try {
+    directory = openDirectoryFn(metadataPath);
+    if (directory.readSync() !== null) return result('PRESENT');
+    const after = lstatFn(metadataPath);
+    if (!after.isDirectory() || after.isSymbolicLink()
+        || ['dev', 'ino', 'mode', 'mtimeMs', 'ctimeMs'].some(key => before[key] !== after[key])) {
+      return result('UNPROVEN');
+    }
+    return result('EMPTY');
+  } catch { return result('UNPROVEN'); }
+  finally { if (directory) { try { directory.closeSync(); } catch { /* read verdict remains conservative */ } } }
+}
+
+function linkedMetadataBlocker(evidence) {
+  return evidence?.linkedWorktreesExcluded === true
+    && ['ABSENT', 'EMPTY'].includes(evidence.state) ? ''
+    : evidence?.state === 'PRESENT'
+      ? 'CANONICAL_GIT_WORKTREE_CONFIG_LINKED_WORKTREES_PRESENT'
+      : 'CANONICAL_GIT_WORKTREE_CONFIG_LINKED_METADATA_UNPROVEN';
+}
+
+function finiteGitConfigRepairFailure(blocker, details = {}) {
+  return Object.freeze({
+    ok: false,
+    blocker,
+    mutationPerformed: false,
+    ...details,
+  });
+}
+
+export function inspectCanonicalGitWorktreeConfigV1({
+  repositoryRoot = fixedRepositoryRoot(),
+  expectedHead = '',
+  platform = process.platform,
+  environment = process.env,
+  spawnSyncFn = spawnSync,
+  inspectTopologyFn = inspectBattleBridgeGitTopology,
+  existsFn = existsSync,
+  inspectLinkedMetadataFn = inspectCanonicalLinkedWorktreeMetadataV1,
+  remainingTimeoutMsFn = () => 10_000,
+} = {}) {
+  const normalizedHead = text(expectedHead).toLowerCase();
+  const held = (blocker, details = {}) => Object.freeze({
+    ok: false,
+    blocker,
+    inspectionComplete: false,
+    safeForFixedUnset: false,
+    mutationPerformed: false,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    gitConfigurationMutationAllowed: false,
+    arbitraryShellAllowed: false,
+    rawPathsReturned: false,
+    rawConfigValuesReturned: false,
+    publicReceiptSafe: true,
+    secretMaterialReturned: false,
+    ...details,
+  });
+  if (!SHA_PATTERN.test(normalizedHead)) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_EXPECTED_HEAD_REQUIRED');
+  }
+
+  let git;
+  try {
+    git = resolveBattleBridgeGitExecution({ platform, environment });
+  } catch {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_GIT_UNAVAILABLE');
+  }
+  const canonicalPrefix = [
+    ...git.fixedConfigArgs,
+    ...battleBridgeCanonicalRepositoryArgs(repositoryRoot),
+  ];
+  const nextProbeTimeoutMs = () => {
+    let remaining = 0;
+    try { remaining = Number(remainingTimeoutMsFn()); } catch { return 0; }
+    if (!Number.isFinite(remaining) || remaining <= 0) return 0;
+    return Math.max(1, Math.min(10_000, Math.floor(remaining)));
+  };
+  const deadlineResult = () => Object.freeze({
+    ok: false,
+    status: null,
+    stdout: '',
+    deadlineExceeded: true,
+  });
+  const captureCanonical = (args) => {
+    const timeout = nextProbeTimeoutMs();
+    if (timeout <= 0) return deadlineResult();
+    const result = spawnSyncFn(git.executable, [...canonicalPrefix, ...args], {
+      cwd: repositoryRoot,
+      env: git.environment,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      timeout,
+      maxBuffer: 64 * 1024,
+    });
+    return Object.freeze({
+      ok: !result?.error && Number(result?.status) === 0,
+      status: Number.isInteger(result?.status) ? result.status : null,
+      stdout: String(result?.stdout || ''),
+      deadlineExceeded: false,
+    });
+  };
+  const head = captureCanonical(['rev-parse', 'HEAD']);
+  const branch = captureCanonical(['branch', '--show-current']);
+  if (head.deadlineExceeded || branch.deadlineExceeded) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED');
+  }
+  if (!head.ok || text(head.stdout).toLowerCase() !== normalizedHead
+      || !branch.ok || text(branch.stdout) !== 'main') {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_SOURCE_IDENTITY_CHANGED');
+  }
+
+  if (nextProbeTimeoutMs() <= 0) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED');
+  }
+  const topology = inspectTopologyFn(repositoryRoot);
+  if (topology?.ok !== true) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_TOPOLOGY_UNPROVEN');
+  }
+
+  const metadataBlocker = linkedMetadataBlocker(inspectLinkedMetadataFn(repositoryRoot));
+  if (metadataBlocker) return held(metadataBlocker);
+  const records = Object.freeze([
+    Object.freeze({ root: repositoryRoot, locked: false, prunable: false }),
+  ]);
+
+  const localConfig = captureCanonical(['config', '--local', '--null', '--list']);
+  if (localConfig.deadlineExceeded) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED', {
+      registeredWorktreeCount: records.length,
+    });
+  }
+  if (!localConfig.ok) return held('CANONICAL_GIT_WORKTREE_CONFIG_READ_FAILED');
+  const policy = validateBattleBridgeLocalGitConfiguration(localConfig.stdout);
+  const riskCategories = Object.freeze(
+    (Array.isArray(policy?.diagnostic?.riskCategories) ? policy.diagnostic.riskCategories : [])
+      .slice(0, 16),
+  );
+
+  const configured = captureCanonical([
+    'config', '--local', '--null', '--get-all', 'extensions.worktreeConfig',
+  ]);
+  let extensionValues = [];
+  let extensionValueState = 'ABSENT';
+  if (configured.deadlineExceeded) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED', {
+      registeredWorktreeCount: records.length,
+      riskCategories,
+    });
+  }
+  if (configured.ok) {
+    const raw = configured.stdout.endsWith('\0')
+      ? configured.stdout.slice(0, -1) : configured.stdout;
+    extensionValues = raw.split('\0');
+    if (extensionValues.length > 1) extensionValueState = 'MULTIPLE';
+    else if (extensionValues[0]?.toLowerCase() === 'true') extensionValueState = 'TRUE';
+    else if (extensionValues[0]?.toLowerCase() === 'false') extensionValueState = 'FALSE';
+    else extensionValueState = 'OTHER';
+  } else if (configured.status !== 1) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_VALUE_UNPROVEN', {
+      registeredWorktreeCount: records.length,
+      riskCategories,
+    });
+  }
+
+  let worktreeConfigFileCount = 0;
+  let nonEmptyWorktreeConfigFileCount = 0;
+  let worktreeConfigEntryCount = 0;
+  let allWorktreeConfigsObserved = true;
+  const worktreeConfigPath = resolve(repositoryRoot, '.git', 'config.worktree');
+  if (existsFn(worktreeConfigPath)) {
+    worktreeConfigFileCount = 1;
+    const config = captureCanonical([
+      'config', '--file', worktreeConfigPath, '--null', '--list',
+    ]);
+    if (config.deadlineExceeded) {
+      return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED', {
+        registeredWorktreeCount: records.length,
+        riskCategories,
+        worktreeConfigFileCount,
+        nonEmptyWorktreeConfigFileCount,
+        worktreeConfigEntryCount,
+      });
+    }
+    if (!config.ok) {
+      return held('CANONICAL_GIT_WORKTREE_CONFIG_CONTENT_UNPROVEN', {
+        registeredWorktreeCount: records.length,
+        riskCategories,
+        worktreeConfigFileCount,
+      });
+    }
+    const entries = config.stdout.split('\0').filter(Boolean);
+    worktreeConfigEntryCount = entries.length;
+    if (entries.length > 0) nonEmptyWorktreeConfigFileCount = 1;
+  }
+
+  const linkedWorktreeCount = Math.max(0, records.length - 1);
+  const lockedWorktreeCount = records.filter(record => record.locked).length;
+  const prunableWorktreeCount = records.filter(record => record.prunable).length;
+  const originCount = text(policy?.diagnostic?.originCount) || 'UNKNOWN';
+  const originMatch = text(policy?.diagnostic?.originMatch) || 'UNKNOWN';
+  const soleExpectedRisk = policy?.blocker === 'CANONICAL_GIT_CONFIGURATION_INVALID'
+    && riskCategories.length === 1
+    && riskCategories[0] === 'EXTENSIONS_WORKTREE_CONFIG';
+  const safeForFixedUnset = topology?.ok === true
+    && originCount === 'ONE'
+    && originMatch === 'CANONICAL'
+    && soleExpectedRisk
+    && extensionValues.length === 1
+    && extensionValueState === 'TRUE'
+    && records.length === 1
+    && linkedWorktreeCount === 0
+    && lockedWorktreeCount === 0
+    && prunableWorktreeCount === 0
+    && allWorktreeConfigsObserved
+    && worktreeConfigEntryCount === 0;
+
+  const observation = Object.freeze({
+    schemaVersion: 'stephanos.canonical-git-worktree-config-inspection.v1',
+    ok: true,
+    inspectionComplete: true,
+    sourceHead: normalizedHead,
+    canonicalTopologyProven: true,
+    canonicalGitConfigurationValid: policy?.ok === true,
+    originCount,
+    originMatch,
+    riskCategories,
+    extensionValueCount: extensionValues.length,
+    extensionValueState,
+    registeredWorktreeCount: records.length,
+    linkedWorktreeCount,
+    lockedWorktreeCount,
+    prunableWorktreeCount,
+    worktreeConfigFileCount,
+    nonEmptyWorktreeConfigFileCount,
+    worktreeConfigEntryCount,
+    allWorktreeConfigsObserved,
+    safeForFixedUnset,
+    mutationPerformed: false,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    gitConfigurationMutationAllowed: false,
+    arbitraryShellAllowed: false,
+    rawPathsReturned: false,
+    rawConfigValuesReturned: false,
+    publicReceiptSafe: true,
+    secretMaterialReturned: false,
+    finalVerdict: policy?.ok === true
+      ? 'CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_CANONICAL'
+      : safeForFixedUnset
+        ? 'CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_REPAIR_ELIGIBLE'
+        : 'CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_REPAIR_HELD',
+  });
+  return observation;
+}
+
+export function repairCanonicalGitWorktreeConfigV1({
+  repositoryRoot = fixedRepositoryRoot(),
+  expectedHead = '',
+  platform = process.platform,
+  environment = process.env,
+  spawnSyncFn = spawnSync,
+  inspectTopologyFn = inspectBattleBridgeGitTopology,
+  existsFn = existsSync,
+  inspectLinkedMetadataFn = inspectCanonicalLinkedWorktreeMetadataV1,
+} = {}) {
+  const normalizedHead = text(expectedHead).toLowerCase();
+  if (!SHA_PATTERN.test(normalizedHead)) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_EXPECTED_HEAD_REQUIRED');
+  }
+
+  let git;
+  try {
+    git = resolveBattleBridgeGitExecution({ platform, environment });
+  } catch {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_GIT_UNAVAILABLE');
+  }
+  const prefix = [
+    ...git.fixedConfigArgs,
+    ...battleBridgeCanonicalRepositoryArgs(repositoryRoot),
+  ];
+  const capture = (args) => {
+    const result = spawnSyncFn(git.executable, [...prefix, ...args], {
+      cwd: repositoryRoot,
+      env: git.environment,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      timeout: 10_000,
+      maxBuffer: 64 * 1024,
+    });
+    return Object.freeze({
+      ok: !result?.error && Number(result?.status) === 0,
+      status: Number.isInteger(result?.status) ? result.status : null,
+      stdout: String(result?.stdout || ''),
+    });
+  };
+
+  const beforeHead = capture(['rev-parse', 'HEAD']);
+  const branch = capture(['branch', '--show-current']);
+  if (!beforeHead.ok || text(beforeHead.stdout).toLowerCase() !== normalizedHead
+      || !branch.ok || text(branch.stdout) !== 'main') {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_SOURCE_IDENTITY_CHANGED');
+  }
+
+  const topology = inspectTopologyFn(repositoryRoot);
+  if (topology?.ok !== true) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_TOPOLOGY_UNPROVEN');
+  }
+
+  const metadataBlocker = linkedMetadataBlocker(inspectLinkedMetadataFn(repositoryRoot));
+  if (metadataBlocker) return finiteGitConfigRepairFailure(metadataBlocker);
+
+  const beforeConfig = capture(['config', '--local', '--null', '--list']);
+  if (!beforeConfig.ok) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_READ_FAILED');
+  }
+  const beforeProof = validateBattleBridgeLocalGitConfiguration(beforeConfig.stdout);
+  if (beforeProof.ok === true) {
+    return Object.freeze({
+      ok: true,
+      blocker: '',
+      mutationPerformed: false,
+      finalVerdict: 'CANONICAL_GIT_CONFIGURATION_ALREADY_VALID',
+      riskCategoriesBefore: Object.freeze([]),
+      canonicalAfter: true,
+    });
+  }
+
+  const categories = Array.isArray(beforeProof?.diagnostic?.riskCategories)
+    ? beforeProof.diagnostic.riskCategories : [];
+  if (beforeProof.blocker !== 'CANONICAL_GIT_CONFIGURATION_INVALID'
+      || beforeProof?.diagnostic?.originCount !== 'ONE'
+      || beforeProof?.diagnostic?.originMatch !== 'CANONICAL'
+      || categories.length !== 1
+      || categories[0] !== 'EXTENSIONS_WORKTREE_CONFIG') {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_SCOPE_MISMATCH', {
+      riskCategoriesBefore: Object.freeze(categories.slice(0, 8)),
+    });
+  }
+
+  const configured = capture(['config', '--local', '--null', '--get-all', 'extensions.worktreeConfig']);
+  const configuredRaw = configured.ok ? configured.stdout : '';
+  const configuredValues = configured.ok
+    ? (configuredRaw.endsWith('\0') ? configuredRaw.slice(0, -1) : configuredRaw).split('\0') : [];
+  if (!configured.ok || configuredValues.length !== 1
+      || configuredValues[0].toLowerCase() !== 'true') {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_VALUE_UNEXPECTED');
+  }
+
+  const worktreeConfigPath = resolve(repositoryRoot, '.git', 'config.worktree');
+  let worktreeEntries = [];
+  if (existsFn(worktreeConfigPath)) {
+    const worktreeConfig = capture(['config', '--file', worktreeConfigPath, '--null', '--list']);
+    if (!worktreeConfig.ok) {
+      return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_CONTENT_UNPROVEN');
+    }
+    worktreeEntries = worktreeConfig.stdout.split('\0').filter(Boolean);
+  }
+  if (worktreeEntries.length !== 0) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_CONTENT_PRESENT');
+  }
+
+  // Recheck after the config/value probes: a newly registered worker holds
+  // this repair. This is not a claim of hostile privileged-writer exclusion.
+  const finalMetadataBlocker = linkedMetadataBlocker(inspectLinkedMetadataFn(repositoryRoot));
+  if (finalMetadataBlocker) return finiteGitConfigRepairFailure(finalMetadataBlocker);
+  const unset = capture(['config', '--local', '--unset-all', 'extensions.worktreeConfig']);
+  if (!unset.ok) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_UNSET_FAILED');
+  }
+
+  const afterConfig = capture(['config', '--local', '--null', '--list']);
+  const afterHead = capture(['rev-parse', 'HEAD']);
+  if (!afterConfig.ok || !afterHead.ok || text(afterHead.stdout).toLowerCase() !== normalizedHead) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_POSTCONDITION_UNPROVEN', {
+      mutationPerformed: true,
+    });
+  }
+  const afterProof = validateBattleBridgeLocalGitConfiguration(afterConfig.stdout);
+  if (afterProof.ok !== true) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_POSTCONDITION_INVALID', {
+      mutationPerformed: true,
+    });
+  }
+
+  return Object.freeze({
+    ok: true,
+    blocker: '',
+    mutationPerformed: true,
+    finalVerdict: 'CANONICAL_GIT_WORKTREE_CONFIG_REPAIRED',
+    riskCategoriesBefore: Object.freeze(['EXTENSIONS_WORKTREE_CONFIG']),
+    canonicalAfter: true,
+  });
+}
+
 export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}, options = {}) {
   const shape = validateSovereignCommanderRemoteCommandShape(command);
   if (!shape.ok || !shape.requested) return shape;
@@ -2431,6 +2986,140 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     return fail('SOVEREIGN_COMMANDER_REMOTE_HEAD_MISMATCH', {
       expectedHead: shape.expectedHead,
       observedHead,
+    });
+  }
+
+
+  if (shape.command.remoteAction === CANONICAL_GIT_WORKTREE_CONFIG_INSPECT_ACTION) {
+    const inspection = inspectCanonicalGitWorktreeConfigV1({
+      repositoryRoot,
+      expectedHead: observedHead,
+      platform: process.platform,
+      environment: env,
+      spawnSyncFn,
+      remainingTimeoutMsFn: () => remainingPlanTimeoutMs(10_000),
+    });
+    if (!inspection.ok) {
+      if (inspection.blocker === 'CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED') {
+        return planDeadlineFailure({
+          inspectionComplete: false,
+          registeredWorktreeCount: inspection.registeredWorktreeCount ?? null,
+          riskCategories: inspection.riskCategories || Object.freeze([]),
+        });
+      }
+      return fail(inspection.blocker, {
+        remoteAction: CANONICAL_GIT_WORKTREE_CONFIG_INSPECT_ACTION,
+        sourceHead: observedHead,
+        expectedHeadMatch: true,
+        registeredWorktreeCount: inspection.registeredWorktreeCount ?? null,
+        riskCategories: inspection.riskCategories || Object.freeze([]),
+        gitConfigurationMutationPerformed: false,
+        sourceMutationAllowed: false,
+        arbitraryShellAllowed: false,
+        mergeAuthority: false,
+        pcRestartAuthority: false,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true,
+      finalVerdict: inspection.finalVerdict,
+      remoteAction: CANONICAL_GIT_WORKTREE_CONFIG_INSPECT_ACTION,
+      sourceHead: observedHead,
+      expectedHeadMatch: true,
+      canonicalGitWorktreeConfigInspection: inspection,
+      proofHash: createHash('sha256').update(JSON.stringify({
+        sourceHead: observedHead,
+        remoteAction: CANONICAL_GIT_WORKTREE_CONFIG_INSPECT_ACTION,
+        canonicalGitConfigurationValid: inspection.canonicalGitConfigurationValid,
+        riskCategories: inspection.riskCategories,
+        extensionValueCount: inspection.extensionValueCount,
+        extensionValueState: inspection.extensionValueState,
+        registeredWorktreeCount: inspection.registeredWorktreeCount,
+        linkedWorktreeCount: inspection.linkedWorktreeCount,
+        lockedWorktreeCount: inspection.lockedWorktreeCount,
+        prunableWorktreeCount: inspection.prunableWorktreeCount,
+        worktreeConfigFileCount: inspection.worktreeConfigFileCount,
+        nonEmptyWorktreeConfigFileCount: inspection.nonEmptyWorktreeConfigFileCount,
+        worktreeConfigEntryCount: inspection.worktreeConfigEntryCount,
+        allWorktreeConfigsObserved: inspection.allWorktreeConfigsObserved,
+        safeForFixedUnset: inspection.safeForFixedUnset,
+      })).digest('hex'),
+      readOnly: true,
+      gitConfigurationMutationPerformed: false,
+      sourceMutationAllowed: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...result,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result,
+    });
+  }
+
+  if (shape.command.remoteAction === CANONICAL_GIT_WORKTREE_CONFIG_ACTION) {
+    const repair = repairCanonicalGitWorktreeConfigV1({
+      repositoryRoot,
+      expectedHead: observedHead,
+      platform: process.platform,
+      environment: env,
+      spawnSyncFn,
+    });
+    if (!repair.ok) {
+      return fail(repair.blocker, {
+        remoteAction: CANONICAL_GIT_WORKTREE_CONFIG_ACTION,
+        sourceHead: observedHead,
+        expectedHeadMatch: true,
+        riskCategoriesBefore: repair.riskCategoriesBefore || Object.freeze([]),
+        gitConfigurationMutationPerformed: repair.mutationPerformed === true,
+        sourceMutationAllowed: false,
+        arbitraryShellAllowed: false,
+        mergeAuthority: false,
+        pcRestartAuthority: false,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true,
+      finalVerdict: repair.finalVerdict,
+      remoteAction: CANONICAL_GIT_WORKTREE_CONFIG_ACTION,
+      sourceHead: observedHead,
+      expectedHeadMatch: true,
+      gitConfigurationMutationPerformed: repair.mutationPerformed === true,
+      gitConfigurationMutationScope: 'extensions.worktreeConfig-only',
+      riskCategoriesBefore: repair.riskCategoriesBefore,
+      canonicalGitConfigurationValid: repair.canonicalAfter === true,
+      proofHash: createHash('sha256').update(JSON.stringify({
+        sourceHead: observedHead,
+        remoteAction: CANONICAL_GIT_WORKTREE_CONFIG_ACTION,
+        mutationPerformed: repair.mutationPerformed === true,
+        canonicalAfter: repair.canonicalAfter === true,
+      })).digest('hex'),
+      sourceMutationAllowed: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...result,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result,
     });
   }
 
@@ -3043,10 +3732,30 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           secretMaterialReturned: false,
         });
       }
+      const fleetMaintenanceFailure = safeFleetMaintenanceFailureProjection(
+        actionCall.body?.result?.structuredContent, actionId);
+      if (fleetMaintenanceFailure) {
+        return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_STEP_FAILED', {
+          stepIndex: index, remoteAction: actionId, remotePlan: shape.command.remotePlan,
+          stepCount: completedSteps.length, completedSteps: Object.freeze(completedSteps),
+          ...fleetMaintenanceFailure,
+          publicReceiptSafe: true, secretMaterialReturned: false,
+        });
+      }
       const boundedFailure = safeMaintenanceFailureProjection(
         actionCall.body?.result?.structuredContent,
         actionId,
       );
+      const fleetSupervisor = actionId === FLEET_SUPERVISOR_ACTION
+        ? safeFleetSupervisorExecutionProjection(actionCall.body?.result?.structuredContent) : null;
+      if (actionId === FLEET_SUPERVISOR_ACTION && !fleetSupervisor) {
+        return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID', {
+          stepIndex: index, remoteAction: actionId, remotePlan: shape.command.remotePlan,
+          stepCount: completedSteps.length, completedSteps: Object.freeze(completedSteps),
+          executionBlocker: 'FLEET_SUPERVISOR_TERMINAL_RECEIPT_INVALID',
+          publicReceiptSafe: true, secretMaterialReturned: false,
+        });
+      }
       if (boundedFailure) {
         return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_STEP_FAILED', {
           stepIndex: index,
@@ -3056,7 +3765,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           status: boundedFailure.status,
           processId: boundedFailure.processId,
           errorCode: boundedFailure.errorCode,
-          executionBlocker: boundedFailure.executionBlocker,
+          executionBlocker: fleetSupervisor ? 'FLEET_SUPERVISOR_REPORTED_BLOCKED' : boundedFailure.executionBlocker,
+          ...(fleetSupervisor ? { fleetSupervisor } : {}),
           completedSteps: Object.freeze(completedSteps),
           publicReceiptSafe: true,
           secretMaterialReturned: false,
@@ -3072,6 +3782,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         && PROOF_HASH_PATTERN.test(projection.proofHash)
         && projection.processId === actionId
         && projection.status === 0
+        && (actionId !== FLEET_SUPERVISOR_ACTION || fleetSupervisor?.ok === true)
         && runtimeProofComplete
         && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
       if (!proofComplete) {
@@ -3098,6 +3809,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         errorCode: projection.errorCode,
         runtimeProof: projection.runtimeProof,
         aiCommanderAcceptance: projection.aiCommanderAcceptance,
+        ...(fleetSupervisor ? { fleetSupervisor } : {}),
       }));
     }
 
@@ -3171,6 +3883,14 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   if (!actionCall.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
+  const fleetMaintenanceFailure = safeFleetMaintenanceFailureProjection(
+    actionCall.body?.result?.structuredContent, shape.command.remoteAction);
+  if (fleetMaintenanceFailure) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', {
+      remoteAction: shape.command.remoteAction, ...fleetMaintenanceFailure,
+      publicReceiptSafe: true, secretMaterialReturned: false,
+    });
+  }
   const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight',
     'rescue-island-readonly-boundary', 'starfield-vr-telemetry-archive']
     .includes(shape.command.remoteAction);
@@ -3178,13 +3898,23 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     || shape.command.remoteAction === 'sovereign-windows-reviewer-calibration')
     ? null
     : safeMaintenanceFailureProjection(actionCall.body?.result?.structuredContent, shape.command.remoteAction);
+  const fleetSupervisor = shape.command.remoteAction === FLEET_SUPERVISOR_ACTION
+    ? safeFleetSupervisorExecutionProjection(actionCall.body?.result?.structuredContent) : null;
+  if (shape.command.remoteAction === FLEET_SUPERVISOR_ACTION && !fleetSupervisor) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_FLEET_RECEIPT_INVALID', {
+      remoteAction: shape.command.remoteAction,
+      executionBlocker: 'FLEET_SUPERVISOR_TERMINAL_RECEIPT_INVALID',
+      publicReceiptSafe: true, secretMaterialReturned: false,
+    });
+  }
   if (boundedFailure) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', {
       remoteAction: shape.command.remoteAction,
       status: boundedFailure.status,
       processId: boundedFailure.processId,
       errorCode: boundedFailure.errorCode,
-      executionBlocker: boundedFailure.executionBlocker,
+      executionBlocker: fleetSupervisor ? 'FLEET_SUPERVISOR_REPORTED_BLOCKED' : boundedFailure.executionBlocker,
+      ...(fleetSupervisor ? { fleetSupervisor } : {}),
       publicReceiptSafe: true,
       secretMaterialReturned: false,
     });
@@ -3993,6 +4723,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     && PROOF_HASH_PATTERN.test(projection.proofHash)
     && projection.processId === shape.command.remoteAction
     && projection.status === 0
+    && (shape.command.remoteAction !== FLEET_SUPERVISOR_ACTION || fleetSupervisor?.ok === true)
     && runtimeProofComplete
     && observationComplete
     && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
@@ -4025,6 +4756,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     controllerLaneStatus: projection.controllerLaneStatus,
     controllerActivityPublication: projection.controllerActivityPublication,
     capabilityParity: projection.capabilityParity,
+    ...(fleetSupervisor ? { fleetSupervisor } : {}),
     ...(coreDaemonStatus ? { coreDaemonStatus } : {}),
     vendorMeterRequired: false,
     externalSaasRelayRequired: false,

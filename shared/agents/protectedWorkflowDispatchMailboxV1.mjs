@@ -1,3 +1,4 @@
+import { validatePersonalRepositoryReadOnlyPriorFailure, PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX } from './protectedMergeReadOnlyPriorFailureV1.mjs';
 import { createHash } from 'node:crypto';
 import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 
@@ -157,36 +158,75 @@ function materialAuthorizationIdentity(command = {}) {
 
 
 /**
- * Refuse a second source-identical protected merge dispatch, even if an
+ * Refuse overlapping source-identical protected merge dispatches, even if an
  * earlier GitHub environment approval is still pending. This is a read-only
  * early guard. The protected executor retains its independently checked
- * replay fence; this result can never confer merge authority.
+ * replay fence. A failed evidence job is retryable only after the same shared
+ * all-attempt job-envelope proof shows both later authority jobs were skipped.
+ * This result can never confer merge authority.
  *
  * The caller MUST retrieve the entire bounded workflow-specific,
  * exact-base GitHub run inventory, not trust an owner-supplied list.
  */
-export function inspectProtectedWorkflowDuplicateDispatchRuns(runs, command = {}) {
+export function inspectProtectedWorkflowDuplicateDispatchRuns(runs, command = {}, { priorRunJobSets = [] } = {}) {
   const sourceHead = command.expectedHead;
   const baseSha = command.expectedBase;
   if (!Array.isArray(runs) || runs.length > 600
+      || !Array.isArray(priorRunJobSets) || priorRunJobSets.length > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX
       || typeof sourceHead !== 'string' || !SHA40.test(sourceHead)
       || typeof baseSha !== 'string' || !SHA40.test(baseSha))
     return fail('PROTECTED_WORKFLOW_DISPATCH_RUN_INVENTORY_UNVERIFIABLE');
   const title = 'Protected operator merge ' + sourceHead;
-  let collision = false;
+  const collisions = [];
+  const seen = new Set();
   for (const run of runs) {
     if (!run || typeof run !== 'object' || Array.isArray(run))
       return fail('PROTECTED_WORKFLOW_DISPATCH_RUN_INVENTORY_UNVERIFIABLE');
     if (run.name !== title && run.display_title !== title) continue;
-    if (!positiveInteger(run.id)
+    if (!Number.isSafeInteger(run.id) || run.id <= 0 || seen.has(run.id)
         || run.name !== title || run.display_title !== title
         || run.event !== 'workflow_dispatch'
         || run.head_sha !== baseSha || run.head_branch !== 'main')
       return fail('PROTECTED_WORKFLOW_DISPATCH_RUN_IDENTITY_UNVERIFIABLE');
-    collision = true;
+    seen.add(run.id);
+    collisions.push(run);
   }
-  if (collision) return fail('PROTECTED_WORKFLOW_DUPLICATE_SOURCE_ATTEMPT_HELD');
-  return Object.freeze({ ok: true, previousSourceAttemptFound: false });
+  if (collisions.length > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX)
+    return fail('PROTECTED_WORKFLOW_DUPLICATE_SOURCE_ATTEMPT_HELD');
+  const proofs = new Map();
+  for (const item of priorRunJobSets) {
+    if (!item || !seen.has(item.runId) || proofs.has(item.runId) || !Array.isArray(item.jobs))
+      return fail('PROTECTED_WORKFLOW_DISPATCH_RUN_INVENTORY_UNVERIFIABLE');
+    proofs.set(item.runId, item.jobs);
+  }
+  const receipts = [];
+  let totalAttempts = 0;
+  const missingJobProofIds = [];
+  for (const run of collisions) {
+    const actor = run.triggering_actor || run.actor;
+    const path = run.path;
+    const exactPath = path === PROTECTED_WORKFLOW_DISPATCH_PATH
+      || path === PROTECTED_WORKFLOW_DISPATCH_REPOSITORY + '/' + PROTECTED_WORKFLOW_DISPATCH_PATH + '@refs/heads/main';
+    const exactActor = (actor?.login === PROTECTED_WORKFLOW_DISPATCH_AUTHOR && actor?.id === PROTECTED_WORKFLOW_DISPATCH_AUTHOR_ID)
+      || (actor?.login === PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR && actor?.id === PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR_ID);
+    if (run.status !== 'completed' || run.conclusion !== 'failure'
+        || !Number.isSafeInteger(run.run_attempt) || run.run_attempt < 1
+        || run.run_attempt > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX
+        || !Number.isSafeInteger(run.workflow_id) || run.workflow_id < 1
+        || run.repository?.full_name !== PROTECTED_WORKFLOW_DISPATCH_REPOSITORY || !exactPath || !exactActor)
+      return fail('PROTECTED_WORKFLOW_DUPLICATE_SOURCE_ATTEMPT_HELD');
+    totalAttempts += run.run_attempt;
+    if (totalAttempts > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX)
+      return fail('PROTECTED_WORKFLOW_DUPLICATE_SOURCE_ATTEMPT_HELD');
+    if (!proofs.has(run.id)) { missingJobProofIds.push(run.id); continue; }
+    const proof = validatePersonalRepositoryReadOnlyPriorFailure(run, proofs.get(run.id));
+    if (!proof.valid) return fail('PROTECTED_WORKFLOW_DUPLICATE_SOURCE_ATTEMPT_HELD', { priorRunId: run.id, blockers: proof.blockers });
+    receipts.push(proof.receipt);
+  }
+  if (missingJobProofIds.length)
+    return fail('PROTECTED_WORKFLOW_DUPLICATE_SOURCE_ATTEMPT_HELD', { retryCandidateRunIds: missingJobProofIds });
+  return Object.freeze({ ok: true, previousSourceAttemptFound: collisions.length > 0,
+    retryablePriorFailures: Object.freeze(receipts), mergeAuthority: false });
 }
 
 export function extractProtectedWorkflowDispatch(body = '') {

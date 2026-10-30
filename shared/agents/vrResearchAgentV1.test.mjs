@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import './vrRuntimeRecoveryClassificationV1.test.mjs';
+// Include original VR Link #1717 lifecycle regressions in existing VR Research CI.
+import '../../apps/vr-link/vr-link-session-lifecycle.test.mjs';
 // Exercise the original Spatial telemetry regressions in hosted VR CI.
 import '../../tests/spatial-workspace-telemetry-state-fidelity.test.mjs';
 import test from 'node:test';

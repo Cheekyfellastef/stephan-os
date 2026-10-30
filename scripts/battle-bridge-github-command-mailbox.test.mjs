@@ -296,7 +296,7 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.doesNotMatch(installer, /New-ScheduledTaskAction -Execute \$(?:node|nodeExe|npm)/);
 
   const mailboxSource = await readFile(mailboxSourcePath, 'utf8');
-  assert.match(mailboxSource, /selectBattleBridgeGitHubCommandBatch\(comments/);
+  assert.match(mailboxSource, /selectBattleBridgeGitHubCommandBatch\(rotationPoll\.comments/);
   assert.match(mailboxSource, /executeBattleBridgeGitHubCommandBatch\(batch/);
   assert.match(mailboxSource, /beforeExecute:\s*async \(selected\)/);
   assert.match(mailboxSource, /onTerminal:\s*async \(selected, execution\)/);
@@ -676,6 +676,67 @@ test('Sovereign Commander remote receipts preserve bounded mobile proof metadata
   assert.equal(serialized.result.result.coreDaemonStatus.remoteCommanderRequired, false);
   assert.equal(Object.hasOwn(serialized.result.result.coreDaemonStatus, 'rawStdout'), false);
   assert.equal(Object.hasOwn(serialized.result.result.coreDaemonStatus, 'localPath'), false);
+});
+
+test('Sovereign status mailbox carries only bounded guardian cycle proof, never claims material repair', () => {
+  const head = 'c'.repeat(40);
+  const guardian = {
+    available: true, enabled: true, running: false, scheduled: true,
+    cycleCount: 13, successCount: 0, failureCount: 13, lastOk: false,
+    lastStartedAtUtc: '2026-10-20T22:45:00.000Z',
+    lastCompletedAtUtc: '2026-10-20T22:46:00.000Z',
+    lastBlocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+    lastFinalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_BLOCKED',
+    loopState: 'CYCLES_OBSERVED', autonomousMaterialRepairProven: true,
+    readOnly: true, secretMaterialReturned: false,
+    rawStdout: 'C:\\Users\\Secret\\raw.txt', privateToken: 'do-not-publish',
+  };
+  const makeReceipt = (remoteAction, value = guardian) => ({
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'sovereign-guardian-status-proof-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 3149,
+    branch: 'main', expectedHead: head, state: 'DONE',
+    result: {
+      ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'sovereign-guardian-status-proof-001',
+      result: {
+        ok: true, remoteAction,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_STATUS_COMPLETE',
+        sourceHead: head, publicReceiptSafe: true, secretMaterialReturned: false,
+        continuousRepairGuardian: value,
+      },
+    },
+  });
+  const receipt = makeReceipt('status');
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.deepEqual(projected.operationResult.continuousRepairGuardian, {
+    available: true, enabled: true, running: false, scheduled: true,
+    cycleCount: 13, successCount: 0, failureCount: 13, lastOk: false,
+    lastStartedAtUtc: '2026-10-20T22:45:00.000Z',
+    lastCompletedAtUtc: '2026-10-20T22:46:00.000Z',
+    lastBlocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+    lastFinalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_BLOCKED',
+    loopState: 'CYCLES_OBSERVED',
+    autonomousMaterialRepairProven: false,
+    readOnly: true, secretMaterialReturned: false,
+  });
+  const serialized = serializeBoundedReceiptJson(receipt);
+  const compact = JSON.parse(serialized).result.result.continuousRepairGuardian;
+  assert.equal(compact.failureCount, 13);
+  assert.equal(compact.autonomousMaterialRepairProven, false);
+  assert.doesNotMatch(serialized, /raw\.txt|do-not-publish|C:\\Users/i);
+
+  const other = createSanitizedMailboxReceiptProjection(makeReceipt('meter-status'));
+  assert.equal(Object.hasOwn(other.operationResult, 'continuousRepairGuardian'), false);
+  const malformed = createSanitizedMailboxReceiptProjection(makeReceipt('status', {
+    ...guardian, cycleCount: '100', loopState: 'CYCLES_OBSERVED',
+    lastBlocker: 'C:\\Users\\private',
+  }));
+  assert.equal(malformed.operationResult.continuousRepairGuardian.available, false);
+  assert.equal(malformed.operationResult.continuousRepairGuardian.loopState, 'UNKNOWN');
+  assert.equal(malformed.operationResult.continuousRepairGuardian.cycleCount, null);
 });
 
 test('Sovereign Commander blocked receipts preserve only bounded failure diagnostics', () => {
@@ -3582,4 +3643,113 @@ test('native Windows reviewer exam survives bounded public receipt without ident
     calibration:{...calibration,reviewerPrincipal:'PRIVATE'}}});
   assert.doesNotMatch(JSON.stringify(unsafe),/PRIVATE/);
   assert.ok(!JSON.stringify(unsafe).includes('EXACT_LOCAL_SOURCE_UNPROVEN'));
+});
+
+
+test('canonical Git worktree inspection survives bounded mailbox publication without raw host detail', () => {
+  const head = 'a'.repeat(40);
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'git-worktree-inspect-1001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    state: 'DONE',
+    expectedHead: head,
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'git-worktree-inspect-1001',
+      result: {
+        ok: true,
+        finalVerdict: 'CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_REPAIR_ELIGIBLE',
+        remoteAction: 'inspect-canonical-git-worktree-config',
+        sourceHead: head,
+        expectedHeadMatch: true,
+        gitConfigurationMutationPerformed: false,
+        canonicalGitWorktreeConfigInspection: {
+          schemaVersion: 'stephanos.canonical-git-worktree-config-inspection.v1',
+          inspectionComplete: true,
+          sourceHead: head,
+          canonicalTopologyProven: true,
+          canonicalGitConfigurationValid: false,
+          originCount: 'ONE',
+          originMatch: 'CANONICAL',
+          riskCategories: ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG', 'PRIVATE_RISK'],
+          extensionValueCount: 1,
+          extensionValueState: 'TRUE',
+          registeredWorktreeCount: 1,
+          linkedWorktreeCount: 0,
+          lockedWorktreeCount: 0,
+          prunableWorktreeCount: 0,
+          worktreeConfigFileCount: 0,
+          nonEmptyWorktreeConfigFileCount: 0,
+          worktreeConfigEntryCount: 0,
+          allWorktreeConfigsObserved: true,
+          safeForFixedUnset: true,
+          finalVerdict: 'CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_REPAIR_ELIGIBLE',
+          rawPath: 'C:\\Users\\Operator\\PRIVATE',
+          rawConfigValue: 'SECRET',
+        },
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  const evidence = projected.operationResult.canonicalGitWorktreeConfigInspection;
+  assert.equal(evidence.safeForFixedUnset, true);
+  assert.equal(evidence.registeredWorktreeCount, 1);
+  assert.equal(evidence.linkedWorktreeCount, 0);
+  assert.deepEqual(evidence.riskCategories, ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG']);
+  assert.equal(projected.operationResult.gitConfigurationMutationPerformed, false);
+
+  const serialized = serializeBoundedReceiptJson(receipt);
+  const compact = JSON.parse(serialized).result.result;
+  assert.equal(compact.canonicalGitWorktreeConfigInspection.safeForFixedUnset, true);
+  assert.equal(compact.canonicalGitWorktreeConfigInspection.extensionValueState, 'TRUE');
+  assert.deepEqual(compact.canonicalGitWorktreeConfigInspection.riskCategories,
+    ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG']);
+  assert.doesNotMatch(serialized, /C:\\\\Users|PRIVATE_RISK|rawConfigValue|SECRET/);
+});
+
+test('canonical Git repair publication preserves completed mutation on failed postcondition', () => {
+  const head = 'b'.repeat(40);
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'git-worktree-repair-1001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    state: 'BLOCKED',
+    expectedHead: head,
+    blocker: 'CANONICAL_GIT_WORKTREE_CONFIG_POSTCONDITION_UNPROVEN',
+    result: {
+      ok: false,
+      verdict: 'COMMAND_EXECUTION_BLOCKED',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'git-worktree-repair-1001',
+      result: {
+        ok: false,
+        blocker: 'CANONICAL_GIT_WORKTREE_CONFIG_POSTCONDITION_UNPROVEN',
+        remoteAction: 'repair-canonical-git-worktree-config',
+        sourceHead: head,
+        expectedHeadMatch: true,
+        gitConfigurationMutationPerformed: true,
+        gitConfigurationMutationScope: 'extensions.worktreeConfig-only',
+        riskCategoriesBefore: ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG', 'PRIVATE_RISK'],
+        canonicalGitConfigurationValid: false,
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt).operationResult;
+  assert.equal(projected.gitConfigurationMutationPerformed, true);
+  assert.equal(projected.gitConfigurationMutationScope, 'extensions.worktreeConfig-only');
+  assert.deepEqual(projected.riskCategoriesBefore, ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG']);
+  assert.equal(projected.canonicalGitConfigurationValid, false);
+
+  const serialized = serializeBoundedReceiptJson(receipt);
+  const compact = JSON.parse(serialized).result.result;
+  assert.equal(compact.gitConfigurationMutationPerformed, true);
+  assert.equal(compact.gitConfigurationMutationScope, 'extensions.worktreeConfig-only');
+  assert.deepEqual(compact.riskCategoriesBefore, ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG']);
+  assert.equal(compact.canonicalGitConfigurationValid, false);
+  assert.doesNotMatch(serialized, /PRIVATE_RISK/);
 });
