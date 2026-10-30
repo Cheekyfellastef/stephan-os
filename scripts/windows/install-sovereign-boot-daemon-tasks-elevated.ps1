@@ -110,6 +110,44 @@ function Assert-CanonicalSource {
     }
 }
 
+function Test-BootInstallerReceipt {
+    param([object]$Receipt, [ValidateSet('Commander','DesktopCommander','RecoveryMesh')][string]$Kind)
+    # Consume each fixed producer's declared schema; never synthesize a verdict
+    # that its real output does not contain. Missing or mistyped proof fails closed.
+    try {
+        if ($null -eq $Receipt -or $Receipt -is [array]) { return $false }
+        $schemas = @{
+            Commander = 'stephanos.sovereign-commander-install.v1'
+            DesktopCommander = 'stephanos.desktop-commander-watchdog-install.v1'
+            RecoveryMesh = 'stephanos.battle-bridge-recovery-mesh-install.v1'
+        }
+        if ($Receipt.schemaVersion -isnot [string] -or $Receipt.schemaVersion -cne $schemas[$Kind]) { return $false }
+        foreach ($field in @('installed','startedNow')) {
+            if ($Receipt.$field -isnot [bool] -or $Receipt.$field -ne $true) { return $false }
+        }
+        if ($Receipt.logonType -isnot [string]) { return $false }
+        if ($Kind -eq 'Commander') {
+            return ($Receipt.finalVerdict -is [string] -and $Receipt.finalVerdict -ceq 'SOVEREIGN_COMMANDER_TASK_INSTALLED' -and
+                $Receipt.requiresInteractiveLogon -is [bool] -and $Receipt.requiresInteractiveLogon -eq $true -and
+                [string]$Receipt.logonType -ceq 'Interactive' -and
+                $Receipt.normalOperatorRuntimeProven -is [bool] -and $Receipt.normalOperatorRuntimeProven -eq $false -and
+                $Receipt.preLoginExecutionProven -is [bool] -and $Receipt.preLoginExecutionProven -eq $false)
+        }
+        if ($Receipt.atStartup -isnot [bool] -or $Receipt.atStartup -ne $true -or
+            [string]$Receipt.logonType -cne 'S4U') { return $false }
+        if ($Kind -eq 'DesktopCommander') { return $true }
+        foreach ($field in @('guardianInstalled','guardianStartedNow','taskPresentAfter','guardianTaskPresentAfter')) {
+            if ($Receipt.$field -isnot [bool] -or $Receipt.$field -ne $true) { return $false }
+        }
+        foreach ($field in @('whatIf','recoveryMeshOnly')) {
+            if ($Receipt.$field -isnot [bool] -or $Receipt.$field -ne $false) { return $false }
+        }
+        return ($Receipt.runLevel -is [string] -and $Receipt.runLevel -ceq 'Limited' -and
+            $Receipt.guardianAuthority -is [string] -and
+            [string]$Receipt.guardianAuthority -ceq 'REREGISTER_AND_START_CANONICAL_RECOVERY_MESH_ONLY')
+    } catch { return $false }
+}
+
 function Get-BootTaskProof {
     param(
         [Parameter(Mandatory = $true)][string]$TaskName,
@@ -129,7 +167,21 @@ function Get-BootTaskProof {
     $restartInterval = [string]$xml.Task.Settings.RestartOnFailure.Interval
     $executeMatches = [string]::Equals([string]$action.Execute, $wscriptExe, [System.StringComparison]::OrdinalIgnoreCase)
     $argumentsMatch = [string]::Equals([string]$action.Arguments, $ExpectedArguments, [System.StringComparison]::Ordinal)
-    $runLevel = [string]$xml.Task.Principals.Principal.RunLevel
+    # Task Scheduler may omit the default XML RunLevel. The normalized live
+    # CIM principal must independently prove Limited; missing CIM is never a default.
+    $taskNamespace = 'http://schemas.microsoft.com/windows/2004/02/mit/task'
+    $namespaces = [System.Xml.XmlNamespaceManager]::new($xml.NameTable)
+    $namespaces.AddNamespace('task', $taskNamespace)
+    $taskSchemaMatches = $xml.DocumentElement.LocalName -ceq 'Task' -and $xml.DocumentElement.NamespaceURI -ceq $taskNamespace
+    $principalNodes = $xml.SelectNodes('/task:Task/task:Principals/task:Principal', $namespaces)
+    $runLevelNodes = $xml.SelectNodes('/task:Task/task:Principals/task:Principal/task:RunLevel', $namespaces)
+    $allRunLevelNodes = $xml.SelectNodes("/*[local-name()='Task']/*[local-name()='Principals']/*[local-name()='Principal']/*[local-name()='RunLevel']")
+    $xmlRunLevel = if ($runLevelNodes.Count -eq 1) { [string]$runLevelNodes[0].InnerText } else { '' }
+    $cimRunLevel = $task.Principal.RunLevel
+    $limitedCim = $cimRunLevel -is [Microsoft.PowerShell.Cmdletization.GeneratedTypes.ScheduledTask.RunLevelEnum] -and [string]$cimRunLevel -ceq 'Limited'
+    $consistentXml = $taskSchemaMatches -and $principalNodes.Count -eq 1 -and $allRunLevelNodes.Count -eq $runLevelNodes.Count -and
+        ($runLevelNodes.Count -eq 0 -or ($runLevelNodes.Count -eq 1 -and $xmlRunLevel -ceq 'LeastPrivilege'))
+    $runLevel = if ($limitedCim -and $consistentXml) { 'LeastPrivilege' } else { 'UNPROVEN' }
     $expectedLogonType = if ($RequiresInteractiveOperator) { 'InteractiveToken' } else { 'S4U' }
     $operatorIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
     try {
@@ -233,26 +285,26 @@ try {
 } catch {
     Stop-Bootstrap 'BOOT_TASK_INSTALL_RECEIPT_INVALID' -Persist
 }
-if ([string]$commanderReceipt.finalVerdict -ne 'SOVEREIGN_COMMANDER_TASK_INSTALLED' -or $commanderReceipt.installed -ne $true -or $commanderReceipt.startedNow -ne $true) {
+if (-not (Test-BootInstallerReceipt -Receipt $commanderReceipt -Kind Commander)) {
     Stop-Bootstrap 'SOVEREIGN_COMMANDER_ELEVATED_INSTALL_UNPROVEN' -Persist
 }
-if ($commanderReceipt.requiresInteractiveLogon -ne $true -or [string]$commanderReceipt.logonType -cne 'Interactive' -or
-    $commanderReceipt.normalOperatorRuntimeProven -ne $false -or $commanderReceipt.preLoginExecutionProven -ne $false) {
-    Stop-Bootstrap 'SOVEREIGN_COMMANDER_OPERATOR_SESSION_CONTRACT_UNPROVEN' -Persist
-}
-if ($desktopCommanderReceipt.installed -ne $true -or $desktopCommanderReceipt.startedNow -ne $true -or $desktopCommanderReceipt.atStartup -ne $true -or [string]$desktopCommanderReceipt.logonType -ne 'S4U') {
+if (-not (Test-BootInstallerReceipt -Receipt $desktopCommanderReceipt -Kind DesktopCommander)) {
     Stop-Bootstrap 'DESKTOP_COMMANDER_ELEVATED_INSTALL_UNPROVEN' -Persist
 }
-if ([string]$recoveryReceipt.finalVerdict -ne 'BATTLE_BRIDGE_RECOVERY_MESH_INSTALLED' -or $recoveryReceipt.installed -ne $true -or $recoveryReceipt.startedNow -ne $true -or $recoveryReceipt.guardianInstalled -ne $true) {
+if (-not (Test-BootInstallerReceipt -Receipt $recoveryReceipt -Kind RecoveryMesh)) {
     Stop-Bootstrap 'RECOVERY_MESH_ELEVATED_INSTALL_UNPROVEN' -Persist
 }
 
 $launcherPath = Join-Path $repoRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs'
 $quotedLauncher = '"' + $launcherPath + '"'
-$commanderProof = Get-BootTaskProof -TaskName 'Stephanos Sovereign Commander' -ExpectedArguments ("//B //NoLogo {0} sovereign-commander-watchdog" -f $quotedLauncher) -RequiresInteractiveOperator
-$desktopCommanderProof = Get-BootTaskProof -TaskName 'Stephanos Commander Watchdog' -ExpectedArguments ("//B //NoLogo {0} desktop-commander-watchdog" -f $quotedLauncher)
-$recoveryProof = Get-BootTaskProof -TaskName 'Stephanos Battle Bridge Recovery Mesh' -ExpectedArguments ("//B //NoLogo {0} recovery-mesh" -f $quotedLauncher)
-$guardianProof = Get-BootTaskProof -TaskName 'Stephanos Battle Bridge Recovery Mesh Guardian' -ExpectedArguments ("//B //NoLogo {0} recovery-mesh-guardian" -f $quotedLauncher)
+try {
+    $commanderProof = Get-BootTaskProof -TaskName 'Stephanos Sovereign Commander' -ExpectedArguments ("//B //NoLogo {0} sovereign-commander-watchdog" -f $quotedLauncher) -RequiresInteractiveOperator
+    $desktopCommanderProof = Get-BootTaskProof -TaskName 'Stephanos Commander Watchdog' -ExpectedArguments ("//B //NoLogo {0} desktop-commander-watchdog" -f $quotedLauncher)
+    $recoveryProof = Get-BootTaskProof -TaskName 'Stephanos Battle Bridge Recovery Mesh' -ExpectedArguments ("//B //NoLogo {0} recovery-mesh" -f $quotedLauncher)
+    $guardianProof = Get-BootTaskProof -TaskName 'Stephanos Battle Bridge Recovery Mesh Guardian' -ExpectedArguments ("//B //NoLogo {0} recovery-mesh-guardian" -f $quotedLauncher)
+} catch {
+    Stop-Bootstrap 'BOOT_TASK_DEFINITION_UNREADABLE' -Persist
+}
 $allConfigurationsVerified = $commanderProof.configurationVerified -and $desktopCommanderProof.configurationVerified -and $recoveryProof.configurationVerified -and $guardianProof.configurationVerified
 if (-not $allConfigurationsVerified) { Stop-Bootstrap 'BOOT_TASK_LIFECYCLE_PROOF_FAILED' -Persist }
 
