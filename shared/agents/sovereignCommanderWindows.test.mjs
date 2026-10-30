@@ -22,7 +22,7 @@ test('boot recovery installers parse with the Windows PowerShell used by the boo
     'run-sovereign-commander-hidden.ps1',
   ].map((name) => fileURLToPath(new URL(`../../scripts/windows/${name}`, import.meta.url)));
   const literals = paths.map((path) => `'${path.replace(/'/g, "''")}'`).join(',');
-  const command = `$ErrorActionPreference = 'Stop'; $failureCount = 0; foreach ($path in @(${literals})) { $tokens = $null; $parseErrors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors); foreach ($error in $parseErrors) { Write-Output ($path + ':' + $error.Extent.StartLineNumber + ': ' + $error.Message); $failureCount++ } }; if ($failureCount -gt 0) { exit 1 }`;
+  const command = `$ErrorActionPreference = 'Stop'; $failureCount = 0; foreach ($path in @(${literals})) { $tokens = $null; $parseErrors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors); foreach ($parseIssue in $parseErrors) { Write-Output ($path + ':' + $parseIssue.Extent.StartLineNumber + ': ' + $parseIssue.Message); $failureCount++ } }; if ($failureCount -gt 0) { exit 1 }`;
   const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', [
     '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64'),
   ], { encoding: 'utf8', windowsHide: true, shell: false, timeout: 30_000 });
@@ -217,18 +217,20 @@ $rows | ConvertTo-Json -Compress
 });
 
 
-test('Sovereign Commander and remote recovery ingress are boot-safe before interactive logon', async () => {
+test('Commander uses the operator session while separate recovery ingress retains its existing boot configuration', async () => {
   const recoveryInstaller = await readFile(new URL('../../scripts/windows/install-battle-bridge-recovery-mesh.ps1', import.meta.url), 'utf8');
   assert.match(installer, /New-ScheduledTaskTrigger -AtStartup/);
-  assert.match(installer, /-LogonType S4U/);
-  assert.match(installer, /requiresInteractiveLogon = \$false/);
+  assert.match(installer, /-UserId \$currentUserSid -LogonType Interactive -RunLevel Limited/);
+  assert.match(installer, /requiresInteractiveLogon = \$true/);
+  assert.match(installer, /normalOperatorRuntimeProven = \$false/);
+  assert.match(installer, /preLoginExecutionProven = \$false/);
   assert.match(installer, /RestartCount 3/);
   assert.match(recoveryInstaller, /New-ScheduledTaskTrigger -AtStartup/);
   assert.match(recoveryInstaller, /-LogonType S4U/);
   assert.match(recoveryInstaller, /requiresInteractiveLogon = \$false/);
   assert.match(recoveryInstaller, /RestartCount 3/);
   assert.match(launcher, /shell\.Environment\("PROCESS"\)\("USERPROFILE"\) = profileRoot/);
-  assert.doesNotMatch(installer, /-LogonType Interactive\b/);
+  assert.doesNotMatch(installer, /-LogonType S4U\b/);
   assert.doesNotMatch(recoveryInstaller, /-LogonType Interactive\b/);
 });
 
@@ -243,10 +245,17 @@ test('one-time boot daemon bootstrap elevates only fixed exact-head task install
   assert.match(elevatedBootstrap, /Stephanos Battle Bridge Recovery Mesh/);
   assert.match(elevatedBootstrap, /Stephanos Battle Bridge Recovery Mesh Guardian/);
   assert.match(elevatedBootstrap, /bootTriggerPresent/);
-  assert.match(elevatedBootstrap, /logonType -eq 'S4U'/);
+  assert.match(elevatedBootstrap, /'InteractiveToken' \} else \{ 'S4U'/);
+  assert.match(elevatedBootstrap, /logonType -eq \$expectedLogonType/);
   assert.match(elevatedBootstrap, /restartCount -eq 3/);
   assert.match(elevatedBootstrap, /restartInterval -eq 'PT1M'/);
-  assert.match(elevatedBootstrap, /SOVEREIGN_BOOT_DAEMON_TASKS_INSTALLED_AND_PROVEN/);
+  assert.match(elevatedBootstrap, /SOVEREIGN_DAEMON_TASK_CONFIGURATION_VERIFIED/);
+  assert.match(elevatedBootstrap, /'Stephanos Sovereign Commander'[^\r\n]*-RequiresInteractiveOperator/);
+  assert.match(elevatedBootstrap, /'InteractiveToken'/);
+  assert.match(elevatedBootstrap, /normalOperatorRuntimeProven = \$false/);
+  assert.match(elevatedBootstrap, /preLoginExecutionProven = \$false/);
+  assert.match(elevatedBootstrap, /runtimeActivationGranted = \$false/);
+  assert.doesNotMatch(elevatedBootstrap, /\$allBootSafe/);
   assert.match(elevatedBootstrap, /AppData\\Local\\Stephanos\\sovereign-boot-daemon-bootstrap-v1[.]json/);
   assert.match(elevatedBootstrap, /receiptDeadline = \[DateTimeOffset\]::UtcNow[.]AddSeconds\(20\)/);
   assert.match(elevatedBootstrap, /standingElevatedTaskCreated = \$false/);
@@ -254,6 +263,112 @@ test('one-time boot daemon bootstrap elevates only fixed exact-head task install
   assert.match(elevatedBootstrap, /mergeAuthority = \$false/);
   assert.match(elevatedBootstrap, /pcRestartAuthority = \$false/);
   assert.doesNotMatch(elevatedBootstrap, /Invoke-Expression|Restart-Computer|Stop-Process|git\s+(?:reset|clean|checkout|switch)/i);
+});
+
+test('actual operator token decisions reject privileged, missing and coerced evidence', { skip: process.platform !== 'win32' }, () => {
+  const contextStart = runner.indexOf('function Resolve-SovereignCommanderOperatorContextV1 {');
+  const contextEnd = runner.indexOf('$operatorContext = Get-SovereignCommanderOperatorContextV1', contextStart);
+  assert.ok(contextStart > 0 && contextEnd > contextStart);
+  const script = `
+$ErrorActionPreference='Stop'
+${runner.slice(contextStart, contextEnd)}
+$sid='S-1-5-21-1-2-3-1002'
+$rows=@()
+foreach($case in @(
+ @{name='normal';sid=$sid;role=$false},
+ @{name='administrator-despite-limited-metadata';sid=$sid;role=$true},
+ @{name='missing-role';sid=$sid;role=$null},
+ @{name='string-false';sid=$sid;role='false'},
+ @{name='numeric-false';sid=$sid;role=0},
+ @{name='service-account';sid='S-1-5-19';role=$false},
+ @{name='missing-user';sid=$null;role=$false}
+)) {
+ $decision=Resolve-SovereignCommanderOperatorContextV1 -UserSid $case.sid -AdministratorRole $case.role
+ $rows += [pscustomobject]@{name=$case.name;allowed=$decision.normalOperatorObserved;blocker=$decision.blocker}
+}
+$identity=[Security.Principal.WindowsIdentity]::GetCurrent()
+try {
+ $expected= -not (New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+ $actual=Get-SovereignCommanderOperatorContextV1
+ if($actual.normalOperatorObserved -isnot [bool] -or $actual.normalOperatorObserved -ne $expected){throw 'ACTUAL_TOKEN_OBSERVATION_MISMATCH'}
+} finally { $identity.Dispose() }
+$rows | ConvertTo-Json -Compress
+`;
+  const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  for (const row of JSON.parse(result.stdout.trim())) {
+    assert.equal(row.allowed, row.name === 'normal', row.name);
+    assert.equal(row.blocker, row.name === 'normal' ? '' : row.name === 'administrator-despite-limited-metadata' ? 'SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED' : 'SOVEREIGN_COMMANDER_OPERATOR_CONTEXT_UNPROVEN', row.name);
+  }
+});
+
+test('task registration proof rejects legacy or altered Commander context without claiming runtime admission', { skip: process.platform !== 'win32' }, () => {
+  const start = elevatedBootstrap.indexOf('function Get-BootTaskProof {');
+  const end = elevatedBootstrap.indexOf('\nAssert-CanonicalSource', start);
+  assert.ok(start > 0 && end > start);
+  const script = `
+$ErrorActionPreference='Stop'
+Set-StrictMode -Version Latest
+$wscriptExe='fixed-wscript'
+$script:sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+function Get-ScheduledTask {
+ $actions=@([pscustomobject]@{Execute='fixed-wscript';Arguments='fixed-arguments'})
+ if($script:case -eq 'extra-action'){$actions+= [pscustomobject]@{Execute='other-program';Arguments='other-arguments'}}
+ if($script:case -eq 'wrong-action'){$actions[0].Arguments='different-arguments'}
+ [pscustomobject]@{Actions=$actions}
+}
+function Export-ScheduledTask {
+ $type=if($script:case -eq 'legacy-s4u' -or $script:case -eq 'other-existing-s4u'){'S4U'}else{'InteractiveToken'}
+ $user=if($script:case -eq 'wrong-user'){'S-1-5-19'}else{$script:sid}
+ $logonUser=if($script:case -eq 'wrong-logon-user'){'S-1-5-19'}elseif($script:case -eq 'normal-account-name'){[Security.Principal.WindowsIdentity]::GetCurrent().Name}elseif($script:case -eq 'foreign-account-name'){'OTHERDOMAIN\OtherUser'}else{$script:sid}
+ $level=if($script:case -eq 'highest'){'HighestAvailable'}else{'LeastPrivilege'}
+ '<Task><Principals><Principal><UserId>'+ $user +'</UserId><LogonType>'+ $type +'</LogonType><RunLevel>'+ $level +'</RunLevel></Principal></Principals><Triggers><BootTrigger/><LogonTrigger><UserId>'+ $logonUser +'</UserId></LogonTrigger></Triggers><Settings><Hidden>true</Hidden><StartWhenAvailable>true</StartWhenAvailable><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><RestartOnFailure><Count>3</Count><Interval>PT1M</Interval></RestartOnFailure></Settings></Task>'
+}
+${elevatedBootstrap.slice(start, end)}
+$rows=@()
+foreach($script:case in @('normal-registration','normal-account-name','foreign-account-name','legacy-s4u','wrong-user','wrong-logon-user','highest','wrong-action','extra-action','other-existing-s4u')) {
+ $interactive=$script:case -ne 'other-existing-s4u'
+ $proof=Get-BootTaskProof -TaskName 'fixed-task' -ExpectedArguments 'fixed-arguments' -RequiresInteractiveOperator:$interactive
+ $rows += [pscustomobject]@{name=$script:case;verified=$proof.configurationVerified;interactive=$proof.requiresInteractiveLogon;bootSafe=$proof.bootSafe;runtime=$proof.normalOperatorRuntimeProven;preLogin=$proof.preLoginExecutionProven}
+}
+$rows | ConvertTo-Json -Compress
+`;
+  const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  for (const row of JSON.parse(result.stdout.trim())) {
+    assert.equal(row.verified, ['normal-registration', 'normal-account-name', 'other-existing-s4u'].includes(row.name), row.name);
+    assert.equal(row.runtime, false, row.name);
+    assert.equal(row.preLogin, false, row.name);
+    if (row.name === 'normal-registration') {
+      assert.equal(row.interactive, true);
+      assert.equal(row.bootSafe, false);
+    }
+    if (row.name === 'other-existing-s4u') assert.equal(row.bootSafe, true);
+  }
+});
+
+test('watchdog stops privileged or unknown startup context before lifecycle mutations', { skip: process.platform !== 'win32' }, () => {
+  const start = runner.indexOf('$operatorContext = Get-SovereignCommanderOperatorContextV1');
+  const end = runner.indexOf('$serverScript =', start);
+  assert.ok(start > 0 && end > start);
+  assert.ok(end < runner.indexOf('Stop-Process'));
+  assert.ok(end < runner.indexOf('Start-Process'));
+  const operatorContext = runner.slice(runner.indexOf('function Resolve-SovereignCommanderOperatorContextV1 {'), start);
+  assert.match(operatorContext, /WindowsIdentity\]::GetCurrent\(\)/);
+  assert.doesNotMatch(operatorContext, /Start-Process|Stop-Process|Register-ScheduledTask|SetAccessControl|Impersonate|CreateRestrictedToken/);
+  for (const value of ['$false', "'true'"]) {
+    const script = `$ErrorActionPreference='Stop'; function Get-SovereignCommanderOperatorContextV1 { [pscustomobject]@{normalOperatorObserved=${value};blocker='SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED'} };\n${runner.slice(start, end)}\nthrow 'LIFECYCLE_REACHED'`;
+    const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+    assert.ifError(result.error);
+    assert.equal(result.status, 2, result.stderr);
+    const row = JSON.parse(result.stdout.trim());
+    assert.equal(row.healthy, false);
+    assert.equal(row.runtimeActivationGranted, false);
+    assert.equal(row.sourceMutationAllowed, false);
+    assert.equal(row.pcRestartAllowed, false);
+  }
 });
 
 
