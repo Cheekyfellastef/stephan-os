@@ -49,8 +49,11 @@ The reusable invariant is: configured privilege metadata is advisory; actual
 execution-context evidence must qualify the real process. Missing evidence
 holds the affected route without disabling independently qualified workers.
 
-The read-only context adapter is contained in the existing pinned runner, avoiding
-an untracked transitive script dependency. The source-pin and composition changes
-are candidates only: they require trusted protected-main review, authenticated
-independent exact-head Windows/security review, the existing protected operator
-bootstrap and separate exact-head merge approval. Local tests cannot admit them.
+The read-only context adapter stays inside the existing runner. Both trusted
+reviewer source modules remain unchanged. The historical internal reviewer
+intentionally refuses the guarded runner's new bytes; an inert, byte-verified
+fixture preserves its historical coverage without enrolling this successor.
+The existing external-first route requires authentic independent exact-head/base
+Windows/security evidence before formal review can clear the new surfaces.
+Local tests are not qualification. Protected integration and separate runtime
+approval remain required; no reviewer bootstrap authority is introduced.
