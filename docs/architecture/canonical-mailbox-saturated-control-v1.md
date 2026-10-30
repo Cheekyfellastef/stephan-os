@@ -505,3 +505,24 @@ never converted into authenticated original FROZEN proof. This bounded binding
 step does not implement or persist a durable phase checkpoint and does not enroll
 the still-unqualified producer. Those original transaction and commissioning
 requirements remain in the delivery order above.
+
+### Native producer-to-consumer software increment
+
+The original branch now includes the internal
+Stephanos.CanonicalMailboxNativeEvidence library. It produces the two existing
+closed V2 envelopes using pinned Ed25519, the canonical domain/NUL framing and
+Node-compatible canonical bytes. Real Windows fixture compilation, native
+retained-handle re-reads, byte-for-byte codec comparison and the exact origin
+verifier exercise that path. Changed/truncated material or malformed input
+poisons and clears the owned session. There is no generic domain/message signing
+entry point and no executable production key-import route.
+
+This is software construction, not an enrolled producer. Production enrollment
+remains EMPTY. The retained material and observations supplied to the internal
+component are explicitly untrusted seams; original guarded ingress, fixed host/
+principal/loader isolation, source-worker exclusion and protected key custody
+must be commissioned by the existing native producer owner before use. The
+component README records that exact proof packet and the still-required original
+freeze/drain/outbox/activation/adoption/probe/VERIFY integration. No capacity or
+R7 key, role or signing domain is inherited. Native algorithm interoperability
+must never be promoted into native transaction or installation evidence.
