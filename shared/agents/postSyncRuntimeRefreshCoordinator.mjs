@@ -148,6 +148,7 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
 ]);
 
 const NO_RUNTIME_EXACT = new Set([
+  'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',
   'scripts/canonical-mailbox-rollover-github-adapter.mjs',
   'scripts/canonical-mailbox-workflow-admission-v1.mjs',
   'scripts/canonical-mailbox-workflow-event-gate.mjs',
@@ -193,6 +194,8 @@ const UI_BUILD_AND_PROOF_TOOLCHAIN_PATHS = new Set([
   'scripts/battle-bridge-ui-4173-repair.mjs',
   'scripts/sovereign-commander-ui-4173-repair.mjs',
   'scripts/battle-bridge-ignition-supervisor.mjs',
+  'scripts/launcher-readiness-live-facts.mjs',
+  'scripts/launcher-readiness-planner.mjs',
 ]);
 
 function normalizePath(value) {
