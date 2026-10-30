@@ -14,6 +14,7 @@ import {
 import { MAXIMUM_BUILD_LANES } from '../../shared/agents/elasticBuildCapacityV1.mjs';
 import {
   buildMissionWorkerAction,
+  createMissionWorkerActionGrantV1,
   projectMissionWorkerActionState,
 } from '../../shared/agents/missionOrchestratorWorker.mjs';
 import {
@@ -233,7 +234,7 @@ function defaultExternalCapacityCandidates(mission, capacityRouting, sourceRevis
   ));
 }
 
-function exactElasticExternalGrant(mission, candidate, sourceRevision, now) {
+export function exactElasticExternalGrant(mission, candidate, sourceRevision, now) {
   if (!prePrElasticMission(mission) || !SHA_40.test(sourceRevision)) return null;
   const issueNumber = elasticIssueNumber(mission);
   const actionState = projectMissionWorkerActionState(mission, { now });
@@ -259,7 +260,7 @@ function exactElasticExternalGrant(mission, candidate, sourceRevision, now) {
   const actionId = text(action.actionId).toLowerCase();
   const branch = text(actionState.git?.branch || actionState.branch);
   if (!missionId || !actionId || !branch) return null;
-  return Object.freeze({
+  return createMissionWorkerActionGrantV1({
     schemaVersion: 'stephanos.mission-worker-action-grant.v1',
     grantId: `grant-${actionId}`.slice(0, 80),
     controllerId: 'durable-flywheel-controller',

@@ -262,7 +262,7 @@ function nextLocalRotation(journal, original) {
 function session(env, fault, callback) {
   check(typeof callback === 'function', 'CALLBACK_REQUIRED');
   const root = dirname(resolveMailboxOutboxGuardLockPath({ env }));
-  return withMailboxOutboxGuardLock(() => {
+  return withMailboxOutboxGuardLock((_lock, readDrainInputs) => {
     const statePath = join(root, 'state.json'), ledger = createMailboxExecutionLedger(root);
     let alive = true, state = readJsonObject(statePath, { maxBytes: MAX_STATE });
     let stateDigest = digest(state);
@@ -317,6 +317,66 @@ function session(env, fault, callback) {
     }
     const api = Object.freeze({
       inspect() { const journal = load(); return journal ? report(journal) : frozen({ journal: null, storageOnly: true, ...noAuthority }); },
+      captureDrainInputs(expected) {
+        const startedAt = Date.now(), journal = current(expected);
+        check(journal.stage !== 'EFFECT_INTENT', 'DRAIN_EFFECT_INTENT_UNCERTAIN');
+        activeReservation(journal);
+        // This also retains the existing applied-state/artifact consistency
+        // checks. A local input capture cannot conceal an uncertain transaction.
+        api.reconcile();
+        const local = readDrainInputs(), execution = ledger.inventory();
+        check(local.stateSha256 === stateDigest, 'DRAIN_STATE_CHANGED');
+        const records = new Map(execution.records.map(record => [record.requestId, record]));
+        const own = records.get(journal.requestId);
+        check(ledgerMatches(own, journal) && own.phase === 'RESERVED', 'DRAIN_RESERVATION_MISMATCH');
+        for (const requestId of local.acceptedRequestIds) {
+          const record = records.get(requestId);
+          check(record && record.issueNumber === journal.consent.epoch.predecessorIssue
+            && record.phase !== 'RETIRED', 'DRAIN_ACCEPTED_LEDGER_UNPROVEN');
+        }
+        const publications = [...local.inlinePublications, ...local.outbox.queuedPublications];
+        check(publications.every(entry => entry.issueNumber === journal.consent.epoch.predecessorIssue), 'DRAIN_PUBLICATION_EPOCH_MISMATCH');
+        fault('after-drain-inputs-capture');
+        // The Control Tower's original consumer can also write the execution
+        // ledger. The outbox lock alone never proves that estate quiescent.
+        const localAfter = readDrainInputs(), executionAfter = ledger.inventory();
+        check(localAfter.inventorySha256 === local.inventorySha256
+          && localAfter.guardGenerationSha256 === local.guardGenerationSha256
+          && executionAfter.inventorySha256 === execution.inventorySha256, 'DRAIN_INVENTORY_CHANGED');
+        current(expected); activeReservation(journal); api.reconcile();
+        const observedAt = Date.now();
+        check(observedAt >= startedAt && observedAt - startedAt <= 120000, 'DRAIN_CAPTURE_NOT_FRESH');
+        const candidate = {
+          schemaVersion: 'stephanos.canonical-mailbox-local-drain-inputs.v2',
+          requestId: journal.requestId, transitionId: journal.consent.transitionId,
+          journalGenerationSha256: journal.generationSha256, bindingSha256: journal.bindingSha256,
+          sourceBinding: journal.consent.source, epochBinding: journal.consent.epoch, barrierBinding: journal.consent.barrier,
+          captureStartedAtUtc: new Date(startedAt).toISOString(), observedAtUtc: new Date(observedAt).toISOString(),
+          stateSha256: local.stateSha256, guardGenerationSha256: local.guardGenerationSha256,
+          localInventorySha256: local.inventorySha256, executionLedgerSha256: execution.inventorySha256,
+          acceptedRequestIdsSha256: digest(local.acceptedRequestIds),
+          inlinePublicationInventorySha256: digest(local.inlinePublications),
+          outboxManifestSha256: local.outbox.manifestSha256, outboxStoreId: local.outbox.storeId,
+          outboxIndexInventorySha256: local.outbox.indexInventorySha256,
+          outboxSegmentInventorySha256: local.outbox.segmentInventorySha256,
+          counts: { acceptedCount: local.acceptedRequestIds.length,
+            inlinePublicationCount: local.inlinePublications.length,
+            segmentedPublicationCount: local.outbox.queuedPublications.length,
+            distinctPublicationCount: new Set(publications.map(entry => entry.publicationId)).size,
+            executionLedgerCount: execution.recordCount, reservedCount: execution.counts.RESERVED,
+            terminalCount: execution.counts.TERMINAL, retiredCount: execution.counts.RETIRED,
+            currentRotationReservationCount: 1 },
+          // These fields deliberately cannot be passed as a canonical V2 drain
+          // payload. Missing independent history/Actions facts are not zeroes.
+          ordinaryReceiptDebtCount: null, historyPendingBeforeCount: null, historyPendingAfterCount: null,
+          orphanAcceptedCount: null, actionPendingAggregateCount: null, actionBlockingCount: null,
+          localCaptureComplete: true, fullDrainProofComplete: false, publicHistoryAuthenticated: false,
+          actionsAuthenticated: false, installedSourceAuthenticated: false,
+          nativeProducerQualified: false, storageOnly: true, ...noAuthority,
+        };
+        check(Buffer.byteLength(JSON.stringify(candidate), 'utf8') <= MAX_ARTIFACT, 'DRAIN_CAPTURE_TOO_LARGE');
+        return report(journal, { readOnly: true, drainInputCandidate: frozen(candidate) });
+      },
       prepare(input) {
         const identity = descriptor(input); fresh(identity);
         const previous = load();

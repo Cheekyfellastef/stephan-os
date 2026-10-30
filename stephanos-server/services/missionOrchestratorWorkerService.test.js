@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateKeyPairSync } from 'node:crypto';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { createHash, generateKeyPairSync } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
 import {
   buildMissionWorkerAction,
+  missionWorkerActionGrantsMatchV1,
   projectMissionWorkerActionState,
 } from '../../shared/agents/missionOrchestratorWorker.mjs';
 import {
@@ -18,6 +19,11 @@ import {
   resolveMissionWorkerQueueRoot,
 } from './missionOrchestratorWorkerService.js';
 import { claimNextMissionWorkerItem } from './missionOrchestratorWorkerConsumer.js';
+import { exactElasticExternalGrant } from './criticalBacklogConveyorServiceCore.js';
+import { createExactWorkerActionGrant } from '../../shared/agents/durableFlywheelControllerVNext.mjs';
+import { appendExecutionReceipt, createExecutionReceipt } from '../../shared/agents/executionReceiptV1.mjs';
+import { BUILD_LANE_CAPACITY_RECEIPT_SCHEMA, forgeLifeboatAuthorityReceiptId,
+  forgeLifeboatProofRef } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
 
 const intent = {
   missionId: 'worker-service-test', operatorIntent: 'Implement a bounded source change.', intendedOutcome: 'Deliver grounded evidence.',
@@ -758,4 +764,311 @@ test('result custody receives original and own-result states at each locked even
     {revision:original.revision+1,status:'complete',event:'EVIDENCE_RECORDED'},
   ]);
   assert.equal(collected.state.revision,original.revision+2);
+});
+
+const capacityEnvelopeSha = bytes => createHash('sha256').update(bytes).digest('hex');
+
+async function pendingCapacityFixture(t) {
+  const options = { ...await runtime(), env: {}, now: new Date('2026-10-30T14:00:00.000Z') };
+  t.after(() => rm(dirname(options.root), { recursive: true, force: true }));
+  options.repoRoot = join(dirname(options.root), 'repo');
+  const missionId = 'critical-1557-elastic-goal';
+  const worktreePath = join(dirname(options.root), 'bounded-worktree');
+  const created = await createMissionRecord({ ...intent, missionId,
+    repositoryRoot: options.repoRoot, branch: 'openclaw/elastic-goal-1557', worktreePath,
+    allowedFiles: ['shared/agents/capacity-contract.mjs'],
+    requiredTests: ['node --test shared/agents/capacity-contract.test.mjs'],
+  }, options);
+  const ready = await appendMissionEvent(missionId, { eventId: 'capacity-refresh-worktree',
+    eventType: 'WORKTREE_READY', worktreePath, clean: true,
+    receipt: proof('isolated worktree', 'capacity-refresh-worktree-proof') }, options);
+  const state = ready.state;
+  const sourceHead = 'a'.repeat(40);
+  const grant = (receiptId, producer = 'controller') => {
+    const candidate = { route: 'FOUNDRY_FORGE', adapter: 'foundry-forge',
+      workerId: 'stephanos-forge-lifeboat-local', receiptId,
+      proofRefs: [forgeLifeboatProofRef(sourceHead)] };
+    const receipt = { schemaVersion: BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
+      route: candidate.route, workerId: candidate.workerId, receiptId,
+      proofRefs: candidate.proofRefs, repository: state.repository, state: 'READY',
+      supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+      supportedTaskClasses: ['FOCUSED_REPAIR', 'MULTI_MODULE_IMPLEMENTATION'],
+      observedAtUtc: '2026-10-30T13:59:00.000Z', expiresAtUtc: '2026-10-30T14:14:00.000Z',
+      queueDepth: 0, p95StartLatencySeconds: 3,
+      authorityReceiptIds: [forgeLifeboatAuthorityReceiptId(sourceHead)] };
+    const result = producer === 'elastic'
+      ? exactElasticExternalGrant(state, candidate, sourceHead, options.now)
+      : createExactWorkerActionGrant({ observedAtUtc: options.now.toISOString(),
+        criticalBacklog: { activeMission: state } }, sourceHead,
+      { nowUtc: options.now.toISOString(), sourceHead, forgeLaneReceipt: receipt }, () => [candidate]);
+    assert.ok(missionWorkerActionGrantsMatchV1(result, result), 'actual factory must emit a complete canonical grant');
+    return result;
+  };
+  const firstGrant = grant('capacity-original', 'elastic');
+  const first = await publishMissionWorkerAction(state, { ...options, actionGrant: firstGrant });
+  assert.equal(first.published, true, JSON.stringify(first));
+  // The archive must preserve historical bytes, including formatting, exactly.
+  const originalItem = JSON.parse(await readFile(first.path));
+  const originalBytes = Buffer.from(`${JSON.stringify(originalItem, null, 1)}\n\n`);
+  await writeFile(first.path, originalBytes);
+  const publish = actionGrant => publishMissionWorkerAction(state, { ...options, actionGrant });
+  const claim = (actionGrant, additions = {}) => claimNextMissionWorkerItem('foundry-forge', {
+    ...options, actionGrant,
+    assertPendingClaimContract: item => {
+      if (!missionWorkerActionGrantsMatchV1(item.actionGrant, actionGrant)) {
+        throw new Error('NATIVE_SOURCE_PENDING_GRANT_CONTRACT_CHANGED');
+      }
+    }, ...additions,
+  });
+  const historyPath = join(options.queueRoot, 'foundry-forge', 'capacity-admissions', firstGrant.actionId);
+  return { options, state, grant, firstGrant, first, originalItem, originalBytes, publish, claim, historyPath };
+}
+
+test('real producer grants refresh pending capacity without changing mission, lease or immutable history', async t => {
+  const f = await pendingCapacityFixture(t);
+  const fresh = f.grant('capacity-refreshed');
+  assert.equal(fresh.actionId, f.firstGrant.actionId);
+  const admitted = await f.publish(fresh);
+  assert.equal(admitted.published, true, JSON.stringify(admitted));
+  assert.equal(admitted.reason, 'pending-capacity-readmitted');
+  assert.equal(admitted.queueItemRefreshed, true);
+  const current = JSON.parse(await readFile(f.first.path));
+  assert.ok(missionWorkerActionGrantsMatchV1(current.actionGrant, fresh));
+  assert.deepEqual(current.executionBinding, f.originalItem.executionBinding);
+  assert.deepEqual(current.handoffResponsibility, f.originalItem.handoffResponsibility);
+  const originalHash = capacityEnvelopeSha(f.originalBytes);
+  assert.deepEqual(await readFile(join(f.historyPath, 'envelopes', `${originalHash}.json`)), f.originalBytes);
+  const journal = JSON.parse(await readFile(join(f.historyPath, '00000001.json')));
+  assert.equal(journal.previousEnvelopeSha256, originalHash);
+  assert.equal(journal.admittedEnvelopeSha256, capacityEnvelopeSha(await readFile(f.first.path)));
+  assert.equal(journal.missionId, f.state.missionId);
+  assert.equal(journal.missionRevision, f.state.revision);
+  assert.equal(journal.claimReleaseAuthority, false);
+  const pending = (await readMissionRecord(f.state.missionId, f.options)).state;
+  assert.equal(pending.revision, f.state.revision); assert.equal(pending.dispatch.status, 'pending');
+  await assert.rejects(f.claim(f.firstGrant), /MISSION_WORKER_PENDING_CAPACITY_GRANT_MISMATCH/);
+  // The general consumer must enforce this even without a fixed-worker callback.
+  await assert.rejects(claimNextMissionWorkerItem('foundry-forge', {
+    ...f.options, actionGrant: f.firstGrant,
+  }), /MISSION_WORKER_PENDING_CAPACITY_GRANT_MISMATCH/);
+  await assert.rejects(claimNextMissionWorkerItem('foundry-forge', f.options),
+    /MISSION_WORKER_PENDING_CAPACITY_GRANT_MISMATCH/);
+  const claim = await f.claim(fresh);
+  assert.equal(claim.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  assert.ok(missionWorkerActionGrantsMatchV1(claim.item.actionGrant, fresh));
+  const running = (await readMissionRecord(f.state.missionId, f.options)).state;
+  assert.equal(running.revision, f.state.revision + 1); assert.equal(running.dispatch.status, 'running');
+});
+
+test('repeated capacity admission is idempotent and no superseded receipt can return', async t => {
+  const f = await pendingCapacityFixture(t);
+  const second = f.grant('capacity-second'), third = f.grant('capacity-third');
+  await f.publish(second);
+  const secondBytes = await readFile(f.first.path);
+  const firstJournal = await readFile(join(f.historyPath, '00000001.json'));
+  const replay = await f.publish(second);
+  assert.equal(replay.published, true); assert.equal(replay.queueItemRefreshed, false);
+  assert.deepEqual(await readFile(f.first.path), secondBytes);
+  assert.deepEqual(await readFile(join(f.historyPath, '00000001.json')), firstJournal);
+  assert.equal((await f.publish(third)).queueItemRefreshed, true);
+  const thirdBytes = await readFile(f.first.path);
+  for (const stale of [f.firstGrant, second, { ...second, capacityProofRefs: ['proofs/changed-under-old-receipt'] }]) {
+    const refused = await f.publish(stale);
+    assert.equal(refused.published, false);
+    assert.deepEqual(refused.blockers, ['MISSION_WORKER_PENDING_CAPACITY_RECEIPT_REPLAY']);
+    assert.deepEqual(await readFile(f.first.path), thirdBytes);
+  }
+  const secondJournal = JSON.parse(await readFile(join(f.historyPath, '00000002.json')));
+  assert.equal(secondJournal.predecessorSha256, capacityEnvelopeSha(firstJournal));
+  assert.deepEqual((await readdir(f.historyPath)).sort(), ['00000001.json', '00000002.json', 'envelopes']);
+});
+
+test('capacity refresh cannot alter source, worker, route, intent, memory, scope or negative authority', async t => {
+  const f = await pendingCapacityFixture(t);
+  const fresh = f.grant('capacity-refreshed');
+  for (const alteration of [
+    { sourceRevision: 'b'.repeat(40) }, { workerId: 'another-worker' }, { capacityRoute: 'CHATGPT_GITHUB' },
+    { providerRouteIntent: 'OPENCLAW_ONLY' }, { engineeringMemoryPack: { packId: 'foreign' }, engineeringMemoryPackId: 'foreign' },
+    { mergeAuthority: true }, { leaseSeizureAllowed: true }, { capacityProofRefs: [] },
+    { newAuthority: true }, { capacityReceiptId: f.firstGrant.capacityReceiptId, capacityProofRefs: ['proofs/changed'] },
+  ]) {
+    const refused = await f.publish({ ...fresh, ...alteration });
+    assert.equal(refused.published, false, JSON.stringify(alteration));
+    assert.deepEqual(await readFile(f.first.path), f.originalBytes);
+  }
+  const record = await readMissionRecord(f.state.missionId, f.options);
+  await writeFile(record.statePath, JSON.stringify({ ...record.state, allowedFiles: ['shared/agents/foreign-scope.mjs'] }));
+  const changedScope = await f.publish(fresh);
+  assert.equal(changedScope.published, false);
+  assert.deepEqual(changedScope.blockers, ['MISSION_WORKER_PENDING_CAPACITY_CONTRACT_CHANGED']);
+  assert.deepEqual(await readFile(f.first.path), f.originalBytes);
+});
+
+test('optional null memory compatibility does not rewrite an otherwise exact pending grant', async t => {
+  const f = await pendingCapacityFixture(t);
+  const legacy = JSON.parse(f.originalBytes);
+  delete legacy.actionGrant.engineeringMemoryPack;
+  delete legacy.actionGrant.engineeringMemoryPackId;
+  const legacyBytes = Buffer.from(JSON.stringify(legacy));
+  await writeFile(f.first.path, legacyBytes);
+  const repeated = await f.publish(f.firstGrant);
+  assert.equal(repeated.published, true); assert.equal(repeated.queueItemRefreshed, false);
+  assert.deepEqual(await readFile(f.first.path), legacyBytes);
+  const fresh = f.grant('capacity-refreshed');
+  const renewed = await f.publish(fresh);
+  assert.equal(renewed.queueItemRefreshed, true);
+  assert.deepEqual(await readFile(join(f.historyPath, 'envelopes', `${capacityEnvelopeSha(legacyBytes)}.json`)), legacyBytes);
+  assert.ok(await f.claim(fresh));
+});
+
+test('pending capacity admission preserves and refuses any original mission processing owner', async t => {
+  const f = await pendingCapacityFixture(t);
+  const processing = join(f.options.queueRoot, 'sovereign-commander', 'processing');
+  await mkdir(processing, { recursive: true });
+  const originalClaimPath = join(processing, `${f.state.missionId}-r0-original-unknown.json`);
+  const originalClaim = Buffer.from(JSON.stringify({ ...f.originalItem,
+    actionId: `${f.state.missionId}-r0-original-unknown`, historicalExecutionOutcome: 'UNKNOWN' }));
+  await writeFile(originalClaimPath, originalClaim);
+  const refused = await f.publish(f.grant('capacity-refreshed'));
+  assert.deepEqual(refused.blockers, ['MISSION_WORKER_PENDING_CAPACITY_PROCESSING_CONFLICT']);
+  assert.deepEqual(await readFile(originalClaimPath), originalClaim);
+  assert.deepEqual(await readFile(f.first.path), f.originalBytes);
+  assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, f.state.revision);
+});
+
+test('pending capacity admission refuses terminal queue truth and authentic execution receipt history', async t => {
+  const f = await pendingCapacityFixture(t);
+  const resultPath = join(f.options.queueRoot, 'foundry-forge', 'failed', `${f.firstGrant.actionId}.result.json`);
+  await writeFile(resultPath, '{"fixture":"previous-terminal-result"}');
+  assert.deepEqual((await f.publish(f.grant('capacity-refreshed'))).blockers,
+    ['MISSION_WORKER_PENDING_CAPACITY_TERMINAL_CONFLICT']);
+  await unlink(resultPath);
+  const receipt = createExecutionReceipt({ repository: f.state.repository, issueNumber: 1557,
+    prNumber: null, branch: f.state.git.branch, sourceHead: f.firstGrant.sourceRevision,
+    workerId: f.firstGrant.workerId, workerType: 'github-first', executionId: `${f.firstGrant.actionId}-prior`,
+    leaseKey: f.originalItem.executionBinding.leaseKey, state: 'queued', phase: 'fixture-prior-admission',
+    sequence: 1, timestampUtc: f.options.now.toISOString(), proofRefs: f.firstGrant.capacityProofRefs,
+    expectedNextAction: 'Fixture prior custody must not be overwritten by pending refresh.' });
+  const appended = await appendExecutionReceipt(f.options.sharedWorkspaceRoot, receipt, { repoRoot: f.options.repoRoot });
+  assert.equal(appended.ok, true, JSON.stringify(appended));
+  assert.deepEqual((await f.publish(f.grant('capacity-refreshed'))).blockers,
+    ['MISSION_WORKER_PENDING_CAPACITY_EXECUTION_RECEIPT_CONFLICT']);
+  assert.deepEqual(await readFile(f.first.path), f.originalBytes);
+});
+
+test('interrupted admitted refresh blocks old pickup and resumes exact preserved bytes before fresh capacity', async t => {
+  const f = await pendingCapacityFixture(t);
+  const second = f.grant('capacity-second');
+  await f.publish(second);
+  const secondBytes = await readFile(f.first.path);
+  const journalBytes = await readFile(join(f.historyPath, '00000001.json'));
+  // This is the real durable state after intent publication but before rename.
+  await writeFile(f.first.path, f.originalBytes);
+  await assert.rejects(f.claim(f.firstGrant), /MISSION_WORKER_PENDING_CAPACITY_RECOVERY_REQUIRED/);
+  const recovered = await f.publish(second);
+  assert.equal(recovered.capacityAdmissionRecovered, true);
+  assert.equal(recovered.queueItemRefreshed, false);
+  assert.deepEqual(await readFile(f.first.path), secondBytes);
+  assert.deepEqual(await readFile(join(f.historyPath, '00000001.json')), journalBytes);
+  await writeFile(f.first.path, f.originalBytes);
+  const stale = await f.publish(f.firstGrant);
+  assert.deepEqual(stale.blockers, ['MISSION_WORKER_PENDING_CAPACITY_RECEIPT_REPLAY']);
+  assert.deepEqual(await readFile(f.first.path), secondBytes);
+  await writeFile(f.first.path, f.originalBytes);
+  const current = await f.publish(f.grant('capacity-third'));
+  assert.equal(current.capacityAdmissionRecovered, true); assert.equal(current.queueItemRefreshed, true);
+  const secondJournal = JSON.parse(await readFile(join(f.historyPath, '00000002.json')));
+  assert.equal(secondJournal.previousEnvelopeSha256, capacityEnvelopeSha(secondBytes));
+});
+
+test('missing pending or damaged admission history never reconstructs or permits a claim', async t => {
+  const f = await pendingCapacityFixture(t);
+  const fresh = f.grant('capacity-refreshed');
+  await f.publish(fresh);
+  const pendingBytes = await readFile(f.first.path);
+  await unlink(f.first.path);
+  assert.deepEqual((await f.publish(fresh)).blockers, ['MISSION_WORKER_PENDING_CAPACITY_PENDING_MISSING']);
+  await assert.rejects(readFile(f.first.path), { code: 'ENOENT' });
+  await writeFile(f.first.path, pendingBytes);
+  const originalSnapshot = join(f.historyPath, 'envelopes', `${capacityEnvelopeSha(f.originalBytes)}.json`);
+  await writeFile(originalSnapshot, 'corrupted-fixture-snapshot');
+  await assert.rejects(f.claim(fresh), /MISSION_WORKER_PENDING_CAPACITY_HISTORY_INVALID/);
+  assert.deepEqual((await f.publish(f.grant('capacity-third'))).blockers,
+    ['MISSION_WORKER_PENDING_CAPACITY_HISTORY_INVALID']);
+  assert.deepEqual(await readFile(f.first.path), pendingBytes);
+});
+
+test('a refreshed envelope requires its journal even if the entire history directory disappears', async t => {
+  const f = await pendingCapacityFixture(t);
+  const fresh = f.grant('capacity-refreshed');
+  await f.publish(fresh);
+  const pendingBytes = await readFile(f.first.path);
+  const pending = JSON.parse(pendingBytes);
+  assert.equal(pending.pendingCapacityAdmission.sequence, 1);
+  assert.equal(pending.pendingCapacityAdmission.previousEnvelopeSha256, capacityEnvelopeSha(f.originalBytes));
+  await rm(f.historyPath, { recursive: true });
+  await assert.rejects(f.claim(fresh), /MISSION_WORKER_PENDING_CAPACITY_HISTORY_REQUIRED/);
+  assert.deepEqual((await f.publish(fresh)).blockers, ['MISSION_WORKER_PENDING_CAPACITY_HISTORY_REQUIRED']);
+  assert.deepEqual((await f.publish(f.grant('capacity-third'))).blockers, ['MISSION_WORKER_PENDING_CAPACITY_HISTORY_REQUIRED']);
+  assert.deepEqual(await readFile(f.first.path), pendingBytes);
+  assert.deepEqual(await readdir(join(f.options.queueRoot, 'foundry-forge', 'processing')), []);
+});
+
+test('locked pickup refuses stale current-state revision before acquiring either original or refreshed pending work', async t => {
+  for (const refreshed of [false, true]) await t.test(refreshed ? 'refreshed grant' : 'original grant', async child => {
+    const f = await pendingCapacityFixture(child);
+    const currentGrant = refreshed ? f.grant('capacity-refreshed') : f.firstGrant;
+    if (refreshed) await f.publish(currentGrant);
+    const originalPending = await readFile(f.first.path);
+    const record = await readMissionRecord(f.state.missionId, f.options);
+    const advanced = { ...record.state, revision: record.state.revision + 1 };
+    await writeFile(record.statePath, JSON.stringify(advanced));
+    const stateBytes = await readFile(record.statePath);
+    await assert.rejects(f.claim(currentGrant), /MISSION_WORKER_PENDING_CAPACITY_MISSION_CHANGED/);
+    assert.deepEqual(await readFile(f.first.path), originalPending);
+    assert.deepEqual(await readFile(record.statePath), stateBytes);
+    assert.deepEqual(await readdir(join(f.options.queueRoot, 'foundry-forge', 'processing')), []);
+  });
+});
+
+test('publication during the real post-rename pre-pickup-event interval cannot create another pending owner', async t => {
+  const f = await pendingCapacityFixture(t);
+  const processingPath = join(f.options.queueRoot, 'foundry-forge', 'processing', `${f.firstGrant.actionId}.json`);
+  await rename(f.first.path, processingPath);
+  const stateBefore = (await readMissionRecord(f.state.missionId, f.options)).state;
+  assert.equal(stateBefore.dispatch.status, 'pending'); assert.equal(stateBefore.revision, f.state.revision);
+  const refused = await f.publish(f.grant('capacity-refreshed'));
+  assert.equal(refused.published, false);
+  assert.deepEqual(refused.blockers, ['MISSION_WORKER_PENDING_CAPACITY_PROCESSING_CONFLICT']);
+  assert.deepEqual(await readFile(processingPath), f.originalBytes);
+  await assert.rejects(readFile(f.first.path), { code: 'ENOENT' });
+  assert.deepEqual((await readMissionRecord(f.state.missionId, f.options)).state, stateBefore);
+});
+
+test('locked refreshed pickup refuses changed source scope even when the stored revision was not advanced', async t => {
+  const f = await pendingCapacityFixture(t);
+  const fresh = f.grant('capacity-refreshed');
+  await f.publish(fresh);
+  const pendingBytes = await readFile(f.first.path);
+  const record = await readMissionRecord(f.state.missionId, f.options);
+  await writeFile(record.statePath, JSON.stringify({ ...record.state, allowedFiles: ['shared/agents/foreign-scope.mjs'] }));
+  await assert.rejects(f.claim(fresh), /MISSION_WORKER_PENDING_CAPACITY_MISSION_CHANGED/);
+  assert.deepEqual(await readFile(f.first.path), pendingBytes);
+  assert.deepEqual(await readdir(join(f.options.queueRoot, 'foundry-forge', 'processing')), []);
+});
+
+test('a source pickup holding the mission lock cannot be superseded by concurrent publication', async t => {
+  const f = await pendingCapacityFixture(t);
+  let publication;
+  const claim = await f.claim(f.firstGrant, { assertPendingClaimContract: item => {
+    assert.ok(missionWorkerActionGrantsMatchV1(item.actionGrant, f.firstGrant));
+    publication = f.publish(f.grant('capacity-refreshed'));
+  } });
+  assert.ok(claim); assert.ok(publication);
+  const competing = await publication;
+  assert.equal(competing.published, false);
+  assert.ok(['pending-capacity-reconciliation-blocked', 'mission-state-precondition-failed'].includes(competing.reason));
+  assert.deepEqual(await readFile(claim.processingPath), f.originalBytes);
+  await assert.rejects(readFile(f.first.path), { code: 'ENOENT' });
+  assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, f.state.revision + 1);
 });
