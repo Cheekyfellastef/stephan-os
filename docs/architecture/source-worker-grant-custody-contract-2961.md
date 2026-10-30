@@ -48,9 +48,61 @@ the native-parent isolation fixture. Fixtures grant no production qualification.
 Recovery is not complete from these changes alone. The preserved original
 processing claim needs reviewed prospective exclusion and crash-convergent
 retirement; its history must remain UNKNOWN. A full boot preceding pickup cannot
-exclude the attempt. Renewed live capacity versus an existing immutable pending
-envelope also requires an ownership-preserving queue reconciliation contract;
-removing receipt identity from agreement is not an acceptable workaround.
+exclude the attempt. No original claim identity or physical exclusion evidence
+can be inferred from a pending-capacity repair.
+
+## Refreshed capacity before pickup
+
+The canonical publisher now re-admits refreshed capacity only while the original
+mission is pending, at its unchanged revision. Both complete grants must validate
+and differ solely in capacity receipt identity and its proof references. Source,
+scope, provider intent, worker, route, memory, action, execution binding and all
+negative authority bits remain exact. The existing controller still supplies the
+currently qualified grant; this operation does not qualify capacity or weaken the
+worker's independent current-grant and live-custody checks.
+
+Before any granted source publication, including when pending is absent, the
+publisher refuses any processing claim for that mission, any terminal queue truth
+for that action, and any existing execution receipt for the unchanged lease.
+It preserves the original raw bytes and the refreshed raw
+bytes under SHA-256-addressed immutable names, then publishes an immutable,
+sequence- and hash-bound admission record. The record grants no execution, claim
+release, lease seizure or merge authority. Publication of complete immutable
+files uses a same-directory temporary file and exclusive hard link; unsupported
+filesystems fail closed. Only then does an atomic rename install the admitted
+pending bytes. A repeated call does not rewrite an already-current envelope.
+
+The refreshed envelope carries a deterministic sequence and predecessor binding;
+the admission record binds its exact hash, without a circular self-hash. Losing
+the journal cannot turn that envelope into ordinary unjournaled work.
+
+This is data recovery after a process interruption, conditional on the original
+mission lock and custody gate permitting re-entry. A killed owner can leave the
+existing mission lock busy; this change neither reclaims that lock nor grants
+release authority. It does not establish power-loss durability: file contents
+are flushed, but directory-entry persistence is not separately proven.
+
+If interrupted between admission and rename, an admitted publisher can resume
+from the exact preserved bytes before considering newer capacity. The consumer refuses
+old pending bytes while that admission is incomplete. Every superseded receipt
+identity remains in the admission chain and cannot be selected again, even with
+different proof references. Missing pending bytes, a broken chain or a changed
+snapshot never authorizes reconstruction of a processing claim.
+
+The publisher's existing mission-state lock also guards the consumer's final
+pending read, admission check and pending-to-processing rename. Granted pickup
+also requires the current stored mission revision, phase and action to agree;
+refreshed work revalidates the complete target and source payload. A refreshed
+envelope cannot be acquired using an older in-memory grant, and a processing
+owner cannot be replaced by capacity renewal. Producer and consumer must run the
+same reviewed source generation before commissioning this contract. The original
+held UNKNOWN processing attempt remains outside it.
+
+Regression proof composes the real elastic and durable-controller factories with
+real temporary mission, queue and receipt stores. It checks original byte
+preservation, strict scope/authority refusal, superseded-receipt replay,
+interrupted admission recovery, damaged history, existing custody and concurrent
+pickup. These source tests do not establish Battle Bridge execution or retirement.
 
 Reusable lesson: shared authority-bearing producers need composition tests,
 and queue acquisition, execution, physical exclusion, retirement and outcome are
