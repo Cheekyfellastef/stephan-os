@@ -1,6 +1,16 @@
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { FLEET_SUPERVISOR_ACTION, FLEET_SUPERVISOR_SCHEMA, FLEET_SUPERVISOR_MARKER,
+  projectFleetConveyorObservationV1 } from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
+import { serializeFleetSupervisorTerminalV1 } from '../../scripts/sovereign-commander-fleet-goal-supervisor.mjs';
+import { startSovereignCommanderContinuousRepairGuardian } from '../../scripts/sovereign-commander-http.mjs';
+import { SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER } from './sovereignMaintenanceAdmissionV1.mjs';
+import { buildSovereignCommanderCommandV1 } from './sovereignCommanderV1.mjs';
+import { STEPHANOS_EXECUTION_SURFACE, buildStephanosExecutionCommandEnvelopeV1,
+  buildStephanosExecutionSurfaceCatalogV1 } from './stephanosExecutionCommandFabricV1.mjs';
+import { checkpointTerminalMailboxReceipt, createSanitizedMailboxReceiptProjection,
+  serializeBoundedReceiptJson } from '../../scripts/battle-bridge-github-command-mailbox.mjs';
 import { projectBoundedRemoteControllerLaneStatus } from '../../scripts/sovereign-controller-lane-status.mjs';
 
 import {
@@ -153,6 +163,414 @@ function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null,
 }
 
 const readToken = async () => 'x'.repeat(44);
+
+function fleetReceiptRaw(overrides = {}) {
+  return {
+    schemaVersion: FLEET_SUPERVISOR_SCHEMA, ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_HELD_EXPLAINED',
+    ...projectFleetConveyorObservationV1({
+      retryAdmission: { classification: 'MISSION_WORKER_RETRY_TERMINAL_EXECUTION_RECEIPT_UNPROVEN',
+        retried: false, missionId: 'critical-2964-elastic-goal' },
+      elasticAdmission: { classification: 'ELASTIC_GOAL_MISSIONS_HELD' },
+      elasticIgnition: { held: [{ issueNumber: 2964, reason: 'EXISTING_GOAL_MISSION_BLOCKED_SIDELINED' }] },
+    }),
+    activeMissionCount: 0, runningMissionCount: 0, runnableGoalCount: 1, availableSlotCount: 1,
+    dispatchCount: 0, pickupPendingCount: 0, provenPickupCount: 0, heldGoalCount: 1,
+    duplicateSchedulerAllowed: false, duplicateLeaseAllowed: false, mergeAuthority: false,
+    runtimeMutationAuthority: false, arbitraryShellAllowed: false,
+    daemonMayReportGreen: false, capabilityCompilerWorkCount: 0,
+    nativeGapCandidateTotalCount: 0, nativeGapSourceHealth: 'CURRENT',
+    blocker: '', ...overrides,
+  };
+}
+
+function fleetOwnerCommand(processId = FLEET_SUPERVISOR_ACTION) {
+  const repoRoot = 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os';
+  return buildSovereignCommanderCommandV1(buildStephanosExecutionCommandEnvelopeV1({
+    catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: repoRoot }),
+    surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+    actionId: 'private-command-must-not-escape', missionId: 'private-mission-must-not-escape',
+    operation: 'MAINTENANCE_ACTION', payload: { actionId: processId },
+  }), { repoRoot });
+}
+
+function fleetMaintenanceEnvelope({ raw = fleetReceiptRaw(), stdout, status, processId = FLEET_SUPERVISOR_ACTION } = {}) {
+  const terminal = serializeFleetSupervisorTerminalV1(raw);
+  const actualStatus = status ?? terminal.exitCode;
+  return {
+    ok: actualStatus === 0,
+    finalVerdict: actualStatus === 0 ? 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' : 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+    proofHash: 'f'.repeat(64), blocker: raw.blocker,
+    command: fleetOwnerCommand(processId),
+    contentText: 'PRIVATE_CONTENT_MUST_NOT_ESCAPE',
+    structuredContent: { ok: actualStatus === 0, status: actualStatus,
+      stdout: stdout ?? terminal.stdout, stderr: 'PRIVATE_STDERR_MUST_NOT_ESCAPE', errorCode: '', signal: '' },
+  };
+}
+
+async function runFleetRemote(maintenance, overrides = {}) {
+  const { fetchFn } = mcpFetch({ maintenance });
+  return executeSovereignCommanderRemoteOnBattleBridge(command({ remoteAction: FLEET_SUPERVISOR_ACTION, ...overrides }), {
+    spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+    ensureRuntimeFn: async () => ({ ok: true, bootstrapAttempted: false }),
+  });
+}
+
+async function runFleetRemotePlan(maintenance) {
+  const { calls, fetchFn } = mcpFetch({ maintenanceByAction: { [FLEET_SUPERVISOR_ACTION]: maintenance } });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(command({ remoteAction: '',
+    remotePlan: [FLEET_SUPERVISOR_ACTION, 'battle-bridge-status'] }), {
+    spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+    ensureRuntimeFn: async () => ({ ok: true, bootstrapAttempted: false }),
+  });
+  return { calls, result };
+}
+
+test('actual guardian denials survive fleet mailbox projection without requiring an unlaunched child receipt', async () => {
+  const held = startSovereignCommanderContinuousRepairGuardian({ enabled: false,
+    custodyStore: { status: () => ({ held: true }), close() {} },
+    spawnImpl: () => assert.fail('denied guardian must never launch a process'),
+  });
+  const stopped = startSovereignCommanderContinuousRepairGuardian({ enabled: false });
+  stopped.stop();
+  const busy = startSovereignCommanderContinuousRepairGuardian({ enabled: false });
+  const ownerCommand = fleetOwnerCommand();
+  let finish;
+  const inFlight = busy.withMaintenanceOwner(ownerCommand, () => new Promise(resolve => { finish = resolve; }));
+  try {
+    for (const [guardian, expectedBlocker] of [
+      [held, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER],
+      [stopped, 'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE'],
+      [busy, 'SOVEREIGN_MAINTENANCE_OWNER_BUSY'],
+    ]) {
+      const denial = await guardian.withMaintenanceOwner(ownerCommand, () => assert.fail('denial ran the action'));
+      assert.equal(denial.finalVerdict, 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED');
+      assert.equal(Object.hasOwn(denial, 'structuredContent'), false);
+      for (const depth of [0, 1, 4]) {
+        let envelope = denial;
+        for (let i = 0; i < depth; i++) envelope = { structuredContent: envelope };
+        const single = await runFleetRemote(envelope);
+        const { result: plan, calls } = await runFleetRemotePlan(envelope);
+        for (const result of [single, plan]) {
+          assert.equal(result.ok, false);
+          assert.equal(result.executionBlocker, expectedBlocker);
+          assert.equal(result.processId, FLEET_SUPERVISOR_ACTION);
+          assert.equal(result.status, null);
+          assert.equal(Object.hasOwn(result, 'fleetSupervisor'), false);
+          assert.equal(result.publicReceiptSafe, true);
+          assert.equal(result.secretMaterialReturned, false);
+          assert.equal(JSON.stringify(result).includes(ownerCommand.commandId), false);
+        }
+        assert.equal(single.blocker, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED');
+        assert.equal(plan.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_STEP_FAILED');
+        assert.equal(plan.stepCount, 0);
+        assert.equal(calls.some(call => call.options?.body?.includes('"actionId":"battle-bridge-status"')), false);
+      }
+    }
+    assert.equal(held.status().timeoutCustodyHeld, true);
+  } finally {
+    finish(fleetMaintenanceEnvelope());
+    await inFlight;
+    held.stop(); busy.stop();
+  }
+});
+
+test('fleet timeout and abort remain unknown-custody failures through direct and nested envelopes', async () => {
+  for (const errorCode of ['ETIMEDOUT', 'ABORT_ERR']) {
+    const failure = { ok: false, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      command: fleetOwnerCommand(), blocker: 'PRIVATE_CODE_SHAPED_TOKEN',
+      structuredContent: { ok: false, status: null, errorCode, stdout: 'PRIVATE STDOUT', stderr: 'PRIVATE STDERR' } };
+    for (const envelope of [failure, { structuredContent: failure }]) {
+      const single = await runFleetRemote(envelope);
+      const { result: plan, calls } = await runFleetRemotePlan(envelope);
+      for (const result of [single, plan]) {
+        assert.equal(result.ok, false);
+        assert.equal(result.executionBlocker, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
+        assert.equal(result.errorCode, errorCode);
+        assert.equal(result.status, null);
+        assert.equal(Object.hasOwn(result, 'fleetSupervisor'), false);
+        assert.doesNotMatch(JSON.stringify(result), /PRIVATE/);
+      }
+      assert.equal(calls.some(call => call.options?.body?.includes('"actionId":"battle-bridge-status"')), false);
+    }
+  }
+});
+
+test('guardian post-execution custody hold cannot be mistaken for fleet completion', async () => {
+  for (const errorCode of ['', 'ETIMEDOUT', 'ABORT_ERR']) {
+    const guardian = startSovereignCommanderContinuousRepairGuardian({ enabled: false });
+    try {
+      const execution = fleetMaintenanceEnvelope({ stdout: 'PRIVATE MALFORMED CHILD RECEIPT' });
+      if (errorCode) {
+        execution.ok = false;
+        execution.finalVerdict = 'SOVEREIGN_COMMANDER_EXECUTION_FAILED';
+        execution.structuredContent = { ...execution.structuredContent, ok: false, status: null, errorCode };
+      }
+      const held = await guardian.withMaintenanceOwner(execution.command, async () => execution);
+      assert.equal(held.finalVerdict, 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED');
+      assert.equal(guardian.status().timeoutCustodyHeld, true);
+      for (const result of [await runFleetRemote(held), (await runFleetRemotePlan(held)).result]) {
+        assert.equal(result.ok, false);
+        assert.equal(result.executionBlocker, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
+        assert.equal(result.status, null);
+        assert.equal(result.errorCode, errorCode);
+        assert.equal(Object.hasOwn(result, 'fleetSupervisor'), false);
+        assert.doesNotMatch(JSON.stringify(result), /PRIVATE/);
+      }
+      assert.equal(guardian.status().timeoutCustodyHeld, true);
+    } finally { guardian.stop(); }
+  }
+});
+
+test('unbound, contradictory, unknown and overnested fleet denials retain receipt rejection', async () => {
+  const denial = { ok: false, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+    command: fleetOwnerCommand(), blocker: SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER };
+  let tooDeep = denial;
+  for (let i = 0; i < 5; i++) tooDeep = { structuredContent: tooDeep };
+  const invalid = [
+    { ...denial, ok: true }, { ...denial, ok: 'false' },
+    { ...denial, command: {} },
+    { ...denial, command: { ...denial.command, dispatchAllowed: false } },
+    { ...denial, command: { ...denial.command, operation: 'START_PROCESS' } },
+    { ...denial, command: { ...denial.command, plan: { ...denial.command.plan, kind: 'UNKNOWN' } } },
+    { ...denial, command: { plan: { processId: 'battle-bridge-status' } } },
+    { ...denial, status: 0 }, { ...denial, structuredContent: null },
+    { ...denial, structuredContent: {} },
+    { ...denial, structuredContent: { ok: true, status: null, stdout: '', stderr: '' } },
+    { ...denial, structuredContent: { ok: true, status: 0, stdout: '', stderr: '', signal: {}, errorCode: '' } },
+    { ...denial, blocker: 'SOVEREIGN_MAINTENANCE_OWNER_BUSY', structuredContent: { status: 0 } },
+    { ...denial, structuredContent: fleetMaintenanceEnvelope().structuredContent },
+    { ...denial, blocker: 'PRIVATE_CODE_SHAPED_TOKEN' },
+    { ...denial, blocker: 'private path / or token' },
+    { ...denial, finalVerdict: 'UNKNOWN' },
+    { ...denial, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' },
+    { ...denial, command: { plan: { processId: 'battle-bridge-status' } }, structuredContent: denial },
+    { ...denial, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      structuredContent: { ok: false, status: null, errorCode: 'PRIVATE_CODE_SHAPED_TOKEN', stdout: '', stderr: '' } },
+    { ...denial, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      structuredContent: { ok: true, status: 0, errorCode: 'ETIMEDOUT', stdout: '', stderr: '' } },
+    tooDeep,
+  ];
+  for (const candidate of invalid) {
+    const single = await runFleetRemote(candidate);
+    const { result: plan, calls } = await runFleetRemotePlan(candidate);
+    assert.equal(single.blocker, 'SOVEREIGN_COMMANDER_REMOTE_FLEET_RECEIPT_INVALID');
+    assert.equal(plan.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID');
+    for (const result of [single, plan]) {
+      assert.equal(result.ok, false);
+      assert.equal(Object.hasOwn(result, 'fleetSupervisor'), false);
+      assert.doesNotMatch(JSON.stringify(result), /PRIVATE|private path/);
+    }
+    assert.equal(calls.some(call => call.options?.body?.includes('"actionId":"battle-bridge-status"')), false);
+  }
+});
+
+test('actual fleet owner denial survives terminal checkpoints and repeated bounded public receipt publication', async () => {
+  const guardian = startSovereignCommanderContinuousRepairGuardian({ enabled: false,
+    custodyStore: { status: () => ({ held: true }), close() {} },
+  });
+  try {
+    const denial = await guardian.withMaintenanceOwner(fleetOwnerCommand(), () => assert.fail('denied action ran'));
+    const results = [await runFleetRemote(denial), (await runFleetRemotePlan(denial)).result];
+    for (const result of results) {
+      const receipt = {
+        schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+        requestId: 'fleet-owner-denial-roundtrip-001', operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+        repository: 'Cheekyfellastef/stephan-os', issueNumber: 3149, branch: 'main',
+        expectedHead: HEAD, processSourceHead: HEAD, state: 'BLOCKED', blocker: result.blocker,
+        result: { ok: false, verdict: 'BLOCKED', result: { ...result,
+          stdout: 'PRIVATE RAW OUTPUT C:\\Users\\Operator\\secret', stderr: 'PRIVATE STDERR' } },
+      };
+      let durableState;
+      checkpointTerminalMailboxReceipt({}, receipt, {
+        persist: state => { durableState = JSON.parse(JSON.stringify(state)); },
+      });
+      const checkpoint = durableState.lastReceipt;
+      assert.deepEqual(durableState.consumedRequestIds, [receipt.requestId]);
+      const published = JSON.parse(serializeBoundedReceiptJson(checkpoint));
+      const repeated = JSON.parse(serializeBoundedReceiptJson(published));
+      const compact = JSON.parse(serializeBoundedReceiptJson({ ...checkpoint,
+        result: { ...checkpoint.result, result: { ...checkpoint.result.result,
+          codexLastMessage: 'SAFE_PADDING '.repeat(1000),
+          blockers: Array.from({ length: 30 }, (_, index) => `SAFE_PADDING_${index}_${'X'.repeat(120)}`),
+        } },
+      }, 6 * 1024));
+      assert.equal(compact.githubProjectionTruncated, true);
+      const compactRepeated = JSON.parse(serializeBoundedReceiptJson(compact, 6 * 1024));
+      for (const packet of [checkpoint, published, repeated, compact, compactRepeated]) {
+        const projected = createSanitizedMailboxReceiptProjection(packet);
+        assert.equal(projected.state, 'BLOCKED');
+        assert.equal(projected.processSourceHead, HEAD);
+        assert.equal(projected.operationResult.sourceHead, '');
+        assert.equal(projected.operationResult.ok, false);
+        assert.equal(projected.operationResult.blocker, result.blocker);
+        assert.equal(projected.operationResult.processId, FLEET_SUPERVISOR_ACTION);
+        assert.equal(projected.operationResult.executionBlocker, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
+        assert.equal(projected.operationResult.maintenanceStatus, null);
+        assert.equal(Object.hasOwn(projected.operationResult, 'fleetSupervisor'), false);
+        assert.equal(projected.operationResult.publicReceiptSafe, true);
+        assert.equal(projected.operationResult.secretMaterialReturned, false);
+        assert.doesNotMatch(JSON.stringify(packet), /PRIVATE|private-command-must-not-escape|private-mission-must-not-escape/);
+      }
+      if (result.remotePlan) {
+        assert.deepEqual(compact.result.result.remotePlan, result.remotePlan);
+        assert.equal(compact.result.result.stepCount, 0);
+      }
+    }
+    assert.equal(guardian.status().timeoutCustodyHeld, true);
+  } finally { guardian.stop(); }
+});
+
+test('fleet action carries actual held retry evidence without claiming pickup or exposing private fields', async () => {
+  const result = await runFleetRemote(fleetMaintenanceEnvelope());
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE');
+  assert.equal(result.fleetSupervisor.retryAdmission.classification, 'MISSION_WORKER_RETRY_TERMINAL_EXECUTION_RECEIPT_UNPROVEN');
+  assert.equal(result.fleetSupervisor.retryAdmission.issueNumber, 2964);
+  assert.equal(result.fleetSupervisor.retryAdmission.retried, false);
+  assert.equal(result.fleetSupervisor.dispatchCount, 0);
+  assert.equal(result.fleetSupervisor.provenPickupCount, 0);
+  assert.equal(result.fleetSupervisor.held.reasons[0].reasonCode, 'EXISTING_GOAL_MISSION_BLOCKED_SIDELINED');
+  for (const secret of ['PRIVATE_CONTENT', 'PRIVATE_STDERR', 'critical-2964', 'commanderParity', 'requiredTests']) {
+    assert.equal(JSON.stringify(result).includes(secret), false);
+  }
+});
+
+test('fleet empty, malformed, ambiguous, mismatched and wrong-process terminal receipts cannot become DONE', async () => {
+  const raw = fleetReceiptRaw(), wire = FLEET_SUPERVISOR_MARKER + JSON.stringify(raw);
+  const invalid = [
+    { stdout: '' }, { stdout: '{}' }, { stdout: wire + '\n' + wire },
+    { stdout: wire + '\nafter-terminal' },
+    { stdout: wire.replace('"ok":true', '"ok":false,"ok":true') },
+    { stdout: FLEET_SUPERVISOR_MARKER + JSON.stringify({ ...raw, schemaVersion: 'unknown' }) },
+    { stdout: FLEET_SUPERVISOR_MARKER + JSON.stringify({ ...raw, finalVerdict: 'UNKNOWN' }) },
+    { stdout: FLEET_SUPERVISOR_MARKER + JSON.stringify({ ...raw, mergeAuthority: true }) },
+    { stdout: wire, status: 2 }, { processId: 'battle-bridge-status' },
+    ...[{ dispatchCount: 'UNKNOWN' }, { retryAdmission: null },
+      { admission: undefined }, { held: null }, { provenPickupCount: 1 }]
+      .map(variant => ({ raw: fleetReceiptRaw({ daemonMayReportGreen: true, ...variant }) })),
+  ];
+  for (const variant of invalid) {
+    const result = await runFleetRemote(fleetMaintenanceEnvelope(variant));
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_FLEET_RECEIPT_INVALID');
+    assert.equal(result.executionBlocker, 'FLEET_SUPERVISOR_TERMINAL_RECEIPT_INVALID');
+    assert.equal(Object.hasOwn(result, 'fleetSupervisor'), false);
+  }
+});
+
+test('valid fleet exit2 retains bounded reason while remaining an action failure', async () => {
+  const result = await runFleetRemote(fleetMaintenanceEnvelope({ raw: fleetReceiptRaw({
+    ok: false, finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_BLOCKED',
+    blocker: 'PRIVATE_CODE_SHAPED_TOKEN',
+  }) }));
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED');
+  assert.equal(result.status, 2);
+  assert.equal(result.executionBlocker, 'FLEET_SUPERVISOR_REPORTED_BLOCKED');
+  assert.equal(result.fleetSupervisor.ok, false);
+  assert.equal(result.fleetSupervisor.blockerCode, 'UNKNOWN');
+  assert.equal(result.fleetSupervisor.retryAdmission.issueNumber, 2964);
+  assert.equal(JSON.stringify(result).includes('PRIVATE_CODE_SHAPED_TOKEN'), false);
+});
+
+test('fleet inner execution and current custody evidence are mandatory in single and plan routes', async () => {
+  const raw = fleetReceiptRaw();
+  for (const mutate of [
+    execution => { execution.structuredContent.ok = false; },
+    execution => { delete execution.structuredContent.ok; },
+    execution => { execution.structuredContent.stdout = FLEET_SUPERVISOR_MARKER + JSON.stringify({ ...raw, blocker: 'ETIMEDOUT' }); },
+    execution => { execution.structuredContent.signal = 'SIGTERM'; },
+  ]) {
+    const execution = fleetMaintenanceEnvelope(); mutate(execution);
+    const single = await runFleetRemote(execution);
+    assert.equal(single.ok, false);
+    assert.equal(single.blocker, 'SOVEREIGN_COMMANDER_REMOTE_FLEET_RECEIPT_INVALID');
+    const { fetchFn } = mcpFetch({ maintenanceByAction: { [FLEET_SUPERVISOR_ACTION]: execution } });
+    const plan = await executeSovereignCommanderRemoteOnBattleBridge(command({ remoteAction: '',
+      remotePlan: [FLEET_SUPERVISOR_ACTION, 'battle-bridge-status'] }), {
+      spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+      ensureRuntimeFn: async () => ({ ok: true, bootstrapAttempted: false }),
+    });
+    assert.equal(plan.ok, false);
+    assert.equal(plan.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID');
+  }
+});
+
+test('successful fleet plan preserves typed held evidence as command completion only', async () => {
+  const { fetchFn } = mcpFetch({ maintenanceByAction: { [FLEET_SUPERVISOR_ACTION]: fleetMaintenanceEnvelope() } });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(command({ remoteAction: '',
+    remotePlan: [FLEET_SUPERVISOR_ACTION, 'battle-bridge-status'] }), {
+    spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+    ensureRuntimeFn: async () => ({ ok: true, bootstrapAttempted: false }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.completedSteps.length, 2);
+  assert.equal(result.completedSteps[0].fleetSupervisor.retryAdmission.retried, false);
+  assert.equal(result.completedSteps[0].fleetSupervisor.provenPickupCount, 0);
+  assert.equal(result.completedSteps[0].fleetSupervisor.blockerCode, '');
+});
+
+test('pre-admission original-owner blocker survives as a finite public code', async () => {
+  const result = await runFleetRemote(fleetMaintenanceEnvelope({ raw: fleetReceiptRaw({
+    ok: false, finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_BLOCKED',
+    ...projectFleetConveyorObservationV1(), blocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+  }) }));
+  assert.equal(result.ok, false);
+  assert.equal(result.fleetSupervisor.blockerCode, 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
+  assert.equal(result.fleetSupervisor.retryAdmission.present, false);
+  assert.equal(result.fleetSupervisor.admission.present, false);
+});
+
+test('fleet contract is mandatory for plan steps and valid prior evidence survives a later failure', async () => {
+  const plan = [FLEET_SUPERVISOR_ACTION, 'battle-bridge-status'];
+  for (const maintenance of [fleetMaintenanceEnvelope({ stdout: '' }), fleetMaintenanceEnvelope({
+    stdout: FLEET_SUPERVISOR_MARKER + JSON.stringify({ ...fleetReceiptRaw(), finalVerdict: 'UNKNOWN' }),
+  })]) {
+    const { fetchFn } = mcpFetch({ maintenanceByAction: { [FLEET_SUPERVISOR_ACTION]: maintenance } });
+    const result = await executeSovereignCommanderRemoteOnBattleBridge(command({ remoteAction: '', remotePlan: plan }), {
+      spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+      ensureRuntimeFn: async () => ({ ok: true, bootstrapAttempted: false }),
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID');
+    assert.equal(result.stepCount, 0);
+  }
+  const laterFailure = { ok: false, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+    command: { plan: { processId: 'battle-bridge-status' } }, blocker: 'STATUS_UNAVAILABLE',
+    structuredContent: { status: 2, stdout: '', stderr: '', errorCode: '' } };
+  const { fetchFn } = mcpFetch({ maintenanceByAction: {
+    [FLEET_SUPERVISOR_ACTION]: fleetMaintenanceEnvelope(), 'battle-bridge-status': laterFailure,
+  } });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(command({ remoteAction: '', remotePlan: plan }), {
+    spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+    ensureRuntimeFn: async () => ({ ok: true, bootstrapAttempted: false }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_STEP_FAILED');
+  assert.equal(result.stepCount, 1);
+  assert.equal(result.completedSteps[0].fleetSupervisor.retryAdmission.retried, false);
+  assert.equal(result.completedSteps[0].fleetSupervisor.provenPickupCount, 0);
+});
+
+test('fleet blocked plan step retains its own typed failure and does not run the next step', async () => {
+  const { calls, fetchFn } = mcpFetch({ maintenanceByAction: {
+    [FLEET_SUPERVISOR_ACTION]: fleetMaintenanceEnvelope({ raw: fleetReceiptRaw({
+      ok: false, finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_BLOCKED', blocker: 'PRIVATE_TOKEN',
+    }) }),
+  } });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(command({ remoteAction: '',
+    remotePlan: [FLEET_SUPERVISOR_ACTION, 'battle-bridge-status'] }), {
+    spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+    ensureRuntimeFn: async () => ({ ok: true, bootstrapAttempted: false }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_STEP_FAILED');
+  assert.equal(result.fleetSupervisor.ok, false);
+  assert.equal(result.fleetSupervisor.retryAdmission.issueNumber, 2964);
+  assert.equal(JSON.stringify(result).includes('PRIVATE_TOKEN'), false);
+  assert.equal(calls.some(call => call.options?.body?.includes('"actionId":"battle-bridge-status"')), false);
+});
 
 test('repair-stephanos transport envelope exceeds the bounded repair execution window', () => {
   assert.equal(SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS, 210_000);
@@ -2688,11 +3106,41 @@ test('Core daemon status stays observational underneath but Sovereign fails stal
   assert.equal(result.coreDaemonStatus.repairRequired, true);
 });
 
+test('public Core status preserves inaccessible process inventory as unknown without leaking raw evidence', async () => {
+  for (const inventory of [
+    { processCount: null, processInventoryComplete: false },
+    { processCount: 0, processInventoryComplete: false },
+    { processCount: 0 },
+    { processCount: 0, processInventoryComplete: true },
+  ]) {
+    const maintenance = {
+      ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: 'a'.repeat(64),
+      command: { plan: { processId: 'status-stephanos-core-daemon' } },
+      structuredContent: { ok: true, status: 0, stdout: JSON.stringify({
+        schemaVersion: 'stephanos.core-daemon-status.v1', ok: false,
+        ...inventory, processObservationBlocker: 'CORE_PROCESS_INVENTORY_UNPROVEN',
+        processId: 12345, commandLine: 'PRIVATE_RAW_COMMAND_LINE', sourceHead: HEAD,
+      }) },
+    };
+    const { fetchFn } = mcpFetch({ maintenance });
+    const result = await executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'status-stephanos-core-daemon' }),
+      { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn, env: { USERPROFILE: 'C:\\Users\\Operator' } },
+    );
+    assert.equal(result.coreDaemonStatus.processCount, inventory.processInventoryComplete === true ? 0 : null);
+    assert.equal(result.coreDaemonStatus.processInventoryComplete, inventory.processInventoryComplete === true);
+    assert.equal(result.ok, false);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_RAW_COMMAND_LINE|12345/);
+  }
+});
+
 test('fresh exact-head Core daemon status remains a successful read-only Sovereign observation', async () => {
   const freshStatus = {
     schemaVersion: 'stephanos.core-daemon-status.v1',
     ok: true,
     processCount: 1,
+    processInventoryComplete: true,
     daemonHealthy: true,
     singleWriterProven: true,
     writerProcessObserved: true,
@@ -2742,6 +3190,20 @@ test('fresh exact-head Core daemon status remains a successful read-only Soverei
   assert.equal(result.coreDaemonStatus.available, true);
   assert.equal(result.coreDaemonStatus.awake, true);
   assert.equal(result.coreDaemonStatus.sourceHead, HEAD);
+  for (const complete of [false, undefined]) {
+    const contradictory = { ...maintenance, structuredContent: {
+      ...maintenance.structuredContent,
+      stdout: JSON.stringify({ ...freshStatus, processInventoryComplete: complete }),
+    } };
+    const { fetchFn: incompleteFetch } = mcpFetch({ maintenance: contradictory });
+    const held = await executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'status-stephanos-core-daemon' }),
+      { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn: incompleteFetch, env: { USERPROFILE: 'C:\\Users\\Operator' } },
+    );
+    assert.equal(held.ok, false);
+    assert.equal(held.coreDaemonStatus.ok, false);
+    assert.equal(held.coreDaemonStatus.processCount, null);
+  }
 });
 
 test('remote Core health refuses missing or false custody proofs despite fresh status', async () => {

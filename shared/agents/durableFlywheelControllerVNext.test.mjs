@@ -898,3 +898,102 @@ test('READY elastic grant refuses parked PR inspection', async () => {
   });
   assert.equal(result.workerActionGrant, undefined);
 });
+
+function publishedElasticReviewFixture() {
+  const mission = {
+    missionId: 'critical-3029-elastic-goal', revision: 6,
+    currentPhase: 'CHECK_PULL_REQUEST', repository: REPOSITORY,
+    continuity: { parkingStatus: 'ACTIVE' }, dispatch: { status: 'complete' },
+    git: { branch: 'openclaw/elastic-goal-3029' },
+    pullRequest: { number: 3218, headSha: LANE_HEAD }, cancelled: false,
+  };
+  const lease = { leaseId: 'critical-3029-elastic-goal-r6-lease', ownerId: 'mission-worker',
+    repository: REPOSITORY, issueNumber: 3029, prNumber: 3218,
+    branch: mission.git.branch, headSha: LANE_HEAD };
+  const lane = { valid: true, active: false, terminal: false, reviewPending: true,
+    status: 'REVIEW_PENDING', laneId: mission.missionId, repository: REPOSITORY,
+    issueNumber: 3029, prNumber: 3218, branch: mission.git.branch, headSha: LANE_HEAD,
+    mutationLeaseIdentity: { active: true, stale: false, leaseId: lease.leaseId },
+    elasticMissionPhaseBinding: { valid: true, reviewOnly: true, materialImplementation: false,
+      phase: 'CHECK_PULL_REQUEST', missionId: mission.missionId, revision: 6, issueNumber: 3029 } };
+  return { mission, p: projection('IDLE', { lane, mutationLease: lease,
+    criticalBacklog: { activeMission: null } }) };
+}
+async function runPublishedElasticReview(fixture) {
+  let reads = 0;
+  const f = machineryFor(fixture.p, {
+    readMissionRecord: async id => { reads++; assert.equal(id, fixture.mission.missionId); return { state: fixture.mission }; },
+    loadCapacityRoutingInput: async () => null,
+    ensureBacklogMission: async () => { throw new Error('review must not create another mission'); },
+  });
+  const result = await runDurableFlywheelStartupCycle(f.machinery, {
+    nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {},
+  });
+  return { result, reads };
+}
+test('published elastic review advances through its existing lease without a legacy backlog mission', async () => {
+  const { result, reads } = await runPublishedElasticReview(publishedElasticReviewFixture());
+  assert.equal(reads, 1);
+  assert.equal(result.allowWorkerTick, true);
+  assert.equal(result.workerActionGrant?.missionId, 'critical-3029-elastic-goal');
+  assert.equal(result.workerActionGrant?.missionRevision, 6);
+  assert.equal(result.workerActionGrant?.adapter, 'openclaw-github-readonly');
+  assert.equal(result.workerActionGrant?.operation, 'check-pr');
+  assert.equal(result.workerActionGrant?.boundedActionCount, 1);
+  assert.equal(result.workerActionGrant?.mergeAuthority, false);
+  assert.equal(result.workerActionGrant?.leaseSeizureAllowed, false);
+});
+test('published review grant refuses stale, foreign, parked and source-writing mission states', async () => {
+  for (const mutate of [
+    f => { f.mission.revision++; },
+    f => { f.mission.currentPhase = 'AGENT_IMPLEMENTATION'; },
+    f => { f.mission.pullRequest.headSha = 'f'.repeat(40); },
+    f => { f.mission.pullRequest.number++; },
+    f => { f.mission.git.branch = 'other/branch'; },
+    f => { f.mission.continuity.parkingStatus = 'PARKED_BLOCKED'; },
+    f => { f.mission.cancelled = true; },
+    f => { f.mission.dispatch.status = 'running'; },
+    f => { f.mission.storeMetadata = { originalSourceAttemptFence: { active: true } }; },
+    f => { f.p.mutationLease.leaseId = 'other-lease'; },
+    f => { f.p.lane.headSha = 'f'.repeat(40); },
+    f => { f.p.lane.mutationLeaseIdentity.stale = true; },
+    f => { f.p.lane.elasticMissionPhaseBinding.valid = false; },
+    f => { f.p.lane.active = true; },
+    f => { f.p.criticalBacklog.activeMission = { missionId: 'different-owner' }; },
+    f => { f.p.status = 'HOLD'; f.p.blockers = ['existing-authority-hold']; },
+  ]) {
+    const fixture = publishedElasticReviewFixture();
+    mutate(fixture);
+    const { result } = await runPublishedElasticReview(fixture);
+    assert.equal(result.workerActionGrant, undefined, JSON.stringify(fixture));
+    assert.equal(result.allowWorkerTick, false);
+  }
+});
+
+
+test('live controller preparation does not freeze later authority observation clocks', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
+  const seen = [];
+  const f = machineryFor(projection('IDLE'), {
+    reconcileLearningGoals: async () => { t.mock.timers.tick(90000); return { ok: true }; },
+    loadAuthoritativeProjection: async options => { seen.push(options.nowUtc); return projection('IDLE'); },
+  });
+  const result = await runDurableFlywheelStartupCycle(f.machinery, { sourceRevision: SOURCE_REVISION, env: {} });
+  assert.ok(seen.length > 0);
+  assert.ok(seen.every(value => value === undefined), 'live observation inherited the cycle-start snapshot');
+  assert.equal(result.status, 'IDLE');
+  assert.ok(Date.parse(f.heartbeats.at(-1).timestampUtc) >= Date.parse(NOW) + 90000);
+});
+
+test('live authority refresh failure holds before any projection or worker grant', async () => {
+  let publications = 0, reads = 0;
+  const f = machineryFor(projection('IDLE'), {
+    publishControllerHeartbeat: async () => ({ ok: ++publications === 1 }),
+    loadAuthoritativeProjection: async () => { reads++; return projection('IDLE'); },
+  });
+  const result = await runDurableFlywheelStartupCycle(f.machinery, { sourceRevision: SOURCE_REVISION, env: {} });
+  assert.equal(result.status, 'HOLD');
+  assert.equal(result.allowWorkerTick, false);
+  assert.equal(reads, 0);
+  assert.ok(result.blockers.includes('controller-heartbeat:observation-refresh-failed'));
+});

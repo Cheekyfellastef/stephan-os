@@ -133,7 +133,65 @@ export function resolveBattleBridgeGitExecution({
   });
 }
 
-function parseNullConfig(output = '') {
+// Keep diagnostic classification local to this foundational module: existing
+// exact-commit review and Seed execution use closed import graphs. These labels
+// describe keys already rejected below; they never decide source admission.
+const fixedCategories = new Map([
+  ['core.worktree', 'CORE_WORKTREE'],
+  ['core.sparsecheckout', 'CORE_SPARSE_CHECKOUT'],
+  ['core.sparsecheckoutcone', 'CORE_SPARSE_CHECKOUT_CONE'],
+  ['index.sparse', 'INDEX_SPARSE'],
+  ['core.hookspath', 'CORE_HOOKS_PATH'],
+  ['core.fsmonitor', 'CORE_FSMONITOR'],
+  ['core.trustctime', 'CORE_TRUST_CTIME'],
+  ['core.checkstat', 'CORE_CHECK_STAT'],
+  ['core.ignorestat', 'CORE_IGNORE_STAT'],
+  ['core.untrackedcache', 'CORE_UNTRACKED_CACHE'],
+  ['core.sshcommand', 'CORE_SSH_COMMAND'],
+  ['core.alternaterefscommand', 'CORE_ALTERNATE_REFS_COMMAND'],
+  ['core.askpass', 'CORE_ASKPASS'],
+  ['core.gitproxy', 'CORE_GIT_PROXY'],
+  ['core.pager', 'CORE_PAGER'],
+  ['diff.external', 'DIFF_EXTERNAL'],
+  ['include.path', 'INCLUDE_PATH'],
+  ['extensions.worktreeconfig', 'EXTENSIONS_WORKTREE_CONFIG'],
+  ['gc.recentobjectshook', 'GC_RECENT_OBJECTS_HOOK'],
+  ['interactive.difffilter', 'INTERACTIVE_DIFF_FILTER'],
+  ['sequence.editor', 'SEQUENCE_EDITOR'],
+  ['core.editor', 'CORE_EDITOR'],
+  ['commit.gpgsign', 'COMMIT_GPG_SIGN'],
+  ['tag.gpgsign', 'TAG_GPG_SIGN'],
+]);
+const patternedCategories = [
+  [/^alias\./, 'ALIAS'],
+  [/^credential\./, 'CREDENTIAL'],
+  [/^filter\./, 'FILTER'],
+  [/^diff\..+\.command$/, 'DIFF_COMMAND'],
+  [/^diff\..+\.textconv$/, 'DIFF_TEXTCONV'],
+  [/^merge\..+\.driver$/, 'MERGE_DRIVER'],
+  [/^branch\..+\.mergeoptions$/, 'BRANCH_MERGE_OPTIONS'],
+  [/^remote\..+\.vcs$/, 'REMOTE_VCS'],
+  [/^remote\..+\.proxy$/, 'REMOTE_PROXY'],
+  [/^remote\..+\.uploadpack$/, 'REMOTE_UPLOAD_PACK'],
+  [/^remote\..+\.receivepack$/, 'REMOTE_RECEIVE_PACK'],
+  [/^url\./, 'URL_REWRITE'],
+  [/^includeif\./, 'INCLUDE_IF'],
+  [/^protocol\./, 'PROTOCOL'],
+  [/^submodule\..+\.update$/, 'SUBMODULE_UPDATE'],
+  [/^gc\..*(hook|command)$/, 'GC_HOOK_OR_COMMAND'],
+  [/^pager\./, 'PAGER'],
+  [/^gpg\./, 'GPG'],
+  [/^http\./, 'HTTP'],
+];
+
+function classifyBattleBridgeGitConfigurationRiskV1(key) {
+  if (typeof key !== 'string') return 'UNKNOWN';
+  return fixedCategories.get(key)
+    || patternedCategories.find(([pattern]) => pattern.test(key))?.[1]
+    || 'UNKNOWN';
+}
+
+export function parseBattleBridgeNullConfigV1(output = '') {
   return String(output || '').split('\0').filter(Boolean).map((entry) => {
     const separator = entry.includes('\n') ? entry.indexOf('\n') : entry.indexOf('=');
     return Object.freeze({
@@ -142,6 +200,7 @@ function parseNullConfig(output = '') {
     });
   });
 }
+const parseNullConfig = parseBattleBridgeNullConfigV1;
 
 export function validateBattleBridgeLocalGitConfiguration(output = '') {
   const entries = parseNullConfig(output);
@@ -196,6 +255,14 @@ export function validateBattleBridgeLocalGitConfiguration(output = '') {
     blocker: ok ? '' : 'CANONICAL_GIT_CONFIGURATION_INVALID',
     remoteUrl: ok ? remoteUrls[0] : '',
     riskyKeys: Object.freeze(risky.map((entry) => entry.key)),
+    diagnostic: Object.freeze({
+      originCount: remoteUrls.length === 0 ? 'ZERO' : remoteUrls.length === 1 ? 'ONE' : 'MULTIPLE',
+      originMatch: remoteUrls.length === 0 ? 'UNKNOWN'
+        : remoteUrls.every(value => value.toLowerCase() === BATTLE_BRIDGE_CANONICAL_REMOTE_URL.toLowerCase())
+          ? 'CANONICAL' : 'NONCANONICAL',
+      riskCategories: Object.freeze([...new Set(risky.map(entry =>
+        classifyBattleBridgeGitConfigurationRiskV1(entry.key)))].sort()),
+    }),
   });
 }
 
@@ -332,3 +399,5 @@ export function inspectBattleBridgeGitTopology(repoRoot, { lstatFn = lstatSync, 
   }
   return Object.freeze({ ok: true, blocker: '', stableIdentities: Object.freeze(stableIdentities) });
 }
+
+// Fixed frontend source admission requires canonical LF deployment bytes.

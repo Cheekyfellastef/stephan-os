@@ -1,0 +1,79 @@
+name: Stephanos Control Tower - Start Next Eligible Build
+
+on:
+  workflow_dispatch:
+  # Protected-main owner pushes can re-arm the EXISTING fixed build wake.
+  # The producer still authenticates the exact sender, main HEAD and run.
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - '.github/workflows/stephanos-control-tower-build.yml'
+      - 'shared/agents/controlTowerBuildRequestV1*'
+      - 'shared/agents/controlTowerBuildReaderV1*'
+      - 'shared/agents/fixtures/controlTowerBuildV1.mjs'
+      - 'shared/agents/mailboxFreeGitHubEvidenceReaderV1.mjs'
+      - 'shared/agents/mailboxFreeGoalNominationV1.mjs'
+      - 'scripts/control-tower-build-request-v1.mjs'
+      - 'scripts/control-tower-build-consumer-v1*'
+      - 'scripts/canonical-mailbox-execution-ledger-v1.mjs'
+      - 'scripts/battle-bridge-sovereign-relay-daemon.mjs'
+      - 'docs/architecture/control-tower-build-start-v1.md'
+
+permissions: {}
+
+concurrency:
+  group: stephanos-control-tower-build-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  contract-test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: >-
+          node --test shared/agents/controlTowerBuildRequestV1.test.mjs
+          shared/agents/controlTowerBuildReaderV1.test.mjs
+          scripts/control-tower-build-consumer-v1.test.mjs
+          shared/agents/mailboxFreeGitHubEvidenceReaderV1.test.mjs
+          shared/agents/mailboxFreeGoalNominationV1.test.mjs
+          shared/agents/sovereignRelayMeshV1.test.mjs
+          shared/agents/mailboxFreeGoalDiscoveryV1.test.mjs
+          shared/agents/sovereignMaintenanceAdmissionV1.test.mjs
+          scripts/canonical-mailbox-rotation-protocol.test.mjs
+          scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.test.mjs
+
+  request-build:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.actor == 'Cheekyfellastef')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Authenticate owner and stage fixed build request
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/control-tower-build-request-v1.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stephanos-control-tower-build-${{ github.run_id }}
+          path: ${{ runner.temp }}/control-tower-build-request.json
+          retention-days: 30
+          if-no-files-found: error

@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { projectPrimaryOwnerCommentReadRequirementV1, goalEstateCoversPrimaryOwnerCommentReadV1, projectRequestedPrimaryOwnerEvidenceV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 import { createHash } from 'node:crypto';
 import { assertOriginalSourceAttemptNotFenced } from './originalSourceAttemptFenceService.js';
 import { readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
@@ -77,6 +78,8 @@ import {
   projectLogicalGoalControllerFabric,
 } from '../../shared/agents/logicalGoalControllerFabricV1.mjs';
 import { getSharedWorkspaceSpecializedStatusRecord } from '../../shared/agents/sharedWorkspaceSpecializedStatusRegistryV1.mjs';
+
+import { projectGoalAdmissionRequiredTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 
 export const PROGRAMME_AUTHORITY_SERVICE_SCHEMA = 'stephanos.programme-authority-service.v1';
 export const SOURCE_MUTATION_LEASE_FILE = `${SOURCE_MUTATION_LEASE_STATUS_ID}.json`;
@@ -315,7 +318,8 @@ function validGithubGoalEstateSnapshotIssue(issue = {}) {
     || admission.arbitraryShellAllowed !== false
     || resourceIds === null
     || resourceIds.some((value) => !value || value.includes('..') || !value.toLowerCase().startsWith(resourcePrefix))
-    || new Set(resourceIds).size !== resourceIds.length) return false;
+    || new Set(resourceIds).size !== resourceIds.length
+    || !projectGoalAdmissionRequiredTestsV1(admission.requiredTests).valid) return false;
 
   return true;
 }
@@ -364,6 +368,8 @@ export async function readGithubGoalEstateSharedSnapshot(options = {}) {
   const cachedAtUtc = safeNow(document.cachedAtUtc);
   const nowUtc = safeNow(options.nowUtc) || new Date().toISOString();
   const ageMs = cachedAtUtc ? Date.parse(nowUtc) - Date.parse(cachedAtUtc) : Number.POSITIVE_INFINITY;
+  const requirement = projectPrimaryOwnerCommentReadRequirementV1(options.requiredPrimaryOwnerCommentIssueNumbers);
+  if (!goalEstateCoversPrimaryOwnerCommentReadV1(document.goalEstateRead, requirement, nowUtc)) return null;
   const maxAgeMs = options.allowStale === true
     ? GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_MAX_STALE_MS
     : GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_TTL_MS;
@@ -466,6 +472,7 @@ async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
       ghTokenProvider: options.ghTokenProvider,
       fetchImpl: options.testOnly === true ? options.fetchImpl : undefined,
       priorGoalRecords: Array.isArray(options.priorGoalRecords) ? options.priorGoalRecords : [],
+      requiredPrimaryOwnerCommentIssueNumbers: options.requiredPrimaryOwnerCommentIssueNumbers,
     });
     if (observation?.status !== 'fetched' || !Array.isArray(observation.issues)) {
       const staleSnapshot = sharedSnapshotEnabled
@@ -476,6 +483,7 @@ async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
     const result = Object.freeze({
       ok: true,
       reason: 'GITHUB_GOAL_ESTATE_FETCHED',
+      ...(observation.primaryOwnerCommentRequestIssueNumbers ? { primaryOwnerCommentRequestIssueNumbers: observation.primaryOwnerCommentRequestIssueNumbers } : {}),
       issues: observation.issues,
       discoveredIssues: Array.isArray(observation.discoveredIssues) ? observation.discoveredIssues : observation.issues,
       retrievedAt: safeNow(observation.retrievedAt) || nowUtc,
@@ -602,7 +610,10 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
     const existingIndex = issueIndex.get(issueNumber);
 
     if (existingIndex !== undefined) {
-      const existing = observedRecords[existingIndex];
+      const { requiredTests: _previousTests, ...existingWithoutTests } = observedRecords[existingIndex];
+      const existing = Object.freeze({ ...existingWithoutTests,
+        ...(issue.admission?.requiredTests === undefined ? {} : { requiredTests: issue.admission.requiredTests }) });
+      observedRecords[existingIndex] = existing;
       const existingResourceIds = Array.isArray(existing?.resourceIds)
         ? existing.resourceIds.map((value) => text(value)).filter(Boolean)
         : [];
@@ -705,6 +716,7 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
       prerequisites: [],
       route: contained ? 'WAITING_FOR_EXTERNAL_CONDITION' : 'OPENCLAW_LOCAL',
       resourceIds: Object.freeze(admittedResourceIds),
+      ...(issue.admission?.requiredTests === undefined ? {} : { requiredTests: issue.admission.requiredTests }),
       evidenceAt: observedAt,
       source: 'github-goal-estate',
       sourceUrl: text(issue.htmlUrl),
@@ -868,6 +880,7 @@ export function buildGithubGoalMirrorEstate(workspaceGoalRecords, goalEstateRead
         title: text(live.title, text(record.title, `Goal #${issueNumber}`)),
         sourceUrl: text(live.htmlUrl, text(record.sourceUrl)),
         operatorLaneContainment: live.operatorLaneContainment ?? record.operatorLaneContainment ?? null,
+        requiredTests: live.admission?.requiredTests,
       }, {
         issueNumber,
         observedAtUtc,
@@ -1890,6 +1903,11 @@ export async function releaseSourceMutationLease(expected = {}, options = {}) {
       nowUtc,
       readFileImpl: deps.readFile,
     });
+    if (expected.originalLeaseDigest !== undefined
+        && ((current.present && createHash('sha256').update(JSON.stringify(current.record)).digest('hex') !== expected.originalLeaseDigest)
+          || (existingRelease.present && existingRelease.value.originalLeaseDigest !== expected.originalLeaseDigest))) {
+      return Object.freeze({ ok: false, released: false, reason: 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_CHANGED' });
+    }
     if (
       current.present
       && current.reason === 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'
@@ -1965,7 +1983,8 @@ export async function releaseSourceMutationLease(expected = {}, options = {}) {
         releaseOnlyExactLease: true,
       });
     }
-    const releaseRecord = createSourceMutationLeaseReleaseRecord(current.record, { timestampUtc: nowUtc });
+    const releaseRecord = { ...createSourceMutationLeaseReleaseRecord(current.record, { timestampUtc: nowUtc }),
+      ...(expected.originalLeaseDigest !== undefined ? { originalLeaseDigest: expected.originalLeaseDigest } : {}) };
     let releasePublication;
     if (existingRelease.present) {
       if (!exactSourceMutationLeaseRelease(existingRelease.value, current.record, nowUtc)) {
@@ -1987,7 +2006,8 @@ export async function releaseSourceMutationLease(expected = {}, options = {}) {
         layout.root,
         ['status', `${releaseRecord.statusId}.json`],
         releaseRecord,
-        { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) },
+        { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc),
+          durable: expected.originalLeaseDigest !== undefined },
       );
       if (!releasePublication.ok) {
         return Object.freeze({
@@ -2050,7 +2070,7 @@ export async function readProgrammeControllerHeartbeat({
   if (loaded.error) return blockedRead('PROGRAMME_CONTROLLER_HEARTBEAT_READ_FAILED', { errorCode: loaded.error.code || '' });
   if (!loaded.present) return blockedRead('PROGRAMME_CONTROLLER_HEARTBEAT_MISSING', { path: resolved.path });
   const projection = projectProgrammeControllerHeartbeat(loaded.value, {
-    nowUtc,
+    nowUtc: nowUtc === undefined ? new Date().toISOString() : nowUtc,
     maxAgeMs,
     expectedSourceRevision,
   });
@@ -2111,7 +2131,7 @@ async function readMissionWorkerHeartbeat(options, deps, nowUtc, expectedHeadSha
     ok: true,
     record: loaded.value,
     projection: projectMissionWorkerHeartbeat(loaded.value, {
-      nowUtc,
+      nowUtc: options.nowUtc === undefined ? new Date().toISOString() : nowUtc,
       maxAgeMs: options.workerHeartbeatMaxAgeMs,
       expectedRepositoryRoot: paths.repositoryRoot,
       expectedHeadSha,
@@ -2270,7 +2290,9 @@ function holdProjection(nowUtc, reason, additions = {}) {
 export async function readAuthoritativeProgrammeProjection(options = {}) {
   const deps = dependencies(options);
   const suppliedNow = options.nowUtc === undefined ? '' : safeNow(options.nowUtc);
-  const nowUtc = suppliedNow || new Date().toISOString();
+  let nowUtc = suppliedNow || new Date().toISOString();
+  const primaryRequirement = projectPrimaryOwnerCommentReadRequirementV1(options.requiredPrimaryOwnerCommentIssueNumbers);
+  if (!primaryRequirement.valid) return holdProjection(nowUtc, 'PRIMARY_OWNER_READ_REQUIREMENT_INVALID');
   if (options.nowUtc !== undefined && !suppliedNow) {
     const projection = holdProjection(nowUtc, 'PROGRAMME_OBSERVATION_TIME_INVALID');
     return Object.freeze({
@@ -2317,7 +2339,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     readProgrammeControllerHeartbeat({
       root,
       repoRoot: options.repoRoot,
-      nowUtc,
+      nowUtc: suppliedNow ? nowUtc : undefined,
       maxAgeMs: options.controllerHeartbeatMaxAgeMs,
       expectedSourceRevision,
       readFileImpl: deps.readFile,
@@ -2325,7 +2347,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     deps.readWorkspaceFeed({
       root,
       repoRoot: options.repoRoot,
-      nowMs: Date.parse(nowUtc),
+      nowMs: suppliedNow ? Date.parse(nowUtc) : undefined,
       staleAfterMs: options.workspaceStaleAfterMs,
     }),
     deps.listMissionRecords({
@@ -2367,7 +2389,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     ? await deps.readWorkspaceFeed({
       root,
       repoRoot: options.repoRoot,
-      nowMs: Date.parse(nowUtc),
+      nowMs: suppliedNow ? Date.parse(nowUtc) : undefined,
       staleAfterMs: options.workspaceStaleAfterMs,
     })
     : workspaceFeed;
@@ -2407,6 +2429,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     }, { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) })
     : null;
   const executionReceipt = executionRead?.receipt ?? null;
+  if (!suppliedNow) nowUtc = new Date().toISOString();
   const proof = buildAffirmativeSchedulerProofSources(effectiveWorkspaceFeed, executionReceipt, {
     nowUtc,
     maxProofAgeMs: options.workspaceStaleAfterMs,
@@ -2507,14 +2530,24 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
         ? [`source:${executionRead.reason}`] : []
     ),
   ];
+  if (!suppliedNow) nowUtc = new Date().toISOString();
+  const observedControllerHeartbeat = controllerHeartbeatRead.record
+    ? projectProgrammeControllerHeartbeat(controllerHeartbeatRead.record, {
+      nowUtc, maxAgeMs: options.controllerHeartbeatMaxAgeMs, expectedSourceRevision,
+    }) : controllerHeartbeatRead.projection;
+  const observedWorkerHeartbeat = workerHeartbeatRead.record
+    ? projectMissionWorkerHeartbeat(workerHeartbeatRead.record, {
+      nowUtc, maxAgeMs: options.workerHeartbeatMaxAgeMs, expectedHeadSha: expectedSourceRevision,
+      expectedRepositoryRoot: missionWorkerPaths.repositoryRoot,
+    }) : workerHeartbeatRead.projection;
   const projection = buildAuthoritativeProgrammeProjection({
     nowUtc,
     workspaceFeed: effectiveWorkspaceFeed,
     goalMirrorFallback,
     lane,
     mutationLease: lease,
-    controllerHeartbeatProjection: controllerHeartbeatRead.projection,
-    workerHeartbeatProjection: workerHeartbeatRead.projection,
+    controllerHeartbeatProjection: observedControllerHeartbeat,
+    workerHeartbeatProjection: observedWorkerHeartbeat,
     executionReceipt,
     battleBridgeProofs: proof.records,
     runtimeHealthRecords: effectiveWorkspaceFeed?.records?.statusRecords,
@@ -2529,6 +2562,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
   return Object.freeze({
     ...projection,
     schema: PROGRAMME_AUTHORITY_SERVICE_SCHEMA,
+    ...(primaryRequirement.requested ? { githubGoalEstateRead: projectRequestedPrimaryOwnerEvidenceV1(githubGoalEstateRead, primaryRequirement) } : {}),
     productionSourcesConstructed: true,
     dependencyInjectionUsed: options.dependencies ? true : false,
     goalClosurePlan,
@@ -2545,7 +2579,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
         ? 'SOURCE_MUTATION_LEASE_RELEASED_INACTIVE'
         : leaseRead.reason,
       controllerHeartbeat: controllerHeartbeatRead.reason,
-        workerHeartbeat: workerHeartbeatRead.projection.finalVerdict,
+        workerHeartbeat: observedWorkerHeartbeat.finalVerdict,
         github: github?.status ?? 'not-required',
         githubGoalEstate: githubGoalEstateRead.reason,
         githubGoalMirror: goalMirrorPublication.classification,

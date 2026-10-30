@@ -1,3 +1,4 @@
+import { projectGoalBuildConveyorOverviewV1 } from '../../shared/agents/goalBuildConveyorOverviewV1.mjs';
 import {
   readSharedWorkspaceDashboardFeed,
   SHARED_WORKSPACE_FEED_RECORD_SCOPES,
@@ -9,6 +10,7 @@ import { readLiveGoalProjection } from './liveGoalProjectionService.js';
 import { readSharedConversationUpliftV1 } from './sharedConversationUpliftService.js';
 import { lstat, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { throwIfWorkspaceReadAborted, waitForWorkspaceRead } from '../../shared/runtime/workspaceReadCancellation.mjs';
 import {
   projectGoalBuildConveyorV1,
   projectGoalBuildJourneyV1,
@@ -83,23 +85,60 @@ function latestClosedLoopLearning(records = []) {
   return event?.closedLoopLearning || null;
 }
 
+export const OPTIONAL_LIVE_PROJECTION_DEADLINE_MS = 2_500;
+const activeLiveProjectionReaders = new WeakSet();
+
 async function resolveLiveProjection(input, nowMs) {
   if (Object.prototype.hasOwnProperty.call(input, 'liveProjection')) {
     return { projection: input.liveProjection || null, state: input.liveProjection ? 'ready' : 'unavailable', reason: input.liveProjection ? 'INJECTED_LIVE_PROJECTION' : 'LIVE_PROJECTION_DISABLED' };
   }
+  const reader = input.readLiveGoalProjection || readLiveGoalProjection;
+  const unavailable = reason => ({ projection: null, state: 'unavailable', reason });
+  // An optional upstream must neither hold local evidence past its budget nor
+  // multiply unfinished reads on every poll. Busy callers get no other caller's
+  // projection, credentials or freshness verdict. There is no completed cache.
+  if (activeLiveProjectionReaders.has(reader)) return unavailable('LIVE_PROJECTION_READ_IN_PROGRESS');
+  activeLiveProjectionReaders.add(reader);
+  const operation = (async () => {
+    try {
+      const configured = input.liveGoalProjectionOptions || {};
+      const projection = await reader({
+        ...configured,
+        now: new Date(nowMs),
+        githubTelemetryOptions: {
+          ...(configured.githubTelemetryOptions || {}),
+          env: configured.githubTelemetryOptions?.env || input.env,
+        },
+      });
+      return { projection, state: projection ? 'ready' : 'unavailable', reason: projection ? 'LIVE_PROJECTION_READ' : 'LIVE_PROJECTION_EMPTY' };
+    } catch (error) {
+      return unavailable(`LIVE_PROJECTION_READ_FAILED:${error?.message || 'unknown'}`);
+    } finally {
+      activeLiveProjectionReaders.delete(reader);
+    }
+  })();
+  // A smaller internal test/caller budget is allowed; callers cannot extend
+  // the production deadline. Existing upstream timeouts still own cancellation.
+  const requested = Number(input.liveProjectionTimeoutMs);
+  const timeoutMs = Number.isFinite(requested) && requested > 0
+    ? Math.min(requested, OPTIONAL_LIVE_PROJECTION_DEADLINE_MS)
+    : OPTIONAL_LIVE_PROJECTION_DEADLINE_MS;
+  let timer;
   try {
-    const configured = input.liveGoalProjectionOptions || {};
-    const projection = await readLiveGoalProjection({
-      ...configured,
-      now: new Date(nowMs),
-      githubTelemetryOptions: {
-        ...(configured.githubTelemetryOptions || {}),
-        env: configured.githubTelemetryOptions?.env || input.env,
-      },
-    });
-    return { projection, state: projection ? 'ready' : 'unavailable', reason: projection ? 'LIVE_PROJECTION_READ' : 'LIVE_PROJECTION_EMPTY' };
-  } catch (error) {
-    return { projection: null, state: 'unavailable', reason: `LIVE_PROJECTION_READ_FAILED:${error?.message || 'unknown'}` };
+    return await Promise.race([operation, new Promise(resolve => {
+      timer = setTimeout(() => resolve(unavailable('LIVE_PROJECTION_DEADLINE_EXCEEDED')), timeoutMs);
+    })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function resolveConversationUplift(input, root, nowMs) {
+  try {
+    const reader = input.readConversationUplift || readSharedConversationUpliftV1;
+    return await reader({ root, repoRoot: input.repoRoot, env: input.env, nowMs });
+  } catch {
+    return { state: 'unavailable', turnCount: 0, candidates: [] };
   }
 }
 
@@ -227,25 +266,28 @@ function enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate, bui
 }
 
 export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
+  throwIfWorkspaceReadAborted(input.signal);
   const validation = await validateSharedWorkspaceFeedConfig(input);
+  throwIfWorkspaceReadAborted(input.signal);
   if (!validation.ok) return unavailableFeed(validation);
 
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const goalGateTrust = await loadCommissionedGoalGateTrust(input);
-  const feed = await readSharedWorkspaceDashboardFeed({
-    ...input,
-    goalGateTrust,
-    root: validation.root,
-    recordScope: input.recordScope || SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE,
-  });
-  const live = await resolveLiveProjection(input, nowMs);
-  let conversationUplift;
-  try {
-    const reader = input.readConversationUplift || readSharedConversationUpliftV1;
-    conversationUplift = await reader({ root: validation.root, repoRoot: input.repoRoot, env: input.env, nowMs });
-  } catch {
-    conversationUplift = { state: 'unavailable', turnCount: 0, candidates: [] };
-  }
+  throwIfWorkspaceReadAborted(input.signal);
+  // These independent read models share the same observation clock. A slow
+  // optional GitHub overlay must not add its entire latency after the history
+  // scan; its existing unavailable/error semantics remain unchanged.
+  const [feed, live, conversationUplift] = await waitForWorkspaceRead(Promise.all([
+    readSharedWorkspaceDashboardFeed({
+      ...input,
+      goalGateTrust,
+      root: validation.root,
+      recordScope: input.recordScope || SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE,
+    }),
+    resolveLiveProjection(input, nowMs),
+    resolveConversationUplift(input, validation.root, nowMs),
+  ]), input.signal);
+  throwIfWorkspaceReadAborted(input.signal);
   const records = feed.records || {};
   const goalEstate = buildGoalDashboardEstateSummary({
     goalRecords: records.goalRecords,
@@ -272,11 +314,14 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
     },
   });
   const projectionBase = enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate, feed.stephanosBuildTruthStatus);
-  const projection = Object.freeze({
+  const overviewInput = {
     ...projectionBase,
     closedLoopLearning: latestClosedLoopLearning(records.eventRecords),
     operationalFacts: feed.operationalFacts,
     goalBuildGateObservatory: feed.projection?.goalBuildGateObservatory || null,
+  };
+  const projection = Object.freeze({ ...overviewInput,
+    goalBuildConveyorOverview: projectGoalBuildConveyorOverviewV1(overviewInput, { nowMs, staleAfterMs: input.staleAfterMs, statusRecords: records.statusRecords }),
   });
   const classification = effectiveFeedClassification(feed, projection);
   const recordCount = Object.values(records).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);

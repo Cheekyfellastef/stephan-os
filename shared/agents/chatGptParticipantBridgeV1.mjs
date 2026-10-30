@@ -11,6 +11,7 @@ import {
 } from './sharedAgentWorkspaceStore.mjs';
 import { validateDeliveryStatusSubject } from './sharedWorkspaceScopedDeliveryStatusV1.mjs';
 import { readSharedWorkspaceDashboardFeed } from './shared-workspace-dashboard-feed.mjs';
+import { projectSharedWorkspaceProofIndexV1 } from './sharedWorkspaceProofIndexV1.mjs';
 import { projectChatHandoffContinuity } from './chatHandoffContinuityV1.mjs';
 
 export const CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION = 'chatgpt-participant-bridge.v1';
@@ -27,6 +28,7 @@ export const CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION = 'READ_STARFIELD_V
 export const CHATGPT_BRIDGE_READ_OPERATIONS = Object.freeze([
   'READ_CURRENT_STATUS',
   'READ_LATEST_PROOF',
+  'READ_PROOF_INDEX',
   'READ_OPERATOR_ATTENTION',
   'READ_DELIVERY_STATUS',
   CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION,
@@ -47,6 +49,7 @@ export const CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS = Object.freeze(['READ_FILE', '
 export const CHATGPT_BRIDGE_RECORD_KINDS = Object.freeze({
   CURRENT_STATUS: 'current-status-projection',
   LATEST_PROOF: 'latest-proof-projection',
+  PROOF_INDEX: 'proof-index-projection',
   OPERATOR_ATTENTION: 'operator-attention-projection',
   DELIVERY_STATUS: 'delivery-status-projection',
   STARFIELD_VR_TELEMETRY: 'starfield-vr-telemetry-projection',
@@ -62,6 +65,7 @@ export const CHATGPT_BRIDGE_RECORD_KINDS = Object.freeze({
 export const CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP = Object.freeze({
   READ_CURRENT_STATUS: CHATGPT_BRIDGE_RECORD_KINDS.CURRENT_STATUS,
   READ_LATEST_PROOF: CHATGPT_BRIDGE_RECORD_KINDS.LATEST_PROOF,
+  READ_PROOF_INDEX: CHATGPT_BRIDGE_RECORD_KINDS.PROOF_INDEX,
   READ_OPERATOR_ATTENTION: CHATGPT_BRIDGE_RECORD_KINDS.OPERATOR_ATTENTION,
   READ_DELIVERY_STATUS: CHATGPT_BRIDGE_RECORD_KINDS.DELIVERY_STATUS,
   [CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION]: CHATGPT_BRIDGE_RECORD_KINDS.STARFIELD_VR_TELEMETRY,
@@ -706,6 +710,13 @@ export async function createSanitizedSharedWorkspaceProjection(input = {}) {
     }
   }
   const controllerFleet = sanitizeControllerFleetProjection(dashboardFeed?.projection?.controllerFleet);
+  const proofIndex = projectSharedWorkspaceProofIndexV1({
+    sourceAvailable: dashboardFeed?.proofIndex?.sourceAvailable === true,
+    proofRecords: dashboardFeed?.records?.proofRecords,
+    nowMs: input.nowMs,
+    staleAfterMs: input.staleAfterMs,
+    maxItems: 8,
+  });
   const sovereignRelay = await readSanitizedSovereignRelayStatus(input);
   const handoffContinuity = projectChatHandoffContinuity({
     directHandoffStatus: input.directHandoffStatus,
@@ -732,6 +743,7 @@ export async function createSanitizedSharedWorkspaceProjection(input = {}) {
     currentGoal: sanitizeRecord(latest.goal),
     currentStatus: sanitizeRecord(latest.status),
     latestProof: sanitizeRecord(latest.proof),
+    proofIndex,
     controllerFleet,
     sovereignRelay,
     handoffContinuity,
@@ -769,6 +781,7 @@ export function verifyChatGptBridgeRequest(request = {}, options = {}) {
     else if (serializedPayloadHasSecretShapedData(serializedPayload)) responseStatus = 'BLOCKED_SECRET_SHAPED_DATA';
     else if (operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION && !isExactStephanosQuestionDeliveryPayload(request.boundedPayload)) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (operation === CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION && !isExactSharedConversationTurnDeliveryPayload(request.boundedPayload)) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
+    else if (operation === 'READ_PROOF_INDEX' && (Object.keys(request.boundedPayload || {}).length !== 0)) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (operation === 'READ_DELIVERY_STATUS' && !validateDeliveryStatusSubject(request.boundedPayload?.statusSubject).ok) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (request.recordKind === 'approval-result') responseStatus = 'BLOCKED_APPROVAL_REQUIRED';
     else if (text(request.approvalRef)) {
