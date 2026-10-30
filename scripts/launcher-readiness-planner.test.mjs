@@ -20,9 +20,14 @@ test('stale shared workspace records block ready', () => {
   assert.equal(plan.safetyBlockers[0].id, 'stale-workspace-records');
 });
 
-test('missing OpenClaw gateway returns partial-openclaw-missing', () => {
+test('missing OpenClaw gateway keeps core readiness green and records optional degradation', () => {
   const plan = planLauncherReadiness({ observedFacts: { services: { backend: true, 'stephanos-ui': true, 'shared-workspace': true } } });
-  assert.equal(plan.finalVerdict, 'partial-openclaw-missing');
+  assert.equal(plan.finalVerdict, 'ready');
+  assert.deepEqual(plan.missingServices, []);
+  assert.deepEqual(plan.degradedOptionalServices, ['openclaw-gateway']);
+  assert.equal(plan.requiredServices.some((service) => service.id === 'openclaw-gateway'), false);
+  assert.equal(plan.optionalServices.some((service) => service.id === 'openclaw-gateway'), true);
+  assert.equal(plan.requiredProofs.some((proof) => /OpenClaw/.test(proof)), false);
 });
 
 test('dirty source blocks launcher repair', () => {

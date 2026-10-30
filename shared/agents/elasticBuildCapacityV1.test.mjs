@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+// Goal #3006: exercise the surge-capacity contract in existing hosted scheduler tests.
+import './surgeBuilderQualificationV1.test.mjs';
 import {
   MAXIMUM_BUILD_LANES,
   MINIMUM_BUILD_LANES,
@@ -59,6 +61,24 @@ test('resource selection admits more than sixteen proven disjoint candidates whe
   const result = selectResourceDisjointCandidates(candidates, { limit:24, activeResourceIds:[] });
   assert.equal(result.selected.length, 24);
   assert.deepEqual(result.held, []);
+});
+
+test('repository-wide scope conflicts with every path inside that repository', () => {
+  const rootFirst = selectResourceDisjointCandidates([
+    { candidateId:'repo-wide', resourceIds:['repo:cheekyfellastef/stephan-os'] },
+    { candidateId:'path-lane', resourceIds:['repo:cheekyfellastef/stephan-os:path:shared/agents/programmeAuthorityV1.mjs'] },
+  ], { limit:5, activeResourceIds:[] });
+  assert.deepEqual(rootFirst.selected.map(({ candidateId }) => candidateId), ['repo-wide']);
+  assert.equal(rootFirst.held[0].reasonCode, 'RESOURCE_CONFLICT');
+
+  const pathAlreadyActive = selectResourceDisjointCandidates([
+    { candidateId:'repo-wide', resourceIds:['repo:cheekyfellastef/stephan-os'] },
+  ], {
+    limit:5,
+    activeResourceIds:['repo:cheekyfellastef/stephan-os:path:shared/runtime/missionScheduler.mjs'],
+  });
+  assert.deepEqual(pathAlreadyActive.selected, []);
+  assert.equal(pathAlreadyActive.held[0].reasonCode, 'RESOURCE_CONFLICT');
 });
 
 test('resource selection admits five isolated candidates and holds only conflicts or overflow', () => {

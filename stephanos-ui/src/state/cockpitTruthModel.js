@@ -38,48 +38,71 @@ function providerHealthStateToState(value) {
 }
 
 
-function isHostedObserver(runtimeStatus = {}) {
-  const sessionKind = String(
-    runtimeStatus?.runtimeContext?.sessionKind
-      || runtimeStatus?.canonicalRouteRuntimeTruth?.sessionKind
-      || runtimeStatus?.sessionKind
-      || '',
-  ).trim().toLowerCase();
-  return sessionKind === 'hosted-web' || sessionKind === 'hosted_web' || sessionKind === 'hosted';
-}
-
 function isFreshBackendHealthProof(routeTruthView = {}) {
   const freshness = String(routeTruthView.currentBackendHealthFresh || '').trim().toLowerCase();
   return ['yes', 'true', 'fresh', 'current'].includes(freshness);
 }
 
-export function deriveBackendServiceState({ runtimeStatus = {}, routeTruthView = {}, apiStatus = {} } = {}) {
+export function deriveBackendServiceState({ routeTruthView = {}, apiStatus = {}, nowMs = Date.now() } = {}) {
   const backendReachableState = String(routeTruthView.backendReachableState || '').trim().toLowerCase();
-  const hostedObserver = isHostedObserver(runtimeStatus);
-  const freshBackendHealthProof = isFreshBackendHealthProof(routeTruthView);
+  const checkedAtMs = Date.parse(String(apiStatus?.runtimeContext?.healthProbeTruth?.lastBackendHealthProbeAt || apiStatus?.lastCheckedAt || ''));
+  const ageMs = nowMs - checkedAtMs;
+  const timeBoundProof = Number.isFinite(checkedAtMs) && ageMs >= 0 && ageMs <= 120000;
 
+  // A fresh, identity-verified service receipt is stronger evidence than a
+  // cached route failure, including a browser transport error after power loss.
+  // Do not promote an unverified "backendReachable: true" flag to service proof.
+  if (deriveCockpitBackendHealthDiagnostics({ apiStatus, routeTruthView: {}, nowMs }).fresh === 'yes') {
+    return 'alive';
+  }
+
+  // A route-positive flag is not timeless process health. Without fresh,
+  // timestamp-bound evidence the UI must show unknown, not a stale green.
   if (backendReachableState === 'yes') {
-    return 'alive';
+    return isFreshBackendHealthProof(routeTruthView) && timeBoundProof ? 'alive' : 'unknown';
   }
 
-  if (backendReachableState === 'no') {
-    if (freshBackendHealthProof) {
-      return 'dead';
-    }
-    if (hostedObserver) {
-      return 'unknown';
-    }
-  }
-
-  if (apiStatus.backendReachable === true) {
-    return 'alive';
-  }
-
-  if (apiStatus.backendReachable === false && !hostedObserver) {
+  if (backendReachableState === 'no' && isFreshBackendHealthProof(routeTruthView) && timeBoundProof) {
     return 'dead';
   }
 
+  // Local and hosted browser transport failures are not proof that the backend
+  // process has stopped. Keep service state unknown while route links report
+  // browser-to-backend reachability separately.
   return 'unknown';
+}
+
+export function deriveCockpitBackendHealthDiagnostics({
+  apiStatus = {},
+  routeTruthView = {},
+  runtimeStatus = {},
+  nowMs = Date.now(),
+} = {}) {
+  const probe = apiStatus?.runtimeContext?.healthProbeTruth || {};
+  const probedAtMs = Date.parse(String(probe.lastBackendHealthProbeAt || ''));
+  const checkedAtMs = Date.parse(String(apiStatus.lastCheckedAt || ''));
+  const validatedBackendIdentity = apiStatus.backendReachable === true
+    && apiStatus.meta?.ok === true
+    && apiStatus.meta?.service === 'stephanos-server'
+    && apiStatus.meta?.schemaVersion === 'stephanos.backend-health.v1'
+    && apiStatus.meta?.backendIdentity?.runtimeId === 'stephanos-battle-bridge-backend';
+  const recentVerifiedProbe = validatedBackendIdentity
+    && probe.lastBackendHealthProbeResult === 'ok:true'
+    && Number.isFinite(probedAtMs)
+    && Number.isFinite(checkedAtMs)
+    && probedAtMs <= nowMs + 5000
+    && checkedAtMs <= nowMs + 5000
+    && nowMs - probedAtMs >= 0
+    && nowMs - probedAtMs <= 120000
+    && Math.abs(checkedAtMs - probedAtMs) <= 30000;
+
+  return {
+    fresh: recentVerifiedProbe ? 'yes' : (routeTruthView.currentBackendHealthFresh || 'no'),
+    source: recentVerifiedProbe
+      ? (probe.currentBackendHealthSource || 'verified-backend-health')
+      : (routeTruthView.routeTruthHealthSource || 'unknown'),
+    checkedAt: String(apiStatus.lastCheckedAt || runtimeStatus?.runtimeContext?.lastHealthCheckAt || 'unavailable'),
+  };
 }
 
 export function isExecutionActive(runtimeStatus, continuitySnapshot, finalAgentView = null) {
@@ -158,7 +181,7 @@ export function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, pro
     nodeStates[selectedSurface] = routeUsable === 'no' ? 'degraded' : 'alive';
   }
 
-  if (nodeStates.backend !== 'dead') {
+  if (nodeStates.backend === 'alive') {
     nodeStates.backend = routeTruthView.fallbackActive ? 'degraded' : (executionActive ? 'active' : 'alive');
   }
 

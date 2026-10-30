@@ -28,7 +28,9 @@ const HEALTH_SCRIPT = [
   "$ErrorActionPreference='Stop'",
   "$processes=@(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'desktop-commander' -and $_.CommandLine -match 'dist[\\\\/]index\\.js' -and $_.CommandLine -match '\\bremote\\b' })",
   "$task=Get-ScheduledTask -TaskName 'Stephanos Commander Watchdog' -ErrorAction Stop",
-  "$healthy=($processes.Count -ge 1 -and [string]$task.State -eq 'Running')",
+  "$taskInfo=Get-ScheduledTaskInfo -TaskName 'Stephanos Commander Watchdog' -ErrorAction Stop",
+  "$recentSuccess=($taskInfo.LastTaskResult -eq 0 -and $taskInfo.LastRunTime -gt (Get-Date).AddMinutes(-5))",
+  "$healthy=($processes.Count -ge 1 -and ([string]$task.State -eq 'Running' -or ([string]$task.State -eq 'Ready' -and $recentSuccess)))",
   "[ordered]@{ healthy=$healthy; commanderProcessCount=$processes.Count; watchdogTaskState=[string]$task.State } | ConvertTo-Json -Compress",
 ].join('; ');
 
@@ -96,13 +98,13 @@ function defaultProbeDesktopCommander(options = {}) {
   if (payload?.healthy !== true
     || !Number.isSafeInteger(Number(payload?.commanderProcessCount))
     || Number(payload.commanderProcessCount) < 1
-    || text(payload?.watchdogTaskState) !== 'Running') {
+    || !['Running', 'Ready'].includes(text(payload?.watchdogTaskState))) {
     return Object.freeze({ ok: false, reason: 'DESKTOP_COMMANDER_NOT_HEALTHY' });
   }
   return Object.freeze({
     ok: true,
     commanderProcessCount: Number(payload.commanderProcessCount),
-    watchdogTaskState: 'Running',
+    watchdogTaskState: text(payload.watchdogTaskState),
     probeLatencyMs: Math.max(1, Date.now() - startedAtMs),
   });
 }

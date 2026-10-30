@@ -1,6 +1,37 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { getEventListeners } from 'node:events';
 import { requestStephanosBackend, resolveStephanosBackendClientBaseUrl } from './backendClient.mjs';
+
+test('caller cancellation aborts actual fetch without relabelling it as a backend timeout', async () => {
+  const controller = new AbortController();
+  let began, observed;
+  const started = new Promise(resolve => { began = resolve; });
+  const request = requestStephanosBackend({
+    runtimeContext: { frontendOrigin: 'http://127.0.0.1:4173' }, signal: controller.signal,
+    fetchImpl: (_url, { signal }) => { observed = signal; began(); return new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })); },
+  });
+  await started; controller.abort();
+  await assert.rejects(request, { name: 'AbortError' });
+  assert.equal(observed.aborted, true);
+  assert.equal(getEventListeners(controller.signal, 'abort').length, 0);
+});
+
+test('completed polls remove external abort listeners and pre-aborted requests never fetch', async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const options = {
+    runtimeContext: { frontendOrigin: 'http://127.0.0.1:4173' }, signal: controller.signal,
+    fetchImpl: async () => { calls++; return { ok: true, status: 200, text: async () => '{}' }; },
+  };
+  for (let i = 0; i < 25; i++) {
+    await requestStephanosBackend(options);
+    assert.equal(getEventListeners(controller.signal, 'abort').length, 0);
+  }
+  controller.abort();
+  await assert.rejects(requestStephanosBackend(options), { name: 'AbortError' });
+  assert.equal(calls, 25);
+});
 
 test('resolveStephanosBackendClientBaseUrl reuses shared resolver defaults', () => {
   const baseUrl = resolveStephanosBackendClientBaseUrl({

@@ -26,6 +26,7 @@ export const PROGRAMME_CONTROLLER_HEARTBEAT_SCHEMA = 'stephanos.programme-contro
 export const TERMINAL_LANE_FINALIZATION_SCHEMA = 'stephanos.terminal-lane-finalization.v1';
 export const PROGRAMME_STALL_DIAGNOSIS_SCHEMA = 'stephanos.programme-stall-diagnosis.v1';
 export const AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA = 'stephanos.authoritative-programme-projection.v1';
+export const CANONICAL_GOAL_HYDRATION_PROOF_SCHEMA = 'stephanos.canonical-goal-hydration-proof.v1';
 export const PROGRAMME_STALL_MONITOR_ID = 'programme-stall-monitor';
 export const PROGRAMME_STALL_MONITOR_HANDLER_ID = 'programme-stall-diagnosis';
 export const SOURCE_MUTATION_LEASE_STATUS_ID = 'source-mutation-lease-current';
@@ -58,6 +59,8 @@ const ACTIVE_LANE_CONTROLLER_STATES = new Set(['ACTIVE_LANE']);
 const IDLE_SELECTION_CONTROLLER_STATES = new Set(['IDLE', 'RECONCILING']);
 const TERMINAL_LANE_CONTROLLER_STATES = new Set(['FINALIZING', 'RECONCILING']);
 const ACTIVE_EXECUTION_RECEIPT_STATES = new Set(['queued', 'accepted', 'started', 'progress']);
+// A dispatch or claim is not physical source execution.
+const PICKED_UP_EXECUTION_RECEIPT_STATES = new Set(['started', 'progress']);
 const FAILED_EXECUTION_RECEIPT_STATES = new Set(['failed', 'cancelled']);
 const AFFIRMATIVE_PROGRESS_PROOF_STATUSES = new Set([
   'COMPLETE',
@@ -343,6 +346,55 @@ function mergeEvidence(github = {}, expected = {}) {
   });
 }
 
+// Verify a review-only elastic mission from authoritative persisted records,
+// not from caller intent, PR OPEN state, or possession of a source lease.
+export function projectElasticMissionPhaseBindingV1(lease = null, missionRecords = []) {
+  const id = text(lease?.leaseId);
+  const match = /^(critical-([1-9]\d*)-elastic-goal(?:[-_.][a-z0-9._-]+)?)-r([1-9]\d*)-lease$/i.exec(id);
+  if (!match) return Object.freeze({
+    elastic: /^critical-[1-9]\d*-elastic-goal/i.test(id),
+    valid: false, reviewOnly: false, materialImplementation: false,
+    phase: 'UNKNOWN', blocker: 'ELASTIC_MISSION_REVISION_BINDING_NOT_PROVEN',
+  });
+  const expectedId = match[1];
+  const issue = Number(match[2]);
+  const revision = Number(match[3]);
+  const sameIdentity = (mission) => mission && typeof mission === 'object'
+    && text(mission.missionId).toLowerCase() === expectedId.toLowerCase()
+    && Number.isSafeInteger(mission.revision) && mission.revision === revision
+    && issue === number(lease?.issueNumber)
+    && number(mission?.pullRequest?.number) === number(lease?.prNumber)
+    && text(mission.repository).toLowerCase() === text(lease?.repository).toLowerCase()
+    && text(mission?.git?.branch) === text(lease?.branch)
+    && sha(mission?.pullRequest?.headSha) === sha(lease?.headSha)
+    && Boolean(sha(lease?.headSha));
+  const candidates = list(missionRecords).filter((mission) =>
+    text(mission?.missionId).toLowerCase() === expectedId.toLowerCase(),
+  );
+  const matched = candidates.filter(sameIdentity);
+  const valid = candidates.length === 1 && matched.length === 1;
+  // Observation is separate from authority: a unique persisted original may
+  // reveal revision drift without ever satisfying the exact lease binding.
+  const observed = candidates.length === 1 ? candidates[0] : null;
+  const phase = valid ? text(matched[0].currentPhase).toUpperCase() : 'UNKNOWN';
+  const reviewOnly = valid && phase === 'CHECK_PULL_REQUEST';
+  const materialImplementation = valid && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(phase);
+  return Object.freeze({
+    schemaVersion: 'stephanos.elastic-mission-phase-binding.v1',
+    elastic: true, valid, reviewOnly, materialImplementation, phase,
+    issueNumber: valid ? issue : null,
+    missionId: valid ? expectedId : '',
+    revision: valid ? revision : null,
+    blocker: valid ? '' : 'ELASTIC_MISSION_REVISION_BINDING_NOT_PROVEN',
+    observedUniqueOriginal: Boolean(observed),
+    observedRevision: observed && Number.isSafeInteger(observed.revision) ? observed.revision : null,
+    observedPhase: observed ? text(observed.currentPhase).toUpperCase() : 'UNKNOWN',
+    observedDispatchStatus: observed ? text(observed.dispatch?.status).toUpperCase() : 'UNKNOWN',
+    releaseLeaseAllowed: false, replaceWriterAllowed: false,
+    mutationAuthority: false, mergeAuthority: false,
+  });
+}
+
 export function buildCanonicalImplementationLaneProjection(input = {}) {
   const blockers = [];
   const laneId = text(input.laneId ?? input.id);
@@ -395,6 +447,12 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
   }
   const github = mergeEvidence(input.github, { prNumber, headSha, nowUtc: input.nowUtc });
   blockers.push(...github.blockers);
+  const elasticPhaseBound = /^critical-[1-9]\d*-elastic-goal/i.test(text(lease?.leaseId));
+  const phaseBinding = input.elasticMissionPhaseBinding || null;
+  if (elasticPhaseBound && phaseBinding?.valid !== true) {
+    blockers.push('elastic-mission-phase-binding-unproven');
+  }
+
 
   let mutationLeaseIdentity = null;
   if (lease) {
@@ -403,6 +461,9 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
       expected: { laneId, issueNumber, prNumber, headSha, branch, repository },
     });
     if (!leaseValidation.valid) blockers.push(...leaseValidation.errors.map((error) => `lease:${error}`));
+    if (elasticPhaseBound && (leaseValidation.active !== true || leaseValidation.stale === true)) {
+      blockers.push('elastic-lease-expired-or-not-active');
+    }
     mutationLeaseIdentity = {
       leaseId: text(lease.leaseId),
       ownerId: text(lease.ownerId),
@@ -437,7 +498,26 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
     ...list(input.proofReferences),
     ...list(input.proofRefs),
   ].map((value) => text(value)).filter(Boolean));
-  const active = blockers.length === 0 && github.active;
+  const materialPhasePermitted = !elasticPhaseBound
+    || phaseBinding?.materialImplementation === true;
+  // A GitHub OPEN PR and an independent source lease are not a material
+  // Goal Conveyor worker. This binds the current single worker-started
+  // receipt to the exact live lease, worker, issue, PR, branch and head.
+  // Actual OS pickup and custody remain separate production authority gates.
+  const currentExecution = executionReceipts.length === 1 ? executionReceipts[0] : null;
+  const executionStartedOnLease = Boolean(
+    lease && currentExecution && executionReceiptRefs.length === 1
+    && PICKED_UP_EXECUTION_RECEIPT_STATES.has(currentExecution.state)
+    && validateExecutionReceiptAgainstMutationLease(currentExecution, lease, { nowUtc: input.nowUtc }).valid
+  );
+  const active = blockers.length === 0 && github.active && materialPhasePermitted
+    && executionStartedOnLease;
+  // A stopped/failed run is a repair HOLD, not a fresh pending pickup.
+  const pickupPending = blockers.length === 0 && github.active && materialPhasePermitted
+    && !executionStartedOnLease
+    && (!currentExecution || ['queued', 'accepted'].includes(currentExecution.state));
+  const reviewPending = blockers.length === 0 && github.active
+    && elasticPhaseBound && phaseBinding?.reviewOnly === true;
   const terminal = blockers.length === 0 && github.affirmativelyMerged;
   if (!active && !terminal && github.prState === 'CLOSED' && !github.affirmativelyMerged) {
     blockers.push('github-pr-closed-without-affirmative-merge');
@@ -457,8 +537,12 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
     prState: github.prState,
     merged: github.affirmativelyMerged,
     mergeEvidence: github,
-    status: terminal ? 'TERMINAL' : active ? 'ACTIVE' : 'HOLD',
+    status: terminal ? 'TERMINAL' : active ? 'ACTIVE' : reviewPending ? 'REVIEW_PENDING' : 'HOLD',
     active,
+    pickupPending,
+    executionStartedOnLease,
+    reviewPending,
+    elasticMissionPhaseBinding: elasticPhaseBound ? phaseBinding : null,
     terminal,
     executionReceiptRefs,
     proofReferences,
@@ -994,6 +1078,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
   const records = list(input.goalRecords);
   const trustedApprovalReceipts = list(input.trustedOperatorApprovalReceipts);
   const goals = [];
+  const hydrationReceipts = [];
   for (const [index, record] of records.entries()) {
     if (!record || typeof record !== 'object' || Array.isArray(record)) {
       blockers.push(`goal-record-${index}-invalid`);
@@ -1056,6 +1141,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       title: text(record.title, `Goal #${issueNumber}`),
       state: normalizedState(record.state ?? record.status ?? 'WAITING_FOR_EXTERNAL_CONDITION'),
       prerequisites: ownValueOr(record, 'prerequisites', []),
+      resourceIds: ownValueOr(record, 'resourceIds', []),
       priority: Number.isFinite(record.priority) ? record.priority : 0,
       criticalPathWeight: Number.isFinite(record.criticalPathWeight) ? record.criticalPathWeight : 0,
       reversibility: text(record.reversibility, 'UNKNOWN').toUpperCase(),
@@ -1078,6 +1164,31 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       duplicateOf: record.duplicateOf ?? null,
       supersededBy: record.supersededBy ?? null,
     });
+    const hydratedGoal = goals[goals.length - 1];
+    hydrationReceipts.push(freeze({
+      schemaVersion: CANONICAL_GOAL_HYDRATION_PROOF_SCHEMA,
+      receiptKind: 'CANONICAL_GOAL_HYDRATION',
+      sourceIndex: index,
+      sourceGoalId: text(record.goalId),
+      sourceRecordSchemaVersion: text(record.schemaVersion),
+      sourceRecordKind: text(record.kind),
+      sourceTimestampUtc: text(record.timestampUtc),
+      observedAtUtc: nowUtc,
+      canonicalIssueNumber: issueNumber,
+      hydratedIssueNumber: hydratedGoal.issue,
+      identityPreserved: hydratedGoal.issue === issueNumber,
+      sourceState: normalizedState(record.state ?? record.status ?? 'WAITING_FOR_EXTERNAL_CONDITION'),
+      hydratedState: hydratedGoal.state,
+      hydratedRoute: hydratedGoal.route,
+      hydratedTitle: hydratedGoal.title,
+      hydratedResourceIds: freeze(Array.isArray(hydratedGoal.resourceIds) ? [...hydratedGoal.resourceIds] : []),
+      sourceResourceIds: freeze(Array.isArray(record.resourceIds) ? [...record.resourceIds] : []),
+      resourceScopePreserved: JSON.stringify(Array.isArray(hydratedGoal.resourceIds) ? hydratedGoal.resourceIds : [])
+        === JSON.stringify(Array.isArray(record.resourceIds) ? record.resourceIds : []),
+      finalVerdict: hydratedGoal.issue === issueNumber
+        ? 'CANONICAL_GOAL_HYDRATED'
+        : 'CANONICAL_GOAL_HYDRATION_IDENTITY_MISMATCH',
+    }));
   }
   const conveyor = input.criticalBacklog;
   const parkedIssueNumbers = parkedCriticalBacklogIssueNumbers(conveyor);
@@ -1187,6 +1298,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       title: existing?.title ?? `Goal #${lane.issueNumber}`,
       state: 'ACTIVE',
       prerequisites: ownValueOr(existing, 'prerequisites', []),
+      resourceIds: ownValueOr(existing, 'resourceIds', []),
       priority: existing?.priority ?? 0,
       criticalPathWeight: existing?.criticalPathWeight ?? 0,
       reversibility: existing?.reversibility ?? 'UNKNOWN',
@@ -1216,10 +1328,27 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
   }
   const duplicates = goals.map((goal) => goal.issue).filter((issue, index, all) => all.indexOf(issue) !== index);
   if (duplicates.length) blockers.push('duplicate-scheduler-goal-identity');
+  const hydrationProof = freeze({
+    schemaVersion: CANONICAL_GOAL_HYDRATION_PROOF_SCHEMA,
+    observedAtUtc: nowUtc,
+    canonicalRecordsObserved: records.length,
+    hydratedCanonicalGoals: hydrationReceipts.length,
+    rejectedCanonicalRecords: Math.max(0, records.length - hydrationReceipts.length),
+    proven: records.length > 0
+      && hydrationReceipts.length === records.length
+      && hydrationReceipts.every((receipt) => receipt.identityPreserved === true),
+    receipts: hydrationReceipts,
+    finalVerdict: records.length > 0
+      && hydrationReceipts.length === records.length
+      && hydrationReceipts.every((receipt) => receipt.identityPreserved === true)
+      ? 'CANONICAL_GOAL_HYDRATION_PROVEN'
+      : 'CANONICAL_GOAL_HYDRATION_NOT_FULLY_PROVEN',
+  });
   return freeze({
     valid: blockers.length === 0,
     blockers: unique(blockers),
     goals,
+    hydrationProof,
     finalVerdict: blockers.length ? 'PROGRAMME_SCHEDULER_GOALS_HOLD' : 'PROGRAMME_SCHEDULER_GOALS_READY',
   });
 }
@@ -1262,11 +1391,17 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
   if (lease && !lane) blockers.push('mutation-lease-without-lane-projection');
   if (lane && !lane.valid) blockers.push(...list(lane.blockers).map((blocker) => `lane:${blocker}`));
   if (lane?.active && !lease) blockers.push('active-lane-without-source-mutation-lease');
+  if (lane && input.executionReceipt && !lease) blockers.push('execution-receipt-without-source-mutation-lease');
   if (!lane && input.executionReceipt) blockers.push('execution-receipt-cannot-create-lane-authority');
 
   const controllerHeartbeat = input.controllerHeartbeatProjection;
   if (!controllerHeartbeat?.valid || !controllerHeartbeat?.fresh) {
     blockers.push(`controller-heartbeat-${controllerHeartbeat?.valid ? 'stale' : 'invalid-or-missing'}`);
+  }
+  // Controller activity is not authenticated construction when its claimed
+  // lane lacks exact current worker-started receipt and source custody.
+  if (!lane?.active && ACTIVE_LANE_CONTROLLER_STATES.has(controllerHeartbeat?.cycleState)) {
+    blockers.push('controller-heartbeat-phantom-active-lane');
   }
   if (lane?.active && controllerHeartbeat?.activeLaneId !== lane.laneId) {
     blockers.push('controller-heartbeat-active-lane-mismatch');
@@ -1308,7 +1443,7 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     else {
       const executionBinding = validateExecutionReceiptAgainstMutationLease(input.executionReceipt, lease, { nowUtc });
       if (!executionBinding.valid) blockers.push(...executionBinding.errors.map((error) => `execution:${error}`));
-      else if (!ACTIVE_EXECUTION_RECEIPT_STATES.has(input.executionReceipt.state)) {
+      else if (!PICKED_UP_EXECUTION_RECEIPT_STATES.has(input.executionReceipt.state)) {
         blockers.push('active-lane-execution-receipt-state-not-executable');
       }
     }
@@ -1317,13 +1452,46 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
   const scheduler = input.scheduler;
   if (!scheduler || typeof scheduler !== 'object') blockers.push('mission-scheduler-source-missing');
   else if (scheduler.failClosed === true) blockers.push(...list(scheduler.contradictions).map((item) => `scheduler:${text(item.code, 'contradiction')}`));
-  if (!lane && scheduler?.decisionReceipt?.status === 'ACTIVE_LANE') blockers.push('scheduler-active-lane-without-canonical-projection');
+  if (!lane?.active && scheduler?.decisionReceipt?.status === 'ACTIVE_LANE') blockers.push('scheduler-active-lane-without-canonical-projection');
   if (lane?.active && scheduler?.decisionReceipt?.status !== 'ACTIVE_LANE') blockers.push('scheduler-active-lane-status-mismatch');
   if (lane?.active && number(scheduler?.decisionReceipt?.activeIssue) !== lane.issueNumber) blockers.push('scheduler-active-lane-identity-mismatch');
 
   const conveyor = input.criticalBacklog;
   if (!conveyor || typeof conveyor !== 'object') blockers.push('critical-backlog-source-missing');
-  if (lane?.active) {
+
+  // Elastic source work is admitted by the canonical scheduler, not by the
+  // separate legacy critical-backlog mission slot. Only a fully bound, live
+  // material-phase lease with affirmative parked/complete legacy capacity
+  // may skip the legacy active-mission identity checks. The controller,
+  // execution-receipt, scheduler, and source-lease gates above still apply.
+  const independentlyScheduledElasticActiveLane = Boolean(
+    lane?.active === true
+    && lane?.valid === true
+    && lane?.elasticMissionPhaseBinding?.valid === true
+    && lane?.elasticMissionPhaseBinding?.materialImplementation === true
+    && lane?.elasticMissionPhaseBinding?.issueNumber === lane?.issueNumber
+    && lane?.mutationLeaseIdentity?.active === true
+    && lane?.mutationLeaseIdentity?.stale === false
+    && lease?.leaseId === lane?.mutationLeaseIdentity?.leaseId
+    && lease?.issueNumber === lane?.issueNumber
+    && lease?.prNumber === lane?.prNumber
+    && sha(lease?.headSha) === lane?.headSha
+    && text(lease?.branch) === lane?.branch
+    && text(lease?.repository).toLowerCase() === text(lane?.repository).toLowerCase()
+    && conveyor?.schemaVersion === CRITICAL_BACKLOG_CONVEYOR_SCHEMA
+    && conveyor?.validation?.valid === true
+    && conveyor?.elasticGoalMissionsUseSchedulerCapacity === true
+    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY', 'BACKLOG_COMPLETE'].includes(conveyor?.decision)
+    && conveyor?.finalVerdict === (
+      conveyor?.decision === 'BACKLOG_COMPLETE'
+        ? 'CRITICAL_BACKLOG_CONVEYOR_COMPLETE'
+        : 'CRITICAL_BACKLOG_CONVEYOR_PARKED'
+    )
+    && Array.isArray(conveyor?.remainingItemIds)
+    && conveyor.remainingItemIds.length === 0
+    && !conveyor?.activeMission
+  );
+  if (lane?.active && !independentlyScheduledElasticActiveLane) {
     if (!['WAIT_ACTIVE_MISSION', 'WAIT_EXTERNAL_ACTIVE_MISSION'].includes(conveyor?.decision)) {
       blockers.push('critical-backlog-active-lane-status-mismatch');
     }
@@ -1553,8 +1721,8 @@ function boundedProgressTimestamp(value, nowMs) {
     : null;
 }
 
-function isAffirmativeLaneProgressProof(proof, lane, nowMs) {
-  if (!lane?.active || !proof || typeof proof !== 'object' || Array.isArray(proof)) return false;
+function isAffirmativeLaneProgressProof(proof, lane, nowMs, executionObserved = lane?.active) {
+  if (!executionObserved || !proof || typeof proof !== 'object' || Array.isArray(proof)) return false;
   if (proof.kind !== SHARED_WORKSPACE_RECORD_KINDS.PROOF) return false;
   if (!validateSharedWorkspaceRecord(proof, { nowMs: nowMs ?? undefined }).valid) return false;
   if (boundedProgressTimestamp(proof.timestampUtc ?? proof.at, nowMs) === null) return false;
@@ -1589,8 +1757,36 @@ export function diagnoseProgrammeStall(projection = {}, options = {}) {
   if (nowMs === null) blockers.push('stall-observation-time-invalid');
   if (safeProjection !== projection) blockers.push('programme-projection-missing');
   const lane = safeProjection.lane;
+  const observedExecution = safeProjection.executionReceipt;
+  const executionBinding = lane?.valid === true && observedExecution && safeProjection.mutationLease
+    && lane.mutationLeaseIdentity?.leaseId && lane.mutationLeaseIdentity?.ownerId
+    && list(lane.executionReceiptRefs).includes(observedExecution.receiptId)
+    ? validateExecutionReceiptAgainstMutationLease(
+      observedExecution, safeProjection.mutationLease, {
+        nowUtc: options.nowUtc ?? safeProjection.observedAtUtc,
+        expectedLease: {
+          leaseId: lane.mutationLeaseIdentity.leaseId, ownerId: lane.mutationLeaseIdentity.ownerId,
+          laneId: lane.laneId, issueNumber: lane.issueNumber,
+          prNumber: lane.prNumber, branch: lane.branch,
+          repository: lane.repository, headSha: lane.headSha,
+        },
+      },
+    ) : null;
+  // Execution identity and present liveness are distinct diagnostic dimensions.
+  // Only receipt heartbeat expiry may be ignored for diagnosis, never for
+  // ACTIVE or mutation authority. Every other validator error still refuses
+  // attribution, including expired lease, wrong owner and impossible timestamps.
+  const executionIdentityBound = Boolean(executionBinding
+    && (executionBinding.valid || (executionBinding.errors.length === 1
+      && executionBinding.errors[0] === 'receipt-heartbeat-expired')));
+  const runningExecutionBound = executionIdentityBound
+    && PICKED_UP_EXECUTION_RECEIPT_STATES.has(observedExecution.state)
+    && lane.terminal !== true && lane.reviewPending !== true
+    && (!lane.elasticMissionPhaseBinding
+      || lane.elasticMissionPhaseBinding.materialImplementation === true);
+  const executionObserved = lane?.active || runningExecutionBound;
   const proofProgressTimes = list(safeProjection.battleBridgeProofs)
-    .filter((proof) => isAffirmativeLaneProgressProof(proof, lane, nowMs))
+    .filter((proof) => isAffirmativeLaneProgressProof(proof, lane, nowMs, executionObserved))
     .map((proof) => boundedProgressTimestamp(proof.timestampUtc ?? proof.at, nowMs));
   const progressTimes = [
     boundedProgressTimestamp(safeProjection.executionReceipt?.timestampUtc, nowMs),
@@ -1599,14 +1795,19 @@ export function diagnoseProgrammeStall(projection = {}, options = {}) {
   ].filter(Number.isFinite);
   const lastProgressMs = progressTimes.length ? Math.max(...progressTimes) : null;
   const progressAgeMs = lastProgressMs === null || nowMs === null ? null : Math.max(0, nowMs - lastProgressMs);
-  if (safeProjection.lane?.active && safeProjection.controllerHeartbeat?.fresh !== true) blockers.push('controller-heartbeat-not-fresh');
-  if (safeProjection.lane?.active && safeProjection.workerHeartbeat?.fresh !== true) blockers.push('worker-heartbeat-not-fresh');
-  if (safeProjection.lane?.active && safeProjection.executionReceipt?.state === 'stalled') blockers.push('execution-receipt-reports-stall');
-  if (safeProjection.lane?.active && FAILED_EXECUTION_RECEIPT_STATES.has(safeProjection.executionReceipt?.state)) {
+  if (executionObserved && safeProjection.controllerHeartbeat?.fresh !== true) blockers.push('controller-heartbeat-not-fresh');
+  if (executionObserved && safeProjection.workerHeartbeat?.fresh !== true) blockers.push('worker-heartbeat-not-fresh');
+  if (runningExecutionBound && executionBinding.errors.includes('receipt-heartbeat-expired')) {
+    blockers.push('execution-receipt-heartbeat-expired');
+  }
+  if (executionIdentityBound && observedExecution.state === 'stalled') {
+    blockers.push('execution-receipt-reports-stall');
+  }
+  if (executionIdentityBound && FAILED_EXECUTION_RECEIPT_STATES.has(observedExecution.state)) {
     blockers.push('execution-receipt-terminal-failure');
   }
-  if (safeProjection.lane?.active && lastProgressMs === null) blockers.push('active-lane-progress-evidence-missing');
-  if (safeProjection.lane?.active && !EXECUTION_TERMINAL_STATES.has(safeProjection.executionReceipt?.state) && progressAgeMs !== null && progressAgeMs > threshold) blockers.push('active-lane-progress-stale');
+  if (executionObserved && lastProgressMs === null) blockers.push('active-lane-progress-evidence-missing');
+  if (executionObserved && !EXECUTION_TERMINAL_STATES.has(safeProjection.executionReceipt?.state) && progressAgeMs !== null && progressAgeMs > threshold) blockers.push('active-lane-progress-stale');
   if (safeProjection.lane?.terminal && safeProjection.mutationLease) blockers.push('terminal-lane-cleanup-pending');
   const stalled = blockers.length > 0;
   return freeze({

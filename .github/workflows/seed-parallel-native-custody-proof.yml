@@ -1,0 +1,75 @@
+name: Seed Parallel Native Custody Proof
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'src/windows/Stephanos.SeedParallelCustody/**'
+      - 'src/windows/Stephanos.SeedParallelCustody.Tests/**'
+      - 'src/windows/Stephanos.RescueIslandCustody/**'
+      - 'scripts/seed-canopy-parallel-builder.mjs'
+      # The canonical projection imports runtime, project and agents modules.
+      # Cover the whole shared closure, including future transitive imports.
+      - 'shared/**'
+      - 'docs/architecture/seed-parallel-target-write-custody.md'
+      - '.github/workflows/seed-parallel-native-custody-proof.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seed-parallel-native-custody-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  native-new-file-custody:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # verified v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # verified v4
+        with:
+          dotnet-version: '8.0.415'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # verified v4
+        with:
+          node-version: '24.21.0'
+      - name: Verify closed canonical data and native reference bytes against actual source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nodePath = (Get-Command node -CommandType Application -ErrorAction Stop).Source
+          if (-not [System.IO.Path]::IsPathFullyQualified($nodePath)) { throw 'SEED_NODE_PATH_UNPROVEN' }
+          # Official signed release SHASUMS: https://nodejs.org/en/blog/release/v24.21.0
+          $expectedNodeSha256 = 'ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32'
+          $actualNodeSha256 = (Get-FileHash -LiteralPath $nodePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualNodeSha256 -cne $expectedNodeSha256) {
+            # The hosted cache is not executable authority. Use only the fixed
+            # official release bytes, then apply the SAME required digest gate.
+            $fixedNodeDir = Join-Path $env:RUNNER_TEMP 'seed-node-v24.21.0-win-x64'
+            [void](New-Item -ItemType Directory -Path $fixedNodeDir -ErrorAction Stop)
+            $nodePath = Join-Path $fixedNodeDir 'node.exe'
+            Invoke-WebRequest -Uri 'https://nodejs.org/dist/v24.21.0/win-x64/node.exe' -OutFile $nodePath -TimeoutSec 120 -MaximumRedirection 0
+            $actualNodeSha256 = (Get-FileHash -LiteralPath $nodePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
+          if ($actualNodeSha256 -cne $expectedNodeSha256) { throw 'SEED_NODE_EXECUTABLE_DIGEST_MISMATCH' }
+          $actualNodeVersion = & $nodePath --version
+          if ($LASTEXITCODE -ne 0 -or $actualNodeVersion -cne 'v24.21.0') { throw 'SEED_NODE_VERSION_MISMATCH' }
+          Write-Output ('SEED_NODE_EXECUTABLE_SHA256=' + $actualNodeSha256)
+          & $nodePath --test-reporter=tap shared/project/seedCanopyCanonicalInventoryV1.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Exercise actual native new-file handles against disposable replacement attempts
+        shell: pwsh
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_GENERATE_ASPNET_CERTIFICATE: 'false'
+        run: |
+          dotnet run --project src/windows/Stephanos.SeedParallelCustody.Tests --configuration Release -p:NuGetAudit=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Output 'SEED_NATIVE_PROOF_IS_DISPOSABLE_FIXTURE=true'
+          Write-Output 'SEED_PHYSICAL_BUILD_PICKUP_PROVEN=false'
+          Write-Output 'SEED_PRODUCTION_WORKER_COMMISSIONED=false'
+          Write-Output 'R7_ORIGINAL_LEASE_RELEASED=false'

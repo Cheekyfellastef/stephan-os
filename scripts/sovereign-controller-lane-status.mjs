@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -13,13 +13,21 @@ import {
 import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import {
   createSharedWorkspaceStatusRecord,
+  ensureSharedWorkspaceLayout,
+  renameAtomicJsonWithRetry,
+  resolveSharedWorkspacePath,
+  validateSharedWorkspaceWriteAncestors,
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { getSharedWorkspaceSpecializedStatusRecord } from '../shared/agents/sharedWorkspaceSpecializedStatusRegistryV1.mjs';
 
 export const SOVEREIGN_CONTROLLER_LANE_STATUS_SCHEMA = 'stephanos.sovereign-controller-lane-status.v1';
 export const SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER = 'SOVEREIGN_COMMANDER_CONTROLLER_LANE_STATUS_RESULT=';
 export const SOVEREIGN_CONTROLLER_LANE_STATUS_FILE = 'controller-lane-status-current.json';
 export const SOVEREIGN_CONTROLLER_LANE_STATUS_STATUS_ID = 'controller-lane-status-current';
+export const STEPHANOS_BUILD_TRUTH_SCHEMA = 'stephanos.sovereign-build-truth.v1';
+export const STEPHANOS_BUILD_TRUTH_FILE = 'stephanos-build-truth-current.json';
+export const STEPHANOS_BUILD_TRUTH_STATUS_ID = 'stephanos-build-truth-current';
 const MAX_RECORD_FILES = 512;
 const DEFAULT_STALE_AFTER_MS = 90 * 60 * 1000;
 
@@ -57,6 +65,26 @@ function uniqueMaterialLaneCount(controllers = []) {
   return identities.size;
 }
 
+function canonicalGoalKey(value) {
+  const raw = text(value, 160);
+  if (!raw) return '';
+  const match = raw.match(/(?:^|[^0-9])#?(\d+)(?:$|[^0-9])/);
+  return match ? `#${match[1]}` : raw.toLowerCase();
+}
+
+function latestTimestamp(values = []) {
+  return values.map((value) => timestamp(value)).filter(Boolean).sort().at(-1) || '';
+}
+
+function autonomyProvenanceProved(value = {}) {
+  return value?.schemaVersion === 'stephanos.autonomy-provenance.v1'
+    && ['stephanos', 'stephanos-foreman'].includes(text(value?.initiatorId, 80).toLowerCase())
+    && ['self-initiated', 'autonomous-loop'].includes(text(value?.triggerClass, 80).toLowerCase())
+    && value?.operatorInitiated === false
+    && value?.chatgptInitiated === false
+    && value?.manualPoke === false;
+}
+
 function uniqueActiveLaneClaimCount(controllers = []) {
   const identities = new Set();
   controllers.forEach((controller) => {
@@ -77,20 +105,32 @@ export function buildSovereignControllerLaneStatus({
   const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now));
   const safeNowMs = Number.isFinite(nowMs) ? nowMs : Date.now();
   const controllers = Array.isArray(controllerFleet?.controllers) ? controllerFleet.controllers : [];
+  const currentControllers = controllers.filter(
+    (controller) => text(controller?.freshness, 40).toUpperCase() === 'CURRENT',
+  );
+  const stalePhysicalControllerCount = controllers.filter(
+    (controller) => text(controller?.freshness, 40).toUpperCase() === 'STALE',
+  ).length;
+  const nonCurrentPhysicalControllerCount = controllers.length - currentControllers.length;
+  const currentPhysicalHardRedCount = currentControllers.filter(
+    (controller) => text(controller?.trafficLight, 20).toUpperCase() === 'RED',
+  ).length;
   const logicalCurrent = logicalFabricCurrent(logicalFabric, safeNowMs, staleAfterMs);
   const targetMaterialLanes = integer(controllerFleet?.metrics?.TARGET_MATERIAL_LANES) || 15;
-  const activeMaterialLaneCount = uniqueMaterialLaneCount(controllers);
-  const activeLaneClaimCount = uniqueActiveLaneClaimCount(controllers);
-  const reportedMaterialLaneCountSum = controllers.reduce((sum, controller) => (
+  // Physical controller receipts are continuity-host observations. Only current
+  // receipts may contribute live lane occupancy or runnable-work claims.
+  const activeMaterialLaneCount = uniqueMaterialLaneCount(currentControllers);
+  const activeLaneClaimCount = uniqueActiveLaneClaimCount(currentControllers);
+  const reportedMaterialLaneCountSum = currentControllers.reduce((sum, controller) => (
     sum + (Array.isArray(controller?.materialLanes) ? controller.materialLanes.length : 0)
   ), 0);
-  const reportedSafeEligibleWorkMax = controllers.reduce((max, controller) => (
+  const reportedSafeEligibleWorkMax = currentControllers.reduce((max, controller) => (
     Math.max(max, integer(controller?.safeEligibleWorkRemaining))
   ), 0);
-  const reportedSafeEligibleWorkSum = controllers.reduce((sum, controller) => (
+  const reportedSafeEligibleWorkSum = currentControllers.reduce((sum, controller) => (
     sum + integer(controller?.safeEligibleWorkRemaining)
   ), 0);
-  const parkedPhysicalLaneCount = controllers.reduce((sum, controller) => (
+  const parkedPhysicalLaneCount = currentControllers.reduce((sum, controller) => (
     sum + integer(controller?.parkedLaneCount ?? (Array.isArray(controller?.parkedLanes) ? controller.parkedLanes.length : 0), 15)
   ), 0);
 
@@ -114,6 +154,31 @@ export function buildSovereignControllerLaneStatus({
       parkedLaneCount: integer(controller?.parkedLaneCount ?? (Array.isArray(controller?.parkedLanes) ? controller.parkedLanes.length : 0), 15),
       safeEligibleWorkRemaining: integer(controller?.safeEligibleWorkRemaining),
       blocker: text(controller?.blocker, 120).toUpperCase(),
+      lastMaterialActionAtUtc: timestamp(controller?.lastMaterialActionAtUtc),
+      exactNextAction: text(controller?.exactNextAction, 220),
+      proofRefs: Object.freeze((Array.isArray(controller?.proofRefs) ? controller.proofRefs : []).slice(0, 12).map((value) => text(value, 220))),
+      materialLanes: Object.freeze((Array.isArray(controller?.materialLanes) ? controller.materialLanes : []).slice(0, 15).map((lane) => Object.freeze({
+        laneId: text(lane?.laneId, 160),
+        goalId: text(lane?.goalId, 160),
+        prNumber: integer(lane?.prNumber) || null,
+        workerId: text(lane?.workerId, 120),
+        lastMaterialAction: text(lane?.lastMaterialAction, 160),
+        lastMaterialActionAtUtc: timestamp(lane?.lastMaterialActionAtUtc),
+        proofRef: text(lane?.proofRef, 220),
+        blocker: text(lane?.blocker, 160),
+        nextAutomaticAction: text(lane?.nextAutomaticAction, 220),
+        autonomyProvenance: lane?.autonomyProvenance && typeof lane.autonomyProvenance === 'object'
+          ? Object.freeze({
+              schemaVersion: text(lane.autonomyProvenance.schemaVersion, 100),
+              missionId: text(lane.autonomyProvenance.missionId, 120),
+              initiatorId: text(lane.autonomyProvenance.initiatorId, 120),
+              triggerClass: text(lane.autonomyProvenance.triggerClass, 120),
+              operatorInitiated: lane.autonomyProvenance.operatorInitiated === true,
+              chatgptInitiated: lane.autonomyProvenance.chatgptInitiated === true,
+              manualPoke: lane.autonomyProvenance.manualPoke === true,
+            })
+          : null,
+      }))),
     }))),
   });
 
@@ -131,6 +196,25 @@ export function buildSovereignControllerLaneStatus({
       ? logicalFabric.controllers.filter((controller) => controller?.selectedForAdmission === true && controller?.retired !== true).length
       : 0,
     finalVerdict: text(logicalFabric?.finalVerdict, 100).toUpperCase() || 'UNKNOWN',
+    blockers: Object.freeze((Array.isArray(logicalFabric?.blockers) ? logicalFabric.blockers : [])
+      .slice(0, 12)
+      .map((blocker) => text(blocker, 160).toUpperCase())
+      .filter(Boolean)),
+    controllers: Object.freeze((Array.isArray(logicalFabric?.controllers) ? logicalFabric.controllers : [])
+      .filter((controller) => controller?.retired !== true)
+      .map((controller) => Object.freeze({
+        logicalControllerId: text(controller?.logicalControllerId, 120),
+        issueNumber: integer(controller?.goalIssueNumber),
+        goalRef: text(controller?.goalRef, 80),
+        title: text(controller?.goalTitle, 220),
+        lifecycle: text(controller?.lifecycle, 80).toUpperCase(),
+        continuityState: text(controller?.continuityState, 40).toUpperCase(),
+        route: text(controller?.route, 120).toUpperCase(),
+        hostControllerId: text(controller?.hostControllerId, 80),
+        hostControllerTitle: text(controller?.hostControllerTitle, 120),
+        selectedForAdmission: controller?.selectedForAdmission === true,
+        executionOwner: text(controller?.executionOwner, 120),
+      }))),
     hostLoads: Object.freeze((Array.isArray(logicalFabric?.hostLoads) ? logicalFabric.hostLoads : [])
       .slice(0, CANONICAL_CONTROLLER_FLEET.length)
       .map((host) => Object.freeze({
@@ -148,10 +232,12 @@ export function buildSovereignControllerLaneStatus({
   if (!workspaceReady || !controllerFleet?.schemaVersion) {
     refillHealth = 'GREY';
     refillState = 'CONTROLLER_TELEMETRY_UNAVAILABLE';
-  } else if (physical.red > 0 || logical.valid === false) {
+  } else if (logical.valid === false || currentPhysicalHardRedCount > 0) {
     refillHealth = 'RED';
     refillState = 'CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED';
   } else if (!physical.allCurrent || !logicalCurrent || physical.unknown > 0) {
+    // Preserve stale continuity-host telemetry as evidence debt, but do not let
+    // stale red receipts veto a current canonical logical execution fabric.
     refillHealth = 'AMBER';
     refillState = 'TELEMETRY_STALE_OR_INCOMPLETE';
   } else if (activeMaterialLaneCount >= targetMaterialLanes) {
@@ -161,6 +247,19 @@ export function buildSovereignControllerLaneStatus({
     refillHealth = 'AMBER';
     refillState = 'SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE';
   }
+
+  // Reuse the per-goal build-truth witness. Global material-lane occupancy
+  // cannot attest that any particular selected goal was physically picked up.
+  const selectedMaterialPickupProvenCount = buildStephanosBuildTruth({
+    capturedAtUtc: new Date(safeNowMs).toISOString(),
+    physical,
+    logical,
+    lanes: { activeMaterialLaneCount, refillHealth, refillState },
+  }).goals.filter((goal) => (
+    goal.selectedForAdmission === true
+    && goal.state === 'BUILDING'
+    && goal.proofRefs.length > 0
+  )).length;
 
   const finalVerdict = refillHealth === 'RED'
     ? 'SOVEREIGN_CONTROLLER_LANE_STATUS_ATTENTION_REQUIRED'
@@ -179,6 +278,7 @@ export function buildSovereignControllerLaneStatus({
     lanes: Object.freeze({
       targetMaterialLanes,
       activeMaterialLaneCount,
+      selectedMaterialPickupProvenCount,
       activeLaneClaimCount,
       reportedMaterialLaneCountSum,
       occupancyPercent: targetMaterialLanes > 0
@@ -187,6 +287,10 @@ export function buildSovereignControllerLaneStatus({
       freeTargetLaneSlots: Math.max(0, targetMaterialLanes - activeMaterialLaneCount),
       runnableBacklogCount: reportedSafeEligibleWorkMax,
       parkedPhysicalLaneCount,
+      currentPhysicalControllerCount: currentControllers.length,
+      stalePhysicalControllerCount,
+      nonCurrentPhysicalControllerCount,
+      currentPhysicalHardRedCount,
       reportedSafeEligibleWorkMax,
       reportedSafeEligibleWorkSum,
       refillHealth,
@@ -200,6 +304,171 @@ export function buildSovereignControllerLaneStatus({
     unknownMeansGreen: false,
     finalVerdict,
   });
+}
+
+
+export function buildStephanosBuildTruth(status = {}) {
+  const physicalControllers = Array.isArray(status?.physical?.controllers) ? status.physical.controllers : [];
+  const logicalControllers = Array.isArray(status?.logical?.controllers) ? status.logical.controllers : [];
+  const physicalById = new Map(physicalControllers.map((controller) => [text(controller?.controllerId, 80), controller]));
+  const goalRows = logicalControllers.map((logical) => {
+    const host = physicalById.get(text(logical?.hostControllerId, 80)) || {};
+    const goalKey = canonicalGoalKey(logical?.goalRef || logical?.issueNumber || logical?.logicalControllerId);
+    const lanes = Array.isArray(host?.materialLanes) ? host.materialLanes : [];
+    const lane = lanes.find((candidate) => canonicalGoalKey(candidate?.goalId) === goalKey) || null;
+    const continuityState = text(logical?.continuityState, 40).toUpperCase() || 'TRACKING';
+    const hostState = text(host?.activityState, 80).toUpperCase();
+    // A scheduler ACTIVE/selected goal and a BUILDING host are not proof that
+    // this particular logical goal was picked up by a material worker.
+    // Only a current host plus a same-goal, worker-bound material receipt
+    // can promote this goal to BUILDING. Keep the canonical scheduler as owner.
+    const materialPickupProven = Boolean(
+      lane
+      && text(lane.workerId, 120)
+      && text(lane.proofRef, 220)
+      && Array.isArray(host.proofRefs)
+      && host.proofRefs.includes(text(lane.proofRef, 220))
+      && timestamp(lane.lastMaterialActionAtUtc)
+    );
+    let state = continuityState === 'PARKED' ? 'HELD' : 'QUEUED';
+    if (text(host?.freshness, 40).toUpperCase() !== 'CURRENT') state = 'STALE';
+    else if (text(host?.trafficLight, 20).toUpperCase() === 'RED') state = 'BLOCKED';
+    else if (continuityState !== 'PARKED' && hostState === 'BUILDING' && materialPickupProven) state = 'BUILDING';
+    else if (logical?.selectedForAdmission === true && hostState.includes('ELIGIBLE_WORK')) state = 'BLOCKED';
+    const blocker = text(lane?.blocker || host?.blocker, 160);
+    if (blocker && state !== 'STALE') state = 'BLOCKED';
+    return Object.freeze({
+      issue: goalKey || (logical?.issueNumber ? `#${logical.issueNumber}` : ''),
+      title: text(logical?.title, 220),
+      state,
+      controllerId: text(logical?.hostControllerId, 80),
+      controllerTitle: text(logical?.hostControllerTitle, 120),
+      logicalLaneId: text(logical?.logicalControllerId, 120),
+      builder: text(lane?.workerId || logical?.executionOwner, 120) || 'canonical-mission-worker',
+      currentPhase: text(lane?.lastMaterialAction || logical?.route || hostState, 160).toUpperCase(),
+      lastMaterialProgressAtUtc: state === 'BUILDING' ? timestamp(lane?.lastMaterialActionAtUtc) : '',
+      prNumber: integer(lane?.prNumber) || null,
+      // Per-goal truth must never inherit unrelated verified host proofs.
+      // materialPickupProven already confirms this exact lane ref is verified.
+      proofRefs: Object.freeze(state === 'BUILDING'
+        ? [text(lane?.proofRef, 220)]
+        : []),
+      blocker,
+      nextAction: text(lane?.nextAutomaticAction || host?.exactNextAction, 220) || 'Continue through the canonical goal fabric.',
+      autonomous: state === 'BUILDING' && autonomyProvenanceProved(lane?.autonomyProvenance),
+      autonomyTruth: state === 'BUILDING' && autonomyProvenanceProved(lane?.autonomyProvenance) ? 'PROVEN' : 'UNPROVEN',
+      selectedForAdmission: logical?.selectedForAdmission === true,
+    });
+  });
+
+  const activeGoals = goalRows.filter((goal) => ['BUILDING', 'QUEUED', 'HELD', 'BLOCKED', 'STALE'].includes(goal.state));
+  const buildingGoals = activeGoals.filter((goal) => goal.state === 'BUILDING');
+  const autonomousBuildingGoalCount = buildingGoals.filter((goal) => goal.autonomous === true).length;
+  const autonomous = buildingGoals.length > 0 && autonomousBuildingGoalCount === buildingGoals.length;
+  const anyBuilding = activeGoals.some((goal) => goal.state === 'BUILDING') || integer(status?.physical?.building) > 0 || integer(status?.lanes?.activeMaterialLaneCount) > 0;
+  const stale = status?.physical?.allCurrent !== true || status?.logical?.current !== true;
+  const stranded = text(status?.lanes?.refillState, 120).toUpperCase() === 'SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE';
+  const blocked = integer(status?.physical?.red) > 0 || text(status?.lanes?.refillHealth, 20).toUpperCase() === 'RED' || stranded || activeGoals.some((goal) => goal.state === 'BLOCKED');
+  const held = !anyBuilding && !blocked && activeGoals.some((goal) => goal.state === 'HELD');
+  const queued = !anyBuilding && !blocked && activeGoals.some((goal) => goal.state === 'QUEUED');
+  const state = stale ? 'STALE'
+    : blocked ? 'BLOCKED'
+      : anyBuilding ? 'BUILDING'
+        : held ? 'HELD'
+          : queued ? 'QUEUED'
+            : 'IDLE_GREEN';
+  const lastMaterialProgressAtUtc = latestTimestamp([
+    ...physicalControllers.map((controller) => controller?.lastMaterialActionAtUtc),
+    ...activeGoals.map((goal) => goal.lastMaterialProgressAtUtc),
+  ]);
+  const blockers = [...new Set([
+    ...activeGoals.map((goal) => goal.blocker).filter(Boolean),
+    ...(stranded ? ['SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE'] : []),
+  ])];
+
+  return Object.freeze({
+    schemaVersion: STEPHANOS_BUILD_TRUTH_SCHEMA,
+    observedAtUtc: timestamp(status?.capturedAtUtc) || new Date().toISOString(),
+    state,
+    trafficLight: state === 'BUILDING' || state === 'IDLE_GREEN' ? 'GREEN'
+      : state === 'QUEUED' ? 'BLUE'
+        : state === 'HELD' ? 'AMBER'
+          : state === 'STALE' ? 'GREY'
+            : 'RED',
+    autonomous,
+    autonomyTruth: autonomous ? 'PROVEN' : 'UNPROVEN',
+    autonomousBuildingGoalCount,
+    activeGoalCount: activeGoals.length,
+    buildingGoalCount: buildingGoals.length,
+    queuedGoalCount: activeGoals.filter((goal) => goal.state === 'QUEUED').length,
+    heldGoalCount: activeGoals.filter((goal) => goal.state === 'HELD').length,
+    blockedGoalCount: activeGoals.filter((goal) => goal.state === 'BLOCKED').length,
+    activeMaterialLaneCount: integer(status?.lanes?.activeMaterialLaneCount, 15),
+    targetMaterialLaneCount: integer(status?.lanes?.targetMaterialLanes, 15) || 15,
+    lastMaterialProgressAtUtc,
+    goals: Object.freeze(activeGoals),
+    blockers: Object.freeze(blockers),
+    nextAction: state === 'BLOCKED'
+      ? 'Repair the blocked autonomous build flow and re-dispatch safe eligible work.'
+      : state === 'STALE'
+        ? 'Refresh Sovereign Commander controller and logical-lane evidence.'
+        : state === 'BUILDING'
+          ? 'Continue autonomous building and publish fresh material proof.'
+          : state === 'QUEUED'
+            ? 'Dispatch the selected safe goal into a material builder lane.'
+            : state === 'HELD'
+              ? 'Keep held work visible and release it automatically when its guard condition clears.'
+              : 'Remain ready and immediately admit the next safe eligible goal.',
+    source: 'sovereign-controller-lane-status',
+    sourceVerdict: text(status?.finalVerdict, 120),
+    staleMeansGreen: false,
+    noWorkMeansGreenOnlyWhenCurrent: true,
+    sourceMutationAllowed: false,
+    runtimeMutationAllowed: false,
+    mergeAuthority: false,
+  });
+}
+
+export function buildSharedWorkspaceStephanosBuildTruthRecord(buildTruth = {}) {
+  const timestampUtc = timestamp(buildTruth?.observedAtUtc) || new Date().toISOString();
+  const summary = `Stephanos foreman ${text(buildTruth?.state, 40).toUpperCase() || 'UNKNOWN'}: ${integer(buildTruth?.buildingGoalCount)} building, ${integer(buildTruth?.activeGoalCount)} active/queued/held, lanes ${integer(buildTruth?.activeMaterialLaneCount, 15)}/${integer(buildTruth?.targetMaterialLaneCount, 15) || 15}.`;
+  return Object.freeze({
+    ...createSharedWorkspaceStatusRecord({
+      statusId: STEPHANOS_BUILD_TRUTH_STATUS_ID,
+      participantId: 'sovereign-commander',
+      timestampUtc,
+      relatedIssue: '#2002',
+      status: text(buildTruth?.state, 40).toUpperCase() || 'UNKNOWN',
+      summary,
+      proofRefs: [...new Set((Array.isArray(buildTruth?.goals) ? buildTruth.goals : []).flatMap((goal) => Array.isArray(goal?.proofRefs) ? goal.proofRefs : []))].slice(0, 24),
+    }),
+    stephanosBuildTruth: buildTruth,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    runtimeMutationAllowed: false,
+    mergeAuthority: false,
+  });
+}
+
+export async function publishSharedWorkspaceStephanosBuildTruth(buildTruth, {
+  repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url))),
+  env = process.env,
+  writeAtomicJsonFn = writeAtomicJson,
+} = {}) {
+  const config = resolveSharedWorkspaceRuntimeConfig({ repoRoot, env });
+  if (!config.ok || !config.root) return Object.freeze({ ok: false, reason: config.reason || 'SHARED_WORKSPACE_UNAVAILABLE' });
+  const record = buildSharedWorkspaceStephanosBuildTruthRecord(buildTruth);
+  try {
+    const write = await writeAtomicJsonFn(
+      config.root,
+      ['status', STEPHANOS_BUILD_TRUTH_FILE],
+      record,
+      { repoRoot, nowMs: Date.parse(record.timestampUtc), staleAfterMs: Number.MAX_SAFE_INTEGER },
+    );
+    return Object.freeze({ ok: write?.ok === true, reason: write?.reason || 'STEPHANOS_BUILD_TRUTH_PUBLICATION_FAILED', path: write?.path || '' });
+  } catch (error) {
+    return Object.freeze({ ok: false, reason: error?.code || error?.message || 'STEPHANOS_BUILD_TRUTH_PUBLICATION_FAILED' });
+  }
 }
 
 export function buildSharedWorkspaceControllerLaneStatusRecord(status = {}) {
@@ -227,27 +496,69 @@ export function buildSharedWorkspaceControllerLaneStatusRecord(status = {}) {
   });
 }
 
+export async function writeControllerLaneSpecializedStatus(record, {
+  root,
+  repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url))),
+  writeFileFn = writeFile,
+  renameFn = rename,
+  unlinkFn = unlink,
+  nowMs = Date.now(),
+} = {}) {
+  if (
+    record?.statusId !== SOVEREIGN_CONTROLLER_LANE_STATUS_STATUS_ID
+    || record?.controllerLaneStatusSchemaVersion !== SOVEREIGN_CONTROLLER_LANE_STATUS_SCHEMA
+    || record?.controllerLaneStatus?.schemaVersion !== SOVEREIGN_CONTROLLER_LANE_STATUS_SCHEMA
+  ) {
+    return Object.freeze({ ok: false, reason: 'CONTROLLER_LANE_STATUS_RECORD_INVALID' });
+  }
+  const registration = getSharedWorkspaceSpecializedStatusRecord(SOVEREIGN_CONTROLLER_LANE_STATUS_FILE);
+  if (!registration?.schemaIds?.includes(SOVEREIGN_CONTROLLER_LANE_STATUS_SCHEMA)) {
+    return Object.freeze({ ok: false, reason: 'CONTROLLER_LANE_STATUS_NOT_REGISTERED' });
+  }
+  const layout = await ensureSharedWorkspaceLayout({ root, repoRoot });
+  if (!layout.ok) return Object.freeze({ ok: false, reason: layout.reason || 'SHARED_WORKSPACE_UNAVAILABLE' });
+  const resolved = resolveSharedWorkspacePath({
+    root: layout.root,
+    repoRoot,
+    segments: ['status', SOVEREIGN_CONTROLLER_LANE_STATUS_FILE],
+  });
+  if (!resolved.ok) return Object.freeze({ ok: false, reason: resolved.reason || 'CONTROLLER_LANE_STATUS_PATH_BLOCKED' });
+  const ancestors = await validateSharedWorkspaceWriteAncestors(resolved);
+  if (!ancestors.ok) return Object.freeze({ ok: false, reason: ancestors.reason || 'CONTROLLER_LANE_STATUS_ANCESTOR_BLOCKED' });
+
+  const payload = `${JSON.stringify(record, null, 2)}\n`;
+  const tempPath = `${resolved.path}.${process.pid}.${Number(nowMs) || Date.now()}.tmp`;
+  try {
+    await writeFileFn(tempPath, payload, { flag: 'wx', mode: 0o600 });
+    const publicationAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
+    if (!publicationAncestors.ok) {
+      try { await unlinkFn(tempPath); } catch {}
+      return Object.freeze({ ok: false, reason: publicationAncestors.reason || 'CONTROLLER_LANE_STATUS_ANCESTOR_BLOCKED' });
+    }
+    await renameAtomicJsonWithRetry(tempPath, resolved.path, { renameFn });
+    return Object.freeze({
+      ok: true,
+      reason: 'CONTROLLER_LANE_STATUS_PUBLISHED',
+      path: resolved.path,
+      bytes: Buffer.byteLength(payload),
+    });
+  } catch (error) {
+    try { await unlinkFn(tempPath); } catch {}
+    return Object.freeze({ ok: false, reason: error?.code || error?.message || 'CONTROLLER_LANE_STATUS_PUBLICATION_FAILED' });
+  }
+}
+
 export async function publishSharedWorkspaceControllerLaneStatus(status, {
   repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url))),
   env = process.env,
-  writeAtomicJsonFn = writeAtomicJson,
+  specializedWriterFn = writeControllerLaneSpecializedStatus,
 } = {}) {
   const config = resolveSharedWorkspaceRuntimeConfig({ repoRoot, env });
   if (!config.ok || !config.root) {
     return Object.freeze({ ok: false, reason: config.reason || 'SHARED_WORKSPACE_UNAVAILABLE' });
   }
   const record = buildSharedWorkspaceControllerLaneStatusRecord(status);
-  try {
-    const write = await writeAtomicJsonFn(
-      config.root,
-      ['status', SOVEREIGN_CONTROLLER_LANE_STATUS_FILE],
-      record,
-      { repoRoot, nowMs: Date.parse(record.timestampUtc), staleAfterMs: Number.MAX_SAFE_INTEGER },
-    );
-    return Object.freeze({ ok: write?.ok === true, reason: write?.reason || 'CONTROLLER_LANE_STATUS_PUBLICATION_FAILED', path: write?.path || '' });
-  } catch (error) {
-    return Object.freeze({ ok: false, reason: error?.code || error?.message || 'CONTROLLER_LANE_STATUS_PUBLICATION_FAILED' });
-  }
+  return specializedWriterFn(record, { root: config.root, repoRoot });
 }
 
 async function readJsonDirectory(path, maxFiles = MAX_RECORD_FILES) {
@@ -311,16 +622,98 @@ export async function collectSovereignControllerLaneStatus({
   });
 }
 
+// The existing Sovereign Commander fixed-process boundary preserves at most
+// 16 KiB of stdout. The full 75-goal logical fabric can exceed that and truncate
+// the JSON line, turning a healthy *observation transport* into an invalid
+// receipt. Emit an allowlisted count/host/physical summary ONLY for the remote
+// --snapshot-only verb. The full local publisher and build-truth evidence remain
+// unchanged. No lease, admission or physical-pickup authority is conferred.
+export function projectBoundedRemoteControllerLaneStatus(status = {}) {
+  if (status?.schemaVersion !== SOVEREIGN_CONTROLLER_LANE_STATUS_SCHEMA
+      || status?.ok !== true
+      || status?.readOnly !== true
+      || status?.arbitraryShellAllowed !== false
+      || status?.sourceMutationAllowed !== false
+      || status?.mergeAuthority !== false
+      || status?.secretMaterialIncluded !== false
+      || status?.unknownMeansGreen !== false) {
+    throw new Error('CONTROLLER_LANE_STATUS_REMOTE_SOURCE_INVALID');
+  }
+  const pick = (source, keys) => Object.fromEntries(
+    keys.filter((key) => source?.[key] !== undefined).map((key) => [key, source[key]]),
+  );
+  return Object.freeze({
+    ...pick(status, [
+      'schemaVersion', 'ok', 'capturedAtUtc', 'finalVerdict',
+      'readOnly', 'arbitraryShellAllowed', 'sourceMutationAllowed',
+      'mergeAuthority', 'secretMaterialIncluded', 'unknownMeansGreen',
+    ]),
+    physical: Object.freeze({
+      ...pick(status.physical, [
+        'expected', 'building', 'amber', 'red', 'unknown', 'allCurrent',
+        'allObservedEnabled', 'finalVerdict',
+      ]),
+      controllers: Object.freeze((status.physical?.controllers || []).slice(0, 5)
+        .map((row) => Object.freeze(pick(row, [
+          'controllerId', 'title', 'freshness', 'activityState', 'trafficLight',
+          'materialLaneCount', 'activeLaneCount', 'parkedLaneCount',
+          'safeEligibleWorkRemaining', 'blocker',
+        ])))),
+    }),
+    logical: Object.freeze({
+      ...pick(status.logical, [
+        'current', 'valid', 'observedAtUtc', 'physicalControllerCount', 'total',
+        'active', 'tracking', 'parked', 'retired', 'selectedForAdmission',
+        'finalVerdict',
+      ]),
+      hostLoads: Object.freeze((status.logical?.hostLoads || []).slice(0, 5)
+        .map((host) => Object.freeze(pick(host, [
+          'controllerId', 'title', 'logicalControllerCount', 'activeCount',
+          'trackingCount', 'parkedCount',
+        ])))),
+    }),
+    lanes: Object.freeze(pick(status.lanes, [
+      'targetMaterialLanes', 'activeMaterialLaneCount',
+      'selectedMaterialPickupProvenCount', 'activeLaneClaimCount',
+      'reportedMaterialLaneCountSum', 'occupancyPercent', 'freeTargetLaneSlots',
+      'runnableBacklogCount', 'parkedPhysicalLaneCount',
+      'currentPhysicalControllerCount', 'stalePhysicalControllerCount',
+      'nonCurrentPhysicalControllerCount', 'currentPhysicalHardRedCount',
+      'reportedSafeEligibleWorkMax', 'reportedSafeEligibleWorkSum',
+      'refillHealth', 'refillState',
+    ])),
+  });
+}
+
+// The MCP fixed read-only diagnostic must not wait on mutable Shared Workspace
+// publications. The periodic publisher keeps both existing writes unchanged.
 export async function runSovereignControllerLaneStatus(options = {}) {
-  const status = await collectSovereignControllerLaneStatus(options);
-  await publishSharedWorkspaceControllerLaneStatus(status, options);
-  process.stdout.write(`${SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER}${JSON.stringify(status)}\n`);
+  const status = await (options.collectStatusFn || collectSovereignControllerLaneStatus)(options);
+  if (options.snapshotOnly !== true) {
+    await (options.publishStatusFn || publishSharedWorkspaceControllerLaneStatus)(status, options);
+    await (options.publishBuildTruthFn || publishSharedWorkspaceStephanosBuildTruth)(buildStephanosBuildTruth(status), options);
+  }
+  const output = options.snapshotOnly === true
+    ? projectBoundedRemoteControllerLaneStatus(status)
+    : status;
+  const line = `${SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER}${JSON.stringify(output)}\n`;
+  // Never silently truncate a purported complete structured receipt.
+  if (options.snapshotOnly === true && Buffer.byteLength(line, 'utf8') > 12 * 1024) {
+    throw new Error('CONTROLLER_LANE_STATUS_REMOTE_OUTPUT_TOO_LARGE');
+  }
+  (options.emitFn || ((value) => process.stdout.write(value)))(line);
   return status;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  runSovereignControllerLaneStatus().catch((error) => {
-    process.stderr.write(`${text(error?.message || error, 240)}\n`);
+  const args = process.argv.slice(2);
+  if (args.length > 1 || (args.length === 1 && args[0] !== '--snapshot-only')) {
+    process.stderr.write('CONTROLLER_LANE_STATUS_ARGUMENTS_INVALID\n');
     process.exitCode = 1;
-  });
+  } else {
+    runSovereignControllerLaneStatus({ snapshotOnly: args[0] === '--snapshot-only' }).catch((error) => {
+      process.stderr.write(`${text(error?.message || error, 240)}\n`);
+      process.exitCode = 1;
+    });
+  }
 }
