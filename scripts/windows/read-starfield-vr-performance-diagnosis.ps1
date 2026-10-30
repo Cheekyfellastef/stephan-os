@@ -41,7 +41,8 @@ function Get-NumericValues {
         $parsed = 0.0
         if ([double]::TryParse([string]$raw, [ref]$parsed)) { $values.Add($parsed) }
     }
-    return @($values)
+    # Preserve an empty or single-value array across the PowerShell pipeline.
+    return ,@($values)
 }
 
 function Get-Average {
@@ -92,7 +93,7 @@ $sessionRoute = Get-OptionalValue -Object $session -Name 'routeIdentity'
 $summaryRoute = Get-OptionalValue -Object $summary -Name 'routeIdentity'
 $sessionProvider = [string](Get-OptionalValue -Object $sessionRoute -Name 'provider' -Default '')
 $summaryProvider = [string](Get-OptionalValue -Object $summaryRoute -Name 'provider' -Default '')
-$providerValues = @($sessionProvider, $summaryProvider) | Where-Object { $_ -in @('mutar-openxr','vorpx') } | Select-Object -Unique
+$providerValues = @(@($sessionProvider, $summaryProvider) | Where-Object { $_ -in @('mutar-openxr','vorpx') } | Select-Object -Unique)
 $providerIdentityStatus = if ($providerValues.Count -gt 1) {
     'PROVIDER_IDENTITY_CONFLICT'
 } elseif ($providerValues.Count -eq 1) {
