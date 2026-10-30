@@ -17,6 +17,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { settleMailboxRotationDrain } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 
 export const MAILBOX_OUTBOX_GUARD_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-guard.v1';
 export const MAILBOX_OUTBOX_DEFERRED_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-deferred.v1';
@@ -1449,6 +1450,23 @@ function releaseGuardLock(lock) {
   } catch {}
 }
 
+// The existing source-sync operation uses the same singleton guard during an
+// epoch transition. This is an internal synchronous adapter, not a new worker,
+// caller-selected path, shell capability or alternate source authority.
+export function withMailboxOutboxGuardLock(operation, { env = process.env } = {}) {
+  if (typeof operation !== 'function') throw new Error('MAILBOX_OUTBOX_OPERATION_REQUIRED');
+  const deferredPath = join(mailboxStateRootFromEnv(env), 'receipt-publication-deferred-v1.json');
+  const lock = acquireGuardLock(deferredPath, new Date(), { tokenFn: () => randomUUID().replaceAll('-', ''),
+    processIdentityFn: defaultProcessIdentity, staleAfterMs: MAILBOX_LOCK_STALE_AFTER_MS });
+  try {
+    verifyGuardLock(lock);
+    const result = operation(lock);
+    if (result && typeof result.then === 'function') throw new Error('MAILBOX_OUTBOX_SYNCHRONOUS_OPERATION_REQUIRED');
+    verifyGuardLock(lock);
+    return result;
+  } finally { releaseGuardLock(lock); }
+}
+
 function resolveProductionPaths({ env = process.env, repoRoot = defaultRepoRoot } = {}) {
   const actualRepoRoot = resolve(repoRoot);
   const expectedRepoRoot = resolve(env.USERPROFILE || homedir(), 'Documents', 'GitHub', 'stephan-os');
@@ -1542,10 +1560,10 @@ export function runMailboxOutboxGuard({
       metrics,
       faultFn,
     );
-    atomicWriteJson(statePath, {
+    atomicWriteJson(statePath, settleMailboxRotationDrain({
       ...stateAfter,
       pendingReceiptPublications: [],
-    }, { maxBytes: MAILBOX_STATE_MAX_BYTES, metrics });
+    }, { outboxPendingCount: pendingCount(manifest), now: now().toISOString() }), { maxBytes: MAILBOX_STATE_MAX_BYTES, metrics });
 
     const childOk = !child?.error && child?.status === 0;
     const childStatus = parseMailboxChildStatus(child?.stdout);

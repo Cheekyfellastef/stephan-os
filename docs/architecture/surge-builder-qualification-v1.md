@@ -1,0 +1,7 @@
+# Builder 9-13 proof projection (Goal #3006)
+
+This is a **read-only, fail-closed acceptance adapter**, not an installer, new scheduler, new worker, lease owner or provider. The existing canonical Programme Authority/Mission Worker must supply trusted callbacks that independently read live signed capacity, canonical resource custody, operating-system pickup/diff/test receipts and exact-head independently reviewed protected-merge/installed-runtime evidence. Untrusted issue comments, labels or caller-supplied green states cannot supply those callbacks.
+
+Builder 9 needs a real physical material canary before 10-13 can qualify. The adapter checks distinct worktree, queue and capacity-resource identities, canonical resource overlap, fresh signed health and gaming/resource admission, independently verified pickup and test receipts, and actual protected integration and current installed head. It never releases a lease, starts a process, merges a PR, installs a model or grants execution authority. Source and hosted tests are **not** live commissioning; the original Goal #3006 remains open until physical proof and productive refill are observed.
+
+Future native deployment should bind these callbacks to *existing* signed producers, the canonical claim/lease ledger, the protected review collector and current installed-source proof. Reuse existing one-parameter installer/supervisor primitives; never register five copies against a single saturated CPU/model/GPU queue or claim five processes from five configuration slots.

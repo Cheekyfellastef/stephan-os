@@ -345,9 +345,20 @@ async function sourceArtifactIdentityFromWorktree(action, execution, claim, opti
   }
 }
 
+// Capture remains the existing bounded Git operation. Native source-task callers
+// capture inside their owned Job; this export adds no claim or execution authority.
+export { sourceArtifactIdentityFromWorktree as captureSourceArtifactIdentityFromWorktreeV1 };
+
 export async function finalizeSourceArtifactEscrowFromWorktreeV1(action, execution, claim, options = {}) {
   if (execution?.success !== true || !Array.isArray(execution.changedFiles) || execution.changedFiles.length === 0) return execution;
   const identity = await sourceArtifactIdentityFromWorktree(action, execution, claim, options);
+  return finalizeSourceArtifactEscrowFromCapturedIdentityV1(action, execution, identity, options);
+}
+
+// Data-only completion from the existing captured identity. The owning caller
+// must independently prove its exact claim and native release before invoking it.
+export async function finalizeSourceArtifactEscrowFromCapturedIdentityV1(action, execution, identity, options = {}) {
+  if (execution?.success !== true || !Array.isArray(execution.changedFiles) || execution.changedFiles.length === 0) return execution;
   const persist = typeof options.persistSourceArtifactEscrow === 'function'
     ? options.persistSourceArtifactEscrow
     : (input) => persistSourceArtifactEscrowV1(input, {

@@ -5,7 +5,90 @@ import {
   applyMissionOrchestratorEvent,
   buildMissionOperationsSnapshot,
   createMissionOrchestratorState,
+  isRetryableAgentFailureBlocker,
+  projectNarrowedMissionSourceScopeV1,
 } from './missionOrchestrator.mjs';
+
+test('retry source scope is directional containment with unchanged path boundaries', () => {
+  const project = projectNarrowedMissionSourceScopeV1;
+  for (const [prior, next] of [
+    [['**'], ['shared/agents/example.mjs']],
+    [['shared/**'], ['shared/agents/example.mjs', 'shared/agents/example.mjs/**']],
+    [['shared/agents/example.mjs', 'scripts/**'], ['shared/agents/example.mjs']],
+  ]) assert.equal(project(prior, next).valid, true);
+  for (const [prior, next] of [
+    [['shared/agents/example.mjs'], ['shared/agents/example.mjs/**']],
+    [['shared/agents/**'], ['shared/**']],
+    [['shared/agents/**'], ['shared/agents-other/a.mjs']],
+    [['**'], ['**']], [['**'], []], [[], ['shared/a.mjs']],
+    [['**'], new Array(1)], [new Array(1), ['shared/a.mjs']],
+    [['**'], ['../shared/a.mjs']], [['**'], ['C:/shared/a.mjs']],
+    [['**'], ['shared//a.mjs']], [['**'], ['shared/./a.mjs']],
+    [['**'], ['.git/config']], [['**'], ['shared/token.mjs']],
+    [['**'], ['shared/a.mjs', 'SHARED/A.mjs']], [['**'], ['shared/*.mjs']],
+  ]) assert.equal(project(prior, next).valid, false, JSON.stringify([prior, next]));
+});
+
+test('failed task retry atomically narrows scope and strengthens acceptance without replacing its history', () => {
+  let state = createMissionOrchestratorState({...base, allowedFiles: ['**']}, {now: new Date(timestamp(0))});
+  state = event(state, 'WORKTREE_READY', {worktreePath: base.worktreePath, clean: true, receipt: receipt('worktree', 'narrow-worktree')});
+  state = event(state, 'AGENT_DISPATCHED', {agentId: 'foundry-forge'});
+  state = event(state, 'AGENT_RESULT_RECEIVED', {success: false, resultId: 'original-narrow-action', error: 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED'});
+  state = event(state, 'MISSION_PARKED_FOR_REPAIR', {reason: 'Original failure', repairOwner: '#2961', receipt: receipt('park', 'narrow-park')});
+  const original = structuredClone(state);
+  const scope = ['shared/agents/example.mjs'];
+  const tests = [...original.requiredTests, 'node --test scripts/independent.test.mjs'];
+  const fields = { retryableBlockers: original.blockers, retryAllowedFiles: scope, retryRequiredTests: tests,
+    retryPlanSourceHead: 'a'.repeat(40), receipt: receipt('retry', 'narrow-retry') };
+  const next = event(original, 'AGENT_FAILURE_RETRY_ADMITTED', fields);
+  assert.equal(next.currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(next.repair.currentRound, original.repair.currentRound + 1);
+  assert.deepEqual(next.allowedFiles, scope);
+  assert.deepEqual(next.requiredTests, tests);
+  assert.deepEqual(next.repair.history.at(-1).previousAllowedFiles, ['**']);
+  assert.deepEqual(next.repair.history.at(-1).previousDispatch, original.dispatch);
+  assert.deepEqual(next.repair.history.at(-1).previousRequiredTests, original.requiredTests);
+  assert.deepEqual(next.continuity.history.slice(0, -1), original.continuity.history);
+  const dispatched = event(next, 'AGENT_DISPATCHED', {agentId: 'codex', adapter: 'codex'});
+  const outside = event(dispatched, 'AGENT_RESULT_RECEIVED', {success: true,
+    changedFiles: ['scripts/independent.test.mjs'], receipt: receipt('result', 'narrow-outside')});
+  assert.equal(outside.currentPhase, 'BLOCKED');
+  assert.match(outside.blockers.join(' '), /exceeded approved source scope/);
+  for (const change of [ {retryPlanSourceHead: ''}, {retryAllowedFiles: ['**']},
+    {retryRequiredTests: original.requiredTests}, {retryAllowedFiles: ['scripts/**']},
+    {retryRequiredTests: ['node --test scripts/independent.test.mjs']} ]) {
+    const rejected = event(original, 'AGENT_FAILURE_RETRY_ADMITTED', {...fields, ...change});
+    assert.equal(rejected.currentPhase, 'BLOCKED');
+    assert.deepEqual(rejected.allowedFiles, original.allowedFiles);
+    assert.deepEqual(rejected.requiredTests, original.requiredTests);
+    assert.equal(rejected.repair.currentRound, original.repair.currentRound);
+  }
+});
+
+test('test failure retry binds the complete validated consumed test plan', () => {
+  const command = 'node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs';
+  const blocker = `PROVIDER_NEUTRAL_TEST_FAILED:${command}`;
+  for (const [plan, eligible] of [
+    [[command], true], [['npm run stephanos:verify', command], true],
+    [['npm run stephanos:verify'], false], [[], false],
+    [[command, 'npm install'], false], [[command, command], false],
+  ]) {
+    assert.equal(isRetryableAgentFailureBlocker(blocker, plan), eligible);
+    let state = createMissionOrchestratorState({ ...base, requiredTests: plan });
+    state.requiredTests = [...plan]; state.git.worktreeReady = true; state.git.clean = true;
+    state.currentPhase = 'BLOCKED'; state.dispatch.status = 'failed'; state.blockers = [blocker];
+    const next = event(state, 'AGENT_FAILURE_RETRY_ADMITTED', {
+      retryableBlockers: [blocker], receipt: receipt('retry', 'test-plan-retry'),
+    });
+    assert.equal(next.currentPhase, eligible ? 'AGENT_IMPLEMENTATION' : 'BLOCKED');
+    assert.equal(next.repair.currentRound, eligible ? 1 : 0);
+    assert.deepEqual(next.requiredTests, state.requiredTests);
+  }
+  for (const invalid of [command + ';whoami', command + ' --watch', command + '\nwhoami',
+    'node --test scripts/../secret.test.mjs', 'node --test scripts/*.test.mjs']) {
+    assert.equal(isRetryableAgentFailureBlocker('PROVIDER_NEUTRAL_TEST_FAILED:' + invalid, [invalid]), false);
+  }
+});
 
 const base = {
   missionId: 'mission-orchestrator-test',
@@ -681,4 +764,39 @@ test('accepted replacement repair prevents duplicate Forge pickup for VR Link',(
  const next=event(state,'AGENT_DISPATCHED',{agentId:'foundry-forge',adapter:'foundry-forge'});
  assert.notEqual(next.dispatch.status,'running');
  assert.match(next.blockers.join(' '),/REPLACEMENT_SOURCE_ALREADY_MERGED/);
+});
+
+test('parked source diff retry binds stronger independent tests while preserving the failed attempt', () => {
+  let state = createMissionOrchestratorState({...base, allowedFiles: ['shared/agents/example.mjs']}, {now: new Date(timestamp(0))});
+  state = event(state, 'WORKTREE_READY', {worktreePath: base.worktreePath, clean: true, receipt: receipt('worktree', 'eof-worktree')});
+  state = event(state, 'AGENT_DISPATCHED', {agentId: 'foundry-forge'});
+  state = event(state, 'AGENT_RESULT_RECEIVED', {success: false, resultId: 'original-eof-action', error: 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED'});
+  state = event(state, 'MISSION_PARKED_FOR_REPAIR', {reason: 'Original EOF failure', repairOwner: '#2961', receipt: receipt('park', 'eof-park')});
+  const original = structuredClone(state);
+  const extra = 'node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs';
+  for (const plan of [undefined, [], state.requiredTests, [extra]]) {
+    const rejected = event(original, 'AGENT_FAILURE_RETRY_ADMITTED', {retryableBlockers: original.blockers, retryRequiredTests: plan, receipt: receipt('retry', 'eof-retry-refuse')});
+    assert.equal(rejected.currentPhase, 'BLOCKED');
+    assert.equal(rejected.continuity.parkingStatus, 'PARKED_BLOCKED');
+    assert.deepEqual(rejected.requiredTests, original.requiredTests);
+  }
+  state = event(original, 'AGENT_FAILURE_RETRY_ADMITTED', {retryableBlockers: original.blockers,
+    retryRequiredTests: [...original.requiredTests, extra], receipt: receipt('retry', 'eof-retry')});
+  assert.equal(state.currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(state.continuity.parkingStatus, 'ACTIVE');
+  assert.equal(state.repair.currentRound, 1);
+  assert.deepEqual(state.requiredTests, [...original.requiredTests, extra]);
+  assert.deepEqual(state.allowedFiles, original.allowedFiles);
+  assert.deepEqual(state.repair.history[0].previousDispatch, original.dispatch);
+  assert.deepEqual(state.repair.history[0].previousRequiredTests, original.requiredTests);
+  assert.deepEqual(state.continuity.history.slice(0, -1), original.continuity.history);
+  assert.ok(state.timeline.some(item => item.eventType === 'AGENT_RESULT_RECEIVED'));
+  const editable = structuredClone(original);
+  editable.allowedFiles.push('scripts/acceptance/**');
+  assert.equal(event(editable, 'AGENT_FAILURE_RETRY_ADMITTED', {retryableBlockers: editable.blockers,
+    retryRequiredTests: [...editable.requiredTests, extra], receipt: receipt('retry', 'eof-editable-refuse')}).currentPhase, 'BLOCKED');
+  const exhausted = structuredClone(original);
+  exhausted.repair.currentRound = MISSION_ORCHESTRATOR_MAX_REPAIR_ROUNDS;
+  assert.equal(event(exhausted, 'AGENT_FAILURE_RETRY_ADMITTED', {retryableBlockers: exhausted.blockers,
+    retryRequiredTests: [...exhausted.requiredTests, extra], receipt: receipt('retry', 'eof-budget-refuse')}).currentPhase, 'BLOCKED');
 });

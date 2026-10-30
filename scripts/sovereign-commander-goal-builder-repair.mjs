@@ -1,8 +1,13 @@
 #!/usr/bin/env node
+import { inspectStephanosNativeCapacityGamingAdmissionV1 } from '../shared/agents/stephanosNativeCapacityGamingAdmissionV1.mjs';
 import { spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { readCanonicalMissionWorkerHeartbeatAgeMs as readGoalBuilderWorkerHeartbeatAgeMs,
+  canonicalMissionWorkerEvidenceAllowsWork } from '../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
+export { readCanonicalMissionWorkerHeartbeatAgeMs as readGoalBuilderWorkerHeartbeatAgeMs,
+  readCanonicalMissionWorkerSourceIdentity as readGoalBuilderSourceIdentity } from '../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
 
 export const SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_SCHEMA =
   'stephanos.sovereign-commander-goal-builder-repair.v1';
@@ -16,7 +21,6 @@ const SAFE_BLOCKER = /^[A-Z0-9][A-Z0-9._:-]{0,159}$/;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const node = process.execPath;
-const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 
 const STEPS = Object.freeze({
   supervisor: Object.freeze({
@@ -31,15 +35,6 @@ const STEPS = Object.freeze({
     // The repair's observation is read-only. The periodic status publisher
     // owns Shared Workspace writes; do not wait on them inside the mailbox.
     args: Object.freeze([resolve(repoRoot, 'scripts', 'sovereign-controller-lane-status.mjs'), '--snapshot-only']),
-    timeoutMs: 20_000,
-  }),
-  startMissionWorker: Object.freeze({
-    id: 'start-mission-orchestrator-worker',
-    executable: powershell,
-    args: Object.freeze([
-      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
-      resolve(repoRoot, 'scripts', 'windows', 'start-mission-orchestrator-worker-task.ps1'),
-    ]),
     timeoutMs: 20_000,
   }),
   goalHeartbeat: Object.freeze({
@@ -86,14 +81,25 @@ function parseControllerLaneStatus(result) {
 }
 
 function parseSupervisorStatus(result) {
-  if (result?.ok !== true) return null;
+  // The fixed supervisor deliberately exits 2 for a complete BLOCKED report.
+  // Keep that negative evidence: dropping it retries worker/discovery mutation
+  // under an incumbent source-custody hold. Timeout/transport failure is not
+  // a terminal supervisor report and must not take this recovery shortcut.
+  const completedBlocked = result?.ok === false && result?.status === 2;
+  if (result?.ok !== true && !completedBlocked) return null;
   const stdout = text(result?.stdout);
   const markerIndex = stdout.lastIndexOf(FLEET_GOAL_SUPERVISOR_MARKER);
   if (markerIndex < 0) return null;
   const payload = stdout.slice(markerIndex + FLEET_GOAL_SUPERVISOR_MARKER.length).trim().split(/\r?\n/)[0];
   try {
     const parsed = JSON.parse(payload);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+      || parsed.schemaVersion !== 'stephanos.sovereign-commander-fleet-goal-supervisor.v1') return null;
+    if (completedBlocked && (parsed.ok !== false
+      || parsed.finalVerdict !== 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_BLOCKED'
+      || !SAFE_BLOCKER.test(text(parsed.blocker))
+      || (text(result.errorCode) && text(result.errorCode) !== text(parsed.blocker)))) return null;
+    return parsed;
   } catch {
     return null;
   }
@@ -231,12 +237,12 @@ function compactStep(step, result) {
 }
 
 export function runFixedGoalBuilderRepairStep(step) {
-  // The worker-start and goal-heartbeat steps may launch descendants on Windows.
+  // The goal-heartbeat step may launch descendants on Windows.
   // If those descendants inherit the synchronous caller's stdout/stderr pipes,
   // Node can remain blocked waiting for pipe EOF even after the bounded direct
   // child has timed out. Keep proof-producing observation steps captured, but
-  // make the two mutating repair steps pipe-free so timeout always terminalizes.
-  const pipeFreeChild = step === STEPS.startMissionWorker || step === STEPS.goalHeartbeat;
+  // make that mutating repair step pipe-free so timeout always terminalizes.
+  const pipeFreeChild = step === STEPS.goalHeartbeat;
   const captureOutput = !pipeFreeChild;
   const result = spawnSync(step.executable, [...step.args], {
     ...(captureOutput ? { encoding: 'utf8' } : {}),
@@ -262,10 +268,40 @@ export function runFixedGoalBuilderRepairStep(step) {
 
 export function runSovereignCommanderGoalBuilderRepair({
   runStep = runFixedGoalBuilderRepairStep,
+  readResourceAdmission,
+  readWorkerHeartbeatAgeMs = readGoalBuilderWorkerHeartbeatAgeMs,
 } = {}) {
   const steps = [];
+  const resourceAllowed = () => {
+    try {
+      if (readResourceAdmission) return readResourceAdmission()?.ok === true;
+      if (runStep !== runFixedGoalBuilderRepairStep) return true; // isolated step fixtures only
+      return inspectStephanosNativeCapacityGamingAdmissionV1({
+        workspaceRoot: 'C:\\Users\\Stephan Callear\\Documents\\Stephanos-openclaw-workspace', repoRoot,
+      }).ok === true;
+    } catch { return false; }
+  };
+  const resourceHold = () => Object.freeze({ok:false,schemaVersion:SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_SCHEMA,
+    repairApplied:steps.length>0,blocker:'SOVEREIGN_GOAL_BUILDER_RESOURCE_GOVERNOR_HOLD',
+    steps:Object.freeze(steps),canonicalGoalFabricOnly:true,duplicateSchedulerAllowed:false,
+    mergeAuthority:false,arbitraryShellAllowed:false,finalVerdict:'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED'});
+  const workerAllowed = () => {
+    try {
+      const age = readWorkerHeartbeatAgeMs();
+      return canonicalMissionWorkerEvidenceAllowsWork(age);
+    } catch { return false; }
+  };
+  const workerHold = () => Object.freeze({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_SCHEMA,
+    repairApplied: steps.length > 0, blocker: 'MISSION_WORKER_CUSTODY_UNPROVEN', steps: Object.freeze(steps),
+    canonicalGoalFabricOnly: true, duplicateSchedulerAllowed: false, mergeAuthority: false,
+    arbitraryShellAllowed: false, finalVerdict: 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED' });
+  // The supervisor can itself reconcile/dispatch. Check before the first step,
+  // then sample again at each subsequent mutation boundary.
+  if (!workerAllowed()) return workerHold();
+  if (!resourceAllowed()) return resourceHold();
   const initialSupervisor = runStep(STEPS.supervisor);
   steps.push(compactStep(STEPS.supervisor, initialSupervisor));
+  if (!resourceAllowed()) return resourceHold();
   const initialLaneStatus = runStep(STEPS.controllerLaneStatus);
   steps.push(compactStep(STEPS.controllerLaneStatus, initialLaneStatus));
 
@@ -293,6 +329,7 @@ export function runSovereignCommanderGoalBuilderRepair({
     });
   }
 
+  if (!workerAllowed()) return workerHold();
   if (supervisorFlowGreen(initialSupervisor) && laneStatusGreen(initialLaneStatus)) {
     return Object.freeze({
       ok: true,
@@ -312,7 +349,11 @@ export function runSovereignCommanderGoalBuilderRepair({
   // repair or reinstall that same control plane while holding the mailbox lease.
   // Independent lifeboat/recovery routes own control-plane recovery. This repair
   // is intentionally scoped to the builder fabric it can safely heal in-band.
-  for (const step of [STEPS.startMissionWorker, STEPS.goalHeartbeat]) {
+  // ALL callers (Core, guardian, mailbox and direct maintenance) meet at this
+  // shared boundary. Heartbeat loss is never permission to start another
+  // worker; only its qualified lifecycle owner can recover missing custody.
+  for (const step of [STEPS.goalHeartbeat]) {
+    if (!resourceAllowed()) return resourceHold();
     const result = runStep(step);
     steps.push(compactStep(step, result));
     if (result?.ok !== true) {
@@ -332,8 +373,11 @@ export function runSovereignCommanderGoalBuilderRepair({
     }
   }
 
+  if (!workerAllowed()) return Object.freeze({ ...workerHold(), repairApplied: true });
+  if (!resourceAllowed()) return resourceHold();
   const finalSupervisor = runStep(STEPS.supervisor);
   steps.push(compactStep(STEPS.supervisor, finalSupervisor));
+  if (!resourceAllowed()) return resourceHold();
   const finalLaneStatus = runStep(STEPS.controllerLaneStatus);
   steps.push(compactStep(STEPS.controllerLaneStatus, finalLaneStatus));
   const green = supervisorFlowGreen(finalSupervisor) && laneStatusGreen(finalLaneStatus);
