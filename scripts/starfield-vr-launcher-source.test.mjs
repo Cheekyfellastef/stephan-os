@@ -2,9 +2,15 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { buildStarfieldVrTelemetryHeadlineProjection } from './report-starfield-vr-telemetry.mjs';
+
+// The hosted vr-research-tests entry point also exercises bounded CPU recorder regressions.
+import './starfield-vr-flight-recorder.test.mjs';
 
 const launcherUrl = new URL('./windows/launch-starfield-vr.ps1', import.meta.url);
 const performanceModeUrl = new URL('./windows/starfield-vr-performance-mode.ps1', import.meta.url);
+const flightRecorderUrl = new URL('./windows/starfield-vr-flight-recorder.ps1', import.meta.url);
+const vrDiagnosisUrl = new URL('./windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url);
 const audioEndpointUrl = new URL('./windows/starfield-vr-audio-endpoint.ps1', import.meta.url);
 const splashUrl = new URL('./windows/launch-starfield-vr-with-splash.ps1', import.meta.url);
 const aerObserveUrl = new URL('./windows/run-starfield-aer-stabilizer-observe.ps1', import.meta.url);
@@ -93,6 +99,79 @@ test('Mutar performance mode parks local AI, applies VR-safe settings, switches 
   assert.match(source, /finalGameProcessId/);
   assert.match(source, /Restore-Session/);
   assert.match(source, /audioRestored/);
+});
+
+test('playtest CPU attribution includes Starfield busiest thread, normalised game CPU, and desktop apps without privacy expansion', async () => {
+  const [performance, recorder, diagnosis] = await Promise.all([
+    readFile(performanceModeUrl, 'utf8'),
+    readFile(flightRecorderUrl, 'utf8'),
+    readFile(vrDiagnosisUrl, 'utf8'),
+  ]);
+  assert.match(recorder, /function Get-StarfieldVrGameThreadCpuSample/);
+  assert.match(recorder, /function Get-StarfieldVrCpuConsumerSample/);
+  assert.match(recorder, /\$thread\.StartTime\.ToUniversalTime\(\)\.Ticks/);
+  assert.match(recorder, /\$thread\.TotalProcessorTime\.TotalSeconds/);
+  assert.match(recorder, /\$Previous\.processStartTicks -eq \$processStartedTicks/);
+  assert.match(recorder, /\$secondsElapsed -gt 0/);
+  assert.match(recorder, /\$g\.matched -eq \$g\.count/);
+  assert.match(recorder, /chatGpt = 'ChatGPT'/);
+  assert.match(recorder, /edge = 'msedge'/);
+  assert.match(recorder, /metaVr = 'OVRServer_x64'/);
+  assert.match(performance, /Get-StarfieldVrGameThreadCpuSample -GameProcessId \$currentGameProcessId/);
+  assert.match(performance, /Get-StarfieldVrCpuConsumerSample -Previous \$cpuConsumerHistory/);
+  assert.match(performance, /starfieldBusiestThreadCpuPct = \$gameThreads\.busiestThreadCpuPct/);
+  assert.match(performance, /starfieldCpuPct = \$starfieldCpuPct/);
+  assert.match(performance, /systemCpuPct = \$systemCpuPct/);
+  assert.match(performance, /starfieldThreadRoleKnown = \$false/);
+  assert.match(performance, /browserTabsInspected = \$false/);
+  assert.match(performance, /chatGptConversationContentsInspected = \$false/);
+  assert.match(diagnosis, /starfield-single-thread-saturation-observed/);
+  assert.match(diagnosis, /desktop-chatgpt-cpu-contention-observed/);
+  assert.doesNotMatch(recorder, /\b(?:Stop-Process|taskkill|Invoke-Expression|CommandLine|Get-CimInstance Win32_Process)\b/i);
+});
+
+test('measured Chrome and Firefox CPU reaches diagnosis, headline, archive and bounded receipts without fabricated zero', async () => {
+  const [performance, diagnosis, reporter, archive, mailbox, remote] = await Promise.all([
+    readFile(performanceModeUrl, 'utf8'),
+    readFile(vrDiagnosisUrl, 'utf8'),
+    readFile(new URL('./report-starfield-vr-telemetry.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('./starfield-vr-telemetry-archive.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('./battle-bridge-github-command-mailbox.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../shared/agents/sovereignCommanderRemoteMailboxV1.mjs', import.meta.url), 'utf8'),
+  ]);
+  for (const family of ['chrome', 'firefox']) {
+    const title = family[0].toUpperCase() + family.slice(1);
+    assert.match(performance, new RegExp('\\$' + family + 'CpuSamples = @\\(\\$samples'));
+    assert.match(performance, new RegExp('avg' + title + 'CpuPct = if \\(\\$' + family + 'CpuSamples\\.Count\\)'));
+    assert.match(diagnosis, new RegExp('avg' + title + 'CpuPct = Get-Average -Values \\$' + family + 'Cpu'));
+    for (const projection of [reporter, archive, mailbox, remote]) {
+      assert.match(projection, new RegExp('avg' + title + 'CpuPct:'));
+    }
+  }
+  const known = buildStarfieldVrTelemetryHeadlineProjection({
+    ok: true,
+    generatedAtUtc: '2026-10-23T12:00:00Z',
+    headline: { avgChromeCpuPct: 18.37, avgFirefoxCpuPct: 0 },
+  });
+  assert.equal(known.headline.avgChromeCpuPct, 18.37);
+  assert.equal(known.headline.avgFirefoxCpuPct, 0);
+  const unknown = buildStarfieldVrTelemetryHeadlineProjection({
+    headline: { avgChromeCpuPct: null, avgFirefoxCpuPct: 105 },
+  });
+  assert.equal(unknown.headline.avgChromeCpuPct, null);
+  assert.equal(unknown.headline.avgFirefoxCpuPct, null);
+});
+
+test('app CPU completeness never declares Chrome/Firefox unknown measurements complete', async () => {
+  const performance = await readFile(performanceModeUrl, 'utf8');
+  const start = performance.indexOf('browserAndAppCpuAttributionComplete = [bool](');
+  const end = performance.indexOf('browserTabsInspected = $false', start);
+  assert.ok(start >= 0 && end > start, 'CPU completeness predicate must be present');
+  const clause = performance.slice(start, end);
+  for (const family of ['chatGpt', 'edge', 'brave', 'chrome', 'firefox', 'webView2']) {
+    assert.ok(clause.includes('$' + family + 'CpuSamples.Count -gt 0'),
+      family + ' unmeasured CPU must not qualify as complete');
+  }
 });
 
 test('Quest audio helper captures and restores exact Windows default endpoints without third-party utilities', async () => {
