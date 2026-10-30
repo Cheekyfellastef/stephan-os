@@ -390,6 +390,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_PR: ${{ matrix.target.prNumber }}
           STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_HEAD: ${{ fromJSON(steps.coordinate.outputs.retry_targets)[0].exactHead }}
+          STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_HINT_RUN: ${{ steps.launch_missing.outputs.recovery_run_id || '' }}
+          STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_HINT_ARTIFACT: ${{ steps.launch_missing.outputs.recovery_artifact_id || '' }}
+          STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_HINT_SHA256: ${{ steps.launch_missing.outputs.recovery_sha256 || '' }}
         run: node scripts/recover-successful-independent-review-v1.mjs
 
       - name: Download recovered successful independent review result
@@ -429,6 +432,8 @@ jobs:
             steps.retry.outcome == 'failure' ||
             (steps.retry.outputs.decision == 'ALREADY_SUCCESSFUL' && steps.consume_recovered_review.outcome != 'success') ||
             steps.launch_missing.outcome == 'failure' ||
+            steps.recover_successful.outcome == 'failure' ||
+            (steps.launch_missing.outputs.decision == 'RECOVER_EXISTING_OWNER_REVIEW' && steps.consume_recovered_review.outcome != 'success') ||
             (steps.launch_missing.outputs.decision == 'ALREADY_SUCCESSFUL' && steps.consume_recovered_review.outcome != 'success')
           )
         env:
