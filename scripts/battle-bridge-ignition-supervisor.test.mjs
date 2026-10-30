@@ -22,7 +22,8 @@ import {
   runCanonicalIgnitionSourceTruthReport,
   defaultBattleBridgeSharedWorkspace,
   evaluateBattleBridgeMutationHeadBinding,
-  runBattleBridgeIgnitionSupervisor,
+  projectUiRepairObservation,
+  runBattleBridgeIgnitionSupervisor as runActualSupervisor,
   evaluateServedRuntimeExactHeadProof,
 } from './battle-bridge-ignition-supervisor.mjs';
 import { buildOpenClawGatewayStartupTarget, npmGlobalBinCandidatesForOpenClaw, resolveOpenClawGatewayStartupExecution } from '../shared/agents/openClawGatewayStartup.mjs';
@@ -35,6 +36,30 @@ import {
   resolveBattleBridgeGitExecutable,
 } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
+
+const testWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), 'ignition-supervisor-proof-'));
+const runBattleBridgeIgnitionSupervisor = options => runActualSupervisor({ ...options,
+  sharedWorkspace: options.sharedWorkspace ?? fs.mkdtempSync(path.join(testWorkspace, 'case-')) });
+test.after(() => {
+  assert.equal(path.dirname(path.resolve(testWorkspace)), path.resolve(os.tmpdir()));
+  assert.ok(path.basename(testWorkspace).startsWith('ignition-supervisor-proof-'));
+  fs.rmSync(testWorkspace, { recursive: true });
+});
+
+test('bounded UI repair diagnostics retain typed failure without copying raw process output', () => {
+  const result = projectUiRepairObservation({ action: 'start-ui-4173-failed', started: false,
+    ready: 'false', pid: -1, expectedHead: 'a'.repeat(40), observedHead: 'b'.repeat(40),
+    spawnError: { code: 'ENOENT', message: 'private process details' },
+    stdout: 'private output', blockers: Array.from({ length: 20 }, () => ({ id: 'ui-repair-current-head-unproven', detail: 'private detail' })),
+  }, 2);
+  assert.equal(result.spawnErrorCode, 'ENOENT');
+  assert.equal(result.readyClaimed, false);
+  assert.equal(result.pid, null);
+  assert.equal(result.blockers.length, 12);
+  assert.equal(JSON.stringify(result).includes('private'), false);
+  assert.equal(result.runtimeActivationGranted, false);
+  assert.equal(projectUiRepairObservation(null, 1).receiptParsed, false);
+});
 
 
 const readyRuntimeProof = async () => ({ ready: true, currentHead: '51600ceb00000000000000000000000000000000', healthOk: true, distOk: true, gitCommitMatches: true, runtimeMarkerMatches: true, gitCommit: '51600ceb', runtimeMarker: 'antifriction-live-v3::51600ceb::fixture' });
@@ -262,6 +287,31 @@ test('missing 4173 repair attempt records structured degraded result when proof 
   assert.equal(result.ok, false);
   assert.equal(result.status.phases['Stephanos UI 4173'].state, 'blocked');
   assert.notEqual(result.status.phases.ready.state, 'ready');
+  assert.equal(result.status.uiRepairObservations[0].action, 'start-ui-4173-spawned-but-not-ready');
+  assert.equal(result.status.uiRepairObservations[0].readyClaimed, false);
+});
+
+test('actual supervisor persistence retains the failed spawn diagnostic after later readiness projection', async () => {
+  const sharedWorkspace = fs.mkdtempSync(path.join(testWorkspace, 'failed-spawn-'));
+  const result = await runBattleBridgeIgnitionSupervisor({
+    sharedWorkspace, housekeepFn: () => {}, publisherFn: async () => {},
+    sourceTruthFn: () => canonicalSourceTruth(), collectFactsFn: async () => factsFor({ ui: false }),
+    plannerFn: facts => ({ ...facts, finalVerdict: 'partial-ui-missing' }),
+    repairFn: async ({ stdout }) => {
+      stdout.write(JSON.stringify({ ready: false, started: false, action: 'start-ui-4173-failed',
+        spawnError: { code: 'ENOENT', message: 'must not be copied' },
+        blockers: [{ id: 'ui-repair-current-head-unproven' }] }));
+      return 1;
+    },
+    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
+  });
+  const persisted = JSON.parse(fs.readFileSync(path.join(sharedWorkspace, 'status', 'battle-bridge-ignition-supervisor-current.json')));
+  assert.equal(result.ok, false);
+  assert.equal(persisted.services.stephanosUi4173.ready, false);
+  assert.equal(persisted.uiRepairObservations[0].spawnErrorCode, 'ENOENT');
+  assert.equal(persisted.uiRepairObservations[0].exitCode, 1);
+  assert.equal(persisted.uiRepairObservations[0].started, false);
+  assert.equal(JSON.stringify(persisted.uiRepairObservations).includes('must not be copied'), false);
 });
 
 test('non-main stale branch reports blocker to splash/status model', async () => {
