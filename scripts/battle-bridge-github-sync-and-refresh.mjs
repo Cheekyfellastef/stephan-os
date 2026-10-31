@@ -7,7 +7,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
+import { projectSovereignCaretakerExecutionEvidence, reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import { createSharedWorkspaceStatusRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { collectPostSyncRefreshDebt, inspectPendingPostSyncRefreshDebt, inspectPostSyncRefreshCompletion, resolvePostSyncRefreshDebt } from './battle-bridge-github-sync-policy.mjs';
 
@@ -93,6 +93,11 @@ export function projectSyncAndRefreshStatus(result = {}, { observedAtUtc = new D
   const ok = result?.ok === true;
   const blocker = boundedText(result?.blocker);
   const finalVerdict = boundedText(result?.finalVerdict, 120);
+  const refreshResult = Array.isArray(result?.refreshes) ? result.refreshes.at(-1)?.result : null;
+  const sovereignCaretakerExecution = safeHead(result?.sourceHead) ? projectSovereignCaretakerExecutionEvidence(
+    result?.controlPlaneRepair?.repair?.sovereignCaretakerExecution || refreshResult?.sovereignCaretakerExecution,
+    safeHead(result?.sourceHead),
+  ) : null;
   return Object.freeze({
     ...createSharedWorkspaceStatusRecord({
       statusId: 'battle-bridge-sync-and-refresh-current',
@@ -124,7 +129,11 @@ export function projectSyncAndRefreshStatus(result = {}, { observedAtUtc = new D
       classification: boundedText(result?.controlPlaneRepair?.classification, 120),
       blocker: boundedText(result?.controlPlaneRepair?.blocker, 180),
       repairAttempted: result?.controlPlaneRepair?.repairAttempted === true,
+      sovereignCaretakerExecution,
     }),
+    lastSovereignCaretakerFailure: safeHead(result?.sourceHead) ? projectSovereignCaretakerExecutionEvidence(
+      refreshResult?.lastSovereignCaretakerFailure, safeHead(result?.sourceHead),
+    ) : null,
     arbitraryShellAllowed: false,
     sourceMutationAllowed: false,
     destructiveGitAllowed: false,

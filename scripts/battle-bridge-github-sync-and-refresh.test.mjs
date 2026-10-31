@@ -10,6 +10,7 @@ import {
   SYNC_AND_REFRESH_MIN_REMAINING_MS,
   SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS,
   projectSyncAndRefreshStatus,
+  writeSyncAndRefreshStatus,
   readPendingPostSyncRefresh,
   runBattleBridgeSyncAndRefresh as runSyncAndRefreshWithRealAncestry,
 } from './battle-bridge-github-sync-and-refresh.mjs';
@@ -416,6 +417,37 @@ test('sync status projection exposes bounded mailbox pulse truth without secrets
   });
   assert.equal(validation.valid, true, validation.errors.join(','));
   assert.doesNotMatch(JSON.stringify(record), /must-not-leak|C:\/private/);
+});
+
+test('actual sync status writer retains bounded caretaker cause from both existing execution paths', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'sync-caretaker-status-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const localPaths = { workspaceRoot: root, syncAndRefreshStatusPath: join(root, 'status', 'battle-bridge-sync-and-refresh-current.json') };
+  const evidence = { schemaVersion: 'stephanos.sovereign-caretaker-execution.v1',
+    expectedSourceHead: B, observedAtUtc: '2026-10-31T00:06:31.000Z', exitStatus: 2,
+    spawnErrorCode: '', terminationSignal: '', failureReceiptRecognized: true,
+    reportedBlocker: 'SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED',
+    reportedVerdict: 'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED', diagnosticOnly: true };
+  for (const path of ['no-change-control-plane', 'post-sync-refresh']) {
+    const dirtyEvidence = { ...evidence, stderr: 'PRIVATE_STDERR', secret: 'PRIVATE_TOKEN' };
+    const input = { ok: false, sourceHead: B, blocker: 'SOVEREIGN_COMMANDER_WATCHDOG_EXECUTION_FAILED',
+      ...(path === 'no-change-control-plane'
+        ? { controlPlaneRepair: { ok: false, repairAttempted: true, repair: { sovereignCaretakerExecution: dirtyEvidence } } }
+        : { refreshes: [{ beforeHead: A, afterHead: B, result: { sovereignCaretakerExecution: dirtyEvidence, lastSovereignCaretakerFailure: dirtyEvidence } }] }) };
+    const record = await writeSyncAndRefreshStatus(input, { paths: localPaths });
+    assert.deepEqual(record.controlPlaneRepair.sovereignCaretakerExecution, evidence, path);
+    const persisted = JSON.parse(await readFile(localPaths.syncAndRefreshStatusPath, 'utf8'));
+    assert.deepEqual(persisted.controlPlaneRepair.sovereignCaretakerExecution, evidence, path);
+    assert.equal(persisted.ok, false);
+    assert.doesNotMatch(JSON.stringify(persisted), /PRIVATE_/);
+    if (path === 'post-sync-refresh') assert.deepEqual(persisted.lastSovereignCaretakerFailure, evidence);
+  }
+  const foreign = projectSyncAndRefreshStatus({ sourceHead: A,
+    controlPlaneRepair: { repair: { sovereignCaretakerExecution: evidence } } });
+  assert.equal(foreign.controlPlaneRepair.sovereignCaretakerExecution, null);
+  assert.equal(projectSyncAndRefreshStatus({
+    controlPlaneRepair: { repair: { sovereignCaretakerExecution: evidence } },
+  }).controlPlaneRepair.sovereignCaretakerExecution, null);
 });
 
 test('control-plane repair failure still blocks wrapper completion after one work-conserving goal-discovery tick', async () => {

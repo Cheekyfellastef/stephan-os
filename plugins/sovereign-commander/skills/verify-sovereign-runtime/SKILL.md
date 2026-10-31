@@ -5,6 +5,11 @@ description: Verify Sovereign Commander, Stephanos AI and the goal-building conv
 
 # Verify Sovereign runtime and climb the stack without claiming false greens
 
+For conversational Control Tower, self-repair or no-meter requests, first read
+[Sovereign conversational control](../use-sovereign-commander/references/conversational-control-v1.md).
+Use its fixed observation/build routing only after current-source and native
+adoption checks; preserve every existing private capability and authority gate.
+
 Use alongside `use-sovereign-commander`; do not invent an alternative machine endpoint, controller, scheduler, reviewer, publisher or source-lease plane. This skill is a verification procedure, not a tool grant.
 
 ## One evidence chain, minimal GitHub reads

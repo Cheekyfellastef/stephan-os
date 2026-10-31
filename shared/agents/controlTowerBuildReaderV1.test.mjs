@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readControlTowerBuildRequestV1, isAuthenticatedControlTowerBuildRequestV1 } from './controlTowerBuildReaderV1.mjs';
-import { fixture, inputs, HEAD, NOW, SIGNED } from './fixtures/controlTowerBuildV1.mjs';
+import { fixture, inputs, zip, API, HEAD, NOW, SIGNED } from './fixtures/controlTowerBuildV1.mjs';
 import { createControlTowerBuildRequestV1 } from './controlTowerBuildRequestV1.mjs';
 const read = (f, extra = {}) => readControlTowerBuildRequestV1({ token: 'test-only', fetchImpl: f.fetchImpl, now: () => NOW, ...extra });
 
@@ -16,6 +17,70 @@ test('fixed GET, owner run, full job estate and archive digest mint a frozen nat
     assert.equal(init.method, 'GET');
     assert.equal(init.headers.Authorization, url === SIGNED ? undefined : 'Bearer test-only');
   }
+});
+
+test('read-only inspection uses the same authenticated artifact without widening transport authority', async () => {
+  const f = fixture();
+  const { event, env } = inputs();
+  event.inputs = { operation: 'OBSERVE_CONTROL_SYSTEM' };
+  const minted = createControlTowerBuildRequestV1(event, env, HEAD, '2026-10-28T12:00:05.000Z');
+  assert.equal(minted.ok, true);
+  f.repack(minted.request);
+  const result = await read(f);
+  assert.equal(result.ok, true);
+  assert.equal(result.request.operation, 'OBSERVE_CONTROL_SYSTEM');
+  assert.equal(isAuthenticatedControlTowerBuildRequestV1(result.request), true);
+  assert.equal(result.request.runtimeMutationAuthority, false);
+  assert.equal(result.request.arbitraryShellAllowed, false);
+  assert.equal(result.request.admissionGranted, false);
+  assert.equal(f.calls.length, 9);
+});
+
+test('a held build cannot starve a later authenticated inspection or become falsely recorded', async () => {
+  const f = fixture();
+  const { event, env } = inputs();
+  event.inputs = { operation: 'OBSERVE_CONTROL_SYSTEM' }; env.GITHUB_RUN_ID = '101';
+  const request = createControlTowerBuildRequestV1(event, env, HEAD, '2026-10-28T12:00:05.000Z').request;
+  const archive = zip(request);
+  const run = { ...f.run, id: 101 };
+  f.list.workflow_runs.unshift(run); f.list.total_count = 2;
+  const observed = [];
+  const fetchImpl = async (url, init) => {
+    observed.push(url);
+    if (url === API + '/actions/runs/101') return Response.json(run);
+    if (url === API + '/actions/runs/101/jobs?per_page=100') return Response.json({
+      total_count: 2, jobs: f.jobs.jobs.map(job => ({ ...job, run_id: 101 })),
+    });
+    if (url === API + '/actions/runs/101/artifacts?per_page=100') return Response.json({ total_count: 1, artifacts: [{
+      ...f.artifacts.artifacts[0], id: 201, name: 'stephanos-control-tower-build-101', size_in_bytes: archive.length,
+      digest: 'sha256:' + createHash('sha256').update(archive).digest('hex'),
+      workflow_run: { ...f.artifacts.artifacts[0].workflow_run, id: 101 },
+    }] });
+    if (url === API + '/actions/artifacts/201/zip') return new Response(null, { status: 302, headers: { location: SIGNED + '/observe' } });
+    if (url === SIGNED + '/observe') {
+      assert.equal(init.headers.Authorization, undefined);
+      return new Response(archive);
+    }
+    return f.fetchImpl(url, init);
+  };
+  const queriedIds = [];
+  const result = await readControlTowerBuildRequestV1({ token: 'test-only', now: () => NOW,
+    fetchImpl, observationOnly: true, isRecorded: id => { queriedIds.push(id); return false; } });
+  assert.equal(result.ok, true);
+  assert.equal(result.request.runId, 101);
+  assert.equal(result.request.operation, 'OBSERVE_CONTROL_SYSTEM');
+  assert.equal(isAuthenticatedControlTowerBuildRequestV1(result.request), true);
+  assert.ok(observed.indexOf(API + '/actions/artifacts/200/zip') < observed.indexOf(API + '/actions/artifacts/201/zip'));
+  assert.ok(queriedIds.includes(100) && queriedIds.includes(101));
+  assert.equal((await read(f)).request.runId, 100, 'restrictive observation selection does not consume or mark the build');
+});
+
+test('observation-only selection rejects ambiguous configuration and never returns a build', async () => {
+  for (const observationOnly of ['true', [], {}, 1, null])
+    assert.equal((await read(fixture(), { observationOnly })).blocker, 'CONTROL_TOWER_REQUEST_OPERATION_FILTER_INVALID');
+  const result = await read(fixture(), { observationOnly: true });
+  assert.equal(result.ok, false);
+  assert.equal(result.request, null);
 });
 test('read-only discovery artifacts, foreign workflows and incomplete jobs never become a build command', async () => {
   for (const mutate of [f => { f.definition.path = '.github/workflows/stephanos-mailbox-free-readonly.yml'; },

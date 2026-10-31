@@ -13,6 +13,9 @@ import { withMailboxRotationTransactionTestJournalV2 as withJournal } from './ca
 import { MAILBOX_ROTATION_OWNER_CONTROL_SCHEMA_V2 } from '../shared/agents/canonicalMailboxNativeEvidenceCodecV2.mjs';
 import { formatMailboxRotationOwnerControlV2 } from '../shared/agents/canonicalMailboxRotationOwnerControlV2.mjs';
 import { mailboxRotationDigest } from '../shared/agents/canonicalMailboxRotationV1.mjs';
+import { createControlTowerRequestObservationV1 } from '../shared/agents/controlTowerRequestObservationV1.mjs';
+import { projectSovereignControlSystemStatusV1 } from '../shared/agents/sovereignControlSystemStatusV1.mjs';
+import { fixture as controlTowerFixture, HEAD as CONTROL_HEAD, NOW as CONTROL_NOW } from '../shared/agents/fixtures/controlTowerBuildV1.mjs';
 
 const FIELD = 'mailboxRotationControlTransactionV2';
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -86,6 +89,143 @@ function denied(value) {
   for (const field of ['consentAuthenticated', 'nativeEvidenceAuthenticated', 'nativeExecutionAuthorized', 'freezeCertified',
     'protectedMergeAuthorized', 'sourceSyncAuthorized', 'epochAdoptionAuthorized', 'effectReplayAllowed']) assert.equal(value[field], false, field);
 }
+
+function reserveControlTower(f, operation = 'BUILD_NEXT_ELIGIBLE_GOAL') {
+  const command = { ...controlTowerFixture().request, operation, issueNumber: 2315,
+    artifactId: 200, artifactSha256: 'c'.repeat(64) };
+  const observation = createControlTowerRequestObservationV1(command, {
+    commandDigest: mailboxRotationDigest(command), acceptedAtUtc: CONTROL_NOW, nowMs: Date.parse(CONTROL_NOW) });
+  assert(observation);
+  f.ledger.reserve(command, { controlTowerObservation: observation });
+  return { command, observation, path: executionPath(f, command.requestId) };
+}
+function completeControlTower(f, material, blocked = false) {
+  const isObservation = material.command.operation === 'OBSERVE_CONTROL_SYSTEM';
+  const status = isObservation && !blocked ? projectSovereignControlSystemStatusV1({
+    schemaVersion: 'stephanos.sovereign-control-system-inspection.v1', observationOnly: true,
+    observationCompleted: true, observedAtUtc: CONTROL_NOW,
+    source: { available: true, stable: true, sourceHead: CONTROL_HEAD, expectedMain: CONTROL_HEAD, reason: '' },
+    nativeRuntime: { available: true, qualificationObserved: false,
+      reason: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING', observedAtUtc: CONTROL_NOW },
+  }) : null;
+  const state = (isObservation ? 'OBSERVATION_' : 'WAKE_') + (blocked ? 'BLOCKED' : 'COMPLETED');
+  const wakeProofHash = !isObservation && !blocked ? 'b'.repeat(64) : '';
+  const observation = createControlTowerRequestObservationV1(material.command, {
+    commandDigest: material.observation.commandDigest, acceptedAtUtc: CONTROL_NOW,
+    observedAtUtc: new Date(Date.parse(CONTROL_NOW) + 1000).toISOString(),
+    nowMs: Date.parse(CONTROL_NOW) + 1000, state,
+    blocker: blocked ? 'SOVEREIGN_MAINTENANCE_CUSTODY_UNPROVEN' : '', wakeProofHash,
+    controlSystemStatus: status, observationProofHash: status ? hash(JSON.stringify(status)) : '',
+  });
+  assert(observation);
+  return f.ledger.complete({ requestId: material.command.requestId, issueNumber: 2315,
+    state: blocked ? 'BLOCKED' : 'DONE', ...(wakeProofHash ? { proofHash: wakeProofHash } : {}),
+    controlTowerObservation: observation });
+}
+
+test('Control Tower inventory snapshot cannot mutate nested metadata or status after its digest is calculated', t => {
+  const f = fixture(t), material = reserveControlTower(f, 'OBSERVE_CONTROL_SYSTEM');
+  completeControlTower(f, material); const before = bytes(f.root), inventory = f.ledger.inventory();
+  const recordsBefore = JSON.stringify(inventory.records);
+  const observed = inventory.records.find(record => record.requestId === material.command.requestId).controlTowerObservation;
+  assert.throws(() => { observed.blocker = 'CONTROL_TOWER_BUILD_WAKE_UNPROVEN'; }, TypeError);
+  assert.throws(() => { observed.controlSystemStatus.source.sourceHead = 'd'.repeat(40); }, TypeError);
+  assert.throws(() => { observed.controlSystemStatus.nativeRuntime.reason = 'FIXED_RUNTIME_WORKER_FAILED'; }, TypeError);
+  assert.throws(() => { observed.controlSystemStatus.source = { available: false }; }, TypeError);
+  assert.equal(JSON.stringify(inventory.records), recordsBefore);
+  assert.equal(inventory.inventorySha256, mailboxRotationDigest({ records: inventory.records,
+    physicalIdentitySha256: inventory.physicalIdentitySha256 }));
+  assert.deepEqual(bytes(f.root), before);
+});
+
+for (const operation of ['BUILD_NEXT_ELIGIBLE_GOAL', 'OBSERVE_CONTROL_SYSTEM'])
+  test('Control Tower inventory preserves ' + operation + ' reservation and terminal metadata under the original drain guard', t => {
+    const f = fixture(t), material = reserveControlTower(f, operation), before = bytes(f.root);
+    const reserved = f.ledger.inventory();
+    assert.equal(reserved.recordCount, 2); assert.equal(reserved.counts.RESERVED, 2);
+    assert.deepEqual(reserved.records.find(record => record.requestId === material.command.requestId).controlTowerObservation,
+      material.observation);
+    assert.equal(reserved.localObservationOnly, true); assert.equal(reserved.executionAuthorized, false);
+    const first = capture(f).drainInputCandidate;
+    assert.equal(first.counts.reservedCount, 2); assert.equal(first.counts.currentRotationReservationCount, 1);
+    assert.equal(first.fullDrainProofComplete, false); assert.equal(first.ordinaryReceiptDebtCount, null); denied(first);
+    assert.deepEqual(bytes(f.root), before);
+    assert.throws(() => f.ledger.reserve(material.command, { controlTowerObservation: material.observation }), /ALREADY_SEEN/);
+    const completed = completeControlTower(f, material), terminalBytes = bytes(f.root);
+    const reloaded = createMailboxExecutionLedger(f.root), terminal = reloaded.inventory();
+    assert.deepEqual(terminal.records.find(record => record.requestId === material.command.requestId), completed);
+    assert.deepEqual(terminal.counts, { RESERVED: 1, TERMINAL: 1, RETIRED: 0 });
+    assert.notEqual(terminal.inventorySha256, reserved.inventorySha256);
+    assert.equal(reloaded.inspectControlTower(material.command.requestId).detailState, 'OBSERVED');
+    assert.equal(reloaded.discoverControlTower().ok, true);
+    const last = capture(f).drainInputCandidate;
+    assert.equal(last.counts.terminalCount, 1); assert.equal(last.counts.reservedCount, 1);
+    assert.equal(last.executionLedgerSha256, terminal.inventorySha256);
+    assert.equal(last.fullDrainProofComplete, false); assert.equal(last.ordinaryReceiptDebtCount, null); denied(last);
+    assert.deepEqual(bytes(f.root), terminalBytes); assert(lstatSync(material.path).size <= 4096);
+  });
+
+for (const operation of ['BUILD_NEXT_ELIGIBLE_GOAL', 'OBSERVE_CONTROL_SYSTEM'])
+  test('Control Tower inventory retains blocked ' + operation + ' outcomes without claiming a complete drain', t => {
+    const f = fixture(t), material = reserveControlTower(f, operation);
+    const completed = completeControlTower(f, material, true), before = bytes(f.root);
+    const retained = f.ledger.inventory().records.find(record => record.requestId === material.command.requestId);
+    assert.deepEqual(retained, completed); assert.equal(retained.terminalState, 'BLOCKED');
+    assert.equal(retained.controlTowerObservation.blocker, 'SOVEREIGN_MAINTENANCE_CUSTODY_UNPROVEN');
+    const result = capture(f).drainInputCandidate;
+    assert.equal(result.counts.terminalCount, 1); assert.equal(result.ordinaryReceiptDebtCount, null);
+    assert.equal(result.fullDrainProofComplete, false); denied(result); assert.deepEqual(bytes(f.root), before);
+  });
+
+for (const [name, mutate, pattern] of [
+  ['null metadata', record => { record.controlTowerObservation = null; }],
+  ['unknown nested field', record => { record.controlTowerObservation.callerAuthority = false; }],
+  ['stripped canonical flags', record => { delete record.controlTowerObservation.diagnosticOnly; }],
+  ['another request identity', record => { record.controlTowerObservation.requestId = 'control-tower-build-101-1'; record.controlTowerObservation.runId = 101; }],
+  ['legacy empty digest with attached detail', record => { record.commandDigest = ''; }],
+  ['different original digest', record => { record.commandDigest = 'd'.repeat(64); }],
+  ['foreign owner issue', record => { record.issueNumber = 3149; }],
+  ['retired phase with live detail', record => { record.phase = 'RETIRED'; }],
+  ['terminal phase with reserved detail', record => { record.phase = 'TERMINAL'; record.terminalState = 'DONE'; }],
+  ['fabricated native pickup', record => { record.controlTowerObservation.nativePickupProven = true; }],
+  ['oversized optional detail', record => { record.controlTowerObservation.padding = 'x'.repeat(4096); }, /INVENTORY_ENTRY_UNSAFE/],
+]) test('Control Tower inventory refuses ' + name + ' without changing original custody or debt bytes', t => {
+  const f = fixture(t), material = reserveControlTower(f), record = read(material.path);
+  mutate(record); write(material.path, record);
+  const before = bytes(f.root);
+  assert.throws(() => f.ledger.inventory(), pattern || /INVENTORY_ENTRY_INVALID/);
+  assert.deepEqual(bytes(f.root), before);
+  refusesUnchanged(f, pattern || /INVENTORY_ENTRY_INVALID/);
+});
+
+for (const [name, operation, mutate] of [
+  ['observation proof digest', 'OBSERVE_CONTROL_SYSTEM', record => { record.controlTowerObservation.observationProofHash = 'd'.repeat(64); }],
+  ['wake proof attached to observation', 'OBSERVE_CONTROL_SYSTEM', record => { record.terminalProofHash = 'd'.repeat(64); }],
+  ['unprojected status field', 'OBSERVE_CONTROL_SYSTEM', record => { record.controlTowerObservation.controlSystemStatus.unrecognized = 'not stored by the canonical producer'; }],
+  ['terminal outcome mismatch', 'OBSERVE_CONTROL_SYSTEM', record => { record.terminalState = 'BLOCKED'; }],
+  ['wake proof binding', 'BUILD_NEXT_ELIGIBLE_GOAL', record => { record.terminalProofHash = 'd'.repeat(64); }],
+]) test('Control Tower terminal inventory rejects tampered ' + name + ' without discarding its original record', t => {
+  const f = fixture(t), material = reserveControlTower(f, operation);
+  completeControlTower(f, material); const record = read(material.path); mutate(record); write(material.path, record);
+  refusesUnchanged(f, /INVENTORY_ENTRY_INVALID/);
+  assert.equal(f.ledger.has(material.command.requestId), true);
+});
+
+for (const change of ['metadata-only', 'terminal transition'])
+  test('Control Tower ' + change + ' during drain capture invalidates the complete original inventory', t => {
+    const f = fixture(t), material = reserveControlTower(f); let afterMutation;
+    assert.throws(() => capture(f, event => {
+      if (event !== 'after-drain-inputs-capture') return;
+      if (change === 'metadata-only') {
+        const record = read(material.path); record.controlTowerObservation.blocker = 'CONTROL_TOWER_BUILD_WAKE_UNPROVEN';
+        write(material.path, record);
+      } else completeControlTower(f, material);
+      afterMutation = bytes(f.root);
+      delete afterMutation['receipt-publication-deferred-v1.json.lock-v1.json'];
+    }), /DRAIN_INVENTORY_CHANGED/);
+    assert(afterMutation); assert.deepEqual(bytes(f.root), afterMutation);
+    assert.equal(f.ledger.inspectControlTower(material.command.requestId).detailState, 'OBSERVED');
+  });
 
 test('fixed original estate capture is immutable, read-only and still incomplete when every local debt count is zero', t => {
   const f = fixture(t), before = bytes(f.root), report = capture(f), result = report.drainInputCandidate;

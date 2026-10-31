@@ -7,6 +7,8 @@ import {
   classifyPostSyncRefresh,
   executePostSyncRefreshPlan,
   parseGitChangedPathStatus,
+  projectPostSyncTargetFailureHistory,
+  reducePostSyncTargetFailureHistory as reduceTargetFailureHistory,
 } from './postSyncRuntimeRefreshCoordinator.mjs';
 
 const A = 'a'.repeat(40);
@@ -15,6 +17,159 @@ const B = 'b'.repeat(40);
 function pass(sourceHead = B) {
   return { ok: true, exactHeadProofOk: true, sourceHead };
 }
+
+const OUTCOME_TIME = '2026-10-31T01:00:00.000Z';
+const NEXT_OUTCOME_TIME = '2026-10-31T01:01:00.000Z';
+const reducePostSyncTargetFailureHistory = (history, event) => reduceTargetFailureHistory(history,
+  { nowMs: Date.parse(NEXT_OUTCOME_TIME), ...event });
+function targetRefusal(history, targetId, overrides = {}) {
+  return reducePostSyncTargetFailureHistory(history, { expectedSourceHead: B, observedAtUtc: OUTCOME_TIME,
+    targetId, failureKind: 'RESULT_UNPROVEN', result: { ok: false, exactHeadProofOk: true, sourceHead: B }, ...overrides });
+}
+
+test('target refusal model preserves every target through retry prefixes and retires only its new exact success', () => {
+  const ids = Object.values(POST_SYNC_REFRESH_TARGETS);
+  let history = null;
+  for (const targetId of ids) history = targetRefusal(history, targetId);
+  assert.equal(history.failures.length, ids.length);
+  const original = JSON.parse(JSON.stringify(history));
+  for (let retry = 1; retry <= 3; retry++) {
+    history = projectPostSyncTargetFailureHistory(history, { expectedSourceHead: B, nowMs: Date.parse(OUTCOME_TIME) + retry * 60_000 });
+    assert.deepEqual(history, original);
+    for (const targetId of ids) {
+      const replay = reducePostSyncTargetFailureHistory(history, { expectedSourceHead: B, observedAtUtc: NEXT_OUTCOME_TIME,
+        targetId, result: { ...pass(), resumed: true } });
+      assert.deepEqual(replay, history, 'Resume is not a new terminal observation');
+    }
+  }
+  for (const targetId of ids) {
+    const previous = history.failures;
+    history = reducePostSyncTargetFailureHistory(history, { expectedSourceHead: B,
+      observedAtUtc: NEXT_OUTCOME_TIME, targetId, result: pass() });
+    assert.deepEqual(history.failures, previous.filter(row => row.targetId !== targetId));
+  }
+  assert.deepEqual(history.failures, []);
+});
+
+test('target history rejects contradictory identities and never promotes a wrong-head or stale success', () => {
+  const targetId = POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER;
+  const history = targetRefusal(null, targetId);
+  for (const result of [pass(A), { ...pass(), sourceHead: [B] }, { ...pass(), exactHeadProofOk: false },
+    { ...pass(), blocker: 'SOVEREIGN_COMMANDER_NOT_HEALTHY' }]) {
+    assert.deepEqual(reducePostSyncTargetFailureHistory(history, { expectedSourceHead: B,
+      observedAtUtc: NEXT_OUTCOME_TIME, targetId, result }), history);
+  }
+  assert.deepEqual(reducePostSyncTargetFailureHistory(history, { expectedSourceHead: B,
+    observedAtUtc: '2026-10-31T00:59:59.000Z', targetId, result: pass() }), history);
+  const twoTargets = targetRefusal(history, POST_SYNC_REFRESH_TARGETS.UI_4173);
+  assert.deepEqual(reducePostSyncTargetFailureHistory(twoTargets, { expectedSourceHead: B,
+    observedAtUtc: '2026-10-31T00:58:59.000Z', targetId, result: pass() }), twoTargets);
+  assert.deepEqual(reducePostSyncTargetFailureHistory(twoTargets, { expectedSourceHead: B,
+    observedAtUtc: NEXT_OUTCOME_TIME, targetId, result: pass(), failureKind: 'RESULT_UNPROVEN' }), twoTargets);
+  assert.equal(projectPostSyncTargetFailureHistory(history, { expectedSourceHead: A, nowMs: Date.parse(NEXT_OUTCOME_TIME) }), null);
+  const mismatch = targetRefusal(history, targetId, { observedAtUtc: NEXT_OUTCOME_TIME, result: pass(A) });
+  assert.equal(mismatch.failures[0].reportedSourceHead, A);
+  assert.equal(mismatch.expectedSourceHead, B);
+  assert.equal(mismatch.failures[0].failureKind, 'RESULT_UNPROVEN');
+});
+
+test('target history is bounded closed-schema diagnostic data with no favorable-prefix selection', () => {
+  const history = targetRefusal(null, POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER, {
+    result: { ok: false, sourceHead: B, blocker: 'PRIVATE_ARBITRARY_UPPERCASE_SECRET', stdout: 'PRIVATE_STDOUT', stderr: 'PRIVATE_STDERR' },
+  });
+  assert.equal(history.failures[0].blocker, 'REFRESH_TARGET_PROOF_FAILED');
+  assert.equal(JSON.stringify(history).includes('PRIVATE_'), false);
+  const row = history.failures[0];
+  const invalid = [
+    { ...history, expectedSourceHead: [B] },
+    { ...history, failures: [row, row] },
+    { ...history, failures: Array(8).fill(row) },
+    ...[{ targetId: 'private-unknown-target' }, { observedAtUtc: '2026-10-31T01:03:00.000Z' },
+      { observedAtUtc: 'not-a-time' }, { reportedSourceHead: [B] }, { failureKind: 'HEALTHY' },
+      { blocker: 'PRIVATE_ARBITRARY_UPPERCASE_SECRET' },
+      { failureKind: 'INVOCATION_FAILED', blocker: 'REFRESH_TARGET_INVOCATION_FAILED', reportedSourceHead: B },
+    ].map(change => ({ ...history, failures: [{ ...row, ...change }] })),
+  ];
+  for (const value of invalid) assert.equal(projectPostSyncTargetFailureHistory(value,
+    { expectedSourceHead: B, nowMs: Date.parse(NEXT_OUTCOME_TIME) }), null);
+  const stripped = projectPostSyncTargetFailureHistory({ ...history, token: 'PRIVATE_TOKEN',
+    failures: [{ ...row, stdout: 'PRIVATE_STDOUT', path: 'PRIVATE_PATH' }] },
+  { expectedSourceHead: B, nowMs: Date.parse(NEXT_OUTCOME_TIME) });
+  assert.deepEqual(stripped, history);
+});
+
+test('terminal target observation distinguishes refusal invocation and missing handler without raw error history', async () => {
+  for (const kind of ['RESULT_UNPROVEN', 'INVOCATION_FAILED', 'HANDLER_MISSING']) {
+    const observations = [];
+    let history = null;
+    const adapter = kind === 'HANDLER_MISSING' ? undefined : () => {
+      if (kind === 'INVOCATION_FAILED') throw new Error('PRIVATE_RAW_HANDLER_ERROR');
+      return { ...pass(), exactHeadProofOk: false, blocker: 'PRIVATE_RAW_HANDLER_DENIAL' };
+    };
+    const result = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B, changedPaths: ['main.js'],
+      adapters: { refreshUi: adapter }, onTargetComplete: (results, observation) => {
+        observations.push({ results, observation });
+        history = reducePostSyncTargetFailureHistory(history,
+          { expectedSourceHead: B, observedAtUtc: OUTCOME_TIME, ...observation });
+      } });
+    assert.equal(result.ok, false);
+    assert.equal(observations.length, 1);
+    assert.equal(observations[0].observation.failureKind, kind);
+    assert.equal(history.failures[0].failureKind, kind);
+    assert.equal(history.failures[0].reportedSourceHead, kind === 'RESULT_UNPROVEN' ? B : '');
+    assert.equal(JSON.stringify(history).includes('PRIVATE_'), false);
+  }
+});
+
+test('checkpoint publication failure after a proven handler is never a target invocation failure', async () => {
+  const targetId = POST_SYNC_REFRESH_TARGETS.UI_4173;
+  const otherTarget = POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER;
+  let history = targetRefusal(targetRefusal(null, targetId), otherTarget);
+  const otherFailure = history.failures.find(row => row.targetId === otherTarget);
+  const observations = [];
+  const result = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B, changedPaths: ['main.js'],
+    adapters: { refreshUi: () => pass() }, onTargetComplete: (results, observation) => {
+      observations.push(observation);
+      history = reducePostSyncTargetFailureHistory(history,
+        { expectedSourceHead: B, observedAtUtc: NEXT_OUTCOME_TIME, ...observation });
+      throw new Error('PRIVATE_STATUS_WRITE_ERROR');
+    } });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, `REFRESH_CHECKPOINT_PUBLICATION_FAILED:${targetId}`);
+  assert.equal(result.results[0].ok, true);
+  assert.equal(observations.length, 1);
+  assert.equal(observations[0].failureKind, '');
+  assert.deepEqual(history.failures, [otherFailure]);
+  assert.equal(JSON.stringify(result).includes('PRIVATE_'), false);
+});
+
+test('fixed native inspector uses the existing guarded Commander refresh and its exact fixture has no runtime action', async () => {
+  const parent = 'scripts/sovereign-fixed-runtime-parent-v1.mjs';
+  const fixture = 'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs';
+  const plan = classifyPostSyncRefresh([parent, fixture, 'scripts/sovereign-fixed-runtime-parent-v1.test.mjs']);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.noRuntimePathCount, 2);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+  assert.equal(classifyPostSyncRefresh([fixture]).classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  let calls = 0;
+  const result = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B, changedPaths: [parent, fixture],
+    adapters: { refreshSovereignCommander: () => { calls++; return { ok: false, exactHeadProofOk: false,
+      blocker: 'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN' }; } } });
+  assert.equal(calls, 1);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN');
+});
+
+test('native inspector classification remains exact and refuses unknown neighboring runtime or fixture paths', () => {
+  for (const path of ['scripts/sovereign-fixed-runtime-parent-v2.mjs',
+    'scripts/sovereign-fixed-runtime-extra.mjs',
+    'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v2.mjs']) {
+    const plan = classifyPostSyncRefresh([path]);
+    assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+    assert.equal(plan.automaticExecutionAllowed, false);
+  }
+});
 
 test('Git changed-path status parser includes deletions and both rename sides', () => {
   const parsed = parseGitChangedPathStatus([
@@ -648,4 +803,132 @@ test('ordinary Commander script refreshes remain independent of desktop-plugin r
   });
   assert.equal(result.ok, true);
   assert.equal(result.plan.pluginHostActivationRequired, false);
+});
+
+test('invocation-loaded ignition sources do not introduce a post-sync service launch', async () => {
+  for (const path of [
+    'scripts/ignite-stephanos-local.mjs',
+    'scripts/ignition-cockpit-model.mjs',
+    'scripts/run-battle-bridge-ignition.mjs',
+  ]) {
+    const calls = [];
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths: [path],
+      adapters: Object.fromEntries([
+        'refreshUi', 'restartBackend', 'restartMissionWorker',
+        'restartGitHubMailbox', 'refreshSovereignCommander', 'confirmNaturalReload',
+      ].map(name => [name, async () => { calls.push(name); return pass(); }])),
+    });
+    assert.equal(result.ok, true, path);
+    assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED, path);
+    assert.deepEqual(result.plan.internal.noRuntimePaths, [path], path);
+    assert.deepEqual(result.plan.targetIds, [], path);
+    assert.deepEqual(calls, [], path);
+  }
+});
+
+test('the existing relay core uses natural reload and rejects stale source proof', async () => {
+  const path = 'scripts/chatgpt-shared-workspace-github-relay-core.mjs';
+  for (const observedHead of [A, B]) {
+    const calls = [];
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths: [path],
+      adapters: {
+        confirmNaturalReload: async () => { calls.push('natural'); return pass(observedHead); },
+        refreshUi: async () => { calls.push('ui'); return pass(); },
+        restartBackend: async () => { calls.push('backend'); return pass(); },
+        restartMissionWorker: async () => { calls.push('worker'); return pass(); },
+      },
+    });
+    assert.deepEqual(result.plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+    assert.deepEqual(calls, ['natural']);
+    assert.equal(result.ok, observedHead === B);
+    assert.equal(result.exactHeadProofOk, observedHead === B);
+    assert.equal(result.blocker, observedHead === B ? '' : 'REFRESH_PROOF_FAILED:natural-reload');
+  }
+});
+
+// Authenticated protected-main comparison 5e0cdfc..dcecfc6 (PRs 2344, 1832,
+// 3263 and 2481). This is source-range proof, not the private host's debt list.
+const POST_3328_PROTECTED_RANGE = [
+  'docs/architecture/autonomous-failure-sentinel-m1-v1.md',
+  'docs/operations/universal-project-chat-bootstrap-v1.md',
+  'scripts/chatgpt-shared-workspace-github-relay-core.mjs',
+  'scripts/chatgpt-universal-project-chat-bootstrap-wiring.test.mjs',
+  'scripts/ignite-stephanos-local.mjs',
+  'scripts/ignite-stephanos-local.test.mjs',
+  'scripts/ignition-cockpit-model.mjs',
+  'scripts/ignition-cockpit-model.test.mjs',
+  'scripts/mission-orchestrator-worker-supervised.mjs',
+  'scripts/mission-orchestrator-worker-supervised.test.mjs',
+  'scripts/ollama-ignition-autostart.test.mjs',
+  'scripts/run-battle-bridge-ignition.mjs',
+  'scripts/run-battle-bridge-ignition.test.mjs',
+  'shared/agents/autonomousFailureSentinelV1.mjs',
+  'shared/agents/autonomousFailureSentinelV1.test.mjs',
+  'shared/agents/universalProjectChatBootstrapV1.mjs',
+];
+
+test('the actual later protected range retains backend and worker proof requirements', async () => {
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: POST_3328_PROTECTED_RANGE,
+    adapters: {
+      restartBackend: async () => { calls.push('backend'); return pass(); },
+      restartMissionWorker: async () => { calls.push('worker'); return pass(); },
+      confirmNaturalReload: async () => { calls.push('natural'); return pass(); },
+    },
+  });
+  assert.equal(result.plan.changedPathCount, 16);
+  assert.deepEqual(result.plan.internal.unknownPaths, []);
+  assert.deepEqual(result.plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
+  assert.deepEqual(calls, ['backend', 'worker', 'natural']);
+  assert.equal(result.ok, true);
+  assert.equal(result.exactHeadProofOk, true);
+});
+
+test('invocation-loaded additions cannot satisfy retained launcher debt with stale UI proof', async () => {
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B,
+    changedPaths: [...POST_3328_PROTECTED_RANGE, 'scripts/battle-bridge-ignition-supervisor.mjs'],
+    adapters: {
+      refreshUi: async () => { calls.push('ui'); return pass(A); },
+      restartBackend: async () => { calls.push('backend'); return pass(); },
+      restartMissionWorker: async () => { calls.push('worker'); return pass(); },
+      confirmNaturalReload: async () => { calls.push('natural'); return pass(); },
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.exactHeadProofOk, false);
+  assert.equal(result.blocker, 'REFRESH_PROOF_FAILED:stephanos-ui-4173');
+  assert.deepEqual(calls, ['ui']);
+});
+
+test('relay and ignition allowances refuse unknown neighboring scripts before any target executes', async () => {
+  for (const path of [
+    'scripts/chatgpt-shared-workspace-github-relay-core-unregistered.mjs',
+    'scripts/chatgpt-shared-workspace-github-relay-new-core.mjs',
+    'scripts/ignition-cockpit-model-unregistered.mjs',
+    'scripts/run-battle-bridge-ignition-unregistered.mjs',
+    'scripts/unregistered-ignition.mjs',
+  ]) {
+    const calls = [];
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths: [...POST_3328_PROTECTED_RANGE, path],
+      adapters: {
+        restartBackend: async () => { calls.push('backend'); return pass(); },
+        restartMissionWorker: async () => { calls.push('worker'); return pass(); },
+        confirmNaturalReload: async () => { calls.push('natural'); return pass(); },
+      },
+    });
+    assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH, path);
+    assert.equal(result.plan.automaticExecutionAllowed, false, path);
+    assert.ok(result.plan.internal.unknownPaths.includes(path), path);
+    assert.deepEqual(calls, [], path);
+  }
 });
