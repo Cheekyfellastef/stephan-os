@@ -755,8 +755,13 @@ test('uncompiled native gap backlog prevents green when unrelated missions dispa
 });
 
 
-test('goal repair resource hold prevents initial work and is rechecked between fixed steps',()=>{
- for(const allowedReads of [0,1]) {
+test('goal repair resource hold gates Ignition preflight and is rechecked before fixed steps',()=>{
+ const cases = [
+  { allowedReads: 0, expectedLaunches: 0 },
+  { allowedReads: 1, expectedLaunches: 0 },
+  { allowedReads: 2, expectedLaunches: 1 },
+ ];
+ for(const { allowedReads, expectedLaunches } of cases) {
   let reads=0;const launched=[];
   const result=runSovereignCommanderGoalBuilderRepair({
    readResourceAdmission:()=>({ok:reads++<allowedReads}),
@@ -764,8 +769,8 @@ test('goal repair resource hold prevents initial work and is rechecked between f
   });
   assert.equal(result.ok,false);
   assert.equal(result.blocker,'SOVEREIGN_GOAL_BUILDER_RESOURCE_GOVERNOR_HOLD');
-  assert.equal(launched.length,allowedReads);
-  assert.equal(result.steps.length,allowedReads);
+  assert.equal(launched.length,expectedLaunches);
+  assert.equal(result.steps.length,expectedLaunches);
  }
 });
 
