@@ -79,7 +79,10 @@ test('current-main fixed runtime preparer stays fixed-source and carries no rest
   assert.match(source,/buildFixedRuntimeInstallerCandidateV1/);
   assert.match(source,/rev-parse', expectedMain \+ ':' \+ relative/);
   assert.match(source,/cat-file', 'blob', blobSha/);
+  assert.match(source,/hash-object', '--path=' \+ relative, '--', relative/);
+  assert.match(source,/materializedBlobSha !== expectedBlobSha/);
   assert.match(source,/FIXED_RUNTIME_INSTALL_SOURCE_MATERIALIZATION_CHANGED/);
+  assert.doesNotMatch(source,/Buffer\.from\(actual\)\.equals\(expectedBytes\)/);
   assert.match(source,/writeFileFn\(candidate\.payloadPath, payload, \{ flag: 'wx', mode: 0o600 \}\)/);
   assert.doesNotMatch(source,/cmd\.exe|Invoke-Expression|Restart-Computer|Stop-Computer|shutdown\.exe|git\s+reset|git\s+clean|git\s+push/i);
 });
