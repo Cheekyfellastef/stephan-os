@@ -502,7 +502,13 @@ export async function runBattleBridgeSyncAndRefresh({
               break;
             }
           }
-          if (settled) continue;
+          if (settled) {
+            pendingSpans = [];
+            requiredTargetIds = [];
+            sovereignRelayRefreshRequired = false;
+            completion = null;
+            continue;
+          }
         }
         return Object.freeze({
           ok: false,
