@@ -544,7 +544,7 @@ test('fully blocked non-unsafe cycle remains enabled for the next scheduled run'
   assert.equal(result.controllerLevelUnsafeProven, false);
 });
 
-test('disablement is restricted to explicit operator intent, terminal completion, or proven controller-wide unsafety', () => {
+test('individual goal completion never self-disables a recurring controller; only operator intent or proven controller-wide unsafety does', () => {
   const operator = evaluateControllerLivenessDecision({ operatorDisableRequested: true });
   assert.equal(operator.disableAllowed, true);
   assert.equal(operator.reason, 'EXPLICIT_OPERATOR_DISABLE');
@@ -553,8 +553,25 @@ test('disablement is restricted to explicit operator intent, terminal completion
     terminalCompletion: true,
     safeEligibleWorkRemaining: false,
   });
-  assert.equal(terminal.disableAllowed, true);
-  assert.equal(terminal.reason, 'TERMINAL_SCOPE_COMPLETE');
+  assert.equal(terminal.disableAllowed, false);
+  assert.equal(terminal.controllerShouldRemainEnabled, true);
+  assert.equal(terminal.retryNextScheduledRun, true);
+  assert.equal(terminal.reason, 'TERMINAL_GOAL_COMPLETE_CONTROLLER_LIVE');
+
+  // A held native source worker cannot turn terminal goal status into a fleet-wide stop.
+  for (const work of [false, true]) {
+    const state = evaluateControllerLivenessDecision({
+      terminalCompletion: true,
+      safeEligibleWorkRemaining: work,
+      surfaceFailures: [
+        { surfaceId: 'native-source', failureClass: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING' },
+        { surfaceId: 'native-source', failureClass: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING' },
+      ],
+    });
+    assert.equal(state.disableAllowed, false);
+    assert.equal(state.controllerShouldRemainEnabled, true);
+    assert.deepEqual(state.blockedSurfaceIds, ['native-source']);
+  }
 
   const incompleteUnsafe = evaluateControllerLivenessDecision({
     controllerLevelUnsafe: true,
