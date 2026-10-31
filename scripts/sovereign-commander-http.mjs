@@ -508,6 +508,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         || typeof custodyStore?.recoverPreparedAfterBoot !== 'function'
         || state.running || state.maintenanceInFlight || stopped) return false;
     state.maintenanceInFlight = true;
+    let recovered = false;
     try {
       const result = await custodyStore.recoverPreparedAfterBoot();
       if (result?.ok === true) {
@@ -515,12 +516,14 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         state.lastBlocker = '';
         state.lastOk = false;
         state.lastFinalVerdict = 'SOVEREIGN_MAINTENANCE_CUSTODY_RECOVERED_REPAIR_PENDING';
-        schedule(startDelayMs);
-        return true;
+        recovered = true;
       }
+      return recovered;
+    } catch {
       return false;
     } finally {
       state.maintenanceInFlight = false;
+      if (recovered && !state.timeoutCustodyHeld) schedule(startDelayMs);
       closeStoppedCustody();
     }
   };
