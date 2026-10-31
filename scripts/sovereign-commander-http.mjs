@@ -985,6 +985,32 @@ export async function runSovereignCommanderHttpServer(options = {}) {
       });
     }
   }
+  if (!installedSourceHead) {
+    const underlyingCustodyStore = custodyStore;
+    const refusal = () => ({ ok: false, custodyReleased: false,
+      blocker: 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN' });
+    custodyStore = Object.freeze({
+      status: () => {
+        const observed = underlyingCustodyStore?.status?.() || {};
+        return observed.held === true ? observed : Object.freeze({
+          ...observed, held: true, blocker: 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN',
+        });
+      },
+      reserve: refusal,
+      release: refusal,
+      recordNativeRoot: refusal,
+      releaseNativeTerminal: refusal,
+      recoverAfterBoot: refusal,
+      prepareAfterAuditLoss: refusal,
+      prepareRetainedMigration: refusal,
+      prepareIncident: refusal,
+      recoverPreparedAfterBoot: typeof underlyingCustodyStore?.recoverPreparedAfterBoot === 'function'
+        ? () => underlyingCustodyStore.recoverPreparedAfterBoot()
+        : refusal,
+      close: () => underlyingCustodyStore?.close?.(),
+    });
+  }
+
   const created = await createSovereignCommanderHttpServer({
     ...options,
     token,
