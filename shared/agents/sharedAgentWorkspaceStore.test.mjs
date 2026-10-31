@@ -162,6 +162,41 @@ test('atomic JSON write retries transient Windows-style rename contention withou
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('Windows persistent rename denial also preserves post-sync runtime refresh current status', async () => {
+  const root = await tempWorkspace();
+  try {
+    const filename = 'post-sync-runtime-refresh-current.json';
+    const target = join(root, 'status', filename);
+    const original = createSharedWorkspaceStatusRecord({
+      statusId: 'post-sync-runtime-refresh-current',
+      timestampUtc: '2026-07-07T00:00:00Z',
+      status: 'REFRESH_READY',
+    });
+    await writeAtomicJson(root, ['status', filename], original, { repoRoot: REPO_ROOT });
+    const replacement = createSharedWorkspaceStatusRecord({
+      statusId: 'post-sync-runtime-refresh-current',
+      timestampUtc: '2026-07-07T00:01:00Z',
+      status: 'REFRESH_COMPLETE',
+    });
+    let renameAttempts = 0;
+    const result = await writeAtomicJson(root, ['status', filename], replacement, {
+      repoRoot: REPO_ROOT,
+      platform: 'win32',
+      atomicRenameRetryDelaysMs: [],
+      renameFn: async () => {
+        renameAttempts += 1;
+        const error = new Error('destination handle denies atomic replacement');
+        error.code = 'EPERM';
+        throw error;
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(renameAttempts, 1);
+    assert.equal(JSON.parse(await readFile(target, 'utf8')).status, 'REFRESH_COMPLETE');
+    assert.deepEqual(await readdir(join(root, 'status')), [filename]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('Windows persistent rename denial falls back to fsynced in-place status replacement', async () => {
   const root = await tempWorkspace();
   try {
