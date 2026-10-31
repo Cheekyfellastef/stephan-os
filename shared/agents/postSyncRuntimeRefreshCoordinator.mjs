@@ -1,6 +1,15 @@
-import { POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA, projectPostSyncSovereignRelayProof }
-  from '../../scripts/battle-bridge-github-sync-policy.mjs';
-export { POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA, projectPostSyncSovereignRelayProof };
+import {
+  POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
+  POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
+  projectPostSyncSovereignRelayObservation,
+  projectPostSyncSovereignRelayProof,
+} from '../../scripts/battle-bridge-github-sync-policy.mjs';
+export {
+  POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
+  POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
+  projectPostSyncSovereignRelayObservation,
+  projectPostSyncSovereignRelayProof,
+};
 
 export const POST_SYNC_REFRESH_SCHEMA = 'stephanos.post-sync-runtime-refresh.v1';
 
@@ -743,6 +752,7 @@ export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', a
     safeRefreshesCompleted: result.safeRefreshesCompleted === true,
     resultTargets: Array.isArray(result.results) ? result.results.map((entry) => {
       const relayProof = projectPostSyncSovereignRelayProof(entry.sovereignRelayProof, afterHead);
+      const relayObservation = projectPostSyncSovereignRelayObservation(entry.sovereignRelayObservation, afterHead);
       const required = entry.targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER && plan.sovereignRelayRefreshRequired === true;
       const qualified = !required || postSyncRefreshTargetResultPass(entry, { targetId: entry.targetId, plan, expectedHead: afterHead });
       return {
@@ -752,6 +762,7 @@ export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', a
         sourceHead: validHead(entry.sourceHead) ? String(entry.sourceHead).toLowerCase() : '',
         blocker: !qualified && entry.ok === true ? 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN' : String(entry.blocker || ''),
         ...(relayProof ? { sovereignRelayProof: relayProof } : {}),
+        ...(relayObservation ? { sovereignRelayObservation: relayObservation } : {}),
       };
     }) : [],
     arbitraryShellAllowed: false,
