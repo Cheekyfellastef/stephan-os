@@ -382,5 +382,4 @@ test('Ignition offers one bounded protected fixed-runtime install without direct
   assert.ok(fn);
   assert.doesNotMatch(fn, /Start-Process|Restart-Computer|shutdown\.exe|Stop-Computer|Invoke-Expression|cmd\.exe/i);
   assert.doesNotMatch(fn, /git\s+(?:reset|clean|push|merge|rebase|checkout|switch)/i);
-});
-
+});\n
