@@ -505,6 +505,8 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
 
   const recoverPreparedCustodyOnStartup = async () => {
     if (!state.timeoutCustodyHeld
+        || typeof custodyStore?.preparedRecoveryEligible !== 'function'
+        || custodyStore.preparedRecoveryEligible() !== true
         || typeof custodyStore?.recoverPreparedAfterBoot !== 'function'
         || state.running || state.maintenanceInFlight || stopped) return false;
     state.maintenanceInFlight = true;
@@ -981,7 +983,7 @@ export async function runSovereignCommanderHttpServer(options = {}) {
       custodyStore = Object.freeze({
         status: () => ({ held: true, blocker: 'MAINTENANCE_CUSTODY_STATE_UNPROVEN' }),
         reserve: refusal, release: refusal, recoverAfterBoot: refusal,
-        recoverPreparedAfterBoot: refusal, close: () => {},
+        preparedRecoveryEligible: () => false, recoverPreparedAfterBoot: refusal, close: () => {},
       });
     }
   }
@@ -1004,6 +1006,9 @@ export async function runSovereignCommanderHttpServer(options = {}) {
       prepareAfterAuditLoss: refusal,
       prepareRetainedMigration: refusal,
       prepareIncident: refusal,
+      preparedRecoveryEligible: typeof underlyingCustodyStore?.preparedRecoveryEligible === 'function'
+        ? () => underlyingCustodyStore.preparedRecoveryEligible() === true
+        : () => false,
       recoverPreparedAfterBoot: typeof underlyingCustodyStore?.recoverPreparedAfterBoot === 'function'
         ? () => underlyingCustodyStore.recoverPreparedAfterBoot()
         : refusal,
