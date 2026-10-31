@@ -341,21 +341,23 @@ test('Ignition commissions only the exact missing Sovereign fixed runtime and th
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(script, /function Invoke-SovereignFixedRuntimeCommissioning/);
   assert.match(script, /sovereign-fixed-runtime-install-current-v1\.mjs/);
-  assert.match(script, /install-sovereign-fixed-runtime-elevated-v1\.ps1/);
   assert.match(script, /Read-FixedRuntimeAdapter 'qualification'/);
   assert.match(script, /\[string\]\$qualification\.Value\.state -eq 'RESTART_REQUIRED'/);
   assert.match(script, /Read-FixedRuntimeAdapter 'status'/);
   assert.match(script, /\[string\]\$status\.Value\.state -ne 'MISSING'/);
   assert.match(script, /FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING/);
-  assert.match(script, /INSTALLED_PENDING_RESTART/);
-  assert.match(script, /requiresLaterFullBoot -eq \$true/);
+  assert.match(script, /Read-FixedRuntimeAdapter 'prepare'/);
+  assert.match(script, /READY_FOR_OPERATOR_APPROVAL/);
+  assert.match(script, /payloadSha256/);
+  assert.match(script, /scriptSha256/);
+  assert.match(script, /Start-Process -FilePath \$powerShellExecutable[\s\S]*?-Verb RunAs[\s\S]*?-Wait -PassThru/);
+  assert.match(script, /'-EncodedCommand'/);
   assert.match(script, /Use the normal Windows Restart command/);
   assert.match(script, /Invoke-SovereignCommanderRetainedCustodyPreparation\) \{\s*exit 0\s*\}[\s\S]*?Invoke-SovereignFixedRuntimeCommissioning\) \{\s*exit 0/);
   const fn = script.match(/function Invoke-SovereignFixedRuntimeCommissioning[\s\S]*?^}\r?$/m)?.[0] || '';
   assert.ok(fn);
   assert.doesNotMatch(fn, /Restart-Computer|shutdown\.exe|Stop-Computer|Invoke-Expression|cmd\.exe|git\s+reset|git\s+clean|git\s+push/i);
-  assert.doesNotMatch(fn, /Start-Process\s+[^\n]*-Verb\s+RunAs/i,
-    'launcher delegates UAC to the fixed broker instead of growing its own elevation surface');
+  assert.match(fn, /\$candidateInvalid = [\s\S]*?powershellExecutable -cne \$powerShellExecutable[\s\S]*?pcRestartAuthority -ne \$false/);
 });
 
 test('Ignition offers exact retained-custody preparation without restart or release authority', async () => {
