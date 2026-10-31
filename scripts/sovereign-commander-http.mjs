@@ -131,7 +131,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   const closeStoppedCustody = () => {
     if (stopped && !custodyClosed && !state.maintenanceInFlight && !nativeCyclePromise) {
       custodyClosed = true;
-      custodyStore?.close();
+      custodyStore?.close?.();
     }
   };
 
@@ -503,7 +503,36 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     return true;
   };
 
-  schedule(startDelayMs);
+  const recoverPreparedCustodyOnStartup = async () => {
+    if (!state.timeoutCustodyHeld
+        || typeof custodyStore?.recoverPreparedAfterBoot !== 'function'
+        || state.running || state.maintenanceInFlight || stopped) return false;
+    state.maintenanceInFlight = true;
+    let recovered = false;
+    try {
+      const result = await custodyStore.recoverPreparedAfterBoot();
+      if (result?.ok === true) {
+        state.timeoutCustodyHeld = false;
+        state.lastBlocker = '';
+        state.lastOk = false;
+        state.lastFinalVerdict = 'SOVEREIGN_MAINTENANCE_CUSTODY_RECOVERED_REPAIR_PENDING';
+        recovered = true;
+      }
+      return recovered;
+    } catch {
+      return false;
+    } finally {
+      state.maintenanceInFlight = false;
+      if (recovered && !state.timeoutCustodyHeld) schedule(startDelayMs);
+      closeStoppedCustody();
+    }
+  };
+
+  if (state.timeoutCustodyHeld) {
+    void recoverPreparedCustodyOnStartup();
+  } else {
+    schedule(startDelayMs);
+  }
 
   return Object.freeze({
     status,
@@ -937,21 +966,51 @@ export async function runSovereignCommanderHttpServer(options = {}) {
   const token = await loadSovereignCommanderToken(options);
   const readRecoverySource = options.readRecoverySource || readMaintenanceRecoverySourceV1;
   let installedSourceHead = '';
-  let custodyStore;
-  try {
-    installedSourceHead = readRecoverySource();
-    custodyStore = options.custodyStore || createMaintenanceCustodyStoreV1({ signingKey: token });
-  } catch {
-    // Observation remains available when recovery authority cannot be proven.
-    // This object cannot release or replace any existing durable reservation.
-    installedSourceHead = '';
+  try { installedSourceHead = readRecoverySource(); } catch { installedSourceHead = ''; }
+
+  let custodyStore = options.custodyStore;
+  if (!custodyStore) {
+    try {
+      custodyStore = createMaintenanceCustodyStoreV1({ signingKey: token });
+    } catch {
+      // Observation remains available when custody authority itself cannot be
+      // authenticated. Source drift alone must not erase a valid prepared
+      // custody record or prevent successor-boot recovery.
+      const refusal = () => ({ ok: false, custodyReleased: false,
+        blocker: 'MAINTENANCE_CUSTODY_STATE_UNPROVEN' });
+      custodyStore = Object.freeze({
+        status: () => ({ held: true, blocker: 'MAINTENANCE_CUSTODY_STATE_UNPROVEN' }),
+        reserve: refusal, release: refusal, recoverAfterBoot: refusal,
+        recoverPreparedAfterBoot: refusal, close: () => {},
+      });
+    }
+  }
+  if (!installedSourceHead) {
+    const underlyingCustodyStore = custodyStore;
     const refusal = () => ({ ok: false, custodyReleased: false,
       blocker: 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN' });
     custodyStore = Object.freeze({
-      status: () => ({ held: true, blocker: 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN' }),
-      reserve: refusal, release: refusal, recoverAfterBoot: refusal, close: () => {},
+      status: () => {
+        const observed = underlyingCustodyStore?.status?.() || {};
+        return observed.held === true ? observed : Object.freeze({
+          ...observed, held: true, blocker: 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN',
+        });
+      },
+      reserve: refusal,
+      release: refusal,
+      recordNativeRoot: refusal,
+      releaseNativeTerminal: refusal,
+      recoverAfterBoot: refusal,
+      prepareAfterAuditLoss: refusal,
+      prepareRetainedMigration: refusal,
+      prepareIncident: refusal,
+      recoverPreparedAfterBoot: typeof underlyingCustodyStore?.recoverPreparedAfterBoot === 'function'
+        ? () => underlyingCustodyStore.recoverPreparedAfterBoot()
+        : refusal,
+      close: () => underlyingCustodyStore?.close?.(),
     });
   }
+
   const created = await createSovereignCommanderHttpServer({
     ...options,
     token,

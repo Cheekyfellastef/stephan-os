@@ -680,9 +680,10 @@ test('standalone supervisor housekeeping ignores hostile PATH and uses only the 
   assert.equal(receivedOptions.preserveRuntimeDirt, true);
   assert.equal(calls.length, 2);
   assert.equal(calls.every((call) => call.command === BATTLE_BRIDGE_WINDOWS_HOST.git), true);
-  assert.deepEqual(calls[0].args.slice(0, BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.length), [...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS]);
+  const fixedConfig = battleBridgeGitFixedConfigArgs('win32');
+  assert.deepEqual(calls[0].args.slice(0, fixedConfig.length), fixedConfig);
   assert.deepEqual(
-    calls[0].args.slice(BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.length, BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.length + 2),
+    calls[0].args.slice(fixedConfig.length, fixedConfig.length + 2),
     [...battleBridgeCanonicalRepositoryArgs(cwd)],
   );
   assert.equal(calls.every((call) => call.options.env.PATH !== 'C:\\attacker'), true);
