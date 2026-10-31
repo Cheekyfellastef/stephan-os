@@ -1064,12 +1064,19 @@ Prepare Sovereign Commander custody for the next boot?
     return $false
   }
 
-  $prepareText = (& $nodeExecutable $recoveryScript 'prepare-retained-migration'
-    '--expected-cycle' ([string]$inspection.projectionReservationId)
-    '--expected-digest' ([string]$inspection.projectionDigest)
-    '--expected-main' $expectedMain
-    '--expected-owner-digest' ([string]$inspection.heldOwner.digest)
-    '--operator-approved' 2>$null | Out-String).Trim()
+  $prepareArgs = @(
+    'prepare-retained-migration'
+    '--expected-cycle'
+    [string]$inspection.projectionReservationId
+    '--expected-digest'
+    [string]$inspection.projectionDigest
+    '--expected-main'
+    $expectedMain
+    '--expected-owner-digest'
+    [string]$inspection.heldOwner.digest
+    '--operator-approved'
+  )
+  $prepareText = (& $nodeExecutable $recoveryScript @prepareArgs 2>$null | Out-String).Trim()
   if (-not $prepareText) { throw 'Sovereign Commander retained-custody preparation returned no proof.' }
   try { $prepared = $prepareText | ConvertFrom-Json } catch { throw 'Sovereign Commander retained-custody preparation proof was invalid.' }
   if ($LASTEXITCODE -ne 0 -or $prepared.ok -ne $true -or $prepared.prepared -ne $true
