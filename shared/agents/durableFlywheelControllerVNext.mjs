@@ -433,13 +433,15 @@ export function evaluateControllerLivenessDecision(input = {}) {
     (surfaceId) => !blockedSurfaceIds.includes(surfaceId),
   );
 
-  const disableAllowed = operatorDisableRequested || terminalCompletion || controllerLevelUnsafe;
+  // Completing one goal does not retire its recurring controller.
+  // Keep the original hourly fleet live for the next qualified task.
+  const disableAllowed = operatorDisableRequested || controllerLevelUnsafe;
   const reason = operatorDisableRequested
     ? 'EXPLICIT_OPERATOR_DISABLE'
-    : terminalCompletion
-      ? 'TERMINAL_SCOPE_COMPLETE'
-      : controllerLevelUnsafe
-        ? 'CONTROLLER_LEVEL_UNSAFE'
+    : controllerLevelUnsafe
+      ? 'CONTROLLER_LEVEL_UNSAFE'
+      : terminalCompletion
+        ? 'TERMINAL_GOAL_COMPLETE_CONTROLLER_LIVE'
         : blockedSurfaceIds.length
           ? 'SURFACE_BLOCKED_CONTROLLER_LIVE'
           : 'CONTROLLER_LIVE';
