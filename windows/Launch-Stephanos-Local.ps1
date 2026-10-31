@@ -757,9 +757,23 @@ function Wait-ForBattleBridgeSupervisorReady([int]$TimeoutSeconds = 300) {
         throw "Battle Bridge ignition supervisor blocked: $($record.blockerId). $($record.nextOperatorAction)"
       }
     }
-    if ($script:ignitionHelperProcess -and $script:ignitionHelperProcess.HasExited -and $script:ignitionHelperProcess.ExitCode -ne 0) {
+    $helperExitCode = $null
+    if ($script:ignitionHelperProcess -and $script:ignitionHelperProcess.HasExited) {
+      try {
+        # Windows PowerShell can report HasExited before Start-Process -PassThru has
+        # populated ExitCode for a redirected background child. Reap/refresh first;
+        # an unproven/null code is not a failure verdict.
+        $script:ignitionHelperProcess.WaitForExit()
+        $script:ignitionHelperProcess.Refresh()
+        $helperExitCode = $script:ignitionHelperProcess.ExitCode
+      }
+      catch {
+        $helperExitCode = $null
+      }
+    }
+    if ($null -ne $helperExitCode -and [int]$helperExitCode -ne 0) {
       $childBlocker = Get-LauncherChildBlocker
-      $detail = if ($childBlocker -and $childBlocker.message) { [string]$childBlocker.message } else { "Ignition helper exited with code $($script:ignitionHelperProcess.ExitCode)." }
+      $detail = if ($childBlocker -and $childBlocker.message) { [string]$childBlocker.message } else { "Ignition helper exited with code $([int]$helperExitCode)." }
       throw "Battle Bridge ignition helper failed before a green supervisor contract: $detail"
     }
     Start-Sleep -Seconds 1
