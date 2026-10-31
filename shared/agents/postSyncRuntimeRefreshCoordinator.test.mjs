@@ -847,6 +847,31 @@ test('merged controller-lane status estate is fully classified and refreshable',
   assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER));
 });
 
+test('qualified Goal Builder maintenance child is exact Commander runtime and the merged repair range is fully classified', () => {
+  const runtime = 'scripts/sovereign-commander-goal-builder-repair.mjs';
+  const single = classifyPostSyncRefresh([runtime]);
+  assert.equal(single.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(single.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+  assert.equal(single.unknownPathCount, 0);
+  assert.equal(single.automaticExecutionAllowed, true);
+
+  const mergedRange = classifyPostSyncRefresh([
+    runtime,
+    'scripts/sovereign-commander-goal-builder-repair.test.mjs',
+    'scripts/sovereign-commander-http.mjs',
+    'shared/agents/sovereignCommanderHttp.test.mjs',
+  ]);
+  assert.equal(mergedRange.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(mergedRange.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+  assert.equal(mergedRange.noRuntimePathCount, 2);
+  assert.equal(mergedRange.unknownPathCount, 0);
+  assert.equal(mergedRange.automaticExecutionAllowed, true);
+
+  const unknown = classifyPostSyncRefresh(['scripts/sovereign-commander-goal-builder-repair-v2.mjs']);
+  assert.equal(unknown.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+  assert.deepEqual(unknown.internal.unknownPaths, ['scripts/sovereign-commander-goal-builder-repair-v2.mjs']);
+});
+
 test('Sovereign Commander runtime changes execute only the dedicated fixed refresh target', async () => {
   const calls = [];
   const result = await executePostSyncRefreshPlan({
