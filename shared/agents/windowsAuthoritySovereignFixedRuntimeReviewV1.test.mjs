@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 import {
@@ -13,28 +12,7 @@ const HEAD = 'a'.repeat(40);
 const BASE = '2f56252825d5bbc9aa0a684808fd141eff74c84c';
 const BRANCH = 'fix/2961-fixed-runtime-closure-relay-proof-20261031';
 
-function gitBlobSha(content) {
-  const bytes = Buffer.from(content, 'utf8');
-  return createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex');
-}
-
-async function sourceRecords() {
-  return Promise.all(WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_PATHS_V1.map(async path => {
-    const content = await readFile(new URL('../../' + path, import.meta.url), 'utf8');
-    return {
-      schemaVersion: 'stephanos.windows-authority-source.v1',
-      repository: 'Cheekyfellastef/stephan-os',
-      path,
-      ref: HEAD,
-      exists: true,
-      size: Buffer.byteLength(content, 'utf8'),
-      blobSha: gitBlobSha(content),
-      content,
-    };
-  }));
-}
-
-function input(sources, overrides = {}) {
+function input(overrides = {}) {
   return {
     repository: 'Cheekyfellastef/stephan-os',
     prNumber: 3362,
@@ -66,29 +44,24 @@ function input(sources, overrides = {}) {
         mergeBaseCommitSha: BASE,
       },
     },
-    sources,
+    sources: [],
     ...overrides,
   };
 }
 
-test('exact #3362 fixed-runtime Windows pair is specialist eligible and clean', async () => {
-  const sources = await sourceRecords();
-  for (const source of sources) {
-    assert.equal(source.blobSha, WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_BLOBS_V1[source.path]);
-  }
-  const result = analyzeWindowsAuthoritySovereignFixedRuntimeReviewV1(input(sources));
+test('exact #3362 two-P0 escalation is eligible but cannot self-certify without exact source evidence', () => {
+  const result = analyzeWindowsAuthoritySovereignFixedRuntimeReviewV1(input());
   assert.equal(result.eligible, true);
-  assert.equal(result.clean, true, JSON.stringify(result.findings));
+  assert.equal(result.clean, false);
   assert.deepEqual(result.reviewedPaths, WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_PATHS_V1);
-  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_SPECIALIST_CLEAN');
+  assert.equal(result.findings.filter(item => item.code === 'fixed-runtime-specialist-exact-source-not-pinned').length, 2);
   assert.equal(result.sourceMutationAllowed, false);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.runtimeMutationAllowed, false);
   assert.equal(result.providerQualificationAuthority, false);
 });
 
-test('wrong PR branch base or escalation estate cannot enter the specialist', async () => {
-  const sources = await sourceRecords();
+test('wrong PR branch base or escalation estate cannot enter the specialist', () => {
   for (const overrides of [
     { prNumber: 3363 },
     { branch: 'other' },
@@ -96,40 +69,47 @@ test('wrong PR branch base or escalation estate cannot enter the specialist', as
     { analysis: { findings: [{ severity: 'P0', code: 'unsupported-high-risk-surface',
       path: WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_PATHS_V1[0] }], counts: { P0: 1, P1: 0, P2: 0 } } },
   ]) {
-    assert.equal(analyzeWindowsAuthoritySovereignFixedRuntimeReviewV1(input(sources, overrides)).eligible, false);
+    assert.equal(analyzeWindowsAuthoritySovereignFixedRuntimeReviewV1(input(overrides)).eligible, false);
   }
 });
 
-test('changed protected Windows bytes remain blocking even when the caller reports a matching blob field', async () => {
-  const sources = await sourceRecords();
-  const changed = { ...sources[0], content: sources[0].content + '\n# widened\n' };
-  changed.size = Buffer.byteLength(changed.content, 'utf8');
-  changed.blobSha = gitBlobSha(changed.content);
-  const result = analyzeWindowsAuthoritySovereignFixedRuntimeReviewV1(input([changed, sources[1]]));
-  assert.equal(result.eligible, true);
-  assert.equal(result.clean, false);
-  assert.ok(result.findings.some(item => item.code === 'fixed-runtime-specialist-exact-source-not-pinned'));
-});
-
-test('source estate widening or duplicate evidence cannot be reviewed favorably', async () => {
-  const sources = await sourceRecords();
-  const extra = { ...sources[0], path: 'scripts/windows/unrelated.ps1' };
-  const result = analyzeWindowsAuthoritySovereignFixedRuntimeReviewV1(input([...sources, extra]));
+test('source estate widening cannot be reviewed favorably', () => {
+  const result = analyzeWindowsAuthoritySovereignFixedRuntimeReviewV1(input({
+    sources: [{
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      path: 'scripts/windows/unrelated.ps1',
+      ref: HEAD,
+      exists: true,
+      size: 1,
+      blobSha: 'b'.repeat(40),
+      content: 'x',
+    }],
+  }));
   assert.equal(result.eligible, true);
   assert.equal(result.clean, false);
   assert.ok(result.findings.some(item => item.code === 'fixed-runtime-specialist-source-estate-widened'));
 });
 
-test('reviewed source contracts retain 258-member and later-boot gates', async () => {
-  const sources = await sourceRecords();
-  const installer = sources.find(row => row.path.endsWith('.ps1')).content;
-  const identity = sources.find(row => row.path.endsWith('.cs')).content;
-  assert.match(installer, /Records\.Count -gt 258/);
-  assert.match(installer, /FIXED_INSTALL_ADMINISTRATOR_REQUIRED/);
-  assert.match(installer, /FIXED_INSTALL_OPERATOR_IDENTITY_CHANGED/);
-  assert.match(installer, /PENDING only: true later full boot/);
-  assert.match(identity, /manifest\.Files\.Length>258/);
-  assert.match(identity, /compiled<installed && installed<boot && boot<now/);
-  assert.match(identity, /RUNTIME_PENDING_LATER_BOOT_UNPROVEN/);
-  assert.match(identity, /RUNTIME_SOURCE_REF_CHANGED/);
+test('review profile pins only the two future #3362 Windows blobs and exact safety literals', async () => {
+  assert.deepEqual(Object.keys(WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_BLOBS_V1).sort(),
+    [...WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_PATHS_V1].sort());
+  assert.equal(WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_BLOBS_V1[
+    'scripts/windows/install-sovereign-fixed-runtime-v1.ps1'
+  ], '8883b76eb04a4857e5627391d612dd09a02a8a97');
+  assert.equal(WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_BLOBS_V1[
+    'scripts/windows/SovereignFixedRuntimeIdentityV1.cs'
+  ], '6c5f32afbba17c21d72aff7f983622862409c73b');
+
+  const source = await readFile(new URL('./windowsAuthoritySovereignFixedRuntimeReviewV1.mjs', import.meta.url), 'utf8');
+  assert.match(source, /Records\.Count -lt 40 -or \$bootstrap\.Records\.Count -gt 258/);
+  assert.match(source, /manifest\.Files==null \|\| manifest\.Files\.Length<40 \|\| manifest\.Files\.Length>258/);
+  assert.match(source, /compiled<installed && installed<boot && boot<now/);
+  assert.match(source, /FIXED_INSTALL_ADMINISTRATOR_REQUIRED/);
+  assert.match(source, /FIXED_INSTALL_OPERATOR_IDENTITY_CHANGED/);
+  assert.match(source, /RUNTIME_PENDING_LATER_BOOT_UNPROVEN/);
+  assert.match(source, /RUNTIME_SOURCE_REF_CHANGED/);
+  assert.match(source, /sourceMutationAllowed: false/);
+  assert.match(source, /mergeAuthority: false/);
+  assert.match(source, /runtimeMutationAllowed: false/);
 });
