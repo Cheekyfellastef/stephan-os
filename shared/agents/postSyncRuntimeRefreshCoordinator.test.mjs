@@ -7,16 +7,62 @@ import {
   classifyPostSyncRefresh,
   executePostSyncRefreshPlan,
   parseGitChangedPathStatus,
+  projectPostSyncSovereignRelayProof,
   projectPostSyncTargetFailureHistory,
   reducePostSyncTargetFailureHistory as reduceTargetFailureHistory,
 } from './postSyncRuntimeRefreshCoordinator.mjs';
+import { projectPostSyncSovereignRelayProof as projectSyncPolicyRelayProof }
+  from '../../scripts/battle-bridge-github-sync-policy.mjs';
 
 const A = 'a'.repeat(40);
 const B = 'b'.repeat(40);
+const SOVEREIGN_RELAY_CONTROL_RUNTIME_PATHS = Object.freeze([
+  'scripts/battle-bridge-sovereign-relay-daemon.mjs',
+  'scripts/control-tower-build-consumer-v1.mjs',
+  'scripts/sovereign-commander-native-inspect.mjs',
+]);
 
 function pass(sourceHead = B) {
   return { ok: true, exactHeadProofOk: true, sourceHead };
 }
+
+function relayProof(sourceHead = B) {
+  return { schemaVersion: 'stephanos.post-sync-sovereign-relay-proof.v1', watchdogSucceeded: true,
+    healthy: true, sourceHead, sourceHeadMatchesLive: true, processCount: 1, heartbeatAgeSeconds: 2, blocker: '' };
+}
+
+test('fresh execution and retained-debt admission share the identical closed relay proof projector', () => {
+  assert.equal(projectPostSyncSovereignRelayProof, projectSyncPolicyRelayProof);
+  assert.deepEqual(projectPostSyncSovereignRelayProof(relayProof(), B), relayProof());
+  let accessed = false;
+  const hostile = relayProof();
+  Object.defineProperty(hostile, 'sourceHead', { enumerable: true, get() { accessed = true; return B; } });
+  assert.equal(projectPostSyncSovereignRelayProof(hostile, B), null);
+  assert.equal(accessed, false);
+});
+
+test('only the inspected offline installer package preparer is exempt from runtime refresh', async () => {
+  const source = 'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs';
+  const paths = [source, source.replace('.mjs', '.test.mjs'),
+    'docs/architecture/sovereign-fixed-runtime-job-custody-v1.md', '.github/workflows/sovereign-core-repair-custody.yml'];
+  const plan = classifyPostSyncRefresh(paths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.equal(plan.noRuntimePathCount, paths.length);
+  assert.deepEqual(plan.targetIds, []);
+  assert.equal(plan.sovereignRelayRefreshRequired, false);
+  let calls = 0;
+  const adapters = Object.fromEntries(['refreshUi', 'proveVrAtlas', 'restartBackend', 'restartMissionWorker',
+    'restartGitHubMailbox', 'refreshSovereignCommander', 'confirmNaturalReload'].map(id => [id, () => { calls++; return pass(); }]));
+  const offline = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B, changedPaths: paths, adapters });
+  assert.equal(offline.ok, true);
+  for (const unknown of [source.replace('-v1.mjs', '-v2.mjs'), source.replace('.mjs', '.ps1'),
+    source.replace('-package-', '-packages-'), source.replace('-v1.mjs', '-runtime-v1.mjs')]) {
+    const refused = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B, changedPaths: [source, unknown], adapters });
+    assert.equal(refused.ok, false);
+    assert.equal(refused.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+  }
+  assert.equal(calls, 0);
+});
 
 const OUTCOME_TIME = '2026-10-31T01:00:00.000Z';
 const NEXT_OUTCOME_TIME = '2026-10-31T01:01:00.000Z';
@@ -169,6 +215,224 @@ test('native inspector classification remains exact and refuses unknown neighbor
     assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
     assert.equal(plan.automaticExecutionAllowed, false);
   }
+});
+
+test('Sovereign control runtime imports share their existing Commander lifecycle for every changed subset', () => {
+  // The watchdog owns the relay, which statically imports the consumer, which
+  // statically imports the inspector. The inspector's CLI is not its only loader.
+  for (let mask = 1; mask < 1 << SOVEREIGN_RELAY_CONTROL_RUNTIME_PATHS.length; mask++) {
+    const paths = SOVEREIGN_RELAY_CONTROL_RUNTIME_PATHS.filter((_, index) => mask & (1 << index));
+    for (const changedPaths of [paths, [...paths].reverse(), [...paths, ...paths],
+      paths.map(path => path.replaceAll('/', '\\'))]) {
+      const plan = classifyPostSyncRefresh(changedPaths);
+      assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+      assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+      assert.equal(plan.noRuntimePathCount, 0);
+      assert.equal(plan.unknownPathCount, 0);
+      assert.equal(plan.unsafePathCount, 0);
+      assert.equal(plan.openClawApprovalRequired, false);
+      assert.equal(plan.automaticExecutionAllowed, true);
+    }
+  }
+});
+
+test('Sovereign control runtime cannot complete from natural reload without its existing Commander handler', async () => {
+  for (const path of SOVEREIGN_RELAY_CONTROL_RUNTIME_PATHS) {
+    let naturalCalls = 0;
+    const result = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B, changedPaths: [path],
+      adapters: { confirmNaturalReload: () => { naturalCalls++; return pass(); } } });
+    assert.equal(result.ok, false);
+    assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED);
+    assert.equal(result.blocker, `REFRESH_HANDLER_MISSING:${POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER}`);
+    assert.equal(result.exactHeadProofOk, false);
+    assert.deepEqual(result.results, []);
+    assert.equal(naturalCalls, 0);
+  }
+});
+
+test('Sovereign control runtime preserves existing native refusal and exact-head proof requirements', async () => {
+  for (const outcome of [
+    { result: { ok: false, exactHeadProofOk: false, blocker: 'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN' },
+      blocker: 'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN' },
+    { result: pass(A), blocker: `REFRESH_PROOF_FAILED:${POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER}` },
+    { result: { ...pass(), exactHeadProofOk: false }, blocker: `REFRESH_PROOF_FAILED:${POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER}` },
+  ]) {
+    const calls = [];
+    const result = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B,
+      changedPaths: SOVEREIGN_RELAY_CONTROL_RUNTIME_PATHS,
+      adapters: {
+        refreshSovereignCommander: ({ targetId }) => { calls.push(targetId); return outcome.result; },
+        confirmNaturalReload: () => { assert.fail('Cached relay imports cannot fall through to natural reload'); },
+      } });
+    assert.equal(result.ok, false);
+    assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED);
+    assert.equal(result.blocker, outcome.blocker);
+    assert.equal(result.exactHeadProofOk, false);
+    assert.deepEqual(calls, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+  }
+});
+
+test('unregistered Sovereign control runtime neighbors block before any existing target is invoked', async () => {
+  for (const unknown of [
+    'scripts/battle-bridge-sovereign-relay-daemon-extra.mjs',
+    'scripts/control-tower-build-consumer-v2.mjs',
+    'scripts/sovereign-commander-native-inspect-v2.mjs',
+    'scripts/unregistered-runtime.mjs',
+  ]) {
+    const changedPaths = [...SOVEREIGN_RELAY_CONTROL_RUNTIME_PATHS, unknown];
+    const plan = classifyPostSyncRefresh(changedPaths);
+    assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+    assert.deepEqual(plan.internal.unknownPaths, [unknown]);
+    assert.equal(plan.automaticExecutionAllowed, false);
+    let calls = 0;
+    const result = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B, changedPaths,
+      adapters: { refreshSovereignCommander: () => { calls++; return pass(); } } });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+    assert.deepEqual(result.results, []);
+    assert.equal(calls, 0);
+  }
+});
+
+test('merged PR3333 full 43-path range selects existing owners and retains the separate plugin activation gate', async () => {
+  // Exact merged 78899d5..30ba156 range; no Git or host execution is needed.
+  const beforeHead = '78899d5f6298f6ca1df1f1ee080194d532d52415';
+  const afterHead = '30ba1567ba01e77fd7f4db421cc3133abc258e1b';
+  const changedPaths = [
+    '.github/workflows/stephanos-control-tower-build.yml',
+    'apps/stephanos-ai/controlSurface.mjs',
+    'apps/stephanos-ai/index.html',
+    'apps/stephanos-ai/workspace.css',
+    'apps/stephanos-ai/workspace.js',
+    'docs/architecture/control-tower-build-start-v1.md',
+    'docs/architecture/sovereign-conversational-control-v1.md',
+    'package.json',
+    'plugins/sovereign-commander/.codex-plugin/plugin.json',
+    'plugins/sovereign-commander/plugin.json',
+    'plugins/sovereign-commander/skills/repair-stephanos-continuously/SKILL.md',
+    'plugins/sovereign-commander/skills/saturated-mailbox-sovereign-recovery/SKILL.md',
+    'plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md',
+    'plugins/sovereign-commander/skills/use-sovereign-commander/references/conversational-control-v1.md',
+    'plugins/sovereign-commander/skills/verify-sovereign-runtime/SKILL.md',
+    'scripts/battle-bridge-sovereign-relay-daemon.mjs',
+    'scripts/canonical-mailbox-control-tower-observation.test.mjs',
+    'scripts/canonical-mailbox-execution-ledger-v1.mjs',
+    'scripts/control-tower-build-consumer-v1.mjs',
+    'scripts/control-tower-build-consumer-v1.test.mjs',
+    'scripts/sovereign-commander-native-inspect.mjs',
+    'scripts/sovereign-commander-native-inspect.test.mjs',
+    'shared/agents/controlTowerBuildBeaconFactsV1.mjs',
+    'shared/agents/controlTowerBuildBeaconFactsV1.test.mjs',
+    'shared/agents/controlTowerBuildReaderV1.mjs',
+    'shared/agents/controlTowerBuildReaderV1.test.mjs',
+    'shared/agents/controlTowerBuildRequestV1.mjs',
+    'shared/agents/controlTowerBuildRequestV1.test.mjs',
+    'shared/agents/controlTowerRequestObservationV1.mjs',
+    'shared/agents/controlTowerRequestObservationV1.test.mjs',
+    'shared/agents/originalSourceCustodyInspectionV1.test.mjs',
+    'shared/agents/sovereignCommanderDesktopPlugin.test.mjs',
+    'shared/agents/sovereignControlConversationV1.mjs',
+    'shared/agents/sovereignControlConversationV1.test.mjs',
+    'shared/agents/sovereignControlSystemStatusV1.mjs',
+    'shared/agents/sovereignControlSystemStatusV1.test.mjs',
+    'shared/agents/stephanosConversationRouterV1.mjs',
+    'stephanos-server/routes/ai.js',
+    'stephanos-server/services/sovereignControlConversationService.js',
+    'stephanos-server/services/sovereignControlConversationService.test.js',
+    'tests/stephanos-ai-control-surface.test.mjs',
+    'tests/stephanos-ai-sovereign-control.browser.test.mjs',
+    'tests/stephanos-conversation-router-v1.test.mjs',
+  ];
+  const expectedTargets = [
+    POST_SYNC_REFRESH_TARGETS.UI_4173,
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(plan.changedPathCount, 43);
+  assert.equal(new Set(changedPaths).size, 43);
+  assert.equal(plan.noRuntimePathCount, 23);
+  assert.deepEqual(plan.internal.unknownPaths, []);
+  assert.equal(plan.unsafePathCount, 0);
+  assert.equal(plan.openClawApprovalRequired, false);
+  assert.equal(plan.automaticExecutionAllowed, true);
+  assert.equal(plan.pluginHostActivationRequired, true);
+  assert.deepEqual(plan.targetIds, expectedTargets);
+
+  const calls = [];
+  const proveTarget = ({ targetId }) => { calls.push(targetId); return { ...pass(afterHead),
+    ...(targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER ? { sovereignRelayProof: relayProof(afterHead) } : {}) }; };
+  const result = await executePostSyncRefreshPlan({ beforeHead, afterHead, changedPaths,
+    adapters: { refreshUi: proveTarget, restartBackend: proveTarget, restartMissionWorker: proveTarget,
+      refreshSovereignCommander: proveTarget, confirmNaturalReload: proveTarget } });
+  assert.deepEqual(calls, expectedTargets);
+  assert.equal(result.ok, false);
+  assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED);
+  assert.equal(result.blocker, 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN');
+  assert.equal(result.exactHeadProofOk, false);
+  assert.equal(result.safeRefreshesCompleted, true);
+  assert.equal(result.pluginHostActivationRequired, true);
+});
+
+test('relay source proof is required before fresh success checkpoint history and serialized resume', async () => {
+  const targetId = POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER;
+  const invalidProofs = [undefined, null, {}, ...[
+    { watchdogSucceeded: false }, { healthy: false }, { sourceHead: A }, { sourceHeadMatchesLive: false },
+    { processCount: 0 }, { processCount: 2 }, { processCount: '1' },
+    { heartbeatAgeSeconds: -1 }, { heartbeatAgeSeconds: 31 }, { heartbeatAgeSeconds: '2' },
+    { blocker: 'SOVEREIGN_RELAY_DAEMON_STALE_RECYCLE_FAILED' }, { extra: 'PRIVATE_VALUE' },
+  ].map(change => ({ ...relayProof(), ...change }))];
+  for (const sovereignRelayProof of invalidProofs) {
+    let history = null;
+    const blocked = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B,
+      changedPaths: SOVEREIGN_RELAY_CONTROL_RUNTIME_PATHS,
+      adapters: { refreshSovereignCommander: () => ({ ...pass(), sovereignRelayProof }) },
+      onTargetComplete: (rows, observation) => {
+        assert.equal(rows[0].ok, false);
+        assert.equal(observation.failureKind, 'RESULT_UNPROVEN');
+        history = reducePostSyncTargetFailureHistory(history, { expectedSourceHead: B,
+          observedAtUtc: OUTCOME_TIME, ...observation });
+      } });
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.blocker, 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN');
+    assert.equal(history.failures[0].blocker, blocked.blocker);
+    let calls = 0;
+    const repaired = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B,
+      changedPaths: SOVEREIGN_RELAY_CONTROL_RUNTIME_PATHS,
+      completedResults: [{ targetId, ...pass(), sovereignRelayProof }],
+      adapters: { refreshSovereignCommander: () => { calls++; return { ...pass(), sovereignRelayProof: relayProof() }; } } });
+    assert.equal(calls, 1, 'Generic or malformed old proof cannot skip the existing owner');
+    assert.equal(repaired.ok, true);
+    const persisted = JSON.parse(JSON.stringify(buildPostSyncRefreshProjection(repaired, { beforeHead: A, afterHead: B })));
+    assert.equal(persisted.sovereignRelayRefreshRequired, true);
+    assert.deepEqual(persisted.resultTargets[0].sovereignRelayProof, relayProof());
+    const resumed = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B,
+      changedPaths: SOVEREIGN_RELAY_CONTROL_RUNTIME_PATHS, completedResults: persisted.resultTargets,
+      adapters: { refreshSovereignCommander: () => { assert.fail('Validated same-head proof must resume'); } } });
+    assert.equal(resumed.ok, true);
+    assert.equal(resumed.results[0].resumed, true);
+  }
+});
+
+test('retained relay obligation survives a net revert without making unrelated Commander refresh relay-mandatory', async () => {
+  const targetId = POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER;
+  const unrelated = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B,
+    changedPaths: ['scripts/sovereign-commander-http.mjs'], adapters: { refreshSovereignCommander: () => pass() } });
+  assert.equal(unrelated.ok, true);
+  assert.equal(unrelated.plan.sovereignRelayRefreshRequired, false);
+  const retained = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B,
+    changedPaths: ['docs/reverted-runtime.md'], sovereignRelayRefreshRequired: true,
+    adapters: { refreshSovereignCommander: () => ({ ...pass(), sovereignRelayProof: relayProof() }) } });
+  assert.equal(retained.ok, true);
+  assert.deepEqual(retained.plan.targetIds, [targetId]);
+  assert.equal(retained.plan.sovereignRelayRefreshRequired, true);
+  const blocked = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B,
+    changedPaths: ['scripts/unregistered-runtime.mjs'], sovereignRelayRefreshRequired: true,
+    adapters: { refreshSovereignCommander: () => { assert.fail('Retained debt cannot exempt unknown source'); } } });
+  assert.equal(blocked.blocker, 'BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
 });
 
 test('Git changed-path status parser includes deletions and both rename sides', () => {

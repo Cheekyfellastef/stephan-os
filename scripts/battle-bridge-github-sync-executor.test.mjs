@@ -131,6 +131,47 @@ async function readStatus(workspaceRoot) {
   return JSON.parse(await readFile(path.join(workspaceRoot, 'status', 'battle-bridge-github-sync-current.json'), 'utf8'));
 }
 
+test('actual sync writer preserves legacy relay debt through source advance failure and generic completion until relay proof', async t => {
+  const fx = await fixture(); t.after(() => rm(fx.root, { recursive: true, force: true }));
+  const C = 'c'.repeat(40), targetId = 'sovereign-commander';
+  const refreshPath = path.join(fx.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json');
+  await mkdir(path.dirname(refreshPath), { recursive: true });
+  const legacy = { schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.status',
+    statusId: 'post-sync-runtime-refresh-current', beforeHead: A, afterHead: B, phase: 'complete',
+    classification: 'REFRESH_COMPLETE', finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_PASS', exactHeadProofOk: true,
+    blocker: '', targetIds: [targetId], resultTargets: [{ targetId, ok: true, exactHeadProofOk: true, sourceHead: B, blocker: '' }],
+    changedPathCount: 1, noRuntimePathCount: 0, unknownPathCount: 0, unsafePathCount: 0,
+    openClawPathCount: 0, pluginHostActivationRequired: false };
+  await writeFile(refreshPath, JSON.stringify(legacy));
+  await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths,
+    git: fakeGit({ localBefore: B, remote: B, mergeBase: B }) });
+  let debt = (await readStatus(fx.workspaceRoot)).pendingRefresh;
+  assert.equal(debt.sovereignRelayRefreshRequired, true);
+  assert.deepEqual(debt.spans, [{ beforeHead: A, afterHead: B }]);
+  const advance = await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths,
+    git: fakeGit({ localBefore: B, remote: C, mergeBase: B }) });
+  assert.equal(advance.sourceUpdated, true);
+  debt = (await readStatus(fx.workspaceRoot)).pendingRefresh;
+  assert.equal(debt.sovereignRelayRefreshRequired, true);
+  assert.deepEqual(debt.spans, [{ beforeHead: A, afterHead: C }]);
+  await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths,
+    git: fakeGit({ localBefore: C, remote: C, mergeBase: C, fetchOk: false }) });
+  assert.deepEqual((await readStatus(fx.workspaceRoot)).pendingRefresh, debt);
+  const generic = { ...legacy, afterHead: C, sovereignRelayRefreshRequired: false,
+    resultTargets: [{ targetId, ok: true, exactHeadProofOk: true, sourceHead: C, blocker: '' }] };
+  await writeFile(refreshPath, JSON.stringify(generic));
+  await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths,
+    git: fakeGit({ localBefore: C, remote: C, mergeBase: C }) });
+  assert.deepEqual((await readStatus(fx.workspaceRoot)).pendingRefresh, debt);
+  const proof = { schemaVersion: 'stephanos.post-sync-sovereign-relay-proof.v1', watchdogSucceeded: true,
+    healthy: true, sourceHead: C, sourceHeadMatchesLive: true, processCount: 1, heartbeatAgeSeconds: 2, blocker: '' };
+  await writeFile(refreshPath, JSON.stringify({ ...generic, sovereignRelayRefreshRequired: true,
+    resultTargets: [{ ...generic.resultTargets[0], sovereignRelayProof: proof }] }));
+  await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths,
+    git: fakeGit({ localBefore: C, remote: C, mergeBase: C }) });
+  assert.equal((await readStatus(fx.workspaceRoot)).pendingRefresh, null);
+});
+
 test('real sync writer retains admitted debt through no-change and failures before any refresh plan', async t => {
   const fx = await fixture(); t.after(() => rm(fx.root, { recursive: true, force: true }));
   const initial = await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths, git: fakeGit({ remote: B }) });

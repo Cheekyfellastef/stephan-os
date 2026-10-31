@@ -14,6 +14,114 @@ import { buildBattleBridgeOutboundBeacon } from './battle-bridge-outbound-health
 
 const source = await readFile(new URL('./battle-bridge-post-sync-refresh.mjs', import.meta.url), 'utf8');
 
+function fixedRelayRefreshFixture(afterHead, { receipt = {}, exitStatus = 0 } = {}) {
+  const calls = [];
+  const owner = { schemaVersion: 'stephanos.sovereign-commander-watchdog.v1', taskName: 'Stephanos Sovereign Commander',
+    daemonHealthy: true, healthyAfter: true, requiredCapabilityVersion: '2026-10-18-island-action-contract-v6',
+    capabilityVersionAfter: '2026-10-18-island-action-contract-v6', vendorMeterRequired: false,
+    externalSaasRelayRequired: false, arbitraryShellAllowed: false, pcRestartAllowed: false,
+    visiblePowerShellRequired: false, blocker: '', relayDaemonHealthy: true, relayDaemonSourceHead: afterHead,
+    relayDaemonSourceHeadMatchesLive: true, relayDaemonProcessCount: 1, relayDaemonHeartbeatAgeSeconds: 2,
+    relayDaemonBlocker: '', ...receipt };
+  const adapter = createFixedPostSyncRuntimeAdapter({ spawnSyncFn: (command, args) => {
+    calls.push({ command, args });
+    if (String(command).toLowerCase().includes('powershell')) {
+      assert.equal(args[args.indexOf('-RequireCapabilityVersion') + 1], '2026-10-18-island-action-contract-v6');
+      return { status: exitStatus, stdout: JSON.stringify(owner), stderr: '' };
+    }
+    assert.deepEqual(args, ['rev-parse', 'HEAD']);
+    return { status: 0, stdout: afterHead + '\n', stderr: '' };
+  } });
+  return { adapter, calls };
+}
+
+test('actual fixed adapter refuses missing failed stale ambiguous or unsuccessful relay receipts only when required', () => {
+  const afterHead = 'b'.repeat(40), paths = { repoRoot: 'C:/fixture/repo' };
+  const invalid = [
+    { receipt: { relayDaemonHealthy: false, relayDaemonSourceHead: 'a'.repeat(40), relayDaemonSourceHeadMatchesLive: false,
+      relayDaemonBlocker: 'SOVEREIGN_RELAY_DAEMON_STALE_RECYCLE_FAILED' } },
+    { receipt: { relayDaemonHealthy: undefined } },
+    { receipt: { relayDaemonSourceHead: 'a'.repeat(40) } },
+    { receipt: { relayDaemonSourceHeadMatchesLive: false } },
+    { receipt: { relayDaemonProcessCount: 0 } }, { receipt: { relayDaemonProcessCount: 2 } },
+    { receipt: { relayDaemonProcessCount: '1' } },
+    { receipt: { relayDaemonHeartbeatAgeSeconds: -1 } }, { receipt: { relayDaemonHeartbeatAgeSeconds: 31 } },
+    { receipt: { relayDaemonHeartbeatAgeSeconds: '2' } },
+    { receipt: { relayDaemonBlocker: 'PRIVATE_ARBITRARY_FAILURE' } }, { exitStatus: 2 },
+  ];
+  for (const mutation of invalid) {
+    const fx = fixedRelayRefreshFixture(afterHead, mutation);
+    const denied = fx.adapter.refreshSovereignCommander({ afterHead, paths, requireSovereignRelayProof: true });
+    assert.equal(denied.ok, false);
+    assert.equal(denied.blocker, 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN');
+    assert.equal(denied.freshProcessLoaded, false);
+    assert.equal(denied.sovereignRelayProof, null);
+    assert.equal(fx.calls.length, 2, 'Only the existing watchdog and bounded current-head read are invoked');
+    assert.doesNotMatch(JSON.stringify(denied), /PRIVATE_/);
+    const unrelated = fx.adapter.refreshSovereignCommander({ afterHead, paths });
+    assert.equal(unrelated.ok, true, 'Unrelated Commander behavior retains its original optional-relay contract');
+  }
+  const valid = fixedRelayRefreshFixture(afterHead).adapter.refreshSovereignCommander({ afterHead, paths, requireSovereignRelayProof: true });
+  assert.equal(valid.ok, true);
+  assert.equal(valid.sovereignRelayProof.sourceHead, afterHead);
+  assert.equal(valid.sovereignRelayProof.processCount, 1);
+  assert.equal(Object.hasOwn(valid, 'loadedSourceBytesProven'), false);
+});
+
+test('original refresh owner migrates legacy completion and rejects generic checkpoint before actual relay proof', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'post-sync-relay-proof-recovery-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const paths = { repoRoot: join(root, 'repo'), workspaceRoot: join(root, 'workspace') };
+  await mkdir(paths.repoRoot);
+  const beforeHead = 'a'.repeat(40), afterHead = 'b'.repeat(40);
+  const success = () => ({ ok: true, exactHeadProofOk: true, sourceHead: afterHead });
+  const base = { inspectHeads: success, isAncestor: (before, after) => ({ ok: true, ancestor: before <= after }),
+    changedPaths: () => ({ ok: true, paths: ['scripts/sovereign-commander-http.mjs'] }),
+    refreshSovereignCommander: success, reconcileControlPlane: success };
+  const first = await runBattleBridgePostSyncRefresh({ paths, expectedPaths: paths, beforeHead, afterHead, adapter: base });
+  assert.equal(first.ok, true);
+  const statusPath = join(paths.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json');
+  const completePath = join(paths.workspaceRoot, 'receipts', 'post-sync-runtime-refresh', afterHead + '-complete.json');
+  const historicalComplete = await readFile(completePath, 'utf8');
+  const legacy = JSON.parse(await readFile(statusPath, 'utf8'));
+  delete legacy.sovereignRelayRefreshRequired;
+  delete legacy.resultTargets[0].sovereignRelayProof;
+  await writeFile(statusPath, JSON.stringify(legacy));
+  const failed = fixedRelayRefreshFixture(afterHead, { receipt: { relayDaemonHealthy: false } });
+  const denied = await runBattleBridgePostSyncRefresh({ paths, expectedPaths: paths, beforeHead, afterHead,
+    adapter: { ...base, ...failed.adapter, inspectHeads: success, isAncestor: base.isAncestor,
+      changedPaths: () => ({ ok: true, paths: ['scripts/control-tower-build-consumer-v1.mjs'] }), reconcileControlPlane: success } });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.blocker, 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN');
+  assert.equal(denied.retainedCompletionReused, undefined);
+  assert.equal(failed.calls.length, 2);
+  assert.equal(await readFile(completePath, 'utf8'), historicalComplete);
+  const checkpoint = JSON.parse(await readFile(statusPath, 'utf8'));
+  assert.equal(checkpoint.sovereignRelayRefreshRequired, true);
+  checkpoint.phase = 'checkpoint-1'; checkpoint.classification = 'REFRESH_READY'; checkpoint.blocker = '';
+  checkpoint.resultTargets = [{ targetId: 'sovereign-commander', ...success(), blocker: '' }];
+  await writeFile(statusPath, JSON.stringify(checkpoint));
+  const valid = fixedRelayRefreshFixture(afterHead);
+  const repaired = await runBattleBridgePostSyncRefresh({ paths, expectedPaths: paths, beforeHead, afterHead,
+    adapter: { ...base, inspectHeads: success,
+      // A net revert retains the obligation even when no changed runtime path remains.
+      changedPaths: () => ({ ok: true, paths: ['docs/reverted-control-source.md'] }),
+      refreshSovereignCommander: input => {
+        const plan = JSON.parse(readFileSync(statusPath, 'utf8'));
+        assert.deepEqual(plan.resultTargets, [], 'Unproven HTTP-only checkpoint must not become resumable');
+        assert.equal(input.requireSovereignRelayProof, true);
+        return valid.adapter.refreshSovereignCommander(input);
+      } } });
+  assert.equal(repaired.ok, true);
+  assert.equal(valid.calls.length, 2);
+  assert.equal(repaired.sovereignRelayRefreshRequired, true);
+  assert.equal(repaired.resultTargets[0].sovereignRelayProof.sourceHead, afterHead);
+  const reused = await runBattleBridgePostSyncRefresh({ paths, expectedPaths: paths, beforeHead, afterHead,
+    adapter: { ...base, refreshSovereignCommander: () => assert.fail('Paid relay proof must not replay the owner') } });
+  assert.equal(reused.ok, true);
+  assert.equal(reused.retainedCompletionReused, true);
+});
+
 test('target failure remains observable while the same-head retry publishes its next plan', async t => {
   const root = await mkdtemp(join(tmpdir(), 'post-sync-target-outcome-continuity-'));
   t.after(() => rm(root, { recursive: true, force: true }));
