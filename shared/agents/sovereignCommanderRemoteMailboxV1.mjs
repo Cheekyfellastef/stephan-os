@@ -25,6 +25,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'search-project',
   'battle-bridge-status',
   'battle-bridge-observe',
+  'diagnose-ignition',
   'original-source-custody-census',
   'original-r7-witness-readiness',
   'meter-status',
@@ -751,6 +752,89 @@ function safeBattleBridgeObservationProjection(value = {}, processId = '') {
   });
 }
 
+
+function safeIgnitionDiagnosisProjection(value = {}, processId = '') {
+  if (processId !== 'diagnose-ignition') return null;
+  const envelope = findMaintenanceExecutionEnvelope(value);
+  const stdout = String(envelope?.structuredContent?.stdout || value?.structuredContent?.stdout || '');
+  const marker = 'SOVEREIGN_COMMANDER_IGNITION_DIAGNOSIS_RESULT=';
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
+  if (!line) return null;
+  let parsed = null;
+  try { parsed = JSON.parse(line.slice(marker.length)); } catch {}
+  if (!parsed
+    || parsed.schemaVersion !== 'stephanos.sovereign-commander-ignition-diagnosis.v1'
+    || typeof parsed.ok !== 'boolean'
+    || parsed.readOnly !== true
+    || parsed.sourceMutationAllowed !== false
+    || parsed.arbitraryShellAllowed !== false
+    || parsed.mergeAuthority !== false
+    || parsed.pcRestartAllowed !== false
+    || parsed.rawLogsReturned !== false
+    || parsed.rawPathsReturned !== false
+    || parsed.secretMaterialIncluded !== false) return null;
+  const safeToken = (input, max = 160) => {
+    const candidate = text(input).slice(0, max);
+    return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(candidate) ? candidate : '';
+  };
+  const safeTime = (input) => {
+    const milliseconds = Date.parse(text(input));
+    return Number.isFinite(milliseconds) ? new Date(milliseconds).toISOString() : '';
+  };
+  const safeService = (service = {}, requiredForIgnition = true) => Object.freeze({
+    ready: service?.ready === true,
+    requiredForIgnition,
+  });
+  const sourceHead = text(parsed.sourceHead).toLowerCase();
+  const nextRepairAction = text(parsed.nextRepairAction);
+  const allowedRepair = ['', 'restart-stephanos-runtime', 'repair-ui-4173'];
+  if ((sourceHead && !SHA_PATTERN.test(sourceHead))
+    || !allowedRepair.includes(nextRepairAction)) return null;
+  const phases = Object.freeze((Array.isArray(parsed?.supervisor?.phases) ? parsed.supervisor.phases : [])
+    .slice(0, 12).flatMap((phase) => {
+      const id = text(phase?.id).slice(0, 80);
+      const state = text(phase?.state).toLowerCase();
+      if (!id || !['pending','running','ready','degraded','blocked','failed'].includes(state)) return [];
+      return [Object.freeze({ id, state, blockerId: safeToken(phase?.blockerId) })];
+    }));
+  return Object.freeze({
+    schemaVersion: parsed.schemaVersion,
+    ok: parsed.ok === true,
+    observedAtUtc: safeTime(parsed.observedAtUtc),
+    sourceHead,
+    sourceExact: parsed.sourceExact === true,
+    readinessVerdict: safeToken(parsed.readinessVerdict, 80),
+    services: Object.freeze({
+      backend8787: safeService(parsed?.services?.backend8787),
+      stephanosUi4173: safeService(parsed?.services?.stephanosUi4173),
+      openClaw18789: safeService(parsed?.services?.openClaw18789, false),
+      sharedWorkspace: safeService(parsed?.services?.sharedWorkspace),
+    }),
+    supervisor: Object.freeze({
+      observed: parsed?.supervisor?.observed === true,
+      stale: parsed?.supervisor?.stale !== false,
+      observedAtUtc: safeTime(parsed?.supervisor?.observedAtUtc),
+      currentPhase: text(parsed?.supervisor?.currentPhase).slice(0, 80),
+      trafficLight: ['blue','green','amber','red','unknown'].includes(text(parsed?.supervisor?.trafficLight).toLowerCase())
+        ? text(parsed?.supervisor?.trafficLight).toLowerCase() : 'unknown',
+      blockerId: safeToken(parsed?.supervisor?.blockerId),
+      phases,
+    }),
+    repairRequired: parsed.repairRequired === true,
+    autoRepairEligible: parsed.autoRepairEligible === true,
+    nextRepairAction,
+    blocker: safeToken(parsed.blocker),
+    readOnly: true,
+    sourceMutationAllowed: false,
+    arbitraryShellAllowed: false,
+    mergeAuthority: false,
+    pcRestartAllowed: false,
+    rawLogsReturned: false,
+    rawPathsReturned: false,
+    secretMaterialIncluded: false,
+    finalVerdict: safeToken(parsed.finalVerdict),
+  });
+}
 
 function safeMeterStatusProjection(value = {}, processId = '') {
   if (processId !== 'meter-status') return null;
@@ -4246,6 +4330,57 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
       requestId: text(shape.command.requestId),
       result: visibilityResult,
+    });
+  }
+
+  if (shape.command.remoteAction === 'diagnose-ignition') {
+    const ignitionDiagnosis = safeIgnitionDiagnosisProjection(rawMaintenance, projection.processId);
+    const diagnosisProofComplete = projection.ok === true
+      && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      && PROOF_HASH_PATTERN.test(projection.proofHash)
+      && projection.processId === shape.command.remoteAction
+      && projection.status === 0
+      && ignitionDiagnosis
+      && ignitionDiagnosis.readOnly === true
+      && ignitionDiagnosis.sourceMutationAllowed === false
+      && ignitionDiagnosis.arbitraryShellAllowed === false
+      && ignitionDiagnosis.rawLogsReturned === false
+      && ignitionDiagnosis.rawPathsReturned === false
+      && ignitionDiagnosis.secretMaterialIncluded === false
+      && ignitionDiagnosis.mergeAuthority === false
+      && ignitionDiagnosis.pcRestartAllowed === false;
+    if (!diagnosisProofComplete) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_IGNITION_DIAGNOSIS_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
+        processIdMatch: projection.processId === shape.command.remoteAction,
+        successfulStatus: projection.status === 0,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_IGNITION_DIAGNOSIS_COMPLETE',
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash,
+      ignitionDiagnosis,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false,
+      sourceMutationAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...result,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result,
     });
   }
 
