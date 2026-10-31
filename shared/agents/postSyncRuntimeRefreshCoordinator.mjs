@@ -73,6 +73,8 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
   'scripts/sovereign-commander-visibility-snapshot.mjs',
   'scripts/sovereign-commander-fleet-goal-supervisor.mjs',
   'scripts/sovereign-commander-goal-builder-repair.mjs',
+  'scripts/sovereign-commander-ignition-diagnosis.mjs',
+  'scripts/sovereign-commander-persistent-runtime-repair.mjs',
   'scripts/sovereign-commander-ui-4173-repair.mjs',
   'scripts/sovereign-commander-ui-runtime-proof.mjs',
   'scripts/windows/configure-sovereign-commander-tailscale.ps1',

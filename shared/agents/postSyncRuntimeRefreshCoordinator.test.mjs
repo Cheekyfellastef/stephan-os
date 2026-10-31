@@ -847,6 +847,29 @@ test('merged controller-lane status estate is fully classified and refreshable',
   assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER));
 });
 
+test('Sovereign Ignition diagnosis and persistent repair are exact Commander runtime paths', () => {
+  const runtimePaths = [
+    'scripts/sovereign-commander-ignition-diagnosis.mjs',
+    'scripts/sovereign-commander-persistent-runtime-repair.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(runtimePaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.noRuntimePathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+
+  for (const unknown of [
+    'scripts/sovereign-commander-ignition-diagnosis-v2.mjs',
+    'scripts/sovereign-commander-persistent-runtime-repair-v2.mjs',
+  ]) {
+    const blocked = classifyPostSyncRefresh([unknown]);
+    assert.equal(blocked.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+    assert.deepEqual(blocked.internal.unknownPaths, [unknown]);
+    assert.equal(blocked.automaticExecutionAllowed, false);
+  }
+});
+
 test('qualified Goal Builder maintenance child is exact Commander runtime and the merged repair range is fully classified', () => {
   const runtime = 'scripts/sovereign-commander-goal-builder-repair.mjs';
   const single = classifyPostSyncRefresh([runtime]);
