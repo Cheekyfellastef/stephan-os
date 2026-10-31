@@ -8,7 +8,7 @@ if(-not $OperatorApproved -or $ExpectedMain -cnotmatch '^[a-f0-9]{40}$' -or
  $null -eq $bootstrap -or $bootstrap.SourceHead -cne $ExpectedMain -or
  $bootstrap.SourceTree -cnotmatch '^[a-f0-9]{40}$' -or
  $bootstrap.OperatorSid -cnotmatch '^S-1-5-21-[0-9-]+$' -or
- $bootstrap.Records.Count -lt 40 -or $bootstrap.Records.Count -gt 256){throw 'FIXED_INSTALL_IMMUTABLE_APPROVAL_REQUIRED'}
+ $bootstrap.Records.Count -lt 40 -or $bootstrap.Records.Count -gt 258){throw 'FIXED_INSTALL_IMMUTABLE_APPROVAL_REQUIRED'}
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 try{
  if(-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
