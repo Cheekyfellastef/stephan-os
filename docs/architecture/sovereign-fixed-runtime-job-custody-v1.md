@@ -228,3 +228,109 @@ integration and actual host acceptance remain necessary. The deterministic VM
 regression exercises the production Windows branch with isolated native/report
 adapters and no production qualification injection; it is not Windows kernel
 or installed-host proof.
+
+## Offline immutable installation package preparation
+
+The existing fixed-runtime installer now has a manual, source-only preparation
+adapter at `scripts/sovereign-fixed-runtime-install-source-package-v1.mjs`.
+It continues the original fixed-runtime implementation under Goal #2961 and
+merged PR #3303. It creates no installer transport, service, source owner,
+credential reader, native action or approval gate. No runtime root imports this
+tool; the canonical runtime closure stays at its existing 256-file limit.
+
+The preparer consumes bounded JSON on stdin and emits deterministic JSON on
+stdout. It neither fetches data nor reads caller-selected paths. A separately
+authenticated source collector supplies the complete raw Git commit object,
+the minimal raw tree objects needed to prove every closed source path, and the
+256 exact blob records. Git object IDs include their object type and length.
+The preparer checks the commit's tree header, every tree/blob hash, canonical
+tree modes and ordering, absence of duplicate or Windows-case-aliased entries,
+exact path membership, strict UTF-8 source, and the unchanged local closure
+declaration. Symlinks, submodules, unused proof objects, incomplete source,
+rebound paths and excess data refuse. No captured source is evaluated.
+Identity decoding preserves every UTF-8 byte, including a leading BOM; it never
+trims or normalizes a Git path or commit header. The package preserves source
+bytes through base64 and never converts CRLF to LF to satisfy a blob hash.
+The existing authenticated `.gitattributes` is itself a closure member and pins
+the installed closure's line endings. The pending installer independently
+compares actual Windows materialization to those exact captured bytes; a changed
+checkout refuses rather than silently repairing or normalizing it.
+
+Input schema:
+
+```json
+{
+  "schemaVersion": "stephanos.fixed-runtime-source-package-input.v1",
+  "repository": "Cheekyfellastef/stephan-os",
+  "commit": { "sha": "<exact commit SHA>", "contentBase64": "<raw Git commit bytes>" },
+  "trees": [{ "sha": "<exact tree SHA>", "contentBase64": "<raw binary Git tree bytes>" }],
+  "records": [{ "path": "<canonical closure member>", "blobSha": "<exact blob SHA>", "contentBase64": "<exact source bytes>" }]
+}
+```
+
+The exact input/output bound is 16 MiB, with at most 128 tree objects, 2 MiB
+decoded tree data and 32,768 tree entries. Existing source bounds remain 2 MiB
+per file and 8 MiB total. The bundle preserves raw object evidence, normalized
+source records, per-file hashes/modes/sizes and a deterministic bundle SHA-256.
+It reports `UNBOUND` and `NOT_INSTALLABLE`. Git object integrity is not an
+authenticated GitHub observation, signature verification, current protected
+main, installed source, identity observation, independent review or approval.
+Those authority fields remain false even if the source collector independently
+holds such evidence; caller flags cannot elevate this artifact.
+
+The `prepare` CLI is usable directly on a curator's POSIX environment:
+
+```sh
+node scripts/sovereign-fixed-runtime-install-source-package-v1.mjs prepare < immutable-source-input.json > source-package.json
+```
+
+Windows PowerShell 5 has different redirection/encoding semantics. For an
+already prepared local input, use explicit UTF-8 reads and writes; the following
+only runs the offline preparer. `$inputPath` and `$outputPath` are private local
+artifact locations chosen by the curator, not parameters accepted by the tool.
+
+```powershell
+$utf8 = [Text.UTF8Encoding]::new($false, $true)
+$previousOutputEncoding = $OutputEncoding
+try {
+  $OutputEncoding = $utf8
+  $inputJson = [IO.File]::ReadAllText($inputPath, $utf8)
+  $packageJson = $inputJson | & 'C:\Program Files\nodejs\node.exe' 'C:\Users\Stephan Callear\Documents\GitHub\stephan-os\scripts\sovereign-fixed-runtime-install-source-package-v1.mjs' prepare
+  if ($LASTEXITCODE -ne 0) { throw 'FIXED_INSTALL_PACKAGE_PREPARATION_REFUSED' }
+  [IO.File]::WriteAllText($outputPath, [String]::Join([Environment]::NewLine, [string[]]$packageJson), $utf8)
+} finally {
+  $OutputEncoding = $previousOutputEncoding
+}
+```
+
+`bind` takes one JSON object with schema
+`stephanos.fixed-runtime-package-bind-input.v1`, the exact `sourcePackage`,
+`expectedMain`, `sourceTree` and private `operatorSid`. It revalidates the entire
+package, refuses changed metadata/flags or a different expected head/tree, checks
+the captured builder against the existing local builder bytes, then delegates
+only to `buildFixedRuntimeInstallerCandidateV1`. It does not import captured
+code. Use the same stdin/stdout invocation with `bind` in place of `prepare`.
+The command does not obtain an SID or infer it from a username. The existing
+local native inspector can observe the real caller SID privately; the public
+Control Tower projection deliberately excludes it. SID syntax and equality are
+not proof that an identity was observed.
+
+The private binding output is `BOUND_FOR_PRIVATE_REVIEW`, still
+`NOT_INSTALLABLE`. Its `publicReview` contains only repository/source/bundle/
+artifact hashes and sizes. Its `privateCandidate` contains the exact payload,
+literal bootstrap and encoded command from the existing builder; the payload
+contains the private operator identity. No off-host environment is serialized
+as a Windows launch environment. Keep that payload local/private. The embedded
+installer's `-OperatorApproved` argument is part of the existing generated
+program, not evidence that the surrounding operator gate has been satisfied.
+
+Before an actual installation, independently establish the ultimate admitted
+main/tree, real private operator identity, qualified exact-artifact review and
+concrete operator approval. Run the existing pinned bootstrap through the
+existing same-operator elevated route only after those gates; this preparer has
+no execution, elevation, copy-to-host or restart option. A source movement
+requires a newly bound package, including when executable bytes happen to be
+unchanged. A pending installation still requires a genuinely later full boot
+and authenticated current custody IDLE before runtime qualification. Neither
+package form releases the unresolved Control Tower BUILD, any source claim or
+native custody, or qualifies the separate mailbox-rotation producer.
