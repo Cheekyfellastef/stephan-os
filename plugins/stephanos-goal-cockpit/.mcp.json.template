@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "stephanos-goal-cockpit": {
+      "command": "node",
+      "args": [
+        "__MCP_SERVER_PATH__",
+        "--repo-root",
+        "__REPO_ROOT__",
+        "--workspace-root",
+        "__WORKSPACE_ROOT__"
+      ]
+    }
+  }
+}
