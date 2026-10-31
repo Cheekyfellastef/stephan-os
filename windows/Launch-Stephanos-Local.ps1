@@ -1105,6 +1105,139 @@ Prepare Sovereign Commander custody for the next boot?
   ) | Out-Null
   return $true
 }
+function Invoke-SovereignFixedRuntimeInstallation {
+  if ($Mode -ne 'launcher-root') { return $false }
+  $nodeExecutable = 'C:\Program Files\nodejs\node.exe'
+  $handoffScript = Join-Path $repoRoot 'scripts\sovereign-fixed-runtime-install-handoff-v1.mjs'
+  $approvedInstaller = Join-Path $repoRoot 'scripts\windows\install-sovereign-fixed-runtime-approved.ps1'
+  $sourceTruthScript = Join-Path $repoRoot 'scripts\battle-bridge-ignition-supervisor.mjs'
+  $required = @($nodeExecutable, $handoffScript, $approvedInstaller, $sourceTruthScript)
+  if (@($required | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -gt 0) { return $false }
+
+  $sourceText = (& $nodeExecutable $sourceTruthScript '--source-truth-json' 2>$null | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $sourceText) { return $false }
+  try { $sourceTruth = $sourceText | ConvertFrom-Json -ErrorAction Stop } catch { return $false }
+  $expectedMain = [string]$sourceTruth.head
+  if ($sourceTruth.ok -ne $true -or $expectedMain -notmatch '^[a-f0-9]{40}$') { return $false }
+
+  $statusText = (& $nodeExecutable $handoffScript 'status' '--expected-main' $expectedMain 2>$null | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $statusText) { return $false }
+  try { $runtimeStatus = $statusText | ConvertFrom-Json -ErrorAction Stop } catch { return $false }
+  if ($runtimeStatus.schemaVersion -cne 'stephanos.fixed-runtime-install-handoff.v1'
+      -or $runtimeStatus.ok -ne $true
+      -or $runtimeStatus.expectedMain -cne $expectedMain) { return $false }
+  if ($runtimeStatus.state -ceq 'QUALIFIED') { return $false }
+
+  Add-Type -AssemblyName System.Windows.Forms
+  if ($runtimeStatus.state -ceq 'PENDING_REBOOT') {
+    $pendingMessage = 'The protected Sovereign fixed runtime is already installed for the current exact source and requires a later full Windows boot before it can qualify. Restart Windows normally, sign back in, then press Ignition.'
+    Write-LiveLog $pendingMessage
+    Write-IgnitionStatus -Phase 'restart-required' -Message $pendingMessage -Extra @{
+      currentStage = 'restart'
+      blocker = ''
+      nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+      sovereignFixedRuntimeInstalled = $true
+      sovereignFixedRuntimeQualified = $false
+      pcRestartPerformed = $false
+      expectedMain = $expectedMain
+    }
+    Write-IgnitionSupportSnapshot -Verdict 'restart-required' -Extra @{
+      nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+      sovereignFixedRuntimeInstalled = $true
+      sovereignFixedRuntimeQualified = $false
+      pcRestartPerformed = $false
+      expectedMain = $expectedMain
+    }
+    [System.Windows.Forms.MessageBox]::Show(
+      "Sovereign fixed runtime is installed and waiting for a later full Windows boot.\r\n\r\nUse the normal Windows Restart command.\r\nAfter sign-in, press Ignition.",
+      'Stephanos - Fixed runtime restart required',
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Information
+    ) | Out-Null
+    return $true
+  }
+  if ($runtimeStatus.state -cne 'MISSING'
+      -or $runtimeStatus.blocker -cne 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING') { return $false }
+
+  $summary = @"
+The protected Sovereign fixed runtime required by Control Tower and the Goal Conveyor is not installed for the current exact source.
+
+Current source:
+$expectedMain
+
+Install Sovereign fixed runtime now?
+
+This action:
+- re-proves the complete fixed runtime source closure against exact Git objects
+- asks Windows for one UAC approval
+- installs only the reviewed fixed runtime under C:\Program Files\Stephanos
+- writes a PENDING protected receipt
+- DOES NOT restart Windows automatically
+- DOES NOT grant arbitrary shell, merge or source-mutation authority
+- requires one later normal Windows Restart before the runtime can qualify
+"@
+  $choice = [System.Windows.Forms.MessageBox]::Show(
+    $summary,
+    'Stephanos - Install Sovereign fixed runtime',
+    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+    [System.Windows.Forms.MessageBoxIcon]::Warning,
+    [System.Windows.Forms.MessageBoxDefaultButton]::Button2
+  )
+  if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {
+    Write-LiveLog 'Sovereign fixed runtime installation was offered and declined; normal Ignition will continue without Goal Conveyor fixed-runtime capacity.'
+    return $false
+  }
+
+  $installText = (& $approvedInstaller -ExpectedHead $expectedMain -OperatorApproved 2>$null | Out-String).Trim()
+  $installExitCode = $LASTEXITCODE
+  if (-not $installText) { throw 'Sovereign fixed runtime installer returned no bounded receipt.' }
+  try { $installed = $installText | ConvertFrom-Json -ErrorAction Stop } catch {
+    throw 'Sovereign fixed runtime installer receipt was invalid.'
+  }
+  if ($installExitCode -ne 0
+      -or $installed.schemaVersion -cne 'stephanos.fixed-runtime-approved-install.v1'
+      -or $installed.ok -ne $true
+      -or $installed.expectedMain -cne $expectedMain
+      -or $installed.pcRestartPerformed -ne $false
+      -or $installed.arbitraryShellAllowed -ne $false
+      -or $installed.mergeAuthority -ne $false
+      -or $installed.state -notin @('PENDING_REBOOT', 'QUALIFIED')) {
+    $blocker = if ([string]$installed.blocker -match '^[A-Z0-9_]{1,120}$') { [string]$installed.blocker } else { 'FIXED_RUNTIME_INSTALL_UNPROVEN' }
+    throw "Sovereign fixed runtime installation blocked: $blocker"
+  }
+
+  if ($installed.state -ceq 'QUALIFIED') {
+    Write-LiveLog 'Sovereign fixed runtime is already qualified after protected installation readback; continuing normal Ignition.'
+    return $false
+  }
+
+  $message = 'Sovereign fixed runtime is installed as PENDING for the exact current source. A later full Windows boot is required before Goal Conveyor execution can qualify.'
+  Write-LiveLog $message
+  Write-IgnitionStatus -Phase 'restart-required' -Message $message -Extra @{
+    currentStage = 'restart'
+    blocker = ''
+    nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+    sovereignFixedRuntimeInstalled = $true
+    sovereignFixedRuntimeQualified = $false
+    pcRestartPerformed = $false
+    expectedMain = $expectedMain
+  }
+  Write-IgnitionSupportSnapshot -Verdict 'restart-required' -Extra @{
+    nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+    sovereignFixedRuntimeInstalled = $true
+    sovereignFixedRuntimeQualified = $false
+    pcRestartPerformed = $false
+    expectedMain = $expectedMain
+  }
+  [System.Windows.Forms.MessageBox]::Show(
+    "Protected fixed runtime installation is complete.\r\n\r\nUse the normal Windows Restart command now.\r\nAfter sign-in, press Ignition.\r\n\r\nStephanos has NOT restarted the PC automatically.",
+    'Stephanos - Fixed runtime installed; restart required',
+    [System.Windows.Forms.MessageBoxButtons]::OK,
+    [System.Windows.Forms.MessageBoxIcon]::Information
+  ) | Out-Null
+  return $true
+}
+
 
 try {
   $resolvedBootMode = if ($Mode -eq 'vite-dev') { 'launcher' } else { $BootMode }
@@ -1119,6 +1252,10 @@ try {
   Show-IgnitionSplashScreen
 
   if (Invoke-SovereignCommanderRetainedCustodyPreparation) {
+    exit 0
+  }
+
+  if (Invoke-SovereignFixedRuntimeInstallation) {
     exit 0
   }
 
