@@ -17,6 +17,9 @@ import {
   classifyPostSyncRefresh,
   executePostSyncRefreshPlan,
   parseGitChangedPathStatus,
+  POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
+  postSyncRefreshTargetResultPass,
+  projectPostSyncSovereignRelayProof,
   projectPostSyncTargetFailureHistory,
   reducePostSyncTargetFailureHistory,
 } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
@@ -229,7 +232,7 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         spawnSyncFn,
       });
     },
-    refreshSovereignCommander({ afterHead, paths }) {
+    refreshSovereignCommander({ afterHead, paths, requireSovereignRelayProof = false }) {
       const runnerPath = path.resolve(paths.repoRoot, 'scripts', 'windows', 'run-sovereign-commander-hidden.ps1');
       const result = fixedRun('powershell.exe', [
         '-NoProfile',
@@ -258,18 +261,30 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         && payload.pcRestartAllowed === false
         && payload.visiblePowerShellRequired === false
       );
+      const sovereignRelayProof = projectPostSyncSovereignRelayProof({
+        schemaVersion: POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
+        watchdogSucceeded: result.ok,
+        healthy: payload?.relayDaemonHealthy,
+        sourceHead: payload?.relayDaemonSourceHead,
+        sourceHeadMatchesLive: payload?.relayDaemonSourceHeadMatchesLive,
+        processCount: payload?.relayDaemonProcessCount,
+        heartbeatAgeSeconds: payload?.relayDaemonHeartbeatAgeSeconds,
+        blocker: payload?.relayDaemonBlocker,
+      }, text(afterHead).toLowerCase());
+      const relayProofOk = !requireSovereignRelayProof || sovereignRelayProof !== null;
       return {
-        ok: receiptValid && exactHeadProofOk,
+        ok: receiptValid && exactHeadProofOk && relayProofOk,
         blocker: !payload
           ? 'SOVEREIGN_COMMANDER_REFRESH_RECEIPT_INVALID'
           : !receiptValid
             ? text(payload.blocker) || 'SOVEREIGN_COMMANDER_REFRESH_PROOF_INVALID'
-            : exactHeadProofOk
-              ? ''
-              : 'SOVEREIGN_COMMANDER_EXACT_HEAD_PROOF_FAILED',
+            : !exactHeadProofOk
+              ? 'SOVEREIGN_COMMANDER_EXACT_HEAD_PROOF_FAILED'
+              : relayProofOk ? '' : 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN',
         sourceHead,
         exactHeadProofOk,
-        freshProcessLoaded: receiptValid,
+        freshProcessLoaded: receiptValid && relayProofOk,
+        sovereignRelayProof,
         capabilityVersion: capabilityVersionAfter,
         requiredCapabilityVersion,
         watchdogExitStatus: result.status,
@@ -352,13 +367,14 @@ async function acquireLock(workspaceRoot, now, { aliveFn = processIsAlive } = {}
   }
 }
 
-async function loadResumeResults(workspaceRoot, afterHead) {
+async function loadResumeResults(workspaceRoot, afterHead, plan) {
   const statusPath = path.resolve(workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json');
   try {
     const status = JSON.parse(await readFile(statusPath, 'utf8'));
     if (text(status?.afterHead).toLowerCase() !== text(afterHead).toLowerCase()) return [];
     return Array.isArray(status?.resultTargets)
-      ? status.resultTargets.filter((entry) => entry?.ok === true && entry?.exactHeadProofOk === true && text(entry?.sourceHead).toLowerCase() === text(afterHead).toLowerCase())
+      ? status.resultTargets.filter((entry) => plan.targetIds.includes(entry?.targetId)
+        && postSyncRefreshTargetResultPass(entry, { targetId: entry.targetId, plan, expectedHead: afterHead }))
       : [];
   } catch {
     return [];
@@ -473,11 +489,13 @@ export async function runBattleBridgePostSyncRefresh({
     const changed = adapter.changedPaths({ beforeHead: normalizedBefore, afterHead: normalizedAfter, repoRoot: paths.repoRoot });
     if (!changed.ok) return Object.freeze({ ok: false, blocker: changed.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
 
-    const plan = classifyPostSyncRefresh(changed.paths);
+    const plan = classifyPostSyncRefresh(changed.paths, {
+      sovereignRelayRefreshRequired: retained.debt.sovereignRelayRefreshRequired,
+    });
     if (retained.debt.requiredTargetIds.some(id => !plan.targetIds.includes(id))) {
       return Object.freeze({ ok: false, blocker: 'POST_SYNC_RETAINED_TARGET_COVERAGE_UNPROVEN', exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
     }
-    const completedResults = await loadResumeResults(paths.workspaceRoot, normalizedAfter);
+    const completedResults = await loadResumeResults(paths.workspaceRoot, normalizedAfter, plan);
     // Resume eligibility and observation continuity are different state. Only
     // the exact successes above can skip work. Historical refusals never can.
     let targetFailureHistory = projectPostSyncTargetFailureHistory(records.refreshRecord?.targetFailureHistory,
@@ -515,6 +533,7 @@ export async function runBattleBridgePostSyncRefresh({
       beforeHead: normalizedBefore,
       afterHead: normalizedAfter,
       changedPaths: changed.paths,
+      sovereignRelayRefreshRequired: retained.debt.sovereignRelayRefreshRequired,
       completedResults,
       adapters: {
         refreshUi: ({ afterHead: head }) => adapter.refreshUi({ afterHead: head }),
@@ -522,7 +541,8 @@ export async function runBattleBridgePostSyncRefresh({
         restartBackend: ({ afterHead: head }) => adapter.restartApprovedTarget({ target: 'backend', afterHead: head, paths }),
         restartMissionWorker: ({ afterHead: head }) => adapter.restartApprovedTarget({ target: 'mission-worker', afterHead: head, paths }),
         restartGitHubMailbox: ({ afterHead: head }) => adapter.restartGitHubMailbox({ afterHead: head, paths }),
-        refreshSovereignCommander: ({ afterHead: head }) => adapter.refreshSovereignCommander({ afterHead: head, paths }),
+        refreshSovereignCommander: ({ afterHead: head, plan: targetPlan }) => adapter.refreshSovereignCommander({ afterHead: head, paths,
+          requireSovereignRelayProof: targetPlan.sovereignRelayRefreshRequired }),
         confirmNaturalReload: ({ afterHead: head }) => adapter.confirmNaturalReload({ afterHead: head, repoRoot: paths.repoRoot }),
       },
       onTargetComplete: async (results, observation) => {

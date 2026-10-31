@@ -13,6 +13,7 @@ import {
   collectPostSyncRefreshDebt,
   evaluateSyncPolicy,
   inspectPostSyncRefreshCompletion,
+  inspectPendingPostSyncRefreshDebt,
   pendingPostSyncRefreshDebt,
   resolvePostSyncRefreshDebt,
   rejectArbitraryShellPlan,
@@ -32,6 +33,128 @@ function refreshReport(overrides = {}) {
     changedPathCount: 1, noRuntimePathCount: 0, unknownPathCount: 0, unsafePathCount: 0,
     openClawPathCount: 0, pluginHostActivationRequired: false, ...overrides };
 }
+
+function relayProof(sourceHead = REMOTE_HEAD) {
+  return { schemaVersion: 'stephanos.post-sync-sovereign-relay-proof.v1', watchdogSucceeded: true,
+    healthy: true, sourceHead, sourceHeadMatchesLive: true, processCount: 1, heartbeatAgeSeconds: 2, blocker: '' };
+}
+
+function commanderReport({ required = true, proof = relayProof(), ...overrides } = {}) {
+  return refreshReport({ targetIds: ['sovereign-commander'], sovereignRelayRefreshRequired: required,
+    resultTargets: [{ targetId: 'sovereign-commander', ok: true, exactHeadProofOk: true,
+      sourceHead: overrides.afterHead || REMOTE_HEAD, blocker: '', ...(proof === undefined ? {} : { sovereignRelayProof: proof }) }], ...overrides });
+}
+
+test('canonical completion retains relay binding and rejects generic discharge of a required relay span', () => {
+  const isAncestor = (before, after) => ({ ok: true, ancestor: before <= after });
+  const span = { beforeHead: LOCAL_HEAD, afterHead: REMOTE_HEAD };
+  const complete = inspectPostSyncRefreshCompletion(commanderReport());
+  assert.equal(complete.ok, true);
+  assert.equal(complete.sovereignRelayRefreshRequired, true);
+  assert.deepEqual(complete.sovereignRelayProof, relayProof());
+  const base = { spans: [span], requiredTargetIds: ['sovereign-commander'], sovereignRelayRefreshRequired: true,
+    currentHead: REMOTE_HEAD, isAncestor };
+  assert.equal(resolvePostSyncRefreshDebt({ ...base, completion: JSON.parse(JSON.stringify(complete)) }).debt, null);
+  const nonRelay = commanderReport({ required: false });
+  delete nonRelay.resultTargets[0].sovereignRelayProof;
+  const generic = inspectPostSyncRefreshCompletion(nonRelay);
+  assert.equal(generic.ok, true);
+  const unresolved = resolvePostSyncRefreshDebt({ ...base, completion: generic });
+  assert.deepEqual(unresolved.debt, { ...span, requiredTargetIds: ['sovereign-commander'], sovereignRelayRefreshRequired: true });
+  for (const mutation of [{ sovereignRelayRefreshRequired: 'true' }, { sovereignRelayProof: null },
+    { sovereignRelayProof: relayProof(LOCAL_HEAD) }, { sovereignRelayProof: { ...relayProof(), processCount: 2 } }]) {
+    assert.equal(resolvePostSyncRefreshDebt({ ...base, completion: { ...complete, ...mutation } }).ok, false);
+  }
+  const stripped = { ok: true, ...span, targetIds: ['sovereign-commander'] };
+  const restored = resolvePostSyncRefreshDebt({ ...base, completion: stripped });
+  assert.equal(restored.debt.sovereignRelayRefreshRequired, true);
+  assert.equal(restored.debt.beforeHead, LOCAL_HEAD);
+});
+
+test('only an otherwise-valid legacy Commander completion migrates to its own recoverable debt', () => {
+  const legacy = commanderReport();
+  delete legacy.sovereignRelayRefreshRequired;
+  delete legacy.resultTargets[0].sovereignRelayProof;
+  const inspected = inspectPostSyncRefreshCompletion(legacy);
+  assert.equal(inspected.ok, false);
+  assert.equal(inspected.legacyCommanderCompletion, true);
+  const recovered = collectPostSyncRefreshDebt({ refreshRecord: legacy });
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.completion, null);
+  assert.equal(recovered.sovereignRelayRefreshRequired, true);
+  assert.deepEqual(recovered.spans, [{ beforeHead: LOCAL_HEAD, afterHead: REMOTE_HEAD }]);
+  assert.deepEqual(recovered.requiredTargetIds, ['sovereign-commander']);
+  for (const mutation of [{ beforeHead: [LOCAL_HEAD] }, { targetIds: [] }, { resultTargets: [] },
+    { exactHeadProofOk: 'true' }, { blocker: 'FAILED' }, { unknownPathCount: 1 },
+    { sovereignRelayRefreshRequired: 'false' }]) {
+    assert.equal(collectPostSyncRefreshDebt({ refreshRecord: { ...legacy, ...mutation } }).ok, false);
+  }
+  const claimedWithoutProof = { ...legacy, sovereignRelayRefreshRequired: true };
+  assert.equal(collectPostSyncRefreshDebt({ refreshRecord: claimedWithoutProof }).ok, false);
+});
+
+test('serialized relay obligation survives repeated coalescing and reverts until exact covering proof pays it', () => {
+  const isAncestor = (before, after) => ({ ok: true, ancestor: before <= after });
+  const heads = [LOCAL_HEAD, REMOTE_HEAD, OTHER_HEAD, WRONG_BEFORE_HEAD, 'e'.repeat(40)];
+  let pending = pendingPostSyncRefreshDebt([{ beforeHead: heads[0], afterHead: heads[1] }],
+    ['sovereign-commander'], '', { sovereignRelayRefreshRequired: true });
+  for (let index = 2; index < heads.length; index++) {
+    const afterHead = heads[index];
+    const httpOnly = commanderReport({ required: false, beforeHead: heads[0], afterHead });
+    delete httpOnly.resultTargets[0].sovereignRelayProof;
+    const syncRecord = { schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.status',
+      statusId: 'battle-bridge-github-sync-current', classification: 'SYNC_NO_CHANGE', pendingRefresh: JSON.parse(JSON.stringify(pending)) };
+    const evidence = collectPostSyncRefreshDebt({ syncRecord, refreshRecord: httpOnly });
+    assert.equal(evidence.sovereignRelayRefreshRequired, true);
+    const result = resolvePostSyncRefreshDebt({ ...evidence,
+      requestedSpans: [{ beforeHead: heads[index - 1], afterHead }], currentHead: afterHead, isAncestor });
+    assert.equal(result.debt.beforeHead, heads[0]);
+    assert.equal(result.debt.afterHead, afterHead);
+    assert.equal(result.debt.sovereignRelayRefreshRequired, true);
+    pending = pendingPostSyncRefreshDebt([result.debt], result.debt.requiredTargetIds, '', result.debt);
+    assert.equal(inspectPendingPostSyncRefreshDebt(pending).sovereignRelayRefreshRequired, true);
+  }
+  const afterHead = heads.at(-1);
+  const paid = inspectPostSyncRefreshCompletion(commanderReport({ afterHead, proof: relayProof(afterHead) }));
+  const result = resolvePostSyncRefreshDebt({ ...inspectPendingPostSyncRefreshDebt(pending),
+    completion: paid, currentHead: afterHead, isAncestor });
+  assert.equal(result.debt, null);
+  assert.equal(result.discharged, true);
+});
+
+test('paid relay debt does not infect later unrelated work and legacy pending metadata remains unknown', () => {
+  const complete = inspectPostSyncRefreshCompletion(commanderReport());
+  const next = resolvePostSyncRefreshDebt({ spans: [{ beforeHead: LOCAL_HEAD, afterHead: REMOTE_HEAD }],
+    requestedSpans: [{ beforeHead: REMOTE_HEAD, afterHead: OTHER_HEAD }], requiredTargetIds: ['sovereign-commander'],
+    sovereignRelayRefreshRequired: true, completion: complete, currentHead: OTHER_HEAD,
+    isAncestor: (before, after) => ({ ok: true, ancestor: before <= after }) });
+  assert.deepEqual(next.debt, { beforeHead: REMOTE_HEAD, afterHead: OTHER_HEAD, requiredTargetIds: [], sovereignRelayRefreshRequired: false });
+  const pending = pendingPostSyncRefreshDebt([{ beforeHead: LOCAL_HEAD, afterHead: REMOTE_HEAD }],
+    ['sovereign-commander'], '', { sovereignRelayRefreshRequired: false });
+  assert.equal(inspectPendingPostSyncRefreshDebt(pending).sovereignRelayRefreshRequired, false);
+  const legacy = { ...pending }; delete legacy.sovereignRelayRefreshRequired;
+  assert.equal(inspectPendingPostSyncRefreshDebt(legacy).sovereignRelayRefreshRequired, true);
+  assert.equal(inspectPendingPostSyncRefreshDebt({ ...pending, sovereignRelayRefreshRequired: 'false' }).ok, false);
+});
+
+test('an insufficient newer completion cannot strand retained relay recovery at an obsolete source head', () => {
+  const debt = { beforeHead: LOCAL_HEAD, afterHead: REMOTE_HEAD };
+  const base = { spans: [debt], requiredTargetIds: ['sovereign-commander'], sovereignRelayRefreshRequired: true,
+    currentHead: OTHER_HEAD, isAncestor: (before, after) => ({ ok: true, ancestor: before <= after }) };
+  const generic = commanderReport({ required: false, afterHead: OTHER_HEAD });
+  delete generic.resultTargets[0].sovereignRelayProof;
+  const nonCovering = commanderReport({ beforeHead: REMOTE_HEAD, afterHead: OTHER_HEAD, proof: relayProof(OTHER_HEAD) });
+  for (const report of [generic, nonCovering]) {
+    const completion = inspectPostSyncRefreshCompletion(report);
+    assert.equal(completion.ok, true);
+    for (const requestedSpans of [[], [{ beforeHead: REMOTE_HEAD, afterHead: OTHER_HEAD }]]) {
+      const result = resolvePostSyncRefreshDebt({ ...base, completion, requestedSpans });
+      assert.equal(result.discharged, false);
+      assert.deepEqual(result.debt, { beforeHead: LOCAL_HEAD, afterHead: OTHER_HEAD,
+        requiredTargetIds: ['sovereign-commander'], sovereignRelayRefreshRequired: true });
+    }
+  }
+});
 
 test('refresh completion requires coherent native target proofs and strict primitive fields', () => {
   assert.equal(inspectPostSyncRefreshCompletion(refreshReport()).ok, true);
@@ -70,7 +193,7 @@ test('completed span discharges only a covered ancestry chain and retained targe
   const complete = inspectPostSyncRefreshCompletion(refreshReport());
   const resolve = options => resolvePostSyncRefreshDebt({ spans: [debt], requiredTargetIds: ['stephanos-ui-4173'], currentHead: OTHER_HEAD, isAncestor, ...options });
   assert.equal(resolve({ completion: complete }).debt, null);
-  assert.deepEqual(resolve({ completion: { ...complete, beforeHead: REMOTE_HEAD, afterHead: OTHER_HEAD } }).debt, { ...debt, requiredTargetIds: ['stephanos-ui-4173'] });
+  assert.deepEqual(resolve({ completion: { ...complete, beforeHead: REMOTE_HEAD, afterHead: OTHER_HEAD } }).debt, { ...debt, requiredTargetIds: ['stephanos-ui-4173'], sovereignRelayRefreshRequired: false });
   assert.ok(resolve({ completion: { ...complete, targetIds: ['natural-reload'] } }).debt);
   assert.equal(resolve({ completion: { ...complete, afterHead: WRONG_BEFORE_HEAD } }).ok, false);
   assert.equal(resolve({ spans: [{ beforeHead: REMOTE_HEAD, afterHead: LOCAL_HEAD }] }).blocker, 'PENDING_POST_SYNC_SPAN_REVERSED');
@@ -95,9 +218,9 @@ test('covered old debt is paid before a new revert delta, while unresolved coale
     spans: [{ beforeHead: LOCAL_HEAD, afterHead: REMOTE_HEAD }],
     requestedSpans: [{ beforeHead: REMOTE_HEAD, afterHead: OTHER_HEAD }],
   });
-  assert.deepEqual(next.debt, { beforeHead: REMOTE_HEAD, afterHead: OTHER_HEAD, requiredTargetIds: [] });
+  assert.deepEqual(next.debt, { beforeHead: REMOTE_HEAD, afterHead: OTHER_HEAD, requiredTargetIds: [], sovereignRelayRefreshRequired: false });
   const coalesced = resolvePostSyncRefreshDebt({ ...base, spans: [{ beforeHead: LOCAL_HEAD, afterHead: OTHER_HEAD }] });
-  assert.deepEqual(coalesced.debt, { beforeHead: LOCAL_HEAD, afterHead: OTHER_HEAD, requiredTargetIds: ['stephanos-ui-4173'] });
+  assert.deepEqual(coalesced.debt, { beforeHead: LOCAL_HEAD, afterHead: OTHER_HEAD, requiredTargetIds: ['stephanos-ui-4173'], sovereignRelayRefreshRequired: false });
 });
 
 const baseFacts = Object.freeze({

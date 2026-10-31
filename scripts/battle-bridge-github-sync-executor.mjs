@@ -525,8 +525,12 @@ export async function runBattleBridgeGitHubSync({
     const resolved = resolvePostSyncRefreshDebt({ ...evidence, requestedSpans: additionalSpan ? [additionalSpan] : [], currentHead, requireCurrentCoverage: false,
       isAncestor: (beforeHead, afterHead) => git.isAncestor?.(beforeHead, afterHead, repoRoot) });
     return resolved.ok
-      ? resolved.debt ? pendingPostSyncRefreshDebt([resolved.debt], resolved.debt.requiredTargetIds) : null
-      : pendingPostSyncRefreshDebt(spans, evidence.requiredTargetIds);
+      ? resolved.debt ? pendingPostSyncRefreshDebt([resolved.debt], resolved.debt.requiredTargetIds, '', {
+        sovereignRelayRefreshRequired: resolved.debt.sovereignRelayRefreshRequired,
+      }) : null
+      : pendingPostSyncRefreshDebt(spans, evidence.requiredTargetIds, '', {
+        sovereignRelayRefreshRequired: evidence.sovereignRelayRefreshRequired,
+      });
   };
   try {
     const records = {};
@@ -538,7 +542,9 @@ export async function runBattleBridgeGitHubSync({
     }
     const evidence = collectPostSyncRefreshDebt(records);
     // Establish retention before any later source/transport exception can write status.
-    pendingRefresh = evidence.ok ? pendingPostSyncRefreshDebt(evidence.spans, evidence.requiredTargetIds)
+    pendingRefresh = evidence.ok ? pendingPostSyncRefreshDebt(evidence.spans, evidence.requiredTargetIds, '', {
+      sovereignRelayRefreshRequired: evidence.sovereignRelayRefreshRequired,
+    })
       : pendingPostSyncRefreshDebt([], [], evidence.blocker);
     let before = await collectPreFetchFacts({ git, repoRoot });
     pendingRefresh = retainDebt(evidence, before.localHead);

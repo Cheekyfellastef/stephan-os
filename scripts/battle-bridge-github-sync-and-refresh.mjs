@@ -385,6 +385,7 @@ export async function runBattleBridgeSyncAndRefresh({
   const pendingInvalid = pending?.ok === false ? pending : null;
   let pendingSpans = pending?.ok === true ? pending.spans || [{ beforeHead: pending.beforeHead, afterHead: pending.afterHead }] : [];
   let requiredTargetIds = pending?.requiredTargetIds || [];
+  let sovereignRelayRefreshRequired = pending?.ok === true ? pending.sovereignRelayRefreshRequired : false;
   let completion = pending?.completion || null;
   let pendingRefreshObserved = pendingSpans.length > 0;
   let sourceForwardedBeforeRefresh = false;
@@ -407,6 +408,7 @@ export async function runBattleBridgeSyncAndRefresh({
     if (freshDebt.ok) {
       pendingSpans = [...new Map([...pendingSpans, ...freshDebt.spans].map(span => [`${span.beforeHead}:${span.afterHead}`, span])).values()];
       requiredTargetIds = [...new Set([...requiredTargetIds, ...freshDebt.requiredTargetIds])];
+      if (freshDebt.sovereignRelayRefreshRequired) sovereignRelayRefreshRequired = true;
       pendingRefreshObserved ||= freshDebt.spans.length > 0;
     }
 
@@ -440,7 +442,7 @@ export async function runBattleBridgeSyncAndRefresh({
 
     const pendingAfterHead = pendingSpans.at(-1)?.afterHead || '';
     const resolved = resolvePostSyncRefreshDebt({
-      spans: pendingSpans, requestedSpans: currentHeads ? [currentHeads] : [], requiredTargetIds, completion,
+      spans: pendingSpans, requestedSpans: currentHeads ? [currentHeads] : [], requiredTargetIds, completion, sovereignRelayRefreshRequired,
       currentHead: currentSourceHead,
       isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot),
     });
@@ -481,6 +483,7 @@ export async function runBattleBridgeSyncAndRefresh({
       const completed = inspectPostSyncRefreshCompletion(refresh.result);
       const covered = completed.ok ? resolvePostSyncRefreshDebt({
         spans: [resolved.debt], requiredTargetIds: resolved.debt.requiredTargetIds, completion: completed,
+        sovereignRelayRefreshRequired: resolved.debt.sovereignRelayRefreshRequired,
         currentHead: currentSourceHead,
         isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot),
       }) : completed;
@@ -492,6 +495,7 @@ export async function runBattleBridgeSyncAndRefresh({
       if (safeRemaining() <= 0) return budgetHeld('POST_REFRESH', currentSourceHead);
       pendingSpans = [];
       requiredTargetIds = [];
+      sovereignRelayRefreshRequired = false;
       completion = completed;
       continue;
     }
