@@ -1108,10 +1108,10 @@ Prepare Sovereign Commander custody for the next boot?
 function Invoke-SovereignFixedRuntimeInstallation {
   if ($Mode -ne 'launcher-root') { return $false }
   $nodeExecutable = 'C:\Program Files\nodejs\node.exe'
+  $powerShellExecutable = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
   $handoffScript = Join-Path $repoRoot 'scripts\sovereign-fixed-runtime-install-handoff-v1.mjs'
-  $approvedInstaller = Join-Path $repoRoot 'scripts\windows\install-sovereign-fixed-runtime-approved.ps1'
   $sourceTruthScript = Join-Path $repoRoot 'scripts\battle-bridge-ignition-supervisor.mjs'
-  $required = @($nodeExecutable, $handoffScript, $approvedInstaller, $sourceTruthScript)
+  $required = @($nodeExecutable, $powerShellExecutable, $handoffScript, $sourceTruthScript)
   if (@($required | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -gt 0) { return $false }
 
   $sourceText = (& $nodeExecutable $sourceTruthScript '--source-truth-json' 2>$null | Out-String).Trim()
@@ -1155,6 +1155,7 @@ function Invoke-SovereignFixedRuntimeInstallation {
     ) | Out-Null
     return $true
   }
+
   $runtimeMissing = ($runtimeStatus.state -ceq 'MISSING') -and ($runtimeStatus.blocker -ceq 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING')
   if (-not $runtimeMissing) { return $false }
 
@@ -1187,20 +1188,48 @@ This action:
     return $false
   }
 
-  $installText = (& $approvedInstaller -ExpectedHead $expectedMain -OperatorApproved 2>$null | Out-String).Trim()
-  $installExitCode = $LASTEXITCODE
-  if (-not $installText) { throw 'Sovereign fixed runtime installer returned no bounded receipt.' }
-  try { $installed = $installText | ConvertFrom-Json -ErrorAction Stop } catch {
-    throw 'Sovereign fixed runtime installer receipt was invalid.'
+  $preparedText = (& $nodeExecutable $handoffScript 'prepare' '--expected-main' $expectedMain 2>$null | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $preparedText) { throw 'Sovereign fixed runtime installation preparation was not proven.' }
+  try { $prepared = $preparedText | ConvertFrom-Json -ErrorAction Stop } catch { throw 'Sovereign fixed runtime installation preparation receipt was invalid.' }
+
+  $expectedPayloadPath = Join-Path (Join-Path $env:LOCALAPPDATA 'Temp') ("StephanosFixedRuntimeInstall-{0}.json" -f $expectedMain)
+  $preparedValid = ($prepared.schemaVersion -ceq 'stephanos.fixed-runtime-install-handoff.v1') -and ($prepared.ok -eq $true) -and ($prepared.state -ceq 'READY_FOR_OPERATOR_APPROVAL') -and ($prepared.expectedMain -ceq $expectedMain) -and ($prepared.powershellExecutable -ceq $powerShellExecutable) -and ([string]::Equals([string]$prepared.payloadPath, $expectedPayloadPath, [System.StringComparison]::OrdinalIgnoreCase)) -and (([string]$prepared.payloadSha256) -match '^[a-f0-9]{64}$') -and (([int]$prepared.payloadBytes) -gt 0) -and (([int]$prepared.payloadBytes) -le (16 * 1024 * 1024)) -and (([string]$prepared.encodedCommand) -match '^[A-Za-z0-9+/=]{1,30000}$') -and (([string]$prepared.encodedCommandSha256) -match '^[a-f0-9]{64}$') -and ($prepared.installationPerformed -eq $false) -and ($prepared.elevationPerformed -eq $false) -and ($prepared.pcRestartPerformed -eq $false) -and ($prepared.arbitraryShellAllowed -eq $false) -and ($prepared.mergeAuthority -eq $false)
+  if (-not $preparedValid) { throw 'Sovereign fixed runtime installation preparation widened or changed.' }
+
+  $encodedCommand = [string]$prepared.encodedCommand
+  $encodedBytes = [Text.Encoding]::UTF8.GetBytes($encodedCommand)
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try {
+    $encodedDigest = ([BitConverter]::ToString($sha.ComputeHash($encodedBytes))).Replace('-', '').ToLowerInvariant()
+  } finally {
+    $sha.Dispose()
   }
-  $installReceiptValid = ($installExitCode -eq 0) -and ($installed.schemaVersion -ceq 'stephanos.fixed-runtime-approved-install.v1') -and ($installed.ok -eq $true) -and ($installed.expectedMain -ceq $expectedMain) -and ($installed.pcRestartPerformed -eq $false) -and ($installed.arbitraryShellAllowed -eq $false) -and ($installed.mergeAuthority -eq $false) -and ($installed.state -in @('PENDING_REBOOT', 'QUALIFIED'))
-  if (-not $installReceiptValid) {
-    $blocker = if (([string]$installed.blocker) -match '^[A-Z0-9_]{1,120}
+  if ($encodedDigest -cne [string]$prepared.encodedCommandSha256) { throw 'Sovereign fixed runtime installer command digest changed.' }
+
+  try {
+    $installer = Start-Process -FilePath $powerShellExecutable -ArgumentList @(
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-EncodedCommand',
+      $encodedCommand
+    ) -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+  } catch {
+    throw 'Sovereign fixed runtime UAC approval was cancelled or the fixed installer failed to start.'
+  }
+  if ([int]$installer.ExitCode -ne 0) { throw "Sovereign fixed runtime elevated installer failed (exit=$([int]$installer.ExitCode))." }
+
+  $verifiedText = (& $nodeExecutable $handoffScript 'verify' '--expected-main' $expectedMain 2>$null | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $verifiedText) { throw 'Sovereign fixed runtime protected installation readback was not proven.' }
+  try { $verified = $verifiedText | ConvertFrom-Json -ErrorAction Stop } catch { throw 'Sovereign fixed runtime protected installation readback was invalid.' }
+  $verifiedValid = ($verified.schemaVersion -ceq 'stephanos.fixed-runtime-install-handoff.v1') -and ($verified.ok -eq $true) -and ($verified.expectedMain -ceq $expectedMain) -and ($verified.state -in @('PENDING_REBOOT', 'QUALIFIED'))
+  if (-not $verifiedValid) {
+    $blocker = if (([string]$verified.blocker) -match '^[A-Z0-9_]{1,120}$') { [string]$verified.blocker } else { 'FIXED_RUNTIME_INSTALL_READBACK_INVALID' }
     throw "Sovereign fixed runtime installation blocked: $blocker"
   }
 
-  if ($installed.state -ceq 'QUALIFIED') {
-    Write-LiveLog 'Sovereign fixed runtime is already qualified after protected installation readback; continuing normal Ignition.'
+  if ($verified.state -ceq 'QUALIFIED') {
+    Write-LiveLog 'Sovereign fixed runtime is qualified after protected installation readback; continuing normal Ignition.'
     return $false
   }
 
@@ -1230,7 +1259,6 @@ This action:
   ) | Out-Null
   return $true
 }
-
 
 try {
   $resolvedBootMode = if ($Mode -eq 'vite-dev') { 'launcher' } else { $BootMode }
