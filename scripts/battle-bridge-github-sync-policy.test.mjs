@@ -5,6 +5,7 @@ import {
   DEFAULT_RUNTIME_ONLY_ALLOWLIST,
   FIXED_GIT_COMMANDS,
   POST_SYNC_REFRESH_REGISTRY,
+  POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
   SYNC_CLASSIFICATIONS,
   buildRemoteDirtBlockerSummary,
   buildSharedWorkspaceHeartbeat,
@@ -15,6 +16,7 @@ import {
   inspectPostSyncRefreshCompletion,
   inspectPendingPostSyncRefreshDebt,
   pendingPostSyncRefreshDebt,
+  projectPostSyncSovereignRelayObservation,
   resolvePostSyncRefreshDebt,
   rejectArbitraryShellPlan,
 } from './battle-bridge-github-sync-policy.mjs';
@@ -38,6 +40,25 @@ function relayProof(sourceHead = REMOTE_HEAD) {
   return { schemaVersion: 'stephanos.post-sync-sovereign-relay-proof.v1', watchdogSucceeded: true,
     healthy: true, sourceHead, sourceHeadMatchesLive: true, processCount: 1, heartbeatAgeSeconds: 2, blocker: '' };
 }
+
+test('failed relay observation is diagnostic only and cannot be confused with proof', () => {
+  const observation = {
+    schemaVersion: POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
+    watchdogSucceeded: true,
+    healthy: false,
+    sourceHead: REMOTE_HEAD,
+    sourceHeadMatchesLive: false,
+    processCount: 0,
+    heartbeatAgeSeconds: 4,
+    blocker: 'SOVEREIGN_RELAY_SOURCE_HEAD_STALE',
+  };
+  const projected = projectPostSyncSovereignRelayObservation(observation, REMOTE_HEAD);
+  assert.deepEqual(projected, observation);
+  assert.equal(Object.hasOwn(projected, 'authorityGranted'), false);
+  assert.equal(projectPostSyncSovereignRelayObservation({ ...observation, rawPath: 'C:\\private' }, REMOTE_HEAD), null);
+  assert.equal(projectPostSyncSovereignRelayObservation({ ...observation, processCount: 33 }, REMOTE_HEAD), null);
+  assert.equal(projectPostSyncSovereignRelayObservation({ ...observation, blocker: 'private path C:\\x' }, REMOTE_HEAD), null);
+});
 
 function commanderReport({ required = true, proof = relayProof(), ...overrides } = {}) {
   return refreshReport({ targetIds: ['sovereign-commander'], sovereignRelayRefreshRequired: required,
