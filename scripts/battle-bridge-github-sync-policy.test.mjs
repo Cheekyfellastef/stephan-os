@@ -57,6 +57,7 @@ test('failed relay observation is diagnostic only and cannot be confused with pr
   assert.equal(Object.hasOwn(projected, 'authorityGranted'), false);
   assert.equal(projectPostSyncSovereignRelayObservation({ ...observation, rawPath: 'C:\\private' }, REMOTE_HEAD), null);
   assert.equal(projectPostSyncSovereignRelayObservation({ ...observation, processCount: 33 }, REMOTE_HEAD), null);
+  assert.equal(projectPostSyncSovereignRelayObservation({ ...observation, blocker: 'PRIVATE_ARBITRARY_FAILURE' }, REMOTE_HEAD), null);
   assert.equal(projectPostSyncSovereignRelayObservation({ ...observation, blocker: 'private path C:\\x' }, REMOTE_HEAD), null);
 });
 
