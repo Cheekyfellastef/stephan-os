@@ -180,6 +180,12 @@ const NO_RUNTIME_EXACT = new Set([
   // Manual offline source-package construction; no runtime root imports it.
   'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs',
   'scripts/sovereign-fixed-runtime-install-current-v1.mjs',
+  // Exact installer construction/native sources are consumed only by the
+  // attended Ignition installer. Source adoption must not start/restart a
+  // long-running service; the later exact-head installation/boot gate owns them.
+  'scripts/sovereign-fixed-runtime-installer-candidate-v1.mjs',
+  'scripts/windows/SovereignFixedRuntimeIdentityV1.cs',
+  'scripts/windows/install-sovereign-fixed-runtime-v1.ps1',
   'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',
   'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs',
   'scripts/canonical-mailbox-rollover-github-adapter.mjs',
