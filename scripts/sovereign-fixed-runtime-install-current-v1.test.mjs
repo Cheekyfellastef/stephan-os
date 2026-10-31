@@ -85,7 +85,7 @@ test('current-main preparer remains fixed-path and cannot become arbitrary insta
   assert.match(source, /FIXED_RUNTIME_INSTALL_SOURCE_MATERIALIZATION_CHANGED/);
   assert.match(source, /writeFileFn\(candidate\.payloadPath, payload, \{ flag: 'wx', mode: 0o600 \}\)/);
   assert.match(source, /args\.length === 3/);
-  assert.match(source, /\['status'|'qualification'|'prepare'\]/, 'mode vocabulary should stay visible in source');
+  for (const mode of ["'status'", "'qualification'", "'prepare'"]) assert.ok(source.includes(mode), mode);
   assert.doesNotMatch(source, /cmd\.exe|Invoke-Expression|Restart-Computer|Stop-Computer|shutdown\.exe|git\s+reset|git\s+clean|git\s+push/i);
 });
 
