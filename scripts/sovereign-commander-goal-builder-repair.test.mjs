@@ -768,3 +768,174 @@ test('goal repair resource hold prevents initial work and is rechecked between f
   assert.equal(result.steps.length,allowedReads);
  }
 });
+
+
+const IGNITION_DIAGNOSIS_MARKER = 'SOVEREIGN_COMMANDER_IGNITION_DIAGNOSIS_RESULT=';
+const PERSISTENT_RUNTIME_REPAIR_MARKER = 'SOVEREIGN_PERSISTENT_RUNTIME_REPAIR_RESULT=';
+const IGNITION_HEAD = 'a'.repeat(40);
+
+function ignitionDiagnosis({
+  ok = true,
+  backend = true,
+  ui = true,
+  openclaw = true,
+  workspace = true,
+  autoRepairEligible = false,
+  nextRepairAction = '',
+  blocker = '',
+} = {}) {
+  const value = {
+    schemaVersion: 'stephanos.sovereign-commander-ignition-diagnosis.v1',
+    ok,
+    sourceHead: IGNITION_HEAD,
+    sourceExact: true,
+    readinessVerdict: ok ? 'ready' : 'blocked-needs-supervisor-repair',
+    services: {
+      backend8787: { ready: backend },
+      stephanosUi4173: { ready: ui },
+      openClaw18789: { ready: openclaw, requiredForIgnition: false },
+      sharedWorkspace: { ready: workspace },
+    },
+    supervisor: { observed: false, stale: true, phases: [] },
+    repairRequired: !ok,
+    autoRepairEligible,
+    nextRepairAction,
+    blocker,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    arbitraryShellAllowed: false,
+    mergeAuthority: false,
+    pcRestartAllowed: false,
+    rawLogsReturned: false,
+    rawPathsReturned: false,
+    secretMaterialIncluded: false,
+    finalVerdict: ok
+      ? 'SOVEREIGN_COMMANDER_IGNITION_DIAGNOSIS_GREEN'
+      : autoRepairEligible
+        ? 'SOVEREIGN_COMMANDER_IGNITION_DIAGNOSIS_REPAIR_READY'
+        : 'SOVEREIGN_COMMANDER_IGNITION_DIAGNOSIS_ATTENTION_REQUIRED',
+  };
+  return {
+    ok: ok || autoRepairEligible,
+    status: ok || autoRepairEligible ? 0 : 2,
+    stdout: IGNITION_DIAGNOSIS_MARKER + JSON.stringify(value) + '\n',
+  };
+}
+
+function persistentDispatch(target, head = IGNITION_HEAD) {
+  return {
+    ok: true,
+    status: 0,
+    stdout: PERSISTENT_RUNTIME_REPAIR_MARKER + JSON.stringify({
+      schemaVersion: 'stephanos.sovereign-persistent-runtime-repair-dispatch.v1',
+      ok: true,
+      target,
+      expectedHead: head,
+      dispatchAttempted: true,
+      taskDefinitionChanged: false,
+      sourceMutationAllowed: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAllowed: false,
+      finalVerdict: 'SOVEREIGN_PERSISTENT_RUNTIME_REPAIR_DISPATCHED',
+    }) + '\n',
+  };
+}
+
+test('automatic guardian preflight dispatches only backend persistent repair when Ignition backend is down', () => {
+  const calls = [];
+  const result = runSovereignCommanderGoalBuilderRepair({
+    readIgnitionDiagnosis: () => ignitionDiagnosis({
+      ok: false, backend: false, ui: false,
+      autoRepairEligible: true,
+      nextRepairAction: 'restart-stephanos-runtime',
+      blocker: 'IGNITION_BACKEND_8787_NOT_READY',
+    }),
+    runStep(step) {
+      calls.push(step.id);
+      if (step.id === 'restart-stephanos-runtime') return persistentDispatch('backend');
+      assert.fail('runtime recovery cycle must not enter Goal Conveyor work');
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.repairApplied, true);
+  assert.equal(result.blocker, 'IGNITION_PERSISTENT_REPAIR_DISPATCHED');
+  assert.equal(result.nextAutomaticAction, 'RECHECK_IGNITION_THEN_RESUME_GOAL_BUILDER');
+  assert.deepEqual(calls, ['restart-stephanos-runtime']);
+  assert.equal(result.duplicateSchedulerAllowed, false);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.arbitraryShellAllowed, false);
+});
+
+test('automatic guardian preflight dispatches only frontend persistent repair when UI is down', () => {
+  const calls = [];
+  const result = runSovereignCommanderGoalBuilderRepair({
+    readIgnitionDiagnosis: () => ignitionDiagnosis({
+      ok: false, ui: false,
+      autoRepairEligible: true,
+      nextRepairAction: 'repair-ui-4173',
+      blocker: 'IGNITION_UI_4173_NOT_READY',
+    }),
+    runStep(step) {
+      calls.push(step.id);
+      if (step.id === 'repair-ui-4173') return persistentDispatch('frontend');
+      assert.fail('frontend recovery cycle must not enter Goal Conveyor work');
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.repairApplied, true);
+  assert.equal(result.blocker, 'IGNITION_PERSISTENT_REPAIR_DISPATCHED');
+  assert.deepEqual(calls, ['repair-ui-4173']);
+});
+
+test('unrepairable or unproven Ignition state fails closed before builder mutation', () => {
+  const calls = [];
+  const result = runSovereignCommanderGoalBuilderRepair({
+    readIgnitionDiagnosis: () => ignitionDiagnosis({
+      ok: false, ui: false, openclaw: false,
+      autoRepairEligible: false,
+      blocker: 'IGNITION_UI_4173_NOT_READY',
+    }),
+    runStep(step) { calls.push(step.id); return { ok: true, status: 0 }; },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.repairApplied, false);
+  assert.equal(result.blocker, 'IGNITION_UI_4173_NOT_READY');
+  assert.deepEqual(calls, []);
+});
+
+test('healthy Ignition diagnosis allows the existing Goal Conveyor path unchanged', () => {
+  const calls = [];
+  const result = runSovereignCommanderGoalBuilderRepair({
+    readIgnitionDiagnosis: () => ignitionDiagnosis(),
+    runStep(step) {
+      calls.push(step.id);
+      if (step.id === 'fleet-goal-supervisor') return supervisorStatus();
+      if (step.id === 'controller-lane-status') return laneStatus();
+      assert.fail('already-green builder fabric should need no mutation');
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.repairApplied, false);
+  assert.deepEqual(calls, ['fleet-goal-supervisor', 'controller-lane-status']);
+});
+
+test('failed persistent repair dispatch remains blocked and does not continue into builder work', () => {
+  const calls = [];
+  const result = runSovereignCommanderGoalBuilderRepair({
+    readIgnitionDiagnosis: () => ignitionDiagnosis({
+      ok: false, backend: false, ui: false,
+      autoRepairEligible: true,
+      nextRepairAction: 'restart-stephanos-runtime',
+      blocker: 'IGNITION_BACKEND_8787_NOT_READY',
+    }),
+    runStep(step) {
+      calls.push(step.id);
+      return { ok: false, status: 2, errorCode: 'PERSISTENT_RUNTIME_TASK_ARGUMENTS_CHANGED' };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.repairApplied, false);
+  assert.equal(result.blocker, 'PERSISTENT_RUNTIME_TASK_ARGUMENTS_CHANGED');
+  assert.deepEqual(calls, ['restart-stephanos-runtime']);
+});
