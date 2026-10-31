@@ -80,6 +80,7 @@ test('parking preserves bounded model-failure retries without bypassing custody,
 import { createMissionWorkerHeartbeatRecord } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
 import {
   GOAL_BUILDING_SELF_HOSTING_MISSION_ID,
+  COMPLETED_DISPATCH_CONVEYOR_MISSION_ID,
   LEGACY_COMPLETED_RETIRED_MISSION_ID,
   LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
   RETIRED_COMPLETED_LEGACY_ACCEPTANCE,
@@ -600,8 +601,81 @@ test('persisted #1291 and retired #1507 stay recorded but do not consume constru
   assert.deepEqual(result.projection.nonBlockingMissionAcceptances[1], RETIRED_COMPLETED_LEGACY_ACCEPTANCE);
 });
 
+test('persisted dispatch claims survive completion acceptance until canonical release', async (t) => {
+  for (const state of [
+    { currentPhase: 'AGENT_IMPLEMENTATION', dispatch: { status: 'running' } },
+    { currentPhase: 'BLOCKED', dispatch: { status: 'running' } },
+    { currentPhase: 'BLOCKED', dispatch: { status: 'failed' } },
+    { currentPhase: 'UNKNOWN' },
+  ]) {
+    await t.test(`${state.currentPhase}:${state.dispatch?.status || 'unknown dispatch'}`, async () => {
+      const paths = await roots();
+      const record = { missionId: COMPLETED_DISPATCH_CONVEYOR_MISSION_ID, revision: 22, ...state };
+      const store = inMemoryMissionStore([record]);
+      const result = await ensureCriticalBacklogMission({
+        paths, now, ...store, testOnly: true,
+        createMission: async () => assert.fail('An unreleased dispatch lane must prevent refill'),
+        appendMissionEvent: async () => assert.fail('Completion acceptance cannot release a claim'),
+        readProgrammeProjection: async () => ({ status: 'HOLD', blockers: ['existing-dispatch-lane'] }),
+        dispatchActiveCriticalMission: async () => ({ ok: true, published: false }),
+      });
+      assert.equal(result.createdMission, false);
+      assert.equal(result.projection.decision, 'WAIT_EXTERNAL_ACTIVE_MISSION');
+      assert.deepEqual(result.projection.activeMission, record);
+      assert.deepEqual(store.records, [record]);
+      assert.deepEqual(result.projection.nonBlockingPersistedMissionIds, []);
+    });
+  }
+});
+
+test('dispatch retirement refills capacity only after the existing reducer proves parking', async () => {
+  const paths = await roots();
+  const mission = DEFAULT_CRITICAL_BACKLOG.find(
+    ({ mission }) => mission.missionId === COMPLETED_DISPATCH_CONVEYOR_MISSION_ID,
+  ).mission;
+  let state = createMissionOrchestratorState({
+    ...mission,
+    repositoryRoot: paths.repoRoot,
+    worktreePath: join(paths.worktreeRoot, mission.missionId),
+  });
+  const proof = (receiptId) => ({ receiptId, requirement: 'deterministic test fixture',
+    source: 'deterministic-test', evidenceType: 'command-output', verified: true, exitCode: 0 });
+  for (const event of [
+    { eventType: 'WORKTREE_READY', worktreePath: state.git.worktreePath,
+      clean: true, receipt: proof('completed-dispatch-worktree') },
+    { eventType: 'AGENT_DISPATCHED', agentId: 'foundry-forge' },
+    { eventType: 'AGENT_RESULT_RECEIVED', success: false,
+      resultId: 'completed-dispatch-original-result', error: 'DISPATCH_CLAIM_RELEASE_REQUIRED' },
+  ]) state = applyMissionOrchestratorEvent(state, event);
+  assert.equal(state.currentPhase, 'BLOCKED');
+  assert.equal(state.continuity.parkingStatus, 'ACTIVE');
+  const run = (record) => {
+    const store = inMemoryMissionStore([record]);
+    return ensureCriticalBacklogMission({
+      paths, now, ...store, testOnly: true,
+      appendMissionEvent: async () => assert.fail('Retirement must not manufacture release evidence'),
+      readProgrammeProjection: async () => ({ status: 'HOLD', blockers: ['test-legacy-path'] }),
+      dispatchActiveCriticalMission: async () => ({ ok: true, published: false }),
+    });
+  };
+  const held = await run(state);
+  assert.equal(held.createdMission, false);
+  assert.equal(held.projection.decision, 'WAIT_EXTERNAL_ACTIVE_MISSION');
+
+  const parked = applyMissionOrchestratorEvent(state, {
+    eventType: 'MISSION_PARKED_FOR_REPAIR', reason: 'Completed source acceptance; original attempt released',
+    repairOwner: 'goal-building-agent', repairRef: '#2002', receipt: proof('completed-dispatch-release'),
+  });
+  assert.equal(parked.continuity.parkingStatus, 'PARKED_BLOCKED');
+  const refilled = await run(parked);
+  assert.equal(refilled.createdMission, true);
+  assert.equal(refilled.missionRecord.missionId, 'critical-1418-universal-chat-bootstrap');
+  assert.deepEqual(refilled.projection.parkedBlockedMissionIds, [COMPLETED_DISPATCH_CONVEYOR_MISSION_ID]);
+  assert.equal(state.continuity.parkingStatus, 'ACTIVE');
+});
+
 test('completed legacy backlog creates Goal Building Agent self-hosting mission instead of idling', async () => {
-  assert.equal(SELF_HOSTING_CRITICAL_BACKLOG.length, DEFAULT_CRITICAL_BACKLOG.length - 1);
+  assert.equal(SELF_HOSTING_CRITICAL_BACKLOG.length, DEFAULT_CRITICAL_BACKLOG.length - 2);
   const paths = await roots();
   const completedLegacy = DEFAULT_CRITICAL_BACKLOG.map((entry) => ({
     missionId: entry.mission.missionId,
