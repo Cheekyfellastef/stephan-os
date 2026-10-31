@@ -504,7 +504,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   };
 
   const recoverPreparedCustodyOnStartup = async () => {
-    if (!state.enabled || !state.timeoutCustodyHeld
+    if (!state.timeoutCustodyHeld
         || typeof custodyStore?.recoverPreparedAfterBoot !== 'function'
         || state.running || state.maintenanceInFlight || stopped) return false;
     state.maintenanceInFlight = true;
@@ -966,20 +966,24 @@ export async function runSovereignCommanderHttpServer(options = {}) {
   const token = await loadSovereignCommanderToken(options);
   const readRecoverySource = options.readRecoverySource || readMaintenanceRecoverySourceV1;
   let installedSourceHead = '';
-  let custodyStore;
-  try {
-    installedSourceHead = readRecoverySource();
-    custodyStore = options.custodyStore || createMaintenanceCustodyStoreV1({ signingKey: token });
-  } catch {
-    // Observation remains available when recovery authority cannot be proven.
-    // This object cannot release or replace any existing durable reservation.
-    installedSourceHead = '';
-    const refusal = () => ({ ok: false, custodyReleased: false,
-      blocker: 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN' });
-    custodyStore = Object.freeze({
-      status: () => ({ held: true, blocker: 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN' }),
-      reserve: refusal, release: refusal, recoverAfterBoot: refusal, close: () => {},
-    });
+  try { installedSourceHead = readRecoverySource(); } catch { installedSourceHead = ''; }
+
+  let custodyStore = options.custodyStore;
+  if (!custodyStore) {
+    try {
+      custodyStore = createMaintenanceCustodyStoreV1({ signingKey: token });
+    } catch {
+      // Observation remains available when custody authority itself cannot be
+      // authenticated. Source drift alone must not erase a valid prepared
+      // custody record or prevent successor-boot recovery.
+      const refusal = () => ({ ok: false, custodyReleased: false,
+        blocker: 'MAINTENANCE_CUSTODY_STATE_UNPROVEN' });
+      custodyStore = Object.freeze({
+        status: () => ({ held: true, blocker: 'MAINTENANCE_CUSTODY_STATE_UNPROVEN' }),
+        reserve: refusal, release: refusal, recoverAfterBoot: refusal,
+        recoverPreparedAfterBoot: refusal, close: () => {},
+      });
+    }
   }
   const created = await createSovereignCommanderHttpServer({
     ...options,
