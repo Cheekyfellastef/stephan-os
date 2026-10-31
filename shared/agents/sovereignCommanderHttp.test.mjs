@@ -713,7 +713,7 @@ async function runNativeGuardianFixture(httpUrl) {
             mergeAuthority: false,
             arbitraryShellAllowed: false,
             finalVerdict: 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED',
-          }) + '\\n'
+          }) + '\n'
         : '';
       const value = Object.freeze({ ok: kind === 'success' || kind === 'forged',
         reason: kind === 'success' ? '' : kind === 'excluded' ? 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD'
