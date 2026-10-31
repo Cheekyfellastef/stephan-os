@@ -148,6 +148,89 @@ test('Windows ignition proceeds degraded when only Sovereign Commander is held b
   assert.equal(result.blocker, '');
 });
 
+test('Windows ignition proceeds degraded when only desktop plugin-host activation remains after every runtime target is exact-head green', async () => {
+  const targetIds = [
+    'stephanos-ui-4173',
+    'stephanos-backend-8787',
+    'mission-orchestrator-worker',
+    'github-command-mailbox',
+    'sovereign-commander',
+    'natural-reload',
+  ];
+  const result = await runBattleBridgeIgnitionSyncPreflight(canonicalWindowsOptions({
+    syncAndRefreshFn: async () => ({
+      ok: false,
+      blocker: 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN',
+      sourceHead: HEAD,
+      syncClassification: 'SYNC_NO_CHANGE',
+      refreshes: [{
+        result: {
+          ok: false,
+          classification: 'BLOCKED_REFRESH_FAILED',
+          blocker: 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN',
+          pluginHostActivationRequired: true,
+          safeRefreshesCompleted: true,
+          targetIds,
+          resultTargets: targetIds.map(targetId => ({
+            targetId,
+            ok: true,
+            exactHeadProofOk: true,
+            sourceHead: HEAD,
+            blocker: '',
+          })),
+        },
+      }],
+      finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
+    }),
+  }));
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'IGNITION_SYNC_PREFLIGHT_PASS_PLUGIN_HOST_DEGRADED');
+  assert.equal(result.pluginHostDegraded, true);
+  assert.equal(result.pluginHostBlocker, 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN');
+  assert.equal(result.blocker, '');
+  assert.equal(result.sourceHead, HEAD);
+  assert.equal(result.finalVerdict, 'IGNITION_SYNC_PREFLIGHT_PASS');
+});
+
+test('Windows ignition never degrades plugin-host debt when runtime proof is incomplete or plugin hold is not exact', async () => {
+  const targetIds = ['stephanos-ui-4173', 'sovereign-commander'];
+  const greenRows = targetIds.map(targetId => ({
+    targetId, ok: true, exactHeadProofOk: true, sourceHead: HEAD, blocker: '',
+  }));
+  const cases = [
+    { pluginHostActivationRequired: false },
+    { safeRefreshesCompleted: false },
+    { resultTargets: [{ ...greenRows[0], ok: false, exactHeadProofOk: false, blocker: 'UI_4173_EXACT_HEAD_PROOF_FAILED' }, greenRows[1]] },
+    { resultTargets: greenRows.slice(0, 1) },
+    { resultTargets: [{ ...greenRows[0], sourceHead: 'b'.repeat(40) }, greenRows[1]] },
+  ];
+  for (const change of cases) {
+    const result = await runBattleBridgeIgnitionSyncPreflight(canonicalWindowsOptions({
+      syncAndRefreshFn: async () => ({
+        ok: false,
+        blocker: 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN',
+        sourceHead: HEAD,
+        syncClassification: 'SYNC_NO_CHANGE',
+        refreshes: [{
+          result: {
+            ok: false,
+            classification: 'BLOCKED_REFRESH_FAILED',
+            blocker: 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN',
+            pluginHostActivationRequired: true,
+            safeRefreshesCompleted: true,
+            targetIds,
+            resultTargets: greenRows,
+            ...change,
+          },
+        }],
+        finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
+      }),
+    }));
+    assert.equal(result.ok, false);
+    assert.equal(result.finalVerdict, 'IGNITION_SYNC_PREFLIGHT_BLOCKED');
+  }
+});
+
 test('Windows ignition does not degrade when a target before Commander is missing even if natural reload is trailing', async () => {
   const result = await runBattleBridgeIgnitionSyncPreflight(canonicalWindowsOptions({
     syncAndRefreshFn: async () => ({
