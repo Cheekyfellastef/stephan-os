@@ -55,6 +55,33 @@ function canDegradeAuxiliaryControlPlane(result = {}, projection = {}) {
     && SHA40.test(String(projection?.sourceHead || ''));
 }
 
+const COMMANDER_CUSTODY_HOLD = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN';
+
+function canDegradeHeldCommanderRefresh(result = {}, projection = {}) {
+  if (result?.ok === true
+      || result?.finalVerdict !== 'SYNC_AND_REFRESH_BLOCKED'
+      || result?.blocker !== COMMANDER_CUSTODY_HOLD
+      || projection?.syncClassification !== 'SYNC_NO_CHANGE'
+      || !SHA40.test(String(projection?.sourceHead || ''))) return false;
+  const refresh = Array.isArray(result?.refreshes) ? result.refreshes.at(-1)?.result : null;
+  if (!refresh || refresh.classification !== 'BLOCKED_REFRESH_FAILED'
+      || refresh.blocker !== COMMANDER_CUSTODY_HOLD
+      || !Array.isArray(refresh.targetIds) || !Array.isArray(refresh.resultTargets)
+      || refresh.targetIds.length !== refresh.resultTargets.length
+      || !refresh.targetIds.includes('sovereign-commander')) return false;
+  const byId = new Map(refresh.resultTargets.map(row => [row?.targetId, row]));
+  for (const targetId of refresh.targetIds) {
+    const row = byId.get(targetId);
+    if (!row) return false;
+    if (targetId === 'sovereign-commander') {
+      if (row.ok !== false || row.exactHeadProofOk !== false || row.blocker !== COMMANDER_CUSTODY_HOLD
+          || safeHead(row.sourceHead) !== projection.sourceHead) return false;
+    } else if (row.ok !== true || row.exactHeadProofOk !== true || row.blocker !== ''
+        || safeHead(row.sourceHead) !== projection.sourceHead) return false;
+  }
+  return true;
+}
+
 export async function runBattleBridgeIgnitionSyncPreflight({
   platform = process.platform,
   repoRoot = CURRENT_REPO_ROOT,
@@ -98,6 +125,20 @@ export async function runBattleBridgeIgnitionSyncPreflight({
         ...projection,
         controlPlaneDegraded: true,
         controlPlaneBlocker: safeBlocker(result?.blocker, 'CONTROL_PLANE_REPAIR_BLOCKED'),
+        blocker: '',
+        finalVerdict: 'IGNITION_SYNC_PREFLIGHT_PASS',
+      });
+    }
+
+    if (canDegradeHeldCommanderRefresh(result, projection)) {
+      return Object.freeze({
+        schemaVersion: BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_SCHEMA,
+        ok: true,
+        skipped: false,
+        classification: 'IGNITION_SYNC_PREFLIGHT_PASS_COMMANDER_CUSTODY_DEGRADED',
+        ...projection,
+        commanderDegraded: true,
+        commanderBlocker: COMMANDER_CUSTODY_HOLD,
         blocker: '',
         finalVerdict: 'IGNITION_SYNC_PREFLIGHT_PASS',
       });
