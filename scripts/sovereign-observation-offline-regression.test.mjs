@@ -42,6 +42,7 @@ test('source outage still consumes only a previously prepared custody recovery w
       ? ({ held: true, digest: 'c'.repeat(64), reservationId: 'prepared-offline-cycle' })
       : ({ held: false, digest: 'd'.repeat(64), reservationId: 'prepared-offline-cycle' }),
     reserve: () => { reservations += 1; return { ok: true }; },
+    preparedRecoveryEligible: () => true,
     recoverPreparedAfterBoot: async () => {
       recoverCalls += 1;
       held = false;
