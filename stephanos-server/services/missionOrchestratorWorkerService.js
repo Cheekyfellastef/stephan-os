@@ -267,6 +267,24 @@ async function reconcilePendingCapacity(state, path, proposed, root, options) {
       bytes = last.after.bytes; item = last.after.item; recovered = true;
     } else if (digest(bytes) !== last.record.admittedEnvelopeSha256) throw capacityRefusal('ENVELOPE_CHANGED');
   }
+  // The first published envelope owns this action's advisory memory snapshot.
+  // A later controller observation may select different lessons or a new pack
+  // timestamp, but cannot rewrite the context of an already admitted action.
+  // Retain the complete validated original pack; all authority fields remain
+  // exact, and only the existing journal may admit a new capacity receipt.
+  const originalGrant = item.actionGrant, candidateGrant = proposed.actionGrant;
+  if (missionWorkerActionGrantsMatchV1(originalGrant, originalGrant)
+      && missionWorkerActionGrantsMatchV1(candidateGrant, candidateGrant)) {
+    const retainedGrant = { ...candidateGrant,
+      engineeringMemoryPack: originalGrant.engineeringMemoryPack ?? null,
+      engineeringMemoryPackId: originalGrant.engineeringMemoryPackId ?? null };
+    if (!missionWorkerActionGrantsMatchV1({ ...retainedGrant,
+      capacityReceiptId: originalGrant.capacityReceiptId,
+      capacityProofRefs: originalGrant.capacityProofRefs }, originalGrant)) {
+      throw capacityRefusal('CONTRACT_CHANGED');
+    }
+    proposed = { ...proposed, actionGrant: retainedGrant };
+  }
   const next = { ...proposed, createdAt: item.createdAt,
     ...(Object.hasOwn(item, 'pendingCapacityAdmission') ? { pendingCapacityAdmission: item.pendingCapacityAdmission } : {}) };
   if (samePendingContract(item, next)) return { item, reused: true, refreshed: false, recovered };
@@ -747,7 +765,11 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     }
   }
   const published = admission?.reused !== true && await createImmutableJson(path, queueItem);
+  const admittedGrant = admission?.item?.actionGrant;
   const capacityAdmission = {
+    // Canonical context adoption applies only to the complete capacity-grant
+    // contract. Read-only investigation handoffs retain their existing schema.
+    publishedActionGrant: missionWorkerActionGrantsMatchV1(admittedGrant, admittedGrant) ? admittedGrant : null,
     queueItemRefreshed: admission?.refreshed === true,
     capacityAdmissionRecovered: admission?.recovered === true,
     capacityAdmission: admission?.admission || null,
@@ -789,6 +811,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
       reason: 'action-already-published',
       action,
       path,
+      ...capacityAdmission,
     };
   }
   let fabricPublication = null;
@@ -815,6 +838,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     adapter,
     fabricPublication,
     handoffResponsibility,
+    ...capacityAdmission,
   };
 }
 

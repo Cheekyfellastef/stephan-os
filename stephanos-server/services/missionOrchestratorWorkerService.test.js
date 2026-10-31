@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash, generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
+import * as fs from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
+import { dirname, join, relative, resolve } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { appendMissionEvent, createMissionRecord, readMissionRecord, runWithMissionStatePrecondition } from './missionOrchestratorStore.js';
 import {
   buildMissionWorkerAction,
   missionWorkerActionGrantsMatchV1,
@@ -18,11 +19,21 @@ import {
   readMissionWorkerQueue,
   resolveMissionWorkerQueueRoot,
 } from './missionOrchestratorWorkerService.js';
+import * as workerConsumer from './missionOrchestratorWorkerConsumer.js';
 import { claimNextMissionWorkerItem } from './missionOrchestratorWorkerConsumer.js';
 import { exactElasticExternalGrant } from './criticalBacklogConveyorServiceCore.js';
 import { createExactWorkerActionGrant } from '../../shared/agents/durableFlywheelControllerVNext.mjs';
+import { buildEngineeringIncidentMethodRecordV1 } from '../../shared/agents/engineeringIncidentMethodMemoryV1.mjs';
+import { SHARED_WORKSPACE_RECORD_KINDS, createSharedWorkspaceProofRecord, writeAtomicJson } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { runMissionWorkerTick, selectGrantedMissionWorkerQueueItem } from '../../scripts/mission-orchestrator-worker.mjs';
+import { runSupervisedMissionWorker } from '../../scripts/mission-orchestrator-worker-supervised.mjs';
+import { readMissionWorkerActiveClaim } from '../../scripts/mission-orchestrator-worker-heartbeat-active-claim.mjs';
+import { resolveCanonicalMissionWorkerPaths, writeMissionWorkerHeartbeat } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
+import { projectNarrowedMissionSourceScopeV1 } from '../../shared/agents/missionOrchestrator.mjs';
+import { CODEX_TASK_CLASS } from '../../shared/agents/codexCapacityGovernorV1.mjs';
 import { appendExecutionReceipt, createExecutionReceipt } from '../../shared/agents/executionReceiptV1.mjs';
-import { BUILD_LANE_CAPACITY_RECEIPT_SCHEMA, forgeLifeboatAuthorityReceiptId,
+import { BUILD_LANE_CAPACITY_RECEIPT_SCHEMA, FORGE_LIFEBOAT_WORKER_ID, MISSION_CONTROLLER_ROUTE,
+  projectMissionControllerTaskV1, forgeLifeboatAuthorityReceiptId,
   forgeLifeboatProofRef } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
 
 const intent = {
@@ -768,7 +779,27 @@ test('result custody receives original and own-result states at each locked even
 
 const capacityEnvelopeSha = bytes => createHash('sha256').update(bytes).digest('hex');
 
-async function pendingCapacityFixture(t) {
+function capacityLesson() {
+  return { kind: SHARED_WORKSPACE_RECORD_KINDS.LESSON,
+    engineeringRecord: buildEngineeringIncidentMethodRecordV1({
+      recordKey: 'bounded-source-grant-continuity', recordClass: 'SUCCESSFUL_REPAIR',
+      problemClass: 'bounded-source-repair',
+      componentAndOwnerRefs: ['shared/agents/capacity-contract.mjs'],
+      observedAtUtc: '2026-10-30T13:00:00.000Z',
+      sourceHead: 'a'.repeat(40), sourceBase: 'b'.repeat(40),
+      symptom: 'Equivalent source grants diverged after handoff.',
+      rootCause: 'Different producers reconstructed advisory memory independently.',
+      repairOrMethod: 'Preserve the single admitted memory context across exact-grant handoff.',
+      prerequisites: ['exact-source-grant'], forbiddenShortcuts: ['do-not-drop-admitted-context'],
+      failureModes: ['grant-context-drift'], counterexamples: ['equal-authority-different-memory'],
+      testAndProofRefs: ['test:grant-composition'], runtimeEvidenceRefs: [],
+      confidenceBasis: 'Bounded source regression fixture.', freshness: 'CURRENT',
+      supersedes: null, supersededBy: null, applicableDomains: ['software-engineering'],
+      privacyAndSensitivity: 'PUBLIC_ENGINEERING', status: 'CURRENT',
+    }) };
+}
+
+async function pendingCapacityFixture(t, { firstProducer = 'elastic', engineeringLessonRecords = [] } = {}) {
   const options = { ...await runtime(), env: {}, now: new Date('2026-10-30T14:00:00.000Z') };
   t.after(() => rm(dirname(options.root), { recursive: true, force: true }));
   options.repoRoot = join(dirname(options.root), 'repo');
@@ -784,7 +815,7 @@ async function pendingCapacityFixture(t) {
     receipt: proof('isolated worktree', 'capacity-refresh-worktree-proof') }, options);
   const state = ready.state;
   const sourceHead = 'a'.repeat(40);
-  const grant = (receiptId, producer = 'controller') => {
+  const grant = (receiptId, producer = 'controller', projection = {}) => {
     const candidate = { route: 'FOUNDRY_FORGE', adapter: 'foundry-forge',
       workerId: 'stephanos-forge-lifeboat-local', receiptId,
       proofRefs: [forgeLifeboatProofRef(sourceHead)] };
@@ -799,12 +830,13 @@ async function pendingCapacityFixture(t) {
     const result = producer === 'elastic'
       ? exactElasticExternalGrant(state, candidate, sourceHead, options.now)
       : createExactWorkerActionGrant({ observedAtUtc: options.now.toISOString(),
+        engineeringLessonRecords, ...projection,
         criticalBacklog: { activeMission: state } }, sourceHead,
       { nowUtc: options.now.toISOString(), sourceHead, forgeLaneReceipt: receipt }, () => [candidate]);
     assert.ok(missionWorkerActionGrantsMatchV1(result, result), 'actual factory must emit a complete canonical grant');
     return result;
   };
-  const firstGrant = grant('capacity-original', 'elastic');
+  const firstGrant = grant('capacity-original', firstProducer);
   const first = await publishMissionWorkerAction(state, { ...options, actionGrant: firstGrant });
   assert.equal(first.published, true, JSON.stringify(first));
   // The archive must preserve historical bytes, including formatting, exactly.
@@ -823,6 +855,252 @@ async function pendingCapacityFixture(t) {
   const historyPath = join(options.queueRoot, 'foundry-forge', 'capacity-admissions', firstGrant.actionId);
   return { options, state, grant, firstGrant, first, originalItem, originalBytes, publish, claim, historyPath };
 }
+
+test('real producer handoff retains the admitted context when later controller memory differs', async t => {
+  const f = await pendingCapacityFixture(t);
+  const later = f.grant('capacity-original', 'controller', { engineeringLessonRecords: [capacityLesson()] });
+  assert.equal(f.firstGrant.engineeringMemoryPack, null);
+  assert.ok(later.engineeringMemoryPack);
+  assert.equal(missionWorkerActionGrantsMatchV1(f.firstGrant, later), false);
+  const admitted = await f.publish(later);
+  assert.equal(admitted.published, true, JSON.stringify(admitted));
+  assert.equal(admitted.queueItemRefreshed, false);
+  assert.deepEqual(admitted.publishedActionGrant, f.firstGrant);
+  assert.deepEqual(await readFile(f.first.path), f.originalBytes);
+  assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, f.state.revision);
+  await assert.rejects(f.claim(later), /NATIVE_SOURCE_PENDING_GRANT_CONTRACT_CHANGED/);
+  const claimed = await f.claim(admitted.publishedActionGrant);
+  assert.equal(claimed.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  assert.deepEqual(claimed.item.actionGrant, f.firstGrant);
+});
+
+test('a later observation cannot replace or drop the original nonnull engineering memory pack', async t => {
+  const f = await pendingCapacityFixture(t, {
+    firstProducer: 'controller', engineeringLessonRecords: [capacityLesson()],
+  });
+  const later = f.grant('capacity-original', 'controller', { observedAtUtc: '2026-10-30T14:01:00.000Z' });
+  assert.ok(f.firstGrant.engineeringMemoryPack);
+  assert.notEqual(later.engineeringMemoryPackId, f.firstGrant.engineeringMemoryPackId);
+  const admitted = await f.publish(later);
+  assert.equal(admitted.published, true, JSON.stringify(admitted));
+  assert.deepEqual(admitted.publishedActionGrant, f.firstGrant);
+  const noLessons = f.grant('capacity-original', 'elastic');
+  assert.equal(noLessons.engineeringMemoryPack, null);
+  const retained = await f.publish(noLessons);
+  assert.equal(retained.published, true, JSON.stringify(retained));
+  assert.deepEqual(retained.publishedActionGrant, f.firstGrant);
+  assert.deepEqual(await readFile(f.first.path), f.originalBytes);
+  await assert.rejects(f.claim(later), /NATIVE_SOURCE_PENDING_GRANT_CONTRACT_CHANGED/);
+  await assert.rejects(f.claim(noLessons), /NATIVE_SOURCE_PENDING_GRANT_CONTRACT_CHANGED/);
+  assert.deepEqual((await f.claim(retained.publishedActionGrant)).item.actionGrant.engineeringMemoryPack,
+    f.firstGrant.engineeringMemoryPack);
+});
+
+test('capacity renewal journals only the receipt change while retaining original nonnull memory', async t => {
+  const f = await pendingCapacityFixture(t, {
+    firstProducer: 'controller', engineeringLessonRecords: [capacityLesson()],
+  });
+  const fresh = f.grant('capacity-renewed', 'controller', { observedAtUtc: '2026-10-30T14:01:00.000Z' });
+  assert.notEqual(fresh.engineeringMemoryPackId, f.firstGrant.engineeringMemoryPackId);
+  const admitted = await f.publish(fresh);
+  assert.equal(admitted.published, true, JSON.stringify(admitted));
+  assert.equal(admitted.queueItemRefreshed, true);
+  const expected = { ...fresh, engineeringMemoryPack: f.firstGrant.engineeringMemoryPack,
+    engineeringMemoryPackId: f.firstGrant.engineeringMemoryPackId };
+  assert.deepEqual(admitted.publishedActionGrant, expected);
+  const currentBytes = await readFile(f.first.path);
+  const journal = JSON.parse(await readFile(join(f.historyPath, '00000001.json')));
+  assert.equal(journal.previousEnvelopeSha256, capacityEnvelopeSha(f.originalBytes));
+  assert.equal(journal.admittedEnvelopeSha256, capacityEnvelopeSha(currentBytes));
+  assert.deepEqual(await readFile(join(f.historyPath, 'envelopes', `${capacityEnvelopeSha(f.originalBytes)}.json`)), f.originalBytes);
+  assert.deepEqual((await f.publish(f.firstGrant)).blockers, ['MISSION_WORKER_PENDING_CAPACITY_RECEIPT_REPLAY']);
+  await assert.rejects(f.claim(fresh), /MISSION_WORKER_PENDING_CAPACITY_GRANT_MISMATCH/);
+  assert.deepEqual((await f.claim(expected)).item.actionGrant, expected);
+});
+
+test('the real worker tick carries the published grant to native preflight without losing admitted memory', async t => {
+  for (const firstProducer of ['elastic', 'controller']) await t.test(firstProducer, async t => {
+    const f = await pendingCapacityFixture(t, { firstProducer, engineeringLessonRecords: [capacityLesson()] });
+    const fresh = f.grant('capacity-renewed', 'controller', { observedAtUtc: '2026-10-30T14:01:00.000Z' });
+    assert.notEqual(fresh.engineeringMemoryPackId, f.firstGrant.engineeringMemoryPackId);
+    const result = await runMissionWorkerTick({ ...f.options, actionGrant: fresh,
+      runCommand: () => { throw new Error('Fixture must never launch any command.'); } });
+    assert.equal(result.publish.published, true, JSON.stringify(result));
+    assert.deepEqual(result.actionGrant, { ...fresh,
+      engineeringMemoryPack: f.firstGrant.engineeringMemoryPack,
+      engineeringMemoryPackId: f.firstGrant.engineeringMemoryPackId });
+    assert.equal(result.processed.processed, false);
+    // env:{} deliberately holds before qualification, claim, model or native execution.
+    assert.equal(result.processed.reason, 'native-capacity-gaming-workspace-unproved');
+    assert.deepEqual(JSON.parse(await readFile(f.first.path)).actionGrant, result.actionGrant);
+    assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, f.state.revision);
+  });
+});
+
+test('real producer, supervisor, worker, claim and heartbeat retain the original grant before native transport', async t => {
+  for (const firstProducer of ['elastic', 'controller']) await t.test(firstProducer, async t => {
+    const f = await pendingCapacityFixture(t, { firstProducer, engineeringLessonRecords: [capacityLesson()] });
+    const controllerGrant = f.grant('capacity-renewed', 'controller', { observedAtUtc: '2026-10-30T14:01:00.000Z' });
+    const originalControllerJson = JSON.stringify(controllerGrant);
+    const expected = { ...controllerGrant, engineeringMemoryPack: f.firstGrant.engineeringMemoryPack,
+      engineeringMemoryPackId: f.firstGrant.engineeringMemoryPackId };
+    assert.equal(missionWorkerActionGrantsMatchV1(controllerGrant, expected), false);
+    const paths = { repositoryRoot: f.options.repoRoot, workspaceRoot: f.options.sharedWorkspaceRoot,
+      heartbeatPath: join(f.options.sharedWorkspaceRoot, 'status', 'mission-orchestrator-worker-heartbeat.json') };
+    const launchId = 'b'.repeat(64), launchPath = join(paths.workspaceRoot, 'status',
+      `mission-orchestrator-worker-launch-identity-${launchId}.json`);
+    await mkdir(dirname(launchPath), { recursive: true });
+    await writeFile(launchPath, JSON.stringify({
+      schemaVersion: 'stephanos.mission-worker-launch-identity.v1', launchIdentityId: launchId,
+      launchKind: 'ordinary', restartInvocationId: '', taskName: 'Stephanos Mission Orchestrator Worker',
+      repositoryRoot: paths.repositoryRoot, branch: 'main', headSha: controllerGrant.sourceRevision,
+      workerPid: process.pid, workerStartedAtUtc: '2026-10-30T13:58:00.000Z',
+      canonicalNode: 'C:\\Program Files\\nodejs\\node.exe',
+      canonicalWorkerScript: join(paths.repositoryRoot, 'scripts', 'mission-orchestrator-worker-supervised.mjs'),
+      createdAtUtc: '2026-10-30T13:59:00.000Z',
+    }));
+    const env = { STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT: paths.repositoryRoot,
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: controllerGrant.sourceRevision,
+      STEPHANOS_MISSION_WORKER_BRANCH: 'main' };
+    const readActive = input => readMissionWorkerActiveClaim({ ...input, queueRoot: f.options.queueRoot });
+    let nativeEntries = 0, tickResult, register;
+    const dependencies = {
+      Buffer, JSON, process, AbortController, setInterval, clearInterval, createHash, randomUUID,
+      resolve, relative, join, homedir,
+      text: (value, fallback = '') => value === null || value === undefined ? fallback : String(value).trim() || fallback,
+      missionWorkerActionGrantsMatchV1, ...workerConsumer, readMissionRecord, runWithMissionStatePrecondition,
+      lstatSync: fs.lstatSync, openSync: fs.openSync, fstatSync: fs.fstatSync,
+      readSync: fs.readSync, closeSync: fs.closeSync, readFileSync: fs.readFileSync,
+      FORGE_LIFEBOAT_WORKER_ID, MISSION_CONTROLLER_ROUTE, CODEX_TASK_CLASS,
+      projectMissionControllerTaskV1, projectNarrowedMissionSourceScopeV1,
+      createSharedWorkspaceProofRecord, writeAtomicJson,
+      selectGrantedMissionWorkerQueueItem, resolveCanonicalMissionWorkerPaths,
+      publishNextMissionWorkerAction, readMissionWorkerQueue,
+      inspectStephanosNativeCapacityGamingAdmissionV1: () => ({ ok: true }),
+      inspectFixedRuntimeQualificationV1: () => ({ ok: true, sourceHead: controllerGrant.sourceRevision,
+        profiles: ['SOURCE_TASK_V1'], custodyRecordSha256: 'c'.repeat(64), nativeRecordId: 26 }),
+      executeFixedSourceTaskRuntimeV1: async () => {
+        nativeEntries++;
+        const processingPath = join(f.options.queueRoot, 'foundry-forge', 'processing', `${expected.actionId}.json`);
+        const processingBytes = await readFile(processingPath);
+        assert.deepEqual(JSON.parse(processingBytes).actionGrant, expected);
+        const heartbeat = JSON.parse(await readFile(paths.heartbeatPath));
+        assert.equal(heartbeat.activeTaskId, expected.actionId);
+        assert.equal(heartbeat.activeReceiptId, `claim:${capacityEnvelopeSha(processingBytes)}`);
+        assert.equal(heartbeat.executionPhase, 'processing:foundry-forge');
+        assert.equal(heartbeat.lastTickVerdict, 'MISSION_WORKER_TICK_RUNNING');
+        assert.equal(await register(expected), false, 'registration cannot be repeated after custody');
+        return { ok: false, taskExecuted: false, reason: 'FIXTURE_NATIVE_TRANSPORT_HELD' };
+      },
+      consumeFixedRuntimeCompletionV1: () => null,
+      consumeFixedRuntimePrelaunchExclusionV1: () => false,
+    };
+    // Execute the actual worker/native-parent bodies with only native admission
+    // and transport isolated. All grant publication, stores, claims, receipts,
+    // supervisor callbacks, active-claim inspection and heartbeat writes are real.
+    const source = await readFile(new URL('../../scripts/mission-orchestrator-worker.mjs', import.meta.url), 'utf8');
+    const start = source.indexOf('function fixedSourceGrantClass(');
+    const end = source.indexOf('\nasync function main()', start);
+    assert.ok(start >= 0 && end > start);
+    const executable = source.slice(start, end).replace('export async function runMissionWorkerTick(', 'async function runMissionWorkerTick(');
+    const actualTick = new Function(...Object.keys(dependencies), `"use strict";\n${executable}\nreturn runMissionWorkerTick;`)(...Object.values(dependencies));
+    const exitCode = await runSupervisedMissionWorker({ argv: ['--once'], env,
+      stdout: { write() {} }, stderr: { write() {} },
+      bootstrapMailbox: async () => ({ ok: true }), listMissionState: async () => [],
+      inspectRepositoryIdentity: async () => ({ valid: true, canonical: true, branch: 'main',
+        headSha: controllerGrant.sourceRevision, sourceClean: true, worktreeClean: true }),
+      runControllerCycle: async () => ({ status: 'ACTIVE', allowWorkerTick: true,
+        authoritativeProjection: { status: 'ACTIVE' }, workerActionGrant: controllerGrant }),
+      loadCapacityRoutingInput: async () => null,
+      runTick: async options => {
+        register = options.acceptPublishedActionGrant;
+        assert.equal(register({ ...expected, sourceRevision: 'd'.repeat(40) }), false);
+        assert.equal(register({ ...expected, providerRouteIntent: 'OPENCLAW_ONLY' }), false);
+        assert.equal(register({ ...expected, engineeringMemoryPack: { packId: 'forged' }, engineeringMemoryPackId: 'forged' }), false);
+        tickResult = await actualTick({ ...f.options, ...options,
+          acceptPublishedActionGrant: grant => {
+            const accepted = register(grant);
+            assert.equal(accepted, true);
+            assert.equal(register(grant), false, 'registration is single use even before claim');
+            return accepted;
+          }, runCommand: () => { throw new Error('Fixture must never launch a command.'); } });
+        return tickResult;
+      },
+      readActiveClaim: readActive,
+      writeHeartbeat: input => writeMissionWorkerHeartbeat({ ...input, paths, expectedPaths: paths,
+        repositoryRoot: paths.repositoryRoot, branch: 'main', headSha: controllerGrant.sourceRevision,
+        launchIdentityId: launchId, launchReceiptPath: launchPath, activeClaimReader: readActive }),
+      setIntervalFn: () => 1, clearIntervalFn() {}, activeClaimProbeIntervalMs: 1,
+      now: () => f.options.now.toISOString(),
+    });
+    assert.equal(exitCode, 1, 'an isolated held transport is not material source success');
+    assert.equal(nativeEntries, 1, JSON.stringify(tickResult));
+    assert.equal(tickResult.processed.reason, 'NATIVE_SOURCE_CUSTODY_UNPROVEN');
+    assert.deepEqual(tickResult.actionGrant, expected);
+    assert.equal(JSON.stringify(controllerGrant), originalControllerJson);
+    assert.equal(register(expected), false, 'a settled invocation cannot register another grant');
+    assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, f.state.revision + 1);
+  });
+});
+
+test('real non-capacity investigation grants keep their existing publication and worker path', async t => {
+  const options = { ...await runtime(), env: {}, sourceRevision: 'a'.repeat(40) };
+  t.after(() => rm(dirname(options.root), { recursive: true, force: true }));
+  options.repoRoot = join(dirname(options.root), 'repo');
+  await mkdir(options.repoRoot, { recursive: true });
+  await mkdir(options.sharedWorkspaceRoot, { recursive: true });
+  const created = await createMissionRecord({ missionId: 'critical-1557-readonly-grant-review',
+    operatorIntent: 'Read-only fixture inspection', intendedOutcome: 'Report a bounded observation',
+    missionKind: 'live-runtime-investigation', repository: 'Cheekyfellastef/stephan-os',
+    repositoryRoot: options.repoRoot, branch: 'openclaw/readonly-grant-review', worktreePath: options.repoRoot,
+    allowedFiles: [], requiredEvidence: ['focused evidence'], requiredTests: [], browserProofRequired: false,
+  }, options);
+  const actionGrant = createExactWorkerActionGrant({ observedAtUtc: new Date().toISOString(),
+    criticalBacklog: { activeMission: created.state } }, options.sourceRevision);
+  assert.equal(actionGrant.adapter, 'openclaw-readonly');
+  assert.equal(actionGrant.capacityRoute, '');
+  assert.equal(missionWorkerActionGrantsMatchV1(actionGrant, actionGrant), false);
+  const result = await runMissionWorkerTick({ ...options, actionGrant,
+    runCommand: () => ({ status: 1, stdout: '', stderr: 'Isolated fixture refusal; no command executed.' }) });
+  assert.equal(result.publish.published, true);
+  assert.equal(result.publish.publishedActionGrant, null);
+  assert.equal(result.processed.processed, true, JSON.stringify(result));
+  assert.notEqual(result.processed.reason, 'published-action-grant-unproven');
+});
+
+test('supervisor refuses first canonical registration after custody observation or controller mutation', async t => {
+  for (const mode of ['custody-observed', 'controller-mutated']) await t.test(mode, async t => {
+    const f = await pendingCapacityFixture(t);
+    const actionGrant = structuredClone(f.firstGrant);
+    let custodyObserved;
+    const custody = new Promise(resolve => { custodyObserved = resolve; });
+    if (mode === 'custody-observed') await f.claim(f.firstGrant);
+    await runSupervisedMissionWorker({ argv: ['--once'],
+      env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: actionGrant.sourceRevision },
+      stdout: { write() {} }, stderr: { write() {} }, bootstrapMailbox: async () => ({ ok: true }),
+      listMissionState: async () => [],
+      inspectRepositoryIdentity: async () => ({ valid: true, canonical: true, branch: 'main',
+        headSha: actionGrant.sourceRevision, sourceClean: true, worktreeClean: true }),
+      runControllerCycle: async () => ({ allowWorkerTick: true, workerActionGrant: actionGrant }),
+      loadCapacityRoutingInput: async () => null,
+      runTick: async options => {
+        if (mode === 'custody-observed') await custody;
+        else actionGrant.providerRouteIntent = 'OPENCLAW_ONLY';
+        assert.equal(options.acceptPublishedActionGrant(f.firstGrant), false);
+        return { processed: { processed: false, reason: 'fixture-held' } };
+      },
+      readActiveClaim: input => readMissionWorkerActiveClaim({ ...input, queueRoot: f.options.queueRoot }),
+      writeHeartbeat: async input => {
+        const active = await readMissionWorkerActiveClaim({ actionGrant: input.activeActionGrant, queueRoot: f.options.queueRoot });
+        if (active) custodyObserved();
+        return { ok: true, record: { ...active, lastTickVerdict: 'MISSION_WORKER_TICK_RUNNING' } };
+      },
+      setIntervalFn: () => 1, clearIntervalFn() {}, activeClaimProbeIntervalMs: 1,
+    });
+    const record = await readMissionRecord(f.state.missionId, f.options);
+    assert.equal(record.state.revision, f.state.revision + (mode === 'custody-observed' ? 1 : 0));
+  });
+});
 
 test('real producer grants refresh pending capacity without changing mission, lease or immutable history', async t => {
   const f = await pendingCapacityFixture(t);
