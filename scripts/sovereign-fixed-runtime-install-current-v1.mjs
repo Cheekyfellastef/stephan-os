@@ -12,7 +12,10 @@ import {
   FIXED_RUNTIME_SOURCE_PATHS_V1,
   buildFixedRuntimeInstallerCandidateV1,
 } from './sovereign-fixed-runtime-installer-candidate-v1.mjs';
-import { inspectFixedRuntimeInstallationPresenceV1 } from './sovereign-fixed-runtime-parent-v1.mjs';
+import {
+  inspectFixedRuntimeInstallationPresenceV1,
+  inspectFixedRuntimeQualificationV1,
+} from './sovereign-fixed-runtime-parent-v1.mjs';
 import { createBattleBridgeMinimalChildEnvironment } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 export const SOVEREIGN_FIXED_RUNTIME_INSTALL_CURRENT_SCHEMA_V1 =
@@ -115,6 +118,32 @@ export function observeCurrentFixedRuntimeInstallationV1(expectedMain, {
   }
   return frozen({ ok: false, state: 'BLOCKED',
     reason: code(observed?.reason), installed: false, sourceHead: expectedMain });
+}
+
+export function observeCurrentFixedRuntimeQualificationV1(expectedMain, {
+  platform = process.platform,
+  inspectQualification = inspectFixedRuntimeQualificationV1,
+} = {}) {
+  if (platform !== 'win32') return frozen({ ok: false, state: 'BLOCKED',
+    reason: 'FIXED_RUNTIME_WINDOWS_REQUIRED', qualified: false });
+  if (!SHA40.test(expectedMain || '')) return frozen({ ok: false, state: 'BLOCKED',
+    reason: 'FIXED_RUNTIME_SOURCE_HEAD_UNPROVEN', qualified: false });
+  const observed = inspectQualification();
+  if (observed?.ok === true && observed.dispatchAllowed === true
+      && observed.sourceHead === expectedMain) {
+    return frozen({ ok: true, state: 'QUALIFIED', reason: '', qualified: true,
+      sourceHead: expectedMain });
+  }
+  if (observed?.reason === 'RUNTIME_PENDING_LATER_BOOT_UNPROVEN') {
+    return frozen({ ok: true, state: 'RESTART_REQUIRED',
+      reason: observed.reason, qualified: false, sourceHead: expectedMain });
+  }
+  if (observed?.reason === 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING') {
+    return frozen({ ok: true, state: 'MISSING',
+      reason: observed.reason, qualified: false, sourceHead: expectedMain });
+  }
+  return frozen({ ok: false, state: 'BLOCKED',
+    reason: code(observed?.reason), qualified: false, sourceHead: expectedMain });
 }
 
 export function prepareCurrentFixedRuntimeInstallerV1({
@@ -252,6 +281,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (args.length === 3 && args[1] === '--expected-main' && SHA40.test(args[2])) {
     if (args[0] === 'status') {
       result = observeCurrentFixedRuntimeInstallationV1(args[2]);
+    } else if (args[0] === 'qualification') {
+      result = observeCurrentFixedRuntimeQualificationV1(args[2]);
     } else if (args[0] === 'prepare') {
       result = prepareCurrentFixedRuntimeInstallerV1({ expectedMain: args[2] });
     }
