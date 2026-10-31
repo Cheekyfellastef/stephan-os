@@ -285,7 +285,8 @@ test('watchdog recycles a fresh but stale-head Sovereign relay after main advanc
   assert.match(watchdog, /SOVEREIGN_RELAY_SOURCE_HEAD_MISSING/);
   assert.match(watchdog, /SOVEREIGN_RELAY_SOURCE_HEAD_STALE/);
   assert.match(watchdog, /\$status\.daemonHealthy\s+-eq\s+\$true[\s\S]*\$age\s+-le\s+30[\s\S]*\$sourceHeadMatchesLive/);
-  assert.match(watchdog, /if \(\$relayBefore\.Count -ne 1 -or -not \[bool\]\$relayHealthBefore\.healthy\)/);
+  assert.match(watchdog, /if \(\$relayBefore\.Count -gt 1\)[\s\S]*Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/);
+  assert.match(watchdog, /if \(\$relayBefore\.Count -eq 0 -or -not \[bool\]\$relayHealthBefore\.healthy\)/);
   assert.match(watchdog, /function Wait-SovereignRelayDaemonReady/);
   assert.match(watchdog, /\$lastProcesses\.Count -eq 1 -and \[bool\]\$lastHealth\.healthy/);
   assert.match(watchdog, /\[int\]\$Attempts = 40/);
