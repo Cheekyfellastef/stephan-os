@@ -102,6 +102,7 @@ const NATURAL_EXACT = new Set([
   'scripts/battle-bridge-outbound-health-beacon.mjs',
   'scripts/sovereign-commander-stephanos-repair.mjs',
   'scripts/chatgpt-shared-workspace-github-relay.mjs',
+  'scripts/chatgpt-shared-workspace-github-relay-core.mjs',
   'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
   'scripts/windows/probe-battle-bridge-recovery-mesh.ps1',
   'scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1',
@@ -148,6 +149,7 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
 ]);
 
 const NO_RUNTIME_EXACT = new Set([
+  'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',
   'scripts/canonical-mailbox-rollover-github-adapter.mjs',
   'scripts/canonical-mailbox-workflow-admission-v1.mjs',
   'scripts/canonical-mailbox-workflow-event-gate.mjs',
@@ -170,7 +172,11 @@ const NO_RUNTIME_EXACT = new Set([
   'shared/agents/codexBankedResetTelemetryMirror.mjs',
   'scripts/operator-protected-personal-repository-merge.mjs',
   'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+  // The existing guarded ignition invocation loads these sources afresh.
+  // Classifying source adoption does not request another ignition or start AI.
   'scripts/ignite-stephanos-local.mjs',
+  'scripts/ignition-cockpit-model.mjs',
+  'scripts/run-battle-bridge-ignition.mjs',
   'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
 ]);
 
@@ -193,6 +199,8 @@ const UI_BUILD_AND_PROOF_TOOLCHAIN_PATHS = new Set([
   'scripts/battle-bridge-ui-4173-repair.mjs',
   'scripts/sovereign-commander-ui-4173-repair.mjs',
   'scripts/battle-bridge-ignition-supervisor.mjs',
+  'scripts/launcher-readiness-live-facts.mjs',
+  'scripts/launcher-readiness-planner.mjs',
 ]);
 
 function normalizePath(value) {

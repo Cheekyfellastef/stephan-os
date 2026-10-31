@@ -1,4 +1,5 @@
 import { runMissionWorkerTick } from '../../scripts/mission-orchestrator-worker.mjs';
+import { missionWorkerTickMadeProgress } from '../../scripts/mission-orchestrator-worker-supervised.mjs';
 import { appendExecutionReceipt, createExecutionReceipt, readExecutionReceiptHistory } from '../../shared/agents/executionReceiptV1.mjs';
 import { writeFileSync, unlinkSync } from 'node:fs';
 import test from 'node:test';
@@ -68,6 +69,7 @@ test('actual Forge publication consumer records canonical custody before publish
   } });
   assert.equal(calls, 1, result.error?.stack);
   assert.equal(result.result.finalVerdict, 'MISSION_WORKER_ITEM_COMPLETE', result.error?.stack);
+  assert.equal(missionWorkerTickMadeProgress({ processed: result }), true);
   const h = await f.history();
   assert.deepEqual(h.receipts.map(r => r.state), ['queued', 'accepted', 'started', 'progress', 'completed']);
   const state = (await readMissionRecord(f.state.missionId, f.options)).state;
@@ -79,6 +81,7 @@ test('actual Forge publication consumer records canonical custody before publish
   const replay = await processNextForgePublicationItem({ ...f.options,
     executeForgePublication: async () => assert.fail('terminal publication replay executed') });
   assert.match(replay.result.error, /EXECUTION_RECEIPT_CLAIM_STATE_INVALID:completed/);
+  assert.equal(missionWorkerTickMadeProgress({ processed: replay }), false);
   assert.equal((await f.history()).receipts.length, 5);
 });
 
@@ -255,6 +258,7 @@ test('verification consumer binds canonical elastic goal evidence to proven sour
   const result = await processNextVerificationItem(options);
   assert.equal(result.processed, true);
   assert.equal(result.result.finalVerdict, 'VERIFICATION_EVIDENCE_GROUNDED');
+  assert.equal(missionWorkerTickMadeProgress({ processed: result }), true);
   assert.equal(result.applied.state.currentPhase, 'GITHUB_COMMIT');
 
   const current = (await readMissionRecord(missionId, options)).state;
@@ -318,6 +322,7 @@ test('verification consumer refuses browser evidence from source-test receipts',
   const result = await processNextVerificationItem(options);
   assert.equal(result.processed, true);
   assert.equal(result.result.finalVerdict, 'VERIFICATION_EVIDENCE_NOT_GROUNDED');
+  assert.equal(missionWorkerTickMadeProgress({ processed: result }), false);
   assert.equal((await readMissionRecord(missionId, options)).state.currentPhase, 'VERIFYING');
 });
 
@@ -394,6 +399,25 @@ test('agent handoff stays pending until atomic processing claim proves pickup', 
   assert.equal(running.dispatch.adapter, 'codex');
 });
 
+test('pending contract refusal preserves the original queue and mission before pickup',async()=>{
+  const options=await runtime();options.capacityRouting=freshCodexCapacityRouting();
+  await createMissionRecord(intent('preclaim-contract-test'),options);
+  const ready=await appendMissionEvent('preclaim-contract-test',{
+    eventId:'preclaim-worktree',eventType:'WORKTREE_READY',worktreePath:'C:\\worktree',
+    clean:true,receipt:proof('isolated worktree','preclaim-worktree-proof')},options);
+  const published=await publishMissionWorkerAction(ready.state,options);
+  assert.equal(published.published,true);
+  const pending=join(options.queueRoot,'codex','pending');
+  const names=await readdir(pending),before=await readFile(join(pending,names[0]));
+  await assert.rejects(claimNextMissionWorkerItem('codex',{...options,
+    assertPendingClaimContract:()=>{throw new Error('PENDING_CONTRACT_REFUSED');}}),/PENDING_CONTRACT_REFUSED/);
+  assert.deepEqual(await readFile(join(pending,names[0])),before);
+  assert.deepEqual(await readdir(join(options.queueRoot,'codex','processing')),[]);
+  const after=(await readMissionRecord('preclaim-contract-test',options)).state;
+  assert.equal(after.revision,ready.state.revision);
+  assert.equal(after.dispatch.status,'pending');
+});
+
 test('exact action grant cannot consume another mission queue item', async () => {
   const options = await runtime();
   const first = await createMissionRecord(intent('claim-first'), options);
@@ -422,6 +446,7 @@ test('signed worktree result advances to implementation', async () => {
   await publishMissionWorkerAction(created.state, options);
   const processed = await processNextSignedOpenClawItem({ ...options, executeSignedOperation: async () => ({ success: true, commandOutputHash: 'a'.repeat(64), completedAt: new Date().toISOString() }), inspectSignedOperation: async () => ({ worktreePath: 'C:\\worktree', clean: true }) });
   assert.equal(processed.applied.state.currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(missionWorkerTickMadeProgress({ processed }), true);
 });
 
 test('source-changing Mission Worker result fails closed before terminal completion without external escrow', async () => {
@@ -447,6 +472,7 @@ test('source-changing Mission Worker result fails closed before terminal complet
   });
   assert.equal(processed.result.finalVerdict, 'MISSION_WORKER_ITEM_FAILED');
   assert.equal(processed.result.error, 'SOURCE_ARTIFACT_ESCROW_REQUIRED');
+  assert.equal(missionWorkerTickMadeProgress({ processed }), false);
 });
 
 test('source-changing Mission Worker rejects an escrow that is not bound to exact execution identity', async () => {
@@ -469,6 +495,7 @@ test('source-changing Mission Worker rejects an escrow that is not bound to exac
   });
   assert.equal(processed.result.finalVerdict, 'MISSION_WORKER_ITEM_FAILED');
   assert.equal(processed.result.error, 'SOURCE_ARTIFACT_ESCROW_IDENTITY_REQUIRED');
+  assert.equal(missionWorkerTickMadeProgress({ processed }), false);
 });
 
 test('Codex and OpenClaw adapters collect bounded results with one active writer', async () => {
@@ -494,6 +521,7 @@ test('Codex and OpenClaw adapters collect bounded results with one active writer
     }),
   });
   assert.equal(codex.applied.state.currentPhase, 'GITHUB_COMMIT');
+  assert.equal(missionWorkerTickMadeProgress({ processed: codex }), true);
 
   const openClawOptions = await runtime();
   const created = await createMissionRecord(intent('readonly-test', 'live-runtime-investigation'), openClawOptions);
@@ -501,6 +529,7 @@ test('Codex and OpenClaw adapters collect bounded results with one active writer
   const openclaw = await processNextOpenClawReadonlyItem({ ...openClawOptions, executeOpenClawReadonlyAction: async () => ({ success: true, changedFiles: [], receipt: proof('openclaw result', 'result'), evidenceReceipts: [proof('focused evidence', 'evidence')] }) });
   assert.equal(openclaw.applied.state.activeWriter, 'none');
   assert.deepEqual(openclaw.result.changedFiles, []);
+  assert.equal(missionWorkerTickMadeProgress({ processed: openclaw }), true);
 });
 
 

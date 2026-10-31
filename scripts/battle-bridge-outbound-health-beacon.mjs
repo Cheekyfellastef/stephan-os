@@ -20,6 +20,11 @@ import { projectBoundedMissionWorkerRestartBlocker } from './battle-bridge-worke
 import { projectPublicGoalGateObservatoryV1 } from '../shared/runtime/goalBuildGatePublicProjectionV1.mjs';
 import { projectGoalBuildGateObservatoryV1 } from '../shared/runtime/goalBuildGateObservatoryV1.mjs';
 import { projectControlTowerBuildBeaconFactsV1 } from '../shared/agents/controlTowerBuildBeaconFactsV1.mjs';
+import {
+  COMMANDER_HEALTH_PROJECTION_SCHEMA,
+  projectLocalCommanderHealth,
+  readSovereignCommanderStatus,
+} from '../stephanos-server/services/sovereignCommanderStatusTool.js';
 import * as core from './battle-bridge-outbound-health-beacon-core.mjs';
 
 export * from './battle-bridge-outbound-health-beacon-core.mjs';
@@ -42,6 +47,14 @@ const SOVEREIGN_REPAIR_SPEC = Object.freeze({
 const MAX_REPAIR_HISTORY_BYTES = 64 * 1024;
 const MAX_REPAIR_HISTORY_RECORDS = 32;
 const REPAIR_CONTINUITY_WINDOW_MS = 30 * 60_000;
+const COMMANDER_OBSERVATION_FAILURES = new Set([
+  'COMMANDER_HEALTH_UNVERIFIED',
+  'COMMANDER_HEALTH_IDENTITY_MISMATCH',
+  'COMMANDER_HEALTH_TIMESTAMP_NOT_CURRENT',
+  'COMMANDER_HEALTH_HTTP_NOT_READY',
+  'COMMANDER_HEALTH_RESPONSE_TOO_LARGE',
+  'COMMANDER_HEALTH_UNREACHABLE',
+]);
 const CONTROLLER_LANE_STATUS_SPEC = Object.freeze({
   path: 'status/controller-lane-status-current.json',
   staleAfterMs: 180_000,
@@ -757,6 +770,9 @@ export function buildBattleBridgeOutboundBeacon(args = {}) {
   );
   return Object.freeze({
     ...augmented,
+    sovereignCommander: projectSovereignCommanderBeaconFacts(
+      args.sovereignCommanderObservation, Date.parse(base.observedAtUtc),
+    ),
     sovereignRepairContinuity: projectSovereignRepairContinuity({
       currentRecord: args.statusRecords?.sovereignRepair,
       history: args.sovereignRepairHistory,
@@ -771,6 +787,44 @@ export function buildBattleBridgeOutboundBeacon(args = {}) {
       { sourceHead: base.sourceHead, nowMs: Date.parse(base.observedAtUtc) },
     ),
   });
+}
+
+/** Revalidate the existing reader's projection before either public or local publication. */
+export function projectSovereignCommanderBeaconFacts(observation = null, nowMs = Date.now()) {
+  const unknown = projectLocalCommanderHealth(null, nowMs);
+  const unavailable = blocker => Object.freeze({ ...unknown, blocker });
+  if (!observation || typeof observation !== 'object' || Array.isArray(observation)) {
+    return unavailable('COMMANDER_HEALTH_NOT_OBSERVED');
+  }
+  if (observation.schemaVersion !== COMMANDER_HEALTH_PROJECTION_SCHEMA
+    || observation.localLoopbackOnly !== true || observation.readOnly !== true
+    || ['commanderMcpAccessGranted', 'executionProven', 'coreAwakeProven',
+      'physicalWorkerPickupProven', 'sourceMutationAllowed', 'arbitraryShellAllowed',
+      'mergeAuthority'].some(key => observation[key] !== false)) {
+    return unavailable('COMMANDER_HEALTH_UNVERIFIED');
+  }
+  if (observation.available !== true) {
+    return unavailable(COMMANDER_OBSERVATION_FAILURES.has(observation.blocker)
+      ? observation.blocker : 'COMMANDER_HEALTH_UNVERIFIED');
+  }
+  if (typeof observation.healthy !== 'boolean') return unavailable('COMMANDER_HEALTH_UNVERIFIED');
+  const guardian = observation.guardian && typeof observation.guardian === 'object'
+    && !Array.isArray(observation.guardian) ? observation.guardian : null;
+  // Only the canonical projector's fixed public fields survive. Recompute age
+  // and operational state at publication; never accept a caller's green state,
+  // unknown fields, raw endpoint data or the last-maintenance head as loaded code.
+  return projectLocalCommanderHealth({
+    service: 'stephanos-sovereign-commander',
+    transport: 'authenticated-http-jsonrpc',
+    ok: observation.healthy,
+    observedAtUtc: observation.observedAtUtc,
+    capabilityVersion: observation.capabilityVersion,
+    continuousRepairGuardian: guardian ? {
+      ...guardian,
+      persistentCustody: { held: guardian.custodyHeld },
+      nextDelayMs: guardian.configuredRetryDelayMs,
+    } : null,
+  }, nowMs);
 }
 
 function digestRecord(record) {
@@ -956,6 +1010,9 @@ export function runBattleBridgeOutboundHealthBeacon(options = {}) {
   const coreGateStatus = readJsonBounded(join(workspaceRoot, 'status', 'stephanos-core-daemon-current.json'));
   const record = Object.freeze({
     ...augmentRecordWithWorkerWatchdog(coreResult.record, workerWatchdogRecord, [], sovereignRepairRecord, controllerLaneStatusRecord),
+    sovereignCommander: projectSovereignCommanderBeaconFacts(
+      options.sovereignCommanderObservation, Date.parse(coreResult.record.observedAtUtc),
+    ),
     sovereignRepairContinuity: projectSovereignRepairContinuity({
       currentRecord: sovereignRepairRecord,
       history: readSovereignRepairCycleTail(workspaceRoot, repoRoot),
@@ -979,9 +1036,18 @@ export function runBattleBridgeOutboundHealthBeacon(options = {}) {
   return Object.freeze({ ...coreResult, publication, record, workspaceMirror });
 }
 
+/** The scheduled CLI observes once; existing synchronous callers keep their contract. */
+export async function runObservedBattleBridgeOutboundHealthBeacon(options = {}, {
+  readCommanderStatus = readSovereignCommanderStatus,
+  runBeacon = runBattleBridgeOutboundHealthBeacon,
+} = {}) {
+  const sovereignCommanderObservation = await readCommanderStatus();
+  return runBeacon({ ...options, sovereignCommanderObservation });
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    const result = runBattleBridgeOutboundHealthBeacon();
+    const result = await runObservedBattleBridgeOutboundHealthBeacon();
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } catch (error) {
     process.stderr.write(`${text(error?.message || error, 200)}\n`);
