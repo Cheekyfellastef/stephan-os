@@ -261,8 +261,49 @@ export const buildSharedWorkspaceReceipt = (evaluation, heads, proofRefs) => bou
 // only interpret their records; they perform no IO and grant no native action.
 export const POST_SYNC_REFRESH_DEBT_SCHEMA = 'stephanos.post-sync-refresh-debt.v1';
 export const POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA = 'stephanos.post-sync-sovereign-relay-proof.v1';
+export const POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA = 'stephanos.post-sync-sovereign-relay-observation.v1';
 const SOVEREIGN_RELAY_PROOF_KEYS = Object.freeze(['schemaVersion', 'watchdogSucceeded', 'healthy',
   'sourceHead', 'sourceHeadMatchesLive', 'processCount', 'heartbeatAgeSeconds', 'blocker']);
+const SOVEREIGN_RELAY_OBSERVATION_KEYS = Object.freeze(['schemaVersion', 'watchdogSucceeded', 'healthy',
+  'sourceHead', 'sourceHeadMatchesLive', 'processCount', 'heartbeatAgeSeconds', 'blocker']);
+
+export function projectPostSyncSovereignRelayObservation(value, expectedHead = '') {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return null;
+    const keys = Reflect.ownKeys(value), descriptors = Object.getOwnPropertyDescriptors(value);
+    if (keys.length !== SOVEREIGN_RELAY_OBSERVATION_KEYS.length
+      || keys.some(key => !SOVEREIGN_RELAY_OBSERVATION_KEYS.includes(key)
+        || !Object.hasOwn(descriptors[key], 'value'))) return null;
+    const sourceHead = typeof value.sourceHead === 'string' ? value.sourceHead : '';
+    const blocker = typeof value.blocker === 'string' && /^[A-Z][A-Z0-9_]{0,159}$/.test(value.blocker)
+      ? value.blocker : '';
+    const heartbeatAgeSeconds = value.heartbeatAgeSeconds === null
+      ? null : Number.isSafeInteger(value.heartbeatAgeSeconds) && value.heartbeatAgeSeconds >= 0
+        && value.heartbeatAgeSeconds <= 86400 ? value.heartbeatAgeSeconds : undefined;
+    if (value.schemaVersion !== POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA
+      || typeof value.watchdogSucceeded !== 'boolean' || typeof value.healthy !== 'boolean'
+      || (sourceHead !== '' && !/^[a-f0-9]{40}$/.test(sourceHead))
+      || typeof value.sourceHeadMatchesLive !== 'boolean'
+      || !Number.isSafeInteger(value.processCount) || value.processCount < 0 || value.processCount > 32
+      || heartbeatAgeSeconds === undefined
+      || (value.blocker !== '' && !blocker)
+      || (expectedHead && !/^[a-f0-9]{40}$/.test(expectedHead))) return null;
+    return Object.freeze({
+      schemaVersion: POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
+      watchdogSucceeded: value.watchdogSucceeded,
+      healthy: value.healthy,
+      sourceHead,
+      sourceHeadMatchesLive: value.sourceHeadMatchesLive,
+      processCount: value.processCount,
+      heartbeatAgeSeconds,
+      blocker,
+      ...(expectedHead ? { sourceHeadMatchesExpected: sourceHead !== '' && sourceHead === expectedHead } : {}),
+      diagnosticOnly: true,
+      authorityGranted: false,
+    });
+  } catch { return null; }
+}
 
 // Shared by fresh refresh execution and every retained-debt consumer. Keep this
 // pure proof contract in the existing runtime closure; importing the coordinator
