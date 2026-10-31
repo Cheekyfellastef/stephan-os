@@ -169,6 +169,87 @@ const inspectedStatus = () => ({ schemaVersion: 'stephanos.sovereign-control-sys
     reason: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING' },
 });
 
+const legacyRequest = (id = 99) => ({
+  ...fixture().request,
+  requestId: `control-tower-build-${id}-1`,
+  runId: id,
+  createdAtUtc: '2026-10-28T11:40:00.000Z',
+  expiresAtUtc: '2026-10-28T11:50:00.000Z',
+  artifactId: id + 200,
+  artifactSha256: 'c'.repeat(64),
+  proofRef: `https://github.com/Cheekyfellastef/stephan-os/actions/runs/${id}`,
+});
+const currentRequest = (id = 100) => ({
+  ...fixture().request,
+  requestId: `control-tower-build-${id}-1`,
+  runId: id,
+  createdAtUtc: '2026-10-28T12:19:00.000Z',
+  expiresAtUtc: '2026-10-28T12:29:00.000Z',
+  artifactId: id + 200,
+  artifactSha256: 'c'.repeat(64),
+  proofRef: `https://github.com/Cheekyfellastef/stephan-os/actions/runs/${id}`,
+});
+const quiescentLegacyStatus = (custodyState = 'NOT_HELD_REPORTED') => ({
+  schemaVersion: 'stephanos.sovereign-control-system-inspection.v1',
+  observedAtUtc: '2026-10-28T12:20:00.000Z',
+  observationOnly: true,
+  observationCompleted: true,
+  blocker: '',
+  source: { available: true, stable: true, sourceHead: HEAD, expectedMain: HEAD, reason: '' },
+  owner: { available: true, stable: true, observedAtUtc: '2026-10-28T12:20:00.000Z', reason: '' },
+  guardian: { available: true, enabled: true, running: false, scheduled: false, maintenanceInFlight: false,
+    custodyState, blocker: custodyState === 'HELD' ? 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN' : '',
+    observedAtUtc: '2026-10-28T12:20:00.000Z' },
+  nativeRuntime: { available: true, qualificationObserved: false, observedAtUtc: '2026-10-28T12:20:00.000Z',
+    reason: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING' },
+  requestLedger: { requested: true, recordObserved: true, phase: 'RESERVED',
+    relayWorkspaceIdentityProven: false, reason: '' },
+});
+
+test('Control Tower self-heals a proven abandoned legacy reservation as BLOCKED then runs the fresh build in the same poll', async t => {
+  const legacy = legacyRequest(99), fresh = currentRequest(100);
+  const s = setup(t, {
+    isAuthenticated: () => true,
+    readHistoricalRequest: async ({ runId }) => ({ ok: runId === 99, blocker: '', request: legacy }),
+    readRequest: async args => {
+      assert.equal(args.observationOnly, false);
+      return { ok: true, blocker: '', request: fresh };
+    },
+    inspect: async args => {
+      assert.deepEqual(args, { expectedMain: HEAD, controlTowerRequestId: legacy.requestId });
+      return quiescentLegacyStatus();
+    },
+  });
+  const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+  ledger.reserve({ ...legacy, issueNumber: 2315 });
+  const result = await s.consume({ now: () => new Date('2026-10-28T12:20:00.000Z') });
+  assert.equal(result.state, 'WAKE_COMPLETED');
+  assert.equal(ledger.read(legacy.requestId).phase, 'TERMINAL');
+  assert.equal(ledger.read(legacy.requestId).terminalState, 'BLOCKED');
+  assert.equal(ledger.read(fresh.requestId).phase, 'TERMINAL');
+  assert.equal(ledger.read(fresh.requestId).terminalState, 'DONE');
+  assert.equal(s.calls.length, 1);
+});
+
+test('Control Tower never retires a legacy reservation while Commander custody remains held', async t => {
+  const legacy = legacyRequest(99);
+  const s = setup(t, {
+    readHistoricalRequest: async () => ({ ok: true, blocker: '', request: legacy }),
+    readRequest: async args => {
+      assert.equal(args.observationOnly, true);
+      return { ok: false, blocker: 'NO_CONTROL_TOWER_BUILD_REQUEST', request: null };
+    },
+    inspect: async () => quiescentLegacyStatus('HELD'),
+  });
+  const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+  ledger.reserve({ ...legacy, issueNumber: 2315 });
+  const result = await s.consume({ now: () => new Date('2026-10-28T12:20:00.000Z') });
+  assert.equal(result.state, 'HELD');
+  assert.equal(result.blocker, 'CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED');
+  assert.equal(ledger.read(legacy.requestId).phase, 'RESERVED');
+  assert.equal(s.calls.length, 0);
+});
+
 test('ambiguous build then observe then restart and empty poll retains original custody and blocks a new build', async t => {
   let invocations = 0; const inspected = [], readerModes = [];
   const s = setup(t, { execute: async () => { invocations++; return { ok: false, blocker: 'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE' }; },
