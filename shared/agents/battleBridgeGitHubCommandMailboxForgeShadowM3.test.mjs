@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -46,7 +47,7 @@ function base(operation, patch = {}) {
       : 'forge-m3-runtime-request-001',
     operation,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -79,7 +80,7 @@ function executeCommand(patch = {}) {
 function mailboxComment(payload, { id = 1, createdAt = PLAN_AT } = {}) {
   return {
     id,
-    html_url: `https://github.com/Cheekyfellastef/stephan-os/issues/3149#issuecomment-${id}`,
+    html_url: `https://github.com/Cheekyfellastef/stephan-os/issues/${activeMailboxIssueForTest}#issuecomment-${id}`,
     created_at: createdAt,
     user: { login: 'Cheekyfellastef' },
     body: `\`\`\`${BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(payload)}\n\`\`\``,
@@ -117,7 +118,7 @@ function m2Receipt() {
     requestId: 'forge-m2-runtime-ready-001',
     operation: 'INSTALL_FORGE_SHADOW_M2',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     expectedHead: HEAD,
     forgejoVersion: '15.0.6',

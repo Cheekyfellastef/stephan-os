@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -27,7 +28,7 @@ function command(overrides = {}) {
     requestId: 'octopus-final-link-codex-readback-v1',
     operation: GUARDED_CODEX_TASK_READBACK_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -40,7 +41,7 @@ function command(overrides = {}) {
 function comment(value = command()) {
   return {
     id: 88771,
-    html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/3149#issuecomment-88771',
+    html_url: `https://github.com/Cheekyfellastef/stephan-os/issues/${activeMailboxIssueForTest}#issuecomment-88771`,
     created_at: NOW.toISOString(),
     user: { login: 'Cheekyfellastef' },
     body: `\`\`\`${core.BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(value)}\n\`\`\``,
@@ -125,7 +126,7 @@ test('sanitized GitHub receipt preserves bounded Codex task visibility', () => {
     requestId: 'octopus-final-link-codex-readback-v1',
     operation: GUARDED_CODEX_TASK_READBACK_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     state: 'DONE',
     expectedHead: HEAD,

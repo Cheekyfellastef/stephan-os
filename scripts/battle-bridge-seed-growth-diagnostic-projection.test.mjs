@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -74,7 +75,7 @@ function receipt(value, overrides = {}) {
     schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
     requestId: 'meter-continuity-seed-growth-diagnostic-20261025t103000000z',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
-    repository: 'Cheekyfellastef/stephan-os', issueNumber: 3149, branch: 'main',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: activeMailboxIssueForTest, branch: 'main',
     acceptedAt: '2026-10-25T10:30:01.000Z', heartbeatAt: '2026-10-25T10:30:02.000Z',
     completedAt: '2026-10-25T10:30:03.000Z',
     expectedHead: HEAD, processSourceHead: HEAD, state: result.ok ? 'DONE' : 'BLOCKED',
