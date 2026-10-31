@@ -1123,9 +1123,8 @@ function Invoke-SovereignFixedRuntimeInstallation {
   $statusText = (& $nodeExecutable $handoffScript 'status' '--expected-main' $expectedMain 2>$null | Out-String).Trim()
   if ($LASTEXITCODE -ne 0 -or -not $statusText) { return $false }
   try { $runtimeStatus = $statusText | ConvertFrom-Json -ErrorAction Stop } catch { return $false }
-  if ($runtimeStatus.schemaVersion -cne 'stephanos.fixed-runtime-install-handoff.v1'
-      -or $runtimeStatus.ok -ne $true
-      -or $runtimeStatus.expectedMain -cne $expectedMain) { return $false }
+  $runtimeStatusValid = ($runtimeStatus.schemaVersion -ceq 'stephanos.fixed-runtime-install-handoff.v1') -and ($runtimeStatus.ok -eq $true) -and ($runtimeStatus.expectedMain -ceq $expectedMain)
+  if (-not $runtimeStatusValid) { return $false }
   if ($runtimeStatus.state -ceq 'QUALIFIED') { return $false }
 
   Add-Type -AssemblyName System.Windows.Forms
@@ -1156,8 +1155,8 @@ function Invoke-SovereignFixedRuntimeInstallation {
     ) | Out-Null
     return $true
   }
-  if ($runtimeStatus.state -cne 'MISSING'
-      -or $runtimeStatus.blocker -cne 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING') { return $false }
+  $runtimeMissing = ($runtimeStatus.state -ceq 'MISSING') -and ($runtimeStatus.blocker -ceq 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING')
+  if (-not $runtimeMissing) { return $false }
 
   $summary = @"
 The protected Sovereign fixed runtime required by Control Tower and the Goal Conveyor is not installed for the current exact source.
@@ -1194,14 +1193,8 @@ This action:
   try { $installed = $installText | ConvertFrom-Json -ErrorAction Stop } catch {
     throw 'Sovereign fixed runtime installer receipt was invalid.'
   }
-  if ($installExitCode -ne 0
-      -or $installed.schemaVersion -cne 'stephanos.fixed-runtime-approved-install.v1'
-      -or $installed.ok -ne $true
-      -or $installed.expectedMain -cne $expectedMain
-      -or $installed.pcRestartPerformed -ne $false
-      -or $installed.arbitraryShellAllowed -ne $false
-      -or $installed.mergeAuthority -ne $false
-      -or $installed.state -notin @('PENDING_REBOOT', 'QUALIFIED')) {
+  $installReceiptValid = ($installExitCode -eq 0) -and ($installed.schemaVersion -ceq 'stephanos.fixed-runtime-approved-install.v1') -and ($installed.ok -eq $true) -and ($installed.expectedMain -ceq $expectedMain) -and ($installed.pcRestartPerformed -eq $false) -and ($installed.arbitraryShellAllowed -eq $false) -and ($installed.mergeAuthority -eq $false) -and ($installed.state -in @('PENDING_REBOOT', 'QUALIFIED'))
+  if (-not $installReceiptValid) {
     $blocker = if (([string]$installed.blocker) -match '^[A-Z0-9_]{1,120}
     throw "Sovereign fixed runtime installation blocked: $blocker"
   }
