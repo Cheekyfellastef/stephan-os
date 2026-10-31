@@ -75,11 +75,12 @@ function currentSourceHead({ repoRoot = REPO_ROOT, platform = process.platform, 
 function encodedTaskDispatch(plan, repoRoot) {
   const launcher = resolve(repoRoot, 'scripts', 'windows', 'run-stephanos-scheduled-task-windowless.vbs');
   const expectedArguments = `//B //NoLogo "${launcher}" ${plan.taskId}`;
+  const psLiteral = value => "'" + String(value).replaceAll("'", "''") + "'";
   const ps = [
     "$ErrorActionPreference='Stop'",
-    "$taskName=" + JSON.stringify(plan.taskName),
-    "$expectedExecute='C:\\Windows\\System32\\wscript.exe'",
-    "$expectedArguments=" + JSON.stringify(expectedArguments),
+    "$taskName=" + psLiteral(plan.taskName),
+    "$expectedExecute=" + psLiteral('C:\\Windows\\System32\\wscript.exe'),
+    "$expectedArguments=" + psLiteral(expectedArguments),
     "$task=Get-ScheduledTask -TaskName $taskName -TaskPath '\\' -ErrorAction Stop",
     "if(@($task.Actions).Count -ne 1){throw 'PERSISTENT_RUNTIME_TASK_ACTION_COUNT_INVALID'}",
     "$action=@($task.Actions)[0]",
