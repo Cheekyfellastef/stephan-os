@@ -103,12 +103,13 @@ export function dispatchPersistentRuntimeRepair({
   platform = process.platform,
   environment = process.env,
   spawnSyncFn = spawnSync,
+  sourceHeadFn = currentSourceHead,
 } = {}) {
   const plan = PLANS[target];
   if (!plan) return blocked('PERSISTENT_RUNTIME_REPAIR_TARGET_NOT_ALLOWED', text(target));
   const expected = text(expectedHead).toLowerCase();
   if (!SHA40.test(expected)) return blocked('PERSISTENT_RUNTIME_REPAIR_EXPECTED_HEAD_REQUIRED', target);
-  const beforeHead = currentSourceHead({ repoRoot, platform, environment, spawnSyncFn });
+  const beforeHead = sourceHeadFn({ repoRoot, platform, environment, spawnSyncFn });
   if (beforeHead !== expected) return blocked('PERSISTENT_RUNTIME_REPAIR_SOURCE_CHANGED', target, { expectedHead: expected });
 
   const result = spawnSyncFn(POWERSHELL, [
@@ -122,7 +123,7 @@ export function dispatchPersistentRuntimeRepair({
     timeout: 15_000,
     maxBuffer: 32 * 1024,
   });
-  const afterHead = currentSourceHead({ repoRoot, platform, environment, spawnSyncFn });
+  const afterHead = sourceHeadFn({ repoRoot, platform, environment, spawnSyncFn });
   if (afterHead !== expected) return blocked('PERSISTENT_RUNTIME_REPAIR_SOURCE_CHANGED', target, {
     expectedHead: expected, dispatchAttempted: result?.status === 0,
   });
