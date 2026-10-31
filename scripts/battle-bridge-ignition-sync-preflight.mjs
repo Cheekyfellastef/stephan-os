@@ -56,6 +56,7 @@ function canDegradeAuxiliaryControlPlane(result = {}, projection = {}) {
 }
 
 const COMMANDER_CUSTODY_HOLD = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN';
+const PLUGIN_HOST_ACTIVATION_HOLD = 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN';
 
 function canDegradeHeldCommanderRefresh(result = {}, projection = {}) {
   if (result?.ok === true
@@ -89,6 +90,37 @@ function canDegradeHeldCommanderRefresh(result = {}, projection = {}) {
       if (row.ok !== false || row.exactHeadProofOk !== false || row.blocker !== COMMANDER_CUSTODY_HOLD
           || safeHead(row.sourceHead) !== projection.sourceHead) return false;
     } else if (row.ok !== true || row.exactHeadProofOk !== true || row.blocker !== ''
+        || safeHead(row.sourceHead) !== projection.sourceHead) return false;
+  }
+  return true;
+}
+
+
+function canDegradeUnattachedPluginHost(result = {}, projection = {}) {
+  if (result?.ok === true
+      || result?.finalVerdict !== 'SYNC_AND_REFRESH_BLOCKED'
+      || result?.blocker !== PLUGIN_HOST_ACTIVATION_HOLD
+      || projection?.syncClassification !== 'SYNC_NO_CHANGE'
+      || !SHA40.test(String(projection?.sourceHead || ''))) return false;
+
+  const refresh = Array.isArray(result?.refreshes) ? result.refreshes.at(-1)?.result : null;
+  if (!refresh
+      || refresh.classification !== 'BLOCKED_REFRESH_FAILED'
+      || refresh.blocker !== PLUGIN_HOST_ACTIVATION_HOLD
+      || refresh.pluginHostActivationRequired !== true
+      || refresh.safeRefreshesCompleted !== true
+      || !Array.isArray(refresh.targetIds)
+      || !Array.isArray(refresh.resultTargets)
+      || refresh.targetIds.length < 1
+      || refresh.targetIds.length !== refresh.resultTargets.length) return false;
+
+  for (let index = 0; index < refresh.targetIds.length; index += 1) {
+    const targetId = refresh.targetIds[index];
+    const row = refresh.resultTargets[index];
+    if (!row || row.targetId !== targetId
+        || row.ok !== true
+        || row.exactHeadProofOk !== true
+        || row.blocker !== ''
         || safeHead(row.sourceHead) !== projection.sourceHead) return false;
   }
   return true;
@@ -151,6 +183,20 @@ export async function runBattleBridgeIgnitionSyncPreflight({
         ...projection,
         commanderDegraded: true,
         commanderBlocker: COMMANDER_CUSTODY_HOLD,
+        blocker: '',
+        finalVerdict: 'IGNITION_SYNC_PREFLIGHT_PASS',
+      });
+    }
+
+    if (canDegradeUnattachedPluginHost(result, projection)) {
+      return Object.freeze({
+        schemaVersion: BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_SCHEMA,
+        ok: true,
+        skipped: false,
+        classification: 'IGNITION_SYNC_PREFLIGHT_PASS_PLUGIN_HOST_DEGRADED',
+        ...projection,
+        pluginHostDegraded: true,
+        pluginHostBlocker: PLUGIN_HOST_ACTIVATION_HOLD,
         blocker: '',
         finalVerdict: 'IGNITION_SYNC_PREFLIGHT_PASS',
       });
