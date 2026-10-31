@@ -52,6 +52,16 @@ test('guarded Ignition sync preflight is loaded fresh and requires no runtime re
   assert.equal(plan.automaticExecutionAllowed, true);
 });
 
+test('maintenance custody store changes refresh Sovereign Commander instead of fail-closing as unclassified', () => {
+  const source = 'scripts/sovereign-maintenance-custody-store-v1.mjs';
+  const plan = classifyPostSyncRefresh([source, source.replace('.mjs', '.test.mjs')]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+  assert.equal(plan.sovereignRelayRefreshRequired, false);
+});
+
 test('only the inspected offline installer package preparer is exempt from runtime refresh', async () => {
   const source = 'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs';
   const paths = [source, source.replace('.mjs', '.test.mjs'),
