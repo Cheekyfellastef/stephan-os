@@ -359,4 +359,5 @@ test('Ignition offers exact retained-custody preparation without restart or rele
   assert.ok(fn);
   assert.doesNotMatch(fn, /Restart-Computer|shutdown\.exe|Stop-Computer|Start-Process\s+[^\n]*powershell/i);
   assert.doesNotMatch(fn, /Invoke-Expression|cmd\.exe|git\s+reset|git\s+clean|git\s+push/i);
+  assert.doesNotMatch(fn, /^\s+-(?:or|and)\b/m, 'Windows PowerShell 5.1 must not depend on a binary operator at the start of a continuation line');
 });
