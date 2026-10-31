@@ -914,6 +914,18 @@ test('VR Atlas changes refresh UI then require exact-head browser proof', async 
 });
 
 
+test('retained maintenance owner observer changes restart only Sovereign Commander', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/sovereign-maintenance-owner-observation-v2.mjs',
+    'scripts/sovereign-maintenance-owner-observation-v2.test.mjs',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+  assert.equal(plan.noRuntimePathCount, 1);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
 test('Sovereign visibility snapshot changes restart the Sovereign runtime', () => {
   const plan = classifyPostSyncRefresh(['scripts/sovereign-commander-visibility-snapshot.mjs']);
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
