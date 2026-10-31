@@ -51,6 +51,7 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
   'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
   'scripts/battle-bridge-observation.mjs',
   'scripts/sovereign-commander-http.mjs',
+  'scripts/sovereign-fixed-runtime-parent-v1.mjs',
   'scripts/sovereign-commander-ignition-autoheal.mjs',
   'scripts/sovereign-commander-mcp.mjs',
   'scripts/sovereign-controller-lane-status.mjs',
@@ -150,6 +151,7 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
 
 const NO_RUNTIME_EXACT = new Set([
   'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',
+  'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs',
   'scripts/canonical-mailbox-rollover-github-adapter.mjs',
   'scripts/canonical-mailbox-workflow-admission-v1.mjs',
   'scripts/canonical-mailbox-workflow-event-gate.mjs',

@@ -4,7 +4,10 @@ import test from 'node:test';
 import {
   buildBattleBridgeOutboundBeacon,
   projectPostSyncRefreshBeaconFacts,
+  buildBattleBridgeOutboundBeaconMaterialBody,
 } from './battle-bridge-outbound-health-beacon-core.mjs';
+import { buildBattleBridgeOutboundBeacon as buildCompleteBeacon, buildBattleBridgeOutboundBeaconBody } from './battle-bridge-outbound-health-beacon.mjs';
+import { projectSyncAndRefreshStatus } from './battle-bridge-github-sync-and-refresh.mjs';
 import {
   POST_SYNC_REFRESH_CLASSIFICATIONS,
   POST_SYNC_REFRESH_TARGETS,
@@ -246,4 +249,91 @@ test('stale outer observation remains stale despite preserved historical target 
   assert.equal(surface.state, 'STALE');
   assert.equal(surface.runtimeRefresh.classification, 'REFRESH_COMPLETE');
   assert.equal(surface.runtimeRefresh.resultTargets[0].ok, true);
+});
+
+function caretakerEvidence(overrides = {}) {
+  return { schemaVersion: 'stephanos.sovereign-caretaker-execution.v1',
+    expectedSourceHead: HEAD, observedAtUtc: NOW.toISOString(), exitStatus: 2,
+    spawnErrorCode: '', terminationSignal: '', failureReceiptRecognized: true,
+    reportedBlocker: 'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN',
+    reportedVerdict: 'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED', diagnosticOnly: true, ...overrides };
+}
+
+test('complete beacon preserves the fixed caretaker denial through actual sync projection and retry-plan surfaces', () => {
+  const evidence = caretakerEvidence({ stdout: 'PRIVATE_RAW_OUTPUT', stderr: 'PRIVATE_ERROR', token: 'PRIVATE_TOKEN' });
+  const syncAndRefreshRecord = projectSyncAndRefreshStatus({
+    sourceHead: HEAD, ok: false, blocker: 'SOVEREIGN_COMMANDER_WATCHDOG_EXECUTION_FAILED',
+    controlPlaneRepair: { repairAttempted: true, repair: { sovereignCaretakerExecution: evidence } },
+  });
+  const plan = buildPostSyncRefreshProjection({
+    classification: 'REFRESH_READY', plan: { targetIds: [TARGET] }, results: [],
+  }, { beforeHead: OTHER_HEAD, afterHead: HEAD });
+  const beacon = buildCompleteBeacon({ sourceHead: HEAD, now: NOW, syncAndRefreshRecord,
+    statusRecords: { postSyncRefresh: { ...plan, timestampUtc: NOW.toISOString(), lastSovereignCaretakerFailure: evidence } } });
+  const sync = beacon.surfaces.find(item => item.id === 'githubSync').sovereignCaretakerExecution;
+  assert.equal(sync.evidenceState, 'OBSERVED');
+  assert.equal(sync.expectedSourceHead, HEAD);
+  assert.equal(sync.observedAtUtc, NOW.toISOString());
+  assert.equal(sync.exitStatus, 2);
+  assert.equal(sync.reportedBlocker, evidence.reportedBlocker);
+  assert.equal(sync.diagnosticOnly, true);
+  const refresh = beacon.surfaces.find(item => item.id === 'postSyncRefresh');
+  assert.equal(refresh.state, 'REFRESH_READY');
+  assert.equal(refresh.runtimeRefresh.lastSovereignCaretakerFailure.evidenceState, 'HISTORICAL');
+  assert.equal(refresh.runtimeRefresh.lastSovereignCaretakerFailure.observedAtUtc, evidence.observedAtUtc);
+  assert.equal(refresh.runtimeRefresh.lastSovereignCaretakerFailure.reportedBlocker, evidence.reportedBlocker);
+  assert.equal(refresh.runtimeRefresh.sovereignCaretakerExecution.evidenceState, 'MISSING');
+  assert.doesNotMatch(buildBattleBridgeOutboundBeaconBody(beacon), /PRIVATE_/);
+  assert.equal(beacon.processRestartAllowed, false);
+});
+
+test('public caretaker observation retains its original source and age instead of borrowing the beacon head', () => {
+  for (const [overrides, state] of [
+    [{ expectedSourceHead: OTHER_HEAD }, 'HEAD_MISMATCH'],
+    [{ observedAtUtc: new Date(NOW.getTime() - 600_000).toISOString() }, 'STALE'],
+    [{ observedAtUtc: new Date(NOW.getTime() + 61_000).toISOString() }, 'FUTURE_DATED'],
+  ]) {
+    const evidence = caretakerEvidence(overrides);
+    const surface = beaconSurface(record({ sovereignCaretakerExecution: evidence, lastSovereignCaretakerFailure: evidence }));
+    const actual = surface.runtimeRefresh.sovereignCaretakerExecution;
+    assert.equal(actual.evidenceState, state);
+    if (state !== 'FUTURE_DATED') {
+      assert.equal(actual.expectedSourceHead, evidence.expectedSourceHead);
+      assert.equal(actual.observedAtUtc, evidence.observedAtUtc);
+      assert.equal(surface.runtimeRefresh.lastSovereignCaretakerFailure.evidenceState, 'HISTORICAL');
+    } else {
+      assert.equal(actual.reportedBlocker, undefined);
+      assert.equal(surface.runtimeRefresh.lastSovereignCaretakerFailure.evidenceState, 'FUTURE_DATED');
+    }
+  }
+});
+
+test('public caretaker evidence rejects spoofed shape and closed-code smuggling', () => {
+  for (const overrides of [
+    { schemaVersion: 'PRIVATE_SCHEMA' }, { expectedSourceHead: [HEAD] },
+    { expectedSourceHead: `${HEAD}/PRIVATE_PATH` }, { observedAtUtc: 'PRIVATE_TIME' },
+  ]) {
+    const projected = beaconSurface(record({ sovereignCaretakerExecution: caretakerEvidence(overrides) })).runtimeRefresh.sovereignCaretakerExecution;
+    assert.equal(projected.evidenceState, 'INVALID');
+    assert.doesNotMatch(JSON.stringify(projected), /PRIVATE_/);
+  }
+  const projected = beaconSurface(record({ sovereignCaretakerExecution: caretakerEvidence({
+    reportedBlocker: 'SOVEREIGN_COMMANDER_PRIVATE_SECRET', spawnErrorCode: 'PRIVATE_ERROR', terminationSignal: 'PRIVATE_SIGNAL',
+  }) })).runtimeRefresh.sovereignCaretakerExecution;
+  assert.equal(projected.failureReceiptRecognized, false);
+  assert.equal(projected.reportedBlocker, '');
+  assert.equal(projected.spawnErrorCode, 'CHILD_PROCESS_ERROR');
+  assert.equal(projected.terminationSignal, 'UNKNOWN');
+  assert.doesNotMatch(JSON.stringify(projected), /PRIVATE_/);
+});
+
+test('caretaker diagnostic age alone is immaterial but changed denial remains publishable', () => {
+  const build = (now, reportedBlocker) => buildCompleteBeacon({ sourceHead: HEAD, now,
+    statusRecords: { postSyncRefresh: record({ lastSovereignCaretakerFailure: caretakerEvidence({ reportedBlocker }) }) } });
+  const material = value => buildBattleBridgeOutboundBeaconMaterialBody(buildBattleBridgeOutboundBeaconBody(value));
+  const blocker = 'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN';
+  const first = build(NOW, blocker);
+  const later = build(new Date(NOW.getTime() + 60_000), blocker);
+  assert.equal(material(first), material(later));
+  assert.notEqual(material(first), material(build(NOW, 'SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED')));
 });

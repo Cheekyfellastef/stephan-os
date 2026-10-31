@@ -10,6 +10,7 @@ import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindows
 import { buildBattleBridgeTelemetryAutorepairProjection } from '../shared/agents/battleBridgeTelemetryAutorepairV1.mjs';
 import { projectMissionWorkerBeaconState } from '../shared/agents/missionWorkerBeaconStateV1.mjs';
 import { POST_SYNC_REFRESH_CLASSIFICATIONS, POST_SYNC_REFRESH_TARGETS } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
+import { projectSovereignCaretakerExecutionEvidence } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import { invalidateBrokeredGithubObservation, publishBrokeredGithubMutation, readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import {
   MAILBOX_RECEIPT_GITHUB_ISSUE,
@@ -278,7 +279,26 @@ function runtimeHeads(record = {}) {
 
 // This is bounded observation of the existing refresh plan and checkpoints.
 // A target's reported result is not proof of an installed/loaded process.
-export function projectPostSyncRefreshBeaconFacts(record, expectedHead = '') {
+function projectCaretakerBeaconFacts(value, expectedHead, nowMs, historical = false) {
+  const evidence = projectSovereignCaretakerExecutionEvidence(value);
+  const absent = evidenceState => Object.freeze({ evidenceState, historical, diagnosticOnly: true });
+  if (!evidence) return absent(value == null ? 'MISSING' : 'INVALID');
+  const observedMs = Date.parse(evidence.observedAtUtc);
+  if (!Number.isFinite(nowMs) || observedMs > nowMs + 60_000) return absent('FUTURE_DATED');
+  const expected = typeof expectedHead === 'string' && /^[a-f0-9]{40}$/.test(expectedHead) ? expectedHead : '';
+  const sourceHeadMatchesExpected = expected ? evidence.expectedSourceHead === expected : null;
+  const ageMs = Math.max(0, nowMs - observedMs);
+  return Object.freeze({
+    ...evidence,
+    historical,
+    sourceHeadMatchesExpected,
+    ageMs,
+    evidenceState: historical ? 'HISTORICAL'
+      : sourceHeadMatchesExpected !== true ? 'HEAD_MISMATCH' : ageMs > 300_000 ? 'STALE' : 'OBSERVED',
+  });
+}
+
+export function projectPostSyncRefreshBeaconFacts(record, expectedHead = '', nowMs = Date.now()) {
   const source = record && typeof record === 'object' && !Array.isArray(record) ? record : null;
   const strictHead = (value) => typeof value === 'string' && /^[a-f0-9]{40}$/i.test(value)
     ? value.toLowerCase() : '';
@@ -341,6 +361,8 @@ export function projectPostSyncRefreshBeaconFacts(record, expectedHead = '') {
     truncated,
     targetIds: Object.freeze(targetIds),
     resultTargets: Object.freeze(resultTargets),
+    sovereignCaretakerExecution: projectCaretakerBeaconFacts(source?.sovereignCaretakerExecution, expected, nowMs),
+    lastSovereignCaretakerFailure: projectCaretakerBeaconFacts(source?.lastSovereignCaretakerFailure, expected, nowMs, true),
   });
 }
 
@@ -358,7 +380,7 @@ export function projectBeaconStatus(record, spec, nowMs = Date.now(), expectedHe
       dirtFacts: Object.freeze({ known: false, blocksSync: false, blockingCount: 0 }),
       housekeeperFacts: Object.freeze({ observed: false, state: 'UNPROVEN', observedAtUtc: '', head: '', blocker: '' }),
       runtimeHeads: Object.freeze({ builtHead: '', servedHead: '', runtimeHead: '' }),
-      ...(spec.id === 'postSyncRefresh' ? { runtimeRefresh: projectPostSyncRefreshBeaconFacts(record, expectedHead) } : {}),
+      ...(spec.id === 'postSyncRefresh' ? { runtimeRefresh: projectPostSyncRefreshBeaconFacts(record, expectedHead, nowMs) } : {}),
     });
   }
   const observedAtUtc = recordObservedAt(record);
@@ -400,7 +422,7 @@ export function projectBeaconStatus(record, spec, nowMs = Date.now(), expectedHe
     dirtFacts: dirtFacts(record),
     housekeeperFacts: housekeeperFacts(record),
     runtimeHeads: runtimeHeads(record),
-    ...(spec.id === 'postSyncRefresh' ? { runtimeRefresh: projectPostSyncRefreshBeaconFacts(record, expectedHead) } : {}),
+    ...(spec.id === 'postSyncRefresh' ? { runtimeRefresh: projectPostSyncRefreshBeaconFacts(record, expectedHead, nowMs) } : {}),
   });
 }
 
@@ -622,6 +644,11 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
   const mailboxPulseFacts = projectMailboxPulseFacts(syncAndRefreshRecord || {});
   const surfaces = STATUS_SPECS.map((spec) => {
     const projected = projectBeaconStatus(statusRecords[spec.id] || null, spec, nowMs, head);
+    if (spec.id === 'githubSync') return Object.freeze({
+      ...projected,
+      sovereignCaretakerExecution: projectCaretakerBeaconFacts(syncAndRefreshRecord?.controlPlaneRepair?.sovereignCaretakerExecution, head, nowMs),
+      lastSovereignCaretakerFailure: projectCaretakerBeaconFacts(syncAndRefreshRecord?.lastSovereignCaretakerFailure, head, nowMs, true),
+    });
     return spec.id === 'mailbox' ? combineMailboxStatus(projected, mailboxIngressObservation, mailboxPulseFacts) : projected;
   });
   const telemetry = buildBattleBridgeTelemetryAutorepairProjection({ sourceHead: head, surfaces, qualifiedRepairPolicies });

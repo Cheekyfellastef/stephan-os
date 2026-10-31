@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   BATTLE_BRIDGE_CONTROL_PLANE_TASKS,
+  projectSovereignCaretakerExecutionEvidence,
   reconcileBattleBridgeControlPlane,
 } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import {
@@ -475,7 +476,16 @@ export async function runBattleBridgePostSyncRefresh({
       return Object.freeze({ ok: false, blocker: 'POST_SYNC_RETAINED_TARGET_COVERAGE_UNPROVEN', exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
     }
     const completedResults = await loadResumeResults(paths.workspaceRoot, normalizedAfter);
-    const planProjection = buildPostSyncRefreshProjection({ ok: false, classification: plan.classification, plan, results: completedResults }, { beforeHead: normalizedBefore, afterHead: normalizedAfter });
+    // A new READY plan is current work, not proof that the preceding caretaker
+    // denial disappeared. Retain only same-head, closed diagnostic fields.
+    const retainedCaretakerFailure = text(records.refreshRecord?.afterHead).toLowerCase() === normalizedAfter
+      && records.refreshRecord?.finalVerdict === 'POST_SYNC_RUNTIME_REFRESH_BLOCKED'
+      ? projectSovereignCaretakerExecutionEvidence(records.refreshRecord?.lastSovereignCaretakerFailure, normalizedAfter)
+      : null;
+    const planProjection = Object.freeze({
+      ...buildPostSyncRefreshProjection({ ok: false, classification: plan.classification, plan, results: completedResults }, { beforeHead: normalizedBefore, afterHead: normalizedAfter }),
+      lastSovereignCaretakerFailure: retainedCaretakerFailure,
+    });
     const planPublication = await publishProjection({ workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot, projection: planProjection, afterHead: normalizedAfter, phase: 'plan', now });
     if (!planPublication.ok) return Object.freeze({ ok: false, blocker: planPublication.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
 
@@ -494,14 +504,16 @@ export async function runBattleBridgePostSyncRefresh({
         confirmNaturalReload: ({ afterHead: head }) => adapter.confirmNaturalReload({ afterHead: head, repoRoot: paths.repoRoot }),
       },
       onTargetComplete: async (results) => {
-        const checkpoint = buildPostSyncRefreshProjection({
+        const checkpoint = Object.freeze({ ...buildPostSyncRefreshProjection({
           ok: false,
           classification: 'REFRESH_READY',
           blocker: '',
           plan,
           results,
           exactHeadProofOk: false,
-        }, { beforeHead: normalizedBefore, afterHead: normalizedAfter });
+        }, { beforeHead: normalizedBefore, afterHead: normalizedAfter }),
+        lastSovereignCaretakerFailure: retainedCaretakerFailure,
+        });
         const checkpointPublication = await publishProjection({
           workspaceRoot: paths.workspaceRoot,
           repoRoot: paths.repoRoot,
@@ -518,10 +530,15 @@ export async function runBattleBridgePostSyncRefresh({
       ? adapter.reconcileControlPlane({ afterHead: normalizedAfter, paths })
       : Object.freeze({ ok: false, skipped: true, blocker: '', sourceHead: '', exactHeadProofOk: false });
     const effectiveExecution = execution.ok === true && controlPlaneReconcile.ok !== true
-      ? Object.freeze({ ...execution, ok: false, blocker: projectControlPlaneFailureBlocker(controlPlaneReconcile) || 'CONTROL_PLANE_RECONCILE_BLOCKED', exactHeadProofOk: false })
+      ? Object.freeze({ ...execution, ok: false, classification: 'BLOCKED_REFRESH_FAILED', blocker: projectControlPlaneFailureBlocker(controlPlaneReconcile) || 'CONTROL_PLANE_RECONCILE_BLOCKED', exactHeadProofOk: false })
       : execution;
 
-    const projection = buildPostSyncRefreshProjection(effectiveExecution, { beforeHead: normalizedBefore, afterHead: normalizedAfter });
+    const sovereignCaretakerExecution = projectSovereignCaretakerExecutionEvidence(controlPlaneReconcile?.sovereignCaretakerExecution, normalizedAfter);
+    const projection = Object.freeze({
+      ...buildPostSyncRefreshProjection(effectiveExecution, { beforeHead: normalizedBefore, afterHead: normalizedAfter }),
+      sovereignCaretakerExecution,
+      lastSovereignCaretakerFailure: effectiveExecution.ok === true ? null : (sovereignCaretakerExecution || retainedCaretakerFailure),
+    });
     const publication = await publishProjection({ workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot, projection, afterHead: normalizedAfter, phase: effectiveExecution.ok ? 'complete' : 'blocked', now: new Date() });
     if (!publication.ok) return Object.freeze({ ok: false, blocker: publication.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
     return Object.freeze({

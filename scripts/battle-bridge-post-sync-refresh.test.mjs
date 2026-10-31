@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -289,10 +290,63 @@ test('fixed control-plane failure identity is persisted into remote-readable pos
     assert.equal(result.controlPlaneReconcile.failedTaskId, 'recoveryMesh');
     const status = JSON.parse(await readFile(join(paths.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json'), 'utf8'));
     assert.equal(status.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryMesh');
+    assert.equal(status.classification, 'BLOCKED_REFRESH_FAILED');
+    assert.equal(status.finalVerdict, 'POST_SYNC_RUNTIME_REFRESH_BLOCKED');
     assert.doesNotMatch(JSON.stringify(status), /\.\.\/|secrets/i);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('caretaker failure remains diagnosed during a same-head retry and clears only on actual reconciliation', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'post-sync-caretaker-evidence-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const paths = { repoRoot: join(root, 'repo'), workspaceRoot: join(root, 'workspace') };
+  await mkdir(paths.repoRoot);
+  const beforeHead = 'c'.repeat(40), afterHead = 'd'.repeat(40);
+  const evidence = { schemaVersion: 'stephanos.sovereign-caretaker-execution.v1',
+    expectedSourceHead: afterHead, observedAtUtc: '2026-10-31T00:06:31.000Z', exitStatus: 2,
+    spawnErrorCode: '', terminationSignal: '', failureReceiptRecognized: true,
+    reportedBlocker: 'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN',
+    reportedVerdict: 'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED', diagnosticOnly: true };
+  const pass = () => ({ ok: true, sourceHead: afterHead, exactHeadProofOk: true });
+  const adapter = {
+    inspectHeads: pass,
+    changedPaths: () => ({ ok: true, paths: ['main.js'] }),
+    refreshUi: pass,
+    reconcileControlPlane: () => ({ ok: false, blocker: 'SOVEREIGN_COMMANDER_WATCHDOG_EXECUTION_FAILED',
+      sourceHead: afterHead, sovereignCaretakerExecution: { ...evidence, stdout: 'PRIVATE_OUTPUT' } }),
+  };
+  const first = await runBattleBridgePostSyncRefresh({ paths, expectedPaths: paths, beforeHead, afterHead, adapter });
+  assert.equal(first.ok, false);
+  assert.equal(first.classification, 'BLOCKED_REFRESH_FAILED');
+  assert.equal(first.finalVerdict, 'POST_SYNC_RUNTIME_REFRESH_BLOCKED');
+  assert.deepEqual(first.lastSovereignCaretakerFailure, evidence);
+  const statusPath = join(paths.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json');
+  const failed = JSON.parse(await readFile(statusPath, 'utf8'));
+  assert.deepEqual(failed.sovereignCaretakerExecution, evidence);
+  assert.deepEqual(failed.lastSovereignCaretakerFailure, evidence);
+  assert.doesNotMatch(JSON.stringify(failed), /PRIVATE_/);
+  const blockedReceiptPath = join(paths.workspaceRoot, 'receipts', 'post-sync-runtime-refresh', `${afterHead}-blocked.json`);
+  const blockedReceipt = await readFile(blockedReceiptPath);
+  let observedPlan = false;
+  const second = await runBattleBridgePostSyncRefresh({ paths, expectedPaths: paths, beforeHead, afterHead,
+    adapter: { ...adapter, reconcileControlPlane: () => {
+      const plan = JSON.parse(readFileSync(statusPath, 'utf8'));
+      assert.equal(plan.phase, 'plan');
+      assert.equal(plan.classification, 'REFRESH_READY');
+      assert.equal(plan.finalVerdict, 'POST_SYNC_RUNTIME_REFRESH_BLOCKED');
+      assert.deepEqual(plan.lastSovereignCaretakerFailure, evidence);
+      observedPlan = true;
+      return pass();
+    } } });
+  assert.equal(observedPlan, true);
+  assert.equal(second.ok, true);
+  assert.equal(second.lastSovereignCaretakerFailure, null);
+  const complete = JSON.parse(await readFile(statusPath, 'utf8'));
+  assert.equal(complete.phase, 'complete');
+  assert.equal(complete.lastSovereignCaretakerFailure, null);
+  assert.deepEqual(await readFile(blockedReceiptPath), blockedReceipt);
 });
 
 test('workspace publication contains bounded projections and relative proof refs', () => {
