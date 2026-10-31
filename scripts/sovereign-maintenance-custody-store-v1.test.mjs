@@ -419,6 +419,34 @@ test('guardian startup resumes scheduling only after prepared custody auto-recov
   assert.equal(held.status().scheduled, false);
   assert.equal(blockedTimers.length, 0);
   held.stop();
+
+  let disabledRecoverCalls = 0;
+  const disabledTimers = [];
+  const disabled = startActualGuardian({
+    custodyStore: {
+      status: () => ({ held: true, digest: 'c'.repeat(64), reservationId: 'prepared-disabled-cycle' }),
+      recoverPreparedAfterBoot: async () => {
+        disabledRecoverCalls += 1;
+        return { ok: true, custodyReleased: true, reservationId: 'prepared-disabled-cycle' };
+      },
+      close() {},
+    },
+    enabled: false,
+    spawnImpl: () => assert.fail('disabled repair scheduler must not spawn'),
+    setTimeoutImpl: (fn, delay) => {
+      const timer = { fn, delay, unref() {} };
+      disabledTimers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl() {},
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(disabledRecoverCalls, 1);
+  assert.equal(disabled.status().timeoutCustodyHeld, false);
+  assert.equal(disabled.status().enabled, false);
+  assert.equal(disabled.status().scheduled, false);
+  assert.equal(disabledTimers.length, 0);
+  disabled.stop();
 });
 
 test('retained migration refuses legacy authority, owner drift, wrong source binding and changed projection', async t => {
