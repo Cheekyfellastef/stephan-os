@@ -63,16 +63,36 @@ test('buildFinalRouteTruthView prefers adjudicated executable provider over sele
   assert.equal(view.executedProvider, 'unknown');
 });
 
-test('buildFinalRouteTruthView marks uiReachable and route usability unknown while pending', () => {
+test('buildFinalRouteTruthView keeps UI, route and unprobed backend reachability unknown while pending', () => {
   const view = buildFinalRouteTruthView({
     appLaunchState: 'pending',
     canonicalRouteRuntimeTruth: {
       winningRoute: 'unavailable',
+      backendReachable: false, // Startup placeholder, not an observed failed probe.
     },
   });
 
   assert.equal(view.uiReachableState, 'unknown');
   assert.equal(view.routeUsableState, 'unknown');
+  assert.equal(view.backendReachableState, 'unknown');
+
+  const confirmedFailure = buildFinalRouteTruthView({
+    appLaunchState: 'degraded',
+    canonicalRouteRuntimeTruth: {
+      winningRoute: 'local-desktop',
+      backendReachable: false,
+    },
+  });
+  assert.equal(confirmedFailure.backendReachableState, 'no');
+
+  const confirmedReady = buildFinalRouteTruthView({
+    appLaunchState: 'ready',
+    canonicalRouteRuntimeTruth: {
+      winningRoute: 'local-desktop',
+      backendReachable: true,
+    },
+  });
+  assert.equal(confirmedReady.backendReachableState, 'yes');
 });
 
 test('buildFinalRouteTruthView prefers tri-state ui reachability from canonicalRouteRuntimeTruth', () => {
