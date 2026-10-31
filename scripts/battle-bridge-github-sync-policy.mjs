@@ -298,9 +298,6 @@ export function projectPostSyncSovereignRelayObservation(value, expectedHead = '
       processCount: value.processCount,
       heartbeatAgeSeconds,
       blocker,
-      ...(expectedHead ? { sourceHeadMatchesExpected: sourceHead !== '' && sourceHead === expectedHead } : {}),
-      diagnosticOnly: true,
-      authorityGranted: false,
     });
   } catch { return null; }
 }
