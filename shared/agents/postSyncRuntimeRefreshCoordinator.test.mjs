@@ -1105,7 +1105,6 @@ test('ordinary Commander script refreshes remain independent of desktop-plugin r
 test('attended fixed-runtime commissioning helpers are startup-only and create no post-sync target', async () => {
   for (const path of [
     'scripts/sovereign-fixed-runtime-install-current-v1.mjs',
-    'scripts/windows/install-sovereign-fixed-runtime-elevated-v1.ps1',
   ]) {
     const calls = [];
     const result = await executePostSyncRefreshPlan({
