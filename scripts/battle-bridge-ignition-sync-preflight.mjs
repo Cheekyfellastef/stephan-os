@@ -67,10 +67,22 @@ function canDegradeHeldCommanderRefresh(result = {}, projection = {}) {
   if (!refresh || refresh.classification !== 'BLOCKED_REFRESH_FAILED'
       || refresh.blocker !== COMMANDER_CUSTODY_HOLD
       || !Array.isArray(refresh.targetIds) || !Array.isArray(refresh.resultTargets)
-      || refresh.targetIds.length !== refresh.resultTargets.length
       || !refresh.targetIds.includes('sovereign-commander')) return false;
+
+  const commanderIndex = refresh.targetIds.indexOf('sovereign-commander');
+  const fullCoverage = refresh.targetIds.length === refresh.resultTargets.length;
+  const trailingNaturalReloadDeferred = refresh.targetIds.length === refresh.resultTargets.length + 1
+    && commanderIndex === refresh.targetIds.length - 2
+    && refresh.targetIds.at(-1) === 'natural-reload'
+    && refresh.resultTargets.length === commanderIndex + 1;
+  if (!fullCoverage && !trailingNaturalReloadDeferred) return false;
+
+  const executedTargetIds = refresh.targetIds.slice(0, refresh.resultTargets.length);
+  if (refresh.resultTargets.some((row, index) => row?.targetId !== executedTargetIds[index])) return false;
   const byId = new Map(refresh.resultTargets.map(row => [row?.targetId, row]));
-  for (const targetId of refresh.targetIds) {
+  if (byId.size !== refresh.resultTargets.length) return false;
+
+  for (const targetId of executedTargetIds) {
     const row = byId.get(targetId);
     if (!row) return false;
     if (targetId === 'sovereign-commander') {

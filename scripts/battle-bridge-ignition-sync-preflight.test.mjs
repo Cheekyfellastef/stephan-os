@@ -128,7 +128,7 @@ test('Windows ignition proceeds degraded when only Sovereign Commander is held b
           ok: false,
           classification: 'BLOCKED_REFRESH_FAILED',
           blocker: 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN',
-          targetIds: ['stephanos-ui-4173','stephanos-backend-8787','mission-orchestrator-worker','github-command-mailbox','sovereign-commander'],
+          targetIds: ['stephanos-ui-4173','stephanos-backend-8787','mission-orchestrator-worker','github-command-mailbox','sovereign-commander','natural-reload'],
           resultTargets: [
             { targetId:'stephanos-ui-4173', ok:true, exactHeadProofOk:true, sourceHead:HEAD, blocker:'' },
             { targetId:'stephanos-backend-8787', ok:true, exactHeadProofOk:true, sourceHead:HEAD, blocker:'' },
@@ -146,6 +146,31 @@ test('Windows ignition proceeds degraded when only Sovereign Commander is held b
   assert.equal(result.commanderDegraded, true);
   assert.equal(result.commanderBlocker, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN');
   assert.equal(result.blocker, '');
+});
+
+test('Windows ignition does not degrade when a target before Commander is missing even if natural reload is trailing', async () => {
+  const result = await runBattleBridgeIgnitionSyncPreflight(canonicalWindowsOptions({
+    syncAndRefreshFn: async () => ({
+      ok: false,
+      blocker: 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN',
+      sourceHead: HEAD,
+      syncClassification: 'SYNC_NO_CHANGE',
+      refreshes: [{
+        result: {
+          ok: false,
+          classification: 'BLOCKED_REFRESH_FAILED',
+          blocker: 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN',
+          targetIds: ['stephanos-ui-4173','stephanos-backend-8787','sovereign-commander','natural-reload'],
+          resultTargets: [
+            { targetId:'stephanos-ui-4173', ok:true, exactHeadProofOk:true, sourceHead:HEAD, blocker:'' },
+            { targetId:'sovereign-commander', ok:false, exactHeadProofOk:false, sourceHead:HEAD, blocker:'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN' },
+          ],
+        },
+      }],
+      finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
+    }),
+  }));
+  assert.equal(result.ok, false);
 });
 
 test('Windows ignition keeps blocking when any non-Commander refresh target also fails', async () => {

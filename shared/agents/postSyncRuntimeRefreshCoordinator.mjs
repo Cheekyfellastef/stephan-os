@@ -64,6 +64,7 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
   'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
   'scripts/battle-bridge-observation.mjs',
   'scripts/sovereign-commander-http.mjs',
+  'scripts/sovereign-maintenance-custody-store-v1.mjs',
   'scripts/sovereign-fixed-runtime-parent-v1.mjs',
   'scripts/sovereign-commander-ignition-autoheal.mjs',
   'scripts/sovereign-commander-mcp.mjs',
@@ -194,6 +195,7 @@ const NO_RUNTIME_EXACT = new Set([
   'scripts/ignite-stephanos-local.mjs',
   'scripts/ignition-cockpit-model.mjs',
   'scripts/run-battle-bridge-ignition.mjs',
+  'scripts/battle-bridge-ignition-sync-preflight.mjs',
   'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
 ]);
 

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const WINDOWS_LAUNCHER_PS1 = new URL('../windows/Launch-Stephanos-Local.ps1', import.meta.url);
 const WINDOWS_LAUNCHER_CMD = new URL('../windows/Launch-Stephanos-Local.cmd', import.meta.url);
@@ -313,4 +315,49 @@ test('Edge discovery tolerates missing ProgramFiles x86 in non-interactive launc
   assert.match(script, /foreach \(\$programRoot in @\(\$\{env:ProgramFiles\(x86\)\}, \$env:ProgramFiles, \$env:LOCALAPPDATA\)\)/);
   assert.match(script, /if \(\$programRoot\) \{[\s\S]*?Join-Path \$programRoot 'Microsoft\\Edge\\Application\\msedge\.exe'/);
   assert.doesNotMatch(script, /Join-Path \$\{env:ProgramFiles\(x86\)\}/);
+});
+
+
+test('Windows launcher parses cleanly before Ignition can expose a PowerShell wall', { skip: process.platform !== 'win32' }, () => {
+  const launcherPath = fileURLToPath(WINDOWS_LAUNCHER_PS1);
+  const escapedPath = launcherPath.replaceAll("'", "''");
+  const command = `$tokens=$null; $errors=$null; [System.Management.Automation.Language.Parser]::ParseFile('${escapedPath}', [ref]$tokens, [ref]$errors) | Out-Null; if ($errors.Count -gt 0) { $errors | ForEach-Object { $_.Message } | Write-Error; exit 1 }`;
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
+    encoding: 'utf8',
+    windowsHide: true,
+    shell: false,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout || result.error?.message);
+});
+
+test('retained-custody preparation passes native arguments through a PowerShell-safe splat', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /\$prepareArgs = @\([\s\S]*?'prepare-retained-migration'[\s\S]*?'--expected-cycle'[\s\S]*?\[string\]\$inspection\.projectionReservationId[\s\S]*?'--expected-digest'[\s\S]*?\[string\]\$inspection\.projectionDigest[\s\S]*?'--expected-main'[\s\S]*?\$expectedMain[\s\S]*?'--expected-owner-digest'[\s\S]*?\[string\]\$inspection\.heldOwner\.digest[\s\S]*?'--operator-approved'[\s\S]*?\)/m);
+  assert.match(script, /\(& \$nodeExecutable \$recoveryScript @prepareArgs 2>\$null \| Out-String\)\.Trim\(\)/m);
+  assert.doesNotMatch(script, /\$prepareText = \(& \$nodeExecutable \$recoveryScript 'prepare-retained-migration'\s*\r?\n\s*'--expected-cycle'/m);
+});
+
+test('Ignition offers exact retained-custody preparation without restart or release authority', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /function Invoke-SovereignCommanderRetainedCustodyPreparation/);
+  assert.match(script, /sovereign-maintenance-custody-recovery\.mjs/);
+  assert.match(script, /inspect-retained-migration/);
+  assert.match(script, /prepare-retained-migration/);
+  assert.match(script, /--expected-cycle/);
+  assert.match(script, /--expected-digest/);
+  assert.match(script, /--expected-main/);
+  assert.match(script, /--expected-owner-digest/);
+  assert.match(script, /--operator-approved/);
+  assert.match(script, /MessageBoxButtons\]::YesNo/);
+  assert.match(script, /MessageBoxDefaultButton\]::Button2/);
+  assert.match(script, /requiresLaterFullBoot -ne \$true/);
+  assert.match(script, /custodyReleased -ne \$false/);
+  assert.match(script, /pcRestartAllowed -ne \$false/);
+  assert.match(script, /Use the normal Windows Restart command/);
+  assert.match(script, /Invoke-SovereignCommanderRetainedCustodyPreparation\) \{\s*exit 0/);
+  const fn = script.match(/function Invoke-SovereignCommanderRetainedCustodyPreparation[\s\S]*?^}\r?$/m)?.[0] || '';
+  assert.ok(fn);
+  assert.doesNotMatch(fn, /Restart-Computer|shutdown\.exe|Stop-Computer|Start-Process\s+[^\n]*powershell/i);
+  assert.doesNotMatch(fn, /Invoke-Expression|cmd\.exe|git\s+reset|git\s+clean|git\s+push/i);
+  assert.doesNotMatch(fn, /^\s+-(?:or|and)\b/m, 'Windows PowerShell 5.1 must not depend on a binary operator at the start of a continuation line');
 });
