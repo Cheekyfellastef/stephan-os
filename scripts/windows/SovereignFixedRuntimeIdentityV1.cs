@@ -224,7 +224,7 @@ namespace Stephanos.Sovereign {
         var manifest=json.Deserialize<FixedRuntimeManifestV1>(new UTF8Encoding(false,true).GetString(manifestBytes));
         if(manifest==null || manifest.SchemaVersion!="stephanos.fixed-runtime-manifest.v1" ||
           !RuntimeHexV1(manifest.SourceHead,40) || !RuntimeHexV1(manifest.SourceTree,40) ||
-          manifest.Files==null || manifest.Files.Length<40 || manifest.Files.Length>256)
+          manifest.Files==null || manifest.Files.Length<40 || manifest.Files.Length>258)
           throw new InvalidOperationException("RUNTIME_MANIFEST_IDENTITY_UNPROVEN");
         string version=Path.Combine(RuntimeProtectedRootV1,manifest.SourceHead);
         string helper=Path.Combine(version,"host.exe"),pendingPath=Path.Combine(version,"pending.json");
