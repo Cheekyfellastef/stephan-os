@@ -794,7 +794,24 @@ if (-not (Test-Path -LiteralPath $relayDaemonScript -PathType Leaf)) {
 } else {
     $relayBefore = @(Get-SovereignRelayDaemonProcesses)
     $relayHealthBefore = Get-SovereignRelayDaemonHealth
-    if ($relayBefore.Count -ne 1 -or -not [bool]$relayHealthBefore.healthy) {
+    # More than one matching relay can never satisfy the exact singleton proof.
+    # Quiesce only these fixed-identity relay processes, then re-observe before
+    # entering the existing absent/unhealthy recycle path reviewed below.
+    if ($relayBefore.Count -gt 1) {
+        $relayDaemonRestartRequested = $true
+        try {
+            foreach ($process in $relayBefore) {
+                Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
+                $relayDaemonStoppedPidCount += 1
+            }
+            Start-Sleep -Milliseconds 300
+            $relayBefore = @(Get-SovereignRelayDaemonProcesses)
+            $relayHealthBefore = Get-SovereignRelayDaemonHealth
+        } catch {
+            $relayDaemonBlocker = 'SOVEREIGN_RELAY_DAEMON_STALE_RECYCLE_FAILED'
+        }
+    }
+    if ($relayBefore.Count -eq 0 -or -not [bool]$relayHealthBefore.healthy) {
         if ($relayBefore.Count -gt 0) {
             $relayDaemonRestartRequested = $true
             try {
