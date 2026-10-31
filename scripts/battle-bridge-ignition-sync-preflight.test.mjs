@@ -114,6 +114,65 @@ test('Windows ignition keeps core startup moving when only auxiliary control-pla
   assert.equal(result.finalVerdict, 'IGNITION_SYNC_PREFLIGHT_PASS');
 });
 
+test('Windows ignition proceeds degraded when only Sovereign Commander is held by timeout custody', async () => {
+  const result = await runBattleBridgeIgnitionSyncPreflight(canonicalWindowsOptions({
+    syncAndRefreshFn: async () => ({
+      ok: false,
+      blocker: 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN',
+      sourceHead: HEAD,
+      syncClassification: 'SYNC_NO_CHANGE',
+      refreshes: [{
+        beforeHead: 'b'.repeat(40),
+        afterHead: HEAD,
+        result: {
+          ok: false,
+          classification: 'BLOCKED_REFRESH_FAILED',
+          blocker: 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN',
+          targetIds: ['stephanos-ui-4173','stephanos-backend-8787','mission-orchestrator-worker','github-command-mailbox','sovereign-commander'],
+          resultTargets: [
+            { targetId:'stephanos-ui-4173', ok:true, exactHeadProofOk:true, sourceHead:HEAD, blocker:'' },
+            { targetId:'stephanos-backend-8787', ok:true, exactHeadProofOk:true, sourceHead:HEAD, blocker:'' },
+            { targetId:'mission-orchestrator-worker', ok:true, exactHeadProofOk:true, sourceHead:HEAD, blocker:'' },
+            { targetId:'github-command-mailbox', ok:true, exactHeadProofOk:true, sourceHead:HEAD, blocker:'' },
+            { targetId:'sovereign-commander', ok:false, exactHeadProofOk:false, sourceHead:HEAD, blocker:'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN' },
+          ],
+        },
+      }],
+      finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
+    }),
+  }));
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'IGNITION_SYNC_PREFLIGHT_PASS_COMMANDER_CUSTODY_DEGRADED');
+  assert.equal(result.commanderDegraded, true);
+  assert.equal(result.commanderBlocker, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN');
+  assert.equal(result.blocker, '');
+});
+
+test('Windows ignition keeps blocking when any non-Commander refresh target also fails', async () => {
+  const result = await runBattleBridgeIgnitionSyncPreflight(canonicalWindowsOptions({
+    syncAndRefreshFn: async () => ({
+      ok: false,
+      blocker: 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN',
+      sourceHead: HEAD,
+      syncClassification: 'SYNC_NO_CHANGE',
+      refreshes: [{
+        result: {
+          ok: false,
+          classification: 'BLOCKED_REFRESH_FAILED',
+          blocker: 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN',
+          targetIds: ['stephanos-ui-4173','sovereign-commander'],
+          resultTargets: [
+            { targetId:'stephanos-ui-4173', ok:false, exactHeadProofOk:false, sourceHead:HEAD, blocker:'UI_4173_EXACT_HEAD_PROOF_FAILED' },
+            { targetId:'sovereign-commander', ok:false, exactHeadProofOk:false, sourceHead:HEAD, blocker:'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN' },
+          ],
+        },
+      }],
+      finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
+    }),
+  }));
+  assert.equal(result.ok, false);
+});
+
 test('Windows ignition does not waive control-plane failure without proven current source', async () => {
   for (const candidate of [
     {
