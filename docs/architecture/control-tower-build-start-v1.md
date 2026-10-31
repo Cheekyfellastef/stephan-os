@@ -1,4 +1,4 @@
-# Control Tower: start the existing build cycle without issue comments
+# Control Tower: sovereign observation and the existing build cycle
 
 Owner: #2315 — Goal: Automatic canonical mailbox rollover before GitHub comment ceiling.
 Builder admission: #2961 — Goal: Core Daemon Blocked-Goal Repair Steward and Proof-Gated Re-Admission.
@@ -13,7 +13,7 @@ saturated #3149 issue. Manual workflow_dispatch remains an optional fallback.
 No additional worker, queue, lease, scheduler, endpoint, privileged instruction,
 merge or runtime approval is introduced.
 
-The owner supplies no script, path, operation, provider, goal grant, source scope,
+The owner supplies no script, path, free-form operation, provider, goal grant, source scope,
 merge or runtime approval. The existing native caller still proves protected
 source identity, independent signed artifact, original mission/worker custody,
 gaming gates and execution permission before any native pickup.
@@ -21,13 +21,15 @@ gaming gates and execution permission before any native pickup.
 ## Actual command path
 
 1. An owner-authenticated, non-forced push to protected main automatically
-   invokes the existing **Stephanos Control Tower - Start Next Eligible Build**
-   workflow. The operator may still use Run workflow on main to request a
-   manual wake, with no workflow inputs. Never use a PR, fork, bot identity,
+   invokes the existing **Stephanos Control Tower - Sovereign Control**
+   workflow. The operator may use Run workflow on main to choose the fixed
+   `BUILD_NEXT_ELIGIBLE_GOAL` (default) or `OBSERVE_CONTROL_SYSTEM` operation.
+   The observation only reads the existing native inspectors; it never enters
+   the maintenance executor. Never use a PR, fork, bot identity,
    branch creation, forced update or arbitrary command as a build request.
 2. Its fixed request-build job verifies repository and numeric owner identity,
    the exact push after/before/head-commit or manual dispatch identity,
-   workflow path, main, first attempt, empty inputs and current source before
+   workflow path, main, first attempt, closed fixed inputs and current source before
    and after GETs. It retains one request artifact, valid for ten minutes.
 3. The existing Sovereign relay reads that workflow through authenticated GETs,
    checks the exact run, both jobs, one artifact, digest, ZIP CRC and bounds,
@@ -39,8 +41,10 @@ gaming gates and execution permission before any native pickup.
    Only this acquisition path brands an immutable request for execution.
 4. The relay uses the original command execution ledger under the original
    mailbox state root. An exclusive durable reservation precedes exactly one
-   invocation of the existing authenticated maintenance owner, fixed action
-   goal-discovery-heartbeat. No new executor, timer, scheduler, queue or grant.
+   invocation of the existing authenticated maintenance owner for a build,
+   fixed action goal-discovery-heartbeat. An observation instead calls the
+   checked-in read-only native inspector and stores its sanitized result in
+   that same ledger. No new executor, timer, scheduler, queue or grant.
 5. That action invokes the original canonical admission and Mission Worker
    build pipeline. It retains source scopes, required tests, leases, provider
    qualification, gaming/resource checks and protected integration gates.
@@ -83,7 +87,7 @@ wrong job estates, main drift, expiry, concurrency, crash retention, custody
 refusal, returned transport uncertainty after possible pickup, lost terminal
 publication, stale-head starvation, and live polling during legacy carrier IO.
 
-At preparation, native maintenance holds cycle
+Historical preparation evidence (not current native proof): native maintenance held cycle
 2a5f269f-bc64-45da-a62c-ab0e4c772294 with MAINTENANCE_CUSTODY_STATE_MISSING.
 The original retained-audit repair owns its recovery. This build carrier must
 report that hold without restarting the owner, clearing state, changing audit
@@ -112,3 +116,11 @@ bound to its own GitHub run and first attempt. Existing durable command
 ledger deduplication retains an ambiguous request without replay.
 Foreign actor pushes are skipped before the job, and the JS producer and
 native artifact reader independently fail closed on unexpected provenance.
+
+## Conversational control and retained results
+
+See [Sovereign conversational control](sovereign-conversational-control-v1.md)
+for the existing AI route integration, read-only inspection, ledger-backed
+historical results and source/live commissioning boundary. The operation
+choice does not authorize mailbox rollover, runtime installation or owner
+replacement. All earlier build admission and protected-main gates remain.
