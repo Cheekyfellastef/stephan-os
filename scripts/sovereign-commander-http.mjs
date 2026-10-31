@@ -131,7 +131,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   const closeStoppedCustody = () => {
     if (stopped && !custodyClosed && !state.maintenanceInFlight && !nativeCyclePromise) {
       custodyClosed = true;
-      custodyStore?.close();
+      custodyStore?.close?.();
     }
   };
 
