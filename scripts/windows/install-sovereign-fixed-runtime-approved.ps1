@@ -62,24 +62,367 @@ try { $prepared = $preparedText | ConvertFrom-Json -ErrorAction Stop } catch {
     exit 2
 }
 $expectedPayloadPath = Join-Path (Join-Path $env:LOCALAPPDATA 'Temp') ("StephanosFixedRuntimeInstall-{0}.json" -f $ExpectedHead)
-$preparedValid = (
-    $prepared.schemaVersion -ceq 'stephanos.fixed-runtime-install-handoff.v1' -and
-    $prepared.ok -eq $true -and
-    $prepared.state -ceq 'READY_FOR_OPERATOR_APPROVAL' -and
-    $prepared.expectedMain -ceq $ExpectedHead -and
-    $prepared.powershellExecutable -ceq $powerShellExecutable -and
-    [string]::Equals([string]$prepared.payloadPath, $expectedPayloadPath, [System.StringComparison]::OrdinalIgnoreCase) -and
-    [string]$prepared.payloadSha256 -match '^[a-f0-9]{64}$' -and
-    [int]$prepared.payloadBytes -gt 0 -and
-    [int]$prepared.payloadBytes -le (16 * 1024 * 1024) -and
-    [string]$prepared.encodedCommand -match '^[A-Za-z0-9+/=]{1,30000}$' -and
-    [string]$prepared.encodedCommandSha256 -match '^[a-f0-9]{64}$' -and
-    $prepared.installationPerformed -eq $false -and
-    $prepared.elevationPerformed -eq $false -and
-    $prepared.pcRestartPerformed -eq $false -and
-    $prepared.arbitraryShellAllowed -eq $false -and
-    $prepared.mergeAuthority -eq $false
-)
+$preparedValid = ($prepared.schemaVersion -ceq 'stephanos.fixed-runtime-install-handoff.v1') -and ($prepared.ok -eq $true) -and ($prepared.state -ceq 'READY_FOR_OPERATOR_APPROVAL') -and ($prepared.expectedMain -ceq $ExpectedHead) -and ($prepared.powershellExecutable -ceq $powerShellExecutable) -and ([string]::Equals([string]$prepared.payloadPath, $expectedPayloadPath, [System.StringComparison]::OrdinalIgnoreCase)) -and (([string]$prepared.payloadSha256) -match '^[a-f0-9]{64}
+if (-not $preparedValid) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_PREPARATION_INVALID'
+    exit 2
+}
+
+$encodedCommand = [string]$prepared.encodedCommand
+$encodedBytes = [Text.Encoding]::UTF8.GetBytes($encodedCommand)
+$sha = [Security.Cryptography.SHA256]::Create()
+try {
+    $encodedDigest = ([BitConverter]::ToString($sha.ComputeHash($encodedBytes))).Replace('-', '').ToLowerInvariant()
+} finally {
+    $sha.Dispose()
+}
+if ($encodedDigest -cne [string]$prepared.encodedCommandSha256) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_COMMAND_DIGEST_CHANGED'
+    exit 2
+}
+
+try {
+    $installer = Start-Process -FilePath $powerShellExecutable -ArgumentList @(
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-EncodedCommand',
+        $encodedCommand
+    ) -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+} catch {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_ELEVATION_CANCELLED_OR_FAILED'
+    exit 2
+}
+$installerExitCode = [int]$installer.ExitCode
+if ($installerExitCode -ne 0) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_ELEVATED_INSTALL_FAILED' -InstallerExitCode $installerExitCode
+    exit 2
+}
+
+$verifiedText = (& $nodeExecutable $handoffScript 'verify' '--expected-main' $ExpectedHead 2>$null | Out-String).Trim()
+$verifyExitCode = $LASTEXITCODE
+if ($verifyExitCode -ne 0 -or -not $verifiedText) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_READBACK_UNPROVEN' -InstallerExitCode $installerExitCode
+    exit 2
+}
+try { $verified = $verifiedText | ConvertFrom-Json -ErrorAction Stop } catch {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_READBACK_INVALID' -InstallerExitCode $installerExitCode
+    exit 2
+}
+$verifiedValid = ($verified.schemaVersion -ceq 'stephanos.fixed-runtime-install-handoff.v1') -and ($verified.ok -eq $true) -and ($verified.expectedMain -ceq $ExpectedHead) -and ($verified.state -in @('PENDING_REBOOT', 'QUALIFIED'))
+if (-not $verifiedValid) {
+    $blocker = if (([string]$verified.blocker) -match '^[A-Z0-9_]{1,120}
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker $blocker -InstallerExitCode $installerExitCode
+    exit 2
+}
+
+$laterBoot = $verified.state -ceq 'PENDING_REBOOT'
+Write-FixedRuntimeInstallReceipt -Ok $true -State ([string]$verified.state) -Blocker '' -LaterFullBootRequired:$laterBoot -InstallerExitCode $installerExitCode
+exit 0
+) -and (([int]$prepared.payloadBytes) -gt 0) -and (([int]$prepared.payloadBytes) -le (16 * 1024 * 1024)) -and (([string]$prepared.encodedCommand) -match '^[A-Za-z0-9+/=]{1,30000}
+if (-not $preparedValid) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_PREPARATION_INVALID'
+    exit 2
+}
+
+$encodedCommand = [string]$prepared.encodedCommand
+$encodedBytes = [Text.Encoding]::UTF8.GetBytes($encodedCommand)
+$sha = [Security.Cryptography.SHA256]::Create()
+try {
+    $encodedDigest = ([BitConverter]::ToString($sha.ComputeHash($encodedBytes))).Replace('-', '').ToLowerInvariant()
+} finally {
+    $sha.Dispose()
+}
+if ($encodedDigest -cne [string]$prepared.encodedCommandSha256) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_COMMAND_DIGEST_CHANGED'
+    exit 2
+}
+
+try {
+    $installer = Start-Process -FilePath $powerShellExecutable -ArgumentList @(
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-EncodedCommand',
+        $encodedCommand
+    ) -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+} catch {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_ELEVATION_CANCELLED_OR_FAILED'
+    exit 2
+}
+$installerExitCode = [int]$installer.ExitCode
+if ($installerExitCode -ne 0) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_ELEVATED_INSTALL_FAILED' -InstallerExitCode $installerExitCode
+    exit 2
+}
+
+$verifiedText = (& $nodeExecutable $handoffScript 'verify' '--expected-main' $ExpectedHead 2>$null | Out-String).Trim()
+$verifyExitCode = $LASTEXITCODE
+if ($verifyExitCode -ne 0 -or -not $verifiedText) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_READBACK_UNPROVEN' -InstallerExitCode $installerExitCode
+    exit 2
+}
+try { $verified = $verifiedText | ConvertFrom-Json -ErrorAction Stop } catch {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_READBACK_INVALID' -InstallerExitCode $installerExitCode
+    exit 2
+}
+if ($verified.schemaVersion -cne 'stephanos.fixed-runtime-install-handoff.v1'
+    -or $verified.ok -ne $true
+    -or $verified.expectedMain -cne $ExpectedHead
+    -or $verified.state -notin @('PENDING_REBOOT', 'QUALIFIED')) {
+    $blocker = if ([string]$verified.blocker -match '^[A-Z0-9_]{1,120}$') { [string]$verified.blocker } else { 'FIXED_RUNTIME_INSTALL_READBACK_INVALID' }
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker $blocker -InstallerExitCode $installerExitCode
+    exit 2
+}
+
+$laterBoot = $verified.state -ceq 'PENDING_REBOOT'
+Write-FixedRuntimeInstallReceipt -Ok $true -State ([string]$verified.state) -Blocker '' -LaterFullBootRequired:$laterBoot -InstallerExitCode $installerExitCode
+exit 0
+) -and (([string]$prepared.encodedCommandSha256) -match '^[a-f0-9]{64}
+if (-not $preparedValid) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_PREPARATION_INVALID'
+    exit 2
+}
+
+$encodedCommand = [string]$prepared.encodedCommand
+$encodedBytes = [Text.Encoding]::UTF8.GetBytes($encodedCommand)
+$sha = [Security.Cryptography.SHA256]::Create()
+try {
+    $encodedDigest = ([BitConverter]::ToString($sha.ComputeHash($encodedBytes))).Replace('-', '').ToLowerInvariant()
+} finally {
+    $sha.Dispose()
+}
+if ($encodedDigest -cne [string]$prepared.encodedCommandSha256) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_COMMAND_DIGEST_CHANGED'
+    exit 2
+}
+
+try {
+    $installer = Start-Process -FilePath $powerShellExecutable -ArgumentList @(
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-EncodedCommand',
+        $encodedCommand
+    ) -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+} catch {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_ELEVATION_CANCELLED_OR_FAILED'
+    exit 2
+}
+$installerExitCode = [int]$installer.ExitCode
+if ($installerExitCode -ne 0) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_ELEVATED_INSTALL_FAILED' -InstallerExitCode $installerExitCode
+    exit 2
+}
+
+$verifiedText = (& $nodeExecutable $handoffScript 'verify' '--expected-main' $ExpectedHead 2>$null | Out-String).Trim()
+$verifyExitCode = $LASTEXITCODE
+if ($verifyExitCode -ne 0 -or -not $verifiedText) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_READBACK_UNPROVEN' -InstallerExitCode $installerExitCode
+    exit 2
+}
+try { $verified = $verifiedText | ConvertFrom-Json -ErrorAction Stop } catch {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_READBACK_INVALID' -InstallerExitCode $installerExitCode
+    exit 2
+}
+if ($verified.schemaVersion -cne 'stephanos.fixed-runtime-install-handoff.v1'
+    -or $verified.ok -ne $true
+    -or $verified.expectedMain -cne $ExpectedHead
+    -or $verified.state -notin @('PENDING_REBOOT', 'QUALIFIED')) {
+    $blocker = if ([string]$verified.blocker -match '^[A-Z0-9_]{1,120}$') { [string]$verified.blocker } else { 'FIXED_RUNTIME_INSTALL_READBACK_INVALID' }
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker $blocker -InstallerExitCode $installerExitCode
+    exit 2
+}
+
+$laterBoot = $verified.state -ceq 'PENDING_REBOOT'
+Write-FixedRuntimeInstallReceipt -Ok $true -State ([string]$verified.state) -Blocker '' -LaterFullBootRequired:$laterBoot -InstallerExitCode $installerExitCode
+exit 0
+) -and ($prepared.installationPerformed -eq $false) -and ($prepared.elevationPerformed -eq $false) -and ($prepared.pcRestartPerformed -eq $false) -and ($prepared.arbitraryShellAllowed -eq $false) -and ($prepared.mergeAuthority -eq $false)
+if (-not $preparedValid) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_PREPARATION_INVALID'
+    exit 2
+}
+
+$encodedCommand = [string]$prepared.encodedCommand
+$encodedBytes = [Text.Encoding]::UTF8.GetBytes($encodedCommand)
+$sha = [Security.Cryptography.SHA256]::Create()
+try {
+    $encodedDigest = ([BitConverter]::ToString($sha.ComputeHash($encodedBytes))).Replace('-', '').ToLowerInvariant()
+} finally {
+    $sha.Dispose()
+}
+if ($encodedDigest -cne [string]$prepared.encodedCommandSha256) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_COMMAND_DIGEST_CHANGED'
+    exit 2
+}
+
+try {
+    $installer = Start-Process -FilePath $powerShellExecutable -ArgumentList @(
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-EncodedCommand',
+        $encodedCommand
+    ) -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+} catch {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_ELEVATION_CANCELLED_OR_FAILED'
+    exit 2
+}
+$installerExitCode = [int]$installer.ExitCode
+if ($installerExitCode -ne 0) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_ELEVATED_INSTALL_FAILED' -InstallerExitCode $installerExitCode
+    exit 2
+}
+
+$verifiedText = (& $nodeExecutable $handoffScript 'verify' '--expected-main' $ExpectedHead 2>$null | Out-String).Trim()
+$verifyExitCode = $LASTEXITCODE
+if ($verifyExitCode -ne 0 -or -not $verifiedText) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_READBACK_UNPROVEN' -InstallerExitCode $installerExitCode
+    exit 2
+}
+try { $verified = $verifiedText | ConvertFrom-Json -ErrorAction Stop } catch {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_READBACK_INVALID' -InstallerExitCode $installerExitCode
+    exit 2
+}
+if ($verified.schemaVersion -cne 'stephanos.fixed-runtime-install-handoff.v1'
+    -or $verified.ok -ne $true
+    -or $verified.expectedMain -cne $ExpectedHead
+    -or $verified.state -notin @('PENDING_REBOOT', 'QUALIFIED')) {
+    $blocker = if ([string]$verified.blocker -match '^[A-Z0-9_]{1,120}$') { [string]$verified.blocker } else { 'FIXED_RUNTIME_INSTALL_READBACK_INVALID' }
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker $blocker -InstallerExitCode $installerExitCode
+    exit 2
+}
+
+$laterBoot = $verified.state -ceq 'PENDING_REBOOT'
+Write-FixedRuntimeInstallReceipt -Ok $true -State ([string]$verified.state) -Blocker '' -LaterFullBootRequired:$laterBoot -InstallerExitCode $installerExitCode
+exit 0
+) { [string]$verified.blocker } else { 'FIXED_RUNTIME_INSTALL_READBACK_INVALID' }
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker $blocker -InstallerExitCode $installerExitCode
+    exit 2
+}
+
+$laterBoot = $verified.state -ceq 'PENDING_REBOOT'
+Write-FixedRuntimeInstallReceipt -Ok $true -State ([string]$verified.state) -Blocker '' -LaterFullBootRequired:$laterBoot -InstallerExitCode $installerExitCode
+exit 0
+) -and (([int]$prepared.payloadBytes) -gt 0) -and (([int]$prepared.payloadBytes) -le (16 * 1024 * 1024)) -and (([string]$prepared.encodedCommand) -match '^[A-Za-z0-9+/=]{1,30000}
+if (-not $preparedValid) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_PREPARATION_INVALID'
+    exit 2
+}
+
+$encodedCommand = [string]$prepared.encodedCommand
+$encodedBytes = [Text.Encoding]::UTF8.GetBytes($encodedCommand)
+$sha = [Security.Cryptography.SHA256]::Create()
+try {
+    $encodedDigest = ([BitConverter]::ToString($sha.ComputeHash($encodedBytes))).Replace('-', '').ToLowerInvariant()
+} finally {
+    $sha.Dispose()
+}
+if ($encodedDigest -cne [string]$prepared.encodedCommandSha256) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_COMMAND_DIGEST_CHANGED'
+    exit 2
+}
+
+try {
+    $installer = Start-Process -FilePath $powerShellExecutable -ArgumentList @(
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-EncodedCommand',
+        $encodedCommand
+    ) -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+} catch {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_ELEVATION_CANCELLED_OR_FAILED'
+    exit 2
+}
+$installerExitCode = [int]$installer.ExitCode
+if ($installerExitCode -ne 0) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_ELEVATED_INSTALL_FAILED' -InstallerExitCode $installerExitCode
+    exit 2
+}
+
+$verifiedText = (& $nodeExecutable $handoffScript 'verify' '--expected-main' $ExpectedHead 2>$null | Out-String).Trim()
+$verifyExitCode = $LASTEXITCODE
+if ($verifyExitCode -ne 0 -or -not $verifiedText) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_READBACK_UNPROVEN' -InstallerExitCode $installerExitCode
+    exit 2
+}
+try { $verified = $verifiedText | ConvertFrom-Json -ErrorAction Stop } catch {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_READBACK_INVALID' -InstallerExitCode $installerExitCode
+    exit 2
+}
+if ($verified.schemaVersion -cne 'stephanos.fixed-runtime-install-handoff.v1'
+    -or $verified.ok -ne $true
+    -or $verified.expectedMain -cne $ExpectedHead
+    -or $verified.state -notin @('PENDING_REBOOT', 'QUALIFIED')) {
+    $blocker = if ([string]$verified.blocker -match '^[A-Z0-9_]{1,120}$') { [string]$verified.blocker } else { 'FIXED_RUNTIME_INSTALL_READBACK_INVALID' }
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker $blocker -InstallerExitCode $installerExitCode
+    exit 2
+}
+
+$laterBoot = $verified.state -ceq 'PENDING_REBOOT'
+Write-FixedRuntimeInstallReceipt -Ok $true -State ([string]$verified.state) -Blocker '' -LaterFullBootRequired:$laterBoot -InstallerExitCode $installerExitCode
+exit 0
+) -and (([string]$prepared.encodedCommandSha256) -match '^[a-f0-9]{64}
+if (-not $preparedValid) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_PREPARATION_INVALID'
+    exit 2
+}
+
+$encodedCommand = [string]$prepared.encodedCommand
+$encodedBytes = [Text.Encoding]::UTF8.GetBytes($encodedCommand)
+$sha = [Security.Cryptography.SHA256]::Create()
+try {
+    $encodedDigest = ([BitConverter]::ToString($sha.ComputeHash($encodedBytes))).Replace('-', '').ToLowerInvariant()
+} finally {
+    $sha.Dispose()
+}
+if ($encodedDigest -cne [string]$prepared.encodedCommandSha256) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_COMMAND_DIGEST_CHANGED'
+    exit 2
+}
+
+try {
+    $installer = Start-Process -FilePath $powerShellExecutable -ArgumentList @(
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-EncodedCommand',
+        $encodedCommand
+    ) -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+} catch {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_ELEVATION_CANCELLED_OR_FAILED'
+    exit 2
+}
+$installerExitCode = [int]$installer.ExitCode
+if ($installerExitCode -ne 0) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_ELEVATED_INSTALL_FAILED' -InstallerExitCode $installerExitCode
+    exit 2
+}
+
+$verifiedText = (& $nodeExecutable $handoffScript 'verify' '--expected-main' $ExpectedHead 2>$null | Out-String).Trim()
+$verifyExitCode = $LASTEXITCODE
+if ($verifyExitCode -ne 0 -or -not $verifiedText) {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_READBACK_UNPROVEN' -InstallerExitCode $installerExitCode
+    exit 2
+}
+try { $verified = $verifiedText | ConvertFrom-Json -ErrorAction Stop } catch {
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_READBACK_INVALID' -InstallerExitCode $installerExitCode
+    exit 2
+}
+if ($verified.schemaVersion -cne 'stephanos.fixed-runtime-install-handoff.v1'
+    -or $verified.ok -ne $true
+    -or $verified.expectedMain -cne $ExpectedHead
+    -or $verified.state -notin @('PENDING_REBOOT', 'QUALIFIED')) {
+    $blocker = if ([string]$verified.blocker -match '^[A-Z0-9_]{1,120}$') { [string]$verified.blocker } else { 'FIXED_RUNTIME_INSTALL_READBACK_INVALID' }
+    Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker $blocker -InstallerExitCode $installerExitCode
+    exit 2
+}
+
+$laterBoot = $verified.state -ceq 'PENDING_REBOOT'
+Write-FixedRuntimeInstallReceipt -Ok $true -State ([string]$verified.state) -Blocker '' -LaterFullBootRequired:$laterBoot -InstallerExitCode $installerExitCode
+exit 0
+) -and ($prepared.installationPerformed -eq $false) -and ($prepared.elevationPerformed -eq $false) -and ($prepared.pcRestartPerformed -eq $false) -and ($prepared.arbitraryShellAllowed -eq $false) -and ($prepared.mergeAuthority -eq $false)
 if (-not $preparedValid) {
     Write-FixedRuntimeInstallReceipt -Ok $false -State 'BLOCKED' -Blocker 'FIXED_RUNTIME_INSTALL_PREPARATION_INVALID'
     exit 2
