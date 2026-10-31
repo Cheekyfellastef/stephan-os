@@ -847,6 +847,50 @@ test('merged controller-lane status estate is fully classified and refreshable',
   assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER));
 });
 
+test('failed Relay witness survives projection without satisfying required Relay proof', () => {
+  const beforeHead = 'a'.repeat(40), afterHead = 'b'.repeat(40);
+  const observation = {
+    schemaVersion: 'stephanos.post-sync-sovereign-relay-observation.v1',
+    watchdogSucceeded: true,
+    healthy: false,
+    sourceHead: afterHead,
+    sourceHeadMatchesLive: true,
+    processCount: 0,
+    heartbeatAgeSeconds: 3,
+    blocker: 'SOVEREIGN_RELAY_STATUS_MISSING',
+  };
+  const projection = buildPostSyncRefreshProjection({
+    ok: false,
+    classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
+    blocker: 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN',
+    exactHeadProofOk: false,
+    plan: {
+      classification: POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY,
+      targetIds: [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER],
+      changedPathCount: 1,
+      noRuntimePathCount: 0,
+      openClawPathCount: 0,
+      pluginHostActivationRequired: false,
+      sovereignRelayRefreshRequired: true,
+      unknownPathCount: 0,
+      unsafePathCount: 0,
+    },
+    results: [{
+      targetId: POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER,
+      ok: false,
+      exactHeadProofOk: false,
+      sourceHead: afterHead,
+      blocker: 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN',
+      sovereignRelayObservation: observation,
+    }],
+  }, { beforeHead, afterHead });
+  const row = projection.resultTargets[0];
+  assert.equal(row.ok, false);
+  assert.equal(row.exactHeadProofOk, false);
+  assert.deepEqual(row.sovereignRelayObservation, observation);
+  assert.equal(Object.hasOwn(row, 'sovereignRelayProof'), false);
+});
+
 test('Sovereign Ignition diagnosis and persistent repair are exact Commander runtime paths', () => {
   const runtimePaths = [
     'scripts/sovereign-commander-ignition-diagnosis.mjs',
