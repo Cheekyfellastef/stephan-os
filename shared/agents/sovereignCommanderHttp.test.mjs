@@ -782,7 +782,7 @@ async function runNativeGuardianFixture(httpUrl) {
       assert.equal(h.guardian.status().lastBlocker, 'CANONICAL_PROGRAMME_HOLD_REPAIR_REQUIRED');
       assert.equal(h.guardian.status().timeoutCustodyHeld, false);
       assert.equal(reports[0].outcome, 'BLOCKED');
-      assert.equal(reports[0].actions[0].blocker, 'CANONICAL_PROGRAMME_HOLD_REPAIR_REQUIRED');
+      assert.equal(reports[0].status.actions[0].blocker, 'CANONICAL_PROGRAMME_HOLD_REPAIR_REQUIRED');
       assert.equal(h.next().delay, 60000);
       cases++;
     } finally { h.guardian.stop(); }
