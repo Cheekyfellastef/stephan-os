@@ -53,6 +53,10 @@ async function fixture() {
   git(repoRoot, 'init', '-b', 'main');
   git(repoRoot, 'config', 'user.name', 'Island Test');
   git(repoRoot, 'config', 'user.email', 'island-test@example.invalid');
+  // The disposable fixture commits exact copied source bytes, not the
+  // runner's global Windows core.autocrlf policy. Otherwise the baseline
+  // Git tree may differ from the real test dependency bytes before testing.
+  git(repoRoot, 'config', 'core.autocrlf', 'false');
   git(repoRoot, 'remote', 'add', 'origin', 'https://github.com/Cheekyfellastef/stephan-os.git');
   git(repoRoot, 'add', '--', 'shared/agents/rescueIslandPreflightV1.mjs',
     'shared/agents/rescueIslandPreflightV1.test.mjs');
