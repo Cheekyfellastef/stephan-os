@@ -95,6 +95,8 @@ scripts/windows/install-sovereign-fixed-runtime-v1.ps1 text eol=lf
 scripts/fixtures/sovereign-fixed-runtime-parent-protocol-fixture-v1.mjs text eol=lf
 
 scripts/sovereign-fixed-runtime-installer-candidate-v1.mjs text eol=lf
+scripts/sovereign-fixed-runtime-install-handoff-v1.mjs text eol=lf
+scripts/sovereign-fixed-runtime-install-handoff-v1.test.mjs text eol=lf
 
 shared/agents/sovereignFixedRuntimeSourceClosureV1.json text eol=lf
 
