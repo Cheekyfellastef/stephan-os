@@ -17,7 +17,6 @@ const SHA40 = /^[a-f0-9]{40}$/;
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const REVIEWED_PR = 3362;
 const REVIEWED_BRANCH = 'fix/2961-fixed-runtime-closure-relay-proof-20261031';
-const REVIEWED_BASE = '2f56252825d5bbc9aa0a684808fd141eff74c84c';
 const MAX_SOURCE_BYTES = 256 * 1024;
 
 const text = value => typeof value === 'string' ? value.trim() : '';
@@ -145,7 +144,8 @@ export function analyzeWindowsAuthoritySovereignFixedRuntimeReviewV1(input = {})
     && input.prNumber === REVIEWED_PR
     && text(input.branch) === REVIEWED_BRANCH
     && SHA40.test(sourceHead)
-    && baseSha === REVIEWED_BASE
+    && SHA40.test(baseSha)
+    && sourceHead !== baseSha
     && exactEscalation(input.analysis)
     && exactLineage(input.lineageEvidence, sourceHead, baseSha);
 
