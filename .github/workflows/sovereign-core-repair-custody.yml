@@ -73,7 +73,10 @@ jobs:
           STEPHANOS_CUSTODY_NATIVE_FIXTURE: ${{ runner.os == 'Windows' && '1' || '0' }}
         run: node --test scripts/sovereign-maintenance-os-anchor-v1.test.mjs
       - name: Native installer source Job and pinned bootstrap proof
-        run: node --test scripts/sovereign-maintenance-installer-source-job-v3.test.mjs
+        run: >-
+          node --test
+          scripts/sovereign-maintenance-installer-source-job-v3.test.mjs
+          scripts/sovereign-fixed-runtime-install-handoff-v1.test.mjs
       - name: Bootstrap-isolated source proof and native racy-index regression
         env:
           STEPHANOS_SHARED_WORKSPACE: ${{ runner.temp }}/stephanos-source-proof-fixture
