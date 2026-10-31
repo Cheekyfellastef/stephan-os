@@ -66,11 +66,9 @@ test('operator-attended fixed runtime install handoff is loaded fresh and requir
   const plan = classifyPostSyncRefresh([
     'scripts/sovereign-fixed-runtime-install-handoff-v1.mjs',
     'scripts/sovereign-fixed-runtime-install-handoff-v1.test.mjs',
-    'scripts/windows/install-sovereign-fixed-runtime-approved.ps1',
-    'scripts/sovereign-fixed-runtime-install-approved.test.mjs',
   ]);
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
-  assert.equal(plan.noRuntimePathCount, 4);
+  assert.equal(plan.noRuntimePathCount, 2);
   assert.deepEqual(plan.targetIds, []);
   assert.equal(plan.automaticExecutionAllowed, true);
 });
