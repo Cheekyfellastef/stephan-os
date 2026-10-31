@@ -352,27 +352,25 @@ export function runSovereignCommanderGoalBuilderRepair({
   // ALL callers (Core, guardian, mailbox and direct maintenance) meet at this
   // shared boundary. Heartbeat loss is never permission to start another
   // worker; only its qualified lifecycle owner can recover missing custody.
+  let heartbeatFailure = null;
   for (const step of [STEPS.goalHeartbeat]) {
     if (!resourceAllowed()) return resourceHold();
     const result = runStep(step);
     steps.push(compactStep(step, result));
     if (result?.ok !== true) {
-      return Object.freeze({
-        ok: false,
-        schemaVersion: SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_SCHEMA,
-        repairApplied: true,
-        blocker: text(result?.errorCode) || `${step.id.toUpperCase().replace(/-/g, '_')}_FAILED`,
-        steps: Object.freeze(steps),
-        canonicalGoalFabricOnly: true,
-        sourceMutationDelegatedToMissionWorker: true,
-        duplicateSchedulerAllowed: false,
-        mergeAuthority: false,
-        arbitraryShellAllowed: false,
-        finalVerdict: 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED',
+      const explicitBlocker = text(result?.errorCode);
+      heartbeatFailure = Object.freeze({
+        actionId: step.id,
+        blocker: explicitBlocker || `${step.id.toUpperCase().replace(/-/g, '_')}_TERMINAL_FAILURE`,
+        explicitBlocker: Boolean(explicitBlocker),
       });
+      break;
     }
   }
 
+  // A failed mutating heartbeat must not hide the two safe read-only terminal
+  // observations. They often contain the exact admission/claim/pickup blocker
+  // that the pipe-free Windows child cannot return directly.
   if (!workerAllowed()) return Object.freeze({ ...workerHold(), repairApplied: true });
   if (!resourceAllowed()) return resourceHold();
   const finalSupervisor = runStep(STEPS.supervisor);
@@ -380,16 +378,34 @@ export function runSovereignCommanderGoalBuilderRepair({
   if (!resourceAllowed()) return resourceHold();
   const finalLaneStatus = runStep(STEPS.controllerLaneStatus);
   steps.push(compactStep(STEPS.controllerLaneStatus, finalLaneStatus));
-  const green = supervisorFlowGreen(finalSupervisor) && laneStatusGreen(finalLaneStatus);
+  const supervisorGreen = supervisorFlowGreen(finalSupervisor);
+  const laneGreen = laneStatusGreen(finalLaneStatus);
+  const green = heartbeatFailure === null && supervisorGreen && laneGreen;
+  const supervisorBlocker = supervisorGreen ? '' : supervisorFlowBlocker(finalSupervisor);
+  const laneBlocker = laneGreen ? '' : laneStatusBlocker(finalLaneStatus);
+  const genericReadbackBlockers = new Set([
+    'FLEET_GOAL_SUPERVISOR_AUTONOMY_UNPROVEN',
+    'FLEET_GOAL_SUPERVISOR_READ_FAILED',
+    'CONTROLLER_LANE_STATUS_UNPROVEN',
+    'CONTROLLER_LANE_STATUS_READ_FAILED',
+  ]);
+  const specificReadbackBlocker = [supervisorBlocker, laneBlocker]
+    .find((blocker) => blocker && !genericReadbackBlockers.has(blocker)) || '';
+  const blocker = green
+    ? ''
+    : heartbeatFailure?.explicitBlocker
+      ? heartbeatFailure.blocker
+      : specificReadbackBlocker
+        || heartbeatFailure?.blocker
+        || supervisorBlocker
+        || laneBlocker
+        || 'GOAL_BUILDER_REPAIR_TERMINAL_STATE_UNPROVEN';
   return Object.freeze({
     ok: green,
     schemaVersion: SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_SCHEMA,
     repairApplied: true,
-    blocker: green
-      ? ''
-      : !supervisorFlowGreen(finalSupervisor)
-        ? supervisorFlowBlocker(finalSupervisor)
-        : laneStatusBlocker(finalLaneStatus),
+    blocker,
+    repairStepFailure: heartbeatFailure,
     steps: Object.freeze(steps),
     canonicalGoalFabricOnly: true,
     sourceMutationDelegatedToMissionWorker: true,
