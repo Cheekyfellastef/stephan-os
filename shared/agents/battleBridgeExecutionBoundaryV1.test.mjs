@@ -34,11 +34,17 @@ test('fixed Git executable is absolute and platform-canonical', () => {
   assert.equal(posix.executable, BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE);
   assert.equal(posix.fixedConfigArgs.includes('core.hooksPath=/dev/null'), true);
   assert.equal(posix.fixedConfigArgs.includes('core.attributesFile=/dev/null'), true);
+  assert.equal(posix.fixedConfigArgs.includes('core.excludesFile=/dev/null'), true);
   assert.equal(posix.environment.PATH, '/usr/bin:/bin');
   assert.equal(posix.environment.GIT_CONFIG_GLOBAL, '/dev/null');
   assert.equal(posix.environment.GIT_GRAFT_FILE, '/dev/null');
   assert.equal(posix.environment.NODE_OPTIONS, undefined);
-  assert.deepEqual(battleBridgeGitFixedConfigArgs('win32').slice(0, 2), ['-c', 'core.hooksPath=NUL']);
+  const windowsArgs = battleBridgeGitFixedConfigArgs('win32');
+  assert.deepEqual(windowsArgs.slice(0, 2), ['-c', 'core.hooksPath=NUL']);
+  assert.equal(windowsArgs.includes('core.attributesFile='), true);
+  assert.equal(windowsArgs.includes('core.excludesFile='), true);
+  assert.equal(windowsArgs.includes('core.attributesFile=NUL'), false);
+  assert.equal(windowsArgs.includes('core.excludesFile=NUL'), false);
 });
 
 test('minimal child environment removes Node/Git/shell injection variables', () => {
@@ -70,6 +76,8 @@ test('minimal child environment removes Node/Git/shell injection variables', () 
   assert.equal(fixedValues[fixedKeys.indexOf('core.checkStat')], 'default');
   assert.equal(fixedValues[fixedKeys.indexOf('core.ignoreStat')], 'false');
   assert.equal(fixedValues[fixedKeys.indexOf('core.untrackedCache')], 'false');
+  assert.equal(fixedValues[fixedKeys.indexOf('core.attributesFile')], '');
+  assert.equal(fixedValues[fixedKeys.indexOf('core.excludesFile')], '');
   assert.equal(fixedValues.includes('attacker.exe'), false);
   assert.equal(result.GIT_NO_REPLACE_OBJECTS, '1');
   assert.equal(result.GIT_GRAFT_FILE, 'NUL');

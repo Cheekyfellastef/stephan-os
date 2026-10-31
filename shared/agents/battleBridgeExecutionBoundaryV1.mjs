@@ -48,9 +48,17 @@ export const BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS = Object.freeze([
 export function battleBridgeGitFixedConfigArgs(platform = process.platform) {
   resolveBattleBridgeGitExecutable(platform);
   const nullDevice = platform === 'win32' ? 'NUL' : '/dev/null';
-  return Object.freeze(BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.map((value) => (
-    value.endsWith('=NUL') ? `${value.slice(0, -3)}${nullDevice}` : value
-  )));
+  return Object.freeze(BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.map((value) => {
+    if (!value.endsWith('=NUL')) return value;
+    if (platform === 'win32'
+        && (value.startsWith('core.attributesFile=') || value.startsWith('core.excludesFile='))) {
+      // Git for Windows rejects NUL for these path-valued config keys. An empty
+      // value disables the external file while retaining the closed-world
+      // source boundary; hooksPath and environment-level null files stay NUL.
+      return value.slice(0, -3);
+    }
+    return `${value.slice(0, -3)}${nullDevice}`;
+  }));
 }
 
 function fixedEnvironmentConfig(fixedConfigArgs) {
