@@ -361,3 +361,26 @@ test('Ignition offers exact retained-custody preparation without restart or rele
   assert.doesNotMatch(fn, /Invoke-Expression|cmd\.exe|git\s+reset|git\s+clean|git\s+push/i);
   assert.doesNotMatch(fn, /^\s+-(?:or|and)\b/m, 'Windows PowerShell 5.1 must not depend on a binary operator at the start of a continuation line');
 });
+
+test('Ignition offers one bounded protected fixed-runtime install without direct elevation authority', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /function Invoke-SovereignFixedRuntimeInstallation/);
+  assert.match(script, /sovereign-fixed-runtime-install-handoff-v1\.mjs/);
+  assert.match(script, /install-sovereign-fixed-runtime-approved\.ps1/);
+  assert.match(script, /'status' '--expected-main' \$expectedMain/);
+  assert.match(script, /FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING/);
+  assert.match(script, /MessageBoxButtons\]::YesNo/);
+  assert.match(script, /Install Sovereign fixed runtime/);
+  assert.match(script, /-ExpectedHead \$expectedMain -OperatorApproved/);
+  assert.match(script, /PENDING_REBOOT/);
+  assert.match(script, /QUALIFIED/);
+  assert.match(script, /sovereignFixedRuntimeInstalled = \$true/);
+  assert.match(script, /pcRestartPerformed = \$false/);
+  assert.match(script, /Use the normal Windows Restart command/);
+  assert.match(script, /Invoke-SovereignFixedRuntimeInstallation\) \{\s*exit 0/);
+  const fn = script.match(/function Invoke-SovereignFixedRuntimeInstallation[\s\S]*?^}\r?$/m)?.[0] || '';
+  assert.ok(fn);
+  assert.doesNotMatch(fn, /Start-Process|Restart-Computer|shutdown\.exe|Stop-Computer|Invoke-Expression|cmd\.exe/i);
+  assert.doesNotMatch(fn, /git\s+(?:reset|clean|push|merge|rebase|checkout|switch)/i);
+});
+
