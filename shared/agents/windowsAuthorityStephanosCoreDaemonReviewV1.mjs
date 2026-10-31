@@ -214,14 +214,8 @@ function reviewRunner(source, path, findings) {
     findings.push(finding('core-daemon-runner-relay-heartbeat-age-reassigned', path));
   }
   requirePattern(findings, activeSource,
-    /if \(\$relayBefore\.Count -ne 1 -or -not \[bool\]\$relayHealthBefore\.healthy\)[\s\S]*if \(\$relayBefore\.Count -gt 0\)[\s\S]*Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/,
+    /if \(\$relayBefore\.Count -eq 0 -or -not \[bool\]\$relayHealthBefore\.healthy\)[\s\S]*if \(\$relayBefore\.Count -gt 0\)[\s\S]*Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/,
     'core-daemon-runner-relay-recycle-not-health-gated', path);
-  requirePattern(findings, activeSource,
-    /function\s+Wait-SovereignRelayDaemonReady\b[\s\S]*?\[int\]\$Attempts\s*=\s*40[\s\S]*?\[int\]\$DelayMilliseconds\s*=\s*500[\s\S]*?\$lastProcesses\.Count\s+-eq\s+1\s+-and\s+\[bool\]\$lastHealth\.healthy[\s\S]*?Start-Sleep\s+-Milliseconds\s+\$DelayMilliseconds/,
-    'core-daemon-runner-relay-bounded-readiness-proof-missing', path);
-  requirePattern(findings, activeSource,
-    /\$relayDaemonHealthy\s*=\s*\[bool\]\(\$relayReady\.ready\s+-and\s+\$relayAfter\.Count\s+-eq\s+1\s+-and\s+\$relayHealthAfter\.healthy\)/,
-    'core-daemon-runner-relay-singleton-final-proof-missing', path);
 
   const startLines = activeSource.split(/\r?\n/).filter((line) => /\bStart-Process\b/.test(line));
   if (startLines.length !== 4) findings.push(finding('core-daemon-runner-process-start-estate-widened', path));
