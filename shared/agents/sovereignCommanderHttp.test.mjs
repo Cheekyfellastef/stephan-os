@@ -702,9 +702,23 @@ async function runNativeGuardianFixture(httpUrl) {
     const fire = () => { const timer = next(); assert.ok(timer, 'next cycle remains scheduled'); timer.fired = true; timer.fn(); };
     const complete = (kind = 'success') => {
       const call = calls.at(-1); assert.ok(call);
+      const typedFailure = kind === 'typed-failure';
+      const typedStdout = typedFailure
+        ? 'SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=' + JSON.stringify({
+            schemaVersion: 'stephanos.sovereign-commander-goal-builder-repair.v1',
+            ok: false,
+            blocker: 'CANONICAL_PROGRAMME_HOLD_REPAIR_REQUIRED',
+            canonicalGoalFabricOnly: true,
+            duplicateSchedulerAllowed: false,
+            mergeAuthority: false,
+            arbitraryShellAllowed: false,
+            finalVerdict: 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED',
+          }) + '\\n'
+        : '';
       const value = Object.freeze({ ok: kind === 'success' || kind === 'forged',
         reason: kind === 'success' ? '' : kind === 'excluded' ? 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD'
           : kind === 'cancelled' ? 'FIXED_RUNTIME_OPERATION_CANCELLED' : 'CHILD_FAILED',
+        stdout: typedStdout,
         executionCustodyReleased: true, nativeReceipt: Object.freeze({ RequestId: call.binding.requestId }),
       });
       if (kind === 'excluded') exclusionProof.set(value, call.binding.requestId);
@@ -757,6 +771,20 @@ async function runNativeGuardianFixture(httpUrl) {
       mode = ''; h.fire(); h.complete(); await flush();
       assert.equal(h.guardian.status().consecutiveFailureCount, 0);
       assert.equal(h.next().delay, 60000); cases++;
+    } finally { h.guardian.stop(); }
+  }
+  {
+    const h = fixture();
+    try {
+      h.fire(); h.complete('typed-failure'); await flush();
+      assert.equal(h.guardian.status().lastOk, false);
+      assert.equal(h.guardian.status().lastActionOk, false);
+      assert.equal(h.guardian.status().lastBlocker, 'CANONICAL_PROGRAMME_HOLD_REPAIR_REQUIRED');
+      assert.equal(h.guardian.status().timeoutCustodyHeld, false);
+      assert.equal(reports[0].outcome, 'BLOCKED');
+      assert.equal(reports[0].actions[0].blocker, 'CANONICAL_PROGRAMME_HOLD_REPAIR_REQUIRED');
+      assert.equal(h.next().delay, 60000);
+      cases++;
     } finally { h.guardian.stop(); }
   }
   for (const kind of ['failure', 'excluded', 'forged', 'journal-failed']) {
@@ -883,7 +911,7 @@ test('production Windows guardian keeps the qualified owner live without widenin
       '--experimental-vm-modules', '--input-type=module', '-e',
       `const run = ${runNativeGuardianFixture.toString()}; process.stdout.write(JSON.stringify(await run(${JSON.stringify(httpUrl)})));`,
     ], { encoding: 'utf8', timeout: 20000, windowsHide: true }));
-  assert.equal(result.cases, 14);
+  assert.equal(result.cases, 15);
   assert.equal(result.nativeExecuted, false);
   assert.equal(result.productionQualification, false);
 });

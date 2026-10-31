@@ -406,7 +406,7 @@ test('goal builder repair never re-enters control-plane repair while running thr
   ]);
 });
 
-test('goal builder repair stops at the first failed bounded recovery step and preserves its blocker', () => {
+test('goal builder repair preserves an explicit heartbeat failure and still performs safe terminal readback', () => {
   const calls = [];
   const result = runSovereignCommanderGoalBuilderRepair({
     runStep(step) {
@@ -425,11 +425,67 @@ test('goal builder repair stops at the first failed bounded recovery step and pr
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'GOAL_HEARTBEAT_FAILED');
+  assert.equal(result.repairStepFailure.explicitBlocker, true);
   assert.deepEqual(calls, [
     'fleet-goal-supervisor',
     'controller-lane-status',
     'goal-discovery-heartbeat',
+    'fleet-goal-supervisor',
+    'controller-lane-status',
   ]);
+});
+
+test('pipe-free heartbeat failure is replaced by the exact safe terminal supervisor blocker', () => {
+  const calls = [];
+  let supervisorCalls = 0;
+  const result = runSovereignCommanderGoalBuilderRepair({
+    runStep(step) {
+      calls.push(step.id);
+      if (step.id === 'fleet-goal-supervisor') {
+        supervisorCalls += 1;
+        return supervisorCalls === 1
+          ? { ok: false, status: 2 }
+          : supervisorStatus({
+              finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_BLOCKED',
+              daemonMayReportGreen: false,
+              blocker: 'CANONICAL_PROGRAMME_HOLD_REPAIR_REQUIRED',
+            });
+      }
+      if (step.id === 'controller-lane-status') return laneStatus({
+        finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED',
+        refillHealth: 'AMBER',
+        refillState: 'TELEMETRY_STALE_OR_INCOMPLETE',
+      });
+      if (step.id === 'goal-discovery-heartbeat') return { ok: false, status: 2, errorCode: '' };
+      return { ok: true, status: 0 };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CANONICAL_PROGRAMME_HOLD_REPAIR_REQUIRED');
+  assert.equal(result.repairStepFailure.blocker, 'GOAL_DISCOVERY_HEARTBEAT_TERMINAL_FAILURE');
+  assert.equal(result.repairStepFailure.explicitBlocker, false);
+  assert.deepEqual(calls, [
+    'fleet-goal-supervisor', 'controller-lane-status', 'goal-discovery-heartbeat',
+    'fleet-goal-supervisor', 'controller-lane-status',
+  ]);
+});
+
+test('pipe-free heartbeat failure can never false-green after readback', () => {
+  let supervisorCalls = 0;
+  const result = runSovereignCommanderGoalBuilderRepair({
+    runStep(step) {
+      if (step.id === 'fleet-goal-supervisor') {
+        supervisorCalls += 1;
+        return supervisorCalls === 1 ? { ok: false, status: 2 } : supervisorStatus();
+      }
+      if (step.id === 'controller-lane-status') return laneStatus();
+      if (step.id === 'goal-discovery-heartbeat') return { ok: false, status: 2, errorCode: '' };
+      return { ok: true, status: 0 };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'GOAL_DISCOVERY_HEARTBEAT_TERMINAL_FAILURE');
+  assert.equal(result.finalVerdict, 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED');
 });
 
 test('goal builder repair never false-greens while safe work still waits in free lanes', () => {

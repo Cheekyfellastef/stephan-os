@@ -34,6 +34,34 @@ function text(value) {
   return String(value ?? '').trim();
 }
 
+const GOAL_BUILDER_REPAIR_RESULT_MARKER = 'SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=';
+const SAFE_GOAL_BUILDER_BLOCKER = /^[A-Z0-9][A-Z0-9._:-]{0,159}$/;
+
+export function projectGoalBuilderChildBlockerV1(processId, stdout) {
+  if (processId !== FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId) return '';
+  const raw = String(stdout || '');
+  if (!raw || Buffer.byteLength(raw, 'utf8') > 16 * 1024) return '';
+  const lines = raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const marked = lines.filter(line => line.startsWith(GOAL_BUILDER_REPAIR_RESULT_MARKER));
+  if (marked.length !== 1) return '';
+  try {
+    const value = JSON.parse(marked[0].slice(GOAL_BUILDER_REPAIR_RESULT_MARKER.length));
+    const blocker = text(value?.blocker);
+    if (!value || Array.isArray(value)
+      || value.schemaVersion !== 'stephanos.sovereign-commander-goal-builder-repair.v1'
+      || value.ok !== false
+      || !['SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED', 'SOVEREIGN_GOAL_BUILDER_ORIGINAL_OWNER_RECOVERY_REQUIRED'].includes(value.finalVerdict)
+      || value.canonicalGoalFabricOnly !== true
+      || value.duplicateSchedulerAllowed !== false
+      || value.mergeAuthority !== false
+      || value.arbitraryShellAllowed !== false
+      || !SAFE_GOAL_BUILDER_BLOCKER.test(blocker)) return '';
+    return blocker;
+  } catch {
+    return '';
+  }
+}
+
 function loopbackHost(value) {
   return ['127.0.0.1', '::1', 'localhost'].includes(text(value).toLowerCase());
 }
@@ -195,12 +223,16 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
           : zero ? custodyStore.releaseNativeTerminal(native.nativeReceipt) : { ok: false };
         state.timeoutCustodyHeld = released.ok !== true;
         state.lastOk = native.ok === true && released.ok === true;
+        const childBlocker = native.ok === true
+          ? ''
+          : projectGoalBuilderChildBlockerV1(command.plan.processId, native.stdout);
         state.lastBlocker = state.timeoutCustodyHeld ? SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER
-          : native.ok === true ? '' : native.reason;
+          : native.ok === true ? '' : childBlocker || native.reason;
         state.lastFinalVerdict = state.lastOk ? 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
           : 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED';
         const structuredContent = Object.freeze({ ...native, processId: command.plan.processId,
-          status: native.ok ? 0 : 2, terminalEvidenceRef: released.terminalEvidenceRef || '',
+          status: native.ok ? 0 : 2, childBlocker,
+          terminalEvidenceRef: released.terminalEvidenceRef || '',
           terminalEvidenceSha256: released.terminalEvidenceSha256 || '' });
         const contentText = native.stdout || native.reason;
         const owned = Object.freeze({ ok: state.lastOk, command, structuredContent, contentText,
