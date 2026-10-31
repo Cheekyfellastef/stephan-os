@@ -503,7 +503,33 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     return true;
   };
 
-  schedule(startDelayMs);
+  const recoverPreparedCustodyOnStartup = async () => {
+    if (!state.enabled || !state.timeoutCustodyHeld
+        || typeof custodyStore?.recoverPreparedAfterBoot !== 'function'
+        || state.running || state.maintenanceInFlight || stopped) return false;
+    state.maintenanceInFlight = true;
+    try {
+      const result = await custodyStore.recoverPreparedAfterBoot();
+      if (result?.ok === true) {
+        state.timeoutCustodyHeld = false;
+        state.lastBlocker = '';
+        state.lastOk = false;
+        state.lastFinalVerdict = 'SOVEREIGN_MAINTENANCE_CUSTODY_RECOVERED_REPAIR_PENDING';
+        schedule(startDelayMs);
+        return true;
+      }
+      return false;
+    } finally {
+      state.maintenanceInFlight = false;
+      closeStoppedCustody();
+    }
+  };
+
+  if (state.timeoutCustodyHeld) {
+    void recoverPreparedCustodyOnStartup();
+  } else {
+    schedule(startDelayMs);
+  }
 
   return Object.freeze({
     status,
