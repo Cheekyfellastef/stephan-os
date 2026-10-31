@@ -427,6 +427,7 @@ test('guardian startup resumes scheduling only after prepared custody auto-recov
   const disabled = startActualGuardian({
     custodyStore: {
       status: () => ({ held: true, digest: 'c'.repeat(64), reservationId: 'prepared-disabled-cycle' }),
+      preparedRecoveryEligible: () => true,
       recoverPreparedAfterBoot: async () => {
         disabledRecoverCalls += 1;
         return { ok: true, custodyReleased: true, reservationId: 'prepared-disabled-cycle' };
