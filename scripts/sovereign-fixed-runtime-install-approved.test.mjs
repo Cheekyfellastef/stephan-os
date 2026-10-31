@@ -1,8 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
 const source = await readFile(new URL('./windows/install-sovereign-fixed-runtime-approved.ps1', import.meta.url), 'utf8');
+
+test('approved fixed runtime bridge parses cleanly in Windows PowerShell 5.1', { skip: process.platform !== 'win32' }, () => {
+  const path = fileURLToPath(new URL('./windows/install-sovereign-fixed-runtime-approved.ps1', import.meta.url));
+  const escaped = path.replace(/'/g, "''");
+  const command = "$tokens=$null; $errors=$null; [System.Management.Automation.Language.Parser]::ParseFile('" + escaped
+    + "', [ref]$tokens, [ref]$errors) | Out-Null; if ($errors.Count -gt 0) { $errors | ForEach-Object { $_.Message } | Write-Error; exit 1 }";
+  const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', windowsHide: true });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
 
 test('approved fixed runtime bridge has one exact-head approval surface and one fixed UAC child', () => {
   assert.match(source, /\[ValidatePattern\('\^\[0-9a-f\]\{40\}\$'\)\]/);
@@ -39,4 +51,4 @@ test('approved bridge validates the private candidate before elevation and verif
   assert.match(source, /FIXED_RUNTIME_ELEVATED_INSTALL_FAILED/);
   assert.match(source, /FIXED_RUNTIME_INSTALL_READBACK_UNPROVEN/);
   assert.match(source, /laterFullBootRequired/);
-});
+});\n
