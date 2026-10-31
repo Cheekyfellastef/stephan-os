@@ -102,7 +102,23 @@ async function fixture() {
 
 test('isolated real Git source build proves physical pickup, actual Node tests, exact scoped commit and no main mutation', async () => {
   const ctx = await fixture();
-  const result = await build(ctx);
+  let result;
+  try { result = await build(ctx); }
+  catch (error) {
+    if (error?.code === 'RESCUE_ISLAND_RECOVERY_TEST_TREE_UNTRUSTED') {
+      // Test-only bounded identity diagnostics. Never weaken the native guard.
+      const worktree = join(ctx.worktreeRoot, ctx.task.taskId);
+      const dependencies = ['rescueIslandPreflightV1.mjs', 'rescueIslandPreflightV1.test.mjs']
+        .map(name => 'shared/agents/' + name).map(relative => ({
+          path: relative,
+          worktreeBlob: git(worktree, 'hash-object', '--no-filters', '--', relative),
+          committedBlob: git(worktree, 'rev-parse', 'HEAD:' + relative),
+        }));
+      const pending = git(worktree, 'status', '--porcelain', '--untracked-files=all').slice(0, 300);
+      console.log('RESCUE_ISLAND_FIXTURE_BLOB_DIAG=' + JSON.stringify({ dependencies, pending }));
+    }
+    throw error;
+  }
   assert.equal(result.ok, true);
   assert.ok(result.receipts.every(receipt => receipt.fixtureOnly === true));
   assert.equal(result.workerId, 'rescue-island-01');
