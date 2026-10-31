@@ -264,9 +264,18 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         && payload.pcRestartAllowed === false
         && payload.visiblePowerShellRequired === false
       );
+      // The watchdog also checks VR governor, Core and fleet-supervisor health.
+      // Their closed exit codes 3/4/5 must not invalidate an independently
+      // healthy exact-head Relay. Exit 2 is Commander-health failure and remains
+      // ineligible because receiptValid requires daemonHealthy/healthyAfter.
+      const relayWatchdogReceiptSucceeded = Boolean(
+        receiptValid
+        && Number.isInteger(result.status)
+        && [0, 3, 4, 5].includes(result.status)
+      );
       const relayObservationInput = {
         schemaVersion: POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
-        watchdogSucceeded: result.ok === true,
+        watchdogSucceeded: relayWatchdogReceiptSucceeded,
         healthy: payload?.relayDaemonHealthy === true,
         sourceHead: text(payload?.relayDaemonSourceHead).toLowerCase(),
         sourceHeadMatchesLive: payload?.relayDaemonSourceHeadMatchesLive === true,
@@ -281,7 +290,7 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         relayObservationInput, text(afterHead).toLowerCase());
       const sovereignRelayProof = projectPostSyncSovereignRelayProof({
         schemaVersion: POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
-        watchdogSucceeded: result.ok,
+        watchdogSucceeded: relayWatchdogReceiptSucceeded,
         healthy: payload?.relayDaemonHealthy,
         sourceHead: payload?.relayDaemonSourceHead,
         sourceHeadMatchesLive: payload?.relayDaemonSourceHeadMatchesLive,

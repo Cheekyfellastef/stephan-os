@@ -45,7 +45,10 @@ test('fixed installation candidate preserves exact blobs and stays below the exi
 
 test('fixed manifest covers current static and literal dynamic imports plus custody runtime-read inputs',()=>{
  const output=execFileSync(process.execPath,['--experimental-vm-modules',fileURLToPath(new URL('./fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',import.meta.url))],{encoding:'utf8',windowsHide:true,timeout:10000});
- const result=JSON.parse(output);assert.ok(result.memberCount<=256);assert.deepEqual(result.missing,[]);
+ const result=JSON.parse(output);assert.ok(result.memberCount<=258);
+  assert.equal(result.memberCount,258);
+  assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes('scripts/sovereign-commander-ignition-diagnosis.mjs'));
+  assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes('scripts/sovereign-commander-persistent-runtime-repair.mjs'));assert.deepEqual(result.missing,[]);
  assert.deepEqual(result.bare,[]);assert.equal(result.repositoryModulesEvaluated,false);
 });
 

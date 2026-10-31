@@ -10,7 +10,7 @@ export function buildFixedRuntimeInstallerCandidateV1({expectedMain,sourceTree,o
  if(!/^[a-f0-9]{40}$/.test(expectedMain??'') || !/^[a-f0-9]{40}$/.test(sourceTree??'') ||
    !/^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$/.test(operatorSid??'') ||
    closure.schemaVersion!=='stephanos.fixed-runtime-source-closure.v1' ||
-   FIXED_RUNTIME_SOURCE_PATHS_V1.length>256 || !Array.isArray(records) || records.length!==FIXED_RUNTIME_SOURCE_PATHS_V1.length)
+   FIXED_RUNTIME_SOURCE_PATHS_V1.length>258 || !Array.isArray(records) || records.length!==FIXED_RUNTIME_SOURCE_PATHS_V1.length)
    throw new Error('FIXED_INSTALL_EXACT_SOURCE_REQUIRED');
  const seen=new Set(),captured=[];let total=0;
  for(const row of records) {
