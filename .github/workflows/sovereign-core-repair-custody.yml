@@ -10,6 +10,7 @@ on:
       - 'scripts/sovereign-fixed-runtime-*'
       - 'scripts/fixtures/sovereign-fixed-runtime-*'
       - 'scripts/windows/install-sovereign-fixed-runtime-v1.ps1'
+      - 'scripts/windows/install-sovereign-fixed-runtime-approved.ps1'
       - 'scripts/windows/SovereignFixedRuntime*'
       - 'scripts/windows/test-sovereign-fixed-runtime*'
       - 'scripts/sovereign-core-directory-action*'
@@ -77,6 +78,7 @@ jobs:
           node --test
           scripts/sovereign-maintenance-installer-source-job-v3.test.mjs
           scripts/sovereign-fixed-runtime-install-handoff-v1.test.mjs
+          scripts/sovereign-fixed-runtime-install-approved.test.mjs
       - name: Bootstrap-isolated source proof and native racy-index regression
         env:
           STEPHANOS_SHARED_WORKSPACE: ${{ runner.temp }}/stephanos-source-proof-fixture
