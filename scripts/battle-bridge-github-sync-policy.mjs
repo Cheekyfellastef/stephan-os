@@ -266,6 +266,19 @@ const SOVEREIGN_RELAY_PROOF_KEYS = Object.freeze(['schemaVersion', 'watchdogSucc
   'sourceHead', 'sourceHeadMatchesLive', 'processCount', 'heartbeatAgeSeconds', 'blocker']);
 const SOVEREIGN_RELAY_OBSERVATION_KEYS = Object.freeze(['schemaVersion', 'watchdogSucceeded', 'healthy',
   'sourceHead', 'sourceHeadMatchesLive', 'processCount', 'heartbeatAgeSeconds', 'blocker']);
+const SOVEREIGN_RELAY_PUBLIC_BLOCKERS = Object.freeze(new Set([
+  '',
+  'SOVEREIGN_RELAY_DAEMON_NODE_MISSING',
+  'SOVEREIGN_RELAY_DAEMON_NOT_HEALTHY',
+  'SOVEREIGN_RELAY_DAEMON_SCRIPT_MISSING',
+  'SOVEREIGN_RELAY_DAEMON_STALE_RECYCLE_FAILED',
+  'SOVEREIGN_RELAY_DAEMON_START_FAILED',
+  'SOVEREIGN_RELAY_LIVE_HEAD_UNPROVEN',
+  'SOVEREIGN_RELAY_SOURCE_HEAD_MISSING',
+  'SOVEREIGN_RELAY_SOURCE_HEAD_STALE',
+  'SOVEREIGN_RELAY_STATUS_INVALID',
+  'SOVEREIGN_RELAY_STATUS_MISSING',
+]));
 
 export function projectPostSyncSovereignRelayObservation(value, expectedHead = '') {
   try {
@@ -276,8 +289,8 @@ export function projectPostSyncSovereignRelayObservation(value, expectedHead = '
       || keys.some(key => !SOVEREIGN_RELAY_OBSERVATION_KEYS.includes(key)
         || !Object.hasOwn(descriptors[key], 'value'))) return null;
     const sourceHead = typeof value.sourceHead === 'string' ? value.sourceHead : '';
-    const blocker = typeof value.blocker === 'string' && /^[A-Z][A-Z0-9_]{0,159}$/.test(value.blocker)
-      ? value.blocker : '';
+    const blocker = typeof value.blocker === 'string' && SOVEREIGN_RELAY_PUBLIC_BLOCKERS.has(value.blocker)
+      ? value.blocker : null;
     const heartbeatAgeSeconds = value.heartbeatAgeSeconds === null
       ? null : Number.isSafeInteger(value.heartbeatAgeSeconds) && value.heartbeatAgeSeconds >= 0
         && value.heartbeatAgeSeconds <= 86400 ? value.heartbeatAgeSeconds : undefined;
@@ -287,7 +300,7 @@ export function projectPostSyncSovereignRelayObservation(value, expectedHead = '
       || typeof value.sourceHeadMatchesLive !== 'boolean'
       || !Number.isSafeInteger(value.processCount) || value.processCount < 0 || value.processCount > 32
       || heartbeatAgeSeconds === undefined
-      || (value.blocker !== '' && !blocker)
+      || blocker === null
       || (expectedHead && !/^[a-f0-9]{40}$/.test(expectedHead))) return null;
     return Object.freeze({
       schemaVersion: POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
