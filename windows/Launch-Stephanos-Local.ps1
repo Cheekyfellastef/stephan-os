@@ -1106,6 +1106,240 @@ Prepare Sovereign Commander custody for the next boot?
   return $true
 }
 
+function Invoke-SovereignFixedRuntimeCommissioning {
+  if ($Mode -ne 'launcher-root') { return $false }
+
+  $nodeExecutable = 'C:\Program Files\nodejs\node.exe'
+  $adapterScript = Join-Path $repoRoot 'scripts\sovereign-fixed-runtime-install-current-v1.mjs'
+  $sourceTruthScript = Join-Path $repoRoot 'scripts\battle-bridge-ignition-supervisor.mjs'
+  $powerShellExecutable = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+  $marker = 'SOVEREIGN_FIXED_RUNTIME_INSTALL_CURRENT_V1='
+
+  foreach ($required in @($nodeExecutable, $adapterScript, $sourceTruthScript, $powerShellExecutable)) {
+    if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { return $false }
+  }
+
+  $sourceText = (& $nodeExecutable $sourceTruthScript '--source-truth-json' 2>$null | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $sourceText) { return $false }
+  try { $sourceTruth = $sourceText | ConvertFrom-Json -ErrorAction Stop } catch { return $false }
+  $expectedMain = [string]$sourceTruth.head
+  if ($sourceTruth.ok -ne $true -or $expectedMain -notmatch '^[a-f0-9]{40}$') { return $false }
+
+  function Read-FixedRuntimeAdapter([string]$ModeName) {
+    $raw = @(& $nodeExecutable $adapterScript $ModeName '--expected-main' $expectedMain 2>&1)
+    $exitCode = $LASTEXITCODE
+    $line = @($raw | ForEach-Object { [string]$_ } | Where-Object { $_.StartsWith($marker) } | Select-Object -Last 1)
+    if (-not $line -or -not $line[0]) { return $null }
+    try {
+      $value = $line[0].Substring($marker.Length) | ConvertFrom-Json -ErrorAction Stop
+      return [pscustomobject]@{ ExitCode = $exitCode; Value = $value }
+    } catch { return $null }
+  }
+
+  $qualification = Read-FixedRuntimeAdapter 'qualification'
+  if ($null -ne $qualification -and $qualification.ExitCode -eq 0 -and $qualification.Value.ok -eq $true) {
+    if ([string]$qualification.Value.state -eq 'QUALIFIED') { return $false }
+    if ([string]$qualification.Value.state -eq 'RESTART_REQUIRED') {
+      $message = 'Sovereign fixed runtime is installed and requires a later full Windows boot before Commander can use it.'
+      Write-LiveLog $message
+      Write-IgnitionStatus -Phase 'restart-required' -Message $message -Extra @{
+        currentStage = 'restart'
+        blocker = ''
+        nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+        sovereignFixedRuntimeInstalled = $true
+        runtimeQualificationProven = $false
+        expectedMain = $expectedMain
+      }
+      Write-IgnitionSupportSnapshot -Verdict 'restart-required' -Extra @{
+        nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+        sovereignFixedRuntimeInstalled = $true
+        runtimeQualificationProven = $false
+        expectedMain = $expectedMain
+      }
+      Add-Type -AssemblyName System.Windows.Forms
+      [System.Windows.Forms.MessageBox]::Show(
+        "The Sovereign fixed runtime is installed but is not allowed to run until a later full Windows boot.\r\n\r\nUse the normal Windows Restart command now.\r\nAfter sign-in, press Ignition.",
+        'Stephanos - Restart required',
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Information
+      ) | Out-Null
+      return $true
+    }
+  }
+
+  $status = Read-FixedRuntimeAdapter 'status'
+  if ($null -eq $status -or $status.ExitCode -ne 0 -or $status.Value.ok -ne $true) { return $false }
+  if ([string]$status.Value.state -eq 'PRESENT') { return $false }
+  if ([string]$status.Value.state -ne 'MISSING' -or
+      [string]$status.Value.reason -ne 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING') { return $false }
+
+  Write-LiveLog 'Control Tower repair requires the protected Sovereign fixed runtime; preparing the exact current-main installer candidate.'
+  Write-IgnitionStatus -Phase 'fixed-runtime-installation' -Message 'Preparing exact current-main Sovereign fixed runtime installation approval.' -Extra @{
+    currentStage = 'fixed-runtime-installation'
+    blocker = 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING'
+    nextOperatorAction = 'Review the fixed runtime package, approve it, then accept the Windows UAC prompt.'
+    expectedMain = $expectedMain
+  }
+
+  $prepared = Read-FixedRuntimeAdapter 'prepare'
+  if ($null -eq $prepared -or $prepared.ExitCode -ne 0 -or $prepared.Value.ok -ne $true) {
+    $prepareBlocker = if ($null -ne $prepared -and $prepared.Value.blocker) { [string]$prepared.Value.blocker } else { 'FIXED_RUNTIME_INSTALL_PREPARATION_UNPROVEN' }
+    Write-LiveLog "Sovereign fixed runtime preparation blocked: $prepareBlocker"
+    Write-IgnitionStatus -Phase 'blocked' -Message "Sovereign fixed runtime preparation blocked: $prepareBlocker" -Extra @{
+      currentStage = 'blocked'
+      blocker = $prepareBlocker
+      expectedMain = $expectedMain
+    }
+    return $true
+  }
+
+  $candidate = $prepared.Value
+  $expectedPayloadPath = Join-Path $env:LOCALAPPDATA "Temp\StephanosFixedRuntimeInstall-$expectedMain.json"
+  $candidateInvalid = ([string]$candidate.state -ne 'READY_FOR_OPERATOR_APPROVAL') -or
+      ([string]$candidate.expectedMain -cne $expectedMain) -or
+      ([string]$candidate.payloadPath -cne $expectedPayloadPath) -or
+      (([string]$candidate.payloadSha256) -notmatch '^[a-f0-9]{64}$') -or
+      (([string]$candidate.scriptSha256) -notmatch '^[a-f0-9]{64}$') -or
+      (([string]$candidate.encodedCommand) -notmatch '^[A-Za-z0-9+/=]+$') -or
+      ([string]$candidate.powershellExecutable -cne $powerShellExecutable) -or
+      ($candidate.requiresUac -ne $true) -or
+      ($candidate.arbitraryShellAllowed -ne $false) -or
+      ($candidate.sourceMutationAllowed -ne $false) -or
+      ($candidate.mergeAuthority -ne $false) -or
+      ($candidate.pcRestartAuthority -ne $false)
+  if ($candidateInvalid) {
+    Write-LiveLog 'Sovereign fixed runtime installer candidate failed the closed launcher contract.'
+    Write-IgnitionStatus -Phase 'blocked' -Message 'Sovereign fixed runtime installer candidate was not exact.' -Extra @{
+      currentStage = 'blocked'
+      blocker = 'FIXED_RUNTIME_INSTALL_CANDIDATE_UNPROVEN'
+      expectedMain = $expectedMain
+    }
+    return $true
+  }
+
+  Add-Type -AssemblyName System.Windows.Forms
+  $summary = @"
+Stephanos Control Tower has proved that the protected Sovereign fixed runtime is missing.
+
+Install the exact reviewed runtime for current protected main?
+
+Main:
+$expectedMain
+
+Payload SHA-256:
+$($candidate.payloadSha256)
+
+Installer program SHA-256:
+$($candidate.scriptSha256)
+
+This action:
+- installs only the fixed Sovereign runtime under C:\Program Files\Stephanos
+- uses the exact current main source closure
+- requires Windows UAC
+- cannot run arbitrary commands or choose another path
+- does NOT restart Windows
+- does NOT grant merge or source-mutation authority
+- requires one normal Windows Restart after installation
+
+Continue?
+"@
+  $choice = [System.Windows.Forms.MessageBox]::Show(
+    $summary,
+    'Stephanos - install Sovereign fixed runtime',
+    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+    [System.Windows.Forms.MessageBoxIcon]::Warning,
+    [System.Windows.Forms.MessageBoxDefaultButton]::Button2
+  )
+  if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {
+    Write-LiveLog 'Sovereign fixed runtime installation was offered and declined; no elevated installer was started.'
+    Write-IgnitionStatus -Phase 'blocked' -Message 'Sovereign fixed runtime installation was declined.' -Extra @{
+      currentStage = 'blocked'
+      blocker = 'FIXED_RUNTIME_INSTALL_OPERATOR_DECLINED'
+      expectedMain = $expectedMain
+    }
+    if (Test-Path -LiteralPath $expectedPayloadPath -PathType Leaf) {
+      Remove-Item -LiteralPath $expectedPayloadPath -Force -ErrorAction SilentlyContinue
+    }
+    return $true
+  }
+
+  try {
+    try {
+      $elevated = Start-Process -FilePath $powerShellExecutable -ArgumentList @(
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-EncodedCommand',
+        ([string]$candidate.encodedCommand)
+      ) -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+    } catch {
+      Write-LiveLog 'Sovereign fixed runtime UAC elevation was cancelled or failed.'
+      Write-IgnitionStatus -Phase 'blocked' -Message 'Sovereign fixed runtime UAC elevation was cancelled or failed.' -Extra @{
+        currentStage = 'blocked'
+        blocker = 'FIXED_RUNTIME_INSTALL_UAC_CANCELLED_OR_FAILED'
+        expectedMain = $expectedMain
+      }
+      return $true
+    }
+
+    if ($elevated.ExitCode -ne 0) {
+      Write-LiveLog "Sovereign fixed runtime elevated installer returned exit code $($elevated.ExitCode)."
+      Write-IgnitionStatus -Phase 'blocked' -Message 'Sovereign fixed runtime elevated installer failed.' -Extra @{
+        currentStage = 'blocked'
+        blocker = 'FIXED_RUNTIME_INSTALL_ELEVATED_CHILD_FAILED'
+        elevatedExitCode = [int]$elevated.ExitCode
+        expectedMain = $expectedMain
+      }
+      return $true
+    }
+
+    $after = Read-FixedRuntimeAdapter 'status'
+    $installed = $null -ne $after -and $after.ExitCode -eq 0 -and $after.Value.ok -eq $true -and
+      [string]$after.Value.state -eq 'PRESENT' -and [string]$after.Value.sourceHead -ceq $expectedMain
+    if (-not $installed) {
+      $readbackBlocker = if ($null -ne $after -and $after.Value.reason) { [string]$after.Value.reason } else { 'FIXED_RUNTIME_INSTALL_READBACK_UNPROVEN' }
+      Write-LiveLog "Sovereign fixed runtime installation readback blocked: $readbackBlocker"
+      Write-IgnitionStatus -Phase 'blocked' -Message "Sovereign fixed runtime installation readback blocked: $readbackBlocker" -Extra @{
+        currentStage = 'blocked'
+        blocker = $readbackBlocker
+        expectedMain = $expectedMain
+      }
+      return $true
+    }
+
+    $message = 'Sovereign fixed runtime installation is complete and protected. A later full Windows boot is required before runtime qualification.'
+    Write-LiveLog $message
+    Write-IgnitionStatus -Phase 'restart-required' -Message $message -Extra @{
+      currentStage = 'restart'
+      blocker = ''
+      nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+      sovereignFixedRuntimeInstalled = $true
+      runtimeQualificationProven = $false
+      expectedMain = $expectedMain
+      installPayloadSha256 = [string]$candidate.payloadSha256
+      installScriptSha256 = [string]$candidate.scriptSha256
+      installedHelperSha256 = [string]$after.Value.helperSha256
+      installedManifestSha256 = [string]$after.Value.manifestSha256
+    }
+    Write-IgnitionSupportSnapshot -Verdict 'restart-required' -Extra @{
+      nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+      sovereignFixedRuntimeInstalled = $true
+      runtimeQualificationProven = $false
+      expectedMain = $expectedMain
+    }
+    [System.Windows.Forms.MessageBox]::Show(
+      "The protected Sovereign fixed runtime was installed successfully.\r\n\r\nUse the normal Windows Restart command now.\r\nAfter sign-in, press Ignition.\r\n\r\nStephanos has NOT restarted the PC automatically.",
+      'Stephanos - Fixed runtime installed',
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Information
+    ) | Out-Null
+    return $true
+  } finally {
+    if (Test-Path -LiteralPath $expectedPayloadPath -PathType Leaf) {
+      Remove-Item -LiteralPath $expectedPayloadPath -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
 try {
   $resolvedBootMode = if ($Mode -eq 'vite-dev') { 'launcher' } else { $BootMode }
   $browserSurfaces = if ($Mode -eq 'vite-dev') {
@@ -1119,6 +1353,10 @@ try {
   Show-IgnitionSplashScreen
 
   if (Invoke-SovereignCommanderRetainedCustodyPreparation) {
+    exit 0
+  }
+
+  if (Invoke-SovereignFixedRuntimeCommissioning) {
     exit 0
   }
 

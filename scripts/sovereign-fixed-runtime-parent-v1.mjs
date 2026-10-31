@@ -148,6 +148,18 @@ function fixedRuntimeInspectionFailureReason(observed) {
     return row.Reason;
   } catch { return unknown; }
 }
+export function inspectFixedRuntimeInstallationPresenceV1() {
+  if(process.platform!=='win32') return Object.freeze({ok:false,reason:'FIXED_RUNTIME_WINDOWS_REQUIRED',installed:false});
+  try {
+    const installation=protectedInstallation();
+    return Object.freeze({ok:true,reason:'',installed:true,sourceHead:installation.head,
+      helperSha256:installation.helperSha256,manifestSha256:installation.manifestSha256});
+  } catch(error) {
+    const reason=/^[A-Z0-9_]{1,96}$/.test(error?.message||'')?error.message:'FIXED_RUNTIME_QUALIFICATION_UNPROVEN';
+    return Object.freeze({ok:false,reason,installed:false});
+  }
+}
+
 export function inspectFixedRuntimeQualificationV1() {
   if(process.platform!=='win32') return denied('FIXED_RUNTIME_WINDOWS_REQUIRED');
   try {

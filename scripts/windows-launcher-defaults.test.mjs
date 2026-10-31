@@ -337,6 +337,29 @@ test('retained-custody preparation passes native arguments through a PowerShell-
   assert.doesNotMatch(script, /\$prepareText = \(& \$nodeExecutable \$recoveryScript 'prepare-retained-migration'\s*\r?\n\s*'--expected-cycle'/m);
 });
 
+test('Ignition commissions only the exact missing Sovereign fixed runtime and then requires a normal restart', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /function Invoke-SovereignFixedRuntimeCommissioning/);
+  assert.match(script, /sovereign-fixed-runtime-install-current-v1\.mjs/);
+  assert.match(script, /Read-FixedRuntimeAdapter 'qualification'/);
+  assert.match(script, /\[string\]\$qualification\.Value\.state -eq 'RESTART_REQUIRED'/);
+  assert.match(script, /Read-FixedRuntimeAdapter 'status'/);
+  assert.match(script, /\[string\]\$status\.Value\.state -ne 'MISSING'/);
+  assert.match(script, /FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING/);
+  assert.match(script, /Read-FixedRuntimeAdapter 'prepare'/);
+  assert.match(script, /READY_FOR_OPERATOR_APPROVAL/);
+  assert.match(script, /payloadSha256/);
+  assert.match(script, /scriptSha256/);
+  assert.match(script, /Start-Process -FilePath \$powerShellExecutable[\s\S]*?-Verb RunAs[\s\S]*?-Wait -PassThru/);
+  assert.match(script, /'-EncodedCommand'/);
+  assert.match(script, /Use the normal Windows Restart command/);
+  assert.match(script, /Invoke-SovereignCommanderRetainedCustodyPreparation\) \{\s*exit 0\s*\}[\s\S]*?Invoke-SovereignFixedRuntimeCommissioning\) \{\s*exit 0/);
+  const fn = script.match(/function Invoke-SovereignFixedRuntimeCommissioning[\s\S]*?^}\r?$/m)?.[0] || '';
+  assert.ok(fn);
+  assert.doesNotMatch(fn, /Restart-Computer|shutdown\.exe|Stop-Computer|Invoke-Expression|cmd\.exe|git\s+reset|git\s+clean|git\s+push/i);
+  assert.match(fn, /\$candidateInvalid = [\s\S]*?powershellExecutable -cne \$powerShellExecutable[\s\S]*?pcRestartAuthority -ne \$false/);
+});
+
 test('Ignition offers exact retained-custody preparation without restart or release authority', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(script, /function Invoke-SovereignCommanderRetainedCustodyPreparation/);

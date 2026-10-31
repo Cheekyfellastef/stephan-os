@@ -1102,6 +1102,26 @@ test('ordinary Commander script refreshes remain independent of desktop-plugin r
   assert.equal(result.plan.pluginHostActivationRequired, false);
 });
 
+test('attended fixed-runtime commissioning helpers are startup-only and create no post-sync target', async () => {
+  for (const path of [
+    'scripts/sovereign-fixed-runtime-install-current-v1.mjs',
+  ]) {
+    const calls = [];
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths: [path],
+      adapters: Object.fromEntries([
+        'refreshUi', 'restartBackend', 'restartMissionWorker',
+        'restartGitHubMailbox', 'refreshSovereignCommander', 'confirmNaturalReload',
+      ].map(name => [name, async () => { calls.push(name); return pass(); }])),
+    });
+    assert.equal(result.ok, true, path);
+    assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED, path);
+    assert.deepEqual(result.plan.internal.noRuntimePaths, [path], path);
+    assert.deepEqual(result.plan.targetIds, [], path);
+    assert.deepEqual(calls, [], path);
+  }
+});
+
 test('invocation-loaded ignition sources do not introduce a post-sync service launch', async () => {
   for (const path of [
     'scripts/ignite-stephanos-local.mjs',
