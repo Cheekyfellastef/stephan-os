@@ -165,8 +165,10 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
 ]);
 
 const NO_RUNTIME_EXACT = new Set([
-  // Manual offline source-package construction; no runtime root imports it.
+  // Manual/offline or operator-attended installer preparation is loaded fresh
+  // and owns no persistent runtime process.
   'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs',
+  'scripts/sovereign-fixed-runtime-install-handoff-v1.mjs',
   'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',
   'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs',
   'scripts/canonical-mailbox-rollover-github-adapter.mjs',
