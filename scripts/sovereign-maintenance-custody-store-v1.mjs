@@ -349,27 +349,31 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
   };
   const prepareAfterAuditLoss = request => prepareFromAuditLoss(request, false);
   const prepareRetainedMigration = request => prepareFromAuditLoss(request, true);
+  const preparedRecoveryEligible = () => {
+    try {
+      const current = read();
+      const incident = current?.record?.incident;
+      return Boolean(current && current.record.phase === 'ACTIVE'
+        && incident?.kind === 'RETAINED_JOURNAL_MIGRATION'
+        && /^[a-f0-9]{64}$/.test(incident?.preparationReceiptDigest ?? '')
+        && /^[a-f0-9]{64}$/.test(incident?.heldOwnerDigest ?? '')
+        && /^[a-f0-9]{40}$/.test(incident?.sourceHead ?? '')
+        && /^[a-f0-9]{64}$/.test(incident?.originalProjectionDigest ?? '')
+        && incident?.historicalOutcome === 'UNKNOWN'
+        && incident?.projectionFreshness === 'UNPROVEN');
+    } catch { return false; }
+  };
   const recoverPreparedAfterBoot = async () => {
     let current;
     try { current = read(); } catch { return held('MAINTENANCE_PREPARED_RECOVERY_UNPROVEN'); }
-    const incident = current?.record?.incident;
-    if (!current || current.record.phase !== 'ACTIVE'
-        || incident?.kind !== 'RETAINED_JOURNAL_MIGRATION'
-        || !/^[a-f0-9]{64}$/.test(incident?.preparationReceiptDigest ?? '')
-        || !/^[a-f0-9]{64}$/.test(incident?.heldOwnerDigest ?? '')
-        || !/^[a-f0-9]{40}$/.test(incident?.sourceHead ?? '')
-        || !/^[a-f0-9]{64}$/.test(incident?.originalProjectionDigest ?? '')
-        || incident?.historicalOutcome !== 'UNKNOWN'
-        || incident?.projectionFreshness !== 'UNPROVEN') {
-      return held('MAINTENANCE_PREPARED_RECOVERY_UNPROVEN');
-    }
+    if (!preparedRecoveryEligible()) return held('MAINTENANCE_PREPARED_RECOVERY_UNPROVEN');
     // The ACTIVE retained-migration record exists only after the exact
     // operator-approved preparation path has durably archived its receipt.
     // A successor boot may consume that prior authorization, but may not
     // create or widen it. recoverAfterBoot still rechecks digest + full boot.
     return recoverAfterBoot({ expectedDigest: current.digest, operatorApproval: 'operator-approved' });
   };
-  return Object.freeze({ status, reserve, release, recordNativeRoot, releaseNativeTerminal, recoverAfterBoot, recoverPreparedAfterBoot, prepareAfterAuditLoss, prepareRetainedMigration,
+  return Object.freeze({ status, reserve, release, recordNativeRoot, releaseNativeTerminal, recoverAfterBoot, preparedRecoveryEligible, recoverPreparedAfterBoot, prepareAfterAuditLoss, prepareRetainedMigration,
     // This only ADDS an ACTIVE fence. The fixed migration adapter independently
     // checks the exact live held owner/report before calling it. No idle seed.
     prepareIncident: request => reserve(request, true),
