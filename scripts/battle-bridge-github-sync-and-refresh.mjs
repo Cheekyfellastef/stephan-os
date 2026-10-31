@@ -355,6 +355,7 @@ export async function runBattleBridgeSyncAndRefresh({
   platform = process.platform,
   maxCycles = MAX_SYNC_REFRESH_CYCLES,
   nowMs = () => performance.now(),
+  sleepFn = (ms) => new Promise(resolve => setTimeout(resolve, ms)),
 } = {}) {
   if (path.resolve(paths.repoRoot) !== path.resolve(expectedPaths.repoRoot)
     || path.resolve(paths.workspaceRoot) !== path.resolve(expectedPaths.workspaceRoot)) {
@@ -468,9 +469,44 @@ export async function runBattleBridgeSyncAndRefresh({
         result: refresh.result || null,
       }));
       if (!refresh.ok || refresh.result?.ok !== true) {
+        const refreshBlocker = refresh.result?.blocker || refresh.blocker || 'POST_SYNC_RUNTIME_REFRESH_BLOCKED';
+        if (refreshBlocker === 'POST_SYNC_REFRESH_ALREADY_RUNNING') {
+          let settled = false;
+          while (safeRemaining() > 1_000) {
+            await sleepFn(Math.min(1_000, safeRemaining()));
+            const observedPending = await pendingReader(paths);
+            if (!observedPending) {
+              settled = true;
+              break;
+            }
+            if (observedPending?.ok === false) {
+              return Object.freeze({
+                ok: false,
+                blocker: observedPending.blocker || 'PENDING_POST_SYNC_REFRESH_INVALID',
+                sourceHead: currentSourceHead,
+                syncClassification: sync.result?.evaluation?.classification || '',
+                refreshes: Object.freeze(refreshes),
+                pendingRefreshObserved: true,
+                sourceForwardedBeforeRefresh,
+                refreshDebtCoalesced,
+                finalVerdict: 'SYNC_AND_REFRESH_REFRESH_DEBT_BLOCKED',
+              });
+            }
+            const observedSpans = Array.isArray(observedPending?.spans)
+              ? observedPending.spans
+              : (observedPending?.beforeHead && observedPending?.afterHead
+                ? [{ beforeHead: observedPending.beforeHead, afterHead: observedPending.afterHead }]
+                : []);
+            if (observedSpans.length === 0 && observedPending?.completion) {
+              settled = true;
+              break;
+            }
+          }
+          if (settled) continue;
+        }
         return Object.freeze({
           ok: false,
-          blocker: refresh.result?.blocker || refresh.blocker || 'POST_SYNC_RUNTIME_REFRESH_BLOCKED',
+          blocker: refreshBlocker,
           sourceHead: currentSourceHead,
           syncClassification: sync.result?.evaluation?.classification || '',
           refreshes: Object.freeze(refreshes),
