@@ -169,7 +169,6 @@ const NO_RUNTIME_EXACT = new Set([
   // and owns no persistent runtime process.
   'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs',
   'scripts/sovereign-fixed-runtime-install-handoff-v1.mjs',
-  'scripts/windows/install-sovereign-fixed-runtime-approved.ps1',
   'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',
   'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs',
   'scripts/canonical-mailbox-rollover-github-adapter.mjs',
