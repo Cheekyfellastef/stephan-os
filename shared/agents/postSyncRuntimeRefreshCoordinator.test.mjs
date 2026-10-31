@@ -16,6 +16,34 @@ function pass(sourceHead = B) {
   return { ok: true, exactHeadProofOk: true, sourceHead };
 }
 
+test('fixed native inspector uses the existing guarded Commander refresh and its exact fixture has no runtime action', async () => {
+  const parent = 'scripts/sovereign-fixed-runtime-parent-v1.mjs';
+  const fixture = 'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs';
+  const plan = classifyPostSyncRefresh([parent, fixture, 'scripts/sovereign-fixed-runtime-parent-v1.test.mjs']);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.noRuntimePathCount, 2);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+  assert.equal(classifyPostSyncRefresh([fixture]).classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  let calls = 0;
+  const result = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B, changedPaths: [parent, fixture],
+    adapters: { refreshSovereignCommander: () => { calls++; return { ok: false, exactHeadProofOk: false,
+      blocker: 'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN' }; } } });
+  assert.equal(calls, 1);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN');
+});
+
+test('native inspector classification remains exact and refuses unknown neighboring runtime or fixture paths', () => {
+  for (const path of ['scripts/sovereign-fixed-runtime-parent-v2.mjs',
+    'scripts/sovereign-fixed-runtime-extra.mjs',
+    'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v2.mjs']) {
+    const plan = classifyPostSyncRefresh([path]);
+    assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+    assert.equal(plan.automaticExecutionAllowed, false);
+  }
+});
+
 test('Git changed-path status parser includes deletions and both rename sides', () => {
   const parsed = parseGitChangedPathStatus([
     'D\tstephanos-server/server.js',

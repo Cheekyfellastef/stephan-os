@@ -24,6 +24,27 @@ const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const WORKSPACE='C:\\Users\\Stephan Callear\\Documents\\Stephanos-openclaw-workspace';
 const resourceAllowed=()=>{try{return inspectStephanosNativeCapacityGamingAdmissionV1({workspaceRoot:WORKSPACE,repoRoot:SOURCE}).ok===true;}catch{return false;}};
 const SHA = /^[a-f0-9]{64}$/;
+// Closed diagnostic vocabulary emitted by the fixed native inventory. These
+// failures never qualify an installation or carry native execution provenance.
+const INSPECTION_DENIAL_REASONS = new Set([
+  'RUNTIME_NORMAL_OPERATOR_REQUIRED', 'RUNTIME_PENDING_LATER_BOOT_UNPROVEN',
+  'RUNTIME_WINDOWS_BOOT_UNPROVEN', 'RUNTIME_MACHINE_UNPROVEN',
+  'RUNTIME_SOURCE_REF_CHANGED', 'RUNTIME_SOURCE_MEMBER_CHANGED',
+  'RUNTIME_SOURCE_MEMBER_UNPROVEN', 'RUNTIME_MANIFEST_CLOSURE_INCOMPLETE',
+  'RUNTIME_MANIFEST_IDENTITY_UNPROVEN', 'RUNTIME_EMBEDDED_MANIFEST_UNPROVEN',
+  'RUNTIME_HELPER_LOCATION_UNPROVEN', 'RUNTIME_HELPER_UNEXPECTED_CONTENT',
+  'RUNTIME_PROTECTED_OWNER_UNPROVEN', 'RUNTIME_PROTECTED_WRITE_AUTHORITY_UNPROVEN',
+  'RUNTIME_ANCESTOR_OWNER_UNPROVEN', 'RUNTIME_ANCESTOR_WRITE_AUTHORITY_UNPROVEN',
+  'RUNTIME_FIXED_EXECUTABLE_CHANGED', 'RUNTIME_FIXED_EXECUTABLE_IDENTITY_UNPROVEN',
+  'RUNTIME_JOURNAL_MAPPING_UNPROVEN', 'RUNTIME_JOURNAL_OWNER_UNPROVEN',
+  'RUNTIME_JOURNAL_MUTATION_AUTHORITY_UNPROVEN', 'RUNTIME_JOURNAL_RETENTION_UNPROVEN',
+  'RUNTIME_JOURNAL_ACCESS_UNPROVEN', 'RUNTIME_JOURNAL_BOOTSTRAP_UNPROVEN',
+  'RUNTIME_NATIVE_ANCHOR_MISSING', 'RUNTIME_NATIVE_ANCHOR_MALFORMED',
+  'RUNTIME_NATIVE_ANCHOR_SCAN_EXHAUSTED', 'RUNTIME_NATIVE_ANCHOR_AUTHENTICATION_FAILED',
+  'RUNTIME_CUSTODY_RECORD_AUTHENTICATION_FAILED', 'RUNTIME_CUSTODY_RECORD_SCHEMA_UNPROVEN',
+  'RUNTIME_CUSTODY_PHASE_UNPROVEN', 'RUNTIME_CUSTODY_BOOT_UNPROVEN',
+  'RUNTIME_CUSTODY_TERMINAL_UNPROVEN',
+]);
 const proof = new WeakMap();
 const qualifications = new WeakMap();
 const exclusions = new WeakMap();
@@ -54,7 +75,16 @@ function exactHead() {
 function protectedInstallation() {
   const head=exactHead(), directory=join(ROOT,head), helper=join(directory,'host.exe');
   for(let path=directory;;path=dirname(path)) {
-    const row=lstatSync(path);
+    let row;
+    try { row=lstatSync(path); }
+    catch(error) {
+      // Only the existing observation of this exact version directory can
+      // establish its absence. Other missing/changed/unreadable files remain
+      // unproven; this classification grants no install or retry authority.
+      if(path===directory && error?.code==='ENOENT')
+        throw new Error('FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING');
+      throw error;
+    }
     if(!row.isDirectory() || row.isSymbolicLink()) throw new Error('FIXED_RUNTIME_PARENT_REDIRECTION');
     if(dirname(path)===path) break;
   }
@@ -96,6 +126,28 @@ function singleReport(stdout,marker,maximum=262144) {
   if(lines.length!==1 || !lines[0].startsWith(marker)) throw new Error('FIXED_RUNTIME_REPORT_SHAPE');
   return JSON.parse(lines[0].slice(marker.length));
 }
+function fixedRuntimeInspectionFailureReason(observed) {
+  const unknown='FIXED_RUNTIME_IDENTITY_INSPECTION_UNPROVEN';
+  if(observed?.error) {
+    if(observed.error.code==='ETIMEDOUT') return 'FIXED_RUNTIME_IDENTITY_INSPECTION_TIMEOUT';
+    if(observed.error.code==='ENOENT') return 'FIXED_RUNTIME_INSPECTOR_NOT_FOUND';
+    return unknown;
+  }
+  if(observed?.signal || observed?.status!==2) return unknown;
+  try {
+    const row=singleReport(observed.stdout,'SOVEREIGN_RUNTIME_INVENTORY_V1=',32768);
+    // The native refusal wire record deliberately has no successful identity or
+    // profile claims. Refuse extra fields, mixed records and contradictory flags;
+    // raw stdout, stderr and OS error text never enter the public diagnostic.
+    if(!row || Array.isArray(row) || Object.keys(row).sort().join(',')!==
+      'MutationAttempted,Ok,Profiles,Reason,RuntimeActivationGranted,SchemaVersion' ||
+      row.SchemaVersion!=='stephanos.fixed-runtime-inventory.v1' || row.Ok!==false ||
+      row.RuntimeActivationGranted!==false || row.MutationAttempted!==false ||
+      !Array.isArray(row.Profiles) || row.Profiles.length!==0 ||
+      !INSPECTION_DENIAL_REASONS.has(row.Reason)) return unknown;
+    return row.Reason;
+  } catch { return unknown; }
+}
 export function inspectFixedRuntimeQualificationV1() {
   if(process.platform!=='win32') return denied('FIXED_RUNTIME_WINDOWS_REQUIRED');
   try {
@@ -103,7 +155,8 @@ export function inspectFixedRuntimeQualificationV1() {
     const installation=protectedInstallation();
     const observed=spawnSync(installation.helper,['--inspect-v1'],{shell:false,windowsHide:true,
       timeout:15000,maxBuffer:32768,encoding:'utf8',env:createBattleBridgeMinimalChildEnvironment()});
-    if(observed.error || observed.status!==0) return denied('FIXED_RUNTIME_IDENTITY_INSPECTION_UNPROVEN');
+    if(observed.error || observed.status!==0 || observed.signal)
+      return denied(fixedRuntimeInspectionFailureReason(observed));
     const row=singleReport(observed.stdout,'SOVEREIGN_RUNTIME_INVENTORY_V1=',32768);
     if(row.SchemaVersion!=='stephanos.fixed-runtime-inventory.v1' || row.Ok!==true ||
       row.SourceHead!==installation.head || row.HelperSha256!==installation.helperSha256 ||
