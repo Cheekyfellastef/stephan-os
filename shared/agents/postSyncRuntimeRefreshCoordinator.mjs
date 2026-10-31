@@ -65,6 +65,7 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
   'scripts/battle-bridge-observation.mjs',
   'scripts/sovereign-commander-http.mjs',
   'scripts/sovereign-maintenance-custody-store-v1.mjs',
+  'scripts/sovereign-maintenance-owner-observation-v2.mjs',
   'scripts/sovereign-fixed-runtime-parent-v1.mjs',
   'scripts/sovereign-commander-ignition-autoheal.mjs',
   'scripts/sovereign-commander-mcp.mjs',
