@@ -1009,21 +1009,14 @@ function Invoke-SovereignCommanderRetainedCustodyPreparation {
   $nodeExecutable = 'C:\Program Files\nodejs\node.exe'
   $recoveryScript = Join-Path $repoRoot 'scripts/sovereign-maintenance-custody-recovery.mjs'
   $sourceTruthScript = Join-Path $repoRoot 'scripts/battle-bridge-ignition-supervisor.mjs'
-  if (-not (Test-Path -LiteralPath $nodeExecutable -PathType Leaf)
-      -or -not (Test-Path -LiteralPath $recoveryScript -PathType Leaf)
-      -or -not (Test-Path -LiteralPath $sourceTruthScript -PathType Leaf)) { return $false }
+  $requiredPathsPresent = (Test-Path -LiteralPath $nodeExecutable -PathType Leaf) -and (Test-Path -LiteralPath $recoveryScript -PathType Leaf) -and (Test-Path -LiteralPath $sourceTruthScript -PathType Leaf)
+  if (-not $requiredPathsPresent) { return $false }
 
   $inspectText = (& $nodeExecutable $recoveryScript 'inspect-retained-migration' 2>$null | Out-String).Trim()
   if ($LASTEXITCODE -ne 0 -or -not $inspectText) { return $false }
   try { $inspection = $inspectText | ConvertFrom-Json } catch { return $false }
-  if ($inspection.ok -ne $true
-      -or [string]$inspection.projectionDigest -notmatch '^[a-f0-9]{64}$'
-      -or -not [string]$inspection.projectionReservationId
-      -or [string]$inspection.heldOwner.digest -notmatch '^[a-f0-9]{64}$'
-      -or $inspection.heldOwner.observation.timeoutCustodyHeld -ne $true
-      -or $inspection.heldOwner.observation.running -ne $false
-      -or $inspection.heldOwner.observation.maintenanceInFlight -ne $false
-      -or $inspection.heldOwner.observation.scheduled -ne $false) { return $false }
+  $inspectionInvalid = ($inspection.ok -ne $true) -or (([string]$inspection.projectionDigest) -notmatch '^[a-f0-9]{64}$') -or [string]::IsNullOrWhiteSpace([string]$inspection.projectionReservationId) -or (([string]$inspection.heldOwner.digest) -notmatch '^[a-f0-9]{64}$') -or ($inspection.heldOwner.observation.timeoutCustodyHeld -ne $true) -or ($inspection.heldOwner.observation.running -ne $false) -or ($inspection.heldOwner.observation.maintenanceInFlight -ne $false) -or ($inspection.heldOwner.observation.scheduled -ne $false)
+  if ($inspectionInvalid) { return $false }
 
   $sourceText = (& $nodeExecutable $sourceTruthScript '--source-truth-json' 2>$null | Out-String).Trim()
   if ($LASTEXITCODE -ne 0 -or -not $sourceText) { return $false }
@@ -1079,9 +1072,8 @@ Prepare Sovereign Commander custody for the next boot?
   $prepareText = (& $nodeExecutable $recoveryScript @prepareArgs 2>$null | Out-String).Trim()
   if (-not $prepareText) { throw 'Sovereign Commander retained-custody preparation returned no proof.' }
   try { $prepared = $prepareText | ConvertFrom-Json } catch { throw 'Sovereign Commander retained-custody preparation proof was invalid.' }
-  if ($LASTEXITCODE -ne 0 -or $prepared.ok -ne $true -or $prepared.prepared -ne $true
-      -or $prepared.requiresLaterFullBoot -ne $true -or $prepared.custodyReleased -ne $false
-      -or $prepared.pcRestartAllowed -ne $false) {
+  $preparationInvalid = ($LASTEXITCODE -ne 0) -or ($prepared.ok -ne $true) -or ($prepared.prepared -ne $true) -or ($prepared.requiresLaterFullBoot -ne $true) -or ($prepared.custodyReleased -ne $false) -or ($prepared.pcRestartAllowed -ne $false)
+  if ($preparationInvalid) {
     $blocker = if ($prepared.blocker) { [string]$prepared.blocker } else { 'MAINTENANCE_RETAINED_MIGRATION_PREPARATION_UNPROVEN' }
     throw "Sovereign Commander retained-custody preparation blocked: $blocker"
   }
