@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   BATTLE_BRIDGE_CONTROL_PLANE_TASKS,
+  projectSovereignCaretakerExecutionEvidence,
   reconcileBattleBridgeControlPlane,
 } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import {
@@ -16,6 +17,8 @@ import {
   classifyPostSyncRefresh,
   executePostSyncRefreshPlan,
   parseGitChangedPathStatus,
+  projectPostSyncTargetFailureHistory,
+  reducePostSyncTargetFailureHistory,
 } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 import {
   appendWorkspaceJsonl,
@@ -475,7 +478,36 @@ export async function runBattleBridgePostSyncRefresh({
       return Object.freeze({ ok: false, blocker: 'POST_SYNC_RETAINED_TARGET_COVERAGE_UNPROVEN', exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
     }
     const completedResults = await loadResumeResults(paths.workspaceRoot, normalizedAfter);
-    const planProjection = buildPostSyncRefreshProjection({ ok: false, classification: plan.classification, plan, results: completedResults }, { beforeHead: normalizedBefore, afterHead: normalizedAfter });
+    // Resume eligibility and observation continuity are different state. Only
+    // the exact successes above can skip work. Historical refusals never can.
+    let targetFailureHistory = projectPostSyncTargetFailureHistory(records.refreshRecord?.targetFailureHistory,
+      { expectedSourceHead: normalizedAfter, nowMs: now.getTime() });
+    if (records.refreshRecord?.targetFailureHistory === undefined
+      && records.refreshRecord?.afterHead === normalizedAfter && records.refreshRecord?.phase === 'blocked'
+      && records.refreshRecord?.classification === 'BLOCKED_REFRESH_FAILED') {
+      // A validated legacy terminal record has an original observation time.
+      // Do not manufacture a failure from an absent target or a retry's time.
+      for (const result of records.refreshRecord.resultTargets) {
+        if (result.ok === true && result.exactHeadProofOk === true && result.sourceHead === normalizedAfter) continue;
+        targetFailureHistory = reducePostSyncTargetFailureHistory(targetFailureHistory, {
+          expectedSourceHead: normalizedAfter, observedAtUtc: records.refreshRecord.timestampUtc, nowMs: now.getTime(),
+          targetId: result.targetId, result, failureKind: 'RESULT_UNPROVEN',
+        });
+      }
+      targetFailureHistory = projectPostSyncTargetFailureHistory(targetFailureHistory,
+        { expectedSourceHead: normalizedAfter, nowMs: now.getTime() });
+    }
+    // A new READY plan is current work, not proof that the preceding caretaker
+    // denial disappeared. Retain only same-head, closed diagnostic fields.
+    const retainedCaretakerFailure = text(records.refreshRecord?.afterHead).toLowerCase() === normalizedAfter
+      && records.refreshRecord?.finalVerdict === 'POST_SYNC_RUNTIME_REFRESH_BLOCKED'
+      ? projectSovereignCaretakerExecutionEvidence(records.refreshRecord?.lastSovereignCaretakerFailure, normalizedAfter)
+      : null;
+    const planProjection = Object.freeze({
+      ...buildPostSyncRefreshProjection({ ok: false, classification: plan.classification, plan, results: completedResults }, { beforeHead: normalizedBefore, afterHead: normalizedAfter }),
+      lastSovereignCaretakerFailure: retainedCaretakerFailure,
+      targetFailureHistory,
+    });
     const planPublication = await publishProjection({ workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot, projection: planProjection, afterHead: normalizedAfter, phase: 'plan', now });
     if (!planPublication.ok) return Object.freeze({ ok: false, blocker: planPublication.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
 
@@ -493,22 +525,30 @@ export async function runBattleBridgePostSyncRefresh({
         refreshSovereignCommander: ({ afterHead: head }) => adapter.refreshSovereignCommander({ afterHead: head, paths }),
         confirmNaturalReload: ({ afterHead: head }) => adapter.confirmNaturalReload({ afterHead: head, repoRoot: paths.repoRoot }),
       },
-      onTargetComplete: async (results) => {
-        const checkpoint = buildPostSyncRefreshProjection({
+      onTargetComplete: async (results, observation) => {
+        const observedAt = new Date();
+        targetFailureHistory = reducePostSyncTargetFailureHistory(targetFailureHistory, {
+          expectedSourceHead: normalizedAfter, observedAtUtc: observedAt.toISOString(), nowMs: observedAt.getTime(), ...observation,
+        });
+        const targetFailed = Boolean(observation.failureKind);
+        const checkpoint = Object.freeze({ ...buildPostSyncRefreshProjection({
           ok: false,
-          classification: 'REFRESH_READY',
-          blocker: '',
+          classification: targetFailed ? 'BLOCKED_REFRESH_FAILED' : 'REFRESH_READY',
+          blocker: targetFailed ? targetFailureHistory?.failures.find(row => row.targetId === observation.targetId)?.blocker || 'REFRESH_TARGET_PROOF_FAILED' : '',
           plan,
           results,
           exactHeadProofOk: false,
-        }, { beforeHead: normalizedBefore, afterHead: normalizedAfter });
+        }, { beforeHead: normalizedBefore, afterHead: normalizedAfter }),
+        lastSovereignCaretakerFailure: retainedCaretakerFailure,
+        targetFailureHistory,
+        });
         const checkpointPublication = await publishProjection({
           workspaceRoot: paths.workspaceRoot,
           repoRoot: paths.repoRoot,
           projection: checkpoint,
           afterHead: normalizedAfter,
-          phase: `checkpoint-${results.length}`,
-          now: new Date(),
+          phase: targetFailed ? 'blocked' : `checkpoint-${results.length}`,
+          now: observedAt,
         });
         if (!checkpointPublication.ok) throw new Error(checkpointPublication.blocker);
       },
@@ -518,10 +558,16 @@ export async function runBattleBridgePostSyncRefresh({
       ? adapter.reconcileControlPlane({ afterHead: normalizedAfter, paths })
       : Object.freeze({ ok: false, skipped: true, blocker: '', sourceHead: '', exactHeadProofOk: false });
     const effectiveExecution = execution.ok === true && controlPlaneReconcile.ok !== true
-      ? Object.freeze({ ...execution, ok: false, blocker: projectControlPlaneFailureBlocker(controlPlaneReconcile) || 'CONTROL_PLANE_RECONCILE_BLOCKED', exactHeadProofOk: false })
+      ? Object.freeze({ ...execution, ok: false, classification: 'BLOCKED_REFRESH_FAILED', blocker: projectControlPlaneFailureBlocker(controlPlaneReconcile) || 'CONTROL_PLANE_RECONCILE_BLOCKED', exactHeadProofOk: false })
       : execution;
 
-    const projection = buildPostSyncRefreshProjection(effectiveExecution, { beforeHead: normalizedBefore, afterHead: normalizedAfter });
+    const sovereignCaretakerExecution = projectSovereignCaretakerExecutionEvidence(controlPlaneReconcile?.sovereignCaretakerExecution, normalizedAfter);
+    const projection = Object.freeze({
+      ...buildPostSyncRefreshProjection(effectiveExecution, { beforeHead: normalizedBefore, afterHead: normalizedAfter }),
+      sovereignCaretakerExecution,
+      lastSovereignCaretakerFailure: effectiveExecution.ok === true ? null : (sovereignCaretakerExecution || retainedCaretakerFailure),
+      targetFailureHistory,
+    });
     const publication = await publishProjection({ workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot, projection, afterHead: normalizedAfter, phase: effectiveExecution.ok ? 'complete' : 'blocked', now: new Date() });
     if (!publication.ok) return Object.freeze({ ok: false, blocker: publication.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
     return Object.freeze({

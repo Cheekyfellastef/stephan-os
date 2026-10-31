@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,8 +10,159 @@ import {
   projectControlPlaneFailureBlocker,
   runBattleBridgePostSyncRefresh,
 } from './battle-bridge-post-sync-refresh.mjs';
+import { buildBattleBridgeOutboundBeacon } from './battle-bridge-outbound-health-beacon.mjs';
 
 const source = await readFile(new URL('./battle-bridge-post-sync-refresh.mjs', import.meta.url), 'utf8');
+
+test('target failure remains observable while the same-head retry publishes its next plan', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'post-sync-target-outcome-continuity-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const paths = { repoRoot: join(root, 'repo'), workspaceRoot: join(root, 'workspace') };
+  await mkdir(paths.repoRoot);
+  const beforeHead = 'a'.repeat(40), afterHead = 'b'.repeat(40);
+  const targetId = 'sovereign-commander';
+  const blocker = 'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN';
+  const statusPath = join(paths.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json');
+  const blockedPath = join(paths.workspaceRoot, 'receipts', 'post-sync-runtime-refresh', `${afterHead}-blocked.json`);
+  const success = () => ({ ok: true, sourceHead: afterHead, exactHeadProofOk: true });
+  const adapter = {
+    inspectHeads: success,
+    isAncestor: () => ({ ok: true, ancestor: true }),
+    changedPaths: () => ({ ok: true, paths: ['main.js', 'scripts/sovereign-commander-http.mjs'] }),
+    refreshUi: success,
+    refreshSovereignCommander: () => ({ ok: false, sourceHead: afterHead, exactHeadProofOk: true, blocker }),
+    reconcileControlPlane: () => { throw new Error('Target failure must not reach reconciliation'); },
+  };
+  const first = await runBattleBridgePostSyncRefresh({ beforeHead, afterHead, paths, expectedPaths: paths, adapter });
+  assert.equal(first.blocker, blocker);
+  assert.equal(first.resultTargets.find(row => row.targetId === targetId).ok, false);
+  const originalBlockedReceipt = await readFile(blockedPath, 'utf8');
+  let retryPlan, retryBeacon, blockedReceiptDuringRetry;
+  await runBattleBridgePostSyncRefresh({ beforeHead, afterHead, paths, expectedPaths: paths, adapter: {
+    ...adapter,
+    refreshUi: () => { throw new Error('The previous exact UI success must be resumed'); },
+    refreshSovereignCommander: async () => {
+      retryPlan = JSON.parse(await readFile(statusPath, 'utf8'));
+      blockedReceiptDuringRetry = await readFile(blockedPath, 'utf8');
+      retryBeacon = buildBattleBridgeOutboundBeacon({ sourceHead: afterHead,
+        statusRecords: { postSyncRefresh: retryPlan }, now: new Date() });
+      return { ok: false, sourceHead: afterHead, exactHeadProofOk: true, blocker };
+    },
+  } });
+  const runtime = retryBeacon.surfaces.find(surface => surface.id === 'postSyncRefresh').runtimeRefresh;
+  t.diagnostic(JSON.stringify({ firstClassification: first.classification, firstFailedTarget: first.resultTargets.find(row => row.targetId === targetId),
+    retryClassification: retryPlan.classification, retryResultTargets: retryPlan.resultTargets,
+    blockedReceiptRetainedDuringRetry: blockedReceiptDuringRetry === originalBlockedReceipt,
+    currentStatusRetainsFailure: JSON.stringify(retryPlan).includes(blocker), publicBeaconRetainsFailure: JSON.stringify(runtime).includes(blocker) }));
+  assert.equal(blockedReceiptDuringRetry, originalBlockedReceipt);
+  assert.equal(retryPlan.classification, 'REFRESH_READY');
+  assert.equal(retryPlan.resultTargets.some(row => row.targetId === targetId), false);
+  assert.ok(JSON.stringify(runtime).includes(blocker), 'The current beacon must retain the previous observed target denial while the retry is unresolved');
+  assert.deepEqual(retryPlan.targetFailureHistory, JSON.parse(originalBlockedReceipt).targetFailureHistory);
+  assert.equal(runtime.targetFailureHistory.expectedSourceHead, afterHead);
+  assert.equal(runtime.targetFailureHistory.sourceHeadMatchesExpected, true);
+  assert.equal(runtime.targetFailureHistory.historical, true);
+  const retriedFailure = JSON.parse(await readFile(statusPath, 'utf8')).targetFailureHistory;
+  let thirdPlan;
+  const completed = await runBattleBridgePostSyncRefresh({ beforeHead, afterHead, paths, expectedPaths: paths, adapter: {
+    ...adapter,
+    refreshUi: () => { throw new Error('A diagnostic history must not replay proven work'); },
+    refreshSovereignCommander: async () => {
+      thirdPlan = JSON.parse(await readFile(statusPath, 'utf8'));
+      return success();
+    },
+    reconcileControlPlane: success,
+  } });
+  assert.deepEqual(thirdPlan.targetFailureHistory, retriedFailure);
+  assert.equal(completed.ok, true);
+  assert.deepEqual(completed.targetFailureHistory.failures, []);
+});
+
+test('retry success checkpoint preserves another target refusal and its original time and head', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'post-sync-target-checkpoint-history-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const paths = { repoRoot: join(root, 'repo'), workspaceRoot: join(root, 'workspace') };
+  await mkdir(paths.repoRoot);
+  const beforeHead = 'a'.repeat(40), afterHead = 'b'.repeat(40);
+  const statusPath = join(paths.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json');
+  const success = () => ({ ok: true, sourceHead: afterHead, exactHeadProofOk: true });
+  const refusal = () => ({ ok: false, sourceHead: afterHead, exactHeadProofOk: false,
+    blocker: 'SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED' });
+  const adapter = { inspectHeads: success, isAncestor: () => ({ ok: true, ancestor: true }),
+    changedPaths: () => ({ ok: true, paths: ['main.js', 'scripts/sovereign-commander-http.mjs'] }),
+    refreshUi: success, refreshSovereignCommander: refusal, reconcileControlPlane: success };
+  await runBattleBridgePostSyncRefresh({ beforeHead, afterHead, paths, expectedPaths: paths, adapter });
+  const previous = JSON.parse(await readFile(statusPath, 'utf8'));
+  const originalHistory = previous.targetFailureHistory;
+  // Absence of a usable earlier success requires re-observation, never a skip
+  // authorized by diagnostic history. The canonical debt parser admits this
+  // incomplete result set and still requires both selected targets.
+  previous.resultTargets = previous.resultTargets.filter(row => row.targetId === 'sovereign-commander');
+  await writeFile(statusPath, JSON.stringify(previous));
+  let plan, checkpoint;
+  const result = await runBattleBridgePostSyncRefresh({ beforeHead, afterHead, paths, expectedPaths: paths, adapter: {
+    ...adapter,
+    refreshUi: async () => { plan = JSON.parse(await readFile(statusPath, 'utf8')); return success(); },
+    refreshSovereignCommander: async () => { checkpoint = JSON.parse(await readFile(statusPath, 'utf8')); return refusal(); },
+  } });
+  assert.equal(result.ok, false);
+  assert.deepEqual(plan.targetFailureHistory, originalHistory);
+  assert.deepEqual(checkpoint.targetFailureHistory, originalHistory);
+  assert.equal(checkpoint.classification, 'REFRESH_READY');
+  assert.equal(checkpoint.phase, 'checkpoint-1');
+  assert.deepEqual(checkpoint.resultTargets.map(row => row.targetId), ['stephanos-ui-4173']);
+  const beacon = buildBattleBridgeOutboundBeacon({ sourceHead: afterHead,
+    statusRecords: { postSyncRefresh: checkpoint }, now: new Date() });
+  const historical = beacon.surfaces.find(row => row.id === 'postSyncRefresh').runtimeRefresh.targetFailureHistory;
+  assert.equal(historical.failures[0].observedAtUtc, originalHistory.failures[0].observedAtUtc);
+  assert.equal(historical.expectedSourceHead, originalHistory.expectedSourceHead);
+});
+
+test('legacy target refusal uses its validated original status timestamp during retry', async t => {
+  const fx = await retainedRefreshFixture(t);
+  const original = JSON.parse(await readFile(fx.statusPath, 'utf8'));
+  delete original.targetFailureHistory;
+  await writeFile(fx.statusPath, JSON.stringify(original));
+  let plan;
+  const result = await runBattleBridgePostSyncRefresh({ beforeHead: fx.A, afterHead: fx.B, paths: fx.paths, expectedPaths: fx.paths,
+    adapter: fx.adapter(fx.B, ['main.js', 'scripts/mission-orchestrator-worker.mjs'], {
+      restartApprovedTarget: async () => {
+        plan = JSON.parse(await readFile(fx.statusPath, 'utf8'));
+        return { ok: true, exactHeadProofOk: true, sourceHead: fx.B };
+      },
+    }) });
+  assert.equal(plan.targetFailureHistory.failures[0].observedAtUtc, original.timestampUtc);
+  assert.equal(plan.targetFailureHistory.expectedSourceHead, fx.B);
+  assert.equal(plan.targetFailureHistory.failures[0].blocker, 'REFRESH_TARGET_PROOF_FAILED');
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.targetFailureHistory.failures, []);
+});
+
+test('real checkpoint write failure preserves proven target success and creates no native refusal', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'post-sync-checkpoint-write-failure-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const paths = { repoRoot: join(root, 'repo'), workspaceRoot: join(root, 'workspace') };
+  await mkdir(paths.repoRoot);
+  const beforeHead = 'a'.repeat(40), afterHead = 'b'.repeat(40);
+  const success = () => ({ ok: true, sourceHead: afterHead, exactHeadProofOk: true });
+  const adapter = { inspectHeads: success, isAncestor: () => ({ ok: true, ancestor: true }),
+    changedPaths: () => ({ ok: true, paths: ['main.js'] }),
+    refreshUi: () => ({ ok: false, sourceHead: afterHead, exactHeadProofOk: false }),
+    reconcileControlPlane: () => { throw new Error('Publication failure must hold before reconciliation'); } };
+  const first = await runBattleBridgePostSyncRefresh({ beforeHead, afterHead, paths, expectedPaths: paths, adapter });
+  assert.equal(first.targetFailureHistory.failures.length, 1);
+  await mkdir(join(paths.workspaceRoot, 'receipts', 'post-sync-runtime-refresh', `${afterHead}-checkpoint-1.json`));
+  const result = await runBattleBridgePostSyncRefresh({ beforeHead, afterHead, paths, expectedPaths: paths,
+    adapter: { ...adapter, refreshUi: success } });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'REFRESH_CHECKPOINT_PUBLICATION_FAILED:stephanos-ui-4173');
+  assert.equal(result.resultTargets[0].ok, true);
+  assert.deepEqual(result.targetFailureHistory.failures, []);
+  const status = JSON.parse(await readFile(join(paths.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json'), 'utf8'));
+  assert.equal(status.phase, 'blocked');
+  assert.equal(status.classification, 'BLOCKED_REFRESH_FAILED');
+  assert.equal(status.blocker, result.blocker);
+});
 
 async function retainedRefreshFixture(t, { complete = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'post-sync-retained-debt-'));
@@ -289,10 +441,63 @@ test('fixed control-plane failure identity is persisted into remote-readable pos
     assert.equal(result.controlPlaneReconcile.failedTaskId, 'recoveryMesh');
     const status = JSON.parse(await readFile(join(paths.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json'), 'utf8'));
     assert.equal(status.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryMesh');
+    assert.equal(status.classification, 'BLOCKED_REFRESH_FAILED');
+    assert.equal(status.finalVerdict, 'POST_SYNC_RUNTIME_REFRESH_BLOCKED');
     assert.doesNotMatch(JSON.stringify(status), /\.\.\/|secrets/i);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('caretaker failure remains diagnosed during a same-head retry and clears only on actual reconciliation', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'post-sync-caretaker-evidence-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const paths = { repoRoot: join(root, 'repo'), workspaceRoot: join(root, 'workspace') };
+  await mkdir(paths.repoRoot);
+  const beforeHead = 'c'.repeat(40), afterHead = 'd'.repeat(40);
+  const evidence = { schemaVersion: 'stephanos.sovereign-caretaker-execution.v1',
+    expectedSourceHead: afterHead, observedAtUtc: '2026-10-31T00:06:31.000Z', exitStatus: 2,
+    spawnErrorCode: '', terminationSignal: '', failureReceiptRecognized: true,
+    reportedBlocker: 'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN',
+    reportedVerdict: 'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED', diagnosticOnly: true };
+  const pass = () => ({ ok: true, sourceHead: afterHead, exactHeadProofOk: true });
+  const adapter = {
+    inspectHeads: pass,
+    changedPaths: () => ({ ok: true, paths: ['main.js'] }),
+    refreshUi: pass,
+    reconcileControlPlane: () => ({ ok: false, blocker: 'SOVEREIGN_COMMANDER_WATCHDOG_EXECUTION_FAILED',
+      sourceHead: afterHead, sovereignCaretakerExecution: { ...evidence, stdout: 'PRIVATE_OUTPUT' } }),
+  };
+  const first = await runBattleBridgePostSyncRefresh({ paths, expectedPaths: paths, beforeHead, afterHead, adapter });
+  assert.equal(first.ok, false);
+  assert.equal(first.classification, 'BLOCKED_REFRESH_FAILED');
+  assert.equal(first.finalVerdict, 'POST_SYNC_RUNTIME_REFRESH_BLOCKED');
+  assert.deepEqual(first.lastSovereignCaretakerFailure, evidence);
+  const statusPath = join(paths.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json');
+  const failed = JSON.parse(await readFile(statusPath, 'utf8'));
+  assert.deepEqual(failed.sovereignCaretakerExecution, evidence);
+  assert.deepEqual(failed.lastSovereignCaretakerFailure, evidence);
+  assert.doesNotMatch(JSON.stringify(failed), /PRIVATE_/);
+  const blockedReceiptPath = join(paths.workspaceRoot, 'receipts', 'post-sync-runtime-refresh', `${afterHead}-blocked.json`);
+  const blockedReceipt = await readFile(blockedReceiptPath);
+  let observedPlan = false;
+  const second = await runBattleBridgePostSyncRefresh({ paths, expectedPaths: paths, beforeHead, afterHead,
+    adapter: { ...adapter, reconcileControlPlane: () => {
+      const plan = JSON.parse(readFileSync(statusPath, 'utf8'));
+      assert.equal(plan.phase, 'plan');
+      assert.equal(plan.classification, 'REFRESH_READY');
+      assert.equal(plan.finalVerdict, 'POST_SYNC_RUNTIME_REFRESH_BLOCKED');
+      assert.deepEqual(plan.lastSovereignCaretakerFailure, evidence);
+      observedPlan = true;
+      return pass();
+    } } });
+  assert.equal(observedPlan, true);
+  assert.equal(second.ok, true);
+  assert.equal(second.lastSovereignCaretakerFailure, null);
+  const complete = JSON.parse(await readFile(statusPath, 'utf8'));
+  assert.equal(complete.phase, 'complete');
+  assert.equal(complete.lastSovereignCaretakerFailure, null);
+  assert.deepEqual(await readFile(blockedReceiptPath), blockedReceipt);
 });
 
 test('workspace publication contains bounded projections and relative proof refs', () => {

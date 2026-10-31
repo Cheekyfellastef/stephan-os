@@ -9,6 +9,7 @@ import {
   BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK,
   BATTLE_BRIDGE_RUNTIME_CONTROL_PLANE_TASKS,
   reconcileBattleBridgeControlPlane,
+  projectSovereignCaretakerExecutionEvidence,
   validateSovereignCommanderWatchdogReceipt,
   validateMonitorMultiplexerInstallerReceipt,
 } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
@@ -190,6 +191,111 @@ function scriptedSpawn({ multiplexer = multiplexerReceipt(), sovereign = soverei
   spawn.calls = calls;
   return spawn;
 }
+
+function caretakerResult(commandResult, { emergency = false } = {}) {
+  const spawn = scriptedSpawn({ failCoreInstaller: emergency ? 'install-battle-bridge-recovery-mesh.ps1' : '' });
+  return reconcileBattleBridgeControlPlane({
+    repoRoot: REPO_ROOT, expectedHead: HEAD, platform: 'win32',
+    spawnSyncFn: (command, args, options) => args.some(arg => String(arg).endsWith('run-sovereign-commander-hidden.ps1'))
+      ? commandResult : spawn(command, args, options),
+    env: { USERPROFILE: USER_HOME }, home: USER_HOME,
+  });
+}
+
+test('nonzero caretaker denial survives normal and emergency reconciliation without becoming health proof', () => {
+  const denied = sovereignReceipt({ healthy: false, daemonHealthy: false,
+    blocker: 'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN',
+    finalVerdict: 'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED', privatePath: 'PRIVATE_PATH', secret: 'PRIVATE_TOKEN' });
+  for (const emergency of [false, true]) {
+    const result = caretakerResult({ status: 2, stdout: JSON.stringify(denied), stderr: 'PRIVATE_STDERR' }, { emergency });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, emergency ? 'CONTROL_PLANE_FIXED_INSTALLER_FAILED' : 'SOVEREIGN_COMMANDER_WATCHDOG_EXECUTION_FAILED');
+    const evidence = result.sovereignCaretakerExecution;
+    assert.equal(evidence.exitStatus, 2);
+    assert.equal(evidence.expectedSourceHead, HEAD);
+    assert.equal(evidence.reportedBlocker, denied.blocker);
+    assert.equal(evidence.reportedVerdict, denied.finalVerdict);
+    assert.equal(evidence.failureReceiptRecognized, true);
+    assert.equal(evidence.diagnosticOnly, true);
+    assert.equal(result.tasks.at(-1).healthy, false);
+    assert.equal(result.tasks.at(-1).receiptValid, false);
+    assert.deepEqual(result.tasks.at(-1).executionEvidence, evidence);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_/);
+  }
+});
+
+test('the fixed early normal-token denial is diagnostic even without a late task receipt', () => {
+  const denied = { schemaVersion: 'stephanos.sovereign-commander-watchdog.v1', healthy: false,
+    normalOperatorObserved: false, runtimeActivationGranted: false, sourceMutationAllowed: false,
+    arbitraryShellAllowed: false, pcRestartAllowed: false,
+    blocker: 'SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED', finalVerdict: 'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED' };
+  const result = caretakerResult({ status: 2, stdout: JSON.stringify(denied) });
+  assert.equal(result.sovereignCaretakerExecution.reportedBlocker, denied.blocker);
+  assert.equal(result.ok, false);
+});
+
+test('caretaker timeout and transport failures retain only typed OS evidence', () => {
+  for (const command of [
+    { status: null, error: { code: 'ETIMEDOUT', message: 'PRIVATE_ERROR' }, signal: 'SIGTERM' },
+    { status: null, error: { code: 'ENOBUFS' } },
+    { status: null, error: { code: 'PRIVATE_ERROR' }, signal: 'PRIVATE_SIGNAL' },
+    { status: 5 },
+  ]) {
+    const result = caretakerResult({ ...command, stdout: JSON.stringify(sovereignReceipt()), stderr: 'PRIVATE_STDERR' });
+    assert.equal(result.ok, false);
+    assert.equal(result.sovereignCaretakerExecution.exitStatus, command.status);
+    assert.equal(result.sovereignCaretakerExecution.spawnErrorCode, command.error?.code === 'PRIVATE_ERROR' ? 'CHILD_PROCESS_ERROR' : command.error?.code || '');
+    assert.equal(result.sovereignCaretakerExecution.terminationSignal, command.signal === 'PRIVATE_SIGNAL' ? 'UNKNOWN' : command.signal || '');
+    assert.equal(result.sovereignCaretakerExecution.failureReceiptRecognized, false);
+    assert.equal(result.sovereignCaretakerExecution.reportedBlocker, '');
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_/);
+  }
+});
+
+test('foreign malformed oversized or contradictory caretaker output never supplies a trusted denial', () => {
+  const denied = sovereignReceipt({ healthy: false, blocker: 'SOVEREIGN_COMMANDER_NOT_HEALTHY', finalVerdict: 'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED' });
+  const outputs = ['', '{PRIVATE_MALFORMED', 'x'.repeat(128 * 1024 + 1),
+    JSON.stringify({ ...denied, taskName: 'PRIVATE_FOREIGN_TASK' }),
+    JSON.stringify({ ...denied, schemaVersion: 'foreign' }),
+    JSON.stringify({ ...denied, healthy: true }),
+    JSON.stringify({ ...denied, arbitraryShellAllowed: true }),
+    JSON.stringify({ ...denied, blocker: 'SOVEREIGN_COMMANDER_PRIVATE_TOKEN' }),
+    JSON.stringify(sovereignReceipt())];
+  for (const stdout of outputs) {
+    const result = caretakerResult({ status: 2, stdout, stderr: 'PRIVATE_STDERR' });
+    assert.equal(result.ok, false);
+    assert.equal(result.tasks.at(-1).receiptValid, false);
+    assert.equal(result.sovereignCaretakerExecution.exitStatus, 2);
+    assert.equal(result.sovereignCaretakerExecution.failureReceiptRecognized, false);
+    assert.equal(result.sovereignCaretakerExecution.reportedBlocker, '');
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_/);
+  }
+});
+
+test('persisted caretaker evidence rejects missing or foreign source identity and drops extra fields', () => {
+  const evidence = caretakerResult({ status: 5, stdout: '' }).sovereignCaretakerExecution;
+  assert.equal(projectSovereignCaretakerExecutionEvidence(evidence, 'b'.repeat(40)), null);
+  assert.equal(projectSovereignCaretakerExecutionEvidence({ ...evidence, expectedSourceHead: '' }), null);
+  assert.equal(projectSovereignCaretakerExecutionEvidence({ ...evidence, expectedSourceHead: [HEAD] }), null);
+  assert.equal(projectSovereignCaretakerExecutionEvidence({ ...evidence, observedAtUtc: 'PRIVATE_TIMESTAMP' }), null);
+  assert.deepEqual(projectSovereignCaretakerExecutionEvidence({ ...evidence, stdout: 'PRIVATE_DATA', privatePath: 'PRIVATE_PATH' }, HEAD), evidence);
+});
+
+test('a thrown caretaker launch error is diagnosed without leaking its message or reporting success', () => {
+  const spawn = scriptedSpawn();
+  const result = reconcileBattleBridgeControlPlane({
+    repoRoot: REPO_ROOT, expectedHead: HEAD, platform: 'win32',
+    spawnSyncFn: (command, args, options) => {
+      if (args.some(arg => String(arg).endsWith('run-sovereign-commander-hidden.ps1'))) throw Error('PRIVATE_LAUNCH_ERROR');
+      return spawn(command, args, options);
+    },
+    env: { USERPROFILE: USER_HOME }, home: USER_HOME,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.sovereignCaretakerExecution.exitStatus, null);
+  assert.equal(result.sovereignCaretakerExecution.spawnErrorCode, 'CHILD_PROCESS_ERROR');
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_/);
+});
 
 test('runtime control plane extends the preserved five-task core with monitor and Sovereign caretaker tasks', () => {
   assert.equal(BATTLE_BRIDGE_CONTROL_PLANE_TASKS.length, 5);
