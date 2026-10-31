@@ -1004,6 +1004,109 @@ function Write-IgnitionSupportSnapshot([string]$Verdict, [hashtable]$Extra = @{}
   Write-IgnitionTranscript -Event @{ event = 'support-snapshot'; verdict = $Verdict; supportSnapshotPath = $ignitionSupportSnapshotPath }
 }
 
+function Invoke-SovereignCommanderRetainedCustodyPreparation {
+  if ($Mode -ne 'launcher-root') { return $false }
+  $nodeExecutable = 'C:\Program Files\nodejs\node.exe'
+  $recoveryScript = Join-Path $repoRoot 'scripts/sovereign-maintenance-custody-recovery.mjs'
+  $sourceTruthScript = Join-Path $repoRoot 'scripts/battle-bridge-ignition-supervisor.mjs'
+  if (-not (Test-Path -LiteralPath $nodeExecutable -PathType Leaf)
+      -or -not (Test-Path -LiteralPath $recoveryScript -PathType Leaf)
+      -or -not (Test-Path -LiteralPath $sourceTruthScript -PathType Leaf)) { return $false }
+
+  $inspectText = (& $nodeExecutable $recoveryScript 'inspect-retained-migration' 2>$null | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $inspectText) { return $false }
+  try { $inspection = $inspectText | ConvertFrom-Json } catch { return $false }
+  if ($inspection.ok -ne $true
+      -or [string]$inspection.projectionDigest -notmatch '^[a-f0-9]{64}$'
+      -or -not [string]$inspection.projectionReservationId
+      -or [string]$inspection.heldOwner.digest -notmatch '^[a-f0-9]{64}$'
+      -or $inspection.heldOwner.observation.timeoutCustodyHeld -ne $true
+      -or $inspection.heldOwner.observation.running -ne $false
+      -or $inspection.heldOwner.observation.maintenanceInFlight -ne $false
+      -or $inspection.heldOwner.observation.scheduled -ne $false) { return $false }
+
+  $sourceText = (& $nodeExecutable $sourceTruthScript '--source-truth-json' 2>$null | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $sourceText) { return $false }
+  try { $sourceTruth = $sourceText | ConvertFrom-Json } catch { return $false }
+  $expectedMain = [string]$sourceTruth.head
+  if ($sourceTruth.ok -ne $true -or $expectedMain -notmatch '^[a-f0-9]{40}$') { return $false }
+
+  Add-Type -AssemblyName System.Windows.Forms
+  $summary = @"
+Sovereign Commander is safely holding an old maintenance custody fence.
+
+Stephanos can prepare that exact held custody for recovery on the next full Windows boot.
+
+Reservation:
+$($inspection.projectionReservationId)
+
+Current source:
+$expectedMain
+
+This action:
+- uses the authenticated held-owner observation and exact signed custody digest
+- DOES NOT release custody now
+- DOES NOT restart Windows
+- DOES NOT run arbitrary commands
+- requires a normal full Windows Restart afterwards
+
+Prepare Sovereign Commander custody for the next boot?
+"@
+  $choice = [System.Windows.Forms.MessageBox]::Show(
+    $summary,
+    'Stephanos - Sovereign Commander custody recovery',
+    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+    [System.Windows.Forms.MessageBoxIcon]::Warning,
+    [System.Windows.Forms.MessageBoxDefaultButton]::Button2
+  )
+  if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {
+    Write-LiveLog 'Sovereign Commander retained-custody preparation was offered and declined; no custody mutation performed.'
+    return $false
+  }
+
+  $prepareText = (& $nodeExecutable $recoveryScript 'prepare-retained-migration'
+    '--expected-cycle' ([string]$inspection.projectionReservationId)
+    '--expected-digest' ([string]$inspection.projectionDigest)
+    '--expected-main' $expectedMain
+    '--expected-owner-digest' ([string]$inspection.heldOwner.digest)
+    '--operator-approved' 2>$null | Out-String).Trim()
+  if (-not $prepareText) { throw 'Sovereign Commander retained-custody preparation returned no proof.' }
+  try { $prepared = $prepareText | ConvertFrom-Json } catch { throw 'Sovereign Commander retained-custody preparation proof was invalid.' }
+  if ($LASTEXITCODE -ne 0 -or $prepared.ok -ne $true -or $prepared.prepared -ne $true
+      -or $prepared.requiresLaterFullBoot -ne $true -or $prepared.custodyReleased -ne $false
+      -or $prepared.pcRestartAllowed -ne $false) {
+    $blocker = if ($prepared.blocker) { [string]$prepared.blocker } else { 'MAINTENANCE_RETAINED_MIGRATION_PREPARATION_UNPROVEN' }
+    throw "Sovereign Commander retained-custody preparation blocked: $blocker"
+  }
+
+  $message = 'Sovereign Commander custody is prepared for successor-boot recovery. Restart Windows normally, then press Ignition after sign-in.'
+  Write-LiveLog $message
+  Write-IgnitionStatus -Phase 'restart-required' -Message $message -Extra @{
+    currentStage = 'restart'
+    blocker = ''
+    nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+    sovereignCommanderCustodyPrepared = $true
+    custodyReleased = $false
+    pcRestartAllowedByPreparation = $false
+    expectedMain = $expectedMain
+    reservationId = [string]$inspection.projectionReservationId
+  }
+  Write-IgnitionSupportSnapshot -Verdict 'restart-required' -Extra @{
+    nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+    sovereignCommanderCustodyPrepared = $true
+    custodyReleased = $false
+    pcRestartAllowedByPreparation = $false
+    expectedMain = $expectedMain
+  }
+  [System.Windows.Forms.MessageBox]::Show(
+    "Preparation is complete.\r\n\r\nUse the normal Windows Restart command now.\r\nAfter sign-in, press Ignition.\r\n\r\nStephanos has NOT restarted the PC automatically.",
+    'Stephanos - Restart required',
+    [System.Windows.Forms.MessageBoxButtons]::OK,
+    [System.Windows.Forms.MessageBoxIcon]::Information
+  ) | Out-Null
+  return $true
+}
+
 try {
   $resolvedBootMode = if ($Mode -eq 'vite-dev') { 'launcher' } else { $BootMode }
   $browserSurfaces = if ($Mode -eq 'vite-dev') {
@@ -1015,6 +1118,10 @@ try {
   $browserTargets = @($browserSurfaces | ForEach-Object { $_.Url })
 
   Show-IgnitionSplashScreen
+
+  if (Invoke-SovereignCommanderRetainedCustodyPreparation) {
+    exit 0
+  }
 
   Write-LiveLog "selected repository root: $repoRoot"
   Write-IgnitionStatus -Phase 'checking-workspace-dirt' -Message 'Running canonical ignition workspace checks; source deletion is forbidden.' -Extra @{ currentStage = 'checking-workspace-dirt'; noSourceDeletion = $true }
