@@ -289,6 +289,17 @@ export function exactElasticExternalGrant(mission, candidate, sourceRevision, no
   });
 }
 
+// Only closed-world validator names can cross the original worker handoff.
+// Do not export source paths, raw exceptions or an unverified grant as authority.
+function safeGrantMismatchFields(publication) {
+  if (!['action-grant-mismatch', 'locked-action-grant-mismatch',
+    'post-repair-action-grant-mismatch'].includes(text(publication?.reason))) return [];
+  const raw = Array.isArray(publication?.blockers) ? publication.blockers : [];
+  return [...new Set(raw.filter(value => typeof value === 'string'
+    && /^(?:action-grant|invalid-action-grant)-[a-z][a-z0-9-]{0,95}$/.test(value)))]
+    .sort().slice(0, 16);
+}
+
 export async function dispatchElasticGoalBuilds(admission = {}, {
   env = process.env,
   now = new Date(),
@@ -365,6 +376,7 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
     let grantCandidateObserved = false;
     let indeterminatePublication = false;
     let lastPublicationReason = '';
+    const grantMismatchFields = new Set();
     for (const capacity of routeCandidates) {
       const grant = exactElasticExternalGrant(mission, capacity, sourceRevision, now);
       if (!grant) continue;
@@ -401,6 +413,7 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
       }
       if (publication?.published !== true || publication?.actionGrantAccepted !== true) {
         lastPublicationReason = text(publication?.reason, 'not-published');
+        for (const field of safeGrantMismatchFields(publication)) grantMismatchFields.add(field);
         continue;
       }
 
@@ -433,6 +446,9 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
         : grantCandidateObserved
           ? `EXTERNAL_DISPATCH_BLOCKED:${lastPublicationReason || 'not-published'}`
           : 'EXACT_EXTERNAL_ACTION_GRANT_UNAVAILABLE',
+      ...(grantMismatchFields.size ? {
+        grantMismatchFields: Object.freeze([...grantMismatchFields].sort().slice(0, 16)),
+      } : {}),
     }));
   }
 
