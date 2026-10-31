@@ -315,3 +315,6 @@ stephanos-server/services/supervisedR7RecoveryRuntime.js text eol=lf
 stephanos-server/utils/logger.js text eol=lf
 
 scripts/windows/read-sovereign-maintenance-boot-witness.ps1 text eol=lf
+scripts/sovereign-fixed-runtime-install-current-v1.mjs text eol=lf
+scripts/sovereign-fixed-runtime-install-current-v1.test.mjs text eol=lf
+scripts/windows/install-sovereign-fixed-runtime-elevated-v1.ps1 text eol=lf
