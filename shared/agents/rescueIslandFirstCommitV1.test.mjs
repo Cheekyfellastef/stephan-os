@@ -306,6 +306,20 @@ test('config-driven SSH signing cannot invoke another executable', async () => {
 test('Git CRLF normalization cannot replace the exact approved committed bytes', async () => {
   const ctx = await fixture();
   ctx.task.content = '# Rescue Island pilot\n\nExact approved CRLF bytes.\r\nSecond line.\r\n';
+  // The fixed production Git invocation overrides core.autocrlf, so that
+  // setting alone cannot prove normalization occurred. A committed attribute
+  // forces LF conversion even with core.autocrlf=false, and the original
+  // source-blob comparison must still reject the changed committed bytes.
+  await writeFile(join(ctx.repoRoot, '.gitattributes'),
+    'docs/architecture/rescue-island-pilot-*.md text eol=lf\n');
+  git(ctx.repoRoot, 'add', '--', '.gitattributes');
+  git(ctx.repoRoot, '-c', 'core.hooksPath=/dev/null', 'commit',
+    '-m', 'test fixture: track forced LF normalization');
+  const newBase = git(ctx.repoRoot, 'rev-parse', 'HEAD');
+  git(ctx.repoRoot, 'update-ref', 'refs/remotes/origin/main', newBase);
+  ctx.task.baseHead = newBase;
+  ctx.observed.mainHead = newBase;
+  ctx.observed.worktreeHead = newBase;
   git(ctx.repoRoot, 'config', 'core.autocrlf', 'input');
   await assert.rejects(() => build(ctx), /RESCUE_ISLAND_COMMIT_BLOB_UNPROVEN/);
   assert.equal(git(ctx.repoRoot, 'rev-parse', 'HEAD'), ctx.task.baseHead);
