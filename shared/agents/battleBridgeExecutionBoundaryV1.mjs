@@ -48,7 +48,8 @@ export const BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS = Object.freeze([
 export function battleBridgeGitFixedConfigArgs(platform = process.platform) {
   resolveBattleBridgeGitExecutable(platform);
   const nullDevice = platform === 'win32' ? 'NUL' : '/dev/null';
-  return Object.freeze(BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.map((value) => {
+  const autocrlf = platform === 'win32' ? 'true' : 'false';
+  const mapped = BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.map((value) => {
     if (!value.endsWith('=NUL')) return value;
     if (platform === 'win32'
         && (value.startsWith('core.attributesFile=') || value.startsWith('core.excludesFile='))) {
@@ -58,7 +59,8 @@ export function battleBridgeGitFixedConfigArgs(platform = process.platform) {
       return value.slice(0, -3);
     }
     return `${value.slice(0, -3)}${nullDevice}`;
-  }));
+  });
+  return Object.freeze(['-c', `core.autocrlf=${autocrlf}`, ...mapped]);
 }
 
 function fixedEnvironmentConfig(fixedConfigArgs) {

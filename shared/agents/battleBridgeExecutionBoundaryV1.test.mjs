@@ -32,6 +32,7 @@ test('fixed Git executable is absolute and platform-canonical', () => {
     environment: { PATH: '/attacker', NODE_OPTIONS: '--require=/attacker/inject.cjs' },
   });
   assert.equal(posix.executable, BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE);
+  assert.equal(posix.fixedConfigArgs.includes('core.autocrlf=false'), true);
   assert.equal(posix.fixedConfigArgs.includes('core.hooksPath=/dev/null'), true);
   assert.equal(posix.fixedConfigArgs.includes('core.attributesFile=/dev/null'), true);
   assert.equal(posix.fixedConfigArgs.includes('core.excludesFile=/dev/null'), true);
@@ -40,7 +41,8 @@ test('fixed Git executable is absolute and platform-canonical', () => {
   assert.equal(posix.environment.GIT_GRAFT_FILE, '/dev/null');
   assert.equal(posix.environment.NODE_OPTIONS, undefined);
   const windowsArgs = battleBridgeGitFixedConfigArgs('win32');
-  assert.deepEqual(windowsArgs.slice(0, 2), ['-c', 'core.hooksPath=NUL']);
+  assert.deepEqual(windowsArgs.slice(0, 2), ['-c', 'core.autocrlf=true']);
+  assert.equal(windowsArgs.includes('core.hooksPath=NUL'), true);
   assert.equal(windowsArgs.includes('core.attributesFile='), true);
   assert.equal(windowsArgs.includes('core.excludesFile='), true);
   assert.equal(windowsArgs.includes('core.attributesFile=NUL'), false);
@@ -68,6 +70,8 @@ test('minimal child environment removes Node/Git/shell injection variables', () 
   assert.equal(Number(result.GIT_CONFIG_COUNT) > 0, true);
   const fixedKeys = Array.from({ length: Number(result.GIT_CONFIG_COUNT) }, (_, index) => result[`GIT_CONFIG_KEY_${index}`]);
   const fixedValues = Array.from({ length: Number(result.GIT_CONFIG_COUNT) }, (_, index) => result[`GIT_CONFIG_VALUE_${index}`]);
+  assert.equal(fixedKeys.includes('core.autocrlf'), true);
+  assert.equal(fixedValues[fixedKeys.indexOf('core.autocrlf')], 'true');
   assert.equal(fixedKeys.includes('core.hooksPath'), true);
   assert.equal(fixedValues[fixedKeys.indexOf('core.hooksPath')], 'NUL');
   assert.equal(fixedValues[fixedKeys.indexOf('commit.gpgSign')], 'false');

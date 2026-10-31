@@ -43,6 +43,7 @@ function minimalBackendChildGitEnvironment() {
   );
   const nullDevice = process.platform === 'win32' ? 'NUL' : '/dev/null';
   const fixedConfig = [
+    ['core.autocrlf', process.platform === 'win32' ? 'true' : 'false'],
     ['core.hooksPath', nullDevice],
     ['core.fsmonitor', 'false'],
     ['core.trustctime', 'true'],
