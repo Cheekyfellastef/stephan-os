@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { buildBattleBridgeTelemetryAutorepairProjection } from '../shared/agents/battleBridgeTelemetryAutorepairV1.mjs';
 import { projectMissionWorkerBeaconState } from '../shared/agents/missionWorkerBeaconStateV1.mjs';
-import { POST_SYNC_REFRESH_CLASSIFICATIONS, POST_SYNC_REFRESH_TARGETS } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
+import { POST_SYNC_REFRESH_CLASSIFICATIONS, POST_SYNC_REFRESH_TARGETS, projectPostSyncTargetFailureHistory } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 import { projectSovereignCaretakerExecutionEvidence } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import { invalidateBrokeredGithubObservation, publishBrokeredGithubMutation, readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import {
@@ -298,6 +298,19 @@ function projectCaretakerBeaconFacts(value, expectedHead, nowMs, historical = fa
   });
 }
 
+function projectTargetFailureBeaconFacts(value, expectedHead, nowMs) {
+  const history = projectPostSyncTargetFailureHistory(value, { nowMs });
+  if (!history) return Object.freeze({ evidenceState: value == null ? 'MISSING' : 'INVALID',
+    failures: Object.freeze([]), historical: true, diagnosticOnly: true });
+  const sourceHeadMatchesExpected = typeof expectedHead === 'string' && /^[a-f0-9]{40}$/.test(expectedHead)
+    ? history.expectedSourceHead === expectedHead : null;
+  return Object.freeze({ ...history, sourceHeadMatchesExpected,
+    evidenceState: sourceHeadMatchesExpected !== true ? 'HEAD_MISMATCH' : history.failures.length ? 'HISTORICAL' : 'EMPTY',
+    failures: Object.freeze(history.failures.map(row => Object.freeze({ ...row,
+      ageMs: Math.max(0, nowMs - Date.parse(row.observedAtUtc)), historical: true, diagnosticOnly: true }))),
+  });
+}
+
 export function projectPostSyncRefreshBeaconFacts(record, expectedHead = '', nowMs = Date.now()) {
   const source = record && typeof record === 'object' && !Array.isArray(record) ? record : null;
   const strictHead = (value) => typeof value === 'string' && /^[a-f0-9]{40}$/i.test(value)
@@ -363,6 +376,7 @@ export function projectPostSyncRefreshBeaconFacts(record, expectedHead = '', now
     resultTargets: Object.freeze(resultTargets),
     sovereignCaretakerExecution: projectCaretakerBeaconFacts(source?.sovereignCaretakerExecution, expected, nowMs),
     lastSovereignCaretakerFailure: projectCaretakerBeaconFacts(source?.lastSovereignCaretakerFailure, expected, nowMs, true),
+    targetFailureHistory: projectTargetFailureBeaconFacts(source?.targetFailureHistory, expected, nowMs),
   });
 }
 

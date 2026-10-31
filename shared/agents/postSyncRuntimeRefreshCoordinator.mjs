@@ -436,6 +436,85 @@ function resultPass(result, expectedHead) {
     && String(result?.sourceHead || '').toLowerCase() === String(expectedHead).toLowerCase();
 }
 
+export const POST_SYNC_TARGET_FAILURE_HISTORY_SCHEMA = 'stephanos.post-sync-target-failure-history.v1';
+const TARGET_FAILURE_KINDS = new Set(['RESULT_UNPROVEN', 'INVOCATION_FAILED', 'HANDLER_MISSING']);
+// Diagnostic vocabulary, never an execution/admission authority. Unknown child
+// strings become a fixed code rather than entering durable/public history.
+const TARGET_FAILURE_CODES = new Set([
+  'REFRESH_TARGET_PROOF_FAILED', 'REFRESH_TARGET_INVOCATION_FAILED', 'REFRESH_TARGET_HANDLER_MISSING',
+  'SOVEREIGN_COMMANDER_OPERATOR_CONTEXT_UNPROVEN', 'SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED',
+  'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN', 'SOVEREIGN_MAINTENANCE_OWNER_BUSY',
+  'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN', 'SOVEREIGN_COMMANDER_SERVER_SCRIPT_MISSING',
+  'SOVEREIGN_COMMANDER_TOKEN_MISSING', 'SOVEREIGN_COMMANDER_CANONICAL_NODE_MISSING',
+  'SOVEREIGN_COMMANDER_STALE_CONTRACT_RECYCLE_FAILED', 'SOVEREIGN_COMMANDER_START_FAILED',
+  'SOVEREIGN_COMMANDER_NOT_HEALTHY', 'SOVEREIGN_COMMANDER_REFRESH_RECEIPT_INVALID',
+  'SOVEREIGN_COMMANDER_REFRESH_PROOF_INVALID', 'SOVEREIGN_COMMANDER_EXACT_HEAD_PROOF_FAILED',
+  'GITHUB_MAILBOX_RESTART_FAILED', 'GITHUB_MAILBOX_RESTART_PROOF_INVALID', 'GITHUB_MAILBOX_EXACT_HEAD_PROOF_FAILED',
+  'APPROVED_RUNTIME_RESTART_RESPONSE_INVALID', 'APPROVED_RUNTIME_RESTART_PROCESS_TIMEOUT',
+  'UI_4173_EXACT_HEAD_PROOF_FAILED', 'VR_ATLAS_BROWSER_PROOF_RESPONSE_INVALID', 'VR_ATLAS_BROWSER_PROOF_BLOCKED',
+  'NATURAL_RELOAD_HEAD_READ_FAILED',
+]);
+const strictHead = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
+const strictTimestamp = value => typeof value === 'string' && value.length === 24
+  && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+
+export function projectPostSyncTargetFailureHistory(value, { expectedSourceHead = '', nowMs } = {}) {
+  if (!value || Array.isArray(value) || value.schemaVersion !== POST_SYNC_TARGET_FAILURE_HISTORY_SCHEMA
+    || !strictHead(value.expectedSourceHead) || (expectedSourceHead && value.expectedSourceHead !== expectedSourceHead)
+    || !Number.isFinite(nowMs) || !Array.isArray(value.failures) || value.failures.length > TARGET_ORDER.length) return null;
+  const seen = new Set(), failures = [];
+  for (const row of value.failures) {
+    // Reject the entire ambiguous list; a favorable prefix is not history.
+    if (!row || Array.isArray(row) || !TARGET_ORDER.includes(row.targetId) || seen.has(row.targetId)
+      || !TARGET_FAILURE_KINDS.has(row.failureKind) || !strictTimestamp(row.observedAtUtc)
+      || Date.parse(row.observedAtUtc) > nowMs + 60_000
+      || (row.reportedSourceHead !== '' && !strictHead(row.reportedSourceHead))
+      || !TARGET_FAILURE_CODES.has(row.blocker)
+      || (row.failureKind === 'INVOCATION_FAILED' && (row.blocker !== 'REFRESH_TARGET_INVOCATION_FAILED' || row.reportedSourceHead !== ''))
+      || (row.failureKind === 'HANDLER_MISSING' && (row.blocker !== 'REFRESH_TARGET_HANDLER_MISSING' || row.reportedSourceHead !== ''))) return null;
+    seen.add(row.targetId);
+    failures.push(Object.freeze({ targetId: row.targetId, failureKind: row.failureKind,
+      observedAtUtc: row.observedAtUtc, reportedSourceHead: row.reportedSourceHead, blocker: row.blocker }));
+  }
+  return Object.freeze({ schemaVersion: POST_SYNC_TARGET_FAILURE_HISTORY_SCHEMA,
+    expectedSourceHead: value.expectedSourceHead,
+    failures: Object.freeze(TARGET_ORDER.flatMap(id => failures.filter(row => row.targetId === id))),
+    historical: true, diagnosticOnly: true });
+}
+
+// One bounded canonical memory for the last refusal of each target. Plans and
+// unrelated checkpoints are identity transitions. Only a new exact-head success
+// retires its own refusal; replayed/resumed rows never become new observations.
+// This memory is never an input to resultPass, resumable results or debt proof.
+export function reducePostSyncTargetFailureHistory(previous, {
+  expectedSourceHead, observedAtUtc, nowMs, targetId, result, failureKind = '',
+} = {}) {
+  const retained = projectPostSyncTargetFailureHistory(previous, { expectedSourceHead, nowMs });
+  if (!strictHead(expectedSourceHead) || !Number.isFinite(nowMs) || !strictTimestamp(observedAtUtc)
+    || Date.parse(observedAtUtc) > nowMs + 60_000 || !TARGET_ORDER.includes(targetId)) return retained;
+  // Processing time validates stored evidence; an older incoming observation
+  // must not make unrelated stored rows appear future-dated and erase them.
+  if (result?.resumed === true
+    || Date.parse(retained?.failures.find(row => row.targetId === targetId)?.observedAtUtc) > Date.parse(observedAtUtc)) return retained;
+  if ((failureKind === 'RESULT_UNPROVEN' && resultPass(result, expectedSourceHead))
+    || (['INVOCATION_FAILED', 'HANDLER_MISSING'].includes(failureKind) && result != null)) return retained;
+  const failures = (retained?.failures || []).filter(row => row.targetId !== targetId);
+  if (!failureKind && resultPass(result, expectedSourceHead) && strictHead(result?.sourceHead)
+    && (result.blocker === undefined || result.blocker === '')) {
+    return projectPostSyncTargetFailureHistory({ schemaVersion: POST_SYNC_TARGET_FAILURE_HISTORY_SCHEMA,
+      expectedSourceHead, failures }, { expectedSourceHead, nowMs });
+  }
+  if (!TARGET_FAILURE_KINDS.has(failureKind)) return retained;
+  const blocker = failureKind === 'HANDLER_MISSING' ? 'REFRESH_TARGET_HANDLER_MISSING'
+    : failureKind === 'INVOCATION_FAILED' ? 'REFRESH_TARGET_INVOCATION_FAILED'
+      : TARGET_FAILURE_CODES.has(result?.blocker) ? result.blocker : 'REFRESH_TARGET_PROOF_FAILED';
+  failures.push({ targetId, failureKind, observedAtUtc,
+    reportedSourceHead: failureKind === 'RESULT_UNPROVEN' && strictHead(result?.sourceHead) ? result.sourceHead : '',
+    blocker });
+  return projectPostSyncTargetFailureHistory({ schemaVersion: POST_SYNC_TARGET_FAILURE_HISTORY_SCHEMA,
+    expectedSourceHead, failures }, { expectedSourceHead, nowMs });
+}
+
 export async function executePostSyncRefreshPlan({
   beforeHead,
   afterHead,
@@ -480,6 +559,20 @@ export async function executePostSyncRefreshPlan({
     [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]: adapters.confirmNaturalReload,
   };
 
+  const checkpoint = async observation => {
+    if (typeof onTargetComplete !== 'function') return null;
+    try {
+      await onTargetComplete(Object.freeze([...results]), Object.freeze(observation));
+      return null;
+    } catch {
+      // A successful handler followed by a failed status write is a persistence
+      // failure, not a new native/target refusal. Preserve the observed result.
+      return Object.freeze({ ok: false, classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
+        blocker: `REFRESH_CHECKPOINT_PUBLICATION_FAILED:${observation.targetId}`,
+        plan, exactHeadProofOk: false, results: Object.freeze(results) });
+    }
+  };
+
   for (const targetId of plan.targetIds) {
     if (resumable.has(targetId)) {
       results.push(resumable.get(targetId));
@@ -487,6 +580,8 @@ export async function executePostSyncRefreshPlan({
     }
     const handler = handlers[targetId];
     if (typeof handler !== 'function') {
+      const publicationFailure = await checkpoint({ targetId, failureKind: 'HANDLER_MISSING' });
+      if (publicationFailure) return publicationFailure;
       return Object.freeze({
         ok: false,
         classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
@@ -496,24 +591,12 @@ export async function executePostSyncRefreshPlan({
         results: Object.freeze(results),
       });
     }
+    let result;
     try {
-      const result = await handler({ beforeHead, afterHead, targetId, plan });
-      const completed = Object.freeze({ targetId, ...result });
-      results.push(completed);
-      if (!resultPass(result, afterHead)) {
-        return Object.freeze({
-          ok: false,
-          classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
-          blocker: result?.blocker || `REFRESH_PROOF_FAILED:${targetId}`,
-          plan,
-          exactHeadProofOk: false,
-          results: Object.freeze(results),
-        });
-      }
-      if (typeof onTargetComplete === 'function') {
-        await onTargetComplete(Object.freeze([...results]));
-      }
+      result = await handler({ beforeHead, afterHead, targetId, plan });
     } catch (error) {
+      const publicationFailure = await checkpoint({ targetId, failureKind: 'INVOCATION_FAILED' });
+      if (publicationFailure) return publicationFailure;
       return Object.freeze({
         ok: false,
         classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
@@ -523,6 +606,16 @@ export async function executePostSyncRefreshPlan({
         exactHeadProofOk: false,
         results: Object.freeze(results),
       });
+    }
+    const completed = Object.freeze({ targetId, ...result });
+    results.push(completed);
+    const passed = resultPass(result, afterHead);
+    const publicationFailure = await checkpoint({ targetId, result, failureKind: passed ? '' : 'RESULT_UNPROVEN' });
+    if (publicationFailure) return publicationFailure;
+    if (!passed) {
+      return Object.freeze({ ok: false, classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
+        blocker: result?.blocker || `REFRESH_PROOF_FAILED:${targetId}`, plan,
+        exactHeadProofOk: false, results: Object.freeze(results) });
     }
   }
 

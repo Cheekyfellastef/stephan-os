@@ -12,6 +12,7 @@ import {
   POST_SYNC_REFRESH_CLASSIFICATIONS,
   POST_SYNC_REFRESH_TARGETS,
   buildPostSyncRefreshProjection,
+  reducePostSyncTargetFailureHistory,
 } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -38,6 +39,67 @@ function beaconSurface(input) {
     statusRecords: { postSyncRefresh: input },
   }).surfaces.find((surface) => surface.id === 'postSyncRefresh');
 }
+
+function targetFailureHistory(overrides = {}) {
+  return reducePostSyncTargetFailureHistory(null, { expectedSourceHead: HEAD,
+    observedAtUtc: new Date(NOW.getTime() - 10_000).toISOString(), nowMs: NOW.getTime(),
+    targetId: TARGET, failureKind: 'RESULT_UNPROVEN',
+    result: { ok: false, exactHeadProofOk: true, sourceHead: HEAD,
+      blocker: 'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN' }, ...overrides });
+}
+
+test('complete beacon exposes historical target refusal without inventing a current attempt result', () => {
+  const history = targetFailureHistory();
+  const input = record({ targetFailureHistory: { ...history, stdout: 'PRIVATE_TOP_LEVEL',
+    failures: [{ ...history.failures[0], stderr: 'PRIVATE_CHILD_ERROR', path: 'PRIVATE_PATH' }] } });
+  const beacon = buildCompleteBeacon({ sourceHead: HEAD, now: NOW, statusRecords: { postSyncRefresh: input } });
+  const runtime = beacon.surfaces.find(row => row.id === 'postSyncRefresh').runtimeRefresh;
+  assert.equal(runtime.classification, 'REFRESH_READY');
+  assert.deepEqual(runtime.resultTargets, []);
+  assert.equal(runtime.targetFailureHistory.evidenceState, 'HISTORICAL');
+  assert.equal(runtime.targetFailureHistory.expectedSourceHead, HEAD);
+  assert.equal(runtime.targetFailureHistory.sourceHeadMatchesExpected, true);
+  assert.equal(runtime.targetFailureHistory.failures[0].observedAtUtc, history.failures[0].observedAtUtc);
+  assert.equal(runtime.targetFailureHistory.failures[0].ageMs, 10_000);
+  assert.equal(runtime.targetFailureHistory.failures[0].historical, true);
+  assert.equal(runtime.targetFailureHistory.failures[0].diagnosticOnly, true);
+  assert.equal(buildBattleBridgeOutboundBeaconBody(beacon).includes('PRIVATE_'), false);
+});
+
+test('public target history rejects ambiguous lists and preserves mismatched original head truth', () => {
+  const history = targetFailureHistory();
+  const row = history.failures[0];
+  for (const invalid of [
+    { ...history, expectedSourceHead: [HEAD] },
+    { ...history, failures: [row, row] },
+    { ...history, failures: Array(8).fill(row) },
+    { ...history, failures: [{ ...row, blocker: 'PRIVATE_RAW_UPPERCASE' }] },
+    { ...history, failures: [{ ...row, observedAtUtc: new Date(NOW.getTime() + 60_001).toISOString() }] },
+  ]) {
+    const projected = beaconSurface(record({ targetFailureHistory: invalid })).runtimeRefresh.targetFailureHistory;
+    assert.equal(projected.evidenceState, 'INVALID');
+    assert.deepEqual(projected.failures, []);
+    assert.equal(JSON.stringify(projected).includes('PRIVATE_'), false);
+  }
+  const mismatch = beaconSurface(record({ targetFailureHistory: { ...history, expectedSourceHead: OTHER_HEAD } })).runtimeRefresh.targetFailureHistory;
+  assert.equal(mismatch.evidenceState, 'HEAD_MISMATCH');
+  assert.equal(mismatch.expectedSourceHead, OTHER_HEAD);
+  assert.equal(mismatch.sourceHeadMatchesExpected, false);
+  assert.equal(mismatch.failures[0].observedAtUtc, row.observedAtUtc);
+});
+
+test('history age alone is immaterial while exact target retirement changes beacon publication', () => {
+  const history = targetFailureHistory();
+  const build = (now, targetFailureHistory) => buildCompleteBeacon({ sourceHead: HEAD, now,
+    statusRecords: { postSyncRefresh: record({ targetFailureHistory }) } });
+  const material = (now, history) => buildBattleBridgeOutboundBeaconMaterialBody(buildBattleBridgeOutboundBeaconBody(build(now, history)));
+  const next = new Date(NOW.getTime() + 60_000);
+  assert.equal(material(NOW, history), material(next, history));
+  const retired = reducePostSyncTargetFailureHistory(history, { expectedSourceHead: HEAD,
+    observedAtUtc: next.toISOString(), nowMs: next.getTime(), targetId: TARGET,
+    result: { ok: true, exactHeadProofOk: true, sourceHead: HEAD } });
+  assert.notEqual(material(next, history), material(next, retired));
+});
 
 test('a real coordinator plan remains REFRESH_READY with no completed target', () => {
   const plan = buildPostSyncRefreshProjection({
