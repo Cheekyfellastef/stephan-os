@@ -286,6 +286,32 @@ function Get-SovereignRelayDaemonHealth {
     }
 }
 
+function Wait-SovereignRelayDaemonReady {
+    param(
+        [int]$Attempts = 40,
+        [int]$DelayMilliseconds = 500
+    )
+    $lastProcesses = @()
+    $lastHealth = $null
+    for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
+        $lastProcesses = @(Get-SovereignRelayDaemonProcesses)
+        $lastHealth = Get-SovereignRelayDaemonHealth
+        if ($lastProcesses.Count -eq 1 -and [bool]$lastHealth.healthy) {
+            return [pscustomobject]@{
+                ready = $true
+                processes = $lastProcesses
+                health = $lastHealth
+            }
+        }
+        Start-Sleep -Milliseconds $DelayMilliseconds
+    }
+    return [pscustomobject]@{
+        ready = $false
+        processes = $lastProcesses
+        health = $lastHealth
+    }
+}
+
 function Get-SovereignCommanderProcesses {
     $processes = @(
         Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
@@ -768,7 +794,7 @@ if (-not (Test-Path -LiteralPath $relayDaemonScript -PathType Leaf)) {
 } else {
     $relayBefore = @(Get-SovereignRelayDaemonProcesses)
     $relayHealthBefore = Get-SovereignRelayDaemonHealth
-    if ($relayBefore.Count -eq 0 -or -not [bool]$relayHealthBefore.healthy) {
+    if ($relayBefore.Count -ne 1 -or -not [bool]$relayHealthBefore.healthy) {
         if ($relayBefore.Count -gt 0) {
             $relayDaemonRestartRequested = $true
             try {
@@ -787,20 +813,24 @@ if (-not (Test-Path -LiteralPath $relayDaemonScript -PathType Leaf)) {
                 $quotedRelayDaemonScript = '"' + $relayDaemonScript.Replace('"', '\"') + '"'
                 $relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
                 $relayDaemonStartedPid = [int]$relayStarted.Id
-                Start-Sleep -Seconds 6
             } catch {
                 $relayDaemonBlocker = 'SOVEREIGN_RELAY_DAEMON_START_FAILED'
             }
         }
     }
-    $relayAfter = @(Get-SovereignRelayDaemonProcesses)
-    $relayHealthAfter = Get-SovereignRelayDaemonHealth
+    $relayReady = if ($relayDaemonBlocker) {
+        [pscustomobject]@{ ready = $false; processes = @(Get-SovereignRelayDaemonProcesses); health = Get-SovereignRelayDaemonHealth }
+    } else {
+        Wait-SovereignRelayDaemonReady
+    }
+    $relayAfter = @($relayReady.processes)
+    $relayHealthAfter = $relayReady.health
     $relayDaemonProcessCount = $relayAfter.Count
     $relayDaemonHeartbeatAgeSeconds = $relayHealthAfter.heartbeatAgeSeconds
     $relayDaemonSourceHead = [string]$relayHealthAfter.sourceHead
     $relayDaemonSourceHeadMatchesLive = [bool]$relayHealthAfter.sourceHeadMatchesLive
     $relayDaemonVerdict = [string]$relayHealthAfter.finalVerdict
-    $relayDaemonHealthy = [bool]($relayAfter.Count -ge 1 -and $relayHealthAfter.healthy)
+    $relayDaemonHealthy = [bool]($relayReady.ready -and $relayAfter.Count -eq 1 -and $relayHealthAfter.healthy)
     if (-not $relayDaemonHealthy -and -not $relayDaemonBlocker) {
         $relayDaemonBlocker = if ($relayHealthAfter.blocker) { [string]$relayHealthAfter.blocker } else { 'SOVEREIGN_RELAY_DAEMON_NOT_HEALTHY' }
     }
