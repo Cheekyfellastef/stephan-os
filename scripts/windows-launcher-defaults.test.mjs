@@ -306,7 +306,16 @@ test('desktop ignition gives eligible control-plane failure one Sovereign Comman
   assert.match(helper, /retrying safe default ignition once after Sovereign Commander repair/);
   assert.doesNotMatch(helper, /while\s*\([^)]*SovereignCommander/i);
   assert.match(launcher, /ignitionHelperProcess.*Start-DevWindow[\s\S]*?-ReturnProcess/);
-  assert.match(launcher, /ignitionHelperProcess\.HasExited[\s\S]*?ExitCode -ne 0/);
+  assert.match(
+    launcher,
+    /ignitionHelperProcess\.HasExited[\s\S]*?WaitForExit\(\)[\s\S]*?Refresh\(\)[\s\S]*?\$helperExitCode = \$script:ignitionHelperProcess\.ExitCode[\s\S]*?\$null -ne \$helperExitCode -and \[int\]\$helperExitCode -ne 0/,
+    'launcher must reap and refresh the helper before treating an observed non-zero exit code as failure',
+  );
+  assert.doesNotMatch(
+    launcher,
+    /ignitionHelperProcess\.HasExited\s+-and\s+\$script:ignitionHelperProcess\.ExitCode\s+-ne\s+0/,
+    'a transient null ExitCode must never be interpreted as helper failure',
+  );
 });
 
 
