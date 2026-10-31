@@ -462,6 +462,27 @@ test('fetch, divergence and ff-only failures fail closed', async () => {
   }
 });
 
+test('pre-boot lock is recovered even when Windows reused the recorded PID', async () => {
+  const fx = await fixture();
+  try {
+    const now = new Date('2026-10-31T17:00:00Z');
+    const bootStartedAtMs = Date.parse('2026-10-31T16:40:00Z');
+    const lockPath = path.join(fx.workspaceRoot, 'locks', 'battle-bridge-github-sync.lock');
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    await writeFile(lockPath, `${JSON.stringify({ pid: 14108, acquiredAtUtc: '2026-10-31T16:36:47.401Z' })}\n`);
+    const result = await runBattleBridgeGitHubSync({
+      paths: fx.paths,
+      expectedPaths: fx.expectedPaths,
+      git: fakeGit(),
+      now,
+      bootStartedAtMs,
+      processIsAliveFn: () => true,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.evaluation.classification, SYNC_CLASSIFICATIONS.SYNC_NO_CHANGE);
+  } finally { await rm(fx.root, { recursive: true, force: true }); }
+});
+
 test('stale dead-process lock is recovered once and does not permanently stall the watcher', async () => {
   const fx = await fixture();
   try {
