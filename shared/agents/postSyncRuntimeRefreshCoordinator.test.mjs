@@ -62,6 +62,35 @@ test('maintenance custody store changes refresh Sovereign Commander instead of f
   assert.equal(plan.sovereignRelayRefreshRequired, false);
 });
 
+test('merged PR #3358 ignition auto-heal range has no unclassified runtime path', () => {
+  const changedPaths = [
+    'scripts/sovereign-commander-goal-builder-repair.mjs',
+    'scripts/sovereign-commander-goal-builder-repair.test.mjs',
+    'scripts/sovereign-commander-ignition-diagnosis.mjs',
+    'scripts/sovereign-commander-ignition-diagnosis.test.mjs',
+    'scripts/sovereign-commander-mcp.mjs',
+    'scripts/sovereign-commander-persistent-runtime-repair.mjs',
+    'scripts/sovereign-commander-persistent-runtime-repair.test.mjs',
+    'shared/agents/sovereignCommanderMcp.test.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs',
+    'shared/agents/sovereignCommanderV1.mjs',
+    'shared/agents/sovereignCommanderV1.test.mjs',
+    'shared/agents/sovereignMaintenanceAdmissionV1.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER,
+  ]);
+  assert.equal(plan.changedPathCount, 13);
+  assert.equal(plan.noRuntimePathCount, 6);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
 test('only the inspected offline installer package preparer is exempt from runtime refresh', async () => {
   const source = 'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs';
   const paths = [source, source.replace('.mjs', '.test.mjs'),
