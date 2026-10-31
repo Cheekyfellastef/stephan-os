@@ -6,6 +6,8 @@ import { MAILBOX_ROTATION_REQUEST_ID, mailboxRotationDigest } from '../shared/ag
 import { projectControlTowerRequestObservationV1, projectControlTowerLedgerObservationV1,
   controlTowerBuildObservationUnresolvedV1 } from '../shared/agents/controlTowerRequestObservationV1.mjs';
 const SCHEMA = 'stephanos.mailbox-execution-ledger-entry.v1';
+const INVENTORY_MAX_ENTRIES = 8192;
+const ENTRY_MAX_BYTES = 4096;
 const CONTROL_TOWER_IDENTITY = ['requestId', 'runId', 'runAttempt', 'operation', 'sourceHead',
   'artifactId', 'artifactSha256', 'commandDigest', 'createdAtUtc', 'expiresAtUtc', 'acceptedAtUtc'];
 const observationHashValid = observation => !observation?.controlSystemStatus
@@ -60,8 +62,105 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
     finally { if (fd !== undefined) closeSync(fd); }
     return true;
   };
+  function inventory() {
+    // Other original consumers can write this ledger outside the outbox lock.
+    // This bounded readback is a local observation, never a serialization claim.
+    // Missing directories are unknown: inventory must not create or import them.
+    directory(root);
+    const dirs = new Map(), files = new Map(), records = [];
+    const deny = reason => { throw Error('MAILBOX_EXECUTION_LEDGER_INVENTORY_' + reason); };
+    const stable = (a, b) => a.dev === b.dev && a.ino === b.ino && a.size === b.size
+      && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs && a.nlink === b.nlink;
+    function freezeRecord(value) {
+      if (value && typeof value === 'object') {
+        for (const child of Object.values(value)) freezeRecord(child);
+        Object.freeze(value);
+      }
+      return value;
+    }
+    function list(path, limit) {
+      directory(path);
+      const before = lstatSync(path), prior = dirs.get(path);
+      if (prior && !stable(prior.info, before)) deny('DIRECTORY_CHANGED');
+      const names = [], stream = opendirSync(path);
+      try {
+        for (;;) {
+          const entry = stream.readSync(); if (!entry) break;
+          if (names.length >= limit) deny('LIMIT');
+          names.push(entry.name);
+        }
+      } finally { stream.closeSync(); }
+      names.sort();
+      if (!stable(before, lstatSync(path)) || (prior && JSON.stringify(prior.names) !== JSON.stringify(names))) deny('DIRECTORY_CHANGED');
+      dirs.set(path, { info: before, names });
+      return names;
+    }
+    for (const bucket of list(root, 256)) {
+      if (!/^[a-f0-9]{2}$/.test(bucket)) deny('PATH_INVALID');
+      const bucketPath = join(root, bucket);
+      for (const name of list(bucketPath, INVENTORY_MAX_ENTRIES - records.length)) {
+        if (!/^[a-f0-9]{64}\.json$/.test(name)) deny('PATH_INVALID');
+        const path = join(bucketPath, name), before = lstatSync(path);
+        if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1
+          || before.size <= 0 || before.size > ENTRY_MAX_BYTES) deny('ENTRY_UNSAFE');
+        const record = readJsonObject(path, { maxBytes: ENTRY_MAX_BYTES });
+        const required = ['schemaVersion', 'requestId', 'issueNumber', 'phase', 'commandDigest'];
+        const allowed = [...required, 'terminalState', 'terminalProofHash', 'controlTowerObservation'];
+        if (!required.every(key => Object.hasOwn(record, key)) || Object.keys(record).some(key => !allowed.includes(key))
+          || record.schemaVersion !== SCHEMA || typeof record.requestId !== 'string'
+          || !MAILBOX_ROTATION_REQUEST_ID.test(record.requestId)
+          || !Number.isSafeInteger(record.issueNumber) || record.issueNumber <= 0
+          || !['RESERVED', 'TERMINAL', 'RETIRED'].includes(record.phase)
+          || typeof record.commandDigest !== 'string' || !/^(?:[a-f0-9]{64})?$/.test(record.commandDigest)
+          || (Object.hasOwn(record, 'terminalState') && (record.phase !== 'TERMINAL' || !['DONE', 'BLOCKED'].includes(record.terminalState)))
+          || (Object.hasOwn(record, 'terminalProofHash') && (record.phase !== 'TERMINAL'
+            || !['DONE', 'BLOCKED'].includes(record.terminalState) || typeof record.terminalProofHash !== 'string'
+            || !/^[a-f0-9]{64}$/.test(record.terminalProofHash)))) deny('ENTRY_INVALID');
+        if (Object.hasOwn(record, 'controlTowerObservation')) {
+          const observation = projectControlTowerRequestObservationV1(record.controlTowerObservation,
+            { requestId: record.requestId, commandDigest: record.commandDigest });
+          // Reuse the canonical metadata/ledger validators and require the exact
+          // stored projection. Unknown nested fields cannot disappear during
+          // validation; the complete original record remains in both read hashes.
+          if (!observation || observation.commandDigest !== record.commandDigest
+            || projectControlTowerLedgerObservationV1(record)?.detailState !== 'OBSERVED'
+            || (observation.operation === 'OBSERVE_CONTROL_SYSTEM' && Object.hasOwn(record, 'terminalProofHash'))
+            || !observationHashValid(observation)
+            || mailboxRotationDigest(observation) !== mailboxRotationDigest(record.controlTowerObservation)) deny('ENTRY_INVALID');
+        }
+        if (path !== location(record.requestId)) deny('REQUEST_PATH_MISMATCH');
+        const after = lstatSync(path);
+        if (!stable(before, after) || after.nlink !== 1) deny('ENTRY_CHANGED');
+        files.set(path, { info: before, digest: mailboxRotationDigest(record) });
+        records.push(freezeRecord(record));
+      }
+    }
+    // Re-read the complete observed estate, including actual file handles via
+    // readJsonObject, and enumerate names again while the observation is open.
+    for (const [path, item] of files) {
+      directory(dirname(path));
+      const before = lstatSync(path);
+      if (!stable(item.info, before) || before.nlink !== 1
+        || mailboxRotationDigest(readJsonObject(path, { maxBytes: ENTRY_MAX_BYTES })) !== item.digest
+        || !stable(item.info, lstatSync(path))) deny('ENTRY_CHANGED');
+    }
+    for (const [path, item] of dirs) list(path, item.names.length);
+    records.sort((a, b) => a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0);
+    const counts = Object.freeze(Object.fromEntries(['RESERVED', 'TERMINAL', 'RETIRED']
+      .map(phase => [phase, records.filter(record => record.phase === phase).length])));
+    const identity = info => [info.dev, info.ino, info.nlink, info.size, info.mtimeMs, info.ctimeMs];
+    const compare = ([a], [b]) => a < b ? -1 : a > b ? 1 : 0;
+    const physicalIdentitySha256 = mailboxRotationDigest({
+      files: [...files].map(([path, item]) => [path, identity(item.info)]).sort(compare),
+      directories: [...dirs].map(([path, item]) => [path, identity(item.info)]).sort(compare),
+    });
+    return Object.freeze({ records: Object.freeze(records), recordCount: records.length, counts,
+      physicalIdentitySha256, inventorySha256: mailboxRotationDigest({ records, physicalIdentitySha256 }),
+      localObservationOnly: true, executionAuthorized: false });
+  }
   return Object.freeze({
     read,
+    inventory,
     // A read-only diagnostic of this SAME ledger, never an admission/replay API.
     inspectControlTower(id, options) {
       const record = read(id);
