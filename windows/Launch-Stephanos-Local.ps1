@@ -1004,6 +1004,467 @@ function Write-IgnitionSupportSnapshot([string]$Verdict, [hashtable]$Extra = @{}
   Write-IgnitionTranscript -Event @{ event = 'support-snapshot'; verdict = $Verdict; supportSnapshotPath = $ignitionSupportSnapshotPath }
 }
 
+function Invoke-SovereignCommanderRetainedCustodyPreparation {
+  if ($Mode -ne 'launcher-root') { return $false }
+  $nodeExecutable = 'C:\Program Files\nodejs\node.exe'
+  $recoveryScript = Join-Path $repoRoot 'scripts/sovereign-maintenance-custody-recovery.mjs'
+  $sourceTruthScript = Join-Path $repoRoot 'scripts/battle-bridge-ignition-supervisor.mjs'
+  if (-not (Test-Path -LiteralPath $nodeExecutable -PathType Leaf)
+      -or -not (Test-Path -LiteralPath $recoveryScript -PathType Leaf)
+      -or -not (Test-Path -LiteralPath $sourceTruthScript -PathType Leaf)) { return $false }
+
+  $inspectText = (& $nodeExecutable $recoveryScript 'inspect-retained-migration' 2>$null | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $inspectText) { return $false }
+  try { $inspection = $inspectText | ConvertFrom-Json } catch { return $false }
+  if ($inspection.ok -ne $true
+      -or [string]$inspection.projectionDigest -notmatch '^[a-f0-9]{64}  $browserSurfaces = if ($Mode -eq 'vite-dev') {
+    @([ordered]@{ Label = 'vite-dev'; Url = $viteDevUrl })
+  }
+  else {
+    Get-CockpitSurfaces -ResolvedBootMode $resolvedBootMode
+  }
+  $browserTargets = @($browserSurfaces | ForEach-Object { $_.Url })
+
+  Show-IgnitionSplashScreen
+
+  if (Invoke-SovereignCommanderRetainedCustodyPreparation) {
+    exit 0
+  }
+
+  Write-LiveLog "selected repository root: $repoRoot"
+  Write-IgnitionStatus -Phase 'checking-workspace-dirt' -Message 'Running canonical ignition workspace checks; source deletion is forbidden.' -Extra @{ currentStage = 'checking-workspace-dirt'; noSourceDeletion = $true }
+  Write-IgnitionStatus -Phase 'classifying-safe-vs-unsafe-dirt' -Message 'Classifying generated/runtime stoppers separately from source blockers; hidden blockers remain surfaced.' -Extra @{ currentStage = 'classifying-safe-vs-unsafe-dirt'; hiddenBlockersAllowed = $false }
+  Write-IgnitionStatus -Phase 'cleaning-generated-runtime-stoppers' -Message 'Safe auto-fix is limited to known generated/runtime stoppers delegated to canonical ignition.' -Extra @{ currentStage = 'cleaning-generated-runtime-stoppers'; safeAutoFixScope = 'known-generated-runtime-stoppers-only' }
+  Write-IgnitionStatus -Phase 'checking-dependencies' -Message 'Checking dependency and runtime prerequisites before startup.' -Extra @{ currentStage = 'checking-dependencies' }
+  Write-IgnitionStatus -Phase 'checking-ports-existing-runtime' -Message 'Checking ports and existing runtime before startup.' -Extra @{ currentStage = 'checking-ports-existing-runtime' }
+
+  $port4173Before = Get-PortListenerSnapshot -Port 4173
+  $port5173Before = Get-PortListenerSnapshot -Port 5173
+
+  Write-LiveLog "selected ignition mode: $Mode"
+  Write-LiveLog "Boot mode: $resolvedBootMode"
+  if ($Mode -eq 'vite-dev') {
+    Write-LiveLog "vite-dev target: $viteDevUrl"
+    if ($BootMode -ne 'launcher') {
+      Write-LiveLog "Boot mode '$BootMode' is not used in vite-dev; using launcher surface only"
+    }
+  }
+  else {
+    Write-LiveLog "4173 launcher shell: $launcherShellUrl"
+    Write-LiveLog "4173 runtime target: $launcherRuntimeUrl"
+    Write-LiveLog "4173 runtime status probe: $launcherRuntimeStatusUrl"
+  }
+
+  Write-LiveLog "4173 currently running: $($port4173Before.Running) (pids=$([string]::Join(',', $port4173Before.ProcessIds)); names=$([string]::Join(',', $port4173Before.ProcessNames)))"
+  Write-LiveLog "5173 currently running: $($port5173Before.Running) (pids=$([string]::Join(',', $port5173Before.ProcessIds)); names=$([string]::Join(',', $port5173Before.ProcessNames)))"
+
+  Write-IgnitionStatus -Phase 'starting-local-services' -Message 'Starting local services with minimized/background PowerShell log capture.' -Extra @{ currentStage = 'starting-local-services' }
+
+  if ($Mode -eq 'vite-dev') {
+    Ensure-ProcessRunning -StepLabel 'backend' -HealthUrl $backendHealthUrl -WindowTitle 'Stephanos Backend' -Command 'npm --prefix stephanos-server run dev'
+    Write-LiveLog 'starting vite-dev UI server'
+    Ensure-ProcessRunning -StepLabel 'vite-dev ui' -HealthUrl $viteDevUrl -WindowTitle 'Stephanos Vite Dev' -Command 'npm --prefix stephanos-ui run dev'
+
+    Write-LiveLog 'waiting for backend'
+    Wait-ForUrl -StepLabel 'backend health' -Url $backendHealthUrl
+    Wait-ForUrl -StepLabel 'backend mission operations freshness route' -Url $backendMissionOperationsUrl
+    Write-LiveLog "waiting for vite-dev runtime at $viteDevUrl"
+    Wait-ForUrl -StepLabel 'vite-dev ui' -Url $viteDevUrl
+  }
+  else {
+    Write-LiveLog 'launcher-root selected; ensuring port 5173 is not used by vite-dev'
+    $stopped = Stop-ProcessOnTcpPort -Port 5173
+    if ($stopped.Count -gt 0) {
+      Write-LiveLog "stopped 5173 listener process ids: $([string]::Join(',', $stopped))"
+    }
+    else {
+      Write-LiveLog 'no 5173 listener to stop'
+    }
+
+    Write-LiveLog "starting Battle Bridge supervisor through launcher-root approval helper (command=$launcherRootCommand)"
+    $script:ignitionHelperProcess = Start-DevWindow -Title 'Stephanos Battle Bridge Ignition Supervisor' -Command $launcherRootCommand -ReturnProcess
+    $battleBridgeSupervisor = Wait-ForBattleBridgeSupervisorReady
+
+    Write-LiveLog "waiting for launcher-root shell at $launcherShellUrl after supervisor green proof"
+    Wait-ForUrl -StepLabel 'launcher-root shell' -Url $launcherShellUrl
+
+    if ($resolvedBootMode -in @('runtime', 'cockpit')) {
+      Write-LiveLog "waiting for launcher-root runtime target at $launcherRuntimeUrl after supervisor green proof"
+      Wait-ForUrl -StepLabel 'launcher-root runtime target' -Url $launcherRuntimeUrl
+    }
+  }
+
+  $isLocalhostLaunch = ($browserTargets | Where-Object { $_ -notlike 'http://127.0.0.1:*' -and $_ -notlike 'http://localhost:*' }).Count -eq 0
+  $autoOpenEnabled = if ($Mode -eq 'launcher-root') {
+    $true
+  }
+  elseif ($isLocalhostLaunch) {
+    $AutoOpen.IsPresent
+  }
+  else {
+    $true
+  }
+
+  Write-IgnitionStatus -Phase 'opening-command-deck' -Message 'Opening Command Deck browser surfaces after readiness proof.' -Extra @{ currentStage = 'opening-command-deck'; browserTargets = $browserTargets; visiblePowerShellWallRequired = $false }
+
+  Write-IgnitionSupportSnapshot -Verdict 'ready-for-local-proof' -Extra @{ browserTargets = $browserTargets; port4173Before = $port4173Before; port5173Before = $port5173Before }
+  Write-IgnitionStatus -Phase 'ready' -Message 'Stephanos local server ready.' -Extra @{ currentStage = 'ready'; browserTargets = $browserTargets; visiblePowerShellWallRequired = $false; supportSnapshotPath = $ignitionSupportSnapshotPath; transcriptPath = $ignitionTranscriptPath }
+
+  Write-LiveLog 'server started'
+  Write-LiveLog "manual URL(s): $([string]::Join(', ', $browserTargets))"
+  Write-LiveLog "browser auto-open disabled: $(-not $autoOpenEnabled)"
+
+  Write-Host ''
+  Write-Host 'Stephanos local server ready' -ForegroundColor Green
+  Write-Host 'Open manually in browser:' -ForegroundColor Green
+  foreach ($target in $browserTargets) {
+    Write-Host $target -ForegroundColor Green
+  }
+  Write-Host ''
+
+  if ($autoOpenEnabled) {
+    for ($index = 0; $index -lt $browserSurfaces.Count; $index++) {
+      $surface = $browserSurfaces[$index]
+      Open-CockpitSurface -Url $surface.Url -Label $surface.Label -Id $surface.Id -ExpectedTitle $surface.ExpectedTitle
+
+      if ($index -lt ($browserSurfaces.Count - 1)) {
+        Start-Sleep -Milliseconds 450
+      }
+    }
+    Write-IgnitionSupportSnapshot -Verdict 'ready-for-local-proof' -Extra @{ browserTargets = $browserTargets; browserSurfaceReceiptPath = $ignitionBrowserSurfaceReceiptPath; browserSurfaceReceipts = @($script:browserSurfaceReceipts); port4173Before = $port4173Before; port5173Before = $port5173Before }
+    Write-IgnitionStatus -Phase 'ready' -Message 'Stephanos local server ready with verified browser surfaces.' -Extra @{ currentStage = 'ready'; browserTargets = $browserTargets; browserSurfaceReceiptPath = $ignitionBrowserSurfaceReceiptPath; browserSurfaceReceipts = @($script:browserSurfaceReceipts); visiblePowerShellWallRequired = $false; supportSnapshotPath = $ignitionSupportSnapshotPath; transcriptPath = $ignitionTranscriptPath }
+  }
+}
+catch {
+  $failedStep = if ($_.Exception -and $_.Exception.Message) { $_.Exception.Message } else { 'unknown step' }
+  Fail-Step -Step $failedStep -ErrorRecord $_
+}
+
+      -or -not [string]$inspection.projectionReservationId
+      -or [string]$inspection.heldOwner.digest -notmatch '^[a-f0-9]{64}  $browserSurfaces = if ($Mode -eq 'vite-dev') {
+    @([ordered]@{ Label = 'vite-dev'; Url = $viteDevUrl })
+  }
+  else {
+    Get-CockpitSurfaces -ResolvedBootMode $resolvedBootMode
+  }
+  $browserTargets = @($browserSurfaces | ForEach-Object { $_.Url })
+
+  Show-IgnitionSplashScreen
+
+  Write-LiveLog "selected repository root: $repoRoot"
+  Write-IgnitionStatus -Phase 'checking-workspace-dirt' -Message 'Running canonical ignition workspace checks; source deletion is forbidden.' -Extra @{ currentStage = 'checking-workspace-dirt'; noSourceDeletion = $true }
+  Write-IgnitionStatus -Phase 'classifying-safe-vs-unsafe-dirt' -Message 'Classifying generated/runtime stoppers separately from source blockers; hidden blockers remain surfaced.' -Extra @{ currentStage = 'classifying-safe-vs-unsafe-dirt'; hiddenBlockersAllowed = $false }
+  Write-IgnitionStatus -Phase 'cleaning-generated-runtime-stoppers' -Message 'Safe auto-fix is limited to known generated/runtime stoppers delegated to canonical ignition.' -Extra @{ currentStage = 'cleaning-generated-runtime-stoppers'; safeAutoFixScope = 'known-generated-runtime-stoppers-only' }
+  Write-IgnitionStatus -Phase 'checking-dependencies' -Message 'Checking dependency and runtime prerequisites before startup.' -Extra @{ currentStage = 'checking-dependencies' }
+  Write-IgnitionStatus -Phase 'checking-ports-existing-runtime' -Message 'Checking ports and existing runtime before startup.' -Extra @{ currentStage = 'checking-ports-existing-runtime' }
+
+  $port4173Before = Get-PortListenerSnapshot -Port 4173
+  $port5173Before = Get-PortListenerSnapshot -Port 5173
+
+  Write-LiveLog "selected ignition mode: $Mode"
+  Write-LiveLog "Boot mode: $resolvedBootMode"
+  if ($Mode -eq 'vite-dev') {
+    Write-LiveLog "vite-dev target: $viteDevUrl"
+    if ($BootMode -ne 'launcher') {
+      Write-LiveLog "Boot mode '$BootMode' is not used in vite-dev; using launcher surface only"
+    }
+  }
+  else {
+    Write-LiveLog "4173 launcher shell: $launcherShellUrl"
+    Write-LiveLog "4173 runtime target: $launcherRuntimeUrl"
+    Write-LiveLog "4173 runtime status probe: $launcherRuntimeStatusUrl"
+  }
+
+  Write-LiveLog "4173 currently running: $($port4173Before.Running) (pids=$([string]::Join(',', $port4173Before.ProcessIds)); names=$([string]::Join(',', $port4173Before.ProcessNames)))"
+  Write-LiveLog "5173 currently running: $($port5173Before.Running) (pids=$([string]::Join(',', $port5173Before.ProcessIds)); names=$([string]::Join(',', $port5173Before.ProcessNames)))"
+
+  Write-IgnitionStatus -Phase 'starting-local-services' -Message 'Starting local services with minimized/background PowerShell log capture.' -Extra @{ currentStage = 'starting-local-services' }
+
+  if ($Mode -eq 'vite-dev') {
+    Ensure-ProcessRunning -StepLabel 'backend' -HealthUrl $backendHealthUrl -WindowTitle 'Stephanos Backend' -Command 'npm --prefix stephanos-server run dev'
+    Write-LiveLog 'starting vite-dev UI server'
+    Ensure-ProcessRunning -StepLabel 'vite-dev ui' -HealthUrl $viteDevUrl -WindowTitle 'Stephanos Vite Dev' -Command 'npm --prefix stephanos-ui run dev'
+
+    Write-LiveLog 'waiting for backend'
+    Wait-ForUrl -StepLabel 'backend health' -Url $backendHealthUrl
+    Wait-ForUrl -StepLabel 'backend mission operations freshness route' -Url $backendMissionOperationsUrl
+    Write-LiveLog "waiting for vite-dev runtime at $viteDevUrl"
+    Wait-ForUrl -StepLabel 'vite-dev ui' -Url $viteDevUrl
+  }
+  else {
+    Write-LiveLog 'launcher-root selected; ensuring port 5173 is not used by vite-dev'
+    $stopped = Stop-ProcessOnTcpPort -Port 5173
+    if ($stopped.Count -gt 0) {
+      Write-LiveLog "stopped 5173 listener process ids: $([string]::Join(',', $stopped))"
+    }
+    else {
+      Write-LiveLog 'no 5173 listener to stop'
+    }
+
+    Write-LiveLog "starting Battle Bridge supervisor through launcher-root approval helper (command=$launcherRootCommand)"
+    $script:ignitionHelperProcess = Start-DevWindow -Title 'Stephanos Battle Bridge Ignition Supervisor' -Command $launcherRootCommand -ReturnProcess
+    $battleBridgeSupervisor = Wait-ForBattleBridgeSupervisorReady
+
+    Write-LiveLog "waiting for launcher-root shell at $launcherShellUrl after supervisor green proof"
+    Wait-ForUrl -StepLabel 'launcher-root shell' -Url $launcherShellUrl
+
+    if ($resolvedBootMode -in @('runtime', 'cockpit')) {
+      Write-LiveLog "waiting for launcher-root runtime target at $launcherRuntimeUrl after supervisor green proof"
+      Wait-ForUrl -StepLabel 'launcher-root runtime target' -Url $launcherRuntimeUrl
+    }
+  }
+
+  $isLocalhostLaunch = ($browserTargets | Where-Object { $_ -notlike 'http://127.0.0.1:*' -and $_ -notlike 'http://localhost:*' }).Count -eq 0
+  $autoOpenEnabled = if ($Mode -eq 'launcher-root') {
+    $true
+  }
+  elseif ($isLocalhostLaunch) {
+    $AutoOpen.IsPresent
+  }
+  else {
+    $true
+  }
+
+  Write-IgnitionStatus -Phase 'opening-command-deck' -Message 'Opening Command Deck browser surfaces after readiness proof.' -Extra @{ currentStage = 'opening-command-deck'; browserTargets = $browserTargets; visiblePowerShellWallRequired = $false }
+
+  Write-IgnitionSupportSnapshot -Verdict 'ready-for-local-proof' -Extra @{ browserTargets = $browserTargets; port4173Before = $port4173Before; port5173Before = $port5173Before }
+  Write-IgnitionStatus -Phase 'ready' -Message 'Stephanos local server ready.' -Extra @{ currentStage = 'ready'; browserTargets = $browserTargets; visiblePowerShellWallRequired = $false; supportSnapshotPath = $ignitionSupportSnapshotPath; transcriptPath = $ignitionTranscriptPath }
+
+  Write-LiveLog 'server started'
+  Write-LiveLog "manual URL(s): $([string]::Join(', ', $browserTargets))"
+  Write-LiveLog "browser auto-open disabled: $(-not $autoOpenEnabled)"
+
+  Write-Host ''
+  Write-Host 'Stephanos local server ready' -ForegroundColor Green
+  Write-Host 'Open manually in browser:' -ForegroundColor Green
+  foreach ($target in $browserTargets) {
+    Write-Host $target -ForegroundColor Green
+  }
+  Write-Host ''
+
+  if ($autoOpenEnabled) {
+    for ($index = 0; $index -lt $browserSurfaces.Count; $index++) {
+      $surface = $browserSurfaces[$index]
+      Open-CockpitSurface -Url $surface.Url -Label $surface.Label -Id $surface.Id -ExpectedTitle $surface.ExpectedTitle
+
+      if ($index -lt ($browserSurfaces.Count - 1)) {
+        Start-Sleep -Milliseconds 450
+      }
+    }
+    Write-IgnitionSupportSnapshot -Verdict 'ready-for-local-proof' -Extra @{ browserTargets = $browserTargets; browserSurfaceReceiptPath = $ignitionBrowserSurfaceReceiptPath; browserSurfaceReceipts = @($script:browserSurfaceReceipts); port4173Before = $port4173Before; port5173Before = $port5173Before }
+    Write-IgnitionStatus -Phase 'ready' -Message 'Stephanos local server ready with verified browser surfaces.' -Extra @{ currentStage = 'ready'; browserTargets = $browserTargets; browserSurfaceReceiptPath = $ignitionBrowserSurfaceReceiptPath; browserSurfaceReceipts = @($script:browserSurfaceReceipts); visiblePowerShellWallRequired = $false; supportSnapshotPath = $ignitionSupportSnapshotPath; transcriptPath = $ignitionTranscriptPath }
+  }
+}
+catch {
+  $failedStep = if ($_.Exception -and $_.Exception.Message) { $_.Exception.Message } else { 'unknown step' }
+  Fail-Step -Step $failedStep -ErrorRecord $_
+}
+
+      -or $inspection.heldOwner.observation.timeoutCustodyHeld -ne $true
+      -or $inspection.heldOwner.observation.running -ne $false
+      -or $inspection.heldOwner.observation.maintenanceInFlight -ne $false
+      -or $inspection.heldOwner.observation.scheduled -ne $false) { return $false }
+
+  $sourceText = (& $nodeExecutable $sourceTruthScript '--source-truth-json' 2>$null | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $sourceText) { return $false }
+  try { $sourceTruth = $sourceText | ConvertFrom-Json } catch { return $false }
+  $expectedMain = [string]$sourceTruth.head
+  if ($sourceTruth.ok -ne $true -or $expectedMain -notmatch '^[a-f0-9]{40}  $browserSurfaces = if ($Mode -eq 'vite-dev') {
+    @([ordered]@{ Label = 'vite-dev'; Url = $viteDevUrl })
+  }
+  else {
+    Get-CockpitSurfaces -ResolvedBootMode $resolvedBootMode
+  }
+  $browserTargets = @($browserSurfaces | ForEach-Object { $_.Url })
+
+  Show-IgnitionSplashScreen
+
+  Write-LiveLog "selected repository root: $repoRoot"
+  Write-IgnitionStatus -Phase 'checking-workspace-dirt' -Message 'Running canonical ignition workspace checks; source deletion is forbidden.' -Extra @{ currentStage = 'checking-workspace-dirt'; noSourceDeletion = $true }
+  Write-IgnitionStatus -Phase 'classifying-safe-vs-unsafe-dirt' -Message 'Classifying generated/runtime stoppers separately from source blockers; hidden blockers remain surfaced.' -Extra @{ currentStage = 'classifying-safe-vs-unsafe-dirt'; hiddenBlockersAllowed = $false }
+  Write-IgnitionStatus -Phase 'cleaning-generated-runtime-stoppers' -Message 'Safe auto-fix is limited to known generated/runtime stoppers delegated to canonical ignition.' -Extra @{ currentStage = 'cleaning-generated-runtime-stoppers'; safeAutoFixScope = 'known-generated-runtime-stoppers-only' }
+  Write-IgnitionStatus -Phase 'checking-dependencies' -Message 'Checking dependency and runtime prerequisites before startup.' -Extra @{ currentStage = 'checking-dependencies' }
+  Write-IgnitionStatus -Phase 'checking-ports-existing-runtime' -Message 'Checking ports and existing runtime before startup.' -Extra @{ currentStage = 'checking-ports-existing-runtime' }
+
+  $port4173Before = Get-PortListenerSnapshot -Port 4173
+  $port5173Before = Get-PortListenerSnapshot -Port 5173
+
+  Write-LiveLog "selected ignition mode: $Mode"
+  Write-LiveLog "Boot mode: $resolvedBootMode"
+  if ($Mode -eq 'vite-dev') {
+    Write-LiveLog "vite-dev target: $viteDevUrl"
+    if ($BootMode -ne 'launcher') {
+      Write-LiveLog "Boot mode '$BootMode' is not used in vite-dev; using launcher surface only"
+    }
+  }
+  else {
+    Write-LiveLog "4173 launcher shell: $launcherShellUrl"
+    Write-LiveLog "4173 runtime target: $launcherRuntimeUrl"
+    Write-LiveLog "4173 runtime status probe: $launcherRuntimeStatusUrl"
+  }
+
+  Write-LiveLog "4173 currently running: $($port4173Before.Running) (pids=$([string]::Join(',', $port4173Before.ProcessIds)); names=$([string]::Join(',', $port4173Before.ProcessNames)))"
+  Write-LiveLog "5173 currently running: $($port5173Before.Running) (pids=$([string]::Join(',', $port5173Before.ProcessIds)); names=$([string]::Join(',', $port5173Before.ProcessNames)))"
+
+  Write-IgnitionStatus -Phase 'starting-local-services' -Message 'Starting local services with minimized/background PowerShell log capture.' -Extra @{ currentStage = 'starting-local-services' }
+
+  if ($Mode -eq 'vite-dev') {
+    Ensure-ProcessRunning -StepLabel 'backend' -HealthUrl $backendHealthUrl -WindowTitle 'Stephanos Backend' -Command 'npm --prefix stephanos-server run dev'
+    Write-LiveLog 'starting vite-dev UI server'
+    Ensure-ProcessRunning -StepLabel 'vite-dev ui' -HealthUrl $viteDevUrl -WindowTitle 'Stephanos Vite Dev' -Command 'npm --prefix stephanos-ui run dev'
+
+    Write-LiveLog 'waiting for backend'
+    Wait-ForUrl -StepLabel 'backend health' -Url $backendHealthUrl
+    Wait-ForUrl -StepLabel 'backend mission operations freshness route' -Url $backendMissionOperationsUrl
+    Write-LiveLog "waiting for vite-dev runtime at $viteDevUrl"
+    Wait-ForUrl -StepLabel 'vite-dev ui' -Url $viteDevUrl
+  }
+  else {
+    Write-LiveLog 'launcher-root selected; ensuring port 5173 is not used by vite-dev'
+    $stopped = Stop-ProcessOnTcpPort -Port 5173
+    if ($stopped.Count -gt 0) {
+      Write-LiveLog "stopped 5173 listener process ids: $([string]::Join(',', $stopped))"
+    }
+    else {
+      Write-LiveLog 'no 5173 listener to stop'
+    }
+
+    Write-LiveLog "starting Battle Bridge supervisor through launcher-root approval helper (command=$launcherRootCommand)"
+    $script:ignitionHelperProcess = Start-DevWindow -Title 'Stephanos Battle Bridge Ignition Supervisor' -Command $launcherRootCommand -ReturnProcess
+    $battleBridgeSupervisor = Wait-ForBattleBridgeSupervisorReady
+
+    Write-LiveLog "waiting for launcher-root shell at $launcherShellUrl after supervisor green proof"
+    Wait-ForUrl -StepLabel 'launcher-root shell' -Url $launcherShellUrl
+
+    if ($resolvedBootMode -in @('runtime', 'cockpit')) {
+      Write-LiveLog "waiting for launcher-root runtime target at $launcherRuntimeUrl after supervisor green proof"
+      Wait-ForUrl -StepLabel 'launcher-root runtime target' -Url $launcherRuntimeUrl
+    }
+  }
+
+  $isLocalhostLaunch = ($browserTargets | Where-Object { $_ -notlike 'http://127.0.0.1:*' -and $_ -notlike 'http://localhost:*' }).Count -eq 0
+  $autoOpenEnabled = if ($Mode -eq 'launcher-root') {
+    $true
+  }
+  elseif ($isLocalhostLaunch) {
+    $AutoOpen.IsPresent
+  }
+  else {
+    $true
+  }
+
+  Write-IgnitionStatus -Phase 'opening-command-deck' -Message 'Opening Command Deck browser surfaces after readiness proof.' -Extra @{ currentStage = 'opening-command-deck'; browserTargets = $browserTargets; visiblePowerShellWallRequired = $false }
+
+  Write-IgnitionSupportSnapshot -Verdict 'ready-for-local-proof' -Extra @{ browserTargets = $browserTargets; port4173Before = $port4173Before; port5173Before = $port5173Before }
+  Write-IgnitionStatus -Phase 'ready' -Message 'Stephanos local server ready.' -Extra @{ currentStage = 'ready'; browserTargets = $browserTargets; visiblePowerShellWallRequired = $false; supportSnapshotPath = $ignitionSupportSnapshotPath; transcriptPath = $ignitionTranscriptPath }
+
+  Write-LiveLog 'server started'
+  Write-LiveLog "manual URL(s): $([string]::Join(', ', $browserTargets))"
+  Write-LiveLog "browser auto-open disabled: $(-not $autoOpenEnabled)"
+
+  Write-Host ''
+  Write-Host 'Stephanos local server ready' -ForegroundColor Green
+  Write-Host 'Open manually in browser:' -ForegroundColor Green
+  foreach ($target in $browserTargets) {
+    Write-Host $target -ForegroundColor Green
+  }
+  Write-Host ''
+
+  if ($autoOpenEnabled) {
+    for ($index = 0; $index -lt $browserSurfaces.Count; $index++) {
+      $surface = $browserSurfaces[$index]
+      Open-CockpitSurface -Url $surface.Url -Label $surface.Label -Id $surface.Id -ExpectedTitle $surface.ExpectedTitle
+
+      if ($index -lt ($browserSurfaces.Count - 1)) {
+        Start-Sleep -Milliseconds 450
+      }
+    }
+    Write-IgnitionSupportSnapshot -Verdict 'ready-for-local-proof' -Extra @{ browserTargets = $browserTargets; browserSurfaceReceiptPath = $ignitionBrowserSurfaceReceiptPath; browserSurfaceReceipts = @($script:browserSurfaceReceipts); port4173Before = $port4173Before; port5173Before = $port5173Before }
+    Write-IgnitionStatus -Phase 'ready' -Message 'Stephanos local server ready with verified browser surfaces.' -Extra @{ currentStage = 'ready'; browserTargets = $browserTargets; browserSurfaceReceiptPath = $ignitionBrowserSurfaceReceiptPath; browserSurfaceReceipts = @($script:browserSurfaceReceipts); visiblePowerShellWallRequired = $false; supportSnapshotPath = $ignitionSupportSnapshotPath; transcriptPath = $ignitionTranscriptPath }
+  }
+}
+catch {
+  $failedStep = if ($_.Exception -and $_.Exception.Message) { $_.Exception.Message } else { 'unknown step' }
+  Fail-Step -Step $failedStep -ErrorRecord $_
+}
+) { return $false }
+
+  Add-Type -AssemblyName System.Windows.Forms
+  $summary = @"
+Sovereign Commander is safely holding an old maintenance custody fence.
+
+Stephanos can prepare that exact held custody for recovery on the next full Windows boot.
+
+Reservation:
+$($inspection.projectionReservationId)
+
+Current source:
+$expectedMain
+
+This action:
+- uses the authenticated held-owner observation and exact signed custody digest
+- DOES NOT release custody now
+- DOES NOT restart Windows
+- DOES NOT run arbitrary commands
+- requires a normal full Windows Restart afterwards
+
+Prepare Sovereign Commander custody for the next boot?
+"@
+  $choice = [System.Windows.Forms.MessageBox]::Show(
+    $summary,
+    'Stephanos - Sovereign Commander custody recovery',
+    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+    [System.Windows.Forms.MessageBoxIcon]::Warning,
+    [System.Windows.Forms.MessageBoxDefaultButton]::Button2
+  )
+  if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {
+    Write-LiveLog 'Sovereign Commander retained-custody preparation was offered and declined; no custody mutation performed.'
+    return $false
+  }
+
+  $prepareText = (& $nodeExecutable $recoveryScript 'prepare-retained-migration'
+    '--expected-cycle' ([string]$inspection.projectionReservationId)
+    '--expected-digest' ([string]$inspection.projectionDigest)
+    '--expected-main' $expectedMain
+    '--expected-owner-digest' ([string]$inspection.heldOwner.digest)
+    '--operator-approved' 2>$null | Out-String).Trim()
+  if (-not $prepareText) { throw 'Sovereign Commander retained-custody preparation returned no proof.' }
+  try { $prepared = $prepareText | ConvertFrom-Json } catch { throw 'Sovereign Commander retained-custody preparation proof was invalid.' }
+  if ($LASTEXITCODE -ne 0 -or $prepared.ok -ne $true -or $prepared.prepared -ne $true
+      -or $prepared.requiresLaterFullBoot -ne $true -or $prepared.custodyReleased -ne $false
+      -or $prepared.pcRestartAllowed -ne $false) {
+    $blocker = if ($prepared.blocker) { [string]$prepared.blocker } else { 'MAINTENANCE_RETAINED_MIGRATION_PREPARATION_UNPROVEN' }
+    throw "Sovereign Commander retained-custody preparation blocked: $blocker"
+  }
+
+  $message = 'Sovereign Commander custody is prepared for successor-boot recovery. Restart Windows normally, then press Ignition after sign-in.'
+  Write-LiveLog $message
+  Write-IgnitionStatus -Phase 'restart-required' -Message $message -Extra @{
+    currentStage = 'restart'
+    blocker = ''
+    nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+    sovereignCommanderCustodyPrepared = $true
+    custodyReleased = $false
+    pcRestartAllowedByPreparation = $false
+    expectedMain = $expectedMain
+    reservationId = [string]$inspection.projectionReservationId
+  }
+  Write-IgnitionSupportSnapshot -Verdict 'restart-required' -Extra @{
+    nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+    sovereignCommanderCustodyPrepared = $true
+    custodyReleased = $false
+    pcRestartAllowedByPreparation = $false
+    expectedMain = $expectedMain
+  }
+  [System.Windows.Forms.MessageBox]::Show(
+    "Preparation is complete.\r\n\r\nUse the normal Windows Restart command now.\r\nAfter sign-in, press Ignition.\r\n\r\nStephanos has NOT restarted the PC automatically.",
+    'Stephanos - Restart required',
+    [System.Windows.Forms.MessageBoxButtons]::OK,
+    [System.Windows.Forms.MessageBoxIcon]::Information
+  ) | Out-Null
+  return $true
+}
+
 try {
   $resolvedBootMode = if ($Mode -eq 'vite-dev') { 'launcher' } else { $BootMode }
   $browserSurfaces = if ($Mode -eq 'vite-dev') {
