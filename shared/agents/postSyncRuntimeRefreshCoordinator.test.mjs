@@ -62,6 +62,17 @@ test('maintenance custody store changes refresh Sovereign Commander instead of f
   assert.equal(plan.sovereignRelayRefreshRequired, false);
 });
 
+test('operator-attended fixed runtime install handoff is loaded fresh and requires no runtime refresh', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/sovereign-fixed-runtime-install-handoff-v1.mjs',
+    'scripts/sovereign-fixed-runtime-install-handoff-v1.test.mjs',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.equal(plan.noRuntimePathCount, 2);
+  assert.deepEqual(plan.targetIds, []);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
 test('only the inspected offline installer package preparer is exempt from runtime refresh', async () => {
   const source = 'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs';
   const paths = [source, source.replace('.mjs', '.test.mjs'),
