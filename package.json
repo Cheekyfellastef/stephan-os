@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
+    "stephanos:control:inspect": "node scripts/sovereign-commander-native-inspect.mjs",
+    "stephanos:control:test": "node --experimental-vm-modules --test shared/agents/controlTowerBuildRequestV1.test.mjs shared/agents/controlTowerBuildReaderV1.test.mjs scripts/control-tower-build-consumer-v1.test.mjs shared/agents/controlTowerRequestObservationV1.test.mjs scripts/canonical-mailbox-control-tower-observation.test.mjs shared/agents/controlTowerBuildBeaconFactsV1.test.mjs scripts/sovereign-commander-native-inspect.test.mjs shared/agents/sovereignControlSystemStatusV1.test.mjs shared/agents/sovereignControlConversationV1.test.mjs stephanos-server/services/sovereignControlConversationService.test.js stephanos-server/services/sovereignCommanderStatusTool.test.js tests/stephanos-conversation-router-v1.test.mjs tests/stephanos-ai-control-surface.test.mjs tests/stephanos-ai-agent-router-integration.test.mjs tests/stephanos-ai-launcher-entry.test.mjs",
+    "stephanos:control:browser:test": "node --test tests/stephanos-ai-sovereign-control.browser.test.mjs",
     "dev": "npm run stephanos:dev",
     "build": "npm run stephanos:build",
     "verify": "npm run stephanos:verify",

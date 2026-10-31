@@ -3,6 +3,10 @@ export const CONTROL_TOWER_BUILD_WORKFLOW = '.github/workflows/stephanos-control
 export const CONTROL_TOWER_BUILD_FILE = 'control-tower-build-request.json';
 export const CONTROL_TOWER_BUILD_REPOSITORY = 'Cheekyfellastef/stephan-os';
 export const CONTROL_TOWER_BUILD_OPERATION = 'BUILD_NEXT_ELIGIBLE_GOAL';
+export const CONTROL_TOWER_OBSERVE_OPERATION = 'OBSERVE_CONTROL_SYSTEM';
+export const CONTROL_TOWER_OPERATIONS_V1 = Object.freeze([
+  CONTROL_TOWER_BUILD_OPERATION, CONTROL_TOWER_OBSERVE_OPERATION,
+]);
 export const CONTROL_TOWER_BUILD_KEYS = Object.freeze([
   'schemaVersion', 'requestId', 'operation', 'repository', 'repositoryId', 'operatorId',
   'runId', 'runAttempt', 'sourceHead', 'createdAtUtc', 'expiresAtUtc',
@@ -35,15 +39,23 @@ export function createControlTowerBuildRequestV1(event, env, mainHead, nowUtc) {
     || env.GITHUB_ACTOR !== 'Cheekyfellastef' || env.GITHUB_ACTOR_ID !== '267490109'
     || event.sender?.login !== 'Cheekyfellastef' || event.sender?.id !== 267490109 || event.sender?.type !== 'User')
     return denied('AUTHENTICATED_BUILD_DISPATCH_INVALID');
+  // The existing authenticated carrier has two fixed operations. An observation
+  // never enters the maintenance executor. Neither accepts free text, a path,
+  // a command, a goal grant, or any mailbox-rotation authority.
   if (event.inputs != null && (typeof event.inputs !== 'object' || Array.isArray(event.inputs)
-    || Object.keys(event.inputs).length !== 0)) return denied('BUILD_DISPATCH_INPUTS_FORBIDDEN');
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(event.inputs))
+    || Object.keys(event.inputs).some(key => key !== 'operation')))
+    return denied('BUILD_DISPATCH_INPUTS_FORBIDDEN');
+  const operation = manual && event.inputs != null && Object.hasOwn(event.inputs, 'operation')
+    ? event.inputs.operation : CONTROL_TOWER_BUILD_OPERATION;
+  if (!CONTROL_TOWER_OPERATIONS_V1.includes(operation)) return denied('BUILD_DISPATCH_INPUTS_FORBIDDEN');
   if (!SHA.test(mainHead || '') || env.GITHUB_SHA !== mainHead || env.GITHUB_RUN_ATTEMPT !== '1'
     || !/^[1-9][0-9]{0,15}$/.test(env.GITHUB_RUN_ID || '') || !positive(Number(env.GITHUB_RUN_ID)) || !utc(nowUtc))
     return denied('BUILD_DISPATCH_SOURCE_RUN_OR_CLOCK_INVALID');
   return Object.freeze({ ok: true, blocker: '', request: Object.freeze({
     schemaVersion: CONTROL_TOWER_BUILD_SCHEMA,
     requestId: 'control-tower-build-' + env.GITHUB_RUN_ID + '-1',
-    operation: CONTROL_TOWER_BUILD_OPERATION, repository: CONTROL_TOWER_BUILD_REPOSITORY,
+    operation, repository: CONTROL_TOWER_BUILD_REPOSITORY,
     repositoryId: 1179385578, operatorId: 267490109, runId: Number(env.GITHUB_RUN_ID), runAttempt: 1,
     sourceHead: mainHead, createdAtUtc: nowUtc, expiresAtUtc: new Date(Date.parse(nowUtc) + 600000).toISOString(),
     admissionGranted: false, mergeAuthority: false, runtimeMutationAuthority: false,
@@ -56,7 +68,7 @@ export function validateControlTowerBuildRequestV1(request, run, mainHead, nowUt
     || Object.keys(request).length !== CONTROL_TOWER_BUILD_KEYS.length
     || !CONTROL_TOWER_BUILD_KEYS.every(k => Object.hasOwn(request, k))
     || request.schemaVersion !== CONTROL_TOWER_BUILD_SCHEMA
-    || request.operation !== CONTROL_TOWER_BUILD_OPERATION
+    || !CONTROL_TOWER_OPERATIONS_V1.includes(request.operation)
     || request.repository !== CONTROL_TOWER_BUILD_REPOSITORY || request.repositoryId !== 1179385578
     || request.operatorId !== 267490109 || !positive(request.runId) || request.runAttempt !== 1
     || request.requestId !== 'control-tower-build-' + request.runId + '-1'
@@ -65,6 +77,7 @@ export function validateControlTowerBuildRequestV1(request, run, mainHead, nowUt
   if (!SHA.test(mainHead || '') || request.sourceHead !== mainHead || run?.head_sha !== mainHead
     || run.id !== request.runId || run.head_branch !== 'main' || run.run_attempt !== 1
     || !['workflow_dispatch', 'push'].includes(run.event)
+    || (run.event === 'push' && request.operation !== CONTROL_TOWER_BUILD_OPERATION)
     || run.status !== 'completed' || run.conclusion !== 'success'
     || run.path !== CONTROL_TOWER_BUILD_WORKFLOW || run.repository?.full_name !== CONTROL_TOWER_BUILD_REPOSITORY
     || run.repository?.id !== 1179385578 || run.actor?.login !== 'Cheekyfellastef' || run.actor?.id !== 267490109

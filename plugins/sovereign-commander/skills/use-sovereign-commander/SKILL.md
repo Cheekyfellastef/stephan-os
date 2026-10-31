@@ -5,6 +5,11 @@ description: Use the local guarded Stephanos Sovereign Commander on the Battle B
 
 # Use Sovereign Commander
 
+For conversational Control Tower, self-repair or no-meter requests, first read
+[Sovereign conversational control](references/conversational-control-v1.md).
+Use its fixed observation/build routing only after current-source and native
+adoption checks; preserve every existing private capability and authority gate.
+
 Use Sovereign Commander as the guarded Battle Bridge control surface without relying on a metered remote-control service. Prefer the local MCP surface when the chat can reach it; otherwise use the existing guarded Sovereign Relay/GitHub mailbox transport.
 
 ## Safety and routing

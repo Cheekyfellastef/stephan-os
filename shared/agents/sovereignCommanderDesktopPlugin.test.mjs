@@ -23,7 +23,7 @@ test('desktop marketplace publishes the local Sovereign Commander plugin using t
 
   const plugin = JSON.parse(manifest);
   assert.equal(plugin.name, 'sovereign-commander');
-  assert.equal(plugin.version, '1.0.8');
+  assert.equal(plugin.version, '1.0.11');
   assert.equal(plugin.version, JSON.parse(portableManifest).version);
   assert.notEqual(plugin.version, '1.0.5', 'An added skill requires a fresh cache identity');
   assert.equal(plugin.mcpServers, './.mcp.json');
@@ -51,7 +51,7 @@ test('portable package declares the Agent Plugins stdio transport explicitly', (
   const plugin = JSON.parse(portableManifest);
   const config = JSON.parse(portableMcp);
   assert.equal(plugin.name, 'sovereign-commander');
-  assert.equal(plugin.version, '1.0.8');
+  assert.equal(plugin.version, '1.0.11');
   assert.equal(plugin.version, JSON.parse(manifest).version);
   assert.equal(plugin.skills, './skills/');
   assert.equal(plugin.extensions['com.openai'].apps, './.app.json');
@@ -124,6 +124,6 @@ test('next source release inventories guarded meter-free, parity, repair and run
     assert.match(source, boundary);
     assert.match(source, /not|never|no |without/i);
   }
-  assert.equal(JSON.parse(manifest).version, '1.0.8');
-  assert.equal(JSON.parse(portableManifest).version, '1.0.8');
+  assert.equal(JSON.parse(manifest).version, '1.0.11');
+  assert.equal(JSON.parse(portableManifest).version, '1.0.11');
 });
