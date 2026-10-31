@@ -17,8 +17,10 @@ import {
   classifyPostSyncRefresh,
   executePostSyncRefreshPlan,
   parseGitChangedPathStatus,
+  POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
   POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
   postSyncRefreshTargetResultPass,
+  projectPostSyncSovereignRelayObservation,
   projectPostSyncSovereignRelayProof,
   projectPostSyncTargetFailureHistory,
   reducePostSyncTargetFailureHistory,
@@ -262,6 +264,21 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         && payload.pcRestartAllowed === false
         && payload.visiblePowerShellRequired === false
       );
+      const relayObservationInput = {
+        schemaVersion: POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
+        watchdogSucceeded: result.ok === true,
+        healthy: payload?.relayDaemonHealthy === true,
+        sourceHead: text(payload?.relayDaemonSourceHead).toLowerCase(),
+        sourceHeadMatchesLive: payload?.relayDaemonSourceHeadMatchesLive === true,
+        processCount: Number.isSafeInteger(Number(payload?.relayDaemonProcessCount))
+          ? Number(payload.relayDaemonProcessCount) : 0,
+        heartbeatAgeSeconds: payload?.relayDaemonHeartbeatAgeSeconds === null
+          || payload?.relayDaemonHeartbeatAgeSeconds === undefined
+          ? null : Number(payload.relayDaemonHeartbeatAgeSeconds),
+        blocker: text(payload?.relayDaemonBlocker),
+      };
+      const sovereignRelayObservation = projectPostSyncSovereignRelayObservation(
+        relayObservationInput, text(afterHead).toLowerCase());
       const sovereignRelayProof = projectPostSyncSovereignRelayProof({
         schemaVersion: POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
         watchdogSucceeded: result.ok,
@@ -286,6 +303,7 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         exactHeadProofOk,
         freshProcessLoaded: receiptValid && relayProofOk,
         sovereignRelayProof,
+        sovereignRelayObservation,
         capabilityVersion: capabilityVersionAfter,
         requiredCapabilityVersion,
         watchdogExitStatus: result.status,
