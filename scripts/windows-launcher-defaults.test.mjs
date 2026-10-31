@@ -314,3 +314,28 @@ test('Edge discovery tolerates missing ProgramFiles x86 in non-interactive launc
   assert.match(script, /if \(\$programRoot\) \{[\s\S]*?Join-Path \$programRoot 'Microsoft\\Edge\\Application\\msedge\.exe'/);
   assert.doesNotMatch(script, /Join-Path \$\{env:ProgramFiles\(x86\)\}/);
 });
+
+
+test('Ignition offers exact retained-custody preparation without restart or release authority', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /function Invoke-SovereignCommanderRetainedCustodyPreparation/);
+  assert.match(script, /sovereign-maintenance-custody-recovery\.mjs/);
+  assert.match(script, /inspect-retained-migration/);
+  assert.match(script, /prepare-retained-migration/);
+  assert.match(script, /--expected-cycle/);
+  assert.match(script, /--expected-digest/);
+  assert.match(script, /--expected-main/);
+  assert.match(script, /--expected-owner-digest/);
+  assert.match(script, /--operator-approved/);
+  assert.match(script, /MessageBoxButtons\]::YesNo/);
+  assert.match(script, /MessageBoxDefaultButton\]::Button2/);
+  assert.match(script, /requiresLaterFullBoot -ne \$true/);
+  assert.match(script, /custodyReleased -ne \$false/);
+  assert.match(script, /pcRestartAllowed -ne \$false/);
+  assert.match(script, /Use the normal Windows Restart command/);
+  assert.match(script, /Invoke-SovereignCommanderRetainedCustodyPreparation\) \{\s*exit 0/);
+  const fn = script.match(/function Invoke-SovereignCommanderRetainedCustodyPreparation[\s\S]*?^}\r?$/m)?.[0] || '';
+  assert.ok(fn);
+  assert.doesNotMatch(fn, /Restart-Computer|shutdown\.exe|Stop-Computer|Start-Process\s+[^\n]*powershell/i);
+  assert.doesNotMatch(fn, /Invoke-Expression|cmd\.exe|git\s+reset|git\s+clean|git\s+push/i);
+});
