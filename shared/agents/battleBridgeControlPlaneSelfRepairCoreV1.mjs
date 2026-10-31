@@ -24,7 +24,7 @@ export const BATTLE_BRIDGE_CONTROL_PLANE_TASKS = Object.freeze([
     id: 'workerWatchdog',
     taskName: 'Stephanos Mission Orchestrator Worker Watchdog',
     installerRelativePath: 'scripts/windows/install-battle-bridge-worker-watchdog.ps1',
-    intervalMinutes: 1,
+    intervalMinutes: 5,
   }),
   Object.freeze({
     id: 'githubCommandMailbox',
@@ -36,7 +36,7 @@ export const BATTLE_BRIDGE_CONTROL_PLANE_TASKS = Object.freeze([
     id: 'outboundHealthBeacon',
     taskName: 'Stephanos Battle Bridge Outbound Health Beacon',
     installerRelativePath: 'scripts/windows/install-battle-bridge-outbound-health-beacon.ps1',
-    intervalMinutes: 1,
+    intervalMinutes: 10,
   }),
 ]);
 
@@ -371,7 +371,7 @@ function validateWorkerWatchdogReceipt(payload) {
     && payload.taskName === 'Stephanos Mission Orchestrator Worker Watchdog'
     && payload.installed === true
     && payload.startedNow === true
-    && Number(payload.intervalMinutes) === 1
+    && Number(payload.intervalMinutes) === 5
     && payload.atLogon === true
     && payload.hidden === true
     && payload.runLevel === 'Limited'
@@ -409,7 +409,7 @@ function validateOutboundHealthBeaconReceipt(payload) {
     && payload.taskName === 'Stephanos Battle Bridge Outbound Health Beacon'
     && payload.installed === true
     && payload.startedNow === true
-    && Number(payload.intervalMinutes) === 1
+    && Number(payload.intervalMinutes) === 10
     && payload.atLogon === true
     && payload.hidden === true
     && payload.runLevel === 'Limited'
