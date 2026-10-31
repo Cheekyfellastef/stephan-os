@@ -1194,6 +1194,46 @@ test('ordinary Commander script refreshes remain independent of desktop-plugin r
   assert.equal(result.plan.pluginHostActivationRequired, false);
 });
 
+test('merged #3362 fixed-runtime repair range has no unclassified installer-only source', () => {
+  const changedPaths = [
+    'docs/architecture/sovereign-fixed-runtime-job-custody-v1.md',
+    'scripts/battle-bridge-post-sync-refresh.mjs',
+    'scripts/battle-bridge-post-sync-refresh.test.mjs',
+    'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs',
+    'scripts/sovereign-fixed-runtime-install-source-package-v1.test.mjs',
+    'scripts/sovereign-fixed-runtime-installer-candidate-v1.mjs',
+    'scripts/sovereign-fixed-runtime-installer-v1.test.mjs',
+    'scripts/windows/SovereignFixedRuntimeIdentityV1.cs',
+    'scripts/windows/install-sovereign-fixed-runtime-v1.ps1',
+    'shared/agents/sovereignFixedRuntimeSourceClosureV1.json',
+  ];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(plan.changedPathCount, 10);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+  assert.ok(plan.internal.noRuntimePaths.includes('scripts/sovereign-fixed-runtime-installer-candidate-v1.mjs'));
+  assert.ok(plan.internal.noRuntimePaths.includes('scripts/windows/SovereignFixedRuntimeIdentityV1.cs'));
+  assert.ok(plan.internal.noRuntimePaths.includes('scripts/windows/install-sovereign-fixed-runtime-v1.ps1'));
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
+});
+
+test('installer-only no-runtime allowance stays exact and rejects neighboring Windows/runtime source', () => {
+  for (const path of [
+    'scripts/sovereign-fixed-runtime-installer-candidate-v2.mjs',
+    'scripts/windows/SovereignFixedRuntimeIdentityV2.cs',
+    'scripts/windows/install-sovereign-fixed-runtime-v2.ps1',
+  ]) {
+    const plan = classifyPostSyncRefresh([path]);
+    assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH, path);
+    assert.deepEqual(plan.internal.unknownPaths, [path], path);
+  }
+});
+
 test('attended fixed-runtime commissioning helpers are startup-only and create no post-sync target', async () => {
   for (const path of [
     'scripts/sovereign-fixed-runtime-install-current-v1.mjs',
