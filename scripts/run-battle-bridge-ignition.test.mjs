@@ -129,7 +129,7 @@ test('fixed authority Git capture prepends the canonical isolation config', () =
   assert.equal(result.stdout, '');
   assert.equal(calls[0].command, BATTLE_BRIDGE_WINDOWS_HOST.git);
   assert.deepEqual(calls[0].args, [
-    ...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+    ...battleBridgeGitFixedConfigArgs('win32'),
     ...battleBridgeCanonicalRepositoryArgs('C:\\repo'),
     'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching',
   ]);

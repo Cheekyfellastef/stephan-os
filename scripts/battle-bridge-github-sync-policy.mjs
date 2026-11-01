@@ -260,6 +260,82 @@ export const buildSharedWorkspaceReceipt = (evaluation, heads, proofRefs) => bou
 // Refresh debt belongs to the existing sync and refresh owners. These helpers
 // only interpret their records; they perform no IO and grant no native action.
 export const POST_SYNC_REFRESH_DEBT_SCHEMA = 'stephanos.post-sync-refresh-debt.v1';
+export const POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA = 'stephanos.post-sync-sovereign-relay-proof.v1';
+export const POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA = 'stephanos.post-sync-sovereign-relay-observation.v1';
+const SOVEREIGN_RELAY_PROOF_KEYS = Object.freeze(['schemaVersion', 'watchdogSucceeded', 'healthy',
+  'sourceHead', 'sourceHeadMatchesLive', 'processCount', 'heartbeatAgeSeconds', 'blocker']);
+const SOVEREIGN_RELAY_OBSERVATION_KEYS = Object.freeze(['schemaVersion', 'watchdogSucceeded', 'healthy',
+  'sourceHead', 'sourceHeadMatchesLive', 'processCount', 'heartbeatAgeSeconds', 'blocker']);
+const SOVEREIGN_RELAY_PUBLIC_BLOCKERS = Object.freeze(new Set([
+  '',
+  'SOVEREIGN_RELAY_DAEMON_NODE_MISSING',
+  'SOVEREIGN_RELAY_DAEMON_NOT_HEALTHY',
+  'SOVEREIGN_RELAY_DAEMON_SCRIPT_MISSING',
+  'SOVEREIGN_RELAY_DAEMON_STALE_RECYCLE_FAILED',
+  'SOVEREIGN_RELAY_DAEMON_START_FAILED',
+  'SOVEREIGN_RELAY_LIVE_HEAD_UNPROVEN',
+  'SOVEREIGN_RELAY_SOURCE_HEAD_MISSING',
+  'SOVEREIGN_RELAY_SOURCE_HEAD_STALE',
+  'SOVEREIGN_RELAY_STATUS_INVALID',
+  'SOVEREIGN_RELAY_STATUS_MISSING',
+]));
+
+export function projectPostSyncSovereignRelayObservation(value, expectedHead = '') {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return null;
+    const keys = Reflect.ownKeys(value), descriptors = Object.getOwnPropertyDescriptors(value);
+    if (keys.length !== SOVEREIGN_RELAY_OBSERVATION_KEYS.length
+      || keys.some(key => !SOVEREIGN_RELAY_OBSERVATION_KEYS.includes(key)
+        || !Object.hasOwn(descriptors[key], 'value'))) return null;
+    const sourceHead = typeof value.sourceHead === 'string' ? value.sourceHead : '';
+    const blocker = typeof value.blocker === 'string' && SOVEREIGN_RELAY_PUBLIC_BLOCKERS.has(value.blocker)
+      ? value.blocker : null;
+    const heartbeatAgeSeconds = value.heartbeatAgeSeconds === null
+      ? null : Number.isSafeInteger(value.heartbeatAgeSeconds) && value.heartbeatAgeSeconds >= 0
+        && value.heartbeatAgeSeconds <= 86400 ? value.heartbeatAgeSeconds : undefined;
+    if (value.schemaVersion !== POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA
+      || typeof value.watchdogSucceeded !== 'boolean' || typeof value.healthy !== 'boolean'
+      || (sourceHead !== '' && !/^[a-f0-9]{40}$/.test(sourceHead))
+      || typeof value.sourceHeadMatchesLive !== 'boolean'
+      || !Number.isSafeInteger(value.processCount) || value.processCount < 0 || value.processCount > 32
+      || heartbeatAgeSeconds === undefined
+      || blocker === null
+      || (expectedHead && !/^[a-f0-9]{40}$/.test(expectedHead))) return null;
+    return Object.freeze({
+      schemaVersion: POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
+      watchdogSucceeded: value.watchdogSucceeded,
+      healthy: value.healthy,
+      sourceHead,
+      sourceHeadMatchesLive: value.sourceHeadMatchesLive,
+      processCount: value.processCount,
+      heartbeatAgeSeconds,
+      blocker,
+    });
+  } catch { return null; }
+}
+
+// Shared by fresh refresh execution and every retained-debt consumer. Keep this
+// pure proof contract in the existing runtime closure; importing the coordinator
+// here would add a new fixed-runtime source dependency.
+// This is the watchdog's source-epoch receipt, not loaded-byte or OS attestation.
+export function projectPostSyncSovereignRelayProof(value, expectedHead) {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return null;
+    const keys = Reflect.ownKeys(value), descriptors = Object.getOwnPropertyDescriptors(value);
+    if (keys.length !== SOVEREIGN_RELAY_PROOF_KEYS.length
+      || keys.some(key => !SOVEREIGN_RELAY_PROOF_KEYS.includes(key) || !Object.hasOwn(descriptors[key], 'value'))) return null;
+    if (value.schemaVersion !== POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA
+      || value.watchdogSucceeded !== true || value.healthy !== true
+      || typeof value.sourceHead !== 'string' || !/^[a-f0-9]{40}$/.test(value.sourceHead)
+      || value.sourceHead !== expectedHead || value.sourceHeadMatchesLive !== true
+      || value.processCount !== 1 || !Number.isSafeInteger(value.heartbeatAgeSeconds)
+      || value.heartbeatAgeSeconds < 0 || value.heartbeatAgeSeconds > 30 || value.blocker !== '') return null;
+    return Object.freeze(Object.fromEntries(SOVEREIGN_RELAY_PROOF_KEYS.map(key => [key, value[key]])));
+  } catch { return null; }
+}
+
 const REFRESH_TARGETS = Object.freeze([
   'stephanos-ui-4173', 'vr-capability-atlas-browser-proof', 'stephanos-backend-8787',
   'mission-orchestrator-worker', 'github-command-mailbox', 'sovereign-commander', 'natural-reload',
@@ -276,14 +352,42 @@ function refreshSpan(value) {
   return beforeHead && afterHead && beforeHead !== afterHead ? Object.freeze({ beforeHead, afterHead }) : null;
 }
 
-export function pendingPostSyncRefreshDebt(spans = [], requiredTargetIds = [], blocker = '') {
+// Missing legacy Commander metadata means an unknown relay obligation, never
+// an explicit non-relay classification. New writers always retain the boolean.
+function relayRequirement(value, targetIds) {
+  if (value !== undefined && typeof value !== 'boolean') return null;
+  const required = value === undefined ? targetIds.includes('sovereign-commander') : value;
+  return required && !targetIds.includes('sovereign-commander') ? null : required;
+}
+
+function completionRelayBinding(completion) {
+  const hasCommander = completion.targetIds.includes('sovereign-commander');
+  const flag = completion.sovereignRelayRefreshRequired;
+  if (!hasCommander && Object.hasOwn(completion, 'sovereignRelayProof')) return debtFailure('PENDING_POST_SYNC_RELAY_COMPLETION_UNPROVEN');
+  if (hasCommander && flag === undefined) {
+    return Object.hasOwn(completion, 'sovereignRelayProof') ? debtFailure('PENDING_POST_SYNC_RELAY_COMPLETION_UNPROVEN')
+      : Object.freeze({ ok: false, legacyCommanderCompletion: true, blocker: 'PENDING_POST_SYNC_RELAY_COMPLETION_LEGACY' });
+  }
+  if (relayRequirement(flag, completion.targetIds) === null) return debtFailure('PENDING_POST_SYNC_RELAY_COMPLETION_UNPROVEN');
+  const proof = Object.hasOwn(completion, 'sovereignRelayProof')
+    ? projectPostSyncSovereignRelayProof(completion.sovereignRelayProof, completion.afterHead) : null;
+  if ((Object.hasOwn(completion, 'sovereignRelayProof') && !proof) || (flag === true && !proof)) {
+    return debtFailure('PENDING_POST_SYNC_RELAY_COMPLETION_UNPROVEN');
+  }
+  return Object.freeze({ ok: true, sovereignRelayRefreshRequired: flag === true,
+    ...(proof ? { sovereignRelayProof: proof } : {}) });
+}
+
+export function pendingPostSyncRefreshDebt(spans = [], requiredTargetIds = [], blocker = '', { sovereignRelayRefreshRequired } = {}) {
   const normalized = Array.isArray(spans) ? spans.map(refreshSpan) : [];
   const unique = [...new Map(normalized.filter(Boolean).map(span => [`${span.beforeHead}:${span.afterHead}`, span])).values()];
-  if (!Array.isArray(spans) || normalized.some(span => !span) || unique.length > REFRESH_MAX_SPANS || !targetSetValid(requiredTargetIds)) {
+  const relayRequired = targetSetValid(requiredTargetIds) ? relayRequirement(sovereignRelayRefreshRequired, requiredTargetIds) : null;
+  if (!Array.isArray(spans) || normalized.some(span => !span) || unique.length > REFRESH_MAX_SPANS || !targetSetValid(requiredTargetIds) || relayRequired === null) {
     return Object.freeze({ schemaVersion: POST_SYNC_REFRESH_DEBT_SCHEMA, state: 'HELD', blocker: 'PENDING_POST_SYNC_DEBT_INVALID', spans: [], requiredTargetIds: [] });
   }
   if (blocker) return Object.freeze({ schemaVersion: POST_SYNC_REFRESH_DEBT_SCHEMA, state: 'HELD', blocker: 'PENDING_POST_SYNC_EVIDENCE_INVALID', spans: unique, requiredTargetIds: [...requiredTargetIds] });
-  return unique.length ? Object.freeze({ schemaVersion: POST_SYNC_REFRESH_DEBT_SCHEMA, state: 'PENDING', spans: unique, requiredTargetIds: [...requiredTargetIds] }) : null;
+  return unique.length ? Object.freeze({ schemaVersion: POST_SYNC_REFRESH_DEBT_SCHEMA, state: 'PENDING', spans: unique,
+    requiredTargetIds: [...requiredTargetIds], sovereignRelayRefreshRequired: relayRequired }) : null;
 }
 
 function recordOwner(record, statusId) {
@@ -292,12 +396,14 @@ function recordOwner(record, statusId) {
 }
 
 export function inspectPendingPostSyncRefreshDebt(retained) {
-  if (retained === null || retained === undefined) return Object.freeze({ ok: true, spans: [], requiredTargetIds: [] });
+  if (retained === null || retained === undefined) return Object.freeze({ ok: true, spans: [], requiredTargetIds: [], sovereignRelayRefreshRequired: false });
   if (!debtObject(retained) || retained.schemaVersion !== POST_SYNC_REFRESH_DEBT_SCHEMA
     || retained.state !== 'PENDING' || !Array.isArray(retained.spans) || !retained.spans.length
     || retained.spans.length > REFRESH_MAX_SPANS || !retained.spans.every(refreshSpan)
     || !targetSetValid(retained.requiredTargetIds)) return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
-  return Object.freeze({ ok: true, spans: retained.spans.map(refreshSpan), requiredTargetIds: [...retained.requiredTargetIds] });
+  const sovereignRelayRefreshRequired = relayRequirement(retained.sovereignRelayRefreshRequired, retained.requiredTargetIds);
+  if (sovereignRelayRefreshRequired === null) return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
+  return Object.freeze({ ok: true, spans: retained.spans.map(refreshSpan), requiredTargetIds: [...retained.requiredTargetIds], sovereignRelayRefreshRequired });
 }
 
 export function inspectPostSyncRefreshCompletion(record) {
@@ -318,13 +424,23 @@ export function inspectPostSyncRefreshCompletion(record) {
   const noRuntime = record.classification === 'NO_RUNTIME_REFRESH_REQUIRED' && !record.targetIds.length
     && record.changedPathCount === record.noRuntimePathCount;
   const refreshed = record.classification === 'REFRESH_COMPLETE' && record.targetIds.length > 0
-    && record.changedPathCount > record.noRuntimePathCount;
-  return noRuntime || refreshed ? Object.freeze({ ok: true, ...span, targetIds: [...record.targetIds] })
-    : debtFailure('PENDING_POST_SYNC_COMPLETION_UNPROVEN');
+    && (record.changedPathCount > record.noRuntimePathCount || record.sovereignRelayRefreshRequired === true);
+  if (!noRuntime && !refreshed) return debtFailure('PENDING_POST_SYNC_COMPLETION_UNPROVEN');
+  const commander = record.resultTargets.find(row => row.targetId === 'sovereign-commander');
+  const binding = completionRelayBinding({ ...span, targetIds: record.targetIds,
+    ...(Object.hasOwn(record, 'sovereignRelayRefreshRequired') ? { sovereignRelayRefreshRequired: record.sovereignRelayRefreshRequired } : {}),
+    ...(commander && Object.hasOwn(commander, 'sovereignRelayProof') ? { sovereignRelayProof: commander.sovereignRelayProof } : {}),
+  });
+  if (!binding.ok) return binding.legacyCommanderCompletion
+    ? Object.freeze({ ...binding, ...span, targetIds: [...record.targetIds] }) : binding;
+  return Object.freeze({ ok: true, ...span, targetIds: [...record.targetIds],
+    sovereignRelayRefreshRequired: binding.sovereignRelayRefreshRequired,
+    ...(binding.sovereignRelayProof ? { sovereignRelayProof: binding.sovereignRelayProof } : {}) });
 }
 
 export function collectPostSyncRefreshDebt({ syncRecord = null, refreshRecord = null } = {}) {
   const spans = [], targets = new Set();
+  let sovereignRelayRefreshRequired = false;
   if (syncRecord !== null) {
     if (!recordOwner(syncRecord, 'battle-bridge-github-sync-current') || !Object.values(SYNC_CLASSIFICATIONS).includes(syncRecord.classification)) return debtFailure('PENDING_POST_SYNC_SYNC_RECORD_INVALID');
     const retained = syncRecord.pendingRefresh;
@@ -333,6 +449,7 @@ export function collectPostSyncRefreshDebt({ syncRecord = null, refreshRecord = 
       if (!inspected.ok) return inspected;
       spans.push(...inspected.spans);
       inspected.requiredTargetIds.forEach(id => targets.add(id));
+      sovereignRelayRefreshRequired ||= inspected.sovereignRelayRefreshRequired;
     }
     if (syncRecord.classification === 'BLOCKED_POST_SYNC_REFRESH_REQUIRED') {
       const legacy = refreshSpan({ beforeHead: syncRecord.localHeadBefore, afterHead: syncRecord.localHeadAfter || syncRecord.remoteHeadObserved });
@@ -347,8 +464,15 @@ export function collectPostSyncRefreshDebt({ syncRecord = null, refreshRecord = 
       || !targetSetValid(refreshRecord.targetIds)) return debtFailure('PENDING_POST_SYNC_RUNTIME_RECORD_INVALID');
     if (refreshRecord.phase === 'complete') {
       const inspected = inspectPostSyncRefreshCompletion(refreshRecord);
-      if (!inspected.ok) return inspected;
-      completion = inspected;
+      if (!inspected.ok && !inspected.legacyCommanderCompletion) return inspected;
+      if (inspected.legacyCommanderCompletion) {
+        // Only a fully validated old completion envelope reaches this narrow
+        // migration. Preserve its own span/targets for the existing owner to
+        // re-observe; malformed or contradictory records remain held.
+        spans.push(refreshSpan(inspected));
+        inspected.targetIds.forEach(id => targets.add(id));
+        sovereignRelayRefreshRequired = true;
+      } else completion = inspected;
     } else {
       if (!['NO_RUNTIME_REFRESH_REQUIRED', 'REFRESH_READY', 'REFRESH_COMPLETE', 'APPROVAL_REQUIRED_OPENCLAW',
         'BLOCKED_UNSAFE_CHANGED_PATH', 'BLOCKED_UNCLASSIFIED_RUNTIME_PATH', 'BLOCKED_REFRESH_FAILED'].includes(refreshRecord.classification)
@@ -364,18 +488,37 @@ export function collectPostSyncRefreshDebt({ syncRecord = null, refreshRecord = 
           || (result.sourceHead !== '' && !debtHead(result.sourceHead)))) return debtFailure('PENDING_POST_SYNC_RUNTIME_RECORD_INVALID');
       spans.push(refreshSpan(refreshRecord));
       refreshRecord.targetIds.forEach(id => targets.add(id));
+      const required = relayRequirement(refreshRecord.sovereignRelayRefreshRequired, refreshRecord.targetIds);
+      if (required === null) return debtFailure('PENDING_POST_SYNC_RUNTIME_RECORD_INVALID');
+      sovereignRelayRefreshRequired ||= required;
     }
   }
   const requiredTargetIds = REFRESH_TARGETS.filter(id => targets.has(id));
-  const pending = pendingPostSyncRefreshDebt(spans, requiredTargetIds);
+  const pending = pendingPostSyncRefreshDebt(spans, requiredTargetIds, '', { sovereignRelayRefreshRequired });
   if (pending?.state === 'HELD') return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
-  return Object.freeze({ ok: true, spans: pending?.spans || [], requiredTargetIds, completion });
+  return Object.freeze({ ok: true, spans: pending?.spans || [], requiredTargetIds, sovereignRelayRefreshRequired, completion });
 }
 
 export function resolvePostSyncRefreshDebt({ spans = [], requestedSpans = [], requiredTargetIds = [], completion = null,
-  currentHead = '', requireCurrentCoverage = true, isAncestor } = {}) {
-  if (!Array.isArray(spans) || !Array.isArray(requestedSpans)) return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
-  const pending = pendingPostSyncRefreshDebt([...spans, ...requestedSpans], requiredTargetIds);
+  sovereignRelayRefreshRequired, currentHead = '', requireCurrentCoverage = true, isAncestor } = {}) {
+  if (!Array.isArray(spans) || !Array.isArray(requestedSpans) || !targetSetValid(requiredTargetIds)) return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
+  let relayRequired = relayRequirement(sovereignRelayRefreshRequired, requiredTargetIds);
+  if (relayRequired === null) return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
+  if (completion) {
+    const span = refreshSpan(completion);
+    if (!span || completion.ok !== true || !targetSetValid(completion.targetIds)) return debtFailure('PENDING_POST_SYNC_COMPLETION_UNPROVEN');
+    const binding = completionRelayBinding({ ...completion, ...span });
+    if (!binding.ok && !binding.legacyCommanderCompletion) return binding;
+    if (binding.legacyCommanderCompletion) {
+      spans = [...spans, span];
+      requiredTargetIds = REFRESH_TARGETS.filter(id => requiredTargetIds.includes(id) || completion.targetIds.includes(id));
+      relayRequired = true;
+      completion = null;
+    } else completion = Object.freeze({ ok: true, ...span, targetIds: [...completion.targetIds],
+      sovereignRelayRefreshRequired: binding.sovereignRelayRefreshRequired,
+      ...(binding.sovereignRelayProof ? { sovereignRelayProof: binding.sovereignRelayProof } : {}) });
+  }
+  const pending = pendingPostSyncRefreshDebt([...spans, ...requestedSpans], requiredTargetIds, '', { sovereignRelayRefreshRequired: relayRequired });
   if (pending?.state === 'HELD') return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
   const uniqueSpans = pending?.spans || [];
   if (!uniqueSpans.length && !completion) return Object.freeze({ ok: true, debt: null, discharged: false });
@@ -410,23 +553,32 @@ export function resolvePostSyncRefreshDebt({ spans = [], requestedSpans = [], re
     if (uniqueSpans.some(span => position(span.beforeHead) >= position(span.afterHead))) return debtFailure('PENDING_POST_SYNC_SPAN_REVERSED');
     if (completion && (position(completion.beforeHead) >= position(completion.afterHead)
       || position(completion.afterHead) > position(current))) return debtFailure('PENDING_POST_SYNC_COMPLETION_HEAD_UNPROVEN');
-    const covered = (span, targets) => Boolean(completion && position(completion.beforeHead) <= position(span.beforeHead)
-      && position(span.afterHead) <= position(completion.afterHead) && targets.every(id => completion.targetIds.includes(id)));
+    const covered = (span, targets, requiresRelay = false) => Boolean(completion && position(completion.beforeHead) <= position(span.beforeHead)
+      && position(span.afterHead) <= position(completion.afterHead) && targets.every(id => completion.targetIds.includes(id))
+      && (!requiresRelay || (completion.sovereignRelayRefreshRequired === true && completion.sovereignRelayProof)));
     // Pay covered old spans before adding a newer source delta. Otherwise a
     // reverted file can disappear from the net old-before/new-after diff even
     // though a completed intermediate version is still loaded by its owner.
-    const retained = spans.map(refreshSpan).filter(span => !covered(span, requiredTargetIds));
-    const requested = requestedSpans.map(refreshSpan).filter(span => !covered(span, []));
+    const retained = spans.map(refreshSpan).filter(span => !covered(span, requiredTargetIds, relayRequired));
+    // An unpaid relay obligation still needs the original owner at the newest
+    // observed source. A generic or non-covering completion cannot trim a newer
+    // requested span while leaving that owner pointed at an obsolete head.
+    const retainedRelay = retained.length > 0 && relayRequired;
+    const requested = requestedSpans.map(refreshSpan).filter(span => retainedRelay || !covered(span, []));
     const remaining = [...retained, ...requested];
     if (!remaining.length) return Object.freeze({ ok: true, debt: null, discharged: uniqueSpans.length > 0 });
     const beforeHead = endpoints[Math.min(...remaining.map(span => position(span.beforeHead)))];
-    const afterHead = endpoints[Math.max(...remaining.map(span => position(span.afterHead)))];
+    const afterHead = endpoints[Math.max(...remaining.map(span => position(span.afterHead)),
+      ...(retainedRelay && completion ? [position(completion.afterHead)] : []))];
     if (requireCurrentCoverage && position(afterHead) > position(current)) return debtFailure('PENDING_POST_SYNC_RETAINED_HEAD_NOT_CURRENT');
     const targets = new Set(retained.length ? requiredTargetIds : []);
+    let nextRelayRequired = retained.length > 0 && relayRequired;
     if (completion && position(beforeHead) < position(completion.afterHead) && position(completion.afterHead) <= position(afterHead)) {
       completion.targetIds.forEach(id => targets.add(id));
+      nextRelayRequired ||= completion.sovereignRelayRefreshRequired;
     }
-    return Object.freeze({ ok: true, debt: Object.freeze({ beforeHead, afterHead, requiredTargetIds: REFRESH_TARGETS.filter(id => targets.has(id)) }), discharged: false });
+    return Object.freeze({ ok: true, debt: Object.freeze({ beforeHead, afterHead,
+      requiredTargetIds: REFRESH_TARGETS.filter(id => targets.has(id)), sovereignRelayRefreshRequired: nextRelayRequired }), discharged: false });
   } catch (error) {
     return debtFailure(/^PENDING_POST_SYNC_[A-Z_]+$/.test(error?.message || '') ? error.message : 'PENDING_POST_SYNC_ANCESTRY_UNPROVEN');
   }

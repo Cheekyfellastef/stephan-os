@@ -353,6 +353,7 @@ test('controller activity publication is fixed, canonical and payload-bound', ()
 test('capability pack 2 maps high-value Battle Bridge actions to fixed source-controlled executables', async () => {
   const cases = [
     ['battle-bridge-observe', /battle-bridge-observation\.mjs$/i, 10000],
+    ['diagnose-ignition', /sovereign-commander-ignition-diagnosis\.mjs$/i, 20000],
     ['meter-status', /sovereign-meter-status\.mjs$/i, 10000],
     ['controller-lane-status', /sovereign-controller-lane-status\.mjs$/i, 20000],
     ['visibility-snapshot', /sovereign-commander-visibility-snapshot\.mjs$/i, 30000],

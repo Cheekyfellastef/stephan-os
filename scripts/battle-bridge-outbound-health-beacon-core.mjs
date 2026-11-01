@@ -9,7 +9,12 @@ import { fileURLToPath } from 'node:url';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { buildBattleBridgeTelemetryAutorepairProjection } from '../shared/agents/battleBridgeTelemetryAutorepairV1.mjs';
 import { projectMissionWorkerBeaconState } from '../shared/agents/missionWorkerBeaconStateV1.mjs';
-import { POST_SYNC_REFRESH_CLASSIFICATIONS, POST_SYNC_REFRESH_TARGETS, projectPostSyncTargetFailureHistory } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
+import {
+  POST_SYNC_REFRESH_CLASSIFICATIONS,
+  POST_SYNC_REFRESH_TARGETS,
+  projectPostSyncSovereignRelayObservation,
+  projectPostSyncTargetFailureHistory,
+} from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 import { projectSovereignCaretakerExecutionEvidence } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import { invalidateBrokeredGithubObservation, publishBrokeredGithubMutation, readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import {
@@ -359,6 +364,9 @@ export function projectPostSyncRefreshBeaconFacts(record, expectedHead = '', now
       || (entry.exactHeadProofOk != null && typeof entry.exactHeadProofOk !== 'boolean')
       || (entry.sourceHead != null && entry.sourceHead !== '' && !sourceHead)
       || (entry.blocker != null && entry.blocker !== '' && !blocker)) invalid = true;
+    const sovereignRelayObservation = entry.targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER
+      ? projectPostSyncSovereignRelayObservation(entry.sovereignRelayObservation, expected)
+      : null;
     resultTargets.push(Object.freeze({
       targetId: entry.targetId,
       ok: boolean(entry.ok),
@@ -366,6 +374,7 @@ export function projectPostSyncRefreshBeaconFacts(record, expectedHead = '', now
       sourceHead,
       sourceHeadMatchesExpected: sourceHead && expected ? sourceHead === expected : null,
       blocker,
+      ...(sovereignRelayObservation ? { sovereignRelayObservation } : {}),
     }));
   }
   return Object.freeze({

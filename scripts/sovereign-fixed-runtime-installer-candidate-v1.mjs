@@ -10,21 +10,30 @@ export function buildFixedRuntimeInstallerCandidateV1({expectedMain,sourceTree,o
  if(!/^[a-f0-9]{40}$/.test(expectedMain??'') || !/^[a-f0-9]{40}$/.test(sourceTree??'') ||
    !/^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$/.test(operatorSid??'') ||
    closure.schemaVersion!=='stephanos.fixed-runtime-source-closure.v1' ||
-   FIXED_RUNTIME_SOURCE_PATHS_V1.length>256 || !Array.isArray(records) || records.length!==FIXED_RUNTIME_SOURCE_PATHS_V1.length)
+   FIXED_RUNTIME_SOURCE_PATHS_V1.length>258 || !Array.isArray(records) || records.length!==FIXED_RUNTIME_SOURCE_PATHS_V1.length)
    throw new Error('FIXED_INSTALL_EXACT_SOURCE_REQUIRED');
  const seen=new Set(),captured=[];let total=0;
  for(const row of records) {
-  if(!row || Object.keys(row).sort().join(',')!=='blobSha,contentBase64,path' ||
+  const keys=row && typeof row==='object' && !Array.isArray(row)
+    ? Object.keys(row).sort().join(',') : '';
+  const legacy=keys==='blobSha,contentBase64,path';
+  const materialized=keys==='blobSha,contentBase64,materializedSha256,path';
+  if(!row || (!legacy && !materialized) ||
     !FIXED_RUNTIME_SOURCE_PATHS_V1.includes(row.path) || seen.has(row.path) ||
     !/^[a-f0-9]{40}$/.test(row.blobSha??'') || typeof row.contentBase64!=='string' ||
     row.contentBase64.length>2796208 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(row.contentBase64))
     throw new Error('FIXED_INSTALL_SOURCE_RECORD_INVALID');
   const bytes=Buffer.from(row.contentBase64,'base64');total+=bytes.length;
+  const blobSha256=sha(bytes);
+  const materializedSha256=materialized?row.materializedSha256:blobSha256;
   if(bytes.length>2097152 || total>8388608 ||
     createHash('sha1').update('blob '+bytes.length+'\0').update(bytes).digest('hex')!==row.blobSha)
     throw new Error('FIXED_INSTALL_SOURCE_BLOB_MISMATCH');
+  if(!/^[a-f0-9]{64}$/.test(materializedSha256??''))
+    throw new Error('FIXED_INSTALL_SOURCE_RECORD_INVALID');
   new TextDecoder('utf-8',{fatal:true}).decode(bytes);
-  seen.add(row.path);captured.push({Path:row.path,Sha256:sha(bytes),ContentBase64:row.contentBase64});
+  seen.add(row.path);captured.push({Path:row.path,Sha256:blobSha256,
+    MaterializedSha256:materializedSha256,ContentBase64:row.contentBase64});
  }
  captured.sort((a,b)=>a.Path.localeCompare(b.Path));
  const payload=Buffer.from(JSON.stringify({SchemaVersion:'stephanos.fixed-runtime-install-input.v1',

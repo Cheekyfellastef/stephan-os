@@ -41,7 +41,7 @@ async function assertHeavyLocalGamingHeadroom() {
     throw new Error('GAME_PRIORITY_LOCAL_TEST_PARKED');
 }
 
-async function processExec(bin, args, cwd = repoRoot, timeoutMs = 120000, gamingGuarded = false) {
+async function processExec(bin, args, cwd = repoRoot, timeoutMs = 120000, gamingGuarded = false, rawOutput = false) {
   if (gamingGuarded) await assertHeavyLocalGamingHeadroom();
   const git = bin === 'git';
   const executable = git ? resolveBattleBridgeGitExecutable()
@@ -106,7 +106,10 @@ async function processExec(bin, args, cwd = repoRoot, timeoutMs = 120000, gaming
       else if (abortOnGaming) rej(new Error('GAME_PRIORITY_LOCAL_TEST_ABORTED'));
       // Git porcelain uses leading spaces as status columns. Remove only
       // the terminal line ending; trimming whitespace corrupts tracked paths.
-      else if (code === 0) res(Buffer.concat(stdoutChunks).toString('utf8').replace(/\r?\n$/, ''));
+      else if (code === 0) {
+        const stdout = Buffer.concat(stdoutChunks);
+        res(rawOutput ? stdout : stdout.toString('utf8').replace(/\r?\n$/, ''));
+      }
       else rej(new Error(executable + ' failed (' + code + '): ' + stderr.slice(-1500)));
     });
   });
@@ -391,7 +394,7 @@ async function assertSeedTestInputsTrusted(worktree, request) {
     try {
       expected = await processExec('git',
         ['rev-parse', '--verify', request.baseSha + ':' + path], worktree);
-      actual = await processExec('git', ['hash-object', '--no-filters', '--', path], worktree);
+      actual = await processExec('git', ['hash-object', '--path=' + path, '--', path], worktree);
     } catch {
       throw new Error('SEED_TEST_SOURCE_BLOB_UNVERIFIABLE');
     }
@@ -533,7 +536,21 @@ async function build(request, manifestSha256) {
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
-    const sha = targetExisted ? createHash('sha256').update(current).digest('hex') : null;
+    let sha = null;
+    if (targetExisted) {
+      // Bind approval to the exact immutable base blob, not whichever LF/CRLF
+      // materialization Git chose for this Windows worktree. First prove the
+      // physical checkout canonicalizes back to that exact approved blob.
+      const expectedBlob = await processExec('git',
+        ['rev-parse', '--verify', request.baseSha + ':' + request.targetPath], worktree);
+      const materializedBlob = await processExec('git',
+        ['hash-object', '--path=' + request.targetPath, '--', request.targetPath], worktree);
+      if (!/^[a-f0-9]{40}$/.test(expectedBlob) || materializedBlob !== expectedBlob)
+        throw new Error('TARGET_CONTENT_BLOB_CHANGED');
+      const canonicalBytes = await processExec('git',
+        ['cat-file', 'blob', expectedBlob], worktree, 120000, false, true);
+      sha = createHash('sha256').update(canonicalBytes).digest('hex');
+    }
     if (sha !== request.expectedTargetSha256) throw new Error('TARGET_CONTENT_HASH_MISMATCH');
     // Only the exactly approved deterministic documentation mode may omit
     // model inference. No task-controlled executable, endpoint or command.

@@ -5,6 +5,7 @@ import { atomicWriteJson, readJsonObject } from './battle-bridge-github-command-
 import { MAILBOX_ROTATION_REQUEST_ID, mailboxRotationDigest } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 import { projectControlTowerRequestObservationV1, projectControlTowerLedgerObservationV1,
   controlTowerBuildObservationUnresolvedV1 } from '../shared/agents/controlTowerRequestObservationV1.mjs';
+import { CONTROL_TOWER_BUILD_OPERATION } from '../shared/agents/controlTowerBuildRequestV1.mjs';
 const SCHEMA = 'stephanos.mailbox-execution-ledger-entry.v1';
 const INVENTORY_MAX_ENTRIES = 8192;
 const ENTRY_MAX_BYTES = 4096;
@@ -240,6 +241,28 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
             ? error.message : 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN',
           latestBuildRequestObservation: null, latestControlSystemObservation: null });
       }
+    },
+    retireLegacyControlTowerReservation({ request, nowMs = Date.now() } = {}) {
+      if (!request || typeof request !== 'object' || Array.isArray(request)
+        || request.operation !== CONTROL_TOWER_BUILD_OPERATION
+        || request.requestId !== 'control-tower-build-' + request.runId + '-1'
+        || !Number.isSafeInteger(request.runId) || request.runId <= 0
+        || typeof request.sourceHead !== 'string' || !/^[a-f0-9]{40}$/.test(request.sourceHead)
+        || !Number.isFinite(nowMs) || !Number.isFinite(Date.parse(request.expiresAtUtc))
+        || Date.parse(request.expiresAtUtc) > nowMs
+        || ['admissionGranted', 'mergeAuthority', 'runtimeMutationAuthority', 'leaseSeizureAllowed', 'arbitraryShellAllowed']
+          .some(flag => request[flag] !== false))
+        throw new Error('CONTROL_TOWER_LEGACY_RESERVATION_RETIREMENT_INVALID');
+      const existing = read(request.requestId);
+      const expectedDigest = mailboxRotationDigest({ ...request, issueNumber: 2315 });
+      if (!existing || existing.issueNumber !== 2315 || existing.phase !== 'RESERVED'
+        || existing.controlTowerObservation !== undefined || existing.terminalState !== undefined
+        || existing.terminalProofHash !== undefined || existing.commandDigest !== expectedDigest)
+        throw new Error('CONTROL_TOWER_LEGACY_RESERVATION_BINDING_UNPROVEN');
+      atomicWriteJson(location(request.requestId), {
+        ...existing, phase: 'TERMINAL', terminalState: 'BLOCKED',
+      }, { maxBytes: 4096, space: 0 });
+      return read(request.requestId);
     },
     has: id => Boolean(read(id)),
     reserve(command, { controlTowerObservation } = {}) {

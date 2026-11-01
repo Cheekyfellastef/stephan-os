@@ -1,3 +1,16 @@
+import {
+  POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
+  POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
+  projectPostSyncSovereignRelayObservation,
+  projectPostSyncSovereignRelayProof,
+} from '../../scripts/battle-bridge-github-sync-policy.mjs';
+export {
+  POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
+  POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
+  projectPostSyncSovereignRelayObservation,
+  projectPostSyncSovereignRelayProof,
+};
+
 export const POST_SYNC_REFRESH_SCHEMA = 'stephanos.post-sync-runtime-refresh.v1';
 
 export const POST_SYNC_REFRESH_CLASSIFICATIONS = Object.freeze({
@@ -42,7 +55,16 @@ const SOVEREIGN_COMMANDER_PLUGIN_MANIFESTS = new Set([
   'plugins/sovereign-commander/.codex-plugin/plugin.json',
 ]);
 
+// The Commander watchdog owns this long-running relay and its static imports.
+// A healthy HTTP daemon alone cannot prove that this separate process reloaded.
+const SOVEREIGN_RELAY_RUNTIME_EXACT = new Set([
+  'scripts/battle-bridge-sovereign-relay-daemon.mjs',
+  'scripts/control-tower-build-consumer-v1.mjs',
+  'scripts/sovereign-commander-native-inspect.mjs',
+]);
+
 const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
+  ...SOVEREIGN_RELAY_RUNTIME_EXACT,
   'scripts/windows/status-stephanos-core-daemon.ps1',
   'scripts/stephanos-core-daemon.mjs',
   'shared/agents/stephanosCoreDaemonV1.mjs',
@@ -51,12 +73,17 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
   'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
   'scripts/battle-bridge-observation.mjs',
   'scripts/sovereign-commander-http.mjs',
+  'scripts/sovereign-maintenance-custody-store-v1.mjs',
+  'scripts/sovereign-maintenance-owner-observation-v2.mjs',
   'scripts/sovereign-fixed-runtime-parent-v1.mjs',
   'scripts/sovereign-commander-ignition-autoheal.mjs',
   'scripts/sovereign-commander-mcp.mjs',
   'scripts/sovereign-controller-lane-status.mjs',
   'scripts/sovereign-commander-visibility-snapshot.mjs',
   'scripts/sovereign-commander-fleet-goal-supervisor.mjs',
+  'scripts/sovereign-commander-goal-builder-repair.mjs',
+  'scripts/sovereign-commander-ignition-diagnosis.mjs',
+  'scripts/sovereign-commander-persistent-runtime-repair.mjs',
   'scripts/sovereign-commander-ui-4173-repair.mjs',
   'scripts/sovereign-commander-ui-runtime-proof.mjs',
   'scripts/windows/configure-sovereign-commander-tailscale.ps1',
@@ -150,6 +177,19 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
 ]);
 
 const NO_RUNTIME_EXACT = new Set([
+  // Manual offline source-package construction; no runtime root imports it.
+  'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs',
+  'scripts/sovereign-fixed-runtime-install-current-v1.mjs',
+  // Seed Forge worker is an on-demand child loaded afresh by the existing
+  // bounded supervisor for each exact approved task. Source adoption does not
+  // require restarting a long-running runtime.
+  'scripts/seed-canopy-parallel-builder.mjs',
+  // Exact installer construction/native sources are consumed only by the
+  // attended Ignition installer. Source adoption must not start/restart a
+  // long-running service; the later exact-head installation/boot gate owns them.
+  'scripts/sovereign-fixed-runtime-installer-candidate-v1.mjs',
+  'scripts/windows/SovereignFixedRuntimeIdentityV1.cs',
+  'scripts/windows/install-sovereign-fixed-runtime-v1.ps1',
   'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',
   'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs',
   'scripts/canonical-mailbox-rollover-github-adapter.mjs',
@@ -179,6 +219,7 @@ const NO_RUNTIME_EXACT = new Set([
   'scripts/ignite-stephanos-local.mjs',
   'scripts/ignition-cockpit-model.mjs',
   'scripts/run-battle-bridge-ignition.mjs',
+  'scripts/battle-bridge-ignition-sync-preflight.mjs',
   'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
 ]);
 
@@ -338,7 +379,7 @@ function isNaturalReloadPath(path) {
     || NATURAL_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
-export function classifyPostSyncRefresh(changedPaths = []) {
+export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefreshRequired = false } = {}) {
   const safePaths = [];
   const unsafePaths = [];
   for (const rawPath of Array.isArray(changedPaths) ? changedPaths : []) {
@@ -393,6 +434,11 @@ export function classifyPostSyncRefresh(changedPaths = []) {
     if (!classified) unknownPaths.push(path);
   }
 
+  const relayRequired = sovereignRelayRefreshRequired === true
+    || safePaths.some((path) => SOVEREIGN_RELAY_RUNTIME_EXACT.has(path));
+  // A later revert can remove a path from the net diff without proving that an
+  // earlier partially refreshed relay stopped using it. Preserve its debt.
+  if (relayRequired) targets.add(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER);
   const targetIds = TARGET_ORDER.filter((target) => targets.has(target));
   let classification = POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED;
   if (unsafePaths.length) classification = POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNSAFE_CHANGED_PATH;
@@ -415,6 +461,7 @@ export function classifyPostSyncRefresh(changedPaths = []) {
     // plugin host has loaded the new manifest/skills. Keep this a separate
     // physical acceptance requirement when either manifest changed.
     pluginHostActivationRequired: safePaths.some((path) => SOVEREIGN_COMMANDER_PLUGIN_MANIFESTS.has(path)),
+    sovereignRelayRefreshRequired: relayRequired,
     automaticExecutionAllowed: unsafePaths.length === 0 && unknownPaths.length === 0,
     internal: Object.freeze({
       safePaths: Object.freeze([...new Set(safePaths)]),
@@ -436,6 +483,13 @@ function resultPass(result, expectedHead) {
     && String(result?.sourceHead || '').toLowerCase() === String(expectedHead).toLowerCase();
 }
 
+export function postSyncRefreshTargetResultPass(result, { targetId, plan, expectedHead } = {}) {
+  if (!resultPass(result, expectedHead)) return false;
+  if (targetId !== POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER || plan?.sovereignRelayRefreshRequired !== true) return true;
+  return (result.blocker === undefined || result.blocker === '')
+    && projectPostSyncSovereignRelayProof(result.sovereignRelayProof, expectedHead) !== null;
+}
+
 export const POST_SYNC_TARGET_FAILURE_HISTORY_SCHEMA = 'stephanos.post-sync-target-failure-history.v1';
 const TARGET_FAILURE_KINDS = new Set(['RESULT_UNPROVEN', 'INVOCATION_FAILED', 'HANDLER_MISSING']);
 // Diagnostic vocabulary, never an execution/admission authority. Unknown child
@@ -449,6 +503,7 @@ const TARGET_FAILURE_CODES = new Set([
   'SOVEREIGN_COMMANDER_STALE_CONTRACT_RECYCLE_FAILED', 'SOVEREIGN_COMMANDER_START_FAILED',
   'SOVEREIGN_COMMANDER_NOT_HEALTHY', 'SOVEREIGN_COMMANDER_REFRESH_RECEIPT_INVALID',
   'SOVEREIGN_COMMANDER_REFRESH_PROOF_INVALID', 'SOVEREIGN_COMMANDER_EXACT_HEAD_PROOF_FAILED',
+  'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN',
   'GITHUB_MAILBOX_RESTART_FAILED', 'GITHUB_MAILBOX_RESTART_PROOF_INVALID', 'GITHUB_MAILBOX_EXACT_HEAD_PROOF_FAILED',
   'APPROVED_RUNTIME_RESTART_RESPONSE_INVALID', 'APPROVED_RUNTIME_RESTART_PROCESS_TIMEOUT',
   'UI_4173_EXACT_HEAD_PROOF_FAILED', 'VR_ATLAS_BROWSER_PROOF_RESPONSE_INVALID', 'VR_ATLAS_BROWSER_PROOF_BLOCKED',
@@ -521,6 +576,7 @@ export async function executePostSyncRefreshPlan({
   changedPaths,
   adapters = {},
   completedResults = [],
+  sovereignRelayRefreshRequired = false,
   onTargetComplete,
 } = {}) {
   if (!validHead(beforeHead) || !validHead(afterHead) || beforeHead === afterHead) {
@@ -533,7 +589,7 @@ export async function executePostSyncRefreshPlan({
     });
   }
 
-  const plan = classifyPostSyncRefresh(changedPaths);
+  const plan = classifyPostSyncRefresh(changedPaths, { sovereignRelayRefreshRequired });
   if (!plan.automaticExecutionAllowed) {
     return Object.freeze({
       ok: false,
@@ -546,7 +602,8 @@ export async function executePostSyncRefreshPlan({
   }
 
   const resumable = new Map((Array.isArray(completedResults) ? completedResults : [])
-    .filter((entry) => plan.targetIds.includes(entry?.targetId) && resultPass(entry, afterHead))
+    .filter((entry) => plan.targetIds.includes(entry?.targetId)
+      && postSyncRefreshTargetResultPass(entry, { targetId: entry.targetId, plan, expectedHead: afterHead }))
     .map((entry) => [entry.targetId, Object.freeze({ ...entry, resumed: true })]));
   const results = [];
   const handlers = {
@@ -607,9 +664,17 @@ export async function executePostSyncRefreshPlan({
         results: Object.freeze(results),
       });
     }
+    // Normalize a generic HTTP-only success before publishing its checkpoint or
+    // reducing failure history. Such a result cannot clear relay refresh debt.
+    if (targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER && plan.sovereignRelayRefreshRequired
+      && resultPass(result, afterHead)
+      && !postSyncRefreshTargetResultPass(result, { targetId, plan, expectedHead: afterHead })) {
+      result = { ...result, ok: false, exactHeadProofOk: false, freshProcessLoaded: false,
+        sovereignRelayProof: null, blocker: 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN' };
+    }
     const completed = Object.freeze({ targetId, ...result });
     results.push(completed);
-    const passed = resultPass(result, afterHead);
+    const passed = postSyncRefreshTargetResultPass(result, { targetId, plan, expectedHead: afterHead });
     const publicationFailure = await checkpoint({ targetId, result, failureKind: passed ? '' : 'RESULT_UNPROVEN' });
     if (publicationFailure) return publicationFailure;
     if (!passed) {
@@ -690,17 +755,26 @@ export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', a
     noRuntimePathCount: Number(plan.noRuntimePathCount || 0),
     openClawPathCount: Number(plan.openClawPathCount || 0),
     pluginHostActivationRequired: plan.pluginHostActivationRequired === true,
+    sovereignRelayRefreshRequired: plan.sovereignRelayRefreshRequired === true,
     unknownPathCount: Number(plan.unknownPathCount || 0),
     unsafePathCount: Number(plan.unsafePathCount || 0),
     exactHeadProofOk: result.exactHeadProofOk === true,
     safeRefreshesCompleted: result.safeRefreshesCompleted === true,
-    resultTargets: Array.isArray(result.results) ? result.results.map((entry) => ({
-      targetId: entry.targetId,
-      ok: entry.ok === true,
-      exactHeadProofOk: entry.exactHeadProofOk === true,
-      sourceHead: validHead(entry.sourceHead) ? String(entry.sourceHead).toLowerCase() : '',
-      blocker: String(entry.blocker || ''),
-    })) : [],
+    resultTargets: Array.isArray(result.results) ? result.results.map((entry) => {
+      const relayProof = projectPostSyncSovereignRelayProof(entry.sovereignRelayProof, afterHead);
+      const relayObservation = projectPostSyncSovereignRelayObservation(entry.sovereignRelayObservation, afterHead);
+      const required = entry.targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER && plan.sovereignRelayRefreshRequired === true;
+      const qualified = !required || postSyncRefreshTargetResultPass(entry, { targetId: entry.targetId, plan, expectedHead: afterHead });
+      return {
+        targetId: entry.targetId,
+        ok: entry.ok === true && qualified,
+        exactHeadProofOk: entry.exactHeadProofOk === true && qualified,
+        sourceHead: validHead(entry.sourceHead) ? String(entry.sourceHead).toLowerCase() : '',
+        blocker: !qualified && entry.ok === true ? 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN' : String(entry.blocker || ''),
+        ...(relayProof ? { sovereignRelayProof: relayProof } : {}),
+        ...(relayObservation ? { sovereignRelayObservation: relayObservation } : {}),
+      };
+    }) : [],
     arbitraryShellAllowed: false,
     arbitraryPowerShellAllowed: false,
     destructiveGitAllowed: false,

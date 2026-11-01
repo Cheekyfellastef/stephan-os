@@ -34,6 +34,34 @@ function text(value) {
   return String(value ?? '').trim();
 }
 
+const GOAL_BUILDER_REPAIR_RESULT_MARKER = 'SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=';
+const SAFE_GOAL_BUILDER_BLOCKER = /^[A-Z0-9][A-Z0-9._:-]{0,159}$/;
+
+export function projectGoalBuilderChildBlockerV1(processId, stdout) {
+  if (processId !== FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId) return '';
+  const raw = String(stdout || '');
+  if (!raw || Buffer.byteLength(raw, 'utf8') > 16 * 1024) return '';
+  const lines = raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const marked = lines.filter(line => line.startsWith(GOAL_BUILDER_REPAIR_RESULT_MARKER));
+  if (marked.length !== 1) return '';
+  try {
+    const value = JSON.parse(marked[0].slice(GOAL_BUILDER_REPAIR_RESULT_MARKER.length));
+    const blocker = text(value?.blocker);
+    if (!value || Array.isArray(value)
+      || value.schemaVersion !== 'stephanos.sovereign-commander-goal-builder-repair.v1'
+      || value.ok !== false
+      || !['SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED', 'SOVEREIGN_GOAL_BUILDER_ORIGINAL_OWNER_RECOVERY_REQUIRED'].includes(value.finalVerdict)
+      || value.canonicalGoalFabricOnly !== true
+      || value.duplicateSchedulerAllowed !== false
+      || value.mergeAuthority !== false
+      || value.arbitraryShellAllowed !== false
+      || !SAFE_GOAL_BUILDER_BLOCKER.test(blocker)) return '';
+    return blocker;
+  } catch {
+    return '';
+  }
+}
+
 function loopbackHost(value) {
   return ['127.0.0.1', '::1', 'localhost'].includes(text(value).toLowerCase());
 }
@@ -131,7 +159,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   const closeStoppedCustody = () => {
     if (stopped && !custodyClosed && !state.maintenanceInFlight && !nativeCyclePromise) {
       custodyClosed = true;
-      custodyStore?.close();
+      custodyStore?.close?.();
     }
   };
 
@@ -195,12 +223,16 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
           : zero ? custodyStore.releaseNativeTerminal(native.nativeReceipt) : { ok: false };
         state.timeoutCustodyHeld = released.ok !== true;
         state.lastOk = native.ok === true && released.ok === true;
+        const childBlocker = native.ok === true
+          ? ''
+          : projectGoalBuilderChildBlockerV1(command.plan.processId, native.stdout);
         state.lastBlocker = state.timeoutCustodyHeld ? SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER
-          : native.ok === true ? '' : native.reason;
+          : native.ok === true ? '' : childBlocker || native.reason;
         state.lastFinalVerdict = state.lastOk ? 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
           : 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED';
         const structuredContent = Object.freeze({ ...native, processId: command.plan.processId,
-          status: native.ok ? 0 : 2, terminalEvidenceRef: released.terminalEvidenceRef || '',
+          status: native.ok ? 0 : 2, childBlocker,
+          terminalEvidenceRef: released.terminalEvidenceRef || '',
           terminalEvidenceSha256: released.terminalEvidenceSha256 || '' });
         const contentText = native.stdout || native.reason;
         const owned = Object.freeze({ ok: state.lastOk, command, structuredContent, contentText,
@@ -503,7 +535,38 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     return true;
   };
 
-  schedule(startDelayMs);
+  const recoverPreparedCustodyOnStartup = async () => {
+    if (!state.timeoutCustodyHeld
+        || typeof custodyStore?.preparedRecoveryEligible !== 'function'
+        || custodyStore.preparedRecoveryEligible() !== true
+        || typeof custodyStore?.recoverPreparedAfterBoot !== 'function'
+        || state.running || state.maintenanceInFlight || stopped) return false;
+    state.maintenanceInFlight = true;
+    let recovered = false;
+    try {
+      const result = await custodyStore.recoverPreparedAfterBoot();
+      if (result?.ok === true) {
+        state.timeoutCustodyHeld = false;
+        state.lastBlocker = '';
+        state.lastOk = false;
+        state.lastFinalVerdict = 'SOVEREIGN_MAINTENANCE_CUSTODY_RECOVERED_REPAIR_PENDING';
+        recovered = true;
+      }
+      return recovered;
+    } catch {
+      return false;
+    } finally {
+      state.maintenanceInFlight = false;
+      if (recovered && !state.timeoutCustodyHeld) schedule(startDelayMs);
+      closeStoppedCustody();
+    }
+  };
+
+  if (state.timeoutCustodyHeld) {
+    void recoverPreparedCustodyOnStartup();
+  } else {
+    schedule(startDelayMs);
+  }
 
   return Object.freeze({
     status,
@@ -937,21 +1000,54 @@ export async function runSovereignCommanderHttpServer(options = {}) {
   const token = await loadSovereignCommanderToken(options);
   const readRecoverySource = options.readRecoverySource || readMaintenanceRecoverySourceV1;
   let installedSourceHead = '';
-  let custodyStore;
-  try {
-    installedSourceHead = readRecoverySource();
-    custodyStore = options.custodyStore || createMaintenanceCustodyStoreV1({ signingKey: token });
-  } catch {
-    // Observation remains available when recovery authority cannot be proven.
-    // This object cannot release or replace any existing durable reservation.
-    installedSourceHead = '';
+  try { installedSourceHead = readRecoverySource(); } catch { installedSourceHead = ''; }
+
+  let custodyStore = options.custodyStore;
+  if (!custodyStore) {
+    try {
+      custodyStore = createMaintenanceCustodyStoreV1({ signingKey: token });
+    } catch {
+      // Observation remains available when custody authority itself cannot be
+      // authenticated. Source drift alone must not erase a valid prepared
+      // custody record or prevent successor-boot recovery.
+      const refusal = () => ({ ok: false, custodyReleased: false,
+        blocker: 'MAINTENANCE_CUSTODY_STATE_UNPROVEN' });
+      custodyStore = Object.freeze({
+        status: () => ({ held: true, blocker: 'MAINTENANCE_CUSTODY_STATE_UNPROVEN' }),
+        reserve: refusal, release: refusal, recoverAfterBoot: refusal,
+        preparedRecoveryEligible: () => false, recoverPreparedAfterBoot: refusal, close: () => {},
+      });
+    }
+  }
+  if (!installedSourceHead) {
+    const underlyingCustodyStore = custodyStore;
     const refusal = () => ({ ok: false, custodyReleased: false,
       blocker: 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN' });
     custodyStore = Object.freeze({
-      status: () => ({ held: true, blocker: 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN' }),
-      reserve: refusal, release: refusal, recoverAfterBoot: refusal, close: () => {},
+      status: () => {
+        const observed = underlyingCustodyStore?.status?.() || {};
+        return observed.held === true ? observed : Object.freeze({
+          ...observed, held: true, blocker: 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN',
+        });
+      },
+      reserve: refusal,
+      release: refusal,
+      recordNativeRoot: refusal,
+      releaseNativeTerminal: refusal,
+      recoverAfterBoot: refusal,
+      prepareAfterAuditLoss: refusal,
+      prepareRetainedMigration: refusal,
+      prepareIncident: refusal,
+      preparedRecoveryEligible: typeof underlyingCustodyStore?.preparedRecoveryEligible === 'function'
+        ? () => underlyingCustodyStore.preparedRecoveryEligible() === true
+        : () => false,
+      recoverPreparedAfterBoot: typeof underlyingCustodyStore?.recoverPreparedAfterBoot === 'function'
+        ? () => underlyingCustodyStore.recoverPreparedAfterBoot()
+        : refusal,
+      close: () => underlyingCustodyStore?.close?.(),
     });
   }
+
   const created = await createSovereignCommanderHttpServer({
     ...options,
     token,

@@ -17,6 +17,11 @@ import {
   classifyPostSyncRefresh,
   executePostSyncRefreshPlan,
   parseGitChangedPathStatus,
+  POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
+  POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
+  postSyncRefreshTargetResultPass,
+  projectPostSyncSovereignRelayObservation,
+  projectPostSyncSovereignRelayProof,
   projectPostSyncTargetFailureHistory,
   reducePostSyncTargetFailureHistory,
 } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
@@ -32,6 +37,7 @@ import { refreshStephanosUi4173 } from './refresh-stephanos-ui-4173.mjs';
 export const POST_SYNC_REFRESH_RUNTIME_SCHEMA = 'stephanos.post-sync-runtime-refresh-runtime.v1';
 export const POST_SYNC_REFRESH_RESULT_MARKER = 'POST_SYNC_REFRESH_RESULT=';
 export const POST_SYNC_REFRESH_LOCK_STALE_AFTER_MS = 15 * 60 * 1000;
+export const POST_SYNC_REFRESH_LOCK_BOOT_SKEW_MS = 5_000;
 export const MISSION_WORKER_POST_SYNC_RESTART_BUDGET_MS = 90_000;
 export const MISSION_WORKER_POST_SYNC_CHILD_EXIT_RESERVE_MS = 10_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
@@ -229,7 +235,7 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         spawnSyncFn,
       });
     },
-    refreshSovereignCommander({ afterHead, paths }) {
+    refreshSovereignCommander({ afterHead, paths, requireSovereignRelayProof = false }) {
       const runnerPath = path.resolve(paths.repoRoot, 'scripts', 'windows', 'run-sovereign-commander-hidden.ps1');
       const result = fixedRun('powershell.exe', [
         '-NoProfile',
@@ -258,18 +264,55 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         && payload.pcRestartAllowed === false
         && payload.visiblePowerShellRequired === false
       );
+      // The watchdog also checks VR governor, Core and fleet-supervisor health.
+      // Their closed exit codes 3/4/5 must not invalidate an independently
+      // healthy exact-head Relay. Exit 2 is Commander-health failure and remains
+      // ineligible because receiptValid requires daemonHealthy/healthyAfter.
+      const relayWatchdogReceiptSucceeded = Boolean(
+        receiptValid
+        && Number.isInteger(result.status)
+        && [0, 3, 4, 5].includes(result.status)
+      );
+      const relayObservationInput = {
+        schemaVersion: POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
+        watchdogSucceeded: relayWatchdogReceiptSucceeded,
+        healthy: payload?.relayDaemonHealthy === true,
+        sourceHead: text(payload?.relayDaemonSourceHead).toLowerCase(),
+        sourceHeadMatchesLive: payload?.relayDaemonSourceHeadMatchesLive === true,
+        processCount: Number.isSafeInteger(Number(payload?.relayDaemonProcessCount))
+          ? Number(payload.relayDaemonProcessCount) : 0,
+        heartbeatAgeSeconds: payload?.relayDaemonHeartbeatAgeSeconds === null
+          || payload?.relayDaemonHeartbeatAgeSeconds === undefined
+          ? null : Number(payload.relayDaemonHeartbeatAgeSeconds),
+        blocker: text(payload?.relayDaemonBlocker),
+      };
+      const sovereignRelayObservation = projectPostSyncSovereignRelayObservation(
+        relayObservationInput, text(afterHead).toLowerCase());
+      const sovereignRelayProof = projectPostSyncSovereignRelayProof({
+        schemaVersion: POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
+        watchdogSucceeded: relayWatchdogReceiptSucceeded,
+        healthy: payload?.relayDaemonHealthy,
+        sourceHead: payload?.relayDaemonSourceHead,
+        sourceHeadMatchesLive: payload?.relayDaemonSourceHeadMatchesLive,
+        processCount: payload?.relayDaemonProcessCount,
+        heartbeatAgeSeconds: payload?.relayDaemonHeartbeatAgeSeconds,
+        blocker: payload?.relayDaemonBlocker,
+      }, text(afterHead).toLowerCase());
+      const relayProofOk = !requireSovereignRelayProof || sovereignRelayProof !== null;
       return {
-        ok: receiptValid && exactHeadProofOk,
+        ok: receiptValid && exactHeadProofOk && relayProofOk,
         blocker: !payload
           ? 'SOVEREIGN_COMMANDER_REFRESH_RECEIPT_INVALID'
           : !receiptValid
             ? text(payload.blocker) || 'SOVEREIGN_COMMANDER_REFRESH_PROOF_INVALID'
-            : exactHeadProofOk
-              ? ''
-              : 'SOVEREIGN_COMMANDER_EXACT_HEAD_PROOF_FAILED',
+            : !exactHeadProofOk
+              ? 'SOVEREIGN_COMMANDER_EXACT_HEAD_PROOF_FAILED'
+              : relayProofOk ? '' : 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN',
         sourceHead,
         exactHeadProofOk,
-        freshProcessLoaded: receiptValid,
+        freshProcessLoaded: receiptValid && relayProofOk,
+        sovereignRelayProof,
+        sovereignRelayObservation,
         capabilityVersion: capabilityVersionAfter,
         requiredCapabilityVersion,
         watchdogExitStatus: result.status,
@@ -323,7 +366,10 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
   });
 }
 
-async function acquireLock(workspaceRoot, now, { aliveFn = processIsAlive } = {}) {
+async function acquireLock(workspaceRoot, now, {
+  aliveFn = processIsAlive,
+  bootStartedAtMs = now.getTime() - (os.uptime() * 1000),
+} = {}) {
   const lockPath = path.resolve(workspaceRoot, 'locks', 'post-sync-runtime-refresh.lock');
   await mkdir(path.dirname(lockPath), { recursive: true });
   const attempt = async () => {
@@ -344,21 +390,29 @@ async function acquireLock(workspaceRoot, now, { aliveFn = processIsAlive } = {}
     } catch {
       try { ageMs = now.getTime() - (await stat(lockPath)).mtimeMs; } catch {}
     }
-    if (Number.isFinite(ageMs) && ageMs > POST_SYNC_REFRESH_LOCK_STALE_AFTER_MS && !aliveFn(Number(parsed?.pid))) {
+    const acquiredAtMs = Number.isFinite(Date.parse(parsed?.acquiredAtUtc))
+      ? Date.parse(parsed.acquiredAtUtc)
+      : (Number.isFinite(ageMs) ? now.getTime() - ageMs : NaN);
+    const predatesCurrentBoot = Number.isFinite(acquiredAtMs)
+      && Number.isFinite(bootStartedAtMs)
+      && acquiredAtMs + POST_SYNC_REFRESH_LOCK_BOOT_SKEW_MS < bootStartedAtMs;
+    if (predatesCurrentBoot
+        || (Number.isFinite(ageMs) && ageMs > POST_SYNC_REFRESH_LOCK_STALE_AFTER_MS && !aliveFn(Number(parsed?.pid)))) {
       await rm(lockPath, { force: true });
-      try { return { ...(await attempt()), recoveredStaleLock: true }; } catch {}
+      try { return { ...(await attempt()), recoveredStaleLock: true, predatesCurrentBoot }; } catch {}
     }
     return { ok: false, blocker: 'POST_SYNC_REFRESH_ALREADY_RUNNING' };
   }
 }
 
-async function loadResumeResults(workspaceRoot, afterHead) {
+async function loadResumeResults(workspaceRoot, afterHead, plan) {
   const statusPath = path.resolve(workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json');
   try {
     const status = JSON.parse(await readFile(statusPath, 'utf8'));
     if (text(status?.afterHead).toLowerCase() !== text(afterHead).toLowerCase()) return [];
     return Array.isArray(status?.resultTargets)
-      ? status.resultTargets.filter((entry) => entry?.ok === true && entry?.exactHeadProofOk === true && text(entry?.sourceHead).toLowerCase() === text(afterHead).toLowerCase())
+      ? status.resultTargets.filter((entry) => plan.targetIds.includes(entry?.targetId)
+        && postSyncRefreshTargetResultPass(entry, { targetId: entry.targetId, plan, expectedHead: afterHead }))
       : [];
   } catch {
     return [];
@@ -430,6 +484,7 @@ export async function runBattleBridgePostSyncRefresh({
   paths = resolveCanonicalPostSyncRefreshPaths({ env }),
   expectedPaths = resolveCanonicalPostSyncRefreshPaths({ env }),
   adapter = createFixedPostSyncRuntimeAdapter(),
+  bootStartedAtMs = now.getTime() - (os.uptime() * 1000),
 } = {}) {
   let normalizedBefore = text(beforeHead).toLowerCase();
   const normalizedAfter = text(afterHead).toLowerCase();
@@ -440,7 +495,7 @@ export async function runBattleBridgePostSyncRefresh({
     return Object.freeze({ ok: false, blocker: 'POST_SYNC_REFRESH_NON_CANONICAL_PATH', exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
   }
   await mkdir(paths.workspaceRoot, { recursive: true });
-  const lock = await acquireLock(paths.workspaceRoot, now);
+  const lock = await acquireLock(paths.workspaceRoot, now, { bootStartedAtMs });
   if (!lock.ok) return Object.freeze({ ok: false, blocker: lock.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
   try {
     const inspection = adapter.inspectHeads({ beforeHead: normalizedBefore, afterHead: normalizedAfter, repoRoot: paths.repoRoot });
@@ -473,11 +528,13 @@ export async function runBattleBridgePostSyncRefresh({
     const changed = adapter.changedPaths({ beforeHead: normalizedBefore, afterHead: normalizedAfter, repoRoot: paths.repoRoot });
     if (!changed.ok) return Object.freeze({ ok: false, blocker: changed.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
 
-    const plan = classifyPostSyncRefresh(changed.paths);
+    const plan = classifyPostSyncRefresh(changed.paths, {
+      sovereignRelayRefreshRequired: retained.debt.sovereignRelayRefreshRequired,
+    });
     if (retained.debt.requiredTargetIds.some(id => !plan.targetIds.includes(id))) {
       return Object.freeze({ ok: false, blocker: 'POST_SYNC_RETAINED_TARGET_COVERAGE_UNPROVEN', exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
     }
-    const completedResults = await loadResumeResults(paths.workspaceRoot, normalizedAfter);
+    const completedResults = await loadResumeResults(paths.workspaceRoot, normalizedAfter, plan);
     // Resume eligibility and observation continuity are different state. Only
     // the exact successes above can skip work. Historical refusals never can.
     let targetFailureHistory = projectPostSyncTargetFailureHistory(records.refreshRecord?.targetFailureHistory,
@@ -515,6 +572,7 @@ export async function runBattleBridgePostSyncRefresh({
       beforeHead: normalizedBefore,
       afterHead: normalizedAfter,
       changedPaths: changed.paths,
+      sovereignRelayRefreshRequired: retained.debt.sovereignRelayRefreshRequired,
       completedResults,
       adapters: {
         refreshUi: ({ afterHead: head }) => adapter.refreshUi({ afterHead: head }),
@@ -522,7 +580,8 @@ export async function runBattleBridgePostSyncRefresh({
         restartBackend: ({ afterHead: head }) => adapter.restartApprovedTarget({ target: 'backend', afterHead: head, paths }),
         restartMissionWorker: ({ afterHead: head }) => adapter.restartApprovedTarget({ target: 'mission-worker', afterHead: head, paths }),
         restartGitHubMailbox: ({ afterHead: head }) => adapter.restartGitHubMailbox({ afterHead: head, paths }),
-        refreshSovereignCommander: ({ afterHead: head }) => adapter.refreshSovereignCommander({ afterHead: head, paths }),
+        refreshSovereignCommander: ({ afterHead: head, plan: targetPlan }) => adapter.refreshSovereignCommander({ afterHead: head, paths,
+          requireSovereignRelayProof: targetPlan.sovereignRelayRefreshRequired }),
         confirmNaturalReload: ({ afterHead: head }) => adapter.confirmNaturalReload({ afterHead: head, repoRoot: paths.repoRoot }),
       },
       onTargetComplete: async (results, observation) => {

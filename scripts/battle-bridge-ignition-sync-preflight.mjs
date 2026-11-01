@@ -55,6 +55,77 @@ function canDegradeAuxiliaryControlPlane(result = {}, projection = {}) {
     && SHA40.test(String(projection?.sourceHead || ''));
 }
 
+const COMMANDER_CUSTODY_HOLD = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN';
+const PLUGIN_HOST_ACTIVATION_HOLD = 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN';
+
+function canDegradeHeldCommanderRefresh(result = {}, projection = {}) {
+  if (result?.ok === true
+      || result?.finalVerdict !== 'SYNC_AND_REFRESH_BLOCKED'
+      || result?.blocker !== COMMANDER_CUSTODY_HOLD
+      || projection?.syncClassification !== 'SYNC_NO_CHANGE'
+      || !SHA40.test(String(projection?.sourceHead || ''))) return false;
+  const refresh = Array.isArray(result?.refreshes) ? result.refreshes.at(-1)?.result : null;
+  if (!refresh || refresh.classification !== 'BLOCKED_REFRESH_FAILED'
+      || refresh.blocker !== COMMANDER_CUSTODY_HOLD
+      || !Array.isArray(refresh.targetIds) || !Array.isArray(refresh.resultTargets)
+      || !refresh.targetIds.includes('sovereign-commander')) return false;
+
+  const commanderIndex = refresh.targetIds.indexOf('sovereign-commander');
+  const fullCoverage = refresh.targetIds.length === refresh.resultTargets.length;
+  const trailingNaturalReloadDeferred = refresh.targetIds.length === refresh.resultTargets.length + 1
+    && commanderIndex === refresh.targetIds.length - 2
+    && refresh.targetIds.at(-1) === 'natural-reload'
+    && refresh.resultTargets.length === commanderIndex + 1;
+  if (!fullCoverage && !trailingNaturalReloadDeferred) return false;
+
+  const executedTargetIds = refresh.targetIds.slice(0, refresh.resultTargets.length);
+  if (refresh.resultTargets.some((row, index) => row?.targetId !== executedTargetIds[index])) return false;
+  const byId = new Map(refresh.resultTargets.map(row => [row?.targetId, row]));
+  if (byId.size !== refresh.resultTargets.length) return false;
+
+  for (const targetId of executedTargetIds) {
+    const row = byId.get(targetId);
+    if (!row) return false;
+    if (targetId === 'sovereign-commander') {
+      if (row.ok !== false || row.exactHeadProofOk !== false || row.blocker !== COMMANDER_CUSTODY_HOLD
+          || safeHead(row.sourceHead) !== projection.sourceHead) return false;
+    } else if (row.ok !== true || row.exactHeadProofOk !== true || row.blocker !== ''
+        || safeHead(row.sourceHead) !== projection.sourceHead) return false;
+  }
+  return true;
+}
+
+
+function canDegradeUnattachedPluginHost(result = {}, projection = {}) {
+  if (result?.ok === true
+      || result?.finalVerdict !== 'SYNC_AND_REFRESH_BLOCKED'
+      || result?.blocker !== PLUGIN_HOST_ACTIVATION_HOLD
+      || projection?.syncClassification !== 'SYNC_NO_CHANGE'
+      || !SHA40.test(String(projection?.sourceHead || ''))) return false;
+
+  const refresh = Array.isArray(result?.refreshes) ? result.refreshes.at(-1)?.result : null;
+  if (!refresh
+      || refresh.classification !== 'BLOCKED_REFRESH_FAILED'
+      || refresh.blocker !== PLUGIN_HOST_ACTIVATION_HOLD
+      || refresh.pluginHostActivationRequired !== true
+      || refresh.safeRefreshesCompleted !== true
+      || !Array.isArray(refresh.targetIds)
+      || !Array.isArray(refresh.resultTargets)
+      || refresh.targetIds.length < 1
+      || refresh.targetIds.length !== refresh.resultTargets.length) return false;
+
+  for (let index = 0; index < refresh.targetIds.length; index += 1) {
+    const targetId = refresh.targetIds[index];
+    const row = refresh.resultTargets[index];
+    if (!row || row.targetId !== targetId
+        || row.ok !== true
+        || row.exactHeadProofOk !== true
+        || row.blocker !== ''
+        || safeHead(row.sourceHead) !== projection.sourceHead) return false;
+  }
+  return true;
+}
+
 export async function runBattleBridgeIgnitionSyncPreflight({
   platform = process.platform,
   repoRoot = CURRENT_REPO_ROOT,
@@ -98,6 +169,34 @@ export async function runBattleBridgeIgnitionSyncPreflight({
         ...projection,
         controlPlaneDegraded: true,
         controlPlaneBlocker: safeBlocker(result?.blocker, 'CONTROL_PLANE_REPAIR_BLOCKED'),
+        blocker: '',
+        finalVerdict: 'IGNITION_SYNC_PREFLIGHT_PASS',
+      });
+    }
+
+    if (canDegradeHeldCommanderRefresh(result, projection)) {
+      return Object.freeze({
+        schemaVersion: BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_SCHEMA,
+        ok: true,
+        skipped: false,
+        classification: 'IGNITION_SYNC_PREFLIGHT_PASS_COMMANDER_CUSTODY_DEGRADED',
+        ...projection,
+        commanderDegraded: true,
+        commanderBlocker: COMMANDER_CUSTODY_HOLD,
+        blocker: '',
+        finalVerdict: 'IGNITION_SYNC_PREFLIGHT_PASS',
+      });
+    }
+
+    if (canDegradeUnattachedPluginHost(result, projection)) {
+      return Object.freeze({
+        schemaVersion: BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_SCHEMA,
+        ok: true,
+        skipped: false,
+        classification: 'IGNITION_SYNC_PREFLIGHT_PASS_PLUGIN_HOST_DEGRADED',
+        ...projection,
+        pluginHostDegraded: true,
+        pluginHostBlocker: PLUGIN_HOST_ACTIVATION_HOLD,
         blocker: '',
         finalVerdict: 'IGNITION_SYNC_PREFLIGHT_PASS',
       });

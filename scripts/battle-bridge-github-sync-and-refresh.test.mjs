@@ -199,6 +199,41 @@ function nonWindowsRepairArgs() {
   };
 }
 
+test('actual wrapper reads legacy Commander completion as pending and accepts only covering relay proof from its child', async t => {
+  for (const relayProven of [false, true]) {
+    const root = await mkdtemp(join(tmpdir(), 'sync-wrapper-relay-debt-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const fixturePaths = { repoRoot: join(root, 'repo'), workspaceRoot: join(root, 'workspace') };
+    await mkdir(join(fixturePaths.workspaceRoot, 'status'), { recursive: true });
+    const targetId = 'sovereign-commander';
+    const legacy = { ...completedRefresh(), schemaVersion: 'shared-agent-workspace-record.v1',
+      kind: 'stephanos.shared_workspace.status', statusId: 'post-sync-runtime-refresh-current',
+      classification: 'REFRESH_COMPLETE', noRuntimePathCount: 0, targetIds: [targetId],
+      resultTargets: [{ targetId, ok: true, exactHeadProofOk: true, sourceHead: B, blocker: '' }] };
+    await writeFile(join(fixturePaths.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json'), JSON.stringify(legacy));
+    const debt = pendingPostSyncRefreshDebt([{ beforeHead: A, afterHead: C }], [targetId], '', { sovereignRelayRefreshRequired: true });
+    const calls = [];
+    const result = await runBattleBridgeSyncAndRefresh({ paths: fixturePaths, expectedPaths: fixturePaths,
+      ...nonWindowsRepairArgs(),
+      adapter: {
+        runSync: () => ({ ok: true, result: { ...noChange(C), facts: { ...noChange(C).facts, pendingRefresh: debt } } }),
+        runRefresh: ({ beforeHead, afterHead }) => {
+          calls.push({ beforeHead, afterHead });
+          const sovereignRelayProof = { schemaVersion: 'stephanos.post-sync-sovereign-relay-proof.v1', watchdogSucceeded: true,
+            healthy: true, sourceHead: C, sourceHeadMatchesLive: true, processCount: 1, heartbeatAgeSeconds: 2, blocker: '' };
+          return { ok: true, result: { ...completedRefresh(beforeHead, afterHead), classification: 'REFRESH_COMPLETE',
+            noRuntimePathCount: 0, targetIds: [targetId], sovereignRelayRefreshRequired: relayProven,
+            resultTargets: [{ targetId, ok: true, exactHeadProofOk: true, sourceHead: C, blocker: '',
+              ...(relayProven ? { sovereignRelayProof } : {}) }] } };
+        },
+      } });
+    assert.deepEqual(calls, [{ beforeHead: A, afterHead: C }]);
+    assert.equal(result.ok, relayProven);
+    if (!relayProven) assert.equal(result.blocker, 'PENDING_POST_SYNC_COMPLETION_COVERAGE_UNPROVEN');
+    else assert.equal(result.refreshes.length, 1, 'A proven paid obligation must not repeatedly invoke the owner');
+  }
+});
+
 test('pending old-executor refresh is paid after a safe source observation and then reconverges', async () => {
   const calls = [];
   const result = await runBattleBridgeSyncAndRefresh({
@@ -497,6 +532,41 @@ test('goal discovery failure blocks otherwise converged completion', async () =>
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'NO_QUALIFIED_CAPACITY');
   assert.equal(result.finalVerdict, 'SYNC_AND_REFRESH_GOAL_DISCOVERY_BLOCKED');
+});
+
+test('in-flight refresh contention is observed to completion and then reconverges instead of blocking Ignition', async () => {
+  let pendingReads = 0;
+  let syncCalls = 0;
+  let refreshCalls = 0;
+  let clock = 0;
+  const result = await runBattleBridgeSyncAndRefresh({
+    paths,
+    expectedPaths: paths,
+    ...nonWindowsRepairArgs(),
+    nowMs: () => clock,
+    sleepFn: async ms => { clock += ms; },
+    pendingReader: async () => {
+      pendingReads += 1;
+      if (pendingReads < 3) return { ok: true, spans: [{ beforeHead: A, afterHead: B }], requiredTargetIds: [], completion: null };
+      return null;
+    },
+    adapter: {
+      runSync() {
+        syncCalls += 1;
+        return { ok: true, result: syncCalls === 1 ? updated(A, B) : noChange(B) };
+      },
+      runRefresh() {
+        refreshCalls += 1;
+        return { ok: true, result: { ok: false, blocker: 'POST_SYNC_REFRESH_ALREADY_RUNNING' } };
+      },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.sourceHead, B);
+  assert.equal(refreshCalls, 1);
+  assert.equal(syncCalls, 2);
+  assert.equal(pendingReads, 3);
+  assert.equal(result.pendingRefreshObserved, true);
 });
 
 test('refresh blocker stops without starting another sync cycle', async () => {

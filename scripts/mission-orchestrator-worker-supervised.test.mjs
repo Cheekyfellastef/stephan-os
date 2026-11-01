@@ -26,11 +26,14 @@ function sink() {
   return { stream: { write(chunk) { value += chunk; } }, read: () => value };
 }
 
-function consumedWorkerResult(overrides = {}) {
+function consumedWorkerResult(overrides = {}, expectedAction = actionGrant) {
   return {
     processed: true,
     result: {
       schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
+      missionId: expectedAction.missionId,
+      actionId: expectedAction.actionId,
+      adapter: expectedAction.adapter,
       finalVerdict: 'MISSION_WORKER_ITEM_COMPLETE',
       execution: { success: true },
       ...overrides,
@@ -38,8 +41,91 @@ function consumedWorkerResult(overrides = {}) {
   };
 }
 
+test('supervisor attributes material progress to the original selected action across cycles', async (t) => {
+  const cases = [
+    { name: 'exact selected action', progress: true },
+    { name: 'missing mission', change: (result) => { delete result.missionId; } },
+    { name: 'missing action', change: (result) => { delete result.actionId; } },
+    { name: 'missing adapter', change: (result) => { delete result.adapter; } },
+    { name: 'foreign mission', change: (result) => { result.missionId = 'foreign-mission'; } },
+    { name: 'foreign action', change: (result) => { result.actionId = 'foreign-action'; } },
+    { name: 'foreign adapter', change: (result) => { result.adapter = 'foundry-forge'; } },
+    { name: 'previous action on the same mission', nextAction: true,
+      change: (result) => { result.actionId = 'selected-mission-r1-action'; } },
+    { name: 'grant identity changed during execution',
+      change: (result, grant) => { grant.actionId = result.actionId = 'changed-in-flight-action'; } },
+    { name: 'grant source changed during execution',
+      change: (_result, grant) => { grant.sourceRevision = 'b'.repeat(40); } },
+  ];
+  for (const scenario of cases) await t.test(scenario.name, async () => {
+    const output = sink();
+    const heartbeats = [];
+    const liveness = [];
+    let controllerCycles = 0;
+    let ticks = 0;
+    let sleeps = 0;
+    await assert.rejects(runSupervisedMissionWorker({
+      argv: [],
+      env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40) },
+      stdout: output.stream,
+      stderr: sink().stream,
+      bootstrapMailbox: async () => ({ ok: true }),
+      inspectRepositoryIdentity: canonicalIdentity,
+      listMissionState: async () => [],
+      readActiveClaim: async () => null,
+      runControllerCycle: async (_input, options) => {
+        liveness.push(structuredClone(options.controllerLivenessEvidence?.surfaceFailures || []));
+        controllerCycles += 1;
+        return controllerCycles <= 2 ? {
+          status: 'ACTIVE', allowWorkerTick: true,
+          authoritativeProjection: { status: 'ACTIVE' },
+          workerActionGrant: {
+            schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+            missionId: 'selected-mission',
+            actionId: scenario.nextAction && controllerCycles === 2
+              ? 'selected-mission-r2-action' : 'selected-mission-r1-action',
+            adapter: 'codex', sourceRevision: 'a'.repeat(40), boundedActionCount: 1,
+          },
+        } : { status: 'ACTIVE', allowWorkerTick: false, boundedMutationSteps: 0 };
+      },
+      runTick: async ({ actionGrant: selected }) => {
+        ticks += 1;
+        const result = {
+          schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
+          missionId: selected.missionId, actionId: selected.actionId, adapter: selected.adapter,
+          finalVerdict: ticks === 1 ? 'MISSION_WORKER_ITEM_BLOCKED' : 'MISSION_WORKER_ITEM_COMPLETE',
+          execution: { success: ticks !== 1 },
+        };
+        if (ticks === 2) scenario.change?.(result, selected);
+        return { processed: { processed: true, result } };
+      },
+      writeHeartbeat: async (input) => { heartbeats.push(input); },
+      setIntervalFn: () => 17,
+      clearIntervalFn: () => {},
+      sleep: async () => { if (++sleeps === 3) throw new Error('binding-observation-complete'); },
+    }), /binding-observation-complete/);
+    assert.equal(ticks, 2);
+    assert.equal(liveness[1].length, 1, 'the first actual failed tick must enter failure history');
+    assert.equal(liveness[1][0].failureClass, 'MISSION_WORKER_ITEM_BLOCKED');
+    assert.equal(liveness[2].length, scenario.progress ? 0 : 2,
+      'only the selected action may clear the preceding mission/surface failure');
+    if (!scenario.progress) {
+      assert.deepEqual(liveness[2][0], liveness[1][0]);
+      assert.equal(liveness[2][1].failureClass, 'MISSION_WORKER_RESULT_IDENTITY_MISMATCH');
+    }
+    const tickLogs = output.read().trim().split('\n').map((line) => JSON.parse(line))
+      .filter((entry) => entry.event === 'worker-tick');
+    assert.equal(tickLogs.at(-1).processingSuccess, scenario.progress === true,
+      'operator log and failure-history decision must use the same bound result');
+    if (!scenario.progress) assert.equal(tickLogs.at(-1).processingBlocker, 'MISSION_WORKER_RESULT_IDENTITY_MISMATCH');
+    assert.equal(heartbeats.at(-1).lastTickVerdict, scenario.progress
+      ? 'MISSION_WORKER_TICK_PASS' : 'CONTROLLER_EXECUTION_DEFECT_NO_MATERIAL_PROGRESS');
+  });
+});
+
 test('worker material progress requires a typed positive producer outcome', () => {
-  const progress = (processed) => missionWorkerTickMadeProgress({ processed });
+  const progress = (processed, adapter = actionGrant.adapter) =>
+    missionWorkerTickMadeProgress({ processed }, { ...actionGrant, adapter });
   assert.equal(progress(consumedWorkerResult()), true);
   for (const processed of [
     { processed: true },
@@ -59,20 +145,61 @@ test('worker material progress requires a typed positive producer outcome', () =
   assert.equal(progress(consumedWorkerResult({
     adapter: 'forge-publication', execution: undefined, prNumber: 3002,
     commitSha: 'd'.repeat(40),
-  })), true);
+  }), 'forge-publication'), true);
   assert.equal(progress(consumedWorkerResult({
     adapter: 'forge-publication', execution: undefined, prNumber: 0,
     commitSha: 'd'.repeat(40),
-  })), false);
+  }), 'forge-publication'), false);
   assert.equal(progress(consumedWorkerResult({
     adapter: 'verification', execution: undefined,
     finalVerdict: 'VERIFICATION_EVIDENCE_GROUNDED', evidenceReceiptCount: 1,
-  })), true);
+  }), 'verification'), true);
   for (const evidenceReceiptCount of [0, -1, '1', undefined]) {
     assert.equal(progress(consumedWorkerResult({
       adapter: 'verification', execution: undefined,
       finalVerdict: 'VERIFICATION_EVIDENCE_GROUNDED', evidenceReceiptCount,
-    })), false);
+    }), 'verification'), false);
+  }
+});
+
+test('every material outcome requires a separate exact action identity', () => {
+  const producers = [
+    consumedWorkerResult(),
+    consumedWorkerResult({ adapter: 'verification', execution: undefined,
+      finalVerdict: 'VERIFICATION_EVIDENCE_GROUNDED', evidenceReceiptCount: 1 }),
+    consumedWorkerResult({ adapter: 'forge-publication', execution: undefined,
+      prNumber: 3334, commitSha: 'c'.repeat(40) }),
+    { schemaVersion: 'stephanos.provider-neutral-source-builder.v1',
+      processed: true, success: true, missionId: actionGrant.missionId,
+      actionId: actionGrant.actionId, adapter: 'foundry-forge',
+      testsPassed: true, executionCustodyReleased: true, sourceArtifactRef: 'proof/source.json',
+      offlinePublicationOutboxId: 'outbox-fixture', finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED' },
+  ];
+  for (const processed of producers) {
+    const outcome = processed.result || processed;
+    const expectedAction = { ...actionGrant, adapter: outcome.adapter };
+    const result = { processed, actionGrant: expectedAction };
+    assert.equal(missionWorkerTickMadeProgress(result, expectedAction), true);
+    assert.equal(missionWorkerTickMadeProgress(result), false,
+      'a returned grant echo cannot supply the independently selected action');
+    for (const key of ['missionId', 'actionId', 'adapter']) {
+      const wrong = structuredClone(result);
+      (wrong.processed.result || wrong.processed)[key] = `foreign-${key}`;
+      assert.equal(missionWorkerTickMadeProgress(wrong, expectedAction), false);
+      const missing = structuredClone(result);
+      delete (missing.processed.result || missing.processed)[key];
+      assert.equal(missionWorkerTickMadeProgress(missing, expectedAction), false);
+      let touched = 0;
+      const accessor = structuredClone(result);
+      Object.defineProperty(accessor.processed.result || accessor.processed, key,
+        { get() { touched += 1; return expectedAction[key]; } });
+      assert.equal(missionWorkerTickMadeProgress(accessor, expectedAction), false);
+      const expectedAccessor = { ...expectedAction };
+      Object.defineProperty(expectedAccessor, key,
+        { get() { touched += 1; return outcome[key]; } });
+      assert.equal(missionWorkerTickMadeProgress(result, expectedAccessor), false);
+      assert.equal(touched, 0, 'identity validation must not execute caller accessors');
+    }
   }
 });
 
@@ -80,11 +207,11 @@ test('worker log projection consumes the same nested result as material-progress
   const failed = consumedWorkerResult({
     finalVerdict: 'MISSION_WORKER_ITEM_BLOCKED', execution: { success: false },
   });
-  const failedLog = createMissionWorkerTickLogProjection({ processed: failed }, '2026-10-30T17:00:00Z');
+  const failedLog = createMissionWorkerTickLogProjection({ processed: failed }, '2026-10-30T17:00:00Z', actionGrant);
   assert.equal(failedLog.processed, true);
   assert.equal(failedLog.processingSuccess, false);
   assert.equal(failedLog.processingVerdict, 'MISSION_WORKER_ITEM_BLOCKED');
-  const completedLog = createMissionWorkerTickLogProjection({ processed: consumedWorkerResult() }, '2026-10-30T17:00:00Z');
+  const completedLog = createMissionWorkerTickLogProjection({ processed: consumedWorkerResult() }, '2026-10-30T17:00:00Z', actionGrant);
   assert.equal(completedLog.processingSuccess, true);
   assert.equal(completedLog.processingVerdict, 'MISSION_WORKER_ITEM_COMPLETE');
 });
@@ -126,18 +253,20 @@ test('nested consumer failure stays visible through the next idle supervisor cyc
 });
 
 test('held native source processing is activity, never successful material progress', () => {
+  const expectedAction = { ...actionGrant, adapter: 'foundry-forge' };
   const held={schemaVersion:'stephanos.provider-neutral-source-builder.v1',processed:true,
+    missionId: expectedAction.missionId, actionId: expectedAction.actionId, adapter: expectedAction.adapter,
     success:false,finalVerdict:'NATIVE_SOURCE_FINALIZATION_HELD'};
-  assert.equal(missionWorkerTickMadeProgress({processed:held}),false);
-  assert.equal(missionWorkerTickMadeProgress({processed:{...held,success:undefined}}),false);
-  assert.equal(missionWorkerTickMadeProgress({processed:{...held,success:true}}),false);
+  assert.equal(missionWorkerTickMadeProgress({processed:held},expectedAction),false);
+  assert.equal(missionWorkerTickMadeProgress({processed:{...held,success:undefined}},expectedAction),false);
+  assert.equal(missionWorkerTickMadeProgress({processed:{...held,success:true}},expectedAction),false);
   assert.equal(missionWorkerTickMadeProgress({processed:{...held,success:true,
     testsPassed:true,executionCustodyReleased:true,sourceArtifactRef:'proof/artifact.json',
-    offlinePublicationOutboxId:'outbox-fixture',finalVerdict:'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'}}),true);
+    offlinePublicationOutboxId:'outbox-fixture',finalVerdict:'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'}},expectedAction),true);
   assert.equal(missionWorkerTickMadeProgress({processed:{...held,success:true,
-    finalVerdict:'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'}}),false);
+    finalVerdict:'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'}},expectedAction),false);
   const projection=createMissionWorkerTickLogProjection({processed:{...held,
-    reason:'NATIVE_SOURCE_CLAIM_GRANT_OR_REVISION_CHANGED'}},'2026-10-30T14:00:00Z');
+    reason:'NATIVE_SOURCE_CLAIM_GRANT_OR_REVISION_CHANGED'}},'2026-10-30T14:00:00Z',expectedAction);
   assert.equal(projection.processingBlocker,'NATIVE_SOURCE_CLAIM_GRANT_OR_REVISION_CHANGED');
   assert.equal(projection.processingSuccess,false);
 });
@@ -975,15 +1104,15 @@ test('worker progress detection is descriptor-safe and ignores caller-shaped get
     enumerable: true,
     get() { touched += 1; return true; },
   });
-  assert.equal(missionWorkerTickMadeProgress({ publish: publication }), false);
+  assert.equal(missionWorkerTickMadeProgress({ publish: publication }, actionGrant), false);
   assert.equal(touched, 0);
-  assert.equal(missionWorkerTickMadeProgress({ processed: { processed: true } }), false);
-  assert.equal(missionWorkerTickMadeProgress({ processed: consumedWorkerResult() }), true);
+  assert.equal(missionWorkerTickMadeProgress({ processed: { processed: true } }, actionGrant), false);
+  assert.equal(missionWorkerTickMadeProgress({ processed: consumedWorkerResult() }, actionGrant), true);
   const nested = consumedWorkerResult();
   Object.defineProperty(nested.result.execution, 'success', {
     get() { touched += 1; return true; },
   });
-  assert.equal(missionWorkerTickMadeProgress({ processed: nested }), false);
+  assert.equal(missionWorkerTickMadeProgress({ processed: nested }, actionGrant), false);
   assert.equal(touched, 0);
 });
 
@@ -1506,7 +1635,7 @@ test('repeated stuck mission is sidelined and the persistent controller advances
       };
     },
     runTick: async ({ actionGrant }) => actionGrant.missionId === nextMissionId
-      ? { processed: consumedWorkerResult(), publish: { published: true } }
+      ? { processed: consumedWorkerResult({}, actionGrant), publish: { published: true } }
       : { processed: { processed: false }, publish: { published: false }, blocker: 'NO_MATERIAL_PROGRESS' },
 
     writeHeartbeat: async () => {},
@@ -1595,7 +1724,7 @@ test('surface-quarantine HOLD sidelines the stuck mission instead of becoming na
     runTick: async ({ actionGrant }) => {
       if (actionGrant.missionId === nextMissionId) {
         nextMissionTicks += 1;
-        return { processed: consumedWorkerResult(), publish: { published: true } };
+        return { processed: consumedWorkerResult({}, actionGrant), publish: { published: true } };
       }
       firstMissionTicks += 1;
       return { processed: { processed: false }, publish: { published: false }, blocker: 'WRITE_BLOCKED' };
