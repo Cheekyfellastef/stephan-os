@@ -2811,6 +2811,7 @@ function exactTerminalReceiptForIdentity(record, identity) {
     && record.prNumber === identity.prNumber
     && record.branch === identity.branch
     && record.headSha === identity.headSha
+    && headFactsValid
     && record.leaseId === identity.leaseId
     && record.ownerId === identity.ownerId
     && record.disposition === 'terminal-evidence-published'
@@ -2821,9 +2822,18 @@ function exactTerminalReceiptForIdentity(record, identity) {
 
 function exactTerminalProofForIdentity(record, identity, expectedProof = null) {
   const proofRef = `proof/${identity.evidenceId}.json`;
+  const leaseHeadSha = text(record?.leaseHeadSha || record?.headSha).toLowerCase();
+  const mergedHeadSha = text(record?.mergedHeadSha || record?.headSha).toLowerCase();
+  const advanced = record?.leaseHeadIsAncestor === true;
+  const headFactsValid = leaseHeadSha === identity.headSha
+    && SHA_40.test(mergedHeadSha)
+    && (advanced ? mergedHeadSha !== leaseHeadSha : mergedHeadSha === leaseHeadSha);
   const mergeFactsMatch = !expectedProof || (
     text(record?.mergeCommitSha).toLowerCase() === text(expectedProof.mergeCommitSha).toLowerCase()
     && safeNow(record?.mergedAtUtc) === safeNow(expectedProof.mergedAtUtc)
+    && mergedHeadSha === text(expectedProof.mergedHeadSha || expectedProof.headSha).toLowerCase()
+    && leaseHeadSha === text(expectedProof.leaseHeadSha || expectedProof.headSha).toLowerCase()
+    && advanced === (expectedProof.leaseHeadIsAncestor === true)
   );
   return Boolean(
     record
