@@ -145,6 +145,29 @@ export function createControllerActivityProofRecord(input = {}) {
   const runId = text(input.runId);
   const proofId = text(input.proofId, `controller-${safeFragment(controllerId.slice(0, 12))}-run-${safeFragment(runId)}`);
   const proofRef = text(input.proofRef, `proof/${proofId}`);
+  const candidate = input.workerPickupAttestation;
+  // Preserve ONLY the detached worker signature supplied by the original
+  // terminal receipt. This proof publisher cannot mint a worker signature.
+  // Signature validity and independently pinned OS identity are checked later.
+  const signedPickup = candidate && typeof candidate === 'object' && !Array.isArray(candidate)
+    && candidate.schemaVersion === 'stephanos.physical-worker-goal-pickup.v1'
+    && candidate.publisherId === 'stephanos-physical-worker'
+    && candidate.proofId === proofId
+    && candidate.proofRef === proofRef
+    && candidate.controllerId === controllerId
+    && candidate.runId === runId
+    && /^[a-f0-9]{40}$/.test(text(candidate.sourceHead))
+    && /^#[1-9][0-9]*$/.test(text(candidate.goalIssue))
+    && /^logical-goal-[1-9][0-9]*$/.test(text(candidate.logicalLaneId))
+    && Number.isFinite(Date.parse(text(candidate.observedAtUtc)))
+    && text(candidate.workerId).length > 0 && text(candidate.workerId).length <= 120
+    && /^[A-Za-z0-9+/]{86}==$/.test(text(candidate.signatureBase64))
+    ? Object.freeze(Object.fromEntries([
+        'schemaVersion', 'publisherId', 'sourceHead', 'goalIssue',
+        'logicalLaneId', 'controllerId', 'runId', 'proofId', 'proofRef',
+        'observedAtUtc', 'workerId', 'signatureBase64',
+      ].map((key) => [key, candidate[key]])))
+    : null;
   return Object.freeze({
     ...createSharedWorkspaceProofRecord({
       proofId,
@@ -164,6 +187,7 @@ export function createControllerActivityProofRecord(input = {}) {
       runId,
       materialActionsSucceeded: count(input.materialActionsSucceeded),
     }),
+    ...(signedPickup ? { workerPickupAttestation: signedPickup } : {}),
   });
 }
 
