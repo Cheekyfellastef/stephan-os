@@ -48,6 +48,9 @@ import {
   readGithubGoalIssue,
 } from './githubPrEvidenceService.js';
 import {
+  COMPLETED_DISPATCH_CONVEYOR_ACCEPTANCE,
+  COMPLETED_DISPATCH_CONVEYOR_ACCEPTANCES,
+  COMPLETED_DISPATCH_CONVEYOR_MISSION_ID,
   LEGACY_COMPLETED_RETIRED_MISSION_ID,
   LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
   RETIRED_COMPLETED_LEGACY_ACCEPTANCE,
@@ -61,6 +64,7 @@ import {
 const NOW = '2026-07-30T10:00:00.000Z';
 const HEAD = 'a'.repeat(40);
 const MERGE = 'b'.repeat(40);
+const ADVANCED_HEAD = 'c'.repeat(40);
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const LANE_ID = 'goal-1497-pr-1617';
 const BRANCH = 'feat/canonical-programme-authority-contracts';
@@ -411,6 +415,70 @@ test('lease acquisition is durable, non-seizing, exactly renewable and exactly r
   });
 });
 
+
+test('production Programme Authority keeps r6 CHECK_PULL_REQUEST review leased without claiming source building or requiring source receipt', async () => {
+  await fixture(async ({ root, home, repoRoot }) => {
+    const reviewBranch = 'openclaw/elastic-goal-2956';
+    const leaseId = 'critical-2956-elastic-goal-r6-lease';
+    const sourceLease = leaseInput({
+      leaseId, laneId: 'goal-2956-pr-2960',
+      issueNumber: 2956, prNumber: 2960,
+      branch: reviewBranch, headSha: HEAD,
+      ownerId: 'review-worker-2956',
+    });
+    const reviewPr = {
+      ...githubOpen(), prNumber: 2960,
+      headBranch: reviewBranch, headSha: HEAD,
+    };
+    const claimed = await claimSourceMutationLease(
+      sourceLease, githubAuthorityOptions(root, repoRoot, reviewPr),
+    );
+    assert.equal(claimed.ok, true);
+    await publishControllerHeartbeat(root, repoRoot);
+    await publishWorkerHeartbeat(home);
+    const dependencies = {
+      resolveGithubTokenConfig: async () => ({ configured: true, token: 'test-only', authority: 'test-only' }),
+      fetchGithubPrEvidence: async () => reviewPr,
+      readRepositoryHead: async () => ({
+        ok: true, branch: 'main', headSha: HEAD,
+        reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+      }),
+      listMissionRecords: async () => [{
+        missionId: 'critical-2956-elastic-goal',
+        revision: 6, currentPhase: 'CHECK_PULL_REQUEST',
+        repository: REPOSITORY,
+        git: { branch: reviewBranch },
+        pullRequest: { number: 2960, headSha: HEAD },
+      }],
+    };
+    const result = await readAuthoritativeProgrammeProjection({
+      root, home, repoRoot, nowUtc: NOW, env: {}, testOnly: true, dependencies,
+    });
+    assert.equal(result.lane.valid, true);
+    assert.equal(result.lane.active, false);
+    assert.equal(result.lane.status, 'REVIEW_PENDING');
+    assert.equal(result.lane.mutationLeaseIdentity.leaseId, leaseId);
+    assert.equal(result.sourceReads.elasticMissionPhase, 'CHECK_PULL_REQUEST');
+    assert.equal(result.sourceReads.executionReceipt, 'NO_EXECUTION_RECEIPTS');
+    assert.ok(!result.blockers.includes('source:NO_EXECUTION_RECEIPTS'));
+    assert.ok(!result.blockers.includes('active-lane-execution-receipt-missing'));
+    assert.ok(!result.blockers.includes('critical-backlog-active-lane-status-mismatch'));
+
+    const mismatched = await readAuthoritativeProgrammeProjection({
+      root, home, repoRoot, nowUtc: NOW, env: {}, testOnly: true,
+      dependencies: {
+        ...dependencies,
+        listMissionRecords: async () => [{ ...await dependencies.listMissionRecords().then(rows => rows[0]), revision: 5 }],
+      },
+    });
+    assert.equal(mismatched.lane.valid, false);
+    assert.equal(mismatched.lane.status, 'HOLD');
+    assert.ok(mismatched.blockers.includes('lane:elastic-mission-phase-binding-unproven'));
+    assert.equal(mismatched.sourceReads.executionReceipt, 'NO_EXECUTION_RECEIPTS');
+    assert.ok(mismatched.blockers.includes('lane:elastic-mission-phase-binding-unproven'));
+    assert.equal(mismatched.lane.active, false);
+  });
+});
 test('production composition reads real Shared Workspace, receipt, heartbeat, scheduler and conveyor contracts', async () => {
   await fixture(async ({ root, home, repoRoot }) => {
     await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
@@ -468,6 +536,31 @@ test('production composition reads real Shared Workspace, receipt, heartbeat, sc
     assert.equal(projection.projectionReceipt.components.some(({ componentId }) => componentId === 'mission-scheduler'), true);
     assert.equal(projection.projectionReceipt.components.some(({ componentId }) => componentId === 'critical-backlog-conveyor'), true);
     assert.deepEqual(calls, ['github-auth', 'github-pr-evidence']);
+
+    const silentWorker = await readAuthoritativeProgrammeProjection({
+      root, home, repoRoot, nowUtc: '2026-07-30T10:31:00.000Z', env: {}, testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => ({ configured: true, token: 'not-published', authority: 'test-only' }),
+        fetchGithubPrEvidence: async () => githubOpen(),
+        readRepositoryHead: async () => ({ ok: true, reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+          branch: 'main', headSha: HEAD }),
+        listMissionRecords: async () => [{ missionId: LANE_ID, issueNumber: 1497,
+          repository: REPOSITORY, git: { branch: BRANCH }, pullRequest: { number: 1617 },
+          currentPhase: 'AGENT_IMPLEMENTATION' }],
+      },
+    });
+    assert.equal(silentWorker.productionSourcesConstructed, true);
+    assert.equal(silentWorker.status, 'HOLD');
+    assert.equal(silentWorker.lane.active, false);
+    assert.equal(silentWorker.lane.pickupPending, false);
+    assert.equal(silentWorker.executionReceipt.leaseKey, LEASE_ID);
+    assert.equal(silentWorker.stallDiagnosis.stalled, true);
+    for (const blocker of ['controller-heartbeat-not-fresh', 'worker-heartbeat-not-fresh',
+      'execution-receipt-heartbeat-expired', 'active-lane-progress-stale']) {
+      assert.ok(silentWorker.stallDiagnosis.blockers.includes(blocker), blocker);
+    }
+    assert.equal(silentWorker.stallDiagnosis.sourceMutationAllowed, false);
+    assert.equal(silentWorker.stallDiagnosis.dispatchAllowed, false);
 
     const staleProcesses = await readAuthoritativeProgrammeProjection({
       root,
@@ -545,7 +638,7 @@ test('recognized degraded worker verdict preserves programme liveness authority'
   });
 });
 
-test('production composition admits an active critical mission when the workspace has no goal records', async () => {
+test('production composition retires satisfied #1292/#1293 history and advances to #1418', async () => {
   await fixture(async ({ root, home, repoRoot }) => {
     await publishProgrammeControllerHeartbeat({
       controllerId: 'durable-flywheel-controller',
@@ -587,16 +680,16 @@ test('production composition admits an active critical mission when the workspac
             currentPhase: 'COMPLETE',
           },
           {
-            missionId: 'critical-1292-1293-dispatch-conveyor',
+            missionId: COMPLETED_DISPATCH_CONVEYOR_MISSION_ID,
             repository: REPOSITORY,
             git: { branch: 'openclaw/critical-1292-1293-dispatch-conveyor' },
-            currentPhase: 'CREATE_WORKTREE',
+            currentPhase: 'COMPLETE',
           },
         ],
       },
     });
 
-    assert.equal(projection.criticalBacklog.decision, 'WAIT_ACTIVE_MISSION');
+    assert.equal(projection.criticalBacklog.decision, 'CREATE_NEXT_MISSION');
     assert.deepEqual(projection.criticalBacklog.nonBlockingPersistedMissionIds, [
       LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
       LEGACY_COMPLETED_RETIRED_MISSION_ID,
@@ -610,12 +703,54 @@ test('production composition admits an active critical mission when the workspac
     assert.deepEqual(retiredAcceptance, RETIRED_COMPLETED_LEGACY_ACCEPTANCE);
     assert.equal(retiredAcceptance.state, 'CLOSED_RETIRED');
     assert.deepEqual(retiredAcceptance.successorIssueNumbers, [2158]);
+    const dispatchAcceptance = projection.criticalBacklog.nonBlockingMissionAcceptances
+      .find(({ missionId }) => missionId === COMPLETED_DISPATCH_CONVEYOR_MISSION_ID);
+    assert.deepEqual(dispatchAcceptance, COMPLETED_DISPATCH_CONVEYOR_ACCEPTANCE);
+    assert.equal(dispatchAcceptance.state, 'CLOSED_RETIRED');
+    assert.deepEqual(projection.criticalBacklog.nonBlockingMissionAcceptances
+      .filter(({ missionId }) => missionId === COMPLETED_DISPATCH_CONVEYOR_MISSION_ID),
+    COMPLETED_DISPATCH_CONVEYOR_ACCEPTANCES);
     assert.equal(projection.scheduler.failClosed, false);
-    assert.equal(projection.scheduler.selectedGoal, '#1292');
+    assert.equal(projection.scheduler.selectedGoal, '#1418');
     assert.equal(projection.scheduler.selectedRoute, 'OPENCLAW_LOCAL');
     assert.equal(projection.scheduler.decisionReceipt.status, 'LANE_SELECTED');
     assert.equal(projection.status, 'READY', projection.blockers.join(','));
   });
+});
+
+test('dispatch completion acceptance cannot hide an active or unparked lane from Programme Authority', async (t) => {
+  for (const currentPhase of ['AGENT_IMPLEMENTATION', 'BLOCKED']) {
+    await t.test(currentPhase, async () => {
+      await fixture(async ({ root, home, repoRoot }) => {
+        await publishProgrammeControllerHeartbeat({
+          controllerId: 'durable-flywheel-controller', sourceRevision: HEAD, cycleState: 'IDLE',
+          activeLaneId: null, lastSuccessfulReconciliationUtc: NOW,
+          lastPublishedReceiptId: 'wait-for-original-dispatch-release', timestampUtc: NOW,
+          boundedMutationSteps: 0,
+        }, { root, repoRoot });
+        await publishWorkerHeartbeat(home);
+        const record = {
+          missionId: COMPLETED_DISPATCH_CONVEYOR_MISSION_ID, repository: REPOSITORY,
+          git: { branch: 'openclaw/critical-1292-1293-dispatch-conveyor' }, currentPhase,
+        };
+        const projection = await readAuthoritativeProgrammeProjection({
+          root, home, repoRoot, nowUtc: NOW, env: {}, testOnly: true,
+          dependencies: {
+            readWorkspaceFeed: async () => ({ state: 'ready',
+              records: { goalRecords: [], statusRecords: [], proofRecords: [] } }),
+            readRepositoryHead: async () => ({ ok: true, reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+              branch: 'main', headSha: HEAD }),
+            listMissionRecords: async () => [record],
+          },
+        });
+        assert.equal(projection.criticalBacklog.decision, 'WAIT_EXTERNAL_ACTIVE_MISSION');
+        assert.deepEqual(projection.criticalBacklog.activeMission, record);
+        assert.deepEqual(projection.criticalBacklog.nonBlockingPersistedMissionIds, []);
+        assert.notEqual(projection.scheduler.selectedGoal, '#1418');
+        assert.notEqual(projection.status, 'READY');
+      });
+    });
+  }
 });
 
 test('an exact durable release marker is inactive evidence and cannot strand the next critical mission', async () => {
@@ -693,7 +828,7 @@ test('an exact durable release marker is inactive evidence and cannot strand the
     assert.equal(projection.mutationLease, null);
     assert.equal(projection.lane, null);
     assert.equal(projection.sourceReads.lease, 'SOURCE_MUTATION_LEASE_RELEASED_INACTIVE');
-    assert.equal(projection.scheduler.selectedGoal, '#1292');
+    assert.equal(projection.scheduler.selectedGoal, '#1418');
     assert.equal(projection.scheduler.selectedRoute, 'OPENCLAW_LOCAL');
     assert.equal(projection.status, 'READY', projection.blockers.join(','));
     assert.equal(projection.blockers.includes('source:SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'), false);
@@ -753,7 +888,8 @@ test('production composition can discover exact GitHub lane truth before lease a
     assert.equal(projection.lane.valid, true);
     assert.equal(projection.lane.prNumber, 1617);
     assert.equal(projection.lane.headSha, HEAD);
-    assert.ok(projection.blockers.includes('active-lane-without-source-mutation-lease'));
+    assert.equal(projection.lane.active, false);
+    assert.equal(projection.lane.executionStartedOnLease, false);
     assert.equal(projection.sourceReads.laneSelector, 'complete');
     assert.equal(projection.projectionReceipt.sourceConstructionMode, 'production-contracts');
     assert.equal(projection.projectionReceipt.authorityInjectedByCaller, false);
@@ -1005,6 +1141,121 @@ test('terminal finalizer rejects unmerged PRs, releases only exact lease, and is
     });
     assert.equal(missingProof.ok, false);
     assert.equal(missingProof.reason, 'TERMINAL_FINALIZATION_EVIDENCE_MISSING');
+  });
+});
+
+test('terminal finalizer releases an exact stale lease only after proving its head is ancestor of the merged PR head', async () => {
+  await fixture(async ({ root, repoRoot }) => {
+    const claimed = await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
+    assert.equal(claimed.ok, true);
+    const identity = { ...leaseInput(), nowUtc: NOW };
+    const advancedGithub = githubMerged();
+    advancedGithub.headSha = ADVANCED_HEAD;
+    const ancestryCalls = [];
+    const finalized = await finalizeTerminalImplementationLane(identity, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => ({ configured: true, token: 'not-published', authority: 'test-only' }),
+        fetchGithubPrEvidence: async () => advancedGithub,
+        proveCommitAncestor: async (input) => {
+          ancestryCalls.push(input);
+          return {
+            ok: true,
+            reason: 'TERMINAL_FINALIZATION_LEASE_HEAD_ANCESTOR_PROVEN',
+            ancestor: input.ancestor,
+            descendant: input.descendant,
+          };
+        },
+      },
+    });
+    assert.equal(finalized.ok, true);
+    assert.equal(finalized.finalized, true);
+    assert.equal(finalized.release.released, true);
+    assert.deepEqual(ancestryCalls, [{
+      repositoryRoot: repoRoot,
+      ancestor: HEAD,
+      descendant: ADVANCED_HEAD,
+    }]);
+    assert.equal(finalized.plan.lane.headSha, ADVANCED_HEAD);
+    assert.equal(finalized.plan.lane.terminalHeadAdvance.leaseHeadSha, HEAD);
+    assert.equal(finalized.plan.lane.terminalHeadAdvance.mergedHeadSha, ADVANCED_HEAD);
+    assert.equal(finalized.records.receipt.headSha, HEAD);
+    assert.equal(finalized.records.proof.headSha, HEAD);
+    assert.equal(finalized.records.proof.leaseHeadSha, HEAD);
+    assert.equal(finalized.records.proof.mergedHeadSha, ADVANCED_HEAD);
+    assert.equal(finalized.records.proof.leaseHeadIsAncestor, true);
+    assert.equal(finalized.release.headSha, HEAD);
+    assert.equal((await readSourceMutationLease({ root, repoRoot, nowUtc: NOW })).present, false);
+
+    const repeated = await finalizeTerminalImplementationLane(identity, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => {
+          throw new Error('durable descendant-head finalization must not refetch GitHub');
+        },
+        proveCommitAncestor: async () => {
+          throw new Error('durable descendant-head finalization must not rerun ancestry proof');
+        },
+      },
+    });
+    assert.equal(repeated.ok, true);
+    assert.equal(repeated.idempotent, true);
+    assert.equal(repeated.release.reason, 'SOURCE_MUTATION_LEASE_ALREADY_RELEASED');
+  });
+
+  await fixture(async ({ root, repoRoot }) => {
+    const claimed = await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
+    assert.equal(claimed.ok, true);
+    const advancedGithub = { ...githubMerged(), headSha: ADVANCED_HEAD };
+    const refused = await finalizeTerminalImplementationLane({ ...leaseInput(), nowUtc: NOW }, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => ({ configured: true, token: 'not-published', authority: 'test-only' }),
+        fetchGithubPrEvidence: async () => advancedGithub,
+        proveCommitAncestor: async (input) => ({
+          ok: false,
+          reason: 'TERMINAL_FINALIZATION_LEASE_HEAD_NOT_ANCESTOR',
+          ancestor: input.ancestor,
+          descendant: input.descendant,
+        }),
+      },
+    });
+    assert.equal(refused.ok, false);
+    assert.equal(refused.reason, 'TERMINAL_FINALIZATION_LEASE_HEAD_NOT_ANCESTOR');
+    assert.equal((await readSourceMutationLease({ root, repoRoot, nowUtc: NOW })).present, true);
+  });
+
+  await fixture(async ({ root, repoRoot }) => {
+    const claimed = await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
+    assert.equal(claimed.ok, true);
+    let ancestryCalled = false;
+    const wrongBranch = await finalizeTerminalImplementationLane({ ...leaseInput(), nowUtc: NOW }, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => ({ configured: true, token: 'not-published', authority: 'test-only' }),
+        fetchGithubPrEvidence: async () => ({
+          ...githubMerged(),
+          headSha: ADVANCED_HEAD,
+          headBranch: 'feat/different-owner',
+        }),
+        proveCommitAncestor: async () => {
+          ancestryCalled = true;
+          return { ok: true };
+        },
+      },
+    });
+    assert.equal(wrongBranch.ok, false);
+    assert.equal(wrongBranch.reason, 'TERMINAL_FINALIZATION_HEAD_ADVANCE_IDENTITY_MISMATCH');
+    assert.equal(ancestryCalled, false);
+    assert.equal((await readSourceMutationLease({ root, repoRoot, nowUtc: NOW })).present, true);
   });
 });
 
@@ -1550,6 +1801,24 @@ test('GitHub goal close adapter emits only the canonical completed-state PATCH',
 });
 
 
+test('canonical mirror refresh carries, replaces and removes only current admitted acceptance tests', () => {
+  const commands = ['node --test scripts/sovereign-goal-builder-worker-evidence.test.mjs'];
+  const live = requiredTests => ({ ok: true, retrievedAt: NOW, issues: [{ issueNumber: 2314, repository: REPOSITORY,
+    title: 'Bounded acceptance task', retrievedAt: NOW, admission: {
+      resourceIds: ['repo:cheekyfellastef/stephan-os:path:shared/agents/source.mjs'],
+      ...(requiredTests === undefined ? {} : { requiredTests }),
+    } }], discoveredIssues: [{ issueNumber: 2314 }] });
+  const first = buildGithubGoalMirrorEstate([], live(commands), NOW);
+  assert.deepEqual(first.records[0].requiredTests, commands);
+  assert.equal(first.records[0].mirrorBuildPickupAllowed, true);
+  assert.deepEqual(first.records[0].resourceIds, ['repo:cheekyfellastef/stephan-os:path:shared/agents/source.mjs']);
+  const second = buildGithubGoalMirrorEstate(first.records, live(['node --test scripts/other.test.mjs']), NOW);
+  assert.deepEqual(second.records[0].requiredTests, ['node --test scripts/other.test.mjs']);
+  const removed = buildGithubGoalMirrorEstate(second.records, live(undefined), NOW);
+  assert.equal(removed.records[0].requiredTests, undefined);
+  assert.deepEqual(first.records[0].requiredTests, commands, 'prior observations remain immutable');
+});
+
 test('GitHub goal estate is mirrored durably with a bounded outage lease', async () => {
   const goalEstate = {
     ok: true,
@@ -1715,6 +1984,61 @@ test('goal mirror parks unadmitted goals and tombstones goals missing from the l
   assert.equal(tombstoned.records[0].mirrorBuildPickupAllowed, false);
 });
 
+
+test('fresh valid admission resurrects only mirror-generated parked goal state', () => {
+  const initial = buildGithubGoalMirrorEstate([], {
+    ok: true,
+    retrievedAt: '2026-07-30T09:00:00.000Z',
+    issues: [{
+      issueNumber: 2314,
+      repository: REPOSITORY,
+      title: 'Autonomous build canary',
+      retrievedAt: '2026-07-30T09:00:00.000Z',
+      admission: {
+        state: 'READY',
+        route: 'OPENCLAW_LOCAL',
+        resourceIds: ['repo:Cheekyfellastef/stephan-os:path:docs/architecture/multiplexer-autonomous-goal-build-v1.md'],
+      },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2314, retrievedAt: '2026-07-30T09:00:00.000Z' }],
+  }, '2026-07-30T09:00:00.000Z');
+
+  const parked = buildGithubGoalMirrorEstate(initial.records, {
+    ok: true,
+    retrievedAt: '2026-07-30T09:30:00.000Z',
+    issues: [],
+    discoveredIssues: [{ issueNumber: 2314, retrievedAt: '2026-07-30T09:30:00.000Z' }],
+  }, '2026-07-30T09:30:00.000Z');
+  assert.equal(parked.records[0].state, 'WAITING_FOR_EXTERNAL_CONDITION');
+  assert.equal(parked.records[0].githubAdmissionState, 'ADMISSION_UNPROVEN');
+  assert.equal(parked.records[0].mirrorBuildPickupAllowed, false);
+
+  const readmitted = buildGithubGoalMirrorEstate(parked.records, {
+    ok: true,
+    retrievedAt: NOW,
+    issues: [{
+      issueNumber: 2314,
+      repository: REPOSITORY,
+      title: 'Autonomous build canary',
+      retrievedAt: NOW,
+      admission: {
+        state: 'READY',
+        route: 'OPENCLAW_LOCAL',
+        resourceIds: ['repo:Cheekyfellastef/stephan-os:path:docs/architecture/multiplexer-autonomous-goal-build-v1.md'],
+      },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2314, retrievedAt: NOW }],
+  }, NOW);
+
+  assert.equal(readmitted.records[0].state, 'READY');
+  assert.equal(readmitted.records[0].status, 'READY');
+  assert.equal(readmitted.records[0].route, 'OPENCLAW_LOCAL');
+  assert.equal(readmitted.records[0].githubAdmissionState, 'ADMISSION_PROVEN');
+  assert.equal(readmitted.records[0].mirrorBuildPickupAllowed, true);
+  assert.equal(readmitted.records[0].evidenceAt, NOW);
+});
 
 test('goal mirror refresh preserves active and complete lifecycle truth', () => {
   for (const [state, route] of [
@@ -2029,4 +2353,70 @@ test('superseded reconciliation projects from the durable winning mirror rather 
   assert.equal(selected[0].state, 'CLOSED');
   assert.equal(selected[0].mirrorBuildPickupAllowed, false);
   assert.equal(selected[0].mirrorObservedAtUtc, '2026-07-30T10:30:00.000Z');
+});
+
+test('canonical guarded release can reconcile an exact expired lease without seizing a new writer', async () => {
+  await fixture(async ({ root, repoRoot }) => {
+    const staleRecord = leaseInput({
+      expiresAtUtc: '2026-07-30T09:45:00.000Z',
+    });
+    const claim = await claimSourceMutationLease(
+      staleRecord, githubAuthorityOptions(root, repoRoot),
+    );
+    assert.equal(claim.ok, true);
+    const before = await readSourceMutationLease({ root, repoRoot, nowUtc: NOW });
+    assert.equal(before.ok, true);
+    assert.equal(before.present, true);
+    assert.equal(before.validation.valid, true);
+    assert.equal(before.validation.stale, true);
+    const release = await releaseSourceMutationLease({
+      ...staleRecord,
+      nowUtc: NOW,
+    }, { root, repoRoot });
+    assert.equal(release.ok, true);
+    assert.equal(release.released, true);
+    assert.equal(release.releaseOnlyExactLease, true);
+    const after = await readSourceMutationLease({ root, repoRoot, nowUtc: NOW });
+    assert.equal(after.ok, true);
+    assert.equal(after.present, false);
+    assert.equal(after.reason, 'SOURCE_MUTATION_LEASE_NOT_CLAIMED');
+  });
+});
+
+
+test('live authority brackets heartbeat reads after asynchronous workspace work without accepting future evidence', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
+  await fixture(async ({ root, home, repoRoot }) => {
+    await publishControllerHeartbeat(root, repoRoot);
+    await publishWorkerHeartbeat(home);
+    let advanced = false;
+    const dependencies = {
+      readRepositoryHead: async () => ({ ok: true, reason: 'CANONICAL_REPOSITORY_HEAD_READ', branch: 'main', headSha: HEAD }),
+      listMissionRecords: async () => [],
+      readWorkspaceFeed: async () => {
+        if (!advanced) {
+          advanced = true;
+          t.mock.timers.tick(90000);
+          await publishWorkerHeartbeat(home, { timestampUtc: new Date().toISOString() });
+        }
+        return { state: 'ready', records: { goalRecords: [], statusRecords: [], proofRecords: [], receiptRecords: [] } };
+      },
+      resolveGithubTokenConfig: async () => ({ configured: false }),
+    };
+    const options = { root, home, repoRoot, env: {}, testOnly: true, dependencies };
+    const live = await readAuthoritativeProgrammeProjection(options);
+    assert.equal(live.workerHeartbeat.valid, true, JSON.stringify(live.workerHeartbeat.errors));
+    assert.equal(live.workerHeartbeat.fresh, true);
+    assert.ok(Date.parse(live.observedAtUtc) >= Date.parse(live.workerHeartbeat.timestampUtc));
+    const expired = await readAuthoritativeProgrammeProjection({ ...options, dependencies: {
+      ...dependencies, buildCapabilityRegistry: () => {
+        t.mock.timers.tick(125000); return {};
+      },
+    } });
+    assert.equal(expired.workerHeartbeat.fresh, false, 'an initially valid heartbeat must age out during later reads');
+    assert.equal(expired.status, 'HOLD');
+    await publishWorkerHeartbeat(home, { timestampUtc: new Date(Date.now() + 90000).toISOString() });
+    const future = await readAuthoritativeProgrammeProjection(options);
+    assert.equal(future.workerHeartbeat.valid, false, 'genuine future heartbeat must remain invalid');
+  });
 });

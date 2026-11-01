@@ -5,6 +5,7 @@ export const STEPHANOS_HOME_BRIDGE_URL_GLOBAL = '__STEPHANOS_HOME_BRIDGE_URL';
 export const STEPHANOS_HOME_BRIDGE_STORAGE_KEY = 'stephanos_home_bridge_url';
 export const STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL_GLOBAL = '__STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL';
 export const STEPHANOS_HOSTED_EXECUTION_BRIDGE_STORAGE_KEY = 'stephanos_hosted_execution_bridge_url';
+export const STEPHANOS_PROJECT_HOSTED_EXECUTION_BRIDGE_URL = 'https://desktop-9flonkj.taild6f215.ts.net';
 
 export const STEPHANOS_HOME_NODE_STORAGE_KEY = 'stephanos_home_node_manual';
 export const STEPHANOS_HOME_NODE_LAST_KNOWN_STORAGE_KEY = 'stephanos_home_node_last_known';
@@ -525,6 +526,33 @@ export function readPersistedStephanosHostedExecutionBridgeUrl(storage = globalT
     return '';
   }
   return validation.ok ? validation.normalizedUrl : '';
+}
+
+export function resolveStephanosHostedExecutionBridgeUrl({
+  frontendOrigin = globalThis?.location?.origin || '',
+  storage = globalThis?.localStorage,
+  candidates = [],
+  projectDefaultUrl = STEPHANOS_PROJECT_HOSTED_EXECUTION_BRIDGE_URL,
+} = {}) {
+  const orderedCandidates = [
+    ...(Array.isArray(candidates) ? candidates : [candidates]),
+    globalThis?.[STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL_GLOBAL] || '',
+    readPersistedStephanosHostedExecutionBridgeUrl(storage, { frontendOrigin }),
+    projectDefaultUrl,
+  ];
+
+  for (const candidate of orderedCandidates) {
+    const validation = validateStephanosHomeBridgeUrl(String(candidate || '').trim(), {
+      frontendOrigin,
+      requireHttps: true,
+      preferBackendPortForTailscale: false,
+    });
+    if (validation.ok && validation.normalizedUrl) {
+      return validation.normalizedUrl;
+    }
+  }
+
+  return '';
 }
 
 export function persistStephanosHostedExecutionBridgeUrl(bridgeUrl = '', storage = globalThis?.localStorage, {

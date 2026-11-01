@@ -11,6 +11,7 @@ import {
   publishStephanosNativeCapacityV1,
 } from '../shared/agents/stephanosNativeCapacityPublisherV1.mjs';
 import { readMissionWorkerQueue } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
+import { summarizeNativePublisherDirt } from './stephanos-native-capacity-publisher-source-gate.mjs';
 
 export const STEPHANOS_NATIVE_CAPACITY_KEY_ID = 'stephanos-native-capacity-key-v1';
 export const STEPHANOS_NATIVE_CAPACITY_REFRESH_MS = 60_000;
@@ -86,16 +87,19 @@ export function inspectStephanosNativeCapacitySourceIdentity(options = {}) {
   try {
     const branchResult = runGit(['branch', '--show-current']);
     const headResult = runGit(['rev-parse', 'HEAD']);
-    const dirtResult = runGit(['status', '--porcelain=v1', '--untracked-files=no']);
+    const dirtResult = runGit(['status', '--porcelain=v1', '--untracked-files=all']);
     if (branchResult?.status !== 0 || headResult?.status !== 0 || dirtResult?.status !== 0) {
       return Object.freeze({ ok: false, reason: 'native-capacity-source-identity-read-failed' });
     }
     const branch = text(branchResult.stdout);
     const sourceHead = text(headResult.stdout).toLowerCase();
-    const trackedDirt = text(dirtResult.stdout);
+    const dirtLines = String(dirtResult.stdout || '').split(/\r?\n/).filter((line) => line.trim());
+    const dirtSummary = summarizeNativePublisherDirt(dirtLines);
     if (branch !== 'main') return Object.freeze({ ok: false, reason: 'native-capacity-source-not-main', branch, sourceHead });
     if (!SHA40.test(sourceHead)) return Object.freeze({ ok: false, reason: 'native-capacity-source-head-invalid', branch, sourceHead: '' });
-    if (trackedDirt) return Object.freeze({ ok: false, reason: 'native-capacity-source-dirty', branch, sourceHead });
+    // Generated dist/runtime churn must not starve the signed native worker,
+    // but tracked or untracked real source dirt still fails closed.
+    if (dirtSummary.blocksSync) return Object.freeze({ ok: false, reason: 'native-capacity-source-dirty', branch, sourceHead });
     const expectedHead = text(env.STEPHANOS_MISSION_WORKER_HEAD_SHA).toLowerCase();
     if (expectedHead && expectedHead !== sourceHead) {
       return Object.freeze({ ok: false, reason: 'native-capacity-launch-head-mismatch', branch, sourceHead, expectedHead });

@@ -1,6 +1,35 @@
+import { createHash } from 'node:crypto';
+
 export const STEPHANOS_CORE_PERSISTENT_FLYWHEEL_SCHEMA = 'stephanos.core-persistent-flywheel.v1';
 export const DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS = 60_000;
 export const DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS = 5 * 60_000;
+// Exact original-source-owner HOLD is not repairable by repeating the same
+// local builder action. Keep hourly bounded checks while watching every refill.
+export const OCTOPUS_ORIGINAL_OWNER_RECOVERY_RECHECK_MS = 60 * 60_000;
+export const OCTOPUS_CONTROLLER_FABRIC_REPAIR_BLOCKERS = Object.freeze([
+  'CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED',
+  'SOVEREIGN_CONTROLLER_LANE_STATUS_ATTENTION_REQUIRED',
+  'CONTROLLER_FLEET_ATTENTION_REQUIRED',
+  'LOGICAL_GOAL_CONTROLLER_FABRIC_INVALID',
+  // A parked critical backlog must not hide an unproven elastic admission path.
+  // Run the existing bounded control-plane repair before retrying admission.
+  'ELASTIC_GOAL_ADMISSION_NOT_PROVEN',
+  // Admission is proven but every selected goal needs existing mission-owner repair.
+  'ELASTIC_GOALS_ALL_HELD_REPAIR_REQUIRED',
+]);
+
+export function projectOctopusRepairEscalation(blocker = '') {
+  const normalized = String(blocker ?? '').trim().toUpperCase();
+  const shouldRepairControlPlane = OCTOPUS_CONTROLLER_FABRIC_REPAIR_BLOCKERS.includes(normalized);
+  return Object.freeze({
+    shouldRepairControlPlane,
+    blocker: normalized,
+    repairActionId: shouldRepairControlPlane ? 'repair-control-plane' : '',
+    retryGoalBuilderAfterRepair: shouldRepairControlPlane,
+    duplicateControllerAllowed: false,
+    authorityWideningAllowed: false,
+  });
+}
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -14,6 +43,49 @@ function finiteMs(value) {
 
 function boundedText(value, max = 120) {
   return text(value).slice(0, max);
+}
+
+export const PERSISTENT_FLYWHEEL_STAGE_LIMITS_MS = Object.freeze({
+  REFILL: 180_000,
+  SELF_HEAL: 240_000,
+  RECONCILE: 300_000,
+  PUBLISH_LANE_TRUTH: 120_000,
+  RECONCILE_ONION: 120_000,
+});
+
+// Independent read-only single-flight witness. A timed-out stage remains
+// owned by its original in-flight process: never start a replacement job,
+// release its lease, or mark work complete on timeout alone.
+export function projectPersistentFlywheelStageWatchV1({
+  cycleRunning = false, stage = '', stageStartedAtUtc = '',
+  observedAtUtc = new Date().toISOString(),
+} = {}) {
+  const name = text(stage).toUpperCase();
+  const stageLimitMs = PERSISTENT_FLYWHEEL_STAGE_LIMITS_MS[name] || 0;
+  const started = Date.parse(text(stageStartedAtUtc));
+  const observed = Date.parse(text(observedAtUtc));
+  const trustedTime = Number.isFinite(started) && Number.isFinite(observed)
+    && started <= observed + 30_000;
+  const ageMs = cycleRunning && stageLimitMs && trustedTime
+    ? Math.max(0, observed - started) : null;
+  const state = !cycleRunning ? 'IDLE'
+    : !stageLimitMs || !trustedTime ? 'UNKNOWN'
+      : ageMs > stageLimitMs ? 'STALLED' : 'IN_PROGRESS';
+  return Object.freeze({
+    schemaVersion: 'stephanos.core-flywheel-stage-watch.v1',
+    state,
+    stage: stageLimitMs ? name : 'UNKNOWN',
+    elapsedMs: ageMs,
+    deadlineMs: stageLimitMs || null,
+    blocker: state === 'STALLED' ? 'PERSISTENT_FLYWHEEL_STAGE_DEADLINE_EXCEEDED'
+      : state === 'UNKNOWN' ? 'PERSISTENT_FLYWHEEL_STAGE_EVIDENCE_MISSING' : '',
+    ownerIssue: '#2961',
+    singleFlightRetained: true,
+    workerLeaseOverrideAllowed: false,
+    duplicateCycleAllowed: false,
+    mutationAuthority: false,
+    mergeAuthority: false,
+  });
 }
 
 export function projectPersistentFlywheelTrigger(input = {}) {
@@ -70,6 +142,8 @@ export function projectOctopusSelfHealDecision(octopusSummary = {}, {
   nowMs = Date.now(),
   lastAttemptAtMs = null,
   cooldownMs = DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS,
+  lastBlocker = '', lastAttemptSourceHead = '', sourceHead = '',
+  programmeBlockerIdentity = '', lastAttemptProgrammeBlockerIdentity = '',
 } = {}) {
   const now = finiteMs(nowMs) ?? Date.now();
   const lastAttempt = lastAttemptAtMs === null || lastAttemptAtMs === undefined
@@ -83,6 +157,30 @@ export function projectOctopusSelfHealDecision(octopusSummary = {}, {
       shouldRepair: false,
       reason: 'OCTOPUS_SELF_HEAL_NOT_REQUIRED',
       retryAfterMs: 0,
+    });
+  }
+
+  // A held historical source-writer receipt cannot be synthesized by the
+  // Core. Suppress redundant attempts on the same source only while the
+  // canonical refill independently still observes Programme HOLD. A new
+  // source head or lifted HOLD re-arms the regular five-minute repair path.
+  const ownerProofMissing = [
+    'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+    'REPAIR_ORIGINAL_TERMINAL_SOURCE_BINDING_UNPROVEN',
+  ].includes(String(lastBlocker).trim().toUpperCase());
+  const sameExactSource = /^[0-9a-f]{40}$/.test(String(sourceHead).toLowerCase())
+    && String(lastAttemptSourceHead).toLowerCase() === String(sourceHead).toLowerCase();
+  const sinceLastAttemptMs = lastAttempt === null ? null : Math.max(0, now - lastAttempt);
+  const sameCanonicalBlocker = typeof programmeBlockerIdentity === 'string'
+    && programmeBlockerIdentity.length > 0
+    && programmeBlockerIdentity === lastAttemptProgrammeBlockerIdentity;
+  if (ownerProofMissing && sameExactSource && octopusSummary?.octopusProgrammeHeld === true
+    && sameCanonicalBlocker
+    && sinceLastAttemptMs !== null && sinceLastAttemptMs < OCTOPUS_ORIGINAL_OWNER_RECOVERY_RECHECK_MS) {
+    return Object.freeze({
+      shouldRepair: false,
+      reason: 'OCTOPUS_ORIGINAL_OWNER_RECOVERY_WAIT',
+      retryAfterMs: OCTOPUS_ORIGINAL_OWNER_RECOVERY_RECHECK_MS - sinceLastAttemptMs,
     });
   }
 
@@ -103,7 +201,14 @@ export function projectOctopusSelfHealDecision(octopusSummary = {}, {
 
 export function summarizePersistentFlywheelResult(result = {}) {
   const blockers = Array.isArray(result?.blockers) ? result.blockers : [];
+  const idleGrantWait = result?.status === 'HOLD'
+    && !result?.authoritativeProjection?.lane
+    && result?.allowWorkerTick === false
+    && Number(result?.boundedMutationSteps) === 0
+    && blockers.length === 1
+    && blockers[0] === 'mission-worker:exact-action-grant-unavailable';
   return Object.freeze({
+    idleGrantWait,
     schemaVersion: STEPHANOS_CORE_PERSISTENT_FLYWHEEL_SCHEMA,
     status: boundedText(result?.status, 40) || 'UNKNOWN',
     action: boundedText(result?.action, 100) || 'NONE',
@@ -163,12 +268,58 @@ export function summarizePersistentRefillSweep(result = {}) {
     refillNoRunnableSourceWorkProven: result?.noRunnableSourceWorkProven === true,
     refillWorkConservingSweepExhausted: result?.workConservingSweepExhausted === true,
     refillParkedLaneCount: Array.isArray(result?.parkedLaneBlockers) ? result.parkedLaneBlockers.length : 0,
+    // A canonical programme HOLD can have no runnable goals and no parked worker
+    // receipts. That is not proved idle: route it to the existing bounded repair.
+    refillCanonicalProgrammeHeld: text(result?.conveyorResult?.programmeStatus).toUpperCase() === 'HOLD'
+      || result?.controllerContinuity === 'RECONCILE_CANONICAL_PROGRAMME_HOLD'
+      || result?.finalVerdict === 'GOAL_DISCOVERY_HEARTBEAT_CANONICAL_PROGRAMME_HOLD',
+    // No hourly throttle without an explicit, bounded canonical HOLD blocker identity.
+    refillCanonicalProgrammeBlockerIdentity: (
+      text(result?.conveyorResult?.programmeStatus).toUpperCase() === 'HOLD'
+      && Array.isArray(result?.conveyorResult?.programmeBlockers)
+      && result.conveyorResult.programmeBlockers.length > 0
+      && result.conveyorResult.programmeBlockers.length <= 20
+      && result.conveyorResult.programmeBlockers.every((entry) => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(text(entry)))
+    )
+      ? [...new Set(result.conveyorResult.programmeBlockers.map((entry) => text(entry).toLowerCase()))].sort().join('|')
+      : '',
     refillFinalVerdict: boundedText(result?.finalVerdict, 120) || 'UNKNOWN',
+  });
+}
+
+// An existing goal owner is not proof that the goal was picked up.
+// Retain the canonical Flywheel reconciliation truth without adding authority.
+export function summarizePersistentGapClosure(reconciliation = null) {
+  const observed = reconciliation !== null && typeof reconciliation === 'object' && !Array.isArray(reconciliation);
+  const attachments = observed && Array.isArray(reconciliation.attachments)
+    ? reconciliation.attachments : [];
+  const owners = new Set();
+  for (const attachment of attachments) {
+    if (!['ATTACH_TO_EXISTING_GOAL', 'CANONICAL_GOAL_CREATED_AND_ADMITTED',
+      'DEDUPED_CANONICAL_GOAL_ADMITTED'].includes(attachment?.disposition)) continue;
+    for (const owner of Array.isArray(attachment?.ownerGoals) ? attachment.ownerGoals : []) {
+      if (/^#[1-9]\d*$/.test(String(owner))) owners.add(String(owner));
+    }
+  }
+  const heldCount = observed && Number.isSafeInteger(reconciliation.canonicalGoalAdmissionHeldCount)
+    ? Math.max(0, reconciliation.canonicalGoalAdmissionHeldCount) : 0;
+  return Object.freeze({
+    gapClosureObserved: observed,
+    gapClosureStatus: !observed ? 'UNKNOWN'
+      : reconciliation.ok !== true ? 'DEGRADED'
+        : owners.size || heldCount ? 'PENDING_PROOF' : 'NO_UNRESOLVED_OWNED_GAPS_OBSERVED',
+    gapClosureUnresolvedOwnerCount: owners.size,
+    gapClosureAdmissionHeldCount: heldCount,
+    gapClosureOwnerRefs: Object.freeze([...owners].sort().slice(0, 20)),
+    gapClosureCompletionProven: false,
+    gapClosureSchedulerAuthority: false,
+    gapClosureMergeAuthority: false,
   });
 }
 
 export function summarizeOctopusBuildProductivity(refillSummary = {}, {
   lastMaterialBuildAtUtc = '',
+  gapClosureSummary = {},
 } = {}) {
   const materialActions = Number.isSafeInteger(Number(refillSummary?.refillMaterialActionsSucceeded))
     ? Math.max(0, Number(refillSummary.refillMaterialActionsSucceeded))
@@ -187,19 +338,37 @@ export function summarizeOctopusBuildProductivity(refillSummary = {}, {
     : 0;
   const degraded = text(refillSummary?.refillStatus).toUpperCase() === 'DEGRADED';
   const noRunnableWorkProven = refillSummary?.refillNoRunnableSourceWorkProven === true;
+  const programmeHeld = refillSummary?.refillCanonicalProgrammeHeld === true;
   const sweepExhausted = refillSummary?.refillWorkConservingSweepExhausted === true;
+  const unresolvedOwnedGaps = Number.isSafeInteger(gapClosureSummary?.gapClosureUnresolvedOwnerCount)
+    ? Math.max(0, gapClosureSummary.gapClosureUnresolvedOwnerCount) : 0;
 
   let verdict = 'WAITING';
-  if (materialActions > 0) verdict = 'BUILDING';
+  // A material action on a resource-disjoint lane must never hide a global
+  // programme HOLD or a degraded refill. Both still require the existing
+  // guarded Core -> Sovereign repair continuation. Retain the action count
+  // separately, but do not let it short-circuit repair of the blocked conveyor.
+  if (programmeHeld) verdict = 'PROGRAMME_HOLD';
   else if (degraded) verdict = 'DEGRADED';
-  else if (noRunnableWorkProven) verdict = 'IDLE_PROVEN';
+  // A full bounded sweep that built something but leaves free safe capacity
+  // must continue through the existing Sovereign self-repair path, rather
+  // than declaring BUILDING and waiting for an operator to notice the gap.
+  else if (materialActions > 0 && sweepExhausted
+    && eligibleWorkRemaining > 0 && provenSafeFreeLanes > 0) {
+    verdict = 'BUILDING_WITH_STRANDED_CAPACITY';
+  }
+  else if (materialActions > 0) verdict = 'BUILDING';
   else if (parkedLanes > 0 && eligibleWorkRemaining === 0 && provenSafeFreeLanes === 0) verdict = 'PARKED';
+  else if (noRunnableWorkProven && unresolvedOwnedGaps > 0) verdict = 'OWNED_GAP_PICKUP_MISSING';
+  else if (noRunnableWorkProven) verdict = 'IDLE_PROVEN';
   else if (eligibleWorkRemaining > 0 || provenSafeFreeLanes > 0 || sweepExhausted) verdict = 'STALLED_WITH_CAPACITY';
 
   return Object.freeze({
     octopusBuildVerdict: verdict,
-    octopusBuildStallDetected: verdict === 'STALLED_WITH_CAPACITY',
-    octopusNeedsRepair: verdict === 'STALLED_WITH_CAPACITY' || verdict === 'DEGRADED',
+    octopusBuildStallDetected: ['STALLED_WITH_CAPACITY', 'BUILDING_WITH_STRANDED_CAPACITY', 'PROGRAMME_HOLD', 'PARKED', 'OWNED_GAP_PICKUP_MISSING'].includes(verdict),
+    octopusNeedsRepair: ['STALLED_WITH_CAPACITY', 'BUILDING_WITH_STRANDED_CAPACITY', 'PROGRAMME_HOLD', 'PARKED', 'OWNED_GAP_PICKUP_MISSING', 'DEGRADED'].includes(verdict),
+    octopusProgrammeHeld: programmeHeld,
+    octopusUnresolvedOwnedGapCount: unresolvedOwnedGaps,
     octopusMaterialActionsLastCycle: materialActions,
     octopusSweepAttemptsLastCycle: sweepAttempts,
     octopusEligibleWorkRemaining: eligibleWorkRemaining,
@@ -208,5 +377,241 @@ export function summarizeOctopusBuildProductivity(refillSummary = {}, {
     octopusNoRunnableWorkProven: noRunnableWorkProven,
     octopusLastMaterialBuildAtUtc: text(lastMaterialBuildAtUtc),
     octopusProofSource: 'CANONICAL_GOAL_BUILD_REFILL',
+  });
+}
+
+
+// A failed bounded Sovereign repair enters the existing Flywheel learning feed.
+// Stable source head and typed root blocker dedupe cooldown retries.
+
+function boundedRepairIdentity(prefix, reason, maxLength) {
+  const slug = reason.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  if ((prefix + slug).length <= maxLength) return prefix + slug;
+  // Preserve short existing identities. Long typed blockers need both a
+  // readable prefix and a digest of the full reason, not truncation aliases.
+  const digest = createHash('sha256').update(reason).digest('hex').slice(0, 16);
+  return prefix + slug.slice(0, maxLength - prefix.length - digest.length - 1) + '-' + digest;
+}
+
+export function projectOctopusFailedRepairLearningEventV1({
+  sourceHead = '', attemptAtUtc = '', attemptCount = 0,
+  blocker = '', needsRepair = false,
+} = {}) {
+  const head = text(sourceHead).toLowerCase();
+  const reason = text(blocker).toUpperCase();
+  const observed = Date.parse(text(attemptAtUtc));
+  const publish = /^[0-9a-f]{40}$/.test(head)
+    && /^[A-Z0-9][A-Z0-9_.:-]{4,119}$/.test(reason)
+    && Number.isSafeInteger(attemptCount) && attemptCount > 0
+    && Number.isFinite(observed) && needsRepair === true;
+  const id = publish
+    // Shared Workspace path segments allow 81 characters including '.json'.
+    ? boundedRepairIdentity('core-octopus-repair-gap-' + head.slice(0, 12) + '-', reason, 76)
+    : '';
+  return Object.freeze({
+    publish, eventId: id,
+    reason: publish ? reason : '',
+    ownerIssue: '#2961',
+    // Learning capability IDs allow 68 characters; the default lesson adds 12.
+    capabilityId: publish ? boundedRepairIdentity('core-octopus-failed-repair-', reason, 68) : '',
+    attemptAtUtc: publish ? attemptAtUtc : '',
+    schedulerAuthority: false, mergeAuthority: false, leaseOverrideAllowed: false,
+  });
+}
+
+// A read-only meta-check on the existing Core Daemon heartbeat. It deliberately
+// distinguishes a live controller from a proven, closed goal-to-live loop.
+// Missing producer evidence stays UNKNOWN and can never turn the dashboard green.
+export const STEPHANOS_CORE_LOOP_CLOSURE_AUDIT_SCHEMA_V1 = 'stephanos.core-loop-closure-audit.v1';
+
+// The existing Core Daemon is the sole checker-of-checkers. Each audit must
+// independently inspect every handoff; no known GAP may prevent UNKNOWN
+// handoffs from receiving their own owner-linked evidence requests. Reopen
+// unresolved cases once per bounded window, not once forever per Git head.
+export const CORE_LOOP_CHECKER_RECHECK_MS = 6 * 60 * 60 * 1000;
+
+export function planCoreLoopCheckerEscalationsV1(audit = {}, {
+  sourceHead = audit?.sourceHead,
+  observedAtUtc = audit?.observedAtUtc,
+} = {}) {
+  const head = String(sourceHead || '').trim().toLowerCase();
+  const observedAtMs = Date.parse(String(observedAtUtc || ''));
+  const valid = /^[0-9a-f]{40}$/.test(head) && Number.isFinite(observedAtMs);
+  const windowId = valid ? Math.floor(observedAtMs / CORE_LOOP_CHECKER_RECHECK_MS) : null;
+  const candidates = valid && Array.isArray(audit?.edges)
+    ? audit.edges.filter((edge) =>
+      ['GAP', 'UNKNOWN'].includes(edge?.state)
+      && /^[A-Z][A-Z0-9_]{3,80}$/.test(String(edge?.id || ''))
+      && /^#[1-9][0-9]{0,8}$/.test(String(edge?.ownerIssue || '')),
+    ).sort((left, right) =>
+      Number(left.state !== 'GAP') - Number(right.state !== 'GAP'),
+    )
+    : [];
+  return Object.freeze({
+    schemaVersion: 'stephanos.core-loop-checker-escalation-plan.v1',
+    sourceHead: valid ? head : '',
+    windowId,
+    totalAuditedEdgeCount: Array.isArray(audit?.edges) ? audit.edges.length : 0,
+    needsProofEdgeCount: candidates.filter((edge) => edge.state === 'UNKNOWN').length,
+    measuredGapEdgeCount: candidates.filter((edge) => edge.state === 'GAP').length,
+    // The publisher checks every candidate against the immutable events store,
+    // writing no more than one new record per heartbeat. The full plan is
+    // stable within one window and reopens if the gap remains on a later one.
+    candidates: Object.freeze(candidates.map((edge) => Object.freeze({
+      edgeId: edge.id,
+      state: edge.state,
+      // #2670 is a whole-system parent filtered from direct Flywheel
+      // owner attachments. Escalate its edge via existing concrete #2972;
+      // keep the original audit owner visible for traceability.
+      ownerIssue: edge.ownerIssue === '#2670' ? '#2972' : edge.ownerIssue,
+      auditOwnerIssue: edge.ownerIssue,
+      reason: edge.reason,
+      eventId: `core-loop-${edge.state === 'GAP' ? 'gap' : 'proof-needed'}-${head.slice(0, 12)}-${edge.id.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-w${windowId}`,
+    }))),
+    noDuplicateController: true,
+    noNewGoalScopeAuthority: true,
+    leaseOverrideAllowed: false,
+    mergeAuthority: false,
+  });
+}
+
+export function auditCoreLoopClosureV1({
+  coreState = {}, flywheel = {}, worker = {}, lease = {},
+  observedAtUtc = new Date().toISOString(),
+} = {}) {
+  const now = Date.parse(observedAtUtc);
+  const head = String(coreState?.sourceHead || '').trim().toLowerCase();
+  const headValid = /^[0-9a-f]{40}$/.test(head);
+  const maxAge = Math.max(180_000, Number(flywheel?.flywheelFallbackIntervalMs) * 3 || 180_000);
+  const timestamp = (value) => {
+    const ms = typeof value === 'string' ? Date.parse(value) : NaN;
+    return Number.isFinite(ms) && Number.isFinite(now) && ms <= now + 30_000 ? ms : null;
+  };
+  const recent = (value, age = maxAge) => {
+    const ms = timestamp(value);
+    return ms !== null && now >= ms && now - ms <= age;
+  };
+  const edges = [];
+  const add = (id, state, reason, ownerIssue, proofRef = '') => {
+    edges.push(Object.freeze({ id, state, reason, ownerIssue, proofRefs: proofRef ? [proofRef] : [] }));
+  };
+
+  const coreHealthy = coreState?.sovereignCommanderHealthy === true
+    && coreState?.backendHealthy === true
+    && coreState?.missionWorkerHealthy === true;
+  add('DEPENDENCIES_TO_WATCH', !headValid ? 'GAP' : coreHealthy ? 'CLOSED' : 'GAP',
+    !headValid ? 'SOURCE_HEAD_UNPROVEN' : coreHealthy ? 'CORE_DEPENDENCIES_OBSERVED_HEALTHY' : 'CORE_DEPENDENCY_UNHEALTHY',
+    '#2593', headValid ? 'status/stephanos-core-daemon-current.json' : '');
+
+  const cycleAt = flywheel?.flywheelLastCycleFinishedAtUtc;
+  const cycleFresh = recent(cycleAt);
+  const stageStalled = flywheel?.flywheelStageWatchState === 'STALLED';
+  const cycleFailed = Boolean(flywheel?.flywheelLastError || flywheel?.octopusLastError) || stageStalled;
+  const cycleRunning = flywheel?.flywheelCycleRunning === true;
+  const gaming = coreState?.gamingActive === true;
+  add('WATCH_TO_RECONCILIATION',
+    gaming ? 'PAUSED' : cycleFailed ? 'GAP' : cycleFresh ? 'CLOSED' : cycleRunning ? 'IN_PROGRESS' : 'GAP',
+    gaming ? 'GAMING_PROTECTED' : cycleFailed ? (stageStalled ? 'PERSISTENT_CYCLE_STAGE_STALLED' : 'PERSISTENT_CYCLE_FAILED')
+      : cycleFresh ? 'FRESH_PERSISTENT_CYCLE_OBSERVED' : cycleRunning ? 'PERSISTENT_CYCLE_IN_PROGRESS' : 'PERSISTENT_CYCLE_MISSING_OR_STALE',
+    '#2593', cycleFresh ? 'status/stephanos-core-daemon-current.json' : '');
+
+  const refillActions = Number(flywheel?.refillMaterialActionsSucceeded) || 0;
+  const eligible = Number(flywheel?.refillSafeEligibleWorkRemaining) || 0;
+  const free = Number(flywheel?.refillProvenSafeFreeLanes) || 0;
+  const stranded = eligible > 0 && free > 0 && refillActions === 0;
+  const admissionHeld = Number(flywheel?.gapClosureAdmissionHeldCount) > 0;
+  const octopus = String(flywheel?.octopusBuildVerdict || '');
+  const contradictoryBuild = octopus === 'BUILDING' && refillActions === 0;
+  add('RECONCILIATION_TO_GOAL_ADMISSION',
+    gaming ? 'PAUSED' : cycleFailed || stranded || contradictoryBuild || admissionHeld
+      || flywheel?.refillCanonicalProgrammeHeld === true ? 'GAP' : 'UNKNOWN',
+    stranded ? 'RUNNABLE_WORK_WITH_FREE_CAPACITY_STRANDED'
+      : contradictoryBuild ? 'BUILDING_CLAIM_WITHOUT_MATERIAL_ACTION'
+        : admissionHeld ? 'CANONICAL_GOAL_ADMISSION_HELD'
+          : flywheel?.refillCanonicalProgrammeHeld === true ? 'CANONICAL_PROGRAMME_HELD'
+          : cycleFailed ? 'REFILL_CYCLE_FAILED' : gaming ? 'GAMING_PROTECTED'
+            : cycleFresh && flywheel?.refillStatus === 'READY' ? 'REFILL_SWEEP_NOT_CANONICAL_ADMISSION_PROOF'
+              : 'FRESH_REFILL_EVIDENCE_MISSING',
+    '#2002', cycleFresh ? 'status/stephanos-core-daemon-current.json' : '');
+
+  // This read-only daemon has no proof that a particular candidate passed
+  // admission, SELECT and CLAIM: aggregate refill/dispatch counters do NOT count.
+  add('ADMISSION_TO_SELECT', 'UNKNOWN', 'CANONICAL_GOAL_SELECTION_RECEIPT_NOT_OBSERVED', '#1622');
+  add('SELECT_TO_CLAIM', 'UNKNOWN', 'EXACT_GOAL_CLAIM_RECEIPT_NOT_OBSERVED', '#1622');
+
+  const task = String(worker?.activeTaskId || '').trim();
+  const receipt = String(worker?.activeReceiptId || '').trim();
+  const workerHead = String(worker?.headSha || '').trim().toLowerCase();
+  const workerAt = worker?.heartbeatAtUtc || worker?.timestampUtc || worker?.observedAtUtc;
+  const workerFresh = recent(workerAt, 180_000);
+  const mismatchedHead = Boolean(task && workerHead && workerHead !== head);
+  const partialClaim = Boolean(task) !== Boolean(receipt);
+  const claimed = Boolean(task && receipt);
+  const physicalPickup = claimed && !receipt.startsWith('claim:')
+    && Boolean(String(worker?.executionPhase || '').trim())
+    && workerFresh && !mismatchedHead && workerHead === head;
+  add('CLAIM_TO_PHYSICAL_PICKUP',
+    mismatchedHead || partialClaim || (claimed && !workerFresh) ? 'GAP'
+      : physicalPickup ? 'CLOSED' : 'UNKNOWN',
+    mismatchedHead ? 'WORKER_SOURCE_HEAD_MISMATCH' : partialClaim ? 'PARTIAL_CLAIM_OR_RECEIPT'
+      : claimed && !workerFresh ? 'WORKER_HEARTBEAT_STALE'
+        : physicalPickup ? 'FRESH_EXACT_HEAD_WORKER_EXECUTION_RECEIPT' : 'PHYSICAL_PICKUP_NOT_PROVEN',
+    '#2961', physicalPickup ? 'status/mission-orchestrator-worker-heartbeat.json' : '');
+
+  // Persisted lease records carry status=ACTIVE, not a computed .active flag.
+  // Observing an expired on-disk lease is a GAP even when the runtime
+  // validation correctly reports that it no longer grants mutation authority.
+  const leasePresent = (typeof lease?.leaseId === 'string' && lease.leaseId.length > 0
+    && lease?.status !== 'RELEASED') || lease?.active === true;
+  const leaseExpiry = timestamp(lease?.expiresAtUtc);
+  const leaseExpired = leasePresent && leaseExpiry !== null && leaseExpiry < now;
+  add('PICKUP_TO_EXECUTION',
+    leaseExpired ? 'GAP' : physicalPickup ? 'IN_PROGRESS' : 'UNKNOWN',
+    leaseExpired ? 'ACTIVE_SOURCE_MUTATION_LEASE_EXPIRED'
+      : physicalPickup ? 'WORKER_RUNNING_EXECUTION_COMPLETION_NOT_PROVEN' : 'EXECUTION_NOT_PROVEN',
+    '#2961');
+
+  // No fabricated proof, merge, deployment, lesson or regression truth. Exact
+  // typed receipts must be wired from their canonical producers in follow-up work.
+  add('EXECUTION_TO_DETERMINISTIC_PROOF', 'UNKNOWN', 'GOAL_SPECIFIC_TEST_AND_PROOF_RECEIPT_NOT_OBSERVED', '#2670');
+  add('PROOF_TO_PROTECTED_MERGE', 'UNKNOWN', 'EXACT_HEAD_APPROVAL_AND_MERGE_RECEIPT_NOT_OBSERVED', '#2670');
+  add('MERGE_TO_LIVE_ACCEPTANCE', 'UNKNOWN', 'POST_MERGE_RUNTIME_ACCEPTANCE_NOT_OBSERVED', '#2972');
+  add('LIVE_TO_REGRESSION_RESCAN', 'UNKNOWN', 'UNATTENDED_REGRESSION_RESCAN_NOT_OBSERVED', '#2972');
+  const eventPublicationBlocked = String(flywheel?.loopClosureGapEventPublicationVerdict || '')
+    .startsWith('CANONICAL_FLYWHEEL_GAP_EVENT_BLOCKED:');
+  add('GAP_TO_GOAL_AND_RETRY',
+    eventPublicationBlocked ? 'GAP' : 'UNKNOWN',
+    eventPublicationBlocked ? 'CANONICAL_FLYWHEEL_GAP_PUBLICATION_FAILED'
+      : 'EVIDENCED_GAP_DEDUPE_ADMISSION_AND_RETRY_NOT_OBSERVED',
+    '#2670');
+
+  const gaps = edges.filter((edge) => edge.state === 'GAP');
+  const unproven = edges.filter((edge) => edge.state === 'UNKNOWN');
+  const closed = edges.filter((edge) => edge.state === 'CLOSED');
+  const allClosed = gaps.length === 0 && unproven.length === 0
+    && edges.every((edge) => edge.state === 'CLOSED');
+  const priority = gaps[0] || unproven[0] || edges.find((edge) => edge.state !== 'CLOSED');
+  return Object.freeze({
+    schemaVersion: STEPHANOS_CORE_LOOP_CLOSURE_AUDIT_SCHEMA_V1,
+    observedAtUtc,
+    sourceHead: headValid ? head : '',
+    classification: allClosed ? 'ALL_LOOPS_PROVEN_CLOSED'
+      : gaps.length ? 'LOOP_GAPS_DETECTED' : 'LOOP_CLOSURE_EVIDENCE_INCOMPLETE',
+    allLoopsProvenClosed: allClosed,
+    totalEdgeCount: edges.length,
+    closedEdgeCount: closed.length,
+    gapCount: gaps.length,
+    unprovenCount: unproven.length,
+    pausedCount: edges.filter((edge) => edge.state === 'PAUSED').length,
+    edges: Object.freeze(edges),
+    nextAction: priority ? Object.freeze({
+      ownerIssue: priority.ownerIssue, edgeId: priority.id, reason: priority.reason,
+      route: 'EXISTING_CANONICAL_GOAL_AND_REPAIR_MACHINERY',
+    }) : null,
+    noNewScheduler: true,
+    noNewMutationAuthority: true,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
   });
 }

@@ -422,7 +422,6 @@ function analyzeOc9(input, repository, prNumber, branch, sourceHead, baseSha) {
   });
 }
 
-
 const OPENCLAW_OC2_SUCCESSOR_PROFILE_V1 = (() => {
 const OPENCLAW_OC2_SPECIALIST_PATHS_V1 = Object.freeze([
   'integrations/openclaw/stephanos-builder-provider/index.js',

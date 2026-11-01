@@ -318,7 +318,6 @@ test('OC9 successor specialist fails closed on stale lineage, widened source est
   assert.equal(hiddenAuthority.clean, false);
   assert.ok(hiddenAuthority.findings.some((item) => item.code === 'oc9-model-dynamic-execution-forbidden'));
 });
-
 {
 const HEAD = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
@@ -605,3 +604,4 @@ test('OC2 specialist fails closed on source evidence drift', () => {
   assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-source-evidence-invalid'));
 });
 }
+

@@ -1,12 +1,16 @@
-import { readFile, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { readFile, mkdir, readdir, link, rename, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import {
   buildMissionWorkerAction,
   issueMissionWorkerAuthorization,
+  missionWorkerActionGrantsMatchV1,
   projectMissionWorkerActionState,
 } from '../../shared/agents/missionOrchestratorWorker.mjs';
 import {
   appendMissionEvent,
+  failedMissionWorkerResultIdentityV1,
   listMissionRecords,
   readMissionRecord,
   resolveMissionOrchestratorRoot,
@@ -21,6 +25,7 @@ import {
   buildStephanosExecutionCommandEnvelopeV1,
   buildStephanosExecutionSurfaceCatalogV1,
 } from '../../shared/agents/stephanosExecutionCommandFabricV1.mjs';
+import { readExecutionReceiptHistory } from '../../shared/agents/executionReceiptV1.mjs';
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -50,10 +55,286 @@ async function createImmutableJson(path, value) {
   }
 }
 
+const CAPACITY_ADMISSION_SCHEMA = 'stephanos.mission-worker-pending-capacity-admission.v1';
+const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const jsonBytes = (value) => Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+const capacityRefusal = (reason) => new Error(`MISSION_WORKER_PENDING_CAPACITY_${reason}`);
+
+async function optionalBytes(path) {
+  try { return await readFile(path); } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+// Publish complete bytes before linking their immutable name. An interrupted
+// write leaves only a temporary file, never a partially admitted journal entry.
+async function preserveImmutableBytes(path, bytes) {
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600, flush: true });
+    try { await link(temporary, path); } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      if (!(await readFile(path)).equals(bytes)) throw capacityRefusal('HISTORY_CONFLICT');
+    }
+  } finally { await unlink(temporary).catch(() => {}); }
+}
+
+async function replacePendingBytes(path, bytes) {
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600, flush: true });
+    await rename(temporary, path);
+  } finally { await unlink(temporary).catch(() => {}); }
+}
+
+function capacityRefreshOnly(before, after, admissionBinding) {
+  const oldGrant = before?.actionGrant, newGrant = after?.actionGrant;
+  if (before?.schemaVersion !== 'stephanos.mission-worker-queue-item.v1'
+      || before?.payload?.actionKind !== 'agent-handoff'
+      || !missionWorkerActionGrantsMatchV1(oldGrant, oldGrant)
+      || !missionWorkerActionGrantsMatchV1(newGrant, newGrant)
+      || !oldGrant.capacityReceiptId || !newGrant.capacityReceiptId
+      || oldGrant.capacityReceiptId === newGrant.capacityReceiptId
+      || !oldGrant.capacityProofRefs.length || !newGrant.capacityProofRefs.length
+      || before.missionId !== oldGrant.missionId || before.actionId !== oldGrant.actionId
+      || before.adapter !== oldGrant.adapter || before.payload.actionId !== oldGrant.actionId
+      || before.payload.missionId !== oldGrant.missionId || before.payload.adapter !== oldGrant.adapter
+      || before.payload.capacityReceiptId !== oldGrant.capacityReceiptId
+      || !isDeepStrictEqual(before.payload.capacityProofRefs, oldGrant.capacityProofRefs)
+      || !missionWorkerActionGrantsMatchV1({ ...oldGrant,
+        capacityReceiptId: newGrant.capacityReceiptId,
+        capacityProofRefs: newGrant.capacityProofRefs }, newGrant)) return false;
+  return isDeepStrictEqual(before.executionBinding, durableQueueExecutionBinding(oldGrant))
+    && isDeepStrictEqual(after.executionBinding, before.executionBinding)
+    && isDeepStrictEqual(after, { ...before, actionGrant: newGrant,
+      pendingCapacityAdmission: admissionBinding,
+      payload: { ...before.payload, capacityReceiptId: newGrant.capacityReceiptId,
+        capacityProofRefs: newGrant.capacityProofRefs } });
+}
+
+function samePendingContract(before, after) {
+  const sameGrant = isDeepStrictEqual(before?.actionGrant, after?.actionGrant)
+    || missionWorkerActionGrantsMatchV1(before?.actionGrant, after?.actionGrant);
+  return sameGrant && isDeepStrictEqual(before, {
+    ...after, createdAt: before.createdAt, actionGrant: before.actionGrant,
+  });
+}
+
+function capacityAdmissionDirectory(root, adapter, actionId) {
+  if (!/^[a-z0-9][a-z0-9._-]{0,191}$/.test(actionId)
+      || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(adapter)) throw capacityRefusal('IDENTITY_INVALID');
+  return resolve(root, adapter, 'capacity-admissions', actionId);
+}
+
+function capacityAdmissionBinding(previousBytes, sequence, predecessorSha256) {
+  return {
+    schemaVersion: 'stephanos.mission-worker-pending-capacity-binding.v1',
+    sequence, predecessorSha256, previousEnvelopeSha256: digest(previousBytes),
+  };
+}
+
+function capacityAdmissionRecord(before, after, sequence, predecessorSha256) {
+  return {
+    schemaVersion: CAPACITY_ADMISSION_SCHEMA,
+    missionId: before.missionId, actionId: before.actionId, adapter: before.adapter,
+    missionRevision: before.actionGrant.missionRevision, sequence, predecessorSha256,
+    previousEnvelopeSha256: digest(before.bytes), admittedEnvelopeSha256: digest(after.bytes),
+    previousCapacityReceiptId: before.actionGrant.capacityReceiptId,
+    admittedCapacityReceiptId: after.actionGrant.capacityReceiptId,
+    claimReleaseAuthority: false, leaseSeizureAllowed: false, mergeAuthority: false,
+  };
+}
+
+async function readCapacityAdmissions(root, item) {
+  const directory = capacityAdmissionDirectory(root, item.adapter, item.actionId);
+  let names;
+  try { names = (await readdir(directory)).filter(name => name.endsWith('.json')).sort(); }
+  catch (error) { if (error?.code === 'ENOENT') names = []; else throw error; }
+  const entries = [], seenReceipts = new Set();
+  for (const name of names) {
+    if (name !== `${String(entries.length + 1).padStart(8, '0')}.json`) throw capacityRefusal('HISTORY_INVALID');
+    try {
+      const bytes = await readFile(resolve(directory, name));
+      const record = JSON.parse(bytes);
+      if (![record.previousEnvelopeSha256, record.admittedEnvelopeSha256]
+        .every(value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value))) throw capacityRefusal('HISTORY_INVALID');
+      const readEnvelope = async (sha) => {
+        const raw = await readFile(resolve(directory, 'envelopes', `${sha}.json`));
+        if (digest(raw) !== sha) throw capacityRefusal('HISTORY_INVALID');
+        return { item: JSON.parse(raw), bytes: raw };
+      };
+      const before = await readEnvelope(record.previousEnvelopeSha256);
+      const after = await readEnvelope(record.admittedEnvelopeSha256);
+      const previous = entries.at(-1);
+      if (!capacityRefreshOnly(before.item, after.item, capacityAdmissionBinding(
+        before.bytes, entries.length + 1, previous ? digest(previous.bytes) : null))
+          || before.item.missionId !== item.missionId || before.item.actionId !== item.actionId
+          || before.item.adapter !== item.adapter
+          || (previous && previous.record.admittedEnvelopeSha256 !== record.previousEnvelopeSha256)
+          || !isDeepStrictEqual(record, capacityAdmissionRecord(
+            { ...before.item, bytes: before.bytes }, { ...after.item, bytes: after.bytes },
+            entries.length + 1, previous ? digest(previous.bytes) : null))) throw capacityRefusal('HISTORY_INVALID');
+      if (!previous) seenReceipts.add(record.previousCapacityReceiptId);
+      if (seenReceipts.has(record.admittedCapacityReceiptId)) throw capacityRefusal('RECEIPT_REPLAY');
+      seenReceipts.add(record.admittedCapacityReceiptId);
+      entries.push({ record, bytes, before, after });
+    } catch (error) {
+      if (error?.message?.startsWith('MISSION_WORKER_PENDING_CAPACITY_')) throw error;
+      throw capacityRefusal('HISTORY_INVALID');
+    }
+  }
+  if (!entries.length && Object.hasOwn(item, 'pendingCapacityAdmission')) throw capacityRefusal('HISTORY_REQUIRED');
+  return { directory, entries };
+}
+
+// Called inside the same mission lock as publication's final pending replacement.
+// An admitted refresh interrupted before replacement must be recovered by the
+// publisher; the original receipt cannot be picked up in the meantime.
+export async function assertMissionWorkerPendingCapacityCurrent(item, bytes, options = {}, state) {
+  const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
+  const history = await readCapacityAdmissions(root, item);
+  if (history.entries.length && history.entries.at(-1).record.admittedEnvelopeSha256 !== digest(bytes)) {
+    throw capacityRefusal('RECOVERY_REQUIRED');
+  }
+  // The original pending envelope is just as exclusive as a renewed one.
+  // Previously the exact caller/persisted grant check ran only after a capacity
+  // refresh. A different controller grant could therefore claim a first-issue
+  // pending item while still matching its advisory mission/action identifier.
+  // Keep legacy *identical* old grants valid, but refuse any changed authority.
+  if (options.actionGrant && !(
+    missionWorkerActionGrantsMatchV1(item.actionGrant, options.actionGrant)
+    || isDeepStrictEqual(item.actionGrant, options.actionGrant)
+  )) {
+    throw capacityRefusal('GRANT_MISMATCH');
+  }
+  if (history.entries.length && !missionWorkerActionGrantsMatchV1(item.actionGrant, options.actionGrant)) {
+    throw capacityRefusal('GRANT_MISMATCH');
+  }
+  if (item.actionGrant) {
+    const grant = item.actionGrant;
+    const action = buildMissionWorkerAction(state, { ...options, actionGrant: grant });
+    // The first published envelope has no renewal journal yet, but the full
+    // modern grant, action payload and execution binding must ALREADY agree.
+    // Older partial pre-contract envelopes remain eligible only when their
+    // stored binding and exact caller identity agree; a malformed modern grant
+    // cannot silently fall back to the legacy compatibility path.
+    const fullyBoundGrant = missionWorkerActionGrantsMatchV1(grant, grant);
+    const isSourceCapacityGrant = ['codex', 'foundry-forge', 'chatgpt-github',
+      'openclaw-standalone', 'openclaw-local', 'desktop-commander',
+      'sovereign-commander', 'stephanos-native'].includes(grant.adapter)
+      || Boolean(text(grant.capacityRoute) || text(item.payload.capacityRoute));
+    if (!state || state.missionId !== grant.missionId || state.revision !== grant.missionRevision
+        || state.currentPhase !== grant.currentPhase || state.dispatch?.status !== 'pending'
+        || action.executable !== true || action.actionId !== grant.actionId
+        || action.actionKind !== grant.actionKind || adapterForAction(action) !== grant.adapter
+        || item.payload.actionId !== action.actionId || item.payload.missionId !== state.missionId
+        || !isDeepStrictEqual(item.executionBinding, durableQueueExecutionBinding(grant))
+        || (isSourceCapacityGrant && Object.hasOwn(grant, 'grantId') && !fullyBoundGrant)
+        || (fullyBoundGrant && (!validateExactActionGrant(state, action, grant, options).valid
+          || !isDeepStrictEqual(item.payload, action)))
+        || (history.entries.length && (!validateExactActionGrant(state, action, grant, options).valid
+          || !isDeepStrictEqual(item.payload, action)))) throw capacityRefusal('MISSION_CHANGED');
+  }
+}
+
+async function assertPendingCapacityUnclaimed(root, item, options) {
+  for (const adapter of (await readdir(root, { withFileTypes: true })).filter(entry => entry.isDirectory())) {
+    const paths = queuePaths(root, adapter.name);
+    let processing = [];
+    try { processing = await readdir(paths.processing); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+    for (const name of processing.filter(name => name.endsWith('.json'))) {
+      const bytes = await optionalBytes(resolve(paths.processing, name));
+      if (!bytes) continue;
+      let claim;
+      try { claim = JSON.parse(bytes); } catch {
+        if (name.startsWith(item.missionId)) throw capacityRefusal('PROCESSING_CONFLICT');
+        continue;
+      }
+      if (claim.missionId === item.missionId || claim.actionId === item.actionId) throw capacityRefusal('PROCESSING_CONFLICT');
+    }
+    for (const terminal of [paths.completed, paths.failed]) {
+      if (await optionalBytes(resolve(terminal, `${item.actionId}.json`))
+          || await optionalBytes(resolve(terminal, `${item.actionId}.result.json`))) throw capacityRefusal('TERMINAL_CONFLICT');
+    }
+  }
+  // Legacy ungranted handoffs have no receipt lease, but still cannot publish
+  // a second queue owner. Every granted handoff must also prove receipt absence.
+  if (!item.actionGrant) return;
+  if (!item.executionBinding?.leaseKey) throw capacityRefusal('RECEIPT_CUSTODY_UNAVAILABLE');
+  const env = options.env || process.env;
+  const workspace = options.sharedWorkspaceRoot || env.STEPHANOS_SHARED_AGENT_WORKSPACE || env.STEPHANOS_SHARED_WORKSPACE_ROOT;
+  if (!workspace) throw capacityRefusal('RECEIPT_CUSTODY_UNAVAILABLE');
+  const history = await readExecutionReceiptHistory(workspace, { leaseKey: item.executionBinding?.leaseKey }, {
+    repoRoot: options.repoRoot || env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT,
+  });
+  if (history.ok !== true || history.receipts.length) throw capacityRefusal('EXECUTION_RECEIPT_CONFLICT');
+}
+
+async function reconcilePendingCapacity(state, path, proposed, root, options) {
+  const history = await readCapacityAdmissions(root, proposed);
+  if (state.dispatch?.status !== 'pending') throw capacityRefusal('MISSION_NOT_PENDING');
+  // A pickup can already own processing while its mission event is pending.
+  // Absence of the pending file never proves that first publication is safe.
+  await assertPendingCapacityUnclaimed(root, proposed, options);
+  let bytes = await optionalBytes(path);
+  if (!bytes && history.entries.length) throw capacityRefusal('PENDING_MISSING');
+  if (!bytes) return { item: proposed, reused: false, refreshed: false, recovered: false };
+  let item;
+  try { item = JSON.parse(bytes); } catch { throw capacityRefusal('ENVELOPE_INVALID'); }
+  let recovered = false;
+  const last = history.entries.at(-1);
+  if (!last && Object.hasOwn(item, 'pendingCapacityAdmission')) throw capacityRefusal('HISTORY_REQUIRED');
+  if (last) {
+    if (!validateExactActionGrant(state, last.after.item.payload, last.after.item.actionGrant, options).valid) throw capacityRefusal('MISSION_CHANGED');
+    if (digest(bytes) === last.record.previousEnvelopeSha256) {
+      await replacePendingBytes(path, last.after.bytes);
+      bytes = last.after.bytes; item = last.after.item; recovered = true;
+    } else if (digest(bytes) !== last.record.admittedEnvelopeSha256) throw capacityRefusal('ENVELOPE_CHANGED');
+  }
+  // The first published envelope owns this action's advisory memory snapshot.
+  // A later controller observation may select different lessons or a new pack
+  // timestamp, but cannot rewrite the context of an already admitted action.
+  // Retain the complete validated original pack; all authority fields remain
+  // exact, and only the existing journal may admit a new capacity receipt.
+  const originalGrant = item.actionGrant, candidateGrant = proposed.actionGrant;
+  if (missionWorkerActionGrantsMatchV1(originalGrant, originalGrant)
+      && missionWorkerActionGrantsMatchV1(candidateGrant, candidateGrant)) {
+    const retainedGrant = { ...candidateGrant,
+      engineeringMemoryPack: originalGrant.engineeringMemoryPack ?? null,
+      engineeringMemoryPackId: originalGrant.engineeringMemoryPackId ?? null };
+    if (!missionWorkerActionGrantsMatchV1({ ...retainedGrant,
+      capacityReceiptId: originalGrant.capacityReceiptId,
+      capacityProofRefs: originalGrant.capacityProofRefs }, originalGrant)) {
+      throw capacityRefusal('CONTRACT_CHANGED');
+    }
+    proposed = { ...proposed, actionGrant: retainedGrant };
+  }
+  const next = { ...proposed, createdAt: item.createdAt,
+    ...(Object.hasOwn(item, 'pendingCapacityAdmission') ? { pendingCapacityAdmission: item.pendingCapacityAdmission } : {}) };
+  if (samePendingContract(item, next)) return { item, reused: true, refreshed: false, recovered };
+  if (history.entries.some(entry => entry.record.previousCapacityReceiptId === next.actionGrant?.capacityReceiptId)) throw capacityRefusal('RECEIPT_REPLAY');
+  const admitted = { ...next, pendingCapacityAdmission: capacityAdmissionBinding(
+    bytes, history.entries.length + 1, last ? digest(last.bytes) : null) };
+  if (!capacityRefreshOnly(item, admitted, admitted.pendingCapacityAdmission)
+      || !validateExactActionGrant(state, item.payload, item.actionGrant, options).valid) throw capacityRefusal('CONTRACT_CHANGED');
+  const nextBytes = jsonBytes(admitted);
+  await mkdir(resolve(history.directory, 'envelopes'), { recursive: true });
+  await preserveImmutableBytes(resolve(history.directory, 'envelopes', `${digest(bytes)}.json`), bytes);
+  await preserveImmutableBytes(resolve(history.directory, 'envelopes', `${digest(nextBytes)}.json`), nextBytes);
+  const record = capacityAdmissionRecord({ ...item, bytes }, { ...admitted, bytes: nextBytes },
+    history.entries.length + 1, last ? digest(last.bytes) : null);
+  await preserveImmutableBytes(resolve(history.directory, `${String(record.sequence).padStart(8, '0')}.json`), jsonBytes(record));
+  await replacePendingBytes(path, nextBytes);
+  return { item: admitted, reused: true, refreshed: true, recovered,
+    admission: record, historyPath: history.directory };
+}
+
 function adapterForAction(action) {
   if (action.actionKind === 'signed-openclaw-operation') return 'openclaw-signed';
+  if (action.actionKind === 'forge-escrow-publication' && action.adapter === 'forge-publication') return 'forge-publication';
   if (action.actionKind === 'github-inspection') return 'openclaw-github-readonly';
-  if (action.actionKind === 'agent-handoff' && ['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native'].includes(action.adapter)) return action.adapter;
+  if (action.actionKind === 'agent-handoff' && ['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native'].includes(action.adapter)) return action.adapter;
   if (action.actionKind === 'local-deployment') return 'openclaw-local-deployment';
   if (action.actionKind === 'evidence-judgment') return 'verification';
   return '';
@@ -129,6 +410,9 @@ function executionSurfaceForAdapter(adapter = '') {
   if (normalized === 'openclaw-standalone') return STEPHANOS_EXECUTION_SURFACE.OPENCLAW_STANDALONE;
   if (normalized === 'openclaw-local') return STEPHANOS_EXECUTION_SURFACE.OPENCLAW_LOCAL;
   if (normalized === 'desktop-commander') return STEPHANOS_EXECUTION_SURFACE.DESKTOP_COMMANDER;
+  // Builder 8 source work is confined to the exact mission worktree, even
+  // though Sovereign Commander's separate maintenance surface can inspect the host.
+  if (normalized === 'sovereign-commander') return STEPHANOS_EXECUTION_SURFACE.BUILD_LANE;
   return STEPHANOS_EXECUTION_SURFACE.BUILD_LANE;
 }
 
@@ -190,6 +474,8 @@ async function publishExternalLaneHandoff(state, action, options = {}) {
       ? 'chatgpt'
       : action.adapter === 'desktop-commander'
         ? 'desktop-commander'
+        : action.adapter === 'sovereign-commander'
+          ? 'sovereign-commander'
         : action.adapter === 'openclaw-standalone'
           ? 'openclaw-standalone'
           : action.adapter === 'openclaw-local'
@@ -353,7 +639,7 @@ function validateExactActionGrant(state, action, grant, options = {}) {
   if (text(grant?.operation) !== text(action?.operation)) {
     errors.push('action-grant-operation-mismatch');
   }
-  const capacityScoped = Object.hasOwn(grant || {}, 'capacityRoute') || ['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native'].includes(action?.adapter);
+  const capacityScoped = Object.hasOwn(grant || {}, 'capacityRoute') || ['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native'].includes(action?.adapter);
   if (capacityScoped) {
     if (text(grant?.capacityRoute) !== text(action?.capacityRoute)) {
       errors.push('action-grant-capacity-route-mismatch');
@@ -375,13 +661,19 @@ function validateExactActionGrant(state, action, grant, options = {}) {
 async function beginRepairIfRequired(state, options) {
   if (state.currentPhase !== 'REPAIR_REQUIRED') return { state, repairStarted: false };
   const round = Number.isInteger(state.repair?.currentRound) ? state.repair.currentRound + 1 : 1;
-  const started = await appendMissionEvent(state.missionId, {
+  let started;
+  try {
+    started = await appendMissionEvent(state.missionId, {
     eventId: `repair-${state.missionId}-round-${round}`.slice(0, 128),
     eventType: 'REPAIR_STARTED',
     expectedRevision: state.revision,
     expectedCurrentPhase: 'REPAIR_REQUIRED',
     summary: `Bounded source repair round ${round} started after required check failure.`,
-  }, options);
+    }, options);
+  } catch (error) {
+    if (error?.message !== 'ORIGINAL_SOURCE_ATTEMPT_FENCED') throw error;
+    return { state, repairStarted: false, preconditionFailed: true, reason: error.message };
+  }
   return {
     state: started.state,
     repairStarted: started.preconditionFailed !== true,
@@ -391,6 +683,10 @@ async function beginRepairIfRequired(state, options) {
 }
 
 async function publishLockedMissionWorkerAction(state, options = {}) {
+  if (state.cancelled === true || state.storeMetadata?.originalSourceAttemptFence
+      || state.storeMetadata?.supervisedRecoveryMaintenance) return {
+    published: false, reason: 'original-source-attempt-fenced', action: null, path: '',
+  };
   const action = buildMissionWorkerAction(state, options);
   if (action.executable !== true) {
     return {
@@ -416,6 +712,19 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
         path: '',
       };
     }
+  }
+  // The signed Forge draft publisher cannot publish a source tree built from
+  // an older main. Refuse stale exact-head work before writing a queue item.
+  if (action.actionKind === 'forge-escrow-publication'
+      && (!options.actionGrant
+        || options.actionGrant.adapter !== 'forge-publication'
+        || action.exactParentHead !== options.actionGrant.sourceRevision
+        || state.sourcePublication?.exactParentHead !== action.exactParentHead)) {
+    return {
+      published: false, reason: 'forge-publication-parent-head-drift',
+      blockers: ['FORGE_PUBLICATION_REQUIRES_FRESH_SOURCE_ARTIFACT'],
+      action, path: '',
+    };
   }
   const adapter = adapterForAction(action);
   if (!adapter) {
@@ -460,7 +769,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
   }
   const handoffResponsibility = pendingHandoffResponsibility(state, action, adapter);
   const path = resolve(paths.pending, `${action.actionId}.json`);
-  const published = await createImmutableJson(path, {
+  const queueItem = {
     schemaVersion: 'stephanos.mission-worker-queue-item.v1',
     adapter,
     actionId: action.actionId,
@@ -470,12 +779,31 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     executionBinding,
     handoffResponsibility,
     payload,
-  });
+  };
+  let admission = null;
+  if (action.actionKind === 'agent-handoff') {
+    try { admission = await reconcilePendingCapacity(state, path, queueItem, root, options); }
+    catch (error) {
+      if (!error?.message?.startsWith('MISSION_WORKER_PENDING_CAPACITY_')) throw error;
+      return { published: false, reason: 'pending-capacity-reconciliation-blocked',
+        blockers: [error.message], action, path, adapter };
+    }
+  }
+  const published = admission?.reused !== true && await createImmutableJson(path, queueItem);
+  const admittedGrant = admission?.item?.actionGrant;
+  const capacityAdmission = {
+    // Canonical context adoption applies only to the complete capacity-grant
+    // contract. Read-only investigation handoffs retain their existing schema.
+    publishedActionGrant: missionWorkerActionGrantsMatchV1(admittedGrant, admittedGrant) ? admittedGrant : null,
+    queueItemRefreshed: admission?.refreshed === true,
+    capacityAdmissionRecovered: admission?.recovered === true,
+    capacityAdmission: admission?.admission || null,
+    capacityHistoryPath: admission?.historyPath || '',
+  };
   if (!published) {
-    if (['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander'].includes(adapter)) {
+    if (['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander'].includes(adapter)) {
       const fabricPublication = await publishExternalLaneHandoff(state, action, options);
       if (fabricPublication?.ok !== true) {
-        await unlink(path).catch(() => {});
         return {
           published: false,
           reason: `shared-workspace-handoff:${text(fabricPublication?.reason, 'publication-failed')}`,
@@ -483,11 +811,12 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
           path: '',
           adapter,
           fabricPublication,
+          ...capacityAdmission,
         };
       }
       return {
         published: true,
-        reason: 'external-action-publication-reconciled',
+        reason: admission?.refreshed ? 'pending-capacity-readmitted' : 'external-action-publication-reconciled',
         action,
         payload,
         path,
@@ -495,17 +824,23 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
         fabricPublication,
         handoffResponsibility,
         queueItemReused: true,
+        ...capacityAdmission,
       };
     }
+    if (admission?.refreshed || admission?.recovered) return {
+      published: true, reason: 'pending-capacity-readmitted', action, payload, path, adapter,
+      handoffResponsibility, queueItemReused: true, ...capacityAdmission,
+    };
     return {
       published: false,
       reason: 'action-already-published',
       action,
       path,
+      ...capacityAdmission,
     };
   }
   let fabricPublication = null;
-  if (['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander'].includes(adapter)) {
+  if (['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander'].includes(adapter)) {
     fabricPublication = await publishExternalLaneHandoff(state, action, options);
     if (fabricPublication?.ok !== true) {
       await unlink(path).catch(() => {});
@@ -528,10 +863,27 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     adapter,
     fabricPublication,
     handoffResponsibility,
+    ...capacityAdmission,
   };
 }
 
+export function replacementSourceForgePublicationBlocked(state = {}) {
+  return state.missionId === 'critical-1717-elastic-goal'
+    && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(state.currentPhase)
+    && state.dispatch?.adapter === 'foundry-forge'
+    && state.continuity?.history?.some(entry =>
+      entry.eventType === 'MISSION_REPAIR_PROVEN'
+      && String(entry.receiptId || '').startsWith('verified-replacement-repair-')) === true;
+}
+
 export async function publishMissionWorkerAction(inputState, options = {}) {
+  if (inputState.cancelled === true || inputState.storeMetadata?.originalSourceAttemptFence || inputState.storeMetadata?.supervisedRecoveryMaintenance) return {
+    published: false, reason: 'original-source-attempt-fenced', action: null, path: '',
+  };
+  if (replacementSourceForgePublicationBlocked(inputState)) return {
+    published:false,reason:'replacement-source-already-merged-forge-publication-fenced',
+    action:null,path:'',
+  };
   if (inputState.dispatch?.status === 'running' && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED', 'LIVE_RUNTIME_INVESTIGATION'].includes(inputState.currentPhase)) return { published: false, reason: 'agent-already-running', action: null, path: '' };
   const prepared = await beginRepairIfRequired(inputState, options);
   if (prepared.preconditionFailed) {
@@ -568,16 +920,10 @@ export async function publishMissionWorkerAction(inputState, options = {}) {
     ...locked.result,
     repairStarted: prepared.repairStarted,
   };
-  if (result.published && result.action.actionKind === 'agent-handoff') {
-    const action = result.action;
-    await appendMissionEvent(state.missionId, {
-      eventId: `dispatch-${action.actionId}`.slice(0, 128),
-      eventType: 'AGENT_DISPATCHED',
-      agentId: action.adapter === 'openclaw-readonly' ? 'openclaw-readonly' : action.adapter,
-      adapter: action.adapter,
-      summary: `${action.adapter} handoff published to the durable worker queue; Mission Worker retains responsibility until a downstream processing claim or terminal result is proven.`,
-    }, options);
-  }
+  // Queue publication is not execution. Keep the mission dispatch pending until
+  // claimNextMissionWorkerItem atomically moves this exact action into processing.
+  // That processing claim is the first point at which AGENT_DISPATCHED/running is
+  // truthful, so an unclaimed queue item cannot consume a build lane indefinitely.
   return result;
 }
 
@@ -661,7 +1007,7 @@ export async function publishNextMissionWorkerAction(options = {}) {
 export async function readMissionWorkerQueue(options = {}) {
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   if (!root) return [];
-  const adapters = ['openclaw-signed', 'openclaw-github-readonly', 'codex', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native', 'openclaw-readonly', 'openclaw-local-deployment', 'verification'];
+  const adapters = ['openclaw-signed', 'openclaw-github-readonly', 'codex', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'forge-publication', 'desktop-commander', 'sovereign-commander', 'stephanos-native', 'openclaw-readonly', 'openclaw-local-deployment', 'verification'];
   const result = [];
   for (const adapter of adapters) {
     const paths = queuePaths(root, adapter);
@@ -680,13 +1026,74 @@ export async function collectAgentWorkerResult(result, options = {}) {
   const missionId = text(result?.missionId).toLowerCase();
   const actionId = text(result?.actionId).toLowerCase();
   const adapter = text(result?.adapter).toLowerCase();
-  if (!missionId || !actionId || !['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native'].includes(adapter)) throw new Error('Agent result identity is incomplete or unsupported.');
+  if (!missionId || !actionId || !['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native'].includes(adapter)) throw new Error('Agent result identity is incomplete or unsupported.');
   const current = await readMissionRecord(missionId, options);
-  if (current.state.dispatch?.status !== 'running') throw new Error('Mission has no active agent dispatch.');
+  if (current.state.cancelled === true || current.state.storeMetadata?.originalSourceAttemptFence || current.state.storeMetadata?.supervisedRecoveryMaintenance) {
+    throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
+  }
   if (adapter !== current.state.dispatch.adapter) throw new Error('Agent result adapter does not match the active dispatch.');
-  let collected = await appendMissionEvent(missionId, { eventId: `result-${actionId}`.slice(0, 128), eventType: 'AGENT_RESULT_RECEIVED', success: result.success === true, resultId: text(result.resultId, actionId), changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [], receipt: result.receipt, error: text(result.error), summary: `${adapter} result collected from the durable worker queue.` }, options);
+  const eventId = `result-${actionId}`.slice(0, 128);
+  const resultId = text(result.resultId, actionId);
+  const previous = current.state;
+  const resultEvent = {
+    missionId, actionId, adapter, eventId, eventType: 'AGENT_RESULT_RECEIVED',
+    success: result.success === true, resultId,
+    changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [],
+    sourceArtifactEscrow: result.sourceArtifactEscrow,
+    offlinePublicationOutbox: result.offlinePublicationOutbox,
+    receipt: result.receipt, error: text(result.error),
+    summary: `${adapter} result collected from the durable worker queue.`,
+  };
+  const failedIdentity = failedMissionWorkerResultIdentityV1(resultEvent);
+  const exactFailedReplay = state => result.success === false && failedIdentity
+    && (!Array.isArray(result.evidenceReceipts) || result.evidenceReceipts.length === 0)
+    && state.cancelled !== true && !state.storeMetadata?.originalSourceAttemptFence && !state.storeMetadata?.supervisedRecoveryMaintenance
+    && state.currentPhase === 'BLOCKED' && state.dispatch?.status === 'failed'
+    && state.dispatch?.adapter === adapter && state.dispatch?.resultId === resultId
+    && state.storeMetadata?.processedEventIds?.includes(eventId) === true
+    && state.storeMetadata?.lastFailedWorkerResultIdentityV1 === failedIdentity;
+  if (exactFailedReplay(previous)) {
+    const locked = await runWithMissionStatePrecondition(missionId, {
+      expectedRevision: previous.revision, expectedCurrentPhase: previous.currentPhase,
+    }, state => {
+      if (!exactFailedReplay(state)) throw new Error('MISSION_WORKER_FAILED_RESULT_REPLAY_UNPROVEN');
+      if (options.assertResultCustody) options.assertResultCustody(state, resultEvent);
+      return { state, duplicate: true, eventId };
+    }, options);
+    if (locked.preconditionFailed) throw new Error('MISSION_WORKER_FAILED_RESULT_REPLAY_PRECONDITION_FAILED');
+    return locked.result;
+  }
+
+  const normalizedFiles = (files) => (Array.isArray(files) ? files : [])
+    .map((file) => text(file).replace(/\\\\/g, '/')).sort();
+  // A crash between AGENT_RESULT_RECEIVED and EVIDENCE_RECORDED leaves the
+  // exact original result persisted, but a replay used to fail merely because
+  // dispatch is no longer running. Resume only the missing evidence step.
+  // Never reexecute a provider or accept a different result under this action.
+  const exactSuccessfulReplay = result.success === true
+    && ['VERIFYING', 'GITHUB_COMMIT'].includes(previous.currentPhase)
+    && previous.dispatch?.status === 'complete'
+    && previous.dispatch?.resultId === resultId
+    && previous.storeMetadata?.processedEventIds?.includes(eventId) === true
+    && Boolean(text(result.receipt?.receiptId || result.receipt?.id))
+    && previous.evidenceReceipts?.some((receipt) =>
+      receipt.receiptId === text(result.receipt?.receiptId || result.receipt?.id)) === true
+    && JSON.stringify(normalizedFiles(previous.git?.changedFiles))
+      === JSON.stringify(normalizedFiles(result.changedFiles))
+    && (adapter !== 'foundry-forge'
+      || (Boolean(text(result.sourceArtifactEscrow?.completeArtifactSha256))
+        && previous.sourcePublication?.artifactSha256
+          === text(result.sourceArtifactEscrow?.completeArtifactSha256)));
+  if (previous.dispatch?.status !== 'running' && !exactSuccessfulReplay) {
+    throw new Error('Mission has no active agent dispatch.');
+  }
+  if (options.assertResultCustody) options.assertResultCustody(previous, resultEvent);
+  let collected = exactSuccessfulReplay
+    ? { state: previous, duplicate: true, eventId }
+    : await appendMissionEvent(missionId, resultEvent, options);
   const evidenceReceipts = Array.isArray(result.evidenceReceipts) ? result.evidenceReceipts : [];
   if (result.success === true && evidenceReceipts.length) {
+    if (options.assertResultCustody) options.assertResultCustody(collected.state, { eventType: 'EVIDENCE_RECORDED' });
     collected = await appendMissionEvent(missionId, {
       eventId: `evidence-${actionId}`.slice(0, 128),
       eventType: 'EVIDENCE_RECORDED',

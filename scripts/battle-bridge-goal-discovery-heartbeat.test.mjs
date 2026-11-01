@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
+import { runBattleBridgeGoalDiscoveryHeartbeat as runActualHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
+const runBattleBridgeGoalDiscoveryHeartbeat = options => runActualHeartbeat({ readWorkerHeartbeatAgeMs: () => 0, ...options });
 
 const lifeboatReady = async () => ({
   ok: true,
@@ -32,17 +33,28 @@ const commanderReady = async () => ({
   runtimeMutationAuthority: false,
 });
 
+const openClawReady = async () => ({
+  ok: true,
+  available: true,
+  workerId: 'openclaw-provider-pool-01',
+  taskClass: 'OC1_REPOSITORY_SCOUT',
+  finalVerdict: 'OPENCLAW_PROVIDER_POOL_CAPACITY_PUBLISHED',
+  mergeAuthority: false,
+  runtimeMutationAuthority: false,
+});
+
 function heartbeat(options = {}) {
   return runBattleBridgeGoalDiscoveryHeartbeat({
     refreshLifeboatCapacity: lifeboatReady,
     refreshCommanderCapacity: commanderReady,
+    refreshOpenClawCapacity: openClawReady,
     refreshGithubLifeboat: githubLifeboatReady,
     readProcessingPickupMissionIdsFn: async () => [],
     ...options,
   });
 }
 
-test('goal discovery heartbeat refreshes Lane 7, Lane 6 and Commander before delegating to the existing critical backlog conveyor', async () => {
+test('goal discovery heartbeat refreshes Lane 7, Lane 6, Commander and OpenClaw before delegating to the existing critical backlog conveyor', async () => {
   const order = [];
   const result = await runBattleBridgeGoalDiscoveryHeartbeat({
     refreshGithubLifeboat: async () => {
@@ -57,17 +69,70 @@ test('goal discovery heartbeat refreshes Lane 7, Lane 6 and Commander before del
       order.push('commander');
       return commanderReady();
     },
+    refreshOpenClawCapacity: async () => {
+      order.push('openclaw');
+      return openClawReady();
+    },
     conveyor: async () => {
       order.push('conveyor');
       return { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' };
     },
     buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
   });
-  assert.deepEqual(order, ['github-lifeboat', 'lifeboat', 'commander', 'conveyor']);
+  assert.deepEqual(order, ['github-lifeboat', 'lifeboat', 'commander', 'openclaw', 'conveyor']);
   assert.equal(result.githubLifeboat.available, true);
   assert.equal(result.lifeboatCapacity.available, true);
+  assert.equal(result.openClawCapacity.available, true);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.runtimeMutationAuthority, false);
+});
+
+test('blocked conveyor publishes a bounded top-level blocker for Sovereign receipts', async () => {
+  const result = await heartbeat({
+    conveyor: async () => ({
+      ok: false,
+      blocker: 'MISSION_WORKER_PICKUP_UNPROVEN',
+      classification: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
+    }),
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'MISSION_WORKER_PICKUP_UNPROVEN');
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED');
+  assert.equal(result.conveyorResult.blocker, 'MISSION_WORKER_PICKUP_UNPROVEN');
+});
+
+test('blocked active mission surfaces its actionable nested ignition blocker', async () => {
+  const result = await heartbeat({
+    conveyor: async () => ({
+      ok: false,
+      classification: 'WAIT_ACTIVE_MISSION',
+      activeMissionIgnition: {
+        ok: false,
+        classification: 'CRITICAL_ACTIVE_MISSION_CAPACITY_ROUTING_UNAVAILABLE',
+      },
+    }),
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CRITICAL_ACTIVE_MISSION_CAPACITY_ROUTING_UNAVAILABLE');
+  assert.equal(result.conveyorResult.classification, 'WAIT_ACTIVE_MISSION');
+});
+
+test('blocked conveyor falls back to a safe public blocker when its detail is not receipt-safe', async () => {
+  const result = await heartbeat({
+    conveyor: async () => ({
+      ok: false,
+      blocker: 'unsafe blocker with spaces and operator text',
+      classification: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
+    }),
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED');
 });
 
 test('Lane 7 receives canonical git command by default and preserves an explicit caller override', async () => {
@@ -80,6 +145,7 @@ test('Lane 7 receives canonical git command by default and preserves an explicit
     },
     refreshLifeboatCapacity: lifeboatReady,
     refreshCommanderCapacity: commanderReady,
+    refreshOpenClawCapacity: openClawReady,
     conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
     buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
   });
@@ -95,6 +161,7 @@ test('unavailable Lane 7 does not strand Lane 6 or other admitted work', async (
     refreshGithubLifeboat: async () => { throw new Error('github-writer-offline'); },
     refreshLifeboatCapacity: lifeboatReady,
     refreshCommanderCapacity: commanderReady,
+    refreshOpenClawCapacity: openClawReady,
     conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
     buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
   });
@@ -145,6 +212,7 @@ test('unavailable Lane 6 does not strand other admitted work', async () => {
     refreshGithubLifeboat: githubLifeboatReady,
     refreshLifeboatCapacity: async () => { throw new Error('ollama-offline'); },
     refreshCommanderCapacity: commanderReady,
+    refreshOpenClawCapacity: openClawReady,
     conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
     buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
   });
@@ -160,6 +228,7 @@ test('unavailable Commander does not strand Forge or other admitted work', async
     refreshGithubLifeboat: githubLifeboatReady,
     refreshLifeboatCapacity: lifeboatReady,
     refreshCommanderCapacity: async () => { throw new Error('commander-offline'); },
+    refreshOpenClawCapacity: openClawReady,
     conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
     buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
   });
@@ -170,9 +239,27 @@ test('unavailable Commander does not strand Forge or other admitted work', async
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE');
 });
 
+test('unavailable OpenClaw pool does not strand Forge, Commander or other admitted work', async () => {
+  const result = await runBattleBridgeGoalDiscoveryHeartbeat({
+    refreshGithubLifeboat: githubLifeboatReady,
+    refreshLifeboatCapacity: lifeboatReady,
+    refreshCommanderCapacity: commanderReady,
+    refreshOpenClawCapacity: async () => { throw new Error('openclaw-offline'); },
+    conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
+    buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.openClawCapacity.available, false);
+  assert.match(result.openClawCapacity.reason, /openclaw-offline/);
+  assert.equal(result.lifeboatCapacity.available, true);
+  assert.equal(result.commanderCapacity.available, true);
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE');
+});
+
 test('goal discovery heartbeat delegates to the existing critical backlog conveyor without authority widening', async () => {
   let calls = 0;
   const result = await heartbeat({
+    refreshOpenClawCapacity: openClawReady,
     conveyor: async () => {
       calls += 1;
       return { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' };
@@ -192,10 +279,52 @@ test('goal discovery heartbeat delegates to the existing critical backlog convey
 
 test('goal discovery heartbeat fails closed when the conveyor blocks', async () => {
   const result = await heartbeat({
+    refreshOpenClawCapacity: openClawReady,
     conveyor: async () => ({ ok: false, blocker: 'NO_QUALIFIED_CAPACITY' }),
   });
   assert.equal(result.ok, false);
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED');
+});
+
+test('runnable source work cannot collapse into false healthy idle when the source builder claims nothing', async () => {
+  const missionId = 'critical-runnable-not-claimed';
+  let conveyorCalls = 0;
+  let buildCalls = 0;
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 2,
+    conveyor: async () => {
+      conveyorCalls += 1;
+      return {
+        ok: true,
+        classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+        elasticAdmission: {
+          activeMissions: [],
+          runnableMissions: [{ missionId }],
+        },
+        elasticIgnition: {
+          availableSlots: 1,
+          dispatchCount: 0,
+          dispatched: [],
+          held: [],
+        },
+      };
+    },
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      return { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+
+  assert.equal(conveyorCalls, 2);
+  assert.equal(buildCalls, 2);
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED');
+  assert.equal(result.noRunnableSourceWorkProven, false);
+  assert.equal(result.controllerContinuity, 'CONTINUE_NEXT_SWEEP');
+  assert.equal(result.materialActionsSucceeded, 0);
+  assert.equal(result.cycleDecision.safeEligibleWorkRemaining, 1);
+  assert.equal(result.cycleDecision.provenSafeFreeLanes, 1);
+  assert.equal(result.cycleDecision.returnAllowed, false);
 });
 
 test('published external dispatch is not mistaken for no runnable work before worker pickup', async () => {
@@ -443,6 +572,7 @@ test('held elastic mission does not strand admitted work or stop controller cont
   let conveyorCalls = 0;
   const built = await heartbeat({
     maxWorkConservingAttempts: 2,
+    refreshOpenClawCapacity: openClawReady,
     conveyor: async () => {
       conveyorCalls += 1;
       if (conveyorCalls === 2) return { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' };
@@ -481,6 +611,7 @@ test('held elastic mission does not strand admitted work or stop controller cont
     },
   });
   const swept = await heartbeat({
+    refreshOpenClawCapacity: openClawReady,
     conveyor: heldConveyor,
     maxWorkConservingAttempts: 3,
     buildClaimedGoal: async () => {
@@ -507,6 +638,7 @@ test('blocked claimed source lane is parked and the same run continues to anothe
   let conveyorCalls = 0;
   const result = await heartbeat({
     maxWorkConservingAttempts: 4,
+    refreshOpenClawCapacity: openClawReady,
     conveyor: async () => {
       conveyorCalls += 1;
       return conveyorCalls === 3
@@ -551,6 +683,7 @@ test('thrown source-builder exception parks only that lane and the same sweep co
   let conveyorCalls = 0;
   const result = await heartbeat({
     maxWorkConservingAttempts: 4,
+    refreshOpenClawCapacity: openClawReady,
     conveyor: async () => {
       conveyorCalls += 1;
       if (conveyorCalls === 3) return { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' };
@@ -591,6 +724,7 @@ test('thrown source-builder exception binds mission identity only when the error
   let buildCalls = 0;
   const result = await heartbeat({
     maxWorkConservingAttempts: 2,
+    refreshOpenClawCapacity: openClawReady,
     conveyor: async () => ({
       ok: true,
       classification: 'ELASTIC_GOAL_MISSION_SELECTED',
@@ -622,6 +756,7 @@ test('orphan recovery hold is parked instead of being misreported as clean queue
   let conveyorCalls = 0;
   const result = await heartbeat({
     maxWorkConservingAttempts: 4,
+    refreshOpenClawCapacity: openClawReady,
     conveyor: async () => {
       conveyorCalls += 1;
       return conveyorCalls === 3
@@ -665,6 +800,7 @@ test('held queue-empty lane is retried within the same bounded sweep and can dis
   let conveyorCalls = 0;
   const result = await heartbeat({
     maxWorkConservingAttempts: 4,
+    refreshOpenClawCapacity: openClawReady,
     conveyor: async () => {
       conveyorCalls += 1;
       if (conveyorCalls === 4) return { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' };
@@ -704,6 +840,7 @@ test('explicit sweep budgets above five are honored instead of silently clamped'
   let buildCalls = 0;
   const result = await heartbeat({
     maxWorkConservingAttempts: 7,
+    refreshOpenClawCapacity: openClawReady,
     conveyor: async () => ({
       ok: true,
       classification: 'ELASTIC_GOAL_MISSION_SELECTED',
@@ -727,6 +864,7 @@ test('default octopus sweep widens beyond eight when more resource-disjoint runn
   let buildCalls = 0;
   const runnableMissions = Array.from({ length: 10 }, (_, index) => ({ missionId: `goal-wide-${index + 1}` }));
   const result = await heartbeat({
+    refreshOpenClawCapacity: openClawReady,
     conveyor: async () => ({
       ok: true,
       classification: 'ELASTIC_GOAL_MISSION_SELECTED',
@@ -754,6 +892,7 @@ test('historical terminal elastic mission records do not inflate the current oct
     currentPhase: 'COMPLETE',
   }));
   const result = await heartbeat({
+    refreshOpenClawCapacity: openClawReady,
     conveyor: async () => ({
       ok: true,
       classification: 'ELASTIC_GOAL_MISSION_SELECTED',
@@ -791,4 +930,56 @@ test('Battle Bridge sync coordinator owns goal discovery after successful conver
   assert.match(coordinatorSource, /SYNC_AND_REFRESH_GOAL_DISCOVERY_BLOCKED/);
   assert.doesNotMatch(launcherSource, /battle-bridge-goal-discovery-heartbeat\.mjs|goalDiscoveryPath/);
   assert.doesNotMatch(launcherSource, /Invoke-Expression|cmd\.exe|reset --hard|git clean|git push/i);
+});
+
+
+test('configured Shared Workspace is preserved for provider-neutral execution receipts', async () => {
+  const configuredWorkspace = '/configured/shared-agent-workspace';
+  let observedBuilderOptions = null;
+  await heartbeat({
+    maxWorkConservingAttempts: 1,
+    builderOptions: {
+      env: { STEPHANOS_SHARED_AGENT_WORKSPACE: configuredWorkspace },
+    },
+    conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
+    buildClaimedGoal: async (options) => {
+      observedBuilderOptions = options;
+      return { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+  assert.equal(observedBuilderOptions.sharedWorkspaceRoot, configuredWorkspace);
+  assert.equal(observedBuilderOptions.env.STEPHANOS_SHARED_AGENT_WORKSPACE, configuredWorkspace);
+});
+
+test('custody expiring inside lifeboat await prevents claim acknowledgement and remaining pre-sweep work', async () => {
+  let fresh = true; const calls = [];
+  const result = await heartbeat({ readWorkerHeartbeatAgeMs: () => fresh ? 119999 : 120001,
+    refreshGithubLifeboat: async options => {
+      assert.equal(options.readWorkerHeartbeatAgeMs(), 119999);
+      await Promise.resolve(); fresh = false; return githubLifeboatReady();
+    },
+    refreshGithubLifeboatClaimAck: async () => { calls.push('ack'); },
+    refreshLifeboatCapacity: async () => { calls.push('capacity'); },
+    conveyor: async () => { calls.push('claim'); },
+  });
+  assert.equal(result.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+  assert.deepEqual(calls, []);
+});
+
+
+test('production heartbeat retains pending pickup without claiming or executing a source build inline', async()=>{
+ const missionId='critical-1557-elastic-goal';
+ const result=await heartbeat({
+  maxWorkConservingAttempts:1,
+  conveyor:async()=>({ok:true,classification:'ELASTIC_MISSION_ADMITTED',elasticAdmission:{runnableMissions:[{missionId}],selectedMission:{missionId}}}),
+  builderOptions:{claimNext:()=>assert.fail('short heartbeat cannot claim source'),
+    runCommand:()=>assert.fail('short heartbeat cannot execute source'),
+    localModelFetchImpl:()=>assert.fail('short heartbeat cannot invoke model')},
+  publishTrack:async()=>({ok:true}),
+ });
+ assert.equal(result.sourceBuild.processed,false);
+ assert.equal(result.sourceBuild.pickupProven,false);
+ assert.equal(result.sourceBuild.finalVerdict,'CANONICAL_MISSION_WORKER_SOURCE_PICKUP_PENDING');
+ assert.equal(result.materialActionsSucceeded,0);
+ assert.equal(result.noRunnableSourceWorkProven,false);
 });

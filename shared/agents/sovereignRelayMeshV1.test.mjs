@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES,
+  SOVEREIGN_RELAY_FAST_STALL_MS,
   SOVEREIGN_RELAY_FAST_POLL_MS,
   SOVEREIGN_RELAY_HOT_POLL_MS,
   SOVEREIGN_RELAY_IDLE_POLL_MS,
@@ -14,6 +15,7 @@ import {
   buildSovereignRelayStatus,
   classifySovereignRelayDeliveryState,
   classifySovereignRelayGuardCycle,
+  readSovereignRelaySourceHead,
   runSovereignRelayCycleWithHeartbeat,
 } from '../../scripts/battle-bridge-sovereign-relay-daemon.mjs';
 
@@ -29,6 +31,32 @@ const relaySource = await readFile(
   new URL('../../scripts/battle-bridge-sovereign-relay-daemon.mjs', import.meta.url),
   'utf8',
 );
+
+test('relay source head proof is exact and uses a non-shell git boundary', () => {
+  const calls = [];
+  const head = 'a'.repeat(40);
+  const result = readSovereignRelaySourceHead({
+    platform: 'linux',
+    cwd: '/repo',
+    spawnSyncFn: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0, stdout: head + '\n', stderr: '' };
+    },
+  });
+  assert.equal(result, head);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, 'git');
+  assert.deepEqual(calls[0].args, ['-C', '/repo', 'rev-parse', 'HEAD']);
+  assert.equal(calls[0].options.shell, false);
+});
+
+test('relay refuses an unproven source head', () => {
+  assert.throws(() => readSovereignRelaySourceHead({
+    platform: 'linux',
+    cwd: '/repo',
+    spawnSyncFn: () => ({ status: 0, stdout: 'not-a-head\n', stderr: '' }),
+  }), /SOVEREIGN_RELAY_SOURCE_HEAD_UNPROVEN/);
+});
 
 test('sovereign relay uses the existing guarded mailbox as transport only', () => {
   assert.ok(SOVEREIGN_RELAY_FAST_POLL_MS >= 1000);
@@ -115,15 +143,22 @@ test('relay classifies bounded mailbox activity metrics for adaptive polling', (
 });
 
 test('relay publishes watchdog-safe in-flight status without widening authority', () => {
+  const sourceHead = 'b'.repeat(40);
   const status = buildSovereignRelayInFlightStatus({
     now: new Date('2026-10-03T12:00:00.000Z'),
     cycleStartedAtMs: Date.parse('2026-10-03T11:59:59.000Z'),
     previousStatus: { carrierHealthy: true },
     consecutiveCarrierFailures: 1,
+    sourceHead,
   });
+  assert.equal(status.schemaVersion, 'shared-agent-workspace-record.v1');
+  assert.equal(status.kind, 'stephanos.shared_workspace.status');
+  assert.equal(status.statusId, 'sovereign-relay-current');
+  assert.equal(status.schema, 'stephanos.sovereign-relay-daemon.v1');
   assert.equal(status.daemonHealthy, true);
   assert.equal(status.cycleInFlight, true);
   assert.equal(status.deliveryState, 'FAST_CHECKING');
+  assert.equal(status.sourceHead, sourceHead);
   assert.equal(status.retryIdentityPreserved, true);
   assert.equal(status.duplicateExecutionAllowed, false);
   assert.equal(status.arbitraryShellAllowed, false);
@@ -149,6 +184,7 @@ test('relay refreshes its in-flight heartbeat while a guarded cycle remains acti
     cycleStartedAtMs: Date.parse('2026-10-03T11:59:59.000Z'),
     previousStatus: { carrierHealthy: true },
     consecutiveCarrierFailures: 0,
+    sourceHead: 'c'.repeat(40),
     heartbeatMs: 1000,
     writeStatus: async (_path, status) => { writes.push(status); },
     setTimeoutFn: (callback) => {
@@ -160,6 +196,7 @@ test('relay refreshes its in-flight heartbeat while a guarded cycle remains acti
   assert.equal(result.ok, true);
   assert.equal(writes.length, 2);
   assert.ok(writes.every((status) => status.cycleInFlight === true));
+  assert.ok(writes.every((status) => status.sourceHead === 'c'.repeat(40)));
   assert.ok(writes.every((status) => status.duplicateExecutionAllowed === false));
   assert.equal(clearCount, 1);
 });
@@ -187,9 +224,11 @@ test('relay distinguishes recovering, fallback-covered, and recovered fast path'
 
 test('completed relay status exposes delivery and fallback proof without duplicate execution', () => {
   const completedAtMs = Date.parse('2026-10-03T12:00:00.000Z');
+  const sourceHead = 'd'.repeat(40);
   const status = buildSovereignRelayStatus({
     now: new Date(completedAtMs),
     cycle: { ok: false, busy: false, blocker: 'NETWORK_UNAVAILABLE' },
+    sourceHead,
     cycleStartedAtMs: completedAtMs - 1000,
     cycleCompletedAtMs: completedAtMs,
     consecutiveCarrierFailures: SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES,
@@ -197,6 +236,7 @@ test('completed relay status exposes delivery and fallback proof without duplica
     recoveredThisCycle: false,
   });
   assert.equal(status.cycleInFlight, false);
+  assert.equal(status.sourceHead, sourceHead);
   assert.equal(status.deliveryState, 'FALLBACK_COVERED');
   assert.equal(status.fallbackCovered, true);
   assert.equal(status.scheduledMailboxFallbackExpected, true);
@@ -238,6 +278,23 @@ test('relay status retains all fallback transports without granting them authori
   ]);
 });
 
+test('watchdog recycles a fresh but stale-head Sovereign relay after main advances', () => {
+  assert.match(watchdog, /\$sourceHead\s*=\s*\(\[string\]\$status\.sourceHead\)/);
+  assert.match(watchdog, /rev-parse HEAD/);
+  assert.match(watchdog, /sourceHeadMatchesLive/);
+  assert.match(watchdog, /SOVEREIGN_RELAY_SOURCE_HEAD_MISSING/);
+  assert.match(watchdog, /SOVEREIGN_RELAY_SOURCE_HEAD_STALE/);
+  assert.match(watchdog, /\$status\.daemonHealthy\s+-eq\s+\$true[\s\S]*\$age\s+-le\s+30[\s\S]*\$sourceHeadMatchesLive/);
+  assert.match(watchdog, /if \(\$relayBefore\.Count -gt 1\)[\s\S]*Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/);
+  assert.match(watchdog, /if \(\$relayBefore\.Count -eq 0 -or -not \[bool\]\$relayHealthBefore\.healthy\)/);
+  assert.match(watchdog, /function Wait-SovereignRelayDaemonReady/);
+  assert.match(watchdog, /\$lastProcesses\.Count -eq 1 -and \[bool\]\$lastHealth\.healthy/);
+  assert.match(watchdog, /\[int\]\$Attempts = 40/);
+  assert.match(watchdog, /\[int\]\$DelayMilliseconds = 500/);
+  assert.match(watchdog, /\$relayDaemonHealthy = \[bool\]\(\$relayReady\.ready -and \$relayAfter\.Count -eq 1 -and \$relayHealthAfter\.healthy\)/);
+  assert.match(watchdog, /relayDaemonSourceHeadMatchesLive/);
+});
+
 test('Sovereign Commander watchdog supervises relay but does not make it a core health dependency', () => {
   assert.match(watchdog, /battle-bridge-sovereign-relay-daemon\.mjs/);
   assert.match(watchdog, /sovereign-relay-current\.json/);
@@ -262,4 +319,79 @@ test('architecture makes the transport mesh additive and keeps every fallback', 
   assert.match(architecture, /OpenAI Secure MCP Tunnel.*fallback/i);
   assert.match(architecture, /Remote Desktop Commander.*fallback/i);
   assert.match(architecture, /no single transport.*critical path/i);
+});
+
+test('relay retains settled carrier failure while the next guard cycle is in flight', () => {
+  const now = new Date('2026-10-15T18:39:40.000Z');
+  const status = buildSovereignRelayInFlightStatus({
+    now,
+    cycleStartedAtMs: now.getTime() - 10_000,
+    previousStatus: {
+      carrierHealthy: false,
+      blocker: 'GITHUB_OBSERVATION_REFRESH_IN_PROGRESS',
+      guardVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+      lastCarrierHealthyAtUtc: '2026-10-15T18:30:00.000Z',
+    },
+    consecutiveCarrierFailures: SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES,
+    sourceHead: 'e'.repeat(40),
+  });
+  assert.equal(status.status, 'ATTENTION_REQUIRED');
+  assert.equal(status.carrierHealthy, false);
+  assert.equal(status.deliveryState, 'FALLBACK_COVERED');
+  assert.equal(status.blocker, 'GITHUB_OBSERVATION_REFRESH_IN_PROGRESS');
+  assert.equal(status.guardVerdict, 'MAILBOX_OUTBOX_GUARD_BLOCKED');
+  assert.equal(status.lastCarrierHealthyAtUtc, '2026-10-15T18:30:00.000Z');
+  assert.equal(status.scheduledMailboxFallbackExpected, true);
+  assert.equal(status.retryIdentityPreserved, true);
+  assert.equal(status.duplicateExecutionAllowed, false);
+});
+
+test('stalled fast relay reports recovery without asserting unproven shared-lock fallback', () => {
+  assert.equal(SOVEREIGN_RELAY_FAST_STALL_MS, 90_000);
+  const now = new Date('2026-10-15T18:50:00.000Z');
+  const previousStatus = { carrierHealthy: true, blocker: '' };
+  const before = buildSovereignRelayInFlightStatus({
+    now, previousStatus, sourceHead: 'f'.repeat(40),
+    cycleStartedAtMs: now.getTime() - (SOVEREIGN_RELAY_FAST_STALL_MS - 1),
+  });
+  assert.equal(before.carrierHealthy, true);
+  assert.equal(before.deliveryState, 'FAST_CHECKING');
+  assert.equal(before.fastCycleStalled, false);
+  const stalled = buildSovereignRelayInFlightStatus({
+    now, previousStatus, sourceHead: 'f'.repeat(40),
+    cycleStartedAtMs: now.getTime() - SOVEREIGN_RELAY_FAST_STALL_MS,
+  });
+  assert.equal(stalled.daemonHealthy, true);
+  assert.equal(stalled.carrierHealthy, false);
+  assert.equal(stalled.status, 'ATTENTION_REQUIRED');
+  assert.equal(stalled.fastCycleStalled, true);
+  assert.equal(stalled.deliveryState, 'RECOVERING');
+  assert.equal(stalled.fallbackCovered, false);
+  assert.equal(stalled.scheduledMailboxFallbackExpected, true);
+  assert.equal(stalled.blocker, 'SOVEREIGN_RELAY_GUARD_CYCLE_STALLED');
+  assert.equal(stalled.duplicateExecutionAllowed, false);
+  assert.equal(stalled.retryIdentityPreserved, true);
+  assert.equal(stalled.sourceMutationAllowed, false);
+});
+
+test('stalled relay preserves prior carrier blocker without claiming fallback coverage', () => {
+  const now = new Date('2026-10-15T19:00:00.000Z');
+  const status = buildSovereignRelayInFlightStatus({
+    now,
+    cycleStartedAtMs: now.getTime() - (SOVEREIGN_RELAY_FAST_STALL_MS + 10),
+    previousStatus: {
+      carrierHealthy: false,
+      blocker: 'GITHUB_OBSERVATION_REFRESH_IN_PROGRESS',
+      guardVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+    },
+    consecutiveCarrierFailures: 3,
+    sourceHead: 'e'.repeat(40),
+  });
+  assert.equal(status.carrierHealthy, false);
+  assert.equal(status.status, 'ATTENTION_REQUIRED');
+  assert.equal(status.deliveryState, 'RECOVERING');
+  assert.equal(status.fallbackCovered, false);
+  assert.equal(status.blocker, 'GITHUB_OBSERVATION_REFRESH_IN_PROGRESS');
+  assert.equal(status.guardVerdict, 'MAILBOX_OUTBOX_GUARD_BLOCKED');
+  assert.equal(status.duplicateExecutionAllowed, false);
 });

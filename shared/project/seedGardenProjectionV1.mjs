@@ -1,5 +1,12 @@
 import { createSeedProjectProgressModel, getProjectStatusScore } from './projectProgressModel.mjs';
 import { buildStarfieldVrOutcomeOwnershipContractV1 } from '../runtime/starfieldVrOutcomeOwnershipContractV1.mjs';
+import { buildAutonomousProjectStewardshipSeedV1 } from '../runtime/autonomousProjectStewardshipSeedV1.mjs';
+import { buildConversationalIntelligenceSeedV1 } from '../runtime/conversationalIntelligenceSeedV1.mjs';
+import { buildSovereignCommanderParitySeedV1 } from '../runtime/sovereignCommanderParitySeedV1.mjs';
+import { buildWorkspaceIntegritySeedV1 } from '../runtime/workspaceIntegritySeedV1.mjs';
+import { buildSovereignMeterIndependenceSeedV1 } from '../runtime/sovereignMeterIndependenceSeedV1.mjs';
+import { buildFullSovereigntySeedV1 } from '../runtime/fullSovereigntySeedV1.mjs';
+import { buildGoalConveyorFleetCareSeedV1 } from '../runtime/goalConveyorFleetCareSeedV1.mjs';
 
 export const SEED_GARDEN_PROJECTION_SCHEMA_V1 = 'stephanos.seed-garden-projection.v1';
 
@@ -18,6 +25,13 @@ function normalizeKey(value) {
 
 function buildHighLevelFlywheelSeedsV1() {
   const starfield = buildStarfieldVrOutcomeOwnershipContractV1();
+  const projectStewardship = buildAutonomousProjectStewardshipSeedV1();
+  const conversationalIntelligence = buildConversationalIntelligenceSeedV1();
+  const sovereignCommanderParity = buildSovereignCommanderParitySeedV1();
+  const workspaceIntegrity = buildWorkspaceIntegritySeedV1();
+  const sovereignMeterIndependence = buildSovereignMeterIndependenceSeedV1();
+  const fullSovereignty = buildFullSovereigntySeedV1();
+  const fleetCare = buildGoalConveyorFleetCareSeedV1();
   return Object.freeze([
     Object.freeze({
       seedId: starfield.missionId,
@@ -34,6 +48,83 @@ function buildHighLevelFlywheelSeedsV1() {
       issue: '#2670',
       northStar: 'Continuously discover, diagnose, own and close material gaps across Stephanos while preserving canonical ownership, evidence-backed truth and operator approval boundaries.',
       source: 'shared/runtime/upliftWorkspaceProjectionV1.mjs',
+    }),
+    Object.freeze({
+      seedId: projectStewardship.missionId,
+      title: projectStewardship.title,
+      seedKind: projectStewardship.seedKind,
+      issue: projectStewardship.issueRef,
+      northStar: projectStewardship.northStar,
+      operatingLoop: projectStewardship.operatingLoop,
+      growthRungs: projectStewardship.growthRungs,
+      source: 'shared/runtime/autonomousProjectStewardshipSeedV1.mjs',
+    }),
+    Object.freeze({
+      seedId: conversationalIntelligence.missionId,
+      title: conversationalIntelligence.title,
+      seedKind: conversationalIntelligence.seedKind,
+      issue: conversationalIntelligence.issueRef,
+      northStar: conversationalIntelligence.northStar,
+      operatingLoop: conversationalIntelligence.operatingLoop,
+      growthRungs: conversationalIntelligence.growthRungs,
+      linkedImprovementWork: conversationalIntelligence.linkedImprovementWork,
+      linkedGoalIssueRefs: Object.freeze(conversationalIntelligence.linkedImprovementWork
+        .filter((work) => work.kind === 'issues' && ['#2434', '#2966'].includes(work.ref))
+        .map((work) => work.ref)),
+      continuousExperienceChecks: conversationalIntelligence.continuousExperienceChecks,
+      source: 'shared/runtime/conversationalIntelligenceSeedV1.mjs',
+    }),
+    Object.freeze({
+      seedId: sovereignCommanderParity.missionId,
+      title: sovereignCommanderParity.title,
+      seedKind: sovereignCommanderParity.seedKind,
+      issue: sovereignCommanderParity.issueRef,
+      northStar: sovereignCommanderParity.northStar,
+      operatingLoop: sovereignCommanderParity.operatingLoop,
+      growthRungs: sovereignCommanderParity.growthRungs,
+      source: 'shared/runtime/sovereignCommanderParitySeedV1.mjs',
+    }),
+    Object.freeze({
+      seedId: sovereignMeterIndependence.missionId,
+      title: sovereignMeterIndependence.title,
+      seedKind: sovereignMeterIndependence.seedKind,
+      issue: sovereignMeterIndependence.issueRef,
+      northStar: sovereignMeterIndependence.northStar,
+      operatingLoop: sovereignMeterIndependence.operatingLoop,
+      growthRungs: sovereignMeterIndependence.growthRungs,
+      source: 'shared/runtime/sovereignMeterIndependenceSeedV1.mjs',
+    }),
+    Object.freeze({
+      seedId: fullSovereignty.missionId,
+      title: fullSovereignty.title,
+      seedKind: fullSovereignty.seedKind,
+      issue: fullSovereignty.issueRef,
+      northStar: fullSovereignty.northStar,
+      operatingLoop: fullSovereignty.operatingLoop,
+      growthRungs: fullSovereignty.growthRungs,
+      existingOwnerIssueRefs: fullSovereignty.existingOwnerIssueRefs,
+      source: 'shared/runtime/fullSovereigntySeedV1.mjs',
+    }),
+    Object.freeze({
+      seedId: workspaceIntegrity.missionId,
+      title: workspaceIntegrity.title,
+      seedKind: workspaceIntegrity.seedKind,
+      issue: workspaceIntegrity.issueRef,
+      northStar: workspaceIntegrity.northStar,
+      operatingLoop: workspaceIntegrity.operatingLoop,
+      growthRungs: workspaceIntegrity.growthRungs,
+      source: 'shared/runtime/workspaceIntegritySeedV1.mjs',
+    }),
+    Object.freeze({
+      seedId: fleetCare.missionId,
+      title: fleetCare.title,
+      seedKind: fleetCare.seedKind,
+      issue: fleetCare.issueRef,
+      northStar: fleetCare.northStar,
+      operatingLoop: fleetCare.operatingLoop,
+      growthRungs: fleetCare.growthRungs,
+      canonicalOwnerGoals: fleetCare.canonicalOwnerGoals,
+      source: 'shared/runtime/goalConveyorFleetCareSeedV1.mjs',
     }),
   ]);
 }

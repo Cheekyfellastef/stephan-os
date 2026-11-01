@@ -404,8 +404,10 @@ test('protected canon: Flywheel exposes honest hosted live-telemetry states with
   const telemetryModelSource = await read(new URL('../shared/runtime/flywheelTelemetryModel.mjs', import.meta.url));
   const styles = await read(stylesPath);
 
-  assert.match(source, /requestStephanosBackend/);
-  assert.match(source, /\/api\/shared-workspace\/dashboard-feed/);
+  assert.match(source, /requestWorkspaceHydration/);
+  assert.match(source, /workspaceId: 'flywheel'/);
+  assert.match(source, /datasets: \['dashboard'\]/);
+  assert.match(source, /\/api\/shared-workspace\/hydrate\?workspace=flywheel/);
   assert.match(source, /bridgeHostedExecutionBridgeUrl/);
   const aiStoreSource = await read(new URL('../stephanos-ui/src/state/aiStore.js', import.meta.url));
   assert.match(aiStoreSource, /persistStephanosHostedExecutionBridgeUrl/);
@@ -432,7 +434,8 @@ test('Flywheel and Agents uplift workspaces preserve protected Command Deck trut
     read(new URL('../stephanos-ui/src/components/FlywheelWorkspaceCanvas.jsx', import.meta.url)),
     read(new URL('../stephanos-ui/src/components/AgentsWorkspaceCanvas.jsx', import.meta.url)),
   ]);
-  assert.match(flywheelPanel, /dashboard-feed\?scope=full-history/);
+  assert.match(flywheelPanel, /requestWorkspaceHydration/);
+  assert.match(flywheelPanel, /workspaceId: 'flywheel'/);
   assert.match(agentsTile, /dashboard-feed\?scope=full-history/);
   assert.match(flywheelPanel, /The observatory remains visible/);
   assert.match(flywheelPanel, /<FlywheelWorkspaceCanvas[\s\S]*\{view\.valid \? \(/);
@@ -490,4 +493,21 @@ test('protected canon: Command Deck heavy-brain gate recognizes Qwen 3.5 27B', a
   const hookSource = await read(new URL('../stephanos-ui/src/hooks/useAIConsole.js', import.meta.url));
   assert.match(hookSource, /HEAVY_OLLAMA_MODELS = new Set\(\['gpt-oss:20b', 'qwen:14b', 'qwen3\.5:27b', 'qwen:32b'\]\)/);
   assert.match(hookSource, /heavyOllamaRequest && previousGenerationUncertain/);
+});
+
+test('protected canon: backend health cannot be overwritten by provider telemetry failure', async () => {
+  const hookSource = await read(new URL('../stephanos-ui/src/hooks/useAIConsole.js', import.meta.url));
+  const healthRefreshStart = hookSource.indexOf('const refreshHealth = useCallback(');
+  const healthRefreshEnd = hookSource.indexOf('}, [runtimeConfig, setApiStatus', healthRefreshStart);
+  assert.ok(healthRefreshStart >= 0 && healthRefreshEnd > healthRefreshStart);
+  const refreshSource = hookSource.slice(healthRefreshStart, healthRefreshEnd);
+  assert.match(refreshSource, /const health = await checkApiHealth\(resolvedRuntimeContext\);/);
+  assert.match(refreshSource, /try \{\s*providerHealth = await getProviderHealth\(/);
+  assert.match(refreshSource, /catch \(providerError\)/);
+  assert.match(refreshSource, /backendReachable: health\.ok,/);
+  assert.match(refreshSource, /healthProbeTruth: reconcileBackendHealthTruth\(/);
+
+  const cockpitSource = await read(new URL('../stephanos-ui/src/components/CockpitPanel.jsx', import.meta.url));
+  assert.match(cockpitSource, /deriveCockpitBackendHealthDiagnostics\(\{ apiStatus, routeTruthView, runtimeStatus \}\)/);
+  assert.match(cockpitSource, /Backend health proof fresh: \$\{backendHealthDiagnostics\.fresh\}/);
 });

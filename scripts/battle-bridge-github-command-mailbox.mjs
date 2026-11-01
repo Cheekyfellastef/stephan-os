@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+import { MAINTENANCE_RECOVERY_OPERATIONS, projectMaintenanceRecoveryReceiptV1 } from '../shared/agents/sovereignMaintenanceRecoveryMailboxV1.mjs';
+import { FRONTEND_VISIBILITY_OPERATIONS, FRONTEND_VISIBILITY_START_OPERATION,
+  projectFrontendVisibilityReceiptV1 } from '../shared/agents/sovereignFrontendVisibilityMailboxV1.mjs';
+import { validateWindowsCalibrationRemoteProjectionV1 } from '../shared/agents/sovereignWindowsCalibrationRemoteV1.mjs';
+import { FLEET_SUPERVISOR_ACTION, projectFleetSupervisorReceiptV1,
+  compactFleetSupervisorReceiptV1 } from '../shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
+import { SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
@@ -16,7 +23,12 @@ import {
   validateStephanosCapabilityRegistry,
 } from '../shared/agents/stephanosCapabilityRegistry.mjs';
 import { cancelBoundedMission } from '../stephanos-server/services/missionOrchestratorControlService.js';
+import { quarantineOriginalSourceAttempt } from '../stephanos-server/services/originalSourceAttemptFenceService.js';
+import { authenticateOriginalWriterExclusionEvidence } from '../stephanos-server/services/originalSourceWriterCustodyService.js';
+import { authenticateLegacyOrphanQuarantine } from '../stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js';
+import { resolveCriticalBacklogRuntimePaths } from '../stephanos-server/services/criticalBacklogConveyorServiceCore.js';
 import { readAuthoritativeProgrammeProjection } from '../stephanos-server/services/programmeAuthorityService.js';
+import { readVerifiedStephanosNativeRoutingCandidate } from '../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
 import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
 import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import { runBattleBridgeMonitorMultiplexerCanary } from './battle-bridge-monitor-multiplexer-canary.mjs';
@@ -47,10 +59,23 @@ import {
 import { GUARDED_CODEX_TASK_READBACK_OPERATION } from '../shared/agents/battleBridgeCodexTaskReadbackV1.mjs';
 import { classifyAllowlistedRecoveryAdapterBlocker } from '../shared/agents/recoveryAdapterBlockerClassifier.mjs';
 import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConveyor.mjs';
-import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
+import { verifyMailboxOutboxGuardLease, readJsonObject, atomicWriteJson } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
+import { CANONICAL_MAILBOX_ISSUE, RETIRED_CANONICAL_MAILBOX_ISSUES } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
+import { MAILBOX_ROTATION_OPERATION, MAILBOX_ROTATION_REQUEST_ID, auditMailboxRotationComments,
+  parseMailboxRotationComment, mailboxRotationCommandAllowed, projectMailboxRotation,
+  validateMailboxRotationRecord, projectMailboxRotationReceipt } from '../shared/agents/canonicalMailboxRotationV1.mjs';
+import { createMailboxExecutionLedger } from './canonical-mailbox-execution-ledger-v1.mjs';
+import { executeMailboxRotationOnHost, readMailboxAuthorityLiteral, verifyMailboxRotationActivationPull } from './canonical-mailbox-rotation-host-v1.mjs';
+import { buildMailboxRotationFence, findMailboxRotationFence } from '../shared/agents/canonicalMailboxRotationFenceV1.mjs';
+import { inventoryMailboxRotationExecution } from './canonical-mailbox-action-evidence-v2.mjs';
 import { readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import { SOVEREIGN_COMMANDER_INSTALL_OPERATION } from '../shared/agents/sovereignCommanderBattleBridgeV1.mjs';
-import { SOVEREIGN_COMMANDER_REMOTE_OPERATION } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
+import {
+  SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+  safeCpuPressureSnapshotProjection,
+} from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
+import { projectBattleBridgeGitConfigurationDiagnosticV1 }
+  from '../shared/agents/battleBridgeGitConfigurationDiagnosticV1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
@@ -64,6 +89,7 @@ const mailboxStateRoot = join(mailboxWorkspaceRoot, 'github-command-mailbox');
 const canonicalReceiptRoot = join(sharedWorkspaceRoot, 'receipts', 'github-command-mailbox');
 const criticalBacklogStatusPath = join(sharedWorkspaceRoot, 'status', 'critical-backlog-conveyor-current.json');
 const statePath = join(mailboxStateRoot, 'state.json');
+const executionLedger = createMailboxExecutionLedger(mailboxStateRoot);
 const MAX_GITHUB_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_GITHUB_RECEIPT_JSON_BYTES = 9 * 1024;
 const MAX_LOCAL_RECEIPT_BYTES = 256 * 1024;
@@ -76,6 +102,7 @@ const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/i;
 const OCI_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/i;
 const FORGE_BACKUP_VOLUME_PATTERN = /^stephanos-forge-shadow-backup-[0-9a-f]{16}$/i;
 const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
+  MAILBOX_ROTATION_OPERATION,
   'UPDATE_STEPHANOS_FROM_CHAT',
   'INSTALL_UNATTENDED_GITHUB_SYNC',
   MISSION_ORCHESTRATOR_CANCEL_OPERATION,
@@ -92,6 +119,7 @@ const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   GUARDED_CODEX_TASK_READBACK_OPERATION,
   SOVEREIGN_COMMANDER_INSTALL_OPERATION,
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+  FRONTEND_VISIBILITY_START_OPERATION,
 ]);
 const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
 const SAFE_CONVEYOR_DECISIONS = new Set(Object.values(CRITICAL_BACKLOG_DECISION));
@@ -956,6 +984,12 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
     .slice(0, 8));
   const selfHeal = Object.freeze({
     available: safeBoolean(value?.selfHeal?.available),
+    outerBridgeRunCount: safeOptionalNonNegativeInteger(value?.selfHeal?.outerBridgeRunCount),
+    outerBridgeInFlight: safeBoolean(value?.selfHeal?.outerBridgeInFlight),
+    outerBridgeLastPublicationOk: safeBoolean(value?.selfHeal?.outerBridgeLastPublicationOk),
+    outerBridgeLastStage: safeTelemetryText(value?.selfHeal?.outerBridgeLastStage, 80).toUpperCase(),
+    outerBridgeLastBlocker: safeTelemetryText(value?.selfHeal?.outerBridgeLastBlocker, 120).toUpperCase(),
+    outerBridgeLastVerdict: safeTelemetryText(value?.selfHeal?.outerBridgeLastVerdict, 120).toUpperCase(),
     dependencySelfHealEnabled: safeBoolean(value?.selfHeal?.dependencySelfHealEnabled),
     dependencySelfHealLastAttemptAtUtc: safeTimestamp(value?.selfHeal?.dependencySelfHealLastAttemptAtUtc),
     dependencySelfHealAttemptCount: safeOptionalNonNegativeInteger(value?.selfHeal?.dependencySelfHealAttemptCount),
@@ -990,6 +1024,31 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
     blocker: safeTelemetryText(value?.relay?.blocker, 160).toUpperCase(),
     finalVerdict: safeTelemetryText(value?.relay?.finalVerdict, 120).toUpperCase(),
   });
+  const rawOuterBridge = value?.outerBridge;
+  const matchedOuterBridge = rawOuterBridge?.available === true
+    && rawOuterBridge?.current === true
+    && rawOuterBridge?.exactHeadMatch === true
+    && rawOuterBridge?.readOnly === true
+    && rawOuterBridge?.sourceMutationAllowed === false
+    && rawOuterBridge?.mergeAuthority === false
+    && safeTelemetrySha(rawOuterBridge?.sourceHead) === repository.head
+    && repository.head === headSync.runtimeHead
+    && headSync.exactHeadChainProven === true;
+  const outerBridge = Object.freeze({
+    available: rawOuterBridge?.available === true,
+    current: matchedOuterBridge,
+    exactHeadMatch: matchedOuterBridge,
+    sourceHead: matchedOuterBridge ? repository.head : '',
+    observedAtUtc: safeTimestamp(rawOuterBridge?.observedAtUtc),
+    cycleAgeSeconds: safeOptionalNonNegativeInteger(rawOuterBridge?.cycleAgeSeconds),
+    stage: matchedOuterBridge ? safeTelemetryText(rawOuterBridge?.stage, 80).toUpperCase() : 'UNVERIFIED',
+    rescueBlocker: safeTelemetryText(rawOuterBridge?.rescueBlocker, 120).toUpperCase(),
+    canonicalLeaseReleaseProven: matchedOuterBridge && rawOuterBridge?.canonicalLeaseReleaseProven === true,
+    physicalPickupProven: false,
+    twoUnattendedRefillsProven: false,
+    canonicalHandbackEligible: false,
+    readOnly: true, sourceMutationAllowed: false, mergeAuthority: false,
+  });
   const health = Object.freeze({
     repository: safeLight(value?.health?.repository),
     core: safeLight(value?.health?.core),
@@ -1020,6 +1079,7 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
     controllers,
     meters,
     relay,
+    outerBridge,
     health,
     readOnly: true,
     sourceMutationAllowed: false,
@@ -1326,6 +1386,494 @@ function findStarfieldVrTelemetryReceiptSource(value, maxDepth = 8) {
   return null;
 }
 
+// Read-only Island result has its own authority-denying public receipt contract.
+function safeRescueIslandBoundaryReceiptProjection(value = {}) {
+  if (value?.remoteAction !== 'rescue-island-readonly-boundary'
+      || value?.finalVerdict !== 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED'
+      || value?.sourceMutationAllowed !== false
+      || value?.originalSourceLeaseReleaseAllowed !== false
+      || value?.mergeAuthority !== false
+      || value?.publicReceiptSafe !== true
+      || value?.secretMaterialReturned !== false) return null;
+  const scope = value?.rescueIslandBoundary;
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)
+      || scope.schemaVersion !== 'stephanos.rescue-island-boundary-probe.v1'
+      || scope.ok !== true || scope.readOnly !== true
+      || scope.observedPathCount !== 3
+      || scope.physicalScopeReadback !== 'LOCAL_OS_SCOPE_OBSERVED'
+      || scope.finalVerdict !== 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED'
+      || scope.sourceMutationAllowed !== false || scope.workerStartAllowed !== false
+      || scope.independentOwnershipAuthenticated !== false
+      || scope.gamingBudgetAuthenticated !== false
+      || scope.originalSourceLeaseReleaseAllowed !== false
+      || scope.seedForgeQueueAccessAllowed !== false
+      || scope.mergeAllowed !== false || scope.publicReceiptSafe !== true
+      || scope.secretMaterialReturned !== false) return null;
+  // Never serialize native file names, process IDs, raw stdout, secrets or aliases.
+  return Object.freeze({
+    schemaVersion: 'stephanos.rescue-island-boundary-probe.v1',
+    ok: true, observedPathCount: 3,
+    physicalScopeReadback: 'LOCAL_OS_SCOPE_OBSERVED',
+    finalVerdict: 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED',
+    readOnly: true,
+    sourceMutationAllowed: false,
+    workerStartAllowed: false,
+    independentOwnershipAuthenticated: false,
+    gamingBudgetAuthenticated: false,
+    originalSourceLeaseReleaseAllowed: false,
+    seedForgeQueueAccessAllowed: false,
+    mergeAllowed: false,
+    publicReceiptSafe: true,
+    secretMaterialReturned: false,
+  });
+}
+
+// Secondary redaction barrier for the single read-only original-r7 census.
+// The public GitHub mailbox must never publish raw process, SID, path or script data.
+const ORIGINAL_CUSTODY_RECEIPT_BLOCKERS = new Set([
+  'ORIGINAL_CHECKOUT_NOT_OBSERVED', 'ORIGINAL_CHECKOUT_ACL_UNOBSERVED',
+  'ORIGINAL_PROCESS_ENUMERATION_UNAVAILABLE', 'ORIGINAL_PROCESS_CANDIDATES_PRESENT',
+  'SCHEDULED_TASK_ENUMERATION_UNAVAILABLE', 'CHECKOUT_PROBE_UNAVAILABLE',
+  'CIM_PROCESS_INVENTORY_UNAVAILABLE', 'CIM_PROCESS_COMMAND_LINE_UNOBSERVED',
+  'TASK_INVENTORY_UNAVAILABLE',
+  'CHECKOUT_UNAVAILABLE', 'CHECKOUT_ACL_UNAVAILABLE',
+  'INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED',
+  'INDEPENDENT_OPERATOR_APPROVAL_NOT_PROVEN',
+]);
+function safeOriginalSourceCustodyReceiptProjection(operationResult = {}) {
+  if (operationResult?.remoteAction !== 'original-source-custody-census') return null;
+  const value = operationResult?.inspection;
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || operationResult.ok !== true
+    || operationResult.finalVerdict !== 'SOVEREIGN_CUSTODY_CENSUS_OBSERVED_HOLD'
+    || operationResult.originalLeaseReleased !== false
+    || operationResult.privilegedWindowsWitnessCommissioned !== false
+    || operationResult.sourceMutationAllowed !== false
+    || operationResult.arbitraryShellAllowed !== false
+    || operationResult.publicReceiptSafe !== true
+    || operationResult.secretMaterialReturned !== false
+    || value.originalLeaseId !== 'critical-2962-elastic-goal-r7-lease'
+    || value.finalVerdict !== 'ORIGINAL_SOURCE_CUSTODY_HOLD'
+    || value.historicalExecutionOutcome !== 'UNKNOWN'
+    || value.independentWindowsExclusionProven !== false
+    || value.independentOperatorApprovalProven !== false
+    || value.leaseReleaseAuthorized !== false
+    || value.sourceMutationAuthorized !== false
+    || typeof value.checkoutPresent !== 'boolean'
+    || typeof value.aclReadable !== 'boolean') return null;
+  const count = item => item === null || (Number.isSafeInteger(item) && item >= 0 && item <= 1_000_000);
+  if (!count(value.candidateProcessCount) || !count(value.stephanosScheduledTaskCount)) return null;
+  const inspectedAtUtc = value.inspectedAtUtc;
+  const observedMs = Date.parse(inspectedAtUtc);
+  if (typeof inspectedAtUtc !== 'string'
+    || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(inspectedAtUtc)
+    || !Number.isFinite(observedMs)
+    || new Date(observedMs).toISOString() !== inspectedAtUtc) return null;
+  const blockers = value.blockers;
+  if (!Array.isArray(blockers) || blockers.length < 2 || blockers.length > 14
+    || blockers.some(code => !ORIGINAL_CUSTODY_RECEIPT_BLOCKERS.has(code))
+    || !blockers.includes('INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED')
+    || !blockers.includes('INDEPENDENT_OPERATOR_APPROVAL_NOT_PROVEN')) return null;
+  return Object.freeze({
+    originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+    inspectedAtUtc,
+    checkoutPresent: value.checkoutPresent,
+    aclReadable: value.aclReadable,
+    candidateProcessCount: value.candidateProcessCount,
+    stephanosScheduledTaskCount: value.stephanosScheduledTaskCount,
+    blockers: Object.freeze([...new Set(blockers)]),
+    historicalExecutionOutcome: 'UNKNOWN',
+    independentWindowsExclusionProven: false,
+    independentOperatorApprovalProven: false,
+    leaseReleaseAuthorized: false,
+    sourceMutationAuthorized: false,
+    finalVerdict: 'ORIGINAL_SOURCE_CUSTODY_HOLD',
+  });
+}
+
+// Projection for the read-only Starfield VR archive. Public GitHub receipts
+// carry only four validated summary rows per page, never raw CSV, file paths,
+// arbitrary metadata, screenshots or host telemetry fields.
+function safeStarfieldVrTelemetryArchiveReceiptProjection(archive) {
+  if (!archive || archive.schemaVersion !== 'stephanos.starfield-vr-telemetry-archive.v1'
+    || archive.ok !== true || archive.readOnly !== true
+    || archive.sourceMutationAllowed !== false
+    || archive.rawTelemetryReturned !== false || archive.hostPathsReturned !== false
+    || archive.secretMaterialReturned !== false || archive.arbitraryShellAllowed !== false
+    || archive.unknownMeansGreen !== false || !Array.isArray(archive.sessions)
+    || archive.sessions.length > 4) return null;
+  const safeCount = (value, maximum = 1000000000) => (
+    Number.isSafeInteger(value) && value >= 0 && value <= maximum ? value : null
+  );
+  const metric = (value, maximum = 1000000) => (
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= maximum
+      ? Math.round(value * 100) / 100 : null
+  );
+  const time = (value) => {
+    if (typeof value !== 'string' || value.length > 60) return '';
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
+  };
+  const limit = safeCount(archive.limit, 4);
+  const offset = safeCount(archive.offset, 1000000);
+  const totalSessions = safeCount(archive.totalSessions, 1000000);
+  const nextOffset = archive.nextOffset === null ? null : safeCount(archive.nextOffset, 1000000);
+  if (!limit || offset === null || totalSessions === null
+    || (archive.hasMore === true && nextOffset === null)
+    || archive.sessions.length > limit
+    || !time(archive.generatedAtUtc)) return null;
+  const sessions = archive.sessions.map((row) => ({
+    sessionId: safeTelemetryId(row.sessionId),
+    enteredAtUtc: time(row.enteredAtUtc),
+    endedAtUtc: time(row.endedAtUtc),
+    provider: ['mutar-openxr', 'vorpx'].includes(row.provider) ? row.provider : 'UNKNOWN',
+    sourceHead: safeTelemetrySha(row.sourceHead),
+    sessionOutcome: safeTelemetryText(row.sessionOutcome, 60),
+    sampleCount: safeCount(row.sampleCount),
+    partialTelemetry: row.partialTelemetry === true,
+    csvPresent: row.csvPresent === true,
+    summaryPresent: row.summaryPresent === true,
+    sessionReceiptPresent: row.sessionReceiptPresent === true,
+    avgApplicationFrameTimeMs: metric(row.avgApplicationFrameTimeMs),
+    p95ApplicationFrameTimeMs: metric(row.p95ApplicationFrameTimeMs),
+    p99ApplicationFrameTimeMs: metric(row.p99ApplicationFrameTimeMs),
+    avgDeliveredCadenceHz: metric(row.avgDeliveredCadenceHz, 1000),
+    headsetRefreshRateHz: metric(row.headsetRefreshRateHz, 1000),
+    maxEyePresentationSkewMs: metric(row.maxEyePresentationSkewMs),
+    maxPoseAgeMs: metric(row.maxPoseAgeMs),
+    avgGpuUtilPct: metric(row.avgGpuUtilPct, 100),
+    avgSystemCpuPct: metric(row.avgSystemCpuPct, 100),
+    telemetryMissingCount: safeCount(row.telemetryMissingCount, 1000),
+    crashEvidenceCount: safeCount(row.crashEvidenceCount, 1000),
+  }));
+  if (sessions.some((row) => !row.sessionId)) return null;
+  return Object.freeze({
+    schemaVersion: 'stephanos.starfield-vr-telemetry-archive.v1',
+    ok: true, generatedAtUtc: time(archive.generatedAtUtc),
+    directoryAvailable: archive.directoryAvailable === true,
+    totalSessions, newestSessionId: safeTelemetryId(archive.newestSessionId),
+    offset, limit, hasMore: archive.hasMore === true, nextOffset,
+    sessions: Object.freeze(sessions),
+    readOnly: true, sourceMutationAllowed: false,
+    rawTelemetryReturned: false, hostPathsReturned: false,
+    secretMaterialReturned: false,
+  });
+}
+
+// Repeat the CPU sampler's fail-closed validator at the public receipt boundary.
+// The host already returns a bounded, allowlisted projection; never mirror raw
+// process command lines, Windows paths, full process inventories or untrusted fields.
+function safeCpuPressureReceiptProjection(operationResult = {}) {
+  if (operationResult?.remoteAction !== 'cpu-pressure-snapshot'
+    || operationResult?.ok !== true
+    || operationResult?.finalVerdict !== 'SOVEREIGN_COMMANDER_REMOTE_CPU_SNAPSHOT_COMPLETE'
+    || operationResult?.publicReceiptSafe !== true
+    || operationResult?.secretMaterialReturned !== false
+    || !operationResult?.cpuPressure
+    || typeof operationResult.cpuPressure !== 'object'
+    || Array.isArray(operationResult.cpuPressure)) return null;
+  let sanitized = null;
+  try {
+    sanitized = safeCpuPressureSnapshotProjection({
+      structuredContent: { stdout: JSON.stringify(operationResult.cpuPressure) },
+    }, 'cpu-pressure-snapshot');
+  } catch { return null; }
+  if (!sanitized) return null;
+  // The public command transport has a strict 9 KiB receipt budget. Keep the
+  // hottest twelve allowlisted entries, never quietly claim the full census.
+  return Object.freeze({
+    ...sanitized,
+    rows: Object.freeze(sanitized.rows.slice(0, 12)),
+    rowsTruncated: sanitized.rows.length > 12,
+    observedRowCount: sanitized.rows.length,
+  });
+}
+
+// The authenticated local /health guardian is already projected by Commander,
+// but the public GitHub mailbox formerly dropped it. Publish only this bounded
+// allowlist; a healthy HTTP listener or a cycleCount > 0 is NOT material repair.
+function safeSovereignGuardianReceiptProjection(operationResult = {}) {
+  if (operationResult?.remoteAction !== 'status'
+    || operationResult?.ok !== true
+    || operationResult?.finalVerdict !== 'SOVEREIGN_COMMANDER_REMOTE_STATUS_COMPLETE'
+    || operationResult?.publicReceiptSafe !== true
+    || operationResult?.secretMaterialReturned !== false) return null;
+  const value = operationResult?.continuousRepairGuardian;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const count = v => Number.isSafeInteger(v) && v >= 0 && v <= 1_000_000_000 ? v : null;
+  const token = v => typeof v === 'string'
+    && /^[A-Z0-9][A-Z0-9_.:-]{0,159}$/.test(v) ? v : '';
+  const stamp = v => typeof v === 'string' && v.length > 0 && v.length <= 40
+    && Number.isFinite(Date.parse(v)) ? new Date(v).toISOString() : '';
+  const state = ['UNKNOWN', 'DISABLED', 'AWAITING_FIRST_CYCLE',
+    'NOT_SCHEDULED', 'CYCLES_OBSERVED'].includes(value.loopState)
+    ? value.loopState : 'UNKNOWN';
+  const available = value.available === true
+    && typeof value.enabled === 'boolean'
+    && typeof value.running === 'boolean'
+    && typeof value.scheduled === 'boolean'
+    && count(value.cycleCount) !== null
+    && count(value.successCount) !== null
+    && count(value.failureCount) !== null;
+  return Object.freeze({
+    available,
+    enabled: available ? value.enabled : null,
+    running: available ? value.running : null,
+    scheduled: available ? value.scheduled : null,
+    cycleCount: available ? count(value.cycleCount) : null,
+    successCount: available ? count(value.successCount) : null,
+    failureCount: available ? count(value.failureCount) : null,
+    lastStartedAtUtc: available ? stamp(value.lastStartedAtUtc) : '',
+    lastCompletedAtUtc: available ? stamp(value.lastCompletedAtUtc) : '',
+    lastOk: available && typeof value.lastOk === 'boolean' ? value.lastOk : null,
+    lastBlocker: available ? token(value.lastBlocker) : '',
+    lastFinalVerdict: available ? token(value.lastFinalVerdict) : '',
+    loopState: available ? state : 'UNKNOWN',
+    autonomousMaterialRepairProven: false,
+    readOnly: true,
+    secretMaterialReturned: false,
+  });
+}
+
+// Closed-world public summary for the fixed original-r7 Windows witness readiness
+// observation. A source-only preflight is never permission to install, sign,
+// release the lease, or infer exclusion from an empty process census.
+const ORIGINAL_R7_READINESS_BLOCKERS = new Set([
+  'PUBLISHER_TASK_CONTEXT_UNAVAILABLE',
+  'OS_WITNESS_SERVICE_NOT_OBSERVED', 'OS_WITNESS_SERVICE_NOT_RUNNING',
+  'ORIGINAL_WRITER_PROCESS_INVENTORY_UNAVAILABLE',
+  'ORIGINAL_WRITER_PROCESS_CANDIDATES_PRESENT',
+  'RELATED_SCHEDULED_TASK_INVENTORY_UNAVAILABLE',
+  'SERVICE_ENUMERATION_UNAVAILABLE', 'PROCESS_ENUMERATION_UNAVAILABLE',
+  'PROCESS_COMMANDLINE_VISIBILITY_INCOMPLETE',
+  'SCHEDULED_TASK_ENUMERATION_UNAVAILABLE', 'CHECKOUT_INSPECTION_UNAVAILABLE',
+  'INDEPENDENT_PROTECTED_SERVICE_SID_NOT_COMMISSIONED',
+  'ORIGINAL_WRITER_OS_EXCLUSION_AND_NEGATIVE_TESTS_UNPROVEN',
+  'PROTECTED_WITNESS_SIGNING_ROOT_UNCOMMISSIONED',
+  'SEPARATE_OPERATOR_SIGNING_ROOT_UNCOMMISSIONED',
+  'CANONICAL_R7_CAS_RELEASE_PROOF_MISSING',
+]);
+const ORIGINAL_R7_MANDATORY_HOLDS = [
+  'INDEPENDENT_PROTECTED_SERVICE_SID_NOT_COMMISSIONED',
+  'ORIGINAL_WRITER_OS_EXCLUSION_AND_NEGATIVE_TESTS_UNPROVEN',
+  'PROTECTED_WITNESS_SIGNING_ROOT_UNCOMMISSIONED',
+  'SEPARATE_OPERATOR_SIGNING_ROOT_UNCOMMISSIONED',
+  'CANONICAL_R7_CAS_RELEASE_PROOF_MISSING',
+];
+function originalR7WitnessReadinessGuardProjection(result = {}) {
+  if (result.remoteAction !== 'original-r7-witness-readiness') return {};
+  // These guards qualify the summary again after local checkpointing and
+  // public compaction. Preserve actual booleans; missing evidence stays null.
+  return {
+    originalLeaseReleased: safeBoolean(result.originalLeaseReleased),
+    privilegedWindowsWitnessCommissioned: safeBoolean(result.privilegedWindowsWitnessCommissioned),
+    sourceMutationAllowed: safeBoolean(result.sourceMutationAllowed),
+    arbitraryShellAllowed: safeBoolean(result.arbitraryShellAllowed),
+  };
+}
+
+function safeOriginalR7WitnessReadinessProjection(result = {}) {
+  if (result.remoteAction !== 'original-r7-witness-readiness') return null;
+  const value = result.witnessReadiness;
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || result.ok !== true || result.finalVerdict !== 'SOVEREIGN_R7_READINESS_OBSERVED_HOLD'
+    || result.originalLeaseReleased !== false || result.privilegedWindowsWitnessCommissioned !== false
+    || result.sourceMutationAllowed !== false || result.arbitraryShellAllowed !== false
+    || result.publicReceiptSafe !== true || result.secretMaterialReturned !== false
+    || value.finalVerdict !== 'ORIGINAL_R7_WINDOWS_WITNESS_NOT_COMMISSIONED'
+    || value.historicalOutcome !== 'UNKNOWN' || value.authenticatedWitness !== false
+    || value.physicalPickupProven !== false || value.leaseReleaseAuthority !== false
+    || value.sourceMutationAuthority !== false
+    || typeof value.servicePresent !== 'boolean'
+    || !['RUNNING', 'STOPPED', 'NOT_INSTALLED', 'UNKNOWN'].includes(value.serviceStatus)
+    || (!value.servicePresent && !['NOT_INSTALLED', 'UNKNOWN'].includes(value.serviceStatus))
+    || typeof value.publisherTaskPresent !== 'boolean'
+    || !['RUNNING', 'READY', 'DISABLED', 'QUEUED', 'NOT_FOUND', 'UNKNOWN'].includes(value.publisherTaskState)
+    || !['ZERO', 'NONZERO', 'NEVER_RUN', 'UNKNOWN'].includes(value.publisherLastResultClass)
+    || value.publisherOriginalWriterAuthenticated !== false
+    || !Array.isArray(value.blockers) || value.blockers.length < 5 || value.blockers.length > 14
+    || value.blockers.some(code => !ORIGINAL_R7_READINESS_BLOCKERS.has(code))
+    || ORIGINAL_R7_MANDATORY_HOLDS.some(code => !value.blockers.includes(code))) return null;
+  const stamp = value.observedAtUtc;
+  const ms = typeof stamp === 'string' ? Date.parse(stamp) : NaN;
+  if (!Number.isFinite(ms) || new Date(ms).toISOString() !== stamp
+    || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(stamp)) return null;
+  return Object.freeze({
+    observedAtUtc: stamp,
+    servicePresent: value.servicePresent,
+    serviceStatus: value.serviceStatus,
+    publisherTaskPresent: value.publisherTaskPresent,
+    publisherTaskState: value.publisherTaskState,
+    publisherLastResultClass: value.publisherLastResultClass,
+    publisherOriginalWriterAuthenticated: false,
+    blockers: Object.freeze([...new Set(value.blockers)]),
+    historicalOutcome: 'UNKNOWN', authenticatedWitness: false,
+    physicalPickupProven: false, leaseReleaseAuthority: false,
+    sourceMutationAuthority: false,
+    finalVerdict: 'ORIGINAL_R7_WINDOWS_WITNESS_NOT_COMMISSIONED',
+  });
+}
+
+// The public census may HOLD its safe numeric summary for a schema reason.
+// Surface only a fixed reason, never raw PIDs, identities, command lines,
+// checkout paths, invalid blocker strings or apparent lease-release authority.
+function safeOriginalSourceCustodyProjectionDiagnostic(operationResult = {}) {
+  if (operationResult?.remoteAction !== 'original-source-custody-census') return null;
+  const projected = safeOriginalSourceCustodyReceiptProjection(operationResult);
+  let status = 'CENSUS_SUMMARY_UNQUALIFIED';
+  if (projected) status = 'SAFE_CENSUS_SUMMARY_VISIBLE';
+  else {
+    const observation = operationResult.inspection;
+    if (!observation || typeof observation !== 'object' || Array.isArray(observation)) {
+      status = 'CENSUS_DETAIL_MISSING';
+    } else if (!Array.isArray(observation.blockers)
+      || observation.blockers.some(x => !ORIGINAL_CUSTODY_RECEIPT_BLOCKERS.has(x))) {
+      status = 'CENSUS_BLOCKERS_UNQUALIFIED';
+    } else if (!([null].includes(observation.candidateProcessCount)
+      || Number.isSafeInteger(observation.candidateProcessCount))
+      || !([null].includes(observation.stephanosScheduledTaskCount)
+      || Number.isSafeInteger(observation.stephanosScheduledTaskCount))) {
+      status = 'CENSUS_COUNTS_UNQUALIFIED';
+    } else {
+      const observedAt = observation.inspectedAtUtc;
+      const ms = Date.parse(observedAt);
+      if (typeof observedAt !== 'string'
+        || !Number.isFinite(ms)
+        || new Date(ms).toISOString() !== observedAt) {
+        status = 'CENSUS_TIMESTAMP_UNQUALIFIED';
+      }
+    }
+  }
+  return Object.freeze({
+    schemaVersion: 'stephanos.original-source-custody-public-diagnostic.v1',
+    status,
+    safeCountSummaryAvailable: Boolean(projected),
+    readOnly: true,
+    historicalExecutionOutcome: 'UNKNOWN',
+    independentWindowsExclusionProven: false,
+    leaseReleaseAuthorized: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+  });
+}
+
+const CANONICAL_GIT_WORKTREE_CONFIG_REMOTE_ACTIONS = new Set([
+  'inspect-canonical-git-worktree-config',
+  'repair-canonical-git-worktree-config',
+]);
+const CANONICAL_GIT_WORKTREE_CONFIG_RISKS = new Set([
+  'CORE_WORKTREE',
+  'CORE_SPARSE_CHECKOUT',
+  'CORE_SPARSE_CHECKOUT_CONE',
+  'INDEX_SPARSE',
+  'CORE_HOOKS_PATH',
+  'CORE_FSMONITOR',
+  'CORE_TRUST_CTIME',
+  'CORE_CHECK_STAT',
+  'CORE_IGNORE_STAT',
+  'CORE_UNTRACKED_CACHE',
+  'CORE_SSH_COMMAND',
+  'CORE_ALTERNATE_REFS_COMMAND',
+  'CORE_ASKPASS',
+  'CORE_GIT_PROXY',
+  'CORE_PAGER',
+  'DIFF_EXTERNAL',
+  'INCLUDE_PATH',
+  'EXTENSIONS_WORKTREE_CONFIG',
+  'GC_RECENT_OBJECTS_HOOK',
+  'INTERACTIVE_DIFF_FILTER',
+  'SEQUENCE_EDITOR',
+  'CORE_EDITOR',
+  'COMMIT_GPG_SIGN',
+  'TAG_GPG_SIGN',
+  'ALIAS',
+  'CREDENTIAL',
+  'FILTER',
+  'DIFF_COMMAND',
+  'DIFF_TEXTCONV',
+  'MERGE_DRIVER',
+  'BRANCH_MERGE_OPTIONS',
+  'REMOTE_VCS',
+  'REMOTE_PROXY',
+  'REMOTE_UPLOAD_PACK',
+  'REMOTE_RECEIVE_PACK',
+  'URL_REWRITE',
+  'INCLUDE_IF',
+  'PROTOCOL',
+  'SUBMODULE_UPDATE',
+  'GC_HOOK_OR_COMMAND',
+  'PAGER',
+  'GPG',
+  'HTTP',
+  'UNKNOWN',
+]);
+const CANONICAL_GIT_WORKTREE_CONFIG_EXTENSION_STATES = new Set([
+  'ABSENT', 'TRUE', 'FALSE', 'OTHER', 'MULTIPLE',
+]);
+const CANONICAL_GIT_WORKTREE_CONFIG_ORIGIN_COUNTS = new Set([
+  'ZERO', 'ONE', 'MULTIPLE', 'UNKNOWN',
+]);
+const CANONICAL_GIT_WORKTREE_CONFIG_ORIGIN_MATCHES = new Set([
+  'CANONICAL', 'NONCANONICAL', 'UNKNOWN',
+]);
+
+function projectCanonicalGitWorktreeConfigEvidence(operationResult = {}) {
+  const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
+  if (!CANONICAL_GIT_WORKTREE_CONFIG_REMOTE_ACTIONS.has(remoteAction)) {
+    return Object.freeze({});
+  }
+  const riskCategories = values => {
+    const projected = projectBattleBridgeGitConfigurationDiagnosticV1({
+      riskCategories: Array.isArray(values) ? values : [],
+    });
+    return Object.freeze(
+      projected.riskCategories
+        .filter(value => value !== 'UNKNOWN')
+        .slice(0, 48),
+    );
+  };
+  const inspectionSource = operationResult?.canonicalGitWorktreeConfigInspection;
+  const inspection = inspectionSource
+    && typeof inspectionSource === 'object' && !Array.isArray(inspectionSource)
+    && inspectionSource.schemaVersion === 'stephanos.canonical-git-worktree-config-inspection.v1'
+    ? Object.freeze({
+      schemaVersion: 'stephanos.canonical-git-worktree-config-inspection.v1',
+      inspectionComplete: inspectionSource.inspectionComplete === true,
+      sourceHead: safeTelemetrySha(inspectionSource.sourceHead),
+      canonicalTopologyProven: safeBoolean(inspectionSource.canonicalTopologyProven),
+      canonicalGitConfigurationValid: safeBoolean(inspectionSource.canonicalGitConfigurationValid),
+      originCount: CANONICAL_GIT_WORKTREE_CONFIG_ORIGIN_COUNTS.has(inspectionSource.originCount)
+        ? inspectionSource.originCount : 'UNKNOWN',
+      originMatch: CANONICAL_GIT_WORKTREE_CONFIG_ORIGIN_MATCHES.has(inspectionSource.originMatch)
+        ? inspectionSource.originMatch : 'UNKNOWN',
+      riskCategories: riskCategories(inspectionSource.riskCategories),
+      extensionValueCount: safeOptionalNonNegativeInteger(inspectionSource.extensionValueCount),
+      extensionValueState: CANONICAL_GIT_WORKTREE_CONFIG_EXTENSION_STATES.has(inspectionSource.extensionValueState)
+        ? inspectionSource.extensionValueState : 'OTHER',
+      registeredWorktreeCount: safeOptionalNonNegativeInteger(inspectionSource.registeredWorktreeCount),
+      linkedWorktreeCount: safeOptionalNonNegativeInteger(inspectionSource.linkedWorktreeCount),
+      lockedWorktreeCount: safeOptionalNonNegativeInteger(inspectionSource.lockedWorktreeCount),
+      prunableWorktreeCount: safeOptionalNonNegativeInteger(inspectionSource.prunableWorktreeCount),
+      worktreeConfigFileCount: safeOptionalNonNegativeInteger(inspectionSource.worktreeConfigFileCount),
+      nonEmptyWorktreeConfigFileCount: safeOptionalNonNegativeInteger(
+        inspectionSource.nonEmptyWorktreeConfigFileCount,
+      ),
+      worktreeConfigEntryCount: safeOptionalNonNegativeInteger(inspectionSource.worktreeConfigEntryCount),
+      allWorktreeConfigsObserved: safeBoolean(inspectionSource.allWorktreeConfigsObserved),
+      safeForFixedUnset: safeBoolean(inspectionSource.safeForFixedUnset),
+      finalVerdict: safeTelemetryText(inspectionSource.finalVerdict, 160).toUpperCase(),
+    })
+    : null;
+  return Object.freeze({
+    ...(inspection ? { canonicalGitWorktreeConfigInspection: inspection } : {}),
+    gitConfigurationMutationPerformed: safeBoolean(operationResult?.gitConfigurationMutationPerformed),
+    gitConfigurationMutationScope: operationResult?.gitConfigurationMutationScope === 'extensions.worktreeConfig-only'
+      ? 'extensions.worktreeConfig-only' : '',
+    riskCategoriesBefore: riskCategories(operationResult?.riskCategoriesBefore),
+    canonicalGitConfigurationValid: safeBoolean(operationResult?.canonicalGitConfigurationValid),
+  });
+}
+
 function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySource = null) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const starfieldVrTelemetrySource = telemetrySource
@@ -1338,11 +1886,22 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     : [];
   if (!remoteAction && remotePlan.length === 0) return Object.freeze({});
 
-  const status = Number(operationResult?.status);
+  // Fleet checkpoints already renamed status to maintenanceStatus. Preserve
+  // that exact observed exit across repeated publication; never coerce null or
+  // resolve contradictory raw/checkpoint exits into a valid fleet packet.
+  const fleetExits = remoteAction === FLEET_SUPERVISOR_ACTION
+    ? ['status', 'maintenanceStatus'].filter(key => Object.hasOwn(operationResult, key))
+      .map(key => operationResult[key]) : [];
+  const fleetExit = fleetExits.length > 0 && fleetExits.every(value => [0, 2].includes(value))
+    && fleetExits.every(value => value === fleetExits[0]) ? fleetExits[0] : null;
+  const status = remoteAction === FLEET_SUPERVISOR_ACTION ? fleetExit : Number(operationResult?.status);
+  const fleetSupervisor = remoteAction === FLEET_SUPERVISOR_ACTION && fleetExit !== null
+    ? projectFleetSupervisorReceiptV1(operationResult?.fleetSupervisor, fleetExit) : null;
   const completedSteps = Array.isArray(operationResult?.completedSteps)
     ? operationResult.completedSteps.slice(0, 6).map((step) => {
       const stepIndex = Number(step?.stepIndex);
-      const stepStatus = Number(step?.status);
+      const stepStatus = step?.remoteAction === FLEET_SUPERVISOR_ACTION
+        ? ([0, 2].includes(step?.status) ? step.status : null) : Number(step?.status);
       return Object.freeze({
         stepIndex: Number.isInteger(stepIndex) && stepIndex >= 0 && stepIndex < 6 ? stepIndex : null,
         remoteAction: safeTelemetryText(step?.remoteAction, 120),
@@ -1350,6 +1909,9 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
         processId: safeTelemetryId(step?.processId),
         status: Number.isInteger(stepStatus) ? stepStatus : null,
         errorCode: safeTelemetryText(step?.errorCode, 120),
+        ...(step?.remoteAction === FLEET_SUPERVISOR_ACTION && [0, 2].includes(step?.status)
+          && projectFleetSupervisorReceiptV1(step?.fleetSupervisor, step?.status)
+          ? { fleetSupervisor: projectFleetSupervisorReceiptV1(step.fleetSupervisor, step.status) } : {}),
       });
     })
     : [];
@@ -1357,24 +1919,52 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
 
   return Object.freeze({
     remoteAction,
+    ...(remoteAction === 'sovereign-windows-reviewer-calibration'
+      && validateWindowsCalibrationRemoteProjectionV1(operationResult.calibration)
+      ? { calibration: operationResult.calibration } : {}),
     remotePlan: Object.freeze(remotePlan),
     stepCount: Number.isInteger(stepCount) && stepCount >= 0 && stepCount <= 6 ? stepCount : null,
     completedSteps: Object.freeze(completedSteps),
     planProofHash: safeSha256(operationResult?.planProofHash),
     proofHash: safeSha256(operationResult?.proofHash),
+    ...projectCanonicalGitWorktreeConfigEvidence(operationResult),
     processId: safeTelemetryId(operationResult?.processId),
+    ...(fleetSupervisor ? { fleetSupervisor } : {}),
     maintenanceStatus: Number.isInteger(status) ? status : null,
+    ...(remoteAction === 'status' ? {
+      continuousRepairGuardian: safeSovereignGuardianReceiptProjection(operationResult),
+    } : {}),
     errorCode: safeTelemetryText(operationResult?.errorCode, 120),
     executionBlocker: safeTelemetryText(operationResult?.executionBlocker, 160),
+    // Archive diagnostics only: expose a typed, minimal failure shape so an
+    // operator can distinguish a stale served MCP tool from a failed reader.
+    // Do not mirror raw structuredContent, stdout, stderr or host paths.
+    ...(remoteAction === 'starfield-vr-telemetry-archive' ? {
+      archiveDedicatedToolAdvertised: safeBoolean(operationResult?.dedicatedToolAdvertised),
+      archiveFixedFallbackSelected: safeBoolean(operationResult?.fixedMaintenanceFallbackSelected),
+      archiveRuntimeRefreshRequired: safeBoolean(operationResult?.runtimeRefreshRequired),
+      archiveMcpToolReturnedError: safeBoolean(operationResult?.mcpToolReturnedError),
+      archiveCommanderBlocker: safeTelemetryId(operationResult?.commanderBlocker),
+      archiveExecutionStatus: Number.isInteger(operationResult?.executionStatus)
+        ? operationResult.executionStatus : null,
+      archiveExecutionErrorCode: safeTelemetryId(operationResult?.executionErrorCode),
+    } : {}),
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
     projectSearch: safeProjectSearchReceiptProjection(operationResult),
+    originalSourceCustodyCensus: safeOriginalSourceCustodyReceiptProjection(operationResult),
+    originalSourceCustodyProjectionDiagnostic: safeOriginalSourceCustodyProjectionDiagnostic(operationResult),
+    witnessReadiness: safeOriginalR7WitnessReadinessProjection(operationResult),
+    ...originalR7WitnessReadinessGuardProjection(operationResult),
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
+    cpuPressure: safeCpuPressureReceiptProjection(operationResult),
     controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
+    rescueIslandBoundary: safeRescueIslandBoundaryReceiptProjection(operationResult),
     visibilitySnapshot: safeVisibilitySnapshotReceiptProjection(operationResult?.visibilitySnapshot),
     capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
     vrAcceptance: safeVrAcceptanceReceiptProjection(operationResult),
     starfieldVrPreflight: safeStarfieldVrPreflightReceiptProjection(operationResult),
     starfieldVrTelemetry: safeStarfieldVrTelemetryReceiptProjection(starfieldVrTelemetrySource),
+    starfieldVrTelemetryArchive: safeStarfieldVrTelemetryArchiveReceiptProjection(operationResult?.telemetryArchive),
     publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
     secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
     ...(safeCoreDaemonStatusProjection(operationResult?.coreDaemonStatus)
@@ -1537,6 +2127,15 @@ function sanitizeProgrammeAuthorityPacket(packet = {}) {
     programmeBlockers: Array.isArray(packet?.programmeBlockers)
       ? packet.programmeBlockers.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 40)
       : [],
+    // Existing authoritative lease-phase projection; diagnosis only.
+    elasticLeaseId: safeTelemetryId(packet?.elasticLeaseId),
+    elasticLeaseRevision: safeOptionalNonNegativeInteger(packet?.elasticLeaseRevision),
+    elasticBindingValid: packet?.elasticBindingValid === true,
+    elasticBindingBlocker: safeTelemetryText(packet?.elasticBindingBlocker, 120).toUpperCase(),
+    elasticOriginalMissionUnique: packet?.elasticOriginalMissionUnique === true,
+    elasticObservedMissionRevision: safeOptionalNonNegativeInteger(packet?.elasticObservedMissionRevision),
+    elasticObservedMissionPhase: safeTelemetryText(packet?.elasticObservedMissionPhase, 80).toUpperCase(),
+    elasticObservedDispatchStatus: safeTelemetryText(packet?.elasticObservedDispatchStatus, 60).toUpperCase(),
     sourceConstructionMode: safeTelemetryText(packet?.sourceConstructionMode, 80),
     schedulerFailClosed: packet?.schedulerFailClosed === true,
     schedulerProgrammeStatus: safeTelemetryText(packet?.schedulerProgrammeStatus, 100).toUpperCase(),
@@ -1564,6 +2163,17 @@ function sanitizeProgrammeAuthorityPacket(packet = {}) {
       ? packet.schedulerContradictionCodes.map((item) => safeTelemetryText(item, 120).toUpperCase()).filter(Boolean).slice(0, 30)
       : [],
     elasticCapacityStatus: safeTelemetryText(packet?.elasticCapacityStatus, 80).toUpperCase(),
+    // Signed local-native capacity is a distinct proof from the elastic scheduler's RUNNING flag.
+    nativeCapacityVerified: packet?.nativeCapacityVerified === true,
+    nativeCapacityReason: safeTelemetryText(packet?.nativeCapacityReason, 160).toUpperCase(),
+    nativeCapacityModel: safeTelemetryText(packet?.nativeCapacityModel, 120),
+    nativeCapacitySourceHead: safeTelemetrySha(packet?.nativeCapacitySourceHead),
+    nativeCapacityReceiptId: safeTelemetryId(packet?.nativeCapacityReceiptId),
+    nativePublisherDiagnosticOnly: packet?.nativePublisherDiagnosticOnly === true,
+    nativePublisherObservedHead: safeTelemetrySha(packet?.nativePublisherObservedHead),
+    nativePublisherHeadMatchesExpected: packet?.nativePublisherHeadMatchesExpected === true,
+    nativePublisherDiagnosticReason: safeTelemetryText(packet?.nativePublisherDiagnosticReason, 120).toUpperCase(),
+    nativePublisherDiagnosticBinding: safeTelemetryText(packet?.nativePublisherDiagnosticBinding, 45).toUpperCase(),
     elasticScaleAction: safeTelemetryText(packet?.elasticScaleAction, 80).toUpperCase(),
     elasticDesiredWidth: safeNonNegativeNumber(packet?.elasticDesiredWidth),
     elasticRemainingAdmissionSlots: safeNonNegativeNumber(packet?.elasticRemainingAdmissionSlots),
@@ -1592,10 +2202,21 @@ export function createSanitizedProgrammeAuthorityStatusProjection(projection = {
   const capacity = scheduler?.elasticCapacity || {};
   const decision = scheduler?.decisionReceipt || {};
   const sourceReads = projection?.sourceReads || {};
+  const phaseBinding = projection?.lane?.elasticMissionPhaseBinding || null;
+  const leaseId = String(projection?.mutationLease?.leaseId || '');
+  const leaseRevisionMatch = /^critical-[1-9]\d*-elastic-goal-r([1-9]\d*)-lease$/.exec(leaseId);
   return sanitizeProgrammeAuthorityPacket({
     programmeStatus: projection?.status,
     programmeFinalVerdict: projection?.finalVerdict,
     programmeBlockers: projection?.blockers,
+    elasticLeaseId: leaseId,
+    elasticLeaseRevision: leaseRevisionMatch ? Number(leaseRevisionMatch[1]) : null,
+    elasticBindingValid: phaseBinding?.valid === true,
+    elasticBindingBlocker: phaseBinding?.blocker,
+    elasticOriginalMissionUnique: phaseBinding?.observedUniqueOriginal === true,
+    elasticObservedMissionRevision: phaseBinding?.observedRevision,
+    elasticObservedMissionPhase: phaseBinding?.observedPhase,
+    elasticObservedDispatchStatus: phaseBinding?.observedDispatchStatus,
     sourceConstructionMode: projection?.sourceConstructionMode,
     schedulerFailClosed: scheduler?.failClosed,
     schedulerProgrammeStatus: scheduler?.programmeStatus,
@@ -1638,8 +2259,22 @@ export function createSanitizedProgrammeAuthorityStatusProjection(projection = {
 }
 
 function programmeAuthorityProjection(operationResult = {}) {
-  if (operationResult?.programmeAuthorityTelemetry !== true) return Object.freeze({});
-  return sanitizeProgrammeAuthorityPacket(operationResult?.programmeAuthority);
+  if (operationResult?.programmeAuthorityTelemetry === true) {
+    return sanitizeProgrammeAuthorityPacket(operationResult?.programmeAuthority);
+  }
+  // Local receipt checkpointing already sanitizes and flattens the packet.
+  // Re-serializing that checkpoint for the bounded public GitHub comment must
+  // retain the same verified source blockers rather than silently stripping
+  // them on the second pass. Only accept the existing complete packet markers.
+  if (
+    safeTelemetryText(operationResult?.programmeStatus, 80)
+    && safeTelemetryText(operationResult?.programmeFinalVerdict, 160)
+    && safeTelemetryText(operationResult?.sourceReadRepositoryHead, 120)
+    && safeTelemetryText(operationResult?.sourceReadGithubGoalEstate, 120)
+  ) {
+    return sanitizeProgrammeAuthorityPacket(operationResult);
+  }
+  return Object.freeze({});
 }
 
 function conveyorProjection(operationResult = {}) {
@@ -1704,6 +2339,59 @@ function postSyncVerificationProjection(receipt = {}, operationResult = {}) {
       outputTruncated: String(tests.stdout || '').includes('...[truncated]')
         || String(tests.stderr || '').includes('...[truncated]'),
     }),
+  });
+}
+
+function projectRescueIslandBuild(operationResult = {}) {
+  const value = operationResult?.rescueIslandBuild;
+  const stages = ['SELECTED', 'CLAIMED', 'BRANCH_RESERVED', 'PHYSICAL_PICKUP',
+    'EDITED', 'TESTED', 'ISOLATED_COMMIT'];
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || value.schemaVersion !== 'stephanos.rescue-island-supervised-document-build.v1'
+      || value.workerId !== 'rescue-island-02'
+      || !safeTelemetryId(value.taskId)
+      || value.ownerIssueNumber !== 3103
+      || !Number.isSafeInteger(value.ownerCommentId) || value.ownerCommentId < 1
+      || !safeTelemetrySha(value.sourceHead)
+      || !safeTelemetrySha(value.commitHead)
+      || !safeTelemetryFingerprint(value.contentSha256)
+      || !safeTelemetryFingerprint(value.taskFingerprint)
+      || !safeTelemetryFingerprint(value.testResultHash)
+      || JSON.stringify(value.stages) !== JSON.stringify(stages)
+      || value.assuranceProfile !== 'SUPERVISED_COOPERATIVE_V1'
+      || value.resourceScheduling !== 'CPU_ONLY_SERIAL_EXISTING_OWNER_LOCK'
+      || value.hostileWriterContainmentProven !== false
+      || value.independentlyCommissionedWorker !== false
+      || value.unattendedRefillsProven !== false
+      || value.reviewRequired !== true
+      || value.published !== false || value.merged !== false || value.deployed !== false
+      || value.publicReceiptSafe !== true || value.secretMaterialReturned !== false
+      || value.finalVerdict !== 'RESCUE_ISLAND_02_SUPERVISED_DOCUMENT_BUILD_COMPLETE') return null;
+  return Object.freeze({
+    schemaVersion: value.schemaVersion,
+    workerId: value.workerId,
+    taskId: safeTelemetryId(value.taskId),
+    ownerIssueNumber: 3103,
+    ownerCommentId: value.ownerCommentId,
+    sourceHead: safeTelemetrySha(value.sourceHead),
+    commitHead: safeTelemetrySha(value.commitHead),
+    targetPath: safeTelemetryText(value.targetPath, 240),
+    contentSha256: safeTelemetryFingerprint(value.contentSha256),
+    taskFingerprint: safeTelemetryFingerprint(value.taskFingerprint),
+    testResultHash: safeTelemetryFingerprint(value.testResultHash),
+    stages: Object.freeze(stages),
+    assuranceProfile: value.assuranceProfile,
+    resourceScheduling: value.resourceScheduling,
+    hostileWriterContainmentProven: false,
+    independentlyCommissionedWorker: false,
+    unattendedRefillsProven: false,
+    reviewRequired: true,
+    published: false,
+    merged: false,
+    deployed: false,
+    publicReceiptSafe: true,
+    secretMaterialReturned: false,
+    finalVerdict: value.finalVerdict,
   });
 }
 
@@ -1775,7 +2463,9 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   const operationResult = nestedOperationResult && typeof nestedOperationResult === 'object' && !Array.isArray(nestedOperationResult)
     ? nestedOperationResult
     : (
-      receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
+      (receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
+        || MAINTENANCE_RECOVERY_OPERATIONS.includes(receipt?.operation)
+        || FRONTEND_VISIBILITY_OPERATIONS.includes(receipt?.operation))
       && execution && typeof execution === 'object' && !Array.isArray(execution)
         ? execution
         : {}
@@ -1813,6 +2503,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     ...dispatchRoutingTelemetryProjection(operationResult),
     proofCompleted: operationResult?.proofCompleted === true,
     nativeProof: projectNativeBrowserProof(operationResult),
+    rescueIslandBuild: projectRescueIslandBuild(operationResult),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     execution: Object.freeze({
@@ -1867,10 +2558,14 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       ...dispatchRoutingTelemetryProjection(operationResult),
       proofCompleted: operationResult?.proofCompleted === true,
       nativeProof: projectNativeBrowserProof(operationResult),
+    rescueIslandBuild: projectRescueIslandBuild(operationResult),
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),
       branch: safeTelemetryBranch(operationResult?.branch),
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
       ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
+      ...projectMaintenanceRecoveryReceiptV1(operationResult, receipt?.operation),
+      ...projectMailboxRotationReceipt(operationResult, receipt?.operation),
+      ...projectFrontendVisibilityReceiptV1(operationResult, receipt?.operation, { expectedHead: receipt?.expectedHead }),
       ...forgeM2ResultProjection(receipt, operationResult),
       ...forgeDigestResolutionProjection(operationResult),
       ...postSyncVerificationProjection(receipt, operationResult),
@@ -2008,6 +2703,12 @@ function compactVisibilityHeadlineForCoreReceipt(value = {}) {
     }) : null,
     selfHeal: snapshot.selfHeal ? Object.freeze({
       available: snapshot.selfHeal.available === true,
+      outerBridgeRunCount: snapshot.selfHeal.outerBridgeRunCount,
+      outerBridgeInFlight: snapshot.selfHeal.outerBridgeInFlight === true,
+      outerBridgeLastPublicationOk: snapshot.selfHeal.outerBridgeLastPublicationOk === true,
+      outerBridgeLastStage: snapshot.selfHeal.outerBridgeLastStage,
+      outerBridgeLastBlocker: snapshot.selfHeal.outerBridgeLastBlocker,
+      outerBridgeLastVerdict: snapshot.selfHeal.outerBridgeLastVerdict,
       dependencySelfHealEnabled: snapshot.selfHeal.dependencySelfHealEnabled === true,
       dependencySelfHealLastAttemptAtUtc: snapshot.selfHeal.dependencySelfHealLastAttemptAtUtc,
       dependencySelfHealAttemptCount: snapshot.selfHeal.dependencySelfHealAttemptCount,
@@ -2063,6 +2764,7 @@ function compactVisibilityHeadlineForCoreReceipt(value = {}) {
       counts: meters.counts,
       finalVerdict: meters.finalVerdict,
     }) : null,
+    outerBridge: snapshot.outerBridge,
     relay: snapshot.relay ? Object.freeze({
       available: snapshot.relay.available === true,
       daemonHealthy: snapshot.relay.daemonHealthy === true,
@@ -2084,8 +2786,87 @@ function compactVisibilityHeadlineForCoreReceipt(value = {}) {
   });
 }
 
-function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24) {
+// Even when an oversized 59-lane Programme Authority packet is reduced to a
+// compact GitHub receipt, retain the *actual blocker codes* and controlling
+// readiness edges. No raw diagnostics, local paths, goals, or credentials.
+function compactProgrammeAuthorityForCoreReceipt(receipt, inner) {
+  if (receipt?.operation !== 'READ_PROGRAMME_AUTHORITY_STATUS') return {};
+  const token = (value, max = 120) => {
+    const safe = safeTelemetryText(value, max).toUpperCase();
+    return /^[A-Z0-9][A-Z0-9._:-]{0,119}$/.test(safe) ? safe : '';
+  };
+  const blockers = (Array.isArray(inner?.programmeBlockers) ? inner.programmeBlockers : [])
+    .map((item) => token(item))
+    .filter(Boolean).slice(0, 16);
+  const sources = (value) => token(value);
+  // The native publisher is independently signed and verified upstream. Keep
+  // that bounded evidence through the final 9 KiB public receipt, but never
+  // turn missing/mismatched proof into a green capacity claim.
+  const nativeSourceHead = safeTelemetrySha(inner?.nativeCapacitySourceHead);
+  const nativeReceiptId = safeTelemetryId(inner?.nativeCapacityReceiptId);
+  const candidateModel = safeTelemetryText(inner?.nativeCapacityModel, 120);
+  const nativeModel = /^[a-z0-9][a-z0-9._:-]{0,119}$/i.test(candidateModel)
+    ? candidateModel : '';
+  const nativeVerified = inner?.nativeCapacityVerified === true
+    && Boolean(nativeSourceHead)
+    && nativeSourceHead === safeTelemetrySha(receipt?.expectedHead)
+    && Boolean(nativeReceiptId)
+    && Boolean(nativeModel);
+  return Object.freeze({
+    programmeStatus: token(inner?.programmeStatus, 80),
+    programmeFinalVerdict: token(inner?.programmeFinalVerdict),
+    programmeBlockers: Object.freeze(blockers),
+    elasticLeaseId: safeTelemetryId(inner?.elasticLeaseId),
+    elasticLeaseRevision: safeOptionalNonNegativeInteger(inner?.elasticLeaseRevision),
+    elasticBindingValid: inner?.elasticBindingValid === true,
+    elasticBindingBlocker: token(inner?.elasticBindingBlocker),
+    elasticOriginalMissionUnique: inner?.elasticOriginalMissionUnique === true,
+    elasticObservedMissionRevision: safeOptionalNonNegativeInteger(inner?.elasticObservedMissionRevision),
+    elasticObservedMissionPhase: token(inner?.elasticObservedMissionPhase),
+    elasticObservedDispatchStatus: token(inner?.elasticObservedDispatchStatus),
+    schedulerFailClosed: inner?.schedulerFailClosed === true,
+    schedulerProgrammeStatus: token(inner?.schedulerProgrammeStatus),
+    schedulerDecisionStatus: token(inner?.schedulerDecisionStatus),
+    schedulerSelectedIssue: safeGoalIssue(inner?.schedulerSelectedIssue),
+    elasticCapacityStatus: token(inner?.elasticCapacityStatus),
+    nativeCapacityVerified: nativeVerified,
+    nativeCapacityReason: token(inner?.nativeCapacityReason),
+    nativeCapacityModel: nativeVerified ? nativeModel : '',
+    nativeCapacitySourceHead: nativeVerified ? nativeSourceHead : '',
+    nativeCapacityReceiptId: nativeVerified ? nativeReceiptId : '',
+    nativePublisherDiagnosticOnly: inner?.nativePublisherDiagnosticOnly === true,
+    nativePublisherObservedHead: safeTelemetrySha(inner?.nativePublisherObservedHead),
+    nativePublisherHeadMatchesExpected: inner?.nativePublisherHeadMatchesExpected === true,
+    nativePublisherDiagnosticReason: token(inner?.nativePublisherDiagnosticReason, 120),
+    nativePublisherDiagnosticBinding: token(inner?.nativePublisherDiagnosticBinding, 45),
+    elasticDesiredWidth: safeNonNegativeNumber(inner?.elasticDesiredWidth),
+    elasticRemainingAdmissionSlots: safeNonNegativeNumber(inner?.elasticRemainingAdmissionSlots),
+    controllerValid: inner?.controllerValid === true,
+    controllerFresh: inner?.controllerFresh === true,
+    workerValid: inner?.workerValid === true,
+    workerFresh: inner?.workerFresh === true,
+    criticalBacklogDecision: safeConveyorDecision(inner?.criticalBacklogDecision),
+    sourceReadRepositoryHead: sources(inner?.sourceReadRepositoryHead),
+    sourceReadControllerHeartbeat: sources(inner?.sourceReadControllerHeartbeat),
+    sourceReadWorkerHeartbeat: sources(inner?.sourceReadWorkerHeartbeat),
+    sourceReadGithubGoalEstate: sources(inner?.sourceReadGithubGoalEstate),
+    originalProgrammeLaneListOmitted: true,
+  });
+}
+
+function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24, fleetHeldLimit = 8) {
   const inner = compactReceipt?.result?.result || {};
+  // Preserve only the existing typed owner failure, including its unknown exit,
+  // when byte-budget compaction removes optional diagnostics. This is no grant
+  // or fleet completion proof; command identities and native output stay private.
+  const fleetOwnerFailure = inner.remoteAction === FLEET_SUPERVISOR_ACTION && inner.ok === false
+    && inner.processId === FLEET_SUPERVISOR_ACTION && inner.maintenanceStatus === null
+    && inner.publicReceiptSafe === true && inner.secretMaterialReturned === false
+    && [SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, 'SOVEREIGN_MAINTENANCE_OWNER_BUSY',
+      'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE'].includes(inner.executionBlocker)
+    && ['', 'ETIMEDOUT', 'ABORT_ERR'].includes(inner.errorCode)
+    ? { processId: FLEET_SUPERVISOR_ACTION, errorCode: inner.errorCode,
+      executionBlocker: inner.executionBlocker } : null;
   return Object.freeze({
     schemaVersion: compactReceipt.schemaVersion,
     requestId: compactReceipt.requestId,
@@ -2108,6 +2889,10 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
       requestId: compactReceipt?.result?.requestId || compactReceipt.requestId,
       result: Object.freeze({
         ok: inner?.ok !== false,
+        ...projectMaintenanceRecoveryReceiptV1(inner?.maintenanceRecovery, compactReceipt.operation),
+        ...projectMailboxRotationReceipt(inner, compactReceipt.operation),
+        ...projectFrontendVisibilityReceiptV1(inner?.frontendVisibility, compactReceipt.operation,
+          { expectedHead: compactReceipt.expectedHead, expectedDistFingerprint: inner?.expectedDistFingerprint }),
         blocker: inner?.blocker || '',
         finalVerdict: inner?.finalVerdict || '',
         expectedHead: inner?.expectedHead || compactReceipt.expectedHead,
@@ -2116,6 +2901,24 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         expectedHeadMatch: inner?.expectedHeadMatch ?? null,
         remoteAction: inner?.remoteAction || '',
         remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 3) : [],
+        ...projectCanonicalGitWorktreeConfigEvidence(inner),
+        ...(fleetOwnerFailure ? {
+          ...fleetOwnerFailure,
+          remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 6) : [],
+        } : {}),
+        ...(inner?.remoteAction === FLEET_SUPERVISOR_ACTION && inner?.fleetSupervisor
+          ? { fleetSupervisor: compactFleetSupervisorReceiptV1(inner.fleetSupervisor, fleetHeldLimit) } : {}),
+        ...(Array.isArray(inner?.completedSteps)
+          && inner.completedSteps.some(step => step?.remoteAction === FLEET_SUPERVISOR_ACTION) ? {
+            remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 6) : [],
+            completedSteps: inner.completedSteps.slice(0, 6).map(step => Object.freeze({
+              stepIndex: step.stepIndex, remoteAction: step.remoteAction,
+              proofHash: step.proofHash, processId: step.processId,
+              status: step.status, errorCode: step.errorCode,
+              ...(step.remoteAction === FLEET_SUPERVISOR_ACTION && step.fleetSupervisor
+                ? { fleetSupervisor: compactFleetSupervisorReceiptV1(step.fleetSupervisor, fleetHeldLimit) } : {}),
+            })),
+          } : {}),
         stepCount: inner?.stepCount ?? null,
         proofHash: inner?.proofHash || '',
         planProofHash: inner?.planProofHash || '',
@@ -2123,8 +2926,17 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         meterStatus: compactMeterStatusForCoreReceipt(inner?.meterStatus, meterLimit),
         visibilityHeadline: compactVisibilityHeadlineForCoreReceipt(inner?.visibilitySnapshot),
         starfieldVrTelemetry: inner?.starfieldVrTelemetry ?? null,
+        cpuPressure: inner?.cpuPressure ?? null,
+        starfieldVrTelemetryArchive: inner?.starfieldVrTelemetryArchive ?? null,
+        // inner was built by sovereignCommanderRemoteProjection above, not from raw input.
+        rescueIslandBoundary: inner?.rescueIslandBoundary ?? null,
+        originalSourceCustodyCensus: inner?.originalSourceCustodyCensus ?? null,
+        originalSourceCustodyProjectionDiagnostic: inner?.originalSourceCustodyProjectionDiagnostic ?? null,
+        witnessReadiness: inner?.witnessReadiness ?? null,
+        ...originalR7WitnessReadinessGuardProjection(inner),
         publicReceiptSafe: inner?.publicReceiptSafe ?? null,
         secretMaterialReturned: inner?.secretMaterialReturned ?? null,
+        ...compactProgrammeAuthorityForCoreReceipt(compactReceipt, inner),
         githubProjectionTruncated: true,
         originalBytes: fullBytes,
       }),
@@ -2144,7 +2956,9 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
   const operationResult = nestedOperationResult && typeof nestedOperationResult === 'object' && !Array.isArray(nestedOperationResult)
     ? nestedOperationResult
     : (
-      receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
+      (receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
+        || MAINTENANCE_RECOVERY_OPERATIONS.includes(receipt?.operation)
+        || FRONTEND_VISIBILITY_OPERATIONS.includes(receipt?.operation))
       && execution && typeof execution === 'object' && !Array.isArray(execution)
         ? execution
         : {}
@@ -2183,6 +2997,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
     proofCompleted: operationResult?.proofCompleted === true,
     nativeProof: projectNativeBrowserProof(operationResult),
+    rescueIslandBuild: projectRescueIslandBuild(operationResult),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     result: {
@@ -2234,10 +3049,14 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
         proofCompleted: operationResult?.proofCompleted === true,
         nativeProof: projectNativeBrowserProof(operationResult),
+    rescueIslandBuild: projectRescueIslandBuild(operationResult),
         sourceHead: safeTelemetrySha(operationResult?.sourceHead),
         branch: safeTelemetryBranch(operationResult?.branch),
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
         ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
+      ...projectMaintenanceRecoveryReceiptV1(operationResult, receipt?.operation),
+      ...projectFrontendVisibilityReceiptV1(operationResult, receipt?.operation, { expectedHead: receipt?.expectedHead }),
+      ...projectMailboxRotationReceipt(operationResult, receipt?.operation),
         ...forgeM2ResultProjection(receipt, operationResult),
         ...forgeDigestResolutionProjection(operationResult),
         ...postSyncVerificationProjection(receipt, operationResult),
@@ -2282,8 +3101,8 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
   const denseCompactJson = JSON.stringify(compactReceipt);
   if (Buffer.byteLength(denseCompactJson, 'utf8') <= maxBytes) return denseCompactJson;
 
-  for (const meterLimit of [24, 12, 6, 0]) {
-    const coreReceipt = buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit);
+  for (const [meterLimit, fleetHeldLimit] of [[24, 8], [12, 4], [6, 1], [0, 0]]) {
+    const coreReceipt = buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit, fleetHeldLimit);
     const coreJson = JSON.stringify(coreReceipt);
     if (Buffer.byteLength(coreJson, 'utf8') <= maxBytes) return coreJson;
   }
@@ -2291,12 +3110,13 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
 }
 
 function loadState() {
-  try { return JSON.parse(readFileSync(statePath, 'utf8')); } catch { return { consumedRequestIds: [], acceptedRequestIds: [] }; }
+  return readJsonObject(statePath, { allowMissing: true,
+    missingValue: { consumedRequestIds: [], acceptedRequestIds: [], pendingReceiptPublications: [] } });
 }
 
 function saveState(state) {
   mkdirSync(mailboxStateRoot, { recursive: true });
-  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+  atomicWriteJson(statePath, state);
 }
 
 export function checkpointTerminalMailboxReceipt(state, receipt, {
@@ -2309,10 +3129,9 @@ export function checkpointTerminalMailboxReceipt(state, receipt, {
   state.consumedRequestIds = [...new Set([
     ...(Array.isArray(state.consumedRequestIds) ? state.consumedRequestIds : []),
     receipt.requestId,
-  ])].slice(-500);
+  ])];
   state.acceptedRequestIds = (Array.isArray(state.acceptedRequestIds) ? state.acceptedRequestIds : [])
-    .filter((requestId) => requestId !== receipt.requestId)
-    .slice(-500);
+    .filter((requestId) => requestId !== receipt.requestId);
   state.lastReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES));
   persist(state);
   return state;
@@ -2328,7 +3147,7 @@ export function checkpointAcceptedMailboxReceipt(state, receipt, {
   state.acceptedRequestIds = [...new Set([
     ...(Array.isArray(state.acceptedRequestIds) ? state.acceptedRequestIds : []),
     receipt.requestId,
-  ])].slice(-500);
+  ])];
   state.lastAcceptedReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES));
   persist(state);
   return state;
@@ -2436,6 +3255,7 @@ export function terminalizeRejectedMailboxCommands(state, rejections = [], {
   write = writeReceipt,
   publish = postReceipt,
   persist = saveState,
+  ledger = null,
 } = {}) {
   const terminal = [];
   const consumed = new Set(Array.isArray(state?.consumedRequestIds) ? state.consumedRequestIds : []);
@@ -2444,6 +3264,7 @@ export function terminalizeRejectedMailboxCommands(state, rejections = [], {
     if (consumed.has(requestId)) continue;
     const receipt = buildRejectedMailboxTerminalReceipt(rejection, now().toISOString());
     const receiptLocation = write(receipt);
+    ledger?.complete(receipt);
     checkpointTerminalMailboxReceipt(state, receipt, { persist });
     consumed.add(requestId);
     const publishable = { ...receipt, receiptRef: receiptLocation.ref };
@@ -2564,14 +3385,133 @@ function loadBoundedMailboxComments() {
   return [...commentsById.values()].sort((left, right) => Number(left.id) - Number(right.id));
 }
 
+export function loadCompleteMailboxComments(issueNumber, { read = ghJson } = {}) {
+  if (![CANONICAL_MAILBOX_ISSUE, ...RETIRED_CANONICAL_MAILBOX_ISSUES].includes(issueNumber)) throw new Error('MAILBOX_HISTORY_ISSUE_NOT_AUTHORIZED');
+  const comments = [];
+  for (let page = 1; page <= 30; page++) {
+    const batch = read(['api', `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${issueNumber}/comments?per_page=100&page=${page}`]);
+    if (!Array.isArray(batch)) throw new Error('MAILBOX_HISTORY_PAGE_INVALID');
+    comments.push(...batch);
+    if (batch.length < 100) return comments;
+  }
+  throw new Error('MAILBOX_HISTORY_ENUMERATION_INCOMPLETE');
+}
+
+export function bootstrapMailboxExecutionHistory(state, { ledger = executionLedger, readComments = loadCompleteMailboxComments,
+  persist = saveState } = {}) {
+  const issues = [...RETIRED_CANONICAL_MAILBOX_ISSUES, CANONICAL_MAILBOX_ISSUE];
+  const bootstrapped = state.executionLedgerBootstrappedIssues || [];
+  if (!Array.isArray(bootstrapped) || bootstrapped.some(issue => !issues.includes(issue))) throw new Error('MAILBOX_EXECUTION_HISTORY_STATE_INVALID');
+  for (const issue of issues) {
+    if (bootstrapped.includes(issue)) continue;
+    const inventory = auditMailboxRotationComments(readComments(issue), { issueNumber: issue });
+    const terminal = new Set(inventory.terminalIds), accepted = new Set(inventory.acceptedIds);
+    for (const id of inventory.requestIds) {
+      if (issue !== CANONICAL_MAILBOX_ISSUE) ledger.importHistorical(id, issue, terminal.has(id) ? 'TERMINAL' : 'RETIRED');
+      else if (terminal.has(id) || accepted.has(id)) ledger.importHistorical(id, issue, terminal.has(id) ? 'TERMINAL' : 'RESERVED');
+    }
+    bootstrapped.push(issue);
+    state.executionLedgerBootstrappedIssues = [...bootstrapped];
+    persist(state);
+  }
+  for (const id of state.consumedRequestIds || []) if (MAILBOX_ROTATION_REQUEST_ID.test(id)) ledger.importHistorical(id, CANONICAL_MAILBOX_ISSUE, 'TERMINAL');
+  for (const id of state.acceptedRequestIds || []) if (MAILBOX_ROTATION_REQUEST_ID.test(id)) ledger.importHistorical(id, CANONICAL_MAILBOX_ISSUE, 'RESERVED');
+}
+
+function readRotationAuthoritySource(head) {
+  if (!EXACT_GIT_HEAD_PATTERN.test(head)) throw new Error('MAILBOX_ROTATION_HEAD_INVALID');
+  const file = ghJson(['api', `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/contents/shared/agents/canonicalMailboxAuthorityV1.mjs?ref=${head}`]);
+  if (file?.encoding !== 'base64' || !Number.isSafeInteger(file.size) || file.size > 64000) throw new Error('MAILBOX_ROTATION_SOURCE_UNPROVEN');
+  return Buffer.from(file.content, 'base64').toString('utf8');
+}
+
+function readRotationPull(number) {
+  if (!Number.isSafeInteger(number) || number <= 0) throw new Error('MAILBOX_ROTATION_PR_INVALID');
+  return ghJson(['api', `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/pulls/${number}`]);
+}
+
+function loadRotationGoalComments() {
+  const comments = [];
+  for (let page=1; page<=30; page++) {
+    const batch = ghJson(['api', `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/2315/comments?per_page=100&page=${page}`]);
+    if (!Array.isArray(batch)) throw new Error('MAILBOX_ROTATION_OWNER_HISTORY_INVALID');
+    comments.push(...batch);
+    if (batch.length < 100) return comments;
+  }
+  throw new Error('MAILBOX_ROTATION_OWNER_HISTORY_INCOMPLETE');
+}
+
+function publishRotationFence(record, proof) {
+  const existing = findMailboxRotationFence(loadRotationGoalComments());
+  const body = buildMailboxRotationFence(record, proof);
+  const endpoint = existing ? `issues/comments/${existing.id}` : 'issues/2315/comments';
+  const created = ghJson(['api', '--method', existing ? 'PATCH' : 'POST',
+    `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/${endpoint}`, '-f', `body=${body}`]);
+  const observed = ghJson(['api', `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/comments/${created.id}`]);
+  if (observed.user?.login !== 'Cheekyfellastef' || observed.body !== body) throw new Error('MAILBOX_ROTATION_GLOBAL_FENCE_READBACK_FAILED');
+  return { commentId: observed.id };
+}
+
+function readRotationActions(record) {
+  return inventoryMailboxRotationExecution({activationHead:record?.cutoverHead,
+    read:path=>ghJson(['api',`repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/${path}`])});
+}
+
+function approvedRotationUpdateHead(record, mainHead) {
+  if (!record || !EXACT_GIT_HEAD_PATTERN.test(mainHead)) return '';
+  const pull = readRotationPull(record.cutoverPrNumber);
+  return verifyMailboxRotationActivationPull(pull, record, readMailboxAuthorityLiteral(readRotationAuthoritySource(mainHead)),
+    { merged: true, mainHead }) ? mainHead : '';
+}
+
+export function prepareMailboxRotationPoll(state, comments, { readComments = loadCompleteMailboxComments,
+  ledger = executionLedger, approvedUpdateHead = '' } = {}) {
+  const consumed = new Set([...(state.consumedRequestIds || []), ...(state.acceptedRequestIds || [])]);
+  const record = state.mailboxRotation;
+  if (record) {
+    validateMailboxRotationRecord(record);
+    if (!['VERIFIED', 'CANCELLED'].includes(record.phase)) state.mailboxRotationInventory = auditMailboxRotationComments(
+      readComments(record.predecessorIssue), { issueNumber: record.predecessorIssue, barrierCommentId: record.barrierCommentId });
+  }
+  const filtered = [], deferredRequestIds = [];
+  for (const comment of comments) {
+    const parsed = parseMailboxRotationComment(comment, CANONICAL_MAILBOX_ISSUE);
+    if (parsed?.type === 'command') {
+      if (ledger.has(parsed.value.requestId)) consumed.add(parsed.value.requestId);
+      if (!mailboxRotationCommandAllowed(parsed.value, parsed.commentId, record, { approvedUpdateHead })) {
+        deferredRequestIds.push(parsed.value.requestId); continue;
+      }
+    }
+    filtered.push(comment);
+  }
+  return { comments: filtered, consumedRequestIds: consumed, deferredRequestIds };
+}
+
 function postReceipt(receipt) {
+  const issueNumber = receipt?.issueNumber;
+  const historical = RETIRED_CANONICAL_MAILBOX_ISSUES.includes(issueNumber)
+    && ['DONE', 'BLOCKED'].includes(receipt.state) && executionLedger.read(receipt.requestId)?.issueNumber === issueNumber;
+  if (issueNumber !== CANONICAL_MAILBOX_ISSUE && !historical) return { ok: false, blocker: 'MAILBOX_RECEIPT_ORIGIN_NOT_AUTHORIZED' };
   const body = [
     '<!-- stephanos-battle-bridge-command-receipt -->',
     '```json',
     serializeBoundedReceiptJson(receipt),
     '```',
   ].join('\n');
-  return run(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, ['issue', 'comment', String(BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE), '--repo', BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY, '--body', body], { timeout: 120000 });
+  const published = run(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, ['issue', 'comment', String(issueNumber), '--repo', BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY, '--body', body], { timeout: 120000 });
+  if (published.ok && receipt.operation === MAILBOX_ROTATION_OPERATION && receipt.state === 'DONE') {
+    // The fence may relax only after the actual owner terminal receipt exists.
+    // Failure here holds the previous global fence; never retry the effect.
+    try {
+      const state = loadState(), record = state.mailboxRotation;
+      const match = published.stdout.trim().match(new RegExp(`^https://github.com/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${issueNumber}#issuecomment-([1-9][0-9]*)$`));
+      const projected = (receipt.result?.result || receipt.result || {}).mailboxRotation;
+      if (record && match && projected?.phase === record.phase) publishRotationFence(record, {
+        commandCommentId: record.controlCommentId, receiptCommentId: Number(match[1]), receiptIssue: issueNumber,
+      });
+    } catch { published.rotationFencePublication = 'HELD'; }
+  }
+  return published;
 }
 
 export function verifyFreshSelectedMailboxCommand(selected = {}, {
@@ -2716,7 +3656,7 @@ async function startRemoteCommander(command = {}) {
     && installReceipt?.taskName === 'Stephanos Commander Watchdog'
     && installReceipt?.installed === true
     && installReceipt?.startedNow === true
-    && installReceipt?.requiredVersion === '0.2.51'
+    && installReceipt?.requiredVersion === '0.2.52'
     && installReceipt?.networkInstallAllowed === false
     && installReceipt?.packageMutationAllowed === false
     && installReceipt?.arbitraryExecutableAllowed === false
@@ -2749,7 +3689,7 @@ async function startRemoteCommander(command = {}) {
   try { runReceipt = parseBoundedGitHubJson(runResult.stdout, 32 * 1024); } catch {}
   const receiptValid = runReceipt?.schemaVersion === 'stephanos.desktop-commander-watchdog.v1'
     && runReceipt?.taskName === 'Stephanos Commander Watchdog'
-    && runReceipt?.requiredVersion === '0.2.51'
+    && runReceipt?.requiredVersion === '0.2.52'
     && runReceipt?.networkInstallAllowed === false
     && runReceipt?.packageMutationAllowed === false
     && runReceipt?.arbitraryExecutableAllowed === false
@@ -3020,6 +3960,130 @@ function programmeAuthorityPacketReady(packet = {}) {
   );
 }
 
+// Reuse the native capacity router's authenticated signature, authority and freshness
+// gates. No raw Shared Workspace records, paths, keys or signed payloads leave this
+// read-only programme status route. A missing proof must stay explicitly non-green.
+// Independent READ-ONLY diagnostic of the local publisher's *untrusted*
+// source-head claim. This cannot satisfy the signed capacity verifier.
+export function readNativeCapacityPublisherHeadDiagnosticV1({
+  expectedHead = '',
+  readStatus = () => readFileSync(
+    join(sharedWorkspaceRoot, 'status', 'stephanos-native-capacity-current.json'), 'utf8',
+  ),
+} = {}) {
+  const unknown = (reason) => Object.freeze({
+    nativePublisherDiagnosticOnly: true,
+    nativePublisherObservedHead: '',
+    nativePublisherHeadMatchesExpected: false,
+    nativePublisherDiagnosticReason: reason,
+    nativePublisherDiagnosticBinding: 'UNBOUND_UNSIGNED_STATUS',
+  });
+  const target = safeTelemetrySha(expectedHead);
+  if (!target) return unknown('NATIVE_PUBLISHER_EXPECTED_HEAD_INVALID');
+  let record;
+  try {
+    const raw = readStatus();
+    if (typeof raw !== 'string' || Buffer.byteLength(raw, 'utf8') > 64 * 1024) {
+      return unknown('NATIVE_PUBLISHER_STATUS_BOUNDED_READ_FAILED');
+    }
+    record = JSON.parse(raw);
+  } catch (error) {
+    return unknown(error?.code === 'ENOENT'
+      ? 'NATIVE_PUBLISHER_STATUS_MISSING'
+      : 'NATIVE_PUBLISHER_STATUS_READ_FAILED');
+  }
+  if (record?.schemaVersion !== 'shared-agent-workspace-record.v1'
+    || record?.statusId !== 'stephanos-native-capacity-current') {
+    return unknown('NATIVE_PUBLISHER_STATUS_IDENTITY_INVALID');
+  }
+  const observed = safeTelemetrySha(record?.capacityReceipt?.payload?.sourceHead);
+  if (!observed) return unknown('NATIVE_PUBLISHER_PAYLOAD_HEAD_UNPROVEN');
+  return Object.freeze({
+    nativePublisherDiagnosticOnly: true,
+    nativePublisherObservedHead: observed,
+    nativePublisherHeadMatchesExpected: observed === target,
+    nativePublisherDiagnosticReason: observed === target
+      ? 'NATIVE_PUBLISHER_HEAD_MATCH_BUT_NOT_VERIFIED'
+      : 'NATIVE_PUBLISHER_STALE_SOURCE_HEAD',
+    // A separate unsigned status read is not the same signed snapshot.
+    nativePublisherDiagnosticBinding: 'UNBOUND_UNSIGNED_STATUS',
+  });
+}
+
+export async function readNativeCapacityProgrammeTelemetry({
+  expectedHead = '',
+  nowUtc = new Date().toISOString(),
+  verifier = readVerifiedStephanosNativeRoutingCandidate,
+  diagnosticReader = readNativeCapacityPublisherHeadDiagnosticV1,
+} = {}) {
+  const sourceHead = safeTelemetrySha(expectedHead);
+  // The signed router is authoritative. A separately sampled unsigned file
+  // may have advanced in the meantime and must never contradict a signed PASS.
+  const unsignedDiagnostic = () => {
+    let diagnostic;
+    try { diagnostic = diagnosticReader({ expectedHead }); }
+    catch { diagnostic = null; }
+    if (diagnostic?.nativePublisherDiagnosticOnly !== true) {
+      diagnostic = readNativeCapacityPublisherHeadDiagnosticV1({
+        expectedHead, readStatus: () => { throw new Error('UNAVAILABLE'); },
+      });
+    }
+    return {
+      ...diagnostic,
+      nativePublisherDiagnosticBinding: 'UNBOUND_UNSIGNED_STATUS',
+    };
+  };
+  const unknown = (reason) => Object.freeze({
+    ...unsignedDiagnostic(),
+    nativeCapacityVerified: false,
+    nativeCapacityReason: safeTelemetryText(reason, 160).toUpperCase(),
+    nativeCapacityModel: '',
+    nativeCapacitySourceHead: '',
+    nativeCapacityReceiptId: '',
+  });
+  if (!sourceHead) return unknown('NATIVE_CAPACITY_EXPECTED_HEAD_INVALID');
+  let verified;
+  try {
+    verified = await verifier({
+      nowUtc,
+      repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
+      sourceHead,
+      taskClass: 'FOCUSED_REPAIR',
+      root: sharedWorkspaceRoot,
+      repoRoot,
+      env: process.env,
+    });
+  } catch {
+    return unknown('NATIVE_CAPACITY_VERIFIER_FAILED');
+  }
+  const candidate = verified?.candidate;
+  if (verified?.ok !== true) {
+    return unknown(verified?.reason || 'NATIVE_CAPACITY_UNVERIFIED');
+  }
+  if (!candidate || candidate.sourceHead !== sourceHead
+      || candidate.repository !== BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY
+      || candidate.taskClass !== 'FOCUSED_REPAIR'
+      || candidate.sourceMutationAllowed !== true
+      || candidate.mergeAuthority !== false
+      || candidate.leaseSeizureAllowed !== false) {
+    return unknown('NATIVE_CAPACITY_CANDIDATE_IDENTITY_INVALID');
+  }
+  return Object.freeze({
+    // Bind the visible head to the SAME signed verifier candidate. Never
+    // report the raced unsigned file as if it were that signed record.
+    nativePublisherDiagnosticOnly: true,
+    nativePublisherObservedHead: sourceHead,
+    nativePublisherHeadMatchesExpected: true,
+    nativePublisherDiagnosticReason: 'NATIVE_PUBLISHER_VERIFIED_CANDIDATE_HEAD',
+    nativePublisherDiagnosticBinding: 'SIGNED_VERIFIER_CANDIDATE',
+    nativeCapacityVerified: true,
+    nativeCapacityReason: 'STEPHANOS_NATIVE_ROUTING_CANDIDATE_VERIFIED',
+    nativeCapacityModel: safeTelemetryText(candidate.model, 120),
+    nativeCapacitySourceHead: sourceHead,
+    nativeCapacityReceiptId: safeTelemetryId(candidate.capacityReceiptId),
+  });
+}
+
 async function readProgrammeAuthorityStatus(command = {}) {
   const identity = readCanonicalSourceIdentity(command);
   if (!identity.ok) return identity;
@@ -3028,7 +4092,14 @@ async function readProgrammeAuthorityStatus(command = {}) {
     repoRoot,
     nowUtc: new Date().toISOString(),
   });
-  const programmeAuthority = createSanitizedProgrammeAuthorityStatusProjection(projection);
+  const nativeCapacity = await readNativeCapacityProgrammeTelemetry({
+    expectedHead: command.expectedHead,
+    nowUtc: new Date().toISOString(),
+  });
+  const programmeAuthority = Object.freeze({
+    ...createSanitizedProgrammeAuthorityStatusProjection(projection),
+    ...nativeCapacity,
+  });
   const telemetryReady = programmeAuthorityPacketReady(programmeAuthority);
   return {
     ...identity,
@@ -3140,15 +4211,29 @@ async function readCriticalBacklogStatus(command = {}) {
 export async function cancelMissionOrchestratorMission(command = {}, {
   readSourceIdentity = readCanonicalSourceIdentity,
   cancelMission = cancelBoundedMission,
+  quarantineSourceAttempt = quarantineOriginalSourceAttempt,
 } = {}) {
   const identity = await readSourceIdentity(command);
   if (!identity.ok) return identity;
   try {
-    const result = await cancelMission({
+    const result = await (command.originalLeaseId ? quarantineSourceAttempt : cancelMission)({
       missionId: command.missionId,
       commandId: command.commandId,
       reason: command.reason,
-    });
+      ...(command.originalLeaseId ? { originalLeaseId: command.originalLeaseId,
+        originalLeaseDigest: command.originalLeaseDigest,
+        expectedMissionRevision: command.expectedMissionRevision,
+        ...(command.legacyOrphanQuarantineRequested === true
+          ? { legacyOrphanQuarantineRequested: true } : {}),
+        operatorSourceRevision: identity.sourceHead,
+        operatorRequestId: command.requestId } : {}),
+    }, command.originalLeaseId ? {
+      paths: resolveCriticalBacklogRuntimePaths({}),
+      // Trusted immutable issuer receipt only. Never use the public packet as
+      // custody evidence or supply a caller-selectable verifier.
+      authenticateOriginalWriterExclusionEvidence,
+      authenticateLegacyOrphanQuarantine,
+    } : {});
     const missionId = safeConveyorId(result?.state?.missionId || command.missionId);
     const currentPhase = safeConveyorId(result?.state?.currentPhase);
     const cancelled = currentPhase === 'CANCELLED';
@@ -3164,6 +4249,7 @@ export async function cancelMissionOrchestratorMission(command = {}, {
       currentPhase,
       duplicate: result?.duplicate === true,
       eventId: safeTelemetryId(result?.eventId),
+      originalSourceAttemptFence: result?.state?.storeMetadata?.originalSourceAttemptFence || null,
       operatorActionRequired: result?.state?.operatorActionRequired === true,
       arbitraryFilesystemAccess: false,
       commandExecutionAccess: false,
@@ -3260,8 +4346,15 @@ export function shouldRolloverMailboxGenerationAfterTerminal(selected = {}, term
   });
 }
 
-async function executeSelectedMailboxCommand(selected, receiptRef) {
+async function executeSelectedMailboxCommand(selected, receiptRef, state) {
   return executeBattleBridgeGitHubCommand(selected.command, {
+    executeMailboxRotationFn: command => executeMailboxRotationOnHost(command, {
+      state, selectedCommentId: selected.commentId, sourceHead: readMailboxCheckoutHead(),
+      readIssue: number => ghJson(['api', `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${number}`]),
+      readPull: readRotationPull, readAuthoritySource: readRotationAuthoritySource,
+      readComments: loadCompleteMailboxComments, persist: saveState,
+      publishFence: publishRotationFence, readActions: readRotationActions,
+    }),
     updateStephanos: (command) => updateStephanosFromChat({
       operatorApproval: command.operatorApproval,
       expectedBranch: 'main',
@@ -3344,24 +4437,37 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
   const publicationOutbox = flushMailboxReceiptPublicationOutbox(state, {
     publish: publicationBudget.publish,
   });
-  const comments = loadBoundedMailboxComments();
-  const batch = selectBattleBridgeGitHubCommandBatch(comments, {
-    consumedRequestIds: new Set([
-      ...(Array.isArray(state.consumedRequestIds) ? state.consumedRequestIds : []),
-      ...(Array.isArray(state.acceptedRequestIds) ? state.acceptedRequestIds : []),
-    ]),
+  bootstrapMailboxExecutionHistory(state);
+  const comments = state.mailboxRotation && !['VERIFIED', 'CANCELLED'].includes(state.mailboxRotation.phase)
+    ? loadCompleteMailboxComments(CANONICAL_MAILBOX_ISSUE) : loadBoundedMailboxComments();
+  const currentHead = readGitHubMainHead();
+  const rotationPoll = prepareMailboxRotationPoll(state, comments, {
+    approvedUpdateHead: state.mailboxRotation && currentHead !== MAILBOX_PROCESS_SOURCE_HEAD
+      ? approvedRotationUpdateHead(state.mailboxRotation, currentHead) : '',
+  });
+  if (state.mailboxRotation && !['VERIFIED', 'CANCELLED'].includes(state.mailboxRotation.phase)) {
+    try { state.mailboxRotationActions = await readRotationActions(state.mailboxRotation); }
+    catch { state.mailboxRotationActions = { complete: false, pendingRuns: [] }; }
+  }
+  saveState(state);
+  const batch = selectBattleBridgeGitHubCommandBatch(rotationPoll.comments, {
+    consumedRequestIds: rotationPoll.consumedRequestIds,
     now: now(),
-    maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
+    maxBatch: 1,
+    currentHead,
   });
   const rejectedTerminal = terminalizeRejectedMailboxCommands(state, batch.terminalRejections, {
     now,
     publish: publicationBudget.publish,
+    ledger: executionLedger,
   });
   if (batch.verdict === 'NO_COMMAND_READY') return Object.freeze({
     ...batch,
     terminalizedRejectionCount: rejectedTerminal.length,
     receiptPublicationOutbox: publicationOutbox,
     receiptPublicationBudget: publicationBudget.snapshot(),
+    rotationDeferredCount: rotationPoll.deferredRequestIds.length,
+    mailboxRotation: projectMailboxRotation(state.mailboxRotation, state.mailboxRotationInventory),
   });
   if (!batch.ok) return batch;
 
@@ -3378,6 +4484,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
       return preflightMailboxControlExpectedHead(selected);
     },
     beforeExecute: async (selected) => {
+      executionLedger.reserve(selected.command);
       const acceptedAt = now().toISOString();
       const receipt = buildBattleBridgeGitHubCommandReceipt({
         command: selected.command,
@@ -3414,7 +4521,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
       const heartbeatTimer = setInterval(renew, 60_000);
       heartbeatTimer?.unref?.();
       try {
-        return await executeSelectedMailboxCommand(selected, prepared.receiptLocation.ref);
+        return await executeSelectedMailboxCommand(selected, prepared.receiptLocation.ref, state);
       } finally {
         clearInterval(heartbeatTimer);
       }
@@ -3437,6 +4544,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
         proofRefs: [selected.commentUrl, prepared?.receiptLocation?.ref].filter(Boolean),
         processSourceHead: MAILBOX_PROCESS_SOURCE_HEAD,
       });
+      executionLedger.complete(receipt);
       const receiptLocation = writeReceipt(receipt);
       checkpointTerminalMailboxReceipt(state, receipt);
       const publishable = { ...receipt, receiptRef: receiptLocation.ref };

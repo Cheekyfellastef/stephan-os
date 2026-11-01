@@ -21,6 +21,16 @@ For Music Tile URL/artwork delivery, live requires all three feature receipts:
 
 The bridge remains read-only for status queries and grants no arbitrary filesystem, command, source-mutation, merge, deployment or self-approval authority.
 
+## Q&A publication recovery
+
+The existing #1506 relay must distinguish answer persistence from public response delivery. Validate decoded JSON strings and keys, including nested values, while checking prose outside the single JSON block separately. Transport escapes are not private paths; decoded paths and secret-shaped strings remain forbidden.
+
+If an authenticated question has a matching `BRIDGE_VERIFIED_PASS:WORKSPACE_QA_PASS` receipt but publication failed, an expiry retry may deliver only that exact persisted result. Require the accepted receipt's request/correlation/issue/PR identity, acceptance before expiry, byte-for-byte question equality, a valid correlated answer at the receipt's original timestamp, and the already-persisted private Canvas handoff. Missing or contradictory evidence blocks recovery without new cognition or workspace writes. An expired request without an accepted durable result remains rejected.
+
+The same rule repairs the legacy contradictory state where the accepted Q&A audit survived but a later completion receipt recorded expiry rejection. Rebind cached requests to the current canonical owner-authored inbox before recovery. A successful recovery replaces that terminal rejection only after the canonical public response has been published; it does not refresh the answer's timestamp or turn an old plan into current truth.
+
+This is the handoff-responsibility invariant applied to #1308 Stephanos Project Intelligence and the existing #1506 participant relay. No alternate chat, mailbox, scheduler, provider route or authority is created.
+
 ## Canonical commit truth
 
 `READ_CURRENT_STATUS` is the shared source-head question for Stephanos, ChatGPT, Codex, OpenClaw and future workspace participants. It reads only the existing fixed Shared Workspace records:
@@ -47,7 +57,7 @@ The same projection exposes the updater observation separately as `HEALTHY`, `RU
 
 The response also contains `windowsProofCoverage`. Each of source, built runtime, served runtime, UI 4173, backend 8787, OpenClaw 18789, Shared Workspace, Recovery Mesh, GitHub Command Mailbox, Mission Worker and the Windows execution surface is independently labelled `PROVEN`, `BLOCKED`, `STALE` or `UNPROVEN`, with its original observation timestamp and age. The aggregate may report `WINDOWS_PROOF_COVERAGE_COMPLETE` only when every required surface is currently proven. Regenerating the response never changes an evidence source timestamp.
 
-Authorised chats obtain read-only Windows diagnostics through the existing #2590 `RUN_BATTLE_BRIDGE_DIAGNOSTICS` mailbox operation and read the correlated terminal receipt. Stephan is not a PowerShell, screenshot or copy/paste courier. A dormant mailbox is itself a typed control-plane blocker; it is not an instruction to ask the operator to relay the proof manually.
+Authorised chats obtain read-only Windows diagnostics through the current canonical `RUN_BATTLE_BRIDGE_DIAGNOSTICS` mailbox operation and read the correlated terminal receipt. Stephan is not a PowerShell, screenshot or copy/paste courier. A dormant mailbox is itself a typed control-plane blocker; it is not an instruction to ask the operator to relay the proof manually.
 
 ## Stephanos as the conversation surface
 
@@ -67,4 +77,4 @@ Missing identity or source head is `UNPROVEN`, a fresh one-way route is `DEGRADE
 
 `READ_CONVERSATION_REPLY` reads only the exact deterministic outbox record for the originating message. A reply is usable only when recipient, requested entity, conversation, thread, correlation, reply-to message and expected source head all match. Missing, mismatched, invalid or stale records return a typed blocker rather than the latest unrelated message.
 
-The source contract is not live conversational acceptance. #1506/#2590 remain incomplete until fresh no-courier round trips separately prove Stephanos, OpenClaw and Codex replies from the Windows Shared Workspace, and until a newly registered future participant can join through a capability record without source changes to the relay. A healthy port without a correlated reply does not satisfy that gate.
+The source contract is not live conversational acceptance. #1506/#2808 remain incomplete until fresh no-courier round trips separately prove Stephanos, OpenClaw and Codex replies from the Windows Shared Workspace, and until a newly registered future participant can join through a capability record without source changes to the relay. A healthy port without a correlated reply does not satisfy that gate.

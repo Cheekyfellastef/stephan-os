@@ -183,6 +183,8 @@ export function buildSourceArtifactPublicationRecoveryV1(input = {}) {
     nowUtc: input.nowUtc,
     capabilities: input.capabilities,
     failedRoutes,
+    // canonicalRemote has already proved this PR branch exists at its parent.
+    existingBranch: true,
   });
 
   if (continuity.routeReady) {

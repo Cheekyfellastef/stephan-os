@@ -1,14 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
+import { EventEmitter } from 'node:events';
+import { mkdtemp, rm, writeFile, mkdir, readFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   SOVEREIGN_COMMANDER_OPERATION,
   buildSovereignCommanderCommandV1,
-  executeSovereignCommanderCommandV1,
+  executeSovereignCommanderCommandV1 as executeActualCommand,
+  validateSovereignWindowsReviewIdentityV1,
 } from './sovereignCommanderV1.mjs';
 import { collectBattleBridgeObservation } from '../../scripts/battle-bridge-observation.mjs';
+import { SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER } from './sovereignMaintenanceAdmissionV1.mjs';
+import { startSovereignCommanderContinuousRepairGuardian } from '../../scripts/sovereign-commander-http.mjs';
 import {
   STEPHANOS_EXECUTION_SURFACE,
   buildStephanosExecutionCommandEnvelopeV1,
@@ -17,6 +21,11 @@ import {
 
 const REPO = 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os';
 const OUTSIDE = 'C:\\Users\\Operator\\Downloads\\proof.txt';
+// Existing executor fixtures model an explicitly idle guardian; held/unknown
+// owner admission is exercised through the actual executor in its own suite.
+const executeSovereignCommanderCommandV1 = (envelope, options = {}) => executeActualCommand(envelope, {
+  withMaintenanceOwner: (_command, run) => run(), ...options,
+});
 
 function envelope(operation, overrides = {}) {
   return buildStephanosExecutionCommandEnvelopeV1({
@@ -36,8 +45,9 @@ test('boot daemon bootstrap remains exact-head, one-time elevated, and bounded',
     'utf8',
   );
   assert.match(source, /Start-Process[^\r\n]*-Verb RunAs[^\r\n]*-WindowStyle Hidden/);
-  assert.match(source, /SOVEREIGN_BOOT_DAEMON_TASKS_INSTALLED_AND_PROVEN/);
-  assert.match(source, /logonType -eq 'S4U'/);
+  assert.match(source, /SOVEREIGN_DAEMON_TASK_CONFIGURATION_VERIFIED/);
+  assert.match(source, /'InteractiveToken' \} else \{ 'S4U'/);
+  assert.match(source, /logonType -eq \$expectedLogonType/);
   assert.match(source, /standingElevatedTaskCreated = \$false/);
   assert.match(source, /arbitraryShellAllowed = \$false/);
   assert.match(source, /mergeAuthority = \$false/);
@@ -306,7 +316,7 @@ test('qwen3.5 canary is a fixed source-controlled maintenance action with a boun
 test('controller activity publication is fixed, canonical and payload-bound', () => {
   const activity = {
     schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
-    controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
     runId: 'controller-run-1',
     observedEnabled: true,
     executionState: 'IDLE',
@@ -330,13 +340,22 @@ test('controller activity publication is fixed, canonical and payload-bound', ()
   ), { repoRoot: REPO });
   assert.equal(blocked.dispatchAllowed, false);
   assert.ok(blocked.blockers.includes('sovereign-controller-activity-controller-invalid'));
+
+  const retired = Buffer.from(JSON.stringify({ ...activity, controllerId: '6a9bb24c04748191ada675a686f3b3fa' }), 'utf8').toString('base64url');
+  const retiredBlocked = buildSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    { payload: { actionId: 'publish-controller-activity', controllerActivityPayloadBase64: retired } },
+  ), { repoRoot: REPO });
+  assert.equal(retiredBlocked.dispatchAllowed, false);
+  assert.ok(retiredBlocked.blockers.includes('sovereign-controller-activity-controller-invalid'));
 });
 
 test('capability pack 2 maps high-value Battle Bridge actions to fixed source-controlled executables', async () => {
   const cases = [
     ['battle-bridge-observe', /battle-bridge-observation\.mjs$/i, 10000],
+    ['diagnose-ignition', /sovereign-commander-ignition-diagnosis\.mjs$/i, 20000],
     ['meter-status', /sovereign-meter-status\.mjs$/i, 10000],
-    ['controller-lane-status', /sovereign-controller-lane-status\.mjs$/i, 10000],
+    ['controller-lane-status', /sovereign-controller-lane-status\.mjs$/i, 20000],
     ['visibility-snapshot', /sovereign-commander-visibility-snapshot\.mjs$/i, 30000],
     ['ignite-stephanos', /run-battle-bridge-ignition\.mjs$/i, 180000],
     ['repair-battle-bridge', /battle-bridge-repair\.mjs$/i, 120000],
@@ -376,6 +395,7 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     assert.equal(observed.length, 1, actionId);
     assert.match(observed[0].args.find((arg) => /\.(?:mjs|ps1)$/i.test(arg)) || '', expectedPath, actionId);
     if (expectedArg) assert.ok(observed[0].args.includes(expectedArg), actionId);
+    if (actionId === 'controller-lane-status') assert.deepEqual(observed[0].args.slice(1), ['--snapshot-only']);
     assert.equal(observed[0].options.shell, false, actionId);
     assert.equal(observed[0].options.windowsHide, true, actionId);
     assert.equal(observed[0].options.timeout, timeout, actionId);
@@ -421,4 +441,432 @@ test('OpenClaw stack repair has bounded headroom below the remote transport dead
   assert.equal(command.plan.processId, 'repair-openclaw-stack');
   assert.equal(command.plan.timeoutMs, 195_000);
   assert.ok(command.plan.timeoutMs < 210_000);
+});
+
+test('Sovereign private batch reads bound eight absolute paths and total content budget', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sovereign-batch-read-'));
+  try {
+    const first = join(root, 'one.txt');
+    const second = join(root, 'two.txt');
+    await writeFile(first, 'alpha\nbeta\ngamma\n', 'utf8');
+    await writeFile(second, 'delta\nepsilon\n', 'utf8');
+    const make = (targets) => buildStephanosExecutionCommandEnvelopeV1({
+      catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: root }),
+      surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+      actionId: 'private-batch-read',
+      missionId: 'private-inspection',
+      operation: SOVEREIGN_COMMANDER_OPERATION.READ_MULTIPLE_FILES,
+      targetPaths: targets,
+      payload: { offset: 1, length: 2 },
+    });
+    const result = await executeSovereignCommanderCommandV1(make([first, second]));
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.structuredContent.files.map((file) => file.content), [
+      'beta\ngamma', 'epsilon\n',
+    ]);
+    assert.equal(result.structuredContent.totalFiles, 2);
+    assert.equal(result.vendorMeterRequired, false);
+    assert.equal(result.command.arbitraryUnboundedCommandAllowed, false);
+    const tooMany = await executeSovereignCommanderCommandV1(make(Array(9).fill(first)));
+    assert.equal(tooMany.ok, false);
+    assert.match(tooMany.blocker, /multiple-read-requires-1-to-8-absolute-targets/);
+    const relative = await executeSovereignCommanderCommandV1(make(['relative.txt']));
+    assert.equal(relative.ok, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Sovereign file metadata inspection does not return file contents', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sovereign-file-info-'));
+  try {
+    const file = join(root, 'alpha.txt');
+    const secretSentinel = 'NEVER_RETURN_CONTENT_OF_FILE_IN_METADATA';
+    await writeFile(file, secretSentinel, 'utf8');
+    const env = buildStephanosExecutionCommandEnvelopeV1({
+      catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: root }),
+      surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+      actionId: 'file-info',
+      missionId: 'private-inspection',
+      operation: SOVEREIGN_COMMANDER_OPERATION.GET_FILE_INFO,
+      targetPaths: [file],
+      payload: {},
+    });
+    const result = await executeSovereignCommanderCommandV1(env);
+    assert.equal(result.ok, true);
+    assert.equal(result.structuredContent.type, 'FILE');
+    assert.equal(result.structuredContent.bytes, Buffer.byteLength(secretSentinel));
+    assert.ok(result.structuredContent.modifiedAtUtc.endsWith('Z'));
+    assert.equal(JSON.stringify(result).includes(secretSentinel), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+test('Rescue Island one-shot probe is only a fixed read-only action with no caller arguments', () => {
+  const command = buildSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    { payload: { actionId: 'rescue-island-readonly-boundary',
+      command: 'Remove-Item C:\\\\* -Recurse',
+      customTargetPath: 'C:\\\\untrusted' } },
+  ), { repoRoot: REPO });
+  assert.equal(command.dispatchAllowed, true);
+  assert.equal(command.plan.processId, 'rescue-island-readonly-boundary');
+  assert.equal(command.plan.kind, 'fixed-process');
+  assert.equal(command.plan.args.length, 1);
+  assert.match(command.plan.args[0], /rescue-island-boundary-probe\.mjs$/);
+  assert.doesNotMatch(JSON.stringify(command.plan), /Remove-Item|untrusted/);
+  assert.equal(command.mergeAuthority, false);
+  assert.equal(command.arbitraryUnboundedCommandAllowed, false);
+});
+
+test('registered Rescue Island source-only probe exercises a real physical path census', async () => {
+  const { inspectRescueIslandLocalBoundaryV1 } = await import(
+    '../../scripts/rescue-island-boundary-probe.mjs'
+  );
+  // Windows TEMP may use an 8.3 alias. The positive fixture needs the physical
+  // spelling; production must continue to refuse a redirected repository root.
+  const parent = await realpath(await mkdtemp(join(tmpdir(), 'island-boundary-live-test-')));
+  try {
+    const root = join(parent, 'canonical');
+    await mkdir(join(root, '.git'), { recursive: true });
+    await mkdir(join(root, 'docs', 'architecture'), { recursive: true });
+    await mkdir(join(root, 'shared', 'agents'), { recursive: true });
+    for (const target of ['rescueIslandFirstCommitV1.mjs', 'rescueIslandPreflightV1.test.mjs']) {
+      await writeFile(join(root, 'shared', 'agents', target), '// fixture\\n');
+    }
+    const safe = await inspectRescueIslandLocalBoundaryV1(root);
+    assert.equal(safe.ok, true);
+    assert.equal(safe.observedPathCount, 3);
+    assert.equal(safe.sourceMutationAllowed, false);
+    assert.equal(safe.independentOwnershipAuthenticated, false);
+    assert.equal(safe.originalSourceLeaseReleaseAllowed, false);
+    await rm(join(root, '.git'), { recursive: true });
+    const held = await inspectRescueIslandLocalBoundaryV1(root);
+    assert.equal(held.ok, false);
+    assert.equal(held.workerStartAllowed, false);
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test('Windows calibration requires exact bounded identity and authenticated route before any process', async t => {
+  for (const [key, value] of Object.entries({ NODE_OPTIONS: '--import=attacker.mjs', NODE_PATH: 'attacker' })) {
+    const before = process.env[key];
+    process.env[key] = value;
+    t.after(() => { if (before === undefined) delete process.env[key]; else process.env[key] = before; });
+  }
+  const identity = {
+    schemaVersion: 'stephanos.sovereign-review-exact-request.v1',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 1574, prNumber: 3090, branch: 'main',
+    sourceHead: 'a'.repeat(40), baseSha: 'b'.repeat(40),
+    implementerProvider: 'github-builder',
+    implementerSessionId: 'builder-3090', reviewerSessionId: 'reviewer-3090',
+    implementerPrincipal: 'builder-principal', reviewerPrincipal: 'reviewer-principal',
+  };
+  const build = (reviewIdentity) => buildSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    { payload: { actionId: 'sovereign-windows-reviewer-calibration', reviewIdentity } },
+  ), { repoRoot: REPO });
+  assert.equal(build().dispatchAllowed, false, 'daemon ambient env is never sufficient');
+  assert.equal(build({ ...identity, baseSha: 'x'.repeat(40) }).dispatchAllowed, false);
+  assert.equal(build({ ...identity, extra: 'powershell' }).dispatchAllowed, false);
+  assert.equal(build({ ...identity, reviewerPrincipal: identity.implementerPrincipal }).dispatchAllowed, false);
+  const valid = build(identity);
+  assert.equal(valid.dispatchAllowed, true);
+  assert.equal(valid.plan.processId, 'sovereign-windows-reviewer-calibration');
+  assert.deepEqual(valid.plan.reviewIdentity, identity);
+  assert.equal(validateSovereignWindowsReviewIdentityV1(identity).sourceHead, identity.sourceHead);
+  let calls = 0;
+  const run = async routeProof => executeSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    { payload: { actionId: 'sovereign-windows-reviewer-calibration', reviewIdentity: identity } },
+  ), { repoRoot: REPO, routeProof, spawnSyncFn(_exe, _args, options) {
+    calls++;
+    assert.equal(options.shell, false);
+    assert.equal(_args[0], '--experimental-loader');
+    assert.match(_args[1], /^data:text\/javascript;base64,/);
+    assert.match(_args[2], /sovereign-windows-review-calibration-v1\.mjs$/);
+    assert.equal(_args[3], '--commander-once');
+    assert.equal(_args.length, 4);
+    assert.equal(options.env.NODE_OPTIONS, undefined);
+    assert.equal(options.env.NODE_PATH, undefined);
+    assert.equal(options.env.STEPHANOS_REVIEW_EXACT_HEAD, identity.sourceHead);
+    assert.equal(options.env.STEPHANOS_REVIEW_EXACT_BASE, identity.baseSha);
+    assert.equal(options.env.STEPHANOS_REVIEW_PR, '3090');
+    assert.equal(options.env.STEPHANOS_REVIEW_REVIEWER_PRINCIPAL, identity.reviewerPrincipal);
+    assert.equal(options.env.STEPHANOS_REVIEW_IMPLEMENTER_PRINCIPAL, identity.implementerPrincipal);
+    return { status: 0, stdout: '{"candidate":true}', stderr: '' };
+  } });
+  const denied = await run({ commandPathProven: true, authenticatedMcp: false, mcpSessionReady: true });
+  assert.equal(denied.ok, false);
+  assert.equal(calls, 0, 'unqualified transport must not launch Ollama calibration');
+  const passed = await run({ commandPathProven: true, authenticatedMcp: true,
+    mcpSessionReady: true, transport: 'authenticated-http-jsonrpc' });
+  assert.equal(passed.ok, true);
+  assert.equal(calls, 1);
+  assert.equal(passed.command.mergeAuthority, false);
+  assert.equal(passed.command.arbitraryUnboundedCommandAllowed, false);
+});
+
+
+test('native reviewer setup exception retains only fixed typed preexecution denial', async () => {
+  const identity = {
+    schemaVersion:'stephanos.sovereign-review-exact-request.v1',
+    repository:'Cheekyfellastef/stephan-os',
+    issueNumber:1574,prNumber:3199,branch:'main',
+    sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),
+    implementerProvider:'github-builder',
+    implementerSessionId:'builder-3199',reviewerSessionId:'reviewer-3199',
+    implementerPrincipal:'builder-principal',reviewerPrincipal:'reviewer-principal',
+  };
+  let called=0;
+  const result=await executeSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    {payload:{actionId:'sovereign-windows-reviewer-calibration',reviewIdentity:identity}},
+  ),{repoRoot:REPO,routeProof:{commandPathProven:true,authenticatedMcp:true,mcpSessionReady:true},
+    spawnSyncFn(){called++;throw Error('PRIVATE_REVIEWER_EXECUTION_PATH_AND_SECRET');}});
+  assert.equal(called,1);
+  assert.equal(result.ok,false);
+  assert.equal(result.finalVerdict,'SOVEREIGN_COMMANDER_EXECUTION_FAILED');
+  assert.equal(result.command.plan.processId,'sovereign-windows-reviewer-calibration');
+  assert.equal(result.blocker,'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE');
+  assert.deepEqual(result.structuredContent,{ok:false,status:null,stdout:'',stderr:'',
+    errorCode:'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE'});
+  assert.equal(result.contentText,'');
+  assert.doesNotMatch(JSON.stringify(result),/PRIVATE_REVIEWER_EXECUTION_PATH_AND_SECRET/);
+  assert.equal(result.command.mergeAuthority,false);
+});
+
+test('async reviewer spawn failures retain fixed private denial through both owner aliases', async () => {
+  const identity = {
+    schemaVersion: 'stephanos.sovereign-review-exact-request.v1',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 1574, prNumber: 3189,
+    branch: 'main', sourceHead: 'a'.repeat(40), baseSha: 'b'.repeat(40),
+    implementerProvider: 'github-builder', implementerSessionId: 'builder-3189',
+    reviewerSessionId: 'reviewer-3189', implementerPrincipal: 'builder-principal',
+    reviewerPrincipal: 'reviewer-principal',
+  };
+  for (const operation of [SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    SOVEREIGN_COMMANDER_OPERATION.START_PROCESS]) {
+    for (const mode of ['throw', 'error-event']) {
+      let calls = 0;
+      const result = await executeActualCommand(envelope(operation, { payload: {
+        [operation === SOVEREIGN_COMMANDER_OPERATION.START_PROCESS ? 'processId' : 'actionId']:
+          'sovereign-windows-reviewer-calibration', reviewIdentity: identity,
+      } }), {
+        repoRoot: REPO,
+        routeProof: { commandPathProven: true, authenticatedMcp: true, mcpSessionReady: true },
+        withMaintenanceOwner: (_command, execute) => execute(),
+        spawnFn() {
+          calls++;
+          const error = Object.assign(new Error('PRIVATE_SPAWN_MESSAGE'), { code: 'PRIVATE_SPAWN_CODE' });
+          if (mode === 'throw') throw error;
+          const child = new EventEmitter();
+          child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => false;
+          queueMicrotask(() => {
+            child.stdout.emit('data', 'PRIVATE_SPAWN_STDOUT');
+            child.stderr.emit('data', 'PRIVATE_SPAWN_STDERR');
+            child.emit('error', error);
+            child.emit('close', 0, null);
+          });
+          return child;
+        },
+      });
+      assert.equal(calls, 1, operation + ':' + mode);
+      assert.equal(result.ok, false);
+      assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_EXECUTION_FAILED');
+      assert.equal(result.blocker, 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE');
+      assert.equal(result.structuredContent.status, null);
+      assert.equal(result.structuredContent.errorCode, result.blocker);
+      assert.equal(result.structuredContent.stdout, '');
+      assert.equal(result.structuredContent.stderr, '');
+      assert.equal(result.contentText, '');
+      assert.doesNotMatch(JSON.stringify(result), /PRIVATE_SPAWN_/);
+      assert.equal(result.command.mergeAuthority, false);
+      assert.equal(result.command.leaseSeizureAllowed, false);
+    }
+  }
+});
+
+test('Windows calibration preserves authenticated exact-source launch in both async owner aliases', async t => {
+  const hostileEnvironment = {
+    NODE_OPTIONS: '--import=attacker.mjs', NODE_PATH: 'attacker',
+    STEPHANOS_REVIEW_EXACT_HEAD: 'c'.repeat(40),
+    STEPHANOS_REVIEW_SESSION: 'ambient-unrelated-review',
+  };
+  for (const [key, value] of Object.entries(hostileEnvironment)) {
+    const before = process.env[key];
+    process.env[key] = value;
+    t.after(() => { if (before === undefined) delete process.env[key]; else process.env[key] = before; });
+  }
+  const identity = {
+    schemaVersion: 'stephanos.sovereign-review-exact-request.v1',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 1574, prNumber: 3090, branch: 'main',
+    sourceHead: 'a'.repeat(40), baseSha: 'b'.repeat(40),
+    implementerProvider: 'github-builder',
+    implementerSessionId: 'builder-3090', reviewerSessionId: 'reviewer-3090',
+    implementerPrincipal: 'builder-principal', reviewerPrincipal: 'reviewer-principal',
+  };
+  for (const operation of [SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    SOVEREIGN_COMMANDER_OPERATION.START_PROCESS]) {
+    let calls = 0;
+    const run = (routeProof, reviewIdentity = identity) => executeActualCommand(envelope(operation, {
+      payload: {
+        [operation === SOVEREIGN_COMMANDER_OPERATION.START_PROCESS ? 'processId' : 'actionId']:
+          'sovereign-windows-reviewer-calibration',
+        reviewIdentity,
+      },
+    }), {
+      repoRoot: REPO, routeProof,
+      // A source fixture for the already-admitted owner; no synchronous
+      // primitive is supplied, so this exercises the production async path.
+      withMaintenanceOwner: (_command, execute) => execute(),
+      spawnFn(_executable, args, options) {
+        calls++;
+        assert.equal(options.shell, false);
+        assert.equal(args[0], '--experimental-loader');
+        assert.match(args[1], /^data:text\/javascript;base64,/);
+        assert.match(args[2], /sovereign-windows-review-calibration-v1\.mjs$/);
+        assert.equal(args[3], '--commander-once');
+        assert.equal(args.length, 4);
+        const loader = Buffer.from(args[1].slice('data:text/javascript;base64,'.length), 'base64').toString();
+        assert.ok(loader.includes(identity.sourceHead));
+        assert.equal(options.env.NODE_OPTIONS, undefined);
+        assert.equal(options.env.NODE_PATH, undefined);
+        assert.equal(options.env.STEPHANOS_REVIEW_EXACT_HEAD, identity.sourceHead);
+        assert.equal(options.env.STEPHANOS_REVIEW_EXACT_BASE, identity.baseSha);
+        assert.equal(options.env.STEPHANOS_REVIEW_SESSION, identity.reviewerSessionId);
+        assert.equal(options.env.STEPHANOS_REVIEW_REVIEWER_PRINCIPAL, identity.reviewerPrincipal);
+        assert.equal(options.env.STEPHANOS_REVIEW_IMPLEMENTER_PRINCIPAL, identity.implementerPrincipal);
+        const child = new EventEmitter();
+        child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => false;
+        queueMicrotask(() => { child.stdout.emit('data', '{"candidate":true}'); child.emit('close', 0, null); });
+        return child;
+      },
+    });
+    for (const route of [undefined, {},
+      { commandPathProven: false, authenticatedMcp: true, mcpSessionReady: true },
+      { commandPathProven: true, authenticatedMcp: false, mcpSessionReady: true },
+      { commandPathProven: true, authenticatedMcp: true, mcpSessionReady: false }]) {
+      const denied = await run(route);
+      assert.equal(denied.ok, false);
+      assert.equal(denied.blocker, 'SOVEREIGN_WINDOWS_REVIEW_IDENTITY_OR_TRANSPORT_UNPROVEN');
+      assert.equal(calls, 0, operation + ' must refuse before spawning');
+    }
+    const admittedRoute = { commandPathProven: true, authenticatedMcp: true,
+      mcpSessionReady: true, transport: 'authenticated-http-jsonrpc' };
+    assert.equal((await run(admittedRoute, { ...identity, reviewerPrincipal: identity.implementerPrincipal })).ok, false);
+    assert.equal(calls, 0, 'ambient review metadata cannot supply a missing independent identity');
+    const result = await run(admittedRoute);
+    assert.equal(result.ok, true);
+    assert.equal(calls, 1);
+    assert.equal(result.command.mergeAuthority, false);
+    assert.equal(result.command.leaseSeizureAllowed, false);
+  }
+});
+
+
+test('real maintenance owner keeps typed reviewer pre-spawn HOLD without losing guardian availability', async () => {
+  const identity = {
+    schemaVersion: 'stephanos.sovereign-review-exact-request.v1',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 1574, prNumber: 3189,
+    branch: 'main', sourceHead: 'a'.repeat(40), baseSha: 'b'.repeat(40),
+    implementerProvider: 'github-builder', implementerSessionId: 'builder-3189',
+    reviewerSessionId: 'reviewer-3189', implementerPrincipal: 'builder-principal',
+    reviewerPrincipal: 'reviewer-principal',
+  };
+  const routeProof = { commandPathProven: true, authenticatedMcp: true, mcpSessionReady: true };
+  const operations = [SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    SOVEREIGN_COMMANDER_OPERATION.START_PROCESS];
+  for (const mode of ['throw', 'pre-spawn-error', 'post-spawn-error', 'null-close', 'signal-close']) {
+    const guardian = startSovereignCommanderContinuousRepairGuardian({
+      enabled: true, startDelayMs: 60_000, intervalMs: 60_000,
+      spawnImpl: () => assert.fail('review fixture uses its injected command transport'),
+      setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl: () => {},
+    });
+    let launches = 0;
+    try {
+      const attempt = operation => executeActualCommand(envelope(operation, { payload: {
+        [operation === SOVEREIGN_COMMANDER_OPERATION.START_PROCESS ? 'processId' : 'actionId']:
+          'sovereign-windows-reviewer-calibration', reviewIdentity: identity,
+      } }), {
+        repoRoot: REPO, routeProof,
+        withMaintenanceOwner: (command, execute) => guardian.withMaintenanceOwner(command, execute),
+        setTimeoutFn: () => ({ unref() {} }), clearTimeoutFn: () => {},
+        spawnFn() {
+          launches++;
+          if (mode === 'throw') throw Error('PRIVATE_PRESPAWN_DATA');
+          const child = new EventEmitter();
+          child.stdout = new EventEmitter();
+          child.stderr = new EventEmitter();
+          child.kill = () => false;
+          queueMicrotask(() => {
+            if (mode !== 'pre-spawn-error') child.emit('spawn');
+            child.stdout.emit('data', 'PRIVATE_REVIEW_OUTPUT');
+            child.stderr.emit('data', 'PRIVATE_REVIEW_DIAGNOSTIC');
+            if (mode === 'null-close') child.emit('close', null, '');
+            else if (mode === 'signal-close') child.emit('close', 0, 'SIGTERM');
+            else {
+              child.emit('error', Error('PRIVATE_REVIEW_ERROR'));
+              child.emit('close', 0, '');
+            }
+          });
+          return child;
+        },
+      });
+      const first = await attempt(operations[0]);
+      assert.equal(first.ok, false, mode);
+      assert.equal(launches, 1, mode);
+      assert.equal(first.command.mergeAuthority, false);
+      assert.doesNotMatch(JSON.stringify(first), /PRIVATE_/);
+      assert.equal(guardian.status().lastOk, false);
+      assert.equal(guardian.status().lastFinalVerdict, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED');
+      if (mode === 'throw' || mode === 'pre-spawn-error') {
+        assert.equal(first.blocker, 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE', mode);
+        assert.equal(guardian.status().lastBlocker, first.blocker);
+        assert.equal(guardian.status().timeoutCustodyHeld, false, mode);
+        assert.equal(guardian.status().scheduled, true, mode);
+        const second = await attempt(operations[1]);
+        assert.equal(launches, 2, mode + ': second alias remains callable');
+        assert.equal(second.blocker, first.blocker);
+        assert.equal(second.ok, false);
+        assert.equal(guardian.status().timeoutCustodyHeld, false);
+      } else {
+        assert.equal(first.blocker, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, mode);
+        assert.equal(guardian.status().timeoutCustodyHeld, true, mode);
+        assert.equal(guardian.status().scheduled, false, mode);
+        const second = await attempt(operations[1]);
+        assert.equal(launches, 1, mode + ': second alias must not launch');
+        assert.equal(second.ok, false);
+        assert.equal(second.blocker, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
+      }
+    } finally { guardian.stop(); }
+  }
+});
+
+test('forged public reviewer denial cannot release unknown child custody', async () => {
+  const guardian = startSovereignCommanderContinuousRepairGuardian({
+    enabled: true, spawnImpl: () => assert.fail('forged result fixture must not spawn'),
+    setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl: () => {},
+  });
+  try {
+    const command = { plan: { kind: 'fixed-process', processId: 'sovereign-windows-reviewer-calibration' } };
+    const forged = Object.freeze({
+      ok: false, command, blocker: 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE',
+      finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      structuredContent: Object.freeze({
+        ok: false, status: null, signal: '', stdout: '', stderr: '',
+        errorCode: 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE',
+      }),
+    });
+    const result = await guardian.withMaintenanceOwner(command, async () => forged);
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
+    assert.equal(guardian.status().timeoutCustodyHeld, true);
+    assert.equal(guardian.status().scheduled, false);
+  } finally { guardian.stop(); }
 });

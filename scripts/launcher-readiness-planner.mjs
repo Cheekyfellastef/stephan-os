@@ -8,7 +8,7 @@ export const LAUNCHER_READINESS_SCHEMA = 'stephanos.launcher-readiness-plan.v1';
 export const REQUIRED_SERVICES = Object.freeze([
   Object.freeze({ id: 'backend', label: 'backend', port: 8787, proof: 'HTTP health proof for http://127.0.0.1:8787/api/health' }),
   Object.freeze({ id: 'stephanos-ui', label: 'Stephanos UI', port: 4173, proof: 'Served launcher/runtime proof for http://127.0.0.1:4173/' }),
-  Object.freeze({ id: 'shared-workspace', label: 'shared workspace publisher/status', port: null, proof: 'Fresh shared workspace publisher/status records' }),
+  Object.freeze({ id: 'shared-workspace', label: 'shared workspace publication', port: null, proof: 'Valid current shared workspace publication, independently of aggregate runtime readiness' }),
 ]);
 
 export const OPTIONAL_SERVICES = Object.freeze([
@@ -108,7 +108,7 @@ export function planLauncherReadiness({ observedFacts = {}, launcherConfigFacts 
 
   if (sourceDirtyPaths.length) safetyBlockers.push({ id: 'dirty-source', detail: 'Commit/stash/discard source dirt before launcher repair.', paths: sourceDirtyPaths });
   if (unsafeCommand) safetyBlockers.push({ id: 'unsafe-launcher-command', detail: 'Readiness planner only describes allowlisted launcher start commands.', command: requestedStartCommand });
-  if (staleWorkspaceRecords.length) safetyBlockers.push({ id: 'stale-workspace-records', detail: 'Shared workspace current records are stale/UNKNOWN.', records: staleWorkspaceRecords });
+  if (staleWorkspaceRecords.length) safetyBlockers.push({ id: 'stale-workspace-records', detail: 'Shared workspace publication is missing, invalid or stale.', records: staleWorkspaceRecords });
 
   let finalVerdict = 'blocked-needs-supervisor-repair';
   if (sourceDirtyPaths.length) finalVerdict = 'blocked-dirty-source';
