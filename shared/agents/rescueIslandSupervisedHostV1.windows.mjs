@@ -87,6 +87,21 @@ async function fixture(t,{realFlatSignal=false,sourceTask=false,sourceBaseline=f
   }
   if(sourcePatch) await writeFile(join(canonicalRoot,'shared/agents/rescueIslandSecondLaneV1.mjs'),
     '// '+('actual large Windows baseline '.repeat(500))+'\nexport const lane = 1;\n');
+  // Git is launched with guarded core.autocrlf=true on the real Windows test
+  // runner. Track only the isolated JavaScript source/test dependencies as
+  // byte-preserved blobs, so their raw worktree bytes match the committed
+  // source identity checked by the production recovery guard. Never relax it.
+  const bytePreservedFixturePaths=[
+    'rescueIslandPreflightV1.mjs','rescueIslandPreflightV1.test.mjs',
+    'rescueIslandSourceTaskV1.mjs','rescueIslandSourceTaskV1.test.mjs',
+    'rescueIslandSupervisedRunV1.test.mjs','rescueIslandFirstCommitV1.mjs',
+    'rescueIslandAuthenticatedGithubReadV1.mjs','rescueIslandPilotOwnerIntakeV1.mjs',
+    'battleBridgeWindowsHosts.mjs','rescueIslandNativeTestProvisionV1.mjs',
+    'rescueIslandSupervisedHostV1.mjs','rescueIslandSupervisedHostV1.windows.mjs',
+    'rescueIslandSecondLaneV1.mjs',
+  ];
+  await writeFile(join(canonicalRoot,'.gitattributes'),
+    bytePreservedFixturePaths.map(name=>'shared/agents/'+name+' -text').join('\n')+'\n');
   git(canonicalRoot,['init','-b','main']);git(canonicalRoot,['add','.']);
   git(canonicalRoot,['-c','user.name=Adapter Fixture','-c','user.email=fixture@example.invalid','commit','-m','Adapter fixture baseline']);
   git(canonicalRoot,['remote','add','origin','https://github.com/Cheekyfellastef/stephan-os.git']);
