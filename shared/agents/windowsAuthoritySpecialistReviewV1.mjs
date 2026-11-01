@@ -31,7 +31,7 @@ const MISSION_WORKER_CLEANUP_BLOB_SHA = 'aba7123d16a26aa736ccd52be8e04ef2ecc4534
 const STEPHANOS_CORE_DAEMON_BLOB_SHA = '074eab1b76e480f10c78d052188ba88764f4ad37';
 const VR_RESOURCE_GOVERNOR_BLOB_SHA = '0686def65f5c8ae7c8eb10a227516d41bfa16bec';
 const SOVEREIGN_FIXED_RUNTIME_BLOB_SHA = 'c1d0df145b50eb05696eb23818679abcd6a3f6ec';
-const CANONICAL_MAILBOX_NATIVE_BLOB_SHA = '7fe42d5b9e839517c02a90efc7d0526b36773342';
+const CANONICAL_MAILBOX_NATIVE_BLOB_SHA = '1b103fda85c371a218f38f20fe5163ca3f5042bf';
 
 // Keep the established switchboard proof vocabulary visible at the trusted
 // composition boundary. The legacy router remains byte-pinned and supplies
