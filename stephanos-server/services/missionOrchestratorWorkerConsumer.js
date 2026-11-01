@@ -511,15 +511,10 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
             !== String(actionGrant.actionId || '').toLowerCase()
         )
       ) {
-        await quarantinePendingQueueItem(
-          paths,
-          adapter,
-          entry,
-          pendingPath,
-          bytes,
-          'MISSION_WORKER_PENDING_ITEM_GRANT_IDENTITY_INVALID',
-          options,
-        );
+        // The queue item's own filename/schema/identity was validated above.
+        // A foreign or stale *caller* grant is not evidence that these original
+        // pending bytes are a poison pill. Never quarantine another owner's
+        // legitimate work to satisfy the wrong selected grant.
         continue;
       }
       try {
