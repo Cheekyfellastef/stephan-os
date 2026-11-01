@@ -3100,7 +3100,7 @@ export async function finalizeTerminalImplementationLane(input = {}, options = {
     issueNumber: lane.issueNumber,
     prNumber: lane.prNumber,
     branch: lane.branch,
-    headSha: lane.headSha,
+    headSha: lease.headSha,
     ownerId: lease.ownerId,
   }, {
     ...options,
