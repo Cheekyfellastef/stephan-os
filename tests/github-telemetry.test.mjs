@@ -163,7 +163,7 @@ test('GitHub telemetry reuses the successful gh CLI fallback after a primary 403
   assert.equal(first.status, 'live');
   assert.equal(first.authAuthority, 'gh-cli');
   assert.equal(second.status, 'live');
-  assert.equal(calls.length, 6);
+  assert.equal(calls.length, 4, 'one denied serial read, then the three successful fallback reads; the next refresh uses cache');
 });
 
 test('GitHub telemetry cache is partitioned by non-secret credential fingerprint', async () => {
@@ -287,7 +287,7 @@ test('GitHub telemetry fails closed within a bounded time when the optional adap
   assert.equal(JSON.stringify(telemetry).includes('bounded-token'), false);
 });
 
-test('paginated goal estate stops after the first 403 instead of hammering every goal', async () => {
+test('paginated goal estate drains already-started reads after the first 403 and does not start another scan', async () => {
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-goal-estate-403-'));
   let calls = 0;
   let fallbackCalls = 0;
@@ -325,13 +325,13 @@ test('paginated goal estate stops after the first 403 instead of hammering every
     assert.equal(first.reasonCode, 'GITHUB_GOAL_ESTATE_RATE_LIMIT_BACKOFF');
     assert.equal(first.issues.length, 0);
     assert.equal(first.discoveredIssues.length, 0);
-    assert.equal(calls, 2, 'list once, events once, then stop');
+    assert.equal(calls, 3, 'one list and two already-started event reads are drained, then stop');
     assert.equal(fallbackCalls, 0);
     const shared = readBrokeredGithubRateLimitHold({ repository: `${owner}/${repo}`, workspaceRoot });
     assert.equal(shared?.source, 'SHARED_GITHUB_RATE_LIMIT_HOLD');
     const second = await fetchGithubGoalIssues(args);
     assert.equal(second.reasonCode, 'GITHUB_GOAL_ESTATE_RATE_LIMIT_BACKOFF');
-    assert.equal(calls, 2, 'no new upstream call during shared hold');
+    assert.equal(calls, 3, 'no new upstream call during shared hold');
     assert.equal(JSON.stringify([first, second]).includes('private-goal-token'), false);
   } finally {
     await rm(workspaceRoot, { recursive: true, force: true });
