@@ -197,6 +197,17 @@ export async function assertMissionWorkerPendingCapacityCurrent(item, bytes, opt
   if (history.entries.length && history.entries.at(-1).record.admittedEnvelopeSha256 !== digest(bytes)) {
     throw capacityRefusal('RECOVERY_REQUIRED');
   }
+  // The original pending envelope is just as exclusive as a renewed one.
+  // Previously the exact caller/persisted grant check ran only after a capacity
+  // refresh. A different controller grant could therefore claim a first-issue
+  // pending item while still matching its advisory mission/action identifier.
+  // Keep legacy *identical* old grants valid, but refuse any changed authority.
+  if (options.actionGrant && !(
+    missionWorkerActionGrantsMatchV1(item.actionGrant, options.actionGrant)
+    || isDeepStrictEqual(item.actionGrant, options.actionGrant)
+  )) {
+    throw capacityRefusal('GRANT_MISMATCH');
+  }
   if (history.entries.length && !missionWorkerActionGrantsMatchV1(item.actionGrant, options.actionGrant)) {
     throw capacityRefusal('GRANT_MISMATCH');
   }
