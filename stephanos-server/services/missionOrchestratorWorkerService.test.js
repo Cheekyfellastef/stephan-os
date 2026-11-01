@@ -868,7 +868,7 @@ test('real producer handoff retains the admitted context when later controller m
   assert.deepEqual(admitted.publishedActionGrant, f.firstGrant);
   assert.deepEqual(await readFile(f.first.path), f.originalBytes);
   assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, f.state.revision);
-  await assert.rejects(f.claim(later), /NATIVE_SOURCE_PENDING_GRANT_CONTRACT_CHANGED/);
+  await assert.rejects(f.claim(later), /MISSION_WORKER_PENDING_CAPACITY_GRANT_MISMATCH/);
   const claimed = await f.claim(admitted.publishedActionGrant);
   assert.equal(claimed.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
   assert.deepEqual(claimed.item.actionGrant, f.firstGrant);
@@ -890,8 +890,8 @@ test('a later observation cannot replace or drop the original nonnull engineerin
   assert.equal(retained.published, true, JSON.stringify(retained));
   assert.deepEqual(retained.publishedActionGrant, f.firstGrant);
   assert.deepEqual(await readFile(f.first.path), f.originalBytes);
-  await assert.rejects(f.claim(later), /NATIVE_SOURCE_PENDING_GRANT_CONTRACT_CHANGED/);
-  await assert.rejects(f.claim(noLessons), /NATIVE_SOURCE_PENDING_GRANT_CONTRACT_CHANGED/);
+  await assert.rejects(f.claim(later), /MISSION_WORKER_PENDING_CAPACITY_GRANT_MISMATCH/);
+  await assert.rejects(f.claim(noLessons), /MISSION_WORKER_PENDING_CAPACITY_GRANT_MISMATCH/);
   assert.deepEqual((await f.claim(retained.publishedActionGrant)).item.actionGrant.engineeringMemoryPack,
     f.firstGrant.engineeringMemoryPack);
 });
