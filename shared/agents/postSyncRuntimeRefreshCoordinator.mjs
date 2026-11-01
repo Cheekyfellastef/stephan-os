@@ -180,6 +180,10 @@ const NO_RUNTIME_EXACT = new Set([
   // Manual offline source-package construction; no runtime root imports it.
   'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs',
   'scripts/sovereign-fixed-runtime-install-current-v1.mjs',
+  // Seed Forge worker is an on-demand child loaded afresh by the existing
+  // bounded supervisor for each exact approved task. Source adoption does not
+  // require restarting a long-running runtime.
+  'scripts/seed-canopy-parallel-builder.mjs',
   // Exact installer construction/native sources are consumed only by the
   // attended Ignition installer. Source adoption must not start/restart a
   // long-running service; the later exact-head installation/boot gate owns them.
