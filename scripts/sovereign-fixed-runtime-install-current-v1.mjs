@@ -46,6 +46,7 @@ function runFixed(spawnSyncFn, executable, args, options = {}) {
     timeout: options.timeout ?? 30_000,
     maxBuffer: options.maxBuffer ?? MAX_GIT_OUTPUT,
     ...(options.encoding === null ? { encoding: null } : { encoding: 'utf8' }),
+    ...(options.input === undefined ? {} : { input: options.input }),
   });
   if (result?.error || result?.signal || result?.status !== 0) {
     throw new Error(options.blocker || 'FIXED_RUNTIME_INSTALL_SOURCE_COMMAND_FAILED');
@@ -53,9 +54,10 @@ function runFixed(spawnSyncFn, executable, args, options = {}) {
   return result.stdout;
 }
 
-function gitText(spawnSyncFn, repoRoot, args) {
+function gitText(spawnSyncFn, repoRoot, args, options = {}) {
   const stdout = runFixed(spawnSyncFn, GIT, ['-C', repoRoot, ...args], {
     blocker: 'FIXED_RUNTIME_INSTALL_GIT_PROOF_FAILED',
+    ...options,
   });
   return String(stdout || '').trim();
 }
@@ -84,19 +86,22 @@ function canonicalRoot(repoRoot) {
 }
 
 function physicalSource(relative, path, expectedBlobSha, {
-  repoRoot, spawnSyncFn, lstatFn,
+  repoRoot, spawnSyncFn, lstatFn, readFileFn,
 }) {
   const info = lstatFn(path);
   if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > MAX_FILE)
     throw new Error('FIXED_RUNTIME_INSTALL_SOURCE_FILE_UNPROVEN');
-  // Git may materialize a clean text file with platform line endings even when
-  // the immutable source object is LF-normalized. The installer consumes the
-  // exact Git blob bytes below, so prove that the physical checkout canonicalizes
-  // to that same blob instead of requiring raw working-tree byte identity.
+  // Capture the exact raw Windows bytes once, then ask Git to canonicalize THAT
+  // captured snapshot through the path attributes. This binds CRLF materialization
+  // to the immutable LF-normalized blob without trusting a second live file read.
+  const physicalBytes = Buffer.from(readFileFn(path));
+  if (physicalBytes.length !== info.size)
+    throw new Error('FIXED_RUNTIME_INSTALL_SOURCE_FILE_UNPROVEN');
   const materializedBlobSha = gitText(spawnSyncFn, repoRoot,
-    ['hash-object', '--path=' + relative, '--', relative]).toLowerCase();
+    ['hash-object', '--path=' + relative, '--stdin'], { input: physicalBytes }).toLowerCase();
   if (!SHA40.test(materializedBlobSha) || materializedBlobSha !== expectedBlobSha)
     throw new Error('FIXED_RUNTIME_INSTALL_SOURCE_MATERIALIZATION_CHANGED');
+  return hash(physicalBytes);
 }
 
 export function observeCurrentFixedRuntimeInstallationV1(expectedMain, {
@@ -193,8 +198,15 @@ export function prepareCurrentFixedRuntimeInstallerV1({
       total += bytes.length;
       if (bytes.length > MAX_FILE || total > MAX_TOTAL)
         throw new Error('FIXED_RUNTIME_INSTALL_SOURCE_BOUND');
-      physicalSource(relative, full, blobSha, { repoRoot, spawnSyncFn, lstatFn });
-      records.push({ path: relative, blobSha, contentBase64: bytes.toString('base64') });
+      const materializedSha256 = physicalSource(relative, full, blobSha, {
+        repoRoot, spawnSyncFn, lstatFn, readFileFn,
+      });
+      records.push({
+        path: relative,
+        blobSha,
+        materializedSha256,
+        contentBase64: bytes.toString('base64'),
+      });
     }
 
     const headAfter = gitText(spawnSyncFn, repoRoot, ['rev-parse', 'HEAD']).toLowerCase();
