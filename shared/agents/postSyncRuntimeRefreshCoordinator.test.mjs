@@ -1234,6 +1234,27 @@ test('installer-only no-runtime allowance stays exact and rejects neighboring Wi
   }
 });
 
+test('Seed Forge invocation worker is exact no-runtime source and #3374 range is fully classified', () => {
+  const exact = classifyPostSyncRefresh(['scripts/seed-canopy-parallel-builder.mjs']);
+  assert.equal(exact.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.deepEqual(exact.internal.noRuntimePaths, ['scripts/seed-canopy-parallel-builder.mjs']);
+  assert.equal(exact.unknownPathCount, 0);
+  assert.deepEqual(exact.targetIds, []);
+
+  const mergedRange = classifyPostSyncRefresh([
+    'scripts/seed-canopy-parallel-builder.mjs',
+    'stephanos-server/services/flywheelSeedGrowthConveyor.test.js',
+  ]);
+  assert.equal(mergedRange.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.equal(mergedRange.changedPathCount, 2);
+  assert.equal(mergedRange.noRuntimePathCount, 2);
+  assert.equal(mergedRange.unknownPathCount, 0);
+  assert.deepEqual(mergedRange.targetIds, []);
+
+  const neighbor = classifyPostSyncRefresh(['scripts/seed-canopy-parallel-builder-v2.mjs']);
+  assert.equal(neighbor.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+});
+
 test('attended fixed-runtime commissioning helpers are startup-only and create no post-sync target', async () => {
   for (const path of [
     'scripts/sovereign-fixed-runtime-install-current-v1.mjs',
