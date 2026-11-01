@@ -147,6 +147,7 @@ test('grant validation mismatch fields survive the original handoff without leak
         return {
           published: false, actionGrantAccepted: false, reason: 'action-grant-mismatch',
           blockers: ['action-grant-pr-mismatch', 'action-grant-head-mismatch',
+            'action-grant-fabricated-claim', 'invalid-action-grant-fabricated-claim',
             'C:\\private\\secret', 'action-grant-pr-mismatch', 'unknown-secret'],
         };
       }
@@ -163,7 +164,7 @@ test('grant validation mismatch fields survive the original handoff without leak
   assert.equal(result.held[0].reason, 'EXTERNAL_DISPATCH_BLOCKED:action-grant-mismatch');
   assert.deepEqual(result.held[0].grantMismatchFields,
     ['action-grant-head-mismatch', 'action-grant-pr-mismatch']);
-  assert.doesNotMatch(JSON.stringify(result), /private|secret|C:\\\\/i);
+  assert.doesNotMatch(JSON.stringify(result), /private|secret|fabricated-claim|C:\\\\/i);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.runtimeMutationAuthority, false);
 });
