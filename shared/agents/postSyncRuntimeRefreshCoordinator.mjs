@@ -96,6 +96,7 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
 
 const NATURAL_EXACT = new Set([
   'scripts/canonical-mailbox-execution-ledger-v1.mjs',
+  'scripts/canonical-mailbox-rotation-transaction-v2.mjs',
   'scripts/canonical-mailbox-rotation-host-v1.mjs',
   'scripts/canonical-mailbox-rotation-sync-preflight-v1.mjs',
   'scripts/canonical-mailbox-action-evidence-v2.mjs',
@@ -173,6 +174,7 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
   '.github/',
   'docs/',
   'tests/',
+  'src/windows/Stephanos.CanonicalMailboxNativeEvidence/',
   'VR-Research-Lab/docs/',
 ]);
 
