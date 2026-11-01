@@ -647,4 +647,3 @@ test('OC2 successor specialist still rejects actual spawnSyncFn aliasing with de
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-unbounded-process-authority-forbidden'));
 });
-
