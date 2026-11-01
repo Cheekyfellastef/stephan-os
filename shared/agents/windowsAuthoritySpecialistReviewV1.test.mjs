@@ -10,6 +10,7 @@ import {
   WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1,
   WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1,
   WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_PATHS_V1,
+  WINDOWS_AUTHORITY_CANONICAL_MAILBOX_NATIVE_PATHS_V1,
   analyzeWindowsAuthoritySpecialistReview,
 } from './windowsAuthoritySpecialistReviewV1.mjs';
 
@@ -34,6 +35,7 @@ await import('./windowsAuthorityIgnitionConvergenceReviewV1.test.mjs');
 await import('./windowsAuthorityStarfieldVrLauncherReviewV1.test.mjs');
 await import('./windowsAuthorityStarfieldVrAerObserveReviewV1.test.mjs');
 await import('./windowsAuthoritySovereignFixedRuntimeReviewV1.test.mjs');
+await import('./windowsAuthorityCanonicalMailboxNativeEvidenceReviewV1.test.mjs');
 
 const HEAD = '7acff57ddff6a506244af99d518b9b73bf1208f6';
 const BASE = 'e31861d2d74e564cd7e15434774a3a0313721baa';
@@ -314,4 +316,39 @@ test('routes exact #3362 fixed-runtime Windows escalation through the sovereign 
   assert.equal(result.clean, false);
   assert.deepEqual(result.reviewedPaths, WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_PATHS_V1);
   assert.ok(result.findings.some(item => item.code === 'fixed-runtime-specialist-exact-source-not-pinned'));
+});
+
+
+test('routes exact #3302 seven Windows source-only P0s before the frozen legacy reviewer without granting native authority', () => {
+  const head = 'a'.repeat(40), base = 'b'.repeat(40);
+  const result = analyzeWindowsAuthoritySpecialistReview({
+    repository: 'Cheekyfellastef/stephan-os',
+    prNumber: 3302,
+    branch: 'codex/2315-saturated-rotation-control-v1',
+    sourceHead: head, baseSha: base,
+    analysis: {
+      findings: WINDOWS_AUTHORITY_CANONICAL_MAILBOX_NATIVE_PATHS_V1.map(path => ({
+        severity: 'P0', code: 'unsupported-high-risk-surface', path,
+      })),
+      counts: { P0: 7, P1: 0, P2: 0 },
+    },
+    lineageEvidence: {
+      schemaVersion: 'stephanos.windows-authority-reconciliation-lineage.v1',
+      repository: 'Cheekyfellastef/stephan-os', sourceHead: head,
+      sourceCommitSha: head, baseSha: base,
+      liveMainBeforeSha: base, liveMainAfterSha: base, parents: [base],
+      comparison: { status: 'ahead', aheadBy: 1, behindBy: 0,
+        baseCommitSha: base, mergeBaseCommitSha: base },
+    },
+    sources: [],
+  });
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.equal(result.findings.filter(x => x.code === 'mailbox-native-source-blob-mismatch').length, 7);
+  assert.deepEqual(result.reviewedPaths, WINDOWS_AUTHORITY_CANONICAL_MAILBOX_NATIVE_PATHS_V1);
+  assert.equal(result.nativeProducerQualified, false);
+  assert.equal(result.nativeEvidenceAuthenticated, false);
+  assert.equal(result.freezeCertified, false);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.epochAdoptionAuthorized, false);
 });
