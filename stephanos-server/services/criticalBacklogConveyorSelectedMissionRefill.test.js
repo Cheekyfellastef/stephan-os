@@ -210,6 +210,9 @@ test('unknown publisher outcome keeps its source scope and slot reserved while d
   assert.equal(result.classification, 'ELASTIC_EXTERNAL_BUILD_DISPATCH_LIVE');
   assert.equal(result.dispatchCount, 1);
   assert.equal(result.indeterminatePublicationCount, 1);
+  assert.equal(result.responsibilityRetainedUntilPickup, true);
+  assert.equal(result.pickupPendingCount, 1, 'only acknowledged dispatch is pickup-pending');
+  assert.equal(result.handoffPublicationIsTerminal, false);
   assert.equal(result.dispatched[0].missionId, disjoint.missionId);
   assert.equal(result.held.length, 2);
   assert.equal(result.held[0].missionId, uncertain.missionId);
@@ -245,6 +248,9 @@ test('unknown publisher consumes the final slot instead of spawning an unrelated
   assert.equal(result.classification, 'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD');
   assert.equal(result.dispatchCount, 0);
   assert.equal(result.indeterminatePublicationCount, 1);
+  assert.equal(result.responsibilityRetainedUntilPickup, true);
+  assert.equal(result.pickupPendingCount, 0, 'unknown publication must not be portrayed as a confirmed pending dispatch');
+  assert.equal(result.handoffPublicationIsTerminal, false);
   assert.equal(result.held.length, 1);
   assert.equal(result.held[0].missionId, uncertain.missionId);
   assert.equal(result.held[0].reason,
@@ -267,6 +273,7 @@ test('untrusted refusal reason cannot leak a provider error or masquerade as a g
 
   assert.equal(result.dispatchCount, 0);
   assert.equal(result.indeterminatePublicationCount, 0);
+  assert.equal(result.responsibilityRetainedUntilPickup, false);
   assert.equal(result.held[0].reason, 'EXTERNAL_DISPATCH_BLOCKED:publication-refused');
   assert.equal(Object.hasOwn(result.held[0], 'grantMismatchFields'), false);
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE_TOKEN_MUST_NOT_LEAK|private/i);
