@@ -1360,8 +1360,15 @@ export async function runMissionWorkerTick(options = {}) {
       || process.env.STEPHANOS_GITHUB_AUTH_PRIVATE_KEY_PATH,
   };
   const publish = await publishNextMissionWorkerAction(workerOptions);
-  if (publish.reason === 'action-grant-mismatch' || publish.reason?.startsWith('action-grant-mission-')) {
-    return { publish, processed: { processed: false, reason: publish.reason } };
+  // Publication is the authority boundary. A stale source grant, failed locked
+  // validation or failed pending-capacity reconciliation cannot fall through to
+  // an older queue item that happens to share the mission/action identifier.
+  // Only an exact idempotent already-published item may be reconsidered; the
+  // next queue/claim stages still enforce its complete persisted grant.
+  if (publish.actionGrantAccepted !== true
+      || (publish.published !== true && publish.reason !== 'action-already-published')) {
+    return { publish, processed: { processed: false,
+      reason: publish.reason || 'exact-action-publication-unproven' } };
   }
   if (publish.publishedActionGrant
       && (publish.published === true || publish.reason === 'action-already-published')) {
