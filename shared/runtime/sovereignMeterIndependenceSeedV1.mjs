@@ -46,6 +46,7 @@ export const SOVEREIGN_METER_INDEPENDENCE_DIMENSIONS_V1 = Object.freeze([
 export const SOVEREIGN_METER_INDEPENDENCE_EXISTING_OWNERS_V1 = Object.freeze([
   '#1898', // Zero-Codex Continuity and Provider Parity.
   '#2519', // Sovereign Commander Safe Parity.
+  '#2968', // Inventory Meters (this goal).
 ]);
 
 export function buildSovereignMeterIndependenceSeedV1(input = {}) {
