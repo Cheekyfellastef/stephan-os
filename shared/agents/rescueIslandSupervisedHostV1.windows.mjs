@@ -274,7 +274,13 @@ test('changed governor source is rejected before that script executes',async t=>
 });
 test('Windows CRLF checkout executes only the preserved exact governor Git blob',async t=>{
   const f=await fixture(t),script=join(f.config.canonicalRoot,'scripts/windows/run-vr-resource-governor.ps1');
-  const approved=await readFile(script,'utf8');await writeFile(script,approved.replace(/\n/g,'\r\n'));
+  const approved=await readFile(script,'utf8');
+  // The fixture incorporates a real checked-out PowerShell action which may
+  // already contain CRLF on the Windows runner. Canonicalise to LF first so
+  // this test exercises *ordinary* CRLF, never accidental CR-CR-LF bytes.
+  const withWindowsNewlines=approved.replace(/\r\n/g,'\n').replace(/\n/g,'\r\n');
+  assert.doesNotMatch(withWindowsNewlines,/\r\r\n/);
+  await writeFile(script,withWindowsNewlines);
   await f.host.host.withExistingOwnerAdmission(f.expected,async()=>{
     await f.host.host.observeSupervisedAdmission({...f.expected,stage:'BEFORE_PREPARATION'});
   });
