@@ -300,6 +300,25 @@ function safeGrantMismatchFields(publication) {
     .sort().slice(0, 16);
 }
 
+// Only known publisher verdicts may enter public conveyor status. In particular,
+// never expose exception messages, internal file paths or provider response bodies.
+const SAFE_PUBLICATION_REASONS = new Set([
+  'not-published', 'capacity-wait', 'publication-refused', 'action-grant-mismatch',
+  'locked-action-grant-mismatch', 'post-repair-action-grant-mismatch',
+  'action-grant-mission-ambiguous', 'action-grant-mission-not-runnable',
+  'repair-transition-precondition-failed', 'mission-state-precondition-failed',
+  'original-source-attempt-fenced', 'agent-already-running',
+  'pending-capacity-reconciliation-blocked', 'queue-execution-binding-unavailable',
+  'forge-publication-parent-head-drift', 'unsupported-worker-adapter',
+  'action-already-published', 'no-runnable-mission',
+  'replacement-source-already-merged-forge-publication-fenced',
+]);
+function safePublicationReason(reason) {
+  const value = text(reason, 'not-published');
+  if (value.startsWith('shared-workspace-handoff:')) return 'shared-workspace-handoff-blocked';
+  return SAFE_PUBLICATION_REASONS.has(value) ? value : 'publication-refused';
+}
+
 export async function dispatchElasticGoalBuilds(admission = {}, {
   env = process.env,
   now = new Date(),
@@ -331,6 +350,7 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
     ));
   const dispatched = [];
   const held = [];
+  let indeterminateCount = 0;
 
   if (!SHA_40.test(sourceRevision)) {
     return Object.freeze({
@@ -349,7 +369,8 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
   }
 
   for (const mission of candidates) {
-    if (dispatched.length >= availableSlots) break;
+    // An unknown publish may already own a real worker slot and source scope.
+    if (dispatched.length + indeterminateCount >= availableSlots) break;
     const missionId = text(mission.missionId).toLowerCase();
     const scopes = missionScopes(mission);
     if (!prePrElasticMission(mission)) {
@@ -396,23 +417,27 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
       let publication;
       try {
         publication = await publishWorkerAction(publicationInput);
-      } catch (error) {
-        const firstError = text(error?.message, 'unknown');
+      } catch {
+        // A publisher exception has an UNKNOWN write outcome. The existing
+        // locked, idempotent reconciliation attempt may establish success, but
+        // a second failure never proves that the first write did not commit.
         try {
           publication = await publishWorkerAction(publicationInput);
-        } catch (reconciliationError) {
+        } catch {
           indeterminatePublication = true;
-          lastPublicationReason = `publication-exception:${firstError};reconciliation-exception:${text(reconciliationError?.message, 'unknown')}`;
+          lastPublicationReason = 'publication-exception-reconciliation-exception';
+          usedCapacity.add(externalCandidateKey(capacity));
           break;
         }
         if (publication?.published !== true || publication?.actionGrantAccepted !== true) {
           indeterminatePublication = true;
-          lastPublicationReason = `publication-exception:${firstError};reconciliation:${text(publication?.reason, 'not-published')}`;
+          lastPublicationReason = 'publication-exception-reconciliation-' + safePublicationReason(publication?.reason);
+          usedCapacity.add(externalCandidateKey(capacity));
           break;
         }
       }
       if (publication?.published !== true || publication?.actionGrantAccepted !== true) {
-        lastPublicationReason = text(publication?.reason, 'not-published');
+        lastPublicationReason = safePublicationReason(publication?.reason);
         for (const field of safeGrantMismatchFields(publication)) grantMismatchFields.add(field);
         continue;
       }
@@ -439,6 +464,13 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
     }
 
     if (dispatchedMission) continue;
+    if (indeterminatePublication) {
+      // An uncertain publication might have committed. Preserve both its
+      // resource scope and one capacity slot until the original owner reconciles
+      // the exact queue/claim; never dispatch an overlapping replacement.
+      indeterminateCount += 1;
+      occupiedScopes.push(...scopes);
+    }
     held.push(Object.freeze({
       missionId,
       reason: indeterminatePublication
@@ -463,13 +495,14 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
     desiredWidth,
     availableSlots,
     dispatchCount: dispatched.length,
+    indeterminatePublicationCount: indeterminateCount,
     dispatched: Object.freeze(dispatched),
     held: Object.freeze(held),
     pickupPendingCount: dispatched.filter((item) => item.pickupProven !== true).length,
     handoffPublicationIsTerminal: false,
     responsibilityRetainedUntilPickup: dispatched.length > 0,
 
-    resourceDisjointOneWriterProven: dispatched.every((item, index) => dispatched
+    resourceDisjointOneWriterProven: indeterminateCount === 0 && dispatched.every((item, index) => dispatched
       .slice(index + 1)
       .every((other) => !scopeSetConflicts(item.resourceScopes, other.resourceScopes))),
     blockedLaneDoesNotStallFleet: held.length === 0 || dispatched.length > 0,
