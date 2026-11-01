@@ -84,19 +84,27 @@ function canonicalRoot(repoRoot) {
 }
 
 function physicalSource(relative, path, expectedBlobSha, {
-  repoRoot, spawnSyncFn, lstatFn,
+  repoRoot, spawnSyncFn, lstatFn, readFileFn,
 }) {
   const info = lstatFn(path);
   if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > MAX_FILE)
     throw new Error('FIXED_RUNTIME_INSTALL_SOURCE_FILE_UNPROVEN');
+  const before = Buffer.from(readFileFn(path));
+  if (before.length !== info.size || before.length > MAX_FILE)
+    throw new Error('FIXED_RUNTIME_INSTALL_SOURCE_FILE_UNPROVEN');
+  const materializedSha256 = hash(before);
   // Git may materialize a clean text file with platform line endings even when
-  // the immutable source object is LF-normalized. The installer consumes the
-  // exact Git blob bytes below, so prove that the physical checkout canonicalizes
-  // to that same blob instead of requiring raw working-tree byte identity.
+  // the immutable source object is LF-normalized. Prove that the physical
+  // checkout canonicalizes to the exact blob while separately pinning the raw
+  // Windows materialization for the elevated installer and later native reader.
   const materializedBlobSha = gitText(spawnSyncFn, repoRoot,
     ['hash-object', '--path=' + relative, '--', relative]).toLowerCase();
   if (!SHA40.test(materializedBlobSha) || materializedBlobSha !== expectedBlobSha)
     throw new Error('FIXED_RUNTIME_INSTALL_SOURCE_MATERIALIZATION_CHANGED');
+  const after = Buffer.from(readFileFn(path));
+  if (after.length !== before.length || hash(after) !== materializedSha256)
+    throw new Error('FIXED_RUNTIME_INSTALL_SOURCE_MATERIALIZATION_CHANGED');
+  return materializedSha256;
 }
 
 export function observeCurrentFixedRuntimeInstallationV1(expectedMain, {
@@ -193,8 +201,10 @@ export function prepareCurrentFixedRuntimeInstallerV1({
       total += bytes.length;
       if (bytes.length > MAX_FILE || total > MAX_TOTAL)
         throw new Error('FIXED_RUNTIME_INSTALL_SOURCE_BOUND');
-      physicalSource(relative, full, blobSha, { repoRoot, spawnSyncFn, lstatFn });
-      records.push({ path: relative, blobSha, contentBase64: bytes.toString('base64') });
+      const materializedSha256 = physicalSource(relative, full, blobSha,
+        { repoRoot, spawnSyncFn, lstatFn, readFileFn });
+      records.push({ path: relative, blobSha, materializedSha256,
+        contentBase64: bytes.toString('base64') });
     }
 
     const headAfter = gitText(spawnSyncFn, repoRoot, ['rev-parse', 'HEAD']).toLowerCase();
