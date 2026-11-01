@@ -57,3 +57,22 @@ test('Goal Dashboard V2 retains the existing bounded live feed and 4173-to-8787 
   assert.match(source, /function escapeHtml/);
   assert.match(source, /escapeHtml\(goal\.title\)/);
 });
+
+
+test('Goal Dashboard renders Sovereign foreman heartbeat and live build-state colours', () => {
+  for (const expected of [
+    'foreman-heartbeat',
+    'STEPHANOS FOREMAN',
+    'renderStephanosBuildTruth',
+    'data-build-state',
+    'Build: ',
+    'BUILDING',
+    'QUEUED',
+    'HELD',
+    'BLOCKED',
+  ]) {
+    assert.equal(source.includes(expected), true, `missing live build-truth UI: ${expected}`);
+  }
+  assert.match(source, /goal-card\[data-build-state="BUILDING"\]/);
+  assert.match(source, /goal-card\[data-build-state="BLOCKED"\]/);
+});

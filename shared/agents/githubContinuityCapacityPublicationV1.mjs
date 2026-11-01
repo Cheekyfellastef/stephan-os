@@ -1,15 +1,23 @@
+import { createHash } from 'node:crypto';
+
 import {
   BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
   MISSION_CONTROLLER_ROUTE,
+  createBuildLaneCapacityStatusRecord,
   publishBuildLaneCapacityToSharedWorkspace,
   validateBuildLaneCapacityReceipt,
 } from './missionControllerCapacityRouterV1.mjs';
+import {
+  validateSharedWorkspaceRecord,
+  writeAtomicJson,
+} from './sharedAgentWorkspaceStore.mjs';
 
 export const GITHUB_CONTINUITY_CAPACITY_PUBLICATION_SCHEMA = 'stephanos.github-continuity-capacity-publication.v1';
 export const GITHUB_CONTINUITY_CAPACITY_PUBLICATION_STATE = Object.freeze({
   READY: 'READY',
   SAFE_HOLD: 'SAFE_HOLD',
 });
+export const FOUNDRY_FORGE_WORKER_CAPACITY_STATUS_PREFIX = 'foundry-forge-build-capacity-worker-';
 
 const INPUT_KEYS = new Set([
   'receiptId', 'route', 'repository', 'workerId', 'supportedTaskClasses',
@@ -133,6 +141,26 @@ function blocked(blocker) {
   });
 }
 
+export function foundryForgeWorkerCapacityStatusId(workerId) {
+  const normalized = text(workerId);
+  if (!SAFE_ID.test(normalized)) return '';
+  const digest = createHash('sha256').update(normalized, 'utf8').digest('hex').slice(0, 24);
+  return `${FOUNDRY_FORGE_WORKER_CAPACITY_STATUS_PREFIX}${digest}`;
+}
+
+export function createFoundryForgeWorkerCapacityStatusRecord(receipt) {
+  if (text(receipt?.route).toUpperCase() !== MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE) return null;
+  const statusId = foundryForgeWorkerCapacityStatusId(receipt?.workerId);
+  if (!statusId) return null;
+  const aggregate = createBuildLaneCapacityStatusRecord(receipt, { nowUtc: receipt?.observedAtUtc });
+  if (!aggregate) return null;
+  return Object.freeze({
+    ...aggregate,
+    statusId,
+    workerScopedCapacity: true,
+  });
+}
+
 export function buildGitHubContinuityCapacityPublicationV1(rawInput = {}) {
   const input = closedWorld(rawInput);
   if (!input) return blocked('capacity-observation-not-data-only-or-closed-world');
@@ -218,10 +246,28 @@ export async function publishGitHubContinuityCapacityPublicationV1(root, rawInpu
   if (invalidAtPublication) return blocked('capacity-observation-not-current-at-publication');
 
   const publication = await publishBuildLaneCapacityToSharedWorkspace(root, built.receipt, { nowUtc });
+  let workerScopedPublication = null;
+  if (publication.ok && built.receipt.route === MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE) {
+    const workerRecord = createFoundryForgeWorkerCapacityStatusRecord(built.receipt);
+    const workerValidation = workerRecord
+      ? validateSharedWorkspaceRecord(workerRecord, { nowMs: Date.parse(nowUtc) })
+      : { valid: false, errors: ['forge-worker-capacity-record-invalid'] };
+    workerScopedPublication = workerValidation.valid
+      ? await writeAtomicJson(
+        root,
+        ['status', `${workerRecord.statusId}.json`],
+        workerRecord,
+        { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) },
+      )
+      : Object.freeze({ ok: false, reason: workerValidation.errors[0], validation: workerValidation });
+  }
+
+  const published = publication.ok && (workerScopedPublication === null || workerScopedPublication.ok === true);
   return Object.freeze({
     ...built,
     publication,
-    finalVerdict: publication.ok
+    workerScopedPublication,
+    finalVerdict: published
       ? 'GITHUB_CONTINUITY_CAPACITY_PUBLISHED'
       : 'GITHUB_CONTINUITY_CAPACITY_PUBLICATION_FAILED',
   });

@@ -254,7 +254,20 @@
     .truth-chip[data-truth="CONFLICTING"] { color:var(--red); border-color:rgba(255,107,122,.26); }
     .proof-row .action { color:var(--muted); }
     .goal-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px; }
-    .goal-card { border:1px solid var(--line); border-radius:14px; padding:12px; background:rgba(255,255,255,.022); }
+    .goal-card { border:1px solid var(--line); border-radius:14px; padding:12px; background:rgba(255,255,255,.022); transition:border-color .3s ease, box-shadow .3s ease, background .3s ease; }
+    .goal-card[data-build-state="BUILDING"] { border-color:rgba(105,240,174,.52); background:linear-gradient(145deg,rgba(105,240,174,.075),rgba(6,15,29,.94)); box-shadow:0 0 22px rgba(105,240,174,.08); }
+    .goal-card[data-build-state="QUEUED"] { border-color:rgba(103,232,249,.42); background:linear-gradient(145deg,rgba(103,232,249,.06),rgba(6,15,29,.94)); }
+    .goal-card[data-build-state="HELD"] { border-color:rgba(255,209,102,.45); background:linear-gradient(145deg,rgba(255,209,102,.055),rgba(6,15,29,.94)); }
+    .goal-card[data-build-state="BLOCKED"] { border-color:rgba(255,107,122,.55); background:linear-gradient(145deg,rgba(255,107,122,.075),rgba(6,15,29,.94)); box-shadow:0 0 20px rgba(255,107,122,.07); }
+    .goal-card[data-build-state="STALE"], .goal-card[data-build-state="UNKNOWN"] { border-color:rgba(148,163,184,.28); opacity:.88; }
+    .foreman-heartbeat { margin-top:15px; display:grid; grid-template-columns:auto 1fr; gap:11px 14px; align-items:center; border:1px solid var(--line); border-radius:15px; padding:12px 14px; background:rgba(2,8,18,.34); }
+    .foreman-light { width:13px; height:13px; border-radius:50%; background:var(--unknown); box-shadow:0 0 12px rgba(148,163,184,.2); }
+    .foreman-heartbeat[data-state="BUILDING"] .foreman-light, .foreman-heartbeat[data-state="IDLE_GREEN"] .foreman-light { background:var(--green); box-shadow:0 0 16px rgba(105,240,174,.55); }
+    .foreman-heartbeat[data-state="QUEUED"] .foreman-light { background:var(--cyan); box-shadow:0 0 16px rgba(103,232,249,.5); }
+    .foreman-heartbeat[data-state="HELD"] .foreman-light { background:var(--gold); box-shadow:0 0 16px rgba(255,209,102,.45); }
+    .foreman-heartbeat[data-state="BLOCKED"] .foreman-light { background:var(--red); box-shadow:0 0 16px rgba(255,107,122,.5); }
+    .foreman-heartbeat strong { display:block; font-size:.78rem; letter-spacing:.045em; }
+    .foreman-heartbeat span { display:block; color:var(--muted); font-size:.68rem; margin-top:3px; line-height:1.4; }
     .goal-card h3 { margin:7px 0 8px; font-size:.83rem; line-height:1.3; }
     .goal-card .meta { color:var(--muted); font-size:.67rem; line-height:1.4; }
     .goal-card .next { margin-top:9px; font-size:.7rem; color:var(--cyan); line-height:1.4; }
@@ -263,6 +276,145 @@
     .goal-card .human-summary { margin:0; color:var(--text); font-size:.75rem; line-height:1.48; }
     .goal-card .human-label { display:block; margin-bottom:3px; color:var(--muted); font-size:.62rem; font-weight:800; letter-spacing:.07em; text-transform:uppercase; }
     .goal-card .human-blocker { margin-top:9px; color:var(--text); font-size:.7rem; line-height:1.42; }
+    .conveyor-overview { margin:16px 0; padding:28px; border:1px solid #294353; border-radius:20px; background:radial-gradient(ellipse at 95% 0,rgba(55,156,180,.12),transparent 55%),#0b1723; }
+    .cv-top { display:flex; justify-content:space-between; gap:20px; align-items:flex-start; }
+    .cv-kicker { color:#80cbd7; font-size:.72rem; font-weight:800; letter-spacing:.15em; }
+    .conveyor-overview h2 { margin:12px 0; font-size:clamp(1.75rem,3.4vw,2.8rem); font-weight:750; letter-spacing:-.045em; line-height:1.12; }
+    .cv-subtitle { max-width:740px; color:#c1d0df; font-size:1rem; line-height:1.6; margin:0; }
+    .cv-meta { color:#9eafc1; font-size:.78rem; line-height:1.6; margin:8px 0; }
+    .cv-status { border:1px solid #3b4d5c; border-radius:30px; padding:10px 14px; white-space:nowrap; font-size:.78rem; font-weight:700; }
+    .cv-lamp { display:inline-block; width:8px; height:8px; margin-right:7px; border-radius:50%; background:var(--unknown); }
+    [data-cv-light="GREEN"] { --cv-color:var(--green); }
+    [data-cv-light="RED"] { --cv-color:var(--red); }
+    [data-cv-light="AMBER"] { --cv-color:var(--gold); }
+    [data-cv-light="GREY"] { --cv-color:#a1b1c3; }
+    .cv-status,.cv-stage-state { color:var(--cv-color,#a1b1c3); }
+    .cv-lamp { background:var(--cv-color,var(--unknown)); }
+    .cv-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:0; margin:26px 0 10px; border-top:1px solid #29404f; border-bottom:1px solid #29404f; padding:20px 0; }
+    .cv-metric { padding:0 20px; border-left:1px solid #29404f; }
+    .cv-metric:first-child { padding-left:0; border:0; }
+    .cv-metric strong { display:block; color:#f0f5fa; font-size:2.35rem; letter-spacing:-.04em; line-height:1.15; font-variant-numeric:tabular-nums; }
+    .cv-metric span { display:block; color:#aebed0; font-size:.8rem; margin-top:7px; }
+    .cv-metric[data-attention="true"] strong { color:var(--gold); }
+    .cv-flow { list-style:none; padding:0; margin:25px 0; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; }
+    .cv-phase { min-width:0; }
+    .cv-phase-heading { display:flex; align-items:center; gap:10px; margin:0 0 12px; color:#c7d7e7; font-size:.8rem; font-weight:700; }
+    .cv-phase-heading b { color:#6c91a8; font-size:.7rem; letter-spacing:.12em; }
+    .cv-phase-heading::after { content:''; flex:1; height:1px; background:#29404f; }
+    .cv-phase ol { list-style:none; padding:0; margin:0; display:grid; gap:8px; }
+    .cv-stage { position:relative; padding:13px 14px 0; border-radius:10px; background:#101f2e; border:1px solid #243848; min-width:0; }
+    .cv-stage[data-current="true"] { background:linear-gradient(110deg,rgba(255,209,102,.10),#142230); border-color:#8e7745; }
+    .cv-stage-head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+    .cv-stage strong { color:#e2ebf4; font-size:.91rem; font-weight:650; }
+    .cv-stage small { color:#829bad; font-size:.65rem; font-variant-numeric:tabular-nums; }
+    .cv-stage-state { display:block; margin-top:9px; font-size:.83rem; font-weight:650; }
+    .cv-stage-reason { color:#a5b7c9; font-size:.75rem; line-height:1.45; min-height:2.9em; margin:7px 0 0; overflow-wrap:anywhere; }
+    .cv-stage details { color:#b1c6d8; font-size:.75rem; overflow-wrap:anywhere; }
+    .cv-stage summary { cursor:pointer; min-height:38px; display:flex; align-items:center; color:#82bacb; font-size:.72rem; }
+    .cv-stage summary::before { content:'＋'; margin-right:6px; }
+    .cv-stage details[open] { padding-bottom:12px; }
+    .cv-bottom { display:grid; grid-template-columns:1.25fr 1fr 1fr; gap:14px; margin-top:18px; }
+    .cv-instrument { min-width:0; padding:20px; background:#101f2e; border-radius:12px; }
+    .cv-instrument:first-child { border-left:3px solid #c7a15a; }
+    .cv-instrument label { display:block; color:#87acbd; text-transform:uppercase; letter-spacing:.12em; font-size:.68rem; margin-bottom:12px; }
+    .cv-instrument strong { display:block; font-size:1.05rem; line-height:1.45; overflow-wrap:anywhere; }
+    .cv-instrument p { color:#aebfd0; font-size:.83rem; line-height:1.6; margin:9px 0 0; overflow-wrap:anywhere; }
+    .cv-health { display:flex; flex-wrap:wrap; gap:10px 20px; margin:22px 0 8px; }
+    .cv-health-item { font-size:.8rem; color:#c0cfdf; }
+    .cv-controller-list { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+    .cv-controller { color:#9eafc1; font-size:.75rem; overflow-wrap:anywhere; }
+    .cv-boundary { margin-top:18px; font-size:.78rem; color:#9eafc1; }
+    .cv-boundary summary { min-height:44px; display:flex; align-items:center; cursor:pointer; }
+    @media(max-width:900px) { .cv-bottom { grid-template-columns:1fr 1fr; } .cv-instrument:first-child { grid-column:1/-1; } }
+    @media(max-width:700px) { .conveyor-overview { padding:20px; } .cv-top { flex-direction:column; gap:8px; } .cv-subtitle { font-size:.9rem; } .cv-flow { gap:10px; } .cv-stage { padding:12px 10px 0; } .cv-stage-head { align-items:flex-start; } .cv-stage strong { font-size:.82rem; } .cv-stage-reason { font-size:.72rem; } .cv-bottom { grid-template-columns:1fr; } .cv-instrument:first-child { grid-row:auto; } }
+    @media(max-width:480px) { .cv-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px 0; } .cv-metric:nth-child(3) { padding-left:0; border:0; } .cv-metric strong { font-size:2rem; } .cv-flow { grid-template-columns:1fr; gap:20px; } .cv-stage-reason { min-height:0; } .cv-stage-head strong { font-size:.95rem; } .cv-status { white-space:normal; } }
+    .cv-fleet { margin:19px 0; padding:16px 0; border-block:1px solid #29404f; }
+    .cv-fleet h3 { margin:0 0 4px; font-size:1.12rem; color:#ecf5fc; }
+    .cv-fleet h4 { margin:13px 0 7px; font-size:.79rem; color:#cbdde9; }
+    .cv-fleet-meta { color:#a7bbce; font-size:.76rem; line-height:1.45; }
+    .cv-fleet-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr)); gap:8px; }
+    .cv-fleet-card { min-width:0; border:1px solid #294353; border-radius:10px; padding:10px; background:#122432; overflow-wrap:anywhere; }
+    .cv-fleet-card[data-cv-light="GREEN"] { border-color:#328566; }
+    .cv-fleet-card[data-cv-light="AMBER"] { border-color:#816b45; }
+    .cv-fleet-card[data-cv-light="RED"] { border-color:#98525c; }
+    .cv-fleet-card strong { display:block; font-size:.8rem; color:#edf5fb; }
+    .cv-fleet-card span,.cv-fleet-card small { display:block; margin-top:5px; color:#b8ccdc; font-size:.72rem; }
+    .cv-fleet-card .cv-fleet-state { color:var(--cv-color,#b8ccdc); font-weight:700; }
+    .cv-fleet-logical { margin-top:12px; border:1px solid #294353; border-radius:10px; padding:0 10px 10px; }
+    .cv-fleet-logical summary { display:flex; align-items:center; cursor:pointer; min-height:44px; color:#9cd2e1; font-size:.78rem; }
+    @media(max-width:700px) { .cv-fleet-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media(max-width:480px) { .cv-fleet-grid { grid-template-columns:1fr; } }
+    .goal-conveyor-panel { padding:16px; margin-bottom:12px; overflow:hidden; }
+    .goal-conveyor-summary { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; margin-bottom:11px; }
+    .goal-conveyor-summary div { border:1px solid var(--line); border-radius:12px; padding:10px 11px; background:rgba(255,255,255,.02); }
+    .goal-conveyor-summary label { display:block; color:var(--muted); font-size:.58rem; letter-spacing:.075em; text-transform:uppercase; }
+    .goal-conveyor-summary strong { display:block; margin-top:5px; font-size:1.2rem; }
+    .goal-conveyor-boundary { margin:0 0 11px; color:var(--muted); font-size:.68rem; line-height:1.45; }
+    .goal-conveyor-board { display:grid; gap:8px; }
+    .conveyor-row { display:grid; grid-template-columns:minmax(210px,.9fr) minmax(520px,2.3fr) minmax(150px,.7fr); gap:10px; align-items:center; padding:10px; border:1px solid rgba(103,232,249,.12); border-radius:13px; background:rgba(255,255,255,.018); }
+    .conveyor-row[data-current-light="RED"] { border-color:rgba(255,107,122,.38); background:rgba(255,107,122,.035); }
+    .conveyor-row[data-current-light="AMBER"] { border-color:rgba(255,209,102,.3); background:rgba(255,209,102,.028); }
+    .conveyor-row[data-current-light="GREEN"] { border-color:rgba(105,240,174,.24); }
+    .conveyor-goal { min-width:0; }
+    .conveyor-goal strong { display:block; font-size:.74rem; line-height:1.35; overflow-wrap:anywhere; }
+    .conveyor-goal span, .conveyor-owner span { display:block; margin-top:4px; color:var(--muted); font-size:.62rem; line-height:1.35; overflow-wrap:anywhere; }
+    .conveyor-owner { min-width:0; text-align:right; }
+    .conveyor-owner strong { display:block; font-size:.66rem; color:var(--cyan); overflow-wrap:anywhere; }
+    .conveyor-stages { display:grid; grid-template-columns:repeat(10,minmax(48px,1fr)); gap:4px; min-width:0; }
+    .conveyor-stage { position:relative; min-width:0; padding:21px 4px 6px; border:1px solid rgba(148,163,184,.16); border-radius:9px; text-align:center; background:rgba(255,255,255,.016); color:var(--muted); font-size:.52rem; line-height:1.15; }
+    .conveyor-stage::before { content:""; position:absolute; top:7px; left:50%; width:8px; height:8px; margin-left:-4px; border-radius:50%; background:var(--unknown); box-shadow:0 0 9px rgba(148,163,184,.16); }
+    .conveyor-stage[data-light="GREEN"] { color:var(--green); border-color:rgba(105,240,174,.25); }
+    .conveyor-stage[data-light="GREEN"]::before { background:var(--green); box-shadow:0 0 11px rgba(105,240,174,.5); }
+    .conveyor-stage[data-light="AMBER"] { color:var(--gold); border-color:rgba(255,209,102,.25); }
+    .conveyor-stage[data-light="AMBER"]::before { background:var(--gold); box-shadow:0 0 11px rgba(255,209,102,.42); }
+    .conveyor-stage[data-light="RED"] { color:var(--red); border-color:rgba(255,107,122,.32); }
+    .conveyor-stage[data-light="RED"]::before { background:var(--red); box-shadow:0 0 11px rgba(255,107,122,.48); }
+    .conveyor-stage[data-current="true"] { outline:1px solid rgba(103,232,249,.48); outline-offset:1px; }
+    .goal-card-conveyor { margin:10px 0 2px; padding:9px; border:1px solid rgba(103,232,249,.12); border-radius:11px; background:rgba(2,8,18,.28); }
+    .goal-card-conveyor-head { display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:7px; color:var(--muted); font-size:.6rem; }
+    .goal-card-conveyor-head strong { color:var(--cyan); font-size:.62rem; }
+    .goal-card-conveyor .conveyor-stages { grid-template-columns:repeat(10,minmax(22px,1fr)); gap:3px; }
+    .goal-card-conveyor .conveyor-stage { padding:18px 2px 5px; font-size:.46rem; }
+    @media (max-width: 1050px) {
+      .conveyor-row { grid-template-columns:1fr; }
+      .conveyor-owner { text-align:left; }
+      .goal-conveyor-summary { grid-template-columns:repeat(3,minmax(0,1fr)); }
+    }
+    @media (max-width: 720px) {
+      .goal-conveyor-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .conveyor-stages { overflow-x:auto; grid-template-columns:repeat(10,minmax(60px,1fr)); padding-bottom:3px; }
+      .goal-card-conveyor .conveyor-stages { grid-template-columns:repeat(10,minmax(48px,1fr)); }
+    }
+    .mission-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:10px; margin-bottom:10px; }
+    .mission-summary div { border:1px solid var(--line); border-radius:14px; padding:13px; background:rgba(255,255,255,.022); }
+    .mission-summary label { display:block; color:var(--muted); font-size:.64rem; letter-spacing:.08em; text-transform:uppercase; }
+    .mission-summary strong { display:block; margin-top:5px; font-size:1.35rem; }
+    .mission-summary span { display:block; margin-top:4px; color:var(--muted); font-size:.7rem; line-height:1.4; }
+    .mission-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:10px; }
+    .mission-card { border:1px solid var(--line); border-radius:16px; padding:15px; background:linear-gradient(145deg,rgba(10,27,49,.96),rgba(6,15,29,.94)); min-width:0; }
+    .mission-card[data-operator-needed="true"] { border-color:rgba(255,209,102,.45); }
+    .mission-card h3 { margin:8px 0; font-size:.95rem; line-height:1.35; }
+    .mission-card .mission-meta { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
+    .mission-card .mission-meta span { border:1px solid var(--line); border-radius:999px; padding:5px 8px; color:var(--text); font-size:.66rem; }
+    .mission-card .mission-outcome { margin:0; color:var(--text); font-size:.75rem; line-height:1.48; }
+    .mission-card .mission-lineage { margin-top:10px; padding:10px; border:1px solid rgba(103,232,249,.15); border-radius:11px; background:rgba(103,232,249,.025); }
+    .mission-card .mission-lineage strong { display:block; color:var(--cyan); font-size:.68rem; margin-bottom:6px; }
+    .mission-card .mission-lineage ul { margin:0; padding-left:18px; color:var(--muted); font-size:.7rem; line-height:1.45; }
+    .mission-card .mission-lineage .unknown-lineage { color:var(--muted); font-size:.7rem; line-height:1.42; }
+    .mission-card .mission-next { margin-top:10px; color:var(--cyan); font-size:.7rem; line-height:1.45; }
+    .mission-attention { margin:9px 0 10px; padding:9px 10px; border:1px solid var(--line2); border-radius:11px; font-size:.7rem; font-weight:800; letter-spacing:.035em; }
+    .mission-attention[data-attention="ACTIVE"] { color:var(--green); border-color:rgba(105,240,174,.36); background:rgba(105,240,174,.055); }
+    .mission-attention[data-attention="QUEUED"], .mission-attention[data-attention="TRACKING"] { color:var(--cyan); border-color:rgba(103,232,249,.28); background:rgba(103,232,249,.045); }
+    .mission-attention[data-attention="WAITING"], .mission-attention[data-attention="STALE"] { color:var(--gold); border-color:rgba(255,209,102,.32); background:rgba(255,209,102,.045); }
+    .mission-attention[data-attention="BLOCKED"], .mission-attention[data-attention="UNWATCHED"] { color:var(--red); border-color:rgba(255,107,122,.34); background:rgba(255,107,122,.045); }
+    .mission-attention[data-attention="DONE"] { color:var(--muted); }
+    .mission-observability { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; margin:9px 0 2px; }
+    .mission-observability > div { min-width:0; padding:8px 9px; border:1px solid rgba(255,255,255,.075); border-radius:10px; background:rgba(255,255,255,.018); }
+    .mission-observability label { display:block; margin-bottom:3px; color:var(--muted); font-size:.58rem; font-weight:800; letter-spacing:.07em; text-transform:uppercase; }
+    .mission-observability span { display:block; color:var(--text); font-size:.68rem; line-height:1.4; overflow-wrap:anywhere; }
+    .mission-recent { margin-top:10px; padding:9px 10px; border:1px solid rgba(255,255,255,.075); border-radius:10px; color:var(--muted); font-size:.67rem; line-height:1.45; }
+    .mission-recent strong { color:var(--text); }
+    .mission-empty { border:1px dashed var(--line2); border-radius:16px; padding:18px; color:var(--muted); line-height:1.5; background:rgba(255,255,255,.018); }
     .approval-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
     .approval-summary div { border:1px solid var(--line); border-radius:14px; padding:13px; background:rgba(255,255,255,.022); }
     .approval-summary label { display:block; color:var(--muted); font-size:.64rem; letter-spacing:.08em; text-transform:uppercase; }
@@ -316,7 +468,7 @@
       .fronts { grid-template-columns:1fr; }
       .runtime-grid { grid-template-columns:repeat(2,1fr); }
       .donut-wrap, .radar-wrap { grid-template-columns:1fr; justify-items:center; }
-      .approval-summary { grid-template-columns:1fr; }
+      .approval-summary, .mission-summary { grid-template-columns:1fr; }
       .radar-labels { width:100%; }
       .health-row { grid-template-columns:105px 1fr; }
       .health-row output { grid-column:1/-1; text-align:left; }
@@ -336,6 +488,7 @@
         <button type="button" role="tab" data-dashboard-view="overview" data-active="true" aria-selected="true">Overview</button>
         <button type="button" role="tab" data-dashboard-view="build-fronts" aria-selected="false">Build fronts</button>
         <button type="button" role="tab" data-dashboard-view="goals" aria-selected="false">Goals</button>
+        <button type="button" role="tab" data-dashboard-view="missions" aria-selected="false">Missions</button>
         <button type="button" role="tab" data-dashboard-view="proof" aria-selected="false">Proof</button>
         <button type="button" role="tab" data-dashboard-view="runtime" aria-selected="false">Runtime</button>
         <button type="button" role="tab" data-dashboard-view="history" aria-selected="false">History</button>
@@ -347,6 +500,30 @@
       <h1 id="dashboard-view-title">Overview</h1>
       <p id="dashboard-view-description">The most useful programme signals at a glance.</p>
     </section>
+    <section class="panel conveyor-overview" data-dashboard-page="overview" data-testid="goal-build-conveyor-overview" aria-label="Live Goal-to-Build Conveyor">
+      <div class="cv-top"><div><div class="cv-kicker">GOAL → BUILD · LIVE CONVEYOR</div><h2 id="cv-headline">Waiting for evidence</h2><p id="cv-summary" class="cv-subtitle">The canonical feed has not reported a current conveyor cycle.</p></div><div id="cv-status" class="cv-status" data-cv-light="GREY" role="status"><i class="cv-lamp" aria-hidden="true"></i>Evidence unavailable</div></div>
+      <p id="cv-cycle" class="cv-meta">Current cycle unavailable.</p>
+      <div id="cv-health" class="cv-health" aria-label="Canonical runtime health observations"></div>
+      <div id="cv-metrics" class="cv-metrics"></div><p id="cv-count-note" class="cv-meta">Waiting for canonical goal classifications.</p>
+      <div class="cv-bottom">
+        <div class="cv-instrument"><label>Where it stops · next step</label><strong id="cv-bottleneck">No current evidence</strong><p id="cv-owner"></p><p id="cv-next"></p></div>
+        <div class="cv-instrument"><label>People & machines doing the work</label><strong id="cv-workers">Active workers unknown</strong><p id="cv-worker-detail">A controller heartbeat does not prove building.</p></div>
+        <div class="cv-instrument"><label>Last real build activity</label><strong id="cv-activity">No material receipt</strong><p id="cv-activity-source"></p></div>
+      </div>
+      <section class="cv-fleet" data-testid="octopus-builder-inventory" aria-label="Observed Octopus builder fleet">
+        <h3>🐙 Octopus · All observed builders</h3>
+        <p id="cv-octopus-counts" class="cv-fleet-meta">Waiting for current named lane inventory.</p>
+        <h4>Five canonical controllers</h4><div id="cv-octopus-controllers" class="cv-fleet-grid"></div>
+        <h4>Every reported execution lane</h4><div id="cv-octopus-lanes" class="cv-fleet-grid"></div>
+        <h4>Named worker identities</h4><div id="cv-octopus-builders" class="cv-fleet-grid"></div>
+        <h4>Provider capacity receipts · not pickup</h4><div id="cv-octopus-capacity" class="cv-fleet-grid"></div>
+        <details class="cv-fleet-logical"><summary id="cv-octopus-logical-title">Logical goal lanes · truth unavailable</summary><div id="cv-octopus-logical" class="cv-fleet-grid"></div></details>
+        <p id="cv-octopus-proof" class="cv-fleet-meta">Controller presence does not prove physical building.</p>
+      </section>
+      <ol id="cv-flow" class="cv-flow" aria-label="System handoffs from admission through protected merge"></ol>
+      <p id="cv-freshness" class="cv-meta"></p>
+      <details class="technical-details cv-boundary"><summary>Evidence, signatures & controller reports</summary><p id="cv-proof"></p><div id="cv-controllers" class="cv-controller-list" aria-label="Existing controller observations"></div><p id="cv-boundary"></p><p id="cv-head"></p></details>
+    </section>
     <section class="hero" data-testid="goal-dashboard-mission-control-v2" data-dashboard-page="overview">
       <article class="hero-main">
         <div class="eyebrow">DELUXE LIVE MISSION CONTROL · #1282</div>
@@ -355,6 +532,10 @@
         <div class="hero-status">
           <div class="posture"><span class="posture-dot" id="posture-dot"></span><span id="programme-posture">EVIDENCE LOADING</span></div>
           <div class="movement" id="last-movement">Last meaningful movement: awaiting current feed</div>
+        </div>
+        <div class="foreman-heartbeat" id="foreman-heartbeat" data-state="UNKNOWN" aria-live="polite">
+          <span class="foreman-light" aria-hidden="true"></span>
+          <div><strong id="foreman-state">STEPHANOS FOREMAN · UNKNOWN</strong><span id="foreman-detail">Awaiting Sovereign Commander build truth.</span></div>
         </div>
       </article>
       <aside class="hero-orbit" aria-label="Programme maturity graphic">
@@ -377,6 +558,15 @@
     <section class="panel source-mesh" aria-label="live backend data sources" data-testid="goal-dashboard-source-mesh" data-dashboard-page="overview">
       <div class="panel-title"><strong>Live source mesh</strong><span>canonical backend projections · inherited feed freshness</span></div>
       <div class="source-mesh-grid" id="source-mesh"><div class="source-node" data-source-id="shared-workspace" data-truth="UNKNOWN"><strong>Shared Workspace</strong><output>UNKNOWN</output><small>Awaiting bounded backend feed.</small></div></div>
+    </section>
+    <section class="panel" data-dashboard-page="overview" data-testid="goal-dashboard-23-gate-ledger" aria-label="Goal-to-build 23 separate trust and execution gates">
+      <div class="panel-title"><strong>Goal-to-Build · 23 independent checkpoints</strong><span>separate custody, capacity, execution and approval · read only</span></div>
+      <p id="goal-build-gates-summary" role="status">23 checkpoints · waiting for current per-gate evidence · no green inferred</p>
+      <p id="goal-build-gates-veto">First evidenced veto: UNVERIFIED. A missing receipt is not an approval.</p>
+      <details class="technical-details">
+        <summary>Inspect all 23 gate states, owners and proof</summary>
+        <ol id="goal-build-gates-list"><li>Awaiting the canonical gate ledger.</li></ol>
+      </details>
     </section>
     <section class="kpis" aria-label="Live programme KPIs" data-dashboard-page="overview">
       <div class="kpi"><label>Open work</label><strong id="kpi-open">?</strong><small>current rendered portfolio</small></div>
@@ -466,6 +656,33 @@
         <div class="critical-path" id="critical-path"><div class="gate"><strong>UNKNOWN</strong><span>Load canonical dependency and blocker truth.</span></div></div>
       </article>
     </section>
+    <section class="section" data-dashboard-page="runtime">
+      <article class="panel">
+        <div class="panel-title"><strong>Autonomous build trace</strong><span>goal → scheduler → mission → claim → worker → provider → source → test</span></div>
+        <div class="critical-path" id="autonomy-build-trace">
+          <div class="gate"><strong>UNKNOWN</strong><span>Waiting for the live autonomy heartbeat trace.</span></div>
+        </div>
+        <p class="decision-message" id="autonomy-build-diagnosis" role="status" aria-live="polite">No live build diagnosis has loaded yet.</p>
+      </article>
+    </section>
+    <section class="section" data-dashboard-page="runtime">
+      <article class="panel">
+        <div class="panel-title"><strong>Five-controller fleet</strong><span>proof-backed activity from Shared Workspace</span></div>
+        <div class="critical-path" id="controller-fleet-grid">
+          <div class="gate"><strong>UNKNOWN</strong><span>Waiting for controller activity receipts.</span></div>
+        </div>
+        <p class="decision-message" id="controller-fleet-summary" role="status" aria-live="polite">No controller fleet telemetry has loaded yet.</p>
+      </article>
+    </section>
+    <section class="section" data-dashboard-page="runtime">
+      <article class="panel">
+        <div class="panel-title"><strong>Logical goal lanes</strong><span>per-goal controllers multiplexed through the five-controller control plane</span></div>
+        <div class="critical-path" id="logical-goal-lane-grid">
+          <div class="gate"><strong>UNKNOWN</strong><span>Waiting for logical goal controller fabric telemetry.</span></div>
+        </div>
+        <p class="decision-message" id="logical-goal-lane-summary" role="status" aria-live="polite">No logical goal lane telemetry has loaded yet.</p>
+      </article>
+    </section>
     <section class="section grid-2" data-dashboard-page="runtime">
       <article class="panel">
         <div class="panel-title"><strong>Project health radar</strong><span>categorical evidence score · CURRENT=1, STALE=.5, UNKNOWN=0</span></div>
@@ -504,10 +721,47 @@
           <div class="proof-row"><strong class="name">Goal / PR</strong><b>STATUS</b><b>PROOF</b><b class="proof-hide-phone">SOURCE</b><b class="proof-hide-tablet">HEAD</b><b class="proof-hide-phone">NEXT ACTION</b></div>
         </div>
       </article>
+      <article class="panel" data-testid="shared-workspace-proof-index">
+        <div class="panel-title"><strong>Shared proof index</strong><span>One read-only view · local workspace records · linked GitHub provenance</span></div>
+        <p class="goal-conveyor-boundary" id="shared-proof-index-summary">Workspace evidence source not connected. Proofs remain UNKNOWN.</p>
+        <div class="timeline" id="shared-proof-index-list" data-proof-index-state="UNAVAILABLE">
+          <div class="timeline-item"><strong>Proof source unavailable</strong><span>No source record has been verified.</span></div>
+        </div>
+      </article>
     </section>
     <section class="section" data-dashboard-page="goals">
-      <div class="section-head"><h2>Goals and implementation lanes</h2><span>drill-down card view</span></div>
+      <div class="section-head"><h2>Goals moving to builders</h2><span>proof-bound conveyor · green means this exact handoff is proven</span></div>
+      <article class="panel goal-conveyor-panel" data-testid="goal-build-conveyor">
+        <div class="goal-conveyor-summary">
+          <div><label>Visible goals</label><strong id="conveyor-visible-count">0</strong></div>
+          <div><label>Reached builder</label><strong id="conveyor-builder-count">0</strong></div>
+          <div><label>Building now</label><strong id="conveyor-building-count">0</strong></div>
+          <div><label>Completed</label><strong id="conveyor-completed-count">0</strong></div>
+          <div><label>Blocked</label><strong id="conveyor-blocked-count">0</strong></div>
+        </div>
+        <p class="goal-conveyor-boundary" id="goal-conveyor-boundary">Green means that exact goal has evidence for the handoff. Amber is waiting or held, red is an evidenced blocker, grey means no proof is available.</p>
+        <div id="goal-conveyor-board" class="goal-conveyor-board"><div class="mission-empty">Waiting for per-goal build evidence.</div></div>
+      </article>
+      <div class="section-head"><h2>Goal cards</h2><span>same conveyor embedded in every goal</span></div>
       <div id="goal-grid" class="goal-grid" data-goal-dashboard-source-state="static-seed"></div>
+    </section>
+    <section class="section" data-dashboard-page="missions">
+      <div class="section-head"><h2>Missions</h2><span>outcomes above goals · canonical lineage only</span></div>
+      <article class="panel">
+        <div class="mission-summary">
+          <div><label>Visible missions</label><strong id="mission-count">0</strong><span>Mission records in the current canonical feed.</span></div>
+          <div><label>System looking</label><strong id="mission-looking-count">0</strong><span>Fresh active watcher or material-lane evidence.</span></div>
+          <div><label>Queued / tracking</label><strong id="mission-queued-count">0</strong><span>Known to the controller fabric, not currently active.</span></div>
+          <div><label>Waiting / blocked</label><strong id="mission-waiting-count">0</strong><span>Explicit parked, blocked, or approval-bound missions.</span></div>
+          <div><label>Unwatched / stale</label><strong id="mission-unwatched-count">0</strong><span>No fresh mission-specific watcher evidence.</span></div>
+          <div><label>Active workers</label><strong id="mission-worker-count">0</strong><span>Distinct workers or controllers attached to visible missions.</span></div>
+          <div><label>Oldest evaluation</label><strong id="mission-oldest-evaluation">No signal</strong><span>Age of the oldest mission-specific evaluation evidence.</span></div>
+          <div><label>Linked child goals</label><strong id="mission-child-count">0</strong><span>Only explicit mission-to-goal relationships are counted.</span></div>
+          <div><label>Need operator</label><strong id="mission-operator-count">0</strong><span>Missions with an explicit operator decision signal.</span></div>
+        </div>
+        <p class="decision-message" id="mission-feed-status" role="status" aria-live="polite">Waiting for the canonical mission projection…</p>
+      </article>
+      <div id="mission-grid" class="mission-grid" data-goal-dashboard-source-state="static-seed"><div class="mission-empty">No mission records have loaded yet.</div></div>
     </section>
     <section class="section" data-dashboard-page="approvals">
       <div class="section-head"><h2>Your approval inbox</h2><span>explicit decisions only · no silent execution</span></div>
@@ -574,6 +828,7 @@
         overview:{title:'Overview',description:'The programme picture in plain English: what is moving, what is stale, and what needs attention.'},
         'build-fronts':{title:'Build fronts',description:'Where Stephanos is being built and which capabilities have current evidence behind them.'},
         goals:{title:'Goals',description:'Every active goal translated into what it means, what is in the way, and what happens next.'},
+        missions:{title:'Missions',description:'The outcome layer above goals: what each mission is trying to achieve, which child goals belong to it, what is blocking it, and whether you need to decide anything.'},
         proof:{title:'Proof',description:'The audit view: which claims are proven, stale, missing, or still waiting for verification.'},
         runtime:{title:'Runtime',description:'Whether the live Stephanos services and recovery machinery are actually available now.'},
         history:{title:'History',description:'The latest durable movement and material blockers published by the project feed.'},
@@ -645,9 +900,484 @@
       function goalStatus(goal) { return truth(goal.statusTruth || goal.state || goal.status); }
       function goalProof(goal) { return truth(goal.proofTruth || goal.proofState || goal.proof); }
       function truthScore(t) { t = truth(t); return t === 'CURRENT' ? 1 : t === 'STALE' ? .5 : 0; }
-      function backendBase() { const loc = window.location || {}; const local = ['localhost','127.0.0.1','::1'].includes(String(loc.hostname || '').toLowerCase()); if (!local) return null; if (String(loc.port || '') === '4173') return (loc.protocol || 'http:') + '//' + (loc.hostname || '127.0.0.1') + ':8787'; return ''; }
+      const HOSTED_EXECUTION_BRIDGE_STORAGE_KEY = 'stephanos_hosted_execution_bridge_url';
+      function readHostedExecutionBridge() {
+        const candidates = [];
+        if (window.__STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL) candidates.push(window.__STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL);
+        if (window.parent && window.parent !== window && window.parent.__STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL) candidates.push(window.parent.__STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL);
+        try {
+          const raw = window.localStorage?.getItem(HOSTED_EXECUTION_BRIDGE_STORAGE_KEY);
+          if (raw) {
+            try {
+              const parsed = JSON.parse(raw);
+              if (typeof parsed === 'string') candidates.push(parsed);
+            } catch {
+              candidates.push(raw);
+            }
+          }
+        } catch {}
+        for (const candidate of candidates) {
+          try {
+            const parsed = new URL(String(candidate || '').trim());
+            if (parsed.protocol === 'https:' && parsed.hostname && !['localhost','127.0.0.1','0.0.0.0','::1'].includes(parsed.hostname.toLowerCase())) return parsed.origin;
+          } catch {}
+        }
+        return '';
+      }
+      function backendBase() {
+        const loc = window.location || {};
+        const local = ['localhost','127.0.0.1','::1'].includes(String(loc.hostname || '').toLowerCase());
+        if (local) {
+          if (String(loc.port || '') === '4173') return (loc.protocol || 'http:') + '//' + (loc.hostname || '127.0.0.1') + ':8787';
+          return '';
+        }
+        return readHostedExecutionBridge() || null;
+      }
       function urlFor(path) { const base = backendBase(); return base === null ? null : base + path; }
-      function renderGoals(goals, sourceState) { const grid = byId('goal-grid'); if (!grid) return; grid.textContent = ''; grid.setAttribute('data-goal-dashboard-source-state', sourceState); for (const goal of goals || []) { const card = document.createElement('article'); card.className = 'goal-card'; const rawId=goal.issue||goal.goalId||'GOAL'; const rawTitle=escapeHtml(goal.title); const rawNext=goal.exactNextAction||goal.nextAction||'Refresh canonical evidence.'; const rawBlockers=Array.isArray(goal.blockers)&&goal.blockers.length?goal.blockers.map(item=>typeof item==='string'?item:(item?.id||item?.summary||'BLOCKER_RECORDED')).join(' · '):'none'; const summary=humanText(goal.summary,'This goal has no plain-language progress note yet.'); const next=humanText(rawNext,'Refresh the project evidence to find the next safe step.'); const displayId=goal.issue?goal.issue:'Durable project goal'; card.innerHTML = '<div class="eyebrow" title="'+escapeHtml(rawId)+'">' + escapeHtml(displayId) + '</div>' + '<h3>' + escapeHtml(humanGoalTitle(goal.title)) + '</h3>' + '<div class="human-status"><span>Progress: '+escapeHtml(humanState(goalStatus(goal)))+'</span><span>Evidence: '+escapeHtml(humanState(goalProof(goal)))+'</span></div>' + '<p class="human-summary">'+escapeHtml(summary)+'</p>' + '<div class="human-blocker"><span class="human-label">What is in the way</span>'+escapeHtml(humanBlockers(goal.blockers))+'</div>' + '<div class="next"><span class="human-label">What happens next</span>'+escapeHtml(next)+'</div>' + '<details class="technical-details"><summary>Technical details</summary><code>ID '+escapeHtml(rawId)+' · Goal '+rawTitle+' · Status '+escapeHtml(goalStatus(goal))+' · Proof '+escapeHtml(goalProof(goal))+' · Blockers '+escapeHtml(rawBlockers)+' · Next '+escapeHtml(rawNext)+'</code></details>'; grid.appendChild(card); } }
+
+      function renderSharedProofIndex(index) {
+        const root=byId('shared-proof-index-list'),summary=byId('shared-proof-index-summary');
+        if(!root||!summary)return;
+        const valid=index?.schemaVersion==='stephanos.shared-workspace-proof-index.v1'&&index?.readOnly===true;
+        const state=valid?String(index.state||'UNKNOWN'):'UNAVAILABLE';
+        root.setAttribute('data-proof-index-state',state);
+        root.textContent='';
+        if(!valid||index.sourceAvailable!==true) {
+          summary.textContent='Proof index unavailable from this surface. No empty-state or successful verification is inferred.';
+          const row=document.createElement('div');row.className='timeline-item';
+          const headline=document.createElement('strong');headline.textContent='SOURCE UNAVAILABLE';
+          const detail=document.createElement('span');detail.textContent='Connect the canonical Shared Workspace backend to inspect proof records.';
+          row.append(headline,detail);root.appendChild(row);return;
+        }
+        summary.textContent=String(index.totalValidRecords??0)+' workspace records · '+String(index.currentRecordCount??0)+' fresh · '+String(index.staleRecordCount??0)+' stale · '+String(index.rejectedRecordCount??0)+' rejected · '+String(index.omittedCount??0)+' beyond the display limit. Record claims are not independent approval, review or merge proof.';
+        const entries=Array.isArray(index.entries)?index.entries:[];
+        if(!entries.length){
+          const row=document.createElement('div');row.className='timeline-item';
+          const label=document.createElement('strong');label.textContent='NO VALID PROOF RECORDS';
+          const detail=document.createElement('span');detail.textContent='Current source has not supplied a validated proof record. This does not mean all work is complete.';
+          row.append(label,detail);root.appendChild(row);return;
+        }
+        entries.forEach(entry=>{
+          const row=document.createElement('div');row.className='timeline-item';
+          row.setAttribute('data-proof-id',String(entry.proofId||'UNKNOWN'));
+          row.setAttribute('data-proof-freshness',String(entry.freshness||'UNKNOWN'));
+          const title=document.createElement('strong');
+          title.textContent=String(entry.proofId||'UNKNOWN')+' · '+String(entry.claimStatus||'UNKNOWN')+' · '+String(entry.freshness||'UNKNOWN');
+          const description=document.createElement('span');
+          description.textContent=String(entry.summary||'No proof summary')+' · '+String(entry.participantId||'UNKNOWN')+' · observed '+String(entry.timestampUtc||'UNKNOWN')+' · NOT independently attested';
+          row.append(title,description);
+          const links=document.createElement('span');
+          (Array.isArray(entry.links)?entry.links:[]).forEach(link=>{
+            const href=String(link.url||'');
+            if(!/^https:\/\/github\.com\/Cheekyfellastef\/stephan-os\/(?:(?:issues|pull)\/[1-9]\d{0,6}|commit\/[a-f0-9]{40})$/.test(href))return;
+            const anchor=document.createElement('a');anchor.href=href;anchor.target='_blank';anchor.rel='noopener noreferrer';
+            anchor.textContent=String(link.label||'GitHub proof reference').slice(0,60);
+            links.appendChild(anchor);links.appendChild(document.createTextNode('  '));
+          });
+          if(!links.childNodes.length)links.textContent='Local proof reference only · GitHub source link unavailable';
+          row.appendChild(links);root.appendChild(row);
+        });
+      }
+      function renderStephanosBuildTruth(projection) {
+        const truth=projection?.stephanosBuildTruth||{};
+        const state=String(truth.state||'UNKNOWN').toUpperCase();
+        const root=byId('foreman-heartbeat');
+        if(root)root.setAttribute('data-state',state);
+        const stateNode=byId('foreman-state');
+        if(stateNode)stateNode.textContent='STEPHANOS FOREMAN · '+state;
+        const detailNode=byId('foreman-detail');
+        if(detailNode){
+          const building=Number(truth.buildingGoalCount||0);
+          const active=Number(truth.activeGoalCount||0);
+          const lanes=Number(truth.activeMaterialLaneCount||0);
+          const target=Number(truth.targetMaterialLaneCount||15);
+          const movement=truth.lastMaterialProgressAtUtc?(' · last material '+truth.lastMaterialProgressAtUtc):'';
+          detailNode.textContent=building+' building · '+active+' active/queued/held · '+lanes+'/'+target+' material lanes'+movement;
+        }
+      }
+      const GOAL_CONVEYOR_STAGE_LABELS = Object.freeze([
+        ['GOAL','Goal'],['READY','Ready'],['SELECTED','Selected'],['MISSION','Mission'],['DISPATCHED','Sent'],['PICKED_UP','Picked'],['BUILDING','Building'],['BUILT','Built'],['TESTED','Tested'],['COMPLETED','Done']
+      ]);
+      function fallbackGoalBuildJourney(goal) {
+        const status=String(goal?.statusTruth||'UNKNOWN').toUpperCase();
+        const build=String(goal?.buildState||'UNKNOWN').toUpperCase();
+        const state=String(goal?.state||'UNKNOWN').toUpperCase();
+        const stages=GOAL_CONVEYOR_STAGE_LABELS.map(([id,label])=>({id,label,trafficLight:'GREY',proven:false,reason:'',proof:'',source:'display-fallback'}));
+        const paint=(id,light,proof='',reason='')=>{const stage=stages.find(item=>item.id===id);if(!stage)return;stage.trafficLight=light;stage.proven=light==='GREEN';stage.proof=proof;stage.reason=reason;};
+        if(status==='CURRENT')paint('GOAL','GREEN','Current goal record visible.');
+        else if(status==='STALE')paint('GOAL','AMBER','','Goal record is stale.');
+        if(status==='CURRENT'&&['ELIGIBLE','READY','SELECTABLE','QUEUED','ACTIVE','BUILDING','RUNNING','SELECTED','CLAIMED'].includes(state))paint('READY','GREEN','Goal record proves build eligibility or later lifecycle.');
+        const builder=String(goal?.builder||'').trim();
+        if(build==='BUILDING'&&builder){paint('DISPATCHED','GREEN','Current build truth binds a builder.');paint('PICKED_UP','GREEN','Current build truth binds an execution owner.');paint('BUILDING','GREEN','Current build truth reports BUILDING.');}
+        const first=stages.find(stage=>stage.trafficLight!=='GREEN')||stages[stages.length-1];
+        if(build==='BLOCKED')paint(first.id,'RED','',String(goal?.buildBlocker||'Build truth reports a blocker.'));
+        else if(['QUEUED','HELD'].includes(build)&&first.trafficLight==='GREY')paint(first.id,'AMBER','',build==='QUEUED'?'Waiting for the next proven handoff.':'Goal is held before the next handoff.');
+        const current=stages.find(stage=>stage.trafficLight==='RED')||stages.find(stage=>stage.trafficLight==='AMBER')||stages.find(stage=>stage.trafficLight!=='GREEN')||stages[stages.length-1];
+        return {schemaVersion:'stephanos.goal-build-conveyor.display-fallback.v1',goal:goal?.issue||goal?.goalId||'',title:goal?.title||'',builder:builder||'UNKNOWN',currentStage:current.id,currentStageLabel:current.label,currentTrafficLight:current.trafficLight,provenStageCount:stages.filter(stage=>stage.proven).length,totalStageCount:stages.length,progressPercent:Math.round(stages.filter(stage=>stage.proven).length/stages.length*100),stages,truthBoundary:'Fallback display never borrows proof from another goal.'};
+      }
+      function goalBuildJourney(goal) { const journey=goal?.buildJourney; return journey&&Array.isArray(journey.stages)?journey:fallbackGoalBuildJourney(goal); }
+      function conveyorStagesHtml(journey) { const current=String(journey?.currentStage||''); return (Array.isArray(journey?.stages)?journey.stages:[]).map(stage=>'<div class="conveyor-stage" data-stage="'+escapeHtml(stage?.id||'UNKNOWN')+'" data-light="'+escapeHtml(stage?.trafficLight||'GREY')+'" data-current="'+String(String(stage?.id||'')===current)+'" title="'+escapeHtml((stage?.proof||stage?.reason||'No proof available.')+(stage?.source?' · '+stage.source:''))+'">'+escapeHtml(stage?.label||stage?.id||'Stage')+'</div>').join(''); }
+      let conveyorOverviewObservation=null;
+      function conveyorAge(at,now=Date.now()) { const ms=Date.parse(at||'');if(!Number.isFinite(ms)||ms>now)return 'timestamp unknown';const seconds=Math.floor((now-ms)/1000);return seconds<60?seconds+'s ago':seconds<3600?Math.floor(seconds/60)+'m ago':Math.floor(seconds/3600)+'h ago'; }
+      function renderConveyorOverview(projection) {
+        const root=byId('cv-flow');if(!root)return;
+        const overview=projection?.goalBuildConveyorOverview;
+        conveyorOverviewObservation=overview?.schemaVersion==='stephanos.goal-build-conveyor-overview.v1'?overview:null;
+        const data=conveyorOverviewObservation||{};
+        const setText=(id,value)=>{const node=byId(id);if(node)node.textContent=value;};
+        const now=Date.now();
+        const expires=at=>Number.isFinite(Date.parse(at||''))&&now<=Date.parse(at);
+        const buildLive=data.buildLive===true&&expires(data.buildExpiresAtUtc);
+        const trace=data.trace;const traceLive=trace?.truth==='CURRENT'&&expires(trace.expiresAtUtc);
+        const missionLabel=trace?.scope==='SYSTEM'?'System cycle · no goal selected':trace?trace.issue+' — '+trace.title:'No cycle reported';
+        setText('cv-cycle',missionLabel+(trace?' · '+(traceLive?'Observed ':'Stale observation · ')+conveyorAge(trace.observedAtUtc,now)+(trace.sourceBinding==='SOURCE_HEAD_MISSING'?' · cycle source head not published':''):''));
+        const vetoLive=data.bottleneck&&(data.bottleneck.gateId?expires(data.bottleneck.expiresAtUtc):buildLive);
+        const state=vetoLive?'BLOCKED':buildLive?data.buildState:traceLive?(['FAIL','BLOCKED'].includes(trace.currentState)?'BLOCKED':'WAITING'):(data.buildObservedAtUtc||trace?'STALE':'UNKNOWN');
+        const light=state==='BLOCKED'?'RED':state==='BUILDING'?'GREEN':['STALE','HELD','QUEUED','WAITING'].includes(state)?'AMBER':'GREY';
+        const names={BLOCKED:'Build flow blocked',BUILDING:'Material building observed',STALE:'Evidence needs refreshing',HELD:'Work held',QUEUED:'Waiting for pickup',WAITING:'Live cycle · waiting',IDLE:'Idle · no build observed',UNKNOWN:'Evidence unavailable'};
+        const badge=byId('cv-status');if(badge){badge.setAttribute('data-cv-light',light);badge.innerHTML='<i class="cv-lamp" aria-hidden="true"></i>'+escapeHtml(names[state]||names.UNKNOWN);}
+        const counts=data.queueCounts||{};
+        const waitingAdmission=traceLive&&trace.currentGate==='ELIGIBLE_GOAL'&&trace.currentState==='WAITING';
+        const gateNames={ELIGIBLE_GOAL:'admission',SELECT:'selection',CLAIM:'claim',WORKER:'physical pickup',SOURCE_CHANGED:'source edits',TESTED:'tests',REVIEW_HANDOFF:'review',RELEASE:'release'};
+        setText('cv-headline',waitingAdmission?'Waiting at admission':vetoLive?'The conveyor is blocked':state==='BUILDING'?'Work is moving into a build':traceLive?(trace.currentState==='WAITING'?'Waiting at ':'At ')+(gateNames[trace.currentGate]||humanText(trace.currentGate)):state==='STALE'?'The evidence has gone quiet':'Waiting for evidence');
+        setText('cv-summary',waitingAdmission?(counts.eligible??'Unknown')+' goal records are labelled eligible, but this cycle reports no eligible goal at admission. No goal has been selected in this cycle.':traceLive?String(trace.diagnosis||'The current cycle is reporting its handoffs below.').replace(/:\s*[A-Z][A-Z0-9_]+\.?$/,''):buildLive?'Material builder evidence is available. Each stage below shows its own evidence.':'Current conveyor evidence is unavailable. Historical observations stay labelled below.');
+        const metrics=[['Open goals',counts.open],['Labelled eligible',counts.eligible],['Scheduler-ready',traceLive?trace.readyWorkCount:null],['Material actions · cycle',traceLive?trace.materialActionsSucceeded:null]];
+        const metricRoot=byId('cv-metrics');if(metricRoot)metricRoot.innerHTML=metrics.map(([label,value],index)=>'<div class="cv-metric" data-attention="'+(waitingAdmission&&index===2)+'"><strong>'+escapeHtml(value??'—')+'</strong><span>'+escapeHtml(label)+'</span></div>').join('');
+        setText('cv-count-note',data.queueCounts?'Goal records: '+(counts.active??'—')+' active / selected · '+(counts.held??'—')+' held · '+(counts.dependency??'—')+' dependency · '+(counts.approval??'—')+' approval · '+(counts.unknown??'—')+' unclassified. '+(data.uncertainGoalCount??'Unknown')+' records stale or unverified.':'Queue counts unavailable.');
+        const reasonLabels={NO_ELIGIBLE_GOAL_OBSERVED:'No eligible goal reported at admission.',SCHEDULER_SELECTION_NOT_OBSERVED:'No scheduler selection reported.',CRITICAL_ACTIVE_MISSION_DISPATCH_NOT_REQUIRED:'No active mission required dispatch.',ELASTIC_EXTERNAL_BUILD_DISPATCH_NOT_REQUIRED:'External build dispatch was not required by this cycle.',WORKER_PICKUP_NOT_OBSERVED:'No worker pickup reported.'};
+        const stageHtml=(stage,index)=>{
+          const expired=stage.expiresAtUtc&&!expires(stage.expiresAtUtc);
+          const op=stage.operational;const opLive=traceLive&&op?.truth==='CURRENT'&&expires(op.expiresAtUtc);
+          const signed=!expired&&stage.state==='PROVEN';
+          const l=op?opLive?op.trafficLight:'AMBER':expired?'AMBER':stage.trafficLight;
+          const label=op?opLive?op.label:'Last: '+op.label.toLowerCase():expired?'Evidence stale':signed?'Signed system checkpoint':stage.id==='commit'?'No commit receipt':stage.id==='merge'?'No merge receipt':'No current report';
+          const reason=op?(reasonLabels[op.reason]|| (op.reason?humanText(op.reason):op.state==='NOT_REACHED'?'An earlier handoff has not completed.':'Canonical cycle observation.')):expired?'The previous checkpoint has expired.':stage.id==='commit'?'A source head alone does not prove a commit.':stage.id==='merge'?'Protected integration needs its own receipt.':stage.reason||'Waiting for canonical evidence.';
+          return '<li class="cv-stage" data-cv-stage="'+escapeHtml(stage.id||String(index))+'" data-cv-light="'+escapeHtml(l||'GREY')+'" data-current="'+Boolean(opLive&&['WAITING','FAIL','BLOCKED'].includes(op.state))+'"><div class="cv-stage-head"><strong>'+escapeHtml(stage.label)+'</strong><small>'+String(index+1).padStart(2,'0')+'</small></div><span class="cv-stage-state"><i class="cv-lamp" aria-hidden="true"></i>'+escapeHtml(label)+'</span><p class="cv-stage-reason">'+escapeHtml(reason)+'</p><details><summary>Evidence</summary>'+escapeHtml(op?'Cycle report: '+op.state+' · '+(op.reason||'no reason code'):'No current operational stage report.')+'<br>'+escapeHtml(expired?'Signed checkpoint expired.':stage.reason||'No signed checkpoint.')+'<br>'+escapeHtml((stage.proofRefs||[]).join(' · ')||'No signed proof reference')+'</details></li>';
+        };
+        const stages=Array.isArray(data.stages)?data.stages:['Admission','Select','Claim','Physical pickup','Edit','Test','Commit','Proof / review','Protected merge'].map(label=>({label,state:'UNKNOWN',trafficLight:'GREY'}));
+        root.innerHTML=['Discover & assign','Pick up & build','Prove & deliver'].map((title,group)=>'<li class="cv-phase"><div class="cv-phase-heading"><b>0'+(group+1)+'</b>'+title+'</div><ol>'+stages.slice(group*3,group*3+3).map((stage,index)=>stageHtml(stage,group*3+index)).join('')+'</ol></li>').join('');
+        setText('cv-bottleneck',vetoLive?data.bottleneck.title:traceLive?(waitingAdmission?'Goal records are not reaching admission':(gateNames[trace.currentGate]||humanText(trace.currentGate))+' · '+humanText(trace.currentState)):'Current bottleneck unverified');
+        setText('cv-owner',vetoLive?'Owner: '+data.bottleneck.owner:traceLive?(trace.owner?'Existing mission owner: '+trace.owner:'Reported by the canonical autonomy cycle. No mission owner is assigned in this observation.'):'Refresh the canonical publisher before acting on an old blocker.');
+        setText('cv-next',traceLive&&!vetoLive?trace.nextAction:buildLive||vetoLive?data.nextAction||'Follow the existing canonical owner.':'Refresh canonical build evidence.');
+        const workers=buildLive?(data.workers||[]):[];
+        setText('cv-workers',buildLive?workers.length+' workers · '+(data.buildingGoalCount??'—')+' goals building':traceLive&&stages.find(stage=>stage.id==='pickup')?.operational?.state==='NOT_REACHED'?'No pickup reported':'Active workers unknown');
+        setText('cv-worker-detail',workers.length?workers.map(worker=>worker.id+' → '+worker.goals.map(goal=>(goal.issue||'')+' — '+(goal.title||'title unavailable from current evidence')).join(', ')).join(' · '):traceLive&&stages.find(stage=>stage.id==='pickup')?.operational?.state==='NOT_REACHED'?'This cycle has not reached physical pickup. Runtime health is shown above.':buildLive?'No material builder is proven by this observation.':'Worker health and controller heartbeats do not prove building.');
+        // Show every observed Octopus identity even when no goal is BUILDING.
+        // The per-item expiry and escaped text preserve canonical truth.
+        const fleet=data.octopusFleet||{};
+        const drawFleetCard=(name,state,light,detail)=>'<article class="cv-fleet-card" data-cv-light="'+escapeHtml(light||'GREY')+'"><strong>'+escapeHtml(name||'Unnamed')+'</strong><span class="cv-fleet-state"><i class="cv-lamp" aria-hidden="true"></i>'+escapeHtml(state||'UNKNOWN')+'</span><small>'+escapeHtml(detail||'')+'</small></article>';
+        const cs=Array.isArray(fleet.controllers)?fleet.controllers:[];
+        const ls=Array.isArray(fleet.lanes)?fleet.lanes:[];
+        const bs=Array.isArray(fleet.builders)?fleet.builders:[];
+        const gs=Array.isArray(fleet.logicalLanes)?fleet.logicalLanes:[];
+        setText('cv-octopus-counts',cs.length+' controller hosts · '+(fleet.observedLaneCount??'unknown')+' named lanes · '+(fleet.provenMaterialLaneCount??'unknown')+' proven material lanes · target '+(fleet.targetMaterialLanes??'unverified'));
+        const cr=byId('cv-octopus-controllers');
+        if(cr)cr.innerHTML=cs.length?cs.map(item=>{
+          const current=item.live===true&&expires(item.expiresAtUtc);
+          return drawFleetCard(item.title,current?item.state:item.observedAtUtc?'STALE':'UNKNOWN',
+            !current?'GREY':item.state==='BUILDING'&&item.materialActions>0?'GREEN':item.blocker?'AMBER':'GREY',
+            item.namedLanes+' reported lane entries'+(current&&item.blocker?' · '+item.blocker:''));
+        }).join(''):'<p class="cv-fleet-meta">Controller inventory unavailable.</p>';
+        const lr=byId('cv-octopus-lanes');
+        if(lr)lr.innerHTML=ls.length?ls.map(item=>{
+          const current=expires(item.expiresAtUtc);
+          return drawFleetCard(item.laneId,current?item.state:item.observedAtUtc?'STALE':'UNKNOWN',
+            current?item.light:'GREY',item.controller+' · '+(item.workerId?'worker '+item.workerId+' · ':'')+(item.goalId?'goal '+item.goalId+' · ':'')+(item.blocker||item.source)+(item.proofVerified&&current?' · material proof verified':' · pickup not proven'));
+        }).join(''):'<p class="cv-fleet-meta">No named execution lanes reported. A target of 15 does not mean 15 workers are live.</p>';
+        const br=byId('cv-octopus-builders');
+        if(br)br.innerHTML=bs.length?bs.map(item=>drawFleetCard(item.id,
+          expires(item.expiresAtUtc)?item.state:'STALE / UNKNOWN',
+          expires(item.expiresAtUtc)?item.light:'GREY',
+          (item.goals||[]).map(goal=>goal.issue+' '+goal.state).join(' · '))).join(''):
+          '<p class="cv-fleet-meta">No named builder in current build truth, not proof that none is installed.</p>';
+        const cap=Array.isArray(fleet.capacityBuilders)?fleet.capacityBuilders:[];
+        const capRoot=byId('cv-octopus-capacity');
+        if(capRoot)capRoot.innerHTML=cap.length?cap.map(item=>drawFleetCard(
+          item.workerId,item.state,
+          expires(item.expiresAtUtc)?item.trafficLight:'GREY',
+          item.route+' · queue '+(item.queueDepth??'unknown')+' · capacity only · no pickup')).join(''):
+          '<p class="cv-fleet-meta">No provider worker-capacity identities in this feed. Unobserved does not mean uninstalled.</p>';
+        setText('cv-octopus-logical-title','Logical goal lanes · '+(fleet.logicalLaneCount??'unknown')+' · '+(fleet.logicalTruth||'UNKNOWN'));
+        const gr=byId('cv-octopus-logical');
+        if(gr)gr.innerHTML=gs.length?gs.map(item=>drawFleetCard(item.goalRef+' '+item.title,
+          item.state,'GREY',item.host+' · '+item.route+' · continuity only')).join(''):
+          '<p class="cv-fleet-meta">Logical lane inventory unavailable; zero is not verified.</p>';
+        setText('cv-octopus-proof',fleet.truthBoundary||'No qualified Octopus inventory evidence available.');
+        const activity=data.lastActivity;
+        const activityNode=byId('cv-activity');if(activityNode){activityNode.textContent=activity?conveyorAge(activity.atUtc,now):'No material receipt';activityNode.title=activity?.atUtc||'';}
+        setText('cv-activity-source',activity?(activity.atUtc+' · '+activity.source+' · historical observation'):'No timestamped material progress is available in these sources. Heartbeats and page refreshes are excluded.');
+        const healthRoot=byId('cv-health');if(healthRoot)healthRoot.innerHTML=(data.health||[]).map(item=>{const current=expires(item.expiresAtUtc);const label=current?item.state.toLowerCase():item.observedAtUtc?'stale':'unknown';return '<span class="cv-health-item" data-cv-light="'+(current&&item.state==='HEALTHY'?'GREEN':current&&item.state==='UNHEALTHY'?'RED':'GREY')+'"><i class="cv-lamp" aria-hidden="true"></i>'+escapeHtml(item.label)+' · '+escapeHtml(label)+'</span>';}).join('');
+        setText('cv-freshness','Cycle: '+(traceLive?'live · ':'stale / unavailable · ')+conveyorAge(trace?.observedAtUtc,now)+' · Material build reports: '+(buildLive?'live':'stale / unavailable')+' · Health observation: '+conveyorAge(data.health?.[0]?.observedAtUtc,now));
+        const controllerRoot=byId('cv-controllers');if(controllerRoot)controllerRoot.innerHTML=(data.controllers||[]).map(controller=>'<span class="cv-controller">'+escapeHtml(controller.title||controller.id||'Controller')+' · '+escapeHtml(controller.truth==='CURRENT'&&expires(controller.expiresAtUtc)?controller.state:'STALE / UNKNOWN')+'</span>').join('');
+        setText('cv-proof',data.signedProof?.live&&expires(data.signedProof?.ledgerExpiresAtUtc)?'Signed checkpoint observations available.':data.signedProof?.publisherVerdict&&expires(data.signedProof.expiresAtUtc)?'Signed publisher: '+humanText(data.signedProof.publisherVerdict)+'. Operational cycle reports above do not prove physical execution.':'Current signed proof unavailable. Operational cycle reports do not prove physical execution.');
+        setText('cv-boundary',data.truthBoundary||'Waiting for the canonical backend overview. No status inferred from static or remote fallback.');
+        setText('cv-head','Cycle: '+(trace?.cycleId||'not published')+' · source head '+(trace?.sourceHead||'not published')+'. Signed checkpoint head: '+(data.sourceHead||'unavailable')+'.');
+      }
+      function refreshConveyorAge() { if(conveyorOverviewObservation)renderConveyorOverview({goalBuildConveyorOverview:conveyorOverviewObservation});window.setTimeout(refreshConveyorAge,5000); }
+      window.setTimeout(refreshConveyorAge,5000);
+      function renderGoalBuildConveyor(goals, projection) {
+        const root=byId('goal-conveyor-board');if(!root)return;
+        const journeys=(goals||[]).map(goal=>({goal,journey:goalBuildJourney(goal)}));
+        const provided=projection?.goalBuildConveyor||{};
+        const reached=Number.isFinite(Number(provided.provenToBuilderCount))?Number(provided.provenToBuilderCount):journeys.filter(item=>item.journey?.stages?.find(stage=>stage.id==='PICKED_UP')?.proven===true).length;
+        const building=Number.isFinite(Number(provided.buildingCount))?Number(provided.buildingCount):journeys.filter(item=>item.journey?.stages?.find(stage=>stage.id==='BUILDING')?.proven===true&&item.journey?.stages?.find(stage=>stage.id==='COMPLETED')?.proven!==true).length;
+        const completed=Number.isFinite(Number(provided.completedCount))?Number(provided.completedCount):journeys.filter(item=>item.journey?.stages?.find(stage=>stage.id==='COMPLETED')?.proven===true).length;
+        const blocked=Number.isFinite(Number(provided.blockedCount))?Number(provided.blockedCount):journeys.filter(item=>item.journey?.stages?.some(stage=>stage.blocked||stage.trafficLight==='RED')).length;
+        setField('conveyor-visible-count',journeys.length);setField('conveyor-builder-count',reached);setField('conveyor-building-count',building);setField('conveyor-completed-count',completed);setField('conveyor-blocked-count',blocked);
+        const boundary=byId('goal-conveyor-boundary');if(boundary)boundary.textContent=provided.truthBoundary||journeys.find(item=>item.journey?.truthBoundary)?.journey?.truthBoundary||'Green means that exact goal has evidence for the handoff. Amber is waiting or held, red is an evidenced blocker, grey means no proof is available.';
+        root.textContent='';
+        if(!journeys.length){root.innerHTML='<div class="mission-empty">No goal build journeys are published by the current feed.</div>';return;}
+        const rank={RED:0,AMBER:1,GREEN:2,GREY:3};
+        journeys.sort((a,b)=>(rank[a.journey?.currentTrafficLight]??4)-(rank[b.journey?.currentTrafficLight]??4)||(b.journey?.progressPercent||0)-(a.journey?.progressPercent||0));
+        journeys.slice(0,30).forEach(({goal,journey})=>{const row=document.createElement('article');row.className='conveyor-row';row.setAttribute('data-goal-build-conveyor-row',goal?.issue||goal?.goalId||'goal');row.setAttribute('data-current-stage',journey?.currentStage||'UNKNOWN');row.setAttribute('data-current-light',journey?.currentTrafficLight||'GREY');row.innerHTML='<div class="conveyor-goal"><strong>'+escapeHtml((goal?.issue||goal?.goalId||'Goal')+' · '+humanGoalTitle(goal?.title||''))+'</strong><span>'+escapeHtml((journey?.provenStageCount||0)+'/'+(journey?.totalStageCount||10)+' handoffs proven · current '+(journey?.currentStageLabel||journey?.currentStage||'unknown'))+'</span></div><div class="conveyor-stages">'+conveyorStagesHtml(journey)+'</div><div class="conveyor-owner"><strong>'+escapeHtml(journey?.builder||goal?.builder||'BUILDER UNKNOWN')+'</strong><span>'+escapeHtml(goal?.currentPhase||goal?.buildNextAction||goal?.exactNextAction||'Waiting for current execution evidence.')+'</span></div>';root.appendChild(row);});
+      }
+      function renderGoals(goals, sourceState) {
+        const grid=byId('goal-grid');if(!grid)return;grid.textContent='';grid.setAttribute('data-goal-dashboard-source-state',sourceState);
+        for(const goal of goals||[]){
+          const card=document.createElement('article');card.className='goal-card';const buildState=String(goal.buildState||'UNKNOWN').toUpperCase();card.setAttribute('data-build-state',buildState);
+          const rawId=goal.issue||goal.goalId||'GOAL';const rawTitle=escapeHtml(goal.title);const rawNext=goal.exactNextAction||goal.nextAction||'Refresh canonical evidence.';const rawBlockers=Array.isArray(goal.blockers)&&goal.blockers.length?goal.blockers.map(item=>typeof item==='string'?item:(item?.id||item?.summary||'BLOCKER_RECORDED')).join(' · '):'none';const summary=humanText(goal.summary,'This goal has no plain-language progress note yet.');const next=humanText(rawNext,'Refresh the project evidence to find the next safe step.');const displayId=goal.issue?goal.issue:'Durable project goal';const journey=goalBuildJourney(goal);
+          const conveyor='<div class="goal-card-conveyor"><div class="goal-card-conveyor-head"><strong>GOAL → BUILDER</strong><span>'+escapeHtml((journey?.provenStageCount||0)+'/'+(journey?.totalStageCount||10)+' proven · '+(journey?.currentStageLabel||'unknown'))+'</span></div><div class="conveyor-stages">'+conveyorStagesHtml(journey)+'</div></div>';
+          card.innerHTML='<div class="eyebrow" title="'+escapeHtml(rawId)+'">'+escapeHtml(displayId)+'</div><h3>'+escapeHtml(humanGoalTitle(goal.title))+'</h3><div class="human-status"><span>Build: '+escapeHtml(buildState)+'</span><span>Progress: '+escapeHtml(humanState(goalStatus(goal)))+'</span><span>Evidence: '+escapeHtml(humanState(goalProof(goal)))+'</span></div>'+conveyor+'<p class="human-summary">'+escapeHtml(summary)+'</p><div class="human-blocker"><span class="human-label">What is in the way</span>'+escapeHtml(humanBlockers(goal.blockers))+'</div><div class="next"><span class="human-label">What happens next</span>'+escapeHtml(next)+'</div><details class="technical-details"><summary>Technical details</summary><code>ID '+escapeHtml(rawId)+' · Goal '+rawTitle+' · Build '+escapeHtml(buildState)+' · Conveyor '+escapeHtml(journey?.currentStage||'UNKNOWN')+' '+escapeHtml(journey?.currentTrafficLight||'GREY')+' · Controller '+escapeHtml(goal.controllerTitle||goal.controllerId||'UNKNOWN')+' · Lane '+escapeHtml(goal.logicalLaneId||'UNKNOWN')+' · Builder '+escapeHtml(goal.builder||'UNKNOWN')+' · Status '+escapeHtml(goalStatus(goal))+' · Proof '+escapeHtml(goalProof(goal))+' · Blockers '+escapeHtml(rawBlockers)+' · Next '+escapeHtml(rawNext)+'</code></details>';
+          grid.appendChild(card);
+        }
+      }
+      function refKeys(value) {
+        const raw=String(value??'').trim();
+        if(!raw)return [];
+        const lower=raw.toLowerCase();
+        const bare=lower.replace(/^#/,'');
+        return lower===bare?[lower]:[lower,bare];
+      }
+      function missionRefs(mission) {
+        const refs=new Set();
+        [mission?.issue,mission?.missionId,mission?.goalId,mission?.id].forEach(value=>refKeys(value).forEach(ref=>refs.add(ref)));
+        return refs;
+      }
+      function isMissionGoal(goal) {
+        const type=[goal?.goalClass,goal?.goalType,goal?.kind,goal?.type,goal?.recordKind,goal?.classification].filter(Boolean).join(' ').toUpperCase();
+        return goal?.mission===true || /(^|[_\s-])MISSION($|[_\s-])/.test(type) || /^\s*mission\s*:/i.test(String(goal?.title||''));
+      }
+      function scalarRecordRefs(record) {
+        if(record===null||record===undefined)return [];
+        if(typeof record==='string'||typeof record==='number')return refKeys(record);
+        if(typeof record!=='object')return [];
+        return [record.issue,record.goalId,record.id,record.missionId].flatMap(refKeys);
+      }
+      function missionChildren(mission, goals) {
+        const all=Array.isArray(goals)?goals:[];
+        const missionKeys=missionRefs(mission);
+        const byRef=new Map();
+        all.forEach(goal=>scalarRecordRefs(goal).forEach(ref=>{if(!byRef.has(ref))byRef.set(ref,goal);}));
+        const explicitRaw=[mission?.childGoals,mission?.children,mission?.goalIds,mission?.childGoalIds,mission?.relatedGoals]
+          .flatMap(value=>Array.isArray(value)?value:(value===null||value===undefined?[]:[value]));
+        const found=[];
+        explicitRaw.forEach(item=>{
+          if(item&&typeof item==='object'){found.push(item);return;}
+          const match=scalarRecordRefs(item).map(ref=>byRef.get(ref)).find(Boolean);
+          found.push(match||{goalId:String(item),title:''});
+        });
+        all.forEach(goal=>{
+          if(goal===mission)return;
+          const parentValues=[goal?.parentMission,goal?.parentGoal,goal?.relatedMission,goal?.missionId,goal?.mission]
+            .filter(value=>value!==true&&value!==false&&value!==null&&value!==undefined);
+          const linked=parentValues.some(value=>scalarRecordRefs(value).some(ref=>missionKeys.has(ref)));
+          if(linked)found.push(goal);
+        });
+        const seen=new Set();
+        return found.filter(item=>{
+          const key=(scalarRecordRefs(item)[0]||String(item?.title||'')).toLowerCase();
+          if(!key||seen.has(key))return false;
+          seen.add(key);return true;
+        });
+      }
+      function missionNeedsOperator(mission, projection) {
+        if(mission?.operatorNeeded===true||mission?.requiresOperator===true)return true;
+        const refs=missionRefs(mission);
+        const approvals=Array.isArray(projection?.operatorAttention?.approvals)?projection.operatorAttention.approvals:[];
+        return approvals.some(item=>scalarRecordRefs(item?.relatedGoal).some(ref=>refs.has(ref)));
+      }
+      function missionAllRefs(mission,children) {
+        const refs=new Set(missionRefs(mission));
+        (children||[]).forEach(item=>scalarRecordRefs(item).forEach(ref=>refs.add(ref)));
+        return refs;
+      }
+      function missionRecordMatches(record,refs) {
+        if(!record||typeof record!=='object')return false;
+        const values=[record.issueNumber,record.issue,record.goalRef,record.goalId,record.relatedGoal,record.relatedIssue,record.missionId,record.parentMission];
+        return values.some(value=>scalarRecordRefs(value).some(ref=>refs.has(ref)));
+      }
+      function missionTimestamp(value) {
+        const ms=Date.parse(String(value||'')); return Number.isFinite(ms)?ms:null;
+      }
+      function missionAgeLabel(value) {
+        const ms=missionTimestamp(value); if(ms===null)return 'No mission-specific timestamp';
+        const age=Math.max(0,Date.now()-ms);
+        if(age<60000)return Math.max(0,Math.floor(age/1000))+'s ago';
+        if(age<3600000)return Math.floor(age/60000)+'m ago';
+        if(age<86400000)return Math.floor(age/3600000)+'h ago';
+        return Math.floor(age/86400000)+'d ago';
+      }
+      function missionLifecycleTerminal(mission) {
+        const state=[mission?.status,mission?.state,mission?.lifecycle,mission?.missionState].filter(Boolean).join(' ').toUpperCase();
+        return /(^|\s)(DONE|COMPLETE|COMPLETED|CLOSED|MERGED|SUPERSEDED|CANCELLED)(\s|$)/.test(state);
+      }
+      function missionObservability(mission,children,projection,operatorNeeded) {
+        const refs=missionAllRefs(mission,children);
+        const logicalRoot=projection?.logicalGoalControllers||{};
+        const logicalTruth=String(logicalRoot?.truth||'UNKNOWN').toUpperCase();
+        const logical=(Array.isArray(logicalRoot?.controllers)?logicalRoot.controllers:[]).filter(item=>missionRecordMatches(item,refs));
+        const fleet=projection?.controllerFleet||{};
+        const fleetControllers=Array.isArray(fleet?.controllers)?fleet.controllers:[];
+        const laneMatches=[];
+        fleetControllers.forEach(controller=>{
+          (Array.isArray(controller?.materialLanes)?controller.materialLanes:[]).forEach(lane=>{
+            if(missionRecordMatches(lane,refs))laneMatches.push({lane,controller});
+          });
+        });
+        const logicalHosts=new Set(logical.map(item=>String(item?.hostControllerId||'')).filter(Boolean));
+        const ownerControllers=fleetControllers.filter(controller=>logicalHosts.has(String(controller?.controllerId||''))||laneMatches.some(item=>item.controller===controller));
+        const freshOwners=ownerControllers.filter(controller=>String(controller?.freshness||'').toUpperCase()==='CURRENT');
+        const activeLane=laneMatches.find(item=>{
+          const state=String(item?.lane?.state||item?.lane?.status||item?.lane?.executionState||'').toUpperCase();
+          return !/PARKED|BLOCKED|DONE|COMPLETE|CLOSED/.test(state);
+        })||laneMatches[0]||null;
+        const activeLogical=logicalTruth==='CURRENT'?logical.find(item=>String(item?.continuityState||'').toUpperCase()==='ACTIVE'):null;
+        const selectedLogical=logicalTruth==='CURRENT'?logical.find(item=>item?.selectedForAdmission===true):null;
+        const trackingLogical=logicalTruth==='CURRENT'?logical.find(item=>String(item?.continuityState||'').toUpperCase()==='TRACKING'):null;
+        const parkedLogical=logical.find(item=>String(item?.continuityState||'').toUpperCase()==='PARKED');
+        const blockerValues=[
+          ...(Array.isArray(mission?.blockers)?mission.blockers:[]),
+          ...ownerControllers.map(item=>item?.blocker).filter(Boolean),
+          ...laneMatches.map(item=>item?.lane?.blocker).filter(Boolean),
+        ];
+        const blockers=[...new Set(blockerValues.map(item=>typeof item==='string'?item:(item?.id||item?.summary||'BLOCKER_RECORDED')).filter(Boolean))];
+        const terminal=missionLifecycleTerminal(mission);
+        const freshActiveOwner=freshOwners.find(item=>String(item?.activityState||'').toUpperCase()==='BUILDING'||String(item?.executionState||'').toUpperCase()==='RUNNING');
+        const systemLooking=!terminal&&Boolean(activeLogical||(activeLane&&freshActiveOwner));
+        let attention='UNWATCHED';
+        if(terminal)attention='DONE';
+        else if(blockers.length||operatorNeeded)attention='BLOCKED';
+        else if(systemLooking)attention='ACTIVE';
+        else if(trackingLogical||selectedLogical)attention='QUEUED';
+        else if(parkedLogical)attention='WAITING';
+        else if(logical.length&&logicalTruth!=='CURRENT')attention='STALE';
+        const owner=activeLogical?.hostControllerTitle||selectedLogical?.hostControllerTitle||trackingLogical?.hostControllerTitle||parkedLogical?.hostControllerTitle||activeLane?.controller?.title||ownerControllers[0]?.title||'No mission-specific owner signal';
+        const lane=activeLane?.lane||null;
+        const laneId=lane?.laneId||lane?.resourceId||'No active material lane';
+        const worker=lane?.workerId||lane?.provider||freshActiveOwner?.controllerId||activeLogical?.logicalControllerId||'No active worker signal';
+        const timestamps=[
+          lane?.lastMaterialActionAtUtc,
+          activeLane?.controller?.lastMaterialActionAtUtc,
+          activeLane?.controller?.timestampUtc,
+          ...ownerControllers.flatMap(item=>[item?.lastMaterialActionAtUtc,item?.timestampUtc,item?.runStartedAtUtc]),
+        ].filter(Boolean).sort((a,b)=>(missionTimestamp(b)||0)-(missionTimestamp(a)||0));
+        const lastEvaluatedAt=timestamps[0]||(logical.length&&projection?.portfolioObservedAt?projection.portfolioObservedAt:'');
+        const currentActivity=systemLooking
+          ? (lane?.activity||lane?.executionState||lane?.state||lane?.status||freshActiveOwner?.activityState||freshActiveOwner?.executionState||activeLogical?.continuityState||'ACTIVE')
+          : (trackingLogical?'TRACKING':selectedLogical?'SELECTED_FOR_ADMISSION':parkedLogical?'PARKED':'No active mission-specific activity signal');
+        const lastMaterialAction=lane?.lastMaterialAction||activeLane?.controller?.lastMaterialAction||freshActiveOwner?.lastMaterialAction||'No mission-specific material action published';
+        const lastMaterialActionAt=lane?.lastMaterialActionAtUtc||activeLane?.controller?.lastMaterialActionAtUtc||freshActiveOwner?.lastMaterialActionAtUtc||'';
+        const recentWatcher=activeLogical?.logicalControllerId||selectedLogical?.logicalControllerId||trackingLogical?.logicalControllerId||parkedLogical?.logicalControllerId||freshActiveOwner?.controllerId||ownerControllers[0]?.controllerId||'No watcher identity signal';
+        const nextAction=lane?.nextAutomaticAction||activeLane?.controller?.exactNextAction||freshActiveOwner?.exactNextAction||mission?.exactNextAction||mission?.nextAction||'Refresh canonical mission evidence.';
+        const proofRefs=[...new Set([
+          mission?.proofRef,
+          ...(Array.isArray(mission?.proofRefs)?mission.proofRefs:[]),
+          lane?.proofRef,
+          ...(Array.isArray(lane?.proofRefs)?lane.proofRefs:[]),
+          ...laneMatches.flatMap(item=>[
+            item?.lane?.proofRef,
+            ...(Array.isArray(item?.lane?.proofRefs)?item.lane.proofRefs:[]),
+          ]),
+        ].filter(Boolean))].slice(0,8);
+        const events=operatorEvents(projection)
+          .filter(event=>missionRecordMatches(event,refs))
+          .sort((a,b)=>(missionTimestamp(b?.timestampUtc)||0)-(missionTimestamp(a?.timestampUtc)||0))
+          .slice(0,5);
+        const workerKeys=new Set();
+        if(systemLooking){
+          if(lane?.workerId)workerKeys.add(String(lane.workerId));
+          if(activeLogical?.logicalControllerId)workerKeys.add(String(activeLogical.logicalControllerId));
+          if(freshActiveOwner?.controllerId)workerKeys.add(String(freshActiveOwner.controllerId));
+        }
+        return {attention,systemLooking,logicalTruth,logical,ownerControllers,owner,laneId,worker,lastEvaluatedAt,currentActivity,lastMaterialAction,lastMaterialActionAt,recentWatcher,nextAction,blockers,proofRefs,events,workerKeys,awaitingDecomposition:!terminal&&children.length===0};
+      }
+      function renderMissions(goals, projection, sourceState) {
+        const root=byId('mission-grid'); if(!root)return;
+        const missionSource=Array.isArray(projection?.missions)?projection.missions:(Array.isArray(goals)?goals:[]);
+        const missions=missionSource.filter(isMissionGoal);
+        const models=missions.map(mission=>{
+          const children=missionChildren(mission,goals);
+          const operatorNeeded=missionNeedsOperator(mission,projection);
+          return {mission,children,operatorNeeded,observation:missionObservability(mission,children,projection,operatorNeeded)};
+        });
+        const childCount=models.reduce((sum,item)=>sum+item.children.length,0);
+        const operatorCount=models.filter(item=>item.operatorNeeded).length;
+        const lookingCount=models.filter(item=>item.observation.systemLooking).length;
+        const queuedCount=models.filter(item=>['QUEUED','TRACKING'].includes(item.observation.attention)).length;
+        const waitingCount=models.filter(item=>['WAITING','BLOCKED'].includes(item.observation.attention)).length;
+        const unwatchedCount=models.filter(item=>['UNWATCHED','STALE'].includes(item.observation.attention)).length;
+        const workerKeys=new Set(models.flatMap(item=>[...item.observation.workerKeys]));
+        const evaluationTimes=models.map(item=>missionTimestamp(item.observation.lastEvaluatedAt)).filter(value=>value!==null);
+        const oldestEvaluationAt=evaluationTimes.length?new Date(Math.min(...evaluationTimes)).toISOString():'';
+        const fields={
+          'mission-count':models.length,
+          'mission-looking-count':lookingCount,
+          'mission-queued-count':queuedCount,
+          'mission-waiting-count':waitingCount,
+          'mission-unwatched-count':unwatchedCount,
+          'mission-worker-count':workerKeys.size,
+          'mission-child-count':childCount,
+          'mission-operator-count':operatorCount,
+        };
+        Object.entries(fields).forEach(([id,value])=>{const el=byId(id);if(el)el.textContent=String(value);});
+        const oldestEvaluation=byId('mission-oldest-evaluation');
+        if(oldestEvaluation)oldestEvaluation.textContent=oldestEvaluationAt?missionAgeLabel(oldestEvaluationAt):'No signal';
+        const status=byId('mission-feed-status');
+        root.textContent='';root.setAttribute('data-goal-dashboard-source-state',sourceState);
+        if(!models.length){
+          root.innerHTML='<div class="mission-empty"><strong>No mission records are published by the current feed.</strong><br/>This is an honest empty state, not proof that no missions exist in GitHub. The Goal Dashboard will show them here when the canonical projection includes mission records.</div>';
+          if(status)status.textContent=sourceState==='live-shared-workspace'?'The live Goal Dashboard feed currently publishes no mission records.':'The live mission projection is not connected; mission existence is unknown from this fallback.';
+          return;
+        }
+        if(status)status.textContent=models.length+' visible · '+lookingCount+' actively watched · '+queuedCount+' queued/tracking · '+waitingCount+' waiting/blocked · '+unwatchedCount+' unwatched/stale. Red means the dashboard cannot prove the system is looking at that mission right now.';
+        models.forEach(({mission,children,operatorNeeded,observation})=>{
+          const card=document.createElement('article');card.className='mission-card';card.dataset.operatorNeeded=String(operatorNeeded);card.dataset.missionAttention=observation.attention;card.dataset.systemLooking=String(observation.systemLooking);
+          const id=mission.issue||mission.missionId||mission.goalId||mission.id||'MISSION';
+          const title=humanGoalTitle(String(mission.title||'Mission').replace(/^\s*Mission\s*:\s*/i,''));
+          const summary=humanText(mission.summary||mission.operatorOutcome||mission.outcome,'This mission has no plain-language outcome note yet.');
+          const attentionText=observation.systemLooking?'SYSTEM IS LOOKING AT THIS':observation.attention==='UNWATCHED'?'UNWATCHED · NO ACTIVE CONTROLLER SIGNAL':observation.attention==='STALE'?'STALE · WATCHER EVIDENCE IS OLD':observation.attention;
+          const lineage=children.length
+            ? '<ul>'+children.slice(0,12).map(goal=>'<li><strong>'+escapeHtml(goal.issue||goal.goalId||goal.id||'Goal')+'</strong> '+escapeHtml(humanGoalTitle(goal.title||''))+' · '+escapeHtml(humanState(goalStatus(goal)))+'</li>').join('')+'</ul>'
+            : '<div class="unknown-lineage"><strong>Awaiting decomposition</strong>No canonical child-goal lineage is published yet. This is now visible as an observability state rather than being painted healthy.</div>';
+          const materialActivity=observation.lastMaterialActionAt?observation.lastMaterialAction+' · '+missionAgeLabel(observation.lastMaterialActionAt):observation.lastMaterialAction;
+          const eventText=observation.events.length
+            ? observation.events.map(event=>escapeHtml(humanText(event.title||event.summary||event.kind||'Mission event'))+(event.timestampUtc?' · '+escapeHtml(missionAgeLabel(event.timestampUtc)):'')).join('<br/>')
+            : 'No mission-specific recent event is published in the current projection.';
+          const proofText=observation.proofRefs.length?observation.proofRefs.join(' · '):'No mission-specific proof references published';
+          card.innerHTML='<div class="eyebrow">'+escapeHtml(id)+'</div><h3>'+escapeHtml(title)+'</h3>'
+            +'<div class="mission-attention" data-attention="'+escapeHtml(observation.attention)+'">'+escapeHtml(attentionText)+'</div>'
+            +'<div class="mission-meta"><span>Progress: '+escapeHtml(humanState(goalStatus(mission)))+'</span><span>Evidence: '+escapeHtml(humanState(goalProof(mission)))+'</span><span>Operator: '+(operatorNeeded?'Needed':'No explicit decision')+'</span></div>'
+            +'<p class="mission-outcome">'+escapeHtml(summary)+'</p>'
+            +'<div class="mission-observability">'
+              +'<div><label>Responsible owner</label><span>'+escapeHtml(observation.owner)+'</span></div>'
+              +'<div><label>Last evaluated</label><span>'+escapeHtml(observation.lastEvaluatedAt?missionAgeLabel(observation.lastEvaluatedAt)+' · '+observation.lastEvaluatedAt:'No mission-specific signal')+'</span></div>'
+              +'<div><label>Heartbeat / watcher</label><span>'+escapeHtml(observation.logical.length?(observation.logicalTruth+' · '+observation.logical.length+' logical controller signal'+(observation.logical.length===1?'':'s')):'No logical controller signal')+'</span></div>'
+              +'<div><label>Most recent watcher</label><span>'+escapeHtml(observation.recentWatcher)+'</span></div>'
+              +'<div><label>Active lane / worker</label><span>'+escapeHtml(observation.laneId+' · '+observation.worker)+'</span></div>'
+              +'<div><label>Current activity</label><span>'+escapeHtml(humanText(observation.currentActivity,'No active mission-specific activity signal'))+'</span></div>'
+              +'<div><label>Last material action</label><span>'+escapeHtml(materialActivity)+'</span></div>'
+              +'<div><label>Next intended action</label><span>'+escapeHtml(humanText(observation.nextAction,'Refresh canonical evidence.'))+'</span></div>'
+              +'<div><label>Proof freshness</label><span>'+escapeHtml(humanState(goalProof(mission))+' · '+proofText)+'</span></div>'
+              +'<div><label>Blockers / approvals</label><span>'+escapeHtml(observation.blockers.length?observation.blockers.join(' · '):(operatorNeeded?'Operator decision required':'none published'))+'</span></div>'
+            +'</div>'
+            +'<div class="mission-lineage"><strong>Mission → child goals ('+children.length+')</strong>'+lineage+'</div>'
+            +'<div class="mission-recent"><strong>Recent mission events</strong><br/>'+eventText+'</div>'
+            +'<div class="human-blocker"><span class="human-label">What is in the way</span>'+escapeHtml(observation.blockers.length?observation.blockers.join(' · '):humanBlockers(mission.blockers))+'</div>'
+            +'<div class="mission-next"><span class="human-label">What happens next</span>'+escapeHtml(humanText(observation.nextAction,'Refresh canonical evidence to find the next mission step.'))+'</div>'
+            +'<details class="technical-details"><summary>Technical details</summary><code>Mission '+escapeHtml(id)+' · Attention '+escapeHtml(observation.attention)+' · System looking '+String(observation.systemLooking)+' · Owner '+escapeHtml(observation.owner)+' · Logical truth '+escapeHtml(observation.logicalTruth)+' · Child goals '+children.length+' · Operator needed '+String(operatorNeeded)+'</code></details>';
+          root.appendChild(card);
+        });
+      }
       function pendingOperatorDecisions(attention) { return (Array.isArray(attention?.approvals)?attention.approvals:[]).filter(item=>item&&typeof item==='object'&&item.decisionId&&item.requiresOperator===true&&['PROPOSED','WAITING_FOR_OPERATOR_APPROVAL','BLOCKED_WITH_EXACT_UNBLOCK_ACTION'].includes(String(item.status||''))).length; }
       function decisionCommandId(decisionId, action) { const key='stephanos-approval-command:'+decisionId+':'+action; try { const existing=window.sessionStorage?.getItem(key); if(existing)return existing; const id='dashboard-'+(window.crypto?.randomUUID?.()||String(Date.now())+'-'+Math.random().toString(16).slice(2)); window.sessionStorage?.setItem(key,id); return id; } catch { return 'dashboard-'+String(Date.now())+'-'+Math.random().toString(16).slice(2); } }
       function renderOperatorApprovalInbox(inbox) {
@@ -673,7 +1403,34 @@
       function scanGoalTruth(goals, regex) { const relevant=(goals||[]).filter(g=>regex.test(String((g.title||'')+' '+(g.issue||'')).toLowerCase())); if(!relevant.length)return 'UNKNOWN'; if(relevant.some(g=>goalStatus(g)==='CONFLICTING'||goalProof(g)==='CONFLICTING'))return 'CONFLICTING'; if(relevant.some(g=>goalStatus(g)==='STALE'||goalProof(g)==='STALE'))return 'STALE'; if(relevant.some(g=>goalStatus(g)==='CURRENT'||goalProof(g)==='CURRENT'))return 'CURRENT'; return 'UNKNOWN'; }
       function renderCapabilityHealth(goals, projection, feedState) { const queue=projection?.queueDispatcher||{}; const bridge=projection?.captainsBridge||{}; const capability=projection?.openClawCapabilityLadder||{}; const direct=(raw,fallback)=>raw&&String(raw).toUpperCase()!=='UNKNOWN'?sourceEvidenceTruth(raw,feedState):fallback; const map={ scheduler:direct(queue.dispatcherState,scanGoalTruth(goals,/scheduler|flywheel|orchestrat/)), review:direct(bridge.mergePipeline?.finalVerdict||bridge.mergePipeline?.phase,scanGoalTruth(goals,/review|merge/)), ignition:scanGoalTruth(goals,/ignition/), recovery:scanGoalTruth(goals,/recovery mesh|lifeboat|recover/), openclaw:Array.isArray(capability.canRunNow)?sourceEvidenceTruth('READY',feedState):scanGoalTruth(goals,/openclaw/), foundry:scanGoalTruth(goals,/forge|foundry/), autonomy:direct(bridge.buildOrchestration?.phase,scanGoalTruth(goals,/autonom|closed.chat|unattended/)) }; Object.entries(map).forEach(([id,t])=>setTruthNode('[data-health="'+id+'"]',t,t)); return map; }
       function renderRuntime(projection, goals) { const sup=projection?.battleBridgeSupervisor || {}; const health=projection?.captainsBridge?.runtimeHealth || {}; const services=[...(Array.isArray(health.services)?health.services:[]),...(Array.isArray(sup.services)?sup.services:[])]; const serviceTruth=(re)=>{const hits=services.filter(s=>re.test(String((s.serviceId||s.id||s.name||'')).toLowerCase()));if(!hits.length)return 'UNKNOWN';const states=hits.map(s=>truth(s.trafficLight||s.freshness||s.state));return states.includes('CONFLICTING')?'CONFLICTING':states.includes('CURRENT')?'CURRENT':states.includes('STALE')?'STALE':'UNKNOWN';}; const states={ ignition: scanGoalTruth(goals,/ignition/), recovery: scanGoalTruth(goals,/recovery mesh/), lifeboat: scanGoalTruth(goals,/lifeboat/), worker: serviceTruth(/worker/), workspace: serviceTruth(/workspace|publisher|shared.workspace.feed/), mailbox: serviceTruth(/mailbox|ingress/), ui: serviceTruth(/dashboard|4173|8787|ui|backend/), refresh: serviceTruth(/post.sync|refresh|verify|publisher.loop/) }; Object.entries(states).forEach(([id,t])=>setTruthNode('[data-runtime="'+id+'"]',t,t)); return states; }
+      function renderGoalBuildGateObservatory(projection) {
+        const summary=byId('goal-build-gates-summary'), veto=byId('goal-build-gates-veto'), root=byId('goal-build-gates-list');
+        if(!summary||!root)return;
+        const ledger=projection?.goalBuildGateObservatory;
+        const gates=ledger?.schemaVersion==='stephanos.goal-build-gate-observatory.v1'&&Array.isArray(ledger?.gates)&&ledger.gates.length===23?ledger.gates:[];
+        summary.textContent=gates.length
+          ? (ledger.counts?.PASS||0)+' passed · '+(ledger.counts?.FAIL||0)+' failed · '+(ledger.counts?.WAITING_FOR_PREREQUISITE||0)+' waiting · '+(ledger.counts?.UNVERIFIED||0)+' unverified · '+(ledger.counts?.STALE||0)+' stale'
+          : '23 checkpoints · canonical per-gate feed unavailable · nothing presumed green';
+        if(veto)veto.textContent=ledger?.firstActionableGate&&gates.length
+          ? 'First evidenced veto: gate #'+ledger.firstActionableGate+' · independent vetoes: '+(ledger.simultaneousVetoes||[]).join(', ')
+          : 'No actionable veto proven. Unknown and stale checks remain unknown, not approved.';
+        root.textContent='';
+        if(!gates.length){const li=document.createElement('li');li.textContent='No trustworthy gate record attached to this projection.';root.appendChild(li);return;}
+        gates.forEach(gate=>{
+          const li=document.createElement('li');
+          li.setAttribute('data-gate-id',String(gate.id));
+          li.setAttribute('data-gate-status',String(gate.status));
+          li.textContent=String(gate.title||'Gate')+' · '+String(gate.status||'UNVERIFIED')+' · '+String(gate.owner||'Unknown owner')
+            +(gate.typedBlocker?' · '+String(gate.typedBlocker):'')
+            +(gate.waitingOnGate?' · waiting for gate #'+String(gate.waitingOnGate):'')
+            +(gate.proofRef?' · proof '+String(gate.proofRef):' · proof not supplied');
+          root.appendChild(li);
+        });
+      }
       function renderCriticalPath(projection) { const root=byId('critical-path'); if(!root)return; const attention=projection?.operatorAttention || {}; const blockers=Array.isArray(attention.blockers)?attention.blockers:[]; const next=attention.exactNextAction || projection?.exactNextAction || 'Refresh canonical dependency truth.'; const gates=blockers.slice(0,4).map((b,i)=>({title:'Gate '+(i+1),detail:humanText(typeof b==='string'?b:(b.summary||b.id||'blocked'))})); gates.push({title:'Next safe action',detail:humanText(next,'Refresh the project evidence to find the next safe step.')}); root.innerHTML=''; gates.forEach(g=>{const el=document.createElement('div');el.className='gate';el.innerHTML='<strong>'+escapeHtml(g.title)+'</strong><span>'+escapeHtml(g.detail)+'</span>';root.appendChild(el);}); }
+      function renderAutonomyBuildTrack(track) { const root=byId('autonomy-build-trace'), diagnosis=byId('autonomy-build-diagnosis'); if(!root)return; const gates=Array.isArray(track?.gates)?track.gates:[]; root.innerHTML=''; if(!gates.length){root.innerHTML='<div class="gate"><strong>UNKNOWN</strong><span>No current autonomy build trace is published.</span></div>';if(diagnosis)diagnosis.textContent='Stephanos cannot diagnose the build chain until a fresh autonomy heartbeat is published.';setTruthNode('[data-health="autonomy"]','UNKNOWN','UNKNOWN');return;} gates.forEach(g=>{const el=document.createElement('div');el.className='gate';el.setAttribute('data-autonomy-gate',String(g?.id||'UNKNOWN'));el.setAttribute('data-autonomy-state',String(g?.state||'UNKNOWN'));const reason=g?.reason?' · '+humanText(g.reason):'';el.innerHTML='<strong>'+escapeHtml(humanText(g?.id||'UNKNOWN'))+'</strong><span>'+escapeHtml(humanText(g?.state||'UNKNOWN')+reason)+'</span>';root.appendChild(el);}); const identity=[track?.issueNumber?'goal #'+track.issueNumber:'',track?.missionId?'mission '+track.missionId:'',track?.providerAdapter?'provider '+track.providerAdapter:''].filter(Boolean).join(' · '); const message=(track?.diagnosis||'No diagnosis published.')+' Next: '+(track?.exactNextAction||'Refresh the autonomy build trace.')+(identity?' ['+identity+']':''); if(diagnosis)diagnosis.textContent=message; const state=String(track?.currentState||'UNKNOWN').toUpperCase(); const truthState=state==='PASS'?'CURRENT':state==='BLOCKED'?'CONFLICTING':state==='WAITING'?'STALE':'UNKNOWN'; setTruthNode('[data-health="autonomy"]',truthState,state); }
+      function renderControllerFleet(fleet) { const root=byId('controller-fleet-grid'), summary=byId('controller-fleet-summary'); if(!root)return; const controllers=Array.isArray(fleet?.controllers)?fleet.controllers:[]; root.innerHTML=''; if(!controllers.length){root.innerHTML='<div class="gate"><strong>UNKNOWN</strong><span>No controller activity receipts are available.</span></div>';if(summary)summary.textContent='Controller telemetry is missing. Enabled state alone does not prove building.';return;} controllers.forEach(c=>{const el=document.createElement('div');el.className='gate';el.setAttribute('data-controller-id',String(c?.controllerId||'UNKNOWN'));el.setAttribute('data-controller-state',String(c?.activityState||'UNKNOWN'));el.setAttribute('data-controller-light',String(c?.trafficLight||'UNKNOWN'));const activity=humanText(c?.activityState||'UNKNOWN');const material=Number(c?.materialActionsSucceeded||0);const active=Array.isArray(c?.activeLanes)?c.activeLanes.length:0;const proof=Array.isArray(c?.proofRefs)?c.proofRefs.length:0;const blocker=c?.blocker?' · '+humanText(c.blocker):'';el.innerHTML='<strong>'+escapeHtml(c?.title||c?.controllerId||'Unknown controller')+'</strong><span>'+escapeHtml((c?.trafficLight||'UNKNOWN')+' · '+activity+' · material '+material+' · active lanes '+active+' · proofs '+proof+blocker)+'</span>';root.appendChild(el);}); const counts=fleet?.counts||{}; const message='Building '+Number(counts.building||0)+'/5 · amber '+Number(counts.amber||0)+' · red '+Number(counts.red||0)+' · unknown '+Number(counts.unknown||0)+' · '+humanText(fleet?.finalVerdict||'UNKNOWN'); if(summary)summary.textContent=message; setField('automation-state',message); }
+      function renderLogicalGoalLanes(lanes) { const root=byId('logical-goal-lane-grid'), summary=byId('logical-goal-lane-summary'); if(!root)return; const controllers=Array.isArray(lanes?.controllers)?lanes.controllers:[]; root.innerHTML=''; if(!controllers.length){const truth=String(lanes?.truth||'UNKNOWN');const blocker=lanes?.blocker?' · '+humanText(lanes.blocker):'';root.innerHTML='<div class="gate"><strong>'+escapeHtml(truth)+'</strong><span>'+escapeHtml('No current logical goal lanes are proven'+blocker)+'</span></div>';if(summary)summary.textContent='Active material lanes 0 · logical controllers 0 · '+truth;return;} controllers.forEach(c=>{const el=document.createElement('div');el.className='gate';el.setAttribute('data-logical-controller-id',String(c?.logicalControllerId||'UNKNOWN'));el.setAttribute('data-goal-issue',String(c?.issueNumber||'UNKNOWN'));el.setAttribute('data-logical-lane-state',String(c?.continuityState||'UNKNOWN'));const selected=c?.selectedForAdmission?' · SELECTED':'';el.innerHTML='<strong>'+escapeHtml((c?.goalRef||'#?')+' '+(c?.title||'Untitled goal'))+'</strong><span>'+escapeHtml((c?.continuityState||'UNKNOWN')+' · '+(c?.lifecycle||'UNKNOWN')+' · '+(c?.route||'UNKNOWN')+' · host '+(c?.hostControllerTitle||'UNKNOWN')+selected)+'</span>';root.appendChild(el);});const message='Active material lanes '+Number(lanes?.activeMaterialLaneCount||0)+' · selected '+Number(lanes?.selectedForAdmissionCount||0)+' · tracking '+Number(lanes?.trackingLaneCount||0)+' · parked '+Number(lanes?.parkedLaneCount||0)+' · logical controllers '+Number(lanes?.logicalControllerCount||0)+' · '+String(lanes?.truth||'UNKNOWN');if(summary)summary.textContent=message; }
       function renderFronts(goals) { const defs={native:/source builder|construction|merge|review/,autonomy:/scheduler|flywheel|autonom|unattended/,recovery:/recover|ignition|battle bridge|lifeboat|telemetry/,product:/conversation|research|intelligence|music|dashboard|product|memory/,openclaw:/openclaw/,foundry:/forge|foundry/}; if (!document.querySelector) return; Object.entries(defs).forEach(([id,re])=>{const el=document.querySelector('[data-front="'+id+'"]');if(!el)return;const t=scanGoalTruth(goals,re);const s=el.querySelector?el.querySelector('.state'):null;if(s){s.textContent=humanState(t);s.title='Technical state: '+t;}el.setAttribute('data-truth',t);}); }
       function radarPoint(index, score) { const angles=[-90,-30,30,90,150,210], r=92*score, a=angles[index]*Math.PI/180; return [110+Math.cos(a)*r,110+Math.sin(a)*r].map(v=>Math.round(v*10)/10).join(','); }
       function renderRadar(capability, runtime, goals) { const dimensions=[ scanGoalTruth(goals,/build|source|construction|pr /), scanGoalTruth(goals,/check|review|proof|merge/), capability.recovery, scanGoalTruth(goals,/provider|openclaw|forge|foundry|codex/), Object.values(runtime).some(v=>v==='CURRENT')?'CURRENT':Object.values(runtime).some(v=>v==='STALE')?'STALE':'UNKNOWN', capability.autonomy ]; const shape=byId('radar-shape'); if(shape)shape.setAttribute('points',dimensions.map((t,i)=>radarPoint(i,truthScore(t))).join(' ')); const labels=byId('radar-labels'); if(labels&&labels.children)Array.from(labels.children).forEach((row,i)=>{const b=row.querySelector?row.querySelector('b'):null;if(b){b.textContent=humanState(dimensions[i]);b.title='Technical state: '+truth(dimensions[i]);}}); }
@@ -695,9 +1452,9 @@
         {id:'workspace-discovery',label:'Workspaces',raw:discovery.finalVerdict,value:(discovery.summary?.active??0)+' active · '+(discovery.summary?.blocked??0)+' blocked',detail:(discovery.summary?.stale??0)+' stale · '+(discovery.summary?.orphaned??0)+' orphaned',human:(discovery.summary?.active??0)+' workspaces are active; '+(discovery.summary?.blocked??0)+' are blocked, '+(discovery.summary?.stale??0)+' are stale, and '+(discovery.summary?.orphaned??0)+' are orphaned.'}
       ]; root.textContent=''; nodes.forEach(node=>{const technicalTruth=sourceEvidenceTruth(node.raw,feedState);const human=typeof node.human==='function'?node.human(technicalTruth):node.human;const el=document.createElement('article');el.className='source-node';el.setAttribute('data-source-id',node.id);el.setAttribute('data-truth',technicalTruth);el.innerHTML='<strong>'+escapeHtml(node.label)+'</strong><output>'+escapeHtml(humanState(technicalTruth))+'</output><p class="plain-language">'+escapeHtml(human)+'</p><details class="technical-details"><summary>Technical details</summary><code>'+escapeHtml(node.value+' · '+node.detail)+'</code></details>';root.appendChild(el);}); }
       function renderCompatibilityFields(payload, projection) { const queue=projection?.queueDispatcher||{}; const bridge=projection?.captainsBridge||{}; const build=bridge.buildOrchestration||{}; const attention=projection?.operatorAttention||{}; setField('active-goal-queue',(queue.currentJob&&queue.currentJob!=='UNKNOWN'?queue.currentJob:'depth '+(queue.queueDepth??'UNKNOWN'))); setField('active-proof-lane',bridge.activeLane?.laneId||bridge.activeLane?.id||bridge.activeLane?.name||bridge.activeLane||'UNKNOWN'); setField('blocked-goals',Array.isArray(attention.blockers)&&attention.blockers.length?attention.blockers.join(', '):'none published'); setField('completed-goals','UNKNOWN · no canonical completed-goals list in this feed'); setField('build-concierge-v1-v8-status',(bridge.milestone?.status||'UNKNOWN')+' · implemented '+(Array.isArray(bridge.milestone?.implementedGoals)?bridge.milestone.implementedGoals.join(', '):'UNKNOWN')); setField('build-concierge-v9-execution-engine',(build.phase||'UNKNOWN')+' · actor '+(build.actor||'UNKNOWN')+' · goal '+(build.selectedGoal||'UNKNOWN')); setField('build-concierge-v9-enriched-candidates',Object.entries(build.signals||{}).filter(([,enabled])=>enabled===true).map(([name])=>name).join(', ')||'none active'); setField('next-operator-action',attention.exactNextAction||bridge.exactNextAction||payload?.exactNextAction||'UNKNOWN'); }
-      function applyProjection(projection, sourceState, feedState='unknown') { window.__stephanosGoalDashboardProjection=projection; const feedGoals=sourceState==='live-shared-workspace'&&Array.isArray(projection?.goals); const goals=feedGoals?projection.goals:(Array.isArray(projection?.goals)&&projection.goals.length?projection.goals:STATIC_GOALS); renderGoals(goals,sourceState); renderProofMatrix(goals); renderDistribution(goals); renderKpis(goals,projection); renderMovement(projection); renderBlockers(projection); const cap=renderCapabilityHealth(goals,projection,feedState); const runtime=renderRuntime(projection,goals); renderCriticalPath(projection); renderFronts(goals); renderRadar(cap,runtime,goals); renderRoadmap(goals,runtime); renderTimeline(projection); renderPosture(goals); }
+      function applyProjection(projection, sourceState, feedState='unknown', autonomyTrack=null) { renderSharedProofIndex(null); window.__stephanosGoalDashboardProjection=projection; renderConveyorOverview(projection); renderStephanosBuildTruth(projection); const feedGoals=sourceState==='live-shared-workspace'&&Array.isArray(projection?.goals); const goals=feedGoals?projection.goals:(Array.isArray(projection?.goals)&&projection.goals.length?projection.goals:STATIC_GOALS); renderGoals(goals,sourceState); renderGoalBuildConveyor(goals,projection); renderMissions(goals,projection,sourceState); renderProofMatrix(goals); renderDistribution(goals); renderKpis(goals,projection); renderMovement(projection); renderBlockers(projection); const cap=renderCapabilityHealth(goals,projection,feedState); const runtime=renderRuntime(projection,goals); renderCriticalPath(projection); renderGoalBuildGateObservatory(projection); renderAutonomyBuildTrack(autonomyTrack||projection?.autonomyBuildTrack||null); renderControllerFleet(projection?.controllerFleet||null); renderLogicalGoalLanes(projection?.logicalGoalControllers||null); renderFronts(goals); renderRadar(cap,runtime,goals); renderRoadmap(goals,runtime); renderTimeline(projection); renderPosture(goals); }
       function setSourceBadge(value, truthState) { setField('source-badge',value); const badge=field('source-badge'); if(badge?.setAttribute)badge.setAttribute('data-truth',truthState); setFieldTranslation('source-badge',humanState(truthState)); }
-      function markStatic(reason) { setField('goal-data-source','Seeded / source-controlled · ' + reason); setField('github-state','Not live in browser'); setField('automation-state','Not live in browser'); setField('proof-state','Explicit or unknown'); setField('telemetry-blocker', reason + ' · No live GitHub proof, local proof, browser proof, or automation proof is attached to this static file.'); setSourceBadge('STATIC_FALLBACK','UNKNOWN'); setFieldTranslation('goal-data-source','Showing the safe built-in project picture.'); setFieldTranslation('github-state','GitHub status is not connected here.'); setFieldTranslation('automation-state','No live automation status is available.'); setFieldTranslation('proof-state','Evidence cannot be confirmed from the fallback page.'); setFieldTranslation('dashboard-feed-endpoint','Waiting for the local project service.'); setFieldTranslation('dashboard-last-refresh','No live refresh has completed.'); setFieldTranslation('dashboard-workspace-root','The shared project workspace is not connected.'); const mesh=byId('source-mesh');if(mesh)mesh.innerHTML='<div class="source-node" data-source-id="shared-workspace" data-truth="UNKNOWN"><strong>Project records</strong><output>'+escapeHtml(humanState('UNKNOWN'))+'</output><p class="plain-language">'+escapeHtml(humanText(reason))+'</p><details class="technical-details"><summary>Technical details</summary><code>'+escapeHtml(reason)+'</code></details></div>'; const boundary=byId('truth-boundary');if(boundary)boundary.textContent='Truth boundary: bounded backend data is unavailable. Static seed visibility is shown only as fallback; no GitHub, automation, runtime or browser proof is claimed.'; const grid=byId('goal-grid');if(grid)grid.setAttribute('data-goal-dashboard-source-state','static-seed'); applyProjection({goals:STATIC_GOALS,operatorAttention:{approvals:[],maintenanceActions:[],blockers:[reason],exactNextAction:'Restore bounded local dashboard feed.'}},'static-seed','unavailable'); renderOperatorApprovalInbox({state:'unavailable',decisions:[],maintenanceActions:[],exactNextAction:'The live approval inbox is unavailable. No decision can be recorded.'}); }
+      function markStatic(reason) { setField('goal-data-source','Seeded / source-controlled · ' + reason); setField('github-state','Not live in browser'); setField('automation-state','Not live in browser'); setField('proof-state','Explicit or unknown'); setField('telemetry-blocker', reason + ' · No live GitHub proof, local proof, browser proof, or automation proof is attached to this static file.'); setSourceBadge('STATIC_FALLBACK','UNKNOWN'); setFieldTranslation('goal-data-source','Showing the safe built-in project picture.'); setFieldTranslation('github-state','GitHub status is not connected here.'); setFieldTranslation('automation-state','No live automation status is available.'); setFieldTranslation('proof-state','Evidence cannot be confirmed from the fallback page.'); setFieldTranslation('dashboard-feed-endpoint','Waiting for the local project service.'); setFieldTranslation('dashboard-last-refresh','No live refresh has completed.'); setFieldTranslation('dashboard-workspace-root','The shared project workspace is not connected.'); const mesh=byId('source-mesh');if(mesh)mesh.innerHTML='<div class="source-node" data-source-id="shared-workspace" data-truth="UNKNOWN"><strong>Project records</strong><output>'+escapeHtml(humanState('UNKNOWN'))+'</output><p class="plain-language">'+escapeHtml(humanText(reason))+'</p><details class="technical-details"><summary>Technical details</summary><code>'+escapeHtml(reason)+'</code></details></div>'; const boundary=byId('truth-boundary');if(boundary)boundary.textContent='Truth boundary: bounded backend data is unavailable. Static seed visibility is shown only as fallback; no GitHub, automation, runtime or browser proof is claimed.'; const grid=byId('goal-grid');if(grid)grid.setAttribute('data-goal-dashboard-source-state','static-seed'); applyProjection({goals:STATIC_GOALS,operatorAttention:{approvals:[],maintenanceActions:[],blockers:[reason],exactNextAction:'Restore bounded local dashboard feed.'}},'static-seed','unavailable'); renderSharedProofIndex(null); renderOperatorApprovalInbox({state:'unavailable',decisions:[],maintenanceActions:[],exactNextAction:'The live approval inbox is unavailable. No decision can be recorded.'}); }
       function proofSummary(goals) { const counts={CURRENT:0,STALE:0,UNKNOWN:0}; (goals||[]).forEach(g=>{const t=goalProof(g);if(t==='CURRENT')counts.CURRENT++;else if(t==='STALE')counts.STALE++;else counts.UNKNOWN++;}); return 'CURRENT '+counts.CURRENT+' · STALE '+counts.STALE+' · UNKNOWN '+counts.UNKNOWN; }
       function humanProofSummary(goals) { const counts={current:0,stale:0,unknown:0}; (goals||[]).forEach(g=>{const t=goalProof(g);if(t==='CURRENT')counts.current++;else if(t==='STALE')counts.stale++;else counts.unknown++;}); return counts.current+' proven now, '+counts.stale+' need refreshing, '+counts.unknown+' are not yet proven.'; }
       function sharedWorkspaceRenderState(payload) {
@@ -707,9 +1464,9 @@
         if (!projection.goals.every(goal => goal && typeof goal === 'object' && !Array.isArray(goal))) return null;
         return ['ready', 'stale'].includes(payload?.state) ? payload.state.toUpperCase() : null;
       }
-      async function loadSharedWorkspace() { const u=urlFor('/api/shared-workspace/dashboard-feed'); setField('dashboard-feed-endpoint',u||'LOCAL_ONLY'); setFieldTranslation('dashboard-feed-endpoint',u?'Connected to the local project service.':'Only local connections are allowed.'); if(!u){markStatic('No live GitHub proof, local proof, browser proof, or automation proof is available on a non-local host.');return false;} const res=await window.fetch(u,{method:'GET'}); if(!res?.ok)return false; const payload=await res.json(); const feedState=sharedWorkspaceRenderState(payload); if(!feedState)return false; const projection=payload.projection; const portfolio=payload.livePortfolio||{}; const queue=projection.queueDispatcher||{}; const githubState=githubEvidenceState(portfolio,projection); setSourceBadge(feedState,feedState==='READY'?'CURRENT':'STALE'); setField('goal-data-source',feedState+' Shared Agent Workspace feed · '+projection.goals.length+' goals'); setFieldTranslation('goal-data-source',projection.goals.length+' project goal'+(projection.goals.length===1?' is':'s are')+' coming from the live workspace.'); setField('github-state',githubState+' · '+(portfolio.source||projection.portfolioSource||'UNKNOWN')+' · '+(portfolio.githubOpenPrCount??projection.liveGithubPrCount??'?')+' open PRs'); setFieldTranslation('github-state',githubState==='UNAVAILABLE'?'GitHub status is not connected here, so no live claim is made.':(portfolio.githubOpenPrCount??projection.liveGithubPrCount??0)+' pull requests are currently open.'); setField('automation-state',(queue.dispatcherState||'UNKNOWN')+' · '+(queue.capabilityMode||'UNKNOWN')+' · depth '+(queue.queueDepth??'?')); setFieldTranslation('automation-state',Number(queue.queueDepth||0)>0?queue.queueDepth+' jobs are waiting in the work queue.':'No queued job is visible right now.'); setField('proof-state',proofSummary(projection.goals)); setFieldTranslation('proof-state',humanProofSummary(projection.goals)); setField('dashboard-workspace-root',payload.workspaceRoot||'UNKNOWN'); setFieldTranslation('dashboard-workspace-root','Connected to the shared project workspace.'); setField('dashboard-last-refresh',new Date().toISOString()); setFieldTranslation('dashboard-last-refresh','Updated just now.'); setField('telemetry-blocker',payload.reason||''); renderCompatibilityFields(payload,projection); renderSourceMesh(payload,projection); const boundary=byId('truth-boundary');if(boundary)boundary.textContent='Live backend projection loaded in read-only mode. Feed state '+String(payload.state).toUpperCase()+' ('+(payload.reason||'no reason published')+'); every source node inherits this freshness and unknown remains unknown.'; const grid=byId('goal-grid');if(grid){grid.setAttribute('data-goal-dashboard-source-state','live-shared-workspace');grid.setAttribute('data-goal-dashboard-feed-state',String(payload.state));} applyProjection(projection,'live-shared-workspace',payload.state); if(approvalInboxSupported(projection))await loadOperatorApprovalInbox(projection);else renderOperatorApprovalInbox({state:'unavailable',decisions:[],maintenanceActions:[],exactNextAction:'The connected backend does not publish the approval inbox contract yet.'}); return true; }
+      async function loadSharedWorkspace() { const u=urlFor('/api/shared-workspace/dashboard-feed'); setField('dashboard-feed-endpoint',u||'LOCAL_ONLY'); setFieldTranslation('dashboard-feed-endpoint',u?'Connected to the canonical project service.':'No persisted HTTPS execution bridge is available on this hosted surface.'); if(!u){markStatic('No persisted HTTPS Home Bridge/Tailscale execution endpoint is available on this hosted surface.');return false;} const res=await window.fetch(u,{method:'GET'}); if(!res?.ok)return false; const payload=await res.json(); const feedState=sharedWorkspaceRenderState(payload); if(!feedState)return false; const projection=payload.projection; const portfolio=payload.livePortfolio||{}; const queue=projection.queueDispatcher||{}; const githubState=githubEvidenceState(portfolio,projection); setSourceBadge(feedState,feedState==='READY'?'CURRENT':'STALE'); setField('goal-data-source',feedState+' Shared Agent Workspace feed · '+projection.goals.length+' goals'); setFieldTranslation('goal-data-source',projection.goals.length+' project goal'+(projection.goals.length===1?' is':'s are')+' coming from the live workspace.'); setField('github-state',githubState+' · '+(portfolio.source||projection.portfolioSource||'UNKNOWN')+' · '+(portfolio.githubOpenPrCount??projection.liveGithubPrCount??'?')+' open PRs'); setFieldTranslation('github-state',githubState==='UNAVAILABLE'?'GitHub status is not connected here, so no live claim is made.':(portfolio.githubOpenPrCount??projection.liveGithubPrCount??0)+' pull requests are currently open.'); setField('automation-state',(queue.dispatcherState||'UNKNOWN')+' · '+(queue.capabilityMode||'UNKNOWN')+' · depth '+(queue.queueDepth??'?')); setFieldTranslation('automation-state',Number(queue.queueDepth||0)>0?queue.queueDepth+' jobs are waiting in the work queue.':'No queued job is visible right now.'); setField('proof-state',proofSummary(projection.goals)); setFieldTranslation('proof-state',humanProofSummary(projection.goals)); setField('dashboard-workspace-root',payload.workspaceRoot||'UNKNOWN'); setFieldTranslation('dashboard-workspace-root','Connected to the shared project workspace.'); setField('dashboard-last-refresh',new Date().toISOString()); setFieldTranslation('dashboard-last-refresh','Updated just now.'); setField('telemetry-blocker',payload.reason||''); renderCompatibilityFields(payload,projection); renderSourceMesh(payload,projection); const boundary=byId('truth-boundary');if(boundary)boundary.textContent='Live backend projection loaded in read-only mode. Feed state '+String(payload.state).toUpperCase()+' ('+(payload.reason||'no reason published')+'); every source node inherits this freshness and unknown remains unknown.'; const grid=byId('goal-grid');if(grid){grid.setAttribute('data-goal-dashboard-source-state','live-shared-workspace');grid.setAttribute('data-goal-dashboard-feed-state',String(payload.state));} applyProjection(projection,'live-shared-workspace',payload.state,payload.autonomyBuildTrack||projection.autonomyBuildTrack||null); renderSharedProofIndex(payload.proofIndex||null); if(approvalInboxSupported(projection))await loadOperatorApprovalInbox(projection);else renderOperatorApprovalInbox({state:'unavailable',decisions:[],maintenanceActions:[],exactNextAction:'The connected backend does not publish the approval inbox contract yet.'}); return true; }
       async function loadLegacyLiveProjection() { const u=urlFor('/api/goal-projection/live'); if(!u)return false; const res=await window.fetch(u,{method:'GET'}); if(!res?.ok)return false; const payload=await res.json(); if(!payload || payload.schemaVersion!=='stephanos.live-goal-projection.v1')return false; setField('source-badge','LIVE_BACKEND'); setField('goal-data-source','LIVE backend telemetry · /api/goal-projection/live'); setField('github-state',payload?.currentAgentStates?.github?.state||'UNKNOWN'); setField('automation-state',payload?.currentAgentStates?.stephanos?.state||'UNKNOWN'); setField('proof-state',payload?.proofTruth?.local||'UNKNOWN'); setField('active-goal-queue',(payload.queuedCandidates||[]).map(x=>x.candidateId).join(', ')||'UNKNOWN'); setField('active-proof-lane',(payload.activeProofLane||[]).map(x=>x.candidateId).join(', ')||'UNKNOWN'); setField('blocked-goals',(payload.blockedCandidates||[]).map(x=>x.candidateId).join(', ')||'UNKNOWN'); setField('completed-goals',(payload.completedCandidates||[]).map(x=>x.candidateId).join(', ')||'UNKNOWN'); const phases=payload?.buildConciergeStatus?.roadmap?.phases||[]; setField('build-concierge-v1-v8-status',phases.map(x=>x.version+':'+x.status).join(' · ')||'UNKNOWN'); const engine=payload?.buildConciergeStatus?.executionEngine||{}; setField('build-concierge-v9-execution-engine','classified '+(engine.classifiedGoalCount??0)+' · watched '+(engine.watchedGoalCount??0)+' · manual '+(engine.manualDispatchRequiredCount??0)); setField('build-concierge-v9-enriched-candidates',(engine.enrichedCandidates||[]).map(x=>x.classification).join(', ')||'UNKNOWN'); setField('next-operator-action',payload.nextOperatorAction||'UNKNOWN'); const missions=(payload.missions||[]).map(x=>({issue:x?.mission?.missionId||'MISSION',title:x?.mission?.title||'Mission',statusTruth:x?.mission?.state==='RUNNING'?'CURRENT':'UNKNOWN',proofTruth:'UNKNOWN',summary:x?.mission?.currentPhase||'',blockers:[],exactNextAction:x?.mission?.nextAction||'Refresh proof.',source:'live-goal-projection'})); const projection={goals:missions.length?missions:STATIC_GOALS,operatorAttention:{approvals:[],maintenanceActions:[],blockers:(payload.blockedCandidates||[]).map(x=>x.candidateId),exactNextAction:payload.nextOperatorAction||'UNKNOWN'},currentPhase:payload.sourceTruth}; const grid=byId('goal-grid');if(grid)grid.setAttribute('data-goal-dashboard-source-state','live-backend'); applyProjection(projection,'live-backend','ready'); await loadOperatorApprovalInbox(projection); return true; }
-      async function refresh() { if(backendBase()===null){markStatic('No live GitHub proof, local proof, browser proof, or automation proof is available on a non-local host.');return;} try { const shared=await loadSharedWorkspace(); if(!shared){const legacy=await loadLegacyLiveProjection(); if(!legacy)markStatic('BACKEND_UNAVAILABLE_STATIC_SEED_ONLY');} } catch { markStatic('BACKEND_UNAVAILABLE_STATIC_SEED_ONLY'); } window.setTimeout(refresh,15000); }
+      async function refresh() { if(backendBase()===null){markStatic('No persisted HTTPS Home Bridge/Tailscale execution endpoint is available on this hosted surface.');window.setTimeout(refresh,15000);return;} try { const shared=await loadSharedWorkspace(); if(!shared){const legacy=await loadLegacyLiveProjection(); if(!legacy)markStatic('BACKEND_UNAVAILABLE_STATIC_SEED_ONLY');} } catch { markStatic('BACKEND_UNAVAILABLE_STATIC_SEED_ONLY'); } window.setTimeout(refresh,15000); }
       initializeDashboardNavigation();
       markStatic('BACKEND_UNAVAILABLE_STATIC_SEED_ONLY');
       refresh();

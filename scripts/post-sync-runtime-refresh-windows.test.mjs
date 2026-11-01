@@ -861,7 +861,7 @@ test('deadline expiry, final task failure and post-confirmation widening cannot 
 test('removing or widening any owned-cleanup identity edge fails the source guard', () => {
   for (const [index, mutation] of [
     restartSource.replaceAll('Stop-NewlyStartedOwnedWorker `', '# cleanup removed'),
-    restartSource.replace("[string]$Plan.TaskName -ne 'Stephanos Mission Orchestrator Worker'", '$false'),
+    restartSource.replaceAll("[string]$Plan.TaskName -ne 'Stephanos Mission Orchestrator Worker'", '$false'),
     restartSource.replaceAll('[string]$ExpectedInvocationId', '[string]$CallerSelectedInvocationId'),
     restartSource.replaceAll('Get-VerifiedInvocationProcessFromLaunchReceipt', 'Get-Process'),
     restartSource.replaceAll('$verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks', '$false'),

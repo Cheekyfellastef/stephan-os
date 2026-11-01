@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { evaluateDirectOperatorIntentStandingAuthorityV1 } from './directOperatorIntentStandingAuthorityV1.mjs';
 
 export const GUARDED_GOAL_RUNNER_V1_OUTCOMES = Object.freeze({
   GOAL_GREEN: 'goal-green',
@@ -7,6 +8,7 @@ export const GUARDED_GOAL_RUNNER_V1_OUTCOMES = Object.freeze({
   ADVANCE_EXISTING_CAPABILITY_GOAL: 'advance-existing-capability-goal',
   CREATE_MINIMAL_CAPABILITY_GOAL: 'create-minimal-capability-goal',
   ROUTE_TO_AUTOMATED_PUBLICATION: 'route-to-automated-publication',
+  ROUTE_TO_PROTECTED_MERGE: 'route-to-protected-merge',
   WAIT_FOR_GENUINE_OPERATOR_APPROVAL: 'wait-for-genuine-operator-approval',
   WAIT_FOR_LOCAL_HARDWARE_PROOF: 'wait-for-local-hardware-proof',
   ABORT_EXTERNAL_UNBUILDABLE: 'abort-external-unbuildable',
@@ -82,6 +84,7 @@ export const guardedGoalRunnerV1ProofPacketShape = Object.freeze({
   pr: 'object: compatibility { baseSha, expectedBaseSha, headSha, expectedHeadSha, mergeable, conflicting }',
   blockerClassification: 'object|string: one of the four governed blocker classes plus ownership evidence',
   authorizedGoal: 'number|string: parent goal whose standing authority is inherited for bounded enabling work',
+  directOperatorIntentAuthority: 'object?: durable direct-request standing-intent receipt; may authorize protected merge continuation without new ceremonial approval',
   logPaths: 'array<string>: proof/evidence log paths, read-only',
   allowedTests: 'array<string>: exact commands the harness may recommend, not execute',
   requestedMutation: 'object?: { kind } must be from guarded allow-list',
@@ -96,8 +99,8 @@ export const guardedGoalRunnerV1MergeGateSchema = Object.freeze({
 
 export const guardedGoalRunnerV1OperatorApprovalEnvelope = Object.freeze({
   bypassesApproval: false,
-  requiredFor: ['startup-approval-required', 'merge-click', 'legal-financial-secret-or-destructive-decision'],
-  notRequiredFor: ['bounded-design', 'bounded-source-patch', 'tests', 'proof', 'branch-publication', 'pr-publication', 'review-retry'],
+  requiredFor: ['startup-approval-required-without-standing-intent', 'protected-merge-without-valid-standing-intent', 'legal-financial-secret-or-destructive-decision'],
+  notRequiredFor: ['bounded-design', 'bounded-source-patch', 'tests', 'proof', 'branch-publication', 'pr-publication', 'review-retry', 'review-fix', 'protected-merge-with-valid-standing-intent', 'guarded-live-update-with-valid-standing-intent'],
   envelope: ['approvalId', 'requestedBy', 'reason', 'expiresAt', 'operatorAction'],
 });
 
@@ -132,11 +135,18 @@ function buildNextAction({ outcome, blocker = null, reason, patch = null, mergeG
   return { runner: 'guarded-goal-runner-v1', outcome, blocker, reason, executesShell: false, performsMerge: false, performsShellExecution: false, patch, mergeGate, operatorApproval, capability, publication };
 }
 
-function isGreenExactHead(packet, blocker) {
+function exactHeadEvidenceGreen(packet) {
   const record = packet.supervisorCurrentRecord ?? {};
   const expected = expectedHead(packet);
   const head = currentHead(packet);
-  return blocker === TERMINAL_GREEN_BLOCKER && Boolean(expected) && head === expected && clean(record.expectedHeadSha ?? record.expected_head_sha ?? expected) === expected && clean(record.currentPhase) === 'ready' && clean(record.trafficLight) === 'green';
+  return Boolean(expected)
+    && head === expected
+    && clean(record.expectedHeadSha ?? record.expected_head_sha ?? expected) === expected
+    && clean(record.currentPhase) === 'ready'
+    && clean(record.trafficLight) === 'green';
+}
+function isGreenExactHead(packet, blocker) {
+  return blocker === TERMINAL_GREEN_BLOCKER && exactHeadEvidenceGreen(packet);
 }
 function hasRepeatedBlocker(packet, blocker) { const prior = Array.isArray(packet.priorBlockers) ? packet.priorBlockers.map(clean).filter(Boolean) : []; return Boolean(blocker && prior.at(-1) === blocker); }
 function hasUnsafeMutation(packet) { const kind = clean(packet.requestedMutation?.kind); return Boolean(kind && !GUARDED_GOAL_RUNNER_V1_ALLOWED_MUTATIONS.includes(kind)); }
@@ -157,21 +167,52 @@ function normalizedBlockerClassification(packet = {}) {
     duplicateSearchComplete: raw.duplicateSearchComplete === true,
     evidenceRefs: Array.isArray(raw.evidenceRefs) ? raw.evidenceRefs.map(String) : [],
     proposedGoalTitle: clean(raw.proposedGoalTitle),
+    approvalKind: clean(raw.approvalKind ?? raw.gateKind ?? raw.operatorActionKind),
   };
 }
 
-function standingAuthority(packet = {}) {
+function standingAuthority(packet = {}, trustedContext = {}) {
+  const directIntent = evaluateDirectOperatorIntentStandingAuthorityV1(packet.directOperatorIntentAuthority || {}, {
+    authenticatedProvenance: trustedContext.authenticatedOperatorIntentProvenance,
+  });
+  const goal = parentGoal(packet);
+  const normalizedGoal = goal.replace(/^#/, '');
+  const receiptGoalMatches = Boolean(
+    directIntent.goalId
+    && normalizedGoal
+    && [normalizedGoal, 'goal-' + normalizedGoal, 'issue-' + normalizedGoal].includes(directIntent.goalId)
+  );
+  if (directIntent.valid && receiptGoalMatches) {
+    return Object.freeze({
+      inherited: true,
+      source: 'direct-operator-intent',
+      authorizedGoal: parentGoal(packet) || directIntent.goalId,
+      requestId: directIntent.requestId,
+      requiresNewOperatorApproval: false,
+      requiresProtectedOperatorAuthentication: directIntent.requiresProtectedOperatorAuthentication,
+      protectedMergeEnvironmentApprovalEligible: directIntent.protectedMergeEnvironmentApprovalEligible,
+      protectedExactHeadMergeEligible: directIntent.protectedExactHeadMergeEligible,
+      guardedLiveUpdateEligible: directIntent.guardedLiveUpdateEligible,
+      authenticatedProvenance: directIntent.authenticatedProvenance,
+      allows: directIntent.allows,
+      excludes: directIntent.excludes,
+    });
+  }
   return Object.freeze({
     inherited: true,
+    source: 'goal-standing-authority',
     authorizedGoal: parentGoal(packet),
     requiresNewOperatorApproval: false,
+    protectedMergeEnvironmentApprovalEligible: false,
+    protectedExactHeadMergeEligible: false,
+    guardedLiveUpdateEligible: false,
     allows: ['bounded-design', 'bounded-source-build', 'tests', 'proof', 'branch-publication', 'pr-publication', 'review-retry'],
     excludes: ['merge', 'self-approval', 'secret-access', 'financial-or-legal-authority', 'destructive-mutation', 'arbitrary-shell'],
   });
 }
 
-function classifyCapabilityGap(packet, blocker, classification) {
-  const authority = standingAuthority(packet);
+function classifyCapabilityGap(packet, blocker, classification, trustedContext = {}) {
+  const authority = standingAuthority(packet, trustedContext);
   if (classification.owningGoal) {
     return buildNextAction({
       outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ADVANCE_EXISTING_CAPABILITY_GOAL,
@@ -196,11 +237,17 @@ function classifyCapabilityGap(packet, blocker, classification) {
   });
 }
 
-function classifyGovernedBlocker(packet, blocker, classification) {
+function isProtectedMergeEnvironmentGate(classification = null) {
+  return classification?.class === GUARDED_GOAL_RUNNER_V1_BLOCKER_CLASSES.GENUINE_OPERATOR_APPROVAL_GATE
+    && classification?.approvalKind === 'protected-merge-environment';
+}
+
+function classifyGovernedBlocker(packet, blocker, classification, trustedContext = {}) {
   if (!classification || !BLOCKER_CLASSES.has(classification.class)) return null;
-  if (classification.class === GUARDED_GOAL_RUNNER_V1_BLOCKER_CLASSES.BUILDABLE_CAPABILITY_GAP) return classifyCapabilityGap(packet, blocker, classification);
+  if (classification.class === GUARDED_GOAL_RUNNER_V1_BLOCKER_CLASSES.BUILDABLE_CAPABILITY_GAP) return classifyCapabilityGap(packet, blocker, classification, trustedContext);
   if (classification.class === GUARDED_GOAL_RUNNER_V1_BLOCKER_CLASSES.GENUINE_OPERATOR_APPROVAL_GATE) {
-    return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.WAIT_FOR_GENUINE_OPERATOR_APPROVAL, blocker, reason: 'A genuine operator judgment or authority gate is proven.', operatorApproval: { bypassesApproval: false, requiresExactDecision: true } });
+    if (isProtectedMergeEnvironmentGate(classification)) return null;
+    return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.WAIT_FOR_GENUINE_OPERATOR_APPROVAL, blocker, reason: 'A genuinely new operator judgment or authority gate is proven.', operatorApproval: { bypassesApproval: false, requiresExactDecision: true } });
   }
   if (classification.class === GUARDED_GOAL_RUNNER_V1_BLOCKER_CLASSES.GENUINE_LOCAL_HARDWARE_PROOF) {
     return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.WAIT_FOR_LOCAL_HARDWARE_PROOF, blocker, reason: 'Completion requires real local hardware/runtime proof that cannot be fabricated remotely.' });
@@ -208,14 +255,18 @@ function classifyGovernedBlocker(packet, blocker, classification) {
   return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ABORT_EXTERNAL_UNBUILDABLE, blocker, reason: 'Verified external blocker cannot be removed by bounded platform work.' });
 }
 
-export function classifyGuardedGoalRunnerV1(packet = {}) {
+export function classifyGuardedGoalRunnerV1(packet = {}, trustedContext = {}) {
   if (!packet.supervisorCurrentRecord) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ABORT_MISSING_PROOF, reason: 'Missing supervisor current proof record.' });
   const blocker = latestBlocker(packet.supervisorCurrentRecord);
   if (hasUnsafeMutation(packet)) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ABORT_UNKNOWN_BLOCKER, blocker, reason: `Unsafe mutation request rejected: ${packet.requestedMutation.kind}.` });
-  const governed = classifyGovernedBlocker(packet, blocker, normalizedBlockerClassification(packet));
+  const blockerClassification = normalizedBlockerClassification(packet);
+  const protectedMergeEnvironmentGate = isProtectedMergeEnvironmentGate(blockerClassification);
+  const governed = protectedMergeEnvironmentGate
+    ? null
+    : classifyGovernedBlocker(packet, blocker, blockerClassification, trustedContext);
   if (governed) return governed;
-  if (!blocker || !KNOWN_BLOCKERS.has(blocker)) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ABORT_UNKNOWN_BLOCKER, blocker, reason: 'Proof record does not contain a known Guarded Goal Runner V1 blocker or governed blocker classification.' });
-  if (hasRepeatedBlocker(packet, blocker)) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ABORT_REPEATED_BLOCKER, blocker, reason: 'The same blocker repeated consecutively; stop before looping.' });
+  if (!protectedMergeEnvironmentGate && (!blocker || !KNOWN_BLOCKERS.has(blocker))) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ABORT_UNKNOWN_BLOCKER, blocker, reason: 'Proof record does not contain a known Guarded Goal Runner V1 blocker or governed blocker classification.' });
+  if (!protectedMergeEnvironmentGate && hasRepeatedBlocker(packet, blocker)) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ABORT_REPEATED_BLOCKER, blocker, reason: 'The same blocker repeated consecutively; stop before looping.' });
 
   const proof = prProof(packet);
   if (!proof) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ABORT_MISSING_PROOF, blocker, reason: 'Missing PR proof packet.' });
@@ -227,7 +278,8 @@ export function classifyGuardedGoalRunnerV1(packet = {}) {
   if (proof.conflicting === true || proof.mergeable === false) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ABORT_CONFLICTING_PR, blocker, reason: 'PR mergeability proof is conflicting or not mergeable.' });
   if (!expected) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ABORT_MISSING_EXPECTED_HEAD, blocker, reason: 'Missing expectedHeadSha; exact-head merge gate proof is required.' });
 
-  if (!isGreenExactHead(packet, blocker)) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.KNOWN_BLOCKER_NEXT_PATCH, blocker, reason: 'Known blocker classified; emit the next bounded source/proof patch packet only.', patch: { mutationKindsAllowed: GUARDED_GOAL_RUNNER_V1_ALLOWED_MUTATIONS, allowedTests: packet.allowedTests ?? [] } });
+  const exactHeadGreen = protectedMergeEnvironmentGate ? exactHeadEvidenceGreen(packet) : isGreenExactHead(packet, blocker);
+  if (!exactHeadGreen) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.KNOWN_BLOCKER_NEXT_PATCH, blocker, reason: 'Known blocker classified; emit the next bounded source/proof patch packet only.', patch: { mutationKindsAllowed: GUARDED_GOAL_RUNNER_V1_ALLOWED_MUTATIONS, allowedTests: packet.allowedTests ?? [] } });
 
   const prExists = Boolean(proof.prNumber && clean(proof.prUrl));
   if (!prExists || publication === 'pending-automated-publication' || publication === 'pending-operator-create-pr-click' || publication === 'missing') {
@@ -235,14 +287,57 @@ export function classifyGuardedGoalRunnerV1(packet = {}) {
       outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ROUTE_TO_AUTOMATED_PUBLICATION,
       blocker,
       reason: 'Green exact-head proof exists but no real PR is published; route to the authenticated bounded publication connector without creating an operator click.',
-      publication: { action: 'publish-existing-branch-or-bundle', duplicateCheckRequired: true, expected_head_sha: expected, base_sha: base, requiresNewOperatorApproval: false, authority: standingAuthority(packet) },
+      publication: { action: 'publish-existing-branch-or-bundle', duplicateCheckRequired: true, expected_head_sha: expected, base_sha: base, requiresNewOperatorApproval: false, authority: standingAuthority(packet, trustedContext) },
     });
   }
   if (publication !== 'published') return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.STOP_AND_REPORT, blocker, reason: `Unsupported PR publication state: ${publication || '<empty>'}.` });
   if (proof.draft === true) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.STOP_AND_REPORT, blocker, reason: 'Published PR is draft; stop before merge gate.' });
   if (clean(proof.headSha) !== expected) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.STOP_AND_REPORT, blocker, reason: 'PR head SHA does not match expected head SHA.' });
-  if (proof.mergeable === true && proof.conflicting === false && requiredTestsGreen(proof.testsRun)) {
-    return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.SAFE_TO_MERGE_WITH_EXPECTED_HEAD, blocker, reason: 'Published PR has clean mergeability and green proof for the expected head. Merge is allowed only through an external exact-head guarded merge step.', mergeGate: { performsMerge: false, performsShellExecution: false, expected_head_sha: expected, pr_number: proof.prNumber, nextOperatorAction: 'merge is allowed only through an external exact-head guarded merge step' } });
+  const mergeEvidenceGreen = proof.mergeable === true && proof.conflicting === false && requiredTestsGreen(proof.testsRun);
+  if (protectedMergeEnvironmentGate) {
+    if (!mergeEvidenceGreen) {
+      return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.STOP_AND_REPORT, blocker, reason: 'Protected merge environment gate is present, but exact-head PR mergeability and required green-test proof are incomplete.' });
+    }
+    const authority = standingAuthority(packet, trustedContext);
+    if (authority.protectedMergeEnvironmentApprovalEligible === true) {
+      return buildNextAction({
+        outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ROUTE_TO_PROTECTED_MERGE,
+        blocker,
+        reason: 'Exact-head PR proof is complete and authenticated operator provenance is present; route only through the existing protected merge environment adapter.',
+        operatorApproval: { bypassesApproval: false, standingIntentReused: true, requiresExactDecision: false, action: 'route-to-protected-merge-environment-adapter', authority },
+      });
+    }
+    return buildNextAction({
+      outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.WAIT_FOR_GENUINE_OPERATOR_APPROVAL,
+      blocker,
+      reason: 'Exact-head PR proof is complete, but protected continuation requires authenticated operator provenance from a trusted transport rather than workspace data alone.',
+      operatorApproval: { bypassesApproval: false, requiresExactDecision: true, requiresAuthenticatedProvenance: true, authority },
+    });
+  }
+  if (mergeEvidenceGreen) {
+    const authority = standingAuthority(packet, trustedContext);
+    const standingMergeAuthorized = authority.protectedExactHeadMergeEligible === true;
+    return buildNextAction({
+      outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.SAFE_TO_MERGE_WITH_EXPECTED_HEAD,
+      blocker,
+      reason: standingMergeAuthorized
+        ? 'Published PR has clean mergeability and green proof for the expected head, and the originating direct operator request authorizes automatic continuation through the protected merge path.'
+        : 'Published PR has clean mergeability and green proof for the expected head. Merge is allowed only through an external exact-head guarded merge step.',
+      mergeGate: {
+        performsMerge: false,
+        performsShellExecution: false,
+        expected_head_sha: expected,
+        pr_number: proof.prNumber,
+        requiresNewOperatorApproval: !standingMergeAuthorized,
+        standingIntentReused: standingMergeAuthorized,
+        environmentApprovalEligible: authority.protectedMergeEnvironmentApprovalEligible === true,
+        guardedLiveUpdateEligible: authority.guardedLiveUpdateEligible === true,
+        authority,
+        nextOperatorAction: standingMergeAuthorized
+          ? 'route automatically through the existing protected exact-head merge and authenticated environment-approval machinery'
+          : 'merge is allowed only through an external exact-head guarded merge step',
+      },
+    });
   }
   return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.STOP_AND_REPORT, blocker, reason: 'PR proof is present but required tests are not reported green or mergeability is incomplete.' });
 }

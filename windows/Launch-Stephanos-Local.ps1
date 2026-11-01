@@ -51,6 +51,7 @@ $visiblePowerShellRequired = $false
 $canonicalSharedWorkspaceRoot = if ($SharedWorkspace -and $SharedWorkspace.Trim()) { $SharedWorkspace.Trim() } elseif ($env:STEPHANOS_SHARED_WORKSPACE -and $env:STEPHANOS_SHARED_WORKSPACE.Trim()) { $env:STEPHANOS_SHARED_WORKSPACE.Trim() } elseif ($env:STEPHANOS_OPENCLAW_WORKSPACE -and $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim()) { $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim() } else { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Stephanos-openclaw-workspace' }
 $battleBridgeSupervisorCurrentPath = Join-Path $canonicalSharedWorkspaceRoot 'status/battle-bridge-ignition-supervisor-current.json'
 $script:ignitionRunStartedAtUtc = (Get-Date).ToUniversalTime()
+$script:ignitionHelperProcess = $null
 $script:supervisorRecordFreshnessSkewSeconds = 2
 $ignitionProofRoot = $canonicalSharedWorkspaceRoot
 $ignitionStatusPath = Join-Path $ignitionProofRoot 'launcher-status.json'
@@ -253,8 +254,8 @@ function Convert-SupervisorRecordToIgnitionStatus([object]$SupervisorRecord, [st
     exactHeadApprovalRequired = $true
     exactHeadApprovalStatus = 'required-before-merge-proof'
     safeAutoFixPolicy = 'known-generated-runtime-stoppers-only; no source deletion; no hidden blockers'
-    openClawStartupState = if ($SupervisorRecord.services.openClaw18789.ready) { 'ready' } else { 'pending' }
-    openClawStartupDetail = 'Projected from Battle Bridge ignition supervisor current record.'
+    openClawStartupState = if ($SupervisorRecord.services.openClaw18789.ready) { 'ready' } else { 'degraded' }
+    openClawStartupDetail = if ($SupervisorRecord.services.openClaw18789.ready) { 'OpenClaw is connected.' } else { 'OpenClaw is optional for Stephanos ignition and may recover/rejoin after startup.' }
     nextOperatorAction = if ($SupervisorRecord.nextOperatorAction) { [string]$SupervisorRecord.nextOperatorAction } else { 'Watch the Battle Bridge ignition supervisor surface.' }
     currentStage = $stage
     ignitionStages = Get-IgnitionStageSnapshot -CurrentStageId $stage
@@ -348,7 +349,7 @@ function Update-IgnitionSplashScreen([object]$Status) {
   <p>$message</p>
   <p class="muted">Professional ignition is browser-first: detailed status, exact blockers, safe generated/runtime cleanup policy, and proof artifacts are visible before Stephanos opens.</p>
   <section aria-label="Detailed ignition stages" class="stage-grid">$stageHtml</section><section aria-label="Build verify pull restart serve proof cards" class="proof-cards">$proofCardsHtml</section><section aria-label="Enter Stephanos state" class="blocker"><strong>$enterLabel</strong></section>
-  <section aria-label="OpenClaw startup status" class="blocker"><strong>OpenClaw startup:</strong> $openClawStartupState<br><strong>Detail:</strong> $openClawStartupDetail</section>
+  <section aria-label="OpenClaw startup status" class="blocker"><strong>OpenClaw startup (optional):</strong> $openClawStartupState<br><strong>Detail:</strong> $openClawStartupDetail</section>
   <section class="blocker" aria-label="Blocker and operator action"><strong>Blocker:</strong> $blocker<br><strong>Next action:</strong> $next</section>
   <section class="proof" aria-label="Support snapshot and proof transcript">
     <p>Status: <code>$statusPathHtml</code></p><p>Logs: <code>$logRootHtml</code></p><p>Proof transcript: <code>$transcriptHtml</code></p><p>Support snapshot: <code>$snapshotHtml</code></p>
@@ -367,11 +368,12 @@ function New-IgnitionSplashScreen {
 }
 
 function Resolve-StephanosEdgeExecutable {
-  $candidates = @(
-    (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'),
-    (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe'),
-    (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\Application\msedge.exe')
-  )
+  $candidates = @()
+  foreach ($programRoot in @(${env:ProgramFiles(x86)}, $env:ProgramFiles, $env:LOCALAPPDATA)) {
+    if ($programRoot) {
+      $candidates += (Join-Path $programRoot 'Microsoft\Edge\Application\msedge.exe')
+    }
+  }
   foreach ($candidate in $candidates) {
     if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
       return [System.IO.Path]::GetFullPath($candidate)
@@ -651,7 +653,7 @@ function Fail-Step([string]$Step, [System.Management.Automation.ErrorRecord]$Err
   exit 1
 }
 
-function Start-DevWindow([string]$Title, [string]$Command) {
+function Start-DevWindow([string]$Title, [string]$Command, [switch]$ReturnProcess) {
   Initialize-IgnitionProofWorkspace
   $escapedRepoRoot = $repoRoot.Replace("'", "''")
   $escapedTitle = $Title.Replace("'", "''")
@@ -661,11 +663,12 @@ function Start-DevWindow([string]$Title, [string]$Command) {
   $stderrLog = Join-Path $ignitionProofRoot ("logs/{0}.stderr.log" -f $safeLogName)
   $psCommand = "`$Host.UI.RawUI.WindowTitle = '$escapedTitle'; Set-Location '$escapedRepoRoot'; & $escapedCommand"
   Write-IgnitionStatus -Phase 'starting-process' -Message "Starting $Title in minimized/background PowerShell with bounded log capture." -Extra @{ processTitle = $Title; stdoutLog = $stdoutLog; stderrLog = $stderrLog }
-  Start-Process -FilePath 'powershell.exe' -WorkingDirectory $repoRoot -WindowStyle Minimized -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -ArgumentList @(
+  $process = Start-Process -FilePath 'powershell.exe' -WorkingDirectory $repoRoot -WindowStyle Minimized -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -ArgumentList @(
     '-NoProfile',
     '-ExecutionPolicy', 'Bypass',
     '-Command', $psCommand
-  ) | Out-Null
+  ) -PassThru
+  if ($ReturnProcess.IsPresent) { return $process }
 }
 
 function Test-UrlReachable([string]$Url) {
@@ -728,7 +731,6 @@ function Test-BattleBridgeSupervisorFinalContract([object]$SupervisorRecord, [st
     $SupervisorRecord.currentPhase -eq 'ready' -and
     $SupervisorRecord.trafficLight -eq 'green' -and
     $SupervisorRecord.services.backend8787.ready -eq $true -and
-    $SupervisorRecord.services.openClaw18789.ready -eq $true -and
     $SupervisorRecord.services.stephanosUi4173.ready -eq $true -and
     $servedRuntimeProof.ready -eq $true -and
     [string]$servedRuntimeProof.currentHead -eq [string]$ExpectedHead
@@ -754,6 +756,25 @@ function Wait-ForBattleBridgeSupervisorReady([int]$TimeoutSeconds = 300) {
         }
         throw "Battle Bridge ignition supervisor blocked: $($record.blockerId). $($record.nextOperatorAction)"
       }
+    }
+    $helperExitCode = $null
+    if ($script:ignitionHelperProcess -and $script:ignitionHelperProcess.HasExited) {
+      try {
+        # Windows PowerShell can report HasExited before Start-Process -PassThru has
+        # populated ExitCode for a redirected background child. Reap/refresh first;
+        # an unproven/null code is not a failure verdict.
+        $script:ignitionHelperProcess.WaitForExit()
+        $script:ignitionHelperProcess.Refresh()
+        $helperExitCode = $script:ignitionHelperProcess.ExitCode
+      }
+      catch {
+        $helperExitCode = $null
+      }
+    }
+    if ($null -ne $helperExitCode -and [int]$helperExitCode -ne 0) {
+      $childBlocker = Get-LauncherChildBlocker
+      $detail = if ($childBlocker -and $childBlocker.message) { [string]$childBlocker.message } else { "Ignition helper exited with code $([int]$helperExitCode)." }
+      throw "Battle Bridge ignition helper failed before a green supervisor contract: $detail"
     }
     Start-Sleep -Seconds 1
   }
@@ -997,6 +1018,342 @@ function Write-IgnitionSupportSnapshot([string]$Verdict, [hashtable]$Extra = @{}
   Write-IgnitionTranscript -Event @{ event = 'support-snapshot'; verdict = $Verdict; supportSnapshotPath = $ignitionSupportSnapshotPath }
 }
 
+function Invoke-SovereignCommanderRetainedCustodyPreparation {
+  if ($Mode -ne 'launcher-root') { return $false }
+  $nodeExecutable = 'C:\Program Files\nodejs\node.exe'
+  $recoveryScript = Join-Path $repoRoot 'scripts/sovereign-maintenance-custody-recovery.mjs'
+  $sourceTruthScript = Join-Path $repoRoot 'scripts/battle-bridge-ignition-supervisor.mjs'
+  $requiredPathsPresent = (Test-Path -LiteralPath $nodeExecutable -PathType Leaf) -and (Test-Path -LiteralPath $recoveryScript -PathType Leaf) -and (Test-Path -LiteralPath $sourceTruthScript -PathType Leaf)
+  if (-not $requiredPathsPresent) { return $false }
+
+  $inspectText = (& $nodeExecutable $recoveryScript 'inspect-retained-migration' 2>$null | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $inspectText) { return $false }
+  try { $inspection = $inspectText | ConvertFrom-Json } catch { return $false }
+  $inspectionInvalid = ($inspection.ok -ne $true) -or (([string]$inspection.projectionDigest) -notmatch '^[a-f0-9]{64}$') -or [string]::IsNullOrWhiteSpace([string]$inspection.projectionReservationId) -or (([string]$inspection.heldOwner.digest) -notmatch '^[a-f0-9]{64}$') -or ($inspection.heldOwner.observation.timeoutCustodyHeld -ne $true) -or ($inspection.heldOwner.observation.running -ne $false) -or ($inspection.heldOwner.observation.maintenanceInFlight -ne $false) -or ($inspection.heldOwner.observation.scheduled -ne $false)
+  if ($inspectionInvalid) { return $false }
+
+  $sourceText = (& $nodeExecutable $sourceTruthScript '--source-truth-json' 2>$null | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $sourceText) { return $false }
+  try { $sourceTruth = $sourceText | ConvertFrom-Json } catch { return $false }
+  $expectedMain = [string]$sourceTruth.head
+  if ($sourceTruth.ok -ne $true -or $expectedMain -notmatch '^[a-f0-9]{40}$') { return $false }
+
+  Add-Type -AssemblyName System.Windows.Forms
+  $summary = @"
+Sovereign Commander is safely holding an old maintenance custody fence.
+
+Stephanos can prepare that exact held custody for recovery on the next full Windows boot.
+
+Reservation:
+$($inspection.projectionReservationId)
+
+Current source:
+$expectedMain
+
+This action:
+- uses the authenticated held-owner observation and exact signed custody digest
+- DOES NOT release custody now
+- DOES NOT restart Windows
+- DOES NOT run arbitrary commands
+- requires a normal full Windows Restart afterwards
+
+Prepare Sovereign Commander custody for the next boot?
+"@
+  $choice = [System.Windows.Forms.MessageBox]::Show(
+    $summary,
+    'Stephanos - Sovereign Commander custody recovery',
+    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+    [System.Windows.Forms.MessageBoxIcon]::Warning,
+    [System.Windows.Forms.MessageBoxDefaultButton]::Button2
+  )
+  if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {
+    Write-LiveLog 'Sovereign Commander retained-custody preparation was offered and declined; no custody mutation performed.'
+    return $false
+  }
+
+  $prepareArgs = @(
+    'prepare-retained-migration'
+    '--expected-cycle'
+    [string]$inspection.projectionReservationId
+    '--expected-digest'
+    [string]$inspection.projectionDigest
+    '--expected-main'
+    $expectedMain
+    '--expected-owner-digest'
+    [string]$inspection.heldOwner.digest
+    '--operator-approved'
+  )
+  $prepareText = (& $nodeExecutable $recoveryScript @prepareArgs 2>$null | Out-String).Trim()
+  if (-not $prepareText) { throw 'Sovereign Commander retained-custody preparation returned no proof.' }
+  try { $prepared = $prepareText | ConvertFrom-Json } catch { throw 'Sovereign Commander retained-custody preparation proof was invalid.' }
+  $preparationInvalid = ($LASTEXITCODE -ne 0) -or ($prepared.ok -ne $true) -or ($prepared.prepared -ne $true) -or ($prepared.requiresLaterFullBoot -ne $true) -or ($prepared.custodyReleased -ne $false) -or ($prepared.pcRestartAllowed -ne $false)
+  if ($preparationInvalid) {
+    $blocker = if ($prepared.blocker) { [string]$prepared.blocker } else { 'MAINTENANCE_RETAINED_MIGRATION_PREPARATION_UNPROVEN' }
+    throw "Sovereign Commander retained-custody preparation blocked: $blocker"
+  }
+
+  $message = 'Sovereign Commander custody is prepared for successor-boot recovery. Restart Windows normally, then press Ignition after sign-in.'
+  Write-LiveLog $message
+  Write-IgnitionStatus -Phase 'restart-required' -Message $message -Extra @{
+    currentStage = 'restart'
+    blocker = ''
+    nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+    sovereignCommanderCustodyPrepared = $true
+    custodyReleased = $false
+    pcRestartAllowedByPreparation = $false
+    expectedMain = $expectedMain
+    reservationId = [string]$inspection.projectionReservationId
+  }
+  Write-IgnitionSupportSnapshot -Verdict 'restart-required' -Extra @{
+    nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+    sovereignCommanderCustodyPrepared = $true
+    custodyReleased = $false
+    pcRestartAllowedByPreparation = $false
+    expectedMain = $expectedMain
+  }
+  [System.Windows.Forms.MessageBox]::Show(
+    "Preparation is complete.\r\n\r\nUse the normal Windows Restart command now.\r\nAfter sign-in, press Ignition.\r\n\r\nStephanos has NOT restarted the PC automatically.",
+    'Stephanos - Restart required',
+    [System.Windows.Forms.MessageBoxButtons]::OK,
+    [System.Windows.Forms.MessageBoxIcon]::Information
+  ) | Out-Null
+  return $true
+}
+
+function Invoke-SovereignFixedRuntimeCommissioning {
+  if ($Mode -ne 'launcher-root') { return $false }
+
+  $nodeExecutable = 'C:\Program Files\nodejs\node.exe'
+  $adapterScript = Join-Path $repoRoot 'scripts\sovereign-fixed-runtime-install-current-v1.mjs'
+  $sourceTruthScript = Join-Path $repoRoot 'scripts\battle-bridge-ignition-supervisor.mjs'
+  $powerShellExecutable = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+  $marker = 'SOVEREIGN_FIXED_RUNTIME_INSTALL_CURRENT_V1='
+
+  foreach ($required in @($nodeExecutable, $adapterScript, $sourceTruthScript, $powerShellExecutable)) {
+    if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { return $false }
+  }
+
+  $sourceText = (& $nodeExecutable $sourceTruthScript '--source-truth-json' 2>$null | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $sourceText) { return $false }
+  try { $sourceTruth = $sourceText | ConvertFrom-Json -ErrorAction Stop } catch { return $false }
+  $expectedMain = [string]$sourceTruth.head
+  if ($sourceTruth.ok -ne $true -or $expectedMain -notmatch '^[a-f0-9]{40}$') { return $false }
+
+  function Read-FixedRuntimeAdapter([string]$ModeName) {
+    $raw = @(& $nodeExecutable $adapterScript $ModeName '--expected-main' $expectedMain 2>&1)
+    $exitCode = $LASTEXITCODE
+    $line = @($raw | ForEach-Object { [string]$_ } | Where-Object { $_.StartsWith($marker) } | Select-Object -Last 1)
+    if (-not $line -or -not $line[0]) { return $null }
+    try {
+      $value = $line[0].Substring($marker.Length) | ConvertFrom-Json -ErrorAction Stop
+      return [pscustomobject]@{ ExitCode = $exitCode; Value = $value }
+    } catch { return $null }
+  }
+
+  $qualification = Read-FixedRuntimeAdapter 'qualification'
+  if ($null -ne $qualification -and $qualification.ExitCode -eq 0 -and $qualification.Value.ok -eq $true) {
+    if ([string]$qualification.Value.state -eq 'QUALIFIED') { return $false }
+    if ([string]$qualification.Value.state -eq 'RESTART_REQUIRED') {
+      $message = 'Sovereign fixed runtime is installed and requires a later full Windows boot before Commander can use it.'
+      Write-LiveLog $message
+      Write-IgnitionStatus -Phase 'restart-required' -Message $message -Extra @{
+        currentStage = 'restart'
+        blocker = ''
+        nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+        sovereignFixedRuntimeInstalled = $true
+        runtimeQualificationProven = $false
+        expectedMain = $expectedMain
+      }
+      Write-IgnitionSupportSnapshot -Verdict 'restart-required' -Extra @{
+        nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+        sovereignFixedRuntimeInstalled = $true
+        runtimeQualificationProven = $false
+        expectedMain = $expectedMain
+      }
+      Add-Type -AssemblyName System.Windows.Forms
+      [System.Windows.Forms.MessageBox]::Show(
+        "The Sovereign fixed runtime is installed but is not allowed to run until a later full Windows boot.\r\n\r\nUse the normal Windows Restart command now.\r\nAfter sign-in, press Ignition.",
+        'Stephanos - Restart required',
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Information
+      ) | Out-Null
+      return $true
+    }
+  }
+
+  $status = Read-FixedRuntimeAdapter 'status'
+  if ($null -eq $status -or $status.ExitCode -ne 0 -or $status.Value.ok -ne $true) { return $false }
+  if ([string]$status.Value.state -eq 'PRESENT') { return $false }
+  if ([string]$status.Value.state -ne 'MISSING' -or
+      [string]$status.Value.reason -ne 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING') { return $false }
+
+  Write-LiveLog 'Control Tower repair requires the protected Sovereign fixed runtime; preparing the exact current-main installer candidate.'
+  Write-IgnitionStatus -Phase 'fixed-runtime-installation' -Message 'Preparing exact current-main Sovereign fixed runtime installation approval.' -Extra @{
+    currentStage = 'fixed-runtime-installation'
+    blocker = 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING'
+    nextOperatorAction = 'Review the fixed runtime package, approve it, then accept the Windows UAC prompt.'
+    expectedMain = $expectedMain
+  }
+
+  $prepared = Read-FixedRuntimeAdapter 'prepare'
+  if ($null -eq $prepared -or $prepared.ExitCode -ne 0 -or $prepared.Value.ok -ne $true) {
+    $prepareBlocker = if ($null -ne $prepared -and $prepared.Value.blocker) { [string]$prepared.Value.blocker } else { 'FIXED_RUNTIME_INSTALL_PREPARATION_UNPROVEN' }
+    Write-LiveLog "Sovereign fixed runtime preparation blocked: $prepareBlocker"
+    Write-IgnitionStatus -Phase 'blocked' -Message "Sovereign fixed runtime preparation blocked: $prepareBlocker" -Extra @{
+      currentStage = 'blocked'
+      blocker = $prepareBlocker
+      expectedMain = $expectedMain
+    }
+    return $true
+  }
+
+  $candidate = $prepared.Value
+  $expectedPayloadPath = Join-Path $env:LOCALAPPDATA "Temp\StephanosFixedRuntimeInstall-$expectedMain.json"
+  $candidateInvalid = ([string]$candidate.state -ne 'READY_FOR_OPERATOR_APPROVAL') -or
+      ([string]$candidate.expectedMain -cne $expectedMain) -or
+      ([string]$candidate.payloadPath -cne $expectedPayloadPath) -or
+      (([string]$candidate.payloadSha256) -notmatch '^[a-f0-9]{64}$') -or
+      (([string]$candidate.scriptSha256) -notmatch '^[a-f0-9]{64}$') -or
+      (([string]$candidate.encodedCommand) -notmatch '^[A-Za-z0-9+/=]+$') -or
+      ([string]$candidate.powershellExecutable -cne $powerShellExecutable) -or
+      ($candidate.requiresUac -ne $true) -or
+      ($candidate.arbitraryShellAllowed -ne $false) -or
+      ($candidate.sourceMutationAllowed -ne $false) -or
+      ($candidate.mergeAuthority -ne $false) -or
+      ($candidate.pcRestartAuthority -ne $false)
+  if ($candidateInvalid) {
+    Write-LiveLog 'Sovereign fixed runtime installer candidate failed the closed launcher contract.'
+    Write-IgnitionStatus -Phase 'blocked' -Message 'Sovereign fixed runtime installer candidate was not exact.' -Extra @{
+      currentStage = 'blocked'
+      blocker = 'FIXED_RUNTIME_INSTALL_CANDIDATE_UNPROVEN'
+      expectedMain = $expectedMain
+    }
+    return $true
+  }
+
+  Add-Type -AssemblyName System.Windows.Forms
+  $summary = @"
+Stephanos Control Tower has proved that the protected Sovereign fixed runtime is missing.
+
+Install the exact reviewed runtime for current protected main?
+
+Main:
+$expectedMain
+
+Payload SHA-256:
+$($candidate.payloadSha256)
+
+Installer program SHA-256:
+$($candidate.scriptSha256)
+
+This action:
+- installs only the fixed Sovereign runtime under C:\Program Files\Stephanos
+- uses the exact current main source closure
+- requires Windows UAC
+- cannot run arbitrary commands or choose another path
+- does NOT restart Windows
+- does NOT grant merge or source-mutation authority
+- requires one normal Windows Restart after installation
+
+Continue?
+"@
+  $choice = [System.Windows.Forms.MessageBox]::Show(
+    $summary,
+    'Stephanos - install Sovereign fixed runtime',
+    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+    [System.Windows.Forms.MessageBoxIcon]::Warning,
+    [System.Windows.Forms.MessageBoxDefaultButton]::Button2
+  )
+  if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {
+    Write-LiveLog 'Sovereign fixed runtime installation was offered and declined; no elevated installer was started.'
+    Write-IgnitionStatus -Phase 'blocked' -Message 'Sovereign fixed runtime installation was declined.' -Extra @{
+      currentStage = 'blocked'
+      blocker = 'FIXED_RUNTIME_INSTALL_OPERATOR_DECLINED'
+      expectedMain = $expectedMain
+    }
+    if (Test-Path -LiteralPath $expectedPayloadPath -PathType Leaf) {
+      Remove-Item -LiteralPath $expectedPayloadPath -Force -ErrorAction SilentlyContinue
+    }
+    return $true
+  }
+
+  try {
+    try {
+      $elevated = Start-Process -FilePath $powerShellExecutable -ArgumentList @(
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-EncodedCommand',
+        ([string]$candidate.encodedCommand)
+      ) -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+    } catch {
+      Write-LiveLog 'Sovereign fixed runtime UAC elevation was cancelled or failed.'
+      Write-IgnitionStatus -Phase 'blocked' -Message 'Sovereign fixed runtime UAC elevation was cancelled or failed.' -Extra @{
+        currentStage = 'blocked'
+        blocker = 'FIXED_RUNTIME_INSTALL_UAC_CANCELLED_OR_FAILED'
+        expectedMain = $expectedMain
+      }
+      return $true
+    }
+
+    if ($elevated.ExitCode -ne 0) {
+      Write-LiveLog "Sovereign fixed runtime elevated installer returned exit code $($elevated.ExitCode)."
+      Write-IgnitionStatus -Phase 'blocked' -Message 'Sovereign fixed runtime elevated installer failed.' -Extra @{
+        currentStage = 'blocked'
+        blocker = 'FIXED_RUNTIME_INSTALL_ELEVATED_CHILD_FAILED'
+        elevatedExitCode = [int]$elevated.ExitCode
+        expectedMain = $expectedMain
+      }
+      return $true
+    }
+
+    $after = Read-FixedRuntimeAdapter 'status'
+    $installed = $null -ne $after -and $after.ExitCode -eq 0 -and $after.Value.ok -eq $true -and
+      [string]$after.Value.state -eq 'PRESENT' -and [string]$after.Value.sourceHead -ceq $expectedMain
+    if (-not $installed) {
+      $readbackBlocker = if ($null -ne $after -and $after.Value.reason) { [string]$after.Value.reason } else { 'FIXED_RUNTIME_INSTALL_READBACK_UNPROVEN' }
+      Write-LiveLog "Sovereign fixed runtime installation readback blocked: $readbackBlocker"
+      Write-IgnitionStatus -Phase 'blocked' -Message "Sovereign fixed runtime installation readback blocked: $readbackBlocker" -Extra @{
+        currentStage = 'blocked'
+        blocker = $readbackBlocker
+        expectedMain = $expectedMain
+      }
+      return $true
+    }
+
+    $message = 'Sovereign fixed runtime installation is complete and protected. A later full Windows boot is required before runtime qualification.'
+    Write-LiveLog $message
+    Write-IgnitionStatus -Phase 'restart-required' -Message $message -Extra @{
+      currentStage = 'restart'
+      blocker = ''
+      nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+      sovereignFixedRuntimeInstalled = $true
+      runtimeQualificationProven = $false
+      expectedMain = $expectedMain
+      installPayloadSha256 = [string]$candidate.payloadSha256
+      installScriptSha256 = [string]$candidate.scriptSha256
+      installedHelperSha256 = [string]$after.Value.helperSha256
+      installedManifestSha256 = [string]$after.Value.manifestSha256
+    }
+    Write-IgnitionSupportSnapshot -Verdict 'restart-required' -Extra @{
+      nextOperatorAction = 'Use the normal Windows Restart command. After sign-in, press Ignition.'
+      sovereignFixedRuntimeInstalled = $true
+      runtimeQualificationProven = $false
+      expectedMain = $expectedMain
+    }
+    [System.Windows.Forms.MessageBox]::Show(
+      "The protected Sovereign fixed runtime was installed successfully.\r\n\r\nUse the normal Windows Restart command now.\r\nAfter sign-in, press Ignition.\r\n\r\nStephanos has NOT restarted the PC automatically.",
+      'Stephanos - Fixed runtime installed',
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Information
+    ) | Out-Null
+    return $true
+  } finally {
+    if (Test-Path -LiteralPath $expectedPayloadPath -PathType Leaf) {
+      Remove-Item -LiteralPath $expectedPayloadPath -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
 try {
   $resolvedBootMode = if ($Mode -eq 'vite-dev') { 'launcher' } else { $BootMode }
   $browserSurfaces = if ($Mode -eq 'vite-dev') {
@@ -1008,6 +1365,14 @@ try {
   $browserTargets = @($browserSurfaces | ForEach-Object { $_.Url })
 
   Show-IgnitionSplashScreen
+
+  if (Invoke-SovereignCommanderRetainedCustodyPreparation) {
+    exit 0
+  }
+
+  if (Invoke-SovereignFixedRuntimeCommissioning) {
+    Write-LiveLog 'Protected Sovereign fixed runtime remains separately held. Continuing ordinary Stephanos startup in degraded mode.'
+  }
 
   Write-LiveLog "selected repository root: $repoRoot"
   Write-IgnitionStatus -Phase 'checking-workspace-dirt' -Message 'Running canonical ignition workspace checks; source deletion is forbidden.' -Extra @{ currentStage = 'checking-workspace-dirt'; noSourceDeletion = $true }
@@ -1060,7 +1425,7 @@ try {
     }
 
     Write-LiveLog "starting Battle Bridge supervisor through launcher-root approval helper (command=$launcherRootCommand)"
-    Start-DevWindow -Title 'Stephanos Battle Bridge Ignition Supervisor' -Command $launcherRootCommand
+    $script:ignitionHelperProcess = Start-DevWindow -Title 'Stephanos Battle Bridge Ignition Supervisor' -Command $launcherRootCommand -ReturnProcess
     $battleBridgeSupervisor = Wait-ForBattleBridgeSupervisorReady
 
     Write-LiveLog "waiting for launcher-root shell at $launcherShellUrl after supervisor green proof"

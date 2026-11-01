@@ -22,11 +22,20 @@ export const INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS = Object.freeze({
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const DOWN_PROBE_ATTEMPTS = 10;
 const DOWN_PROBE_INTERVAL_MS = 500;
-const RECOVERY_STATUS_ATTEMPTS = 30;
+// The installed watchdog task is bounded to two minutes, while the watchdog
+// itself may legitimately spend most of that lifetime restarting and proving
+// the Mission Worker. Observe publication for the same two-minute bound plus
+// the fixed 15-second scheduling margin used by idle reconciliation.
+export const WORKER_WATCHDOG_STATUS_PUBLICATION_ATTEMPTS = 135;
+const RECOVERY_STATUS_ATTEMPTS = WORKER_WATCHDOG_STATUS_PUBLICATION_ATTEMPTS;
 const RECOVERY_STATUS_INTERVAL_MS = 1_000;
 const FINAL_WORKER_PROBE_ATTEMPTS = 10;
 const FINAL_WORKER_PROBE_INTERVAL_MS = 1_000;
-const TASK_IDLE_ATTEMPTS = 30;
+// The installed watchdog task has a fixed two-minute execution limit. Allow
+// an already-running canonical instance to finish, plus a fixed 15-second
+// scheduling margin, before failing reconciliation closed.
+export const WORKER_WATCHDOG_TASK_IDLE_ATTEMPTS = 135;
+const TASK_IDLE_ATTEMPTS = WORKER_WATCHDOG_TASK_IDLE_ATTEMPTS;
 const TASK_IDLE_INTERVAL_MS = 1_000;
 const HEARTBEAT_MAX_AGE_MS = 120_000;
 

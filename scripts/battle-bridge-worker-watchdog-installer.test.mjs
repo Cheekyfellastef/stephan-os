@@ -290,6 +290,11 @@ test('stale canonical worker reclaim is unique, task-quiescent and process-capab
   assert.match(helperSource, /MISSION_WORKER_CANONICAL_PROCESS_IDENTITY_AMBIGUOUS/);
   assert.match(helperSource, /\[System\.Diagnostics\.Process\]::GetProcessById\(\$processId\)/);
   assert.match(helperSource, /\$processCapability\.StartTime\.ToUniversalTime\(\)/);
+  assert.match(helperSource, /Get-CimInstance Win32_Process -Filter "ProcessId = \$processId"/);
+  assert.match(helperSource, /Test-ExactCanonicalWorkerProcess -Process \$candidateReRead -ExpectedRepoRoot \$ExpectedRepoRoot/);
+  assert.match(helperSource, /\$candidateReReadStartedAtUtc\.Ticks -ne \$candidateStartedAtUtc\.Ticks/);
+  assert.match(helperSource, /ProcessStartedAtUtc = \$capabilityProcessStartedAtUtc/);
+  assert.doesNotMatch(helperSource, /\$capabilityProcessStartedAtUtc\.Ticks -ne \$candidateStartedAtUtc\.Ticks/);
   assert.match(source, /\$orphanWorkerRecheck\.ProcessStartedAtUtc\.Ticks -ne \$orphanWorker\.ProcessStartedAtUtc\.Ticks/);
   assert.match(source, /\$reverifiedOrphanProcessCapability\.Kill\(\)/);
   assert.match(source, /\$reverifiedOrphanProcessCapability\.WaitForExit\(10000\)/);

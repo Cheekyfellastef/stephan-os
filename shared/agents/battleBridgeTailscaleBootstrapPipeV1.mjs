@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs';
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_SCHEMA = 'stephanos.battle-bridge-tailscale-bootstrap.v1';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_MARKER = 'stephanos-battle-bridge-tailscale-bootstrap';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_OPERATION = 'BOOTSTRAP_CANONICAL_GITHUB_SYNC';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_REPOSITORY = 'Cheekyfellastef/stephan-os';
-export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_ISSUE = 1507;
+export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_ISSUE = CANONICAL_MAILBOX_ISSUE;
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_AUTHOR = 'Cheekyfellastef';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_TAG = 'tag:stephanos-github-recovery';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_VERDICT = 'BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_READY';
@@ -103,67 +104,32 @@ function psSingleQuoted(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
 }
 
-function fixedPreservationSyncRpcLines() {
-  return [
-    {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2025-06-18',
-        capabilities: {},
-        clientInfo: { name: 'codex-mcp-client', version: '1.0.0' },
-      },
-    },
-    { jsonrpc: '2.0', method: 'notifications/initialized', params: {} },
-    { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
-    {
-      jsonrpc: '2.0',
-      id: 3,
-      method: 'tools/call',
-      params: {
-        name: 'sync_codex_dispatch_bridge',
-        arguments: {
-          operatorApproval: 'operator-approved',
-          expectedBranch: 'main',
-          preservationProfile: 'battle-bridge-runtime-data-v1',
-          preservationApproval: 'operator-approved',
-        },
-      },
-    },
-  ];
-}
-
 export function buildFixedBattleBridgeBootstrapPowerShell(expectedHead) {
   const head = text(expectedHead).toLowerCase();
   if (!SHA.test(head)) throw new Error('Expected exact main head is required.');
   const expected = psSingleQuoted(head);
-  const rpc = fixedPreservationSyncRpcLines().map((line) => psSingleQuoted(JSON.stringify(line))).join(', ');
   return [
     "$ErrorActionPreference = 'Stop'",
     "$ProgressPreference = 'SilentlyContinue'",
     "$repo = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\\GitHub\\stephan-os'))",
-    "$workspace = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\\Stephanos-openclaw-workspace'))",
     "$installer = [System.IO.Path]::GetFullPath((Join-Path $repo 'scripts\\windows\\install-battle-bridge-github-sync.ps1'))",
     "$statusScript = [System.IO.Path]::GetFullPath((Join-Path $repo 'scripts\\windows\\status-battle-bridge-github-sync.ps1'))",
-    "$mcp = [System.IO.Path]::GetFullPath((Join-Path $repo 'scripts\\stephanos-codex-dispatch-mcp.mjs'))",
+    "$preservationSync = [System.IO.Path]::GetFullPath((Join-Path $repo 'scripts\\battle-bridge-exact-head-preservation-sync.mjs'))",
     "$git = 'C:\\Program Files\\Git\\cmd\\git.exe'",
     "$node = 'C:\\Program Files\\nodejs\\node.exe'",
-    "if (-not (Test-Path -LiteralPath $mcp -PathType Leaf)) { throw 'TAILSCALE_BOOTSTRAP_PRESERVATION_MCP_MISSING' }",
+    "if (-not (Test-Path -LiteralPath $preservationSync -PathType Leaf)) { throw 'TAILSCALE_BOOTSTRAP_PRESERVATION_ADAPTER_MISSING' }",
     "if (-not (Test-Path -LiteralPath $node -PathType Leaf)) { throw 'TAILSCALE_BOOTSTRAP_CANONICAL_NODE_MISSING' }",
     "if (-not (Test-Path -LiteralPath $git -PathType Leaf)) { throw 'TAILSCALE_BOOTSTRAP_CANONICAL_GIT_MISSING' }",
     `$expectedHead = ${expected}`,
-    `$mcpInput = @(${rpc}) -join [Environment]::NewLine`,
-    "try { $mcpOutput = @($mcpInput | & $node $mcp) } catch { throw 'TAILSCALE_BOOTSTRAP_PRESERVATION_SYNC_FAILED' }",
-    "if ($LASTEXITCODE -ne 0 -or $mcpOutput.Count -lt 1) { throw 'TAILSCALE_BOOTSTRAP_PRESERVATION_SYNC_FAILED' }",
-    "$syncResponse = (($mcpOutput | Select-Object -Last 1) | ConvertFrom-Json)",
-    "$sync = $syncResponse.result.structuredContent",
-    "if ($null -eq $sync -or $sync.ok -ne $true -or [string]$sync.afterHead -ne $expectedHead -or $null -eq $sync.preservation -or $sync.preservation.ok -ne $true -or [int]$sync.preservation.receipt.itemCount -ne 6 -or $sync.preservation.receipt.allHashesVerified -ne $true -or $sync.preservation.destructiveCleanupPerformed -ne $false) { throw 'TAILSCALE_BOOTSTRAP_PRESERVATION_SYNC_INVALID' }",
+    "try { $syncOutput = @(& $node $preservationSync $expectedHead) } catch { throw 'TAILSCALE_BOOTSTRAP_PRESERVATION_SYNC_FAILED' }",
+    "if ($LASTEXITCODE -ne 0 -or $syncOutput.Count -lt 1) { throw 'TAILSCALE_BOOTSTRAP_PRESERVATION_SYNC_FAILED' }",
+    "$sync = (($syncOutput -join [Environment]::NewLine) | ConvertFrom-Json)",
+    "if ($null -eq $sync -or $sync.ok -ne $true -or $sync.exactHeadBound -ne $true -or [string]$sync.expectedHead -ne $expectedHead -or [string]$sync.afterHead -ne $expectedHead -or $null -eq $sync.preservation -or $sync.preservation.ok -ne $true -or [int]$sync.preservation.receipt.itemCount -ne 6 -or $sync.preservation.receipt.allHashesVerified -ne $true -or $sync.preservation.destructiveCleanupPerformed -ne $false) { throw 'TAILSCALE_BOOTSTRAP_PRESERVATION_SYNC_INVALID' }",
     "if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw 'TAILSCALE_BOOTSTRAP_SYNC_INSTALLER_MISSING' }",
     "if (-not (Test-Path -LiteralPath $statusScript -PathType Leaf)) { throw 'TAILSCALE_BOOTSTRAP_SYNC_STATUS_SCRIPT_MISSING' }",
     "try { $installerOutput = @(& $installer -StartNow) } catch { throw 'TAILSCALE_BOOTSTRAP_SYNC_INSTALLER_FAILED' }",
     "$installerReceipt = (($installerOutput -join [Environment]::NewLine) | ConvertFrom-Json)",
-    "if ([string]$installerReceipt.taskName -ne 'Stephanos Battle Bridge GitHub Sync' -or $installerReceipt.installed -ne $true -or $installerReceipt.startedNow -ne $true -or [int]$installerReceipt.intervalMinutes -ne 15 -or $installerReceipt.atLogon -ne $true -or $installerReceipt.hidden -ne $true -or [string]$installerReceipt.runLevel -ne 'Limited' -or $installerReceipt.arbitraryShellAllowed -ne $false -or $installerReceipt.liveOpenClawUpdateAllowed -ne $false -or $installerReceipt.headlessLauncher -ne $true) { throw 'TAILSCALE_BOOTSTRAP_SYNC_INSTALLER_RECEIPT_INVALID' }",
+    "if ([string]$installerReceipt.taskName -ne 'Stephanos Battle Bridge GitHub Sync' -or $installerReceipt.installed -ne $true -or $installerReceipt.startedNow -ne $true -or [int]$installerReceipt.intervalMinutes -ne 1 -or $installerReceipt.atLogon -ne $true -or $installerReceipt.hidden -ne $true -or [string]$installerReceipt.runLevel -ne 'Limited' -or $installerReceipt.arbitraryShellAllowed -ne $false -or $installerReceipt.liveOpenClawUpdateAllowed -ne $false -or $installerReceipt.headlessLauncher -ne $true) { throw 'TAILSCALE_BOOTSTRAP_SYNC_INSTALLER_RECEIPT_INVALID' }",
     "$observedHead = ''",
     "for ($attempt = 0; $attempt -lt 24; $attempt += 1) {",
     "  $headLine = @(& $git -C $repo rev-parse HEAD 2>$null | Select-Object -First 1)",

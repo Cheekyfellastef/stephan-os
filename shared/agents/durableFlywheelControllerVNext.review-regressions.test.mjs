@@ -57,6 +57,7 @@ function baseMachinery(authoritativeProjection, calls, overrides = {}) {
             revision: 0,
             currentPhase: 'LIVE_RUNTIME_INVESTIGATION',
             repository: 'Cheekyfellastef/stephan-os',
+            git: { branch: 'openclaw/critical-1497-review-test' },
           },
         },
       };
@@ -217,7 +218,7 @@ test('startup crash cannot publish success evidence for a receipt that does not 
   );
 
   assert.equal(heartbeats.length, 1);
-  assert.equal(heartbeats[0].cycleState, 'STARTING');
+  assert.equal(heartbeats[0].cycleState, 'RECONCILING');
   assert.equal(heartbeats[0].lastSuccessfulReconciliationUtc, '');
   assert.equal(heartbeats[0].lastPublishedReceiptId, '');
   assert.deepEqual(heartbeats[0].proofRefs, []);

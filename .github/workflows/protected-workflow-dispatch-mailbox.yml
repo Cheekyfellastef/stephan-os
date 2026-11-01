@@ -12,13 +12,13 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: protected-workflow-dispatch-mailbox-${{ github.event.comment.id || github.run_id }}
+  group: protected-workflow-dispatch-mailbox-${{ github.event.comment.user.login || github.run_id }}
   cancel-in-progress: false
 
 jobs:
   dispatch:
     if: >-
-      github.event.issue.number == 1507 &&
+      github.event.issue.number > 0 &&
       github.event.comment.user.login == 'Cheekyfellastef' &&
       !github.event.issue.pull_request &&
       contains(github.event.comment.body, 'stephanos-protected-workflow-dispatch')
@@ -34,6 +34,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Require canonical mailbox epoch from trusted main
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/canonical-mailbox-workflow-event-gate.mjs protected
       - name: Validate exact owner command and perform only the fixed protected lifecycle action
         env:
           GITHUB_TOKEN: ${{ github.token }}

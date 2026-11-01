@@ -7,7 +7,7 @@ import {
 } from './operatorMergeApprovalGate.mjs';
 
 const PERSONAL_REPOSITORY_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
-const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = '99f1db1892ec1dc57fa5d7a578ed9b411a1fcc3e04eb0a823794da10246bebcb';
+const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = '59d739aa780343d464f3fbad8782bb9330e652998192e57fb987b4f45a43a3dc';
 const PERSONAL_REPOSITORY_WORKFLOW_SOURCE_KEYS = Object.freeze([
   'schemaVersion',
   'repository',
@@ -39,7 +39,7 @@ const PERSONAL_REPOSITORY_WORKFLOW_CHECKOUT_REFS = Object.freeze([
 const PERSONAL_REPOSITORY_WORKFLOW_PERMISSIONS = Object.freeze([
   'actions:read,checks:read,contents:read,pull-requests:read',
   'actions:read,checks:read,contents:read,pull-requests:read',
-  'actions:read,checks:read,contents:read,deployments:read,pull-requests:read',
+  'actions:read,checks:read,contents:read,deployments:read,issues:read,pull-requests:read',
   'actions:read,checks:read,contents:read,deployments:read,pull-requests:read',
   'actions:read,checks:read,contents:write,deployments:read,issues:write,pull-requests:write',
 ]);
@@ -115,6 +115,7 @@ export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
   '.github/workflows/operator-merge-approval-gate.yml',
   '.github/workflows/independent-merge-security-review.yml',
   '.github/workflows/build-stephanos-ui.yml',
+  '.github/workflows/deploy-stephanos-pages.yml',
   '.github/workflows/pr-clean.yml',
   '.github/workflows/exact-head-review-dispatch.yml',
   '.github/workflows/battle-bridge-publisher-proof.yml',
@@ -129,8 +130,13 @@ export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
   'shared/agents/operatorMergeApprovalGateV2.mjs',
   'shared/agents/operatorMergeApprovalBoundaryV2.mjs',
   'shared/agents/operatorMergeBaseBindingV1.mjs',
+  'shared/agents/operatorMergeBaseBindingV1.core.mjs',
+  'shared/agents/mainMovementTolerantOperatorAuthorizationV1.mjs',
   'shared/agents/operatorMergeReviewArtifactV1.mjs',
   'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+  'shared/agents/protectedMergeReadOnlyPriorFailureV1.mjs',
+  'shared/agents/protectedWorkflowDispatchMailboxV1.mjs',
+  'scripts/dispatch-protected-merge-from-mailbox.mjs',
   'shared/agents/protectedOpenClawMergeMailboxAdapter.mjs',
   'shared/agents/providerNeutralReviewV1.mjs',
   'shared/agents/qualifiedSpecialistReviewV1.mjs',
@@ -140,7 +146,9 @@ export const WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1 = Object.freeze([
   'scripts/independent-merge-security-review-with-windows-specialist-v1.mjs',
   'shared/agents/windowsAuthorityIgnitionConvergenceReviewV1.mjs',
   'shared/agents/windowsAuthorityMissionWorkerCleanupReviewV1.mjs',
+  'shared/agents/windowsAuthorityStephanosCoreDaemonReviewV1.mjs',
   'shared/agents/windowsAuthorityWorkerWatchdogReviewV1.mjs',
+  'shared/agents/windowsAuthorityVrResourceGovernorReviewV1.mjs',
   'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
 ]);
 
@@ -161,6 +169,8 @@ const INDEPENDENT_REVIEWER_PATHS = Object.freeze([
 
 const BASE_BINDING_PATHS = Object.freeze([
   'shared/agents/operatorMergeBaseBindingV1.mjs',
+  'shared/agents/operatorMergeBaseBindingV1.core.mjs',
+  'shared/agents/mainMovementTolerantOperatorAuthorizationV1.mjs',
   'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
 ]);
 

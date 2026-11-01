@@ -167,6 +167,23 @@ export function inspectGithubCredentialProcessAncestry(options = {}) {
   while (Number.isSafeInteger(pid) && pid > 0 && !seen.has(pid)) {
     seen.add(pid);
     inspectedPids.push(pid);
+
+    if (pid === 1) {
+      let environment;
+      try {
+        environment = readProcFile('/proc/1/environ');
+      } catch (error) {
+        const code = text(error?.code || error?.message, 'unknown');
+        if (code === 'EACCES' || code === 'EPERM') break;
+        blockers.push(`process-ancestry-unreadable:1:${code}`);
+        break;
+      }
+      for (const entry of parseEnvironmentNames(environment)) {
+        if (GITHUB_CREDENTIAL_NAMES.has(entry.name) && entry.value) blockers.push(`github-credential-in-process-ancestry:1:${entry.name}`);
+      }
+      break;
+    }
+
     let environment;
     let status;
     try {
@@ -205,9 +222,17 @@ function assertNoPersistedGitCredentials(repositoryRoot) {
   if (/x-access-token|oauth2:|https:\/\/[^/@]+@/i.test(remoteUrl)) throw new Error('credential-bearing git remote is forbidden during patched-code tests');
 }
 
-function statusChangedFiles(repositoryRoot) {
-  return lines(run('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: repositoryRoot }).stdout)
+export function parsePorcelainChangedFiles(raw) {
+  return String(raw || '')
+    .split(/\r?\n/)
+    .filter((entry) => entry.length >= 4)
     .map((entry) => entry.slice(3).replace(/^"|"$/g, ''));
+}
+
+function statusChangedFiles(repositoryRoot) {
+  return parsePorcelainChangedFiles(
+    run('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: repositoryRoot }).stdout,
+  );
 }
 
 function writePatchFile(manifest, patch) {
@@ -240,7 +265,7 @@ function applyPatchToWorkspace(repositoryRoot, manifest, patchPath) {
   run('git', ['checkout', '--detach', manifest.baseSha], { cwd: repositoryRoot });
   run('git', ['apply', '--check', '--binary', patchPath], { cwd: repositoryRoot });
   run('git', ['apply', '--binary', patchPath], { cwd: repositoryRoot });
-  const actualChangedFiles = lines(run('git', ['diff', '--name-only'], { cwd: repositoryRoot }).stdout);
+  const actualChangedFiles = statusChangedFiles(repositoryRoot);
   if (!sameStrings(actualChangedFiles, manifest.changedFiles)) throw new Error('applied patch changed files do not match signed manifest');
   run('git', ['diff', '--check'], { cwd: repositoryRoot });
   return Object.freeze(actualChangedFiles);

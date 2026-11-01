@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "source_id": "witcher-3-vr-route",
+  "title": "The Witcher 3 VR Route",
+  "priority": "P1",
+  "status": "registered-title-specific-operational-evidence",
+  "canonical_game_source": "https://www.thewitcher.com/",
+  "vr_presentation_source": "https://www.vorpx.com/",
+  "first_person_mod_source": "https://www.nexusmods.com/witcher3/mods/5706",
+  "creator_evidence_source": "https://www.youtube.com/@VoodooDE_VR_english",
+  "snapshot_versions": {
+    "witcher_3": "Next-Gen 4.04 family",
+    "gervant_first_person": "7.9",
+    "vorpx": "current public operational evidence, exact profile/runtime version pending showcase extraction"
+  },
+  "snapshot_date": "2026-08-05",
+  "licence": "Mixed and restricted: proprietary game and vorpX, creator-controlled video, and restrictive title-mod permissions",
+  "rights_boundary": "Use route-selection, setup, compatibility, comfort and behaviour evidence only. Do not copy proprietary vorpX implementation, Witcher assets, creator video or restricted mod code/assets.",
+  "evidence_role": "Title-specific evidence for combining a third-person game's first-person camera mod with a proprietary stereo/head-tracking presentation layer and creator headset evaluation.",
+  "featured_evidence": [
+    {
+      "title": "The Witcher 3 in VR showcase",
+      "creator": "VoodooDE VR English",
+      "observed_by_operator": "2026-08-05",
+      "video_id": "pending-exact-permalink-verification",
+      "status": "operator-reported-current-showcase-pending-metadata-pin"
+    }
+  ],
+  "known_boundaries": [
+    "The exact current VoodooDE showcase title, video ID, tested headset and settings remain to be extracted.",
+    "This route may combine first-person camera behaviour with vorpX rather than a native OpenXR engine conversion.",
+    "Camera clipping, animations, combat readability, cutscenes, menus and forced camera transitions require independent evaluation.",
+    "Quest 3 Meta Air Link operation is not established by registration."
+  ],
+  "programme_links": [1591, 1593, 1594, 1595, 1596, 1597, 1643],
+  "refresh_owner": 1596,
+  "promotion_rule": "Keep game, first-person mod, vorpX and creator observations as separate evidence planes. Require exact version metadata and local Quest 3 proof before classifying the route as usable."
+}

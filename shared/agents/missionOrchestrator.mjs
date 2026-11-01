@@ -1,15 +1,33 @@
+import { projectGoalAdmissionRequiredTestsV1, projectStrengthenedRetryTestsV1 } from './goalAdmissionRequiredTestsV1.mjs';
+import { isModelTransportFailureV1, modelTransportFailureProofMatchesV1 } from './modelTransportFailureRetryV1.mjs';
+
 const MAX_REPAIR_ROUNDS = 3;
 const SHA40_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const MISSION_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{2,127}$/;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SAFE_BRANCH_PATTERN = /^(?:codex|openclaw|orchestrator)\/[a-z0-9][a-z0-9._/-]{2,127}$/;
-const FORBIDDEN_PATH_PATTERN = /(^|\/)(apps\/stephanos\/dist|stephanos-server\/data|runtime|runtime-data|root-data|root data|data|tmp|\.git|node_modules)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
+const FORBIDDEN_PATH_PATTERN = /^(?:apps\/stephanos\/dist|stephanos-server\/data|runtime|runtime-data|root-data|root data|data|tmp)(?:\/|$)|(^|\/)(?:\.git|node_modules)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
 const RECEIPT_PATH_PATTERN = /^(?:proof|proofs|receipts|evidence\/receipts)\//;
 
 export const MISSION_ORCHESTRATOR_SCHEMA_VERSION = 'stephanos.mission-orchestrator.v1';
 export const MISSION_ORCHESTRATOR_EVENT_SCHEMA_VERSION = 'stephanos.mission-orchestrator-event.v1';
 export const MISSION_ORCHESTRATOR_MAX_REPAIR_ROUNDS = MAX_REPAIR_ROUNDS;
+export const RETRYABLE_AGENT_FAILURE_BLOCKERS = Object.freeze([
+  'PROVIDER_NEUTRAL_MODEL_RESULT_INVALID_JSON',
+  'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING',
+  'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING',
+  'SOURCE_ARTIFACT_DIFF_CHECK_FAILED',
+]);
+const RETRYABLE_AGENT_FAILURE_BLOCKER_SET = new Set(RETRYABLE_AGENT_FAILURE_BLOCKERS);
+const RETRYABLE_AGENT_FAILURE_PATH_PREFIXES = Object.freeze([
+  'PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:',
+]);
+export const MISSION_CONTINUITY_PARKING_STATUS = Object.freeze({
+  ACTIVE: 'ACTIVE',
+  PARKED_BLOCKED: 'PARKED_BLOCKED',
+  REENTRY_READY: 'REENTRY_READY',
+});
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -25,6 +43,29 @@ function unique(values) {
   return [...new Set(values)];
 }
 
+export function isRetryableAgentFailureBlocker(value, requiredTests = []) {
+  const blocker = text(value);
+  if (isModelTransportFailureV1(blocker)) return true;
+  const testPrefix = 'PROVIDER_NEUTRAL_TEST_FAILED:';
+  if (blocker.startsWith(testPrefix)) {
+    const plan = projectGoalAdmissionRequiredTestsV1(requiredTests);
+    return plan.valid && plan.supplied && plan.commands.includes(blocker.slice(testPrefix.length));
+  }
+  if (RETRYABLE_AGENT_FAILURE_BLOCKER_SET.has(blocker)) return true;
+  return RETRYABLE_AGENT_FAILURE_PATH_PREFIXES.some((prefix) => {
+    if (!blocker.startsWith(prefix) || blocker.length <= prefix.length) return false;
+    return !isUnsafePath(blocker.slice(prefix.length));
+  });
+}
+
+// Parking releases a construction slot; it must not change the existing bounded
+// failure policy. Custody, clean worktree, CAS, acceptance and budget remain
+// separate retry gates. This predicate is shared by selection and reduction.
+export function isRetryableParkedAgentFailure(blockers, requiredTests = []) {
+  return Array.isArray(blockers) && blockers.length > 0
+    && blockers.every(reason => isRetryableAgentFailureBlocker(reason, requiredTests));
+}
+
 function normalizePath(value) {
   return text(value).replace(/\\/g, '/').replace(/^\.\/+/, '');
 }
@@ -37,6 +78,43 @@ function isUnsafePath(value) {
     || path.split('/').includes('..')
     || FORBIDDEN_PATH_PATTERN.test(path)
     || /secret|token/i.test(path);
+}
+
+function scopeAllowsPath(scope, value) {
+  const normalizedScope = normalizePath(scope);
+  const path = normalizePath(value);
+  const scopeIdentity = normalizedScope.toLowerCase();
+  const pathIdentity = path.toLowerCase();
+  if (scopeIdentity === '**') return !isUnsafePath(path);
+  if (scopeIdentity === pathIdentity) return true;
+  if (scopeIdentity.endsWith('/**')) {
+    const base = scopeIdentity.slice(0, -3);
+    return pathIdentity === base || pathIdentity.startsWith(`${base}/`);
+  }
+  return false;
+}
+
+// A repaired failed-task plan may reduce mutation authority, never enlarge it.
+// Evaluate containment with the same path semantics used at result ingestion.
+export function projectNarrowedMissionSourceScopeV1(previous, next) {
+  const invalid = () => Object.freeze({ valid: false, allowedFiles: Object.freeze([]) });
+  const validScope = value => typeof value === 'string' && value === normalizePath(value)
+    && !isUnsafePath(value)
+    && (value === '**' || /^[A-Za-z0-9._/-]+(?:\/\*\*)?$/.test(value))
+    && !value.split('/').some(part => !part || part === '.')
+    && !value.replace(/\/\*\*$/, '').includes('*');
+  if (!Array.isArray(previous) || !previous.length || !Array.isArray(next) || !next.length
+      || [...previous].some(value => value !== '**' && !validScope(value))
+      || [...next].some(value => value === '**' || !validScope(value))) return invalid();
+  const allowedFiles = [...new Set(next)];
+  if (new Set(allowedFiles.map(value => value.toLowerCase())).size !== allowedFiles.length) return invalid();
+  for (const candidate of allowedFiles) {
+    const recursive = candidate.endsWith('/**');
+    const base = recursive ? candidate.slice(0, -3) : candidate;
+    if (!previous.some(scope => scopeAllowsPath(scope, base)
+        && (!recursive || scope === '**' || scope.endsWith('/**')))) return invalid();
+  }
+  return Object.freeze({ valid: true, allowedFiles: Object.freeze(allowedFiles) });
 }
 
 function iso(value, fallback = '') {
@@ -118,6 +196,38 @@ function deploymentComplete(deployment = {}) {
   return ['sync', 'build', 'verify', 'restart'].every((step) => deployment[step]?.status === 'success');
 }
 
+function defaultContinuity() {
+  return {
+    parkingStatus: MISSION_CONTINUITY_PARKING_STATUS.ACTIVE,
+    parkedAt: '',
+    sourcePhase: '',
+    reason: '',
+    repairOwner: '',
+    repairRef: '',
+    reentryReadyAt: '',
+    lastRepairReceiptId: '',
+    pendingResolvedBlockers: [],
+    reentryCount: 0,
+    history: [],
+  };
+}
+
+function ensureContinuity(state) {
+  const existing = state.continuity && typeof state.continuity === 'object' ? state.continuity : {};
+  const parkingStatus = Object.values(MISSION_CONTINUITY_PARKING_STATUS).includes(text(existing.parkingStatus).toUpperCase())
+    ? text(existing.parkingStatus).toUpperCase()
+    : MISSION_CONTINUITY_PARKING_STATUS.ACTIVE;
+  state.continuity = {
+    ...defaultContinuity(),
+    ...existing,
+    parkingStatus,
+    pendingResolvedBlockers: unique(list(existing.pendingResolvedBlockers).map(text)),
+    reentryCount: Number.isSafeInteger(existing.reentryCount) && existing.reentryCount >= 0 ? existing.reentryCount : 0,
+    history: Array.isArray(existing.history) ? existing.history : [],
+  };
+  return state.continuity;
+}
+
 function activeAgentForPhase(state) {
   const phase = state.currentPhase;
   if (['CREATE_WORKTREE', 'GITHUB_COMMIT', 'GITHUB_PUSH', 'OPEN_PULL_REQUEST', 'CHECK_PULL_REQUEST', 'MERGE_PULL_REQUEST', 'LOCAL_DEPLOYMENT'].includes(phase)) {
@@ -135,6 +245,7 @@ function activeAgentForPhase(state) {
 function derivePhase(state) {
   if (state.cancelled) return 'CANCELLED';
   if (state.blockers.length) return 'BLOCKED';
+  if (state.currentMainAcceptance?.verified === true) return 'COMPLETE';
   if (state.missionKind === 'live-runtime-investigation') {
     if (!state.dispatch.startedAt) return 'LIVE_RUNTIME_INVESTIGATION';
     if (state.dispatch.status === 'running') return 'LIVE_RUNTIME_INVESTIGATION';
@@ -179,9 +290,22 @@ function nextActionForPhase(state) {
 }
 
 function refreshDerivedState(state, timestamp) {
+  const continuity = ensureContinuity(state);
   state.currentPhase = derivePhase(state);
   if (state.currentPhase === 'BLOCKED' && state.repair.currentRound >= MAX_REPAIR_ROUNDS && !state.blockers.includes('Maximum repair rounds reached.')) {
     state.blockers.push('Maximum repair rounds reached.');
+  }
+  if (continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE) {
+    state.activeAgent = { agentId: 'none', label: 'None', role: 'none', status: 'idle' };
+    state.activeWriter = 'none';
+    state.nextAction = continuity.parkingStatus === MISSION_CONTINUITY_PARKING_STATUS.REENTRY_READY
+      ? { type: 'WAIT_FOR_SCHEDULER_REENTRY', owner: 'Mission Scheduler', approvalRequired: false }
+      : { type: 'WAIT_FOR_REPAIR_PROOF', owner: text(continuity.repairOwner, 'Continuity Controller'), approvalRequired: false };
+    state.updatedAt = timestamp;
+    state.finalVerdict = continuity.parkingStatus;
+    state.operatorActionRequired = state.currentPhase === 'AWAITING_OPERATOR_APPROVAL'
+      || text(continuity.repairOwner).toLowerCase() === 'operator';
+    return state;
   }
   state.activeAgent = activeAgentForPhase(state);
   state.activeWriter = ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(state.currentPhase)
@@ -244,6 +368,17 @@ export function createMissionOrchestratorState(input = {}, options = {}) {
     activeWriter: 'none',
     simultaneousWritersAllowed: false,
     dispatch: { adapter: resolvedMissionKind === 'live-runtime-investigation' ? 'openclaw-readonly' : 'codex', status: 'pending', startedAt: '', completedAt: '', resultId: '' },
+    currentMainAcceptance: {
+      verified: false,
+      sourceRevision: '',
+      canonicalMainHeadSha: '',
+      worktreeHeadSha: '',
+      acceptedAt: '',
+      receiptId: '',
+      headReceiptIds: [],
+      testCommands: [],
+    },
+    sourcePublication: null,
     git: { branch, baseBranch: text(input.baseBranch, 'main'), worktreePath: text(input.worktreePath), worktreeReady: false, changedFiles: [], commitSha: '', pushed: false, clean: false },
     pullRequest: { number: null, url: '', headSha: '', state: 'none', mergeable: false, checks: [], merged: false, mergeCommitSha: '' },
     repair: { currentRound: 0, maximumRounds: MAX_REPAIR_ROUNDS, history: [] },
@@ -251,6 +386,7 @@ export function createMissionOrchestratorState(input = {}, options = {}) {
     evidenceReceipts: [],
     rejectedEvidenceCount: 0,
     deployment: { sync: { status: 'pending' }, build: { status: 'pending' }, verify: { status: 'pending' }, restart: { status: 'pending' } },
+    continuity: defaultContinuity(),
     blockers,
     warnings: [],
     timeline: [{ eventType: 'MISSION_CREATED', timestamp, summary: 'Mission intake state created.' }],
@@ -287,6 +423,7 @@ function normalizeChecks(checks) {
 export function applyMissionOrchestratorEvent(currentState, event = {}, options = {}) {
   const timestamp = iso(event.timestamp, nowIso(options));
   const state = clone(currentState);
+  ensureContinuity(state);
   if (state.schemaVersion !== MISSION_ORCHESTRATOR_SCHEMA_VERSION) return block(state, 'Mission orchestrator state schema is unsupported.', timestamp);
   if (event.schemaVersion && event.schemaVersion !== MISSION_ORCHESTRATOR_EVENT_SCHEMA_VERSION) return block(state, 'Mission orchestrator event schema is unsupported.', timestamp);
   if (text(event.missionId, state.missionId) !== state.missionId) return block(state, 'Event mission id does not match.', timestamp);
@@ -296,32 +433,272 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
   state.revision += 1;
   state.timeline.push({ eventType, timestamp, summary: text(event.summary, eventType) });
 
-  if (eventType === 'WORKTREE_READY') {
+  if (eventType === 'AGENT_FAILURE_RETRY_ADMITTED') {
+    const parkedRetry = state.continuity.parkingStatus === MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED
+      && isRetryableParkedAgentFailure(state.blockers, state.requiredTests);
+    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE && !parkedRetry) return block(state, 'Retry admission requires active mission continuity or bounded parked agent failures.', timestamp);
+    const transportRetry = state.blockers.some(isModelTransportFailureV1);
+    if (transportRetry && (state.blockers.length !== 1
+        || !SHA40_PATTERN.test(text(event.retryPlanSourceHead))
+        || !modelTransportFailureProofMatchesV1(event.retryProviderFailureProof,
+          state.missionId, state.dispatch.resultId, state.blockers[0]))) {
+      return block(state, 'Model transport retry requires the exact failed provider terminal receipt and current owner plan.', timestamp);
+    }
+    const narrowedScope = event.retryAllowedFiles === undefined ? null
+      : projectNarrowedMissionSourceScopeV1(state.allowedFiles, event.retryAllowedFiles);
+    if (narrowedScope && (!narrowedScope.valid || !SHA40_PATTERN.test(text(event.retryPlanSourceHead)) || state.blockers.length !== 1
+        || state.blockers[0] !== 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED')) {
+      return block(state, 'Retry scope reduction requires the original bounded source-diff failure and cannot widen authority.', timestamp);
+    }
+    const strengthened = event.retryRequiredTests === undefined ? null
+      : projectStrengthenedRetryTestsV1(state.requiredTests, event.retryRequiredTests, narrowedScope?.allowedFiles || state.allowedFiles);
+    if ((state.blockers.includes('SOURCE_ARTIFACT_DIFF_CHECK_FAILED') && (state.blockers.length !== 1 || !strengthened?.valid)) || (strengthened && !strengthened.valid)) {
+      return block(state, 'Parked source retry requires strengthened independent acceptance without weakening the consumed plan.', timestamp);
+    }
+    if (state.currentPhase !== 'BLOCKED' || state.dispatch?.status !== 'failed') {
+      return block(state, 'Retry admission requires a BLOCKED mission with a failed agent dispatch.', timestamp);
+    }
+    const retryableBlockers = unique(list(event.retryableBlockers).map(text));
+    const retryable = reason => isRetryableAgentFailureBlocker(reason, state.requiredTests);
+    const currentRetryable = state.blockers.filter(retryable);
+    const nonRetryable = state.blockers.filter((reason) => !retryable(reason));
+    if (!retryableBlockers.length
+      || retryableBlockers.some((reason) => !retryable(reason) || !state.blockers.includes(reason))
+      || nonRetryable.length
+      || retryableBlockers.length !== currentRetryable.length) {
+      return block(state, 'Retry admission can only clear the complete current set of bounded retryable agent failures.', timestamp);
+    }
+    if (state.repair.currentRound >= MAX_REPAIR_ROUNDS) return block(state, 'Maximum repair rounds reached.', timestamp);
+    if (!appendReceipt(state, event.receipt)) return block(state, 'Retry admission requires a valid deterministic scheduler receipt.', timestamp);
+    state.repair.currentRound += 1;
+    state.repair.history.push({
+      round: state.repair.currentRound,
+      startedAt: timestamp,
+      retryableAgentFailures: retryableBlockers,
+      retryReceiptId: text(event.receipt?.receiptId || event.receipt?.id),
+      previousRequiredTests: [...state.requiredTests],
+      ...(transportRetry ? { retryProviderFailureProof: clone(event.retryProviderFailureProof),
+        retryPlanSourceHead: event.retryPlanSourceHead } : {}),
+      ...(narrowedScope ? { previousAllowedFiles: [...state.allowedFiles], allowedFiles: [...narrowedScope.allowedFiles],
+        retryPlanSourceHead: event.retryPlanSourceHead } : {}),
+      previousDispatch: clone(state.dispatch),
+      previousParkingStatus: state.continuity.parkingStatus,
+      requiredTests: [...(strengthened?.commands || state.requiredTests)],
+    });
+    if (strengthened) state.requiredTests = [...strengthened.commands];
+    if (narrowedScope) state.allowedFiles = [...narrowedScope.allowedFiles];
+    if (parkedRetry) state.continuity = { ...state.continuity,
+      parkingStatus: MISSION_CONTINUITY_PARKING_STATUS.ACTIVE,
+      pendingResolvedBlockers: [],
+      history: [...state.continuity.history, { eventType, timestamp,
+        previousParkingStatus: MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED,
+        receiptId: text(event.receipt?.receiptId || event.receipt?.id) }],
+    };
+    state.blockers = state.blockers.filter((reason) => !retryableBlockers.includes(reason));
+    state.dispatch = { ...state.dispatch, status: 'pending', startedAt: '', completedAt: '', resultId: '' };
+  } else if (eventType === 'MISSION_PARKED_FOR_REPAIR') {
+    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE) return block(state, 'Mission is already continuity-parked.', timestamp);
+    if (state.currentPhase !== 'BLOCKED') return block(state, 'Continuity repair parking requires the mission to be authoritatively BLOCKED first.', timestamp);
+    if (!text(event.reason) || !text(event.repairOwner)) return block(state, 'Continuity parking requires a blocker reason and repair owner.', timestamp);
+    if (state.dispatch?.status === 'running' && event.executionClaimReleased !== true) return block(state, 'A running dispatch cannot be parked until its execution claim is released.', timestamp);
+    if (!appendReceipt(state, event.receipt)) return block(state, 'Continuity parking requires a valid deterministic stall/lease-release receipt.', timestamp);
+    const sourcePhase = state.currentPhase;
+    if (state.dispatch?.status === 'running') {
+      state.dispatch = { ...state.dispatch, status: 'pending', startedAt: '', completedAt: '', resultId: '' };
+    }
+    state.continuity = {
+      ...state.continuity,
+      parkingStatus: MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED,
+      parkedAt: timestamp,
+      sourcePhase,
+      reason: text(event.reason),
+      repairOwner: text(event.repairOwner),
+      repairRef: text(event.repairRef),
+      reentryReadyAt: '',
+      lastRepairReceiptId: '',
+      pendingResolvedBlockers: [],
+      history: [...state.continuity.history, {
+        eventType,
+        timestamp,
+        sourcePhase,
+        reason: text(event.reason),
+        repairOwner: text(event.repairOwner),
+        repairRef: text(event.repairRef),
+      }],
+    };
+  } else if (eventType === 'MISSION_REPAIR_PROVEN') {
+    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED) return block(state, 'Repair proof can only target a repair-parked mission.', timestamp);
+    const resolvedBlockers = unique(list(event.resolvedBlockers).map(text));
+    const unknown = resolvedBlockers.filter((reason) => !state.blockers.includes(reason));
+    if (unknown.length) return block(state, `Repair proof referenced unknown blockers: ${unknown.join(', ')}`, timestamp);
+    if (!appendReceipt(state, event.receipt)) return block(state, 'Repair completion requires a valid deterministic receipt.', timestamp);
+    const provenResolved = unique([...state.continuity.pendingResolvedBlockers, ...resolvedBlockers]);
+    const remainingBlockers = state.blockers.filter((reason) => !provenResolved.includes(reason));
+    const receiptId = text(event.receipt?.receiptId || event.receipt?.id);
+    const ready = remainingBlockers.length === 0;
+    state.continuity = {
+      ...state.continuity,
+      parkingStatus: ready ? MISSION_CONTINUITY_PARKING_STATUS.REENTRY_READY : MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED,
+      reentryReadyAt: ready ? timestamp : '',
+      lastRepairReceiptId: receiptId,
+      pendingResolvedBlockers: provenResolved,
+      history: [...state.continuity.history, {
+        eventType,
+        timestamp,
+        resolvedBlockers,
+        remainingBlockers,
+        receiptId,
+      }],
+    };
+  } else if (eventType === 'MISSION_REENTERED') {
+    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.REENTRY_READY) return block(state, 'Mission re-entry requires fresh repair proof and REENTRY_READY state.', timestamp);
+    if (event.capacityAvailable !== true) return block(state, 'Mission re-entry requires canonical scheduler capacity proof.', timestamp);
+    const pendingResolved = unique(list(state.continuity.pendingResolvedBlockers).map(text));
+    const unresolvedBlockers = state.blockers.filter((reason) => !pendingResolved.includes(reason));
+    if (unresolvedBlockers.length) return block(state, 'Mission cannot re-enter while unproven blockers remain.', timestamp);
+    if (!appendReceipt(state, event.receipt)) return block(state, 'Mission re-entry requires a valid scheduler-admission receipt.', timestamp);
+    state.blockers = unresolvedBlockers;
+    if (state.dispatch?.status === 'failed') {
+      state.dispatch = { ...state.dispatch, status: 'pending', startedAt: '', completedAt: '', resultId: '' };
+    }
+    state.continuity = {
+      ...state.continuity,
+      parkingStatus: MISSION_CONTINUITY_PARKING_STATUS.ACTIVE,
+      parkedAt: '',
+      reason: '',
+      repairOwner: '',
+      repairRef: '',
+      reentryReadyAt: '',
+      pendingResolvedBlockers: [],
+      reentryCount: state.continuity.reentryCount + 1,
+      history: [...state.continuity.history, {
+        eventType,
+        timestamp,
+        receiptId: text(event.receipt?.receiptId || event.receipt?.id),
+      }],
+    };
+  } else if (eventType === 'CURRENT_MAIN_SATISFACTION_RECORDED') {
+    // Replacement source is not whole-goal acceptance. Pilot goals require
+    // independently reconciled acceptance before a terminal transition.
+    if (/^critical-(1646|1717|1723)-elastic-goal$/.test(state.missionId)) {
+      return block(state, 'Current-main satisfaction for this pilot mission requires independent goal-acceptance completion proof; merged source alone is insufficient.', timestamp);
+    }
+    if (state.missionKind !== 'implementation') return block(state, 'Current-main satisfaction is only valid for implementation missions.', timestamp);
+    if (state.currentPhase !== 'AGENT_IMPLEMENTATION') return block(state, 'Current-main satisfaction can only be recorded from implementation phase.', timestamp);
+    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE) return block(state, 'Continuity-parked mission cannot accept current-main satisfaction.', timestamp);
+    if (state.dispatch?.status === 'running') return block(state, 'Current-main satisfaction cannot race an active source writer.', timestamp);
+    if (state.git.worktreeReady !== true || state.git.clean !== true || event.worktreeClean !== true) {
+      return block(state, 'Current-main satisfaction requires a clean ready worktree.', timestamp);
+    }
+    if (state.git.changedFiles.length || list(event.changedFiles).length) {
+      return block(state, 'Current-main satisfaction requires zero source delta.', timestamp);
+    }
+    const sourceRevision = text(event.sourceRevision).toLowerCase();
+    const canonicalMainHeadSha = text(event.canonicalMainHeadSha).toLowerCase();
+    const worktreeHeadSha = text(event.worktreeHeadSha).toLowerCase();
+    if (!SHA40_PATTERN.test(sourceRevision)) return block(state, 'Current-main satisfaction requires an exact source revision.', timestamp);
+    if (text(state.baseBranch, state.git.baseBranch).toLowerCase() !== 'main') {
+      return block(state, 'Current-main satisfaction requires canonical main as the base branch.', timestamp);
+    }
+    if (
+      !SHA40_PATTERN.test(canonicalMainHeadSha)
+      || !SHA40_PATTERN.test(worktreeHeadSha)
+      || canonicalMainHeadSha !== sourceRevision
+      || worktreeHeadSha !== sourceRevision
+    ) {
+      return block(state, 'Current-main satisfaction requires canonical main HEAD and worktree HEAD bound to the exact source revision.', timestamp);
+    }
+    const headReceipts = list(event.headReceipts);
+    const requiredHeadProofs = [
+      ['canonical main head', canonicalMainHeadSha],
+      ['worktree head', worktreeHeadSha],
+    ];
+    const missingHeadProofs = requiredHeadProofs.filter(([requirement, headSha]) => !headReceipts.some((receipt) => (
+      normalizedRequirement(receipt?.requirement) === normalizedRequirement(requirement)
+      && text(receipt?.headSha).toLowerCase() === headSha
+      && validReceipt(receipt)
+    )));
+    if (missingHeadProofs.length) {
+      return block(state, 'Current-main satisfaction requires deterministic canonical-main and worktree-head receipts.', timestamp);
+    }
+
+    const testReceipts = list(event.testReceipts);
+    const missingTests = state.requiredTests.filter((command) => !testReceipts.some((receipt) => (
+      text(receipt?.testCommand) === command
+      && receipt?.exitCode === 0
+      && validReceipt(receipt)
+    )));
+    if (missingTests.length) return block(state, `Current-main satisfaction is missing verified test receipts: ${missingTests.join(' | ')}`, timestamp);
+
+    for (const receipt of headReceipts) appendReceipt(state, receipt);
+    for (const receipt of testReceipts) appendReceipt(state, receipt);
+    for (const receipt of list(event.evidenceReceipts)) appendReceipt(state, receipt);
+    if (!evidenceSatisfied(state)) return block(state, 'Current-main satisfaction requires every declared evidence requirement.', timestamp);
+    if (!appendReceipt(state, event.receipt)) return block(state, 'Current-main satisfaction requires a valid deterministic acceptance receipt.', timestamp);
+
+    state.currentMainAcceptance = {
+      verified: true,
+      sourceRevision,
+      canonicalMainHeadSha,
+      worktreeHeadSha,
+      acceptedAt: timestamp,
+      receiptId: text(event.receipt?.receiptId || event.receipt?.id),
+      headReceiptIds: Object.freeze(requiredHeadProofs.map(([requirement, headSha]) => text(
+        headReceipts.find((receipt) => (
+          normalizedRequirement(receipt?.requirement) === normalizedRequirement(requirement)
+          && text(receipt?.headSha).toLowerCase() === headSha
+        ))?.receiptId,
+      ))),
+      testCommands: Object.freeze([...state.requiredTests]),
+    };
+    state.dispatch = {
+      ...state.dispatch,
+      status: 'complete',
+      completedAt: timestamp,
+      resultId: text(event.resultId, `current-main-${sourceRevision.slice(0, 12)}`),
+    };
+    state.git.changedFiles = [];
+    state.git.clean = true;
+  } else if (eventType === 'WORKTREE_READY') {
     if (state.currentPhase !== 'CREATE_WORKTREE') return block(state, 'Worktree receipt arrived out of sequence.', timestamp);
     if (!appendReceipt(state, event.receipt)) return block(state, 'Worktree creation requires a valid deterministic receipt.', timestamp);
     state.git.worktreeReady = true;
     state.git.worktreePath = text(event.worktreePath, state.git.worktreePath);
     state.git.clean = event.clean === true;
   } else if (eventType === 'AGENT_DISPATCHED') {
-    const adapter = text(
-      event.adapter,
-      text(event.agentId).toLowerCase() === 'openclaw-standalone' ? 'openclaw-readonly' : text(event.agentId),
-    ).toLowerCase();
+    // Once canonical replacement-source repair is accepted, re-dispatching
+    // Forge to regenerate those same files would duplicate merged work.
+    if (state.missionId === 'critical-1717-elastic-goal'
+      && state.continuity?.history?.some((entry) => entry.eventType === 'MISSION_REPAIR_PROVEN'
+        && String(entry.receiptId || '').startsWith('verified-replacement-repair-'))
+      && text(event.adapter, event.agentId).toLowerCase() === 'foundry-forge') {
+      return block(state, 'REPLACEMENT_SOURCE_ALREADY_MERGED: Forge re-dispatch requires fresh independently approved source scope.', timestamp);
+    }
+    const eventAgent = text(event.agentId).toLowerCase();
+    const inferredAdapter = eventAgent === 'openclaw-standalone'
+      ? (state.missionKind === 'live-runtime-investigation' ? 'openclaw-readonly' : 'openclaw-standalone')
+      : eventAgent === 'stephanos-scout-coder'
+        ? 'openclaw-local'
+        : eventAgent;
+    const adapter = text(event.adapter, inferredAdapter).toLowerCase();
     const allowedAdapters = state.missionKind === 'live-runtime-investigation'
       ? new Set(['openclaw-readonly'])
-      : new Set(['codex', 'chatgpt-github', 'foundry-forge']);
-    const eventAgent = text(event.agentId).toLowerCase();
+      : new Set(['codex', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native', 'openclaw-standalone', 'openclaw-local']);
     const agentMatches = eventAgent === adapter
-      || (eventAgent === 'openclaw-standalone' && adapter === 'openclaw-readonly');
+      || (eventAgent === 'openclaw-standalone' && adapter === 'openclaw-readonly')
+      || (eventAgent === 'stephanos-scout-coder' && adapter === 'openclaw-local');
     if (!allowedAdapters.has(adapter) || !agentMatches) {
       return block(state, 'Dispatched agent does not match a registered deterministic adapter.', timestamp);
     }
+    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE) return block(state, 'Continuity-parked mission cannot accept dispatch.', timestamp);
     if (state.dispatch.status === 'running') return block(state, 'A mission agent is already running.', timestamp);
     state.dispatch = { ...state.dispatch, adapter, status: 'running', startedAt: timestamp, completedAt: '', resultId: '' };
   } else if (eventType === 'AGENT_RESULT_RECEIVED') {
     if (state.dispatch.status !== 'running') return block(state, 'Agent result arrived without an active dispatch.', timestamp);
     if (event.success !== true) {
       state.dispatch.status = 'failed';
+      state.dispatch.completedAt = timestamp;
+      state.dispatch.resultId = text(event.resultId);
       return block(state, text(event.error, 'Agent execution failed.'), timestamp);
     }
     if (!appendReceipt(state, event.receipt)) return block(state, 'Agent completion requires a valid deterministic receipt.', timestamp);
@@ -329,10 +706,40 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     state.dispatch.completedAt = timestamp;
     state.dispatch.resultId = text(event.resultId);
     state.git.changedFiles = unique(list(event.changedFiles).map(normalizePath));
-    const unsafeChanges = state.git.changedFiles.filter((path) => isUnsafePath(path) || !state.allowedFiles.some((scope) => {
-      if (scope === path) return true;
-      return scope.endsWith('/**') && (path === scope.slice(0, -3) || path.startsWith(`${scope.slice(0, -3)}/`));
-    }));
+    if (state.dispatch.adapter === 'foundry-forge') {
+      const escrow = event.sourceArtifactEscrow;
+      const outbox = event.offlinePublicationOutbox;
+      const valid = escrow?.schemaVersion === 'stephanos.source-artifact-escrow.v1'
+        && outbox?.schemaVersion === 'stephanos.offline-publication-outbox.v1'
+        && escrow?.missionId === state.missionId
+        // Escrow must be canonical. A lowercase scheduler identity is accepted
+        // only for that very same repository; never trust a lookalike escrow.
+        && escrow?.repository === 'Cheekyfellastef/stephan-os'
+        && text(state.repository).toLowerCase() === 'cheekyfellastef/stephan-os'
+        && escrow?.canonicalBranch === state.git.branch
+        && escrow?.canonicalPr === null
+        && outbox?.completeArtifactSha256 === escrow?.completeArtifactSha256
+        && outbox?.missionId === state.missionId
+        && outbox?.artifactRef === escrow?.artifactRef
+        && outbox?.publicationPaused === true
+        && outbox?.pushAuthority === false
+        && outbox?.mergeAuthority === false
+        && SHA256_PATTERN.test(text(escrow?.completeArtifactSha256))
+        && SHA40_PATTERN.test(text(escrow?.exactParentHead))
+        && SHA40_PATTERN.test(text(escrow?.exactResultTree));
+      if (!valid) return block(state, 'Forge source result requires exact durable escrow and offline outbox.', timestamp);
+      state.sourcePublication = {
+        artifactSha256: escrow.completeArtifactSha256,
+        outboxId: outbox.outboxId,
+        exactParentHead: escrow.exactParentHead,
+        exactResultTree: escrow.exactResultTree,
+        canonicalBranch: escrow.canonicalBranch,
+      };
+    }
+
+    const unsafeChanges = state.git.changedFiles.filter(
+      (path) => isUnsafePath(path) || !state.allowedFiles.some((scope) => scopeAllowsPath(scope, path)),
+    );
     if (unsafeChanges.length) return block(state, `Agent result exceeded approved source scope: ${unsafeChanges.join(', ')}`, timestamp);
   } else if (eventType === 'EVIDENCE_RECORDED') {
     for (const receipt of list(event.receipts)) appendReceipt(state, receipt);
@@ -348,6 +755,37 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     } else {
       return block(state, 'Unsupported Git operation completion event.', timestamp);
     }
+  } else if (eventType === 'FORGE_ESCROW_DRAFT_PUBLISHED') {
+    // One exact, signed pre-PR publication substitutes for commit/push/open-pr.
+    // No completion, merge, deploy or operator approval is implied.
+    const publication = event.publication;
+    if (state.currentPhase !== 'GITHUB_COMMIT'
+        || state.dispatch?.adapter !== 'foundry-forge'
+        || publication?.finalVerdict !== 'FORGE_PRE_PR_DRAFT_PUBLISHED_WITH_EXACT_TREE_PROOF'
+        || publication?.mergeAuthority !== false
+        || publication?.forcePushAllowed !== false
+        || publication?.draft !== true
+        || publication?.repository !== 'Cheekyfellastef/stephan-os'
+        || text(state.repository).toLowerCase() !== 'cheekyfellastef/stephan-os'
+        || publication?.branch !== state.git?.branch
+        || !SHA40_PATTERN.test(text(publication?.commitSha))
+        || !Number.isSafeInteger(publication?.prNumber)
+        || publication.prNumber < 1
+        || !SHA256_PATTERN.test(text(publication?.sourceArtifactSha256))
+        || publication?.sourceArtifactSha256 !== state.sourcePublication?.artifactSha256
+        || publication?.exactResultTree !== state.sourcePublication?.exactResultTree
+        || !SHA40_PATTERN.test(text(publication?.exactResultTree))
+        || !appendReceipt(state, event.receipt)) {
+      return block(state, 'Forge escrow publication requires exact signed draft and verified receipt.', timestamp);
+    }
+    state.git.commitSha = publication.commitSha;
+    state.git.pushed = true;
+    state.git.clean = true;
+    state.pullRequest = { ...state.pullRequest, number: publication.prNumber,
+      url: text(event.prUrl), headSha: publication.commitSha, state: 'draft',
+      mergeable: false, checks: [], merged: false };
+    state.approval = { ...state.approval, status: 'not-requested',
+      requiredToken: '', suppliedTokenHash: '', requestedAt: '', decidedAt: '' };
   } else if (eventType === 'PULL_REQUEST_OPENED') {
     if (!appendReceipt(state, event.receipt)) return block(state, 'Pull request creation requires a valid receipt.', timestamp);
     const number = Number.parseInt(event.prNumber, 10);
@@ -408,13 +846,16 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
 
 export function buildMissionOperationsSnapshot(state, options = {}) {
   const timestamp = nowIso(options);
+  const continuity = state.continuity && typeof state.continuity === 'object' ? state.continuity : defaultContinuity();
   return {
     schemaVersion: 'stephanos.mission-operations-snapshot.v1',
     source: 'stephanos-mission-orchestrator',
     missionId: state.missionId,
     title: state.title,
     intendedOutcome: state.intendedOutcome,
-    state: state.currentPhase === 'COMPLETE' ? 'COMPLETE' : state.currentPhase === 'BLOCKED' ? 'BLOCKED' : state.currentPhase === 'AWAITING_OPERATOR_APPROVAL' ? 'AWAITING_APPROVAL' : 'RUNNING',
+    state: continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE
+      ? continuity.parkingStatus
+      : state.currentPhase === 'COMPLETE' ? 'COMPLETE' : state.currentPhase === 'BLOCKED' ? 'BLOCKED' : state.currentPhase === 'AWAITING_OPERATOR_APPROVAL' ? 'AWAITING_APPROVAL' : 'RUNNING',
     finalVerdict: state.finalVerdict,
     startedAt: state.createdAt,
     updatedAt: state.updatedAt || timestamp,
@@ -422,11 +863,22 @@ export function buildMissionOperationsSnapshot(state, options = {}) {
     nextAction: state.nextAction.type,
     activeAgent: state.activeAgent,
     supportingAgents: state.supportingAgents,
+    continuity,
+    currentMainAcceptance: {
+      verified: state.currentMainAcceptance?.verified === true,
+      sourceRevision: text(state.currentMainAcceptance?.sourceRevision),
+      canonicalMainHeadSha: text(state.currentMainAcceptance?.canonicalMainHeadSha),
+      worktreeHeadSha: text(state.currentMainAcceptance?.worktreeHeadSha),
+      acceptedAt: text(state.currentMainAcceptance?.acceptedAt),
+      receiptId: text(state.currentMainAcceptance?.receiptId),
+      headReceiptIds: list(state.currentMainAcceptance?.headReceiptIds).map(text),
+      testCommands: list(state.currentMainAcceptance?.testCommands).map(text),
+    },
     github: {
       repository: state.repository,
       branch: state.git.branch,
       baseBranch: state.git.baseBranch,
-      headSha: state.pullRequest.headSha || state.git.commitSha,
+      headSha: state.pullRequest.headSha || state.git.commitSha || state.currentMainAcceptance?.sourceRevision || '',
       worktreePath: state.git.worktreePath,
       changedFiles: state.git.changedFiles,
       clean: state.git.clean,

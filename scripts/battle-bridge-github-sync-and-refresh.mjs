@@ -1,16 +1,25 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
+import { performance } from 'node:perf_hooks';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
+import { projectSovereignCaretakerExecutionEvidence, reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
+import { createSharedWorkspaceStatusRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { collectPostSyncRefreshDebt, inspectPendingPostSyncRefreshDebt, inspectPostSyncRefreshCompletion, resolvePostSyncRefreshDebt } from './battle-bridge-github-sync-policy.mjs';
 
 export const BATTLE_BRIDGE_SYNC_AND_REFRESH_SCHEMA = 'stephanos.battle-bridge-sync-and-refresh.v1';
 export const BATTLE_BRIDGE_SYNC_AND_REFRESH_RESULT_MARKER = 'BATTLE_BRIDGE_SYNC_AND_REFRESH_RESULT=';
 export const MAX_SYNC_REFRESH_CYCLES = 3;
+// Execution task remains five minutes. Leave 120 seconds for fixed host cleanup,
+// in-process checks and the final durable status write; never let child waits
+// consume the whole Windows Scheduled Task window.
+export const SYNC_AND_REFRESH_CHILD_BUDGET_MS = 180_000;
+export const SYNC_AND_REFRESH_MIN_REMAINING_MS = 5_000;
+export const SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS = Object.freeze({ sync: 60_000, refresh: 90_000, mailbox: 30_000 });
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
 function text(value) {
@@ -31,8 +40,15 @@ export function resolveCanonicalSyncAndRefreshPaths({ env = process.env, home = 
     workspaceRoot,
     syncExecutor: path.resolve(repoRoot, 'scripts', 'battle-bridge-github-sync-executor.mjs'),
     refreshCoordinator: path.resolve(repoRoot, 'scripts', 'battle-bridge-post-sync-refresh.mjs'),
+    mailboxRunner: path.resolve(repoRoot, 'scripts', 'battle-bridge-github-command-mailbox-outbox-guard-v1.mjs'),
     syncStatusPath: path.resolve(workspaceRoot, 'status', 'battle-bridge-github-sync-current.json'),
+    syncAndRefreshStatusPath: path.resolve(workspaceRoot, 'status', 'battle-bridge-sync-and-refresh-current.json'),
   });
+}
+
+function boundedChildTimeoutMs(requested, ceiling) {
+  return Number.isSafeInteger(requested) && requested > 0
+    ? Math.min(requested, ceiling) : 0;
 }
 
 function fixedNodeRun(scriptPath, args, {
@@ -60,6 +76,85 @@ function fixedNodeRun(scriptPath, args, {
   });
 }
 
+function boundedText(value, limit = 160) {
+  const normalized = String(value ?? '').trim();
+  return normalized.length > limit ? normalized.slice(0, limit) : normalized;
+}
+
+function boundedStatusCode(value, limit = 180) {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  return normalized && normalized.length <= limit && /^[A-Z0-9_:-]+$/.test(normalized) ? normalized : '';
+}
+
+export function projectSyncAndRefreshStatus(result = {}, { observedAtUtc = new Date().toISOString() } = {}) {
+  const mailboxPulse = result?.mailboxPulse && typeof result.mailboxPulse === 'object'
+    ? result.mailboxPulse
+    : null;
+  const ok = result?.ok === true;
+  const blocker = boundedText(result?.blocker);
+  const finalVerdict = boundedText(result?.finalVerdict, 120);
+  const refreshResult = Array.isArray(result?.refreshes) ? result.refreshes.at(-1)?.result : null;
+  const sovereignCaretakerExecution = safeHead(result?.sourceHead) ? projectSovereignCaretakerExecutionEvidence(
+    result?.controlPlaneRepair?.repair?.sovereignCaretakerExecution || refreshResult?.sovereignCaretakerExecution,
+    safeHead(result?.sourceHead),
+  ) : null;
+  return Object.freeze({
+    ...createSharedWorkspaceStatusRecord({
+      statusId: 'battle-bridge-sync-and-refresh-current',
+      participantId: 'battle-bridge-sync-and-refresh',
+      timestampUtc: observedAtUtc,
+      status: ok ? 'READY' : 'BLOCKED',
+      summary: ok
+        ? 'Battle Bridge sync and refresh is ready.'
+        : `Battle Bridge sync and refresh is blocked: ${blocker || finalVerdict || 'UNKNOWN'}.`,
+      proofRefs: [],
+    }),
+    schema: 'stephanos.battle-bridge-sync-and-refresh-status.v1',
+    observedAtUtc,
+    sourceHead: safeHead(result?.sourceHead),
+    ok,
+    blocker,
+    finalVerdict,
+    mailboxPulseObserved: result?.mailboxPulseObserved === true,
+    mailboxPulse: mailboxPulse ? Object.freeze({
+      ok: mailboxPulse?.ok === true,
+      classification: boundedText(mailboxPulse?.classification, 120),
+      blocker: boundedText(mailboxPulse?.blocker, 180),
+      detailCode: boundedStatusCode(mailboxPulse?.detailCode),
+      finalVerdict: boundedText(mailboxPulse?.finalVerdict, 120),
+      pulseAttempted: mailboxPulse?.pulseAttempted === true,
+    }) : null,
+    controlPlaneRepair: Object.freeze({
+      ok: result?.controlPlaneRepair?.ok === true,
+      classification: boundedText(result?.controlPlaneRepair?.classification, 120),
+      blocker: boundedText(result?.controlPlaneRepair?.blocker, 180),
+      repairAttempted: result?.controlPlaneRepair?.repairAttempted === true,
+      sovereignCaretakerExecution,
+    }),
+    lastSovereignCaretakerFailure: safeHead(result?.sourceHead) ? projectSovereignCaretakerExecutionEvidence(
+      refreshResult?.lastSovereignCaretakerFailure, safeHead(result?.sourceHead),
+    ) : null,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    destructiveGitAllowed: false,
+  });
+}
+
+export async function writeSyncAndRefreshStatus(result = {}, {
+  paths = resolveCanonicalSyncAndRefreshPaths(),
+  now = () => new Date(),
+} = {}) {
+  const statusPath = path.resolve(paths.syncAndRefreshStatusPath || path.resolve(paths.workspaceRoot, 'status', 'battle-bridge-sync-and-refresh-current.json'));
+  const expectedRoot = path.resolve(paths.workspaceRoot, 'status');
+  if (path.dirname(statusPath).toLowerCase() !== expectedRoot.toLowerCase()) {
+    throw new Error('SYNC_AND_REFRESH_STATUS_PATH_INVALID');
+  }
+  await mkdir(path.dirname(statusPath), { recursive: true });
+  const record = projectSyncAndRefreshStatus(result, { observedAtUtc: now().toISOString() });
+  await writeFile(statusPath, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+  return record;
+}
+
 function parseJsonObject(value) {
   try {
     const parsed = JSON.parse(text(value));
@@ -79,23 +174,53 @@ function parseMarkedJson(stdout, marker) {
 }
 
 export function createFixedSyncAndRefreshAdapter({ spawnSyncFn = spawnSync } = {}) {
+  let ancestryBudgetMs = 5_000;
   return Object.freeze({
-    runSync(paths) {
-      const execution = fixedNodeRun(paths.syncExecutor, [], { cwd: paths.repoRoot, spawnSyncFn, timeout: 300_000 });
+    isAncestor(beforeHead, afterHead, repoRoot) {
+      if (typeof beforeHead !== 'string' || typeof afterHead !== 'string' || !/^[0-9a-f]{40}$/.test(beforeHead)
+        || !/^[0-9a-f]{40}$/.test(afterHead) || ancestryBudgetMs <= 0) return { ok: false, ancestor: false };
+      const started = Date.now();
+      const result = spawnSyncFn('git', ['merge-base', '--is-ancestor', beforeHead, afterHead], {
+        cwd: repoRoot, encoding: 'utf8', shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: Math.min(1_000, ancestryBudgetMs), maxBuffer: 64 * 1024,
+      });
+      ancestryBudgetMs -= Math.max(1, Date.now() - started);
+      return { ok: !result.error && [0, 1].includes(result.status), ancestor: result.status === 0 };
+    },
+    runSync(paths, { timeoutMs = SYNC_AND_REFRESH_CHILD_BUDGET_MS } = {}) {
+      const timeout = boundedChildTimeoutMs(timeoutMs, SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.sync);
+      if (!timeout) return { ok: false, blocker: 'SYNC_AND_REFRESH_CHILD_BUDGET_MISSING' };
+      const execution = fixedNodeRun(paths.syncExecutor, [], { cwd: paths.repoRoot, spawnSyncFn, timeout });
+      if (execution.errorCode === 'ETIMEDOUT') return { ok: false, blocker: 'SYNC_EXECUTOR_TIMEOUT', execution };
       const result = parseJsonObject(execution.stdout);
       if (!result) return { ok: false, blocker: 'SYNC_EXECUTOR_RESPONSE_INVALID', execution };
       return { ok: true, result, execution };
     },
-    runRefresh({ beforeHead, afterHead, paths }) {
+    runMailboxPulse(paths, { timeoutMs = SYNC_AND_REFRESH_CHILD_BUDGET_MS } = {}) {
+      const timeout = boundedChildTimeoutMs(timeoutMs, SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.mailbox);
+      if (!timeout) return { ok: false, blocker: 'SYNC_AND_REFRESH_CHILD_BUDGET_MISSING' };
+      const execution = fixedNodeRun(paths.mailboxRunner, [], { cwd: paths.repoRoot, spawnSyncFn, timeout });
+      if (execution.errorCode === 'ETIMEDOUT') return { ok: false, blocker: 'MAILBOX_PULSE_TIMEOUT', execution };
+      const result = parseJsonObject(execution.stdout);
+      return Object.freeze({
+        ok: execution.ok && result?.ok === true,
+        blocker: result ? String(result.blocker || (execution.ok ? '' : 'MAILBOX_PULSE_FAILED')) : 'MAILBOX_PULSE_FAILED',
+        result: result || null,
+        execution,
+      });
+    },
+    runRefresh({ beforeHead, afterHead, paths, timeoutMs = SYNC_AND_REFRESH_CHILD_BUDGET_MS }) {
       if (!safeHead(beforeHead) || !safeHead(afterHead) || beforeHead === afterHead) {
         return { ok: false, blocker: 'POST_SYNC_HEADS_INVALID' };
       }
+      const timeout = boundedChildTimeoutMs(timeoutMs, SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.refresh);
+      if (!timeout) return { ok: false, blocker: 'SYNC_AND_REFRESH_CHILD_BUDGET_MISSING' };
       const execution = fixedNodeRun(paths.refreshCoordinator, ['--before', beforeHead, '--after', afterHead], {
         cwd: paths.repoRoot,
         spawnSyncFn,
-        timeout: 900_000,
+        timeout,
         env: { ...process.env, GIT_REDIRECT_STDERR: 'off' },
       });
+      if (execution.errorCode === 'ETIMEDOUT') return { ok: false, blocker: 'POST_SYNC_REFRESH_TIMEOUT', execution };
       const result = parseMarkedJson(execution.stdout, 'POST_SYNC_REFRESH_RESULT=');
       if (!result) return { ok: false, blocker: 'POST_SYNC_REFRESH_RESPONSE_INVALID', execution };
       return { ok: true, result, execution };
@@ -104,18 +229,15 @@ export function createFixedSyncAndRefreshAdapter({ spawnSyncFn = spawnSync } = {
 }
 
 export async function readPendingPostSyncRefresh(paths) {
-  try {
-    const status = JSON.parse(await readFile(paths.syncStatusPath, 'utf8'));
-    if (status?.classification !== 'BLOCKED_POST_SYNC_REFRESH_REQUIRED') return null;
-    const beforeHead = safeHead(status.localHeadBefore);
-    const afterHead = safeHead(status.localHeadAfter || status.remoteHeadObserved);
-    if (!beforeHead || !afterHead || beforeHead === afterHead) {
-      return Object.freeze({ ok: false, blocker: 'PENDING_POST_SYNC_HEADS_INVALID' });
-    }
-    return Object.freeze({ ok: true, beforeHead, afterHead, proofRefs: Array.isArray(status.proofRefs) ? status.proofRefs : [] });
-  } catch {
-    return null;
+  const records = {};
+  for (const [key, filename] of [['syncRecord', 'battle-bridge-github-sync-current.json'], ['refreshRecord', 'post-sync-runtime-refresh-current.json']]) {
+    try {
+      const raw = await readFile(path.join(paths.workspaceRoot, 'status', filename), 'utf8');
+      records[key] = raw.length <= 64 * 1024 ? JSON.parse(raw) : {};
+    } catch (error) { records[key] = error?.code === 'ENOENT' ? null : {}; }
   }
+  const evidence = collectPostSyncRefreshDebt(records);
+  return evidence.ok && !evidence.spans.length && !evidence.completion ? null : evidence;
 }
 
 function refreshHeadsFromSyncResult(result = {}) {
@@ -137,6 +259,56 @@ function syncHead(result = {}) {
     || result?.facts?.remoteHead
     || result?.facts?.localHead,
   );
+}
+
+async function runFreshGoalDiscoveryHeartbeat(sourceHead) {
+  const heartbeatUrl = new URL('./battle-bridge-goal-discovery-heartbeat.mjs', import.meta.url);
+  heartbeatUrl.searchParams.set('sourceHead', sourceHead);
+  const heartbeatModule = await import(heartbeatUrl.href);
+  if (typeof heartbeatModule.runBattleBridgeGoalDiscoveryHeartbeat !== 'function') {
+    return Object.freeze({ ok: false, blocker: 'GOAL_DISCOVERY_HEARTBEAT_EXPORT_MISSING' });
+  }
+  return heartbeatModule.runBattleBridgeGoalDiscoveryHeartbeat();
+}
+
+function pulseConvergedMailbox({ paths, adapter, platform, timeoutMs }) {
+  if (platform !== 'win32') {
+    return Object.freeze({
+      ok: true,
+      classification: 'MAILBOX_PULSE_SKIPPED_NON_WINDOWS',
+      pulseAttempted: false,
+    });
+  }
+  if (typeof adapter?.runMailboxPulse !== 'function') {
+    return Object.freeze({
+      ok: true,
+      classification: 'MAILBOX_PULSE_SKIPPED_ADAPTER_UNAVAILABLE',
+      pulseAttempted: false,
+    });
+  }
+  const pulse = adapter.runMailboxPulse(paths, { timeoutMs });
+  if (pulse?.ok === true) {
+    return Object.freeze({
+      ok: true,
+      classification: 'MAILBOX_PULSE_READY',
+      pulseAttempted: true,
+      blocker: '',
+      finalVerdict: String(pulse?.result?.finalVerdict || ''),
+    });
+  }
+  return Object.freeze({
+    ok: false,
+    classification: 'MAILBOX_PULSE_BLOCKED',
+    pulseAttempted: true,
+    blocker: String(pulse?.blocker || pulse?.result?.blocker || 'MAILBOX_PULSE_BLOCKED'),
+    detailCode: boundedStatusCode(
+      pulse?.result?.error
+      || pulse?.result?.childBlocker
+      || pulse?.result?.childMailboxBlocker
+      || pulse?.result?.childIndexBlocker,
+    ),
+    finalVerdict: String(pulse?.result?.finalVerdict || ''),
+  });
 }
 
 function reconcileConvergedControlPlane({ sourceHead, paths, controlPlaneReconciler, platform }) {
@@ -179,8 +351,11 @@ export async function runBattleBridgeSyncAndRefresh({
   adapter = createFixedSyncAndRefreshAdapter(),
   pendingReader = readPendingPostSyncRefresh,
   controlPlaneReconciler = reconcileBattleBridgeControlPlane,
+  goalDiscoveryHeartbeat = null,
   platform = process.platform,
   maxCycles = MAX_SYNC_REFRESH_CYCLES,
+  nowMs = () => performance.now(),
+  sleepFn = (ms) => new Promise(resolve => setTimeout(resolve, ms)),
 } = {}) {
   if (path.resolve(paths.repoRoot) !== path.resolve(expectedPaths.repoRoot)
     || path.resolve(paths.workspaceRoot) !== path.resolve(expectedPaths.workspaceRoot)) {
@@ -188,21 +363,55 @@ export async function runBattleBridgeSyncAndRefresh({
   }
 
   const refreshes = [];
+  const start = nowMs();
+  if (!Number.isFinite(start)) {
+    return Object.freeze({ ok: false, blocker: 'SYNC_AND_REFRESH_CLOCK_INVALID', finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
+  }
+  const deadline = start + SYNC_AND_REFRESH_CHILD_BUDGET_MS;
+  const remaining = () => {
+    const observed = nowMs();
+    return Number.isFinite(observed)
+      ? Math.max(0, Math.floor(deadline - observed)) : 0;
+  };
+  const budgetHeld = (phase, sourceHead = '') => Object.freeze({
+    ok: false,
+    blocker: 'SYNC_AND_REFRESH_PARENT_BUDGET_EXHAUSTED',
+    budgetPhase: phase,
+    sourceHead: safeHead(sourceHead),
+    refreshes: Object.freeze([...refreshes]),
+    finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
+  });
+  const safeRemaining = () => remaining() - SYNC_AND_REFRESH_MIN_REMAINING_MS;
   const pending = await pendingReader(paths);
   const pendingInvalid = pending?.ok === false ? pending : null;
-  let pendingDebt = pending?.ok === true ? pending : null;
+  let pendingSpans = pending?.ok === true ? pending.spans || [{ beforeHead: pending.beforeHead, afterHead: pending.afterHead }] : [];
+  let requiredTargetIds = pending?.requiredTargetIds || [];
+  let sovereignRelayRefreshRequired = pending?.ok === true ? pending.sovereignRelayRefreshRequired : false;
+  let completion = pending?.completion || null;
+  let pendingRefreshObserved = pendingSpans.length > 0;
   let sourceForwardedBeforeRefresh = false;
   let refreshDebtCoalesced = false;
 
   for (let cycle = 0; cycle < maxCycles; cycle += 1) {
-    const sync = adapter.runSync(paths);
+    if (safeRemaining() <= 0) return budgetHeld('SYNC');
+    const sync = adapter.runSync(paths, { timeoutMs: safeRemaining() });
     if (!sync.ok) {
       return Object.freeze({ ok: false, blocker: sync.blocker, refreshes: Object.freeze(refreshes), finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
     }
 
+    if (safeRemaining() <= 0) return budgetHeld('POST_SYNC', syncHead(sync.result));
     const converged = syncIsConverged(sync.result);
     const currentHeads = refreshHeadsFromSyncResult(sync.result);
     const currentSourceHead = syncHead(sync.result);
+    // A different invocation may have advanced source after our initial read.
+    // Include the debt actually retained by this sync child under its lock.
+    const freshDebt = inspectPendingPostSyncRefreshDebt(sync.result?.facts?.pendingRefresh);
+    if (freshDebt.ok) {
+      pendingSpans = [...new Map([...pendingSpans, ...freshDebt.spans].map(span => [`${span.beforeHead}:${span.afterHead}`, span])).values()];
+      requiredTargetIds = [...new Set([...requiredTargetIds, ...freshDebt.requiredTargetIds])];
+      if (freshDebt.sovereignRelayRefreshRequired) sovereignRelayRefreshRequired = true;
+      pendingRefreshObserved ||= freshDebt.spans.length > 0;
+    }
 
     if (!converged && !currentHeads) {
       return Object.freeze({
@@ -217,11 +426,11 @@ export async function runBattleBridgeSyncAndRefresh({
       });
     }
 
-    if (pendingInvalid) {
+    if (pendingInvalid || !freshDebt.ok) {
       sourceForwardedBeforeRefresh = sync.result?.sourceUpdated === true;
       return Object.freeze({
         ok: false,
-        blocker: pendingInvalid.blocker,
+        blocker: pendingInvalid?.blocker || freshDebt.blocker,
         sourceHead: currentSourceHead,
         syncClassification: sync.result?.evaluation?.classification || '',
         refreshes: Object.freeze(refreshes),
@@ -232,35 +441,27 @@ export async function runBattleBridgeSyncAndRefresh({
       });
     }
 
-    let refreshHeads = null;
-    let pendingAfterHead = '';
-
-    if (pendingDebt) {
-      const afterHead = currentHeads?.afterHead || currentSourceHead;
-      if (!afterHead || afterHead === pendingDebt.beforeHead) {
-        return Object.freeze({
-          ok: false,
-          blocker: 'PENDING_POST_SYNC_HEADS_INVALID',
-          sourceHead: currentSourceHead,
-          syncClassification: sync.result?.evaluation?.classification || '',
-          refreshes: Object.freeze(refreshes),
-          pendingRefreshObserved: true,
-          sourceForwardedBeforeRefresh: sync.result?.sourceUpdated === true,
-          refreshDebtCoalesced,
-          finalVerdict: 'SYNC_AND_REFRESH_REFRESH_DEBT_BLOCKED',
-        });
-      }
-
-      pendingAfterHead = pendingDebt.afterHead;
-      refreshDebtCoalesced ||= pendingDebt.afterHead !== afterHead;
+    const pendingAfterHead = pendingSpans.at(-1)?.afterHead || '';
+    const resolved = resolvePostSyncRefreshDebt({
+      spans: pendingSpans, requestedSpans: currentHeads ? [currentHeads] : [], requiredTargetIds, completion, sovereignRelayRefreshRequired,
+      currentHead: currentSourceHead,
+      isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot),
+    });
+    if (!resolved.ok) return Object.freeze({
+      ok: false, blocker: resolved.blocker, sourceHead: currentSourceHead,
+      syncClassification: sync.result?.evaluation?.classification || '', refreshes: Object.freeze(refreshes),
+      pendingRefreshObserved, sourceForwardedBeforeRefresh: sync.result?.sourceUpdated === true,
+      refreshDebtCoalesced, finalVerdict: 'SYNC_AND_REFRESH_REFRESH_DEBT_BLOCKED',
+    });
+    const refreshHeads = resolved.debt ? Object.freeze({ beforeHead: resolved.debt.beforeHead, afterHead: currentSourceHead }) : null;
+    if (refreshHeads && pendingAfterHead) {
+      refreshDebtCoalesced ||= pendingAfterHead !== currentSourceHead;
       sourceForwardedBeforeRefresh ||= sync.result?.sourceUpdated === true;
-      refreshHeads = Object.freeze({ beforeHead: pendingDebt.beforeHead, afterHead });
-    } else if (!converged) {
-      refreshHeads = currentHeads;
     }
 
     if (refreshHeads) {
-      const refresh = adapter.runRefresh({ ...refreshHeads, paths });
+      if (safeRemaining() <= 0) return budgetHeld('REFRESH', currentSourceHead);
+      const refresh = adapter.runRefresh({ ...refreshHeads, paths, timeoutMs: safeRemaining() });
       refreshes.push(Object.freeze({
         ...refreshHeads,
         pendingAfterHead,
@@ -268,33 +469,122 @@ export async function runBattleBridgeSyncAndRefresh({
         result: refresh.result || null,
       }));
       if (!refresh.ok || refresh.result?.ok !== true) {
+        const refreshBlocker = refresh.result?.blocker || refresh.blocker || 'POST_SYNC_RUNTIME_REFRESH_BLOCKED';
+        if (refreshBlocker === 'POST_SYNC_REFRESH_ALREADY_RUNNING') {
+          let settled = false;
+          while (safeRemaining() > 1_000) {
+            await sleepFn(Math.min(1_000, safeRemaining()));
+            const observedPending = await pendingReader(paths);
+            if (!observedPending) {
+              settled = true;
+              break;
+            }
+            if (observedPending?.ok === false) {
+              return Object.freeze({
+                ok: false,
+                blocker: observedPending.blocker || 'PENDING_POST_SYNC_REFRESH_INVALID',
+                sourceHead: currentSourceHead,
+                syncClassification: sync.result?.evaluation?.classification || '',
+                refreshes: Object.freeze(refreshes),
+                pendingRefreshObserved: true,
+                sourceForwardedBeforeRefresh,
+                refreshDebtCoalesced,
+                finalVerdict: 'SYNC_AND_REFRESH_REFRESH_DEBT_BLOCKED',
+              });
+            }
+            const observedSpans = Array.isArray(observedPending?.spans)
+              ? observedPending.spans
+              : (observedPending?.beforeHead && observedPending?.afterHead
+                ? [{ beforeHead: observedPending.beforeHead, afterHead: observedPending.afterHead }]
+                : []);
+            if (observedSpans.length === 0 && observedPending?.completion) {
+              settled = true;
+              break;
+            }
+          }
+          if (settled) {
+            pendingSpans = [];
+            requiredTargetIds = [];
+            sovereignRelayRefreshRequired = false;
+            completion = null;
+            continue;
+          }
+        }
         return Object.freeze({
           ok: false,
-          blocker: refresh.result?.blocker || refresh.blocker || 'POST_SYNC_RUNTIME_REFRESH_BLOCKED',
+          blocker: refreshBlocker,
           sourceHead: currentSourceHead,
           syncClassification: sync.result?.evaluation?.classification || '',
           refreshes: Object.freeze(refreshes),
-          pendingRefreshObserved: Boolean(pendingDebt),
+          pendingRefreshObserved,
           sourceForwardedBeforeRefresh,
           refreshDebtCoalesced,
           finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
         });
       }
-      pendingDebt = null;
+      const completed = inspectPostSyncRefreshCompletion(refresh.result);
+      const covered = completed.ok ? resolvePostSyncRefreshDebt({
+        spans: [resolved.debt], requiredTargetIds: resolved.debt.requiredTargetIds, completion: completed,
+        sovereignRelayRefreshRequired: resolved.debt.sovereignRelayRefreshRequired,
+        currentHead: currentSourceHead,
+        isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot),
+      }) : completed;
+      if (!covered.ok || covered.debt) return Object.freeze({
+        ok: false, blocker: covered.blocker || 'PENDING_POST_SYNC_COMPLETION_COVERAGE_UNPROVEN',
+        sourceHead: currentSourceHead, refreshes: Object.freeze(refreshes),
+        finalVerdict: 'SYNC_AND_REFRESH_REFRESH_DEBT_BLOCKED',
+      });
+      if (safeRemaining() <= 0) return budgetHeld('POST_REFRESH', currentSourceHead);
+      pendingSpans = [];
+      requiredTargetIds = [];
+      sovereignRelayRefreshRequired = false;
+      completion = completed;
       continue;
     }
+    if (!converged) continue;
 
     if (converged) {
       const sourceHead = currentSourceHead;
       if (!sourceHead) {
         return Object.freeze({ ok: false, blocker: 'SYNC_CONVERGED_HEAD_UNPROVEN', refreshes: Object.freeze(refreshes), finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
       }
+
+      // Source-building lanes are independently bounded and must get one work-conserving
+      // tick before auxiliary control-plane repair. A degraded recovery subsystem must not
+      // starve Forge/GitHub lifeboat capacity or canonical Mission Worker handoffs.
+      if (safeRemaining() <= 0) return budgetHeld('GOAL_DISCOVERY', sourceHead);
+      const goalDiscovery = typeof goalDiscoveryHeartbeat === 'function'
+        ? await goalDiscoveryHeartbeat()
+        : await runFreshGoalDiscoveryHeartbeat(sourceHead);
+      if (safeRemaining() <= 0) return budgetHeld('POST_GOAL_DISCOVERY', sourceHead);
+      const mailboxPulse = pulseConvergedMailbox({ paths, adapter, platform, timeoutMs: safeRemaining() });
+      if (safeRemaining() <= 0) return budgetHeld('POST_MAILBOX_PULSE', sourceHead);
       const controlPlaneRepair = reconcileConvergedControlPlane({
         sourceHead,
         paths,
         controlPlaneReconciler,
         platform,
       });
+
+      if (safeRemaining() <= 0) return budgetHeld('POST_CONTROL_PLANE', sourceHead);
+      if (goalDiscovery?.ok !== true) {
+        return Object.freeze({
+          ok: false,
+          blocker: String(goalDiscovery?.blocker || goalDiscovery?.finalVerdict || 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED'),
+          sourceHead,
+          syncClassification: sync.result.evaluation.classification,
+          refreshes: Object.freeze(refreshes),
+          sourceForwardedBeforeRefresh,
+          refreshDebtCoalesced,
+          controlPlaneRepair,
+          mailboxPulse,
+          mailboxPulseObserved: true,
+          goalDiscovery: goalDiscovery || null,
+          goalDiscoveryObserved: true,
+          finalVerdict: 'SYNC_AND_REFRESH_GOAL_DISCOVERY_BLOCKED',
+        });
+      }
+
       if (!controlPlaneRepair.ok) {
         return Object.freeze({
           ok: false,
@@ -305,9 +595,16 @@ export async function runBattleBridgeSyncAndRefresh({
           sourceForwardedBeforeRefresh,
           refreshDebtCoalesced,
           controlPlaneRepair,
+          mailboxPulse,
+          mailboxPulseObserved: true,
+          goalDiscovery,
+          goalDiscoveryObserved: true,
+          workConservingGoalDiscoveryPreserved: true,
+          workConservingMailboxPulsePreserved: true,
           finalVerdict: 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED',
         });
       }
+
       return Object.freeze({
         schemaVersion: BATTLE_BRIDGE_SYNC_AND_REFRESH_SCHEMA,
         ok: true,
@@ -315,11 +612,17 @@ export async function runBattleBridgeSyncAndRefresh({
         syncClassification: sync.result.evaluation.classification,
         refreshes: Object.freeze(refreshes),
         freshCoordinatorProcessUsed: refreshes.length > 0,
-        pendingRefreshObserved: pending?.ok === true,
+        pendingRefreshObserved,
         sourceForwardedBeforeRefresh,
         refreshDebtCoalesced,
         controlPlaneRepair,
         controlPlaneRepairObserved: true,
+        mailboxPulse,
+        mailboxPulseObserved: true,
+        goalDiscovery,
+        goalDiscoveryObserved: true,
+        workConservingGoalDiscoveryPreserved: true,
+        workConservingMailboxPulsePreserved: true,
         arbitraryShellAllowed: false,
         destructiveGitAllowed: false,
         liveOpenClawUpdateAllowed: false,
@@ -339,7 +642,9 @@ export async function runBattleBridgeSyncAndRefresh({
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const result = await runBattleBridgeSyncAndRefresh();
+  const paths = resolveCanonicalSyncAndRefreshPaths();
+  const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths });
+  await writeSyncAndRefreshStatus(result, { paths });
   process.stdout.write(`${BATTLE_BRIDGE_SYNC_AND_REFRESH_RESULT_MARKER}${JSON.stringify(result)}\n`);
   process.exitCode = result.ok ? 0 : 2;
 }

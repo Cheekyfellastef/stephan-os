@@ -10,6 +10,7 @@ import {
   createBoundedMission,
 } from '../stephanos-server/services/missionOrchestratorControlService.js';
 import {
+  BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
   MISSION_ORCHESTRATOR_CANCEL_OPERATION,
   executeBattleBridgeGitHubCommand,
   validateBattleBridgeGitHubCommand,
@@ -177,7 +178,7 @@ test('Battle Bridge cancellation command is closed-world and dispatches only the
     requestId: 'mission-cancel-mailbox-test-001',
     operation: MISSION_ORCHESTRATOR_CANCEL_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: 'c'.repeat(40),
@@ -402,6 +403,8 @@ test('server mounts bounded approve/cancel controls without exposing direct miss
   assert.match(mount, /backendIdentity/);
   assert.match(mount, /missionOperationsRouter/);
   assert.match(route, /router\.get\('\/', async/);
+  assert.match(route, /identityOnly/);
+  assert.match(route, /stephanos\.mission-operations-feed\.v1/);
   assert.match(route, /router\.post\('\/missions\/:missionId\/approve'/);
   assert.match(route, /router\.post\('\/missions\/:missionId\/cancel'/);
   assert.match(route, /cancelBoundedMission\(\{/);

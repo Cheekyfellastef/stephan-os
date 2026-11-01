@@ -2,6 +2,7 @@ import { resolveArtistIntelligence } from './musicArtistIntelligence.js';
 import { generateMusicSearchQueries } from './musicSearchQueryGenerator.js';
 import { resolveMusicCandidate } from './musicCatalogResolver.js';
 import { adjudicateMusicReality } from './musicRealityAdjudicator.js';
+import { hasVerifiedCatalogSpotifyTrack, isVerifiedCandidateTrack } from './candidateVerification.js';
 
 export async function runMusicDiscoveryPipeline({ query = '', tasteDNA = {}, aiHints = [], localCandidates = [] } = {}) {
   const artistProfile = resolveArtistIntelligence(query);
@@ -16,7 +17,9 @@ export async function runMusicDiscoveryPipeline({ query = '', tasteDNA = {}, aiH
     const finalScore = localScore + verificationScore;
     return { ...c, localScore, aiScore: c.sourceKind === 'ai' ? 1 : 0, verificationScore, finalScore, why: matched, risk: reality.riskFlags };
   });
-  const verifiedCandidates = scored.filter((c) => c.finalScore >= 1 && c.verificationStatus.includes('verified'));
+  const verifiedCandidates = scored.filter((c) => c.finalScore >= 1
+    && c.verificationStatus.includes('verified')
+    && (isVerifiedCandidateTrack(c) || hasVerifiedCatalogSpotifyTrack(c)));
   const searchLeads = scored.filter((c) => c.verificationStatus === 'search_only' || c.verificationStatus === 'needs_user_confirmation');
   const fallbackCandidates = scored.length ? [] : [{ title: 'Taste DNA fallback', artist: query || 'Unknown', verificationStatus: 'search_only' }];
   return {

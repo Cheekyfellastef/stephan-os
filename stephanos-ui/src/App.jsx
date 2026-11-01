@@ -30,7 +30,9 @@ import OpenClawTile from './components/OpenClawTile.jsx';
 import MissionConsoleTile from './components/MissionConsoleTile.jsx';
 import CapabilityRadarTile from './components/CapabilityRadarTile.jsx';
 import SkillForgeTile from './components/SkillForgeTile.jsx';
+import StephanosCommandObservatory from './components/StephanosCommandObservatory.jsx';
 import WorldWorkspaceTile from './components/WorldWorkspaceTile.jsx';
+import GamingResourceTile from './components/GamingResourceTile.jsx';
 import StephanosSurfacePane from './components/StephanosSurfacePane.jsx';
 import { useAIConsole } from './hooks/useAIConsole';
 import { collectActionHints } from './components/system/actionHints.js';
@@ -98,7 +100,7 @@ import {
 import { getCanonicalCopySources } from './utils/copyFeedbackRecorder.js';
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
-const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
+const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen3.5:27b', 'qwen:32b']);
 
 const PANE_DRAG_HANDLE_SELECTOR = '[data-pane-drag-handle="true"]';
 const PANE_DRAG_BLOCK_SELECTOR = [
@@ -605,6 +607,7 @@ export default function App() {
   }, []);
   const cockpitSurfaceMode = surfaceMode === 'cockpit';
   const agentsSurfaceMode = surfaceMode === 'agents';
+  const flywheelSurfaceMode = surfaceMode === 'flywheel';
   const missionConsoleSurfaceMode = surfaceMode === 'mission-console';
   const openClawSurfaceMode = surfaceMode === 'openclaw' || launcherDestination === 'openclaw';
   const capabilityRadarSurfaceMode = surfaceMode === 'capability-radar';
@@ -913,9 +916,11 @@ export default function App() {
     canonicalCurrentIntent,
     canonicalMissionPacket,
     canonicalSourceDistAlignment,
+    missionPacketWorkflow,
+    missionLineage,
     selectors: orchestrationSelectors,
     latestResponseEnvelope: debugData?.latestOperatorCommandEnvelope || null,
-  }), [canonicalCurrentIntent, canonicalMemoryContext, canonicalMissionPacket, canonicalSourceDistAlignment, orchestrationSelectors, debugData?.latestOperatorCommandEnvelope]);
+  }), [canonicalCurrentIntent, canonicalMemoryContext, canonicalMissionPacket, canonicalSourceDistAlignment, missionPacketWorkflow, missionLineage, orchestrationSelectors, debugData?.latestOperatorCommandEnvelope]);
   const actionHints = useMemo(() => collectActionHints(finalRouteTruth, orchestrationTruth)
     .map((hint) => (typeof hint === 'string'
       ? { severity: 'info', subsystem: 'SYSTEM', text: hint }
@@ -1165,11 +1170,22 @@ export default function App() {
   const missionBridgeExternalSigRef = useRef(stableJsonSignature(missionBridgeTruth));
   const trackedSetOpenClawIntegration = useCallback((nextValueOrUpdater) => {
     recordPerfCounter('hook.App.externalSetter.openClawIntegration.called', 'called');
+
+    if (typeof nextValueOrUpdater !== 'function') {
+      const nextSig = stableJsonSignature(nextValueOrUpdater);
+      const previousSig = openClawIntegrationExternalSigRef.current;
+      if (previousSig === nextSig) {
+        recordPerfCounter('hook.App.externalSetter.openClawIntegration.preflight_skipped', 'unchanged');
+        return;
+      }
+    }
+
     setOpenClawIntegration((previous) => {
       const next = typeof nextValueOrUpdater === 'function' ? nextValueOrUpdater(previous) : nextValueOrUpdater;
-      const previousSig = openClawIntegrationExternalSigRef.current || stableJsonSignature(previous);
+      const previousSig = stableJsonSignature(previous);
       const nextSig = stableJsonSignature(next);
       if (previousSig === nextSig) {
+        openClawIntegrationExternalSigRef.current = previousSig;
         recordPerfCounter('hook.App.externalSetter.openClawIntegration.skipped', 'unchanged');
         return previous;
       }
@@ -1244,11 +1260,13 @@ export default function App() {
       const nextSig = buildOpenClawIntegrationSignature(next);
       if (signaturesEqual(prevSig, nextSig)) {
         openClawIntegrationSignatureRef.current = openClawIntegrationInputSignature;
+        openClawIntegrationExternalSigRef.current = stableJsonSignature(previous ?? next);
         recordPerfCounter('app_state.openClawIntegration.setter_skipped_same_semantic', 'routeTruth');
         recordPerfCounter('app_update_source.setOpenClawIntegration.routeTruth', 'skipped');
         return previous ?? next;
       }
       openClawIntegrationSignatureRef.current = openClawIntegrationInputSignature;
+      openClawIntegrationExternalSigRef.current = stableJsonSignature(next);
       recordPerfCounter('app_state.openClawIntegration.setter_changed', 'routeTruth');
       recordPerfCounter('app_state.openClawIntegration.effect_applied', 'routeTruth');
       recordPerfCounter('app_update_source.setOpenClawIntegration.routeTruth', 'changed');
@@ -1618,6 +1636,9 @@ export default function App() {
             debugVisibility={agentControls.debugVisibility}
             openClawIntegration={openClawIntegration}
             agentTaskProjection={agentTaskProjection}
+            bridgeTransportTruth={runtimeStatusModel?.runtimeContext?.bridgeTransportTruth || null}
+            homeBridgeUrl={runtimeStatusModel?.runtimeContext?.homeNodeBridge?.backendUrl || ''}
+            runtimeStatusModel={runtimeStatusModel}
             onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
             onClearOpenClawEndpointConfig={() => setOpenClawEndpointDraft({
               endpointLabel: 'Local OpenClaw Adapter',
@@ -1750,6 +1771,13 @@ export default function App() {
           />
         </div>
       ),
+    },
+    {
+      id: 'gamingResourcePanel',
+      wideSurface: true,
+      title: 'Gaming Resource Guard',
+      className: 'pane-span-2',
+      render: () => <GamingResourceTile uiLayout={safeUiLayout} togglePanel={togglePanel} />,
     },
     {
       id: 'capabilityRadarPanel',
@@ -2183,7 +2211,7 @@ export default function App() {
         scrollHeight: document.documentElement?.scrollHeight || 0,
       },
     };
-    window.__STEPHANOS_UI_REALITY__ = reality;
+    window.__STEPHANOS_UI_REALITY__ = { ...reality, cockpitRegression: window.__STEPHANOS_UI_REALITY__?.cockpitRegression || null };
     window.__COPY_STEPHANOS_UI_REALITY__ = () => {
       const payload = JSON.stringify(window.__STEPHANOS_UI_REALITY__ || {}, null, 2);
       if (typeof window.copy === 'function') window.copy(payload);
@@ -2316,7 +2344,7 @@ export default function App() {
           COCKPIT SURFACE · <strong>{ignitionModeBanner.mode}</strong> · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
         </div>
         <section className="cockpit-surface-stage">
-          <CockpitPanel standalone telemetryEntries={telemetryEntries} finalAgentView={displayAgentView} />
+          <CockpitPanel forceOpen standalone telemetryEntries={telemetryEntries} finalAgentView={displayAgentView} />
         </section>
         <DebugConsole />
       </main>
@@ -2354,6 +2382,10 @@ export default function App() {
             debugVisibility={agentControls.debugVisibility}
             openClawIntegration={openClawIntegration}
             agentTaskProjection={agentTaskProjection}
+            bridgeTransportTruth={runtimeStatusModel?.runtimeContext?.bridgeTransportTruth || null}
+            homeBridgeUrl={runtimeStatusModel?.runtimeContext?.homeNodeBridge?.backendUrl || ''}
+            runtimeStatusModel={runtimeStatusModel}
+            forcePanelOpen
             onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
             onClearOpenClawEndpointConfig={() => setOpenClawEndpointDraft({
               endpointLabel: 'Local OpenClaw Adapter',
@@ -2369,6 +2401,22 @@ export default function App() {
             telemetryEntries={telemetryEntries}
             actionHints={actionHints}
           />
+        </section>
+        <DebugConsole />
+      </main>
+    );
+  }
+
+  if (flywheelSurfaceMode) {
+    markStartupStage('app-flywheel-surface-render-start');
+    markStartupStage('app-flywheel-surface-render-complete');
+    return (
+      <main className="app-shell-root mission-console-surface-mode flywheel-surface-mode">
+        <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
+          FLYWHEEL SURFACE · <strong>{ignitionModeBanner.mode}</strong> · Shared Workspace uplift fabric · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
+        </div>
+        <section className="mission-console-surface-stage flywheel-surface-stage">
+          <FlywheelPanel />
         </section>
         <DebugConsole />
       </main>
@@ -2455,6 +2503,22 @@ export default function App() {
     );
   }
 
+  if (skillForgeSurfaceMode) {
+    markStartupStage('app-skill-forge-surface-render-start');
+    markStartupStage('app-skill-forge-surface-render-complete');
+    return (
+      <main className="app-shell-root mission-console-surface-mode skill-forge-surface-mode">
+        <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
+          SKILL FORGE SURFACE · <strong>{ignitionModeBanner.mode}</strong> · Shared Workspace capability provenance · origin <code>{runtimeFingerprint.currentOrigin}</code>
+        </div>
+        <section className="mission-console-surface-stage">
+          <SkillForgeTile uiLayout={safeUiLayout} togglePanel={togglePanel} runtimeStatusModel={runtimeStatusModel} forcePanelOpen />
+        </section>
+        <DebugConsole />
+      </main>
+    );
+  }
+
   if (openClawSurfaceMode) {
     markStartupStage('app-openclaw-surface-render-start');
     markStartupStage('app-openclaw-surface-render-complete');
@@ -2525,6 +2589,15 @@ export default function App() {
       <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
         IGNITION MODE: <strong>{ignitionModeBanner.mode}</strong> · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
       </div>
+      <StephanosCommandObservatory
+        runtimeStatus={runtimeStatus}
+        runtimeStatusModel={runtimeStatusModel}
+        routeTruthView={routeTruthView}
+        finalAgentView={displayAgentView}
+        runtimeBuildParity={runtimeBuildParity}
+        safeApiStatus={safeApiStatus}
+        missionBridgeTruth={missionBridgeTruth}
+      />
       <AgentQuickControls
         controls={agentControls}
         registry={agentRegistry}

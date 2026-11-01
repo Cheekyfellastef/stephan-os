@@ -1,7 +1,12 @@
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
+
+// V1 builder name is permanently retired: historical queued workflows fail before their first GitHub write.
+export const CODEX_BANKED_RESET_PUBLICATION_API_VERSION = 2;
+
 export const CODEX_BANKED_RESET_TELEMETRY_SCHEMA_VERSION = 'stephanos.codex-banked-reset-telemetry.v1';
 export const CODEX_BANKED_RESET_TELEMETRY_MARKER = 'stephanos-codex-banked-reset-telemetry';
 export const CODEX_BANKED_RESET_TELEMETRY_ISSUE = 1570;
-export const CODEX_BANKED_RESET_MAILBOX_ISSUE = 1507;
+export const CODEX_BANKED_RESET_MAILBOX_ISSUE = CANONICAL_MAILBOX_ISSUE;
 export const CODEX_BANKED_RESET_REPOSITORY = 'Cheekyfellastef/stephan-os';
 export const CODEX_BANKED_RESET_STATUS_OPERATION = 'READ_CODEX_BANKED_RESET_STATUS';
 export const CODEX_BANKED_RESET_OPERATION = 'REDEEM_BANKED_CODEX_RATE_LIMIT_RESET';
@@ -209,7 +214,7 @@ export function createCodexBankedResetTelemetryRecord(comments = [], {
   });
 }
 
-export function buildCodexBankedResetTelemetryIssueBody(record = {}) {
+export function buildCodexBankedResetTelemetryIssueBodyV2(record = {}) {
   const payload = JSON.stringify(record, null, 2);
   return [
     `<!-- ${CODEX_BANKED_RESET_TELEMETRY_MARKER} -->`,

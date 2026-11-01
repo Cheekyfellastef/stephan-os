@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 
+import { readMissionWorkerActiveClaim } from './mission-orchestrator-worker-heartbeat-active-claim.mjs';
+
 export const MISSION_WORKER_HEARTBEAT_SCHEMA = 'stephanos.mission-orchestrator-worker-heartbeat.v1';
 export const MISSION_WORKER_LAUNCH_IDENTITY_SCHEMA = 'stephanos.mission-worker-launch-identity.v1';
 export const MISSION_WORKER_TASK_NAME = 'Stephanos Mission Orchestrator Worker';
@@ -14,6 +16,8 @@ export const MISSION_WORKER_LAUNCH_RECEIPT_RETRY_ATTEMPTS = 40;
 export const MISSION_WORKER_LAUNCH_RECEIPT_RETRY_DELAY_MS = 50;
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const ID_64 = /^[0-9a-f]{64}$/i;
+const ACTIVE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
+const ACTIVE_PHASE = /^[a-z0-9][a-z0-9._:/ -]{0,159}$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const CANONICAL_NODE = 'C:\\Program Files\\nodejs\\node.exe';
 const LAUNCH_IDENTITY_KEYS = Object.freeze([
@@ -36,10 +40,28 @@ const AFFIRMATIVE_WORKER_TICK_VERDICTS = new Set([
   'MISSION_WORKER_TICK_RUNNING',
   'MISSION_WORKER_TICK_PASS',
 ]);
+const RECOGNIZED_WORKER_TICK_VERDICTS = new Set([
+  ...AFFIRMATIVE_WORKER_TICK_VERDICTS,
+  'MISSION_WORKER_STALLED_MISSION_SIDELINED',
+  'MISSION_WORKER_EXTERNAL_HANDOFF_PENDING',
+  'CONTROLLER_EXECUTION_DEFECT_NO_MATERIAL_PROGRESS',
+  'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT',
+  'MISSION_WORKER_TICK_FAILED',
+  'MISSION_WORKER_COMPLETION_GUARDIAN_FAILED',
+]);
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
   return normalized || fallback;
+}
+
+function normalizeActiveClaim(activeClaim) {
+  if (!activeClaim || typeof activeClaim !== 'object' || Array.isArray(activeClaim)) return null;
+  const activeTaskId = text(activeClaim.activeTaskId);
+  const activeReceiptId = text(activeClaim.activeReceiptId);
+  const executionPhase = text(activeClaim.executionPhase);
+  if (!ACTIVE_ID.test(activeTaskId) || !ACTIVE_ID.test(activeReceiptId) || !ACTIVE_PHASE.test(executionPhase)) return null;
+  return Object.freeze({ activeTaskId, activeReceiptId, executionPhase });
 }
 
 export function resolveCanonicalMissionWorkerPaths({ env = process.env, home = os.homedir() } = {}) {
@@ -62,6 +84,7 @@ export function createMissionWorkerHeartbeatRecord({
   workerStartedAtUtc,
   taskName = MISSION_WORKER_TASK_NAME,
   lastTickVerdict = 'MISSION_WORKER_RUNNING',
+  activeClaim = null,
 } = {}) {
   const resolvedRepositoryRoot = path.resolve(text(repositoryRoot));
   const normalizedBranch = text(branch).toLowerCase();
@@ -70,6 +93,13 @@ export function createMissionWorkerHeartbeatRecord({
   const normalizedPid = Number.parseInt(pid, 10);
   const normalizedLaunchIdentityId = text(launchIdentityId).toLowerCase();
   const normalizedWorkerStartedAtUtc = text(workerStartedAtUtc);
+  const requestedTickVerdict = text(lastTickVerdict, 'MISSION_WORKER_RUNNING');
+  const activeExecution = requestedTickVerdict === 'MISSION_WORKER_TICK_RUNNING'
+    ? normalizeActiveClaim(activeClaim)
+    : null;
+  const effectiveTickVerdict = requestedTickVerdict === 'MISSION_WORKER_TICK_RUNNING' && !activeExecution
+    ? 'MISSION_WORKER_TICK_PASS'
+    : requestedTickVerdict;
   const timestampMs = EXPLICIT_TIMEZONE.test(text(timestampUtc)) ? Date.parse(timestampUtc) : Number.NaN;
   const workerStartedAtMs = EXPLICIT_TIMEZONE.test(normalizedWorkerStartedAtUtc)
     ? Date.parse(normalizedWorkerStartedAtUtc)
@@ -94,7 +124,8 @@ export function createMissionWorkerHeartbeatRecord({
     pid: normalizedPid,
     launchIdentityId: normalizedLaunchIdentityId,
     workerStartedAtUtc: normalizedWorkerStartedAtUtc,
-    lastTickVerdict: text(lastTickVerdict, 'MISSION_WORKER_RUNNING'),
+    lastTickVerdict: effectiveTickVerdict,
+    ...(activeExecution || {}),
     arbitraryShellAllowed: false,
     sourceMutationAllowed: false,
   });
@@ -150,8 +181,15 @@ export function projectMissionWorkerHeartbeat(record = {}, {
   else if (Number.isFinite(heartbeatMs) && workerStartedAtMs >= heartbeatMs) {
     errors.push('worker-heartbeat-not-after-process-start');
   }
-  if (!AFFIRMATIVE_WORKER_TICK_VERDICTS.has(text(record?.lastTickVerdict))) {
-    errors.push('worker-last-tick-not-affirmative');
+  const lastTickVerdict = text(record?.lastTickVerdict);
+  const lastTickRecognized = RECOGNIZED_WORKER_TICK_VERDICTS.has(lastTickVerdict);
+  const lastTickAffirmative = AFFIRMATIVE_WORKER_TICK_VERDICTS.has(lastTickVerdict);
+  // A queued external handoff still needs its existing consumer. Readiness
+  // keeps that consumer alive; it is not proof of external/material progress.
+  const lastTickOperational = lastTickAffirmative
+    || lastTickVerdict === 'MISSION_WORKER_EXTERNAL_HANDOFF_PENDING';
+  if (!lastTickRecognized) {
+    errors.push('worker-last-tick-unrecognized');
   }
   if (record?.sourceMutationAllowed !== false) errors.push('worker-source-mutation-forbidden');
   if (record?.arbitraryShellAllowed !== false) errors.push('worker-arbitrary-shell-forbidden');
@@ -180,7 +218,10 @@ export function projectMissionWorkerHeartbeat(record = {}, {
     workerStartedAtUtc: Number.isFinite(workerStartedAtMs)
       ? new Date(workerStartedAtMs).toISOString()
       : null,
-    lastTickVerdict: text(record?.lastTickVerdict),
+    lastTickVerdict,
+    lastTickRecognized,
+    lastTickAffirmative,
+    lastTickOperational,
     errors: Object.freeze([...new Set(errors)]),
     authority: 'mission-worker-only',
     controllerHeartbeatAuthority: false,
@@ -302,6 +343,8 @@ export async function writeMissionWorkerHeartbeat({
   launchIdentityId = env.STEPHANOS_MISSION_WORKER_LAUNCH_ID,
   launchReceiptPath = env.STEPHANOS_MISSION_WORKER_LAUNCH_RECEIPT_PATH,
   lastTickVerdict,
+  activeActionGrant,
+  activeClaimReader = readMissionWorkerActiveClaim,
   readFileFn,
   lstatFn,
   sleepFn = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
@@ -327,6 +370,14 @@ export async function writeMissionWorkerHeartbeat({
     readFileFn,
     lstatFn,
   }, sleepFn);
+  let activeClaim = null;
+  if (activeActionGrant) {
+    try {
+      activeClaim = await activeClaimReader({ env, actionGrant: activeActionGrant });
+    } catch {
+      activeClaim = null;
+    }
+  }
   const record = createMissionWorkerHeartbeatRecord({
     timestampUtc,
     repositoryRoot,
@@ -337,6 +388,7 @@ export async function writeMissionWorkerHeartbeat({
     launchIdentityId: launchIdentity.launchIdentityId,
     workerStartedAtUtc: launchIdentity.workerStartedAtUtc,
     lastTickVerdict,
+    activeClaim,
   });
   await mkdir(path.dirname(paths.heartbeatPath), { recursive: true });
   const temporaryPath = `${paths.heartbeatPath}.${pid}.${randomUUID()}.tmp`;

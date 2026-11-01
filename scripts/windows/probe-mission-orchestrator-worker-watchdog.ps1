@@ -307,7 +307,13 @@ function Get-VerifiedWorkerLaunchIdentity {
         if ($launchIdentityId -notmatch '^[0-9a-f]{64}$') { return $null }
         $heartbeatTimestampUtc = [datetime]::Parse([string]$Heartbeat.timestampUtc).ToUniversalTime()
         $heartbeatWorkerStartedAtUtc = [datetime]::Parse([string]$Heartbeat.workerStartedAtUtc).ToUniversalTime()
-        $processStartedAtUtc = ([datetime]$Process.CreationDate).ToUniversalTime()
+        $processCapability = [System.Diagnostics.Process]::GetProcessById([int]$Process.ProcessId)
+        try {
+            if ($processCapability.HasExited -or $processCapability.Id -ne [int]$Process.ProcessId) { return $null }
+            $null = $processCapability.Handle
+            $processStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
+        }
+        finally { $processCapability.Dispose() }
         if ($heartbeatWorkerStartedAtUtc.Ticks -ne $processStartedAtUtc.Ticks `
             -or $heartbeatTimestampUtc -le $processStartedAtUtc `
             -or $heartbeatTimestampUtc -gt [datetime]::UtcNow) { return $null }

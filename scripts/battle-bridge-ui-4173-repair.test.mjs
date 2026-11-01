@@ -2,13 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { collectUi4173ServedExactHeadProof, evaluateUi4173Repair, getUi4173RepairCurrentGitHead, resolveUi4173RepairInvocation, runUi4173Repair } from './battle-bridge-ui-4173-repair.mjs';
+import { join, dirname, resolve, basename } from 'node:path';
+import { collectUi4173ServedExactHeadProof, evaluateUi4173Repair, getUi4173RepairCurrentGitHead, resolveUi4173RepairInvocation, runUi4173Repair as runActualUiRepair } from './battle-bridge-ui-4173-repair.mjs';
 import { BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 const EXACT_HEAD = 'a'.repeat(40);
+const testWorkspace = mkdtempSync(join(tmpdir(), 'ui-repair-proof-'));
+const runUi4173Repair = options => runActualUiRepair({ ...options,
+  sharedWorkspace: options.sharedWorkspace ?? mkdtempSync(join(testWorkspace, 'case-')) });
+test.after(() => {
+  assert.equal(dirname(resolve(testWorkspace)), resolve(tmpdir()));
+  assert.ok(basename(testWorkspace).startsWith('ui-repair-proof-'));
+  rmSync(testWorkspace, { recursive: true });
+});
 
 function exactHeadProof(overrides = {}) {
   return {
@@ -45,6 +53,15 @@ test('fixture READY does not start or plan start', () => {
   const result = evaluateUi4173Repair({ readinessReport: report({ ui: true, verdict: 'ready' }), dryRun: true });
   assert.equal(result.allowedToStart, false);
   assert.match(result.blockers.map((b) => b.id).join(','), /stephanos-ui-already-ready/);
+});
+
+test('fixture READY with stale exact-head proof plans bounded 4173 restart', () => {
+  const servedRuntimeProof = { ready: false, expectedHead: EXACT_HEAD, gitCommit: 'b'.repeat(40) };
+  const result = evaluateUi4173Repair({ readinessReport: report({ ui: true, verdict: 'ready' }), dryRun: true, servedRuntimeProof });
+  assert.equal(result.allowedToStart, true);
+  assert.equal(result.staleServedRuntime, true);
+  assert.equal(result.action, 'dry-run-plan-stale-ui-4173-restart');
+  assert.equal(result.authority.killsProcesses, false);
 });
 
 test('fixture STALE_WORKSPACE blocks start', () => {
@@ -239,6 +256,12 @@ test('Windows start uses controlled cmd.exe wrapper with fixed args for the cano
   assert.equal(calls[0].options.shell, false);
   assert.equal(calls[0].options.cwd, process.cwd());
   assert.equal(calls[0].options.env.STEPHANOS_EXPECTED_HEAD, EXACT_HEAD);
+  assert.equal(calls[0].options.detached, true);
+  assert.equal(calls[0].options.windowsHide, true);
+  assert.equal(calls[0].options.stdio[0], 'ignore');
+  assert.equal(Number.isInteger(calls[0].options.stdio[1]), true);
+  assert.equal(Number.isInteger(calls[0].options.stdio[2]), true);
+  assert.notEqual(calls[0].options.stdio[1], calls[0].options.stdio[2]);
   const output = json();
   assert.equal(output.invocation.kind, 'CONTROLLED_WINDOWS_NPM_WRAPPER');
   assert.equal(output.invocation.command, 'cmd.exe');

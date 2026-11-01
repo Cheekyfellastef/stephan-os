@@ -9,7 +9,25 @@ on:
       - 'shared/agents/mailboxReceiptIndexAccess.test.mjs'
       - 'shared/agents/mailboxReceiptIndexGitHubMirror.mjs'
       - 'shared/agents/mailboxReceiptIndexGitHubMirror.test.mjs'
+      - 'shared/agents/mailboxReceiptIndexWorkflow.test.mjs'
       - 'shared/agents/mailboxReceiptTruthIssue.test.mjs'
+      - 'shared/agents/canonicalMailboxRolloverConsumerV1.mjs'
+      - 'shared/agents/canonicalMailboxRolloverConsumerV1.test.mjs'
+      - 'shared/agents/canonicalMailboxRotation*.mjs'
+      - 'scripts/canonical-mailbox-rotation*.mjs'
+      - 'scripts/canonical-mailbox-action-evidence-v2*.mjs'
+      - 'tests/fixtures/canonical-mailbox-rotation/**'
+      - 'scripts/canonical-mailbox-execution-ledger-v1.mjs'
+      - 'scripts/canonical-mailbox-workflow*.mjs'
+      - 'shared/agents/codexDispatchHostOps.mjs'
+      - 'shared/agents/postSyncRuntimeRefreshCoordinator.mjs'
+      - 'scripts/stephanos-codex-dispatch-mcp.mjs'
+      - 'scripts/stephanos-codex-dispatch-host-operation-v1*.mjs'
+      - 'scripts/battle-bridge-github-sync-executor*.mjs'
+      - 'scripts/battle-bridge-github-command-mailbox.mjs'
+      - 'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs'
+      - 'scripts/canonical-mailbox-rollover-github-adapter.mjs'
+      - 'scripts/canonical-mailbox-rollover-github-adapter.test.mjs'
       - 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.mjs'
       - 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs'
       - 'scripts/windows/install-battle-bridge-github-command-mailbox.ps1'
@@ -21,6 +39,9 @@ on:
     paths:
       - 'shared/agents/mailboxReceiptIndex.mjs'
       - 'shared/agents/mailboxReceiptIndexGitHubMirror.mjs'
+      - 'shared/agents/canonicalMailboxAuthorityV1.mjs'
+      - 'shared/agents/canonicalMailboxRolloverConsumerV1.mjs'
+      - 'scripts/canonical-mailbox-rollover-github-adapter.mjs'
       - '.github/workflows/mailbox-receipt-index.yml'
   workflow_dispatch:
 
@@ -29,7 +50,7 @@ permissions:
 
 concurrency:
   group: mailbox-receipt-index-${{ github.event.pull_request.number || 'mirror' }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   proof:
@@ -50,13 +71,120 @@ jobs:
 
       - name: Shared Workspace receipt index proof
         run: >-
-          node --test
+          node --test --test-concurrency=1
+          scripts/battle-bridge-fleet-receipt-projection.test.mjs
+          scripts/battle-bridge-frontend-visibility-mailbox.test.mjs
+          scripts/battle-bridge-github-command-mailbox-accepted-lease.test.mjs
+          scripts/battle-bridge-github-command-mailbox-cache-authority.test.mjs
+          scripts/battle-bridge-github-command-mailbox-one-minute-cadence.test.mjs
+          scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.test.mjs
+          scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs
+          scripts/battle-bridge-github-command-mailbox.test.mjs
+          scripts/battle-bridge-github-sync-and-refresh.test.mjs
+          scripts/battle-bridge-github-sync-command-registry.test.mjs
+          scripts/battle-bridge-github-sync-executor.test.mjs
+          scripts/battle-bridge-github-sync-installer.test.mjs
+          scripts/battle-bridge-github-sync-policy.test.mjs
+          scripts/battle-bridge-github-sync-runtime-memory.test.mjs
+          scripts/battle-bridge-outbound-health-beacon-ingress-freshness.test.mjs
+          scripts/battle-bridge-outbound-health-beacon.test.mjs
+          scripts/battle-bridge-post-sync-refresh.test.mjs
+          scripts/battle-bridge-recovery-canonical-mailbox-authority.test.mjs
+          scripts/battle-bridge-recovery-mesh.test.mjs
+          scripts/battle-bridge-seed-growth-diagnostic-projection.test.mjs
+          scripts/battle-bridge-tailscale-bootstrap-pipe.test.mjs
+          scripts/battle-bridge-tailscale-prerequisite-proof.test.mjs
+          scripts/battle-bridge-worker-watchdog-post-sync-deadline.test.mjs
+          scripts/canonical-mailbox-action-evidence-v2.test.mjs
+          scripts/canonical-mailbox-rollover-github-adapter.test.mjs
+          scripts/canonical-mailbox-rotation-protocol.test.mjs
+          scripts/canonical-mailbox-workflow-event-gate.test.mjs
+          scripts/operator-protected-personal-repository-merge-dispatch-inventory.test.mjs
+          scripts/post-sync-runtime-refresh-windows-canonical-git-hardlink.test.mjs
+          scripts/protected-openclaw-merge-continuity-v2.test.mjs
+          scripts/prove-protected-workflow-actor-handoff.test.mjs
+          scripts/repository-native-merge-boundary.test.mjs
+          scripts/starfield-vr-telemetry-archive.test.mjs
+          scripts/stephanos-codex-dispatch-host-operation-v1.test.mjs
+          shared/agents/backendColdStartFailureClassifierV1.test.mjs
+          shared/agents/battleBridgeApprovedBackendRestartMailboxV1.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailbox.elastic-v1.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailbox.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxBootstrap.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxDiagnosticLink.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxForgeShadow.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxForgeShadowM3.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxGuardedCodexDispatchV1.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxGuardedCodexReadbackV1.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxOperatorEnvironmentApprovalV1.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxProtectedMerge.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxSovereignRemote.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxStarfieldVr.test.mjs
+          shared/agents/battleBridgeGitHubRuntimeDataPreservationMailboxV1.test.mjs
+          shared/agents/battleBridgeOutOfBandObserverReceiptV1.test.mjs
+          shared/agents/battleBridgeTailscaleBootstrapPipeV1.test.mjs
+          shared/agents/battleBridgeTailscalePrerequisiteProofV1.test.mjs
+          shared/agents/canonicalMailboxAuthorityV1.test.mjs
+          shared/agents/canonicalMailboxRolloverConsumerV1.test.mjs
+          shared/agents/canonicalMailboxRolloverPlannerV1.test.mjs
+          shared/agents/canonicalMailboxRotationActionEvidenceV1.test.mjs
+          shared/agents/canonicalMailboxRotationV1.test.mjs
+          shared/agents/canonicalMailboxRoutingPolicyV1.test.mjs
+          shared/agents/codexBankedResetTelemetryMirror.test.mjs
+          shared/agents/codexDispatchHostOps.test.mjs
+          shared/agents/codexDispatchMcp.test.mjs
+          shared/agents/elasticBattleBridgeMailboxCapacityV1.test.mjs
+          shared/agents/elasticBattleBridgeMailboxResourceEvidenceV1.test.mjs
+          shared/agents/elasticBattleBridgeMailboxSchedulerAdapterV1.test.mjs
+          shared/agents/elasticBattleBridgeMailboxSchedulerEvidenceV1.test.mjs
+          shared/agents/expressCommandMailboxV1.test.mjs
+          shared/agents/forgeShadowM3RunnerExecutionReceiptAdapterV1.test.mjs
+          shared/agents/forgeShadowM3RunnerRuntimePlanV1.test.mjs
           shared/agents/mailboxReceiptIndex.test.mjs
           shared/agents/mailboxReceiptIndexAccess.test.mjs
           shared/agents/mailboxReceiptIndexGitHubMirror.test.mjs
+          shared/agents/mailboxReceiptIndexWorkflow.test.mjs
           shared/agents/mailboxReceiptTruthIssue.test.mjs
-          scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs
-          shared/agents/battleBridgeGitHubCommandMailbox.test.mjs
+          shared/agents/mainMovementTolerantProtectedMergeIntegrationV1.test.mjs
+          shared/agents/monitorMultiplexerMailboxRoute.test.mjs
+          shared/agents/operatorEnvironmentApprovalBattleBridgeV1.test.mjs
+          shared/agents/operatorPersonalRepositoryMergeV1.test.mjs
+          shared/agents/operatorPersonalRepositoryProvenanceBootstrapV1.test.mjs
+          shared/agents/operatorProtectedMergeConfigurationActivationV1.test.mjs
+          shared/agents/postSyncCodexDispatchMcpNaturalReloadV1.test.mjs
+          shared/agents/postSyncEdgeLauncherNaturalReloadV1.test.mjs
+          shared/agents/postSyncExecutionSurfaceQuarantineHardeningV1.test.mjs
+          shared/agents/postSyncGoalDiscoveryHeartbeatRuntimeV1.test.mjs
+          shared/agents/postSyncMailboxReceiptIndexNaturalReloadV1.test.mjs
+          shared/agents/postSyncProtectedMergeNoRuntimeV1.test.mjs
+          shared/agents/postSyncRuntimeRefreshControlPlaneClassification.test.mjs
+          shared/agents/postSyncRuntimeRefreshCoordinator.test.mjs
+          shared/agents/postSyncRuntimeRefreshCoordinator.workerWatchdogProbe.test.mjs
+          shared/agents/postSyncServerOpenClawClassificationV1.test.mjs
+          shared/agents/postSyncVerificationClassificationV1.test.mjs
+          shared/agents/protectedOpenClawMergeMailboxAdapterSuccessorBoundary.test.mjs
+          shared/agents/protectedOpenClawMergeMailboxCanonicalProvenance.test.mjs
+          shared/agents/protectedOpenClawMergeWorkflowDispatch.contract.test.mjs
+          shared/agents/protectedOpenClawMergeWorkflowDispatch.integration.test.mjs
+          shared/agents/protectedOpenClawMergeWorkflowDispatch.test.mjs
+          shared/agents/protectedWorkflowDispatchCanonicalMailboxV1.test.mjs
+          shared/agents/protectedWorkflowDispatchMailboxPermissionsV1.test.mjs
+          shared/agents/protectedWorkflowDispatchMailboxV1.test.mjs
+          shared/agents/rescueIslandSupervisedMailboxV1.test.mjs
+          shared/agents/sovereignCommanderBattleBridgeV1.test.mjs
+          shared/agents/sovereignCommanderCanonicalGitConfigRepairV1.test.mjs
+          shared/agents/sovereignCommanderCpuPressure.test.mjs
+          shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs
+          shared/agents/sovereignCommanderTailscale.test.mjs
+          shared/agents/sovereignFrontendVisibilityMailboxV1.test.mjs
+          shared/agents/sovereignMaintenanceRecoveryMailboxV1.test.mjs
+          shared/agents/starfieldVrBattleBridgeMailboxV1.test.mjs
+          shared/agents/starfieldVrBattleBridgeReadinessV1.test.mjs
+          shared/agents/stephanosChatUpdate.test.mjs
+          shared/agents/windowsAuthorityMailboxCadenceReviewV1.test.mjs
+          shared/agents/windowsAuthorityMailboxCadenceRouterV1.test.mjs
+          shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.test.mjs
+          shared/agents/windowsAuthorityMailboxRolloverExecutionScanV1.test.mjs
 
       - name: Import structure proof
         run: node scripts/guard-import-structure.mjs
@@ -71,7 +199,7 @@ jobs:
       (
         github.event_name != 'issue_comment' ||
         (
-          github.event.issue.number == 1507 &&
+          github.event.issue.number > 0 &&
           github.event.comment.user.login == github.repository_owner &&
           contains(github.event.comment.body, '<!-- stephanos-battle-bridge-command-receipt -->')
         )
@@ -88,10 +216,20 @@ jobs:
           ref: main
           fetch-depth: 1
 
+      - name: Recheck canonical owner event from trusted main
+        if: github.event_name == 'issue_comment'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/canonical-mailbox-workflow-event-gate.mjs receipt
       - name: Update compact receipt truth surfaces
         uses: actions/github-script@v7
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           script: |
+            const { assertMailboxRotationWorkflowAdmission } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/canonical-mailbox-workflow-admission-v1.mjs`);
+            const recheck = () => assertMailboxRotationWorkflowAdmission({ mode: 'receipt' });
+            await recheck();
             const path = await import('node:path');
             const { pathToFileURL } = await import('node:url');
             const moduleUrl = `${pathToFileURL(path.resolve('shared/agents/mailboxReceiptIndexGitHubMirror.mjs')).href}?run=${Date.now()}`;
@@ -103,13 +241,33 @@ jobs:
               issue_number: mailboxIssueNumber,
               per_page: 100,
             });
+            const truthIssueNumber = receiptIndexMirror.MAILBOX_RECEIPT_GITHUB_TRUTH_ISSUE;
+            const predecessorComments = [];
+            const predecessor = receiptIndexMirror.MAILBOX_RECEIPT_GITHUB_PREDECESSOR;
+            if (predecessor) {
+              const issue = await github.rest.issues.get({ owner: context.repo.owner, repo: context.repo.repo, issue_number: predecessor });
+              const latest = Math.max(1, Math.ceil(issue.data.comments / 100));
+              for (const page of [...new Set([Math.max(1, latest - 1), latest])]) {
+                const response = await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: predecessor, per_page: 100, page });
+                predecessorComments.push(...response.data);
+              }
+            }
+            const previousTruth = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: truthIssueNumber,
+            });
             const record = receiptIndexMirror.createTrustedMailboxReceiptIndexFromGitHubComments(comments, {
               ownerLogin: context.repo.owner,
               timestampUtc: new Date().toISOString(),
+              priorTruthIssueBody: previousTruth.data.body,
+              predecessorComments,
             });
-            const commentBody = receiptIndexMirror.buildTrustedMailboxReceiptIndexGitHubBody(record);
+            const commentBody = receiptIndexMirror.buildTrustedMailboxReceiptIndexGitHubBodyV2(record);
             const existing = receiptIndexMirror.findTrustedMailboxReceiptIndexComment(comments);
             if (existing) {
+              await recheck();
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -118,6 +276,7 @@ jobs:
               });
               core.info(`Updated receipt index comment ${existing.id}.`);
             } else {
+              await recheck();
               const created = await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -127,8 +286,8 @@ jobs:
               core.info(`Created receipt index comment ${created.data.id}.`);
             }
 
-            const truthIssueNumber = receiptIndexMirror.MAILBOX_RECEIPT_GITHUB_TRUTH_ISSUE;
             const truthBody = receiptIndexMirror.buildTrustedMailboxReceiptTruthIssueBody(record);
+            await recheck();
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -138,3 +297,20 @@ jobs:
               state: 'open',
             });
             core.info(`Updated receipt truth issue ${truthIssueNumber}.`);
+
+      - name: Observe capacity and prepare one inactive successor through existing owner
+        uses: actions/github-script@v7
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          script: |
+            const { assertMailboxRotationWorkflowAdmission } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/canonical-mailbox-workflow-admission-v1.mjs`);
+            const recheck = () => assertMailboxRotationWorkflowAdmission({ mode: 'receipt' });
+            await recheck();
+            const { pathToFileURL } = await import('node:url');
+            const { resolve } = await import('node:path');
+            const { observeCanonicalMailboxRolloverOnGitHub } = await import(
+              pathToFileURL(resolve('scripts/canonical-mailbox-rollover-github-adapter.mjs')).href);
+            const result = await observeCanonicalMailboxRolloverOnGitHub({ github, context });
+            core.info(JSON.stringify(result));
+            if (!result.ok) core.setFailed(result.blocker);

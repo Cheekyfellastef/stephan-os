@@ -1,0 +1,976 @@
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
+import {
+  CRITICAL_BACKLOG_CONVEYOR_SCHEMA,
+  CRITICAL_BACKLOG_DECISION,
+  DEFAULT_CRITICAL_BACKLOG,
+  buildCriticalBacklogMissionInput,
+  buildCriticalBacklogProjection,
+  projectElasticMissionExecutionObligation,
+} from '../../shared/agents/criticalBacklogConveyor.mjs';
+import { MAXIMUM_BUILD_LANES } from '../../shared/agents/elasticBuildCapacityV1.mjs';
+import {
+  buildMissionWorkerAction,
+  createMissionWorkerActionGrantV1,
+  projectMissionWorkerActionState,
+} from '../../shared/agents/missionOrchestratorWorker.mjs';
+import {
+  MISSION_CONTROLLER_ROUTE,
+  routeMissionControllerCapacity,
+} from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
+import {
+  OPENCLAW_PROVIDER_ROUTE,
+  routeWithQualifiedOpenClawProvider,
+} from '../../shared/agents/openClawProviderPoolQualificationV1.mjs';
+import {
+  createSharedWorkspaceEventRecord,
+  createSharedWorkspaceStatusRecord,
+  resolveSharedWorkspacePath,
+  writeAtomicJson,
+} from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import {
+  createMissionRecord,
+  listMissionRecords,
+} from './missionOrchestratorStore.js';
+import {
+  readAuthoritativeProgrammeProjection,
+  readMissionControllerCapacityRoutingInput,
+} from './programmeAuthorityService.js';
+import { ensureElasticGoalMissions } from './elasticGoalMissionAdmissionService.js';
+import { reconcileExpiredElasticReviewLeaseV1 } from './elasticPrHeadLeaseService.js';
+import { publishNextMissionWorkerAction } from './missionOrchestratorWorkerService.js';
+
+export const CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA = 'stephanos.critical-backlog-conveyor-service.v1';
+export const ELASTIC_GOAL_BUILD_IGNITION_SCHEMA = 'stephanos.elastic-goal-build-ignition.v1';
+
+const BLOCKED_DECISIONS = new Set([
+  CRITICAL_BACKLOG_DECISION.BLOCKED_BY_INVALID_BACKLOG,
+  CRITICAL_BACKLOG_DECISION.BLOCKED_BY_MULTIPLE_ACTIVE_MISSIONS,
+  CRITICAL_BACKLOG_DECISION.BLOCKED_BY_TERMINAL_MISSION,
+]);
+const SHA_40 = /^[0-9a-f]{40}$/i;
+const ELASTIC_MISSION_ID = /^critical-([1-9]\d*)-elastic-goal(?:$|[-_.])/i;
+const EXTERNAL_ELASTIC_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'openclaw-standalone', 'openclaw-local', 'sovereign-commander']);
+const EXTERNAL_ELASTIC_ROUTES = new Set([
+  MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
+  MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
+  MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
+  MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL,
+  MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER,
+]);
+
+function text(value, fallback = '') {
+  const normalized = String(value ?? '').trim();
+  return normalized || fallback;
+}
+
+function standaloneCompatibilityBlockedAdapters(blockedAdapters = []) {
+  return [...new Set(
+    (Array.isArray(blockedAdapters) ? blockedAdapters : [])
+      .map((value) => text(value).toLowerCase())
+      .filter(Boolean),
+  )];
+}
+
+function qualifiedStandaloneCandidate(routed = {}) {
+  if (routed?.dispatchAllowed !== true) return null;
+  const adapter = text(routed.adapter).toLowerCase();
+  const route = text(routed.route).toUpperCase();
+  const provider = text(
+    routed?.openClawQualification?.receipt?.provider
+      || routed?.openClawCapacity?.receipt?.provider,
+  ).toLowerCase();
+  const directStandalone = adapter === 'openclaw-standalone'
+    && route === MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE;
+  const directLocal = adapter === 'openclaw-local'
+    && route === MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL
+    && provider === 'openclaw-standalone';
+  if (!directStandalone && !directLocal) return null;
+  return Object.freeze({
+    route: directLocal
+      ? MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL
+      : MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
+    adapter: directLocal ? 'openclaw-local' : 'openclaw-standalone',
+    workerId: routed.workerId,
+    receiptId: routed.selectedCapacityReceiptId,
+    proofRefs: routed.proofRefs,
+    queueDepth: routed.openClawCapacity?.receipt?.queueDepth,
+    p95StartLatencySeconds: routed.openClawCapacity?.receipt?.p95StartLatencySeconds,
+  });
+}
+
+function eventId(value) {
+  return `critical-backlog-${createHash('sha256').update(value).digest('hex').slice(0, 20)}`;
+}
+
+function elasticIssueNumber(mission = {}) {
+  const match = text(mission?.missionId).toLowerCase().match(ELASTIC_MISSION_ID);
+  const parsed = Number(match?.[1]);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function elasticControllerProjection(admission = {}) {
+  const mission = admission.selectedMission;
+  const issueNumber = elasticIssueNumber(mission);
+  if (!mission || !issueNumber) return null;
+  const executionObligation = projectElasticMissionExecutionObligation(admission);
+  return Object.freeze({
+    schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SCHEMA,
+    validation: Object.freeze({ valid: true, errors: Object.freeze([]), finalVerdict: 'CRITICAL_BACKLOG_PASS' }),
+    decision: CRITICAL_BACKLOG_DECISION.WAIT_EXTERNAL_ACTIVE_MISSION,
+    selectedItem: Object.freeze({
+      itemId: `elastic-goal-${issueNumber}`,
+      priority: 0,
+      issueNumbers: Object.freeze([issueNumber]),
+      headlineApprovalRef: 'mission-scheduler-elastic-admission',
+      mission,
+    }),
+    activeMission: mission,
+    executionObligation,
+    completedItemIds: Object.freeze([]),
+    remainingItemIds: Object.freeze([]),
+    elasticMissionIds: Object.freeze((admission.elasticMissions || []).map((item) => text(item.missionId)).filter(Boolean)),
+    exactNextAction: executionObligation.state === 'OCCUPIED'
+      ? `Observe the existing external execution of ${text(mission.missionId)} and reconcile its authentic result; no new worker action is owed.`
+      : executionObligation.state === 'RUNNABLE'
+        ? `Advance scheduler-admitted elastic goal mission ${text(mission.missionId)} by one bounded Mission Worker action.`
+        : `Resolve incomplete execution-obligation evidence for ${text(mission.missionId)} before claiming worker readiness.`,
+    oneActiveMissionEnforced: false,
+    elasticGoalMissionsUseSchedulerCapacity: true,
+    duplicateCodexDispatchAllowed: false,
+    mergeAuthority: false,
+    exactHeadApprovalRequired: true,
+    finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
+  });
+}
+
+function normalizeScope(value) {
+  return text(value).replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/\*\*$/, '').replace(/\/+$/, '');
+}
+
+function missionScopes(mission = {}) {
+  return [...new Set((Array.isArray(mission.allowedFiles) ? mission.allowedFiles : [])
+    .map(normalizeScope)
+    .filter(Boolean))].sort();
+}
+
+function scopesOverlap(left, right) {
+  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+}
+
+function scopeSetConflicts(scopes, occupied) {
+  return scopes.some((scope) => occupied.some((held) => scopesOverlap(scope, held)));
+}
+
+function prePrElasticMission(mission = {}) {
+  const issueNumber = elasticIssueNumber(mission);
+  const branch = text(mission.git?.branch || mission.branch);
+  const prNumber = Number(mission.pullRequest?.number || mission.prNumber || 0);
+  const headSha = text(mission.pullRequest?.headSha || mission.headSha || mission.git?.headSha).toLowerCase();
+  return Boolean(
+    issueNumber
+    && branch === `openclaw/elastic-goal-${issueNumber}`
+    && !(Number.isSafeInteger(prNumber) && prNumber > 0)
+    && !SHA_40.test(headSha),
+  );
+}
+
+function externalCandidateKey(candidate = {}) {
+  return [text(candidate.adapter), text(candidate.workerId), text(candidate.receiptId)].join(':').toLowerCase();
+}
+
+function normalizedExternalCandidate(candidate = {}) {
+  const route = text(candidate.route).toUpperCase();
+  const adapter = text(candidate.adapter).toLowerCase();
+  const workerId = text(candidate.workerId);
+  if (!EXTERNAL_ELASTIC_ROUTES.has(route) || !EXTERNAL_ELASTIC_ADAPTERS.has(adapter) || !workerId) return null;
+  return Object.freeze({
+    route,
+    adapter,
+    workerId,
+    receiptId: text(candidate.receiptId || candidate.selectedCapacityReceiptId),
+    proofRefs: Object.freeze(Array.isArray(candidate.proofRefs) ? [...candidate.proofRefs] : []),
+    queueDepth: Number.isSafeInteger(candidate.queueDepth) ? candidate.queueDepth : 0,
+    p95StartLatencySeconds: Number.isFinite(candidate.p95StartLatencySeconds) ? candidate.p95StartLatencySeconds : 0,
+  });
+}
+
+function defaultExternalCapacityCandidates(mission, capacityRouting, sourceRevision, nowUtc) {
+  if (!capacityRouting || !SHA_40.test(sourceRevision)) return [];
+  const baseInput = {
+    ...capacityRouting,
+    nowUtc,
+    sourceHead: sourceRevision,
+    mission,
+  };
+  const fallback = routeMissionControllerCapacity({
+    ...baseInput,
+    codexStatus: null,
+  });
+  const candidates = (Array.isArray(fallback?.fallbackCandidates) ? fallback.fallbackCandidates : [])
+    .map(normalizedExternalCandidate)
+    .filter(Boolean);
+  const openClaw = routeWithQualifiedOpenClawProvider({
+    ...baseInput,
+    blockedAdapters: standaloneCompatibilityBlockedAdapters(baseInput.blockedAdapters),
+    mission: { ...mission, preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
+    task: { preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
+  }, capacityRouting.openClawHostContext);
+  const standalone = qualifiedStandaloneCandidate(openClaw);
+  const candidate = standalone ? normalizedExternalCandidate(standalone) : null;
+  if (candidate) candidates.push(candidate);
+  const unique = new Map();
+  for (const candidate of candidates) {
+    const key = externalCandidateKey(candidate);
+    if (!unique.has(key)) unique.set(key, candidate);
+  }
+  return [...unique.values()].sort((left, right) => (
+    left.p95StartLatencySeconds - right.p95StartLatencySeconds
+    || left.queueDepth - right.queueDepth
+    || left.route.localeCompare(right.route)
+  ));
+}
+
+export function exactElasticExternalGrant(mission, candidate, sourceRevision, now) {
+  if (!prePrElasticMission(mission) || !SHA_40.test(sourceRevision)) return null;
+  const issueNumber = elasticIssueNumber(mission);
+  const actionState = projectMissionWorkerActionState(mission, { now });
+  const currentPhase = text(actionState?.currentPhase).toUpperCase();
+  if (!['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(currentPhase)) return null;
+  const provisionalGrant = {
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    missionId: text(actionState.missionId).toLowerCase(),
+    capacityRoute: candidate.route,
+    adapter: candidate.adapter,
+    workerId: candidate.workerId,
+    capacityReceiptId: candidate.receiptId,
+    capacityProofRefs: candidate.proofRefs,
+  };
+  const action = buildMissionWorkerAction(actionState, { now, actionGrant: provisionalGrant });
+  if (
+    action?.executable !== true
+    || action?.actionKind !== 'agent-handoff'
+    || text(action.adapter).toLowerCase() !== candidate.adapter
+    || text(action.owner) !== candidate.workerId
+  ) return null;
+  const missionId = text(actionState.missionId).toLowerCase();
+  const actionId = text(action.actionId).toLowerCase();
+  const branch = text(actionState.git?.branch || actionState.branch);
+  if (!missionId || !actionId || !branch) return null;
+  return createMissionWorkerActionGrantV1({
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    grantId: `grant-${actionId}`.slice(0, 80),
+    controllerId: 'durable-flywheel-controller',
+    sourceRevision: sourceRevision.toLowerCase(),
+    missionId,
+    missionRevision: Number(actionState.revision),
+    currentPhase,
+    actionId,
+    actionKind: 'agent-handoff',
+    adapter: candidate.adapter,
+    operation: text(action.operation),
+    providerRouteIntent: text(actionState.providerRouteIntent, 'AUTO').toUpperCase(),
+    capacityRoute: candidate.route,
+    capacityReceiptId: candidate.receiptId || null,
+    capacityProofRefs: candidate.proofRefs,
+    workerId: candidate.workerId,
+    laneId: missionId,
+    repository: text(actionState.repository),
+    issueNumber,
+    prNumber: null,
+    branch,
+    headSha: null,
+    boundedActionCount: 1,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+  });
+}
+
+// The exact static error vocabulary emitted by validateExactActionGrant and
+// validateExecutionTargetBindings in missionOrchestratorWorkerService.js.
+// This is an intentionally fail-closed allowlist, not a prefix/shape match:
+// adding a new validator reason requires an explicit reviewed update here.
+const SAFE_GRANT_MISMATCH_CODES = new Set([
+  'action-grant-action-branch-mismatch',
+  'action-grant-action-head-mismatch',
+  'action-grant-action-mismatch',
+  'action-grant-action-pr-mismatch',
+  'action-grant-action-repository-mismatch',
+  'action-grant-adapter-mismatch',
+  'action-grant-authority-expanded',
+  'action-grant-branch-mismatch',
+  'action-grant-branch-missing',
+  'action-grant-capacity-proof-mismatch',
+  'action-grant-capacity-receipt-mismatch',
+  'action-grant-capacity-route-mismatch',
+  'action-grant-head-binding-missing',
+  'action-grant-head-mismatch',
+  'action-grant-issue-binding-missing',
+  'action-grant-issue-binding-unproven',
+  'action-grant-issue-mismatch',
+  'action-grant-kind-mismatch',
+  'action-grant-lane-binding-missing',
+  'action-grant-lane-issue-mismatch',
+  'action-grant-lane-mismatch',
+  'action-grant-lane-pr-mismatch',
+  'action-grant-mission-mismatch',
+  'action-grant-not-single-use',
+  'action-grant-operation-mismatch',
+  'action-grant-phase-mismatch',
+  'action-grant-pr-binding-missing',
+  'action-grant-pr-binding-unproven',
+  'action-grant-pr-mismatch',
+  'action-grant-repository-mismatch',
+  'action-grant-repository-missing',
+  'action-grant-revision-mismatch',
+  'action-grant-source-revision-mismatch',
+  'invalid-action-grant-controller',
+  'invalid-action-grant-schema',
+  'invalid-action-grant-source-revision',
+]);
+
+// Only closed-world validator names can cross the original worker handoff.
+// Do not export source paths, raw exceptions or an unverified grant as authority.
+function safeGrantMismatchFields(publication) {
+  if (!['action-grant-mismatch', 'locked-action-grant-mismatch',
+    'post-repair-action-grant-mismatch'].includes(text(publication?.reason))) return [];
+  const raw = Array.isArray(publication?.blockers) ? publication.blockers : [];
+  return [...new Set(raw.filter(value => typeof value === 'string'
+    && SAFE_GRANT_MISMATCH_CODES.has(value)))]
+    .sort().slice(0, 16);
+}
+
+// Only known publisher verdicts may enter public conveyor status. In particular,
+// never expose exception messages, internal file paths or provider response bodies.
+const SAFE_PUBLICATION_REASONS = new Set([
+  'not-published', 'capacity-wait', 'publication-refused', 'action-grant-mismatch',
+  'locked-action-grant-mismatch', 'post-repair-action-grant-mismatch',
+  'action-grant-mission-ambiguous', 'action-grant-mission-not-runnable',
+  'repair-transition-precondition-failed', 'mission-state-precondition-failed',
+  'original-source-attempt-fenced', 'agent-already-running',
+  'pending-capacity-reconciliation-blocked', 'queue-execution-binding-unavailable',
+  'forge-publication-parent-head-drift', 'unsupported-worker-adapter',
+  'action-already-published', 'no-runnable-mission',
+  'replacement-source-already-merged-forge-publication-fenced',
+]);
+function safePublicationReason(reason) {
+  const value = text(reason, 'not-published');
+  if (value.startsWith('shared-workspace-handoff:')) return 'shared-workspace-handoff-blocked';
+  return SAFE_PUBLICATION_REASONS.has(value) ? value : 'publication-refused';
+}
+
+export async function dispatchElasticGoalBuilds(admission = {}, {
+  env = process.env,
+  now = new Date(),
+  paths = resolveCriticalBacklogRuntimePaths({ env }),
+  sourceRevision = text(env.STEPHANOS_MISSION_WORKER_HEAD_SHA).toLowerCase(),
+  capacityRouting = null,
+  resolveCapacityCandidates = defaultExternalCapacityCandidates,
+  publishWorkerAction = publishNextMissionWorkerAction,
+} = {}) {
+  const desiredWidth = Math.max(0, Math.min(MAXIMUM_BUILD_LANES, Number(admission.desiredWidth) || 0));
+  const selectedMissionId = text(admission.selectedMission?.missionId).toLowerCase();
+  const running = (Array.isArray(admission.activeMissions) ? admission.activeMissions : [])
+    .filter((mission) => text(mission.dispatch?.status).toLowerCase() === 'running');
+  const runningMissionIds = new Set(running
+    .map((mission) => text(mission.missionId).toLowerCase())
+    .filter(Boolean));
+  const availableSlots = Math.max(0, desiredWidth - running.length);
+  const occupiedScopes = running.flatMap(missionScopes);
+  const usedCapacity = new Set(running.map((mission) => [
+    text(mission.dispatch?.adapter),
+    text(mission.dispatch?.workerId),
+    text(mission.dispatch?.capacityReceiptId),
+  ].join(':').toLowerCase()).filter((value) => value !== '::'));
+  const candidates = [...(Array.isArray(admission.runnableMissions) ? admission.runnableMissions : [])]
+    .filter((mission) => !runningMissionIds.has(text(mission.missionId).toLowerCase()))
+    .sort((left, right) => (
+      Number(text(right.missionId).toLowerCase() === selectedMissionId)
+      - Number(text(left.missionId).toLowerCase() === selectedMissionId)
+    ));
+  const dispatched = [];
+  const held = [];
+  let indeterminateCount = 0;
+
+  if (!SHA_40.test(sourceRevision)) {
+    return Object.freeze({
+      schemaVersion: ELASTIC_GOAL_BUILD_IGNITION_SCHEMA,
+      ok: false,
+      classification: 'ELASTIC_IGNITION_SOURCE_REVISION_UNPROVEN',
+      desiredWidth,
+      availableSlots,
+      dispatched,
+      held: candidates.map((mission) => Object.freeze({ missionId: text(mission.missionId), reason: 'SOURCE_REVISION_REQUIRED' })),
+      dispatchCount: 0,
+      resourceDisjointOneWriterProven: false,
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    });
+  }
+
+  for (const mission of candidates) {
+    // An unknown publish may already own a real worker slot and source scope.
+    if (dispatched.length + indeterminateCount >= availableSlots) break;
+    const missionId = text(mission.missionId).toLowerCase();
+    const scopes = missionScopes(mission);
+    if (!prePrElasticMission(mission)) {
+      held.push(Object.freeze({ missionId, reason: 'EXACT_PR_HEAD_LANE_REQUIRES_CANONICAL_LEASE_PATH' }));
+      continue;
+    }
+    if (!['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(text(mission.currentPhase).toUpperCase())) {
+      held.push(Object.freeze({ missionId, reason: 'NATIVE_CONTROL_PHASE_REMAINS_PRIMARY_LANE' }));
+      continue;
+    }
+    if (!scopes.length || scopeSetConflicts(scopes, occupiedScopes)) {
+      held.push(Object.freeze({ missionId, reason: scopes.length ? 'RESOURCE_SCOPE_CONFLICT' : 'RESOURCE_SCOPE_REQUIRED' }));
+      continue;
+    }
+
+    const routeCandidates = resolveCapacityCandidates(mission, capacityRouting, sourceRevision, now.toISOString())
+      .filter((candidate) => !usedCapacity.has(externalCandidateKey(candidate)));
+    if (!routeCandidates.length) {
+      held.push(Object.freeze({ missionId, reason: 'DISTINCT_PROVEN_EXTERNAL_CAPACITY_UNAVAILABLE' }));
+      continue;
+    }
+
+    let dispatchedMission = null;
+    let grantCandidateObserved = false;
+    let indeterminatePublication = false;
+    let lastPublicationReason = '';
+    const grantMismatchFields = new Set();
+    for (const capacity of routeCandidates) {
+      const grant = exactElasticExternalGrant(mission, capacity, sourceRevision, now);
+      if (!grant) continue;
+      grantCandidateObserved = true;
+
+      const publicationInput = {
+        env,
+        now,
+        nowUtc: now.toISOString(),
+        sourceRevision: sourceRevision.toLowerCase(),
+        repoRoot: paths.repoRoot,
+        sharedWorkspaceRoot: paths.workspaceRoot,
+        root: paths.orchestratorRoot,
+        snapshotRoot: paths.snapshotRoot,
+        actionGrant: grant,
+      };
+      let publication;
+      try {
+        publication = await publishWorkerAction(publicationInput);
+      } catch {
+        // A publisher exception has an UNKNOWN write outcome. The existing
+        // locked, idempotent reconciliation attempt may establish success, but
+        // a second failure never proves that the first write did not commit.
+        try {
+          publication = await publishWorkerAction(publicationInput);
+        } catch {
+          indeterminatePublication = true;
+          lastPublicationReason = 'publication-exception-reconciliation-exception';
+          usedCapacity.add(externalCandidateKey(capacity));
+          break;
+        }
+        if (publication?.published !== true || publication?.actionGrantAccepted !== true) {
+          indeterminatePublication = true;
+          lastPublicationReason = 'publication-exception-reconciliation-' + safePublicationReason(publication?.reason);
+          usedCapacity.add(externalCandidateKey(capacity));
+          break;
+        }
+      }
+      if (publication?.published !== true || publication?.actionGrantAccepted !== true) {
+        lastPublicationReason = safePublicationReason(publication?.reason);
+        for (const field of safeGrantMismatchFields(publication)) grantMismatchFields.add(field);
+        continue;
+      }
+
+      dispatchedMission = Object.freeze({
+        missionId,
+        issueNumber: elasticIssueNumber(mission),
+        adapter: capacity.adapter,
+        route: capacity.route,
+        workerId: capacity.workerId,
+        capacityReceiptId: capacity.receiptId || null,
+        actionId: grant.actionId,
+        grantId: grant.grantId,
+        resourceScopes: Object.freeze([...scopes]),
+        handoffState: text(publication?.handoffResponsibility?.state, 'PICKUP_PENDING'),
+        pickupProven: false,
+        responsibilityRetained: publication?.handoffResponsibility?.responsibilityRetained !== false,
+        publicationIsTerminal: false,
+      });
+      dispatched.push(dispatchedMission);
+      occupiedScopes.push(...scopes);
+      usedCapacity.add(externalCandidateKey(capacity));
+      break;
+    }
+
+    if (dispatchedMission) continue;
+    if (indeterminatePublication) {
+      // An uncertain publication might have committed. Preserve both its
+      // resource scope and one capacity slot until the original owner reconciles
+      // the exact queue/claim; never dispatch an overlapping replacement.
+      indeterminateCount += 1;
+      occupiedScopes.push(...scopes);
+    }
+    held.push(Object.freeze({
+      missionId,
+      reason: indeterminatePublication
+        ? `EXTERNAL_DISPATCH_INDETERMINATE:${lastPublicationReason || 'reconciliation-required'}`
+        : grantCandidateObserved
+          ? `EXTERNAL_DISPATCH_BLOCKED:${lastPublicationReason || 'not-published'}`
+          : 'EXACT_EXTERNAL_ACTION_GRANT_UNAVAILABLE',
+      ...(grantMismatchFields.size ? {
+        grantMismatchFields: Object.freeze([...grantMismatchFields].sort().slice(0, 16)),
+      } : {}),
+    }));
+  }
+
+  return Object.freeze({
+    schemaVersion: ELASTIC_GOAL_BUILD_IGNITION_SCHEMA,
+    ok: true,
+    classification: dispatched.length
+      ? 'ELASTIC_EXTERNAL_BUILD_DISPATCH_LIVE'
+      : candidates.length
+        ? 'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD'
+        : 'ELASTIC_EXTERNAL_BUILD_DISPATCH_NOT_REQUIRED',
+    desiredWidth,
+    availableSlots,
+    dispatchCount: dispatched.length,
+    indeterminatePublicationCount: indeterminateCount,
+    dispatched: Object.freeze(dispatched),
+    held: Object.freeze(held),
+    pickupPendingCount: dispatched.filter((item) => item.pickupProven !== true).length,
+    handoffPublicationIsTerminal: false,
+    // An uncertain publication may already have durable pending/processing
+    // custody. Retain the original controller's responsibility even when no
+    // successful dispatch acknowledgement can be asserted.
+    responsibilityRetainedUntilPickup: dispatched.length > 0 || indeterminateCount > 0,
+
+    resourceDisjointOneWriterProven: indeterminateCount === 0 && dispatched.every((item, index) => dispatched
+      .slice(index + 1)
+      .every((other) => !scopeSetConflicts(item.resourceScopes, other.resourceScopes))),
+    blockedLaneDoesNotStallFleet: held.length === 0 || dispatched.length > 0,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+  });
+}
+
+export function resolveCriticalBacklogRuntimePaths({
+  env = process.env,
+  home = os.homedir(),
+  repoRoot,
+  workspaceRoot,
+  worktreeRoot,
+  orchestratorRoot,
+  snapshotRoot,
+} = {}) {
+  const userHome = path.resolve(env.USERPROFILE || env.HOME || home);
+  const resolved = (override, ...segments) => path.resolve(override || path.join(userHome, ...segments));
+  return Object.freeze({
+    repoRoot: resolved(repoRoot, 'Documents', 'GitHub', 'stephan-os'),
+    workspaceRoot: resolved(workspaceRoot, 'Documents', 'Stephanos-openclaw-workspace'),
+    worktreeRoot: resolved(worktreeRoot, 'Documents', 'GitHub', 'stephan-os-worktrees'),
+    orchestratorRoot: resolved(orchestratorRoot, 'Documents', 'OpenClaw-Standalone', 'mission-runner', 'orchestrator'),
+    snapshotRoot: resolved(snapshotRoot, 'Documents', 'OpenClaw-Standalone', 'mission-runner', 'proof', 'mission-operations'),
+  });
+}
+
+function projectionSignature(projection = {}) {
+  return JSON.stringify({
+    decision: projection.decision || '',
+    selectedItemId: projection.selectedItem?.itemId || '',
+    activeMissionId: projection.activeMission?.missionId || '',
+    activePhase: projection.activeMission?.currentPhase || '',
+    completedItemIds: projection.completedItemIds || [],
+    remainingItemIds: projection.remainingItemIds || [],
+  });
+}
+
+async function readPreviousProjection(paths) {
+  const resolved = resolveSharedWorkspacePath({
+    root: paths.workspaceRoot,
+    repoRoot: paths.repoRoot,
+    segments: ['status', 'critical-backlog-conveyor-current.json'],
+  });
+  if (!resolved.ok) return null;
+  try {
+    const record = JSON.parse(await readFile(resolved.path, 'utf8'));
+    return {
+      decision: record.decision,
+      selectedItem: record.selectedItemId ? { itemId: record.selectedItemId } : null,
+      activeMission: record.activeMissionId ? { missionId: record.activeMissionId, currentPhase: record.activePhase } : null,
+      completedItemIds: Array.isArray(record.completedItemIds) ? record.completedItemIds : [],
+      remainingItemIds: Array.isArray(record.remainingItemIds) ? record.remainingItemIds : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function publishCriticalBacklogProjection(projection, {
+  paths,
+  now = new Date(),
+} = {}) {
+  const timestampUtc = now instanceof Date ? now.toISOString() : new Date().toISOString();
+  const selectedItemId = text(projection.selectedItem?.itemId);
+  const activeMissionId = text(projection.activeMission?.missionId);
+  const activePhase = text(projection.activeMission?.currentPhase);
+  const summary = selectedItemId
+    ? `Critical backlog ${projection.decision}: ${selectedItemId}.`
+    : `Critical backlog ${projection.decision}.`;
+  const previous = await readPreviousProjection(paths);
+  const changed = !previous || projectionSignature(previous) !== projectionSignature(projection);
+  const statusRecord = Object.freeze({
+    ...createSharedWorkspaceStatusRecord({
+      statusId: 'critical-backlog-conveyor-current',
+      participantId: 'critical-backlog-conveyor',
+      timestampUtc,
+      status: projection.finalVerdict,
+      summary,
+      proofRefs: [],
+    }),
+    schema: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
+    decision: projection.decision,
+    selectedItemId,
+    activeMissionId,
+    activePhase,
+    completedItemIds: [...(projection.completedItemIds || [])],
+    remainingItemIds: [...(projection.remainingItemIds || [])],
+    exactNextAction: text(projection.exactNextAction),
+    oneActiveMissionEnforced: projection.oneActiveMissionEnforced !== false,
+    elasticGoalMissionsUseSchedulerCapacity: projection.elasticGoalMissionsUseSchedulerCapacity === true,
+    duplicateCodexDispatchAllowed: false,
+    mergeAuthority: false,
+    exactHeadApprovalRequired: true,
+  });
+
+  let eventWrite = null;
+  if (changed) {
+    const transitionEventId = eventId(projectionSignature(projection));
+    const eventRecord = Object.freeze({
+      ...createSharedWorkspaceEventRecord({
+        eventId: transitionEventId,
+        participantId: 'critical-backlog-conveyor',
+        timestampUtc,
+        eventKind: 'critical-backlog-state-changed',
+        summary,
+      }),
+      decision: projection.decision,
+      selectedItemId,
+      activeMissionId,
+      activePhase,
+    });
+    eventWrite = await writeAtomicJson(
+      paths.workspaceRoot,
+      ['events', 'critical-backlog-conveyor', `${transitionEventId}.json`],
+      eventRecord,
+      { repoRoot: paths.repoRoot },
+    );
+    if (!eventWrite.ok) return Object.freeze({ ok: false, reason: eventWrite.reason, statusWrite: null, eventWrite });
+  }
+
+  const statusWrite = await writeAtomicJson(
+    paths.workspaceRoot,
+    ['status', 'critical-backlog-conveyor-current.json'],
+    statusRecord,
+    { repoRoot: paths.repoRoot },
+  );
+  if (!statusWrite.ok) return Object.freeze({ ok: false, reason: statusWrite.reason, statusWrite, eventWrite });
+
+  return Object.freeze({
+    ok: true,
+    reason: changed ? 'CONVEYOR_STATUS_AND_EVENT_PUBLISHED' : 'CONVEYOR_STATUS_REFRESHED',
+    changed,
+    statusWrite,
+    eventWrite,
+  });
+}
+
+
+export function projectElasticAdmissionGateV1({
+  programmeStatus = 'UNKNOWN', programmeBlockers = [], sourceRevision = '',
+  scheduler = null,
+} = {}) {
+  const status = text(programmeStatus, 'UNKNOWN').toUpperCase();
+  const blocked = (Array.isArray(programmeBlockers) ? programmeBlockers : [])
+    .map((value) => text(value).slice(0, 160)).filter(Boolean).slice(0, 20);
+  const workerOnlyHold = status === 'HOLD' && blocked.length > 0
+    && blocked.every((value) => [
+      'worker-heartbeat-stale', 'worker-heartbeat-invalid-or-missing',
+      'source:mission-worker-heartbeat-unavailable',
+    ].includes(value));
+  const gateReasons = [];
+  if (status !== 'READY' && !workerOnlyHold) {
+    gateReasons.push(status === 'HOLD' ? 'AUTHORITATIVE_PROGRAMME_HOLD'
+      : 'AUTHORITATIVE_PROGRAMME_NOT_READY');
+  }
+  if (!SHA_40.test(text(sourceRevision).toLowerCase())) {
+    gateReasons.push('ELASTIC_ADMISSION_SOURCE_HEAD_INVALID');
+  }
+  if (scheduler?.failClosed !== false) gateReasons.push('PROGRAMME_SCHEDULER_FAIL_CLOSED');
+  if (text(scheduler?.elasticCapacity?.status).toUpperCase() !== 'RUNNING') {
+    gateReasons.push('ELASTIC_SCHEDULER_CAPACITY_NOT_RUNNING');
+  }
+  return Object.freeze({
+    schemaVersion: 'stephanos.elastic-admission-gate-observation.v1',
+    admissionPreflightEligible: gateReasons.length === 0,
+    workerRuntimeHold: workerOnlyHold,
+    blocker: gateReasons[0] || '',
+    gateReasons: Object.freeze(gateReasons),
+    programmeStatus: status,
+    programmeBlockers: Object.freeze(blocked),
+    canonicalOwner: '#2961',
+    readOnly: true,
+    sourceMutationAllowed: false,
+    leaseOverrideAllowed: false,
+    mergeAuthority: false,
+  });
+}
+
+export async function ensureCriticalBacklogMission({
+  backlog = DEFAULT_CRITICAL_BACKLOG,
+  env = process.env,
+  now = new Date(),
+  paths = resolveCriticalBacklogRuntimePaths({ env }),
+  listMissions = listMissionRecords,
+  createMission = createMissionRecord,
+  allowLegacyMissionCreation = true,
+  publishProjection = publishCriticalBacklogProjection,
+  readProgrammeProjection = readAuthoritativeProgrammeProjection,
+  ensureElasticMissions = ensureElasticGoalMissions,
+  readCapacityRouting = readMissionControllerCapacityRoutingInput,
+  dispatchElasticBuilds = dispatchElasticGoalBuilds,
+  reconcileExpiredReviewLease = reconcileExpiredElasticReviewLeaseV1,
+} = {}) {
+  const nowUtc = now instanceof Date ? now.toISOString() : new Date().toISOString();
+  let elasticAdmission = null;
+  let elasticIgnition = null;
+  let programmeStatus = 'UNKNOWN';
+  let programmeBlockers = [];
+  let elasticAdmissionGate = projectElasticAdmissionGateV1();
+  let elasticReviewLeaseRecovery = null;
+  try {
+    let authoritative = await readProgrammeProjection({
+      env,
+      nowUtc,
+      root: paths.workspaceRoot,
+      repoRoot: paths.repoRoot,
+      orchestratorRoot: paths.orchestratorRoot,
+      snapshotRoot: paths.snapshotRoot,
+    });
+    const sourceRevision = text(authoritative?.machineryInventory?.sourceHead).toLowerCase();
+    // A verified expired review-only lease is no longer a source writer,
+    // but the persisted stale file still prevents other eligible goals from
+    // entering canonical Programme Authority. Reconcile it exactly once via
+    // the existing guarded lease release, only after persisted mission,
+    // current PR head, canonical queue and execution history all disprove
+    // in-flight work. Never remove a lease based on timeout alone.
+    if (text(authoritative?.status).toUpperCase() === 'HOLD'
+        && Array.isArray(authoritative?.blockers)
+        && (authoritative.blockers.includes('lane:elastic-lease-expired-or-not-active')
+          || authoritative.blockers.includes('lane:elastic-mission-phase-binding-unproven'))
+        && SHA_40.test(sourceRevision)) {
+      const originalMissions = await listMissions({
+        root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env,
+      });
+      elasticReviewLeaseRecovery = await reconcileExpiredReviewLease({
+        missionRecords: originalMissions,
+        now, env, paths, sourceRevision,
+      });
+      if (elasticReviewLeaseRecovery?.released === true) {
+        authoritative = await readProgrammeProjection({
+          env, nowUtc, root: paths.workspaceRoot, repoRoot: paths.repoRoot,
+          orchestratorRoot: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot,
+        });
+      }
+    }
+    programmeStatus = text(authoritative?.status, 'UNKNOWN').toUpperCase();
+    programmeBlockers = (Array.isArray(authoritative?.blockers) ? authoritative.blockers : [])
+      .map((blocker) => text(blocker))
+      .filter(Boolean);
+    elasticAdmissionGate = projectElasticAdmissionGateV1({
+      programmeStatus, programmeBlockers, sourceRevision, scheduler: authoritative?.scheduler,
+    });
+    const workerRuntimeHold = elasticAdmissionGate.workerRuntimeHold;
+    if (elasticAdmissionGate.admissionPreflightEligible) {
+      elasticAdmission = await ensureElasticMissions({
+        scheduler: authoritative.scheduler,
+        env,
+        now,
+        repoRoot: paths.repoRoot,
+        workspaceRoot: paths.workspaceRoot,
+        worktreeRoot: paths.worktreeRoot,
+        orchestratorRoot: paths.orchestratorRoot,
+        snapshotRoot: paths.snapshotRoot,
+      });
+      const elasticProjection = elasticAdmission?.ok === true
+        ? elasticControllerProjection(elasticAdmission)
+        : null;
+      if (elasticProjection) {
+        if (workerRuntimeHold) {
+          const desiredWidth = Math.max(0, Math.min(MAXIMUM_BUILD_LANES, Number(elasticAdmission.desiredWidth) || 0));
+          const runningCount = (Array.isArray(elasticAdmission.activeMissions) ? elasticAdmission.activeMissions : [])
+            .filter((mission) => text(mission?.dispatch?.status).toLowerCase() === 'running').length;
+          elasticIgnition = Object.freeze({
+            schemaVersion: ELASTIC_GOAL_BUILD_IGNITION_SCHEMA,
+            ok: true,
+            classification: 'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD',
+            sourceRevision,
+            desiredWidth,
+            availableSlots: Math.max(0, desiredWidth - runningCount),
+            dispatchCount: 0,
+            dispatched: Object.freeze([]),
+            held: Object.freeze([Object.freeze({
+              missionId: text(elasticAdmission.selectedMission?.missionId).toLowerCase(),
+              reason: 'MISSION_WORKER_RUNTIME_NOT_READY',
+            })]),
+            runtimeBlockers: Object.freeze([...programmeBlockers]),
+            resourceDisjointOneWriterProven: true,
+            blockedLaneDoesNotStallFleet: false,
+            mergeAuthority: false,
+            runtimeMutationAuthority: false,
+          });
+        } else {
+          const capacityRouting = await readCapacityRouting({
+            root: paths.workspaceRoot,
+            repoRoot: paths.repoRoot,
+            nowUtc,
+            sourceRevision,
+            env,
+          });
+          elasticIgnition = await dispatchElasticBuilds(elasticAdmission, {
+            env,
+            now,
+            paths,
+            sourceRevision,
+            capacityRouting,
+          });
+        }
+        return Object.freeze({
+          schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
+          ok: true,
+          classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+          projection: elasticProjection,
+          createdMission: Number(elasticAdmission.createdMissionCount || 0) > 0,
+          duplicateCreateObserved: false,
+          missionRecord: Object.freeze({
+            missionId: elasticAdmission.selectedMission.missionId,
+            currentPhase: elasticAdmission.selectedMission.currentPhase,
+          }),
+          preflightPublication: null,
+          publication: null,
+          elasticAdmission,
+          elasticIgnition,
+          elasticAdmissionGate,
+          elasticReviewLeaseRecovery,
+          programmeStatus: text(authoritative?.status).toUpperCase(),
+          programmeBlockers: Object.freeze([...programmeBlockers]),
+          workerRuntimeHold,
+          arbitraryShellAllowed: false,
+          destructiveGitAllowed: false,
+          duplicateActiveMissionAllowed: false,
+          mergeAuthority: false,
+          finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_PASS',
+        });
+      }
+    }
+  } catch (error) {
+    elasticAdmission = Object.freeze({
+      ok: false,
+      classification: 'ELASTIC_GOAL_ADMISSION_DIAGNOSTIC_FAILED',
+      reason: text(error?.message, 'unknown'),
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    });
+  }
+
+  let missionRecords = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
+  let projection = buildCriticalBacklogProjection({ backlog, missionRecords });
+  let createdMission = false;
+  let duplicateCreateObserved = false;
+  let missionRecord = null;
+  let preflightPublication = null;
+
+  if (projection.decision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION && allowLegacyMissionCreation !== false) {
+    preflightPublication = await publishProjection(projection, { paths, now });
+    if (!preflightPublication.ok) {
+      return Object.freeze({
+        schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
+        ok: false,
+        classification: 'CREATE_NEXT_MISSION_PUBLICATION_BLOCKED',
+        projection,
+        createdMission: false,
+        duplicateCreateObserved: false,
+        missionRecord: null,
+        preflightPublication,
+        publication: preflightPublication,
+        elasticAdmission,
+        elasticIgnition,
+        elasticAdmissionGate,
+        elasticReviewLeaseRecovery,
+        arbitraryShellAllowed: false,
+        destructiveGitAllowed: false,
+        duplicateActiveMissionAllowed: false,
+        mergeAuthority: false,
+        finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
+      });
+    }
+    const worktreePath = path.resolve(paths.worktreeRoot, projection.selectedItem.mission.missionId);
+    const built = buildCriticalBacklogMissionInput(projection.selectedItem, {
+      repositoryRoot: paths.repoRoot,
+      worktreePath,
+    });
+    if (!built.ok) {
+      projection = buildCriticalBacklogProjection({ backlog: [], missionRecords });
+    } else {
+      try {
+        missionRecord = await createMission(built.mission, {
+          root: paths.orchestratorRoot,
+          snapshotRoot: paths.snapshotRoot,
+          env,
+          now,
+          createdBy: 'critical-backlog-conveyor',
+        });
+        createdMission = true;
+      } catch (error) {
+        if (!/Mission already exists:/i.test(text(error?.message))) throw error;
+        duplicateCreateObserved = true;
+      }
+      missionRecords = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
+      projection = buildCriticalBacklogProjection({ backlog, missionRecords });
+    }
+  }
+
+  const publication = await publishProjection(projection, { paths, now });
+  const blocked = BLOCKED_DECISIONS.has(projection.decision);
+  const ok = !blocked && publication.ok === true;
+  return Object.freeze({
+    schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
+    ok,
+    classification: projection.decision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION && allowLegacyMissionCreation === false
+      ? 'CREATE_NEXT_MISSION_DEFERRED_TO_DURABLE_CONTROLLER'
+      : projection.decision,
+    projection,
+    createdMission,
+    legacyMissionCreationAllowed: allowLegacyMissionCreation !== false,
+    duplicateCreateObserved,
+    missionRecord: missionRecord?.state
+      ? Object.freeze({ missionId: missionRecord.state.missionId, currentPhase: missionRecord.state.currentPhase })
+      : null,
+    preflightPublication,
+    publication,
+    elasticAdmission,
+    elasticIgnition,
+    elasticAdmissionGate,
+    elasticReviewLeaseRecovery,
+    programmeStatus,
+    programmeBlockers: Object.freeze([...programmeBlockers]),
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+    duplicateActiveMissionAllowed: false,
+    mergeAuthority: false,
+    finalVerdict: ok ? 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_PASS' : 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
+  });
+}

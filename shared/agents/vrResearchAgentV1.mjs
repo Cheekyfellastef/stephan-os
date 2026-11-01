@@ -6,6 +6,8 @@ import {
   createAgentCapabilityRecord,
   validateSharedWorkspaceRecord,
 } from './sharedAgentWorkspaceStore.mjs';
+import { projectVrTeachingIntoSharedWorkspace } from './vrTeachingWorkspaceProjectionV1.mjs';
+import { projectSpatialWorkspaceTelemetryForConsumersV1 } from '../vr/spatialWorkspaceTelemetryProjectionV1.mjs';
 
 export const VR_RESEARCH_AGENT_SCHEMA_VERSION = 'stephanos.vr-research-agent.v1';
 export const VR_RESEARCH_AGENT_ID = 'vr-research-agent';
@@ -34,6 +36,7 @@ export const VR_RESEARCH_AGENT_ACTIONS = Object.freeze({
   REFRESH_WORKSPACE: 'PROPOSE_WORKSPACE_REFRESH',
   TRIAGE_DISCOVERY: 'PROPOSE_DISCOVERY_TRIAGE',
   PREPARE_RESEARCH: 'PROPOSE_RESEARCH_PACKET',
+  CORRELATE_EVIDENCE: 'PROPOSE_CANONICAL_VR_CORRELATION',
   REQUEST_RUNTIME_EVIDENCE: 'PROPOSE_BATTLE_BRIDGE_EVIDENCE_REQUEST',
   UPDATE_CAPABILITY_GRAPH: 'PROPOSE_CAPABILITY_GRAPH_UPDATE',
   NO_ACTION: 'NO_ACTION',
@@ -128,11 +131,15 @@ export function buildVrResearchAgentReadModel(input = {}) {
       verdict: VR_RESEARCH_AGENT_VERDICTS.WORKSPACE_MISSING,
       freshness: 'UNKNOWN',
       sourceSummary: boundedSourceSummary(input.sourceRegistry),
+      spatialTelemetry: projectSpatialWorkspaceTelemetryForConsumersV1(input.spatialTelemetryFeed),
       blockers: ['canonical-vr-research-projection-missing'],
     });
   }
 
   const freshness = freshnessClassification(workspaceProjection, nowMs);
+  const spatialTelemetry = projectSpatialWorkspaceTelemetryForConsumersV1(
+    input.spatialTelemetryFeed || workspaceProjection.spatialTelemetryFeed || workspaceProjection.spatialTelemetry,
+  );
   const blockers = [];
   if (freshness !== 'FRESH') blockers.push(`canonical-vr-research-projection-${freshness.toLowerCase()}`);
 
@@ -147,12 +154,47 @@ export function buildVrResearchAgentReadModel(input = {}) {
     target: text(workspaceProjection.currentTarget || workspaceProjection.target, 'Starfield VR'),
     programmeStage: text(workspaceProjection.programmeStage || workspaceProjection.stage, 'unknown'),
     sourceSummary: boundedSourceSummary(input.sourceRegistry),
+    referenceCorpus: workspaceProjection.referenceCorpus || null,
+    canonicalEvidence: workspaceProjection.canonicalEvidence || null,
+    correlationCandidates: list(workspaceProjection.correlationCandidates),
+    analysisQuestions: list(workspaceProjection.analysisQuestions),
     researchQueue: list(workspaceProjection.researchQueue),
     discoveryCandidates: list(workspaceProjection.discoveryCandidates),
     graphCandidates: list(workspaceProjection.capabilityGraphCandidates),
     runtimeEvidenceRequests: list(workspaceProjection.runtimeEvidenceRequests),
+    spatialTelemetry,
     blockers: Object.freeze(blockers),
   });
+}
+
+function teachingProjectionInput(input = {}) {
+  const existing = input.workspaceProjection && typeof input.workspaceProjection === 'object'
+    ? input.workspaceProjection
+    : {};
+  return {
+    ...existing,
+    ...input,
+    currentTarget: text(input.currentTarget || existing.currentTarget),
+    desiredExperience: text(input.desiredExperience || existing.desiredExperience),
+    programmeStage: text(input.programmeStage || existing.programmeStage),
+    nextAuthorisedAction: text(input.nextAuthorisedAction || existing.nextAuthorisedAction),
+    facts: list(input.facts).length ? list(input.facts) : list(existing.facts),
+    hypotheses: list(input.hypotheses).length ? list(input.hypotheses) : list(existing.hypotheses),
+    decisions: list(input.decisions).length ? list(input.decisions) : list(existing.decisions),
+    discoveryCandidates: list(input.discoveryCandidates).length ? list(input.discoveryCandidates) : list(existing.discoveryCandidates),
+    capabilityGraphCandidates: list(existing.capabilityGraphCandidates),
+    methodLibrary: list(existing.methodLibrary),
+    runtimeEvidenceRequests: list(input.runtimeEvidenceRequests).length ? list(input.runtimeEvidenceRequests) : list(existing.runtimeEvidenceRequests),
+    battleBridgeEvidence: list(input.battleBridgeEvidence).length ? list(input.battleBridgeEvidence) : list(existing.battleBridgeEvidence),
+    blockers: list(input.blockers).length ? list(input.blockers) : list(existing.blockers),
+    proofRefs: list(existing.proofRefs),
+    updatedAt: text(input.updatedAt || input.timestampUtc || existing.updatedAt, new Date().toISOString()),
+  };
+}
+
+function materializeTeachingCycle(input = {}) {
+  if (list(input.teachingRecords).length === 0) return null;
+  return projectVrTeachingIntoSharedWorkspace(teachingProjectionInput(input));
 }
 
 function routeForAction(action, input = {}) {
@@ -197,24 +239,43 @@ function proposal(action, reason, readModel, input = {}) {
 }
 
 export function planVrResearchAgentCycle(input = {}) {
-  const readModel = buildVrResearchAgentReadModel(input);
+  const vrTeachingWorkspaceProjection = materializeTeachingCycle(input);
+  const effectiveInput = vrTeachingWorkspaceProjection
+    ? { ...input, workspaceProjection: vrTeachingWorkspaceProjection.projection }
+    : input;
+  const readModel = vrTeachingWorkspaceProjection?.agentReadModel
+    || buildVrResearchAgentReadModel(effectiveInput);
+  if (vrTeachingWorkspaceProjection?.projectionReceipt?.verdict === 'VR_TEACHING_WORKSPACE_PROJECTION_BLOCKED') {
+    const action = VR_RESEARCH_AGENT_ACTIONS.REFRESH_WORKSPACE;
+    return Object.freeze({
+      schemaVersion: VR_RESEARCH_AGENT_SCHEMA_VERSION,
+      agentId: VR_RESEARCH_AGENT_ID,
+      mode: VR_RESEARCH_AGENT_MODES.PROPOSAL_ONLY,
+      verdict: VR_RESEARCH_AGENT_VERDICTS.INVALID_INPUT,
+      readModel,
+      vrTeachingWorkspaceProjection,
+      proposal: proposal(action, 'vr-teaching-workspace-projection-blocked', readModel, effectiveInput),
+    });
+  }
   if (!readModel.ready) {
-    const action = readModel.verdict === VR_RESEARCH_AGENT_VERDICTS.WORKSPACE_MISSING
-      ? VR_RESEARCH_AGENT_ACTIONS.REFRESH_WORKSPACE
-      : VR_RESEARCH_AGENT_ACTIONS.REFRESH_WORKSPACE;
+    const action = VR_RESEARCH_AGENT_ACTIONS.REFRESH_WORKSPACE;
     return Object.freeze({
       schemaVersion: VR_RESEARCH_AGENT_SCHEMA_VERSION,
       agentId: VR_RESEARCH_AGENT_ID,
       mode: VR_RESEARCH_AGENT_MODES.PROPOSAL_ONLY,
       verdict: readModel.verdict,
       readModel,
-      proposal: proposal(action, readModel.blockers[0] || 'workspace-refresh-required', readModel, input),
+      ...(vrTeachingWorkspaceProjection ? { vrTeachingWorkspaceProjection } : {}),
+      proposal: proposal(action, readModel.blockers[0] || 'workspace-refresh-required', readModel, effectiveInput),
     });
   }
 
   let action = VR_RESEARCH_AGENT_ACTIONS.NO_ACTION;
   let reason = 'no-material-vr-research-change';
-  if (readModel.runtimeEvidenceRequests.length > 0) {
+  if (readModel.canonicalEvidence?.current === true && readModel.correlationCandidates.length > 0) {
+    action = VR_RESEARCH_AGENT_ACTIONS.CORRELATE_EVIDENCE;
+    reason = 'fresh-canonical-vr-evidence-correlation-candidates-present';
+  } else if (readModel.runtimeEvidenceRequests.length > 0) {
     action = VR_RESEARCH_AGENT_ACTIONS.REQUEST_RUNTIME_EVIDENCE;
     reason = 'runtime-or-headset-evidence-required';
   } else if (readModel.discoveryCandidates.length > 0) {
@@ -236,7 +297,8 @@ export function planVrResearchAgentCycle(input = {}) {
       ? VR_RESEARCH_AGENT_VERDICTS.NO_ACTION
       : VR_RESEARCH_AGENT_VERDICTS.READY,
     readModel,
-    proposal: proposal(action, reason, readModel, input),
+    ...(vrTeachingWorkspaceProjection ? { vrTeachingWorkspaceProjection } : {}),
+    proposal: proposal(action, reason, readModel, effectiveInput),
   });
 }
 
@@ -267,12 +329,22 @@ export function createVrResearchAgentWorkspaceRecords(input = {}) {
       requiresOperator: cycle.proposal.requiresOperator,
       freshness: cycle.readModel.freshness,
       sourceCount: cycle.readModel.sourceSummary.sourceCount,
+      referenceCorpusSourceCount: cycle.readModel.referenceCorpus?.sourceCount || 0,
+      canonicalEvidenceSessionId: cycle.readModel.canonicalEvidence?.sessionId || null,
+      correlationCandidateCount: cycle.readModel.correlationCandidates?.length || 0,
+      spatialTelemetryState: cycle.readModel.spatialTelemetry?.state || 'unavailable',
+      spatialTelemetryRunId: cycle.readModel.spatialTelemetry?.runId || null,
+      spatialTelemetrySourceHead: cycle.readModel.spatialTelemetry?.sourceHead || null,
+      spatialTelemetryOperatorAcceptance: cycle.readModel.spatialTelemetry?.operatorAcceptance === true,
+      teachingProjectionReceiptId: cycle.vrTeachingWorkspaceProjection?.projectionReceipt?.receiptId || null,
+      teachingProjectionVerdict: cycle.vrTeachingWorkspaceProjection?.projectionReceipt?.verdict || null,
     }),
     proofRefs,
   };
   return Object.freeze({
     capability,
     status,
+    vrTeachingWorkspaceProjection: cycle.vrTeachingWorkspaceProjection || null,
     validations: Object.freeze({
       capability: validateSharedWorkspaceRecord(capability, input.validationOptions),
       status: validateSharedWorkspaceRecord(status, input.validationOptions),

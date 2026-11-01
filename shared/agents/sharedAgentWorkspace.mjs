@@ -7,6 +7,7 @@ export const SHARED_WORKSPACE_DIRECTORIES = Object.freeze([
   'inbox',
   'outbox',
   'events',
+  'lessons',
   'status',
   'proof',
   'logs',

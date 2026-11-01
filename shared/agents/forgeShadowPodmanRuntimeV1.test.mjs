@@ -7,6 +7,10 @@ import {
   FORGE_SHADOW_PODMAN_PORT,
   FORGE_SHADOW_PODMAN_RUNTIME_REPOSITORY,
   FORGE_SHADOW_PODMAN_RUNTIME_VERSION,
+  FORGE_SHADOW_MAXIMUM_WINDOWS_BUILD_EXCLUSIVE,
+  FORGE_SHADOW_MINIMUM_WINDOWS_BUILD,
+  FORGE_SHADOW_REQUIRED_WINDOWS_ARCHITECTURE,
+  FORGE_SHADOW_WINDOWS_HOST_ADAPTER,
   planForgeShadowPodmanRuntime,
 } from './forgeShadowPodmanRuntimeV1.mjs';
 
@@ -15,8 +19,13 @@ const DIGEST = `sha256:${'b'.repeat(64)}`;
 
 function facts(overrides = {}) {
   return {
-    windows11OrNewer: true,
+    windowsBuild: 19045,
+    windowsHostAdapter: FORGE_SHADOW_WINDOWS_HOST_ADAPTER,
+    windowsProductName: 'Windows 10 Pro',
+    windowsInstallationType: 'Client',
+    windowsArchitecture: 'X64',
     wsl2Available: true,
+    wsl2Evidence: 'default-version-2',
     podmanPresent: true,
     podmanVersion: '6.0.2',
     machineExists: true,
@@ -48,7 +57,7 @@ function input(factOverrides = {}, topOverrides = {}) {
   };
 }
 
-test('fixed runtime identity selects current Forgejo LTS and loopback-only port', () => {
+test('fixed runtime identity selects current Forgejo LTS and exact Windows 10 x64 boundary', () => {
   const result = planForgeShadowPodmanRuntime(input());
   assert.equal(result.valid, true);
   assert.equal(result.decision, FORGE_SHADOW_PODMAN_DECISIONS.READY);
@@ -59,6 +68,13 @@ test('fixed runtime identity selects current Forgejo LTS and loopback-only port'
   assert.equal(result.identity.host, '127.0.0.1');
   assert.equal(result.identity.connectionName, 'stephanos-forge-shadow');
   assert.equal(result.identity.remoteUrl, 'https://github.com/Cheekyfellastef/stephan-os.git');
+  assert.equal(result.identity.windowsHostAdapter, 'podman-desktop-windows10-wsl2-v1');
+  assert.equal(result.identity.minimumWindowsBuild, 19043);
+  assert.equal(result.identity.maximumWindowsBuildExclusive, 22000);
+  assert.equal(result.identity.requiredWindowsArchitecture, 'X64');
+  assert.equal(FORGE_SHADOW_MINIMUM_WINDOWS_BUILD, 19043);
+  assert.equal(FORGE_SHADOW_MAXIMUM_WINDOWS_BUILD_EXCLUSIVE, 22000);
+  assert.equal(FORGE_SHADOW_REQUIRED_WINDOWS_ARCHITECTURE, 'X64');
   assert.equal(result.authority.githubCredentialUse, false);
   assert.equal(result.authority.credentialPersistence, false);
   assert.equal(result.authority.credentialLogging, false);
@@ -81,7 +97,7 @@ test('repository, head, digest and fact schemas fail closed', () => {
   }
 });
 
-test('runtime fact observations require exact boolean and string types', () => {
+test('runtime fact observations require exact boolean, integer and string types', () => {
   for (const patch of [
     { machineRootful: 'false' },
     { machineRunning: 1 },
@@ -89,6 +105,13 @@ test('runtime fact observations require exact boolean and string types', () => {
     { parityReady: null },
     { podmanVersion: 6.002 },
     { mirrorSourceHead: false },
+    { windowsBuild: '19045' },
+    { windowsBuild: 19045.5 },
+    { windowsHostAdapter: false },
+    { windowsProductName: false },
+    { windowsInstallationType: null },
+    { windowsArchitecture: null },
+    { wsl2Evidence: false },
   ]) {
     const result = planForgeShadowPodmanRuntime(input(patch));
     assert.equal(result.valid, false);
@@ -97,15 +120,26 @@ test('runtime fact observations require exact boolean and string types', () => {
   }
 });
 
-test('Windows 11, WSL2 and rootless machine proof are mandatory', () => {
+test('the allowlisted Windows 10 x64 build range and real WSL2 evidence are mandatory', () => {
   for (const patch of [
-    { windows11OrNewer: false },
+    { windowsBuild: 19042 },
+    { windowsBuild: 22000 },
+    { windowsHostAdapter: 'local-one-off-adapter' },
+    { windowsProductName: 'Windows Server 2022 Standard' },
+    { windowsInstallationType: 'Server' },
+    { windowsArchitecture: 'Arm64' },
     { wsl2Available: false },
+    { wsl2Evidence: '' },
+    { wsl2Evidence: 'wsl-command-exists' },
     { machineRootful: true },
   ]) {
     const result = planForgeShadowPodmanRuntime(input(patch));
     assert.equal(result.valid, false);
   }
+
+  const distroProof = planForgeShadowPodmanRuntime(input({ wsl2Evidence: 'distribution-version-2' }));
+  assert.equal(distroProof.valid, true);
+  assert.equal(distroProof.decision, FORGE_SHADOW_PODMAN_DECISIONS.READY);
 });
 
 test('GitHub credentials and uncontained bootstrap credentials are forbidden', () => {

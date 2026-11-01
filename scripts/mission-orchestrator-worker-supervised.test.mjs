@@ -1,21 +1,275 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createExecutionReceipt } from '../shared/agents/executionReceiptV1.mjs';
+import { buildCanonicalImplementationLaneProjection, createSourceMutationLeaseRecord } from '../shared/agents/programmeAuthorityV1.mjs';
 
 import {
+  MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD,
   MISSION_WORKER_LOG_MAX_BYTES,
   createMissionWorkerRepositoryLogProjection,
   createMissionWorkerControllerLogProjection,
   createMissionWorkerTickLogProjection,
+  deriveDurableSurfaceFailureHistory,
+  carryCompletionGuardianFailure,
   inspectMissionWorkerRepositoryIdentity,
+  launchRecurringCalibrationLane,
   missionWorkerTickMadeProgress,
+  recurringCalibrationDueParticipantIds,
   MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE,
+  planMissionDeadlockSideline,
   runSupervisedMissionWorker,
+  controllerRequiresMaterialProgress,
 } from './mission-orchestrator-worker-supervised.mjs';
 
 function sink() {
   let value = '';
   return { stream: { write(chunk) { value += chunk; } }, read: () => value };
 }
+
+function consumedWorkerResult(overrides = {}, expectedAction = actionGrant) {
+  return {
+    processed: true,
+    result: {
+      schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
+      missionId: expectedAction.missionId,
+      actionId: expectedAction.actionId,
+      adapter: expectedAction.adapter,
+      finalVerdict: 'MISSION_WORKER_ITEM_COMPLETE',
+      execution: { success: true },
+      ...overrides,
+    },
+  };
+}
+
+test('supervisor attributes material progress to the original selected action across cycles', async (t) => {
+  const cases = [
+    { name: 'exact selected action', progress: true },
+    { name: 'missing mission', change: (result) => { delete result.missionId; } },
+    { name: 'missing action', change: (result) => { delete result.actionId; } },
+    { name: 'missing adapter', change: (result) => { delete result.adapter; } },
+    { name: 'foreign mission', change: (result) => { result.missionId = 'foreign-mission'; } },
+    { name: 'foreign action', change: (result) => { result.actionId = 'foreign-action'; } },
+    { name: 'foreign adapter', change: (result) => { result.adapter = 'foundry-forge'; } },
+    { name: 'previous action on the same mission', nextAction: true,
+      change: (result) => { result.actionId = 'selected-mission-r1-action'; } },
+    { name: 'grant identity changed during execution',
+      change: (result, grant) => { grant.actionId = result.actionId = 'changed-in-flight-action'; } },
+    { name: 'grant source changed during execution',
+      change: (_result, grant) => { grant.sourceRevision = 'b'.repeat(40); } },
+  ];
+  for (const scenario of cases) await t.test(scenario.name, async () => {
+    const output = sink();
+    const heartbeats = [];
+    const liveness = [];
+    let controllerCycles = 0;
+    let ticks = 0;
+    let sleeps = 0;
+    await assert.rejects(runSupervisedMissionWorker({
+      argv: [],
+      env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40) },
+      stdout: output.stream,
+      stderr: sink().stream,
+      bootstrapMailbox: async () => ({ ok: true }),
+      inspectRepositoryIdentity: canonicalIdentity,
+      listMissionState: async () => [],
+      readActiveClaim: async () => null,
+      runControllerCycle: async (_input, options) => {
+        liveness.push(structuredClone(options.controllerLivenessEvidence?.surfaceFailures || []));
+        controllerCycles += 1;
+        return controllerCycles <= 2 ? {
+          status: 'ACTIVE', allowWorkerTick: true,
+          authoritativeProjection: { status: 'ACTIVE' },
+          workerActionGrant: {
+            schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+            missionId: 'selected-mission',
+            actionId: scenario.nextAction && controllerCycles === 2
+              ? 'selected-mission-r2-action' : 'selected-mission-r1-action',
+            adapter: 'codex', sourceRevision: 'a'.repeat(40), boundedActionCount: 1,
+          },
+        } : { status: 'ACTIVE', allowWorkerTick: false, boundedMutationSteps: 0 };
+      },
+      runTick: async ({ actionGrant: selected }) => {
+        ticks += 1;
+        const result = {
+          schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
+          missionId: selected.missionId, actionId: selected.actionId, adapter: selected.adapter,
+          finalVerdict: ticks === 1 ? 'MISSION_WORKER_ITEM_BLOCKED' : 'MISSION_WORKER_ITEM_COMPLETE',
+          execution: { success: ticks !== 1 },
+        };
+        if (ticks === 2) scenario.change?.(result, selected);
+        return { processed: { processed: true, result } };
+      },
+      writeHeartbeat: async (input) => { heartbeats.push(input); },
+      setIntervalFn: () => 17,
+      clearIntervalFn: () => {},
+      sleep: async () => { if (++sleeps === 3) throw new Error('binding-observation-complete'); },
+    }), /binding-observation-complete/);
+    assert.equal(ticks, 2);
+    assert.equal(liveness[1].length, 1, 'the first actual failed tick must enter failure history');
+    assert.equal(liveness[1][0].failureClass, 'MISSION_WORKER_ITEM_BLOCKED');
+    assert.equal(liveness[2].length, scenario.progress ? 0 : 2,
+      'only the selected action may clear the preceding mission/surface failure');
+    if (!scenario.progress) {
+      assert.deepEqual(liveness[2][0], liveness[1][0]);
+      assert.equal(liveness[2][1].failureClass, 'MISSION_WORKER_RESULT_IDENTITY_MISMATCH');
+    }
+    const tickLogs = output.read().trim().split('\n').map((line) => JSON.parse(line))
+      .filter((entry) => entry.event === 'worker-tick');
+    assert.equal(tickLogs.at(-1).processingSuccess, scenario.progress === true,
+      'operator log and failure-history decision must use the same bound result');
+    if (!scenario.progress) assert.equal(tickLogs.at(-1).processingBlocker, 'MISSION_WORKER_RESULT_IDENTITY_MISMATCH');
+    assert.equal(heartbeats.at(-1).lastTickVerdict, scenario.progress
+      ? 'MISSION_WORKER_TICK_PASS' : 'CONTROLLER_EXECUTION_DEFECT_NO_MATERIAL_PROGRESS');
+  });
+});
+
+test('worker material progress requires a typed positive producer outcome', () => {
+  const progress = (processed, adapter = actionGrant.adapter) =>
+    missionWorkerTickMadeProgress({ processed }, { ...actionGrant, adapter });
+  assert.equal(progress(consumedWorkerResult()), true);
+  for (const processed of [
+    { processed: true },
+    { processed: true, success: true },
+    { processed: true, success: false },
+    { processed: true, success: true, finalVerdict: 'ERROR' },
+    { processed: true, success: true, finalVerdict: 'CANCELLED' },
+    consumedWorkerResult({ schemaVersion: 'unrecognized-result' }),
+    consumedWorkerResult({ execution: undefined }),
+    consumedWorkerResult({ execution: { success: false } }),
+    consumedWorkerResult({ execution: { success: 'true' } }),
+    ...['', 'ERROR', 'CANCELLED', 'MISSION_WORKER_ITEM_FAILED',
+      'MISSION_WORKER_ITEM_BLOCKED', 'VERIFICATION_EVIDENCE_NOT_GROUNDED']
+      .map((finalVerdict) => consumedWorkerResult({ finalVerdict })),
+  ]) assert.equal(progress(processed), false, JSON.stringify(processed));
+
+  assert.equal(progress(consumedWorkerResult({
+    adapter: 'forge-publication', execution: undefined, prNumber: 3002,
+    commitSha: 'd'.repeat(40),
+  }), 'forge-publication'), true);
+  assert.equal(progress(consumedWorkerResult({
+    adapter: 'forge-publication', execution: undefined, prNumber: 0,
+    commitSha: 'd'.repeat(40),
+  }), 'forge-publication'), false);
+  assert.equal(progress(consumedWorkerResult({
+    adapter: 'verification', execution: undefined,
+    finalVerdict: 'VERIFICATION_EVIDENCE_GROUNDED', evidenceReceiptCount: 1,
+  }), 'verification'), true);
+  for (const evidenceReceiptCount of [0, -1, '1', undefined]) {
+    assert.equal(progress(consumedWorkerResult({
+      adapter: 'verification', execution: undefined,
+      finalVerdict: 'VERIFICATION_EVIDENCE_GROUNDED', evidenceReceiptCount,
+    }), 'verification'), false);
+  }
+});
+
+test('every material outcome requires a separate exact action identity', () => {
+  const producers = [
+    consumedWorkerResult(),
+    consumedWorkerResult({ adapter: 'verification', execution: undefined,
+      finalVerdict: 'VERIFICATION_EVIDENCE_GROUNDED', evidenceReceiptCount: 1 }),
+    consumedWorkerResult({ adapter: 'forge-publication', execution: undefined,
+      prNumber: 3334, commitSha: 'c'.repeat(40) }),
+    { schemaVersion: 'stephanos.provider-neutral-source-builder.v1',
+      processed: true, success: true, missionId: actionGrant.missionId,
+      actionId: actionGrant.actionId, adapter: 'foundry-forge',
+      testsPassed: true, executionCustodyReleased: true, sourceArtifactRef: 'proof/source.json',
+      offlinePublicationOutboxId: 'outbox-fixture', finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED' },
+  ];
+  for (const processed of producers) {
+    const outcome = processed.result || processed;
+    const expectedAction = { ...actionGrant, adapter: outcome.adapter };
+    const result = { processed, actionGrant: expectedAction };
+    assert.equal(missionWorkerTickMadeProgress(result, expectedAction), true);
+    assert.equal(missionWorkerTickMadeProgress(result), false,
+      'a returned grant echo cannot supply the independently selected action');
+    for (const key of ['missionId', 'actionId', 'adapter']) {
+      const wrong = structuredClone(result);
+      (wrong.processed.result || wrong.processed)[key] = `foreign-${key}`;
+      assert.equal(missionWorkerTickMadeProgress(wrong, expectedAction), false);
+      const missing = structuredClone(result);
+      delete (missing.processed.result || missing.processed)[key];
+      assert.equal(missionWorkerTickMadeProgress(missing, expectedAction), false);
+      let touched = 0;
+      const accessor = structuredClone(result);
+      Object.defineProperty(accessor.processed.result || accessor.processed, key,
+        { get() { touched += 1; return expectedAction[key]; } });
+      assert.equal(missionWorkerTickMadeProgress(accessor, expectedAction), false);
+      const expectedAccessor = { ...expectedAction };
+      Object.defineProperty(expectedAccessor, key,
+        { get() { touched += 1; return outcome[key]; } });
+      assert.equal(missionWorkerTickMadeProgress(result, expectedAccessor), false);
+      assert.equal(touched, 0, 'identity validation must not execute caller accessors');
+    }
+  }
+});
+
+test('worker log projection consumes the same nested result as material-progress truth', () => {
+  const failed = consumedWorkerResult({
+    finalVerdict: 'MISSION_WORKER_ITEM_BLOCKED', execution: { success: false },
+  });
+  const failedLog = createMissionWorkerTickLogProjection({ processed: failed }, '2026-10-30T17:00:00Z', actionGrant);
+  assert.equal(failedLog.processed, true);
+  assert.equal(failedLog.processingSuccess, false);
+  assert.equal(failedLog.processingVerdict, 'MISSION_WORKER_ITEM_BLOCKED');
+  const completedLog = createMissionWorkerTickLogProjection({ processed: consumedWorkerResult() }, '2026-10-30T17:00:00Z', actionGrant);
+  assert.equal(completedLog.processingSuccess, true);
+  assert.equal(completedLog.processingVerdict, 'MISSION_WORKER_ITEM_COMPLETE');
+});
+
+test('nested consumer failure stays visible through the next idle supervisor cycle', async () => {
+  const heartbeats = [];
+  const liveness = [];
+  let cycles = 0;
+  let sleeps = 0;
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40) },
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    loadCapacityRoutingInput: async () => ({}),
+    listMissionState: async () => [],
+    readMissionState: async () => null,
+    readActiveClaim: async () => null,
+    runControllerCycle: async (_machinery, options) => {
+      liveness.push(options.controllerLivenessEvidence.surfaceFailures);
+      cycles += 1;
+      return cycles === 1
+        ? { status: 'ACTIVE', authoritativeProjection: { status: 'ACTIVE' },
+          allowWorkerTick: true, workerActionGrant: actionGrant }
+        : { status: 'IDLE', authoritativeProjection: { status: 'READY' }, allowWorkerTick: false };
+    },
+    runTick: async () => ({ processed: consumedWorkerResult({
+      finalVerdict: 'MISSION_WORKER_ITEM_BLOCKED', execution: { success: false },
+    }) }),
+    writeHeartbeat: async (options) => { heartbeats.push(options); },
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => { if (++sleeps === 2) throw new Error('stop-after-idle-observation'); },
+  }), /stop-after-idle-observation/);
+  assert.equal(liveness[1][0].failureClass, 'MISSION_WORKER_ITEM_BLOCKED');
+  assert.equal(heartbeats.at(-1).lastTickVerdict, 'CONTROLLER_EXECUTION_DEFECT_NO_MATERIAL_PROGRESS');
+});
+
+test('held native source processing is activity, never successful material progress', () => {
+  const expectedAction = { ...actionGrant, adapter: 'foundry-forge' };
+  const held={schemaVersion:'stephanos.provider-neutral-source-builder.v1',processed:true,
+    missionId: expectedAction.missionId, actionId: expectedAction.actionId, adapter: expectedAction.adapter,
+    success:false,finalVerdict:'NATIVE_SOURCE_FINALIZATION_HELD'};
+  assert.equal(missionWorkerTickMadeProgress({processed:held},expectedAction),false);
+  assert.equal(missionWorkerTickMadeProgress({processed:{...held,success:undefined}},expectedAction),false);
+  assert.equal(missionWorkerTickMadeProgress({processed:{...held,success:true}},expectedAction),false);
+  assert.equal(missionWorkerTickMadeProgress({processed:{...held,success:true,
+    testsPassed:true,executionCustodyReleased:true,sourceArtifactRef:'proof/artifact.json',
+    offlinePublicationOutboxId:'outbox-fixture',finalVerdict:'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'}},expectedAction),true);
+  assert.equal(missionWorkerTickMadeProgress({processed:{...held,success:true,
+    finalVerdict:'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'}},expectedAction),false);
+  const projection=createMissionWorkerTickLogProjection({processed:{...held,
+    reason:'NATIVE_SOURCE_CLAIM_GRANT_OR_REVISION_CHANGED'}},'2026-10-30T14:00:00Z',expectedAction);
+  assert.equal(projection.processingBlocker,'NATIVE_SOURCE_CLAIM_GRANT_OR_REVISION_CHANGED');
+  assert.equal(projection.processingSuccess,false);
+});
 
 function timerHarness() {
   let callback = null;
@@ -27,6 +281,131 @@ function timerHarness() {
     wasCleared: () => cleared,
   };
 }
+
+async function observePollCycles({ controllers, count = controllers.length, env = {}, writeHeartbeat = async () => {}, runCompletionGuardianCycle, launchCalibrationLane } = {}) {
+  const delays = [];
+  const observations = [];
+  let clock = Date.parse('2026-10-25T23:00:00Z');
+  let identityReads = 0;
+  let cycles = 0;
+  let ticks = 0;
+  const errors = sink();
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40), ...env },
+    stdout: sink().stream,
+    stderr: errors.stream,
+    bootstrapMailbox: async () => ({ ok: true }),
+    inspectRepositoryIdentity: async (options) => { identityReads += 1; return canonicalIdentity(options); },
+    listMissionState: async () => [],
+    runControllerCycle: async (_input, options) => {
+      observations.push(options.nowUtc);
+      return controllers[Math.min(cycles++, controllers.length - 1)];
+    },
+    runTick: async () => { ticks += 1; return { processed: { processed: true } }; },
+    writeHeartbeat,
+    ...(runCompletionGuardianCycle ? { runCompletionGuardianCycle } : {}),
+    ...(launchCalibrationLane ? { launchCalibrationLane } : {}),
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    now: () => new Date(clock).toISOString(),
+    sleep: async (delayMs) => {
+      delays.push(delayMs);
+      clock += delayMs;
+      if (delays.length === count) throw new Error('poll-observation-complete');
+    },
+  }), /poll-observation-complete/);
+  return { delays, observations, identityReads, cycles, ticks, errors: errors.read() };
+}
+
+const explicitlyEmptyController = Object.freeze({ status: 'HOLD', allowWorkerTick: false, boundedMutationSteps: 0 });
+
+test('empty worker cycles back off boundedly while rereading canonical identity and controller evidence each time', async () => {
+  const result = await observePollCycles({ controllers: [explicitlyEmptyController], count: 5 });
+  assert.deepEqual(result.delays, [4000, 8000, 15000, 15000, 15000]);
+  assert.equal(result.identityReads, 5);
+  assert.equal(result.cycles, 5);
+  assert.equal(new Set(result.observations).size, 5, 'each cycle must obtain a fresh observation, not reuse a cached controller decision');
+  assert.equal(result.ticks, 0);
+});
+
+test('newly admitted work runs at the next fresh observation and resets empty backoff after progress', async () => {
+  const result = await observePollCycles({ controllers: [
+    explicitlyEmptyController, explicitlyEmptyController, explicitlyEmptyController,
+    { status: 'ACTIVE', allowWorkerTick: true, boundedMutationSteps: 1, workerActionGrant: actionGrant },
+    explicitlyEmptyController, explicitlyEmptyController,
+  ] });
+  assert.deepEqual(result.delays, [4000, 8000, 15000, 250, 4000, 8000]);
+  assert.equal(result.ticks, 1);
+  assert.equal(result.identityReads, 6);
+});
+
+test('controller mutations, grants and unproven mutation counts retain the steady poll cadence', async () => {
+  const result = await observePollCycles({ controllers: [
+    { ...explicitlyEmptyController, boundedMutationSteps: 1 },
+    { status: 'HOLD', allowWorkerTick: false },
+    { ...explicitlyEmptyController, workerActionGrant: actionGrant },
+  ] });
+  assert.deepEqual(result.delays, [2000, 2000, 2000]);
+});
+
+test('heartbeat publication failures cannot enter the empty-cycle backoff', async () => {
+  const result = await observePollCycles({ controllers: [explicitlyEmptyController], count: 3,
+    writeHeartbeat: async () => { throw new Error('heartbeat-publication-failed'); },
+  });
+  assert.deepEqual(result.delays, [2000, 2000, 2000]);
+  assert.match(result.errors, /MISSION_WORKER_HEARTBEAT_WRITE_FAILED/);
+});
+
+test('a persistent completion guardian failure retains steady rechecks between guardian runs', async () => {
+  let guardianRuns = 0;
+  const result = await observePollCycles({ controllers: [explicitlyEmptyController], count: 3,
+    env: { STEPHANOS_COMPLETION_GUARDIAN_ENABLED: '1' },
+    runCompletionGuardianCycle: async () => { guardianRuns += 1; return { ok: false }; },
+  });
+  assert.equal(guardianRuns, 1);
+  assert.deepEqual(result.delays, [2000, 2000, 2000]);
+});
+
+test('empty backoff never accelerates an explicitly slower configured interval', async () => {
+  const result = await observePollCycles({ controllers: [explicitlyEmptyController], count: 3,
+    env: { STEPHANOS_MISSION_WORKER_INTERVAL_MS: '30000' },
+  });
+  assert.deepEqual(result.delays, [30000, 30000, 30000]);
+});
+
+test('launching a due calibration is activity even when the controller reports zero mutation steps', async () => {
+  let launches = 0;
+  const result = await observePollCycles({ controllers: [{ ...explicitlyEmptyController,
+    recurringCalibrationReadiness: { ok: true, dueParticipantIds: ['stephanos'], executionDeferred: true },
+  }], count: 1, launchCalibrationLane: async () => { launches += 1; return { launched: true }; } });
+  assert.equal(launches, 1);
+  assert.deepEqual(result.delays, [2000]);
+});
+
+test('a canonical head change exits for supervised reload before reading another backed-off controller cycle', async () => {
+  let cycles = 0;
+  let identityReads = 0;
+  const delays = [];
+  const exitCode = await runSupervisedMissionWorker({
+    argv: [], env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40) },
+    stdout: sink().stream, stderr: sink().stream, bootstrapMailbox,
+    inspectRepositoryIdentity: async (options) => {
+      identityReads += 1;
+      const identity = await canonicalIdentity(options);
+      return identityReads <= 3 ? identity : { ...identity, canonical: false, headSha: 'b'.repeat(40) };
+    },
+    listMissionState: async () => [],
+    runControllerCycle: async () => { cycles += 1; return explicitlyEmptyController; },
+    runTick: async () => assert.fail('no action was admitted'),
+    writeHeartbeat: async () => {}, setIntervalFn: () => 17, clearIntervalFn: () => {},
+    sleep: async (delayMs) => { delays.push(delayMs); },
+  });
+  assert.equal(exitCode, MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE);
+  assert.equal(cycles, 3);
+  assert.equal(identityReads, 4);
+  assert.deepEqual(delays, [4000, 8000, 15000]);
+});
 
 const actionGrant = {
   schemaVersion: 'stephanos.mission-worker-action-grant.v1',
@@ -62,6 +441,84 @@ const canonicalIdentity = async ({ env }) => env.STEPHANOS_MISSION_WORKER_HEAD_S
       runtimeDirtCount: 0,
       blocker: 'MISSION_WORKER_LAUNCH_IDENTITY_INVALID',
     });
+
+test('calibration launcher detaches a due exam lane without waiting for it', () => {
+  let observed = null;
+  let unrefCalls = 0;
+  const controller = {
+    recurringCalibrationReadiness: {
+      ok: true,
+      dueParticipantIds: ['openclaw-local', 'stephanos'],
+      executionDeferred: true,
+    },
+  };
+  assert.deepEqual(recurringCalibrationDueParticipantIds(controller), ['openclaw-local', 'stephanos']);
+  const result = launchRecurringCalibrationLane({
+    controller,
+    env: {
+      STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT: 'C:\\repo',
+      STEPHANOS_SHARED_AGENT_WORKSPACE: 'C:\\workspace',
+    },
+    scriptPath: 'C:\\repo\\scripts\\recurring-calibration-worker.mjs',
+    spawnFn(executable, args, options) {
+      observed = { executable, args, options };
+      return { pid: 4242, unref() { unrefCalls += 1; } };
+    },
+  });
+  assert.equal(result.launched, true);
+  assert.equal(result.pid, 4242);
+  assert.equal(unrefCalls, 1);
+  assert.equal(observed.options.detached, true);
+  assert.equal(observed.options.windowsHide, true);
+  assert.equal(observed.options.stdio, 'ignore');
+  assert.equal(observed.options.shell, false);
+  assert.equal(observed.options.cwd, 'C:\\repo');
+  assert.deepEqual(observed.args, ['C:\\repo\\scripts\\recurring-calibration-worker.mjs']);
+  assert.equal(observed.options.env.STEPHANOS_CALIBRATION_DUE_PARTICIPANTS, 'openclaw-local,stephanos');
+});
+
+test('supervised worker launches due calibration lane and still executes the granted goal tick', async () => {
+  let calibrationLaunches = 0;
+  let ticks = 0;
+  const env = {
+    STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+    STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT: 'C:\\repo',
+    STEPHANOS_SHARED_AGENT_WORKSPACE: 'C:\\workspace',
+  };
+  const result = await runSupervisedMissionWorker({
+    argv: ['--once'],
+    env,
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: async () => ({
+      status: 'ACTIVE',
+      allowWorkerTick: true,
+      workerActionGrant: actionGrant,
+      recurringCalibrationReadiness: {
+        ok: true,
+        dueParticipantIds: ['stephanos'],
+        executionDeferred: true,
+      },
+    }),
+    launchCalibrationLane: async ({ controller }) => {
+      calibrationLaunches += 1;
+      assert.deepEqual(controller.recurringCalibrationReadiness.dueParticipantIds, ['stephanos']);
+      return { launched: true, dueParticipantIds: ['stephanos'], pid: 99 };
+    },
+    runTick: async () => {
+      ticks += 1;
+      return { processed: consumedWorkerResult(), publish: { published: true } };
+    },
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+  });
+  assert.equal(result, 0);
+  assert.equal(calibrationLaunches, 1);
+  assert.equal(ticks, 1);
+});
 
 test('supervised worker writes running and final heartbeat around a successful tick', async () => {
   const output = sink();
@@ -101,6 +558,91 @@ test('supervised worker writes running and final heartbeat around a successful t
   assert.match(output.read(), /"event":"worker-tick"/);
   assert.match(output.read(), /"publishOk":true/);
   assert.equal(errors.read(), '');
+});
+
+test('canonical Mission Worker task runs Completion Guardian once per enabled cycle', async () => {
+  const output = sink();
+  const heartbeats = [];
+  const timer = timerHarness();
+  const calls = [];
+  const env = {
+    STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+    STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT: 'C:\\canonical\\stephan-os',
+    STEPHANOS_SHARED_AGENT_WORKSPACE: 'C:\\canonical\\workspace',
+    STEPHANOS_MISSION_ORCHESTRATOR_DIR: 'C:\\canonical\\orchestrator',
+    STEPHANOS_MISSION_WORKER_TASK_NAME: 'Stephanos Mission Orchestrator Worker',
+    STEPHANOS_COMPLETION_GUARDIAN_INTERVAL_MS: '60000',
+  };
+
+  const exitCode = await runSupervisedMissionWorker({
+    argv: ['--once'],
+    env,
+    stdout: output.stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: allowWorkerTick,
+    runTick: async () => ({ publish: { published: false } }),
+    runCompletionGuardianCycle: async (options) => {
+      calls.push(options);
+      return {
+        ok: true,
+        finalVerdict: 'COMPLETION_GUARDIAN_ACTION_REQUIRED',
+        projection: { actionableCount: 3 },
+      };
+    },
+    writeHeartbeat: async (input) => { heartbeats.push(input); },
+    setIntervalFn: timer.setIntervalFn,
+    clearIntervalFn: timer.clearIntervalFn,
+  });
+
+  assert.equal(exitCode, 0);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].env, env);
+  assert.equal(calls[0].repoRoot, env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT);
+  assert.equal(calls[0].workspaceRoot, env.STEPHANOS_SHARED_AGENT_WORKSPACE);
+  assert.equal(calls[0].missionRoot, env.STEPHANOS_MISSION_ORCHESTRATOR_DIR);
+  assert.match(output.read(), /"event":"completion-guardian"/);
+  assert.match(output.read(), /"actionableCount":3/);
+  assert.equal(heartbeats.at(-1).lastTickVerdict, 'MISSION_WORKER_TICK_PASS');
+});
+
+test('failed Completion Guardian does not silently become green between scheduled guardian sweeps', () => {
+  assert.equal(carryCompletionGuardianFailure('MISSION_WORKER_TICK_PASS', true), 'MISSION_WORKER_COMPLETION_GUARDIAN_FAILED');
+  assert.equal(carryCompletionGuardianFailure('MISSION_WORKER_TICK_PASS', false), 'MISSION_WORKER_TICK_PASS');
+  assert.equal(carryCompletionGuardianFailure('MISSION_WORKER_TICK_FAILED', true), 'MISSION_WORKER_TICK_FAILED');
+});
+
+test('Completion Guardian status file publication failure retains red proof in worker logs', async () => {
+  const output = sink();
+  const heartbeats = [];
+  const timer = timerHarness();
+  const exitCode = await runSupervisedMissionWorker({
+    argv: ['--once'],
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+      STEPHANOS_MISSION_WORKER_TASK_NAME: 'Stephanos Mission Orchestrator Worker',
+    },
+    stdout: output.stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: allowWorkerTick,
+    runTick: async () => ({ publish: { published: false } }),
+    runCompletionGuardianCycle: async () => ({
+      ok: false,
+      finalVerdict: 'COMPLETION_GUARDIAN_ACTION_REQUIRED',
+      writes: { statusWrite: { ok: false, reason: 'COMPLETION_GUARDIAN_STATUS_PUBLICATION_FAILED' } },
+      projection: { actionableCount: 43 },
+    }),
+    writeHeartbeat: async (input) => { heartbeats.push(input); },
+    setIntervalFn: timer.setIntervalFn,
+    clearIntervalFn: timer.clearIntervalFn,
+  });
+  assert.equal(exitCode, 1);
+  assert.equal(heartbeats.at(-1).lastTickVerdict, 'MISSION_WORKER_COMPLETION_GUARDIAN_FAILED');
+  assert.match(output.read(), /"publicationBlocker":"COMPLETION_GUARDIAN_STATUS_PUBLICATION_FAILED"/);
+  assert.match(output.read(), /"actionableCount":43/);
 });
 
 test('supervised worker refreshes heartbeat while a long tick is still running', async () => {
@@ -265,6 +807,7 @@ test('repository identity reader brackets canonical runtime dirt with stable exa
     '?? memory/dreaming/deep/2026-08-27.md',
     '?? memory/dreaming/light/2026-08-27.md',
     '?? memory/dreaming/rem/2026-08-27.md',
+    '?? .openclaw/workspace-state.json',
   ].join('\n');
   const result = inspectMissionWorkerRepositoryIdentity({
     env: {
@@ -285,7 +828,7 @@ test('repository identity reader brackets canonical runtime dirt with stable exa
   assert.equal(result.canonical, true);
   assert.equal(result.sourceClean, true);
   assert.equal(result.worktreeClean, false);
-  assert.equal(result.runtimeDirtCount, 10);
+  assert.equal(result.runtimeDirtCount, 11);
   assert.equal(calls.length, 3);
   for (const call of calls) {
     assert.match(call.executable, /Git\\cmd\\git\.exe$/);
@@ -561,9 +1104,16 @@ test('worker progress detection is descriptor-safe and ignores caller-shaped get
     enumerable: true,
     get() { touched += 1; return true; },
   });
-  assert.equal(missionWorkerTickMadeProgress({ publish: publication }), false);
+  assert.equal(missionWorkerTickMadeProgress({ publish: publication }, actionGrant), false);
   assert.equal(touched, 0);
-  assert.equal(missionWorkerTickMadeProgress({ processed: { processed: true } }), true);
+  assert.equal(missionWorkerTickMadeProgress({ processed: { processed: true } }, actionGrant), false);
+  assert.equal(missionWorkerTickMadeProgress({ processed: consumedWorkerResult() }, actionGrant), true);
+  const nested = consumedWorkerResult();
+  Object.defineProperty(nested.result.execution, 'success', {
+    get() { touched += 1; return true; },
+  });
+  assert.equal(missionWorkerTickMadeProgress({ processed: nested }, actionGrant), false);
+  assert.equal(touched, 0);
 });
 
 test('worker log byte bounds hold for escaped Unicode fields and accessor-shaped lists', () => {
@@ -630,4 +1180,774 @@ test('long-running worker suppresses unchanged controller telemetry', async () =
   }), /stop-test-loop/);
   const controllerLines = output.read().split('\n').filter((line) => line.includes('"event":"controller-cycle"'));
   assert.equal(controllerLines.length, 1);
+});
+
+
+test('persistent worker carries repeated adapter failures into the next controller liveness cycle', async () => {
+  const observedEvidence = [];
+  let cycles = 0;
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+      STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000',
+    },
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: async (_machinery, options) => {
+      observedEvidence.push(options.controllerLivenessEvidence);
+      return {
+        status: 'ACTIVE',
+        allowWorkerTick: true,
+        authoritativeProjection: { status: 'ACTIVE' },
+        workerActionGrant: {
+          schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+          missionId: 'critical-surface-quarantine-test',
+          actionId: 'surface-quarantine-action',
+          adapter: 'chatgpt-github',
+          capacityRoute: 'CHATGPT_GITHUB',
+        },
+      };
+    },
+    runTick: async () => {
+      cycles += 1;
+      return {
+        status: 'BLOCKED',
+        blocker: 'EXECUTION_SURFACE_FAILURE',
+        finalVerdict: 'WRITE_BLOCKED',
+        processed: { processed: false },
+        publish: { published: false },
+      };
+    },
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => {
+      if (cycles >= 3) throw new Error('stop-after-liveness-history-proof');
+    },
+  }), /stop-after-liveness-history-proof/);
+
+  assert.equal(cycles, 3);
+  assert.deepEqual(observedEvidence[0].surfaceFailures, []);
+  assert.deepEqual(observedEvidence[1].surfaceFailures, [
+    { surfaceId: 'chatgpt-github', failureClass: 'EXECUTION_SURFACE_FAILURE' },
+  ]);
+  assert.deepEqual(observedEvidence[2].surfaceFailures, [
+    { surfaceId: 'chatgpt-github', failureClass: 'EXECUTION_SURFACE_FAILURE' },
+    { surfaceId: 'chatgpt-github', failureClass: 'EXECUTION_SURFACE_FAILURE' },
+  ]);
+});
+
+
+test('external handoff pending is neutral until durable mission state reports terminal failure', async () => {
+  const observedEvidence = [];
+  let controllerCycles = 0;
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+      STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000',
+    },
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: async (_machinery, options) => {
+      observedEvidence.push(options.controllerLivenessEvidence);
+      controllerCycles += 1;
+      if (controllerCycles === 1) {
+        return {
+          status: 'ACTIVE',
+          allowWorkerTick: true,
+          authoritativeProjection: { status: 'ACTIVE' },
+          workerActionGrant: {
+            schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+            missionId: 'critical-2099-external-failure-proof',
+            actionId: 'external-failure-action',
+            adapter: 'chatgpt-github',
+            capacityRoute: 'CHATGPT_GITHUB',
+          },
+        };
+      }
+      return {
+        status: 'HOLD',
+        allowWorkerTick: false,
+        authoritativeProjection: { status: 'HOLD' },
+      };
+    },
+    runTick: async () => ({
+      publish: { published: true },
+      processed: {
+        processed: false,
+        reason: 'proven-external-lane-handoff-pending',
+        adapter: 'chatgpt-github',
+      },
+    }),
+    readMissionState: async () => ({
+      state: {
+        missionId: 'critical-2099-external-failure-proof',
+        currentPhase: 'BLOCKED',
+        dispatch: { status: 'failed', adapter: 'chatgpt-github' },
+        blockers: ['WRITE_BLOCKED'],
+      },
+    }),
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => {
+      if (controllerCycles >= 2) throw new Error('stop-after-terminal-failure-proof');
+    },
+  }), /stop-after-terminal-failure-proof/);
+
+  assert.deepEqual(observedEvidence[0].surfaceFailures, []);
+  assert.deepEqual(observedEvidence[1].surfaceFailures, [
+    { surfaceId: 'chatgpt-github', failureClass: 'WRITE_BLOCKED' },
+  ]);
+});
+
+test('durable external success clears earlier failure history for that adapter', async () => {
+  const observedEvidence = [];
+  let controllerCycles = 0;
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+      STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000',
+    },
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: async (_machinery, options) => {
+      observedEvidence.push(options.controllerLivenessEvidence);
+      controllerCycles += 1;
+      return {
+        status: 'ACTIVE',
+        allowWorkerTick: controllerCycles <= 2,
+        authoritativeProjection: { status: controllerCycles <= 2 ? 'ACTIVE' : 'HOLD' },
+        workerActionGrant: controllerCycles <= 2 ? {
+          schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+          missionId: controllerCycles === 1
+            ? 'critical-2099-sync-failure-proof'
+            : 'critical-2099-external-success-proof',
+          actionId: controllerCycles === 1 ? 'sync-failure-action' : 'external-success-action',
+          adapter: 'chatgpt-github',
+          capacityRoute: 'CHATGPT_GITHUB',
+        } : undefined,
+      };
+    },
+    runTick: async ({ actionGrant }) => actionGrant.actionId === 'sync-failure-action'
+      ? {
+        publish: { published: false },
+        processed: { processed: false, reason: 'writer-rejected' },
+        blocker: 'WRITE_BLOCKED',
+      }
+      : {
+        publish: { published: true },
+        processed: {
+          processed: false,
+          reason: 'proven-external-lane-handoff-pending',
+          adapter: 'chatgpt-github',
+        },
+      },
+    readMissionState: async () => ({
+      state: {
+        missionId: 'critical-2099-external-success-proof',
+        currentPhase: 'GITHUB_COMMIT',
+        dispatch: { status: 'complete', adapter: 'chatgpt-github' },
+        blockers: [],
+      },
+    }),
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => {
+      if (controllerCycles >= 3) throw new Error('stop-after-terminal-success-proof');
+    },
+  }), /stop-after-terminal-success-proof/);
+
+  assert.deepEqual(observedEvidence[0].surfaceFailures, []);
+  assert.deepEqual(observedEvidence[1].surfaceFailures, [
+    { surfaceId: 'chatgpt-github', failureClass: 'WRITE_BLOCKED' },
+  ]);
+  assert.deepEqual(observedEvidence[2].surfaceFailures, []);
+});
+
+
+test('blocked complete external mission does not clear prior adapter failure history', async () => {
+  const observedEvidence = [];
+  let cycles = 0;
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40), STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000' },
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: async (_machinery, options) => {
+      observedEvidence.push(options.controllerLivenessEvidence);
+      cycles += 1;
+      if (cycles <= 2) {
+        return {
+          status: 'ACTIVE',
+          allowWorkerTick: true,
+          authoritativeProjection: { status: 'ACTIVE' },
+          workerActionGrant: {
+            missionId: 'blocked-complete-external-test',
+            actionId: 'blocked-complete-action',
+            adapter: 'chatgpt-github',
+            capacityRoute: 'CHATGPT_GITHUB',
+          },
+        };
+      }
+      return { status: 'HOLD', allowWorkerTick: false, authoritativeProjection: { status: 'HOLD' } };
+    },
+    runTick: async () => ({
+      publish: { published: true },
+      processed: { processed: false, reason: 'proven-external-lane-handoff-pending' },
+    }),
+    readMissionState: async () => ({
+      state: {
+        missionId: 'blocked-complete-external-test',
+        currentPhase: 'BLOCKED',
+        dispatch: { status: 'complete', adapter: 'chatgpt-github' },
+        blockers: ['OUT_OF_SCOPE_CHANGE'],
+      },
+    }),
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => {
+      if (cycles >= 3) throw new Error('stop-blocked-complete-test');
+    },
+  }), /stop-blocked-complete-test/);
+  assert.deepEqual(observedEvidence[2].surfaceFailures, []);
+});
+
+test('capacity routing exception before adapter invocation does not poison surface history', async () => {
+  const observedEvidence = [];
+  let cycles = 0;
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40), STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000' },
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: async (_machinery, options) => {
+      observedEvidence.push(options.controllerLivenessEvidence);
+      cycles += 1;
+      return {
+        status: 'ACTIVE',
+        allowWorkerTick: true,
+        authoritativeProjection: { status: 'ACTIVE' },
+        workerActionGrant: {
+          missionId: 'capacity-read-failure-test',
+          actionId: 'capacity-read-failure-action',
+          adapter: 'chatgpt-github',
+          capacityRoute: 'CHATGPT_GITHUB',
+        },
+      };
+    },
+    loadCapacityRoutingInput: async () => { throw new Error('capacity-read-failed'); },
+    runTick: async () => { throw new Error('must-not-run'); },
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => {
+      if (cycles >= 2) throw new Error('stop-capacity-read-test');
+    },
+  }), /stop-capacity-read-test/);
+  assert.deepEqual(observedEvidence[1].surfaceFailures, []);
+});
+
+
+test('durable mission truth reconstructs recent surface failures across worker restarts and success clears them', () => {
+  const nowUtc = '2026-09-25T02:00:00.000Z';
+  const failed = (missionId, updatedAt) => ({
+    missionId,
+    updatedAt,
+    currentPhase: 'BLOCKED',
+    dispatch: { adapter: 'chatgpt-github', status: 'failed' },
+    blockers: ['WRITE_BLOCKED'],
+  });
+  const first = deriveDurableSurfaceFailureHistory([
+    failed('critical-2099-github-failure-1', '2026-09-25T01:56:00.000Z'),
+    failed('critical-2099-github-failure-2', '2026-09-25T01:58:00.000Z'),
+  ], nowUtc);
+  assert.deepEqual(first, [
+    { surfaceId: 'chatgpt-github', failureClass: 'WRITE_BLOCKED', evidenceId: 'critical-2099-github-failure-1' },
+    { surfaceId: 'chatgpt-github', failureClass: 'WRITE_BLOCKED', evidenceId: 'critical-2099-github-failure-2' },
+  ]);
+
+  const cleared = deriveDurableSurfaceFailureHistory([
+    ...[
+      failed('critical-2099-github-failure-1', '2026-09-25T01:56:00.000Z'),
+      failed('critical-2099-github-failure-2', '2026-09-25T01:58:00.000Z'),
+    ],
+    {
+      missionId: 'critical-2099-github-success-1',
+      updatedAt: '2026-09-25T01:59:00.000Z',
+      currentPhase: 'GITHUB_COMMIT',
+      dispatch: { adapter: 'chatgpt-github', status: 'complete' },
+      blockers: [],
+    },
+  ], nowUtc);
+  assert.deepEqual(cleared, []);
+
+  const expired = deriveDurableSurfaceFailureHistory([
+    failed('critical-2099-old-github-failure-1', '2026-09-25T00:30:00.000Z'),
+    failed('critical-2099-old-github-failure-2', '2026-09-25T00:40:00.000Z'),
+  ], nowUtc);
+  assert.deepEqual(expired, []);
+});
+
+test('fresh supervisor process feeds durable repeated failures into controller liveness evidence', async () => {
+  const observedEvidence = [];
+  const nowUtc = '2026-09-25T02:00:00.000Z';
+  const exitCode = await runSupervisedMissionWorker({
+    argv: ['--once'],
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40) },
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    listMissionState: async () => ([
+      {
+        missionId: 'critical-2099-restart-failure-1',
+        updatedAt: '2026-09-25T01:56:00.000Z',
+        currentPhase: 'BLOCKED',
+        dispatch: { adapter: 'chatgpt-github', status: 'failed' },
+        blockers: ['WRITE_BLOCKED'],
+      },
+      {
+        missionId: 'critical-2099-restart-failure-2',
+        updatedAt: '2026-09-25T01:58:00.000Z',
+        currentPhase: 'BLOCKED',
+        dispatch: { adapter: 'chatgpt-github', status: 'failed' },
+        blockers: ['WRITE_BLOCKED'],
+      },
+    ]),
+    runControllerCycle: async (_machinery, options) => {
+      observedEvidence.push(options.controllerLivenessEvidence);
+      return {
+        status: 'HOLD',
+        allowWorkerTick: false,
+        authoritativeProjection: { status: 'HOLD' },
+      };
+    },
+    runTick: async () => assert.fail('durable quarantine proof must not require an adapter invocation'),
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    now: () => nowUtc,
+  });
+  assert.equal(exitCode, 0);
+  assert.deepEqual(observedEvidence, [{
+    surfaceFailures: [
+      { surfaceId: 'chatgpt-github', failureClass: 'WRITE_BLOCKED' },
+      { surfaceId: 'chatgpt-github', failureClass: 'WRITE_BLOCKED' },
+    ],
+  }]);
+});
+
+
+test('mission deadlock fuse ignores transient failures and trips only on bounded repeated no-progress', () => {
+  const missionId = 'critical-deadlock-fuse-test';
+  const missionRecord = {
+    missionId,
+    revision: 7,
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    dispatch: { status: 'failed' },
+  };
+  const failures = Array.from({ length: MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD }, (_, index) => ({
+    surfaceId: index % 2 ? 'chatgpt-github' : 'codex',
+    failureClass: 'NO_MATERIAL_PROGRESS',
+    evidenceId: missionId,
+  }));
+  const early = planMissionDeadlockSideline({ missionId, missionRecord, failureHistory: failures.slice(0, -1) });
+  assert.equal(early.trip, false);
+  const tripped = planMissionDeadlockSideline({ missionId, missionRecord, failureHistory: failures });
+  assert.equal(tripped.trip, true);
+  assert.equal(tripped.failureCount, MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD);
+  assert.deepEqual(tripped.surfaces, ['chatgpt-github', 'codex']);
+  assert.match(tripped.reason, /CONTROLLER_STALLED_MISSION/);
+  assert.match(tripped.eventId, /^deadlock-[0-9a-f]{20}$/);
+  const running = planMissionDeadlockSideline({
+    missionId,
+    failureHistory: failures,
+    missionRecord: { ...missionRecord, dispatch: { status: 'running' } },
+  });
+  assert.equal(running.trip, false);
+});
+
+
+test('repeated stuck mission is sidelined and the persistent controller advances to different work', async () => {
+  const output = sink();
+  const errors = sink();
+  const firstMissionId = 'critical-stuck-controller-item';
+  const nextMissionId = 'critical-next-eligible-item';
+  let blocked = false;
+  let controllerCycles = 0;
+  const controllerMissionIds = [];
+  const appendedEvents = [];
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+      STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000',
+    },
+    stdout: output.stream,
+    stderr: errors.stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    listMissionState: async () => [],
+    readMissionState: async (missionId) => ({
+      state: {
+        missionId,
+        revision: 11,
+        currentPhase: 'AGENT_IMPLEMENTATION',
+        dispatch: { status: 'failed' },
+      },
+    }),
+
+    appendMissionStateEvent: async (missionId, event) => {
+      appendedEvents.push({ missionId, event });
+      blocked = true;
+      return { state: { missionId, revision: 12, currentPhase: 'BLOCKED', dispatch: { status: 'failed' } } };
+    },
+    runControllerCycle: async () => {
+      controllerCycles += 1;
+      const missionId = blocked ? nextMissionId : firstMissionId;
+      controllerMissionIds.push(missionId);
+      return {
+        status: 'ACTIVE',
+        allowWorkerTick: true,
+        authoritativeProjection: { status: 'ACTIVE' },
+        workerActionGrant: {
+          schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+          missionId,
+          actionId: `${missionId}-action`,
+          adapter: blocked ? 'codex' : 'chatgpt-github',
+        },
+      };
+    },
+    runTick: async ({ actionGrant }) => actionGrant.missionId === nextMissionId
+      ? { processed: consumedWorkerResult({}, actionGrant), publish: { published: true } }
+      : { processed: { processed: false }, publish: { published: false }, blocker: 'NO_MATERIAL_PROGRESS' },
+
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => {
+      if (blocked && controllerCycles >= MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD + 1) {
+        throw new Error('stop-after-deadlock-fuse-proof');
+      }
+    },
+  }), /stop-after-deadlock-fuse-proof/);
+
+  assert.equal(appendedEvents.length, 1);
+  assert.equal(appendedEvents[0].missionId, firstMissionId);
+  assert.equal(appendedEvents[0].event.eventType, 'MISSION_BLOCKED');
+  assert.match(appendedEvents[0].event.reason, /CONTROLLER_STALLED_MISSION/);
+  assert.deepEqual(
+    controllerMissionIds.slice(0, MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD),
+    Array(MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD).fill(firstMissionId),
+  );
+  assert.equal(controllerMissionIds.at(-1), nextMissionId);
+  assert.match(output.read(), /"event":"mission-deadlock-fuse"/);
+  assert.match(output.read(), /MISSION_WORKER_STALLED_MISSION_SIDELINED/);
+});
+
+
+test('surface-quarantine HOLD sidelines the stuck mission instead of becoming narration-only', async () => {
+  const output = sink();
+  const firstMissionId = 'critical-hold-trap-item';
+  const nextMissionId = 'critical-hold-trap-next';
+  let blocked = false;
+  let controllerCycles = 0;
+  let firstMissionTicks = 0;
+  let nextMissionTicks = 0;
+  const appendedEvents = [];
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+      STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000',
+    },
+    stdout: output.stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    listMissionState: async () => [],
+    readMissionState: async (missionId) => ({
+      state: { missionId, revision: 4, currentPhase: 'AGENT_IMPLEMENTATION', dispatch: { status: 'failed' } },
+    }),
+
+    appendMissionStateEvent: async (missionId, event) => {
+      appendedEvents.push({ missionId, event });
+      blocked = true;
+      return { state: { missionId, revision: 5, currentPhase: 'BLOCKED', dispatch: { status: 'failed' } } };
+    },
+    runControllerCycle: async (_machinery, options) => {
+      controllerCycles += 1;
+      if (blocked) {
+        return {
+          status: 'ACTIVE',
+          allowWorkerTick: true,
+          authoritativeProjection: { status: 'ACTIVE' },
+          workerActionGrant: { missionId: nextMissionId, actionId: 'next-action', adapter: 'codex' },
+        };
+      }
+      if (options.controllerLivenessEvidence.surfaceFailures.length >= 2) {
+        return {
+          status: 'HOLD',
+          allowWorkerTick: false,
+          authoritativeProjection: { status: 'HOLD' },
+          controllerLivenessDecision: {
+            controllerShouldRemainEnabled: true,
+            retryNextScheduledRun: true,
+            reason: 'SURFACE_BLOCKED_CONTROLLER_LIVE',
+          },
+        };
+      }
+      return {
+        status: 'ACTIVE',
+        allowWorkerTick: true,
+        authoritativeProjection: { status: 'ACTIVE' },
+        workerActionGrant: { missionId: firstMissionId, actionId: 'stuck-action', adapter: 'chatgpt-github' },
+      };
+    },
+
+    runTick: async ({ actionGrant }) => {
+      if (actionGrant.missionId === nextMissionId) {
+        nextMissionTicks += 1;
+        return { processed: consumedWorkerResult({}, actionGrant), publish: { published: true } };
+      }
+      firstMissionTicks += 1;
+      return { processed: { processed: false }, publish: { published: false }, blocker: 'WRITE_BLOCKED' };
+    },
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => {
+      if (blocked && controllerCycles >= 4) throw new Error('stop-after-hold-trap-proof');
+    },
+  }), /stop-after-hold-trap-proof/);
+
+  assert.equal(firstMissionTicks, 2);
+  assert.equal(nextMissionTicks, 1);
+  assert.equal(appendedEvents.length, 1);
+  assert.equal(appendedEvents[0].missionId, firstMissionId);
+  assert.equal(appendedEvents[0].event.eventType, 'MISSION_BLOCKED');
+  assert.match(appendedEvents[0].event.reason, /CONTROLLER_STALLED_MISSION/);
+  assert.match(output.read(), /MISSION_WORKER_STALLED_MISSION_SIDELINED/);
+});
+
+test('READY with no selected mission is idle rather than no-grant execution defect', () => {
+  assert.equal(controllerRequiresMaterialProgress({authoritativeProjection:{status:'READY'},allowWorkerTick:false}),false);
+  assert.equal(controllerRequiresMaterialProgress({authoritativeProjection:{status:'READY'},actionResult:{elasticAdmission:{selectedMission:{missionId:'critical-1507-elastic-goal'}}}}),true);
+  assert.equal(controllerRequiresMaterialProgress({authoritativeProjection:{status:'READY',lane:{active:true,missionId:'critical-1507-elastic-goal'}}}),true);
+  assert.equal(controllerRequiresMaterialProgress({authoritativeProjection:{status:'HOLD'},actionResult:{elasticAdmission:{selectedMission:{missionId:'critical-1507-elastic-goal'}}}}),false);
+});
+
+function observedSourceLane(state, expiredLease = false) {
+  const nowUtc = '2026-10-26T12:00:00.000Z';
+  const head = 'c'.repeat(40);
+  const lease = createSourceMutationLeaseRecord({
+    leaseId: 'goal-2315-pr-3259-review', laneId: 'goal-2315-pr-3259',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 2315, prNumber: 3259,
+    branch: 'goal/2315-mailbox-cutover', headSha: head, ownerId: 'mailbox-owner',
+    acquiredAtUtc: '2026-10-26T11:30:00.000Z',
+    expiresAtUtc: expiredLease ? '2026-10-26T11:59:00.000Z' : '2026-10-26T13:30:00.000Z',
+    proofRefs: ['proofs/mailbox-lease.json'],
+  });
+  const execution = state ? createExecutionReceipt({
+    receiptId: 'mailbox-execution', executionId: 'mailbox-execution',
+    repository: lease.repository, issueNumber: lease.issueNumber, prNumber: lease.prNumber,
+    branch: lease.branch, sourceHead: head, workerId: lease.ownerId, workerType: 'github-first',
+    leaseKey: lease.leaseId, state, phase: 'bounded-source-mutation', sequence: 1,
+    timestampUtc: '2026-10-26T11:59:00.000Z', heartbeatExpiresAtUtc: '2026-10-26T12:01:00.000Z',
+    blocker: state === 'stalled' ? 'TEST_STALL' : '',
+    proofRefs: ['proofs/mailbox-execution.json'], expectedNextAction: 'Remain within the existing owner.',
+  }) : null;
+  const lane = buildCanonicalImplementationLaneProjection({
+    laneId: lease.laneId, repository: lease.repository, issueNumber: lease.issueNumber,
+    prNumber: lease.prNumber, branch: lease.branch, headSha: head, mutationLease: lease,
+    executionReceipt: execution, nowUtc,
+    github: { repository: lease.repository, prNumber: lease.prNumber, headSha: head,
+      headBranch: lease.branch, prState: 'open', merged: false },
+  });
+  assert.equal(lane.valid, true);
+  return lane;
+}
+
+test('canonical receipt and lease state matrix does not turn observed lanes into worker obligations', () => {
+  for (const state of [null, 'queued', 'accepted', 'started', 'progress', 'stalled', 'completed', 'failed', 'cancelled']) {
+    for (const expired of [false, true]) {
+      const lane = observedSourceLane(state, expired);
+      const expectedMaterial = !expired && ['started', 'progress'].includes(state);
+      assert.equal(lane.active, expectedMaterial);
+      const controller = { status: 'IDLE', allowWorkerTick: false,
+        authoritativeProjection: { status: 'IDLE', lane } };
+      assert.equal(controllerRequiresMaterialProgress(controller), expectedMaterial, String(state) + ':' + expired);
+      assert.equal(controllerRequiresMaterialProgress({ ...controller, actionResult: {
+        elasticAdmission: { selectedMission: { missionId: 'critical-2964-elastic-goal' } },
+      } }), true, 'a selected mission still requires its grant');
+    }
+  }
+});
+
+test('actual worker cycle distinguishes inactive observed leases from missing active-work grants', async () => {
+  for (const [state, expired, expectsDefect] of [[null, true, false], ['queued', false, false],
+    ['progress', true, false], ['failed', false, false], ['started', false, true]]) {
+    const lane = observedSourceLane(state, expired);
+    const errors = sink();
+    const heartbeats = [];
+    let ticks = 0;
+    const code = await runSupervisedMissionWorker({
+      argv: ['--once'], env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'c'.repeat(40) },
+      stdout: sink().stream, stderr: errors.stream, bootstrapMailbox,
+      inspectRepositoryIdentity: canonicalIdentity, listMissionState: async () => [],
+      runControllerCycle: async () => ({ status: 'IDLE', action: 'WAIT_FOR_DURABLE_GOAL_EVIDENCE',
+        allowWorkerTick: false, boundedMutationSteps: 0,
+        authoritativeProjection: { status: 'IDLE', lane } }),
+      runTick: async () => { ticks += 1; assert.fail('no grant may execute'); },
+      writeHeartbeat: async h => { heartbeats.push(h); },
+      setIntervalFn: () => 17, clearIntervalFn: () => {},
+    });
+    assert.equal(ticks, 0);
+    assert.equal(code, expectsDefect ? 1 : 0, String(state) + ':' + expired);
+    assert.equal(errors.read().includes('CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT'), expectsDefect);
+    assert.equal(heartbeats.at(-1).lastTickVerdict,
+      expectsDefect ? 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT' : 'MISSION_WORKER_TICK_PASS');
+  }
+});
+
+// Regression contract: observing another execution is not a new grant obligation.
+function occupiedExternalControllerFixture() {
+  const mission = {
+    missionId: 'critical-2963-elastic-goal', revision: 5,
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    dispatch: { adapter: 'foundry-forge', status: 'running', resultId: '' },
+    continuity: { parkingStatus: 'ACTIVE' },
+  };
+  return {
+    status: 'HOLD', allowWorkerTick: false, boundedMutationSteps: 0,
+    authoritativeProjection: { status: 'READY', lane: null },
+    actionResult: {
+      classification: 'WAIT_ACTIVE_MISSION',
+      elasticAdmission: {
+        schemaVersion: 'stephanos.elastic-goal-mission-admission.v1',
+        ok: true, classification: 'ELASTIC_GOAL_MISSIONS_OCCUPIED',
+        selectedMission: mission, activeMissions: [mission],
+        elasticMissions: [mission], runnableMissions: [],
+      },
+      projection: { decision: 'WAIT_EXTERNAL_ACTIVE_MISSION', activeMission: mission },
+    },
+  };
+}
+
+test('occupied fallback obligation: running external work is observed without demanding another grant', () => {
+  const controller = occupiedExternalControllerFixture();
+  const original = JSON.stringify(controller);
+  assert.equal(controllerRequiresMaterialProgress(controller), false);
+  assert.equal(JSON.stringify(controller), original, 'classification cannot retire or rewrite the old attempt');
+});
+
+test('occupied fallback obligation: genuinely selected runnable work still requires its missing grant', () => {
+  for (const phase of ['CREATE_WORKTREE', 'AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED', 'VERIFYING', 'CHECK_PULL_REQUEST']) {
+    const controller = occupiedExternalControllerFixture();
+    const selected = { missionId: 'critical-2964-elastic-goal', revision: 8,
+      currentPhase: phase, dispatch: { adapter: 'foundry-forge', status: 'pending' } };
+    controller.actionResult.elasticAdmission.classification = 'ELASTIC_GOAL_MISSIONS_AVAILABLE';
+    controller.actionResult.elasticAdmission.selectedMission = selected;
+    controller.actionResult.elasticAdmission.runnableMissions = [selected];
+    controller.actionResult.projection.activeMission = selected;
+    assert.equal(controllerRequiresMaterialProgress(controller), true, phase);
+  }
+});
+
+test('occupied fallback obligation: contradictory or incomplete inventory cannot manufacture idle readiness', () => {
+  const cases = [
+    ['missing runnable inventory', c => { delete c.actionResult.elasticAdmission.runnableMissions; }],
+    ['invalid runnable inventory', c => { c.actionResult.elasticAdmission.runnableMissions = {}; }],
+    ['failed admission', c => { c.actionResult.elasticAdmission.ok = false; }],
+    ['missing phase', c => { delete c.actionResult.elasticAdmission.selectedMission.currentPhase; }],
+    ['unknown dispatch', c => { c.actionResult.elasticAdmission.selectedMission.dispatch.status = 'unknown'; }],
+    ['contradictory runnable selection', c => {
+      c.actionResult.elasticAdmission.runnableMissions = [c.actionResult.elasticAdmission.selectedMission];
+    }],
+    ['different projected mission', c => {
+      c.actionResult.projection.activeMission = { missionId: 'critical-2964-elastic-goal',
+        currentPhase: 'AGENT_IMPLEMENTATION', dispatch: { status: 'pending' } };
+    }],
+  ];
+  for (const [label, change] of cases) {
+    const controller = occupiedExternalControllerFixture();
+    change(controller);
+    assert.equal(controllerRequiresMaterialProgress(controller), true, label);
+  }
+});
+
+test('occupied fallback obligation: explicit current action or active canonical lane still requires progress', () => {
+  const granted = occupiedExternalControllerFixture();
+  granted.allowWorkerTick = true;
+  granted.workerActionGrant = actionGrant;
+  assert.equal(controllerRequiresMaterialProgress(granted), true);
+  const active = occupiedExternalControllerFixture();
+  active.authoritativeProjection.lane = { active: true };
+  assert.equal(controllerRequiresMaterialProgress(active), true);
+});
+
+test('occupied fallback obligation: actual supervised cycle preserves old work and never invokes another writer', async () => {
+  const controller = occupiedExternalControllerFixture();
+  const original = JSON.stringify(controller);
+  const errors = sink();
+  const heartbeats = [];
+  let ticks = 0;
+  let stateWrites = 0;
+  const code = await runSupervisedMissionWorker({
+    argv: ['--once'], env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'c'.repeat(40) },
+    stdout: sink().stream, stderr: errors.stream, bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    listMissionState: async () => [],
+    appendMissionStateEvent: async () => { stateWrites += 1; assert.fail('observation cannot mutate a mission'); },
+    runControllerCycle: async () => controller,
+    runTick: async () => { ticks += 1; assert.fail('no grant may execute'); },
+    writeHeartbeat: async h => { heartbeats.push(h); },
+    setIntervalFn: () => 17, clearIntervalFn: () => {},
+  });
+  assert.equal(code, 0);
+  assert.equal(ticks, 0);
+  assert.equal(stateWrites, 0);
+  assert.equal(errors.read().includes('CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT'), false);
+  assert.equal(heartbeats.at(-1).lastTickVerdict, 'MISSION_WORKER_TICK_PASS');
+  assert.equal(JSON.stringify(controller), original);
+});
+
+test('occupied fallback obligation: actual supervised cycle keeps runnable-without-grant failure visible', async () => {
+  const controller = occupiedExternalControllerFixture();
+  const mission = controller.actionResult.elasticAdmission.selectedMission;
+  mission.dispatch.status = 'pending';
+  controller.actionResult.elasticAdmission.classification = 'ELASTIC_GOAL_MISSIONS_AVAILABLE';
+  controller.actionResult.elasticAdmission.runnableMissions = [mission];
+  const errors = sink();
+  const heartbeats = [];
+  let ticks = 0;
+  const code = await runSupervisedMissionWorker({
+    argv: ['--once'], env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'c'.repeat(40) },
+    stdout: sink().stream, stderr: errors.stream, bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity, listMissionState: async () => [],
+    runControllerCycle: async () => controller,
+    runTick: async () => { ticks += 1; assert.fail('a pending mission is not a grant'); },
+    writeHeartbeat: async h => { heartbeats.push(h); },
+    setIntervalFn: () => 17, clearIntervalFn: () => {},
+  });
+  assert.equal(code, 1);
+  assert.equal(ticks, 0);
+  assert.equal(errors.read().includes('CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT'), true);
+  assert.equal(heartbeats.at(-1).lastTickVerdict, 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT');
 });
