@@ -64,6 +64,7 @@ import {
 const NOW = '2026-07-30T10:00:00.000Z';
 const HEAD = 'a'.repeat(40);
 const MERGE = 'b'.repeat(40);
+const ADVANCED_HEAD = 'c'.repeat(40);
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const LANE_ID = 'goal-1497-pr-1617';
 const BRANCH = 'feat/canonical-programme-authority-contracts';
@@ -1140,6 +1141,121 @@ test('terminal finalizer rejects unmerged PRs, releases only exact lease, and is
     });
     assert.equal(missingProof.ok, false);
     assert.equal(missingProof.reason, 'TERMINAL_FINALIZATION_EVIDENCE_MISSING');
+  });
+});
+
+test('terminal finalizer releases an exact stale lease only after proving its head is ancestor of the merged PR head', async () => {
+  await fixture(async ({ root, repoRoot }) => {
+    const claimed = await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
+    assert.equal(claimed.ok, true);
+    const identity = { ...leaseInput(), nowUtc: NOW };
+    const advancedGithub = githubMerged();
+    advancedGithub.headSha = ADVANCED_HEAD;
+    const ancestryCalls = [];
+    const finalized = await finalizeTerminalImplementationLane(identity, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => ({ configured: true, token: 'not-published', authority: 'test-only' }),
+        fetchGithubPrEvidence: async () => advancedGithub,
+        proveCommitAncestor: async (input) => {
+          ancestryCalls.push(input);
+          return {
+            ok: true,
+            reason: 'TERMINAL_FINALIZATION_LEASE_HEAD_ANCESTOR_PROVEN',
+            ancestor: input.ancestor,
+            descendant: input.descendant,
+          };
+        },
+      },
+    });
+    assert.equal(finalized.ok, true);
+    assert.equal(finalized.finalized, true);
+    assert.equal(finalized.release.released, true);
+    assert.deepEqual(ancestryCalls, [{
+      repositoryRoot: repoRoot,
+      ancestor: HEAD,
+      descendant: ADVANCED_HEAD,
+    }]);
+    assert.equal(finalized.plan.lane.headSha, ADVANCED_HEAD);
+    assert.equal(finalized.plan.lane.terminalHeadAdvance.leaseHeadSha, HEAD);
+    assert.equal(finalized.plan.lane.terminalHeadAdvance.mergedHeadSha, ADVANCED_HEAD);
+    assert.equal(finalized.records.receipt.headSha, HEAD);
+    assert.equal(finalized.records.proof.headSha, HEAD);
+    assert.equal(finalized.records.proof.leaseHeadSha, HEAD);
+    assert.equal(finalized.records.proof.mergedHeadSha, ADVANCED_HEAD);
+    assert.equal(finalized.records.proof.leaseHeadIsAncestor, true);
+    assert.equal(finalized.release.headSha, HEAD);
+    assert.equal((await readSourceMutationLease({ root, repoRoot, nowUtc: NOW })).present, false);
+
+    const repeated = await finalizeTerminalImplementationLane(identity, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => {
+          throw new Error('durable descendant-head finalization must not refetch GitHub');
+        },
+        proveCommitAncestor: async () => {
+          throw new Error('durable descendant-head finalization must not rerun ancestry proof');
+        },
+      },
+    });
+    assert.equal(repeated.ok, true);
+    assert.equal(repeated.idempotent, true);
+    assert.equal(repeated.release.reason, 'SOURCE_MUTATION_LEASE_ALREADY_RELEASED');
+  });
+
+  await fixture(async ({ root, repoRoot }) => {
+    const claimed = await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
+    assert.equal(claimed.ok, true);
+    const advancedGithub = { ...githubMerged(), headSha: ADVANCED_HEAD };
+    const refused = await finalizeTerminalImplementationLane({ ...leaseInput(), nowUtc: NOW }, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => ({ configured: true, token: 'not-published', authority: 'test-only' }),
+        fetchGithubPrEvidence: async () => advancedGithub,
+        proveCommitAncestor: async (input) => ({
+          ok: false,
+          reason: 'TERMINAL_FINALIZATION_LEASE_HEAD_NOT_ANCESTOR',
+          ancestor: input.ancestor,
+          descendant: input.descendant,
+        }),
+      },
+    });
+    assert.equal(refused.ok, false);
+    assert.equal(refused.reason, 'TERMINAL_FINALIZATION_LEASE_HEAD_NOT_ANCESTOR');
+    assert.equal((await readSourceMutationLease({ root, repoRoot, nowUtc: NOW })).present, true);
+  });
+
+  await fixture(async ({ root, repoRoot }) => {
+    const claimed = await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
+    assert.equal(claimed.ok, true);
+    let ancestryCalled = false;
+    const wrongBranch = await finalizeTerminalImplementationLane({ ...leaseInput(), nowUtc: NOW }, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => ({ configured: true, token: 'not-published', authority: 'test-only' }),
+        fetchGithubPrEvidence: async () => ({
+          ...githubMerged(),
+          headSha: ADVANCED_HEAD,
+          headBranch: 'feat/different-owner',
+        }),
+        proveCommitAncestor: async () => {
+          ancestryCalled = true;
+          return { ok: true };
+        },
+      },
+    });
+    assert.equal(wrongBranch.ok, false);
+    assert.equal(wrongBranch.reason, 'TERMINAL_FINALIZATION_HEAD_ADVANCE_IDENTITY_MISMATCH');
+    assert.equal(ancestryCalled, false);
+    assert.equal((await readSourceMutationLease({ root, repoRoot, nowUtc: NOW })).present, true);
   });
 });
 
