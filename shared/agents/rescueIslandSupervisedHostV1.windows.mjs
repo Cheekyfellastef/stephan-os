@@ -279,14 +279,27 @@ test('Windows CRLF checkout executes only the preserved exact governor Git blob'
   // already contain CRLF on the Windows runner. Canonicalise to LF first so
   // this test exercises *ordinary* CRLF, never accidental CR-CR-LF bytes.
   const withWindowsNewlines=approved.replace(/\r\n/g,'\n').replace(/\n/g,'\r\n');
+  // Independently read the exact committed Git blob as raw bytes. Comparing
+  // against the earlier mixed-EOL worktree would mistake valid normalization
+  // for a source-integrity failure after the correct fixed source executes.
+  const approvedBlob=git(f.config.canonicalRoot,['rev-parse',f.task.baseHead+':scripts/windows/run-vr-resource-governor.ps1']);
+  const committed=spawnSync(resolveBattleBridgeGitExecutable(),
+    [...battleBridgeGitFixedConfigArgs(),'-C',f.config.canonicalRoot,'cat-file','blob',approvedBlob],
+    {encoding:null,shell:false,windowsHide:true,timeout:30000,
+      env:createBattleBridgeMinimalChildEnvironment(process.env,{git:true})});
+  assert.equal(committed.status,0,String(committed.stderr||''));
+  assert.ok(Buffer.isBuffer(committed.stdout));
   assert.doesNotMatch(withWindowsNewlines,/\r\r\n/);
   await writeFile(script,withWindowsNewlines);
+  assert.notDeepEqual(await readFile(script),committed.stdout,
+    'test must exercise ordinary CRLF worktree bytes distinct from the Git blob');
   await f.host.host.withExistingOwnerAdmission(f.expected,async()=>{
     await f.host.host.observeSupervisedAdmission({...f.expected,stage:'BEFORE_PREPARATION'});
   });
   const inputs=join(f.config.sharedWorkspaceRoot,'proof/rescue-island-01-inputs');
   const files=await readdir(inputs);assert.equal(files.length,1);
-  assert.equal(await readFile(join(inputs,files[0]),'utf8'),approved);
+  assert.deepEqual(await readFile(join(inputs,files[0])),committed.stdout,
+    'only the exact independently read HEAD blob may be materialized for execution');
 });
 test('replacing a physical estate root between observations is held',async t=>{
   const f=await fixture(t);
