@@ -205,6 +205,8 @@ export async function publishSovereignControllerActivity(input, options = {}) {
     statusId: text(result.statusRecord?.statusId),
     proofId: text(result.proofRecord?.proofId),
     executionState: text(result.statusRecord?.controllerActivity?.executionState),
+    activeLaneCount: Number(result.statusRecord?.controllerActivity?.activeLaneCount) || 0,
+    parkedLaneCount: Number(result.statusRecord?.controllerActivity?.parkedLaneCount) || 0,
     materialLaneCount: Array.isArray(result.statusRecord?.controllerActivity?.materialLanes)
       ? result.statusRecord.controllerActivity.materialLanes.length
       : 0,
