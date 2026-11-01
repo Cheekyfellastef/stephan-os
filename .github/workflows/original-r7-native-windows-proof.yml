@@ -8,6 +8,8 @@ on:
       - 'global.json'
       - 'scripts/windows/stage-original-r7-witness-candidate.ps1'
       - 'scripts/windows/build-original-r7-scoped-mutation-gate.ps1'
+      - 'scripts/windows/build-original-r7-native-qualification.ps1'
+      - 'src/windows/Stephanos.OriginalR7NativeQualification/**'
       - 'src/windows/Stephanos.OriginalR7ScopedMutationGate/**'
       - 'src/windows/Stephanos.OriginalR7DaclReadback/**'
       - 'src/windows/Stephanos.OriginalR7DaclReadback.Tests/**'
@@ -85,6 +87,12 @@ jobs:
             }
           } finally { $archive.Dispose() }
           ./scripts/windows/build-original-r7-scoped-mutation-gate.ps1 -WdkRoot $kit -WdkPackagePath $package
+      - name: Compile disposable native qualification harness without signing or loading
+        shell: pwsh
+        run: |
+          $package = Join-Path $env:RUNNER_TEMP 'microsoft.windows.wdk.x64.10.0.26100.6584.nupkg'
+          $kit = Join-Path $env:RUNNER_TEMP 'r7-development-wdk'
+          ./scripts/windows/build-original-r7-native-qualification.ps1 -WdkRoot $kit -WdkPackagePath $package
       - name: Compile and execute native Windows probe regressions
         shell: pwsh
         run: |
