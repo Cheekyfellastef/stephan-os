@@ -167,10 +167,9 @@ test('preserves count-only active and parked lane telemetry without manufacturin
     blocker: 'WAITING_FOR_CURRENT_OWNER',
   }, { workspaceRoot: root, repoRoot: process.cwd() });
   assert.equal(result.ok, true);
-  assert.equal(result.statusRecord.controllerActivity.activeLaneCount, 2);
-  assert.equal(result.statusRecord.controllerActivity.parkedLaneCount, 1);
-  assert.deepEqual(result.statusRecord.controllerActivity.activeLanes, []);
-  assert.deepEqual(result.statusRecord.controllerActivity.parkedLanes, []);
+  assert.equal(result.activeLaneCount, 2);
+  assert.equal(result.parkedLaneCount, 1);
+  assert.equal(result.materialLaneCount, 0);
 
   assert.throws(() => validateSovereignControllerActivityPayload({
     schemaVersion: SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISH_SCHEMA,
