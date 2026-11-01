@@ -603,7 +603,6 @@ test('OC2 specialist fails closed on source evidence drift', () => {
   const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(input({ sources: drifted }));
   assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-source-evidence-invalid'));
 });
-}
 
 test('OC2 successor specialist parses default-parameter functions and permits one direct captured spawn result', () => {
   const defaultParameterExecutor = EXECUTOR
@@ -647,3 +646,4 @@ test('OC2 successor specialist still rejects actual spawnSyncFn aliasing with de
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-unbounded-process-authority-forbidden'));
 });
+}
