@@ -554,7 +554,10 @@ function functionBody(source, names) {
     const pattern = new RegExp(`\\bfunction\\s+${name}\\s*\\(|\\b(?:async\\s+)?function\\s+${name}\\s*\\(`);
     const match = pattern.exec(masked);
     if (!match) continue;
-    const brace = masked.indexOf('{', match.index + match[0].length);
+    const open = masked.indexOf('(', match.index);
+    const close = open >= 0 ? matchBalanced(masked, open, '(', ')') : -1;
+    if (close < 0) continue;
+    const brace = masked.indexOf('{', close + 1);
     if (brace < 0) continue;
     const end = matchBalanced(masked, brace, '{', '}');
     if (end < 0) continue;
@@ -690,12 +693,12 @@ function importAuthorityViolation(source) {
 
 function hasProcessAlias(source) {
   const code = executableOnly(source);
-  if (/\b(?:const|let|var)\s+(?!spawnSyncFn\b)[A-Za-z_$][\w$]*\s*=\s*spawnSyncFn\b/.test(code)) return true;
+  if (/\b(?:const|let|var)\s+(?!spawnSyncFn\b)[A-Za-z_$][\w$]*\s*=\s*spawnSyncFn\b(?!\s*\()/.test(code)) return true;
   if (/\bspawnSyncFn\s*\.\s*(?:bind|call|apply)\b/.test(code)) return true;
   if (/\bimport\s*\{[^}]*spawnSync\s+as\s+/i.test(stripComments(source))) return true;
   if (/[{,]\s*[A-Za-z_$][\w$]*\s*:\s*spawnSyncFn\b/.test(code)) return true;
   if (/\[\s*spawnSyncFn\s*(?:,|\])/.test(code) || /,\s*spawnSyncFn\s*\]/.test(code)) return true;
-  if (/\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[[^\]]+\])\s*=\s*spawnSyncFn\b/.test(code)) return true;
+  if (/\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[[^\]]+\])\s*=\s*spawnSyncFn\b(?!\s*\()/.test(code)) return true;
   return false;
 }
 

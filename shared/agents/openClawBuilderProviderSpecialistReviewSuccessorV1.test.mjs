@@ -604,3 +604,47 @@ test('OC2 specialist fails closed on source evidence drift', () => {
   assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-source-evidence-invalid'));
 });
 }
+
+test('OC2 successor specialist parses default-parameter functions and permits one direct captured spawn result', () => {
+  const defaultParameterExecutor = EXECUTOR
+    .replace(
+      'async function validate(grant, claim, action, persisted) {',
+      'async function validate(grant, claim, action, persisted, options = {}) {',
+    )
+    .replace(
+      'async function execute(platform, task, spawnSyncFn, repoRoot, env) {',
+      'async function execute(platform, task, spawnSyncFn, repoRoot, env, options = {}) {',
+    )
+    .replace(
+      'return spawnSyncFn(executable, args, { cwd: repoRoot, env, shell: false, windowsHide: true, timeout });',
+      'const result = spawnSyncFn(executable, args, { cwd: repoRoot, env, shell: false, windowsHide: true, timeout }); return result;',
+    );
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(input({
+    sources: sources({
+      [OPENCLAW_OC2_SUCCESSOR_SPECIALIST_PATHS_V1[1]]: defaultParameterExecutor,
+    }),
+  }));
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true, JSON.stringify(result.findings));
+});
+
+test('OC2 successor specialist still rejects actual spawnSyncFn aliasing with default parameters', () => {
+  const aliased = EXECUTOR
+    .replace(
+      'async function validate(grant, claim, action, persisted) {',
+      'async function validate(grant, claim, action, persisted, options = {}) {',
+    )
+    .replace(
+      'async function execute(platform, task, spawnSyncFn, repoRoot, env) {',
+      'async function execute(platform, task, spawnSyncFn, repoRoot, env, options = {}) {',
+    )
+    .concat('\nconst invoke = spawnSyncFn; invoke(userExecutable, userArgs);\n');
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(input({
+    sources: sources({
+      [OPENCLAW_OC2_SUCCESSOR_SPECIALIST_PATHS_V1[1]]: aliased,
+    }),
+  }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-unbounded-process-authority-forbidden'));
+});
+
