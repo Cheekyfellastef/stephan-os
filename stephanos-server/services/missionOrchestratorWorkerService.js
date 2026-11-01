@@ -220,13 +220,17 @@ export async function assertMissionWorkerPendingCapacityCurrent(item, bytes, opt
     // stored binding and exact caller identity agree; a malformed modern grant
     // cannot silently fall back to the legacy compatibility path.
     const fullyBoundGrant = missionWorkerActionGrantsMatchV1(grant, grant);
+    const isSourceCapacityGrant = ['codex', 'foundry-forge', 'chatgpt-github',
+      'openclaw-standalone', 'openclaw-local', 'desktop-commander',
+      'sovereign-commander', 'stephanos-native'].includes(grant.adapter)
+      || Boolean(text(grant.capacityRoute) || text(item.payload.capacityRoute));
     if (!state || state.missionId !== grant.missionId || state.revision !== grant.missionRevision
         || state.currentPhase !== grant.currentPhase || state.dispatch?.status !== 'pending'
         || action.executable !== true || action.actionId !== grant.actionId
         || action.actionKind !== grant.actionKind || adapterForAction(action) !== grant.adapter
         || item.payload.actionId !== action.actionId || item.payload.missionId !== state.missionId
         || !isDeepStrictEqual(item.executionBinding, durableQueueExecutionBinding(grant))
-        || (Object.hasOwn(grant, 'grantId') && !fullyBoundGrant)
+        || (isSourceCapacityGrant && Object.hasOwn(grant, 'grantId') && !fullyBoundGrant)
         || (fullyBoundGrant && (!validateExactActionGrant(state, action, grant, options).valid
           || !isDeepStrictEqual(item.payload, action)))
         || (history.entries.length && (!validateExactActionGrant(state, action, grant, options).valid
