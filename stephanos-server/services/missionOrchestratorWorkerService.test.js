@@ -1350,3 +1350,39 @@ test('a source pickup holding the mission lock cannot be superseded by concurren
   await assert.rejects(readFile(f.first.path), { code: 'ENOENT' });
   assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, f.state.revision + 1);
 });
+
+
+test('first issued pending grant refuses a different controller or capacity identity before atomic pickup', async t => {
+  const f = await pendingCapacityFixture(t);
+  const originalPending = await readFile(f.first.path);
+  const originalState = (await readMissionRecord(f.state.missionId, f.options)).state;
+  const changed = [
+    { workerId: 'foreign-source-writer' },
+    { sourceRevision: 'b'.repeat(40) },
+    { providerRouteIntent: 'OPENCLAW_ONLY' },
+    { capacityReceiptId: 'foreign-capacity-receipt' },
+    { capacityProofRefs: ['foreign-capacity-proof'] },
+    { branch: 'openclaw/foreign-original-owner' },
+    { grantId: 'grant-foreign' },
+  ];
+  for (const alteration of changed) {
+    const foreignGrant = { ...f.firstGrant, ...alteration };
+    assert.equal(missionWorkerActionGrantsMatchV1(f.firstGrant, foreignGrant), false);
+    await assert.rejects(
+      claimNextMissionWorkerItem('foundry-forge', { ...f.options, actionGrant: foreignGrant }),
+      /MISSION_WORKER_PENDING_CAPACITY_GRANT_MISMATCH/,
+    );
+    assert.deepEqual(await readFile(f.first.path), originalPending);
+    assert.deepEqual((await readMissionRecord(f.state.missionId, f.options)).state, originalState);
+    assert.deepEqual(await readdir(join(f.options.queueRoot, 'foundry-forge', 'processing')), []);
+  }
+  // No lease seizure, rewrite or fake progress. The original exact writer can
+  // still make the single real pending -> processing claim.
+  const exact = await claimNextMissionWorkerItem('foundry-forge', {
+    ...f.options, actionGrant: f.firstGrant,
+  });
+  assert.equal(exact.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  assert.ok(missionWorkerActionGrantsMatchV1(exact.item.actionGrant, f.firstGrant));
+  const running = (await readMissionRecord(f.state.missionId, f.options)).state;
+  assert.equal(running.dispatch.status, 'running');
+});
