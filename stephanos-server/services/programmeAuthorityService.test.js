@@ -48,6 +48,9 @@ import {
   readGithubGoalIssue,
 } from './githubPrEvidenceService.js';
 import {
+  COMPLETED_DISPATCH_CONVEYOR_ACCEPTANCE,
+  COMPLETED_DISPATCH_CONVEYOR_ACCEPTANCES,
+  COMPLETED_DISPATCH_CONVEYOR_MISSION_ID,
   LEGACY_COMPLETED_RETIRED_MISSION_ID,
   LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
   RETIRED_COMPLETED_LEGACY_ACCEPTANCE,
@@ -634,7 +637,7 @@ test('recognized degraded worker verdict preserves programme liveness authority'
   });
 });
 
-test('production composition admits an active critical mission when the workspace has no goal records', async () => {
+test('production composition retires satisfied #1292/#1293 history and advances to #1418', async () => {
   await fixture(async ({ root, home, repoRoot }) => {
     await publishProgrammeControllerHeartbeat({
       controllerId: 'durable-flywheel-controller',
@@ -676,16 +679,16 @@ test('production composition admits an active critical mission when the workspac
             currentPhase: 'COMPLETE',
           },
           {
-            missionId: 'critical-1292-1293-dispatch-conveyor',
+            missionId: COMPLETED_DISPATCH_CONVEYOR_MISSION_ID,
             repository: REPOSITORY,
             git: { branch: 'openclaw/critical-1292-1293-dispatch-conveyor' },
-            currentPhase: 'CREATE_WORKTREE',
+            currentPhase: 'COMPLETE',
           },
         ],
       },
     });
 
-    assert.equal(projection.criticalBacklog.decision, 'WAIT_ACTIVE_MISSION');
+    assert.equal(projection.criticalBacklog.decision, 'CREATE_NEXT_MISSION');
     assert.deepEqual(projection.criticalBacklog.nonBlockingPersistedMissionIds, [
       LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
       LEGACY_COMPLETED_RETIRED_MISSION_ID,
@@ -699,12 +702,54 @@ test('production composition admits an active critical mission when the workspac
     assert.deepEqual(retiredAcceptance, RETIRED_COMPLETED_LEGACY_ACCEPTANCE);
     assert.equal(retiredAcceptance.state, 'CLOSED_RETIRED');
     assert.deepEqual(retiredAcceptance.successorIssueNumbers, [2158]);
+    const dispatchAcceptance = projection.criticalBacklog.nonBlockingMissionAcceptances
+      .find(({ missionId }) => missionId === COMPLETED_DISPATCH_CONVEYOR_MISSION_ID);
+    assert.deepEqual(dispatchAcceptance, COMPLETED_DISPATCH_CONVEYOR_ACCEPTANCE);
+    assert.equal(dispatchAcceptance.state, 'CLOSED_RETIRED');
+    assert.deepEqual(projection.criticalBacklog.nonBlockingMissionAcceptances
+      .filter(({ missionId }) => missionId === COMPLETED_DISPATCH_CONVEYOR_MISSION_ID),
+    COMPLETED_DISPATCH_CONVEYOR_ACCEPTANCES);
     assert.equal(projection.scheduler.failClosed, false);
-    assert.equal(projection.scheduler.selectedGoal, '#1292');
+    assert.equal(projection.scheduler.selectedGoal, '#1418');
     assert.equal(projection.scheduler.selectedRoute, 'OPENCLAW_LOCAL');
     assert.equal(projection.scheduler.decisionReceipt.status, 'LANE_SELECTED');
     assert.equal(projection.status, 'READY', projection.blockers.join(','));
   });
+});
+
+test('dispatch completion acceptance cannot hide an active or unparked lane from Programme Authority', async (t) => {
+  for (const currentPhase of ['AGENT_IMPLEMENTATION', 'BLOCKED']) {
+    await t.test(currentPhase, async () => {
+      await fixture(async ({ root, home, repoRoot }) => {
+        await publishProgrammeControllerHeartbeat({
+          controllerId: 'durable-flywheel-controller', sourceRevision: HEAD, cycleState: 'IDLE',
+          activeLaneId: null, lastSuccessfulReconciliationUtc: NOW,
+          lastPublishedReceiptId: 'wait-for-original-dispatch-release', timestampUtc: NOW,
+          boundedMutationSteps: 0,
+        }, { root, repoRoot });
+        await publishWorkerHeartbeat(home);
+        const record = {
+          missionId: COMPLETED_DISPATCH_CONVEYOR_MISSION_ID, repository: REPOSITORY,
+          git: { branch: 'openclaw/critical-1292-1293-dispatch-conveyor' }, currentPhase,
+        };
+        const projection = await readAuthoritativeProgrammeProjection({
+          root, home, repoRoot, nowUtc: NOW, env: {}, testOnly: true,
+          dependencies: {
+            readWorkspaceFeed: async () => ({ state: 'ready',
+              records: { goalRecords: [], statusRecords: [], proofRecords: [] } }),
+            readRepositoryHead: async () => ({ ok: true, reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+              branch: 'main', headSha: HEAD }),
+            listMissionRecords: async () => [record],
+          },
+        });
+        assert.equal(projection.criticalBacklog.decision, 'WAIT_EXTERNAL_ACTIVE_MISSION');
+        assert.deepEqual(projection.criticalBacklog.activeMission, record);
+        assert.deepEqual(projection.criticalBacklog.nonBlockingPersistedMissionIds, []);
+        assert.notEqual(projection.scheduler.selectedGoal, '#1418');
+        assert.notEqual(projection.status, 'READY');
+      });
+    });
+  }
 });
 
 test('an exact durable release marker is inactive evidence and cannot strand the next critical mission', async () => {
@@ -782,7 +827,7 @@ test('an exact durable release marker is inactive evidence and cannot strand the
     assert.equal(projection.mutationLease, null);
     assert.equal(projection.lane, null);
     assert.equal(projection.sourceReads.lease, 'SOURCE_MUTATION_LEASE_RELEASED_INACTIVE');
-    assert.equal(projection.scheduler.selectedGoal, '#1292');
+    assert.equal(projection.scheduler.selectedGoal, '#1418');
     assert.equal(projection.scheduler.selectedRoute, 'OPENCLAW_LOCAL');
     assert.equal(projection.status, 'READY', projection.blockers.join(','));
     assert.equal(projection.blockers.includes('source:SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'), false);
