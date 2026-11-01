@@ -604,4 +604,3 @@ test('OC2 specialist fails closed on source evidence drift', () => {
   assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-source-evidence-invalid'));
 });
 }
-
