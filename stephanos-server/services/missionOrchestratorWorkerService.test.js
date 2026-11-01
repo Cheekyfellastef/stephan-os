@@ -1442,3 +1442,25 @@ test('initial canonical pickup verifies persisted grant, payload and execution b
   assert.equal(exact.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
   assert.deepEqual(exact.item.actionGrant, f.firstGrant);
 });
+
+
+test('foreign selected grant cannot quarantine an unrelated original pending queue owner', async t => {
+  const f = await pendingCapacityFixture(t);
+  const originalPending = await readFile(f.first.path);
+  const originalState = (await readMissionRecord(f.state.missionId, f.options)).state;
+  const foreign = { ...f.firstGrant, missionId: 'critical-9999-elastic-goal' };
+  const refused = await claimNextMissionWorkerItem('foundry-forge', {
+    ...f.options, actionGrant: foreign,
+  });
+  assert.equal(refused, null);
+  assert.deepEqual(await readFile(f.first.path), originalPending);
+  assert.deepEqual((await readMissionRecord(f.state.missionId, f.options)).state, originalState);
+  for (const folder of ['processing', 'failed', 'completed']) {
+    assert.deepEqual(await readdir(join(f.options.queueRoot, 'foundry-forge', folder)), []);
+  }
+  const exact = await claimNextMissionWorkerItem('foundry-forge', {
+    ...f.options, actionGrant: f.firstGrant,
+  });
+  assert.equal(exact.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  assert.deepEqual(exact.item.actionGrant, f.firstGrant);
+});
