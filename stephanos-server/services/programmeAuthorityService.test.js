@@ -36,6 +36,7 @@ import {
   SHARED_WORKSPACE_RECORD_KINDS,
   createSharedWorkspaceProofRecord,
   createSharedWorkspaceReceiptRecord,
+  createSharedWorkspaceStatusRecord,
   ensureSharedWorkspaceLayout,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import {
@@ -1739,6 +1740,7 @@ test('GitHub goal estate is mirrored durably with a bounded outage lease', async
 
   const writes = [];
   const publication = await publishGithubGoalMirrorEstate(mirror, {
+    nowUtc: NOW,
     root: '/workspace',
     repoRoot: '/repo',
     testOnly: true,
@@ -2009,6 +2011,7 @@ test('goal mirror publication serializes observations and rejects an older overl
   };
   let writes = 0;
   const result = await publishGithubGoalMirrorEstate(older, {
+    nowUtc: '2026-07-30T10:30:00.000Z',
     root: '/workspace',
     repoRoot: '/repo',
     testOnly: true,
@@ -2057,6 +2060,7 @@ test('failed goal revocation leaves a durable fail-closed reconciliation fence',
   }, NOW);
   const statusWrites = [];
   const result = await publishGithubGoalMirrorEstate(revoked, {
+    nowUtc: NOW,
     root: '/workspace',
     repoRoot: '/repo',
     testOnly: true,
@@ -2231,7 +2235,17 @@ test('superseded reconciliation projects from the durable winning mirror rather 
   const selected = selectGoalRecordsForProgrammeProjection(
     { records: [staleCallerRecord] },
     { ok: true, classification: 'GITHUB_GOAL_MIRROR_OBSERVATION_SUPERSEDED' },
-    { records: { goalRecords: [winningDurableRecord] } },
+    { records: { goalRecords: [winningDurableRecord], statusRecords: [{
+      ...createSharedWorkspaceStatusRecord({ statusId: 'github-goal-mirror-reconciliation',
+        participantId: 'programme-authority', timestampUtc: winningDurableRecord.mirrorObservedAtUtc, status: 'READY' }),
+      schema: 'stephanos.github-goal-mirror-reconciliation.v1',
+      mirrorObservedAtUtc: winningDurableRecord.mirrorObservedAtUtc,
+      mirrorLeaseExpiresAtUtc: winningDurableRecord.mirrorLeaseExpiresAtUtc,
+      mirroredIssueNumbers: [2002], fallbackAllowed: true, singleCanonicalScheduler: true,
+      duplicateMissionPreventionByCanonicalIssueIdentity: true,
+      mergeAuthority: false, deploymentAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false,
+    }] } },
+    '2026-07-30T10:30:00.000Z',
   );
   assert.equal(selected.length, 1);
   assert.equal(selected[0].state, 'CLOSED');
