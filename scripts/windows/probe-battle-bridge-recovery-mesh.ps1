@@ -46,12 +46,30 @@ function Test-TaskAction {
     } catch { return $false }
 }
 
+// Task Scheduler may persist the same identity as a short name or SID.
+// Compare the actual Windows account SID, not an unauthenticated spelling.
+// A failed translation grants no authority and never changes a task.
+function Resolve-TaskPrincipalSid {
+    param([string]$PrincipalUserId)
+    if ([string]::IsNullOrWhiteSpace($PrincipalUserId)) { return '' }
+    try {
+        if ($PrincipalUserId -match '^S-\d-\d+(?:-\d+)+$') {
+            return ([System.Security.Principal.SecurityIdentifier]::new($PrincipalUserId)).Value
+        }
+        return ([System.Security.Principal.NTAccount]::new($PrincipalUserId)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+    } catch { return '' }
+}
+
 function Test-TaskAuthority {
     param([object]$Task)
     try {
         if (-not $Task -or -not $Task.Principal -or -not $Task.Settings) { return $false }
-        $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-        return [string]::Equals([string]$Task.Principal.UserId, $currentUser, [System.StringComparison]::OrdinalIgnoreCase) `
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $currentSid = if ($identity -and $identity.User) { [string]$identity.User.Value } else { '' }
+        $principalSid = Resolve-TaskPrincipalSid -PrincipalUserId ([string]$Task.Principal.UserId)
+        return (-not [string]::IsNullOrWhiteSpace($currentSid) `
+            -and -not [string]::IsNullOrWhiteSpace($principalSid) `
+            -and [string]::Equals($principalSid, $currentSid, [System.StringComparison]::Ordinal)) `
             -and [string]$Task.Principal.LogonType -eq 'Interactive' `
             -and [string]$Task.Principal.RunLevel -eq 'Limited' `
             -and [string]$Task.Settings.MultipleInstances -eq 'IgnoreNew' `

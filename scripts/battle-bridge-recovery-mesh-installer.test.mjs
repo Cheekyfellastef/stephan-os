@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 
 const windows = new URL('./windows/', import.meta.url);
 
@@ -302,4 +303,57 @@ test('recovery does not re-run an already verified backend task', async () => {
   assert.match(probe, /if \(\$spec\.Id -eq 'backend' -and \$backendBeforeRecovery\.healthy\) \{[\s\S]*?\$backendRestartSkippedAsCurrent = \$true[\s\S]*?continue/);
   assert.match(probe, /backendRestartSkippedAsCurrent = \[bool\]\$backendRestartSkippedAsCurrent/);
   assert.doesNotMatch(probe, /\$spec\.Id -eq 'backend' -and \[string\]\$observed\.state/);
+});
+
+
+test('Recovery Mesh probe uses resolved task SIDs without weakening task admission', async (t) => {
+  const probe = await source('probe-battle-bridge-recovery-mesh.ps1');
+  assert.match(probe, /function Resolve-TaskPrincipalSid/);
+  assert.match(probe, /SecurityIdentifier\]::new\(\$PrincipalUserId\)/);
+  assert.match(probe, /NTAccount\]::new\(\$PrincipalUserId\)\)\.Translate/);
+  assert.match(probe, /Resolve-TaskPrincipalSid -PrincipalUserId \(\[string\]\$Task\.Principal\.UserId\)/);
+  assert.match(probe, /Equals\(\$principalSid, \$currentSid, \[System\.StringComparison\]::Ordinal\)/);
+  assert.doesNotMatch(probe, /Equals\(\[string\]\$Task\.Principal\.UserId,\s*\$currentUser/);
+  if (process.platform !== 'win32') {
+    t.diagnostic('Real SID identity cases run on Windows CI');
+    return;
+  }
+  // Execute only the two pure functions, NOT the probe or any scheduled task.
+  const begin = probe.indexOf('function Resolve-TaskPrincipalSid {');
+  const end = probe.indexOf('function Get-TaskHealth {', begin);
+  assert.ok(begin >= 0 && end > begin);
+  const functions = probe.slice(begin, end);
+  const harness = String.raw`
+$ErrorActionPreference = 'Stop'
+` + functions + `
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$short = ([string]$identity.Name -split '\\')[-1]
+$sid = $identity.User.Value
+function Assert-Identity([string]$name, [string]$user, [string]$logon,
+    [string]$level, [bool]$enabled, [string]$instances, [bool]$expected) {
+    $task = [pscustomobject]@{
+        Principal = [pscustomobject]@{ UserId = $user; LogonType = $logon; RunLevel = $level }
+        Settings = [pscustomobject]@{ Enabled = $enabled; MultipleInstances = $instances }
+    }
+    if ((Test-TaskAuthority -Task $task) -ne $expected) { throw "RECOVERY_SID_IDENTITY_FAILED:$name" }
+}
+Assert-Identity 'canonical' $identity.Name 'Interactive' 'Limited' $true 'IgnoreNew' $true
+Assert-Identity 'sid-form' $sid 'Interactive' 'Limited' $true 'IgnoreNew' $true
+Assert-Identity 'short-name' $short 'Interactive' 'Limited' $true 'IgnoreNew' $true
+Assert-Identity 'foreign' 'S-1-5-18' 'Interactive' 'Limited' $true 'IgnoreNew' $false
+Assert-Identity 'unresolvable' 'INVALID_ACCOUNT_993371' 'Interactive' 'Limited' $true 'IgnoreNew' $false
+Assert-Identity 'elevated' $sid 'Interactive' 'Highest' $true 'IgnoreNew' $false
+Assert-Identity 'wrong-logon' $sid 'S4U' 'Limited' $true 'IgnoreNew' $false
+Assert-Identity 'disabled' $sid 'Interactive' 'Limited' $false 'IgnoreNew' $false
+Assert-Identity 'parallel' $sid 'Interactive' 'Limited' $true 'Parallel' $false
+'RECOVERY_MESH_SID_REGRESSION_PASS'
+`;
+  const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive',
+    '-EncodedCommand', Buffer.from(harness, 'utf16le').toString('base64')], {
+    shell: false, windowsHide: true, encoding: 'utf8', timeout: 15000, maxBuffer: 8192,
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, (result.stderr || '').slice(0, 600));
+  assert.equal(result.stdout.trim(), 'RECOVERY_MESH_SID_REGRESSION_PASS');
 });
