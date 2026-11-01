@@ -14,9 +14,10 @@ export function buildFixedRuntimeInstallerCandidateV1({expectedMain,sourceTree,o
    throw new Error('FIXED_INSTALL_EXACT_SOURCE_REQUIRED');
  const seen=new Set(),captured=[];let total=0;
  for(const row of records) {
-  if(!row || Object.keys(row).sort().join(',')!=='blobSha,contentBase64,path' ||
+  if(!row || Object.keys(row).sort().join(',')!=='blobSha,contentBase64,materializedSha256,path' ||
     !FIXED_RUNTIME_SOURCE_PATHS_V1.includes(row.path) || seen.has(row.path) ||
-    !/^[a-f0-9]{40}$/.test(row.blobSha??'') || typeof row.contentBase64!=='string' ||
+    !/^[a-f0-9]{40}$/.test(row.blobSha??'') || !/^[a-f0-9]{64}$/.test(row.materializedSha256??'') ||
+    typeof row.contentBase64!=='string' ||
     row.contentBase64.length>2796208 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(row.contentBase64))
     throw new Error('FIXED_INSTALL_SOURCE_RECORD_INVALID');
   const bytes=Buffer.from(row.contentBase64,'base64');total+=bytes.length;
@@ -24,7 +25,7 @@ export function buildFixedRuntimeInstallerCandidateV1({expectedMain,sourceTree,o
     createHash('sha1').update('blob '+bytes.length+'\0').update(bytes).digest('hex')!==row.blobSha)
     throw new Error('FIXED_INSTALL_SOURCE_BLOB_MISMATCH');
   new TextDecoder('utf-8',{fatal:true}).decode(bytes);
-  seen.add(row.path);captured.push({Path:row.path,Sha256:sha(bytes),ContentBase64:row.contentBase64});
+  seen.add(row.path);captured.push({Path:row.path,Sha256:sha(bytes),MaterializedSha256:row.materializedSha256,ContentBase64:row.contentBase64});
  }
  captured.sort((a,b)=>a.Path.localeCompare(b.Path));
  const payload=Buffer.from(JSON.stringify({SchemaVersion:'stephanos.fixed-runtime-install-input.v1',
