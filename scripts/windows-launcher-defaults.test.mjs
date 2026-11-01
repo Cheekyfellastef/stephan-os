@@ -362,7 +362,10 @@ test('Ignition commissions only the exact missing Sovereign fixed runtime and th
   assert.match(script, /Start-Process -FilePath \$powerShellExecutable[\s\S]*?-Verb RunAs[\s\S]*?-Wait -PassThru/);
   assert.match(script, /'-EncodedCommand'/);
   assert.match(script, /Use the normal Windows Restart command/);
-  assert.match(script, /Invoke-SovereignCommanderRetainedCustodyPreparation\) \{\s*exit 0\s*\}[\s\S]*?Invoke-SovereignFixedRuntimeCommissioning\) \{\s*exit 0/);
+  assert.match(script, /Invoke-SovereignCommanderRetainedCustodyPreparation\) \{\s*exit 0\s*\}/);
+  assert.match(script, /if \(Invoke-SovereignFixedRuntimeCommissioning\) \{\s*Write-LiveLog 'Protected Sovereign fixed runtime remains separately held\. Continuing ordinary Stephanos startup in degraded mode\.'\s*\}/);
+  assert.match(script, /if \(Invoke-SovereignFixedRuntimeCommissioning\)[\s\S]*?Write-IgnitionStatus -Phase 'checking-workspace-dirt'/);
+  assert.doesNotMatch(script, /if \(Invoke-SovereignFixedRuntimeCommissioning\) \{\s*exit 0\s*\}/);
   const fn = script.match(/function Invoke-SovereignFixedRuntimeCommissioning[\s\S]*?^}\r?$/m)?.[0] || '';
   assert.ok(fn);
   assert.doesNotMatch(fn, /Restart-Computer|shutdown\.exe|Stop-Computer|Invoke-Expression|cmd\.exe|git\s+reset|git\s+clean|git\s+push/i);
