@@ -99,16 +99,9 @@ function Test-CanonicalBackendCommandLine {
     param([string]$CommandLine, [string]$ExpectedSourceHead)
     $commandLine = (([string]$CommandLine -replace '\s+', ' ').Trim())
     $canonicalBootstrapEval = "import('data:text/javascript;base64,'+process.env.STEPHANOS_BACKEND_BOOTSTRAP_BASE64)"
-    $expectedCommands = @(
-        "`"$canonicalNode`" --input-type=module --eval `"$canonicalBootstrapEval`"",
-        "$canonicalNode --input-type=module --eval `"$canonicalBootstrapEval`""
-    )
-    foreach ($expectedCommand in $expectedCommands) {
-        if ([string]::Equals($commandLine, $expectedCommand, [System.StringComparison]::OrdinalIgnoreCase)) {
-            return $true
-        }
-    }
-    return $false
+    $expectedQuotedCommand = "`"$canonicalNode`" --input-type=module --eval `"$canonicalBootstrapEval`""
+    $expectedUnquotedCommand = "$canonicalNode --input-type=module --eval `"$canonicalBootstrapEval`""
+    return ([string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase) -or [string]::Equals($commandLine, $expectedUnquotedCommand, [System.StringComparison]::OrdinalIgnoreCase))
 }
 
 function Test-RuntimeUiDistStatus {

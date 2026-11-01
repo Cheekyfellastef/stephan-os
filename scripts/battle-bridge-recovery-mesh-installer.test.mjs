@@ -357,3 +357,18 @@ Assert-Identity 'parallel' $sid 'Interactive' 'Limited' $true 'Parallel' $false
   assert.equal(result.status, 0, (result.stderr || '').slice(0, 600));
   assert.equal(result.stdout.trim(), 'RECOVERY_MESH_SID_REGRESSION_PASS');
 });
+
+
+test('Recovery Mesh pins both exact backend bootstrap command spellings', async () => {
+  const sourceText = await source('probe-battle-bridge-recovery-mesh.ps1');
+  const begin = sourceText.indexOf('function Test-CanonicalBackendCommandLine {');
+  const end = sourceText.indexOf('function Test-RuntimeUiDistStatus', begin);
+  assert.ok(begin >= 0 && end > begin);
+  const block = sourceText.slice(begin, end);
+  assert.match(block, /\$expectedQuotedCommand\s*=/);
+  assert.match(block, /\$expectedUnquotedCommand\s*=/);
+  assert.match(block, /\[string\]::Equals\(\$commandLine,\s*\$expectedQuotedCommand/);
+  assert.match(block, /\[string\]::Equals\(\$commandLine,\s*\$expectedUnquotedCommand/);
+  assert.doesNotMatch(block, /\$expectedCommands\s*=\s*@/);
+  assert.doesNotMatch(block, /-match\s+|\.Contains\(/);
+});
