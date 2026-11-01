@@ -16,7 +16,7 @@ namespace Stephanos.Sovereign {
   using Microsoft.Win32;
 
   public sealed class FixedRuntimeManifestFileV1 {
-    public string Path = "", Sha256 = "";
+    public string Path = "", Sha256 = "", MaterializedSha256 = "";
   }
   public sealed class FixedRuntimeManifestV1 {
     public string SchemaVersion = "", SourceHead = "", SourceTree = "";
@@ -272,12 +272,13 @@ namespace Stephanos.Sovereign {
               row.Path=="integrations/openclaw/stephanos-builder-provider/lib/oc1-gateway-provider.mjs" ||
               row.Path=="integrations/openclaw/stephanos-builder-provider/lib/oc1-repository-scout.mjs" ||
               System.Text.RegularExpressions.Regex.IsMatch(row.Path,@"^(scripts|shared|stephanos-server)/[A-Za-z0-9._/-]+$")) ||
-            row.Path.Contains("..") || row.Path.Contains("//") || !RuntimeHexV1(row.Sha256,64) || !seen.Add(row.Path))
+            row.Path.Contains("..") || row.Path.Contains("//") || !RuntimeHexV1(row.Sha256,64) ||
+            !RuntimeHexV1(row.MaterializedSha256,64) || !seen.Add(row.Path))
             throw new InvalidOperationException("RUNTIME_SOURCE_MEMBER_UNPROVEN");
           string path=Path.Combine(RuntimeSourceRootV1,row.Path.Replace('/',Path.DirectorySeparatorChar));
           RuntimePinParentsV1(path,pins);
           byte[] bytes=RuntimeReadPinnedV1(path,2097152,pins); total+=bytes.Length;
-          if(total>8388608 || RuntimeHashV1(bytes)!=row.Sha256)
+          if(total>8388608 || RuntimeHashV1(bytes)!=row.MaterializedSha256)
             throw new InvalidOperationException("RUNTIME_SOURCE_MEMBER_CHANGED");
         }
         foreach(string required in new string[]{
