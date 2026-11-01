@@ -20,6 +20,7 @@ import {
   buildIndependentReviewRunQueryV1,
   selectIndependentReviewRunCandidatesV1,
 } from '../shared/agents/independentReviewRunDiscoveryV1.mjs';
+import { findExistingIndependentReviewEvidenceHintV1 } from '../shared/agents/independentReviewExistingEvidenceFenceV1.mjs';
 import {
   INDEPENDENT_REVIEW_MISSING_RUN_LAUNCH_DECISION,
   planIndependentReviewMissingRunLaunchV1,
@@ -534,6 +535,30 @@ async function exactContext({ owner, repo, repository, prNumber, expectedHead, t
   };
 }
 
+// A durable review claim is NOT merge/review qualification. Stop the duplicate
+// launch and leave artifact/readback reconciliation to the existing collector.
+function suppressOnPriorReviewEvidence(context, repository) {
+  const hint = findExistingIndependentReviewEvidenceHintV1({
+    comments: context.comments, repository,
+    prNumber: context.pr.number, branch: context.pr.headRef,
+    expectedHead: context.pr.headSha, expectedBase: context.pr.baseSha,
+  });
+  if (hint.status === 'NO_EXISTING_EVIDENCE_HINT') return false;
+  console.log(`INDEPENDENT_REVIEW_DUPLICATE_LAUNCH_HELD=${hint.status}`);
+  if (hint.runId) console.log(`INDEPENDENT_REVIEW_POSSIBLE_RUN_ID=${hint.runId}`);
+  if (hint.status === 'HOLD_EXISTING_REVIEW_NEEDS_READBACK'
+    && hint.kind === 'OWNER_REVIEW_ARTIFACT_REFERENCE'
+    && hint.runId && hint.artifactId && /^[a-f0-9]{64}$/.test(hint.sha256 || '')) {
+    appendOutput('decision', 'RECOVER_EXISTING_OWNER_REVIEW');
+    appendOutput('recovery_run_id', hint.runId);
+    appendOutput('recovery_artifact_id', hint.artifactId);
+    appendOutput('recovery_sha256', hint.sha256);
+    return true;
+  }
+  appendOutput('decision', hint.status);
+  return true;
+}
+
 async function main() {
   if (process.env.GITHUB_ACTIONS !== 'true') throw new Error('missing independent-review launch may run only inside GitHub Actions');
   const eventName = text(process.env.GITHUB_EVENT_NAME);
@@ -565,6 +590,7 @@ async function main() {
     appendOutput('decision', 'SUPPRESSED_EXISTING_RUN');
     return;
   }
+  if (suppressOnPriorReviewEvidence(context, repository)) return;
 
   let dispatchAdmission = admitIndependentReviewWorkflowDispatchV1({
     repository,
@@ -630,6 +656,8 @@ async function main() {
     appendOutput('decision', 'SUPPRESSED_AFTER_REVALIDATION');
     return;
   }
+  // Second original-PR read before launching prevents a review-receipt race.
+  if (suppressOnPriorReviewEvidence(context, repository)) return;
   dispatchAdmission = admitIndependentReviewWorkflowDispatchV1({
     repository,
     workflowDefinition: context.workflow,

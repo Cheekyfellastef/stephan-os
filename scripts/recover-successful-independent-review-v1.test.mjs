@@ -6,6 +6,7 @@ import {
   buildSuccessfulReviewArtifactRecoveryV1,
   selectSuccessfulReviewRecoveryLaunchReceiptV1,
   waitForTerminalReviewReconciliationV1,
+  validateOwnerHintReviewArtifactReadbackV1,
 } from './recover-successful-independent-review-v1.mjs';
 import {
   buildIndependentReviewWorkflowDispatchLaunchReceiptV1,
@@ -211,4 +212,17 @@ test('recovery helper is read-only and delegates run discovery/reconciliation to
   assert.match(source, /TERMINAL_RECOVERY_MAX_POLLS = 30/);
   assert.match(source, /stephanos-independent-review-\$\{runId\}-attempt-\$\{runAttempt\}/);
   assert.doesNotMatch(source, /method:\s*'POST'|\/dispatches|rerun-failed-jobs|execFile|spawn|child_process|shell:\s*true|git\s+(?:push|reset|clean|rebase)|\/merges|\/contents\//i);
+});
+
+const OWNER_RUN=40916781623,OWNER_ART=12916836185,OWNER_DIGEST='e'.repeat(64);
+const OWNER_PR={number:3315,headSha:HEAD,baseSha:BASE,headRef:'original/review'};
+const OWNER_WORKFLOW={id:318073448,name:'Independent Merge Security Review',path:'.github/workflows/independent-merge-security-review.yml',state:'active'};
+const OWNER_RUN_OBJ={id:OWNER_RUN,workflow_id:318073448,path:OWNER_WORKFLOW.path,event:'pull_request_target',status:'completed',conclusion:'success',run_attempt:1,head_sha:HEAD,head_branch:OWNER_PR.headRef,pull_requests:[{number:3315,head:{sha:HEAD,ref:OWNER_PR.headRef,repo:{id:100}},base:{sha:BASE,ref:'main',repo:{id:100}}}]};
+const OWNER_ART_OBJ={id:OWNER_ART,name:`stephanos-independent-review-${OWNER_RUN}-attempt-1`,expired:false,digest:`sha256:${OWNER_DIGEST}`,workflow_run:{id:OWNER_RUN,head_sha:HEAD,head_branch:OWNER_PR.headRef}};
+const ownerReview=(changes={})=>validateOwnerHintReviewArtifactReadbackV1({workflow:OWNER_WORKFLOW,run:OWNER_RUN_OBJ,artifacts:[OWNER_ART_OBJ],pr:OWNER_PR,hint:{runId:OWNER_RUN,artifactId:OWNER_ART,sha256:OWNER_DIGEST},...changes});
+test('owner-only exact review artifact readback recovers with no launch receipt',()=>{
+ const result=ownerReview();assert.equal(result.recoveryRequired,true);assert.equal(result.runId,OWNER_RUN);
+});
+test('wrong head/base, failed run, forgery, bad digest, expiry, duplicates and missing binding deny',()=>{
+ for(const bad of [{pr:{...OWNER_PR,headSha:OTHER_HEAD}},{pr:{...OWNER_PR,baseSha:OTHER_HEAD}},{workflow:{...OWNER_WORKFLOW,id:2}},{run:{...OWNER_RUN_OBJ,conclusion:'failure'}},{run:{...OWNER_RUN_OBJ,event:'untrusted'}},{run:{...OWNER_RUN_OBJ,pull_requests:[]}},{artifacts:[{...OWNER_ART_OBJ,expired:true}]},{artifacts:[{...OWNER_ART_OBJ,digest:`sha256:${'f'.repeat(64)}`}]},{artifacts:[OWNER_ART_OBJ,OWNER_ART_OBJ]}]) assert.throws(()=>ownerReview(bad));
 });
