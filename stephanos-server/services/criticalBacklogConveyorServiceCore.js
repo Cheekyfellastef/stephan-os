@@ -339,7 +339,7 @@ function safeGrantMismatchFields(publication) {
     'post-repair-action-grant-mismatch'].includes(text(publication?.reason))) return [];
   const raw = Array.isArray(publication?.blockers) ? publication.blockers : [];
   return [...new Set(raw.filter(value => typeof value === 'string'
-    && SAFE_GRANT_MISMATCH_CODES.has(value))]
+    && SAFE_GRANT_MISMATCH_CODES.has(value)))]
     .sort().slice(0, 16);
 }
 
