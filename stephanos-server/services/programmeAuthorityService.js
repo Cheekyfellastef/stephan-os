@@ -2811,7 +2811,6 @@ function exactTerminalReceiptForIdentity(record, identity) {
     && record.prNumber === identity.prNumber
     && record.branch === identity.branch
     && record.headSha === identity.headSha
-    && headFactsValid
     && record.leaseId === identity.leaseId
     && record.ownerId === identity.ownerId
     && record.disposition === 'terminal-evidence-published'
@@ -2857,6 +2856,7 @@ function exactTerminalProofForIdentity(record, identity, expectedProof = null) {
     && record.prNumber === identity.prNumber
     && record.branch === identity.branch
     && record.headSha === identity.headSha
+    && headFactsValid
     && record.leaseId === identity.leaseId
     && record.ownerId === identity.ownerId
     && record.status === 'MERGED'
