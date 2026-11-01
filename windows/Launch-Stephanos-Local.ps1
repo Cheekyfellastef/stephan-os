@@ -1371,7 +1371,7 @@ try {
   }
 
   if (Invoke-SovereignFixedRuntimeCommissioning) {
-    exit 0
+    Write-LiveLog 'Protected Sovereign fixed runtime remains separately held. Continuing ordinary Stephanos startup in degraded mode.'
   }
 
   Write-LiveLog "selected repository root: $repoRoot"
