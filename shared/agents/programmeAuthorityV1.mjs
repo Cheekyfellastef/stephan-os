@@ -418,15 +418,30 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
   const githubPr = number(input.github?.prNumber ?? input.github?.number);
   const githubBranch = text(input.github?.headBranch);
   const githubRepository = text(input.github?.repository);
+  const githubHead = sha(input.github?.headSha ?? input.github?.head?.sha);
   const leaseIssue = number(lease?.issueNumber);
   const leasePr = number(lease?.prNumber);
+  const leaseHead = sha(lease?.headSha);
   const issueNumber = identityConflict('issue', [encoded.issueNumber, explicitIssue, leaseIssue], blockers);
   const prNumber = identityConflict('pr', [encoded.prNumber, explicitPr, leasePr, githubPr], blockers);
-  const headSha = identityConflict('head', [
-    sha(input.headSha),
-    sha(lease?.headSha),
-    sha(input.github?.headSha ?? input.github?.head?.sha),
-  ], blockers);
+  const advance = input.terminalHeadAdvance;
+  const advanceRequested = advance !== undefined && advance !== null;
+  const terminalHeadAdvanceProven = Boolean(
+    advanceRequested
+    && isBoundedPlainData(advance)
+    && lease
+    && leaseHead
+    && githubHead
+    && leaseHead !== githubHead
+    && sha(advance.leaseHeadSha) === leaseHead
+    && sha(advance.mergedHeadSha) === githubHead
+    && advance.leaseHeadIsAncestor === true
+    && input.github?.merged === true
+  );
+  if (advanceRequested && !terminalHeadAdvanceProven) blockers.push('terminal-head-advance-unproven');
+  const headSha = terminalHeadAdvanceProven
+    ? identityConflict('head', [sha(input.headSha), githubHead], blockers)
+    : identityConflict('head', [sha(input.headSha), leaseHead, githubHead], blockers);
   const branch = identityConflict('branch', [text(input.branch), text(lease?.branch), githubBranch], blockers);
   const repository = identityConflict('repository', [text(input.repository), text(lease?.repository), githubRepository], blockers);
   if (!laneId || !SAFE_ID.test(laneId)) blockers.push('lane-id-invalid');
@@ -458,7 +473,11 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
   if (lease) {
     const leaseValidation = validateSourceMutationLease(lease, {
       nowUtc: input.nowUtc,
-      expected: { laneId, issueNumber, prNumber, headSha, branch, repository },
+      expected: {
+        laneId, issueNumber, prNumber,
+        headSha: terminalHeadAdvanceProven ? leaseHead : headSha,
+        branch, repository,
+      },
     });
     if (!leaseValidation.valid) blockers.push(...leaseValidation.errors.map((error) => `lease:${error}`));
     if (elasticPhaseBound && (leaseValidation.active !== true || leaseValidation.stale === true)) {
@@ -481,7 +500,7 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
       repository,
       issueNumber,
       branch,
-      expectedHead: headSha,
+      expectedHead: terminalHeadAdvanceProven ? leaseHead : headSha,
     });
     if (!validation.valid) {
       blockers.push(`execution-receipt:${validation.refusalReason || 'invalid'}`);
@@ -537,6 +556,11 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
     prState: github.prState,
     merged: github.affirmativelyMerged,
     mergeEvidence: github,
+    terminalHeadAdvance: terminalHeadAdvanceProven ? Object.freeze({
+      leaseHeadSha: leaseHead,
+      mergedHeadSha: headSha,
+      leaseHeadIsAncestor: true,
+    }) : null,
     status: terminal ? 'TERMINAL' : active ? 'ACTIVE' : reviewPending ? 'REVIEW_PENDING' : 'HOLD',
     active,
     pickupPending,
@@ -1887,7 +1911,7 @@ export function buildTerminalLaneFinalizationPlan(input = {}) {
       issueNumber: lane?.issueNumber,
       prNumber: lane?.prNumber,
       branch: lane?.branch,
-      headSha: lane?.headSha,
+      headSha: lane?.terminalHeadAdvance?.leaseHeadSha || lane?.headSha,
       ownerId: input.ownerId,
     },
   });
@@ -1916,7 +1940,7 @@ export function createTerminalLaneEvidenceId(lane = {}, lease = {}) {
     number(lane.issueNumber),
     number(lane.prNumber),
     text(lane.branch),
-    sha(lane.headSha),
+    sha(lease.headSha) || sha(lane.headSha),
     text(lease.leaseId),
     text(lease.ownerId),
   ])).digest('hex').slice(0, 32);
@@ -1937,7 +1961,9 @@ export function createTerminalLaneEvidenceRecords(plan, input = {}) {
       relatedIssue: `#${plan.lane.issueNumber}`,
       relatedPr: `#${plan.lane.prNumber}`,
       status: 'MERGED',
-      summary: `GitHub affirmatively merged PR #${plan.lane.prNumber} at exact head ${plan.lane.headSha}.`,
+      summary: plan.lane.terminalHeadAdvance
+        ? `GitHub affirmatively merged PR #${plan.lane.prNumber} at descendant head ${plan.lane.headSha}; lease head ${plan.mutationLease.headSha} was proven as its ancestor.`
+        : `GitHub affirmatively merged PR #${plan.lane.prNumber} at exact head ${plan.lane.headSha}.`,
       refs: [proofRef],
       proofRefs: [proofRef],
     }),
@@ -1947,7 +1973,10 @@ export function createTerminalLaneEvidenceRecords(plan, input = {}) {
     issueNumber: plan.lane.issueNumber,
     prNumber: plan.lane.prNumber,
     branch: plan.lane.branch,
-    headSha: plan.lane.headSha,
+    headSha: plan.mutationLease.headSha,
+    mergedHeadSha: plan.lane.headSha,
+    leaseHeadSha: plan.mutationLease.headSha,
+    leaseHeadIsAncestor: plan.lane.terminalHeadAdvance?.leaseHeadIsAncestor === true,
     leaseId: plan.mutationLease.leaseId,
     ownerId: plan.mutationLease.ownerId,
     mergeCommitSha: plan.mergeEvidence.mergeCommitSha,
@@ -1974,7 +2003,7 @@ export function createTerminalLaneEvidenceRecords(plan, input = {}) {
     issueNumber: plan.lane.issueNumber,
     prNumber: plan.lane.prNumber,
     branch: plan.lane.branch,
-    headSha: plan.lane.headSha,
+    headSha: plan.mutationLease.headSha,
     leaseId: plan.mutationLease.leaseId,
     ownerId: plan.mutationLease.ownerId,
     releaseOnlyExactLease: true,
