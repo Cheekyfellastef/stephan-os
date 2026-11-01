@@ -15,6 +15,7 @@ const MISSION_WORKER_CLEANUP_PATH = './windowsAuthorityMissionWorkerCleanupRevie
 const STEPHANOS_CORE_DAEMON_PATH = './windowsAuthorityStephanosCoreDaemonReviewV1.mjs';
 const VR_RESOURCE_GOVERNOR_PATH = './windowsAuthorityVrResourceGovernorReviewV1.mjs';
 const SOVEREIGN_FIXED_RUNTIME_PATH = './windowsAuthoritySovereignFixedRuntimeReviewV1.mjs';
+const CANONICAL_MAILBOX_NATIVE_PATH = './windowsAuthorityCanonicalMailboxNativeEvidenceReviewV1.mjs';
 
 const BASE_BLOB_SHA = 'b0d5a568b8d51e7a1343a05bdac72c910ea4037f';
 const LEGACY_ROUTER_BLOB_SHA = '0bd8978f55ace41b6743fc3cc900575e4f0cdf8f';
@@ -30,6 +31,7 @@ const MISSION_WORKER_CLEANUP_BLOB_SHA = 'aba7123d16a26aa736ccd52be8e04ef2ecc4534
 const STEPHANOS_CORE_DAEMON_BLOB_SHA = '074eab1b76e480f10c78d052188ba88764f4ad37';
 const VR_RESOURCE_GOVERNOR_BLOB_SHA = '0686def65f5c8ae7c8eb10a227516d41bfa16bec';
 const SOVEREIGN_FIXED_RUNTIME_BLOB_SHA = 'c1d0df145b50eb05696eb23818679abcd6a3f6ec';
+const CANONICAL_MAILBOX_NATIVE_BLOB_SHA = '7fe42d5b9e839517c02a90efc7d0526b36773342';
 
 // Keep the established switchboard proof vocabulary visible at the trusted
 // composition boundary. The legacy router remains byte-pinned and supplies
@@ -85,6 +87,7 @@ provePinnedModule(MISSION_WORKER_CLEANUP_PATH, MISSION_WORKER_CLEANUP_BLOB_SHA);
 const stephanosCoreDaemonModule = provePinnedModule(STEPHANOS_CORE_DAEMON_PATH, STEPHANOS_CORE_DAEMON_BLOB_SHA);
 const vrResourceGovernorModule = provePinnedModule(VR_RESOURCE_GOVERNOR_PATH, VR_RESOURCE_GOVERNOR_BLOB_SHA);
 const sovereignFixedRuntimeModule = provePinnedModule(SOVEREIGN_FIXED_RUNTIME_PATH, SOVEREIGN_FIXED_RUNTIME_BLOB_SHA);
+const canonicalMailboxNativeModule = provePinnedModule(CANONICAL_MAILBOX_NATIVE_PATH, CANONICAL_MAILBOX_NATIVE_BLOB_SHA);
 void MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA;
 void WORKER_WATCHDOG_BLOB_SHA;
 void MAILBOX_CADENCE_ROUTE;
@@ -127,6 +130,7 @@ if (JSON.stringify(stephanosCoreDaemon.WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_P
 ])) throw new Error('WINDOWS_AUTHORITY_CORE_DAEMON_TRANSITIVE_INVENTORY_MISMATCH');
 const vrResourceGovernor = await import(vrResourceGovernorModule.url.href);
 const sovereignFixedRuntime = await import(sovereignFixedRuntimeModule.url.href);
+const canonicalMailboxNative = await import(canonicalMailboxNativeModule.url.href);
 
 export * from './windowsAuthoritySpecialistReviewV1LegacyRouter.mjs';
 export const WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1 = wsl2.WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1;
@@ -138,6 +142,7 @@ export const WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1 = starfieldVrAe
 export const WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1 = stephanosCoreDaemon.WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1;
 export const WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1 = vrResourceGovernor.WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1;
 export const WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_PATHS_V1 = sovereignFixedRuntime.WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_PATHS_V1;
+export const WINDOWS_AUTHORITY_CANONICAL_MAILBOX_NATIVE_PATHS_V1 = canonicalMailboxNative.WINDOWS_AUTHORITY_CANONICAL_MAILBOX_NATIVE_PATHS_V1;
 
 const STARFIELD_VR_SPLASH_LAUNCH_PATH = 'scripts/windows/launch-starfield-vr-with-splash.ps1';
 const STARFIELD_VR_LAUNCHER_SCRIPT_PATH = WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0];
@@ -230,6 +235,9 @@ function analyzeStarfieldVrAerCompositeReview(input = {}) {
 }
 
 export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
+  // Original #2315 source-only review, never an installed native-signer qualification.
+  const mailboxNative = canonicalMailboxNative.analyzeWindowsAuthorityCanonicalMailboxNativeEvidenceReviewV1(input);
+  if (mailboxNative.eligible) return mailboxNative;
   const sovereignFixedRuntimeResult = sovereignFixedRuntime.analyzeWindowsAuthoritySovereignFixedRuntimeReviewV1(input);
   if (sovereignFixedRuntimeResult.eligible) return sovereignFixedRuntimeResult;
 
