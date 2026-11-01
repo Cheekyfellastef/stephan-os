@@ -46,9 +46,9 @@ function Test-TaskAction {
     } catch { return $false }
 }
 
-// Task Scheduler may persist the same identity as a short name or SID.
-// Compare the actual Windows account SID, not an unauthenticated spelling.
-// A failed translation grants no authority and never changes a task.
+# Task Scheduler may persist the same identity as a short name or SID.
+# Compare the actual Windows account SID, not an unauthenticated spelling.
+# A failed translation grants no authority and never changes a task.
 function Resolve-TaskPrincipalSid {
     param([string]$PrincipalUserId)
     if ([string]::IsNullOrWhiteSpace($PrincipalUserId)) { return '' }
