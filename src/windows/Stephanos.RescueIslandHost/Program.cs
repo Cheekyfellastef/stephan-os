@@ -19,6 +19,9 @@ try
     var principal = WindowsProcessPrincipalObservation.ObserveCurrentProcess();
     if (args[0] == "--supervised-once")
     {
+        if (principal.Elevated || principal.ThreadImpersonating || principal.ElevationType == "Full"
+            || (principal.AdministratorsGroupPresent && (principal.AdministratorsGroupAttributes is not uint attributes || (attributes & 16) == 0)))
+            throw new HostHeldException("ISLAND_HOST_NON_ADMINISTRATIVE_TOKEN_REQUIRED");
         byte[] buffer = new byte[16385];
         int count = 0;
         using var inputDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -43,14 +46,6 @@ try
             sourceProposal = root.GetProperty("task").TryGetProperty("schemaVersion", out var schema)
                 && schema.ValueKind == JsonValueKind.String && schema.GetString() == "stephanos.rescue-island-source-task.v1";
         }
-        if (principal.ThreadImpersonating)
-            throw new HostHeldException("ISLAND_HOST_NON_ADMINISTRATIVE_TOKEN_REQUIRED");
-        bool restrictedIngressRequired = principal.Elevated || principal.ElevationType == "Full"
-            || (principal.AdministratorsGroupPresent
-                && (principal.AdministratorsGroupAttributes is not uint attributes || (attributes & 16) == 0));
-        if (restrictedIngressRequired)
-            return RestrictedSupervisedLauncher.Run(request, sourceProposal);
-
         // The built executable has one source layout. No cwd/env/task can
         // nominate a script, executable or repository. Copied binaries fail shut.
         string sourceRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../.."));
