@@ -179,7 +179,7 @@ export function analyzeWindowsAuthorityCanonicalMailboxNativeEvidenceReviewV1(in
     }
     if (!sourceOnlySafeguards(path, src.content))
       findings.push(finding('mailbox-native-source-only-safety-invariant-missing', path));
-    else proofRefs.push('source-only/windows-mailbox-native/' + path + '@' + head + '#' + src.blobSha + ':' + src.size);
+    else proofRefs.push('proofs/windows-mailbox-native/' + path + '@' + head + '#' + src.blobSha + ':' + src.size);
   }
   const clean = findings.length === 0 && proofRefs.length === count;
   return Object.freeze({
