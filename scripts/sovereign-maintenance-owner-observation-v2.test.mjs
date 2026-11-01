@@ -8,6 +8,7 @@ const native = () => ({ schemaVersion: 'stephanos.maintenance-owner-native-obser
 const held = () => ({ ok: true, service: 'stephanos-sovereign-commander', continuousRepairGuardian: {
   timeoutCustodyHeld: true, running: false, maintenanceInFlight: false, scheduled: false, currentCycleId: '',
   lastBlocker: 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN',
+  persistentCustody: { held: true, blocker: 'MAINTENANCE_CUSTODY_RESERVED' },
   lastCycleId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', lastStartedAtUtc: new Date(Date.now() - 30_000).toISOString() } });
 test('owner observation binds stable native birth and exact held attempt without executing an action', async () => {
   const n = native(), h = held(); const r = await readMaintenanceOwnerObservationV2({
@@ -19,14 +20,36 @@ test('owner observation binds stable native birth and exact held attempt without
   assert.equal(r.observation.pid, n.pid); assert.equal(r.observation.lastCycleId, h.continuousRepairGuardian.lastCycleId);
   assert.equal(r.digest, createHash('sha256').update(JSON.stringify(r.observation)).digest('hex'));
 });
+test('restarted quiescent owner may bind the same persisted hold without volatile cycle metadata', async () => {
+  const n = native(), h = held();
+  h.continuousRepairGuardian.lastCycleId = '';
+  h.continuousRepairGuardian.lastStartedAtUtc = '';
+  const r = await readMaintenanceOwnerObservationV2({
+    nativeReader: () => ({ ...n, observedAtUtc: new Date().toISOString() }),
+    fetchFn: async () => Response.json(h),
+  });
+  assert.equal(r.observation.lastCycleId, '');
+  assert.equal(r.observation.lastStartedAtUtc, '');
+  assert.equal(r.observation.timeoutCustodyHeld, true);
+  assert.equal(r.observation.running, false);
+  assert.equal(r.observation.scheduled, false);
+});
+
 test('owner drift, stale observations, active work and malformed health all refuse', async () => {
-  for (const scenario of ['pid', 'birth', 'stale', 'running', 'scheduled', 'wrong-service', 'cycle', 'unheld']) {
+  for (const scenario of ['pid', 'birth', 'stale', 'running', 'scheduled', 'wrong-service', 'cycle', 'unheld',
+    'persistent-missing', 'persistent-false', 'partial-restart-cycle']) {
     const n = native(), h = held(); let calls = 0;
     if (scenario === 'running') h.continuousRepairGuardian.running = true;
     if (scenario === 'scheduled') h.continuousRepairGuardian.scheduled = true;
     if (scenario === 'wrong-service') h.service = 'other';
     if (scenario === 'cycle') h.continuousRepairGuardian.lastCycleId = 'unknown';
     if (scenario === 'unheld') h.continuousRepairGuardian.timeoutCustodyHeld = false;
+    if (scenario === 'persistent-missing') delete h.continuousRepairGuardian.persistentCustody;
+    if (scenario === 'persistent-false') h.continuousRepairGuardian.persistentCustody.held = false;
+    if (scenario === 'partial-restart-cycle') {
+      h.continuousRepairGuardian.lastCycleId = '';
+      h.continuousRepairGuardian.lastStartedAtUtc = new Date(Date.now() - 30_000).toISOString();
+    }
     await assert.rejects(readMaintenanceOwnerObservationV2({
       nativeReader: () => { calls++; return { ...n,
         ...(scenario === 'pid' && calls > 1 ? { pid: 11 } : {}),

@@ -290,3 +290,104 @@ test('claim watcher stops when the tick finishes and never publishes stale activ
   assert.equal(heartbeats[1].lastTickVerdict, 'MISSION_WORKER_TICK_PASS');
   assert.equal(heartbeats[1].activeActionGrant, undefined);
 });
+
+
+test('local source processing heartbeat preserves exact canonical task class and original grant', async () => {
+  const parent=await mkdtemp(path.join(os.tmpdir(),'fixed-source-active-'));
+  try {
+    const actionGrant=grant({adapter:'foundry-forge',capacityRoute:'FOUNDRY_FORGE',
+      workerId:'stephanos-forge-lifeboat-local',currentPhase:'REPAIR_REQUIRED',
+      mergeAuthority:false,leaseSeizureAllowed:false});
+    const item=queueItem(actionGrant,{actionGrant,payload:{...queueItem(actionGrant).payload,
+      allowedFiles:['shared/agents/one.mjs'],requiredEvidence:['source tests']}});
+    const processing=path.join(parent,'foundry-forge','processing');
+    await mkdir(processing,{recursive:true});
+    const claimPath=path.join(processing,actionGrant.actionId+'.json');
+    const read=()=>readMissionWorkerActiveClaim({queueRoot:parent,actionGrant});
+    await writeFile(claimPath,JSON.stringify(item));
+    const active=await read();
+    assert.equal(active.executionPhase,'processing:foundry-forge');
+    assert.match(active.activeReceiptId,/^claim:[a-f0-9]{64}$/);
+    for(const alter of [
+      value=>{value.actionGrant.workerId='another-worker';},
+      value=>{value.actionGrant.mergeAuthority=true;},
+      value=>{value.payload.requiredEvidence=['Windows runtime proof'];},
+      value=>{value.payload.requiredEvidence=['Battle Bridge evidence'];},
+      value=>{value.payload.allowedFiles=[];},
+      value=>{value.payload.allowedFiles=['a','b','c','d','e'];},
+    ]) {
+      const invalid=structuredClone(item);alter(invalid);
+      await writeFile(claimPath,JSON.stringify(invalid));
+      assert.equal(await read(),null);
+    }
+  } finally {await rm(parent,{recursive:true,force:true});}
+});
+
+// Append these tests to the existing heartbeat-active-claim test module.
+for (const mode of ['delayed-success','write-failure','wrong-action','wrong-claim','no-active-record','claim-timeout']) {
+  test('source launch joins actual active-claim publication: '+mode, async () => {
+    const actionGrant=grant({adapter:'foundry-forge',capacityRoute:'FOUNDRY_FORGE',workerId:'stephanos-forge-lifeboat-local'});
+    const activeClaim={activeTaskId:actionGrant.actionId,activeReceiptId:'claim:'+'c'.repeat(64),executionPhase:'processing:foundry-forge'};
+    let join,started=false,published=false,launchAttempted=false,finishWrite,publicationEntered;
+    const writing=new Promise(resolve=>{publicationEntered=resolve;});
+    const writeGate=new Promise(resolve=>{finishWrite=resolve;});
+    const running=runSupervisedMissionWorker({
+      argv:['--once'],env:workerEnv(),stdout:sink(),stderr:sink(),
+      bootstrapMailbox:async()=>({ok:true,status:'MAILBOX_ALREADY_REGISTERED'}),
+      inspectRepositoryIdentity:async()=>canonicalIdentity(),runControllerCycle:async()=>controllerFor(actionGrant),
+      runTick:async options=>{
+        join=options.awaitActiveClaimHeartbeat;
+        assert.equal(typeof join,'function');started=true;
+        assert.equal(await join({...actionGrant,actionId:'foreign-action'}),false);
+        const allowed=await join(structuredClone(actionGrant));
+        launchAttempted=allowed;
+        assert.equal(allowed,mode==='delayed-success');
+        if(allowed)assert.equal(published,true);
+        return {publish:{published:true},processed:{processed:true}};
+      },
+      readActiveClaim:async()=>started&&mode!=='claim-timeout'?activeClaim:null,
+      writeHeartbeat:async input=>{
+        if(!input.activeActionGrant)return {ok:true,record:{}};
+        publicationEntered();await writeGate;
+        if(mode==='write-failure')throw new Error('simulated atomic write failure');
+        published=true;
+        const record={...activeClaim,lastTickVerdict:'MISSION_WORKER_TICK_RUNNING'};
+        if(mode==='wrong-action')record.activeTaskId='foreign-action';
+        if(mode==='wrong-claim')record.activeReceiptId='claim:'+'d'.repeat(64);
+        if(mode==='no-active-record')delete record.activeTaskId;
+        return {ok:true,record};
+      },
+      activeClaimProbeIntervalMs:1,setIntervalFn:()=>7,clearIntervalFn:()=>{},
+      now:()=> '2026-09-04T16:00:01.000Z',
+    });
+    if(mode!=='claim-timeout') {
+      // Bounded wait also lets the immutable-baseline negative fail cleanly.
+      await Promise.race([writing,running]);
+      assert.equal(launchAttempted,false);
+      finishWrite();
+    }
+    const code=await running;
+    assert.equal(code,mode==='write-failure'?1:0);
+    assert.equal(launchAttempted,mode==='delayed-success');
+    assert.equal(await join(structuredClone(actionGrant)),false);
+  });
+}
+
+test('active publication cannot qualify a mutated original in-flight grant',async()=>{
+  const actionGrant=grant(),activeClaim={activeTaskId:actionGrant.actionId,activeReceiptId:'claim:'+'c'.repeat(64),executionPhase:'processing:codex'};
+  let join,started=false;
+  const code=await runSupervisedMissionWorker({
+    argv:['--once'],env:workerEnv(),stdout:sink(),stderr:sink(),
+    bootstrapMailbox:async()=>({ok:true}),inspectRepositoryIdentity:async()=>canonicalIdentity(),
+    runControllerCycle:async()=>controllerFor(actionGrant),
+    runTick:async options=>{join=options.awaitActiveClaimHeartbeat;assert.equal(typeof join,'function');started=true;
+      assert.equal(await join(structuredClone(actionGrant)),false);
+      return {publish:{published:true},processed:{processed:true}};},
+    readActiveClaim:async()=>started?activeClaim:null,
+    writeHeartbeat:async input=>{if(!input.activeActionGrant)return {ok:true,record:{}};
+      actionGrant.operation='different-operation';
+      return {ok:true,record:{...activeClaim,lastTickVerdict:'MISSION_WORKER_TICK_RUNNING'}};},
+    activeClaimProbeIntervalMs:1,setIntervalFn:()=>7,clearIntervalFn:()=>{},now:()=> '2026-09-04T16:00:01.000Z',
+  });
+  assert.equal(code,0);
+});

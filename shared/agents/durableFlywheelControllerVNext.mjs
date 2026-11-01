@@ -41,6 +41,7 @@ import {
 } from '../../stephanos-server/services/flywheelLearningGoalBridgeService.js';
 import {
   buildMissionWorkerAction,
+  createMissionWorkerActionGrantV1,
   projectMissionWorkerActionState,
 } from './missionOrchestratorWorker.mjs';
 
@@ -331,7 +332,7 @@ async function exactPublishedReviewGrantProjection(projection, readCurrentMissio
   return { ...projection, criticalBacklog: { ...projection.criticalBacklog, activeMission: mission } };
 }
 
-function createExactWorkerActionGrant(
+export function createExactWorkerActionGrant(
   projection = {},
   sourceRevision = '',
   capacityRouting = null,
@@ -372,7 +373,7 @@ function createExactWorkerActionGrant(
   const identity = resolveMissionWorkerGrantIdentity(actionState, projectionIdentity(projection));
   if (!identity?.laneId || !identity?.repository || !identity?.issueNumber || !identity?.branch) return null;
   const engineeringMemoryPack = buildMissionEngineeringMemoryPack(projection, activeMission);
-  return freeze({
+  return freeze(createMissionWorkerActionGrantV1({
     schemaVersion: 'stephanos.mission-worker-action-grant.v1',
     grantId: `grant-${actionId}`.slice(0, 80),
     controllerId: DURABLE_FLYWHEEL_CONTROLLER_ID,
@@ -384,6 +385,7 @@ function createExactWorkerActionGrant(
     actionKind: text(action.actionKind),
     adapter,
     operation: text(action.operation),
+    providerRouteIntent: text(actionState.providerRouteIntent, 'AUTO').toUpperCase(),
     capacityRoute: text(action.capacityRoute),
     capacityReceiptId: text(action.capacityReceiptId) || null,
     capacityProofRefs: freeze(list(action.capacityProofRefs)),
@@ -399,7 +401,7 @@ function createExactWorkerActionGrant(
     boundedActionCount: 1,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
-  });
+  }));
 }
 
 export const CONTROLLER_LIVENESS_DECISION_SCHEMA = 'stephanos.controller-liveness-decision.v1';
@@ -410,7 +412,10 @@ export function evaluateControllerLivenessDecision(input = {}) {
   const terminalCompletion = input?.terminalCompletion === true && !safeEligibleWorkRemaining;
   const scopedActions = [...new Set(list(input?.scopedActions).map(text).filter(Boolean))].sort();
   const unsafeScopedActions = [...new Set(list(input?.unsafeScopedActions).map(text).filter(Boolean))].sort();
-  const controllerLevelUnsafe = input?.controllerLevelUnsafe === true
+  // Caller-supplied action sets cannot prove the controller's *entire* work
+  // universe unsafe. Keep unsafe actions held, but never disable the recurring
+  // controller or a disjoint qualified provider without operator intent.
+  const scopedUnsafeActionsReported = input?.controllerLevelUnsafe === true
     && scopedActions.length > 0
     && scopedActions.length === unsafeScopedActions.length
     && scopedActions.every((action, index) => action === unsafeScopedActions[index]);
@@ -431,13 +436,15 @@ export function evaluateControllerLivenessDecision(input = {}) {
     (surfaceId) => !blockedSurfaceIds.includes(surfaceId),
   );
 
-  const disableAllowed = operatorDisableRequested || terminalCompletion || controllerLevelUnsafe;
+  // Completing one goal does not retire its recurring controller.
+  // Keep the original hourly fleet live for the next qualified task.
+  const disableAllowed = operatorDisableRequested;
   const reason = operatorDisableRequested
     ? 'EXPLICIT_OPERATOR_DISABLE'
-    : terminalCompletion
-      ? 'TERMINAL_SCOPE_COMPLETE'
-      : controllerLevelUnsafe
-        ? 'CONTROLLER_LEVEL_UNSAFE'
+    : scopedUnsafeActionsReported
+      ? 'SCOPED_UNSAFE_CONTROLLER_LIVE'
+      : terminalCompletion
+        ? 'TERMINAL_GOAL_COMPLETE_CONTROLLER_LIVE'
         : blockedSurfaceIds.length
           ? 'SURFACE_BLOCKED_CONTROLLER_LIVE'
           : 'CONTROLLER_LIVE';
@@ -454,7 +461,9 @@ export function evaluateControllerLivenessDecision(input = {}) {
     selectedAlternateSurface: alternateQualifiedSurfaces[0] ?? null,
     retryNextScheduledRun: !disableAllowed && alternateQualifiedSurfaces.length === 0,
     safeEligibleWorkRemaining,
-    controllerLevelUnsafeProven: controllerLevelUnsafe,
+    // A reported action subset is not authenticated controller-wide coverage.
+    controllerLevelUnsafeProven: false,
+    scopedUnsafeActionsReported,
     surfaceBlockScope: 'SURFACE_OR_LANE_ONLY',
   });
 }

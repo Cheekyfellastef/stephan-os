@@ -4,7 +4,7 @@ import {
   FLEET_SUPERVISOR_ACTION, FLEET_SUPERVISOR_SCHEMA, FLEET_SUPERVISOR_MARKER,
 } from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 const READ_ONLY_ACTIONS = new Set([
-  'battle-bridge-status', 'battle-bridge-observe', 'meter-status',
+  'battle-bridge-status', 'battle-bridge-observe', 'diagnose-ignition', 'meter-status',
   'controller-lane-status', 'rescue-island-readonly-boundary', 'visibility-snapshot',
   'cpu-pressure-snapshot', 'status-recovery-mesh', 'status-worker-watchdog',
   'status-stephanos-core-daemon',
@@ -16,7 +16,22 @@ const READ_ONLY_ACTIONS = new Set([
 // Both retain ordinary owner admission rather than bypassing a custody hold.
 export const SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER =
   'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN';
-export const SOVEREIGN_MAINTENANCE_OWNER_VERSION = '2026-10-21-guardian-reservation-v1';
+export const SOVEREIGN_MAINTENANCE_OWNER_VERSION = '2026-10-28-fixed-runtime-reservation-v2';
+
+// Shared disposition for automatic broad Core repair. Native custody has not
+// been enrolled. Neither a healthy worker nor the manual maintenance route
+// can turn an automatic caller into an operator-approved repair. There is no
+// caller-provided qualification flag and no maintenance reservation to release.
+export function unqualifiedCoreWindowsRepairV1() {
+  return Object.freeze({
+    ok: false, attempted: false, dispatchAllowed: false,
+    executionState: 'NOT_STARTED', maintenanceReservationCreated: false,
+    nativeCustodyQualified: false,
+    blocker: 'SOVEREIGN_CORE_WINDOWS_JOB_CUSTODY_UNAVAILABLE',
+    sourceMutationAllowed: false,
+    finalVerdict: 'CORE_AUTOMATIC_MAINTENANCE_NOT_STARTED',
+  });
+}
 
 export function isSovereignMaintenanceObservationV1(processId) {
   return READ_ONLY_ACTIONS.has(processId);

@@ -126,3 +126,156 @@ test('already-running selected mission is never offered to a second provider wri
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.runtimeMutationAuthority, false);
 });
+
+test('grant validation mismatch fields survive the original handoff without leaking private paths or blocking disjoint work', async () => {
+  const blockedMission = elasticImplementationMission(2005);
+  const otherMission = elasticImplementationMission(2006);
+  const publications = [];
+  const result = await dispatchElasticGoalBuilds({
+    desiredWidth: 2,
+    selectedMission: blockedMission,
+    activeMissions: [],
+    runnableMissions: [blockedMission, otherMission],
+  }, {
+    now,
+    paths,
+    sourceRevision: 'c'.repeat(40),
+    resolveCapacityCandidates: capacityFor,
+    publishWorkerAction: async ({ actionGrant }) => {
+      publications.push(actionGrant.missionId);
+      if (actionGrant.missionId === blockedMission.missionId) {
+        return {
+          published: false, actionGrantAccepted: false, reason: 'action-grant-mismatch',
+          blockers: ['action-grant-pr-mismatch', 'action-grant-head-mismatch',
+            'action-grant-fabricated-claim', 'invalid-action-grant-fabricated-claim',
+            'C:\\private\\secret', 'action-grant-pr-mismatch', 'unknown-secret'],
+        };
+      }
+      return { published: true, actionGrantAccepted: true };
+    },
+  });
+
+  assert.equal(result.classification, 'ELASTIC_EXTERNAL_BUILD_DISPATCH_LIVE');
+  assert.equal(result.dispatchCount, 1);
+  assert.equal(result.dispatched[0].missionId, otherMission.missionId);
+  assert.deepEqual(publications, [blockedMission.missionId, otherMission.missionId]);
+  assert.equal(result.held.length, 1);
+  assert.equal(result.held[0].missionId, blockedMission.missionId);
+  assert.equal(result.held[0].reason, 'EXTERNAL_DISPATCH_BLOCKED:action-grant-mismatch');
+  assert.deepEqual(result.held[0].grantMismatchFields,
+    ['action-grant-head-mismatch', 'action-grant-pr-mismatch']);
+  assert.doesNotMatch(JSON.stringify(result), /private|secret|fabricated-claim|C:\\\\/i);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.runtimeMutationAuthority, false);
+});
+
+test('untrusted publication failures do not manufacture canonical mismatch fields', async () => {
+  const mission = elasticImplementationMission(2007);
+  const result = await dispatchElasticGoalBuilds({
+    desiredWidth: 1, selectedMission: mission, activeMissions: [], runnableMissions: [mission],
+  }, {
+    now, paths, sourceRevision: 'd'.repeat(40), resolveCapacityCandidates: capacityFor,
+    publishWorkerAction: async () => ({
+      published: false, actionGrantAccepted: false, reason: 'capacity-wait',
+      blockers: ['action-grant-head-mismatch', 'C:\\private\\secret'],
+    }),
+  });
+  assert.equal(result.dispatchCount, 0);
+  assert.equal(result.held[0].reason, 'EXTERNAL_DISPATCH_BLOCKED:capacity-wait');
+  assert.equal(Object.hasOwn(result.held[0], 'grantMismatchFields'), false);
+});
+
+
+test('unknown publisher outcome keeps its source scope and slot reserved while disjoint work continues', async () => {
+  const uncertain = elasticImplementationMission(2101);
+  const overlap = elasticImplementationMission(2102);
+  overlap.allowedFiles = [...uncertain.allowedFiles];
+  const disjoint = elasticImplementationMission(2103);
+  const calls = [];
+  const result = await dispatchElasticGoalBuilds({
+    desiredWidth: 3, selectedMission: uncertain, activeMissions: [],
+    runnableMissions: [uncertain, overlap, disjoint],
+  }, {
+    now, paths, sourceRevision: 'e'.repeat(40),
+    resolveCapacityCandidates: capacityFor,
+    publishWorkerAction: async ({ actionGrant }) => {
+      calls.push(actionGrant.missionId);
+      if (actionGrant.missionId === uncertain.missionId) {
+        throw new Error('C:\\private\\PRIVATE_TOKEN_MUST_NOT_LEAK');
+      }
+      return { published: true, actionGrantAccepted: true };
+    },
+  });
+
+  assert.deepEqual(calls, [uncertain.missionId, uncertain.missionId, disjoint.missionId]);
+  assert.equal(result.classification, 'ELASTIC_EXTERNAL_BUILD_DISPATCH_LIVE');
+  assert.equal(result.dispatchCount, 1);
+  assert.equal(result.indeterminatePublicationCount, 1);
+  assert.equal(result.responsibilityRetainedUntilPickup, true);
+  assert.equal(result.pickupPendingCount, 1, 'only acknowledged dispatch is pickup-pending');
+  assert.equal(result.handoffPublicationIsTerminal, false);
+  assert.equal(result.dispatched[0].missionId, disjoint.missionId);
+  assert.equal(result.held.length, 2);
+  assert.equal(result.held[0].missionId, uncertain.missionId);
+  assert.equal(result.held[0].reason,
+    'EXTERNAL_DISPATCH_INDETERMINATE:publication-exception-reconciliation-exception');
+  assert.equal(result.held[1].missionId, overlap.missionId);
+  assert.equal(result.held[1].reason, 'RESOURCE_SCOPE_CONFLICT');
+  assert.equal(result.resourceDisjointOneWriterProven, false);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_TOKEN_MUST_NOT_LEAK|private/i);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.runtimeMutationAuthority, false);
+});
+
+test('unknown publisher consumes the final slot instead of spawning an unrelated replacement', async () => {
+  const uncertain = elasticImplementationMission(2104);
+  const other = elasticImplementationMission(2105);
+  let attempts = 0;
+  const result = await dispatchElasticGoalBuilds({
+    desiredWidth: 1, selectedMission: uncertain, activeMissions: [],
+    runnableMissions: [uncertain, other],
+  }, {
+    now, paths, sourceRevision: 'f'.repeat(40),
+    resolveCapacityCandidates: capacityFor,
+    publishWorkerAction: async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('PRIVATE_TOKEN_MUST_NOT_LEAK');
+      return { published: false, actionGrantAccepted: false,
+        reason: 'PRIVATE_TOKEN_MUST_NOT_LEAK' };
+    },
+  });
+
+  assert.equal(attempts, 2);
+  assert.equal(result.classification, 'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD');
+  assert.equal(result.dispatchCount, 0);
+  assert.equal(result.indeterminatePublicationCount, 1);
+  assert.equal(result.responsibilityRetainedUntilPickup, true);
+  assert.equal(result.pickupPendingCount, 0, 'unknown publication must not be portrayed as a confirmed pending dispatch');
+  assert.equal(result.handoffPublicationIsTerminal, false);
+  assert.equal(result.held.length, 1);
+  assert.equal(result.held[0].missionId, uncertain.missionId);
+  assert.equal(result.held[0].reason,
+    'EXTERNAL_DISPATCH_INDETERMINATE:publication-exception-reconciliation-publication-refused');
+  assert.equal(result.resourceDisjointOneWriterProven, false);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_TOKEN_MUST_NOT_LEAK/);
+});
+
+test('untrusted refusal reason cannot leak a provider error or masquerade as a grant validation result', async () => {
+  const mission = elasticImplementationMission(2106);
+  const result = await dispatchElasticGoalBuilds({
+    desiredWidth: 1, selectedMission: mission, activeMissions: [], runnableMissions: [mission],
+  }, {
+    now, paths, sourceRevision: 'a'.repeat(40),
+    resolveCapacityCandidates: capacityFor,
+    publishWorkerAction: async () => ({ published: false, actionGrantAccepted: false,
+      reason: 'C:\\private\\PRIVATE_TOKEN_MUST_NOT_LEAK',
+      blockers: ['action-grant-head-mismatch'] }),
+  });
+
+  assert.equal(result.dispatchCount, 0);
+  assert.equal(result.indeterminatePublicationCount, 0);
+  assert.equal(result.responsibilityRetainedUntilPickup, false);
+  assert.equal(result.held[0].reason, 'EXTERNAL_DISPATCH_BLOCKED:publication-refused');
+  assert.equal(Object.hasOwn(result.held[0], 'grantMismatchFields'), false);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_TOKEN_MUST_NOT_LEAK|private/i);
+});

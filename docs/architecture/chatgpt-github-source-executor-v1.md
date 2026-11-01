@@ -19,7 +19,7 @@ authority, so it does not depend on unmerged picker bytes.
 2. Read the complete current GitHub PR estate with the existing authenticated
    discovery adapter. Obtain fresh task/path/head-bound canonical, Seed, Island
    and ChatGPT custody observations from the independently trusted host observer.
-   Unknown custody holds this task; the original #2962/r7 hold is never cleared.
+   Unknown custody holds this task. The original #2962/R7 attempt was RETIRED, with historical outcome UNKNOWN: it must never be reopened or released again. Any current, later source writer/maintenance hold is an independent identity requiring its own owner-authenticated proof.
 3. Use `createBoundedParallelConstructionAuthority` for admission and its atomic
    reservation callback. An inventory check alone cannot acquire ownership.
    Keep that reservation when execution becomes uncertain; do not auto-release.
@@ -31,10 +31,15 @@ authority, so it does not depend on unmerged picker bytes.
    non-force ref update is insufficient. Publish at most six explicitly approved
    document/test additions or replacements (8 KiB each), never delete files or
    touch main. Authenticate resulting commit and complete changed-file scope.
-6. Persist source proof, recheck ownership and PR collisions, open one ordinary
-   PR for actual hosted CI and existing independent exact-head review. The
-   existing protected operator workflow owns approval and merge. The adapter has
-   no merge, ready, review, deployment, OS, source-lease-release or shell operation.
+6. Persist source proof, recheck ownership and PR collisions, open one **draft**
+   PR for actual hosted CI. This avoids automatically requesting optional metered
+   Codex review on initial PR creation when Codex is unavailable. Independently
+   qualify exact-head review via the existing provider-neutral route; only the
+   separately authorized protected READY/review lifecycle may later mark it ready.
+   The GitHub-side Codex app may also auto-review on READY unless its own account
+   settings disable that behavior; the draft default does not control that app.
+   The existing protected operator workflow owns approval and merge. The adapter
+   has no merge, ready, review, deployment, OS, source-lease-release or shell operation.
 7. `reconcile` reads the ORIGINAL durable execution, authenticates exact PR/head
    identity and GitHub's merge result, then asks the separate protected collector
    for actual immutable review/workflow/environment proof. Only after that may
@@ -104,6 +109,8 @@ from task-selected modules, URLs, paths, executable strings or goal content.
   as physically picked up. Runtime-changing work needs separate live acceptance.
 - Use an already-approved GitHub App/user credential whose source publication
   actually triggers CI. Never put credentials in comments, receipts or source.
+
+Zero-meter scope: this change removes one **unnecessary early vendor-review trigger**, not ChatGPT/GitHub hosted dependencies. A provider-neutral CI/security artifact must still be independently authenticated, high-risk specialist gates remain binding, and a draft PR is neither a review pass nor a merge. It does not claim a working fully local/offline route.
 
 The existing bounded construction authority is a source contract. A production
 `reserveConstructionLane` host binding was not found in repository source.

@@ -51,6 +51,7 @@ import {
 const NOW = '2026-07-30T10:00:00.000Z';
 const HEAD = 'a'.repeat(40);
 const MERGE = 'b'.repeat(40);
+const ADVANCED_HEAD = 'c'.repeat(40);
 const LANE_ID = 'goal-1497-pr-1617';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const BRANCH = 'feat/canonical-programme-authority-contracts';
@@ -177,6 +178,73 @@ test('canonical lane binds lane ID, issue, PR, exact head, receipts, proofs and 
   assert.deepEqual(projection.executionReceiptRefs, ['execution-1617-1']);
   assert.equal(projection.mutationLeaseIdentity.leaseId, 'lease-goal-1497-pr-1617');
   assert.equal(projection.chatMemoryAuthoritative, false);
+});
+
+test('terminal lane preserves exact lease identity while accepting only a proven descendant merged head', () => {
+  const merged = github({
+    headSha: ADVANCED_HEAD,
+    prState: 'closed',
+    merged: true,
+    mergedAt: '2026-07-30T09:59:00.000Z',
+    mergeCommitSha: MERGE,
+  });
+  const terminal = lane({
+    headSha: ADVANCED_HEAD,
+    github: merged,
+    executionReceipt: null,
+    terminalHeadAdvance: {
+      leaseHeadSha: HEAD,
+      mergedHeadSha: ADVANCED_HEAD,
+      leaseHeadIsAncestor: true,
+    },
+  });
+  assert.equal(terminal.valid, true);
+  assert.equal(terminal.terminal, true);
+  assert.equal(terminal.headSha, ADVANCED_HEAD);
+  assert.deepEqual(terminal.terminalHeadAdvance, {
+    leaseHeadSha: HEAD,
+    mergedHeadSha: ADVANCED_HEAD,
+    leaseHeadIsAncestor: true,
+  });
+
+  const plan = buildTerminalLaneFinalizationPlan({
+    lane: terminal,
+    mutationLease: lease(),
+    github: merged,
+    leaseId: 'lease-goal-1497-pr-1617',
+    ownerId: OWNER,
+    nowUtc: NOW,
+  });
+  assert.equal(plan.valid, true);
+  const records = createTerminalLaneEvidenceRecords(plan, { timestampUtc: NOW });
+  assert.equal(records.proof.headSha, HEAD);
+  assert.equal(records.proof.leaseHeadSha, HEAD);
+  assert.equal(records.proof.mergedHeadSha, ADVANCED_HEAD);
+  assert.equal(records.proof.leaseHeadIsAncestor, true);
+  assert.equal(records.receipt.headSha, HEAD);
+
+  const withoutProof = lane({
+    headSha: ADVANCED_HEAD,
+    github: merged,
+    executionReceipt: null,
+  });
+  assert.equal(withoutProof.valid, false);
+  assert.ok(withoutProof.blockers.includes('head-identity-conflict'));
+
+  for (const terminalHeadAdvance of [
+    { leaseHeadSha: HEAD, mergedHeadSha: ADVANCED_HEAD, leaseHeadIsAncestor: false },
+    { leaseHeadSha: 'd'.repeat(40), mergedHeadSha: ADVANCED_HEAD, leaseHeadIsAncestor: true },
+    { leaseHeadSha: HEAD, mergedHeadSha: 'd'.repeat(40), leaseHeadIsAncestor: true },
+  ]) {
+    const refused = lane({
+      headSha: ADVANCED_HEAD,
+      github: merged,
+      executionReceipt: null,
+      terminalHeadAdvance,
+    });
+    assert.equal(refused.valid, false);
+    assert.ok(refused.blockers.includes('terminal-head-advance-unproven'));
+  }
 });
 
 test('open PR and unrelated source lease cannot fabricate a material builder', () => {

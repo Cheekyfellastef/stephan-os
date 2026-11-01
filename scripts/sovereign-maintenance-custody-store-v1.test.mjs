@@ -5,7 +5,13 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createMaintenanceCustodyStoreV1 } from './sovereign-maintenance-custody-store-v1.mjs';
-import { startSovereignCommanderContinuousRepairGuardian } from './sovereign-commander-http.mjs';
+import { startSovereignCommanderContinuousRepairGuardian as startActualGuardian } from './sovereign-commander-http.mjs';
+
+// Legacy terminal protocol fixtures exercise the actual guardian with an
+// explicit non-native transport. They never qualify a Windows runtime profile.
+const startSovereignCommanderContinuousRepairGuardian = options => startActualGuardian({
+  spawnImpl: () => assert.fail('manual custody fixture must not spawn'), ...options,
+});
 
 const machineHash = 'a'.repeat(64);
 const clock = Date.now();
@@ -320,6 +326,132 @@ test('retained migration archives stale IDLE but only creates ACTIVE and require
   assert.equal((await successor.recoverAfterBoot(approved(r.digest))).ok, true);
   assert.equal(successor.status().held, false);
 });
+test('prepared retained migration auto-recovers after successor full boot without a second approval token', async t => {
+  const root = fixture(t), first = store(root);
+  first.prepareIncident(reservation); first.release(); first.close();
+  const p = join(root, 'status', 'sovereign-commander-maintenance-custody.json');
+  const original = readFileSync(p);
+  const expectedDigest = createHash('sha256').update(original).digest('hex');
+  anchors.get(root).lose();
+  const owner = heldOwner(newBoot);
+  const migration = store(root, newBoot, { observeMigrationOwner: () => owner });
+  const prepared = await migration.prepareRetainedMigration({
+    ...approved(expectedDigest),
+    expectedReservationId: reservation.reservationId,
+    expectedOwnerDigest: owner.digest,
+    expectedMain: 'c'.repeat(40),
+  });
+  assert.equal(prepared.ok, true);
+  migration.close();
+
+  const later = { ...newBoot,
+    bootStartedAtUtc: new Date(clock + 30_000).toISOString(),
+    observedAtUtc: new Date(clock + 60_000).toISOString() };
+  const successor = store(root, later, { now: () => later.observedAtUtc, readBootWitness: () => later });
+  const recovered = await successor.recoverPreparedAfterBoot();
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.custodyReleased, true);
+  assert.equal(successor.status().held, false);
+});
+
+test('unprepared ACTIVE custody never auto-recovers merely because a later boot exists', async t => {
+  const root = fixture(t), original = store(root);
+  original.prepareIncident(reservation);
+  original.close();
+  const successor = store(root, newBoot);
+  const result = await successor.recoverPreparedAfterBoot();
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'MAINTENANCE_PREPARED_RECOVERY_UNPROVEN');
+  assert.equal(successor.status().held, true);
+});
+
+test('guardian startup resumes scheduling only after prepared custody auto-recovery succeeds', async () => {
+  const timers = [];
+  let recoverCalls = 0;
+  const timerFactory = (fn, delay) => {
+    const timer = { fn, delay, unref() {} };
+    timers.push(timer);
+    return timer;
+  };
+  const custodyStore = {
+    status: () => ({ held: true, digest: 'a'.repeat(64), reservationId: 'prepared-cycle' }),
+    preparedRecoveryEligible: () => true,
+    recoverPreparedAfterBoot: async () => {
+      recoverCalls += 1;
+      return { ok: true, custodyReleased: true, reservationId: 'prepared-cycle' };
+    },
+    close() {},
+  };
+  const guardian = startActualGuardian({
+    custodyStore,
+    enabled: true,
+    spawnImpl: () => assert.fail('startup recovery must not spawn before the scheduled repair tick'),
+    startDelayMs: 5000,
+    setTimeoutImpl: timerFactory,
+    clearTimeoutImpl() {},
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(recoverCalls, 1);
+  assert.equal(guardian.status().timeoutCustodyHeld, false);
+  assert.equal(guardian.status().maintenanceInFlight, false);
+  assert.equal(guardian.status().scheduled, true);
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delay, 5000);
+  guardian.stop();
+
+  const blockedTimers = [];
+  const held = startActualGuardian({
+    custodyStore: {
+      status: () => ({ held: true, digest: 'b'.repeat(64), reservationId: 'unprepared-cycle' }),
+      preparedRecoveryEligible: () => false,
+      recoverPreparedAfterBoot: async () => ({ ok: false, blocker: 'MAINTENANCE_PREPARED_RECOVERY_UNPROVEN' }),
+      close() {},
+    },
+    enabled: true,
+    spawnImpl: () => assert.fail('unprepared custody must not spawn'),
+    setTimeoutImpl: (fn, delay) => {
+      const timer = { fn, delay, unref() {} };
+      blockedTimers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl() {},
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(held.status().timeoutCustodyHeld, true);
+  assert.equal(held.status().scheduled, false);
+  assert.equal(blockedTimers.length, 0);
+  held.stop();
+
+  let disabledRecoverCalls = 0;
+  const disabledTimers = [];
+  const disabled = startActualGuardian({
+    custodyStore: {
+      status: () => ({ held: true, digest: 'c'.repeat(64), reservationId: 'prepared-disabled-cycle' }),
+      preparedRecoveryEligible: () => true,
+      recoverPreparedAfterBoot: async () => {
+        disabledRecoverCalls += 1;
+        return { ok: true, custodyReleased: true, reservationId: 'prepared-disabled-cycle' };
+      },
+      close() {},
+    },
+    enabled: false,
+    spawnImpl: () => assert.fail('disabled repair scheduler must not spawn'),
+    setTimeoutImpl: (fn, delay) => {
+      const timer = { fn, delay, unref() {} };
+      disabledTimers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl() {},
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(disabledRecoverCalls, 1);
+  assert.equal(disabled.status().timeoutCustodyHeld, false);
+  assert.equal(disabled.status().enabled, false);
+  assert.equal(disabled.status().scheduled, false);
+  assert.equal(disabledTimers.length, 0);
+  disabled.stop();
+});
+
 test('retained migration refuses legacy authority, owner drift, wrong source binding and changed projection', async t => {
   for (const scenario of ['legacy-present', 'legacy-unreadable', 'owner-drift', 'owner-running',
     'missing-owner-binding', 'source-invalid', 'projection-changed', 'anchor-append-failed']) {
@@ -408,4 +540,40 @@ test('closed capacity refusal admits no reservation and preserves the prior nati
   const r = s.reserve({ reservationId: 'must-not-run', operation: 'repair-stephanos' });
   assert.equal(r.ok, false); assert.equal(r.blocker, 'MAINTENANCE_CUSTODY_JOURNAL_CAPACITY_UNAVAILABLE');
   assert.equal(s.status().held, true); assert.deepEqual(anchors.get(root).readLatest(), prior); s.close();
+});
+
+
+test('native failed operation retains signed terminal evidence before releasing proven zero', t => {
+  const root=fixture(t), owner=store(root); owner.prepareIncident(reservation);
+  const state=owner.status();
+  const common={RequestId:reservation.reservationId,OwnerPid:process.pid,
+    CustodyRecordSha256:state.digest,NativeRecordId:state.anchorRecordId,
+    Profile:'MAINTENANCE_GOAL_BUILDER_V1'};
+  assert.equal(owner.recordNativeRoot({...common,SchemaVersion:'stephanos.fixed-runtime-prepared.v1',
+    RootPid:1234,RootCreatedAtUtc:oldNow}).ok,true);
+  const terminal={...common,SchemaVersion:'stephanos.fixed-runtime-job.v1',
+    OperationOk:false,Reason:'DEADLINE_CANCELLED',ExecutionCustodyReleased:true,
+    TaskStage:{ExecutionCustodyReleased:true,ZeroActiveProcessesObserved:true,ActiveProcesses:0}};
+  const released=owner.releaseNativeTerminal(terminal);
+  assert.equal(released.ok,true); assert.equal(owner.status().held,false);
+  const receipt=JSON.parse(readFileSync(join(root,released.terminalEvidenceRef),'utf8'));
+  assert.equal(receipt.receipt.evidence.OperationOk,false);
+  assert.equal(receipt.receipt.evidence.Reason,'DEADLINE_CANCELLED');
+  assert.match(receipt.mac,/^[a-f0-9]{64}$/);
+  const anchored=JSON.parse(anchors.get(root).readLatest().bytes).record;
+  assert.equal(anchored.terminalEvidence.sha256,released.terminalEvidenceSha256);
+});
+
+test('foreign native terminal and failed archive preserve the original hold', t => {
+  for(const scenario of ['foreign','archive']) {
+    const root=fixture(t), owner=store(root); owner.prepareIncident(reservation);
+    const state=owner.status();
+    if(scenario==='archive') writeFileSync(join(root,'events','sovereign-maintenance-custody'),'retain');
+    const result=owner.releaseNativeTerminal({SchemaVersion:'stephanos.fixed-runtime-job.v1',
+      Profile:'MAINTENANCE_GOAL_BUILDER_V1',RequestId:reservation.reservationId,OwnerPid:process.pid,
+      CustodyRecordSha256:scenario==='foreign'?'f'.repeat(64):state.digest,NativeRecordId:state.anchorRecordId,
+      ExecutionCustodyReleased:true,TaskStage:{ExecutionCustodyReleased:true,ZeroActiveProcessesObserved:true,ActiveProcesses:0}});
+    assert.equal(result.ok,false);assert.equal(owner.status().held,true);assert.equal(owner.status().digest,state.digest);
+    owner.close();
+  }
 });

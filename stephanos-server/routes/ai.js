@@ -22,6 +22,8 @@ import {
 } from '../services/sharedIntelligenceContinuityService.js';
 import { buildStephanosIdentityContextBlock, buildStephanosIdentityPresenceKernel } from '../../shared/agents/stephanosIdentityPresenceKernelV1.mjs';
 import { routeStephanosConversationV1 } from '../../shared/agents/stephanosConversationRouterV1.mjs';
+import { classifySovereignControlConversationV1 } from '../../shared/agents/sovereignControlConversationV1.mjs';
+import { readSovereignControlConversationV1 } from '../services/sovereignControlConversationService.js';
 import { answerLiveTelemetryQuestion } from '../services/githubTelemetryService.js';
 import { durableMemoryService } from '../services/durableMemoryService.js';
 import { activityLogService } from '../services/activityLogService.js';
@@ -277,7 +279,9 @@ function persistAiContinuityArtifacts({
     const outcomeRecord = createContinuityRecord({
       id: `${baseId}-outcome`,
       type: 'ai.summary',
-      summary: `AI outcome recorded (${executionMetadata.actual_provider_used || 'unknown-provider'}).`,
+      summary: executionMetadata.response_source === 'CANONICAL_CONTROL_OBSERVATIONS'
+        ? 'Control-service observation recorded.'
+        : `AI outcome recorded (${executionMetadata.actual_provider_used || 'unknown-provider'}).`,
       payload: {
         outputPreview,
         provider: executionMetadata.actual_provider_used || '',
@@ -286,6 +290,8 @@ function persistAiContinuityArtifacts({
         fallbackReason: executionMetadata.fallback_reason || '',
         memoryHitCount: Array.isArray(memoryHits) ? memoryHits.length : 0,
         tileLinked,
+        ...(executionMetadata.response_source === 'CANONICAL_CONTROL_OBSERVATIONS'
+          ? { responseSource: executionMetadata.response_source, modelInvoked: false } : {}),
       },
       tags: [...tags, 'ai.outcome', tileLinked ? 'tile-linked' : 'tile-unlinked'],
       source: 'ai-continuity-outcome',
@@ -452,14 +458,10 @@ router.post('/chat', async (req, res) => {
       markCancelled('client-disconnect');
     }
   });
-  const effectiveProviderConfig = Object.keys(providerConfig || {}).length > 0 ? providerConfig : providerConfigs?.[provider] || {};
-  const mergedProviderConfigs = buildServerOwnedProviderConfigs({ ...providerConfigs, ...(provider ? { [provider]: effectiveProviderConfig } : {}) });
   const normalizedRuntimeContext = { ...runtimeContext, frontendOrigin: runtimeContext.frontendOrigin || req.headers.origin || '' };
   const assembledTileContext = normalizedRuntimeContext.tileContext && typeof normalizedRuntimeContext.tileContext === 'object'
     ? normalizedRuntimeContext.tileContext
     : null;
-  const providerResolution = resolveProviderRequest(provider, effectiveProviderConfig, { routeMode, fallbackEnabled, fallbackOrder, devMode, runtimeContext: normalizedRuntimeContext });
-
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json(buildErrorResponse({ route: 'assistant', output_text: 'Prompt is required.', error: 'Prompt is required.', error_code: ERROR_CODES.CMD_INVALID, timing_ms: Date.now() - startedAt, debug: { route_reason: 'Input validation failed', request_id: requestId } }));
   }
@@ -470,9 +472,23 @@ router.post('/chat', async (req, res) => {
       || assembledTileContext?.addressedTargetId
       || 'everyone',
   });
-
+  const controlIntent = classifySovereignControlConversationV1({
+    prompt, requestedTargetId: conversationRouting.requestedTargetId,
+  });
   const parsedCommand = parseCommand(prompt);
-  const decision = resolveRoute(parsedCommand, prompt);
+  const decision = controlIntent.applies
+    ? { route: 'system', action: 'control_conversation', reason: 'CANONICAL_CONTROL_SERVICE_REPLY' }
+    : resolveRoute(parsedCommand, prompt);
+  const controlObservationRoute = controlIntent.applies || decision.tool === 'getSovereignCommanderStatus';
+  // Control observations never load provider credentials, resolve a model,
+  // probe model health or invoke a provider. Chat targets grant no authority.
+  const effectiveProviderConfig = Object.keys(providerConfig || {}).length > 0 ? providerConfig : providerConfigs?.[provider] || {};
+  const mergedProviderConfigs = controlObservationRoute ? {}
+    : buildServerOwnedProviderConfigs({ ...providerConfigs, ...(provider ? { [provider]: effectiveProviderConfig } : {}) });
+  const providerResolution = controlObservationRoute
+    ? { requestedProvider: '', resolvedProvider: '', fallbackApplied: false, overrideKeys: [] }
+    : resolveProviderRequest(provider, effectiveProviderConfig, { routeMode, fallbackEnabled, fallbackOrder, devMode, runtimeContext: normalizedRuntimeContext });
+
   const { relevantItems: memoryHits, summaryText: memorySummary } = memoryService.buildContextSummary(prompt, { limit: 4 });
 
   logger.info('Incoming /api/ai/chat request', {
@@ -543,6 +559,79 @@ router.post('/chat', async (req, res) => {
       ? governAuthorisedHistoricalTeachingV1(authorisedHistoricalChatContext)
       : null;
     const governedOperatorRecall = recallGovernedOperatorTeachingV1(prompt);
+    if (controlIntent.applies) {
+      const controlConversation = await readSovereignControlConversationV1({
+        prompt, requestedTargetId: conversationRouting.requestedTargetId,
+      });
+      if (!controlConversation) throw new Error('CONTROL_CONVERSATION_UNAVAILABLE');
+      const controlCompletion = sharedIntelligencePrepared?.ok
+        ? await completeSharedIntelligenceAiTurnV1({
+            prepared: sharedIntelligencePrepared,
+            requestIdentity: sharedIntelligenceRequestIdentity,
+            answerText: controlConversation.outputText,
+            timestampUtc: new Date().toISOString(),
+            env: process.env,
+            surface: normalizedRuntimeContext?.surface === 'ipad' || normalizedRuntimeContext?.surface === 'iphone'
+              ? normalizedRuntimeContext.surface : 'desktop-browser',
+          })
+        : sharedIntelligencePrepared;
+      const controlRouting = routeStephanosConversationV1({
+        prompt, requestedTargetId: conversationRouting.requestedTargetId, controlConversation,
+      });
+      const controlExecutionMetadata = {
+        response_source: controlConversation.responseSource,
+        actual_provider_used: null, model_used: null, model_invoked: false,
+        fallback_used: false, native_action_submitted: false,
+        conversation_responder_label: controlRouting.responder.label,
+        conversation_direct_participant_dispatch_proven: false,
+      };
+      persistAiContinuityArtifacts({
+        prompt, route: decision.route, executionMetadata: controlExecutionMetadata,
+        outputText: controlConversation.outputText, memoryHits, tileContext: assembledTileContext,
+      });
+      const controlPayload = buildSuccessResponse({
+        type: 'control_result', route: decision.route,
+        command: parsedCommand.isSlash ? parsedCommand.raw : null,
+        output_text: controlConversation.outputText,
+        data: {
+          sovereign_control_conversation: controlConversation,
+          conversation_routing: controlRouting,
+          execution_metadata: controlExecutionMetadata,
+          governed_operator_recall: {
+            classification: governedOperatorRecall.classification, record_count: governedOperatorRecall.recordCount,
+          },
+          governed_historical_teaching: governedHistoricalTeaching ? {
+            classification: governedHistoricalTeaching.classification,
+            candidate_count: governedHistoricalTeaching.candidateCount,
+            promoted_count: governedHistoricalTeaching.promotedCount,
+          } : null,
+          shared_intelligence_continuity: controlCompletion ? {
+            ok: controlCompletion.ok === true, classification: controlCompletion.classification || null,
+            thread_id: controlCompletion.threadId || null,
+            operator_turn_id: controlCompletion.operatorTurnId || null,
+            stephanos_turn_id: controlCompletion.stephanosTurnId || null,
+            knowledge_twin_valid: controlCompletion.knowledgeTwin?.valid === true,
+            visible_context_items: controlCompletion.knowledgeTwin?.visibleItems?.length || 0,
+            errors: Array.isArray(controlCompletion.errors) ? controlCompletion.errors : [],
+          } : null,
+          conversation_canvas_view: controlCompletion?.ok ? controlCompletion.conversationCanvasView : null,
+        },
+        tools_used: ['getSovereignCommanderStatus', 'control-tower-receipt-observation'],
+        memory_hits: memoryHits, timing_ms: Date.now() - startedAt,
+        debug: { request_id: requestId, route_reason: decision.reason, model_invoked: false, error_code: null },
+      });
+      if (streamingEnabled) {
+        res.status(200);
+        res.setHeader('Content-Type', STREAMING_MEDIA_TYPE);
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('Connection', 'keep-alive');
+        writeSseEvent(res, 'final', { type: 'final', content: controlConversation.outputText, done: true });
+        writeSseEvent(res, 'metadata', { type: 'metadata', done: true, success: true, data: controlPayload });
+        writeSseCompletion(res, true);
+        return res.end();
+      }
+      return res.json(controlPayload);
+    }
     const liveGoalProjection = await readLiveGoalProjection();
     const goalProjectionContext = formatGoalProjectionForPrompt(liveGoalProjection);
     const projectIntelligenceGrounding = buildProjectIntelligenceGrounding({ prompt, liveGoalProjection });

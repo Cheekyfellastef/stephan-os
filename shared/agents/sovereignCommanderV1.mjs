@@ -201,6 +201,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('battle-bridge-observation.mjs')]),
       timeoutMs: 10_000,
     }),
+    'diagnose-ignition': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-ignition-diagnosis.mjs')]),
+      timeoutMs: 20_000,
+    }),
     'meter-status': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-meter-status.mjs')]),
@@ -957,7 +962,7 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
   const run = () => executeAdmittedSovereignCommandV1(command, options);
   if (command.plan.kind === 'fixed-process' && !isSovereignMaintenanceObservationV1(command.plan.processId)) {
     if (typeof options.withMaintenanceOwner === 'function') {
-      return options.withMaintenanceOwner(command, run);
+      return options.withMaintenanceOwner(command, run, { signal: options.signal });
     }
     // Local Core/stdio callers never launch beside an independently scheduled
     // guardian. The existing authenticated HTTP owner performs the operation.

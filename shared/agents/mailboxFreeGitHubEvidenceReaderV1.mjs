@@ -63,6 +63,7 @@ export async function readMailboxFreeGitHubJsonV1(fetchImpl, path, token, signal
   const url = path === '/git/ref/heads/main' ? BASE + path
     : path === '/actions/workflows/stephanos-control-tower-build.yml'
       || /^\/actions\/workflows\/stephanos-control-tower-build\.yml\/runs\?event=workflow_dispatch&per_page=5&head_sha=[a-f0-9]{40}$/.test(path)
+      || /^\/actions\/workflows\/stephanos-control-tower-build\.yml\/runs\?per_page=10&head_sha=[a-f0-9]{40}$/.test(path)
       || /^\/actions\/runs\/[1-9][0-9]*$/.test(path)
       || /^\/actions\/runs\/[1-9][0-9]*\/(?:jobs|artifacts)\?per_page=100$/.test(path)
       || /^\/issues\/[1-9][0-9]{0,6}$/.test(path)

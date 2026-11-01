@@ -172,6 +172,7 @@ const TOOLS = Object.freeze([
           enum: [
             'battle-bridge-status',
             'battle-bridge-observe',
+            'diagnose-ignition',
             'meter-status',
             'controller-lane-status',
             'rescue-island-readonly-boundary',

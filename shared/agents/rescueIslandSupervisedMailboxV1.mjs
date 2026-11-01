@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
 import { createRescueIslandSupervisedHostV1,
   rescueIslandGovernorEnvironmentV1 } from './rescueIslandSupervisedHostV1.mjs';
+import { resolveRescueIslandNativeHostV1, observeRescueIslandNativeHostV1 } from './rescueIslandNativeHostLocationV1.mjs';
 
 export const RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION =
   'RUN_RESCUE_ISLAND_SUPERVISED_DOCUMENT_TASK';
@@ -269,10 +270,15 @@ export async function executeRescueIslandSupervisedDocumentOnBattleBridge(comman
   }
   const platform = options.platform || process.platform;
   if (platform !== 'win32') return executionFail(shape.command, 'RESCUE_ISLAND_REMOTE_WINDOWS_REQUIRED');
-  const run = typeof options.spawnSyncFn === 'function' ? options.spawnSyncFn : spawnSync;
   const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-  const nativeHost = join(repositoryRoot, 'src', 'windows', 'Stephanos.RescueIslandHost',
-    'bin', 'Release', 'net8.0-windows', 'Stephanos.RescueIslandHost.exe');
+  const nativeHost = resolveRescueIslandNativeHostV1(repositoryRoot);
+  // Keep the existing injected I/O boundary for unit tests. The production
+  // boundary always verifies the original bytes before spawning the fixed host.
+  const run = typeof options.spawnSyncFn === 'function' ? options.spawnSyncFn : (executable, args, spawnOptions) => {
+    const observed = observeRescueIslandNativeHostV1(repositoryRoot);
+    if (observed.executable !== executable) throw Error('ISLAND_HOST_NATIVE_LOCATION_INVALID');
+    return spawnSync(executable, args, spawnOptions);
+  };
   const input = JSON.stringify({
     commentId: shape.command.commentId,
     task: shape.command.task,
