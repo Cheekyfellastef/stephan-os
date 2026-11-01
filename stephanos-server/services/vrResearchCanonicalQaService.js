@@ -15,7 +15,11 @@ export async function readCanonicalVrResearchAnswer({ repoRoot=process.cwd(), qu
       readFileImpl(resolve(repoRoot,'VR-Research-Lab/lab-workspace.json'),'utf8').then(JSON.parse),
     ]);
   }catch{return {ok:false,reason:'CANONICAL_VR_SOURCE_UNAVAILABLE'};}
-  const projection=buildVrResearchWorkspaceProjection({sourceRegistry:registry,workspaceModel:workspace,updatedAt:nowUtc});
+  // A successful file read does not renew the underlying research evidence.
+  // The canonical workspace timestamp, not the request clock, determines freshness.
+  const observedAtUtc=typeof workspace?.updatedAt==='string' && workspace.updatedAt.trim()
+    ? workspace.updatedAt : 'unknown';
+  const projection=buildVrResearchWorkspaceProjection({sourceRegistry:registry,workspaceModel:workspace,updatedAt:observedAtUtc});
   const request=createVrResearchQuestion({
     questionId:'vr-route-'+String(questionClass).toLowerCase()+'-'+nowUtc.replace(/[^0-9]/g,'').slice(0,14),
     askerParticipantId:'stephanos-command-deck',
