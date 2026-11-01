@@ -500,7 +500,10 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
     held: Object.freeze(held),
     pickupPendingCount: dispatched.filter((item) => item.pickupProven !== true).length,
     handoffPublicationIsTerminal: false,
-    responsibilityRetainedUntilPickup: dispatched.length > 0,
+    // An uncertain publication may already have durable pending/processing
+    // custody. Retain the original controller's responsibility even when no
+    // successful dispatch acknowledgement can be asserted.
+    responsibilityRetainedUntilPickup: dispatched.length > 0 || indeterminateCount > 0,
 
     resourceDisjointOneWriterProven: indeterminateCount === 0 && dispatched.every((item, index) => dispatched
       .slice(index + 1)
