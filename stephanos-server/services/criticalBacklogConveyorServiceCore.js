@@ -289,6 +289,49 @@ export function exactElasticExternalGrant(mission, candidate, sourceRevision, no
   });
 }
 
+// The exact static error vocabulary emitted by validateExactActionGrant and
+// validateExecutionTargetBindings in missionOrchestratorWorkerService.js.
+// This is an intentionally fail-closed allowlist, not a prefix/shape match:
+// adding a new validator reason requires an explicit reviewed update here.
+const SAFE_GRANT_MISMATCH_CODES = new Set([
+  'action-grant-action-branch-mismatch',
+  'action-grant-action-head-mismatch',
+  'action-grant-action-mismatch',
+  'action-grant-action-pr-mismatch',
+  'action-grant-action-repository-mismatch',
+  'action-grant-adapter-mismatch',
+  'action-grant-authority-expanded',
+  'action-grant-branch-mismatch',
+  'action-grant-branch-missing',
+  'action-grant-capacity-proof-mismatch',
+  'action-grant-capacity-receipt-mismatch',
+  'action-grant-capacity-route-mismatch',
+  'action-grant-head-binding-missing',
+  'action-grant-head-mismatch',
+  'action-grant-issue-binding-missing',
+  'action-grant-issue-binding-unproven',
+  'action-grant-issue-mismatch',
+  'action-grant-kind-mismatch',
+  'action-grant-lane-binding-missing',
+  'action-grant-lane-issue-mismatch',
+  'action-grant-lane-mismatch',
+  'action-grant-lane-pr-mismatch',
+  'action-grant-mission-mismatch',
+  'action-grant-not-single-use',
+  'action-grant-operation-mismatch',
+  'action-grant-phase-mismatch',
+  'action-grant-pr-binding-missing',
+  'action-grant-pr-binding-unproven',
+  'action-grant-pr-mismatch',
+  'action-grant-repository-mismatch',
+  'action-grant-repository-missing',
+  'action-grant-revision-mismatch',
+  'action-grant-source-revision-mismatch',
+  'invalid-action-grant-controller',
+  'invalid-action-grant-schema',
+  'invalid-action-grant-source-revision',
+]);
+
 // Only closed-world validator names can cross the original worker handoff.
 // Do not export source paths, raw exceptions or an unverified grant as authority.
 function safeGrantMismatchFields(publication) {
@@ -296,7 +339,7 @@ function safeGrantMismatchFields(publication) {
     'post-repair-action-grant-mismatch'].includes(text(publication?.reason))) return [];
   const raw = Array.isArray(publication?.blockers) ? publication.blockers : [];
   return [...new Set(raw.filter(value => typeof value === 'string'
-    && /^(?:action-grant|invalid-action-grant)-[a-z][a-z0-9-]{0,95}$/.test(value)))]
+    && SAFE_GRANT_MISMATCH_CODES.has(value))]
     .sort().slice(0, 16);
 }
 
