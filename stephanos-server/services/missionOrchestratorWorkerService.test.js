@@ -1386,3 +1386,24 @@ test('first issued pending grant refuses a different controller or capacity iden
   const running = (await readMissionRecord(f.state.missionId, f.options)).state;
   assert.equal(running.dispatch.status, 'running');
 });
+
+
+test('worker tick refuses a denied publication even when a same-action pending queue item exists', async t => {
+  const f = await pendingCapacityFixture(t);
+  const originalPending = await readFile(f.first.path);
+  const originalState = (await readMissionRecord(f.state.missionId, f.options)).state;
+  const forged = { ...f.firstGrant, workerId: 'other-worker-without-custody' };
+  assert.equal(missionWorkerActionGrantsMatchV1(f.firstGrant, forged), false);
+  const result = await runMissionWorkerTick({
+    ...f.options, actionGrant: forged,
+    runCommand: () => { throw new Error('DENIED_PUBLICATION_MUST_NOT_EXECUTE'); },
+  });
+  assert.equal(result.publish.published, false);
+  assert.equal(result.publish.reason, 'pending-capacity-reconciliation-blocked');
+  assert.deepEqual(result.publish.blockers, ['MISSION_WORKER_PENDING_CAPACITY_CONTRACT_CHANGED']);
+  assert.equal(result.processed.processed, false);
+  assert.equal(result.processed.reason, 'pending-capacity-reconciliation-blocked');
+  assert.deepEqual(await readFile(f.first.path), originalPending);
+  assert.deepEqual((await readMissionRecord(f.state.missionId, f.options)).state, originalState);
+  assert.deepEqual(await readdir(join(f.options.queueRoot, 'foundry-forge', 'processing')), []);
+});
