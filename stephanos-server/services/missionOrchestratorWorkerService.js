@@ -214,11 +214,21 @@ export async function assertMissionWorkerPendingCapacityCurrent(item, bytes, opt
   if (item.actionGrant) {
     const grant = item.actionGrant;
     const action = buildMissionWorkerAction(state, { ...options, actionGrant: grant });
+    // The first published envelope has no renewal journal yet, but the full
+    // modern grant, action payload and execution binding must ALREADY agree.
+    // Older partial pre-contract envelopes remain eligible only when their
+    // stored binding and exact caller identity agree; a malformed modern grant
+    // cannot silently fall back to the legacy compatibility path.
+    const fullyBoundGrant = missionWorkerActionGrantsMatchV1(grant, grant);
     if (!state || state.missionId !== grant.missionId || state.revision !== grant.missionRevision
         || state.currentPhase !== grant.currentPhase || state.dispatch?.status !== 'pending'
         || action.executable !== true || action.actionId !== grant.actionId
         || action.actionKind !== grant.actionKind || adapterForAction(action) !== grant.adapter
         || item.payload.actionId !== action.actionId || item.payload.missionId !== state.missionId
+        || !isDeepStrictEqual(item.executionBinding, durableQueueExecutionBinding(grant))
+        || (Object.hasOwn(grant, 'grantId') && !fullyBoundGrant)
+        || (fullyBoundGrant && (!validateExactActionGrant(state, action, grant, options).valid
+          || !isDeepStrictEqual(item.payload, action)))
         || (history.entries.length && (!validateExactActionGrant(state, action, grant, options).valid
           || !isDeepStrictEqual(item.payload, action)))) throw capacityRefusal('MISSION_CHANGED');
   }
