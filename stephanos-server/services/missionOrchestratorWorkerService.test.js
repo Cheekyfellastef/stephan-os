@@ -1407,3 +1407,38 @@ test('worker tick refuses a denied publication even when a same-action pending q
   assert.deepEqual((await readMissionRecord(f.state.missionId, f.options)).state, originalState);
   assert.deepEqual(await readdir(join(f.options.queueRoot, 'foundry-forge', 'processing')), []);
 });
+
+
+test('initial canonical pickup verifies persisted grant, payload and execution binding even without controller callback', async t => {
+  const f = await pendingCapacityFixture(t);
+  const originalPending = await readFile(f.first.path);
+  const originalItem = JSON.parse(originalPending);
+  const originalState = (await readMissionRecord(f.state.missionId, f.options)).state;
+  const alterations = [
+    item => { item.actionGrant.capacityReceiptId = 'forged-receipt'; },
+    item => { item.actionGrant.workerId = 'another-worker'; },
+    item => { item.actionGrant.extraMutableAuthority = true; },
+    item => { item.payload.capacityReceiptId = 'forged-payload-receipt'; },
+    item => { item.payload.capacityProofRefs = ['forged-payload-proof']; },
+    item => { item.executionBinding.sourceRevision = 'b'.repeat(40); },
+    item => { item.executionBinding.leaseKey = 'different-execution-lease'; },
+  ];
+  for (const alter of alterations) {
+    const item = structuredClone(originalItem);
+    alter(item);
+    await writeFile(f.first.path, JSON.stringify(item));
+    await assert.rejects(
+      claimNextMissionWorkerItem('foundry-forge', f.options),
+      /MISSION_WORKER_PENDING_CAPACITY_MISSION_CHANGED/,
+    );
+    assert.deepEqual((await readMissionRecord(f.state.missionId, f.options)).state, originalState);
+    assert.deepEqual(await readdir(join(f.options.queueRoot, 'foundry-forge', 'processing')), []);
+    assert.deepEqual(JSON.parse(await readFile(f.first.path)), item);
+  }
+  await writeFile(f.first.path, originalPending);
+  const exact = await claimNextMissionWorkerItem('foundry-forge', {
+    ...f.options, actionGrant: f.firstGrant,
+  });
+  assert.equal(exact.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  assert.deepEqual(exact.item.actionGrant, f.firstGrant);
+});
