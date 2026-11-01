@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
@@ -218,7 +219,7 @@ test('direct pre-admission Git config actions are excluded from remote plans', (
       requestId: 'git-config-direct-only-plan-test',
       operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
       repository: 'Cheekyfellastef/stephan-os',
-      issueNumber: 3149,
+      issueNumber: activeMailboxIssueForTest,
       branch: 'main',
       operatorApproval: 'operator-approved',
       expectedHead: HEAD,
@@ -335,7 +336,7 @@ test('mailbox serves read-only Git worktree/config inspection before Commander h
     requestId: 'inspect-canonical-git-config-test-01',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: f.head,
@@ -423,7 +424,7 @@ test('mailbox executes fixed repair before Commander health', async t => {
     requestId: 'repair-canonical-git-config-test-01',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: f.head,
@@ -472,7 +473,7 @@ test('mailbox failure after completed mutation reports the mutation truthfully',
     requestId: 'repair-canonical-git-config-test-02',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: f.head,

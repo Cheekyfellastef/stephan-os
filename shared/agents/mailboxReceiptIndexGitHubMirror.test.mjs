@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -15,7 +16,7 @@ import {
 const OWNER = 'Cheekyfellastef';
 const HEAD = 'b3aca072a1c66555a1a2d3b4343f218af8d33ef4';
 const REQUEST_ID = 'receipt-index-mirror-20260717T2045Z';
-const CANONICAL_MAILBOX_ISSUE = 3149;
+
 
 function command(overrides = {}) {
   return {

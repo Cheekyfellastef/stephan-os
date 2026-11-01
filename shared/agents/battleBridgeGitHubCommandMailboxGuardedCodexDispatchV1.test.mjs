@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -41,7 +42,7 @@ function approvalReceipt() {
   const result = createRemoteCodexOperatorApprovalReceipt({
     approvalId: 'approval-final-link-codex-2373',
     requestId: 'final-link-codex-2373-v1',
-    owningIssue: 3149,
+    owningIssue: activeMailboxIssueForTest,
     expectedHead: HEAD,
     task: TASK,
     requestedProofCommands: PROOF_COMMANDS,
@@ -59,7 +60,7 @@ function command(overrides = {}) {
     requestId: 'final-link-codex-2373-v1',
     operation: GUARDED_CODEX_TASK_DISPATCH_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -87,7 +88,7 @@ function directProofNotApplicable() {
 function comment(value = command()) {
   return {
     id: 12345,
-    html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/3149#issuecomment-12345',
+    html_url: `https://github.com/Cheekyfellastef/stephan-os/issues/${activeMailboxIssueForTest}#issuecomment-12345`,
     created_at: '2026-09-25T05:40:00.000Z',
     user: { login: 'Cheekyfellastef' },
     body: `\`\`\`${core.BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(value)}\n\`\`\``,
@@ -277,7 +278,7 @@ test('provider-neutral mailbox receipt does not advertise a Codex task before pr
     requestId: 'provider-neutral-truth-v1',
     operation: GUARDED_CODEX_TASK_DISPATCH_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     state: 'BLOCKED',
     expectedHead: HEAD,
@@ -434,7 +435,7 @@ test('mailbox-safe projection preserves bounded dispatcher blocker telemetry', (
     requestId: 'dispatch-blocker-telemetry-v1',
     operation: GUARDED_CODEX_TASK_DISPATCH_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     state: 'BLOCKED',
     expectedHead: HEAD,

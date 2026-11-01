@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import './rescueIslandSupervisedMailboxV1.test.mjs';
@@ -32,7 +33,7 @@ function command(overrides = {}) {
     requestId: 'req-1507-0001',
     operation: 'UPDATE_STEPHANOS_FROM_CHAT',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: 'fb10c39a5c0178158bc3b43c5539e8f5d023bc2a',

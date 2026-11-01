@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -242,7 +243,7 @@ test('public archive failure receipt contains only safe route and execution toke
     requestId: 'starfield-archive-failure-proof-v1',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149, branch: 'main', state: 'BLOCKED',
+    issueNumber: activeMailboxIssueForTest, branch: 'main', state: 'BLOCKED',
     expectedHead: SHA,
     result: {
       ok: false, result: {

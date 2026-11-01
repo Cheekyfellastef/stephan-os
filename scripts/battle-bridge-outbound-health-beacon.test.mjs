@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
@@ -61,7 +62,7 @@ function commandComment({
       requestId,
       operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
       repository,
-      issueNumber: 3149,
+      issueNumber: activeMailboxIssueForTest,
       branch: 'main',
       operatorApproval: 'operator-approved',
       expectedHead,
@@ -85,7 +86,7 @@ function receiptComment({
       requestId,
       operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
       repository: 'Cheekyfellastef/stephan-os',
-      issueNumber: 3149,
+      issueNumber: activeMailboxIssueForTest,
       branch: 'main',
       expectedHead,
       state: 'ACCEPTED',
