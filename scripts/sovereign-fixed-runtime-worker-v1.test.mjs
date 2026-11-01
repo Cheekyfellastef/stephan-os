@@ -103,7 +103,17 @@ for(const mode of ['success','prechain-contract-failed','missing-proposal','canc
   consumeFixedRuntimeCompletionV1:value=>{const yes=brands.has(value);brands.delete(value);return yes?Object.freeze({executionCustodyReleased:true,operationDisposition:transportCancelled?'CANCELLED':mode.startsWith('transport-unproven-')?'UNPROVEN':mode.startsWith('transport-missing-')?undefined:mode.startsWith('transport-mismatch-')?(cleanFailure?'SUCCEEDED':'FAILED'):cleanFailure?'FAILED':'SUCCEEDED'}):null;},consumeFixedRuntimePrelaunchExclusionV1:value=>{const yes=exclusions.has(value);exclusions.delete(value);return yes;}});
  vm.runInContext(body+'\nglobalThis.runFixed=processFixedSourceTaskInWorker;',context);
  if(mode==='prior-receipt')await consumer.beginMissionWorkerExecutionReceiptChain({adapter:'foundry-forge',item,processingPath:join(queueRoot,'foundry-forge','processing',grant.actionId+'.json')},{...options,actionGrant:grant});
- const result=await context.runFixed({...options,actionGrant:grant,signal:invocation.signal,awaitActiveClaimHeartbeat:async()=>mode!=='publication-failed',...(mode==='abort-caller-assert'?{assertResultCustody:()=>{if(nativeReturned)abortInvocation();}}:{})});
+ const runOptions={...options,actionGrant:grant,signal:invocation.signal,awaitActiveClaimHeartbeat:async()=>mode!=='publication-failed',...(mode==='abort-caller-assert'?{assertResultCustody:()=>{if(nativeReturned)abortInvocation();}}:{})};
+ if(mode==='wrong-payload'){
+  await assert.rejects(()=>context.runFixed(runOptions),/MISSION_WORKER_PENDING_CAPACITY_MISSION_CHANGED/);
+  const current=await store.readMissionRecord(missionId,options);
+  assert.equal(attempts,0,'Corrupt pending payload must be refused before native transport');
+  assert.equal(current.state.dispatch.status,'pending');
+  assert.equal(fs.existsSync(join(queueRoot,'foundry-forge','pending',grant.actionId+'.json')),true);
+  assert.equal(fs.existsSync(join(queueRoot,'foundry-forge','processing',grant.actionId+'.json')),false);
+  return;
+ }
+ const result=await context.runFixed(runOptions);
  const current=await store.readMissionRecord(missionId,options);
  if(invocationCase){
   assert.equal(invocationAborts,1,'The actual external invocation must abort at the selected boundary');
