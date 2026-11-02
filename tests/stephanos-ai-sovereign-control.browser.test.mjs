@@ -35,7 +35,7 @@ function response(operation = 'OBSERVE_CONTROL_SYSTEM') {
         responseSource: 'CANONICAL_CONTROL_OBSERVATIONS', readOnly: true, modelInvoked: false,
         nativeActionSubmitted: false, directParticipantDispatchProven: false,
         controlTower: { latestRequestObservation: { requestId: 'control-tower-build-123-1', state: 'RESERVED', historical: true } },
-        handoff: { state: 'NOT_SUBMITTED', requestSubmitted: false, executionAuthority: false,
+        handoff: { handoffId: '12345678-1234-4123-8123-123456789abc', state: 'NOT_SUBMITTED', requestSubmitted: false, executionAuthority: false,
           authenticatedOwnerSubmissionRequired: true, singleAuthenticatedRunRequired: true, reusableAuthority: false,
           operation, workflowUrl: CONTROL_WORKFLOW_URL, workflowRef: 'main', workflowInputs: { operation },
           createdAtUtc: new Date(now).toISOString(), expiresAtUtc: new Date(now + 600000).toISOString(), submissionBlockedReason: '' },
@@ -122,5 +122,63 @@ test('phone can select Control Tower and a delayed reply cannot mark another tar
       composer: document.getElementById('composer').getBoundingClientRect().bottom }));
     assert.ok(dimensions.page <= dimensions.width, 'phone must not overflow horizontally');
     assert.ok(dimensions.composer <= 844, 'composer must remain reachable');
+  } finally { await browser?.close(); await server.close(); }
+});
+
+
+test('one explicit local operator click requests the fixed workflow once; an inert chat reply cannot dispatch', async () => {
+  const server = await startServer();
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true,
+      ...(process.env.STEPHANOS_BROWSER_EXECUTABLE_PATH
+        ? { executablePath: process.env.STEPHANOS_BROWSER_EXECUTABLE_PATH } : {}) });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
+    const posts = [], errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('dialog', dialog => dialog.accept());
+    await page.route(/http:\/\/(localhost|127\.0\.0\.1):8787\//, async route => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204,
+        headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
+      const url = route.request().url();
+      if (url.endsWith('/api/ai/control-tower/dispatch')) {
+        posts.push({ body: route.request().postDataJSON(), headers: route.request().headers() });
+        return route.fulfill({ status: 202, json: {
+          schemaVersion: 'stephanos.control-tower-operator-dispatch.v1',
+          ok: true, state: 'DISPATCH_ACCEPTED_UNCORRELATED',
+          workflowRequestAccepted: true, nativeActionSubmitted: false,
+        }, headers: { 'access-control-allow-origin': '*' } });
+      }
+      const value = response('OBSERVE_CONTROL_SYSTEM');
+      value.data.control_operator_intent = {
+        schemaVersion: 'stephanos.control-tower-operator-dispatch.v1',
+        handoffId: value.data.sovereign_control_conversation.handoff.handoffId,
+        operation: 'OBSERVE_CONTROL_SYSTEM', sourceHead: 'a'.repeat(40),
+        expiresAtUtc: new Date(Date.now() + 60000).toISOString(),
+        signature: 'b'.repeat(64), operatorClickRequired: true,
+        workflowRequestAccepted: false, nativeActionSubmitted: false,
+      };
+      return route.fulfill({ status: 200, json: value,
+        headers: { 'access-control-allow-origin': '*' } });
+    });
+    await page.goto(server.origin + '/apps/stephanos-ai/index.html');
+    await page.getByLabel('Conversation target').selectOption('control-tower');
+    await page.locator('#prompt').fill('Inspect the native control system.');
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await expect(page.getByRole('button', { name: 'Approve and request inspection' })).toBeVisible();
+    assert.equal(posts.length, 0, 'read-only chat itself cannot dispatch');
+    await page.getByRole('button', { name: 'Approve and request inspection' }).click();
+    await expect(page.getByLabel('Sovereign control receipt')).toContainText('GitHub accepted the request');
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].body.operation, 'OBSERVE_CONTROL_SYSTEM');
+    assert.equal(posts[0].body.sourceHead, 'a'.repeat(40));
+    assert.equal(posts[0].headers['x-stephanos-operator-click'], 'confirmed-v1');
+    assert.deepEqual(Object.keys(posts[0].body).sort(),
+      ['schemaVersion', 'handoffId', 'operation', 'sourceHead', 'expiresAtUtc', 'signature'].sort());
+    assert.equal(await page.getByRole('button', { name: 'Approve and request inspection' }).count(), 0,
+      'spent handoff cannot be resubmitted');
+    assert.equal(await page.getByRole('link', { name: 'Open authorised Control Tower' }).count(), 1,
+      'original owner-workflow fallback remains visible');
+    assert.deepEqual(errors, []);
   } finally { await browser?.close(); await server.close(); }
 });
