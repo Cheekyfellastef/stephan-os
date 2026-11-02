@@ -47,6 +47,46 @@ the link, and removes expired or blocked preparation links. A random handoff ID
 is correlation only; it is not an execution token. An unresolved BUILD remains
 visible even if a later read-only inspection succeeds.
 
+## Owner-confirmed local direct handoff (Goal #2961 commissioning continuation)
+
+The prepared handoff remains `NOT_SUBMITTED` and its conversation always remains
+`readOnly:true` with `nativeActionSubmitted:false`. On the physically local
+Battle Bridge UI (127.0.0.1/localhost:4173 only), the backend may separately
+issue a short-lived HMAC-bound one-use intent for exactly one existing fixed
+Control Tower operation, `OBSERVE_CONTROL_SYSTEM` or
+`BUILD_NEXT_ELIGIBLE_GOAL`. Neither model output nor the chat input is a
+native execution credential.
+
+Only an explicit operator click on the visible approval button can POST to
+the distinct `/api/ai/control-tower/dispatch` backend route. That route
+requires the real loopback socket, exact frontend Origin/Host, same-site
+browser request, fixed custom operator-click header and closed JSON envelope.
+Forwarded headers, remote/mobile/hosted origins, missing Origin, arbitrary
+operations/paths/URLs, unsigned/expired or source-mismatched intents are denied.
+The HMAC secret lives only in the backend process, not in the UI or repository.
+The user's GitHub token is resolved server-side, never returned to the browser.
+
+Before using GitHub's original workflow dispatch endpoint, the action validates
+fresh Relay/Commander observations, refuses an unresolved earlier build from
+the **original** execution ledger, reads authenticated GitHub owner numeric ID,
+exact protected-main ref and existing active workflow. It then writes one
+exclusive, immutable, source-bound idempotency marker under the ORIGINAL
+mailbox-ledger workspace and performs at most one fixed GitHub POST. This marker
+is a replay guard, not a new queue/worker/controller/lease/transport.
+An ambiguous POST is terminally unrepeatable for that handoff; the next step is
+readback from GitHub and the original Control Tower ledger, not another send.
+
+A GitHub 204 response means **workflow request accepted, run identity not yet
+correlated**; it does not prove a native wake, goal pickup, edit, test, merge,
+served state, or ownership of maintenance custody. The existing Sovereign relay
+and Mission Worker still enforce all their source/grant/lease/gaming gates.
+Remote/iPad/hosted surfaces continue to use the authenticated GitHub workflow
+handoff until a separately qualified cross-device operator identity exists.
+
+This is source-level construction until merged, backend restarted with exact
+source, and real browser/owner workflow evidence is recorded. No source-only
+test or signed capability makes the path commissioned.
+
 ## Meter and privacy boundary
 
 Control replies use deterministic observations and no language-model API.
