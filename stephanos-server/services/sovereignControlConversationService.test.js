@@ -210,6 +210,8 @@ async function routeHarness(f, { continuityOk = true, allowLegacyHealthTool = fa
     readLiveGoalProjection: forbidden('UNRELATED_GOAL_READ'),
     buildStephanosExecutiveChatBridge: forbidden('EXECUTIVE_ACTION_BRIDGE'),
     readSovereignControlConversationV1: input => readSovereignControlConversationV1(input, f.options),
+    prepareControlTowerOperatorIntentV1: () => null,
+    dispatchControlTowerOperatorIntentV1: forbidden('UNTRUSTED_CHAT_DISPATCH'),
     prepareSharedIntelligenceForAiTurnV1: async value => {
       calls.prepare.push(value);
       return { ok: continuityOk, classification: continuityOk ? 'OBSERVED' : 'WORKSPACE_UNAVAILABLE',
@@ -259,6 +261,8 @@ test('actual AI handler returns control answer with continuity and no provider, 
   assert.equal(response.statusCode, 200);
   assert.equal(response.payload.success, true);
   assert.equal(response.payload.type, 'control_result');
+  assert.equal(response.payload.data.control_operator_intent, undefined);
+  assert.equal(response.payload.data.sovereign_control_conversation.nativeActionSubmitted, false);
   assert.equal(response.payload.data.sovereign_control_conversation.handoff.state, 'NOT_SUBMITTED');
   assert.equal(response.payload.data.conversation_routing.responder.label, 'Stephanos control');
   assert.equal(response.payload.data.conversation_routing.directParticipantDispatchProven, false);
