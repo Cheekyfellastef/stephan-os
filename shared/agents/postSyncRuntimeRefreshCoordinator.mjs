@@ -166,6 +166,9 @@ const NATURAL_PREFIXES = Object.freeze([
 const OPENCLAW_APPROVAL_EXEMPT_EXACT = new Set([
   'shared/agents/openClawProviderPoolQualificationV1.mjs',
   'scripts/windows/repair-openclaw-full-stack.ps1',
+  // This exact specialist-review helper is not an OpenClaw gateway change.
+  // Backend/worker refresh classification still applies to the shared agent.
+  'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.mjs',
 ]);
 
 const NO_RUNTIME_PREFIXES = Object.freeze([
@@ -191,7 +194,15 @@ const NO_RUNTIME_EXACT = new Set([
   // long-running service; the later exact-head installation/boot gate owns them.
   'scripts/sovereign-fixed-runtime-installer-candidate-v1.mjs',
   'scripts/windows/SovereignFixedRuntimeIdentityV1.cs',
+  // Source-closure input only: a new main still requires separate protected
+  // installation and later-boot qualification, never an automatic host start.
+  'scripts/windows/SovereignFixedRuntimeHostV1.cs',
   'scripts/windows/install-sovereign-fixed-runtime-v1.ps1',
+  // These exact files build a one-shot mailbox evidence host, not a daemon.
+  // Do not exempt new or neighboring signer files by directory prefix.
+  'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/Program.cs',
+  'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/Stephanos.CanonicalMailboxNativeEvidenceHost.csproj',
+  'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/packages.lock.json',
   'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',
   'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs',
   'scripts/canonical-mailbox-rollover-github-adapter.mjs',
