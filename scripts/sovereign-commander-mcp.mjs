@@ -217,6 +217,7 @@ const TOOLS = Object.freeze([
             'repair-stephanos',
             'prove-vr-atlas-runtime',
             'prove-flywheel-runtime',
+            'observe-open-stephanos-tabs',
             'prove-stephanos-ai-commander',
             'reconcile-remote-commander-parity',
             'sync-vr-reference-sources',
