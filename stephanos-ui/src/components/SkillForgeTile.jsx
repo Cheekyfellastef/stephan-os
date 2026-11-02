@@ -136,6 +136,29 @@ function SkillForgeObservatory({ runtimeStatusModel }) {
           <p className="skill-truth-note">Knowledge may travel from Local to Stephanos, Sovereign Commander and Standalone. Each recipient needs a fresh proof, scope review and its own approval; privileges never travel with the lesson.</p>
         </section>
       </div>
+      <section className="skill-panel" data-testid="skill-forge-gate-repair-handoff">
+        <div className="skill-section-head">
+          <div><span className="skill-kicker">SIGNED GOAL OBSERVATORY → CAPABILITY TRIAGE</span><h3>Failed gates and repair handoffs</h3></div>
+          <span>{view.gateRepair.summary.failedGateCount} evidenced failure(s) · {view.gateRepair.summary.skillReviewDraftCount} skill-review draft(s)</span>
+        </div>
+        <p>Trust: {view.gateRepair.sourceTruth}. Gate failures become owner-specific review handoffs, not automatically installed tools. Only explicit missing-capability evidence enters the Skill Forge blueprint vault.</p>
+        {view.gateRepair.requests.length ? <div className="skill-agent-list">
+          {view.gateRepair.requests.map(request => <article className="skill-agent-card" key={request.gateId}>
+            <div className="skill-agent-symbol">{request.gateId}</div>
+            <div><strong>{request.title}</strong><small>{request.blocker} · {request.owner}</small><span>{request.nextAction}</span></div>
+            <div className="skill-agent-count"><small>{request.route.replaceAll('_', ' ')}</small></div>
+          </article>)}
+        </div> : <p className="skill-empty">No fresh, verified failed-gate handoffs in this feed. UNKNOWN is not PASS; refresh signed Observatory proof.</p>}
+        <p className="skill-truth-note">Original custody, independent Windows witnesses and operator approvals can never be satisfied by installing a skill. No admission, mutation, execution or protected merge authority is granted here.</p>
+      </section>
+      <section className="skill-panel" data-testid="skill-forge-external-intake">
+        <div className="skill-section-head">
+          <div><span className="skill-kicker">SOVEREIGN SKILL FOUNDRY · EXTERNAL INTAKE</span><h3>Ready-made skill review</h3></div>
+          <span>{view.skillCandidates.filter(skill => skill.provenance === 'EXTERNAL_DRAFT_NOT_INSTALLED').length} external review draft(s)</span>
+        </div>
+        <p>Pre-existing SKILL.md packages from OpenAI, Anthropic, GitHub or ClawHub can be staged with the offline intake tool. Only typed packets already recorded in Shared Workspace appear here. Source links, licenses and publisher claims still require independent verification.</p>
+        <p className="skill-truth-note">Intake is review-only. No marketplace install, executable shell, automatic approval, new authority, global OpenClaw propagation or Battle Bridge activation is enabled. OpenClaw Local is the only initial candidate recipient.</p>
+      </section>
       <section className="skill-panel">
         <div className="skill-section-head"><div><span className="skill-kicker">CANDIDATE LIBRARY</span><h3>Skill blueprint vault</h3></div><span>{filtered.length} of {view.skillCandidates.length} seeds</span></div>
         <div className="skill-filters" aria-label="Filter skill candidates">

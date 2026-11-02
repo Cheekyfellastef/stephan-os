@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, symlink, link, rename, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -17,8 +17,11 @@ const WITNESS_SID = 'S-1-5-21-100-200-300-406';
 const OPERATOR_SID = 'S-1-5-21-100-200-300-407';
 async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), 'stephanos-legacy-quarantine-'));
-  const worktreePath = join(dir, 'source-worktree');
-  await mkdir(worktreePath);
+  const checkoutDirectory = join(dir, 'source-worktree');
+  await mkdir(checkoutDirectory);
+  // Windows temp roots may be reached through a case/alias variant.
+  // The production verifier requires an exact canonical named worktree.
+  const worktreePath = await realpath(checkoutDirectory);
   const witness = generateKeyPairSync('ed25519');
   const operator = generateKeyPairSync('ed25519');
   const witnessPem = witness.publicKey.export({ format: 'pem', type: 'spki' });
@@ -225,5 +228,42 @@ test('symlinked or in-checkout trusted file cannot be used as rescue evidence', 
     assert.equal((await f.inspect(f.expected, { ...f.env,
       STEPHANOS_LEGACY_ORPHAN_OS_WITNESS_PUBLIC_KEY_PATH: f.operatorKey,
     })).authenticated, false);
+  } finally { await rm(f.dir, { recursive: true, force: true }); }
+});
+
+test('hard-linked custody evidence or trust root cannot satisfy external-path protection', async () => {
+  const f = await fixture();
+  try {
+    await f.emit();
+    assert.equal((await f.inspect()).authenticated, true);
+    const linkedEvidence = join(f.expected.worktreePath, 'linked-evidence.json');
+    await link(f.evidence, linkedEvidence);
+    const deniedEvidence = await f.inspect();
+    assert.equal(deniedEvidence.authenticated, false);
+    assert.equal(deniedEvidence.leaseReleaseAuthority, false);
+    await rm(linkedEvidence);
+
+    const linkedKey = join(f.expected.worktreePath, 'linked-public-key.pem');
+    await link(f.witnessKey, linkedKey);
+    const deniedKey = await f.inspect();
+    assert.equal(deniedKey.authenticated, false);
+    assert.equal(deniedKey.leaseReleaseAuthority, false);
+    await rm(linkedKey);
+    assert.equal((await f.inspect()).authenticated, true);
+  } finally { await rm(f.dir, { recursive: true, force: true }); }
+});
+
+test('renamed-away trusted receipt and substituted symlink fail closed', async () => {
+  const f = await fixture();
+  try {
+    await f.emit();
+    assert.equal((await f.inspect()).authenticated, true);
+    const movedEvidence = join(f.dir, 'moved-evidence.json');
+    await rename(f.evidence, movedEvidence);
+    await symlink(movedEvidence, f.evidence);
+    const denied = await f.inspect();
+    assert.equal(denied.authenticated, false);
+    assert.equal(denied.leaseReleaseAuthority, false);
+    assert.equal(denied.sourceMutationAuthority, false);
   } finally { await rm(f.dir, { recursive: true, force: true }); }
 });

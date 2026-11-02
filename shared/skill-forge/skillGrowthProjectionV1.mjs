@@ -1,5 +1,6 @@
 // Pure read-only projection. A candidate, a learning event, and an installed skill
 // are different claims. Never promote one to another without an explicit receipt.
+import { deriveGateSkillIntakeV1 } from './gateRepairSkillIntakeV1.mjs';
 export const SKILL_GROWTH_OBSERVATORY_SCHEMA = 'stephanos.skill-growth-observatory.v1';
 export const SKILL_TRANSFER_ACTORS = Object.freeze([
   { id: 'openclaw-local', label: 'OpenClaw Local', scope: 'Stephanos source and product only' },
@@ -109,7 +110,39 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
     provenance: 'LEARNING_DRAFT_NOT_INSTALLED',
     learningState: event.learningState,
   })])).values()];
+  // Typed external intake packets may be projected only if they were already
+  // published through the canonical Shared Workspace capability feed.
+  // They remain review drafts even if an untrusted payload claims ACTIVE.
+  const externalDrafts = capabilityRecords
+    .map(record => record?.externalSkillIntake)
+    .filter(packet => packet?.schemaVersion === 'stephanos.external-skill-review.v1'
+      && packet?.verdict === 'REVIEW_REQUIRED'
+      && packet?.targetActor === 'openclaw-local'
+      && /^[a-f0-9]{64}$/.test(packet?.contentSha256 || ''))
+    .map(packet => Object.freeze({
+      id: 'external-' + packet.contentSha256.slice(0, 20),
+      name: text(packet.name, 'External skill candidate').slice(0, 100),
+      category: 'External SKILL.md intake',
+      status: 'DRAFT',
+      riskLevel: packet.instructionSignals?.length ? 'HIGH' : 'MEDIUM',
+      permissionLevel: 'PROPOSE_ONLY',
+      plainEnglishSummary: 'Pinned external skill source staged for independent review; not installed.',
+      whySuggested: 'Claimed registry: ' + text(packet.claimedRegistry, 'UNKNOWN').slice(0, 32)
+        + ' · Source revision: ' + text(packet.sourceRevision, 'UNVERIFIED').slice(0, 64),
+      allowedTouches: ['Display structural review result and source digest'],
+      forbiddenTouches: [
+        'No automatic external downloads, execution, installation, permission changes, merges or promotions.',
+        'No transfer beyond OpenClaw Local without independent target qualification.',
+      ],
+      rollbackPath: 'Reject or archive the review draft; no runtime capability was changed.',
+      evidence: [{ type: 'content-sha256', summary: packet.contentSha256 }],
+      tags: ['openclaw-related'],
+      provenance: 'EXTERNAL_DRAFT_NOT_INSTALLED',
+    }));
+  const gateRepair = deriveGateSkillIntakeV1(feed.projection?.goalBuildGateObservatory, { feedState: feed.state });
   const skillCandidates = [
+    ...gateRepair.skillCandidates,
+    ...externalDrafts,
     ...rows(seedSkills).map(skill => ({ ...skill, provenance: 'STATIC_SEED_NOT_INSTALLED' })),
     ...learnedDrafts,
   ];
@@ -160,11 +193,13 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
     sourceTruth: !feedReadable ? 'UNAVAILABLE' : feed.state === 'stale' ? 'STALE' : 'REPORTED',
     reason: text(feed.reason, 'No verified Shared Workspace response'),
     nextAction: text(feed.exactNextAction, 'Verify the Shared Workspace backend connection.'),
-    skillCandidates,
+    skillCandidates, gateRepair,
     publishedSkills, learningEvents, stages, observedActors,
     timeline: learningEvents.slice(0, 16),
     summary: Object.freeze({
       proposals: skillCandidates.length,
+      verifiedGateFailures: gateRepair.summary.failedGateCount,
+      gateCapabilityDrafts: gateRepair.summary.skillReviewDraftCount,
       witnessedLearning: learningEvents.length,
       verifiedLessons: learningEvents.filter(event => event.verified).length,
       publishedSkillRecords: publishedSkills.length,

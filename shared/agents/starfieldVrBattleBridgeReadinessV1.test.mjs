@@ -21,7 +21,7 @@ function command(overrides = {}) {
     requestId: 'starfield-vr-readiness-20260921',
     operation: STARFIELD_VR_READINESS_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2808,
+    issueNumber: 3149,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,

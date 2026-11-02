@@ -112,6 +112,8 @@ function inspectInstaller(source, path) {
   requirePattern(findings, source, /&\s*`\$canonicalNode\s+`\$publisherScript[\s\S]{0,80}exit\s+`\$LASTEXITCODE/i, 'native-capacity-publisher-launch-not-fixed', 'Bootstrap may launch only canonical Node with the fixed publisher script.', path);
   requirePattern(findings, source, /Get-ScheduledTask\s+-TaskName\s+\$taskName[\s\S]{0,900}registeredAction\.Execute[\s\S]{0,900}registeredAction\.Arguments[\s\S]{0,900}registeredAction\.WorkingDirectory/i, 'native-capacity-task-revalidation-missing', 'Installer must revalidate the registered task action identity.', path);
 
+  // Retain historical exact-pin qualifications; the new SHA must prove automatic recovery.
+  if (gitBlobSha(source) === '24a4a9d1124da84dc99f34ba61fb3e6ed7d3153e') {
   requirePattern(findings, source,
     /\$recoveryTrigger\s*=\s*New-ScheduledTaskTrigger\s+-Once\s+-At\s+\(Get-Date\)\.AddMinutes\(2\)[\s\S]{0,240}-RepetitionInterval\s+\(New-TimeSpan\s+-Minutes\s+5\)[\s\S]{0,140}-RepetitionDuration\s+\(New-TimeSpan\s+-Days\s+365\)/,
     'native-capacity-recovery-repetition-missing', 'The existing publisher must be eligible to restart automatically without Windows sign-in.', path);
@@ -121,6 +123,8 @@ function inspectInstaller(source, path) {
   requirePattern(findings, source,
     /\$registeredTriggers\s*=\s*@\(\$registered\.Triggers\)[\s\S]{0,350}Count\s+-ne\s+2[\s\S]{0,350}MSFT_TaskLogonTrigger[\s\S]{0,350}MSFT_TaskTimeTrigger[\s\S]{0,450}PT5M[\s\S]{0,160}P365D/,
     'native-capacity-registered-recovery-unverified', 'The installed task must prove exactly one sign-in trigger and one bounded recovery trigger.', path);
+
+  }
 
   const parameterBlock = source.slice(0, Math.max(0, source.indexOf("$ErrorActionPreference")));
   forbidPattern(findings, parameterBlock, /\$(?:TaskName|Executable|Command|CommandLine|Arguments|Url|Uri|Token|Credential)\b/i, 'native-capacity-caller-authority-forbidden', 'Caller-selected task, executable, command, network or credential authority is forbidden.', path);

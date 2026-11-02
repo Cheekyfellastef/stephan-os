@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import {
   MAX_HIGH_RISK_CHUNK_BYTES, MAX_HIGH_RISK_DIFF_BYTES,
   prepareSovereignHighRiskCandidateV1 as prepare,
-  evaluateSovereignHighRiskCandidateV1 as evaluate,
+  evaluateSovereignHighRiskCandidateV1 as evaluateRaw,
 } from './sovereignHighRiskReviewCandidateV1.mjs';
 import { validateProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
 
@@ -16,6 +16,7 @@ const input = (changes = {}) => ({
   repository: 'Cheekyfellastef/stephan-os', issueNumber: 1574,
   prNumber: 3047, branch: 'rescue/lease-observer-20261012',
   sourceHead: 'a'.repeat(40), baseSha: 'b'.repeat(40),
+  reviewedObjectClosureSha256:'c'.repeat(64),
   changedFiles: ['scripts/battle-bridge-recovery-mesh.mjs'],
   diff: diffOne('scripts/battle-bridge-recovery-mesh.mjs'),
   reviewerSessionId: 'sovereign-review-session', implementerSessionId: 'github-author-session',
@@ -23,6 +24,13 @@ const input = (changes = {}) => ({
   ...changes,
 });
 const digest = value => createHash('sha256').update(value).digest('hex');
+const modelPin='d'.repeat(64);
+const evaluate=(sample, options={})=>evaluateRaw(sample,{...options,modelDigestSha256:modelPin,
+  invokeModel:typeof options.invokeModel==='function'?async(prompt,chunk)=>{
+    const response=await options.invokeModel(prompt,chunk);
+    return typeof response==='string'?{response,modelDigestSha256:modelPin,
+      chunkId:chunk.chunkId,contentSha256:chunk.contentSha256}:response;
+  }:options.invokeModel});
 const clean = (_prompt, chunk) => JSON.stringify({
   chunkId: chunk.chunkId, contentSha256: chunk.contentSha256,
   verdict: 'clean', findings: [],
@@ -44,6 +52,37 @@ test('high-risk rescue code is analyzed as an advisory but never given specialis
   assertNoAuthority(result); assertNoAuthority(result.candidateEvidence);
   assert.equal(validateProviderNeutralReviewReceipt(result.candidateEvidence).valid, false);
   assert.equal(result.reviewReceipt, undefined);
+});
+
+test('one observed model digest binds every chunk and final packet; drift/forged receipt holds', async () => {
+  const sample=input({diff:diffOne('scripts/battle-bridge-recovery-mesh.mjs','+bounded code\n'.repeat(700))});
+  const invoke=pin=>async(prompt,chunk)=>({response:clean(prompt,chunk),modelDigestSha256:pin,
+    chunkId:chunk.chunkId,contentSha256:chunk.contentSha256});
+  const first=await evaluateRaw(sample,{modelDigestSha256:modelPin,invokeModel:invoke(modelPin)});
+  const other='e'.repeat(64);
+  const second=await evaluateRaw(sample,{modelDigestSha256:other,invokeModel:invoke(other)});
+  assert.equal(first.status,'HIGH_RISK_LOCAL_CANDIDATE_READY');
+  assert.equal(first.candidateEvidence.modelDigestSha256,modelPin);
+  assert.ok(first.candidateEvidence.reviewedChunks.every(c=>c.modelDigestSha256===modelPin));
+  assert.notEqual(first.candidateEvidence.reviewPacketSha256,second.candidateEvidence.reviewPacketSha256);
+  const finding=summary=>async(prompt,chunk)=>({modelDigestSha256:modelPin,
+    chunkId:chunk.chunkId,contentSha256:chunk.contentSha256,response:JSON.stringify({
+      chunkId:chunk.chunkId,contentSha256:chunk.contentSha256,verdict:'findings',
+      findings:[{severity:'P2',code:'source-finding',path:chunk.path,summary}],
+    })});
+  const resultA=await evaluateRaw(input(),{modelDigestSha256:modelPin,invokeModel:finding('First independently retained source finding.')});
+  const resultB=await evaluateRaw(input(),{modelDigestSha256:modelPin,invokeModel:finding('Second independently retained source finding.')});
+  assert.notEqual(resultA.candidateEvidence.reviewPacketSha256,resultB.candidateEvidence.reviewPacketSha256,
+    'equal finding counts cannot substitute result content under the same packet hash');
+  assertNoAuthority(first.candidateEvidence);
+  let n=0;
+  const changed=await evaluateRaw(sample,{modelDigestSha256:modelPin,invokeModel:async(p,c)=>
+    invoke(++n===1?modelPin:other)(p,c)});
+  assert.equal(changed.reason,'REVIEW_MODEL_OR_CHUNK_IDENTITY_CHANGED');
+  assert.equal(changed.reviewedChunkCount,1); assertNoAuthority(changed);
+  assert.equal((await evaluateRaw(sample,{invokeModel:invoke(modelPin)})).reason,'REVIEW_MODEL_DIGEST_UNVERIFIED');
+  assert.equal((await evaluateRaw(sample,{modelDigestSha256:modelPin,invokeModel:clean})).reason,
+    'REVIEW_MODEL_OR_CHUNK_IDENTITY_CHANGED');
 });
 
 test('an approximately 30 KB patch is reviewed in complete, ordered, bounded chunks', async () => {
@@ -177,4 +216,27 @@ test('rejects binary changes, overlong lines, misleading paths and missing exact
     assert.equal(value.status,'SOVEREIGN_HIGH_RISK_REVIEW_HELD');
     assertNoAuthority(value);
   }
+});
+
+test('local high-risk reviewer applies relevant cross-domain security checks without claiming approval',async()=>{
+  const paths=[
+    'src/windows/Stephanos.OriginalR7CustodyWitness/Program.cs',
+    'plugins/openclaw-local/SKILL.md',
+    'shared/agents/originalSourceLeaseV1.mjs',
+    'shared/agents/qualifiedSpecialistReviewV1.mjs',
+  ];
+  const snapshot=input({changedFiles:paths,diff:paths.map(path=>diffOne(path)).join('')});
+  const focus=[];
+  const result=await evaluate(snapshot,{invokeModel:(prompt,chunk)=>{
+    focus.push(prompt);
+    return clean(prompt,chunk);
+  }});
+  assert.equal(result.status,'HIGH_RISK_LOCAL_CANDIDATE_READY');
+  assert.equal(focus.length,paths.length);
+  assert.match(focus[0],/SCM service\/token SID verification/);
+  assert.match(focus[1],/agent role separation/);
+  assert.match(focus[2],/compare-and-swap digests/);
+  assert.match(focus[3],/reviewer independence/);
+  assert.ok(focus.every(p=>p.includes('do not claim physical proof')));
+  assertNoAuthority(result);assertNoAuthority(result.candidateEvidence);
 });

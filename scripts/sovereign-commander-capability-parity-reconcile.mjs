@@ -10,7 +10,7 @@ import {
 import {
   compileSovereignCommanderCapabilityPlanV1,
 } from '../shared/agents/sovereignCommanderCapabilityCompilerV1.mjs';
-import { extractSovereignNativeCapabilityGapsV1 } from '../shared/agents/sovereignCommanderNativeGapIntakeV1.mjs';
+import { extractSovereignNativeCapabilityGapsV1, SOVEREIGN_NATIVE_GAP_INTAKE_SCHEMA } from '../shared/agents/sovereignCommanderNativeGapIntakeV1.mjs';
 import { readSharedWorkspaceRecordDirectory } from '../shared/agents/shared-workspace-dashboard-feed.mjs';
 import {
   promoteSharedWorkspaceLearningCandidatesV1,
@@ -95,10 +95,23 @@ export async function reconcileSovereignCommanderCapabilityParity({
     }
     const nativeIntakeBlocked = !Array.isArray(nativeEvents?.records)
       || (Array.isArray(nativeEvents?.errors) && nativeEvents.errors.length > 0);
+    const trustedPriorNativeIntake = priorRecord?.schemaVersion === 'shared-agent-workspace-record.v1'
+      && priorRecord?.kind === 'stephanos.shared_workspace.status'
+      && priorRecord?.statusId === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATUS_ID
+      && priorRecord?.participantId === 'sovereign-commander'
+      && priorRecord?.relatedIssue === '#2573'
+      && priorRecord?.nativeGapIntake?.schemaVersion === SOVEREIGN_NATIVE_GAP_INTAKE_SCHEMA
+      ? (priorRecord.nativeGapIntake.retainedGaps ?? priorRecord.nativeGapIntake.gaps) : [];
     const nativeGapIntake = extractSovereignNativeCapabilityGapsV1(
       nativeIntakeBlocked ? [] : nativeEvents.records,
-      { nowUtc: timestampUtc },
+      { nowUtc: timestampUtc, priorGaps: trustedPriorNativeIntake },
     );
+    // Any already-persisted overflow means we cannot prove the complete
+    // outstanding inventory from an aging seven-day event window. Do not
+    // clear the fault simply because this cycle read fewer new events.
+    const priorRetentionIncomplete = priorRecord?.nativeGapIntake?.retentionTruncated === true;
+    const nativeGapInventoryIncomplete = nativeIntakeBlocked
+      || nativeGapIntake.retentionTruncated || priorRetentionIncomplete;
     const capabilityCompiler = compileSovereignCommanderCapabilityPlanV1(ledger, {
       nativeGaps: nativeGapIntake.gaps,
     });
@@ -145,9 +158,11 @@ export async function reconcileSovereignCommanderCapabilityParity({
         });
       }
     }
-    const combinedVerdict = nativeGapIntake.candidateCount > 0
-      ? 'SOVEREIGN_COMMANDER_NATIVE_CAPABILITY_GAPS_TRACKED'
-      : ledger.finalVerdict;
+    const combinedVerdict = nativeGapInventoryIncomplete
+      ? 'SOVEREIGN_COMMANDER_NATIVE_GAP_INTAKE_DEGRADED'
+      : nativeGapIntake.candidateCount > 0
+        ? 'SOVEREIGN_COMMANDER_NATIVE_CAPABILITY_GAPS_TRACKED'
+        : ledger.finalVerdict;
     const statusRecord = Object.freeze({
       ...createSharedWorkspaceStatusRecord({
         statusId: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATUS_ID,
@@ -164,7 +179,11 @@ export async function reconcileSovereignCommanderCapabilityParity({
       }),
       capabilityParity: ledger,
       capabilityCompiler,
-      nativeGapIntake: Object.freeze({ ...nativeGapIntake, sourceHealth: nativeIntakeBlocked ? 'DEGRADED' : 'VALIDATED', sourceErrorCount: nativeIntakeBlocked ? Math.max(1, nativeEvents.errors?.length || 0) : 0 }),
+      nativeGapIntake: Object.freeze({ ...nativeGapIntake,
+        retentionTruncated: nativeGapInventoryIncomplete && (nativeGapIntake.retentionTruncated || priorRetentionIncomplete),
+        sourceHealth: nativeGapInventoryIncomplete ? 'DEGRADED' : 'VALIDATED',
+        sourceErrorCount: nativeGapInventoryIncomplete ? Math.max(1, nativeEvents.errors?.length || 0) : 0,
+      }),
       flywheelLearning,
       flywheelEventPublicationCount: flywheelEventPublications.filter((item) => item?.ok === true).length,
       canonicalOwnerGoal: ledger.canonicalOwnerGoal,
@@ -198,7 +217,7 @@ export async function reconcileSovereignCommanderCapabilityParity({
       buildableGapCount: ledger.buildableGapCount,
       capabilityCompiler,
       nativeGapIntake,
-      nativeGapSourceHealth: nativeIntakeBlocked ? 'DEGRADED' : 'VALIDATED',
+      nativeGapSourceHealth: nativeGapInventoryIncomplete ? 'DEGRADED' : 'VALIDATED',
       flywheelLearning,
       flywheelEventPublications: Object.freeze(flywheelEventPublications),
       boundaryHoldCount: ledger.boundaryHoldCount,

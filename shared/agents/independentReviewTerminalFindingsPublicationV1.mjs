@@ -167,6 +167,11 @@ export function planIndependentReviewTerminalFindingsPublicationV1({
     return Object.freeze({
       decision: 'RETRY_BUDGET_REMAINS',
       publishAllowed: false,
+      repository: expectedRepository,
+      prNumber: expectedPrNumber,
+      branch: expectedBranch,
+      sourceHead: expectedHead,
+      baseSha: expectedBase,
       workflowRunId: expectedRunId,
       workflowRunAttempt: expectedAttempt,
       payloadSha256,
@@ -236,5 +241,44 @@ export function renderIndependentReviewTerminalFindingsCommentV1(plan = {}) {
     '```json',
     JSON.stringify(packet, null, 2),
     '```',
+  ].join('\n');
+}
+
+/**
+ * A read-only job-summary fallback when the GitHub Actions installation lacks
+ * permission to publish issue comments. Never turns findings into review
+ * admission, changes retry policy, or acts as a signed specialist receipt.
+ * The caller must use the exact, digest-checked publication plan above.
+ */
+export function renderIndependentReviewBlockedJobSummaryV1(plan = {}) {
+  if (!['RETRY_BUDGET_REMAINS', 'PUBLISH_TERMINAL_FINDINGS'].includes(plan?.decision)
+    || !/^[a-f0-9]{40}$/.test(plan?.sourceHead ?? '')
+    || !/^[a-f0-9]{40}$/.test(plan?.baseSha ?? '')
+    || !Number.isSafeInteger(plan?.prNumber) || plan.prNumber < 1
+    || !Number.isSafeInteger(plan?.workflowRunId) || plan.workflowRunId < 1
+    || !Number.isSafeInteger(plan?.workflowRunAttempt) || plan.workflowRunAttempt < 1
+    || !/^[a-f0-9]{64}$/.test(plan?.payloadSha256 ?? '')
+    || ![plan?.counts?.P0, plan?.counts?.P1, plan?.counts?.P2]
+      .every(n => Number.isSafeInteger(n) && n >= 0 && n <= 100)
+    || plan.counts.P0 + plan.counts.P1 + plan.counts.P2 < 1) {
+    return '';
+  }
+  return [
+    '### Independent security review: HOLD (not merge approval)',
+    '',
+    `- PR: #${plan.prNumber}`,
+    `- Exact head: \`${plan.sourceHead}\``,
+    `- Exact base: \`${plan.baseSha}\``,
+    `- Immutable findings payload SHA-256: \`${plan.payloadSha256}\``,
+    `- Findings: P0 **${plan.counts.P0}**, P1 **${plan.counts.P1}**, P2 **${plan.counts.P2}**`,
+    `- Independent review run: [${plan.workflowRunId}](https://github.com/Cheekyfellastef/stephan-os/actions/runs/${plan.workflowRunId}) (attempt ${plan.workflowRunAttempt})`,
+    `- Reporting status: ${plan.decision === 'RETRY_BUDGET_REMAINS'
+      ? 'first-attempt findings retained in immutable artifact; no acceptance'
+      : 'retry boundary reached; terminal findings still block acceptance'}`,
+    '',
+    '**Authority: NO protected merge, reviewer qualification, Windows commissioning or R7 release.**',
+    'Do not re-run an unchanged deterministic P0 security decision merely to obtain a green badge.',
+    'The immutable artifact, not this runner summary or optional PR comment, is the review evidence.',
+    '',
   ].join('\n');
 }

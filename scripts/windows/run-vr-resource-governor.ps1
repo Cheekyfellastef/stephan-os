@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('Watch','Reconcile','Status','PrepareGaming','CancelPrepare','SetAuto','ForceOn','ForceOff')][string]$Action = 'Watch',
+    [ValidateSet('Watch','Reconcile','Status','ObserveAdmission','PrepareGaming','CancelPrepare','SetAuto','ForceOn','ForceOff')][string]$Action = 'Watch',
     [int]$PollMilliseconds = 500,
     [int]$ReleaseGraceSeconds = 45,
     [int]$CooldownSeconds = 90,
@@ -1134,6 +1134,22 @@ function Invoke-CurrentReconcile {
     return Invoke-Reconcile -Signal $signal -Effective $effective -PriorState $prior
 }
 
+if ($Action -eq 'ObserveAdmission') {
+    # Fresh read-only admission for cooperative CPU workers. Leave the sole
+    # watcher/reconciler in charge of persisted state, leases and model actions.
+    # Do not call Resolve-EffectiveState: it can clear prepare-lease evidence.
+    $signal = Get-GamingSignal
+    [pscustomobject]@{
+        schemaVersion = 'stephanos.gaming-resource-admission-observation.v1'
+        observedAtUtc = [DateTime]::UtcNow.ToString('o')
+        signalActive = [bool]$signal.active
+        overrideMode = [string](Read-OverrideMode)
+        preparePending = [bool](Test-Path -LiteralPath $preparePath)
+        readOnly = $true
+    } | ConvertTo-Json -Depth 4
+    exit 0
+}
+
 if ($Action -eq 'SetAuto') {
     Write-OverrideMode -Mode 'AUTO' | Out-Null
     Invoke-CurrentReconcile | ConvertTo-Json -Depth 8
@@ -1209,8 +1225,27 @@ while ($true) {
     $processChanged = -not $prior -or [string]$prior.gameProcessName -ne [string]$signal.gameProcessName
     $guardIntervalSeconds = if ($effective.active -and $effective.profile.parkAllModels) { 0.5 } else { 5 }
     $guardDue = $effective.active -and ($now - $lastGuardAt).TotalSeconds -ge $guardIntervalSeconds
+    # Keep an independently observed idle-state heartbeat fresh for bounded
+    # GPU/CPU model admission. Without this, Watch refreshes its JSON only on
+    # transitions. Core expires evidence at 15s (the reviewer at 30s), so
+    # refresh at 5s to leave room for observation and reconciliation latency.
+    # Do not extend consumer freshness limits or reuse an unobserved idle state.
+    # The watcher still scans game/headset signals on every tick BEFORE this.
+    $idleHeartbeatDue = $false
+    if (-not $effective.active) {
+        try {
+            $observedUtc = [DateTime]::Parse(
+                [string]$prior.updatedAtUtc,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [System.Globalization.DateTimeStyles]::RoundtripKind
+            ).ToUniversalTime()
+            $idleHeartbeatDue = ($now.ToUniversalTime() - $observedUtc).TotalSeconds -ge 5
+        } catch {
+            $idleHeartbeatDue = $true
+        }
+    }
 
-    if ($phaseChanged -or $reasonChanged -or $overrideChanged -or $processChanged -or $guardDue) {
+    if ($phaseChanged -or $reasonChanged -or $overrideChanged -or $processChanged -or $guardDue -or $idleHeartbeatDue) {
         $state = Invoke-Reconcile -Signal $signal -Effective $effective -PriorState $prior
         if ($state.active) { $lastGuardAt = $now }
     }

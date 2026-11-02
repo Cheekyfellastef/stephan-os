@@ -1269,6 +1269,8 @@ test('current protected dispatch binds every exact dynamic run identity field', 
     ['workflow-path', { path: `${repository}/${PERSONAL_REPOSITORY_WORKFLOW_PATH}@feature` }],
     ['triggering-actor', { triggering_actor: { login: 'lookalike-operator' } }],
     ['run-status', { status: 'completed' }],
+    ['run-status', { status: 'completed', conclusion: 'success' }],
+    ['run-status', { status: 'cancelled' }],
   ];
   for (const [field, mutation] of mutations) {
     const blocked = validatePersonalRepositoryDispatchExecution(
@@ -2551,5 +2553,109 @@ test('unbound push duplicate is neutral only when the same check has an exact PR
     );
     assert.equal(hostile.valid, false, label);
     assert.ok(hostile.blockers.includes('personal-repository-check-run-identity-invalid'), label);
+  }
+});
+
+
+test('reviewed UNSTABLE failed exact-head check safely supersedes a historical draft skip', () => {
+  const draft = escalationWorkflowRun({ id: 9198, check_suite_id: 8198, conclusion: 'skipped' });
+  const reviewed = escalationWorkflowRun({ id: 9199, check_suite_id: 8199, conclusion: 'failure' });
+  const checks = [
+    checkRun(draft, { id: 9298, conclusion: 'skipped' }),
+    checkRun(reviewed, { id: 9299, conclusion: 'failure' }),
+  ];
+  const expected = { ...expectedEvidence, mergeStateStatus: 'UNSTABLE' };
+  const admitted = validatePersonalRepositoryCheckRuns(checks, [draft, reviewed], [], expected, {
+    cleanIndependentReviewProved: true,
+  });
+  assert.equal(admitted.valid, true, admitted.blockers.join(', '));
+  assert.equal(admitted.admittedReviewEscalations, 1);
+  assert.deepEqual(admitted.evidence.map(item => item.disposition),
+    ['superseded-draft-skip', 'clean-independent-review']);
+
+  const noIndependentProof = validatePersonalRepositoryCheckRuns(
+    checks, [draft, reviewed], [], expected,
+  );
+  assert.equal(noIndependentProof.valid, false);
+
+  const unrelatedLaterReview = { ...reviewed, path: `${repository}/.github/workflows/untrusted-review.yml@refs/heads/main` };
+  assert.equal(validatePersonalRepositoryCheckRuns(
+    checks, [draft, unrelatedLaterReview], [], expected, { cleanIndependentReviewProved: true },
+  ).valid, false);
+});
+
+test('BLOCKED exact-head escalation requires clean independent review of only that exact failed check', () => {
+  const reviewRun = escalationWorkflowRun();
+  const greenRun = workflowRuns()[0];
+  const expected = { ...expectedEvidence, mergeStateStatus: 'BLOCKED' };
+  const checks = [
+    checkRun(greenRun, { id: 9301, name: 'verify-mission-operations', conclusion: 'success' }),
+    checkRun(reviewRun, { id: 9302, name: 'exact-head-review', conclusion: 'failure' }),
+  ];
+  const runs = [...workflowRuns(), reviewRun];
+  const admitted = validatePersonalRepositoryCheckRuns(checks, runs, [], expected, {
+    cleanIndependentReviewProved: true,
+  });
+  assert.equal(admitted.valid, true, admitted.blockers.join(', '));
+  assert.equal(admitted.admittedReviewEscalations, 1);
+  assert.equal(admitted.evidence[1].disposition, 'clean-independent-review');
+
+  const unproved = validatePersonalRepositoryCheckRuns(checks, runs, [], expected);
+  assert.equal(unproved.valid, false);
+  assert.ok(unproved.blockers.includes('personal-repository-check-run-not-exact-green'));
+
+  const otherFailure = checkRun(greenRun, {
+    id: 9303, name: 'unrelated-security-check', conclusion: 'failure',
+  });
+  const rejected = validatePersonalRepositoryCheckRuns(
+    [...checks, otherFailure], runs, [], expected, { cleanIndependentReviewProved: true },
+  );
+  assert.equal(rejected.valid, false);
+  assert.ok(rejected.blockers.includes('personal-repository-check-run-not-exact-green'));
+
+  for (const badReview of [
+    { ...checks[1], name: 'other-review' },
+    { ...checks[1], head_sha: 'f'.repeat(40) },
+    { ...checks[1], status: 'in_progress' },
+    { ...checks[1], app: { id: 999, slug: 'github-actions' } },
+  ]) {
+    assert.equal(validatePersonalRepositoryCheckRuns(
+      [checks[0], badReview], runs, [], expected, { cleanIndependentReviewProved: true },
+    ).valid, false);
+  }
+});
+
+// The same owner-authorised protected merge job can observe a still-waiting
+// top-level run immediately after GitHub has approved the environment and
+// released the job. Status is informational here; this validator must not
+// confer approval, admission or merge authority from the status alone.
+test('protected GitHub run state may remain waiting without waiving identity or replay protection', () => {
+  const waiting = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({run: dispatchRun({status:'waiting'})}),
+    expectedDispatchExecution,
+  );
+  assert.equal(waiting.valid,true);
+  assert.deepEqual(waiting.currentMismatches,[]);
+
+  const wrongActor = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({run:dispatchRun({
+      status:'waiting',triggering_actor:{login:'untrusted-bot'},
+    })}),expectedDispatchExecution,
+  );
+  assert.equal(wrongActor.valid,false);
+  assert.ok(wrongActor.currentMismatches.includes('triggering-actor'));
+
+  const wrongHead = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({run:dispatchRun({status:'waiting',head_sha:'f'.repeat(40)})}),
+    expectedDispatchExecution,
+  );
+  assert.equal(wrongHead.valid,false);
+  assert.ok(wrongHead.currentMismatches.includes('base-head'));
+
+  for(const status of ['completed','cancelled','failure','success']){
+    const terminal=validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({run:dispatchRun({status})}),expectedDispatchExecution);
+    assert.equal(terminal.valid,false,status);
+    assert.ok(terminal.currentMismatches.includes('run-status'),status);
   }
 });

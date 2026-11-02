@@ -2211,7 +2211,7 @@ export default function App() {
         scrollHeight: document.documentElement?.scrollHeight || 0,
       },
     };
-    window.__STEPHANOS_UI_REALITY__ = reality;
+    window.__STEPHANOS_UI_REALITY__ = { ...reality, cockpitRegression: window.__STEPHANOS_UI_REALITY__?.cockpitRegression || null };
     window.__COPY_STEPHANOS_UI_REALITY__ = () => {
       const payload = JSON.stringify(window.__STEPHANOS_UI_REALITY__ || {}, null, 2);
       if (typeof window.copy === 'function') window.copy(payload);
@@ -2344,7 +2344,7 @@ export default function App() {
           COCKPIT SURFACE · <strong>{ignitionModeBanner.mode}</strong> · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
         </div>
         <section className="cockpit-surface-stage">
-          <CockpitPanel standalone telemetryEntries={telemetryEntries} finalAgentView={displayAgentView} />
+          <CockpitPanel forceOpen standalone telemetryEntries={telemetryEntries} finalAgentView={displayAgentView} />
         </section>
         <DebugConsole />
       </main>

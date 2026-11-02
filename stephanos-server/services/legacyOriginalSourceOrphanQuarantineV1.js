@@ -1,5 +1,6 @@
 import { createHash, createPublicKey, verify } from 'node:crypto';
-import { lstat, readFile, realpath } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, open, realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 export const LEGACY_ORPHAN_QUARANTINE_SCHEMA = 'stephanos.legacy-original-source-orphan-quarantine.v1';
@@ -30,11 +31,40 @@ const inside = (base, path) => {
   return diff === '' || (diff !== '..' && !diff.startsWith('..\\')
     && !diff.startsWith('../') && !isAbsolute(diff));
 };
-async function boundedRegular(path, limit) {
+// The three independently pinned trust objects must be read from retained
+// file handles. A path-only lstat followed by readFile can otherwise open a
+// different file after a rename/reparse swap. Reject hard links as well:
+ // a second name inside a source-controlled tree defeats path-only custody.
+function sameTrustFile(a, b) {
+  return a.isFile() && b.isFile()
+    && !a.isSymbolicLink() && !b.isSymbolicLink()
+    && a.dev === b.dev && a.ino === b.ino
+    && a.nlink === 1 && b.nlink === 1
+    && a.size === b.size && a.mtimeMs === b.mtimeMs
+    && a.ctimeMs === b.ctimeMs;
+}
+
+async function boundedRegular(path, limit, pinnedRealPath) {
   const entry = await lstat(path);
-  if (!entry.isFile() || entry.isSymbolicLink() || entry.size < 1 || entry.size > limit) return null;
-  const data = await readFile(path);
-  return data.length === entry.size ? data : null;
+  if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1
+    || entry.size < 1 || entry.size > limit
+    || await realpath(path) !== pinnedRealPath) return null;
+  // O_NOFOLLOW protects a final-component link swap where the platform
+  // supports it. Handle/path identity checks below fail closed on platforms
+  // that do not implement O_NOFOLLOW.
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const opened = await handle.stat();
+    if (!sameTrustFile(entry, opened)) return null;
+    const data = await handle.readFile();
+    const after = await handle.stat();
+    const named = await lstat(path);
+    if (!sameTrustFile(opened, after) || !sameTrustFile(after, named)
+      || data.length !== entry.size || await realpath(path) !== pinnedRealPath) return null;
+    return data;
+  } finally {
+    await handle.close();
+  }
 }
 function verifiedSignature(part, key, domain) {
   if (!part || !part.claims || typeof part.claims !== 'object'
@@ -79,9 +109,9 @@ export async function authenticateLegacyOrphanQuarantine(
     const realPaths = await Promise.all(configPaths.map(x => realpath(x)));
     if (realPaths.some(x => inside(home, x))) return failed('LEGACY_ORPHAN_TRUST_PATHS_UNSAFE');
     const [recordBytes, witnessBytes, operatorBytes] = await Promise.all([
-      boundedRegular(configPaths[0], 24 * 1024),
-      boundedRegular(configPaths[1], 4096),
-      boundedRegular(configPaths[2], 4096),
+      boundedRegular(configPaths[0], 24 * 1024, realPaths[0]),
+      boundedRegular(configPaths[1], 4096, realPaths[1]),
+      boundedRegular(configPaths[2], 4096, realPaths[2]),
     ]);
     if (!recordBytes || !witnessBytes || !operatorBytes
       || hash(witnessBytes) !== witnessHash || hash(operatorBytes) !== operatorHash) {

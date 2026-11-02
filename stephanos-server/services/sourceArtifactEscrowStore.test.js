@@ -10,6 +10,8 @@ import { validateSourceArtifactEscrowV1 } from '../../shared/agents/sourceArtifa
 import {
   SOURCE_ARTIFACT_COMPLETE_FILE_BUNDLE_V1_SCHEMA,
   finalizeSourceArtifactEscrowFromWorktreeV1,
+  finalizeSourceArtifactEscrowFromCapturedIdentityV1,
+  captureSourceArtifactIdentityFromWorktreeV1,
   persistOfflinePublicationOutboxV1,
   persistSourceArtifactEscrowV1,
 } from './sourceArtifactEscrowStore.js';
@@ -108,7 +110,7 @@ test('escrow preserves canonical shared/runtime source but rejects mutable runti
     artifactFiles: [{ ...valid.artifactFiles[0], path: sourcePath }],
   }), options);
   assert.equal(nonCanonical, null);
-  const outbox = await persistOfflinePublicationOutboxV1(escrow, options);
+  const outbox = await persistOfflinePublicationOutboxV1(escrow, { ...options, now: new Date(NOW) });
   assert.ok(outbox, 'proven tracked source must reach publication outbox');
   assert.equal(outbox.mergeAuthority, false);
   assert.equal(outbox.pushAuthority, false);
@@ -139,7 +141,7 @@ test('escrow preserves canonical shared/runtime source but rejects mutable runti
 test('queues a proven source artifact for later governed publication without adding push or merge authority', async () => {
   const options = await roots();
   const escrow = await persistSourceArtifactEscrowV1(input(), options);
-  const outbox = await persistOfflinePublicationOutboxV1(escrow, options);
+  const outbox = await persistOfflinePublicationOutboxV1(escrow, { ...options, now: new Date(NOW) });
   assert.ok(outbox);
   assert.equal(outbox.state, 'PENDING_PUBLICATION');
   assert.equal(outbox.completeArtifactSha256, escrow.completeArtifactSha256);
@@ -268,4 +270,68 @@ test('preserves invalid UTF-8 staged blob bytes exactly in source escrow', async
     Buffer.from(bundle.changedFiles[0].contentBase64, 'base64'),
     binary,
   );
+});
+
+test('captured source identity completes real escrow and outbox without invoking a subprocess runner', async () => {
+  const options = await roots();
+  const completedAt = new Date().toISOString();
+  const captured = input({ completedAt });
+  const action = { missionId: captured.missionId, worktreePath: options.repoRoot,
+    requiredTests: captured.requiredTests };
+  const execution = { success: true, resultId: captured.actionId, completedAt,
+    changedFiles: captured.changedFiles.map(file => file.path),
+    sourceTestReceipts: captured.evidenceReceipts };
+  let runnerCalls = 0;
+  const finalized = await finalizeSourceArtifactEscrowFromCapturedIdentityV1(action, execution, captured, {
+    ...options,
+    // An admission snapshot cannot become the publication completion clock.
+    now: new Date('2000-01-01T00:00:00.000Z'),
+    runCommand() { runnerCalls++; throw new Error('PARENT_SUBPROCESS_FORBIDDEN'); },
+  });
+  assert.equal(runnerCalls, 0);
+  assert.equal(typeof captureSourceArtifactIdentityFromWorktreeV1, 'function');
+  assert.equal(finalized.completionProofVerdict, 'SOURCE_WORKER_COMPLETION_PROOF_READY');
+  assert.equal(finalized.testsPassed, true);
+  assert.deepEqual(finalized.changedFiles, execution.changedFiles);
+  assert.deepEqual(finalized.sourceArtifactIdentity.changedFiles, captured.changedFiles);
+  assert.equal(validateSourceArtifactEscrowV1(finalized.sourceArtifactEscrow, completedAt).valid, true);
+  assert.equal(finalized.offlinePublicationOutbox.finalVerdict, 'OFFLINE_PUBLICATION_ARTIFACT_QUEUED');
+  const fileName = finalized.sourceArtifactEscrow.artifactRef.split('/').at(-1);
+  const bundleBytes = await readFile(join(options.sharedWorkspaceRoot, 'source-artifacts', fileName));
+  assert.equal(createHash('sha256').update(bundleBytes).digest('hex'), finalized.sourceArtifactEscrow.completeArtifactSha256);
+  const bundle = JSON.parse(bundleBytes.toString('utf8'));
+  assert.equal(bundle.changedFiles[0].contentBase64, captured.artifactFiles[0].contentBase64);
+});
+
+test('captured identity completion retains existing byte and required-test proof refusal', async () => {
+  const options = await roots();
+  const completedAt = new Date().toISOString();
+  const captured = input({ completedAt });
+  const action = { missionId: captured.missionId, worktreePath: options.repoRoot,
+    requiredTests: captured.requiredTests };
+  const execution = { success: true, resultId: captured.actionId, completedAt,
+    changedFiles: captured.changedFiles.map(file => file.path),
+    sourceTestReceipts: captured.evidenceReceipts };
+  const runner = () => { throw new Error('PARENT_SUBPROCESS_FORBIDDEN'); };
+  const invalidBytes = { ...captured, artifactFiles: [{ ...captured.artifactFiles[0],
+    contentBase64: Buffer.from('different source').toString('base64') }] };
+  const bad = await finalizeSourceArtifactEscrowFromCapturedIdentityV1(action, execution, invalidBytes,
+    { ...options, runCommand: runner });
+  assert.equal(bad.completionProofVerdict, 'SOURCE_ARTIFACT_ESCROW_REQUIRED');
+  assert.equal(bad.sourceArtifactEscrow, null);
+  assert.equal(bad.offlinePublicationOutbox, null);
+  const ungrounded = await finalizeSourceArtifactEscrowFromCapturedIdentityV1(action,
+    { ...execution, sourceTestReceipts: [] }, captured, { ...options, runCommand: runner });
+  assert.equal(ungrounded.completionProofVerdict, 'SOURCE_WORKER_TEST_PROOF_REQUIRED');
+  assert.equal(ungrounded.testsPassed, false);
+  assert.equal(ungrounded.sourceArtifactEscrow, null);
+  assert.equal(ungrounded.offlinePublicationOutbox, null);
+});
+
+test('captured identity completion preserves the original unsuccessful no-op behavior', async () => {
+  const execution = { success: false, changedFiles: [] };
+  const finalized = await finalizeSourceArtifactEscrowFromCapturedIdentityV1({}, execution, null, {
+    runCommand() { throw new Error('PARENT_SUBPROCESS_FORBIDDEN'); },
+  });
+  assert.equal(finalized, execution);
 });

@@ -65,10 +65,12 @@ export function projectCoreGateEvidenceV1({
 
 export function planCoreGateStewardV1(observatory = {}, {
   previousActionKey = '', previousAttemptAtMs = null, nowMs = Date.now(),
-  minRetryMs = 60 * 60_000, gamingProtected = false,
+  minRetryMs = 60 * 60_000, gamingProtected = false, previousAttempts = [],
 } = {}) {
   const failures = Array.isArray(observatory.gates)
-    ? observatory.gates.filter(g => g?.status === 'FAIL') : [];
+    ? observatory.gates.filter(g => g?.status === 'FAIL'
+      && HEAD.test(observatory?.sourceHead || '')
+      && g.sourceHead === observatory.sourceHead) : [];
   const actions = failures.map(gate => {
     const policy = SAFE_GATE_ACTIONS_V1[gate.id];
     return policy ? Object.freeze({
@@ -76,12 +78,37 @@ export function planCoreGateStewardV1(observatory = {}, {
       ...policy, proofRef: gate.proofRef || '',
     }) : null;
   }).filter(Boolean);
-  const priority = actions.find(a => a.gateId === 8)
-    || actions.find(a => a.gateId === 13)
-    || actions[0] || null;
-  const key = priority ? [observatory.sourceHead, priority.gateId, priority.reason].join(':') : '';
-  const repeat = key && previousActionKey === key
-    && Number.isFinite(previousAttemptAtMs) && nowMs - previousAttemptAtMs < minRetryMs;
+  // An incumbent custody HOLD must not monopolise independent capacity or
+  // diagnostic repairs. Track cooldown per exact head/gate/reason, not merely
+  // the most recently suggested action. This remains a shadow-only planner.
+  const ordered = [
+    ...actions.filter(a => a.gateId === 8),
+    ...actions.filter(a => a.gateId === 13),
+    ...actions.filter(a => a.gateId !== 8 && a.gateId !== 13),
+  ];
+  const keyFor = action =>
+    [observatory.sourceHead, action.gateId, action.reason].join(':');
+  const ledger = new Map();
+  for (const entry of Array.isArray(previousAttempts) ? previousAttempts.slice(-23) : []) {
+    if (typeof entry?.key === 'string' && Number.isFinite(entry?.atMs)
+      && entry.atMs <= nowMs && entry.atMs >= nowMs - minRetryMs) {
+      ledger.set(entry.key, Math.max(ledger.get(entry.key) ?? 0, entry.atMs));
+    }
+  }
+  // Preserve the existing single-action caller while Core transitions to a
+  // bounded multi-gate ledger. Neither history form grants execution authority.
+  if (previousActionKey && Number.isFinite(previousAttemptAtMs)
+    && previousAttemptAtMs <= nowMs && previousAttemptAtMs >= nowMs - minRetryMs) {
+    ledger.set(previousActionKey, Math.max(ledger.get(previousActionKey) ?? 0, previousAttemptAtMs));
+  }
+  const coolingMs = action => {
+    const attemptedAt = ledger.get(keyFor(action));
+    return Number.isFinite(attemptedAt)
+      ? Math.max(0, minRetryMs - (nowMs - attemptedAt)) : 0;
+  };
+  const next = ordered.find(action => coolingMs(action) === 0) || null;
+  const cooldowns = ordered.map(coolingMs).filter(ms => ms > 0);
+  const key = next ? keyFor(next) : ordered[0] ? keyFor(ordered[0]) : '';
   return Object.freeze({
     schemaVersion: GOAL_GATE_STEWARD_SCHEMA_V1,
     owner: 'EXISTING_STEPhANOS_CORE_DAEMON',
@@ -90,13 +117,14 @@ export function planCoreGateStewardV1(observatory = {}, {
     gateCount: 23,
     failedGateIds: Object.freeze(failures.map(g => g.id)),
     proposals: Object.freeze(actions),
-    nextAction: priority && !gamingProtected && !repeat ? priority : null,
+    nextAction: gamingProtected ? null : next,
     decision: gamingProtected ? 'GAMING_PROTECTED'
-      : !priority ? 'AWAIT_FRESH_GATE_PROOF'
-        : repeat ? 'SAME_EVIDENCE_COOLDOWN'
+      : ordered.length === 0 ? 'AWAIT_FRESH_GATE_PROOF'
+        : !next ? 'SAME_EVIDENCE_COOLDOWN'
           : 'PROPOSE_EXISTING_AUTHORITY_ACTION',
     proofKey: key,
-    retryAfterMs: repeat ? Math.max(0, minRetryMs - (nowMs - previousAttemptAtMs)) : 0,
+    retryAfterMs: !next && cooldowns.length ? Math.min(...cooldowns) : 0,
+    coolingGateIds: Object.freeze(ordered.filter(a => coolingMs(a) > 0).map(a => a.gateId)),
     autoExecuteAllowed: false,
     approvalAuthority: false,
     mergeAuthority: false,

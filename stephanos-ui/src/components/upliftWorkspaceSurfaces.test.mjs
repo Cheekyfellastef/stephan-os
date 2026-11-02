@@ -1,8 +1,11 @@
+import '../../../shared/skill-forge/gateRepairSkillIntakeV1.test.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import { deriveConversationLearningJourneyV1 } from '../../../shared/runtime/conversationLearningJourneyV1.mjs';
+// Reuse the existing surface/Skill Forge test lane; do not create another GitHub authority workflow.
+import '../../../shared/skill-forge/pinnedGithubSkillIntakeV2.test.mjs';
 
 const flywheelUrl = new URL('./FlywheelPanel.jsx', import.meta.url);
 const flywheelCanvasUrl = new URL('./FlywheelWorkspaceCanvas.jsx', import.meta.url);

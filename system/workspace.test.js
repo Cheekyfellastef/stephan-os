@@ -325,6 +325,23 @@ test("workspace open close open sequence keeps chrome transitions and iframe cre
   }
 });
 
+test("Cockpit opens the canonical top-level runtime without allocating an iframe", async () => {
+  const documentRef = createDocumentFixture();
+  const { restore } = installWorkspaceGlobals(documentRef, async () => ({ ok: true, text: async () => '' }));
+  const assigned = [];
+  globalThis.window.location.assign = value => assigned.push(value);
+  resetWorkspaceRuntimeDebugState();
+  try {
+    await workspace.open({ id: 'cockpit', folder: 'cockpit', name: 'Cockpit', entry: 'apps/cockpit/index.html', packaging: 'classic-static' });
+    assert.equal(assigned.length, 1);
+    const target = new URL(assigned[0]);
+    assert.equal(target.pathname, '/apps/stephanos/dist/index.html');
+    assert.equal(target.searchParams.get('surface'), 'cockpit');
+    assert.ok(target.searchParams.has('stephanosLauncherShellUrl'));
+    assert.equal(getWorkspaceRuntimeDebugState().iframeCreationCount, 0);
+  } finally { restore(); resetWorkspaceRuntimeDebugState(); }
+});
+
 test("workspace stephanos launch uses validated launch target for tile-click runtime semantics", async () => {
   const documentRef = createDocumentFixture();
   const globals = installWorkspaceGlobals(documentRef, async () => ({ ok: true, status: 200 }));

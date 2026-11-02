@@ -3,15 +3,19 @@ import { createHash } from 'node:crypto';
 export const WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1 = Object.freeze([
   'scripts/windows/run-sovereign-commander-hidden.ps1',
   'scripts/windows/status-stephanos-core-daemon.ps1',
+  'scripts/windows/stephanos-core-process-observation.ps1',
 ]);
 
 // Authority is pinned to complete, independently reviewed Windows source.
 // The textual checks below add defense in depth, but may not approve a
 // modified script merely because familiar safe snippets still occur.
 const REVIEWED_CORE_SOURCE_BLOBS = Object.freeze({
-  'scripts/windows/run-sovereign-commander-hidden.ps1': 'b794651bacf0e09c48a677586c0e0db6d24c6b9e',
-  'scripts/windows/status-stephanos-core-daemon.ps1': '74d5db0a25a6183653b5332304e39d2d1ca204b0',
+  'scripts/windows/run-sovereign-commander-hidden.ps1': Object.freeze(['9e2d84e59e10632224212a3257ae74a6414c6efa', '47022203dd3948fe1744327ca0d94eeb91ef60c2']),
+  'scripts/windows/status-stephanos-core-daemon.ps1': Object.freeze(['523aca4b93fe9adf434fd157137c7cb4ef52fbca']),
+  'scripts/windows/stephanos-core-process-observation.ps1': Object.freeze(['9e00ce659859b0274fce36e13cb20045b1b337b1']),
 });
+// Successor estate candidate: these bindings become trusted ONLY through the
+// existing protected reviewer-bootstrap admission, never this PR's own checks.
 
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
 const SOURCE_SCHEMA = 'stephanos.windows-authority-source.v1';
@@ -143,15 +147,15 @@ function reviewRunner(source, path, findings) {
     ['pcRestartAllowed = $false', 'core-daemon-runner-pc-restart-denial-absent'],
   ]) requireLiteral(findings, source, literal, code, path);
 
-  requirePattern(findings, source,
-    /function\s+Get-StephanosCoreDaemonProcesses[\s\S]*\.Name\s+-eq\s+'node\.exe'[\s\S]*CommandLine\s+-match\s+\$coreDaemonScriptPattern/,
+  requirePattern(findings, activeSource,
+    /function\s+Get-StephanosCoreDaemonProcesses\s*\{\s*\$script:coreProcessObservation = Get-StephanosCoreProcessObservation -CoreScript \$coreDaemonScript\s*return @\(\$script:coreProcessObservation\.processes\)\s*\}/,
     'core-daemon-runner-process-identity-not-bounded', path);
   requirePattern(findings, activeSource,
-    /if \(\$coreBefore\.Count -gt 1\)[\s\S]*?elseif \(\$coreBefore\.Count -eq 1 -and -not \[bool\]\$coreHealthBefore\.healthy\)[\s\S]*?elseif \(\$coreBefore\.Count -eq 0\)/,
+    /if \(-not \$coreBeforeComplete -or -not \$script:coreProcessObservation\.complete\)\s*\{\s*\$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_PROCESS_INVENTORY_UNPROVEN'\s*\} elseif \(\$coreBefore\.Count -gt 1\)[\s\S]*?elseif \(\$coreBefore\.Count -eq 1 -and -not \[bool\]\$coreHealthBefore\.healthy\)[\s\S]*?elseif \(\$coreBefore\.Count -eq 0\)/,
     'core-daemon-runner-ambiguous-and-live-writer-fence-not-proven', path);
   // Core can only be started when absent. A matching writer without
   // authenticated lease/process creation proof is HELD, not force-recycled.
-  const coreStart = activeSource.indexOf('if ($coreBefore.Count -gt 1)');
+  const coreStart = activeSource.indexOf('if (-not $coreBeforeComplete');
   const relayStart = activeSource.indexOf('$relayBefore = @(Get-SovereignRelayDaemonProcesses)', coreStart);
   if (coreStart < 0 || relayStart < coreStart) {
     findings.push(finding('core-daemon-runner-custody-boundary-missing', path));
@@ -160,6 +164,14 @@ function reviewRunner(source, path, findings) {
     forbidPattern(findings, coreLifecycle, /\bStop-Process\b|\btaskkill\b|\$coreDaemonRestartRequested\s*=\s*\$true/i,
       'core-daemon-runner-live-writer-recycle-forbidden', path);
   }
+  requireLiteral(findings, activeSource, ". (Join-Path $scriptDir 'stephanos-core-process-observation.ps1')", 'core-daemon-runner-inventory-import-not-fixed', path);
+  requireLiteral(findings, activeSource, '$script:coreProcessObservation.complete -and', 'core-daemon-runner-incomplete-inventory-cannot-prove-custody', path);
+  requirePattern(findings, activeSource,
+    /if \(\$healthBefore\.timeoutCustodyHeld -eq \$true\)\s*\{\s*\$blocker = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN'\s*\} elseif/,
+    'core-daemon-runner-timeout-owner-hold-absent', path);
+  requirePattern(findings, activeSource,
+    /elseif \(\$healthBefore\.maintenanceInFlight -eq \$true\)\s*\{\s*\$blocker = 'SOVEREIGN_MAINTENANCE_OWNER_BUSY'\s*\} elseif/,
+    'core-daemon-runner-maintenance-owner-hold-absent', path);
   requirePattern(findings, activeSource,
     /function\s+Get-SovereignRelayDaemonProcesses\b[\s\S]*?Where-Object\s*\{[\s\S]*?\$_\.Name\s+-eq\s+'node\.exe'\s+-and\s*\r?\n?\s*\[string\]\$_\.CommandLine\s+-match\s+\$relayDaemonScriptPattern[\s\S]*?\}/,
     'core-daemon-runner-relay-process-identity-not-bounded', path);
@@ -239,9 +251,10 @@ function reviewStatus(source, path, findings) {
     ["$coreScript = Join-Path $repoRoot 'scripts\\stephanos-core-daemon.mjs'", 'core-daemon-status-script-not-fixed'],
     ["$statusPath = Join-Path $env:USERPROFILE 'Documents\\Stephanos-openclaw-workspace\\status\\stephanos-core-daemon-current.json'", 'core-daemon-status-path-not-fixed'],
     ['$corePattern = [regex]::Escape($coreScript)', 'core-daemon-status-process-pattern-not-fixed'],
-    ['Get-CimInstance Win32_Process -ErrorAction SilentlyContinue', 'core-daemon-status-process-read-absent'],
-    ["$_.Name -eq 'node.exe'", 'core-daemon-status-node-identity-absent'],
-    ['[string]$_.CommandLine -match $corePattern', 'core-daemon-status-command-identity-absent'],
+    [". (Join-Path $scriptDir 'stephanos-core-process-observation.ps1')", 'core-daemon-status-inventory-import-not-fixed'],
+    ['$processObservation = Get-StephanosCoreProcessObservation -CoreScript $coreScript', 'core-daemon-status-inventory-call-not-fixed'],
+    ['$processObservation.complete -and', 'core-daemon-status-incomplete-inventory-cannot-prove-custody'],
+    ['processCount = $processObservation.processCount', 'core-daemon-status-unknown-count-not-preserved'],
     ['Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json', 'core-daemon-status-fixed-read-absent'],
     ["[string]$lockRecord.schemaVersion -ceq 'stephanos.core-daemon-lock.v1'", 'core-daemon-status-lock-schema-check-absent'],
     ["$startupLagSeconds -ge -3 -and $startupLagSeconds -le 90", 'core-daemon-status-process-creation-fence-absent'],
@@ -267,6 +280,32 @@ function reviewStatus(source, path, findings) {
     [/\bgit(?:\.exe)?\s+(?:push|reset|clean|rebase|checkout|switch|merge|stash)\b|\$gitExe[^\r\n]{0,160}\s(?:push|reset|clean|rebase|checkout|switch|merge|stash)\b/i, 'core-daemon-status-git-mutation-forbidden'],
     [/(^|\r?\n)\s*exit\s+[1-9]\d*\b/im, 'core-daemon-status-failing-diagnostic-forbidden'],
   ]) forbidPattern(findings, source, pattern, code, path);
+}
+
+function reviewInventoryHelper(source, path, findings) {
+  const active = activePowerShellSource(source);
+  for (const literal of [
+    '$complete = $ObservationSucceeded',
+    "if ([string]$row.Name -ine 'node.exe') { continue }",
+    '$rows = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
+    '$complete = $false', '$uninspectable++',
+    "$canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'",
+    "$executable = if ($row.PSObject.Properties['ExecutablePath']) { [string]$row.ExecutablePath } else { '' }",
+    "if (-not [string]::Equals($executable.Replace('/', '\\'), $canonicalNode, [StringComparison]::OrdinalIgnoreCase)) {",
+    '$coreMatches += $row',
+    'processCount = if ($complete) { [int]$coreMatches.Count } else { $null }',
+    "blocker = if ($complete) { '' } else { 'CORE_PROCESS_INVENTORY_UNPROVEN' }",
+    'ConvertTo-StephanosCoreProcessObservation -ObservationSucceeded $false -CoreScript $CoreScript',
+  ]) requireLiteral(findings, active, literal, 'core-daemon-inventory-invariant-absent', path);
+  requirePattern(findings, active,
+    /if \(\[string\]::IsNullOrWhiteSpace\(\$command\)\)\s*\{\s*\$uninspectable\+\+\s*\$complete = \$false\s*continue/,
+    'core-daemon-inventory-hidden-node-not-unknown', path);
+  forbidPattern(findings, active,
+    /\b(?:Start-Process|Stop-Process|Invoke-Expression|Invoke-RestMethod|Invoke-WebRequest|Set-Content|Add-Content|Out-File|Remove-Item|Move-Item|Copy-Item|New-Item|Start-ScheduledTask|Stop-ScheduledTask|Register-ScheduledTask|Restart-Computer)\b|\b(?:git|cmd|powershell|pwsh)\.exe\b|\biex\b/i,
+    'core-daemon-inventory-mutation-or-execution-forbidden', path);
+  if ((active.match(/Get-CimInstance/g) || []).length !== 1) {
+    findings.push(finding('core-daemon-inventory-observation-estate-widened', path));
+  }
 }
 
 export function analyzeWindowsAuthorityStephanosCoreDaemonReviewV1(input = {}) {
@@ -297,10 +336,11 @@ export function analyzeWindowsAuthorityStephanosCoreDaemonReviewV1(input = {}) {
       findings.push(finding('windows-authority-source-evidence-invalid', path));
       continue;
     }
-    if (candidates[0].blobSha !== REVIEWED_CORE_SOURCE_BLOBS[path]) {
+    if (!REVIEWED_CORE_SOURCE_BLOBS[path]?.includes(candidates[0].blobSha)) {
       findings.push(finding('windows-authority-core-source-blob-unreviewed', path));
     }
-    if (path.endsWith('status-stephanos-core-daemon.ps1')) reviewStatus(candidates[0].content, path, findings);
+    if (path.endsWith('stephanos-core-process-observation.ps1')) reviewInventoryHelper(candidates[0].content, path, findings);
+    else if (path.endsWith('status-stephanos-core-daemon.ps1')) reviewStatus(candidates[0].content, path, findings);
     else reviewRunner(candidates[0].content, path, findings);
     proofRefs.push('proofs/windows-authority-stephanos-core-daemon/' + path + '@' + sourceHead + '#' + candidates[0].blobSha + ':' + candidates[0].size);
   }

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
+import * as duplicateGuard from './protectedWorkflowDispatchMailboxV1.mjs';
 import {
   PROTECTED_WORKFLOW_DISPATCH_AUTHOR,
   PROTECTED_WORKFLOW_DISPATCH_ISSUE,
@@ -105,7 +107,7 @@ test('handoff fails closed for altered comment, stale transport and every detach
     { ...authorizationComment, updated_at: undefined },
     { ...authorizationComment, created_at: 'invalid' },
     { ...authorizationComment, id: AUTHORIZATION_COMMENT_ID + 1 },
-    { ...authorizationComment, issue_url: authorizationComment.issue_url.replace('/2808', '/3085') },
+    { ...authorizationComment, issue_url: authorizationComment.issue_url.replace('/3149', '/2808') },
   ]) assert.equal(validateProtectedWorkflowActorHandoff(comment, baseCommand, options).ok, false);
   assert.equal(validateProtectedWorkflowActorHandoff(authorizationComment, baseCommand, { ...options, transportActor: 'lookalike' }).ok, false);
   assert.equal(validateProtectedWorkflowActorHandoff(authorizationComment, baseCommand, { ...options, transportActorId: 267490109 }).ok, false);
@@ -367,4 +369,114 @@ test('merge schema still requires fresh independent review identity', () => {
   const missingPayload = { ...baseCommand };
   delete missingPayload.independentReviewPayloadSha256;
   assert.equal(validate(missingPayload).blocker, 'PROTECTED_WORKFLOW_DISPATCH_PAYLOAD_DIGEST_INVALID');
+});
+
+
+test('protected mailbox refuses a second identical run before any workflow dispatch', () => {
+  const { inspectProtectedWorkflowDuplicateDispatchRuns: inspect } = duplicateGuard;
+  const HEAD = baseCommand.expectedHead;
+  const BASE = baseCommand.expectedBase;
+  const expected = { expectedHead: HEAD, expectedBase: BASE };
+  const run = (status, overrides = {}) => ({
+    id: 38967178500, name: 'Protected operator merge ' + HEAD,
+    display_title: 'Protected operator merge ' + HEAD,
+    event: 'workflow_dispatch', head_sha: BASE, head_branch: 'main',
+    status, conclusion: status === 'completed' ? 'failure' : null, ...overrides,
+  });
+  assert.equal(inspect([], expected).ok, true);
+  assert.equal(inspect([run('waiting')], expected).blocker,
+    'PROTECTED_WORKFLOW_DUPLICATE_SOURCE_ATTEMPT_HELD');
+  assert.equal(inspect([run('completed')], expected).blocker,
+    'PROTECTED_WORKFLOW_DUPLICATE_SOURCE_ATTEMPT_HELD');
+  assert.equal(inspect([run('in_progress')], expected).blocker,
+    'PROTECTED_WORKFLOW_DUPLICATE_SOURCE_ATTEMPT_HELD');
+  assert.equal(inspect([run('queued')], expected).blocker,
+    'PROTECTED_WORKFLOW_DUPLICATE_SOURCE_ATTEMPT_HELD');
+  assert.equal(inspect([run('waiting', { name: 'altered' })], expected).blocker,
+    'PROTECTED_WORKFLOW_DISPATCH_RUN_IDENTITY_UNVERIFIABLE');
+  assert.equal(inspect([run('waiting', { head_sha: HEAD })], expected).blocker,
+    'PROTECTED_WORKFLOW_DISPATCH_RUN_IDENTITY_UNVERIFIABLE');
+  assert.equal(inspect([run('waiting', { name: 'Protected operator merge ' + BASE,
+    display_title: 'Protected operator merge ' + BASE })], expected).ok, true);
+  assert.equal(inspect([run('waiting', { id: 0 })], expected).blocker,
+    'PROTECTED_WORKFLOW_DISPATCH_RUN_IDENTITY_UNVERIFIABLE');
+  assert.equal(inspect(null, expected).blocker,
+    'PROTECTED_WORKFLOW_DISPATCH_RUN_INVENTORY_UNVERIFIABLE');
+  assert.equal(inspect(new Array(601).fill(run('waiting')), expected).blocker,
+    'PROTECTED_WORKFLOW_DISPATCH_RUN_INVENTORY_UNVERIFIABLE');
+});
+
+test('dispatch entrypoint checks the complete bounded run estate before POST', () => {
+  const script = readFileSync('scripts/dispatch-protected-merge-from-mailbox.mjs', 'utf8');
+  assert.match(script, /async function rejectPriorProtectedDispatch\(command\)/);
+  assert.match(script, /actions\/workflows\/operator-merge-approval-gate\.yml\/runs/);
+  assert.match(script, /head_sha=\$\{command.expectedBase\}/);
+  assert.match(script, /result\.total_count !== expectedTotal/);
+  assert.ok(script.indexOf('await rejectPriorProtectedDispatch(command);')
+    < script.indexOf('const dispatch = buildProtectedWorkflowDispatchRequest'));
+  const workflow = readFileSync('.github/workflows/protected-workflow-dispatch-mailbox.yml', 'utf8');
+  assert.match(workflow, /group: protected-workflow-dispatch-mailbox-\$\{\{ github\.event\.comment\.user\.login/);
+  assert.doesNotMatch(workflow, /group: protected-workflow-dispatch-mailbox-\$\{\{ github\.event\.comment\.id/);
+});
+
+
+function readOnlyRetryFixture(attempts = 1) {
+  const repository = 'Cheekyfellastef/stephan-os';
+  const id = 38967178500;
+  const title = 'Protected operator merge ' + baseCommand.expectedHead;
+  const run = { id, run_attempt: attempts, workflow_id: 12345, name: title, display_title: title,
+    event: 'workflow_dispatch', head_sha: baseCommand.expectedBase, head_branch: 'main',
+    repository: { full_name: repository }, path: '.github/workflows/operator-merge-approval-gate.yml',
+    triggering_actor: { login: 'github-actions[bot]', id: 41898282 },
+    status: 'completed', conclusion: 'failure' };
+  const jobs = Array.from({ length: attempts }, (_, index) => {
+    const attempt = index + 1;
+    return [
+      ['personal-repository-evidence', 'failure'],
+      ['operator-personal-repository-approval', 'skipped'],
+      ['operator-personal-repository-squash-merge', 'skipped'],
+    ].map(([name, conclusion], offset) => {
+      const jobId = attempt * 100 + offset + 1;
+      return { id: jobId, run_id: id, run_attempt: attempt, workflow_name: title,
+        head_branch: 'main', head_sha: baseCommand.expectedBase, name, status: 'completed', conclusion,
+        url: 'https://api.github.com/repos/' + repository + '/actions/jobs/' + jobId,
+        run_url: 'https://api.github.com/repos/' + repository + '/actions/runs/' + id,
+        check_run_url: 'https://api.github.com/repos/' + repository + '/check-runs/' + jobId,
+        html_url: 'https://github.com/' + repository + '/actions/runs/' + id + '/job/' + jobId };
+    });
+  }).flat();
+  return { run, jobs, priorRunJobSets: [{ runId: id, jobs }] };
+}
+
+test('mailbox shares the executor read-only failure proof and admits no other replay', () => {
+  const inspect = duplicateGuard.inspectProtectedWorkflowDuplicateDispatchRuns;
+  const fixture = readOnlyRetryFixture(2);
+  assert.equal(inspect([fixture.run], baseCommand).ok, false);
+  const accepted = inspect([fixture.run], baseCommand, { priorRunJobSets: fixture.priorRunJobSets });
+  assert.equal(accepted.ok, true, JSON.stringify(accepted));
+  assert.equal(accepted.retryablePriorFailures[0].runAttempt, 2);
+  for (const mutate of [
+    f => { f.jobs = f.jobs.filter(j => j.run_attempt === 2); },
+    f => { f.jobs[2].conclusion = 'success'; },
+    f => { f.jobs[1].status = 'in_progress'; },
+    f => { f.jobs[0].run_id += 1; },
+    f => { f.jobs[0].head_sha = 'f'.repeat(40); },
+    f => { f.jobs[0].url += '/forged'; },
+    f => { f.jobs.push({ ...f.jobs[0] }); },
+    f => { f.run.conclusion = 'success'; },
+    f => { f.run.status = 'waiting'; },
+    f => { f.run.path = '.github/workflows/other.yml'; },
+    f => { f.run.repository.full_name = 'other/repository'; },
+    f => { f.run.triggering_actor.id = 999; },
+    f => { f.run.run_attempt = 9; },
+  ]) {
+    const hostile = readOnlyRetryFixture(2);
+    mutate(hostile);
+    assert.equal(inspect([hostile.run], baseCommand,
+      { priorRunJobSets: [{ runId: hostile.run.id, jobs: hostile.jobs }] }).ok, false);
+  }
+  assert.equal(inspect([fixture.run], baseCommand,
+    { priorRunJobSets: [...fixture.priorRunJobSets, ...fixture.priorRunJobSets] }).ok, false);
+  assert.equal(inspect(Array.from({length: 9}, (_, n) => ({ ...fixture.run, id: fixture.run.id + n })),
+    baseCommand, { priorRunJobSets: fixture.priorRunJobSets }).ok, false);
 });
