@@ -214,7 +214,7 @@ test('every production workflow ingress and privileged final step uses the same 
     const source=readFileSync(new URL(`../.github/workflows/${file}`,import.meta.url),'utf8');
     assert.match(source,/GITHUB_TOKEN: \$\{\{ github.token \}\}/);
     assert.match(source,/canonical-mailbox-workflow-event-gate.mjs/);
-    if (file.includes('bootstrap-pipe') || file.includes('observer')) assert.match(source,/event-gate.mjs \\w+\\r?\\n          ssh/);
+    if (file.includes('bootstrap-pipe') || file.includes('observer')) assert.match(source,/event-gate.mjs \w+\r?\n          ssh/);
     else if (file.includes('receipt-index') || file.includes('telemetry')) assert.match(source,/await recheck\(\);[\s\S]*await github.rest.issues.update\(/);
   }
   for (const file of ['dispatch-protected-merge-from-mailbox.mjs','operator-protected-personal-repository-merge.mjs','operator-protected-merge-gate-v2.mjs']) {
