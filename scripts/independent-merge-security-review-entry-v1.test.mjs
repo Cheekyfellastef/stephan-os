@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const sourceUrl = new URL('./independent-merge-security-review-entry-v1.mjs', import.meta.url);
@@ -54,4 +58,53 @@ test('only pull_request_target and workflow_dispatch are accepted', async () => 
   assert.match(text, /Independent review event \$\{eventName \|\| 'unknown'\} is not allowlisted/);
   assert.match(text, /GITHUB_ACTIONS !== 'true'/);
   assert.match(text, /GITHUB_JOB\) !== 'independent-security-review'/);
+});
+
+test('draft pull_request_target exits before any GitHub read or specialist launch', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'stephanos-draft-review-'));
+  try {
+    const path = join(dir, 'event.json');
+    const event = {
+      repository: { full_name: 'Cheekyfellastef/stephan-os' },
+      pull_request: { draft: true, base: { ref: 'main' } },
+    };
+    await writeFile(path, JSON.stringify(event));
+    const result = spawnSync(process.execPath, [fileURLToPath(sourceUrl)], {
+      encoding: 'utf8', timeout: 10_000,
+      env: {
+        ...process.env,
+        GITHUB_ACTIONS: 'true',
+        GITHUB_JOB: 'independent-security-review',
+        GITHUB_EVENT_NAME: 'pull_request_target',
+        GITHUB_EVENT_PATH: path,
+        GITHUB_REPOSITORY: 'Cheekyfellastef/stephan-os',
+        GITHUB_TOKEN: '',
+        GH_TOKEN: '',
+      },
+    });
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /INDEPENDENT_REVIEW_DRAFT_HELD_NO_API_READS/);
+    assert.doesNotMatch(result.stderr, /GitHub token is required|GitHub GET|https:\/\/api\.github/);
+    for (const mutation of [
+      { ...event, pull_request: { ...event.pull_request, draft: undefined } },
+      { ...event, repository: { full_name: 'untrusted/elsewhere' } },
+    ]) {
+      await writeFile(path, JSON.stringify(mutation));
+      const blocked = spawnSync(process.execPath, [fileURLToPath(sourceUrl)], {
+        encoding: 'utf8', timeout: 10_000,
+        env: {
+          ...process.env, GITHUB_ACTIONS: 'true',
+          GITHUB_JOB: 'independent-security-review',
+          GITHUB_EVENT_NAME: 'pull_request_target',
+          GITHUB_EVENT_PATH: path,
+          GITHUB_REPOSITORY: 'Cheekyfellastef/stephan-os',
+          GITHUB_TOKEN: '', GH_TOKEN: '',
+        },
+      });
+      assert.equal(blocked.status, 1, blocked.stderr);
+      assert.match(blocked.stderr, /INDEPENDENT_REVIEW_DRAFT_IDENTITY_UNVERIFIED/);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
