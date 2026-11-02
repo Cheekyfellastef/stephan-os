@@ -1450,3 +1450,44 @@ test('relay and ignition allowances refuse unknown neighboring scripts before an
     assert.deepEqual(calls, [], path);
   }
 });
+
+test('the exact 3354-era native one-shot files and review helper cannot strand retained Ignition debt', () => {
+  const nativeOneShots = [
+    'scripts/windows/SovereignFixedRuntimeHostV1.cs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/Program.cs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/Stephanos.CanonicalMailboxNativeEvidenceHost.csproj',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/packages.lock.json',
+  ];
+  const reviewHelper = 'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.mjs';
+  const plan = classifyPostSyncRefresh([...nativeOneShots, reviewHelper], {
+    sovereignRelayRefreshRequired: true,
+  });
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.openClawApprovalRequired, false);
+  assert.deepEqual(plan.internal.unknownPaths, []);
+  assert.deepEqual(plan.internal.openClawPaths, []);
+  for (const path of nativeOneShots) assert.ok(plan.internal.noRuntimePaths.includes(path), path);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER,
+  ]);
+});
+
+test('native signer neighbors and other OpenClaw source are still fail-closed', () => {
+  const unknownNative = [
+    'scripts/windows/SovereignFixedRuntimeHostV2.cs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/UnreviewedSigner.cs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/UnreviewedSigner.csproj',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/other.lock.json',
+  ];
+  for (const path of unknownNative) {
+    const plan = classifyPostSyncRefresh([path]);
+    assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH, path);
+    assert.ok(plan.internal.unknownPaths.includes(path), path);
+  }
+  const openClaw = classifyPostSyncRefresh(['shared/agents/openClawUnreviewedRuntimeV1.mjs']);
+  assert.equal(openClaw.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.APPROVAL_REQUIRED_OPENCLAW);
+  assert.equal(openClaw.openClawApprovalRequired, true);
+});
