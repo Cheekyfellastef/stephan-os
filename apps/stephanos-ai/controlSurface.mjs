@@ -45,8 +45,28 @@ export function projectControlReplyForSurfaceV1(result, nowMs = Date.now()) {
     && Date.parse(candidate.expiresAtUtc) - Date.parse(candidate.createdAtUtc) <= 600000) {
     const expired = Date.parse(candidate.expiresAtUtc) <= nowMs;
     const blocked = typeof candidate.submissionBlockedReason === 'string' && candidate.submissionBlockedReason.length > 0;
+    const approval = result?.data?.control_operator_intent;
+    const localOperatorIntent = !expired && !blocked
+      && approval?.schemaVersion === 'stephanos.control-tower-operator-dispatch.v1'
+      && approval?.operatorClickRequired === true
+      && approval?.workflowRequestAccepted === false
+      && approval?.nativeActionSubmitted === false
+      && approval?.handoffId === candidate.handoffId
+      && approval?.operation === candidate.operation
+      && /^[a-f0-9]{40}$/.test(approval?.sourceHead || '')
+      && /^[a-f0-9]{64}$/.test(approval?.signature || '')
+      && Number.isFinite(Date.parse(approval?.expiresAtUtc))
+      && Date.parse(approval.expiresAtUtc) > nowMs
+      && Date.parse(approval.expiresAtUtc) <= Date.parse(candidate.expiresAtUtc)
+      && Date.parse(approval.expiresAtUtc) <= nowMs + 120_000
+      ? Object.freeze({
+        schemaVersion: approval.schemaVersion, handoffId: approval.handoffId,
+        operation: approval.operation, sourceHead: approval.sourceHead,
+        expiresAtUtc: approval.expiresAtUtc, signature: approval.signature,
+      }) : null;
     handoff = {
       operation: candidate.operation,
+      operatorIntent: localOperatorIntent,
       label: candidate.operation === 'OBSERVE_CONTROL_SYSTEM' ? 'Inspect control system' : 'Request guarded goal building',
       workflowUrl: CONTROL_WORKFLOW_URL,
       expiresAtUtc: candidate.expiresAtUtc,
