@@ -611,6 +611,54 @@ test('complete mailbox ledger and guardian-chain repair range has no unclassifie
   assert.equal(plan.automaticExecutionAllowed, true);
 });
 
+test('merged #3302 saturated-mailbox foundation has no unclassified uninstalled source', () => {
+  const changedPaths = [
+    'docs/architecture/canonical-mailbox-saturated-control-v1.md',
+    'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
+    'scripts/canonical-mailbox-execution-ledger-v1.mjs',
+    'scripts/canonical-mailbox-rotation-drain-inputs-v2.test.mjs',
+    'scripts/canonical-mailbox-rotation-transaction-v2.mjs',
+    'scripts/canonical-mailbox-rotation-transaction-v2.test.mjs',
+    'scripts/sovereign-commander-native-inspect.test.mjs',
+    'shared/agents/canonicalMailboxNativeEvidenceCodecV2.mjs',
+    'shared/agents/canonicalMailboxNativeEvidenceCodecV2.test.mjs',
+    'shared/agents/canonicalMailboxNativeEvidenceEnrollmentV2.mjs',
+    'shared/agents/canonicalMailboxNativeEvidenceVerifierV2.mjs',
+    'shared/agents/canonicalMailboxNativeEvidenceVerifierV2.test.mjs',
+    'shared/agents/canonicalMailboxRotationOwnerControlGitHubV2.mjs',
+    'shared/agents/canonicalMailboxRotationOwnerControlGitHubV2.test.mjs',
+    'shared/agents/canonicalMailboxRotationOwnerControlV2.mjs',
+    'shared/agents/canonicalMailboxRotationOwnerControlV2.test.mjs',
+    'shared/agents/canonicalMailboxRotationPublicDrainInputsV2.test.mjs',
+    'shared/agents/canonicalMailboxSaturatedPhaseModelV2.mjs',
+    'shared/agents/canonicalMailboxSaturatedPhaseModelV2.test.mjs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidence/CanonicalMailboxNativeEvidenceProducer.cs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidence/README.md',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidence/Stephanos.CanonicalMailboxNativeEvidence.csproj',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidence/THIRD_PARTY_NOTICES.txt',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidence/packages.lock.json',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidence/tests/NativeEvidenceInteropFixture.cs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidence/tests/native-producer.test.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+  assert.ok(plan.internal.noRuntimePaths.includes('src/windows/Stephanos.CanonicalMailboxNativeEvidence/CanonicalMailboxNativeEvidenceProducer.cs'));
+  assert.ok(plan.internal.noRuntimePaths.includes('src/windows/Stephanos.CanonicalMailboxNativeEvidence/Stephanos.CanonicalMailboxNativeEvidence.csproj'));
+  assert.ok(plan.internal.noRuntimePaths.includes('src/windows/Stephanos.CanonicalMailboxNativeEvidence/packages.lock.json'));
+  assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.BACKEND_8787));
+  assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.MISSION_WORKER));
+  assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD));
+  assert.deepEqual(plan.internal.unknownPaths, []);
+});
+
+test('mailbox native source-only allowance stays bounded to the exact project prefix', () => {
+  const neighbor = classifyPostSyncRefresh(['src/windows/Stephanos.CanonicalMailboxNativeEvidenceV3/Producer.cs']);
+  assert.equal(neighbor.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+  assert.deepEqual(neighbor.internal.unknownPaths, ['src/windows/Stephanos.CanonicalMailboxNativeEvidenceV3/Producer.cs']);
+});
+
 test('mailbox runtime changes require a fresh mailbox process before natural reload proof', async () => {
   const calls = [];
   const result = await executePostSyncRefreshPlan({
