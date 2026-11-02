@@ -2659,3 +2659,71 @@ test('protected GitHub run state may remain waiting without waiving identity or 
     assert.ok(terminal.currentMismatches.includes('run-status'),status);
   }
 });
+
+
+test('only exact PR-inert mailbox mirror and Control Tower request jobs are neutral with a green same-run proof', () => {
+  const fixtures = [
+    ['Mailbox Receipt Index', '.github/workflows/mailbox-receipt-index.yml', 'mirror', 'proof'],
+    ['Stephanos Control Tower - Sovereign Control', '.github/workflows/stephanos-control-tower-build.yml', 'request-build', 'contract-test'],
+  ];
+  for (const [name, path, skipped, sibling] of fixtures) {
+    const run = { ...workflowRuns()[0], id: 9800, check_suite_id: 8800, name,
+      path: `${repository}/${path}@refs/heads/${branch}`, event: 'pull_request',
+      head_branch: branch, status: 'completed', conclusion: 'success' };
+    const skippedCheck = checkRun(run, { id: 9801, name: skipped, conclusion: 'skipped' });
+    const proofCheck = checkRun(run, { id: 9802, name: sibling, conclusion: 'success' });
+    const approved = validatePersonalRepositoryCheckRuns(
+      [skippedCheck, proofCheck], [run], [], expectedEvidence);
+    assert.equal(approved.valid, true, name + ': ' + approved.blockers.join(', '));
+    assert.equal(approved.evidence[0].disposition, 'pr-inert-mutation-job-skip');
+    assert.equal(validatePersonalRepositoryCheckRuns([skippedCheck], [run], [], expectedEvidence).valid, false);
+    assert.equal(validatePersonalRepositoryCheckRuns([
+      skippedCheck, { ...proofCheck, conclusion: 'failure' },
+    ], [run], [], expectedEvidence).valid, false);
+    assert.equal(validatePersonalRepositoryCheckRuns([
+      skippedCheck, { ...proofCheck, head_sha: 'f'.repeat(40) },
+    ], [run], [], expectedEvidence).valid, false);
+    for (const runChanges of [
+      { event: 'push' }, { event: 'workflow_dispatch' }, { name: 'Other Workflow' },
+      { path: `${repository}/.github/workflows/other.yml@refs/heads/${branch}` },
+      { head_branch: 'main' }, { status: 'in_progress' }, { conclusion: 'failure' },
+      { pull_requests: [] },
+    ]) {
+      const different = { ...run, ...runChanges };
+      const denied = validatePersonalRepositoryCheckRuns(
+        [skippedCheck, proofCheck], [different], [], expectedEvidence);
+      assert.equal(denied.valid, false, name + ': ' + JSON.stringify(runChanges));
+    }
+    const extra = checkRun(run, { id: 9803, name: 'unreviewed-other-job', conclusion: 'skipped' });
+    assert.equal(validatePersonalRepositoryCheckRuns(
+      [skippedCheck, proofCheck, extra], [run], [], expectedEvidence).valid, false);
+  }
+});
+
+test('a SHA-bound independent clean review can neutralise only its skipped draft-era target check', () => {
+  const run = escalationWorkflowRun({ id: 9899, check_suite_id: 8899,
+    status: 'completed', conclusion: 'skipped' });
+  const check = checkRun(run, { id: 9999, name: 'exact-head-review', conclusion: 'skipped' });
+  const options = { cleanIndependentReviewProved: true };
+  const approved = validatePersonalRepositoryCheckRuns([check], [run], [], expectedEvidence, options);
+  assert.equal(approved.valid, true, JSON.stringify(approved.blockers));
+  assert.equal(approved.evidence[0].disposition, 'clean-independent-draft-review-skip');
+  assert.equal(validatePersonalRepositoryCheckRuns([check], [run], [], expectedEvidence).valid, false);
+  assert.equal(validatePersonalRepositoryCheckRuns([check], [run], [],
+    { ...expectedEvidence, mergeStateStatus: 'UNSTABLE' }, options).valid, false);
+  for (const mutation of [
+    { event: 'push' }, { event: 'pull_request' }, { name: 'Other Workflow' },
+    { path: `${repository}/.github/workflows/unreviewed.yml@refs/heads/main` },
+    { conclusion: 'failure' }, { status: 'in_progress' }, { pull_requests: [] },
+  ]) {
+    assert.equal(validatePersonalRepositoryCheckRuns([check], [{ ...run, ...mutation }], [],
+      expectedEvidence, options).valid, false, JSON.stringify(mutation));
+  }
+  for (const mutation of [
+    { name: 'unknown-review' }, { conclusion: 'failure' }, { status: 'queued' },
+    { head_sha: 'f'.repeat(40) }, { check_suite: { id: 9001 } },
+  ]) {
+    assert.equal(validatePersonalRepositoryCheckRuns([{ ...check, ...mutation }], [run], [],
+      expectedEvidence, options).valid, false, JSON.stringify(mutation));
+  }
+});
