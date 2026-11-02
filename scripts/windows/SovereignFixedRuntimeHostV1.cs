@@ -77,6 +77,11 @@ namespace Stephanos.Sovereign {
     static FixedRuntimeRequestV1 ParseFixedRuntimeRequestV1(string raw) {
       if(raw==null || Encoding.UTF8.GetByteCount(raw)>32768)
         throw new InvalidOperationException("RUNTIME_FRAME_UNPROVEN");
+      // Closed fixed-runtime fields/values are ASCII and need no JSON escapes.
+      // Reject encoded property aliases before the JSON dictionary normalizes
+      // two raw field names to the same executable Profile.
+      if(raw.IndexOf('\\')>=0)
+        throw new InvalidOperationException("RUNTIME_FRAME_ESCAPED_WIRE_FORBIDDEN");
       var parser=new JavaScriptSerializer { MaxJsonLength=32768,RecursionLimit=4 };
       var objectValue=RuntimeObjectV1(parser.DeserializeObject(raw));
       string[] keys={"SchemaVersion","RequestId","Profile","RuntimeSourceHead","OwnerPid",
@@ -100,13 +105,14 @@ namespace Stephanos.Sovereign {
       if(frame.SchemaVersion!="stephanos.fixed-runtime-request.v1" ||
         !Regex.IsMatch(frame.RequestId,@"^[a-z0-9][a-z0-9._-]{7,79}$") ||
         !RuntimeHexV1(frame.RuntimeSourceHead,40) || frame.OwnerPid<=0 ||
-        (frame.Profile!="MAINTENANCE_GOAL_BUILDER_V1" && frame.Profile!="SOURCE_TASK_V1") ||
+        (frame.Profile!="MAINTENANCE_GOAL_BUILDER_V1" && frame.Profile!="SOURCE_TASK_V1" &&
+          frame.Profile!="CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1") ||
         frame.TaskFrameBase64.Length>24000 || !RuntimeHexV1(frame.TaskBindingSha256,64))
         throw new InvalidOperationException("RUNTIME_FRAME_IDENTITY_UNPROVEN");
       byte[] body=Convert.FromBase64String(frame.TaskFrameBase64);
       if(body.Length>16384 || Convert.ToBase64String(body)!=frame.TaskFrameBase64 ||
         RuntimeHashV1(body)!=frame.TaskBindingSha256 ||
-        (frame.Profile=="MAINTENANCE_GOAL_BUILDER_V1" && body.Length!=0))
+        ((frame.Profile=="MAINTENANCE_GOAL_BUILDER_V1" || frame.Profile=="CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1") && body.Length!=0))
         throw new InvalidOperationException("RUNTIME_TASK_BINDING_UNPROVEN");
       return frame;
     }
@@ -163,7 +169,7 @@ namespace Stephanos.Sovereign {
             SchemaVersion="stephanos.fixed-runtime-inventory.v1",Ok=true,SourceHead=pins.SourceHead,
             SourceTree=pins.SourceTree,HelperSha256=pins.HelperSha256,ManifestSha256=pins.ManifestSha256,
             BootStartedAtUtc=pins.BootStartedAtUtc,AuthenticatedCustodyPhase=custody.Phase,
-            AuthenticatedCustodyIdle=idle,CustodyRecordSha256=custody.RecordSha256,NativeRecordId=custody.NativeRecordId,Profiles=new string[]{"MAINTENANCE_GOAL_BUILDER_V1","SOURCE_TASK_V1"},
+            AuthenticatedCustodyIdle=idle,CustodyRecordSha256=custody.RecordSha256,NativeRecordId=custody.NativeRecordId,Profiles=new string[]{"MAINTENANCE_GOAL_BUILDER_V1","SOURCE_TASK_V1","CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1"},
             RuntimeActivationGranted=false,MutationAttempted=false }));
           return 0;
         }
@@ -210,6 +216,7 @@ namespace Stephanos.Sovereign {
         var custody=ReadRuntimeCustodyV1(pins);
         receipt.CustodyRecordSha256=custody.RecordSha256; receipt.NativeRecordId=custody.NativeRecordId;
         bool source=frame.Profile=="SOURCE_TASK_V1";
+        bool mailboxNativeEvidence=frame.Profile=="CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1";
         if(custody.MachineHash!=pins.MachineHash ||
           (source?RuntimeInstantV1(custody.BootStartedAtUtc)>RuntimeInstantV1(pins.BootStartedAtUtc):
             RuntimeInstantV1(custody.BootStartedAtUtc)!=RuntimeInstantV1(pins.BootStartedAtUtc)))
@@ -220,6 +227,10 @@ namespace Stephanos.Sovereign {
           sourceBinding=RuntimeSourceBindingV1(frame,pins,born);
           receipt.ActionId=sourceBinding.ActionId;receipt.MissionId=sourceBinding.MissionId;receipt.ClaimSha256=sourceBinding.ClaimSha256;
         }
+        // Source integration may expose the fixed profile, but execution remains
+        // impossible until the dedicated rotation signer/enrollment is commissioned.
+        // This fence is deliberately before Job creation and before any child launch.
+        if(mailboxNativeEvidence) throw new InvalidOperationException("NATIVE_ROTATION_PRODUCER_UNQUALIFIED");
         if(!source && (custody.Phase!="ACTIVE" || custody.OwnerPid!=frame.OwnerPid ||
           custody.ReservationId!=frame.RequestId || custody.Operation!="repair-goal-builder-flow"))
           throw new InvalidOperationException("RUNTIME_EXACT_MAINTENANCE_OWNER_UNPROVEN");

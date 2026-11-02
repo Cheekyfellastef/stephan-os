@@ -18,6 +18,16 @@ export function fixedRuntimeMaintenanceActionQualifiedV1(actionId) {
   return actionId === FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId;
 }
 
+// Compiled-profile declaration only. The protected runtime may advertise this
+// seam after source integration, but no caller can dispatch it until a separate
+// purpose-scoped signer/enrollment commissioning step is independently proven.
+export const FIXED_MAILBOX_NATIVE_EVIDENCE_RUNTIME_PROFILE_V1 = Object.freeze({
+  profile: 'CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1',
+  signerCommissioned: false,
+  dispatchAllowed: false,
+  reason: 'NATIVE_ROTATION_PRODUCER_UNQUALIFIED',
+});
+
 const ROOT = 'C:\\Program Files\\Stephanos\\SovereignFixedRuntimeV1';
 const SOURCE = 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os';
 const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
@@ -174,7 +184,7 @@ export function inspectFixedRuntimeQualificationV1() {
       row.SourceHead!==installation.head || row.HelperSha256!==installation.helperSha256 ||
       row.ManifestSha256!==installation.manifestSha256 || row.AuthenticatedCustodyIdle!==true ||
       row.RuntimeActivationGranted!==false || row.MutationAttempted!==false ||
-      !Array.isArray(row.Profiles) || row.Profiles.some(p=>!['MAINTENANCE_GOAL_BUILDER_V1','SOURCE_TASK_V1'].includes(p)) ||
+      !Array.isArray(row.Profiles) || row.Profiles.some(p=>!['MAINTENANCE_GOAL_BUILDER_V1','SOURCE_TASK_V1',FIXED_MAILBOX_NATIVE_EVIDENCE_RUNTIME_PROFILE_V1.profile].includes(p)) ||
       !SHA.test(row.CustodyRecordSha256??'') || !Number.isSafeInteger(row.NativeRecordId) || row.NativeRecordId<1)
       return denied('FIXED_RUNTIME_AUTHENTICATED_IDLE_UNPROVEN');
     if(!resourceAllowed())return denied('FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
