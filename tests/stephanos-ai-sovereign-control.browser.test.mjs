@@ -177,8 +177,8 @@ test('one explicit local operator click requests the fixed workflow once; an ine
       ['schemaVersion', 'handoffId', 'operation', 'sourceHead', 'expiresAtUtc', 'signature'].sort());
     assert.equal(await page.getByRole('button', { name: 'Approve and request inspection' }).count(), 0,
       'spent handoff cannot be resubmitted');
-    assert.equal(await page.getByRole('link', { name: 'Open authorised Control Tower' }).count(), 1,
-      'original owner-workflow fallback remains visible');
+    assert.equal(await page.getByRole('link', { name: 'Inspect Control Tower workflow' }).count(), 1,
+      'spent intent leaves only a reconciliation link, not another submit affordance');
     assert.deepEqual(errors, []);
   } finally { await browser?.close(); await server.close(); }
 });
