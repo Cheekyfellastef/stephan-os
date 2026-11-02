@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {consumeFixedRuntimePrelaunchExclusionV1, consumeFixedRuntimeTerminalProvenanceV1, executeFixedMaintenanceRuntimeV1, executeFixedSourceTaskRuntimeV1} from './sovereign-fixed-runtime-parent-v1.mjs';
+import {FIXED_MAILBOX_NATIVE_EVIDENCE_RUNTIME_PROFILE_V1, consumeFixedRuntimePrelaunchExclusionV1, consumeFixedRuntimeTerminalProvenanceV1, executeFixedMaintenanceRuntimeV1, executeFixedSourceTaskRuntimeV1} from './sovereign-fixed-runtime-parent-v1.mjs';
 import {observeCurrentFixedRuntimeInstallationV1, observeCurrentFixedRuntimeQualificationV1} from './sovereign-fixed-runtime-install-current-v1.mjs';
 
 test('child JSON copies and caller qualification cannot mint native provenance', async () => {
@@ -88,4 +88,18 @@ test('current-main fixed runtime preparer stays fixed-source and carries no rest
   assert.doesNotMatch(source,/Buffer\.from\(actual\)\.equals\(expectedBytes\)/);
   assert.match(source,/writeFileFn\(candidate\.payloadPath, payload, \{ flag: 'wx', mode: 0o600 \}\)/);
   assert.doesNotMatch(source,/cmd\.exe|Invoke-Expression|Restart-Computer|Stop-Computer|shutdown\.exe|git\s+reset|git\s+clean|git\s+push/i);
+});
+
+
+test('mailbox native evidence fixed profile is inspectable but remains pre-job fail-closed', () => {
+  assert.deepEqual(FIXED_MAILBOX_NATIVE_EVIDENCE_RUNTIME_PROFILE_V1,{
+    profile:'CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1',signerCommissioned:false,dispatchAllowed:false,reason:'NATIVE_ROTATION_PRODUCER_UNQUALIFIED',
+  });
+  const host=readFileSync(fileURLToPath(new URL('./windows/SovereignFixedRuntimeHostV1.cs',import.meta.url)),'utf8');
+  const parent=readFileSync(fileURLToPath(new URL('./sovereign-fixed-runtime-parent-v1.mjs',import.meta.url)),'utf8');
+  assert.equal(host.includes('Profiles=new string[]{"MAINTENANCE_GOAL_BUILDER_V1","SOURCE_TASK_V1","CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1"}'),true);
+  assert.equal(host.includes('if(mailboxNativeEvidence) throw new InvalidOperationException("NATIVE_ROTATION_PRODUCER_UNQUALIFIED")'),true);
+  assert.ok(host.indexOf('if(mailboxNativeEvidence) throw new InvalidOperationException("NATIVE_ROTATION_PRODUCER_UNQUALIFIED")') < host.indexOf('job=CreateJobObjectW'));
+  assert.doesNotMatch(parent,/executeFixedMailboxNativeEvidenceRuntimeV1/);
+  assert.doesNotMatch(parent,/generateKeyPairSync|privateKey|private-key/i);
 });
