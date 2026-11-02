@@ -12,7 +12,7 @@ function fixture() {
       requestId: 'control-tower-build-123-1', state: 'UNKNOWN', historical: true,
       observedAtUtc: new Date(NOW - 60000).toISOString(),
     } },
-    handoff: { state: 'NOT_SUBMITTED', requestSubmitted: false, executionAuthority: false,
+    handoff: { handoffId: '12345678-1234-4123-8123-123456789abc', state: 'NOT_SUBMITTED', requestSubmitted: false, executionAuthority: false,
       reusableAuthority: false, authenticatedOwnerSubmissionRequired: true, singleAuthenticatedRunRequired: true,
       operation: 'OBSERVE_CONTROL_SYSTEM', workflowUrl: CONTROL_WORKFLOW_URL, workflowRef: 'main',
       workflowInputs: { operation: 'OBSERVE_CONTROL_SYSTEM' },
@@ -87,4 +87,35 @@ test('ordinary model replies and claimed native dispatch cannot masquerade as co
     assert.equal(projectControlReplyForSurfaceV1(result, NOW), null);
   }
   assert.equal(projectControlReplyForSurfaceV1({ output_text: 'Working' }, NOW), null);
+});
+
+test('local signed single-use intent enables an explicit operator-click action without changing read-only conversation', () => {
+  const result = fixture();
+  const handoff = result.data.sovereign_control_conversation.handoff;
+  result.data.control_operator_intent = {
+    schemaVersion: 'stephanos.control-tower-operator-dispatch.v1',
+    handoffId: handoff.handoffId, operation: handoff.operation,
+    sourceHead: 'a'.repeat(40),
+    expiresAtUtc: new Date(NOW + 90000).toISOString(),
+    signature: 'b'.repeat(64), operatorClickRequired: true,
+    workflowRequestAccepted: false, nativeActionSubmitted: false,
+  };
+  const view = projectControlReplyForSurfaceV1(result, NOW);
+  assert.equal(view.handoff.operatorIntent.operation, 'OBSERVE_CONTROL_SYSTEM');
+  assert.equal(view.handoff.operatorIntent.sourceHead, 'a'.repeat(40));
+  assert.equal(result.data.sovereign_control_conversation.nativeActionSubmitted, false);
+  for (const change of [
+    i => { i.signature = 'not-a-signature'; },
+    i => { i.sourceHead = 'changed'; },
+    i => { i.handoffId = 'another-handoff'; },
+    i => { i.operation = 'BUILD_NEXT_ELIGIBLE_GOAL'; },
+    i => { i.workflowRequestAccepted = true; },
+    i => { i.nativeActionSubmitted = true; },
+    i => { i.expiresAtUtc = new Date(NOW - 1).toISOString(); },
+  ]) {
+    const value = fixture();
+    value.data.control_operator_intent = { ...result.data.control_operator_intent };
+    change(value.data.control_operator_intent);
+    assert.equal(projectControlReplyForSurfaceV1(value, NOW).handoff.operatorIntent, null);
+  }
 });
