@@ -283,12 +283,34 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
   const core = latestStatus('stephanos-core-daemon-current');
   const coreKnown = /^[a-f0-9]{40}$/.test(core?.sourceHead || '');
   const coreLive = coreKnown && fresh(core.timestampUtc, nowMs, maxAgeMs);
-  const health = ['daemonHealthy', 'missionWorkerHealthy', 'backendHealthy'].map((field, index) => ({
-    id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
-    state: coreLive && typeof core[field] === 'boolean' ? core[field] ? 'HEALTHY' : 'UNHEALTHY' : 'UNKNOWN',
-    observedAtUtc: coreKnown ? core.timestampUtc : '',
-    expiresAtUtc: coreLive ? new Date(time(core.timestampUtc) + maxAgeMs).toISOString() : '',
-  }));
+  // Each service must have an independently timestamped health observation.
+  // A stopped Core publisher cannot make a still-live worker/backend appear
+  // stopped, and an HTTP read must never renew an old observation.
+  const runtimeServices = array(projection.captainsBridge?.runtimeHealth?.services);
+  const health = ['daemonHealthy', 'missionWorkerHealthy', 'backendHealthy'].map((field, index) => {
+    const serviceId = index === 1 ? 'mission-worker' : index === 2 ? 'backend' : '';
+    const independent = serviceId ? runtimeServices.find(entry => entry?.serviceId === serviceId) : null;
+    const independentLive = independent?.freshness === 'CURRENT'
+      && fresh(independent?.observedAtUtc, nowMs, maxAgeMs);
+    const independentLight = String(independent?.trafficLight || '').toUpperCase();
+    if (independentLive && ['GREEN', 'RED', 'AMBER'].includes(independentLight)) {
+      return {
+        id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+        state: independentLight === 'GREEN' ? 'HEALTHY'
+          : independentLight === 'RED' ? 'UNHEALTHY' : 'DEGRADED',
+        observedAtUtc: independent.observedAtUtc,
+        expiresAtUtc: new Date(time(independent.observedAtUtc) + maxAgeMs).toISOString(),
+        evidenceSource: 'INDEPENDENT_SERVICE_HEALTH',
+      };
+    }
+    return {
+      id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+      state: coreLive && typeof core[field] === 'boolean' ? core[field] ? 'HEALTHY' : 'UNHEALTHY' : 'UNKNOWN',
+      observedAtUtc: coreKnown ? core.timestampUtc : '',
+      expiresAtUtc: coreLive ? new Date(time(core.timestampUtc) + maxAgeMs).toISOString() : '',
+      evidenceSource: coreKnown ? 'CORE_DAEMON_AGGREGATE' : 'UNAVAILABLE',
+    };
+  });
   return {
     schemaVersion: CONVEYOR_OVERVIEW_SCHEMA, readOnly: true, state, buildState,
     trafficLight: state === 'BLOCKED' ? 'RED' : state === 'BUILDING' ? 'GREEN'
