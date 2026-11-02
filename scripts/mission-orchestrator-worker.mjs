@@ -1337,7 +1337,7 @@ async function processFixedSourceTaskInWorker(options) {
 
 
 export async function runMissionWorkerTick(options = {}) {
-  const actionGrant = options.actionGrant;
+  let actionGrant = options.actionGrant;
   const grantCheck = selectGrantedMissionWorkerQueueItem([], actionGrant);
   if (grantCheck.reason === 'exact-action-grant-invalid') {
     return {
@@ -1360,8 +1360,35 @@ export async function runMissionWorkerTick(options = {}) {
       || process.env.STEPHANOS_GITHUB_AUTH_PRIVATE_KEY_PATH,
   };
   const publish = await publishNextMissionWorkerAction(workerOptions);
-  if (publish.reason === 'action-grant-mismatch' || publish.reason?.startsWith('action-grant-mission-')) {
-    return { publish, processed: { processed: false, reason: publish.reason } };
+  // Publication is the authority boundary. A stale source grant, failed locked
+  // validation or failed pending-capacity reconciliation cannot fall through to
+  // an older queue item that happens to share the mission/action identifier.
+  // Only an exact idempotent already-published item may be reconsidered; the
+  // next queue/claim stages still enforce its complete persisted grant.
+  if (publish.actionGrantAccepted !== true
+      || (publish.published !== true && publish.reason !== 'action-already-published')) {
+    return { publish, processed: { processed: false,
+      reason: publish.reason || 'exact-action-publication-unproven' } };
+  }
+  if (publish.publishedActionGrant
+      && (publish.published === true || publish.reason === 'action-already-published')) {
+    // Locked canonical publication retains an existing action's complete
+    // advisory context. Carry that exact envelope to pickup; never regenerate
+    // its pack from a later observation or weaken the native equality check.
+    const publishedGrant = publish.publishedActionGrant;
+    const expected = { ...actionGrant,
+      engineeringMemoryPack: publishedGrant.engineeringMemoryPack ?? null,
+      engineeringMemoryPackId: publishedGrant.engineeringMemoryPackId ?? null };
+    if (!missionWorkerActionGrantsMatchV1(actionGrant, actionGrant)
+        || !missionWorkerActionGrantsMatchV1(expected, publishedGrant)) {
+      return { publish, processed: { processed: false, reason: 'published-action-grant-unproven' } };
+    }
+    if (typeof options.acceptPublishedActionGrant === 'function'
+        && await options.acceptPublishedActionGrant(publishedGrant) !== true) {
+      return { publish, processed: { processed: false, reason: 'published-action-grant-registration-unproven' } };
+    }
+    actionGrant = publishedGrant;
+    workerOptions.actionGrant = publishedGrant;
   }
   const selection = selectGrantedMissionWorkerQueueItem(
     await readMissionWorkerQueue(workerOptions),

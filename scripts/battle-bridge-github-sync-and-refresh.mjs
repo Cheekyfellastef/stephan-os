@@ -7,7 +7,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
+import { projectSovereignCaretakerExecutionEvidence, reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import { createSharedWorkspaceStatusRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { collectPostSyncRefreshDebt, inspectPendingPostSyncRefreshDebt, inspectPostSyncRefreshCompletion, resolvePostSyncRefreshDebt } from './battle-bridge-github-sync-policy.mjs';
 
@@ -93,6 +93,11 @@ export function projectSyncAndRefreshStatus(result = {}, { observedAtUtc = new D
   const ok = result?.ok === true;
   const blocker = boundedText(result?.blocker);
   const finalVerdict = boundedText(result?.finalVerdict, 120);
+  const refreshResult = Array.isArray(result?.refreshes) ? result.refreshes.at(-1)?.result : null;
+  const sovereignCaretakerExecution = safeHead(result?.sourceHead) ? projectSovereignCaretakerExecutionEvidence(
+    result?.controlPlaneRepair?.repair?.sovereignCaretakerExecution || refreshResult?.sovereignCaretakerExecution,
+    safeHead(result?.sourceHead),
+  ) : null;
   return Object.freeze({
     ...createSharedWorkspaceStatusRecord({
       statusId: 'battle-bridge-sync-and-refresh-current',
@@ -124,7 +129,11 @@ export function projectSyncAndRefreshStatus(result = {}, { observedAtUtc = new D
       classification: boundedText(result?.controlPlaneRepair?.classification, 120),
       blocker: boundedText(result?.controlPlaneRepair?.blocker, 180),
       repairAttempted: result?.controlPlaneRepair?.repairAttempted === true,
+      sovereignCaretakerExecution,
     }),
+    lastSovereignCaretakerFailure: safeHead(result?.sourceHead) ? projectSovereignCaretakerExecutionEvidence(
+      refreshResult?.lastSovereignCaretakerFailure, safeHead(result?.sourceHead),
+    ) : null,
     arbitraryShellAllowed: false,
     sourceMutationAllowed: false,
     destructiveGitAllowed: false,
@@ -346,6 +355,7 @@ export async function runBattleBridgeSyncAndRefresh({
   platform = process.platform,
   maxCycles = MAX_SYNC_REFRESH_CYCLES,
   nowMs = () => performance.now(),
+  sleepFn = (ms) => new Promise(resolve => setTimeout(resolve, ms)),
 } = {}) {
   if (path.resolve(paths.repoRoot) !== path.resolve(expectedPaths.repoRoot)
     || path.resolve(paths.workspaceRoot) !== path.resolve(expectedPaths.workspaceRoot)) {
@@ -376,6 +386,7 @@ export async function runBattleBridgeSyncAndRefresh({
   const pendingInvalid = pending?.ok === false ? pending : null;
   let pendingSpans = pending?.ok === true ? pending.spans || [{ beforeHead: pending.beforeHead, afterHead: pending.afterHead }] : [];
   let requiredTargetIds = pending?.requiredTargetIds || [];
+  let sovereignRelayRefreshRequired = pending?.ok === true ? pending.sovereignRelayRefreshRequired : false;
   let completion = pending?.completion || null;
   let pendingRefreshObserved = pendingSpans.length > 0;
   let sourceForwardedBeforeRefresh = false;
@@ -398,6 +409,7 @@ export async function runBattleBridgeSyncAndRefresh({
     if (freshDebt.ok) {
       pendingSpans = [...new Map([...pendingSpans, ...freshDebt.spans].map(span => [`${span.beforeHead}:${span.afterHead}`, span])).values()];
       requiredTargetIds = [...new Set([...requiredTargetIds, ...freshDebt.requiredTargetIds])];
+      if (freshDebt.sovereignRelayRefreshRequired) sovereignRelayRefreshRequired = true;
       pendingRefreshObserved ||= freshDebt.spans.length > 0;
     }
 
@@ -431,7 +443,7 @@ export async function runBattleBridgeSyncAndRefresh({
 
     const pendingAfterHead = pendingSpans.at(-1)?.afterHead || '';
     const resolved = resolvePostSyncRefreshDebt({
-      spans: pendingSpans, requestedSpans: currentHeads ? [currentHeads] : [], requiredTargetIds, completion,
+      spans: pendingSpans, requestedSpans: currentHeads ? [currentHeads] : [], requiredTargetIds, completion, sovereignRelayRefreshRequired,
       currentHead: currentSourceHead,
       isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot),
     });
@@ -457,9 +469,50 @@ export async function runBattleBridgeSyncAndRefresh({
         result: refresh.result || null,
       }));
       if (!refresh.ok || refresh.result?.ok !== true) {
+        const refreshBlocker = refresh.result?.blocker || refresh.blocker || 'POST_SYNC_RUNTIME_REFRESH_BLOCKED';
+        if (refreshBlocker === 'POST_SYNC_REFRESH_ALREADY_RUNNING') {
+          let settled = false;
+          while (safeRemaining() > 1_000) {
+            await sleepFn(Math.min(1_000, safeRemaining()));
+            const observedPending = await pendingReader(paths);
+            if (!observedPending) {
+              settled = true;
+              break;
+            }
+            if (observedPending?.ok === false) {
+              return Object.freeze({
+                ok: false,
+                blocker: observedPending.blocker || 'PENDING_POST_SYNC_REFRESH_INVALID',
+                sourceHead: currentSourceHead,
+                syncClassification: sync.result?.evaluation?.classification || '',
+                refreshes: Object.freeze(refreshes),
+                pendingRefreshObserved: true,
+                sourceForwardedBeforeRefresh,
+                refreshDebtCoalesced,
+                finalVerdict: 'SYNC_AND_REFRESH_REFRESH_DEBT_BLOCKED',
+              });
+            }
+            const observedSpans = Array.isArray(observedPending?.spans)
+              ? observedPending.spans
+              : (observedPending?.beforeHead && observedPending?.afterHead
+                ? [{ beforeHead: observedPending.beforeHead, afterHead: observedPending.afterHead }]
+                : []);
+            if (observedSpans.length === 0 && observedPending?.completion) {
+              settled = true;
+              break;
+            }
+          }
+          if (settled) {
+            pendingSpans = [];
+            requiredTargetIds = [];
+            sovereignRelayRefreshRequired = false;
+            completion = null;
+            continue;
+          }
+        }
         return Object.freeze({
           ok: false,
-          blocker: refresh.result?.blocker || refresh.blocker || 'POST_SYNC_RUNTIME_REFRESH_BLOCKED',
+          blocker: refreshBlocker,
           sourceHead: currentSourceHead,
           syncClassification: sync.result?.evaluation?.classification || '',
           refreshes: Object.freeze(refreshes),
@@ -472,6 +525,7 @@ export async function runBattleBridgeSyncAndRefresh({
       const completed = inspectPostSyncRefreshCompletion(refresh.result);
       const covered = completed.ok ? resolvePostSyncRefreshDebt({
         spans: [resolved.debt], requiredTargetIds: resolved.debt.requiredTargetIds, completion: completed,
+        sovereignRelayRefreshRequired: resolved.debt.sovereignRelayRefreshRequired,
         currentHead: currentSourceHead,
         isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot),
       }) : completed;
@@ -483,6 +537,7 @@ export async function runBattleBridgeSyncAndRefresh({
       if (safeRemaining() <= 0) return budgetHeld('POST_REFRESH', currentSourceHead);
       pendingSpans = [];
       requiredTargetIds = [];
+      sovereignRelayRefreshRequired = false;
       completion = completed;
       continue;
     }

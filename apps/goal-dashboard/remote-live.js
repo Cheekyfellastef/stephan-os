@@ -301,9 +301,28 @@
       const beacon = latestBeacon(comments);
       if (!beacon) throw new Error('REMOTE_BATTLE_BRIDGE_BEACON_NOT_FOUND');
       const projection = buildProjection({ beacon, ref, issues });
+      // The canonical backend may appear while all three public reads are in flight.
+      // No await separates this late boundary from the actual UI application.
+      const lateCanonicalBackend = canonicalHostedBackendRoute();
+      if (lateCanonicalBackend) {
+        return {
+          skipped: true,
+          reason: 'CANONICAL_HOSTED_BACKEND_REMAINS_CANONICAL',
+          backendBase: lateCanonicalBackend,
+        };
+      }
       applyRemoteProjection(projection);
       return projection;
     } catch (error) {
+      // A late public HTTP error must not wipe a newly available canonical feed.
+      const lateCanonicalBackend = canonicalHostedBackendRoute();
+      if (lateCanonicalBackend) {
+        return {
+          skipped: true,
+          reason: 'CANONICAL_HOSTED_BACKEND_REMAINS_CANONICAL',
+          backendBase: lateCanonicalBackend,
+        };
+      }
       markRemoteUnavailable(error);
       return null;
     } finally {

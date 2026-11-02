@@ -27,6 +27,7 @@ import {
   projectMailboxPulseFacts,
   projectSovereignRepairBeaconFacts,
   projectSovereignRepairContinuity,
+  projectSovereignCommanderBeaconFacts,
   readSovereignRepairCycleTail,
   mirrorBattleBridgeCompleteStateToSharedWorkspace,
 } from './battle-bridge-outbound-health-beacon.mjs';
@@ -1501,7 +1502,7 @@ test('complete sovereign local telemetry is saved before an external publication
       projectControlTowerBuildBeaconFactsV1: () => ({}),
       projectPublicGoalGateObservatoryV1: () => ({}),
       readCommissionedGateLedger: () => null,
-      projectSovereignRepairContinuity, readSovereignRepairCycleTail,
+      projectSovereignRepairContinuity, readSovereignRepairCycleTail, projectSovereignCommanderBeaconFacts,
       options: {
         env: { USERPROFILE: root, STEPHANOS_SHARED_AGENT_WORKSPACE: workspace },
         mirror: mirrorBattleBridgeCompleteStateToSharedWorkspace,
@@ -1512,6 +1513,8 @@ test('complete sovereign local telemetry is saved before an external publication
           assert.equal(local.finalVerdict, 'BATTLE_BRIDGE_OUTBOUND_HEALTH_OBSERVATION_READY');
           assert.doesNotMatch(local.finalVerdict, /PUBLISHED/);
           assert.equal(local.sovereignRepairContinuity.twoDistinctMaintenanceCompletionsObserved, false);
+          assert.equal(local.sovereignCommander.blocker, 'COMMANDER_HEALTH_NOT_OBSERVED');
+          assert.equal(local.sovereignCommander.executionProven, false);
           throw new Error('GITHUB_UNAVAILABLE_TEST');
         },
       },

@@ -511,15 +511,10 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
             !== String(actionGrant.actionId || '').toLowerCase()
         )
       ) {
-        await quarantinePendingQueueItem(
-          paths,
-          adapter,
-          entry,
-          pendingPath,
-          bytes,
-          'MISSION_WORKER_PENDING_ITEM_GRANT_IDENTITY_INVALID',
-          options,
-        );
+        // The queue item's own filename/schema/identity was validated above.
+        // A foreign or stale *caller* grant is not evidence that these original
+        // pending bytes are a poison pill. Never quarantine another owner's
+        // legitimate work to satisfy the wrong selected grant.
         continue;
       }
       try {
@@ -799,6 +794,7 @@ async function applyClaimResult(claim, action, execution, inspection, executionR
   const applied = await appendMissionEvent(action.missionId, event, claim.options);
   const result = {
     schemaVersion: 'stephanos.mission-worker-consumption-result.v1', actionId: action.actionId, missionId: action.missionId,
+    adapter: claim.adapter,
     operation: action.operation, eventId: event.eventId, stateRevision: applied.state.revision, currentPhase: applied.state.currentPhase,
     duplicate: applied.duplicate, execution: { success: execution.success === true, commandOutputHash: execution.commandOutputHash || '', completedAt: execution.completedAt || '' },
     inspection, finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',

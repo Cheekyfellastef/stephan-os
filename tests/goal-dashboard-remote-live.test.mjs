@@ -178,6 +178,76 @@ test('hosted Goal Dashboard keeps canonical HTTPS backend above the public remot
   assert.equal(window.applied, undefined);
 });
 
+
+test('late canonical hosted backend wins over an in-flight successful GitHub fallback', async () => {
+  let backend = '';
+  let release;
+  let calls = 0;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const liveBeacon = beacon({ observedAtUtc: new Date().toISOString() });
+  const { api, window, fields } = makeContext({
+    hostname: 'cheekyfellastef.github.io',
+    backendBase: () => backend,
+    fetchImpl: async (url) => {
+      calls += 1;
+      await gate;
+      const value = String(url).includes('/git/ref/heads/main')
+        ? { object: { sha: HEAD } }
+        : String(url).includes('/issues/1889/comments')
+          ? [{ ...beaconComment(liveBeacon), user: { login: 'Cheekyfellastef', id: 267490109 } }]
+          : [];
+      return { ok: true, status: 200, json: async () => value };
+    },
+  });
+  const pending = api.refreshRemote();
+  assert.equal(calls, 3);
+  backend = 'https://bridge.example.ts.net';
+  release();
+  const result = await pending;
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'CANONICAL_HOSTED_BACKEND_REMAINS_CANONICAL');
+  assert.equal(result.backendBase, 'https://bridge.example.ts.net');
+  assert.equal(window.applied, undefined);
+  assert.equal(fields.has('source-badge'), false);
+});
+
+test('late canonical hosted backend wins over an in-flight failed GitHub fallback', async () => {
+  let backend = '';
+  let release;
+  let calls = 0;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const { api, window, fields } = makeContext({
+    hostname: 'cheekyfellastef.github.io',
+    backendBase: () => backend,
+    fetchImpl: async () => {
+      calls += 1;
+      await gate;
+      return { ok: false, status: 403, json: async () => ({}) };
+    },
+  });
+  const pending = api.refreshRemote();
+  assert.equal(calls, 3);
+  backend = 'https://bridge.example.ts.net';
+  release();
+  const result = await pending;
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'CANONICAL_HOSTED_BACKEND_REMAINS_CANONICAL');
+  assert.equal(window.applied, undefined);
+  assert.equal(fields.has('source-badge'), false);
+  assert.equal(window.__stephanosGoalDashboardRemote, undefined);
+});
+
+test('hosted GitHub fallback still reports unavailable when no canonical backend exists', async () => {
+  const { api, fields } = makeContext({
+    hostname: 'cheekyfellastef.github.io',
+    backendBase: () => '',
+    fetchImpl: async () => ({ ok: false, status: 403 }),
+  });
+  assert.equal(await api.refreshRemote(), null);
+  assert.equal(fields.get('source-badge'), 'REMOTE UNAVAILABLE');
+  assert.equal(fields.get('source-truth'), 'UNAVAILABLE');
+});
+
 test('local Battle Bridge browser never uses the remote public adapter', async () => {
   let called = false;
   const { api } = makeContext({ hostname: '127.0.0.1', fetchImpl: async () => { called = true; return { ok: false, status: 500 }; } });

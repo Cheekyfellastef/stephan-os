@@ -6,6 +6,8 @@ import {
   buildSuccessfulReviewArtifactRecoveryV1,
   selectSuccessfulReviewRecoveryLaunchReceiptV1,
   waitForTerminalReviewReconciliationV1,
+  validateOwnerHintReviewArtifactReadbackV1,
+  selectRecoverableOwnerReviewHintV1,
 } from './recover-successful-independent-review-v1.mjs';
 import {
   buildIndependentReviewWorkflowDispatchLaunchReceiptV1,
@@ -211,4 +213,64 @@ test('recovery helper is read-only and delegates run discovery/reconciliation to
   assert.match(source, /TERMINAL_RECOVERY_MAX_POLLS = 30/);
   assert.match(source, /stephanos-independent-review-\$\{runId\}-attempt-\$\{runAttempt\}/);
   assert.doesNotMatch(source, /method:\s*'POST'|\/dispatches|rerun-failed-jobs|execFile|spawn|child_process|shell:\s*true|git\s+(?:push|reset|clean|rebase)|\/merges|\/contents\//i);
+});
+
+const OWNER_RUN=40916781623,OWNER_ART=12916836185,OWNER_DIGEST='e'.repeat(64);
+const OWNER_PR={number:3315,headSha:HEAD,baseSha:BASE,headRef:'original/review'};
+const OWNER_WORKFLOW={id:318073448,name:'Independent Merge Security Review',path:'.github/workflows/independent-merge-security-review.yml',state:'active'};
+const OWNER_RUN_OBJ={id:OWNER_RUN,workflow_id:318073448,path:OWNER_WORKFLOW.path,event:'pull_request_target',status:'completed',conclusion:'success',run_attempt:1,head_sha:HEAD,head_branch:OWNER_PR.headRef,pull_requests:[{number:3315,head:{sha:HEAD,ref:OWNER_PR.headRef,repo:{id:100}},base:{sha:BASE,ref:'main',repo:{id:100}}}]};
+const OWNER_ART_OBJ={id:OWNER_ART,name:`stephanos-independent-review-${OWNER_RUN}-attempt-1`,expired:false,digest:`sha256:${OWNER_DIGEST}`,workflow_run:{id:OWNER_RUN,head_sha:HEAD,head_branch:OWNER_PR.headRef}};
+const ownerReview=(changes={})=>validateOwnerHintReviewArtifactReadbackV1({workflow:OWNER_WORKFLOW,run:OWNER_RUN_OBJ,artifacts:[OWNER_ART_OBJ],pr:OWNER_PR,hint:{runId:OWNER_RUN,artifactId:OWNER_ART,sha256:OWNER_DIGEST},...changes});
+test('owner-only exact review artifact readback recovers with no launch receipt',()=>{
+ const result=ownerReview();assert.equal(result.recoveryRequired,true);assert.equal(result.runId,OWNER_RUN);
+});
+test('wrong head/base, failed run, forgery, bad digest, expiry, duplicates and missing binding deny',()=>{
+ for(const bad of [{pr:{...OWNER_PR,headSha:OTHER_HEAD}},{pr:{...OWNER_PR,baseSha:OTHER_HEAD}},{workflow:{...OWNER_WORKFLOW,id:2}},{run:{...OWNER_RUN_OBJ,conclusion:'failure'}},{run:{...OWNER_RUN_OBJ,event:'untrusted'}},{run:{...OWNER_RUN_OBJ,pull_requests:[]}},{artifacts:[{...OWNER_ART_OBJ,expired:true}]},{artifacts:[{...OWNER_ART_OBJ,digest:`sha256:${'f'.repeat(64)}`}]},{artifacts:[OWNER_ART_OBJ,OWNER_ART_OBJ]}]) assert.throws(()=>ownerReview(bad));
+});
+
+const OWNER_REPO = 'Cheekyfellastef/stephan-os';
+const OWNER_HINT_TIME = '2026-10-29T18:30:00.000Z';
+const ownerEvidenceComment = (change = {}) => ({
+  id: 6500000001,
+  user: { login: 'Cheekyfellastef', id: 267490109, type: 'User' },
+  author_association: 'OWNER',
+  created_at: OWNER_HINT_TIME,
+  updated_at: OWNER_HINT_TIME,
+  body: `Original PR #3315, HEAD ${HEAD}, protected main ${BASE}. Independent security review CLEAN.
+[review ${OWNER_RUN}](https://github.com/${OWNER_REPO}/actions/runs/${OWNER_RUN}).
+[artifact ${OWNER_ART}](https://github.com/${OWNER_REPO}/actions/runs/${OWNER_RUN}/artifacts/${OWNER_ART}), sha256 ${OWNER_DIGEST}.`,
+  ...change,
+});
+const selectOwnerEvidence = (changes = {}) => selectRecoverableOwnerReviewHintV1({
+  comments: [ownerEvidenceComment()],
+  repository: OWNER_REPO,
+  pr: OWNER_PR,
+  ...changes,
+});
+
+test('owner-only review is found without editing the protected workflow or inventing a launch receipt', () => {
+  const selected = selectOwnerEvidence();
+  assert.deepEqual(selected, { runId: OWNER_RUN, artifactId: OWNER_ART, sha256: OWNER_DIGEST });
+  const source = fs.readFileSync(new URL('./recover-successful-independent-review-v1.mjs', import.meta.url), 'utf8');
+  assert.match(source, /findExistingIndependentReviewEvidenceHintV1/);
+  assert.match(source, /selectRecoverableOwnerReviewHintV1\(\{/);
+  assert.match(source, /validateOwnerHintReviewArtifactReadbackV1/);
+});
+
+test('forged, edited, stale, incomplete, colliding and caller-supplied owner hints stay held', () => {
+  const good = ownerEvidenceComment();
+  assert.equal(selectOwnerEvidence({ comments: [] }), null);
+  assert.equal(selectOwnerEvidence({ pr: { ...OWNER_PR, baseSha: OTHER_HEAD } }), null);
+  assert.equal(selectOwnerEvidence({ comments: [{ ...good, user: { login: 'outsider', id: 123, type: 'User' } }] }), null);
+  assert.throws(() => selectOwnerEvidence({ comments: [{ ...good, updated_at: '2026-10-29T18:31:00.000Z' }] }), /provenance not immutable/);
+  assert.throws(() => selectOwnerEvidence({ comments: [{ ...good, author_association: 'CONTRIBUTOR' }] }), /provenance not immutable/);
+  assert.equal(selectOwnerEvidence({ comments: [{ ...good, body: good.body.replace('sha256 '+OWNER_DIGEST, 'sha256 missing') }] }), null);
+  assert.throws(() => selectOwnerEvidence({
+    comments: [good, { ...good, id: 6500000002, body: good.body.replaceAll(String(OWNER_RUN), String(OWNER_RUN+1)) }],
+  }), /invalid or conflicting/);
+  assert.throws(() => selectOwnerEvidence({ suppliedHint: { runId: OWNER_RUN+1, artifactId: OWNER_ART, sha256: OWNER_DIGEST } }), /conflicts/);
+  assert.throws(() => selectOwnerEvidence({ comments: [], suppliedHint: { runId: OWNER_RUN, artifactId: OWNER_ART, sha256: OWNER_DIGEST } }), /lacks original owner evidence/);
+  assert.deepEqual(selectOwnerEvidence({
+    suppliedHint: { runId: OWNER_RUN, artifactId: OWNER_ART, sha256: OWNER_DIGEST },
+  }), { runId: OWNER_RUN, artifactId: OWNER_ART, sha256: OWNER_DIGEST });
 });
