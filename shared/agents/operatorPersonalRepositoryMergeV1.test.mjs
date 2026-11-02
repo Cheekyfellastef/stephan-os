@@ -2705,10 +2705,11 @@ test('a SHA-bound independent clean review can neutralise only its skipped draft
     status: 'completed', conclusion: 'skipped' });
   const check = checkRun(run, { id: 9999, name: 'exact-head-review', conclusion: 'skipped' });
   const options = { cleanIndependentReviewProved: true };
-  const approved = validatePersonalRepositoryCheckRuns([check], [run], [], expectedEvidence, options);
+  const exactClean = { ...expectedEvidence, mergeStateStatus: 'CLEAN' };
+  const approved = validatePersonalRepositoryCheckRuns([check], [run], [], exactClean, options);
   assert.equal(approved.valid, true, JSON.stringify(approved.blockers));
   assert.equal(approved.evidence[0].disposition, 'clean-independent-draft-review-skip');
-  assert.equal(validatePersonalRepositoryCheckRuns([check], [run], [], expectedEvidence).valid, false);
+  assert.equal(validatePersonalRepositoryCheckRuns([check], [run], [], exactClean).valid, false);
   assert.equal(validatePersonalRepositoryCheckRuns([check], [run], [],
     { ...expectedEvidence, mergeStateStatus: 'UNSTABLE' }, options).valid, false);
   for (const mutation of [
@@ -2717,13 +2718,13 @@ test('a SHA-bound independent clean review can neutralise only its skipped draft
     { conclusion: 'failure' }, { status: 'in_progress' }, { pull_requests: [] },
   ]) {
     assert.equal(validatePersonalRepositoryCheckRuns([check], [{ ...run, ...mutation }], [],
-      expectedEvidence, options).valid, false, JSON.stringify(mutation));
+      exactClean, options).valid, false, JSON.stringify(mutation));
   }
   for (const mutation of [
     { name: 'unknown-review' }, { conclusion: 'failure' }, { status: 'queued' },
     { head_sha: 'f'.repeat(40) }, { check_suite: { id: 9001 } },
   ]) {
     assert.equal(validatePersonalRepositoryCheckRuns([{ ...check, ...mutation }], [run], [],
-      expectedEvidence, options).valid, false, JSON.stringify(mutation));
+      exactClean, options).valid, false, JSON.stringify(mutation));
   }
 });
