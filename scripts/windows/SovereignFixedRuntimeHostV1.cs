@@ -77,6 +77,11 @@ namespace Stephanos.Sovereign {
     static FixedRuntimeRequestV1 ParseFixedRuntimeRequestV1(string raw) {
       if(raw==null || Encoding.UTF8.GetByteCount(raw)>32768)
         throw new InvalidOperationException("RUNTIME_FRAME_UNPROVEN");
+      // Closed fixed-runtime fields/values are ASCII and need no JSON escapes.
+      // Reject encoded property aliases before the JSON dictionary normalizes
+      // two raw field names to the same executable Profile.
+      if(raw.IndexOf('\\')>=0)
+        throw new InvalidOperationException("RUNTIME_FRAME_ESCAPED_WIRE_FORBIDDEN");
       var parser=new JavaScriptSerializer { MaxJsonLength=32768,RecursionLimit=4 };
       var objectValue=RuntimeObjectV1(parser.DeserializeObject(raw));
       string[] keys={"SchemaVersion","RequestId","Profile","RuntimeSourceHead","OwnerPid",

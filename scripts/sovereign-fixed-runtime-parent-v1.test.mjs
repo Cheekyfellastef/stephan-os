@@ -103,3 +103,48 @@ test('mailbox native evidence fixed profile is inspectable but remains pre-job f
   assert.doesNotMatch(parent,/executeFixedMailboxNativeEvidenceRuntimeV1/);
   assert.doesNotMatch(parent,/generateKeyPairSync|privateKey|private-key/i);
 });
+
+
+test('native frame canonical wire denies escaped JSON aliases before parsing', () => {
+  const host=readFileSync(fileURLToPath(new URL('./windows/SovereignFixedRuntimeHostV1.cs',import.meta.url)),'utf8');
+  const denial=host.indexOf('RUNTIME_FRAME_ESCAPED_WIRE_FORBIDDEN');
+  const decoder=host.indexOf('parser.DeserializeObject(raw)');
+  assert.ok(denial>0 && decoder>denial, 'escaped wire rejected before JSON dictionary');
+});
+
+test('real Windows fixed runtime parser rejects escaped JSON property aliases', {skip:process.platform!=='win32'}, () => {
+  const script=String.raw`$ErrorActionPreference='Stop'
+$root=(Get-Location).Path
+$names=@('SovereignCoreJobCustodyV1.cs','SovereignFixedRuntimeJobV1.cs','SovereignFixedRuntimeIdentityV1.cs','SovereignFixedRuntimeAuthorityV1.cs','SovereignFixedRuntimeHostV1.cs','SovereignFixedRuntimeSourceV1.cs')
+$src=($names|ForEach-Object{[IO.File]::ReadAllText((Join-Path $root ('scripts\windows\'+$_)))}) -join [Environment]::NewLine
+Add-Type -TypeDefinition $src -ReferencedAssemblies 'System.Web.Extensions','System.Core','System.Management'
+$h=@'
+public static class StephanosFrameAliasRegressionV1 {
+ public static string Check(System.Reflection.MethodInfo parser,string json) {
+  try{return parser.Invoke(null,new object[]{json})==null?"NULL":"ACCEPTED";}
+  catch(System.Reflection.TargetInvocationException e){return "REJECT:"+e.InnerException.Message;}
+ }
+}
+'@
+Add-Type -TypeDefinition $h
+$parser=[Stephanos.Sovereign.CoreJobCustodyV1].GetMethod('ParseFixedRuntimeRequestV1',[Reflection.BindingFlags]'NonPublic,Static')
+$sha=([BitConverter]::ToString(([Security.Cryptography.SHA256]::Create()).ComputeHash([byte[]]@()))).Replace('-','').ToLowerInvariant()
+$f=[ordered]@{SchemaVersion='stephanos.fixed-runtime-request.v1';RequestId='mailboxnative-2315-review';Profile='CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1';RuntimeSourceHead='a'*40;OwnerPid=$PID;TaskFrameBase64='';TaskBindingSha256=$sha}
+$json=ConvertTo-Json -InputObject $f -Compress -Depth 5
+$canonical='"Profile":"CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1"'
+if(-not $json.Contains($canonical)){throw 'CANONICAL_FRAME_MISSING'}
+$cases=@(
+@{input=$json;expected='ACCEPTED'},
+@{input=$json.Replace($canonical,'"Profile":"SOURCE_TASK_V1","Profile":"CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1"');expected='REJECT:RUNTIME_FRAME_DUPLICATE_FIELD'},
+@{input=$json.Replace($canonical,'"Profile":"CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1","\u0050rofile":"SOURCE_TASK_V1"');expected='REJECT:RUNTIME_FRAME_ESCAPED_WIRE_FORBIDDEN'},
+@{input=$json.Replace($canonical,'"\u0050rofile":"SOURCE_TASK_V1","Profile":"CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1"');expected='REJECT:RUNTIME_FRAME_ESCAPED_WIRE_FORBIDDEN'},
+@{input=$json.Replace('"SchemaVersion":','"\u0053chemaVersion":');expected='REJECT:RUNTIME_FRAME_ESCAPED_WIRE_FORBIDDEN'},
+@{input=$json.Replace('"TaskFrameBase64":','"\u0054askFrameBase64":');expected='REJECT:RUNTIME_FRAME_ESCAPED_WIRE_FORBIDDEN'}
+)
+foreach($item in $cases){$actual=[StephanosFrameAliasRegressionV1]::Check($parser,[string]$item.input);if($actual -cne $item.expected){throw ('FRAME_ALIAS_REGRESSION_FAILED:'+ $item.expected+':'+$actual)}}
+Write-Output 'RUNTIME_FRAME_ESCAPED_KEY_REGRESSION_PASS_6_OF_6'`;
+  const output=execFileSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command',script],
+    {cwd:fileURLToPath(new URL('../',import.meta.url)),encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:65536});
+  assert.match(output,/RUNTIME_FRAME_ESCAPED_KEY_REGRESSION_PASS_6_OF_6/);
+});
