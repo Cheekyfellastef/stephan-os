@@ -273,6 +273,33 @@ test('fresh Core health remains separate from stale builders and expires at its 
   assert.ok(result.health.every(h => h.state === 'UNKNOWN'));
   assert.equal(result.signedProof.publisherVerdict, '');
 });
+test('current independent service health survives a stopped Core status publisher', () => {
+  const data = input();
+  const staleCore = { statusId: 'stephanos-core-daemon-current', sourceHead: 'a'.repeat(40),
+    timestampUtc: at(-700000), daemonHealthy: true, missionWorkerHealthy: false, backendHealthy: false };
+  data.captainsBridge = { runtimeHealth: { services: [
+    { serviceId: 'mission-worker', freshness: 'CURRENT', trafficLight: 'GREEN', observedAtUtc: at(-1000) },
+    { serviceId: 'backend', freshness: 'CURRENT', trafficLight: 'GREEN', observedAtUtc: at(-2000) },
+  ] } };
+  let result = project(data, { ...options, statusRecords: [staleCore] });
+  assert.deepEqual(result.health.map(h => h.state), ['UNKNOWN', 'HEALTHY', 'HEALTHY']);
+  assert.equal(result.health[1].evidenceSource, 'INDEPENDENT_SERVICE_HEALTH');
+  assert.equal(result.health[2].observedAtUtc, at(-2000));
+
+  // An expired independent worker publication must never borrow the backend's
+  // heartbeat or its own newly generated HTTP response timestamp.
+  data.captainsBridge.runtimeHealth.services[0].observedAtUtc = at(-600001);
+  result = project(data, { ...options, statusRecords: [staleCore] });
+  assert.deepEqual(result.health.map(h => h.state), ['UNKNOWN', 'UNKNOWN', 'HEALTHY']);
+  data.captainsBridge.runtimeHealth.services[1].observedAtUtc = at(1000);
+  result = project(data, { ...options, statusRecords: [staleCore] });
+  assert.deepEqual(result.health.map(h => h.state), ['UNKNOWN', 'UNKNOWN', 'UNKNOWN']);
+
+  data.captainsBridge.runtimeHealth.services[1] = {
+    serviceId: 'backend', freshness: 'CURRENT', trafficLight: 'AMBER', observedAtUtc: at(-1000) };
+  result = project(data, { ...options, statusRecords: [staleCore] });
+  assert.equal(result.health[2].state, 'DEGRADED');
+});
 
 }
 
