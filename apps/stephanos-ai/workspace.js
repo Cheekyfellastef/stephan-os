@@ -1,4 +1,5 @@
 import { queryStephanosAI } from '../../shared/ai/stephanosClient.mjs';
+import { requestStephanosBackend } from '../../shared/runtime/backendClient.mjs';
 import { projectControlReplyForSurfaceV1 } from './controlSurface.mjs';
 
 const agents = [
@@ -99,7 +100,7 @@ function escapeText(value='') {
   return span.innerHTML;
 }
 
-function controlCard(result) {
+function controlCard(result, entryIndex, dispatchStatus = '') {
   const control = projectControlReplyForSurfaceV1(result);
   if (!control) return '';
   const request = control.request;
@@ -109,18 +110,18 @@ function controlCard(result) {
     <p class="control-observation">Observed ${escapeText(control.observedAtUtc)}</p>
     ${request ? `<dl><div><dt>${request.historical ? 'Retained request' : 'Observed request'}</dt><dd>${escapeText(request.requestId)}</dd></div><div><dt>Outcome</dt><dd>${escapeText(request.label)}</dd></div></dl>` : '<p class="control-observation">No request outcome has been proven in this reply.</p>'}
     ${control.unresolvedBuild ? `<p class="control-unresolved">Earlier build ${escapeText(control.unresolvedBuild.requestId)}: ${escapeText(control.unresolvedBuild.label)}. An inspection does not resolve that request.</p>` : ''}
-    ${handoff ? `<div class="control-handoff"><b>${escapeText(handoff.label)}</b><span>${escapeText(handoff.status)}</span>${handoff.available ? `<a class="control-open" href="${handoff.workflowUrl}" target="_blank" rel="noopener noreferrer" data-expires-at="${escapeText(handoff.expiresAtUtc)}">Open authorised Control Tower</a><small>Choose ${escapeText(handoff.operation)} on main. Opening this page does not submit it.</small>` : ''}</div>` : ''}
+    ${handoff ? `<div class="control-handoff"><b>${escapeText(handoff.label)}</b><span>${escapeText(handoff.status)}</span>${handoff.available && handoff.operatorIntent && !dispatchStatus ? `<button type="button" class="control-submit" data-control-entry="${entryIndex}">Approve and request ${handoff.operation === 'OBSERVE_CONTROL_SYSTEM' ? 'inspection' : 'guarded building'}</button><small>One explicit local operator approval. GitHub workflow dispatch is not native build completion.</small>` : ''}${dispatchStatus ? `<small class="control-submit-status">${escapeText(dispatchStatus)}</small>` : ''}${handoff.available ? `<a class="control-open" href="${handoff.workflowUrl}" target="_blank" rel="noopener noreferrer" data-expires-at="${escapeText(handoff.expiresAtUtc)}">Open authorised Control Tower</a><small>GitHub owner workflow remains available as fallback.</small>` : ''}</div>` : ''}
   </section>`;
 }
 
 function renderMessages() {
   const history = historyFor(selected.id);
   document.body.classList.toggle('has-messages', history.length > 0);
-  messages.innerHTML = history.map((entry) => `
+  messages.innerHTML = history.map((entry, i) => `
     <article class="message ${entry.role}">
       <span class="meta">${entry.role === 'user' ? 'YOU' : escapeText(entry.author || 'STEPHANOS AI')}${entry.routeNote ? ` · ${escapeText(entry.routeNote)}` : ''}</span>
       <div class="message-text">${escapeText(entry.text)}</div>
-      ${entry.controlResult ? controlCard(entry.controlResult) : ''}
+      ${entry.controlResult ? controlCard(entry.controlResult, i, entry.controlDispatchStatus || '') : ''}
     </article>`).join('');
   messages.scrollTop = messages.scrollHeight;
 }
@@ -232,6 +233,46 @@ async function send(text) {
     if (window.matchMedia('(pointer: fine)').matches) prompt.focus();
   }
 }
+
+// Only the user's explicit click can cross from read-only conversation to
+// one source-bound GitHub workflow submission. A missing or ambiguous response
+// never permits automatic retry; the original relay ledger is authoritative.
+messages.addEventListener('click', async (event) => {
+  const button = event.target.closest('button[data-control-entry]');
+  if (!button) return;
+  const index = Number(button.dataset.controlEntry);
+  const targetId = selected.id;
+  const history = historyFor(targetId);
+  if (!Number.isSafeInteger(index) || index < 0 || index >= history.length) return;
+  const entry = history[index];
+  const view = projectControlReplyForSurfaceV1(entry?.controlResult);
+  const intent = view?.handoff?.operatorIntent;
+  if (!intent || entry.controlDispatchStatus) return;
+  const operationName = intent.operation === 'OBSERVE_CONTROL_SYSTEM' ? 'read-only inspection' : 'guarded goal-building request';
+  if (!window.confirm('Submit ONE ' + operationName
+      + ' through the authenticated Control Tower workflow? This does not grant a merge, shell, restart or native execution approval.')) return;
+  entry.controlDispatchStatus = 'Submitting one owner-bound workflow request…';
+  if (selected.id === targetId) renderMessages();
+  try {
+    const response = await requestStephanosBackend({
+      path: '/api/ai/control-tower/dispatch', method: 'POST',
+      body: intent,
+      headers: { 'X-Stephanos-Operator-Click': 'confirmed-v1' },
+      runtimeContext: { frontendOrigin: window.location.origin },
+      timeoutMs: 40000,
+    });
+    const payload = response.json;
+    entry.controlDispatchStatus = payload?.workflowRequestAccepted === true
+      && payload?.state === 'DISPATCH_ACCEPTED_UNCORRELATED'
+      ? 'GitHub accepted the request. Await its exact Control Tower ledger receipt; this is not a completed build.'
+      : 'Submission unproven. Inspect the original ledger before trying a new request.';
+  } catch (error) {
+    const blocker = String(error?.payload?.blocker || error?.code || 'CONTROL_TOWER_SUBMISSION_UNVERIFIED');
+    entry.controlDispatchStatus = 'Submission held or uncertain (' + blocker
+      + '). Do not repeat until the existing ledger is reconciled.';
+  }
+  if (selected.id === targetId) renderMessages();
+});
 
 function autoGrow() {
   prompt.style.height = 'auto';
