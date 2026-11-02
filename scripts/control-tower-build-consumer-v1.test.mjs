@@ -69,6 +69,89 @@ test('existing custody refusal becomes a bounded blocked wake without a fabricat
   assert.equal(result.blocker, 'MAINTENANCE_CUSTODY_STATE_MISSING'); assert.equal(result.nativePickupProven, false);
   assert.equal(createMailboxExecutionLedger(join(s.root, 'github-command-mailbox')).read(result.requestId).terminalState, 'BLOCKED');
 });
+test('a guardian busy refusal yields to the SAME reserved Control Tower request', async t => {
+  let attempts = 0, waits = 0;
+  const s = setup(t, {
+    sleep: async ms => { assert.equal(ms, 3000); waits++; },
+    execute: async args => {
+      attempts++;
+      assert.equal(args.actionId, 'repair-goal-builder-flow');
+      if (attempts === 1) return {
+        ok: false, blocker: 'SOVEREIGN_MAINTENANCE_OWNER_BUSY',
+        command: { plan: { processId: args.actionId } },
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+      };
+      return { ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+        command: { plan: { processId: args.actionId } }, proofHash: 'b'.repeat(64) };
+    },
+  });
+  const r = await s.consume();
+  assert.equal(r.state, 'WAKE_COMPLETED');
+  assert.equal(attempts, 2); assert.equal(waits, 1);
+  const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+  assert.equal(ledger.read(r.requestId).phase, 'TERMINAL');
+  assert.equal(ledger.read(r.requestId).terminalState, 'DONE');
+  assert.equal((await s.consume()).state, 'WAITING');
+  assert.equal(attempts, 2);
+});
+
+test('busy cannot replay when owner response becomes ambiguous', async t => {
+  let attempts = 0;
+  const s = setup(t, {
+    sleep: async () => {},
+    execute: async args => {
+      attempts++;
+      return attempts === 1 ? {
+        ok: false, blocker: 'SOVEREIGN_MAINTENANCE_OWNER_BUSY',
+        command: { plan: { processId: args.actionId } },
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+      } : { ok: false, blocker: 'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE' };
+    },
+  });
+  const r = await s.consume();
+  assert.equal(r.state, 'UNKNOWN');
+  assert.equal(attempts, 2);
+  assert.equal(createMailboxExecutionLedger(join(s.root, 'github-command-mailbox')).read(r.requestId).phase, 'RESERVED');
+  await s.consume(); assert.equal(attempts, 2);
+});
+
+test('a repeatedly busy guardian is bounded and never invents native pickup', async t => {
+  let attempts = 0, waits = 0;
+  const s = setup(t, {
+    sleep: async () => { waits++; },
+    execute: async args => {
+      attempts++;
+      return { ok: false, blocker: 'SOVEREIGN_MAINTENANCE_OWNER_BUSY',
+        command: { plan: { processId: args.actionId } },
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' };
+    },
+  });
+  const r = await s.consume();
+  assert.equal(r.state, 'WAKE_BLOCKED');
+  assert.equal(r.blocker, 'SOVEREIGN_MAINTENANCE_OWNER_BUSY');
+  assert.equal(attempts, 24); assert.equal(waits, 23);
+  assert.equal(r.nativePickupProven, false);
+  assert.equal(createMailboxExecutionLedger(join(s.root, 'github-command-mailbox')).read(r.requestId).terminalState, 'BLOCKED');
+});
+
+test('source movement after a busy refusal preserves reservation without another owner attempt', async t => {
+  let attempts = 0, moved = false;
+  const s = setup(t, {
+    sleep: async () => { moved = true; },
+    execute: async args => {
+      attempts++;
+      return { ok: false, blocker: 'SOVEREIGN_MAINTENANCE_OWNER_BUSY',
+        command: { plan: { processId: args.actionId } },
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' };
+    },
+  });
+  const r = await s.consume({ readSourceHead: async () => moved ? 'b'.repeat(40) : HEAD });
+  assert.equal(r.state, 'UNKNOWN');
+  assert.equal(r.blocker, 'CONTROL_TOWER_BUILD_SOURCE_OR_EXPIRY_CHANGED');
+  assert.equal(attempts, 1);
+  assert.equal(createMailboxExecutionLedger(join(s.root, 'github-command-mailbox')).read(r.requestId).phase, 'RESERVED');
+});
+
 test('a crash or missing terminal result retains the original reservation across new consumer instances', async t => {
   let calls = 0;
   const s = setup(t, { execute: async () => { calls++; throw Error('uncertain private response'); } });
