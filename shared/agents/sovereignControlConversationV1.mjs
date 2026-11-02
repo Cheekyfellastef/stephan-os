@@ -189,7 +189,9 @@ function actionHandoff(intent, handoffId, at, commander, tower) {
     if (tower.latestBuildRequestObservation?.outcomeUnresolved === true
       || (!tower.latestBuildRequestObservation && last?.operation !== 'OBSERVE_CONTROL_SYSTEM'
         && ['RESERVED', 'UNKNOWN'].includes(last?.state))) blocked = 'CONTROL_TOWER_REQUEST_OUTCOME_UNPROVEN';
-    else if (commander.guardian?.running === true || commander.guardian?.maintenanceInFlight === true) blocked = 'SOVEREIGN_MAINTENANCE_OWNER_BUSY';
+    // Transient guardian activity is not a standing prohibition on preparing
+    // the original request. The one-reservation consumer may retry ONLY a
+    // verified BUSY refusal; unresolved earlier work still blocks here.
   }
   return {
     handoffId, state: 'NOT_SUBMITTED', operation: intent,
