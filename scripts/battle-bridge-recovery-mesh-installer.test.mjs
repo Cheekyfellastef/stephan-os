@@ -327,7 +327,7 @@ test('Recovery Mesh probe uses resolved task SIDs without weakening task admissi
 $ErrorActionPreference = 'Stop'
 ` + functions + `
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-$short = ([string]$identity.Name -split '\\')[-1]
+$short = ([string]$identity.Name -split '\\\\')[-1]
 $sid = $identity.User.Value
 function Assert-Identity([string]$name, [string]$user, [string]$logon,
     [string]$level, [bool]$enabled, [string]$instances, [bool]$expected) {
