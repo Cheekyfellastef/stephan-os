@@ -20,6 +20,11 @@ const SCHEMA = 'stephanos.control-tower-build-consumer.v1';
 const POLL_STATES = new Set(['WAITING', 'HELD', 'REPLAY_HELD', 'UNKNOWN', 'WAKE_BLOCKED', 'WAKE_COMPLETED',
   'OBSERVATION_COMPLETED', 'OBSERVATION_BLOCKED']);
 const ACTION = FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId;
+// The existing guardian may own maintenance for a short period. A signed,
+// exact-action BUSY refusal has no native pickup and may be retried within
+// this ONE already-reserved request. Transport ambiguity is never retryable.
+const OWNER_BUSY_RETRY_INTERVAL_MS = 3_000;
+const OWNER_BUSY_MAX_ATTEMPTS = 24;
 const SHA = /^[a-f0-9]{40}$/;
 const REQUEST = /^control-tower-build-[1-9][0-9]{0,15}-1$/;
 const requestId = value => typeof value === 'string' && REQUEST.test(value)
@@ -102,7 +107,8 @@ export async function consumeControlTowerBuildRequestV1({
     readHistoricalRequest: readHistoricalControlTowerBuildRequestV1,
     isAuthenticated: isAuthenticatedControlTowerBuildRequestV1,
     createLedger: createMailboxExecutionLedger, execute: callSovereignMaintenanceOwnerV1,
-    inspect: inspectSovereignControlSystemV1, ...dependencies };
+    inspect: inspectSovereignControlSystemV1,
+    sleep: ms => new Promise(resolve => setTimeout(resolve, ms)), ...dependencies };
   let request = null, reserved = false, ledger = null, initialObservation = null;
   let latestBuild = null, latestObserve = null, discovery = null;
   const restore = (id, operation) => {
@@ -264,8 +270,25 @@ export async function consumeControlTowerBuildRequestV1({
     // deadline. A legacy heartbeat is not an admitted native Windows operation.
     // Request authentication grants intent only; the original owner retains
     // every identity/qualification/lease/goal/resource/custody gate.
-    const owned = await deps.execute({ actionId: ACTION, arguments: { actionId: ACTION },
-      timeoutMs: FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.executionTimeoutMs });
+    let owned;
+    // Never re-issue an ambiguous request. Retry only the original owner's
+    // explicit synchronous refusal to start a second action while its own
+    // continuous guardian has a verified in-flight maintenance cycle.
+    for (let attempt = 0; attempt < OWNER_BUSY_MAX_ATTEMPTS; attempt++) {
+      owned = await deps.execute({ actionId: ACTION, arguments: { actionId: ACTION },
+        timeoutMs: FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.executionTimeoutMs });
+      const exactBusyRefusal = owned?.command?.plan?.processId === ACTION
+        && owned?.ok === false
+        && owned.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED'
+        && owned.blocker === 'SOVEREIGN_MAINTENANCE_OWNER_BUSY';
+      if (!exactBusyRefusal || attempt + 1 === OWNER_BUSY_MAX_ATTEMPTS) break;
+      if (Date.parse(request.expiresAtUtc) <= now().getTime() + OWNER_BUSY_RETRY_INTERVAL_MS)
+        return finish('UNKNOWN', 'CONTROL_TOWER_BUILD_SOURCE_OR_EXPIRY_CHANGED', evidence());
+      await deps.sleep(OWNER_BUSY_RETRY_INTERVAL_MS);
+      if (await readSourceHead() !== sourceHead
+        || Date.parse(request.expiresAtUtc) <= now().getTime())
+        return finish('UNKNOWN', 'CONTROL_TOWER_BUILD_SOURCE_OR_EXPIRY_CHANGED', evidence());
+    }
     const exactOwnerAction = owned?.command?.plan?.processId === ACTION;
     const completed = exactOwnerAction && owned?.ok === true
       && owned.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' && /^[a-f0-9]{64}$/.test(owned.proofHash || '');
