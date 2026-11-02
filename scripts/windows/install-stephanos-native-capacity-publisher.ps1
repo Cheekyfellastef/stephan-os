@@ -72,10 +72,10 @@ if (`$LASTEXITCODE -ne 0 -or `$head -notmatch '^[0-9a-f]{40}$') { exit 75 }
 `$sourceGateReceipt = (& `$canonicalNode `$sourceGateScript | Select-Object -Last 1)
 if (`$LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]`$sourceGateReceipt)) { exit 75 }
 try { `$sourceGate = `$sourceGateReceipt | ConvertFrom-Json -ErrorAction Stop } catch { exit 75 }
-if ([bool]`$sourceGate.ok -ne `$true `
-    -or [string]`$sourceGate.finalVerdict -ne 'STEPHANOS_NATIVE_PUBLISHER_SOURCE_GATE_PASS' `
-    -or [string]`$sourceGate.sourceHead -ne `$head `
-    -or [bool]`$sourceGate.dirtSummary.blocksSync -ne `$false) { exit 75 }
+if ([bool]`$sourceGate.ok -ne `$true -or
+    [string]`$sourceGate.finalVerdict -ne 'STEPHANOS_NATIVE_PUBLISHER_SOURCE_GATE_PASS' -or
+    [string]`$sourceGate.sourceHead -ne `$head -or
+    [bool]`$sourceGate.dirtSummary.blocksSync -ne `$false) { exit 75 }
 & `$canonicalNode `$publisherScript
 exit `$LASTEXITCODE
 "@
@@ -83,6 +83,10 @@ $encodedBootstrap = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
 $arguments = '-NoProfile -NonInteractive -EncodedCommand ' + $encodedBootstrap
 $action = New-ScheduledTaskAction -Execute $canonicalPowerShell -Argument $arguments -WorkingDirectory $repositoryRoot
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+# Same existing task: IgnoreNew prevents overlapping publisher instances.
+$recoveryTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) `
+    -RepetitionInterval (New-TimeSpan -Minutes 5) `
+    -RepetitionDuration (New-TimeSpan -Days 365)
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
@@ -92,7 +96,7 @@ $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -StartWhenAvailable
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
-$task = New-ScheduledTask -Action $action -Trigger $trigger -Settings $settings -Principal $principal
+$task = New-ScheduledTask -Action $action -Trigger @($trigger, $recoveryTrigger) -Settings $settings -Principal $principal
 Register-ScheduledTask -TaskName $taskName -InputObject $task -Force | Out-Null
 
 $registered = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
@@ -101,6 +105,13 @@ if (-not [string]::Equals([string]$registeredAction.Execute, $canonicalPowerShel
     -or [string]$registeredAction.Arguments -ne $arguments `
     -or -not [string]::Equals([string]$registeredAction.WorkingDirectory, $repositoryRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw 'Registered native capacity publisher task identity does not match the guarded bootstrap.'
+}
+
+$registeredTriggers = @($registered.Triggers)
+if ($registeredTriggers.Count -ne 2 `
+    -or @($registeredTriggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' -and $_.Enabled }).Count -ne 1 `
+    -or @($registeredTriggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskTimeTrigger' -and $_.Enabled -and [string]$_.Repetition.Interval -eq 'PT5M' -and [string]$_.Repetition.Duration -eq 'P365D' }).Count -ne 1) {
+    throw 'Registered native capacity publisher recovery cadence does not match the canonical single task.'
 }
 
 if ($StartNow) { Start-ScheduledTask -TaskName $taskName }

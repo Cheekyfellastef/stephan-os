@@ -6,7 +6,16 @@ export const WINDOWS_AUTHORITY_STEPHANOS_NATIVE_CAPACITY_PUBLISHER_PATHS_V1 = Ob
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const SOURCE_SCHEMA = 'stephanos.windows-authority-source.v1';
-const EXPECTED_BLOB_SHA = '65253e069c91414bfe24cec8fc0db6ad14d9371c';
+// Existing qualification, plus a source candidate for the existing PR #3100.
+// The new candidate remains subject to independent exact-head Windows/security review.
+// Historical qualification plus the independently reviewed bootstrap syntax repair:
+// PR #3077, exact head 2efb7d390255445d17fc15a1993813fefd0f94e9,
+// independent review comment 6133050345. No other source bytes are admitted.
+const QUALIFIED_BLOB_SHAS = new Set([
+  '65253e069c91414bfe24cec8fc0db6ad14d9371c',
+  '8d3c7a8c528a62011967b986e3d87b8675810b5a',
+  '24a4a9d1124da84dc99f34ba61fb3e6ed7d3153e',
+]);
 const MAX_BYTES = 256 * 1024;
 const SHA40 = /^[a-f0-9]{40}$/;
 
@@ -51,7 +60,7 @@ function exactSource(source, sourceHead, path) {
     && bytes <= MAX_BYTES
     && SHA40.test(text(source.blobSha))
     && source.blobSha === gitBlobSha(content)
-    && source.blobSha === EXPECTED_BLOB_SHA
+    && QUALIFIED_BLOB_SHAS.has(source.blobSha)
   );
 }
 
@@ -103,6 +112,16 @@ function inspectInstaller(source, path) {
   requirePattern(findings, source, /&\s*`\$canonicalNode\s+`\$publisherScript[\s\S]{0,80}exit\s+`\$LASTEXITCODE/i, 'native-capacity-publisher-launch-not-fixed', 'Bootstrap may launch only canonical Node with the fixed publisher script.', path);
   requirePattern(findings, source, /Get-ScheduledTask\s+-TaskName\s+\$taskName[\s\S]{0,900}registeredAction\.Execute[\s\S]{0,900}registeredAction\.Arguments[\s\S]{0,900}registeredAction\.WorkingDirectory/i, 'native-capacity-task-revalidation-missing', 'Installer must revalidate the registered task action identity.', path);
 
+  requirePattern(findings, source,
+    /\$recoveryTrigger\s*=\s*New-ScheduledTaskTrigger\s+-Once\s+-At\s+\(Get-Date\)\.AddMinutes\(2\)[\s\S]{0,240}-RepetitionInterval\s+\(New-TimeSpan\s+-Minutes\s+5\)[\s\S]{0,140}-RepetitionDuration\s+\(New-TimeSpan\s+-Days\s+365\)/,
+    'native-capacity-recovery-repetition-missing', 'The existing publisher must be eligible to restart automatically without Windows sign-in.', path);
+  requirePattern(findings, source,
+    /\$task\s*=\s*New-ScheduledTask\s+-Action\s+\$action\s+-Trigger\s+@\(\$trigger,\s*\$recoveryTrigger\)\s+-Settings\s+\$settings\s+-Principal\s+\$principal/,
+    'native-capacity-recovery-must-reuse-task', 'The bounded restart trigger must belong to the single original task.', path);
+  requirePattern(findings, source,
+    /\$registeredTriggers\s*=\s*@\(\$registered\.Triggers\)[\s\S]{0,350}Count\s+-ne\s+2[\s\S]{0,350}MSFT_TaskLogonTrigger[\s\S]{0,350}MSFT_TaskTimeTrigger[\s\S]{0,450}PT5M[\s\S]{0,160}P365D/,
+    'native-capacity-registered-recovery-unverified', 'The installed task must prove exactly one sign-in trigger and one bounded recovery trigger.', path);
+
   const parameterBlock = source.slice(0, Math.max(0, source.indexOf("$ErrorActionPreference")));
   forbidPattern(findings, parameterBlock, /\$(?:TaskName|Executable|Command|CommandLine|Arguments|Url|Uri|Token|Credential)\b/i, 'native-capacity-caller-authority-forbidden', 'Caller-selected task, executable, command, network or credential authority is forbidden.', path);
   forbidPattern(findings, source, /Invoke-Expression|\biex\b|\bStart-Process\b|\bStop-Process\b|\btaskkill(?:\.exe)?\b|cmd(?:\.exe)?\s+\/c|powershell(?:\.exe)?\s+-command|-Verb\s+RunAs/i, 'native-capacity-generic-execution-forbidden', 'Generic shell/process/elevation authority is forbidden.', path);
@@ -140,7 +159,7 @@ export function analyzeWindowsAuthorityStephanosNativeCapacityPublisherReviewV1(
     findings.push(finding('windows-authority-source-evidence-invalid', 'Exactly one immutable exact-head native capacity publisher installer source record is required.', path));
   } else {
     findings.push(...inspectInstaller(candidates[0].content, path));
-    proofRefs.push(`proofs/windows-authority/native-capacity-publisher/${path}@${sourceHead}#${EXPECTED_BLOB_SHA}:${candidates[0].size}`);
+    proofRefs.push(`proofs/windows-authority/native-capacity-publisher/${path}@${sourceHead}#${candidates[0].blobSha}:${candidates[0].size}`);
   }
 
   const clean = findings.length === 0;
