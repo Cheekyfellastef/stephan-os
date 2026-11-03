@@ -206,6 +206,7 @@ function captureGithub({
   spawnSyncFn = spawnSync,
   cwd,
   timeoutMs = 120_000,
+  childEnv,
 } = {}) {
   const result = spawnSyncFn(ghCommand, ['api', endpoint, ...args], {
     cwd,
@@ -215,6 +216,7 @@ function captureGithub({
     timeout: timeoutMs,
     maxBuffer: GITHUB_OBSERVATION_BROKER_MAX_BYTES,
     stdio: ['ignore', 'pipe', 'pipe'],
+    ...(childEnv ? { env: childEnv } : {}),
   });
   return Object.freeze({
     ok: !result?.error && result?.status === 0,
@@ -238,6 +240,7 @@ export function readBrokeredGithubJson({
   spawnSyncFn,
   cwd,
   timeoutMs,
+  childEnv,
 } = {}) {
   const paths = brokerPaths({ workspaceRoot, key, env });
   const ttl = boundedMs(ttlMs, DEFAULT_GITHUB_OBSERVATION_TTL_MS);
@@ -287,7 +290,7 @@ export function readBrokeredGithubJson({
       }
       return Object.freeze({ ok: false, reason: 'GITHUB_RATE_LIMIT_BACKOFF', rateLimitHold: afterLockHold, upstreamCalls: 0 });
     }
-    const result = captureGithub({ endpoint, args, ghCommand, spawnSyncFn, cwd, timeoutMs });
+    const result = captureGithub({ endpoint, args, ghCommand, spawnSyncFn, cwd, timeoutMs, childEnv });
     if (!result.ok) {
       const rateLimitHold = repository && isGithubCliRateLimitError(result.stderr)
         ? recordBrokeredGithubRateLimitHold({ repository, workspaceRoot, env, nowMs })

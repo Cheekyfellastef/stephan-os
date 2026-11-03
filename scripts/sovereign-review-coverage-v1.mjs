@@ -1,36 +1,14 @@
 #!/usr/bin/env node
-// Fixed, read-only coverage intake in the existing Sovereign Reviewer lane.
-// Never emits raw source/diff, never enrolls a specialist, and never dispatches.
+// Independently protected installed-parent entry. Candidate engines are never
+// imported from mutable paths before the exact-commit loader authenticates them.
 import { fileURLToPath } from 'node:url';
-import { captureHighRiskAdvisorySnapshotV1 } from './sovereign-high-risk-advisory-v1.mjs';
-import { assessSovereignReviewCoverageV1 } from '../shared/agents/sovereignReviewCoverageV1.mjs';
-
-const held = reason => Object.freeze({
-  schemaVersion:'stephanos.sovereign-review-coverage.v1',
-  status:'REVIEW_COVERAGE_HELD', reason,
-  meteredReviewReplacementQualified:false,
-  protectedMergeAuthority:false, reviewerEnrollmentAuthority:false,
-  originalLeaseReleaseAuthority:false,
-});
-
-export function runSovereignReviewCoverageV1(env=process.env,{
-  snapshot=captureHighRiskAdvisorySnapshotV1,
-}={}) {
-  try {
-    const source=snapshot(env);
-    // The source snapshot itself proves clean exact local HEAD, branch, base
-    // ancestry and complete changed-path list, but it does NOT qualify a review.
-    return assessSovereignReviewCoverageV1(source);
-  } catch {
-    return held('EXACT_LOCAL_REVIEW_SOURCE_UNVERIFIED');
-  }
+import { runFixedSovereignReviewEntryV1 } from './sovereign-high-risk-advisory-launcher-v1.mjs';
+export function runSovereignReviewCoverageV1(env=process.env) {
+  return runFixedSovereignReviewEntryV1('coverage', {env});
 }
-
 if(process.argv[1]===fileURLToPath(import.meta.url)) {
-  const report=process.argv.length===3 && process.argv[2]==='--once'
-    ? runSovereignReviewCoverageV1()
-    : held('FIXED_ONCE_ONLY');
-  // Output contains categories and SHA identities, not the untrusted diff.
-  process.stdout.write('SOVEREIGN_REVIEW_COVERAGE_RESULT='+JSON.stringify(report)+'\n');
-  if(report.status==='REVIEW_COVERAGE_HELD') process.exitCode=2;
+  const result=process.argv.length===3 && process.argv[2]==='--once'
+    ? runSovereignReviewCoverageV1() : {status:'REVIEW_COVERAGE_HELD',reason:'FIXED_ONCE_ONLY',mergeAuthority:false};
+  process.stdout.write('SOVEREIGN_REVIEW_COVERAGE_RESULT='+JSON.stringify(result)+'\n');
+  if(result.status==='REVIEW_COVERAGE_HELD')process.exitCode=2;
 }

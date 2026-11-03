@@ -421,3 +421,104 @@ test('control characters or traversal cannot enter the approved path estate', ()
     assert.ok(result.blockers.includes('authorization-changed-files-invalid'));
   }
 });
+
+
+const mixedCaseFiles = Object.freeze([
+  { path: 'src/windows/Witness/Program.cs', afterBlobSha: 'a'.repeat(40), entryMode: '100644', entryType: 'blob' },
+  { path: 'src/windows/Witness/packages.lock.json', afterBlobSha: 'b'.repeat(40), entryMode: '100644', entryType: 'blob' },
+  { path: 'src/windows/Witness/_state.cs', afterBlobSha: 'c'.repeat(40), entryMode: '100644', entryType: 'blob' },
+  { path: 'src/windows/Witness/program.cs', afterBlobSha: 'd'.repeat(40), entryMode: '100644', entryType: 'blob' },
+]);
+
+function permutations(values) {
+  if (values.length < 2) return [values];
+  return values.flatMap((value, index) => permutations(values.filter((_, i) => i !== index))
+    .map((rest) => [value, ...rest]));
+}
+
+test('mixed-case path identity is independent of API and authorization order in exact and converged execution', () => {
+  const orders = permutations(mixedCaseFiles);
+  for (const approved of orders) {
+    for (const comparisonOrder of orders) {
+      const evidence = observed({
+        currentBase: authorizationBase,
+        authorizationBaseToApprovedSourceComparison: restCompare(
+          authorizationBase, sourceHead, comparisonOrder.map((file) => file.path),
+        ),
+        authorizationBaseToCurrentBaseComparison: restCompare(authorizationBase, authorizationBase, []),
+      });
+      const approval = { ...authorization, changedFiles: approved };
+      for (const converged of [false, true]) {
+        const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
+          authorization: approval,
+          observed: {
+            ...evidence,
+            ...(converged ? {
+              sourceHead: convergedHead,
+              sourceTree: convergedTree,
+              preservationConvergence: convergence({
+                parents: [{ sha: sourceHead }, { sha: authorizationBase }],
+                currentChangedFiles: [...comparisonOrder].reverse(),
+              }),
+            } : {}),
+          },
+        });
+        assert.equal(result.authorizationReusable, true, JSON.stringify(result.blockers));
+        assert.equal(result.protectedExecutionReady, true, JSON.stringify(result.blockers));
+        assert.deepEqual(result.approvedChangedPaths, mixedCaseFiles.map((file) => file.path).sort());
+        assert.equal(result.mergeAuthority, false);
+      }
+    }
+  }
+});
+
+test('path ordering retains case-sensitive estate, duplicate, and convergence blob checks', () => {
+  const approval = { ...authorization, changedFiles: mixedCaseFiles };
+  const evidence = observed({
+    currentBase: authorizationBase,
+    authorizationBaseToApprovedSourceComparison: restCompare(
+      authorizationBase, sourceHead, mixedCaseFiles.map((file) => file.path),
+    ),
+    authorizationBaseToCurrentBaseComparison: restCompare(authorizationBase, authorizationBase, []),
+  });
+  for (const files of [
+    mixedCaseFiles.slice(1),
+    [...mixedCaseFiles, mixedCaseFiles[0]],
+    mixedCaseFiles.map((file, i) => i === 0 ? { ...file, path: 'src/windows/Witness/PROGRAM.cs' } : file),
+  ]) {
+    const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
+      authorization: { ...approval, changedFiles: files },
+      observed: evidence,
+    });
+    assert.equal(result.authorizationReusable, false);
+  }
+  const changedBlob = evaluateMainMovementTolerantOperatorAuthorizationV1({
+    authorization: approval,
+    observed: {
+      ...evidence,
+      sourceHead: convergedHead, sourceTree: convergedTree,
+      preservationConvergence: convergence({
+        parents: [{ sha: sourceHead }, { sha: authorizationBase }],
+        currentChangedFiles: mixedCaseFiles.map((file, i) => i === 0 ? { ...file, afterBlobSha: 'e'.repeat(40) } : file),
+      }),
+    },
+  });
+  assert.equal(changedBlob.authorizationReusable, false);
+  assert.ok(changedBlob.blockers.includes('preservation:convergence-approved-blob-changed:src/windows/Witness/Program.cs'));
+});
+
+test('mixed-case approved paths still reject intervening exact-path overlap', () => {
+  const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
+    authorization: { ...authorization, changedFiles: mixedCaseFiles },
+    observed: observed({
+      authorizationBaseToApprovedSourceComparison: restCompare(
+        authorizationBase, sourceHead, mixedCaseFiles.map((file) => file.path),
+      ),
+      authorizationBaseToCurrentBaseComparison: restCompare(
+        authorizationBase, currentBase, ['src/windows/Witness/Program.cs'],
+      ),
+    }),
+  });
+  assert.equal(result.authorizationReusable, false);
+  assert.ok(result.blockers.includes('main-movement:approved-path-overlap:src/windows/Witness/Program.cs'));
+});

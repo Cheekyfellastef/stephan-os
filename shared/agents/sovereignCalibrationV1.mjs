@@ -23,6 +23,19 @@ const cases = Object.freeze([
     '--- a/src/examples/'+id+'.js','+++ b/src/examples/'+id+'.js',
     '@@ -1 +1 @@','-'+before,'+'+after,''].join('\n'),
 })));
+// A closed taxonomy of finding *names* is public. The model is never told
+// which code applies to which randomized case, nor the secret expected labels.
+export const SOVEREIGN_CALIBRATION_FINDING_CODES = Object.freeze([
+  'credential-exposure',
+  'dynamic-code-execution',
+  'unbounded-retry',
+  'lease-authorization-bypass',
+  'false-worker-pickup',
+  'sql-injection',
+  'dom-xss',
+  'unrestricted-file-path',
+  'other-regression',
+]);
 const authority = Object.freeze({
   specialistAuthority:false, independentReviewSatisfied:false,
   protectedMergeAuthority:false, sourceMutationAuthority:false,
@@ -72,6 +85,9 @@ export async function evaluateSovereignCalibrationV1(input={}, {invokeModel}={})
       'Inspect for security and correctness regressions, and unjustified build-completion claims.',
       'Return JSON with exactly challengeId,diffSha256,verdict,findings.',
       'verdict: clean or findings. findings: array of {code,path,severity,summary}.',
+      'Choose each finding code from this general taxonomy (not a hint about this case): '
+        + SOVEREIGN_CALIBRATION_FINDING_CODES.join(', ') + '.',
+      'Use other-regression only if none of the named classes fits the actual patch.',
       'If clean, findings must be empty. Never invoke tools or claim runtime proof.',
       'Challenge: '+challengeId,'SHA256: '+diffSha256,'<UNTRUSTED_PATCH>',candidateDiff,'</UNTRUSTED_PATCH>',
     ].join('\n');

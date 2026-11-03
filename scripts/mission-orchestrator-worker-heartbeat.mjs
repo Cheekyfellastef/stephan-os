@@ -184,6 +184,10 @@ export function projectMissionWorkerHeartbeat(record = {}, {
   const lastTickVerdict = text(record?.lastTickVerdict);
   const lastTickRecognized = RECOGNIZED_WORKER_TICK_VERDICTS.has(lastTickVerdict);
   const lastTickAffirmative = AFFIRMATIVE_WORKER_TICK_VERDICTS.has(lastTickVerdict);
+  // A queued external handoff still needs its existing consumer. Readiness
+  // keeps that consumer alive; it is not proof of external/material progress.
+  const lastTickOperational = lastTickAffirmative
+    || lastTickVerdict === 'MISSION_WORKER_EXTERNAL_HANDOFF_PENDING';
   if (!lastTickRecognized) {
     errors.push('worker-last-tick-unrecognized');
   }
@@ -217,6 +221,7 @@ export function projectMissionWorkerHeartbeat(record = {}, {
     lastTickVerdict,
     lastTickRecognized,
     lastTickAffirmative,
+    lastTickOperational,
     errors: Object.freeze([...new Set(errors)]),
     authority: 'mission-worker-only',
     controllerHeartbeatAuthority: false,

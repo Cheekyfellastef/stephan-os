@@ -1,3 +1,4 @@
+import { assertCanonicalMissionWorkerCustody } from '../../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
 import { readFile, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -215,6 +216,10 @@ export async function refreshGitHubLifeboatLane7ClaimAck(options = {}) {
     handoff: validated.handoff,
   });
   const writeOutbox = options.writeOutbox || ((body) => defaultWriteOutbox(body, options));
+  try { assertCanonicalMissionWorkerCustody(options); }
+  catch { return Object.freeze({ schemaVersion: GITHUB_LIFEBOAT_LANE7_CLAIM_ACK_KEEPER_SCHEMA,
+    ok: false, published: false, state: 'SAFE_HOLD', reason: 'MISSION_WORKER_CUSTODY_UNPROVEN',
+    ...authorityBoundary(), finalVerdict: 'GITHUB_LIFEBOAT_LANE7_CLAIM_ACK_SAFE_HOLD' }); }
   const publication = await writeOutbox(renderOutbox(payload));
   return Object.freeze({
     schemaVersion: GITHUB_LIFEBOAT_LANE7_CLAIM_ACK_KEEPER_SCHEMA,

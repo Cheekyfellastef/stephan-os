@@ -139,6 +139,7 @@ export async function evaluateSovereignReviewSnapshot(input = {}, { invokeModel 
     prNumber: input.prNumber,
     branch: input.branch,
     sourceHead: input.sourceHead,
+    baseSha: input.baseSha,
     producerId: 'sovereign-local-reviewer',
     producerClass: 'openclaw-local-readonly',
     providerIntent: 'sovereign-local-ollama',

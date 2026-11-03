@@ -1,3 +1,5 @@
+import { buildMissionWorkerAction } from '../../shared/agents/missionOrchestratorWorker.mjs';
+import { createMissionOrchestratorState } from '../../shared/agents/missionOrchestrator.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -74,6 +76,105 @@ function admission(missions, selectedMission = missions[0]) {
     runnableMissions: missions.filter((item) => item.currentPhase !== 'AWAITING_OPERATOR_APPROVAL'),
   };
 }
+
+function repairCandidate() {
+  const candidate = mission(1802, 2096, HEAD_A);
+  return { ...createMissionOrchestratorState({ ...candidate, missionKind: 'implementation',
+    operatorIntent: 'Repair the existing failed PR', intendedOutcome: 'Required checks pass',
+    branch: candidate.git.branch, worktreePath: candidate.git.worktreePath,
+  }, { now: NOW }), ...candidate, currentPhase: 'REPAIR_REQUIRED',
+  pullRequest: { ...candidate.pullRequest, checks: [{ name: 'focused', status: 'failure', required: true }] } };
+}
+
+test('PR-head fallback cannot route retained-scope source work omitted from runnable missions', async () => {
+  const candidate = repairCandidate();
+  const owner = mission(3031, 3224, HEAD_C, { currentPhase: 'AWAITING_OPERATOR_APPROVAL',
+    allowedFiles: [...candidate.allowedFiles], dispatch: { status: 'complete' } });
+  let capacityReads = 0, mutations = 0;
+  const result = await dispatchElasticPrHeadBuildsFromCanonicalLease({
+    ...admission([candidate, owner], null), runnableMissions: [],
+    held: [{ missionId: candidate.missionId, reason: 'RETAINED_SOURCE_SCOPE_RESERVED' }],
+  }, { now: NOW, paths: PATHS, sourceRevision: SOURCE,
+    readSourceMutationLease: async () => ({ ok: true, present: false }),
+    readCapacityRouting: async () => { capacityReads++; return {}; },
+    claimSourceMutationLease: async () => { mutations++; throw Error('must not claim'); },
+    renewSourceMutationLease: async () => { mutations++; throw Error('must not renew'); },
+    releaseSourceMutationLease: async () => { mutations++; throw Error('must not release'); },
+    appendExecutionReceipt: async () => { mutations++; throw Error('must not append'); },
+    publishWorkerAction: async () => { mutations++; throw Error('must not publish'); },
+  });
+  assert.equal(result.classification, 'ELASTIC_PR_HEAD_RETAINED_SOURCE_SCOPE_HELD');
+  assert.ok(result.held.some(h => h.missionId === candidate.missionId && h.reason === 'RETAINED_SOURCE_SCOPE_RESERVED'));
+  assert.equal(result.dispatchCount, 0);
+  assert.equal(capacityReads, 0);
+  assert.equal(mutations, 0);
+});
+
+test('PR-head source scope is recomputed from inventory and an existing held lease remains untouched', async () => {
+  const candidate = repairCandidate();
+  const owner = mission(3031, 3224, HEAD_C, { currentPhase: 'AWAITING_OPERATOR_APPROVAL',
+    allowedFiles: ['shared/agents'], dispatch: { status: 'complete' } });
+  const lease = leaseFor(candidate);
+  let changes = 0;
+  const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([candidate, owner]), {
+    now: NOW, paths: PATHS, sourceRevision: SOURCE,
+    readSourceMutationLease: async () => ({ ok: true, present: true, record: lease }),
+    renewSourceMutationLease: async () => { changes++; return { ok: true, record: lease }; },
+    releaseSourceMutationLease: async () => { changes++; },
+    publishWorkerAction: async () => { changes++; },
+  });
+  assert.equal(result.classification, 'ELASTIC_PR_HEAD_RETAINED_SOURCE_SCOPE_HELD');
+  assert.equal(result.activeLease.leaseId, lease.leaseId);
+  assert.equal(changes, 0);
+});
+
+test('PR-head fallback still inspects read-only work beside held source repair', async () => {
+  const candidate = repairCandidate();
+  const owner = mission(3031, 3224, HEAD_C, { currentPhase: 'AWAITING_OPERATOR_APPROVAL',
+    allowedFiles: candidate.allowedFiles, dispatch: { status: 'complete' } });
+  const inspection = mission(1899, 1920, HEAD_C, { allowedFiles: candidate.allowedFiles });
+  const grants = [];
+  const result = await dispatchElasticPrHeadBuildsFromCanonicalLease({
+    ...admission([candidate, owner, inspection], null), runnableMissions: [],
+  }, { now: NOW, paths: PATHS, sourceRevision: SOURCE,
+    readSourceMutationLease: async () => ({ ok: true, present: false }),
+    readCapacityRouting: async () => assert.fail('read-only inspection needs no source capacity'),
+    claimSourceMutationLease: async input => ({ ok: true, claimed: true, record: { ...input } }),
+    readExecutionReceiptHistory: async () => ({ ok: true, receipts: [], latestReceipt: null }),
+    appendExecutionReceipt: async () => ({ ok: true }), isActionInFlight: async () => false,
+    publishWorkerAction: async input => { grants.push(input.actionGrant); return {
+      published: true, actionGrantAccepted: true, adapter: 'openclaw-github-readonly',
+    }; },
+  });
+  assert.equal(result.dispatchCount, 1);
+  assert.equal(grants[0].missionId, inspection.missionId);
+  assert.equal(grants[0].adapter, 'openclaw-github-readonly');
+  assert.ok(result.held.some(h => h.missionId === candidate.missionId && h.reason === 'RETAINED_SOURCE_SCOPE_RESERVED'));
+});
+
+test('retained-scope gate preserves exact running lease renewal and the original owner repair', async () => {
+  const candidate = repairCandidate();
+  const owner = mission(3031, 3224, HEAD_C, { currentPhase: 'AWAITING_OPERATOR_APPROVAL',
+    allowedFiles: candidate.allowedFiles, dispatch: { status: 'complete' } });
+  const running = { ...candidate, dispatch: { status: 'running' } };
+  const lease = leaseFor(running);
+  let renewals = 0, capacityReads = 0;
+  const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([running, owner]), {
+    now: NOW, paths: PATHS, sourceRevision: SOURCE,
+    readSourceMutationLease: async () => ({ ok: true, present: true, record: lease }),
+    renewSourceMutationLease: async () => { renewals++; return { ok: true, record: lease }; },
+    publishWorkerAction: async () => assert.fail('do not duplicate a running claim'),
+  });
+  assert.equal(result.classification, 'ELASTIC_PR_HEAD_LEASE_ALREADY_RUNNING');
+  assert.equal(renewals, 1);
+  const ownRepair = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([candidate]), {
+    now: NOW, paths: PATHS, sourceRevision: SOURCE,
+    readSourceMutationLease: async () => ({ ok: true, present: false }),
+    readCapacityRouting: async () => { capacityReads++; return null; },
+  });
+  assert.equal(ownRepair.classification, 'ELASTIC_PR_HEAD_CAPACITY_ROUTING_UNAVAILABLE');
+  assert.equal(capacityReads, 1);
+});
 
 test('exact identity exists only after an elastic mission owns a PR head', () => {
   const exact = mission(1802, 2096, HEAD_A);
@@ -1203,4 +1304,180 @@ test('terminal or already accepted receipt without a lease cannot reclaim writer
     assert.equal(result.activeLease, null);
     assert.equal(claims, 0);
   }
+});
+
+
+async function completedInspectionFixture() {
+  const root = await mkdtemp(join(tmpdir(), 'completed-elastic-review-'));
+  const paths = { workspaceRoot: join(root, 'workspace'), repoRoot: join(root, 'repo'), orchestratorRoot: join(root, 'orchestrator') };
+  const env = { ...process.env, STEPHANOS_MISSION_WORKER_QUEUE_DIR: join(root, 'queue') };
+  const prior = mission(1802, 2096, HEAD_A, { revision: 6, dispatch: { status: 'complete', resultId: 'source-result' } });
+  const lease = leaseFor(prior);
+  const action = buildMissionWorkerAction(prior);
+  const eventId = 'worker-' + action.actionId;
+  const sourceId = prior.missionId + '-r1-aaaaaaaaaaaa';
+  const checks = [{ id: 'verify', name: 'verify', status: 'failure', required: true }];
+  const completedAt = new Date(NOW.getTime() - 1000).toISOString();
+  const event = { eventId, missionId: prior.missionId, eventType: 'PULL_REQUEST_CHECKS_UPDATED',
+    prNumber: 2096, headSha: HEAD_A, prState: 'open', mergeable: true, checks,
+    receipt: { verified: true, source: 'openclaw-github-readonly', evidenceType: 'github-inspection', commandOutputHash: 'f'.repeat(64), createdAt: completedAt } };
+  const current = { ...prior, revision: 7, currentPhase: 'REPAIR_REQUIRED',
+    pullRequest: { ...prior.pullRequest, checks },
+    storeMetadata: { lastEventId: eventId, processedEventIds: ['result-' + sourceId, eventId] } };
+  const identity = { missionId: prior.missionId, repository: REPOSITORY, issueNumber: 1802,
+    prNumber: 2096, branch: prior.git.branch, headSha: HEAD_A };
+  const grant = { schemaVersion: 'stephanos.mission-worker-action-grant.v1', controllerId: 'durable-flywheel-controller',
+    grantId: 'grant-' + action.actionId, ...identity, laneId: prior.missionId, missionRevision: 6,
+    currentPhase: 'CHECK_PULL_REQUEST', actionId: action.actionId, actionKind: 'github-inspection',
+    adapter: 'openclaw-github-readonly', operation: 'check-pr', boundedActionCount: 1,
+    mergeAuthority: false, leaseSeizureAllowed: false, sourceRevision: SOURCE };
+  const item = { schemaVersion: 'stephanos.mission-worker-queue-item.v1', adapter: grant.adapter,
+    actionId: action.actionId, missionId: prior.missionId, actionGrant: grant, payload: action,
+    executionBinding: { schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1', ...identity,
+      executionId: action.actionId, leaseKey: lease.leaseId, missionRevision: 6, grantId: grant.grantId, sourceRevision: SOURCE } };
+  const result = { schemaVersion: 'stephanos.mission-worker-consumption-result.v1', actionId: action.actionId,
+    missionId: prior.missionId, operation: 'check-pr', eventId, stateRevision: 7, currentPhase: 'REPAIR_REQUIRED',
+    finalVerdict: 'MISSION_WORKER_ITEM_COMPLETE', execution: { success: true, commandOutputHash: 'f'.repeat(64), completedAt },
+    inspection: { prNumber: 2096, headSha: HEAD_A, prState: 'open', mergeable: true, checks } };
+  const queued = { ...identity, sourceHead: HEAD_A, leaseKey: lease.leaseId, executionId: action.actionId, state: 'queued' };
+  const sourceReceipt = { ...identity, executionId: sourceId, leaseKey: prior.missionId + '-r1-lease', state: 'completed' };
+  const facts = { root, paths, env, lease, current, item, result, event,
+    events: [{ eventId: 'result-' + sourceId, missionId: prior.missionId, eventType: 'AGENT_RESULT_RECEIVED', resultId: 'source-result' }, event],
+    history: { ok: true, receipts: [queued], latestReceipt: queued },
+    sourceHistory: { ok: true, receipts: [sourceReceipt], latestReceipt: sourceReceipt }, releases: [] };
+  facts.persist = async () => {
+    await mkdir(paths.orchestratorRoot, { recursive: true });
+    await writeFile(join(paths.orchestratorRoot, current.missionId + '.state.json'), JSON.stringify(current));
+    await writeFile(join(paths.orchestratorRoot, current.missionId + '.events.ndjson'), facts.events.map(e => JSON.stringify(e)).join('\n') + '\n');
+    const dir = join(env.STEPHANOS_MISSION_WORKER_QUEUE_DIR, 'openclaw-github-readonly', 'completed');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, action.actionId + '.json'), JSON.stringify(item));
+    await writeFile(join(dir, action.actionId + '.result.json'), JSON.stringify(result));
+  };
+  facts.args = { now: NOW, env, paths, sourceRevision: SOURCE, missionRecords: [current],
+    readLease: async () => ({ ok: true, present: true, record: lease, validation: { valid: true, active: true, stale: false } }),
+    releaseLease: async expected => { facts.releases.push(expected); return { ok: true, released: true }; },
+    readReceiptHistoryFn: async (_root, query) => query.executionId === sourceId ? facts.sourceHistory : facts.history,
+    originalMissionInFlightFn: async () => false };
+  return facts;
+}
+
+test('consumed read-only inspection retires exact epoch without fabricating queued receipt history', async () => {
+  const f = await completedInspectionFixture();
+  try {
+    await f.persist();
+    const before = JSON.stringify(f.history);
+    const outcome = await reconcileExpiredElasticReviewLeaseV1(f.args);
+    assert.equal(outcome.released, true, JSON.stringify(outcome));
+    assert.equal(outcome.classification, 'ELASTIC_CONSUMED_READONLY_INSPECTION_LEASE_RELEASED');
+    assert.equal(outcome.terminalExecutionReceiptReconstructed, false);
+    assert.equal(outcome.sourceMutationAllowed, false);
+    assert.equal(f.releases.length, 1);
+    assert.equal(f.releases[0].leaseId, f.lease.leaseId);
+    assert.match(f.releases[0].originalLeaseDigest, /^[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(f.history), before);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('completed inspection custody rejects source, identity, journal, receipt and live-writer substitutions', async t => {
+  const mutations = {
+    'extra revision': f => { f.current.revision += 1; },
+    'source phase': f => { f.current.currentPhase = 'AGENT_IMPLEMENTATION'; },
+    'original fence': f => { f.current.storeMetadata.originalSourceAttemptFence = { schemaVersion: 'retained' }; },
+    'maintenance': f => { f.current.storeMetadata.supervisedRecoveryMaintenance = {}; },
+    'parked': f => { f.current.continuity = { parkingStatus: 'PARKED' }; },
+    'cancelled': f => { f.current.cancelled = true; },
+    'source writer grant': f => { f.item.actionGrant.actionKind = 'agent-handoff'; },
+    'writer payload': f => { f.item.payload.activeWriter = 'source'; },
+    'foreign lease binding': f => { f.item.executionBinding.leaseKey = 'other-lease'; },
+    'foreign head': f => { f.item.actionGrant.headSha = HEAD_C; },
+    'expanded grant': f => { f.item.actionGrant.mergeAuthority = true; },
+    'duplicate event': f => { f.events.push(f.event); },
+    'unconsumed event': f => { f.current.storeMetadata.processedEventIds = []; },
+    'wrong last event': f => { f.current.storeMetadata.lastEventId = 'different'; },
+    'result hash mismatch': f => { f.result.execution.commandOutputHash = 'e'.repeat(64); },
+    'result successor mismatch': f => { f.result.stateRevision += 1; },
+    'result failed': f => { f.result.execution.success = false; },
+    'different check evidence': f => { f.result.inspection.checks = []; },
+    'nonterminal receipt': f => { f.history.latestReceipt.state = 'started'; },
+    'additional execution': f => { f.history.receipts.push({ ...f.history.latestReceipt, executionId: 'foreign-action' }); },
+    'source incomplete': f => { f.sourceHistory.latestReceipt.state = 'started'; },
+    'active original work': f => { f.args.originalMissionInFlightFn = async () => true; },
+    'lease changed before CAS': f => { let reads = 0; f.args.readLease = async () => ({ ok: true, present: true,
+      record: ++reads === 1 ? f.lease : { ...f.lease, renewedAtUtc: NOW.toISOString() },
+      validation: { valid: true, active: true, stale: false } }); },
+    'CAS refusal': f => { f.args.releaseLease = async () => ({ ok: false, released: false }); },
+  };
+  for (const [name, mutate] of Object.entries(mutations)) await t.test(name, async () => {
+    const f = await completedInspectionFixture();
+    try {
+      mutate(f); await f.persist();
+      const outcome = await reconcileExpiredElasticReviewLeaseV1(f.args);
+      assert.equal(outcome.released, false, JSON.stringify(outcome));
+      assert.equal(f.releases.length, 0);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+});
+
+
+test('completed inspection pending and passing outcomes retain normal operator and review gates', async t => {
+  for (const [status, phase] of [['pending', 'CHECK_PULL_REQUEST'], ['success', 'AWAITING_OPERATOR_APPROVAL']]) await t.test(phase, async () => {
+    const f = await completedInspectionFixture();
+    try {
+      f.event.checks[0].status = status;
+      f.current.currentPhase = phase; f.result.currentPhase = phase;
+      await f.persist();
+      const outcome = await reconcileExpiredElasticReviewLeaseV1(f.args);
+      assert.equal(outcome.released, true, JSON.stringify(outcome));
+      assert.equal(outcome.mergeAuthority, false);
+      assert.equal(outcome.sourceMutationAllowed, false);
+      assert.equal(f.current.currentPhase, phase);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+});
+
+
+test('consumed read-only publication-failure chain is preserved while exact custody is reconciled', async t => {
+  for (const variant of ['exact', 'wrong-stage', 'wrong-blocker', 'extra-record', 'failure-after-consumption']) await t.test(variant, async () => {
+    const f = await completedInspectionFixture();
+    try {
+      const queued = { ...f.history.latestReceipt, receiptId: 'inspection-queued', sequence: 1 };
+      const failed = { ...queued, receiptId: 'inspection-failed', sequence: 2, predecessorReceiptId: queued.receiptId,
+        state: 'failed', phase: 'pr-head-queue-publication-failed', blocker: 'action-grant-mismatch',
+        timestampUtc: new Date(NOW.getTime() - 2000).toISOString() };
+      if (variant === 'failure-after-consumption') failed.timestampUtc = NOW.toISOString();
+      if (variant === 'wrong-stage') failed.phase = 'readonly-inspection-failed';
+      if (variant === 'wrong-blocker') failed.blocker = 'different-failure';
+      f.history = { ok: true, receipts: [queued, failed], latestReceipt: failed };
+      if (variant === 'extra-record') f.history.receipts.push({ ...failed, state: 'started', receiptId: 'unexpected' });
+      await f.persist();
+      const before = JSON.stringify(f.history);
+      const result = await reconcileExpiredElasticReviewLeaseV1(f.args);
+      assert.equal(result.released, variant === 'exact', JSON.stringify(result));
+      assert.equal(f.releases.length, variant === 'exact' ? 1 : 0);
+      assert.equal(JSON.stringify(f.history), before);
+      if (variant === 'exact') {
+        assert.equal(result.terminalExecutionReceiptReconstructed, false);
+        assert.equal(result.sourceMutationAllowed, false);
+      }
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+});
+
+test('publication failure terminal receipt follows the observed failure clock', async () => {
+  const candidate = mission(1802, 2096, HEAD_A);
+  const receipts = [];
+  let failedAt;
+  const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([candidate]), {
+    now: NOW, paths: PATHS, sourceRevision: SOURCE,
+    readSourceMutationLease: async () => ({ ok: true, present: false }),
+    claimSourceMutationLease: async input => ({ ok: true, record: input }),
+    readExecutionReceiptHistory: async () => ({ ok: true, receipts: [], latestReceipt: null }),
+    isActionInFlight: async () => false,
+    appendExecutionReceipt: async (root, receipt) => { receipts.push(receipt); return { ok: true }; },
+    publishWorkerAction: async () => { failedAt = Date.now(); return { published: false, reason: 'action-grant-mismatch' }; },
+  });
+  assert.equal(result.classification, 'ELASTIC_PR_HEAD_DISPATCH_BLOCKED');
+  assert.deepEqual(receipts.map(r => r.state), ['queued', 'failed']);
+  assert.ok(Date.parse(receipts[1].timestampUtc) >= failedAt, 'failure reused the admission snapshot clock');
 });

@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { serializeBoundedReceiptJson } from './battle-bridge-github-command-mailbox.mjs';
 import {
-  serializeBoundedReceiptJson,
   MAILBOX_ACCEPTED_LEASE_EXPIRED_BLOCKER,
   MAILBOX_ACCEPTED_LEASE_MS,
   MAILBOX_SELF_UPDATE_GENERATION_ORPHANED_BLOCKER,
