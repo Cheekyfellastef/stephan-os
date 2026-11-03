@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('Watch','Reconcile','Status','PrepareGaming','CancelPrepare','SetAuto','ForceOn','ForceOff')][string]$Action = 'Watch',
+    [ValidateSet('Watch','Reconcile','Status','ObserveAdmission','PrepareGaming','CancelPrepare','SetAuto','ForceOn','ForceOff')][string]$Action = 'Watch',
     [int]$PollMilliseconds = 500,
     [int]$ReleaseGraceSeconds = 45,
     [int]$CooldownSeconds = 90,
@@ -122,14 +122,48 @@ function Get-GpuSnapshot {
     }
 }
 
-function Test-RealAirLinkActive {
-    # OculusDash appears when the Quest enters the PC VR session. Treat that as
-    # headset detection, before Starfield itself starts, so local AI cannot grab
-    # VRAM during the launch tunnel. SteamVR equivalents retain provider neutrality.
-    foreach ($name in @('OculusDash', 'vrcompositor', 'vrdashboard')) {
-        if ($null -ne (Get-Process -Name $name -ErrorAction SilentlyContinue | Select-Object -First 1)) {
-            return $true
+function Test-StaleOculusDashAfterCrash {
+    # Never infer disconnection from OculusDash alone. Fail closed if the
+    # evidence is missing or ambiguous, including while the Quest is in VR.
+    if (Get-Process -Name 'Starfield', 'vrcompositor', 'vrdashboard' -ErrorAction SilentlyContinue | Select-Object -First 1) { return $false }
+    $log = Get-ChildItem -LiteralPath (Join-Path $env:LOCALAPPDATA 'Oculus') -Filter 'Service_*.txt' -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    if (-not $log -or $log.LastWriteTimeUtc -lt [datetime]::UtcNow.AddSeconds(-35)) { return $false }
+    try {
+        $stream = [IO.File]::Open($log.FullName, 'Open', 'Read', 'ReadWrite')
+        try {
+            $count = [int][math]::Min($stream.Length, 1048576)
+            [void]$stream.Seek(-$count, 'End')
+            $bytes = [byte[]]::new($count)
+            $read = $stream.Read($bytes, 0, $count)
+            $tail = [Text.Encoding]::UTF8.GetString($bytes, 0, $read)
+        } finally { $stream.Dispose() }
+        $hmd = [regex]::Matches($tail, "(?m)(\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{3}).*?HMD Reporting state change: \{'State':'([^']+)','IsDetected':([01])")
+        if ($hmd.Count -lt 2) { return $false }
+        foreach ($item in $hmd) {
+            if ($item.Groups[2].Value -ne 'NotDetected' -or $item.Groups[3].Value -ne '0') { return $false }
         }
+        $year = [datetime]::Now.Year
+        $first = [datetime]::ParseExact("$year/$($hmd[0].Groups[1].Value)", 'yyyy/dd/MM HH:mm:ss.fff', [globalization.cultureinfo]::InvariantCulture)
+        $last = [datetime]::ParseExact("$year/$($hmd[$hmd.Count - 1].Groups[1].Value)", 'yyyy/dd/MM HH:mm:ss.fff', [globalization.cultureinfo]::InvariantCulture)
+        if (($last - $first).TotalMinutes -lt 10 -or $last -lt [datetime]::Now.AddSeconds(-35)) { return $false }
+        # Any live wireless streaming transition keeps the VR guard engaged.
+        $session = [regex]::Matches($tail, 'oculus_xrs_session_state_transition previous_state: \w+ current_state: (\w+)[^\r\n]*?current_session_type: (\w+)')
+        if ($session.Count -eq 0) { return $false }
+        $latest = $session[$session.Count - 1]
+        if ($latest.Groups[2].Value -eq 'streaming') { return $false }
+        if ($latest.Groups[1].Value -notin @('Connected', 'Disconnected')) { return $false }
+        return $latest.Groups[2].Value -in @('basic', 'none')
+    } catch { return $false }
+}
+
+function Test-RealAirLinkActive {
+    # SteamVR processes always win. OculusDash alone can persist after a crash.
+    foreach ($name in @('vrcompositor', 'vrdashboard')) {
+        if (Get-Process -Name $name -ErrorAction SilentlyContinue | Select-Object -First 1) { return $true }
+    }
+    if (Get-Process -Name 'OculusDash' -ErrorAction SilentlyContinue | Select-Object -First 1) {
+        return -not (Test-StaleOculusDashAfterCrash)
     }
     return $false
 }
@@ -325,11 +359,15 @@ function Get-FlatGameSignal {
 }
 
 function Get-GamingSignal {
+    param([switch]$ThrottleFlatGameScan)
+
     $airLink = Get-AirLinkSignal
 
     # Headset detection is the highest-priority signal. Do not spend the first
     # protection cycle walking every desktop process before evicting local AI.
     if ($airLink.active) {
+        # Never reuse a stale desktop game scan after a headset transition.
+        if ($ThrottleFlatGameScan) { $script:cachedFlatGameSignal = $null }
         return [pscustomobject]@{
             active = $true
             airLinkActive = $true
@@ -346,7 +384,19 @@ function Get-GamingSignal {
         }
     }
 
-    $flatGame = Get-FlatGameSignal
+    # Only Watch may reuse a bounded idle inventory. Explicit reconcile/prepare
+    # actions always obtain fresh process proof.
+    if ($ThrottleFlatGameScan) {
+        $scanAt = Get-Date
+        if ($null -eq $script:cachedFlatGameSignal -or
+            ($scanAt - $script:lastFlatGameScanAt).TotalSeconds -ge $script:flatGameScanIntervalSeconds) {
+            $script:cachedFlatGameSignal = Get-FlatGameSignal
+            $script:lastFlatGameScanAt = Get-Date
+        }
+        $flatGame = $script:cachedFlatGameSignal
+    } else {
+        $flatGame = Get-FlatGameSignal
+    }
     return [pscustomobject]@{
         active = [bool]$flatGame.active
         airLinkActive = $false
@@ -1084,6 +1134,22 @@ function Invoke-CurrentReconcile {
     return Invoke-Reconcile -Signal $signal -Effective $effective -PriorState $prior
 }
 
+if ($Action -eq 'ObserveAdmission') {
+    # Fresh read-only admission for cooperative CPU workers. Leave the sole
+    # watcher/reconciler in charge of persisted state, leases and model actions.
+    # Do not call Resolve-EffectiveState: it can clear prepare-lease evidence.
+    $signal = Get-GamingSignal
+    [pscustomobject]@{
+        schemaVersion = 'stephanos.gaming-resource-admission-observation.v1'
+        observedAtUtc = [DateTime]::UtcNow.ToString('o')
+        signalActive = [bool]$signal.active
+        overrideMode = [string](Read-OverrideMode)
+        preparePending = [bool](Test-Path -LiteralPath $preparePath)
+        readOnly = $true
+    } | ConvertTo-Json -Depth 4
+    exit 0
+}
+
 if ($Action -eq 'SetAuto') {
     Write-OverrideMode -Mode 'AUTO' | Out-Null
     Invoke-CurrentReconcile | ConvertTo-Json -Depth 8
@@ -1138,6 +1204,11 @@ if ($Action -eq 'Reconcile') {
 
 $poll = [Math]::Max(250, $PollMilliseconds)
 $lastGuardAt = [DateTime]::MinValue
+# Retain fast real-headset detection and immediate AI-model eviction on every
+# watcher tick. Expensive all-process flat-game discovery is capped at 1/3s.
+$script:flatGameScanIntervalSeconds = 3
+$script:lastFlatGameScanAt = [DateTime]::MinValue
+$script:cachedFlatGameSignal = $null
 
 while ($true) {
     # First bite: headset presence wins over every other workload. If any Ollama
@@ -1145,7 +1216,7 @@ while ($true) {
     [void](Invoke-ImmediateVrModelEviction)
 
     $prior = Read-GovernorState
-    $signal = Get-GamingSignal
+    $signal = Get-GamingSignal -ThrottleFlatGameScan
     $effective = Resolve-EffectiveState -Signal $signal -PriorState $prior
     $now = Get-Date
     $phaseChanged = -not $prior -or [string]$prior.phase -ne [string]$effective.phase
@@ -1154,8 +1225,27 @@ while ($true) {
     $processChanged = -not $prior -or [string]$prior.gameProcessName -ne [string]$signal.gameProcessName
     $guardIntervalSeconds = if ($effective.active -and $effective.profile.parkAllModels) { 0.5 } else { 5 }
     $guardDue = $effective.active -and ($now - $lastGuardAt).TotalSeconds -ge $guardIntervalSeconds
+    # Keep an independently observed idle-state heartbeat fresh for bounded
+    # GPU/CPU model admission. Without this, Watch refreshes its JSON only on
+    # transitions. Core expires evidence at 15s (the reviewer at 30s), so
+    # refresh at 5s to leave room for observation and reconciliation latency.
+    # Do not extend consumer freshness limits or reuse an unobserved idle state.
+    # The watcher still scans game/headset signals on every tick BEFORE this.
+    $idleHeartbeatDue = $false
+    if (-not $effective.active) {
+        try {
+            $observedUtc = [DateTime]::Parse(
+                [string]$prior.updatedAtUtc,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [System.Globalization.DateTimeStyles]::RoundtripKind
+            ).ToUniversalTime()
+            $idleHeartbeatDue = ($now.ToUniversalTime() - $observedUtc).TotalSeconds -ge 5
+        } catch {
+            $idleHeartbeatDue = $true
+        }
+    }
 
-    if ($phaseChanged -or $reasonChanged -or $overrideChanged -or $processChanged -or $guardDue) {
+    if ($phaseChanged -or $reasonChanged -or $overrideChanged -or $processChanged -or $guardDue -or $idleHeartbeatDue) {
         $state = Invoke-Reconcile -Signal $signal -Effective $effective -PriorState $prior
         if ($state.active) { $lastGuardAt = $now }
     }

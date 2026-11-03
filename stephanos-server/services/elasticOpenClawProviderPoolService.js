@@ -1,3 +1,4 @@
+import { resolveStephanosNativeFocusedSourceFile } from '../../shared/agents/stephanosNativeFocusedTaskV1.mjs';
 import { readFile, readdir } from 'node:fs/promises';
 
 import { MAXIMUM_BUILD_LANES } from '../../shared/agents/elasticBuildCapacityV1.mjs';
@@ -30,12 +31,13 @@ const ALLOWED_EXTERNAL_ROUTES = new Set([
   MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
   MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
   MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
+  MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER,
   MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE,
   MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
   MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL,
 ]);
-const ALLOWED_EXTERNAL_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native', 'openclaw-standalone', 'openclaw-local']);
-const CURRENT_MISSION_WORKER_SOURCE_HANDOFF_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native', 'openclaw-standalone', 'openclaw-local']);
+const ALLOWED_EXTERNAL_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native', 'openclaw-standalone', 'openclaw-local']);
+const CURRENT_MISSION_WORKER_SOURCE_HANDOFF_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native', 'openclaw-standalone', 'openclaw-local']);
 const STEPHANOS_NATIVE_SOURCE_TASK_CLASS = CODEX_TASK_CLASS.FOCUSED_REPAIR;
 
 function text(value, fallback = '') {
@@ -294,9 +296,7 @@ export function resolveElasticExternalCapacityCandidates(
   const probe = routeCapacity({ ...baseInput, codexStatus: null, nativeRoutingCandidate: null });
   const taskClass = text(probe?.task?.taskClass).toUpperCase();
   const singleFileNativeMission = taskClass === STEPHANOS_NATIVE_SOURCE_TASK_CLASS
-    && Array.isArray(mission?.allowedFiles)
-    && mission.allowedFiles.length === 1
-    && text(mission.allowedFiles[0]);
+    && Boolean(resolveStephanosNativeFocusedSourceFile(mission?.allowedFiles));
   const nativeRoutingCandidate = singleFileNativeMission
     ? capacityRouting.nativeRoutingCandidatesByTaskClass?.[STEPHANOS_NATIVE_SOURCE_TASK_CLASS] ?? null
     : null;

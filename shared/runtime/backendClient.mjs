@@ -117,11 +117,14 @@ function createAbortController(timeoutMs, externalSignal) {
     controller.abort();
   }, resolvedTimeout);
 
-  if (externalSignal && typeof externalSignal.addEventListener === 'function') {
-    externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
-  }
-
-  return { controller, timeoutId };
+  const onAbort = () => controller.abort(externalSignal.reason);
+  externalSignal?.addEventListener('abort', onAbort, { once: true });
+  if (externalSignal?.aborted) onAbort();
+  const cleanup = () => {
+    clearTimeout(timeoutId);
+    externalSignal?.removeEventListener('abort', onAbort);
+  };
+  return { controller, cleanup };
 }
 
 function joinBackendUrl(baseUrl, path) {
@@ -173,7 +176,8 @@ export async function requestStephanosBackend({
     requestHeaders['Content-Type'] = 'application/json';
   }
 
-  const { controller, timeoutId } = createAbortController(timeoutMs, signal);
+  signal?.throwIfAborted();
+  const { controller, cleanup } = createAbortController(timeoutMs, signal);
 
   try {
     const response = await fetchImpl(url, {
@@ -227,6 +231,7 @@ export async function requestStephanosBackend({
       url,
     };
   } catch (error) {
+    signal?.throwIfAborted();
     diagnostics?.({
       ok: false,
       method,
@@ -246,7 +251,7 @@ export async function requestStephanosBackend({
     }
     throw error;
   } finally {
-    clearTimeout(timeoutId);
+    cleanup();
   }
 }
 

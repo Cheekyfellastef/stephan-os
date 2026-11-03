@@ -53,10 +53,14 @@ test('physical Mission Worker head cannot substitute for missing canonical-main 
     now: NOW,
     paths: PATHS,
     readProgrammeProjection: async () => ({ machineryInventory: { sourceHead: '' } }),
+    publishWorkerAction: async () => assert.fail('unproven canonical source cannot publish a worker action'),
   });
 
   assert.equal(result.ok, false);
-  assert.equal(result.classification, 'ELASTIC_IGNITION_SOURCE_REVISION_UNPROVEN');
+  assert.equal(result.classification, 'ELASTIC_GOAL_BUILD_DISPATCH_PARTIAL_BLOCKED');
+  assert.equal(result.dispatchCount, 0);
+  assert.deepEqual(result.dispatched, []);
+  assert.equal(result.resourceDisjointOneWriterProven, false);
   assert.equal(result.runtimeMutationAuthority, false);
   assert.equal(result.mergeAuthority, false);
 });

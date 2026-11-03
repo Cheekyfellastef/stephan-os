@@ -565,6 +565,15 @@
         nodes.mission.textContent = `VR workspace model failed to load: ${error.message}`;
       });
   </script>
+  <section id="vr-research-qa-live" aria-label="Live canonical VR Research participant" style="margin:18px;padding:16px;border:1px solid #2a4f87;border-radius:12px;background:#0b1730;color:#d9ecff">
+    <h2>VR Research participant · Canonical Q&amp;A</h2>
+    <label for="vr-research-qa-question">Question class</label>
+    <select id="vr-research-qa-question"><option value="SOURCE_STACK">Current source stack</option><option value="NEXT_EXPERIMENT">Next experiment</option><option value="EVIDENCE_PLANE">Evidence plane</option><option value="LICENCE_BOUNDARIES">Licence boundaries</option><option value="KNOWN_UNKNOWNS">Known unknowns</option></select>
+    <button id="vr-research-qa-refresh" type="button">Check canonical research</button>
+    <p id="vr-research-qa-state" role="status" aria-live="polite">Not checked yet</p>
+    <p id="vr-research-qa-answer"></p>
+  </section>
+  <script type="module" src="./vr-research-qa-live.js"></script>
   <script type="module" src="./vr-playtest-flywheel-feed.js"></script>
   <script type="module" src="./spatial-workspace-telemetry-feed.js"></script>
   <script type="module" src="./visual-knowledge-cockpit.js"></script>

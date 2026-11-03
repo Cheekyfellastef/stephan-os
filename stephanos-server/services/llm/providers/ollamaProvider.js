@@ -77,11 +77,13 @@ function inferOllamaReasoningProfile(request = {}) {
     || routeDecision?.conflictingEvidence === true
     || routeDecision?.upliftRequired === true
     || routeDecision?.reasoningPressure === 'uplift';
+  const sovereignRepairIntent = /\b(?:fix|repair|restore|self-heal|debug)\b.{0,160}\b(?:stephanos|goal builder|builder|controller|flywheel|daemon|openclaw)\b|\b(?:stephanos|goal builder|builder|controller|flywheel|daemon|openclaw)\b.{0,160}\b(?:fix|repair|restore|self-heal|debug)\b/i.test(userText);
   const explicitDeepReasoning = /\b(deep|hard|multi[- ]step|architecture|root cause|debug plan|escalate)\b/i.test(userText)
     || routeDecision?.selectedAnswerMode === 'deep-local'
     || routeDecision?.localReasoningTier === 'deep'
     || routeDecision?.operatorDeepReasoning === true
-    || evidenceDrivenEscalation;
+    || evidenceDrivenEscalation
+    || sovereignRepairIntent;
   const explicitLightweight = /\b(quick|brief|tiny|short answer|minimal)\b/i.test(userText)
     || routeDecision?.localReasoningTier === 'lightweight';
   const complexitySignals = [
@@ -97,6 +99,8 @@ function inferOllamaReasoningProfile(request = {}) {
     promptWordCount: userText ? userText.split(/\s+/).filter(Boolean).length : 0,
     explicitDeepReasoning,
     explicitLightweight,
+    evidenceDrivenEscalation,
+    sovereignRepairIntent,
     autoEscalate,
     preferredTier: explicitLightweight
       ? 'lightweight'
@@ -188,7 +192,9 @@ function chooseOllamaModel({
     ollamaLoadMode: String(config?.ollamaLoadMode || 'balanced').trim().toLowerCase(),
     requestedModel: selectedModel,
     prompt: String(latestUserMessage?.content || ''),
-    forceHeavyModel: config?.forceHeavyModel === true,
+    forceHeavyModel: config?.forceHeavyModel === true
+      || (String(config?.ollamaLoadMode || 'balanced').trim().toLowerCase() === 'balanced'
+        && (profile.evidenceDrivenEscalation || profile.sovereignRepairIntent)),
     availableModels: available,
   });
 

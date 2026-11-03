@@ -25,7 +25,7 @@ function conveyorResult(overrides = {}) {
     elasticIgnition: {
       availableSlots: 1,
       dispatchCount: 1,
-      dispatched: [{ missionId: 'mission-b' }],
+      dispatched: [{ missionId: 'mission-b', pickupProven: true, pickupProofRef: 'workspace:receipts/mission-b.json' }],
       held: [],
     },
     workerRuntimeHold: false,
@@ -69,6 +69,8 @@ test('Sovereign fleet-goal supervisor delegates directly to canonical scheduler/
   }]);
   assert.equal(result.ok, true);
   assert.equal(result.dispatchCount, 1);
+  assert.equal(result.pickupPendingCount, 0);
+  assert.equal(result.provenPickupCount, 1);
   assert.equal(result.runningMissionCount, 1);
   assert.equal(result.programmeStatus, 'READY');
   assert.equal(result.commanderParityHealthy, true);
@@ -84,6 +86,44 @@ test('Sovereign fleet-goal supervisor delegates directly to canonical scheduler/
   assert.equal(result.duplicateLeaseAllowed, false);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_DISPATCHED');
+});
+
+test('published grants without receipt-bound pickup remain non-green and request repair', async () => {
+  for (const unproven of [
+    { missionId: 'mission-b', pickupProven: false },
+    { missionId: 'mission-b', pickupProven: true },
+  ]) {
+    const result = await runSupervisor({
+      conveyor: async () => conveyorResult({
+        elasticIgnition: {
+          availableSlots: 1, dispatchCount: 1, dispatched: [unproven], held: [],
+        },
+      }),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.dispatchCount, 1);
+    assert.equal(result.provenPickupCount, 0);
+    assert.equal(result.pickupPendingCount, 1);
+    assert.equal(result.daemonMayReportGreen, false);
+    assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PICKUP_PENDING');
+    assert.equal(result.mergeAuthority, false);
+  }
+});
+
+test('unavailable native event feed cannot produce idle green despite unrelated dispatch', async () => {
+  const result = await runSupervisor({
+    conveyor: async () => conveyorResult(),
+    reconcileCommanderParity: async () => parityResult({
+      nativeGapSourceHealth: 'DEGRADED',
+      capabilityCompiler: { buildableCapabilityCount: 0, nativeGapCandidateCount: 0 },
+    }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.dispatchCount, 1);
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.zeroGapInvariantSatisfied, false);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_INTAKE_UNVERIFIED');
+  assert.equal(result.mergeAuthority, false);
 });
 
 test('one-minute supervisor contains no synchronous provider refresh or source-build execution path', () => {
@@ -201,4 +241,284 @@ test('one-minute supervisor reconciles Remote Commander capability parity before
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_PENDING');
   assert.equal(result.duplicateSchedulerAllowed, false);
   assert.equal(result.sourceMutationDelegatedToMissionWorker, true);
+});
+
+test('native Sovereign skill gaps cannot be reported as green idle or as a proven builder pickup', async () => {
+  for (const dispatchCount of [0, 1]) {
+    const result = await runSupervisor({
+      reconcileCommanderParity: async () => parityResult({
+        buildableGapCount: 0,
+        capabilityCompiler: {
+          buildableCapabilityCount: 1,
+          nativeGapCandidateCount: 1,
+          skillForgeCandidates: [{ status: 'DRAFT', activationAllowed: false }],
+          automaticCapabilityConstructionAllowed: false,
+        },
+      }),
+      conveyor: async () => conveyorResult({
+        elasticAdmission: { activeMissions: [], runnableMissions: [] },
+        elasticIgnition: { availableSlots: 3, dispatchCount, dispatched: [], held: [] },
+      }),
+    });
+    assert.equal(result.ok, true, 'observation completed, not construction');
+    assert.equal(result.capabilityParityBuildableGapCount, 0);
+    assert.equal(result.capabilityCompilerWorkCount, 1);
+    assert.equal(result.capabilityWorkRemainingCount, 1);
+    assert.equal(result.nativeCapabilityWorkPending, true);
+    assert.equal(result.zeroGapInvariantSatisfied, false);
+    assert.equal(result.capabilityParityClosureRequired, true);
+    assert.equal(result.daemonMayReportGreen, false);
+    assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_UPLIFT_PENDING');
+    assert.equal(result.sourceMutationDelegatedToMissionWorker, true);
+    assert.equal(result.mergeAuthority, false);
+  }
+});
+
+test('native drafts do not hide unresolved Remote Commander parity gaps', async () => {
+  const result = await runSupervisor({
+    reconcileCommanderParity: async () => parityResult({
+      buildableGapCount: 2,
+      capabilityCompiler: { buildableCapabilityCount: 3, nativeGapCandidateCount: 1 },
+    }),
+    conveyor: async () => conveyorResult({
+      elasticAdmission: { activeMissions: [], runnableMissions: [] },
+      elasticIgnition: { availableSlots: 3, dispatchCount: 0, dispatched: [], held: [] },
+    }),
+  });
+  assert.equal(result.capabilityWorkRemainingCount, 3);
+  assert.equal(result.nativeCapabilityWorkPending, true);
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.zeroGapInvariantSatisfied, false);
+  assert.equal(result.capabilityParityBuildableGapCount, 2);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_UPLIFT_PENDING');
+});
+
+test('parked backlog with all selected goals proven held routes exact repair causes, never false green', async () => {
+  const result = await runSupervisor({
+    conveyor: async () => conveyorResult({
+      classification: 'PARKED_BLOCKERS_ONLY',
+      elasticAdmission: {
+        ok: true,
+        classification: 'ELASTIC_GOAL_MISSIONS_HELD',
+        activeMissions: [],
+        runnableMissions: [],
+        held: [
+          { issueNumber: 1383, reason: 'EXISTING_GOAL_MISSION_TERMINAL_AWAITING_GOAL_RECONCILIATION' },
+          { issueNumber: 1645, reason: 'EXISTING_GOAL_MISSION_AWAITING_OPERATOR_APPROVAL' },
+        ],
+      },
+      elasticIgnition: null,
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'ELASTIC_GOALS_ALL_HELD_REPAIR_REQUIRED');
+  assert.equal(result.heldGoalCount, 2);
+  assert.deepEqual(result.heldIssues.map((issue) => issue.issueNumber), [1383, 1645]);
+  assert.equal(result.duplicateSchedulerAllowed, false);
+  assert.equal(result.mergeAuthority, false);
+});
+
+test('parked backlog without elastic admission is blocked, never falsely idle green', async () => {
+  const result = await runSupervisor({
+    conveyor: async () => conveyorResult({
+      classification: 'PARKED_BLOCKERS_ONLY',
+      elasticAdmission: null,
+      elasticIgnition: null,
+      programmeStatus: 'HOLD',
+      programmeBlockers: ['phase-lease-reconciliation-blocked', 'source-mutation-proof-missing'],
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'ELASTIC_GOAL_ADMISSION_NOT_PROVEN');
+  assert.equal(result.programmeStatus, 'HOLD');
+  assert.deepEqual(result.programmeBlockers, ['phase-lease-reconciliation-blocked', 'source-mutation-proof-missing']);
+  assert.equal(result.elasticAdmissionPresent, false);
+  assert.equal(result.elasticIgnitionPresent, false);
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_BLOCKED');
+});
+
+test('one-minute supervisor never calls an authoritative programme HOLD healthy idle', async () => {
+  const result = await runSupervisor({
+    conveyor: async () => conveyorResult({
+      programmeStatus: 'HOLD',
+      programmeBlockers: ['SOURCE_MUTATION_LEASE_HELD'],
+      elasticAdmission: { activeMissions: [], runnableMissions: [] },
+      elasticIgnition: { availableSlots: 4, dispatchCount: 0, dispatched: [], held: [] },
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.blocker, 'CANONICAL_PROGRAMME_HOLD_REPAIR_REQUIRED');
+  assert.deepEqual(result.programmeBlockers, ['SOURCE_MUTATION_LEASE_HELD']);
+  assert.equal(result.duplicateSchedulerAllowed, false);
+  assert.equal(result.mergeAuthority, false);
+});
+
+test('one-minute supervisor never treats unavailable Commander parity as zero known gaps', async () => {
+  const result = await runSupervisor({
+    reconcileCommanderParity: async () => ({
+      ok: false,
+      blocker: 'SOVEREIGN_PARITY_LEDGER_STALE',
+      buildableGapCount: 0,
+    }),
+    conveyor: async () => conveyorResult({
+      elasticAdmission: { activeMissions: [], runnableMissions: [] },
+      elasticIgnition: { availableSlots: 4, dispatchCount: 0, dispatched: [], held: [] },
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.blocker, 'SOVEREIGN_PARITY_LEDGER_STALE');
+  assert.equal(result.commanderParityHealthy, false);
+  assert.equal(result.duplicateLeaseAllowed, false);
+});
+
+test('Sovereign supervisor carries exact read-only admission-gate cause on a held conveyor', async () => {
+  const admissionGate = {
+    schemaVersion: 'stephanos.elastic-admission-gate-observation.v1',
+    admissionPreflightEligible: false,
+    blocker: 'AUTHORITATIVE_PROGRAMME_HOLD',
+    programmeStatus: 'HOLD',
+    programmeBlockers: ['source-mutation-lease-held'],
+    canonicalOwner: '#2961',
+    sourceMutationAllowed: false,
+    leaseOverrideAllowed: false,
+    mergeAuthority: false,
+  };
+  const result = await runSupervisor({
+    conveyor: async () => conveyorResult({
+      classification: 'PARKED_BLOCKERS_ONLY',
+      programmeStatus: 'HOLD',
+      programmeBlockers: ['source-mutation-lease-held'],
+      elasticAdmission: null,
+      elasticIgnition: null,
+      elasticAdmissionGate: admissionGate,
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'ELASTIC_GOAL_ADMISSION_NOT_PROVEN');
+  assert.equal(result.elasticAdmissionGate.blocker, 'AUTHORITATIVE_PROGRAMME_HOLD');
+  assert.equal(result.elasticAdmissionGate.canonicalOwner, '#2961');
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.mergeAuthority, false);
+});
+
+test('Sovereign supervisor reports exact guarded stale review lease hold instead of generic admission error', async () => {
+  const result = await runSupervisor({
+    conveyor: async () => conveyorResult({
+      classification: 'PARKED_BLOCKERS_ONLY',
+      programmeStatus: 'HOLD',
+      programmeBlockers: ['lane:elastic-lease-expired-or-not-active'],
+      elasticAdmission: null,
+      elasticIgnition: null,
+      elasticReviewLeaseRecovery: {
+        ok: false, released: false,
+        blocker: 'NONTERMINAL_REVIEW_EXECUTION_RECEIPT',
+        leaseSeizureAllowed: false, mergeAuthority: false,
+      },
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'NONTERMINAL_REVIEW_EXECUTION_RECEIPT');
+  assert.equal(result.elasticReviewLeaseRecovery.released, false);
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.mergeAuthority, false);
+});
+
+test('post-lease READY programme with failed elastic admission reports the typed cause, not a generic retry blocker', async () => {
+  for (const [classification, expectedBlocker] of [
+    ['ELASTIC_GOAL_ADMISSION_SAFE_HOLD', 'ELASTIC_GOAL_ADMISSION_SAFE_HOLD'],
+    ['ELASTIC_GOAL_ADMISSION_DIAGNOSTIC_FAILED', 'ELASTIC_GOAL_ADMISSION_DIAGNOSTIC_FAILED'],
+    ['UNKNOWN_ADMISSION_CLASSIFICATION', 'ELASTIC_GOAL_ADMISSION_FAILED'],
+  ]) {
+    const result = await runSupervisor({
+      conveyor: async () => conveyorResult({
+        classification: 'PARKED_BLOCKERS_ONLY',
+        programmeStatus: 'READY',
+        programmeBlockers: [],
+        elasticAdmission: {
+          ok: false,
+          classification,
+          reason: 'SCHEDULER_ELASTIC_ADMISSION_NOT_PROVEN',
+        },
+        elasticIgnition: null,
+      }),
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, expectedBlocker);
+    assert.equal(result.elasticAdmissionClassification, classification);
+    assert.equal(result.elasticAdmissionReasonCode, 'SCHEDULER_ELASTIC_ADMISSION_NOT_PROVEN');
+    assert.equal(result.daemonMayReportGreen, false);
+    assert.equal(result.duplicateLeaseAllowed, false);
+    assert.equal(result.sourceMutationDelegatedToMissionWorker, true);
+  }
+});
+
+test('missing claimable mission is not silently recast as success or an unknown preflight', async () => {
+  const result = await runSupervisor({
+    conveyor: async () => conveyorResult({
+      classification: 'PARKED_BLOCKERS_ONLY',
+      programmeStatus: 'READY',
+      programmeBlockers: [],
+      elasticAdmission: {
+        ok: true,
+        classification: 'ELASTIC_GOAL_MISSIONS_HELD',
+        activeMissions: [],
+        runnableMissions: [],
+        held: [],
+      },
+      elasticIgnition: null,
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'ELASTIC_GOAL_MISSIONS_HELD_WITHOUT_CLAIMABLE_WORK');
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.duplicateSchedulerAllowed, false);
+});
+
+test('admission diagnostic never exposes arbitrary local exception paths via supervisor receipts', async () => {
+  const result = await runSupervisor({
+    conveyor: async () => conveyorResult({
+      classification: 'PARKED_BLOCKERS_ONLY',
+      programmeStatus: 'READY',
+      programmeBlockers: [],
+      elasticAdmission: {
+        ok: false,
+        classification: 'ELASTIC_GOAL_ADMISSION_DIAGNOSTIC_FAILED',
+        reason: 'ENOENT C:\\\\Users\\\\somebody\\\\private-keys',
+      },
+      elasticIgnition: null,
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.elasticAdmissionReasonCode, '');
+  assert.equal(JSON.stringify(result).includes('private-keys'), false);
+  assert.equal(result.daemonMayReportGreen, false);
+});
+
+
+test('more pending native proposals than compiler slots never resolve to idle green', async () => {
+  for (const dispatchCount of [0, 2]) {
+    const result = await runSupervisor({
+      reconcileCommanderParity: async () => parityResult({
+        nativeGapSourceHealth: 'VALIDATED',
+        nativeGapIntake: { candidateTotalCount: 5, retainedCount: 5, candidateCount: 2 },
+        capabilityCompiler: { buildableCapabilityCount: 0 },
+      }),
+      conveyor: async () => conveyorResult({
+        elasticAdmission: { activeMissions: [], runnableMissions: [] },
+        elasticIgnition: { availableSlots: 3, dispatchCount, dispatched: [], held: [] },
+      }),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.nativeGapCandidateTotalCount, 5);
+    assert.equal(result.capabilityWorkRemainingCount, 5);
+    assert.equal(result.nativeCapabilityWorkPending, true);
+    assert.equal(result.capabilityParityClosureRequired, true);
+    assert.equal(result.daemonMayReportGreen, false);
+    assert.equal(result.zeroGapInvariantSatisfied, false);
+    assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_UPLIFT_PENDING');
+    assert.equal(result.mergeAuthority, false);
+  }
 });

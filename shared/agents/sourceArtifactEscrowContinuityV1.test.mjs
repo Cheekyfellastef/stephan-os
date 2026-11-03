@@ -104,6 +104,21 @@ test('primary publisher failure immediately selects the next proven route withou
   assert.equal(result.preserveEscrow, true);
 });
 
+test('existing PR escrow cannot fail over to an app limited to create-branch authority', () => {
+  const createOnly = receipt(SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP,
+    ['CREATE_BLOBS', 'CREATE_TREE', 'CREATE_COMMIT', 'CREATE_BRANCH_REF']);
+  const result = buildSourceArtifactPublicationRecoveryV1({
+    nowUtc: NOW, escrow, canonicalRemote: remote, workspace,
+    failedRoutes: [SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT],
+    capabilities: { [SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP]: createOnly },
+  });
+  assert.equal(result.selectedRoute, SOURCE_PUBLICATION_ROUTE.NONE);
+  assert.equal(result.finalVerdict, 'SOURCE_PUBLICATION_CAPABILITY_PROBES_PENDING');
+  assert.equal(result.preserveEscrow, true);
+  assert.equal(result.rebuildRequired, false);
+  assert.equal(result.duplicateBranchAllowed, false);
+});
+
 test('canonical branch drift fails closed before publisher mutation', () => {
   const result = buildSourceArtifactPublicationRecoveryV1({ nowUtc: NOW, escrow, canonicalRemote: { ...remote, head: '9'.repeat(40) }, workspace, capabilities: { [SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP]: githubApp() } });
   assert.equal(result.finalVerdict, SOURCE_ARTIFACT_RECOVERY_STATE.BRANCH_DRIFTED);

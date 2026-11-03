@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
+import { FORGE_LIFEBOAT_WORKER_ID, MISSION_CONTROLLER_ROUTE } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
+import { withOriginalSourceAttemptMutationGuard } from './originalSourceAttemptFenceService.js';
 import { existsSync, rmSync, symlinkSync } from 'node:fs';
 import { lstat, readFile, realpath as fsRealpath, rm, writeFile } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import {
@@ -11,14 +13,18 @@ import {
   finalizeMissionWorkerQueueClaim,
 } from './missionOrchestratorWorkerConsumer.js';
 import { collectAgentWorkerResult } from './missionOrchestratorWorkerService.js';
-import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
+import { captureSourceArtifactIdentityFromWorktreeV1, finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
+import { analyzeImportStructureInSource } from '../../scripts/guard-import-structure.mjs';
+import { projectGoalTestContextPathsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
+import { requestBoundedOllamaJsonReplyV1 } from '../../shared/ai/boundedOllamaJsonReplyV1.mjs';
+import { createLocalBuilderModelRequestV1 } from '../../shared/ai/localBuilderModelRequestV1.mjs';
 import {
   readGithubGoalIssue,
   resolveGithubTokenConfig,
 } from './githubPrEvidenceService.js';
 
 export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutral-source-builder.v1';
-const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github']);
+const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github', 'sovereign-commander']);
 
 // Source context caps
 const MAX_PER_FILE_BYTES = 64 * 1024; // 64 KiB
@@ -278,11 +284,71 @@ async function collectSourceSnapshots(worktreePath, allowedFiles, run, options =
     }
     const bytes = await readFileImpl(absolutePath);
     if (bytes.length > MAX_PER_FILE_BYTES) continue;
-    if (totalBytes + bytes.length > MAX_TOTAL_BYTES) continue;
+    if (totalBytes + bytes.length > Math.min(MAX_TOTAL_BYTES, options.maxContextBytes ?? MAX_TOTAL_BYTES)) continue;
     totalBytes += bytes.length;
     snapshot.push(Object.freeze({ path, content: bytes.toString('utf8') }));
   }
   return Object.freeze(snapshot);
+}
+
+async function hydrateStructuredEditTargetSnapshots(worktreePath, edits, allowedFiles, sourceSnapshots, options = {}) {
+  const hydrated = [...(Array.isArray(sourceSnapshots) ? sourceSnapshots : [])];
+  const known = new Set(hydrated.map((entry) => normalizePath(entry?.path)).filter(Boolean));
+  const requested = [...new Set((Array.isArray(edits) ? edits : [])
+    .map((edit) => normalizePath(edit?.path))
+    .filter(Boolean))].sort();
+  const missing = requested.filter((path) => !known.has(path));
+  if (!missing.length) return Object.freeze(hydrated);
+  const outsideScope = missing.find((path) => path.includes('..') || !pathAllowed(path, allowedFiles));
+  if (outsideScope) {
+    throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${outsideScope || 'invalid-path'}`);
+  }
+
+  const run = options.runCommand || defaultRun;
+  const tracked = run(
+    'git.exe',
+    ['-C', worktreePath, 'ls-files', '-z', '--', ...missing],
+    { cwd: worktreePath },
+  );
+  if (tracked.error || tracked.status !== 0) {
+    throw new Error('PROVIDER_NEUTRAL_SOURCE_CONTEXT_TRACKED_QUERY_FAILED');
+  }
+  const trackedPaths = new Set(String(tracked.stdout || '').split('\0').map(normalizePath).filter(Boolean));
+  const untracked = missing.find((path) => !trackedPaths.has(path)
+    && edits.some((edit) => normalizePath(edit?.path) === path && edit?.old !== ''));
+  if (untracked) {
+    throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_TARGET_NOT_TRACKED:${untracked}`);
+  }
+
+  const lstatImpl = options.sourceContextLstatImpl || lstat;
+  const realpathImpl = options.sourceContextRealpathImpl || fsRealpath;
+  const readFileImpl = options.sourceContextReadFileImpl || readFile;
+  const worktreeRealpath = await realpathImpl(worktreePath);
+
+  // Absent new-file targets use the existing scoped creation path. Hydrate
+  // tracked replacement targets without reclassifying existing ignored files.
+  for (const path of missing.filter((entry) => trackedPaths.has(entry))) {
+    if (path.includes('..') || !pathAllowed(path, allowedFiles)) {
+      throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${path || 'invalid-path'}`);
+    }
+    const absolutePath = resolve(worktreePath, path);
+    const fileStat = await lstatImpl(absolutePath);
+    if (fileStat?.isSymbolicLink?.() === true) {
+      throw new Error(`PROVIDER_NEUTRAL_SOURCE_CONTEXT_SYMLINK_REJECTED:${path}`);
+    }
+    const fileRealpath = await realpathImpl(absolutePath);
+    const rel = relative(worktreeRealpath, fileRealpath);
+    if (rel.startsWith('..') || isAbsolute(rel)) {
+      throw new Error(`PROVIDER_NEUTRAL_SOURCE_CONTEXT_PATH_ESCAPE:${path}`);
+    }
+    const bytes = await readFileImpl(absolutePath);
+    if (bytes.length > MAX_PER_FILE_BYTES) {
+      throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTEXT_TOO_LARGE:${path}`);
+    }
+    hydrated.push(Object.freeze({ path, content: bytes.toString('utf8') }));
+    known.add(path);
+  }
+  return Object.freeze(hydrated);
 }
 
 function normalizeStructuredEdits(edits, allowedFiles, sourceSnapshots) {
@@ -309,11 +375,29 @@ function normalizeStructuredEdits(edits, allowedFiles, sourceSnapshots) {
     if (!path || path.includes('..') || !pathAllowed(path, allowedFiles)) {
       throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${path || 'invalid-path'}`);
     }
-    if (!snapshots.has(path)) {
+    const snapshotBacked = snapshots.has(path);
+    if (oldText === null || newText === null || oldText === newText) {
+      throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:${path}`);
+    }
+    if (snapshotBacked && oldText.length === 0) {
+      throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:${path}`);
+    }
+    if (!snapshotBacked && oldText.length > 0) {
       throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTEXT_REQUIRED:${path}`);
     }
-    if (oldText === null || newText === null || oldText.length === 0 || oldText === newText) {
+    if (!snapshotBacked && newText.length === 0) {
       throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:${path}`);
+    }
+    // Reject the observed EOF-only response inside the existing bounded model
+    // retry, before mutation/tests. Do not trim arbitrary source or string data.
+    const content = snapshots.get(path)?.content;
+    if (typeof content === 'string' && content.endsWith(oldText)
+      && content.indexOf(oldText) === content.lastIndexOf(oldText)
+      && newText.startsWith(oldText)) {
+      const suffix = newText.slice(oldText.length);
+      if (/^[\t \r\n]+$/.test(suffix) && /\r?\n[\t ]*\r?\n[\t \r\n]*$/.test(content + suffix)) {
+        throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:${path}`);
+      }
     }
     totalBytes += Buffer.byteLength(oldText, 'utf8') + Buffer.byteLength(newText, 'utf8');
     if (totalBytes > MAX_STRUCTURED_EDIT_BYTES) {
@@ -329,7 +413,8 @@ async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, option
   const realpathImpl = options.sourceContextRealpathImpl || fsRealpath;
   const readFileImpl = options.sourceContextReadFileImpl || readFile;
   const writeFileImpl = options.sourceContextWriteFileImpl || writeFile;
-  const worktreeRealpath = await realpathImpl(worktreePath);
+  const worktreeResolved = resolve(worktreePath);
+  const worktreeRealpath = await realpathImpl(worktreeResolved);
   const snapshotByPath = new Map(
     (Array.isArray(sourceSnapshots) ? sourceSnapshots : [])
       .map((entry) => [normalizePath(entry?.path), entry]),
@@ -340,8 +425,24 @@ async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, option
 
   for (const path of targetPaths) {
     const expected = snapshotByPath.get(path);
-    if (!expected) throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTEXT_REQUIRED:${path}`);
-    const absolutePath = resolve(worktreePath, path);
+    const absolutePath = resolve(worktreeResolved, path);
+    const lexicalRel = relative(worktreeResolved, absolutePath);
+    if (lexicalRel.startsWith('..') || isAbsolute(lexicalRel)) {
+      throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_PATH_ESCAPE:${path}`);
+    }
+    if (!expected) {
+      if (existsSync(absolutePath)) {
+        throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_NEW_FILE_ALREADY_EXISTS:${path}`);
+      }
+      const parentRealpath = await realpathImpl(dirname(absolutePath));
+      const parentRel = relative(worktreeRealpath, parentRealpath);
+      if (parentRel.startsWith('..') || isAbsolute(parentRel)) {
+        throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_PATH_ESCAPE:${path}`);
+      }
+      originalByPath.set(path, '');
+      rollbackSnapshot.push(Object.freeze({ path, existed: false, bytes: Buffer.alloc(0) }));
+      continue;
+    }
     const fileStat = await lstatImpl(absolutePath);
     if (fileStat?.isSymbolicLink?.() === true) {
       throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_SYMLINK_REJECTED:${path}`);
@@ -363,6 +464,13 @@ async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, option
   const nextByPath = new Map(originalByPath);
   for (const edit of edits) {
     const current = nextByPath.get(edit.path);
+    if (edit.old === '') {
+      if (current !== '') {
+        throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_ANCHOR_MISMATCH:${edit.path}`);
+      }
+      nextByPath.set(edit.path, edit.new);
+      continue;
+    }
     const first = current.indexOf(edit.old);
     const last = current.lastIndexOf(edit.old);
     if (first < 0 || first !== last) {
@@ -376,11 +484,20 @@ async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, option
 
   try {
     for (const path of targetPaths) {
-      await writeFileImpl(resolve(worktreePath, path), nextByPath.get(path), 'utf8');
+      const saved = rollbackSnapshot.find((entry) => entry.path === path);
+      await writeFileImpl(
+        resolve(worktreePath, path),
+        nextByPath.get(path),
+        saved?.existed === false ? { encoding: 'utf8', flag: 'wx' } : 'utf8',
+      );
     }
   } catch (error) {
     for (const saved of rollbackSnapshot) {
-      await writeFile(resolve(worktreePath, saved.path), saved.bytes);
+      if (saved.existed === true) {
+        await writeFile(resolve(worktreePath, saved.path), saved.bytes);
+      } else {
+        await rm(resolve(worktreePath, saved.path), { force: true });
+      }
     }
     throw error;
   }
@@ -392,10 +509,14 @@ async function restoreStructuredEditSnapshot(worktreePath, snapshot, run) {
     .map((entry) => normalizePath(entry?.path))
     .filter(Boolean))].sort();
   for (const saved of Array.isArray(snapshot) ? snapshot : []) {
-    if (!saved?.path || saved.existed !== true || !Buffer.isBuffer(saved.bytes)) {
+    if (!saved?.path || ![true, false].includes(saved.existed) || !Buffer.isBuffer(saved.bytes)) {
       throw new Error('PROVIDER_NEUTRAL_STRUCTURED_EDIT_ROLLBACK_SNAPSHOT_INVALID');
     }
-    await writeFile(resolve(worktreePath, saved.path), saved.bytes);
+    if (saved.existed === true) {
+      await writeFile(resolve(worktreePath, saved.path), saved.bytes);
+    } else {
+      await rm(resolve(worktreePath, saved.path), { force: true });
+    }
   }
   const status = run(
     'git.exe',
@@ -421,9 +542,14 @@ async function loadAuthoritativeGoalContext(action = {}, claim = {}, options = {
     env: options.env || process.env,
     ghTokenProvider: options.ghTokenProvider,
   });
+  // Scheduler resource IDs are normalized to lowercase, while the existing
+  // canonical GitHub goal reader requires the repository's exact display casing.
+  // Verify the allowlisted identity before restoring that casing; never let a
+  // lookalike repository supply authoritative goal instructions to Forge.
+  if (`${repositoryMatch[1]}/${repositoryMatch[2]}`.toLowerCase() !== 'cheekyfellastef/stephan-os') return '';
   const issue = await readGithubGoalIssue({
-    owner: repositoryMatch[1],
-    repo: repositoryMatch[2],
+    owner: 'Cheekyfellastef',
+    repo: 'stephan-os',
     issueNumber,
     auth,
     ghTokenProvider: options.ghTokenProvider,
@@ -441,7 +567,7 @@ async function loadAuthoritativeGoalContext(action = {}, claim = {}, options = {
   return text(issue?.body).slice(0, MAX_GOAL_CONTEXT_BYTES);
 }
 
-function localBuilderPrompt(action = {}, sourceSnapshots = []) {
+function localBuilderPrompt(action = {}, sourceSnapshots = [], testSnapshots = []) {
   const sourceSnapshotsSection = sourceSnapshots.length
     ? `\nSource snapshots:\n${JSON.stringify(sourceSnapshots, null, 2)}\n`
     : '';
@@ -450,16 +576,21 @@ function localBuilderPrompt(action = {}, sourceSnapshots = []) {
         'Return JSON only with keys edits and summary.',
         'edits must be a non-empty array of objects with exactly path, old, and new string fields.',
         'Prefer structured edits for paths present in the supplied Source snapshots.',
-        'For structured edits, each path must be one of the supplied Source snapshots.',
-        'Each old value must be copied exactly from that source snapshot, be non-empty, and occur exactly once at the point it is applied.',
-        'new is the exact replacement text.',
-        'If the mission requires at least one allowed path absent from Source snapshots, you may instead return JSON with keys patch and summary.',
-        'That patch must be one git-compatible unified diff relative to the repository root and may include both snapshot-backed and unsnapshotted allowed paths needed for the bounded mission.',
+        'For an existing file, each path must be one of the supplied Source snapshots and old must be copied exactly from that snapshot, be non-empty, and occur exactly once at the point it is applied.',
+        'To create a new allowed file that is absent from Source snapshots, use old as the empty string and new as the complete file contents.',
+        'new is the exact replacement text or complete new-file contents.',
+        'For existing files, return compact edits using the smallest unique old-text anchors and only the replacement text. Do not copy unchanged functions or the whole file into old or new.',
+        'Keep the entire response within 8192 generated tokens; use a short summary and no explanations.',
+        'Do not return a unified diff when Source snapshots are supplied.',
       ]
     : [
-        'Return JSON only with keys patch and summary.',
-        'patch must be one git-compatible unified diff relative to the repository root.',
-        'Use patch mode only because no tracked source snapshot is available, for example a scoped new-file mission.',
+        'Return JSON only with keys edits and summary.',
+        'edits must be a non-empty array with exactly path, old, and new string fields.',
+        'There are no tracked source snapshots for this scope. Prefer creating one genuinely absent allowed file.',
+        'For each new file use old as the empty string and new as its complete, literal contents.',
+        'Never invent old contents or overwrite an existing, ignored, or protected file.',
+        'Do not hand-write a unified diff for a new file; the guarded structured-edit path handles creation.',
+        'A legacy JSON object with patch and summary is accepted only as a fallback for a valid git diff.',
       ];
   const goalContextSection = text(action.goalContext)
     ? `\nAuthoritative GitHub goal context:\n${text(action.goalContext)}\n`
@@ -471,15 +602,18 @@ function localBuilderPrompt(action = {}, sourceSnapshots = []) {
     `Intended outcome: ${text(action.intendedOutcome)}`,
     `Allowed source files: ${JSON.stringify(action.allowedFiles || [])}`,
     `Required tests: ${JSON.stringify(action.requiredTests || [])}`,
-    goalContextSection,
+    testSnapshots.length ? `Read-only required-test context (never permission to edit):\n${JSON.stringify(testSnapshots, null, 2)}` : '',
     sourceSnapshotsSection,
+    goalContextSection,
     'Source snapshots are bounded context and may omit allowed files; do not assume omitted files do not exist.',
     '',
     ...mutationInstructions,
     'Only modify paths allowed by Allowed source files.',
     'Do not modify .git, dependencies, runtime data, secrets, environment files, generated output or protected main.',
     'Do not commit, push, merge or create branches.',
-    'Make the smallest implementation that satisfies the intended outcome.',
+    goalContextSection ? 'Implement the concrete requirements in the Authoritative GitHub goal context above; keep the source change bounded.'
+      : 'Make the smallest implementation that satisfies the intended outcome.',
+    'Implement the requested behavior. Appending blank lines or returning unchanged code does not satisfy the task.',
   ].join('\n');
 }
 
@@ -494,18 +628,13 @@ function modelStructuredEditsContractValid(edits) {
       return typeof edit.path === 'string'
         && text(edit.path).length > 0
         && typeof edit.old === 'string'
-        && edit.old.length > 0
-        && typeof edit.new === 'string';
+        && typeof edit.new === 'string'
+        && (edit.old.length > 0 || edit.new.length > 0);
     });
 }
 
-function modelPatchFallbackAllowed(action = {}, sourceSnapshots = []) {
-  if (!sourceSnapshots.length) return true;
-  const snapshotPaths = new Set(sourceSnapshots.map((entry) => normalizePath(entry?.path)).filter(Boolean));
-  const exactAllowedPaths = (Array.isArray(action.allowedFiles) ? action.allowedFiles : [])
-    .map(normalizePath)
-    .filter((scope) => scope && scope !== '**' && !scope.endsWith('/**'));
-  return exactAllowedPaths.length === 0 || exactAllowedPaths.some((path) => !snapshotPaths.has(path));
+function modelPatchFallbackAllowed(_action = {}, sourceSnapshots = []) {
+  return sourceSnapshots.length === 0;
 }
 
 async function callLocalBuilder(action, options = {}) {
@@ -521,22 +650,14 @@ async function callLocalBuilder(action, options = {}) {
     : 'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING';
 
   for (let attempt = 1; attempt <= MAX_LOCAL_MODEL_ATTEMPTS; attempt += 1) {
+    const retryReason = text(finalError).replace(/[\r\n]/g, ' ').slice(0, 240);
     const retryInstruction = attempt > 1
-      ? '\nYour previous response did not satisfy the required machine-readable mutation contract. Return only the requested JSON object. Do not explain, apologize, or wrap it in Markdown.\n'
+      ? '\nYour previous response did not satisfy the required machine-readable mutation contract. Validator reason: ' + retryReason + '. Return only the requested JSON object with a corrected mutation. Do not explain, apologize, or wrap it in Markdown.\n'
       : '';
-    const response = await fetchImpl(endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        format: 'json',
-        messages: [{ role: 'user', content: localBuilderPrompt(action, sourceSnapshots) + retryInstruction }],
-        options: { temperature: 0.1 },
-      }),
-    });
-    if (!response.ok) throw new Error(`PROVIDER_NEUTRAL_MODEL_HTTP_${response.status}`);
-    const payload = await response.json();
+    const payload = await requestBoundedOllamaJsonReplyV1(endpoint, createLocalBuilderModelRequestV1({
+      model, patchFallbackAllowed,
+      prompt: localBuilderPrompt(action, sourceSnapshots, options.testSnapshots) + retryInstruction,
+    }), { fetchImpl });
     let parsed;
     try {
       parsed = JSON.parse(text(payload?.message?.content));
@@ -544,8 +665,17 @@ async function callLocalBuilder(action, options = {}) {
       finalError = 'PROVIDER_NEUTRAL_MODEL_RESULT_INVALID_JSON';
       continue;
     }
-    if (sourceSnapshots.length && modelStructuredEditsContractValid(parsed?.edits)) {
-      return { edits: parsed.edits, summary: text(parsed?.summary) };
+    // An empty snapshot set usually means a scoped file-creation goal, not a
+    // reason to force brittle model-authored unified diffs. The guarded
+    // structured-edit path already verifies absent targets, scope and rollback.
+    if (modelStructuredEditsContractValid(parsed?.edits)) {
+      try {
+        normalizeStructuredEdits(parsed.edits, action.allowedFiles, sourceSnapshots);
+        return { edits: parsed.edits, summary: text(parsed?.summary) };
+      } catch (error) {
+        finalError = text(error?.message, 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_INVALID');
+        continue;
+      }
     }
     const patch = typeof parsed?.patch === 'string' ? parsed.patch : '';
     if (patchFallbackAllowed && patch.startsWith('diff --git ')) return { patch, summary: text(parsed?.summary) };
@@ -759,6 +889,48 @@ async function claimExternal(options = {}) {
   return null;
 }
 
+
+export const PROVIDER_NEUTRAL_SOURCE_BUILD_PROPOSAL_SCHEMA = 'stephanos.provider-neutral-source-build-proposal.v1';
+// Only the explicit proposal entry can select this internal behavior. Serialized
+// options cannot turn ordinary legacy execution into a different authority lane.
+const SOURCE_BUILD_PROPOSAL_MODE = Symbol('source-build-proposal');
+
+function requireLocalOwnedSourceProposalClaim(claim) {
+  const item = claim?.item;
+  const action = item?.payload;
+  const grant = item?.actionGrant;
+  const same = key => text(grant?.[key]).toLowerCase() === text(action?.[key]).toLowerCase();
+  if (claim?.adapter !== 'foundry-forge' || item?.adapter !== 'foundry-forge'
+      || item?.schemaVersion !== 'stephanos.mission-worker-queue-item.v1'
+      || action?.adapter !== 'foundry-forge' || action?.actionKind !== 'agent-handoff'
+      || grant?.schemaVersion !== 'stephanos.mission-worker-action-grant.v1'
+      || grant.adapter !== 'foundry-forge' || grant.actionKind !== 'agent-handoff'
+      || grant.capacityRoute !== MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE
+      || grant.workerId !== FORGE_LIFEBOAT_WORKER_ID
+      || grant.boundedActionCount !== 1 || grant.mergeAuthority !== false
+      || grant.leaseSeizureAllowed !== false || !text(claim.processingPath)
+      || !text(action.missionId) || !text(action.actionId)
+      || !same('missionId') || !same('actionId') || !same('repository')
+      || text(item.missionId).toLowerCase() !== text(action.missionId).toLowerCase()
+      || text(item.actionId).toLowerCase() !== text(action.actionId).toLowerCase()
+      || text(grant.branch) !== text(action.branch)
+      || text(action.repository).toLowerCase() !== 'cheekyfellastef/stephan-os'
+      || !/^[a-f0-9]{40}$/.test(text(grant.sourceRevision).toLowerCase())) {
+    throw new Error('PROVIDER_NEUTRAL_LOCAL_SOURCE_PROPOSAL_CLAIM_REQUIRED');
+  }
+}
+
+// Data producer for an ALREADY-OWNED parent claim, not a claim/qualification API.
+// The fixed native driver and original parent remain responsible for authentic
+// admission, native lifetime, original ownership, scope/test binding and CAS.
+export async function produceProviderNeutralSourceBuildProposalV1(claim, options = {}) {
+  if (typeof options.runCommand !== 'function') {
+    throw new Error('PROVIDER_NEUTRAL_SOURCE_PROPOSAL_BOUNDED_RUNNER_REQUIRED');
+  }
+  requireLocalOwnedSourceProposalClaim(claim);
+  return runClaimedProviderNeutralSourceBuild(claim, options, SOURCE_BUILD_PROPOSAL_MODE);
+}
+
 export async function processNextProviderNeutralSourceBuild(options = {}) {
   const pendingQueueDiagnostics = [];
   const claim = await claimExternal({
@@ -783,13 +955,22 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       finalVerdict: quarantined ? 'PROVIDER_NEUTRAL_PENDING_QUEUE_RECOVERY' : '',
     });
   }
+  return runClaimedProviderNeutralSourceBuild(claim, options);
+}
+
+async function runClaimedProviderNeutralSourceBuild(claim, options, mode) {
+  const proposalOnly = mode === SOURCE_BUILD_PROPOSAL_MODE;
   const action = claim.item?.payload || {};
   const worktreePath = text(action.worktreePath);
+  // Future native Job Object execution needs its own independent Windows
+  // specialist review. This quarantine-first PR keeps the existing builder
+  // command route, under its original lease and cancellation fences.
   const run = options.runCommand || defaultRun;
   const collectResult = options.collectAgentWorkerResult || collectAgentWorkerResult;
-  const completedAt = options.now instanceof Date ? options.now.toISOString() : new Date().toISOString();
+  let completedAt = '';
   let patchPath = '';
   let mutationApplied = false;
+  let mutationAttempted = false;
   let structuredEditsApplied = false;
   let patchRecountUsed = false;
   let succeeded = false;
@@ -798,6 +979,9 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
   let executionReceipt = null;
   let mutationSnapshot = [];
   let mutationEvidence = '';
+  const guardMutation = operation => withOriginalSourceAttemptMutationGuard(action.missionId, operation, {
+    env: options.env, missionStoreOptions: { root: options.root }, readMissionRecord: options.readMissionRecord,
+  });
   try {
     if (action.actionKind !== 'agent-handoff' || !EXTERNAL_ADAPTERS.includes(claim.adapter)) {
       throw new Error('PROVIDER_NEUTRAL_ACTION_NOT_SOURCE_BUILD');
@@ -805,7 +989,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     if (!worktreePath || !existsSync(worktreePath)) throw new Error('PROVIDER_NEUTRAL_WORKTREE_REQUIRED');
     if (!Array.isArray(action.allowedFiles) || action.allowedFiles.length === 0) throw new Error('PROVIDER_NEUTRAL_ALLOWED_FILES_REQUIRED');
 
-    executionReceipt = await beginMissionWorkerExecutionReceiptChain(claim, options);
+    if (!proposalOnly) executionReceipt = await beginMissionWorkerExecutionReceiptChain(claim, options);
 
     const startingChanges = changedFiles(worktreePath, run);
     if (startingChanges.length) throw new Error(`PROVIDER_NEUTRAL_WORKTREE_NOT_CLEAN:${startingChanges.join(',')}`);
@@ -834,89 +1018,160 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       run,
       { ...options, sourceContextHint },
     );
+    const testContextPaths = projectGoalTestContextPathsV1(action.requiredTests);
+    const testSnapshots = testContextPaths.length ? await collectSourceSnapshots(
+      worktreePath, testContextPaths, run, { ...options, sourceContextHint, maxContextBytes: 16 * 1024 },
+    ) : [];
     providerInvoked = true;
     const generated = await callLocalBuilder(
       { ...sourceBuildAction, goalContext },
-      { ...options, sourceSnapshots },
+      { ...options, sourceSnapshots, testSnapshots },
     );
     providerCompleted = true;
+    const { finalized, receipt, sourceTestReceipts, proposalExecution, proposalIdentity } = await guardMutation(async () => {
 
-    if (Array.isArray(generated.edits)) {
-      const edits = normalizeStructuredEdits(generated.edits, sourceBuildAction.allowedFiles, sourceSnapshots);
-      mutationSnapshot = await applyStructuredEdits(worktreePath, edits, sourceSnapshots, options);
-      mutationEvidence = JSON.stringify(edits);
-      structuredEditsApplied = true;
-      mutationApplied = true;
-    } else {
-      const patch = typeof generated.patch === 'string' ? generated.patch : '';
-      mutationSnapshot = await snapshotPatchTargets(worktreePath, patch, sourceBuildAction.allowedFiles);
-      patchPath = text(claim.processingPath)
-        ? claim.processingPath + '.provider-neutral.patch'
-        : resolve(worktreePath, '..', `.stephanos-${text(action.actionId, 'source-build')}.patch`);
-      await writeFile(patchPath, patch, { encoding: 'utf8', flag: 'wx' });
-
-      let applyArgs = ['-C', worktreePath, 'apply', '--whitespace=error-all', patchPath];
-      let check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--whitespace=error-all', patchPath], { cwd: worktreePath });
-      if (check.error || check.status !== 0) {
-        const recountCheck = run(
-          'git.exe',
-          ['-C', worktreePath, 'apply', '--recount', '--check', '--whitespace=error-all', patchPath],
-          { cwd: worktreePath },
+      if (Array.isArray(generated.edits)) {
+        const structuredEditSnapshots = await hydrateStructuredEditTargetSnapshots(
+          worktreePath,
+          generated.edits,
+          sourceBuildAction.allowedFiles,
+          sourceSnapshots,
+          options,
         );
-        if (recountCheck.error || recountCheck.status !== 0) {
-          throw new Error(`PROVIDER_NEUTRAL_PATCH_CHECK_FAILED:${text(recountCheck.stderr || recountCheck.stdout || check.stderr || check.stdout)}`);
+        const edits = normalizeStructuredEdits(generated.edits, sourceBuildAction.allowedFiles, structuredEditSnapshots);
+        mutationAttempted = true;
+        mutationSnapshot = await applyStructuredEdits(worktreePath, edits, structuredEditSnapshots, options);
+        mutationEvidence = JSON.stringify(edits);
+        structuredEditsApplied = true;
+        mutationApplied = true;
+      } else {
+        const patch = typeof generated.patch === 'string' ? generated.patch : '';
+        mutationSnapshot = await snapshotPatchTargets(worktreePath, patch, sourceBuildAction.allowedFiles);
+        patchPath = text(claim.processingPath)
+          ? claim.processingPath + '.provider-neutral.patch'
+          : resolve(worktreePath, '..', `.stephanos-${text(action.actionId, 'source-build')}.patch`);
+        await writeFile(patchPath, patch, { encoding: 'utf8', flag: 'wx' });
+
+        let applyArgs = ['-C', worktreePath, 'apply', '--whitespace=error-all', patchPath];
+        let check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--whitespace=error-all', patchPath], { cwd: worktreePath });
+        if (check.error || check.status !== 0) {
+          const recountCheck = run(
+            'git.exe',
+            ['-C', worktreePath, 'apply', '--recount', '--check', '--whitespace=error-all', patchPath],
+            { cwd: worktreePath },
+          );
+          if (recountCheck.error || recountCheck.status !== 0) {
+            throw new Error(`PROVIDER_NEUTRAL_PATCH_CHECK_FAILED:${text(recountCheck.stderr || recountCheck.stdout || check.stderr || check.stdout)}`);
+          }
+          check = recountCheck;
+          patchRecountUsed = true;
+          applyArgs = ['-C', worktreePath, 'apply', '--recount', '--whitespace=error-all', patchPath];
         }
-        check = recountCheck;
-        patchRecountUsed = true;
-        applyArgs = ['-C', worktreePath, 'apply', '--recount', '--whitespace=error-all', patchPath];
+        mutationAttempted = true;
+        const apply = run('git.exe', applyArgs, { cwd: worktreePath });
+        if (apply.error || apply.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_APPLY_FAILED:${text(apply.stderr || apply.stdout)}`);
+        mutationEvidence = patch;
+        mutationApplied = true;
       }
-      const apply = run('git.exe', applyArgs, { cwd: worktreePath });
-      if (apply.error || apply.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_APPLY_FAILED:${text(apply.stderr || apply.stdout)}`);
-      mutationEvidence = patch;
-      mutationApplied = true;
-    }
 
-    const files = changedFiles(worktreePath, run);
-    if (files.length === 0) throw new Error('PROVIDER_NEUTRAL_SOURCE_UNCHANGED');
-    const unsafe = files.filter((path) => !pathAllowed(path, sourceBuildAction.allowedFiles));
-    if (unsafe.length) throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`);
+      const files = changedFiles(worktreePath, run);
+      if (files.length === 0) throw new Error('PROVIDER_NEUTRAL_SOURCE_UNCHANGED');
+      const unsafe = files.filter((path) => !pathAllowed(path, sourceBuildAction.allowedFiles));
+      if (unsafe.length) throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`);
 
-    const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
-    const receipt = Object.freeze({
-      receiptId: `provider-neutral-source-${text(action.actionId)}`.slice(0, 128),
-      requirement: 'provider-neutral bounded source change',
-      source: claim.adapter,
-      evidenceType: 'source-mutation',
-      verified: true,
-      commandOutputHash: createHash('sha256').update(mutationEvidence).digest('hex'),
-      createdAt: completedAt,
+      // Reject structurally invalid generated modules before tests, signed escrow or GitHub PR publication.
+      // Run only on scoped changed JS sources to avoid rechecking the entire repository on every build.
+      for (const sourcePath of files) {
+        if (!/\.(?:mjs|js)$/i.test(sourcePath)) continue;
+        const source = await readFile(resolve(worktreePath, sourcePath), 'utf8');
+        const violations = analyzeImportStructureInSource(source, sourcePath);
+        if (violations.length) {
+          const first = violations[0];
+          throw new Error(`PROVIDER_NEUTRAL_IMPORT_STRUCTURE_INVALID:${first.file}:${first.reason}`);
+        }
+      }
+
+      const requiredTestReceipts = runRequiredTests(action, worktreePath, run, options);
+      // Newly owned regression files are additive evidence; never rewrite the
+      // immutable owner-required command identity to make them an oracle.
+      const ownedRegressionCommands = mutationSnapshot
+        .filter(saved => saved.existed === false && files.includes(saved.path)
+          && /\.(?:test|spec)\.(?:mjs|js)$/.test(saved.path))
+        .map(saved => 'node --test ' + saved.path);
+      const ownedRegressionReceipts = ownedRegressionCommands.length
+        ? runRequiredTests({ ...action, requiredTests: ownedRegressionCommands }, worktreePath, run, options) : [];
+      const sourceTestReceipts = Object.freeze([...requiredTestReceipts, ...ownedRegressionReceipts]);
+      // options.now is an admission snapshot, not the completion clock.
+      completedAt = new Date().toISOString();
+      const receipt = Object.freeze({
+        receiptId: `provider-neutral-source-${text(action.actionId)}`.slice(0, 128),
+        requirement: 'provider-neutral bounded source change',
+        source: claim.adapter,
+        evidenceType: 'source-mutation',
+        verified: true,
+        commandOutputHash: createHash('sha256').update(mutationEvidence).digest('hex'),
+        createdAt: completedAt,
+      });
+
+      const execution = Object.freeze({
+        success: true,
+        resultId: text(action.actionId),
+        changedFiles: Object.freeze(files),
+        completedAt,
+        receipt,
+        evidenceReceipts: sourceTestReceipts,
+        sourceTestReceipts,
+        ownedRegressionReceipts,
+        stage: 'TESTED',
+        testsPassed: true,
+        summary: generated.summary,
+      });
+      if (proposalOnly) {
+        const identity = await captureSourceArtifactIdentityFromWorktreeV1(action, execution, claim, {
+          ...options,
+          actionGrant: claim.item?.actionGrant || options.actionGrant,
+          runCommand: run,
+          repoRoot: options.repoRoot || action.repositoryRoot,
+        });
+        return { proposalExecution: execution, proposalIdentity: identity, receipt, sourceTestReceipts };
+      }
+      const finalized = await finalizeSourceArtifactEscrowFromWorktreeV1(
+        action,
+        execution,
+        claim,
+        {
+          ...options,
+          actionGrant: claim.item?.actionGrant || options.actionGrant,
+          runCommand: run,
+          repoRoot: options.repoRoot || action.repositoryRoot,
+        },
+      );
+      if (!finalized.sourceArtifactEscrow || !finalized.offlinePublicationOutbox) {
+        throw new Error('PROVIDER_NEUTRAL_OFFLINE_PUBLICATION_PRESERVATION_REQUIRED');
+      }
+      return { finalized, receipt, sourceTestReceipts };
     });
 
-    const execution = Object.freeze({
-      success: true,
-      resultId: text(action.actionId),
-      changedFiles: Object.freeze(files),
-      completedAt,
-      receipt,
-      evidenceReceipts: sourceTestReceipts,
-      sourceTestReceipts,
-      stage: 'TESTED',
-      testsPassed: true,
-      summary: generated.summary,
-    });
-    const finalized = await finalizeSourceArtifactEscrowFromWorktreeV1(
-      action,
-      execution,
-      claim,
-      {
-        ...options,
-        actionGrant: claim.item?.actionGrant || options.actionGrant,
-        runCommand: run,
-        repoRoot: options.repoRoot || action.repositoryRoot,
-      },
-    );
-    if (!finalized.sourceArtifactEscrow || !finalized.offlinePublicationOutbox) {
-      throw new Error('PROVIDER_NEUTRAL_OFFLINE_PUBLICATION_PRESERVATION_REQUIRED');
+    if (proposalOnly) {
+      succeeded = true;
+      return Object.freeze({
+        schemaVersion: PROVIDER_NEUTRAL_SOURCE_BUILD_PROPOSAL_SCHEMA,
+        processed: true,
+        success: true,
+        adapter: claim.adapter,
+        missionId: text(action.missionId),
+        actionId: text(action.actionId),
+        providerInvoked,
+        providerCompleted,
+        failureStage: '',
+        sourceState: 'SOURCE_CHANGED_TESTED_CAPTURED',
+        sourceInspection: Object.freeze({ known: true, error: '' }),
+        changedFiles: proposalExecution.changedFiles,
+        partialSourcePossible: false,
+        execution: proposalExecution,
+        sourceArtifactIdentity: proposalIdentity,
+        finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_PROPOSAL_READY',
+      });
     }
 
     await collectResult({
@@ -926,6 +1181,8 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       success: true,
       resultId: finalized.resultId,
       changedFiles: finalized.changedFiles,
+      sourceArtifactEscrow: finalized.sourceArtifactEscrow,
+      offlinePublicationOutbox: finalized.offlinePublicationOutbox,
       receipt,
       evidenceReceipts: sourceTestReceipts,
       error: '',
@@ -956,7 +1213,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
         options,
         {
           phase: 'provider-neutral-result-validated',
-          timestampUtc: completedAt,
+          timestampUtc: new Date().toISOString(),
           proofRefs: [receipt.receiptId, ...sourceTestReceipts.map((item) => item.receiptId)],
           expectedNextAction: 'Release/refill may consume this terminal receipt after canonical completion gates pass.',
         },
@@ -967,14 +1224,65 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     return completedResult;
   } catch (error) {
     let failure = error?.message || 'provider-neutral source build failed';
+
+    if (proposalOnly) {
+      let rollbackState = 'NOT_ATTEMPTED';
+      if (mutationApplied && !succeeded) {
+        try {
+          const rollbackPaths = changedFiles(worktreePath, run);
+          await guardMutation(async () => {
+            if (structuredEditsApplied) {
+              await restoreStructuredEditSnapshot(worktreePath, mutationSnapshot, run);
+            } else if (patchPath) {
+              await reverseAppliedPatch(worktreePath, patchPath, run, rollbackPaths, mutationSnapshot, patchRecountUsed);
+            }
+          });
+          rollbackState = 'RESTORED';
+        } catch (rollbackError) {
+          rollbackState = 'FAILED';
+          failure += ';' + (rollbackError?.message || 'PROVIDER_NEUTRAL_MUTATION_ROLLBACK_FAILED');
+        }
+      }
+      let observedFiles = null;
+      let inspectionError = '';
+      try { observedFiles = changedFiles(worktreePath, run); }
+      catch (inspectionFailure) {
+        inspectionError = inspectionFailure?.message || 'PROVIDER_NEUTRAL_SOURCE_INSPECTION_FAILED';
+      }
+      return Object.freeze({
+        schemaVersion: PROVIDER_NEUTRAL_SOURCE_BUILD_PROPOSAL_SCHEMA,
+        processed: true,
+        success: false,
+        adapter: claim.adapter,
+        missionId: text(action.missionId),
+        actionId: text(action.actionId),
+        providerInvoked,
+        providerCompleted,
+        failureStage: providerInvoked && !providerCompleted ? 'PROVIDER'
+          : providerCompleted ? 'SOURCE_OR_TEST' : 'WORKER_PRE_PROVIDER',
+        sourceState: observedFiles === null ? 'UNKNOWN'
+          : observedFiles.length ? (mutationAttempted ? 'PARTIAL_SOURCE_PRESERVED' : 'PREEXISTING_SOURCE_PRESERVED')
+            : 'UNCHANGED_OBSERVED',
+        sourceInspection: Object.freeze({ known: observedFiles !== null, error: inspectionError }),
+        changedFiles: observedFiles === null ? null : Object.freeze(observedFiles),
+        partialSourcePossible: mutationAttempted && (observedFiles === null || observedFiles.length > 0),
+        rollbackState,
+        execution: null,
+        sourceArtifactIdentity: null,
+        error: failure,
+        finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_PROPOSAL_BLOCKED',
+      });
+    }
     if (mutationApplied && !succeeded) {
       const rollbackPaths = changedFiles(worktreePath, run);
       try {
-        if (structuredEditsApplied) {
-          await restoreStructuredEditSnapshot(worktreePath, mutationSnapshot, run);
-        } else if (patchPath) {
-          await reverseAppliedPatch(worktreePath, patchPath, run, rollbackPaths, mutationSnapshot, patchRecountUsed);
-        }
+        await guardMutation(async () => {
+          if (structuredEditsApplied) {
+            await restoreStructuredEditSnapshot(worktreePath, mutationSnapshot, run);
+          } else if (patchPath) {
+            await reverseAppliedPatch(worktreePath, patchPath, run, rollbackPaths, mutationSnapshot, patchRecountUsed);
+          }
+        });
       } catch (rollbackError) {
         failure = `${failure};${rollbackError?.message || 'PROVIDER_NEUTRAL_MUTATION_ROLLBACK_FAILED'}`;
       }
@@ -1015,6 +1323,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
           options,
           {
             phase: 'provider-neutral-result-blocked',
+            timestampUtc: new Date().toISOString(),
             blocker: failure,
             expectedNextAction: 'Surface blocker and keep mutation authority closed until a new bounded execution is admitted.',
           },

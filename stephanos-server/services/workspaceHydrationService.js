@@ -1,7 +1,12 @@
 import { readBackendSharedWorkspaceDashboardFeed } from './sharedWorkspaceDashboardFeedService.js';
+import { throwIfWorkspaceReadAborted, waitForWorkspaceRead } from '../../shared/runtime/workspaceReadCancellation.mjs';
 import { readVrCapabilityFeed } from './vrCapabilityFeedService.js';
 import { readVrPlaytestFeed } from './vrPlaytestFeedService.js';
 import { readSpatialWorkspaceTelemetryFeed } from './spatialWorkspaceTelemetryService.js';
+import {
+  buildWorkspaceDatasetProvenanceV1,
+  buildWorkspaceIntegrityMeshV1,
+} from '../../shared/runtime/workspaceIntegrityMeshV1.mjs';
 
 export const WORKSPACE_HYDRATION_SCHEMA_V1 = 'stephanos.workspace-hydration.v1';
 export const WORKSPACE_HYDRATION_ROUTE = '/api/shared-workspace/hydrate';
@@ -12,6 +17,13 @@ export const WORKSPACE_HYDRATION_DATASETS = Object.freeze([
   'vr-playtest',
   'spatial-telemetry',
 ]);
+
+export const WORKSPACE_HYDRATION_DATASET_SCHEMAS = Object.freeze({
+  dashboard: 'stephanos.shared-workspace-dashboard-feed.v1',
+  'vr-capability': 'stephanos.vr-capability-live-feed.v1',
+  'vr-playtest': 'stephanos.vr-playtest-live-feed.v1',
+  'spatial-telemetry': 'stephanos.spatial-workspace-telemetry-feed.v1',
+});
 
 const DEFAULT_DATASETS_BY_WORKSPACE = Object.freeze({
   'goal-dashboard': Object.freeze(['dashboard']),
@@ -100,7 +112,9 @@ export async function readWorkspaceHydrationBundle({
   nowMs = Date.now(),
   staleAfterMs,
   readers = defaultReaders(),
+  signal,
 } = {}) {
+  throwIfWorkspaceReadAborted(signal);
   const normalizedWorkspaceId = normalizeWorkspaceHydrationWorkspaceId(workspaceId);
   if (!normalizedWorkspaceId) {
     return Object.freeze({
@@ -123,7 +137,7 @@ export async function readWorkspaceHydrationBundle({
   });
   const readerMap = { ...defaultReaders(), ...(readers || {}) };
 
-  const entries = await Promise.all(selectedDatasets.map(async (dataset) => {
+  const entries = await waitForWorkspaceRead(Promise.all(selectedDatasets.map(async (dataset) => {
     const reader = readerMap[dataset];
     if (typeof reader !== 'function') {
       return [dataset, Object.freeze({
@@ -134,7 +148,7 @@ export async function readWorkspaceHydrationBundle({
     }
 
     try {
-      const common = { env, repoRoot, nowMs, staleAfterMs };
+      const common = { env, repoRoot, nowMs, staleAfterMs, signal };
       const dashboardRecordScope = normalizedWorkspaceId === 'flywheel'
         ? 'full-history'
         : 'current-state';
@@ -147,16 +161,36 @@ export async function readWorkspaceHydrationBundle({
         payload,
       })];
     } catch (error) {
+      throwIfWorkspaceReadAborted(signal);
       return [dataset, Object.freeze({
         state: 'unavailable',
         reason: text(error?.message, 'WORKSPACE_HYDRATION_DATASET_FAILED'),
         payload: null,
       })];
     }
-  }));
+  })), signal);
+  throwIfWorkspaceReadAborted(signal);
 
-  const projectedDatasets = Object.freeze(Object.fromEntries(entries));
+  const hydratedAtUtc = new Date(nowMs).toISOString();
+  const enrichedEntries = entries.map(([dataset, value]) => {
+    const provenance = buildWorkspaceDatasetProvenanceV1({
+      workspaceId: normalizedWorkspaceId,
+      datasetId: dataset,
+      payload: value.payload,
+      state: value.state,
+      expectedSchemaVersion: WORKSPACE_HYDRATION_DATASET_SCHEMAS[dataset] || '',
+      observedAtUtc: hydratedAtUtc,
+    });
+    return [dataset, Object.freeze({ ...value, provenance })];
+  });
+  const projectedDatasets = Object.freeze(Object.fromEntries(enrichedEntries));
   const state = hydrationState(projectedDatasets);
+  const integrity = buildWorkspaceIntegrityMeshV1({
+    nowMs,
+    staleAfterMs: Number.isFinite(staleAfterMs) ? staleAfterMs : 5 * 60 * 1000,
+    bindings: enrichedEntries.map(([, value]) => value.provenance),
+    importantSources: selectedDatasets,
+  });
   const errors = Object.freeze(entries
     .filter(([, value]) => value.state === 'unavailable')
     .map(([dataset, value]) => `${dataset}:${value.reason}`));
@@ -175,8 +209,9 @@ export async function readWorkspaceHydrationBundle({
           : 'WORKSPACE_HYDRATION_UNAVAILABLE',
     workspaceId: normalizedWorkspaceId,
     requestedDatasets: selectedDatasets,
-    hydratedAtUtc: new Date(nowMs).toISOString(),
+    hydratedAtUtc,
     datasets: projectedDatasets,
+    integrity,
     errors,
   });
 }

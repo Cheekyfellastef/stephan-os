@@ -1,3 +1,4 @@
+import { projectGoalBuildConveyorOverviewV1 } from '../../shared/agents/goalBuildConveyorOverviewV1.mjs';
 import {
   readSharedWorkspaceDashboardFeed,
   SHARED_WORKSPACE_FEED_RECORD_SCOPES,
@@ -6,10 +7,34 @@ import { overlayGoalDashboardWithLivePortfolio } from '../../shared/agents/liveG
 import { buildGoalDashboardEstateSummary } from '../../shared/agents/goalDashboardEstateSummaryV1.mjs';
 import { validateExistingSharedWorkspaceRuntimeConfig, SHARED_WORKSPACE_NEXT_ACTION } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import { readLiveGoalProjection } from './liveGoalProjectionService.js';
+import { readSharedConversationUpliftV1 } from './sharedConversationUpliftService.js';
+import { lstat, readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { throwIfWorkspaceReadAborted, waitForWorkspaceRead } from '../../shared/runtime/workspaceReadCancellation.mjs';
 import {
   projectGoalBuildConveyorV1,
   projectGoalBuildJourneyV1,
 } from '../../shared/agents/goalBuildConveyorV1.mjs';
+
+// Public verifier only. The private signer is owned by the separate Core
+// machine principal, and neither key nor trust pin travels to the browser.
+async function loadCommissionedGoalGateTrust(input = {}) {
+  const env = input.env || process.env;
+  const expectedSourceHead = String(env.STEPHANOS_GATE_OBSERVATORY_EXPECTED_HEAD || '').toLowerCase();
+  const trustedPublicKeySha256 = String(env.STEPHANOS_GATE_OBSERVATORY_PUBLIC_KEY_SHA256 || '').toLowerCase();
+  if (!/^[a-f0-9]{40}$/.test(expectedSourceHead)
+    || !/^[a-f0-9]{64}$/.test(trustedPublicKeySha256)) return {};
+  try {
+    const profile = String(env.LOCALAPPDATA || '');
+    if (!profile) return {};
+    const p = resolve(profile, 'Stephanos', 'keys', 'stephanos-goal-build-gates-public.pem');
+    const meta = await lstat(p);
+    if (!meta.isFile() || meta.isSymbolicLink() || meta.size > 8192) return {};
+    return { expectedSourceHead, trustedPublicKeySha256, trustedPublicKeyPem: await readFile(p, 'utf8') };
+  } catch {
+    return {};
+  }
+}
 
 export const SHARED_WORKSPACE_DASHBOARD_FEED_ROUTE = '/api/shared-workspace/dashboard-feed';
 export const MISSING_WORKSPACE_NEXT_ACTION = SHARED_WORKSPACE_NEXT_ACTION;
@@ -44,6 +69,7 @@ function unavailableFeed(validation) {
     diagnosticTrace: [validation.trace],
     records: { goalRecords: [], statusRecords: [], proofRecords: [], capabilityRecords: [], eventRecords: [], lessonRecords: [], receiptRecords: [] },
     goalEstate: buildGoalDashboardEstateSummary(),
+    conversationUplift: { state: 'unavailable', turnCount: 0, candidates: [] },
     errors: [validation.reason],
   });
 }
@@ -59,23 +85,60 @@ function latestClosedLoopLearning(records = []) {
   return event?.closedLoopLearning || null;
 }
 
+export const OPTIONAL_LIVE_PROJECTION_DEADLINE_MS = 2_500;
+const activeLiveProjectionReaders = new WeakSet();
+
 async function resolveLiveProjection(input, nowMs) {
   if (Object.prototype.hasOwnProperty.call(input, 'liveProjection')) {
     return { projection: input.liveProjection || null, state: input.liveProjection ? 'ready' : 'unavailable', reason: input.liveProjection ? 'INJECTED_LIVE_PROJECTION' : 'LIVE_PROJECTION_DISABLED' };
   }
+  const reader = input.readLiveGoalProjection || readLiveGoalProjection;
+  const unavailable = reason => ({ projection: null, state: 'unavailable', reason });
+  // An optional upstream must neither hold local evidence past its budget nor
+  // multiply unfinished reads on every poll. Busy callers get no other caller's
+  // projection, credentials or freshness verdict. There is no completed cache.
+  if (activeLiveProjectionReaders.has(reader)) return unavailable('LIVE_PROJECTION_READ_IN_PROGRESS');
+  activeLiveProjectionReaders.add(reader);
+  const operation = (async () => {
+    try {
+      const configured = input.liveGoalProjectionOptions || {};
+      const projection = await reader({
+        ...configured,
+        now: new Date(nowMs),
+        githubTelemetryOptions: {
+          ...(configured.githubTelemetryOptions || {}),
+          env: configured.githubTelemetryOptions?.env || input.env,
+        },
+      });
+      return { projection, state: projection ? 'ready' : 'unavailable', reason: projection ? 'LIVE_PROJECTION_READ' : 'LIVE_PROJECTION_EMPTY' };
+    } catch (error) {
+      return unavailable(`LIVE_PROJECTION_READ_FAILED:${error?.message || 'unknown'}`);
+    } finally {
+      activeLiveProjectionReaders.delete(reader);
+    }
+  })();
+  // A smaller internal test/caller budget is allowed; callers cannot extend
+  // the production deadline. Existing upstream timeouts still own cancellation.
+  const requested = Number(input.liveProjectionTimeoutMs);
+  const timeoutMs = Number.isFinite(requested) && requested > 0
+    ? Math.min(requested, OPTIONAL_LIVE_PROJECTION_DEADLINE_MS)
+    : OPTIONAL_LIVE_PROJECTION_DEADLINE_MS;
+  let timer;
   try {
-    const configured = input.liveGoalProjectionOptions || {};
-    const projection = await readLiveGoalProjection({
-      ...configured,
-      now: new Date(nowMs),
-      githubTelemetryOptions: {
-        ...(configured.githubTelemetryOptions || {}),
-        env: configured.githubTelemetryOptions?.env || input.env,
-      },
-    });
-    return { projection, state: projection ? 'ready' : 'unavailable', reason: projection ? 'LIVE_PROJECTION_READ' : 'LIVE_PROJECTION_EMPTY' };
-  } catch (error) {
-    return { projection: null, state: 'unavailable', reason: `LIVE_PROJECTION_READ_FAILED:${error?.message || 'unknown'}` };
+    return await Promise.race([operation, new Promise(resolve => {
+      timer = setTimeout(() => resolve(unavailable('LIVE_PROJECTION_DEADLINE_EXCEEDED')), timeoutMs);
+    })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function resolveConversationUplift(input, root, nowMs) {
+  try {
+    const reader = input.readConversationUplift || readSharedConversationUpliftV1;
+    return await reader({ root, repoRoot: input.repoRoot, env: input.env, nowMs });
+  } catch {
+    return { state: 'unavailable', turnCount: 0, candidates: [] };
   }
 }
 
@@ -203,16 +266,28 @@ function enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate, bui
 }
 
 export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
+  throwIfWorkspaceReadAborted(input.signal);
   const validation = await validateSharedWorkspaceFeedConfig(input);
+  throwIfWorkspaceReadAborted(input.signal);
   if (!validation.ok) return unavailableFeed(validation);
 
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
-  const feed = await readSharedWorkspaceDashboardFeed({
-    ...input,
-    root: validation.root,
-    recordScope: input.recordScope || SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE,
-  });
-  const live = await resolveLiveProjection(input, nowMs);
+  const goalGateTrust = await loadCommissionedGoalGateTrust(input);
+  throwIfWorkspaceReadAborted(input.signal);
+  // These independent read models share the same observation clock. A slow
+  // optional GitHub overlay must not add its entire latency after the history
+  // scan; its existing unavailable/error semantics remain unchanged.
+  const [feed, live, conversationUplift] = await waitForWorkspaceRead(Promise.all([
+    readSharedWorkspaceDashboardFeed({
+      ...input,
+      goalGateTrust,
+      root: validation.root,
+      recordScope: input.recordScope || SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE,
+    }),
+    resolveLiveProjection(input, nowMs),
+    resolveConversationUplift(input, validation.root, nowMs),
+  ]), input.signal);
+  throwIfWorkspaceReadAborted(input.signal);
   const records = feed.records || {};
   const goalEstate = buildGoalDashboardEstateSummary({
     goalRecords: records.goalRecords,
@@ -239,10 +314,14 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
     },
   });
   const projectionBase = enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate, feed.stephanosBuildTruthStatus);
-  const projection = Object.freeze({
+  const overviewInput = {
     ...projectionBase,
     closedLoopLearning: latestClosedLoopLearning(records.eventRecords),
     operationalFacts: feed.operationalFacts,
+    goalBuildGateObservatory: feed.projection?.goalBuildGateObservatory || null,
+  };
+  const projection = Object.freeze({ ...overviewInput,
+    goalBuildConveyorOverview: projectGoalBuildConveyorOverviewV1(overviewInput, { nowMs, staleAfterMs: input.staleAfterMs, statusRecords: records.statusRecords }),
   });
   const classification = effectiveFeedClassification(feed, projection);
   const recordCount = Object.values(records).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);
@@ -266,6 +345,7 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
     projection,
     operationalFacts: feed.operationalFacts,
     goalEstate,
+    conversationUplift,
     operatorAttention: projection.operatorAttention,
     livePortfolio: Object.freeze({
       state: live.state,

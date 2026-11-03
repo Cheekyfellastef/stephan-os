@@ -26,6 +26,11 @@ import {
 } from '../stephanos-server/services/missionOrchestratorWorkerConsumer.js';
 import { processNextProviderNeutralSourceBuild } from '../stephanos-server/services/providerNeutralSourceBuilderService.js';
 
+// Retain Builder 8's new independent capacity and publisher regressions in the
+// existing proof entry point, without altering the protected Actions workflow.
+import '../shared/agents/sovereignCommanderBuilder8CapacityV1.test.mjs';
+import '../stephanos-server/services/sovereignBuilder8CapacityService.test.js';
+
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const proof = (requirement, receiptId, source = 'all-builder-exits-proof') => ({
   receiptId,
@@ -234,6 +239,7 @@ const PATCH = [
 for (const builder of [
   { adapter: 'foundry-forge', route: 'FOUNDRY_FORGE', issueNumber: 7105 },
   { adapter: 'chatgpt-github', route: 'CHATGPT_GITHUB', issueNumber: 7106 },
+  { adapter: 'sovereign-commander', route: 'SOVEREIGN_COMMANDER', issueNumber: 7108 },
 ]) {
   test(`${builder.adapter} claims exact goal packet, mutates/tests source, and emits full execution truth`, async () => {
     const fx = await runtime(builder.issueNumber, builder.adapter);

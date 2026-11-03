@@ -19,6 +19,8 @@ import {
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { createBattleBridgeMinimalChildEnvironment } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { preflightCanonicalMailboxRotationSync } from './canonical-mailbox-rotation-sync-preflight-v1.mjs';
+import { withMailboxOutboxGuardLock } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 import {
   CANONICAL_SYNC_CONTRACT,
   FIXED_GIT_COMMANDS,
@@ -28,7 +30,10 @@ import {
   buildSharedWorkspacePlan,
   buildSharedWorkspaceReceipt,
   classifyDirt,
+  collectPostSyncRefreshDebt,
   evaluateSyncPolicy,
+  pendingPostSyncRefreshDebt,
+  resolvePostSyncRefreshDebt,
 } from './battle-bridge-github-sync-policy.mjs';
 
 export const BATTLE_BRIDGE_GITHUB_SYNC_EXECUTOR_SCHEMA = 'stephanos.battle-bridge-github-sync-executor.v1';
@@ -80,6 +85,7 @@ const FORBIDDEN_ARG_PATTERN = /^(?:checkout|switch|reset|clean|stash|rebase|push
 const SHA_PATTERN = /^[a-f0-9]{40}$/i;
 const HOUSEKEEPER_STATUS_PREFIX = '[HOUSEKEEP] status=';
 export const SYNC_LOCK_STALE_AFTER_MS = 10 * 60 * 1000;
+export const LOCK_BOOT_SKEW_MS = 5_000;
 
 function text(value) {
   return String(value ?? '').trim();
@@ -238,10 +244,24 @@ export function getFixedSyncGitCommand(id) {
 }
 
 export function createFixedGitAdapter({ spawnSyncFn = spawnSync } = {}) {
+  let ancestryBudgetMs = 5_000;
   return Object.freeze({
-    run(id, cwd) {
+    isAncestor(beforeHead, afterHead, cwd) {
+      if (typeof beforeHead !== 'string' || typeof afterHead !== 'string' || !/^[0-9a-f]{40}$/.test(beforeHead)
+        || !/^[0-9a-f]{40}$/.test(afterHead) || ancestryBudgetMs <= 0) return { ok: false, ancestor: false };
+      const started = Date.now();
+      const result = spawnSyncFn('git', ['merge-base', '--is-ancestor', beforeHead, afterHead], {
+        cwd, encoding: 'utf8', shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: Math.min(1_000, ancestryBudgetMs), maxBuffer: 64 * 1024,
+      });
+      ancestryBudgetMs -= Math.max(1, Date.now() - started);
+      return { ok: !result.error && [0, 1].includes(result.status), ancestor: result.status === 0 };
+    },
+    run(id, cwd, { expectedHead } = {}) {
       const command = getFixedSyncGitCommand(id);
-      const result = spawnSyncFn(command.executable, [...command.argv], {
+      if (expectedHead !== undefined && (id !== FIXED_SYNC_GIT_COMMANDS.mergeFfOnlyOriginMain.id
+        || !SHA_PATTERN.test(expectedHead))) throw new Error('SYNC_EXACT_TARGET_REQUIRED');
+      const argv = expectedHead === undefined ? [...command.argv] : ['merge', '--ff-only', expectedHead];
+      const result = spawnSyncFn(command.executable, argv, {
         cwd,
         encoding: 'utf8',
         shell: false,
@@ -320,6 +340,7 @@ async function publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts, n
     taskName: BATTLE_BRIDGE_GITHUB_SYNC_TASK_NAME,
     syncRecordKind,
     ...boundedFields,
+    pendingRefresh: facts.pendingRefresh || null,
     ...(facts.housekeeperObservation ? { housekeeperObservation: facts.housekeeperObservation } : {}),
     authority: BATTLE_BRIDGE_GITHUB_SYNC_AUTHORITY,
   };
@@ -402,6 +423,7 @@ function defaultProcessIsAlive(pid) {
 async function acquireSingleInstanceLock(workspaceRoot, now, {
   processIsAliveFn = defaultProcessIsAlive,
   staleAfterMs = SYNC_LOCK_STALE_AFTER_MS,
+  bootStartedAtMs = now.getTime() - (os.uptime() * 1000),
   allowRecovery = true,
 } = {}) {
   const lockPath = path.resolve(workspaceRoot, 'locks', 'battle-bridge-github-sync.lock');
@@ -425,14 +447,21 @@ async function acquireSingleInstanceLock(workspaceRoot, now, {
       const acquiredAtMs = Number.isFinite(parsedAcquiredAtMs) ? parsedAcquiredAtMs : lockStat?.mtimeMs;
       const ageMs = Number.isFinite(acquiredAtMs) ? now.getTime() - acquiredAtMs : NaN;
       const ownerAlive = processIsAliveFn(Number.parseInt(parsed?.pid, 10));
-      if (allowRecovery && Number.isFinite(ageMs) && ageMs > staleAfterMs && !ownerAlive) {
+      const predatesCurrentBoot = Number.isFinite(acquiredAtMs)
+        && Number.isFinite(bootStartedAtMs)
+        && acquiredAtMs + LOCK_BOOT_SKEW_MS < bootStartedAtMs;
+      const recoverable = predatesCurrentBoot
+        || (Number.isFinite(ageMs) && ageMs > staleAfterMs && !ownerAlive);
+      if (allowRecovery && recoverable) {
         await rm(lockPath, { force: true });
         const recovered = await acquireSingleInstanceLock(workspaceRoot, now, {
           processIsAliveFn,
           staleAfterMs,
+          bootStartedAtMs,
           allowRecovery: false,
         });
-        return { ...recovered, recoveredStaleLock: recovered.ok, staleLock: { ageMs, pid: parsed?.pid ?? null } };
+        return { ...recovered, recoveredStaleLock: recovered.ok,
+          staleLock: { ageMs, pid: parsed?.pid ?? null, predatesCurrentBoot } };
       }
       return { ok: false, reason: 'SYNC_ALREADY_RUNNING', lockPath, existing: existing.slice(0, 500), ownerAlive, ageMs };
     }
@@ -473,8 +502,11 @@ export async function runBattleBridgeGitHubSync({
   expectedPaths = resolveCanonicalSyncPaths({ env }),
   processIsAliveFn = defaultProcessIsAlive,
   staleAfterMs = SYNC_LOCK_STALE_AFTER_MS,
+  bootStartedAtMs = now.getTime() - (os.uptime() * 1000),
   housekeeperFn = runBoundedSyncHousekeeper,
   platform = process.platform,
+  rotationPreflightFn = preflightCanonicalMailboxRotationSync,
+  rotationGuardFn = withMailboxOutboxGuardLock,
 } = {}) {
   const { repoRoot, workspaceRoot } = paths;
   const pathValidation = validateCanonicalSyncPaths({ repoRoot, workspaceRoot, expectedPaths });
@@ -489,16 +521,44 @@ export async function runBattleBridgeGitHubSync({
   } catch (error) {
     return Object.freeze({ ok: false, evaluation: blockedEvaluation(SYNC_CLASSIFICATIONS.BLOCKED_INSTALL_OR_PERMISSION_REQUIRED, `Shared Workspace is unavailable: ${error?.message || error}`) });
   }
-  const lock = await acquireSingleInstanceLock(workspaceRoot, now, { processIsAliveFn, staleAfterMs });
+  const lock = await acquireSingleInstanceLock(workspaceRoot, now, { processIsAliveFn, staleAfterMs, bootStartedAtMs });
   if (!lock.ok) {
     const evaluation = blockedEvaluation(SYNC_CLASSIFICATIONS.BLOCKED_INSTALL_OR_PERMISSION_REQUIRED, lock.reason);
-    let publication = null;
-    try { publication = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts: {}, now, kind: 'blocker' }); } catch {}
-    return Object.freeze({ ok: false, evaluation, lock, publication });
+    // A non-owner must not replace the current owner's durable refresh debt.
+    return Object.freeze({ ok: false, evaluation, lock, publication: null });
   }
 
+  let pendingRefresh = null;
+  const retainDebt = (evidence, currentHead, additionalSpan = null) => {
+    if (!evidence.ok) return pendingPostSyncRefreshDebt([], [], evidence.blocker);
+    const spans = [...evidence.spans, ...(additionalSpan ? [additionalSpan] : [])];
+    const resolved = resolvePostSyncRefreshDebt({ ...evidence, requestedSpans: additionalSpan ? [additionalSpan] : [], currentHead, requireCurrentCoverage: false,
+      isAncestor: (beforeHead, afterHead) => git.isAncestor?.(beforeHead, afterHead, repoRoot) });
+    return resolved.ok
+      ? resolved.debt ? pendingPostSyncRefreshDebt([resolved.debt], resolved.debt.requiredTargetIds, '', {
+        sovereignRelayRefreshRequired: resolved.debt.sovereignRelayRefreshRequired,
+      }) : null
+      : pendingPostSyncRefreshDebt(spans, evidence.requiredTargetIds, '', {
+        sovereignRelayRefreshRequired: evidence.sovereignRelayRefreshRequired,
+      });
+  };
   try {
+    const records = {};
+    for (const [key, filename] of [['syncRecord', 'battle-bridge-github-sync-current.json'], ['refreshRecord', 'post-sync-runtime-refresh-current.json']]) {
+      try {
+        const raw = await readFile(path.join(workspaceRoot, 'status', filename), 'utf8');
+        records[key] = raw.length <= 64 * 1024 ? JSON.parse(raw) : {};
+      } catch (error) { records[key] = error?.code === 'ENOENT' ? null : {}; }
+    }
+    const evidence = collectPostSyncRefreshDebt(records);
+    // Establish retention before any later source/transport exception can write status.
+    pendingRefresh = evidence.ok ? pendingPostSyncRefreshDebt(evidence.spans, evidence.requiredTargetIds, '', {
+      sovereignRelayRefreshRequired: evidence.sovereignRelayRefreshRequired,
+    })
+      : pendingPostSyncRefreshDebt([], [], evidence.blocker);
     let before = await collectPreFetchFacts({ git, repoRoot });
+    pendingRefresh = retainDebt(evidence, before.localHead);
+    before = { ...before, pendingRefresh };
     let earlyBlocker = preFetchBlocker(before);
     let housekeeperObservation = null;
     if (earlyBlocker?.classification === SYNC_CLASSIFICATIONS.BLOCKED_DIRTY_SOURCE) {
@@ -511,7 +571,7 @@ export async function runBattleBridgeGitHubSync({
         }
         const headBeforeHousekeeper = before.localHead;
         const afterHousekeeper = await collectPreFetchFacts({ git, repoRoot });
-        before = { ...afterHousekeeper, housekeeperObservation };
+        before = { ...afterHousekeeper, housekeeperObservation, pendingRefresh };
         if (afterHousekeeper.localHead !== headBeforeHousekeeper) {
           earlyBlocker = blockedEvaluation(
             SYNC_CLASSIFICATIONS.BLOCKED_HEAD_PROOF_MISSING,
@@ -559,14 +619,38 @@ export async function runBattleBridgeGitHubSync({
     };
     let evaluation = evaluateSyncPolicy(facts);
     const heartbeat = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts, now, kind: 'heartbeat' });
-    const plan = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts, now, kind: 'plan' });
+    let plan = null;
 
     if (evaluation.classification !== SYNC_CLASSIFICATIONS.SYNC_FAST_FORWARD_READY) {
+      plan = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts, now, kind: 'plan' });
       const receipt = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts, now, kind: evaluation.operatorNeeded ? 'blocker' : 'receipt' });
       return Object.freeze({ ok: evaluation.classification === SYNC_CLASSIFICATIONS.SYNC_NO_CHANGE, evaluation, facts, housekeeperObservation, heartbeat, plan, receipt });
     }
 
-    const mergeResult = git.run(FIXED_SYNC_GIT_COMMANDS.mergeFfOnlyOriginMain.id, repoRoot);
+    const admission = rotationPreflightFn({ repoRoot, expectedHead: facts.remoteHead, env });
+    if (!admission?.ok) throw new Error(admission?.blocker || 'MAILBOX_ROTATION_SYNC_ADMISSION_UNPROVEN');
+    // Retain the admitted prospective span before the pinned fast-forward. If
+    // the merge fails, this remains debt; it is never proof of an applied head.
+    pendingRefresh = retainDebt(evidence, facts.localHead, { beforeHead: facts.localHead, afterHead: facts.remoteHead });
+    facts.pendingRefresh = pendingRefresh;
+    plan = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts, now, kind: 'plan' });
+    const mergePinned = () => {
+      const local = requireGitResult(git.run(FIXED_SYNC_GIT_COMMANDS.localHead.id, repoRoot));
+      const remote = requireGitResult(git.run(FIXED_SYNC_GIT_COMMANDS.remoteHead.id, repoRoot));
+      const status = git.run(FIXED_SYNC_GIT_COMMANDS.statusPorcelain.id, repoRoot);
+      requireGitResult(status);
+      if (local !== facts.localHead || remote !== facts.remoteHead || classifyDirt(splitLines(status.stdout)).blocksSync) {
+        throw new Error('MAILBOX_ROTATION_SYNC_SOURCE_CHANGED_BEFORE_FAST_FORWARD');
+      }
+      return git.run(FIXED_SYNC_GIT_COMMANDS.mergeFfOnlyOriginMain.id, repoRoot, { expectedHead: facts.remoteHead });
+    };
+    const mergeResult = admission.required ? rotationGuardFn(guard => {
+      const fresh = rotationPreflightFn({ repoRoot, expectedHead: facts.remoteHead, env, guardToken: guard.token });
+      if (!fresh?.ok || fresh.required !== true || fresh.sourceHead !== facts.remoteHead) {
+        throw new Error(fresh?.blocker || 'MAILBOX_ROTATION_SYNC_LOCKED_ADMISSION_UNPROVEN');
+      }
+      return mergePinned();
+    }, { env }) : mergePinned();
     if (!mergeResult.ok) {
       const failedFacts = { ...facts, mergeAttempted: true, mergeOk: false };
       evaluation = evaluateSyncPolicy(failedFacts);
@@ -605,7 +689,7 @@ export async function runBattleBridgeGitHubSync({
   } catch (error) {
     const evaluation = blockedEvaluation(SYNC_CLASSIFICATIONS.BLOCKED_INSTALL_OR_PERMISSION_REQUIRED, `Sync executor failed closed: ${error?.message || error}`);
     let publication = null;
-    try { publication = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts: {}, now, kind: 'blocker' }); } catch {}
+    try { publication = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts: { pendingRefresh }, now, kind: 'blocker' }); } catch {}
     return Object.freeze({ ok: false, evaluation, error: error?.message || String(error), publication });
   } finally {
     await rm(lock.lockPath, { force: true }).catch(() => {});

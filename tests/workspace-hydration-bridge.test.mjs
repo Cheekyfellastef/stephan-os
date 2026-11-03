@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { waitForWorkspaceRead } from '../shared/runtime/workspaceReadCancellation.mjs';
 
 import {
   readWorkspaceHydrationBundle,
@@ -11,6 +12,31 @@ import {
   WORKSPACE_HYDRATION_REQUEST_MESSAGE_V1,
   WORKSPACE_HYDRATION_RESPONSE_MESSAGE_V1,
 } from '../shared/runtime/workspaceHydrationBridge.mjs';
+
+test('caller abort crosses hydration without becoming an unavailable dataset', async () => {
+  let began, reject;
+  const started = new Promise(resolve => { began = resolve; });
+  const pending = new Promise((_, no) => { reject = no; });
+  const controller = new AbortController();
+  const result = readWorkspaceHydrationBundle({
+    workspaceId: 'flywheel', datasets: ['dashboard'], signal: controller.signal,
+    readers: { dashboard: ({ signal }) => { assert.equal(signal, controller.signal); began(); return waitForWorkspaceRead(pending, signal); } },
+  });
+  await started;
+  controller.abort();
+  await assert.rejects(result, { name: 'AbortError' });
+  reject(new Error('late dataset failure'));
+});
+
+test('an already-aborted hydration does not start any dataset work', async () => {
+  const controller = new AbortController(); controller.abort();
+  let calls = 0;
+  await assert.rejects(readWorkspaceHydrationBundle({
+    workspaceId: 'flywheel', datasets: ['dashboard'], signal: controller.signal,
+    readers: { dashboard: () => { calls++; } },
+  }), { name: 'AbortError' });
+  assert.equal(calls, 0);
+});
 
 test('workspace hydration defaults every unknown hosted workspace to canonical dashboard truth', () => {
   assert.deepEqual(resolveWorkspaceHydrationDatasets({ workspaceId: 'unknown-workspace' }), ['dashboard']);
@@ -35,6 +61,11 @@ test('Flywheel hydration preserves the full-history dashboard projection used by
 
   assert.equal(bundle.state, 'ready');
   assert.deepEqual(observedScopes, ['full-history']);
+  assert.equal(bundle.datasets.dashboard.provenance.workspaceId, 'flywheel');
+  assert.equal(bundle.datasets.dashboard.provenance.transportId, '/api/shared-workspace/hydrate');
+  assert.equal(bundle.datasets.dashboard.provenance.expectedSchemaVersion, 'stephanos.shared-workspace-dashboard-feed.v1');
+  assert.equal(bundle.integrity.finalVerdict, 'WORKSPACE_INTEGRITY_PROOF_INCOMPLETE');
+  assert.equal(bundle.integrity.amber, 1);
 });
 
 test('workspace hydration service returns a versioned partial bundle instead of hiding failed datasets', async () => {
@@ -53,6 +84,9 @@ test('workspace hydration service returns a versioned partial bundle instead of 
   assert.equal(bundle.state, 'partial');
   assert.equal(bundle.datasets.dashboard.state, 'ready');
   assert.equal(bundle.datasets['vr-capability'].state, 'unavailable');
+  assert.equal(bundle.datasets['vr-capability'].provenance.sourceState, 'BROKEN');
+  assert.equal(bundle.integrity.finalVerdict, 'WORKSPACE_INTEGRITY_BROKEN');
+  assert.equal(bundle.integrity.red, 1);
   assert.deepEqual(bundle.errors, ['vr-capability:VR_FEED_DOWN']);
 });
 

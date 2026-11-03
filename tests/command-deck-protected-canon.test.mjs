@@ -494,3 +494,20 @@ test('protected canon: Command Deck heavy-brain gate recognizes Qwen 3.5 27B', a
   assert.match(hookSource, /HEAVY_OLLAMA_MODELS = new Set\(\['gpt-oss:20b', 'qwen:14b', 'qwen3\.5:27b', 'qwen:32b'\]\)/);
   assert.match(hookSource, /heavyOllamaRequest && previousGenerationUncertain/);
 });
+
+test('protected canon: backend health cannot be overwritten by provider telemetry failure', async () => {
+  const hookSource = await read(new URL('../stephanos-ui/src/hooks/useAIConsole.js', import.meta.url));
+  const healthRefreshStart = hookSource.indexOf('const refreshHealth = useCallback(');
+  const healthRefreshEnd = hookSource.indexOf('}, [runtimeConfig, setApiStatus', healthRefreshStart);
+  assert.ok(healthRefreshStart >= 0 && healthRefreshEnd > healthRefreshStart);
+  const refreshSource = hookSource.slice(healthRefreshStart, healthRefreshEnd);
+  assert.match(refreshSource, /const health = await checkApiHealth\(resolvedRuntimeContext\);/);
+  assert.match(refreshSource, /try \{\s*providerHealth = await getProviderHealth\(/);
+  assert.match(refreshSource, /catch \(providerError\)/);
+  assert.match(refreshSource, /backendReachable: health\.ok,/);
+  assert.match(refreshSource, /healthProbeTruth: reconcileBackendHealthTruth\(/);
+
+  const cockpitSource = await read(new URL('../stephanos-ui/src/components/CockpitPanel.jsx', import.meta.url));
+  assert.match(cockpitSource, /deriveCockpitBackendHealthDiagnostics\(\{ apiStatus, routeTruthView, runtimeStatus \}\)/);
+  assert.match(cockpitSource, /Backend health proof fresh: \$\{backendHealthDiagnostics\.fresh\}/);
+});

@@ -72,10 +72,10 @@ if (`$LASTEXITCODE -ne 0 -or `$head -notmatch '^[0-9a-f]{40}$') { exit 75 }
 `$sourceGateReceipt = (& `$canonicalNode `$sourceGateScript | Select-Object -Last 1)
 if (`$LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]`$sourceGateReceipt)) { exit 75 }
 try { `$sourceGate = `$sourceGateReceipt | ConvertFrom-Json -ErrorAction Stop } catch { exit 75 }
-if ([bool]`$sourceGate.ok -ne `$true `
-    -or [string]`$sourceGate.finalVerdict -ne 'STEPHANOS_NATIVE_PUBLISHER_SOURCE_GATE_PASS' `
-    -or [string]`$sourceGate.sourceHead -ne `$head `
-    -or [bool]`$sourceGate.dirtSummary.blocksSync -ne `$false) { exit 75 }
+if ([bool]`$sourceGate.ok -ne `$true -or
+    [string]`$sourceGate.finalVerdict -ne 'STEPHANOS_NATIVE_PUBLISHER_SOURCE_GATE_PASS' -or
+    [string]`$sourceGate.sourceHead -ne `$head -or
+    [bool]`$sourceGate.dirtSummary.blocksSync -ne `$false) { exit 75 }
 & `$canonicalNode `$publisherScript
 exit `$LASTEXITCODE
 "@
