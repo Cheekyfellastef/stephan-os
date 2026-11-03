@@ -47,6 +47,76 @@ This removes the reachable executable-read path rather than adding a racy
 config check before Git status. Physical candidate proof requires a separately
 qualified reader bound to the complete operation.
 
+## Deterministic inventory input and output lifetime
+
+The next component slice is `SeedInventoryCustodySession`: two immutable,
+digest-checked private input snapshots (manifest and canonical seed contract)
+and one new output, retained for a single lifetime. It reuses the stateless
+`PinnedFileSnapshot` primitive already present in the Rescue custody assembly;
+this is a code dependency only, with no Island worker, host or ownership state.
+The Seed test workflow now runs when that dependency changes as well.
+
+The existing Seed new-file primitive has a prepare/create lifecycle. Preparation
+freezes proposal bytes and retains existing output-parent handles without
+creating an artifact. Those handles remain held while the input snapshots are
+acquired, including when the output is outside the input parents. Creation is
+one-shot and relative to the retained parent. A leaf installed by another
+writer is preserved; a failure closes the session, rather than silently trying
+again against a different namespace state. Input readers consume only verified
+cached bytes; no path, native handle or mutable internal buffer is reopened or
+exported. Locks serialize creation, reads and disposal.
+
+This completes only that component lifetime. Caller-supplied hashes do not
+authenticate the manifest or candidate provenance, and the two declared inputs
+do not represent all executable/import, Git/index/object, test, claim/receipt
+or principal dependencies. No existing production caller uses the component.
+Both worker capability constants remain false; original R7 custody, qualified
+host commissioning, independent review, protected merge and physical pickup
+remain separate requirements. Do not turn component fixture success into a
+live building claim or use it to skip the remaining host containment work.
+
+## Fixed inventory operation from closed retained data
+
+`AcquireCanonicalInventory` now closes the deterministic derivation gap inside
+that component lifetime. The expected relative target and configured workspace
+root are available before reading inputs, so the existing output parents are
+pinned first. The retained manifest must later match that exact target and the
+expected protected base. A private parent-only preparation is completed with
+exactly one payload derived in process from the two immutable snapshots. No
+caller bytes, rendering callback, executable or independently supplied output
+digest enters this operation. Creation and verification use the same retained
+parent/output handles. Failures before creation create no output leaf and
+preserve any existing leaf.
+
+The second input is a versioned closed projection of the actual canonical seed
+contracts, not executable JavaScript: `seedCanopyCanonicalInventoryV1.json`.
+Its five scalar fields preserve canonical seed order and existing inventory
+renderer semantics. Canonical contracts remain the source of truth. A source
+test recomputes the complete projection and sixteen reference outputs from the
+real import closure; Windows tests consume those exact files. The parity/native
+workflow covers `shared/**`, including project, runtime and agents dependencies.
+No source-base commit is embedded in its own derived blob.
+
+The fixed factory checks manifest SHA256, expected base/target and projection
+Git blob identity, including the blob's actual byte length. An independently
+qualified existing owner/base boundary must supply those expectations from one
+approved manifest and protected source estate. Caller-provided hashes or a
+passing parity test do not authenticate canonical ownership. The native parser
+accepts a documented strict subset of V1: bounded UTF-8 JSON, no duplicates or
+unknown properties, complete canonical row validation, exact kinds, new-document
+target only, fixed generation mode, safe test paths as data, and absent/false
+authority flags. Output byte parity covers ECMAScript whitespace and UTF-16
+length semantics. The original precomputed-output `Acquire` remains a lower
+level compatibility component and does not gain a derivation claim.
+
+This completes snapshot-to-validation-to-render-to-new-file custody for this
+fixed operation. It does not prove the remaining executable/import,
+Git/index/object, test, claim/receipt, account/process or authenticated overlap
+estate. It adds no worker entry point, process launcher, scheduler, live route
+or R7 interaction. `OutputDerivedFromPinnedInputs` is a narrow transformation
+fact; ownership authentication, complete-operation custody, commissioning and
+lease-release remain false. Both production capability constants stay held.
+
 
 ## Bounded approval verification fairness
 

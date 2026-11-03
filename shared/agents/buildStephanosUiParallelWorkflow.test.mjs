@@ -129,6 +129,7 @@ test('stateful suites remain serial only inside their isolated parallel job', as
 const seedNativeActions = Object.freeze([
   'actions/checkout@11d5960a326750d5838078e36cf38b85af677262',
   'actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9',
+  'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020',
 ]);
 
 function assertSeedNativeActionIdentity(workflow) {
@@ -136,11 +137,13 @@ function assertSeedNativeActionIdentity(workflow) {
   assert.deepEqual(actions, seedNativeActions);
 }
 
-test('Seed native proof admits only both immutable verified action identities', async () => {
+test('Seed native proof admits only all three immutable verified action identities', async () => {
   const workflow = await readFile(new URL('../../.github/workflows/seed-parallel-native-custody-proof.yml', import.meta.url), 'utf8');
   assertSeedNativeActionIdentity(workflow);
   for (const action of seedNativeActions) {
     const [name] = action.split('@');
+    assert.throws(() => assertSeedNativeActionIdentity(workflow.replace(action, '')),
+      `reject missing required ${name}`);
     for (const ref of ['v4', 'main', '11d5960', '0'.repeat(40)]) {
       assert.throws(() => assertSeedNativeActionIdentity(workflow.replace(action, `${name}@${ref}`)),
         `reject ${name} at mutable, short or wrong ref`);
@@ -170,4 +173,34 @@ test('Sovereign reviewer qualification suites remain in exact-head custody jobs'
   assert.match(execution, /shared\/agents\/sovereignCalibrationV1\.test\.mjs/);
   assert.match(execution, /shared\/agents\/localReviewCapabilityExamV1\.test\.mjs/);
   assert.match(execution, /scripts\/sovereign-windows-review-calibration-v1\.test\.mjs/);
+});
+
+
+function assertSeedNodeExecutableIdentity(workflow) {
+  assert.match(workflow, /node-version: '24\.21\.0'/);
+  assert.match(workflow, /Get-Command node -CommandType Application -ErrorAction Stop/);
+  assert.match(workflow, /Invoke-WebRequest -Uri 'https:\/\/nodejs\.org\/dist\/v24\.21\.0\/win-x64\/node\.exe' -OutFile \$nodePath -TimeoutSec 120 -MaximumRedirection 0/);
+  assert.match(workflow, /Get-FileHash -LiteralPath \$nodePath -Algorithm SHA256/);
+  assert.match(workflow, /\$expectedNodeSha256 = 'ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32'/);
+  assert.match(workflow, /if \(\$actualNodeSha256 -cne \$expectedNodeSha256\) \{ throw 'SEED_NODE_EXECUTABLE_DIGEST_MISMATCH' \}/);
+  assert.match(workflow, /\$actualNodeVersion = & \$nodePath --version/);
+  assert.match(workflow, /if \(\$LASTEXITCODE -ne 0 -or \$actualNodeVersion -cne 'v24\.21\.0'\) \{ throw 'SEED_NODE_VERSION_MISMATCH' \}/);
+  const digestGate = workflow.indexOf("throw 'SEED_NODE_EXECUTABLE_DIGEST_MISMATCH'");
+  const versionGate = workflow.indexOf("throw 'SEED_NODE_VERSION_MISMATCH'");
+  const canonicalImport = workflow.indexOf('& $nodePath --test-reporter=tap');
+  assert.ok(digestGate >= 0 && versionGate > digestGate && canonicalImport > versionGate);
+  assert.doesNotMatch(workflow, /^\s+node (?:--version|--test-reporter)/m);
+}
+
+test('Seed canonical imports use the exact release executable only after digest and version verification', async () => {
+  const workflow = await readFile(new URL('../../.github/workflows/seed-parallel-native-custody-proof.yml', import.meta.url), 'utf8');
+  assertSeedNodeExecutableIdentity(workflow);
+  for (const changed of [
+    workflow.replace("node-version: '24.21.0'", "node-version: '24'"),
+    workflow.replace('ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32', '0'.repeat(64)),
+    workflow.replace("throw 'SEED_NODE_EXECUTABLE_DIGEST_MISMATCH'", 'Write-Output ignored'),
+    workflow.replace("throw 'SEED_NODE_VERSION_MISMATCH'", 'Write-Output ignored'),
+    workflow.replace('& $nodePath --test-reporter=tap', 'node --test-reporter=tap'),
+    workflow.replace('Get-Command node -CommandType Application -ErrorAction Stop', 'Get-Command node'),
+  ]) assert.throws(() => assertSeedNodeExecutableIdentity(changed));
 });

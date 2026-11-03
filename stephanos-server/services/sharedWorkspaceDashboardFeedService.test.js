@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { setImmediate } from 'node:timers/promises';
 import {
   createSharedWorkspaceGoalRecord,
   createSharedWorkspaceStatusRecord,
@@ -16,6 +17,92 @@ async function createWorkspace() {
     .map((directory) => mkdir(join(root, directory), { recursive: true })));
   return root;
 }
+
+test('optional live read deadline preserves local evidence and bounds unfinished work across polls', async () => {
+  const root = await createWorkspace();
+  await writeFile(join(root, 'status', 'current.json'), JSON.stringify(createSharedWorkspaceStatusRecord({
+    statusId: 'current', timestampUtc: new Date().toISOString(), status: 'CURRENT',
+  })));
+  let finish;
+  let calls = 0;
+  let startedRetry;
+  const retryStarted = new Promise(resolve => { startedRetry = resolve; });
+  const reader = async () => {
+    calls += 1;
+    if (calls === 2) startedRetry();
+    return new Promise(resolve => { finish = resolve; });
+  };
+  const input = { env: { STEPHANOS_SHARED_AGENT_WORKSPACE: root }, repoRoot: process.cwd(),
+    readLiveGoalProjection: reader, liveProjectionTimeoutMs: 20 };
+  let first;
+  try {
+    first = await readBackendSharedWorkspaceDashboardFeed(input);
+    assert.equal(first.state, 'ready');
+    assert.equal(first.records.statusRecords.length, 1);
+    assert.equal(first.livePortfolio.state, 'unavailable');
+    assert.equal(first.livePortfolio.reason, 'LIVE_PROJECTION_DEADLINE_EXCEEDED');
+    const waiting = await Promise.all(Array.from({ length: 4 }, () => readBackendSharedWorkspaceDashboardFeed(input)));
+    assert.equal(calls, 1, 'timed-out work remains single-flight until it actually settles');
+    assert.ok(waiting.every(feed => feed.livePortfolio.reason === 'LIVE_PROJECTION_READ_IN_PROGRESS'));
+    assert.ok(waiting.every(feed => feed.records.statusRecords.length === 1));
+  } finally { finish?.({ sourceTruth: 'live', generatedAt: new Date().toISOString() }); await setImmediate(); }
+  assert.equal(first.livePortfolio.state, 'unavailable', 'late completion cannot upgrade the returned authority verdict');
+  const retried = readBackendSharedWorkspaceDashboardFeed(input);
+  // Wait for the next real invocation rather than returning a completed cache.
+  let guard;
+  try {
+    await Promise.race([retryStarted, new Promise((_, reject) => {
+      guard = setTimeout(() => reject(new Error('completed read did not release admission')), 3000);
+    })]);
+  } finally { clearTimeout(guard); finish(null); }
+  const next = await retried;
+  assert.equal(calls, 2);
+  assert.equal(next.livePortfolio.reason, 'LIVE_PROJECTION_EMPTY');
+});
+
+test('optional live read failures release admission and successful fresh reads are retained', async () => {
+  const root = await createWorkspace();
+  let calls = 0;
+  const input = { env: { STEPHANOS_SHARED_AGENT_WORKSPACE: root }, repoRoot: process.cwd(),
+    readLiveGoalProjection: async () => {
+      if (++calls === 1) throw new Error('injected optional failure');
+      return { generatedAt: new Date().toISOString(), sourceTruth: 'mixed', queuedCandidates: [] };
+    } };
+  const failed = await readBackendSharedWorkspaceDashboardFeed(input);
+  assert.equal(failed.livePortfolio.state, 'unavailable');
+  assert.match(failed.livePortfolio.reason, /injected optional failure/);
+  const next = await readBackendSharedWorkspaceDashboardFeed(input);
+  assert.equal(next.livePortfolio.state, 'ready');
+  assert.equal(next.livePortfolio.reason, 'LIVE_PROJECTION_READ');
+  assert.equal(calls, 2);
+});
+
+test('conversation read starts before a blocked history read finishes and its failure remains unavailable', async () => {
+  const root = await createWorkspace();
+  await writeFile(join(root, 'status', 'current.json'), JSON.stringify(createSharedWorkspaceStatusRecord({
+    statusId: 'current', timestampUtc: new Date().toISOString(), status: 'CURRENT',
+  })));
+  let releaseHistory;
+  const historyGate = new Promise(resolve => { releaseHistory = resolve; });
+  let conversationStarted;
+  const conversationGate = new Promise(resolve => { conversationStarted = resolve; });
+  const reading = readBackendSharedWorkspaceDashboardFeed({
+    env: { STEPHANOS_SHARED_AGENT_WORKSPACE: root },
+    repoRoot: process.cwd(), liveProjection: null,
+    readFile: async (...args) => { await historyGate; return readFile(...args); },
+    readConversationUplift: async () => { conversationStarted(); throw new Error('conversation unavailable'); },
+  });
+  let deadline;
+  try {
+    await Promise.race([conversationGate, new Promise((_, reject) => {
+      deadline = setTimeout(() => reject(new Error('conversation queued behind history')), 3000);
+    })]);
+  } finally { clearTimeout(deadline); releaseHistory(); await reading; }
+  const feed = await reading;
+  assert.equal(feed.state, 'ready');
+  assert.equal(feed.records.statusRecords.length, 1);
+  assert.deepEqual(feed.conversationUplift, { state: 'unavailable', turnCount: 0, candidates: [] });
+});
 
 test('backend dashboard feed reads current state without walking historical receipt storage', async () => {
   const root = await createWorkspace();
