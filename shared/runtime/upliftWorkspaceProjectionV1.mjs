@@ -144,10 +144,12 @@ function truthFromRecord(record = {}) {
     'RED', 'OFFLINE', 'REJECTED', 'UNSAFE', 'CANCELLED', 'CANCELED', 'ABORTED', 'HOLD',
     'INCOMPLETE', 'UNPROVED', 'UNPROVEN', 'STALLED', 'UNHEALTHY', 'DENIED',
   ]);
-  const stale = new Set(['STALE', 'DEGRADED', 'WAIT', 'WAITING', 'PARTIAL', 'PENDING', 'CONNECTING']);
+  // AWAITING_REVIEW is not a completed review; NEEDS_OPERATOR_APPROVAL is not approval.
+  // Fail closed against another field claiming READY before those gates are proved.
+  const stale = new Set(['STALE', 'DEGRADED', 'WAIT', 'WAITING', 'AWAITING', 'PARTIAL', 'PENDING', 'CONNECTING']);
   const negatedPositive = tokens.includes('NOT') && tokens.some((value) => positive.has(value));
   if (negatedPositive || tokens.some((value) => negative.has(value))) return 'CONFLICTING';
-  if (tokens.some((value) => ['REQUIRED', 'MISSING', 'UNVERIFIED', 'UNQUALIFIED'].includes(value))) return 'UNKNOWN';
+  if (tokens.some((value) => ['REQUIRED', 'MISSING', 'UNVERIFIED', 'UNQUALIFIED', 'NEEDS'].includes(value))) return 'UNKNOWN';
   if (tokens.some((value) => stale.has(value))) return 'STALE';
   if (tokens.some((value) => positive.has(value))) return 'CURRENT';
   return 'UNKNOWN';
