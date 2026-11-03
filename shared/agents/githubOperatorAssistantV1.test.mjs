@@ -404,3 +404,42 @@ test('orphan receiver and terminal claims cannot self-certify cross-run handoff'
  assert.equal(f([producer,ack]).status,'WAITING_FOR_PROOF');
  assert.equal(f([]).status,'PASS');
 });
+
+test('cross-handoff reuse of receiver and verification receipt identities fails closed', () => {
+ const head='a'.repeat(40),base='b'.repeat(40);
+ const producers=[1,2].map(n=>({
+  kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449+n,issueNumber:2670+n,
+  sourceHead:head,baseSha:base,ref:'producer-'+n,nextOwner:'owner-'+n,
+  nextAction:'consume-review',acceptancePredicate:'verified-live-outcome',
+  producedAtUtc:'2026-11-03T18:00:00Z',dueAtUtc:'2026-11-03T22:00:00Z'
+ }));
+ const acks=producers.map((p,i)=>({
+  kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',
+  producerReceiptRef:p.ref,ref:'ack-'+i,prNumber:p.prNumber,issueNumber:p.issueNumber,
+  sourceHead:p.sourceHead,baseSha:p.baseSha,receiverOwner:p.nextOwner,
+  nextAction:p.nextAction,acknowledgedAtUtc:'2026-11-03T18:10:00Z'
+ }));
+ const done=producers.map((p,i)=>({
+  kind:'goal-stage-handoff',marker:'VERIFIED_DONE',
+  producerReceiptRef:p.ref,receiverAckRef:acks[i].ref,ref:'done-'+i,
+  verificationRef:'live-proof-'+i,acceptancePredicate:p.acceptancePredicate,
+  prNumber:p.prNumber,issueNumber:p.issueNumber,sourceHead:p.sourceHead,
+  baseSha:p.baseSha,receiverOwner:p.nextOwner,nextAction:p.nextAction,
+  verifiedAtUtc:'2026-11-03T18:20:00Z'
+ }));
+ const classify=(a,d)=>buildGitHubOperatorBriefing({
+  generatedAtUtc:'2026-11-03T19:00:00Z',evidence:[...producers,...a,...d]
+ });
+ assert.equal(classify(acks,done).status,'PASS');
+ assert.equal(classify(acks,[]).waitingForProof.length,2);
+ const replayAck=classify([acks[0],{...acks[1],ref:acks[0].ref}],
+  [done[0],{...done[1],receiverAckRef:acks[0].ref}]);
+ assert.equal(replayAck.status,'BLOCKED');
+ assert.equal(replayAck.blocked.filter(x=>x.kind==='automation-debt-reused-receiver-ack-ref').length,2);
+ const replayTerminal=classify(acks,[done[0],{...done[1],ref:done[0].ref}]);
+ assert.equal(replayTerminal.status,'BLOCKED');
+ assert.equal(replayTerminal.blocked.filter(x=>x.kind==='automation-debt-reused-terminal-verification-ref').length,2);
+ const replayProof=classify(acks,[done[0],{...done[1],verificationRef:done[0].verificationRef}]);
+ assert.equal(replayProof.status,'BLOCKED');
+ assert.equal(replayProof.blocked.filter(x=>x.kind==='automation-debt-reused-terminal-verification-ref').length,2);
+});

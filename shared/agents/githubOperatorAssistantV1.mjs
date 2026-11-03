@@ -26,6 +26,13 @@ function handoffDebtFromEvidence(evidence,now,prs=[]){
  const made=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&text(e.marker)==='PRODUCED');
  const acks=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&text(e.marker)==='ACKNOWLEDGED');
  const verified=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&['VERIFIED_DONE','VERIFIED_FAILED'].includes(text(e.marker)));
+ const ackRefCounts=new Map(),terminalRefCounts=new Map(),verificationRefCounts=new Map();
+ for(const a of acks){const ref=text(a.ref);if(ref)ackRefCounts.set(ref,(ackRefCounts.get(ref)||0)+1);}
+ for(const v of verified){
+  const ref=text(v.ref),proof=text(v.verificationRef);
+  if(ref)terminalRefCounts.set(ref,(terminalRefCounts.get(ref)||0)+1);
+  if(proof)verificationRefCounts.set(proof,(verificationRefCounts.get(proof)||0)+1);
+ }
  const producerRefCounts=new Map();
  for(const p of made){const ref=text(p.ref);if(ref)producerRefCounts.set(ref,(producerRefCounts.get(ref)||0)+1);}
  // Unowned receiver and terminal claims cannot silently disappear from a producer-only scan.
@@ -73,6 +80,15 @@ function handoffDebtFromEvidence(evidence,now,prs=[]){
   }
   const receiverAcks=acks.filter(a=>text(a.producerReceiptRef)===receipt);
   const terminal=verified.filter(v=>text(v.producerReceiptRef)===receipt);
+  // A receipt may not attest multiple distinct producer/receiver handoffs.
+  if(receiverAcks.some(a=>ackRefCounts.get(text(a.ref))>1)){
+   blocked.push({...item,kind:'automation-debt-reused-receiver-ack-ref',
+    reason:'One receiver ACK receipt identifier is claimed by more than one handoff.'});continue;
+  }
+  if(terminal.some(v=>terminalRefCounts.get(text(v.ref))>1||verificationRefCounts.get(text(v.verificationRef))>1)){
+   blocked.push({...item,kind:'automation-debt-reused-terminal-verification-ref',
+    reason:'One terminal receipt or verification reference is claimed by multiple handoffs.'});continue;
+  }
   if(terminal.length>1){blocked.push({...item,kind:'automation-debt-ambiguous-terminal-proof',reason:'Multiple terminal receipts claim the same producer identity.'});continue;}
   if(terminal.length&&!receiverAcks.length){blocked.push({...item,kind:'automation-debt-terminal-without-ack',reason:'Terminal completion claims lack a bound receiver acknowledgement.'});continue;}
   if(receipt&&receiverAcks.length>1){
