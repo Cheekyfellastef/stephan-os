@@ -21,6 +21,8 @@ function item(kind, input, reason){return {kind, number:Number(input.number), ti
 function handoffDebtFromEvidence(evidence,now,prs=[]){
  const blocked=[], waiting=[];const nowMs=Date.parse(now);
  const prByNumber=new Map(prs.map(p=>[Number(p?.number),p]).filter(([n])=>Number.isInteger(n)&&n>0));
+ const prSnapshotCounts=new Map();
+ for(const candidate of prs){const n=Number(candidate?.number);if(Number.isInteger(n)&&n>0)prSnapshotCounts.set(n,(prSnapshotCounts.get(n)||0)+1);}
  const made=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&text(e.marker)==='PRODUCED');
  const acks=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&text(e.marker)==='ACKNOWLEDGED');
  const verified=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&['VERIFIED_DONE','VERIFIED_FAILED'].includes(text(e.marker)));
@@ -40,6 +42,11 @@ function handoffDebtFromEvidence(evidence,now,prs=[]){
   if(receipt&&producerRefCounts.get(receipt)>1){
    blocked.push({...item,kind:'automation-debt-duplicate-producer-receipt',
     reason:'Producer receipt is reused by multiple handoffs; receiver custody is ambiguous.'});continue;
+  }
+  // Duplicate current PR identities cannot select authoritative HEAD/base custody.
+  if(pr&&prSnapshotCounts.get(pr)>1){
+   blocked.push({...item,kind:'automation-debt-ambiguous-pr-snapshot',
+    reason:'Multiple current PR snapshots claim one PR identity; fail closed before receiver or terminal acceptance.'});continue;
   }
   // A valid historical ACK cannot qualify an older producer head after the PR advances.
   const current=prByNumber.get(pr);

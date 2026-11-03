@@ -345,3 +345,28 @@ test('a receiver VERIFIED_FAILED outcome is terminal debt, never a successful or
    'automation-debt-invalid-terminal-proof');
  }
 });
+
+
+test('rejects duplicated current PR snapshots instead of selecting the last matching handoff identity',()=>{
+ const producer={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'duplicate-current-snapshot',
+  nextOwner:'protected-merge-owner',nextAction:'consume-review',acceptancePredicate:'live-user-outcome',
+  producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T18:00:00Z'};
+ const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:producer.ref,
+  ref:'duplicate-current-snapshot-ack',prNumber:producer.prNumber,issueNumber:producer.issueNumber,
+  sourceHead:producer.sourceHead,baseSha:producer.baseSha,receiverOwner:producer.nextOwner,
+  nextAction:producer.nextAction,acknowledgedAtUtc:'2026-11-03T13:00:00Z'};
+ const current={number:1449,headSha:producer.sourceHead,baseSha:producer.baseSha,
+  publicationVerified:true,checksStatus:'pass'};
+ const stale={...current,headSha:'c'.repeat(40)};
+ const briefing=pullRequests=>buildGitHubOperatorBriefing({
+  generatedAtUtc:'2026-11-03T14:00:00Z',evidence:[producer,ack],pullRequests});
+ assert.equal(briefing([current]).status,'WAITING_FOR_PROOF');
+ assert.equal(briefing([stale]).blocked[0].kind,'automation-debt-stale-source-identity');
+ for(const snapshots of [[stale,current],[current,stale],[current,current]]){
+  const b=briefing(snapshots);
+  assert.equal(b.status,'BLOCKED');
+  assert.equal(b.blocked[0].kind,'automation-debt-ambiguous-pr-snapshot');
+  assert.equal(b.waitingForProof.some(x=>x.kind==='handoff-awaiting-terminal-verification'),false);
+ }
+});
