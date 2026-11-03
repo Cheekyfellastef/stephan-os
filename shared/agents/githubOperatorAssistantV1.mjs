@@ -23,7 +23,7 @@ function handoffDebtFromEvidence(evidence,now,prs=[]){
  const prByNumber=new Map(prs.map(p=>[Number(p?.number),p]).filter(([n])=>Number.isInteger(n)&&n>0));
  const made=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&text(e.marker)==='PRODUCED');
  const acks=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&text(e.marker)==='ACKNOWLEDGED');
- const verified=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&text(e.marker)==='VERIFIED_DONE');
+ const verified=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&['VERIFIED_DONE','VERIFIED_FAILED'].includes(text(e.marker)));
  const producerRefCounts=new Map();
  for(const p of made){const ref=text(p.ref);if(ref)producerRefCounts.set(ref,(producerRefCounts.get(ref)||0)+1);}
  for(const p of made){
@@ -76,6 +76,7 @@ function handoffDebtFromEvidence(evidence,now,prs=[]){
     text(v.acceptancePredicate)===text(p.acceptancePredicate)&&
     Number.isFinite(at)&&at>=ackAt&&at<=nowMs;
    if(!matches){blocked.push({...item,kind:'automation-debt-invalid-terminal-proof',reason:'Terminal claim lacks exact receiver, source, acceptance or verification binding.'});}
+   else if(text(v.marker)==='VERIFIED_FAILED'){blocked.push({...item,kind:'automation-debt-verified-failed-outcome',reason:'Verified terminal failure does not satisfy the original capability acceptance predicate.'});}
    continue;
   }
   // A present but nonmatching ACK is a custody defect, not an outstanding handoff.

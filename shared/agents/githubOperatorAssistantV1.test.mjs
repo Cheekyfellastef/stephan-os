@@ -316,3 +316,32 @@ test('terminal capability proof cannot invent an acceptance predicate absent fro
  assert.equal(briefing([{...p,acceptancePredicate:v.acceptancePredicate},a,v]).status,'PASS');
  assert.equal(briefing([{...p,acceptancePredicate:'different-acceptance'},a,v]).status,'BLOCKED');
 });
+
+test('a receiver VERIFIED_FAILED outcome is terminal debt, never a successful or pending handoff',()=>{
+ const producer={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'failed-producer-1',
+  nextOwner:'original-merge-owner',nextAction:'guarded-merge',acceptancePredicate:'live-user-outcome',
+  producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T14:00:00Z'};
+ const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:producer.ref,ref:'failed-ack-1',
+  prNumber:producer.prNumber,issueNumber:producer.issueNumber,sourceHead:producer.sourceHead,
+  baseSha:producer.baseSha,receiverOwner:producer.nextOwner,nextAction:producer.nextAction,
+  acknowledgedAtUtc:'2026-11-03T12:05:00Z'};
+ const failed={kind:'goal-stage-handoff',marker:'VERIFIED_FAILED',producerReceiptRef:producer.ref,
+  receiverAckRef:ack.ref,ref:'failed-terminal-1',verificationRef:'live-failure-receipt-1',
+  acceptancePredicate:producer.acceptancePredicate,prNumber:producer.prNumber,
+  issueNumber:producer.issueNumber,sourceHead:producer.sourceHead,baseSha:producer.baseSha,
+  receiverOwner:producer.nextOwner,nextAction:producer.nextAction,verifiedAtUtc:'2026-11-03T12:10:00Z'};
+ const briefing=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T12:15:00Z',evidence});
+ const result=briefing([producer,ack,failed]);
+ assert.equal(result.status,'BLOCKED');
+ assert.equal(result.blocked[0].kind,'automation-debt-verified-failed-outcome');
+ assert.equal(briefing([producer,ack]).waitingForProof[0].kind,'handoff-awaiting-terminal-verification');
+ assert.equal(briefing([producer,ack,{...failed,marker:'VERIFIED_DONE'}]).status,'PASS');
+ assert.equal(briefing([producer,failed]).blocked[0].kind,'automation-debt-terminal-without-ack');
+ assert.equal(briefing([producer,ack,failed,{...failed,marker:'VERIFIED_DONE',ref:'other'}]).blocked[0].kind,'automation-debt-ambiguous-terminal-proof');
+ for(const invalid of [{receiverAckRef:'foreign'},{sourceHead:'c'.repeat(40)},
+  {acceptancePredicate:'other'},{verifiedAtUtc:'2026-11-03T12:30:00Z'}]){
+  assert.equal(briefing([producer,ack,{...failed,...invalid}]).blocked[0].kind,
+   'automation-debt-invalid-terminal-proof');
+ }
+});
