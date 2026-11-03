@@ -153,18 +153,13 @@ export async function buildStarfieldVrProjectPerformanceLoop({
   // RENDERING_OR_STEREO also covers pose-age pressure; it cannot by itself
   // establish AER/eye-history instability. Require a stereo-specific signal.
   const stereoMotionObserved = signals.has('stereo-eye-timing-skew-observed');
-  // A single busy-game-thread reading or process total cannot identify the
-  // competing VR/desktop load. Only same-run samples prove attribution.
-  // CPU fields alone are not same-run physical attribution proof. Require
-  // measured thread and process-family sample intervals as well as finite
-  // percentage metrics before offering a targeted CPU experiment.
-  const cpuAttributionReady = [
-    'avgSystemCpuPct', 'avgStarfieldCpuPct',
-    'maxStarfieldBusiestThreadCpuPct', 'avgChatGptCpuPct', 'avgMetaVrCpuPct',
-  ].every((key) => measuredCpuPercent(metrics, key))
-    && [
-      'starfieldThreadCpuMeasuredSampleCount', 'cpuConsumersAvailableSampleCount',
-    ].every((key) => measuredCpuSampleCount(metrics, key));
+  // The canonical diagnosis currently measures total system CPU and Starfield
+  // process CPU over the same session. That is enough for a coarse game-vs-rest
+  // split, but not enough to name a specific desktop/Meta process or busiest
+  // Starfield thread. Keep the experiment at that truthful resolution.
+  const cpuAttributionReady = ['avgSystemCpuPct', 'avgStarfieldCpuPct']
+    .every((key) => measuredCpuPercent(metrics, key))
+    && measuredCpuSampleCount(metrics, 'sampleCount');
 
   const sources = Object.freeze({
     mutar: {
@@ -285,13 +280,10 @@ export async function buildStarfieldVrProjectPerformanceLoop({
   if (cpuPressureObserved) {
     requirements.push(requirement({
       id: 'starfield-cpu-attribution',
-      title: 'Game, busiest-thread, desktop and Meta CPU attribution',
-      metricKeys: [
-        'avgSystemCpuPct', 'avgStarfieldCpuPct',
-        'maxStarfieldBusiestThreadCpuPct', 'avgChatGptCpuPct', 'avgMetaVrCpuPct',
-      ],
+      title: 'System and Starfield CPU attribution',
+      metricKeys: ['sampleCount', 'avgSystemCpuPct', 'avgStarfieldCpuPct'],
       sourceRef: sources.installedCorpus.path,
-      rationale: 'CPU saturation must be attributed from matching session timestamps before tuning graphics or disabling processes.',
+      rationale: 'The canonical diagnosis can separate measured Starfield process CPU from total system CPU; the remaining CPU stays explicitly unattributed until richer process/thread telemetry exists.',
       available: cpuAttributionReady,
     }));
   }
@@ -302,10 +294,10 @@ export async function buildStarfieldVrProjectPerformanceLoop({
   if (cpuPressureObserved) {
     add({
       id: 'starfield-cpu-stage-isolation',
-      title: 'Attribute Starfield main-thread and background CPU pressure',
+      title: 'Separate Starfield CPU from remaining system CPU pressure',
       sources: [sources.installedCorpus, sources.airLink],
-      rationale: 'A pegged whole-system CPU with a partly idle GPU needs matched game-thread, desktop and Meta runtime evidence, not an assumed culprit.',
-      experiment: 'Repeat stationary, yaw and strafe segments without changing the profile; compare busiest Starfield thread, process-family CPU, actual frame time and compositor cadence.',
+      rationale: 'A pegged whole-system CPU with a partly idle GPU can first be split into measured Starfield process load versus unattributed remainder without pretending the current producer identifies individual background processes.',
+      experiment: 'Repeat stationary, yaw and strafe segments without changing the profile; compare Starfield process CPU against total system CPU, frame time and compositor cadence. Treat the remainder as unattributed until richer telemetry is independently available.',
       priority: 115,
     });
   }
@@ -437,9 +429,9 @@ export async function buildStarfieldVrProjectPerformanceLoop({
       }
     : cpuPressureObserved && !cpuAttributionReady
       ? {
-          id: 'qualify-starfield-cpu-attribution-collector',
-          title: 'Qualify and activate Starfield CPU attribution in PR #3187: Record ChatGPT Desktop and browser CPU pressure during Starfield VR playtests',
-          rationale: 'The live canonical reporter currently lacks complete busiest-thread and app-family CPU evidence. PR #3187: Record ChatGPT Desktop and browser CPU pressure during Starfield VR playtests adds these fields but requires independent Windows review, protected merge, Battle Bridge exact-head sync and a real matched playtest before detailed CPU attribution is available.',
+          id: 'capture-canonical-starfield-cpu-attribution',
+          title: 'Capture canonical Starfield and system CPU samples',
+          rationale: 'CPU pressure is evidenced, but the current session lacks the canonical sample count and/or measured Starfield/system CPU pair required for a truthful coarse attribution.',
           sourceRef: sources.installedCorpus.path,
         }
     : missingTelemetry.some((item) => ['application-frame-time', 'delivered-cadence', 'headset-refresh'].includes(item.id))
