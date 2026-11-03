@@ -4,6 +4,7 @@ import GraphEdgeCard from './GraphEdgeCard';
 import GraphStatsCard from './GraphStatsCard';
 import SimulationResultCard from './SimulationResultCard';
 import AnswerPaneCopyButton from './AnswerPaneCopyButton';
+import ConversationCanvasCard, { isConversationCanvasViewV1 } from './ConversationCanvasCard';
 
 function GraphPayload({ payload }) {
   const stats = payload.stats;
@@ -48,6 +49,10 @@ export default function CommandResultCard({ entry }) {
   const executionMetadata = entry.data_payload?.execution_metadata || null;
   const providerExecutionTruth = entry.data_payload?.provider_execution_truth || null;
   const suggestedActions = entry.data_payload?.suggested_actions ?? [];
+  const conversationCanvasView = entry.data_payload?.conversation_canvas_view
+    || entry.data_payload?.conversationCanvasView
+    || null;
+  const hasConversationCanvas = isConversationCanvasViewV1(conversationCanvasView);
   const isMockResponse = executionMetadata?.actual_provider_used === 'mock';
   const displayAnswerText = entry.stream_finalized === true
     ? entry.output_text
@@ -75,7 +80,11 @@ export default function CommandResultCard({ entry }) {
           </span>
         </div>
       ) : null}
-      <p className="assistant-answer-text" data-no-drag>{displayAnswerText}</p>
+      {hasConversationCanvas ? (
+        <ConversationCanvasCard view={conversationCanvasView} />
+      ) : (
+        <p className="assistant-answer-text" data-no-drag>{displayAnswerText}</p>
+      )}
       {providerExecutionTruth?.narration ? <p className="muted">{providerExecutionTruth.narration}</p> : null}
       {entry.error && <p className="error-text">Error [{entry.error_code ?? 'N/A'}]: {entry.error}</p>}
       <p className="muted">Subsystem: {entry.response?.debug?.selected_subsystem ?? entry.route}</p>

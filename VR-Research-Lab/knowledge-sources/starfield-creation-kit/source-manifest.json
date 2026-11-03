@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0",
+  "source_id": "official-bethesda-starfield-creation-kit",
+  "title": "Starfield and Starfield Creation Kit",
+  "priority": "P0",
+  "status": "registered-authoritative-operational-source",
+  "target_role": "First Skyrim VR-quality proving project and Creation Engine 2 authoring evidence layer",
+  "canonical_sources": [
+    {
+      "type": "official-support",
+      "url": "https://help.bethesda.net/app/answers/detail/a_id/65849/~/where-do-i-get-the-creation-kit-for-starfield",
+      "claim": "The Starfield Creation Kit is a separate free Steam download."
+    },
+    {
+      "type": "official-support",
+      "url": "https://help.bethesda.net/app/answers/detail/a_id/73814/~/can-i-use-the-creation-kit-without-owning-starfield-through-steam%3F",
+      "claim": "The editor will not launch unless Starfield is owned and installed through Steam."
+    },
+    {
+      "type": "official-wiki",
+      "url": "https://wiki.bethesda.net/wiki/Starfield/",
+      "claim": "Canonical Starfield Creation Kit documentation surface."
+    },
+    {
+      "type": "official-update-notes",
+      "url": "https://bethesda.net/en/game/starfield/article/3eFYYUUqzOpOSv086XWMh9/starfield-update-notes-may?pubDate=20250506",
+      "claim": "Official game and Creation Kit compatibility/change evidence."
+    }
+  ],
+  "snapshot_date": "2026-07-29",
+  "version_policy": "Do not infer a current game or editor version from public pages. Capture the exact installed Battle Bridge versions and SHA-256 hashes before research or proof.",
+  "licence_and_rights": {
+    "posture": "Proprietary Bethesda game and editor; documentation and individual files may have separate terms.",
+    "ingestion": "Metadata, hashes, inventories, derived schemas, independently written notes and bounded operational evidence only.",
+    "forbidden_repository_content": [
+      "game or Creation Kit executables",
+      "ESM, ESP or ESL files",
+      "BA2 archives",
+      "Bethesda textures, meshes, audio, video or other assets",
+      "access-controlled or paid Creation content",
+      "substantial copied documentation"
+    ]
+  },
+  "evidence_planes": {
+    "authoring": "Creation Kit records, forms, objects, relationships, scripts, plugin structure and official documentation.",
+    "implementation": "Admitted public VR code including Mutar/NoMoreFlat, REFramework and OpenXR sources.",
+    "runtime": "Exact Battle Bridge Starfield build, editor build, configuration, logs, captures and headset results."
+  },
+  "battle_bridge_capture": {
+    "owner_goal": 1595,
+    "integration_goal": 1611,
+    "required_fields": [
+      "Starfield distribution and install path",
+      "Starfield executable version and SHA-256",
+      "Creation Kit presence, install path, version and SHA-256",
+      "Steam ownership and launch compatibility verdict",
+      "SFSE and relevant plugin inventory",
+      "active plugin, master and archive metadata",
+      "approved Downloads-folder source package inventory",
+      "commands, timestamps and proof locations"
+    ]
+  },
+  "programme_links": [1591, 1593, 1595, 1596, 1597, 1611],
+  "refresh_owner": 1596,
+  "promotion_rule": "Keep authored, implementation and observed-runtime evidence distinct. Promote only evidence-linked derived knowledge, never proprietary assets."
+}

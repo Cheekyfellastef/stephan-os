@@ -1,8 +1,19 @@
-import { providerSecretStore } from './providerSecretStore.js';
+import { createHash } from 'node:crypto';
+
 import { resolveGithubRepoConfig } from './githubPrEvidenceService.js';
 import { resolveGithubAuth, resolveGithubGhCliAuth } from './githubAuthResolver.js';
+import { readBrokeredGithubRateLimitHold, recordBrokeredGithubRateLimitHold } from '../../shared/agents/githubObservationBrokerV1.mjs';
 
 export const GITHUB_TELEMETRY_SCHEMA = 'stephanos.github.telemetry.v1';
+export const DEFAULT_GITHUB_TELEMETRY_REQUEST_TIMEOUT_MS = 3_000;
+export const DEFAULT_GITHUB_TELEMETRY_CACHE_TTL_MS = 60_000;
+const MAX_GITHUB_TELEMETRY_CACHE_TTL_MS = 5 * 60 * 1000;
+const githubTelemetryCache = new Map();
+// Single-flight for concurrent dashboard refreshes sharing one credential.
+const githubTelemetryInFlight = new Map();
+const GITHUB_TELEMETRY_RATE_LIMIT_DEFAULT_MS = 120_000;
+const GITHUB_TELEMETRY_RATE_LIMIT_MIN_MS = 30_000;
+const GITHUB_TELEMETRY_RATE_LIMIT_MAX_MS = 65 * 60_000;
 const WORKFLOW_STATES = new Set(['running', 'queued', 'failed', 'passed', 'cancelled']);
 function text(value, fallback = '') { const normalized = String(value ?? '').trim(); return normalized || fallback; }
 function list(value) { return Array.isArray(value) ? value : []; }
@@ -68,7 +79,16 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     if (['success', 'passed'].includes(conclusion)) status = 'passed';
     if (['failure', 'failed', 'timed_out', 'action_required'].includes(conclusion)) status = 'failed';
     if (conclusion === 'cancelled') status = 'cancelled';
-    return { id: text(run.id, `workflow-${index + 1}`), name: text(run.name, 'unknown'), status, prNumber: Number(run.prNumber || run.pull_requests?.[0]?.number || 0) || null, goalId: text(run.goalId), url: text(run.url || run.html_url), updatedAt: text(run.updatedAt || run.updated_at || run.run_started_at) };
+    return {
+      id: text(run.id, `workflow-${index + 1}`),
+      name: text(run.name, 'unknown'),
+      status,
+      prNumber: Number(run.prNumber || run.pull_requests?.[0]?.number || 0) || null,
+      headSha: text(run.headSha || run.head_sha, ''),
+      goalId: text(run.goalId),
+      url: text(run.url || run.html_url),
+      updatedAt: text(run.updatedAt || run.updated_at || run.run_started_at),
+    };
   });
   const blockers = [];
   if (!available) blockers.push('github_adapter_unavailable');
@@ -92,36 +112,185 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     mergeAllowed: false,
   };
 }
-async function githubJson(url, auth, fetchImpl = fetch) {
-  const response = await fetchImpl(url, { headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${auth.token}`, 'User-Agent': 'stephanos-readonly-github-telemetry' } });
-  if (!response.ok) { const error = new Error(`GitHub API request failed (${response.status})`); error.status = response.status; throw error; }
-  return response.json();
+function githubRequestTimeoutMs(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.floor(parsed)
+    : DEFAULT_GITHUB_TELEMETRY_REQUEST_TIMEOUT_MS;
+}
+function githubTelemetryCacheTtlMs(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_GITHUB_TELEMETRY_CACHE_TTL_MS;
+  return Math.min(Math.max(Math.floor(parsed), 5_000), MAX_GITHUB_TELEMETRY_CACHE_TTL_MS);
+}
+function githubCredentialFingerprint(auth = {}) {
+  const token = text(auth?.token);
+  return token ? createHash('sha256').update(token).digest('hex').slice(0, 24) : 'no-token';
+}
+function githubTelemetryCacheKey(repoConfig, auth) {
+  return `${text(repoConfig?.owner).toLowerCase()}/${text(repoConfig?.repo).toLowerCase()}:${text(auth?.authority, 'unknown')}:${githubCredentialFingerprint(auth)}`;
+}
+
+// Observational dashboards never turn a rate-limited GitHub read into proof of
+// live PR/check state. The broker already shares this unavailable HOLD with
+// independent Battle Bridge PR evidence and gh-cli observer processes.
+function heldGithubTelemetry(repoConfig, authority, options, hold) {
+  return {
+    ...normalizeGithubTelemetry({
+      available: false, authAuthority: authority, repository: repoConfig,
+    }, options),
+    status: 'adapter_error',
+    blockers: ['github_rate_limit_backoff'],
+    rateLimitHold: {
+      reasonCode: 'GITHUB_RATE_LIMIT_BACKOFF',
+      retryAfterUtc: hold.retryAfterUtc,
+    },
+  };
+}
+async function githubJson(url, auth, options = {}) {
+  const fetchImpl = options.fetchImpl || fetch;
+  const timeoutMs = githubRequestTimeoutMs(options.requestTimeoutMs);
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      controller?.abort();
+      const error = new Error(`GitHub telemetry request timed out after ${timeoutMs}ms`);
+      error.code = 'github-telemetry-timeout';
+      reject(error);
+    }, timeoutMs);
+  });
+  try {
+    const response = await Promise.race([
+      Promise.resolve().then(() => fetchImpl(url, {
+        headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${auth.token}`, 'User-Agent': 'stephanos-readonly-github-telemetry' },
+        ...(controller ? { signal: controller.signal } : {}),
+      })),
+      timeout,
+    ]);
+    if (!response.ok) {
+      const error = new Error(`GitHub API request failed (${response.status})`);
+      error.status = response.status;
+      if ([403, 429].includes(response.status)) {
+        const remaining = String(response.headers?.get?.('x-ratelimit-remaining') ?? '');
+        let message = '';
+        try {
+          message = String((await Promise.race([
+            Promise.resolve().then(() => response.json()),
+            timeout,
+          ]))?.message ?? '');
+        } catch {}
+        // A plain permissions 403 is not a rate-limit event: preserve the
+        // existing alternate-auth retry only for that distinct case.
+        if (response.status === 429 || remaining === '0'
+            || /(?:api|secondary) rate limit exceeded|rate limit exceeded|exceeded (?:a |the )?secondary rate limit|too many requests/i.test(message)) {
+          const retrySeconds = Number(response.headers?.get?.('retry-after'));
+          const resetSeconds = Number(response.headers?.get?.('x-ratelimit-reset'));
+          const requestedMs = Number.isFinite(retrySeconds) && retrySeconds > 0
+            ? retrySeconds * 1000
+            : Number.isFinite(resetSeconds) && resetSeconds > 0
+              ? resetSeconds * 1000 - Date.now() + 5_000
+              : GITHUB_TELEMETRY_RATE_LIMIT_DEFAULT_MS;
+          error.githubRateLimited = true;
+          error.retryAfterMs = Math.min(GITHUB_TELEMETRY_RATE_LIMIT_MAX_MS,
+            Math.max(GITHUB_TELEMETRY_RATE_LIMIT_MIN_MS, requestedMs));
+        }
+      }
+      throw error;
+    }
+    return await Promise.race([
+      Promise.resolve().then(() => response.json()),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 async function readGithubTelemetryWithAuth(repoConfig, auth, options = {}) {
   const { owner, repo } = repoConfig;
-  const fetchImpl = options.fetchImpl || fetch;
-  const [notifications, prs, workflowRuns] = await Promise.all([
-    githubJson('https://api.github.com/notifications?all=false&participating=false', auth, fetchImpl),
-    githubJson(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open&per_page=100`, auth, fetchImpl),
-    githubJson(`https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=50`, auth, fetchImpl),
-  ]);
+  const requestOptions = {
+    fetchImpl: options.fetchImpl || fetch,
+    requestTimeoutMs: options.requestTimeoutMs,
+  };
+  // Serial, deliberately: one exhausted endpoint must not dispatch two more
+  // doomed requests before the shared rate-limit HOLD can be recorded.
+  const prs = await githubJson(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open&per_page=100`, auth, requestOptions);
+  const workflowRuns = await githubJson(`https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=50`, auth, requestOptions);
+  const notifications = await githubJson('https://api.github.com/notifications?all=false&participating=false', auth, requestOptions);
   return normalizeGithubTelemetry({ available: true, source: 'github-api', authAuthority: auth.authority, repository: repoConfig, notifications, pullRequests: prs, workflows: workflowRuns.workflow_runs || [] }, options);
 }
 export async function readGithubTelemetry(options = {}) {
   if (options.adapterData) return normalizeGithubTelemetry(options.adapterData, options);
   const repoConfig = resolveGithubRepoConfig(options.env || process.env);
-  const auth = await resolveGithubAuth({ env: options.env || process.env, secretStoreToken: Object.prototype.hasOwnProperty.call(options, 'secretStoreToken') ? options.secretStoreToken : providerSecretStore.getSecret('github'), ghTokenProvider: options.ghTokenProvider, execFile: options.execFile });
+  const authOptions = {};
+  if (Object.prototype.hasOwnProperty.call(options, 'env')) authOptions.env = options.env;
+  if (Object.prototype.hasOwnProperty.call(options, 'secretStoreToken')) authOptions.secretStoreToken = options.secretStoreToken;
+  if (typeof options.ghTokenProvider === 'function') authOptions.ghTokenProvider = options.ghTokenProvider;
+  if (typeof options.execFile === 'function') authOptions.execFile = options.execFile;
+  const auth = await resolveGithubAuth(authOptions);
   if (!repoConfig || !auth.configured) return normalizeGithubTelemetry({ available: false, authAuthority: auth.authority, repository: repoConfig }, options);
+
+  // Injected tests cannot read or mutate the operator's Shared Workspace.
+  const useSharedHold = options.fetchImpl === undefined || options.fetchImpl === fetch || Boolean(options.workspaceRoot);
+  const repository = `${repoConfig.owner}/${repoConfig.repo}`;
+  const sharedHold = useSharedHold
+    ? readBrokeredGithubRateLimitHold({ repository, workspaceRoot: options.workspaceRoot })
+    : null;
+  if (sharedHold) return heldGithubTelemetry(repoConfig, auth.authority, options, sharedHold);
+
+  const cacheEnabled = options.cacheEnabled === undefined ? options.fetchImpl === undefined : options.cacheEnabled === true;
+  const nowMs = options.now instanceof Date ? options.now.getTime() : Date.now();
+  const cacheTtlMs = githubTelemetryCacheTtlMs(options.cacheTtlMs);
+  const cacheKey = githubTelemetryCacheKey(repoConfig, auth);
+  if (cacheEnabled) {
+    const cached = githubTelemetryCache.get(cacheKey);
+    if (cached && nowMs - cached.cachedAtMs >= 0 && nowMs - cached.cachedAtMs < cacheTtlMs) return cached.telemetry;
+  }
+
+  // The cache only contains completed observations. Deduplicate refreshes
+  // currently in progress as well, or concurrent UI clients would each launch
+  // their own entire GitHub request sequence.
+  if (cacheEnabled && githubTelemetryInFlight.has(cacheKey)) {
+    return githubTelemetryInFlight.get(cacheKey);
+  }
+  const flight = (async () => {
   try {
-    return await readGithubTelemetryWithAuth(repoConfig, auth, options);
+    const telemetry = await readGithubTelemetryWithAuth(repoConfig, auth, options);
+    if (cacheEnabled) githubTelemetryCache.set(cacheKey, { cachedAtMs: nowMs, telemetry });
+    return telemetry;
   } catch (error) {
-    if (error?.status === 403 && auth.authority !== 'gh-cli') {
-      const ghAuth = await resolveGithubGhCliAuth({ ghTokenProvider: options.ghTokenProvider, execFile: options.execFile });
+    if (error?.status === 403 && !error.githubRateLimited && auth.authority !== 'gh-cli') {
+      const ghAuth = await resolveGithubGhCliAuth(authOptions);
       if (ghAuth.configured) {
-        try { return await readGithubTelemetryWithAuth(repoConfig, ghAuth, options); } catch (retryError) { error = retryError; }
+        try {
+          const telemetry = await readGithubTelemetryWithAuth(repoConfig, ghAuth, options);
+          if (cacheEnabled) {
+            const cached = { cachedAtMs: nowMs, telemetry };
+            githubTelemetryCache.set(githubTelemetryCacheKey(repoConfig, ghAuth), cached);
+            githubTelemetryCache.set(cacheKey, cached);
+          }
+          return telemetry;
+        } catch (retryError) {
+          error = retryError;
+        }
       }
     }
+    if (error?.githubRateLimited) {
+      const recorded = useSharedHold ? recordBrokeredGithubRateLimitHold({
+        repository, workspaceRoot: options.workspaceRoot, retryAfterMs: error.retryAfterMs,
+      }) : null;
+      const retryAfterUtc = recorded?.retryAfterUtc
+        || new Date(Date.now() + error.retryAfterMs).toISOString();
+      return heldGithubTelemetry(repoConfig, auth.authority, options, { retryAfterUtc });
+    }
     return { ...normalizeGithubTelemetry({ available: false, authAuthority: auth.authority, repository: repoConfig }, options), status: 'adapter_error', blockers: [`github_adapter_error:${error?.message || 'unknown'}`] };
+  }
+  })();
+  if (cacheEnabled) githubTelemetryInFlight.set(cacheKey, flight);
+  try {
+    return await flight;
+  } finally {
+    if (githubTelemetryInFlight.get(cacheKey) === flight) githubTelemetryInFlight.delete(cacheKey);
   }
 }
 export function buildExecutionChains({ goals = [], githubTelemetry = {} } = {}) {

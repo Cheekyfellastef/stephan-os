@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "source_id": "official-virtual-desktop",
+  "title": "Virtual Desktop",
+  "classification": [
+    "commercial-proprietary",
+    "operational-evidence",
+    "wireless-pcvr-transport",
+    "virtual-screen-presentation",
+    "stereoscopic-sbs-presentation",
+    "openxr-vdxr-routing",
+    "latency-and-streaming-reference",
+    "resistant-game-fallback-reference"
+  ],
+  "upstream": {
+    "canonical_source": "https://www.vrdesktop.net/",
+    "compatibility_source": "https://games.vrdesktop.net/",
+    "public_release_repository": "guygodin/VirtualDesktop",
+    "snapshot_version": "1.34.18",
+    "snapshot_date": "2026-08-02"
+  },
+  "licence": {
+    "classification": "Commercial proprietary",
+    "reuse_verdict": "metadata-public-behaviour-and-operator-evidence-only",
+    "notes": "The public GitHub repository is a release and changelog surface, not an open-source grant for the Virtual Desktop application or VDXR implementation. Do not copy implementation, binaries, substantial site content or compatibility data into Stephanos without permission."
+  },
+  "public_capabilities": [
+    "display a PC desktop, movies and flat games on a giant virtual screen",
+    "stream PCVR games from a Windows VR-ready PC to supported standalone headsets",
+    "present side-by-side 3D content using an in-app 3D mode",
+    "route compatible OpenXR games through VDXR or other supported runtimes",
+    "support multiple codecs, bitrate and streaming-quality controls",
+    "support gamepad, tracked-controller and selected hand/body/eye-tracking paths",
+    "publish compatibility and operational troubleshooting guidance",
+    "expose practical network, capture, DRM and black-screen limitations"
+  ],
+  "programme_links": [1593, 1595, 1596, 1597, 1643],
+  "refresh_owner": 1596,
+  "local_extraction": "VR-Research-Lab/knowledge-sources/virtual-desktop/knowledge-extraction.md",
+  "promotion_rule": "Use Virtual Desktop as an operational benchmark, presentation transport candidate and field-evidence source. Any Stephanos-owned reconstruction, streaming, runtime-routing or SBS system must be independently designed from open standards and licence-compatible components, then proven on the Battle Bridge and Quest 3.",
+  "trust": {
+    "source_type": "official commercial product and public release metadata",
+    "code_reuse": "prohibited without separate permission",
+    "binary_ingestion": "approval-gated local product use only",
+    "claims_require_local_reproduction": true,
+    "compatibility_entries_are_not_runtime_proof": true
+  }
+}
