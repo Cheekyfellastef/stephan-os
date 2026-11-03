@@ -370,3 +370,35 @@ test('rejects duplicated current PR snapshots instead of selecting the last matc
   assert.equal(b.waitingForProof.some(x=>x.kind==='handoff-awaiting-terminal-verification'),false);
  }
 });
+
+
+test('orphan receiver and terminal claims cannot self-certify cross-run handoff', () => {
+ const head='a'.repeat(40),base='b'.repeat(40);
+ const producer={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  ref:'prod-1449',sourceHead:head,baseSha:base,nextOwner:'merge-owner',
+  nextAction:'consume-review',acceptancePredicate:'exact-main-live',
+  producedAtUtc:'2026-11-03T17:00:00Z',dueAtUtc:'2026-11-03T18:00:00Z'};
+ const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',prNumber:1449,issueNumber:2972,
+  producerReceiptRef:'prod-1449',ref:'ack-1449',sourceHead:head,baseSha:base,
+  receiverOwner:'merge-owner',nextAction:'consume-review',acknowledgedAtUtc:'2026-11-03T17:10:00Z'};
+ const done={kind:'goal-stage-handoff',marker:'VERIFIED_DONE',prNumber:1449,issueNumber:2972,
+  producerReceiptRef:'prod-1449',ref:'done-1449',receiverAckRef:'ack-1449',
+  verificationRef:'live-physical-receipt',sourceHead:head,baseSha:base,
+  receiverOwner:'merge-owner',nextAction:'consume-review',acceptancePredicate:'exact-main-live',
+  verifiedAtUtc:'2026-11-03T17:20:00Z'};
+ const failed={...done,marker:'VERIFIED_FAILED',ref:'failed-1449'};
+ const f=(evidence)=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T17:30:00Z',evidence});
+ const cases=[
+  {name:'orphan ack',evidence:[ack],kind:'automation-debt-orphan-receiver-ack'},
+  {name:'orphan done',evidence:[done],kind:'automation-debt-orphan-terminal-receipt'},
+  {name:'orphan failed',evidence:[failed],kind:'automation-debt-orphan-terminal-receipt'},
+  {name:'orphan ack and done',evidence:[ack,done],kind:'automation-debt-orphan-receiver-ack'},
+  {name:'foreign ack alongside canonical handoff',evidence:[producer,ack,{...ack,ref:'foreign-ack',producerReceiptRef:'foreign'}],kind:'automation-debt-orphan-receiver-ack'},
+  {name:'empty producer ref',evidence:[{...ack,producerReceiptRef:''}],kind:'automation-debt-orphan-receiver-ack'},
+ ];
+ for(const c of cases){const b=f(c.evidence);assert.equal(b.status,'BLOCKED',c.name);
+  assert.ok(b.blocked.some(x=>x.kind===c.kind),c.name);}
+ assert.equal(f([producer,ack,done]).status,'PASS');
+ assert.equal(f([producer,ack]).status,'WAITING_FOR_PROOF');
+ assert.equal(f([]).status,'PASS');
+});

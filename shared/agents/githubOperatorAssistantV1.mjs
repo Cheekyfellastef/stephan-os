@@ -28,6 +28,21 @@ function handoffDebtFromEvidence(evidence,now,prs=[]){
  const verified=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&['VERIFIED_DONE','VERIFIED_FAILED'].includes(text(e.marker)));
  const producerRefCounts=new Map();
  for(const p of made){const ref=text(p.ref);if(ref)producerRefCounts.set(ref,(producerRefCounts.get(ref)||0)+1);}
+ // Unowned receiver and terminal claims cannot silently disappear from a producer-only scan.
+ // An orphan receipt is a custody defect even when another handoff is valid.
+ for(const [claims,kind,reason] of [
+  [acks,'automation-debt-orphan-receiver-ack','Receiver ACK has no corresponding canonical producer receipt.'],
+  [verified,'automation-debt-orphan-terminal-receipt','Terminal claim has no corresponding canonical producer receipt.'],
+ ]){
+  for(const claim of claims){
+   const producerRef=text(claim.producerReceiptRef);
+   if(producerRef&&producerRefCounts.has(producerRef))continue;
+   const pr=Number(claim.prNumber)||0,issue=Number(claim.issueNumber)||0;
+   blocked.push({kind,number:pr||issue,title:'Goal handoff',url:'',
+    headSha:text(claim.sourceHead),issueNumbers:issue?[issue]:[],
+    evidenceRefs:[producerRef,text(claim.ref)].filter(Boolean),reason});
+  }
+ }
  for(const p of made){
   const pr=Number(p.prNumber)||0,issue=Number(p.issueNumber)||0,head=text(p.sourceHead),base=text(p.baseSha);
   const receipt=text(p.ref),owner=text(p.nextOwner),action=text(p.nextAction);
