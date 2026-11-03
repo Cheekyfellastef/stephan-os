@@ -178,6 +178,9 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
   'docs/',
   'tests/',
   'src/windows/Stephanos.CanonicalMailboxNativeEvidence/',
+  // This host is an offline native package, not a live Windows service.
+  // Distinct sibling versions deliberately remain unclassified and blocked.
+  'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/',
   'VR-Research-Lab/docs/',
 ]);
 
@@ -194,8 +197,8 @@ const NO_RUNTIME_EXACT = new Set([
   // long-running service; the later exact-head installation/boot gate owns them.
   'scripts/sovereign-fixed-runtime-installer-candidate-v1.mjs',
   'scripts/windows/SovereignFixedRuntimeIdentityV1.cs',
-  // Source-closure input only: a new main still requires separate protected
-  // installation and later-boot qualification, never an automatic host start.
+  // Protected host C# source is compiled only by the attended installer. A
+  // source change never activates or qualifies the installed native binary.
   'scripts/windows/SovereignFixedRuntimeHostV1.cs',
   'scripts/windows/install-sovereign-fixed-runtime-v1.ps1',
   // These exact files build a one-shot mailbox evidence host, not a daemon.
@@ -303,6 +306,14 @@ export function parseGitChangedPathStatus(stdout) {
 }
 
 function isTestOrDocumentation(path) {
+  // Current main lists the offline evidence-host directory as an inert source
+  // package, but a NEW signer/source file in it must not silently inherit
+  // the reviewed three-file trust boundary. Exact tests/docs stay inert.
+  if (path.startsWith('src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/')) {
+    return NO_RUNTIME_EXACT.has(path)
+      || /(?:^|\\/)[^/]+\\.(?:test|spec)\\.(?:c?js|mjs|jsx|ts|tsx)$/i.test(path)
+      || /\\.(?:md|mdx)$/i.test(path);
+  }
   return NO_RUNTIME_EXACT.has(path)
     || NO_RUNTIME_PREFIXES.some((prefix) => path.startsWith(prefix))
     || /(?:^|\/)[^/]+\.(?:test|spec)\.(?:c?js|mjs|jsx|ts|tsx)$/i.test(path)
