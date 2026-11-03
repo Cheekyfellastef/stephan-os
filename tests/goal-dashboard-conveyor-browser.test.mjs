@@ -41,11 +41,16 @@ test('served conveyor is truthful, responsive, touch accessible, and ages withou
       observedAtUtc:at,expiresAtUtc:new Date(now+240000).toISOString(),queueDepth:0},
   }];
   projection.goalBuildConveyorOverview = overview(projection, { nowMs: now, statusRecords: statusRecordsForCapacity });
-  let available = true;
+  let available = true, backendHealthy = true;
   const server = createServer((req, res) => {
     res.setHeader('cache-control', 'no-store');
     if (req.url.includes('/api/')) {
-      if (available && req.url.includes('dashboard-feed')) {
+      if (available && req.url === '/api/health') {
+        res.setHeader('content-type','application/json');
+        res.statusCode=backendHealthy?200:503;
+        res.end(JSON.stringify({ok:backendHealthy,service:'stephanos-server',
+          api_status:backendHealthy?'online':'unavailable'}));
+      } else if (available && req.url.includes('dashboard-feed')) {
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({ schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1', state: 'ready', projection }));
       } else { res.statusCode=503;res.end('{}'); }
@@ -61,6 +66,18 @@ test('served conveyor is truthful, responsive, touch accessible, and ages withou
     await page.goto('http://127.0.0.1:'+server.address().port+'/apps/goal-dashboard/index.html');
     const card=page.getByTestId('goal-build-conveyor-overview');
     await page.waitForFunction(()=>document.querySelector('#cv-status').textContent.includes('Material building observed'));
+    const backendBadge=card.locator('#cv-health .cv-health-item').filter({hasText:'Backend'});
+    assert.equal(await backendBadge.getAttribute('data-cv-light'),'GREEN',
+      'a live HTTP 200 /api/health confirms independently responsive Backend');
+    assert.match(await backendBadge.textContent(),/Backend · healthy/);
+    assert.equal(await card.locator('#cv-health .cv-health-item').filter({hasText:'Core daemon'})
+      .getAttribute('data-cv-light'),'GREY','Backend success must not paint the Core healthy');
+    backendHealthy=false;await page.evaluate(()=>refresh());
+    assert.equal(await backendBadge.getAttribute('data-cv-light'),'GREY',
+      'a failed health probe must revoke the previous green without reusing a stale receipt');
+    backendHealthy=true;await page.evaluate(()=>refresh());
+    assert.equal(await backendBadge.getAttribute('data-cv-light'),'GREEN',
+      'a fresh successful probe restores readiness without a PC or backend restart');
     assert.ok((await card.boundingBox()).y<140,'The live conveyor must be visible before the decorative overview hero');
     assert.equal(await card.locator('.cv-stage').count(),9);
     const inventory=page.getByTestId('octopus-builder-inventory');
