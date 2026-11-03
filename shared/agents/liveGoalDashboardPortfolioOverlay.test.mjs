@@ -460,3 +460,48 @@ test('workspace evidence accepts either canonical proof reference field without 
   assert.deepEqual(invalid.proofRefs, []);
   assert.ok(invalid.blockers.includes('PROOF_REFERENCE_MISSING'));
 });
+
+test('source-bound workspace handoff proof rejects mismatched or missing receiver head identities', () => {
+  const headA = 'a'.repeat(40);
+  const headB = 'b'.repeat(40);
+  const observed = '2026-08-14T11:29:50Z';
+  const project = (goalHead, proofHead, proofStatus = 'PASS') => {
+    const goal = { goalId: 'goal-2670', status: 'ACTIVE', timestampUtc: observed };
+    const proof = { goalId: 'goal-2670', status: proofStatus,
+      timestampUtc: observed, proofRefs: ['proofs/goal-2670-receipt.json'] };
+    if (goalHead !== undefined) goal.sourceHead = goalHead;
+    if (proofHead !== undefined) proof.sourceHead = proofHead;
+    const result = overlayGoalDashboardWithLivePortfolio({
+      baseProjection: baseProjection(), nowMs: NOW,
+      goalRecords: [goal], proofRecords: [proof],
+    });
+    return { result, card: result.goals[0] };
+  };
+
+  // Reproduced pre-fix: these unacknowledged head combinations all returned CURRENT.
+  for (const [description, producerHead, receiverHead] of [
+    ['different SHA', headA, headB],
+    ['missing receiver SHA', headA, undefined],
+    ['missing producer SHA', undefined, headA],
+    ['malformed producer SHA', 'not-a-sha', headA],
+    ['malformed receiver SHA', headA, 'not-a-sha'],
+  ]) {
+    const { result, card } = project(producerHead, receiverHead);
+    assert.equal(card.proofTruth, 'UNKNOWN', description);
+    assert.ok(card.blockers.includes('PROOF_SOURCE_HEAD_UNBOUND'), description);
+    assert.match(card.exactNextAction, /Reconcile exact source head/, description);
+    assert.equal(result.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED', description);
+  }
+
+  for (const [description, producerHead, receiverHead] of [
+    ['matched exact SHA', headA, headA],
+    ['case-insensitive exact SHA', headA.toUpperCase(), headA],
+    ['legacy records without claimed source heads', undefined, undefined],
+  ]) {
+    const { card } = project(producerHead, receiverHead);
+    assert.equal(card.proofTruth, 'CURRENT', description);
+    assert.equal(card.blockers.includes('PROOF_SOURCE_HEAD_UNBOUND'), false, description);
+  }
+  assert.equal(project(headA, headA, 'FAIL').card.proofTruth, 'UNKNOWN',
+    'correct SHA must not rescue a failing receipt');
+});

@@ -103,13 +103,22 @@ function workspaceGoalCard(record, input, options) {
   const proofPassed = ['PASS', 'PASSED', 'SUCCESS', 'SUCCEEDED', 'VERIFIED'].includes(proofStatus);
   const proofRefs = [...new Set([...list(proofRecord?.refs), ...list(proofRecord?.proofRefs)]
     .filter((ref) => typeof ref === 'string').map((ref) => ref.trim()).filter(Boolean))];
-  const proofTruth = proofFreshness.truth === CURRENT && (!proofPassed || !proofRefs.length)
+  // A passing receipt from a different or unidentified source head does not
+  // acknowledge this goal's current source identity. Preserve legacy displays
+  // only when neither record declares a source head.
+  const goalHead = text(record.sourceHead || record.headSha || record.expectedHead).toLowerCase();
+  const proofHead = text(proofRecord?.sourceHead || proofRecord?.headSha || proofRecord?.expectedHead).toLowerCase();
+  const sourceIdentityDeclared = Boolean(goalHead || proofHead);
+  const proofHeadBound = !sourceIdentityDeclared
+    || (SHA40.test(goalHead) && SHA40.test(proofHead) && goalHead === proofHead);
+  const proofTruth = proofFreshness.truth === CURRENT && (!proofPassed || !proofRefs.length || !proofHeadBound)
     ? UNKNOWN : proofFreshness.truth;
   const blockers = [];
   if (statusFreshness.truth !== CURRENT) blockers.push(`${statusFreshness.truth}_STATUS_RECORD`);
   if (proofTruth !== CURRENT) blockers.push(`${proofTruth}_PROOF_RECORD`);
   if (proofFreshness.truth === CURRENT && !proofPassed) blockers.push('PROOF_RESULT_NOT_PASSED');
   if (proofFreshness.truth === CURRENT && proofPassed && !proofRefs.length) blockers.push('PROOF_REFERENCE_MISSING');
+  if (proofFreshness.truth === CURRENT && proofPassed && proofRefs.length && !proofHeadBound) blockers.push('PROOF_SOURCE_HEAD_UNBOUND');
   return Object.freeze({
     issue: identity,
     title: text(record.title, 'Shared Workspace goal'),
@@ -119,7 +128,9 @@ function workspaceGoalCard(record, input, options) {
     summary: text(record.summary, `Status: ${text(record.status, 'open')}`),
     proofRefs,
     blockers,
-    exactNextAction: blockers.length
+    exactNextAction: !proofHeadBound && proofFreshness.truth === CURRENT
+      ? `Reconcile exact source head for ${identity} between the goal and its proof receipt before claiming completion.`
+      : blockers.length
       ? 'Refresh the goal/proof records from canonical programme evidence before claiming current completion.'
       : text(record.nextAction, 'Continue the current bounded goal through its proof and completion contract.'),
     source: 'shared-workspace-goal-record',
