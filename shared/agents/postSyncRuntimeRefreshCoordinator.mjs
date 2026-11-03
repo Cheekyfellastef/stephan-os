@@ -165,6 +165,9 @@ const NATURAL_PREFIXES = Object.freeze([
 
 const OPENCLAW_APPROVAL_EXEMPT_EXACT = new Set([
   'shared/agents/openClawProviderPoolQualificationV1.mjs',
+  // The specialist review model is imported by backend-side protected merge
+  // adapters; it is not the running OpenClaw gateway or its plugin bundle.
+  'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.mjs',
   'scripts/windows/repair-openclaw-full-stack.ps1',
   // This exact specialist-review helper is not an OpenClaw gateway change.
   // Backend/worker refresh classification still applies to the shared agent.
