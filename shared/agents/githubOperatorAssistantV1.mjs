@@ -29,7 +29,7 @@ function handoffDebtFromEvidence(evidence,now){
   const item={number:pr||issue,title:'Goal handoff',url:'',headSha:head,
    issueNumbers:issue?[issue]:[],evidenceRefs:receipt?[receipt]:[]};
   if(!(pr||issue)||!(/^[a-f0-9]{40}$/i.test(head)&&/^[a-f0-9]{40}$/i.test(base))||
-      !receipt||!owner||!action||![nowMs,madeAt,due].every(Number.isFinite)||due<madeAt){
+      !receipt||!owner||!action||![nowMs,madeAt,due].every(Number.isFinite)||madeAt>nowMs||due<madeAt){
    blocked.push({...item,kind:'automation-debt-incomplete-handoff',
     reason:'Producer handoff lacks an exact owner, source/base, action, receipt or freshness bound.'});continue;
   }

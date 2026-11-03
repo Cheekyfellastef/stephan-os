@@ -131,3 +131,24 @@ test('projects pending and incomplete handoffs without treating summary claims a
  assert.equal(f([{...producer,baseSha:''}]).blocked[0].kind,'automation-debt-incomplete-handoff');
  assert.equal(f([{...producer,marker:'CLAIMED'}]).status,'PASS');
 });
+
+test('rejects future-dated PRODUCED handoffs and retains valid acknowledgements',()=>{
+ const p={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'future-1',
+  nextOwner:'review-owner',nextAction:'consume-review',
+  producedAtUtc:'2026-11-03T13:00:01Z',dueAtUtc:'2026-11-03T14:00:00Z'};
+ const f=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T13:00:00Z',evidence});
+ for(const producedAtUtc of ['2026-11-03T13:00:01Z','2026-11-04T13:00:00Z']){
+  const b=f([{...p,producedAtUtc,dueAtUtc:'2026-11-05T13:00:00Z'}]);
+  assert.equal(b.status,'BLOCKED');
+  assert.equal(b.blocked[0].kind,'automation-debt-incomplete-handoff');
+  assert.equal(b.waitingForProof.length,0);
+ }
+ const valid={...p,producedAtUtc:'2026-11-03T12:30:00Z'};
+ assert.equal(f([valid]).status,'WAITING_FOR_PROOF');
+ const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:'future-1',ref:'ack',
+  prNumber:1449,issueNumber:2972,sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),
+  receiverOwner:'review-owner',nextAction:'consume-review',acknowledgedAtUtc:'2026-11-03T12:45:00Z'};
+ assert.equal(f([valid,ack]).status,'PASS');
+ assert.equal(f([p,ack]).status,'BLOCKED');
+});
