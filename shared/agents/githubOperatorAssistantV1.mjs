@@ -55,8 +55,11 @@ function handoffDebtFromEvidence(evidence,now){
   if(accepted)continue;
   // A present but nonmatching ACK is a custody defect, not an outstanding handoff.
   if(receiverAcks.length===1){
-   blocked.push({...item,kind:'automation-debt-mismatched-receiver-ack',
-    reason:'Receiver acknowledgement fails exact producer identity, owner, action or freshness binding.'});continue;
+   const at=Date.parse(text(receiverAcks[0].acknowledgedAtUtc));
+   const expired=Number.isFinite(at)&&at>due&&nowMs>due;
+   blocked.push({...item,kind:expired?'automation-debt-stale-handoff':'automation-debt-mismatched-receiver-ack',
+    reason:expired?'Expired producer handoff has no timely receiver acknowledgement.':
+     'Receiver acknowledgement fails exact producer identity, owner, action or freshness binding.'});continue;
   }
   const overdue=nowMs>due;
   (overdue?blocked:waiting).push({...item,
