@@ -25,7 +25,9 @@ catch{if($_.Exception.Message -cne 'FIXED_INSTALL_IMMUTABLE_APPROVAL_REQUIRED'){
 test('fixed installation candidate preserves exact blobs and stays below the existing command budget without granting authority',()=>{
  const records=FIXED_RUNTIME_SOURCE_PATHS_V1.map(path=>{
   const bytes=readFileSync(new URL('../'+path,import.meta.url));
-  return {path,contentBase64:bytes.toString('base64'),blobSha:createHash('sha1').update('blob '+bytes.length+'\0').update(bytes).digest('hex')};
+  return {path,contentBase64:bytes.toString('base64'),
+    blobSha:createHash('sha1').update('blob '+bytes.length+'\0').update(bytes).digest('hex'),
+    materializedSha256:createHash('sha256').update(bytes).digest('hex')};
  });
  const input={expectedMain:'a'.repeat(40),sourceTree:'b'.repeat(40),operatorSid:'S-1-5-21-1-2-3-1001',records};
  const candidate=buildFixedRuntimeInstallerCandidateV1(input);
@@ -33,6 +35,9 @@ test('fixed installation candidate preserves exact blobs and stays below the exi
  assert.equal(candidate.independentSourceAuthorityProven,false);assert.equal(candidate.operatorApprovalProven,false);
  assert.equal(candidate.installed,false);assert.equal(candidate.custodyReleased,false);
  assert.equal(createHash('sha256').update(candidate.payloadBytes).digest('hex'),candidate.payloadSha256);
+ const payload=JSON.parse(candidate.payloadBytes.toString('utf8'));
+ assert.equal(payload.Records.length,records.length);
+ assert.ok(payload.Records.every(row=>/^[a-f0-9]{64}$/.test(row.MaterializedSha256)));
  assert.match(candidate.payloadPath,/StephanosFixedRuntimeInstall-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json$/);
  assert.equal(candidate.environment.NODE_OPTIONS,undefined);
  assert.throws(()=>buildFixedRuntimeInstallerCandidateV1({...input,records:[...records,records[0]]}),/EXACT_SOURCE_REQUIRED/);
@@ -40,12 +45,21 @@ test('fixed installation candidate preserves exact blobs and stays below the exi
  assert.throws(()=>buildFixedRuntimeInstallerCandidateV1({...input,records:corrupt}),/SOURCE_BLOB_MISMATCH/);
  const rebound=records.map((row,i)=>i===0?{...row,path:'scripts/../../outside.mjs'}:row);
  assert.throws(()=>buildFixedRuntimeInstallerCandidateV1({...input,records:rebound}),/SOURCE_RECORD_INVALID/);
+ const badMaterialized=records.map((row,i)=>i===0?{...row,materializedSha256:'bad'}:row);
+ assert.throws(()=>buildFixedRuntimeInstallerCandidateV1({...input,records:badMaterialized}),/SOURCE_RECORD_INVALID/);
+ const legacy=records.map(({materializedSha256,...row})=>row);
+ const legacyCandidate=buildFixedRuntimeInstallerCandidateV1({...input,records:legacy});
+ const legacyPayload=JSON.parse(legacyCandidate.payloadBytes.toString('utf8'));
+ assert.ok(legacyPayload.Records.every(row=>row.MaterializedSha256===row.Sha256));
 });
 
 
 test('fixed manifest covers current static and literal dynamic imports plus custody runtime-read inputs',()=>{
  const output=execFileSync(process.execPath,['--experimental-vm-modules',fileURLToPath(new URL('./fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',import.meta.url))],{encoding:'utf8',windowsHide:true,timeout:10000});
- const result=JSON.parse(output);assert.ok(result.memberCount<=256);assert.deepEqual(result.missing,[]);
+ const result=JSON.parse(output);assert.ok(result.memberCount<=258);
+  assert.equal(result.memberCount,258);
+  assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes('scripts/sovereign-commander-ignition-diagnosis.mjs'));
+  assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes('scripts/sovereign-commander-persistent-runtime-repair.mjs'));assert.deepEqual(result.missing,[]);
  assert.deepEqual(result.bare,[]);assert.equal(result.repositoryModulesEvaluated,false);
 });
 

@@ -5,6 +5,11 @@ description: Continue existing Stephanos Core Daemon and goal-building repairs t
 
 # Stephanos: persistent repair-to-building continuation
 
+For conversational Control Tower, self-repair or no-meter requests, first read
+[Sovereign conversational control](../use-sovereign-commander/references/conversational-control-v1.md).
+Use its fixed observation/build routing only after current-source and native
+adoption checks; preserve every existing private capability and authority gate.
+
 Use this skill when the operator wants the already-existing Stephanos Core Daemon, Sovereign Commander, Observatory and building machinery to keep repairing and producing real material source work. This is an operator-facing workflow skill, not a daemon, task scheduler, machine tool, privilege grant, automatic code installer or alternative lease/review authority. Installing it in ChatGPT does not prove the Battle Bridge desktop plugin host, OpenClaw Local or the Core Daemon has loaded it.
 
 ## Durable parent objective

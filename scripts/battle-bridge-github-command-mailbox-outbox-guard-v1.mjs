@@ -7,6 +7,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  opendirSync,
   readSync,
   renameSync,
   unlinkSync,
@@ -15,7 +16,7 @@ import {
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, parse, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { settleMailboxRotationDrain } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 
@@ -52,6 +53,7 @@ const MAILBOX_LOCK_STALE_AFTER_MS = 20 * 60 * 1000;
 const MAILBOX_DEAD_OWNER_RECOVERY_GRACE_MS = 10 * 1000;
 const MAILBOX_LEGACY_V1_MAX_MIGRATION_ENTRIES = 500;
 const MAILBOX_MAX_SEQUENCE = 9_007_199_254_740_000;
+const MAILBOX_DRAIN_INVENTORY_MAX_ENTRIES = 8192;
 
 const defaultRepoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
@@ -1450,6 +1452,170 @@ function releaseGuardLock(lock) {
   } catch {}
 }
 
+function freezeDrainInput(value) {
+  if (value && typeof value === 'object') {
+    for (const item of Object.values(value)) freezeDrainInput(item);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+// Read-only capture has stricter absence/link semantics than the normal outbox
+// runner. It must never initialize, migrate, recover, normalize or retire debt.
+function readMailboxDrainInputEstate(deferredPath) {
+  const stateRoot = dirname(deferredPath), statePath = join(stateRoot, 'state.json');
+  const directories = new Map(), files = new Map();
+  let totalBytes = 0;
+  const deny = reason => { throw Error('MAILBOX_OUTBOX_DRAIN_' + reason); };
+  function directory(path) {
+    const absolute = resolve(path), root = parse(absolute).root;
+    let current = root;
+    for (const component of ['', ...absolute.slice(root.length).split(/[\\/]+/).filter(Boolean)]) {
+      if (component) current = join(current, component);
+      const info = assertUnlinkedDirectory(current), previous = directories.get(current);
+      const inEstate = current === stateRoot || current.startsWith(stateRoot + sep);
+      if (previous && (!sameDirectoryIdentity(previous.info, info)
+        || (inEstate && (previous.info.mtimeMs !== info.mtimeMs || previous.info.ctimeMs !== info.ctimeMs)))) deny('DIRECTORY_CHANGED');
+      if (!previous) directories.set(current, { info, names: null });
+    }
+  }
+  function names(path, limit) {
+    directory(path);
+    const result = [], stream = opendirSync(path);
+    try {
+      for (;;) {
+        const entry = stream.readSync(); if (!entry) break;
+        if (result.length >= limit) deny('INVENTORY_LIMIT');
+        result.push(entry.name);
+      }
+    } finally { stream.closeSync(); }
+    result.sort();
+    const before = directories.get(path).names;
+    if (before && stableJson(before) !== stableJson(result)) deny('DIRECTORY_CHANGED');
+    directories.get(path).names = result;
+    return result;
+  }
+  function json(path, maxBytes) {
+    directory(dirname(path));
+    const before = assertRegularUnlinkedFile(path);
+    if (before.nlink !== 1) deny('LINKED_FILE');
+    if (files.size >= MAILBOX_DRAIN_INVENTORY_MAX_ENTRIES + MAILBOX_OUTBOX_MAX_ENTRIES + 2
+      || before.size > maxBytes || (totalBytes += before.size) > MAILBOX_STATE_MAX_BYTES) deny('INVENTORY_LIMIT');
+    const value = readJsonObject(path, { maxBytes });
+    const after = assertRegularUnlinkedFile(path);
+    if (after.nlink !== 1 || !sameFileIdentity(before, after)) deny('FILE_CHANGED');
+    files.set(path, { info: before, maxBytes, digest: recordDigest(value) });
+    return value;
+  }
+  function verify() {
+    for (const [path, item] of files) {
+      const before = assertRegularUnlinkedFile(path);
+      if (before.nlink !== 1 || !sameFileIdentity(item.info, before)
+        || recordDigest(readJsonObject(path, { maxBytes: item.maxBytes })) !== item.digest) deny('FILE_CHANGED');
+      const after = assertRegularUnlinkedFile(path);
+      if (after.nlink !== 1 || !sameFileIdentity(item.info, after)) deny('FILE_CHANGED');
+    }
+    for (const [path, item] of directories) {
+      directory(path);
+      if (item.names) names(path, item.names.length);
+    }
+  }
+  const rootNames = names(stateRoot, MAILBOX_DRAIN_INVENTORY_MAX_ENTRIES);
+  if (rootNames.some(name => name === basename(transactionPath(deferredPath))
+    || name.startsWith(basename(transactionPath(deferredPath)) + '.tmp-')
+    || name.startsWith('state.json.tmp-') || name.startsWith(basename(deferredPath) + '.tmp-'))) deny('RECOVERY_REQUIRED');
+  const state = json(statePath, MAILBOX_STATE_MAX_BYTES);
+  if (!Array.isArray(state.acceptedRequestIds) || !Array.isArray(state.pendingReceiptPublications)) deny('STATE_INCOMPLETE');
+  if (state.acceptedRequestIds.length > MAILBOX_DRAIN_INVENTORY_MAX_ENTRIES
+    || state.pendingReceiptPublications.length > MAILBOX_OUTBOX_MAX_ENTRIES) deny('INVENTORY_LIMIT');
+  const accepted = state.acceptedRequestIds;
+  if (accepted.some(id => typeof id !== 'string' || !REQUEST_ID.test(id))
+    || new Set(accepted).size !== accepted.length) deny('ACCEPTED_INVALID');
+  const manifest = json(deferredPath, MAILBOX_OUTBOX_MANIFEST_MAX_BYTES);
+  if (typeof manifest.storeId !== 'string') deny('MANIFEST_INVALID');
+  validateLedgerManifest(manifest);
+  if (!Object.hasOwn(manifest, 'legacy') || manifest.legacy !== null) deny('RECOVERY_REQUIRED');
+  const span = manifest.nextSequence - manifest.headSequence;
+  if (span > MAILBOX_OUTBOX_MAX_ENTRIES) deny('INVENTORY_LIMIT');
+  const estateRoot = ledgerRoot(deferredPath);
+  const estateNames = names(estateRoot, 2);
+  if (stableJson(estateNames) !== '["index","segments"]') deny('STORE_INCOMPLETE');
+  const segmentsRoot = join(estateRoot, 'segments'), indexRoot = join(estateRoot, 'index');
+  const segments = new Map(), indexes = new Map();
+  for (const bucket of names(segmentsRoot, MAILBOX_OUTBOX_MAX_ENTRIES)) {
+    if (!/^[0-9]{13}$/.test(bucket)) deny('SEGMENT_PATH_INVALID');
+    const bucketPath = join(segmentsRoot, bucket);
+    for (const name of names(bucketPath, MAILBOX_OUTBOX_MAX_ENTRIES - segments.size)) {
+      if (!/^segment-[0-9]{16}\.json$/.test(name)) deny('SEGMENT_PATH_INVALID');
+      const sequence = Number(name.slice(8, -5));
+      if (!validSequence(sequence) || sequenceBucket(sequence) !== bucket
+        || basename(segmentPath(deferredPath, sequence)) !== name
+        || sequence < manifest.headSequence || sequence >= manifest.nextSequence || segments.has(sequence)) deny('SEGMENT_OUTSIDE_MANIFEST');
+      const value = json(join(bucketPath, name), MAILBOX_OUTBOX_SEGMENT_MAX_BYTES);
+      if (typeof value.entryDigest !== 'string' || typeof value.storeId !== 'string') deny('SEGMENT_INVALID');
+      const segment = validateSegment(value, manifest, sequence);
+      segments.set(sequence, segment);
+    }
+  }
+  if (segments.size !== span) deny('SEGMENT_INVENTORY_INCOMPLETE');
+  for (const bucket of names(indexRoot, 256)) {
+    if (!/^[a-f0-9]{2}$/.test(bucket)) deny('INDEX_PATH_INVALID');
+    const bucketPath = join(indexRoot, bucket);
+    for (const name of names(bucketPath, MAILBOX_DRAIN_INVENTORY_MAX_ENTRIES - indexes.size)) {
+      if (!/^[a-f0-9]{64}\.json$/.test(name)) deny('INDEX_PATH_INVALID');
+      const value = json(join(bucketPath, name), MAILBOX_LEDGER_INDEX_MAX_BYTES);
+      if (typeof value.publicationId !== 'string' || typeof value.entryDigest !== 'string') deny('INDEX_INVALID');
+      const index = validateIndexRecord(value);
+      const digest = sha256(index.publicationId);
+      if (name !== digest + '.json' || bucket !== digest.slice(0, 2) || indexes.has(index.publicationId)) deny('INDEX_PATH_INVALID');
+      indexes.set(index.publicationId, index);
+    }
+  }
+  const queued = new Map();
+  for (const segment of segments.values()) {
+    const index = indexes.get(segment.entry.publicationId);
+    if (!index || index.status !== 'QUEUED' || index.source !== 'ledger-v3' || index.sequence !== segment.sequence
+      || index.entryDigest !== segment.entryDigest || queued.has(index.publicationId)) deny('SEGMENT_INDEX_MISMATCH');
+    queued.set(index.publicationId, segment.entry);
+  }
+  for (const index of indexes.values()) if (index.status === 'QUEUED' && !queued.has(index.publicationId)) deny('ORPHAN_QUEUED_INDEX');
+  function publication(entry) {
+    if (!validatePendingEntry(entry) || typeof entry.publicationId !== 'string'
+      || typeof entry.receipt.requestId !== 'string' || typeof entry.receipt.state !== 'string'
+      || !Number.isSafeInteger(entry.receipt.issueNumber) || entry.receipt.issueNumber <= 0) deny('PUBLICATION_INVALID');
+    return { publicationId: entry.publicationId, requestId: entry.receipt.requestId,
+      issueNumber: entry.receipt.issueNumber, receiptState: entry.receipt.state, entrySha256: pendingReceiptPublicationDigest(entry) };
+  }
+  const inline = new Map();
+  for (const entry of state.pendingReceiptPublications) {
+    const item = publication(entry);
+    if (inline.has(item.publicationId)) deny('INLINE_DUPLICATE');
+    const index = indexes.get(item.publicationId);
+    if (index && index.entryDigest !== item.entrySha256) deny('PUBLICATION_CONFLICT');
+    inline.set(item.publicationId, item);
+  }
+  const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+  const fileIdentity = info => [info.dev, info.ino, info.nlink, info.size, info.mtimeMs, info.ctimeMs];
+  const physicalIdentitySha256 = recordDigest({
+    files: [...files].map(([path, item]) => [path, fileIdentity(item.info)]).sort(([a], [b]) => compare(a, b)),
+    directories: [...directories].map(([path, item]) => [path,
+      path === stateRoot || path.startsWith(stateRoot + sep) ? fileIdentity(item.info) : [item.info.dev, item.info.ino]])
+      .sort(([a], [b]) => compare(a, b)),
+  });
+  const queuedPublications = [...queued.values()].map(publication).sort((a, b) => compare(a.publicationId, b.publicationId));
+  const result = {
+    stateSha256: recordDigest(state), physicalIdentitySha256, acceptedRequestIds: [...accepted].sort(),
+    inlinePublications: [...inline.values()].sort((a, b) => compare(a.publicationId, b.publicationId)),
+    outbox: { manifestSha256: recordDigest(manifest), storeId: manifest.storeId,
+      headSequence: manifest.headSequence, nextSequence: manifest.nextSequence,
+      queuedPublications, indexCount: indexes.size,
+      indexInventorySha256: recordDigest([...indexes].sort(([a], [b]) => compare(a, b))),
+      segmentInventorySha256: recordDigest([...segments].sort(([a], [b]) => a - b)) },
+  };
+  verify();
+  return freezeDrainInput({ ...result, inventorySha256: recordDigest(result) });
+}
+
 // The existing source-sync operation uses the same singleton guard during an
 // epoch transition. This is an internal synchronous adapter, not a new worker,
 // caller-selected path, shell capability or alternate source authority.
@@ -1458,13 +1624,25 @@ export function withMailboxOutboxGuardLock(operation, { env = process.env } = {}
   const deferredPath = join(mailboxStateRootFromEnv(env), 'receipt-publication-deferred-v1.json');
   const lock = acquireGuardLock(deferredPath, new Date(), { tokenFn: () => randomUUID().replaceAll('-', ''),
     processIdentityFn: defaultProcessIdentity, staleAfterMs: MAILBOX_LOCK_STALE_AFTER_MS });
+  let active = true;
+  const readDrainInputs = Object.freeze(function () {
+    if (!active) throw Error('MAILBOX_OUTBOX_DRAIN_SESSION_CLOSED');
+    if (arguments.length) throw Error('MAILBOX_OUTBOX_DRAIN_ARGUMENTS_NOT_ALLOWED');
+    verifyGuardLock(lock);
+    const result = readMailboxDrainInputEstate(deferredPath);
+    verifyGuardLock(lock);
+    return freezeDrainInput({ ...result, storageOnly: true, readOnly: true, fullDrainProofComplete: false,
+      nativeExecutionAuthorized: false, freezeCertified: false, publicHistoryAuthenticated: false, actionsAuthenticated: false,
+      guardGenerationSha256: recordDigest({ token: lock.token,
+      pid: process.pid, ownerBootId: lock.processIdentity?.bootId, ownerProcessStartId: lock.processIdentity?.processStartId }) });
+  });
   try {
     verifyGuardLock(lock);
-    const result = operation(lock);
+    const result = operation(lock, readDrainInputs);
     if (result && typeof result.then === 'function') throw new Error('MAILBOX_OUTBOX_SYNCHRONOUS_OPERATION_REQUIRED');
     verifyGuardLock(lock);
     return result;
-  } finally { releaseGuardLock(lock); }
+  } finally { active = false; releaseGuardLock(lock); }
 }
 
 function resolveProductionPaths({ env = process.env, repoRoot = defaultRepoRoot } = {}) {

@@ -1,19 +1,169 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   createFixedSyncAndRefreshAdapter,
   SYNC_AND_REFRESH_CHILD_BUDGET_MS,
   SYNC_AND_REFRESH_MIN_REMAINING_MS,
   SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS,
   projectSyncAndRefreshStatus,
-  runBattleBridgeSyncAndRefresh,
+  writeSyncAndRefreshStatus,
+  readPendingPostSyncRefresh,
+  runBattleBridgeSyncAndRefresh as runSyncAndRefreshWithRealAncestry,
 } from './battle-bridge-github-sync-and-refresh.mjs';
 import { validateSharedWorkspaceRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { pendingPostSyncRefreshDebt } from './battle-bridge-github-sync-policy.mjs';
 
 const A = 'a'.repeat(40);
 const B = 'b'.repeat(40);
 const C = 'c'.repeat(40);
 const paths = { repoRoot: '/canonical/repo', workspaceRoot: '/canonical/workspace' };
+const linearAncestry = (before, after) => ({ ok: true, ancestor: before <= after });
+const runBattleBridgeSyncAndRefresh = options => runSyncAndRefreshWithRealAncestry({
+  ...options, adapter: { isAncestor: linearAncestry, ...options.adapter },
+});
+
+function completedRefresh(beforeHead = A, afterHead = B) {
+  return { ok: true, phase: 'complete', beforeHead, afterHead, sourceHead: afterHead,
+    classification: 'NO_RUNTIME_REFRESH_REQUIRED', finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_PASS',
+    exactHeadProofOk: true, blocker: '', targetIds: [], resultTargets: [],
+    changedPathCount: 1, noRuntimePathCount: 1, unknownPathCount: 0, unsafePathCount: 0,
+    openClawPathCount: 0, pluginHostActivationRequired: false };
+}
+
+// Child processes use the real source/refresh writers with fixture Git/native
+// adapters. This preserves the production synchronous child boundary and the
+// on-disk handoff between separate invocations.
+const debtChildProgram = `
+const { readFile, writeFile } = await import('node:fs/promises');
+const { join } = await import('node:path');
+const input = JSON.parse(process.argv[1]);
+const state = JSON.parse(await readFile(input.paths.sourceState, 'utf8'));
+const ancestor = (before, after) => ({ ok: true, ancestor: before <= after });
+let result;
+if (input.mode === 'sync') {
+  const { runBattleBridgeGitHubSync, FIXED_SYNC_GIT_COMMANDS: ids } = await import(input.syncModule);
+  const outputs = {
+    [ids.currentBranch.id]: () => 'main', [ids.originUrl.id]: () => 'https://github.com/Cheekyfellastef/stephan-os.git',
+    [ids.statusPorcelain.id]: () => '', [ids.localHead.id]: () => state.local, [ids.remoteHead.id]: () => state.remote,
+    [ids.mergeBase.id]: () => state.local, [ids.fetchOriginMain.id]: () => '',
+    [ids.mergeFfOnlyOriginMain.id]: () => { state.local = state.remote; return ''; },
+  };
+  result = await runBattleBridgeGitHubSync({ paths: input.paths, expectedPaths: input.paths,
+    git: { isAncestor: ancestor, run(id) { if (!outputs[id]) throw Error('unexpected fixture Git command'); return { ok: true, stdout: outputs[id](), stderr: '' }; } },
+    rotationPreflightFn: () => ({ ok: true, required: false }) });
+  await writeFile(input.paths.sourceState, JSON.stringify(state));
+  if (input.legacyWriter) {
+    // Exact old-writer record/return shape after source-forward: no retained
+    // pendingRefresh field. The prior refresh report remains untouched.
+    const filename = join(input.paths.workspaceRoot, 'status', 'battle-bridge-github-sync-current.json');
+    const status = JSON.parse(await readFile(filename, 'utf8')); delete status.pendingRefresh;
+    await writeFile(filename, JSON.stringify(status));
+    if (result.facts) delete result.facts.pendingRefresh;
+  }
+} else {
+  const { runBattleBridgePostSyncRefresh } = await import(input.refreshModule);
+  const pass = () => ({ ok: true, exactHeadProofOk: true, sourceHead: input.afterHead });
+  result = await runBattleBridgePostSyncRefresh({ paths: input.paths, expectedPaths: input.paths,
+    beforeHead: input.beforeHead, afterHead: input.afterHead,
+    adapter: {
+      isAncestor: ancestor,
+      inspectHeads: () => ({ ...pass(), ok: state.local === input.afterHead }),
+      changedPaths: ({ beforeHead, afterHead }) => ({ ok: true, paths: [
+        ...(beforeHead === input.originalBefore ? ['scripts/launcher-readiness-live-facts.mjs', 'stephanos-server/server.js', 'scripts/mission-orchestrator-worker.mjs'] : []),
+        ...(afterHead === input.repairAfter ? ['shared/agents/postSyncRuntimeRefreshCoordinator.mjs', 'shared/agents/postSyncRuntimeRefreshCoordinator.test.mjs'] : []),
+      ] }),
+      refreshUi: () => input.failUi ? { ok: false, exactHeadProofOk: false, sourceHead: input.beforeHead, blocker: 'UI_4173_EXACT_HEAD_PROOF_FAILED' } : pass(),
+      restartApprovedTarget: pass, restartGitHubMailbox: pass, confirmNaturalReload: pass, reconcileControlPlane: pass,
+    } });
+}
+process.stdout.write(JSON.stringify(result));
+`;
+
+async function productionDebtFixture(t) {
+  const root = await mkdtemp(join(tmpdir(), 'sync-refresh-debt-composition-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const fixturePaths = { repoRoot: join(root, 'repo'), workspaceRoot: join(root, 'workspace'), sourceState: join(root, 'source-state.json') };
+  await mkdir(fixturePaths.repoRoot);
+  await writeFile(fixturePaths.sourceState, JSON.stringify({ local: A, remote: B }));
+  const child = (mode, extra = {}) => {
+    const input = { mode, paths: fixturePaths, originalBefore: A, repairAfter: C,
+      syncModule: new URL('./battle-bridge-github-sync-executor.mjs', import.meta.url).href,
+      refreshModule: new URL('./battle-bridge-post-sync-refresh.mjs', import.meta.url).href, ...extra };
+    const executed = spawnSync(process.execPath, ['--input-type=module', '-e', debtChildProgram, JSON.stringify(input)], { encoding: 'utf8', timeout: 10_000, shell: false });
+    assert.ifError(executed.error);
+    assert.equal(executed.status, 0, executed.stderr);
+    return { ok: true, result: JSON.parse(executed.stdout) };
+  };
+  assert.equal(child('sync').result.sourceUpdated, true);
+  const calls = [];
+  const invoke = (failUi, legacyCaller = false) => runSyncAndRefreshWithRealAncestry({
+    paths: fixturePaths, expectedPaths: fixturePaths, platform: 'linux', ...safeGoalDiscoveryArgs(),
+    ...(legacyCaller ? { pendingReader: async () => null } : {}),
+    adapter: {
+      isAncestor: linearAncestry,
+      runSync: () => child('sync', { legacyWriter: legacyCaller }),
+      runRefresh: ({ beforeHead, afterHead }) => { calls.push({ beforeHead, afterHead }); return child('refresh', { beforeHead, afterHead, failUi }); },
+    },
+  });
+  return { paths: fixturePaths, calls, invoke, child };
+}
+
+test('production writers retain failed refresh across no-change retries and pay the original range after repair adoption', async t => {
+  const fx = await productionDebtFixture(t);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const failed = await fx.invoke(true);
+    assert.equal(failed.ok, false);
+    assert.equal(failed.blocker, 'UI_4173_EXACT_HEAD_PROOF_FAILED');
+    assert.equal((await readPendingPostSyncRefresh(fx.paths)).spans[0].beforeHead, A);
+  }
+  assert.deepEqual(fx.calls, [{ beforeHead: A, afterHead: B }, { beforeHead: A, afterHead: B }]);
+  const oldReceipt = join(fx.paths.workspaceRoot, 'receipts', 'post-sync-runtime-refresh', `${B}-blocked.json`);
+  const historical = await readFile(oldReceipt);
+  await writeFile(fx.paths.sourceState, JSON.stringify({ local: B, remote: C }));
+  const adopted = await fx.invoke(false);
+  assert.equal(adopted.ok, true);
+  assert.deepEqual(fx.calls.at(-1), { beforeHead: A, afterHead: C });
+  assert.deepEqual(adopted.refreshes[0].result.targetIds, ['stephanos-ui-4173', 'stephanos-backend-8787', 'mission-orchestrator-worker', 'github-command-mailbox', 'natural-reload']);
+  assert.deepEqual(await readFile(oldReceipt), historical);
+  const sync = JSON.parse(await readFile(join(fx.paths.workspaceRoot, 'status', 'battle-bridge-github-sync-current.json'), 'utf8'));
+  assert.equal(sync.pendingRefresh, null);
+  assert.deepEqual((await readPendingPostSyncRefresh(fx.paths)).spans, []);
+});
+
+test('fresh refresh child recovers old debt when the already-loaded old caller supplies only the repair delta', async t => {
+  const fx = await productionDebtFixture(t);
+  assert.equal((await fx.invoke(true)).ok, false);
+  await writeFile(fx.paths.sourceState, JSON.stringify({ local: B, remote: C }));
+  const adopted = await fx.invoke(false, true);
+  assert.equal(adopted.ok, true);
+  assert.deepEqual(fx.calls.at(-1), { beforeHead: B, afterHead: C });
+  assert.equal(adopted.refreshes[0].result.beforeHead, A);
+  assert.equal(adopted.refreshes[0].result.afterHead, C);
+  assert.ok(adopted.refreshes[0].result.targetIds.includes('stephanos-ui-4173'));
+  assert.ok(adopted.refreshes[0].result.targetIds.includes('stephanos-backend-8787'));
+  assert.ok(adopted.refreshes[0].result.targetIds.includes('mission-orchestrator-worker'));
+});
+
+test('no-change sync incorporates debt retained by a competing original sync invocation', async () => {
+  const calls = [];
+  const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths, ...nonWindowsRepairArgs(),
+    pendingReader: async () => null,
+    adapter: {
+      runSync: () => ({ ok: true, result: { ...noChange(C), facts: { ...noChange(C).facts, pendingRefresh: pendingPostSyncRefreshDebt([{ beforeHead: B, afterHead: C }]) } } }),
+      runRefresh: input => { calls.push(input); return { ok: true, result: { ok: false, blocker: 'FIXTURE_REFRESH_HELD' } }; },
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'FIXTURE_REFRESH_HELD');
+  assert.equal(result.pendingRefreshObserved, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].beforeHead, B);
+  assert.equal(calls[0].afterHead, C);
+});
 
 function noChange(head = B) {
   return { ok: true, evaluation: { classification: 'SYNC_NO_CHANGE' }, facts: { localHead: head, remoteHead: head } };
@@ -49,6 +199,41 @@ function nonWindowsRepairArgs() {
   };
 }
 
+test('actual wrapper reads legacy Commander completion as pending and accepts only covering relay proof from its child', async t => {
+  for (const relayProven of [false, true]) {
+    const root = await mkdtemp(join(tmpdir(), 'sync-wrapper-relay-debt-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const fixturePaths = { repoRoot: join(root, 'repo'), workspaceRoot: join(root, 'workspace') };
+    await mkdir(join(fixturePaths.workspaceRoot, 'status'), { recursive: true });
+    const targetId = 'sovereign-commander';
+    const legacy = { ...completedRefresh(), schemaVersion: 'shared-agent-workspace-record.v1',
+      kind: 'stephanos.shared_workspace.status', statusId: 'post-sync-runtime-refresh-current',
+      classification: 'REFRESH_COMPLETE', noRuntimePathCount: 0, targetIds: [targetId],
+      resultTargets: [{ targetId, ok: true, exactHeadProofOk: true, sourceHead: B, blocker: '' }] };
+    await writeFile(join(fixturePaths.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json'), JSON.stringify(legacy));
+    const debt = pendingPostSyncRefreshDebt([{ beforeHead: A, afterHead: C }], [targetId], '', { sovereignRelayRefreshRequired: true });
+    const calls = [];
+    const result = await runBattleBridgeSyncAndRefresh({ paths: fixturePaths, expectedPaths: fixturePaths,
+      ...nonWindowsRepairArgs(),
+      adapter: {
+        runSync: () => ({ ok: true, result: { ...noChange(C), facts: { ...noChange(C).facts, pendingRefresh: debt } } }),
+        runRefresh: ({ beforeHead, afterHead }) => {
+          calls.push({ beforeHead, afterHead });
+          const sovereignRelayProof = { schemaVersion: 'stephanos.post-sync-sovereign-relay-proof.v1', watchdogSucceeded: true,
+            healthy: true, sourceHead: C, sourceHeadMatchesLive: true, processCount: 1, heartbeatAgeSeconds: 2, blocker: '' };
+          return { ok: true, result: { ...completedRefresh(beforeHead, afterHead), classification: 'REFRESH_COMPLETE',
+            noRuntimePathCount: 0, targetIds: [targetId], sovereignRelayRefreshRequired: relayProven,
+            resultTargets: [{ targetId, ok: true, exactHeadProofOk: true, sourceHead: C, blocker: '',
+              ...(relayProven ? { sovereignRelayProof } : {}) }] } };
+        },
+      } });
+    assert.deepEqual(calls, [{ beforeHead: A, afterHead: C }]);
+    assert.equal(result.ok, relayProven);
+    if (!relayProven) assert.equal(result.blocker, 'PENDING_POST_SYNC_COMPLETION_COVERAGE_UNPROVEN');
+    else assert.equal(result.refreshes.length, 1, 'A proven paid obligation must not repeatedly invoke the owner');
+  }
+});
+
 test('pending old-executor refresh is paid after a safe source observation and then reconverges', async () => {
   const calls = [];
   const result = await runBattleBridgeSyncAndRefresh({
@@ -57,7 +242,7 @@ test('pending old-executor refresh is paid after a safe source observation and t
     ...nonWindowsRepairArgs(),
     pendingReader: async () => ({ ok: true, beforeHead: A, afterHead: B }),
     adapter: {
-      runRefresh(input) { calls.push(['refresh', input.beforeHead, input.afterHead]); return { ok: true, result: { ok: true, sourceHead: B } }; },
+      runRefresh(input) { calls.push(['refresh', input.beforeHead, input.afterHead]); return { ok: true, result: completedRefresh(input.beforeHead, input.afterHead) }; },
       runSync() { calls.push(['sync']); return { ok: true, result: noChange(B) }; },
     },
   });
@@ -83,7 +268,7 @@ test('stale refresh debt cannot strand delivery of its own repair and is coalesc
       runSync() { calls.push('sync'); return { ok: true, result: syncResults.shift() }; },
       runRefresh(input) {
         calls.push(`refresh:${input.beforeHead}:${input.afterHead}`);
-        return { ok: true, result: { ok: true, sourceHead: input.afterHead } };
+        return { ok: true, result: completedRefresh(input.beforeHead, input.afterHead) };
       },
     },
   });
@@ -107,7 +292,7 @@ test('new source update without old debt refreshes and then runs a second sync f
     pendingReader: async () => null,
     adapter: {
       runSync() { calls.push('sync'); return { ok: true, result: syncResults.shift() }; },
-      runRefresh(input) { calls.push(`refresh:${input.beforeHead}:${input.afterHead}`); return { ok: true, result: { ok: true, sourceHead: B } }; },
+      runRefresh(input) { calls.push(`refresh:${input.beforeHead}:${input.afterHead}`); return { ok: true, result: completedRefresh(input.beforeHead, input.afterHead) }; },
     },
   });
   assert.equal(result.ok, true);
@@ -269,6 +454,37 @@ test('sync status projection exposes bounded mailbox pulse truth without secrets
   assert.doesNotMatch(JSON.stringify(record), /must-not-leak|C:\/private/);
 });
 
+test('actual sync status writer retains bounded caretaker cause from both existing execution paths', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'sync-caretaker-status-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const localPaths = { workspaceRoot: root, syncAndRefreshStatusPath: join(root, 'status', 'battle-bridge-sync-and-refresh-current.json') };
+  const evidence = { schemaVersion: 'stephanos.sovereign-caretaker-execution.v1',
+    expectedSourceHead: B, observedAtUtc: '2026-10-31T00:06:31.000Z', exitStatus: 2,
+    spawnErrorCode: '', terminationSignal: '', failureReceiptRecognized: true,
+    reportedBlocker: 'SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED',
+    reportedVerdict: 'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED', diagnosticOnly: true };
+  for (const path of ['no-change-control-plane', 'post-sync-refresh']) {
+    const dirtyEvidence = { ...evidence, stderr: 'PRIVATE_STDERR', secret: 'PRIVATE_TOKEN' };
+    const input = { ok: false, sourceHead: B, blocker: 'SOVEREIGN_COMMANDER_WATCHDOG_EXECUTION_FAILED',
+      ...(path === 'no-change-control-plane'
+        ? { controlPlaneRepair: { ok: false, repairAttempted: true, repair: { sovereignCaretakerExecution: dirtyEvidence } } }
+        : { refreshes: [{ beforeHead: A, afterHead: B, result: { sovereignCaretakerExecution: dirtyEvidence, lastSovereignCaretakerFailure: dirtyEvidence } }] }) };
+    const record = await writeSyncAndRefreshStatus(input, { paths: localPaths });
+    assert.deepEqual(record.controlPlaneRepair.sovereignCaretakerExecution, evidence, path);
+    const persisted = JSON.parse(await readFile(localPaths.syncAndRefreshStatusPath, 'utf8'));
+    assert.deepEqual(persisted.controlPlaneRepair.sovereignCaretakerExecution, evidence, path);
+    assert.equal(persisted.ok, false);
+    assert.doesNotMatch(JSON.stringify(persisted), /PRIVATE_/);
+    if (path === 'post-sync-refresh') assert.deepEqual(persisted.lastSovereignCaretakerFailure, evidence);
+  }
+  const foreign = projectSyncAndRefreshStatus({ sourceHead: A,
+    controlPlaneRepair: { repair: { sovereignCaretakerExecution: evidence } } });
+  assert.equal(foreign.controlPlaneRepair.sovereignCaretakerExecution, null);
+  assert.equal(projectSyncAndRefreshStatus({
+    controlPlaneRepair: { repair: { sovereignCaretakerExecution: evidence } },
+  }).controlPlaneRepair.sovereignCaretakerExecution, null);
+});
+
 test('control-plane repair failure still blocks wrapper completion after one work-conserving goal-discovery tick', async () => {
   let wakeups = 0;
   const calls = [];
@@ -316,6 +532,41 @@ test('goal discovery failure blocks otherwise converged completion', async () =>
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'NO_QUALIFIED_CAPACITY');
   assert.equal(result.finalVerdict, 'SYNC_AND_REFRESH_GOAL_DISCOVERY_BLOCKED');
+});
+
+test('in-flight refresh contention is observed to completion and then reconverges instead of blocking Ignition', async () => {
+  let pendingReads = 0;
+  let syncCalls = 0;
+  let refreshCalls = 0;
+  let clock = 0;
+  const result = await runBattleBridgeSyncAndRefresh({
+    paths,
+    expectedPaths: paths,
+    ...nonWindowsRepairArgs(),
+    nowMs: () => clock,
+    sleepFn: async ms => { clock += ms; },
+    pendingReader: async () => {
+      pendingReads += 1;
+      if (pendingReads < 3) return { ok: true, spans: [{ beforeHead: A, afterHead: B }], requiredTargetIds: [], completion: null };
+      return null;
+    },
+    adapter: {
+      runSync() {
+        syncCalls += 1;
+        return { ok: true, result: syncCalls === 1 ? updated(A, B) : noChange(B) };
+      },
+      runRefresh() {
+        refreshCalls += 1;
+        return { ok: true, result: { ok: false, blocker: 'POST_SYNC_REFRESH_ALREADY_RUNNING' } };
+      },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.sourceHead, B);
+  assert.equal(refreshCalls, 1);
+  assert.equal(syncCalls, 2);
+  assert.equal(pendingReads, 3);
+  assert.equal(result.pendingRefreshObserved, true);
 });
 
 test('refresh blocker stops without starting another sync cycle', async () => {

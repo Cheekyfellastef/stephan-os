@@ -107,7 +107,7 @@ test('handoff fails closed for altered comment, stale transport and every detach
     { ...authorizationComment, updated_at: undefined },
     { ...authorizationComment, created_at: 'invalid' },
     { ...authorizationComment, id: AUTHORIZATION_COMMENT_ID + 1 },
-    { ...authorizationComment, issue_url: authorizationComment.issue_url.replace('/3149', '/2808') },
+    { ...authorizationComment, issue_url: authorizationComment.issue_url.replace('/' + PROTECTED_WORKFLOW_DISPATCH_ISSUE, '/2808') },
   ]) assert.equal(validateProtectedWorkflowActorHandoff(comment, baseCommand, options).ok, false);
   assert.equal(validateProtectedWorkflowActorHandoff(authorizationComment, baseCommand, { ...options, transportActor: 'lookalike' }).ok, false);
   assert.equal(validateProtectedWorkflowActorHandoff(authorizationComment, baseCommand, { ...options, transportActorId: 267490109 }).ok, false);

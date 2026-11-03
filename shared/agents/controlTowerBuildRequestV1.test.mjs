@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createControlTowerBuildRequestV1, validateControlTowerBuildRequestV1 } from './controlTowerBuildRequestV1.mjs';
+import { createControlTowerBuildRequestV1, validateControlTowerBuildRequestV1,
+  validateHistoricalControlTowerBuildRequestV1 } from './controlTowerBuildRequestV1.mjs';
 import { inputs, fixture, HEAD, NOW } from './fixtures/controlTowerBuildV1.mjs';
 
-test('owner dispatch can request only the next canonically eligible build, with no grant', () => {
+test('owner dispatch defaults to the next canonically eligible build, with no grant', () => {
   const { event, env } = inputs();
   const result = createControlTowerBuildRequestV1(event, env, HEAD, NOW);
   assert.equal(result.ok, true); assert.equal(result.request.operation, 'BUILD_NEXT_ELIGIBLE_GOAL');
@@ -22,11 +23,51 @@ test('PR, fork, rerun, foreign operator, workflow, job and source contexts canno
   const { event, env } = inputs(); event.repository.id = 1;
   assert.equal(createControlTowerBuildRequestV1(event, env, HEAD, NOW).ok, false);
 });
-test('caller operations, shell, scopes, routes and goal grants are never dispatch inputs', () => {
+test('unknown operations, shell, scopes, routes and goal grants are never dispatch inputs', () => {
   for (const key of ['operation', 'command', 'path', 'goal_issue', 'route', 'admissionGranted']) {
     const { event, env } = inputs(); event.inputs[key] = 'anything';
     assert.equal(createControlTowerBuildRequestV1(event, env, HEAD, NOW).blocker, 'BUILD_DISPATCH_INPUTS_FORBIDDEN');
   }
+});
+
+test('the same exact owner can select a fixed read-only control-system observation', () => {
+  const { event, env } = inputs();
+  event.inputs = { operation: 'OBSERVE_CONTROL_SYSTEM' };
+  const result = createControlTowerBuildRequestV1(event, env, HEAD, NOW);
+  assert.equal(result.ok, true);
+  assert.equal(result.request.operation, 'OBSERVE_CONTROL_SYSTEM');
+  for (const flag of ['admissionGranted', 'mergeAuthority', 'runtimeMutationAuthority', 'leaseSeizureAllowed', 'arbitraryShellAllowed'])
+    assert.equal(result.request[flag], false);
+  const { run } = fixture();
+  assert.equal(validateControlTowerBuildRequestV1(result.request, run, HEAD, NOW).ok, true);
+  assert.equal(validateControlTowerBuildRequestV1(result.request, { ...run, event: 'push' }, HEAD, NOW).ok, false);
+});
+
+test('fixed observation choice cannot smuggle arguments or relax owner and source binding', () => {
+  for (const operation of ['', null, true, 1, [], {}, 'OBSERVE_CONTROL_SYSTEM ',
+    'observe_control_system', 'FREEZE', 'DRAIN', 'STATUS', 'REPAIR_CONTROL_PLANE', 'RUN_COMMAND']) {
+    const { event, env } = inputs(); event.inputs = { operation };
+    assert.equal(createControlTowerBuildRequestV1(event, env, HEAD, NOW).ok, false);
+  }
+  for (const key of ['command', 'text', 'question', 'path', 'url', 'pid', 'sourceHead', 'operatorApproval']) {
+    const { event, env } = inputs(); event.inputs = { operation: 'OBSERVE_CONTROL_SYSTEM', [key]: 'value' };
+    assert.equal(createControlTowerBuildRequestV1(event, env, HEAD, NOW).ok, false);
+  }
+  for (const patch of [{ GITHUB_ACTOR_ID: '1' }, { GITHUB_RUN_ATTEMPT: '2' },
+    { GITHUB_SHA: 'b'.repeat(40) }, { GITHUB_EVENT_NAME: 'repository_dispatch' }]) {
+    const { event, env } = inputs(); event.inputs = { operation: 'OBSERVE_CONTROL_SYSTEM' };
+    assert.equal(createControlTowerBuildRequestV1(event, { ...env, ...patch }, HEAD, NOW).ok, false);
+  }
+  const { event, env } = inputs(); event.inputs = Object.create({ operation: 'OBSERVE_CONTROL_SYSTEM' });
+  assert.equal(createControlTowerBuildRequestV1(event, env, HEAD, NOW).ok, false);
+});
+
+test('unknown observation operation and elevated grants are rejected after authenticated readback', () => {
+  const f = fixture();
+  for (const operation of ['FREEZE', 'DRAIN', 'RUN_COMMAND', '', null])
+    assert.equal(validateControlTowerBuildRequestV1({ ...f.request, operation }, f.run, HEAD, NOW).ok, false);
+  for (const key of ['admissionGranted', 'mergeAuthority', 'runtimeMutationAuthority', 'leaseSeizureAllowed', 'arbitraryShellAllowed'])
+    assert.equal(validateControlTowerBuildRequestV1({ ...f.request, operation: 'OBSERVE_CONTROL_SYSTEM', [key]: true }, f.run, HEAD, NOW).ok, false);
 });
 test('authority flags, unknown fields, expiry and source substitution are rejected at native readback', () => {
   const f = fixture();
@@ -36,6 +77,18 @@ test('authority flags, unknown fields, expiry and source substitution are reject
     assert.equal(validateControlTowerBuildRequestV1({ ...f.request, ...patch }, f.run, HEAD, NOW).ok, false);
   assert.equal(validateControlTowerBuildRequestV1(f.request, f.run, HEAD, '2026-10-28T12:11:00.000Z').ok, false);
 });
+test('expired requests can be authenticated only for historical diagnosis, never live execution', () => {
+  const f = fixture();
+  const afterExpiry = '2026-10-28T12:11:00.000Z';
+  assert.equal(validateControlTowerBuildRequestV1(f.request, f.run, HEAD, afterExpiry).ok, false);
+  assert.equal(validateHistoricalControlTowerBuildRequestV1(f.request, f.run, HEAD, afterExpiry).ok, true);
+  assert.equal(validateHistoricalControlTowerBuildRequestV1(f.request, f.run, HEAD, NOW).ok, false);
+  assert.equal(validateHistoricalControlTowerBuildRequestV1({ ...f.request, mergeAuthority: true },
+    f.run, HEAD, afterExpiry).ok, false);
+  assert.equal(validateHistoricalControlTowerBuildRequestV1(f.request,
+    { ...f.run, actor: { login: 'Cheekyfellastef', id: 1 } }, HEAD, afterExpiry).ok, false);
+});
+
 test('authenticated run identity cannot be replaced by a familiar artifact name', () => {
   for (const patch of [{ actor: { login: 'Cheekyfellastef', id: 1 } }, { triggering_actor: { login: 'Cheekyfellastef' } },
     { repository: { full_name: 'Cheekyfellastef/stephan-os', id: 1 } }, { event: 'repository_dispatch' }, { run_attempt: 2 }]) {

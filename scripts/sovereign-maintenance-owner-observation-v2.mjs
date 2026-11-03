@@ -41,13 +41,16 @@ export async function readMaintenanceOwnerObservationV2({ nativeReader = readMai
   if (!fresh(before.observedAtUtc) || !fresh(after.observedAtUtc)
       || digest(identity(before)) !== digest(identity(after))) refuse();
   const g = h.continuousRepairGuardian;
+  const persistentHeld = g?.persistentCustody?.held === true;
+  const liveCycle = /^[a-f0-9-]{36}$/.test(g?.lastCycleId ?? '')
+    && typeof g?.lastStartedAtUtc === 'string' && /Z$/.test(g.lastStartedAtUtc)
+    && Number.isFinite(Date.parse(g.lastStartedAtUtc)) && Date.parse(g.lastStartedAtUtc) <= Date.now();
+  const restartedPersistedHold = g?.lastCycleId === '' && g?.lastStartedAtUtc === '' && persistentHeld;
   if (h.service !== 'stephanos-sovereign-commander' || h.ok !== true
       || !g || g.timeoutCustodyHeld !== true || g.running !== false || g.maintenanceInFlight !== false
       || g.scheduled !== false || g.currentCycleId !== ''
       || g.lastBlocker !== 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN'
-      || !/^[a-f0-9-]{36}$/.test(g.lastCycleId ?? '')
-      || typeof g.lastStartedAtUtc !== 'string' || !/Z$/.test(g.lastStartedAtUtc)
-      || !Number.isFinite(Date.parse(g.lastStartedAtUtc)) || Date.parse(g.lastStartedAtUtc) > Date.now()) refuse();
+      || !persistentHeld || (!liveCycle && !restartedPersistedHold)) refuse();
   const observation = { schemaVersion: 'stephanos.maintenance-held-owner-observation.v2',
     ...identity(after), lastCycleId: g.lastCycleId, lastStartedAtUtc: g.lastStartedAtUtc,
     timeoutCustodyHeld: true, running: false, maintenanceInFlight: false, scheduled: false };

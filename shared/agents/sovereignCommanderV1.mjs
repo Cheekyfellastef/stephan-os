@@ -201,6 +201,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('battle-bridge-observation.mjs')]),
       timeoutMs: 10_000,
     }),
+    'diagnose-ignition': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-ignition-diagnosis.mjs')]),
+      timeoutMs: 20_000,
+    }),
     'meter-status': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-meter-status.mjs')]),

@@ -27,6 +27,8 @@
     "scripts/sovereign-commander-capability-parity-reconcile.mjs",
     "scripts/sovereign-commander-fleet-goal-supervisor.mjs",
     "scripts/sovereign-commander-goal-builder-repair.mjs",
+    "scripts/sovereign-commander-ignition-diagnosis.mjs",
+    "scripts/sovereign-commander-persistent-runtime-repair.mjs",
     "scripts/sovereign-commander-http.mjs",
     "scripts/sovereign-commander-ignition-autoheal.mjs",
     "scripts/sovereign-commander-mcp.mjs",
