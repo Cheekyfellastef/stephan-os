@@ -196,7 +196,9 @@ test('fails closed on duplicate producer receipts and ambiguous receiver acknowl
   assert.equal(r.status,'BLOCKED');
   assert.equal(r.blocked[0].kind,'automation-debt-ambiguous-receiver-ack');
  }
- assert.equal(f([p,a,{...a,producerReceiptRef:'other-unrelated-producer'}]).status,'WAITING_FOR_PROOF');
+ const orphan=f([p,a,{...a,producerReceiptRef:'other-unrelated-producer'}]);
+ assert.equal(orphan.status,'BLOCKED');
+ assert.ok(orphan.blocked.some(x=>x.kind==='automation-debt-orphan-receiver-ack'));
  const p2={...p,ref:'producer-unique-2',issueNumber:2670};
  const a2={...a,producerReceiptRef:p2.ref,issueNumber:p2.issueNumber,ref:'receiver-unique-2'};
  assert.equal(f([p,p2,a,a2]).status,'WAITING_FOR_PROOF');
