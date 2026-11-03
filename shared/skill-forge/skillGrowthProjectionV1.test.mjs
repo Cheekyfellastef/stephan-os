@@ -50,6 +50,33 @@ test('a claimed ACTIVE record does not count as installed without recipient exac
 });
 
 
+test('stale and unavailable feeds retain skill history but never prove an active OpenClaw skill', () => {
+  const record = { timestampUtc: '2026-11-03T14:00:00Z', skillForge: {
+    schemaVersion: 'stephanos.skill-provenance.v1',
+    skillId: 'openclaw-verified-example',
+    name: 'Verified example', status: 'ACTIVE',
+    allowedTargets: ['openclaw-local'], proofRefs: ['source:verified'],
+    targetRuntimeProofs: [{
+      actorId: 'openclaw-local', passed: true,
+      installedRevision: 'sha256:verified-revision',
+      operatorApprovalRef: 'approval:qualified',
+      proofRefs: ['runtime:verified'],
+    }],
+  } };
+  for (const state of ['ready', 'stale', 'unavailable', 'error', 'STALE']) {
+    const view = deriveSkillGrowthObservatoryV1({
+      payload: { state, records: { capabilityRecords: [record] } },
+    });
+    assert.equal(view.summary.publishedSkillRecords, 1, state);
+    assert.equal(view.publishedSkills[0].id, 'openclaw-verified-example', state);
+    const expectedActive = state === 'ready' ? 1 : 0;
+    assert.equal(view.observedActors.find(a => a.id === 'openclaw-local').skillCount, expectedActive, state);
+    assert.equal(view.summary.provenActiveTargets, expectedActive, state);
+    assert.equal(view.stages.find(s => s.id === 'ACTIVE').count, expectedActive, state);
+    if (state !== 'ready') assert.notEqual(view.sourceTruth, 'REPORTED', state);
+  }
+});
+
 test('canonical external intake is an uninstalled review draft, never an ACTIVE agent skill', () => {
   const externalSkillIntake = {
     schemaVersion: 'stephanos.external-skill-review.v1',
