@@ -33,6 +33,18 @@ function handoffDebtFromEvidence(evidence,now,prs=[]){
   if(ref)terminalRefCounts.set(ref,(terminalRefCounts.get(ref)||0)+1);
   if(proof)verificationRefCounts.set(proof,(verificationRefCounts.get(proof)||0)+1);
  }
+  // One immutable receipt identity may belong to only one lifecycle stage.
+  // Preserve the existing same-kind replay classifications below.
+  const stageRolesByRef=new Map();
+  for(const [stage,refs] of [
+   ['producer',made.map(e=>e.ref)],['receiver',acks.map(e=>e.ref)],
+   ['terminal',verified.map(e=>e.ref)],['verification',verified.map(e=>e.verificationRef)]
+  ])for(const raw of refs){
+   const ref=text(raw);if(!ref)continue;
+   if(!stageRolesByRef.has(ref))stageRolesByRef.set(ref,new Set());
+   stageRolesByRef.get(ref).add(stage);
+  }
+  const crossStageRefs=new Set([...stageRolesByRef].filter(([,roles])=>roles.size>1).map(([ref])=>ref));
  const producerRefCounts=new Map();
  for(const p of made){const ref=text(p.ref);if(ref)producerRefCounts.set(ref,(producerRefCounts.get(ref)||0)+1);}
  // Unowned receiver and terminal claims cannot silently disappear from a producer-only scan.
@@ -94,6 +106,12 @@ function handoffDebtFromEvidence(evidence,now,prs=[]){
   if(terminal.some(v=>terminalRefCounts.get(text(v.ref))>1||verificationRefCounts.get(text(v.verificationRef))>1)){
    blocked.push({...item,kind:'automation-debt-reused-terminal-verification-ref',
     reason:'One terminal receipt or verification reference is claimed by multiple handoffs.'});continue;
+  }
+  // Cross-stage replay can span separate producers or occur before terminal proof.
+  const stageRefs=[receipt,...receiverAcks.map(a=>a.ref),...terminal.flatMap(v=>[v.ref,v.verificationRef])];
+  if(stageRefs.some(ref=>crossStageRefs.has(text(ref)))){
+   blocked.push({...item,kind:'automation-debt-cross-stage-receipt-ref',
+    reason:'One immutable receipt identity is reused across producer, receiver, terminal or verification stages.'});continue;
   }
   const accepted=receiverAcks.some(a=>{
    const at=Date.parse(text(a.acknowledgedAtUtc));

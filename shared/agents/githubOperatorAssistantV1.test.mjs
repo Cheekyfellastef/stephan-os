@@ -468,3 +468,43 @@ test('rejects duplicate current PR snapshots even before any producer handoff ex
  assert.equal(partial.readyForReview[0].number,1450);
  assert.equal(partial.blocked.filter(x=>x.kind==='pr-ambiguous-snapshot').length,1);
 });
+
+test('immutable handoff receipt identities cannot be recycled across evidence stages',()=>{
+ const head='a'.repeat(40),base='b'.repeat(40);
+ const p={kind:'goal-stage-handoff',marker:'PRODUCED',ref:'stage-producer-1',
+  prNumber:1449,issueNumber:2670,sourceHead:head,baseSha:base,
+  nextOwner:'review-owner',nextAction:'consume-review',acceptancePredicate:'verified-live',
+  producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T18:00:00Z'};
+ const a={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:p.ref,
+  ref:'stage-ack-1',prNumber:p.prNumber,issueNumber:p.issueNumber,
+  sourceHead:head,baseSha:base,receiverOwner:p.nextOwner,nextAction:p.nextAction,
+  acknowledgedAtUtc:'2026-11-03T13:00:00Z'};
+ const v={kind:'goal-stage-handoff',marker:'VERIFIED_DONE',producerReceiptRef:p.ref,
+  receiverAckRef:a.ref,ref:'stage-terminal-1',verificationRef:'stage-live-proof-1',
+  prNumber:p.prNumber,issueNumber:p.issueNumber,sourceHead:head,baseSha:base,
+  receiverOwner:p.nextOwner,nextAction:p.nextAction,
+  acceptancePredicate:p.acceptancePredicate,verifiedAtUtc:'2026-11-03T13:15:00Z'};
+ const run=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T14:00:00Z',evidence});
+ assert.equal(run([p,a,v]).status,'PASS');
+ assert.equal(run([p,a]).status,'WAITING_FOR_PROOF');
+ for(const altered of [
+  [p,{...a,ref:p.ref},{...v,receiverAckRef:p.ref}],
+  [p,a,{...v,ref:a.ref}],
+  [p,a,{...v,verificationRef:p.ref}],
+  [p,a,{...v,ref:p.ref}],
+  [p,{...a,ref:p.ref}]
+ ]){
+  const result=run(altered);
+  assert.equal(result.status,'BLOCKED');
+  assert.equal(result.blocked[0].kind,'automation-debt-cross-stage-receipt-ref');
+ }
+ const p2={...p,ref:'stage-producer-2',prNumber:1450,issueNumber:2972};
+ const a2={...a,producerReceiptRef:p2.ref,ref:p.ref,prNumber:1450,issueNumber:2972};
+ const v2={...v,producerReceiptRef:p2.ref,receiverAckRef:a2.ref,
+  ref:'stage-terminal-2',verificationRef:'stage-live-proof-2',prNumber:1450,issueNumber:2972};
+ const cross=run([p,p2,a,a2,v,v2]);
+ assert.equal(cross.status,'BLOCKED');
+ assert.equal(cross.blocked.filter(b=>b.kind==='automation-debt-cross-stage-receipt-ref').length,2);
+ const distinct=run([p,p2,a,{...a2,ref:'stage-ack-2'},v,{...v2,receiverAckRef:'stage-ack-2'}]);
+ assert.equal(distinct.status,'PASS');
+});
