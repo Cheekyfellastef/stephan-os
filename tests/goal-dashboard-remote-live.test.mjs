@@ -7,6 +7,8 @@ import '../shared/runtime/goalConveyorGateStewardV1.test.mjs';
 import '../shared/runtime/goalConveyorGateReadOnlyExecutionV1.test.mjs';
 // Exercise the exact-head PR-check batch contract in this hosted dashboard suite.
 import './github-telemetry-pr-check-batch.test.mjs';
+// Exercise workflow status/conclusion contradictions in the existing hosted dashboard gate.
+import './github-telemetry.test.mjs';
 // Exercise portfolio freshness invariants in the actual hosted ignition CI suite.
 import '../shared/agents/liveGoalDashboardPortfolioOverlay.test.mjs';
 
