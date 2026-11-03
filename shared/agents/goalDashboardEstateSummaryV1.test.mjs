@@ -301,6 +301,66 @@ test('current independent service health survives a stopped Core status publishe
   assert.equal(result.health[2].state, 'DEGRADED');
 });
 
+
+test('live canonical watchdog and exact-head Backend refresh stay green with an expired Core', () => {
+  const head = 'a'.repeat(40);
+  const staleCore = { statusId: 'stephanos-core-daemon-current', sourceHead: 'b'.repeat(40),
+    timestampUtc: at(-700000), daemonHealthy: true, missionWorkerHealthy: false, backendHealthy: false };
+  const watchdog = {
+    statusId: 'battle-bridge-worker-watchdog-current',
+    timestampUtc: at(-8000), status: 'WORKER_WATCHDOG_HEALTHY',
+    classification: 'WORKER_WATCHDOG_HEALTHY',
+    finalAssessment: {
+      finalVerdict: 'WORKER_WATCHDOG_HEALTHY', healthy: true, processHealthy: true,
+      heartbeatFresh: true, heartbeatPidMatchesProcess: true, processLaunchIdentityValid: true,
+      heartbeatLaunchIdentityMatchesProcess: true, repositoryFromCanonicalMain: true,
+      heartbeatMatchesCanonicalRepositoryHead: true, remoteMainHeadProven: true,
+      sourceHead: head, canonicalRepositoryHead: head, remoteMainHead: head,
+    },
+  };
+  const refresh = {
+    statusId: 'post-sync-runtime-refresh-current', timestampUtc: at(-15000),
+    classification: 'BLOCKED_REFRESH_FAILED',
+    blocker: 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN',
+    safeRefreshesCompleted: true, unknownPathCount: 0, unsafePathCount: 0,
+    afterHead: head,
+    resultTargets: [{ targetId: 'stephanos-backend-8787', ok: true,
+      exactHeadProofOk: true, sourceHead: head }],
+  };
+  const statusRecords = [staleCore, watchdog, refresh];
+  let v = project(input(), { ...options, statusRecords });
+  assert.deepEqual(v.health.map(item => item.state), ['UNKNOWN', 'HEALTHY', 'HEALTHY']);
+  assert.deepEqual(v.health.map(item => item.evidenceSource),
+    ['CORE_DAEMON_AGGREGATE', 'CANONICAL_WORKER_WATCHDOG', 'EXACT_HEAD_BACKEND_REFRESH']);
+  assert.equal(v.health[1].observedAtUtc, watchdog.timestampUtc);
+  assert.equal(v.health[2].observedAtUtc, refresh.timestampUtc);
+  assert.equal(v.health[0].expiresAtUtc, '');
+  assert.equal(v.health[1].expiresAtUtc, at(112000));
+
+  v = project(input(), { ...options, statusRecords: [staleCore,
+    { ...watchdog, timestampUtc: at(-120001) }, refresh] });
+  assert.deepEqual(v.health.map(item => item.state), ['UNKNOWN', 'UNKNOWN', 'HEALTHY']);
+
+  v = project(input(), { ...options, statusRecords: [staleCore, watchdog,
+    { ...refresh, timestampUtc: at(-120001) }] });
+  assert.deepEqual(v.health.map(item => item.state), ['UNKNOWN', 'HEALTHY', 'UNKNOWN']);
+
+  v = project(input(), { ...options, statusRecords: [staleCore,
+    { ...watchdog, finalAssessment: { ...watchdog.finalAssessment, heartbeatPidMatchesProcess: false } },
+    { ...refresh, resultTargets: [{ ...refresh.resultTargets[0], ok: false }] }] });
+  assert.deepEqual(v.health.map(item => item.state), ['UNKNOWN', 'UNKNOWN', 'UNKNOWN']);
+
+  v = project(input(), { ...options, statusRecords: [staleCore,
+    { ...watchdog, finalAssessment: { ...watchdog.finalAssessment, remoteMainHead: 'c'.repeat(40) } },
+    { ...refresh, afterHead: 'c'.repeat(40) }] });
+  assert.deepEqual(v.health.map(item => item.state), ['UNKNOWN', 'UNKNOWN', 'UNKNOWN']);
+
+  v = project(input(), { ...options, statusRecords: [staleCore,
+    { ...watchdog, timestampUtc: at(2000) },
+    { ...refresh, timestampUtc: at(1000) }] });
+  assert.deepEqual(v.health.map(item => item.state), ['UNKNOWN', 'UNKNOWN', 'UNKNOWN']);
+});
+
 }
 
 
