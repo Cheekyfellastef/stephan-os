@@ -165,6 +165,9 @@ const NATURAL_PREFIXES = Object.freeze([
 
 const OPENCLAW_APPROVAL_EXEMPT_EXACT = new Set([
   'shared/agents/openClawProviderPoolQualificationV1.mjs',
+  // The specialist review model is imported by backend-side protected merge
+  // adapters; it is not the running OpenClaw gateway or its plugin bundle.
+  'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.mjs',
   'scripts/windows/repair-openclaw-full-stack.ps1',
 ]);
 
@@ -175,6 +178,9 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
   'docs/',
   'tests/',
   'src/windows/Stephanos.CanonicalMailboxNativeEvidence/',
+  // This host is an offline native package, not a live Windows service.
+  // Distinct sibling versions deliberately remain unclassified and blocked.
+  'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/',
   'VR-Research-Lab/docs/',
 ]);
 
@@ -191,6 +197,9 @@ const NO_RUNTIME_EXACT = new Set([
   // long-running service; the later exact-head installation/boot gate owns them.
   'scripts/sovereign-fixed-runtime-installer-candidate-v1.mjs',
   'scripts/windows/SovereignFixedRuntimeIdentityV1.cs',
+  // Protected host C# source is compiled only by the attended installer. A
+  // source change never activates or qualifies the installed native binary.
+  'scripts/windows/SovereignFixedRuntimeHostV1.cs',
   'scripts/windows/install-sovereign-fixed-runtime-v1.ps1',
   'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',
   'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs',
