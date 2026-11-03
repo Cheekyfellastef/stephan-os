@@ -293,3 +293,78 @@ test('iPad hosted projection shows all 23 signed-gate states only with owner-aut
   assert.equal(mismatch.goalBuildGateObservatory.counts.PASS, 0);
   assert.equal(mismatch.goalBuildGateObservatory.firstActionableGate, null);
 });
+
+
+test('hosted refresh generation rejects a stale success after a newer successful projection', async () => {
+  let calls = 0;
+  const releases = [];
+  const gates = [0, 1].map(() => new Promise(resolve => releases.push(resolve)));
+  const fetchImpl = async (url) => {
+    const generation = Math.floor(calls++ / 3);
+    await gates[generation];
+    const sourceHead = generation === 0 ? HEAD : OTHER_HEAD;
+    const record = beacon({ sourceHead, observedAtUtc: new Date().toISOString() });
+    const result = String(url).includes('/git/ref/heads/main')
+      ? { object: { sha: sourceHead } }
+      : String(url).includes('/issues/1889/comments')
+        ? [{ ...beaconComment(record), user: { login: 'Cheekyfellastef', id: 267490109 } }]
+        : [];
+    return { ok: true, status: 200, json: async () => result };
+  };
+  const { api, window } = makeContext({ hostname: 'stephanos.pages.dev', fetchImpl });
+  const older = api.refreshRemote();
+  const newer = api.refreshRemote();
+  assert.equal(calls, 6);
+  releases[1]();
+  const newestResult = await newer;
+  assert.equal(newestResult.remoteProjection.githubHead, OTHER_HEAD);
+  releases[0]();
+  const staleResult = await older;
+  assert.equal(staleResult.skipped, true);
+  assert.equal(staleResult.reason, 'STALE_REMOTE_REFRESH_SUPERSEDED');
+  assert.equal(window.applied.projection.remoteProjection.githubHead, OTHER_HEAD);
+  assert.equal(window.__stephanosGoalDashboardRemote.githubHead, OTHER_HEAD);
+});
+
+test('hosted refresh generation cannot let an older failure erase a newer success', async () => {
+  let calls = 0;
+  const releases = [];
+  const gates = [0, 1].map(() => new Promise(resolve => releases.push(resolve)));
+  const fetchImpl = async (url) => {
+    const generation = Math.floor(calls++ / 3);
+    await gates[generation];
+    if (generation === 0) return { ok: false, status: 403 };
+    const record = beacon({ observedAtUtc: new Date().toISOString() });
+    const result = String(url).includes('/git/ref/heads/main')
+      ? { object: { sha: HEAD } }
+      : String(url).includes('/issues/1889/comments')
+        ? [{ ...beaconComment(record), user: { login: 'Cheekyfellastef', id: 267490109 } }]
+        : [];
+    return { ok: true, status: 200, json: async () => result };
+  };
+  const { api, window, fields } = makeContext({ hostname: 'stephanos.pages.dev', fetchImpl });
+  const older = api.refreshRemote();
+  const newer = api.refreshRemote();
+  assert.equal(calls, 6);
+  releases[1]();
+  await newer;
+  releases[0]();
+  const staleResult = await older;
+  assert.equal(staleResult.reason, 'STALE_REMOTE_REFRESH_SUPERSEDED');
+  assert.equal(window.__stephanosGoalDashboardRemote.state, 'ready');
+  assert.equal(fields.get('source-badge'), 'REMOTE LIVE');
+});
+
+test('future-dated owner beacon fails closed instead of appearing fresh', () => {
+  const { api } = makeContext();
+  const future = api.buildProjection({
+    beacon: beacon({ observedAtUtc: '2099-01-01T00:00:00.000Z' }),
+    ref: { object: { sha: HEAD } },
+    issues: [],
+    nowMs: NOW,
+  });
+  assert.equal(future.sourceTruth, 'STALE');
+  assert.equal(future.remoteProjection.beaconFresh, false);
+  assert.ok(future.remoteProjection.beaconAgeMs < 0);
+  assert.equal(future.finalVerdict, 'GOAL_DASHBOARD_REMOTE_DEGRADED');
+});

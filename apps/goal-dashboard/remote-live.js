@@ -10,6 +10,7 @@
   const MAX_BEACON_AGE_MS = 3 * 60 * 1000;
   const SHA = /^[0-9a-f]{40}$/;
   const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+  let latestRefreshGeneration = 0;
 
   function isLocalHost() {
     return LOCAL_HOSTS.has(String(window.location?.hostname || '').toLowerCase());
@@ -125,8 +126,9 @@
   function buildProjection({ beacon, ref, issues, nowMs = Date.now() }) {
     const githubHead = safeSha(ref?.object?.sha);
     const battleBridgeHead = safeSha(beacon?.sourceHead);
-    const ageMs = Math.max(0, nowMs - observedMs(beacon?.observedAtUtc));
-    const beaconFresh = Number.isFinite(ageMs) && ageMs <= MAX_BEACON_AGE_MS;
+    const ageMs = nowMs - observedMs(beacon?.observedAtUtc);
+    // A future-dated owner beacon cannot prove a current host observation.
+    const beaconFresh = Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= MAX_BEACON_AGE_MS;
     const exactHeadMatch = Boolean(githubHead && battleBridgeHead && githubHead === battleBridgeHead);
     const complete = beacon?.completeStateAnswerable === true && String(beacon?.freshness || '').toUpperCase() === 'FRESH';
     const sourceTruth = !beaconFresh ? 'STALE' : (!exactHeadMatch ? 'CONFLICTING' : (complete ? 'CURRENT' : 'STALE'));
@@ -281,6 +283,8 @@
   }
 
   async function refreshRemote() {
+    // Each new refresh invalidates every older in-flight GitHub result.
+    const generation = ++latestRefreshGeneration;
     if (isLocalHost()) return { skipped: true, reason: 'LOCAL_BACKEND_REMAINS_CANONICAL' };
     const canonicalBackend = canonicalHostedBackendRoute();
     if (canonicalBackend) {
@@ -298,6 +302,9 @@
         fetchJson(`${API_ROOT}/issues/${BEACON_ISSUE}/comments?per_page=30`, controller.signal),
         fetchJson(`${API_ROOT}/issues?state=open&per_page=100&sort=updated&direction=desc`, controller.signal),
       ]);
+      if (generation !== latestRefreshGeneration) {
+        return { skipped: true, reason: 'STALE_REMOTE_REFRESH_SUPERSEDED' };
+      }
       const beacon = latestBeacon(comments);
       if (!beacon) throw new Error('REMOTE_BATTLE_BRIDGE_BEACON_NOT_FOUND');
       const projection = buildProjection({ beacon, ref, issues });
@@ -314,6 +321,10 @@
       applyRemoteProjection(projection);
       return projection;
     } catch (error) {
+      // Older failures must not overwrite a newer successful projection.
+      if (generation !== latestRefreshGeneration) {
+        return { skipped: true, reason: 'STALE_REMOTE_REFRESH_SUPERSEDED' };
+      }
       // A late public HTTP error must not wipe a newly available canonical feed.
       const lateCanonicalBackend = canonicalHostedBackendRoute();
       if (lateCanonicalBackend) {
