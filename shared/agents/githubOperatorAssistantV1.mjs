@@ -80,6 +80,12 @@ function handoffDebtFromEvidence(evidence,now,prs=[]){
   }
   const receiverAcks=acks.filter(a=>text(a.producerReceiptRef)===receipt);
   const terminal=verified.filter(v=>text(v.producerReceiptRef)===receipt);
+  if(terminal.length>1){blocked.push({...item,kind:'automation-debt-ambiguous-terminal-proof',reason:'Multiple terminal receipts claim the same producer identity.'});continue;}
+  if(terminal.length&&!receiverAcks.length){blocked.push({...item,kind:'automation-debt-terminal-without-ack',reason:'Terminal completion claims lack a bound receiver acknowledgement.'});continue;}
+  if(receipt&&receiverAcks.length>1){
+   blocked.push({...item,kind:'automation-debt-ambiguous-receiver-ack',
+    reason:'Multiple receiver acknowledgements reference the same producer receipt.'});continue;
+  }
   // A receipt may not attest multiple distinct producer/receiver handoffs.
   if(receiverAcks.some(a=>ackRefCounts.get(text(a.ref))>1)){
    blocked.push({...item,kind:'automation-debt-reused-receiver-ack-ref',
@@ -88,12 +94,6 @@ function handoffDebtFromEvidence(evidence,now,prs=[]){
   if(terminal.some(v=>terminalRefCounts.get(text(v.ref))>1||verificationRefCounts.get(text(v.verificationRef))>1)){
    blocked.push({...item,kind:'automation-debt-reused-terminal-verification-ref',
     reason:'One terminal receipt or verification reference is claimed by multiple handoffs.'});continue;
-  }
-  if(terminal.length>1){blocked.push({...item,kind:'automation-debt-ambiguous-terminal-proof',reason:'Multiple terminal receipts claim the same producer identity.'});continue;}
-  if(terminal.length&&!receiverAcks.length){blocked.push({...item,kind:'automation-debt-terminal-without-ack',reason:'Terminal completion claims lack a bound receiver acknowledgement.'});continue;}
-  if(receipt&&receiverAcks.length>1){
-   blocked.push({...item,kind:'automation-debt-ambiguous-receiver-ack',
-    reason:'Multiple receiver acknowledgements reference the same producer receipt.'});continue;
   }
   const accepted=receiverAcks.some(a=>{
    const at=Date.parse(text(a.acknowledgedAtUtc));
