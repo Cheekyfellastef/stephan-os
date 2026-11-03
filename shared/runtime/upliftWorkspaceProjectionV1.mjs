@@ -147,9 +147,18 @@ function truthFromRecord(record = {}) {
   // AWAITING_REVIEW is not a completed review; NEEDS_OPERATOR_APPROVAL is not approval.
   // Fail closed against another field claiming READY before those gates are proved.
   const stale = new Set(['STALE', 'DEGRADED', 'WAIT', 'WAITING', 'AWAITING', 'PARTIAL', 'PENDING', 'CONNECTING']);
+  // Security-review findings must never be made green by a different READY field.
+  // Match the risk and finding in the same field, not unrelated record fields;
+  // explicit NO/ZERO findings remains a clean positive control.
+  const unresolvedCriticalFinding = states.some((value) => {
+    const fieldTokens = value.split(/[^A-Z0-9]+/).filter(Boolean);
+    return fieldTokens.some((token) => ['P0', 'P1', 'SECURITY'].includes(token))
+      && fieldTokens.some((token) => ['FINDING', 'FINDINGS', 'BLOCKER', 'BLOCKERS', 'UNRESOLVED'].includes(token))
+      && !fieldTokens.some((token) => ['NO', 'ZERO', 'CLEARED'].includes(token));
+  });
   const negatedPositive = tokens.includes('NOT') && tokens.some((value) => positive.has(value));
-  if (negatedPositive || tokens.some((value) => negative.has(value))) return 'CONFLICTING';
-  if (tokens.some((value) => ['REQUIRED', 'MISSING', 'UNVERIFIED', 'UNQUALIFIED', 'NEEDS'].includes(value))) return 'UNKNOWN';
+  if (unresolvedCriticalFinding || negatedPositive || tokens.some((value) => negative.has(value))) return 'CONFLICTING';
+  if (tokens.some((value) => ['REQUIRED', 'REQUIRES', 'MISSING', 'UNVERIFIED', 'UNQUALIFIED', 'NEEDS'].includes(value))) return 'UNKNOWN';
   if (tokens.some((value) => stale.has(value))) return 'STALE';
   if (tokens.some((value) => positive.has(value))) return 'CURRENT';
   return 'UNKNOWN';
