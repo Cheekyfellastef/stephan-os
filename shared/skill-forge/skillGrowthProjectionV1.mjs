@@ -190,11 +190,12 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
   });
   const lastLearning = learningEvents[0] || null;
   const latestRuntime = runtimeStatusModel?.runtimeContext || {};
-  const feedReadable = ['ready', 'stale'].includes(text(feed.state).toLowerCase());
+  const normalizedFeedState = text(feed.state).toLowerCase();
+  const feedReadable = ['ready', 'stale'].includes(normalizedFeedState);
   return Object.freeze({
     schemaVersion: SKILL_GROWTH_OBSERVATORY_SCHEMA,
     source: 'Shared Workspace dashboard-feed · full-history',
-    sourceTruth: !feedReadable ? 'UNAVAILABLE' : feed.state === 'stale' ? 'STALE' : 'REPORTED',
+    sourceTruth: !feedReadable ? 'UNAVAILABLE' : normalizedFeedState === 'stale' ? 'STALE' : 'REPORTED',
     reason: text(feed.reason, 'No verified Shared Workspace response'),
     nextAction: text(feed.exactNextAction, 'Verify the Shared Workspace backend connection.'),
     skillCandidates, gateRepair,
