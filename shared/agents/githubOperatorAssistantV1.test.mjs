@@ -107,3 +107,27 @@ test('fails closed on contradictory per-check result aliases', () => {
  const consistent=buildGitHubOperatorBriefing({pullRequests:[{...pr,statusCheckRollup:[{status:'COMPLETED',conclusion:'SUCCESS',state:'SUCCESS'}]}]});
  assert.equal(consistent.status,'PASS');
 });
+
+
+test('detects overdue canonical handoff and rejects foreign acknowledgement',()=>{
+ const producer={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'producer-1',nextOwner:'protected-merge-owner',
+  nextAction:'consume-review',producedAtUtc:'2026-11-03T10:00:00Z',dueAtUtc:'2026-11-03T11:00:00Z'};
+ const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:'producer-1',
+  prNumber:1449,issueNumber:2972,sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),
+  ref:'ack-1',receiverOwner:'protected-merge-owner',nextAction:'consume-review',acknowledgedAtUtc:'2026-11-03T10:30:00Z'};
+ const f=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T12:00:00Z',evidence});
+ assert.equal(f([producer]).blocked[0].kind,'automation-debt-stale-handoff');
+ assert.equal(f([producer,{...ack,sourceHead:'c'.repeat(40)}]).status,'BLOCKED');
+ assert.equal(f([producer,{...ack,producerReceiptRef:'different'}]).status,'BLOCKED');
+ assert.equal(f([producer,ack]).status,'PASS');
+});
+test('projects pending and incomplete handoffs without treating summary claims as evidence',()=>{
+ const producer={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:2094,issueNumber:2670,
+  sourceHead:'d'.repeat(40),baseSha:'e'.repeat(40),ref:'receipt-2',nextOwner:'reviewer',
+  nextAction:'review-exact-head',producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T14:00:00Z'};
+ const f=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T13:00:00Z',evidence});
+ assert.equal(f([producer]).waitingForProof[0].kind,'handoff-awaiting-receiver-ack');
+ assert.equal(f([{...producer,baseSha:''}]).blocked[0].kind,'automation-debt-incomplete-handoff');
+ assert.equal(f([{...producer,marker:'CLAIMED'}]).status,'PASS');
+});
