@@ -13,7 +13,7 @@ const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const PR_GLOBAL_ID_404 = /Could not resolve to a node with the global id of ["']?PR_[A-Za-z0-9_-]+["']?/i;
-const TRANSIENT_HTTP_STATUSES = new Set([429, 502, 503, 504]);
+const TRANSIENT_HTTP_STATUSES = new Set([502, 503, 504]);
 const RATE_LIMIT_BODY = /(?:API rate limit exceeded|secondary rate limit|rate limit exceeded)/i;
 const RETRY_DELAYS_MS = Object.freeze([250, 750]);
 const FAILURE_CODES = new Set([
@@ -51,8 +51,9 @@ export function classifyGitHubReadFailure(input = {}) {
   const networkError = input.networkError === true;
   const rateLimitRemaining = text(input.rateLimitRemaining);
   const resetEpochSeconds = Number(input.rateLimitResetEpochSeconds);
-  const retryAtUtc = Number.isFinite(resetEpochSeconds) && resetEpochSeconds > 0
-    ? new Date(resetEpochSeconds * 1000).toISOString()
+  const resetAt = new Date(resetEpochSeconds * 1000);
+  const retryAtUtc = Number.isFinite(resetEpochSeconds) && resetEpochSeconds > 0 && Number.isFinite(resetAt.getTime())
+    ? resetAt.toISOString()
     : null;
   if (method !== 'GET') {
     return Object.freeze({
@@ -69,7 +70,7 @@ export function classifyGitHubReadFailure(input = {}) {
       code: 'GITHUB_READ_NETWORK',
     });
   }
-  if (status === 403 && (rateLimitRemaining === '0' || RATE_LIMIT_BODY.test(body))) {
+  if (status === 429 || (status === 403 && (rateLimitRemaining === '0' || RATE_LIMIT_BODY.test(body)))) {
     return Object.freeze({
       schemaVersion: GITHUB_READ_RESILIENCE_SCHEMA_VERSION,
       retryable: true,

@@ -21,11 +21,30 @@ const IDENTITY = Object.freeze({
 
 test('only bounded read-only transient conditions are retryable', () => {
   assert.equal(GITHUB_READ_MAX_ATTEMPTS, 3);
-  for (const status of [429, 502, 503, 504]) {
+  for (const status of [502, 503, 504]) {
     const result = classifyGitHubReadFailure({ method: 'GET', status });
     assert.equal(result.retryable, true);
     assert.equal(result.code, 'GITHUB_READ_TRANSIENT_HTTP');
   }
+  for (const [status, body, reset] of [
+    [429, 'API rate limit exceeded', 1790449200],
+    [429, 'secondary rate limit', null],
+  ]) {
+    const limited = classifyGitHubReadFailure({ method: 'GET', status, body,
+      rateLimitRemaining: '0', rateLimitResetEpochSeconds: reset });
+    assert.equal(limited.retryable, true);
+    assert.equal(limited.retryImmediately, false);
+    assert.equal(limited.code, 'GITHUB_READ_RATE_LIMIT');
+  }
+  for (const [status, expectedCode] of [[200, 'GITHUB_READ_PERMANENT'],
+    [403, 'GITHUB_READ_RATE_LIMIT'], [429, 'GITHUB_READ_RATE_LIMIT']]) {
+    const response = classifyGitHubReadFailure({ method: 'GET', status,
+      body: 'API rate limit exceeded', rateLimitRemaining: '0',
+      rateLimitResetEpochSeconds: '1e30' });
+    assert.equal(response.code, expectedCode);
+    assert.equal(response.retryAtUtc ?? null, null);
+  }
+  assert.equal(classifyGitHubReadFailure({ method: 'POST', status: 429 }).retryable, false);
   const network = classifyGitHubReadFailure({ method: 'GET', networkError: true });
   assert.equal(network.retryable, true);
   assert.equal(network.code, 'GITHUB_READ_NETWORK');
