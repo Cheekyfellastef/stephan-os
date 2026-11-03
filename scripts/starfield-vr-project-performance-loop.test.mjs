@@ -443,5 +443,5 @@ test('storage-priority advice refuses unknown measurements, foreign providers an
     diagnosis: { focus: 'STORAGE_PRESSURE',
       signals: ['drive-space-pressure-high', 'system-cpu-load-high'] },
   });
-  assert.equal(cpuFirst.nextExperiment.id, 'qualify-starfield-cpu-attribution-collector');
+  assert.equal(cpuFirst.nextExperiment.id, 'capture-canonical-starfield-cpu-attribution');
 });
