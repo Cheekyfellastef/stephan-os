@@ -412,3 +412,51 @@ test('unverified PRs cannot be counted as active builders from open-PR presence 
     'CI success without native execution receipts never becomes BUILDING');
   assert.equal(makeCard('unknown', true).goals[0].state, 'VERIFYING');
 });
+
+test('fresh failed or unreferenced workspace receipts cannot falsely qualify live completion', () => {
+  const fixture = (status, proofRefs, timeOffset = -2000) =>
+    overlayGoalDashboardWithLivePortfolio({
+      baseProjection: baseProjection(), nowMs: NOW,
+      goalRecords: [{ goalId: 'goal-handoff', status: 'ACTIVE',
+        timestampUtc: new Date(NOW - 3000).toISOString() }],
+      proofRecords: [{ goalId: 'goal-handoff', status, proofRefs,
+        timestampUtc: new Date(NOW + timeOffset).toISOString() }],
+    });
+  for (const status of ['FAIL', 'ERROR', 'PENDING', 'UNKNOWN', 'COMPLETED', '']) {
+    const result = fixture(status, ['proofs/failed-or-unqualified.json']);
+    assert.equal(result.goals[0].proofTruth, 'UNKNOWN', status);
+    assert.ok(result.goals[0].blockers.includes('PROOF_RESULT_NOT_PASSED'), status);
+    assert.equal(result.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED');
+  }
+  for (const refs of [[], [''], ['   '], [null], [{ path: 'forged' }]]) {
+    const result = fixture('PASS', refs);
+    assert.equal(result.goals[0].proofTruth, 'UNKNOWN');
+    assert.ok(result.goals[0].blockers.includes('PROOF_REFERENCE_MISSING'));
+    assert.equal(result.sourceTruth, 'UNKNOWN');
+    assert.equal(result.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED');
+  }
+  for (const status of ['PASS', 'PASSED', 'SUCCESS', 'SUCCEEDED', 'VERIFIED']) {
+    const result = fixture(status, ['proofs/goal-handoff.json']);
+    assert.equal(result.goals[0].proofTruth, 'CURRENT', status);
+    assert.equal(result.finalVerdict, 'LANDING_GOAL_DASHBOARD_CURRENT');
+  }
+  assert.equal(fixture('PASS', ['proofs/goal-handoff.json'], -90_000_000).goals[0].proofTruth, 'STALE');
+  assert.equal(fixture('PASS', ['proofs/goal-handoff.json'], 1000).goals[0].proofTruth, 'UNKNOWN');
+});
+
+test('workspace evidence accepts either canonical proof reference field without trusting non-string objects', () => {
+  const project = (proofRecord) => overlayGoalDashboardWithLivePortfolio({
+    baseProjection: baseProjection(), nowMs: NOW,
+    goalRecords: [{ goalId: 'goal-ref', status: 'ACTIVE',
+      timestampUtc: new Date(NOW - 3000).toISOString() }],
+    proofRecords: [{ goalId: 'goal-ref', status: 'PASS',
+      timestampUtc: new Date(NOW - 2000).toISOString(), ...proofRecord }],
+  }).goals[0];
+  const valid = project({ refs: [], proofRefs: ['proofs/goal-ref.json'] });
+  assert.equal(valid.proofTruth, 'CURRENT');
+  assert.deepEqual(valid.proofRefs, ['proofs/goal-ref.json']);
+  const invalid = project({ refs: [{ path: 'object-not-proof-ref' }], proofRefs: [''] });
+  assert.equal(invalid.proofTruth, 'UNKNOWN');
+  assert.deepEqual(invalid.proofRefs, []);
+  assert.ok(invalid.blockers.includes('PROOF_REFERENCE_MISSING'));
+});
