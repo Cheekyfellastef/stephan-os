@@ -386,3 +386,29 @@ test('authoritative exact-head check batch outranks stale workflow failures but 
   assert.ok(headless.blockers.includes('GITHUB_HEAD_UNKNOWN'));
   assert.equal(headless.proofTruth, 'UNKNOWN');
 });
+
+test('unverified PRs cannot be counted as active builders from open-PR presence alone', () => {
+  const makeCard = (checksStatus, draft = false) => overlayGoalDashboardWithLivePortfolio({
+    baseProjection: baseProjection(),
+    nowMs: NOW,
+    liveProjection: { githubTelemetry: {
+      adapterAvailable: true,
+      lastUpdatedAt: '2026-08-14T11:29:50Z',
+      pullRequests: [{
+        number: 1899, title: 'No physical execution receipt',
+        headSha: HEAD, checksStatus, draft, blockers: [],
+      }],
+      workflows: [],
+    }},
+  });
+  const unknown = makeCard('unknown');
+  assert.equal(unknown.goals[0].state, 'UNKNOWN');
+  assert.match(unknown.goals[0].summary, /^UNKNOWN · checks unknown/);
+  assert.ok(unknown.goals[0].blockers.includes('GITHUB_CHECKS_UNKNOWN'));
+  assert.equal(unknown.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED');
+  assert.equal(makeCard('pending').goals[0].state, 'VERIFYING');
+  assert.equal(makeCard('failed').goals[0].state, 'BLOCKED');
+  assert.equal(makeCard('passed').goals[0].state, 'VERIFYING',
+    'CI success without native execution receipts never becomes BUILDING');
+  assert.equal(makeCard('unknown', true).goals[0].state, 'VERIFYING');
+});

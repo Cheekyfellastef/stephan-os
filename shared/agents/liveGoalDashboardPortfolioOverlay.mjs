@@ -168,7 +168,8 @@ function prState(pr = {}) {
   if (checks === 'pending') return 'VERIFYING';
   if (checks === 'passed' && /approval/i.test(text(pr.mergeReadiness))) return 'APPROVAL_REQUIRED';
   if (checks === 'passed') return 'VERIFYING';
-  return 'ACTIVE';
+  // A PR without exact-head checks or an execution heartbeat is not an active builder.
+  return 'UNKNOWN';
 }
 
 function prNextAction(pr = {}) {
