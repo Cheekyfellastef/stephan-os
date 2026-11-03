@@ -443,3 +443,28 @@ test('cross-handoff reuse of receiver and verification receipt identities fails 
  assert.equal(replayProof.status,'BLOCKED');
  assert.equal(replayProof.blocked.filter(x=>x.kind==='automation-debt-reused-terminal-verification-ref').length,2);
 });
+
+
+test('rejects duplicate current PR snapshots even before any producer handoff exists',()=>{
+ const head='a'.repeat(40),base='b'.repeat(40);
+ const original={number:1449,headSha:head,baseSha:base,publicationVerified:true,checksStatus:'pass',isDraft:false};
+ const project=pullRequests=>buildGitHubOperatorBriefing({
+  generatedAtUtc:'2026-11-03T22:28:00Z',pullRequests
+ });
+ assert.equal(project([original]).status,'PASS');
+ assert.equal(project([original]).readyForReview.length,1);
+ assert.equal(project([original,{...original,number:1450}]).readyForReview.length,2);
+ for(const snapshots of [[original,{...original}], [original,{...original,headSha:'c'.repeat(40)}],
+  [{...original,headSha:'c'.repeat(40)},original]]){
+  const result=project(snapshots);
+  assert.equal(result.status,'BLOCKED');
+  assert.equal(result.readyForReview.length,0);
+  assert.equal(result.blocked.filter(x=>x.kind==='pr-ambiguous-snapshot').length,1);
+  assert.equal(result.blocked[0].number,1449);
+ }
+ const partial=project([original,{...original},{...original,number:1450}]);
+ assert.equal(partial.status,'BLOCKED');
+ assert.equal(partial.readyForReview.length,1);
+ assert.equal(partial.readyForReview[0].number,1450);
+ assert.equal(partial.blocked.filter(x=>x.kind==='pr-ambiguous-snapshot').length,1);
+});

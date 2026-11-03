@@ -136,7 +136,23 @@ export function buildGitHubOperatorBriefing(input={}){
  const now=text(input.generatedAtUtc)||'1970-01-01T00:00:00.000Z'; const evidence=arr(input.evidence); const prs=arr(input.pullRequests).slice().sort((a,b)=>Number(a.number)-Number(b.number)); const issues=arr(input.issues).slice().sort((a,b)=>Number(a.number)-Number(b.number));
  const ready=[], blocked=[], waitingForProof=[], waitingForOperator=[], waitingForImplementation=[];
  const debt=handoffDebtFromEvidence(evidence,now,prs); blocked.push(...debt.blocked); waitingForProof.push(...debt.waiting);
+ // An ambiguous PR inventory must not report PASS/ready even without a producer
+ // handoff yet. The handoff-specific guard cannot cover that earlier stage.
+ const observedPrNumbers=new Set(), ambiguousPrNumbers=new Set(), reportedAmbiguousPrNumbers=new Set();
+ for(const candidate of prs){
+  const n=Number(candidate?.number);
+  if(!Number.isSafeInteger(n)||n<1)continue;
+  if(observedPrNumbers.has(n))ambiguousPrNumbers.add(n);
+  observedPrNumbers.add(n);
+ }
  for(const pr of prs){ const n=Number(pr.number); const blockers=[]; let missing=false;
+  if(ambiguousPrNumbers.has(n)){
+   if(!reportedAmbiguousPrNumbers.has(n)){
+    blocked.push(item('pr-ambiguous-snapshot',pr,'Multiple current PR snapshots claim one PR identity; cannot certify review readiness.'));
+    reportedAmbiguousPrNumbers.add(n);
+   }
+   continue;
+  }
   const pubOk=pr.publicationVerified===true || hasProof(evidence,n,'PR_PUBLICATION_VERIFIER_PASS');
   if(!pubOk){ missing=true; waitingForProof.push(item('pr-missing-publication-proof',pr,'Missing PR publication proof from PRPublicationVerifier.')); }
   if(text(pr.headSha)&&text(pr.headRefOid)&&text(pr.headSha)!==text(pr.headRefOid)){ blocked.push(item('pr-head-evidence-conflict',pr,'Conflicting GitHub HEAD identities require reconciliation.')); continue; }
