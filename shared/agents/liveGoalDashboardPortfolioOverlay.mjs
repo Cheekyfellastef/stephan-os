@@ -96,17 +96,28 @@ function workspaceGoalCard(record, input, options) {
   const proofFreshness = proofRecord
     ? freshness(proofRecord.timestampUtc || proofRecord.checkedAtUtc || proofRecord.publishedAtUtc || proofRecord.createdAt, options.nowMs, options.staleAfterMs)
     : { truth: UNKNOWN, ageMs: null };
+  // A fresh receipt is not passing proof unless its explicit outcome succeeds
+  // and it links to a nonempty canonical proof reference. Never infer live
+  // completion from timestamp freshness alone.
+  const proofStatus = text(proofRecord?.status || proofRecord?.verdict).toUpperCase();
+  const proofPassed = ['PASS', 'PASSED', 'SUCCESS', 'SUCCEEDED', 'VERIFIED'].includes(proofStatus);
+  const proofRefs = [...new Set([...list(proofRecord?.refs), ...list(proofRecord?.proofRefs)]
+    .filter((ref) => typeof ref === 'string').map((ref) => ref.trim()).filter(Boolean))];
+  const proofTruth = proofFreshness.truth === CURRENT && (!proofPassed || !proofRefs.length)
+    ? UNKNOWN : proofFreshness.truth;
   const blockers = [];
   if (statusFreshness.truth !== CURRENT) blockers.push(`${statusFreshness.truth}_STATUS_RECORD`);
-  if (proofFreshness.truth !== CURRENT) blockers.push(`${proofFreshness.truth}_PROOF_RECORD`);
+  if (proofTruth !== CURRENT) blockers.push(`${proofTruth}_PROOF_RECORD`);
+  if (proofFreshness.truth === CURRENT && !proofPassed) blockers.push('PROOF_RESULT_NOT_PASSED');
+  if (proofFreshness.truth === CURRENT && proofPassed && !proofRefs.length) blockers.push('PROOF_REFERENCE_MISSING');
   return Object.freeze({
     issue: identity,
     title: text(record.title, 'Shared Workspace goal'),
     statusTruth: statusFreshness.truth,
-    proofTruth: proofFreshness.truth,
+    proofTruth,
     capabilityTruth: 'not-required',
     summary: text(record.summary, `Status: ${text(record.status, 'open')}`),
-    proofRefs: list(proofRecord?.refs || proofRecord?.proofRefs),
+    proofRefs,
     blockers,
     exactNextAction: blockers.length
       ? 'Refresh the goal/proof records from canonical programme evidence before claiming current completion.'
