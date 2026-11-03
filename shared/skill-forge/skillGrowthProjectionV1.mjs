@@ -162,17 +162,19 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
     })),
     timestampUtc: text(record.timestampUtc, 'UNKNOWN'),
   }));
-  // A stale/unavailable feed retains historical provenance, but cannot
-  // attest to currently installed or ACTIVE capabilities.
+  // A stale/unavailable feed retains history, but a fresh installation report
+  // is not a verified skill invocation. The feed has no independently bound
+  // tool-call/recipient/session/skill attestation. Preserve installation claims
+  // for diagnosis while withholding ACTIVE until a qualified verifier exists.
   const feedCurrent = text(feed.state).toLowerCase() === 'ready';
   const stages = SKILL_STAGES.map(stage => ({
     id: stage,
     count: learningEvents.filter(event => event.stage === stage).length
-      + publishedSkills.filter(skill => skill.status === stage && (stage !== 'ACTIVE' || feedCurrent)).length,
+      + publishedSkills.filter(skill => skill.status === stage && stage !== 'ACTIVE').length,
   }));
   const observedActors = SKILL_TRANSFER_ACTORS.map(actor => {
     const heartbeat = actorRecord(statusRecords, actor.id);
-    const actorProof = publishedSkills.filter(skill => feedCurrent
+    const installedClaims = publishedSkills.filter(skill => feedCurrent
       && skill.allowedTargets.includes(actor.id)
       && skill.provenanceRefs.length > 0
       && skill.status === 'ACTIVE'
@@ -183,8 +185,15 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
       ...actor,
       runtime: heartbeat ? text(heartbeat.runtimeState || heartbeat.processState, 'UNPROVEN') : 'UNKNOWN',
       evidenceAt: heartbeat ? text(heartbeat.timestampUtc, 'UNKNOWN') : 'UNKNOWN',
-      skillCount: actorProof.length,
-      skillProof: actorProof.map(skill => skill.id),
+      // Do not equate an installed-record claim with verified live tool/skill use.
+      // Forged invocation flags or an unsigned local trace cannot mint ACTIVE.
+      skillCount: 0,
+      skillProof: [],
+      installedClaimCount: installedClaims.length,
+      installedClaimRefs: installedClaims.map(skill => skill.id),
+      invocationProofVerdict: installedClaims.length
+        ? 'RECIPIENT_SKILL_INVOCATION_INDEPENDENT_PROOF_REQUIRED'
+        : 'NO_CURRENT_QUALIFIED_INSTALLATION_CLAIM',
       learningCount: learningEvents.filter(event => event.teacher === actor.id).length,
     });
   });
@@ -208,6 +217,7 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
       witnessedLearning: learningEvents.length,
       verifiedLessons: learningEvents.filter(event => event.verified).length,
       publishedSkillRecords: publishedSkills.length,
+      installedClaimTargets: observedActors.filter(actor => actor.installedClaimCount > 0).length,
       provenActiveTargets: observedActors.filter(actor => actor.skillCount > 0).length,
       currentSourceRecords: statusRecords.length,
     }),
