@@ -69,11 +69,11 @@ function handoffDebtFromEvidence(evidence,now,prs=[]){
   if(accepted){
    if(!terminal.length){waiting.push({...item,kind:'handoff-awaiting-terminal-verification',reason:'Receiver acknowledged the handoff; terminal capability proof remains outstanding.'});continue;}
    const ack=receiverAcks[0],v=terminal[0],at=Date.parse(text(v.verifiedAtUtc)),ackAt=Date.parse(text(ack.acknowledgedAtUtc));
-   const matches=!!text(v.ref)&&!!text(v.verificationRef)&&!!text(v.acceptancePredicate)&&
+   const matches=!!text(p.acceptancePredicate)&&!!text(v.ref)&&!!text(v.verificationRef)&&!!text(v.acceptancePredicate)&&
     text(v.receiverAckRef)===text(ack.ref)&&Number(v.prNumber||0)===pr&&
     Number(v.issueNumber||0)===issue&&text(v.sourceHead)===head&&text(v.baseSha)===base&&
     text(v.receiverOwner)===owner&&text(v.nextAction)===action&&
-    (!text(p.acceptancePredicate)||text(v.acceptancePredicate)===text(p.acceptancePredicate))&&
+    text(v.acceptancePredicate)===text(p.acceptancePredicate)&&
     Number.isFinite(at)&&at>=ackAt&&at<=nowMs;
    if(!matches){blocked.push({...item,kind:'automation-debt-invalid-terminal-proof',reason:'Terminal claim lacks exact receiver, source, acceptance or verification binding.'});}
    continue;

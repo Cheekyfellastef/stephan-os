@@ -292,3 +292,27 @@ test('requires exact terminal live-verification evidence after the receiver ackn
  assert.equal(f([p,done]).blocked[0].kind,'automation-debt-terminal-without-ack');
  assert.equal(f([p,ack,done,{...done,ref:'duplicate'}]).blocked[0].kind,'automation-debt-ambiguous-terminal-proof');
 });
+
+
+test('terminal capability proof cannot invent an acceptance predicate absent from the producer',()=>{
+ const p={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'predicate-producer-1',
+  nextOwner:'original-merge-owner',nextAction:'guarded-merge',
+  producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T14:00:00Z'};
+ const a={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:p.ref,
+  prNumber:p.prNumber,issueNumber:p.issueNumber,sourceHead:p.sourceHead,baseSha:p.baseSha,
+  ref:'predicate-ack-1',receiverOwner:p.nextOwner,nextAction:p.nextAction,
+  acknowledgedAtUtc:'2026-11-03T12:20:00Z'};
+ const v={kind:'goal-stage-handoff',marker:'VERIFIED_DONE',producerReceiptRef:p.ref,
+  receiverAckRef:a.ref,ref:'predicate-terminal-1',verificationRef:'independent-live-proof-1',
+  acceptancePredicate:'operator-visible-live-outcome',prNumber:p.prNumber,
+  issueNumber:p.issueNumber,sourceHead:p.sourceHead,baseSha:p.baseSha,
+  receiverOwner:p.nextOwner,nextAction:p.nextAction,verifiedAtUtc:'2026-11-03T12:25:00Z'};
+ const briefing=e=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T12:30:00Z',evidence:e});
+ assert.equal(briefing([p,a]).status,'WAITING_FOR_PROOF');
+ const missing=briefing([p,a,v]);
+ assert.equal(missing.status,'BLOCKED');
+ assert.equal(missing.blocked[0].kind,'automation-debt-invalid-terminal-proof');
+ assert.equal(briefing([{...p,acceptancePredicate:v.acceptancePredicate},a,v]).status,'PASS');
+ assert.equal(briefing([{...p,acceptancePredicate:'different-acceptance'},a,v]).status,'BLOCKED');
+});
