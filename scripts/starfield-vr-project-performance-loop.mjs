@@ -277,9 +277,8 @@ export async function buildStarfieldVrProjectPerformanceLoop({
       title: 'Long-session thermal/network drift',
       metricKeys: ['runtimeSeconds', 'longSessionDriftVerdict'],
       sourceRef: sources.airLink.path,
-      rationale: 'The project requires stability evidence beyond a successful launch or short smooth burst.',
-      available: ['runtimeSeconds', 'longSessionDriftVerdict']
-        .every((key) => metricPresent(metrics, key)),
+      rationale: 'The canonical diagnosis producer does not yet publish runtimeSeconds or longSessionDriftVerdict, so caller-injected lookalikes cannot qualify this requirement.',
+      available: false,
     }),
   ];
 
