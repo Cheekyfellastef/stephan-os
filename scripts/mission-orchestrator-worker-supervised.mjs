@@ -14,6 +14,7 @@ import { appendMissionEvent, listMissionRecords, readMissionRecord } from '../st
 import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
 import { runCompletionGuardian } from './completion-guardian.mjs';
 import { readMissionWorkerActiveClaim } from './mission-orchestrator-worker-heartbeat-active-claim.mjs';
+import { missionWorkerActionGrantsMatchV1 } from '../shared/agents/missionOrchestratorWorker.mjs';
 import { runMissionWorkerTick } from './mission-orchestrator-worker.mjs';
 import { writeMissionWorkerHeartbeat } from './mission-orchestrator-worker-heartbeat.mjs';
 
@@ -87,14 +88,15 @@ export function createMissionWorkerControllerLogProjection(controller, checkedAt
   return Object.freeze({ schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA, event: 'controller-cycle', checkedAt: boundedText(checkedAt, 32), status: boundedText(ownData(controller, 'status'), 32), action: boundedText(ownData(controller, 'action'), 48), finalVerdict: boundedText(ownData(controller, 'finalVerdict'), 64), allowWorkerTick: ownData(controller, 'allowWorkerTick') === true, blockers: Object.freeze(boundedTextList(ownData(controller, 'blockers'))), missionId: boundedText(ownData(grant, 'missionId'), 96), actionId: boundedText(ownData(grant, 'actionId'), 96), adapter: boundedText(ownData(grant, 'adapter'), 32) });
 }
 
-export function createMissionWorkerTickLogProjection(result, checkedAt) {
+export function createMissionWorkerTickLogProjection(result, checkedAt, expectedAction) {
   const publication = ownData(result, 'publish');
   const processing = ownData(result, 'processed');
+  const progress = projectMissionWorkerProgress(result, expectedAction);
   return Object.freeze({ schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA, event: 'worker-tick', checkedAt: boundedText(checkedAt, 32), status: boundedText(ownData(result, 'status'), 32), state: boundedText(ownData(result, 'state'), 32), phase: boundedText(ownData(result, 'phase'), 48), finalVerdict: boundedText(ownData(result, 'finalVerdict'), 64), blocker: boundedText(ownData(result, 'blocker'), 96), publishOk: ownData(publication, 'published') === true,
     processed:ownData(processing,'processed')===true,
-    processingSuccess:missionWorkerTickMadeProgress(result),
+    processingSuccess:progress.madeProgress,
     processingVerdict:typedProcessingCode(result,'finalVerdict'),
-    processingBlocker:typedProcessingCode(result,'reason') });
+    processingBlocker:progress.blocker });
 }
 
 function stableLogSignature(projection) { const { checkedAt: _checkedAt, ...stable } = projection; return JSON.stringify(stable); }
@@ -109,7 +111,29 @@ function typedProcessingCode(result,key) {
   const code=processResultText(workerProcessingOutcome(result),key);
   return /^[A-Z][A-Z0-9_:-]{0,95}$/.test(code)?code:'';
 }
-export function missionWorkerTickMadeProgress(result) {
+function workerOutcomeMatchesAction(result, expectedAction) {
+  const outcome = workerProcessingOutcome(result);
+  // The controller validates authority. This binds the producer's outcome to
+  // that invocation; a result cannot supply its own expected action identity.
+  return ['missionId', 'actionId', 'adapter'].every((key) => {
+    const expected = ownData(expectedAction, key);
+    return typeof expected === 'string' && expected.length > 0 && expected.length <= 256
+      && expected === expected.trim() && ownData(outcome, key) === expected;
+  });
+}
+function projectMissionWorkerProgress(result, expectedAction) {
+  const material = workerOutcomeShowsMaterialProgress(result);
+  const identityMatches = workerOutcomeMatchesAction(result, expectedAction);
+  return Object.freeze({
+    madeProgress: material && identityMatches,
+    blocker: material && !identityMatches
+      ? 'MISSION_WORKER_RESULT_IDENTITY_MISMATCH' : typedProcessingCode(result, 'reason'),
+  });
+}
+export function missionWorkerTickMadeProgress(result, expectedAction) {
+  return projectMissionWorkerProgress(result, expectedAction).madeProgress;
+}
+function workerOutcomeShowsMaterialProgress(result) {
   const processing = ownData(result, 'processed');
   if (ownData(processing, 'processed') !== true || ownData(processing, 'success') === false) return false;
   if(ownData(processing,'schemaVersion')==='stephanos.provider-neutral-source-builder.v1') {
@@ -627,10 +651,23 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
       if (!holdSideline?.blocked && carriedExecutionDefect && boundedText(ownData(controller, 'status'), 32).toUpperCase() === 'HOLD') { carriedExecutionDefect = ''; lastTickVerdict = 'MISSION_WORKER_TICK_PASS'; }
       materialProgressRequired = controllerRequiresMaterialProgress(controller);
       if (controller?.allowWorkerTick === true) {
-        const actionGrant = controller.workerActionGrant; attemptedSurfaceId = executionSurfaceId(actionGrant); attemptedMissionId = boundedText(ownData(actionGrant, 'missionId'), 96).toLowerCase(); adapterInvocationStarted = false; const capacityRoute = boundedText(ownData(actionGrant, 'capacityRoute'), 48); const capacityRouting = capacityRoute ? await loadCapacityRoutingInput(capacityRoutingOptions) : undefined; activeActionGrant = actionGrant; let tickSettled = false; let activeClaimHeartbeatPublished = false;
+        const actionGrant = controller.workerActionGrant;
+        // Capture the selected contract before any awaited adapter work. Neither
+        // an old result nor an in-flight grant mutation may clear its failures.
+        const originalGrantJson = JSON.stringify(actionGrant);
+        const expectedAction = Object.freeze(JSON.parse(originalGrantJson));
+        attemptedSurfaceId = executionSurfaceId(expectedAction);
+        attemptedMissionId = boundedText(ownData(expectedAction, 'missionId'), 96).toLowerCase();
+        adapterInvocationStarted = false;
+        const capacityRoute = boundedText(ownData(actionGrant, 'capacityRoute'), 48);
+        const capacityRouting = capacityRoute ? await loadCapacityRoutingInput(capacityRoutingOptions) : undefined;
+        activeActionGrant = actionGrant;
+        let tickSettled = false;
+        let activeClaimHeartbeatPublished = false;
+        let heartbeatGrant = actionGrant, heartbeatGrantJson = originalGrantJson;
+        let publishedGrantRegistered = false, activeClaimObserved = false;
         // Publication completion is task-local. A selected or merely read claim
         // cannot stand in for the existing heartbeat writer's atomic receipt.
-        const originalGrantJson = JSON.stringify(actionGrant);
         let settleClaimPublication, claimPublicationOutcome = null, claimPublicationTimer;
         const claimPublication = new Promise(resolvePublication => { settleClaimPublication = resolvePublication; });
         const finishClaimPublication = value => {
@@ -639,8 +676,28 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
           clearTimeout(claimPublicationTimer);
           settleClaimPublication(claimPublicationOutcome);
         };
-        const sameInFlightGrant = grant => !tickSettled && activeActionGrant === actionGrant
-          && JSON.stringify(actionGrant) === originalGrantJson && JSON.stringify(grant) === originalGrantJson;
+        const sameInFlightGrant = grant => !tickSettled && activeActionGrant === heartbeatGrant
+          && JSON.stringify(actionGrant) === originalGrantJson
+          && JSON.stringify(heartbeatGrant) === heartbeatGrantJson
+          && JSON.stringify(grant) === heartbeatGrantJson;
+        const acceptPublishedActionGrant = grant => {
+          // Locked publication may retain the original action's advisory pack.
+          // Bind it once before pickup; preserve the independent controller
+          // snapshot, and never substitute identity, authority or live custody.
+          if (tickSettled || publishedGrantRegistered || activeClaimObserved
+              || activeClaimHeartbeatPublished || claimPublicationOutcome !== null
+              || !sameInFlightGrant(heartbeatGrant)
+              || !missionWorkerActionGrantsMatchV1(actionGrant, actionGrant)) return false;
+          const expected = { ...expectedAction,
+            engineeringMemoryPack: grant?.engineeringMemoryPack ?? null,
+            engineeringMemoryPackId: grant?.engineeringMemoryPackId ?? null };
+          if (!missionWorkerActionGrantsMatchV1(expected, grant)) return false;
+          heartbeatGrantJson = JSON.stringify(grant);
+          heartbeatGrant = Object.freeze(JSON.parse(heartbeatGrantJson));
+          activeActionGrant = heartbeatGrant;
+          publishedGrantRegistered = true;
+          return true;
+        };
         const awaitActiveClaimHeartbeat = async grant => {
           if (!sameInFlightGrant(grant)) return false;
           if (!claimPublicationTimer && claimPublicationOutcome === null)
@@ -650,14 +707,17 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
         };
         const watchActiveClaim = async () => {
           while (!tickSettled && !activeClaimHeartbeatPublished && claimPublicationOutcome !== false) {
+            const observedGrant = heartbeatGrant;
             let activeClaim = null;
-            try { activeClaim = await readActiveClaim({ env, actionGrant }); } catch { activeClaim = null; }
+            try { activeClaim = await readActiveClaim({ env, actionGrant: observedGrant }); } catch { activeClaim = null; }
             if (tickSettled) { finishClaimPublication(false); return; }
+            if (observedGrant !== heartbeatGrant) continue;
             if (activeClaim) {
+              activeClaimObserved = true;
               const published = await queueHeartbeat(authoritativeHeartbeatVerdict());
               const record = ownData(published, 'record');
-              const exact = sameInFlightGrant(actionGrant) && ownData(published, 'ok') === true
-                && ownData(record, 'activeTaskId') === ownData(actionGrant, 'actionId')
+              const exact = sameInFlightGrant(observedGrant) && ownData(published, 'ok') === true
+                && ownData(record, 'activeTaskId') === ownData(observedGrant, 'actionId')
                 && ownData(record, 'activeTaskId') === ownData(activeClaim, 'activeTaskId')
                 && ownData(record, 'activeReceiptId') === ownData(activeClaim, 'activeReceiptId')
                 && ownData(record, 'executionPhase') === ownData(activeClaim, 'executionPhase')
@@ -672,11 +732,15 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
         };
         adapterInvocationStarted = true;
         let result;
-        const tickPromise = runTick({ env, actionGrant, capacityRouting, awaitActiveClaimHeartbeat });
+        const tickPromise = runTick({ env, actionGrant, capacityRouting,
+          acceptPublishedActionGrant, awaitActiveClaimHeartbeat });
         const activeClaimWatcher = watchActiveClaim();
         try { result = await tickPromise; }
         finally { tickSettled = true; finishClaimPublication(false); await activeClaimWatcher; activeActionGrant = undefined; }
-        const tickMadeMaterialProgress = missionWorkerTickMadeProgress(result); tickHadActivity = missionWorkerTickHadActivity(result);
+        const tickLog = createMissionWorkerTickLogProjection(result, checkedAt,
+          JSON.stringify(actionGrant) === originalGrantJson ? expectedAction : null);
+        const tickMadeMaterialProgress = tickLog.processingSuccess;
+        tickHadActivity = missionWorkerTickHadActivity(result);
         if (externalHandoffPending(result)) {
           pendingExternalHandoff = Object.freeze({
             surfaceId: attemptedSurfaceId,
@@ -698,7 +762,7 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
           surfaceFailures = appendSurfaceFailure(
             surfaceFailures,
             attemptedSurfaceId,
-            executionSurfaceFailureClass(result),
+            tickLog.processingBlocker || executionSurfaceFailureClass(result),
             attemptedMissionId,
           );
           const sideline = await sidelineStalledMission(attemptedMissionId, surfaceFailures, checkedAt);
@@ -722,7 +786,7 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
             stderr.write(`${JSON.stringify({ checkedAt: now(), finalVerdict: lastTickVerdict, missionId: boundedText(ownData(actionGrant, 'missionId'), 96), actionId: boundedText(ownData(actionGrant, 'actionId'), 96) })}\n`); if (once) exitCode = 1;
           }
         }
-        const tickLog = createMissionWorkerTickLogProjection(result, checkedAt); const tickLogSignature = stableLogSignature(tickLog); if (once || tickLogSignature !== lastTickLogSignature) { stdout.write(`${JSON.stringify(tickLog)}\n`); lastTickLogSignature = tickLogSignature; }
+        const tickLogSignature = stableLogSignature(tickLog); if (once || tickLogSignature !== lastTickLogSignature) { stdout.write(`${JSON.stringify(tickLog)}\n`); lastTickLogSignature = tickLogSignature; }
       } else if (materialProgressRequired) { lastTickVerdict = 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT'; carriedExecutionDefect = lastTickVerdict; stderr.write(`${JSON.stringify({ checkedAt: now(), finalVerdict: lastTickVerdict })}\n`); if (once) exitCode = 1; }
     } catch (error) {
       let sideline = null;

@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
@@ -27,6 +28,7 @@ import {
   projectMailboxPulseFacts,
   projectSovereignRepairBeaconFacts,
   projectSovereignRepairContinuity,
+  projectSovereignCommanderBeaconFacts,
   readSovereignRepairCycleTail,
   mirrorBattleBridgeCompleteStateToSharedWorkspace,
 } from './battle-bridge-outbound-health-beacon.mjs';
@@ -60,7 +62,7 @@ function commandComment({
       requestId,
       operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
       repository,
-      issueNumber: 3149,
+      issueNumber: activeMailboxIssueForTest,
       branch: 'main',
       operatorApproval: 'operator-approved',
       expectedHead,
@@ -84,7 +86,7 @@ function receiptComment({
       requestId,
       operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
       repository: 'Cheekyfellastef/stephan-os',
-      issueNumber: 3149,
+      issueNumber: activeMailboxIssueForTest,
       branch: 'main',
       expectedHead,
       state: 'ACCEPTED',
@@ -1501,7 +1503,7 @@ test('complete sovereign local telemetry is saved before an external publication
       projectControlTowerBuildBeaconFactsV1: () => ({}),
       projectPublicGoalGateObservatoryV1: () => ({}),
       readCommissionedGateLedger: () => null,
-      projectSovereignRepairContinuity, readSovereignRepairCycleTail,
+      projectSovereignRepairContinuity, readSovereignRepairCycleTail, projectSovereignCommanderBeaconFacts,
       options: {
         env: { USERPROFILE: root, STEPHANOS_SHARED_AGENT_WORKSPACE: workspace },
         mirror: mirrorBattleBridgeCompleteStateToSharedWorkspace,
@@ -1512,6 +1514,8 @@ test('complete sovereign local telemetry is saved before an external publication
           assert.equal(local.finalVerdict, 'BATTLE_BRIDGE_OUTBOUND_HEALTH_OBSERVATION_READY');
           assert.doesNotMatch(local.finalVerdict, /PUBLISHED/);
           assert.equal(local.sovereignRepairContinuity.twoDistinctMaintenanceCompletionsObserved, false);
+          assert.equal(local.sovereignCommander.blocker, 'COMMANDER_HEALTH_NOT_OBSERVED');
+          assert.equal(local.sovereignCommander.executionProven, false);
           throw new Error('GITHUB_UNAVAILABLE_TEST');
         },
       },

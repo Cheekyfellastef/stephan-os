@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -34,7 +35,7 @@ function command(overrides = {}) {
     requestId: 'sovereign-mobile-1001',
     operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -376,7 +377,7 @@ test('actual fleet owner denial survives terminal checkpoints and repeated bound
       const receipt = {
         schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
         requestId: 'fleet-owner-denial-roundtrip-001', operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
-        repository: 'Cheekyfellastef/stephan-os', issueNumber: 3149, branch: 'main',
+        repository: 'Cheekyfellastef/stephan-os', issueNumber: activeMailboxIssueForTest, branch: 'main',
         expectedHead: HEAD, processSourceHead: HEAD, state: 'BLOCKED', blocker: result.blocker,
         result: { ok: false, verdict: 'BLOCKED', result: { ...result,
           stdout: 'PRIVATE RAW OUTPUT C:\\Users\\Operator\\secret', stderr: 'PRIVATE STDERR' } },
@@ -4412,4 +4413,85 @@ test('native calibration pre-execution failures expose only a bounded denial, ne
   assert.equal(malformed.blocker,'SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID');
   assert.equal(malformed.errorCode ?? '', '');
   assert.doesNotMatch(JSON.stringify(malformed),/PRIVATE|secret-token/);
+});
+
+
+test('remote Ignition diagnosis returns bounded live repair truth without private logs or paths', async () => {
+  const diagnosis = {
+    schemaVersion: 'stephanos.sovereign-commander-ignition-diagnosis.v1',
+    ok: false,
+    observedAtUtc: '2026-10-31T21:30:00.000Z',
+    sourceHead: HEAD,
+    sourceExact: true,
+    readinessVerdict: 'blocked-needs-supervisor-repair',
+    services: {
+      backend8787: { ready: true },
+      stephanosUi4173: { ready: false },
+      openClaw18789: { ready: true, requiredForIgnition: false },
+      sharedWorkspace: { ready: true },
+    },
+    supervisor: {
+      observed: true,
+      stale: false,
+      observedAtUtc: '2026-10-31T21:29:59.000Z',
+      currentPhase: 'Stephanos UI 4173',
+      trafficLight: 'red',
+      blockerId: 'IGNITION_UI_4173_NOT_READY',
+      phases: [
+        { id: 'backend 8787', state: 'ready', blockerId: '' },
+        { id: 'Stephanos UI 4173', state: 'blocked', blockerId: 'IGNITION_UI_4173_NOT_READY' },
+      ],
+      logPath: 'C:\\private\\ignition.log',
+    },
+    repairRequired: true,
+    autoRepairEligible: true,
+    nextRepairAction: 'repair-ui-4173',
+    blocker: 'IGNITION_UI_4173_NOT_READY',
+    readOnly: true,
+    sourceMutationAllowed: false,
+    arbitraryShellAllowed: false,
+    mergeAuthority: false,
+    pcRestartAllowed: false,
+    rawLogsReturned: false,
+    rawPathsReturned: false,
+    secretMaterialIncluded: false,
+    finalVerdict: 'SOVEREIGN_COMMANDER_IGNITION_DIAGNOSIS_REPAIR_READY',
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'f'.repeat(64),
+    command: { plan: { processId: 'diagnose-ignition' } },
+    contentText: 'PRIVATE CONTENT MUST NOT ESCAPE',
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: 'SOVEREIGN_COMMANDER_IGNITION_DIAGNOSIS_RESULT=' + JSON.stringify(diagnosis) + '\nPRIVATE STDOUT',
+      stderr: 'PRIVATE STDERR',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'diagnose-ignition' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_IGNITION_DIAGNOSIS_COMPLETE');
+  assert.equal(result.ignitionDiagnosis.services.backend8787.ready, true);
+  assert.equal(result.ignitionDiagnosis.services.stephanosUi4173.ready, false);
+  assert.equal(result.ignitionDiagnosis.nextRepairAction, 'repair-ui-4173');
+  assert.equal(result.ignitionDiagnosis.autoRepairEligible, true);
+  assert.equal(result.ignitionDiagnosis.rawLogsReturned, false);
+  assert.equal(result.ignitionDiagnosis.rawPathsReturned, false);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes('C:\\private\\ignition.log'), false);
+  assert.equal(serialized.includes('PRIVATE STDOUT'), false);
+  assert.equal(serialized.includes('PRIVATE STDERR'), false);
+  assert.equal(serialized.includes('PRIVATE CONTENT MUST NOT ESCAPE'), false);
 });

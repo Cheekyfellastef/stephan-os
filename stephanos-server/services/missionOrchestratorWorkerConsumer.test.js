@@ -69,7 +69,7 @@ test('actual Forge publication consumer records canonical custody before publish
   } });
   assert.equal(calls, 1, result.error?.stack);
   assert.equal(result.result.finalVerdict, 'MISSION_WORKER_ITEM_COMPLETE', result.error?.stack);
-  assert.equal(missionWorkerTickMadeProgress({ processed: result }), true);
+  assert.equal(missionWorkerTickMadeProgress({ processed: result }, f.options.actionGrant), true);
   const h = await f.history();
   assert.deepEqual(h.receipts.map(r => r.state), ['queued', 'accepted', 'started', 'progress', 'completed']);
   const state = (await readMissionRecord(f.state.missionId, f.options)).state;
@@ -81,7 +81,7 @@ test('actual Forge publication consumer records canonical custody before publish
   const replay = await processNextForgePublicationItem({ ...f.options,
     executeForgePublication: async () => assert.fail('terminal publication replay executed') });
   assert.match(replay.result.error, /EXECUTION_RECEIPT_CLAIM_STATE_INVALID:completed/);
-  assert.equal(missionWorkerTickMadeProgress({ processed: replay }), false);
+  assert.equal(missionWorkerTickMadeProgress({ processed: replay }, f.options.actionGrant), false);
   assert.equal((await f.history()).receipts.length, 5);
 });
 
@@ -258,7 +258,7 @@ test('verification consumer binds canonical elastic goal evidence to proven sour
   const result = await processNextVerificationItem(options);
   assert.equal(result.processed, true);
   assert.equal(result.result.finalVerdict, 'VERIFICATION_EVIDENCE_GROUNDED');
-  assert.equal(missionWorkerTickMadeProgress({ processed: result }), true);
+  assert.equal(missionWorkerTickMadeProgress({ processed: result }, { ...published.action, adapter: published.adapter }), true);
   assert.equal(result.applied.state.currentPhase, 'GITHUB_COMMIT');
 
   const current = (await readMissionRecord(missionId, options)).state;
@@ -322,7 +322,7 @@ test('verification consumer refuses browser evidence from source-test receipts',
   const result = await processNextVerificationItem(options);
   assert.equal(result.processed, true);
   assert.equal(result.result.finalVerdict, 'VERIFICATION_EVIDENCE_NOT_GROUNDED');
-  assert.equal(missionWorkerTickMadeProgress({ processed: result }), false);
+  assert.equal(missionWorkerTickMadeProgress({ processed: result }, { ...published.action, adapter: published.adapter }), false);
   assert.equal((await readMissionRecord(missionId, options)).state.currentPhase, 'VERIFYING');
 });
 
@@ -443,10 +443,11 @@ test('exact action grant cannot consume another mission queue item', async () =>
 test('signed worktree result advances to implementation', async () => {
   const options = await runtime();
   const created = await createMissionRecord(intent('signed-test'), options);
-  await publishMissionWorkerAction(created.state, options);
+  const published = await publishMissionWorkerAction(created.state, options);
   const processed = await processNextSignedOpenClawItem({ ...options, executeSignedOperation: async () => ({ success: true, commandOutputHash: 'a'.repeat(64), completedAt: new Date().toISOString() }), inspectSignedOperation: async () => ({ worktreePath: 'C:\\worktree', clean: true }) });
   assert.equal(processed.applied.state.currentPhase, 'AGENT_IMPLEMENTATION');
-  assert.equal(missionWorkerTickMadeProgress({ processed }), true);
+  assert.equal(processed.result.adapter, 'openclaw-signed');
+  assert.equal(missionWorkerTickMadeProgress({ processed }, { ...published.action, adapter: published.adapter }), true);
 });
 
 test('source-changing Mission Worker result fails closed before terminal completion without external escrow', async () => {
@@ -472,7 +473,7 @@ test('source-changing Mission Worker result fails closed before terminal complet
   });
   assert.equal(processed.result.finalVerdict, 'MISSION_WORKER_ITEM_FAILED');
   assert.equal(processed.result.error, 'SOURCE_ARTIFACT_ESCROW_REQUIRED');
-  assert.equal(missionWorkerTickMadeProgress({ processed }), false);
+  assert.equal(missionWorkerTickMadeProgress({ processed }, { ...dispatch.action, adapter: dispatch.adapter }), false);
 });
 
 test('source-changing Mission Worker rejects an escrow that is not bound to exact execution identity', async () => {
@@ -495,7 +496,7 @@ test('source-changing Mission Worker rejects an escrow that is not bound to exac
   });
   assert.equal(processed.result.finalVerdict, 'MISSION_WORKER_ITEM_FAILED');
   assert.equal(processed.result.error, 'SOURCE_ARTIFACT_ESCROW_IDENTITY_REQUIRED');
-  assert.equal(missionWorkerTickMadeProgress({ processed }), false);
+  assert.equal(missionWorkerTickMadeProgress({ processed }, { ...dispatch.action, adapter: dispatch.adapter }), false);
 });
 
 test('Codex and OpenClaw adapters collect bounded results with one active writer', async () => {
@@ -521,15 +522,15 @@ test('Codex and OpenClaw adapters collect bounded results with one active writer
     }),
   });
   assert.equal(codex.applied.state.currentPhase, 'GITHUB_COMMIT');
-  assert.equal(missionWorkerTickMadeProgress({ processed: codex }), true);
+  assert.equal(missionWorkerTickMadeProgress({ processed: codex }, { ...dispatch.action, adapter: dispatch.adapter }), true);
 
   const openClawOptions = await runtime();
   const created = await createMissionRecord(intent('readonly-test', 'live-runtime-investigation'), openClawOptions);
-  await publishMissionWorkerAction(created.state, openClawOptions);
+  const openclawPublication = await publishMissionWorkerAction(created.state, openClawOptions);
   const openclaw = await processNextOpenClawReadonlyItem({ ...openClawOptions, executeOpenClawReadonlyAction: async () => ({ success: true, changedFiles: [], receipt: proof('openclaw result', 'result'), evidenceReceipts: [proof('focused evidence', 'evidence')] }) });
   assert.equal(openclaw.applied.state.activeWriter, 'none');
   assert.deepEqual(openclaw.result.changedFiles, []);
-  assert.equal(missionWorkerTickMadeProgress({ processed: openclaw }), true);
+  assert.equal(missionWorkerTickMadeProgress({ processed: openclaw }, { ...openclawPublication.action, adapter: openclawPublication.adapter }), true);
 });
 
 
@@ -877,6 +878,10 @@ test('GitHub inspection records started before adapter and terminal receipt afte
   } });
   assert.equal(called, true, result.error?.stack || JSON.stringify(result.result));
   assert.equal(result.result.finalVerdict, 'MISSION_WORKER_ITEM_COMPLETE', result.error?.stack);
+  assert.equal(result.result.adapter, 'openclaw-github-readonly');
+  assert.equal(missionWorkerTickMadeProgress({ processed: result }, f.item.actionGrant), true);
+  assert.equal(missionWorkerTickMadeProgress({ processed: result },
+    { ...f.item.actionGrant, actionId: 'different-inspection' }), false);
   assert.equal(result.applied.state.currentPhase, 'REPAIR_REQUIRED');
   const h = await f.history();
   assert.deepEqual(h.receipts.map(r => r.state), ['queued', 'accepted', 'started', 'progress', 'completed']);
