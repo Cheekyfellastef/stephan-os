@@ -152,3 +152,24 @@ test('rejects future-dated PRODUCED handoffs and retains valid acknowledgements'
  assert.equal(f([valid,ack]).status,'PASS');
  assert.equal(f([p,ack]).status,'BLOCKED');
 });
+
+
+// A receiver ACK is not timely merely because it eventually arrived.
+test('retains automation debt when receiver acknowledgement missed producer deadline',()=>{
+  const producer={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+    sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'deadline-receipt-1',
+    nextOwner:'protected-merge-owner',nextAction:'consume-exact-review',
+    producedAtUtc:'2026-11-03T10:00:00Z',dueAtUtc:'2026-11-03T11:00:00Z'};
+  const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:producer.ref,
+    prNumber:1449,issueNumber:2972,sourceHead:producer.sourceHead,baseSha:producer.baseSha,
+    ref:'deadline-ack-1',receiverOwner:producer.nextOwner,nextAction:producer.nextAction,
+    acknowledgedAtUtc:'2026-11-03T11:00:01Z'};
+  const f=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T12:00:00Z',evidence});
+  const late=f([producer,ack]);
+  assert.equal(late.status,'BLOCKED');
+  assert.equal(late.blocked[0].kind,'automation-debt-stale-handoff');
+  assert.equal(f([producer,{...ack,acknowledgedAtUtc:'2026-11-03T11:00:00Z'}]).status,'PASS');
+  assert.equal(f([producer,{...ack,acknowledgedAtUtc:'2026-11-03T10:30:00Z'}]).status,'PASS');
+  assert.equal(f([producer,{...ack,acknowledgedAtUtc:'2026-11-03T09:59:59Z'}]).status,'BLOCKED');
+  assert.equal(f([producer,{...ack,acknowledgedAtUtc:'2026-11-03T12:00:01Z'}]).status,'BLOCKED');
+});

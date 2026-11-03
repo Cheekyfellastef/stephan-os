@@ -39,7 +39,7 @@ function handoffDebtFromEvidence(evidence,now){
     Number(a.prNumber||0)===pr&&Number(a.issueNumber||0)===issue&&
     text(a.sourceHead)===head&&text(a.baseSha)===base&&
     text(a.receiverOwner)===owner&&text(a.nextAction)===action&&
-    Number.isFinite(at)&&at>=madeAt&&at<=nowMs;
+    Number.isFinite(at)&&at>=madeAt&&at<=due&&at<=nowMs;
   });
   if(accepted)continue;
   const overdue=nowMs>due;
