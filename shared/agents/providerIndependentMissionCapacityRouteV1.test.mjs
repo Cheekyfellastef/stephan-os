@@ -151,3 +151,118 @@ test('route planner overrides are rejected outside explicit test-only use', () =
     routePlanner: plannerFor(),
   }), /test-only/);
 });
+test('blackout accepts every governed non-OpenAI source route', () => {
+  const routes = [
+    [MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE, 'openclaw-standalone'],
+    [MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL, 'openclaw-local'],
+  ];
+  for (const [route, adapter] of routes) {
+    const planner = (input = {}) => {
+      const stripped = input.codexStatus === null && input.githubLaneReceipt === null;
+      return Object.freeze(stripped
+        ? {
+            route,
+            adapter,
+            workerId: `${adapter}-worker`,
+            dispatchAllowed: true,
+            blockers: Object.freeze([]),
+            finalVerdict: 'MISSION_CONTROLLER_FALLBACK_ROUTE_READY',
+          }
+        : {
+            route: MISSION_CONTROLLER_ROUTE.CODEX,
+            adapter: 'codex',
+            dispatchAllowed: true,
+            blockers: Object.freeze([]),
+            finalVerdict: 'MISSION_CONTROLLER_ROUTE_READY',
+          });
+    };
+    const result = routeProviderIndependentMissionCapacityV1({
+      preferNonOpenAi: true,
+      openAiBlackout: true,
+      codexStatus: { available: true },
+      githubLaneReceipt: { available: true },
+    }, TEST_OPTIONS(planner));
+    assert.equal(result.route, route);
+    assert.equal(result.adapter, adapter);
+    assert.equal(result.dispatchAllowed, true);
+    assert.equal(result.nonOpenAiRouteSelected, true);
+    assert.equal(result.openAiCriticalPathRequired, false);
+  }
+});
+
+test('a blackout does not count ready metered Desktop Commander as sovereign capacity', () => {
+  let independentInput;
+  const planner = (input = {}) => {
+    const stripped = input.codexStatus === null && input.githubLaneReceipt === null;
+    if (stripped) independentInput = input;
+    return Object.freeze({
+      route: MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
+      adapter: 'desktop-commander',
+      dispatchAllowed: true,
+      blockers: Object.freeze([]),
+      finalVerdict: 'MISSION_CONTROLLER_FALLBACK_ROUTE_READY',
+    });
+  };
+  const result = routeProviderIndependentMissionCapacityV1({
+    openAiBlackout: true,
+    desktopCommanderLaneReceipt: { state: 'READY' },
+  }, TEST_OPTIONS(planner));
+
+  assert.equal(independentInput.desktopCommanderLaneReceipt, null);
+  assert.ok(independentInput.blockedAdapters.includes('desktop-commander'));
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+  assert.equal(result.nonOpenAiRouteSelected, false);
+  assert.equal(result.openAiCriticalPathRequired, false);
+  assert.equal(result.finalVerdict, 'MISSION_CONTROLLER_OPENAI_BLACKOUT_HELD');
+});
+
+test('a sovereign Commander receipt wins over faster metered Desktop Commander in blackout', () => {
+  let independentInput;
+  const planner = (input = {}) => {
+    const stripped = input.codexStatus === null && input.githubLaneReceipt === null;
+    if (stripped) independentInput = input;
+    const route = stripped && input.desktopCommanderLaneReceipt === null
+      && input.blockedAdapters.includes('desktop-commander')
+      ? MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER
+      : MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER;
+    return Object.freeze({
+      route,
+      adapter: route === MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER
+        ? 'sovereign-commander' : 'desktop-commander',
+      dispatchAllowed: true,
+      workerId: 'original-worker',
+      blockers: Object.freeze([]),
+      finalVerdict: 'MISSION_CONTROLLER_FALLBACK_ROUTE_READY',
+    });
+  };
+  const result = routeProviderIndependentMissionCapacityV1({
+    openAiBlackout: true,
+    desktopCommanderLaneReceipt: { state: 'READY', p95StartLatencySeconds: 1 },
+    sovereignCommanderLaneReceipt: { state: 'READY', p95StartLatencySeconds: 5 },
+  }, TEST_OPTIONS(planner));
+  assert.equal(independentInput.desktopCommanderLaneReceipt, null);
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER);
+  assert.equal(result.adapter, 'sovereign-commander');
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.nonOpenAiRouteSelected, true);
+  assert.equal(result.openAiCriticalPathRequired, false);
+});
+
+test('explicit ordinary overflow still permits independently qualified Desktop Commander', () => {
+  const planner = () => Object.freeze({
+    route: MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
+    adapter: 'desktop-commander',
+    dispatchAllowed: true,
+    blockers: Object.freeze([]),
+    finalVerdict: 'MISSION_CONTROLLER_FALLBACK_ROUTE_READY',
+  });
+  const result = routeProviderIndependentMissionCapacityV1({
+    preferNonOpenAi: false,
+    openAiBlackout: false,
+  }, TEST_OPTIONS(planner));
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER);
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.nonOpenAiAttempted, false);
+  assert.equal(result.nonOpenAiRouteSelected, false);
+});

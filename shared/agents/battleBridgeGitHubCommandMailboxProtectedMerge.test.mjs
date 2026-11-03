@@ -9,6 +9,7 @@ import {
   BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
   BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA,
   executeBattleBridgeGitHubCommand,
+  selectBattleBridgeGitHubCommandBatch,
   validateBattleBridgeGitHubCommand,
 } from './battleBridgeGitHubCommandMailbox.mjs';
 import {
@@ -227,6 +228,7 @@ function successfulRequiredChecks() {
     name: workflow === 'Build Stephanos UI' ? 'build' : 'proof',
     workflow,
     state: 'SUCCESS',
+    ...(workflow === 'Build Stephanos UI' ? { event: 'pull_request' } : {}),
   }));
 }
 
@@ -282,7 +284,7 @@ test('protected merge ignores non-required workflow conclusions but rejects malf
 
 test('protected merge check inspection requests exact name, state and workflow identities', () => {
   const source = readFileSync(new URL('./protectedOpenClawMergeMailboxAdapter.mjs', import.meta.url), 'utf8');
-  assert.match(source, /'--json', 'name,state,workflow'/);
+  assert.match(source, /'--json', 'name,state,workflow,event'/);
   assert.doesNotMatch(source, /'--json', 'state'/);
 });
 
@@ -299,4 +301,70 @@ test('feature branches emit only the pull-request build checks consumed by prote
     .replace(/\r\n/g, '\n');
   assert.match(source, /^  push:\n    branches:\n      - main\n    paths:\s*$/m);
   assert.match(source, /^  pull_request:\s*$/m);
+});
+
+test('protected merge mailbox compares reviewed PR expectedBase to main, never PR source head', () => {
+  const authoredAt = new Date('2026-08-05T16:29:00.000Z').toISOString();
+  const payload = {
+    ...command,
+    requestId: 'protected-bootstrap-source-base-admission',
+    expectedHead: head,
+    expectedBase: base,
+  };
+  const entry = {
+    id: 12345,
+    created_at: authoredAt,
+    user: { login: 'Cheekyfellastef' },
+    body: '```stephanos-battle-bridge-command\n' + JSON.stringify(payload) + '\n```',
+  };
+  const options = { now: new Date('2026-08-05T16:30:00.000Z') };
+
+  const admitted = selectBattleBridgeGitHubCommandBatch([entry], {
+    ...options, currentHead: base,
+  });
+  assert.equal(admitted.ok, true);
+  assert.equal(admitted.commands.length, 1);
+  assert.equal(admitted.commands[0].command.operation, PROTECTED_OPENCLAW_MERGE_OPERATION);
+  assert.equal(admitted.commands[0].command.expectedHead, head);
+  assert.equal(admitted.commands[0].command.expectedBase, base);
+  assert.equal(admitted.terminalRejections.length, 0);
+
+  const staleBase = selectBattleBridgeGitHubCommandBatch([entry], {
+    ...options, currentHead: 'f'.repeat(40),
+  });
+  assert.equal(staleBase.verdict, 'NO_COMMAND_READY');
+  assert.equal(staleBase.terminalRejections.length, 1);
+  assert.equal(staleBase.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+  assert.equal(staleBase.rejected[0].expectedHead, head);
+  assert.equal(staleBase.rejected[0].expectedMainHead, base);
+  assert.equal(staleBase.rejected[0].githubMainHead, 'f'.repeat(40));
+
+  const normal = { ...payload, operation: 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE' };
+  const normalEntry = { ...entry, body: '```stephanos-battle-bridge-command\n' + JSON.stringify(normal) + '\n```' };
+  const strict = selectBattleBridgeGitHubCommandBatch([normalEntry], {
+    ...options, currentHead: base,
+  });
+  assert.equal(strict.verdict, 'NO_COMMAND_READY');
+  assert.equal(strict.terminalRejections[0].blocker, 'PROTECTED_MERGE_FIELD_NOT_ALLOWED');
+  const ordinary = {
+    schemaVersion: payload.schemaVersion,
+    requestId: 'strict-control-head-not-pr',
+    operation: 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
+    repository: payload.repository,
+    issueNumber: payload.issueNumber,
+    branch: payload.branch,
+    operatorApproval: payload.operatorApproval,
+    expectedHead: head,
+    expiresAt: payload.expiresAt,
+  };
+  const ordinaryEntry = {
+    ...entry,
+    body: '```stephanos-battle-bridge-command\n' + JSON.stringify(ordinary) + '\n```',
+  };
+  const strictOrdinary = selectBattleBridgeGitHubCommandBatch([ordinaryEntry], {
+    ...options, currentHead: base,
+  });
+  assert.equal(strictOrdinary.verdict, 'NO_COMMAND_READY');
+  assert.equal(strictOrdinary.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+  assert.equal(strictOrdinary.rejected[0].expectedMainHead, head);
 });

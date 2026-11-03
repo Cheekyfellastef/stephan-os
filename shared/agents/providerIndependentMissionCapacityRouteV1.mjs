@@ -5,9 +5,12 @@ import {
 
 export const PROVIDER_INDEPENDENT_MISSION_CAPACITY_ROUTE_V1_SCHEMA = 'stephanos.provider-independent-mission-capacity-route.v1';
 
-const NON_OPENAI_SOURCE_ROUTES = new Set([
+const SOVEREIGN_SOURCE_ROUTES = new Set([
   MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
   MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE,
+  MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER,
+  MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
+  MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL,
 ]);
 
 function text(value) {
@@ -33,10 +36,16 @@ function routePlanner(input, options = {}) {
 }
 
 function nonOpenAiAttempt(input, planner) {
+  // A non-OpenAI route is not necessarily sovereign: Desktop Commander is
+  // another metered external transport. Preserve it only as optional normal
+  // capacity when it is actually available, never as blackout independence.
+  const blockedAdapters = [...new Set([...list(input.blockedAdapters), 'desktop-commander'])];
   return planner({
     ...input,
     codexStatus: null,
     githubLaneReceipt: null,
+    desktopCommanderLaneReceipt: null,
+    blockedAdapters,
   });
 }
 
@@ -81,7 +90,7 @@ export function routeProviderIndependentMissionCapacityV1(input = {}, options = 
 
   const independent = nonOpenAiAttempt(input, planner);
   const independentReady = independent?.dispatchAllowed === true
-    && NON_OPENAI_SOURCE_ROUTES.has(text(independent.route).toUpperCase());
+    && SOVEREIGN_SOURCE_ROUTES.has(text(independent.route).toUpperCase());
 
   if (independentReady) {
     return decorate({

@@ -638,9 +638,13 @@ export async function shutdownServerForRestart(server, {
 
 export function createStephanosDistServer({
   shutdownForRestart = shutdownServerForRestart,
+  visibilitySnapshot = null,
 } = {}) {
   let server;
   server = createServer((request, response) => {
+    if (visibilitySnapshot) {
+      return serveVisibilitySnapshot(request, response, visibilitySnapshot);
+    }
     if (request.method === 'OPTIONS') {
       response.writeHead(204, baseHeaders);
       response.end();
@@ -813,6 +817,48 @@ export function createStephanosDistServer({
     createReadStream(filePath).pipe(response);
   });
   return server;
+}
+
+// A separately admitted start-only profile of this existing server. It has no
+// filesystem fallback, proxy, restart endpoint or network-probe/control route.
+// Bytes are captured and verified before binding, so later disk edits cannot
+// silently change the approved static surface.
+export function serveVisibilitySnapshot(request, response, snapshot) {
+  const headers = {
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'",
+    'Cross-Origin-Resource-Policy': 'same-origin',
+  };
+  const reply = (status, type, bytes) => {
+    response.writeHead(status, { ...headers, 'Content-Type': type, 'Content-Length': Buffer.byteLength(bytes) });
+    response.end(request.method === 'HEAD' ? undefined : bytes);
+  };
+  if (!['GET', 'HEAD'].includes(request.method))
+    return reply(405, 'application/json', JSON.stringify({ ok: false, blocker: 'FRONTEND_VISIBILITY_CONTROLS_DISABLED' }));
+  let pathname;
+  try { pathname = new URL(request.url, 'http://127.0.0.1:4173').pathname; }
+  catch { return reply(400, 'text/plain', 'Invalid path'); }
+  if (pathname === '/__stephanos/health')
+    return reply(200, 'application/json', JSON.stringify(snapshot.receipt));
+  if (pathname === '/__stephanos/source-truth')
+    return reply(200, 'application/json', JSON.stringify({
+      sourceTruthAvailable: snapshot.receipt.launcherCriticalSourceTruth?.length === 4
+        && snapshot.receipt.launcherCriticalSourceTruth.every(entry => entry.exists === true), sourceDistParityOk: null,
+      launcherCriticalSourceTruth: snapshot.receipt.launcherCriticalSourceTruth,
+      mode: 'visibility-only',
+    }));
+  if (pathname === '/apps/stephanos/runtime-status.json')
+    return reply(200, 'application/json', JSON.stringify({
+      state: 'degraded', mode: 'visibility-only',
+      runtimeMarker: snapshot.receipt.runtimeMarker, gitCommit: snapshot.receipt.existingBuildHead,
+      buildTimestamp: snapshot.receipt.buildTimestamp,
+      message: 'Static visibility only. Controls disabled; repair custody and service health remain unverified.',
+    }));
+  const key = pathname === '/' ? 'index.html' : pathname.slice(1);
+  const bytes = snapshot.files.get(key) || (pathname.endsWith('/') ? snapshot.files.get(key + 'index.html') : null);
+  if (!bytes) return reply(404, 'text/plain', 'Not found');
+  return reply(200, resolveContentType(key), bytes);
 }
 
 export async function startFreshServerAfterPortClose({
@@ -1026,3 +1072,5 @@ if (isMainModule) {
     }
   });
 }
+
+// Fixed frontend source admission requires canonical LF deployment bytes.

@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "stephanos.vr-local-evidence-receipt.v1",
+  "receiptId": "vr-battle-bridge-installed-vr-corpus-2026-09-29",
+  "sourceId": "battle-bridge-installed-vr-corpus",
+  "observedAt": "2026-09-29T04:38:36.6253282+01:00",
+  "hostRole": "Battle Bridge",
+  "rawManifestSha256": "1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+  "rawManifestDisposition": "operator-local-only-not-committed",
+  "evidencePlane": "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+  "specimenCount": 16,
+  "specimens": [
+    {"name":"Starfield","identity":"Steam build 23518663 / Starfield.exe 1.16.244.0","markers":["dxgi.dll","openxr_loader.dll","vr_config.txt","vr_ui.ini"]},
+    {"name":"Skyrim VR","identity":"Steam build 2743427 / SkyrimVR.exe 1.4.15.0","markers":["openvr_api.dll","SKSEVR","HIGGS","VRIK","PLANCK"]},
+    {"name":"Skyrim Special Edition","identity":"Steam build 24914197 / SkyrimSE.exe 1.7.104.0","markers":["flat sibling"]},
+    {"name":"Fallout 4 VR","identity":"Steam build 2772164 / Fallout4VR.exe 1.2.72.0","markers":["openvr_api.dll","F4SEVR","VR archives"]},
+    {"name":"Fallout 4","identity":"Steam build 24564252 / Fallout4.exe 1.11.240.0","markers":["flat sibling"]},
+    {"name":"Borderlands 2 VR","identity":"Steam build 4614005 / Win64 Borderlands2VR.exe","markers":["openvr_api.dll"]},
+    {"name":"Borderlands 2","identity":"Steam build 9218157 / Win32 Borderlands2.exe","markers":["flat sibling"]},
+    {"name":"No Man's Sky","identity":"Steam build 25442159","markers":["openvr_api.dll"]},
+    {"name":"Half-Life: Alyx","identity":"Steam build 25352687","markers":["hlvr.exe","openvr_api.dll","VR configuration"]},
+    {"name":"Hellblade VR","identity":"Steam build 3015561","markers":["VR-specific executable","Oculus runtime tree","OpenVR runtime tree"]},
+    {"name":"GORN","identity":"Steam build 4043783","markers":["SteamVR actions","openvr_api.dll","OVRPlugin"]},
+    {"name":"VRChat","identity":"Steam build 25307595","markers":["Unity XR OpenVR","SteamVR actions","multi-controller bindings"]},
+    {"name":"Thumper","identity":"Steam build 8899753","markers":["openvr_api.dll"]},
+    {"name":"Aliens Attack VR","identity":"Steam build 3879900","markers":["Unity VR data/plugin layout"]},
+    {"name":"Red Dead Redemption 2","identity":"Steam build 13773296 / RDR2.exe 1.0.1491.50","markers":["RealVR64.dll","RealVR_RDR2.asi","dinput8.dll","dxgi.dll","openvr_api.dll","VK_LAYER_RealVR"]},
+    {"name":"Cyberpunk 2077","identity":"Cyberpunk2077.exe 2.31","markers":["CyberpunkVR powered by vorpX","vpxCP2077","OpenXR backend","OpenVR backend","controller bindings"]}
+  ],
+  "supportingRuntimeMetadata": {
+    "vorpX": "25.1.5.0",
+    "VirtualDesktopStreamer": "1.34.2",
+    "VirtualDesktopService": "1.18.52",
+    "SteamVR": "installed"
+  },
+  "safety": {
+    "binariesCopied": false,
+    "assetsCopied": false,
+    "decompilationPerformed": false,
+    "proprietaryProfilesCopied": false,
+    "containsSecrets": false
+  },
+  "verificationBoundary": "This committed receipt makes the exact safe observations and source-manifest hash retrievable from any checkout. It does not make the private raw manifest public and does not claim current headset playability, comfort or performance."
+}

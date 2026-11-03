@@ -9,17 +9,28 @@
     "https://github.com/mutars",
     "https://github.com/mutars/starfield2vr",
     "https://github.com/mutars/anvilengine2vr",
-    "https://www.patreon.com/NoMoreFlat/posts/my-mods-125554096"
+    "https://www.patreon.com/NoMoreFlat/posts/my-mods-125554096",
+    "https://github.com/Alex7722/starfield2vr",
+    "https://github.com/gsaw0/starfield2vr",
+    "https://github.com/gsaw0/vrframework",
+    "https://github.com/elliotttate/vrframework"
   ],
   "snapshot": {
-    "observed_date": "2026-07-29",
+    "observed_date": "2026-10-03",
     "starfield2vr_commit": "c8a2b200710cdf70db22fd0fcac498cba02da676",
-    "anvilengine2vr_commit": "bc25bf37932c9f0376c9d6f38ec497d62cb363d2"
+    "anvilengine2vr_commit": "bc25bf37932c9f0376c9d6f38ec497d62cb363d2",
+    "alex7722_starfield2vr_commit": "e8860ef84368f9b443ca6f16953e3ca05cb32e9f",
+    "gsaw0_starfield2vr_commit": "f1ee35d8b202e613cc68854f1321743cba7d54d5",
+    "gsaw0_vrframework_commit": "46bd25db8985602a6d5db75dd74c2afb0beb244e"
   },
   "licence_posture": {
     "starfield2vr": "MIT",
     "anvilengine2vr": "MIT",
-    "other_repositories_and_releases": "Inspect individually before ingestion"
+    "other_repositories_and_releases": "Inspect individually before ingestion",
+    "alex7722_starfield2vr": "MIT",
+    "gsaw0_starfield2vr": "MIT",
+    "gsaw0_vrframework": "MIT",
+    "elliotttate_vrframework": "NOASSERTION: analysis/documentation only unless file-level permission is established"
   },
   "evidence_scope": [
     "Starfield native-style VR conversion on REFramework",
@@ -48,6 +59,29 @@
   },
   "refresh_owner": 1596,
   "extraction_owner": 1593,
-  "programme_links": [1591, 1593, 1595, 1596, 1597, 1605, 1606],
-  "promotion_rule": "Prefer exact pinned source and release evidence. Preserve engine-family commonality while independently validating each title adapter."
+  "programme_links": [
+    1591,
+    1593,
+    1595,
+    1596,
+    1597,
+    1605,
+    1606
+  ],
+  "promotion_rule": "Prefer exact pinned source and release evidence. Preserve engine-family commonality while independently validating each title adapter.",
+  "local_reference_lock": "VR-Research-Lab/reference-source-lock.json",
+  "source_intake": {
+    "reusable": [
+      "mutars/starfield2vr",
+      "mutars/anvilengine2vr",
+      "Alex7722/starfield2vr",
+      "gsaw0/starfield2vr",
+      "gsaw0/vrframework"
+    ],
+    "analysis_only": [
+      "elliotttate/vrframework"
+    ],
+    "cache_root": "VR-Research-Lab/internal/reference-sources",
+    "sync_script": "scripts/sync-vr-reference-sources.ps1"
+  }
 }

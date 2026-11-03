@@ -1,4 +1,6 @@
 import os from 'node:os';
+import { validateSeedGrowthWorkV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
+import { projectGoalAdmissionRequiredTestsV1, projectOwnerGoalRequiredTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 import { resolve } from 'node:path';
 import {
   createMissionRecord,
@@ -6,6 +8,7 @@ import {
 } from './missionOrchestratorStore.js';
 import {
   MAXIMUM_BUILD_LANES,
+  adjudicateResourceScopeOverlap,
   projectCanonicalResourceIds,
   selectResourceDisjointCandidates,
 } from '../../shared/agents/elasticBuildCapacityV1.mjs';
@@ -16,6 +19,7 @@ export const ELASTIC_GOAL_MISSION_ADMISSION_SCHEMA = 'stephanos.elastic-goal-mis
 const SCHEDULER_SCHEMA = 'stephanos.mission-scheduler.v1';
 const SAFE_REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const REPOSITORY_PATH_RESOURCE = /^repo:([^:]+\/[^:]+):path:(.+)$/;
+const REPOSITORY_ROOT_RESOURCE = /^repo:([^:]+\/[^:]+)$/;
 const TERMINAL_PHASES = new Set(['COMPLETE', 'CANCELLED']);
 const NON_RUNNABLE_PHASES = new Set(['BLOCKED', 'AWAITING_OPERATOR_APPROVAL']);
 
@@ -72,15 +76,41 @@ function sourceScope(candidate = {}, portfolioGoal = {}) {
   if (!projection.valid || projection.resourceIds.length === 0) {
     return freeze({ valid: false, repository: '', allowedFiles: [], resourceIds: [], reason: 'RESOURCE_SCOPE_REQUIRED' });
   }
+
+  const suppliedMutationResourceIds = list(portfolioGoal.resourceIds).length > 0
+    ? list(portfolioGoal.resourceIds)
+    : list(candidate.resourceIds);
+  const mutationProjection = projectCanonicalResourceIds(suppliedMutationResourceIds);
+  if (
+    !mutationProjection.valid
+    || JSON.stringify(mutationProjection.resourceIds) !== JSON.stringify(projection.resourceIds)
+  ) {
+    return freeze({
+      valid: false,
+      repository: '',
+      allowedFiles: [],
+      resourceIds: projection.resourceIds,
+      reason: 'SOURCE_SCOPE_IDENTITY_MISMATCH',
+    });
+  }
+
   const repositories = new Set();
   const paths = [];
-  for (const resourceId of projection.resourceIds) {
-    const match = resourceId.match(REPOSITORY_PATH_RESOURCE);
-    if (!match) continue;
-    repositories.add(match[1]);
-    paths.push(match[2]);
+  let repositoryWide = false;
+  for (const resourceId of suppliedMutationResourceIds) {
+    const pathMatch = text(resourceId).match(REPOSITORY_PATH_RESOURCE);
+    if (pathMatch) {
+      repositories.add(pathMatch[1].toLowerCase());
+      paths.push(pathMatch[2]);
+      continue;
+    }
+    const rootMatch = text(resourceId).match(REPOSITORY_ROOT_RESOURCE);
+    if (rootMatch) {
+      repositories.add(rootMatch[1].toLowerCase());
+      repositoryWide = true;
+    }
   }
-  if (repositories.size !== 1 || paths.length === 0) {
+  if (repositories.size !== 1 || (!repositoryWide && paths.length === 0)) {
     return freeze({
       valid: false,
       repository: '',
@@ -89,11 +119,19 @@ function sourceScope(candidate = {}, portfolioGoal = {}) {
       reason: repositories.size > 1 ? 'MULTI_REPOSITORY_SOURCE_SCOPE_NOT_SUPPORTED' : 'SOURCE_PATH_SCOPE_REQUIRED',
     });
   }
-  const repository = [...repositories][0];
+  const scopedRepository = [...repositories][0];
+  const declaredRepository = text(portfolioGoal.repository ?? candidate.repository);
+  const repository = declaredRepository
+    && SAFE_REPOSITORY.test(declaredRepository)
+    && declaredRepository.toLowerCase() === scopedRepository
+    ? declaredRepository
+    : scopedRepository;
   if (!SAFE_REPOSITORY.test(repository)) {
     return freeze({ valid: false, repository: '', allowedFiles: [], resourceIds: projection.resourceIds, reason: 'REPOSITORY_SCOPE_INVALID' });
   }
-  const allowedFiles = [...new Set(paths.flatMap((path) => [path, `${path}/**`]))].sort();
+  const allowedFiles = repositoryWide
+    ? ['**']
+    : [...new Set(paths.flatMap((path) => [path, `${path}/**`]))].sort((left, right) => left.localeCompare(right));
   return freeze({ valid: true, repository, allowedFiles, resourceIds: projection.resourceIds, reason: '' });
 }
 
@@ -123,6 +161,19 @@ function missionTerminal(state = {}) {
   return TERMINAL_PHASES.has(text(state.currentPhase).toUpperCase());
 }
 
+function missionCapacityOccupying(state = {}) {
+  const phase = text(state.currentPhase).toUpperCase();
+  return Boolean(phase) && !TERMINAL_PHASES.has(phase) && !NON_RUNNABLE_PHASES.has(phase);
+}
+
+function missionAdmissionExclusionReason(state = {}) {
+  const phase = text(state.currentPhase).toUpperCase();
+  if (TERMINAL_PHASES.has(phase)) return 'EXISTING_GOAL_MISSION_TERMINAL_AWAITING_GOAL_RECONCILIATION';
+  if (phase === 'BLOCKED') return 'EXISTING_GOAL_MISSION_BLOCKED_SIDELINED';
+  if (phase === 'AWAITING_OPERATOR_APPROVAL') return 'EXISTING_GOAL_MISSION_AWAITING_OPERATOR_APPROVAL';
+  return '';
+}
+
 function missionRunnable(state = {}) {
   const phase = text(state.currentPhase).toUpperCase();
   if (!phase || TERMINAL_PHASES.has(phase) || NON_RUNNABLE_PHASES.has(phase)) return false;
@@ -142,14 +193,83 @@ function schedulerEligible(scheduler = {}) {
   );
 }
 
-function compatibilityCandidateInventory(scheduler = {}, goalRecords = []) {
-  if (scheduler.parallelCandidateDetails.length > 0) {
+function missionSourceResources(state, goal = {}) {
+  const repository = text(state.repository || goal?.repository);
+  if (!SAFE_REPOSITORY.test(repository)) return [];
+  const paths = list(state.allowedFiles).map(value => text(value));
+  const supplied = paths.includes('**') ? ['repo:' + repository] : paths.map(path =>
+    'repo:' + repository + ':path:' + (path.endsWith('/**') ? path.slice(0, -3) : path));
+  const scope = projectCanonicalResourceIds([...new Set(supplied.length ? supplied : list(goal?.resourceIds))]);
+  // Unproven retained scope holds only its own repository.
+  return scope.valid && scope.resourceIds.length ? scope.resourceIds : ['repo:' + repository.toLowerCase()];
+}
+
+function retainedSourceReservations(records, goalRecords = [], scheduler = {}) {
+  return records.flatMap(state => {
+    const issueNumber = issueFromMissionId(state?.missionId);
+    if (!issueNumber || state.missionId !== missionIdForIssue(issueNumber) || missionTerminal(state)) return [];
+    const retained = /^[a-f0-9]{64}$/i.test(text(state.sourcePublication?.artifactSha256))
+      || (positiveInteger(state.pullRequest?.number) && /^[a-f0-9]{40}$/i.test(text(state.pullRequest?.headSha)));
+    if (!retained) return [];
+    const goal = recordForIssue(goalRecords, issueNumber) || goalForIssue(scheduler, issueNumber);
+    const resources = missionSourceResources(state, goal);
+    return resources.length ? [{ missionId: state.missionId, resourceIds: resources }] : [];
+  });
+}
+function sourceReservationConflict(resourceIds, reservations, ownMissionId = '') {
+  const conflicts = reservations.filter(owner => owner.missionId !== ownMissionId)
+    .map(owner => ({ owner, overlap: adjudicateResourceScopeOverlap(owner.resourceIds, resourceIds) }))
+    .filter(row => row.overlap.valid && row.overlap.overlaps);
+  return conflicts.length ? { reason: 'RETAINED_SOURCE_SCOPE_RESERVED',
+    reservedMissionIds: [...new Set(conflicts.map(row => row.owner.missionId))],
+    resourceIds: [...new Set(conflicts.flatMap(row => row.overlap.conflictingResourceIds))] } : null;
+}
+
+function pendingSourceReservationConflict(state, reservations) {
+  if (state.dispatch?.status === 'running'
+      || !['CREATE_WORKTREE', 'AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED', 'LIVE_RUNTIME_INVESTIGATION']
+        .includes(text(state.currentPhase).toUpperCase())) return null;
+  const resources = missionSourceResources(state);
+  return resources.length ? sourceReservationConflict(resources, reservations, state.missionId) : null;
+}
+
+export function projectElasticRetainedSourceHoldsV1(missionRecords = [], options = {}) {
+  const records = list(missionRecords);
+  const reservations = retainedSourceReservations(records, options.goalRecords, options.scheduler);
+  return freeze(records.flatMap((state) => {
+    if (!issueFromMissionId(state?.missionId)) return [];
+    const conflict = pendingSourceReservationConflict(state, reservations);
+    return conflict ? [{ issueNumber: issueFromMissionId(state.missionId),
+      missionId: state.missionId, ...conflict }] : [];
+  }));
+}
+
+function compatibilityCandidateInventory(scheduler = {}, goalRecords = [], excludedIssueReasons = new Map()) {
+  const projectedCandidates = list(scheduler.parallelCandidateDetails);
+  const candidates = projectedCandidates.filter((candidate) => !excludedIssueReasons.has(candidateIssue(candidate)));
+  const excluded = projectedCandidates.filter((candidate) => excludedIssueReasons.has(candidateIssue(candidate)));
+  const admissionLimit = Math.min(
+    MAXIMUM_BUILD_LANES,
+    Number.isSafeInteger(scheduler.elasticCapacity?.remainingAdmissionSlots)
+      ? scheduler.elasticCapacity.remainingAdmissionSlots
+      : 0,
+  );
+  const excludedHeld = excluded.map((candidate) => ({
+    candidateId: candidate.candidateId ?? `#${candidateIssue(candidate)}`,
+    issue: candidateIssue(candidate),
+    reasonCode: excludedIssueReasons.get(candidateIssue(candidate))
+      || 'EXISTING_GOAL_MISSION_NOT_ADMISSIBLE',
+    conflictingResourceIds: [],
+  }));
+
+  if (candidates.length >= admissionLimit) {
     return freeze({
-      candidates: scheduler.parallelCandidateDetails,
-      held: [],
+      candidates,
+      held: excludedHeld,
       compatibilityEnrichmentUsed: false,
     });
   }
+
   const activeIssues = new Set(list(scheduler.activeGoals).map(positiveInteger).filter(Boolean));
   const activeResourceIds = [];
   for (const issueNumber of activeIssues) {
@@ -157,30 +277,36 @@ function compatibilityCandidateInventory(scheduler = {}, goalRecords = []) {
     const resourceProjection = projectCanonicalResourceIds(record?.resourceIds ?? []);
     if (resourceProjection.valid) activeResourceIds.push(...resourceProjection.resourceIds);
   }
+
+  const retainedIssueNumbers = new Set(candidates.map(candidateIssue).filter(Boolean));
+  const retainedResourceIds = candidates.flatMap((candidate) => list(candidate.resourceIds));
   const ready = list(scheduler.portfolio)
     .filter((goal) => text(goal.lifecycle).toUpperCase() === 'READY')
+    .filter((goal) => {
+      const issueNumber = positiveInteger(goal.issue);
+      return issueNumber && !excludedIssueReasons.has(issueNumber) && !retainedIssueNumbers.has(issueNumber);
+    })
     .map((goal) => {
       const issueNumber = positiveInteger(goal.issue);
       const record = recordForIssue(goalRecords, issueNumber);
+      const recordResourceIds = list(record?.resourceIds);
       return {
         candidateId: `#${issueNumber}`,
         issue: issueNumber,
         route: goal.route,
-        resourceIds: record?.resourceIds ?? [],
+        resourceIds: recordResourceIds.length > 0 ? recordResourceIds : list(goal.resourceIds),
       };
     });
   const selection = selectResourceDisjointCandidates(ready, {
-    limit: Math.min(
-      MAXIMUM_BUILD_LANES,
-      Number.isSafeInteger(scheduler.elasticCapacity?.remainingAdmissionSlots)
-        ? scheduler.elasticCapacity.remainingAdmissionSlots
-        : 0,
-    ),
-    activeResourceIds,
+    limit: Math.max(0, admissionLimit - candidates.length),
+    activeResourceIds: [...activeResourceIds, ...retainedResourceIds],
   });
   return freeze({
-    candidates: selection.selected,
-    held: selection.held,
+    candidates: [...candidates, ...selection.selected],
+    held: [
+      ...excludedHeld,
+      ...selection.held,
+    ],
     compatibilityEnrichmentUsed: true,
   });
 }
@@ -196,6 +322,11 @@ function missionInput(issueNumber, goal, scope, options = {}) {
       `Build durable GitHub goal #${issueNumber} through the canonical elastic Goal Flywheel.`,
       'Read the authoritative GitHub goal and current repository truth before implementation.',
       'Stay within the scheduler-approved resource scope and do not create duplicate implementation work.',
+      ...(validateSeedGrowthWorkV1(goal?.seedGrowthWork) ? [
+        `Seed owner ${goal.seedGrowthWork.ownerIssueRef}; pressure ${goal.seedGrowthWork.pressureKey}.`,
+        goal.seedGrowthWork.nextBestAction,
+        'Return result proof, reusable capability and shared lesson to the canonical goal, then replay the seed-specific acceptance evidence.',
+      ] : []),
     ].join(' '),
     intendedOutcome: title,
     missionKind: 'implementation',
@@ -206,7 +337,7 @@ function missionInput(issueNumber, goal, scope, options = {}) {
     worktreePath: resolve(worktreeRoot, missionId),
     allowedFiles: scope.allowedFiles,
     requiredEvidence: [`Goal #${issueNumber} bounded implementation and focused verification evidence`],
-    requiredTests: ['npm run stephanos:verify'],
+    requiredTests: [...goal.requiredTests],
     browserProofRequired: false,
   };
 }
@@ -225,16 +356,48 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
     });
   }
   const records = list(missionRecords);
-  const inventory = compatibilityCandidateInventory(scheduler, options.goalRecords);
+  const excludedMissionIssueReasons = new Map();
+  for (const state of records) {
+    const issueNumber = issueFromMissionId(state?.missionId);
+    const reason = missionAdmissionExclusionReason(state);
+    if (issueNumber && reason) excludedMissionIssueReasons.set(issueNumber, reason);
+  }
+  const reservations = retainedSourceReservations(records, options.goalRecords, scheduler);
+  const sourceHolds = new Map(projectElasticRetainedSourceHoldsV1(records, { ...options, scheduler })
+    .map(hold => [hold.missionId, hold]));
+  const reservationHolds = new Map();
+  for (const goal of list(scheduler.portfolio)) {
+    const issueNumber = positiveInteger(goal.issue);
+    if (!issueNumber || text(goal.lifecycle).toUpperCase() !== 'READY' || excludedMissionIssueReasons.has(issueNumber)) continue;
+    const existing = records.find(state => missionMatchesIssue(state, issueNumber));
+    if (existing && (existing.dispatch?.status === 'running'
+      || !['CREATE_WORKTREE', 'AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED', 'LIVE_RUNTIME_INVESTIGATION']
+        .includes(text(existing.currentPhase).toUpperCase()))) continue;
+    const record = recordForIssue(options.goalRecords, issueNumber);
+    const resources = projectCanonicalResourceIds(record?.resourceIds || goal.resourceIds);
+    if (!resources.valid || !resources.resourceIds.length) continue;
+    const conflict = sourceReservationConflict(resources.resourceIds, reservations, existing?.missionId);
+    if (conflict) {
+      excludedMissionIssueReasons.set(issueNumber, conflict.reason);
+      reservationHolds.set(issueNumber, conflict);
+    }
+  }
+  const inventory = compatibilityCandidateInventory(scheduler, options.goalRecords, excludedMissionIssueReasons);
   const admitted = [];
   const held = inventory.held.map((item) => ({
     issueNumber: candidateIssue(item),
     reason: text(item.reasonCode, 'ELASTIC_SELECTION_HELD'),
     resourceIds: list(item.conflictingResourceIds),
   }));
+  for (const [issueNumber, conflict] of reservationHolds) {
+    const prior = held.find(item => item.issueNumber === issueNumber && item.reason === conflict.reason);
+    if (prior) Object.assign(prior, conflict);
+    else held.push({ issueNumber, ...conflict });
+  }
   const runnableMissions = records.filter((state) => {
     const issueNumber = issueFromMissionId(state?.missionId);
-    return missionRunnable(state) && !(issueNumber && goalOperatorContained(options.goalRecords, issueNumber));
+    return missionRunnable(state) && !sourceHolds.has(state.missionId)
+      && !(issueNumber && goalOperatorContained(options.goalRecords, issueNumber));
   });
   for (const candidate of inventory.candidates) {
     const issueNumber = candidateIssue(candidate);
@@ -248,8 +411,9 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
     }
     const existing = records.find((state) => missionMatchesIssue(state, issueNumber));
     if (existing) {
-      if (missionTerminal(existing)) {
-        held.push({ issueNumber, reason: 'EXISTING_GOAL_MISSION_TERMINAL_AWAITING_GOAL_RECONCILIATION', missionId: existing.missionId });
+      const exclusionReason = missionAdmissionExclusionReason(existing);
+      if (exclusionReason) {
+        held.push({ issueNumber, reason: exclusionReason, missionId: existing.missionId });
       } else {
         admitted.push({ issueNumber, missionId: existing.missionId, existing: true, mission: existing });
       }
@@ -266,11 +430,27 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
       held.push({ issueNumber, reason: scope.reason, resourceIds: scope.resourceIds });
       continue;
     }
+    const ownerTests = projectOwnerGoalRequiredTestsV1(record, issueNumber, scope.repository);
+    // Derive legacy acceptance only from exact declared paths. The existing
+    // validator rejects unsafe or overlarge plans; never truncate acceptance.
+    // Explicit owner plans remain authoritative, including independent tests.
+    const declaredTestCommands = scope.allowedFiles
+      .filter(path => /\.test\.(?:mjs|cjs|js)$/.test(path))
+      .map(path => `node --test ${path}`);
+    const tests = ownerTests.supplied || !ownerTests.valid
+      ? ownerTests
+      : projectGoalAdmissionRequiredTestsV1([
+        'npm run stephanos:verify', ...new Set(declaredTestCommands),
+      ]);
+    if (!tests.valid) {
+      held.push({ issueNumber, reason: 'GOAL_REQUIRED_TEST_PLAN_UNPROVEN' });
+      continue;
+    }
     admitted.push({
       issueNumber,
       missionId: missionIdForIssue(issueNumber),
       existing: false,
-      missionInput: missionInput(issueNumber, goal, scope, options),
+      missionInput: missionInput(issueNumber, { ...goal, requiredTests: tests.commands, seedGrowthWork: record?.seedGrowthWork }, scope, options),
       resourceIds: scope.resourceIds,
     });
   }
@@ -352,15 +532,44 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
   const after = await listRecords(missionStoreOptions);
   const candidateIssues = new Set(plan.admitted.map(({ issueNumber }) => issueNumber));
   const elasticMissions = after.filter((state) => issueFromMissionId(state?.missionId) !== null);
+  const sourceHolds = new Map(projectElasticRetainedSourceHoldsV1(elasticMissions,
+    { goalRecords, scheduler: input.scheduler }).map(hold => [hold.missionId, hold]));
+  for (const hold of sourceHolds.values()) {
+    if (!held.some(item => item.issueNumber === hold.issueNumber && item.reason === hold.reason)) held.push(hold);
+  }
   const runnableMissions = elasticMissions.filter((state) => {
     const issueNumber = issueFromMissionId(state?.missionId);
-    return missionRunnable(state) && !(issueNumber && goalOperatorContained(goalRecords, issueNumber));
+    return missionRunnable(state) && !sourceHolds.has(state.missionId)
+      && !(issueNumber && goalOperatorContained(goalRecords, issueNumber));
   });
   const activeMissions = elasticMissions.filter((state) => {
     const issueNumber = issueFromMissionId(state?.missionId);
-    return !missionTerminal(state) && !(issueNumber && goalOperatorContained(goalRecords, issueNumber));
+    return missionCapacityOccupying(state) && !(issueNumber && goalOperatorContained(goalRecords, issueNumber));
   });
-  const selectedMission = runnableMissions[0] ?? activeMissions[0] ?? null;
+  // A verified replacement-source repair must not monopolise selection for
+  // another Forge build. Preserve the mission and its acceptance obligations.
+  const sourceConstructionAlreadyReplaced = (state) => (
+    state?.missionId === 'critical-1717-elastic-goal'
+    && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(text(state?.currentPhase).toUpperCase())
+    && state?.continuity?.history?.some((entry) =>
+      entry?.eventType === 'MISSION_REPAIR_PROVEN'
+      && text(entry?.receiptId).startsWith('verified-replacement-repair-')) === true
+  );
+  // Prefer a phase the existing exact-action controller can actually grant.
+  // Pending source-writer work must not hide an independently runnable
+  // worktree, verification, PR inspection, or exact Forge publication step.
+  const grantablePhase = (state) => (
+    ['CREATE_WORKTREE', 'VERIFYING', 'CHECK_PULL_REQUEST'].includes(text(state?.currentPhase).toUpperCase())
+    || (text(state?.currentPhase).toUpperCase() === 'GITHUB_COMMIT'
+      && state?.dispatch?.adapter === 'foundry-forge'
+      && state?.dispatch?.status === 'complete')
+  );
+  const eligibleRunnable = runnableMissions.filter((state) => !sourceConstructionAlreadyReplaced(state));
+  const selectedMission = eligibleRunnable.find(grantablePhase)
+    ?? eligibleRunnable[0]
+    ?? activeMissions.find((state) => !sourceConstructionAlreadyReplaced(state)
+      && !sourceHolds.has(state.missionId))
+    ?? null;
   return freeze({
     schemaVersion: ELASTIC_GOAL_MISSION_ADMISSION_SCHEMA,
     ok: true,

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Stephanos source mutation merge guard.
+exec node scripts/source-mutation-commit-guard.mjs --merge
