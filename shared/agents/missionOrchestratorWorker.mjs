@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { validateEngineeringCodingMemoryPackV1 } from './engineeringIncidentMethodMemoryV1.mjs';
 import { issueOpenClawGitHubAuthorization } from './openClawGitHubAuthorization.mjs';
 import { buildOpenClawGitHubOperation } from './openClawGitHubOperator.mjs';
 import { applyMissionOrchestratorEvent } from './missionOrchestrator.mjs';
@@ -9,6 +10,84 @@ import { routeProviderIndependentMissionCapacityV1 } from './providerIndependent
 
 const OPENCLAW_BRANCH_PATTERN = /^openclaw\/[a-z0-9][a-z0-9._/-]{2,127}$/;
 const SHA40_PATTERN = /^[a-f0-9]{40}$/;
+const WORKER_GRANT_KEYS_V1 = Object.freeze([
+  'schemaVersion', 'grantId', 'controllerId', 'sourceRevision', 'missionId',
+  'missionRevision', 'currentPhase', 'actionId', 'actionKind', 'adapter',
+  'operation', 'providerRouteIntent', 'capacityRoute', 'capacityReceiptId',
+  'capacityProofRefs', 'workerId', 'laneId', 'repository', 'issueNumber',
+  'prNumber', 'branch', 'headSha', 'engineeringMemoryPack',
+  'engineeringMemoryPackId', 'boundedActionCount', 'mergeAuthority', 'leaseSeizureAllowed',
+]);
+
+// Both producers use the same envelope. Only absent/null optional memory has
+// compatibility equivalence; provider intent and every authority field stay exact.
+export function createMissionWorkerActionGrantV1(input) {
+  return Object.freeze({ ...input,
+    engineeringMemoryPack: input.engineeringMemoryPack ?? null,
+    engineeringMemoryPackId: input.engineeringMemoryPackId ?? null,
+  });
+}
+
+export function missionWorkerActionGrantsMatchV1(left, right) {
+  const normalize = (value, depth = 0) => {
+    if (depth > 32) throw new Error('GRANT_JSON_DEPTH');
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (!value || typeof value !== 'object') throw new Error('GRANT_JSON_VALUE');
+    const array = Array.isArray(value), keys = Reflect.ownKeys(value);
+    if (!array && ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new Error('GRANT_JSON_PROTOTYPE');
+    for (const key of keys) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (typeof key !== 'string' || !Object.hasOwn(descriptor, 'value')
+        || (!descriptor.enumerable && !(array && key === 'length'))
+        || (array && key !== 'length' && !/^(0|[1-9][0-9]*)$/.test(key))) throw new Error('GRANT_JSON_PROPERTY');
+    }
+    if (array) {
+      if (keys.length !== value.length + 1) throw new Error('GRANT_JSON_SPARSE_ARRAY');
+      return value.map(child => normalize(child, depth + 1));
+    }
+    return Object.fromEntries(keys.sort().map(key => [key, normalize(value[key], depth + 1)]));
+  };
+  const canonical = grant => {
+    if (!grant || typeof grant !== 'object' || Array.isArray(grant)) return null;
+    try { grant = normalize(grant); } catch { return null; }
+    const descriptors = Object.getOwnPropertyDescriptors(grant);
+    if (Object.values(descriptors).some(row => !Object.hasOwn(row, 'value'))
+      || Reflect.ownKeys(grant).some(key => !WORKER_GRANT_KEYS_V1.includes(key))
+      || WORKER_GRANT_KEYS_V1.some(key => !key.startsWith('engineeringMemoryPack') && !Object.hasOwn(grant, key))
+      || grant.schemaVersion !== 'stephanos.mission-worker-action-grant.v1'
+      || typeof grant.providerRouteIntent !== 'string' || !grant.providerRouteIntent.trim()
+      || grant.providerRouteIntent !== grant.providerRouteIntent.trim()) return null;
+    const strings = ['grantId', 'controllerId', 'missionId', 'currentPhase', 'actionId',
+      'actionKind', 'adapter', 'capacityRoute', 'laneId', 'repository', 'branch'];
+    if (strings.some(key => typeof grant[key] !== 'string' || !grant[key]
+      || grant[key] !== grant[key].trim() || grant[key].length > 256)
+      || typeof grant.operation !== 'string' || grant.operation.length > 128
+      || typeof grant.sourceRevision !== 'string' || !SHA40_PATTERN.test(grant.sourceRevision)
+      || (grant.headSha !== null && (typeof grant.headSha !== 'string' || !SHA40_PATTERN.test(grant.headSha)))
+      || !Number.isSafeInteger(grant.missionRevision) || grant.missionRevision < 0
+      || !Number.isSafeInteger(grant.issueNumber) || grant.issueNumber < 1
+      || (grant.prNumber !== null && (!Number.isSafeInteger(grant.prNumber) || grant.prNumber < 1))
+      || ![grant.capacityReceiptId, grant.workerId].every(value => value === null
+        || (typeof value === 'string' && value.length > 0 && value.length <= 256 && value === value.trim()))
+      || !Array.isArray(grant.capacityProofRefs) || grant.capacityProofRefs.length > 64
+      || grant.capacityProofRefs.some(value => typeof value !== 'string' || !value
+        || value !== value.trim() || value.length > 512)
+      || grant.boundedActionCount !== 1 || grant.mergeAuthority !== false
+      || grant.leaseSeizureAllowed !== false) return null;
+    const normalized = createMissionWorkerActionGrantV1(grant);
+    const pack = normalized.engineeringMemoryPack;
+    if ((pack === null) !== (normalized.engineeringMemoryPackId === null)) return null;
+    if (pack !== null && (!validateEngineeringCodingMemoryPackV1(pack)
+      || pack.packId !== normalized.engineeringMemoryPackId)) return null;
+    try {
+      const serialized = JSON.stringify(normalize(normalized));
+      return Buffer.byteLength(serialized, 'utf8') <= 32 * 1024 ? serialized : null;
+    } catch { return null; }
+  };
+  const a = canonical(left), b = canonical(right);
+  return a !== null && b !== null && a === b;
+}
 const SIGNED_OPERATION_PHASES = new Map([
   ['CREATE_WORKTREE', 'create-worktree'],
   ['GITHUB_COMMIT', 'commit'],

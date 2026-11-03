@@ -1,9 +1,15 @@
-param([ValidateSet('Read', 'Append')][string]$Mode = 'Read')
+param([ValidateSet('Read', 'Append', 'ObserveLegacy')][string]$Mode = 'Read',[switch]$Fixture)
 $ErrorActionPreference = 'Stop'
 $PSModuleAutoLoadingPreference = 'None'
-$logName = 'Windows PowerShell'
+ . ([IO.Path]::Combine($PSScriptRoot,'sovereign-maintenance-journal-policy-v2.ps1'))
+if ($Mode -eq 'ObserveLegacy') {
+    if ($Fixture) { throw 'LEGACY_FIXTURE_NOT_ADMITTED' }
+    $policy = @{Log='Windows PowerShell';Source='PowerShell';Id='legacy-v1-observation'}
+} else { $policy = Get-MaintenanceJournalPolicyV2 ([bool]$Fixture) }
+$logName = $policy.Log
+$sourceName = $policy.Source
 $eventId = 62517
-$marker = 'SOVEREIGN_MAINTENANCE_ANCHOR_V1='
+$marker = if ($Mode -eq 'ObserveLegacy') { 'SOVEREIGN_MAINTENANCE_ANCHOR_V1=' } else { 'SOVEREIGN_MAINTENANCE_ANCHOR_V2=' }
 $kernelMutex = $null
 $ownsMutex = $false
 try {
@@ -21,6 +27,7 @@ try {
     }
     if ($request.scope -cnotmatch '^[a-f0-9]{64}$') { throw 'INVALID_SCOPE' }
     [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_STAGE=INPUT')
+    if ($Mode -ne 'ObserveLegacy') { Assert-MaintenanceJournalPolicyV2 $policy; Assert-MaintenanceJournalBootstrapV2 $policy }
     $logInfo = [Diagnostics.Eventing.Reader.EventLogConfiguration]::new($logName)
     [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_STAGE=CONFIG')
     if (-not $logInfo.IsEnabled) { throw 'AUDIT_DISABLED' }
@@ -46,7 +53,7 @@ try {
         $reader = [Diagnostics.Eventing.Reader.EventLogReader]::new($query)
         [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_STAGE=QUERY')
         try {
-            $row = $reader.ReadEvent([TimeSpan]::FromSeconds(2))
+            $row = $reader.ReadEvent()
             [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_STAGE=NEXT')
             if ($null -eq $row) { throw 'AUDIT_SEQUENCE_UNKNOWN' }
             try { return [long]$row.RecordId } finally { $row.Dispose() }
@@ -55,17 +62,17 @@ try {
     function Read-Anchor {
         [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_STAGE=QUERY_OPEN')
         $query = [Diagnostics.Eventing.Reader.EventLogQuery]::new($logName, [Diagnostics.Eventing.Reader.PathType]::LogName,
-            "*[System[(EventID=62517) and Provider[@Name='PowerShell']]]")
+            ("*[System[(EventID=62517) and Provider[@Name='" + $sourceName + "']]]"))
         $query.ReverseDirection = $true
         $reader = [Diagnostics.Eventing.Reader.EventLogReader]::new($query)
         [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_STAGE=QUERY')
         try { for ($index=0; $index -lt 256; $index++) {
-            $row = $reader.ReadEvent([TimeSpan]::FromSeconds(2))
+            $row = $reader.ReadEvent()
             [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_STAGE=NEXT')
             if ($null -eq $row) { return $null }
             try {
             $raw = [string]$row.Properties[0].Value
-            if (-not $raw.StartsWith($marker, [StringComparison]::Ordinal)) { continue }
+            if (-not $raw.StartsWith($marker, [StringComparison]::Ordinal)) { throw 'AUDIT_CUSTODY_MARKER_INVALID' }
             # Never skip malformed newer custody evidence in favor of old green.
             $envelopeRaw = $raw.Substring($marker.Length)
             $scopeMatch = [regex]::Match($envelopeRaw, '^\{"scope":"([a-f0-9]{64})",')
@@ -77,16 +84,16 @@ try {
             }
             } finally { $row.Dispose() }
         } } finally { $reader.Dispose() }
-        return $null
+        throw 'AUDIT_SCAN_BUDGET_EXCEEDED'
     }
     function Write-AnchorResult($result) {
-        if ($null -eq $result) { [Console]::WriteLine('{"found":false}'); return }
+        if ($null -eq $result) { [Console]::WriteLine('{"found":false,"journalId":"' + $policy.Id + '"}'); return }
         # Frame untrusted event data as base64; it cannot inject or replace the
         # independently read native EventRecordId in the response envelope.
         $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($result.raw))
-        [Console]::WriteLine('{"found":true,"eventRecordId":' + [string]$result.eventRecordId + ',"envelopeBase64":"' + $encoded + '"}')
+        [Console]::WriteLine('{"found":true,"journalId":"' + $policy.Id + '","eventRecordId":' + [string]$result.eventRecordId + ',"envelopeBase64":"' + $encoded + '"}')
     }
-    if ($Mode -eq 'Read') {
+    if ($Mode -in @('Read','ObserveLegacy')) {
         $result = Read-Anchor
         Write-AnchorResult $result
         exit 0
@@ -136,18 +143,19 @@ try {
         $previousJson = [string]$previous.eventRecordId
     }
     $writer = [Diagnostics.EventLog]::new($logName)
-    $writer.Source = 'PowerShell'
+    $writer.Source = $sourceName
     try {
         for ($attempt=0; $attempt -lt 5; $attempt++) {
+            Assert-MaintenanceJournalAppendCapacityV2 $policy
             $nextId = (Read-NewestRecordId) + 1
-            $signingText = 'stephanos-maintenance-os-anchor-v2' + [char]0 + $request.scope + [char]0 +
+            $signingText = 'stephanos-maintenance-os-anchor-v3' + [char]0 + $policy.Id + [char]0 + $request.scope + [char]0 +
                 [string]$nextId + [char]0 + $request.expectedRecordId + [char]0 + $request.transitionId + [char]0 + $request.stateBase64
             $hmac = [Security.Cryptography.HMACSHA256]::new([Text.Encoding]::UTF8.GetBytes($request.authKey))
             try { $signature = ([BitConverter]::ToString($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($signingText)))).Replace('-','').ToLowerInvariant() }
             finally { $hmac.Dispose() }
             # Every interpolated field is a fixed number or validated ASCII
             # token/base64 value. No general JSON/module dependency is loaded.
-            $entry = '{"scope":"' + $request.scope + '","recordId":' + [string]$nextId +
+            $entry = '{"scope":"' + $request.scope + '","journalId":"' + $policy.Id + '","recordId":' + [string]$nextId +
                 ',"previousRecordId":' + $previousJson + ',"transitionId":"' + $request.transitionId + '","stateBase64":"' + $request.stateBase64 + '","mac":"' + $signature + '"}'
             $writer.WriteEntry($marker + $entry, [Diagnostics.EventLogEntryType]::Information, $eventId)
             $result = Read-Anchor

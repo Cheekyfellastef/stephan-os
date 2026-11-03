@@ -220,7 +220,11 @@ test('real Git fast-forward preserves and canonicalizes target-identical tracked
   const regression = 'stephanos-server/services/sharedWorkspaceDashboardFeedService.test.js';
   const servicePath = path.join(repoRoot, service);
   const regressionPath = path.join(repoRoot, regression);
-  const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8', shell: false, windowsHide: true });
+  // This disposable fixture uses a local bare remote. Admit file transport only
+  // for its own child invocations; retain the host's inherited Git restrictions.
+  const git = (cwd, args, options = {}) => spawnSync('git', ['-c', 'protocol.file.allow=always', ...args], {
+    ...options, cwd, encoding: 'utf8', shell: false, windowsHide: true,
+  });
   try {
     await mkdir(path.dirname(servicePath), { recursive: true });
     assert.equal(git(root, ['init', '-b', 'main', repoRoot]).status, 0);
@@ -246,7 +250,7 @@ test('real Git fast-forward preserves and canonicalizes target-identical tracked
     await writeFile(regressionPath, 'canonical test\n');
     const spawnSyncFn = (command, args, options) => command === 'node-test'
       ? { status: 0, stdout: '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n', stderr: '' }
-      : spawnSync(command, args, options);
+      : command === 'git' ? git(options.cwd, args, options) : spawnSync(command, args, options);
     const result = syncCodexDispatchBridge({
       repoRoot,
       operatorApproval: 'operator-approved',
@@ -345,7 +349,11 @@ test('real Git rejection preserves distinct staged content behind target-identic
   const remoteRoot = path.join(root, 'remote.git');
   const service = 'stephanos-server/services/sharedWorkspaceDashboardFeedService.js';
   const servicePath = path.join(repoRoot, service);
-  const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8', shell: false, windowsHide: true });
+  // Keep the local test remote usable even under the fresh host's restricted
+  // environment, without changing process.env or production transport policy.
+  const git = (cwd, args, options = {}) => spawnSync('git', ['-c', 'protocol.file.allow=always', ...args], {
+    ...options, cwd, encoding: 'utf8', shell: false, windowsHide: true,
+  });
   try {
     await mkdir(path.dirname(servicePath), { recursive: true });
     assert.equal(git(root, ['init', '-b', 'main', repoRoot]).status, 0);
@@ -375,7 +383,8 @@ test('real Git rejection preserves distinct staged content behind target-identic
       operatorApproval: 'operator-approved',
       expectedBranch: 'main',
       nodeCommand: 'node-test',
-      spawnSyncFn: spawnSync,
+      spawnSyncFn: (command, args, options) => command === 'git'
+        ? git(options.cwd, args, options) : spawnSync(command, args, options),
     });
 
     assert.equal(result.ok, false);

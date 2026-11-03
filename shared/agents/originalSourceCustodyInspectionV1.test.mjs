@@ -89,7 +89,7 @@ test('Sovereign Commander custody skill bumps both plugin cache identities toget
   assert.equal(manifest.name, 'sovereign-commander');
   assert.equal(codexManifest.name, manifest.name);
   assert.equal(manifest.version, codexManifest.version);
-  assert.equal(manifest.version, '1.0.8');
+  assert.equal(manifest.version, '1.0.11');
 });
 
 test('Skill YAML description preserves original custody trigger instead of truncating at #', async () => {

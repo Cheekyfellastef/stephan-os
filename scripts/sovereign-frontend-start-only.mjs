@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createStephanosDistServer } from './serve-stephanos-dist.mjs';
 import { repoRoot, createStephanosDistManifest, computeStephanosDistManifestFingerprint } from './stephanos-build-utils.mjs';
+import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const SCHEMA = 'stephanos.frontend-start-only.v1';
@@ -15,16 +16,87 @@ const fail = code => { throw new Error(code); };
 const HEX = /^[a-f0-9]{40}$/;
 const DIGEST = /^[a-f0-9]{64}$/;
 const node = 'C:\\Program Files\\nodejs\\node.exe';
-const git = process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : 'git';
+const gitExecution = resolveBattleBridgeGitExecution();
 const environment = process.platform === 'win32'
   ? { SystemRoot: 'C:\\Windows', WINDIR: 'C:\\Windows', PATH: 'C:\\Windows\\System32', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: 'NUL', GIT_TERMINAL_PROMPT: '0' }
   : { PATH: process.env.PATH, HOME: '/nonexistent', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' };
 
 function capture(args, root, input) {
-  const result = spawnSync(git, args, { cwd: root, env: environment, input,
+  const result = spawnSync(gitExecution.executable, [...gitExecution.fixedConfigArgs, ...args], {
+    cwd: root, env: gitExecution.environment, input,
     shell: false, windowsHide: true, timeout: 10_000, maxBuffer: MAX_BYTES });
   if (result.error || result.status !== 0) fail('FRONTEND_LOCAL_SOURCE_UNPROVEN');
   return result.stdout;
+}
+
+function authenticateObject(type, bytes, oid) {
+  const actual = createHash('sha1').update(`${type} ${bytes.length}\0`).update(bytes).digest('hex');
+  if (actual !== oid) fail('FRONTEND_GIT_OBJECT_IDENTITY_INVALID');
+}
+
+function treeEntries(bytes) {
+  const rows = new Map();
+  let offset = 0;
+  while (offset < bytes.length) {
+    const space = bytes.indexOf(32, offset), nul = bytes.indexOf(0, space + 1);
+    if (space < offset || nul <= space || nul + 21 > bytes.length) fail('FRONTEND_GIT_TREE_INVALID');
+    const mode = bytes.subarray(offset, space).toString('ascii');
+    const name = bytes.subarray(space + 1, nul).toString('utf8');
+    if (!/^(?:40000|100644|100755|120000|160000)$/.test(mode)
+      || !name || name === '.' || name === '..' || /[\0/\\]/.test(name) || rows.has(name)) fail('FRONTEND_GIT_TREE_INVALID');
+    rows.set(name, { mode, oid: bytes.subarray(nul + 1, nul + 21).toString('hex') });
+    offset = nul + 21;
+  }
+  return rows;
+}
+
+function authenticatedLauncherObjects(root, head) {
+  const commit = capture(['cat-file', 'commit', head], root);
+  authenticateObject('commit', commit, head);
+  const rootTree = commit.toString('utf8').match(/^tree ([a-f0-9]{40})\n/)?.[1];
+  if (!rootTree) fail('FRONTEND_GIT_COMMIT_INVALID');
+  const selected = capture(['ls-tree', '-rtz', '--full-tree', rootTree, '--',
+    'index.html', 'main.js', 'style.css', 'stephanos-icon.png', 'system', 'modules', 'shared', 'assets', 'apps'], root)
+    .toString('utf8').split('\0').filter(Boolean).map(line => {
+      const match = line.match(/^([0-7]+) (tree|blob|commit) ([a-f0-9]{40})\t(.+)$/);
+      if (!match) fail('FRONTEND_GIT_TREE_INVALID');
+      return { mode: match[1], type: match[2], oid: match[3], path: match[4] };
+    });
+  const accepted = path => !path.startsWith('apps/stephanos/dist/')
+    && (/^[A-Za-z0-9_./-]+\.(?:html|js|mjs|css|svg|png|ico|webp|woff2?|ttf)$/.test(path)
+      || /^apps\/(?:index\.json|[A-Za-z0-9_-]+\/app\.json)$/.test(path));
+  const files = selected.filter(row => row.type === 'blob' && accepted(row.path));
+  if (files.length > 4096 || !files.some(row => row.path === 'index.html') || !files.some(row => row.path === 'main.js')) fail('FRONTEND_LAUNCHER_UNPROVEN');
+  const requested = new Set([rootTree, ...selected.filter(row => row.type === 'tree').map(row => row.oid), ...files.map(row => row.oid)]);
+  if (requested.size > 8192) fail('FRONTEND_SNAPSHOT_LIMIT');
+  const raw = capture(['cat-file', '--batch'], root, [...requested].join('\n') + '\n');
+  const objects = new Map();
+  let offset = 0;
+  for (const oid of requested) {
+    const end = raw.indexOf(10, offset);
+    const match = raw.subarray(offset, end).toString('ascii').match(/^([a-f0-9]{40}) (tree|blob) ([0-9]+)$/);
+    if (end < offset || !match || match[1] !== oid) fail('FRONTEND_GIT_OBJECT_IDENTITY_INVALID');
+    offset = end + 1;
+    const size = Number(match[3]);
+    if (!Number.isSafeInteger(size) || size < 0 || offset + size >= raw.length || raw[offset + size] !== 10) fail('FRONTEND_GIT_OBJECT_IDENTITY_INVALID');
+    const bytes = raw.subarray(offset, offset + size);
+    authenticateObject(match[2], bytes, oid);
+    objects.set(oid, { type: match[2], bytes }); offset += size + 1;
+  }
+  if (offset !== raw.length) fail('FRONTEND_GIT_OBJECT_IDENTITY_INVALID');
+  return files.map(file => {
+    const parts = file.path.split('/');
+    let oid = rootTree;
+    for (let i = 0; i < parts.length; i++) {
+      const tree = objects.get(oid);
+      if (tree?.type !== 'tree') fail('FRONTEND_GIT_TREE_CHAIN_INVALID');
+      const entry = treeEntries(tree.bytes).get(parts[i]);
+      if (!entry || (i < parts.length - 1 ? entry.mode !== '40000' : !['100644', '100755'].includes(entry.mode))) fail('FRONTEND_GIT_TREE_CHAIN_INVALID');
+      oid = entry.oid;
+    }
+    if (oid !== file.oid || objects.get(oid)?.type !== 'blob') fail('FRONTEND_GIT_TREE_CHAIN_INVALID');
+    return { path: file.path, bytes: objects.get(oid).bytes };
+  });
 }
 
 export function collectFrontendVisibilitySnapshotV1({ root = repoRoot, expectedHead, expectedDistFingerprint } = {}) {
@@ -34,7 +106,7 @@ export function collectFrontendVisibilitySnapshotV1({ root = repoRoot, expectedH
   if (capture(['branch', '--show-current'], root).toString().trim() !== 'main') fail('FRONTEND_CANONICAL_MAIN_REQUIRED');
   // Source identity is local and offline. No fetch, source update, build or lease
   // write occurs. Dist is separately bound to the approved existing fingerprint.
-  capture(['diff', '--quiet', '--no-ext-diff', 'HEAD', '--', 'scripts', 'shared', 'package.json', 'stephanos-ui/package.json'], root);
+  capture(['diff', '--quiet', '--no-ext-diff', '--no-textconv', 'HEAD', '--', 'scripts', 'shared', 'package.json', 'stephanos-ui/package.json'], root);
   const manifest = createStephanosDistManifest({ rootDir: root });
   if (manifest.fingerprint !== expectedDistFingerprint) fail('FRONTEND_ASSET_FINGERPRINT_CHANGED');
   const files = new Map();
@@ -44,26 +116,10 @@ export function collectFrontendVisibilitySnapshotV1({ root = repoRoot, expectedH
     if (bytes.length > 32 * 1024 * 1024 || total > MAX_BYTES || files.size >= 4096) fail('FRONTEND_SNAPSHOT_LIMIT');
     files.set(path, Buffer.from(bytes));
   };
-  // Launcher files come from exact local Git objects, never unrestricted disk.
-  const names = capture(['ls-tree', '-rz', '--name-only', 'HEAD', '--',
-    'index.html', 'main.js', 'style.css', 'stephanos-icon.png', 'system', 'modules', 'shared', 'assets', 'apps'], root)
-    .toString().split('\0').filter(path => !path.startsWith('apps/stephanos/dist/')
-      && (/^[A-Za-z0-9_./-]+\.(?:html|js|mjs|css|svg|png|ico|webp|woff2?|ttf)$/.test(path)
-        || /^apps\/(?:index\.json|[A-Za-z0-9_-]+\/app\.json)$/.test(path)));
-  if (!names.includes('index.html') || !names.includes('main.js') || names.length > 4096) fail('FRONTEND_LAUNCHER_UNPROVEN');
-  const objects = capture(['cat-file', '--batch'], root, names.map(path => `HEAD:${path}\n`).join(''));
-  let offset = 0;
-  for (const path of names) {
-    const end = objects.indexOf(10, offset);
-    const match = objects.subarray(offset, end).toString().match(/^[a-f0-9]{40} blob ([0-9]+)$/);
-    if (end < offset || !match) fail('FRONTEND_SOURCE_OBJECT_INVALID');
-    const size = Number(match[1]);
-    offset = end + 1;
-    if (!Number.isSafeInteger(size) || size < 0 || offset + size >= objects.length || objects[offset + size] !== 10) fail('FRONTEND_SOURCE_OBJECT_INVALID');
-    put(path, objects.subarray(offset, offset + size));
-    offset += size + 1;
-  }
-  if (offset !== objects.length) fail('FRONTEND_SOURCE_OBJECT_INVALID');
+  // The fixed boundary disables hooks, fsmonitor, grafts, replacements and
+  // helper execution. Independently authenticate commit -> tree -> blob bytes;
+  // mutable HEAD:path expressions or batch headers alone cannot grant trust.
+  for (const file of authenticatedLauncherObjects(root, head)) put(file.path, file.bytes);
   for (const entry of manifest.entries) {
     const path = resolve(root, 'apps/stephanos/dist', entry.path);
     const bytes = readFileSync(path);

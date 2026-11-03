@@ -61,6 +61,7 @@ import {
 } from '../shared/agents/operatorMergeBaseBindingV1.mjs';
 
 import { proveProtectedWorkflowActorHandoff } from './prove-protected-workflow-actor-handoff.mjs';
+import { assertMailboxRotationWorkflowAdmission } from './canonical-mailbox-workflow-admission-v1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-personal-repository-protected-squash';
@@ -1320,6 +1321,7 @@ async function main() {
       blockers: receiptValidation.blockers,
     });
   }
+  await assertMailboxRotationWorkflowAdmission({ mode: 'protected', prNumber: receipt.prNumber, head: receipt.sourceHead });
   const mergeResponse = await apiJson(`/repos/${owner}/${repo}/pulls/${receipt.prNumber}/merge`, {
     method: 'PUT',
     body: {

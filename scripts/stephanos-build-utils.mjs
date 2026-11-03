@@ -618,3 +618,5 @@ export function formatDurationMs(durationMs) {
   const minutes = Math.round(seconds / 60);
   return `${minutes}m`;
 }
+
+// Fixed frontend source admission requires canonical LF deployment bytes.

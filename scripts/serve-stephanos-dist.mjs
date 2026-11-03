@@ -1072,3 +1072,5 @@ if (isMainModule) {
     }
   });
 }
+
+// Fixed frontend source admission requires canonical LF deployment bytes.

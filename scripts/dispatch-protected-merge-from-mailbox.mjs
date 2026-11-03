@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFileSync } from 'node:fs';
+import { assertMailboxRotationWorkflowAdmission } from './canonical-mailbox-workflow-admission-v1.mjs';
 import {
   PROTECTED_WORKFLOW_DISPATCH_AUTHOR,
   PROTECTED_WORKFLOW_DISPATCH_ISSUE,
@@ -215,6 +216,7 @@ async function main() {
     const before = await readExactState(command, { allowDraft: true });
     let lifecycleResult = 'ALREADY_READY';
     if (before.pull.draft === true) {
+      await assertMailboxRotationWorkflowAdmission({ mode: 'protected', prNumber: command.prNumber, head: command.expectedHead });
       const mutation = await graphqlReady(before.pull.node_id);
       if (!mutation
         || Number(mutation.number) !== command.prNumber
@@ -242,6 +244,7 @@ async function main() {
     await rejectPriorProtectedDispatch(command);
     const dispatch = buildProtectedWorkflowDispatchRequest(command, { authorizationCommentId });
     if (!dispatch.ok) fail(dispatch.blocker, dispatch.details);
+    await assertMailboxRotationWorkflowAdmission({ mode: 'protected', prNumber: command.prNumber, head: command.expectedHead });
     await github(dispatch.path, { method: dispatch.method, body: dispatch.body, expectedStatus: 204 });
     const receipt = await postReceipt(command, 'PROTECTED_MERGE_WORKFLOW_DISPATCHED');
     console.log(JSON.stringify({ ok: true, verdict: 'PROTECTED_WORKFLOW_DISPATCHED', receipt }));

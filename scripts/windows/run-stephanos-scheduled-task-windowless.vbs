@@ -32,6 +32,9 @@ shell.Environment("PROCESS")("USERPROFILE") = profileRoot
 powershellExe = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
 
 Select Case taskId
+  Case "frontend"
+    targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-stephanos-frontend-hidden.ps1")
+    command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
   Case "worker-watchdog"
     targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-battle-bridge-worker-watchdog-hidden.ps1")
     command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)

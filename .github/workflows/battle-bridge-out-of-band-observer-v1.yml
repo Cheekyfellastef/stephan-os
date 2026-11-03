@@ -76,6 +76,8 @@ jobs:
 
       - name: Recheck canonical owner event from trusted main
         id: mailbox_gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/canonical-mailbox-workflow-event-gate.mjs observer
       - name: Validate exact owner-authored read-only request
         id: request
@@ -111,6 +113,11 @@ jobs:
           echo "ready=$READY" >> "$GITHUB_OUTPUT"
           echo "proof_path=$SETTINGS_PROOF" >> "$GITHUB_OUTPUT"
 
+      - name: Recheck freeze and live source immediately before private access
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/canonical-mailbox-workflow-event-gate.mjs observer
+
       - name: Join tailnet as fixed ephemeral observer identity
         if: steps.settings.outputs.ready == 'true'
         id: tailnet
@@ -141,6 +148,7 @@ jobs:
           printf '%s\n' "$SSH_PRIVATE_KEY" > "$KEY_FILE"
           printf '%s\n' "$SSH_KNOWN_HOSTS" > "$KNOWN_HOSTS_FILE"
           ENCODED_COMMAND="$(node scripts/battle-bridge-tailscale-prerequisite-proof.mjs encoded-command "$EXPECTED_HEAD")"
+          GITHUB_TOKEN="${{ github.token }}" node scripts/canonical-mailbox-workflow-event-gate.mjs observer
           ssh \
             -i "$KEY_FILE" \
             -o BatchMode=yes \
@@ -164,6 +172,7 @@ jobs:
         if: always() && steps.mailbox_gate.outcome == 'success'
         uses: actions/github-script@v7
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           SETTINGS_PATH: ${{ steps.settings.outputs.proof_path }}
           REMOTE_RECEIPT_PATH: ${{ steps.remote.outputs.receipt_path }}
           TAILNET_OUTCOME: ${{ steps.tailnet.outcome }}
@@ -197,6 +206,8 @@ jobs:
               remoteOutcome: process.env.REMOTE_OUTCOME || '',
             });
             const body = observer.buildBattleBridgeOutOfBandObserverReceiptBody(receipt);
+            const { assertMailboxRotationWorkflowAdmission } = await import(pathToFileURL(path.resolve('scripts/canonical-mailbox-workflow-admission-v1.mjs')).href);
+            await assertMailboxRotationWorkflowAdmission({ mode: 'receipt' });
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,

@@ -68,12 +68,18 @@ export default function FlywheelPanel() {
     bridgeTransportTruth?.bridgeHostedExecutionTarget,
     bridgeTransportTruth?.bridgeOperatorTransportUrl,
     homeBridgeUrl,
-    runtimeStatusModel?.runtimeContext?.homeNodeBridge,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.configured,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.accepted,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.backendUrl,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.executionUrl,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.reachability,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.reason,
   ]);
 
   useEffect(() => {
     let cancelled = false;
     let timer = null;
+    const controller = new AbortController();
 
     const refresh = async () => {
       try {
@@ -82,6 +88,7 @@ export default function FlywheelPanel() {
           datasets: ['dashboard'],
           runtimeContext,
           timeoutMs: 10000,
+          signal: controller.signal,
         });
         if (cancelled) return;
         const dashboardDataset = hydration?.datasets?.dashboard || null;
@@ -123,6 +130,7 @@ export default function FlywheelPanel() {
     void refresh();
     return () => {
       cancelled = true;
+      controller.abort();
       if (timer !== null) window.clearTimeout(timer);
     };
   }, [runtimeContext]);
