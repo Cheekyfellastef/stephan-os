@@ -1413,20 +1413,6 @@ export function validatePersonalRepositoryCheckRuns(
           && text(candidate.check?.status).toLowerCase() === 'completed'
           && text(candidate.check?.conclusion).toLowerCase() === 'success'));
 
-    // The legacy pull_request_target review job was skipped while the PR was
-    // a draft. GitHub's bot-authored ready transition cannot retroactively
-    // turn that run into a green check. Accept ONLY its exact skipped identity
-    // when the independently fetched, SHA-bound HIGH-risk review artifact
-    // already proves CLEAN for this PR/head/base. No other review skip qualifies.
-    const independentDraftReviewSkip = conclusion === 'skipped'
-      && cleanIndependentReviewProved && mergeStateStatus === 'CLEAN'
-      && workflow === 'Stephanos Exact-Head Review'
-      && path === '.github/workflows/stephanos-exact-head-review.yml'
-      && name === 'exact-head-review'
-      && text(run?.event) === 'pull_request_target'
-      && text(run?.status).toLowerCase() === 'completed'
-      && text(run?.conclusion).toLowerCase() === 'skipped';
-
     let disposition = 'green';
     if (status !== 'completed') {
       blockers.push('personal-repository-check-run-not-terminal');
@@ -1438,8 +1424,6 @@ export function validatePersonalRepositoryCheckRuns(
       disposition = 'neutral-skip';
     } else if (intentionalPrJobSkip) {
       disposition = 'pr-inert-mutation-job-skip';
-    } else if (independentDraftReviewSkip) {
-      disposition = 'clean-independent-draft-review-skip';
     } else if (supersededDraftSkip) {
       disposition = 'superseded-draft-skip';
     } else if (prPagesDeploymentNotRequested) {
