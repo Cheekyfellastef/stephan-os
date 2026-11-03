@@ -287,6 +287,37 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
   // A stopped Core publisher cannot make a still-live worker/backend appear
   // stopped, and an HTTP read must never renew an old observation.
   const runtimeServices = array(projection.captainsBridge?.runtimeHealth?.services);
+  // This estate has no legacy runtime-health records on some deployed machines.
+  // Reuse the existing *independent* canonical Windows watchdog and post-sync
+  // target receipts instead of re-aging the expired Core daemon aggregate.
+  // Both sources are bounded by their original publication time and exact head.
+  const watchdog = latestStatus('battle-bridge-worker-watchdog-current');
+  const workerProof = watchdog?.finalAssessment;
+  const refresh = latestStatus('post-sync-runtime-refresh-current');
+  const backendProof = array(refresh?.resultTargets).find(target =>
+    target?.targetId === 'stephanos-backend-8787');
+  const serviceProofAgeMs = Math.min(maxAgeMs, 2 * 60_000);
+  const workerProofValid = watchdog?.status === 'WORKER_WATCHDOG_HEALTHY'
+    && watchdog?.classification === 'WORKER_WATCHDOG_HEALTHY'
+    && workerProof?.finalVerdict === 'WORKER_WATCHDOG_HEALTHY'
+    && workerProof?.healthy === true && workerProof?.processHealthy === true
+    && workerProof?.heartbeatFresh === true
+    && workerProof?.heartbeatPidMatchesProcess === true
+    && workerProof?.processLaunchIdentityValid === true
+    && workerProof?.heartbeatLaunchIdentityMatchesProcess === true
+    && workerProof?.repositoryFromCanonicalMain === true
+    && workerProof?.heartbeatMatchesCanonicalRepositoryHead === true
+    && workerProof?.remoteMainHeadProven === true
+    && /^[a-f0-9]{40}$/.test(String(workerProof?.sourceHead || ''))
+    && workerProof.sourceHead === workerProof.canonicalRepositoryHead
+    && workerProof.sourceHead === workerProof.remoteMainHead
+    && fresh(watchdog.timestampUtc, nowMs, serviceProofAgeMs);
+  const backendProofValid = refresh?.safeRefreshesCompleted === true
+    && refresh?.unknownPathCount === 0 && refresh?.unsafePathCount === 0
+    && backendProof?.ok === true && backendProof?.exactHeadProofOk === true
+    && /^[a-f0-9]{40}$/.test(String(backendProof?.sourceHead || ''))
+    && backendProof.sourceHead === refresh.afterHead
+    && fresh(refresh.timestampUtc, nowMs, serviceProofAgeMs);
   const health = ['daemonHealthy', 'missionWorkerHealthy', 'backendHealthy'].map((field, index) => {
     const serviceId = index === 1 ? 'mission-worker' : index === 2 ? 'backend' : '';
     const independent = serviceId ? runtimeServices.find(entry => entry?.serviceId === serviceId) : null;
@@ -303,6 +334,21 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
         evidenceSource: 'INDEPENDENT_SERVICE_HEALTH',
       };
     }
+    // The watchdog proves a real worker process, authenticated launch
+    // identity, fresh PID-bound heartbeat and canonical source head. The
+    // post-sync receipt proves the Backend's independently verified target,
+    // even when desktop plugin-host activation remains separately blocked.
+    const fallback = index === 1 && workerProofValid
+      ? { observedAtUtc: watchdog.timestampUtc, evidenceSource: 'CANONICAL_WORKER_WATCHDOG' }
+      : index === 2 && backendProofValid
+        ? { observedAtUtc: refresh.timestampUtc, evidenceSource: 'EXACT_HEAD_BACKEND_REFRESH' }
+        : null;
+    if (fallback) return {
+      id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+      state: 'HEALTHY', observedAtUtc: fallback.observedAtUtc,
+      expiresAtUtc: new Date(time(fallback.observedAtUtc) + serviceProofAgeMs).toISOString(),
+      evidenceSource: fallback.evidenceSource,
+    };
     return {
       id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
       state: coreLive && typeof core[field] === 'boolean' ? core[field] ? 'HEALTHY' : 'UNHEALTHY' : 'UNKNOWN',
