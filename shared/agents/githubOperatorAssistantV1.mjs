@@ -22,6 +22,8 @@ function handoffDebtFromEvidence(evidence,now){
  const blocked=[], waiting=[];const nowMs=Date.parse(now);
  const made=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&text(e.marker)==='PRODUCED');
  const acks=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&text(e.marker)==='ACKNOWLEDGED');
+ const producerRefCounts=new Map();
+ for(const p of made){const ref=text(p.ref);if(ref)producerRefCounts.set(ref,(producerRefCounts.get(ref)||0)+1);}
  for(const p of made){
   const pr=Number(p.prNumber)||0,issue=Number(p.issueNumber)||0,head=text(p.sourceHead),base=text(p.baseSha);
   const receipt=text(p.ref),owner=text(p.nextOwner),action=text(p.nextAction);
@@ -33,7 +35,16 @@ function handoffDebtFromEvidence(evidence,now){
    blocked.push({...item,kind:'automation-debt-incomplete-handoff',
     reason:'Producer handoff lacks an exact owner, source/base, action, receipt or freshness bound.'});continue;
   }
-  const accepted=acks.some(a=>{
+  if(receipt&&producerRefCounts.get(receipt)>1){
+   blocked.push({...item,kind:'automation-debt-duplicate-producer-receipt',
+    reason:'Producer receipt is reused by multiple handoffs; receiver custody is ambiguous.'});continue;
+  }
+  const receiverAcks=acks.filter(a=>text(a.producerReceiptRef)===receipt);
+  if(receipt&&receiverAcks.length>1){
+   blocked.push({...item,kind:'automation-debt-ambiguous-receiver-ack',
+    reason:'Multiple receiver acknowledgements reference the same producer receipt.'});continue;
+  }
+  const accepted=receiverAcks.some(a=>{
    const at=Date.parse(text(a.acknowledgedAtUtc));
    return text(a.producerReceiptRef)===receipt&&!!text(a.ref)&&
     Number(a.prNumber||0)===pr&&Number(a.issueNumber||0)===issue&&

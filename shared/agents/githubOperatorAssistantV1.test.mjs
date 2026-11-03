@@ -173,3 +173,33 @@ test('retains automation debt when receiver acknowledgement missed producer dead
   assert.equal(f([producer,{...ack,acknowledgedAtUtc:'2026-11-03T09:59:59Z'}]).status,'BLOCKED');
   assert.equal(f([producer,{...ack,acknowledgedAtUtc:'2026-11-03T12:00:01Z'}]).status,'BLOCKED');
 });
+
+
+test('fails closed on duplicate producer receipts and ambiguous receiver acknowledgements',()=>{
+ const p={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'producer-unique-1',
+  nextOwner:'merge-owner',nextAction:'guarded-merge',
+  producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T13:00:00Z'};
+ const a={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:p.ref,
+  prNumber:p.prNumber,issueNumber:p.issueNumber,sourceHead:p.sourceHead,baseSha:p.baseSha,
+  ref:'receiver-unique-1',receiverOwner:p.nextOwner,nextAction:p.nextAction,
+  acknowledgedAtUtc:'2026-11-03T12:30:00Z'};
+ const f=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T12:45:00Z',evidence});
+ assert.equal(f([p,a]).status,'PASS');
+ for(const collision of [{...p},{...p,nextOwner:'foreign-owner'}]){
+  const r=f([p,collision,a]);
+  assert.equal(r.status,'BLOCKED');
+  assert.equal(r.blocked[0].kind,'automation-debt-duplicate-producer-receipt');
+ }
+ for(const duplicateAck of [{...a},{...a,receiverOwner:'foreign-owner',ref:'receiver-unique-2'}]){
+  const r=f([p,a,duplicateAck]);
+  assert.equal(r.status,'BLOCKED');
+  assert.equal(r.blocked[0].kind,'automation-debt-ambiguous-receiver-ack');
+ }
+ assert.equal(f([p,a,{...a,producerReceiptRef:'other-unrelated-producer'}]).status,'PASS');
+ const p2={...p,ref:'producer-unique-2',issueNumber:2670};
+ const a2={...a,producerReceiptRef:p2.ref,issueNumber:p2.issueNumber,ref:'receiver-unique-2'};
+ assert.equal(f([p,p2,a,a2]).status,'PASS');
+ assert.equal(f([p]).status,'WAITING_FOR_PROOF');
+ assert.equal(f([p,{...p},a]).blocked.length,2);
+});
