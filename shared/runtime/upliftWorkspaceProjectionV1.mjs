@@ -124,10 +124,31 @@ function proofRefs(record = {}) {
 }
 
 function truthFromRecord(record = {}) {
-  const raw = text(record.truth || record.freshness || record.status || record.state, 'UNKNOWN').toUpperCase();
-  if (/CURRENT|ACTIVE|READY|PASS|HEALTHY|ONLINE|RUNNING/.test(raw)) return 'CURRENT';
-  if (/STALE|DEGRADED|WAIT|PARTIAL/.test(raw)) return 'STALE';
-  if (/BLOCK|FAIL|ERROR|CONFLICT|RED|OFFLINE/.test(raw)) return 'CONFLICTING';
+  const states = [
+    record.truth,
+    record.freshness,
+    record.status,
+    record.state,
+    record.verdict,
+    record.finalVerdict,
+    record.phase,
+  ].map((value) => text(value, '').toUpperCase()).filter(Boolean);
+  const tokens = states.flatMap((value) => value.split(/[^A-Z0-9]+/).filter(Boolean));
+  const positive = new Set([
+    'CURRENT', 'ACTIVE', 'READY', 'PASS', 'PASSED', 'HEALTHY', 'ONLINE', 'RUNNING',
+    'PROVED', 'VERIFIED', 'COMPLETE', 'COMPLETED', 'RECOVERED', 'RESOLVED', 'REPAIRED',
+    'SUCCESS', 'SUCCEEDED', 'DONE',
+  ]);
+  const negative = new Set([
+    'BLOCK', 'BLOCKED', 'FAIL', 'FAILED', 'FAILURE', 'ERROR', 'CONFLICT', 'CONFLICTING',
+    'RED', 'OFFLINE', 'REJECTED', 'UNSAFE', 'CANCELLED', 'CANCELED', 'ABORTED', 'HOLD',
+    'INCOMPLETE', 'UNPROVED', 'UNPROVEN', 'STALLED', 'UNHEALTHY',
+  ]);
+  const stale = new Set(['STALE', 'DEGRADED', 'WAIT', 'WAITING', 'PARTIAL', 'PENDING', 'CONNECTING']);
+  const negatedPositive = tokens.includes('NOT') && tokens.some((value) => positive.has(value));
+  if (negatedPositive || tokens.some((value) => negative.has(value))) return 'CONFLICTING';
+  if (tokens.some((value) => stale.has(value))) return 'STALE';
+  if (tokens.some((value) => positive.has(value))) return 'CURRENT';
   return 'UNKNOWN';
 }
 
