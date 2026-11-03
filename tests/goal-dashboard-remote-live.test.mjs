@@ -368,3 +368,31 @@ test('future-dated owner beacon fails closed instead of appearing fresh', () => 
   assert.ok(future.remoteProjection.beaconAgeMs < 0);
   assert.equal(future.finalVerdict, 'GOAL_DASHBOARD_REMOTE_DEGRADED');
 });
+
+// Bracketed IPv6 loopback is the hostname reported by URL in modern browsers.
+test('local bracketed IPv6 loopback stays on canonical backend without GitHub calls', async () => {
+  let githubCalls = 0;
+  const { api, window } = makeContext({
+    hostname: '[::1]',
+    fetchImpl: async () => { githubCalls += 1; return { ok: false, status: 403 }; },
+  });
+  const result = await api.refreshRemote();
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'LOCAL_BACKEND_REMAINS_CANONICAL');
+  assert.equal(githubCalls, 0);
+  assert.equal(window.applied, undefined);
+});
+
+test('hosted page rejects bracketed IPv6 loopback as a canonical public HTTPS backend', async () => {
+  let githubCalls = 0;
+  const { api, window } = makeContext({
+    hostname: 'cheekyfellastef.github.io',
+    backendBase: 'https://[::1]:8787',
+    fetchImpl: async () => { githubCalls += 1; return { ok: false, status: 403 }; },
+  });
+  assert.equal(api.canonicalHostedBackendRoute(), '');
+  const result = await api.refreshRemote();
+  assert.equal(result, null);
+  assert.equal(githubCalls, 3);
+  assert.equal(window.applied, undefined);
+});

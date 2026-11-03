@@ -9,7 +9,7 @@
   const REFRESH_MS = 5 * 60 * 1000;
   const MAX_BEACON_AGE_MS = 3 * 60 * 1000;
   const SHA = /^[0-9a-f]{40}$/;
-  const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+  const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
   let latestRefreshGeneration = 0;
 
   function isLocalHost() {
