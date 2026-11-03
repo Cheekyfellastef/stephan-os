@@ -20,7 +20,13 @@ export function projectCaptainsBridgeRuntimeHealth(input = {}) {
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : 60*1000;
   const records = [...(Array.isArray(input.healthRecords)?input.healthRecords:[]), ...(Array.isArray(input.publisherSlice?.services)?input.publisherSlice.services:[]), ...(Array.isArray(input.supervisorHealthRecords)?input.supervisorHealthRecords:[])];
-  const services = CAPTAINS_BRIDGE_RUNTIME_HEALTH_SERVICES.map((id)=>{ const record=source(records,id); return Object.freeze({ serviceId:id, ...(light(record,nowMs,staleAfterMs)), sourceKind: record?.kind || 'missing' }); });
+  const services = CAPTAINS_BRIDGE_RUNTIME_HEALTH_SERVICES.map((id)=>{ const record=source(records,id); return Object.freeze({
+    serviceId:id, ...(light(record,nowMs,staleAfterMs)),
+    // Preserve the publisher's original observation. A later HTTP read must
+    // never make an expired individual service heartbeat look fresh again.
+    observedAtUtc: record?.checkedAtUtc || record?.timestampUtc || record?.publishedAtUtc || '',
+    sourceKind: record?.kind || 'missing',
+  }); });
   const worst = services.some(s=>s.trafficLight==='RED') ? 'RED' : services.some(s=>s.trafficLight==='AMBER') ? 'AMBER' : services.some(s=>s.trafficLight==='UNKNOWN') ? 'UNKNOWN' : 'GREEN';
   const first = services.find(s=>s.trafficLight!=='GREEN');
   return Object.freeze({ schemaVersion: CAPTAINS_BRIDGE_RUNTIME_HEALTH_SCHEMA_VERSION, kind:'stephanos.captains_bridge.runtime_health.projection', readOnly:true, processKillingAllowed:false, restartImplementationAllowed:false, arbitraryShellAllowed:false, consumesContracts:Object.freeze({ publisherServices:[...BATTLE_BRIDGE_PUBLISHER_SERVICES], supervisorServices:[...BATTLE_BRIDGE_SERVICE_IDS] }), overallTrafficLight: worst, services, exactNextAction: first?.exactNextAction || 'All runtime lights green; continue monitoring.', finalVerdict: worst==='GREEN' ? 'CAPTAINS_BRIDGE_RUNTIME_HEALTH_GREEN' : 'CAPTAINS_BRIDGE_RUNTIME_HEALTH_ATTENTION_REQUIRED' });

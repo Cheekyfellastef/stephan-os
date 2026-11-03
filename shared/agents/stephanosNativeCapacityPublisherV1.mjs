@@ -1,5 +1,6 @@
 import { createHash, createPublicKey } from 'node:crypto';
-import { readFile, unlink } from 'node:fs/promises';
+import { readFile, rename, unlink } from 'node:fs/promises';
+import { inspectStephanosNativeCapacityGamingAdmissionV1 } from './stephanosNativeCapacityGamingAdmissionV1.mjs';
 import {
   createStephanosNativeCapacityReceipt,
   createStephanosNativeSourceAuthority,
@@ -25,6 +26,18 @@ const QUALIFICATION_EXPECTED = Object.freeze({
   source: 'export const add=(a,b)=>a+b;',
   test: 'assert.equal(add(2,3),5);',
 });
+
+class GamingAdmissionHold extends Error {
+  constructor(admission) {
+    super(admission.reason);
+    this.admission = admission;
+  }
+}
+
+function requireGamingAdmission(options) {
+  const admission = inspectStephanosNativeCapacityGamingAdmissionV1(options);
+  if (!admission.ok) throw new GamingAdmissionHold(admission);
+}
 
 function text(value) { return typeof value === 'string' ? value.trim() : ''; }
 function hash(value) { return createHash('sha256').update(String(value), 'utf8').digest('hex'); }
@@ -98,6 +111,7 @@ export async function probeStephanosNativeOllamaV1(options = {}) {
   }
 
   try {
+    requireGamingAdmission(options);
     const tags = await fetchJson(`${endpoint}/api/tags`, { method: 'GET' }, Math.min(timeoutMs, 10_000), fetchImpl);
     const inventory = (Array.isArray(tags.json?.models) ? tags.json.models : [])
       .map((item) => text(item?.name))
@@ -118,6 +132,8 @@ export async function probeStephanosNativeOllamaV1(options = {}) {
     };
     const requestBytes = JSON.stringify(requestBody);
     const startedAtMs = nowMs();
+    // Inventory retrieval is awaited; startup permission cannot authorize this POST.
+    requireGamingAdmission(options);
     const chat = await fetchJson(`${endpoint}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -132,6 +148,7 @@ export async function probeStephanosNativeOllamaV1(options = {}) {
     const ps = await fetchJson(`${endpoint}/api/ps`, { method: 'GET' }, Math.min(timeoutMs, 10_000), fetchImpl);
     const loaded = (Array.isArray(ps.json?.models) ? ps.json.models : []).find((item) => text(item?.name) === model);
     if (!loaded) return frozen({ ok: false, reason: 'native-model-load-unproven', executedModel });
+    requireGamingAdmission(options);
 
     const latencySeconds = Math.max(0, (Number(completedAtMs) - Number(startedAtMs)) / 1000);
     return frozen({
@@ -155,6 +172,7 @@ export async function probeStephanosNativeOllamaV1(options = {}) {
       timeoutMs,
     });
   } catch (error) {
+    if (error instanceof GamingAdmissionHold) return error.admission;
     return frozen({
       ok: false,
       reason: error?.name === 'AbortError' ? 'native-model-probe-timeout' : 'native-model-probe-failed',
@@ -186,7 +204,10 @@ export async function publishStephanosNativeCapacityV1(options = {}) {
     if (!privateKeyPem) return frozen({ ok: false, reason: 'native-capacity-signing-key-missing', cleared: true });
 
     const probe = await probeStephanosNativeOllamaV1(options);
-    if (!probe.ok) return frozen({ ok: false, reason: probe.reason, probe, cleared: true });
+    if (!probe.ok) return frozen({
+      ok: false, reason: probe.reason, probe, cleared: true,
+      ...(probe.finalVerdict ? { finalVerdict: probe.finalVerdict } : {}),
+    });
 
     if (typeof options.readQueue !== 'function') {
       return frozen({ ok: false, reason: 'native-capacity-queue-unproven', cleared: true });
@@ -258,6 +279,7 @@ export async function publishStephanosNativeCapacityV1(options = {}) {
       { repoRoot, nowMs: observedAtMs },
     );
     if (!proofWrite.ok) return frozen({ ok: false, reason: `native-capacity-proof:${proofWrite.reason}`, cleared: true });
+    requireGamingAdmission(options);
 
     const expiresAtUtc = new Date(observedAtMs + 5 * 60 * 1000).toISOString();
     const payload = frozen({
@@ -320,9 +342,19 @@ export async function publishStephanosNativeCapacityV1(options = {}) {
       workspaceRoot,
       ['status', `${STEPHANOS_NATIVE_CAPACITY_STATUS_ID}.json`],
       statusRecord,
-      { repoRoot, nowMs: observedAtMs },
+      {
+        repoRoot, nowMs: observedAtMs,
+        // The shared writer awaits directory, temporary-file and ancestor work.
+        // Re-read at every actual rename attempt, including Windows retries.
+        renameFn: (sourcePath, targetPath) => {
+          requireGamingAdmission(options);
+          return rename(sourcePath, targetPath);
+        },
+      },
     );
     if (!statusWrite.ok) return frozen({ ok: false, reason: `native-capacity-status:${statusWrite.reason}`, cleared: true });
+    // Revocation during the awaited rename must not leave available capacity.
+    requireGamingAdmission(options);
 
     return frozen({
       ok: true,
@@ -334,7 +366,13 @@ export async function publishStephanosNativeCapacityV1(options = {}) {
       expiresAtUtc,
     });
   } catch (error) {
-    await clearStephanosNativeCapacityStatus({ workspaceRoot, repoRoot }).catch(() => {});
-    return frozen({ ok: false, reason: 'native-capacity-publication-failed', errorCode: text(error?.code || error?.message).slice(0, 80), cleared: true });
+    const cleanup = await clearStephanosNativeCapacityStatus({ workspaceRoot, repoRoot })
+      .catch(() => ({ ok: false, reason: 'native-capacity-status-clear-failed' }));
+    const clearState = {
+      cleared: cleanup.ok === true,
+      ...(cleanup.ok ? {} : { cleanupReason: cleanup.reason }),
+    };
+    if (error instanceof GamingAdmissionHold) return frozen({ ...error.admission, ...clearState });
+    return frozen({ ok: false, reason: 'native-capacity-publication-failed', errorCode: text(error?.code || error?.message).slice(0, 80), ...clearState });
   }
 }

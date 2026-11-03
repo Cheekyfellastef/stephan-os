@@ -1,0 +1,224 @@
+# Maintenance custody recovery through the existing guardian
+
+The 25 October continuous-repair timeout cannot acquire retroactive Job custody.
+A current process list, parent exit, PID reuse, elapsed time or restarting
+Commander cannot establish that its descendants ended. The original cycle and
+R7 authority remain distinct. The requested result is an admitted maintenance
+owner and the existing `repair-ui-4173` action producing live exact-head proof.
+
+## Structural decision
+
+Persist an authenticated ACTIVE reservation **before** either guardian or manual
+maintenance launches work. All HTTP sessions and restarted Commander processes
+consult the same guardian state, anchored in the existing OS-owned Windows
+PowerShell event log. The Shared Workspace JSON is a replaceable projection.
+The native kernel compare-and-append admits only one owner; boot-scoped workspace
+fences are conservative diagnostics. Unknown execution, process
+death, persistence failure, absent OS evidence and malformed authority retain
+admission. Known terminal completion publishes an OS-anchored IDLE certificate;
+file absence never means idle.
+
+Specialist review reproduced rollback of an older signed IDLE projection over a
+new ACTIVE record. HMAC alone is authenticity, not freshness. The correction
+moves the full authenticated state into the existing OS append log, not another
+writable counter. A caller without the credential cannot forge an anchor. Each
+anchor MAC binds the actual OS EventRecordId as well as workspace scope,
+transition nonce and full state. Re-appending a valid old message acquires a new
+record ID and is rejected. Reads consider the newest matching event, never skip
+invalid new evidence to recover an older green record. A missing/rotated/cleared
+anchor holds; the JSON projection cannot substitute for it. The original ACTIVE
+record remains recoverable from the OS anchor even after projection rollback.
+
+The fixed adapter reuses the pre-existing PowerShell source and Windows
+PowerShell channel, verifies its ACL grants clear/owner/DACL control only to
+privileged OS groups, and changes no source, channel, permission, service or
+scheduler configuration. Windows enforces append/read versus clear rights.
+Append is acknowledged only after readback of the exact newly assigned record;
+concurrent record-ID races are bounded and otherwise hold before child launch.
+State and audit authentication reuse the existing private Commander bearer-key
+trust domain with separate MAC domains, not a new signer or credential. No claim
+is made against an actor controlling that credential, OS administration or the
+installed executor. Key changes and unavailable audit capacity fail closed.
+The existing terminal-admission predicate remains binding;
+no caller flag, child receipt or successful direct-child kill overrides it.
+
+The existing unjournaled incident must be prepared while its original live HTTP
+owner still reports the exact cycle hold. Preparation binds that health record,
+the matching canonical repair report's bytes/digest, and a fresh local Windows
+boot observation. Preparation only adds a fence; it cannot discharge one.
+
+Recovery is a fixed, authenticated operation on the same guardian, not another
+maintenance executor or scheduler. It admits only a separately operator-approved
+exact reservation digest after a fresh local Windows observation proves the
+same machine has completed a full boot **later than the preparation observation**.
+Caller-supplied boot evidence is never accepted. A same-boot service reload,
+unknown boot, different machine, altered reservation and concurrent recovery
+all fail closed. The same native transition primitive serializes recovery against
+all new reservations. The full original record and new boot proof are durably
+archived before the state can become IDLE. Recovery reports prospective
+termination across the boot boundary, never historical successful completion.
+
+The boot observer executes only its fixed source-controlled read-only Windows
+probe. The probe reads OS boot time and MachineGuid (hashed before output). It
+does not control processes, services, scheduled tasks or leases. Windows Restart
+requires separate operator approval; this source introduces no PC restart verb.
+Both preparation and recovery bind canonical installed main; the HTTP owner
+also pins the source it loaded, so source advancement requires deliberate owner
+activation. The missing-state first-install posture is HOLD: this bounded
+migration only seeds ACTIVE state from the matching original held incident,
+never an invented idle certificate. Source review, exact-head merge, installation
+and a real changed-boot witness are
+required before live recovery. No patch may be loaded into the held process.
+
+## Scope and acceptance
+
+### Structural ownership review after the two authority findings
+
+The rollback and replaceable-fence findings share a root cause: workspace
+artifacts were treated as authority for freshness or exclusion. Stop adding
+caller-side guards. Every state transition must instead compare its expected
+previous OS anchor and append the successor inside one native critical section.
+
+The fixed audit adapter creates/opens one key-derived Global Windows kernel
+mutex, shared across interactive and S4U sessions. Creation applies a protected
+ACL for the canonical user and SYSTEM; existing object owner/ACL are verified.
+The Global namespace is OS-managed, not a workspace directory. Windows requires
+privileged global symbolic-link creation, and an open mutex cannot be replaced
+by deleting a workspace file. Wrong object type, unexpected ACL/owner, wait
+timeout or native failure holds. A mutex becoming abandoned is never child
+exclusion: the persisted ACTIVE OS anchor still holds the original request.
+
+The mutex covers only compare-and-append, not the child lifetime. Before append,
+the native adapter re-reads the newest scoped OS anchor while holding the mutex
+and requires its EventRecordId to equal the caller's authenticated expected
+previous identity (including the explicit no-previous bootstrap). It retains
+the mutex through bounded append and exact readback. A second contender reading
+the same IDLE identity must lose the compare, even if its workspace fence and
+projection were replaced. Terminal IDLE and successor-boot recovery use the
+same transition primitive; they cannot overwrite a foreign reservation.
+
+The linearization point is the independently read-back OS append under that
+kernel mutex. Source-model and real Windows concurrent-adapter tests must cover
+two stale readers, deleted/replaced workspace state, stale terminal release and
+recovery races. Existing file fences remain conservative crash diagnostics, not
+the proof of exclusive ownership. This adds no executor, scheduler or signer.
+
+Primary OS contracts: [kernel namespaces](https://learn.microsoft.com/en-us/windows/win32/termserv/kernel-object-namespaces)
+and [mutex security](https://learn.microsoft.com/en-us/dotnet/api/system.threading.mutex.-ctor?view=netframework-4.8).
+
+This restores maintenance admission following proven process extinction; it does
+not release R7 source ownership, cancel durable scheduled jobs, enroll the native
+directory worker, or qualify unattended builder mutation. Those retain their
+existing gates. Existing manual `repair-ui-4173` remains registered and must be
+executed and verified after recovery. A green source test or disabled repair is
+not completion of the operator request.
+
+Adversarial acceptance includes two owners, crash/restart, unknown terminal
+execution, corrupt state, same-boot recovery, foreign machine, stale/forged
+witness, changed digest, failed audit persistence and recovery/acquisition races.
+Physical acceptance must preserve the original incident, prove the new Windows
+boot and guardian identity, perform the existing UI repair, and obtain served
+head plus browser proof. The durable lesson is: retaining custody needs a
+persistent owner record and an explicit evidence-bearing recovery transition.
+# Independent frontend visibility during custody recovery
+
+The original unknown maintenance owner and R7 remain held. Frontend visibility
+is a different resource: validated static bytes and an exclusive 4173 listener.
+It must not depend on a healthy builder, shared-workspace publisher, backend,
+OpenClaw gateway, or remote GitHub fetch. The full `repair-ui-4173` action still
+builds and retains normal maintenance admission; it is never an exception.
+
+`scripts/sovereign-frontend-start-only.mjs` is a fixed, local start-only adapter
+of the existing dist server. Production requires the canonical Windows main
+checkout and fixed installed Node executable. Its exact local source head and
+existing dist manifest fingerprint must be included in the operator activation
+packet. `status` validates without binding; `start` additionally requires
+`--operator-approved`, and launches only its fixed `serve` invocation. No source
+sync, build, install, service/lease mutation, broad process kill or custody
+transition is available. The source-only protected update and runtime activation
+gates remain prerequisites; adding this script does not install it.
+
+The server captures launcher files from exact local Git objects and bounded
+dist bytes from the already approved manifest. It checks each dist byte hash
+again while capturing and retains immutable in-memory bytes. It preserves the
+root launcher and separate built-runtime entry. The served receipt distinguishes
+captured source head, existing build head, approved input fingerprint and served
+fingerprint (which includes a visible restriction notice). Stale build metadata
+is reported honestly. It does not claim current runtime, backend or builder health.
+
+Every validation Git read uses `resolveBattleBridgeGitExecution()` with the
+canonical fixed overrides and minimal environment, including disabled fsmonitor,
+hooks, replacement objects, grafts and lazy fetch. Diff additionally disables
+external diff and text conversion. Launcher trust is authenticated from the
+pinned commit's actual Git object hash through its root tree, every path's tree
+entries and each blob's Git object hash. Batch requests use immutable object
+IDs, never mutable `HEAD:path` expressions. Header shape and a clean worktree
+alone cannot authenticate served JavaScript. Regressions retain repository-local
+helper and blob/tree replacement attacks as explicit adversarial cases.
+
+The visibility profile has no arbitrary filesystem fallback, proxy, POST,
+restart or OpenClaw-probe route. CSP restricts connections to its own origin;
+external backend/gateway connections and controls are disabled. These restrictions
+are an explicit interim visibility posture, not completion of process recovery
+or normal frontend usability. A fixed native listener observation plus exact
+fixed-executable/argv identity is required before reusing a matching profile.
+A different listener is refused and never stopped; exclusive bind handles races.
+No failed startup result is proof of process exclusion or custody release.
+
+The original legacy process-custody recovery still requires its separately
+approved full-boot witness and exact recovery receipt. A full boot also ends
+the temporary visibility process. Normal frontend repair then remains behind
+the original recovered maintenance owner; do not leave the visibility profile
+or disabled repair capability as the parent goal's terminal outcome.
+
+Reusable invariant: loss of mutation authority must retain truthful observation;
+resource-disjoint static visibility may be separately admitted only with a
+closed executable, asset, listener and HTTP authority contract. It must never
+turn the broad building repair into an observation operation.
+
+## Fixed remote visibility admission
+
+The canonical mailbox exposes the separate visibility resource through two
+bounded operations, after their protected source update is installed:
+
+- `OBSERVE_STEPHANOS_FRONTEND_VISIBILITY` accepts the standard authenticated
+  canonical envelope and exact installed `expectedHead`. It validates the fixed
+  source closure and existing assets, observes the native listener, and returns
+  the existing build identity and asset fingerprint. Validation is not startup.
+- `START_STEPHANOS_FRONTEND_VISIBILITY` additionally requires the exact observed
+  `expectedDistFingerprint` and actual operator activation authority. It invokes
+  only the existing fixed starter with those bindings. It has no caller-supplied
+  executable, script path, command arguments, environment, URL or port.
+
+Both operations target canonical main and retain the ordinary mailbox identity,
+expiry and once-only request contract. They do not enter the shared maintenance
+owner: their resource remains captured static assets and the exclusive loopback
+listener. This is not an exception for ordinary `repair-ui-4173`, a custody
+release, or a grant to build or synchronize source.
+
+Before launching the fixed child, admission authenticates the installed code it
+will execute. The child retains the original source, asset and listener checks.
+An existing foreign listener is never stopped. Changed source or assets require
+a new observation and an appropriately bound activation; an ambiguous startup
+result is not a reason to create a second request or kill a process.
+
+All nine files in the fixed executable closure have explicit LF checkout pins.
+An existing Git-clean CRLF worktree file can survive a source update when its
+blob is unchanged, even if an LF attribute already exists. The five shared
+dependencies therefore carry a source comment change so a normal protected
+update materializes their reviewed LF bytes as well as the four fixed scripts.
+Admission never normalizes files or accepts differing bytes at runtime.
+Byte refusal codes retain the `FRONTEND_MAILBOX_SOURCE_BYTES_CHANGED` prefix
+and add only a fixed source ID and `IDENTITY`, `CRLF_ONLY`, or `CONTENT` reason.
+`CRLF_ONLY` requires exact byte comparison after removing only CR bytes directly
+before LF; it still blocks. No file paths, contents, stdout, or exception text
+are exposed by these finite codes. A generic historical refusal alone does not
+establish that line endings caused the live failure.
+
+Public `frontendVisibility` receipts contain only bounded status, source/build
+identities, fingerprints and listener counts. Controls and external connections
+must remain disabled in accepted child evidence. HTTP page verification is
+reported separately from browser verification; a successful HTTP probe does not
+certify browser usability, normal controls, current backend health or completed
+maintenance recovery. Source publication and a dispatch acknowledgement do not
+prove that the installed host has activated either operation.

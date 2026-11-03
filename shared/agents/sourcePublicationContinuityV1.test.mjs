@@ -55,6 +55,24 @@ test('skips authenticated Git without an exact commit and selects an app that ca
   assert.equal(result.selectedRoute, SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP);
 });
 
+test('existing canonical owner branch cannot use GitHub create-ref as a publication fast-forward', () => {
+  const diffArtifact = { ...artifact, exactCommit: '' };
+  const createOnly = githubApp({ exactCommit: '', operations: ['CREATE_BLOBS', 'CREATE_TREE', 'CREATE_COMMIT', 'CREATE_BRANCH_REF'] });
+  const common = { workspace, artifact: diffArtifact, nowUtc: NOW, capabilities: { [SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP]: createOnly } };
+  const held = buildSourcePublicationContinuityV1({ ...common, existingBranch: true });
+  assert.equal(held.routeReady, false);
+  assert.equal(held.blocker, SOURCE_PUBLICATION_BLOCKER.PROBES_PENDING);
+  assert.equal(held.duplicateBranchAllowed, false);
+  // New-source authoring remains independently eligible for create-ref.
+  assert.equal(buildSourcePublicationContinuityV1(common).selectedRoute, SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP);
+  const updater = githubApp({ exactCommit: '', operations: ['CREATE_BLOBS', 'CREATE_TREE', 'CREATE_COMMIT', 'UPDATE_BRANCH_REF'] });
+  const allowed = buildSourcePublicationContinuityV1({ ...common, existingBranch: true,
+    capabilities: { [SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP]: updater } });
+  assert.equal(allowed.selectedRoute, SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP);
+  assert.equal(allowed.fastForwardOnly, true);
+  assert.equal(allowed.mutationAllowed, false);
+});
+
 test('Forge is selectable only with fresh M2, M3 and publication operations bound to the artifact', () => {
   const route = SOURCE_PUBLICATION_ROUTE.FORGE_SIDECAR;
   const blocked = buildSourcePublicationContinuityV1({ workspace, artifact, nowUtc: NOW, capabilities: { [route]: { receipt: receipt(route, { operations: ['M2_READY', 'M3_RUNNER_READY'] }) } } });

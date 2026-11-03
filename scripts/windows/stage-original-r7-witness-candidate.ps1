@@ -110,6 +110,94 @@ function Protect-StagedImage {
     Add-Rule $fileAcl $witness $read $false
     Set-Acl -LiteralPath $installedExe -AclObject $fileAcl
 }
+function New-StagedRegistrationSecurity([Security.Principal.SecurityIdentifier]$WitnessSid) {
+    if ($null -eq $WitnessSid -or $WitnessSid.Value -notmatch '^S-1-5-80-(\d+-){4}\d+$') {
+        throw 'R7_STAGE_REGISTRY_SERVICE_SID_REQUIRED'
+    }
+    $acl = [Security.AccessControl.RegistrySecurity]::new()
+    $acl.SetAccessRuleProtection($true, $false)
+    $admins = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
+    $system = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
+    $acl.SetOwner($admins)
+    foreach ($sid in @($admins, $system, $WitnessSid)) {
+        $rights = [Security.AccessControl.RegistryRights]::FullControl
+        if ($sid.Equals($WitnessSid)) { $rights = [Security.AccessControl.RegistryRights]::ReadKey }
+        $acl.AddAccessRule([Security.AccessControl.RegistryAccessRule]::new(
+            $sid, $rights, [Security.AccessControl.InheritanceFlags]::None,
+            [Security.AccessControl.PropagationFlags]::None,
+            [Security.AccessControl.AccessControlType]::Allow))
+    }
+    return $acl
+}
+function Assert-StagedRegistrationSecurity([byte[]]$Descriptor, [Security.Principal.SecurityIdentifier]$WitnessSid) {
+    # Inspect raw ACEs as the native reader does; Access rules alone can hide
+    # callback/object ACE details. This samples shape, not effective access or
+    # continuous protection against an administrator/parent-key replacement.
+    if ($null -eq $Descriptor -or $Descriptor.Length -eq 0 -or $Descriptor.Length -gt 65536 -or
+        $null -eq $WitnessSid -or
+        $WitnessSid.Value -notmatch '^S-1-5-80-(\d+-){4}\d+$') {
+        throw 'R7_STAGE_REGISTRY_DESCRIPTOR_UNPROVEN'
+    }
+    $raw = [Security.AccessControl.RawSecurityDescriptor]::new($Descriptor, 0)
+    $required = [Security.AccessControl.ControlFlags]::DiscretionaryAclPresent -bor
+        [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected
+    if ($null -eq $raw.Owner -or $raw.Owner.Value -ne 'S-1-5-32-544' -or
+        ($raw.ControlFlags -band $required) -ne $required -or
+        $null -eq $raw.DiscretionaryAcl -or $raw.DiscretionaryAcl.Count -ne 3) {
+        throw 'R7_STAGE_REGISTRY_DESCRIPTOR_UNPROVEN'
+    }
+    $seen = @{}
+    foreach ($ace in $raw.DiscretionaryAcl) {
+        if ($ace -isnot [Security.AccessControl.CommonAce] -or $ace.IsCallback -or
+            $ace.AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed -or
+            $ace.AceFlags -ne [Security.AccessControl.AceFlags]::None) {
+            throw 'R7_STAGE_REGISTRY_ACE_UNPROVEN'
+        }
+        $sid = $ace.SecurityIdentifier.Value
+        if ($seen.ContainsKey($sid)) { throw 'R7_STAGE_REGISTRY_ACE_UNPROVEN' }
+        $seen[$sid] = $true
+        if ($sid -eq $WitnessSid.Value) {
+            $expected = [int][Security.AccessControl.RegistryRights]::ReadKey
+        } elseif ($sid -in @('S-1-5-18', 'S-1-5-32-544')) {
+            $expected = [int][Security.AccessControl.RegistryRights]::FullControl
+        } else { throw 'R7_STAGE_REGISTRY_ACE_UNPROVEN' }
+        if ($ace.AccessMask -ne $expected) { throw 'R7_STAGE_REGISTRY_ACE_UNPROVEN' }
+    }
+    foreach ($sid in @('S-1-5-18', 'S-1-5-32-544', $WitnessSid.Value)) {
+        if (-not $seen.ContainsKey($sid)) { throw 'R7_STAGE_REGISTRY_ACE_UNPROVEN' }
+    }
+}
+function Protect-StagedRegistration {
+    $witness = ([Security.Principal.NTAccount]::new('NT SERVICE', $service)).Translate(
+        [Security.Principal.SecurityIdentifier])
+    $acl = New-StagedRegistrationSecurity $witness
+    Assert-StagedRegistrationSecurity ($acl.GetSecurityDescriptorBinaryForm()) $witness
+    $baseKey = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+        [Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64)
+    $key = $null
+    try {
+        # Never create a caller-selected key or enable token privileges. Use
+        # the fixed existing SCM registration after disabled service creation.
+        $rights = [Security.AccessControl.RegistryRights]::ReadKey -bor
+            [Security.AccessControl.RegistryRights]::SetValue -bor
+            [Security.AccessControl.RegistryRights]::ChangePermissions -bor
+            [Security.AccessControl.RegistryRights]::TakeOwnership
+        $key = $baseKey.OpenSubKey("SYSTEM\CurrentControlSet\Services\$service",
+            [Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree, $rights)
+        if ($null -eq $key) { throw 'R7_STAGE_REGISTRY_KEY_MISSING' }
+        $key.SetAccessControl($acl)
+        Assert-StagedRegistrationSecurity ($key.GetAccessControl().GetSecurityDescriptorBinaryForm()) $witness
+        $key.SetValue('PinnedImageSha256', $ExpectedSha256, [Microsoft.Win32.RegistryValueKind]::String)
+        if ($key.GetValueKind('PinnedImageSha256') -ne [Microsoft.Win32.RegistryValueKind]::String -or
+            $key.GetValue('PinnedImageSha256') -cne $ExpectedSha256) {
+            throw 'R7_STAGE_REGISTRY_PIN_READBACK_FAILED'
+        }
+        Assert-StagedRegistrationSecurity ($key.GetAccessControl().GetSecurityDescriptorBinaryForm()) $witness
+    } finally {
+        if ($null -ne $key) { $key.Dispose() }
+        $baseKey.Dispose()
+    }
+}
 if ($env:OS -ne 'Windows_NT' -or [IntPtr]::Size -ne 8) {
     throw 'R7_STAGE_WINDOWS_X64_REQUIRED'
 }
@@ -181,7 +269,7 @@ try {
     & $sc sidtype $service restricted | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'R7_STAGE_RESTRICTED_SID_FAILED' }
     Protect-StagedImage
-    New-ItemProperty -LiteralPath $serviceKey -Name PinnedImageSha256 -PropertyType String -Value $ExpectedSha256 -ErrorAction Stop | Out-Null
+    Protect-StagedRegistration
     $props = Get-ItemProperty -LiteralPath $serviceKey -ErrorAction Stop
     $expectedImagePath = '"' + $installedExe + '"'
     if ($props.ObjectName -cne $account -or [int]$props.Type -ne 16 -or
@@ -255,6 +343,8 @@ try {
     if ((Read-LocalSha256 $installedExe) -cne $ExpectedSha256) {
         throw 'R7_STAGE_POST_ACL_IMAGE_HASH_MISMATCH'
     }
+    Assert-StagedRegistrationSecurity ((Get-Acl -LiteralPath $serviceKey -ErrorAction Stop).GetSecurityDescriptorBinaryForm()) (
+        [Security.Principal.SecurityIdentifier]::new($witnessSid))
     $receipt.finalVerdict = 'R7_STAGE_B_DISABLED_SERVICE_STAGED_NOT_COMMISSIONED'
     $receipt | ConvertTo-Json -Compress
 } catch {

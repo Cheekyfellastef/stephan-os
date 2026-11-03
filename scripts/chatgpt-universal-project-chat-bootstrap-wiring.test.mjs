@@ -217,6 +217,11 @@ test('bootstrap is ready only when canonical main, Windows checkout and Shared W
   assert.equal(bootstrap.operatingRules.chatLocalMemoryIsSystemOfRecord, false);
   assert.equal(bootstrap.operatingRules.createDuplicateLaneBeforeDiscoveryAllowed, false);
   assert.equal(bootstrap.operatingRules.alternateQualifiedRouteMustBeTriedBeforeGlobalBlocker, true);
+  assert.equal(bootstrap.operatingRules.workConservingControllerCycleRequired, true);
+  assert.equal(bootstrap.operatingRules.safeCapacityRefillAfterMaterialActionRequired, true);
+  assert.equal(bootstrap.operatingRules.waitingLaneMayTerminateControllerCycle, false);
+  assert.equal(bootstrap.operatingRules.sharedWorkConservingPolicyOwnerIssue, 1947);
+  assert.equal(bootstrap.operatingRules.elasticWidthPolicyOwnerIssue, 1637);
   assert.equal(bootstrap.requiredBefore.includes('CAPABILITY_DENIAL'), true);
   assert.equal(bootstrap.requiredBefore.includes('CREATE_PULL_REQUEST'), true);
   assert.equal(bootstrap.runbookOrder[1].path, 'shared/agents/universalProjectChatBootstrapV1.RUNBOOK.md');
