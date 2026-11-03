@@ -355,3 +355,34 @@ test('future-dated Shared Workspace status and proof remain unknown even with su
   assert.ok(projection.goals[0].blockers.includes('UNKNOWN_PROOF_RECORD'));
   assert.equal(projection.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED');
 });
+
+test('authoritative exact-head check batch outranks stale workflow failures but never denied batches', () => {
+  const historicalRuns = REQUIRED_WORKFLOWS.map((name, index) => ({
+    id: `prior-${index}`, name, prNumber: 1835, headSha: HEAD,
+    status: index === 0 ? 'failed' : 'passed', updatedAt: '2026-08-14T10:00:00Z',
+  }));
+  const project = (checksStatus, checkBatchObserved, headSha = HEAD) =>
+    overlayGoalDashboardWithLivePortfolio({
+      baseProjection: baseProjection(), nowMs: NOW,
+      liveProjection: { githubTelemetry: {
+        adapterAvailable: true, lastUpdatedAt: '2026-08-14T11:29:50Z',
+        pullRequests: [{ number: 1835, headSha, checksStatus, checkBatchObserved, blockers: [] }],
+        workflows: historicalRuns,
+      }},
+    }).goals[0];
+  const current = project('passed', true);
+  assert.match(current.summary, /checks passed/);
+  assert.equal(current.proofTruth, 'CURRENT');
+  assert.equal(current.state, 'VERIFYING', 'passing CI does not prove physical building');
+  for (const [direct, expected] of [['failed','FAILED'], ['pending','PENDING'], ['unknown','UNKNOWN']]) {
+    const card = project(direct, true);
+    assert.ok(card.blockers.includes(`GITHUB_CHECKS_${expected}`));
+    assert.equal(card.proofTruth, 'UNKNOWN');
+  }
+  assert.ok(project('passed', false).blockers.includes('GITHUB_CHECKS_FAILED'),
+    'legacy fallback keeps failed historical workflow conservatism');
+  const headless = project('passed', true, '');
+  assert.ok(headless.blockers.includes('GITHUB_CHECKS_UNKNOWN'));
+  assert.ok(headless.blockers.includes('GITHUB_HEAD_UNKNOWN'));
+  assert.equal(headless.proofTruth, 'UNKNOWN');
+});

@@ -145,15 +145,17 @@ function workflowChecksStatus(pr = {}, workflows = []) {
 
 function effectiveChecksStatus(pr = {}, workflows = []) {
   const direct = text(pr.checksStatus, 'unknown').toLowerCase();
+  // An exact-head check rollup outranks stale workflow summaries; invalid
+  // or partial batches remain UNKNOWN and never inherit a historical green.
+  if (pr.checkBatchObserved === true) {
+    if (direct === 'failed' || direct === 'pending') return direct;
+    return exactPrHead(pr) && direct === 'passed' ? 'passed' : 'unknown';
+  }
   const fromWorkflows = workflowChecksStatus(pr, workflows);
   if (direct === 'failed' || fromWorkflows === 'failed') return 'failed';
   if (direct === 'pending' || fromWorkflows === 'pending') return 'pending';
   if (!exactPrHead(pr)) return 'unknown';
   if (direct === 'passed') return 'passed';
-  // A received check-batch observation is authoritative about its own gaps.
-  // Older workflow summaries cannot erase rejected, empty, stale or partial
-  // rollup evidence. Legacy rows without a batch observation retain fallback.
-  if (pr.checkBatchObserved === true) return 'unknown';
   if (fromWorkflows === 'passed') return 'passed';
   return 'unknown';
 }
