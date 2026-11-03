@@ -203,3 +203,31 @@ test('fails closed on duplicate producer receipts and ambiguous receiver acknowl
  assert.equal(f([p]).status,'WAITING_FOR_PROOF');
  assert.equal(f([p,{...p},a]).blocked.length,2);
 });
+
+
+test('fails closed on a present but invalid receiver acknowledgement before producer deadline',()=>{
+ const p={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'bounded-producer-ack',
+  nextOwner:'original-merge-owner',nextAction:'consume-exact-review',
+  producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T13:00:00Z'};
+ const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',
+  producerReceiptRef:p.ref,prNumber:p.prNumber,issueNumber:p.issueNumber,
+  sourceHead:p.sourceHead,baseSha:p.baseSha,ref:'bounded-receiver-ack',
+  receiverOwner:p.nextOwner,nextAction:p.nextAction,acknowledgedAtUtc:'2026-11-03T12:10:00Z'};
+ const f=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T12:30:00Z',evidence});
+ assert.equal(f([p,ack]).status,'PASS');
+ assert.equal(f([p]).waitingForProof[0].kind,'handoff-awaiting-receiver-ack');
+ const cases=[
+  {prNumber:2094},{issueNumber:2670},{sourceHead:'c'.repeat(40)},
+  {baseSha:'d'.repeat(40)},{receiverOwner:'unrelated-owner'},
+  {nextAction:'wrong-action'},{ref:''},{acknowledgedAtUtc:'2026-11-03T11:59:59Z'},
+  {acknowledgedAtUtc:'2026-11-03T12:31:00Z'},
+  {acknowledgedAtUtc:'2026-11-03T13:00:01Z'},
+ ];
+ for(const altered of cases){
+  const briefing=f([p,{...ack,...altered}]);
+  assert.equal(briefing.status,'BLOCKED');
+  assert.equal(briefing.blocked[0].kind,'automation-debt-mismatched-receiver-ack');
+  assert.equal(briefing.waitingForProof.length,0);
+ }
+});

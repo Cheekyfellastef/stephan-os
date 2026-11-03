@@ -53,6 +53,11 @@ function handoffDebtFromEvidence(evidence,now){
     Number.isFinite(at)&&at>=madeAt&&at<=due&&at<=nowMs;
   });
   if(accepted)continue;
+  // A present but nonmatching ACK is a custody defect, not an outstanding handoff.
+  if(receiverAcks.length===1){
+   blocked.push({...item,kind:'automation-debt-mismatched-receiver-ack',
+    reason:'Receiver acknowledgement fails exact producer identity, owner, action or freshness binding.'});continue;
+  }
   const overdue=nowMs>due;
   (overdue?blocked:waiting).push({...item,
    kind:overdue?'automation-debt-stale-handoff':'handoff-awaiting-receiver-ack',
