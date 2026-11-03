@@ -33,6 +33,8 @@ function boundedErrors(value) {
 }
 
 export function sanitizeSpatialWorkspaceTelemetryV1(input = {}) {
+  // A numeric/boolean run ID must not become valid provenance by string coercion.
+  if (typeof input.runId !== 'string') throw new Error('SPATIAL_TELEMETRY_RUN_ID_INVALID');
   const runId = text(input.runId).toLowerCase();
   const phase = text(input.phase).toLowerCase();
   const observedAtUtc = iso(input.observedAtUtc);
@@ -52,7 +54,12 @@ export function sanitizeSpatialWorkspaceTelemetryV1(input = {}) {
     sequence: integer(input.sequence, 0, 1000000),
     observedAtUtc,
     sourceHead: /^[0-9a-f]{40}$/i.test(text(input.sourceHead)) ? text(input.sourceHead).toLowerCase() : '',
-    rendererSourceHead: /^[0-9a-f]{40}$/i.test(text(input.rendererSourceHead)) ? text(input.rendererSourceHead).toLowerCase() : '',
+    // True legacy omission is distinct from an explicitly supplied bad head.
+    // Preserve the field when supplied, even if its value normalizes to blank.
+    ...(Object.hasOwn(input, 'rendererSourceHead') ? {
+      rendererSourceHead: /^[0-9a-f]{40}$/i.test(text(input.rendererSourceHead))
+        ? text(input.rendererSourceHead).toLowerCase() : '',
+    } : {}),
     device: text(input.device, 'browser').slice(0, 80),
     route: text(input.route, 'Stephanos Spatial Workspace / WebXR').slice(0, 120),
     room: text(input.room, 'holodeck-starting-chamber').slice(0, 80),

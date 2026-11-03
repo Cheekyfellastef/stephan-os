@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
@@ -62,7 +63,7 @@ function m2() {
   return {
     schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
     requestId: 'forge-m2-runtime-ready-001', operation: 'INSTALL_FORGE_SHADOW_M2',
-    repository: 'Cheekyfellastef/stephan-os', issueNumber: 3149, branch: 'main',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: activeMailboxIssueForTest, branch: 'main',
     expectedHead: HEAD, forgejoVersion: '15.0.6', forgejoImageDigest: IMAGE,
     runtimeBoundary: 'podman-wsl-rootless', m2Only: true, state: 'DONE',
     acceptedAt: '2026-08-07T20:50:00Z', heartbeatAt: '2026-08-07T20:55:00Z',

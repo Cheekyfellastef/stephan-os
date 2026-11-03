@@ -45,8 +45,9 @@ test('boot daemon bootstrap remains exact-head, one-time elevated, and bounded',
     'utf8',
   );
   assert.match(source, /Start-Process[^\r\n]*-Verb RunAs[^\r\n]*-WindowStyle Hidden/);
-  assert.match(source, /SOVEREIGN_BOOT_DAEMON_TASKS_INSTALLED_AND_PROVEN/);
-  assert.match(source, /logonType -eq 'S4U'/);
+  assert.match(source, /SOVEREIGN_DAEMON_TASK_CONFIGURATION_VERIFIED/);
+  assert.match(source, /'InteractiveToken' \} else \{ 'S4U'/);
+  assert.match(source, /logonType -eq \$expectedLogonType/);
   assert.match(source, /standingElevatedTaskCreated = \$false/);
   assert.match(source, /arbitraryShellAllowed = \$false/);
   assert.match(source, /mergeAuthority = \$false/);
@@ -352,6 +353,7 @@ test('controller activity publication is fixed, canonical and payload-bound', ()
 test('capability pack 2 maps high-value Battle Bridge actions to fixed source-controlled executables', async () => {
   const cases = [
     ['battle-bridge-observe', /battle-bridge-observation\.mjs$/i, 10000],
+    ['diagnose-ignition', /sovereign-commander-ignition-diagnosis\.mjs$/i, 20000],
     ['meter-status', /sovereign-meter-status\.mjs$/i, 10000],
     ['controller-lane-status', /sovereign-controller-lane-status\.mjs$/i, 20000],
     ['visibility-snapshot', /sovereign-commander-visibility-snapshot\.mjs$/i, 30000],
@@ -783,6 +785,7 @@ test('real maintenance owner keeps typed reviewer pre-spawn HOLD without losing 
   for (const mode of ['throw', 'pre-spawn-error', 'post-spawn-error', 'null-close', 'signal-close']) {
     const guardian = startSovereignCommanderContinuousRepairGuardian({
       enabled: true, startDelayMs: 60_000, intervalMs: 60_000,
+      spawnImpl: () => assert.fail('review fixture uses its injected command transport'),
       setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl: () => {},
     });
     let launches = 0;
@@ -847,7 +850,8 @@ test('real maintenance owner keeps typed reviewer pre-spawn HOLD without losing 
 
 test('forged public reviewer denial cannot release unknown child custody', async () => {
   const guardian = startSovereignCommanderContinuousRepairGuardian({
-    enabled: true, setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl: () => {},
+    enabled: true, spawnImpl: () => assert.fail('forged result fixture must not spawn'),
+    setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl: () => {},
   });
   try {
     const command = { plan: { kind: 'fixed-process', processId: 'sovereign-windows-reviewer-calibration' } };

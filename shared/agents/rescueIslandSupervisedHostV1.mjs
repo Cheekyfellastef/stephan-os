@@ -2,6 +2,7 @@
 // Ordinary files and repeated observations are NOT hostile-writer containment.
 import { createHash } from 'node:crypto';
 import {observeIslandNativeTestHostV1} from './rescueIslandNativeTestProvisionV1.mjs';
+import { resolveRescueIslandNativeHostV1, observeRescueIslandNativeHostV1 } from './rescueIslandNativeHostLocationV1.mjs';
 import { spawnSync } from 'node:child_process';
 import { lstat, mkdir, open, readFile, readdir, realpath } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -293,8 +294,7 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
     worktreeRoot:join(estate,'worktrees'),receiptRoot:join(estate,'receipts')});
   const missionRoot=configuration.missionRoot||join(homedir(),'Documents','OpenClaw-Standalone','mission-runner','orchestrator');
   const seedRoot=configuration.seedRoot||join(homedir(),'.stephanos','seed-parallel');
-  const nativeHostPath=configuration.nativeHostPath||join(canonicalRoot,'src','windows','Stephanos.RescueIslandHost',
-    'bin','Release','net8.0-windows','Stephanos.RescueIslandHost.exe');
+  const nativeHostPath=configuration.nativeHostPath||resolveRescueIslandNativeHostV1(canonicalRoot);
   let active=null, savedPreservation=null;
   async function admissionInventory(scopeRoots=roots,scopeWorker=workerId) {
     const claimsRoot=join(scopeRoots.receiptRoot,'claims');
@@ -383,6 +383,9 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
       if(!active || !(await active.lock.verifyOwnership())
         || Object.keys(active.expected).some(key=>active.expected[key]!==expected[key]))
         held('ISLAND_HOST_OWNER_ADMISSION_CHANGED');
+      // The pre-existing internal test configuration can select its built smoke
+      // host. Production always uses and re-observes the fixed approved estate.
+      if(!configuration.nativeHostPath)observeRescueIslandNativeHostV1(canonicalRoot);
       nativePrincipal(nativeHostPath);
       const nativeTestHost=expected.needsNativeObserver?await observeIslandNativeTestHostV1(nativeHostPath):null;
       if(!(await physical(canonicalRoot)).isDirectory() || !inspectBattleBridgeGitTopology(canonicalRoot).ok

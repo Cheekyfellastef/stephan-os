@@ -7,7 +7,7 @@ import {
 } from '../../shared/agents/operatorMergeApprovalGate.mjs';
 import { projectCanonicalResourceIds } from '../../shared/agents/elasticBuildCapacityV1.mjs';
 import { evaluateOperatorLaneContainmentV1 } from '../../shared/agents/operatorLaneContainmentV1.mjs';
-import { projectGoalAdmissionRequiredTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
+import { projectGoalAdmissionRequiredTestsV1, projectPrimaryOwnerCommentReadRequirementV1, goalEstateCoversPrimaryOwnerCommentReadV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 
 export const GITHUB_GOAL_ADMISSION_SCHEMA = 'stephanos.github-goal-admission.v1';
 export const GITHUB_GOAL_ADMISSION_MARKER = 'stephanos-goal-admission-v1';
@@ -382,10 +382,12 @@ export async function closeGithubGoalIssue({
   return issue;
 }
 
-export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenProvider, fetchImpl = fetch, maxPages = 10, maxCommentPages = 10, maxEventPages = 10, priorGoalRecords = [], cacheEnabled, cacheTtlMs = GITHUB_GOAL_ESTATE_CACHE_TTL_MS, failureBackoffMs = GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS, requestTimeoutMs = GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS, nowMs = Date.now, workspaceRoot } = {}) {
+export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenProvider, fetchImpl = fetch, maxPages = 10, maxCommentPages = 10, maxEventPages = 10, priorGoalRecords = [], requiredPrimaryOwnerCommentIssueNumbers, cacheEnabled, cacheTtlMs = GITHUB_GOAL_ESTATE_CACHE_TTL_MS, failureBackoffMs = GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS, requestTimeoutMs = GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS, nowMs = Date.now, workspaceRoot } = {}) {
   const repository = `${asText(owner)}/${asText(repo)}`;
   if (!parseRepoSlug(repository).owner) return Object.freeze({ status: 'error', source: 'github-api', repository, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), recommendedNextAction: 'GitHub goal-estate repository identity is invalid.' });
 
+  const primaryRequirement = projectPrimaryOwnerCommentReadRequirementV1(requiredPrimaryOwnerCommentIssueNumbers);
+  if (!primaryRequirement.valid) return Object.freeze({ status: 'error', source: 'github-api', repository, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), reasonCode: 'PRIMARY_OWNER_READ_REQUIREMENT_INVALID' });
   const rawNowMs = Number(typeof nowMs === 'function' ? nowMs() : nowMs); const observedNowMs = Number.isFinite(rawNowMs) ? rawNowMs : Date.now();
   // All production goal discovery uses the same durable rate-limit HOLD as
   // dashboard telemetry, PR evidence and the gh observation broker. Injected
@@ -408,7 +410,8 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
   if (shouldUseCache) {
     const cached = githubGoalEstateCache.get(cacheKey); const cacheAgeMs = cached ? observedNowMs - cached.cachedAtMs : Number.POSITIVE_INFINITY;
     const ttl = cached?.failure ? boundedFailureBackoffMs : boundedCacheTtlMs;
-    if (cached && cacheAgeMs >= 0 && cacheAgeMs < ttl) return cached.result;
+    if (cached && cacheAgeMs >= 0 && cacheAgeMs < ttl
+        && (cached.failure || goalEstateCoversPrimaryOwnerCommentReadV1(cached.result, primaryRequirement, new Date(observedNowMs).toISOString()))) return cached.result;
   }
   const cacheFailure = (result) => { if (shouldUseCache) githubGoalEstateCache.set(cacheKey, { cachedAtMs: observedNowMs, result, failure: true }); return result; };
 
@@ -465,7 +468,7 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
   const goalDeadlineError = () => Object.assign(new Error('Goal estate deadline exceeded'), { code: 'GITHUB_GOAL_ESTATE_DEADLINE' });
   const inspectGoal = async (issue) => {
     const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt); if (!discovery) return; discoveredIssues.push(discovery);
-    const priorMirrorAdmission = trustedPriorGoalMirrorAdmission(
+    const priorMirrorAdmission = primaryRequirement.issueNumbers.includes(discovery.issueNumber) ? null : trustedPriorGoalMirrorAdmission(
       discovery,
       priorGoalRecords,
       owner,
@@ -566,7 +569,7 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
   }
   const deduped = [...new Map(issues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
   const dedupedDiscoveries = [...new Map(discoveredIssues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
-  const result = Object.freeze({ status: 'fetched', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze(deduped), discoveredIssues: Object.freeze(dedupedDiscoveries), retrievedAt, readOnly: true, admissionContractRequired: true, ownerAuthoredGoalsAutoAdmitted: false, admissionProofSources: Object.freeze(['OWNER_AUTHENTICATED_GOAL_LABEL_EVENT', 'OWNER_AUTHENTICATED_COMMENT', 'PRIOR_MIRROR_ADMISSION_REVALIDATED']), admissionReadFailureCount, admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA, mergeAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
+  const result = Object.freeze({ ...(primaryRequirement.requested ? { primaryOwnerCommentRequestIssueNumbers: primaryRequirement.issueNumbers } : {}), status: 'fetched', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze(deduped), discoveredIssues: Object.freeze(dedupedDiscoveries), retrievedAt, readOnly: true, admissionContractRequired: true, ownerAuthoredGoalsAutoAdmitted: false, admissionProofSources: Object.freeze(['OWNER_AUTHENTICATED_GOAL_LABEL_EVENT', 'OWNER_AUTHENTICATED_COMMENT', 'PRIOR_MIRROR_ADMISSION_REVALIDATED']), admissionReadFailureCount, admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA, mergeAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
   clearTimeout(observationTimer);
   if (shouldUseCache) githubGoalEstateCache.set(cacheKey, { cachedAtMs: observedNowMs, result, failure: false }); return result;
 }

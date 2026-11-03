@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { buildAgentRegistry } from './agentRegistry.mjs';
 import { adjudicateAgents } from './agentAdjudicator.mjs';
 import { buildFinalAgentView } from './finalAgentView.mjs';
-import { buildAgentSurfaceProjection, resolveAgentSurfaceMode } from './agentSurfaceProjection.mjs';
+import { buildAgentSurfaceProjection, resolveAgentSurfaceMode, resolveWorkspaceBoundSurfaceMode } from './agentSurfaceProjection.mjs';
 
 function buildBaseContext() {
   return {
@@ -439,4 +439,14 @@ test('local-desktop keeps write/build execution approval-gated', () => {
   const executionEntry = adjudicated.approvalQueue.find((entry) => entry.taskId === 'task-execute');
   assert.equal(executionEntry.approvalState, 'pending');
   assert.equal(executionEntry.classification, 'approval-required-action');
+});
+
+test('Flywheel identity survives query loss without hijacking other workspace routes', () => {
+  for (const surface of ['', 'mission-control', 'agents', 'flywheel']) {
+    assert.equal(resolveWorkspaceBoundSurfaceMode(surface, 'flywheel'), 'flywheel');
+  }
+  assert.equal(resolveWorkspaceBoundSurfaceMode('', ''), 'mission-control');
+  assert.equal(resolveWorkspaceBoundSurfaceMode('agents', ''), 'agents');
+  assert.equal(resolveWorkspaceBoundSurfaceMode('cockpit', 'cockpit'), 'cockpit');
+  assert.equal(resolveWorkspaceBoundSurfaceMode('', 'unknown'), 'mission-control');
 });
