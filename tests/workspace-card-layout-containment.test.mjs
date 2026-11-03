@@ -119,6 +119,7 @@ function boundInputs({ admission, fixtureContract, assetManifest } = {}) {
     blocked('qualified asset and fixture inventories required');
   const prefix = admission.pathname.slice(0, admission.pathname.lastIndexOf('/') + 1);
   const assetPaths = new Set([admission.pathname, prefix + 'stephanos-build.json']);
+  const assetDigests = new Map();
   for (const asset of assetManifest.assets) {
     if (!asset || typeof asset.pathname !== 'string'
       || new URL(asset.pathname, origin).pathname !== asset.pathname
@@ -127,6 +128,7 @@ function boundInputs({ admission, fixtureContract, assetManifest } = {}) {
       || !/^[a-f0-9]{64}$/i.test(asset.sha256 || '') || assetPaths.has(asset.pathname))
       blocked('invalid or duplicate asset binding');
     assetPaths.add(asset.pathname);
+    assetDigests.set(asset.pathname, asset.sha256.toLowerCase());
   }
   const responses = new Map();
   if (fixtureContract.responses.length > 2) blocked('fixture route scope widened');
@@ -152,7 +154,7 @@ function boundInputs({ admission, fixtureContract, assetManifest } = {}) {
   }
   return { resourceId: admission.resourceId, sourceHead: admission.sourceHead,
     sourceFingerprint: admission.sourceFingerprint, origin: origin.origin,
-    pathname: admission.pathname, expires, assetPaths, responses,
+    pathname: admission.pathname, expires, assetPaths, assetDigests, responses,
     fixtureContractId: fixtureContract.id, browserLaunchId: admission.browserLaunchId };
 }
 
@@ -163,7 +165,7 @@ function boundInputs({ admission, fixtureContract, assetManifest } = {}) {
  * A fresh context blocks service workers and installs HTTP AND WebSocket routing
  * before any page exists. No browser/server startup or navigation occurs here.
  */
-async function fulfillOwnedAssetWithoutRedirects(route, blockedRequests = []) {
+async function fulfillOwnedAssetWithoutRedirects(route, blockedRequests = [], expectedSha256 = '') {
   const deny = async code => {
     if (Array.isArray(blockedRequests)) blockedRequests.push({ kind: code });
     if (typeof route?.abort === 'function') {
@@ -190,8 +192,25 @@ async function fulfillOwnedAssetWithoutRedirects(route, blockedRequests = []) {
   // would let the browser follow without re-entering the original route.
   if (status >= 300 && status < 400) return deny('OWNED_ASSET_REDIRECT');
   if (status !== 200) return deny('OWNED_ASSET_STATUS_UNQUALIFIED');
+  let verifiedBody = null;
+  if (expectedSha256) {
+    if (!/^[a-f0-9]{64}$/i.test(expectedSha256))
+      return deny('OWNED_ASSET_SHA256_INVALID');
+    if (typeof response?.body !== 'function')
+      return deny('OWNED_ASSET_BODY_UNAVAILABLE');
+    try {
+      verifiedBody = await response.body();
+    } catch {
+      return deny('OWNED_ASSET_BODY_UNAVAILABLE');
+    }
+    if (!Buffer.isBuffer(verifiedBody))
+      return deny('OWNED_ASSET_BODY_UNAVAILABLE');
+    const observedSha256 = createHash('sha256').update(verifiedBody).digest('hex');
+    if (observedSha256 !== expectedSha256.toLowerCase())
+      return deny('OWNED_ASSET_SHA256_MISMATCH');
+  }
   try {
-    await route.fulfill({ response });
+    await route.fulfill(verifiedBody === null ? { response } : { response, body: verifiedBody });
   } catch {
     return deny('OWNED_ASSET_FULFILL_FAILED');
   }
@@ -231,7 +250,9 @@ export async function prepareAdmittedCardLayoutContext(browser, inputs) {
             && CARD_LAYOUT_SURFACES.some(value => value.surface === url.searchParams.get('surface'))
           : !url.search)) {
         try {
-          await fulfillOwnedAssetWithoutRedirects(route, blockedRequests);
+          await fulfillOwnedAssetWithoutRedirects(
+            route, blockedRequests, binding.assetDigests.get(url.pathname) || '',
+          );
         } catch (error) {
           await context.close(); // Only this independently owned QA context.
           throw error;
@@ -403,13 +424,25 @@ test('an arbitrary existing page is not a guarded actual-app proof target', asyn
 });
 
 
-function ownedAssetRouteFixture({ status = 200, location = '', missing = '', throws = '' } = {}) {
-  const calls = { fetch: 0, fulfill: 0, abort: 0, continue: 0, forbiddenAttachment: 0 };
-  const response = { status: () => {
-    if (throws === 'status') throw new Error('status unavailable');
-    return status;
-  } };
+function ownedAssetRouteFixture({
+  status = 200, location = '', missing = '', throws = '', body = Buffer.from('OWNED_ASSET_OK'),
+} = {}) {
+  const calls = {
+    fetch: 0, fulfill: 0, abort: 0, continue: 0, forbiddenAttachment: 0, bodyReads: 0,
+  };
+  const response = {
+    status: () => {
+      if (throws === 'status') throw new Error('status unavailable');
+      return status;
+    },
+    body: async () => {
+      calls.bodyReads += 1;
+      if (throws === 'body') throw new Error('body unavailable');
+      return body;
+    },
+  };
   if (missing === 'status') delete response.status;
+  if (missing === 'body') delete response.body;
   const route = {
     fetch: async options => {
       calls.fetch += 1;
@@ -421,6 +454,7 @@ function ownedAssetRouteFixture({ status = 200, location = '', missing = '', thr
     fulfill: async options => {
       calls.fulfill += 1;
       calls.fulfilled = options.response;
+      calls.fulfilledBody = options.body;
       if (throws === 'fulfill') throw new Error('fulfill failed');
       if (status >= 300 && status < 400 && location) calls.forbiddenAttachment += 1;
     },
@@ -433,7 +467,7 @@ function ownedAssetRouteFixture({ status = 200, location = '', missing = '', thr
       if (location) calls.forbiddenAttachment += 1;
     },
   };
-  if (missing && missing !== 'status') delete route[missing];
+  if (missing && !['status', 'body'].includes(missing)) delete route[missing];
   return { route, response, calls };
 }
 const assetBlocked = error => error.code === 'CARD_LAYOUT_BROWSER_PROOF_NOT_RUN_BLOCKED';
@@ -463,6 +497,36 @@ test('ordinary owned200 fetch disables redirects and fulfills only that response
   assert.equal(calls.abort, 0);
   assert.equal(calls.continue, 0);
 });
+test('manifest-listed owned asset verifies exact bytes before browser fulfillment', async () => {
+  const body = Buffer.from('MANIFEST_BOUND_ASSET');
+  const expectedSha256 = createHash('sha256').update(body).digest('hex');
+  const { route, response, calls } = ownedAssetRouteFixture({ body });
+  assert.deepEqual(await fulfillOwnedAssetWithoutRedirects(route, [], expectedSha256),
+    { state: 'OWNED_ASSET_FULFILLED_WITHOUT_REDIRECT', status: 200 });
+  assert.equal(calls.bodyReads, 1);
+  assert.equal(calls.fulfilled, response);
+  assert.deepEqual(calls.fulfilledBody, body);
+  assert.equal(calls.fulfill, 1);
+  assert.equal(calls.abort, 0);
+});
+
+test('manifest-listed owned asset rejects changed or unreadable bytes before fulfillment', async () => {
+  const expectedSha256 = createHash('sha256').update(Buffer.from('EXPECTED_ASSET')).digest('hex');
+  for (const scenario of [
+    { body: Buffer.from('ALTERED_ASSET'), code: 'OWNED_ASSET_SHA256_MISMATCH' },
+    { missing: 'body', code: 'OWNED_ASSET_BODY_UNAVAILABLE' },
+    { throws: 'body', code: 'OWNED_ASSET_BODY_UNAVAILABLE' },
+  ]) {
+    const { route, calls } = ownedAssetRouteFixture(scenario);
+    const blockedRequests = [];
+    await assert.rejects(fulfillOwnedAssetWithoutRedirects(route, blockedRequests, expectedSha256),
+      assetBlocked);
+    assert.equal(calls.fulfill, 0);
+    assert.equal(calls.abort, 1);
+    assert.deepEqual(blockedRequests, [{ kind: scenario.code }]);
+  }
+});
+
 test('missing owned-asset capabilities fail before any network fetch', async () => {
   for (const missing of ['fetch', 'fulfill', 'abort']) {
     const { route, calls } = ownedAssetRouteFixture({ missing });
