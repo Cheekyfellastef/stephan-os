@@ -338,11 +338,15 @@ test('application frame-time readiness requires measured average and p95 from th
   assert.equal(measured.telemetryRequirements.find((entry) => entry.id === 'application-frame-time').available, true);
 });
 
-test('long-session drift is not ready without measured duration and a completed verdict', async () => {
+test('long-session drift stays unavailable until the canonical diagnosis producer owns its fields', async () => {
+  const producer = await readFile(new URL('./windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url), 'utf8');
+  assert.doesNotMatch(producer, /runtimeSeconds\s*=/);
+  assert.doesNotMatch(producer, /longSessionDriftVerdict\s*=/);
+
   const project = (metrics) => buildStarfieldVrProjectPerformanceLoop({
     repoRoot, runIdentity: identity, diagnosis: { focus: 'FRAME_TIME_PROOF', signals: [] }, metrics,
   });
-  const unavailable = [
+  const callerInputs = [
     {},
     { runtimeSeconds: 1800 },
     { longSessionDriftVerdict: 'STABLE' },
@@ -355,16 +359,15 @@ test('long-session drift is not ready without measured duration and a completed 
     { runtimeSeconds: 1800, longSessionDriftVerdict: 'UNAVAILABLE' },
     { runtimeSeconds: 1800, longSessionDriftVerdict: 'PENDING' },
     { runtimeSeconds: 1800, longSessionDriftVerdict: {} },
+    { runtimeSeconds: 1800, longSessionDriftVerdict: 'STABLE' },
   ];
-  for (const metrics of unavailable) {
+  for (const metrics of callerInputs) {
     const loop = await project(metrics);
     const entry = loop.telemetryRequirements.find((item) => item.id === 'long-session-drift');
     assert.equal(entry.available, false, JSON.stringify(metrics));
     assert.ok(loop.missingTelemetry.some((item) => item.id === 'long-session-drift'));
     assert.equal(loop.authority.automaticRuntimeMutation, false);
   }
-  const observed = await project({ runtimeSeconds: 1800, longSessionDriftVerdict: 'STABLE' });
-  assert.equal(observed.telemetryRequirements.find((item) => item.id === 'long-session-drift').available, true);
 });
 
 test('measured low game-drive capacity takes canonical advisory storage priority over generic VR techniques', async () => {
