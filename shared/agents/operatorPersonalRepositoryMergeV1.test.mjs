@@ -1918,6 +1918,57 @@ test('GitHub BLOCKED state still requires exact green check bindings', () => {
   assert.ok(failed.blockers.includes('personal-repository-check-run-not-exact-green'));
 });
 
+test('Control Tower PR request-build skip requires same-run green contract-test', () => {
+  const run = {
+    ...workflowRuns()[0],
+    id: 9917,
+    check_suite_id: 8917,
+    name: 'Stephanos Control Tower - Sovereign Control',
+    path: repository + '/.github/workflows/stephanos-control-tower-build.yml@refs/heads/' + branch,
+    event: 'pull_request',
+    status: 'completed',
+    conclusion: 'success',
+  };
+  const contract = checkRun(run, { id: 9918, name: 'contract-test', conclusion: 'success' });
+  const skipped = checkRun(run, { id: 9919, name: 'request-build', conclusion: 'skipped' });
+  const checks = [contract, skipped];
+  const admitted = validatePersonalRepositoryCheckRuns(checks, [run], [], expectedEvidence);
+  assert.equal(admitted.valid, true, JSON.stringify(admitted.blockers));
+  assert.equal(admitted.evidence[1].disposition, 'pr-control-tower-build-not-requested');
+  for (const mutation of [
+    { event: 'push' }, { event: 'workflow_dispatch' }, { event: 'pull_request_target' },
+    { name: 'Unknown Control Tower' }, { path: '.github/workflows/other.yml' },
+    { status: 'in_progress' }, { conclusion: 'failure' }, { pull_requests: [] },
+  ]) {
+    const altered = { ...run, ...mutation };
+    const result = validatePersonalRepositoryCheckRuns(
+      [checkRun(altered, { id: 9918, name: 'contract-test', conclusion: 'success' }),
+       checkRun(altered, { id: 9919, name: 'request-build', conclusion: 'skipped' })],
+      [altered], [], expectedEvidence,
+    );
+    assert.equal(result.valid, false, JSON.stringify(mutation));
+  }
+  for (const bad of [
+    { name: 'unknown-job' }, { conclusion: 'failure' }, { status: 'queued' },
+    { head_sha: 'f'.repeat(40) }, { check_suite: { id: 9999 } },
+  ]) {
+    const result = validatePersonalRepositoryCheckRuns(
+      [contract, { ...skipped, ...bad }], [run], [], expectedEvidence,
+    );
+    assert.equal(result.valid, false, JSON.stringify(bad));
+  }
+  for (const badContract of [
+    { conclusion: 'failure' }, { conclusion: 'skipped' },
+    { status: 'queued' }, { name: 'not-contract-test' },
+  ]) {
+    const result = validatePersonalRepositoryCheckRuns(
+      [{ ...contract, ...badContract }, skipped], [run], [], expectedEvidence,
+    );
+    assert.equal(result.valid, false, JSON.stringify(badContract));
+  }
+  assert.equal(validatePersonalRepositoryCheckRuns([skipped], [run], [], expectedEvidence).valid, false);
+});
+
 test('a successful exact PR build does not require the intentionally excluded live Pages deployment', () => {
   const buildRun = { ...workflowRuns().find((run) => run.name === 'Build Stephanos UI'), head_branch: branch };
   const checks = [checkRun(buildRun, { id: 9401, name: 'build', conclusion: 'success' }),
