@@ -311,8 +311,8 @@ function isTestOrDocumentation(path) {
   // the reviewed three-file trust boundary. Exact tests/docs stay inert.
   if (path.startsWith('src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/')) {
     return NO_RUNTIME_EXACT.has(path)
-      || /(?:^|\\/)[^/]+\\.(?:test|spec)\\.(?:c?js|mjs|jsx|ts|tsx)$/i.test(path)
-      || /\\.(?:md|mdx)$/i.test(path);
+      || /(?:^|\/)[^/]+\.(?:test|spec)\.(?:c?js|mjs|jsx|ts|tsx)$/i.test(path)
+      || /\.(?:md|mdx)$/i.test(path);
   }
   return NO_RUNTIME_EXACT.has(path)
     || NO_RUNTIME_PREFIXES.some((prefix) => path.startsWith(prefix))
