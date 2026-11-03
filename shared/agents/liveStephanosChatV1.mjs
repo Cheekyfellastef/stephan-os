@@ -118,7 +118,7 @@ export function createLiveStephanosChatResponse(input = {}) {
     goalId: context.missionOperations.currentGoal,
     nextAction: context.missionOperations.nextAction || context.orchestrator.nextAction,
     blocker: context.missionOperations.blocker || context.orchestrator.blocker || '',
-    facts: context.projectIntelligence.facts || [],
+    facts: context.projectIntelligence.provenFacts || context.projectIntelligence.facts || [],
     hypotheses: context.projectIntelligence.hypotheses || [],
     finalVerdict: 'LIVE_STEPHANOS_CHAT_RESPONSE_READY',
   };

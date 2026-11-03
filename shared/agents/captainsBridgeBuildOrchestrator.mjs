@@ -18,19 +18,32 @@ function list(value) {
   return Array.isArray(value) ? value.filter(Boolean) : [];
 }
 
-function normalizedPrState(lane = {}) {
-  return text(lane.prState || lane.pullRequestState || lane.pullRequest?.state || lane.pr?.state || lane.githubPrEvidence?.prState || lane.githubPrEvidence?.state || lane.stateEvidence?.prState || lane.stateEvidence?.state, '').toLowerCase();
+function prOpenEvidence(lane = {}) {
+  // PR status is distinct from build-lane status (running/dispatched). A terminal
+  // state from any PR authority source vetoes stale boolean OPEN hints.
+  const raw = [lane.prState, lane.pullRequestState, lane.pullRequest?.state, lane.pr?.state,
+    lane.githubPrEvidence?.prState, lane.githubPrEvidence?.state,
+    lane.stateEvidence?.prState, lane.stateEvidence?.state, lane.state];
+  const states = raw.map(value => text(value).toLowerCase())
+    .filter(value => ['open', 'closed', 'merged'].includes(value));
+  const hints = [lane.prOpen, lane.pullRequest?.isOpen, lane.pr?.isOpen];
+  const terminal = states.find(value => value === 'closed' || value === 'merged') || '';
+  return {
+    state: terminal || states[0] || '',
+    open: !terminal && !hints.includes(false) &&
+      (states.includes('open') || hints.includes(true)),
+    missing: states.length === 0 && !hints.includes(true) && !hints.includes(false),
+  };
 }
 
 function hasExplicitOpenPrEvidence(lane = {}) {
-  const state = normalizedPrState(lane);
-  return state === 'open' || lane.prOpen === true || lane.pullRequest?.isOpen === true || lane.pr?.isOpen === true;
+  return prOpenEvidence(lane).open;
 }
 
 function prOpenStateBlocker(lane = {}) {
-  const state = normalizedPrState(lane);
-  if (!state && lane.prOpen !== true && lane.pullRequest?.isOpen !== true && lane.pr?.isOpen !== true) return 'Active implementation PR state is missing; explicit open-state proof is required before claiming implementation in progress.';
-  return `Active implementation PR state is ${state || 'unknown'}; only explicit open-state proof may count as active implementation evidence.`;
+  const evidence = prOpenEvidence(lane);
+  if (evidence.missing) return 'Active implementation PR state is missing; explicit open-state proof is required before claiming implementation in progress.';
+  return `Active implementation PR state is ${evidence.state || 'unknown'}; only explicit open-state proof may count as active implementation evidence.`;
 }
 
 function goalId(value = {}) {

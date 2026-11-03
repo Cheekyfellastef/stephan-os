@@ -10,7 +10,8 @@ test('AI candidate hints default to unverified unless valid source URL exists', 
 
 test('unverified candidates show badge and hide direct Spotify open/embed', () => {
   assert.match(js, /AI suggestion · unverified/);
-  assert.match(js, /const hasPlayableSpotifyTrack = verifiedCandidate && spotifyRef\.valid && spotifyRef\.type === 'track';/);
+  assert.match(js, /const hasPlayableSpotifyTrack = verifiedCandidate && hasReachableSpotifyTrack;/);
+  assert.match(js, /hasReachableSpotifyTrack = spotifyRef\.valid && spotifyRef\.type === 'track' && \(verifiedCandidate \|\| hasValidatedCatalogLink\)/);
 });
 
 test('candidate controls include search links and not found flow', () => {

@@ -1,0 +1,1108 @@
+import { createHash, randomUUID } from 'node:crypto';
+
+import {
+  FORGE_SHADOW_M3_RUNTIME_READY,
+  FORGE_SHADOW_M3_RUNTIME_RECEIPT_SCHEMA,
+  planForgeShadowM3RunnerRuntime,
+} from './forgeShadowM3RunnerRuntimePlanV1.mjs';
+
+const SHA40 = /^[0-9a-f]{40}$/;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+const DIGEST = /^sha256:[0-9a-f]{64}$/;
+const SEMVER = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{7,127}$/i;
+const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
+const PROOF_REF = /^proofs\/forge-shadow-m3\/[a-z0-9][a-z0-9._:-]{2,127}\/[0-9a-f]{64}\.json$/i;
+const QUARANTINE_PROOF_REF = /^proofs\/forge-shadow-m3-quarantine\/[a-z0-9][a-z0-9._:-]{7,127}\/[a-z0-9][a-z0-9._:-]{7,127}\/[a-z0-9][a-z0-9._:-]{7,127}\/[0-9a-f]{64}\.json$/i;
+const MAX_AUTHORIZATION_MS = 2 * 60 * 60 * 1000;
+const MAX_RUNNER_EXECUTION_MS = 60 * 60 * 1000;
+const MAX_RUNNER_TEARDOWN_MS = 300 * 1000;
+const MAX_RUNNER_PROOF_REFS = 8;
+const MAX_RECEIPT_PROOF_REFS = 16;
+const TEARDOWN_QUARANTINE_REASON = 'TEARDOWN_POLICY_VIOLATION';
+const CANONICAL_RUNNER_IDENTITIES = Object.freeze([
+  'stephanos-forge-linux-runner-01',
+  'stephanos-forge-windows-proof-runner-01',
+]);
+
+export const FORGE_SHADOW_M3_EXECUTION_ADAPTER_SCHEMA =
+  'stephanos.forge-shadow-m3-runner-execution-adapter.v1';
+export const FORGE_SHADOW_M3_EXECUTION_OBSERVATION_SCHEMA =
+  'stephanos.forge-shadow-m3-runner-execution-observation.v1';
+export const FORGE_SHADOW_M3_RUNTIME_AUTHORIZATION_SCHEMA =
+  'stephanos.forge-shadow-m3-runner-runtime-authorization.v1';
+export const FORGE_SHADOW_M3_OPERATOR_APPROVAL_SCHEMA =
+  'stephanos.forge-shadow-m3-operator-approval-receipt.v1';
+export const FORGE_SHADOW_M3_OPERATOR_APPROVAL_VERIFICATION_SCHEMA =
+  'stephanos.forge-shadow-m3-operator-approval-verification.v1';
+export const FORGE_SHADOW_M3_AUTHORIZATION_RESERVATION_SCHEMA =
+  'stephanos.forge-shadow-m3-authorization-reservation.v1';
+export const FORGE_SHADOW_M3_TERMINATION_ACK_SCHEMA =
+  'stephanos.forge-shadow-m3-runner-termination-acknowledgement.v1';
+export const FORGE_SHADOW_M3_EXECUTION_READY = 'FORGE_SHADOW_M3_RUNNER_RUNTIME_READY';
+export const FORGE_SHADOW_M3_EXECUTION_PROVEN = 'FORGE_SHADOW_M3_RUNNER_CONSTRUCTION_PROVEN';
+export const FORGE_SHADOW_M3_EXECUTION_BLOCKED = 'FORGE_SHADOW_M3_RUNNER_EXECUTION_BLOCKED';
+export const FORGE_SHADOW_M3_EXECUTION_SURFACE = 'CONNECTED_WINDOWS_BATTLE_BRIDGE';
+export const FORGE_SHADOW_M3_CANARY_WORKFLOW = 'forge-shadow-m3-isolation-canary-v1';
+export const FORGE_SHADOW_M3_CANARY_SCENARIO = 'EXACT_HEAD_ISOLATION_AND_TEARDOWN';
+
+const INPUT_KEYS = ['runtimePlanInput', 'runtimeAuthorization'];
+const AUTHORIZATION_KEYS = [
+  'schemaVersion', 'authorizationId', 'repository', 'expectedHead', 'expectedTree',
+  'runtimePlanDigest', 'issuedAtUtc', 'expiresAtUtc', 'executionSurface',
+  'approvalReceipt', 'm3Only',
+];
+const APPROVAL_KEYS = [
+  'schemaVersion', 'issuer', 'decision', 'proofRef', 'repository', 'expectedHead',
+  'expectedTree', 'runtimePlanDigest', 'authorizationId', 'executionSurface',
+  'issuedAtUtc', 'expiresAtUtc', 'payloadSha256',
+];
+const APPROVAL_VERIFICATION_KEYS = [
+  'schemaVersion', 'verifierId', 'verified', 'proofRef', 'approvalPayloadSha256',
+  'authorizationId', 'repository', 'expectedHead', 'expectedTree',
+  'runtimePlanDigest', 'executionSurface', 'verifiedAtUtc',
+];
+const AUTHORIZATION_RESERVATION_KEYS = [
+  'schemaVersion', 'reserverId', 'reservationId', 'reserved', 'authorizationId',
+  'receiptId', 'approvalPayloadSha256', 'repository', 'expectedHead', 'expectedTree',
+  'runtimePlanDigest', 'reservedAtUtc',
+];
+const OBSERVATION_KEYS = [
+  'schemaVersion', 'authorizationId', 'invocationId', 'runnerId', 'poolId',
+  'runnerClass', 'runtimeBoundary',
+  'forgeService', 'forgeListener', 'registrationRepository', 'registrationScope',
+  'registrationMode', 'oneJobMode', 'registrationProofRef',
+  'sourceHead', 'sourceTree', 'artifactDigest', 'artifactSetDigest',
+  'startedAtUtc', 'teardownStartedAtUtc', 'teardownCompletedAtUtc', 'completedAtUtc',
+  'installed', 'registered', 'connected',
+  'ephemeralRegistration', 'canaryWorkflowId', 'canaryScenario', 'canaryHead',
+  'canaryTree', 'canarySucceeded', 'unregistered',
+  'registrationCredentialDestroyed', 'workspaceDestroyed', 'runtimeBoundaryDestroyed',
+  'zeroResidualRegistration', 'zeroResidualCredential', 'zeroResidualWorkspace',
+  'credentialLogged', 'credentialPersisted', 'publicExposure', 'tailscaleExposure',
+  'canonicalCheckoutMounted', 'containerSocketMounted', 'hostProcessAccess',
+  'sourceMutation', 'gitRefWrite', 'mergeAuthority', 'deploymentAuthority',
+  'arbitraryCommand', 'proofRefs',
+];
+const EXECUTION_RESULT_KEYS = ['observation', 'terminationAcknowledgement'];
+const TERMINATION_ACK_KEYS = [
+  'schemaVersion', 'authorizationId', 'invocationId', 'runnerId', 'terminated',
+  'teardownAcknowledged', 'acknowledgedAtUtc', 'quarantined',
+  'quarantineAcknowledged', 'quarantineReason', 'quarantineProofRef',
+];
+const RECEIPT_KEYS = [
+  'schemaVersion', 'receiptId', 'repository', 'sourceHead', 'sourceTree',
+  'artifactSetDigest', 'runnerIdentities', 'linuxReviewRunnerConnected',
+  'windowsProofRunnerConnected', 'teardownComplete', 'zeroResidualRegistration',
+  'zeroResidualCredential', 'zeroResidualWorkspace', 'canCarryRealWork',
+  'finalVerdict', 'completedAt', 'proofRefs', 'payloadSha256',
+];
+const RECEIPT_EXPECTATION_KEYS = [
+  'expectedRepository', 'expectedHead', 'expectedTree', 'expectedArtifactSetDigest',
+];
+const FORBIDDEN_FIELDS = new Set([
+  'command', 'commands', 'executable', 'args', 'arguments', 'shell', 'powershell',
+  'script', 'path', 'url', 'uri', 'environment', 'env', 'token', 'credential',
+  'credentials', 'cookie', 'session', 'password', 'secret', 'secrets', 'privatekey',
+  'publickey', 'dockerhost', 'podmansocket', 'dockersocket', 'registrationtoken',
+  'registrationkey', 'selector', 'javascript',
+]);
+const OPERATOR_APPROVAL_ISSUER = 'STEPHANOS_OPERATOR_APPROVAL_GATE';
+const OPERATOR_APPROVAL_DECISION = 'APPROVED';
+const OPERATOR_APPROVAL_VERIFIER = 'STEPHANOS_OPERATOR_APPROVAL_VERIFIER';
+const OPERATOR_AUTHORIZATION_RESERVER = 'STEPHANOS_OPERATOR_AUTHORIZATION_RESERVER';
+const APPROVAL_PROOF_REF = /^proofs\/operator-approvals\/[a-z0-9][a-z0-9._:-]{7,127}\/[0-9a-f]{64}\.json$/i;
+
+const text = (value) => String(value ?? '').trim();
+const unique = (values) => [...new Set(values)];
+
+function stable(value) {
+  if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sha256(value) {
+  return `sha256:${createHash('sha256').update(stable(value), 'utf8').digest('hex')}`;
+}
+
+function sha256Hex(value) {
+  return createHash('sha256').update(stable(value), 'utf8').digest('hex');
+}
+
+function exactKeys(value, expected) {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const actual = Reflect.ownKeys(value);
+    if (!actual.every((key) => typeof key === 'string')) return false;
+    const normalized = actual.sort();
+    const wanted = [...expected].sort();
+    return normalized.length === wanted.length
+      && normalized.every((key, index) => key === wanted[index]);
+  } catch {
+    return false;
+  }
+}
+
+function subsetKeys(value, allowed) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const actual = Reflect.ownKeys(value);
+  return actual.every((key) => typeof key === 'string' && allowed.includes(key));
+}
+
+function inertArraySnapshot(value) {
+  if (!Array.isArray(value) || !Number.isSafeInteger(value.length) || value.length > 1_024) {
+    throw new TypeError('array-snapshot-bound-invalid');
+  }
+  const snapshot = new Array(value.length);
+  for (const key of Reflect.ownKeys(value)) {
+    if (key === 'length') continue;
+    const field = value[key];
+    if (typeof field !== 'string') {
+      throw new TypeError('array-element-must-be-primitive-string');
+    }
+    Object.defineProperty(snapshot, key, {
+      value: field,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    });
+  }
+  return Object.freeze(snapshot);
+}
+
+function inertRecordSnapshot(value, { arrays = true, primitiveScalars = false } = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('record-required');
+  }
+  const keys = Reflect.ownKeys(value);
+  if (!keys.every((key) => typeof key === 'string')) {
+    throw new TypeError('record-symbol-key-invalid');
+  }
+  const snapshot = {};
+  for (const key of keys) {
+    const field = value[key];
+    if (arrays && Array.isArray(field)) {
+      snapshot[key] = inertArraySnapshot(field);
+      continue;
+    }
+    if (primitiveScalars && field !== null
+        && !['string', 'number', 'boolean', 'undefined'].includes(typeof field)) {
+      throw new TypeError('record-scalar-must-be-primitive');
+    }
+    snapshot[key] = field;
+  }
+  return Object.freeze(snapshot);
+}
+
+function inertDeepSnapshot(value, seen = new WeakSet()) {
+  if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) return value;
+  if (!value || typeof value !== 'object') {
+    throw new TypeError('inert-value-type-invalid');
+  }
+  if (Array.isArray(value)) return inertArraySnapshot(value);
+  if (seen.has(value)) throw new TypeError('inert-value-cycle-invalid');
+  seen.add(value);
+  const keys = Reflect.ownKeys(value);
+  if (!keys.every((key) => typeof key === 'string')) {
+    throw new TypeError('inert-record-symbol-key-invalid');
+  }
+  const snapshot = {};
+  for (const key of keys) snapshot[key] = inertDeepSnapshot(value[key], seen);
+  seen.delete(value);
+  return Object.freeze(snapshot);
+}
+
+function instant(value) {
+  const normalized = text(value);
+  const parsed = EXPLICIT_TIMEZONE.test(normalized) ? Date.parse(normalized) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function trustedNowMs(now) {
+  try {
+    const value = now();
+    return value instanceof Date ? value.getTime() : instant(value);
+  } catch {
+    return Number.NaN;
+  }
+}
+
+function findForbidden(value, trail = [], seen = new WeakSet()) {
+  try {
+    if (!value || typeof value !== 'object') return '';
+    if (seen.has(value)) return [...trail, 'cyclic-reference'].join('.');
+    seen.add(value);
+    for (const key of Reflect.ownKeys(value)) {
+      const keyText = typeof key === 'string' ? key : `[${String(key)}]`;
+      const next = [...trail, keyText];
+      if (typeof key !== 'string' || FORBIDDEN_FIELDS.has(key.toLowerCase())) {
+        return next.join('.');
+      }
+      if (Array.isArray(value) && key === 'length') continue;
+      const nested = value[key];
+      const found = findForbidden(nested, next, seen);
+      if (found) return found;
+    }
+    seen.delete(value);
+    return '';
+  } catch {
+    return [...trail, 'inspection-failed'].join('.');
+  }
+}
+
+function isDenseClosedWorldArray(value, minimum, maximum) {
+  if (!Array.isArray(value) || value.length < minimum || value.length > maximum) return false;
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.length !== value.length + 1 || !ownKeys.includes('length')) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (!ownKeys.includes(String(index)) || !Object.hasOwn(value, index)) return false;
+  }
+  return true;
+}
+
+function safeProofRefs(value, runnerId = '', maximum = MAX_RUNNER_PROOF_REFS) {
+  if (!isDenseClosedWorldArray(value, 1, maximum)) return null;
+  const refs = value.map(text);
+  if (new Set(refs).size !== refs.length) return null;
+  if (!refs.every((ref) => PROOF_REF.test(ref) && !ref.includes('..'))) return null;
+  if (runnerId && !refs.every((ref) => ref.startsWith(`proofs/forge-shadow-m3/${runnerId}/`))) return null;
+  return Object.freeze([...refs].sort());
+}
+
+function safeAggregateProofRefs(value) {
+  const refs = safeProofRefs(value, '', MAX_RECEIPT_PROOF_REFS);
+  if (!refs || !CANONICAL_RUNNER_IDENTITIES.every((runnerId) => (
+    refs.some((ref) => ref.startsWith(`proofs/forge-shadow-m3/${runnerId}/`))
+  ))) return null;
+  return refs;
+}
+
+function supportedRunnerEstate(plan) {
+  const identities = isDenseClosedWorldArray(plan?.runners, 2, 2)
+    ? plan.runners.map((runner) => text(runner?.runnerId)).sort()
+    : [];
+  return identities.length === 2
+    && identities[0] === 'stephanos-forge-linux-runner-01'
+    && identities[1] === 'stephanos-forge-windows-proof-runner-01';
+}
+
+function falseAuthority() {
+  return Object.freeze({
+    runtimeMutation: false,
+    futureExecution: false,
+    sourceMutation: false,
+    gitRefWrite: false,
+    githubCredentialAccess: false,
+    secretAccess: false,
+    merge: false,
+    deployment: false,
+    arbitraryCommand: false,
+  });
+}
+
+function blocked(blockers, runtimePlanDigest = '') {
+  return Object.freeze({
+    schemaVersion: FORGE_SHADOW_M3_EXECUTION_ADAPTER_SCHEMA,
+    ok: false,
+    finalVerdict: FORGE_SHADOW_M3_EXECUTION_BLOCKED,
+    blockers: Object.freeze(unique(blockers)),
+    runtimePlanDigest,
+    receipt: null,
+    authority: falseAuthority(),
+  });
+}
+
+export function buildForgeShadowM3RuntimePlanDigest(plan) {
+  return sha256(plan);
+}
+
+function validateApprovalReceipt(receipt, authorization, plan, planDigest, nowMs, blockers) {
+  if (!exactKeys(receipt, APPROVAL_KEYS)) {
+    blockers.push('operator-approval-fields-invalid');
+    return null;
+  }
+  const unsafe = findForbidden(receipt);
+  if (unsafe) blockers.push(`operator-approval-unsafe-field:${unsafe}`);
+  const issuedMs = instant(receipt.issuedAtUtc);
+  const expiresMs = instant(receipt.expiresAtUtc);
+  const { payloadSha256, ...body } = receipt;
+  if (receipt.schemaVersion !== FORGE_SHADOW_M3_OPERATOR_APPROVAL_SCHEMA) blockers.push('operator-approval-schema-invalid');
+  if (receipt.issuer !== OPERATOR_APPROVAL_ISSUER) blockers.push('operator-approval-issuer-invalid');
+  if (receipt.decision !== OPERATOR_APPROVAL_DECISION) blockers.push('operator-approval-decision-invalid');
+  if (!APPROVAL_PROOF_REF.test(text(receipt.proofRef))
+      || !text(receipt.proofRef).startsWith(`proofs/operator-approvals/${text(authorization.authorizationId)}/`)) blockers.push('operator-approval-proof-ref-invalid');
+  if (receipt.repository !== plan.repository) blockers.push('operator-approval-repository-mismatch');
+  if (text(receipt.expectedHead).toLowerCase() !== plan.canonicalMainHead) blockers.push('operator-approval-head-mismatch');
+  if (text(receipt.expectedTree).toLowerCase() !== plan.canonicalMainTree) blockers.push('operator-approval-tree-mismatch');
+  if (text(receipt.runtimePlanDigest).toLowerCase() !== planDigest) blockers.push('operator-approval-plan-digest-mismatch');
+  if (receipt.authorizationId !== authorization.authorizationId) blockers.push('operator-approval-authorization-mismatch');
+  if (receipt.executionSurface !== authorization.executionSurface) blockers.push('operator-approval-surface-mismatch');
+  if (!Number.isFinite(issuedMs) || !Number.isFinite(expiresMs)) blockers.push('operator-approval-time-invalid');
+  else {
+    if (issuedMs !== instant(authorization.issuedAtUtc) || expiresMs !== instant(authorization.expiresAtUtc)) blockers.push('operator-approval-window-mismatch');
+    if (nowMs < issuedMs) blockers.push('operator-approval-not-yet-valid');
+    if (nowMs >= expiresMs) blockers.push('operator-approval-expired');
+  }
+  if (!SHA256_HEX.test(text(payloadSha256).toLowerCase())
+      || sha256Hex(body) !== text(payloadSha256).toLowerCase()) blockers.push('operator-approval-content-digest-invalid');
+  return blockers.length ? null : Object.freeze({
+    issuer: receipt.issuer,
+    decision: receipt.decision,
+    proofRef: receipt.proofRef,
+    payloadSha256: text(payloadSha256).toLowerCase(),
+  });
+}
+
+function validateApprovalVerification(value, receipt, authorization, plan, planDigest, nowMs, blockers) {
+  if (!exactKeys(value, APPROVAL_VERIFICATION_KEYS)) {
+    blockers.push('operator-approval-verification-fields-invalid');
+    return null;
+  }
+  const verifiedAtMs = instant(value.verifiedAtUtc);
+  if (value.schemaVersion !== FORGE_SHADOW_M3_OPERATOR_APPROVAL_VERIFICATION_SCHEMA) {
+    blockers.push('operator-approval-verification-schema-invalid');
+  }
+  if (value.verifierId !== OPERATOR_APPROVAL_VERIFIER) blockers.push('operator-approval-verifier-invalid');
+  if (value.verified !== true) blockers.push('operator-approval-not-verified');
+  if (value.proofRef !== receipt.proofRef) blockers.push('operator-approval-verification-proof-ref-mismatch');
+  if (text(value.approvalPayloadSha256).toLowerCase() !== text(receipt.payloadSha256).toLowerCase()) {
+    blockers.push('operator-approval-verification-digest-mismatch');
+  }
+  if (value.authorizationId !== authorization.authorizationId) blockers.push('operator-approval-verification-authorization-mismatch');
+  if (value.repository !== plan.repository) blockers.push('operator-approval-verification-repository-mismatch');
+  if (text(value.expectedHead).toLowerCase() !== plan.canonicalMainHead) blockers.push('operator-approval-verification-head-mismatch');
+  if (text(value.expectedTree).toLowerCase() !== plan.canonicalMainTree) blockers.push('operator-approval-verification-tree-mismatch');
+  if (text(value.runtimePlanDigest).toLowerCase() !== planDigest) blockers.push('operator-approval-verification-plan-digest-mismatch');
+  if (value.executionSurface !== authorization.executionSurface) blockers.push('operator-approval-verification-surface-mismatch');
+  if (!Number.isFinite(verifiedAtMs)
+      || verifiedAtMs < instant(receipt.issuedAtUtc)
+      || verifiedAtMs > nowMs
+      || verifiedAtMs >= instant(receipt.expiresAtUtc)) {
+    blockers.push('operator-approval-verification-time-invalid');
+  }
+  return blockers.length ? null : Object.freeze({
+    verifierId: value.verifierId,
+    proofRef: value.proofRef,
+    approvalPayloadSha256: text(value.approvalPayloadSha256).toLowerCase(),
+    verifiedAtUtc: new Date(verifiedAtMs).toISOString(),
+  });
+}
+
+function validateAuthorizationReservation(value, receipt, authorization, plan, planDigest, nowMs, blockers) {
+  if (!exactKeys(value, AUTHORIZATION_RESERVATION_KEYS)) {
+    blockers.push('runtime-authorization-reservation-fields-invalid');
+    return null;
+  }
+  const reservedAtMs = instant(value.reservedAtUtc);
+  const expectedReceiptId = `forge-m3-runtime-${authorization.authorizationId}`;
+  if (value.schemaVersion !== FORGE_SHADOW_M3_AUTHORIZATION_RESERVATION_SCHEMA) blockers.push('runtime-authorization-reservation-schema-invalid');
+  if (value.reserverId !== OPERATOR_AUTHORIZATION_RESERVER) blockers.push('runtime-authorization-reserver-invalid');
+  if (!SAFE_ID.test(text(value.reservationId))) blockers.push('runtime-authorization-reservation-id-invalid');
+  if (value.reserved !== true) blockers.push('runtime-authorization-already-consumed');
+  if (value.authorizationId !== authorization.authorizationId) blockers.push('runtime-authorization-reservation-authorization-mismatch');
+  if (value.receiptId !== expectedReceiptId) blockers.push('runtime-authorization-reservation-receipt-mismatch');
+  if (text(value.approvalPayloadSha256).toLowerCase() !== text(receipt.payloadSha256).toLowerCase()) blockers.push('runtime-authorization-reservation-approval-mismatch');
+  if (value.repository !== plan.repository) blockers.push('runtime-authorization-reservation-repository-mismatch');
+  if (text(value.expectedHead).toLowerCase() !== plan.canonicalMainHead) blockers.push('runtime-authorization-reservation-head-mismatch');
+  if (text(value.expectedTree).toLowerCase() !== plan.canonicalMainTree) blockers.push('runtime-authorization-reservation-tree-mismatch');
+  if (text(value.runtimePlanDigest).toLowerCase() !== planDigest) blockers.push('runtime-authorization-reservation-plan-mismatch');
+  if (!Number.isFinite(reservedAtMs)
+      || reservedAtMs < instant(receipt.issuedAtUtc)
+      || reservedAtMs > nowMs
+      || reservedAtMs >= instant(receipt.expiresAtUtc)) blockers.push('runtime-authorization-reservation-time-invalid');
+  return blockers.length ? null : Object.freeze({
+    reservationId: value.reservationId,
+    reservedAtUtc: new Date(reservedAtMs).toISOString(),
+  });
+}
+
+function validateAuthorization(authorization, plan, planDigest, nowMs, blockers) {
+  if (!exactKeys(authorization, AUTHORIZATION_KEYS)) {
+    blockers.push('runtime-authorization-fields-invalid');
+    return null;
+  }
+  const unsafe = findForbidden(authorization);
+  if (unsafe) blockers.push(`runtime-authorization-unsafe-field:${unsafe}`);
+  const issuedMs = instant(authorization.issuedAtUtc);
+  const expiresMs = instant(authorization.expiresAtUtc);
+  if (authorization.schemaVersion !== FORGE_SHADOW_M3_RUNTIME_AUTHORIZATION_SCHEMA) blockers.push('runtime-authorization-schema-invalid');
+  if (!SAFE_ID.test(text(authorization.authorizationId))) blockers.push('runtime-authorization-id-invalid');
+  if (!SAFE_ID.test(`forge-m3-runtime-${text(authorization.authorizationId)}`)) blockers.push('runtime-authorization-receipt-id-invalid');
+  if (authorization.repository !== plan.repository) blockers.push('runtime-authorization-repository-mismatch');
+  if (text(authorization.expectedHead).toLowerCase() !== plan.canonicalMainHead) blockers.push('runtime-authorization-head-mismatch');
+  if (text(authorization.expectedTree).toLowerCase() !== plan.canonicalMainTree) blockers.push('runtime-authorization-tree-mismatch');
+  if (text(authorization.runtimePlanDigest).toLowerCase() !== planDigest) blockers.push('runtime-authorization-plan-digest-mismatch');
+  if (!Number.isFinite(issuedMs) || !Number.isFinite(expiresMs)) blockers.push('runtime-authorization-time-invalid');
+  else {
+    if (expiresMs <= issuedMs || expiresMs - issuedMs > MAX_AUTHORIZATION_MS) blockers.push('runtime-authorization-window-invalid');
+    if (nowMs < issuedMs) blockers.push('runtime-authorization-not-yet-valid');
+    if (nowMs >= expiresMs) blockers.push('runtime-authorization-expired');
+  }
+  if (authorization.executionSurface !== FORGE_SHADOW_M3_EXECUTION_SURFACE) blockers.push('runtime-authorization-surface-mismatch');
+  const approvalReceipt = validateApprovalReceipt(
+    authorization.approvalReceipt, authorization, plan, planDigest, nowMs, blockers,
+  );
+  if (authorization.m3Only !== true) blockers.push('runtime-authorization-m3-only-required');
+  return blockers.length ? null : Object.freeze({
+    authorizationId: text(authorization.authorizationId),
+    issuedAtUtc: new Date(issuedMs).toISOString(),
+    expiresAtUtc: new Date(expiresMs).toISOString(),
+    expiresMs,
+    approvalReceipt,
+  });
+}
+
+function validateObservation(
+  value, runner, artifact, plan, authorization, invocation, settledMs, lifecycle, blockers,
+) {
+  const initialBlockerCount = blockers.length;
+  const prefix = text(runner?.runnerId) || 'unknown-runner';
+  if (!exactKeys(value, OBSERVATION_KEYS)) {
+    blockers.push(`runner-observation-fields-invalid:${prefix}`);
+  }
+  value = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const unsafe = findForbidden(value);
+  if (unsafe) blockers.push(`runner-observation-unsafe-field:${prefix}:${unsafe}`);
+  const {
+    startedMs, teardownStartedMs, teardownCompletedMs, completedMs,
+  } = lifecycle;
+  const refs = safeProofRefs(value.proofRefs, prefix);
+  if (value.schemaVersion !== FORGE_SHADOW_M3_EXECUTION_OBSERVATION_SCHEMA) blockers.push(`runner-observation-schema-invalid:${prefix}`);
+  if (value.authorizationId !== authorization.authorizationId) blockers.push(`runner-authorization-identity-mismatch:${prefix}`);
+  if (value.invocationId !== invocation.invocationId) blockers.push(`runner-invocation-identity-mismatch:${prefix}`);
+  if (value.runnerId !== runner.runnerId || value.poolId !== runner.poolId || value.runnerClass !== runner.runnerClass) blockers.push(`runner-identity-mismatch:${prefix}`);
+  if (value.runtimeBoundary !== runner.runtimeBoundary) blockers.push(`runner-boundary-mismatch:${prefix}`);
+  if (value.forgeService !== runner.forgeService || value.forgeListener !== runner.forgeListener) blockers.push(`runner-forge-target-mismatch:${prefix}`);
+  if (value.registrationRepository !== plan.repository || value.registrationScope !== 'repository') blockers.push(`runner-registration-scope-mismatch:${prefix}`);
+  if (value.registrationMode !== runner.registrationMode || value.oneJobMode !== true) blockers.push(`runner-registration-mode-mismatch:${prefix}`);
+  if (text(value.sourceHead).toLowerCase() !== plan.canonicalMainHead) blockers.push(`runner-head-mismatch:${prefix}`);
+  if (text(value.sourceTree).toLowerCase() !== plan.canonicalMainTree) blockers.push(`runner-tree-mismatch:${prefix}`);
+  if (text(value.artifactDigest).toLowerCase() !== artifact.artifactDigest) blockers.push(`runner-artifact-mismatch:${prefix}`);
+  if (text(value.artifactSetDigest).toLowerCase() !== plan.artifactSetDigest) blockers.push(`runner-artifact-set-mismatch:${prefix}`);
+  if (!Number.isFinite(startedMs) || !Number.isFinite(completedMs)) blockers.push(`runner-time-invalid:${prefix}`);
+  else {
+    if (startedMs < invocation.startedMs
+        || completedMs > authorization.expiresMs
+        || completedMs > settledMs) blockers.push(`runner-time-outside-invocation:${prefix}`);
+    if (completedMs < startedMs || completedMs - startedMs > MAX_RUNNER_EXECUTION_MS) blockers.push(`runner-duration-invalid:${prefix}`);
+  }
+  const quarantineRequired = validateTeardownPolicy(value, lifecycle, prefix, blockers);
+  if (value.installed !== true || value.registered !== true || value.connected !== true) blockers.push(`runner-execution-incomplete:${prefix}`);
+  if (value.ephemeralRegistration !== true) blockers.push(`runner-registration-not-ephemeral:${prefix}`);
+  if (value.canaryWorkflowId !== FORGE_SHADOW_M3_CANARY_WORKFLOW || value.canaryScenario !== FORGE_SHADOW_M3_CANARY_SCENARIO) blockers.push(`runner-canary-identity-mismatch:${prefix}`);
+  if (text(value.canaryHead).toLowerCase() !== plan.canonicalMainHead || text(value.canaryTree).toLowerCase() !== plan.canonicalMainTree) blockers.push(`runner-canary-source-mismatch:${prefix}`);
+  if (value.canarySucceeded !== true) blockers.push(`runner-canary-failed:${prefix}`);
+  for (const field of [
+    'credentialLogged', 'credentialPersisted', 'publicExposure', 'tailscaleExposure',
+    'canonicalCheckoutMounted', 'containerSocketMounted', 'hostProcessAccess',
+    'sourceMutation', 'gitRefWrite', 'mergeAuthority', 'deploymentAuthority',
+    'arbitraryCommand',
+  ]) {
+    if (value[field] !== false) blockers.push(`runner-authority-invalid:${prefix}:${field}`);
+  }
+  if (!refs) blockers.push(`runner-proof-refs-invalid:${prefix}`);
+  if (!refs || !refs.includes(value.registrationProofRef)) blockers.push(`runner-registration-proof-ref-invalid:${prefix}`);
+  if (blockers.length !== initialBlockerCount) {
+    return Object.freeze({ observation: null, quarantineRequired });
+  }
+  const observation = Object.freeze({
+    runnerId: runner.runnerId,
+    poolId: runner.poolId,
+    runnerClass: runner.runnerClass,
+    runtimeBoundary: runner.runtimeBoundary,
+    forgeService: runner.forgeService,
+    forgeListener: runner.forgeListener,
+    registrationRepository: plan.repository,
+    registrationScope: 'repository',
+    registrationMode: runner.registrationMode,
+    oneJobMode: true,
+    registrationProofRef: value.registrationProofRef,
+    artifactDigest: artifact.artifactDigest,
+    startedAtUtc: new Date(startedMs).toISOString(),
+    teardownStartedAtUtc: new Date(teardownStartedMs).toISOString(),
+    teardownCompletedAtUtc: new Date(teardownCompletedMs).toISOString(),
+    completedAtUtc: new Date(completedMs).toISOString(),
+    installed: true,
+    registered: true,
+    connected: true,
+    ephemeralRegistration: true,
+    canarySucceeded: true,
+    unregistered: true,
+    registrationCredentialDestroyed: true,
+    workspaceDestroyed: true,
+    runtimeBoundaryDestroyed: true,
+    zeroResidualRegistration: true,
+    zeroResidualCredential: true,
+    zeroResidualWorkspace: true,
+    proofRefs: refs,
+  });
+  return Object.freeze({ observation, quarantineRequired });
+}
+
+function safelyObservedLifecycle(value, invocationStartedMs) {
+  const inspect = (field) => {
+    try {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return Number.NaN;
+      return instant(value[field]);
+    } catch {
+      return Number.NaN;
+    }
+  };
+  const lifecycle = Object.freeze({
+    startedMs: inspect('startedAtUtc'),
+    teardownStartedMs: inspect('teardownStartedAtUtc'),
+    teardownCompletedMs: inspect('teardownCompletedAtUtc'),
+    completedMs: inspect('completedAtUtc'),
+  });
+  const completionBoundaries = [lifecycle.teardownCompletedMs, lifecycle.completedMs]
+    .filter(Number.isFinite);
+  return Object.freeze({
+    ...lifecycle,
+    minimumAcknowledgedMs: completionBoundaries.length
+      ? Math.max(invocationStartedMs, ...completionBoundaries)
+      : invocationStartedMs,
+  });
+}
+
+function validateTeardownPolicy(value, lifecycle, prefix, blockers) {
+  let quarantineRequired = false;
+  const quarantineBlock = (blocker) => {
+    quarantineRequired = true;
+    blockers.push(blocker);
+  };
+  const {
+    startedMs, teardownStartedMs, teardownCompletedMs, completedMs,
+  } = lifecycle;
+  if (!Number.isFinite(teardownStartedMs) || !Number.isFinite(teardownCompletedMs)) {
+    quarantineBlock(`runner-teardown-time-invalid:${prefix}`);
+  } else {
+    if (!Number.isFinite(startedMs)
+        || !Number.isFinite(completedMs)
+        || teardownStartedMs < startedMs
+        || teardownCompletedMs < teardownStartedMs
+        || teardownCompletedMs !== completedMs) {
+      quarantineBlock(`runner-teardown-time-order-invalid:${prefix}`);
+    }
+    if (teardownCompletedMs - teardownStartedMs > MAX_RUNNER_TEARDOWN_MS) {
+      quarantineBlock(`runner-teardown-deadline-exceeded:${prefix}`);
+    }
+  }
+  for (const field of [
+    'unregistered', 'registrationCredentialDestroyed', 'workspaceDestroyed',
+    'runtimeBoundaryDestroyed', 'zeroResidualRegistration', 'zeroResidualCredential',
+    'zeroResidualWorkspace',
+  ]) {
+    if (value[field] !== true) {
+      quarantineBlock(`runner-teardown-incomplete:${prefix}:${field}`);
+    }
+  }
+  return quarantineRequired;
+}
+
+function validateTerminationAcknowledgement(value, runner, authorization, invocation, settledMs, deadlineMs, blockers) {
+  const prefix = text(runner?.runnerId) || 'unknown-runner';
+  if (!exactKeys(value, TERMINATION_ACK_KEYS)) {
+    blockers.push(`runner-termination-ack-fields-invalid:${prefix}`);
+    return null;
+  }
+  const acknowledgedMs = instant(value.acknowledgedAtUtc);
+  if (value.schemaVersion !== FORGE_SHADOW_M3_TERMINATION_ACK_SCHEMA) blockers.push(`runner-termination-ack-schema-invalid:${prefix}`);
+  if (value.authorizationId !== authorization.authorizationId) blockers.push(`runner-termination-ack-authorization-mismatch:${prefix}`);
+  if (value.invocationId !== invocation.invocationId) blockers.push(`runner-termination-ack-invocation-mismatch:${prefix}`);
+  if (value.runnerId !== runner.runnerId) blockers.push(`runner-termination-ack-runner-mismatch:${prefix}`);
+  if (value.terminated !== true || value.teardownAcknowledged !== true) blockers.push(`runner-termination-not-acknowledged:${prefix}`);
+  const quarantineProofRef = text(value.quarantineProofRef);
+  const normalTermination = value.quarantined === false
+    && value.quarantineAcknowledged === false
+    && value.quarantineReason === ''
+    && quarantineProofRef === '';
+  const quarantinedTermination = value.quarantined === true
+    && value.quarantineAcknowledged === true
+    && value.quarantineReason === TEARDOWN_QUARANTINE_REASON
+    && QUARANTINE_PROOF_REF.test(quarantineProofRef)
+    && quarantineProofRef.startsWith(
+      `proofs/forge-shadow-m3-quarantine/${runner.runnerId}/${authorization.authorizationId}/${invocation.invocationId}/`,
+    );
+  if (!normalTermination && !quarantinedTermination) {
+    blockers.push(`runner-quarantine-ack-invalid:${prefix}`);
+  }
+  if (!Number.isFinite(acknowledgedMs)
+      || acknowledgedMs < invocation.startedMs
+      || acknowledgedMs > settledMs
+      || acknowledgedMs > deadlineMs) blockers.push(`runner-termination-ack-time-invalid:${prefix}`);
+  return blockers.length ? null : Object.freeze({
+    authorizationId: authorization.authorizationId,
+    invocationId: invocation.invocationId,
+    runnerId: runner.runnerId,
+    acknowledgedAtUtc: new Date(acknowledgedMs).toISOString(),
+    quarantined: quarantinedTermination,
+    quarantineAcknowledged: quarantinedTermination,
+    quarantineReason: quarantinedTermination ? TEARDOWN_QUARANTINE_REASON : '',
+    quarantineProofRef: quarantinedTermination ? quarantineProofRef : '',
+  });
+}
+
+function createTerminationProofGate({ runner, authorization, invocation, deadlineMs, now }) {
+  const invalidBlockers = new Set();
+  const waiters = new Set();
+  let latestNormalProof = null;
+  let latestQuarantineProof = null;
+
+  const proofFor = (
+    minimumAcknowledgedMs = invocation.startedMs, quarantineRequired = false,
+  ) => {
+    const proof = quarantineRequired ? latestQuarantineProof : latestNormalProof;
+    if (!proof) {
+      if (quarantineRequired && latestNormalProof) {
+        invalidBlockers.add(`runner-quarantine-ack-required:${runner.runnerId}`);
+      } else if (!quarantineRequired && latestQuarantineProof) {
+        invalidBlockers.add(`runner-quarantine-unexpected:${runner.runnerId}`);
+      }
+      return null;
+    }
+    if (proof.acknowledgedMs < minimumAcknowledgedMs) {
+      invalidBlockers.add(`runner-termination-before-observation-complete:${runner.runnerId}`);
+      return null;
+    }
+    return proof;
+  };
+
+  const publish = (value, observedMs) => {
+    let trustedObservedMs = observedMs;
+    if (!Number.isFinite(trustedObservedMs)) {
+      trustedObservedMs = trustedNowMs(now);
+    }
+    const candidateBlockers = [];
+    if (!Number.isFinite(trustedObservedMs)) {
+      candidateBlockers.push(`runner-termination-ack-observation-now-invalid:${runner.runnerId}`);
+    }
+    let proof = null;
+    if (Number.isFinite(trustedObservedMs)) {
+      try {
+        proof = validateTerminationAcknowledgement(
+          value, runner, authorization, invocation,
+          trustedObservedMs, deadlineMs, candidateBlockers,
+        );
+      } catch {
+        candidateBlockers.push(`runner-termination-ack-inspection-threw:${runner.runnerId}`);
+      }
+    }
+    for (const blocker of candidateBlockers) invalidBlockers.add(blocker);
+    if (!proof) return false;
+
+    const acknowledgedMs = instant(proof.acknowledgedAtUtc);
+    const acceptedProof = Object.freeze({ ...proof, acknowledgedMs });
+    if (proof.quarantineAcknowledged) {
+      if (!latestQuarantineProof || acknowledgedMs >= latestQuarantineProof.acknowledgedMs) {
+        latestQuarantineProof = acceptedProof;
+      }
+    } else if (!latestNormalProof || acknowledgedMs >= latestNormalProof.acknowledgedMs) {
+      latestNormalProof = acceptedProof;
+    }
+    for (const waiter of [...waiters]) {
+      const accepted = proofFor(waiter.minimumAcknowledgedMs, waiter.quarantineRequired);
+      if (!accepted) continue;
+      waiters.delete(waiter);
+      waiter.resolve(accepted);
+    }
+    return true;
+  };
+
+  const waitFor = (
+    minimumAcknowledgedMs = invocation.startedMs, quarantineRequired = false,
+  ) => {
+    const accepted = proofFor(minimumAcknowledgedMs, quarantineRequired);
+    if (accepted) return Promise.resolve(accepted);
+    return new Promise((resolve) => {
+      waiters.add(Object.freeze({ minimumAcknowledgedMs, quarantineRequired, resolve }));
+    });
+  };
+
+  return Object.freeze({
+    publish,
+    proofFor,
+    waitFor,
+    blockers: () => Object.freeze([...invalidBlockers]),
+  });
+}
+
+function buildReceipt(plan, authorization, observations) {
+  const proofRefs = Object.freeze(unique(observations.flatMap((item) => item.proofRefs)).sort());
+  const completedAt = observations.map((item) => item.completedAtUtc).sort().at(-1);
+  const runnerIdentities = Object.freeze(observations.map((item) => item.runnerId).sort());
+  const body = {
+    schemaVersion: FORGE_SHADOW_M3_RUNTIME_RECEIPT_SCHEMA,
+    receiptId: `forge-m3-runtime-${authorization.authorizationId}`,
+    repository: plan.repository,
+    sourceHead: plan.canonicalMainHead,
+    sourceTree: plan.canonicalMainTree,
+    artifactSetDigest: `sha256:${plan.artifactSetDigest}`,
+    runnerIdentities,
+    linuxReviewRunnerConnected: runnerIdentities.includes('stephanos-forge-linux-runner-01'),
+    windowsProofRunnerConnected: runnerIdentities.includes('stephanos-forge-windows-proof-runner-01'),
+    teardownComplete: observations.every((item) => (
+      item.unregistered && item.registrationCredentialDestroyed
+      && item.workspaceDestroyed && item.runtimeBoundaryDestroyed
+    )),
+    zeroResidualRegistration: observations.every((item) => item.zeroResidualRegistration),
+    zeroResidualCredential: observations.every((item) => item.zeroResidualCredential),
+    zeroResidualWorkspace: observations.every((item) => item.zeroResidualWorkspace),
+    canCarryRealWork: false,
+    finalVerdict: FORGE_SHADOW_M3_EXECUTION_PROVEN,
+    completedAt,
+    proofRefs,
+  };
+  return Object.freeze({ ...body, payloadSha256: sha256Hex(body) });
+}
+
+export function validateForgeShadowM3RunnerRuntimeReceipt(receipt, expectations = {}) {
+  try {
+    const projectedReceipt = inertRecordSnapshot(receipt, { primitiveScalars: true });
+    const projectedExpectations = inertRecordSnapshot(expectations, { primitiveScalars: true });
+    const blockers = [];
+    if (!subsetKeys(projectedExpectations, RECEIPT_EXPECTATION_KEYS)) {
+      blockers.push('receipt-expectation-fields-invalid');
+    }
+    const expectedRepository = projectedExpectations.expectedRepository ?? '';
+    const expectedHead = projectedExpectations.expectedHead ?? '';
+    const expectedTree = projectedExpectations.expectedTree ?? '';
+    const expectedArtifactSetDigest = projectedExpectations.expectedArtifactSetDigest ?? '';
+    if (!exactKeys(projectedReceipt, RECEIPT_KEYS)) blockers.push('receipt-fields-invalid');
+    if (projectedReceipt.schemaVersion !== FORGE_SHADOW_M3_RUNTIME_RECEIPT_SCHEMA) blockers.push('receipt-schema-invalid');
+    if (!SAFE_ID.test(text(projectedReceipt.receiptId))) blockers.push('receipt-id-invalid');
+    if (projectedReceipt.finalVerdict !== FORGE_SHADOW_M3_EXECUTION_PROVEN) blockers.push('receipt-verdict-invalid');
+    if (expectedRepository && projectedReceipt.repository !== expectedRepository) blockers.push('receipt-repository-mismatch');
+    if (expectedHead && text(projectedReceipt.sourceHead).toLowerCase() !== text(expectedHead).toLowerCase()) blockers.push('receipt-head-mismatch');
+    if (expectedTree && text(projectedReceipt.sourceTree).toLowerCase() !== text(expectedTree).toLowerCase()) blockers.push('receipt-tree-mismatch');
+    if (!SHA40.test(text(projectedReceipt.sourceHead).toLowerCase()) || !SHA40.test(text(projectedReceipt.sourceTree).toLowerCase())) blockers.push('receipt-source-identity-invalid');
+    const expectedArtifactDigest = text(expectedArtifactSetDigest).toLowerCase();
+    const normalizedExpectedArtifactDigest = SHA256_HEX.test(expectedArtifactDigest)
+      ? `sha256:${expectedArtifactDigest}`
+      : expectedArtifactDigest;
+    if (normalizedExpectedArtifactDigest && text(projectedReceipt.artifactSetDigest).toLowerCase() !== normalizedExpectedArtifactDigest) blockers.push('receipt-artifact-set-mismatch');
+    if (!DIGEST.test(text(projectedReceipt.artifactSetDigest).toLowerCase())) blockers.push('receipt-digest-invalid');
+    const runnerIds = isDenseClosedWorldArray(projectedReceipt.runnerIdentities, 2, 2)
+      ? projectedReceipt.runnerIdentities.map(text)
+      : [];
+    if (runnerIds.length !== 2 || new Set(runnerIds).size !== 2
+        || !runnerIds.includes('stephanos-forge-linux-runner-01')
+        || !runnerIds.includes('stephanos-forge-windows-proof-runner-01')) blockers.push('receipt-runner-estate-invalid');
+    for (const field of [
+      'linuxReviewRunnerConnected', 'windowsProofRunnerConnected', 'teardownComplete',
+      'zeroResidualRegistration', 'zeroResidualCredential', 'zeroResidualWorkspace',
+    ]) if (projectedReceipt[field] !== true) blockers.push(`receipt-runtime-proof-incomplete:${field}`);
+    if (projectedReceipt.canCarryRealWork !== false) blockers.push('receipt-current-capacity-invalid');
+    if (!safeAggregateProofRefs(projectedReceipt.proofRefs)) blockers.push('receipt-proof-refs-invalid');
+    if (!Number.isFinite(instant(projectedReceipt.completedAt))) blockers.push('receipt-completion-time-invalid');
+    const { payloadSha256, ...body } = projectedReceipt;
+    if (!SHA256_HEX.test(text(payloadSha256).toLowerCase()) || sha256Hex(body) !== text(payloadSha256).toLowerCase()) blockers.push('receipt-content-digest-invalid');
+    return Object.freeze({
+      ok: blockers.length === 0,
+      finalVerdict: blockers.length === 0 ? FORGE_SHADOW_M3_EXECUTION_PROVEN : FORGE_SHADOW_M3_EXECUTION_BLOCKED,
+      blockers: Object.freeze(unique(blockers)),
+      receipt: blockers.length === 0 ? projectedReceipt : null,
+    });
+  } catch {
+    return Object.freeze({
+      ok: false,
+      finalVerdict: FORGE_SHADOW_M3_EXECUTION_BLOCKED,
+      blockers: Object.freeze(['receipt-inspection-failed']),
+      receipt: null,
+    });
+  }
+}
+
+export async function executeForgeShadowM3RunnerPlan(input = {}, {
+  platform = process.platform,
+  now = () => new Date(),
+  executeRunner,
+  verifyOperatorApproval,
+  reserveOperatorAuthorization,
+  createInvocationId = () => `forge-m3-invocation-${randomUUID()}`,
+} = {}) {
+  const blockers = [];
+  let inputSnapshot = {};
+  let runtimeAuthorization = null;
+  try {
+    inputSnapshot = inertRecordSnapshot(input, { arrays: false });
+    runtimeAuthorization = inertDeepSnapshot(inputSnapshot.runtimeAuthorization);
+  } catch {
+    blockers.push('runtime-authorization-inspection-failed');
+  }
+  if (!exactKeys(inputSnapshot, INPUT_KEYS)) blockers.push('input-fields-invalid');
+  const planUnsafe = findForbidden(inputSnapshot.runtimePlanInput, ['runtimePlanInput']);
+  if (planUnsafe) blockers.push(`unsafe-field:${planUnsafe}`);
+  const authorizationUnsafe = findForbidden(runtimeAuthorization, ['runtimeAuthorization']);
+  if (authorizationUnsafe) blockers.push(`unsafe-field:${authorizationUnsafe}`);
+  if (platform !== 'win32') blockers.push('connected-windows-battle-bridge-required');
+  const nowMs = trustedNowMs(now);
+  if (!Number.isFinite(nowMs)) blockers.push('execution-now-invalid');
+  const trustedNowUtc = Number.isFinite(nowMs) ? new Date(nowMs).toISOString() : '';
+  const suppliedPlanInput = inputSnapshot.runtimePlanInput;
+  const trustedPlanInput = suppliedPlanInput && typeof suppliedPlanInput === 'object'
+    && !Array.isArray(suppliedPlanInput)
+    ? {
+        ...suppliedPlanInput,
+        nowUtc: trustedNowUtc,
+        admissionInput: suppliedPlanInput.admissionInput
+          && typeof suppliedPlanInput.admissionInput === 'object'
+          && !Array.isArray(suppliedPlanInput.admissionInput)
+          ? { ...suppliedPlanInput.admissionInput, nowUtc: trustedNowUtc }
+          : suppliedPlanInput.admissionInput,
+      }
+    : suppliedPlanInput;
+  let plan;
+  try { plan = planForgeShadowM3RunnerRuntime(trustedPlanInput); }
+  catch { blockers.push('runtime-plan-threw'); }
+  if (!plan || plan.valid !== true || plan.finalVerdict !== FORGE_SHADOW_M3_RUNTIME_READY) blockers.push('runtime-plan-not-ready');
+  if (plan && !supportedRunnerEstate(plan)) blockers.push('runtime-plan-runner-estate-unsupported');
+  const planDigest = plan ? buildForgeShadowM3RuntimePlanDigest(plan) : '';
+  let authorization = plan && Number.isFinite(nowMs)
+    ? validateAuthorization(runtimeAuthorization, plan, planDigest, nowMs, blockers)
+    : null;
+  if (typeof executeRunner !== 'function') blockers.push('fixed-runner-executor-not-configured');
+  if (typeof verifyOperatorApproval !== 'function') blockers.push('operator-approval-verifier-not-configured');
+  if (typeof reserveOperatorAuthorization !== 'function') blockers.push('runtime-authorization-reserver-not-configured');
+  if (typeof createInvocationId !== 'function') blockers.push('invocation-identity-generator-not-configured');
+  if (blockers.length) return blocked(blockers, planDigest);
+
+  let approvalVerification;
+  try {
+    approvalVerification = await verifyOperatorApproval(Object.freeze({
+      approvalReceipt: runtimeAuthorization.approvalReceipt,
+      authorizationId: authorization.authorizationId,
+      repository: plan.repository,
+      expectedHead: plan.canonicalMainHead,
+      expectedTree: plan.canonicalMainTree,
+      runtimePlanDigest: planDigest,
+      executionSurface: runtimeAuthorization.executionSurface,
+      nowUtc: new Date(nowMs).toISOString(),
+    }));
+  } catch {
+    blockers.push('operator-approval-verifier-threw');
+  }
+  const verificationNowMs = trustedNowMs(now);
+  if (!Number.isFinite(verificationNowMs)) blockers.push('operator-approval-verification-now-invalid');
+  const verifiedAuthorization = plan && Number.isFinite(verificationNowMs)
+    ? validateAuthorization(runtimeAuthorization, plan, planDigest, verificationNowMs, blockers)
+    : null;
+  const verifiedApproval = approvalVerification && validateApprovalVerification(
+    approvalVerification,
+    runtimeAuthorization.approvalReceipt,
+    runtimeAuthorization,
+    plan,
+    planDigest,
+    verificationNowMs,
+    blockers,
+  );
+  if (!verifiedApproval || !verifiedAuthorization) return blocked(blockers, planDigest);
+  authorization = verifiedAuthorization;
+
+  let reservation;
+  try {
+    reservation = await reserveOperatorAuthorization(Object.freeze({
+      authorizationId: authorization.authorizationId,
+      receiptId: `forge-m3-runtime-${authorization.authorizationId}`,
+      approvalPayloadSha256: verifiedApproval.approvalPayloadSha256,
+      repository: plan.repository,
+      expectedHead: plan.canonicalMainHead,
+      expectedTree: plan.canonicalMainTree,
+      runtimePlanDigest: planDigest,
+      nowUtc: new Date(verificationNowMs).toISOString(),
+    }));
+  } catch {
+    blockers.push('runtime-authorization-reserver-threw');
+  }
+  const reservationNowMs = trustedNowMs(now);
+  if (!Number.isFinite(reservationNowMs)) blockers.push('runtime-authorization-reservation-now-invalid');
+  const reservedAuthorization = plan && Number.isFinite(reservationNowMs)
+    ? validateAuthorization(runtimeAuthorization, plan, planDigest, reservationNowMs, blockers)
+    : null;
+  const validatedReservation = reservation && validateAuthorizationReservation(
+    reservation,
+    runtimeAuthorization.approvalReceipt,
+    runtimeAuthorization,
+    plan,
+    planDigest,
+    reservationNowMs,
+    blockers,
+  );
+  if (!validatedReservation || !reservedAuthorization) return blocked(blockers, planDigest);
+  authorization = reservedAuthorization;
+
+  const observations = [];
+  const invocationIds = new Set();
+  for (const runner of plan.runners) {
+    const artifact = plan.runnerArtifacts.find((item) => item.runnerClass === runner.runnerClass);
+    if (!artifact) return blocked([`runner-artifact-not-found:${runner.runnerId}`], planDigest);
+    const runnerNowMs = trustedNowMs(now);
+    const runnerAuthorizationBlockers = [];
+    const liveAuthorization = Number.isFinite(runnerNowMs)
+      ? validateAuthorization(runtimeAuthorization, plan, planDigest, runnerNowMs, runnerAuthorizationBlockers)
+      : null;
+    if (!Number.isFinite(runnerNowMs)) runnerAuthorizationBlockers.push(`runner-execution-now-invalid:${runner.runnerId}`);
+    if (!liveAuthorization) return blocked(runnerAuthorizationBlockers, planDigest);
+    const executionDeadlineMs = Math.min(
+      liveAuthorization.expiresMs,
+      runnerNowMs + MAX_RUNNER_EXECUTION_MS,
+    );
+    const remainingExecutionMs = executionDeadlineMs - runnerNowMs;
+    if (remainingExecutionMs <= 0) return blocked([`runner-authorization-expired:${runner.runnerId}`], planDigest);
+
+    const invocationId = text(createInvocationId({
+      authorizationId: liveAuthorization.authorizationId,
+      runnerId: runner.runnerId,
+    }));
+    if (!SAFE_ID.test(invocationId) || invocationIds.has(invocationId)) {
+      return blocked([`runner-invocation-id-invalid:${runner.runnerId}`], planDigest);
+    }
+    invocationIds.add(invocationId);
+    const invocation = Object.freeze({ invocationId, startedMs: runnerNowMs });
+
+    const controller = new AbortController();
+    const terminationGate = createTerminationProofGate({
+      runner,
+      authorization: liveAuthorization,
+      invocation,
+      deadlineMs: executionDeadlineMs,
+      now,
+    });
+    let deadlineTimer;
+    let executorSettlement;
+    let outcome;
+    try {
+      const executionRequest = Object.freeze({
+        authorization: runtimeAuthorization,
+        authorizationId: liveAuthorization.authorizationId,
+        invocationId,
+        runtimePlan: plan,
+        runner,
+        artifact,
+        executionDeadlineUtc: new Date(executionDeadlineMs).toISOString(),
+        signal: controller.signal,
+        acknowledgeTermination: (value) => terminationGate.publish(value),
+        canary: Object.freeze({
+          workflowId: FORGE_SHADOW_M3_CANARY_WORKFLOW,
+          scenario: FORGE_SHADOW_M3_CANARY_SCENARIO,
+          repository: plan.repository,
+          head: plan.canonicalMainHead,
+          tree: plan.canonicalMainTree,
+        }),
+      });
+      const deadline = new Promise((resolveDeadline) => {
+        deadlineTimer = setTimeout(() => {
+          controller.abort();
+          resolveDeadline({ deadlineExceeded: true });
+        }, remainingExecutionMs);
+      });
+      executorSettlement = Promise.resolve()
+        .then(() => executeRunner(executionRequest))
+        .then((value) => ({ status: 'fulfilled', value }), () => ({ status: 'rejected' }));
+      outcome = await Promise.race([
+        executorSettlement,
+        deadline,
+      ]);
+    } catch {
+      controller.abort();
+      await terminationGate.waitFor(invocation.startedMs);
+      return blocked([
+        `runner-executor-threw:${runner.runnerId}`,
+        ...terminationGate.blockers(),
+      ], planDigest);
+    } finally {
+      if (deadlineTimer) clearTimeout(deadlineTimer);
+    }
+
+    const deadlineExceeded = outcome.deadlineExceeded === true;
+    const settled = deadlineExceeded ? await executorSettlement : outcome;
+    const runnerBlockers = [];
+    if (deadlineExceeded) runnerBlockers.push(`runner-execution-deadline-exceeded:${runner.runnerId}`);
+    if (settled.status !== 'fulfilled') runnerBlockers.push(`runner-executor-threw:${runner.runnerId}`);
+    const settledNowMs = trustedNowMs(now);
+    if (!Number.isFinite(settledNowMs)) runnerBlockers.push(`runner-settlement-now-invalid:${runner.runnerId}`);
+    else if (settledNowMs > executionDeadlineMs) runnerBlockers.push(`runner-settlement-after-deadline:${runner.runnerId}`);
+
+    if (settled.status !== 'fulfilled') {
+      controller.abort();
+      await terminationGate.waitFor(invocation.startedMs);
+      return blocked([...runnerBlockers, ...terminationGate.blockers()], planDigest);
+    }
+
+    let minimumAcknowledgedMs = invocation.startedMs;
+    let quarantineRequired = false;
+    try {
+      const executionResult = inertRecordSnapshot(settled.value, { arrays: false });
+      if (!exactKeys(executionResult, EXECUTION_RESULT_KEYS)) {
+        controller.abort();
+        runnerBlockers.push(`runner-execution-result-fields-invalid:${runner.runnerId}`);
+        await terminationGate.waitFor(invocation.startedMs);
+        return blocked([...runnerBlockers, ...terminationGate.blockers()], planDigest);
+      }
+
+      const terminationSnapshot = inertRecordSnapshot(
+        executionResult.terminationAcknowledgement,
+      );
+      terminationGate.publish(terminationSnapshot, settledNowMs);
+      quarantineRequired = true;
+      const observationSnapshot = inertRecordSnapshot(executionResult.observation);
+      const lifecycle = safelyObservedLifecycle(observationSnapshot, invocation.startedMs);
+      minimumAcknowledgedMs = lifecycle.minimumAcknowledgedMs;
+      const observationAssessment = validateObservation(
+        observationSnapshot,
+        runner,
+        artifact,
+        plan,
+        liveAuthorization,
+        invocation,
+        settledNowMs,
+        lifecycle,
+        runnerBlockers,
+      );
+      quarantineRequired = observationAssessment.quarantineRequired;
+      const { observation } = observationAssessment;
+      let termination = terminationGate.proofFor(minimumAcknowledgedMs, quarantineRequired);
+      const invalidTerminationProof = terminationGate.blockers().length > 0;
+      if (!termination || !observation || runnerBlockers.length || invalidTerminationProof) {
+        controller.abort();
+        if (!termination) {
+          termination = await terminationGate.waitFor(minimumAcknowledgedMs, quarantineRequired);
+        }
+        return blocked([
+          ...runnerBlockers,
+          ...terminationGate.blockers(),
+        ], planDigest);
+      }
+
+      observations.push(observation);
+    } catch {
+      controller.abort();
+      await terminationGate.waitFor(minimumAcknowledgedMs, quarantineRequired);
+      return blocked([
+        ...runnerBlockers,
+        `runner-execution-result-inspection-threw:${runner.runnerId}`,
+        ...terminationGate.blockers(),
+      ], planDigest);
+    }
+  }
+
+  const receipt = buildReceipt(plan, authorization, observations);
+  const validation = validateForgeShadowM3RunnerRuntimeReceipt(receipt, {
+    expectedRepository: plan.repository,
+    expectedHead: plan.canonicalMainHead,
+    expectedTree: plan.canonicalMainTree,
+    expectedArtifactSetDigest: plan.artifactSetDigest,
+  });
+  if (!validation.ok) return blocked(validation.blockers, planDigest);
+  return Object.freeze({
+    schemaVersion: FORGE_SHADOW_M3_EXECUTION_ADAPTER_SCHEMA,
+    ok: true,
+    finalVerdict: FORGE_SHADOW_M3_EXECUTION_PROVEN,
+    blockers: Object.freeze([]),
+    runtimePlanDigest: planDigest,
+    receipt: validation.receipt,
+    authority: falseAuthority(),
+  });
+}

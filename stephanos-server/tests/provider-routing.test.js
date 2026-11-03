@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 
 import { normalizeRuntimeContext, resolveRoutingPlan } from '../services/llm/utils/providerUtils.js';
 
+// Reuse this existing CI provider-test entry point for the Stephanos repair
+// classifier and Ollama deep-routing regression suites. Do not modify a
+// protected GitHub workflow merely to add more explicit test filenames.
+import '../services/stephanosExecutiveChatBridgeService.test.js';
+import './ollama-provider.test.js';
+
 test('provider utils classify hosted LAN sessions as lan companions when the home node is reachable', () => {
   const runtimeContext = normalizeRuntimeContext({
     frontendOrigin: 'https://cheekyfellastef.github.io',

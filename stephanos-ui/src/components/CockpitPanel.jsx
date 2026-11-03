@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useAIStore } from '../state/aiStore';
 import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from '../state/finalRouteTruthView';
-import { buildCockpitModel, CONNECTIONS, COCKPIT_VIEWBOX, NODE_LAYOUT } from '../state/cockpitTruthModel.js';
+import { buildCockpitModel, deriveCockpitBackendHealthDiagnostics, CONNECTIONS, COCKPIT_VIEWBOX, NODE_LAYOUT } from '../state/cockpitTruthModel.js';
 import { buildCockpitProjection } from '../state/cockpitProjection.js';
 import { buildCanonicalCockpitProjectionRuntimeStatus } from '../state/cockpitProjectionSelector.js';
 import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
@@ -12,6 +12,7 @@ import CockpitDetailView from './CockpitDetailView.jsx';
 import { RECENT_ACTIVITY_WINDOW_MS } from '../state/continuityLoopSnapshot.js';
 import CollapsiblePanel from './CollapsiblePanel';
 import { CockpitCard, CockpitField, CockpitSafetyLockStrip } from './CockpitVisualLanguage.jsx';
+import { installCockpitRegressionMonitor, projectCockpitServices } from '../../../shared/runtime/cockpitRegression.mjs';
 
 
 export function resolveOperatorProofConciergeRenderState(operatorProofConcierge = {}) {
@@ -53,6 +54,9 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
   const [detailId, setDetailId] = useState('backend');
   const [isPageVisible, setIsPageVisible] = useState(() => (typeof document === 'undefined' ? true : document.visibilityState === 'visible'));
   const [activityExpiryTick, setActivityExpiryTick] = useState(0);
+  const [backendHealthExpiryTick, setBackendHealthExpiryTick] = useState(0);
+  const [regressionEvidence, setRegressionEvidence] = useState(null);
+  const regressionExpected = useRef({});
   const { copyState: conciergeCopyState, setCopyState: setConciergeCopyState } = useClipboardButtonState();
   const { copyState: plannerCopyState, setCopyState: setPlannerCopyState } = useClipboardButtonState();
   const { copyState: missionCopyState, setCopyState: setMissionCopyState } = useClipboardButtonState();
@@ -96,7 +100,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
       commandHistory,
       telemetryEntries,
     });
-  }, [shouldRenderCockpit, runtimeStatus, routeTruthView, finalAgentView, apiStatus, providerHealth, workingMemory, projectMemory, commandHistory, telemetryEntries, activityExpiryTick]);
+  }, [shouldRenderCockpit, runtimeStatus, routeTruthView, finalAgentView, apiStatus, providerHealth, workingMemory, projectMemory, commandHistory, telemetryEntries, activityExpiryTick, backendHealthExpiryTick]);
 
   useEffect(() => {
     if (typeof document === 'undefined') {
@@ -132,22 +136,50 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     return () => window.clearTimeout(timeoutId);
   }, [shouldRenderCockpit, cockpitModel?.continuitySnapshot?.lastContinuityEventAt]);
 
+  // Positive and negative health proof expires even when the browser governor suspends
+  // polling. A single deadline-based tick invalidates the memoized Cockpit
+  // model; no background polling loop or additional backend request is added.
+  useEffect(() => {
+    if (!shouldRenderCockpit || typeof window === 'undefined') return undefined;
+    const checkedAt = Date.parse(String(apiStatus?.runtimeContext?.healthProbeTruth?.lastBackendHealthProbeAt || ''));
+    if (!Number.isFinite(checkedAt) || typeof apiStatus?.backendReachable !== 'boolean') return undefined;
+    const expiresInMs = (checkedAt + 120_000 + 50) - Date.now();
+    if (expiresInMs <= 0) return undefined;
+    const timeoutId = window.setTimeout(() => {
+      setBackendHealthExpiryTick(value => value + 1);
+    }, expiresInMs);
+    return () => window.clearTimeout(timeoutId);
+  }, [shouldRenderCockpit, apiStatus?.backendReachable, apiStatus?.runtimeContext?.healthProbeTruth?.lastBackendHealthProbeAt]);
+
   const detail = useMemo(() => {
     if (!cockpitModel) {
       return { title: 'Cockpit detail', state: 'unknown', facts: ['Cockpit is paused while hidden.'] };
     }
+    const backendHealthDiagnostics = deriveCockpitBackendHealthDiagnostics({ apiStatus, routeTruthView, runtimeStatus });
     const node = NODE_LAYOUT[detailId];
     if (node) {
-      return {
-        title: node.label,
-        state: cockpitModel.nodeStates[detailId] || 'unknown',
-        facts: [
+      const nodeState = cockpitModel.nodeStates[detailId] || 'unknown';
+      const nodeFacts = detailId === 'backend'
+        ? [
+          `Service health: ${nodeState}`,
+          `Observer session: ${runtimeStatus?.runtimeContext?.sessionKind || runtimeStatus?.sessionKind || 'unknown'}`,
+          `Selected-route reachability: ${routeTruthView.selectedRouteReachableState || 'unknown'}`,
+          `Backend route reachability: ${routeTruthView.backendReachableState || 'unknown'}`,
+          `Backend health proof fresh: ${backendHealthDiagnostics.fresh}`,
+          `Health source: ${backendHealthDiagnostics.source}`,
+          `Last health check: ${backendHealthDiagnostics.checkedAt}`,
+        ]
+        : [
           `Launch state: ${routeTruthView.effectiveLaunchState || runtimeStatus.appLaunchState}`,
           `Route kind: ${routeTruthView.routeKind}`,
           `Fallback active: ${routeTruthView.fallbackActive ? 'yes' : 'no'}`,
           `Continuity loop: ${cockpitModel.continuitySnapshot.continuityLoopState}`,
           `Acting agent: ${finalAgentView?.actingAgentId || 'none'}`,
-        ],
+        ];
+      return {
+        title: detailId === 'backend' ? 'Backend service' : node.label,
+        state: nodeState,
+        facts: nodeFacts,
       };
     }
 
@@ -167,7 +199,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     }
 
     return { title: 'Cockpit detail', state: 'unknown', facts: ['No detail selected'] };
-  }, [detailId, cockpitModel, finalAgentView, runtimeStatus.appLaunchState, routeTruthView]);
+  }, [detailId, cockpitModel, finalAgentView, apiStatus, runtimeStatus.appLaunchState, routeTruthView]);
 
   const resolveCockpitActionTarget = useCallback((action) => {
     const targetPaneId = action.targetPaneId === 'missionConsolePanel' || action.targetPaneId === 'aiCoreMissionConsolePanel'
@@ -410,6 +442,21 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     ));
   }, [operatorProofConcierge.nextProof, primaryProofCopyPacket?.label, conciergeCopyState]);
 
+  const services = projectCockpitServices({ apiStatus, mission: cockpitProjection, telemetryEntries });
+  regressionExpected.current = { standalone, expectedBackendState: cockpitModel?.nodeStates.backend || 'unknown', services };
+  useEffect(() => {
+    if (!shouldRenderCockpit) return undefined;
+    return installCockpitRegressionMonitor({
+      documentRef: document, windowRef: window,
+      readExpected: () => regressionExpected.current,
+      publish: (evidence) => {
+        window.__STEPHANOS_UI_REALITY__ = { ...(window.__STEPHANOS_UI_REALITY__ || {}), cockpitRegression: evidence };
+        setRegressionEvidence(previous => previous?.verdict === evidence.verdict
+          && JSON.stringify(previous.failures) === JSON.stringify(evidence.failures) ? previous : evidence);
+      },
+    });
+  }, [shouldRenderCockpit, standalone]);
+
   return (
     <CollapsiblePanel
       as="aside"
@@ -423,6 +470,17 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
       {!shouldRenderCockpit ? <p className="muted">Cockpit rendering pauses when the panel or page is hidden.</p> : null}
       {shouldRenderCockpit ? (
         <div className="cockpit-shell">
+        <section className="cockpit-service-summary" aria-label="Live service status" data-testid="cockpit-service-summary">
+          <div><span>Front end</span><strong>serving this page</strong></div>
+          <div><span>Backend connection</span><strong data-testid="cockpit-backend-reachability">{services.reachable}</strong></div>
+          <div><span>Backend health</span><strong data-testid="cockpit-backend-health">{services.backendHealth}</strong></div>
+          <div><span>Health endpoint</span><strong>{services.healthEndpoint}</strong></div>
+          <div><span>Mission proof</span><strong>{services.missionProof}{services.missionProof === 'missing' ? ` · ${services.missingProofCount} items` : ''}</strong></div>
+          <div><span>Last health check · {services.freshness}</span><strong>{services.checkedAt}</strong></div>
+          <div><span>Last telemetry received</span><strong>{services.lastTelemetry}</strong></div>
+          <p className="muted">Mission proof and merge readiness are separate from service health.</p>
+          <p role="status" data-testid="cockpit-ui-monitor">UI regression checks: {regressionEvidence?.verdict || 'checking'}{regressionEvidence?.failures.length ? ` · ${regressionEvidence.failures.join(', ')}` : ''}</p>
+        </section>
         <CockpitDetailView projection={cockpitProjection} onPrimaryAction={routeCockpitPrimaryAction} />
 
         <div className="cockpit-mission-stack" data-cockpit-block="mission-stack" data-cockpit-kind="visual-language-v1" data-cockpit-layout-density="compact" data-cockpit-debug-collapsed-default="yes">
@@ -522,6 +580,8 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
             return (
               <g
                 key={nodeId}
+                data-cockpit-node={nodeId}
+                data-service-state={state}
                 className={`cockpit-node ${stateClassName(state)} ${cockpitModel.animatedNodeIds.includes(nodeId) ? 'cockpit-trace-animated' : ''} ${detailId === nodeId ? 'selected' : ''}`}
                 transform={`translate(${node.x}, ${node.y})`}
                 onClick={() => setDetailId(nodeId)}

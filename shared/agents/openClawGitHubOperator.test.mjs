@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { buildOpenClawGitHubOperation } from './openClawGitHubOperator.mjs';
+import { PROTECTED_MERGE_REQUIRED_WORKFLOWS } from './protectedMergeCheckClassifierV1.mjs';
 
 const base = {
   missionId: 'github-operator-v1',
@@ -11,6 +13,15 @@ const base = {
   branch: 'openclaw/github-operator-v1',
   worktreePath: 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os-worktrees\\github-operator-v1',
 };
+
+function successfulRequiredChecks() {
+  return PROTECTED_MERGE_REQUIRED_WORKFLOWS.map((workflow, index) => ({
+    name: `required-${index}`,
+    workflow,
+    state: 'SUCCESS',
+    ...(workflow === 'Build Stephanos UI' ? { event: 'pull_request' } : {}),
+  }));
+}
 
 test('creates an isolated worktree from origin main without shell interpolation', () => {
   const packet = buildOpenClawGitHubOperation({ ...base, operation: 'create-worktree' });
@@ -30,6 +41,27 @@ test('blocks direct main mutation and non-openclaw branches', () => {
     assert.equal(packet.finalVerdict, 'BLOCKED');
     assert.deepEqual(packet.command, []);
   }
+});
+
+test('repository-wide scope permits safe source files but still blocks forbidden paths', () => {
+  const safe = buildOpenClawGitHubOperation({
+    ...base,
+    operation: 'commit',
+    allowedFiles: ['**'],
+    changedFiles: ['shared/agents/example.mjs', 'shared/runtime/runtimeAdjudicator.mjs', 'apps/music-tile/data/trackLibrary.js'],
+    commitMessage: 'Safe repository-wide change',
+  });
+  assert.equal(safe.finalVerdict, 'READY_TO_EXECUTE');
+
+  const forbidden = buildOpenClawGitHubOperation({
+    ...base,
+    operation: 'commit',
+    allowedFiles: ['**'],
+    changedFiles: ['runtime/state.json'],
+    commitMessage: 'Unsafe repository-wide change',
+  });
+  assert.equal(forbidden.finalVerdict, 'BLOCKED');
+  assert.match(forbidden.blockers.join(' '), /forbidden paths/i);
 });
 
 test('commit stages only exact approved files', () => {
@@ -98,11 +130,11 @@ test('push and open PR block when the complete branch diff differs from signed s
 test('merge blocks failed checks stale head and missing exact approval', () => {
   const head = 'a'.repeat(40);
   const variants = [
-    { checks: ['failure'], expectedHeadSha: head, actualHeadSha: head, mergeable: true, approvalToken: `APPROVE_OPENCLAW_SQUASH_MERGE:1261:${head}` },
-    { checks: ['success'], expectedHeadSha: '', actualHeadSha: head, mergeable: true, approvalToken: '' },
-    { checks: ['success'], expectedHeadSha: head, actualHeadSha: head, mergeable: false, approvalToken: `APPROVE_OPENCLAW_SQUASH_MERGE:1261:${head}` },
-    { checks: ['success'], expectedHeadSha: head, actualHeadSha: head, mergeable: true, approvalToken: 'APPROVE' },
-    { checks: ['success'], expectedHeadSha: head, actualHeadSha: 'c'.repeat(40), mergeable: true, approvalToken: `APPROVE_OPENCLAW_SQUASH_MERGE:1261:${head}` },
+    { checks: successfulRequiredChecks().map((check, index) => (index === 0 ? { ...check, state: 'FAILURE' } : check)), expectedHeadSha: head, actualHeadSha: head, mergeable: true, approvalToken: `APPROVE_OPENCLAW_SQUASH_MERGE:1261:${head}` },
+    { checks: successfulRequiredChecks(), expectedHeadSha: '', actualHeadSha: head, mergeable: true, approvalToken: '' },
+    { checks: successfulRequiredChecks(), expectedHeadSha: head, actualHeadSha: head, mergeable: false, approvalToken: `APPROVE_OPENCLAW_SQUASH_MERGE:1261:${head}` },
+    { checks: successfulRequiredChecks(), expectedHeadSha: head, actualHeadSha: head, mergeable: true, approvalToken: 'APPROVE' },
+    { checks: successfulRequiredChecks(), expectedHeadSha: head, actualHeadSha: 'c'.repeat(40), mergeable: true, approvalToken: `APPROVE_OPENCLAW_SQUASH_MERGE:1261:${head}` },
   ];
   for (const variant of variants) {
     const packet = buildOpenClawGitHubOperation({ ...base, operation: 'merge-pr', prNumber: 1261, ...variant });
@@ -120,7 +152,10 @@ test('merge requires exact PR head approval and only emits squash merge', () => 
     expectedHeadSha: head,
     actualHeadSha: head,
     mergeable: true,
-    checks: ['success', 'success'],
+    checks: [
+      ...successfulRequiredChecks(),
+      { name: 'exact-head-review', workflow: 'Stephanos Exact-Head Review', state: 'FAILURE' },
+    ],
     approvalToken: `APPROVE_OPENCLAW_SQUASH_MERGE:1261:${head}`,
   });
   assert.equal(packet.finalVerdict, 'READY_TO_EXECUTE');
@@ -128,4 +163,38 @@ test('merge requires exact PR head approval and only emits squash merge', () => 
     executable: 'gh.exe',
     args: ['pr', 'merge', '1261', '--repo', base.repository, '--squash', '--match-head-commit', head],
   }]);
+});
+
+test('Windows executor preserves canonical workflow identity through final merge preflight', () => {
+  const source = readFileSync(new URL('../../scripts/openclaw-github-operator.mjs', import.meta.url), 'utf8');
+  assert.match(source, /'--json', 'name,state,workflow,event'/);
+  assert.match(source, /parseOpenClawGitHubMergeObservation/);
+  assert.match(source, /checks: mergeObservation\.checkPayload,/);
+  assert.doesNotMatch(source, /checks\.status !== 0/);
+  assert.doesNotMatch(source, /checkPayload\.map\(/);
+});
+
+
+test('commit treats scheduler scope identities as case-insensitive while preserving exact file boundaries', () => {
+  const accepted = buildOpenClawGitHubOperation({
+    ...base,
+    operation: 'commit',
+    allowedFiles: ['shared/agents/battlebridgesupervisor.mjs'],
+    changedFiles: ['shared/agents/battleBridgeSupervisor.mjs'],
+    actualChangedFiles: ['shared/agents/battleBridgeSupervisor.mjs'],
+    commitMessage: 'Accept exact Git casing',
+  });
+  assert.equal(accepted.finalVerdict, 'READY_TO_EXECUTE');
+  assert.deepEqual(accepted.command[0].args.slice(3), ['--', 'shared/agents/battleBridgeSupervisor.mjs']);
+
+  const blocked = buildOpenClawGitHubOperation({
+    ...base,
+    operation: 'commit',
+    allowedFiles: ['shared/agents/battlebridgesupervisor.mjs'],
+    changedFiles: ['shared/agents/battleBridgeSupervisor.test.mjs'],
+    actualChangedFiles: ['shared/agents/battleBridgeSupervisor.test.mjs'],
+    commitMessage: 'Do not widen scope',
+  });
+  assert.equal(blocked.finalVerdict, 'BLOCKED');
+  assert.match(blocked.blockers.join(' '), /exceed the approved scope/i);
 });

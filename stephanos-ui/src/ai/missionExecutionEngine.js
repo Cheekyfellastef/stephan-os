@@ -1,6 +1,7 @@
 import { normalizeMissionExecutionPacket } from '../../../shared/ai/missionExecutionContract.mjs';
 import { getAgentRole } from '../../../shared/runtime/agentRoleRegistry.mjs';
 import { resolveToolByType } from '../../../shared/runtime/toolExecutionRegistry.mjs';
+import { buildMissionKernelProjection } from '../../../shared/ai/missionKernelV1.mjs';
 
 function resolveMissionClass(intentType = '') {
   if (String(intentType).startsWith('build-')) return intentType;
@@ -26,9 +27,13 @@ function resolveToolTypes(missionClass = 'analysis') {
 }
 
 export function buildMissionExecutionPacket({
+  operatorIntent = '',
   intent = {},
   proposalPacket = {},
   missionWorkflow = {},
+  missionLineage = {},
+  finalRouteTruth = {},
+  finalAgentView = {},
   graphState = {},
 } = {}) {
   const missionClass = resolveMissionClass(intent.intentType);
@@ -48,7 +53,7 @@ export function buildMissionExecutionPacket({
   const toolTypes = resolveToolTypes(missionClass);
   const graphNodes = Array.isArray(graphState?.nodes) ? graphState.nodes : [];
 
-  return normalizeMissionExecutionPacket({
+  const packet = normalizeMissionExecutionPacket({
     missionId: `mission_${Date.now()}_${intent.intentType || 'unknown'}`,
     missionTitle: missionTitle(intent.intentType, proposalPacket?.recommended_move_summary?.title),
     missionClass,
@@ -101,4 +106,21 @@ export function buildMissionExecutionPacket({
     dependencyEdgesSuggested: [],
     graphPromotionDeferredReason: graphNodes.length > 0 ? '' : 'graph-empty-no-nodes-available',
   });
+
+  const kernelProjection = buildMissionKernelProjection({
+    operatorIntent,
+    intent,
+    missionWorkflow,
+    missionLineage,
+    finalRouteTruth,
+    finalAgentView,
+    missionClass,
+    executionMode,
+    blocked,
+  });
+
+  return {
+    ...packet,
+    ...kernelProjection,
+  };
 }

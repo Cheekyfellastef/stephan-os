@@ -1,0 +1,62 @@
+---
+name: Dispatch Battle Bridge Codex
+description: Use the local Stephanos dispatcher for guarded Battle Bridge updates, deterministic diagnostics, and operator-approved Codex work.
+---
+
+# Dispatch Battle Bridge Codex
+
+Prefer the narrowest tool that can return trustworthy evidence.
+
+## Routing policy
+
+Keep source design, code changes, tests, GitHub review, commits, pull requests, and merges in the normal ChatGPT plus GitHub lane whenever they can be completed there.
+
+Use `update_stephanos_from_chat` after explicit operator approval when Stephan asks to update Stephanos completely. It fetches and records the latest canonical `origin/main` head observed by the current run, fast-forwards only to that exact target, runs the bridge regression tests through the current Node executable, invokes the existing guarded ignition entry, and proves the served UI plus backend and OpenClaw health. It removes manual PowerShell from the operator workflow while preserving the existing internal Windows machinery and safety gates.
+
+Use `sync_codex_dispatch_bridge` after explicit operator approval when only the canonical Battle Bridge repository and dispatch tests need to move forward. The approval scope is the latest canonical `origin/main` observed immediately after that run fetches it. The returned `approvedTargetHead` must equal the post-sync local HEAD. This tool must never reset, clean, stash, force-check out, or discard local work.
+
+Use `run_battle_bridge_diagnostics` for deterministic Git and localhost health proof. It runs in the trusted MCP host without a Codex child, PowerShell, service control, source mutation, or dependency on Codex shell policy.
+
+Use `dispatch_codex_task` only after the operator explicitly asks for work that genuinely requires a Codex child, such as:
+
+- live Windows runtime or browser acceptance that deterministic host tools do not cover;
+- bounded machine-only investigation requiring Codex reasoning;
+- local credentials or specialist tools unavailable through GitHub and direct diagnostics;
+- post-merge end-to-end proof that cannot be represented as an allowlisted host operation.
+
+Do not dispatch ordinary code writing merely because Codex is available.
+
+## Hard execution-surface gate
+
+A plain GitHub `@codex` mention is a cloud Codex launch surface. It must never be used for work requiring Windows, the Battle Bridge, localhost services, Task Scheduler, watchdog/service state, canonical Windows checkout proof, or exact served-runtime proof. Writing “use Windows” in the prompt does not change the execution surface.
+
+Before dispatching any task requiring `can_local_windows_proof`, require a fresh execution-surface handshake containing:
+
+- a real Battle Bridge surface receipt;
+- attached/connected state;
+- Windows platform proof;
+- `can_local_windows_proof: true`;
+- a fresh heartbeat.
+
+If any field is absent or stale, fail closed as `BATTLE_BRIDGE_EXECUTION_SURFACE_NOT_ATTACHED` or `BLOCKED_ROUTE_CAPABILITY_MISMATCH`. Do not create a cloud/Linux substitute, do not emit a plain GitHub `@codex` mention, and do not create a duplicate task.
+
+When the handshake is valid, route exactly one bounded task through `REMOTE_CODEX_BATTLE_BRIDGE`, then require a real task receipt and heartbeat before claiming that execution started.
+
+## Phone and iPad Codex Remote route
+
+When this local MCP tool surface is not present but the chat is attached to the Battle Bridge through Codex Remote, use the repository skill `update-stephanos-from-chat` and its exact source-controlled Node entrypoint. Do not use `npm`, `npm.cmd`, handwritten PowerShell, or a pasted shell wall. Do not pin a request for the latest canonical main to an older merge head.
+
+## Required dispatch shape
+
+Provide:
+
+- the owning GitHub issue number;
+- one exact bounded task under 4,000 characters;
+- `operatorApproval: operator-approved` only after explicit user consent;
+- the expected source branch and commit when known;
+- exact proof commands where they fit the canonical queue command allowlist;
+- a PASS/FAIL evidence contract.
+
+The dispatcher permits one active task. It has no merge, push, branch deletion, hard-reset, public-tunnel, broad-process-kill, or source-mutation authority.
+
+After dispatch, call `get_codex_task_status`. When the task reaches `DONE`, `FAILED`, or `BLOCKED`, call `read_codex_task_result` and report verified facts separately from uncertainty.

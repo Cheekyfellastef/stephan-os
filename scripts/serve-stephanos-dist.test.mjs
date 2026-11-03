@@ -71,6 +71,8 @@ test('dist server serves shared runtime modules with JavaScript MIME type', asyn
     const contentType = response.headers.get('content-type');
     assert.equal(contentType, 'text/javascript; charset=utf-8');
     assert.notEqual(contentType, 'application/octet-stream');
+    const body = await response.text();
+    assert.equal(Number(response.headers.get('content-length')), Buffer.byteLength(body));
   }
 });
 

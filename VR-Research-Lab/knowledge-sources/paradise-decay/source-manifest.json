@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "source_id": "creator-paradise-decay",
+  "title": "Paradise Decay VR Field Evidence",
+  "priority": "P1",
+  "status": "registered-creator-field-evidence",
+  "canonical_sources": [
+    "https://www.youtube.com/@ParadiseDecay",
+    "https://steamcommunity.com/id/paradisedecay/videos",
+    "https://store.steampowered.com/curator/6659922-Paradise-Decay-Game-Reviews/"
+  ],
+  "snapshot_date": "2026-07-31",
+  "rights": "Creator-controlled videos, captions, descriptions and screenshots. Store metadata, links and independently written derived notes only.",
+  "evidence_role": "Large-scale real-headset compatibility, setup, comfort and usability evidence across UEVR, vorpX, ReShade 3D and native VR.",
+  "seed_items": [
+    {
+      "title": "PrayDog's UEVR Injector Mod is HERE! + ESSENTIAL START-UP GUIDE with IMPORTANT Hints & Tips!",
+      "evidence": "UEVR startup workflow, profile catalogue, Flat2VR community, Rai Pal discovery and common setup pitfalls."
+    },
+    {
+      "title": "PrayDog's UEVR Injector MOD - HANDS ON!",
+      "video_id": "qn9J6rHbhiE",
+      "evidence": "Early operational impressions and broad-conversion usability observations."
+    },
+    {
+      "title": "Paradise Decay Steam video and curator indexes",
+      "evidence": "Searchable game-by-game field-test catalogue including Quest 3, Pimax, first-person, room-scale, motion-control and performance observations."
+    }
+  ],
+  "transcript_policy": "Use public captions or transcripts when available to locate claims and timestamps. Do not store full transcripts; store compact attributed summaries and evidence references.",
+  "programme_links": [1591, 1593, 1594, 1596, 1597, 1611],
+  "refresh_owner": 1596,
+  "promotion_rule": "Treat creator demonstrations as field evidence, not source-code or normative proof. Promote only reproducible observations linked to game version, profile, hardware and runtime where available."
+}

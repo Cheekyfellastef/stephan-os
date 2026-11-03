@@ -1,0 +1,13 @@
+{
+  "id": "stephanos-ignite-command",
+  "name": "Stephanos Ignite Command",
+  "description": "Adds /stephanos-ignite status and one authenticated fixed recovery wake route.",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
