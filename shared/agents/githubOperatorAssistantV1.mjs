@@ -23,6 +23,7 @@ function handoffDebtFromEvidence(evidence,now,prs=[]){
  const prByNumber=new Map(prs.map(p=>[Number(p?.number),p]).filter(([n])=>Number.isInteger(n)&&n>0));
  const made=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&text(e.marker)==='PRODUCED');
  const acks=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&text(e.marker)==='ACKNOWLEDGED');
+ const verified=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&text(e.marker)==='VERIFIED_DONE');
  const producerRefCounts=new Map();
  for(const p of made){const ref=text(p.ref);if(ref)producerRefCounts.set(ref,(producerRefCounts.get(ref)||0)+1);}
  for(const p of made){
@@ -49,6 +50,9 @@ function handoffDebtFromEvidence(evidence,now,prs=[]){
     reason:'Producer handoff no longer matches the observed current PR head/base; refresh custody before proceeding.'});continue;
   }
   const receiverAcks=acks.filter(a=>text(a.producerReceiptRef)===receipt);
+  const terminal=verified.filter(v=>text(v.producerReceiptRef)===receipt);
+  if(terminal.length>1){blocked.push({...item,kind:'automation-debt-ambiguous-terminal-proof',reason:'Multiple terminal receipts claim the same producer identity.'});continue;}
+  if(terminal.length&&!receiverAcks.length){blocked.push({...item,kind:'automation-debt-terminal-without-ack',reason:'Terminal completion claims lack a bound receiver acknowledgement.'});continue;}
   if(receipt&&receiverAcks.length>1){
    blocked.push({...item,kind:'automation-debt-ambiguous-receiver-ack',
     reason:'Multiple receiver acknowledgements reference the same producer receipt.'});continue;
@@ -61,7 +65,19 @@ function handoffDebtFromEvidence(evidence,now,prs=[]){
     text(a.receiverOwner)===owner&&text(a.nextAction)===action&&
     Number.isFinite(at)&&at>=madeAt&&at<=due&&at<=nowMs;
   });
-  if(accepted)continue;
+  // Receiving work is not proof that the original user-facing capability is live.
+  if(accepted){
+   if(!terminal.length){waiting.push({...item,kind:'handoff-awaiting-terminal-verification',reason:'Receiver acknowledged the handoff; terminal capability proof remains outstanding.'});continue;}
+   const ack=receiverAcks[0],v=terminal[0],at=Date.parse(text(v.verifiedAtUtc)),ackAt=Date.parse(text(ack.acknowledgedAtUtc));
+   const matches=!!text(v.ref)&&!!text(v.verificationRef)&&!!text(v.acceptancePredicate)&&
+    text(v.receiverAckRef)===text(ack.ref)&&Number(v.prNumber||0)===pr&&
+    Number(v.issueNumber||0)===issue&&text(v.sourceHead)===head&&text(v.baseSha)===base&&
+    text(v.receiverOwner)===owner&&text(v.nextAction)===action&&
+    (!text(p.acceptancePredicate)||text(v.acceptancePredicate)===text(p.acceptancePredicate))&&
+    Number.isFinite(at)&&at>=ackAt&&at<=nowMs;
+   if(!matches){blocked.push({...item,kind:'automation-debt-invalid-terminal-proof',reason:'Terminal claim lacks exact receiver, source, acceptance or verification binding.'});}
+   continue;
+  }
   // A present but nonmatching ACK is a custody defect, not an outstanding handoff.
   if(receiverAcks.length===1){
    const at=Date.parse(text(receiverAcks[0].acknowledgedAtUtc));

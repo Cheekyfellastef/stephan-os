@@ -120,7 +120,7 @@ test('detects overdue canonical handoff and rejects foreign acknowledgement',()=
  assert.equal(f([producer]).blocked[0].kind,'automation-debt-stale-handoff');
  assert.equal(f([producer,{...ack,sourceHead:'c'.repeat(40)}]).status,'BLOCKED');
  assert.equal(f([producer,{...ack,producerReceiptRef:'different'}]).status,'BLOCKED');
- assert.equal(f([producer,ack]).status,'PASS');
+ assert.equal(f([producer,ack]).status,'WAITING_FOR_PROOF');
 });
 test('projects pending and incomplete handoffs without treating summary claims as evidence',()=>{
  const producer={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:2094,issueNumber:2670,
@@ -149,7 +149,7 @@ test('rejects future-dated PRODUCED handoffs and retains valid acknowledgements'
  const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:'future-1',ref:'ack',
   prNumber:1449,issueNumber:2972,sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),
   receiverOwner:'review-owner',nextAction:'consume-review',acknowledgedAtUtc:'2026-11-03T12:45:00Z'};
- assert.equal(f([valid,ack]).status,'PASS');
+ assert.equal(f([valid,ack]).status,'WAITING_FOR_PROOF');
  assert.equal(f([p,ack]).status,'BLOCKED');
 });
 
@@ -168,8 +168,8 @@ test('retains automation debt when receiver acknowledgement missed producer dead
   const late=f([producer,ack]);
   assert.equal(late.status,'BLOCKED');
   assert.equal(late.blocked[0].kind,'automation-debt-stale-handoff');
-  assert.equal(f([producer,{...ack,acknowledgedAtUtc:'2026-11-03T11:00:00Z'}]).status,'PASS');
-  assert.equal(f([producer,{...ack,acknowledgedAtUtc:'2026-11-03T10:30:00Z'}]).status,'PASS');
+  assert.equal(f([producer,{...ack,acknowledgedAtUtc:'2026-11-03T11:00:00Z'}]).status,'WAITING_FOR_PROOF');
+  assert.equal(f([producer,{...ack,acknowledgedAtUtc:'2026-11-03T10:30:00Z'}]).status,'WAITING_FOR_PROOF');
   assert.equal(f([producer,{...ack,acknowledgedAtUtc:'2026-11-03T09:59:59Z'}]).status,'BLOCKED');
   assert.equal(f([producer,{...ack,acknowledgedAtUtc:'2026-11-03T12:00:01Z'}]).status,'BLOCKED');
 });
@@ -185,7 +185,7 @@ test('fails closed on duplicate producer receipts and ambiguous receiver acknowl
   ref:'receiver-unique-1',receiverOwner:p.nextOwner,nextAction:p.nextAction,
   acknowledgedAtUtc:'2026-11-03T12:30:00Z'};
  const f=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T12:45:00Z',evidence});
- assert.equal(f([p,a]).status,'PASS');
+ assert.equal(f([p,a]).status,'WAITING_FOR_PROOF');
  for(const collision of [{...p},{...p,nextOwner:'foreign-owner'}]){
   const r=f([p,collision,a]);
   assert.equal(r.status,'BLOCKED');
@@ -196,10 +196,10 @@ test('fails closed on duplicate producer receipts and ambiguous receiver acknowl
   assert.equal(r.status,'BLOCKED');
   assert.equal(r.blocked[0].kind,'automation-debt-ambiguous-receiver-ack');
  }
- assert.equal(f([p,a,{...a,producerReceiptRef:'other-unrelated-producer'}]).status,'PASS');
+ assert.equal(f([p,a,{...a,producerReceiptRef:'other-unrelated-producer'}]).status,'WAITING_FOR_PROOF');
  const p2={...p,ref:'producer-unique-2',issueNumber:2670};
  const a2={...a,producerReceiptRef:p2.ref,issueNumber:p2.issueNumber,ref:'receiver-unique-2'};
- assert.equal(f([p,p2,a,a2]).status,'PASS');
+ assert.equal(f([p,p2,a,a2]).status,'WAITING_FOR_PROOF');
  assert.equal(f([p]).status,'WAITING_FOR_PROOF');
  assert.equal(f([p,{...p},a]).blocked.length,2);
 });
@@ -215,7 +215,7 @@ test('fails closed on a present but invalid receiver acknowledgement before prod
   sourceHead:p.sourceHead,baseSha:p.baseSha,ref:'bounded-receiver-ack',
   receiverOwner:p.nextOwner,nextAction:p.nextAction,acknowledgedAtUtc:'2026-11-03T12:10:00Z'};
  const f=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T12:30:00Z',evidence});
- assert.equal(f([p,ack]).status,'PASS');
+ assert.equal(f([p,ack]).status,'WAITING_FOR_PROOF');
  assert.equal(f([p]).waitingForProof[0].kind,'handoff-awaiting-receiver-ack');
  const cases=[
   {prNumber:2094},{issueNumber:2670},{sourceHead:'c'.repeat(40)},
@@ -246,7 +246,7 @@ test('flags a previously acknowledged handoff when the observed current PR ident
  const project=(pr)=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T14:00:00Z',
   evidence:[producer,ack],pullRequests:pr?[{number:1449,publicationVerified:true,
    checksStatus:'pass',isDraft:false,...pr}]:[]});
- assert.equal(project({headSha:producer.sourceHead,baseSha:producer.baseSha}).status,'PASS');
+ assert.equal(project({headSha:producer.sourceHead,baseSha:producer.baseSha}).status,'WAITING_FOR_PROOF');
  for(const changed of [
   {headSha:'c'.repeat(40),baseSha:producer.baseSha},
   {headSha:producer.sourceHead,baseSha:'d'.repeat(40)},
@@ -258,6 +258,37 @@ test('flags a previously acknowledged handoff when the observed current PR ident
   assert.equal(r.waitingForProof.length,0);
  }
  // A missing current PR snapshot must not be invented as a source-identity conflict.
- assert.equal(project(null).status,'PASS');
- assert.equal(project({}).status,'PASS');
+ assert.equal(project(null).status,'WAITING_FOR_PROOF');
+ assert.equal(project({}).status,'WAITING_FOR_PROOF');
+});
+
+test('requires exact terminal live-verification evidence after the receiver acknowledges a handoff',()=>{
+ const p={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'terminal-producer-1',nextOwner:'merge-steward',
+  nextAction:'consume-reviewed-merge',acceptancePredicate:'original-user-facing-live-outcome',
+  producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T13:00:00Z'};
+ const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:p.ref,ref:'terminal-ack-1',
+  prNumber:p.prNumber,issueNumber:p.issueNumber,sourceHead:p.sourceHead,baseSha:p.baseSha,
+  receiverOwner:p.nextOwner,nextAction:p.nextAction,acknowledgedAtUtc:'2026-11-03T12:20:00Z'};
+ const done={kind:'goal-stage-handoff',marker:'VERIFIED_DONE',producerReceiptRef:p.ref,receiverAckRef:ack.ref,
+  ref:'terminal-proof-receipt-1',verificationRef:'canonical-live-proof-1',acceptancePredicate:p.acceptancePredicate,
+  prNumber:p.prNumber,issueNumber:p.issueNumber,sourceHead:p.sourceHead,baseSha:p.baseSha,
+  receiverOwner:p.nextOwner,nextAction:p.nextAction,verifiedAtUtc:'2026-11-03T12:30:00Z'};
+ const f=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T12:40:00Z',evidence});
+ const pending=f([p,ack]);
+ assert.equal(pending.status,'WAITING_FOR_PROOF');
+ assert.equal(pending.waitingForProof[0].kind,'handoff-awaiting-terminal-verification');
+ assert.equal(f([p,ack,done]).status,'PASS');
+ for(const altered of [
+  {receiverAckRef:'different'}, {sourceHead:'c'.repeat(40)}, {baseSha:'d'.repeat(40)},
+  {receiverOwner:'other'}, {nextAction:'other'}, {acceptancePredicate:'other'},
+  {verificationRef:''}, {ref:''}, {verifiedAtUtc:'2026-11-03T12:19:59Z'},
+  {verifiedAtUtc:'2026-11-03T12:40:01Z'}
+ ]){
+  const b=f([p,ack,{...done,...altered}]);
+  assert.equal(b.status,'BLOCKED');
+  assert.equal(b.blocked[0].kind,'automation-debt-invalid-terminal-proof');
+ }
+ assert.equal(f([p,done]).blocked[0].kind,'automation-debt-terminal-without-ack');
+ assert.equal(f([p,ack,done,{...done,ref:'duplicate'}]).blocked[0].kind,'automation-debt-ambiguous-terminal-proof');
 });
