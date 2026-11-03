@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
+import { runBattleBridgeGoalDiscoveryHeartbeat as runActualHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
+const runBattleBridgeGoalDiscoveryHeartbeat = options => runActualHeartbeat({ readWorkerHeartbeatAgeMs: () => 0, ...options });
 
 const lifeboatReady = async () => ({
   ok: true,
@@ -948,4 +949,37 @@ test('configured Shared Workspace is preserved for provider-neutral execution re
   });
   assert.equal(observedBuilderOptions.sharedWorkspaceRoot, configuredWorkspace);
   assert.equal(observedBuilderOptions.env.STEPHANOS_SHARED_AGENT_WORKSPACE, configuredWorkspace);
+});
+
+test('custody expiring inside lifeboat await prevents claim acknowledgement and remaining pre-sweep work', async () => {
+  let fresh = true; const calls = [];
+  const result = await heartbeat({ readWorkerHeartbeatAgeMs: () => fresh ? 119999 : 120001,
+    refreshGithubLifeboat: async options => {
+      assert.equal(options.readWorkerHeartbeatAgeMs(), 119999);
+      await Promise.resolve(); fresh = false; return githubLifeboatReady();
+    },
+    refreshGithubLifeboatClaimAck: async () => { calls.push('ack'); },
+    refreshLifeboatCapacity: async () => { calls.push('capacity'); },
+    conveyor: async () => { calls.push('claim'); },
+  });
+  assert.equal(result.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+  assert.deepEqual(calls, []);
+});
+
+
+test('production heartbeat retains pending pickup without claiming or executing a source build inline', async()=>{
+ const missionId='critical-1557-elastic-goal';
+ const result=await heartbeat({
+  maxWorkConservingAttempts:1,
+  conveyor:async()=>({ok:true,classification:'ELASTIC_MISSION_ADMITTED',elasticAdmission:{runnableMissions:[{missionId}],selectedMission:{missionId}}}),
+  builderOptions:{claimNext:()=>assert.fail('short heartbeat cannot claim source'),
+    runCommand:()=>assert.fail('short heartbeat cannot execute source'),
+    localModelFetchImpl:()=>assert.fail('short heartbeat cannot invoke model')},
+  publishTrack:async()=>({ok:true}),
+ });
+ assert.equal(result.sourceBuild.processed,false);
+ assert.equal(result.sourceBuild.pickupProven,false);
+ assert.equal(result.sourceBuild.finalVerdict,'CANONICAL_MISSION_WORKER_SOURCE_PICKUP_PENDING');
+ assert.equal(result.materialActionsSucceeded,0);
+ assert.equal(result.noRunnableSourceWorkProven,false);
 });

@@ -2,9 +2,13 @@
 // independently observed owner comment/issue/current-main identity. No writer.
 // This does NOT authenticate canonical/Seed/Island ownership or allow pickup.
 import { readBrokeredGithubJson } from './githubObservationBrokerV1.mjs';
-import { inspectRescueIslandPilotOwnerIntakeV1 } from './rescueIslandPilotOwnerIntakeV1.mjs';
+import {inspectRescueIslandSourceTaskV1} from './rescueIslandSourceTaskV1.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
+import { createBattleBridgeMinimalChildEnvironment } from './battleBridgeExecutionBoundaryV1.mjs';
+import { inspectRescueIslandPilotOwnerIntakeV1, inspectRescueIslandSupervisedOwnerIntakeV1, resolveRescueIslandSupervisedDocumentWorkerV1 } from './rescueIslandPilotOwnerIntakeV1.mjs';
 
 export const RESCUE_ISLAND_GITHUB_READ_SCHEMA = 'stephanos.rescue-island-github-read.v1';
+const SUPERVISED_READ = Symbol('supervised-cooperative-read');
 const ROOT = '/repos/Cheekyfellastef/stephan-os';
 const ISSUE = 3109;
 const MAX_BYTES = 32 * 1024;
@@ -46,11 +50,13 @@ function headOf(value) {
 
 export function inspectRescueIslandGithubReadFactsV1({
   issue, comment, initialMain, finalMain, commentId, task, nowUtc, consumedCommentIds = [],
+  [SUPERVISED_READ]: supervised = false,
 } = {}) {
   if (!safeCommentId(commentId)) return blocker('COMMENT_ID_UNTRUSTED');
   const first = headOf(initialMain), second = headOf(finalMain);
   if (!first || first !== second) return blocker('GITHUB_MAIN_HEAD_CHANGED_OR_UNPROVEN');
-  const intake = inspectRescueIslandPilotOwnerIntakeV1({
+  const inspect = supervised ? inspectRescueIslandSupervisedOwnerIntakeV1 : inspectRescueIslandPilotOwnerIntakeV1;
+  const intake = inspect({
     issue, comment, commentId, mainHead: first, nowUtc, task, consumedCommentIds,
   });
   if (intake.disposition !== 'STRUCTURALLY_ELIGIBLE_UNAUTHENTICATED')
@@ -58,9 +64,12 @@ export function inspectRescueIslandGithubReadFactsV1({
   return Object.freeze({
     ...blocker('EXTERNAL_OS_AND_OWNERSHIP_PROOF_REQUIRED'),
     verdict: 'GITHUB_FACTS_STRUCTURALLY_VERIFIED',
+    ...(supervised ? { assuranceProfile: 'SUPERVISED_COOPERATIVE_V1' } : {}),
     blockers: Object.freeze([]),
     nextRequiredProof: 'EXTERNAL_OS_AND_OWNERSHIP_PROOF_REQUIRED',
     sourceHead: first,
+    workerId: intake.workerId,
+    ownerIssueNumber: intake.issueNumber,
     commentId,
     taskId: task.taskId,
     readOnlyRequestCount: 4,
@@ -85,17 +94,20 @@ const BROKER_READS = Object.freeze([
     jq: '{ref,object:{sha:.object.sha}}' }),
 ]);
 
-function trustedSharedGithubObservation(spec, commentId, nowMs) {
+function trustedSharedGithubObservation(spec, commentId, nowMs, issueNumber=ISSUE) {
   const endpoint = spec.id === 'comment'
-    ? ROOT.slice(1) + '/issues/comments/' + commentId : spec.endpoint;
+    ? ROOT.slice(1) + '/issues/comments/' + commentId
+    : spec.id==='issue' ? ROOT.slice(1)+'/issues/'+issueNumber : spec.endpoint;
   const observed = readBrokeredGithubJson({
-    key: 'rescue-island:3109:' + commentId + ':' + spec.id,
+    key: 'rescue-island:' + issueNumber + ':' + commentId + ':' + spec.id,
     endpoint,
     args: ['--jq', spec.jq],
     ttlMs: 1000,
     maxStaleMs: 1000,
     timeoutMs: BROKER_TIMEOUT_MS,
     nowMs,
+    ghCommand: process.platform === 'win32' ? BATTLE_BRIDGE_WINDOWS_HOST.githubCli : '/usr/bin/gh',
+    childEnv: createBattleBridgeMinimalChildEnvironment(process.env),
   });
   // Never use stale/error-cache observations for approval-bearing evidence.
   // The common broker persists cooldown; a future controller invocation must
@@ -123,7 +135,7 @@ function trustedSharedGithubObservation(spec, commentId, nowMs) {
  */
 export async function readRescueIslandPilotGithubFactsV1({
   commentId, task, nowUtc = new Date().toISOString(),
-  consumedCommentIds = [],
+  consumedCommentIds = [], [SUPERVISED_READ]: supervised = false,
 } = {}) {
   if (!safeCommentId(commentId)) return blocker('COMMENT_ID_UNTRUSTED');
   const statedMs = typeof nowUtc === 'string' ? Date.parse(nowUtc) : NaN;
@@ -131,15 +143,28 @@ export async function readRescueIslandPilotGithubFactsV1({
   // Never allow an externally supplied clock to bypass shared cooldown.
   if (!Number.isFinite(statedMs) || Math.abs(statedMs - liveNowMs) > 5_000)
     return blocker('OBSERVATION_TIME_NOT_LIVE');
+  const source = supervised && task?.schemaVersion==='stephanos.rescue-island-source-task.v1';
+  const sourcePlan = source ? inspectRescueIslandSourceTaskV1(task,new Date().toISOString()) : null;
+  if(source && !sourcePlan.valid)return blocker('SOURCE_TASK_PLAN_HELD');
+  const documentWorker=!source && supervised ? resolveRescueIslandSupervisedDocumentWorkerV1(task) : null;
+  if(supervised && !source && !documentWorker)return blocker('DOCUMENT_TASK_WORKER_BINDING_HELD');
+  const issueNumber=sourcePlan?.issueNumber || documentWorker?.issueNumber || ISSUE;
   const payloads = [];
   for (const spec of BROKER_READS) {
-    const result = trustedSharedGithubObservation(spec, commentId, liveNowMs);
+    const result = trustedSharedGithubObservation(spec, commentId, liveNowMs, issueNumber);
     if (!result.ok) return blocker(result.blocker);
     payloads.push(result.payload);
   }
   return inspectRescueIslandGithubReadFactsV1({
     initialMain: payloads[0], issue: payloads[1],
     comment: payloads[2], finalMain: payloads[3],
-    commentId, task, nowUtc, consumedCommentIds,
+    commentId, task, nowUtc: supervised ? new Date().toISOString() : nowUtc, consumedCommentIds,
+    [SUPERVISED_READ]: supervised,
   });
+}
+
+// Fixed alternate parser, same four authenticated broker reads and cooldown.
+// The result is still read-only evidence; it is not an Island host grant.
+export async function readRescueIslandSupervisedPilotGithubFactsV1(input = {}) {
+  return readRescueIslandPilotGithubFactsV1({ ...input, [SUPERVISED_READ]: true });
 }

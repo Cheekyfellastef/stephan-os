@@ -25,7 +25,7 @@ export default function CockpitVisualDashboard({ projection, compact = false } =
     >
       <div className="cockpit-dashboard-core">
         <div className="cockpit-visual-orb" data-state={p.currentStatus || 'unknown'} data-cockpit-visual-current-status={p.currentStatus || 'unknown'}>
-          <span>{compact ? 'Cockpit' : (p.currentStatus || 'monitoring')}</span>
+          <span>{compact ? 'Cockpit' : `Mission proof: ${p.currentStatus || 'unknown'}`}</span>
         </div>
         {!compact ? <div className="cockpit-dashboard-mission"><strong>{p.currentMission || 'Current Stephanos mission'}</strong><span>{p.whoShouldActNext || 'Operator'}</span></div> : null}
       </div>

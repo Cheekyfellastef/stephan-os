@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CANONICAL_MAILBOX_ISSUE } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
+import { CANONICAL_MAILBOX_ISSUE, CANONICAL_MAILBOX_RECEIPT_PREDECESSOR } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import { evaluateCanonicalMailboxWorkflowEvent } from './canonical-mailbox-workflow-event-gate.mjs';
 const event = (patch = {}) => ({
   action: 'created',
@@ -12,9 +12,8 @@ const event = (patch = {}) => ({
 });
 test('new canonical shard allows event ingress but grants zero protected authority', () => {
   const result = evaluateCanonicalMailboxWorkflowEvent(event(), { mode: 'receipt' });
-  assert.equal(CANONICAL_MAILBOX_ISSUE, 3149);
   assert.equal(result.admitted, true);
-  assert.equal(result.issueNumber, 3149);
+  assert.equal(result.issueNumber, CANONICAL_MAILBOX_ISSUE);
   assert.equal(result.downstreamExactCommandValidationRequired, true);
   assert.equal(result.sourceMutationAuthority, false);
   assert.equal(result.mergeAuthority, false);
@@ -22,7 +21,6 @@ test('new canonical shard allows event ingress but grants zero protected authori
 });
 test('old mailbox, foreign owners and pull requests are denied for all event modes', () => {
   const invalid = [
-    event({ issue: { number: 2808 } }),
     event({ issue: { number: 2590 } }),
     event({ issue: { number: CANONICAL_MAILBOX_ISSUE, pull_request: {} } }),
     event({ repository: { full_name: 'foreign/project' } }),
@@ -35,6 +33,13 @@ test('old mailbox, foreign owners and pull requests are denied for all event mod
       assert.equal(evaluateCanonicalMailboxWorkflowEvent(item, { mode }).admitted, false);
     }
   }
+});
+
+test('only predecessor receipt ingress is read-only; every executable class remains denied', () => {
+  const predecessor = event({ issue: { number: CANONICAL_MAILBOX_RECEIPT_PREDECESSOR } });
+  assert.equal(evaluateCanonicalMailboxWorkflowEvent(predecessor, { mode: 'receipt' }).admitted, true);
+  for (const mode of ['protected', 'observer', 'bootstrap', 'prerequisite']) assert.equal(evaluateCanonicalMailboxWorkflowEvent(predecessor, { mode }).admitted, false);
+  assert.equal(evaluateCanonicalMailboxWorkflowEvent(predecessor, { mode: 'receipt' }).mergeAuthority, false);
 });
 test('command classes are independent and edited protected approvals never admitted', () => {
   const prereq = event({

@@ -76,7 +76,9 @@ async function harness(t, options = {}) {
     }
     if (url.startsWith(`${ROOT}/pulls?state=all&head=`))return response(pull?[pull]:[]);
     if (url===`${ROOT}/pulls`){
-      pull={number:3140,head:{sha:HEAD,ref:body.head,repo:{full_name:REPO}},base:{ref:'main',repo:{full_name:REPO}},merged:false};
+      pull={number:3140,draft:body.draft,head:{sha:HEAD,ref:body.head,repo:{full_name:REPO}},base:{ref:'main',repo:{full_name:REPO}},merged:false};
+      if(Object.hasOwn(options,'reportedDraft')) pull.draft=options.reportedDraft;
+      if(options.omitReportedDraft) delete pull.draft;
       if(options.losePrAck&&!options.prAckLost){options.prAckLost=true;throw new Error('PR ack lost');}
       return response(pull,201);
     }
@@ -109,7 +111,7 @@ async function harness(t, options = {}) {
   return {executor,host,task,comment,calls,receipts,root,run:()=>executor.runOnce({issueNumber:1574,commentId:123456}),
     get committed(){return committed;},get completed(){return completed;},get reservations(){return reservations;},
     get pull(){return pull;},get durable(){return durable;},
-    merge(){pull.merged=true;pull.merge_commit_sha=MERGED;}};
+    merge(){pull.draft=false;pull.merged=true;pull.merge_commit_sha=MERGED;}};
 }
 
 test('real canonical reservation and disk receipt chain surround one CAS commit and PR',async t=>{
@@ -130,6 +132,23 @@ test('real canonical reservation and disk receipt chain surround one CAS commit 
   h.merge();const reconciled=await h.executor.reconcile({issueNumber:1574,commentId:123456});
   assert.equal(reconciled.verdict,'MERGED_SOURCE_TASK_RECONCILED');assert.equal(h.completed,true);
   assert.equal(reconciled.unattendedRefillProven,false);
+});
+
+test('zero-Codex GitHub-first source publishes a draft and does not initiate metered review',async t=>{
+  const h=await harness(t);
+  const result=await h.run();
+  assert.equal(result.verdict,'PR_OPEN',JSON.stringify(result));
+  const publishes=h.calls.filter(c=>c.url===`${ROOT}/pulls`&&c.method==='POST');
+  assert.equal(publishes.length,1);
+  assert.equal(publishes[0].body.draft,true);
+  assert.equal(h.pull.draft,true);
+  assert.match(publishes[0].body.body,/DRAFT/);
+  assert.match(publishes[0].body.body,/External Codex auto-review settings may still trigger at READY/);
+  assert.equal(h.calls.some(c=>c.url.includes('/requested_reviewers')
+    || c.url.includes('/dispatches') || c.body?.reviewers?.includes('codex')),false);
+  assert.equal(h.completed,false);
+  assert.equal((await h.executor.reconcile({issueNumber:1574,commentId:123456})).verdict,
+    'AWAITING_EXISTING_CI_REVIEW_AND_PROTECTED_MERGE');
 });
 
 test('forged/edited/expired owner intake is rejected before any source write',async t=>{
@@ -279,4 +298,43 @@ test('closed unmerged PR is a typed hold rather than completion or automatic rep
   const h=await harness(t);await h.run();h.pull.state='closed';
   assert.equal((await h.executor.reconcile({issueNumber:1574,commentId:123456})).blocker,
     'PR_CLOSED_UNMERGED_PRESERVE_SOURCE');assert.equal(h.completed,false);
+});
+
+test('fresh PR creation requires actual GitHub DRAFT readback, preserving the created PR and original reservation on mismatch',async t=>{
+  for(const opts of [{reportedDraft:false},{omitReportedDraft:true}]) {
+    const h=await harness(t,opts),result=await h.run();
+    assert.equal(result.verdict,'HELD'); assert.equal(result.blocker,'PR_DRAFT_STATE_UNPROVEN');
+    assert.equal(result.prNumber,3140); assert.equal(result.head,HEAD);
+    assert.equal(h.pull.number,3140);
+    assert.equal(h.calls.filter(c=>c.url===`${ROOT}/pulls`&&c.method==='POST').length,1);
+    assert.equal(h.calls.some(c=>c.method==='PATCH'||c.url.includes('requested_reviewers')),false);
+    assert.equal(h.completed,false);
+    assert.equal(h.receipts.at(-1).state,'failed');
+  }
+});
+test('lost PR POST acknowledgement cannot automatically accept an unexpected READY or missing-draft response',async t=>{
+  for(const opts of [{losePrAck:true,reportedDraft:false},{losePrAck:true,omitReportedDraft:true}]) {
+    const h=await harness(t,opts);
+    assert.equal((await h.run()).blocker,'GITHUB_WRITE_OUTCOME_UNKNOWN');
+    const recovered=await h.executor.reconcile({issueNumber:1574,commentId:123456});
+    assert.equal(recovered.verdict,'HELD');
+    assert.equal(recovered.blocker,'RECOVERY_PR_DRAFT_STATE_UNPROVEN');
+    assert.equal(h.calls.filter(c=>c.url===`${ROOT}/pulls`&&c.method==='POST').length,1);
+    assert.equal(h.calls.filter(c=>c.body?.query?.startsWith('mutation(')).length,1);
+    assert.equal(h.completed,false);
+  }
+});
+test('unproved later READY is held, but real protected merge proof can still reconcile the original source task',async t=>{
+  const h=await harness(t);
+  assert.equal((await h.run()).verdict,'PR_OPEN');
+  h.pull.draft=false;
+  const state=await h.executor.reconcile({issueNumber:1574,commentId:123456});
+  assert.equal(state.verdict,'HELD');
+  assert.equal(state.blocker,'PR_READY_REVIEW_AUTHORITY_UNPROVEN');
+  assert.equal(state.prNumber,3140);
+  assert.equal(h.completed,false);
+  h.merge();
+  const merged=await h.executor.reconcile({issueNumber:1574,commentId:123456});
+  assert.equal(merged.verdict,'MERGED_SOURCE_TASK_RECONCILED');
+  assert.equal(h.completed,true);
 });

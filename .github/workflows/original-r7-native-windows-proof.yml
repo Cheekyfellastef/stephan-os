@@ -7,6 +7,8 @@ on:
     paths:
       - 'global.json'
       - 'scripts/windows/stage-original-r7-witness-candidate.ps1'
+      - 'scripts/windows/build-original-r7-scoped-mutation-gate.ps1'
+      - 'src/windows/Stephanos.OriginalR7ScopedMutationGate/**'
       - 'src/windows/Stephanos.OriginalR7DaclReadback/**'
       - 'src/windows/Stephanos.OriginalR7DaclReadback.Tests/**'
       - 'src/windows/Stephanos.OriginalR7CustodyWitness/**'
@@ -31,7 +33,7 @@ concurrency:
 
 jobs:
   native-r7-probe:
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4; immutable upstream commit
@@ -56,6 +58,33 @@ jobs:
           }
           $selected = (& dotnet --version).Trim()
           if ($LASTEXITCODE -ne 0 -or $selected -cne '8.0.426') { throw 'R7_EXACT_DOTNET_SDK_NOT_SELECTED' }
+      - name: Compile kernel mutation core and execute policy properties without loading a driver
+        shell: pwsh
+        run: |
+          # Exact Microsoft package, development headers/libraries only.
+          # No WDK installer, package build tasks, signing or driver loading.
+          $package = Join-Path $env:RUNNER_TEMP 'microsoft.windows.wdk.x64.10.0.26100.6584.nupkg'
+          Invoke-WebRequest -Uri 'https://api.nuget.org/v3-flatcontainer/microsoft.windows.wdk.x64/10.0.26100.6584/microsoft.windows.wdk.x64.10.0.26100.6584.nupkg' -OutFile $package
+          $expected = 'jhddaBnhMDqt3GVr32RVTtaR0KHmZDjY0JCTMn10OQpk4+AShXCK9QA09vBazp8ni1Mju84qM5SGXfIfnyOJ+g=='
+          $actual = [Convert]::ToBase64String([Convert]::FromHexString((Get-FileHash -LiteralPath $package -Algorithm SHA512).Hash))
+          if ($actual -cne $expected) { throw 'R7_WDK_ARCHIVE_DIGEST_MISMATCH' }
+          dotnet nuget verify --all $package
+          if ($LASTEXITCODE -ne 0) { throw 'R7_WDK_SIGNATURE_VERIFICATION_FAILED' }
+          $kit = [IO.Path]::GetFullPath((Join-Path $env:RUNNER_TEMP 'r7-development-wdk'))
+          $archive = [IO.Compression.ZipFile]::OpenRead($package)
+          try {
+            foreach ($entry in $archive.Entries) {
+              if ($entry.FullName.EndsWith('/')) { continue }
+              if (-not ($entry.FullName.StartsWith('c/Include/10.0.26100.0/km/',[StringComparison]::Ordinal) -or $entry.FullName.StartsWith('c/Lib/10.0.26100.0/km/x64/',[StringComparison]::Ordinal))) { continue }
+              $destination = [IO.Path]::GetFullPath((Join-Path $kit $entry.FullName))
+              if (-not $destination.StartsWith($kit+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) { throw 'R7_WDK_ARCHIVE_PATH_ESCAPE' }
+              [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination)) | Out-Null
+              $r7ZipInput = $entry.Open()
+              $r7DiskOutput = [IO.File]::Open($destination,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+              try { $r7ZipInput.CopyTo($r7DiskOutput) } finally { $r7ZipInput.Dispose(); $r7DiskOutput.Dispose() }
+            }
+          } finally { $archive.Dispose() }
+          ./scripts/windows/build-original-r7-scoped-mutation-gate.ps1 -WdkRoot $kit -WdkPackagePath $package
       - name: Compile and execute native Windows probe regressions
         shell: pwsh
         run: |
@@ -92,6 +121,7 @@ jobs:
             'Stephanos.OriginalR7PeerPairing.Tests',
             'Stephanos.OriginalR7SeedCreation.Tests',
             'Stephanos.OriginalR7EstateSnapshot.Tests'
+            'Stephanos.OriginalR7LiveFence.Tests'
           )
           foreach ($project in $projects) {
             dotnet run --project "src/windows/$project" --configuration Release --disable-build-servers -p:UseSharedCompilation=false -p:RestoreLockedMode=true

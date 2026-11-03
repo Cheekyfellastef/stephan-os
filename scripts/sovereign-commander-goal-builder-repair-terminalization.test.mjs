@@ -10,7 +10,7 @@ const source = await readFile(
 test('goal-builder repair keeps mutating child steps off synchronous proof pipes', () => {
   assert.match(
     source,
-    /const pipeFreeChild = step === STEPS\.startMissionWorker \|\| step === STEPS\.goalHeartbeat;/,
+    /const pipeFreeChild = step === STEPS\.goalHeartbeat;/,
   );
   assert.match(
     source,

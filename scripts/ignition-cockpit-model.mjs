@@ -47,6 +47,8 @@ export function projectIgnitionCockpit(input = {}) {
   const servedProofReady = servedProof.healthProbePass === true
     && servedProof.runtimeMarkerMatches === true
     && servedProof.moduleMimeChecksPass === true;
+  const localAiStage = stages.find((stage) => stage.id === 'local-ai');
+  const localAiReady = !localAiStage || TERMINAL_PASS.has(localAiStage.status);
   let trafficLight = TRAFFIC_LIGHT.BLUE;
   let exactNextOperatorAction = input.exactNextOperatorAction || 'Wait for ignition to finish the current proof stage.';
   let readyToEnterStephanos = false;
@@ -56,11 +58,15 @@ export function projectIgnitionCockpit(input = {}) {
     captainStatus = 'BLOCKED';
     trafficLight = TRAFFIC_LIGHT.RED;
     exactNextOperatorAction = input.exactNextOperatorAction || 'Resolve the blocker, then rerun npm run stephanos:ignite.';
-  } else if (buildPassed && verifyPassed && servedProofReady) {
+  } else if (buildPassed && verifyPassed && servedProofReady && localAiReady) {
     captainStatus = (input.sourceUpdateProof || input.sourceProof?.sourceUpdateProof || {}).runningLatestMain === true ? 'RUNNING LATEST MAIN' : 'READY TO ENTER';
     trafficLight = TRAFFIC_LIGHT.GREEN;
     readyToEnterStephanos = true;
     exactNextOperatorAction = 'Enter Stephanos.';
+  } else if (buildPassed && verifyPassed && servedProofReady && !localAiReady) {
+    captainStatus = 'BUILDING';
+    trafficLight = TRAFFIC_LIGHT.BLUE;
+    exactNextOperatorAction = input.exactNextOperatorAction || 'Wait for Local AI readiness proof before entering Stephanos.';
   } else if (buildPassed && verifyPassed && input.serverStarted === true) {
     captainStatus = 'BUILDING';
     trafficLight = TRAFFIC_LIGHT.AMBER;
@@ -101,6 +107,7 @@ export function projectIgnitionCockpit(input = {}) {
       verifyPassed,
       serverStarted: input.serverStarted === true,
       servedProofReady,
+      localAiReady,
       servedProof,
     },
     timestamps: {
