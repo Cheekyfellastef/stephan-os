@@ -110,6 +110,24 @@ for (const [name, check, expectedChecks, expectedState] of [
   });
 }
 
+test('optional GraphQL check-batch denial cannot turn passing workflow summaries into current proof', async () => {
+  const { result, calls } = await observe(null, {
+    prs: [{ ...pr(2), draft: false }],
+    workflows: passingExactHeadWorkflows(),
+    fail: true,
+  });
+  assert.equal(calls.length, 4, 'one GraphQL attempt, no hidden repeat');
+  assert.equal(result.status, 'live', 'REST PR observation remains useful');
+  assert.equal(result.pullRequests[0].checkBatchObserved, true);
+  assert.equal(result.pullRequests[0].checksEvidenceBlocker, 'GITHUB_CHECK_BATCH_UNAVAILABLE');
+  assert.equal(result.pullRequests[0].checksStatus, 'unknown');
+  const projection = overlayGoalDashboardWithLivePortfolio({
+    liveProjection: { githubTelemetry: result }, nowMs: now.getTime(),
+  });
+  assert.equal(projection.goals[0].proofTruth, 'UNKNOWN');
+  assert.equal(projection.operatorAttention.approvals.length, 0);
+});
+
 const failedContext = { name: 'external-check', status: 'COMPLETED', conclusion: 'FAILURE' };
 const rejectedBatchCases = [
   ['moved PR head', () => ({ pr2: row([failedContext], { headRefOid: 'b'.repeat(40) }) }), true],

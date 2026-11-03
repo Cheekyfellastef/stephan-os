@@ -271,7 +271,9 @@ async function enrichDashboardPrChecks(prs, repoConfig, auth, requestOptions) {
     // Ordinary optional failures retain the valid PR observation; exhaustion
     // must reach the existing broker rather than disappear behind enrichment.
     if (error?.githubRateLimited) throw error;
-    return { prs };
+    // Retain the REST PR list but never promote workflow summaries when the
+    // selected exact-head check rollup could not be inspected.
+    return { prs: rejectSelected('GITHUB_CHECK_BATCH_UNAVAILABLE') };
   }
 }
 async function readGithubTelemetryWithAuth(repoConfig, auth, options = {}) {
