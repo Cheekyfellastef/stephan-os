@@ -96,7 +96,7 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     const conclusion = lc(run.conclusion);
     let status = WORKFLOW_STATES.has(statusText) ? statusText : 'queued';
     if (['in_progress', 'requested', 'waiting', 'pending'].includes(statusText)) status = statusText === 'in_progress' ? 'running' : 'queued';
-    if (['success', 'passed'].includes(conclusion)) status = 'passed';
+    if (['success', 'passed'].includes(conclusion) && (!statusText || statusText === 'completed')) status = 'passed';
     if (['failure', 'failed', 'timed_out', 'action_required'].includes(conclusion)) status = 'failed';
     if (conclusion === 'cancelled') status = 'cancelled';
     return {

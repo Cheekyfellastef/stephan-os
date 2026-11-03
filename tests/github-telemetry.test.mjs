@@ -41,6 +41,52 @@ test('GitHub telemetry projects PRs workflows unavailable state and no fabricate
   assert.equal(unavailable.blockers.includes('github_adapter_unavailable'), true);
 });
 
+test('workflow status cannot be overridden by stale or contradictory SUCCESS/PASSED conclusions', () => {
+  const statusCases = [
+    ['IN_PROGRESS', 'running'],
+    ['QUEUED', 'queued'],
+    ['REQUESTED', 'queued'],
+    ['WAITING', 'queued'],
+    ['PENDING', 'queued'],
+    ['RUNNING', 'running'],
+    ['FAILED', 'failed'],
+    ['CANCELLED', 'cancelled'],
+    ['COMPLETED', 'passed'],
+    ['', 'passed'],
+  ];
+  for (const [rawStatus, expectedOnSuccess] of statusCases) {
+    for (const [conclusion, expected] of [
+      ['SUCCESS', expectedOnSuccess],
+      ['PASSED', expectedOnSuccess],
+      ['FAILURE', 'failed'],
+      ['CANCELLED', 'cancelled'],
+    ]) {
+      const telemetry = normalizeGithubTelemetry({
+        available: true, workflows: [{ id: 2, name: 'build', status: rawStatus, conclusion, prNumber: 42 }],
+      });
+      assert.equal(telemetry.workflows[0].status, expected,
+        `status=${rawStatus || '(absent)'} conclusion=${conclusion}`);
+      assert.equal(telemetry.workflowCounts.passed || 0, expected === 'passed' ? 1 : 0);
+    }
+  }
+  const githubTelemetry = normalizeGithubTelemetry({
+    available: true,
+    pullRequests: [{ number: 42, title: 'Historical Mission Control API', headSha: 'b'.repeat(40), checks: [], state: 'open' }],
+    workflows: [{ id: 2, name: 'build', status: 'IN_PROGRESS', conclusion: 'SUCCESS', prNumber: 42 }],
+  });
+  const projection = buildLiveGoalProjection({
+    backendStatus: { status: 'live', ok: true },
+    missionOperationsFeed: { status: 'ready', missions: [], errors: [] },
+    importedGoals: { receipts: [], candidates: [{
+      candidateId: 'goal-42', title: 'Historical Mission Control API',
+      intent: 'API', lastKnownPR: '#42', status: 'open',
+    }] },
+    githubTelemetry,
+  });
+  assert.equal(projection.executionChains[0].workflows[0].status, 'running',
+    'Goal Dashboard workflow fallback must not invent passed exact-head proof');
+});
+
 test('live projection correlates goals to PR workflow chain and command deck answers from telemetry', () => {
   const githubTelemetry = normalizeGithubTelemetry({ available: true, notifications: [{ id: 'n1', reason: 'review_requested', subject: { title: 'Review PR 42', type: 'PullRequest' } }], pullRequests: [{ number: 42, title: 'Historical Mission Control API', branch: 'work', headSha: 'b'.repeat(40), checks: [{ conclusion: 'success' }], approvalStatus: 'approved' }], workflows: [{ id: 1, name: 'verify', conclusion: 'failure', prNumber: 42 }] });
   const projection = buildLiveGoalProjection({ backendStatus: { status: 'live', ok: true }, missionOperationsFeed: { status: 'ready', missions: [], errors: [] }, importedGoals: { receipts: [], candidates: [{ candidateId: 'goal-42', title: 'Historical Mission Control API', intent: 'API', lastKnownPR: '#42', status: 'open' }] }, githubTelemetry });
