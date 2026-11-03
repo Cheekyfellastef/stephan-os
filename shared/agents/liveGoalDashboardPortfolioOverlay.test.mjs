@@ -300,3 +300,58 @@ test('legacy base blockers are discarded when live cards replace the seeded esta
   assert.equal(projection.operatorAttention.localProofNeeded.length, 0);
   assert.equal(projection.finalVerdict, 'LANDING_GOAL_DASHBOARD_CURRENT');
 });
+
+
+test('future-dated observations cannot be current, including valid timestamp boundaries', () => {
+  const fixture = (when) => overlayGoalDashboardWithLivePortfolio({
+    baseProjection: baseProjection(),
+    nowMs: NOW,
+    staleAfterMs: 60_000,
+    liveProjection: {
+      githubTelemetry: {
+        adapterAvailable: true,
+        lastUpdatedAt: when,
+        pullRequests: [{ number: 1785, title: 'Future observation', headSha: HEAD, checksStatus: 'passed', blockers: [] }],
+      },
+    },
+  });
+  for (const [offset, expected] of [
+    [1, 'UNKNOWN'],
+    [60 * 60_000, 'UNKNOWN'],
+    [0, 'CURRENT'],
+    [-60_000, 'CURRENT'],
+    [-60_001, 'STALE'],
+  ]) {
+    const projection = fixture(new Date(NOW + offset).toISOString());
+    assert.equal(projection.sourceTruth, expected, `GitHub timestamp offset ${offset}`);
+    assert.equal(projection.goals[0].statusTruth, expected, `PR timestamp offset ${offset}`);
+    if (offset > 0) {
+      assert.equal(projection.goals[0].proofTruth, 'UNKNOWN');
+      assert.ok(projection.goals[0].blockers.includes('UNKNOWN_GITHUB_TELEMETRY'));
+      assert.equal(projection.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED');
+    }
+  }
+  assert.equal(fixture('not-a-timestamp').sourceTruth, 'UNKNOWN');
+});
+
+test('future-dated Shared Workspace status and proof remain unknown even with successful records', () => {
+  const projection = overlayGoalDashboardWithLivePortfolio({
+    baseProjection: baseProjection(),
+    nowMs: NOW,
+    goalRecords: [{
+      goalId: 'goal-future', status: 'ACTIVE',
+      timestampUtc: new Date(NOW + 1).toISOString(),
+    }],
+    proofRecords: [{
+      goalId: 'goal-future', status: 'PASS',
+      timestampUtc: new Date(NOW + 60_000).toISOString(),
+      proofRefs: ['proofs/not-yet-observed.json'],
+    }],
+  });
+  assert.equal(projection.sourceTruth, 'UNKNOWN');
+  assert.equal(projection.goals[0].statusTruth, 'UNKNOWN');
+  assert.equal(projection.goals[0].proofTruth, 'UNKNOWN');
+  assert.ok(projection.goals[0].blockers.includes('UNKNOWN_STATUS_RECORD'));
+  assert.ok(projection.goals[0].blockers.includes('UNKNOWN_PROOF_RECORD'));
+  assert.equal(projection.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED');
+});

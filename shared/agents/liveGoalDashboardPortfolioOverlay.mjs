@@ -35,7 +35,9 @@ function timestampMs(value) {
 function freshness(timestamp, nowMs, staleAfterMs) {
   const observedMs = timestampMs(timestamp);
   if (!Number.isFinite(observedMs)) return { truth: UNKNOWN, ageMs: null };
-  const ageMs = Math.max(0, nowMs - observedMs);
+  // Future observations cannot prove current execution or completion.
+  if (observedMs > nowMs) return { truth: UNKNOWN, ageMs: null };
+  const ageMs = nowMs - observedMs;
   return { truth: ageMs > staleAfterMs ? STALE : CURRENT, ageMs };
 }
 
