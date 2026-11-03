@@ -48,6 +48,28 @@ test('failed and cancelled completed checks are failed, while an empty rollup re
   assert.equal(result.pullRequests[0].checksStatus, 'unknown');
 });
 
+test('SKIPPED or NEUTRAL-only exact-head check batches cannot fabricate passing proof', async () => {
+  const skippedAndNeutral = [['SKIPPED'], ['NEUTRAL'], ['SKIPPED', 'NEUTRAL']];
+  for (const conclusions of skippedAndNeutral) {
+    const checks = conclusions.map((conclusion, index) => ({
+      name: `nonexecuted-${index}`, status: 'COMPLETED', conclusion,
+    }));
+    const { result } = await observe({ nameWithOwner: 'owner/repo', pr2: row(checks) });
+    assert.equal(result.pullRequests[0].checkBatchObserved, true);
+    assert.equal(result.pullRequests[0].checksStatus, 'unknown');
+    const projection = overlayGoalDashboardWithLivePortfolio({
+      liveProjection: { githubTelemetry: result }, nowMs: now.getTime(),
+    });
+    assert.equal(projection.goals[0].state, 'VERIFYING');
+    assert.equal(projection.operatorAttention.approvals.length, 0);
+  }
+  const { result } = await observe({ nameWithOwner: 'owner/repo', pr2: row([
+    { name: 'skipped', status: 'COMPLETED', conclusion: 'SKIPPED' },
+    { name: 'executed', status: 'COMPLETED', conclusion: 'SUCCESS' },
+  ]) });
+  assert.equal(result.pullRequests[0].checksStatus, 'passed');
+});
+
 test('moved PR/commit head, wrong repository and truncated check pages cannot upgrade proof', async () => {
   const good = row([{ name: 'build', status: 'COMPLETED', conclusion: 'SUCCESS' }]);
   const variants = [

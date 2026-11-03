@@ -25,7 +25,9 @@ function normalizeChecks(checks = []) {
   const states = list(checks).map((check) => lc(check?.conclusion || check?.state || check?.status));
   if (states.some((state) => ['error', 'failure', 'failed', 'timed_out', 'cancelled', 'action_required', 'startup_failure'].includes(state))) return 'failed';
   if (states.some((state) => ['expected', 'requested', 'queued', 'in_progress', 'pending', 'waiting'].includes(state))) return 'pending';
-  if (states.length && states.every((state) => ['success', 'passed', 'skipped', 'neutral'].includes(state))) return 'passed';
+  // SKIPPED/NEUTRAL-only batches contain no executed success proof.
+  if (states.some((state) => ['success', 'passed'].includes(state))
+    && states.every((state) => ['success', 'passed', 'skipped', 'neutral'].includes(state))) return 'passed';
   return 'unknown';
 }
 export function classifyGithubNotification(notification = {}) {
