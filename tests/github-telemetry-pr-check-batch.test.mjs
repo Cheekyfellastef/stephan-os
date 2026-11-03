@@ -132,6 +132,42 @@ for (const [name, check, expectedChecks, expectedState] of [
   });
 }
 
+test('nonterminal CheckRuns with stale SUCCESS conclusions stay pending despite passing exact-head workflow summaries', async () => {
+  for (const status of ['REQUESTED', 'QUEUED', 'IN_PROGRESS', 'WAITING', 'PENDING']) {
+    for (const withCompletedSuccess of [false, true]) {
+      const checks = [
+        ...(withCompletedSuccess ? [{ name: 'earlier-green', status: 'COMPLETED', conclusion: 'SUCCESS' }] : []),
+        { name: 'not-finished', status, conclusion: 'SUCCESS' },
+      ];
+      const { result } = await observe({ nameWithOwner: 'owner/repo', pr2: row(checks) }, {
+        prs: [{ ...pr(2), draft: false }], workflows: passingExactHeadWorkflows(),
+      });
+      assert.equal(result.pullRequests[0].checksStatus, 'pending', `status ${status}`);
+      const projection = overlayGoalDashboardWithLivePortfolio({
+        liveProjection: { githubTelemetry: result }, nowMs: now.getTime(),
+      });
+      assert.equal(projection.goals[0].proofTruth, 'UNKNOWN', `status ${status}`);
+      assert.equal(projection.goals[0].state, 'VERIFYING', `status ${status}`);
+      assert.equal(projection.operatorAttention.approvals.length, 0);
+    }
+  }
+});
+
+test('explicit CheckRun failure conclusions still outrank contradictory nonterminal statuses', async () => {
+  for (const status of ['IN_PROGRESS', 'QUEUED']) {
+    const { result } = await observe({ nameWithOwner: 'owner/repo', pr2: row([
+      { name: 'failed-not-final', status, conclusion: 'FAILURE' },
+      { name: 'passing', status: 'COMPLETED', conclusion: 'SUCCESS' },
+    ]) });
+    assert.equal(result.pullRequests[0].checksStatus, 'failed');
+    const projection = overlayGoalDashboardWithLivePortfolio({
+      liveProjection: { githubTelemetry: result }, nowMs: now.getTime(),
+    });
+    assert.equal(projection.goals[0].state, 'BLOCKED');
+    assert.equal(projection.goals[0].proofTruth, 'UNKNOWN');
+  }
+});
+
 test('optional GraphQL check-batch denial cannot turn passing workflow summaries into current proof', async () => {
   const { result, calls } = await observe(null, {
     prs: [{ ...pr(2), draft: false }],

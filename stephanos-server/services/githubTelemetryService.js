@@ -22,7 +22,15 @@ function list(value) { return Array.isArray(value) ? value : []; }
 function lc(value) { return text(value).toLowerCase(); }
 function countBy(items, key) { return items.reduce((acc, item) => ({ ...acc, [item[key]]: (acc[item[key]] || 0) + 1 }), {}); }
 function normalizeChecks(checks = []) {
-  const states = list(checks).map((check) => lc(check?.conclusion || check?.state || check?.status));
+  const states = list(checks).map((check) => {
+    const conclusion = lc(check?.conclusion);
+    // A stale success conclusion must never certify a nonterminal CheckRun.
+    // Explicit failure conclusions remain failures even with inconsistent status.
+    if (['error', 'failure', 'failed', 'timed_out', 'cancelled', 'action_required', 'startup_failure'].includes(conclusion)) return conclusion;
+    const status = lc(check?.status);
+    if (status && status !== 'completed') return status;
+    return lc(check?.conclusion || check?.state || check?.status);
+  });
   if (states.some((state) => ['error', 'failure', 'failed', 'timed_out', 'cancelled', 'action_required', 'startup_failure'].includes(state))) return 'failed';
   if (states.some((state) => ['expected', 'requested', 'queued', 'in_progress', 'pending', 'waiting'].includes(state))) return 'pending';
   // SKIPPED/NEUTRAL-only batches contain no executed success proof.
