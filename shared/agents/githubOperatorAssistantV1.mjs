@@ -18,8 +18,9 @@ function checksPass(pr){
 }
 function item(kind, input, reason){return {kind, number:Number(input.number), title:text(input.title), url:text(input.url), reason, headSha:prHead(input), claimedHeadSha:text(input.claimedHeadSha), branch:prBranch(input), issueNumbers: arr(input.issueNumbers).map(Number).filter(Boolean), evidenceRefs: arr(input.evidenceRefs).map(text).filter(Boolean)};}
 
-function handoffDebtFromEvidence(evidence,now){
+function handoffDebtFromEvidence(evidence,now,prs=[]){
  const blocked=[], waiting=[];const nowMs=Date.parse(now);
+ const prByNumber=new Map(prs.map(p=>[Number(p?.number),p]).filter(([n])=>Number.isInteger(n)&&n>0));
  const made=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&text(e.marker)==='PRODUCED');
  const acks=evidence.filter(e=>e?.kind==='goal-stage-handoff'&&text(e.marker)==='ACKNOWLEDGED');
  const producerRefCounts=new Map();
@@ -38,6 +39,14 @@ function handoffDebtFromEvidence(evidence,now){
   if(receipt&&producerRefCounts.get(receipt)>1){
    blocked.push({...item,kind:'automation-debt-duplicate-producer-receipt',
     reason:'Producer receipt is reused by multiple handoffs; receiver custody is ambiguous.'});continue;
+  }
+  // A valid historical ACK cannot qualify an older producer head after the PR advances.
+  const current=prByNumber.get(pr);
+  const currentHead=current?prHead(current):'';
+  const currentBase=current?text(current.baseSha||current.baseRefOid):'';
+  if(current&&((currentHead&&currentHead!==head)||(currentBase&&currentBase!==base))){
+   blocked.push({...item,kind:'automation-debt-stale-source-identity',
+    reason:'Producer handoff no longer matches the observed current PR head/base; refresh custody before proceeding.'});continue;
   }
   const receiverAcks=acks.filter(a=>text(a.producerReceiptRef)===receipt);
   if(receipt&&receiverAcks.length>1){
@@ -71,7 +80,7 @@ function handoffDebtFromEvidence(evidence,now){
 export function buildGitHubOperatorBriefing(input={}){
  const now=text(input.generatedAtUtc)||'1970-01-01T00:00:00.000Z'; const evidence=arr(input.evidence); const prs=arr(input.pullRequests).slice().sort((a,b)=>Number(a.number)-Number(b.number)); const issues=arr(input.issues).slice().sort((a,b)=>Number(a.number)-Number(b.number));
  const ready=[], blocked=[], waitingForProof=[], waitingForOperator=[], waitingForImplementation=[];
- const debt=handoffDebtFromEvidence(evidence,now); blocked.push(...debt.blocked); waitingForProof.push(...debt.waiting);
+ const debt=handoffDebtFromEvidence(evidence,now,prs); blocked.push(...debt.blocked); waitingForProof.push(...debt.waiting);
  for(const pr of prs){ const n=Number(pr.number); const blockers=[]; let missing=false;
   const pubOk=pr.publicationVerified===true || hasProof(evidence,n,'PR_PUBLICATION_VERIFIER_PASS');
   if(!pubOk){ missing=true; waitingForProof.push(item('pr-missing-publication-proof',pr,'Missing PR publication proof from PRPublicationVerifier.')); }

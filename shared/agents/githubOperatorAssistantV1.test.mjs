@@ -231,3 +231,33 @@ test('fails closed on a present but invalid receiver acknowledgement before prod
   assert.equal(briefing.waitingForProof.length,0);
  }
 });
+
+
+test('flags a previously acknowledged handoff when the observed current PR identity changes',()=>{
+ const producer={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'review-stage-producer-1',
+  nextOwner:'protected-merge-owner',nextAction:'consume-exact-review',
+  producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T16:00:00Z'};
+ const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:producer.ref,
+  prNumber:producer.prNumber,issueNumber:producer.issueNumber,
+  sourceHead:producer.sourceHead,baseSha:producer.baseSha,ref:'review-stage-ack-1',
+  receiverOwner:producer.nextOwner,nextAction:producer.nextAction,
+  acknowledgedAtUtc:'2026-11-03T13:00:00Z'};
+ const project=(pr)=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T14:00:00Z',
+  evidence:[producer,ack],pullRequests:pr?[{number:1449,publicationVerified:true,
+   checksStatus:'pass',isDraft:false,...pr}]:[]});
+ assert.equal(project({headSha:producer.sourceHead,baseSha:producer.baseSha}).status,'PASS');
+ for(const changed of [
+  {headSha:'c'.repeat(40),baseSha:producer.baseSha},
+  {headSha:producer.sourceHead,baseSha:'d'.repeat(40)},
+  {headRefOid:'c'.repeat(40),baseRefOid:producer.baseSha},
+ ]){
+  const r=project(changed);
+  assert.equal(r.status,'BLOCKED');
+  assert.equal(r.blocked[0].kind,'automation-debt-stale-source-identity');
+  assert.equal(r.waitingForProof.length,0);
+ }
+ // A missing current PR snapshot must not be invented as a source-identity conflict.
+ assert.equal(project(null).status,'PASS');
+ assert.equal(project({}).status,'PASS');
+});
