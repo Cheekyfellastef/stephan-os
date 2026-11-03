@@ -1508,6 +1508,26 @@ export function validatePersonalRepositoryCheckRuns(
       && text(run?.status).toLowerCase() === 'completed'
       && text(run?.conclusion).toLowerCase() === 'success';
 
+    // request-build is intentionally absent from pull_request executions.
+    // Neutrality requires the exact canonical workflow and a successful
+    // contract-test sibling in the same authenticated check suite.
+    const prControlTowerBuildNotRequested = conclusion === 'skipped'
+      && name === 'request-build'
+      && workflow === 'Stephanos Control Tower - Sovereign Control'
+      && path === '.github/workflows/stephanos-control-tower-build.yml'
+      && text(run?.event) === 'pull_request'
+      && text(run?.status).toLowerCase() === 'completed'
+      && text(run?.conclusion).toLowerCase() === 'success'
+      && exactCheckBindings.some((candidate) => (
+        candidate !== checkBinding
+        && candidate.exactRun
+        && candidate.checkSuiteId === checkSuiteId
+        && candidate.run?.id === run?.id
+        && text(candidate.check?.name) === 'contract-test'
+        && text(candidate.check?.status).toLowerCase() === 'completed'
+        && text(candidate.check?.conclusion).toLowerCase() === 'success'
+      ));
+
     let disposition = 'green';
     if (status !== 'completed') {
       blockers.push('personal-repository-check-run-not-terminal');
@@ -1517,6 +1537,8 @@ export function validatePersonalRepositoryCheckRuns(
     } else if (conclusion === 'skipped'
       && PERSONAL_REPOSITORY_NEUTRAL_SKIPPED_CHECKS.has(`${workflow}\0${name}`)) {
       disposition = 'neutral-skip';
+    } else if (prControlTowerBuildNotRequested) {
+      disposition = 'pr-control-tower-build-not-requested';
     } else if (supersededDraftSkip) {
       disposition = 'superseded-draft-skip';
     } else if (readyReviewLifecycle?.valid === true) {
