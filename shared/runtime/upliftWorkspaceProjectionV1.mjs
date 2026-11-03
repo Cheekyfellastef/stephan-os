@@ -152,9 +152,16 @@ function truthFromRecord(record = {}) {
   // explicit NO/ZERO findings remains a clean positive control.
   const unresolvedCriticalFinding = states.some((value) => {
     const fieldTokens = value.split(/[^A-Z0-9]+/).filter(Boolean);
-    return fieldTokens.some((token) => ['P0', 'P1', 'SECURITY'].includes(token))
-      && fieldTokens.some((token) => ['FINDING', 'FINDINGS', 'BLOCKER', 'BLOCKERS', 'UNRESOLVED'].includes(token))
-      && !fieldTokens.some((token) => ['NO', 'ZERO', 'CLEARED'].includes(token));
+    // Clearances apply only to their own risk tier. A NO_P0 finding
+    // cannot clear a separate unresolved P1 finding in the same field.
+    return fieldTokens.some((token, index) => {
+      if (!['P0', 'P1', 'SECURITY'].includes(token)) return false;
+      const next = fieldTokens.slice(index + 1);
+      const findingIndex = next.findIndex((part) => ['FINDING', 'FINDINGS', 'BLOCKER', 'BLOCKERS', 'UNRESOLVED'].includes(part));
+      if (findingIndex < 0) return false;
+      const before = fieldTokens.slice(Math.max(0, index - 1), index);
+      return !before.some((part) => ['NO', 'ZERO', 'CLEARED'].includes(part));
+    });
   });
   const negatedPositive = tokens.includes('NOT') && tokens.some((value) => positive.has(value));
   if (unresolvedCriticalFinding || negatedPositive || tokens.some((value) => negative.has(value))) return 'CONFLICTING';
