@@ -95,6 +95,12 @@ test('truth projection lets explicit failure fields veto positive-looking status
     [{ status: 'PASS_PENDING' }, 'STALE'],
     [{ status: 'UNKNOWN_SENSOR' }, 'UNKNOWN'],
     [{ status: 'NOT_READY' }, 'CONFLICTING'],
+    [{ status: 'READY', finalVerdict: 'PROOF_REQUIRED' }, 'UNKNOWN'],
+    [{ status: 'READY', finalVerdict: 'REVIEW_REQUIRED' }, 'UNKNOWN'],
+    [{ status: 'READY', finalVerdict: 'SOURCE_MUTATION_LEASE_MISSING' }, 'UNKNOWN'],
+    [{ status: 'READY', finalVerdict: 'SOURCE_LEASE_DENIED' }, 'CONFLICTING'],
+    [{ status: 'SEED_ACTIVE', finalVerdict: 'UNVERIFIED' }, 'UNKNOWN'],
+    [{ status: 'PASSED', phase: 'UNQUALIFIED' }, 'UNKNOWN'],
   ];
   for (const [fields, expected] of cases) {
     const payload = feed();

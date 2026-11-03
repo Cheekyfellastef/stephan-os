@@ -142,11 +142,12 @@ function truthFromRecord(record = {}) {
   const negative = new Set([
     'BLOCK', 'BLOCKED', 'FAIL', 'FAILED', 'FAILURE', 'ERROR', 'CONFLICT', 'CONFLICTING',
     'RED', 'OFFLINE', 'REJECTED', 'UNSAFE', 'CANCELLED', 'CANCELED', 'ABORTED', 'HOLD',
-    'INCOMPLETE', 'UNPROVED', 'UNPROVEN', 'STALLED', 'UNHEALTHY',
+    'INCOMPLETE', 'UNPROVED', 'UNPROVEN', 'STALLED', 'UNHEALTHY', 'DENIED',
   ]);
   const stale = new Set(['STALE', 'DEGRADED', 'WAIT', 'WAITING', 'PARTIAL', 'PENDING', 'CONNECTING']);
   const negatedPositive = tokens.includes('NOT') && tokens.some((value) => positive.has(value));
   if (negatedPositive || tokens.some((value) => negative.has(value))) return 'CONFLICTING';
+  if (tokens.some((value) => ['REQUIRED', 'MISSING', 'UNVERIFIED', 'UNQUALIFIED'].includes(value))) return 'UNKNOWN';
   if (tokens.some((value) => stale.has(value))) return 'STALE';
   if (tokens.some((value) => positive.has(value))) return 'CURRENT';
   return 'UNKNOWN';
