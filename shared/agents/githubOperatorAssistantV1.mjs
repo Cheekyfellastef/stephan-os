@@ -8,9 +8,11 @@ function prBranch(pr){return text(pr.branch || pr.headRefName);}
 function checksPass(pr){
  const rollup=pr.statusCheckRollup;
  if(Array.isArray(rollup))return rollup.length>0&&rollup.every(check=>{
-  const result=text(check?.conclusion || check?.state).toUpperCase();
+  const conclusion=text(check?.conclusion).toUpperCase();
+  const state=text(check?.state).toUpperCase();
   const status=text(check?.status).toUpperCase();
-  return result==='SUCCESS' && (!status || status==='COMPLETED');
+  // Conflicting authoritative result aliases must not produce a ready signal.
+  return (conclusion || state)==='SUCCESS' && (!conclusion || !state || conclusion===state) && (!status || status==='COMPLETED');
  });
  return text(pr.checksStatus).toLowerCase()==='pass';
 }

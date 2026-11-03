@@ -92,3 +92,18 @@ test('detects claimed HEAD drift and contradictory GitHub field aliases', () => 
   number:1500,headSha:'a'.repeat(40),headRefOid:'b'.repeat(40),checksStatus:'pass'}],evidence:verified});
  assert.equal(conflict.blocked[0].kind,'pr-head-evidence-conflict');
 });
+
+test('fails closed on contradictory per-check result aliases', () => {
+ const pr={number:1500,headSha:'a'.repeat(40),publicationVerified:true};
+ for(const statusCheckRollup of [
+  [{status:'COMPLETED',conclusion:'SUCCESS',state:'FAILURE'}],
+  [{status:'COMPLETED',conclusion:'SUCCESS',state:'PENDING'}],
+  [{status:'COMPLETED',conclusion:'FAILURE',state:'SUCCESS'}],
+ ]){
+  const briefing=buildGitHubOperatorBriefing({pullRequests:[{...pr,statusCheckRollup}]});
+  assert.equal(briefing.status,'WAITING_FOR_PROOF');
+  assert.equal(briefing.readyForReview.length,0);
+ }
+ const consistent=buildGitHubOperatorBriefing({pullRequests:[{...pr,statusCheckRollup:[{status:'COMPLETED',conclusion:'SUCCESS',state:'SUCCESS'}]}]});
+ assert.equal(consistent.status,'PASS');
+});
