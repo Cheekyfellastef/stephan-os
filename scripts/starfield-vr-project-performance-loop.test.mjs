@@ -67,35 +67,36 @@ test('telemetry reporter publishes the project loop into shared workspace', asyn
   assert.match(report, /projectNextExperiment/);
 });
 
-test('observed system CPU pressure prioritizes missing game-thread and background attribution', async () => {
+test('observed system CPU pressure requests canonical Starfield CPU samples when the session pair is incomplete', async () => {
   const loop = await buildStarfieldVrProjectPerformanceLoop({
     repoRoot,
     runIdentity: identity,
     diagnosis: { focus: 'CPU_LOAD', signals: ['system-cpu-load-high'] },
     metrics: { avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7, avgGpuUtilPct: 28.8 },
   });
-  assert.equal(loop.nextExperiment.id, 'qualify-starfield-cpu-attribution-collector');
-  assert.match(loop.nextExperiment.rationale, /PR #3187/);
-  assert.match(loop.nextExperiment.title, /PR #3187: Record ChatGPT Desktop and browser CPU pressure during Starfield VR playtests/);
+  assert.equal(loop.nextExperiment.id, 'capture-canonical-starfield-cpu-attribution');
+  assert.match(loop.nextExperiment.rationale, /canonical sample count/i);
   assert.ok(loop.missingTelemetry.some((entry) => entry.id === 'starfield-cpu-attribution'));
   assert.equal(loop.authority.automaticRuntimeMutation, false);
 });
 
-test('matched CPU evidence chooses safe per-stage investigation before graphics tuning', async () => {
+test('canonical Starfield and system CPU evidence chooses safe coarse isolation before graphics tuning', async () => {
   const loop = await buildStarfieldVrProjectPerformanceLoop({
     repoRoot,
     runIdentity: identity,
-    diagnosis: { focus: 'CPU_LOAD', signals: ['starfield-single-thread-saturation-observed'] },
+    diagnosis: { focus: 'CPU_LOAD', signals: ['system-cpu-load-high'] },
     metrics: {
-      avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7, maxStarfieldBusiestThreadCpuPct: 97,
-      avgChatGptCpuPct: 7, avgMetaVrCpuPct: 10, avgApplicationFrameTimeMs: 44.9, p95ApplicationFrameTimeMs: 52.0,
-      starfieldThreadCpuMeasuredSampleCount: 4, cpuConsumersAvailableSampleCount: 4,
+      sampleCount: 4, avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7,
+      avgApplicationFrameTimeMs: 44.9, p95ApplicationFrameTimeMs: 52.0,
       avgDeliveredCadenceHz: 71.6, headsetRefreshRateHz: 72,
       avgGpuUtilPct: 28.8, maxGpuMemoryPct: 40,
     },
   });
   assert.equal(loop.nextExperiment.id, 'starfield-cpu-stage-isolation');
-  assert.equal(loop.telemetryRequirements.find((entry) => entry.id === 'starfield-cpu-attribution').available, true);
+  const requirement = loop.telemetryRequirements.find((entry) => entry.id === 'starfield-cpu-attribution');
+  assert.equal(requirement.available, true);
+  assert.deepEqual(requirement.metricKeys, ['sampleCount', 'avgSystemCpuPct', 'avgStarfieldCpuPct']);
+  assert.match(loop.nextExperiment.rationale, /unattributed remainder/i);
   assert.equal(loop.nextExperiment.authority.automaticMutation, false);
 });
 
@@ -130,38 +131,44 @@ test('pose-latency focus alone cannot masquerade as evidence of AER stereo fault
   assert.equal(loop.authority.automaticRuntimeMutation, false);
 });
 
-test('CPU stage isolation requires same-run measured sample counts and finite CPU percentages', async () => {
+test('CPU stage isolation requires the canonical measured session count and finite Starfield/system percentages', async () => {
+  const producer = await readFile(new URL('./windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url), 'utf8');
+  for (const key of ['sampleCount', 'avgSystemCpuPct', 'avgStarfieldCpuPct']) {
+    assert.match(producer, new RegExp('\\b' + key + '\\s*='));
+  }
+  for (const unproduced of ['maxStarfieldBusiestThreadCpuPct', 'avgChatGptCpuPct', 'avgMetaVrCpuPct']) {
+    assert.doesNotMatch(producer, new RegExp('\\b' + unproduced + '\\s*='));
+  }
+
   const base = {
-    avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7,
-    maxStarfieldBusiestThreadCpuPct: 97, avgChatGptCpuPct: 0, avgMetaVrCpuPct: 0,
-    avgApplicationFrameTimeMs: 44.9, p95ApplicationFrameTimeMs: 52.0, avgDeliveredCadenceHz: 71.6, headsetRefreshRateHz: 72,
+    sampleCount: 4, avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7,
+    avgApplicationFrameTimeMs: 44.9, p95ApplicationFrameTimeMs: 52.0,
+    avgDeliveredCadenceHz: 71.6, headsetRefreshRateHz: 72,
   };
   const missingOrInvalid = [
-    {},
-    { starfieldThreadCpuMeasuredSampleCount: 0, cpuConsumersAvailableSampleCount: 4 },
-    { starfieldThreadCpuMeasuredSampleCount: 4, cpuConsumersAvailableSampleCount: 0 },
-    { starfieldThreadCpuMeasuredSampleCount: 4, cpuConsumersAvailableSampleCount: 4,
-      maxStarfieldBusiestThreadCpuPct: '97' },
-    { starfieldThreadCpuMeasuredSampleCount: 4, cpuConsumersAvailableSampleCount: 4,
-      avgChatGptCpuPct: Number.NaN },
-    { starfieldThreadCpuMeasuredSampleCount: 4, cpuConsumersAvailableSampleCount: 4,
-      avgMetaVrCpuPct: -1 },
+    { sampleCount: 0 },
+    { sampleCount: -1 },
+    { sampleCount: '4' },
+    { avgSystemCpuPct: undefined },
+    { avgSystemCpuPct: Number.NaN },
+    { avgStarfieldCpuPct: undefined },
+    { avgStarfieldCpuPct: -1 },
+    { avgStarfieldCpuPct: '36.7' },
   ];
   for (const caseFields of missingOrInvalid) {
     const loop = await buildStarfieldVrProjectPerformanceLoop({
       repoRoot, runIdentity: identity,
-      diagnosis: { focus: 'CPU_LOAD', signals: ['starfield-single-thread-saturation-observed'] },
+      diagnosis: { focus: 'CPU_LOAD', signals: ['system-cpu-load-high'] },
       metrics: { ...base, ...caseFields },
     });
-    assert.equal(loop.nextExperiment.id, 'qualify-starfield-cpu-attribution-collector');
+    assert.equal(loop.nextExperiment.id, 'capture-canonical-starfield-cpu-attribution');
     assert.equal(loop.telemetryRequirements.find((item) => item.id === 'starfield-cpu-attribution').available, false);
     assert.equal(loop.authority.automaticRuntimeMutation, false);
   }
   const measured = await buildStarfieldVrProjectPerformanceLoop({
     repoRoot, runIdentity: identity,
-    diagnosis: { focus: 'CPU_LOAD', signals: ['starfield-single-thread-saturation-observed'] },
-    metrics: { ...base, starfieldThreadCpuMeasuredSampleCount: 4,
-      cpuConsumersAvailableSampleCount: 4 },
+    diagnosis: { focus: 'CPU_LOAD', signals: ['system-cpu-load-high'] },
+    metrics: base,
   });
   assert.equal(measured.nextExperiment.id, 'starfield-cpu-stage-isolation');
   assert.equal(measured.telemetryRequirements.find((item) => item.id === 'starfield-cpu-attribution').available, true);
