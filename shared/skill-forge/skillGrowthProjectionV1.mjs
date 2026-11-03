@@ -162,14 +162,18 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
     })),
     timestampUtc: text(record.timestampUtc, 'UNKNOWN'),
   }));
+  // A stale/unavailable feed retains historical provenance, but cannot
+  // attest to currently installed or ACTIVE capabilities.
+  const feedCurrent = text(feed.state).toLowerCase() === 'ready';
   const stages = SKILL_STAGES.map(stage => ({
     id: stage,
     count: learningEvents.filter(event => event.stage === stage).length
-      + publishedSkills.filter(skill => skill.status === stage).length,
+      + publishedSkills.filter(skill => skill.status === stage && (stage !== 'ACTIVE' || feedCurrent)).length,
   }));
   const observedActors = SKILL_TRANSFER_ACTORS.map(actor => {
     const heartbeat = actorRecord(statusRecords, actor.id);
-    const actorProof = publishedSkills.filter(skill => skill.allowedTargets.includes(actor.id)
+    const actorProof = publishedSkills.filter(skill => feedCurrent
+      && skill.allowedTargets.includes(actor.id)
       && skill.provenanceRefs.length > 0
       && skill.status === 'ACTIVE'
       && skill.targetRuntimeProofs.some(proof => proof.actorId === actor.id
