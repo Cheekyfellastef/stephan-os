@@ -82,6 +82,43 @@ test('Flywheel workspace derives evidence-backed uplift and history from Shared 
 });
 
 
+test('truth projection lets explicit failure fields veto positive-looking status text', () => {
+  const cases = [
+    [{ status: 'READY' }, 'CURRENT'],
+    [{ status: 'SEED_ACTIVE' }, 'CURRENT'],
+    [{ status: 'BOOTSTRAP_ACTIVE' }, 'CURRENT'],
+    [{ status: 'PASSED' }, 'CURRENT'],
+    [{ status: 'READY', finalVerdict: 'FAILED' }, 'CONFLICTING'],
+    [{ status: 'PASS', verdict: 'FAILED' }, 'CONFLICTING'],
+    [{ state: 'RUNNING', phase: 'BLOCKED' }, 'CONFLICTING'],
+    [{ truth: 'CURRENT', status: 'DEGRADED' }, 'STALE'],
+    [{ status: 'PASS_PENDING' }, 'STALE'],
+    [{ status: 'UNKNOWN_SENSOR' }, 'UNKNOWN'],
+    [{ status: 'NOT_READY' }, 'CONFLICTING'],
+  ];
+  for (const [fields, expected] of cases) {
+    const payload = feed();
+    payload.records = {
+      statusRecords: [{
+        kind: 'stephanos.shared_workspace.status',
+        participantId: 'truth-probe',
+        timestampUtc: '2026-11-03T09:45:00.000Z',
+        summary: 'Truth precedence probe',
+        ...fields,
+      }],
+      capabilityRecords: [],
+      receiptRecords: [],
+      eventRecords: [],
+      lessonRecords: [],
+      proofRecords: [],
+    };
+    const view = deriveFlywheelWorkspaceView(payload);
+    const participant = view.participants.find((entry) => entry.participantId === 'truth-probe');
+    assert.ok(participant, JSON.stringify(fields));
+    assert.equal(participant.truth, expected, JSON.stringify(fields));
+  }
+});
+
 test('passing logical controller pulse named Capability Gap Intake is not a current capability failure', () => {
   const payload = feed();
   payload.records.eventRecords = [];
