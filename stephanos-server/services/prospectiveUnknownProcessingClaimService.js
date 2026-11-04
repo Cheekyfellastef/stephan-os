@@ -279,6 +279,16 @@ export async function quarantineUnknownProcessingClaim(input, options = {}) {
 
   const readMission = options.readMissionRecord || readMissionRecord;
   const appender = options.appendMissionEvent || appendMissionEvent;
+  const guard = operation => (options.withOriginalSourceLeaseFenceGuard
+    || withOriginalSourceLeaseFenceGuard)(operation, {
+    root: options.paths.workspaceRoot, repoRoot: options.paths.repoRoot, env: options.env,
+  });
+  const requireQuarantined = result => {
+    if (result?.quarantined !== true) {
+      fail('PROSPECTIVE_ORPHAN_PROCESSING_CLAIM_QUARANTINE_UNPROVEN');
+    }
+    return result;
+  };
   const current = await readMission(input.missionId, {
     root: options.paths?.orchestratorRoot, env: options.env || process.env,
   });
@@ -292,7 +302,9 @@ export async function quarantineUnknownProcessingClaim(input, options = {}) {
         || durableFence.processingClaimSha256 !== text(input.processingClaimSha256).toLowerCase()) {
       fail('PROSPECTIVE_ORPHAN_REPLAY_IDENTITY_MISMATCH');
     }
-    const quarantine = await retireUnknownProcessingClaim(existing, options);
+    const quarantine = requireQuarantined(await guard(
+      () => retireUnknownProcessingClaim(existing, options),
+    ));
     return Object.freeze({
       state: existing, duplicate: true,
       eventId: existing.storeMetadata?.lastEventId || '',
@@ -309,10 +321,6 @@ export async function quarantineUnknownProcessingClaim(input, options = {}) {
     operatorRequestId: text(input.operatorRequestId).toLowerCase(),
     processingClaimSha256: text(input.processingClaimSha256).toLowerCase(),
   };
-  const guard = operation => (options.withOriginalSourceLeaseFenceGuard
-    || withOriginalSourceLeaseFenceGuard)(operation, {
-    root: options.paths.workspaceRoot, repoRoot: options.paths.repoRoot, env: options.env,
-  });
   const cancelled = await appender(input.missionId, {
     eventId: 'cancel-' + input.commandId,
     eventType: 'MISSION_CANCELLED',
@@ -328,6 +336,8 @@ export async function quarantineUnknownProcessingClaim(input, options = {}) {
     withOriginalSourceLeaseFenceGuard: guard,
   });
   if (cancelled?.preconditionFailed) return cancelled;
-  const quarantine = await guard(() => retireUnknownProcessingClaim(cancelled.state, options));
+  const quarantine = requireQuarantined(await guard(
+    () => retireUnknownProcessingClaim(cancelled.state, options),
+  ));
   return Object.freeze({ ...cancelled, processingClaimQuarantine: quarantine });
 }

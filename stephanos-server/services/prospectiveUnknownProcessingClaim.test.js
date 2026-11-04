@@ -286,3 +286,116 @@ test('UNKNOWN processing claim is fenced before exact bytes leave processing and
     /PROSPECTIVE_ORPHAN_REPLAY_IDENTITY_MISMATCH/,
   );
 });
+
+
+test('retirement lock refusal fails closed after durable fence and exact replay completes quarantine', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'prospective-orphan-lock-race-'));
+  const queueRoot = join(root, 'queue');
+  const processing = join(queueRoot, 'foundry-forge', 'processing');
+  const failed = join(queueRoot, 'foundry-forge', 'failed');
+  await mkdir(processing, { recursive: true });
+  await mkdir(failed, { recursive: true });
+  for (const stage of ['pending', 'completed']) {
+    await mkdir(join(queueRoot, 'foundry-forge', stage), { recursive: true });
+  }
+
+  const claimPath = join(processing, actionId + '.json');
+  const bytes = Buffer.from(JSON.stringify(processingItem()));
+  await writeFile(claimPath, bytes);
+  const claimSha = sha(bytes);
+  let durable = {
+    missionId,
+    revision: 6,
+    repository: 'Cheekyfellastef/stephan-os',
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    cancelled: false,
+    dispatch: { status: 'running', adapter: 'foundry-forge' },
+    git: {
+      branch: 'openclaw/elastic-goal-1574',
+      worktreePath: join(root, 'worktree'),
+    },
+    storeMetadata: {
+      lastEventId: 'pickup-' + actionId,
+      processedEventIds: ['pickup-' + actionId],
+    },
+  };
+  await mkdir(durable.git.worktreePath);
+  const paths = {
+    workspaceRoot: join(root, 'workspace'),
+    repoRoot: join(root, 'repo'),
+    orchestratorRoot: join(root, 'orchestrator'),
+  };
+  await mkdir(paths.workspaceRoot);
+  await mkdir(paths.repoRoot);
+  await mkdir(paths.orchestratorRoot);
+  let retirementGuardCalls = 0;
+  const options = {
+    queueRoot,
+    paths,
+    env: {},
+    readMissionRecord: async () => ({ state: durable }),
+    readExecutionReceiptHistory: async () => ({
+      ok: true, receipts: [], latestReceipt: null,
+    }),
+    authenticateProspectiveOrphanQuarantine: async expected => ({
+      authenticated: true,
+      historicalExecutionOutcome: 'UNKNOWN',
+      eligibilityOnly: true,
+      processingClaimQuarantineAuthority: true,
+      leaseReleaseAuthority: false,
+      evidenceDigest: 'e'.repeat(64),
+      witnessDigest: 'f'.repeat(64),
+      processingClaimSha256: expected.processingClaimSha256,
+    }),
+    withOriginalSourceLeaseFenceGuard: async operation => {
+      retirementGuardCalls += 1;
+      if (retirementGuardCalls === 1) {
+        return { ok: false, reason: 'SOURCE_MUTATION_LEASE_OPERATION_BUSY' };
+      }
+      return operation();
+    },
+    appendMissionEvent: async (_mission, event, appendOptions) => {
+      const fence = await appendOptions.proveOriginalSourceQuarantine(durable);
+      durable = {
+        ...durable,
+        revision: durable.revision + 1,
+        currentPhase: 'CANCELLED',
+        cancelled: true,
+        storeMetadata: {
+          ...durable.storeMetadata,
+          originalSourceAttemptFence: fence,
+          lastEventId: event.eventId,
+          processedEventIds: [...durable.storeMetadata.processedEventIds, event.eventId],
+        },
+      };
+      return { state: durable, duplicate: false, eventId: event.eventId };
+    },
+  };
+  const input = {
+    missionId,
+    commandId: 'quarantine-1574-r5-lock-race',
+    operatorRequestId: 'quarantine-1574-r5-lock-race-request',
+    operatorSourceRevision,
+    expectedMissionRevision: 6,
+    sourceExecutionId: actionId,
+    sourceExecutionLeaseKey: leaseKey,
+    processingClaimSha256: claimSha,
+    reason: 'Fence then quarantine exact UNKNOWN processing claim.',
+  };
+
+  await assert.rejects(
+    quarantineUnknownProcessingClaim(input, options),
+    /PROSPECTIVE_ORPHAN_PROCESSING_CLAIM_QUARANTINE_UNPROVEN/,
+  );
+  assert.equal(durable.currentPhase, 'CANCELLED');
+  assert.equal(sha(await readFile(claimPath)), claimSha);
+
+  const replay = await quarantineUnknownProcessingClaim(input, options);
+  assert.equal(replay.duplicate, true);
+  assert.equal(replay.processingClaimQuarantine.quarantined, true);
+  assert.equal(replay.processingClaimQuarantine.idempotent, false);
+  assert.equal(retirementGuardCalls, 2);
+  const archived = join(failed, replay.processingClaimQuarantine.archiveName);
+  assert.equal(sha(await readFile(archived)), claimSha);
+  await assert.rejects(readFile(claimPath), error => error.code === 'ENOENT');
+});
