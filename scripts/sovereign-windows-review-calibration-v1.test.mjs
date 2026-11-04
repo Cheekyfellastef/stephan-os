@@ -41,6 +41,13 @@ const mockFetch = async (url, args) => {
   const match = parsed.prompt.match(/Case: (win-[a-f0-9]{32})\nSHA256: ([a-f0-9]{64})/);
   assert.ok(match);
   const file = parsed.prompt.match(/\+\+\+ b\/(src\/windows\/Case[a-f0-9]{32}\.(?:cs|ps1))/)?.[1];
+  assert.equal(parsed.format.properties.caseId.const, match[1]);
+  assert.equal(parsed.format.properties.patchSha256.const, match[2]);
+  assert.equal(parsed.format.properties.findings.items.properties.path.const, file);
+  assert.deepEqual(
+    [...parsed.format.properties.findings.items.properties.code.enum].sort(),
+    unsafe.map(([, findingCode]) => findingCode).sort(),
+  );
   const code = unsafe.find(([needle])=>parsed.prompt.includes(needle))?.[1];
   const findings = code ? [{ code, path:file, severity:'P1',
     summary:'The changed source has this serious Windows security regression.' }] : [];
