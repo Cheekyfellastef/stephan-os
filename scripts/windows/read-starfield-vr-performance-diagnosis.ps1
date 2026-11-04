@@ -46,20 +46,20 @@ function Get-NumericValues {
 
 function Get-Average {
     param([double[]]$Values)
-    if (@($Values).Count -eq 0) { return $null }
-    return [math]::Round((@($Values) | Measure-Object -Average).Average, 1)
+    if ($null -eq $Values -or $Values.Length -eq 0) { return $null }
+    return [math]::Round(($Values | Measure-Object -Average).Average, 1)
 }
 
 function Get-Maximum {
     param([double[]]$Values)
-    if (@($Values).Count -eq 0) { return $null }
-    return [math]::Round((@($Values) | Measure-Object -Maximum).Maximum, 1)
+    if ($null -eq $Values -or $Values.Length -eq 0) { return $null }
+    return [math]::Round(($Values | Measure-Object -Maximum).Maximum, 1)
 }
 
 function Get-Minimum {
     param([double[]]$Values)
-    if (@($Values).Count -eq 0) { return $null }
-    return [math]::Round((@($Values) | Measure-Object -Minimum).Minimum, 1)
+    if ($null -eq $Values -or $Values.Length -eq 0) { return $null }
+    return [math]::Round(($Values | Measure-Object -Minimum).Minimum, 1)
 }
 
 $governor = Read-OptionalJson -Path $governorPath
@@ -92,7 +92,7 @@ $sessionRoute = Get-OptionalValue -Object $session -Name 'routeIdentity'
 $summaryRoute = Get-OptionalValue -Object $summary -Name 'routeIdentity'
 $sessionProvider = [string](Get-OptionalValue -Object $sessionRoute -Name 'provider' -Default '')
 $summaryProvider = [string](Get-OptionalValue -Object $summaryRoute -Name 'provider' -Default '')
-$providerValues = @($sessionProvider, $summaryProvider) | Where-Object { $_ -in @('mutar-openxr','vorpx') } | Select-Object -Unique
+$providerValues = @(@($sessionProvider, $summaryProvider) | Where-Object { $_ -in @('mutar-openxr','vorpx') } | Select-Object -Unique)
 $providerIdentityStatus = if ($providerValues.Count -gt 1) {
     'PROVIDER_IDENTITY_CONFLICT'
 } elseif ($providerValues.Count -eq 1) {
