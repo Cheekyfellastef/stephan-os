@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  SOVEREIGN_COMMANDER_IGNITION_DIAGNOSIS_TIMEOUT_MS,
   runFixedGoalBuilderRepairStep,
   runSovereignCommanderGoalBuilderRepair as runActualGoalBuilderRepair,
 } from './sovereign-commander-goal-builder-repair.mjs';
@@ -82,6 +83,11 @@ function supervisorStatus({
     }) + '\n',
   };
 }
+
+test('Goal Builder gives canonical Ignition source proof a non-racing bounded budget', () => {
+  assert.equal(SOVEREIGN_COMMANDER_IGNITION_DIAGNOSIS_TIMEOUT_MS, 45_000);
+  assert.ok(SOVEREIGN_COMMANDER_IGNITION_DIAGNOSIS_TIMEOUT_MS > 20_000);
+});
 
 test('fixed repair step preserves blocker from marker-prefixed child output', () => {
   const result = runFixedGoalBuilderRepairStep({
