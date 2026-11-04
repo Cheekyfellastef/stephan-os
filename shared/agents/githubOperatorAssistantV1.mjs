@@ -7,6 +7,8 @@ function prHead(pr){return text(pr.headSha || pr.headRefOid);}
 function prBranch(pr){return text(pr.branch || pr.headRefName);}
 function checksPass(pr){
  const rollup=pr.statusCheckRollup;
+ // A malformed supplied rollup cannot be overridden by a legacy green summary.
+ if(rollup != null && !Array.isArray(rollup))return false;
  if(Array.isArray(rollup))return rollup.length>0&&rollup.every(check=>{
   const conclusion=text(check?.conclusion).toUpperCase();
   const state=text(check?.state).toUpperCase();

@@ -83,6 +83,26 @@ test('rejects missing, pending, failing, draft and contradictory check evidence'
  }
 });
 
+test('rejects malformed check rollups even when a legacy status claims success', () => {
+ const pr={number:1500,headSha:'a'.repeat(40),publicationVerified:true,checksStatus:'pass'};
+ for(const statusCheckRollup of [
+  {nodes:[{status:'COMPLETED',conclusion:'FAILURE'}]},
+  {checks:[{status:'COMPLETED',conclusion:'SUCCESS'}]},
+  'SUCCESS',
+  42,
+ ]){
+  const briefing=buildGitHubOperatorBriefing({pullRequests:[{...pr,statusCheckRollup}]});
+  assert.equal(briefing.status,'WAITING_FOR_PROOF');
+  assert.equal(briefing.readyForReview.length,0);
+  assert.equal(briefing.waitingForProof[0].kind,'pr-checks-incomplete');
+ }
+ assert.equal(buildGitHubOperatorBriefing({pullRequests:[pr]}).status,'PASS');
+ assert.equal(buildGitHubOperatorBriefing({pullRequests:[{...pr,statusCheckRollup:null}]}).status,'PASS');
+ assert.equal(buildGitHubOperatorBriefing({pullRequests:[{
+  ...pr,statusCheckRollup:[{status:'COMPLETED',conclusion:'SUCCESS'}],
+ }]}).status,'PASS');
+});
+
 test('detects claimed HEAD drift and contradictory GitHub field aliases', () => {
  const verified=[{prNumber:1500,marker:'PR_PUBLICATION_VERIFIER_PASS'}];
  const drift=buildGitHubOperatorBriefing({pullRequests:[{
