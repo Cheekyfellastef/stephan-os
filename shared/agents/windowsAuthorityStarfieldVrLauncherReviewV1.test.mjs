@@ -146,8 +146,8 @@ test('current Meta Air Link isolation helper must set the compatibility disable 
   const current = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(content));
   assert.equal(current.clean, true, JSON.stringify(current.findings));
   const disabled = content.replace(
-    "            '1',\n            'Process'",
-    "            '0',\n            'Process'",
+    "SetEnvironmentVariable($virtualDesktopOculusCompatibilityDisableEnvironment, '1', 'Process')",
+    "SetEnvironmentVariable($virtualDesktopOculusCompatibilityDisableEnvironment, '0', 'Process')",
   );
   assert.notEqual(disabled, content);
   const result = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(disabled));
@@ -330,4 +330,33 @@ test('extra call-operator process invocation is rejected', () => {
   const result = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(hostile));
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'starfield-launcher-call-operator-estate-not-closed'));
+});
+
+// These mutations use the actual current launcher, not a synthetic old helper.
+test('current telemetry helper rejects altered process, restoration and child environment contracts', async () => {
+  const current = (await readFile(new URL('../../scripts/windows/launch-starfield-vr.ps1', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  for (const [before, after] of [
+    ["'XR_API_LAYER_PATH', $layerPath, 'Process'", "'XR_API_LAYER_PATH', $layerPath, 'Machine'"],
+    ["SetEnvironmentVariable($name, $previous[$name], 'Process')", "SetEnvironmentVariable($name, 'changed', 'Process')"],
+    ["$VisualTelemetry.capabilities.modifiesFrameData -ne $false", "$VisualTelemetry.capabilities.modifiesFrameData -eq $false"],
+    ["return Start-Process -FilePath", "return Start-Process -Verb RunAs -FilePath"],
+    ["'STEPHANOS_VR_TELEMETRY_GAME_ID', $gameId, 'Process'", "'PATH', $gameId, 'Process'"],
+  ]) {
+    const hostile = current.replace(before, after);
+    assert.notEqual(hostile, current, before);
+    assert.equal(analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(hostile)).clean, false, before);
+  }
+  const extra = current + "\n[Environment]::SetEnvironmentVariable('PATH', 'changed', 'Process')\n";
+  assert.equal(analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(extra)).clean, false);
+});
+
+test('current read-head observation does not admit rebound Git applications or different commands', async () => {
+  const current = (await readFile(new URL('../../scripts/windows/launch-starfield-vr.ps1', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  for (const hostile of [
+    current.replace("Get-Command -Name 'git.exe'", "Get-Command -Name 'powershell.exe'"),
+    current.replace('rev-parse HEAD 2>', 'status --porcelain 2>'),
+    current + "\n$gitCommand = $env:EVIL\n",
+    current + "\nSet-Variable -Name gitCommand -Value $env:EVIL\n",
+    current.replace("$sourceHead = if ([string]$env:STEPHANOS_SOURCE_HEAD -match '^[a-fA-F0-9]{40}$') {", 'function Hidden-Observation {\n' + "$sourceHead = if ([string]$env:STEPHANOS_SOURCE_HEAD -match '^[a-fA-F0-9]{40}$') {") + '\n}\n',
+  ]) assert.equal(analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(hostile)).clean, false);
 });
