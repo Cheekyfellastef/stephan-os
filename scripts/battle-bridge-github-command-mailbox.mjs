@@ -23,7 +23,8 @@ import {
   validateStephanosCapabilityRegistry,
 } from '../shared/agents/stephanosCapabilityRegistry.mjs';
 import { cancelBoundedMission } from '../stephanos-server/services/missionOrchestratorControlService.js';
-import { quarantineOriginalSourceAttempt, quarantineUnknownProcessingClaim } from '../stephanos-server/services/originalSourceAttemptFenceService.js';
+import { quarantineOriginalSourceAttempt } from '../stephanos-server/services/originalSourceAttemptFenceService.js';
+import { quarantineUnknownProcessingClaim } from '../stephanos-server/services/prospectiveUnknownProcessingClaimService.js';
 import { authenticateOriginalWriterExclusionEvidence } from '../stephanos-server/services/originalSourceWriterCustodyService.js';
 import { authenticateLegacyOrphanQuarantine, authenticateProspectiveOrphanQuarantine } from '../stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js';
 import { resolveCriticalBacklogRuntimePaths } from '../stephanos-server/services/criticalBacklogConveyorServiceCore.js';

@@ -13,7 +13,7 @@ import {
 import {
   PROSPECTIVE_ORPHAN_FENCE_SCHEMA,
   quarantineUnknownProcessingClaim,
-} from './originalSourceAttemptFenceService.js';
+} from './prospectiveUnknownProcessingClaimService.js';
 
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const NOW = Date.parse('2026-11-04T12:10:00.000Z');
