@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { planWindowsSovereignReviewerV1, runWindowsSovereignReviewerV1,
   verifyWslReviewerExecutableBytesV1, REVIEWER_CRITICAL_SOURCE_PATHS,
 } from './sovereign-reviewer-wsl-bridge-v1.mjs';
@@ -469,4 +470,21 @@ test('Windows review does not launch unverified WSL Node reviewer after source p
   assert.equal(commands.length, 2, 'only two bounded path conversions allowed');
   assert.equal(commands.some(args => args.includes('/usr/bin/node')), false,
     'tainted WSL reviewer executable must never start');
+});
+
+
+test('Windows reviewer executable custody paths are LF-pinned for raw-byte verification', () => {
+  const attrs = new Set(readFileSync(new URL('../.gitattributes', import.meta.url), 'utf8')
+    .split(/\r?\n/).map(line => line.trim()).filter(Boolean));
+  const rawByteCritical = [
+    'scripts/sovereign-reviewer-v1.mjs',
+    'scripts/sovereign-reviewer-ollama-calibration-v1.mjs',
+    'scripts/sovereign-high-risk-advisory-v1.mjs',
+    'scripts/sovereign-high-risk-advisory-launcher-v1.mjs',
+    'scripts/sovereign-windows-review-calibration-v1.mjs',
+    'scripts/sovereign-windows-review-calibration-v1-engine.mjs',
+  ];
+  for (const file of rawByteCritical) {
+    assert.ok(attrs.has(file + ' text eol=lf'), file + ' must preserve exact LF Git bytes on Windows');
+  }
 });
