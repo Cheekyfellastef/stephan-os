@@ -1,6 +1,9 @@
 import {
   readSharedWorkspaceRecordDirectory,
+  readSharedWorkspaceDashboardFeed,
 } from '../../shared/agents/shared-workspace-dashboard-feed.mjs';
+import { deriveFlywheelWorkspaceView } from '../../shared/runtime/upliftWorkspaceProjectionV1.mjs';
+import { planSeedGrowthWorkV1, seedGrowthGoalCompletedV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
 import {
   resolveSharedWorkspaceRuntimeConfig,
 } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
@@ -16,6 +19,7 @@ import {
   admitFlywheelCanonicalGoalV1,
 } from './flywheelCanonicalGoalAdmissionService.js';
 import { routeLLMRequest } from './llm/providerRouter.js';
+import { readSharedConversationUpliftV1 } from './sharedConversationUpliftService.js';
 
 export const FLYWHEEL_LEARNING_GOAL_BRIDGE_SCHEMA_V1 = 'stephanos.flywheel-learning-goal-bridge.v1';
 export const FLYWHEEL_LEARNING_GOAL_SOURCE_V1 = 'Flywheel mission 2670';
@@ -341,6 +345,7 @@ function resultBase(overrides = {}) {
     brainDiagnosisSuccessCount: 0,
     brainDiagnosisFailureCount: 0,
     brainDiagnoses: Object.freeze([]),
+    conversationUplift: Object.freeze({ state: 'unavailable', turnCount: 0, eligibleCount: 0, createdCandidateCount: 0, dedupedCandidateCount: 0, attachments: [] }),
     attachments: Object.freeze([]),
     createdCanonicalGoalIssueNumbers: Object.freeze([]),
     dedupedCanonicalGoalIssueNumbers: Object.freeze([]),
@@ -424,6 +429,7 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
   let canonicalGoalAdmissionHeldCount = 0;
   let dedupedGoalCandidateCount = 0;
   let heldCount = 0;
+  const seedGrowthAttachments = [];
 
   for (const event of events) {
     const eventId = eventIdentity(event);
@@ -606,6 +612,127 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
     }
   }
 
+  // The canonical shared conversation is a source of *investigation hints*.
+  // Reuse Build Concierge's bounded candidate intake and duplicate receipts.
+  // Do not turn chat assertions into confirmed capability failures or admitted builds.
+  let conversationUplift = { state: 'unavailable', turnCount: 0, eligibleCount: 0,
+    createdCandidateCount: 0, dedupedCandidateCount: 0, attachments: [] };
+  try {
+    const readConversation = input.readConversationUplift || readSharedConversationUpliftV1;
+    const observed = await readConversation({ root: resolved.root, repoRoot, env: input.env, nowMs });
+    conversationUplift.state = text(observed?.state, 'unavailable');
+    conversationUplift.turnCount = Number(observed?.turnCount) || 0;
+    const eligible = observed?.state === 'ready'
+      ? list(observed.candidates).filter(row => row.eligibleForBoundedInvestigation === true
+        && row.provenCapabilityFailure === false
+        && list(row.sourceTurnRefs).length >= 2)
+      : [];
+    conversationUplift.eligibleCount = eligible.length;
+    let remaining = Math.max(0, Math.min(2, maxCandidates - createdGoalCandidateIds.length));
+    for (const signal of eligible) {
+      const id = safeId(signal.id);
+      const marker = 'CONVERSATION_GAP:' + id;
+      const known = receipts.find(receipt => text(receipt?.goal?.intent).split(/\s+/).includes(marker));
+      if (known) {
+        conversationUplift.dedupedCandidateCount += 1;
+        conversationUplift.attachments.push({ id, disposition: 'EXISTING_INVESTIGATION_CANDIDATE' });
+        continue;
+      }
+      if (remaining <= 0) break;
+      // The normal candidate path has no authority to execute, merge or deploy.
+      const request = {
+        title: 'Investigate conversation-led gap: ' + text(signal.title).slice(0, 100),
+        intent: marker + ' Review recurring shared conversation hints for ' + id
+          + '. These are unverified requests, NOT executable failure proof or human-authored approvals.'
+          + ' Find an existing canonical owner, reproduce the fault, obtain runtime proof,'
+          + ' then use the existing governed goal-to-build pipeline. Source turn refs: '
+          + list(signal.sourceTurnRefs).join(' '),
+        priority: 'normal',
+        requestedBy: 'durable-flywheel-controller',
+        sourceSurface: 'Shared Conversation Intelligence',
+      };
+      try {
+        const created = await createCandidate(request, { ...(input.buildConciergeGoalOptions || {}), now });
+        if (created?.ok === true) {
+          if (created.receipt) receipts.push(created.receipt);
+          const candidateId = text(created?.candidate?.id || created?.receipt?.goal?.id || created?.receipt?.receiptId);
+          if (candidateId) createdGoalCandidateIds.push(candidateId);
+          conversationUplift.createdCandidateCount += 1;
+          conversationUplift.attachments.push({ id, disposition: 'BOUNDED_REVIEW_CANDIDATE_CREATED', candidateId });
+          remaining -= 1;
+        } else {
+          conversationUplift.attachments.push({ id, disposition: text(created?.reason, 'CANDIDATE_HELD') });
+        }
+      } catch (error) {
+        conversationUplift.attachments.push({ id, disposition: text(error?.message, 'CANDIDATE_HELD') });
+      }
+    }
+  } catch (error) {
+    conversationUplift.state = 'unavailable';
+    conversationUplift.attachments.push({ disposition: text(error?.message, 'READ_UNAVAILABLE') });
+  }
+
+  // This is the existing controller reconciliation, lock, admission policy and
+  // scheduler store. Seed pressure must not become a second work queue.
+  try {
+    const readSeedFeed = input.readSeedFeed || readSharedWorkspaceDashboardFeed;
+    const currentFeed = await readSeedFeed({ root: resolved.root, repoRoot, nowMs });
+    const seedFeed = { ...currentFeed, errors: [...list(currentFeed.errors), ...list(eventHistory?.errors)], records: { ...currentFeed.records,
+      eventRecords: list(eventHistory?.records) } };
+    const pressures = planSeedGrowthWorkV1(deriveFlywheelWorkspaceView(seedFeed, { nowMs }), seedFeed, nowMs);
+    for (const pressure of pressures) {
+      const { existingGoal, identityConflict, ...seedGrowthWork } = pressure;
+      if (identityConflict) {
+        seedGrowthAttachments.push({ pressureKey: pressure.pressureKey, disposition: 'SEED_GOAL_IDENTITY_CONFLICT' });
+        continue;
+      }
+      if (existingGoal) {
+        seedGrowthAttachments.push({ seedId: pressure.seedId, pressureKey: pressure.pressureKey,
+          ownerGoals: [`#${existingGoal.issueNumber}`],
+          disposition: seedGrowthGoalCompletedV1(existingGoal)
+            ? 'COMPLETION_PROOF_RETURNED_AWAITING_RUNG_EVIDENCE' : 'ATTACHED_EXISTING_CANONICAL_SEED_GOAL' });
+        continue;
+      }
+      if (input.canonicalGoalAdmissionAuthorized !== true) {
+        seedGrowthAttachments.push({ seedId: pressure.seedId, pressureKey: pressure.pressureKey,
+          disposition: 'SEED_GOAL_PRODUCTION_AUTHORITY_REQUIRED' });
+        continue;
+      }
+      let canonical;
+      try {
+        canonical = await admitCanonicalGoal({
+          ...(input.canonicalGoalAdmissionOptions || {}),
+          root: resolved.root, repoRoot, nowMs, nowUtc: now.toISOString(),
+          canonicalGoalAdmissionAuthorized: true,
+          eventId: pressure.pressureKey, capabilityId: pressure.pressureKey,
+          evidenceRefs: pressure.evidenceRefs, seedGrowthWork,
+          allowIssueCreation: createdCanonicalGoalCount < maxCanonicalGoals,
+        });
+      } catch (error) {
+        canonical = { ok: false, reason: text(error?.message, 'SEED_GOAL_ADMISSION_FAILED') };
+      }
+      const number = Number(canonical?.issue?.number);
+      if (canonical?.created === true) {
+        createdCanonicalGoalCount += 1;
+        if (Number.isSafeInteger(number) && number > 0) createdCanonicalGoalIssueNumbers.push(number);
+      }
+      if (canonical?.ok === true && canonical?.created !== true) {
+        dedupedCanonicalGoalCount += 1;
+        dedupedCanonicalGoalIssueNumbers.push(number);
+      }
+      if (canonical?.ok !== true) {
+        canonicalGoalAdmissionHeldCount += 1;
+        canonicalGoalAdmissionBlockers.push(`${pressure.pressureKey}:${text(canonical?.reason, 'SEED_GOAL_ADMISSION_HELD')}`);
+      }
+      seedGrowthAttachments.push({ seedId: pressure.seedId, pressureKey: pressure.pressureKey,
+        ownerGoals: Number.isSafeInteger(number) && number > 0 ? [`#${number}`] : [],
+        schedulerGoalId: text(canonical?.schedulerGoal?.goalId),
+        disposition: text(canonical?.reason, 'SEED_GOAL_ADMISSION_HELD') });
+    }
+  } catch (error) {
+    errors.push(`seed-growth:${text(error?.message, 'SEED_GOAL_RECONCILIATION_FAILED')}`);
+  }
+
   return resultBase({
     ok: errors.length === 0,
     reason: errors.length
@@ -624,7 +751,9 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
     brainDiagnosisSuccessCount,
     brainDiagnosisFailureCount,
     brainDiagnoses: Object.freeze(brainDiagnoses),
+    conversationUplift: Object.freeze({ ...conversationUplift, attachments: Object.freeze(conversationUplift.attachments.map(item => Object.freeze(item))) }),
     attachments: Object.freeze(attachments),
+    seedGrowthAttachments: Object.freeze(seedGrowthAttachments.map((item) => Object.freeze(item))),
     createdCanonicalGoalIssueNumbers: Object.freeze(createdCanonicalGoalIssueNumbers),
     dedupedCanonicalGoalIssueNumbers: Object.freeze(dedupedCanonicalGoalIssueNumbers),
     canonicalGoalAdmissionBlockers: Object.freeze(canonicalGoalAdmissionBlockers),

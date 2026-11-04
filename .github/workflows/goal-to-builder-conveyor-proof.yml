@@ -18,6 +18,8 @@ on:
       - 'shared/agents/sharedWorkspaceSpecializedStatusRegistryV1.mjs'
       - 'stephanos-server/services/elasticGoalMissionAdmissionService.js'
       - 'stephanos-server/services/elasticGoalMissionAdmissionService.test.js'
+      - 'stephanos-server/services/elasticPrHeadLeaseService.js'
+      - 'stephanos-server/services/elasticPrHeadLeaseService.test.js'
       - 'stephanos-server/services/criticalBacklogConveyorServiceCore.js'
       - 'stephanos-server/services/criticalBacklogConveyorService.test.js'
       - 'stephanos-server/services/missionOrchestratorWorkerService.js'
@@ -28,6 +30,8 @@ on:
       - 'stephanos-server/services/openClawProviderPoolAdmissionService.test.js'
       - 'stephanos-server/services/providerNeutralSourceBuilderService.js'
       - 'stephanos-server/services/providerNeutralSourceBuilderService.test.js'
+      - 'stephanos-server/services/sourceArtifactEscrowStore.js'
+      - 'stephanos-server/services/sourceArtifactEscrowStore.test.js'
       - 'stephanos-server/services/programmeAuthorityService.js'
       - 'stephanos-server/services/programmeAuthorityService.test.js'
       - 'shared/agents/sovereignCommanderCapabilityParityV1.mjs'
@@ -72,11 +76,13 @@ jobs:
           node --check shared/agents/missionControllerCapacityRouterV1.mjs
           node --check shared/agents/openClawProviderPoolQualificationV1.mjs
           node --check stephanos-server/services/elasticGoalMissionAdmissionService.js
+          node --check stephanos-server/services/elasticPrHeadLeaseService.js
           node --check stephanos-server/services/criticalBacklogConveyorServiceCore.js
           node --check stephanos-server/services/missionOrchestratorWorkerService.js
           node --check stephanos-server/services/missionOrchestratorWorkerConsumer.js
           node --check stephanos-server/services/openClawProviderPoolAdmissionService.js
           node --check stephanos-server/services/providerNeutralSourceBuilderService.js
+          node --check stephanos-server/services/sourceArtifactEscrowStore.js
           node --check stephanos-server/services/programmeAuthorityService.js
           node --check shared/agents/sovereignCommanderCapabilityParityV1.mjs
           node --check scripts/sovereign-commander-capability-parity-reconcile.mjs
@@ -99,10 +105,12 @@ jobs:
           stephanos-server/services/programmeAuthorityService.test.js
           shared/runtime/missionScheduler.test.mjs
           stephanos-server/services/elasticGoalMissionAdmissionService.test.js
+          stephanos-server/services/elasticPrHeadLeaseService.test.js
           shared/agents/missionControllerCapacityRouterV1.test.mjs
           shared/agents/openClawProviderPoolQualificationV1.test.mjs
           stephanos-server/services/openClawProviderPoolAdmissionService.test.js
           stephanos-server/services/providerNeutralSourceBuilderService.test.js
+          stephanos-server/services/sourceArtifactEscrowStore.test.js
           shared/agents/sovereignCommanderCapabilityParityV1.test.mjs
           scripts/sovereign-commander-capability-parity-reconcile.test.mjs
           stephanos-server/services/missionOrchestratorWorkerService.test.js

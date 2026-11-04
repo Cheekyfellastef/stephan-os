@@ -10,6 +10,8 @@ import { validateSourceArtifactEscrowV1 } from '../../shared/agents/sourceArtifa
 import {
   SOURCE_ARTIFACT_COMPLETE_FILE_BUNDLE_V1_SCHEMA,
   finalizeSourceArtifactEscrowFromWorktreeV1,
+  finalizeSourceArtifactEscrowFromCapturedIdentityV1,
+  captureSourceArtifactIdentityFromWorktreeV1,
   persistOfflinePublicationOutboxV1,
   persistSourceArtifactEscrowV1,
 } from './sourceArtifactEscrowStore.js';
@@ -86,10 +88,60 @@ test('persists a content-addressed externally-readable pre-PR complete-file bund
   assert.deepEqual(bundle.testsRun, [TEST_COMMAND]);
 });
 
+test('escrow preserves canonical shared/runtime source but rejects mutable runtime and protected paths', async () => {
+  const options = await roots();
+  const sourcePath = 'shared/runtime/stephanosMemory.mjs';
+  const valid = input();
+  const scopedFile = { ...valid.changedFiles[0], path: sourcePath };
+  const escrow = await persistSourceArtifactEscrowV1(input({
+    canonicalIssue: 1645,
+    changedFiles: [scopedFile],
+    artifactFiles: [{ ...valid.artifactFiles[0], path: sourcePath }],
+  }), options);
+  assert.ok(escrow, 'tracked shared/runtime source must reach escrow');
+  assert.equal(escrow.changedFiles[0].path, sourcePath);
+  assert.equal(escrow.repository, 'Cheekyfellastef/stephan-os');
+  assert.equal(escrow.canonicalIssue, 1645);
+  // Direct immutable escrow requires canonical casing; lowercase is normalized
+  // by the separate guarded worktree-finalization boundary, not this API.
+  const nonCanonical = await persistSourceArtifactEscrowV1(input({
+    repository: 'cheekyfellastef/stephan-os',
+    changedFiles: [scopedFile],
+    artifactFiles: [{ ...valid.artifactFiles[0], path: sourcePath }],
+  }), options);
+  assert.equal(nonCanonical, null);
+  const outbox = await persistOfflinePublicationOutboxV1(escrow, { ...options, now: new Date(NOW) });
+  assert.ok(outbox, 'proven tracked source must reach publication outbox');
+  assert.equal(outbox.mergeAuthority, false);
+  assert.equal(outbox.pushAuthority, false);
+
+  const denied = [
+    'runtime/state.json',
+    'runtime-data/private.json',
+    'apps/example/runtime/state.json',
+    'shared/runtime/deep/runtime/state.json',
+    'shared/runtime-data/state.json',
+    'shared/runtime/.git/config',
+    'shared/runtime/node_modules/internal.js',
+    'shared/runtime/.env',
+    'shared/runtime/secret.pem',
+    'stephanos-server/data/state.json',
+    '../shared/runtime/stephanosMemory.mjs',
+  ];
+  for (const path of denied) {
+    const changed = { ...valid.changedFiles[0], path };
+    const invalid = await persistSourceArtifactEscrowV1(input({
+      changedFiles: [changed],
+      artifactFiles: [{ ...valid.artifactFiles[0], path }],
+    }), options);
+    assert.equal(invalid, null, path);
+  }
+});
+
 test('queues a proven source artifact for later governed publication without adding push or merge authority', async () => {
   const options = await roots();
   const escrow = await persistSourceArtifactEscrowV1(input(), options);
-  const outbox = await persistOfflinePublicationOutboxV1(escrow, options);
+  const outbox = await persistOfflinePublicationOutboxV1(escrow, { ...options, now: new Date(NOW) });
   assert.ok(outbox);
   assert.equal(outbox.state, 'PENDING_PUBLICATION');
   assert.equal(outbox.completeArtifactSha256, escrow.completeArtifactSha256);
@@ -125,41 +177,6 @@ test('refuses escrow when complete-file bytes do not match the claimed Git blob 
   assert.equal(result, null);
 });
 
-test('allows tracked shared/runtime source while keeping runtime and generated state roots forbidden', async () => {
-  const options = await roots();
-  const base = input();
-  const path = 'shared/runtime/stephanosmemory.mjs';
-  const changed = { ...base.changedFiles[0], path };
-  const artifact = { ...base.artifactFiles[0], path };
-  const escrow = await persistSourceArtifactEscrowV1({
-    ...base,
-    changedFiles: [changed],
-    artifactFiles: [artifact],
-  }, options);
-  assert.ok(escrow);
-  assert.equal(escrow.changedFiles[0].path, path);
-
-  for (const forbiddenPath of [
-    'runtime/state.json',
-    'runtime-data/state.json',
-    'data/state.json',
-    'tmp/state.json',
-    'stephanos-server/data/state.json',
-    'apps/stephanos/dist/index.js',
-    'shared/node_modules/pkg/index.js',
-    'shared/.env.local',
-  ]) {
-    const deniedChanged = { ...base.changedFiles[0], path: forbiddenPath };
-    const deniedArtifact = { ...base.artifactFiles[0], path: forbiddenPath };
-    const denied = await persistSourceArtifactEscrowV1({
-      ...base,
-      changedFiles: [deniedChanged],
-      artifactFiles: [deniedArtifact],
-    }, options);
-    assert.equal(denied, null, forbiddenPath);
-  }
-});
-
 test('source escrow reuses the Mission Worker bounded runner instead of owning child-process execution', async () => {
   const storeSource = await readFile(new URL('./sourceArtifactEscrowStore.js', import.meta.url), 'utf8');
   const workerSource = await readFile(new URL('../../scripts/mission-orchestrator-worker.mjs', import.meta.url), 'utf8');
@@ -179,75 +196,6 @@ test('rejects expired escrow using the current publication clock', async () => {
     now: new Date('2026-11-30T00:00:00.000Z'),
   });
   assert.equal(outbox, null);
-});
-
-test('finalizes a tracked shared/runtime source file instead of misclassifying it as runtime state', async () => {
-  const options = await roots();
-  const sourceDir = join(options.repoRoot, 'shared', 'runtime');
-  const sourcePath = join(sourceDir, 'stephanosmemory.mjs');
-  await mkdir(sourceDir, { recursive: true });
-  await writeFile(sourcePath, 'export const memory = 1;\n');
-
-  const runCommand = (executable, args, runOptions = {}) => spawnSync(
-    executable === 'git.exe' && process.platform !== 'win32' ? 'git' : executable,
-    args,
-    {
-      cwd: runOptions.cwd,
-      env: runOptions.env || process.env,
-      encoding: Object.hasOwn(runOptions, 'encoding') ? runOptions.encoding : 'utf8',
-      shell: false,
-      windowsHide: true,
-    },
-  );
-  for (const args of [
-    ['-C', options.repoRoot, 'init'],
-    ['-C', options.repoRoot, 'config', 'user.email', 'offline-test@example.invalid'],
-    ['-C', options.repoRoot, 'config', 'user.name', 'Offline Test'],
-    ['-C', options.repoRoot, 'add', '.'],
-    ['-C', options.repoRoot, 'commit', '-m', 'baseline'],
-  ]) {
-    const result = runCommand('git.exe', args, { cwd: options.repoRoot });
-    assert.equal(result.status, 0, String(result.stderr || result.stdout || ''));
-  }
-
-  await writeFile(sourcePath, 'export const memory = 2;\n');
-  const completedAt = '2026-10-08T16:48:14.986Z';
-  const execution = {
-    success: true,
-    resultId: 'shared-runtime-run-1',
-    changedFiles: ['shared/runtime/stephanosmemory.mjs'],
-    completedAt,
-    sourceTestReceipts: [{
-      receiptId: 'shared-runtime-test',
-      requirement: 'source deterministic test',
-      testCommand: TEST_COMMAND,
-      source: 'test',
-      evidenceType: 'source-test-command',
-      verified: true,
-      commandOutputHash: 'e'.repeat(64),
-      createdAt: completedAt,
-    }],
-  };
-  const finalized = await finalizeSourceArtifactEscrowFromWorktreeV1({
-    missionId: 'critical-1645-elastic-goal',
-    actionId: 'critical-1645-shared-runtime-test',
-    adapter: 'foundry-forge',
-    repository: 'cheekyfellastef/stephan-os',
-    branch: 'openclaw/elastic-goal-1645',
-    worktreePath: options.repoRoot,
-    requiredTests: [TEST_COMMAND],
-  }, execution, {
-    processingPath: join(options.repoRoot, '..', 'shared-runtime-claim.json'),
-  }, {
-    ...options,
-    runCommand,
-    actionGrant: { issueNumber: 1645, prNumber: null },
-    persistOfflinePublicationOutbox: async () => ({ outboxId: 'shared-runtime-test-outbox' }),
-  });
-
-  assert.equal(finalized.testsPassed, true);
-  assert.equal(finalized.sourceArtifactIdentity.changedFiles[0].path, 'shared/runtime/stephanosmemory.mjs');
-  assert.equal(finalized.sourceArtifactEscrow.changedFiles[0].path, 'shared/runtime/stephanosmemory.mjs');
 });
 
 test('preserves invalid UTF-8 staged blob bytes exactly in source escrow', async () => {
@@ -322,4 +270,113 @@ test('preserves invalid UTF-8 staged blob bytes exactly in source escrow', async
     Buffer.from(bundle.changedFiles[0].contentBase64, 'base64'),
     binary,
   );
+});
+
+test('captured source identity completes real escrow and outbox without invoking a subprocess runner', async () => {
+  const options = await roots();
+  const completedAt = new Date().toISOString();
+  const captured = input({ completedAt });
+  const action = { missionId: captured.missionId, worktreePath: options.repoRoot,
+    requiredTests: captured.requiredTests };
+  const execution = { success: true, resultId: captured.actionId, completedAt,
+    changedFiles: captured.changedFiles.map(file => file.path),
+    sourceTestReceipts: captured.evidenceReceipts };
+  let runnerCalls = 0;
+  const finalized = await finalizeSourceArtifactEscrowFromCapturedIdentityV1(action, execution, captured, {
+    ...options,
+    // An admission snapshot cannot become the publication completion clock.
+    now: new Date('2000-01-01T00:00:00.000Z'),
+    runCommand() { runnerCalls++; throw new Error('PARENT_SUBPROCESS_FORBIDDEN'); },
+  });
+  assert.equal(runnerCalls, 0);
+  assert.equal(typeof captureSourceArtifactIdentityFromWorktreeV1, 'function');
+  assert.equal(finalized.completionProofVerdict, 'SOURCE_WORKER_COMPLETION_PROOF_READY');
+  assert.equal(finalized.testsPassed, true);
+  assert.deepEqual(finalized.changedFiles, execution.changedFiles);
+  assert.deepEqual(finalized.sourceArtifactIdentity.changedFiles, captured.changedFiles);
+  assert.equal(validateSourceArtifactEscrowV1(finalized.sourceArtifactEscrow, completedAt).valid, true);
+  assert.equal(finalized.offlinePublicationOutbox.finalVerdict, 'OFFLINE_PUBLICATION_ARTIFACT_QUEUED');
+  const fileName = finalized.sourceArtifactEscrow.artifactRef.split('/').at(-1);
+  const bundleBytes = await readFile(join(options.sharedWorkspaceRoot, 'source-artifacts', fileName));
+  assert.equal(createHash('sha256').update(bundleBytes).digest('hex'), finalized.sourceArtifactEscrow.completeArtifactSha256);
+  const bundle = JSON.parse(bundleBytes.toString('utf8'));
+  assert.equal(bundle.changedFiles[0].contentBase64, captured.artifactFiles[0].contentBase64);
+});
+
+test('captured identity completion retains existing byte and required-test proof refusal', async () => {
+  const options = await roots();
+  const completedAt = new Date().toISOString();
+  const captured = input({ completedAt });
+  const action = { missionId: captured.missionId, worktreePath: options.repoRoot,
+    requiredTests: captured.requiredTests };
+  const execution = { success: true, resultId: captured.actionId, completedAt,
+    changedFiles: captured.changedFiles.map(file => file.path),
+    sourceTestReceipts: captured.evidenceReceipts };
+  const runner = () => { throw new Error('PARENT_SUBPROCESS_FORBIDDEN'); };
+  const invalidBytes = { ...captured, artifactFiles: [{ ...captured.artifactFiles[0],
+    contentBase64: Buffer.from('different source').toString('base64') }] };
+  const bad = await finalizeSourceArtifactEscrowFromCapturedIdentityV1(action, execution, invalidBytes,
+    { ...options, runCommand: runner });
+  assert.equal(bad.completionProofVerdict, 'SOURCE_ARTIFACT_ESCROW_REQUIRED');
+  assert.equal(bad.sourceArtifactEscrow, null);
+  assert.equal(bad.offlinePublicationOutbox, null);
+  const ungrounded = await finalizeSourceArtifactEscrowFromCapturedIdentityV1(action,
+    { ...execution, sourceTestReceipts: [] }, captured, { ...options, runCommand: runner });
+  assert.equal(ungrounded.completionProofVerdict, 'SOURCE_WORKER_TEST_PROOF_REQUIRED');
+  assert.equal(ungrounded.testsPassed, false);
+  assert.equal(ungrounded.sourceArtifactEscrow, null);
+  assert.equal(ungrounded.offlinePublicationOutbox, null);
+});
+
+test('captured identity completion preserves the original unsuccessful no-op behavior', async () => {
+  const execution = { success: false, changedFiles: [] };
+  const finalized = await finalizeSourceArtifactEscrowFromCapturedIdentityV1({}, execution, null, {
+    runCommand() { throw new Error('PARENT_SUBPROCESS_FORBIDDEN'); },
+  });
+  assert.equal(finalized, execution);
+});
+
+test('escrow denies generated-state roots and duplicate changed-file identities', async () => {
+  const options = await roots();
+  const original = input();
+  for (const forbiddenPath of [
+    'apps/stephanos/dist/index.js',
+    'apps/stephanos/dist/assets/module.css',
+    'data/runtime-state.json',
+    'tmp/model-output.json',
+    'root-data/state.json',
+    'root data/cache.txt',
+  ]) {
+    const changed = { ...original.changedFiles[0], path: forbiddenPath };
+    const artifact = { ...original.artifactFiles[0], path: forbiddenPath };
+    const result = await persistSourceArtifactEscrowV1(input({
+      changedFiles: [changed], artifactFiles: [artifact],
+    }), options);
+    assert.equal(result, null, `generated/state path ${forbiddenPath} must not enter escrow`);
+  }
+  const sourcePath = 'shared/runtime/stephanosMemory.mjs';
+  const valid = await persistSourceArtifactEscrowV1(input({
+    changedFiles: [{ ...original.changedFiles[0], path: sourcePath }],
+    artifactFiles: [{ ...original.artifactFiles[0], path: sourcePath }],
+  }), options);
+  assert.ok(valid, 'preserve the already integrated shared/runtime tracked-source exception');
+
+  const changedA = original.changedFiles[0];
+  const artifactA = original.artifactFiles[0];
+  const changedB = { ...changedA, path: 'shared/agents/second.mjs' };
+  const artifactB = { ...artifactA, path: 'shared/agents/second.mjs' };
+  for (const duplicate of [changedA, { ...changedA, path: './shared/agents/example.mjs' }]) {
+    const invalid = await persistSourceArtifactEscrowV1(input({
+      changedFiles: [changedA, duplicate],
+      artifactFiles: [artifactA, artifactB],
+    }), options);
+    assert.equal(invalid, null, 'duplicate canonical changed paths must not crowd out B');
+  }
+  const distinct = await persistSourceArtifactEscrowV1(input({
+    changedFiles: [changedA, changedB],
+    artifactFiles: [artifactA, artifactB],
+  }), options);
+  assert.ok(distinct, 'legitimate distinct complete-file bundle remains supported');
+  assert.deepEqual(distinct.changedFiles.map((file) => file.path),
+    ['shared/agents/example.mjs', 'shared/agents/second.mjs']);
 });

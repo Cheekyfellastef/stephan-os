@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { buildIndependentReviewRunQueryV1 } from '../shared/agents/independentReviewRunDiscoveryV1.mjs';
 import {
   evaluateDistFreshnessAgainstOrigin,
 } from './ignite-stephanos-local.mjs';
@@ -61,13 +62,15 @@ test('mailbox comment page selection is bounded around the newest REST page', ()
   assert.deepEqual(boundedMailboxCommentPages(12_345), [123, 124, 125]);
 });
 
-test('mailbox source no longer paginates the complete historical issue thread', () => {
+test('normal polling stays bounded while dedup bootstrap and active rotation explicitly require complete inventories', () => {
   const source = readSource(new URL('./battle-bridge-github-command-mailbox.mjs', import.meta.url));
   const commandLoad = source.match(
-    /export async function runBattleBridgeGitHubCommandMailbox[\s\S]*?const comments = loadBoundedMailboxComments\(\);/,
+    /async function runBattleBridgeGitHubCommandMailboxCore[\s\S]*?const currentHead = readGitHubMainHead\(\);/,
   )?.[0] || '';
 
   assert.match(commandLoad, /loadBoundedMailboxComments\(\)/);
+  assert.match(commandLoad, /bootstrapMailboxExecutionHistory\(state\)/);
+  assert.match(commandLoad, /state\.mailboxRotation[\s\S]*loadCompleteMailboxComments\(CANONICAL_MAILBOX_ISSUE\)/);
   assert.doesNotMatch(commandLoad, /--paginate/);
 });
 
@@ -109,11 +112,12 @@ test('independent review retry scans one bounded exact-head page', () => {
     /async function loadRecentReviewRuns[\s\S]*?\n}\n\nasync function main/,
   )?.[0] || '';
 
-  assert.match(loader, /head_sha=\$\{encodedHead}/);
-  assert.match(loader, /per_page=100&page=1/);
+  assert.match(loader, /buildIndependentReviewRunQueryV1\(\{ workflowId, expectedHead \}\)/);
+  assert.equal(buildIndependentReviewRunQueryV1({ workflowId: 123, expectedHead: exactHead }),
+    `/actions/workflows/123/runs?event=pull_request_target&head_sha=${exactHead}&per_page=100&page=1`);
   assert.doesNotMatch(loader, /githubPages\(/);
   assert.match(
     source,
-    /loadRecentReviewRuns\(owner, repo, workflow\.id, prNumber, expectedHead\)/,
+    /loadRecentReviewRuns\(\s*owner,\s*repo,\s*workflow\.id,\s*prNumber,\s*pr\.headRef,\s*expectedHead,\s*pr\.baseSha,\s*\)/,
   );
 });

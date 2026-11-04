@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const mailbox = await readFile(new URL('./protectedWorkflowDispatchMailboxV1.mjs', import.meta.url), 'utf8');
 const workflow = await readFile(new URL('../../.github/workflows/operator-merge-approval-gate.yml', import.meta.url), 'utf8');
+const handoff = await readFile(new URL('../../scripts/prove-protected-workflow-actor-handoff.mjs', import.meta.url), 'utf8');
 
 test('material operator authorization is distinguishable from the short-lived dispatch transport window', () => {
   assert.match(mailbox, /materialAuthorization/);
@@ -18,10 +19,11 @@ test('durable material authorization does not weaken fresh dispatch expiry valid
   assert.match(mailbox, /PROTECTED_WORKFLOW_DISPATCH_EXPIRY_TOO_FAR_AHEAD/);
 });
 
-test('protected workflow explicitly opts into historical material authorization only after fetching the exact owner comment', () => {
+test('protected workflow proves a fresh exact carrier packet before retaining material authorization', () => {
   assert.match(workflow, /authorization_comment_id/);
-  assert.match(workflow, /allowExpiredMaterialAuthorization:\s*true|historicalMaterialAuthorization:\s*true/);
-  assert.match(workflow, /validateProtectedWorkflowAuthorizationComment/);
+  assert.match(workflow, /node scripts\/prove-protected-workflow-actor-handoff\.mjs/);
+  assert.match(handoff, /validateProtectedWorkflowActorHandoff/);
+  assert.match(handoff, /now: new Date\(run\.created_at\)/);
 });
 
 test('no durable authorization path grants raw merge, runtime or ruleset authority', () => {

@@ -11,6 +11,19 @@ import {
 const head = '704f64a1662de33bfd3ac2ff6531ad296bf5e846';
 const MACHINE_PATH_PATTERN = /(?:^|["'\s])(?:[A-Za-z]:[\\/]|\\\\|\/(?:users|home|workspace|tmp)\/)/i;
 
+test('Sovereign Commander is discoverable to Stephanos AI but never grants implicit live mutation or an unrestricted shell', () => {
+  const commander = findStephanosCapability('sovereign-commander');
+  assert.equal(commander.capabilityId, 'sovereign-commander');
+  assert.equal(commander.ownerIssue, 2519);
+  assert.equal(commander.requiresOperatorApproval, true);
+  assert.equal(commander.runtimeMutationAllowed, true);
+  assert.equal(commander.arbitraryShellAllowed, false);
+  assert.equal(commander.destructiveGitAllowed, false);
+  assert.ok(commander.operations.includes('MAINTENANCE_ACTION'));
+  assert.ok(commander.operations.includes('SEARCH_PROJECT'));
+  assert.equal(commander.discoveryRoute, 'local-mcp-or-guarded-github-mailbox');
+});
+
 test('registry is deterministic, unique and fail-closed', () => {
   const validation = validateStephanosCapabilityRegistry();
   assert.equal(validation.valid, true);

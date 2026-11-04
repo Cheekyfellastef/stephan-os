@@ -28,7 +28,16 @@ export const STEPHANOS_CONVERSATION_TARGETS = Object.freeze([
     label: 'Sovereign Commander',
     capability: 'GUARDED_COMMAND_SURFACE',
     directReplyInAiRoute: false,
-    availability: 'ADDRESSABLE_NOT_CONVERSATIONAL',
+    controlReplyInAiRoute: true,
+    availability: 'OBSERVATIONS_VIA_STEPHANOS_CONTROL',
+  }),
+  Object.freeze({
+    id: 'control-tower',
+    label: 'Control Tower',
+    capability: 'GUARDED_WORKFLOW_HANDOFF_AND_OBSERVATIONS',
+    directReplyInAiRoute: false,
+    controlReplyInAiRoute: true,
+    availability: 'OBSERVATIONS_VIA_STEPHANOS_CONTROL',
   }),
   Object.freeze({
     id: 'openclaw-local',
@@ -78,6 +87,7 @@ const TARGET_BY_ID = new Map(STEPHANOS_CONVERSATION_TARGETS.map((target) => [tar
 const MAX_CONTRIBUTORS = 3;
 
 const ROUTE_RULES = Object.freeze([
+  Object.freeze({ id: 'control-tower', pattern: /\b(control tower|control-tower)\b/i }),
   Object.freeze({ id: 'vr-agent', pattern: /\b(vr|virtual reality|starfield|skyrim|quest ?3|vorpx|mutar|openxr|stereo|headset|aer|frame pacing)\b/i }),
   Object.freeze({ id: 'sovereign-commander', pattern: /\b(sovereign commander|commander|meter|mailbox|battle bridge command|pc command)\b/i }),
   Object.freeze({ id: 'battle-bridge', pattern: /\b(battle bridge|telemetry|runtime health|machine health|service health|disk|gpu|vram)\b/i }),
@@ -168,7 +178,18 @@ export function routeStephanosConversationV1(input = {}) {
   const selectedContributors = selectedContributorIds
     .map(targetProjection)
     .filter(Boolean);
-  const responder = targetProjection('stephanos');
+  const control = input.controlConversation;
+  const controlReplyObserved = control?.schemaVersion === 'stephanos.sovereign-control-conversation.v1'
+    && control.responseSource === 'CANONICAL_CONTROL_OBSERVATIONS'
+    && control.modelInvoked === false && control.nativeActionSubmitted === false
+    && control.directParticipantDispatchProven === false && control.responder?.id === 'stephanos';
+  if (controlReplyObserved) {
+    routeState = 'STEPHANOS_CONTROL_OBSERVATION';
+    reason = 'CANONICAL_CONTROL_SERVICE_REPLY';
+  }
+  const responder = controlReplyObserved
+    ? freeze({ ...targetProjection('stephanos'), label: 'Stephanos control', capability: 'CANONICAL_CONTROL_OBSERVATIONS' })
+    : targetProjection('stephanos');
   const directlyConversationalTargetIds = STEPHANOS_CONVERSATION_TARGETS
     .filter((target) => target.directReplyInAiRoute)
     .map((target) => target.id);
@@ -186,6 +207,7 @@ export function routeStephanosConversationV1(input = {}) {
     directlyConversationalTargetIds,
     unavailableDirectTargetIds,
     allTargetCapabilities: STEPHANOS_CONVERSATION_TARGETS,
+    controlReplyObserved,
     directParticipantDispatchProven: false,
   };
 

@@ -1,6 +1,104 @@
 import test from 'node:test';
+import '../../tests/conversational-intelligence-experience-seed.test.mjs';
+// Integrate independent seed-lane tests without changing protected CI workflow.
+import './seedCanopyParallelForgeV1.test.mjs';
+import './seedCanopyParallelResourceV1.test.mjs';
+import './seedCanopyParallelGitHubApprovalV1.test.mjs';
+import './seedCanopyParallelSupervisorV1.test.mjs';
+import '../../tests/seed-canopy-parallel-forge-integration.test.mjs';
 import assert from 'node:assert/strict';
 import { deriveAgentsWorkspaceView, deriveFlywheelWorkspaceView } from './upliftWorkspaceProjectionV1.mjs';
+
+const CPU_TEST_NOW = Date.parse('2026-10-25T20:00:00Z');
+function historyRecord(id, seconds, fields = {}) {
+  return { participantId: 'history-index-test', kind: 'learning-event', eventId: id,
+    timestampUtc: new Date(CPU_TEST_NOW + seconds * 1000).toISOString(), ...fields };
+}
+function historyParticipant(records, id = 'history-index-test') {
+  return deriveFlywheelWorkspaceView({ schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1', state: 'ready', records: { eventRecords: records } },
+    { nowMs: CPU_TEST_NOW }).participants.find((entry) => entry.participantId === id);
+}
+
+test('recovery index preserves strict timestamp ordering and stable first recovery proof', () => {
+  const participant = historyParticipant([
+    historyRecord('gap', 10, { eventKind: 'capability-gap', gapId: 'gap-a', state: 'BLOCKED' }),
+    historyRecord('same-time', 10, { gapId: 'gap-a', state: 'RESOLVED', proofRefs: ['proof/too-early'] }),
+    historyRecord('first', 20, { gapId: 'gap-a', state: 'RESOLVED', proofRefs: ['proof/first'] }),
+    historyRecord('second', 20, { gapId: 'gap-a', state: 'RESOLVED', proofRefs: ['proof/second'] }),
+  ]);
+  assert.equal(participant.capabilityGapCount, 0);
+  assert.deepEqual(participant.resolvedGaps[0].resolvedByProofRefs, ['proof/first']);
+  const unresolved = historyParticipant([
+    historyRecord('gap', 10, { eventKind: 'capability-gap', gapId: 'gap-a' }),
+    historyRecord('same-time', 10, { gapId: 'gap-a', state: 'RESOLVED', proofRefs: ['proof/same'] }),
+  ]);
+  assert.equal(unresolved.capabilityGapCount, 1);
+});
+
+test('recovery index retains negative-state precedence, proof requirements and participant isolation', () => {
+  const gap = historyRecord('gap', 1, { eventKind: 'capability-gap', gapId: 'gap-a' });
+  const invalidRecoveries = [
+    historyRecord('negative', 2, { gapId: 'gap-a', state: 'RESOLVED', status: 'FAILED', proofRefs: ['proof/negative'] }),
+    historyRecord('no-proof', 3, { gapId: 'gap-a', state: 'RESOLVED' }),
+    historyRecord('other-agent', 4, { participantId: 'another-agent', gapId: 'gap-a', state: 'RESOLVED', proofRefs: ['proof/other'] }),
+  ];
+  assert.equal(historyParticipant([gap, ...invalidRecoveries]).capabilityGapCount, 1);
+  const recovered = historyParticipant([gap, ...invalidRecoveries,
+    historyRecord('valid', 5, { gapId: 'gap-a', state: 'PASSED', proofRefs: ['proof/valid'] }),
+  ]);
+  assert.deepEqual(recovered.resolvedGaps[0].resolvedByProofRefs, ['proof/valid']);
+});
+
+test('all explicit recovery aliases resolve gaps and later failures reopen without a cache', () => {
+  const keys = ['direct', 'resolved', 'superseded', 'closure', 'root-ref', 'resolved-ref', 'supersedes-ref'];
+  const gaps = keys.map((gapId, i) => historyRecord(`gap-${i}`, i, { gapId, eventKind: 'capability-gap' }));
+  const recovery = historyRecord('all-recovered', 20, {
+    gapId: 'DIRECT', resolvedGapId: ' RESOLVED ', supersedesGapId: 'SUPERSEDED', closureOf: 'CLOSURE',
+    rootGapRefs: ['ROOT-REF', 'DIRECT'], resolvedGapRefs: ['RESOLVED-REF'], supersedes: ['SUPERSEDES-REF'],
+    state: 'VERIFIED', proofRefs: ['proof/all'],
+  });
+  const records = [...gaps, recovery];
+  const resolved = historyParticipant(records);
+  assert.equal(resolved.resolvedGapCount, keys.length);
+  assert.equal(resolved.capabilityGapCount, 0);
+  records.push(historyRecord('new-failure', 30, { gapId: 'direct', eventKind: 'capability-gap' }));
+  const reopened = historyParticipant(records);
+  assert.equal(reopened.capabilityGapCount, 1);
+  assert.equal(reopened.currentGaps[0].gapId, 'direct');
+  assert.equal(resolved.capabilityGapCount, 0, 'previous results retain independent ownership');
+});
+
+test('recovery index keeps invalid-time fallback and anonymous sorted-record identity', () => {
+  const participant = historyParticipant([
+    historyRecord('invalid-time', 1, { timestampUtc: 'invalid', gapId: 'invalid-time-gap', eventKind: 'capability-gap' }),
+    { participantId: 'history-index-test', kind: 'learning-event', timestampUtc: new Date(CPU_TEST_NOW).toISOString(), eventKind: 'capability-gap', summary: 'Missing tool' },
+    historyRecord('recovery', 20, { state: 'RESOLVED', resolvedGapRefs: ['invalid-time-gap', 'historical:missing-tool:1'], proofRefs: ['proof/later'] }),
+  ]);
+  assert.equal(participant.resolvedGapCount, 2);
+  assert.equal(participant.capabilityGapCount, 0);
+});
+
+test('history timestamp reads grow below quadratic when unrelated recovery history doubles', () => {
+  function countReads(size) {
+    let reads = 0;
+    const records = [];
+    for (let i = 0; i < size; i += 1) {
+      for (const record of [
+        historyRecord(`gap-${i}`, i, { eventKind: 'capability-gap', gapId: `gap-${i}` }),
+        historyRecord(`recovery-${i}`, size + i, { gapId: `other-${i}`, state: 'RESOLVED', proofRefs: ['proof/unrelated'] }),
+      ]) {
+        const timestamp = record.timestampUtc;
+        Object.defineProperty(record, 'timestampUtc', { enumerable: true, get() { reads += 1; return timestamp; } });
+        records.push(record);
+      }
+    }
+    assert.equal(historyParticipant(records).capabilityGapCount, size);
+    return reads;
+  }
+  const small = countReads(80);
+  const large = countReads(160);
+  assert.ok(large < small * 2.8, `doubling history must not quadruple timestamp work: ${small} -> ${large}`);
+});
 
 function feed() {
   return {
@@ -72,6 +170,54 @@ test('Flywheel workspace derives evidence-backed uplift and history from Shared 
   assert.equal(builder.upliftNeedCount > 0, true);
 });
 
+
+test('passing logical controller pulse named Capability Gap Intake is not a current capability failure', () => {
+  const payload = feed();
+  payload.records.eventRecords = [];
+  payload.records.receiptRecords = [];
+  payload.records.statusRecords = [{
+    kind: 'stephanos.shared_workspace.status',
+    participantId: 'monitor-multiplexer',
+    statusId: 'monitor-logical-goal-1721',
+    timestampUtc: '2026-10-08T04:10:47.461Z',
+    status: 'PASS',
+    summary: 'Logical controller logical-goal-1721 pulse due: Goal: Ambient Question-to-Goal Capability Gap Intake V1',
+    proofRefs: ['proof/logical-goal-1721'],
+  }];
+  payload.records.proofRecords = [{
+    kind: 'stephanos.shared_workspace.proof',
+    participantId: 'monitor-multiplexer',
+    proofId: 'monitor-logical-goal-1721',
+    timestampUtc: '2026-10-08T04:10:47.461Z',
+    status: 'PASS',
+    summary: 'Logical controller logical-goal-1721 pulse due: Goal: Ambient Question-to-Goal Capability Gap Intake V1',
+    proofRefs: ['proof/logical-goal-1721'],
+  }];
+  const view = deriveFlywheelWorkspaceView(payload);
+  const agent = view.participants.find((participant) => participant.participantId === 'monitor-multiplexer');
+  assert.ok(agent);
+  assert.equal(agent.capabilityGapCount, 0);
+  assert.equal(agent.currentGaps.length, 0);
+  assert.equal(view.stats.agentsNeedingUplift, 0);
+});
+
+test('typed capability failures remain visible despite successful record text nearby', () => {
+  const payload = feed();
+  payload.records.eventRecords = [];
+  payload.records.receiptRecords = [];
+  payload.records.statusRecords = [{
+    kind: 'stephanos.shared_workspace.status',
+    participantId: 'mission-orchestrator',
+    timestampUtc: '2026-10-08T04:11:00.000Z',
+    status: 'BLOCKED',
+    summary: 'Post-sync runtime refresh BLOCKED_UNCLASSIFIED_RUNTIME_PATH',
+    proofRefs: ['proof/runtime-refresh-blocked'],
+  }];
+  const view = deriveFlywheelWorkspaceView(payload);
+  const agent = view.participants.find((participant) => participant.participantId === 'mission-orchestrator');
+  assert.equal(agent.capabilityGapCount, 1);
+  assert.equal(agent.currentGaps[0].summary, 'Post-sync runtime refresh BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
+});
 
 test('Flywheel keeps the source-proven Starfield seed contract visible when live feed is unavailable', () => {
   const view = deriveFlywheelWorkspaceView({
@@ -266,7 +412,7 @@ test('Flywheel keeps the whole-system capability closure seed visible and truthf
   assert.equal(unavailable.wholeSystemSeedGrowth.missionId, 'stephanos-whole-system-capability-closure');
   assert.equal(unavailable.wholeSystemSeedGrowth.issueRef, '#2670');
   assert.equal(unavailable.wholeSystemSeedGrowth.persistent, true);
-  assert.equal(unavailable.outcomeSeeds.length, 6);
+  assert.equal(unavailable.outcomeSeeds.length, 9);
   assert.match(unavailable.wholeSystemSeedGrowth.nextBestAction, /Publish the #2670 mission heartbeat/i);
 
   const payload = feed();
@@ -430,7 +576,7 @@ test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backe
   assert.equal(live.autonomousProjectSeedGrowth.replanCount >= 1, true);
   assert.equal(live.autonomousProjectSeedGrowth.autonomyVerdict, 'YES');
   assert.equal(live.autonomousProjectSeedGrowth.provedAutonomousCycleCount, 2);
-  assert.equal(live.outcomeSeeds.length, 6);
+  assert.equal(live.outcomeSeeds.length, 9);
   assert.match(live.autonomousProjectSeedGrowth.nextBestAction, /Repeat|ratchet/i);
 });
 
@@ -831,7 +977,7 @@ test('Flywheel exposes conversational intelligence as a persistent evidence-back
   assert.equal(live.conversationalIntelligenceSeedGrowth.groundingSignalCount >= 1, true);
   assert.equal(live.conversationalIntelligenceSeedGrowth.brainSignalCount >= 1, true);
   assert.equal(live.conversationalIntelligenceSeedGrowth.coherenceSignalCount >= 1, true);
-  assert.equal(live.outcomeSeeds.length, 6);
+  assert.equal(live.outcomeSeeds.length, 9);
   assert.match(live.conversationalIntelligenceSeedGrowth.nextBestAction, /next conversation|ratcheting|retained lessons/i);
 });
 
@@ -1405,5 +1551,96 @@ test('Flywheel exposes workspace integrity provenance as a persistent evidence-b
   assert.equal(live.workspaceIntegritySeedGrowth.orphanAuditProofCount >= 1, true);
   assert.equal(live.workspaceIntegritySeedGrowth.continuousAuditProofCount >= 1, true);
   assert.equal(live.workspaceIntegritySeedGrowth.pressureState, 'CURRENT');
-  assert.equal(live.outcomeSeeds.length, 6);
+  assert.equal(live.outcomeSeeds.length, 9);
+});
+
+test('Goal Conveyor & Fleet Care requires live heartbeat and typed proof, and recognises existing owner incidents', () => {
+  const now = '2026-10-09T14:55:00.000Z';
+  const nowMs = Date.parse(now);
+  const missing = deriveFlywheelWorkspaceView({}, { nowMs }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(missing.declared, true);
+  assert.equal(missing.planted, false);
+  assert.equal(missing.sourceTruth, 'UNKNOWN');
+  const payload = feed();
+  payload.records.statusRecords.push({
+    statusId: 'goal-conveyor-fleet-care', missionId: 'goal-conveyor-fleet-care',
+    timestampUtc: now, status: 'SEED_ACTIVE', participantId: 'flywheel', proofRefs: [],
+    seedHeartbeat: {
+      schemaVersion: 'stephanos.high-level-flywheel-seed-heartbeat.v1',
+      missionId: 'goal-conveyor-fleet-care', issueRef: '#2972',
+      contractSource: 'shared/runtime/goalConveyorFleetCareSeedV1.mjs',
+    },
+  });
+  const heartbeatOnly = deriveFlywheelWorkspaceView(payload, { nowMs }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(heartbeatOnly.planted, true);
+  assert.equal(heartbeatOnly.sourceTruth, 'CURRENT');
+  assert.equal(heartbeatOnly.currentRung, 'SEED_PLANTED');
+  assert.equal(heartbeatOnly.healthState, 'AWAITING_FLEET_PROOF');
+  assert.equal(heartbeatOnly.proofCount, 0);
+
+  payload.records.eventRecords.push({
+    eventId: 'inventory-1', missionId: 'goal-conveyor-fleet-care',
+    timestampUtc: now, eventKind: 'fleet-inventory-verified',
+    status: 'CURRENT', proofRefs: ['proof/fleet-inventory'],
+  }, {
+    eventId: 'pickup-missing', relatedIssue: '#1622', timestampUtc: now,
+    eventKind: 'worker-pickup-failed', capabilityId: 'worker-pickup-missing',
+    status: 'BLOCKED', proofRefs: ['proof/pickup-failure'], summary: 'SELECT without physical worker pickup',
+  });
+  const observed = deriveFlywheelWorkspaceView(payload, { nowMs }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(observed.currentRung, 'FLEET_OBSERVED');
+  assert.equal(observed.healthState, 'FLEET_REPAIR_NEEDED');
+  assert.equal(observed.currentGaps.length, 1);
+  assert.equal(observed.currentGaps[0].owner, '#1622');
+  assert.equal(observed.currentGaps[0].capabilityId, 'worker-pickup-missing');
+  assert.equal(observed.nextGrowthRung, 'HEALTH_VERIFIED');
+  assert.equal(observed.proofCount, 1);
+
+  payload.records.eventRecords.push({
+    eventId: 'pickup-recovered', relatedIssue: '#1622', missionId: 'goal-conveyor-fleet-care',
+    timestampUtc: '2026-10-09T14:55:01.000Z', eventKind: 'goal-build-recovered',
+    resolvedGapId: 'worker-pickup-missing', status: 'CURRENT', proofRefs: ['proof/recovery'],
+  });
+  const recovered = deriveFlywheelWorkspaceView(payload, { nowMs: nowMs + 1000 }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(recovered.currentGaps.length, 0);
+  payload.records.statusRecords.at(-1).timestampUtc = '2026-10-07T14:55:00.000Z';
+  const stale = deriveFlywheelWorkspaceView(payload, { nowMs }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(stale.sourceTruth, 'STALE');
+  assert.equal(stale.pressureState, 'UNKNOWN');
+  assert.equal(stale.nextGrowthRung, '');
+});
+
+
+test('fleet care shows real canonical goal conveyor counts without treating stale backend data as healthy', () => {
+  const now = '2026-10-09T15:01:00.000Z';
+  const payload = feed();
+  payload.records.statusRecords.push({
+    statusId: 'goal-conveyor-fleet-care', missionId: 'goal-conveyor-fleet-care',
+    timestampUtc: now, status: 'SEED_ACTIVE', participantId: 'flywheel',
+    seedHeartbeat: {
+      schemaVersion: 'stephanos.high-level-flywheel-seed-heartbeat.v1',
+      missionId: 'goal-conveyor-fleet-care', issueRef: '#2972',
+      contractSource: 'shared/runtime/goalConveyorFleetCareSeedV1.mjs',
+    },
+  });
+  payload.projection = {
+    sourceFreshness: { truth: 'CURRENT' },
+    goalBuildConveyor: {
+      schemaVersion: 'stephanos.goal-build-conveyor.v1',
+      visibleGoalCount: 51, provenToBuilderCount: 9,
+      buildingCount: 3, completedCount: 6, blockedCount: 2,
+    },
+  };
+  const current = deriveFlywheelWorkspaceView(payload, { nowMs: Date.parse(now) }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(current.conveyorTelemetry.visibleGoals, 51);
+  assert.equal(current.conveyorTelemetry.builderPickups, 9);
+  assert.equal(current.conveyorTelemetry.activelyBuilding, 3);
+  assert.equal(current.conveyorTelemetry.blocked, 2);
+  assert.equal(current.healthState, 'CONVEYOR_BLOCKED_GOALS');
+  assert.equal(current.currentRung, 'SEED_PLANTED');
+  assert.equal(current.currentGaps.length, 0);
+  payload.projection.sourceFreshness.truth = 'STALE';
+  const stale = deriveFlywheelWorkspaceView(payload, { nowMs: Date.parse(now) }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(stale.conveyorTelemetry.sourceTruth, 'UNKNOWN');
+  assert.equal(stale.conveyorTelemetry.builderPickups, null);
 });

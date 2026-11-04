@@ -39,11 +39,10 @@ export function projectChatHandoffContinuity(input = {}, {
     && relay.carrierHealthy === true
     && relayHeartbeatCurrent
     && FAST_RELAY_STATES.has(relayDeliveryState);
-  const scheduledMailboxReady = input.scheduledMailboxAvailable === true
-    || (relayHeartbeatCurrent && (
-      relay.scheduledMailboxFallbackExpected === true
-      || relayDeliveryState === 'FALLBACK_COVERED'
-    ));
+  // A relay expectation is not evidence that the scheduled consumer can
+  // acquire the shared outbox guard. Only independent caller-supplied
+  // availability proof may select this fallback route.
+  const scheduledMailboxReady = input.scheduledMailboxAvailable === true;
   const tailscaleReady = input.tailscalePrivateAvailable === true;
 
   let selectedRoute = 'HOLD_NO_ADMITTED_TRANSPORT';

@@ -3,6 +3,8 @@ import process from 'node:process';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveGoalDiscoveryWorkspaceV1 } from '../shared/agents/goalDiscoveryWorkspaceV1.mjs';
+import { readCanonicalMissionWorkerHeartbeatAgeMs, canonicalMissionWorkerEvidenceAllowsWork } from '../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
 
 import {
   AUTONOMY_BUILD_TRACK_STATUS_ID,
@@ -18,12 +20,20 @@ import {
 } from '../stephanos-server/services/criticalBacklogConveyorService.js';
 import { refreshForgeLifeboatCapacity } from '../stephanos-server/services/forgeLifeboatCapacityService.js';
 import { refreshDesktopCommanderCapacity } from '../stephanos-server/services/desktopCommanderCapacityService.js';
+import { refreshSovereignBuilder8Capacity } from '../stephanos-server/services/sovereignBuilder8CapacityService.js';
 import { refreshOpenClawProviderPoolCapacity } from '../stephanos-server/services/openClawProviderPoolAdmissionService.js';
 import { runGitHubLifeboatLane7 } from '../stephanos-server/services/githubLifeboatLane7Service.js';
 import { refreshGitHubLifeboatLane7ClaimAck } from '../stephanos-server/services/githubLifeboatLane7ClaimAckKeeper.js';
-import { processNextProviderNeutralSourceBuild } from '../stephanos-server/services/providerNeutralSourceBuilderService.js';
 import { resolveMissionWorkerQueueRoot } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
 import { decideWorkConservingControllerCycleV1 } from '../shared/agents/providerNeutralExecutionCompatibilityV1.mjs';
+
+// Source execution belongs to the existing supervised Mission Worker, not
+// this short maintenance heartbeat. Publication remains the conveyor's job.
+export async function deferSourceBuildToCanonicalWorkerV1() {
+  return Object.freeze({processed:false,success:false,pickupProven:false,
+    reason:'CANONICAL_MISSION_WORKER_SOURCE_PICKUP_PENDING',
+    finalVerdict:'CANONICAL_MISSION_WORKER_SOURCE_PICKUP_PENDING'});
+}
 
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA = 'stephanos.battle-bridge-goal-discovery-heartbeat.v1';
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT_MARKER = 'BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT=';
@@ -160,6 +170,7 @@ const PROCESSING_PICKUP_ADAPTERS = Object.freeze([
   'chatgpt-github',
   'foundry-forge',
   'desktop-commander',
+  'sovereign-commander',
   'stephanos-native',
 ]);
 
@@ -399,14 +410,17 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   lifeboatOptions = {},
   refreshCommanderCapacity = refreshDesktopCommanderCapacity,
   commanderOptions = {},
+  refreshSovereignCapacity = refreshSovereignBuilder8Capacity,
+  sovereignOptions = {},
   refreshOpenClawCapacity = refreshOpenClawProviderPoolCapacity,
   openClawOptions = {},
   refreshGithubLifeboat = runGitHubLifeboatLane7,
   githubLifeboatOptions = {},
   refreshGithubLifeboatClaimAck = refreshGitHubLifeboatLane7ClaimAck,
   githubLifeboatClaimAckOptions = {},
-  buildClaimedGoal = processNextProviderNeutralSourceBuild,
+  buildClaimedGoal = deferSourceBuildToCanonicalWorkerV1,
   builderOptions = {},
+  readWorkerHeartbeatAgeMs = readCanonicalMissionWorkerHeartbeatAgeMs,
   readProcessingPickupMissionIdsFn = readProcessingPickupMissionIds,
   maxWorkConservingAttempts,
   paths = resolveCriticalBacklogRuntimePaths(),
@@ -432,44 +446,67 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   let latestTrackPublication = null;
   let lifeboatCapacity = null;
   let commanderCapacity = null;
+  let sovereignCapacity = null;
   let openClawCapacity = null;
   let githubLifeboat = null;
   let githubLifeboatClaimAck = null;
   const effectiveBuilderOptions = Object.freeze({
     ...builderOptions,
     repoRoot: builderOptions.repoRoot || paths.repoRoot,
-    sharedWorkspaceRoot: builderOptions.sharedWorkspaceRoot
-      || builderOptions.env?.STEPHANOS_SHARED_AGENT_WORKSPACE
-      || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
-      || paths.workspaceRoot,
+    sharedWorkspaceRoot: resolveGoalDiscoveryWorkspaceV1({ builderOptions, paths }),
   });
+  const workerAllowed = () => {
+    try {
+      const age = readWorkerHeartbeatAgeMs({ workspaceRoot: effectiveBuilderOptions.sharedWorkspaceRoot });
+      return canonicalMissionWorkerEvidenceAllowsWork(age);
+    } catch { return false; }
+  };
+  const workerHold = () => Object.freeze({ schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
+    ok: false, blocker: 'MISSION_WORKER_CUSTODY_UNPROVEN', cycleId,
+    materialActionsSucceeded, sweepAttemptCount: sweepAttempts.length,
+    sweepAttempts: Object.freeze([...sweepAttempts]), sourceBuild: latestSourceBuild,
+    ...authorityBoundary(), finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED' });
+  if (!workerAllowed()) return workerHold();
 
   try {
     try {
       githubLifeboat = await refreshGithubLifeboat({
         ...githubLifeboatOptions,
+        readWorkerHeartbeatAgeMs,
+        workerWorkspaceRoot: effectiveBuilderOptions.sharedWorkspaceRoot,
         gitCommand: githubLifeboatOptions.gitCommand || 'git',
         ghCommand: githubLifeboatOptions.ghCommand || BATTLE_BRIDGE_CANONICAL_GITHUB_CLI,
       });
     } catch (error) { githubLifeboat = unavailableGithubLifeboat(error); }
 
+    if (!workerAllowed()) return workerHold();
     try {
       githubLifeboatClaimAck = await refreshGithubLifeboatClaimAck({
         ...githubLifeboatClaimAckOptions,
+        readWorkerHeartbeatAgeMs,
+        workerWorkspaceRoot: effectiveBuilderOptions.sharedWorkspaceRoot,
         sourceHead: githubLifeboat?.sourceHead || githubLifeboatClaimAckOptions.sourceHead || '',
       });
     } catch (error) { githubLifeboatClaimAck = unavailableGithubLifeboatClaimAck(error); }
 
+    if (!workerAllowed()) return workerHold();
     try { lifeboatCapacity = await refreshLifeboatCapacity(lifeboatOptions); }
     catch (error) { lifeboatCapacity = unavailableLifeboat(error); }
 
+    if (!workerAllowed()) return workerHold();
     try { commanderCapacity = await refreshCommanderCapacity(commanderOptions); }
     catch (error) { commanderCapacity = unavailableDesktopCommander(error); }
 
+    if (!workerAllowed()) return workerHold();
+    try { sovereignCapacity = await refreshSovereignCapacity({ paths, ...sovereignOptions }); }
+    catch (error) { sovereignCapacity = { ok: false, available: false, reason: 'SOVEREIGN_BUILDER8_CAPACITY_REFRESH_EXCEPTION' }; }
+
+    if (!workerAllowed()) return workerHold();
     try { openClawCapacity = await refreshOpenClawCapacity(openClawOptions); }
     catch (error) { openClawCapacity = unavailableOpenClawProviderPool(error); }
 
     for (let attemptIndex = 0; attemptIndex < limit; attemptIndex += 1) {
+      if (!workerAllowed()) return workerHold();
       const result = await conveyor({
         allowLegacyMissionCreation: false,
         admissionOwner: 'battle-bridge-goal-discovery',
@@ -499,6 +536,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
           githubLifeboatClaimAck,
           lifeboatCapacity,
           commanderCapacity,
+          sovereignCapacity,
           openClawCapacity,
           conveyorResult: result || null,
           sourceBuild: latestSourceBuild,
@@ -536,6 +574,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       for (const missionId of processingPickupMissionIds) pendingExternalPickupMissionIds.delete(String(missionId).trim().toLowerCase());
 
       let sourceBuild;
+      if (!workerAllowed()) return workerHold();
       try {
         sourceBuild = await buildClaimedGoal(effectiveBuilderOptions);
       } catch (error) {
@@ -570,11 +609,13 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       // canonical runnable work disappeared. Keep sweeping while the scheduler
       // still exposes runnable missions so safe eligible work cannot collapse
       // into a false healthy-idle result.
+      const canonicalProgrammeHeld = String(result?.programmeStatus || '').toUpperCase() === 'HOLD';
       const returningNoWork = !built
         && !blocked
         && !elasticHold
         && !externalPickupPending
-        && runnableMissionCount === 0;
+        && runnableMissionCount === 0
+        && !canonicalProgrammeHeld;
       const observationCycleDecision = returningNoWork
         ? buildCycleDecision({
           result,
@@ -623,6 +664,14 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
 
       if (!elasticHold && !externalPickupPending && runnableMissionCount === 0) {
         const materialProgress = materialActionsSucceeded > 0;
+        if (canonicalProgrammeHeld) {
+          lastCycleDecision = buildCycleDecision({
+            result,
+            materialActionsSucceeded,
+            waitingLaneCount: parkedLaneBlockers.size,
+            noRunnableSourceWorkProven: false,
+          });
+        }
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
           ok: true,
@@ -631,6 +680,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
           githubLifeboatClaimAck,
           lifeboatCapacity,
           commanderCapacity,
+          sovereignCapacity,
           openClawCapacity,
           conveyorResult: result,
           sourceBuild: lastMaterialSourceBuild || sourceBuild || null,
@@ -645,13 +695,15 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
           pendingExternalPickupMissionIds: Object.freeze([...pendingExternalPickupMissionIds]),
           cycleDecision: lastCycleDecision,
           parkedLaneBlockers: Object.freeze([...parkedLaneBlockers]),
-          noRunnableSourceWorkProven: true,
+          noRunnableSourceWorkProven: !canonicalProgrammeHeld,
           materialProgress,
-          controllerContinuity: 'RETURN_WORK_CONSERVING',
+          controllerContinuity: canonicalProgrammeHeld ? 'RECONCILE_CANONICAL_PROGRAMME_HOLD' : 'RETURN_WORK_CONSERVING',
           ...authorityBoundary(),
-          finalVerdict: materialProgress
-            ? 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED'
-            : 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE',
+          finalVerdict: canonicalProgrammeHeld
+            ? 'GOAL_DISCOVERY_HEARTBEAT_CANONICAL_PROGRAMME_HOLD'
+            : materialProgress
+              ? 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED'
+              : 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE',
         });
       }
     }
@@ -670,6 +722,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       githubLifeboatClaimAck,
       lifeboatCapacity,
       commanderCapacity,
+      sovereignCapacity,
       openClawCapacity,
       conveyorResult: latestResult,
       sourceBuild: lastMaterialSourceBuild || latestSourceBuild,
@@ -716,6 +769,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       githubLifeboatClaimAck,
       lifeboatCapacity,
       commanderCapacity,
+      sovereignCapacity,
       openClawCapacity,
       conveyorResult: latestResult,
       sourceBuild: latestSourceBuild,
