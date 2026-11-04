@@ -40,6 +40,8 @@ test('launcher delegates authority to the canonical shared decision policy throu
   assert.match(source, /FIRST_SAMPLE_RECORDED/);
   assert.match(source, /starfield-vr-telemetry-guardian-start-failed/);
   assert.match(source, /performanceGuardianProcessId/);
+  assert.match(source, /Get-Command -Name 'git\.exe' -CommandType Application/);
+  assert.match(source, /-C \$repositoryRoot rev-parse HEAD/);
   assert.match(source, /starfield-vr-readiness-current\.json/);
   assert.match(source, /UTF8Encoding\(\$false\)/);
   assert.match(source, /\$latestPath = if \(\$ReadinessOnly\) \{ \$latestReadinessPath \} else \{ \$latestReceiptPath \}/);
