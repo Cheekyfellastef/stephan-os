@@ -119,7 +119,7 @@ test('exact-head Git snapshot pins actual executable and high-risk policy bytes'
   assert.equal(snap.sourceHead,SHA);
   assert.equal(snap.diff,DIFF+'\n');
   assert.deepEqual(snap.changedFiles,[PATH]);
-  const runtimeOnly=snapshotOptions({status:' M stephanos-server/data/memory/durable-memory.json\\n?? apps/stephanos/dist/assets/runtime-proof.js'});
+  const runtimeOnly=snapshotOptions({status:' M stephanos-server/data/memory/durable-memory.json\n?? apps/stephanos/dist/assets/runtime-proof.js'});
   assert.doesNotThrow(()=>capture(ENV,runtimeOnly.captured));
   for(const status of [' M scripts/sovereign-high-risk-advisory-v1.mjs','?? scripts/untracked-reviewer.mjs']) {
     const dirty=snapshotOptions({status});
