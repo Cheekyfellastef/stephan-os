@@ -1,5 +1,7 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './rescueIslandSupervisedMailboxV1.test.mjs';
 import {
   BATTLE_BRIDGE_GITHUB_COMMAND_MARKER,
   BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
@@ -31,7 +33,7 @@ function command(overrides = {}) {
     requestId: 'req-1507-0001',
     operation: 'UPDATE_STEPHANOS_FROM_CHAT',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2808,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: 'fb10c39a5c0178158bc3b43c5539e8f5d023bc2a',
@@ -39,6 +41,24 @@ function command(overrides = {}) {
     ...overrides,
   };
 }
+
+test('original source quarantine requires an indivisible exact lease and mission revision packet', () => {
+  const packet = command({ operation: 'CANCEL_MISSION_ORCHESTRATOR_MISSION',
+    missionId: 'critical-2962-elastic-goal', commandId: 'fence-original-2962-test',
+    reason: 'Retire the original source attempt only.',
+    originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+    originalLeaseDigest: 'a'.repeat(64), expectedMissionRevision: 7 });
+  const accepted = validateBattleBridgeGitHubCommand(packet, { now, authorLogin: 'Cheekyfellastef' });
+  assert.equal(accepted.ok, true, JSON.stringify(accepted));
+  for (const field of ['originalLeaseId', 'originalLeaseDigest', 'expectedMissionRevision']) {
+    const incomplete = { ...packet }; delete incomplete[field];
+    assert.equal(validateBattleBridgeGitHubCommand(incomplete, { now, authorLogin: 'Cheekyfellastef' }).ok, false);
+  }
+  assert.equal(validateBattleBridgeGitHubCommand({ ...packet, expectedMissionRevision: 8 },
+    { now, authorLogin: 'Cheekyfellastef' }).ok, false);
+  assert.equal(validateBattleBridgeGitHubCommand({ ...packet, operation: 'UPDATE_STEPHANOS_FROM_CHAT' },
+    { now, authorLogin: 'Cheekyfellastef' }).ok, false);
+});
 
 function scopedDelivery(overrides = {}) {
   return {

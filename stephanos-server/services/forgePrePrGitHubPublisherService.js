@@ -3,6 +3,7 @@ import {
   reserveOpenClawGitHubAuthorization,
   completeOpenClawGitHubAuthorizationReservation,
 } from '../../shared/agents/openClawGitHubAuthorization.mjs';
+import { runWithMissionStatePrecondition } from './missionOrchestratorStore.js';
 import { verifyForgePrePrPublicationEvidence } from '../../shared/agents/forgePrePrPublicationV1.mjs';
 
 export const FORGE_PRE_PR_GITHUB_PUBLISHER_SCHEMA = 'stephanos.forge-pre-pr-github-publisher.v1';
@@ -38,9 +39,29 @@ export function verifyForgePublicationGrant(envelope, publicKeyPem, proof, nowUt
 
 // The API adapter is deliberately narrow: only create blob/tree/commit/ref/PR,
 // and read exact remote refs/commits. No updateRef, merge, force, delete or shell.
-export async function publishForgePrePrToGitHub({
+export async function publishForgePrePrToGitHub(input = {}) {
+  const missionId = String(input.escrow?.missionId || '');
+  if (!/^critical-[1-9]\d*-elastic-goal$/.test(missionId)) return publishUnfencedForgePrePr(input);
+  try {
+    // Hold the existing mission lock through every remote mutation. A fence
+    // cannot commit between a preflight read and publication of a source ref.
+    const guarded = await runWithMissionStatePrecondition(missionId, {}, async (state) => {
+      if (state.cancelled === true || state.currentPhase === 'CANCELLED'
+          || state.storeMetadata?.originalSourceAttemptFence
+          || state.storeMetadata?.supervisedRecoveryMaintenance) {
+        return fail('ORIGINAL_SOURCE_ATTEMPT_FENCED');
+      }
+      return publishUnfencedForgePrePr(input);
+    }, { env: input.env || process.env });
+    return guarded.result;
+  } catch {
+    return fail('ORIGINAL_SOURCE_ATTEMPT_FENCED_OR_UNOBSERVABLE');
+  }
+}
+
+async function publishUnfencedForgePrePr({
   escrow, outbox, bundleBytes, authorization, publicKeyPem, receiptRoot,
-  githubApi, nowUtc = new Date().toISOString(),
+  githubApi, nowUtc = new Date().toISOString(), env = process.env,
 } = {}) {
   if (!githubApi || [
     'getMain', 'getBranch', 'listOpenPulls', 'createBlob', 'createTree',

@@ -254,6 +254,10 @@ test("workspace launch does not recreate iframe for duplicate open requests", as
     assert.equal(debugState.repeatedLaunchCount, 1);
     assert.equal(debugState.chromeHideCount, 1);
     assert.equal(iframeCount, 1);
+    const mountedFrame = documentRef.nodes["workspace-content"].children
+      .flatMap((node) => node.children || [])
+      .find((node) => node.tagName === "iframe");
+    assert.equal(mountedFrame.getAttribute("data-stephanos-workspace-id"), "wealthapp");
     assert.equal(documentRef.nodes.workspace.classList.contains("stephanos-root-workspace-shell"), true);
     assert.equal(documentRef.nodes.workspace.getAttribute("data-workspace-shell"), "canonical");
     assert.equal(documentRef.nodes["workspace-content"].classList.contains("stephanos-root-workspace-canvas"), true);
@@ -323,6 +327,23 @@ test("workspace open close open sequence keeps chrome transitions and iframe cre
   } finally {
     globals.restore();
   }
+});
+
+test("Cockpit opens the canonical top-level runtime without allocating an iframe", async () => {
+  const documentRef = createDocumentFixture();
+  const { restore } = installWorkspaceGlobals(documentRef, async () => ({ ok: true, text: async () => '' }));
+  const assigned = [];
+  globalThis.window.location.assign = value => assigned.push(value);
+  resetWorkspaceRuntimeDebugState();
+  try {
+    await workspace.open({ id: 'cockpit', folder: 'cockpit', name: 'Cockpit', entry: 'apps/cockpit/index.html', packaging: 'classic-static' });
+    assert.equal(assigned.length, 1);
+    const target = new URL(assigned[0]);
+    assert.equal(target.pathname, '/apps/stephanos/dist/index.html');
+    assert.equal(target.searchParams.get('surface'), 'cockpit');
+    assert.ok(target.searchParams.has('stephanosLauncherShellUrl'));
+    assert.equal(getWorkspaceRuntimeDebugState().iframeCreationCount, 0);
+  } finally { restore(); resetWorkspaceRuntimeDebugState(); }
 });
 
 test("workspace stephanos launch uses validated launch target for tile-click runtime semantics", async () => {

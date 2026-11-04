@@ -1,4 +1,5 @@
 import { readBackendSharedWorkspaceDashboardFeed } from './sharedWorkspaceDashboardFeedService.js';
+import { throwIfWorkspaceReadAborted, waitForWorkspaceRead } from '../../shared/runtime/workspaceReadCancellation.mjs';
 import { readVrCapabilityFeed } from './vrCapabilityFeedService.js';
 import { readVrPlaytestFeed } from './vrPlaytestFeedService.js';
 import { readSpatialWorkspaceTelemetryFeed } from './spatialWorkspaceTelemetryService.js';
@@ -111,7 +112,9 @@ export async function readWorkspaceHydrationBundle({
   nowMs = Date.now(),
   staleAfterMs,
   readers = defaultReaders(),
+  signal,
 } = {}) {
+  throwIfWorkspaceReadAborted(signal);
   const normalizedWorkspaceId = normalizeWorkspaceHydrationWorkspaceId(workspaceId);
   if (!normalizedWorkspaceId) {
     return Object.freeze({
@@ -134,7 +137,7 @@ export async function readWorkspaceHydrationBundle({
   });
   const readerMap = { ...defaultReaders(), ...(readers || {}) };
 
-  const entries = await Promise.all(selectedDatasets.map(async (dataset) => {
+  const entries = await waitForWorkspaceRead(Promise.all(selectedDatasets.map(async (dataset) => {
     const reader = readerMap[dataset];
     if (typeof reader !== 'function') {
       return [dataset, Object.freeze({
@@ -145,7 +148,7 @@ export async function readWorkspaceHydrationBundle({
     }
 
     try {
-      const common = { env, repoRoot, nowMs, staleAfterMs };
+      const common = { env, repoRoot, nowMs, staleAfterMs, signal };
       const dashboardRecordScope = normalizedWorkspaceId === 'flywheel'
         ? 'full-history'
         : 'current-state';
@@ -158,13 +161,15 @@ export async function readWorkspaceHydrationBundle({
         payload,
       })];
     } catch (error) {
+      throwIfWorkspaceReadAborted(signal);
       return [dataset, Object.freeze({
         state: 'unavailable',
         reason: text(error?.message, 'WORKSPACE_HYDRATION_DATASET_FAILED'),
         payload: null,
       })];
     }
-  }));
+  })), signal);
+  throwIfWorkspaceReadAborted(signal);
 
   const hydratedAtUtc = new Date(nowMs).toISOString();
   const enrichedEntries = entries.map(([dataset, value]) => {

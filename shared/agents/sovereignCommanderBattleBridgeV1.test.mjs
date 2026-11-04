@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -15,7 +16,7 @@ function command(overrides = {}) {
     requestId: 'sovereign-install-20260930-001',
     operation: SOVEREIGN_COMMANDER_INSTALL_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2808,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -109,7 +110,7 @@ test('sovereign bootstrap installs fixed task and proves authenticated MCP postu
     body: {
       ok: true,
       service: 'stephanos-sovereign-commander',
-      capabilityVersion: '2026-10-05-continuous-repair-reporting-v4',
+      capabilityVersion: '2026-10-18-island-action-contract-v6',
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
     },
@@ -177,7 +178,7 @@ test('sovereign bootstrap installs fixed task and proves authenticated MCP postu
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_INSTALLED_STARTED_AND_AUTHENTICATED');
   assert.equal(result.expectedHeadMatch, true);
   assert.equal(result.healthReady, true);
-  assert.equal(result.capabilityVersion, '2026-10-05-continuous-repair-reporting-v4');
+  assert.equal(result.capabilityVersion, '2026-10-18-island-action-contract-v6');
   assert.equal(result.authenticatedMcpReady, true);
   assert.equal(result.tailnetIgnitionReady, true);
   assert.equal(result.remoteIgnitionPath, '/ignite');
@@ -200,7 +201,7 @@ test('sovereign bootstrap installs fixed task and proves authenticated MCP postu
   const runnerCall = processCalls.find((call) => call.args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1')));
   assert.ok(runnerCall);
   assert.ok(runnerCall.args.includes('-RequireCapabilityVersion'));
-  assert.ok(runnerCall.args.includes('2026-10-05-continuous-repair-reporting-v4'));
+  assert.ok(runnerCall.args.includes('2026-10-18-island-action-contract-v6'));
 });
 
 
@@ -225,7 +226,7 @@ test('sovereign bootstrap reuses an existing healthy task without reinstalling i
     body: {
       ok: true,
       service: 'stephanos-sovereign-commander',
-      capabilityVersion: '2026-10-05-continuous-repair-reporting-v4',
+      capabilityVersion: '2026-10-18-island-action-contract-v6',
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
     },
@@ -297,7 +298,7 @@ test('sovereign bootstrap rejects failed outer config receipts even when nested 
     body: {
       ok: true,
       service: 'stephanos-sovereign-commander',
-      capabilityVersion: '2026-10-05-continuous-repair-reporting-v4',
+      capabilityVersion: '2026-10-18-island-action-contract-v6',
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
     },
@@ -370,7 +371,7 @@ test('sovereign bootstrap recycles an existing unhealthy scheduled task without 
     body: {
       ok: true,
       service: 'stephanos-sovereign-commander',
-      capabilityVersion: '2026-10-05-continuous-repair-reporting-v4',
+      capabilityVersion: '2026-10-18-island-action-contract-v6',
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
     },
@@ -422,7 +423,7 @@ test('sovereign bootstrap recycles an existing unhealthy scheduled task without 
   const runnerCall = processCalls.find((call) => call.args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1')));
   assert.ok(runnerCall);
   assert.ok(runnerCall.args.includes('-RequireCapabilityVersion'));
-  assert.ok(runnerCall.args.includes('2026-10-05-continuous-repair-reporting-v4'));
+  assert.ok(runnerCall.args.includes('2026-10-18-island-action-contract-v6'));
 });
 
 

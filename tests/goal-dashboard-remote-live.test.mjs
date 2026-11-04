@@ -2,9 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+// Hosted / local gate parity must run the same signer and steward regressions.
+import '../shared/runtime/goalConveyorGateStewardV1.test.mjs';
+import '../shared/runtime/goalConveyorGateReadOnlyExecutionV1.test.mjs';
 
 const source = readFileSync(new URL('../apps/goal-dashboard/remote-live.js', import.meta.url), 'utf8');
-const deployWorkflow = readFileSync(new URL('../.github/workflows/build-stephanos-ui.yml', import.meta.url), 'utf8');
+const deployWorkflow = readFileSync(new URL('../.github/workflows/deploy-stephanos-pages.yml', import.meta.url), 'utf8');
 const HEAD = 'a'.repeat(40);
 const OTHER_HEAD = 'b'.repeat(40);
 const NOW = Date.parse('2026-09-12T12:35:00.000Z');
@@ -35,7 +38,7 @@ function beaconComment(record = beacon()) {
   return { body: `<!-- stephanos-battle-bridge-outbound-health-beacon -->\n\n\`\`\`json\n${JSON.stringify(record)}\n\`\`\`` };
 }
 
-function makeContext({ hostname = 'localhost', fetchImpl = async () => ({ ok: false, status: 500 }) } = {}) {
+function makeContext({ hostname = 'localhost', fetchImpl = async () => ({ ok: false, status: 500 }), backendBase = null } = {}) {
   const timers = [];
   const fields = new Map();
   const grid = { attrs: {}, setAttribute(key, value) { this.attrs[key] = value; } };
@@ -49,12 +52,15 @@ function makeContext({ hostname = 'localhost', fetchImpl = async () => ({ ok: fa
     setSourceBadge(value, truth) { fields.set('source-badge', String(value)); fields.set('source-truth', String(truth)); },
     applyProjection(projection, source, feedState) { window.applied = { projection, source, feedState }; },
   };
+  if (backendBase !== null) {
+    window.backendBase = typeof backendBase === 'function' ? backendBase : () => backendBase;
+  }
   const document = {
     visibilityState: 'visible',
     getElementById(id) { return id === 'goal-grid' ? grid : null; },
     querySelector() { return null; },
   };
-  const context = { window, document, AbortController, Date, JSON, Math, Number, String, Array, Object, RegExp, Set, Error, console };
+  const context = { window, document, AbortController, URL, Date, JSON, Math, Number, String, Array, Object, RegExp, Set, Error, console };
   vm.runInNewContext(source, context);
   return { api: window.__stephanosRemoteGoalDashboardV1, window, document, timers, fields, grid };
 }
@@ -71,6 +77,14 @@ test('remote adapter accepts only the bounded outbound beacon contract', () => {
   assert.equal(api.parseBeaconComment(beaconComment(beacon({ repository: 'other/repo' }))), null);
   assert.equal(api.parseBeaconComment(beaconComment(beacon({ schemaVersion: 'wrong.schema' }))), null);
   assert.equal(api.parseBeaconComment({ body: 'not a beacon' }), null);
+});
+
+test('latest hosted gate beacon excludes unauthenticated comments before timestamp ranking', () => {
+  const { api } = makeContext();
+  const owner = { ...beaconComment(beacon()), user: { login: 'Cheekyfellastef', id: 267490109 } };
+  const futureCopy = { ...beaconComment(beacon({ observedAtUtc: '2099-01-01T00:00:00.000Z' })), user: { login: 'unrelated-account', id: 123 } };
+  assert.equal(api.latestBeacon([owner, futureCopy])?.ownerCommentAuthenticated, true);
+  assert.equal(api.latestBeacon([futureCopy]), null);
 });
 
 test('remote projection is current only with fresh exact-head complete evidence', () => {
@@ -113,7 +127,7 @@ test('remote browser refresh reads public GitHub truth only and renders iPad-saf
   const liveBeacon = beacon({ observedAtUtc: new Date().toISOString() });
   const responses = new Map([
     ['ref', { object: { sha: HEAD } }],
-    ['comments', [beaconComment(liveBeacon)]],
+    ['comments', [{ ...beaconComment(liveBeacon), user: { login: 'Cheekyfellastef', id: 267490109 } }]],
     ['issues', [
       { number: 1282, title: 'Goal Dashboard', state: 'open', updated_at: '2026-09-12T12:33:00Z' },
       { number: 2188, title: 'Merged PR is filtered', state: 'open', pull_request: {}, updated_at: '2026-09-12T12:32:00Z' },
@@ -143,6 +157,97 @@ test('remote browser refresh reads public GitHub truth only and renders iPad-saf
   assert.equal(grid.attrs['data-goal-dashboard-feed-state'], 'ready');
 });
 
+test('hosted Goal Dashboard keeps canonical HTTPS backend above the public remote fallback', async () => {
+  let called = false;
+  const { api, window } = makeContext({
+    hostname: 'cheekyfellastef.github.io',
+    backendBase: 'https://battle-bridge.example.ts.net',
+    fetchImpl: async () => {
+      called = true;
+      return { ok: false, status: 500, json: async () => ({}) };
+    },
+  });
+
+  assert.equal(api.canonicalHostedBackendRoute(), 'https://battle-bridge.example.ts.net');
+  const result = await api.refreshRemote();
+
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'CANONICAL_HOSTED_BACKEND_REMAINS_CANONICAL');
+  assert.equal(result.backendBase, 'https://battle-bridge.example.ts.net');
+  assert.equal(called, false);
+  assert.equal(window.applied, undefined);
+});
+
+
+test('late canonical hosted backend wins over an in-flight successful GitHub fallback', async () => {
+  let backend = '';
+  let release;
+  let calls = 0;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const liveBeacon = beacon({ observedAtUtc: new Date().toISOString() });
+  const { api, window, fields } = makeContext({
+    hostname: 'cheekyfellastef.github.io',
+    backendBase: () => backend,
+    fetchImpl: async (url) => {
+      calls += 1;
+      await gate;
+      const value = String(url).includes('/git/ref/heads/main')
+        ? { object: { sha: HEAD } }
+        : String(url).includes('/issues/1889/comments')
+          ? [{ ...beaconComment(liveBeacon), user: { login: 'Cheekyfellastef', id: 267490109 } }]
+          : [];
+      return { ok: true, status: 200, json: async () => value };
+    },
+  });
+  const pending = api.refreshRemote();
+  assert.equal(calls, 3);
+  backend = 'https://bridge.example.ts.net';
+  release();
+  const result = await pending;
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'CANONICAL_HOSTED_BACKEND_REMAINS_CANONICAL');
+  assert.equal(result.backendBase, 'https://bridge.example.ts.net');
+  assert.equal(window.applied, undefined);
+  assert.equal(fields.has('source-badge'), false);
+});
+
+test('late canonical hosted backend wins over an in-flight failed GitHub fallback', async () => {
+  let backend = '';
+  let release;
+  let calls = 0;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const { api, window, fields } = makeContext({
+    hostname: 'cheekyfellastef.github.io',
+    backendBase: () => backend,
+    fetchImpl: async () => {
+      calls += 1;
+      await gate;
+      return { ok: false, status: 403, json: async () => ({}) };
+    },
+  });
+  const pending = api.refreshRemote();
+  assert.equal(calls, 3);
+  backend = 'https://bridge.example.ts.net';
+  release();
+  const result = await pending;
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'CANONICAL_HOSTED_BACKEND_REMAINS_CANONICAL');
+  assert.equal(window.applied, undefined);
+  assert.equal(fields.has('source-badge'), false);
+  assert.equal(window.__stephanosGoalDashboardRemote, undefined);
+});
+
+test('hosted GitHub fallback still reports unavailable when no canonical backend exists', async () => {
+  const { api, fields } = makeContext({
+    hostname: 'cheekyfellastef.github.io',
+    backendBase: () => '',
+    fetchImpl: async () => ({ ok: false, status: 403 }),
+  });
+  assert.equal(await api.refreshRemote(), null);
+  assert.equal(fields.get('source-badge'), 'REMOTE UNAVAILABLE');
+  assert.equal(fields.get('source-truth'), 'UNAVAILABLE');
+});
+
 test('local Battle Bridge browser never uses the remote public adapter', async () => {
   let called = false;
   const { api } = makeContext({ hostname: '127.0.0.1', fetchImpl: async () => { called = true; return { ok: false, status: 500 }; } });
@@ -150,4 +255,144 @@ test('local Battle Bridge browser never uses the remote public adapter', async (
   assert.equal(result.skipped, true);
   assert.equal(result.reason, 'LOCAL_BACKEND_REMAINS_CANONICAL');
   assert.equal(called, false);
+});
+
+test('iPad hosted projection shows all 23 signed-gate states only with owner-authenticated current beacon', () => {
+  const { api } = makeContext({ hostname: 'stephanos.pages.dev' });
+  const gateView = {
+    schemaVersion: 'stephanos.public-goal-build-gate-observatory.v1',
+    sourceHead: HEAD,
+    observationStatus: 'EVIDENCE_AVAILABLE',
+    observedAtUtc: '2026-09-12T12:34:00.000Z',
+    gates: Array.from({ length: 23 }, (_, i) => ({
+      id: i + 1, status: i === 6 ? 'FAIL' : i === 2 ? 'PASS' : 'UNVERIFIED',
+      title: 'Gate ' + (i + 1), owner: 'Trusted subsystem',
+      typedBlocker: i === 6 ? 'PROGRAMME_HOLD' : '',
+      proofRef: 'workspace:proof/goal-gate-' + (i + 1),
+    })),
+  };
+  const ownerBeacon = api.parseBeaconComment({
+    ...beaconComment(beacon({ goalBuildGateObservatory: gateView })),
+    user: { login: 'Cheekyfellastef', id: 267490109 },
+  });
+  const projection = api.buildProjection({
+    beacon: ownerBeacon, ref: { object: { sha: HEAD } },
+    issues: [], nowMs: NOW,
+  });
+  assert.equal(projection.goalBuildGateObservatory.gates.length, 23);
+  assert.equal(projection.goalBuildGateObservatory.counts.PASS, 1);
+  assert.equal(projection.goalBuildGateObservatory.counts.FAIL, 1);
+  assert.equal(projection.goalBuildGateObservatory.firstActionableGate, 7);
+  assert.equal(projection.goalBuildGateObservatory.gates[6].proofRef, 'workspace:proof/goal-gate-7');
+  const bot = api.parseBeaconComment(beaconComment(beacon({ goalBuildGateObservatory: gateView })));
+  const noOwner = api.buildProjection({ beacon: bot, ref: { object: { sha: HEAD } }, issues: [], nowMs: NOW });
+  assert.equal(noOwner.goalBuildGateObservatory.counts.PASS, 0);
+  assert.equal(noOwner.goalBuildGateObservatory.counts.STALE, 2);
+  assert.equal(noOwner.goalBuildGateObservatory.firstActionableGate, null);
+  const mismatch = api.buildProjection({ beacon: ownerBeacon, ref: { object: { sha: OTHER_HEAD } }, issues: [], nowMs: NOW });
+  assert.equal(mismatch.goalBuildGateObservatory.counts.PASS, 0);
+  assert.equal(mismatch.goalBuildGateObservatory.firstActionableGate, null);
+});
+
+
+test('hosted refresh generation rejects a stale success after a newer successful projection', async () => {
+  let calls = 0;
+  const releases = [];
+  const gates = [0, 1].map(() => new Promise(resolve => releases.push(resolve)));
+  const fetchImpl = async (url) => {
+    const generation = Math.floor(calls++ / 3);
+    await gates[generation];
+    const sourceHead = generation === 0 ? HEAD : OTHER_HEAD;
+    const record = beacon({ sourceHead, observedAtUtc: new Date().toISOString() });
+    const result = String(url).includes('/git/ref/heads/main')
+      ? { object: { sha: sourceHead } }
+      : String(url).includes('/issues/1889/comments')
+        ? [{ ...beaconComment(record), user: { login: 'Cheekyfellastef', id: 267490109 } }]
+        : [];
+    return { ok: true, status: 200, json: async () => result };
+  };
+  const { api, window } = makeContext({ hostname: 'stephanos.pages.dev', fetchImpl });
+  const older = api.refreshRemote();
+  const newer = api.refreshRemote();
+  assert.equal(calls, 6);
+  releases[1]();
+  const newestResult = await newer;
+  assert.equal(newestResult.remoteProjection.githubHead, OTHER_HEAD);
+  releases[0]();
+  const staleResult = await older;
+  assert.equal(staleResult.skipped, true);
+  assert.equal(staleResult.reason, 'STALE_REMOTE_REFRESH_SUPERSEDED');
+  assert.equal(window.applied.projection.remoteProjection.githubHead, OTHER_HEAD);
+  assert.equal(window.__stephanosGoalDashboardRemote.githubHead, OTHER_HEAD);
+});
+
+test('hosted refresh generation cannot let an older failure erase a newer success', async () => {
+  let calls = 0;
+  const releases = [];
+  const gates = [0, 1].map(() => new Promise(resolve => releases.push(resolve)));
+  const fetchImpl = async (url) => {
+    const generation = Math.floor(calls++ / 3);
+    await gates[generation];
+    if (generation === 0) return { ok: false, status: 403 };
+    const record = beacon({ observedAtUtc: new Date().toISOString() });
+    const result = String(url).includes('/git/ref/heads/main')
+      ? { object: { sha: HEAD } }
+      : String(url).includes('/issues/1889/comments')
+        ? [{ ...beaconComment(record), user: { login: 'Cheekyfellastef', id: 267490109 } }]
+        : [];
+    return { ok: true, status: 200, json: async () => result };
+  };
+  const { api, window, fields } = makeContext({ hostname: 'stephanos.pages.dev', fetchImpl });
+  const older = api.refreshRemote();
+  const newer = api.refreshRemote();
+  assert.equal(calls, 6);
+  releases[1]();
+  await newer;
+  releases[0]();
+  const staleResult = await older;
+  assert.equal(staleResult.reason, 'STALE_REMOTE_REFRESH_SUPERSEDED');
+  assert.equal(window.__stephanosGoalDashboardRemote.state, 'ready');
+  assert.equal(fields.get('source-badge'), 'REMOTE LIVE');
+});
+
+test('future-dated owner beacon fails closed instead of appearing fresh', () => {
+  const { api } = makeContext();
+  const future = api.buildProjection({
+    beacon: beacon({ observedAtUtc: '2099-01-01T00:00:00.000Z' }),
+    ref: { object: { sha: HEAD } },
+    issues: [],
+    nowMs: NOW,
+  });
+  assert.equal(future.sourceTruth, 'STALE');
+  assert.equal(future.remoteProjection.beaconFresh, false);
+  assert.ok(future.remoteProjection.beaconAgeMs < 0);
+  assert.equal(future.finalVerdict, 'GOAL_DASHBOARD_REMOTE_DEGRADED');
+});
+
+// Bracketed IPv6 loopback is the hostname reported by URL in modern browsers.
+test('local bracketed IPv6 loopback stays on canonical backend without GitHub calls', async () => {
+  let githubCalls = 0;
+  const { api, window } = makeContext({
+    hostname: '[::1]',
+    fetchImpl: async () => { githubCalls += 1; return { ok: false, status: 403 }; },
+  });
+  const result = await api.refreshRemote();
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'LOCAL_BACKEND_REMAINS_CANONICAL');
+  assert.equal(githubCalls, 0);
+  assert.equal(window.applied, undefined);
+});
+
+test('hosted page rejects bracketed IPv6 loopback as a canonical public HTTPS backend', async () => {
+  let githubCalls = 0;
+  const { api, window } = makeContext({
+    hostname: 'cheekyfellastef.github.io',
+    backendBase: 'https://[::1]:8787',
+    fetchImpl: async () => { githubCalls += 1; return { ok: false, status: 403 }; },
+  });
+  assert.equal(api.canonicalHostedBackendRoute(), '');
+  const result = await api.refreshRemote();
+  assert.equal(result, null);
+  assert.equal(githubCalls, 3);
+  assert.equal(window.applied, undefined);
 });

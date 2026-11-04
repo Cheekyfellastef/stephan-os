@@ -27,6 +27,8 @@ function safeTimestamp(value) {
 }
 
 function boundedPercent(value) {
+  // A missing meter reading is UNKNOWN, not a fabricated zero-percent outage.
+  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) return null;
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 && number <= 100
     ? Math.round(number * 100) / 100
@@ -34,6 +36,7 @@ function boundedPercent(value) {
 }
 
 function boundedInteger(value) {
+  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) return null;
   const number = Number(value);
   return Number.isSafeInteger(number) && number >= 0 ? number : null;
 }
@@ -63,11 +66,13 @@ function meterLikeRecord(record = {}) {
 }
 
 function trafficLight({ remainingPercent, availability, truthState, fresh }) {
-  const posture = `${safeText(availability, 80)} ${safeText(truthState, 80)}`.toUpperCase();
-  if (/(METER_STALLED|EXHAUSTED|DEPLETED|INSUFFICIENT_QUOTA|QUOTA_EXHAUSTED|BLOCKED_BY_METER)/.test(posture)) return 'RED';
+  const availabilityState = safeText(availability, 80).toUpperCase();
+  const posture = `${availabilityState} ${safeText(truthState, 80)}`.toUpperCase();
+  if (/(METER_STALLED|EXHAUSTED|DEPLETED|INSUFFICIENT_QUOTA|QUOTA_EXHAUSTED|BLOCKED_BY_METER|CAPACITY_UNAVAILABLE|UNAVAILABLE|NOT_AVAILABLE|OFFLINE|DISABLED)/.test(posture)) return 'RED';
   if (remainingPercent === 0) return 'RED';
   if (remainingPercent !== null) {
-    if (fresh === false) return 'AMBER';
+    // Percent remaining does not prove that the provider is accepting work.
+    if (fresh !== true || !['AVAILABLE', 'READY', 'HEALTHY'].includes(availabilityState)) return 'AMBER';
     if (remainingPercent < 5) return 'RED';
     if (remainingPercent < 25) return 'AMBER';
     return 'GREEN';
@@ -84,16 +89,18 @@ export function normalizeWorkspaceMeterRecord(record = {}, { nowMs = Date.now(),
 
   const observedAtUtc = safeTimestamp(record.observedAtUtc || record.timestampUtc);
   const observedMs = observedAtUtc ? Date.parse(observedAtUtc) : NaN;
-  const ageSeconds = Number.isFinite(observedMs)
-    ? Math.max(0, Math.floor((nowMs - observedMs) / 1000))
+  // A future-dated observation has no authenticated age and cannot prove
+  // currently available capacity, even if its advertised percentage is high.
+  const ageSeconds = Number.isFinite(observedMs) && Number.isFinite(nowMs) && observedMs <= nowMs
+    ? Math.floor((nowMs - observedMs) / 1000)
     : null;
   const truthState = safeText(record.truthState || record.status || 'UNKNOWN', 80).toUpperCase();
   const availability = safeText(record.availability || 'UNKNOWN', 80).toUpperCase();
   const remainingPercent = boundedPercent(record.remainingPercent ?? record?.metrics?.remainingPercent);
-  const explicitlyCurrent = truthState === 'CURRENT' || record.meterTruthUsable === true;
-  const explicitlyStale = truthState === 'STALE' || record.meterTruthUsable === false;
+  // Identity/freshness/usable truth must agree: a recent UNKNOWN record,
+  // contradictory flag or future timestamp must not become a GREEN capacity.
   const freshByAge = ageSeconds !== null && ageSeconds * 1000 <= staleAfterMs;
-  const fresh = explicitlyStale ? false : (explicitlyCurrent ? freshByAge : freshByAge);
+  const fresh = truthState === 'CURRENT' && record.meterTruthUsable === true && freshByAge;
   const naturalResetAtUtc = safeTimestamp(record.naturalResetAtUtc);
   const light = trafficLight({ remainingPercent, availability, truthState, fresh });
 
@@ -121,7 +128,7 @@ export function normalizeGithubRateResources(resources = {}, { nowMs = Date.now(
     if (!item || typeof item !== 'object') return [];
     const limit = boundedInteger(item.limit);
     const remaining = boundedInteger(item.remaining);
-    if (limit === null || limit <= 0 || remaining === null) return [];
+    if (limit === null || limit <= 0 || remaining === null || remaining > limit) return [];
     const remainingPercent = boundedPercent((remaining / limit) * 100);
     const resetEpoch = boundedInteger(item.reset);
     const naturalResetAtUtc = resetEpoch === null ? '' : new Date(resetEpoch * 1000).toISOString();

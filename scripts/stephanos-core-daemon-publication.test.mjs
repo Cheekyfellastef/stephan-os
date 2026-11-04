@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,8 @@ import { projectStephanosCoreDaemonState } from '../shared/agents/stephanosCoreD
 import * as flywheel from '../shared/agents/stephanosCorePersistentFlywheelV1.mjs';
 import * as onion from '../shared/agents/stephanosCoreOnionContinuationV1.mjs';
 import * as spine from '../shared/agents/stephanosControlPlaneSpineV1.mjs';
+import { projectCoreGateEvidenceV1, planCoreGateStewardV1 } from '../shared/runtime/goalConveyorGateStewardV1.mjs';
+import { executeCoreGateReadOnlyActionV1 } from '../shared/runtime/goalConveyorGateReadOnlyExecutionV1.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const source = await readFile(join(repoRoot, 'scripts', 'stephanos-core-daemon.mjs'), 'utf8');
@@ -34,6 +36,11 @@ function isolatedPublisher(workspaceRoot) {
   const context = vm.createContext({
     Object, String, Promise, Date, process: { pid: process.pid },
     repoRoot, workspaceRoot, resolve,
+    localStateRoot: workspaceRoot, lstat, readFile,
+    projectCoreGateEvidenceV1, planCoreGateStewardV1, executeCoreGateReadOnlyActionV1,
+    readVerifiedStephanosNativeRoutingCandidate: async () => null,
+    publishSignedCoreGateEvidenceV1: async () => { throw Error('fixture signing authority is not commissioned'); },
+    sovereignOuterBridge: { snapshot: () => ({ runCount: 0, inFlight: false, lastResult: null }) },
     readJsonIfPresent: async (path) => { try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; } },
     createSharedWorkspaceEventRecord,
     FLYWHEEL_FALLBACK_MS: flywheel.DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS,
