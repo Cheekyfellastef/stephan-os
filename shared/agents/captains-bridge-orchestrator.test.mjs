@@ -80,3 +80,34 @@ test('G13 orchestrator accepts top-level PR OPEN without confusing running lane 
     assert.equal(wrap({ goalId: 'G13', status, state: 'running' }).phase, 'BLOCKER');
   }
 });
+
+test('G13 orchestrator vetoes terminal PR metadata even when a stale open hint survives', () => {
+  const negatives = [
+    { pullRequest: { merged: true } },
+    { pullRequest: { mergedAt: '2026-11-04T00:00:00Z' } },
+    { pullRequest: { closedAt: '2026-11-04T00:00:00Z' } },
+    { merged: true },
+    { closedAt: '2026-11-04T00:00:00Z' },
+    { pr: { merged: true } },
+    { githubPrEvidence: { isOpen: false } },
+    { githubPrEvidence: { merged: true } },
+    { pullRequest: { merged_at: '2026-11-04T00:00:00Z' } },
+    { pullRequest: { closed_at: '2026-11-04T00:00:00Z' } },
+    { stateEvidence: { closed: true } },
+  ];
+  for (const metadata of negatives) {
+    const lane = { goalId: 'G13', status: 'running', prOpen: true, ...metadata };
+    const projection = projectCaptainsBridgeBuildOrchestrator({ buildLaneManager: { activeLane: lane } });
+    assert.equal(projection.phase, 'BLOCKER', JSON.stringify(lane));
+    assert.equal(projection.signals.BUILDING_NOW, false, JSON.stringify(lane));
+  }
+  const positives = [
+    { prState: 'open' }, { pullRequest: { state: 'OPEN' } },
+    { state: 'OPEN' }, { prOpen: true }, { githubPrEvidence: { state: 'OPEN' } },
+  ];
+  for (const metadata of positives) {
+    const lane = { goalId: 'G13', status: 'running', prOpen: true, ...metadata };
+    const projection = projectCaptainsBridgeBuildOrchestrator({ buildLaneManager: { activeLane: lane } });
+    assert.equal(projection.phase, 'BUILDING_NOW', JSON.stringify(lane));
+  }
+});

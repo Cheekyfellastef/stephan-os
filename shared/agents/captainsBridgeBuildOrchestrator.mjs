@@ -26,8 +26,12 @@ function prOpenEvidence(lane = {}) {
     lane.stateEvidence?.prState, lane.stateEvidence?.state, lane.state];
   const states = raw.map(value => text(value).toLowerCase())
     .filter(value => ['open', 'closed', 'merged'].includes(value));
-  const hints = [lane.prOpen, lane.pullRequest?.isOpen, lane.pr?.isOpen];
-  const terminal = states.find(value => value === 'closed' || value === 'merged') || '';
+  const sources = [lane, lane.pullRequest, lane.pr, lane.githubPrEvidence, lane.stateEvidence]
+    .filter(value => value && typeof value === 'object');
+  const hints = [lane.prOpen, ...sources.map(value => value.isOpen)];
+  const terminal = states.find(value => value === 'closed' || value === 'merged') ||
+    (sources.some(value => value.merged === true || text(value.mergedAt || value.merged_at)) ? 'merged' :
+      sources.some(value => value.closed === true || text(value.closedAt || value.closed_at)) ? 'closed' : '');
   return {
     state: terminal || states[0] || '',
     open: !terminal && !hints.includes(false) &&
