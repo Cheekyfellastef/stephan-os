@@ -14,6 +14,8 @@ const PATH = WINDOWS_AUTHORITY_STEPHANOS_NATIVE_CAPACITY_PUBLISHER_PATHS_V1[0];
 const FIXTURE_URL = new URL('./fixtures/stephanosNativeCapacityPublisherInstallerV1.fixture.txt', import.meta.url);
 const FIXTURE = readFileSync(FIXTURE_URL, 'utf8');
 const EXPECTED_BLOB = '65253e069c91414bfe24cec8fc0db6ad14d9371c';
+const REPAIRED_BLOB = '8d3c7a8c528a62011967b986e3d87b8675810b5a';
+const REPAIRED_FIXTURE = readFileSync(new URL('./fixtures/stephanosNativeCapacityPublisherBootstrapRepairV1.fixture.txt', import.meta.url), 'utf8');
 
 function gitBlobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
@@ -68,6 +70,26 @@ test('exact pinned installer is eligible and clean with zero mutation authority'
   assert.equal(result.runtimeMutationAllowed, false);
   assert.equal(result.providerQualificationAuthority, false);
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_STEPHANOS_NATIVE_CAPACITY_PUBLISHER_CLEAN');
+});
+
+test('independently reviewed bootstrap repair retains the exact source and denial policy', () => {
+  assert.equal(gitBlobSha(REPAIRED_FIXTURE), REPAIRED_BLOB);
+  const result = analyzeWindowsAuthorityStephanosNativeCapacityPublisherReviewV1({
+    repository: REPOSITORY, sourceHead: SOURCE_HEAD, analysis: analysis(),
+    sources: [source(REPAIRED_FIXTURE)],
+  });
+  assert.equal(result.clean, true, JSON.stringify(result.findings));
+  assert.ok(result.proofRefs[0].includes('#' + REPAIRED_BLOB + ':'));
+  assert.equal(result.sourceMutationAllowed, false);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.runtimeMutationAllowed, false);
+  assert.equal(result.providerQualificationAuthority, false);
+  const drifted = analyzeWindowsAuthorityStephanosNativeCapacityPublisherReviewV1({
+    repository: REPOSITORY, sourceHead: SOURCE_HEAD, analysis: analysis(),
+    sources: [source(REPAIRED_FIXTURE + '\nStart-Process cmd.exe\n')],
+  });
+  assert.equal(drifted.clean, false);
+  assert.equal(drifted.findings[0].code, 'windows-authority-source-evidence-invalid');
 });
 
 test('any implementation-byte drift fails closed before semantic clearance', () => {

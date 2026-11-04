@@ -24,6 +24,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      issues: read
     env:
       BOOTSTRAP_HOST: ${{ vars.STEPHANOS_BATTLE_BRIDGE_TAILSCALE_HOST }}
       BOOTSTRAP_USER: ${{ vars.STEPHANOS_BATTLE_BRIDGE_SSH_USER }}
@@ -40,6 +41,8 @@ jobs:
           node-version: '22'
 
       - name: Recheck canonical bootstrap mailbox event
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/canonical-mailbox-workflow-event-gate.mjs bootstrap
       - name: Validate exact owner-authored bootstrap request
         id: request
@@ -70,6 +73,11 @@ jobs:
             exit 2
           fi
 
+      - name: Recheck freeze and live source immediately before private access
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/canonical-mailbox-workflow-event-gate.mjs bootstrap
+
       - name: Join tailnet as fixed ephemeral recovery identity
         uses: tailscale/github-action@v4
         with:
@@ -95,6 +103,7 @@ jobs:
           printf '%s\n' "$SSH_PRIVATE_KEY" > "$KEY_FILE"
           printf '%s\n' "$SSH_KNOWN_HOSTS" > "$KNOWN_HOSTS_FILE"
           ENCODED_COMMAND="$(node scripts/battle-bridge-tailscale-bootstrap-pipe.mjs encoded-command "$EXPECTED_HEAD")"
+          GITHUB_TOKEN="${{ github.token }}" node scripts/canonical-mailbox-workflow-event-gate.mjs bootstrap
           ssh \
             -i "$KEY_FILE" \
             -o BatchMode=yes \
@@ -128,6 +137,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      issues: read
     env:
       BOOTSTRAP_HOST: ${{ vars.STEPHANOS_BATTLE_BRIDGE_TAILSCALE_HOST }}
       BOOTSTRAP_USER: ${{ vars.STEPHANOS_BATTLE_BRIDGE_SSH_USER }}
@@ -144,6 +154,8 @@ jobs:
           node-version: '22'
 
       - name: Recheck canonical prerequisite mailbox event
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/canonical-mailbox-workflow-event-gate.mjs prerequisite
       - name: Validate exact owner-authored read-only prerequisite request
         id: request
@@ -188,6 +200,11 @@ jobs:
           echo 'TAILSCALE_BOOTSTRAP_PREREQUISITE_SETTINGS_REQUIRED'
           exit 2
 
+      - name: Recheck freeze and live source immediately before private access
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/canonical-mailbox-workflow-event-gate.mjs prerequisite
+
       - name: Join tailnet as fixed ephemeral recovery identity
         if: steps.settings.outputs.ready == 'true'
         uses: tailscale/github-action@v4
@@ -215,6 +232,7 @@ jobs:
           printf '%s\n' "$SSH_PRIVATE_KEY" > "$KEY_FILE"
           printf '%s\n' "$SSH_KNOWN_HOSTS" > "$KNOWN_HOSTS_FILE"
           ENCODED_COMMAND="$(node scripts/battle-bridge-tailscale-prerequisite-proof.mjs encoded-command "$EXPECTED_HEAD")"
+          GITHUB_TOKEN="${{ github.token }}" node scripts/canonical-mailbox-workflow-event-gate.mjs prerequisite
           ssh \
             -i "$KEY_FILE" \
             -o BatchMode=yes \

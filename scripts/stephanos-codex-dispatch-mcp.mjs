@@ -28,10 +28,9 @@ import {
 } from '../shared/agents/localCodexExecIntegration.mjs';
 import {
   runBattleBridgeDiagnostics,
-  syncCodexDispatchBridge,
 } from '../shared/agents/codexDispatchHostOps.mjs';
 import { BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE } from '../shared/agents/battleBridgeDirtyDataPreservationV1.mjs';
-import { updateStephanosFromChat } from '../shared/agents/stephanosChatUpdate.mjs';
+import { runFreshCanonicalHostOperation } from './stephanos-codex-dispatch-host-operation-v1.mjs';
 import {
   validateRemoteCodexBattleBridgeAttachment,
   validateRemoteCodexBattleBridgeHandoff,
@@ -779,7 +778,11 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
 
 export function createCodexDispatchMcpHandler({
   integration = createLocalCodexExecIntegration(),
-  hostOps = { syncCodexDispatchBridge, updateStephanosFromChat, runBattleBridgeDiagnostics },
+  hostOps = {
+    syncCodexDispatchBridge: args => runFreshCanonicalHostOperation('sync',args),
+    updateStephanosFromChat: args => runFreshCanonicalHostOperation('update',args),
+    runBattleBridgeDiagnostics,
+  },
   now = () => new Date().toISOString(),
   attachmentProofPublisher = publishCodexDispatchAttachmentProof,
   attachmentIdentity = {},
@@ -953,7 +956,8 @@ export function createCodexDispatchMcpHandler({
       }
       if (name === 'run_battle_bridge_diagnostics') {
         const result = await hostOps.runBattleBridgeDiagnostics();
-        return asTextResult(result, !result.ok);
+        return asTextResult({ ...result, sourceOperationsUseFreshProcess: true,
+          mcpProcessServerSourceSha256: processAttachmentIdentity.serverSourceSha256 }, !result.ok);
       }
       return asTextResult({ ok: false, blocker: 'UNKNOWN_TOOL', tool: name }, true);
     }

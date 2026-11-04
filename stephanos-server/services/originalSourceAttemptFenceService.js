@@ -1,7 +1,12 @@
+import { prepareSupervisedR7RecoveryV1 } from './supervisedR7RecoveryPreparationV1.mjs';
 import { createHash } from 'node:crypto';
+import { SUPERVISED_R7_FENCE_SCHEMA, supervisedR7FenceBindsLease,
+  readSupervisedRecoverySourceHead, readSupervisedRecoveryMaintenance,
+  prepareRuntimeSupervisedR7, readRuntimeSupervisedR7Packet, authenticateRuntimeSupervisedR7,
+  verifyRuntimeSupervisedR7Fence, supervisedRecoveryDigest } from './supervisedR7RecoveryRuntime.js';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { readMissionRecord, appendMissionEvent } from './missionOrchestratorStore.js';
+import { readMissionRecord, appendMissionEvent, runWithMissionStatePrecondition } from './missionOrchestratorStore.js';
 import { readSourceMutationLease, withOriginalSourceLeaseFenceGuard } from './programmeAuthorityService.js';
 import { readExecutionReceiptHistory } from '../../shared/agents/executionReceiptV1.mjs';
 import { authenticateLegacyOrphanQuarantine } from './legacyOriginalSourceOrphanQuarantineV1.js';
@@ -51,12 +56,31 @@ export async function assertOriginalSourceAttemptNotFenced(missionId, options = 
     env: options.env || process.env, ...options.missionStoreOptions,
   });
   if (state.cancelled === true || state.currentPhase === 'CANCELLED'
-      || state.storeMetadata?.originalSourceAttemptFence) {
+      || state.storeMetadata?.originalSourceAttemptFence
+      || state.storeMetadata?.supervisedRecoveryMaintenance) {
     fail('ORIGINAL_SOURCE_ATTEMPT_FENCED');
   }
 }
 
+// Serialize cooperative source writes (including rollback) against this exact
+// maintenance reservation. Other missions retain their existing admission path.
+export async function withOriginalSourceAttemptMutationGuard(missionId, operation, options = {}) {
+  if (missionId !== 'critical-2962-elastic-goal') {
+    await assertOriginalSourceAttemptNotFenced(missionId, options);
+    return operation();
+  }
+  const guarded = await runWithMissionStatePrecondition(missionId, {}, async state => {
+    if (state.cancelled === true || state.currentPhase === 'CANCELLED'
+        || state.storeMetadata?.originalSourceAttemptFence || state.storeMetadata?.supervisedRecoveryMaintenance)
+      fail('ORIGINAL_SOURCE_ATTEMPT_FENCED');
+    return operation();
+  }, { env: options.env || process.env, ...options.missionStoreOptions });
+  if (guarded.preconditionFailed) fail('ORIGINAL_SOURCE_ATTEMPT_FENCED');
+  return guarded.result;
+}
+
 export function originalSourceFenceBindsLease(fence, lease) {
+  if (fence?.schemaVersion === SUPERVISED_R7_FENCE_SCHEMA) return supervisedR7FenceBindsLease(fence, lease);
   // Exception is bound to the one verified historical gap; its schema never
   // claims an original terminal receipt. The proof is independently rechecked
   // from protected OS/operator keys before any canonical release.
@@ -367,6 +391,9 @@ export async function verifyOriginalSourceAttemptFence(mission, lease, paths, en
       || events[0].missionId !== mission.missionId || events[0].eventType !== 'MISSION_CANCELLED'
       || events[0].originalSourceQuarantineRequested !== true
       || digest(events[0].originalSourceAttemptFence) !== digest(fence)) return false;
+  if (fence.schemaVersion === SUPERVISED_R7_FENCE_SCHEMA) {
+    return verifyRuntimeSupervisedR7Fence(fence, lease, paths, env);
+  }
   if (fence.schemaVersion === LEGACY_ORPHAN_FENCE_SCHEMA) {
     const sourceAction = await readOriginalSourceExecutionIdV1(mission, paths, env);
     if (sourceAction !== fence.sourceExecutionId || !resolveMissionWorkerQueueRoot(env)) return false;
@@ -404,4 +431,82 @@ export async function verifyOriginalSourceAttemptFence(mission, lease, paths, en
   if (pair.pairDigest !== fence.sourcePairDigest) return false;
   return await originalMissionHasQueuedWork({ missionId: mission.missionId,
     leaseId: lease.leaseId, env }) === false;
+}
+
+// Read-only first slice of the operator-approved supervised recovery pivot.
+// Request data never carries a reader, approval callback or mutation permission.
+export async function prepareSupervisedOriginalSourceRecovery(input, options = {}) {
+  const paths = options.paths;
+  if (!paths?.workspaceRoot || !paths.repoRoot || !paths.orchestratorRoot) {
+    fail('SUPERVISED_R7_CANONICAL_PATHS_UNPROVEN');
+  }
+  const readHead = options.readRepositorySourceHead || readSupervisedRecoverySourceHead;
+  const readMaintenance = options.readSupervisedRecoveryMaintenance || readSupervisedRecoveryMaintenance;
+  if (typeof readHead !== 'function' || typeof readMaintenance !== 'function') {
+    fail('SUPERVISED_R7_OBSERVATION_ADAPTER_NOT_INSTALLED');
+  }
+  const env = options.env || process.env;
+  const now = options.now || Date.now;
+  return prepareSupervisedR7RecoveryV1(input, {
+    now,
+    readSnapshot: async () => {
+      const sourceRevision = await readHead(paths.repoRoot);
+      const { state: mission } = await (options.readMissionRecord || readMissionRecord)(
+        'critical-2962-elastic-goal', { root: paths.orchestratorRoot, env });
+      const leaseRead = await (options.readSourceMutationLease || readSourceMutationLease)({
+        root: paths.workspaceRoot, repoRoot: paths.repoRoot, nowUtc: new Date(now()).toISOString(),
+      });
+      const queuesIdle = Boolean(resolveMissionWorkerQueueRoot(env))
+        && await (options.originalMissionHasQueuedWork || originalMissionHasQueuedWork)({
+          missionId: 'critical-2962-elastic-goal',
+          leaseId: 'critical-2962-elastic-goal-r7-lease', env,
+        }) === false;
+      const maintenance = await readMaintenance({ paths, env });
+      return { sourceRevision, mission, leaseRead, queuesIdle, maintenance };
+    },
+  });
+}
+
+// Explicit alternative only; ordinary strict quarantine is unchanged. The
+// preparation packet is read from its durable artifact, never from request JSON.
+export async function retireSupervisedOriginalSourceRecovery(input, approvalCommentId, options = {}) {
+  const prepared = await readRuntimeSupervisedR7Packet(input, options);
+  return appendMissionEvent('critical-2962-elastic-goal', {
+    eventId: `cancel-${input.commandId}`, eventType: 'MISSION_CANCELLED',
+    expectedRevision: 7, expectedCurrentPhase: 'REPAIR_REQUIRED',
+    originalSourceQuarantineRequested: true,
+    summary: 'Operator-approved cooperative recovery; historical execution outcome remains UNKNOWN.',
+  }, { ...options, root: options.paths.orchestratorRoot,
+    withOriginalSourceLeaseFenceGuard: operation => withOriginalSourceLeaseFenceGuard(operation, {
+      root: options.paths.workspaceRoot, repoRoot: options.paths.repoRoot, env: options.env }),
+    proveOriginalSourceQuarantine: async current => {
+      const fresh = await prepareRuntimeSupervisedR7(input, options);
+      if (supervisedRecoveryDigest(fresh.packet.target) !== supervisedRecoveryDigest(prepared.packet.target)
+          || supervisedRecoveryDigest(fresh.packet.maintenanceEvidence) !== supervisedRecoveryDigest(prepared.packet.maintenanceEvidence))
+        fail('SUPERVISED_R7_APPROVED_EVIDENCE_CHANGED');
+      const approval = await authenticateRuntimeSupervisedR7(prepared, approvalCommentId, options);
+      // Authentication is awaited under both canonical locks. Re-read the real
+      // preservation/maintenance/lease estate after that potentially slow IO.
+      const closing = await prepareRuntimeSupervisedR7(input, options);
+      if (supervisedRecoveryDigest(closing.packet.target) !== supervisedRecoveryDigest(prepared.packet.target)
+          || supervisedRecoveryDigest(closing.packet.maintenanceEvidence) !== supervisedRecoveryDigest(prepared.packet.maintenanceEvidence))
+        fail('SUPERVISED_R7_APPROVED_EVIDENCE_CHANGED');
+      const consumedAt = (options.now || Date.now)();
+      if (Date.parse(prepared.packet.expiresAtUtc) <= consumedAt
+          || Date.parse(approval.approvalExpiresAtUtc) <= consumedAt) fail('SUPERVISED_R7_APPROVAL_EXPIRED');
+      const t = prepared.packet.target;
+      return { schemaVersion: SUPERVISED_R7_FENCE_SCHEMA, missionId: current.missionId,
+        originalRevision: 7, originalLeaseId: t.leaseId, originalLeaseDigest: t.originalLeaseDigest,
+        repository: t.repository, issueNumber: t.issueNumber, prNumber: t.prNumber,
+        branch: t.branch, headSha: t.headSha, worktreePath: t.worktreePath,
+        prepared, approvalCommentId, approvalEvidenceDigest: approval.approvalEvidenceDigest,
+        approvalConsumedAtUtc: new Date(consumedAt).toISOString(),
+        approvalConsumed: true, commandId: input.commandId, operatorRequestId: input.requestId,
+        operatorSourceRevision: input.sourceRevision,
+        recoveryDisposition: 'OPERATOR_APPROVED_SUPERVISED_RETIREMENT',
+        historicalExecutionOutcome: 'UNKNOWN', historicalTerminalReceiptReconstructed: false,
+        hostileWriterExclusionProven: false, witnessCommissioned: false,
+        goalComplete: false, leaseSeizureAllowed: false, sourceMutationAuthority: false, leaseReleaseAuthority: false };
+    },
+  });
 }

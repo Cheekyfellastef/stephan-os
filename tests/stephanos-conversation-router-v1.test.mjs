@@ -48,3 +48,22 @@ test('unknown target fails soft to Stephanos rather than inventing a participant
   assert.equal(result.selectedContributors.length, 0);
   assert.equal(result.responder.id, 'stephanos');
 });
+
+test('Control Tower is addressable and distinguishes a real control observation from model synthesis', () => {
+  const input = { prompt: 'control status', requestedTargetId: 'control-tower' };
+  const before = routeStephanosConversationV1(input);
+  assert.equal(before.selectedContributors[0].id, 'control-tower');
+  assert.equal(before.selectedContributors[0].controlReplyInAiRoute, true);
+  assert.equal(before.controlReplyObserved, false);
+  const observed = routeStephanosConversationV1({ ...input, controlConversation: {
+    schemaVersion: 'stephanos.sovereign-control-conversation.v1',
+    responseSource: 'CANONICAL_CONTROL_OBSERVATIONS', modelInvoked: false,
+    nativeActionSubmitted: false, directParticipantDispatchProven: false, responder: { id: 'stephanos' },
+  } });
+  assert.equal(observed.routeState, 'STEPHANOS_CONTROL_OBSERVATION');
+  assert.equal(observed.responder.label, 'Stephanos control');
+  assert.equal(observed.directParticipantDispatchProven, false);
+  assert.equal(observed.controlReplyObserved, true);
+  const mentioned = routeStephanosConversationV1({ prompt: 'Control Tower, inspect the control system', requestedTargetId: 'everyone' });
+  assert.equal(mentioned.selectedContributors[0].id, 'control-tower');
+});
