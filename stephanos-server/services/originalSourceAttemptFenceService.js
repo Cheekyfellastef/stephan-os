@@ -377,6 +377,65 @@ export async function quarantineOriginalSourceAttempt(input, options = {}) {
 
 
 
+export async function verifyOriginalSourceAttemptFence(mission, lease, paths, env) {
+  const fence = mission.storeMetadata?.originalSourceAttemptFence;
+  if (!originalSourceFenceBindsLease(fence, lease)
+      || fence.worktreePath !== mission.git?.worktreePath
+      || mission.cancelled !== true
+      || mission.currentPhase !== 'CANCELLED' || mission.revision !== fence.originalRevision + 1) return false;
+  const record = await readMissionRecord(mission.missionId, { root: paths.orchestratorRoot, env });
+  const log = await readFile(record.eventPath, 'utf8');
+  if (Buffer.byteLength(log) > 2 * 1024 * 1024) return false;
+  const lines = log.split('\n').filter(Boolean);
+  if (lines.length > 2048) return false;
+  const eventId = mission.storeMetadata.lastEventId;
+  const events = lines.map((line) => JSON.parse(line)).filter((event) => event.eventId === eventId);
+  if (events.length !== 1 || !mission.storeMetadata.processedEventIds.includes(eventId)
+      || events[0].missionId !== mission.missionId || events[0].eventType !== 'MISSION_CANCELLED'
+      || events[0].originalSourceQuarantineRequested !== true
+      || digest(events[0].originalSourceAttemptFence) !== digest(fence)) return false;
+  if (fence.schemaVersion === SUPERVISED_R7_FENCE_SCHEMA) {
+    return verifyRuntimeSupervisedR7Fence(fence, lease, paths, env);
+  }
+  if (fence.schemaVersion === LEGACY_ORPHAN_FENCE_SCHEMA) {
+    const sourceAction = await readOriginalSourceExecutionIdV1(mission, paths, env);
+    if (sourceAction !== fence.sourceExecutionId || !resolveMissionWorkerQueueRoot(env)) return false;
+    const historical = await readExecutionReceiptHistory(paths.workspaceRoot, {
+      leaseKey: lease.leaseId, expectedHead: lease.headSha,
+    }, { repoRoot: paths.repoRoot });
+    if (historical?.ok !== true || !Array.isArray(historical.receipts)
+        || historical.receipts.length !== 0) return false;
+    if (await originalMissionHasQueuedWork({ missionId: mission.missionId,
+      leaseId: lease.leaseId, env }) !== false) return false;
+    const verified = await authenticateLegacyOrphanQuarantine({
+      repository: lease.repository, missionId: mission.missionId,
+      leaseId: lease.leaseId, revision: 7, originalLeaseDigest: digest(lease),
+      branch: lease.branch, headSha: lease.headSha,
+      sourceExecutionId: sourceAction, sourceRevision: fence.operatorSourceRevision,
+      worktreePath: mission.git?.worktreePath,
+      commandId: fence.commandId, requestId: fence.operatorRequestId,
+    }, { env });
+    return verified?.authenticated === true
+      && verified.eligibilityOnly === true
+      && verified.leaseReleaseAuthority === false
+      && verified.historicalExecutionOutcome === 'UNKNOWN'
+      && verified.evidenceDigest === fence.legacyEvidenceDigest
+      && verified.witnessDigest === fence.legacyWitnessDigest;
+  }
+  const sourceAction = await readOriginalSourceExecutionIdV1(mission, paths, env);
+  if (sourceAction !== fence.sourceExecutionId) return false;
+  const history = await readExecutionReceiptHistory(paths.workspaceRoot,
+    { executionId: sourceAction }, { repoRoot: paths.repoRoot });
+  if (!history.ok || history.latestReceipt?.state !== 'completed'
+      || history.latestReceipt?.receiptId !== fence.sourceReceiptId) return false;
+  await proveHeldLeaseExecutionsTerminal(lease, paths, readExecutionReceiptHistory);
+  if (!['foundry-forge', 'chatgpt-github', 'sovereign-commander'].includes(fence.sourceAdapter)) return false;
+  const pair = await readTerminalSourcePair(resolveMissionWorkerQueueRoot(env), fence.sourceAdapter, sourceAction);
+  if (pair.pairDigest !== fence.sourcePairDigest) return false;
+  return await originalMissionHasQueuedWork({ missionId: mission.missionId,
+    leaseId: lease.leaseId, env }) === false;
+}
+
 const PROSPECTIVE_SOURCE_ADAPTERS = new Set([
   'foundry-forge', 'chatgpt-github', 'desktop-commander', 'sovereign-commander',
 ]);
@@ -693,64 +752,6 @@ export async function quarantineUnknownProcessingClaim(input, options = {}) {
   if (cancelled?.preconditionFailed) return cancelled;
   const quarantine = await guard(() => retireUnknownProcessingClaim(cancelled.state, options));
   return Object.freeze({ ...cancelled, processingClaimQuarantine: quarantine });
-}
-export async function verifyOriginalSourceAttemptFence(mission, lease, paths, env) {
-  const fence = mission.storeMetadata?.originalSourceAttemptFence;
-  if (!originalSourceFenceBindsLease(fence, lease)
-      || fence.worktreePath !== mission.git?.worktreePath
-      || mission.cancelled !== true
-      || mission.currentPhase !== 'CANCELLED' || mission.revision !== fence.originalRevision + 1) return false;
-  const record = await readMissionRecord(mission.missionId, { root: paths.orchestratorRoot, env });
-  const log = await readFile(record.eventPath, 'utf8');
-  if (Buffer.byteLength(log) > 2 * 1024 * 1024) return false;
-  const lines = log.split('\n').filter(Boolean);
-  if (lines.length > 2048) return false;
-  const eventId = mission.storeMetadata.lastEventId;
-  const events = lines.map((line) => JSON.parse(line)).filter((event) => event.eventId === eventId);
-  if (events.length !== 1 || !mission.storeMetadata.processedEventIds.includes(eventId)
-      || events[0].missionId !== mission.missionId || events[0].eventType !== 'MISSION_CANCELLED'
-      || events[0].originalSourceQuarantineRequested !== true
-      || digest(events[0].originalSourceAttemptFence) !== digest(fence)) return false;
-  if (fence.schemaVersion === SUPERVISED_R7_FENCE_SCHEMA) {
-    return verifyRuntimeSupervisedR7Fence(fence, lease, paths, env);
-  }
-  if (fence.schemaVersion === LEGACY_ORPHAN_FENCE_SCHEMA) {
-    const sourceAction = await readOriginalSourceExecutionIdV1(mission, paths, env);
-    if (sourceAction !== fence.sourceExecutionId || !resolveMissionWorkerQueueRoot(env)) return false;
-    const historical = await readExecutionReceiptHistory(paths.workspaceRoot, {
-      leaseKey: lease.leaseId, expectedHead: lease.headSha,
-    }, { repoRoot: paths.repoRoot });
-    if (historical?.ok !== true || !Array.isArray(historical.receipts)
-        || historical.receipts.length !== 0) return false;
-    if (await originalMissionHasQueuedWork({ missionId: mission.missionId,
-      leaseId: lease.leaseId, env }) !== false) return false;
-    const verified = await authenticateLegacyOrphanQuarantine({
-      repository: lease.repository, missionId: mission.missionId,
-      leaseId: lease.leaseId, revision: 7, originalLeaseDigest: digest(lease),
-      branch: lease.branch, headSha: lease.headSha,
-      sourceExecutionId: sourceAction, sourceRevision: fence.operatorSourceRevision,
-      worktreePath: mission.git?.worktreePath,
-      commandId: fence.commandId, requestId: fence.operatorRequestId,
-    }, { env });
-    return verified?.authenticated === true
-      && verified.eligibilityOnly === true
-      && verified.leaseReleaseAuthority === false
-      && verified.historicalExecutionOutcome === 'UNKNOWN'
-      && verified.evidenceDigest === fence.legacyEvidenceDigest
-      && verified.witnessDigest === fence.legacyWitnessDigest;
-  }
-  const sourceAction = await readOriginalSourceExecutionIdV1(mission, paths, env);
-  if (sourceAction !== fence.sourceExecutionId) return false;
-  const history = await readExecutionReceiptHistory(paths.workspaceRoot,
-    { executionId: sourceAction }, { repoRoot: paths.repoRoot });
-  if (!history.ok || history.latestReceipt?.state !== 'completed'
-      || history.latestReceipt?.receiptId !== fence.sourceReceiptId) return false;
-  await proveHeldLeaseExecutionsTerminal(lease, paths, readExecutionReceiptHistory);
-  if (!['foundry-forge', 'chatgpt-github', 'sovereign-commander'].includes(fence.sourceAdapter)) return false;
-  const pair = await readTerminalSourcePair(resolveMissionWorkerQueueRoot(env), fence.sourceAdapter, sourceAction);
-  if (pair.pairDigest !== fence.sourcePairDigest) return false;
-  return await originalMissionHasQueuedWork({ missionId: mission.missionId,
-    leaseId: lease.leaseId, env }) === false;
 }
 
 // Read-only first slice of the operator-approved supervised recovery pivot.
