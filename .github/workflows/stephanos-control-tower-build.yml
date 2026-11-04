@@ -26,7 +26,6 @@ on:
       - 'shared/agents/controlTowerRequestObservationV1*'
       - 'shared/agents/stephanosConversationRouterV1*'
       - 'stephanos-server/services/sovereignControlConversationService*'
-      - 'stephanos-server/services/controlTowerOperatorDispatchV1*'
       - 'stephanos-server/routes/ai.js'
       - 'apps/stephanos-ai/**'
       - 'tests/stephanos-ai-control*'
@@ -77,7 +76,6 @@ jobs:
           shared/agents/controlTowerRequestObservationV1.test.mjs
           scripts/canonical-mailbox-control-tower-observation.test.mjs
           stephanos-server/services/sovereignControlConversationService.test.js
-          stephanos-server/services/controlTowerOperatorDispatchV1.test.js
           stephanos-server/services/sovereignCommanderStatusTool.test.js
           tests/stephanos-conversation-router-v1.test.mjs
           tests/stephanos-ai-control-surface.test.mjs

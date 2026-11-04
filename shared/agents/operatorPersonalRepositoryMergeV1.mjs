@@ -1391,28 +1391,6 @@ export function validatePersonalRepositoryCheckRuns(
       && text(run?.status).toLowerCase() === 'completed'
       && text(run?.conclusion).toLowerCase() === 'success';
 
-    // On pull_request, these exact workflows deliberately run their
-    // source/test job while their MUTATING push/issue/dispatch job is inert.
-    // Neutralise only an exact PR-bound skipped job with a successful
-    // independently verified sibling in the SAME immutable workflow run.
-    const intentionalPrJobSkip = conclusion === 'skipped'
-      && text(run?.event) === 'pull_request'
-      && text(run?.head_branch) === branch
-      && text(run?.status).toLowerCase() === 'completed'
-      && text(run?.conclusion).toLowerCase() === 'success'
-      && [
-        ['Mailbox Receipt Index', '.github/workflows/mailbox-receipt-index.yml', 'mirror', 'proof'],
-        ['Stephanos Control Tower - Sovereign Control', '.github/workflows/stephanos-control-tower-build.yml', 'request-build', 'contract-test'],
-      ].some(([expectedWorkflow, expectedPath, skippedName, requiredSibling]) =>
-        workflow === expectedWorkflow && path === expectedPath && name === skippedName
-        && exactCheckBindings.some((candidate) =>
-          candidate !== checkBinding && candidate.exactRun
-          && strictPositiveInteger(candidate.run?.id) === strictPositiveInteger(run?.id)
-          && strictPositiveInteger(candidate.checkSuiteId) === checkSuiteId
-          && text(candidate.check?.name) === requiredSibling
-          && text(candidate.check?.status).toLowerCase() === 'completed'
-          && text(candidate.check?.conclusion).toLowerCase() === 'success'));
-
     let disposition = 'green';
     if (status !== 'completed') {
       blockers.push('personal-repository-check-run-not-terminal');
@@ -1422,8 +1400,6 @@ export function validatePersonalRepositoryCheckRuns(
     } else if (conclusion === 'skipped'
       && PERSONAL_REPOSITORY_NEUTRAL_SKIPPED_CHECKS.has(`${workflow}\0${name}`)) {
       disposition = 'neutral-skip';
-    } else if (intentionalPrJobSkip) {
-      disposition = 'pr-inert-mutation-job-skip';
     } else if (supersededDraftSkip) {
       disposition = 'superseded-draft-skip';
     } else if (prPagesDeploymentNotRequested) {

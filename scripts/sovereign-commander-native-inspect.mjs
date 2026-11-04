@@ -19,14 +19,7 @@ const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.e
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const SHA = /^[a-f0-9]{40}$/, DIGEST = /^[a-f0-9]{64}$/;
 const REQUEST_ID = /^control-tower-build-[1-9][0-9]{0,19}-1$/;
-// The current protected runtime also reports the closed, non-dispatchable
-// mailbox native-evidence profile. Observation may recognize its identity;
-// it grants no signer enrollment, native pickup, or execution authority.
-const PROFILES = new Set([
-  'MAINTENANCE_GOAL_BUILDER_V1',
-  'SOURCE_TASK_V1',
-  'CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1',
-]);
+const PROFILES = new Set(['MAINTENANCE_GOAL_BUILDER_V1', 'SOURCE_TASK_V1']);
 const UNKNOWN = 'SOVEREIGN_CONTROL_SYSTEM_OBSERVATION_UNPROVEN';
 const fail = code => { throw new Error(code); };
 const diagnosticCode = (error, fallback = UNKNOWN) =>
@@ -272,7 +265,7 @@ export async function inspectSovereignControlSystemV1(options = {}) {
       else if (native.ok === true && native.sourceHead === sourceHead && utc(native.observedAtUtc)
         && Date.parse(native.observedAtUtc) <= Date.parse(observedAtUtc)
         && Date.parse(observedAtUtc) - Date.parse(native.observedAtUtc) <= 15000
-        && Array.isArray(native.profiles) && native.profiles.length <= PROFILES.size
+        && Array.isArray(native.profiles) && native.profiles.length <= 2
         && native.profiles.every(profile => PROFILES.has(profile))
         && new Set(native.profiles).size === native.profiles.length) {
         report.nativeRuntime = { available: true, qualificationObserved: true, reason: '',

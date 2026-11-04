@@ -162,33 +162,6 @@ test('health failures, invalid UTF-8 and oversized streams remain sanitized boun
   assert.equal(report.guardian.blocker, 'SOVEREIGN_CONTROL_SYSTEM_HEALTH_BOUND_EXCEEDED');
 });
 
-test('current three-profile fixed runtime remains observable without granting signer or execution authority', async () => {
-  const profiles = ['MAINTENANCE_GOAL_BUILDER_V1', 'SOURCE_TASK_V1',
-    'CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1'];
-  const native = { ok: true, sourceHead: HEAD, observedAtUtc: NOW, profiles };
-  const report = await inspectSovereignControlSystemV1(fixture({
-    inspectRuntime: () => native,
-  }).options);
-  assert.equal(report.nativeRuntime.available, true);
-  assert.equal(report.nativeRuntime.qualificationObserved, true);
-  assert.equal(report.nativeRuntime.reason, '');
-  assert.deepEqual(report.nativeRuntime.profiles, profiles);
-  assert.equal(report.observationOnly, true);
-  assert.equal(report.observationCompleted, true);
-
-  for (const badProfiles of [
-    [...profiles, 'ARBITRARY_SHELL'],
-    ['MAINTENANCE_GOAL_BUILDER_V1', 'SOURCE_TASK_V1', 'CANONICAL_MAILBOX_NATIVE_EVIDENCE_V2'],
-    ['SOURCE_TASK_V1', 'SOURCE_TASK_V1', 'CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1'],
-  ]) {
-    const held = await inspectSovereignControlSystemV1(fixture({
-      inspectRuntime: () => ({ ...native, profiles: badProfiles }),
-    }).options);
-    assert.equal(held.nativeRuntime.qualificationObserved, false);
-    assert.equal(held.nativeRuntime.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
-  }
-});
-
 test('typed native denials survive; malformed success and arbitrary errors never qualify', async () => {
   for (const reason of ['RUNTIME_NORMAL_OPERATOR_REQUIRED', 'RUNTIME_PENDING_LATER_BOOT_UNPROVEN',
     'RUNTIME_SOURCE_REF_CHANGED', 'FIXED_RUNTIME_IDENTITY_INSPECTION_TIMEOUT', 'FIXED_RUNTIME_INSPECTOR_NOT_FOUND']) {

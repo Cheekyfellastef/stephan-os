@@ -24,7 +24,6 @@ import { buildStephanosIdentityContextBlock, buildStephanosIdentityPresenceKerne
 import { routeStephanosConversationV1 } from '../../shared/agents/stephanosConversationRouterV1.mjs';
 import { classifySovereignControlConversationV1 } from '../../shared/agents/sovereignControlConversationV1.mjs';
 import { readSovereignControlConversationV1 } from '../services/sovereignControlConversationService.js';
-import { prepareControlTowerOperatorIntentV1, dispatchControlTowerOperatorIntentV1 } from '../services/controlTowerOperatorDispatchV1.js';
 import { answerLiveTelemetryQuestion } from '../services/githubTelemetryService.js';
 import { durableMemoryService } from '../services/durableMemoryService.js';
 import { activityLogService } from '../services/activityLogService.js';
@@ -415,13 +414,6 @@ router.post('/ollama/release', async (req, res) => {
   });
 });
 
-// A separate operator-click boundary. Ordinary chat remains observation-only;
- // neither a model reply nor a prepared handoff can submit a workflow by itself.
-router.post('/control-tower/dispatch', async (req, res) => {
-  const result = await dispatchControlTowerOperatorIntentV1(req, req.body);
-  res.status(result.ok ? 202 : result.status).json(result);
-});
-
 router.post('/chat', async (req, res) => {
   const startedAt = Date.now();
   const {
@@ -572,9 +564,6 @@ router.post('/chat', async (req, res) => {
         prompt, requestedTargetId: conversationRouting.requestedTargetId,
       });
       if (!controlConversation) throw new Error('CONTROL_CONVERSATION_UNAVAILABLE');
-      const controlOperatorIntent = prepareControlTowerOperatorIntentV1(req, controlConversation, {
-        sourceHead: process.env.STEPHANOS_BACKEND_SOURCE_HEAD,
-      });
       const controlCompletion = sharedIntelligencePrepared?.ok
         ? await completeSharedIntelligenceAiTurnV1({
             prepared: sharedIntelligencePrepared,
@@ -606,7 +595,6 @@ router.post('/chat', async (req, res) => {
         output_text: controlConversation.outputText,
         data: {
           sovereign_control_conversation: controlConversation,
-          ...(controlOperatorIntent ? { control_operator_intent: controlOperatorIntent } : {}),
           conversation_routing: controlRouting,
           execution_metadata: controlExecutionMetadata,
           governed_operator_recall: {

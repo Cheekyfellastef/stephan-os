@@ -152,16 +152,15 @@ test('a completed inspection does not permit repeating an earlier unresolved bui
   assert.match(result.outputText, /newer inspection does not resolve/);
 });
 
-test('active maintenance leaves one prepared fixed handoff; original owner still decides pickup', () => {
+test('active maintenance blocks build handoff but read-only observation remains available', () => {
   const commander = health();
   commander.guardian.running = true;
   commander.guardian.operationalState = 'WORKING';
-  for (const [prompt, expected] of [['repair', ''], ['inspect', '']]) {
+  for (const [prompt, expected] of [['repair', 'SOVEREIGN_MAINTENANCE_OWNER_BUSY'], ['inspect', '']]) {
     const result = reply({ commander,
       classification: classifySovereignControlConversationV1({ prompt, requestedTargetId: 'control-tower' }) });
     assert.equal(result.handoff.submissionBlockedReason, expected);
     assert.equal(result.handoff.requestSubmitted, false);
-    assert.equal(result.handoff.executionAuthority, false);
   }
 });
 

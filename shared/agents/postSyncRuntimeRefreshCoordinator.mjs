@@ -169,9 +169,6 @@ const OPENCLAW_APPROVAL_EXEMPT_EXACT = new Set([
   // adapters; it is not the running OpenClaw gateway or its plugin bundle.
   'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.mjs',
   'scripts/windows/repair-openclaw-full-stack.ps1',
-  // This exact specialist-review helper is not an OpenClaw gateway change.
-  // Backend/worker refresh classification still applies to the shared agent.
-  'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.mjs',
 ]);
 
 const NO_RUNTIME_PREFIXES = Object.freeze([
@@ -204,11 +201,6 @@ const NO_RUNTIME_EXACT = new Set([
   // source change never activates or qualifies the installed native binary.
   'scripts/windows/SovereignFixedRuntimeHostV1.cs',
   'scripts/windows/install-sovereign-fixed-runtime-v1.ps1',
-  // These exact files build a one-shot mailbox evidence host, not a daemon.
-  // Do not exempt new or neighboring signer files by directory prefix.
-  'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/Program.cs',
-  'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/Stephanos.CanonicalMailboxNativeEvidenceHost.csproj',
-  'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/packages.lock.json',
   'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',
   'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs',
   'scripts/canonical-mailbox-rollover-github-adapter.mjs',
@@ -239,6 +231,10 @@ const NO_RUNTIME_EXACT = new Set([
   'scripts/ignition-cockpit-model.mjs',
   'scripts/run-battle-bridge-ignition.mjs',
   'scripts/battle-bridge-ignition-sync-preflight.mjs',
+  // These are one-shot advisory/review children loaded afresh by their fixed callers;
+  // source adoption must not restart a long-running runtime. Keep exact-only.
+  'scripts/starfield-vr-project-performance-loop.mjs',
+  'scripts/sovereign-windows-review-calibration-v1-engine.mjs',
   'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
 ]);
 
@@ -309,14 +305,6 @@ export function parseGitChangedPathStatus(stdout) {
 }
 
 function isTestOrDocumentation(path) {
-  // Current main lists the offline evidence-host directory as an inert source
-  // package, but a NEW signer/source file in it must not silently inherit
-  // the reviewed three-file trust boundary. Exact tests/docs stay inert.
-  if (path.startsWith('src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/')) {
-    return NO_RUNTIME_EXACT.has(path)
-      || /(?:^|\/)[^/]+\.(?:test|spec)\.(?:c?js|mjs|jsx|ts|tsx)$/i.test(path)
-      || /\.(?:md|mdx)$/i.test(path);
-  }
   return NO_RUNTIME_EXACT.has(path)
     || NO_RUNTIME_PREFIXES.some((prefix) => path.startsWith(prefix))
     || /(?:^|\/)[^/]+\.(?:test|spec)\.(?:c?js|mjs|jsx|ts|tsx)$/i.test(path)
