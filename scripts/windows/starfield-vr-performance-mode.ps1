@@ -837,6 +837,8 @@ $handoffDeadline = $null
 $samples = New-Object System.Collections.Generic.List[object]
 $logicalProcessorCount = [Math]::Max(1, [Environment]::ProcessorCount)
 $previousCpuByPid = @{}
+$cpuConsumerHistory = @{}
+$starfieldThreadCpuHistory = @{}
 $airLinkWasObserved = $false
 $airLinkInactiveSince = $null
 $audioRestoredOnAirLinkExit = $false
@@ -924,20 +926,37 @@ while ($true) {
 
     $starfieldCpuPct = $null
     $cpuSeconds = $game.TotalProcessorTime.TotalSeconds
-    if ($previousCpuByPid.ContainsKey($currentGameProcessId)) {
+    $gameStartTicks = $null
+    try { $gameStartTicks = [long]$game.StartTime.ToUniversalTime().Ticks } catch {}
+    if ($null -ne $gameStartTicks -and $previousCpuByPid.ContainsKey($currentGameProcessId)) {
         $previousCpu = $previousCpuByPid[$currentGameProcessId]
-        $elapsedSeconds = [Math]::Max(0.001, ($sampledAt - $previousCpu.sampledAt).TotalSeconds)
-        $cpuDeltaSeconds = [Math]::Max(0, $cpuSeconds - [double]$previousCpu.cpuSeconds)
-        $starfieldCpuPct = [math]::Round(
-            [Math]::Min(100, (($cpuDeltaSeconds / $elapsedSeconds) / $logicalProcessorCount) * 100),
-            1
-        )
+        $elapsedSeconds = ($sampledAt - [DateTime]$previousCpu.sampledAt).TotalSeconds
+        $cpuDeltaSeconds = $cpuSeconds - [double]$previousCpu.cpuSeconds
+        # A PID can be reused after a game restart. A different start time,
+        # unreadable identity or non-monotonic counter must never produce a
+        # fabricated CPU percentage (including a fabricated zero).
+        if ([long]$previousCpu.processStartTicks -eq $gameStartTicks -and
+            $elapsedSeconds -gt 0 -and $elapsedSeconds -le 120 -and $cpuDeltaSeconds -ge 0) {
+            $starfieldCpuPct = [math]::Round(
+                [Math]::Min(100, (($cpuDeltaSeconds / $elapsedSeconds) / $logicalProcessorCount) * 100),
+                1
+            )
+        }
     }
-    $previousCpuByPid[$currentGameProcessId] = [pscustomobject]@{
-        sampledAt = $sampledAt
-        cpuSeconds = $cpuSeconds
+    if ($null -ne $gameStartTicks) {
+        $previousCpuByPid[$currentGameProcessId] = [pscustomobject]@{
+            processStartTicks = $gameStartTicks
+            sampledAt = $sampledAt
+            cpuSeconds = $cpuSeconds
+        }
+    } else {
+        [void]$previousCpuByPid.Remove($currentGameProcessId)
     }
 
+    # Same-session fixed-name CPU attribution. No separate daemon or browser
+    # inspection, no tab/URL capture, and no process mutation.
+    $cpuConsumers = Get-StarfieldVrCpuConsumerSample -Previous $cpuConsumerHistory -LogicalProcessorCount $logicalProcessorCount
+    $gameThreads = Get-StarfieldVrGameThreadCpuSample -GameProcessId $currentGameProcessId -Previous $starfieldThreadCpuHistory
     $metaProcesses = @(Get-Process -Name 'OculusDash','OVRServer_x64','OVRServiceLauncher' -ErrorAction SilentlyContinue)
     $metaWorkingSetMiB = if ($metaProcesses.Count) {
         [math]::Round((($metaProcesses | Measure-Object WorkingSet64 -Sum).Sum / 1MB), 1)
@@ -1003,7 +1022,38 @@ while ($true) {
         gpuTemperatureC = if ($gpu) { $gpu.gpuTemperatureC } else { $null }
         gpuPowerW = if ($gpu) { $gpu.gpuPowerW } else { $null }
         starfieldCpuPct = $starfieldCpuPct
+        starfieldBusiestThreadCpuPct = $gameThreads.busiestThreadCpuPct
+        starfieldThreadCpuSource = [string]$gameThreads.source
+        starfieldThreadCpuReason = [string]$gameThreads.reason
+        starfieldThreadCount = $gameThreads.threadCount
+        starfieldMatchedThreadCount = [int]$gameThreads.matchedThreadCount
         systemCpuPct = $systemCpuPct
+        cpuConsumersAvailable = [bool]$cpuConsumers.available
+        cpuConsumersSource = [string]$cpuConsumers.source
+        chatGptProcessCount = [int]$cpuConsumers.chatGptProcessCount
+        chatGptCpuPct = $cpuConsumers.chatGptCpuPct
+        edgeProcessCount = [int]$cpuConsumers.edgeProcessCount
+        edgeCpuPct = $cpuConsumers.edgeCpuPct
+        braveProcessCount = [int]$cpuConsumers.braveProcessCount
+        braveCpuPct = $cpuConsumers.braveCpuPct
+        chromeProcessCount = [int]$cpuConsumers.chromeProcessCount
+        chromeCpuPct = $cpuConsumers.chromeCpuPct
+        firefoxProcessCount = [int]$cpuConsumers.firefoxProcessCount
+        firefoxCpuPct = $cpuConsumers.firefoxCpuPct
+        webView2ProcessCount = [int]$cpuConsumers.webView2ProcessCount
+        webView2CpuPct = $cpuConsumers.webView2CpuPct
+        steamWebProcessCount = [int]$cpuConsumers.steamWebProcessCount
+        steamWebCpuPct = $cpuConsumers.steamWebCpuPct
+        metaVrCpuProcessCount = [int]$cpuConsumers.metaVrProcessCount
+        metaVrCpuPct = $cpuConsumers.metaVrCpuPct
+        nodeProcessCount = [int]$cpuConsumers.nodeProcessCount
+        nodeCpuPct = $cpuConsumers.nodeCpuPct
+        powerShellProcessCount = [int]$cpuConsumers.powerShellProcessCount
+        powerShellCpuPct = $cpuConsumers.powerShellCpuPct
+        defenderProcessCount = [int]$cpuConsumers.defenderProcessCount
+        defenderCpuPct = $cpuConsumers.defenderCpuPct
+        desktopWindowManagerProcessCount = [int]$cpuConsumers.desktopWindowManagerProcessCount
+        desktopWindowManagerCpuPct = $cpuConsumers.desktopWindowManagerCpuPct
         starfieldWorkingSetMiB = [math]::Round($game.WorkingSet64 / 1MB, 1)
         starfieldPrivateMiB = [math]::Round($game.PrivateMemorySize64 / 1MB, 1)
         systemFreeMemoryMiB = [math]::Round($os.FreePhysicalMemory / 1KB, 1)
@@ -1109,7 +1159,18 @@ $endedAt = Get-Date
 $summaryPath = [System.IO.Path]::ChangeExtension([string]$session.telemetryPath, '.summary.json')
 $gpuSamples = @($samples | Where-Object { $null -ne $_.gpuUtilPct })
 $starfieldCpuSamples = @($samples | Where-Object { $null -ne $_.starfieldCpuPct })
+$busiestThreadSamples = @($samples | Where-Object { $null -ne $_.starfieldBusiestThreadCpuPct })
 $systemCpuSamples = @($samples | Where-Object { $null -ne $_.systemCpuPct })
+$chatGptCpuSamples = @($samples | Where-Object { $null -ne $_.chatGptCpuPct })
+$edgeCpuSamples = @($samples | Where-Object { $null -ne $_.edgeCpuPct })
+$braveCpuSamples = @($samples | Where-Object { $null -ne $_.braveCpuPct })
+$chromeCpuSamples = @($samples | Where-Object { $null -ne $_.chromeCpuPct })
+$firefoxCpuSamples = @($samples | Where-Object { $null -ne $_.firefoxCpuPct })
+$webView2CpuSamples = @($samples | Where-Object { $null -ne $_.webView2CpuPct })
+$nodeCpuSamples = @($samples | Where-Object { $null -ne $_.nodeCpuPct })
+$steamWebCpuSamples = @($samples | Where-Object { $null -ne $_.steamWebCpuPct })
+$metaVrCpuSamples = @($samples | Where-Object { $null -ne $_.metaVrCpuPct })
+$cpuConsumerAvailableSamples = @($samples | Where-Object { $_.cpuConsumersAvailable -eq $true })
 $encoderSamples = @($samples | Where-Object { $null -ne $_.gpuEncoderUtilPct })
 $decoderSamples = @($samples | Where-Object { $null -ne $_.gpuDecoderUtilPct })
 $gpuMemoryPctSamples = @($samples | Where-Object { $null -ne $_.gpuMemoryPct })
@@ -1164,8 +1225,36 @@ $summary = [ordered]@{
     maxGpuDecoderUtilPct = if ($decoderSamples.Count) { ($decoderSamples | Measure-Object gpuDecoderUtilPct -Maximum).Maximum } else { $null }
     avgStarfieldCpuPct = if ($starfieldCpuSamples.Count) { [math]::Round(($starfieldCpuSamples | Measure-Object starfieldCpuPct -Average).Average, 1) } else { $null }
     maxStarfieldCpuPct = if ($starfieldCpuSamples.Count) { ($starfieldCpuSamples | Measure-Object starfieldCpuPct -Maximum).Maximum } else { $null }
+    avgStarfieldBusiestThreadCpuPct = if ($busiestThreadSamples.Count) { [math]::Round(($busiestThreadSamples | Measure-Object starfieldBusiestThreadCpuPct -Average).Average, 2) } else { $null }
+    maxStarfieldBusiestThreadCpuPct = if ($busiestThreadSamples.Count) { ($busiestThreadSamples | Measure-Object starfieldBusiestThreadCpuPct -Maximum).Maximum } else { $null }
+    starfieldThreadCpuMeasuredSampleCount = $busiestThreadSamples.Count
+    starfieldThreadCpuSource = 'STARFIELD_PROCESS_THREAD_CPU_DELTAS'
+    starfieldThreadRoleKnown = $false
     avgSystemCpuPct = if ($systemCpuSamples.Count) { [math]::Round(($systemCpuSamples | Measure-Object systemCpuPct -Average).Average, 1) } else { $null }
     maxSystemCpuPct = if ($systemCpuSamples.Count) { ($systemCpuSamples | Measure-Object systemCpuPct -Maximum).Maximum } else { $null }
+    cpuConsumersSource = 'FIXED_APP_FAMILY_PROCESS_CPU_DELTAS'
+    cpuConsumersAvailableSampleCount = $cpuConsumerAvailableSamples.Count
+    avgChatGptCpuPct = if ($chatGptCpuSamples.Count) { [math]::Round(($chatGptCpuSamples | Measure-Object chatGptCpuPct -Average).Average, 2) } else { $null }
+    maxChatGptCpuPct = if ($chatGptCpuSamples.Count) { ($chatGptCpuSamples | Measure-Object chatGptCpuPct -Maximum).Maximum } else { $null }
+    maxChatGptProcessCount = if ($samples.Count) { ($samples | Measure-Object chatGptProcessCount -Maximum).Maximum } else { $null }
+    avgEdgeCpuPct = if ($edgeCpuSamples.Count) { [math]::Round(($edgeCpuSamples | Measure-Object edgeCpuPct -Average).Average, 2) } else { $null }
+    maxEdgeCpuPct = if ($edgeCpuSamples.Count) { ($edgeCpuSamples | Measure-Object edgeCpuPct -Maximum).Maximum } else { $null }
+    avgBraveCpuPct = if ($braveCpuSamples.Count) { [math]::Round(($braveCpuSamples | Measure-Object braveCpuPct -Average).Average, 2) } else { $null }
+    avgChromeCpuPct = if ($chromeCpuSamples.Count) { [math]::Round(($chromeCpuSamples | Measure-Object chromeCpuPct -Average).Average, 2) } else { $null }
+    avgFirefoxCpuPct = if ($firefoxCpuSamples.Count) { [math]::Round(($firefoxCpuSamples | Measure-Object firefoxCpuPct -Average).Average, 2) } else { $null }
+    avgWebView2CpuPct = if ($webView2CpuSamples.Count) { [math]::Round(($webView2CpuSamples | Measure-Object webView2CpuPct -Average).Average, 2) } else { $null }
+    avgNodeCpuPct = if ($nodeCpuSamples.Count) { [math]::Round(($nodeCpuSamples | Measure-Object nodeCpuPct -Average).Average, 2) } else { $null }
+    avgSteamWebCpuPct = if ($steamWebCpuSamples.Count) { [math]::Round(($steamWebCpuSamples | Measure-Object steamWebCpuPct -Average).Average, 2) } else { $null }
+    avgMetaVrCpuPct = if ($metaVrCpuSamples.Count) { [math]::Round(($metaVrCpuSamples | Measure-Object metaVrCpuPct -Average).Average, 2) } else { $null }
+    # Every fixed-name browser family must have a genuine measured (including
+    # observed absent-process zero) sample before reporting complete coverage.
+    # Unknown Chrome/Firefox CPU cannot silently qualify as complete attribution.
+    browserAndAppCpuAttributionComplete = [bool]($samples.Count -gt 1 -and
+        $chatGptCpuSamples.Count -gt 0 -and $edgeCpuSamples.Count -gt 0 -and
+        $braveCpuSamples.Count -gt 0 -and $chromeCpuSamples.Count -gt 0 -and
+        $firefoxCpuSamples.Count -gt 0 -and $webView2CpuSamples.Count -gt 0)
+    browserTabsInspected = $false
+    chatGptConversationContentsInspected = $false
     minSystemFreeMemoryMiB = if ($samples.Count) { ($samples | Measure-Object systemFreeMemoryMiB -Minimum).Minimum } else { $null }
     maxMetaVrWorkingSetMiB = if ($samples.Count) { ($samples | Measure-Object metaVrWorkingSetMiB -Maximum).Maximum } else { 0 }
     airLinkRuntimeSamplePct = if ($samples.Count) { [math]::Round((@($samples | Where-Object airLinkRuntimeActive).Count / $samples.Count) * 100, 1) } else { 0 }

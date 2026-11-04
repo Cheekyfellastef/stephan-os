@@ -220,6 +220,208 @@ function Get-StarfieldVrControllerSample {
     }
 }
 
+
+# Fixed-name app-family CPU sampler. Keeps a per-PID start-time baseline in
+# memory for this playtest only, reads no tab/URL/profile/command-line data,
+# and never changes process priorities or termination state.
+function Get-StarfieldVrCpuConsumerSample {
+    param(
+        [hashtable]$Previous,
+        [int]$LogicalProcessorCount = 1
+    )
+    $families = [ordered]@{
+        chatGpt = 'ChatGPT'
+        edge = 'msedge'
+        brave = 'brave'
+        chrome = 'chrome'
+        firefox = 'firefox'
+        webView2 = 'msedgewebview2'
+        steamWeb = 'steamwebhelper'
+        metaVr = 'OVRServer_x64'
+        node = 'node'
+        powerShell = 'powershell'
+        defender = 'MsMpEng'
+        desktopWindowManager = 'dwm'
+    }
+    $now = (Get-Date).ToUniversalTime()
+    $group = @{}
+    $byName = @{}
+    foreach ($key in $families.Keys) {
+        $group[$key] = @{ count = 0; matched = 0; totalCpuPct = 0.0 }
+        $byName[([string]$families[$key]).ToLowerInvariant()] = [string]$key
+    }
+    $processes = @()
+    $inventoryAvailable = $true
+    $processLookupErrors = @()
+    try {
+        # A missing optional app is normal. One inventory per sample avoids
+        # repeating the entire Get-Process scan for every absent family.
+        $processes = @(Get-Process -Name @($families.Values) -ErrorAction SilentlyContinue -ErrorVariable +processLookupErrors)
+        foreach ($lookupError in @($processLookupErrors)) {
+            # Only 'no process by this name' is evidence of an absent app.
+            # Access denial or another inventory error cannot certify zero CPU.
+            if ([string]$lookupError.FullyQualifiedErrorId -notlike 'NoProcessFoundForGivenName*') {
+                $inventoryAvailable = $false
+                break
+            }
+        }
+    } catch {
+        $inventoryAvailable = $false
+    }
+    $next = @{}
+    foreach ($p in $processes) {
+        $name = [string]$p.ProcessName
+        $key = $byName[$name.ToLowerInvariant()]
+        if (-not $key) { continue }
+        $g = $group[$key]
+        $g.count++
+        $pidValue = [int]$p.Id
+        try {
+            $startTicks = $p.StartTime.ToUniversalTime().Ticks
+            $seconds = [double]$p.TotalProcessorTime.TotalSeconds
+            $before = $Previous[$pidValue]
+            if ($before -and [long]$before.startTicks -eq $startTicks) {
+                $duration = ($now - [DateTime]$before.observedAt).TotalSeconds
+                $delta = $seconds - [double]$before.cpuSeconds
+                if ($duration -gt 0 -and $duration -le 120 -and $delta -ge 0) {
+                    $g.totalCpuPct += [Math]::Min(100, (($delta / $duration) / [Math]::Max(1, $LogicalProcessorCount)) * 100)
+                    $g.matched++
+                }
+            }
+            $next[$pidValue] = @{
+                startTicks = $startTicks
+                cpuSeconds = $seconds
+                observedAt = $now
+            }
+        } catch {
+            # No process CPU evidence is better than a fabricated 0% reading.
+        }
+    }
+    $Previous.Clear()
+    foreach ($id in $next.Keys) { $Previous[$id] = $next[$id] }
+    $out = [ordered]@{
+        available = $inventoryAvailable
+        source = 'FIXED_APP_FAMILY_PROCESS_CPU_DELTAS'
+        observedAtUtc = $now.ToString('o')
+    }
+    foreach ($key in $families.Keys) {
+        $g = $group[$key]
+        $out["${key}ProcessCount"] = [int]$g.count
+        $out["${key}CpuPct"] = if (-not $inventoryAvailable) { $null }
+            elseif ($g.count -eq 0) { 0.0 }
+            elseif ($g.matched -eq $g.count) { [Math]::Round([Math]::Min(100, $g.totalCpuPct), 2) }
+            else { $null }
+    }
+    return [pscustomobject]$out
+}
+
+
+# Read-only, bounded game-thread CPU evidence. A fully utilized *single*
+# logical processor corresponds to roughly 100%, independently of the
+# normalized whole-process CPU percentage. Do not label the busiest thread
+# the main/render thread: thread function/role is not determined here.
+function Get-StarfieldVrGameThreadCpuSample {
+    param(
+        [int]$GameProcessId,
+        [hashtable]$Previous,
+        [int]$MaximumThreadCount = 512
+    )
+    $sampledAt = (Get-Date).ToUniversalTime()
+    $out = [ordered]@{
+        source = 'STARFIELD_PROCESS_THREAD_CPU_DELTAS'
+        available = $false
+        reason = 'THREAD_SNAPSHOT_UNAVAILABLE'
+        threadCount = $null
+        matchedThreadCount = 0
+        busiestThreadCpuPct = $null
+    }
+    if ($GameProcessId -le 0 -or $null -eq $Previous) {
+        $out.reason = 'THREAD_IDENTITY_UNAVAILABLE'
+        return [pscustomobject]$out
+    }
+    # Collect thread-level evidence at most every five seconds. Sampling
+    # every frame or every adaptive 1s tick can itself create CPU overhead.
+    if ($Previous.ContainsKey('collectedAtUtc') -and $Previous.ContainsKey('processId') -and
+        $Previous.processId -eq $GameProcessId -and
+        $Previous.collectedAtUtc -is [DateTime]) {
+        # Never convert an untrusted/stale history timestamp outside the
+        # protected sampling block. Invalid history must re-warm, not crash
+        # the low-overhead playtest recorder or fabricate a measured delta.
+        $since = ($sampledAt - $Previous.collectedAtUtc).TotalSeconds
+        if ($since -ge 0 -and $since -lt 5) {
+            $out.reason = 'THREAD_SAMPLE_THROTTLED'
+            return [pscustomobject]$out
+        }
+    }
+    try {
+        $process = Get-Process -Id $GameProcessId -ErrorAction Stop
+        $processStartedTicks = [long]$process.StartTime.ToUniversalTime().Ticks
+        $threads = @($process.Threads)
+        if ($threads.Count -gt $MaximumThreadCount) {
+            $out.reason = 'THREAD_INVENTORY_LIMIT'
+            $Previous.Clear()
+            return [pscustomobject]$out
+        }
+        $out.available = $true
+        $out.threadCount = $threads.Count
+        $out.reason = 'THREAD_WARMUP'
+        $prior = @{}
+        if ($Previous.processId -eq $GameProcessId -and
+            $Previous.processStartTicks -eq $processStartedTicks -and
+            $Previous.ContainsKey('threadCpu')) {
+            $prior = $Previous.threadCpu
+        }
+        $fresh = @{}
+        $maxCorePercent = $null
+        $matched = 0
+        foreach ($thread in $threads) {
+            try {
+                $threadId = [int]$thread.Id
+                $threadStartTicks = [long]$thread.StartTime.ToUniversalTime().Ticks
+                $cpuSeconds = [double]$thread.TotalProcessorTime.TotalSeconds
+                $old = $prior[$threadId]
+                if ($old -and [long]$old.startTicks -eq $threadStartTicks) {
+                    $secondsElapsed = ($sampledAt - [DateTime]$old.observedAtUtc).TotalSeconds
+                    $usedSeconds = $cpuSeconds - [double]$old.cpuSeconds
+                    if ($secondsElapsed -gt 0 -and $secondsElapsed -le 120 -and $usedSeconds -ge 0) {
+                        $corePercent = [Math]::Min(100, ($usedSeconds / $secondsElapsed) * 100)
+                        if ($null -eq $maxCorePercent -or $corePercent -gt $maxCorePercent) {
+                            $maxCorePercent = $corePercent
+                        }
+                        $matched++
+                    }
+                }
+                $fresh[$threadId] = @{
+                    startTicks = $threadStartTicks
+                    cpuSeconds = $cpuSeconds
+                    observedAtUtc = $sampledAt
+                }
+            } catch {
+                # Threads can exit while sampled; never manufacture a 0% CPU value.
+            }
+        }
+        $Previous.Clear()
+        $Previous.processId = $GameProcessId
+        $Previous.processStartTicks = $processStartedTicks
+        $Previous.threadCpu = $fresh
+        $Previous.collectedAtUtc = $sampledAt
+        $out.matchedThreadCount = $matched
+        if ($matched -gt 0) {
+            $out.busiestThreadCpuPct = [Math]::Round([double]$maxCorePercent, 2)
+            $out.reason = 'THREAD_CPU_MEASURED'
+        }
+    } catch {
+        $Previous.Clear()
+        $out.reason = 'THREAD_SNAPSHOT_UNAVAILABLE'
+    } finally {
+        # Failed/oversized inventories are still inspection attempts. Retain the
+        # 5-second cooldown during 1s adaptive VR sampling, but not stale deltas.
+        $Previous.processId = $GameProcessId
+        $Previous.collectedAtUtc = $sampledAt
+    }
+    return [pscustomobject]$out
+}
+
 function Get-StarfieldVrCrashFingerprint {
     param([string]$Message)
     $flat = ([string]$Message -replace '\s+', ' ').Trim()

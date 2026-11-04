@@ -106,7 +106,21 @@ $gpu = Get-NumericValues -Rows $rows -Name 'gpuUtilPct'
 $gpuMemory = Get-NumericValues -Rows $rows -Name 'gpuMemoryPct'
 $encoder = Get-NumericValues -Rows $rows -Name 'gpuEncoderUtilPct'
 $starfieldCpu = Get-NumericValues -Rows $rows -Name 'starfieldCpuPct'
+$starfieldThreadCpu = Get-NumericValues -Rows $rows -Name 'starfieldBusiestThreadCpuPct'
 $systemCpu = Get-NumericValues -Rows $rows -Name 'systemCpuPct'
+$chatGptCpu = Get-NumericValues -Rows $rows -Name 'chatGptCpuPct'
+$edgeCpu = Get-NumericValues -Rows $rows -Name 'edgeCpuPct'
+$braveCpu = Get-NumericValues -Rows $rows -Name 'braveCpuPct'
+$chromeCpu = Get-NumericValues -Rows $rows -Name 'chromeCpuPct'
+$firefoxCpu = Get-NumericValues -Rows $rows -Name 'firefoxCpuPct'
+$webView2Cpu = Get-NumericValues -Rows $rows -Name 'webView2CpuPct'
+$nodeCpu = Get-NumericValues -Rows $rows -Name 'nodeCpuPct'
+$metaVrCpu = Get-NumericValues -Rows $rows -Name 'metaVrCpuPct'
+# Count only real same-session CSV intervals where the bounded process-family sampler succeeded.
+# A missing legacy column, missing process inventory, or a failed sample is not a measured zero.
+$cpuConsumersAvailableRows = @($rows | Where-Object {
+    [string](Get-OptionalValue -Object $_ -Name 'cpuConsumersAvailable' -Default 'False') -ceq 'True'
+})
 $llama = Get-NumericValues -Rows $rows -Name 'llamaServerCount'
 $metaWorkingSet = Get-NumericValues -Rows $rows -Name 'metaVrWorkingSetMiB'
 $driveFreeGiB = Get-NumericValues -Rows $rows -Name 'gameDriveFreeGiB'
@@ -147,8 +161,23 @@ $metrics = [ordered]@{
     maxGpuEncoderUtilPct = Get-Maximum -Values $encoder
     avgStarfieldCpuPct = Get-Average -Values $starfieldCpu
     maxStarfieldCpuPct = Get-Maximum -Values $starfieldCpu
+    avgStarfieldBusiestThreadCpuPct = Get-Average -Values $starfieldThreadCpu
+    maxStarfieldBusiestThreadCpuPct = Get-Maximum -Values $starfieldThreadCpu
+    starfieldThreadCpuMeasuredSampleCount = @($starfieldThreadCpu).Count
+    starfieldThreadCpuTelemetryAvailable = @($starfieldThreadCpu).Count -gt 0
     avgSystemCpuPct = Get-Average -Values $systemCpu
     maxSystemCpuPct = Get-Maximum -Values $systemCpu
+    cpuAttributionAvailable = @($chatGptCpu).Count -gt 0
+    cpuConsumersAvailableSampleCount = $cpuConsumersAvailableRows.Count
+    avgChatGptCpuPct = Get-Average -Values $chatGptCpu
+    maxChatGptCpuPct = Get-Maximum -Values $chatGptCpu
+    avgEdgeCpuPct = Get-Average -Values $edgeCpu
+    avgBraveCpuPct = Get-Average -Values $braveCpu
+    avgChromeCpuPct = Get-Average -Values $chromeCpu
+    avgFirefoxCpuPct = Get-Average -Values $firefoxCpu
+    avgWebView2CpuPct = Get-Average -Values $webView2Cpu
+    avgNodeCpuPct = Get-Average -Values $nodeCpu
+    avgMetaVrCpuPct = Get-Average -Values $metaVrCpu
     maxLlamaServerCount = Get-Maximum -Values $llama
     maxMetaVrWorkingSetMiB = Get-Maximum -Values $metaWorkingSet
     minGameDriveFreeGiB = Get-Minimum -Values $driveFreeGiB
@@ -195,6 +224,9 @@ if ($null -ne $metrics.maxGpuMemoryPct -and $metrics.maxGpuMemoryPct -ge 90) { $
 if ($null -ne $metrics.avgGpuUtilPct -and $metrics.avgGpuUtilPct -ge 90) { $signals.Add('gpu-saturation-high') }
 if ($null -ne $metrics.maxGpuEncoderUtilPct -and $metrics.maxGpuEncoderUtilPct -ge 80) { $signals.Add('gpu-encoder-load-high') }
 if ($null -ne $metrics.avgSystemCpuPct -and $metrics.avgSystemCpuPct -ge 85) { $signals.Add('system-cpu-load-high') }
+if ($null -ne $metrics.maxStarfieldBusiestThreadCpuPct -and $metrics.maxStarfieldBusiestThreadCpuPct -ge 90) { $signals.Add('starfield-single-thread-saturation-observed') }
+if ($null -ne $metrics.maxChatGptCpuPct -and $metrics.maxChatGptCpuPct -ge 10) { $signals.Add('desktop-chatgpt-cpu-contention-observed') }
+if ($null -ne $metrics.avgEdgeCpuPct -and $metrics.avgEdgeCpuPct -ge 10) { $signals.Add('edge-process-cpu-contention-observed') }
 if (
     ($null -ne $metrics.minGameDriveFreePct -and $metrics.minGameDriveFreePct -le 10) -or
     ($null -ne $metrics.minGameDriveFreeGiB -and $metrics.minGameDriveFreeGiB -le 50)
