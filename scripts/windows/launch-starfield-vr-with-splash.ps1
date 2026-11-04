@@ -723,8 +723,17 @@ $statusHint.Font = New-Object System.Drawing.Font($fontFamily, 10)
 $statusHint.Text = 'Cards show configured state only. Canonical readiness runs after you select a provider.'
 $statusPanel.Controls.Add($statusHint)
 
+$telemetryLabel = New-Object System.Windows.Forms.Label
+$telemetryLabel.AutoSize = $false
+$telemetryLabel.Location = New-Object System.Drawing.Point(25, 76)
+$telemetryLabel.Size = New-Object System.Drawing.Size(836, 18)
+$telemetryLabel.ForeColor = [System.Drawing.Color]::FromArgb(126, 231, 194)
+$telemetryLabel.Font = New-Object System.Drawing.Font($fontFamily, 8.5, [System.Drawing.FontStyle]::Bold)
+$telemetryLabel.Text = 'TELEMETRY AUTO | MutaR FPS + frame time -> Shared Workspace'
+$statusPanel.Controls.Add($telemetryLabel)
+
 $progressTrack = New-Object System.Windows.Forms.Panel
-$progressTrack.Location = New-Object System.Drawing.Point(26, 90)
+$progressTrack.Location = New-Object System.Drawing.Point(26, 101)
 $progressTrack.Size = New-Object System.Drawing.Size(850, 4)
 $progressTrack.BackColor = [System.Drawing.Color]::FromArgb(48, 73, 94)
 $statusPanel.Controls.Add($progressTrack)
@@ -945,7 +954,11 @@ $readinessPollTimer.Add_Tick({
     }
 
     $statusLabel.Text = 'Ready to launch'
-    $statusHint.Text = 'Quest 3, OpenXR and the verified VR provider passed the launch gate.'
+    $statusHint.Text = if ($processState.Provider -eq 'mutar-openxr') {
+        'Quest 3 and MutaR passed the gate. FPS/frame-time telemetry is armed and will publish to Shared Workspace.'
+    } else {
+        'Quest 3 and the verified VR provider passed the launch gate.'
+    }
     $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(174, 255, 221)
     $progressFill.BackColor = [System.Drawing.Color]::FromArgb(113, 236, 193)
     $progressFill.Width = 850
@@ -972,7 +985,11 @@ $launchPollTimer.Add_Tick({
         }
         else {
             $statusLabel.Text = 'Starfield VR launched'
-            $statusHint.Text = 'The verified launcher accepted the route and started the game.'
+            $statusHint.Text = if ($processState.Provider -eq 'mutar-openxr') {
+                'Telemetry guardian proved its first sample. FPS/frame time will be sealed into the Shared Workspace session when Starfield exits.'
+            } else {
+                'The verified launcher accepted the route and started the game.'
+            }
         }
         $finishTimer.Start()
     }
