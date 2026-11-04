@@ -492,6 +492,105 @@ test('fixed Sovereign refresh proves current capability and exact source head wi
   assert.equal(JSON.stringify(calls).includes('Invoke-Expression'), false);
 });
 
+test('healthy exact-head Relay proof survives unrelated watchdog subhealth exit codes', () => {
+  const afterHead = '9'.repeat(40);
+  for (const watchdogStatus of [3, 4, 5]) {
+    const spawnSyncFn = (command, args) => {
+      if (String(command).toLowerCase().includes('powershell')) {
+        return {
+          status: watchdogStatus,
+          stdout: JSON.stringify({
+            schemaVersion: 'stephanos.sovereign-commander-watchdog.v1',
+            taskName: 'Stephanos Sovereign Commander',
+            daemonHealthy: true,
+            healthyAfter: true,
+            requiredCapabilityVersion: '2026-10-18-island-action-contract-v6',
+            capabilityVersionAfter: '2026-10-18-island-action-contract-v6',
+            vendorMeterRequired: false,
+            externalSaasRelayRequired: false,
+            arbitraryShellAllowed: false,
+            pcRestartAllowed: false,
+            visiblePowerShellRequired: false,
+            blocker: watchdogStatus === 3
+              ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_FAILED'
+              : watchdogStatus === 4
+                ? 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BLOCKED'
+                : 'SOVEREIGN_COMMANDER_CORE_DAEMON_BLOCKED',
+            relayDaemonHealthy: true,
+            relayDaemonSourceHead: afterHead,
+            relayDaemonSourceHeadMatchesLive: true,
+            relayDaemonProcessCount: 1,
+            relayDaemonHeartbeatAgeSeconds: 2,
+            relayDaemonBlocker: '',
+          }),
+          stderr: '',
+        };
+      }
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') {
+        return { status: 0, stdout: afterHead + '\n', stderr: '' };
+      }
+      return { status: 1, stdout: '', stderr: 'unexpected' };
+    };
+    const adapter = createFixedPostSyncRuntimeAdapter({ spawnSyncFn });
+    const result = adapter.refreshSovereignCommander({
+      afterHead,
+      paths: { repoRoot: 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os' },
+      requireSovereignRelayProof: true,
+    });
+    assert.equal(result.ok, true, String(watchdogStatus));
+    assert.equal(result.sovereignRelayProof?.watchdogSucceeded, true);
+    assert.equal(result.sovereignRelayObservation?.watchdogSucceeded, true);
+    assert.equal(result.sovereignRelayProof?.healthy, true);
+    assert.equal(result.sovereignRelayProof?.processCount, 1);
+    assert.equal(result.sovereignRelayProof?.sourceHead, afterHead);
+  }
+});
+
+test('unknown watchdog failure cannot manufacture Relay success from healthy-looking fields', () => {
+  const afterHead = '8'.repeat(40);
+  const spawnSyncFn = (command, args) => {
+    if (String(command).toLowerCase().includes('powershell')) {
+      return {
+        status: 1,
+        stdout: JSON.stringify({
+          schemaVersion: 'stephanos.sovereign-commander-watchdog.v1',
+          taskName: 'Stephanos Sovereign Commander',
+          daemonHealthy: true,
+          healthyAfter: true,
+          requiredCapabilityVersion: '2026-10-18-island-action-contract-v6',
+          capabilityVersionAfter: '2026-10-18-island-action-contract-v6',
+          vendorMeterRequired: false,
+          externalSaasRelayRequired: false,
+          arbitraryShellAllowed: false,
+          pcRestartAllowed: false,
+          visiblePowerShellRequired: false,
+          blocker: '',
+          relayDaemonHealthy: true,
+          relayDaemonSourceHead: afterHead,
+          relayDaemonSourceHeadMatchesLive: true,
+          relayDaemonProcessCount: 1,
+          relayDaemonHeartbeatAgeSeconds: 2,
+          relayDaemonBlocker: '',
+        }),
+        stderr: '',
+      };
+    }
+    if (args[0] === 'rev-parse' && args[1] === 'HEAD') {
+      return { status: 0, stdout: afterHead + '\n', stderr: '' };
+    }
+    return { status: 1, stdout: '', stderr: 'unexpected' };
+  };
+  const adapter = createFixedPostSyncRuntimeAdapter({ spawnSyncFn });
+  const result = adapter.refreshSovereignCommander({
+    afterHead,
+    paths: { repoRoot: 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os' },
+    requireSovereignRelayProof: true,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.sovereignRelayProof, null);
+  assert.equal(result.sovereignRelayObservation?.watchdogSucceeded, false);
+});
+
 test('control-plane repair runs only after normal exact-head refresh execution passes', () => {
   const executeIndex = source.indexOf('executePostSyncRefreshPlan({');
   const reconcileIndex = source.indexOf('adapter.reconcileControlPlane({ afterHead: normalizedAfter, paths })');

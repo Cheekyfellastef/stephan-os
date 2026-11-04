@@ -85,6 +85,7 @@ const FORBIDDEN_ARG_PATTERN = /^(?:checkout|switch|reset|clean|stash|rebase|push
 const SHA_PATTERN = /^[a-f0-9]{40}$/i;
 const HOUSEKEEPER_STATUS_PREFIX = '[HOUSEKEEP] status=';
 export const SYNC_LOCK_STALE_AFTER_MS = 10 * 60 * 1000;
+export const LOCK_BOOT_SKEW_MS = 5_000;
 
 function text(value) {
   return String(value ?? '').trim();
@@ -422,6 +423,7 @@ function defaultProcessIsAlive(pid) {
 async function acquireSingleInstanceLock(workspaceRoot, now, {
   processIsAliveFn = defaultProcessIsAlive,
   staleAfterMs = SYNC_LOCK_STALE_AFTER_MS,
+  bootStartedAtMs = now.getTime() - (os.uptime() * 1000),
   allowRecovery = true,
 } = {}) {
   const lockPath = path.resolve(workspaceRoot, 'locks', 'battle-bridge-github-sync.lock');
@@ -445,14 +447,21 @@ async function acquireSingleInstanceLock(workspaceRoot, now, {
       const acquiredAtMs = Number.isFinite(parsedAcquiredAtMs) ? parsedAcquiredAtMs : lockStat?.mtimeMs;
       const ageMs = Number.isFinite(acquiredAtMs) ? now.getTime() - acquiredAtMs : NaN;
       const ownerAlive = processIsAliveFn(Number.parseInt(parsed?.pid, 10));
-      if (allowRecovery && Number.isFinite(ageMs) && ageMs > staleAfterMs && !ownerAlive) {
+      const predatesCurrentBoot = Number.isFinite(acquiredAtMs)
+        && Number.isFinite(bootStartedAtMs)
+        && acquiredAtMs + LOCK_BOOT_SKEW_MS < bootStartedAtMs;
+      const recoverable = predatesCurrentBoot
+        || (Number.isFinite(ageMs) && ageMs > staleAfterMs && !ownerAlive);
+      if (allowRecovery && recoverable) {
         await rm(lockPath, { force: true });
         const recovered = await acquireSingleInstanceLock(workspaceRoot, now, {
           processIsAliveFn,
           staleAfterMs,
+          bootStartedAtMs,
           allowRecovery: false,
         });
-        return { ...recovered, recoveredStaleLock: recovered.ok, staleLock: { ageMs, pid: parsed?.pid ?? null } };
+        return { ...recovered, recoveredStaleLock: recovered.ok,
+          staleLock: { ageMs, pid: parsed?.pid ?? null, predatesCurrentBoot } };
       }
       return { ok: false, reason: 'SYNC_ALREADY_RUNNING', lockPath, existing: existing.slice(0, 500), ownerAlive, ageMs };
     }
@@ -493,6 +502,7 @@ export async function runBattleBridgeGitHubSync({
   expectedPaths = resolveCanonicalSyncPaths({ env }),
   processIsAliveFn = defaultProcessIsAlive,
   staleAfterMs = SYNC_LOCK_STALE_AFTER_MS,
+  bootStartedAtMs = now.getTime() - (os.uptime() * 1000),
   housekeeperFn = runBoundedSyncHousekeeper,
   platform = process.platform,
   rotationPreflightFn = preflightCanonicalMailboxRotationSync,
@@ -511,7 +521,7 @@ export async function runBattleBridgeGitHubSync({
   } catch (error) {
     return Object.freeze({ ok: false, evaluation: blockedEvaluation(SYNC_CLASSIFICATIONS.BLOCKED_INSTALL_OR_PERMISSION_REQUIRED, `Shared Workspace is unavailable: ${error?.message || error}`) });
   }
-  const lock = await acquireSingleInstanceLock(workspaceRoot, now, { processIsAliveFn, staleAfterMs });
+  const lock = await acquireSingleInstanceLock(workspaceRoot, now, { processIsAliveFn, staleAfterMs, bootStartedAtMs });
   if (!lock.ok) {
     const evaluation = blockedEvaluation(SYNC_CLASSIFICATIONS.BLOCKED_INSTALL_OR_PERMISSION_REQUIRED, lock.reason);
     // A non-owner must not replace the current owner's durable refresh debt.

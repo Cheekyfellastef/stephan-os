@@ -136,7 +136,7 @@ function validateEvidence(input) {
     trees.set(row.sha, treeEntries(bytes, budget));
   }
   if (!trees.has(sourceTree)) fail('COMMIT_TREE_UNPROVEN');
-  if (!Array.isArray(input.records) || FIXED_RUNTIME_SOURCE_PATHS_V1.length > 256
+  if (!Array.isArray(input.records) || FIXED_RUNTIME_SOURCE_PATHS_V1.length > 258
     || input.records.length !== FIXED_RUNTIME_SOURCE_PATHS_V1.length) fail('SOURCE_RECORD_INVALID');
   const paths = new Set(FIXED_RUNTIME_SOURCE_PATHS_V1), seen = new Set(), usedTrees = new Set();
   const manifest = [], records = [];

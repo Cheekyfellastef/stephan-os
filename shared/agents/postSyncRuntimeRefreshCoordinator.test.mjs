@@ -41,6 +41,71 @@ test('fresh execution and retained-debt admission share the identical closed rel
   assert.equal(accessed, false);
 });
 
+test('guarded Ignition sync preflight is loaded fresh and requires no runtime refresh', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/battle-bridge-ignition-sync-preflight.mjs',
+    'scripts/battle-bridge-ignition-sync-preflight.test.mjs',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.equal(plan.noRuntimePathCount, 2);
+  assert.deepEqual(plan.targetIds, []);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+test('maintenance custody store changes refresh Sovereign Commander instead of fail-closing as unclassified', () => {
+  const source = 'scripts/sovereign-maintenance-custody-store-v1.mjs';
+  const plan = classifyPostSyncRefresh([source, source.replace('.mjs', '.test.mjs')]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+  assert.equal(plan.sovereignRelayRefreshRequired, false);
+});
+
+test('native installer package source is not mistaken for a live runtime', () => {
+  const nativeSource = [
+    'scripts/windows/SovereignFixedRuntimeHostV1.cs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/Program.cs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/Stephanos.CanonicalMailboxNativeEvidenceHost.csproj',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/packages.lock.json',
+  ];
+  const native = classifyPostSyncRefresh(nativeSource);
+  assert.equal(native.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.equal(native.noRuntimePathCount, nativeSource.length);
+  assert.equal(native.unknownPathCount, 0);
+  assert.equal(native.automaticExecutionAllowed, true);
+  assert.deepEqual(native.targetIds, []);
+  // A new installed native host or unrelated C# path still requires explicit review.
+  for (const unknown of [
+    'scripts/windows/SovereignFixedRuntimeHostV2.cs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHostV2/Program.cs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHostProxy/Program.cs',
+  ]) {
+    const refused = classifyPostSyncRefresh([...nativeSource, unknown]);
+    assert.equal(refused.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+    assert.deepEqual(refused.internal.unknownPaths, [unknown]);
+  }
+});
+
+test('offline OpenClaw specialist review source refreshes backend and worker but not gateway', () => {
+  const model = 'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.mjs';
+  const safe = classifyPostSyncRefresh([
+    model, 'scripts/windows/SovereignFixedRuntimeHostV1.cs', 'stephanos-ui/src/App.jsx',
+  ]);
+  assert.equal(safe.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(safe.unknownPathCount, 0);
+  assert.equal(safe.openClawPathCount, 0);
+  assert.equal(safe.automaticExecutionAllowed, true);
+  assert.ok(safe.targetIds.includes(POST_SYNC_REFRESH_TARGETS.UI_4173));
+  assert.ok(safe.targetIds.includes(POST_SYNC_REFRESH_TARGETS.BACKEND_8787));
+  assert.ok(safe.targetIds.includes(POST_SYNC_REFRESH_TARGETS.MISSION_WORKER));
+  // Actual OpenClaw gateway/plugin source remains approval-gated.
+  const gateway = classifyPostSyncRefresh([model, 'integrations/openclaw/stephanos-ignite-command/index.mjs']);
+  assert.equal(gateway.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.APPROVAL_REQUIRED_OPENCLAW);
+  assert.equal(gateway.openClawPathCount, 1);
+  assert.equal(gateway.automaticExecutionAllowed, true);
+});
+
 test('only the inspected offline installer package preparer is exempt from runtime refresh', async () => {
   const source = 'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs';
   const paths = [source, source.replace('.mjs', '.test.mjs'),
@@ -590,6 +655,54 @@ test('complete mailbox ledger and guardian-chain repair range has no unclassifie
   assert.equal(plan.automaticExecutionAllowed, true);
 });
 
+test('merged #3302 saturated-mailbox foundation has no unclassified uninstalled source', () => {
+  const changedPaths = [
+    'docs/architecture/canonical-mailbox-saturated-control-v1.md',
+    'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
+    'scripts/canonical-mailbox-execution-ledger-v1.mjs',
+    'scripts/canonical-mailbox-rotation-drain-inputs-v2.test.mjs',
+    'scripts/canonical-mailbox-rotation-transaction-v2.mjs',
+    'scripts/canonical-mailbox-rotation-transaction-v2.test.mjs',
+    'scripts/sovereign-commander-native-inspect.test.mjs',
+    'shared/agents/canonicalMailboxNativeEvidenceCodecV2.mjs',
+    'shared/agents/canonicalMailboxNativeEvidenceCodecV2.test.mjs',
+    'shared/agents/canonicalMailboxNativeEvidenceEnrollmentV2.mjs',
+    'shared/agents/canonicalMailboxNativeEvidenceVerifierV2.mjs',
+    'shared/agents/canonicalMailboxNativeEvidenceVerifierV2.test.mjs',
+    'shared/agents/canonicalMailboxRotationOwnerControlGitHubV2.mjs',
+    'shared/agents/canonicalMailboxRotationOwnerControlGitHubV2.test.mjs',
+    'shared/agents/canonicalMailboxRotationOwnerControlV2.mjs',
+    'shared/agents/canonicalMailboxRotationOwnerControlV2.test.mjs',
+    'shared/agents/canonicalMailboxRotationPublicDrainInputsV2.test.mjs',
+    'shared/agents/canonicalMailboxSaturatedPhaseModelV2.mjs',
+    'shared/agents/canonicalMailboxSaturatedPhaseModelV2.test.mjs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidence/CanonicalMailboxNativeEvidenceProducer.cs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidence/README.md',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidence/Stephanos.CanonicalMailboxNativeEvidence.csproj',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidence/THIRD_PARTY_NOTICES.txt',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidence/packages.lock.json',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidence/tests/NativeEvidenceInteropFixture.cs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidence/tests/native-producer.test.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+  assert.ok(plan.internal.noRuntimePaths.includes('src/windows/Stephanos.CanonicalMailboxNativeEvidence/CanonicalMailboxNativeEvidenceProducer.cs'));
+  assert.ok(plan.internal.noRuntimePaths.includes('src/windows/Stephanos.CanonicalMailboxNativeEvidence/Stephanos.CanonicalMailboxNativeEvidence.csproj'));
+  assert.ok(plan.internal.noRuntimePaths.includes('src/windows/Stephanos.CanonicalMailboxNativeEvidence/packages.lock.json'));
+  assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.BACKEND_8787));
+  assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.MISSION_WORKER));
+  assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD));
+  assert.deepEqual(plan.internal.unknownPaths, []);
+});
+
+test('mailbox native source-only allowance stays bounded to the exact project prefix', () => {
+  const neighbor = classifyPostSyncRefresh(['src/windows/Stephanos.CanonicalMailboxNativeEvidenceV3/Producer.cs']);
+  assert.equal(neighbor.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+  assert.deepEqual(neighbor.internal.unknownPaths, ['src/windows/Stephanos.CanonicalMailboxNativeEvidenceV3/Producer.cs']);
+});
+
 test('mailbox runtime changes require a fresh mailbox process before natural reload proof', async () => {
   const calls = [];
   const result = await executePostSyncRefreshPlan({
@@ -826,6 +939,98 @@ test('merged controller-lane status estate is fully classified and refreshable',
   assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER));
 });
 
+test('failed Relay witness survives projection without satisfying required Relay proof', () => {
+  const beforeHead = 'a'.repeat(40), afterHead = 'b'.repeat(40);
+  const observation = {
+    schemaVersion: 'stephanos.post-sync-sovereign-relay-observation.v1',
+    watchdogSucceeded: true,
+    healthy: false,
+    sourceHead: afterHead,
+    sourceHeadMatchesLive: true,
+    processCount: 0,
+    heartbeatAgeSeconds: 3,
+    blocker: 'SOVEREIGN_RELAY_STATUS_MISSING',
+  };
+  const projection = buildPostSyncRefreshProjection({
+    ok: false,
+    classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
+    blocker: 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN',
+    exactHeadProofOk: false,
+    plan: {
+      classification: POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY,
+      targetIds: [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER],
+      changedPathCount: 1,
+      noRuntimePathCount: 0,
+      openClawPathCount: 0,
+      pluginHostActivationRequired: false,
+      sovereignRelayRefreshRequired: true,
+      unknownPathCount: 0,
+      unsafePathCount: 0,
+    },
+    results: [{
+      targetId: POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER,
+      ok: false,
+      exactHeadProofOk: false,
+      sourceHead: afterHead,
+      blocker: 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN',
+      sovereignRelayObservation: observation,
+    }],
+  }, { beforeHead, afterHead });
+  const row = projection.resultTargets[0];
+  assert.equal(row.ok, false);
+  assert.equal(row.exactHeadProofOk, false);
+  assert.deepEqual(row.sovereignRelayObservation, observation);
+  assert.equal(Object.hasOwn(row, 'sovereignRelayProof'), false);
+});
+
+test('Sovereign Ignition diagnosis and persistent repair are exact Commander runtime paths', () => {
+  const runtimePaths = [
+    'scripts/sovereign-commander-ignition-diagnosis.mjs',
+    'scripts/sovereign-commander-persistent-runtime-repair.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(runtimePaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.noRuntimePathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+
+  for (const unknown of [
+    'scripts/sovereign-commander-ignition-diagnosis-v2.mjs',
+    'scripts/sovereign-commander-persistent-runtime-repair-v2.mjs',
+  ]) {
+    const blocked = classifyPostSyncRefresh([unknown]);
+    assert.equal(blocked.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+    assert.deepEqual(blocked.internal.unknownPaths, [unknown]);
+    assert.equal(blocked.automaticExecutionAllowed, false);
+  }
+});
+
+test('qualified Goal Builder maintenance child is exact Commander runtime and the merged repair range is fully classified', () => {
+  const runtime = 'scripts/sovereign-commander-goal-builder-repair.mjs';
+  const single = classifyPostSyncRefresh([runtime]);
+  assert.equal(single.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(single.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+  assert.equal(single.unknownPathCount, 0);
+  assert.equal(single.automaticExecutionAllowed, true);
+
+  const mergedRange = classifyPostSyncRefresh([
+    runtime,
+    'scripts/sovereign-commander-goal-builder-repair.test.mjs',
+    'scripts/sovereign-commander-http.mjs',
+    'shared/agents/sovereignCommanderHttp.test.mjs',
+  ]);
+  assert.equal(mergedRange.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(mergedRange.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+  assert.equal(mergedRange.noRuntimePathCount, 2);
+  assert.equal(mergedRange.unknownPathCount, 0);
+  assert.equal(mergedRange.automaticExecutionAllowed, true);
+
+  const unknown = classifyPostSyncRefresh(['scripts/sovereign-commander-goal-builder-repair-v2.mjs']);
+  assert.equal(unknown.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+  assert.deepEqual(unknown.internal.unknownPaths, ['scripts/sovereign-commander-goal-builder-repair-v2.mjs']);
+});
+
 test('Sovereign Commander runtime changes execute only the dedicated fixed refresh target', async () => {
   const calls = [];
   const result = await executePostSyncRefreshPlan({
@@ -892,6 +1097,18 @@ test('VR Atlas changes refresh UI then require exact-head browser proof', async 
   ]);
 });
 
+
+test('retained maintenance owner observer changes restart only Sovereign Commander', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/sovereign-maintenance-owner-observation-v2.mjs',
+    'scripts/sovereign-maintenance-owner-observation-v2.test.mjs',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+  assert.equal(plan.noRuntimePathCount, 1);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
 
 test('Sovereign visibility snapshot changes restart the Sovereign runtime', () => {
   const plan = classifyPostSyncRefresh(['scripts/sovereign-commander-visibility-snapshot.mjs']);
@@ -1067,6 +1284,87 @@ test('ordinary Commander script refreshes remain independent of desktop-plugin r
   });
   assert.equal(result.ok, true);
   assert.equal(result.plan.pluginHostActivationRequired, false);
+});
+
+test('merged #3362 fixed-runtime repair range has no unclassified installer-only source', () => {
+  const changedPaths = [
+    'docs/architecture/sovereign-fixed-runtime-job-custody-v1.md',
+    'scripts/battle-bridge-post-sync-refresh.mjs',
+    'scripts/battle-bridge-post-sync-refresh.test.mjs',
+    'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs',
+    'scripts/sovereign-fixed-runtime-install-source-package-v1.test.mjs',
+    'scripts/sovereign-fixed-runtime-installer-candidate-v1.mjs',
+    'scripts/sovereign-fixed-runtime-installer-v1.test.mjs',
+    'scripts/windows/SovereignFixedRuntimeIdentityV1.cs',
+    'scripts/windows/install-sovereign-fixed-runtime-v1.ps1',
+    'shared/agents/sovereignFixedRuntimeSourceClosureV1.json',
+  ];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(plan.changedPathCount, 10);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+  assert.ok(plan.internal.noRuntimePaths.includes('scripts/sovereign-fixed-runtime-installer-candidate-v1.mjs'));
+  assert.ok(plan.internal.noRuntimePaths.includes('scripts/windows/SovereignFixedRuntimeIdentityV1.cs'));
+  assert.ok(plan.internal.noRuntimePaths.includes('scripts/windows/install-sovereign-fixed-runtime-v1.ps1'));
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
+});
+
+test('installer-only no-runtime allowance stays exact and rejects neighboring Windows/runtime source', () => {
+  for (const path of [
+    'scripts/sovereign-fixed-runtime-installer-candidate-v2.mjs',
+    'scripts/windows/SovereignFixedRuntimeIdentityV2.cs',
+    'scripts/windows/install-sovereign-fixed-runtime-v2.ps1',
+  ]) {
+    const plan = classifyPostSyncRefresh([path]);
+    assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH, path);
+    assert.deepEqual(plan.internal.unknownPaths, [path], path);
+  }
+});
+
+test('Seed Forge invocation worker is exact no-runtime source and #3374 range is fully classified', () => {
+  const exact = classifyPostSyncRefresh(['scripts/seed-canopy-parallel-builder.mjs']);
+  assert.equal(exact.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.deepEqual(exact.internal.noRuntimePaths, ['scripts/seed-canopy-parallel-builder.mjs']);
+  assert.equal(exact.unknownPathCount, 0);
+  assert.deepEqual(exact.targetIds, []);
+
+  const mergedRange = classifyPostSyncRefresh([
+    'scripts/seed-canopy-parallel-builder.mjs',
+    'stephanos-server/services/flywheelSeedGrowthConveyor.test.js',
+  ]);
+  assert.equal(mergedRange.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.equal(mergedRange.changedPathCount, 2);
+  assert.equal(mergedRange.noRuntimePathCount, 2);
+  assert.equal(mergedRange.unknownPathCount, 0);
+  assert.deepEqual(mergedRange.targetIds, []);
+
+  const neighbor = classifyPostSyncRefresh(['scripts/seed-canopy-parallel-builder-v2.mjs']);
+  assert.equal(neighbor.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+});
+
+test('attended fixed-runtime commissioning helpers are startup-only and create no post-sync target', async () => {
+  for (const path of [
+    'scripts/sovereign-fixed-runtime-install-current-v1.mjs',
+  ]) {
+    const calls = [];
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths: [path],
+      adapters: Object.fromEntries([
+        'refreshUi', 'restartBackend', 'restartMissionWorker',
+        'restartGitHubMailbox', 'refreshSovereignCommander', 'confirmNaturalReload',
+      ].map(name => [name, async () => { calls.push(name); return pass(); }])),
+    });
+    assert.equal(result.ok, true, path);
+    assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED, path);
+    assert.deepEqual(result.plan.internal.noRuntimePaths, [path], path);
+    assert.deepEqual(result.plan.targetIds, [], path);
+    assert.deepEqual(calls, [], path);
+  }
 });
 
 test('invocation-loaded ignition sources do not introduce a post-sync service launch', async () => {

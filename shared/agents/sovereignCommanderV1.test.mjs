@@ -353,6 +353,7 @@ test('controller activity publication is fixed, canonical and payload-bound', ()
 test('capability pack 2 maps high-value Battle Bridge actions to fixed source-controlled executables', async () => {
   const cases = [
     ['battle-bridge-observe', /battle-bridge-observation\.mjs$/i, 10000],
+    ['diagnose-ignition', /sovereign-commander-ignition-diagnosis\.mjs$/i, 20000],
     ['meter-status', /sovereign-meter-status\.mjs$/i, 10000],
     ['controller-lane-status', /sovereign-controller-lane-status\.mjs$/i, 20000],
     ['visibility-snapshot', /sovereign-commander-visibility-snapshot\.mjs$/i, 30000],
@@ -370,7 +371,7 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     ['repair-openclaw-stack', /repair-openclaw-full-stack\.ps1$/i, 195000],
     ['repair-openclaw-standalone', /repair-openclaw-agent\.ps1$/i, 180000, 'Standalone'],
     ['repair-openclaw-local', /repair-openclaw-agent\.ps1$/i, 180000, 'Local'],
-    ['repair-goal-builder-flow', /sovereign-commander-goal-builder-repair\.mjs$/i, 145000],
+    ['repair-goal-builder-flow', /sovereign-commander-goal-builder-repair\.mjs$/i, 195000],
     ['repair-stephanos', /sovereign-commander-stephanos-repair\.mjs$/i, 220000],
     ['prove-vr-atlas-runtime', /sovereign-commander-ui-runtime-proof\.mjs$/i, 60000],
     ['prove-flywheel-runtime', /sovereign-commander-flywheel-runtime-proof\.mjs$/i, 60000],

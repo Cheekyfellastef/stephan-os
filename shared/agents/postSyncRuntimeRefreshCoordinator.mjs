@@ -1,6 +1,15 @@
-import { POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA, projectPostSyncSovereignRelayProof }
-  from '../../scripts/battle-bridge-github-sync-policy.mjs';
-export { POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA, projectPostSyncSovereignRelayProof };
+import {
+  POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
+  POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
+  projectPostSyncSovereignRelayObservation,
+  projectPostSyncSovereignRelayProof,
+} from '../../scripts/battle-bridge-github-sync-policy.mjs';
+export {
+  POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
+  POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
+  projectPostSyncSovereignRelayObservation,
+  projectPostSyncSovereignRelayProof,
+};
 
 export const POST_SYNC_REFRESH_SCHEMA = 'stephanos.post-sync-runtime-refresh.v1';
 
@@ -64,12 +73,17 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
   'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
   'scripts/battle-bridge-observation.mjs',
   'scripts/sovereign-commander-http.mjs',
+  'scripts/sovereign-maintenance-custody-store-v1.mjs',
+  'scripts/sovereign-maintenance-owner-observation-v2.mjs',
   'scripts/sovereign-fixed-runtime-parent-v1.mjs',
   'scripts/sovereign-commander-ignition-autoheal.mjs',
   'scripts/sovereign-commander-mcp.mjs',
   'scripts/sovereign-controller-lane-status.mjs',
   'scripts/sovereign-commander-visibility-snapshot.mjs',
   'scripts/sovereign-commander-fleet-goal-supervisor.mjs',
+  'scripts/sovereign-commander-goal-builder-repair.mjs',
+  'scripts/sovereign-commander-ignition-diagnosis.mjs',
+  'scripts/sovereign-commander-persistent-runtime-repair.mjs',
   'scripts/sovereign-commander-ui-4173-repair.mjs',
   'scripts/sovereign-commander-ui-runtime-proof.mjs',
   'scripts/windows/configure-sovereign-commander-tailscale.ps1',
@@ -82,6 +96,7 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
 
 const NATURAL_EXACT = new Set([
   'scripts/canonical-mailbox-execution-ledger-v1.mjs',
+  'scripts/canonical-mailbox-rotation-transaction-v2.mjs',
   'scripts/canonical-mailbox-rotation-host-v1.mjs',
   'scripts/canonical-mailbox-rotation-sync-preflight-v1.mjs',
   'scripts/canonical-mailbox-action-evidence-v2.mjs',
@@ -150,6 +165,9 @@ const NATURAL_PREFIXES = Object.freeze([
 
 const OPENCLAW_APPROVAL_EXEMPT_EXACT = new Set([
   'shared/agents/openClawProviderPoolQualificationV1.mjs',
+  // The specialist review model is imported by backend-side protected merge
+  // adapters; it is not the running OpenClaw gateway or its plugin bundle.
+  'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.mjs',
   'scripts/windows/repair-openclaw-full-stack.ps1',
 ]);
 
@@ -159,12 +177,30 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
   '.github/',
   'docs/',
   'tests/',
+  'src/windows/Stephanos.CanonicalMailboxNativeEvidence/',
+  // This host is an offline native package, not a live Windows service.
+  // Distinct sibling versions deliberately remain unclassified and blocked.
+  'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/',
   'VR-Research-Lab/docs/',
 ]);
 
 const NO_RUNTIME_EXACT = new Set([
   // Manual offline source-package construction; no runtime root imports it.
   'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs',
+  'scripts/sovereign-fixed-runtime-install-current-v1.mjs',
+  // Seed Forge worker is an on-demand child loaded afresh by the existing
+  // bounded supervisor for each exact approved task. Source adoption does not
+  // require restarting a long-running runtime.
+  'scripts/seed-canopy-parallel-builder.mjs',
+  // Exact installer construction/native sources are consumed only by the
+  // attended Ignition installer. Source adoption must not start/restart a
+  // long-running service; the later exact-head installation/boot gate owns them.
+  'scripts/sovereign-fixed-runtime-installer-candidate-v1.mjs',
+  'scripts/windows/SovereignFixedRuntimeIdentityV1.cs',
+  // Protected host C# source is compiled only by the attended installer. A
+  // source change never activates or qualifies the installed native binary.
+  'scripts/windows/SovereignFixedRuntimeHostV1.cs',
+  'scripts/windows/install-sovereign-fixed-runtime-v1.ps1',
   'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',
   'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs',
   'scripts/canonical-mailbox-rollover-github-adapter.mjs',
@@ -194,6 +230,7 @@ const NO_RUNTIME_EXACT = new Set([
   'scripts/ignite-stephanos-local.mjs',
   'scripts/ignition-cockpit-model.mjs',
   'scripts/run-battle-bridge-ignition.mjs',
+  'scripts/battle-bridge-ignition-sync-preflight.mjs',
   'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
 ]);
 
@@ -736,6 +773,7 @@ export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', a
     safeRefreshesCompleted: result.safeRefreshesCompleted === true,
     resultTargets: Array.isArray(result.results) ? result.results.map((entry) => {
       const relayProof = projectPostSyncSovereignRelayProof(entry.sovereignRelayProof, afterHead);
+      const relayObservation = projectPostSyncSovereignRelayObservation(entry.sovereignRelayObservation, afterHead);
       const required = entry.targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER && plan.sovereignRelayRefreshRequired === true;
       const qualified = !required || postSyncRefreshTargetResultPass(entry, { targetId: entry.targetId, plan, expectedHead: afterHead });
       return {
@@ -745,6 +783,7 @@ export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', a
         sourceHead: validHead(entry.sourceHead) ? String(entry.sourceHead).toLowerCase() : '',
         blocker: !qualified && entry.ok === true ? 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN' : String(entry.blocker || ''),
         ...(relayProof ? { sovereignRelayProof: relayProof } : {}),
+        ...(relayObservation ? { sovereignRelayObservation: relayObservation } : {}),
       };
     }) : [],
     arbitraryShellAllowed: false,

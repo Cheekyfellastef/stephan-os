@@ -534,6 +534,41 @@ test('goal discovery failure blocks otherwise converged completion', async () =>
   assert.equal(result.finalVerdict, 'SYNC_AND_REFRESH_GOAL_DISCOVERY_BLOCKED');
 });
 
+test('in-flight refresh contention is observed to completion and then reconverges instead of blocking Ignition', async () => {
+  let pendingReads = 0;
+  let syncCalls = 0;
+  let refreshCalls = 0;
+  let clock = 0;
+  const result = await runBattleBridgeSyncAndRefresh({
+    paths,
+    expectedPaths: paths,
+    ...nonWindowsRepairArgs(),
+    nowMs: () => clock,
+    sleepFn: async ms => { clock += ms; },
+    pendingReader: async () => {
+      pendingReads += 1;
+      if (pendingReads < 3) return { ok: true, spans: [{ beforeHead: A, afterHead: B }], requiredTargetIds: [], completion: null };
+      return null;
+    },
+    adapter: {
+      runSync() {
+        syncCalls += 1;
+        return { ok: true, result: syncCalls === 1 ? updated(A, B) : noChange(B) };
+      },
+      runRefresh() {
+        refreshCalls += 1;
+        return { ok: true, result: { ok: false, blocker: 'POST_SYNC_REFRESH_ALREADY_RUNNING' } };
+      },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.sourceHead, B);
+  assert.equal(refreshCalls, 1);
+  assert.equal(syncCalls, 2);
+  assert.equal(pendingReads, 3);
+  assert.equal(result.pendingRefreshObserved, true);
+});
+
 test('refresh blocker stops without starting another sync cycle', async () => {
   let syncCalls = 0;
   const result = await runBattleBridgeSyncAndRefresh({

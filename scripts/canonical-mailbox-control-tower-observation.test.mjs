@@ -80,6 +80,29 @@ test('legacy reserved and terminal entries stay ambiguous and cannot be retrofit
   assert.equal(ledger.read(m.command.requestId).phase, 'RESERVED');
 });
 
+test('proven expired legacy reservation can retire only as terminal BLOCKED', t => {
+  const { ledger } = setup(t), m = material(99);
+  ledger.reserve(m.command);
+  assert.throws(() => ledger.retireLegacyControlTowerReservation({
+    request: m.command, nowMs: Date.parse(m.command.expiresAtUtc) - 1,
+  }), /RETIREMENT_INVALID/);
+  assert.throws(() => ledger.retireLegacyControlTowerReservation({
+    request: { ...m.command, artifactSha256: 'd'.repeat(64) },
+    nowMs: Date.parse(m.command.expiresAtUtc) + 1,
+  }), /BINDING_UNPROVEN/);
+  const retired = ledger.retireLegacyControlTowerReservation({
+    request: m.command, nowMs: Date.parse(m.command.expiresAtUtc) + 1,
+  });
+  assert.equal(retired.phase, 'TERMINAL');
+  assert.equal(retired.terminalState, 'BLOCKED');
+  assert.equal(retired.controlTowerObservation, undefined);
+  const observed = ledger.discoverControlTower({ nowMs: Date.parse(m.command.expiresAtUtc) + 1 })
+    .latestBuildRequestObservation;
+  assert.equal(observed.detailState, 'LEGACY_DETAIL_UNAVAILABLE');
+  assert.equal(observed.ledgerPhase, 'TERMINAL');
+  assert.equal(observed.terminalState, 'BLOCKED');
+});
+
 test('observation terminal hash binds only the closed status and never becomes terminal wake proof', t => {
   const { root, ledger } = setup(t), m = material(101, 'OBSERVE_CONTROL_SYSTEM'); reserve(ledger, m);
   const status = statusProject({ schemaVersion: 'stephanos.sovereign-control-system-inspection.v1',

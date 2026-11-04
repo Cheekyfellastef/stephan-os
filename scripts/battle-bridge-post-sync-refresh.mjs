@@ -17,8 +17,10 @@ import {
   classifyPostSyncRefresh,
   executePostSyncRefreshPlan,
   parseGitChangedPathStatus,
+  POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
   POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
   postSyncRefreshTargetResultPass,
+  projectPostSyncSovereignRelayObservation,
   projectPostSyncSovereignRelayProof,
   projectPostSyncTargetFailureHistory,
   reducePostSyncTargetFailureHistory,
@@ -35,6 +37,7 @@ import { refreshStephanosUi4173 } from './refresh-stephanos-ui-4173.mjs';
 export const POST_SYNC_REFRESH_RUNTIME_SCHEMA = 'stephanos.post-sync-runtime-refresh-runtime.v1';
 export const POST_SYNC_REFRESH_RESULT_MARKER = 'POST_SYNC_REFRESH_RESULT=';
 export const POST_SYNC_REFRESH_LOCK_STALE_AFTER_MS = 15 * 60 * 1000;
+export const POST_SYNC_REFRESH_LOCK_BOOT_SKEW_MS = 5_000;
 export const MISSION_WORKER_POST_SYNC_RESTART_BUDGET_MS = 90_000;
 export const MISSION_WORKER_POST_SYNC_CHILD_EXIT_RESERVE_MS = 10_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
@@ -261,9 +264,33 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         && payload.pcRestartAllowed === false
         && payload.visiblePowerShellRequired === false
       );
+      // The watchdog also checks VR governor, Core and fleet-supervisor health.
+      // Their closed exit codes 3/4/5 must not invalidate an independently
+      // healthy exact-head Relay. Exit 2 is Commander-health failure and remains
+      // ineligible because receiptValid requires daemonHealthy/healthyAfter.
+      const relayWatchdogReceiptSucceeded = Boolean(
+        receiptValid
+        && Number.isInteger(result.status)
+        && [0, 3, 4, 5].includes(result.status)
+      );
+      const relayObservationInput = {
+        schemaVersion: POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
+        watchdogSucceeded: relayWatchdogReceiptSucceeded,
+        healthy: payload?.relayDaemonHealthy === true,
+        sourceHead: text(payload?.relayDaemonSourceHead).toLowerCase(),
+        sourceHeadMatchesLive: payload?.relayDaemonSourceHeadMatchesLive === true,
+        processCount: Number.isSafeInteger(Number(payload?.relayDaemonProcessCount))
+          ? Number(payload.relayDaemonProcessCount) : 0,
+        heartbeatAgeSeconds: payload?.relayDaemonHeartbeatAgeSeconds === null
+          || payload?.relayDaemonHeartbeatAgeSeconds === undefined
+          ? null : Number(payload.relayDaemonHeartbeatAgeSeconds),
+        blocker: text(payload?.relayDaemonBlocker),
+      };
+      const sovereignRelayObservation = projectPostSyncSovereignRelayObservation(
+        relayObservationInput, text(afterHead).toLowerCase());
       const sovereignRelayProof = projectPostSyncSovereignRelayProof({
         schemaVersion: POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
-        watchdogSucceeded: result.ok,
+        watchdogSucceeded: relayWatchdogReceiptSucceeded,
         healthy: payload?.relayDaemonHealthy,
         sourceHead: payload?.relayDaemonSourceHead,
         sourceHeadMatchesLive: payload?.relayDaemonSourceHeadMatchesLive,
@@ -285,6 +312,7 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         exactHeadProofOk,
         freshProcessLoaded: receiptValid && relayProofOk,
         sovereignRelayProof,
+        sovereignRelayObservation,
         capabilityVersion: capabilityVersionAfter,
         requiredCapabilityVersion,
         watchdogExitStatus: result.status,
@@ -338,7 +366,10 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
   });
 }
 
-async function acquireLock(workspaceRoot, now, { aliveFn = processIsAlive } = {}) {
+async function acquireLock(workspaceRoot, now, {
+  aliveFn = processIsAlive,
+  bootStartedAtMs = now.getTime() - (os.uptime() * 1000),
+} = {}) {
   const lockPath = path.resolve(workspaceRoot, 'locks', 'post-sync-runtime-refresh.lock');
   await mkdir(path.dirname(lockPath), { recursive: true });
   const attempt = async () => {
@@ -359,9 +390,16 @@ async function acquireLock(workspaceRoot, now, { aliveFn = processIsAlive } = {}
     } catch {
       try { ageMs = now.getTime() - (await stat(lockPath)).mtimeMs; } catch {}
     }
-    if (Number.isFinite(ageMs) && ageMs > POST_SYNC_REFRESH_LOCK_STALE_AFTER_MS && !aliveFn(Number(parsed?.pid))) {
+    const acquiredAtMs = Number.isFinite(Date.parse(parsed?.acquiredAtUtc))
+      ? Date.parse(parsed.acquiredAtUtc)
+      : (Number.isFinite(ageMs) ? now.getTime() - ageMs : NaN);
+    const predatesCurrentBoot = Number.isFinite(acquiredAtMs)
+      && Number.isFinite(bootStartedAtMs)
+      && acquiredAtMs + POST_SYNC_REFRESH_LOCK_BOOT_SKEW_MS < bootStartedAtMs;
+    if (predatesCurrentBoot
+        || (Number.isFinite(ageMs) && ageMs > POST_SYNC_REFRESH_LOCK_STALE_AFTER_MS && !aliveFn(Number(parsed?.pid)))) {
       await rm(lockPath, { force: true });
-      try { return { ...(await attempt()), recoveredStaleLock: true }; } catch {}
+      try { return { ...(await attempt()), recoveredStaleLock: true, predatesCurrentBoot }; } catch {}
     }
     return { ok: false, blocker: 'POST_SYNC_REFRESH_ALREADY_RUNNING' };
   }
@@ -446,6 +484,7 @@ export async function runBattleBridgePostSyncRefresh({
   paths = resolveCanonicalPostSyncRefreshPaths({ env }),
   expectedPaths = resolveCanonicalPostSyncRefreshPaths({ env }),
   adapter = createFixedPostSyncRuntimeAdapter(),
+  bootStartedAtMs = now.getTime() - (os.uptime() * 1000),
 } = {}) {
   let normalizedBefore = text(beforeHead).toLowerCase();
   const normalizedAfter = text(afterHead).toLowerCase();
@@ -456,7 +495,7 @@ export async function runBattleBridgePostSyncRefresh({
     return Object.freeze({ ok: false, blocker: 'POST_SYNC_REFRESH_NON_CANONICAL_PATH', exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
   }
   await mkdir(paths.workspaceRoot, { recursive: true });
-  const lock = await acquireLock(paths.workspaceRoot, now);
+  const lock = await acquireLock(paths.workspaceRoot, now, { bootStartedAtMs });
   if (!lock.ok) return Object.freeze({ ok: false, blocker: lock.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
   try {
     const inspection = adapter.inspectHeads({ beforeHead: normalizedBefore, afterHead: normalizedAfter, repoRoot: paths.repoRoot });

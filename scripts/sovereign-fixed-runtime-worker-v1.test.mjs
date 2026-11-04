@@ -47,7 +47,7 @@ for(const mode of ['success','prechain-contract-failed','missing-proposal','canc
  }
  const head=run('git.exe',['rev-parse','HEAD'],{cwd:repoRoot}).stdout.trim();
  const options={root:join(parent,'state'),snapshotRoot:join(parent,'snapshots'),sharedWorkspaceRoot:workspace,repoRoot,queueRoot};
- const missionId='native-source-fixture';
+ const missionId='critical-1557-native-source-fixture';
  await store.createMissionRecord({missionId,missionKind:'implementation',operatorIntent:'Implement bounded source fixture',intendedOutcome:'Pass focused evidence',repository:'Cheekyfellastef/stephan-os',repositoryRoot:repoRoot,worktreePath:repoRoot,branch:'openclaw/native-source-fixture',allowedFiles:['shared/agents/example.mjs'],requiredTests:['node --test focused.test.mjs'],requiredEvidence:['focused test output']},options);
  const ready=await store.appendMissionEvent(missionId,{eventId:'worktree',eventType:'WORKTREE_READY',worktreePath:repoRoot,clean:true,receipt:proof('isolated worktree','worktree')},options);
  const draft={schemaVersion:'stephanos.mission-worker-action-grant.v1',grantId:'fixture-grant',controllerId:'durable-flywheel-controller',sourceRevision:head,missionId,missionRevision:ready.state.revision,currentPhase:ready.state.currentPhase,adapter:'foundry-forge',workerId:FORGE_LIFEBOAT_WORKER_ID,capacityRoute:MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,capacityReceiptId:'fixture-capacity',capacityProofRefs:['proof/fixture-capacity.json'],repository:'Cheekyfellastef/stephan-os',issueNumber:1557,prNumber:null,branch:ready.state.git.branch,headSha:null,boundedActionCount:1,mergeAuthority:false,leaseSeizureAllowed:false};
@@ -103,7 +103,17 @@ for(const mode of ['success','prechain-contract-failed','missing-proposal','canc
   consumeFixedRuntimeCompletionV1:value=>{const yes=brands.has(value);brands.delete(value);return yes?Object.freeze({executionCustodyReleased:true,operationDisposition:transportCancelled?'CANCELLED':mode.startsWith('transport-unproven-')?'UNPROVEN':mode.startsWith('transport-missing-')?undefined:mode.startsWith('transport-mismatch-')?(cleanFailure?'SUCCEEDED':'FAILED'):cleanFailure?'FAILED':'SUCCEEDED'}):null;},consumeFixedRuntimePrelaunchExclusionV1:value=>{const yes=exclusions.has(value);exclusions.delete(value);return yes;}});
  vm.runInContext(body+'\nglobalThis.runFixed=processFixedSourceTaskInWorker;',context);
  if(mode==='prior-receipt')await consumer.beginMissionWorkerExecutionReceiptChain({adapter:'foundry-forge',item,processingPath:join(queueRoot,'foundry-forge','processing',grant.actionId+'.json')},{...options,actionGrant:grant});
- const result=await context.runFixed({...options,actionGrant:grant,signal:invocation.signal,awaitActiveClaimHeartbeat:async()=>mode!=='publication-failed',...(mode==='abort-caller-assert'?{assertResultCustody:()=>{if(nativeReturned)abortInvocation();}}:{})});
+ const runOptions={...options,actionGrant:grant,signal:invocation.signal,awaitActiveClaimHeartbeat:async()=>mode!=='publication-failed',...(mode==='abort-caller-assert'?{assertResultCustody:()=>{if(nativeReturned)abortInvocation();}}:{})};
+ if(mode==='wrong-payload'){
+  await assert.rejects(()=>context.runFixed(runOptions),/MISSION_WORKER_PENDING_CAPACITY_MISSION_CHANGED/);
+  const current=await store.readMissionRecord(missionId,options);
+  assert.equal(attempts,0,'Corrupt pending payload must be refused before native transport');
+  assert.equal(current.state.dispatch.status,'pending');
+  assert.equal(fs.existsSync(join(queueRoot,'foundry-forge','pending',grant.actionId+'.json')),true);
+  assert.equal(fs.existsSync(join(queueRoot,'foundry-forge','processing',grant.actionId+'.json')),false);
+  return;
+ }
+ const result=await context.runFixed(runOptions);
  const current=await store.readMissionRecord(missionId,options);
  if(invocationCase){
   assert.equal(invocationAborts,1,'The actual external invocation must abort at the selected boundary');

@@ -236,13 +236,13 @@ adapter at `scripts/sovereign-fixed-runtime-install-source-package-v1.mjs`.
 It continues the original fixed-runtime implementation under Goal #2961 and
 merged PR #3303. It creates no installer transport, service, source owner,
 credential reader, native action or approval gate. No runtime root imports this
-tool; the canonical runtime closure stays at its existing 256-file limit.
+tool; the canonical runtime closure stays at its existing 258-file limit.
 
 The preparer consumes bounded JSON on stdin and emits deterministic JSON on
 stdout. It neither fetches data nor reads caller-selected paths. A separately
 authenticated source collector supplies the complete raw Git commit object,
 the minimal raw tree objects needed to prove every closed source path, and the
-256 exact blob records. Git object IDs include their object type and length.
+258 exact blob records. Git object IDs include their object type and length.
 The preparer checks the commit's tree header, every tree/blob hash, canonical
 tree modes and ordering, absence of duplicate or Windows-case-aliased entries,
 exact path membership, strict UTF-8 source, and the unchanged local closure

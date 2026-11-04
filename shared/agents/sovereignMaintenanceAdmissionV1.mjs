@@ -4,7 +4,7 @@ import {
   FLEET_SUPERVISOR_ACTION, FLEET_SUPERVISOR_SCHEMA, FLEET_SUPERVISOR_MARKER,
 } from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 const READ_ONLY_ACTIONS = new Set([
-  'battle-bridge-status', 'battle-bridge-observe', 'meter-status',
+  'battle-bridge-status', 'battle-bridge-observe', 'diagnose-ignition', 'meter-status',
   'controller-lane-status', 'rescue-island-readonly-boundary', 'visibility-snapshot',
   'cpu-pressure-snapshot', 'status-recovery-mesh', 'status-worker-watchdog',
   'status-stephanos-core-daemon',

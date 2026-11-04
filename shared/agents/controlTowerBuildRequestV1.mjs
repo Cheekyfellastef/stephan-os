@@ -63,6 +63,38 @@ export function createControlTowerBuildRequestV1(event, env, mainHead, nowUtc) {
   }) });
 }
 
+export function validateHistoricalControlTowerBuildRequestV1(request, run, sourceHead, nowUtc) {
+  if (!request || typeof request !== 'object' || Array.isArray(request)
+    || Object.keys(request).length !== CONTROL_TOWER_BUILD_KEYS.length
+    || !CONTROL_TOWER_BUILD_KEYS.every(k => Object.hasOwn(request, k))
+    || request.schemaVersion !== CONTROL_TOWER_BUILD_SCHEMA
+    || !CONTROL_TOWER_OPERATIONS_V1.includes(request.operation)
+    || request.repository !== CONTROL_TOWER_BUILD_REPOSITORY || request.repositoryId !== 1179385578
+    || request.operatorId !== 267490109 || !positive(request.runId) || request.runAttempt !== 1
+    || request.requestId !== 'control-tower-build-' + request.runId + '-1'
+    || !['admissionGranted', 'mergeAuthority', 'runtimeMutationAuthority', 'leaseSeizureAllowed', 'arbitraryShellAllowed']
+      .every(k => request[k] === false)) return denied('BUILD_REQUEST_SCOPE_INVALID');
+  if (!SHA.test(sourceHead || '') || request.sourceHead !== sourceHead || run?.head_sha !== sourceHead
+    || run.id !== request.runId || run.head_branch !== 'main' || run.run_attempt !== 1
+    || !['workflow_dispatch', 'push'].includes(run.event)
+    || (run.event === 'push' && request.operation !== CONTROL_TOWER_BUILD_OPERATION)
+    || run.status !== 'completed' || run.conclusion !== 'success'
+    || run.path !== CONTROL_TOWER_BUILD_WORKFLOW || run.repository?.full_name !== CONTROL_TOWER_BUILD_REPOSITORY
+    || run.repository?.id !== 1179385578 || run.actor?.login !== 'Cheekyfellastef' || run.actor?.id !== 267490109
+    || run.triggering_actor?.login !== 'Cheekyfellastef' || run.triggering_actor?.id !== 267490109)
+    return denied('BUILD_REQUEST_AUTHENTICATED_RUN_INVALID');
+  if (![request.createdAtUtc, request.expiresAtUtc, run.created_at, run.updated_at, nowUtc].every(utc)
+    || Date.parse(run.updated_at) < Date.parse(run.created_at)
+    || Date.parse(request.createdAtUtc) < Date.parse(run.created_at)
+    || Date.parse(request.createdAtUtc) > Date.parse(run.updated_at) + 5000
+    || Date.parse(request.createdAtUtc) > Date.parse(nowUtc) + 5000
+    || Date.parse(run.updated_at) > Date.parse(nowUtc) + 5000
+    || Date.parse(request.expiresAtUtc) - Date.parse(request.createdAtUtc) !== 600000
+    || Date.parse(request.expiresAtUtc) > Date.parse(nowUtc))
+    return denied('BUILD_REQUEST_HISTORICAL_WINDOW_UNPROVEN');
+  return Object.freeze({ ok: true, blocker: '' });
+}
+
 export function validateControlTowerBuildRequestV1(request, run, mainHead, nowUtc) {
   if (!request || typeof request !== 'object' || Array.isArray(request)
     || Object.keys(request).length !== CONTROL_TOWER_BUILD_KEYS.length
