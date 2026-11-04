@@ -34,6 +34,10 @@ const mockFetch = async (url, args) => {
   const parsed = JSON.parse(args.body);
   assert.equal(parsed.keep_alive, 0);
   assert.equal(parsed.model, 'qwen:14b');
+  assert.equal(parsed.format.type, 'object');
+  assert.equal(parsed.format.additionalProperties, false);
+  assert.deepEqual(parsed.format.required, ['caseId','patchSha256','verdict','findings']);
+  assert.equal(parsed.format.properties.findings.items.additionalProperties, false);
   const match = parsed.prompt.match(/Case: (win-[a-f0-9]{32})\nSHA256: ([a-f0-9]{64})/);
   assert.ok(match);
   const file = parsed.prompt.match(/\+\+\+ b\/(src\/windows\/Case[a-f0-9]{32}\.(?:cs|ps1))/)?.[1];
