@@ -63,7 +63,8 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
   if (git(['symbolic-ref','--quiet','--short','HEAD']).trim() !== branch) {
     throw Error('LOCAL_REVIEW_BRANCH_MISMATCH');
   }
-  const statusLines = git(['status','--porcelain','--untracked-files=normal']).split(/\r?\n/).filter(Boolean);
+  const statusLines = git(['status','--porcelain','--untracked-files=normal'])
+    .split('\n').map(line => line.endsWith('\r') ? line.slice(0, -1) : line).filter(Boolean);
   if (classifyDirt(statusLines).blocksSync) throw Error('DIRTY_REVIEW_CHECKOUT');
   if (git(['rev-parse','--verify',base+'^{commit}']).trim().toLowerCase() !== base) {
     throw Error('BASE_COMMIT_NOT_PROVEN');
