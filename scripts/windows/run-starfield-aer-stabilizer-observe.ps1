@@ -38,27 +38,56 @@ function Require-File([string]$Path, [string]$Label) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "$Label missing: $Path" }
 }
 function Start-StarfieldWithMetaAirLinkIsolation {
-    # Virtual Desktop's implicit Oculus compatibility layer is useful for its own
-    # route, but this launcher is explicitly Meta Air Link. Keep the two stacks
-    # from interposing on the same Starfield process.
-    $previous = [Environment]::GetEnvironmentVariable(
+    param($VisualTelemetry = $null)
+
+    $environmentNames = @(
         $virtualDesktopOculusCompatibilityDisableEnvironment,
-        'Process'
+        'XR_API_LAYER_PATH',
+        'XR_ENABLE_API_LAYERS',
+        'STEPHANOS_VR_TELEMETRY_TRACE_PATH',
+        'STEPHANOS_VR_TELEMETRY_TARGET_EXE',
+        'STEPHANOS_VR_TELEMETRY_LAUNCH_SESSION_ID',
+        'STEPHANOS_VR_TELEMETRY_GAME_ID'
     )
+    $previous = @{}
+    foreach ($name in $environmentNames) {
+        $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    }
     try {
-        [Environment]::SetEnvironmentVariable(
-            $virtualDesktopOculusCompatibilityDisableEnvironment,
-            '1',
-            'Process'
-        )
+        [Environment]::SetEnvironmentVariable($virtualDesktopOculusCompatibilityDisableEnvironment, '1', 'Process')
+        if ($VisualTelemetry) {
+            if ([bool]$VisualTelemetry.capabilities.modifiesFrameData -ne $false) {
+                throw 'VR telemetry layer must remain pass-through.'
+            }
+            $layerDirectory = [string]$VisualTelemetry.layerDirectory
+            $tracePath = [string]$VisualTelemetry.tracePath
+            $targetExecutable = [string]$VisualTelemetry.targetExecutable
+            $launchIdentity = [string]$VisualTelemetry.launchSessionId
+            $gameId = [string]$VisualTelemetry.gameId
+            if (-not (Test-Path -LiteralPath $layerDirectory -PathType Container) -or
+                [string]::IsNullOrWhiteSpace($tracePath) -or
+                $targetExecutable -notmatch '^[A-Za-z0-9._-]{1,160}$' -or
+                $launchIdentity -notmatch '^[A-Za-z0-9._-]{1,160}$' -or
+                $gameId -notmatch '^[A-Za-z0-9._-]{1,120}$') {
+                throw 'VR telemetry child environment contract is invalid.'
+            }
+            $priorLayerPath = [string]$previous['XR_API_LAYER_PATH']
+            $priorLayers = [string]$previous['XR_ENABLE_API_LAYERS']
+            $layerPath = if ($priorLayerPath) { $layerDirectory + ';' + $priorLayerPath } else { $layerDirectory }
+            $enabledLayers = if ($priorLayers) { $priorLayers + ';XR_APILAYER_STEPHANOS_telemetry_v1' } else { 'XR_APILAYER_STEPHANOS_telemetry_v1' }
+            [Environment]::SetEnvironmentVariable('XR_API_LAYER_PATH', $layerPath, 'Process')
+            [Environment]::SetEnvironmentVariable('XR_ENABLE_API_LAYERS', $enabledLayers, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_TRACE_PATH', $tracePath, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_TARGET_EXE', $targetExecutable, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_LAUNCH_SESSION_ID', $launchIdentity, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_GAME_ID', $gameId, 'Process')
+        }
         return Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru
     }
     finally {
-        [Environment]::SetEnvironmentVariable(
-            $virtualDesktopOculusCompatibilityDisableEnvironment,
-            $previous,
-            'Process'
-        )
+        foreach ($name in $environmentNames) {
+            [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process')
+        }
     }
 }
 function Set-MutarConfigValue([string]$Content, [string]$Name, [string]$Value) {
@@ -261,7 +290,7 @@ try {
     $swapped = $true
     if ((Get-Sha256 $liveDll) -ne $expectedCustomHash) { throw 'Experimental DLL swap verification failed.' }
 
-    $perfText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $gameRoot -Provider 'mutar-openxr' -ProfilePath $profilePath -ProfileSha256 $profileSha256 -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String
+    $perfText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $gameRoot -Provider 'mutar-openxr' -ProfilePath $profilePath -ProfileSha256 $profileSha256 -LaunchSessionId $launchSessionId -SourceHead $sourceHead -ProviderSensors @('mutar.aer-presenter-sequence','mutar.aer-parity') -ProviderTelemetryPath $liveLog 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { throw "Performance mode enter failed: $($perfText.Trim())" }
     $performanceMode = $perfText.Trim() | ConvertFrom-Json
     if (-not $performanceMode.mutarComfortProfile -or
@@ -293,7 +322,7 @@ try {
         throw 'Fresh canonical telemetry session identity does not match this exact launch.'
     }
 
-    $game = Start-StarfieldWithMetaAirLinkIsolation
+    $game = Start-StarfieldWithMetaAirLinkIsolation -VisualTelemetry $performanceMode.visualTelemetry
 
     $session = [ordered]@{
         schemaVersion = 'stephanos.starfield-vr-aer-stabilizer-session.v1'
@@ -310,6 +339,7 @@ try {
         sharedWorkspaceRoot = $workspaceRoot
         repoRoot = $repoRoot
         performanceSessionPath = $performanceSessionPath
+        visualTelemetry = $performanceMode.visualTelemetry
         gameProcessId = $game.Id
         canonicalReadinessReceipt = [string]$readiness.receiptPath
         routeIdentity = [ordered]@{

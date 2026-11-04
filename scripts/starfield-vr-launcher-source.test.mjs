@@ -52,7 +52,9 @@ test('launcher delegates authority to the canonical shared decision policy throu
   assert.match(source, /Nothing was changed and flat Starfield was not started/);
   assert.match(source, /DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY/);
   assert.match(source, /function Start-StarfieldWithMetaAirLinkIsolation/);
-  assert.match(source, /Virtual Desktop registers an implicit Oculus-compatibility OpenXR layer/);
+  assert.match(source, /STEPHANOS_VR_TELEMETRY_TRACE_PATH/);
+  assert.match(source, /XR_APILAYER_STEPHANOS_telemetry_v1/);
+  assert.match(source, /capabilities\.modifiesFrameData/);
   assert.match(source, /SetEnvironmentVariable\([\s\S]*?\$virtualDesktopOculusCompatibilityDisableEnvironment,[\s\S]*?'1',[\s\S]*?'Process'/);
   assert.match(source, /Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath \$launchExecutable -WorkingDirectory \$workingDirectory/);
   assert.match(source, /virtualDesktopOculusCompatibilityLayerDisabled = \$true/);
@@ -165,8 +167,9 @@ test('splash is presentation-only, requires provider selection, and delegates re
   assert.match(source, /Checking OpenXR runtime/);
   assert.match(source, /Checking verified VR provider/);
   assert.match(source, /Ready to launch/);
-  assert.match(source, /TELEMETRY AUTO \| MutaR FPS \+ frame time -> Shared Workspace/);
-  assert.match(source, /Telemetry guardian proved its first sample/);
+  assert.match(source, /FLIGHT RECORDER AUTO \| FPS \+ frame time \+ stereo\/pose\/OpenXR -> Shared Workspace/);
+  assert.match(source, /Flight recorder proved its first sample/);
+  assert.match(source, /View \+ L3 \+ R3/);
   assert.match(source, /Launching Starfield VR/);
   assert.match(source, /Start-StarfieldVrLauncherProcess -SelectedProfilePath \$processState\.ProfilePath -ReadinessOnly/);
   assert.match(source, /Start-StarfieldVrLauncherProcess/);
@@ -266,8 +269,10 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(observe, /AER Observe blocked a stale readiness receipt/);
   assert.match(observe, /DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY/);
   assert.match(observe, /function Start-StarfieldWithMetaAirLinkIsolation/);
-  assert.match(observe, /Virtual Desktop's implicit Oculus compatibility layer/);
-  assert.match(observe, /\$game = Start-StarfieldWithMetaAirLinkIsolation/);
+  assert.match(observe, /XR_APILAYER_STEPHANOS_telemetry_v1/);
+  assert.match(observe, /-ProviderSensors @\('mutar\.aer-presenter-sequence','mutar\.aer-parity'\)/);
+  assert.match(observe, /-ProviderTelemetryPath \$liveLog/);
+  assert.match(observe, /\$game = Start-StarfieldWithMetaAirLinkIsolation -VisualTelemetry \$performanceMode\.visualTelemetry/);
   assert.match(observe, /virtualDesktopOculusCompatibilityLayerDisabled = \$true/);
   assert.match(observe, /Fresh canonical telemetry session was not created before Starfield launch/);
   assert.match(observe, /Fresh canonical telemetry session identity does not match this exact launch/);
