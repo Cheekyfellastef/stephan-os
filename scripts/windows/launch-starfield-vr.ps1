@@ -17,6 +17,7 @@ if (-not $ProfilePath) {
 }
 $receiptRoot = Join-Path $workspaceRoot 'vr\starfield-vr-launch-receipts'
 $latestReceiptPath = Join-Path $workspaceRoot 'vr\starfield-vr-launch-current.json'
+$latestReadinessPath = Join-Path $workspaceRoot 'vr\starfield-vr-readiness-current.json'
 $decisionScript = Join-Path $repositoryRoot 'scripts\starfield-vr-launch-decision.mjs'
 $performanceModeScript = Join-Path $repositoryRoot 'scripts\windows\starfield-vr-performance-mode.ps1'
 $gamingResourceGovernorScript = Join-Path $repositoryRoot 'scripts\windows\run-vr-resource-governor.ps1'
@@ -52,8 +53,10 @@ function Write-LaunchReceipt {
     $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
     $receiptPath = Join-Path $receiptRoot "starfield-vr-launch-$timestamp.json"
     $json = $receipt | ConvertTo-Json -Depth 12
-    $json | Set-Content -LiteralPath $receiptPath -Encoding UTF8
-    $json | Set-Content -LiteralPath $latestReceiptPath -Encoding UTF8
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($receiptPath, $json + [Environment]::NewLine, $utf8NoBom)
+    $latestPath = if ($ReadinessOnly) { $latestReadinessPath } else { $latestReceiptPath }
+    [System.IO.File]::WriteAllText($latestPath, $json + [Environment]::NewLine, $utf8NoBom)
     return $receiptPath
 }
 
