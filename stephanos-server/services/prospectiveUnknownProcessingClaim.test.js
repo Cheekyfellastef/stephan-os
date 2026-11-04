@@ -399,3 +399,104 @@ test('retirement lock refusal fails closed after durable fence and exact replay 
   assert.equal(sha(await readFile(archived)), claimSha);
   await assert.rejects(readFile(claimPath), error => error.code === 'ENOENT');
 });
+
+test('competing cancellation precondition failure never becomes quarantine success', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'prospective-orphan-cancel-race-'));
+  const queueRoot = join(root, 'queue');
+  const processing = join(queueRoot, 'foundry-forge', 'processing');
+  const failed = join(queueRoot, 'foundry-forge', 'failed');
+  await mkdir(processing, { recursive: true });
+  await mkdir(failed, { recursive: true });
+  for (const stage of ['pending', 'completed']) {
+    await mkdir(join(queueRoot, 'foundry-forge', stage), { recursive: true });
+  }
+
+  const claimPath = join(processing, actionId + '.json');
+  const bytes = Buffer.from(JSON.stringify(processingItem()));
+  await writeFile(claimPath, bytes);
+  const claimSha = sha(bytes);
+  const active = {
+    missionId,
+    revision: 6,
+    repository: 'Cheekyfellastef/stephan-os',
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    cancelled: false,
+    dispatch: { status: 'running', adapter: 'foundry-forge' },
+    git: {
+      branch: 'openclaw/elastic-goal-1574',
+      worktreePath: join(root, 'worktree'),
+    },
+    storeMetadata: {
+      lastEventId: 'pickup-' + actionId,
+      processedEventIds: ['pickup-' + actionId],
+    },
+  };
+  await mkdir(active.git.worktreePath);
+  const competingCancelled = {
+    ...active,
+    revision: 7,
+    currentPhase: 'CANCELLED',
+    cancelled: true,
+    storeMetadata: {
+      ...active.storeMetadata,
+      lastEventId: 'cancel-competing-owner',
+      processedEventIds: [...active.storeMetadata.processedEventIds, 'cancel-competing-owner'],
+    },
+  };
+  const paths = {
+    workspaceRoot: join(root, 'workspace'),
+    repoRoot: join(root, 'repo'),
+    orchestratorRoot: join(root, 'orchestrator'),
+  };
+  await mkdir(paths.workspaceRoot);
+  await mkdir(paths.repoRoot);
+  await mkdir(paths.orchestratorRoot);
+
+  let authenticationCalls = 0;
+  let retirementGuardCalls = 0;
+  const options = {
+    queueRoot,
+    paths,
+    env: {},
+    readMissionRecord: async () => ({ state: active }),
+    readExecutionReceiptHistory: async () => ({
+      ok: true, receipts: [], latestReceipt: null,
+    }),
+    authenticateProspectiveOrphanQuarantine: async () => {
+      authenticationCalls += 1;
+      throw new Error('CONTAINMENT_MUST_NOT_RUN_AFTER_PRECONDITION_FAILURE');
+    },
+    withOriginalSourceLeaseFenceGuard: async operation => {
+      retirementGuardCalls += 1;
+      return operation();
+    },
+    appendMissionEvent: async () => ({
+      state: competingCancelled,
+      duplicate: false,
+      eventId: 'cancel-quarantine-1574-r5-cancel-race',
+      preconditionFailed: true,
+      reason: 'MISSION_STATE_PRECONDITION_FAILED',
+    }),
+  };
+  const input = {
+    missionId,
+    commandId: 'quarantine-1574-r5-cancel-race',
+    operatorRequestId: 'quarantine-1574-r5-cancel-race-request',
+    operatorSourceRevision,
+    expectedMissionRevision: 6,
+    sourceExecutionId: actionId,
+    sourceExecutionLeaseKey: leaseKey,
+    processingClaimSha256: claimSha,
+    reason: 'Do not convert a competing cancellation into quarantine success.',
+  };
+
+  await assert.rejects(
+    quarantineUnknownProcessingClaim(input, options),
+    /PROSPECTIVE_ORPHAN_CANCELLATION_PRECONDITION_FAILED/,
+  );
+  assert.equal(authenticationCalls, 0);
+  assert.equal(retirementGuardCalls, 0);
+  assert.equal(sha(await readFile(claimPath)), claimSha);
+  assert.deepEqual(await readdir(failed), []);
+});
+

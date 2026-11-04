@@ -335,7 +335,9 @@ export async function quarantineUnknownProcessingClaim(input, options = {}) {
       proveUnknownProcessingClaimQuarantine(currentState, normalizedInput, options),
     withOriginalSourceLeaseFenceGuard: guard,
   });
-  if (cancelled?.preconditionFailed) return cancelled;
+  if (cancelled?.preconditionFailed) {
+    fail('PROSPECTIVE_ORPHAN_CANCELLATION_PRECONDITION_FAILED');
+  }
   const quarantine = requireQuarantined(await guard(
     () => retireUnknownProcessingClaim(cancelled.state, options),
   ));
