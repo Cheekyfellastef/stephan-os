@@ -21,6 +21,31 @@ const FILES = Object.freeze([
   'scripts/sovereign-high-risk-advisory-v1.mjs',
 ]);
 const MODEL = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
+const MODEL_RESPONSE_FORMAT = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: ['caseId', 'patchSha256', 'verdict', 'findings'],
+  properties: {
+    caseId: { type: 'string' },
+    patchSha256: { type: 'string' },
+    verdict: { type: 'string', enum: ['clean', 'findings'] },
+    findings: {
+      type: 'array',
+      maxItems: 12,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['code', 'path', 'severity', 'summary'],
+        properties: {
+          code: { type: 'string' },
+          path: { type: 'string' },
+          severity: { type: 'string', enum: ['P0', 'P1', 'P2'] },
+          summary: { type: 'string' },
+        },
+      },
+    },
+  },
+});
 const SHA64 = /^[a-f0-9]{64}$/;
 const NO_AUTHORITY = Object.freeze({
   qualifiedWindowsSpecialist: false, independentSecurityReviewSatisfied: false,
@@ -157,7 +182,7 @@ export async function runWindowsCalibrationCandidateV1(env = process.env, {
         const r = await fetchImpl('http://127.0.0.1:11434/api/generate', {
           method:'POST', redirect:'error',
           headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ model, prompt, stream:false, format:'json',
+          body: JSON.stringify({ model, prompt, stream:false, format:MODEL_RESPONSE_FORMAT,
             keep_alive:0, options:{temperature:0,num_ctx:8192} }),
           signal: AbortSignal.any([AbortSignal.timeout(Math.max(1, Math.min(45_000, Math.floor(deadline - clock())))), controller.signal]),
         });
