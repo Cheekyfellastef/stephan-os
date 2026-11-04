@@ -499,4 +499,3 @@ test('competing cancellation precondition failure never becomes quarantine succe
   assert.equal(sha(await readFile(claimPath)), claimSha);
   assert.deepEqual(await readdir(failed), []);
 });
-
