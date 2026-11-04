@@ -475,7 +475,7 @@ test('Windows review does not launch unverified WSL Node reviewer after source p
 
 test('Windows reviewer executable custody paths are LF-pinned for raw-byte verification', () => {
   const attrs = new Set(readFileSync(new URL('../.gitattributes', import.meta.url), 'utf8')
-    .split(/\\r?\\n/).map(line => line.trim()).filter(Boolean));
+    .split(/\r?\n/).map(line => line.trim()).filter(Boolean));
   const rawByteCritical = [
     'scripts/sovereign-reviewer-v1.mjs',
     'scripts/sovereign-reviewer-ollama-calibration-v1.mjs',
