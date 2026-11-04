@@ -113,6 +113,7 @@ test('mid-exam game or model identity change fails closed',async()=>{
 test('executable bytes require H-index flags and exact tracked HEAD hash',()=>{
   const fileChecks = [];
   const mockSpawn = (_cmd,args,options)=>{
+    assert.equal(options.cwd, 'C:\\trusted');
     assert.equal(options.env.GIT_NO_REPLACE_OBJECTS, '1');
     assert.equal(options.env.GIT_GRAFT_FILE, 'NUL');
     const i=args.indexOf('--work-tree=C:\\trusted');
