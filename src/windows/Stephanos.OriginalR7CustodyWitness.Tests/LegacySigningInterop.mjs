@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { authenticateLegacyOrphanQuarantine } from '../../../stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js';
+import { authenticateLegacyOrphanQuarantine, authenticateProspectiveOrphanQuarantine } from '../../../stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js';
 
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 if (process.argv[2] === 'canonical') {
@@ -36,6 +36,22 @@ if (process.argv[2] === 'canonical') {
     base64RoundTripHasPlusSlashEquals: ['+', '/', '='].every(c => record.osWitness.signatureBase64.includes(c)),
     interpretedWitness
   }));
+} else if (process.argv[2] === 'verify-prospective') {
+  const f = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+  const env = {
+    STEPHANOS_PROSPECTIVE_ORPHAN_EVIDENCE_PATH: f.recordPath,
+    STEPHANOS_PROSPECTIVE_ORPHAN_OS_WITNESS_PUBLIC_KEY_PATH: f.witnessPublicPath,
+    STEPHANOS_PROSPECTIVE_ORPHAN_OPERATOR_PUBLIC_KEY_PATH: f.operatorPublicPath,
+    STEPHANOS_PROSPECTIVE_ORPHAN_OS_WITNESS_PUBLIC_KEY_SHA256: sha(fs.readFileSync(f.witnessPublicPath)),
+    STEPHANOS_PROSPECTIVE_ORPHAN_OPERATOR_PUBLIC_KEY_SHA256: sha(fs.readFileSync(f.operatorPublicPath)),
+  };
+  const scoped = await authenticateProspectiveOrphanQuarantine(f.expected, {
+    env, now: () => Date.parse(f.clockUtc),
+  });
+  const noProductionPins = await authenticateProspectiveOrphanQuarantine(f.expected, {
+    env: {}, now: () => Date.parse(f.clockUtc),
+  });
+  process.stdout.write(JSON.stringify({ testOnlyTrust: true, scoped, noProductionPins }));
 } else {
   throw new Error('FIXED_TEST_OPERATION_REQUIRED');
 }
