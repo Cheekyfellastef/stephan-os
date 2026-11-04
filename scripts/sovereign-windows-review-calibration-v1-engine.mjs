@@ -187,7 +187,7 @@ export async function runWindowsCalibrationCandidateV1(env = process.env, {
         const r = await fetchImpl('http://127.0.0.1:11434/api/generate', {
           method:'POST', redirect:'error',
           headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ model, prompt, stream:false, format:modelResponseFormatV1(challenge),
+          body: JSON.stringify({ model, prompt, stream:false, think:false, format:modelResponseFormatV1(challenge),
             keep_alive:'5s', options:{temperature:0,num_ctx:8192} }),
           signal: AbortSignal.any([AbortSignal.timeout(Math.max(1, Math.min(45_000, Math.floor(deadline - clock())))), controller.signal]),
         });
