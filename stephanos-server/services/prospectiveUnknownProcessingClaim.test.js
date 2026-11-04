@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -59,7 +59,7 @@ test('generic prospective containment authenticates exact UNKNOWN claim and reje
     branch: 'openclaw/elastic-goal-1574',
     sourceRevision,
     operatorSourceRevision,
-    worktreePath: worktree,
+    worktreePath: await realpath(worktree),
     commandId: 'quarantine-1574-r5-unknown',
     requestId: 'quarantine-1574-r5-request',
   };
