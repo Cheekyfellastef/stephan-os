@@ -331,4 +331,3 @@ export async function quarantineUnknownProcessingClaim(input, options = {}) {
   const quarantine = await guard(() => retireUnknownProcessingClaim(cancelled.state, options));
   return Object.freeze({ ...cancelled, processingClaimQuarantine: quarantine });
 }
-
