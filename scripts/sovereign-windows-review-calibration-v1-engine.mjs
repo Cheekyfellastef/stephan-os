@@ -188,7 +188,7 @@ export async function runWindowsCalibrationCandidateV1(env = process.env, {
           method:'POST', redirect:'error',
           headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ model, prompt, stream:false, format:modelResponseFormatV1(challenge),
-            keep_alive:0, options:{temperature:0,num_ctx:8192} }),
+            keep_alive:'5s', options:{temperature:0,num_ctx:8192} }),
           signal: AbortSignal.any([AbortSignal.timeout(Math.max(1, Math.min(45_000, Math.floor(deadline - clock())))), controller.signal]),
         });
         if (!r?.ok || controller.signal.aborted) throw Error('LOCAL_MODEL_UNAVAILABLE');
