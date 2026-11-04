@@ -32,7 +32,7 @@ const mockFetch = async (url, args) => {
   assert.equal(url, 'http://127.0.0.1:11434/api/generate');
   assert.equal(args.redirect, 'error');
   const parsed = JSON.parse(args.body);
-  assert.equal(parsed.keep_alive, 0);
+  assert.equal(parsed.keep_alive, '5s');
   assert.equal(parsed.model, 'qwen:14b');
   assert.equal(parsed.format.type, 'object');
   assert.equal(parsed.format.additionalProperties, false);
