@@ -34,6 +34,7 @@ const mockFetch = async (url, args) => {
   const parsed = JSON.parse(args.body);
   assert.equal(parsed.keep_alive, '5s');
   assert.equal(parsed.model, 'qwen:14b');
+  assert.equal(parsed.think, false);
   assert.equal(parsed.format.type, 'object');
   assert.equal(parsed.format.additionalProperties, false);
   assert.deepEqual(parsed.format.required, ['caseId','patchSha256','verdict','findings']);
