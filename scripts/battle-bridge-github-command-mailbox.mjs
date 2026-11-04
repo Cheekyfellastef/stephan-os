@@ -23,9 +23,9 @@ import {
   validateStephanosCapabilityRegistry,
 } from '../shared/agents/stephanosCapabilityRegistry.mjs';
 import { cancelBoundedMission } from '../stephanos-server/services/missionOrchestratorControlService.js';
-import { quarantineOriginalSourceAttempt } from '../stephanos-server/services/originalSourceAttemptFenceService.js';
+import { quarantineOriginalSourceAttempt, quarantineUnknownProcessingClaim } from '../stephanos-server/services/originalSourceAttemptFenceService.js';
 import { authenticateOriginalWriterExclusionEvidence } from '../stephanos-server/services/originalSourceWriterCustodyService.js';
-import { authenticateLegacyOrphanQuarantine } from '../stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js';
+import { authenticateLegacyOrphanQuarantine, authenticateProspectiveOrphanQuarantine } from '../stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js';
 import { resolveCriticalBacklogRuntimePaths } from '../stephanos-server/services/criticalBacklogConveyorServiceCore.js';
 import { readAuthoritativeProgrammeProjection } from '../stephanos-server/services/programmeAuthorityService.js';
 import { readVerifiedStephanosNativeRoutingCandidate } from '../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
@@ -4212,27 +4212,41 @@ export async function cancelMissionOrchestratorMission(command = {}, {
   readSourceIdentity = readCanonicalSourceIdentity,
   cancelMission = cancelBoundedMission,
   quarantineSourceAttempt = quarantineOriginalSourceAttempt,
+  quarantineUnknownClaim = quarantineUnknownProcessingClaim,
 } = {}) {
   const identity = await readSourceIdentity(command);
   if (!identity.ok) return identity;
   try {
-    const result = await (command.originalLeaseId ? quarantineSourceAttempt : cancelMission)({
+    const prospective = command.prospectiveOrphanQuarantineRequested === true;
+    const quarantining = prospective || Boolean(command.originalLeaseId);
+    const handler = prospective ? quarantineUnknownClaim
+      : command.originalLeaseId ? quarantineSourceAttempt : cancelMission;
+    const result = await handler({
       missionId: command.missionId,
       commandId: command.commandId,
       reason: command.reason,
-      ...(command.originalLeaseId ? { originalLeaseId: command.originalLeaseId,
+      ...(command.originalLeaseId ? {
+        originalLeaseId: command.originalLeaseId,
         originalLeaseDigest: command.originalLeaseDigest,
         expectedMissionRevision: command.expectedMissionRevision,
         ...(command.legacyOrphanQuarantineRequested === true
           ? { legacyOrphanQuarantineRequested: true } : {}),
         operatorSourceRevision: identity.sourceHead,
-        operatorRequestId: command.requestId } : {}),
-    }, command.originalLeaseId ? {
+        operatorRequestId: command.requestId,
+      } : {}),
+      ...(prospective ? {
+        sourceExecutionId: command.sourceExecutionId,
+        sourceExecutionLeaseKey: command.sourceExecutionLeaseKey,
+        processingClaimSha256: command.processingClaimSha256,
+        expectedMissionRevision: command.expectedMissionRevision,
+        operatorSourceRevision: identity.sourceHead,
+        operatorRequestId: command.requestId,
+      } : {}),
+    }, quarantining ? {
       paths: resolveCriticalBacklogRuntimePaths({}),
-      // Trusted immutable issuer receipt only. Never use the public packet as
-      // custody evidence or supply a caller-selectable verifier.
       authenticateOriginalWriterExclusionEvidence,
       authenticateLegacyOrphanQuarantine,
+      authenticateProspectiveOrphanQuarantine,
     } : {});
     const missionId = safeConveyorId(result?.state?.missionId || command.missionId);
     const currentPhase = safeConveyorId(result?.state?.currentPhase);
@@ -4250,6 +4264,8 @@ export async function cancelMissionOrchestratorMission(command = {}, {
       duplicate: result?.duplicate === true,
       eventId: safeTelemetryId(result?.eventId),
       originalSourceAttemptFence: result?.state?.storeMetadata?.originalSourceAttemptFence || null,
+      processingClaimQuarantined: result?.processingClaimQuarantine?.quarantined === true,
+      processingClaimSha256: safeSha256(result?.processingClaimQuarantine?.processingClaimSha256),
       operatorActionRequired: result?.state?.operatorActionRequired === true,
       arbitraryFilesystemAccess: false,
       commandExecutionAccess: false,
