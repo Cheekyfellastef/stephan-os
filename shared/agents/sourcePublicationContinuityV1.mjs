@@ -34,7 +34,7 @@ const RECEIPT_KEYS = Object.freeze([
   'branch', 'state', 'observedAtUtc', 'expiresAtUtc', 'operations',
 ]);
 
-function text(value) { return String(value ?? '').trim(); }
+function text(value) { return typeof value === 'string' ? value.trim() : ''; }
 function list(value) { return Array.isArray(value) ? value : []; }
 function sameKeys(value, expected) {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -48,7 +48,9 @@ function safeCanonicalBranch(value) {
     && !branch.startsWith('/')
     && !branch.endsWith('/')
     && !branch.includes('..')
-    && !branch.includes('//');
+    && !branch.includes('//')
+    && !branch.split('/').some((component) =>
+      component.startsWith('.') || component.endsWith('.') || component.endsWith('.lock'));
 }
 
 function exactArtifact(artifact = {}) {
@@ -63,7 +65,13 @@ function exactArtifact(artifact = {}) {
 function receiptEvidence(route, capability, artifact, nowMs) {
   const receipt = capability?.receipt;
   if (!receipt) return Object.freeze({ state: 'missing', receipt: null, operations: new Set() });
-  if (!sameKeys(receipt, RECEIPT_KEYS)) return Object.freeze({ state: 'invalid', receipt, operations: new Set() });
+  if (!sameKeys(receipt, RECEIPT_KEYS)
+    || !RECEIPT_KEYS.filter((key) => key !== 'operations')
+      .every((key) => typeof receipt[key] === 'string')
+    || !Array.isArray(receipt.operations)
+    || !receipt.operations.every((operation) => typeof operation === 'string')) {
+    return Object.freeze({ state: 'invalid', receipt, operations: new Set() });
+  }
   const observedAtMs = Date.parse(text(receipt.observedAtUtc));
   const expiresAtMs = Date.parse(text(receipt.expiresAtUtc));
   const operations = new Set(list(receipt.operations).map(text));
@@ -129,8 +137,9 @@ function baseProjection(artifact = {}) {
 }
 
 export function buildSourcePublicationContinuityV1(input = {}) {
+  input = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   const workspace = input.workspace || {};
-  const artifact = exactArtifact(input.artifact);
+  const artifact = exactArtifact(input.artifact && typeof input.artifact === 'object' && !Array.isArray(input.artifact) ? input.artifact : {});
   const base = baseProjection(artifact);
   const nowMs = Date.parse(text(input.nowUtc));
   if (workspace.discoveryCompleted !== true) {
@@ -147,7 +156,13 @@ export function buildSourcePublicationContinuityV1(input = {}) {
   }
 
   const capabilities = input.capabilities || {};
-  const failedRoutes = new Set(list(input.failedRoutes).map(text));
+  if (input.failedRoutes !== undefined && (!Array.isArray(input.failedRoutes)
+    || input.failedRoutes.some((route) => typeof route !== 'string' || (!ROUTE_PRIORITY.includes(route) && route !== 'GH_CLI_MISSING')))) {
+    return Object.freeze({ ...base, evaluatedRoutes: ROUTE_PRIORITY, blocker: SOURCE_PUBLICATION_BLOCKER.PROBES_PENDING,
+      exactNextAction: 'Reconcile invalid failed-route evidence before selecting a publisher; do not mutate the canonical branch.',
+      finalVerdict: SOURCE_PUBLICATION_BLOCKER.PROBES_PENDING });
+  }
+  const failedRoutes = new Set(list(input.failedRoutes));
   const evidence = Object.fromEntries(ROUTE_PRIORITY.map((route) => [route, receiptEvidence(route, capabilities[route], artifact, nowMs)]));
   const selectedRoute = ROUTE_PRIORITY.find((route) => !failedRoutes.has(route)
     && routeCompatible(route, artifact, evidence[route], input.existingBranch === true));

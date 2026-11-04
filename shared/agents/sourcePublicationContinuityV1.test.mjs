@@ -100,3 +100,45 @@ test('repository instructions make route discovery mandatory and gh absence rout
   assert.match(instructions, /Fail over without rebuilding the source change/);
   assert.match(instructions, /SOURCE_PUBLICATION_CAPACITY_UNAVAILABLE/);
 });
+
+test('Git-invalid refname components are not publication-ready',()=>{
+ for(const branch of ['feature/foo.lock','feature/foo.','feature/./foo','feature/.hidden','feature/a/.','feature/a.lock/foo']){
+  const a={...artifact,branch};
+  const result=buildSourcePublicationContinuityV1({workspace,artifact:a,nowUtc:NOW,capabilities:{[SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT]:localGit({branch})}});
+  assert.equal(result.blocker,SOURCE_PUBLICATION_BLOCKER.ARTIFACT_INVALID,branch);
+  assert.equal(result.routeReady,false,branch);
+  assert.equal(result.mutationAllowed,false);
+ }
+ for(const branch of ['feature/valid-thing','feature/foo.locking','feature/fix_v1']){
+  const a={...artifact,branch};
+  const result=buildSourcePublicationContinuityV1({workspace,artifact:a,nowUtc:NOW,capabilities:{[SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT]:localGit({branch})}});
+  assert.equal(result.selectedRoute,SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT,branch);
+  assert.equal(result.mutationAllowed,false);
+ }
+});
+
+test('malformed failed-route histories fail closed before route selection',()=>{
+ const poisoned=JSON.parse('{"toString":null}');
+ for(const failedRoutes of [[poisoned],[21],['UNRECOGNISED_ROUTE'],'AUTHENTICATED_GIT']){
+  const r=buildSourcePublicationContinuityV1({workspace,artifact,nowUtc:NOW,failedRoutes,capabilities:{[SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT]:localGit()}});
+  assert.equal(r.blocker,SOURCE_PUBLICATION_BLOCKER.PROBES_PENDING);assert.equal(r.routeReady,false);assert.equal(r.mutationAllowed,false);
+ }
+});
+test('malformed artifact, timestamp and null request return typed holds',()=>{
+ const poisoned=JSON.parse('{"toString":null}');
+ for(const override of [{artifact:{...artifact,branch:poisoned}},{nowUtc:poisoned}]){
+  const r=buildSourcePublicationContinuityV1({workspace,artifact,nowUtc:NOW,...override});
+  assert.equal(r.blocker,SOURCE_PUBLICATION_BLOCKER.ARTIFACT_INVALID);assert.equal(r.mutationAllowed,false);
+ }
+ assert.equal(buildSourcePublicationContinuityV1(null).blocker,SOURCE_PUBLICATION_BLOCKER.DISCOVERY_REQUIRED);
+});
+test('poisoned Git capability receipt preserves valid GitHub App fallback',()=>{
+ const poisoned=JSON.parse('{"toString":null}');
+ for(const bad of [{operations:[poisoned]},{operations:['PUSH_EXACT_SOURCE_COMMIT',19]},{exactBase:poisoned},{observedAtUtc:poisoned}]){
+  const r=buildSourcePublicationContinuityV1({workspace,artifact,nowUtc:NOW,existingBranch:true,capabilities:{
+   [SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT]:localGit(bad),
+   [SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP]:githubApp({operations:['CREATE_BLOBS','CREATE_TREE','CREATE_COMMIT','UPDATE_BRANCH_REF']})
+  }});
+  assert.equal(r.selectedRoute,SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP);assert.equal(r.mutationAllowed,false);
+ }
+});
