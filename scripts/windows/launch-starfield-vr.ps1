@@ -333,7 +333,17 @@ $companionObservation = Get-FileObservation -Path $companionExecutablePath
 $activeOpenXrRuntimePath = Get-ActiveOpenXrRuntimePath
 $sourceHead = if ([string]$env:STEPHANOS_SOURCE_HEAD -match '^[a-fA-F0-9]{40}$') {
     ([string]$env:STEPHANOS_SOURCE_HEAD).ToLowerInvariant()
-} else { '' }
+} else {
+    $gitCommand = Get-Command -Name 'git.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($gitCommand) {
+        try {
+            $candidateHead = (& $gitCommand.Source -C $repositoryRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim().ToLowerInvariant()
+            if ($candidateHead -match '^[a-f0-9]{40}$') { $candidateHead } else { '' }
+        }
+        catch { '' }
+    }
+    else { '' }
+}
 $observations = [ordered]@{
     platform = 'win32'
     observedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
