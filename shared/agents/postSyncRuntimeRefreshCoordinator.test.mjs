@@ -52,6 +52,29 @@ test('guarded Ignition sync preflight is loaded fresh and requires no runtime re
   assert.equal(plan.automaticExecutionAllowed, true);
 });
 
+test('one-shot Starfield telemetry and Sovereign reviewer calibration engines are exact no-runtime paths', () => {
+  const exact = [
+    'scripts/starfield-vr-project-performance-loop.mjs',
+    'scripts/sovereign-windows-review-calibration-v1-engine.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(exact);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.equal(plan.noRuntimePathCount, exact.length);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.deepEqual(plan.targetIds, []);
+  assert.deepEqual(plan.internal.noRuntimePaths, exact);
+
+  for (const sibling of [
+    'scripts/starfield-vr-project-performance-loop-v2.mjs',
+    'scripts/sovereign-windows-review-calibration-v2-engine.mjs',
+  ]) {
+    const refused = classifyPostSyncRefresh([sibling]);
+    assert.equal(refused.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH, sibling);
+    assert.deepEqual(refused.internal.unknownPaths, [sibling], sibling);
+    assert.equal(refused.automaticExecutionAllowed, false, sibling);
+  }
+});
+
 test('maintenance custody store changes refresh Sovereign Commander instead of fail-closing as unclassified', () => {
   const source = 'scripts/sovereign-maintenance-custody-store-v1.mjs';
   const plan = classifyPostSyncRefresh([source, source.replace('.mjs', '.test.mjs')]);
