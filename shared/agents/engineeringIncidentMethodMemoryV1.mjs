@@ -377,3 +377,52 @@ export function buildEngineeringCodingMemoryPackV1(input = {}) {
   if (observedBytes > maxBytes) throw new Error('engineering coding memory pack exceeds declared byte budget');
   return pack;
 }
+
+// Validation of an existing pack never grants execution authority or silently
+// rebuilds its identity. All supplied content remains digest-bound.
+export function validateEngineeringCodingMemoryPackV1(pack) {
+  try {
+    const plainData = (value, depth = 0) => {
+      if (depth > 32) return false;
+      if (value === null || typeof value === 'boolean') return true;
+      if (typeof value === 'string') return value.length <= MAX_PACK_BYTES;
+      if (typeof value === 'number') return Number.isFinite(value);
+      if (!value || typeof value !== 'object') return false;
+      const array = Array.isArray(value), own = Reflect.ownKeys(value);
+      if ((!array && ![Object.prototype, null].includes(Object.getPrototypeOf(value))) || own.length > 1024
+        || (array && own.length !== value.length + 1)) return false;
+      return own.every(key => {
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        return typeof key === 'string' && Object.hasOwn(descriptor, 'value')
+          && ((array && key === 'length') || (descriptor.enumerable
+            && (!array || /^(0|[1-9][0-9]*)$/.test(key)) && plainData(descriptor.value, depth + 1)));
+      });
+    };
+    if (!plainData(pack)) return false;
+    const keys = ['schemaVersion', 'problemClass', 'componentRefs', 'createdAtUtc',
+      'preferredMethodRecordIds', 'incidentAndCounterexampleRecordIds',
+      'automationCandidateRecordIds', 'records', 'omittedSensitiveState',
+      'selectionPolicy', 'authority', 'packId'];
+    if (!pack || typeof pack !== 'object' || Array.isArray(pack)
+      || Reflect.ownKeys(pack).length !== keys.length
+      || Reflect.ownKeys(pack).some(key => !keys.includes(key))
+      || pack.schemaVersion !== ENGINEERING_CODING_MEMORY_PACK_SCHEMA_V1
+      || !safeId(pack.problemClass) || timestamp(pack.createdAtUtc) !== pack.createdAtUtc
+      || canonicalJson(pack.authority) !== canonicalJson(ENGINEERING_INCIDENT_METHOD_AUTHORITY_V1)
+      || pack.selectionPolicy !== 'CURRENT_METHODS_THEN_INCIDENTS_COUNTEREXAMPLES_AUTOMATION_AND_HISTORY'
+      || typeof pack.omittedSensitiveState !== 'boolean'
+      || !Array.isArray(pack.componentRefs) || !pack.componentRefs.length || pack.componentRefs.length > 24
+      || pack.componentRefs.some(ref => safeComponentOrOwnerRef(ref) !== ref)
+      || !Array.isArray(pack.records) || !pack.records.length || pack.records.length > 32
+      || pack.records.some(record => {
+        const validation = validateEngineeringIncidentMethodRecordInputV1(record);
+        return !validation.valid || canonicalJson(validation.record) !== canonicalJson(record);
+      })
+      || ['preferredMethodRecordIds', 'incidentAndCounterexampleRecordIds', 'automationCandidateRecordIds']
+        .some(key => !Array.isArray(pack[key]) || pack[key].length > 256
+          || pack[key].some(id => typeof id !== 'string' || !SAFE_ID.test(id)))
+      || Buffer.byteLength(canonicalJson(pack), 'utf8') > MAX_PACK_BYTES) return false;
+    const { packId, ...candidate } = pack;
+    return packId === `engineering-coding-memory-pack-${sha256(canonicalJson(candidate)).slice(0, 24)}`;
+  } catch { return false; }
+}

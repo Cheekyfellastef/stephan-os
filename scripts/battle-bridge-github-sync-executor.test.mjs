@@ -14,6 +14,8 @@ import {
   validateCanonicalSyncPaths,
 } from './battle-bridge-github-sync-executor.mjs';
 import { SYNC_CLASSIFICATIONS } from './battle-bridge-github-sync-policy.mjs';
+import { readPendingPostSyncRefresh } from './battle-bridge-github-sync-and-refresh.mjs';
+import { runBattleBridgePostSyncRefresh } from './battle-bridge-post-sync-refresh.mjs';
 const runBattleBridgeGitHubSync = options => runSyncWithRealRotationAdmission({
   rotationPreflightFn: () => ({ok:true,required:false}), ...options,
 });
@@ -94,6 +96,7 @@ function fakeGit({
   };
   return {
     calls,
+    isAncestor(before, after) { return { ok: true, ancestor: before <= after }; },
     run(id) {
       calls.push(id);
       const result = outputs[id]?.();
@@ -127,6 +130,110 @@ function housekeeperObservation({ state = 'READY', sourceDirtCount = 0, hardBloc
 async function readStatus(workspaceRoot) {
   return JSON.parse(await readFile(path.join(workspaceRoot, 'status', 'battle-bridge-github-sync-current.json'), 'utf8'));
 }
+
+test('actual sync writer preserves legacy relay debt through source advance failure and generic completion until relay proof', async t => {
+  const fx = await fixture(); t.after(() => rm(fx.root, { recursive: true, force: true }));
+  const C = 'c'.repeat(40), targetId = 'sovereign-commander';
+  const refreshPath = path.join(fx.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json');
+  await mkdir(path.dirname(refreshPath), { recursive: true });
+  const legacy = { schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.status',
+    statusId: 'post-sync-runtime-refresh-current', beforeHead: A, afterHead: B, phase: 'complete',
+    classification: 'REFRESH_COMPLETE', finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_PASS', exactHeadProofOk: true,
+    blocker: '', targetIds: [targetId], resultTargets: [{ targetId, ok: true, exactHeadProofOk: true, sourceHead: B, blocker: '' }],
+    changedPathCount: 1, noRuntimePathCount: 0, unknownPathCount: 0, unsafePathCount: 0,
+    openClawPathCount: 0, pluginHostActivationRequired: false };
+  await writeFile(refreshPath, JSON.stringify(legacy));
+  await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths,
+    git: fakeGit({ localBefore: B, remote: B, mergeBase: B }) });
+  let debt = (await readStatus(fx.workspaceRoot)).pendingRefresh;
+  assert.equal(debt.sovereignRelayRefreshRequired, true);
+  assert.deepEqual(debt.spans, [{ beforeHead: A, afterHead: B }]);
+  const advance = await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths,
+    git: fakeGit({ localBefore: B, remote: C, mergeBase: B }) });
+  assert.equal(advance.sourceUpdated, true);
+  debt = (await readStatus(fx.workspaceRoot)).pendingRefresh;
+  assert.equal(debt.sovereignRelayRefreshRequired, true);
+  assert.deepEqual(debt.spans, [{ beforeHead: A, afterHead: C }]);
+  await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths,
+    git: fakeGit({ localBefore: C, remote: C, mergeBase: C, fetchOk: false }) });
+  assert.deepEqual((await readStatus(fx.workspaceRoot)).pendingRefresh, debt);
+  const generic = { ...legacy, afterHead: C, sovereignRelayRefreshRequired: false,
+    resultTargets: [{ targetId, ok: true, exactHeadProofOk: true, sourceHead: C, blocker: '' }] };
+  await writeFile(refreshPath, JSON.stringify(generic));
+  await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths,
+    git: fakeGit({ localBefore: C, remote: C, mergeBase: C }) });
+  assert.deepEqual((await readStatus(fx.workspaceRoot)).pendingRefresh, debt);
+  const proof = { schemaVersion: 'stephanos.post-sync-sovereign-relay-proof.v1', watchdogSucceeded: true,
+    healthy: true, sourceHead: C, sourceHeadMatchesLive: true, processCount: 1, heartbeatAgeSeconds: 2, blocker: '' };
+  await writeFile(refreshPath, JSON.stringify({ ...generic, sovereignRelayRefreshRequired: true,
+    resultTargets: [{ ...generic.resultTargets[0], sovereignRelayProof: proof }] }));
+  await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths,
+    git: fakeGit({ localBefore: C, remote: C, mergeBase: C }) });
+  assert.equal((await readStatus(fx.workspaceRoot)).pendingRefresh, null);
+});
+
+test('real sync writer retains admitted debt through no-change and failures before any refresh plan', async t => {
+  const fx = await fixture(); t.after(() => rm(fx.root, { recursive: true, force: true }));
+  const initial = await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths, git: fakeGit({ remote: B }) });
+  assert.equal(initial.sourceUpdated, true);
+  const before = (await readStatus(fx.workspaceRoot)).pendingRefresh;
+  assert.deepEqual(before.spans, [{ beforeHead: A, afterHead: B }]);
+  const lockPath = path.join(fx.workspaceRoot, 'locks', 'post-sync-runtime-refresh.lock');
+  await writeFile(lockPath, JSON.stringify({ pid: process.pid, acquiredAtUtc: new Date().toISOString() }));
+  const held = await runBattleBridgePostSyncRefresh({ beforeHead: A, afterHead: B, paths: fx.paths, expectedPaths: fx.paths,
+    adapter: { inspectHeads() { throw new Error('must not inspect while original refresh owner holds lock'); } } });
+  assert.equal(held.blocker, 'POST_SYNC_REFRESH_ALREADY_RUNNING');
+  for (const mode of ['no-change', 'fetch-failure', 'exception']) {
+    const git = fakeGit({ localBefore: B, remote: B, mergeBase: B, fetchOk: mode !== 'fetch-failure' });
+    if (mode === 'exception') {
+      const run = git.run.bind(git);
+      git.run = id => { if (id === FIXED_SYNC_GIT_COMMANDS.fetchOriginMain.id) throw new Error('fixture transport exception'); return run(id); };
+    }
+    await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths, git });
+    assert.deepEqual((await readStatus(fx.workspaceRoot)).pendingRefresh, before, mode);
+    assert.deepEqual((await readPendingPostSyncRefresh(fx.paths)).spans, before.spans, mode);
+  }
+  await assert.rejects(readFile(path.join(fx.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json')), { code: 'ENOENT' });
+});
+
+test('sync lock loser leaves durable current status byte-for-byte unchanged', async t => {
+  const fx = await fixture(); t.after(() => rm(fx.root, { recursive: true, force: true }));
+  await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths, git: fakeGit({ remote: B }) });
+  const statusPath = path.join(fx.workspaceRoot, 'status', 'battle-bridge-github-sync-current.json');
+  const before = await readFile(statusPath);
+  await writeFile(path.join(fx.workspaceRoot, 'locks', 'battle-bridge-github-sync.lock'), JSON.stringify({ pid: process.pid, acquiredAtUtc: new Date().toISOString() }));
+  const result = await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths, git: fakeGit({ localBefore: B, remote: B, mergeBase: B }), processIsAliveFn: () => true });
+  assert.equal(result.ok, false);
+  assert.equal(result.publication, null);
+  assert.deepEqual(await readFile(statusPath), before);
+});
+
+test('sync preserves malformed debt as a typed hold while allowing protected source-forward', async t => {
+  const fx = await fixture(); t.after(() => rm(fx.root, { recursive: true, force: true }));
+  await mkdir(path.join(fx.workspaceRoot, 'status'), { recursive: true });
+  await writeFile(path.join(fx.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json'), '{broken');
+  const result = await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths, git: fakeGit({ remote: B }) });
+  assert.equal(result.sourceUpdated, true);
+  assert.equal((await readStatus(fx.workspaceRoot)).pendingRefresh.state, 'HELD');
+  assert.equal((await readPendingPostSyncRefresh(fx.paths)).ok, false);
+});
+
+test('fixed ancestry uses bounded read-only argv and distinguishes unrelated history from probe errors', () => {
+  const calls = [];
+  let status = 1, error;
+  const adapter = createFixedGitAdapter({ spawnSyncFn: (command, args, options) => { calls.push({ command, args, options }); return { status, error, stdout: '', stderr: '' }; } });
+  assert.deepEqual(adapter.isAncestor(A, B, '/fixture'), { ok: true, ancestor: false });
+  status = 2;
+  assert.equal(adapter.isAncestor(A, B, '/fixture').ok, false);
+  status = 0; error = { code: 'ETIMEDOUT' };
+  assert.equal(adapter.isAncestor(A, B, '/fixture').ok, false);
+  for (const value of [[A], A.toUpperCase(), ` ${A}`, 'main']) assert.equal(adapter.isAncestor(value, B, '/fixture').ok, false);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[0].args, ['merge-base', '--is-ancestor', A, B]);
+  assert.equal(calls[0].options.shell, false);
+  assert.ok(calls[0].options.timeout > 0 && calls[0].options.timeout <= 1000);
+  assert.equal(calls[0].options.maxBuffer, 64 * 1024);
+});
 
 test('canonical path validator rejects arbitrary repository and overlapping workspace', () => {
   const expectedPaths = { repoRoot: '/home/u/Documents/GitHub/stephan-os', workspaceRoot: '/home/u/Documents/Stephanos-openclaw-workspace' };
@@ -353,6 +460,27 @@ test('fetch, divergence and ff-only failures fail closed', async () => {
       assert.equal(result.evaluation.classification, expected);
     } finally { await rm(fx.root, { recursive: true, force: true }); }
   }
+});
+
+test('pre-boot lock is recovered even when Windows reused the recorded PID', async () => {
+  const fx = await fixture();
+  try {
+    const now = new Date('2026-10-31T17:00:00Z');
+    const bootStartedAtMs = Date.parse('2026-10-31T16:40:00Z');
+    const lockPath = path.join(fx.workspaceRoot, 'locks', 'battle-bridge-github-sync.lock');
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    await writeFile(lockPath, `${JSON.stringify({ pid: 14108, acquiredAtUtc: '2026-10-31T16:36:47.401Z' })}\n`);
+    const result = await runBattleBridgeGitHubSync({
+      paths: fx.paths,
+      expectedPaths: fx.expectedPaths,
+      git: fakeGit(),
+      now,
+      bootStartedAtMs,
+      processIsAliveFn: () => true,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.evaluation.classification, SYNC_CLASSIFICATIONS.SYNC_NO_CHANGE);
+  } finally { await rm(fx.root, { recursive: true, force: true }); }
 });
 
 test('stale dead-process lock is recovered once and does not permanently stall the watcher', async () => {

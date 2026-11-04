@@ -37,7 +37,7 @@ namespace Stephanos.Sovereign {
     public string RepairScope = "NONE";
   }
 
-  public static class CoreJobCustodyV1 {
+  public static partial class CoreJobCustodyV1 {
     [StructLayout(LayoutKind.Sequential,Pack=4)] struct FILE_INFO {
       public uint attributes; public long creation,access,write;
       public uint volume,sizeHigh,sizeLow,links,indexHigh,indexLow;

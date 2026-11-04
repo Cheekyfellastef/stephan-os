@@ -5,6 +5,7 @@ import { deflateRawSync } from 'node:zlib';
 import {
   MAILBOX_FREE_GITHUB_READER_SCHEMA,
   readMailboxFreeGoalEvidenceFromGitHubV1 as read,
+  readMailboxFreeGitHubJsonV1,
 } from './mailboxFreeGitHubEvidenceReaderV1.mjs';
 
 const RUN = 40573665291;
@@ -228,4 +229,34 @@ test('response size guard refuses huge metadata',async()=>{
     ? new Response('x'.repeat(270000),{status:200,headers:{'content-length':'270000'}})
     : orig(url,opt);
   await denied(f,'AUTHENTICATED_READ_OR_ARTIFACT_FAILED');
+});
+
+test('Control Tower dual-event inventory is one exact allowlisted GET, not general workflow access', async () => {
+  let requests = 0;
+  const current = '/actions/workflows/stephanos-control-tower-build.yml/runs?per_page=10&head_sha=' + HEAD;
+  const oldManual = '/actions/workflows/stephanos-control-tower-build.yml/runs?event=workflow_dispatch&per_page=5&head_sha=' + HEAD;
+  const fetchImpl = async (url, init) => {
+    requests += 1;
+    assert.ok(url === API + current || url === API + oldManual);
+    assert.equal(init.method, 'GET');
+    assert.equal(init.redirect, 'error');
+    assert.equal(init.headers.Authorization, 'Bearer test-read-only');
+    return Response.json({ workflow_runs: [], total_count: 0 });
+  };
+  for (const path of [current, oldManual]) {
+    const observed = await readMailboxFreeGitHubJsonV1(fetchImpl, path, 'test-read-only');
+    assert.deepEqual(observed.workflow_runs, []);
+  }
+  assert.equal(requests, 2);
+  for (const bad of [
+    current.replace('per_page=10', 'per_page=100'),
+    current.replace('head_sha=' + HEAD, 'head_sha=main'),
+    current + '&event=pull_request',
+    current.replace('stephanos-control-tower-build.yml', 'foreign.yml'),
+    current.replace('runs?', 'dispatches?'),
+    current.replace('head_sha=' + HEAD, 'head_sha=' + 'A'.repeat(40)),
+  ]) {
+    await assert.rejects(() => readMailboxFreeGitHubJsonV1(fetchImpl, bad, 'test-read-only'), /NONCANONICAL_GET/);
+  }
+  assert.equal(requests, 2);
 });

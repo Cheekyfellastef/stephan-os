@@ -24,9 +24,16 @@ import { refreshSovereignBuilder8Capacity } from '../stephanos-server/services/s
 import { refreshOpenClawProviderPoolCapacity } from '../stephanos-server/services/openClawProviderPoolAdmissionService.js';
 import { runGitHubLifeboatLane7 } from '../stephanos-server/services/githubLifeboatLane7Service.js';
 import { refreshGitHubLifeboatLane7ClaimAck } from '../stephanos-server/services/githubLifeboatLane7ClaimAckKeeper.js';
-import { processNextProviderNeutralSourceBuild } from '../stephanos-server/services/providerNeutralSourceBuilderService.js';
 import { resolveMissionWorkerQueueRoot } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
 import { decideWorkConservingControllerCycleV1 } from '../shared/agents/providerNeutralExecutionCompatibilityV1.mjs';
+
+// Source execution belongs to the existing supervised Mission Worker, not
+// this short maintenance heartbeat. Publication remains the conveyor's job.
+export async function deferSourceBuildToCanonicalWorkerV1() {
+  return Object.freeze({processed:false,success:false,pickupProven:false,
+    reason:'CANONICAL_MISSION_WORKER_SOURCE_PICKUP_PENDING',
+    finalVerdict:'CANONICAL_MISSION_WORKER_SOURCE_PICKUP_PENDING'});
+}
 
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA = 'stephanos.battle-bridge-goal-discovery-heartbeat.v1';
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT_MARKER = 'BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT=';
@@ -411,7 +418,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   githubLifeboatOptions = {},
   refreshGithubLifeboatClaimAck = refreshGitHubLifeboatLane7ClaimAck,
   githubLifeboatClaimAckOptions = {},
-  buildClaimedGoal = processNextProviderNeutralSourceBuild,
+  buildClaimedGoal = deferSourceBuildToCanonicalWorkerV1,
   builderOptions = {},
   readWorkerHeartbeatAgeMs = readCanonicalMissionWorkerHeartbeatAgeMs,
   readProcessingPickupMissionIdsFn = readProcessingPickupMissionIds,

@@ -60,6 +60,25 @@ permissions:
   contents: read
 
 jobs:
+  powershell51-launcher:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Parse and guard launcher with Windows PowerShell 5.1
+        shell: powershell
+        run: node --test scripts/windows-launcher-defaults.test.mjs
+
   proof:
     runs-on: ubuntu-latest
     timeout-minutes: 20

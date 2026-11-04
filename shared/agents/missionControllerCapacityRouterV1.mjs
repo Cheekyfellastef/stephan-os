@@ -99,6 +99,8 @@ export function forgeLifeboatProofRef(sourceHead = '') {
   return FULL_SHA.test(normalized) ? `${FORGE_LIFEBOAT_PROOF_PREFIX}${normalized}.json` : '';
 }
 
+export { taskForMission as projectMissionControllerTaskV1 };
+
 function taskForMission(mission = {}, explicitTask = {}) {
   const allowedFiles = list(mission.allowedFiles);
   const requestedTaskClass = text(explicitTask.taskClass).toUpperCase();
