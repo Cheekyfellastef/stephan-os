@@ -74,7 +74,7 @@ export function inspectWindowsCalibrationSourceV1(env = process.env, {
       const result = spawn(execution.executable, [
         ...execution.fixedConfigArgs,
         '--git-dir=' + join(root, '.git'), '--work-tree=' + root, ...args,
-      ], { encoding: 'utf8', shell: false, windowsHide: true,
+      ], { cwd: root, encoding: 'utf8', shell: false, windowsHide: true,
         timeout: 12_000, maxBuffer: 4096, env: {
           ...execution.environment,
           GIT_NO_REPLACE_OBJECTS: '1',
