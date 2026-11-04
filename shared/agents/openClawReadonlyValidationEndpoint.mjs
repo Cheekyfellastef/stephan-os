@@ -4,3 +4,5 @@ export const OPENCLAW_READONLY_VALIDATION_ENDPOINT = Object.freeze({
   mode: 'local_readonly_probe',
   canExecute: false,
 });
+
+// Fixed frontend source admission requires canonical LF deployment bytes.

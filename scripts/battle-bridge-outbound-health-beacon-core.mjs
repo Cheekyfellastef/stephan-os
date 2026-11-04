@@ -9,6 +9,13 @@ import { fileURLToPath } from 'node:url';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { buildBattleBridgeTelemetryAutorepairProjection } from '../shared/agents/battleBridgeTelemetryAutorepairV1.mjs';
 import { projectMissionWorkerBeaconState } from '../shared/agents/missionWorkerBeaconStateV1.mjs';
+import {
+  POST_SYNC_REFRESH_CLASSIFICATIONS,
+  POST_SYNC_REFRESH_TARGETS,
+  projectPostSyncSovereignRelayObservation,
+  projectPostSyncTargetFailureHistory,
+} from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
+import { projectSovereignCaretakerExecutionEvidence } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import { invalidateBrokeredGithubObservation, publishBrokeredGithubMutation, readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import {
   MAILBOX_RECEIPT_GITHUB_ISSUE,
@@ -32,6 +39,8 @@ const SHA = /^[0-9a-f]{40}$/;
 const MAX_STATUS_BYTES = 64 * 1024;
 const MAX_GITHUB_BYTES = 512 * 1024;
 const MAX_DIRT_IDENTITIES = 64;
+const REFRESH_TARGET_IDS = new Set(Object.values(POST_SYNC_REFRESH_TARGETS));
+const REFRESH_CLASSIFICATIONS = new Set(Object.values(POST_SYNC_REFRESH_CLASSIFICATIONS));
 const SYNC_AND_REFRESH_STATUS_PATH = 'status/battle-bridge-sync-and-refresh-current.json';
 const STEPHANOS_CORE_STATUS_PATH = 'status/stephanos-core-daemon-current.json';
 const STATUS_SPECS = Object.freeze([
@@ -273,6 +282,113 @@ function runtimeHeads(record = {}) {
   });
 }
 
+// This is bounded observation of the existing refresh plan and checkpoints.
+// A target's reported result is not proof of an installed/loaded process.
+function projectCaretakerBeaconFacts(value, expectedHead, nowMs, historical = false) {
+  const evidence = projectSovereignCaretakerExecutionEvidence(value);
+  const absent = evidenceState => Object.freeze({ evidenceState, historical, diagnosticOnly: true });
+  if (!evidence) return absent(value == null ? 'MISSING' : 'INVALID');
+  const observedMs = Date.parse(evidence.observedAtUtc);
+  if (!Number.isFinite(nowMs) || observedMs > nowMs + 60_000) return absent('FUTURE_DATED');
+  const expected = typeof expectedHead === 'string' && /^[a-f0-9]{40}$/.test(expectedHead) ? expectedHead : '';
+  const sourceHeadMatchesExpected = expected ? evidence.expectedSourceHead === expected : null;
+  const ageMs = Math.max(0, nowMs - observedMs);
+  return Object.freeze({
+    ...evidence,
+    historical,
+    sourceHeadMatchesExpected,
+    ageMs,
+    evidenceState: historical ? 'HISTORICAL'
+      : sourceHeadMatchesExpected !== true ? 'HEAD_MISMATCH' : ageMs > 300_000 ? 'STALE' : 'OBSERVED',
+  });
+}
+
+function projectTargetFailureBeaconFacts(value, expectedHead, nowMs) {
+  const history = projectPostSyncTargetFailureHistory(value, { nowMs });
+  if (!history) return Object.freeze({ evidenceState: value == null ? 'MISSING' : 'INVALID',
+    failures: Object.freeze([]), historical: true, diagnosticOnly: true });
+  const sourceHeadMatchesExpected = typeof expectedHead === 'string' && /^[a-f0-9]{40}$/.test(expectedHead)
+    ? history.expectedSourceHead === expectedHead : null;
+  return Object.freeze({ ...history, sourceHeadMatchesExpected,
+    evidenceState: sourceHeadMatchesExpected !== true ? 'HEAD_MISMATCH' : history.failures.length ? 'HISTORICAL' : 'EMPTY',
+    failures: Object.freeze(history.failures.map(row => Object.freeze({ ...row,
+      ageMs: Math.max(0, nowMs - Date.parse(row.observedAtUtc)), historical: true, diagnosticOnly: true }))),
+  });
+}
+
+export function projectPostSyncRefreshBeaconFacts(record, expectedHead = '', nowMs = Date.now()) {
+  const source = record && typeof record === 'object' && !Array.isArray(record) ? record : null;
+  const strictHead = (value) => typeof value === 'string' && /^[a-f0-9]{40}$/i.test(value)
+    ? value.toLowerCase() : '';
+  const boolean = (value) => typeof value === 'boolean' ? value : null;
+  const typedBlocker = (value) => {
+    if (typeof value !== 'string' || value.length > 160) return '';
+    const parts = value.split(':');
+    if (!/^[A-Z][A-Z0-9_]*$/.test(parts[0]) || parts.length > 2) return '';
+    if (parts.length === 2 && !REFRESH_TARGET_IDS.has(parts[1]) && !/^[A-Z0-9_]+$/.test(parts[1])) return '';
+    return value;
+  };
+  const classification = REFRESH_CLASSIFICATIONS.has(source?.classification) ? source.classification : 'UNKNOWN';
+  const targets = Array.isArray(source?.targetIds) ? source.targetIds : null;
+  const results = Array.isArray(source?.resultTargets) ? source.resultTargets : null;
+  const limit = REFRESH_TARGET_IDS.size;
+  const truncated = Boolean((targets && targets.length > limit) || (results && results.length > limit));
+  let invalid = Boolean(source && classification === 'UNKNOWN');
+  const targetIds = [];
+  const seenTargets = new Set();
+  for (const targetId of targets?.slice(0, limit) || []) {
+    if (!REFRESH_TARGET_IDS.has(targetId) || seenTargets.has(targetId)) { invalid = true; continue; }
+    seenTargets.add(targetId);
+    targetIds.push(targetId);
+  }
+  const boundedResults = results?.slice(0, limit) || [];
+  const resultCounts = new Map();
+  for (const entry of boundedResults) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || !REFRESH_TARGET_IDS.has(entry.targetId)) {
+      invalid = true;
+      continue;
+    }
+    resultCounts.set(entry.targetId, (resultCounts.get(entry.targetId) || 0) + 1);
+  }
+  const expected = strictHead(expectedHead);
+  const resultTargets = [];
+  // An oversized result list could hide a later contradictory observation.
+  // Preserve the plan, but do not select a favorable prefix as target proof.
+  for (const entry of results && results.length <= limit ? boundedResults : []) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || !REFRESH_TARGET_IDS.has(entry.targetId)) continue;
+    if (resultCounts.get(entry.targetId) !== 1) { invalid = true; continue; }
+    const sourceHead = strictHead(entry.sourceHead);
+    const blocker = typedBlocker(entry.blocker);
+    if (!seenTargets.has(entry.targetId)
+      || (entry.ok != null && typeof entry.ok !== 'boolean')
+      || (entry.exactHeadProofOk != null && typeof entry.exactHeadProofOk !== 'boolean')
+      || (entry.sourceHead != null && entry.sourceHead !== '' && !sourceHead)
+      || (entry.blocker != null && entry.blocker !== '' && !blocker)) invalid = true;
+    const sovereignRelayObservation = entry.targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER
+      ? projectPostSyncSovereignRelayObservation(entry.sovereignRelayObservation, expected)
+      : null;
+    resultTargets.push(Object.freeze({
+      targetId: entry.targetId,
+      ok: boolean(entry.ok),
+      exactHeadProofOk: boolean(entry.exactHeadProofOk),
+      sourceHead,
+      sourceHeadMatchesExpected: sourceHead && expected ? sourceHead === expected : null,
+      blocker,
+      ...(sovereignRelayObservation ? { sovereignRelayObservation } : {}),
+    }));
+  }
+  return Object.freeze({
+    classification,
+    evidenceState: truncated ? 'TRUNCATED' : invalid ? 'INVALID' : !source || !targets || !results ? 'MISSING' : 'OBSERVED',
+    truncated,
+    targetIds: Object.freeze(targetIds),
+    resultTargets: Object.freeze(resultTargets),
+    sovereignCaretakerExecution: projectCaretakerBeaconFacts(source?.sovereignCaretakerExecution, expected, nowMs),
+    lastSovereignCaretakerFailure: projectCaretakerBeaconFacts(source?.lastSovereignCaretakerFailure, expected, nowMs, true),
+    targetFailureHistory: projectTargetFailureBeaconFacts(source?.targetFailureHistory, expected, nowMs),
+  });
+}
+
 export function projectBeaconStatus(record, spec, nowMs = Date.now(), expectedHead = '') {
   if (!record) {
     return Object.freeze({
@@ -287,6 +403,7 @@ export function projectBeaconStatus(record, spec, nowMs = Date.now(), expectedHe
       dirtFacts: Object.freeze({ known: false, blocksSync: false, blockingCount: 0 }),
       housekeeperFacts: Object.freeze({ observed: false, state: 'UNPROVEN', observedAtUtc: '', head: '', blocker: '' }),
       runtimeHeads: Object.freeze({ builtHead: '', servedHead: '', runtimeHead: '' }),
+      ...(spec.id === 'postSyncRefresh' ? { runtimeRefresh: projectPostSyncRefreshBeaconFacts(record, expectedHead, nowMs) } : {}),
     });
   }
   const observedAtUtc = recordObservedAt(record);
@@ -328,6 +445,7 @@ export function projectBeaconStatus(record, spec, nowMs = Date.now(), expectedHe
     dirtFacts: dirtFacts(record),
     housekeeperFacts: housekeeperFacts(record),
     runtimeHeads: runtimeHeads(record),
+    ...(spec.id === 'postSyncRefresh' ? { runtimeRefresh: projectPostSyncRefreshBeaconFacts(record, expectedHead, nowMs) } : {}),
   });
 }
 
@@ -549,6 +667,11 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
   const mailboxPulseFacts = projectMailboxPulseFacts(syncAndRefreshRecord || {});
   const surfaces = STATUS_SPECS.map((spec) => {
     const projected = projectBeaconStatus(statusRecords[spec.id] || null, spec, nowMs, head);
+    if (spec.id === 'githubSync') return Object.freeze({
+      ...projected,
+      sovereignCaretakerExecution: projectCaretakerBeaconFacts(syncAndRefreshRecord?.controlPlaneRepair?.sovereignCaretakerExecution, head, nowMs),
+      lastSovereignCaretakerFailure: projectCaretakerBeaconFacts(syncAndRefreshRecord?.lastSovereignCaretakerFailure, head, nowMs, true),
+    });
     return spec.id === 'mailbox' ? combineMailboxStatus(projected, mailboxIngressObservation, mailboxPulseFacts) : projected;
   });
   const telemetry = buildBattleBridgeTelemetryAutorepairProjection({ sourceHead: head, surfaces, qualifiedRepairPolicies });
@@ -583,7 +706,9 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
     liveOpenClawUpdateAllowed: false,
     pcRestartAllowed: false,
     secretValuesPublished: false,
-    finalVerdict: 'BATTLE_BRIDGE_OUTBOUND_HEALTH_BEACON_PUBLISHED',
+    // A completed observation is durable locally before external publication.
+    // Only the runner's publication result describes that transport outcome.
+    finalVerdict: 'BATTLE_BRIDGE_OUTBOUND_HEALTH_OBSERVATION_READY',
   });
 }
 
@@ -594,7 +719,7 @@ export function buildBattleBridgeOutboundBeaconBody(record) {
 export function buildBattleBridgeOutboundBeaconMaterialBody(body = '') {
   return String(body)
     .replace(/("(?:observedAtUtc|timestampUtc|heartbeatAtUtc)"\s*:\s*)"[^"]*"/g, (_match, prefix) => prefix + '"<volatile>"')
-    .replace(/("(?:ageMs|statusAgeMs|heartbeatAgeMs)"\s*:\s*)\d+/g, (_match, prefix) => prefix + '0');
+    .replace(/("(?:ageMs|statusAgeMs|heartbeatAgeMs|lastCompletedAgeMs)"\s*:\s*)\d+/g, (_match, prefix) => prefix + '0');
 }
 
 function runFixed(executable, args, options = {}) {
@@ -604,6 +729,7 @@ function runFixed(executable, args, options = {}) {
     shell: false,
     windowsHide: true,
     timeout: options.timeout || 60_000,
+    input: options.input,
     maxBuffer: MAX_GITHUB_BYTES,
   });
   return Object.freeze({
@@ -769,9 +895,9 @@ function publishBeacon(repoRoot, body) {
     heartbeatMs: 5 * 60_000,
     publish: (nextBody) => {
       const args = existingId
-        ? ['api', '-X', 'PATCH', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/comments/${existingId}`, '-f', `body=${nextBody}`]
-        : ['api', '-X', 'POST', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments`, '-f', `body=${nextBody}`];
-      const result = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, args, { cwd: repoRoot, timeout: 120_000 });
+        ? ['api', '-X', 'PATCH', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/comments/${existingId}`, '--input', '-']
+        : ['api', '-X', 'POST', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments`, '--input', '-'];
+      const result = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, args, { cwd: repoRoot, timeout: 120_000, input: JSON.stringify({ body: nextBody }) });
       if (result.ok && !existingId) {
         invalidateBrokeredGithubObservation({ key: `health-beacon-thread:${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}` });
       }
