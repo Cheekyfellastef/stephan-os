@@ -9,7 +9,7 @@ import { resolve } from 'node:path';
 import { readMissionRecord, appendMissionEvent, runWithMissionStatePrecondition } from './missionOrchestratorStore.js';
 import { readSourceMutationLease, withOriginalSourceLeaseFenceGuard } from './programmeAuthorityService.js';
 import { readExecutionReceiptHistory } from '../../shared/agents/executionReceiptV1.mjs';
-import { authenticateLegacyOrphanQuarantine, authenticateProspectiveOrphanQuarantine } from './legacyOriginalSourceOrphanQuarantineV1.js';
+import { authenticateLegacyOrphanQuarantine } from './legacyOriginalSourceOrphanQuarantineV1.js';
 import { resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import {
   exactElasticPrHeadIdentity, originalMissionHasQueuedWork, readOriginalSourceExecutionIdV1,
@@ -375,8 +375,6 @@ export async function quarantineOriginalSourceAttempt(input, options = {}) {
   });
 }
 
-
-
 export async function verifyOriginalSourceAttemptFence(mission, lease, paths, env) {
   const fence = mission.storeMetadata?.originalSourceAttemptFence;
   if (!originalSourceFenceBindsLease(fence, lease)
@@ -571,8 +569,10 @@ export async function proveUnknownProcessingClaimQuarantine(current, input, opti
     fail('PROSPECTIVE_ORPHAN_CANONICAL_PATHS_UNPROVEN');
   }
   const observed = await readExactUnknownProcessingClaim(current, input, options);
-  const authenticate = options.authenticateProspectiveOrphanQuarantine
-    || authenticateProspectiveOrphanQuarantine;
+  const authenticate = options.authenticateProspectiveOrphanQuarantine;
+  if (typeof authenticate !== 'function') {
+    fail('PROSPECTIVE_ORPHAN_INDEPENDENT_OS_AUTHORITY_NOT_INSTALLED');
+  }
   const expected = {
     repository: current.repository,
     missionId: current.missionId,
