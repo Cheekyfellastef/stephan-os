@@ -430,8 +430,10 @@ function fixedRegistry(repoRoot) {
       executable: node,
       args: frozen([nodeFile('sovereign-commander-goal-builder-repair.mjs')]),
       // The in-band builder repair never re-enters control-plane repair.
-      // Its fixed child budgets total 125s, plus a bounded orchestration margin.
-      timeoutMs: 145_000,
+      // Its longest fail-closed path can spend 160s in fixed children after
+      // the Ignition source-proof budget increase. Preserve bounded headroom
+      // while staying below the remote repair transport's 240s ceiling.
+      timeoutMs: 195_000,
     }),
     'repair-stephanos': frozen({
       executable: node,

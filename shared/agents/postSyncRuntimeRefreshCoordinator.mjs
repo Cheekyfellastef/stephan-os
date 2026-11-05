@@ -231,6 +231,10 @@ const NO_RUNTIME_EXACT = new Set([
   'scripts/ignition-cockpit-model.mjs',
   'scripts/run-battle-bridge-ignition.mjs',
   'scripts/battle-bridge-ignition-sync-preflight.mjs',
+  // These are one-shot advisory/review children loaded afresh by their fixed callers;
+  // source adoption must not restart a long-running runtime. Keep exact-only.
+  'scripts/starfield-vr-project-performance-loop.mjs',
+  'scripts/sovereign-windows-review-calibration-v1-engine.mjs',
   'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
 ]);
 
