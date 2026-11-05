@@ -41,7 +41,9 @@ function within(parent, child) {
   return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
 }
 function safePath(value) {
-  const normalized = text(value).replace(/\\/g, '/').replace(/^\.\/+/, '');
+  // Preserve raw Git path identity before handling separator/dot aliases.
+  if (typeof value !== 'string' || value !== value.trim()) return '';
+  const normalized = value.replace(/\\/g, '/').replace(/^\.\/+/, '');
   // shared/runtime contains tracked Stephanos source modules, not mutable
   // root runtime state. Keep every other nested runtime segment excluded.
   const canonicalSourceRuntime = normalized.startsWith('shared/runtime/')
@@ -117,11 +119,15 @@ function validatedBundleInput(input = {}) {
   // A duplicated canonical changed path must never silently crowd out another
   // artifact path when Map lookup reconstructs the complete-file bundle.
   const changedPaths = changedFiles.map((file) => safePath(file?.path));
-  if (new Set(changedPaths).size !== changedFiles.length) {
+  const artifactPaths = artifactFiles.map((file) => safePath(file?.path));
+  // Windows path identity is case-insensitive; refuse collisions in both sets.
+  // Preserve exact spelling across changed-file and artifact-file bindings.
+  const distinctWin32 = (paths) => paths.every(Boolean)
+    && new Set(paths.map((path) => path.toLowerCase())).size === paths.length;
+  if (!distinctWin32(changedPaths) || !distinctWin32(artifactPaths)) {
     return { ok: false, reason: 'SOURCE_ARTIFACT_ESCROW_FILE_SET_INVALID' };
   }
-  const byPath = new Map(artifactFiles.map((file) => [safePath(file?.path), file]));
-  if (byPath.size !== artifactFiles.length || byPath.has('')) return { ok: false, reason: 'SOURCE_ARTIFACT_ESCROW_FILE_SET_INVALID' };
+  const byPath = new Map(artifactFiles.map((file, index) => [artifactPaths[index], file]));
   const files = [];
   let byteLength = 0;
   for (const changed of changedFiles) {
@@ -273,7 +279,10 @@ function stagedEntry(run, worktreePath, indexEnv, path) {
 async function sourceArtifactIdentityFromWorktree(action, execution, claim, options = {}) {
   const worktreePath = resolve(text(action?.worktreePath));
   const changedPaths = (Array.isArray(execution?.changedFiles) ? execution.changedFiles : []).map(safePath).filter(Boolean).sort();
-  if (!worktreePath || !changedPaths.length || changedPaths.length !== execution.changedFiles.length || new Set(changedPaths).size !== changedPaths.length) throw new Error('SOURCE_ARTIFACT_CHANGED_FILE_SET_INVALID');
+  if (!worktreePath || !changedPaths.length || changedPaths.length !== execution.changedFiles.length
+      || new Set(changedPaths.map((path) => path.toLowerCase())).size !== changedPaths.length) {
+    throw new Error('SOURCE_ARTIFACT_CHANGED_FILE_SET_INVALID');
+  }
   const run = options.runCommand;
   if (typeof run !== 'function') throw new Error('SOURCE_ARTIFACT_BOUNDED_RUNNER_REQUIRED');
   const env = options.env || process.env;
