@@ -82,6 +82,7 @@ test('existing publication router accepts an existing fix branch and connected-a
     workspace,
     artifact: { exactBase: escrow.exactParentHead, exactTree: escrow.exactResultTree, exactCommit: '', branch: escrow.canonicalBranch },
     nowUtc: NOW,
+    existingBranch: true,
     capabilities: { [SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP]: githubApp() },
   });
   assert.equal(result.selectedRoute, SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP);
