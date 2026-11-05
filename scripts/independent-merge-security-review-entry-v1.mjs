@@ -95,7 +95,24 @@ function draftReviewHeld() {
       || typeof event?.pull_request?.draft !== 'boolean') {
     throw new Error('INDEPENDENT_REVIEW_DRAFT_IDENTITY_UNVERIFIED');
   }
-  return event.pull_request.draft;
+  // Preserve cheap draft hold; READY requires complete hosted identity before
+  // resource-intensive specialist launch. Do not change workflow_dispatch.
+  if (event.pull_request.draft) return true;
+  const pr = event.pull_request;
+  const safePrNumber = (value) => Number.isSafeInteger(value) && value > 0;
+  const fullSha = (value) => /^[0-9a-f]{40}$/i.test(text(value));
+  const sameRepository = (value) => text(value).toLowerCase() === repository.toLowerCase();
+  if (!safePrNumber(event.number)
+      || !safePrNumber(pr.number)
+      || event.number !== pr.number
+      || !fullSha(pr?.head?.sha)
+      || !fullSha(pr?.base?.sha)
+      || !text(pr?.head?.ref)
+      || !sameRepository(pr?.head?.repo?.full_name)
+      || !sameRepository(pr?.base?.repo?.full_name)) {
+    throw new Error('INDEPENDENT_REVIEW_READY_IDENTITY_UNVERIFIED');
+  }
+  return false;
 }
 
 function main() {

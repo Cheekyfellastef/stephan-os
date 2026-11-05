@@ -108,3 +108,63 @@ test('draft pull_request_target exits before any GitHub read or specialist launc
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// A hosted READY payload is untrusted until bound to its PR and repositories.
+// Execute the real entry child with a bounded specialist stub in a temp CWD:
+// no GitHub API token or network is required for these resource-admission checks.
+test('READY prelaunch binds exact PR identity before specialist launch', async (t) => {
+  const repository = 'Cheekyfellastef/stephan-os';
+  const valid = {
+    number: 3055,
+    repository: { full_name: repository },
+    pull_request: {
+      number: 3055, draft: false,
+      head: { sha: 'a'.repeat(40), ref: 'fix/2954-ready-guard', repo: { full_name: repository } },
+      base: { sha: 'b'.repeat(40), ref: 'main', repo: { full_name: repository } },
+    },
+  };
+  const changed = (mutation) => { const event = structuredClone(valid); mutation(event); return event; };
+  const cases = [
+    ['complete READY starts exactly one specialist', valid, true],
+    ['READY missing event PR number', changed(e => { delete e.number; }), false],
+    ['READY conflicting PR numbers', changed(e => { e.number = 3056; }), false],
+    ['READY missing nested PR number', changed(e => { delete e.pull_request.number; }), false],
+    ['READY nonnumeric PR number', changed(e => { e.pull_request.number = '3055'; }), false],
+    ['READY missing head SHA', changed(e => { delete e.pull_request.head.sha; }), false],
+    ['READY invalid head SHA', changed(e => { e.pull_request.head.sha = 'f'.repeat(39); }), false],
+    ['READY missing base SHA', changed(e => { delete e.pull_request.base.sha; }), false],
+    ['READY invalid base SHA', changed(e => { e.pull_request.base.sha = 'z'.repeat(40); }), false],
+    ['READY missing head ref', changed(e => { delete e.pull_request.head.ref; }), false],
+    ['READY missing head repository', changed(e => { delete e.pull_request.head.repo; }), false],
+    ['READY foreign head repository', changed(e => { e.pull_request.head.repo.full_name = 'foreign/repo'; }), false],
+    ['READY missing base repository', changed(e => { delete e.pull_request.base.repo; }), false],
+    ['READY foreign base repository', changed(e => { e.pull_request.base.repo.full_name = 'foreign/repo'; }), false],
+  ];
+  for (const [name, event, mayLaunch] of cases) {
+    await t.test(name, async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'stephanos-ready-review-'));
+      try {
+        const { mkdir } = await import('node:fs/promises');
+        await mkdir(join(dir, 'scripts'));
+        await writeFile(join(dir, 'scripts', 'independent-merge-security-review-with-openclaw-specialist-v1.mjs'),
+          "import { writeFileSync } from 'node:fs'; writeFileSync('started.txt', 'one child');\n");
+        const eventPath = join(dir, 'event.json');
+        await writeFile(eventPath, JSON.stringify(event));
+        const result = spawnSync(process.execPath, [fileURLToPath(sourceUrl)], {
+          cwd: dir, encoding: 'utf8', timeout: 10_000,
+          env: {
+            ...process.env, GITHUB_ACTIONS: 'true', GITHUB_JOB: 'independent-security-review',
+            GITHUB_EVENT_NAME: 'pull_request_target', GITHUB_EVENT_PATH: eventPath,
+            GITHUB_REPOSITORY: repository, GH_TOKEN: '', GITHUB_TOKEN: '',
+          },
+        });
+        const { access } = await import('node:fs/promises');
+        let launched = false;
+        try { await access(join(dir, 'started.txt')); launched = true; } catch {}
+        assert.equal(launched, mayLaunch, result.stderr);
+        assert.equal(result.status, mayLaunch ? 0 : 1, result.stderr);
+        if (!mayLaunch) assert.match(result.stderr, /INDEPENDENT_REVIEW_READY_IDENTITY_UNVERIFIED/);
+      } finally { await rm(dir, { recursive: true, force: true }); }
+    });
+  }
+});
