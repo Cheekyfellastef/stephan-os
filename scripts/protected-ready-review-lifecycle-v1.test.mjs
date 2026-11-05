@@ -80,6 +80,9 @@ test('a complete clean selection is validated before the new draft transition an
     comment: f.proof.handoff.ownerComment, ...d, now: () => clock(5) });
   assert.equal(prepared.beforeDraft, true);
   assert.equal(prepared.unresolvedReviewThreads, 0);
+  assert.equal(prepared.preflight.engineReceipt.verdict, 'STEPHANOS_REVIEW_PASS');
+  assert.equal(prepared.preflight.escalationCommentId, 0);
+  assert.ok(d.calls.includes(`exactHeadInput:2094:${f.identity.sourceHead}:${f.identity.baseSha}`));
   assert.ok(d.calls.includes('reviewThreads:2094:null'));
   const dir = mkdtempSync(join(tmpdir(), 'ready-review-test-'));
   try {
@@ -92,6 +95,44 @@ test('a complete clean selection is validated before the new draft transition an
     assert.match(readFileSync(join(dir, 'outputs'), 'utf8'), /ready_review=true/);
     assert.equal(JSON.parse(readFileSync(join(dir, 'handoff.json'), 'utf8')).payloadSha256, handoff.payloadSha256);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('READY preflight refuses engine findings before draft mutation until exact owner qualification exists', async () => {
+  const f = readyLifecycleFixture({ engineFindings: true }); active(f.proof.handoff.run); f.state.pull.draft = true;
+  f.proof.escalationComment = null;
+  const d = deps(f, 'dispatch');
+  await assert.rejects(prepareReadyReviewProducer({ command: f.command,
+    comment: f.proof.handoff.ownerComment, ...d, now: () => clock(5) }), /OWNER_(COMMENT_ABSENT|ESCALATION_NOT_POSTED)/);
+  assert.equal(d.calls.includes('reviewThreads:2094:null'), false);
+});
+
+test('READY preflight accepts only the owner qualification bound to its selected independent review', async () => {
+  const f = readyLifecycleFixture({ engineFindings: true }); active(f.proof.handoff.run); f.state.pull.draft = true;
+  const d = deps(f, 'dispatch');
+  const prepared = await prepareReadyReviewProducer({ command: f.command,
+    comment: f.proof.handoff.ownerComment, ...d, now: () => clock(5) });
+  assert.equal(prepared.preflight.engineReceipt.verdict, 'STEPHANOS_REVIEW_FINDINGS');
+  assert.equal(prepared.preflight.qualification.finalVerdict, 'EXACT_HEAD_QUALIFIED_ESCALATION_PASS');
+  assert.equal(prepared.preflight.escalationCommentId, 901);
+  f.proof.escalationComment.body = f.proof.escalationComment.body.replace('"reviewRunId":90', '"reviewRunId":91');
+  await assert.rejects(prepareReadyReviewProducer({ command: f.command,
+    comment: f.proof.handoff.ownerComment, ...deps(f, 'dispatch'), now: () => clock(5) }), /REVIEW_RUN_UNBOUND|DIFFERENT_FROM_OWNER_READY_SELECTION/);
+});
+
+test('READY preflight rejects a changed or incomplete exact-head engine input', async t => {
+  const attacks = {
+    head: input => { input.headSha = 'e'.repeat(40); },
+    base: input => { input.baseSha = 'e'.repeat(40); },
+    duplicate: input => { input.changedFiles.push(input.changedFiles[0]); },
+    patch: input => { input.patch = ''; },
+  };
+  for (const [name, attack] of Object.entries(attacks)) await t.test(name, async () => {
+    const f = readyLifecycleFixture(); active(f.proof.handoff.run); f.state.pull.draft = true;
+    const d = deps(f, 'dispatch'), input = structuredClone(f.input); attack(input);
+    d.readExactHeadInput = async () => input;
+    await assert.rejects(prepareReadyReviewProducer({ command: f.command,
+      comment: f.proof.handoff.ownerComment, ...d, now: () => clock(5) }), /PREFLIGHT_ENGINE_INPUT_BINDING/);
+  });
 });
 
 test('draft bootstrap remains HOLD; independently already-ready bootstrap is not mislabeled clean', async () => {
@@ -263,6 +304,27 @@ test('thread transport exposes only the fixed read-only query and typed variable
   await assert.rejects(transport.readThreadsPage('2094', null), /API_ID_INVALID/);
   await assert.rejects(transport.readThreadsPage(2094, {}), /QUERY_INPUT/);
   assert.equal(calls.length, 1);
+});
+
+test('READY preflight transport reads only the exact bounded PR files and complete patch around identity rereads', async t => {
+  const f = readyLifecycleFixture(), calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    calls.push({ url, options });
+    const path = String(url).replace('https://api.github.com/repos/Cheekyfellastef/stephan-os', '');
+    let value;
+    if (path === '/pulls/2094' && options.headers?.Accept === 'application/vnd.github.v3.diff') value = f.input.patch;
+    else if (path === '/pulls/2094') value = JSON.stringify(f.state.pull);
+    else if (path === '/git/ref/heads/main') value = JSON.stringify(f.state.main);
+    else if (path === `/git/commits/${f.identity.sourceHead}`) value = JSON.stringify(f.state.commit);
+    else if (path === '/pulls/2094/files?per_page=100&page=1') value = JSON.stringify([{ filename: f.input.changedFiles[0] }]);
+    else throw new Error(`unexpected fetch ${path}`);
+    return { ok: true, status: 200, text: async () => value };
+  });
+  const transport = readyReviewTransports({ GITHUB_TOKEN: 'fixture-token' });
+  assert.deepEqual(await transport.readExactHeadInput(f.identity), f.input);
+  assert.equal(calls.filter(call => call.url.endsWith('/pulls/2094')).length, 3);
+  assert.equal(calls.filter(call => call.url.includes('/pulls/2094/files?')).length, 1);
+  assert.equal(calls.filter(call => call.options.headers?.Accept === 'application/vnd.github.v3.diff').length, 1);
 });
 
 test('target runs unchanged engine on full exact input and keeps a genuine clean result', async () => {

@@ -7,6 +7,7 @@ import {
   assertQualifiableExactHeadReceiptV1,
   validateOwnerEscalationCommentV1,
   qualifyExactHeadReviewV1,
+  qualifyProtectedReadyDraftReviewV1,
   assertCurrentExactHeadPrIdentityV1,
 } from './exact-head-qualified-escalation-v1.mjs';
 
@@ -55,6 +56,7 @@ test('exact PR head/base and ownership remain pinned before and after independen
     base: { sha: SHA_B, ref: 'main' },
   };
   assert.equal(assertCurrentExactHeadPrIdentityV1(current, input), true);
+  assert.throws(() => assertCurrentExactHeadPrIdentityV1({ ...current, draft: true }, input), /PR_CHANGED/);
   for (const altered of [
     { ...current, head: { ...current.head, sha: 'c'.repeat(40) } },
     { ...current, base: { ...current.base, sha: 'c'.repeat(40) } },
@@ -65,7 +67,8 @@ test('exact PR head/base and ownership remain pinned before and after independen
   ]) assert.throws(() => assertCurrentExactHeadPrIdentityV1(altered, input), /PR_CHANGED/);
   const actual = readFileSync(new URL('./exact-head-qualified-escalation-v1.mjs', import.meta.url), 'utf8');
   assert.match(actual, /const prAfter = await api\('\/pulls\/' \+ input\.prNumber\)/);
-  assert.match(actual, /assertCurrentExactHeadPrIdentityV1\(prAfter, input\)/);
+  assert.match(actual, /assertCurrentExactHeadPrIdentity\(prAfter, input, allowDraft\)/);
+  assert.match(actual, /qualifyProtectedReadyDraftReviewV1[\s\S]*qualifyExactHeadReview\(input, receipt, options, true\)/);
 });
 
 test('only P2 authority and dynamic execution findings can request external qualification', () => {

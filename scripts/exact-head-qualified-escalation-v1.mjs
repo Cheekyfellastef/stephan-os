@@ -71,20 +71,24 @@ export function assertQualifiableExactHeadReceiptV1(input, receipt) {
 // Exact-head review cannot outlive a concurrent PR head/base update. This
 // validation is used once before external evidence and again at conclusion.
 // It does NOT confer merge authority or waive separate branch protections.
-export function assertCurrentExactHeadPrIdentityV1(pr, input) {
-  requireProof(pr?.state === 'open' && pr?.draft === false
+function assertCurrentExactHeadPrIdentity(pr, input, allowDraft) {
+  requireProof(pr?.state === 'open' && (pr?.draft === false || (allowDraft === true && pr?.draft === true))
     && pr?.head?.sha === input.headSha && pr?.base?.sha === input.baseSha
     && pr?.base?.ref === 'main' && pr?.head?.repo?.full_name === REPO,
     'PR_CHANGED');
   return true;
 }
 
-export async function qualifyExactHeadReviewV1(input, receipt, { api, download, unzip, nowMs } = {}) {
+export function assertCurrentExactHeadPrIdentityV1(pr, input) {
+  return assertCurrentExactHeadPrIdentity(pr, input, false);
+}
+
+async function qualifyExactHeadReview(input, receipt, { api, download, unzip, nowMs } = {}, allowDraft = false) {
   const context = assertQualifiableExactHeadReceiptV1(input, receipt);
   requireProof(typeof api === 'function' && typeof download === 'function'
     && typeof unzip === 'function', 'TRUSTED_TRANSPORT_UNAVAILABLE');
   const pr = await api('/pulls/' + input.prNumber);
-  assertCurrentExactHeadPrIdentityV1(pr, input);
+  assertCurrentExactHeadPrIdentity(pr, input, allowDraft);
   const issue = await api('/issues/' + input.prNumber);
   const pages = Math.ceil(Number(issue?.comments) / 100);
   requireProof(pages > 0 && Number.isSafeInteger(pages), 'OWNER_COMMENT_ABSENT');
@@ -152,7 +156,7 @@ export async function qualifyExactHeadReviewV1(input, receipt, { api, download, 
   // Reject a replaced PR head or changed protected base, even if the first
   // GitHub read and the independent evidence matched the old snapshot.
   const prAfter = await api('/pulls/' + input.prNumber);
-  assertCurrentExactHeadPrIdentityV1(prAfter, input);
+  assertCurrentExactHeadPrIdentity(prAfter, input, allowDraft);
   return Object.freeze({
     ok: true, finalVerdict: 'EXACT_HEAD_QUALIFIED_ESCALATION_PASS',
     prNumber: input.prNumber, sourceHead: input.headSha,
@@ -160,6 +164,16 @@ export async function qualifyExactHeadReviewV1(input, receipt, { api, download, 
     independentArtifactId: owner.reviewArtifactId,
     reviewMode: artifact.reviewMode, approvalAuthority: false, mergeAuthority: false,
   });
+}
+
+export function qualifyExactHeadReviewV1(input, receipt, options) {
+  return qualifyExactHeadReview(input, receipt, options, false);
+}
+
+// This named entry is used only by the protected READY producer before its
+// draft-state mutation. It changes no review, approval, merge or runtime authority.
+export function qualifyProtectedReadyDraftReviewV1(input, receipt, options) {
+  return qualifyExactHeadReview(input, receipt, options, true);
 }
 
 async function api(path) {

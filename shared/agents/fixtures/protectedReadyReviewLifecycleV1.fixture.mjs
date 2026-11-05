@@ -181,7 +181,12 @@ export function fixtureTransport(fixture) {
     if (threadPages.length) return threadPages.shift();
     return fixtureThreadPage(fixture);
   };
-  return { api, download: async id => artifacts.get(id)?.zip, readThreadsPage, threadPages, inventory, calls, runs, artifacts };
+  const readExactHeadInput = async identity => {
+    calls.push(`exactHeadInput:${identity.prNumber}:${identity.sourceHead}:${identity.baseSha}`);
+    return fixture.input;
+  };
+  return { api, download: async id => artifacts.get(id)?.zip, readThreadsPage, readExactHeadInput,
+    threadPages, inventory, calls, runs, artifacts };
 }
 
 export function fixtureThreadPage(fixture, { nodes = [], totalCount = nodes.length, hasNextPage = false, endCursor = null } = {}) {

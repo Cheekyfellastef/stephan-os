@@ -25,12 +25,14 @@ import {
   extractPersonalRepositoryArtifactZip,
 } from '../shared/agents/operatorPersonalRepositoryMergeV1.mjs';
 import { reviewExactHead } from './exact-head-review.mjs';
-import { qualifyExactHeadReviewV1, validateOwnerEscalationCommentV1 } from './exact-head-qualified-escalation-v1.mjs';
+import { qualifyExactHeadReviewV1, qualifyProtectedReadyDraftReviewV1,
+  validateOwnerEscalationCommentV1 } from './exact-head-qualified-escalation-v1.mjs';
 import { planProtectedReadyExecutionRoute, PROTECTED_READY_EXECUTION_ROUTE } from '../shared/agents/protectedReadyExecutionRouteV1.mjs';
 
 const MAX_PAGES = 6;
 const DISPATCH_OBSERVATIONS = 6;
 const DISPATCH_OBSERVATION_DELAY_MS = 5000;
+const MAX_PATCH_BYTES = 2_000_000;
 const ROOT = `/repos/${REPO}`;
 // Fixed read-only query. Callers supply only the exact PR number and an opaque
 // pagination cursor, never a query, repository, field list or mutation.
@@ -162,10 +164,38 @@ export async function readReadyReviewUnresolvedThreads(readThreadsPage, identity
   throw new Error('PROTECTED_READY_REVIEW_BLOCKED:REVIEW_THREADS_LIMIT');
 }
 
+function assertReadyReviewInput(input, identity) {
+  requireProof(input?.repository === identity.repository && input.prNumber === identity.prNumber
+    && input.headSha === identity.sourceHead && input.baseSha === identity.baseSha
+    && Array.isArray(input.changedFiles) && input.changedFiles.length > 0
+    && input.changedFiles.length <= MAX_PAGES * 100
+    && input.changedFiles.every(path => typeof path === 'string' && path.length > 0 && path.length <= 1024)
+    && new Set(input.changedFiles).size === input.changedFiles.length
+    && typeof input.patch === 'string' && input.patch.startsWith('diff --git ')
+    && Buffer.byteLength(input.patch) <= MAX_PATCH_BYTES, 'PREFLIGHT_ENGINE_INPUT_BINDING');
+  return input;
+}
+
+async function qualifyReadyReviewReceipt(input, engineReceipt, command, independentReviewMode,
+  { api, download, now, allowDraft = false }) {
+  let qualification = null, escalationComment = null;
+  if (engineReceipt.verdict !== 'STEPHANOS_REVIEW_PASS' || engineReceipt.findings.length !== 0) {
+    const qualify = allowDraft ? qualifyProtectedReadyDraftReviewV1 : qualifyExactHeadReviewV1;
+    qualification = await qualify(input, engineReceipt, { api, download,
+      unzip: bytes => extractPersonalRepositoryArtifactZip(bytes, INDEPENDENT_REVIEW_ARTIFACT_FILE).toString('utf8'),
+      nowMs: Date.parse(now) });
+    escalationComment = await api(`/issues/comments/${apiId(qualification.ownerCommentId)}`);
+    escalationMatchesReady(escalationComment, { patchSha256: sha(input.patch) }, command, input, now);
+    requireProof(qualification.reviewMode === independentReviewMode, 'QUALIFICATION_MODE_CHANGED');
+  }
+  return { qualification, escalationComment };
+}
+
 // This happens before the new route mutates draft state. A legacy READY packet
 // without a full review selection keeps its old behavior and never gets a proof.
 export async function prepareReadyReviewProducer({ command, comment, env = process.env,
-  sourceSha = ownSource(), api, download, readThreadsPage, now = () => new Date().toISOString() }) {
+  sourceSha = ownSource(), api, download, readThreadsPage, readExactHeadInput,
+  now = () => new Date().toISOString() }) {
   const identity = readyReviewIdentity(command);
   assertReadyReviewSourceContext(env, sourceSha, identity.baseSha, 'dispatch');
   apiId(comment?.id);
@@ -179,6 +209,11 @@ export async function prepareReadyReviewProducer({ command, comment, env = proce
   requireProof(run.id === Number(env.GITHUB_RUN_ID), 'PRODUCER_RUN_ID');
   const mode = assertReadyReviewIndependent(independent, command);
   requireProof(state.pull.draft === false || mode === 'clean-independent', 'DRAFT_BOOTSTRAP_READY_NOT_AUTHORIZED');
+  requireProof(typeof readExactHeadInput === 'function', 'PREFLIGHT_ENGINE_INPUT_READER_UNAVAILABLE');
+  const input = assertReadyReviewInput(await readExactHeadInput(identity), identity);
+  const engineReceipt = reviewExactHead(input);
+  const preflight = await qualifyReadyReviewReceipt(input, engineReceipt, command, mode,
+    { api, download, now: now(), allowDraft: state.pull.draft });
   const unresolvedReviewThreads = state.pull.draft
     ? await readReadyReviewUnresolvedThreads(readThreadsPage, identity) : null;
   const route = planProtectedReadyExecutionRoute({ repository: identity.repository, prNumber: identity.prNumber,
@@ -189,7 +224,10 @@ export async function prepareReadyReviewProducer({ command, comment, env = proce
     : PROTECTED_READY_EXECUTION_ROUTE.ALREADY_READY), route.blocker || 'READY_ROUTE_NOT_AUTHORIZED');
   assertReadyReviewOwner(await api(`/issues/comments/${apiId(comment.id)}`), command, now(),
     comment.id, protectedWorkflowAuthorizationCommentSha256(comment));
-  return { command, comment: liveComment, run, definition, sourceSha, beforeDraft: state.pull.draft, unresolvedReviewThreads };
+  return { command, comment: liveComment, run, definition, sourceSha, beforeDraft: state.pull.draft,
+    unresolvedReviewThreads, preflight: { patchSha256: sha(input.patch),
+      changedFilesSha256: sha(JSON.stringify(input.changedFiles)), engineReceipt,
+      qualification: preflight.qualification, escalationCommentId: preflight.escalationComment?.id || 0 } };
 }
 export async function finishReadyReviewProducer(prepared, lifecycleResult, { api, env = process.env,
   now = new Date().toISOString(), path = READY_REVIEW_HANDOFF_FILE } = {}) {
@@ -328,16 +366,9 @@ export async function executeReadyReview({ prepared, input, env = process.env, s
   // Both clean and findings results are created by the unchanged trusted engine
   // over the complete live PR input. The READY record never supplies a verdict.
   const engineReceipt = reviewExactHead(input);
-  let qualification = null, escalationComment = null;
   const patchSha256 = sha(input.patch), changedFilesSha256 = sha(JSON.stringify(input.changedFiles));
-  if (engineReceipt.verdict !== 'STEPHANOS_REVIEW_PASS' || engineReceipt.findings.length !== 0) {
-    qualification = await qualifyExactHeadReviewV1(input, engineReceipt, { api, download,
-      unzip: bytes => extractPersonalRepositoryArtifactZip(bytes, INDEPENDENT_REVIEW_ARTIFACT_FILE).toString('utf8'),
-      nowMs: Date.parse(now()) });
-    escalationComment = await api(`/issues/comments/${apiId(qualification.ownerCommentId)}`);
-    escalationMatchesReady(escalationComment, { patchSha256 }, handoff.command, input, now());
-    requireProof(qualification.reviewMode === independentReviewMode, 'QUALIFICATION_MODE_CHANGED');
-  }
+  const { qualification, escalationComment } = await qualifyReadyReviewReceipt(input, engineReceipt,
+    handoff.command, independentReviewMode, { api, download, now: now() });
   requireProof(selectReadyReviewRun(await lifecycleRuns(api, identity), identity)?.id === prepared.review.run.id,
     'REVIEW_RUN_ESTATE_CHANGED');
   const owner = await api(`/issues/comments/${apiId(handoff.authorizationCommentId)}`);
@@ -432,7 +463,39 @@ export function readyReviewTransports(env = process.env) {
     requireProof(Buffer.byteLength(raw) <= READY_REVIEW_MAX_BYTES, 'REVIEW_THREADS_RESPONSE_TOO_LARGE');
     return JSON.parse(raw);
   };
-  return { api, download, dispatch, readThreadsPage };
+  const readExactHeadInput = async identity => {
+    requireProof(identity?.repository === REPO && Number.isSafeInteger(identity.prNumber) && identity.prNumber > 0
+      && typeof identity.branch === 'string' && apiSha(identity.sourceHead) && apiSha(identity.sourceTree)
+      && apiSha(identity.baseSha), 'PREFLIGHT_IDENTITY');
+    await readReadyReviewTarget(api, identity, { allowDraft: true });
+    const changedFiles = [], seen = new Set();
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+      const response = await fetch(`https://api.github.com${ROOT}/pulls/${apiId(identity.prNumber)}/files?per_page=100&page=${page}`,
+        { redirect: 'error', headers });
+      requireProof(response.ok, `PREFLIGHT_FILES_API_${response.status}`);
+      const raw = await response.text();
+      requireProof(Buffer.byteLength(raw) <= READY_REVIEW_MAX_BYTES, 'PREFLIGHT_FILES_RESPONSE_TOO_LARGE');
+      let rows;
+      try { rows = JSON.parse(raw); } catch { requireProof(false, 'PREFLIGHT_FILES_JSON'); }
+      requireProof(Array.isArray(rows) && rows.length <= 100, 'PREFLIGHT_FILES_PAGE');
+      for (const row of rows) {
+        requireProof(typeof row?.filename === 'string' && row.filename.length > 0 && row.filename.length <= 1024
+          && !seen.has(row.filename), 'PREFLIGHT_FILES_IDENTITY');
+        seen.add(row.filename); changedFiles.push(row.filename);
+      }
+      if (rows.length < 100) break;
+      requireProof(page < MAX_PAGES, 'PREFLIGHT_FILES_LIMIT');
+    }
+    const patchResponse = await fetch(`https://api.github.com${ROOT}/pulls/${apiId(identity.prNumber)}`,
+      { redirect: 'error', headers: { ...headers, Accept: 'application/vnd.github.v3.diff' } });
+    requireProof(patchResponse.ok, `PREFLIGHT_PATCH_API_${patchResponse.status}`);
+    const patch = await patchResponse.text();
+    const input = assertReadyReviewInput({ repository: REPO, prNumber: identity.prNumber,
+      headSha: identity.sourceHead, baseSha: identity.baseSha, changedFiles, patch }, identity);
+    await readReadyReviewTarget(api, identity, { allowDraft: true });
+    return input;
+  };
+  return { api, download, dispatch, readThreadsPage, readExactHeadInput };
 }
 async function main() {
   const mode = process.argv[2], transport = readyReviewTransports();
