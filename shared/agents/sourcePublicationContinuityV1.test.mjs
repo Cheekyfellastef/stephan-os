@@ -192,3 +192,30 @@ test('raw artifact branch and capability receipt branch must match byte-exact',(
   const q=get(artifact.branch,b);assert.equal(q.blocker,SOURCE_PUBLICATION_BLOCKER.PROBES_PENDING);assert.equal(q.routeReady,false);assert.equal(q.mutationAllowed,false);
  }
 });
+
+test('capability operations must match raw authority bytes, not trimmed aliases', () => {
+ const route=SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP;
+ const core=['CREATE_BLOBS','CREATE_TREE','CREATE_COMMIT','UPDATE_BRANCH_REF'];
+ const run=(operations)=>buildSourcePublicationContinuityV1({
+  workspace,artifact,nowUtc:NOW,existingBranch:true,
+  capabilities:{[route]:githubApp({operations})},
+ });
+ assert.equal(run(core).routeReady,true);
+ for(const operations of [
+  [' CREATE_BLOBS',...core.slice(1)],
+  [core[0],'CREATE_TREE ',...core.slice(2)],
+  [core[0],core[1],'CREATE_COMMIT\t',core[3]],
+  [...core.slice(0,3),'UPDATE_BRANCH_REF '],
+  [...core.slice(0,3),'UPDATE_BRANCH_REF\n'],
+  [...core.slice(0,3),'UPDATE_BRANCH_REF\t'],
+  [...core.slice(0,3),'  UPDATE_BRANCH_REF'],
+  ['CREATE_BLOBS\n',...core.slice(1)],
+  [...core,' CREATE_BLOBS'],
+ ]){
+  const actual=run(operations);
+  assert.equal(actual.routeReady,false,JSON.stringify(operations));
+  assert.equal(actual.blocker,SOURCE_PUBLICATION_BLOCKER.PROBES_PENDING);
+  assert.equal(actual.mutationAllowed,false);
+ }
+ assert.equal(run([...core,'READ_ONLY_PROBE']).routeReady,true);
+});

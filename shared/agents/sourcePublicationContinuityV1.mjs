@@ -70,7 +70,7 @@ function receiptEvidence(route, capability, artifact, nowMs) {
     || !RECEIPT_KEYS.filter((key) => key !== 'operations')
       .every((key) => typeof receipt[key] === 'string')
     || !Array.isArray(receipt.operations)
-    || !receipt.operations.every((operation) => typeof operation === 'string')) {
+    || !receipt.operations.every((operation) => typeof operation === 'string' && operation === operation.trim())) {
     return Object.freeze({ state: 'invalid', receipt, operations: new Set() });
   }
   const observedAtMs = Date.parse(text(receipt.observedAtUtc));
