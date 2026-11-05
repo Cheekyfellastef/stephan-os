@@ -77,7 +77,9 @@ test('Sovereign fleet-goal supervisor delegates directly to canonical scheduler/
   assert.equal(result.capabilityParityOwnerGoal, '#2573');
   assert.equal(result.capabilityParityBuildableGapCount, 0);
   assert.equal(result.zeroGapInvariantSatisfied, true);
-  assert.equal(result.daemonMayReportGreen, true);
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.capabilityParityRuntimeProven, false);
+  assert.equal(result.capabilityParityClosureRequired, true);
   assert.equal(result.capacityObservationSource, 'canonical-programme-and-provider-receipts');
   assert.equal(result.synchronousProviderRefreshAllowed, false);
   assert.equal(result.canonicalGoalFabricOnly, true);
@@ -142,7 +144,7 @@ test('one-minute supervisor contains no synchronous provider refresh or source-b
   assert.match(supervisorSource, /synchronousProviderRefreshAllowed: false/);
 });
 
-test('Sovereign fleet-goal supervisor treats proven no-runnable-work as green idle', async () => {
+test('Sovereign fleet-goal supervisor keeps installed parity unproven with no runnable work', async () => {
   const result = await runSupervisor({
     conveyor: async () => conveyorResult({
       elasticAdmission: { activeMissions: [], runnableMissions: [] },
@@ -152,7 +154,10 @@ test('Sovereign fleet-goal supervisor treats proven no-runnable-work as green id
 
   assert.equal(result.ok, true);
   assert.equal(result.runnableGoalCount, 0);
-  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_IDLE_GREEN');
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_PENDING');
+  assert.equal(result.dispatchCount, 0);
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.capabilityParityClosureRequired, true);
 });
 
 test('Sovereign fleet-goal supervisor fails closed if safe work and proven capacity are stranded', async () => {
@@ -520,5 +525,19 @@ test('more pending native proposals than compiler slots never resolve to idle gr
     assert.equal(result.zeroGapInvariantSatisfied, false);
     assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_UPLIFT_PENDING');
     assert.equal(result.mergeAuthority, false);
+  }
+});
+
+test('catalog uncertainty preserves unrelated dispatch while refusing empty-queue parity green', async () => {
+  for (const runtimeParityProven of [false, true]) {
+    const result = await runSupervisor({
+      conveyor: async () => conveyorResult(),
+      reconcileCommanderParity: async () => parityResult({ parityEvidenceScope: 'SOURCE_CATALOG_ONLY', runtimeParityProven }),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.dispatchCount, 1);
+    assert.equal(result.provenPickupCount, 1);
+    assert.equal(result.daemonMayReportGreen, false);
+    assert.equal(result.capabilityParityRuntimeProven, false);
   }
 });
