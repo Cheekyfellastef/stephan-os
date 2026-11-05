@@ -113,10 +113,13 @@ const MISSION_CANCEL_ALLOWED_FIELDS = new Set([
   'expiresAt',
   'originalLeaseId', 'originalLeaseDigest', 'expectedMissionRevision',
   'legacyOrphanQuarantineRequested',
+  'prospectiveOrphanQuarantineRequested', 'sourceExecutionId',
+  'sourceExecutionLeaseKey', 'processingClaimSha256',
 ]);
 const MISSION_CANCEL_ONLY_FIELDS = Object.freeze(['missionId', 'commandId', 'reason',
   'originalLeaseId', 'originalLeaseDigest', 'expectedMissionRevision',
-  'legacyOrphanQuarantineRequested']);
+  'legacyOrphanQuarantineRequested', 'prospectiveOrphanQuarantineRequested',
+  'sourceExecutionId', 'sourceExecutionLeaseKey', 'processingClaimSha256']);
 const RESET_COMMAND_FIELDS = Object.freeze([
   'resetId',
   'resetExpiresAtUtc',
@@ -253,19 +256,41 @@ function validateMissionCancellation(command = {}) {
   const commandId = String(command.commandId || '').trim().toLowerCase();
   if (!MISSION_COMMAND_ID_PATTERN.test(commandId)) return fail('MISSION_CANCEL_COMMAND_ID_INVALID');
   const reason = String(command.reason || '').trim();
-  if (['originalLeaseId', 'originalLeaseDigest', 'expectedMissionRevision'].some((field) => command[field] !== undefined)
-      && (!/^critical-[1-9]\d*-elastic-goal-r(?:0|[1-9]\d*)-lease$/.test(String(command.originalLeaseId || ''))
-        || !/^[a-f0-9]{64}$/.test(String(command.originalLeaseDigest || ''))
-        || !Number.isSafeInteger(command.expectedMissionRevision) || command.expectedMissionRevision < 0
-        || command.originalLeaseId !== `${missionId}-r${command.expectedMissionRevision}-lease`)) {
-    return fail('MISSION_CANCEL_FIELD_NOT_ALLOWED');
-  }
-  if (command.legacyOrphanQuarantineRequested !== undefined
-      && (command.legacyOrphanQuarantineRequested !== true
-        || missionId !== 'critical-2962-elastic-goal'
-        || command.expectedMissionRevision !== 7
-        || command.originalLeaseId !== 'critical-2962-elastic-goal-r7-lease')) {
-    return fail('MISSION_CANCEL_LEGACY_ORPHAN_SCOPE_FORBIDDEN');
+  if (command.prospectiveOrphanQuarantineRequested === true) {
+    const actionMatch = String(command.sourceExecutionId || '').match(
+      /^critical-([1-9]\d*)-elastic-goal-r(0|[1-9]\d*)-[a-f0-9]{12}$/);
+    const actionRevision = actionMatch && missionId === 'critical-' + actionMatch[1] + '-elastic-goal'
+      ? Number(actionMatch[2]) : null;
+    if (command.legacyOrphanQuarantineRequested !== undefined
+        || command.originalLeaseId !== undefined || command.originalLeaseDigest !== undefined
+        || actionRevision === null
+        || command.sourceExecutionLeaseKey !== missionId + '-r' + actionRevision + '-lease'
+        || !/^[a-f0-9]{64}$/.test(String(command.processingClaimSha256 || ''))
+        || !Number.isSafeInteger(command.expectedMissionRevision)
+        || command.expectedMissionRevision !== actionRevision + 1) {
+      return fail('MISSION_CANCEL_PROSPECTIVE_ORPHAN_SCOPE_FORBIDDEN');
+    }
+  } else {
+    if (['originalLeaseId', 'originalLeaseDigest', 'expectedMissionRevision'].some((field) => command[field] !== undefined)
+        && (!/^critical-[1-9]\d*-elastic-goal-r(?:0|[1-9]\d*)-lease$/.test(String(command.originalLeaseId || ''))
+          || !/^[a-f0-9]{64}$/.test(String(command.originalLeaseDigest || ''))
+          || !Number.isSafeInteger(command.expectedMissionRevision) || command.expectedMissionRevision < 0
+          || command.originalLeaseId !== missionId + '-r' + command.expectedMissionRevision + '-lease')) {
+      return fail('MISSION_CANCEL_FIELD_NOT_ALLOWED');
+    }
+    if (command.legacyOrphanQuarantineRequested !== undefined
+        && (command.legacyOrphanQuarantineRequested !== true
+          || missionId !== 'critical-2962-elastic-goal'
+          || command.expectedMissionRevision !== 7
+          || command.originalLeaseId !== 'critical-2962-elastic-goal-r7-lease')) {
+      return fail('MISSION_CANCEL_LEGACY_ORPHAN_SCOPE_FORBIDDEN');
+    }
+    if (command.prospectiveOrphanQuarantineRequested !== undefined
+        || command.sourceExecutionId !== undefined
+        || command.sourceExecutionLeaseKey !== undefined
+        || command.processingClaimSha256 !== undefined) {
+      return fail('MISSION_CANCEL_PROSPECTIVE_ORPHAN_SCOPE_FORBIDDEN');
+    }
   }
   if (!reason || reason.length > MISSION_CANCEL_REASON_MAX_LENGTH || /[\u0000-\u001f\u007f]/.test(reason)) {
     return fail('MISSION_CANCEL_REASON_INVALID');
@@ -278,6 +303,13 @@ function validateMissionCancellation(command = {}) {
         expectedMissionRevision: command.expectedMissionRevision,
         ...(command.legacyOrphanQuarantineRequested === true
           ? { legacyOrphanQuarantineRequested: true } : {}) } : {}),
+      ...(command.prospectiveOrphanQuarantineRequested === true ? {
+        prospectiveOrphanQuarantineRequested: true,
+        sourceExecutionId: String(command.sourceExecutionId),
+        sourceExecutionLeaseKey: String(command.sourceExecutionLeaseKey),
+        processingClaimSha256: String(command.processingClaimSha256).toLowerCase(),
+        expectedMissionRevision: command.expectedMissionRevision,
+      } : {}),
     }),
   });
 }

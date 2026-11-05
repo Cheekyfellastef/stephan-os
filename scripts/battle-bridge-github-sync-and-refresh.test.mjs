@@ -26,6 +26,14 @@ const runBattleBridgeSyncAndRefresh = options => runSyncAndRefreshWithRealAncest
   ...options, adapter: { isAncestor: linearAncestry, ...options.adapter },
 });
 
+test('refresh child ceiling exceeds every fixed inner refresh target while staying inside the parent child budget', () => {
+  assert.equal(SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.refresh, 150_000);
+  assert.ok(SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.refresh > 120_000);
+  assert.ok(SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.refresh > 100_000);
+  assert.ok(SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.refresh <= SYNC_AND_REFRESH_CHILD_BUDGET_MS);
+  assert.equal(SYNC_AND_REFRESH_CHILD_BUDGET_MS, 180_000);
+});
+
 function completedRefresh(beforeHead = A, afterHead = B) {
   return { ok: true, phase: 'complete', beforeHead, afterHead, sourceHead: afterHead,
     classification: 'NO_RUNTIME_REFRESH_REQUIRED', finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_PASS',

@@ -46,20 +46,20 @@ function Get-NumericValues {
 
 function Get-Average {
     param([double[]]$Values)
-    if (@($Values).Count -eq 0) { return $null }
-    return [math]::Round((@($Values) | Measure-Object -Average).Average, 1)
+    if ($null -eq $Values -or $Values.Length -eq 0) { return $null }
+    return [math]::Round(($Values | Measure-Object -Average).Average, 1)
 }
 
 function Get-Maximum {
     param([double[]]$Values)
-    if (@($Values).Count -eq 0) { return $null }
-    return [math]::Round((@($Values) | Measure-Object -Maximum).Maximum, 1)
+    if ($null -eq $Values -or $Values.Length -eq 0) { return $null }
+    return [math]::Round(($Values | Measure-Object -Maximum).Maximum, 1)
 }
 
 function Get-Minimum {
     param([double[]]$Values)
-    if (@($Values).Count -eq 0) { return $null }
-    return [math]::Round((@($Values) | Measure-Object -Minimum).Minimum, 1)
+    if ($null -eq $Values -or $Values.Length -eq 0) { return $null }
+    return [math]::Round(($Values | Measure-Object -Minimum).Minimum, 1)
 }
 
 $governor = Read-OptionalJson -Path $governorPath
@@ -92,7 +92,7 @@ $sessionRoute = Get-OptionalValue -Object $session -Name 'routeIdentity'
 $summaryRoute = Get-OptionalValue -Object $summary -Name 'routeIdentity'
 $sessionProvider = [string](Get-OptionalValue -Object $sessionRoute -Name 'provider' -Default '')
 $summaryProvider = [string](Get-OptionalValue -Object $summaryRoute -Name 'provider' -Default '')
-$providerValues = @($sessionProvider, $summaryProvider) | Where-Object { $_ -in @('mutar-openxr','vorpx') } | Select-Object -Unique
+$providerValues = @(@($sessionProvider, $summaryProvider) | Where-Object { $_ -in @('mutar-openxr','vorpx') } | Select-Object -Unique)
 $providerIdentityStatus = if ($providerValues.Count -gt 1) {
     'PROVIDER_IDENTITY_CONFLICT'
 } elseif ($providerValues.Count -eq 1) {
@@ -179,6 +179,17 @@ $metrics = [ordered]@{
     maxJitterMs = Get-Maximum -Values $jitter
     maxControllerProblemCount = Get-Maximum -Values $controllerProblems
     adaptiveCaptureSampleCount = @($adaptiveCapture).Count
+    visualTelemetrySampleCount = Get-OptionalValue -Object $summary -Name 'visualTelemetrySampleCount' -Default 0
+    visualAnomalySampleCount = Get-OptionalValue -Object $summary -Name 'visualAnomalySampleCount' -Default 0
+    missingStereoEyeSampleCount = Get-OptionalValue -Object $summary -Name 'missingStereoEyeSampleCount' -Default 0
+    noProjectionLayerSampleCount = Get-OptionalValue -Object $summary -Name 'noProjectionLayerSampleCount' -Default 0
+    eyeReleaseMissingSampleCount = Get-OptionalValue -Object $summary -Name 'eyeReleaseMissingSampleCount' -Default 0
+    eyeReleaseReusedSampleCount = Get-OptionalValue -Object $summary -Name 'eyeReleaseReusedSampleCount' -Default 0
+    endFrameFailureSampleCount = Get-OptionalValue -Object $summary -Name 'endFrameFailureSampleCount' -Default 0
+    operatorVisualFaultMarkerCount = Get-OptionalValue -Object $summary -Name 'operatorVisualFaultMarkerCount' -Default 0
+    providerTelemetrySampleCount = Get-OptionalValue -Object $summary -Name 'providerTelemetrySampleCount' -Default 0
+    maxAerSequenceFaultCount = Get-OptionalValue -Object $summary -Name 'maxAerSequenceFaultCount' -Default 0
+    pixelContentState = [string](Get-OptionalValue -Object $summary -Name 'pixelContentState' -Default 'UNOBSERVED')
     telemetryCompleteness = Get-OptionalValue -Object $summary -Name 'telemetryCompleteness'
 }
 
@@ -215,12 +226,22 @@ if ($null -ne $metrics.maxPoseAgeMs -and $metrics.maxPoseAgeMs -ge 20) { $signal
 if ($null -ne $metrics.maxPacketLossPct -and $metrics.maxPacketLossPct -gt 1) { $signals.Add('air-link-packet-loss-observed') }
 if ($null -ne $metrics.maxJitterMs -and $metrics.maxJitterMs -ge 5) { $signals.Add('air-link-jitter-high') }
 if ($null -ne $metrics.maxControllerProblemCount -and $metrics.maxControllerProblemCount -gt 0) { $signals.Add('controller-problem-observed') }
+if ([int]$metrics.visualAnomalySampleCount -gt 0) { $signals.Add('visual-submission-anomaly-observed') }
+if ([int]$metrics.missingStereoEyeSampleCount -gt 0) { $signals.Add('missing-stereo-eye-observed') }
+if ([int]$metrics.noProjectionLayerSampleCount -gt 0) { $signals.Add('no-projection-layer-observed') }
+if ([int]$metrics.eyeReleaseMissingSampleCount -gt 0) { $signals.Add('eye-release-unproven-observed') }
+if ([int]$metrics.eyeReleaseReusedSampleCount -gt 0) { $signals.Add('reused-eye-release-observed') }
+if ([int]$metrics.endFrameFailureSampleCount -gt 0) { $signals.Add('openxr-end-frame-failure-observed') }
+if ([int]$metrics.operatorVisualFaultMarkerCount -gt 0) { $signals.Add('operator-visual-fault-marked') }
+if ([int]$metrics.maxAerSequenceFaultCount -gt 0) { $signals.Add('aer-sequence-fault-observed') }
 
 $storagePressure = $signals.Contains('drive-space-pressure-high') -or $signals.Contains('storage-io-pressure-high')
 $focus = if ($signals.Contains('starfield-vr-crash-observed')) {
     'CRASH_FORENSICS'
 } elseif ($signals.Contains('vr-prelaunch-error-observed')) {
     'LAUNCH_FAILURE'
+} elseif ($signals.Contains('visual-submission-anomaly-observed') -or $signals.Contains('aer-sequence-fault-observed') -or $signals.Contains('operator-visual-fault-marked')) {
+    'RENDERING_OR_STEREO'
 } elseif ($storagePressure -and $signals.Contains('vram-pressure-high')) {
     'MULTI_RESOURCE_PRESSURE'
 } elseif ($storagePressure) {
