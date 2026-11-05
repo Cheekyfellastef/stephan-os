@@ -323,8 +323,11 @@ test('canonical workflows preserve draft guards, pin main source and upload sepa
   assert.match(reviewer, /path: review-proof\//);
   assert.match(reviewer, /if: github\.event_name != 'workflow_dispatch'[\s\S]*node scripts\/exact-head-qualified-escalation-v1\.mjs/);
   const collector = source('scripts/operator-protected-personal-repository-merge.mjs');
-  assert.match(collector, /initialReadyReview = await loadReadyReviewForSnapshot/);
-  assert.match(collector, /refreshedAuthority = await readPersonalRepositoryAuthoritySnapshot[\s\S]*refreshedReadyReview = await loadReadyReviewForSnapshot/);
+  assert.match(collector, /export async function loadReadyReviewForCheckSnapshot/);
+  assert.match(collector, /readReadyReview = loadReadyReviewForCheckSnapshot[\s\S]*readyReviewLifecycleEvidence = await readReadyReview/);
+  assert.match(collector, /initialReadyReview = await loadReadyReviewForCheckSnapshot/);
+  assert.match(collector, /refreshedAuthority = await readPersonalRepositoryAuthoritySnapshot[\s\S]*refreshedReadyReview = await loadReadyReviewForCheckSnapshot/);
+  assert.match(collector, /cleanIndependentReviewProved: true, readyReviewLifecycleEvidence/);
   assert.match(collector, /readyReviewLifecycleEvidence: refreshedReadyReview/);
   const dispatcher = source('scripts/dispatch-protected-merge-from-mailbox.mjs');
   assert.ok(dispatcher.indexOf('await prepareReadyReviewProducer') < dispatcher.indexOf('await graphqlReady(before.pull.node_id)'));
