@@ -10,6 +10,7 @@ const READ_ONLY_ACTIONS = new Set([
   'status-stephanos-core-daemon',
   'status-mission-orchestrator-worker', 'status-stephanos-backend',
   'starfield-vr-telemetry-archive',
+  'observe-open-stephanos-tabs', // fixed --native-receipt-only; no CDP or writes
 ]);
 // Names do not prove observation-only behavior. Gaming Status can reconcile
 // missing state and evict Ollama; the opaque OpenClaw CLI can load plugins.
