@@ -464,6 +464,60 @@ async function readPreApprovalChecks(context) {
   return { checkRuns, workflowRuns, commitStatuses: statuses.items };
 }
 
+// Both the read-only preflight and the protected final collector must resolve
+// an observed canonical draft skip through the same authenticated READY-review
+// lifecycle. A caller cannot supply a boolean waiver: the unchanged check-run
+// validator consumes the complete proof and binds it to the skipped run.
+export async function loadReadyReviewForCheckSnapshot(context, {
+  snapshot,
+  expected,
+  identity = context.dispatch.identity,
+  cleanIndependentReviewProved = false,
+  selectedReview = context.dispatch.identity,
+  loadLifecycle = loadProtectedReadyReviewLifecycle,
+  api = (path) => apiJson(`/repos/${context.owner}/${context.repo}${path}`),
+  download = (id) => apiArtifactArchive(
+    `/repos/${context.owner}/${context.repo}/actions/artifacts/${id}/zip`,
+    context.repository,
+    INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES,
+  ),
+} = {}) {
+  if (!snapshot || ['checkRuns', 'workflowRuns', 'commitStatuses']
+    .some((key) => !Array.isArray(snapshot[key]))) {
+    fail('READY-review check snapshot is incomplete.');
+  }
+  const expectation = { ...expected, sourceTree: identity.sourceTree };
+  // Existing successful PR-target supersession remains sufficient. Resolve a
+  // separate lifecycle only when the exact observed draft skip still blocks.
+  if (validatePersonalRepositoryCheckRuns(
+    snapshot.checkRuns,
+    snapshot.workflowRuns,
+    snapshot.commitStatuses,
+    expectation,
+    { cleanIndependentReviewProved },
+  ).valid) return null;
+  const skippedRunIds = snapshot.workflowRuns.filter((run) => (
+    run.event === 'pull_request_target'
+    && run.path === '.github/workflows/stephanos-exact-head-review.yml'
+    && run.name === 'Stephanos Exact-Head Review'
+    && run.head_sha === identity.sourceHead
+    && snapshot.checkRuns.some((check) => (
+      check.name === 'exact-head-review'
+      && check.conclusion === 'skipped'
+      && check.head_sha === identity.sourceHead
+      && check.check_suite?.id === run.check_suite_id
+    ))
+  )).map((run) => run.id);
+  if (!skippedRunIds.length) return null;
+  return loadLifecycle({
+    identity: { ...identity, repository: context.repository },
+    skippedRunIds,
+    selectedReview,
+    api,
+    download,
+  });
+}
+
 // Early read-only rejection, not an approval receipt. The final protected
 // collector, replay fence, configuration proof and merge revalidation remain
 // mandatory. Test adapters cannot turn this result into mutation authority.
@@ -472,6 +526,7 @@ export async function preflightBeforeProtectedApproval(context, {
   readIdentity = readPreApprovalIdentity,
   readChecks = readPreApprovalChecks,
   readReview = (value) => loadSelectedIndependentReview(value, value.dispatch.identity, ''),
+  readReadyReview = loadReadyReviewForCheckSnapshot,
 } = {}) {
   const execution = await readExecution(context);
   const identity = context.dispatch.identity;
@@ -507,14 +562,22 @@ export async function preflightBeforeProtectedApproval(context, {
     if (!snapshot || ['checkRuns', 'workflowRuns', 'commitStatuses'].some((key) => !Array.isArray(snapshot[key]))) {
       fail('Pre-approval check snapshot is incomplete.');
     }
+    const exactBinding = { ...binding, sourceTree: identity.sourceTree };
+    const readyReviewLifecycleEvidence = await readReadyReview(context, {
+      snapshot,
+      expected: exactBinding,
+      identity,
+      cleanIndependentReviewProved: true,
+      selectedReview: context.dispatch.identity,
+    });
     const checks = validatePersonalRepositoryCheckRuns(
-      snapshot.checkRuns, snapshot.workflowRuns, snapshot.commitStatuses, binding,
-      { cleanIndependentReviewProved: true },
+      snapshot.checkRuns, snapshot.workflowRuns, snapshot.commitStatuses, exactBinding,
+      { cleanIndependentReviewProved: true, readyReviewLifecycleEvidence },
     );
     // The per-check validator cannot detect an absent required workflow.
     // Use the same complete workflow contract as the protected final collector.
     const workflows = validatePersonalRepositoryWorkflowRuns(
-      execution?.definitions, snapshot.workflowRuns, binding,
+      execution?.definitions, snapshot.workflowRuns, exactBinding,
     );
     return {
       valid: checks.valid && workflows.valid,
@@ -992,27 +1055,13 @@ async function collectEvidence(context, expected = {}) {
       blockers: checkExpectation.blockers,
     });
   }
-  const loadReadyReviewForSnapshot = async (snapshot, mergeStateStatus, cleanIndependentReviewProved) => {
-    const expectation = { ...checkExpectation.expected, sourceTree: identity.sourceTree, mergeStateStatus };
-    // Existing successful PR-target supersession remains sufficient. The new
-    // route is read only when an observed exact-head draft skip still blocks.
-    if (validatePersonalRepositoryCheckRuns(snapshot.checkRuns, snapshot.workflowRuns,
-      snapshot.commitStatuses, expectation, { cleanIndependentReviewProved }).valid) return null;
-    const skippedRunIds = snapshot.workflowRuns.filter(run => run.event === 'pull_request_target'
-      && run.path === '.github/workflows/stephanos-exact-head-review.yml'
-      && run.name === 'Stephanos Exact-Head Review' && run.head_sha === identity.sourceHead
-      && snapshot.checkRuns.some(check => check.name === 'exact-head-review' && check.conclusion === 'skipped'
-        && check.head_sha === identity.sourceHead && check.check_suite?.id === run.check_suite_id))
-      .map(run => run.id);
-    if (!skippedRunIds.length) return null;
-    return loadProtectedReadyReviewLifecycle({ identity: { ...identity, repository: context.repository },
-      skippedRunIds, selectedReview: context.dispatch.identity,
-      api: path => apiJson(`/repos/${context.owner}/${context.repo}${path}`),
-      download: id => apiArtifactArchive(`/repos/${context.owner}/${context.repo}/actions/artifacts/${id}/zip`,
-        context.repository, INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES) });
-  };
-  const initialReadyReview = await loadReadyReviewForSnapshot(initialCheckSnapshot,
-    review.mergeStateStatus, independentReview.reviewMode === 'clean-independent');
+  const initialReadyReview = await loadReadyReviewForCheckSnapshot(context, {
+    snapshot: initialCheckSnapshot,
+    expected: { ...checkExpectation.expected, mergeStateStatus: review.mergeStateStatus },
+    identity,
+    cleanIndependentReviewProved: independentReview.reviewMode === 'clean-independent',
+    selectedReview: context.dispatch.identity,
+  });
   const checks = await validatePersonalRepositoryCheckRunsWithBoundedReread({
     readSnapshot: async (attempt) => {
       if (attempt === 1) return initialCheckSnapshot;
@@ -1053,8 +1102,16 @@ async function collectEvidence(context, expected = {}) {
       blockers: refreshedCheckExpectation.blockers,
     });
   }
-  const refreshedReadyReview = await loadReadyReviewForSnapshot(checks.selectedSnapshot,
-    refreshedAuthority.review.mergeStateStatus, refreshedAuthority.independentReview.reviewMode === 'clean-independent');
+  const refreshedReadyReview = await loadReadyReviewForCheckSnapshot(context, {
+    snapshot: checks.selectedSnapshot,
+    expected: {
+      ...refreshedCheckExpectation.expected,
+      mergeStateStatus: refreshedAuthority.review.mergeStateStatus,
+    },
+    identity,
+    cleanIndependentReviewProved: refreshedAuthority.independentReview.reviewMode === 'clean-independent',
+    selectedReview: context.dispatch.identity,
+  });
   const finalChecks = validatePersonalRepositoryCheckRuns(
     checks.selectedSnapshot.checkRuns,
     checks.selectedSnapshot.workflowRuns,
