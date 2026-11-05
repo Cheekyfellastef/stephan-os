@@ -348,7 +348,7 @@ export class MemoryService {
 
     return this.listMemory({ category, tags })
       .map((item) => ({ item, score: this.scoreMemoryItem(item, normalizedQuery, tokens) }))
-      .filter(({ score }) => normalizedQuery ? score > 0 : true)
+      .filter(({ item, score }) => normalizedQuery ? score > (item.importance || DEFAULT_IMPORTANCE) : true)
       .sort((a, b) => b.score - a.score || new Date(b.item.updatedAt).getTime() - new Date(a.item.updatedAt).getTime())
       .map(({ item }) => item);
   }
