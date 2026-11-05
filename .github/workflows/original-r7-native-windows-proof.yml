@@ -203,8 +203,6 @@ jobs:
           ./scripts/windows/r7-hosted-native-lab-boundaries.test.ps1
           python -B scripts/windows/prepare-r7-hosted-native-package.test.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node --test shared/agents/r7IsolatedNativeLabAdmissionV1.test.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package the exact unsigned native build for a separately approved isolated test
         shell: pwsh
         env:
@@ -264,22 +262,37 @@ jobs:
     # Explicit owner dispatch starts read-only preparation. The fixed host script
     # independently waits for a fresh immutable approval for this actual run ID
     # on the existing canonical mailbox before creating any guest/disk/cert.
-    if: github.event_name == 'workflow_dispatch' && github.actor_id == '267490109'
+    name: ${{ github.event_name == 'pull_request' && 'isolated-native-admission-contract' || 'isolated-native-smoke' }}
     runs-on: windows-2022
     timeout-minutes: 120
     steps:
       - name: Checkout exact retained merged candidate without credentials
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4; immutable upstream commit
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Verify event and run actual PR admission contract without a guest
+        shell: pwsh
+        env:
+          R7_DISPATCH_ACTOR_ID: ${{ github.actor_id }}
+        run: |
+          if ($env:GITHUB_EVENT_NAME -ceq 'pull_request') {
+            node --test shared/agents/r7IsolatedNativeLabAdmissionV1.test.mjs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } elseif ($env:GITHUB_EVENT_NAME -ceq 'workflow_dispatch' -and $env:R7_DISPATCH_ACTOR_ID -ceq '267490109') {
+            Write-Output 'R7_EXPLICIT_DISPATCH_STILL_REQUIRES_EXACT_RUN_OWNER_APPROVAL=true'
+          } else {
+            throw 'R7_SOURCE_EVENT_OR_DISPATCH_OWNER_UNPROVEN'
+          }
       - name: Prepare actual source/run/artifact-bound invocation without a guest
+        if: github.event_name == 'workflow_dispatch' && github.actor_id == '267490109'
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
           R7_NATIVE_ARTIFACT_ID: ${{ inputs.native_artifact_id }}
         run: node scripts/windows/admit-r7-hosted-native-invocation.mjs prepare
       - name: Retain public preparation for the one actual hosted run
+        if: github.event_name == 'workflow_dispatch' && github.actor_id == '267490109'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4; immutable upstream commit
         with:
           name: r7-isolated-preparation-${{ github.run_id }}-${{ github.run_attempt }}
@@ -287,9 +300,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Acquire fixed official media and extract only its pinned WIM
+        if: github.event_name == 'workflow_dispatch' && github.actor_id == '267490109'
         shell: pwsh
         run: ./scripts/windows/prepare-r7-hosted-native-media.ps1
       - name: Require exact-run owner approval then run one disposable native experiment
+        if: github.event_name == 'workflow_dispatch' && github.actor_id == '267490109'
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -302,6 +317,7 @@ jobs:
           if ($record.ownedGuestAndDisksDisposed -ne $true -or $record.productionCustodyProven -ne $false -or $record.leaseChanged -ne $false) { throw 'R7_EXPERIMENT_DISPOSAL_OR_TRUTH_UNPROVEN' }
           [IO.File]::WriteAllText((Join-Path $root 'public-result.json'),($record | ConvertTo-Json -Depth 20))
       - name: Retain only the public causal result after verified guest disposal
+        if: github.event_name == 'workflow_dispatch' && github.actor_id == '267490109'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4; immutable upstream commit
         with:
           name: r7-isolated-result-${{ github.run_id }}-${{ github.run_attempt }}

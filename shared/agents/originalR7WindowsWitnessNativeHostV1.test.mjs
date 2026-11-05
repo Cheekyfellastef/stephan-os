@@ -1,3 +1,4 @@
+import { validatePersonalRepositoryCheckRuns } from './operatorPersonalRepositoryMergeV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -379,4 +380,36 @@ test('Windows stage script read-only plan and incorrect-image negative test exec
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+
+test('isolated native PR job proves admission without emitting an unadmitted skip or executing the guest', () => {
+  const document=nativeCi.replace(/\r\n/g,'\n');
+  const marker='  isolated-native-smoke:\n';
+  assert.equal(document.split(marker).length,2);
+  const section=document.slice(document.indexOf(marker));
+  assert.doesNotMatch(section,/^    if:/m,'the PR contract job must actually run');
+  assert.match(section,/node --test shared\/agents\/r7IsolatedNativeLabAdmissionV1\.test\.mjs/);
+  const condition="        if: github.event_name == 'workflow_dispatch' && github.actor_id == '267490109'\n";
+  for(const name of ['Prepare actual source/run/artifact-bound invocation without a guest',
+    'Retain public preparation for the one actual hosted run',
+    'Acquire fixed official media and extract only its pinned WIM',
+    'Require exact-run owner approval then run one disposable native experiment',
+    'Retain only the public causal result after verified guest disposal']) {
+    assert.ok(section.includes('      - name: '+name+'\n'+condition),name+' must stay behind explicit owner dispatch');
+  }
+  // Exercise the real merge validator, without changing its skip policy.
+  const repository='Cheekyfellastef/stephan-os',sourceHead='a'.repeat(40),baseSha='b'.repeat(40),branch='fix/3123-native-recovery-inspection-20261023';
+  const expected={repository,prNumber:3211,sourceHead,baseSha,branch,mergeStateStatus:'CLEAN'};
+  const run={id:700,run_attempt:1,check_suite_id:501,head_sha:sourceHead,head_branch:branch,
+    name:'Native Windows r7 Access Probe Proof',path:'.github/workflows/original-r7-native-windows-proof.yml',
+    event:'pull_request',status:'completed',conclusion:'success',repository:{full_name:repository},
+    pull_requests:[{number:3211,head:{sha:sourceHead,ref:branch},base:{sha:baseSha,ref:'main'}}]};
+  const check={id:900,name:'isolated-native-admission-contract',head_sha:sourceHead,status:'completed',conclusion:'success',
+    app:{slug:'github-actions',id:15368},check_suite:{id:501},details_url:'https://github.com/'+repository+'/actions/runs/700/job/900'};
+  const good=validatePersonalRepositoryCheckRuns([check],[run],[],expected);
+  assert.equal(good.valid,true,JSON.stringify(good.blockers));
+  const prior=validatePersonalRepositoryCheckRuns([{...check,name:'isolated-native-smoke',conclusion:'skipped'}],[run],[],expected);
+  assert.equal(prior.valid,false);
+  assert.ok(prior.blockers.includes('personal-repository-check-run-not-exact-green'));
 });

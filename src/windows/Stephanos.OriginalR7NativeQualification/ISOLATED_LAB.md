@@ -1,9 +1,10 @@
-# Isolated R7 native smoke test â€” source preparation only
+# Isolated R7 native smoke test: source preparation only
 
 The existing recovery decoder remains inspection-only. These scripts add a
 concrete disposable Windows test setup for the retained-object native component.
 Pull-request CI never starts a guest, accepts evaluation terms, signs or loads a driver.
-The existing proof workflow now has a separate explicit owner-dispatch job. Its
+The existing proof workflow runs an actual admission contract on pull requests;
+its guest path is enabled only by explicit owner dispatch. Its
 fixed host entrypoint independently authenticates an immutable fresh approval
 for that exact actual hosted run and attempt1 before any guest mutation.
 The existing native proof job builds an unsigned test package, runs refusal and
@@ -113,3 +114,10 @@ Primary references: [official evaluation media](https://www.microsoft.com/en-us/
 [BCDBoot /s behavior](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/bcdboot-command-line-options-techref-di),
 [test-signing](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/test-signing-driver-packages),
 [Driver Verifier](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/driver-verifier).
+
+The PR admission job must report its real executed contract tests as successful.
+A skipped manual-only job is not neutral under the protected merge policy. The
+regression exercises that unchanged validator: a real successful PR contract is
+admitted, while the prior unrequested skipped smoke job remains blocked. All
+preparation, download, approval consumption and guest/result steps require the
+explicit owner-dispatch event; no PR event can execute them.
