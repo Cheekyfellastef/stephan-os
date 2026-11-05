@@ -1,4 +1,5 @@
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, opendirSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, opendirSync, readFileSync, readSync, writeFileSync } from 'node:fs';
+import { setImmediate as yieldDiscovery } from 'node:timers/promises';
 import { dirname, join, parse, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { atomicWriteJson, readJsonObject } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
@@ -9,6 +10,8 @@ import { CONTROL_TOWER_BUILD_OPERATION } from '../shared/agents/controlTowerBuil
 const SCHEMA = 'stephanos.mailbox-execution-ledger-entry.v1';
 const INVENTORY_MAX_ENTRIES = 8192;
 const ENTRY_MAX_BYTES = 4096;
+const DISCOVERY_BATCH_SIZE = 128;
+const DISCOVERY_MAX_DURATION_MS = 10_000;
 const CONTROL_TOWER_IDENTITY = ['requestId', 'runId', 'runAttempt', 'operation', 'sourceHead',
   'artifactId', 'artifactSha256', 'commandDigest', 'createdAtUtc', 'expiresAtUtc', 'acceptedAtUtc'];
 const observationHashValid = observation => !observation?.controlSystemStatus
@@ -18,6 +21,19 @@ const sameIdentity = (before, after) => before.dev === after.dev && before.ino =
   && before.mtimeMs === after.mtimeMs && before.ctimeMs === after.ctimeMs && before.size === after.size;
 const latestObservation = (left, right) => !left || (Date.parse(right.acceptedAtUtc) || 0) > (Date.parse(left.acceptedAtUtc) || 0)
   || (right.acceptedAtUtc === left.acceptedAtUtc && right.runId > left.runId) ? right : left;
+function validateLedgerRecord(record, id) {
+  if (record.schemaVersion !== SCHEMA || record.requestId !== id
+    || !['RESERVED', 'TERMINAL', 'RETIRED'].includes(record.phase)
+    || !Number.isSafeInteger(record.issueNumber) || record.issueNumber <= 0)
+    throw new Error('MAILBOX_EXECUTION_LEDGER_ENTRY_INVALID');
+  return record;
+}
+function observeControlTowerRecord(record, options) {
+  const observed = projectControlTowerLedgerObservationV1(record, options);
+  if (observed?.detailState === 'OBSERVED' && !observationHashValid(observed))
+    return projectControlTowerLedgerObservationV1({ ...record, controlTowerObservation: {} }, options);
+  return observed;
+}
 function directory(path, create = false) {
   const absolute = resolve(path), root = parse(absolute).root;
   let current = root;
@@ -47,11 +63,9 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
     if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > 4096) throw new Error('MAILBOX_EXECUTION_LEDGER_ENTRY_UNSAFE');
     const record = JSON.parse(readFileSync(path, 'utf8'));
     const after = lstatSync(path);
-    if (before.dev !== after.dev || before.ino !== after.ino || before.mtimeMs !== after.mtimeMs
-      || record.schemaVersion !== SCHEMA || record.requestId !== id
-      || !['RESERVED', 'TERMINAL', 'RETIRED'].includes(record.phase)
-      || !Number.isSafeInteger(record.issueNumber) || record.issueNumber <= 0) throw new Error('MAILBOX_EXECUTION_LEDGER_ENTRY_INVALID');
-    return record;
+    if (before.dev !== after.dev || before.ino !== after.ino || before.mtimeMs !== after.mtimeMs)
+      throw new Error('MAILBOX_EXECUTION_LEDGER_ENTRY_INVALID');
+    return validateLedgerRecord(record, id);
   };
   const insert = (id, record) => {
     if (Buffer.byteLength(`${JSON.stringify(record)}\n`, 'utf8') > 4096)
@@ -164,61 +178,81 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
     inventory,
     // A read-only diagnostic of this SAME ledger, never an admission/replay API.
     inspectControlTower(id, options) {
-      const record = read(id);
-      const observed = projectControlTowerLedgerObservationV1(record, options);
-      if (observed?.detailState === 'OBSERVED' && !observationHashValid(observed))
-        return projectControlTowerLedgerObservationV1({ ...record, controlTowerObservation: {} }, options);
-      return observed;
+      return observeControlTowerRecord(read(id), options);
     },
     // Bounded read-only recovery from THIS ledger closes the reserve-to-status
     // crash window. It is not the proposed mailbox inventory/rotation API and
     // never admits, deletes, completes, freezes or releases a request.
-    discoverControlTower({ nowMs = Date.now(), maxEntries = 4096 } = {}) {
+    async discoverControlTower({ nowMs = Date.now(), batchSize = DISCOVERY_BATCH_SIZE,
+      maxDurationMs = DISCOVERY_MAX_DURATION_MS, maxEntries } = {}) {
       let latestBuildRequestObservation = null, latestControlSystemObservation = null, unresolved = null;
-      let count = 0;
-      const identities = [];
-      const scanNames = (path, max, visit) => {
-        directory(path);
-        const before = lstatSync(path), handle = opendirSync(path);
-        let seen = 0;
+      let count = 0, batchWork = 0;
+      const started = performance.now(), directories = new Map(), transcripts = new Map();
+      const unproven = () => { throw new Error('CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN'); };
+      const bound = () => { throw new Error('CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED'); };
+      const budget = () => { if (performance.now() - started >= maxDurationMs) bound(); };
+      const checkpoint = async () => {
+        budget();
+        if (++batchWork >= batchSize) { batchWork = 0; await yieldDiscovery(); budget(); }
+      };
+      // Precise identities keep the scan's retained memory independent of history.
+      // These transcripts are ephemeral read-set checks, never an authority index.
+      const identity = info => [info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs, info.nlink]
+        .map(value => { if (typeof value !== 'bigint') unproven(); return String(value); });
+      const same = (left, right) => JSON.stringify(identity(left)) === JSON.stringify(identity(right));
+      const inspectDirectory = path => {
+        const info = lstatSync(path, { bigint: true });
+        if (!info.isDirectory() || info.isSymbolicLink()) unproven();
+        const previous = directories.get(path);
+        if (previous && !same(previous, info)) unproven();
+        if (!previous) directories.set(path, info);
+        return info;
+      };
+      const inspectEntry = path => {
+        const info = lstatSync(path, { bigint: true });
+        if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1n
+          || info.size < 1n || info.size > BigInt(ENTRY_MAX_BYTES)) unproven();
+        return info;
+      };
+      const readEntry = (path, before) => {
+        const descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+        try {
+          const opened = fstatSync(descriptor, { bigint: true });
+          if (!same(before, opened)) unproven();
+          const bytes = Buffer.alloc(ENTRY_MAX_BYTES + 1);
+          const length = readSync(descriptor, bytes, 0, bytes.length, 0);
+          if (BigInt(length) !== before.size || !same(before, fstatSync(descriptor, { bigint: true }))) unproven();
+          const record = JSON.parse(bytes.subarray(0, length).toString('utf8'));
+          if (typeof record?.requestId !== 'string' || location(record.requestId) !== path) unproven();
+          return validateLedgerRecord(record, record.requestId);
+        } finally { closeSync(descriptor); }
+      };
+      function* shardEntries(shard) {
+        budget();
+        const path = join(root, shard);
+        inspectDirectory(path);
+        const handle = opendirSync(path, { bufferSize: batchSize });
         try {
           let entry;
           while ((entry = handle.readSync())) {
-            if (++seen > max) throw new Error('CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED');
-            visit(entry);
+            budget();
+            if (!/^[a-f0-9]{64}\.json$/.test(entry.name) || entry.name.slice(0, 2) !== shard
+              || !entry.isFile() || entry.isSymbolicLink()) unproven();
+            const entryPath = join(path, entry.name);
+            yield { name: entry.name, path: entryPath, before: inspectEntry(entryPath) };
           }
         } finally { handle.closeSync(); }
-        const after = lstatSync(path);
-        if (!sameIdentity(before, after) || after.isSymbolicLink() || !after.isDirectory())
-          throw new Error('CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN');
-        identities.push([path, after]);
-      };
-      try {
-        if (!Number.isFinite(nowMs) || !Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 4096)
-          throw new Error('CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN');
-        let parent = root;
-        while (!existsSync(parent)) parent = dirname(parent);
-        directory(parent);
-        if (!existsSync(root)) return Object.freeze({ ok: true, blocker: '',
-          latestBuildRequestObservation: null, latestControlSystemObservation: null });
-        scanNames(root, 256, shard => {
-          if (!/^[a-f0-9]{2}$/.test(shard.name) || !shard.isDirectory() || shard.isSymbolicLink())
-            throw new Error('CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN');
-          scanNames(join(root, shard.name), maxEntries, entry => {
-            if (++count > maxEntries) throw new Error('CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED');
-            if (!/^[a-f0-9]{64}\.json$/.test(entry.name) || !entry.isFile() || entry.isSymbolicLink()
-              || entry.name.slice(0, 2) !== shard.name) throw new Error('CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN');
-            const path = join(root, shard.name, entry.name), before = lstatSync(path);
-            const identity = readJsonObject(path, { maxBytes: 4096 });
-            if (typeof identity.requestId !== 'string' || location(identity.requestId) !== path)
-              throw new Error('CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN');
-            const record = read(identity.requestId), after = lstatSync(path);
-            if (!sameIdentity(before, after) || mailboxRotationDigest(identity) !== mailboxRotationDigest(record))
-              throw new Error('CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN');
-            identities.push([path, after]);
-            if (!/^control-tower-build-[1-9][0-9]{0,15}-1$/.test(record.requestId)) return;
-            const observed = this.inspectControlTower(record.requestId, { nowMs });
-            if (!observed) throw new Error('CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN');
+        inspectDirectory(path);
+      }
+      const scanShard = async shard => {
+        const hash = createHash('sha256'); let entries = 0;
+        for (const entry of shardEntries(shard)) {
+          if (maxEntries !== undefined && ++count > maxEntries) bound();
+          const record = readEntry(entry.path, entry.before);
+          if (!same(entry.before, inspectEntry(entry.path))) unproven();
+          if (/^control-tower-build-[1-9][0-9]{0,15}-1$/.test(record.requestId)) {
+            const observed = observeControlTowerRecord(record, { nowMs });
+            if (!observed) unproven();
             if (observed.operation === 'OBSERVE_CONTROL_SYSTEM')
               latestControlSystemObservation = latestObservation(latestControlSystemObservation, observed);
             else {
@@ -226,12 +260,56 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
               if (controlTowerBuildObservationUnresolvedV1(observed, { nowMs })
                 && (!unresolved || observed.runId < unresolved.runId)) unresolved = observed;
             }
-          });
-        });
-        // A terminal rename, substituted directory or concurrent new reservation
-        // invalidates the snapshot. The next existing relay poll may retry it.
-        for (const [path, before] of identities) if (!sameIdentity(before, lstatSync(path)))
-          throw new Error('CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN');
+          }
+          hash.update(JSON.stringify([entry.name, ...identity(entry.before)]) + '\n'); entries++;
+          await checkpoint();
+        }
+        transcripts.set(join(root, shard), JSON.stringify([entries, hash.digest('hex')]));
+      };
+      // Closing verification deliberately has no asynchronous boundary. This
+      // preserves the original synchronous read-set check while retaining only
+      // fixed-size shard transcripts, rather than one object per historical row.
+      const verifyShard = shard => {
+        const hash = createHash('sha256'); let entries = 0;
+        for (const entry of shardEntries(shard)) {
+          hash.update(JSON.stringify([entry.name, ...identity(entry.before)]) + '\n'); entries++;
+        }
+        if (transcripts.get(join(root, shard)) !== JSON.stringify([entries, hash.digest('hex')])) unproven();
+      };
+      try {
+        if (!Number.isFinite(nowMs) || !Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 4096
+          || !Number.isSafeInteger(maxDurationMs) || maxDurationMs < 1 || maxDurationMs > DISCOVERY_MAX_DURATION_MS
+          || (maxEntries !== undefined && (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 4096)))
+          unproven();
+        budget();
+        let parent = root;
+        while (!existsSync(parent)) parent = dirname(parent);
+        directory(parent);
+        if (!existsSync(root)) return Object.freeze({ ok: true, blocker: '',
+          latestBuildRequestObservation: null, latestControlSystemObservation: null });
+        inspectDirectory(root);
+        const shards = [], handle = opendirSync(root, { bufferSize: 256 });
+        try {
+          let entry;
+          while ((entry = handle.readSync())) {
+            if (shards.length >= 256 || !/^[a-f0-9]{2}$/.test(entry.name)
+              || !entry.isDirectory() || entry.isSymbolicLink()) unproven();
+            shards.push(entry.name);
+          }
+        } finally { handle.closeSync(); }
+        inspectDirectory(root);
+        shards.sort();
+        for (const shard of shards) await scanShard(shard);
+        // Drain queued in-process writers BEFORE the final uninterrupted proof.
+        await yieldDiscovery(); budget();
+        // Admitted ledger writers use create-once insertion or atomic rename;
+        // directory checks also catch those external writers after an early
+        // file check. This remains an observation, not global serialization
+        // against arbitrary actors bypassing the original ledger write API.
+        for (const shard of shards) verifyShard(shard);
+        directory(root);
+        for (const path of directories.keys()) { budget(); inspectDirectory(path); }
+        budget();
         return Object.freeze({ ok: true, blocker: '',
           latestBuildRequestObservation: unresolved || latestBuildRequestObservation,
           latestControlSystemObservation });

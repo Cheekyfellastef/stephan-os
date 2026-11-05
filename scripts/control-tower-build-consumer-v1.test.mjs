@@ -320,7 +320,10 @@ test('fixed observation never calls maintenance and malformed or wrong-source re
 test('unproven ledger discovery restricts acquisition to observation and cannot wake or reserve a new build', async t => {
   let mode;
   const s = setup(t, { createLedger: root => ({ ...createMailboxExecutionLedger(root),
-    discoverControlTower: () => ({ ok: false, blocker: 'CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED' }) }),
+    discoverControlTower: async () => {
+      await new Promise(resolve => setImmediate(resolve));
+      return { ok: false, blocker: 'CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED' };
+    } }),
     readRequest: async args => { mode = args.observationOnly; return requestTransport(101, 'OBSERVE_CONTROL_SYSTEM')(args); },
     inspect: async () => inspectedStatus() });
   const observed = await s.consume(); assert.equal(mode, true); assert.equal(observed.state, 'OBSERVATION_COMPLETED');

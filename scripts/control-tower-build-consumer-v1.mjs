@@ -140,7 +140,7 @@ export async function consumeControlTowerBuildRequestV1({
       || controlTowerMissingLedgerObservationV1(latestBuildRequestId);
     latestObserve = restore(latestObserveRequestId, CONTROL_TOWER_OBSERVE_OPERATION);
     discovery = typeof ledger.discoverControlTower === 'function'
-      ? ledger.discoverControlTower({ nowMs: now().getTime() }) : null;
+      ? await ledger.discoverControlTower({ nowMs: now().getTime() }) : null;
     if (discovery?.ok) {
       if (latestBuild?.detailState !== 'MISSING') latestBuild = discovery.latestBuildRequestObservation || latestBuild;
       latestObserve = discovery.latestControlSystemObservation || latestObserve;
@@ -178,7 +178,7 @@ export async function consumeControlTowerBuildRequestV1({
             request: historicalRequest, nowMs: now().getTime(),
           });
           discovery = typeof ledger.discoverControlTower === 'function'
-            ? ledger.discoverControlTower({ nowMs: now().getTime() }) : null;
+            ? await ledger.discoverControlTower({ nowMs: now().getTime() }) : null;
           if (discovery?.ok) {
             latestBuild = discovery.latestBuildRequestObservation || latestBuild;
             latestObserve = discovery.latestControlSystemObservation || latestObserve;
@@ -203,7 +203,7 @@ export async function consumeControlTowerBuildRequestV1({
       // Recheck after authenticated network/source reads, immediately before
       // the synchronous original reservation. This is not a cross-process lock.
       discovery = typeof ledger.discoverControlTower === 'function'
-        ? ledger.discoverControlTower({ nowMs: now().getTime() }) : null;
+        ? await ledger.discoverControlTower({ nowMs: now().getTime() }) : null;
       if (discovery?.ok !== true)
         return finish('HELD', discovery?.blocker || 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN', evidence());
       if (latestBuild?.detailState !== 'MISSING') latestBuild = discovery.latestBuildRequestObservation || latestBuild;
