@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   buildSovereignCommanderCapabilityParityLedger,
+  projectSovereignCapabilityCatalogTruth,
 } from '../shared/agents/sovereignCommanderCapabilityParityV1.mjs';
 import {
   compileSovereignCommanderCapabilityPlanV1,
@@ -173,8 +174,8 @@ export async function reconcileSovereignCommanderCapabilityParity({
         summary: ledger.buildableGapCount > 0
           ? `Sovereign Commander retains ${ledger.buildableGapCount} buildable Remote Commander parity gap(s) under #2573.`
           : nativeGapIntake.candidateCount > 0
-            ? `Sovereign Commander has ${nativeGapIntake.candidateCount} native skill proposals; Remote Commander parity remains green.`
-            : 'Sovereign Commander Remote Commander capability parity is green.',
+            ? `Sovereign Commander has ${nativeGapIntake.candidateCount} native skill proposals; installed Remote Commander parity remains unproven.`
+            : 'Sovereign Commander catalog has no observed buildable gaps; installed capability parity remains unproven.',
         proofRefs: [],
       }),
       capabilityParity: ledger,
@@ -221,6 +222,7 @@ export async function reconcileSovereignCommanderCapabilityParity({
       flywheelLearning,
       flywheelEventPublications: Object.freeze(flywheelEventPublications),
       boundaryHoldCount: ledger.boundaryHoldCount,
+      ...projectSovereignCapabilityCatalogTruth(ledger),
       ...boundary(),
       finalVerdict: combinedVerdict,
     });
