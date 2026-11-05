@@ -18,6 +18,13 @@ const { distMountPath } = createStephanosLocalUrls({
   port: Number(process.env.STEPHANOS_SERVE_PORT || 4173),
 });
 
+
+function currentBuildSnapshot() {
+  const head='a'.repeat(40), fingerprint='b'.repeat(64);
+  const metadata={gitCommit:head,sourceFingerprint:fingerprint,runtimeMarker:'antifriction-live-v3::'+head+'::'+fingerprint.slice(0,12)};
+  return {expectedHead:head,observedHead:head,metadata,embeddedMetadata:{...metadata}};
+}
+
 function createHealthyReuseProbe(overrides = {}) {
   return {
     payload: {
@@ -78,7 +85,7 @@ test('dist server serves shared runtime modules with JavaScript MIME type', asyn
 
 
 test('dist server serves launcher runtime-status endpoint with shared toggle registry payload', async (t) => {
-  const server = createStephanosDistServer();
+  const server = createStephanosDistServer({readRuntimeSnapshot:currentBuildSnapshot});
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => server.close());
@@ -94,7 +101,7 @@ test('dist server serves launcher runtime-status endpoint with shared toggle reg
 });
 
 test('dist server routes runtime-status before static 404 handling (query-string safe)', async (t) => {
-  const server = createStephanosDistServer();
+  const server = createStephanosDistServer({readRuntimeSnapshot:currentBuildSnapshot});
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => server.close());

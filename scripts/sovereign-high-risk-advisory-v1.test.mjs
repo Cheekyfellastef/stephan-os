@@ -99,7 +99,14 @@ test('exact-head Git snapshot pins actual executable and high-risk policy bytes'
         let stdout='';
         if(cmd[0]==='rev-parse'&&cmd[1]==='HEAD')stdout=SHA;
         else if(cmd[0]==='symbolic-ref')stdout=ENV.STEPHANOS_REVIEW_EXACT_BRANCH;
-        else if(cmd[0]==='status')stdout='';
+        else if(cmd[0]==='-c'&&cmd[1]==='status.renames=false'&&cmd[2]==='status') {
+          stdout=overrides.renameFromRuntimeToSource
+            ? 'D  apps/stephanos/dist/tracked.mjs\nA  scripts/introduced.mjs'
+            : overrides.renameFromSourceToRuntime
+              ? 'D  scripts/original.mjs\nA  apps/stephanos/dist/replaced.mjs'
+              : overrides.status||'';
+        }
+        else if(cmd[0]==='status')throw Error('RENAME_PROTECTION_NOT_APPLIED');
         else if(cmd[0]==='rev-parse'&&cmd[1]==='--verify')stdout=BASE;
         else if(cmd[0]==='ls-files')stdout=(overrides.indexFlag||'H')+' '+cmd.at(-1);
         else if(cmd[0]==='rev-parse'&&cmd[1].startsWith('HEAD:'))
@@ -119,6 +126,25 @@ test('exact-head Git snapshot pins actual executable and high-risk policy bytes'
   assert.equal(snap.sourceHead,SHA);
   assert.equal(snap.diff,DIFF+'\n');
   assert.deepEqual(snap.changedFiles,[PATH]);
+  const runtimeOnly=snapshotOptions({status:' M stephanos-server/data/memory/durable-memory.json\n?? apps/stephanos/dist/assets/runtime-proof.js'});
+  assert.doesNotThrow(()=>capture(ENV,runtimeOnly.captured));
+  for(const status of [
+    ' M scripts/sovereign-high-risk-advisory-v1.mjs',
+    '?? scripts/untracked-reviewer.mjs',
+    ' M stephanos-server/data/memory/durable-memory.json\n M scripts/sovereign-high-risk-advisory-v1.mjs',
+    '?? apps/stephanos/dist/assets/runtime-proof.js\r\n?? scripts/untracked-reviewer.mjs',
+  ]) {
+    const dirty=snapshotOptions({status});
+    assert.throws(()=>capture(ENV,dirty.captured),/DIRTY_REVIEW_CHECKOUT/);
+  }
+  for (const fixture of [
+    {renameFromRuntimeToSource:true},
+    {renameFromSourceToRuntime:true},
+  ]) {
+    const rename=snapshotOptions(fixture);
+    assert.throws(()=>capture(ENV,rename.captured),/DIRTY_REVIEW_CHECKOUT/,
+      'staged rename across runtime/source boundary must fail closed');
+  }
   for(const indexFlag of ['s','h']) {
     const bad=snapshotOptions({indexFlag});
     assert.throws(()=>capture(ENV,bad.captured),/HIGH_RISK_REVIEWER_INDEX_FLAGS_UNSAFE/);

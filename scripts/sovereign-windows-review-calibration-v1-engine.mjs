@@ -22,6 +22,7 @@ const FILES = Object.freeze([
   'shared/agents/sovereignReviewCoverageV1.mjs',
   'shared/agents/battleBridgeExecutionBoundaryV1.mjs',
   'scripts/sovereign-high-risk-advisory-v1.mjs',
+  'scripts/battle-bridge-github-sync-policy.mjs',
 ]);
 const MODEL = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
 function modelResponseFormatV1({ caseId = '', patchSha256 = '', path = '' } = {}) {
