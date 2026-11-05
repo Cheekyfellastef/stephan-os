@@ -232,9 +232,13 @@ test('actual guardian denials survive fleet mailbox projection without requiring
     custodyStore: { status: () => ({ held: true }), close() {} },
     spawnImpl: () => assert.fail('denied guardian must never launch a process'),
   });
-  const stopped = startSovereignCommanderContinuousRepairGuardian({ enabled: false });
+  const stopped = startSovereignCommanderContinuousRepairGuardian({ enabled: false,
+    spawnImpl: () => assert.fail('mailbox receipt fixture must not launch native processes'),
+  });
   stopped.stop();
-  const busy = startSovereignCommanderContinuousRepairGuardian({ enabled: false });
+  const busy = startSovereignCommanderContinuousRepairGuardian({ enabled: false,
+    spawnImpl: () => assert.fail('mailbox receipt fixture must not launch native processes'),
+  });
   const ownerCommand = fleetOwnerCommand();
   let finish;
   const inFlight = busy.withMaintenanceOwner(ownerCommand, () => new Promise(resolve => { finish = resolve; }));
@@ -299,7 +303,9 @@ test('fleet timeout and abort remain unknown-custody failures through direct and
 
 test('guardian post-execution custody hold cannot be mistaken for fleet completion', async () => {
   for (const errorCode of ['', 'ETIMEDOUT', 'ABORT_ERR']) {
-    const guardian = startSovereignCommanderContinuousRepairGuardian({ enabled: false });
+    const guardian = startSovereignCommanderContinuousRepairGuardian({ enabled: false,
+    spawnImpl: () => assert.fail('mailbox receipt fixture must not launch native processes'),
+  });
     try {
       const execution = fleetMaintenanceEnvelope({ stdout: 'PRIVATE MALFORMED CHILD RECEIPT' });
       if (errorCode) {
@@ -1527,11 +1533,15 @@ test('parity reconciliation returns bounded zero-gap truth without raw ledger ou
     parityPresentCount: 12,
     buildableGapCount: 0,
     boundaryHoldCount: 2,
-    zeroGapInvariantSatisfied: true,
-    closureRequired: false,
-    daemonMayReportGreen: true,
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    installedParityState: 'UNKNOWN',
+    zeroGapInvariantSatisfied: false,
+    sourceGapClosureRequired: true,
+    closureRequired: true,
+    daemonMayReportGreen: false,
     mustContinueUntilZero: true,
-    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
+    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_BOUNDARY_HOLD',
   });
   const serialized = JSON.stringify(result);
   assert.equal(serialized.includes('PRIVATE RAW PARITY'), false);
