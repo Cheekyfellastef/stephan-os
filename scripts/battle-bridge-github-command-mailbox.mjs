@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { projectSovereignCapabilityCatalogTruth } from '../shared/agents/sovereignCommanderCapabilityParityV1.mjs';
 import { MAINTENANCE_RECOVERY_OPERATIONS, projectMaintenanceRecoveryReceiptV1 } from '../shared/agents/sovereignMaintenanceRecoveryMailboxV1.mjs';
 import { FRONTEND_VISIBILITY_OPERATIONS, FRONTEND_VISIBILITY_START_OPERATION,
   projectFrontendVisibilityReceiptV1 } from '../shared/agents/sovereignFrontendVisibilityMailboxV1.mjs';
@@ -1098,30 +1099,7 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
 }
 
 function safeCapabilityParityReceiptProjection(value = {}) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const bounded = (input) => {
-    const number = Number(input);
-    return Number.isSafeInteger(number) && number >= 0 && number <= 10000 ? number : null;
-  };
-  const retainedCapabilityCount = bounded(value?.retainedCapabilityCount);
-  const parityPresentCount = bounded(value?.parityPresentCount);
-  const buildableGapCount = bounded(value?.buildableGapCount);
-  const boundaryHoldCount = bounded(value?.boundaryHoldCount);
-  if ([retainedCapabilityCount, parityPresentCount, buildableGapCount, boundaryHoldCount].some((entry) => entry === null)) return null;
-  const finalVerdict = safeTelemetryText(value?.finalVerdict, 100);
-  if (!['SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN', 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GAPS_TRACKED'].includes(finalVerdict)) return null;
-  return Object.freeze({
-    canonicalOwnerGoal: value?.canonicalOwnerGoal === '#2573' ? '#2573' : '',
-    retainedCapabilityCount,
-    parityPresentCount,
-    buildableGapCount,
-    boundaryHoldCount,
-    zeroGapInvariantSatisfied: buildableGapCount === 0,
-    closureRequired: buildableGapCount > 0,
-    daemonMayReportGreen: buildableGapCount === 0,
-    mustContinueUntilZero: true,
-    finalVerdict,
-  });
+  return projectSovereignCapabilityCatalogTruth(value);
 }
 
 function safeCoreDaemonStatusProjection(value = {}) {
