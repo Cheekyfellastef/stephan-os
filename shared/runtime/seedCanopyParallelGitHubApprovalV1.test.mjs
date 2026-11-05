@@ -74,6 +74,35 @@ test('missing owner proof, malformed reference and exhausted GitHub are fail-clo
   assert.equal(r.ok, false);
 });
 
+test('one owner comment cannot be edited into a different exact task grant', async () => {
+  const verify = (req, manifest, comment) => verifySeedParallelOwnerGitHubApprovalV1({
+    request: req, manifestSha256: manifest, reference: ref, nowMs: NOW,
+    fetchFn: fakeFetch(comment),
+  });
+  assert.equal((await verify(request, digest, source)).ok, true);
+  const substitutions = [
+    ['taskId', 'another-approved-task'], ['seedId', 'seed-other'],
+    ['ownerIssue', '#3096'], ['targetPath', 'docs/architecture/other-seed.md'],
+    ['baseSha', 'b'.repeat(40)], ['manifestSha256', 'f'.repeat(64)],
+  ];
+  for (const [field, value] of substitutions) {
+    const changed = field === 'manifestSha256' ? request : { ...request, [field]: value };
+    const manifest = field === 'manifestSha256' ? value : digest;
+    const grant = makeParallelSeedExactApprovalV1({ request: changed,
+      manifestSha256: manifest, nowUtc: new Date(NOW - 1000).toISOString(),
+      expiryUtc: new Date(NOW + 300000).toISOString() });
+    const edited = { ...source, updated_at: new Date(NOW - 500).toISOString(),
+      body: '```stephanos-seed-parallel-owner-approval\n' + JSON.stringify(grant) + '\n```' };
+    const result = await verify(changed, manifest, edited);
+    assert.equal(result.ok, false, field);
+    assert.equal(result.reason, 'GITHUB_APPROVAL_NOT_FRESH', field);
+  }
+  // Restoring an old body does not make an observably edited comment immutable.
+  assert.equal((await verify(request, digest, { ...source,
+    updated_at: new Date(NOW - 500).toISOString() })).ok, false);
+  assert.equal((await verify(request, digest, source)).ok, true);
+});
+
 test('seed approval and execution titles use exact canonical issue data, never a fabricated title', async () => {
   let requests = 0;
   const valid = await resolveSeedParallelOwnerIssueLabelV1('#3026', {
