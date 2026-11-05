@@ -7,6 +7,7 @@ import {
   validatePersonalRepositoryReadOnlyPriorFailure
 } from './protectedMergeReadOnlyPriorFailureV1.mjs';
 import { PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR } from './protectedWorkflowDispatchMailboxV1.mjs';
+import { validateProtectedReadyReviewLifecycleEvidence } from './protectedReadyReviewLifecycleV1.mjs';
 import { inflateRawSync } from 'node:zlib';
 import {
   OPERATOR_MERGE_ENVIRONMENT,
@@ -1353,12 +1354,17 @@ export function validatePersonalRepositoryCheckRuns(
       continue;
     }
 
-    const supersededDraftSkip = conclusion === 'skipped'
+    const canonicalDraftSkip = conclusion === 'skipped'
       && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
       && path === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
       && text(run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
-      && name === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check
-      && exactCheckBindings.some((candidate) => (
+      && name === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check;
+    const readyReviewLifecycle = canonicalDraftSkip && options.readyReviewLifecycleEvidence
+      && run.status === 'completed'
+      && Date.parse(options.readyReviewLifecycleEvidence.review?.run?.created_at) >= Date.parse(run.created_at)
+      ? validateProtectedReadyReviewLifecycleEvidence(options.readyReviewLifecycleEvidence, expected, run.id)
+      : null;
+    const supersededDraftSkip = canonicalDraftSkip && exactCheckBindings.some((candidate) => (
         candidate !== checkBinding
         && candidate.exactRun
         && strictPositiveInteger(candidate.run?.id) > strictPositiveInteger(run?.id)
@@ -1411,6 +1417,20 @@ export function validatePersonalRepositoryCheckRuns(
         && text(candidate.check?.conclusion).toLowerCase() === 'success'
       ));
 
+    // Mailbox Receipt Index mirrors receipts only for non-PR events. Its PR
+    // proof job still runs, so the bound mirror skip is expected only for the
+    // exact successful pull_request run. No push, dispatch, main-headed run or
+    // substituted workflow/check identity inherits this disposition.
+    const prMailboxMirrorNotRequested = conclusion === 'skipped'
+      && workflow === 'Mailbox Receipt Index'
+      && path === '.github/workflows/mailbox-receipt-index.yml'
+      && name === 'mirror'
+      && text(run?.event) === 'pull_request'
+      && text(run?.head_branch) === branch
+      && branch !== 'main'
+      && text(run?.status).toLowerCase() === 'completed'
+      && text(run?.conclusion).toLowerCase() === 'success';
+
     let disposition = 'green';
     if (status !== 'completed') {
       blockers.push('personal-repository-check-run-not-terminal');
@@ -1424,8 +1444,14 @@ export function validatePersonalRepositoryCheckRuns(
       disposition = 'pr-control-tower-build-not-requested';
     } else if (supersededDraftSkip) {
       disposition = 'superseded-draft-skip';
+    } else if (readyReviewLifecycle?.valid === true) {
+      // Preserve the original skipped check as observed. The separate proof is
+      // a real main-headed workflow_dispatch review, never a synthetic PR check.
+      disposition = 'reviewed-ready-lifecycle';
     } else if (prPagesDeploymentNotRequested) {
       disposition = 'pr-pages-deployment-not-requested';
+    } else if (prMailboxMirrorNotRequested) {
+      disposition = 'pr-mailbox-mirror-not-requested';
     } else if (cleanIndependentReviewProved
       && ['UNSTABLE', 'BLOCKED'].includes(mergeStateStatus)
       && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
@@ -1451,6 +1477,7 @@ export function validatePersonalRepositoryCheckRuns(
       status,
       conclusion,
       disposition,
+      ...(disposition === 'reviewed-ready-lifecycle' ? { readyReviewLifecycle } : {}),
     }));
   }
 

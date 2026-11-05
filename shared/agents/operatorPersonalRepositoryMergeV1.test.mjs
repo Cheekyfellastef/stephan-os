@@ -219,7 +219,7 @@ test('protected merge entry constructs one repository-bound check expectation', 
     source,
     /const checkExpectation = buildPersonalRepositoryCheckExpectation\(\{[\s\S]*repository: context\.repository,[\s\S]*identity,[\s\S]*mergeStateStatus: review\.mergeStateStatus,[\s\S]*\}\);/,
   );
-  assert.match(source, /expected: checkExpectation\.expected,/);
+  assert.match(source, /expected: \{ \.\.\.checkExpectation\.expected, sourceTree: identity\.sourceTree \},/);
   assert.doesNotMatch(source, /expected:\s*\{\s*\.\.\.identity,\s*mergeStateStatus:/);
 });
 
@@ -2005,6 +2005,98 @@ test('the PR-only deployment exclusion rejects other triggers, failed runs and s
     assert.equal(validatePersonalRepositoryCheckRuns([
       checkRun(buildRun, { name: 'pages-deploy', conclusion: 'skipped', ...mutation }),
     ], [buildRun], [], expectedEvidence).valid, false, JSON.stringify(mutation));
+  }
+});
+
+test('a successful exact PR mailbox proof preserves the intentionally excluded receipt mirror', () => {
+  const mailboxRun = {
+    id: 9201,
+    run_number: 201,
+    run_attempt: 1,
+    workflow_id: 7201,
+    check_suite_id: 8201,
+    name: 'Mailbox Receipt Index',
+    path: `${repository}/.github/workflows/mailbox-receipt-index.yml@refs/heads/${branch}`,
+    event: 'pull_request',
+    repository: { full_name: repository },
+    head_sha: sourceHead,
+    head_branch: branch,
+    status: 'completed',
+    conclusion: 'success',
+    pull_requests: [{
+      number: prNumber,
+      head: { sha: sourceHead, ref: branch },
+      base: { sha: baseSha, ref: 'main' },
+    }],
+  };
+  const checks = [
+    checkRun(mailboxRun, { id: 9403, name: 'proof', conclusion: 'success' }),
+    checkRun(mailboxRun, { id: 9404, name: 'mirror', conclusion: 'skipped' }),
+  ];
+  const result = validatePersonalRepositoryCheckRuns(checks, [mailboxRun], [], expectedEvidence);
+  assert.equal(result.valid, true, JSON.stringify(result.blockers));
+  assert.equal(result.evidence[1].disposition, 'pr-mailbox-mirror-not-requested');
+});
+
+test('the PR-only mailbox mirror exclusion rejects trigger, workflow, run and binding substitutions', () => {
+  const mailboxRun = {
+    id: 9202,
+    run_number: 202,
+    run_attempt: 1,
+    workflow_id: 7202,
+    check_suite_id: 8202,
+    name: 'Mailbox Receipt Index',
+    path: `${repository}/.github/workflows/mailbox-receipt-index.yml@refs/heads/${branch}`,
+    event: 'pull_request',
+    repository: { full_name: repository },
+    head_sha: sourceHead,
+    head_branch: branch,
+    status: 'completed',
+    conclusion: 'success',
+    pull_requests: [{
+      number: prNumber,
+      head: { sha: sourceHead, ref: branch },
+      base: { sha: baseSha, ref: 'main' },
+    }],
+  };
+  for (const mutation of [
+    { event: 'push' }, { event: 'workflow_dispatch' }, { event: 'issue_comment' },
+    { path: `${repository}/.github/workflows/unrelated-mailbox.yml@refs/heads/${branch}` },
+    { name: 'Unrelated Mailbox' }, { conclusion: 'failure' },
+    { status: 'in_progress' }, { head_branch: 'main' }, { pull_requests: [] },
+    { pull_requests: [{
+      number: prNumber + 1,
+      head: { sha: sourceHead, ref: branch },
+      base: { sha: baseSha, ref: 'main' },
+    }] },
+    { pull_requests: [{
+      number: prNumber,
+      head: { sha: 'f'.repeat(40), ref: branch },
+      base: { sha: baseSha, ref: 'main' },
+    }] },
+    { pull_requests: [{
+      number: prNumber,
+      head: { sha: sourceHead, ref: branch },
+      base: { sha: 'e'.repeat(40), ref: 'main' },
+    }] },
+  ]) {
+    const run = { ...mailboxRun, ...mutation };
+    const result = validatePersonalRepositoryCheckRuns([
+      checkRun(run, { name: 'mirror', conclusion: 'skipped' }),
+    ], [run], [], expectedEvidence);
+    assert.equal(result.valid, false, JSON.stringify(mutation));
+  }
+  for (const mutation of [
+    { name: 'proof' }, { name: 'unknown-check' }, { conclusion: 'failure' },
+    { conclusion: 'cancelled' }, { status: 'in_progress' }, { head_sha: 'f'.repeat(40) },
+    { check_suite: { id: mailboxRun.check_suite_id + 1 } },
+    { app: { id: 15368, slug: 'not-github-actions' } },
+    { app: { id: 1, slug: 'github-actions' } },
+  ]) {
+    const result = validatePersonalRepositoryCheckRuns([
+      checkRun(mailboxRun, { name: 'mirror', conclusion: 'skipped', ...mutation }),
+    ], [mailboxRun], [], expectedEvidence);
+    assert.equal(result.valid, false, JSON.stringify(mutation));
   }
 });
 

@@ -7,6 +7,7 @@ using BcEd25519 = Org.BouncyCastle.Math.EC.Rfc8032.Ed25519;
 namespace Stephanos.OriginalR7CustodyWitness;
 
 internal enum OriginalR7SignaturePurpose { Witness, Operator }
+internal enum OriginalR7SignatureProfile { LegacyOrphan, ProspectiveOrphan }
 
 // A software primitive, NOT a trust/custody provider. It never opens a host
 // key, creates/enrolls a root, consumes request authority, or issues a lease.
@@ -18,6 +19,8 @@ internal static class OriginalR7SigningPrimitives
     internal const string SourceCommit = "4007498b13582d90ee1eda5d9920c324428b98b3";
     internal const string WitnessDomain = "stephanos.legacy-orphan-os-witness.v1\0";
     internal const string OperatorDomain = "stephanos.legacy-orphan-operator-approval.v1\0";
+    internal const string ProspectiveWitnessDomain = "stephanos.original-source-prospective-os-witness.v1\0";
+    internal const string ProspectiveOperatorDomain = "stephanos.original-source-prospective-operator-approval.v1\0";
     private static readonly UTF8Encoding Utf8 = new(false, true);
 
     internal static byte[] PublicKey(ReadOnlySpan<byte> seed)
@@ -80,12 +83,17 @@ internal static class OriginalR7SigningPrimitives
         => "-----BEGIN PUBLIC KEY-----\n" + Convert.ToBase64String(PublicSpki(publicKey))
             + "\n-----END PUBLIC KEY-----\n";
 
-    internal static byte[] DomainMessage(OriginalR7SignaturePurpose purpose, ReadOnlySpan<byte> canonicalClaims)
+    // Closed-world, role-separated signature domain selection. Legacy stays the default.
+    // This is algorithm preparation, not production signer/custody authority.
+    internal static byte[] DomainMessage(OriginalR7SignaturePurpose purpose, ReadOnlySpan<byte> canonicalClaims,
+        OriginalR7SignatureProfile profile = OriginalR7SignatureProfile.LegacyOrphan)
     {
-        string domain = purpose switch {
-            OriginalR7SignaturePurpose.Witness => WitnessDomain,
-            OriginalR7SignaturePurpose.Operator => OperatorDomain,
-            _ => throw Held("PURPOSE_INVALID")
+        string domain = (profile, purpose) switch {
+            (OriginalR7SignatureProfile.LegacyOrphan, OriginalR7SignaturePurpose.Witness) => WitnessDomain,
+            (OriginalR7SignatureProfile.LegacyOrphan, OriginalR7SignaturePurpose.Operator) => OperatorDomain,
+            (OriginalR7SignatureProfile.ProspectiveOrphan, OriginalR7SignaturePurpose.Witness) => ProspectiveWitnessDomain,
+            (OriginalR7SignatureProfile.ProspectiveOrphan, OriginalR7SignaturePurpose.Operator) => ProspectiveOperatorDomain,
+            _ => throw Held("SIGNATURE_PROFILE_OR_PURPOSE_INVALID")
         };
         if (canonicalClaims.Length is < 2 or > MaxPayloadBytes) throw Held("CLAIMS_BOUND");
         byte[] claims = canonicalClaims.ToArray();
@@ -142,9 +150,10 @@ internal static class OriginalR7SigningPrimitives
     // Base64 + / = characters, is what the canonical operator witnessDigest
     // hashes. Never hash a default serializer's differently escaped envelope.
     internal static byte[] CanonicalSignaturePart(OriginalR7SignaturePurpose purpose,
-        ReadOnlySpan<byte> canonicalClaims, OriginalR7SoftwareSignature signature)
+        ReadOnlySpan<byte> canonicalClaims, OriginalR7SoftwareSignature signature,
+        OriginalR7SignatureProfile profile = OriginalR7SignatureProfile.LegacyOrphan)
     {
-        byte[] message = DomainMessage(purpose, canonicalClaims);
+        byte[] message = DomainMessage(purpose, canonicalClaims, profile);
         try
         {
             if (signature.Algorithm != "Ed25519"
@@ -228,7 +237,8 @@ internal sealed class OriginalR7SoftwareSeedSession : IDisposable
     }
 
     internal OriginalR7SoftwareSignature SignForAlgorithmPreparation(
-        OriginalR7SignaturePurpose requestedPurpose, ReadOnlySpan<byte> canonicalClaims)
+        OriginalR7SignaturePurpose requestedPurpose, ReadOnlySpan<byte> canonicalClaims,
+        OriginalR7SignatureProfile profile = OriginalR7SignatureProfile.LegacyOrphan)
     {
         lock (sync)
         {
@@ -252,7 +262,7 @@ internal sealed class OriginalR7SoftwareSeedSession : IDisposable
                         throw Held("MATERIAL_CHANGED");
                 }
                 finally { CryptographicOperations.ZeroMemory(current); }
-                message = OriginalR7SigningPrimitives.DomainMessage(purpose, canonicalClaims);
+                message = OriginalR7SigningPrimitives.DomainMessage(purpose, canonicalClaims, profile);
                 byte[] signature = OriginalR7SigningPrimitives.SignDetached(seed, message);
                 byte[] pub = OriginalR7SigningPrimitives.PublicKey(seed);
                 byte[] spki = OriginalR7SigningPrimitives.PublicSpki(pub);

@@ -95,6 +95,19 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
 ]);
 
 const NATURAL_EXACT = new Set([
+  // On-demand VR owners load these on their next explicit invocation. This
+  // confirms source adoption only; never launch/restart games or recorders.
+  'scripts/report-starfield-vr-telemetry.mjs',
+  'scripts/windows/launch-starfield-vr-with-splash.ps1',
+  'scripts/windows/launch-starfield-vr.ps1',
+  'scripts/windows/new-vr-telemetry-session.ps1',
+  'scripts/windows/read-starfield-vr-performance-diagnosis.ps1',
+  'scripts/windows/run-starfield-aer-stabilizer-observe.ps1',
+  'scripts/windows/starfield-vr-flight-recorder.ps1',
+  'scripts/windows/starfield-vr-performance-mode.ps1',
+  'scripts/windows/starfield-vr-runtime-metrics-producer.ps1',
+  'scripts/windows/vr-visual-fault-marker.ps1',
+  'shared/vr/vrTelemetrySensorContractV1.mjs',
   'scripts/canonical-mailbox-execution-ledger-v1.mjs',
   'scripts/canonical-mailbox-rotation-transaction-v2.mjs',
   'scripts/canonical-mailbox-rotation-host-v1.mjs',
@@ -185,6 +198,15 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
 ]);
 
 const NO_RUNTIME_EXACT = new Set([
+  // Offline/attended native package sources. Source adoption cannot compile,
+  // install, sign, commission, or qualify their separately installed binaries.
+  'scripts/windows/install-vr-openxr-telemetry-layer.ps1',
+  'src/vr/Stephanos.OpenXrTelemetryLayer/layer.json',
+  'src/vr/Stephanos.OpenXrTelemetryLayer/stephanos-openxr-telemetry-layer.cpp',
+  'src/vr/Stephanos.OpenXrTelemetryLayer/stephanos-openxr-telemetry-layer.test.cpp',
+  'src/windows/Stephanos.OriginalR7CustodyWitness.Tests/LegacySigningInterop.mjs',
+  'src/windows/Stephanos.OriginalR7CustodyWitness.Tests/OriginalR7SigningProviderTests.cs',
+  'src/windows/Stephanos.OriginalR7CustodyWitness/OriginalR7SigningPrimitives.cs',
   // Manual offline source-package construction; no runtime root imports it.
   'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs',
   'scripts/sovereign-fixed-runtime-install-current-v1.mjs',
@@ -231,6 +253,14 @@ const NO_RUNTIME_EXACT = new Set([
   'scripts/ignition-cockpit-model.mjs',
   'scripts/run-battle-bridge-ignition.mjs',
   'scripts/battle-bridge-ignition-sync-preflight.mjs',
+  // These are one-shot advisory/review children loaded afresh by their fixed callers;
+  // source adoption must not restart a long-running runtime. Keep exact-only.
+  'scripts/starfield-vr-project-performance-loop.mjs',
+  'scripts/sovereign-windows-review-calibration-v1-engine.mjs',
+  // One-shot protected review entries. Adoption never installs/trusts the
+  // launcher or invokes inference; their existing installation gates remain.
+  'scripts/sovereign-high-risk-advisory-launcher-v1.mjs',
+  'scripts/sovereign-high-risk-advisory-v1.mjs',
   'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
 ]);
 
