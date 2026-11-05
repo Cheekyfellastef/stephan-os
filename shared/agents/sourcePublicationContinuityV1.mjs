@@ -41,7 +41,7 @@ function sameKeys(value, expected) {
     && JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort());
 }
 function safeCanonicalBranch(value) {
-  const branch = text(value);
+  const branch = typeof value === 'string' ? value : '';
   return SAFE_BRANCH.test(branch)
     && !['main', 'master', 'head', 'fetch_head', 'merge_head', 'revert_head', 'bisect_head', 'auto_merge', 'orig_head', 'cherry_pick_head', 'rebase_head'].includes(branch.toLowerCase())
     && !['main/', 'master/'].some((prefix) => branch.toLowerCase().startsWith(prefix))
@@ -59,7 +59,7 @@ function exactArtifact(artifact = {}) {
     exactBase: text(artifact.exactBase).toLowerCase(),
     exactTree: text(artifact.exactTree).toLowerCase(),
     exactCommit: text(artifact.exactCommit).toLowerCase(),
-    branch: text(artifact.branch),
+    branch: typeof artifact.branch === 'string' ? artifact.branch : '',
   });
 }
 
@@ -82,7 +82,7 @@ function receiptEvidence(route, capability, artifact, nowMs) {
     && text(receipt.exactBase).toLowerCase() === artifact.exactBase
     && text(receipt.exactTree).toLowerCase() === artifact.exactTree
     && text(receipt.exactCommit).toLowerCase() === artifact.exactCommit
-    && text(receipt.branch) === artifact.branch
+    && receipt.branch === artifact.branch
     && ['ready', 'unavailable'].includes(receipt.state)
     && EXPLICIT_TIMEZONE.test(text(receipt.observedAtUtc))
     && EXPLICIT_TIMEZONE.test(text(receipt.expiresAtUtc))
@@ -108,7 +108,7 @@ function routeCompatible(route, artifact, evidence, existingBranch = false) {
     // An escrow recovery needs genuine fast-forward ref-update capability.
     return coreReady && (existingBranch
       ? operations.has('UPDATE_BRANCH_REF')
-      : (operations.has('UPDATE_BRANCH_REF') || operations.has('CREATE_BRANCH_REF')));
+      : operations.has('CREATE_BRANCH_REF'));
   }
   if (route === SOURCE_PUBLICATION_ROUTE.FORGE_SIDECAR) {
     return ['M2_READY', 'M3_RUNNER_READY', 'PUBLISH_SOURCE_BRANCH'].every((item) => operations.has(item));

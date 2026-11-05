@@ -172,3 +172,23 @@ test('rejects Git pseudo-ref collisions and protected-branch namespace children'
     assert.equal(result.mutationAllowed, false, branch);
   }
 });
+
+test('new branches require create-ref, existing branches require update-ref',()=>{
+ const core=['CREATE_BLOBS','CREATE_TREE','CREATE_COMMIT'];
+ const get=(ops,existing)=>buildSourcePublicationContinuityV1({workspace,artifact,nowUtc:NOW,existingBranch:existing,capabilities:{[SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP]:githubApp({operations:[...core,...ops]})}});
+ assert.equal(get(['UPDATE_BRANCH_REF'],false).routeReady,false);
+ assert.equal(get(['UPDATE_BRANCH_REF'],false).blocker,SOURCE_PUBLICATION_BLOCKER.PROBES_PENDING);
+ assert.equal(get(['CREATE_BRANCH_REF'],false).selectedRoute,SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP);
+ assert.equal(get(['CREATE_BRANCH_REF'],true).routeReady,false);
+ assert.equal(get(['UPDATE_BRANCH_REF'],true).selectedRoute,SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP);
+ for(const exists of [false,true])assert.equal(get(['CREATE_BRANCH_REF','UPDATE_BRANCH_REF'],exists).routeReady,true);
+});
+test('raw artifact branch and capability receipt branch must match byte-exact',()=>{
+ const route=SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP;
+ const get=(a,r)=>buildSourcePublicationContinuityV1({workspace,artifact:{...artifact,branch:a},nowUtc:NOW,capabilities:{[route]:githubApp({branch:r,operations:['CREATE_BLOBS','CREATE_TREE','CREATE_COMMIT','CREATE_BRANCH_REF']})}});
+ assert.equal(get(artifact.branch,artifact.branch).routeReady,true);
+ for(const b of [artifact.branch+' ',' '+artifact.branch,artifact.branch+'\t']){
+  const r=get(b,artifact.branch);assert.equal(r.blocker,SOURCE_PUBLICATION_BLOCKER.ARTIFACT_INVALID);assert.equal(r.mutationAllowed,false);
+  const q=get(artifact.branch,b);assert.equal(q.blocker,SOURCE_PUBLICATION_BLOCKER.PROBES_PENDING);assert.equal(q.routeReady,false);assert.equal(q.mutationAllowed,false);
+ }
+});
