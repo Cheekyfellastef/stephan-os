@@ -24,14 +24,18 @@ export function collectChangedJavaScriptFiles({
 } = {}) {
   const output = execGit(
     'git',
-    ['diff', '--name-only', '--diff-filter=ACMR', `${baseRef}...HEAD`],
-    { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    ['diff', '--name-only', '-z', '--diff-filter=ACMRT', `${baseRef}...HEAD`],
+    { cwd, encoding: 'buffer', stdio: ['ignore', 'pipe', 'pipe'] },
   );
+  const bytes = Buffer.isBuffer(output) ? output : Buffer.from(String(output), 'utf8');
+  // Only NUL-delimited Git paths are unambiguous. Newlines are valid filenames.
+  if (bytes.length && bytes[bytes.length - 1] !== 0) {
+    throw new Error('CHANGED_SOURCE_DIFF_PATH_ENCODING_INVALID');
+  }
   return Object.freeze(
     [...new Set(
-      String(output)
-        .split(/\r?\n/)
-        .map(text)
+      bytes.toString('utf8')
+        .split('\0')
         .filter((path) => path && SOURCE_EXTENSION.test(path)),
     )].sort(),
   );

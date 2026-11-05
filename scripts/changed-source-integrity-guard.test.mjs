@@ -11,8 +11,8 @@ import {
 test('changed source discovery is deterministic and limits itself to JavaScript source', () => {
   const files = collectChangedJavaScriptFiles({
     execGit: (_command, args) => {
-      assert.deepEqual(args, ['diff', '--name-only', '--diff-filter=ACMR', 'origin/main...HEAD']);
-      return 'z.mjs\nnotes.md\na.js\na.js\nconfig.json\nworker.cjs\n';
+      assert.deepEqual(args, ['diff', '--name-only', '-z', '--diff-filter=ACMRT', 'origin/main...HEAD']);
+      return 'z.mjs\0notes.md\0a.js\0a.js\0config.json\0worker.cjs\0';
     },
   });
   assert.deepEqual(files, ['a.js', 'worker.cjs', 'z.mjs']);
@@ -46,4 +46,21 @@ test('missing changed source fails closed rather than disappearing from proof', 
   });
   assert.equal(result.ok, false);
   assert.equal(result.failures[0].blocker, 'CHANGED_SOURCE_FILE_MISSING');
+});
+
+test('type-changed and newline-containing changed filenames stay in integrity proof', () => {
+  const files = collectChangedJavaScriptFiles({
+    execGit: (_command, args) => {
+      assert.equal(args.includes('--diff-filter=ACMRT'), true);
+      assert.equal(args.includes('-z'), true);
+      return Buffer.from('broken\nname.js\0link.mjs\0', 'utf8');
+    },
+  });
+  assert.deepEqual(files, ['broken\nname.js', 'link.mjs']);
+});
+
+test('ambiguous newline-delimited Git output fails closed', () => {
+  assert.throws(() => collectChangedJavaScriptFiles({
+    execGit: () => 'safe.js\nunsafe.js\n',
+  }), /CHANGED_SOURCE_DIFF_PATH_ENCODING_INVALID/);
 });
