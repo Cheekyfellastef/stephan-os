@@ -1,3 +1,4 @@
+import { projectSovereignCapabilityCatalogTruth } from './sovereignCommanderCapabilityParityV1.mjs';
 import { createHash } from 'node:crypto';
 import { projectMaintenanceCustodyVisibilityV1, maintenanceCustodyVisibilityLightV1 } from './maintenanceCustodyVisibilityV1.mjs';
 import { parseWindowsCalibrationRemoteV1 } from './sovereignWindowsCalibrationRemoteV1.mjs';
@@ -1540,36 +1541,12 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
 
 function safeCapabilityParityProjection(value = {}, processId = '') {
   if (processId !== 'reconcile-remote-commander-parity') return null;
-  const stdout = String(value?.structuredContent?.stdout || '');
   const prefix = 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RESULT=';
-  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(prefix));
+  const line = String(value?.structuredContent?.stdout || '').split(/\r?\n/).find(entry => entry.startsWith(prefix));
   if (!line) return null;
-  let parsed = null;
-  try { parsed = JSON.parse(line.slice(prefix.length)); } catch {}
-  if (!parsed || parsed.ok !== true) return null;
-  const bounded = (input) => {
-    const number = Number(input);
-    return Number.isSafeInteger(number) && number >= 0 && number <= 10000 ? number : null;
-  };
-  const retainedCapabilityCount = bounded(parsed.retainedCapabilityCount);
-  const parityPresentCount = bounded(parsed.parityPresentCount);
-  const buildableGapCount = bounded(parsed.buildableGapCount);
-  const boundaryHoldCount = bounded(parsed.boundaryHoldCount);
-  if ([retainedCapabilityCount, parityPresentCount, buildableGapCount, boundaryHoldCount].some((entry) => entry === null)) return null;
-  const finalVerdict = text(parsed.finalVerdict);
-  if (!['SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN', 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GAPS_TRACKED'].includes(finalVerdict)) return null;
-  return Object.freeze({
-    canonicalOwnerGoal: text(parsed.canonicalOwnerGoal) === '#2573' ? '#2573' : '',
-    retainedCapabilityCount,
-    parityPresentCount,
-    buildableGapCount,
-    boundaryHoldCount,
-    zeroGapInvariantSatisfied: buildableGapCount === 0,
-    closureRequired: buildableGapCount > 0,
-    daemonMayReportGreen: buildableGapCount === 0,
-    mustContinueUntilZero: true,
-    finalVerdict,
-  });
+  let parsed;
+  try { parsed = JSON.parse(line.slice(prefix.length)); } catch { return null; }
+  return parsed?.ok === true ? projectSovereignCapabilityCatalogTruth(parsed) : null;
 }
 
 function safeStarfieldVrTelemetryArchiveProjection(value = {}, processId = '') {

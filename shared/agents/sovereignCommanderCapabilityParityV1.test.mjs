@@ -249,8 +249,9 @@ test('repeated observations deduplicate into one durable capability entry', () =
   assert.equal(second.buildableGapCount, 0);
   assert.equal(second.parityPresentCount, 1);
   assert.equal(second.zeroGapInvariantSatisfied, true);
-  assert.equal(second.closureRequired, false);
-  assert.equal(second.daemonMayReportGreen, true);
+  assert.equal(second.sourceGapClosureRequired, false);
+  assert.equal(second.closureRequired, true);
+  assert.equal(second.daemonMayReportGreen, false);
   assert.equal(second.mustContinueUntilZero, true);
   assert.equal(second.duplicateGoalCreationAllowed, false);
   assert.equal(second.standingGoalMustRemainOpen, true);
@@ -276,4 +277,48 @@ test('new unmetered private read-only diagnostics map to Sovereign capabilities'
     assert.equal(result.mergeAuthority, false);
     assert.equal(result.arbitraryShellAllowed, false);
   }
+});
+
+test('empty, static and retained catalog observations never establish installed parity', async () => {
+  const { projectSovereignCapabilityCatalogTruth } = await import('./sovereignCommanderCapabilityParityV1.mjs');
+  for (const entries of [[], [remote('source-construction')], [remote('read-file')]]) {
+    for (const priorLedger of [null, { daemonMayReportGreen: true, runtimeParityProven: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN', capabilities: [{
+        capabilityId: 'read-file', state: 'PARITY_PRESENT', newlyProvenParity: true, runtimeParityProven: true,
+      }] }]) {
+      const ledger = buildSovereignCommanderCapabilityParityLedger(entries, { priorLedger });
+      assert.equal(ledger.runtimeParityProven, false);
+      assert.equal(ledger.daemonMayReportGreen, false);
+      assert.equal(ledger.installedParityState, 'UNKNOWN');
+      assert.equal(ledger.closureRequired, true);
+      assert.equal(ledger.newlyProvenParityCount, 0);
+      assert.ok(ledger.capabilities.every(c => c.runtimeParityProven === false && c.newlyProvenParity === false));
+      const projected = projectSovereignCapabilityCatalogTruth(ledger);
+      assert.equal(projected.daemonMayReportGreen, false);
+      assert.equal(projected.finalVerdict, 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RUNTIME_UNPROVEN');
+    }
+  }
+});
+
+test('public catalog truth rejects malformed counts and cannot launder asserted acceptance', async () => {
+  const { projectSovereignCapabilityCatalogTruth: project } = await import('./sovereignCommanderCapabilityParityV1.mjs');
+  const legacy = { canonicalOwnerGoal: '#2573', retainedCapabilityCount: 31, parityPresentCount: 31,
+    buildableGapCount: 0, boundaryHoldCount: 0, finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN' };
+  for (const claimed of [false, true, 'true', null, { allRequiredProofs: true }]) {
+    const result = project({ ...legacy, runtimeParityProven: claimed, daemonMayReportGreen: claimed,
+      installedHead: 'a'.repeat(40), acceptedOperationCount: 31, proofRefs: ['caller-asserted'], privatePath: 'PRIVATE' });
+    assert.equal(result.runtimeParityProven, false);
+    assert.equal(result.daemonMayReportGreen, false);
+    assert.equal(result.closureRequired, true);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE|caller-asserted|installedHead/);
+    assert.deepEqual(project(result), result);
+  }
+  for (const key of ['retainedCapabilityCount','parityPresentCount','buildableGapCount','boundaryHoldCount'])
+    for (const bad of [null, '0', false, -1, 0.5, 10001, NaN, Infinity])
+      assert.equal(project({ ...legacy, [key]: bad }), null, key + ':' + bad);
+  assert.equal(project({ ...legacy, retainedCapabilityCount: 30 }), null);
+  assert.equal(project({ ...legacy, canonicalOwnerGoal: '#9999' }), null);
+  const held = project({ ...legacy, parityPresentCount: 30, boundaryHoldCount: 1 });
+  assert.equal(held.zeroGapInvariantSatisfied, false);
+  assert.equal(held.finalVerdict, 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_BOUNDARY_HOLD');
 });

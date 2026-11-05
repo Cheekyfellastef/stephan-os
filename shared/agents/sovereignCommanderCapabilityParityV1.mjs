@@ -67,6 +67,42 @@ export const SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS = Object.freeze(Object.assig
 const BOUNDARY_PATTERN =
   /(?:^|[-_])(arbitrary[-_]?shell|run[-_]?shell|force[-_]?push|destructive[-_]?git|delete[-_]?file|pc[-_]?restart|credential[-_]?export|secret[-_]?export|merge)(?:$|[-_])/i;
 
+function catalogTruth(buildableGapCount, boundaryHoldCount) {
+  return Object.freeze({
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    installedParityState: 'UNKNOWN',
+    zeroGapInvariantSatisfied: buildableGapCount === 0 && boundaryHoldCount === 0,
+    sourceGapClosureRequired: buildableGapCount > 0 || boundaryHoldCount > 0,
+    closureRequired: true,
+    daemonMayReportGreen: false,
+    mustContinueUntilZero: true,
+    finalVerdict: buildableGapCount > 0
+      ? 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GAPS_TRACKED'
+      : boundaryHoldCount > 0
+        ? 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_BOUNDARY_HOLD'
+        : 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RUNTIME_UNPROVEN',
+  });
+}
+
+// Queue observations and catalog equivalence cannot authenticate installed
+// acceptance. Both public transports use this same projection, including when
+// receiving an older producer's unsupported GREEN claim. Physical receipts
+// remain in their existing acceptance surfaces; this does not erase them.
+export function projectSovereignCapabilityCatalogTruth(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.canonicalOwnerGoal !== '#2573') return null;
+  const keys = ['retainedCapabilityCount', 'parityPresentCount', 'buildableGapCount', 'boundaryHoldCount'];
+  if (keys.some(key => !Number.isSafeInteger(value[key]) || value[key] < 0 || value[key] > 10000)) return null;
+  if (value.retainedCapabilityCount !== value.parityPresentCount + value.buildableGapCount + value.boundaryHoldCount) return null;
+  if (!['SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN', 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GAPS_TRACKED',
+    'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RUNTIME_UNPROVEN', 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_BOUNDARY_HOLD'].includes(value.finalVerdict)) return null;
+  return Object.freeze({ canonicalOwnerGoal: '#2573',
+    ...Object.fromEntries(keys.map(key => [key, value[key]])),
+    ...catalogTruth(value.buildableGapCount, value.boundaryHoldCount),
+  });
+}
+
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
   return normalized || fallback;
@@ -139,6 +175,8 @@ export function classifyRemoteCommanderCapabilityObservation(entry = {}) {
     observationIngress: observedAdapter,
     state,
     sovereignEquivalent: directEquivalent || suggestedEquivalent(operation),
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
     ...(searchGap || {}),
     canonicalOwnerGoal: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.goal,
     canonicalOwnerTitle: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.title,
@@ -218,7 +256,7 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
       : current
         ? 'OBSERVED'
         : 'RETAINED';
-    const newlyProvenParity = previousState === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP
+    const newlyMappedCapability = previousState === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP
       && state === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT;
     const firstSeenAtUtc = validTimestamp(previous.firstSeenAtUtc, timestampUtc);
     const priorCount = Number.isSafeInteger(Number(previous.observationCount))
@@ -234,7 +272,10 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
       state,
       previousState: previousState || null,
       stateTransition,
-      newlyProvenParity,
+      newlyProvenParity: false,
+      newlyMappedCapability,
+      parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+      runtimeParityProven: false,
       sovereignEquivalent: text(classified?.sovereignEquivalent
         || (searchGap ? suggestedEquivalent(id) : previous.sovereignEquivalent)
         || suggestedEquivalent(id)),
@@ -249,7 +290,7 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
       actionIds: Object.freeze(retainedReferences('actionIds', current?.actionIds)),
       queuePaths: Object.freeze(retainedReferences('queuePaths', current?.queuePaths)),
       nextAction: state === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT
-        ? 'Use Sovereign Commander by default; keep Remote Commander break-glass only.'
+        ? 'Prefer the mapped Sovereign route after live capability admission; verify each result.'
         : state === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BOUNDARY_HOLD
           ? 'Preserve the authority boundary. Do not clone forbidden authority merely for parity.'
           : 'Advance #2573 through the canonical goal-building fabric until guarded Sovereign parity is proven.',
@@ -284,12 +325,10 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
     retainedCapabilityCount: capabilities.length,
     parityPresentCount,
     newlyProvenParityCount,
+    newlyMappedCapabilityCount: capabilities.filter(item => item.newlyMappedCapability).length,
     buildableGapCount,
     boundaryHoldCount,
-    zeroGapInvariantSatisfied: buildableGapCount === 0,
-    closureRequired: buildableGapCount > 0,
-    daemonMayReportGreen: buildableGapCount === 0,
-    mustContinueUntilZero: true,
+    ...catalogTruth(buildableGapCount, boundaryHoldCount),
     capabilities: Object.freeze(capabilities),
     schedulerBypassAllowed: false,
     duplicateSchedulerAllowed: false,
@@ -301,8 +340,5 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
     arbitraryShellAllowed: false,
     pcRestartAuthority: false,
     destructiveGitAllowed: false,
-    finalVerdict: buildableGapCount > 0
-      ? 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GAPS_TRACKED'
-      : 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
   });
 }

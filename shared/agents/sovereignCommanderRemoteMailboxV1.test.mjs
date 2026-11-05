@@ -1533,11 +1533,15 @@ test('parity reconciliation returns bounded zero-gap truth without raw ledger ou
     parityPresentCount: 12,
     buildableGapCount: 0,
     boundaryHoldCount: 2,
-    zeroGapInvariantSatisfied: true,
-    closureRequired: false,
-    daemonMayReportGreen: true,
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    installedParityState: 'UNKNOWN',
+    zeroGapInvariantSatisfied: false,
+    sourceGapClosureRequired: true,
+    closureRequired: true,
+    daemonMayReportGreen: false,
     mustContinueUntilZero: true,
-    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
+    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_BOUNDARY_HOLD',
   });
   const serialized = JSON.stringify(result);
   assert.equal(serialized.includes('PRIVATE RAW PARITY'), false);
