@@ -232,9 +232,13 @@ test('actual guardian denials survive fleet mailbox projection without requiring
     custodyStore: { status: () => ({ held: true }), close() {} },
     spawnImpl: () => assert.fail('denied guardian must never launch a process'),
   });
-  const stopped = startSovereignCommanderContinuousRepairGuardian({ enabled: false });
+  const stopped = startSovereignCommanderContinuousRepairGuardian({ enabled: false,
+    spawnImpl: () => assert.fail('mailbox receipt fixture must not launch native processes'),
+  });
   stopped.stop();
-  const busy = startSovereignCommanderContinuousRepairGuardian({ enabled: false });
+  const busy = startSovereignCommanderContinuousRepairGuardian({ enabled: false,
+    spawnImpl: () => assert.fail('mailbox receipt fixture must not launch native processes'),
+  });
   const ownerCommand = fleetOwnerCommand();
   let finish;
   const inFlight = busy.withMaintenanceOwner(ownerCommand, () => new Promise(resolve => { finish = resolve; }));
@@ -299,7 +303,9 @@ test('fleet timeout and abort remain unknown-custody failures through direct and
 
 test('guardian post-execution custody hold cannot be mistaken for fleet completion', async () => {
   for (const errorCode of ['', 'ETIMEDOUT', 'ABORT_ERR']) {
-    const guardian = startSovereignCommanderContinuousRepairGuardian({ enabled: false });
+    const guardian = startSovereignCommanderContinuousRepairGuardian({ enabled: false,
+    spawnImpl: () => assert.fail('mailbox receipt fixture must not launch native processes'),
+  });
     try {
       const execution = fleetMaintenanceEnvelope({ stdout: 'PRIVATE MALFORMED CHILD RECEIPT' });
       if (errorCode) {
