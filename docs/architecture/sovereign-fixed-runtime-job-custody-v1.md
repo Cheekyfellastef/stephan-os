@@ -334,3 +334,39 @@ unchanged. A pending installation still requires a genuinely later full boot
 and authenticated current custody IDLE before runtime qualification. Neither
 package form releases the unresolved Control Tower BUILD, any source claim or
 native custody, or qualifies the separate mailbox-rotation producer.
+
+
+## 4 November 2026: goal repair deadline composition
+
+The installed goal-builder profile bounds native execution to 145 seconds.
+Its discovery and supervisor children previously had 25-second limits even
+though their existing GitHub goal observation can take 30 seconds. Independent
+per-child limits also allowed the complete sequence to exceed its native parent.
+This is a deadline-composition defect, not evidence of worker readiness or
+permission to increase the native deadline.
+
+The candidate gives those children 35 seconds and shares one 135-second
+monotonic work budget across the existing sequence. Every child is clamped to
+remaining time; exhausted budget refuses another launch with a typed failure.
+The existing native deadline, Job custody, terminal drain, resource checks,
+worker validation, source ownership and proof requirements remain binding.
+Deadline cloning preserves discovery's pipe-free execution and the production
+resource/ignition checks; an adapter wrapper must not select fixture behavior.
+
+Regression proof includes cold observations exceeding the old 25-second limit,
+aggregate exhaustion that refuses the next child, and actual cloned discovery
+execution with output pipes disabled. These are source regressions, not live
+conveyor recovery or qualification of another native profile.
+
+Core repair is a separate unresolved authority surface. The current fixed host
+admits goal-builder maintenance and source tasks; the broad control-plane
+reconciler starts persistent scheduled work outside a short-lived native Job.
+Aliasing that reconciler to the goal-builder profile would not contain it.
+Core qualification therefore requires a reviewed lifecycle design for the
+existing Core owner, protected installed closure and principal, original process
+identity and singleton custody, resource cancellation, and durable terminal or
+persistent ownership evidence. Retain FIXED_RUNTIME_PROFILE_NOT_QUALIFIED until
+that implementation and physical acceptance exist. Do not qualify it with a
+caller flag, add an unrestricted profile, or run the rejected action via another
+commander. Installation still requires the existing exact-artifact review and
+operator gates; a later boot must not be invented or automatically requested.
