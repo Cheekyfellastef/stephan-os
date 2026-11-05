@@ -8,7 +8,7 @@ test('source write custody remains uncommissioned independently of model residen
 
 const NOW = Date.parse('2026-10-13T16:00:00.000Z');
 const idle = { schemaVersion: 'stephanos.vr-resource-governor.v1',
-  active: false, phase: 'NORMAL', localModelAllowed: true, updatedAtUtc: new Date(NOW - 1000).toISOString() };
+  active: false, phase: 'NORMAL', localModelAllowed: true, prepareLeaseActive: false, updatedAtUtc: new Date(NOW - 1000).toISOString() };
 const loaded = { data: [{ id: 'qwen3-coder:30b', status: { value: 'loaded', args: ['llama-server', '-ctx', '4096'] } }] };
 
 test('resident router remains held without canonical governor custody even with fresh idle proof', () => {
@@ -77,6 +77,17 @@ test('local post-inference test stage parks on game, cooldown, stale or corrupt 
     { ...idle, active: true }, { ...idle, localModelAllowed: false },
     { ...idle, updatedAtUtc: new Date(NOW - 31000).toISOString() },
   ]) assert.equal(isParallelSeedLocalWorkAllowedV1(state, NOW), false);
+});
+
+test('local work requires explicit inactive gaming preparation lease evidence', () => {
+  assert.equal(isParallelSeedLocalWorkAllowedV1(idle, NOW), true);
+  for (const value of [true, undefined, null, 'false', 0, {}, []]) {
+    assert.equal(isParallelSeedLocalWorkAllowedV1({ ...idle, prepareLeaseActive: value }, NOW), false,
+      'preparation lease must be explicitly false: ' + String(value));
+  }
+  const missing = { ...idle };
+  delete missing.prepareLeaseActive;
+  assert.equal(isParallelSeedLocalWorkAllowedV1(missing, NOW), false);
 });
 
 test('direct autoload-capable Ollama generation is not an admissible Seed Forge route', async () => {
