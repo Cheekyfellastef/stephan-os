@@ -1,4 +1,5 @@
-# Pure decision policy, shared by production and native fixture tests.
+# Pure recovery decisions plus the bounded attended-child observation adapter.
+# Ordinary watchdog inventory remains in its unchanged reviewed helper.
 function Assert-StephanosCoreAbsentInventoryPair {
     param($Before, $After, [double]$ElapsedSeconds)
     if ([double]::IsNaN($ElapsedSeconds) -or [double]::IsInfinity($ElapsedSeconds) -or
@@ -99,4 +100,28 @@ function Invoke-StephanosCoreLockRetirement {
     if ($after.bootUtc -ne $before.bootUtc) { throw 'CORE_RECOVERY_BOOT_CHANGED' }
     Assert-StephanosCoreLockRecoveryEvidence -Lock $lock -Digest $Handle.Digest -ExpectedDigest $ExpectedDigest -Observation $after.inventory -BootUtc $after.bootUtc -NowUtc $after.nowUtc -CreatedUtc $Handle.CreatedUtc -WrittenUtc $Handle.WrittenUtc -LockPidPresent $after.pidPresent
     $Handle.Commit($ExpectedDigest)
+}
+
+# Attended native child only. Never serialized into a startup grant. The
+# ordinary watchdog continues to use its original complete-inventory gate.
+function Get-StephanosCoreProcessIdentityObservation {
+    param([Parameter(Mandatory = $true)][string]$CoreScript)
+    $rows = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction Stop)
+    if ($rows.Count -gt 128) { throw 'CORE_RECOVERY_INVENTORY_BOUND_EXCEEDED' }
+    $inventory = ConvertTo-StephanosCoreProcessObservation -ProcessRows $rows -ObservationSucceeded $true -CoreScript $CoreScript
+    if (-not $inventory.complete -or $inventory.processCount -ne 0) { throw 'CORE_RECOVERY_INVENTORY_NOT_EMPTY' }
+    $identities = @{}
+    foreach ($row in $rows) {
+        if ($row.Name -ine 'node.exe' -or $null -eq $row.CreationDate -or
+            $row.CreationDate -isnot [DateTime] -or $row.ProcessId -le 0 -or
+            [string]::IsNullOrWhiteSpace([string]$row.ExecutablePath) -or
+            [string]::IsNullOrWhiteSpace([string]$row.CommandLine)) { throw 'CORE_RECOVERY_PROCESS_IDENTITY_UNPROVEN' }
+        $key = [string]$row.ProcessId
+        if ($identities.ContainsKey($key)) { throw 'CORE_RECOVERY_DUPLICATE_PROCESS_IDENTITY' }
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $commandDigest = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$row.CommandLine)))).Replace('-', '').ToLowerInvariant() }
+        finally { $sha.Dispose() }
+        $identities[$key] = $row.CreationDate.ToUniversalTime().ToString('o') + '|' + [string]$row.ExecutablePath + '|' + $commandDigest
+    }
+    [pscustomobject]@{ inventory = $inventory; identities = $identities }
 }

@@ -37,6 +37,12 @@ The absent-lock fixture exposed that the existing adapter's metadata-only ancest
 
 Native qualification must cover the existing attended Add-Type closure as well as this adapter change; no new compiler authority is granted. Original native/R7 ownership and unknown-claim holds are unaffected.
 
+## Preserve the qualified shared inventory estate
+
+Broader CI correctly refused the first published candidate because adding an attended-only capture function to the shared watchdog inventory helper changed its exact reviewed blob and observation estate. The correction restores that helper to original blob `9e00ce659859b0274fce36e13cb20045b1b337b1` with its original two functions. Attended identity capture belongs in the existing recovery policy, loaded by the existing recovery entry; at invocation it reuses the unchanged shared classifier. Both policy and helper remain in the entry's fixed captured-and-rechecked source closure. No reviewer allowlist, trusted hash, semantic pattern or failure code is changed. The ordinary watchdog receives no attended override or new observation operation.
+
+An integration regression binds the original helper blob/function estate and actual production load ordering, alongside the unchanged watchdog adversaries and the actual source-estate qualifier suite. Fresh review must bind the complete corrected published head; the earlier review request and artifacts cannot clear changed policy/helper source automatically.
+
 ## Original-owner review round 1: stale terminal time
 
 The original recovery owner acknowledged this scope and independently found a blocking defect in tree `8096e3c13e147075735563cdf4c12d6816f19f86`: a completion stopwatch created after WaitForExit could exclude time when the parent was suspended after the child exited. Its report is retained externally with SHA256 `844f8df02349c1a95dcdb839962c4d4c3e5e900f533cc12e6f42794906133460`; that candidate is preserved under `review-round-1`, not cleared.
