@@ -1,5 +1,6 @@
 import { projectGoalAdmissionRequiredTestsV1, projectStrengthenedRetryTestsV1 } from './goalAdmissionRequiredTestsV1.mjs';
 import { isModelTransportFailureV1, modelTransportFailureProofMatchesV1 } from './modelTransportFailureRetryV1.mjs';
+import { validateExternalMergeObservationV1, hasExternalMergeObservationV1 } from './externalMergeObservationV1.mjs';
 
 const MAX_REPAIR_ROUNDS = 3;
 const SHA40_PATTERN = /^[a-f0-9]{40}$/;
@@ -245,6 +246,7 @@ function activeAgentForPhase(state) {
 function derivePhase(state) {
   if (state.cancelled) return 'CANCELLED';
   if (state.blockers.length) return 'BLOCKED';
+  if (hasExternalMergeObservationV1(state)) return 'VERIFYING';
   if (state.currentMainAcceptance?.verified === true) return 'COMPLETE';
   if (state.missionKind === 'live-runtime-investigation') {
     if (!state.dispatch.startedAt) return 'LIVE_RUNTIME_INVESTIGATION';
@@ -269,6 +271,10 @@ function derivePhase(state) {
 }
 
 function nextActionForPhase(state) {
+  if (state.currentPhase === 'VERIFYING' && hasExternalMergeObservationV1(state)) {
+    return { type: 'RECONCILE_GOAL_ACCEPTANCE', owner: 'Verification Judge', approvalRequired: false,
+      sourceIntegrationObserved: true, historicalApprovalProven: false, runtimeMutationAuthority: false };
+  }
   const actions = {
     CREATE_WORKTREE: { type: 'OPENCLAW_SIGNED_OPERATION', operation: 'create-worktree', owner: 'OpenClaw', approvalRequired: false },
     AGENT_IMPLEMENTATION: { type: 'DISPATCH_AGENT', adapter: text(state.dispatch?.adapter, 'codex'), owner: text(state.dispatch?.adapter, 'codex'), approvalRequired: false },
@@ -819,6 +825,20 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     state.approval.status = 'approved';
     state.approval.decidedAt = timestamp;
     state.approval.suppliedTokenHash = SHA256_PATTERN.test(text(event.approvalTokenHash)) ? text(event.approvalTokenHash) : '';
+  } else if (eventType === 'EXTERNAL_PULL_REQUEST_MERGE_OBSERVED') {
+    const validation = validateExternalMergeObservationV1(currentState, event.observation, timestamp);
+    if (!validation.valid) return block(state, validation.errors.join(':'), timestamp);
+    if (event.expectedRevision !== currentState.revision
+        || event.expectedCurrentPhase !== currentState.currentPhase
+        || event.receipt?.source !== 'completion-guardian-github-observation'
+        || event.receipt?.evidenceType !== 'github-merged-observation'
+        || !SHA256_PATTERN.test(event.receipt?.commandOutputHash || '')
+        || !appendReceipt(state, event.receipt)) {
+      return block(state, 'EXTERNAL_MERGE_RECEIPT_UNPROVEN', timestamp);
+    }
+    state.externalMergeObservation = { ...event.observation,
+      receiptId: event.receipt.receiptId, evidenceSha256: event.receipt.commandOutputHash,
+      historicalApprovalProven: false, runtimeMutationAuthority: false, goalAcceptanceProven: false };
   } else if (eventType === 'PULL_REQUEST_MERGED') {
     if (state.currentPhase !== 'MERGE_PULL_REQUEST' || state.approval.status !== 'approved') return block(state, 'Merge receipt arrived without exact approved merge authority.', timestamp);
     if (!appendReceipt(state, event.receipt)) return block(state, 'Merge requires a valid deterministic receipt.', timestamp);
