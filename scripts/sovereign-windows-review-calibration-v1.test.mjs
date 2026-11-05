@@ -32,16 +32,28 @@ const mockFetch = async (url, args) => {
   assert.equal(url, 'http://127.0.0.1:11434/api/generate');
   assert.equal(args.redirect, 'error');
   const parsed = JSON.parse(args.body);
-  assert.equal(parsed.keep_alive, 0);
-  assert.equal(parsed.model, 'sha256:' + 'c'.repeat(64));
+  assert.equal(parsed.keep_alive, '5s');
+  assert.equal(parsed.model, 'qwen:14b');
+  assert.equal(parsed.think, false);
+  assert.equal(parsed.format.type, 'object');
+  assert.equal(parsed.format.additionalProperties, false);
+  assert.deepEqual(parsed.format.required, ['caseId','patchSha256','verdict','findings']);
+  assert.equal(parsed.format.properties.findings.items.additionalProperties, false);
   const match = parsed.prompt.match(/Case: (win-[a-f0-9]{32})\nSHA256: ([a-f0-9]{64})/);
   assert.ok(match);
   const file = parsed.prompt.match(/\+\+\+ b\/(src\/windows\/Case[a-f0-9]{32}\.(?:cs|ps1))/)?.[1];
+  assert.equal(parsed.format.properties.caseId.const, match[1]);
+  assert.equal(parsed.format.properties.patchSha256.const, match[2]);
+  assert.equal(parsed.format.properties.findings.items.properties.path.const, file);
+  assert.deepEqual(
+    [...parsed.format.properties.findings.items.properties.code.enum].sort(),
+    unsafe.map(([, findingCode]) => findingCode).sort(),
+  );
   const code = unsafe.find(([needle])=>parsed.prompt.includes(needle))?.[1];
   const findings = code ? [{ code, path:file, severity:'P1',
     summary:'The changed source has this serious Windows security regression.' }] : [];
   return {ok:true, text:async()=>JSON.stringify({
-    model:'sha256:' + 'c'.repeat(64), done:true, done_reason:'stop',
+    model:'qwen:14b', done:true, done_reason:'stop',
     response:JSON.stringify({
       caseId:match[1],patchSha256:match[2],
       verdict:findings.length?'findings':'clean',findings,
@@ -70,11 +82,11 @@ test('Windows host model score remains candidate evidence with no privileges',as
   assert.equal(r.modelDigestSha256,'c'.repeat(64));
   noAuthority(r);
 });
-test('native thirteen-case exam rejects a mutable-tag model completion',async()=>{
+test('native thirteen-case exam rejects a response model identity substitution',async()=>{
   const r=await run(env,{...dependencies,fetchImpl:async(url,args)=>{
     const response=await mockFetch(url,args);
     const body=JSON.parse(await response.text());
-    return {ok:true,text:async()=>JSON.stringify({...body,model:'qwen:14b'})};
+    return {ok:true,text:async()=>JSON.stringify({...body,model:'qwen:32b'})};
   }});
   assert.equal(r.status,'WINDOWS_CALIBRATION_HELD');noAuthority(r);
 });
@@ -101,6 +113,7 @@ test('mid-exam game or model identity change fails closed',async()=>{
 test('executable bytes require H-index flags and exact tracked HEAD hash',()=>{
   const fileChecks = [];
   const mockSpawn = (_cmd,args,options)=>{
+    assert.equal(options.cwd, 'C:\\trusted');
     assert.equal(options.env.GIT_NO_REPLACE_OBJECTS, '1');
     assert.equal(options.env.GIT_GRAFT_FILE, 'NUL');
     const i=args.indexOf('--work-tree=C:\\trusted');
@@ -115,7 +128,7 @@ test('executable bytes require H-index flags and exact tracked HEAD hash',()=>{
   const git = ()=>({executable:'git.exe',fixedConfigArgs:[],environment:{}});
   assert.equal(sourceCheck({}, {platform:'win32',root:'C:\\trusted',
     resolveGit:git,spawn:mockSpawn}),true);
-  assert.equal(fileChecks.length,21);
+  assert.equal(fileChecks.length,24,'eight pinned files with three Git proofs each');
   const swapped=(_cmd,args)=>args.includes('ls-files')
     ? {status:0,stdout:'S '+args.at(-1)+'\n'} : {status:0,stdout:'a'.repeat(40)+'\n'};
   assert.equal(sourceCheck({}, {platform:'win32',root:'C:\\trusted',

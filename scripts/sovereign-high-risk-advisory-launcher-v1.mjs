@@ -12,6 +12,7 @@ import { resolveBattleBridgeGitExecution, createBattleBridgeMinimalChildEnvironm
 
 export const HIGH_RISK_ADVISORY_EXECUTION_FILES = Object.freeze([
   'scripts/sovereign-high-risk-advisory-v1.mjs',
+  'scripts/battle-bridge-github-sync-policy.mjs',
   'scripts/sovereign-windows-review-calibration-v1-engine.mjs',
   'scripts/sovereign-review-coverage-v1-engine.mjs',
   'shared/agents/sovereignWindowsCalibrationV1.mjs',

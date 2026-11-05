@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { projectPrimaryOwnerCommentReadRequirementV1, goalEstateCoversPrimaryOwnerCommentReadV1, projectRequestedPrimaryOwnerEvidenceV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 import { createHash } from 'node:crypto';
 import { assertOriginalSourceAttemptNotFenced } from './originalSourceAttemptFenceService.js';
 import { readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
@@ -77,6 +78,8 @@ import {
   projectLogicalGoalControllerFabric,
 } from '../../shared/agents/logicalGoalControllerFabricV1.mjs';
 import { getSharedWorkspaceSpecializedStatusRecord } from '../../shared/agents/sharedWorkspaceSpecializedStatusRegistryV1.mjs';
+
+import { projectGoalAdmissionRequiredTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 
 export const PROGRAMME_AUTHORITY_SERVICE_SCHEMA = 'stephanos.programme-authority-service.v1';
 export const SOURCE_MUTATION_LEASE_FILE = `${SOURCE_MUTATION_LEASE_STATUS_ID}.json`;
@@ -177,6 +180,14 @@ function dependencies(options = {}) {
     writeAtomicJson,
     readRepositoryHead: ({ repositoryRoot }) => readCanonicalRepositoryHead({
       repositoryRoot,
+      execFileImpl: options.testOnly === true && options.execFile
+        ? options.execFile
+        : execFileAsync,
+    }),
+    proveCommitAncestor: ({ repositoryRoot, ancestor, descendant }) => proveCanonicalCommitAncestor({
+      repositoryRoot,
+      ancestor,
+      descendant,
       execFileImpl: options.testOnly === true && options.execFile
         ? options.execFile
         : execFileAsync,
@@ -315,7 +326,8 @@ function validGithubGoalEstateSnapshotIssue(issue = {}) {
     || admission.arbitraryShellAllowed !== false
     || resourceIds === null
     || resourceIds.some((value) => !value || value.includes('..') || !value.toLowerCase().startsWith(resourcePrefix))
-    || new Set(resourceIds).size !== resourceIds.length) return false;
+    || new Set(resourceIds).size !== resourceIds.length
+    || !projectGoalAdmissionRequiredTestsV1(admission.requiredTests).valid) return false;
 
   return true;
 }
@@ -364,6 +376,8 @@ export async function readGithubGoalEstateSharedSnapshot(options = {}) {
   const cachedAtUtc = safeNow(document.cachedAtUtc);
   const nowUtc = safeNow(options.nowUtc) || new Date().toISOString();
   const ageMs = cachedAtUtc ? Date.parse(nowUtc) - Date.parse(cachedAtUtc) : Number.POSITIVE_INFINITY;
+  const requirement = projectPrimaryOwnerCommentReadRequirementV1(options.requiredPrimaryOwnerCommentIssueNumbers);
+  if (!goalEstateCoversPrimaryOwnerCommentReadV1(document.goalEstateRead, requirement, nowUtc)) return null;
   const maxAgeMs = options.allowStale === true
     ? GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_MAX_STALE_MS
     : GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_TTL_MS;
@@ -466,6 +480,7 @@ async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
       ghTokenProvider: options.ghTokenProvider,
       fetchImpl: options.testOnly === true ? options.fetchImpl : undefined,
       priorGoalRecords: Array.isArray(options.priorGoalRecords) ? options.priorGoalRecords : [],
+      requiredPrimaryOwnerCommentIssueNumbers: options.requiredPrimaryOwnerCommentIssueNumbers,
     });
     if (observation?.status !== 'fetched' || !Array.isArray(observation.issues)) {
       const staleSnapshot = sharedSnapshotEnabled
@@ -476,6 +491,7 @@ async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
     const result = Object.freeze({
       ok: true,
       reason: 'GITHUB_GOAL_ESTATE_FETCHED',
+      ...(observation.primaryOwnerCommentRequestIssueNumbers ? { primaryOwnerCommentRequestIssueNumbers: observation.primaryOwnerCommentRequestIssueNumbers } : {}),
       issues: observation.issues,
       discoveredIssues: Array.isArray(observation.discoveredIssues) ? observation.discoveredIssues : observation.issues,
       retrievedAt: safeNow(observation.retrievedAt) || nowUtc,
@@ -602,7 +618,10 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
     const existingIndex = issueIndex.get(issueNumber);
 
     if (existingIndex !== undefined) {
-      const existing = observedRecords[existingIndex];
+      const { requiredTests: _previousTests, ...existingWithoutTests } = observedRecords[existingIndex];
+      const existing = Object.freeze({ ...existingWithoutTests,
+        ...(issue.admission?.requiredTests === undefined ? {} : { requiredTests: issue.admission.requiredTests }) });
+      observedRecords[existingIndex] = existing;
       const existingResourceIds = Array.isArray(existing?.resourceIds)
         ? existing.resourceIds.map((value) => text(value)).filter(Boolean)
         : [];
@@ -705,6 +724,7 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
       prerequisites: [],
       route: contained ? 'WAITING_FOR_EXTERNAL_CONDITION' : 'OPENCLAW_LOCAL',
       resourceIds: Object.freeze(admittedResourceIds),
+      ...(issue.admission?.requiredTests === undefined ? {} : { requiredTests: issue.admission.requiredTests }),
       evidenceAt: observedAt,
       source: 'github-goal-estate',
       sourceUrl: text(issue.htmlUrl),
@@ -868,6 +888,7 @@ export function buildGithubGoalMirrorEstate(workspaceGoalRecords, goalEstateRead
         title: text(live.title, text(record.title, `Goal #${issueNumber}`)),
         sourceUrl: text(live.htmlUrl, text(record.sourceUrl)),
         operatorLaneContainment: live.operatorLaneContainment ?? record.operatorLaneContainment ?? null,
+        requiredTests: live.admission?.requiredTests,
       }, {
         issueNumber,
         observedAtUtc,
@@ -1291,6 +1312,43 @@ async function readCanonicalRepositoryHead({ repositoryRoot, execFileImpl = exec
       repositoryRoot: expectedRepositoryRoot,
       headSha: '',
       errorCode: error?.code || '',
+    });
+  }
+}
+
+async function proveCanonicalCommitAncestor({
+  repositoryRoot, ancestor, descendant, execFileImpl = execFileAsync,
+} = {}) {
+  const root = text(repositoryRoot);
+  const before = text(ancestor).toLowerCase();
+  const after = text(descendant).toLowerCase();
+  if (!root || !SHA_40.test(before) || !SHA_40.test(after) || before === after) {
+    return Object.freeze({
+      ok: false,
+      reason: 'TERMINAL_FINALIZATION_ANCESTRY_IDENTITY_INVALID',
+      ancestor: before,
+      descendant: after,
+    });
+  }
+  try {
+    await execFileImpl(fixedBackendExecutable('git'), [
+      '-C', root, 'merge-base', '--is-ancestor', before, after,
+    ], { encoding: 'utf8', windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024 });
+    return Object.freeze({
+      ok: true,
+      reason: 'TERMINAL_FINALIZATION_LEASE_HEAD_ANCESTOR_PROVEN',
+      ancestor: before,
+      descendant: after,
+    });
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      reason: Number(error?.code) === 1
+        ? 'TERMINAL_FINALIZATION_LEASE_HEAD_NOT_ANCESTOR'
+        : 'TERMINAL_FINALIZATION_ANCESTRY_PROOF_FAILED',
+      ancestor: before,
+      descendant: after,
+      errorCode: String(error?.code || '').slice(0, 80),
     });
   }
 }
@@ -1890,6 +1948,11 @@ export async function releaseSourceMutationLease(expected = {}, options = {}) {
       nowUtc,
       readFileImpl: deps.readFile,
     });
+    if (expected.originalLeaseDigest !== undefined
+        && ((current.present && createHash('sha256').update(JSON.stringify(current.record)).digest('hex') !== expected.originalLeaseDigest)
+          || (existingRelease.present && existingRelease.value.originalLeaseDigest !== expected.originalLeaseDigest))) {
+      return Object.freeze({ ok: false, released: false, reason: 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_CHANGED' });
+    }
     if (
       current.present
       && current.reason === 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'
@@ -1965,7 +2028,8 @@ export async function releaseSourceMutationLease(expected = {}, options = {}) {
         releaseOnlyExactLease: true,
       });
     }
-    const releaseRecord = createSourceMutationLeaseReleaseRecord(current.record, { timestampUtc: nowUtc });
+    const releaseRecord = { ...createSourceMutationLeaseReleaseRecord(current.record, { timestampUtc: nowUtc }),
+      ...(expected.originalLeaseDigest !== undefined ? { originalLeaseDigest: expected.originalLeaseDigest } : {}) };
     let releasePublication;
     if (existingRelease.present) {
       if (!exactSourceMutationLeaseRelease(existingRelease.value, current.record, nowUtc)) {
@@ -1987,7 +2051,8 @@ export async function releaseSourceMutationLease(expected = {}, options = {}) {
         layout.root,
         ['status', `${releaseRecord.statusId}.json`],
         releaseRecord,
-        { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) },
+        { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc),
+          durable: expected.originalLeaseDigest !== undefined },
       );
       if (!releasePublication.ok) {
         return Object.freeze({
@@ -2050,7 +2115,7 @@ export async function readProgrammeControllerHeartbeat({
   if (loaded.error) return blockedRead('PROGRAMME_CONTROLLER_HEARTBEAT_READ_FAILED', { errorCode: loaded.error.code || '' });
   if (!loaded.present) return blockedRead('PROGRAMME_CONTROLLER_HEARTBEAT_MISSING', { path: resolved.path });
   const projection = projectProgrammeControllerHeartbeat(loaded.value, {
-    nowUtc,
+    nowUtc: nowUtc === undefined ? new Date().toISOString() : nowUtc,
     maxAgeMs,
     expectedSourceRevision,
   });
@@ -2111,7 +2176,7 @@ async function readMissionWorkerHeartbeat(options, deps, nowUtc, expectedHeadSha
     ok: true,
     record: loaded.value,
     projection: projectMissionWorkerHeartbeat(loaded.value, {
-      nowUtc,
+      nowUtc: options.nowUtc === undefined ? new Date().toISOString() : nowUtc,
       maxAgeMs: options.workerHeartbeatMaxAgeMs,
       expectedRepositoryRoot: paths.repositoryRoot,
       expectedHeadSha,
@@ -2270,7 +2335,9 @@ function holdProjection(nowUtc, reason, additions = {}) {
 export async function readAuthoritativeProgrammeProjection(options = {}) {
   const deps = dependencies(options);
   const suppliedNow = options.nowUtc === undefined ? '' : safeNow(options.nowUtc);
-  const nowUtc = suppliedNow || new Date().toISOString();
+  let nowUtc = suppliedNow || new Date().toISOString();
+  const primaryRequirement = projectPrimaryOwnerCommentReadRequirementV1(options.requiredPrimaryOwnerCommentIssueNumbers);
+  if (!primaryRequirement.valid) return holdProjection(nowUtc, 'PRIMARY_OWNER_READ_REQUIREMENT_INVALID');
   if (options.nowUtc !== undefined && !suppliedNow) {
     const projection = holdProjection(nowUtc, 'PROGRAMME_OBSERVATION_TIME_INVALID');
     return Object.freeze({
@@ -2317,7 +2384,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     readProgrammeControllerHeartbeat({
       root,
       repoRoot: options.repoRoot,
-      nowUtc,
+      nowUtc: suppliedNow ? nowUtc : undefined,
       maxAgeMs: options.controllerHeartbeatMaxAgeMs,
       expectedSourceRevision,
       readFileImpl: deps.readFile,
@@ -2325,7 +2392,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     deps.readWorkspaceFeed({
       root,
       repoRoot: options.repoRoot,
-      nowMs: Date.parse(nowUtc),
+      nowMs: suppliedNow ? Date.parse(nowUtc) : undefined,
       staleAfterMs: options.workspaceStaleAfterMs,
     }),
     deps.listMissionRecords({
@@ -2367,7 +2434,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     ? await deps.readWorkspaceFeed({
       root,
       repoRoot: options.repoRoot,
-      nowMs: Date.parse(nowUtc),
+      nowMs: suppliedNow ? Date.parse(nowUtc) : undefined,
       staleAfterMs: options.workspaceStaleAfterMs,
     })
     : workspaceFeed;
@@ -2407,6 +2474,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     }, { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) })
     : null;
   const executionReceipt = executionRead?.receipt ?? null;
+  if (!suppliedNow) nowUtc = new Date().toISOString();
   const proof = buildAffirmativeSchedulerProofSources(effectiveWorkspaceFeed, executionReceipt, {
     nowUtc,
     maxProofAgeMs: options.workspaceStaleAfterMs,
@@ -2507,14 +2575,24 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
         ? [`source:${executionRead.reason}`] : []
     ),
   ];
+  if (!suppliedNow) nowUtc = new Date().toISOString();
+  const observedControllerHeartbeat = controllerHeartbeatRead.record
+    ? projectProgrammeControllerHeartbeat(controllerHeartbeatRead.record, {
+      nowUtc, maxAgeMs: options.controllerHeartbeatMaxAgeMs, expectedSourceRevision,
+    }) : controllerHeartbeatRead.projection;
+  const observedWorkerHeartbeat = workerHeartbeatRead.record
+    ? projectMissionWorkerHeartbeat(workerHeartbeatRead.record, {
+      nowUtc, maxAgeMs: options.workerHeartbeatMaxAgeMs, expectedHeadSha: expectedSourceRevision,
+      expectedRepositoryRoot: missionWorkerPaths.repositoryRoot,
+    }) : workerHeartbeatRead.projection;
   const projection = buildAuthoritativeProgrammeProjection({
     nowUtc,
     workspaceFeed: effectiveWorkspaceFeed,
     goalMirrorFallback,
     lane,
     mutationLease: lease,
-    controllerHeartbeatProjection: controllerHeartbeatRead.projection,
-    workerHeartbeatProjection: workerHeartbeatRead.projection,
+    controllerHeartbeatProjection: observedControllerHeartbeat,
+    workerHeartbeatProjection: observedWorkerHeartbeat,
     executionReceipt,
     battleBridgeProofs: proof.records,
     runtimeHealthRecords: effectiveWorkspaceFeed?.records?.statusRecords,
@@ -2529,6 +2607,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
   return Object.freeze({
     ...projection,
     schema: PROGRAMME_AUTHORITY_SERVICE_SCHEMA,
+    ...(primaryRequirement.requested ? { githubGoalEstateRead: projectRequestedPrimaryOwnerEvidenceV1(githubGoalEstateRead, primaryRequirement) } : {}),
     productionSourcesConstructed: true,
     dependencyInjectionUsed: options.dependencies ? true : false,
     goalClosurePlan,
@@ -2545,7 +2624,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
         ? 'SOURCE_MUTATION_LEASE_RELEASED_INACTIVE'
         : leaseRead.reason,
       controllerHeartbeat: controllerHeartbeatRead.reason,
-        workerHeartbeat: workerHeartbeatRead.projection.finalVerdict,
+        workerHeartbeat: observedWorkerHeartbeat.finalVerdict,
         github: github?.status ?? 'not-required',
         githubGoalEstate: githubGoalEstateRead.reason,
         githubGoalMirror: goalMirrorPublication.classification,
@@ -2742,9 +2821,18 @@ function exactTerminalReceiptForIdentity(record, identity) {
 
 function exactTerminalProofForIdentity(record, identity, expectedProof = null) {
   const proofRef = `proof/${identity.evidenceId}.json`;
+  const leaseHeadSha = text(record?.leaseHeadSha || record?.headSha).toLowerCase();
+  const mergedHeadSha = text(record?.mergedHeadSha || record?.headSha).toLowerCase();
+  const advanced = record?.leaseHeadIsAncestor === true;
+  const headFactsValid = leaseHeadSha === identity.headSha
+    && SHA_40.test(mergedHeadSha)
+    && (advanced ? mergedHeadSha !== leaseHeadSha : mergedHeadSha === leaseHeadSha);
   const mergeFactsMatch = !expectedProof || (
     text(record?.mergeCommitSha).toLowerCase() === text(expectedProof.mergeCommitSha).toLowerCase()
     && safeNow(record?.mergedAtUtc) === safeNow(expectedProof.mergedAtUtc)
+    && mergedHeadSha === text(expectedProof.mergedHeadSha || expectedProof.headSha).toLowerCase()
+    && leaseHeadSha === text(expectedProof.leaseHeadSha || expectedProof.headSha).toLowerCase()
+    && advanced === (expectedProof.leaseHeadIsAncestor === true)
   );
   return Boolean(
     record
@@ -2768,6 +2856,7 @@ function exactTerminalProofForIdentity(record, identity, expectedProof = null) {
     && record.prNumber === identity.prNumber
     && record.branch === identity.branch
     && record.headSha === identity.headSha
+    && headFactsValid
     && record.leaseId === identity.leaseId
     && record.ownerId === identity.ownerId
     && record.status === 'MERGED'
@@ -2873,15 +2962,51 @@ export async function finalizeTerminalImplementationLane(input = {}, options = {
     });
   }
   const github = await githubEvidenceForLaneIdentity(lease, options, deps);
+  const githubHead = text(github?.headSha ?? github?.head?.sha).toLowerCase();
+  let terminalHeadAdvance = null;
+  if (SHA_40.test(githubHead) && githubHead !== lease.headSha) {
+    const sameIdentity = Number(github?.prNumber ?? github?.number) === lease.prNumber
+      && text(github?.repository).toLowerCase() === text(lease.repository).toLowerCase()
+      && text(github?.headBranch) === lease.branch
+      && github?.merged === true;
+    if (!sameIdentity) {
+      return Object.freeze({
+        ok: false,
+        finalized: false,
+        reason: 'TERMINAL_FINALIZATION_HEAD_ADVANCE_IDENTITY_MISMATCH',
+        github,
+      });
+    }
+    const ancestry = await deps.proveCommitAncestor({
+      repositoryRoot: options.repoRoot,
+      ancestor: lease.headSha,
+      descendant: githubHead,
+    });
+    if (!ancestry?.ok) {
+      return Object.freeze({
+        ok: false,
+        finalized: false,
+        reason: ancestry?.reason || 'TERMINAL_FINALIZATION_ANCESTRY_PROOF_FAILED',
+        ancestry,
+        github,
+      });
+    }
+    terminalHeadAdvance = Object.freeze({
+      leaseHeadSha: lease.headSha,
+      mergedHeadSha: githubHead,
+      leaseHeadIsAncestor: true,
+    });
+  }
   const lane = buildCanonicalImplementationLaneProjection({
     laneId: lease.laneId,
     issueNumber: lease.issueNumber,
     prNumber: lease.prNumber,
-    headSha: lease.headSha,
+    headSha: terminalHeadAdvance ? githubHead : lease.headSha,
     branch: lease.branch,
     repository: lease.repository,
     github,
     mutationLease: lease,
+    terminalHeadAdvance,
     nowUtc,
   });
   const plan = buildTerminalLaneFinalizationPlan({
@@ -2975,7 +3100,7 @@ export async function finalizeTerminalImplementationLane(input = {}, options = {
     issueNumber: lane.issueNumber,
     prNumber: lane.prNumber,
     branch: lane.branch,
-    headSha: lane.headSha,
+    headSha: lease.headSha,
     ownerId: lease.ownerId,
   }, {
     ...options,

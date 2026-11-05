@@ -82,3 +82,29 @@ test('canonical external intake is an uninstalled review draft, never an ACTIVE 
   } });
   assert.equal(untrusted.summary.proposals, 0);
 });
+
+test('Skill Forge consumes the backend verified gate ledger inside the projection envelope', () => {
+  const sourceHead = 'a'.repeat(40);
+  const gates = Array.from({ length: 23 }, (_, i) => ({
+    id: i + 1, title: 'Gate ' + (i + 1), owner: 'canonical-gate-owner',
+    status: i === 14 ? 'FAIL' : 'UNVERIFIED',
+    typedBlocker: i === 14 ? 'MISSING_CAPABILITY' : '',
+    proofRef: i === 14 ? 'workspace:proof/goal-gate-15' : '',
+  }));
+  const projection = {
+    schemaVersion: 'stephanos.goal-build-gate-observatory.v1',
+    diagnosticOnly: true, approvalAuthority: false, mergeAuthority: false,
+    observationStatus: 'EVIDENCE_AVAILABLE', sourceHead,
+    observedAtUtc: new Date().toISOString(), gates,
+  };
+  const view = deriveSkillGrowthObservatoryV1({
+    payload: { state: 'ready', projection: { goalBuildGateObservatory: projection } },
+  });
+  assert.equal(view.gateRepair.summary.failedGateCount, 1);
+  assert.equal(view.gateRepair.summary.skillReviewDraftCount, 1);
+  assert.equal(view.skillCandidates[0].provenance, 'GATE_FAILURE_REVIEW_DRAFT_NOT_INSTALLED');
+  const wrongEnvelope = deriveSkillGrowthObservatoryV1({
+    payload: { state: 'ready', goalBuildGateObservatory: projection },
+  });
+  assert.equal(wrongEnvelope.gateRepair.sourceTruth, 'UNVERIFIED');
+});
