@@ -28,4 +28,3 @@ foreach ($mode in @('throw','empty','malformed','unsafe','notok')) {
     if (-not $rejected) { throw "Required telemetry did not fail closed: $mode" }
 }
 'PASS: absent/stale native exit code and five required-telemetry failure cases'
-
