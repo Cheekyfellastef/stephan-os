@@ -23,6 +23,15 @@ test('Windows native recovery refuses competing owners, replacements and ambiguo
   assert.equal(result.status, 0, result.stderr || result.error?.message);
   assert.match(result.stdout, /CORE_RECOVERY_NATIVE_FIXTURES_PASS=12/);
 });
+
+test('Windows attended absent bootstrap rejects stale terminal identity and parent delays', { skip: process.platform !== 'win32' }, () => {
+  const fixture = new URL('./windows/stephanos-core-absent-bootstrap.test.ps1', import.meta.url);
+  const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', fileURLToPath(fixture),
+  ], { windowsHide: true, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  assert.match(result.stdout, /CORE_ABSENT_BOOTSTRAP_POLICY_TESTS_PASS=49/);
+});
 test('recovery entry refuses missing approval before any native observation or mutation', { skip: process.platform !== 'win32' }, () => {
   const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', fileURLToPath(entry),
