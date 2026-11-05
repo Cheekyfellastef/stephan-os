@@ -19,7 +19,7 @@ export const MAX_SYNC_REFRESH_CYCLES = 3;
 // consume the whole Windows Scheduled Task window.
 export const SYNC_AND_REFRESH_CHILD_BUDGET_MS = 180_000;
 export const SYNC_AND_REFRESH_MIN_REMAINING_MS = 5_000;
-export const SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS = Object.freeze({ sync: 60_000, refresh: 90_000, mailbox: 30_000 });
+export const SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS = Object.freeze({ sync: 60_000, refresh: 150_000, mailbox: 30_000 });
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
 function text(value) {

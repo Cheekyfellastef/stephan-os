@@ -13,6 +13,9 @@ export const SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_SCHEMA =
   'stephanos.sovereign-commander-goal-builder-repair.v1';
 export const SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_MARKER =
   'SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=';
+// Canonical Ignition source proof performs bounded isolated Git topology/config/fetch
+// checks on Windows. Give that proof enough room to finish without weakening it.
+export const SOVEREIGN_COMMANDER_IGNITION_DIAGNOSIS_TIMEOUT_MS = 45_000;
 const CONTROLLER_LANE_STATUS_MARKER =
   'SOVEREIGN_COMMANDER_CONTROLLER_LANE_STATUS_RESULT=';
 const FLEET_GOAL_SUPERVISOR_MARKER =
@@ -31,7 +34,7 @@ const STEPS = Object.freeze({
     id: 'diagnose-ignition',
     executable: node,
     args: Object.freeze([resolve(repoRoot, 'scripts', 'sovereign-commander-ignition-diagnosis.mjs')]),
-    timeoutMs: 20_000,
+    timeoutMs: SOVEREIGN_COMMANDER_IGNITION_DIAGNOSIS_TIMEOUT_MS,
   }),
   supervisor: Object.freeze({
     id: 'fleet-goal-supervisor',

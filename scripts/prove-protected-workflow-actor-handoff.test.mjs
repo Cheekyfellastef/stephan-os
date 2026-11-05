@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
@@ -7,7 +8,7 @@ import { buildProtectedWorkflowDispatchRequest, PROTECTED_WORKFLOW_DISPATCH_SCHE
 const command = {
   schemaVersion: PROTECTED_WORKFLOW_DISPATCH_SCHEMA, requestId: 'actor-handoff-test-3085',
   operation: 'DISPATCH_PROTECTED_OPERATOR_MERGE', repository: 'Cheekyfellastef/stephan-os',
-  issueNumber: 3149, operatorApproval: 'operator-approved', expiresAt: '2026-10-13T00:12:00Z',
+  issueNumber: activeMailboxIssueForTest, operatorApproval: 'operator-approved', expiresAt: '2026-10-13T00:12:00Z',
   mode: 'user-owned-protected-squash', prNumber: 3085,
   expectedBranch: 'repair/2961-original-owner-recovery-handoff-20261013',
   expectedHead: '7e9a6893371d229d7d8f50f6c454a90ebf415ed5',
@@ -20,7 +21,7 @@ const command = {
 };
 const comment = {
   id: 6134973687, user: { login: 'Cheekyfellastef', id: 267490109, type: 'User' },
-  issue_url: 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/3149',
+  issue_url: `https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/${activeMailboxIssueForTest}`,
   created_at: '2026-10-13T00:03:11Z', updated_at: '2026-10-13T00:03:11Z',
   body: '```stephanos-protected-workflow-dispatch\n' + JSON.stringify(command) + '\n```',
 };

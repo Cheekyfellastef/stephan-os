@@ -52,6 +52,29 @@ test('guarded Ignition sync preflight is loaded fresh and requires no runtime re
   assert.equal(plan.automaticExecutionAllowed, true);
 });
 
+test('one-shot Starfield telemetry and Sovereign reviewer calibration engines are exact no-runtime paths', () => {
+  const exact = [
+    'scripts/starfield-vr-project-performance-loop.mjs',
+    'scripts/sovereign-windows-review-calibration-v1-engine.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(exact);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.equal(plan.noRuntimePathCount, exact.length);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.deepEqual(plan.targetIds, []);
+  assert.deepEqual(plan.internal.noRuntimePaths, exact);
+
+  for (const sibling of [
+    'scripts/starfield-vr-project-performance-loop-v2.mjs',
+    'scripts/sovereign-windows-review-calibration-v2-engine.mjs',
+  ]) {
+    const refused = classifyPostSyncRefresh([sibling]);
+    assert.equal(refused.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH, sibling);
+    assert.deepEqual(refused.internal.unknownPaths, [sibling], sibling);
+    assert.equal(refused.automaticExecutionAllowed, false, sibling);
+  }
+});
+
 test('maintenance custody store changes refresh Sovereign Commander instead of fail-closing as unclassified', () => {
   const source = 'scripts/sovereign-maintenance-custody-store-v1.mjs';
   const plan = classifyPostSyncRefresh([source, source.replace('.mjs', '.test.mjs')]);
@@ -60,6 +83,50 @@ test('maintenance custody store changes refresh Sovereign Commander instead of f
   assert.equal(plan.unknownPathCount, 0);
   assert.equal(plan.automaticExecutionAllowed, true);
   assert.equal(plan.sovereignRelayRefreshRequired, false);
+});
+
+test('native installer package source is not mistaken for a live runtime', () => {
+  const nativeSource = [
+    'scripts/windows/SovereignFixedRuntimeHostV1.cs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/Program.cs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/Stephanos.CanonicalMailboxNativeEvidenceHost.csproj',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/packages.lock.json',
+  ];
+  const native = classifyPostSyncRefresh(nativeSource);
+  assert.equal(native.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.equal(native.noRuntimePathCount, nativeSource.length);
+  assert.equal(native.unknownPathCount, 0);
+  assert.equal(native.automaticExecutionAllowed, true);
+  assert.deepEqual(native.targetIds, []);
+  // A new installed native host or unrelated C# path still requires explicit review.
+  for (const unknown of [
+    'scripts/windows/SovereignFixedRuntimeHostV2.cs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHostV2/Program.cs',
+    'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHostProxy/Program.cs',
+  ]) {
+    const refused = classifyPostSyncRefresh([...nativeSource, unknown]);
+    assert.equal(refused.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+    assert.deepEqual(refused.internal.unknownPaths, [unknown]);
+  }
+});
+
+test('offline OpenClaw specialist review source refreshes backend and worker but not gateway', () => {
+  const model = 'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.mjs';
+  const safe = classifyPostSyncRefresh([
+    model, 'scripts/windows/SovereignFixedRuntimeHostV1.cs', 'stephanos-ui/src/App.jsx',
+  ]);
+  assert.equal(safe.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(safe.unknownPathCount, 0);
+  assert.equal(safe.openClawPathCount, 0);
+  assert.equal(safe.automaticExecutionAllowed, true);
+  assert.ok(safe.targetIds.includes(POST_SYNC_REFRESH_TARGETS.UI_4173));
+  assert.ok(safe.targetIds.includes(POST_SYNC_REFRESH_TARGETS.BACKEND_8787));
+  assert.ok(safe.targetIds.includes(POST_SYNC_REFRESH_TARGETS.MISSION_WORKER));
+  // Actual OpenClaw gateway/plugin source remains approval-gated.
+  const gateway = classifyPostSyncRefresh([model, 'integrations/openclaw/stephanos-ignite-command/index.mjs']);
+  assert.equal(gateway.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.APPROVAL_REQUIRED_OPENCLAW);
+  assert.equal(gateway.openClawPathCount, 1);
+  assert.equal(gateway.automaticExecutionAllowed, true);
 });
 
 test('only the inspected offline installer package preparer is exempt from runtime refresh', async () => {

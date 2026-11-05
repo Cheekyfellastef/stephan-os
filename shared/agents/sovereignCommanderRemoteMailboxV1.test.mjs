@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -34,7 +35,7 @@ function command(overrides = {}) {
     requestId: 'sovereign-mobile-1001',
     operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -376,7 +377,7 @@ test('actual fleet owner denial survives terminal checkpoints and repeated bound
       const receipt = {
         schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
         requestId: 'fleet-owner-denial-roundtrip-001', operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
-        repository: 'Cheekyfellastef/stephan-os', issueNumber: 3149, branch: 'main',
+        repository: 'Cheekyfellastef/stephan-os', issueNumber: activeMailboxIssueForTest, branch: 'main',
         expectedHead: HEAD, processSourceHead: HEAD, state: 'BLOCKED', blocker: result.blocker,
         result: { ok: false, verdict: 'BLOCKED', result: { ...result,
           stdout: 'PRIVATE RAW OUTPUT C:\\Users\\Operator\\secret', stderr: 'PRIVATE STDERR' } },
