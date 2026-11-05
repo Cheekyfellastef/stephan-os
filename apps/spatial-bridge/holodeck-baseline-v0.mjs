@@ -1,4 +1,5 @@
 import { createHolodeckRoomRenderer } from './holodeck-room-v1.mjs';
+import { createHolodeckLocomotion, sampleHolodeckControls } from './holodeck-locomotion-v1.mjs';
 
 export const HOLODECK_BASELINE_SESSION_MODE = 'immersive-vr';
 export const HOLODECK_BASELINE_MODE = 'Holodeck Baseline';
@@ -38,7 +39,9 @@ export async function enterHolodeckBaseline({
   navigatorRef = globalThis.navigator,
   canvas,
   xrWebGLLayerCtor = globalThis.XRWebGLLayer,
+  rendererFactory = createHolodeckRoomRenderer,
   onFrame = () => {},
+  onLocomotionStatus = () => {},
 } = {}) {
   if (!navigatorRef?.xr || typeof navigatorRef.xr.requestSession !== 'function') {
     return { ok: false, session: null, reason: 'WebXR immersive session API unavailable' };
@@ -73,16 +76,34 @@ export async function enterHolodeckBaseline({
         return session.requestReferenceSpace(referenceSpaceType);
       });
 
-    const renderer = createHolodeckRoomRenderer({ gl });
+    const renderer = rendererFactory({ gl });
+    const locomotion = createHolodeckLocomotion({ room: renderer.geometry.room });
+    let lastLocomotionStatus = '';
+    let activeController = 'none';
     let active = true;
     session.addEventListener('end', () => {
       active = false;
       renderer.dispose();
+      try { onLocomotionStatus({ controller: 'No active VR session', state: 'ended' }); } catch {}
     }, { once: true });
 
     const draw = (time, frame) => {
       if (!active) return;
-      const frameTruth = renderer.drawFrame(frame, referenceSpace) || { poseAvailable: false, viewCount: 0 };
+      let gamepads = [];
+      try { gamepads = navigatorRef.getGamepads?.() ?? []; } catch {}
+      const pose = frame.getViewerPose(referenceSpace);
+      const input = sampleHolodeckControls({ inputSources: session.inputSources, gamepads,
+        preferredSource: activeController });
+      activeController = input.source;
+      const navigation = locomotion.update({ time, pose, input,
+        visible: session.visibilityState === 'visible' });
+      const statusKey = `${navigation.controller}:${navigation.state}`;
+      if (statusKey !== lastLocomotionStatus) {
+        lastLocomotionStatus = statusKey;
+        try { onLocomotionStatus({ controller: navigation.controller, state: navigation.state }); } catch {}
+      }
+      const frameTruth = renderer.drawFrame(frame, referenceSpace, { pose, navigation })
+        || { poseAvailable: false, viewCount: 0 };
       try {
         onFrame({
           time,

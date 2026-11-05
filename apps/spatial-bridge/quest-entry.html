@@ -41,6 +41,8 @@
       <p class="muted">Starting Simulation · Holodeck Chamber</p>
       <button type="button" id="enter-holodeck">Enter Spatial Workspace</button>
       <p id="session-reason" aria-live="polite">Inspecting WebXR capability.</p>
+      <p class="muted">Xbox or Quest controllers: left stick to walk and strafe; right stick for smooth turning. Press the right stick to return to the entrance.</p>
+      <p id="controller-status" aria-live="polite">Enter VR to detect controllers. For Xbox, connect it to the device running this browser and press a button to wake it.</p>
     </section>
     <section class="panel status-grid" aria-label="VR Link diagnostics">
       <div class="status-card"><span class="label">Surface</span><span class="value">Spatial Workspace</span></div>
@@ -73,6 +75,7 @@
     const telemetryStatus = document.getElementById('telemetry-status');
     const commandDeckStatus = document.getElementById('command-deck-status');
     const sessionReason = document.getElementById('session-reason');
+    const controllerStatus = document.getElementById('controller-status');
     const enterButton = document.getElementById('enter-holodeck');
     const pingButton = document.getElementById('ping-stephanos');
     const canvas = document.getElementById('holodeck-canvas');
@@ -104,6 +107,13 @@
       const result = await enterHolodeckBaseline({
         canvas,
         onFrame: (frameTruth) => activeTelemetry?.recordFrame(frameTruth),
+        onLocomotionStatus: ({ controller, state }) => {
+          const detail = state === 'ready' ? 'movement ready'
+            : state === 'release-sticks' ? 'release both sticks to enable movement'
+            : state === 'ended' ? 'enter VR to use controllers'
+            : 'movement paused; check tracking and controller connection';
+          controllerStatus.textContent = `${controller} · ${detail}`;
+        },
       });
       if (!result.ok) {
         await activeTelemetry.fail(new Error(result.reason));
