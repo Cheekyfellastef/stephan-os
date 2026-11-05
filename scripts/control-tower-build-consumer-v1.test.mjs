@@ -320,7 +320,10 @@ test('fixed observation never calls maintenance and malformed or wrong-source re
 test('unproven ledger discovery restricts acquisition to observation and cannot wake or reserve a new build', async t => {
   let mode;
   const s = setup(t, { createLedger: root => ({ ...createMailboxExecutionLedger(root),
-    discoverControlTower: () => ({ ok: false, blocker: 'CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED' }) }),
+    discoverControlTower: async () => {
+      await new Promise(resolve => setImmediate(resolve));
+      return { ok: false, blocker: 'CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED' };
+    } }),
     readRequest: async args => { mode = args.observationOnly; return requestTransport(101, 'OBSERVE_CONTROL_SYSTEM')(args); },
     inspect: async () => inspectedStatus() });
   const observed = await s.consume(); assert.equal(mode, true); assert.equal(observed.state, 'OBSERVATION_COMPLETED');
@@ -466,5 +469,51 @@ test('successful reservation advances the locator before a diagnostic re-read ca
   assert.equal(observed.latestBuildRequestObservation.state, 'RESERVED');
   assert.equal(observed.latestBuildRequestObservation.ledgerPhase, 'RESERVED');
   assert.equal(createMailboxExecutionLedger(join(s.root, 'github-command-mailbox')).read(observed.requestId).phase, 'RESERVED');
+  assert.equal(s.calls.length, 0);
+});
+
+for (const existingHistory of [false, true]) {
+  test('two distinct authenticated requests retain one unresolved build with existing history ' + existingHistory, async t => {
+    const s = setup(t, { execute: async args => { s.calls.push(args); return { ok: false, blocker: 'TRANSPORT_OUTCOME_UNKNOWN' }; } });
+    const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+    if (existingHistory) ledger.importHistorical('ordinary-mailbox-history', 3258, 'TERMINAL');
+    const consume = runId => consumeControlTowerBuildRequestV1({ ...s.options,
+      dependencies: { ...s.options.dependencies, readRequest: requestTransport(runId) } });
+    const results = await Promise.all([consume(100), consume(101)]);
+    assert.equal(s.calls.length, 1);
+    assert.equal([100, 101].filter(id => ledger.read('control-tower-build-' + id + '-1')?.phase === 'RESERVED').length, 1);
+    assert.equal(results.filter(result => result.state === 'UNKNOWN').length, 1);
+    assert.equal(results.filter(result => result.state === 'HELD').length, 1);
+  });
+}
+
+test('a missing original locator prevents combined admission and owner invocation', async t => {
+  let admissions = 0;
+  const s = setup(t, { createLedger: root => {
+    const real = createMailboxExecutionLedger(root);
+    return { ...real, discoverAndReserveControlTower: (...args) => { admissions++; return real.discoverAndReserveControlTower(...args); } };
+  } });
+  const result = await s.consume({ latestBuildRequestId: 'control-tower-build-99-1' });
+  assert.equal(result.state, 'HELD');
+  assert.equal(result.blocker, 'CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED');
+  assert.equal(admissions, 0);
+  assert.equal(s.calls.length, 0);
+  assert.equal(result.latestBuildRequestObservation.detailState, 'MISSING');
+});
+
+test('uncertain combined reservation keeps its locator and never calls the owner', async t => {
+  const s = setup(t, { createLedger: root => {
+    const real = createMailboxExecutionLedger(root);
+    return { ...real, discoverAndReserveControlTower: async (command, options) => {
+      await real.discoverAndReserveControlTower(command, options);
+      return { ok: false, blocker: 'CONTROL_TOWER_BUILD_DELIVERY_UNPROVEN',
+        reservation: null, reservationAttempted: true,
+        latestBuildRequestObservation: null, latestControlSystemObservation: null };
+    } };
+  } });
+  const result = await s.consume();
+  assert.equal(result.state, 'UNKNOWN');
+  assert.equal(result.requestPointers.latestBuildRequestId, 'control-tower-build-100-1');
+  assert.equal(result.latestBuildRequestObservation.ledgerPhase, 'RESERVED');
   assert.equal(s.calls.length, 0);
 });

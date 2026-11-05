@@ -4,10 +4,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$InstallWimPath,
-    [Parameter(Mandatory)][string]$NativePackagePath,
-    [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{64}$')][string]$NativePackageSha256,
-    [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{64}$')][string]$DriverSha256,
-    [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{64}$')][string]$ClientSha256
+    [Parameter(Mandatory)][string]$NativePackagePath
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -23,6 +20,19 @@ if ((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory*1KB -lt 6GB -or [
 $parent=[IO.Path]::GetFullPath($env:RUNNER_TEMP)
 if (-not [IO.Path]::IsPathFullyQualified($parent) -or (Get-Item -LiteralPath $parent).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) { throw 'R7_RUNNER_TEMP_UNSAFE' }
 if ((Get-Volume -FilePath $parent).SizeRemaining -lt 32GB) { throw 'R7_TEMP_DISK_CAPACITY_INSUFFICIENT' }
+# The fixed adapter independently reads the actual GitHub run, merged source,
+# successful CI artifact and one immutable fresh owner approval for this run.
+# Hash arguments or caller flags cannot substitute for that authority.
+$gate=& 'C:\Program Files\nodejs\node.exe' (Join-Path $PSScriptRoot 'admit-r7-hosted-native-invocation.mjs') admit
+if ($LASTEXITCODE -ne 0 -or @($gate).Count -ne 1) {throw 'R7_EXACT_RUN_OWNER_APPROVAL_REQUIRED'}
+$admission=$gate | ConvertFrom-Json
+if ($admission.admitted -ne $true -or $admission.workflowRunAttempt -ne 1 -or $admission.productionAuthority -ne $false -or $admission.claimMutationAuthority -ne $false) {throw 'R7_EXACT_RUN_OWNER_APPROVAL_UNPROVEN'}
+$inputRoot=Join-Path $parent ('r7-native-invocation-'+$env:GITHUB_RUN_ID)
+if (-not [string]::Equals([IO.Path]::GetFullPath($InstallWimPath),(Join-Path $inputRoot 'windows\install.wim'),[StringComparison]::OrdinalIgnoreCase) -or
+    -not [string]::Equals([IO.Path]::GetFullPath($NativePackagePath),(Join-Path $inputRoot 'package\r7-native-test-package.zip'),[StringComparison]::OrdinalIgnoreCase)) {throw 'R7_PREPARED_INPUT_PATHS_REQUIRED'}
+$NativePackageSha256=$admission.nativePackageSha256
+$DriverSha256=$admission.driverSha256
+$ClientSha256=$admission.clientSha256
 $identity=[guid]::NewGuid().ToString('N')
 $ownedRoot=[IO.Path]::GetFullPath((Join-Path $parent ('r7-native-'+$identity)))
 if (-not $ownedRoot.StartsWith($parent.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase) -or (Test-Path -LiteralPath $ownedRoot)) { throw 'R7_NEW_OWNED_DIRECTORY_REQUIRED' }
@@ -36,8 +46,11 @@ $package=$null
 $archive=$null
 $receipt=$null
 $cleanupCompleted=$false
-$deadline=[DateTime]::UtcNow.AddMinutes(110)
+$deadline=[DateTime]::Parse($admission.workflowCreatedAtUtc,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime().AddMinutes(110)
+if ([DateTime]::UtcNow -ge $deadline) {throw 'R7_HOST_TOTAL_DEADLINE'}
 function Invoke-FixedHostTool([ValidateSet('dism.exe','bcdboot.exe')][string]$Name,[string[]]$Arguments,[int]$TimeoutSeconds) {
+    $TimeoutSeconds=[Math]::Min($TimeoutSeconds,[Math]::Floor(($deadline-[DateTime]::UtcNow).TotalSeconds))
+    if ($TimeoutSeconds -lt 1) {throw 'R7_HOST_TOTAL_DEADLINE'}
     $start=[Diagnostics.ProcessStartInfo]::new((Join-Path $env:windir ('System32/'+$Name)))
     $start.UseShellExecute=$false
     $start.CreateNoWindow=$true
@@ -61,6 +74,8 @@ function Get-ExactOwnedVm {
 function Invoke-OwnedGuest([scriptblock]$Code,[object[]]$Arguments,[int]$TimeoutSeconds) {
     if ([DateTime]::UtcNow -ge $deadline) {throw 'R7_HOST_TOTAL_DEADLINE'}
     Get-ExactOwnedVm | Out-Null
+    $TimeoutSeconds=[Math]::Min($TimeoutSeconds,[Math]::Floor(($deadline-[DateTime]::UtcNow).TotalSeconds))
+    if ($TimeoutSeconds -lt 1) {throw 'R7_HOST_TOTAL_DEADLINE'}
     $job=Invoke-Command -VMId $ownedVmId -Credential $credential -ScriptBlock $Code -ArgumentList $Arguments -AsJob -ErrorAction Stop
     try {
         $done=Wait-Job -Job $job -Timeout $TimeoutSeconds
@@ -170,7 +185,7 @@ try {
     $second=Wait-OwnedGuest $first.bootUtc
     $result=Invoke-OwnedGuest { & 'C:\R7Lab\guest.ps1' -Phase Run } @() 180
     if ($result.nonce -cne $nonce -or $result.bootUtc -cne $second.bootUtc -or $result.normalUnloadSucceeded -ne $true -or $result.productionCustodyProven -ne $false -or $result.leaseChanged -ne $false) {throw 'R7_GUEST_RESULT_IDENTITY_MISMATCH'}
-    $receipt=[ordered]@{schemaVersion='stephanos.r7-hosted-native-smoke.v1';runId=$env:GITHUB_RUN_ID;runAttempt=$env:GITHUB_RUN_ATTEMPT;ownedVmId=[string]$ownedVmId;vmProcessors=2;vmMemoryBytes=4GB;osDiskLogicalBytes=64GB;networkAdapterCount=0;officialIsoSha256='3e4fa6d8507b554856fc9ca6079cc402df11a8b79344871669f0251535255325';wimSha256='e073fe38d47d9832608ec4dff061cd5358f3924650dcd5c1b13456abc34eaac9';nativePackageSha256=$NativePackageSha256;result=$result;productionCustodyProven=$false;leaseChanged=$false}
+    $receipt=[ordered]@{schemaVersion='stephanos.r7-hosted-native-smoke.v1';admission=$admission;runId=$env:GITHUB_RUN_ID;runAttempt=$env:GITHUB_RUN_ATTEMPT;ownedVmId=[string]$ownedVmId;vmProcessors=2;vmMemoryBytes=4GB;osDiskLogicalBytes=64GB;networkAdapterCount=0;officialIsoSha256='3e4fa6d8507b554856fc9ca6079cc402df11a8b79344871669f0251535255325';wimSha256='e073fe38d47d9832608ec4dff061cd5358f3924650dcd5c1b13456abc34eaac9';nativePackageSha256=$NativePackageSha256;result=$result;productionCustodyProven=$false;leaseChanged=$false}
 } finally {
     # GUID plus owned path/name checks precede removal. Never touch any other VM.
     if (-not $ownedVmId -and $creationAttempted) {

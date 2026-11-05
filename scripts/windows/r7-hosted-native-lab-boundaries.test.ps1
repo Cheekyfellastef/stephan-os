@@ -15,14 +15,14 @@ $saved=@{};foreach($name in $names){$saved[$name]=[Environment]::GetEnvironmentV
 try {
     foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$null)}
     function Get-CimInstance {throw 'UNEXPECTED_CIM_QUERY'}
-    Expect-Refusal {& $hostScript -InstallWimPath 'DO_NOT_OPEN' -NativePackagePath 'DO_NOT_OPEN' -NativePackageSha256 ('a'*64) -DriverSha256 ('b'*64) -ClientSha256 ('c'*64)} 'R7_FIXED_HOSTED_WINDOWS2022_FIRST_ATTEMPT_REQUIRED'
+    Expect-Refusal {& $hostScript -InstallWimPath 'DO_NOT_OPEN' -NativePackagePath 'DO_NOT_OPEN'} 'R7_FIXED_HOSTED_WINDOWS2022_FIRST_ATTEMPT_REQUIRED'
     $env:GITHUB_ACTIONS='true';$env:RUNNER_ENVIRONMENT='github-hosted';$env:RUNNER_OS='Windows';$env:RUNNER_ARCH='X64';$env:ImageOS='win22';$env:GITHUB_RUN_ATTEMPT='2'
-    Expect-Refusal {& $hostScript -InstallWimPath 'DO_NOT_OPEN' -NativePackagePath 'DO_NOT_OPEN' -NativePackageSha256 ('a'*64) -DriverSha256 ('b'*64) -ClientSha256 ('c'*64)} 'R7_FIXED_HOSTED_WINDOWS2022_FIRST_ATTEMPT_REQUIRED'
+    Expect-Refusal {& $hostScript -InstallWimPath 'DO_NOT_OPEN' -NativePackagePath 'DO_NOT_OPEN'} 'R7_FIXED_HOSTED_WINDOWS2022_FIRST_ATTEMPT_REQUIRED'
     $env:GITHUB_RUN_ATTEMPT='1';$env:COMPUTERNAME='BATTLE-BRIDGE'
-    Expect-Refusal {& $hostScript -InstallWimPath 'DO_NOT_OPEN' -NativePackagePath 'DO_NOT_OPEN' -NativePackageSha256 ('a'*64) -DriverSha256 ('b'*64) -ClientSha256 ('c'*64)} 'R7_BATTLE_BRIDGE_EXECUTION_FORBIDDEN'
+    Expect-Refusal {& $hostScript -InstallWimPath 'DO_NOT_OPEN' -NativePackagePath 'DO_NOT_OPEN'} 'R7_BATTLE_BRIDGE_EXECUTION_FORBIDDEN'
     $env:COMPUTERNAME='FIXTURE'
     function Get-CimInstance {[pscustomobject]@{Manufacturer='Physical fixture';Model='Physical fixture'}}
-    Expect-Refusal {& $hostScript -InstallWimPath 'DO_NOT_OPEN' -NativePackagePath 'DO_NOT_OPEN' -NativePackageSha256 ('a'*64) -DriverSha256 ('b'*64) -ClientSha256 ('c'*64)} 'R7_EXISTING_HOSTED_VIRTUAL_MACHINE_REQUIRED'
+    Expect-Refusal {& $hostScript -InstallWimPath 'DO_NOT_OPEN' -NativePackagePath 'DO_NOT_OPEN'} 'R7_EXISTING_HOSTED_VIRTUAL_MACHINE_REQUIRED'
     $env:COMPUTERNAME='BATTLE-BRIDGE'
     Expect-Refusal {& $guestScript -Phase Prepare} 'R7_GUEST_IDENTITY_REQUIRED'
     Expect-Refusal {& $guestScript -Phase Run} 'R7_GUEST_IDENTITY_REQUIRED'
@@ -30,7 +30,7 @@ try {
     # operational script or call any real Hyper-V/storage/driver command.
     $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($hostScript,[ref]$tokens,[ref]$errors)
     if ($errors.Count) {throw 'HOST_PARSE_FAILED'}
-    foreach($path in @($guestScript,(Join-Path $root 'package-r7-isolated-native-test.ps1'))) {
+    foreach($path in @($guestScript,(Join-Path $root 'package-r7-isolated-native-test.ps1'),(Join-Path $root 'prepare-r7-hosted-native-media.ps1'))) {
         $tokens=$null;$parseErrors=$null;[Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$parseErrors)|Out-Null
         if ($parseErrors.Count) {throw 'GUEST_OR_PACKAGE_PARSE_FAILED'}
         $checks++

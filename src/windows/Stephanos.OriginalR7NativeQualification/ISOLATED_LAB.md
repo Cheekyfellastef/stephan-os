@@ -1,8 +1,11 @@
-# Isolated R7 native smoke test — source preparation only
+# Isolated R7 native smoke test â€” source preparation only
 
 The existing recovery decoder remains inspection-only. These scripts add a
 concrete disposable Windows test setup for the retained-object native component.
-No workflow starts a guest, accepts evaluation terms, signs or loads a driver.
+Pull-request CI never starts a guest, accepts evaluation terms, signs or loads a driver.
+The existing proof workflow now has a separate explicit owner-dispatch job. Its
+fixed host entrypoint independently authenticates an immutable fresh approval
+for that exact actual hosted run and attempt1 before any guest mutation.
 The existing native proof job builds an unsigned test package, runs refusal and
 ownership fixtures, and retains only that package and its public digest pins.
 It never uploads Windows media, disks, private certificates or credentials.
@@ -21,16 +24,33 @@ Parser wheel SHA256 is
 These hashes bind bytes, not license acceptance or production authority.
 
 A separately approved invocation of `invoke-r7-hosted-native-smoke.ps1` needs
-that WIM path, a genuine successful exact-head CI package, and the package,
-unsigned driver and client SHA256 values from its immutable artifact. Those
-three digest arguments are test-input data; the script does not authenticate
-operator consent. Before execution, the existing authorized executor must bind
-one exact source head/tree, both script hashes, artifact run/attempt/ID/digest,
-all three input pins, media hash and the complete operation below. It must
-independently verify the artifact provenance, never trust a caller-created pins
-file, and consume a single execution admission. No runtime/controller route for
-this invocation is introduced here. The script is deliberately not wired to
-workflow_dispatch, a mailbox, a service or automatic pull-request execution.
+that WIM path, a genuine successful exact-head CI package, and its genuine successful exact-head CI package. The fixed adapter derives
+the package, unsigned driver and client SHA256 values from independently
+verified artifact bytes and the authenticated owner approval. The adapter reads the actual GitHub Actions run/actor/attempt, merged original
+PR and retained branch/head/tree, successful native proof and immutable artifact,
+then uses the fixed bounded package reader. No caller-created pins file,
+environment flag or standalone pure-projector result grants authority.
+
+An owner-authenticated manual dispatch of the existing native proof workflow,
+using the retained PR branch and successful native artifact ID, performs
+read-only preparation and fixed media acquisition. It publishes a public
+preparation artifact containing its actual run ID. The existing canonical
+mailbox must then contain one fresh immutable owner approval fenced with
+`stephanos-r7-isolated-native-lab-approval`, schema
+`stephanos.r7-isolated-native-lab-approval.v1`, operation
+`RUN_R7_DISPOSABLE_NATIVE_SMOKE`. It binds the actual run ID, attempt1, exact
+source/tree, CI run/attempt/artifact and all package/component/media hashes, a
+bounded expiry and explicit evaluation-terms acceptance. Unknown fields fail.
+The source-defined active canonical mailbox is independently read from current
+protected main; a rotation holds this old source. A second run or rerun cannot
+reuse the approval. The fixed adapter rereads the actual comment before consuming
+it locally once. It polls at most15minutes, then stops without a guest if consent
+is absent. Preparation is never consent. The controller must post this approval
+only within the human's explicit exact-operation authority.
+
+There is no new scheduler, worker, mailbox or production authority database.
+The existing workflow is the disposable test adapter. Native execution cannot
+occur in pull-request CI, on self-hosted runners or on Battle Bridge.
 
 ## Bounded physical experiment
 
@@ -68,7 +88,9 @@ testOnly=true, custodyProven=false, leaseChanged=false, and normal filter unload
 Driver Verifier must name the actually loaded image. This is a first native
 smoke test, not full production qualification.
 
-Host calls have finite deadlines. An unknown native call is never retried. The
+Host calls have finite deadlines. The110-minute experiment deadline starts
+at the actual workflow creation time, leaving10minutes of the120-minute job
+for cleanup; approval does not reset that budget. An unknown native call is never retried. The
 VM is turned off and removed by its retained GUID after name/path checks, then
 only the verified private directory may be removed. A remaining attachment or
 reparse point refuses recursive cleanup. An incomplete cleanup is a failure,

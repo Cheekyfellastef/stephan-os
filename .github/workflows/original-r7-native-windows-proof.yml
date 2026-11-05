@@ -1,6 +1,12 @@
 name: Native Windows r7 Access Probe Proof
 
 on:
+  workflow_dispatch:
+    inputs:
+      native_artifact_id:
+        description: 'Existing successful exact-head unsigned native package artifact ID; no guest authority'
+        required: true
+        type: string
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
@@ -12,6 +18,7 @@ on:
       - 'scripts/windows/inspect-r7-hosted-linux-lab-capacity.py'
       - 'scripts/windows/*r7*isolated*'
       - 'scripts/windows/*r7*hosted*'
+      - 'shared/agents/r7IsolatedNativeLabAdmissionV1.*'
       - 'src/windows/Stephanos.OriginalR7NativeQualification/**'
       - 'src/windows/Stephanos.OriginalR7ScopedMutationGate/**'
       - 'src/windows/Stephanos.OriginalR7DaclReadback/**'
@@ -32,13 +39,15 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
-  group: native-r7-probe-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: native-r7-probe-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   native-r7-probe:
+    if: github.event_name == 'pull_request'
     runs-on: windows-2022
     timeout-minutes: 15
     steps:
@@ -192,6 +201,10 @@ jobs:
           python -B scripts/windows/prepare-r7-isolated-windows-media.test.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./scripts/windows/r7-hosted-native-lab-boundaries.test.ps1
+          python -B scripts/windows/prepare-r7-hosted-native-package.test.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test shared/agents/r7IsolatedNativeLabAdmissionV1.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package the exact unsigned native build for a separately approved isolated test
         shell: pwsh
         env:
@@ -208,6 +221,7 @@ jobs:
           retention-days: 14
 
   hosted-linux-lab-capability:
+    if: github.event_name == 'pull_request'
     # Read-only inventory in this existing native proof workflow. No guest boot.
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -245,3 +259,52 @@ jobs:
           then
             printf '%s\n' 'R7_EXISTING_KVM_GROUP_QUERY=UNKNOWN_NO_POLICY_CHANGED'
           fi
+
+  isolated-native-smoke:
+    # Explicit owner dispatch starts read-only preparation. The fixed host script
+    # independently waits for a fresh immutable approval for this actual run ID
+    # on the existing canonical mailbox before creating any guest/disk/cert.
+    if: github.event_name == 'workflow_dispatch' && github.actor_id == '267490109'
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact retained merged candidate without credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4; immutable upstream commit
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Prepare actual source/run/artifact-bound invocation without a guest
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          R7_NATIVE_ARTIFACT_ID: ${{ inputs.native_artifact_id }}
+        run: node scripts/windows/admit-r7-hosted-native-invocation.mjs prepare
+      - name: Retain public preparation for the one actual hosted run
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4; immutable upstream commit
+        with:
+          name: r7-isolated-preparation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r7-native-invocation-${{ github.run_id }}/preparation.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Acquire fixed official media and extract only its pinned WIM
+        shell: pwsh
+        run: ./scripts/windows/prepare-r7-hosted-native-media.ps1
+      - name: Require exact-run owner approval then run one disposable native experiment
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          R7_NATIVE_ARTIFACT_ID: ${{ inputs.native_artifact_id }}
+        run: |
+          $root=Join-Path $env:RUNNER_TEMP ('r7-native-invocation-'+$env:GITHUB_RUN_ID)
+          $result=& ./scripts/windows/invoke-r7-hosted-native-smoke.ps1 -InstallWimPath (Join-Path $root 'windows/install.wim') -NativePackagePath (Join-Path $root 'package/r7-native-test-package.zip')
+          if ($LASTEXITCODE -ne 0) { throw 'R7_HOSTED_EXPERIMENT_NOT_COMPLETED' }
+          $record=($result -join "`n") | ConvertFrom-Json
+          if ($record.ownedGuestAndDisksDisposed -ne $true -or $record.productionCustodyProven -ne $false -or $record.leaseChanged -ne $false) { throw 'R7_EXPERIMENT_DISPOSAL_OR_TRUTH_UNPROVEN' }
+          [IO.File]::WriteAllText((Join-Path $root 'public-result.json'),($record | ConvertTo-Json -Depth 20))
+      - name: Retain only the public causal result after verified guest disposal
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4; immutable upstream commit
+        with:
+          name: r7-isolated-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r7-native-invocation-${{ github.run_id }}/public-result.json
+          if-no-files-found: error
+          retention-days: 14
