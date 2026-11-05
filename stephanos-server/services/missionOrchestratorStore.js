@@ -451,6 +451,13 @@ export async function appendMissionEvent(missionId, event, options = {}) {
       preparedEvent.approvalTokenHash = sha256(preparedEvent.approvalToken);
     }
     const commit = async () => {
+      if (text(preparedEvent.eventType).toUpperCase() === 'EXTERNAL_PULL_REQUEST_MERGE_OBSERVED') {
+        // JSON events from generic clients cannot manufacture observation trust.
+        if (typeof options.authorizeExternalMergeObservation !== 'function') {
+          throw new Error('EXTERNAL_MERGE_OBSERVER_REQUIRED');
+        }
+        await options.authorizeExternalMergeObservation(current);
+      }
       let originalSourceAttemptFence = current.storeMetadata?.originalSourceAttemptFence;
       if (preparedEvent.originalSourceQuarantineRequested === true) {
         if (preparedEvent.eventType !== 'MISSION_CANCELLED'
