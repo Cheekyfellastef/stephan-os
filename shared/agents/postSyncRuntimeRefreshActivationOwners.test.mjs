@@ -63,3 +63,37 @@ test('two protected advisory entries adopt source without invoking or trusting t
   assert.equal(classifyPostSyncRefresh([path]).classification,'BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
  assert.equal(classifyPostSyncRefresh([...paths,'scripts/uninspected-review.mjs']).classification,'BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
 });
+
+// Captured from the actual nine-file PR3400 rollout, not a selected activation subset.
+const ignitionRollout = [
+  "docs/architecture/ignition-source-activation-routing.md",
+  "scripts/battle-bridge-sync-housekeeper-runner.mjs",
+  "scripts/ignite-stephanos-local.mjs",
+  "scripts/serve-stephanos-dist.mjs",
+  "scripts/serve-stephanos-dist.test.mjs",
+  "scripts/served-build-rollback.test.mjs",
+  "shared/agents/postSyncRuntimeRefreshActivationOwners.test.mjs",
+  "shared/agents/postSyncRuntimeRefreshCoordinator.mjs",
+  "shared/runtime/buildParity.mjs"
+];
+test('complete merged Ignition rollout has an existing activation owner for every path',()=>{
+ assert.equal(ignitionRollout.length,9);
+ const plan=classifyPostSyncRefresh(ignitionRollout);
+ assert.equal(plan.unknownPathCount,0);
+ assert.deepEqual(plan.targetIds,['stephanos-ui-4173','stephanos-backend-8787','github-command-mailbox','natural-reload']);
+ assert.equal(plan.classification,'REFRESH_READY');
+ assert.deepEqual(classifyPostSyncRefresh(['scripts/battle-bridge-sync-housekeeper-runner.mjs']).targetIds,['natural-reload']);
+ assert.equal(classifyPostSyncRefresh(['scripts/battle-bridge-sync-housekeeper-runner.mjs']).noRuntimePathCount,0);
+});
+test('scheduled sync child adoption confirms source without running housekeeping or starting a service',async()=>{
+ const calls=[];
+ const result=await executePostSyncRefreshPlan({beforeHead:'a'.repeat(40),afterHead:'b'.repeat(40),changedPaths:['scripts/battle-bridge-sync-housekeeper-runner.mjs'],adapters:{confirmNaturalReload:async()=>{calls.push('natural-reload');return {ok:true,exactHeadProofOk:true,sourceHead:'b'.repeat(40)};}}});
+ assert.equal(result.ok,true);assert.deepEqual(calls,['natural-reload']);
+ for(const path of ['scripts/battle-bridge-sync-housekeeper-runner-v2.mjs','scripts/battle-bridge-sync-housekeeper-other.mjs'])assert.equal(classifyPostSyncRefresh([path]).classification,'BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
+ const denied=[];const held=await executePostSyncRefreshPlan({beforeHead:'a'.repeat(40),afterHead:'b'.repeat(40),changedPaths:[...ignitionRollout,'scripts/uninspected-refresh-owner.mjs'],adapters:new Proxy({}, {get(){return async()=>{denied.push('called');throw Error('held plan must not invoke adapters');};}})});
+ assert.equal(held.ok,false);assert.deepEqual(denied,[]);
+});
+test('the shared owner cannot turn stale natural-reload evidence into current adoption',async()=>{
+ const result=await executePostSyncRefreshPlan({beforeHead:'a'.repeat(40),afterHead:'b'.repeat(40),changedPaths:['scripts/battle-bridge-sync-housekeeper-runner.mjs'],adapters:{confirmNaturalReload:async()=>({ok:true,exactHeadProofOk:true,sourceHead:'c'.repeat(40)})}});
+ assert.equal(result.ok,false);
+});
