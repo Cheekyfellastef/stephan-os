@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Read-only capability inventory for the existing R7 hosted Linux CI child.
 
-No VM creation, guest boot, installation, download, privilege change, device
+No VM creation, guest boot, installation, download, privilege-policy or device
 configuration, disk allocation, certificate, signing or driver operation.
 Environment checks prevent accidental local use; they are not authentication.
-KVM_GET_API_VERSION is a system query only, not proof that a guest can boot.
+KVM system queries below never create a VM or prove that a guest can boot.
+Existing hosted sudo may run this same fixed read-only probe; it grants no
+permission to boot guests or alter device policy.
 """
 import datetime
 import json
@@ -66,13 +68,17 @@ def main():
         "runnerImageOS": safe_text("ImageOS"),
         "runnerImageVersion": safe_text("ImageVersion"),
         "provenanceIsAuthority": False,
+        "queryPrivilege": "ROOT" if os.geteuid() == 0 else "ORDINARY",
         "cpuCount": os.cpu_count(),
         "cpuVirtualizationFlagVisible": None,
         "availableMemoryBytes": None,
         "rootAvailableBytes": None,
         "temporaryAvailableBytes": None,
         "kvm": {"deviceIsCharacter": None, "systemQuerySucceeded": False,
-                "apiVersion": None, "apiVersionIsExpected12": False, "errno": None},
+                "apiVersion": None, "apiVersionIsExpected12": False, "errno": None,
+                "extensions": {"irqchip": None, "userMemory": None,
+                               "recommendedVcpus": None, "maximumVcpus": None},
+                "extensionQueryErrno": None},
         "qemuSystemX64OnPath": shutil.which("qemu-system-x86_64") is not None,
         "qemuImgOnPath": shutil.which("qemu-img") is not None,
         "uefiFirmwarePresent": any(os.path.isfile(p) for p in (
@@ -123,10 +129,19 @@ def main():
         descriptor = os.open("/dev/kvm", os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW)
         result["kvm"]["deviceIsCharacter"] = stat.S_ISCHR(os.fstat(descriptor).st_mode)
         if result["kvm"]["deviceIsCharacter"]:
-            version = fcntl.ioctl(descriptor, 0xAE00, 0)  # KVM_GET_API_VERSION only
+            version = fcntl.ioctl(descriptor, 0xAE00, 0)  # KVM_GET_API_VERSION
             result["kvm"]["apiVersion"] = version
             result["kvm"]["systemQuerySucceeded"] = True
             result["kvm"]["apiVersionIsExpected12"] = version == 12
+            if version == 12:
+                try:
+                    # Fixed system queries from Linux uapi/linux/kvm.h.
+                    # These report capabilities, without enabling any of them.
+                    for name, capability in (("irqchip", 0), ("userMemory", 3),
+                                             ("recommendedVcpus", 9), ("maximumVcpus", 66)):
+                        result["kvm"]["extensions"][name] = fcntl.ioctl(descriptor, 0xAE03, capability)
+                except OSError as error:
+                    result["kvm"]["extensionQueryErrno"] = error.errno
     except OSError as error:
         result["kvm"]["errno"] = error.errno
     finally:

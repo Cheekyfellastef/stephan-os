@@ -198,3 +198,12 @@ jobs:
         env:
           R7_LAB_SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
         run: timeout --signal=TERM --kill-after=5s 30s python3 -I scripts/windows/inspect-r7-hosted-linux-lab-capacity.py
+      - name: Query fixed KVM metadata through existing hosted sudo without changing policy
+        shell: bash
+        env:
+          R7_LAB_SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          sudo -n
+          --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS,RUNNER_ARCH,ImageOS,ImageVersion,R7_LAB_SOURCE_HEAD,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT
+          -- /usr/bin/timeout --signal=TERM --kill-after=5s 30s
+          /usr/bin/python3 -I scripts/windows/inspect-r7-hosted-linux-lab-capacity.py
