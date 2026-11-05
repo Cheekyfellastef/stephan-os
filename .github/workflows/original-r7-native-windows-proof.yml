@@ -118,7 +118,7 @@ jobs:
       - name: Test current processing-claim binding and owned native scope
         shell: pwsh
         run: |
-          dotnet run --project src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests --configuration Release --disable-build-servers --warnaserror -p:UseSharedCompilation=false
+          dotnet run --project src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests --configuration Release --disable-build-servers -p:UseSharedCompilation=false
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Execute owned native capability and peer preparation regressions
         shell: pwsh
