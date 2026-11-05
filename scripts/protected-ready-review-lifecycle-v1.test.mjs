@@ -11,7 +11,7 @@ import {
 import { validateProtectedReadyReviewLifecycleEvidence, parseReadyReviewInputs,
   sealReadyReviewPayload, READY_REVIEW_HANDOFF_FILE, READY_REVIEW_RECEIPT_FILE } from '../shared/agents/protectedReadyReviewLifecycleV1.mjs';
 import { readyLifecycleFixture, fixtureEnv, fixtureTransport, fixtureThreadPage,
-  fixtureArtifact, clock } from '../shared/agents/fixtures/protectedReadyReviewLifecycleV1.fixture.mjs';
+  readyRecoveryFixture, fixtureRecoveryTransport, fixtureArtifact, clock } from '../shared/agents/fixtures/protectedReadyReviewLifecycleV1.fixture.mjs';
 
 function active(run) { run.status = 'in_progress'; run.conclusion = null; }
 function activeJob(job) { active(job); job.completed_at = null; }
@@ -30,6 +30,54 @@ test('loads complete real-shaped GitHub evidence and keeps the base-headed revie
   assert.ok(transport.calls.includes('/actions/runs/100/attempts/1/jobs?filter=all&per_page=100&page=1'));
   assert.ok(transport.calls.includes('/check-runs/201'));
   assert.equal(transport.calls.filter(p => p.startsWith('/actions/workflows/stephanos-exact-head-review.yml/runs?')).length, 2);
+});
+
+test('collector composes the preserved failed run and distinct recovery receipt without selecting old success', async () => {
+  const f = readyRecoveryFixture(), transport = fixtureRecoveryTransport(f);
+  const proof = await loadProtectedReadyReviewLifecycle({ identity: f.identity, skippedRunIds: [50], ...transport });
+  assert.equal(proof.failedReview.run.id, 200);
+  assert.equal(proof.failedReview.run.conclusion, 'failure');
+  assert.equal(proof.recovery.run.id, 300);
+  assert.equal(proof.recovery.run.event, 'issue_comment');
+  assert.ok(transport.calls.includes(`/compare/${f.originalIdentity.baseSha}...${f.currentMainSha}`));
+  assert.ok(transport.calls.includes('/actions/runs/200/artifacts?per_page=100&page=1'));
+  assert.equal(transport.calls.filter(path => path.includes('event=issue_comment')).length, 2);
+});
+
+test('collector rejects diagnostic archive corruption, duplicate diagnostics and recovery replay inventory', async t => {
+  await t.test('diagnostic archive corruption', async () => {
+    const f = readyRecoveryFixture(), transport = fixtureRecoveryTransport(f), read = transport.download;
+    transport.download = async id => {
+      const bytes = Buffer.from(await read(id));
+      if (id === 503) bytes[40] ^= 0x01;
+      return bytes;
+    };
+    await assert.rejects(loadProtectedReadyReviewLifecycle({ identity: f.identity, skippedRunIds: [50], ...transport }),
+      /DIAGNOSTIC_ZIP|DIAGNOSTIC_ARTIFACT_ARCHIVE/);
+  });
+  await t.test('duplicate diagnostic metadata', async () => {
+    const f = readyRecoveryFixture(), transport = fixtureRecoveryTransport(f), read = transport.api;
+    transport.api = async path => {
+      const value = await read(path);
+      if (path === '/actions/runs/200/artifacts?per_page=100&page=1') return { total_count: 2,
+        artifacts: [value.artifacts[0], { ...value.artifacts[0], id: 999 }] };
+      return value;
+    };
+    await assert.rejects(loadProtectedReadyReviewLifecycle({ identity: f.identity, skippedRunIds: [50], ...transport }),
+      /RECOVERY_FAILED_ARTIFACT_SET/);
+  });
+  await t.test('second recovery run', async () => {
+    const f = readyRecoveryFixture(), transport = fixtureRecoveryTransport(f), read = transport.api;
+    transport.api = async path => {
+      const value = await read(path);
+      if (path.includes('event=issue_comment')) return { total_count: 2,
+        workflow_runs: [value.workflow_runs[0], { ...value.workflow_runs[0], id: 301,
+          display_title: value.workflow_runs[0].display_title.replace('comment-901', 'comment-902') }] };
+      return value;
+    };
+    await assert.rejects(loadProtectedReadyReviewLifecycle({ identity: f.identity, skippedRunIds: [50], ...transport }),
+      /RECOVERY_RUN_NOT_UNIQUE/);
+  });
 });
 
 test('full artifact bytes and singleton immutable metadata are required before consumer admission', async t => {
@@ -382,6 +430,11 @@ test('canonical workflows preserve draft guards, pin main source and upload sepa
   assert.match(reviewer, /github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main' && github\.sha == inputs\.base_sha/);
   assert.match(reviewer, /test "\$\{GITHUB_WORKFLOW_SHA\}" = "\$\{GITHUB_SHA\}"/);
   assert.match(reviewer, /path: protected-ready-review-receipt\.json/);
+  assert.match(reviewer, /Probe preserved protected READY failure recovery[\s\S]*recovery-prepare/);
+  assert.match(reviewer, /Recover preserved failed READY review with the unchanged engine[\s\S]*recovery-review/);
+  assert.match(reviewer, /name: protected-ready-review-recovery-receipt-\$\{\{ github\.run_id \}\}-attempt-\$\{\{ github\.run_attempt \}\}/);
+  assert.match(reviewer, /path: protected-ready-review-recovery-receipt\.json/);
+  assert.match(reviewer, /steps\.ready_recovery\.outputs\.ready_recovery != 'true'/);
   assert.match(reviewer, /path: review-proof\//);
   assert.match(reviewer, /if: github\.event_name != 'workflow_dispatch'[\s\S]*node scripts\/exact-head-qualified-escalation-v1\.mjs/);
   const collector = source('scripts/operator-protected-personal-repository-merge.mjs');

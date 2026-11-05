@@ -3,8 +3,9 @@ import { buildIndependentReviewArtifact } from '../operatorMergeReviewArtifactV1
 import { reviewExactHead } from '../../../scripts/exact-head-review.mjs';
 import {
   readyReviewSha256 as sha, sealReadyReviewPayload, readyReviewRunName,
-  readyReviewHandoffName, readyReviewReceiptName, READY_REVIEW_HANDOFF_FILE,
-  READY_REVIEW_RECEIPT_FILE, READY_REVIEW_REPOSITORY as repository,
+  readyReviewHandoffName, readyReviewReceiptName, readyReviewRecoveryReceiptName, readyReviewRecoveryRunName,
+  READY_REVIEW_HANDOFF_FILE, READY_REVIEW_RECEIPT_FILE, READY_REVIEW_RECOVERY_RECEIPT_FILE,
+  READY_REVIEW_REPOSITORY as repository,
   READY_REVIEW_PRODUCER_PATH, READY_REVIEW_PRODUCER_NAME, READY_REVIEW_PATH, READY_REVIEW_NAME,
 } from '../protectedReadyReviewLifecycleV1.mjs';
 import { PROTECTED_WORKFLOW_DISPATCH_ISSUE } from '../protectedWorkflowDispatchMailboxV1.mjs';
@@ -30,6 +31,32 @@ export function fixtureZip(name, value) {
   end.writeUInt32LE(0x06054b50); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10);
   end.writeUInt32LE(central.length + filename.length, 12); end.writeUInt32LE(offset, 16);
   return Buffer.concat([local, filename, payload, central, filename, end]);
+}
+export function fixtureZipFiles(files) {
+  const locals = [], centrals = [];
+  let offset = 0;
+  for (const [name, value] of Object.entries(files)) {
+    const payload = Buffer.from(typeof value === 'string' ? value : JSON.stringify(value));
+    const filename = Buffer.from(name);
+    let crc = 0xffffffff;
+    for (const byte of payload) {
+      crc ^= byte;
+      for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+    }
+    crc = (crc ^ 0xffffffff) >>> 0;
+    const local = Buffer.alloc(30), central = Buffer.alloc(46);
+    local.writeUInt32LE(0x04034b50); local.writeUInt16LE(20, 4); local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(payload.length, 18); local.writeUInt32LE(payload.length, 22); local.writeUInt16LE(filename.length, 26);
+    central.writeUInt32LE(0x02014b50); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6);
+    central.writeUInt32LE(crc, 16); central.writeUInt32LE(payload.length, 20); central.writeUInt32LE(payload.length, 24);
+    central.writeUInt16LE(filename.length, 28); central.writeUInt32LE(offset, 42);
+    locals.push(local, filename, payload); centrals.push(central, filename);
+    offset += local.length + filename.length + payload.length;
+  }
+  const centralBytes = Buffer.concat(centrals), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50); end.writeUInt16LE(Object.keys(files).length, 8);
+  end.writeUInt16LE(Object.keys(files).length, 10); end.writeUInt32LE(centralBytes.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, centralBytes, end]);
 }
 export function fixtureArtifact(id, name, file, payload, run, at) {
   const zip = fixtureZip(file, payload);
@@ -133,6 +160,67 @@ export function readyLifecycleFixture({ bootstrap = false, alreadyReady = false,
     main: { object: { sha: identity.baseSha } }, commit: { sha: identity.sourceHead, tree: { sha: identity.sourceTree } } };
   return { identity, command, proof, inputs, state, input };
 }
+
+export function readyRecoveryFixture() {
+  const f = readyLifecycleFixture({ alreadyReady: true, engineFindings: true });
+  const originalIdentity = f.identity, currentMainSha = 'd'.repeat(40);
+  f.proof.review.run.status = 'completed';
+  f.proof.review.run.conclusion = 'failure';
+  f.proof.review.job.status = 'completed';
+  f.proof.review.job.conclusion = 'failure';
+  f.proof.review.job.steps = [
+    'Gate hosted review on its own GitHub installation API budget', 'Resolve immutable review identity',
+    'Checkout trusted reviewer', 'Verify trusted reviewer source', 'Authenticate immutable READY handoff before review reads',
+    'Admit exact current-main review target', 'Require exact current-main admission', 'Run trusted engine regressions',
+    'Build immutable exact-head review input',
+  ].map((name, index) => ({ number: index + 1, name, conclusion: 'success' }));
+  f.proof.review.job.steps.push({ number: 10, name: 'Review ready head with the unchanged engine and qualified escalation', conclusion: 'failure' },
+    { number: 11, name: 'Upload separate immutable lifecycle review proof', conclusion: 'skipped' },
+    { number: 12, name: 'Upload SHA-bound review receipt', conclusion: 'success' });
+  const diagnosticZip = Buffer.from('synthetic-diagnostic-archive');
+  const diagnosticMetadata = { ...f.proof.review.artifact.metadata, id: 503,
+    name: `exact-head-review-${originalIdentity.prNumber}-${originalIdentity.sourceHead}`,
+    size_in_bytes: diagnosticZip.length, digest: `sha256:${sha(diagnosticZip)}` };
+  const diagnostic = { metadata: diagnosticMetadata, archiveSha256: sha(diagnosticZip), input: f.input,
+    changedFilesText: `${f.input.changedFiles.join('\n')}\n`, patch: f.input.patch,
+    readyContext: { inputs: f.inputs, review: { run: f.proof.review.run } } };
+  const continuity = { schemaVersion: 'stephanos.protected-ready-review-continuity.v1',
+    fromBaseSha: originalIdentity.baseSha, toMainSha: currentMainSha, commitShas: [currentMainSha],
+    changedFiles: ['scripts/protected-ready-review-lifecycle-v1.mjs'],
+    changedFilesSha256: sha(JSON.stringify(['scripts/protected-ready-review-lifecycle-v1.mjs'])),
+    correctionFiles: ['scripts/protected-ready-review-lifecycle-v1.mjs'],
+    correctionFilesSha256: sha(JSON.stringify(['scripts/protected-ready-review-lifecycle-v1.mjs'])) };
+  const recoveryRun = run(300, f.proof.review.definition, currentMainSha,
+    readyReviewRecoveryRunName({ prNumber: originalIdentity.prNumber, commentId: 901, sourceSha: currentMainSha }));
+  recoveryRun.event = 'issue_comment'; recoveryRun.actor = fixtureOwner; recoveryRun.triggering_actor = fixtureOwner;
+  recoveryRun.created_at = clock(70); recoveryRun.run_started_at = clock(71);
+  const recoveryJob = job(recoveryRun, 301, 'exact-head-review', 71, 90);
+  const recoveryReceipt = sealReadyReviewPayload({ schemaVersion: 'stephanos.protected-ready-review-recovery-receipt.v1',
+    identity: originalIdentity, recoveryRunId: 300, recoveryRunAttempt: 1, recoverySourceSha: currentMainSha,
+    failedReviewRunId: 200, failedReviewRunAttempt: 1, failedDiagnosticArtifactId: diagnosticMetadata.id,
+    failedDiagnosticArtifactDigest: diagnosticMetadata.digest, failedDiagnosticArchiveSha256: diagnostic.archiveSha256,
+    handoffRunId: 100, handoffArtifactId: 501, handoffArtifactDigest: f.proof.handoff.artifact.metadata.digest,
+    handoffPayloadSha256: f.proof.handoff.artifact.payload.payloadSha256, startedAt: clock(72), finishedAt: clock(85),
+    patchSha256: sha(f.input.patch), changedFilesSha256: sha(JSON.stringify(f.input.changedFiles)),
+    target: { currentMainSha, prBaseSha: originalIdentity.baseSha, sourceHead: originalIdentity.sourceHead,
+      sourceTree: originalIdentity.sourceTree, mergeable: true }, continuity,
+    engineReceipt: f.proof.review.artifact.payload.engineReceipt,
+    independentReviewMode: f.proof.review.artifact.payload.independentReviewMode,
+    qualification: f.proof.review.artifact.payload.qualification, escalationCommentId: 901,
+    escalationCommentSha256: sha(f.proof.escalationComment.body) });
+  const recoveryArtifact = fixtureArtifact(504, readyReviewRecoveryReceiptName(300),
+    READY_REVIEW_RECOVERY_RECEIPT_FILE, recoveryReceipt, recoveryRun, clock(86));
+  const recoveryCheck = { id: recoveryJob.id, name: 'exact-head-review', head_sha: currentMainSha,
+    status: 'completed', conclusion: 'success', app: { slug: 'github-actions', id: 15368 },
+    check_suite: { id: recoveryRun.check_suite_id }, details_url: recoveryJob.html_url };
+  const proof = { handoff: f.proof.handoff, failedReview: { run: f.proof.review.run,
+    definition: f.proof.review.definition, job: f.proof.review.job, lifecycleArtifacts: [],
+    diagnosticArtifacts: [diagnosticMetadata], diagnostic }, recovery: { run: recoveryRun,
+    definition: f.proof.review.definition, job: recoveryJob, check: recoveryCheck, artifact: recoveryArtifact },
+  independent: f.proof.independent, escalationComment: f.proof.escalationComment };
+  return { ...f, originalIdentity, identity: { ...originalIdentity, baseSha: currentMainSha }, currentMainSha,
+    continuity, diagnostic, recoveryReceipt, proof };
+}
 export function fixtureEnv(fixture, role = 'exact-head-review') {
   const producer = role === 'dispatch' || role === 'review-ready';
   return { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: fixture.identity.repository, GITHUB_REF: 'refs/heads/main',
@@ -187,6 +275,71 @@ export function fixtureTransport(fixture) {
   };
   return { api, download: async id => artifacts.get(id)?.zip, readThreadsPage, readExactHeadInput,
     threadPages, inventory, calls, runs, artifacts };
+}
+
+export function fixtureRecoveryTransport(fixture) {
+  const p = fixture.proof, calls = [], original = fixture.originalIdentity, current = fixture.identity;
+  const diagnosticZip = fixtureZipFiles({
+    'input.json': p.failedReview.diagnostic.input,
+    'ready-context.json': p.failedReview.diagnostic.readyContext,
+    'changed-files.txt': p.failedReview.diagnostic.changedFilesText,
+    'pull-request.patch': p.failedReview.diagnostic.patch,
+  });
+  p.failedReview.diagnostic.archiveSha256 = sha(diagnosticZip);
+  p.failedReview.diagnostic.metadata.size_in_bytes = diagnosticZip.length;
+  p.failedReview.diagnostic.metadata.digest = `sha256:${sha(diagnosticZip)}`;
+  p.failedReview.diagnosticArtifacts[0] = p.failedReview.diagnostic.metadata;
+  const receiptBody = { ...p.recovery.artifact.payload,
+    failedDiagnosticArtifactDigest: p.failedReview.diagnostic.metadata.digest,
+    failedDiagnosticArchiveSha256: p.failedReview.diagnostic.archiveSha256 };
+  delete receiptBody.payloadSha256;
+  p.recovery.artifact.payload = sealReadyReviewPayload(receiptBody);
+  p.recovery.artifact = fixtureArtifact(p.recovery.artifact.metadata.id, p.recovery.artifact.metadata.name,
+    READY_REVIEW_RECOVERY_RECEIPT_FILE, p.recovery.artifact.payload, p.recovery.run, clock(86));
+  const artifacts = new Map([[500, p.independent], [501, p.handoff.artifact],
+    [503, { ...p.failedReview.diagnostic, zip: diagnosticZip }], [504, p.recovery.artifact]]);
+  const runs = new Map([[90, p.independent.run], [100, p.handoff.run], [200, p.failedReview.run], [300, p.recovery.run]]);
+  const jobs = new Map([[90, p.independent.jobs], [100, [p.handoff.job, p.handoff.dispatchJob]],
+    [200, [p.failedReview.job]], [300, [p.recovery.job]]]);
+  const api = async path => {
+    calls.push(path);
+    let match;
+    if (path === `/pulls/${current.prNumber}`) return { ...fixture.state.pull, draft: false, mergeable: true,
+      base: { ...fixture.state.pull.base, sha: original.baseSha } };
+    if (path === '/git/ref/heads/main') return { object: { sha: current.baseSha } };
+    if (path === `/git/commits/${current.sourceHead}`) return fixture.state.commit;
+    if (path === '/actions/workflows/protected-workflow-dispatch-mailbox.yml') return p.handoff.definition;
+    if (path === '/actions/workflows/stephanos-exact-head-review.yml') return p.recovery.definition;
+    if (path === '/actions/workflows/independent-merge-security-review.yml') return p.independent.definition;
+    if (path.includes('/actions/workflows/stephanos-exact-head-review.yml/runs?event=workflow_dispatch')) {
+      const selected = path.includes(`head_sha=${original.baseSha}`) ? [p.failedReview.run] : [];
+      return { total_count: selected.length, workflow_runs: selected };
+    }
+    if (path.includes('/actions/workflows/stephanos-exact-head-review.yml/runs?event=issue_comment')) {
+      return { total_count: 1, workflow_runs: [p.recovery.run] };
+    }
+    if ((match = path.match(/^\/actions\/runs\/(\d+)$/))) return runs.get(Number(match[1]));
+    if ((match = path.match(/^\/actions\/runs\/(\d+)\/attempts\/1\/jobs\?/))) {
+      const value = jobs.get(Number(match[1])); return { total_count: value.length, jobs: value };
+    }
+    if ((match = path.match(/^\/actions\/runs\/(\d+)\/artifacts\?/))) {
+      const value = [...artifacts.values()].filter(artifact => artifact.metadata.workflow_run.id === Number(match[1]));
+      return { total_count: value.length, artifacts: value.map(artifact => artifact.metadata) };
+    }
+    if ((match = path.match(/^\/actions\/artifacts\/(\d+)$/))) return artifacts.get(Number(match[1]))?.metadata;
+    if (path === '/issues/comments/900') return p.handoff.ownerComment;
+    if (path === '/issues/comments/901') return p.escalationComment;
+    if (path === '/actions/runs/90/jobs?per_page=100') return { total_count: p.independent.jobs.length, jobs: p.independent.jobs };
+    if (path === `/check-runs/${p.recovery.job.id}`) return p.recovery.check;
+    if (path === `/compare/${original.baseSha}...${current.baseSha}`) return { status: 'ahead', ahead_by: 1, behind_by: 0,
+      total_commits: 1, base_commit: { sha: original.baseSha }, merge_base_commit: { sha: original.baseSha },
+      head_commit: { sha: current.baseSha }, commits: [{ sha: current.baseSha }],
+      files: fixture.continuity.changedFiles.map(filename => ({ filename })) };
+    if (path === `/commits/${current.baseSha}`) return { sha: current.baseSha, parents: [{ sha: original.baseSha }],
+      files: fixture.continuity.correctionFiles.map(filename => ({ filename })) };
+    throw new Error(`Unexpected recovery fixture API read: ${path}`);
+  };
+  return { api, download: async id => artifacts.get(id)?.zip, calls };
 }
 
 export function fixtureThreadPage(fixture, { nodes = [], totalCount = nodes.length, hasNextPage = false, endCursor = null } = {}) {
