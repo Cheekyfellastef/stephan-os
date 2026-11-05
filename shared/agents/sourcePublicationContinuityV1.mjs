@@ -43,8 +43,9 @@ function sameKeys(value, expected) {
 function safeCanonicalBranch(value) {
   const branch = text(value);
   return SAFE_BRANCH.test(branch)
-    && !['main', 'master'].includes(branch)
-    && !branch.startsWith('refs/')
+    && !['main', 'master', 'head', 'fetch_head', 'merge_head', 'revert_head', 'bisect_head', 'auto_merge', 'orig_head', 'cherry_pick_head', 'rebase_head'].includes(branch.toLowerCase())
+    && !['main/', 'master/'].some((prefix) => branch.toLowerCase().startsWith(prefix))
+    && !branch.toLowerCase().startsWith('refs/')
     && !branch.startsWith('/')
     && !branch.endsWith('/')
     && !branch.includes('..')

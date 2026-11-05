@@ -142,3 +142,32 @@ test('poisoned Git capability receipt preserves valid GitHub App fallback',()=>{
   assert.equal(r.selectedRoute,SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP);assert.equal(r.mutationAllowed,false);
  }
 });
+
+test('rejects Git pseudo-ref collisions and protected-branch namespace children', () => {
+  const blocked = [
+    'HEAD', 'head', 'FETCH_HEAD', 'MERGE_HEAD', 'REVERT_HEAD',
+    'BISECT_HEAD', 'AUTO_MERGE', 'ORIG_HEAD', 'CHERRY_PICK_HEAD',
+    'REBASE_HEAD', 'main', 'master', 'main/sub', 'main/sub/child',
+    'master/sub', 'master/sub/child', 'MAIN/sub', 'Master/sub', 'Refs/heads/main',
+  ];
+  for (const branch of blocked) {
+    const item = { ...artifact, branch };
+    const result = buildSourcePublicationContinuityV1({
+      workspace, artifact: item, nowUtc: NOW,
+      capabilities: { [SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT]: localGit({ branch }) },
+    });
+    assert.equal(result.blocker, SOURCE_PUBLICATION_BLOCKER.ARTIFACT_INVALID, branch);
+    assert.equal(result.routeReady, false, branch);
+    assert.equal(result.mutationAllowed, false, branch);
+  }
+  for (const branch of ['feature/HEAD', 'feature/FETCH_HEAD', 'agent/normal',
+    'mainstream/a', 'masterpiece/a', 'feature/foo.locking', 'agent/review-throughput-v1']) {
+    const item = { ...artifact, branch };
+    const result = buildSourcePublicationContinuityV1({
+      workspace, artifact: item, nowUtc: NOW,
+      capabilities: { [SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT]: localGit({ branch }) },
+    });
+    assert.equal(result.selectedRoute, SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT, branch);
+    assert.equal(result.mutationAllowed, false, branch);
+  }
+});
