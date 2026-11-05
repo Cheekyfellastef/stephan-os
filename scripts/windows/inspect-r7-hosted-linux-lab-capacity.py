@@ -57,6 +57,7 @@ def main():
         return 2
 
     import fcntl
+    import grp
 
     result = {
         "schemaVersion": SCHEMA,
@@ -69,6 +70,7 @@ def main():
         "runnerImageVersion": safe_text("ImageVersion"),
         "provenanceIsAuthority": False,
         "queryPrivilege": "ROOT" if os.geteuid() == 0 else "ORDINARY",
+        "existingKvmPrimaryGroupActive": None,
         "cpuCount": os.cpu_count(),
         "cpuVirtualizationFlagVisible": None,
         "availableMemoryBytes": None,
@@ -121,6 +123,11 @@ def main():
             result[key] = info.f_bavail * info.f_frsize
         except OSError:
             pass
+
+    try:
+        result["existingKvmPrimaryGroupActive"] = grp.getgrgid(os.getegid()).gr_name == "kvm"
+    except KeyError:
+        pass
 
     descriptor = None
     try:

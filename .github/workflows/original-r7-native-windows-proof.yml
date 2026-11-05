@@ -207,3 +207,17 @@ jobs:
           --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS,RUNNER_ARCH,ImageOS,ImageVersion,R7_LAB_SOURCE_HEAD,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT
           -- /usr/bin/timeout --signal=TERM --kill-after=5s 30s
           /usr/bin/python3 -I scripts/windows/inspect-r7-hosted-linux-lab-capacity.py
+      - name: Query fixed KVM metadata as runner with the existing kvm group
+        shell: bash
+        env:
+          R7_LAB_SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Reuse existing sudo/group policy for this one read-only process.
+          # No chmod, udev, usermod, group creation or persistent membership change.
+          if ! sudo -n --user=runner --group=kvm \
+            --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS,RUNNER_ARCH,ImageOS,ImageVersion,R7_LAB_SOURCE_HEAD,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT \
+            -- /usr/bin/timeout --signal=TERM --kill-after=5s 30s \
+            /usr/bin/python3 -I scripts/windows/inspect-r7-hosted-linux-lab-capacity.py
+          then
+            printf '%s\n' 'R7_EXISTING_KVM_GROUP_QUERY=UNKNOWN_NO_POLICY_CHANGED'
+          fi
