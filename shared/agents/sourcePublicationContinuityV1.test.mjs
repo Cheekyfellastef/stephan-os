@@ -102,14 +102,15 @@ test('repository instructions make route discovery mandatory and gh absence rout
 });
 
 test('Git-invalid refname components are not publication-ready',()=>{
- for(const branch of ['feature/foo.lock','feature/foo.','feature/./foo','feature/.hidden','feature/a/.','feature/a.lock/foo']){
+ for(const branch of ['feature/foo.lock','feature/foo.','feature/./foo','feature/.hidden','feature/a/.','feature/a.lock/foo',
+  'feature/task.LOCK','feature/task.Lock','feature/foo.LOCK/child','feature/foo.Lock/child','feature/foo.lOcK']){
   const a={...artifact,branch};
   const result=buildSourcePublicationContinuityV1({workspace,artifact:a,nowUtc:NOW,capabilities:{[SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT]:localGit({branch})}});
   assert.equal(result.blocker,SOURCE_PUBLICATION_BLOCKER.ARTIFACT_INVALID,branch);
   assert.equal(result.routeReady,false,branch);
   assert.equal(result.mutationAllowed,false);
  }
- for(const branch of ['feature/valid-thing','feature/foo.locking','feature/fix_v1']){
+ for(const branch of ['feature/valid-thing','feature/foo.locking','feature/fix_v1','feature/task.LOCKed']){
   const a={...artifact,branch};
   const result=buildSourcePublicationContinuityV1({workspace,artifact:a,nowUtc:NOW,capabilities:{[SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT]:localGit({branch})}});
   assert.equal(result.selectedRoute,SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT,branch);

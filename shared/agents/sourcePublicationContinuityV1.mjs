@@ -51,7 +51,7 @@ function safeCanonicalBranch(value) {
     && !branch.includes('..')
     && !branch.includes('//')
     && !branch.split('/').some((component) =>
-      component.startsWith('.') || component.endsWith('.') || component.endsWith('.lock'));
+      component.startsWith('.') || component.endsWith('.') || component.toLowerCase().endsWith('.lock'));
 }
 
 function exactArtifact(artifact = {}) {
