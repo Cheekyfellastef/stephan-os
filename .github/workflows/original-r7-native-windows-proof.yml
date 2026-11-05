@@ -14,6 +14,7 @@ on:
       - 'src/windows/Stephanos.OriginalR7DaclReadback/**'
       - 'src/windows/Stephanos.OriginalR7DaclReadback.Tests/**'
       - 'src/windows/Stephanos.OriginalR7CustodyWitness/**'
+      - 'src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests/**'
       - 'src/windows/Stephanos.OriginalR7*.Tests/**'
       - 'shared/agents/r7ProtectedOwner*.mjs'
       - 'shared/agents/r7NativeOwnerPeerPairingV1.*'
@@ -114,6 +115,11 @@ jobs:
           $child = Start-Process -FilePath $witnessExe -ArgumentList '--unapproved-ci-invocation' -NoNewWindow -Wait -PassThru
           $rejected = $child.ExitCode
           if ($rejected -ne 2) { throw "WITNESS_INTERACTIVE_ARGUMENT_DENIAL_NOT_PROVEN: $rejected" }
+      - name: Test current processing-claim binding and owned native scope
+        shell: pwsh
+        run: |
+          dotnet run --project src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests --configuration Release --disable-build-servers --warnaserror -p:UseSharedCompilation=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Execute owned native capability and peer preparation regressions
         shell: pwsh
         env:
