@@ -133,3 +133,129 @@ test('preserves absent enablement and execution observations as unknown', async 
   assert.equal(result.statusRecord.controllerActivity.observedEnabled, null);
   assert.equal(result.statusRecord.controllerActivity.executionState, 'UNKNOWN');
 });
+
+test('canonical publisher carries detached worker signature from original terminal receipt but never invents one', async () => {
+  const root = await workspace();
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const runId = 'run-signed-3050';
+  const proofRef = 'receipts/worker-goal3050-pickup';
+  const proofId = `controller-${controller.controllerId.slice(0, 12)}-run-${runId}`;
+  const timestampUtc = '2026-10-18T17:45:00.000Z';
+  const workerPickupAttestation = {
+    schemaVersion: 'stephanos.physical-worker-goal-pickup.v1',
+    publisherId: 'stephanos-physical-worker',
+    sourceHead: 'a'.repeat(40),
+    goalIssue: '#3050',
+    logicalLaneId: 'logical-goal-3050',
+    controllerId: controller.controllerId,
+    runId, proofId, proofRef, observedAtUtc: timestampUtc,
+    workerId: 'physical-worker-01',
+    // Syntactically present but NOT cryptographically valid. The publisher
+    // only preserves the bytes; Core's pinned-key verifier must reject it.
+    signatureBase64: 'A'.repeat(86) + '==',
+  };
+  const original = {
+    ...createSharedWorkspaceReceiptRecord({
+      receiptId: 'worker-goal3050-pickup', participantId: 'physical-worker-01',
+      timestampUtc, correlationId: runId, relatedIssue: '#3050',
+      proofRefs: [proofRef], receivedRecordId: 'physical-pickup-3050',
+      disposition: 'verified', summary: 'Worker claims physical pickup',
+    }),
+    workerPickupAttestation,
+  };
+  assert.equal((await writeAtomicJson(root, ['receipts', 'worker-goal3050-pickup.json'],
+    original, { repoRoot: process.cwd() })).ok, true);
+  const result = await publishControllerActivityV1({
+    controllerId: controller.controllerId, runId, timestampUtc,
+    observedEnabled: true, executionState: 'RUNNING', materialActionsSucceeded: 1,
+    proofRefs: [proofRef], materialLanes: [{
+      laneId: 'lane-3050', goalId: '#3050', workerId: 'physical-worker-01',
+      lastMaterialActionAtUtc: timestampUtc, proofRef,
+    }],
+  }, { workspaceRoot: root, repoRoot: process.cwd() });
+  assert.equal(result.ok, true, result.blocker);
+  assert.deepEqual(result.proofRecord.workerPickupAttestation, workerPickupAttestation);
+  assert.equal(Object.isFrozen(result.proofRecord.workerPickupAttestation), true);
+});
+
+test('canonical publisher rejects a detached worker signature bound to the wrong run', async () => {
+  const root = await workspace();
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const runId = 'run-signed-3050-b';
+  const proofRef = 'receipts/worker-goal3050-wrong-run';
+  const original = {
+    ...createSharedWorkspaceReceiptRecord({
+      receiptId: 'worker-goal3050-wrong-run', participantId: 'physical-worker-01',
+      timestampUtc: '2026-10-18T17:45:00.000Z', correlationId: runId,
+      relatedIssue: '#3050', proofRefs: [proofRef], receivedRecordId: 'physical-pickup-3050',
+      disposition: 'verified',
+    }),
+    workerPickupAttestation: {
+      schemaVersion: 'stephanos.physical-worker-goal-pickup.v1',
+      publisherId: 'stephanos-physical-worker', runId: 'different-run',
+      controllerId: controller.controllerId, proofRef,
+      sourceHead: 'a'.repeat(40), signatureBase64: 'A'.repeat(86) + '==',
+    },
+  };
+  assert.equal((await writeAtomicJson(root, ['receipts', 'worker-goal3050-wrong-run.json'],
+    original, { repoRoot: process.cwd() })).ok, true);
+  const result = await publishControllerActivityV1({
+    controllerId: controller.controllerId, runId,
+    materialActionsSucceeded: 1, proofRefs: [proofRef],
+  }, { workspaceRoot: root, repoRoot: process.cwd() });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CONTROLLER_ACTIVITY_WORKER_ATTESTATION_BINDING_INVALID');
+});
+
+test('accepts an existing .json-suffixed terminal receipt proof reference without appending another extension', async () => {
+  const root = await workspace();
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const timestampUtc = '2026-10-21T16:00:00.000Z';
+  const runId = 'run-explicit-json-receipt-1';
+  const receiptId = 'controller-run-explicit-json-1';
+  const proofRef = `receipts/${receiptId}.json`;
+  const receipt = createSharedWorkspaceReceiptRecord({
+    receiptId, participantId: 'physical-receipt-provider', timestampUtc,
+    correlationId: runId, relatedIssue: '#3050', proofRefs: [proofRef],
+    receivedRecordId: 'verified-source-change', disposition: 'verified',
+    summary: 'Existing terminal receipt, with explicit JSON filename.',
+  });
+  assert.equal((await writeAtomicJson(root, ['receipts', `${receiptId}.json`],
+    receipt, { repoRoot: process.cwd() })).ok, true);
+
+  const result = await publishControllerActivityV1({
+    controllerId: controller.controllerId, runId, timestampUtc,
+    observedEnabled: true, executionState: 'RUNNING',
+    materialActionsSucceeded: 1, proofRefs: [proofRef],
+  }, { workspaceRoot: root, repoRoot: process.cwd() });
+
+  assert.equal(result.ok, true, result.blocker);
+  assert.equal(result.proofWritten, true);
+  assert.deepEqual(result.statusRecord.controllerActivity.proofRefs, [proofRef]);
+  assert.ok(result.proofRecord.refs.includes(proofRef));
+});
+
+test('an ACCEPTED command receipt never qualifies as completed controller construction', async () => {
+  const root = await workspace();
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const runId = 'run-admission-is-not-material-work';
+  const receiptId = 'controller-admission-only';
+  const ref = `receipts/${receiptId}.json`;
+  const timestampUtc = '2026-10-21T17:00:00.000Z';
+  const pending = createSharedWorkspaceReceiptRecord({
+    receiptId, participantId: 'test', timestampUtc,
+    correlationId: runId, relatedIssue: '#3050', proofRefs: [ref],
+    receivedRecordId: 'dispatch-accepted', disposition: 'accepted',
+    summary: 'The scheduler accepted a command; no worker edit or commit happened.',
+  });
+  assert.equal((await writeAtomicJson(root, ['receipts', `${receiptId}.json`],
+    pending, { repoRoot: process.cwd() })).ok, true);
+  const published = await publishControllerActivityV1({
+    controllerId: controller.controllerId, runId, timestampUtc,
+    observedEnabled: true, executionState: 'RUNNING',
+    materialActionsSucceeded: 1, proofRefs: [ref],
+  }, { workspaceRoot: root, repoRoot: process.cwd() });
+  assert.equal(published.ok, false);
+  assert.equal(published.blocker, 'CONTROLLER_ACTIVITY_PROOF_REF_NOT_TERMINAL_PASS');
+  assert.equal(published.proofRecord, undefined);
+});

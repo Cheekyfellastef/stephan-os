@@ -51,6 +51,12 @@ import { projectCoreGateEvidenceV1, planCoreGateStewardV1 } from '../shared/runt
 import { executeCoreGateReadOnlyActionV1 } from '../shared/runtime/goalConveyorGateReadOnlyExecutionV1.mjs';
 import { readVerifiedStephanosNativeRoutingCandidate } from '../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
 import { publishSignedCoreGateEvidenceV1 } from '../shared/runtime/goalBuildGateSignedPublisherV1.mjs';
+import {
+  loadControllerActivityProofRecordsV1,
+  loadPinnedWorkerPickupVerifierV1,
+  signLogicalGoalBuildTruthV1,
+  verifyCleanCanonicalTrackedMainV1,
+} from '../shared/agents/logicalGoalPickupProofV1.mjs';
 import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
 import { readCanonicalMissionWorkerHeartbeatAgeMs, canonicalMissionWorkerEvidenceAllowsWork } from '../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
 import { createSovereignOuterBridgeSupervisorV1 } from './sovereign-outer-bridge-service.mjs';
@@ -301,9 +307,48 @@ async function publishControllerLaneTruth() {
       env: process.env,
     });
     const buildTruth = buildStephanosBuildTruth(status);
+    // Reuse the existing independently commissioned Core key. Never sign
+    // an unverified pickup reference; a missing key or raw proof stays UNKNOWN.
+    let pickupAttestation = null;
+    const canonicalTree = verifyCleanCanonicalTrackedMainV1(repoRoot);
+    if (canonicalTree.ok && canonicalTree.sourceHead === sourceHead
+      && currentHead() === sourceHead && Array.isArray(buildTruth.goals)) {
+      try {
+        const observed = await loadControllerActivityProofRecordsV1({ workspaceRoot });
+        if (!observed.ok) throw new Error(observed.blocker);
+        // Core's signature is not the independent physical-worker witness.
+        // The protected worker key must be DIFFERENT from Core's key, and
+        // must be pinned outside the writable checkout and workspace.
+        const workerTrust = await loadPinnedWorkerPickupVerifierV1({
+          localStateRoot, env: process.env,
+        });
+        if (!workerTrust.ok) throw new Error(workerTrust.blocker);
+        const keyFile = resolve(localStateRoot, 'keys', 'stephanos-goal-build-gates-private.pem');
+        const meta = await lstat(keyFile);
+        if (!meta.isFile() || meta.isSymbolicLink() || meta.size > 8192) throw new Error('UNCOMMISSIONED_CORE_KEY');
+        const signingPrivateKeyPem = await readFile(keyFile, 'utf8');
+        const finalCanonicalTree = verifyCleanCanonicalTrackedMainV1(repoRoot);
+        if (!finalCanonicalTree.ok || finalCanonicalTree.sourceHead !== sourceHead) {
+          throw new Error(finalCanonicalTree.blocker || 'LOGICAL_GOAL_SOURCE_CHANGED_DURING_OBSERVATION');
+        }
+        const signed = signLogicalGoalBuildTruthV1({
+          buildTruth, sourceHead, proofRecords: observed.records,
+          signingPrivateKeyPem,
+          trustedWorkerPublicKeyPem: workerTrust.workerPublicKeyPem,
+          trustedWorkerPublicKeySha256: workerTrust.workerPublicKeySha256,
+          corePublicKeySha256: workerTrust.corePublicKeySha256,
+          corePublicKeyPem: workerTrust.corePublicKeyPem,
+        });
+        if (signed.ok) pickupAttestation = signed.attestation;
+      } catch {
+        // Preserve unsigned diagnostics. Consumers MUST fail closed.
+        pickupAttestation = null;
+      }
+    }
     const buildTruthPublication = await publishSharedWorkspaceStephanosBuildTruth(buildTruth, {
       repoRoot,
       env: process.env,
+      pickupAttestation,
     });
     const ok = lanePublication?.ok === true && buildTruthPublication?.ok === true;
     lastControllerLanePublicationVerdict = ok

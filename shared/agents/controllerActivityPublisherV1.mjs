@@ -27,10 +27,13 @@ function list(value) {
 function proofRefSegments(ref) {
   const normalized = text(ref).replace(/\\/g, '/');
   const match = normalized.match(/^(proof|receipts)\/([A-Za-z0-9][A-Za-z0-9._-]{0,80})$/);
-  return match ? [match[1], `${match[2]}.json`] : null;
+  if (!match) return null;
+  const filename = match[2];
+  return [match[1], filename.endsWith('.json') ? filename : `${filename}.json`];
 }
 
-async function verifyProofRefs(proofRefs, { workspaceRoot, repoRoot, runId }) {
+async function verifyProofRefs(proofRefs, { workspaceRoot, repoRoot, runId, controllerId }) {
+  const signedPickupCandidates = [];
   for (const ref of proofRefs) {
     const segments = proofRefSegments(ref);
     if (!segments) return fail('CONTROLLER_ACTIVITY_PROOF_REF_UNSUPPORTED');
@@ -42,10 +45,29 @@ async function verifyProofRefs(proofRefs, { workspaceRoot, repoRoot, runId }) {
     if (!validation.valid) return fail('CONTROLLER_ACTIVITY_PROOF_REF_INVALID');
     if (text(record.correlationId) !== runId) return fail('CONTROLLER_ACTIVITY_PROOF_REF_RUN_MISMATCH');
     const pass = text(record.kind) === 'stephanos.shared_workspace.proof' && text(record.status).toUpperCase() === 'PASS';
-    const receipt = text(record.kind) === 'stephanos.shared_workspace.record.receipt' && ['accepted','complete','completed','success','succeeded','verified'].includes(text(record.disposition).toLowerCase());
+    // ACCEPTED is queue admission, never completed work. Only terminal receipts qualify.
+    const receipt = text(record.kind) === 'stephanos.shared_workspace.record.receipt' && ['complete','completed','success','succeeded','verified'].includes(text(record.disposition).toLowerCase());
     if (!pass && !receipt) return fail('CONTROLLER_ACTIVITY_PROOF_REF_NOT_TERMINAL_PASS');
+    // Only a worker-origin already persisted terminal receipt can supply
+    // detached worker signature bytes. Never accept a caller-controlled
+    // controllerActivity.workerPickupAttestation field from the mailbox.
+    const candidate = record?.workerPickupAttestation;
+    if (candidate !== undefined) {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)
+        || candidate.schemaVersion !== 'stephanos.physical-worker-goal-pickup.v1'
+        || candidate.publisherId !== 'stephanos-physical-worker'
+        || text(candidate.runId) !== runId
+        || text(candidate.controllerId) !== controllerId
+        || text(candidate.proofRef) !== ref
+        || !/^[a-f0-9]{40}$/.test(text(candidate.sourceHead))
+        || !/^[A-Za-z0-9+/]{86}==$/.test(text(candidate.signatureBase64))) {
+        return fail('CONTROLLER_ACTIVITY_WORKER_ATTESTATION_BINDING_INVALID');
+      }
+      signedPickupCandidates.push(candidate);
+    }
   }
-  return Object.freeze({ ok: true });
+  if (signedPickupCandidates.length > 1) return fail('CONTROLLER_ACTIVITY_WORKER_ATTESTATION_AMBIGUOUS');
+  return Object.freeze({ ok: true, workerPickupAttestation: signedPickupCandidates[0] || null });
 }
 
 function canonicalController(controllerId) {
@@ -92,9 +114,9 @@ export async function publishControllerActivityV1(input = {}, options = {}) {
   let proofRecord = null;
   let proofWrite = null;
   if (proofRequired) {
-    const verification = await verifyProofRefs(proofRefs, { workspaceRoot, repoRoot, runId });
+    const verification = await verifyProofRefs(proofRefs, { workspaceRoot, repoRoot, runId, controllerId });
     if (!verification.ok) return verification;
-    proofRecord = createControllerActivityProofRecord({
+    const proofInput = {
       controllerId,
       runId,
       timestampUtc,
@@ -111,7 +133,15 @@ export async function publishControllerActivityV1(input = {}, options = {}) {
         input.proofSummary,
         `Verified ${materialActionsSucceeded} material action(s) for ${canonical.title} run ${runId}.`,
       ),
-    });
+    };
+    const expectedProof = createControllerActivityProofRecord(proofInput);
+    const suppliedPickup = verification.workerPickupAttestation;
+    if (suppliedPickup && text(suppliedPickup.proofId) !== expectedProof.proofId) {
+      return fail('CONTROLLER_ACTIVITY_WORKER_PROOF_ID_MISMATCH');
+    }
+    proofRecord = suppliedPickup
+      ? createControllerActivityProofRecord({ ...proofInput, workerPickupAttestation: suppliedPickup })
+      : expectedProof;
     proofWrite = await writeAtomicJson(
       workspaceRoot,
       ['proof', `${proofRecord.proofId}.json`],

@@ -85,6 +85,18 @@ function isBoundedCoreLaneTelemetry(record, key, value) {
 }
 
 function isAllowedBuildTruthTelemetryField(root, path, key) {
+  // A narrowly typed, detached, public-key-verifiable worker statement also
+  // carries a logicalLaneId. Do not treat this allowlist as permission for
+  // arbitrary log/session/secret fields or self-claimed worker authority.
+  if (key === 'logicalLaneId'
+    && root?.schemaVersion === SHARED_WORKSPACE_RECORD_SCHEMA_VERSION
+    && [SHARED_WORKSPACE_RECORD_KINDS.RECEIPT, SHARED_WORKSPACE_RECORD_KINDS.PROOF].includes(root.kind)
+    && path.length === 1 && path[0] === 'workerPickupAttestation'
+    && root.workerPickupAttestation?.schemaVersion === 'stephanos.physical-worker-goal-pickup.v1'
+    && root.workerPickupAttestation?.publisherId === 'stephanos-physical-worker'
+    && /^logical-goal-[1-9][0-9]*$/.test(String(root.workerPickupAttestation?.logicalLaneId || ''))) {
+    return true;
+  }
   return key === 'logicalLaneId'
     && root?.schemaVersion === SHARED_WORKSPACE_RECORD_SCHEMA_VERSION
     && root?.kind === SHARED_WORKSPACE_RECORD_KINDS.STATUS
