@@ -6,10 +6,19 @@ export function resolveAgentSurfaceMode(surfaceParam = '') {
   const normalized = String(surfaceParam || '').trim().toLowerCase();
   if (normalized === 'cockpit') return 'cockpit';
   if (normalized === 'agents') return 'agents';
+  if (normalized === 'flywheel') return 'flywheel';
   if (normalized === 'mission-console') return 'mission-console';
   if (normalized === 'openclaw') return 'openclaw';
   if (normalized === 'capability-radar') return 'capability-radar';
   return 'mission-control';
+}
+
+// A tile mounted by the canonical workspace shell keeps its identity even if
+// browser history or a runtime reload drops the transient ?surface= query.
+// Only the shell-provided frame identity can override a query route.
+export function resolveWorkspaceBoundSurfaceMode(surfaceParam = '', workspaceId = '') {
+  if (String(workspaceId || '').trim().toLowerCase() === 'flywheel') return 'flywheel';
+  return resolveAgentSurfaceMode(surfaceParam);
 }
 
 export function buildAgentSurfaceProjection({ finalAgentView = {}, surfaceMode = 'mission-control' } = {}) {

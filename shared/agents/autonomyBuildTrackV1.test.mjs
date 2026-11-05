@@ -19,6 +19,35 @@ test('heartbeat track shows safe idle before an eligible goal exists', () => {
   assert.equal(track.autonomousLoopProven, false);
 });
 
+test('canonical programme HOLD is exposed instead of masquerading as an empty goal queue', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-10-08T04:00:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'PARKED_BLOCKERS_ONLY',
+      programmeStatus: 'HOLD',
+      programmeBlockers: ['active-lane-execution-receipt-missing', 'critical-backlog-active-lane-status-mismatch'],
+    },
+    sourceBuild: { processed: false, reason: 'queue-empty' },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'HEARTBEAT').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'ELIGIBLE_GOAL').state, 'BLOCKED');
+  assert.equal(track.currentGate, 'ELIGIBLE_GOAL');
+  assert.equal(track.blocker, 'PROGRAMME_ADMISSION_HOLD:active-lane-execution-receipt-missing');
+  assert.match(track.exactNextAction, /canonical programme blocker/);
+  assert.equal(track.autonomousLoopProven, false);
+});
+
+test('ordinary empty queue retains WAITING rather than borrowing programme HOLD', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-10-08T04:00:01.000Z',
+    conveyorResult: { ok: true, classification: 'PARKED_BLOCKERS_ONLY', programmeStatus: 'READY', programmeBlockers: [] },
+  });
+  assert.equal(track.currentGate, 'ELIGIBLE_GOAL');
+  assert.equal(track.currentState, 'WAITING');
+  assert.equal(track.blocker, '');
+});
+
 test('heartbeat track proves select claim source test and terminal receipt when a real build succeeds', () => {
   const track = projectHeartbeatAutonomyBuildTrack({
     timestampUtc: '2026-09-15T12:01:00.000Z',
@@ -229,6 +258,81 @@ test('trace keeps pre-provider validation failures on the worker stage', () => {
 });
 
 
+test('unidentified builder exception is a blocked claim without borrowing the conveyor mission identity', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:06:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2304-elastic-goal', issueNumber: 2304 } },
+      elasticIgnition: { ok: true, dispatchCount: 1, sourceRevision: 'f'.repeat(40) },
+    },
+    sourceBuild: {
+      processed: false,
+      success: false,
+      missionId: '',
+      actionId: '',
+      failureStage: 'WORKER',
+      error: 'provider-process-disconnected',
+      finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION',
+    },
+  });
+
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'BLOCKED');
+  assert.equal(track.currentGate, 'CLAIM');
+  assert.equal(track.blocker, 'provider-process-disconnected');
+  assert.equal(track.missionId, '');
+  assert.equal(track.issueNumber, null);
+});
+
+test('orphan recovery hold with exact mission identity is projected as a worker blocker', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:07:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2305-elastic-goal', issueNumber: 2305 } },
+      elasticIgnition: { ok: true, dispatchCount: 1, sourceRevision: '1'.repeat(40) },
+    },
+    sourceBuild: {
+      processed: false,
+      success: false,
+      missionId: 'critical-2305-elastic-goal',
+      reason: 'MISSION_WORKER_ORPHAN_RECONCILIATION_REQUIRED:progress',
+      finalVerdict: 'PROVIDER_NEUTRAL_ORPHAN_RECOVERY_HOLD',
+    },
+  });
+
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'WORKER').state, 'BLOCKED');
+  assert.equal(track.currentGate, 'WORKER');
+  assert.equal(track.blocker, 'MISSION_WORKER_ORPHAN_RECONCILIATION_REQUIRED:progress');
+  assert.equal(track.missionId, 'critical-2305-elastic-goal');
+});
+
+test('quarantined pending queue recovery is projected as a claim blocker rather than queue-empty waiting', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:08:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2306-elastic-goal', issueNumber: 2306 } },
+    },
+    sourceBuild: {
+      processed: false,
+      success: false,
+      failureStage: 'CLAIM',
+      reason: 'MISSION_WORKER_PENDING_ITEM_QUARANTINED',
+      finalVerdict: 'PROVIDER_NEUTRAL_PENDING_QUEUE_RECOVERY',
+    },
+  });
+
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'BLOCKED');
+  assert.equal(track.currentGate, 'CLAIM');
+  assert.equal(track.blocker, 'MISSION_WORKER_PENDING_ITEM_QUARANTINED');
+  assert.equal(track.missionId, '');
+});
+
 function successfulTailHeartbeat(timestampUtc = '2026-09-15T12:01:00.000Z') {
   return projectHeartbeatAutonomyBuildTrack({
     timestampUtc,
@@ -388,4 +492,119 @@ test('workspace tail ignores controller reconciliation that predates the exact m
   });
   assert.equal(track.gates.find((gate) => gate.id === 'RELEASE').state, 'PASS');
   assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').state, 'WAITING');
+});
+
+
+test('matching running incumbent keeps CLAIM waiting for its original terminal outcome', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-11-01T15:37:41.238Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'WAIT_ACTIVE_MISSION',
+      elasticAdmission: {
+        selectedMission: {
+          missionId: 'critical-1574-elastic-goal',
+          issueNumber: 1574,
+          dispatch: { status: 'running' },
+        },
+        activeMissions: [{
+          missionId: 'critical-1574-elastic-goal',
+          issueNumber: 1574,
+          dispatch: { status: 'running' },
+        }],
+      },
+      elasticIgnition: {
+        ok: true,
+        dispatchCount: 0,
+        classification: 'ELASTIC_EXTERNAL_BUILD_DISPATCH_NOT_REQUIRED',
+      },
+    },
+    sourceBuild: { processed: false, reason: 'CANONICAL_MISSION_WORKER_SOURCE_PICKUP_PENDING' },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'WAITING');
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').reason, 'INCUMBENT_DISPATCH_TERMINAL_OUTCOME_UNPROVEN');
+  assert.equal(track.gates.find((gate) => gate.id === 'WORKER').state, 'NOT_REACHED');
+  assert.equal(track.currentGate, 'CLAIM');
+  assert.equal(track.currentReason, 'INCUMBENT_DISPATCH_TERMINAL_OUTCOME_UNPROVEN');
+  assert.match(track.exactNextAction, /incumbent ORIGINAL processing claim/i);
+  assert.match(track.exactNextAction, /duplicate dispatch/i);
+  assert.equal(track.autonomousLoopProven, false);
+});
+
+test('unrelated running mission cannot satisfy selected mission claim projection', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-11-01T15:37:42.238Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'WAIT_ACTIVE_MISSION',
+      elasticAdmission: {
+        selectedMission: { missionId: 'critical-1574-elastic-goal', issueNumber: 1574 },
+        activeMissions: [{
+          missionId: 'critical-2963-elastic-goal',
+          issueNumber: 2963,
+          dispatch: { status: 'running' },
+        }],
+      },
+      elasticIgnition: {
+        ok: true,
+        dispatchCount: 0,
+        classification: 'ELASTIC_EXTERNAL_BUILD_DISPATCH_NOT_REQUIRED',
+      },
+    },
+    sourceBuild: { processed: false, reason: 'CANONICAL_MISSION_WORKER_SOURCE_PICKUP_PENDING' },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'WAITING');
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').reason, 'SOURCE_CLAIM_NOT_OBSERVED');
+  assert.equal(track.currentGate, 'CLAIM');
+});
+
+test('no incumbent mission maps no-new-dispatch to ordinary source-claim waiting', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-11-01T15:37:43.238Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: {
+        selectedMission: { missionId: 'critical-1574-elastic-goal', issueNumber: 1574 },
+        activeMissions: [],
+      },
+      elasticIgnition: {
+        ok: true,
+        dispatchCount: 0,
+        classification: 'ELASTIC_EXTERNAL_BUILD_DISPATCH_NOT_REQUIRED',
+      },
+    },
+    sourceBuild: { processed: false, reason: 'CANONICAL_MISSION_WORKER_SOURCE_PICKUP_PENDING' },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'WAITING');
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').reason, 'SOURCE_CLAIM_NOT_OBSERVED');
+});
+
+test('real held elastic dispatch remains a typed claim blocker', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-11-01T15:37:44.238Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'WAIT_ACTIVE_MISSION',
+      elasticAdmission: {
+        selectedMission: { missionId: 'critical-1574-elastic-goal', issueNumber: 1574 },
+        activeMissions: [{
+          missionId: 'critical-1574-elastic-goal',
+          issueNumber: 1574,
+          dispatch: { status: 'running' },
+        }],
+      },
+      elasticIgnition: {
+        ok: false,
+        dispatchCount: 0,
+        classification: 'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD',
+        held: [{ missionId: 'critical-1574-elastic-goal', reason: 'SOURCE_REVISION_REQUIRED' }],
+      },
+    },
+    sourceBuild: { processed: false, reason: 'CANONICAL_MISSION_WORKER_SOURCE_PICKUP_PENDING' },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'BLOCKED');
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').reason, 'SOURCE_REVISION_REQUIRED');
+  assert.equal(track.currentGate, 'CLAIM');
+  assert.equal(track.blocker, 'SOURCE_REVISION_REQUIRED');
 });

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Stephanos.SeedParallelCustody/Stephanos.SeedParallelCustody.csproj" />
+    <Content Include="../../../shared/project/seedCanopyCanonicalInventoryV1.json"
+      Link="fixtures/seedCanopyCanonicalInventoryV1.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../../shared/project/fixtures/seedCanopyCanonicalInventoryV1.vectors.json"
+      Link="fixtures/seedCanopyCanonicalInventoryV1.vectors.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

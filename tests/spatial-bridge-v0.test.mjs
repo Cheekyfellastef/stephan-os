@@ -29,7 +29,7 @@ test('spatial bridge is launcher discoverable and explicitly read-only', () => {
   assert.equal(manifest.name, 'Stephanos Spatial Bridge');
   assert.equal(manifest.entry, 'index.html');
   assert.equal(manifest.authority, 'read-only');
-  assert.equal(manifest.implementationStage, 'v0-flat-prototype-plus-holodeck-baseline-source');
+  assert.equal(manifest.implementationStage, 'v1-spatial-workspace-starting-chamber-source');
   assert.equal(manifest.aiAddressable, false);
   assert.equal(manifest.questDistribution.preferredType, 'immersive-webxr-pwa');
   assert.equal(manifest.questDistribution.preferredChannel, 'private-alpha-release-channel');
@@ -76,7 +76,7 @@ test('Quest entry meets the source-level PWA and Holodeck baseline contract', ()
   const holodeckModule = readFileSync(holodeckModulePath, 'utf8');
   const serviceWorker = readFileSync(serviceWorkerPath, 'utf8');
   const offline = readFileSync(offlinePath, 'utf8');
-  assert.equal(pwa.name, 'Stephanos Spatial Bridge');
+  assert.equal(pwa.name, 'Stephanos Spatial Workspace');
   assert.equal(pwa.short_name, 'Stephanos');
   assert.equal(pwa.start_url, './quest-entry.html');
   assert.equal(pwa.scope, './');
@@ -88,6 +88,7 @@ test('Quest entry meets the source-level PWA and Holodeck baseline contract', ()
   assert.match(holodeckModule, /isSessionSupported/);
   assert.match(entry, /serviceWorker\.register\('\.\/service-worker\.js'/);
   assert.match(serviceWorker, /holodeck-baseline-v0\.mjs/);
+  assert.match(serviceWorker, /holodeck-room-v1\.mjs/);
   assert.match(serviceWorker, /caches\.open\(CACHE_NAME\)/);
   assert.match(serviceWorker, /event\.request\.method !== 'GET'/);
   assert.match(serviceWorker, /GENERATED_PACKAGING_ASSETS/);

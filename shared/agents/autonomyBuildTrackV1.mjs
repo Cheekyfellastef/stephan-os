@@ -23,7 +23,32 @@ function text(value, fallback = '') { const normalized = String(value ?? '').tri
 function freezeGate(id, state, reason = '') { return Object.freeze({ id, state, reason: text(reason) }); }
 function issueFromMission(mission = {}) { const direct=Number(mission.issueNumber||mission.issue||0); if(Number.isSafeInteger(direct)&&direct>0)return direct; const parsed=Number(text(mission.missionId).match(/^critical-([1-9]\d*)-elastic-goal/i)?.[1]||0); return Number.isSafeInteger(parsed)&&parsed>0?parsed:null; }
 function selectedMission(conveyor={}) { return conveyor?.elasticAdmission?.selectedMission||conveyor?.projection?.activeMission||conveyor?.missionRecord||null; }
-function dispatchFacts(conveyor={}) { const elastic=conveyor?.elasticIgnition||{}, active=conveyor?.activeMissionIgnition||{}; const dispatched=Number(elastic.dispatchCount||0)>0||active.published===true||active.classification==='CRITICAL_ACTIVE_MISSION_ALREADY_RUNNING'; const blocked=elastic.ok===false||active.ok===false; const reason=(Array.isArray(elastic.held)&&elastic.held.length?elastic.held.map(i=>text(i?.reason)).filter(Boolean).join(','):'')||(Array.isArray(active.blockers)?active.blockers.map(text).filter(Boolean).join(','):'')||text(elastic.classification||active.classification); return Object.freeze({dispatched,blocked,reason}); }
+function dispatchFacts(conveyor={}) {
+  const elastic=conveyor?.elasticIgnition||{}, active=conveyor?.activeMissionIgnition||{};
+  const selected=selectedMission(conveyor);
+  const selectedMissionId=text(selected?.missionId).toLowerCase();
+  const activeMissions=Array.isArray(conveyor?.elasticAdmission?.activeMissions)
+    ? conveyor.elasticAdmission.activeMissions : [];
+  const incumbent=selectedMissionId
+    ? activeMissions.find(item=>text(item?.missionId).toLowerCase()===selectedMissionId)
+    : null;
+  const incumbentRunning=text(incumbent?.dispatch?.status).toLowerCase()==='running';
+  const noNewExternalDispatch=elastic.ok===true
+    && text(elastic.classification)==='ELASTIC_EXTERNAL_BUILD_DISPATCH_NOT_REQUIRED'
+    && Number(elastic.dispatchCount||0)===0;
+  const dispatched=Number(elastic.dispatchCount||0)>0
+    || active.published===true
+    || (active.classification==='CRITICAL_ACTIVE_MISSION_ALREADY_RUNNING'&&!noNewExternalDispatch);
+  const blocked=elastic.ok===false||active.ok===false;
+  const heldReason=(Array.isArray(elastic.held)&&elastic.held.length
+    ? elastic.held.map(i=>text(i?.reason)).filter(Boolean).join(','):'')
+    || (Array.isArray(active.blockers)?active.blockers.map(text).filter(Boolean).join(','):'');
+  const reason=heldReason
+    || (noNewExternalDispatch
+      ? incumbentRunning ? 'INCUMBENT_DISPATCH_TERMINAL_OUTCOME_UNPROVEN' : 'SOURCE_CLAIM_NOT_OBSERVED'
+      : text(elastic.classification||active.classification));
+  return Object.freeze({dispatched,blocked,reason});
+}
 function firstActionableGate(gates=[]) { return gates.find(g=>g.state===AUTONOMY_BUILD_TRACK_STATES.BLOCKED)||gates.find(g=>g.state===AUTONOMY_BUILD_TRACK_STATES.WAITING)||gates.find(g=>g.state===AUTONOMY_BUILD_TRACK_STATES.UNKNOWN)||gates.find(g=>g.state===AUTONOMY_BUILD_TRACK_STATES.NOT_REACHED)||null; }
 function lastPassedGate(gates=[]) { return [...gates].reverse().find(g=>g.state===AUTONOMY_BUILD_TRACK_STATES.PASS)?.id||''; }
 
@@ -34,10 +59,14 @@ function gateGuidance(gate={}) {
     SYNC:['Battle Bridge source sync is not proven'+detail,'Repair or refresh the canonical GitHub sync before diagnosing downstream build stages.'],
     CONTROL_PLANE:['The Stephanos control plane is not proven ready'+detail,'Repair the control-plane/runtime refresh blocker, then rerun the existing heartbeat.'],
     HEARTBEAT:['The autonomous goal heartbeat is blocked'+detail,'Inspect the heartbeat/conveyor failure. Do not infer scheduler or worker health from later stale records.'],
-    ELIGIBLE_GOAL:['No eligible goal reached the autonomous conveyor'+detail,'Inspect canonical goal discovery, admission and eligibility. Confirm an open goal becomes scheduler-visible.'],
+    ELIGIBLE_GOAL: reason.startsWith('PROGRAMME_ADMISSION_HOLD:')
+      ? ['Canonical programme HOLD prevents goal admission'+detail,'Reconcile the canonical programme blocker and its exact lane/lease/receipt evidence before re-admission. Shared Workspace READY is not execution authority.']
+      : ['No eligible goal reached the autonomous conveyor'+detail,'Inspect canonical goal discovery, admission and eligibility. Confirm an open goal becomes scheduler-visible.'],
     SELECT:['A goal is visible but scheduler selection is not proven'+detail,'Inspect the scheduler decision and contradictions for the visible goal.'],
     MISSION:['The scheduler selected work but no durable mission is visible'+detail,'Inspect mission creation/publication and mission-store persistence for the selected goal.'],
-    CLAIM:['A mission exists but no source claim/dispatch is proven'+detail,'Inspect lease/claim creation and the provider-neutral dispatch handoff for this mission.'],
+    CLAIM: reason==='INCUMBENT_DISPATCH_TERMINAL_OUTCOME_UNPROVEN'
+      ? ['An incumbent mission is already running but its claim/terminal outcome is not proven'+detail,'Reconcile the incumbent ORIGINAL processing claim and authentic terminal result/receipt. Do not create a duplicate dispatch or delete/release its lease.']
+      : ['A mission exists but no source claim/dispatch is proven'+detail,'Inspect lease/claim creation and the provider-neutral dispatch handoff for this mission.'],
     WORKER:['A claim exists but the source worker has not picked it up'+detail,'Inspect the Mission Worker heartbeat, queue claim and worker acceptance for this mission.'],
     PROVIDER:['The worker reached provider execution but the provider did not complete'+detail,'Inspect the selected provider/adapter result and route around unavailable capacity without changing mission identity.'],
     SOURCE_CHANGED:['Provider execution did not produce a valid source change'+detail,'Inspect the bounded source-builder failure and preserve the exact mission/branch/worktree identity.'],
@@ -86,13 +115,20 @@ export function projectHeartbeatAutonomyBuildTrack({conveyorResult=null,sourceBu
   const selectedItemId=text(conveyor?.projection?.selectedItem?.itemId);
   const remainingItems=Array.isArray(conveyor?.projection?.remainingItemIds)?conveyor.projection.remainingItemIds:[];
   const observed=Boolean(selectedItemId||missionId||remainingItems.length||conveyor?.classification==='ELASTIC_GOAL_MISSION_SELECTED'||conveyor?.classification==='WAIT_ACTIVE_MISSION');
+  const programmeAdmissionHeld=!observed&&text(conveyor?.programmeStatus).toUpperCase()==='HOLD';
+  const programmeHoldBlocker=(Array.isArray(conveyor?.programmeBlockers)?conveyor.programmeBlockers:[]).map(text).find(Boolean)||'UNSPECIFIED_CANONICAL_PROGRAMME_BLOCKER';
   const selected=Boolean(selectedItemId||missionId||conveyor?.classification==='ELASTIC_GOAL_MISSION_SELECTED'||conveyor?.classification==='WAIT_ACTIVE_MISSION');
   const missionCreated=Boolean(missionId);
   const issueNumber=issueFromMission(mission||conveyor?.missionRecord||{});
   const dispatch=dispatchFacts(conveyor);
   const processed=sourceBuild?.processed===true;
   const success=processed&&sourceBuild?.success===true;
-  const buildBlocked=processed&&sourceBuild?.success===false;
+  const typedUnprocessedBlocker=[
+    'PROVIDER_NEUTRAL_ORPHAN_RECOVERY_HOLD',
+    'PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION',
+    'PROVIDER_NEUTRAL_PENDING_QUEUE_RECOVERY',
+  ].includes(text(sourceBuild?.finalVerdict));
+  const buildBlocked=(processed&&sourceBuild?.success===false)||typedUnprocessedBlocker;
   const adapter=text(sourceBuild?.providerAdapter||sourceBuild?.adapter);
   const providerInvoked=typeof sourceBuild?.providerInvoked==='boolean'
     ? sourceBuild.providerInvoked
@@ -103,19 +139,30 @@ export function projectHeartbeatAutonomyBuildTrack({conveyorResult=null,sourceBu
   const failureStage=text(sourceBuild?.failureStage);
   const sourceHead=text(conveyor?.elasticIgnition?.sourceRevision||conveyor?.activeMissionIgnition?.sourceRevision||sourceBuild?.sourceHead);
   const actionId=text(sourceBuild?.actionId);
+  const exactBuildMissionId=text(sourceBuild?.missionId);
+  const hasExactBuildIdentity=Boolean(exactBuildMissionId||actionId);
   const conveyorBlocker=text(conveyor?.blocker||conveyor?.classification||conveyor?.finalVerdict);
   const buildReason=text(sourceBuild?.error||sourceBuild?.reason||sourceBuild?.finalVerdict);
-  const claimPass=dispatch.dispatched||processed;
-  const workerPreProviderBlocked=buildBlocked&&failureStage==='WORKER_PRE_PROVIDER';
-  const providerBlocked=buildBlocked&&(failureStage==='PROVIDER'||(providerInvoked&&!providerCompleted));
-  const sourceBlocked=buildBlocked&&!workerPreProviderBlocked&&!providerBlocked;
+  const claimBlocked=typedUnprocessedBlocker&&(
+    text(sourceBuild?.finalVerdict)==='PROVIDER_NEUTRAL_PENDING_QUEUE_RECOVERY'
+    || !hasExactBuildIdentity
+  );
+  const workerPreProviderBlocked=buildBlocked&&!claimBlocked&&(
+    failureStage==='WORKER_PRE_PROVIDER'
+    || failureStage==='WORKER'
+    || failureStage==='WORKER_UNKNOWN'
+    || (!processed&&!failureStage)
+  );
+  const claimPass=dispatch.dispatched||processed||workerPreProviderBlocked;
+  const providerBlocked=buildBlocked&&!claimBlocked&&!workerPreProviderBlocked&&(failureStage==='PROVIDER'||(providerInvoked&&!providerCompleted));
+  const sourceBlocked=buildBlocked&&!claimBlocked&&!workerPreProviderBlocked&&!providerBlocked;
 
   const gates=[
     freezeGate('HEARTBEAT',conveyorOk?'PASS':'BLOCKED',conveyorOk?'':conveyorBlocker),
-    freezeGate('ELIGIBLE_GOAL',observed?'PASS':(conveyorOk?'WAITING':'NOT_REACHED'),observed?'':'NO_ELIGIBLE_GOAL_OBSERVED'),
+    freezeGate('ELIGIBLE_GOAL',observed?'PASS':programmeAdmissionHeld?'BLOCKED':(conveyorOk?'WAITING':'NOT_REACHED'),observed?'':programmeAdmissionHeld?`PROGRAMME_ADMISSION_HOLD:${programmeHoldBlocker}`:'NO_ELIGIBLE_GOAL_OBSERVED'),
     freezeGate('SELECT',selected?'PASS':observed?'WAITING':'NOT_REACHED',selected?'':'SCHEDULER_SELECTION_NOT_OBSERVED'),
     freezeGate('MISSION',missionCreated?'PASS':selected?'WAITING':'NOT_REACHED',missionCreated?'':'MISSION_NOT_CREATED'),
-    freezeGate('CLAIM',claimPass?'PASS':missionCreated&&dispatch.blocked?'BLOCKED':missionCreated?'WAITING':'NOT_REACHED',claimPass?'':dispatch.reason||'SOURCE_CLAIM_NOT_OBSERVED'),
+    freezeGate('CLAIM',claimBlocked?'BLOCKED':claimPass?'PASS':missionCreated&&dispatch.blocked?'BLOCKED':missionCreated?'WAITING':'NOT_REACHED',claimBlocked?buildReason:claimPass?'':dispatch.reason||'SOURCE_CLAIM_NOT_OBSERVED'),
     freezeGate('WORKER',workerPreProviderBlocked?'BLOCKED':processed?'PASS':claimPass?'WAITING':'NOT_REACHED',workerPreProviderBlocked?buildReason:processed?'':'WORKER_PICKUP_NOT_OBSERVED'),
     freezeGate('PROVIDER',providerCompleted?'PASS':providerBlocked?'BLOCKED':processed&&providerInvoked?'WAITING':processed?'NOT_REACHED':'NOT_REACHED',providerCompleted?'':providerBlocked?buildReason:providerInvoked?'PROVIDER_COMPLETION_NOT_OBSERVED':'PROVIDER_INVOCATION_NOT_OBSERVED'),
     freezeGate('SOURCE_CHANGED',success?'PASS':sourceBlocked?'BLOCKED':'NOT_REACHED',sourceBlocked?buildReason:''),
@@ -125,7 +172,9 @@ export function projectHeartbeatAutonomyBuildTrack({conveyorResult=null,sourceBu
     freezeGate('RELEASE','NOT_REACHED'),
     freezeGate('SELECT_NEXT','NOT_REACHED'),
   ];
-  return buildTrack({timestampUtc,sourceHead,missionId,issueNumber,actionId,providerAdapter:adapter,cycleId,attemptNumber,materialActionsSucceeded,successfulMissionIds,cycleDecision,gates});
+  const projectedMissionId=buildBlocked?exactBuildMissionId:missionId;
+  const projectedIssueNumber=buildBlocked&&!exactBuildMissionId?null:issueNumber;
+  return buildTrack({timestampUtc,sourceHead,missionId:projectedMissionId,issueNumber:projectedIssueNumber,actionId,providerAdapter:adapter,cycleId,attemptNumber,materialActionsSucceeded,successfulMissionIds,cycleDecision,gates});
 }
 
 function recordMs(record) { if (!record || typeof record !== 'object') return 0; const parsed=Date.parse(text(record.timestampUtc||record.checkedAtUtc||record.createdAt)); return Number.isFinite(parsed)?parsed:0; }

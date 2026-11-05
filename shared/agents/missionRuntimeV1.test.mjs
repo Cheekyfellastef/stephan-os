@@ -14,6 +14,7 @@ test('contract names the merged stack and truth rules', () => {
   assert.equal(contract.schemaVersion, MISSION_RUNTIME_SCHEMA_VERSION);
   assert.deepEqual(contract.composedSystems, [
     'Mission Executive V1',
+    'Stephanos Executive Command Plane V1',
     'Mission Flywheel Director V1',
     'Shared Workspace Mission Room V2',
     'Project Intelligence V1',
@@ -33,6 +34,8 @@ test('emits blocked with exact unblock action when build evidence is missing', (
   assert.equal(snapshot.phase, RUNTIME_PHASE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION);
   assert.match(snapshot.exactUnblockAction, /Record build evidence/);
   assert.equal(snapshot.commandDeck.status, RUNTIME_PHASE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION);
+  assert.equal(snapshot.stack.executiveCommandPlane.commandClass, 'ASK_FLYWHEEL');
+  assert.equal(snapshot.stack.executiveCommandPlane.flywheel.kind, 'stephanos.executive-command-plane.flywheel-dialogue');
   assert.equal(validateMissionRuntimeSnapshot(snapshot).valid, true);
 });
 

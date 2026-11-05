@@ -60,7 +60,11 @@ function normalizeChangedFiles(values) {
   ))) return null;
   const paths = normalized.map((entry) => entry.path);
   if (new Set(paths).size !== paths.length) return null;
-  return Object.freeze([...normalized].sort((left, right) => left.path.localeCompare(right.path)));
+  // Use the same case-sensitive code-unit order as normalizePaths. Locale
+  // collation would make an identical mixed-case path estate compare unequal.
+  return Object.freeze([...normalized].sort((left, right) => (
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0
+  )));
 }
 
 function filePaths(files) {
@@ -97,7 +101,12 @@ function exactForwardComparison(comparison = {}, baseSha, headSha, { allowIdenti
   const behind = Number(comparison.behind_by);
   const observedBase = exactSha(comparison?.base_commit?.sha);
   const mergeBase = exactSha(comparison?.merge_base_commit?.sha);
-  const observedHead = exactSha(comparison?.head_commit?.sha);
+  const commits = Array.isArray(comparison?.commits) ? comparison.commits : [];
+  const observedHead = exactSha(
+    comparison?.head_commit?.sha
+    ?? commits.at(-1)?.sha
+    ?? (status === 'identical' ? comparison?.base_commit?.sha : ''),
+  );
 
   if (allowIdentical && baseSha === headSha) {
     if (status !== 'identical') blockers.push('comparison-status-not-identical');

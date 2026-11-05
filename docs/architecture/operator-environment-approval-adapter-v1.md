@@ -38,7 +38,7 @@ Any drift fails closed without a request.
 
 ## Execution contract
 
-`executeOperatorEnvironmentApprovalV1()` accepts an authenticated request callback from the surrounding trusted execution surface. The adapter passes only its internally constructed bounded POST request to that callback. It accepts only HTTP `204` as proof that GitHub consumed the approval.
+`executeOperatorEnvironmentApprovalV1()` accepts an authenticated request callback from the surrounding trusted execution surface. The adapter passes only its internally constructed bounded POST request to that callback. It accepts only HTTP `200` as proof that GitHub consumed the approval, matching GitHub's documented pending-deployment review response contract.
 
 The adapter itself stores no credential and cannot manufacture operator identity. A ChatGPT/GitHub connector, local operator-authenticated Stephanos surface or future user-to-server GitHub integration must provide that authenticated request capability.
 

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 
-import { runBattleBridgeGitHubCommandMailboxWithReceiptIndex } from './battle-bridge-github-command-mailbox-with-receipt-index.mjs';
+import { runBattleBridgeGitHubCommandMailboxWithReceiptIndex, safeMailboxRunnerExceptionBlocker } from './battle-bridge-github-command-mailbox-with-receipt-index.mjs';
 import {
   MAILBOX_OUTBOX_GUARD_LEASE_ENV,
   MAILBOX_OUTBOX_GUARD_LEASE_SCHEMA,
@@ -269,6 +269,28 @@ test('sidecar still refreshes the index after a mailbox exception and returns a 
   assert.equal(result.mailboxBlocker, 'MAILBOX_RUNNER_FAILED');
   assert.equal(result.indexBlocker, '');
   assert.equal(result.finalVerdict, 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED');
+}));
+
+test('sidecar preserves only safe uppercase runner exception codes', async () => fixture(async ({ repoRoot, env }) => {
+  assert.equal(safeMailboxRunnerExceptionBlocker(new Error('MAILBOX_ISSUE_READ_FAILED')), 'MAILBOX_ISSUE_READ_FAILED');
+  assert.equal(safeMailboxRunnerExceptionBlocker(new Error('C:/private secret=abc')), 'MAILBOX_RUNNER_FAILED');
+
+  const result = await runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
+    platform: 'win32',
+    sourceRepoRoot: repoRoot,
+    canonicalRepoRoot: repoRoot,
+    env,
+    refreshIndex: async () => ({
+      ok: true,
+      finalVerdict: 'MAILBOX_RECEIPT_INDEX_READY',
+      projection: { recentReceipts: [] },
+    }),
+    runMailbox: async () => { throw new Error('MAILBOX_ISSUE_READ_FAILED'); },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'MAILBOX_ISSUE_READ_FAILED');
+  assert.equal(result.mailboxBlocker, 'MAILBOX_ISSUE_READ_FAILED');
+  assert.equal(result.indexBlocker, '');
 }));
 
 test('Scheduled Task installer reports the fixed guard and its child sidecar while retaining bounded authority', async () => {

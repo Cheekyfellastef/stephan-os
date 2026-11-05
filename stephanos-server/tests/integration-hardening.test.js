@@ -17,6 +17,16 @@ function resetStores() {
   fs.rmSync(simDir, { recursive: true, force: true });
 }
 
+test('Stephanos AI /sovereign reaches only guarded read-only Commander observation', () => {
+  const command = parseCommand('/sovereign');
+  const result = resolveRoute(command, command.raw);
+  assert.equal(result.route, 'system');
+  assert.equal(result.tool, 'getSovereignCommanderStatus');
+  assert.equal(result.needsAI, false);
+  const fake = parseCommand('/sovereign shell whoami');
+  assert.equal(resolveRoute(fake, fake.raw).action, 'invalid_command');
+});
+
 test('parser routes /kg and /simulate deterministically', () => {
   const kg = parseCommand('/kg delete node node_1');
   const sim = parseCommand('/simulate preset save baseline --simulation trajectory-demo --start 10 --years 2');

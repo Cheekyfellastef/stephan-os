@@ -102,6 +102,30 @@ test('READ_CURRENT_STATUS carries the universal project-chat bootstrap pack from
       currentGoal: { kind: 'goal', title: 'Operator Attention & Completion Loop V1' },
       currentStatus: { kind: 'status', status: 'RUNNING', summary: 'Bootstrap repair active' },
       latestProof: { kind: 'proof', status: 'PASS', summary: 'Shared truth available' },
+      controllerFleet: {
+        schemaVersion: 'stephanos.controller-fleet-telemetry.v1',
+        expectedControllerCount: 5,
+        counts: { building: 2, amber: 2, red: 0, unknown: 1 },
+        allCurrent: false,
+        allObservedEnabled: true,
+        finalVerdict: 'CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING',
+        controllers: [{
+          controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+          title: 'Stephanos Autonomous Goal Builder',
+          freshness: 'CURRENT',
+          activityState: 'BUILDING',
+          trafficLight: 'GREEN',
+          observedEnabled: true,
+          materialActionsSucceeded: 2,
+          activeLaneCount: 2,
+          parkedLaneCount: 0,
+          safeEligibleWorkRemaining: 1,
+          blocker: '',
+          lastMaterialActionAtUtc: '2026-09-20T10:59:30.000Z',
+          exactNextAction: 'Continue.',
+          proofRefs: ['proof/controller-action'],
+        }],
+      },
       freshnessUtc: '2026-09-20T11:00:00.000Z',
     }),
     headTruthEvidenceLoader: async () => ({ records: { sync: syncRecord(main) } }),
@@ -135,6 +159,9 @@ test('READ_CURRENT_STATUS carries the universal project-chat bootstrap pack from
   assert.equal(bootstrapCalls, 1);
   assert.match(responseBody, /"projectChatBootstrap"/);
   assert.match(responseBody, /"UNIVERSAL_PROJECT_CHAT_BOOTSTRAP_READY"/);
+  assert.match(responseBody, /"controllerFleet"/);
+  assert.match(responseBody, /"CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING"/);
+  assert.match(responseBody, /"Stephanos Autonomous Goal Builder"/);
   assert.match(responseBody, new RegExp(`"sourceHead": "${main}"`));
 });
 
@@ -153,6 +180,30 @@ test('bootstrap is ready only when canonical main, Windows checkout and Shared W
       currentGoal: { kind: 'goal', title: 'Goal #1418' },
       currentStatus: { kind: 'status', status: 'RUNNING' },
       latestProof: { kind: 'proof', status: 'PASS' },
+      controllerFleet: {
+        schemaVersion: 'stephanos.controller-fleet-telemetry.v1',
+        expectedControllerCount: 5,
+        counts: { building: 1, amber: 4, red: 0, unknown: 0 },
+        allCurrent: true,
+        allObservedEnabled: true,
+        finalVerdict: 'CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING',
+        controllers: [{
+          controllerId: 'controller-1',
+          title: 'Controller One',
+          freshness: 'CURRENT',
+          activityState: 'BUILDING',
+          trafficLight: 'GREEN',
+          observedEnabled: true,
+          materialActionsSucceeded: 1,
+          activeLaneCount: 1,
+          parkedLaneCount: 0,
+          safeEligibleWorkRemaining: 0,
+          blocker: '',
+          lastMaterialActionAtUtc: '2026-09-20T10:59:00.000Z',
+          exactNextAction: 'Continue.',
+          proofRefs: ['proof/controller-1'],
+        }],
+      },
     },
     timestampUtc: '2026-09-20T11:00:00.000Z',
   });
@@ -161,9 +212,16 @@ test('bootstrap is ready only when canonical main, Windows checkout and Shared W
   assert.equal(bootstrap.finalVerdict, 'UNIVERSAL_PROJECT_CHAT_BOOTSTRAP_READY');
   assert.equal(bootstrap.sourceHead, main);
   assert.equal(bootstrap.capabilityRegistry.finalVerdict, 'STEPHANOS_CAPABILITY_REGISTRY_PASS');
+  assert.equal(bootstrap.currentState.controllerFleet.expectedControllerCount, 5);
+  assert.equal(bootstrap.currentState.controllerFleet.controllers[0].activityState, 'BUILDING');
   assert.equal(bootstrap.operatingRules.chatLocalMemoryIsSystemOfRecord, false);
   assert.equal(bootstrap.operatingRules.createDuplicateLaneBeforeDiscoveryAllowed, false);
   assert.equal(bootstrap.operatingRules.alternateQualifiedRouteMustBeTriedBeforeGlobalBlocker, true);
+  assert.equal(bootstrap.operatingRules.workConservingControllerCycleRequired, true);
+  assert.equal(bootstrap.operatingRules.safeCapacityRefillAfterMaterialActionRequired, true);
+  assert.equal(bootstrap.operatingRules.waitingLaneMayTerminateControllerCycle, false);
+  assert.equal(bootstrap.operatingRules.sharedWorkConservingPolicyOwnerIssue, 1947);
+  assert.equal(bootstrap.operatingRules.elasticWidthPolicyOwnerIssue, 1637);
   assert.equal(bootstrap.requiredBefore.includes('CAPABILITY_DENIAL'), true);
   assert.equal(bootstrap.requiredBefore.includes('CREATE_PULL_REQUEST'), true);
   assert.equal(bootstrap.runbookOrder[1].path, 'shared/agents/universalProjectChatBootstrapV1.RUNBOOK.md');
@@ -197,6 +255,7 @@ test('bootstrap fails closed instead of letting a new chat operate from stale or
   assert.equal(bootstrap.ready, false);
   assert.equal(bootstrap.finalVerdict, 'UNIVERSAL_PROJECT_CHAT_BOOTSTRAP_BLOCKED');
   assert.deepEqual(bootstrap.blockers, [
+    'CANONICAL_SOURCE_HEAD_TRUTH_NOT_CURRENT',
     'CANONICAL_SOURCE_HEADS_NOT_CONVERGED',
     'SHARED_WORKSPACE_AGGREGATION_BLOCKED',
   ]);

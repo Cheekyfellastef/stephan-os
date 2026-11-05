@@ -6,6 +6,7 @@ export const STEPHANOS_CAPABILITY_QUESTION_SCHEMA_VERSION = 'stephanos.conversat
 export const STEPHANOS_CAPABILITY_ANSWER_SCHEMA_VERSION = 'stephanos.conversational-capability-answer.v1';
 export const STEPHANOS_CAPABILITY_GAP_SCHEMA_VERSION = 'stephanos.conversational-capability-gap.v1';
 export const STEPHANOS_BOUNDARY_ADJUDICATION_SCHEMA_VERSION = 'stephanos.boundary-evidence-adjudication.v1';
+export const STEPHANOS_NOVEL_ROUND_HOST_AUTHORITY_SCHEMA_VERSION = 'stephanos.conversational-capability-novel-round-host-authority.v1';
 
 export const STEPHANOS_INITIAL_QUESTION_CLASSES = Object.freeze([
   'CURRENT_PROGRAMME_TRUTH',
@@ -335,7 +336,69 @@ export function validateStephanosCapabilityQuestion(question, options = {}) {
   return observed.verdict || validateQuestionSnapshot(observed.snapshot, options);
 }
 
-function validateRoundSnapshot(round) {
+const NOVEL_ROUND_HOST_KEYS = Object.freeze([
+  'schemaVersion', 'roundId', 'roundNumber', 'noveltyAuthoritySchema',
+  'noveltyVerdict', 'ledgerId', 'proofRefs',
+]);
+const TRUSTED_PROOF_REF = /^(?:proof|proofs|receipts|evidence\/receipts)\/[a-z0-9][a-z0-9._:/#-]{0,220}$/i;
+
+function trustedHostDataRecord(value, expectedKeys) {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return null;
+    if (Object.getOwnPropertySymbols(value).length > 0) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Object.keys(descriptors).sort(compareCodePoints);
+    const expected = [...expectedKeys].sort(compareCodePoints);
+    if (JSON.stringify(keys) !== JSON.stringify(expected)) return null;
+    const output = Object.create(null);
+    for (const key of expectedKeys) {
+      const descriptor = descriptors[key];
+      if (!descriptor?.enumerable || descriptor.get || descriptor.set || !Object.hasOwn(descriptor, 'value')) return null;
+      output[key] = descriptor.value;
+    }
+    return output;
+  } catch {
+    return null;
+  }
+}
+
+function trustedProofRefs(value) {
+  try {
+    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const length = descriptors.length?.value;
+    if (!Number.isSafeInteger(length) || length < 1 || length > 64 || Object.keys(descriptors).length !== length + 1) return null;
+    const refs = [];
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (!descriptor?.enumerable || descriptor.get || descriptor.set || !Object.hasOwn(descriptor, 'value')) return null;
+      const ref = text(descriptor.value).replace(/\\/g, '/');
+      if (!TRUSTED_PROOF_REF.test(ref) || ref.split('/').includes('..')) return null;
+      refs.push(ref);
+    }
+    return refs;
+  } catch {
+    return null;
+  }
+}
+
+function trustedNovelRoundAuthority(round, trustedHostContext = {}) {
+  if (round?.roundNumber <= 1) return true;
+  const host = trustedHostDataRecord(trustedHostContext, NOVEL_ROUND_HOST_KEYS);
+  if (!host) return false;
+  const proofRefs = trustedProofRefs(host.proofRefs);
+  return host.schemaVersion === STEPHANOS_NOVEL_ROUND_HOST_AUTHORITY_SCHEMA_VERSION
+    && host.roundId === round?.roundId
+    && host.roundNumber === round?.roundNumber
+    && host.noveltyAuthoritySchema === 'stephanos.question-novelty-authority.v1'
+    && host.noveltyVerdict === 'NOVELTY_PROVEN'
+    && safeId(host.ledgerId)
+    && Boolean(proofRefs);
+}
+
+function validateRoundSnapshot(round, trustedHostContext = {}) {
   const errors = [];
   if (!exactShape(round, ROUND_KEYS, errors)) return result(errors);
   if (round.schemaVersion !== STEPHANOS_CAPABILITY_ROUND_SCHEMA_VERSION) errors.push('schema-version-mismatch');
@@ -370,13 +433,13 @@ function validateRoundSnapshot(round) {
     const missing = STEPHANOS_INITIAL_QUESTION_CLASSES.filter((questionClass) => !classes.includes(questionClass));
     if (missing.length > 0) errors.push(`initial-round-missing-classes:${missing.join(',')}`);
   }
-  if (round.roundNumber > 1) errors.push('canonical-novelty-authority-unresolved');
+  if (round.roundNumber > 1 && !trustedNovelRoundAuthority(round, trustedHostContext)) errors.push('canonical-novelty-authority-unresolved');
   return result(errors);
 }
 
-export function validateStephanosCapabilityRound(round, _options = {}) {
+export function validateStephanosCapabilityRound(round, trustedHostContext = {}) {
   const observed = observeRecord(round, 'round');
-  return observed.verdict || validateRoundSnapshot(observed.snapshot);
+  return observed.verdict || validateRoundSnapshot(observed.snapshot, trustedHostContext);
 }
 
 function validateAnswerSnapshot(answer) {
@@ -501,14 +564,14 @@ function safeHold(roundId, errors, options = {}) {
   });
 }
 
-export function evaluateStephanosCapabilityRound(input = {}) {
+export function evaluateStephanosCapabilityRound(input = {}, trustedHostContext = {}) {
   const safeInput = dataOnly(input);
   if (safeInput === INVALID || !record(safeInput)) {
     return safeHold('', ['input-must-be-data-only']);
   }
   const round = safeInput.round;
   const answers = safeInput.answers;
-  const roundValidation = validateRoundSnapshot(round);
+  const roundValidation = validateRoundSnapshot(round, trustedHostContext);
   const errors = [...roundValidation.errors.map((error) => `round:${error}`)];
   if (!Array.isArray(answers)) errors.push('answers-must-be-dense-array');
   if (errors.length > 0) return safeHold(round?.roundId, errors);

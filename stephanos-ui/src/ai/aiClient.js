@@ -14,7 +14,7 @@ import { reconcileFinalProviderDispatch } from '../state/providerRoutingTruth.js
 const HOSTED_COGNITION_CONTRACT_VERSION = 'stephanos.hosted-cognition.v1';
 const HOSTED_COGNITION_CHAT_PATH = '/api/ai/chat';
 const HOSTED_COGNITION_PROVIDER_ORDER = ['groq', 'gemini'];
-const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
+const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen3.5:27b', 'qwen:32b']);
 
 function normalizeResponse(json) {
   return { ...EMPTY_RESPONSE, ...(json && typeof json === 'object' ? json : {}) };
@@ -624,9 +624,21 @@ export function resolveTimeoutExecutionTruth({
     routeDecision?.selectedProvider,
     requestedProviderNormalized,
   ).toLowerCase();
+  const deepLocalReasoningRequested = effectiveProvider === 'ollama' && (
+    routeDecision?.localReasoningTier === 'deep'
+    || routeDecision?.operatorDeepReasoning === true
+    || routeDecision?.reasoningPressure === 'uplift'
+    || Number(routeDecision?.recurringFailureCount || 0) >= 2
+    || Number(routeDecision?.capabilityGapCount || 0) > 0
+    || ['UNKNOWN', 'CONFLICTING'].includes(String(routeDecision?.rootCauseState || '').trim().toUpperCase())
+    || routeDecision?.conflictingEvidence === true
+    || routeDecision?.upliftRequired === true
+  );
+  const predictedDeepModel = deepLocalReasoningRequested ? 'qwen3.5:27b' : '';
   const effectiveModel = firstNonEmpty(
     hydratedEnvelope?.effectiveModel,
     hydratedEnvelope?.timeoutModel,
+    predictedDeepModel,
     providerConfigs?.[effectiveProvider]?.model,
   );
   return {
@@ -1369,6 +1381,29 @@ export {
 export async function checkApiHealth(runtimeConfig = getApiRuntimeConfig()) {
   const result = await requestJson('/api/health', {}, runtimeConfig);
   return { ok: result.ok, status: result.status, target: getApiTargetLabel(runtimeConfig.baseUrl), baseUrl: runtimeConfig.baseUrl, data: result.data };
+}
+
+export async function getGamingResourceState(runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestJson('/api/gaming-resource/state', {}, { ...runtimeConfig, timeoutMs: 20_000 });
+  return { ok: result.ok, status: result.status, data: result.data };
+}
+
+export async function setGamingResourceMode(mode, runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestJson('/api/gaming-resource/mode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: String(mode || '').trim().toUpperCase() }),
+  }, { ...runtimeConfig, timeoutMs: 70_000 });
+  return { ok: result.ok, status: result.status, data: result.data };
+}
+
+export async function runGamingResourceAcceptance(runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestJson('/api/gaming-resource/acceptance', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  }, { ...runtimeConfig, timeoutMs: 140_000 });
+  return { ok: result.ok, status: result.status, data: result.data };
 }
 
 export { getApiRuntimeConfig };

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   STEPHANOS_CAPABILITY_QUESTION_SCHEMA_VERSION,
   STEPHANOS_CAPABILITY_ROUND_SCHEMA_VERSION,
+  STEPHANOS_NOVEL_ROUND_HOST_AUTHORITY_SCHEMA_VERSION,
   evaluateStephanosCapabilityRound,
 } from './stephanosConversationalCapabilityLadderV1.mjs';
 
@@ -300,7 +301,62 @@ function safeHold(errors, details = {}) {
   });
 }
 
-export function buildStephanosQuestionNoveltyLedgerV1(input = {}) {
+const TRUSTED_NOVEL_ROUND_HOST_KEYS = Object.freeze([
+  'schemaVersion', 'roundId', 'roundNumber', 'noveltyAuthoritySchema',
+  'noveltyVerdict', 'ledgerId', 'proofRefs',
+]);
+
+function trustedAuthoritySnapshot(value) {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return null;
+    if (Object.getOwnPropertySymbols(value).length > 0) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const actual = Object.keys(descriptors).sort(compareCodePoints);
+    const expected = [...TRUSTED_NOVEL_ROUND_HOST_KEYS].sort(compareCodePoints);
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) return null;
+    const output = Object.create(null);
+    for (const key of TRUSTED_NOVEL_ROUND_HOST_KEYS) {
+      const descriptor = descriptors[key];
+      if (!descriptor?.enumerable || descriptor.get || descriptor.set || !Object.hasOwn(descriptor, 'value')) return null;
+      output[key] = descriptor.value;
+    }
+    if (output.schemaVersion !== STEPHANOS_NOVEL_ROUND_HOST_AUTHORITY_SCHEMA_VERSION) return null;
+    return Object.freeze(output);
+  } catch {
+    return null;
+  }
+}
+
+function trustedRoundHostAuthority(trustedHostContext = {}, round = {}) {
+  try {
+    if (!trustedHostContext || typeof trustedHostContext !== 'object' || Array.isArray(trustedHostContext)) return {};
+    const prototype = Object.getPrototypeOf(trustedHostContext);
+    if (prototype !== Object.prototype && prototype !== null) return {};
+    if (Object.getOwnPropertySymbols(trustedHostContext).length > 0) return {};
+    const descriptors = Object.getOwnPropertyDescriptors(trustedHostContext);
+    if (JSON.stringify(Object.keys(descriptors).sort(compareCodePoints)) !== JSON.stringify(['novelRoundAuthorities'])) return {};
+    const descriptor = descriptors.novelRoundAuthorities;
+    if (!descriptor?.enumerable || descriptor.get || descriptor.set || !Object.hasOwn(descriptor, 'value')) return {};
+    const authorities = descriptor.value;
+    if (!Array.isArray(authorities) || Object.getPrototypeOf(authorities) !== Array.prototype) return {};
+    const arrayDescriptors = Object.getOwnPropertyDescriptors(authorities);
+    const length = arrayDescriptors.length?.value;
+    if (!Number.isSafeInteger(length) || length < 0 || length > 128 || Object.keys(arrayDescriptors).length !== length + 1) return {};
+    for (let index = 0; index < length; index += 1) {
+      const itemDescriptor = arrayDescriptors[String(index)];
+      if (!itemDescriptor?.enumerable || itemDescriptor.get || itemDescriptor.set || !Object.hasOwn(itemDescriptor, 'value')) return {};
+      const authority = trustedAuthoritySnapshot(itemDescriptor.value);
+      if (authority && authority.roundId === round.roundId && authority.roundNumber === round.roundNumber) return authority;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+export function buildStephanosQuestionNoveltyLedgerV1(input = {}, trustedHostContext = {}) {
   const safeInput = dataOnly(input);
   const errors = [];
   if (safeInput === INVALID || !record(safeInput)) return Object.freeze({ valid: false, ledger: null, errors: Object.freeze(['input-must-be-data-only']) });
@@ -323,7 +379,10 @@ export function buildStephanosQuestionNoveltyLedgerV1(input = {}) {
     if (!Array.isArray(entry.answers) || entry.answers.length !== 10) errors.push(`${label}-answers-must-contain-exactly-10`);
     if (!round || questions.length !== 10 || !Array.isArray(entry.answers)) continue;
 
-    const evaluation = evaluateStephanosCapabilityRound({ round, answers: entry.answers });
+    const evaluation = evaluateStephanosCapabilityRound(
+      { round, answers: entry.answers },
+      trustedRoundHostAuthority(trustedHostContext, round),
+    );
     if (evaluation.valid !== true || evaluation.roundId !== round.roundId || evaluation.state !== 'SETTLED') {
       errors.push(`${label}-canonical-evaluation-not-settled`);
     }
