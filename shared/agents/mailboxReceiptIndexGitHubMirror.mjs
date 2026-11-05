@@ -7,6 +7,9 @@ import {
   sanitizeMailboxReceiptForIndex,
 } from './mailboxReceiptIndex.mjs';
 
+// V1 builder name is permanently retired: historical queued workflows fail before their first GitHub write.
+export const MAILBOX_RECEIPT_PUBLICATION_API_VERSION = 2;
+
 export const MAILBOX_RECEIPT_GITHUB_COMMAND_MARKER = 'stephanos-battle-bridge-command';
 export const MAILBOX_RECEIPT_GITHUB_RECEIPT_MARKER = 'stephanos-battle-bridge-command-receipt';
 export const MAILBOX_RECEIPT_GITHUB_REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -126,7 +129,7 @@ export function findTrustedMailboxReceiptIndexComment(comments = []) {
     && String(comment?.body || '').includes(`<!-- ${MAILBOX_RECEIPT_INDEX_GITHUB_MARKER} -->`)) || null;
 }
 
-export function buildTrustedMailboxReceiptIndexGitHubBody(record = {}) {
+export function buildTrustedMailboxReceiptIndexGitHubBodyV2(record = {}) {
   return buildMailboxReceiptIndexGitHubBody(record);
 }
 

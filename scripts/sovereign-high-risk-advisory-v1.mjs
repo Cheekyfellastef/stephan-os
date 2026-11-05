@@ -8,6 +8,7 @@ import { resolve, dirname, join, isAbsolute, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 import { captureAuthenticatedReviewDiffV1 } from '../shared/agents/sovereignAuthenticatedReviewDiffV1.mjs';
+import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
 
 import { resolveBattleBridgeGitExecution } from
   '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
@@ -62,7 +63,9 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
   if (git(['symbolic-ref','--quiet','--short','HEAD']).trim() !== branch) {
     throw Error('LOCAL_REVIEW_BRANCH_MISMATCH');
   }
-  if (git(['status','--porcelain','--untracked-files=normal']).trim()) throw Error('DIRTY_REVIEW_CHECKOUT');
+  const statusLines = git(['-c','status.renames=false','status','--porcelain','--untracked-files=normal'])
+    .split('\n').map(line => line.endsWith('\r') ? line.slice(0, -1) : line).filter(Boolean);
+  if (classifyDirt(statusLines).blocksSync) throw Error('DIRTY_REVIEW_CHECKOUT');
   if (git(['rev-parse','--verify',base+'^{commit}']).trim().toLowerCase() !== base) {
     throw Error('BASE_COMMIT_NOT_PROVEN');
   }

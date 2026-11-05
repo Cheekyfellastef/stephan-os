@@ -204,6 +204,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('battle-bridge-observation.mjs')]),
       timeoutMs: 10_000,
     }),
+    'diagnose-ignition': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-ignition-diagnosis.mjs')]),
+      timeoutMs: 20_000,
+    }),
     'meter-status': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-meter-status.mjs')]),
@@ -428,8 +433,10 @@ function fixedRegistry(repoRoot) {
       executable: node,
       args: frozen([nodeFile('sovereign-commander-goal-builder-repair.mjs')]),
       // The in-band builder repair never re-enters control-plane repair.
-      // Its fixed child budgets total 125s, plus a bounded orchestration margin.
-      timeoutMs: 145_000,
+      // Its longest fail-closed path can spend 160s in fixed children after
+      // the Ignition source-proof budget increase. Preserve bounded headroom
+      // while staying below the remote repair transport's 240s ceiling.
+      timeoutMs: 195_000,
     }),
     'repair-stephanos': frozen({
       executable: node,
@@ -978,7 +985,7 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
   const run = () => executeAdmittedSovereignCommandV1(command, options);
   if (command.plan.kind === 'fixed-process' && !isSovereignMaintenanceObservationV1(command.plan.processId)) {
     if (typeof options.withMaintenanceOwner === 'function') {
-      return options.withMaintenanceOwner(command, run);
+      return options.withMaintenanceOwner(command, run, { signal: options.signal });
     }
     // Local Core/stdio callers never launch beside an independently scheduled
     // guardian. The existing authenticated HTTP owner performs the operation.

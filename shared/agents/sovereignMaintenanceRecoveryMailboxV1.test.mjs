@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -19,7 +20,7 @@ const cycle = '0a23c41a-124f-4776-97e8-e45ab0309b0b';
 const now = new Date('2026-10-25T14:00:00Z');
 const command = (extra = {}) => ({ schemaVersion: 'stephanos.battle-bridge-github-command.v1',
   requestId: 'octopus-recovery-test-1', operation: ops[0], repository: 'Cheekyfellastef/stephan-os',
-  issueNumber: 3149, branch: 'main', operatorApproval: 'operator-approved', expectedHead: head,
+  issueNumber: activeMailboxIssueForTest, branch: 'main', operatorApproval: 'operator-approved', expectedHead: head,
   expiresAt: '2026-10-25T14:30:00Z', ...extra });
 const options = { readMaintenanceRecoverySourceFn: () => head,
   runMaintenanceCustodyRecoveryFn: async () => ({ ok: true, originalHoldMatched: true,
@@ -194,7 +195,10 @@ export function collectCanonicalIgnitionSourceTruth() { return result; }\n`);
   writeFileSync(join(root, 'shared', 'agents', 'goalDiscoveryWorkspaceV1.mjs'),
     'export function resolveGoalDiscoveryWorkspaceV1() { throw new Error("unexpected workspace operation"); }\n');
   writeFileSync(join(root, 'scripts', 'sovereign-maintenance-os-anchor-v1.mjs'),
-    'export function createMaintenanceOsAnchorV1() { throw new Error("unexpected custody operation"); }\n');
+    'export function createMaintenanceOsAnchorV1() { throw new Error("unexpected custody operation"); }\n'
+    + 'export function readMaintenanceLegacyAuditObservationV1() { throw new Error("unexpected legacy audit operation"); }\n');
+  writeFileSync(join(root, 'scripts', 'sovereign-maintenance-owner-observation-v2.mjs'),
+    'export function readMaintenanceOwnerObservationV2() { throw new Error("unexpected owner observation"); }\n');
   return { ...(await import(pathToFileURL(collectorPath).href)),
     ...(await import(pathToFileURL(readerPath).href)) };
 }

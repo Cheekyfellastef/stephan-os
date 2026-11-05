@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 const source = resolve(import.meta.dirname, 'windows/SovereignCoreJobCustodyV1.cs');
 const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const windows = process.platform === 'win32';
-function runner({ mode = 'complete', safe = '$true', cancel = '$false', deadline = 8000, watchInput = false, directoryRoot } = {}) {
+function runner({ mode = 'complete', safe = '$true', cancel = '$false', deadline = 8000, watchInput = false, directoryRoot, terminalWitness } = {}) {
   // Test harness invokes only the checked-in closed probe; no production
   // registry, canonical workspace, services, scheduler or model is accessed.
   const code = `$ErrorActionPreference='Stop'; Add-Type -Path '${source.replaceAll("'", "''")}';
@@ -23,11 +23,19 @@ function runner({ mode = 'complete', safe = '$true', cancel = '$false', deadline
     Buffer.from(code, 'utf16le').toString('base64')], {
     windowsHide: true, shell: false, stdio: [watchInput ? 'pipe' : 'ignore', 'pipe', 'pipe'],
   });
-  let stdout = '', stderr = '';
+  let stdout = '', stderr = '', nativePidPublished = false;
   const pid = new Promise(resolvePid => child.stdout.on('data', b => {
     stdout += b;
     const match = stdout.match(/CORE_JOB_CHILD_PID=(\d+)/);
-    if (match) resolvePid(Number(match[1]));
+    if (match && !nativePidPublished) {
+      nativePidPublished = true;
+      const childPid=Number(match[1]);
+      if(terminalWitness) {
+        writeFileSync(terminalWitness+'.pending',String(childPid),{flag:'wx'});
+        renameSync(terminalWitness+'.pending',terminalWitness);
+      }
+      resolvePid(childPid);
+    }
   }));
   const done = new Promise((resolveDone, reject) => {
     child.stderr.on('data', b => { stderr += b; });
@@ -160,17 +168,28 @@ test('native adapter uses atomic Job assignment and never enables breakaway or c
 
 test('common completion admission holds a drained child on deadline, unknown cancel and probe game onset',
   { skip: !windows, timeout: 30000 }, () => publicationFixture(async root => {
-    // The unconditional first post-resume sample lets the fixed child finish.
-    // Change the channel at the terminal sample after it has drained.
-    const wait = '$script:n++;if($script:n -eq 4){[Threading.Thread]::Sleep(2500)};';
+    // Join the actual native creator's private PID publication, then wait
+    // for that owned child to exit before changing the terminal channel.
+    // A fixed sleep could expire the deadline while the child was still live.
+    const witness = join(root, 'terminal-child.pid');
+    const quoted = witness.replaceAll("'", "''");
+    const wait = `$script:n++;if($script:n -eq 4){
+      $observer=[Diagnostics.Stopwatch]::StartNew();
+      while(-not [IO.File]::Exists('${quoted}') -and $observer.ElapsedMilliseconds -lt 2000){[Threading.Thread]::Sleep(5)}
+      if(-not [IO.File]::Exists('${quoted}')){throw 'FIXTURE_NATIVE_PID_NOT_PUBLISHED'}
+      $rootPid=[int][IO.File]::ReadAllText('${quoted}');
+      try{$owned=[Diagnostics.Process]::GetProcessById($rootPid)}catch [ArgumentException]{$owned=$null}
+      if($null -ne $owned){try{if(-not $owned.WaitForExit(3000)){throw 'FIXTURE_ROOT_NOT_TERMINAL'}}finally{$owned.Dispose()}}
+    };`;
     for (const [name, options, reason] of [
-      ['deadline', { safe: wait + 'if($script:n -ge 5){[Threading.Thread]::Sleep(2500)};$true', deadline: 4000 }, 'DEADLINE_CANCELLED'],
+      ['deadline', { safe: wait + 'if($script:n -ge 5){[Threading.Thread]::Sleep(4000)};$true', deadline: 4000 }, 'DEADLINE_CANCELLED'],
       ['unknown-cancel', { safe: wait + '$true', cancel: 'if($script:n -ge 5){throw "cancel unavailable"};$false' }, 'OPERATOR_CANCELLED'],
       ['probe-game', { mode: 'complete', safe: wait + '$script:n -lt 5' }, 'GAMING_CANCELLED'],
     ]) {
       const directoryRoot = name === 'probe-game' ? undefined : join(root, name);
       if (directoryRoot) mkdirSync(directoryRoot);
-      const { receipt, status, stderr } = await runner({ directoryRoot, ...options }).done;
+      if(existsSync(witness))rmSync(witness);
+      const { receipt, status, stderr } = await runner({ directoryRoot, terminalWitness:witness, ...options }).done;
       assert.equal(status, 0, stderr);
       assert.ok(receipt, stderr);
       assert.equal(receipt.ExitCode, 0, JSON.stringify(receipt));

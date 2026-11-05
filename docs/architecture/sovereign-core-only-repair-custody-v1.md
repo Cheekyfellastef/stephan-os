@@ -284,3 +284,32 @@ session attempts and the actual unenrolled command rejection. Candidate action/
 MCP composition tests inject only fixture executors; they do not enroll an action
 or prove OS custody. The top-level unenrollment decision and all three missing
 external trust roots remain binding. No clear/retry or activation path is added.
+
+## Core automatic repair must not impersonate manual admission
+
+The 2026-10-28 Battle Bridge recovery exposed a second entry point into broad
+Windows repair. The scheduled continuous runner correctly denied caretaker,
+builder and control-plane descendants while native custody remained unenrolled,
+but Core's automatic octopus self-heal invoked the ordinary manual maintenance
+envelope for its initial, escalation and retry steps. A fresh worker heartbeat
+did not qualify that route for automatic execution. A later live Core attempt
+encountered a retained unknown-execution hold; no build or safe release was
+proven. These are separate facts: a pre-launch denial itself releases no running
+child and must not be blamed for an unknown-execution hold.
+
+The existing shared maintenance admission model now supplies the unenrolled
+automatic disposition to both callers. Core preserves its earlier worker check,
+then returns NOT_STARTED without constructing an envelope, contacting the owner,
+or creating a reservation. There is no caller-supplied qualification switch.
+This closes the alternate entry point required by the existing custody design;
+it does not enroll the native executor, release an existing hold, qualify a
+provider, retire another worker's claim, or prove productive building. The
+separately scoped backend dependency action retains its existing owner route.
+
+Regression tests execute the actual Core function bodies and the real modeled
+maintenance owner. Initial repair, control-plane escalation and retry must all
+make zero execution calls and leave a subsequent attended action admissible.
+The old Core body fails this regression by entering owner admission. Worker
+failure still stops first, and the distinct backend action still delegates.
+Specialist exact-head review, protected integration and live commissioning
+remain necessary before this source correction can affect Battle Bridge.

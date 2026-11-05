@@ -74,6 +74,12 @@ test('Starfield VR flight recorder captures bounded runtime, stereo, transport a
   assert.match(recorder, /rightEyePresentMs/);
   assert.match(recorder, /eyePresentationSkewMs/);
   assert.match(recorder, /poseAgeMs/);
+  assert.match(recorder, /visualFrameState/);
+  assert.match(recorder, /visualProjectionViews/);
+  assert.match(recorder, /operatorMarkerCount/);
+  assert.match(recorder, /aerSequenceFaultCount/);
+  assert.match(recorder, /openXrVisualSubmission/);
+  assert.match(recorder, /visualFaultMarkerCapability/);
   assert.match(recorder, /Get-StarfieldVrControllerSample/);
   assert.match(recorder, /xinputModuleLoaded/);
   assert.match(recorder, /RUNTIME_METRICS_LAUNCH_IDENTITY_MISMATCH/);
@@ -125,7 +131,11 @@ test('Meta Air Link runtime metrics producer feeds measured render and transport
   assert.match(runtimeProducer, /app_render_height/);
   assert.match(runtimeProducer, /SessionStartedAtUtc/);
   assert.match(runtimeProducer, /NoGameGraceSeconds = 35/);
-  assert.match(runtimeProducer, /eventUtc -ge \$sessionStartUtc\.AddSeconds\(-2\)/);
+  assert.match(runtimeProducer, /eventUtc -lt \$sessionStartUtc\.AddSeconds\(-2\)/);
+  assert.match(runtimeProducer, /Get-LatestOpenXrVisualEvent/);
+  assert.match(runtimeProducer, /Get-ProviderTelemetryState/);
+  assert.match(runtimeProducer, /visualFrameState/);
+  assert.match(runtimeProducer, /aerSequenceFaultCount/);
   assert.match(performance, /starfield-vr-runtime-metrics-producer\.ps1/);
   assert.match(performance, /source = 'META_OCULUS_PERFLOG_XRS_STATS'/);
   assert.match(performance, /freshnessSeconds = 75/);
@@ -149,6 +159,9 @@ test('playtest guard adapts capture cadence and produces configuration, crash an
   assert.match(performance, /Get-StarfieldVrConfigurationFingerprint/);
   assert.match(performance, /Get-StarfieldVrCrashFingerprint/);
   assert.match(performance, /adaptiveCaptureReason/);
+  assert.match(performance, /VISUAL_SUBMISSION_ANOMALY/);
+  assert.match(performance, /OPERATOR_VISUAL_FAULT/);
+  assert.match(performance, /AER_SEQUENCE_FAULT/);
   assert.match(performance, /sampleIntervalSeconds = if \(\$adaptiveCaptureActive\) \{ 1 \}/);
   assert.match(performance, /p95ApplicationFrameTimeMs/);
   assert.match(performance, /p99ApplicationFrameTimeMs/);
@@ -175,6 +188,10 @@ test('diagnosis classifies frame, stereo, transport and input evidence and expos
   assert.match(diagnosis, /air-link-packet-loss-observed/);
   assert.match(diagnosis, /air-link-jitter-high/);
   assert.match(diagnosis, /controller-problem-observed/);
+  assert.match(diagnosis, /visual-submission-anomaly-observed/);
+  assert.match(diagnosis, /missing-stereo-eye-observed/);
+  assert.match(diagnosis, /operator-visual-fault-marked/);
+  assert.match(diagnosis, /aer-sequence-fault-observed/);
   assert.match(diagnosis, /'RENDERING_OR_STEREO'/);
   assert.match(diagnosis, /'STREAMING_TRANSPORT'/);
   assert.match(diagnosis, /'TRACKING_OR_INPUT'/);
@@ -185,6 +202,11 @@ test('diagnosis classifies frame, stereo, transport and input evidence and expos
 test('shared telemetry surfaces recorder completeness and operator physical verdict without inference', () => {
   assert.match(reporter, /frameTimeTelemetryAvailable/);
   assert.match(reporter, /maxEyePresentationSkewMs/);
+  assert.match(reporter, /visualAnomalySampleCount/);
+  assert.match(reporter, /missingStereoEyeSampleCount/);
+  assert.match(reporter, /operatorVisualFaultMarkerCount/);
+  assert.match(reporter, /maxAerSequenceFaultCount/);
+  assert.match(reporter, /pixelContentState/);
   assert.match(reporter, /telemetryCompleteness/);
   assert.match(reporter, /skyrimBaselineComparison/);
   assert.match(reporter, /physicalVerdict/);

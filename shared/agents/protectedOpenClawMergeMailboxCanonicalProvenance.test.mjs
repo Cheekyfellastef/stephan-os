@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -21,7 +22,7 @@ function command(overrides = {}) {
     requestId: 'backend-cold-start-protected-merge-2178-test',
     operation: 'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: head,
@@ -54,14 +55,14 @@ function plan() {
 function comment(id, payload = command(), overrides = {}) {
   return {
     id,
-    issue_url: 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/3149',
+    issue_url: `https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/${activeMailboxIssueForTest}`,
     user: { login: 'Cheekyfellastef' },
     body: `\`\`\`stephanos-battle-bridge-command\n${JSON.stringify(payload)}\n\`\`\``,
     ...overrides,
   };
 }
 
-test('canonical protected merge resolves only the exact owner-authored #3149 command', () => {
+test('canonical protected merge resolves only the exact owner-authored canonical mailbox command', () => {
   const exactPlan = plan();
   const comments = [
     comment(100, command({ requestId: 'different-request-id' })),
@@ -111,7 +112,7 @@ for (const platform of ['win32', 'linux']) {
     assert.equal(result.ok, false);
     assert.equal(result.blocker, 'PROTECTED_OPERATOR_MERGE_CANONICAL_MAILBOX_REQUIRED');
     assert.equal(result.details.operation, 'DISPATCH_PROTECTED_OPERATOR_MERGE');
-    assert.equal(result.details.issueNumber, 3149);
+    assert.equal(result.details.issueNumber, activeMailboxIssueForTest);
     assert.equal(result.details.expectedHead, head);
     assert.equal(result.details.expectedBase, base);
   });

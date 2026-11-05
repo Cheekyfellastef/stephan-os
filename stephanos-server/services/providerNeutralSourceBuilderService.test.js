@@ -7,7 +7,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { processNextProviderNeutralSourceBuild as buildSource } from './providerNeutralSourceBuilderService.js';
+import { produceProviderNeutralSourceBuildProposalV1, processNextProviderNeutralSourceBuild as buildSource } from './providerNeutralSourceBuilderService.js';
 
 // Existing edit fixtures describe a complete model message. Present them on the
 // real streaming Response interface now used by the builder transport.
@@ -1574,4 +1574,51 @@ test('adding a missing single final newline remains a permitted structured sourc
     collectAgentWorkerResult: async () => ({state: {revision: 1}}),
   });
   assert.equal(result.success, true, result.error);
+});
+
+
+test('owned local source proposal edits tests and captures bytes without terminal authority', async () => {
+  const fx = await fixture();
+  Object.assign(fx.actionGrant, {
+    adapter: 'foundry-forge', actionKind: 'agent-handoff',
+    capacityRoute: 'FOUNDRY_FORGE', workerId: 'stephanos-forge-lifeboat-local',
+    boundedActionCount: 1, mergeAuthority: false, leaseSeizureAllowed: false,
+    missionId: fx.action.missionId, actionId: fx.action.actionId,
+    repository: fx.action.repository, branch: fx.action.branch,
+  });
+  Object.assign(fx.claim.item, {schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter: 'foundry-forge', missionId: fx.action.missionId, actionId: fx.action.actionId});
+  await writeFile(fx.claim.processingPath, JSON.stringify(fx.claim.item));
+  const originalClaim = await readFile(fx.claim.processingPath, 'utf8');
+  const forbidden = () => { throw new Error('PROPOSAL_TERMINAL_AUTHORITY_USED'); };
+  const result = await produceProviderNeutralSourceBuildProposalV1(fx.claim, {
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot, repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant, runCommand: run,
+    readMissionRecord: async () => ({state: {missionId: fx.action.missionId, cancelled: false}}),
+    claimNext: forbidden, collectAgentWorkerResult: forbidden,
+    finalizeMissionWorkerQueueClaim: forbidden,
+    localModelFetchImpl: async () => new Response(JSON.stringify({done: true,
+      message: {content: JSON.stringify({edits: [{path:'shared/agents/example.mjs',
+        old:'export const value = 1;', new:'export const value = 2;'}, {path:'shared/agents/example.identity.test.mjs',old:'',
+        new:"import assert from 'node:assert/strict';\nimport {value} from './example.mjs';\nassert.equal(value,2);\n"}], summary:'fixture repair'})}}) + '\n'),
+  });
+  assert.equal(result.success, true, result.error);
+  assert.deepEqual(result.changedFiles, ['shared/agents/example.identity.test.mjs','shared/agents/example.mjs']);
+  assert.equal(result.execution.ownedRegressionReceipts.length,1);
+  assert.equal(result.execution.sourceTestReceipts.length,2);
+  assert.deepEqual(result.execution.changedFiles, result.changedFiles);
+  assert.ok(result.sourceArtifactIdentity);
+  assert.equal(await readFile(fx.claim.processingPath, 'utf8'), originalClaim);
+  assert.match(await readFile(join(fx.repoRoot,'shared/agents/example.mjs'),'utf8'), /value = 2/);
+  assert.equal(existsSync(join(fx.sharedWorkspaceRoot,'source-artifacts')), false);
+  assert.equal(existsSync(join(fx.sharedWorkspaceRoot,'publication-outbox')), false);
+});
+
+test('source proposal rejects absent bounded runner and wrong class before execution', async () => {
+  const fx = await fixture();
+  await assert.rejects(produceProviderNeutralSourceBuildProposalV1(fx.claim), /BOUNDED_RUNNER_REQUIRED/);
+  await assert.rejects(produceProviderNeutralSourceBuildProposalV1(fx.claim, {
+    runCommand: () => { throw new Error('RUNNER_MUST_NOT_RUN'); },
+    localModelFetchImpl: () => { throw new Error('MODEL_MUST_NOT_RUN'); },
+  }), /LOCAL_SOURCE_PROPOSAL_CLAIM_REQUIRED/);
 });

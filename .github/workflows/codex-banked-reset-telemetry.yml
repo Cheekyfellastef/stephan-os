@@ -95,7 +95,7 @@ jobs:
               ownerLogin: context.repo.owner,
               timestampUtc: new Date().toISOString(),
             });
-            const body = telemetry.buildCodexBankedResetTelemetryIssueBody(record);
+            const body = telemetry.buildCodexBankedResetTelemetryIssueBodyV2(record);
             await recheck();
             await github.rest.issues.update({
               owner: context.repo.owner,
