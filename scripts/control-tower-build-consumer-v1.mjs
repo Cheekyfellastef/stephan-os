@@ -199,28 +199,41 @@ export async function consumeControlTowerBuildRequestV1({
     if (request.sourceHead !== sourceHead || Date.parse(request.expiresAtUtc) <= now().getTime()
       || await readSourceHead() !== sourceHead) return finish('HELD', 'CONTROL_TOWER_BUILD_SOURCE_OR_EXPIRY_CHANGED', evidence());
     if (ledger.has(request.requestId)) { refreshStoredRequest(); return finish('REPLAY_HELD', 'CONTROL_TOWER_BUILD_REQUEST_ALREADY_RECORDED', evidence()); }
-    if (request.operation === CONTROL_TOWER_BUILD_OPERATION) {
-      // Recheck after authenticated network/source reads, immediately before
-      // the synchronous original reservation. This is not a cross-process lock.
-      discovery = typeof ledger.discoverControlTower === 'function'
-        ? await ledger.discoverControlTower({ nowMs: now().getTime() }) : null;
-      if (discovery?.ok !== true)
-        return finish('HELD', discovery?.blocker || 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN', evidence());
-      if (latestBuild?.detailState !== 'MISSING') latestBuild = discovery.latestBuildRequestObservation || latestBuild;
-      latestObserve = discovery.latestControlSystemObservation || latestObserve;
-    }
+    // An independent MISSING locator is an unresolved history gap even when
+    // a full scan is empty. Never erase it before a mutating admission call.
     if (request.operation === CONTROL_TOWER_BUILD_OPERATION
       && controlTowerBuildObservationUnresolvedV1(latestBuild, { nowMs: now().getTime() }))
       return finish('HELD', 'CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED', evidence());
-    // issueNumber is the owning build-transport goal, not a mailbox routing
-    // identity. The control-tower-build namespace is never a comment command.
     const command = { ...request, issueNumber: 2315 };
-    const acceptedAtUtc = now().toISOString();
-    initialObservation = createControlTowerRequestObservationV1(request, {
-      commandDigest: mailboxRotationDigest(command), acceptedAtUtc, nowMs: now().getTime(),
-    });
-    if (!initialObservation) return finish('HELD', 'CONTROL_TOWER_BUILD_REQUEST_OBSERVATION_INVALID', evidence());
-    const reservation = ledger.reserve(command, { controlTowerObservation: initialObservation });
+    let reservation;
+    if (request.operation === CONTROL_TOWER_BUILD_OPERATION) {
+      if (typeof ledger.discoverAndReserveControlTower !== 'function')
+        return finish('HELD', 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN', evidence());
+      discovery = await ledger.discoverAndReserveControlTower(command, {
+        nowMs: now().getTime(), now: () => now().getTime(), readSourceHead,
+      });
+      if (discovery?.reservationAttempted === true) {
+        reserved = true;
+        latestBuildRequestId = request.requestId;
+      }
+      if (discovery?.ok !== true) {
+        if (reserved) refreshStoredRequest();
+        return finish(reserved ? 'UNKNOWN' : 'HELD',
+          discovery?.blocker || 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN', evidence());
+      }
+      if (latestBuild?.detailState !== 'MISSING') latestBuild = discovery.latestBuildRequestObservation || latestBuild;
+      latestObserve = discovery.latestControlSystemObservation || latestObserve;
+      reservation = discovery.reservation;
+      if (!reservation) return finish('HELD',
+        discovery.blocker || 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN', evidence());
+      initialObservation = reservation.controlTowerObservation;
+    } else {
+      initialObservation = createControlTowerRequestObservationV1(request, {
+        commandDigest: mailboxRotationDigest(command), acceptedAtUtc: now().toISOString(), nowMs: now().getTime(),
+      });
+      if (!initialObservation) return finish('HELD', 'CONTROL_TOWER_BUILD_REQUEST_OBSERVATION_INVALID', evidence());
+      reservation = ledger.reserve(command, { controlTowerObservation: initialObservation });
+    }
     reserved = true;
     // Only the original ledger establishes acceptance. Current status is a
     // locator/projection, never a second execution or dedupe authority.

@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { atomicWriteJson, readJsonObject } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 import { MAILBOX_ROTATION_REQUEST_ID, mailboxRotationDigest } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 import { projectControlTowerRequestObservationV1, projectControlTowerLedgerObservationV1,
-  controlTowerBuildObservationUnresolvedV1 } from '../shared/agents/controlTowerRequestObservationV1.mjs';
+  controlTowerBuildObservationUnresolvedV1, createControlTowerRequestObservationV1 } from '../shared/agents/controlTowerRequestObservationV1.mjs';
 import { CONTROL_TOWER_BUILD_OPERATION } from '../shared/agents/controlTowerBuildRequestV1.mjs';
 const SCHEMA = 'stephanos.mailbox-execution-ledger-entry.v1';
 const INVENTORY_MAX_ENTRIES = 8192;
@@ -173,20 +173,60 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
       physicalIdentitySha256, inventorySha256: mailboxRotationDigest({ records, physicalIdentitySha256 }),
       localObservationOnly: true, executionAuthorized: false });
   }
-  return Object.freeze({
-    read,
-    inventory,
-    // A read-only diagnostic of this SAME ledger, never an admission/replay API.
-    inspectControlTower(id, options) {
-      return observeControlTowerRecord(read(id), options);
-    },
-    // Bounded read-only recovery from THIS ledger closes the reserve-to-status
-    // crash window. It is not the proposed mailbox inventory/rotation API and
-    // never admits, deletes, completes, freezes or releases a request.
-    async discoverControlTower({ nowMs = Date.now(), batchSize = DISCOVERY_BATCH_SIZE,
-      maxDurationMs = DISCOVERY_MAX_DURATION_MS, maxEntries } = {}) {
+  function reserve(command, { controlTowerObservation } = {}) {
+      const record = { schemaVersion: SCHEMA, requestId: command.requestId, issueNumber: command.issueNumber,
+        phase: 'RESERVED', commandDigest: mailboxRotationDigest(command) };
+      if (controlTowerObservation !== undefined) {
+        const observation = projectControlTowerRequestObservationV1(controlTowerObservation,
+          { requestId: command.requestId, commandDigest: record.commandDigest });
+        if (command.issueNumber !== 2315 || !observation || observation.state !== 'RESERVED'
+          || CONTROL_TOWER_IDENTITY.filter(key => !['commandDigest', 'acceptedAtUtc'].includes(key))
+            .some(key => observation[key] !== command[key]))
+          throw new Error('MAILBOX_EXECUTION_CONTROL_TOWER_OBSERVATION_INVALID');
+        record.controlTowerObservation = observation;
+      }
+      if (!insert(command.requestId, record)) throw new Error('MAILBOX_EXECUTION_REQUEST_ALREADY_SEEN');
+      return record;
+  }
+
+  async function scanControlTower({ nowMs = Date.now(), batchSize = DISCOVERY_BATCH_SIZE,
+      maxDurationMs = DISCOVERY_MAX_DURATION_MS, maxEntries } = {}, admission = null) {
       let latestBuildRequestObservation = null, latestControlSystemObservation = null, unresolved = null;
-      let count = 0, batchWork = 0;
+      let count = 0, batchWork = 0, reservationAttempted = false, admittedAt, clockSampledAt;
+      const command = admission ? JSON.parse(JSON.stringify(admission.command)) : null;
+      const success = () => {
+        const observations = { ok: true, blocker: '',
+          latestBuildRequestObservation: unresolved || latestBuildRequestObservation,
+          latestControlSystemObservation };
+        if (!admission) return Object.freeze(observations);
+        if (unresolved) return Object.freeze({ ...observations,
+          blocker: 'CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED', reservation: null, reservationAttempted: false });
+        // The injected clock ran before closing verification. Account for the
+        // uninterrupted closing time without invoking caller code again.
+        const closingElapsedMs = Math.ceil(performance.now() - clockSampledAt);
+        if (!Number.isFinite(admittedAt) || !Number.isFinite(closingElapsedMs)
+          || closingElapsedMs < 0 || Date.parse(command.expiresAtUtc) <= admittedAt + closingElapsedMs)
+          throw Error('CONTROL_TOWER_BUILD_SOURCE_OR_EXPIRY_CHANGED');
+        const observation = createControlTowerRequestObservationV1(command, {
+          commandDigest: mailboxRotationDigest(command), acceptedAtUtc: new Date(admittedAt).toISOString(), nowMs: admittedAt,
+        });
+        if (!observation) throw Error('CONTROL_TOWER_BUILD_REQUEST_OBSERVATION_INVALID');
+        // This is the original create-once writer. No Promise or caller code may
+        // run between the final verified read-set, refusal and this reservation.
+        reservationAttempted = true;
+        const reservation = reserve(command, { controlTowerObservation: observation });
+        return Object.freeze({ ...observations, reservation, reservationAttempted: true });
+      };
+      const sourceBeforeClose = async () => {
+        if (admission) {
+          if (await admission.readSourceHead() !== command.sourceHead)
+            throw Error('CONTROL_TOWER_BUILD_SOURCE_OR_EXPIRY_CHANGED');
+          // All explicitly supplied callbacks finish before the final read-set
+          // proof. Even a reentrant clock writer must be detected by that proof.
+          admittedAt = admission.now();
+          clockSampledAt = performance.now();
+        }
+      };
       const started = performance.now(), directories = new Map(), transcripts = new Map();
       const unproven = () => { throw new Error('CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN'); };
       const bound = () => { throw new Error('CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED'); };
@@ -281,12 +321,21 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
           || !Number.isSafeInteger(maxDurationMs) || maxDurationMs < 1 || maxDurationMs > DISCOVERY_MAX_DURATION_MS
           || (maxEntries !== undefined && (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 4096)))
           unproven();
+        if (admission && (command?.operation !== CONTROL_TOWER_BUILD_OPERATION || command.issueNumber !== 2315
+          || typeof admission.readSourceHead !== 'function' || typeof admission.now !== 'function')) unproven();
         budget();
         let parent = root;
         while (!existsSync(parent)) parent = dirname(parent);
         directory(parent);
-        if (!existsSync(root)) return Object.freeze({ ok: true, blocker: '',
-          latestBuildRequestObservation: null, latestControlSystemObservation: null });
+        if (!existsSync(root)) {
+          if (!admission) return success();
+          // A missing estate must not cross an await into a cached empty grant.
+          inspectDirectory(parent);
+          await sourceBeforeClose(); budget();
+          inspectDirectory(parent);
+          if (existsSync(root)) unproven();
+          return success();
+        }
         inspectDirectory(root);
         const shards = [], handle = opendirSync(root, { bufferSize: 256 });
         try {
@@ -302,6 +351,7 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
         for (const shard of shards) await scanShard(shard);
         // Drain queued in-process writers BEFORE the final uninterrupted proof.
         await yieldDiscovery(); budget();
+        await sourceBeforeClose(); budget();
         // Admitted ledger writers use create-once insertion or atomic rename;
         // directory checks also catch those external writers after an early
         // file check. This remains an observation, not global serialization
@@ -310,15 +360,34 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
         directory(root);
         for (const path of directories.keys()) { budget(); inspectDirectory(path); }
         budget();
-        return Object.freeze({ ok: true, blocker: '',
-          latestBuildRequestObservation: unresolved || latestBuildRequestObservation,
-          latestControlSystemObservation });
+        return success();
       } catch (error) {
         return Object.freeze({ ok: false,
-          blocker: error?.message === 'CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED'
-            ? error.message : 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN',
-          latestBuildRequestObservation: null, latestControlSystemObservation: null });
+          blocker: reservationAttempted ? 'CONTROL_TOWER_BUILD_DELIVERY_UNPROVEN'
+            : ['CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED', 'CONTROL_TOWER_BUILD_SOURCE_OR_EXPIRY_CHANGED',
+              'CONTROL_TOWER_BUILD_REQUEST_OBSERVATION_INVALID'].includes(error?.message)
+              ? error.message : 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN',
+          latestBuildRequestObservation: null, latestControlSystemObservation: null,
+          ...(admission ? { reservation: null, reservationAttempted } : {}) });
       }
+  }
+
+  return Object.freeze({
+    read,
+    inventory,
+    // A read-only diagnostic of this SAME ledger, never an admission/replay API.
+    inspectControlTower(id, options) {
+      return observeControlTowerRecord(read(id), options);
+    },
+    // Bounded read-only recovery from THIS ledger closes the reserve-to-status
+    // crash window. It is not the proposed mailbox inventory/rotation API and
+    // never admits, deletes, completes, freezes or releases a request.
+    discoverControlTower(options) { return scanControlTower(options); },
+    // Explicitly mutating BUILD admission, using the SAME original ledger.
+    // Original consumer/source adapters remain trusted internal dependencies;
+    // no caller-supplied command field grants execution or custody authority.
+    discoverAndReserveControlTower(command, { readSourceHead, now = Date.now, ...options } = {}) {
+      return scanControlTower(options, { command, readSourceHead, now });
     },
     retireLegacyControlTowerReservation({ request, nowMs = Date.now() } = {}) {
       if (!request || typeof request !== 'object' || Array.isArray(request)
@@ -343,21 +412,7 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
       return read(request.requestId);
     },
     has: id => Boolean(read(id)),
-    reserve(command, { controlTowerObservation } = {}) {
-      const record = { schemaVersion: SCHEMA, requestId: command.requestId, issueNumber: command.issueNumber,
-        phase: 'RESERVED', commandDigest: mailboxRotationDigest(command) };
-      if (controlTowerObservation !== undefined) {
-        const observation = projectControlTowerRequestObservationV1(controlTowerObservation,
-          { requestId: command.requestId, commandDigest: record.commandDigest });
-        if (command.issueNumber !== 2315 || !observation || observation.state !== 'RESERVED'
-          || CONTROL_TOWER_IDENTITY.filter(key => !['commandDigest', 'acceptedAtUtc'].includes(key))
-            .some(key => observation[key] !== command[key]))
-          throw new Error('MAILBOX_EXECUTION_CONTROL_TOWER_OBSERVATION_INVALID');
-        record.controlTowerObservation = observation;
-      }
-      if (!insert(command.requestId, record)) throw new Error('MAILBOX_EXECUTION_REQUEST_ALREADY_SEEN');
-      return record;
-    },
+    reserve,
     importHistorical(requestId, issueNumber, phase) {
       if (!['TERMINAL', 'RETIRED', 'RESERVED'].includes(phase)) throw new Error('MAILBOX_EXECUTION_LEDGER_PHASE_INVALID');
       const existing = read(requestId);

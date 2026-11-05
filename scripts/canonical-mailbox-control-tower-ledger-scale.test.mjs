@@ -229,3 +229,135 @@ test('the monotonic deadline is rechecked after a batch yields', async t => {
   assert.equal(result.latestBuildRequestObservation, null);
   assert.equal(result.latestControlSystemObservation, null);
 });
+
+function admissionRequest(runId) {
+  return { ...fixture().request, requestId: 'control-tower-build-' + runId + '-1',
+    runId, issueNumber: 2315, artifactId: runId + 1000, artifactSha256: 'c'.repeat(64) };
+}
+const admissionOptions = command => ({ nowMs, now: () => nowMs, readSourceHead: async () => command.sourceHead });
+
+for (const historyCount of [0, 5]) {
+  test('a reentrant clock writer runs before the final proof with history ' + historyCount, async t => {
+    const { root, ledger } = setup(t, historyCount), command = admissionRequest(100);
+    const result = await ledger.discoverAndReserveControlTower(command, {
+      ...admissionOptions(command), now: () => {
+        reserve(createMailboxExecutionLedger(root), 101);
+        return nowMs;
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.reservation, null);
+    assert.equal(result.reservationAttempted, false);
+    assert.equal(result.latestBuildRequestObservation, null);
+    assert.equal(ledger.read(command.requestId), null);
+    assert.equal(ledger.read('control-tower-build-101-1').phase, 'RESERVED');
+  });
+
+  test('one ledger-owned admission across distinct handles with history ' + historyCount, async t => {
+    const { root, ledger } = setup(t, historyCount);
+    const other = createMailboxExecutionLedger(root), commands = [admissionRequest(100), admissionRequest(101)];
+    const results = await Promise.all([ledger, other].map((handle, i) =>
+      handle.discoverAndReserveControlTower(commands[i], admissionOptions(commands[i]))));
+    assert.equal(results.filter(result => result.reservation).length, 1);
+    assert.equal(commands.filter(command => ledger.read(command.requestId)?.phase === 'RESERVED').length, 1);
+    const winner = results.find(result => result.reservation).reservation;
+    assert.equal(winner.controlTowerObservation.acceptedAtUtc, NOW);
+    assert.equal(results.filter(result => result.reservationAttempted === true).length, 1);
+  });
+
+  test('final host time and source govern admission with history ' + historyCount, async t => {
+    for (const mode of ['fresh-time', 'expired', 'source-changed']) {
+      const { ledger } = setup(t, historyCount), command = admissionRequest(100);
+      let hostNow = nowMs;
+      const result = await ledger.discoverAndReserveControlTower(command, {
+        nowMs, now: () => hostNow,
+        readSourceHead: async () => {
+          hostNow = mode === 'expired' ? Date.parse(command.expiresAtUtc) + 1 : nowMs + 1000;
+          return mode === 'source-changed' ? 'e'.repeat(40) : command.sourceHead;
+        },
+      });
+      if (mode === 'fresh-time') {
+        assert.equal(result.ok, true, result.blocker);
+        assert.equal(result.reservation.controlTowerObservation.acceptedAtUtc, new Date(nowMs + 1000).toISOString());
+      } else {
+        assert.equal(result.ok, false);
+        assert.equal(result.blocker, 'CONTROL_TOWER_BUILD_SOURCE_OR_EXPIRY_CHANGED');
+        assert.equal(result.reservationAttempted, false);
+        assert.equal(result.latestBuildRequestObservation, null);
+        assert.equal(ledger.read(command.requestId), null);
+      }
+    }
+  });
+}
+
+test('expiry during uninterrupted closing is held without invoking the clock again', async t => {
+  const { ledger, ledgerRoot } = setup(t, 5);
+  const command = { ...admissionRequest(100), expiresAtUtc: new Date(nowMs + 5).toISOString() };
+  let clockCalls = 0, delayed = false;
+  const original = fs.lstatSync;
+  t.mock.method(fs, 'lstatSync', (path, ...args) => {
+    if (clockCalls && !delayed && path === ledgerRoot) {
+      delayed = true;
+      const until = performance.now() + 25;
+      while (performance.now() < until) { /* Closing may outlive a near expiry. */ }
+    }
+    return original(path, ...args);
+  });
+  syncBuiltinESMExports();
+  let result;
+  try { result = await ledger.discoverAndReserveControlTower(command,
+    { ...admissionOptions(command), now: () => { clockCalls++; return nowMs; } }); }
+  finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+  assert.equal(delayed, true);
+  assert.equal(clockCalls, 1);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CONTROL_TOWER_BUILD_SOURCE_OR_EXPIRY_CHANGED');
+  assert.equal(result.reservationAttempted, false);
+  assert.equal(ledger.read(command.requestId), null);
+});
+
+test('a competing original reservation during the final source await prevents a second admission', async t => {
+  const { root, ledger } = setup(t, 5), command = admissionRequest(101);
+  const result = await ledger.discoverAndReserveControlTower(command, {
+    ...admissionOptions(command), readSourceHead: async () => {
+      reserve(createMailboxExecutionLedger(root), 100);
+      return command.sourceHead;
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reservation, null);
+  assert.equal(result.latestBuildRequestObservation, null);
+  assert.equal(ledger.read(command.requestId), null);
+  assert.equal(ledger.read('control-tower-build-100-1').phase, 'RESERVED');
+});
+
+test('uncertain original reservation write preserves its record and prevents a new admission', async t => {
+  const { ledger } = setup(t, 0), command = admissionRequest(100);
+  t.mock.method(fs, 'fsyncSync', () => { throw Error('fixture fsync outcome unknown after write'); });
+  syncBuiltinESMExports();
+  let result;
+  try { result = await ledger.discoverAndReserveControlTower(command, admissionOptions(command)); }
+  finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+  assert.equal(result.ok, false);
+  assert.equal(result.reservation, null);
+  assert.equal(result.reservationAttempted, true);
+  assert.equal(result.blocker, 'CONTROL_TOWER_BUILD_DELIVERY_UNPROVEN');
+  assert.equal(ledger.read(command.requestId).phase, 'RESERVED');
+  const next = admissionRequest(101);
+  const held = await ledger.discoverAndReserveControlTower(next, admissionOptions(next));
+  assert.equal(held.reservation, null);
+  assert.equal(held.blocker, 'CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED');
+  assert.equal(ledger.read(next.requestId), null);
+});
+
+test('combined admission rejects wrong operation and malformed request binding without mutation', async t => {
+  for (const changes of [{ operation: 'OBSERVE_CONTROL_SYSTEM' }, { issueNumber: 3258 },
+    { requestId: 'control-tower-build-999-1' }, { sourceHead: 'unproven' }]) {
+    const { ledger } = setup(t, 0), command = { ...admissionRequest(100), ...changes };
+    const result = await ledger.discoverAndReserveControlTower(command, admissionOptions(command));
+    assert.equal(result.ok, false);
+    assert.equal(result.reservation, null);
+    assert.equal(result.reservationAttempted, false);
+    assert.equal(ledger.read(command.requestId), null);
+  }
+});

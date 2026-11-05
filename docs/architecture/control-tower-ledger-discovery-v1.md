@@ -62,3 +62,31 @@ in-place changes/new reservations/terminal renames, verification-pass races,
 cooperative yielding, monotonic expiry after a yield, and asynchronous consumer
 refusal. Existing replay, unsafe-link, original inventory and terminal-proof
 tests remain applicable.
+## BUILD admission is a ledger-owned transition
+
+An asynchronous discovery result cannot authorize a later separate reservation:
+two callers can observe the same empty estate before either resumes. The original
+consumer therefore uses `discoverAndReserveControlTower` for BUILD. It shares the
+bounded reader, checks the existing trusted source adapter immediately before
+closing, and performs final read-set verification, unresolved-BUILD refusal and
+the original create-once reservation without an asynchronous boundary. A missing
+root is revalidated in that same continuation. The acceptance timestamp and
+expiry check use the fresh final-admission clock, not a pre-scan timestamp.
+Both supplied source and clock callbacks finish before closing verification.
+Acceptance is timestamped at the entrance to this final uninterrupted admission;
+the expiry check includes elapsed monotonic closing time without invoking caller
+code again after the verified read-set and unresolved decision.
+
+The consumer retains an independent MISSING-locator hold before mutation, uses
+the returned original reservation without reserving again, and retains the
+request locator with UNKNOWN outcome if a write may have committed. It never
+calls the owner without the actual returned reservation. The existing source,
+expiry and native-owner checks after reservation still apply. Plain discovery,
+OBSERVE and rotation remain separate from this explicitly mutating operation.
+
+This restores the original single-JavaScript-domain admission boundary across
+different ledger handles. It is not a global lock or proof against arbitrary
+external writers. No new lock, cursor, witness, queue, scheduler or claimant is
+introduced. The regression model covers absent/existing history, distinct
+authenticated requests, competing original writes, fresh source/expiry,
+uncertain persistence and retained history gaps.
