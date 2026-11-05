@@ -257,6 +257,10 @@ const NO_RUNTIME_EXACT = new Set([
   // source adoption must not restart a long-running runtime. Keep exact-only.
   'scripts/starfield-vr-project-performance-loop.mjs',
   'scripts/sovereign-windows-review-calibration-v1-engine.mjs',
+  // One-shot protected review entries. Adoption never installs/trusts the
+  // launcher or invokes inference; their existing installation gates remain.
+  'scripts/sovereign-high-risk-advisory-launcher-v1.mjs',
+  'scripts/sovereign-high-risk-advisory-v1.mjs',
   'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
 ]);
 

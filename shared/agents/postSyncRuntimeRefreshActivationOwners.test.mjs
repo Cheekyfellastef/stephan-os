@@ -51,3 +51,15 @@ test('uninspected neighbours and unsafe paths remain fenced', () => {
   const mixed=classifyPostSyncRefresh([...onDemand,...offline,'scripts/uninspected.mjs']);
   assert.equal(mixed.classification,'BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
 });
+
+test('two protected advisory entries adopt source without invoking or trusting their installed parent',async()=>{
+ const paths=['scripts/sovereign-high-risk-advisory-launcher-v1.mjs','scripts/sovereign-high-risk-advisory-v1.mjs'];
+ const plan=classifyPostSyncRefresh(paths);
+ assert.equal(plan.classification,'NO_RUNTIME_REFRESH_REQUIRED');
+ assert.deepEqual(plan.targetIds,[]);
+ const result=await executePostSyncRefreshPlan({beforeHead:'a'.repeat(40),afterHead:'b'.repeat(40),changedPaths:paths,adapters:new Proxy({}, {get(){return async()=>{throw Error('no activation permitted');};}})});
+ assert.equal(result.ok,true);
+ for(const path of ['scripts/sovereign-high-risk-advisory-v2.mjs','scripts/sovereign-high-risk-advisory-launcher-v2.mjs'])
+  assert.equal(classifyPostSyncRefresh([path]).classification,'BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
+ assert.equal(classifyPostSyncRefresh([...paths,'scripts/uninspected-review.mjs']).classification,'BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
+});
