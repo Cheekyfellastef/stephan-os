@@ -342,6 +342,11 @@ test('escrow denies generated-state roots and duplicate changed-file identities'
   for (const forbiddenPath of [
     'apps/stephanos/dist/index.js',
     'apps/stephanos/dist/assets/module.css',
+    'apps/stephanos/./dist/index.js',
+    'apps/./stephanos/dist/index.js',
+    'stephanos-server/./data/state.json',
+    'shared/agents/./example.mjs',
+    'shared/runtime/./stephanosMemory.mjs',
     'data/runtime-state.json',
     'tmp/model-output.json',
     'root-data/state.json',

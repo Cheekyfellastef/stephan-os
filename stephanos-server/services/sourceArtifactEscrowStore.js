@@ -47,6 +47,8 @@ function safePath(value) {
   const canonicalSourceRuntime = normalized.startsWith('shared/runtime/')
     && !RUNTIME_STATE_SEGMENT.test(normalized.slice('shared/runtime/'.length));
   const runtimeState = RUNTIME_STATE_SEGMENT.test(normalized) && !canonicalSourceRuntime;
+  // Interior dot components are aliases that can bypass generated/state path exclusions.
+  if (normalized.split('/').includes('.')) return '';
   return SAFE_PATH.test(normalized) && !FORBIDDEN_PATH.test(normalized) && !runtimeState
     ? normalized : '';
 }
