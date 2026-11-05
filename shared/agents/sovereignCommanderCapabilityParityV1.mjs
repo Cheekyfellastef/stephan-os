@@ -30,6 +30,23 @@ const DIRECT_PARITY = Object.freeze({
   'list-devices': 'visibility-snapshot',
   'device-status': 'visibility-snapshot',
   'connection-status': 'visibility-snapshot',
+  // Exact semantic actions already implemented by the canonical fixed registry.
+  // General PowerShell, service control and process termination are not aliases.
+  'battle-bridge-status': 'battle-bridge-status',
+  'battle-bridge-observe': 'battle-bridge-observe',
+  'visibility-snapshot': 'visibility-snapshot',
+  'cpu-pressure-snapshot': 'cpu-pressure-snapshot',
+  'meter-status': 'meter-status',
+  'controller-lane-status': 'controller-lane-status',
+  'status-recovery-mesh': 'status-recovery-mesh',
+  'status-worker-watchdog': 'status-worker-watchdog',
+  'status-stephanos-core-daemon': 'status-stephanos-core-daemon',
+  'gaming-resource-status': 'gaming-resource-status',
+  'starfield-vr-performance-diagnosis': 'starfield-vr-performance-diagnosis',
+  'repair-ui-4173': 'repair-ui-4173',
+  'repair-control-plane': 'repair-control-plane',
+  'repair-battle-bridge': 'repair-battle-bridge',
+  'repair-openclaw-stack': 'repair-openclaw-stack',
   'source-construction': 'sovereign-source-construction-lane',
 });
 
