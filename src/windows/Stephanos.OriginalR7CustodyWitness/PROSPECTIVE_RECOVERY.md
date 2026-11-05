@@ -64,13 +64,12 @@ UAC, reboot, service activation, signing root or security-principal expansion is
 authorized by this preparation. A compiled test harness is not a commissioned
 producer.
 
-Protected source review has a separate current dependency: reviewer-repair PR3395
-contains the current contract corrections but trusted main's pre-artifact tests
-fail before a qualifying immutable review artifact exists. Preserve the real
-approval-boundary self-change finding. The fixed PR1581 compatibility cannot be
-reused. A governance owner must resolve that trusted-reviewer bootstrap with an
-explicitly qualified source-defined amendment; neither this owner nor its context
-parser may manufacture an artifact or bypass protected exact-head integration.
+Protected source review is independent of production commissioning. Baseline
+b6786e43450899deeac1e592010e9539b8fdb4f1 has a genuine clean normal review from
+run42015196162/artifact13409031374 against protected base46c69ff9498b68437eebf30c18d60d482f1132b5.
+Any source advancement needs a fresh exact-head/base specialist review and
+canonical immutable artifact. The consumed PR3395 exception and older reviews
+cannot authorize this changed source, a merge, installation or lease mutation.
 
 
 ## Native producer-preparation slice
@@ -100,3 +99,28 @@ Primary APIs: [native file identity](https://learn.microsoft.com/en-us/windows/w
 
 In-source fixture action IDs and paths are synthetic. Actual current claim bytes,
 native IDs and local diagnostic bundles are never part of this source package.
+
+## Current-claim signing wire component
+
+OriginalR7SigningPrimitives.ProspectiveDomainMessage and
+CanonicalProspectiveSignaturePart use the separately typed
+ProspectiveProcessingClaimSignaturePurpose. They select only the existing
+current-claim witness/operator domains exported by the canonical Node consumer.
+Legacy purposes and the legacy retained-seed session remain separate. The shared
+strict flat JSON encoder preserves JSON.stringify bytes and refuses duplicate
+fields, unsupported Unicode/numbers, nested values and numeric property names.
+Envelope encoding uses the same owned claim snapshot that was validated.
+
+These APIs encode claims without authenticating their physical assertions.
+They open no key, accept no runtime operation, enroll no principal/root and grant
+no signer authority. The production SCM host and policy-adoption refusal are
+unchanged; an isolated current-claim signing owner is still missing.
+
+Owned interoperability tests use public RFC8032 keys and scoped fixture trust
+files with the actual authenticateProspectiveOrphanQuarantine consumer. They
+prove all four legacy/current witness/operator domains remain distinct, current
+signatures and witness-envelope digests agree across runtimes, and legacy or
+cross-role signatures, wrong claim bindings, missing containment assertions,
+wrong approval intent/order and differently escaped envelope digests are refused.
+The real un-enrolled context still returns PROSPECTIVE_ORPHAN_TRUST_ROOTS_UNPROVEN.
+No fixture calls the quarantine mutator or establishes actual native custody.
