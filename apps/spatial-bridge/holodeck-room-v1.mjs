@@ -1,3 +1,5 @@
+import { applyHolodeckLocomotionToView } from './holodeck-locomotion-v1.mjs';
+
 const ICE = Object.freeze([0.58, 0.9, 1.0]);
 const GRID = Object.freeze([0.16, 0.43, 0.62]);
 const GRID_SOFT = Object.freeze([0.08, 0.22, 0.34]);
@@ -153,9 +155,9 @@ export function createHolodeckRoomRenderer({ gl } = {}) {
   gl.enable(gl.DEPTH_TEST);
   gl.depthFunc(gl.LEQUAL);
 
-  function drawFrame(frame, referenceSpace) {
+  const locomotionView = new Float32Array(16);
+  function drawFrame(frame, referenceSpace, { pose = frame.getViewerPose(referenceSpace), navigation } = {}) {
     const layer = frame.session.renderState.baseLayer;
-    const pose = frame.getViewerPose(referenceSpace);
     gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
     gl.clearColor(0.006, 0.015, 0.028, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -172,7 +174,10 @@ export function createHolodeckRoomRenderer({ gl } = {}) {
       const viewport = layer.getViewport(view);
       gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
       gl.uniformMatrix4fv(projectionLocation, false, view.projectionMatrix);
-      gl.uniformMatrix4fv(viewLocation, false, view.transform.inverse.matrix);
+      const viewMatrix = navigation
+        ? applyHolodeckLocomotionToView(view.transform.inverse.matrix, navigation, locomotionView)
+        : view.transform.inverse.matrix;
+      gl.uniformMatrix4fv(viewLocation, false, viewMatrix);
       gl.drawArrays(gl.LINES, 0, geometry.vertexCount);
     }
     return Object.freeze({ poseAvailable: true, viewCount: pose.views.length });

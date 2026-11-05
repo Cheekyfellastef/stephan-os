@@ -56,6 +56,28 @@ Transport simulation routes:
 - Digital Asset Link template
 - private Alpha release-channel deployment contract
 
+## Controller movement
+
+Inside the immersive chamber, Xbox-compatible standard gamepads and Quest/VR
+controllers provide the same controls:
+
+- Left stick: walk forward/backward and strafe, relative to where you look.
+- Right stick left/right: smooth analog turning (up to 90 degrees per second).
+- Press the right stick: return to the entrance and face the portal.
+
+Connect an Xbox controller to the device running the browser (the PC for Link,
+or the headset for Quest Browser), and press a button if the browser has not yet
+exposed it. Quest controllers are read from the active WebXR session. Release
+both sticks on entry, after switching controller type, and after tracking resumes.
+Movement stops during tracking loss, hidden sessions, and controller disconnection.
+Stick movement stays within the chamber; physical tracking is never overridden.
+Walking speed is capped at 1.2 metres per second, with drift dead zones and bounded
+frame timing. Only one controller type drives movement at once.
+
+Mappings follow the [WebXR Gamepads Module](https://immersive-web.github.io/webxr-gamepads-module/)
+and standard Gamepad layout. Automated input and stereo-matrix tests are source
+proof; Xbox and Quest physical controller acceptance remains pending playtesting.
+
 ## Generated packaging assets
 
 The repository firewall rejects committed images and binary files. Generate the required PNG icons during packaging:
@@ -93,7 +115,7 @@ Generated PNGs are deployment artifacts and must not be committed.
 ## Deterministic source test
 
 ```text
-node --test tests/spatial-bridge-v0.test.mjs tests/spatial-bridge-holodeck-baseline-v0.test.mjs tests/spatial-workspace-launcher-v1.test.mjs
+node --test tests/spatial-bridge-v0.test.mjs tests/spatial-bridge-holodeck-baseline-v0.test.mjs tests/spatial-workspace-launcher-v1.test.mjs tests/spatial-workspace-locomotion-v1.test.mjs
 ```
 
 The source tests validate the flat contract, Holodeck Baseline source-readiness boundary and PNG generation without promoting physical headset proof.
