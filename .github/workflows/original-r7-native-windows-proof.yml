@@ -9,6 +9,7 @@ on:
       - 'scripts/windows/stage-original-r7-witness-candidate.ps1'
       - 'scripts/windows/build-original-r7-scoped-mutation-gate.ps1'
       - 'scripts/windows/build-original-r7-native-qualification.ps1'
+      - 'scripts/windows/inspect-r7-hosted-linux-lab-capacity.py'
       - 'src/windows/Stephanos.OriginalR7NativeQualification/**'
       - 'src/windows/Stephanos.OriginalR7ScopedMutationGate/**'
       - 'src/windows/Stephanos.OriginalR7DaclReadback/**'
@@ -181,3 +182,19 @@ jobs:
           Write-Output 'ORIGINAL_R7_WRITER_CONTAINMENT_PROVED=false'
           Write-Output 'BATTLE_BRIDGE_WINDOWS_WITNESS_COMMISSIONED=false'
           Write-Output 'ORIGINAL_R7_LEASE_RELEASED=false'
+
+  hosted-linux-lab-capability:
+    # Read-only inventory in this existing native proof workflow. No guest boot.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Checkout exact native candidate without persisting credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4; immutable upstream commit
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Inspect bounded hosted Linux test-guest prerequisites only
+        shell: bash
+        env:
+          R7_LAB_SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: timeout --signal=TERM --kill-after=5s 30s python3 -I scripts/windows/inspect-r7-hosted-linux-lab-capacity.py
