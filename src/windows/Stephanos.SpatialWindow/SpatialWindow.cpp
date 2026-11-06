@@ -26,6 +26,17 @@ using namespace winrt::Windows::Graphics::DirectX;
 using namespace winrt::Windows::Graphics::DirectX::Direct3D11;
 using namespace winrt::Windows::Data::Json;
 using Clock=std::chrono::steady_clock;
+constexpr bool CaptureSizeValid(int width,int height){return width>0&&height>0&&width<=8192&&height<=8192;}
+constexpr bool CaptureCopyFits(int width,int height,UINT textureWidth,UINT textureHeight,UINT rowPitch){
+  return CaptureSizeValid(width,height)&&(UINT)width<=textureWidth&&(UINT)height<=textureHeight&&rowPitch>=(UINT)width*4;
+}
+// Compile-time boundary regressions also run in every production native build.
+static_assert(CaptureCopyFits(8192,8192,8192,8192,32768));
+static_assert(CaptureCopyFits(640,480,1920,1080,7680));
+static_assert(!CaptureCopyFits(0,480,1920,1080,7680)&&!CaptureCopyFits(640,-1,1920,1080,7680));
+static_assert(!CaptureCopyFits(8193,480,16384,1080,65536)&&!CaptureCopyFits(640,8193,1920,16384,7680));
+static_assert(!CaptureCopyFits(1920,1080,640,1080,7680)&&!CaptureCopyFits(1920,1080,1920,480,7680));
+static_assert(!CaptureCopyFits(640,480,640,480,2559));
 static JsonObject Reply(const wchar_t* status){JsonObject o;o.SetNamedValue(L"status",JsonValue::CreateStringValue(status));return o;}
 static void Str(JsonObject& o,const wchar_t* key,std::wstring const& value){o.SetNamedValue(key,JsonValue::CreateStringValue(value));}
 static void Num(JsonObject& o,const wchar_t* key,double value){o.SetNamedValue(key,JsonValue::CreateNumberValue(value));}
@@ -71,7 +82,7 @@ struct Surface : std::enable_shared_from_this<Surface> {
     std::lock_guard lock(mutex);target=w;inputChild=nullptr;jpeg.clear();closed=false;generation++;
     auto factory=get_activation_factory<GraphicsCaptureItem,IGraphicsCaptureItemInterop>();
     check_hresult(factory->CreateForWindow(w,guid_of<GraphicsCaptureItem>(),put_abi(item)));
-    const auto size=item.Size();if(size.Width<1||size.Height<1||size.Width>8192||size.Height>8192)throw std::runtime_error("Invalid window size");
+    const auto size=item.Size();if(!CaptureSizeValid(size.Width,size.Height))throw std::runtime_error("Invalid window size");
     width=size.Width;height=size.Height;
     pool=Direct3D11CaptureFramePool::CreateFreeThreaded(direct,DirectXPixelFormat::B8G8R8A8UIntNormalized,2,size);
     const auto weak=weak_from_this();const auto expected=captureEpoch;
@@ -85,18 +96,22 @@ struct Surface : std::enable_shared_from_this<Surface> {
       auto size=frame.ContentSize();std::lock_guard lock(mutex);
       if(closed||captureEpoch!=expected)return;
       if(!target||!TargetValid()||IsIconic(target)){jpeg.clear();return;}
+      if(!CaptureSizeValid(size.Width,size.Height)){jpeg.clear();generation++;return;}
       if(size.Width!=width||size.Height!=height){
-        jpeg.clear();generation++;width=size.Width;height=size.Height;frame.Close();
-        if(width>0&&height>0&&width<=8192&&height<=8192)sender.Recreate(direct,DirectXPixelFormat::B8G8R8A8UIntNormalized,2,size);
+        jpeg.clear();generation++;frame.Close();
+        sender.Recreate(direct,DirectXPixelFormat::B8G8R8A8UIntNormalized,2,size);
+        width=size.Width;height=size.Height;
         return;
       }
       if(Clock::now()-encoded<std::chrono::milliseconds(66))return;
       auto access=frame.Surface().as<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();com_ptr<ID3D11Texture2D> texture;
       check_hresult(access->GetInterface(IID_PPV_ARGS(texture.put())));D3D11_TEXTURE2D_DESC desc{};texture->GetDesc(&desc);
+      if(desc.Format!=DXGI_FORMAT_B8G8R8A8_UNORM||desc.Width<(UINT)width||desc.Height<(UINT)height)throw std::runtime_error("Capture texture is smaller than its content");
       desc.Usage=D3D11_USAGE_STAGING;desc.BindFlags=0;desc.MiscFlags=0;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
       com_ptr<ID3D11Texture2D> staging;check_hresult(device->CreateTexture2D(&desc,nullptr,staging.put()));context->CopyResource(staging.get(),texture.get());
-      D3D11_MAPPED_SUBRESOURCE mapped{};check_hresult(context->Map(staging.get(),0,D3D11_MAP_READ,0,&mapped));
       std::vector<BYTE> pixels((size_t)width*height*4);
+      D3D11_MAPPED_SUBRESOURCE mapped{};check_hresult(context->Map(staging.get(),0,D3D11_MAP_READ,0,&mapped));
+      if(!mapped.pData||!CaptureCopyFits(width,height,desc.Width,desc.Height,mapped.RowPitch)){context->Unmap(staging.get(),0);throw std::runtime_error("Capture copy extent is invalid");}
       for(int y=0;y<height;y++)memcpy(pixels.data()+(size_t)y*width*4,(BYTE*)mapped.pData+(size_t)y*mapped.RowPitch,(size_t)width*4);
       context->Unmap(staging.get(),0);
       com_ptr<IWICBitmap> bitmap;check_hresult(wic->CreateBitmapFromMemory(width,height,GUID_WICPixelFormat32bppBGRA,width*4,(UINT)pixels.size(),pixels.data(),bitmap.put()));
