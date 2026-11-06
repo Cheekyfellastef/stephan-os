@@ -56,6 +56,84 @@ Transport simulation routes:
 - Digital Asset Link template
 - private Alpha release-channel deployment contract
 
+## Controller movement
+
+Inside the immersive chamber, Xbox-compatible standard gamepads and Quest/VR
+controllers provide the same controls:
+
+- Left stick: walk forward/backward and strafe, relative to where you look.
+- Right stick left/right: smooth analog turning (up to 90 degrees per second).
+- Press the right stick: return to the entrance and face the portal.
+
+Connect an Xbox controller to the device running the browser (the PC for Link,
+or the headset for Quest Browser), and press a button if the browser has not yet
+exposed it. Quest controllers are read from the active WebXR session. Release
+both sticks on entry, after switching controller type, and after tracking resumes.
+Movement stops during tracking loss, hidden sessions, and controller disconnection.
+Stick movement stays within the chamber and stops at the table, with a
+28 cm body margin and sliding along edges. A swept collision check prevents
+passing through thin objects between frames. Physical tracking is never overridden:
+if room-scale walking or leaning places the viewer inside an object, stick movement
+can take them back out through the nearest edge without an automatic camera jump.
+Walking speed is capped at 1.2 metres per second, with drift dead zones and bounded
+frame timing. Only one controller type drives movement at once.
+
+Mappings follow the [WebXR Gamepads Module](https://immersive-web.github.io/webxr-gamepads-module/)
+and standard Gamepad layout. Automated input and stereo-matrix tests are source
+proof; Xbox and Quest physical controller acceptance remains pending playtesting.
+
+The chamber uses a solid, softly lit room shell with a continuous grid on the
+floor, all four walls and ceiling. Ceiling and perimeter lights illuminate a
+suspended ceramic workstation with a sculpted split pedestal, luminous edge
+and inlaid controls. Furniture and collision footprints share one layout module.
+The desktop preview uses the same geometry and lighting as the immersive renderer.
+Lighting is deliberately static, with no flashing effects or expensive shadow maps.
+
+## Glass cube interaction
+
+The original glass cube has 57 mm edges; the second has 114 mm edges (twice the
+edge length, eight times the volume). Both start on the tabletop and use the same
+transparent glass material, gravity, room contacts and controller controls.
+Each hand can hold one cube. Selection chooses the nearest aimed-at available
+cube; the Xbox X button recalls the held/aimed-at cube, or the last selected one.
+
+The preview and VR session share one room instance. A versioned, bounded local
+save stores both cubes' positions, orientations and free motion, without controller
+ownership. Saves occur during motion, on release/rest, on page hide and on VR exit.
+Reopening restores the layout; a cube left airborne continues falling. Saving is
+local to the same browser profile and origin on this device, including offline.
+It does not synchronise to a different browser/device, and clearing site data
+removes the save. Storage failure and a stale window trying to overwrite a newer
+save are reported visibly. Invalid records fall back to the tabletop layout;
+future schema versions are preserved. This is simulation state only, with no
+Stephanos execution, authority, telemetry or backend-state changes.
+
+- Quest: point at the cube (within 3.5 m), or reach near it above the table;
+  hold the grip/squeeze button to carry it. Release to drop or throw using the
+  measured hand motion. Either controller can hold it; one holds it at a time.
+- Xbox: look at the cube and hold RT to pick it up. Release RT to drop it, or
+  press RB while holding to throw in the direction you look. D-pad up/down
+  adjusts reach, left/right rotates it, and X recalls it to the tabletop.
+- The existing left-stick walking and right-stick smooth turning are unchanged.
+- Release grip/RT before first pickup or after a disconnect/tracking interruption.
+
+Gravity is 9.81 m/s², integrated at a bounded 120 Hz. Swept support-volume checks
+keep the cube within the floor, walls, ceiling and convex table surfaces, including
+while held. The cubes also block one another using conservative convex contacts;
+a resting stack wakes when its support moves. They bounce, loses energy and settles flat. This is lightweight local
+cube physics, with conservative contacts around rotated corners, not fracture or
+optical refraction simulation. Throw speed is capped at 8 m/s and tracking loss
+releases a held cube without stale throw velocity. A distant pickup must reach
+the hand before its motion contributes to a throw.
+
+The desktop Drop cube, Throw at wall, Reset cube and Inspect glass cube controls
+use the selected small/large cube and the same saved room as VR. These are preview interactions;
+physical Quest/Xbox acceptance still requires an on-headset playtest.
+
+The Quest grip and pose adapter follows the
+[WebXR Gamepads mapping](https://immersive-web.github.io/webxr-gamepads-module/)
+and [WebXR grip-space definition](https://www.w3.org/TR/webxr/#xrinputsource-interface).
+
 ## Generated packaging assets
 
 The repository firewall rejects committed images and binary files. Generate the required PNG icons during packaging:
@@ -93,7 +171,7 @@ Generated PNGs are deployment artifacts and must not be committed.
 ## Deterministic source test
 
 ```text
-node --test tests/spatial-bridge-v0.test.mjs tests/spatial-bridge-holodeck-baseline-v0.test.mjs tests/spatial-workspace-launcher-v1.test.mjs
+node --test tests/spatial-bridge-v0.test.mjs tests/spatial-bridge-holodeck-baseline-v0.test.mjs tests/spatial-workspace-launcher-v1.test.mjs tests/spatial-workspace-locomotion-v1.test.mjs
 ```
 
 The source tests validate the flat contract, Holodeck Baseline source-readiness boundary and PNG generation without promoting physical headset proof.

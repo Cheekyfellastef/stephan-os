@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { join, dirname, resolve, sep } from 'node:path';
+import { join, dirname, resolve, sep, posix } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -56,7 +56,7 @@ function closure(root, omitted) {
 }
 
 test('directory package captures exactly three dependencies and rejects incomplete or extra records', () => {
-  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 261);
+  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 263);
   for (const path of directoryPaths) assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(path), path);
   const records = candidateRecords();
   assert.throws(() => candidate(records.filter(row => !directoryPaths.includes(row.path))), /EXACT_SOURCE_REQUIRED/);
@@ -78,7 +78,7 @@ test('isolated captured package proves imports and both source-owned runtime-rea
   const root = packagedCandidate();
   try {
     const complete = closure(root);
-    assert.equal(complete.memberCount, 261);
+    assert.equal(complete.memberCount, 263);
     assert.deepEqual(complete.missing, []);
     assert.deepEqual(complete.bare, []);
     assert.equal(complete.repositoryModulesEvaluated, false);
@@ -114,8 +114,8 @@ test('complete packaged-module graph catches future dependency omissions without
   const root = packagedCandidate();
   const modulePath = join(root, 'shared/agents/missionOrchestrator.mjs');
   const original = readFileSync(modulePath, 'utf8');
-  // These five paths reproduce the other current producer omissions as a
-  // synthetic graph only. Their implementations/approval are not imported here.
+  // Explicitly omit each dependency from this synthetic graph, including
+  // dependencies now present after another producer's source integration.
   const additionalDependencies = [
     './knownMalformedPatchRetryV1.mjs', './knownMalformedPatchOwnerPlanV1.mjs',
     '../../stephanos-server/services/knownMalformedPatchRetryService.js',
@@ -124,12 +124,15 @@ test('complete packaged-module graph catches future dependency omissions without
   ];
   try {
     const before = closure(root);
+    assert.deepEqual(before.missing, []);
     const jsMembers = FIXED_RUNTIME_SOURCE_PATHS_V1.filter(path => /\.(mjs|js)$/.test(path));
     assert.deepEqual(before.parsedPaths, jsMembers.slice().sort());
     for (const spec of additionalDependencies) {
       writeFileSync(modulePath, "import '" + spec + "';\n" + original);
-      const result = closure(root);
-      assert.ok(result.missing.some(row => row.file === 'shared/agents/missionOrchestrator.mjs' && row.role === 'import'));
+      const omitted = posix.normalize(posix.join('shared/agents', spec));
+      const result = closure(root, omitted);
+      assert.ok(result.missing.some(row => row.file === 'shared/agents/missionOrchestrator.mjs'
+        && row.role === 'import' && row.target === omitted));
       assert.equal(result.repositoryModulesEvaluated, false);
     }
     writeFileSync(modulePath, original);

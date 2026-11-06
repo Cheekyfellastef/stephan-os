@@ -1,3 +1,4 @@
+import { hasExternalMergeObservationV1 } from './externalMergeObservationV1.mjs';
 export const COMPLETION_GUARDIAN_SCHEMA = 'stephanos.completion-guardian.v1';
 
 export const COMPLETION_GUARDIAN_STATE = Object.freeze({
@@ -58,6 +59,7 @@ export function classifyCompletionMission(mission = {}, options = {}) {
 
   if (['CANCELLED', 'RETIRED'].includes(phase)) return COMPLETION_GUARDIAN_STATE.TERMINAL_INACTIVE;
   if (regression) return COMPLETION_GUARDIAN_STATE.REGRESSION_REPAIR_REQUIRED;
+  if (phase === 'VERIFYING' && hasExternalMergeObservationV1(mission)) return COMPLETION_GUARDIAN_STATE.PROOF_PENDING;
   if (completionProven(mission)) return COMPLETION_GUARDIAN_STATE.COMPLETE_PROVEN;
   if (['AWAITING_OPERATOR_APPROVAL', 'MERGE_PULL_REQUEST'].includes(phase)
     || mission?.approval?.status === 'pending') return COMPLETION_GUARDIAN_STATE.APPROVAL_GATED;

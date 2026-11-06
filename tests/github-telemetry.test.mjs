@@ -41,6 +41,52 @@ test('GitHub telemetry projects PRs workflows unavailable state and no fabricate
   assert.equal(unavailable.blockers.includes('github_adapter_unavailable'), true);
 });
 
+test('workflow status cannot be overridden by stale or contradictory SUCCESS/PASSED conclusions', () => {
+  const statusCases = [
+    ['IN_PROGRESS', 'running'],
+    ['QUEUED', 'queued'],
+    ['REQUESTED', 'queued'],
+    ['WAITING', 'queued'],
+    ['PENDING', 'queued'],
+    ['RUNNING', 'running'],
+    ['FAILED', 'failed'],
+    ['CANCELLED', 'cancelled'],
+    ['COMPLETED', 'passed'],
+    ['', 'passed'],
+  ];
+  for (const [rawStatus, expectedOnSuccess] of statusCases) {
+    for (const [conclusion, expected] of [
+      ['SUCCESS', expectedOnSuccess],
+      ['PASSED', expectedOnSuccess],
+      ['FAILURE', 'failed'],
+      ['CANCELLED', 'cancelled'],
+    ]) {
+      const telemetry = normalizeGithubTelemetry({
+        available: true, workflows: [{ id: 2, name: 'build', status: rawStatus, conclusion, prNumber: 42 }],
+      });
+      assert.equal(telemetry.workflows[0].status, expected,
+        `status=${rawStatus || '(absent)'} conclusion=${conclusion}`);
+      assert.equal(telemetry.workflowCounts.passed || 0, expected === 'passed' ? 1 : 0);
+    }
+  }
+  const githubTelemetry = normalizeGithubTelemetry({
+    available: true,
+    pullRequests: [{ number: 42, title: 'Historical Mission Control API', headSha: 'b'.repeat(40), checks: [], state: 'open' }],
+    workflows: [{ id: 2, name: 'build', status: 'IN_PROGRESS', conclusion: 'SUCCESS', prNumber: 42 }],
+  });
+  const projection = buildLiveGoalProjection({
+    backendStatus: { status: 'live', ok: true },
+    missionOperationsFeed: { status: 'ready', missions: [], errors: [] },
+    importedGoals: { receipts: [], candidates: [{
+      candidateId: 'goal-42', title: 'Historical Mission Control API',
+      intent: 'API', lastKnownPR: '#42', status: 'open',
+    }] },
+    githubTelemetry,
+  });
+  assert.equal(projection.executionChains[0].workflows[0].status, 'running',
+    'Goal Dashboard workflow fallback must not invent passed exact-head proof');
+});
+
 test('live projection correlates goals to PR workflow chain and command deck answers from telemetry', () => {
   const githubTelemetry = normalizeGithubTelemetry({ available: true, notifications: [{ id: 'n1', reason: 'review_requested', subject: { title: 'Review PR 42', type: 'PullRequest' } }], pullRequests: [{ number: 42, title: 'Historical Mission Control API', branch: 'work', headSha: 'b'.repeat(40), checks: [{ conclusion: 'success' }], approvalStatus: 'approved' }], workflows: [{ id: 1, name: 'verify', conclusion: 'failure', prNumber: 42 }] });
   const projection = buildLiveGoalProjection({ backendStatus: { status: 'live', ok: true }, missionOperationsFeed: { status: 'ready', missions: [], errors: [] }, importedGoals: { receipts: [], candidates: [{ candidateId: 'goal-42', title: 'Historical Mission Control API', intent: 'API', lastKnownPR: '#42', status: 'open' }] }, githubTelemetry });
@@ -163,7 +209,7 @@ test('GitHub telemetry reuses the successful gh CLI fallback after a primary 403
   assert.equal(first.status, 'live');
   assert.equal(first.authAuthority, 'gh-cli');
   assert.equal(second.status, 'live');
-  assert.equal(calls.length, 6);
+  assert.equal(calls.length, 4, 'one denied serial read, then the three successful fallback reads; the next refresh uses cache');
 });
 
 test('GitHub telemetry cache is partitioned by non-secret credential fingerprint', async () => {
@@ -287,7 +333,7 @@ test('GitHub telemetry fails closed within a bounded time when the optional adap
   assert.equal(JSON.stringify(telemetry).includes('bounded-token'), false);
 });
 
-test('paginated goal estate stops after the first 403 instead of hammering every goal', async () => {
+test('paginated goal estate drains already-started reads after the first 403 and does not start another scan', async () => {
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-goal-estate-403-'));
   let calls = 0;
   let fallbackCalls = 0;
@@ -325,13 +371,13 @@ test('paginated goal estate stops after the first 403 instead of hammering every
     assert.equal(first.reasonCode, 'GITHUB_GOAL_ESTATE_RATE_LIMIT_BACKOFF');
     assert.equal(first.issues.length, 0);
     assert.equal(first.discoveredIssues.length, 0);
-    assert.equal(calls, 2, 'list once, events once, then stop');
+    assert.equal(calls, 3, 'one list and two already-started event reads are drained, then stop');
     assert.equal(fallbackCalls, 0);
     const shared = readBrokeredGithubRateLimitHold({ repository: `${owner}/${repo}`, workspaceRoot });
     assert.equal(shared?.source, 'SHARED_GITHUB_RATE_LIMIT_HOLD');
     const second = await fetchGithubGoalIssues(args);
     assert.equal(second.reasonCode, 'GITHUB_GOAL_ESTATE_RATE_LIMIT_BACKOFF');
-    assert.equal(calls, 2, 'no new upstream call during shared hold');
+    assert.equal(calls, 3, 'no new upstream call during shared hold');
     assert.equal(JSON.stringify([first, second]).includes('private-goal-token'), false);
   } finally {
     await rm(workspaceRoot, { recursive: true, force: true });
