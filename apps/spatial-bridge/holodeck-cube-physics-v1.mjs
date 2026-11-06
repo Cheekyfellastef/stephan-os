@@ -1,4 +1,4 @@
-import { HOLODECK_ROOM, HOLODECK_TABLE, HOLODECK_CUBE } from './holodeck-layout-v1.mjs';
+import { HOLODECK_ROOM, HOLODECK_TABLE, HOLODECK_CUBE, HOLODECK_CONSOLE } from './holodeck-layout-v1.mjs';
 
 export const CUBE_GRAVITY = 9.81;
 const STEP = 1 / 120;
@@ -37,7 +37,11 @@ function prism(w,d,bottom,top,bevel=0,cx=0,cz=HOLODECK_TABLE.center[2]) {
   return planes;
 }
 export function createCubeSolids(table=HOLODECK_TABLE) {
+  const console=HOLODECK_CONSOLE;
   return [prism(table.halfWidth,table.halfDepth,table.bottom,table.top+0.008,table.bevel,0,table.center[2]),
+    prism(console.halfWidth,console.halfDepth,console.bottom,console.top,console.bevel,0,console.center[2]),
+    ...[-1,1].map(side=>prism(0.09,0.38,0.05,console.bottom,0,side*1.3,console.center[2])),
+    ...[-1,1].map(side=>prism(0.09,0.28,0.84,1.10,0,side*1.3,-5.72)),
     prism(0.68,0.44,0.035,0.13,0.20),prism(0.20,0.20,0.18,0.58,0.08),
     ...[-1,1].map(side=>{
       const slope=side*0.38/0.55,centre=side*0.24-slope*0.13,n=Math.hypot(1,slope);

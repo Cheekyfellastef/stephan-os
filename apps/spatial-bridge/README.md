@@ -4,7 +4,7 @@
 
 The flat source prototype and Quest PWA entry are built, and the Holodeck Baseline now renders the first dependency-free immersive Spatial Workspace chamber: stereo room grid, focal portal, pedestal and a first idea-cube visual primitive. Deterministic source proof is available, while physical Quest 3 observation, controller interaction, signed packaging and headset acceptance remain pending.
 
-This app remains read-only. The flat prototype consumes only `bridge-state.v0.json`, a bundled mock projection with `readOnly: true` and `authority: none`; that fixture is never evidence of live Stephanos/backend reachability.
+The flat prototype and Stephanos diagnostics remain read-only. They consume only `bridge-state.v0.json`, a bundled mock projection with `readOnly: true` and `authority: none`; that fixture is never evidence of live Stephanos/backend reachability. The starting room additionally offers an operator-selected Windows ChatGPT/Codex window with a holographic display and keyboard. See [Spatial ChatGPT console](SPATIAL-CONSOLE.md) for setup, local input boundaries and proof limits. The original app retains its tools and approval rules.
 
 ## Chosen Quest route
 

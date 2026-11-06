@@ -1,5 +1,6 @@
 import { applyHolodeckLocomotionToView } from './holodeck-locomotion-v1.mjs';
-import { HOLODECK_ROOM, HOLODECK_TABLE, HOLODECK_CUBE, HOLODECK_CUBES, HOLODECK_OBSTACLES } from './holodeck-layout-v1.mjs';
+import { HOLODECK_ROOM, HOLODECK_TABLE, HOLODECK_CUBE, HOLODECK_CUBES, HOLODECK_OBSTACLES, HOLODECK_DISPLAY, HOLODECK_CONSOLE } from './holodeck-layout-v1.mjs';
+import { createHolodeckDisplayRenderer } from './holodeck-display-renderer-v1.mjs';
 import { rotate3, add3, scale3, normalize3 } from './holodeck-cube-physics-v1.mjs';
 
 const CYAN = [0.32, 0.88, 1.0], ICE = [0.68, 0.9, 1.0], WARM = [1.0, 0.75, 0.43];
@@ -115,9 +116,27 @@ export function createHolodeckRoomGeometry() {
     line(g,[side*0.63,0.895,cz-0.38],[side*1.03,0.895,cz-0.38],CYAN);
   }
   ring(g,[0,0.016,cz],1.62,[0.12,0.30,0.36],true);
-  ring(g,[0,1.55,f+0.03],1.0,CYAN);
-  ring(g,[0,1.55,f+0.035],0.91,WARM);
-  ring(g,[0,1.55,f+0.03],0.84,GRID);
+  // Wall-wide suspended holographic field; separated light rails give it depth.
+  const display=HOLODECK_DISPLAY,c=HOLODECK_CONSOLE;
+  for(const depth of [0.02,-0.08]) {
+    const z=display.z+depth;
+    outline(g,[[-3.86,0.60,z],[3.86,0.60,z],[3.86,3.08,z],[-3.86,3.08,z]],depth>0?CYAN:GRID);
+    for(const side of [-1,1]) {
+      line(g,[side*3.86,0.60,z],[side*4.02,0.76,z-0.1],CYAN);
+      line(g,[side*3.86,3.08,z],[side*4.02,2.92,z-0.1],CYAN);
+      line(g,[side*4.02,0.76,z-0.1],[side*4.02,2.92,z-0.1],GRID);
+    }
+  }
+  for(const x of [-3.6,-2.4,2.4,3.6]) {
+    quad(g,[x-0.04,0.40,f+0.04],[x+0.04,0.40,f+0.04],[x+0.04,0.58,display.z],[x-0.04,0.58,display.z],CYAN,1);
+  }
+  slab(g,{cz:c.center[2],w:c.halfWidth,d:c.halfDepth,bevel:c.bevel,bottom:c.bottom,top:c.top,color:CERAMIC});
+  slab(g,{cz:c.center[2],w:c.halfWidth+0.012,d:c.halfDepth+0.012,bevel:c.bevel,bottom:0.88,top:0.90,color:CYAN,emissive:1});
+  for(const side of [-1,1]) {
+    box(g,[side*1.3,0.435,c.center[2]],[0.18,0.77,0.76],METAL);
+    box(g,[side*1.3,0.97,-5.72],[0.18,0.26,0.56],CERAMIC);
+    line(g,[side*1.3,0.08,-4.734],[side*1.3,0.82,-4.734],CYAN);
+  }
   return Object.freeze({
     ...Object.fromEntries(Object.entries(g).map(([key,value])=>[key,new Float32Array(value)])),
     vertexCount:g.positions.length/3, solidVertexCount:g.solidPositions.length/3,
@@ -243,9 +262,10 @@ function previewMatrices(width,height,eye,target) {
   return {view,projection};
 }
 
-export function createHolodeckRoomRenderer({gl}={}) {
+export function createHolodeckRoomRenderer({gl,screen}={}) {
   if (!gl) throw new Error('WebGL context required');
   const geometry=createHolodeckRoomGeometry(),program=createProgram(gl),buffers=[];
+  const display=screen?createHolodeckDisplayRenderer({gl,screen}):null;
   const attributes=Object.fromEntries(['Position','Color','Normal','Emission'].map(name=>[name,gl.getAttribLocation(program,`a${name}`)]));
   const projectionLocation=gl.getUniformLocation(program,'uProjection'),viewLocation=gl.getUniformLocation(program,'uView');
   const glassLocation=gl.getUniformLocation(program,'uGlass'),eyeLocation=gl.getUniformLocation(program,'uEyePosition');
@@ -294,6 +314,8 @@ export function createHolodeckRoomRenderer({gl}={}) {
     gl.uniform1f(glassLocation,0);
     bind(solid); gl.drawArrays(gl.TRIANGLES,0,geometry.solidVertexCount);
     bind(lines); gl.drawArrays(gl.LINES,0,geometry.vertexCount);
+    display?.draw(projection,view);
+    gl.useProgram(program);
     const eye=[-view[0]*view[12]-view[1]*view[13]-view[2]*view[14],
       -view[4]*view[12]-view[5]*view[13]-view[6]*view[14],-view[8]*view[12]-view[9]*view[13]-view[10]*view[14]];
     gl.uniform3f(eyeLocation,...eye);
@@ -310,6 +332,7 @@ export function createHolodeckRoomRenderer({gl}={}) {
   }
   const locomotionView=new Float32Array(16);
   function drawFrame(frame,referenceSpace,{pose=frame.getViewerPose(referenceSpace),navigation,cube:state}={}) {
+    display?.update();
     const layer=frame.session.renderState.baseLayer; begin(layer.framebuffer);
     if (!pose) return {poseAvailable:false,viewCount:0};
     const cube=updateCube(state);
@@ -320,9 +343,10 @@ export function createHolodeckRoomRenderer({gl}={}) {
     return {poseAvailable:true,viewCount:pose.views.length};
   }
   function drawPreview({width=gl.drawingBufferWidth,height=gl.drawingBufferHeight,eye=[3.4,2.35,2.1],target=[0,1.15,-2.2],cube:state}={}) {
+    display?.update();
     const {projection,view}=previewMatrices(Math.max(1,width),Math.max(1,height),eye,target);
     begin(null); gl.viewport(0,0,width,height); draw(projection,view,updateCube(state));
   }
-  function dispose() { buffers.forEach(handle=>gl.deleteBuffer(handle)); gl.deleteProgram(program); }
+  function dispose() { display?.dispose();buffers.forEach(handle=>gl.deleteBuffer(handle)); gl.deleteProgram(program); }
   return Object.freeze({geometry,drawFrame,drawPreview,dispose});
 }
