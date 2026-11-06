@@ -259,7 +259,7 @@ for (const builder of [
   });
 }
 
-test('Desktop Commander source handoff is absorbed by the green Sovereign source-construction lane', () => {
+test('Desktop Commander source handoff maps to Sovereign without claiming installed parity', () => {
   const observation = {
     adapter: 'desktop-commander',
     path: 'C:/queue/desktop-source-build.json',
@@ -279,6 +279,11 @@ test('Desktop Commander source handoff is absorbed by the green Sovereign source
   assert.equal(ledger.buildableGapCount, 0);
   assert.equal(ledger.parityPresentCount, 1);
   assert.equal(ledger.zeroGapInvariantSatisfied, true);
-  assert.equal(ledger.daemonMayReportGreen, true);
-  assert.equal(ledger.finalVerdict, 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN');
+  assert.equal(ledger.parityEvidenceScope, 'SOURCE_CATALOG_ONLY');
+  assert.equal(ledger.runtimeParityProven, false);
+  assert.equal(ledger.installedParityState, 'UNKNOWN');
+  assert.equal(ledger.sourceGapClosureRequired, false);
+  assert.equal(ledger.closureRequired, true);
+  assert.equal(ledger.daemonMayReportGreen, false);
+  assert.equal(ledger.finalVerdict, 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RUNTIME_UNPROVEN');
 });
