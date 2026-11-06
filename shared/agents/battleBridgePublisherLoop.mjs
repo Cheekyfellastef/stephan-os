@@ -178,7 +178,7 @@ export function startBattleBridgePublisherLoop(input = {}) {
     return lastResult;
   };
   if (input.runImmediately !== false) void tick();
-  const timer = setTimer(() => { void tick(); }, contract.intervalMs);
+  let timer = setTimer(() => { void tick(); }, contract.intervalMs);
   return Object.freeze({
     schemaVersion: BATTLE_BRIDGE_PUBLISHER_LOOP_SCHEMA_VERSION,
     contract,
@@ -186,7 +186,10 @@ export function startBattleBridgePublisherLoop(input = {}) {
     stop() {
       if (!stopped) {
         stopped = true;
-        clearTimer(timer);
+        if (timer !== null && timer !== undefined) {
+          clearTimer(timer);
+          timer = null;
+        }
       }
       return { stopped: true, finalVerdict: 'BATTLE_BRIDGE_PUBLISHER_LOOP_STOPPED' };
     },
