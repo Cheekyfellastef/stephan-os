@@ -431,6 +431,7 @@ export async function retrySafelyBlockedAgentFailure({
   refreshRetryWorktree = refreshRetryWorktreeToCurrentMain,
   readProgrammeProjection = readAuthoritativeProgrammeProjection,
   collectKnownPatchEvidence = collectKnownMalformedPatchRetryEvidenceV1,
+  blockedAdapters = [],
 } = {}) {
   const retryClockStart = performance.now();
   const retryEpoch = Date.now();
@@ -438,6 +439,24 @@ export async function retrySafelyBlockedAgentFailure({
   // Neither a backward wall clock nor a snapshot timestamp can renew evidence.
   const retryNow = () => new Date(Math.max(Date.now(),
     retryEpoch + Math.max(0, performance.now() - retryClockStart))).toISOString();
+  const readKnownPatchRetryCapacity = async (mission, allowedFiles, requiredTests, sourceRevision) => {
+    try {
+      const capacityRouting = capacityRoutingWithBlockedAdapters(await readElasticMissionControllerCapacityRoutingInput({
+        root: paths.workspaceRoot, repoRoot: paths.repoRoot, env,
+        nowUtc: retryNow(), sourceRevision,
+      }), blockedAdapters);
+      const proposed = { ...mission, currentPhase: 'AGENT_IMPLEMENTATION', allowedFiles,
+        requiredTests, dispatch: { ...mission.dispatch, status: 'pending' } };
+      // Re-evaluate freshness after the awaited native reads. Serialized
+      // caller options cannot supply a capacity verdict or replace this reader.
+      const [selected] = resolveElasticExternalCapacityCandidates(proposed,
+        capacityRouting, sourceRevision, retryNow());
+      return selected ? JSON.stringify({ route: selected.route, adapter: selected.adapter,
+        workerId: selected.workerId, receiptId: selected.receiptId, proofRefs: selected.proofRefs }) : null;
+    } catch {
+      return null;
+    }
+  };
   const records = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
   // Observe the existing scan without selecting work or evaluating extra proof.
   // Scalar snapshots are captured before a possible retry event mutates state.
@@ -635,11 +654,22 @@ export async function retrySafelyBlockedAgentFailure({
       continue;
     }
     let knownPatchEvidence;
+    let retryCapacityBinding;
     if (knownPatchRetry) {
       knownPatchEvidence = await collectKnownPatchEvidence({ mission: currentCandidate,
         sourceHead: retryPlanBinding.sourceHead, ownershipRelease, repoRoot: paths.repoRoot });
       if (knownPatchEvidence?.ok !== true) {
         firstBlockedCandidate ??= { ok: true, classification: knownPatchEvidence?.reason || 'KNOWN_PATCH_SOURCE_QUALIFICATION_FAILED',
+          retried: false, missionId: currentCandidate.missionId };
+        continue;
+      }
+      // Read the same native capacity estate and use the same planner as normal
+      // elastic dispatch, against the proposed scope, not the retained '**'.
+      // This is a readiness precondition, never a grant or a queue reservation.
+      retryCapacityBinding = await readKnownPatchRetryCapacity(currentCandidate,
+        retryAllowedFiles, retryRequiredTests, retryPlanBinding.sourceHead);
+      if (!retryCapacityBinding) {
+        firstBlockedCandidate ??= { ok: true, classification: 'KNOWN_PATCH_COMPATIBLE_CAPACITY_UNPROVEN',
           retried: false, missionId: currentCandidate.missionId };
         continue;
       }
@@ -682,7 +712,7 @@ export async function retrySafelyBlockedAgentFailure({
     }
     observation.note(currentCandidate, 'RETRY_SELECTED');
     candidateRecord = currentCandidate;
-    candidate = { ...currentCandidate, retryRequiredTests, retryAllowedFiles, retryPlanBinding, knownPatchEvidence, retryWorkspaceRoot: workspaceResolution.root,
+    candidate = { ...currentCandidate, retryRequiredTests, retryAllowedFiles, retryPlanBinding, knownPatchEvidence, retryCapacityBinding, retryWorkspaceRoot: workspaceResolution.root,
       retryProviderFailureProof: transportRetry ? ownershipRelease.providerTransportFailure : undefined,
       retryWorktreeRefresh: worktreeRefresh };
     break;
@@ -730,6 +760,9 @@ export async function retrySafelyBlockedAgentFailure({
         ownershipRelease, repoRoot: paths.repoRoot });
       if (evidence?.ok !== true
           || knownMalformedPatchDigestV1(evidence.proof) !== knownMalformedPatchDigestV1(candidate.knownPatchEvidence.proof)) reject();
+      const capacity = await readKnownPatchRetryCapacity(current, candidate.retryAllowedFiles,
+        candidate.retryRequiredTests, candidate.retryPlanBinding.sourceHead);
+      if (!capacity || capacity !== candidate.retryCapacityBinding) reject();
       // Awaited custody/source reads cannot extend the owner observation's TTL.
       const finalOwner = selectRetryOwnerPlan(authority, issueFromMissionId(current.missionId), current.repository, retryNow(), true, current);
       if (!finalOwner.freshOwnerContract || !finalOwner.ownerPlan?.valid
@@ -1484,6 +1517,7 @@ export async function ensureCriticalBacklogMission(options = {}) {
     paths,
     listMissions,
     appendEvent,
+    blockedAdapters: normalized.blockedAdapters,
   });
   if (retryAdmission?.ok === false) {
     return Object.freeze({
