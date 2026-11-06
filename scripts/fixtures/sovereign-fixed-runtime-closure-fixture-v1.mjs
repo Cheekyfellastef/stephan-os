@@ -41,6 +41,7 @@ const capturedReadAdapters = {
   'shared/agents/sovereignSearchSessionsV1.mjs': '34a3e080c0fb33f4dea59f244c019a884098daf29ed69ace2d654cb201a8d1d8',
   'shared/agents/sovereignFileMoveV1.mjs': '79ea603d77c6aa0d53366a966aef849ecc20e80019f2162e28886b6a28747190',
 };
+const capturedProcessAdapterSha256 = 'ad029b85f850637d915d220463c2ecc40d1aabb46bc2462ff0ff44970d217873';
 for (const target of requiredRoots) if (!members.has(target)) missing.push({ role: 'profile-root', target });
 // Checking all admitted JS members also covers a newly reachable import in a
 // packaged library outside the previous selected-root traversal. This cannot
@@ -100,6 +101,22 @@ while (queue.length) {
       const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), declaration[2]));
       if (members.has(target) && fs.existsSync(new URL(target, root))
         && digest(fs.readFileSync(new URL(target, root))) !== pin[2])
+        missing.push({ file, target, runtimeReadPinMismatch: true });
+    }
+  }
+  if (file === 'shared/agents/sovereignProcessSessionsV1.mjs') {
+    // Exact reviewed two-profile dependency model. The hash binds this finite
+    // interpretation to the adapter; it does not authorize computed discovery.
+    if (digest(source.replace(/\r\n/g, '\n')) !== capturedProcessAdapterSha256)
+      missing.push({ file, runtimeReadSourceUnproven: true });
+    for (const [spec, pin] of [
+      ['../../scripts/windows/status-battle-bridge-recovery-mesh.ps1', 'd48756676ed2fe75214c298d26c3010d08c219c2ed12ab6475998d5272645e03'],
+      ['../../scripts/windows/status-battle-bridge-worker-watchdog.ps1', '948d3b7ae81589301741d2975d2f5b0878f9592e085d29e768873231d7cb0230'],
+    ]) {
+      edge(file, spec, 'runtime-read');
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), spec));
+      if (members.has(target) && fs.existsSync(new URL(target, root))
+        && digest(fs.readFileSync(new URL(target, root))) !== pin)
         missing.push({ file, target, runtimeReadPinMismatch: true });
     }
   }

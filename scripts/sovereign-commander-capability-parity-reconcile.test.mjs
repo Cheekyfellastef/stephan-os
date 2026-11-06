@@ -87,6 +87,32 @@ test('canonical parity reconcile persists proposed Skill Forge recipes without s
   assert.equal(persisted.mergeAuthority, false);
 });
 
+test('scoped capability metadata publishes through the unchanged secret-field guard without implying acceptance', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'sovereign-scoped-capabilities-'));
+  const operations = ['start-search', 'set-config-value', 'move-file', 'start-process', 'list-devices'];
+  const result = await reconcileSovereignCommanderCapabilityParity({
+    paths: { workspaceRoot, repoRoot: 'C:/repo' },
+    now: new Date('2026-11-06T23:00:00.000Z'),
+    readQueue: async () => operations.map(operation => ({ adapter: 'desktop-commander-direct', item: {
+      missionId: 'critical-2573-scoped-capabilities', actionId: `scope-${operation}`, actionGrant: { operation },
+    } })),
+  });
+  assert.equal(result.ok, true, result.blocker);
+  const persisted = JSON.parse(await readFile(
+    join(workspaceRoot, 'status', `${SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATUS_ID}.json`), 'utf8'));
+  assert.equal(persisted.capabilityParity.parityPresentCount, 2);
+  assert.equal(persisted.capabilityParity.buildableGapCount, 3);
+  assert.equal(persisted.capabilityParity.runtimeParityProven, false);
+  assert.equal(persisted.capabilityParity.daemonMayReportGreen, false);
+  for (const id of ['start-search', 'set-config-value', 'move-file', 'start-process']) {
+    const item = persisted.capabilityParity.capabilities.find(row => row.capabilityId === id);
+    assert.equal(item.privateTransportRequired, true);
+    assert.equal(item.runtimeParityProven, false);
+  }
+  assert.equal(persisted.capabilityCompiler.learningCandidates.length, 0);
+  assert.equal(persisted.capabilityCompiler.skillForgeActivationAllowed, false);
+});
+
 test('catalog transition cannot publish a proven-parity Flywheel lesson', async () => {
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'sovereign-parity-learning-'));
   const repoRoot = 'C:/repo';

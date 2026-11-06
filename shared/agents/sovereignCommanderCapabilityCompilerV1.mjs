@@ -162,6 +162,8 @@ function skillPacketFromPlan(plan, capability, timestampUtc) {
       parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
       runtimeParityProven: false,
       ...(plan.atomicContentCasProven === false ? { atomicContentCasProven: false } : {}),
+      ...(plan.descendantsExcluded === false ? { descendantsExcluded: false } : {}),
+      ...(plan.nativeCustodyQualified === false ? { nativeCustodyQualified: false } : {}),
     } : {}),
     whySuggested: capability?.origin === 'sovereign-native-event'
       ? `An existing validated Sovereign Commander learning event reported ${id} as an unmet ability. This is discovery evidence, not implementation proof.`

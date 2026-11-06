@@ -26,19 +26,40 @@ export const SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY = Object.freeze(Object.f
   ['list-remote-tool-calls', 'list_remote_tool_calls', 'THIS_PRIVATE_HTTP_SESSION_ADVISORY_HISTORY'],
   ['set-config-value', 'set_config_value', 'THIS_PRIVATE_SESSION_TYPED_IO_LIMITS'],
 ].map(([id, sovereignEquivalent, functionalScope]) => [id, Object.freeze({ sovereignEquivalent,
-  functionalScope, privateSessionRequired: true, runtimeParityProven: false })])));
+  functionalScope, privateTransportRequired: true, runtimeParityProven: false })])));
 
-// A same-parent rename is useful partial coverage. It cannot close the broader
-// cross-directory move outcome, even if a retained ledger once called it parity.
+// Useful scoped implementations do not close their broader vendor outcomes,
+// even if a retained ledger once called the limited route parity.
 export const SOVEREIGN_COMMANDER_PARTIAL_PARITY_GAPS = Object.freeze({
   'move-file': Object.freeze({
     partialSovereignEquivalent: 'move_file',
     partialScope: 'SAME_PARENT_REGULAR_FILE_RENAME_NO_REPLACE',
     parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
     runtimeParityProven: false,
-    privateSessionRequired: true,
+    privateTransportRequired: true,
     atomicContentCasProven: false,
     parityGapReason: 'CROSS_DIRECTORY_FILE_MOVE_UNQUALIFIED',
+  }),
+  ...Object.fromEntries([
+    ['start-process', 'start_process'],
+    ['read-process-output', 'read_process_output'],
+    ['list-sessions', 'list_sessions'],
+  ].map(([id, partialSovereignEquivalent]) => [id, Object.freeze({
+    partialSovereignEquivalent,
+    partialScope: 'THIS_PRIVATE_HANDLER_TWO_FIXED_READ_ONLY_DIAGNOSTIC_PROFILES',
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    privateTransportRequired: true,
+    descendantsExcluded: false,
+    nativeCustodyQualified: false,
+    parityGapReason: 'GENERAL_INTERACTIVE_PROCESS_SESSION_CONTRACT_UNQUALIFIED',
+  })])),
+  'list-devices': Object.freeze({
+    partialSovereignEquivalent: 'visibility-snapshot',
+    partialScope: 'LOCAL_BATTLE_BRIDGE_HOST_VISIBILITY_ONLY',
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    parityGapReason: 'AUTHENTICATED_ACCOUNT_DEVICE_INVENTORY_UNIMPLEMENTED',
   }),
 });
 
@@ -54,7 +75,6 @@ const DIRECT_PARITY = Object.freeze({
   'create-directory': 'create_directory',
   'search-project': 'search_project',
   'list-processes': 'list_processes',
-  'list-devices': 'visibility-snapshot',
   'device-status': 'visibility-snapshot',
   'connection-status': 'visibility-snapshot',
   // Exact semantic actions already implemented by the canonical fixed registry.

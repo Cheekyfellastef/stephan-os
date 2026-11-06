@@ -1,9 +1,9 @@
-# Private Sovereign search, history, configuration and file moves
+# Private Sovereign capabilities
 
 Owner: **#2573 — Goal: Make Sovereign Commander absorb every Remote Commander capability**.
 
 The existing Commander host previously offered only a repository search and no
-session-local command history. This source contribution adds ten operations to
+session-local command history. This source contribution adds thirteen operations to
 that host and its canonical command envelope. It does not introduce another
 controller, worker, scheduler, durable store, public mailbox or execution owner.
 
@@ -21,8 +21,11 @@ controller, worker, scheduler, durable store, public mailbox or execution owner.
 | `list_remote_tool_calls` | The current handler's authenticated HTTP calls only; local stdio and other sessions are excluded. |
 | `set_config_value` | Revision-checked read/write limits for this private handler, enforced by subsequent file calls within the original hard caps. |
 | `move_file` | A regular file renamed within the same physical local Windows parent, with matching bounded pre/post SHA-256 observations and no destination replacement. Cross-directory moves remain unqualified. |
+| `start_process` | A bounded asynchronous session for only the existing `status-recovery-mesh` and `status-worker-watchdog` read-only profiles; actual root launch evidence, no caller commands or input. |
+| `read_process_output` | Stable pages of bounded stdout/stderr chunks from a process session created by this handler, including output observed before the child closes. |
+| `list_sessions` | Only this handler's diagnostic process sessions and observed direct-child states; no host-wide terminal inventory or custody release. |
 
-All ten require an actual MCP request after initialization and tool discovery.
+All thirteen require an actual MCP request after initialization and tool discovery.
 The trusted transport must be local stdio or authenticated HTTP. Caller JSON
 cannot provide transport proof, session state, an executor, a scanner or a history
 store. Unknown fields, accessors, inherited arguments and coercible numbers are
@@ -118,6 +121,58 @@ changes are eligible for the same private receipt history, including before/afte
 values, while another handler retains its own defaults. Closing the handler
 disposes this configuration; persistent machine settings are outside the contract.
 
+## Bounded diagnostic process sessions
+
+The three process tools implement a deliberately limited asynchronous contract.
+`start_process` accepts only a `profile` of `status-recovery-mesh` or
+`status-worker-watchdog`. The canonical command builder verifies the profile's
+existing read-only registration, fixed executable, exact script path and original
+ten-second deadline. The new internal operation is `START_PROCESS_SESSION`;
+the pre-existing `START_PROCESS` fixed-registry operation and its maintenance
+ownership rules retain their original meaning.
+
+The service captures and verifies the two existing PowerShell scripts before
+launch, then executes those bytes in a separate fixed script block. Their
+`[CmdletBinding()] param()` declarations stay intact. The scripts use only their
+existing named task and user-profile status-file observations; neither depends on
+repository-relative paths or source-location variables. The executable and system
+module path are fixed. The user profile comes only from the trusted host's minimal
+environment. No request may choose shell text, arguments, a working directory,
+environment variables, input, arbitrary PIDs or an additional profile.
+
+A successful start receipt requires observed child creation. It is a launch
+receipt, not a completed diagnostic. Output chunks have stable sequence offsets
+and can be read while the child remains alive. Each page reports truncation and
+whether output is complete. The service separately records root exit and stdio
+closure; it does not infer either from a timeout, disposal or a missing result.
+The limits are two active hosts across handlers, four retained sessions per
+handler, a five-minute access age, 16 KiB of output and 256 chunks of at most
+1 KiB per session. Pages default to 20 chunks and stop at 50 chunks or 12 KiB of
+serialized output. Expiry is pruned on access. The ten-second deadline requests
+termination only of the owned child; a two-second grace observation cannot
+establish termination when close has not been observed. Uncertain starts
+never authorize automatic retries, and uncertain child lifetime keeps admission
+held until the original child actually closes or a pre-spawn failure is proven.
+
+Handler disposal removes private access to retained observations while preserving
+unresolved process admission. It cannot release maintenance reservations, native
+custody or source leases. Even a root exit and closed pipes do not establish zero
+descendants: `descendantsExcluded` and `nativeCustodyQualified` remain false.
+The production scripts normally emit their JSON near completion; a real-child
+fixture separately proves that the transport can expose a chunk before exit.
+
+The catalog and compiler keep all three general process outcomes as
+`BUILDABLE_GAP`, with the precise two-profile partial scope. Interactive input,
+general build/terminal profiles, arbitrary process termination and full process
+tree custody need a separately qualified contract. A local status stream does not
+close those outcomes or create a Flywheel learning receipt.
+
+The same distinction applies to device inventory: `visibility-snapshot` describes
+the local Battle Bridge host. It does not enumerate authenticated account devices,
+so `list_devices` remains a partial local-visibility gap. Descriptive capability
+metadata uses `privateTransportRequired`; it is not a session token or admission
+proof, and publication still uses the unchanged shared workspace secret-field guard.
+
 ## Guarded regular-file rename coverage
 
 The move contract requires exact `source`, `destination` and `expectedSha256`
@@ -146,9 +201,9 @@ bounded private identity and hash metadata; file contents are not returned.
 
 ## Package, proof and adoption
 
-The fixed-runtime closure grows from 266 to **274 exact members**: the search,
-history, configuration and move modules, plus the two fixed scripts and native
-sources. Every original member remains present. The preparer,
+The fixed-runtime closure grows from 266 to **277 exact members**: five private
+session/adapter modules, four search/move native helper files, and the two existing
+fixed read-only status scripts. Every original member remains present. The preparer,
 installer, native verifier and closure regressions carry the same bounded member
 count. Captured helper reads are included in the parse-only dependency proof;
 omitted or modified helper bytes must fail it. There is no dynamic discovery of
@@ -156,7 +211,9 @@ extra installer files.
 
 Focused source tests cover argument and transport admission, scope binding,
 pagination, cancellation uncertainty, session isolation, history privacy and
-resource bounds. Configuration tests exercise real file behavior, stale revisions,
+resource bounds. Process tests exercise actual output before child exit, isolated
+session IDs, deadline/error/close races and retained admission under uncertainty.
+Configuration tests exercise real file behavior, stale revisions,
 rollback and independent handlers. Real disposable Windows fixtures compile the native helpers and
 exercise plain reads, sensitive-file exclusion, reparse/hard-link refusal and
 ancestor/file-handle races in the existing Windows CI job. Linux skips are not

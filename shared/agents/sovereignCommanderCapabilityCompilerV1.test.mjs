@@ -89,6 +89,38 @@ test('compiler decomposes process parity into a guarded primitive recipe without
   assert.equal(result.flywheelImprovementTargetCount, 1);
 });
 
+test('partial diagnostic streaming retains broader work in plans and cannot become a learning receipt', () => {
+  const ids = ['start-process', 'read-process-output', 'list-sessions'];
+  const result = compileSovereignCommanderCapabilityPlanV1({ capabilities: ids.map(capabilityId => ({
+    capabilityId, state: 'PARITY_PRESENT', sovereignEquivalent: capabilityId.replaceAll('-', '_'),
+    newlyProvenParity: true,
+  })) });
+  assert.equal(result.buildableCapabilityCount, 3);
+  assert.equal(result.learningCandidates.length, 0);
+  assert.equal(result.newlyProvenParityCount, 0);
+  for (const item of [...result.plans, ...result.skillForgeCandidates]) {
+    assert.equal(item.partialScope, 'THIS_PRIVATE_HANDLER_TWO_FIXED_READ_ONLY_DIAGNOSTIC_PROFILES');
+    assert.equal(item.parityGapReason, 'GENERAL_INTERACTIVE_PROCESS_SESSION_CONTRACT_UNQUALIFIED');
+    assert.equal(item.nativeCustodyQualified, false);
+    assert.equal(item.descendantsExcluded, false);
+    assert.equal(item.runtimeParityProven, false);
+  }
+});
+
+test('compiler keeps authenticated device inventory open when only local host visibility exists', () => {
+  const result = compileSovereignCommanderCapabilityPlanV1({ capabilities: [{
+    capabilityId: 'list-devices', state: 'PARITY_PRESENT', sovereignEquivalent: 'visibility-snapshot',
+    newlyProvenParity: true,
+  }] });
+  assert.equal(result.buildableCapabilityCount, 1);
+  assert.equal(result.learningCandidates.length, 0);
+  for (const item of [...result.plans, ...result.skillForgeCandidates]) {
+    assert.equal(item.partialScope, 'LOCAL_BATTLE_BRIDGE_HOST_VISIBILITY_ONLY');
+    assert.equal(item.parityGapReason, 'AUTHENTICATED_ACCOUNT_DEVICE_INVENTORY_UNIMPLEMENTED');
+    assert.equal(item.runtimeParityProven, false);
+  }
+});
+
 test('unknown capability proves a minimum primitive need instead of inventing a broad shell', () => {
   const result = compileSovereignCommanderCapabilityPlanV1({
     capabilities: [{

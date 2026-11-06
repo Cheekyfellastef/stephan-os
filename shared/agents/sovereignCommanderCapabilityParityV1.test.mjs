@@ -98,8 +98,8 @@ test('direct ChatGPT Remote Commander observations feed the same parity ratchet'
   assert.equal(result.canonicalOwnerGoal, '#2573');
 });
 
-test('Remote Commander device/reachability probes resolve to Sovereign visibility snapshot parity', () => {
-  for (const operation of ['list-devices', 'device-status', 'connection-status']) {
+test('local device/reachability probes resolve to Sovereign visibility snapshot parity', () => {
+  for (const operation of ['device-status', 'connection-status']) {
     const result = classifyRemoteCommanderCapabilityObservation({
       ...remote(operation),
       adapter: 'desktop-commander-direct',
@@ -121,7 +121,7 @@ test('scoped private capabilities map to their own tools without installed accep
     assert.equal(result.state, 'PARITY_PRESENT', operation);
     assert.equal(result.sovereignEquivalent, operation.replaceAll('-', '_'), operation);
     assert.notEqual(result.sovereignEquivalent, 'search_project');
-    assert.equal(result.privateSessionRequired, true);
+    assert.equal(result.privateTransportRequired, true);
     assert.equal(result.parityEvidenceScope, 'SOURCE_CATALOG_ONLY');
     assert.equal(result.runtimeParityProven, false);
     assert.equal(result.runtimeMutationAuthority, false);
@@ -251,6 +251,46 @@ test('forbidden authority is held at the boundary instead of cloned for parity',
   assert.match(result.sovereignEquivalent, /arbitrary-shell/);
   assert.equal(result.arbitraryShellAllowed, false);
   assert.equal(result.pcRestartAuthority, false);
+});
+
+test('fixed diagnostic sessions cannot close general process outcomes in fresh or retained ledgers', () => {
+  const ids = ['start-process', 'read-process-output', 'list-sessions'];
+  for (const id of ids) {
+    const fresh = classifyRemoteCommanderCapabilityObservation(remote(id));
+    assert.equal(fresh.state, 'BUILDABLE_GAP');
+    assert.equal(fresh.partialSovereignEquivalent, id.replaceAll('-', '_'));
+    assert.equal(fresh.partialScope, 'THIS_PRIVATE_HANDLER_TWO_FIXED_READ_ONLY_DIAGNOSTIC_PROFILES');
+    assert.equal(fresh.descendantsExcluded, false);
+    assert.equal(fresh.nativeCustodyQualified, false);
+  }
+  const retained = buildSovereignCommanderCapabilityParityLedger([], { priorLedger: {
+    capabilities: ids.map(id => ({ capabilityId: id, state: 'PARITY_PRESENT',
+      sovereignEquivalent: id.replaceAll('-', '_'), newlyProvenParity: true, observationCount: 4 })),
+  } });
+  assert.equal(retained.buildableGapCount, 3);
+  assert.equal(retained.parityPresentCount, 0);
+  assert.equal(retained.daemonMayReportGreen, false);
+  for (const capability of retained.capabilities) {
+    assert.equal(capability.observationCount, 4);
+    assert.equal(capability.parityGapReason, 'GENERAL_INTERACTIVE_PROCESS_SESSION_CONTRACT_UNQUALIFIED');
+    assert.equal(capability.runtimeParityProven, false);
+  }
+});
+
+test('one-host visibility cannot close authenticated account device inventory', () => {
+  const fresh = classifyRemoteCommanderCapabilityObservation(remote('list-devices'));
+  assert.equal(fresh.state, 'BUILDABLE_GAP');
+  assert.equal(fresh.partialSovereignEquivalent, 'visibility-snapshot');
+  assert.equal(fresh.partialScope, 'LOCAL_BATTLE_BRIDGE_HOST_VISIBILITY_ONLY');
+  const ledger = buildSovereignCommanderCapabilityParityLedger([], { priorLedger: { capabilities: [{
+    capabilityId: 'list-devices', state: 'PARITY_PRESENT', sovereignEquivalent: 'visibility-snapshot',
+    newlyProvenParity: true, observationCount: 7,
+  }] } });
+  assert.equal(ledger.parityPresentCount, 0);
+  assert.equal(ledger.buildableGapCount, 1);
+  assert.equal(ledger.capabilities[0].observationCount, 7);
+  assert.equal(ledger.capabilities[0].parityGapReason, 'AUTHENTICATED_ACCOUNT_DEVICE_INVENTORY_UNIMPLEMENTED');
+  assert.equal(ledger.capabilities[0].runtimeParityProven, false);
 });
 
 test('repeated observations deduplicate into one durable capability entry', () => {

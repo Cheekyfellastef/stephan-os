@@ -16,6 +16,7 @@ import { createSovereignSearchSessionsV1 } from '../shared/agents/sovereignSearc
 import { createSovereignMcpSessionHistoryV1 } from '../shared/agents/sovereignMcpSessionHistoryV1.mjs';
 import { createSovereignMcpSessionConfigV1 } from '../shared/agents/sovereignMcpSessionConfigV1.mjs';
 import { runSovereignFileMoveV1 } from '../shared/agents/sovereignFileMoveV1.mjs';
+import { createSovereignProcessSessionsV1 } from '../shared/agents/sovereignProcessSessionsV1.mjs';
 import {
   STEPHANOS_EXECUTION_SURFACE,
   buildStephanosExecutionCommandEnvelopeV1,
@@ -38,7 +39,8 @@ export const SOVEREIGN_COMMANDER_INSPECTION_ACTIONS = Object.freeze([
 
 const SEARCH_SESSION_TOOLS = Object.freeze(['start_search', 'get_more_search_results', 'stop_search', 'list_searches']);
 const HISTORY_TOOLS = Object.freeze(['get_usage_stats', 'get_recent_tool_calls', 'get_tool_result', 'list_remote_tool_calls']);
-const PRIVATE_SESSION_TOOLS = Object.freeze([...SEARCH_SESSION_TOOLS, ...HISTORY_TOOLS, 'set_config_value', 'move_file']);
+const PROCESS_SESSION_TOOLS = Object.freeze(['start_process', 'read_process_output', 'list_sessions']);
+const PRIVATE_SESSION_TOOLS = Object.freeze([...SEARCH_SESSION_TOOLS, ...HISTORY_TOOLS, ...PROCESS_SESSION_TOOLS, 'set_config_value', 'move_file']);
 const PRIVATE_READ_ANNOTATIONS = Object.freeze({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
 const HISTORY_PAGE_SCHEMA = Object.freeze({ type: 'object', additionalProperties: false,
   properties: { offset: { type: 'integer', minimum: 0, maximum: 256, default: 0 },
@@ -277,6 +279,31 @@ const TOOLS = Object.freeze([
     annotations: PRIVATE_READ_ANNOTATIONS,
   },
   {
+    name: 'start_process',
+    title: 'Start a fixed read-only diagnostic session',
+    description: 'Start only status-recovery-mesh or status-worker-watchdog as a bounded private process session. Returns observed direct-child launch state; output can be read separately before exit. No commands, arguments, environment, input, arbitrary PIDs or repair actions are accepted. This does not prove descendant or maintenance custody release.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['profile'],
+      properties: { profile: { type: 'string', enum: ['status-recovery-mesh', 'status-worker-watchdog'] } } },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'read_process_output',
+    title: 'Read this session’s diagnostic output',
+    description: 'Read bounded, sequenced stdout/stderr chunks from a process session created by this private MCP handler. Offset is a stable chunk sequence; truncation and direct-child lifecycle remain explicit. Reading never repeats the diagnostic.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['sessionId'],
+      properties: { sessionId: { type: 'string', minLength: 1, maxLength: 128 },
+        offset: { type: 'integer', minimum: 0, maximum: 256, default: 0 },
+        limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 } } },
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'list_sessions',
+    title: 'List this handler’s diagnostic sessions',
+    description: 'List only process sessions created by this private MCP handler, with observed direct-child state. This is not a host-wide terminal inventory or evidence that native execution custody is released.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
     name: 'list_processes',
     title: 'List processes',
     description: 'List a bounded snapshot of Battle Bridge processes using the fixed local process probe.',
@@ -414,6 +441,7 @@ function defaultRepoRoot(env = process.env) {
 }
 
 function operationForTool(name) {
+  if (name === 'start_process') return SOVEREIGN_COMMANDER_OPERATION.START_PROCESS_SESSION;
   if (PRIVATE_SESSION_TOOLS.includes(name)) return name.toUpperCase();
   return Object.freeze({
     get_config: SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG,
@@ -507,6 +535,7 @@ export function createSovereignCommanderMcpHandler({
   searchSessionsFactory = createSovereignSearchSessionsV1,
   sessionHistoryFactory = createSovereignMcpSessionHistoryV1,
   sessionConfigFactory = createSovereignMcpSessionConfigV1,
+  processSessionsFactory = createSovereignProcessSessionsV1,
   fileMoveExecutor = runSovereignFileMoveV1,
 } = {}) {
   let session = null;
@@ -515,6 +544,7 @@ export function createSovereignCommanderMcpHandler({
   const searchSessions = searchSessionsFactory();
   const sessionHistory = sessionHistoryFactory();
   const sessionConfig = sessionConfigFactory();
+  const processSessions = processSessionsFactory();
   // Only this fixed private operation reaches the native adapter. Closing an
   // MCP session does not cancel a possible mutation or release native admission.
   const fileMoves = Object.freeze({ execute: (operation, args) => {
@@ -541,7 +571,7 @@ export function createSovereignCommanderMcpHandler({
       try { if (recorded?.recorded) sessionHistory.finish(envelope.commandId, value, flags); } catch {}
     };
     try {
-      const result = await executor(envelope, { ...options, searchSessions, sessionHistory, sessionConfig, fileMoves });
+      const result = await executor(envelope, { ...options, searchSessions, sessionHistory, sessionConfig, fileMoves, processSessions });
       recordResponse(result);
       return result;
     } catch (error) {
@@ -689,12 +719,16 @@ export function createSovereignCommanderMcpHandler({
     throw new Error(`Unsupported MCP method: ${method}`);
   }
   // Transport lifecycle only. Closing a session cancels its read-only searches
-  // and forgets private history; it never releases canonical maintenance custody.
+  // and forgets private history. Process disposal does not invent child exit,
+  // release uncertain process admission or canonical maintenance custody.
   handle.close = async () => {
     if (closed) return;
     closed = true;
     try { sessionConfig.dispose(); }
-    finally { try { sessionHistory.dispose(); } finally { await searchSessions.dispose(); } }
+    finally {
+      try { sessionHistory.dispose(); }
+      finally { try { await searchSessions.dispose(); } finally { await processSessions.dispose(); } }
+    }
   };
   return handle;
 }

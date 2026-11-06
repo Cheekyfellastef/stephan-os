@@ -24,6 +24,10 @@ on:
       - 'shared/agents/sovereignFileMoveV1*'
       - 'shared/agents/sovereignCommanderSessionConfigV1.test.mjs'
       - 'shared/agents/sovereignCommanderFileMoveV1.test.mjs'
+      - 'shared/agents/sovereignProcessSessionsV1*'
+      - 'shared/agents/sovereignCommanderProcessSessionsV1.test.mjs'
+      - 'scripts/windows/status-battle-bridge-recovery-mesh.ps1'
+      - 'scripts/windows/status-battle-bridge-worker-watchdog.ps1'
       - 'shared/agents/sovereignFixedRuntimeSourceClosureV1.json'
       - 'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs'
       - 'scripts/sovereign-fixed-runtime-directory-package-v1.test.mjs'
@@ -120,6 +124,10 @@ on:
       - 'shared/agents/sovereignFileMoveV1*'
       - 'shared/agents/sovereignCommanderSessionConfigV1.test.mjs'
       - 'shared/agents/sovereignCommanderFileMoveV1.test.mjs'
+      - 'shared/agents/sovereignProcessSessionsV1*'
+      - 'shared/agents/sovereignCommanderProcessSessionsV1.test.mjs'
+      - 'scripts/windows/status-battle-bridge-recovery-mesh.ps1'
+      - 'scripts/windows/status-battle-bridge-worker-watchdog.ps1'
       - 'shared/agents/sovereignFixedRuntimeSourceClosureV1.json'
       - 'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs'
       - 'scripts/sovereign-fixed-runtime-directory-package-v1.test.mjs'
@@ -243,7 +251,7 @@ jobs:
           node --test shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs
           node --test shared/agents/sovereignCommanderV1.test.mjs shared/agents/sovereignDirectoryCreateV1.test.mjs
           node --test shared/agents/sovereignCommanderMcp.test.mjs
-          node --test shared/agents/sovereignSearchSessionsV1.test.mjs shared/agents/sovereignMcpSessionHistoryV1.test.mjs shared/agents/sovereignCommanderPrivateSessionsV1.test.mjs shared/agents/sovereignCommanderSessionLifecycleV1.test.mjs shared/agents/sovereignMcpSessionConfigV1.test.mjs shared/agents/sovereignCommanderSessionConfigV1.test.mjs shared/agents/sovereignFileMoveV1.test.mjs shared/agents/sovereignCommanderFileMoveV1.test.mjs
+          node --test shared/agents/sovereignSearchSessionsV1.test.mjs shared/agents/sovereignMcpSessionHistoryV1.test.mjs shared/agents/sovereignCommanderPrivateSessionsV1.test.mjs shared/agents/sovereignCommanderSessionLifecycleV1.test.mjs shared/agents/sovereignMcpSessionConfigV1.test.mjs shared/agents/sovereignCommanderSessionConfigV1.test.mjs shared/agents/sovereignFileMoveV1.test.mjs shared/agents/sovereignCommanderFileMoveV1.test.mjs shared/agents/sovereignProcessSessionsV1.test.mjs shared/agents/sovereignCommanderProcessSessionsV1.test.mjs
           node --test shared/agents/sovereignCommanderHttp.test.mjs
           node --test shared/agents/sovereignWindowsQualificationWorkflow.test.mjs shared/agents/sovereignMaintenanceAdmissionV1.test.mjs scripts/sovereign-goal-builder-worker-evidence.test.mjs scripts/sovereign-commander-goal-builder-repair.test.mjs shared/agents/goalDiscoveryWorkspaceV1.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs
           node --test tests/battle-bridge-observation.test.mjs
@@ -308,7 +316,7 @@ jobs:
       - name: Real Windows private directory creation, exact Unicode and ancestor race regressions
         run: node --test shared/agents/sovereignDirectoryCreateV1.test.mjs shared/agents/sovereignCommanderV1.test.mjs
       - name: Native private file confinement and MCP session lifecycle
-        run: node --test --test-concurrency=1 shared/agents/sovereignSearchSessionsV1.test.mjs shared/agents/sovereignMcpSessionHistoryV1.test.mjs shared/agents/sovereignCommanderPrivateSessionsV1.test.mjs shared/agents/sovereignCommanderSessionLifecycleV1.test.mjs shared/agents/sovereignMcpSessionConfigV1.test.mjs shared/agents/sovereignCommanderSessionConfigV1.test.mjs shared/agents/sovereignFileMoveV1.test.mjs shared/agents/sovereignCommanderFileMoveV1.test.mjs
+        run: node --test --test-concurrency=1 shared/agents/sovereignSearchSessionsV1.test.mjs shared/agents/sovereignMcpSessionHistoryV1.test.mjs shared/agents/sovereignCommanderPrivateSessionsV1.test.mjs shared/agents/sovereignCommanderSessionLifecycleV1.test.mjs shared/agents/sovereignMcpSessionConfigV1.test.mjs shared/agents/sovereignCommanderSessionConfigV1.test.mjs shared/agents/sovereignFileMoveV1.test.mjs shared/agents/sovereignCommanderFileMoveV1.test.mjs shared/agents/sovereignProcessSessionsV1.test.mjs shared/agents/sovereignCommanderProcessSessionsV1.test.mjs
       - name: Captured private-tool package closure and installer contracts
         run: node --test scripts/sovereign-fixed-runtime-directory-package-v1.test.mjs scripts/sovereign-fixed-runtime-install-source-package-v1.test.mjs scripts/sovereign-fixed-runtime-installer-v1.test.mjs
       - name: Windows VR diagnosis empty and single-value array regression

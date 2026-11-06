@@ -15,6 +15,11 @@ import { isSovereignMaintenanceObservationV1 } from './sovereignMaintenanceAdmis
 import { executeSovereignDirectoryCreateV1, validateSovereignDirectoryTargetV1 } from './sovereignDirectoryCreateV1.mjs';
 import { validateSovereignFileMoveArgumentsV1 } from './sovereignFileMoveV1.mjs';
 import {
+  validateSovereignProcessSessionArgumentsV1,
+  SOVEREIGN_PROCESS_SESSION_PROFILES_V1,
+  SOVEREIGN_PROCESS_SESSION_EXECUTABLE_V1,
+} from './sovereignProcessSessionsV1.mjs';
+import {
   captureSovereignMcpSessionConfigArgumentsV1, captureSovereignMcpSessionConfigSnapshotV1,
   countSovereignSubmittedLinesV1, SOVEREIGN_MCP_SESSION_CONFIG_DEFAULTS_V1,
   SOVEREIGN_MCP_SESSION_CONFIG_LIMITS_V1, SOVEREIGN_MCP_SESSION_CONFIG_SEMANTICS_V1,
@@ -45,6 +50,9 @@ export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
   LIST_PROCESSES: 'LIST_PROCESSES',
   RUN_NODE_TEST: 'RUN_NODE_TEST',
   START_PROCESS: 'START_PROCESS',
+  START_PROCESS_SESSION: 'START_PROCESS_SESSION',
+  READ_PROCESS_OUTPUT: 'READ_PROCESS_OUTPUT',
+  LIST_SESSIONS: 'LIST_SESSIONS',
   MAINTENANCE_ACTION: 'MAINTENANCE_ACTION',
 });
 
@@ -117,11 +125,18 @@ const PRIVATE_SESSION_ARGUMENTS = Object.freeze({
   GET_RECENT_TOOL_CALLS: ['offset', 'limit'],
   GET_TOOL_RESULT: ['callId'],
   LIST_REMOTE_TOOL_CALLS: ['offset', 'limit'],
+  START_PROCESS_SESSION: ['profile'],
+  READ_PROCESS_OUTPUT: ['sessionId', 'offset', 'limit'],
+  LIST_SESSIONS: [],
 });
 
 // JSON schema is a discovery contract, not runtime admission. Capture only own
 // data properties before the command fabric can trim paths or read accessors.
 export function captureSovereignPrivateSessionArgumentsV1(operation, raw) {
+  if (['START_PROCESS_SESSION', 'READ_PROCESS_OUTPUT', 'LIST_SESSIONS'].includes(operation)) {
+    const validated = validateSovereignProcessSessionArgumentsV1(operation, raw);
+    return validated.ok === true ? validated.args : null;
+  }
   if (operation === 'MOVE_FILE') {
     const validated = validateSovereignFileMoveArgumentsV1(raw);
     return validated.ok === true ? validated.args : null;
@@ -591,6 +606,8 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
   if (Object.hasOwn(PRIVATE_SESSION_ARGUMENTS, operation)) {
     const args = captureSovereignPrivateSessionArgumentsV1(operation, envelope.payload);
     const search = ['START_SEARCH', 'GET_MORE_SEARCH_RESULTS', 'STOP_SEARCH', 'LIST_SEARCHES'].includes(operation);
+    const processSession = ['START_PROCESS_SESSION', 'READ_PROCESS_OUTPUT', 'LIST_SESSIONS'].includes(operation);
+    let profileBinding = null;
     if (!args) blockers.push('SOVEREIGN_PRIVATE_SESSION_ARGUMENTS_INVALID');
     if (operation === 'START_SEARCH') {
       if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 1
@@ -602,8 +619,26 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     } else if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 0) {
       blockers.push('SOVEREIGN_PRIVATE_SESSION_SCOPE_INVALID');
     }
+    if (operation === 'START_PROCESS_SESSION' && args) {
+      const fixed = registry[args.profile];
+      const profile = SOVEREIGN_PROCESS_SESSION_PROFILES_V1[args.profile];
+      const root = normalizedAbsolutePath(options.repoRoot);
+      const expectedArgs = profile && root ? ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', resolve(root, profile.scriptPath)] : [];
+      // A private streaming route cannot turn a registered maintenance action
+      // into an observation or borrow its execution/owner authority.
+      if (!root || !fixed || !profile || !isSovereignMaintenanceObservationV1(args.profile)
+        || fixed.executable !== SOVEREIGN_PROCESS_SESSION_EXECUTABLE_V1
+        || fixed.timeoutMs !== profile.timeoutMs || profile.timeoutMs !== 10_000
+        || JSON.stringify(fixed.args) !== JSON.stringify(expectedArgs)) {
+        blockers.push('SOVEREIGN_PROCESS_PROFILE_BINDING_INVALID');
+      } else profileBinding = frozen({ profile: args.profile, scriptPath: profile.scriptPath,
+        scriptSha256: profile.scriptSha256, timeoutMs: profile.timeoutMs });
+    }
     if (args) plan = frozen({ kind: 'private-session',
-      family: operation === 'MOVE_FILE' ? 'move' : operation === 'SET_CONFIG_VALUE' ? 'config' : search ? 'search' : 'history', operation, args });
+      family: operation === 'MOVE_FILE' ? 'move' : operation === 'SET_CONFIG_VALUE' ? 'config'
+        : processSession ? 'process' : search ? 'search' : 'history', operation, args,
+      ...(profileBinding ? { profileBinding } : {}) });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG) {
     plan = frozen({ kind: 'config', ...configuration });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.READ_FILE) {
@@ -1094,7 +1129,8 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
           && options.routeProof?.authenticatedMcp === true));
     const service = command.plan.family === 'search' ? options.searchSessions
       : command.plan.family === 'config' ? options.sessionConfig
-        : command.plan.family === 'move' ? options.fileMoves : options.sessionHistory;
+        : command.plan.family === 'move' ? options.fileMoves
+          : command.plan.family === 'process' ? options.processSessions : options.sessionHistory;
     if (!privateRoute || !service || typeof service.execute !== 'function') return frozen({
       ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
       blocker: 'SOVEREIGN_PRIVATE_SESSION_REQUIRED',
@@ -1136,20 +1172,29 @@ async function executeAdmittedSovereignCommandV1(command, options) {
     if (command.plan.kind === 'private-session') {
       const service = command.plan.family === 'search' ? options.searchSessions
         : command.plan.family === 'config' ? options.sessionConfig
-          : command.plan.family === 'move' ? options.fileMoves : options.sessionHistory;
+          : command.plan.family === 'move' ? options.fileMoves
+            : command.plan.family === 'process' ? options.processSessions : options.sessionHistory;
       structuredContent = await service.execute(command.plan.family === 'history'
         ? command.plan.operation.toLowerCase() : command.plan.operation, command.plan.args);
       const move = command.plan.family === 'move';
+      const processStart = command.plan.operation === 'START_PROCESS_SESSION';
       if (!structuredContent || structuredContent.ok !== true
-        || (move && structuredContent.mutationState !== 'MOVED')) {
+        || (move && structuredContent.mutationState !== 'MOVED')
+        || (processStart && (structuredContent.launchState !== 'SPAWN_OBSERVED'
+          || structuredContent.session?.spawnObserved !== true))) {
         const unknownMove = move && structuredContent?.mutationState !== 'NOT_STARTED';
+        const unknownProcessStart = processStart && structuredContent?.launchState !== 'NOT_STARTED';
         if (unknownMove) structuredContent = frozen({ ...structuredContent,
           ok: false, mutationState: 'UNKNOWN', retryAllowed: false });
+        if (unknownProcessStart) structuredContent = frozen({ ...structuredContent,
+          ok: false, launchState: 'UNKNOWN', retryAllowed: false,
+          nativeCustodyQualified: false, descendantsExcluded: false });
         contentText = JSON.stringify(structuredContent).slice(0, MAX_RESULT_TEXT);
         return frozen({
           ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command, contentText, structuredContent,
           blocker: structuredContent?.blocker || 'SOVEREIGN_PRIVATE_SESSION_OPERATION_BLOCKED',
-          finalVerdict: unknownMove ? 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' : 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+          finalVerdict: unknownMove || unknownProcessStart
+            ? 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' : 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
         });
       }
       contentText = JSON.stringify(structuredContent).slice(0, MAX_RESULT_TEXT);
@@ -1377,6 +1422,14 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         ? 'SOVEREIGN_COMMANDER_SESSION_OPERATION_RETURNED' : 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
     });
   } catch (error) {
+    if (command.plan?.kind === 'private-session' && command.plan.operation === 'START_PROCESS_SESSION') {
+      const structuredContent = frozen({ ok: false, launchState: 'UNKNOWN', retryAllowed: false,
+        nativeCustodyQualified: false, descendantsExcluded: false,
+        blocker: 'SOVEREIGN_PROCESS_LAUNCH_UNKNOWN' });
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
     if (command.plan?.kind === 'private-session' && command.plan.family === 'move') {
       const structuredContent = frozen({ ok: false, mutationState: 'UNKNOWN', retryAllowed: false,
         blocker: 'SOVEREIGN_MOVE_EFFECT_UNKNOWN' });
