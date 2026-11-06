@@ -70,13 +70,24 @@ or the headset for Quest Browser), and press a button if the browser has not yet
 exposed it. Quest controllers are read from the active WebXR session. Release
 both sticks on entry, after switching controller type, and after tracking resumes.
 Movement stops during tracking loss, hidden sessions, and controller disconnection.
-Stick movement stays within the chamber; physical tracking is never overridden.
+Stick movement stays within the chamber and stops at the table and cube, with a
+28 cm body margin and sliding along edges. A swept collision check prevents
+passing through thin objects between frames. Physical tracking is never overridden:
+if room-scale walking or leaning places the viewer inside an object, stick movement
+can take them back out through the nearest edge without an automatic camera jump.
 Walking speed is capped at 1.2 metres per second, with drift dead zones and bounded
 frame timing. Only one controller type drives movement at once.
 
 Mappings follow the [WebXR Gamepads Module](https://immersive-web.github.io/webxr-gamepads-module/)
 and standard Gamepad layout. Automated input and stereo-matrix tests are source
 proof; Xbox and Quest physical controller acceptance remains pending playtesting.
+
+The chamber uses a solid, softly lit room shell with a continuous grid on the
+floor, all four walls and ceiling. Ceiling and perimeter lights illuminate a
+suspended ceramic workstation with a sculpted split pedestal, luminous edge
+and inlaid controls. Furniture and collision footprints share one layout module.
+The desktop preview uses the same geometry and lighting as the immersive renderer.
+Lighting is deliberately static, with no flashing effects or expensive shadow maps.
 
 ## Generated packaging assets
 

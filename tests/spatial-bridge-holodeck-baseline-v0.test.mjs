@@ -51,7 +51,7 @@ test('Holodeck room geometry includes the chamber and first idea cube', () => {
   assert.ok(geometry.vertexCount > 300);
   assert.equal(geometry.positions.length, geometry.colors.length);
   assert.equal(geometry.positions.length, geometry.vertexCount * 3);
-  assert.deepEqual(geometry.ideaCube.center, [0, 1.18, -2.2]);
+  assert.deepEqual(geometry.ideaCube.center, [0, 1.25, -2.2]);
   assert.equal(geometry.ideaCube.size, 0.58);
   assert.equal(geometry.room.frontZ, -6);
   assert.equal(geometry.room.height, 3.2);

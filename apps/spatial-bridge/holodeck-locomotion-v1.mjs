@@ -1,5 +1,7 @@
 // Controller motion changes only the rendered room, never the headset's tracking.
 // XR thumbstick layout: https://immersive-web.github.io/webxr-gamepads-module/
+import { resolveHolodeckMovement } from './holodeck-collision-v1.mjs';
+import { HOLODECK_ROOM, HOLODECK_OBSTACLES } from './holodeck-layout-v1.mjs';
 const DEAD_ZONE = 0.18;
 const TURN_RADIANS_PER_SECOND = Math.PI / 2;
 const SPEED = 1.2;
@@ -74,16 +76,7 @@ function rotate(x, z, yaw) {
     z: -Math.sin(yaw) * x + Math.cos(yaw) * z };
 }
 
-function boundedDelta(current, delta, min, max) {
-  // Physical walking may put the head outside the virtual room. Do not snap
-  // it back; permit only stick movement towards the room until it re-enters.
-  if (current < min) return Math.max(0, Math.min(delta, max - current));
-  if (current > max) return Math.min(0, Math.max(delta, min - current));
-  return Math.max(min, Math.min(max, current + delta)) - current;
-}
-
-export function createHolodeckLocomotion({ room } = {}) {
-  const bounds = room ?? { halfWidth: 5, frontZ: -6, backZ: 3 };
+export function createHolodeckLocomotion({ room = HOLODECK_ROOM, obstacles = HOLODECK_OBSTACLES } = {}) {
   const rig = { x: 0, z: 0, yaw: 0 };
   let previousTime = null;
   let previousSource = 'none';
@@ -134,10 +127,10 @@ export function createHolodeckLocomotion({ room } = {}) {
     }
     const direction = rotate(input.moveX, input.moveY, rig.yaw + headYaw);
     const tracked = rotate(head.x, head.z, rig.yaw);
-    rig.x += boundedDelta(rig.x + tracked.x, direction.x * SPEED * dt,
-      -bounds.halfWidth + 0.3, bounds.halfWidth - 0.3);
-    rig.z += boundedDelta(rig.z + tracked.z, direction.z * SPEED * dt,
-      bounds.frontZ + 0.3, bounds.backZ - 0.3);
+    const travel = resolveHolodeckMovement({ x: rig.x + tracked.x, z: rig.z + tracked.z },
+      { x: direction.x * SPEED * dt, z: direction.z * SPEED * dt }, { room, obstacles });
+    rig.x += travel.x;
+    rig.z += travel.z;
     return { ...rig, controller: input.label, state: 'ready' };
   }
 

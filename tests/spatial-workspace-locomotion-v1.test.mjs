@@ -134,10 +134,11 @@ test('tracking loss, lost visibility, pauses and disconnects stop motion until n
 });
 
 test('stick travel stays in the chamber without snapping an out-of-bounds physical head', () => {
-  const nav = ready();
+  const nav = createHolodeckLocomotion({ obstacles: [] });
+  nav.update({ time: 0, pose: pose(), input: neutral });
   let state;
   for (let t = 50; t <= 20000; t += 50) state = nav.update({ time: t, pose: pose(), input: input([0, -1, 0, 0]) });
-  close(state.z, -5.7);
+  close(state.z, -5.72);
   const outside = ready(pose(8, 0));
   close(outside.update({ time: 50, pose: pose(8, 0), input: input([1, 0, 0, 0]) }).x, 0);
   close(outside.update({ time: 100, pose: pose(8, 0), input: input([-1, 0, 0, 0]) }).x, -0.06);
