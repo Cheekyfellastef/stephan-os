@@ -56,7 +56,7 @@ function closure(root, omitted) {
 }
 
 test('directory package captures exactly three dependencies and rejects incomplete or extra records', () => {
-  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 263);
+  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 266);
   for (const path of directoryPaths) assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(path), path);
   const records = candidateRecords();
   assert.throws(() => candidate(records.filter(row => !directoryPaths.includes(row.path))), /EXACT_SOURCE_REQUIRED/);
@@ -78,7 +78,7 @@ test('isolated captured package proves imports and both source-owned runtime-rea
   const root = packagedCandidate();
   try {
     const complete = closure(root);
-    assert.equal(complete.memberCount, 263);
+    assert.equal(complete.memberCount, 266);
     assert.deepEqual(complete.missing, []);
     assert.deepEqual(complete.bare, []);
     assert.equal(complete.repositoryModulesEvaluated, false);
