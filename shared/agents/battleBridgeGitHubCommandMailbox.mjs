@@ -234,6 +234,10 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
   if (Array.isArray(selected.rejected)) {
     for (const entry of selected.rejected) {
       const original = originals.get(String(entry?.commentId ?? ''));
+      if (original && !core.projectMailboxReceiptRequestId(String(original.command?.requestId || ''))) {
+        rejected.push(entry);
+        continue;
+      }
       const blocker = original?.shape?.ok === false ? original.shape.blocker : entry.blocker;
       if (
         original?.shape?.ok === false

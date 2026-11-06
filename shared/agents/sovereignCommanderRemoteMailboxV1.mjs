@@ -461,9 +461,10 @@ export async function callSovereignMaintenanceOwnerV1(request, options = {}) {
   const readFileFn = options.readFileFn || readFile;
   let token = '', sessionId = '';
   try {
-    const healthExchange = await fetchTextWithDeadline(fetchFn, HEALTH_URL, { method: 'GET' }, 3_000);
+    const healthExchange = await fetchTextWithDeadline(fetchFn, HEALTH_URL + '?view=protocol', { method: 'GET' }, 3_000);
     const health = JSON.parse(healthExchange.bodyText || 'null');
     if (!healthExchange.response.ok || health?.ok !== true || health.service !== 'stephanos-sovereign-commander'
+        || health.observationScope !== 'TRANSPORT_PROTOCOL_ONLY' || health.maintenanceAdmissionProven !== false
         || health.maintenanceOwnerAdmissionVersion !== SOVEREIGN_MAINTENANCE_OWNER_VERSION) {
       return fail('SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED');
     }
