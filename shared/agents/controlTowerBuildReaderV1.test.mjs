@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readControlTowerBuildRequestV1, isAuthenticatedControlTowerBuildRequestV1 } from './controlTowerBuildReaderV1.mjs';
+import { readControlTowerBuildRequestV1, readHistoricalControlTowerBuildRequestV1,
+  isAuthenticatedControlTowerBuildRequestV1 } from './controlTowerBuildReaderV1.mjs';
 import { fixture, inputs, zip, API, HEAD, NOW, SIGNED } from './fixtures/controlTowerBuildV1.mjs';
 import { createControlTowerBuildRequestV1 } from './controlTowerBuildRequestV1.mjs';
 const read = (f, extra = {}) => readControlTowerBuildRequestV1({ token: 'test-only', fetchImpl: f.fetchImpl, now: () => NOW, ...extra });
@@ -17,6 +18,23 @@ test('fixed GET, owner run, full job estate and archive digest mint a frozen nat
     assert.equal(init.method, 'GET');
     assert.equal(init.headers.Authorization, url === SIGNED ? undefined : 'Bearer test-only');
   }
+});
+
+test('historical reader rehydrates an expired owner artifact without minting live execution authority', async () => {
+  const f = fixture();
+  const result = await readHistoricalControlTowerBuildRequestV1({
+    token: 'test-only', fetchImpl: f.fetchImpl, runId: 100,
+    now: () => '2026-10-28T12:11:00.000Z',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.request.requestId, 'control-tower-build-100-1');
+  assert.equal(result.request.operation, 'BUILD_NEXT_ELIGIBLE_GOAL');
+  assert.equal(isAuthenticatedControlTowerBuildRequestV1(result.request), false);
+  for (const flag of ['admissionGranted', 'mergeAuthority', 'runtimeMutationAuthority', 'leaseSeizureAllowed', 'arbitraryShellAllowed'])
+    assert.equal(result.request[flag], false);
+  assert.equal((await readHistoricalControlTowerBuildRequestV1({
+    token: 'test-only', fetchImpl: f.fetchImpl, runId: 100, now: () => NOW,
+  })).ok, false);
 });
 
 test('read-only inspection uses the same authenticated artifact without widening transport authority', async () => {

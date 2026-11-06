@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createControlTowerBuildRequestV1, validateControlTowerBuildRequestV1 } from './controlTowerBuildRequestV1.mjs';
+import { createControlTowerBuildRequestV1, validateControlTowerBuildRequestV1,
+  validateHistoricalControlTowerBuildRequestV1 } from './controlTowerBuildRequestV1.mjs';
 import { inputs, fixture, HEAD, NOW } from './fixtures/controlTowerBuildV1.mjs';
 
 test('owner dispatch defaults to the next canonically eligible build, with no grant', () => {
@@ -76,6 +77,18 @@ test('authority flags, unknown fields, expiry and source substitution are reject
     assert.equal(validateControlTowerBuildRequestV1({ ...f.request, ...patch }, f.run, HEAD, NOW).ok, false);
   assert.equal(validateControlTowerBuildRequestV1(f.request, f.run, HEAD, '2026-10-28T12:11:00.000Z').ok, false);
 });
+test('expired requests can be authenticated only for historical diagnosis, never live execution', () => {
+  const f = fixture();
+  const afterExpiry = '2026-10-28T12:11:00.000Z';
+  assert.equal(validateControlTowerBuildRequestV1(f.request, f.run, HEAD, afterExpiry).ok, false);
+  assert.equal(validateHistoricalControlTowerBuildRequestV1(f.request, f.run, HEAD, afterExpiry).ok, true);
+  assert.equal(validateHistoricalControlTowerBuildRequestV1(f.request, f.run, HEAD, NOW).ok, false);
+  assert.equal(validateHistoricalControlTowerBuildRequestV1({ ...f.request, mergeAuthority: true },
+    f.run, HEAD, afterExpiry).ok, false);
+  assert.equal(validateHistoricalControlTowerBuildRequestV1(f.request,
+    { ...f.run, actor: { login: 'Cheekyfellastef', id: 1 } }, HEAD, afterExpiry).ok, false);
+});
+
 test('authenticated run identity cannot be replaced by a familiar artifact name', () => {
   for (const patch of [{ actor: { login: 'Cheekyfellastef', id: 1 } }, { triggering_actor: { login: 'Cheekyfellastef' } },
     { repository: { full_name: 'Cheekyfellastef/stephan-os', id: 1 } }, { event: 'repository_dispatch' }, { run_attempt: 2 }]) {

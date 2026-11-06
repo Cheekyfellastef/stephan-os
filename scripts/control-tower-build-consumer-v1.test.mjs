@@ -169,6 +169,87 @@ const inspectedStatus = () => ({ schemaVersion: 'stephanos.sovereign-control-sys
     reason: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING' },
 });
 
+const legacyRequest = (id = 99) => ({
+  ...fixture().request,
+  requestId: `control-tower-build-${id}-1`,
+  runId: id,
+  createdAtUtc: '2026-10-28T11:40:00.000Z',
+  expiresAtUtc: '2026-10-28T11:50:00.000Z',
+  artifactId: id + 200,
+  artifactSha256: 'c'.repeat(64),
+  proofRef: `https://github.com/Cheekyfellastef/stephan-os/actions/runs/${id}`,
+});
+const currentRequest = (id = 100) => ({
+  ...fixture().request,
+  requestId: `control-tower-build-${id}-1`,
+  runId: id,
+  createdAtUtc: '2026-10-28T12:19:00.000Z',
+  expiresAtUtc: '2026-10-28T12:29:00.000Z',
+  artifactId: id + 200,
+  artifactSha256: 'c'.repeat(64),
+  proofRef: `https://github.com/Cheekyfellastef/stephan-os/actions/runs/${id}`,
+});
+const quiescentLegacyStatus = (custodyState = 'NOT_HELD_REPORTED') => ({
+  schemaVersion: 'stephanos.sovereign-control-system-inspection.v1',
+  observedAtUtc: '2026-10-28T12:20:00.000Z',
+  observationOnly: true,
+  observationCompleted: true,
+  blocker: '',
+  source: { available: true, stable: true, sourceHead: HEAD, expectedMain: HEAD, reason: '' },
+  owner: { available: true, stable: true, observedAtUtc: '2026-10-28T12:20:00.000Z', reason: '' },
+  guardian: { available: true, enabled: true, running: false, scheduled: false, maintenanceInFlight: false,
+    custodyState, blocker: custodyState === 'HELD' ? 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN' : '',
+    observedAtUtc: '2026-10-28T12:20:00.000Z' },
+  nativeRuntime: { available: true, qualificationObserved: false, observedAtUtc: '2026-10-28T12:20:00.000Z',
+    reason: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING' },
+  requestLedger: { requested: true, recordObserved: true, phase: 'RESERVED',
+    relayWorkspaceIdentityProven: false, reason: '' },
+});
+
+test('Control Tower self-heals a proven abandoned legacy reservation as BLOCKED then runs the fresh build in the same poll', async t => {
+  const legacy = legacyRequest(99), fresh = currentRequest(100);
+  const s = setup(t, {
+    isAuthenticated: () => true,
+    readHistoricalRequest: async ({ runId }) => ({ ok: runId === 99, blocker: '', request: legacy }),
+    readRequest: async args => {
+      assert.equal(args.observationOnly, false);
+      return { ok: true, blocker: '', request: fresh };
+    },
+    inspect: async args => {
+      assert.deepEqual(args, { expectedMain: HEAD, controlTowerRequestId: legacy.requestId });
+      return quiescentLegacyStatus();
+    },
+  });
+  const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+  ledger.reserve({ ...legacy, issueNumber: 2315 });
+  const result = await s.consume({ now: () => new Date('2026-10-28T12:20:00.000Z') });
+  assert.equal(result.state, 'WAKE_COMPLETED');
+  assert.equal(ledger.read(legacy.requestId).phase, 'TERMINAL');
+  assert.equal(ledger.read(legacy.requestId).terminalState, 'BLOCKED');
+  assert.equal(ledger.read(fresh.requestId).phase, 'TERMINAL');
+  assert.equal(ledger.read(fresh.requestId).terminalState, 'DONE');
+  assert.equal(s.calls.length, 1);
+});
+
+test('Control Tower never retires a legacy reservation while Commander custody remains held', async t => {
+  const legacy = legacyRequest(99);
+  const s = setup(t, {
+    readHistoricalRequest: async () => ({ ok: true, blocker: '', request: legacy }),
+    readRequest: async args => {
+      assert.equal(args.observationOnly, true);
+      return { ok: false, blocker: 'NO_CONTROL_TOWER_BUILD_REQUEST', request: null };
+    },
+    inspect: async () => quiescentLegacyStatus('HELD'),
+  });
+  const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+  ledger.reserve({ ...legacy, issueNumber: 2315 });
+  const result = await s.consume({ now: () => new Date('2026-10-28T12:20:00.000Z') });
+  assert.equal(result.state, 'HELD');
+  assert.equal(result.blocker, 'CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED');
+  assert.equal(ledger.read(legacy.requestId).phase, 'RESERVED');
+  assert.equal(s.calls.length, 0);
+});
+
 test('ambiguous build then observe then restart and empty poll retains original custody and blocks a new build', async t => {
   let invocations = 0; const inspected = [], readerModes = [];
   const s = setup(t, { execute: async () => { invocations++; return { ok: false, blocker: 'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE' }; },
@@ -239,7 +320,10 @@ test('fixed observation never calls maintenance and malformed or wrong-source re
 test('unproven ledger discovery restricts acquisition to observation and cannot wake or reserve a new build', async t => {
   let mode;
   const s = setup(t, { createLedger: root => ({ ...createMailboxExecutionLedger(root),
-    discoverControlTower: () => ({ ok: false, blocker: 'CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED' }) }),
+    discoverControlTower: async () => {
+      await new Promise(resolve => setImmediate(resolve));
+      return { ok: false, blocker: 'CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED' };
+    } }),
     readRequest: async args => { mode = args.observationOnly; return requestTransport(101, 'OBSERVE_CONTROL_SYSTEM')(args); },
     inspect: async () => inspectedStatus() });
   const observed = await s.consume(); assert.equal(mode, true); assert.equal(observed.state, 'OBSERVATION_COMPLETED');
@@ -385,5 +469,51 @@ test('successful reservation advances the locator before a diagnostic re-read ca
   assert.equal(observed.latestBuildRequestObservation.state, 'RESERVED');
   assert.equal(observed.latestBuildRequestObservation.ledgerPhase, 'RESERVED');
   assert.equal(createMailboxExecutionLedger(join(s.root, 'github-command-mailbox')).read(observed.requestId).phase, 'RESERVED');
+  assert.equal(s.calls.length, 0);
+});
+
+for (const existingHistory of [false, true]) {
+  test('two distinct authenticated requests retain one unresolved build with existing history ' + existingHistory, async t => {
+    const s = setup(t, { execute: async args => { s.calls.push(args); return { ok: false, blocker: 'TRANSPORT_OUTCOME_UNKNOWN' }; } });
+    const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+    if (existingHistory) ledger.importHistorical('ordinary-mailbox-history', 3258, 'TERMINAL');
+    const consume = runId => consumeControlTowerBuildRequestV1({ ...s.options,
+      dependencies: { ...s.options.dependencies, readRequest: requestTransport(runId) } });
+    const results = await Promise.all([consume(100), consume(101)]);
+    assert.equal(s.calls.length, 1);
+    assert.equal([100, 101].filter(id => ledger.read('control-tower-build-' + id + '-1')?.phase === 'RESERVED').length, 1);
+    assert.equal(results.filter(result => result.state === 'UNKNOWN').length, 1);
+    assert.equal(results.filter(result => result.state === 'HELD').length, 1);
+  });
+}
+
+test('a missing original locator prevents combined admission and owner invocation', async t => {
+  let admissions = 0;
+  const s = setup(t, { createLedger: root => {
+    const real = createMailboxExecutionLedger(root);
+    return { ...real, discoverAndReserveControlTower: (...args) => { admissions++; return real.discoverAndReserveControlTower(...args); } };
+  } });
+  const result = await s.consume({ latestBuildRequestId: 'control-tower-build-99-1' });
+  assert.equal(result.state, 'HELD');
+  assert.equal(result.blocker, 'CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED');
+  assert.equal(admissions, 0);
+  assert.equal(s.calls.length, 0);
+  assert.equal(result.latestBuildRequestObservation.detailState, 'MISSING');
+});
+
+test('uncertain combined reservation keeps its locator and never calls the owner', async t => {
+  const s = setup(t, { createLedger: root => {
+    const real = createMailboxExecutionLedger(root);
+    return { ...real, discoverAndReserveControlTower: async (command, options) => {
+      await real.discoverAndReserveControlTower(command, options);
+      return { ok: false, blocker: 'CONTROL_TOWER_BUILD_DELIVERY_UNPROVEN',
+        reservation: null, reservationAttempted: true,
+        latestBuildRequestObservation: null, latestControlSystemObservation: null };
+    } };
+  } });
+  const result = await s.consume();
+  assert.equal(result.state, 'UNKNOWN');
+  assert.equal(result.requestPointers.latestBuildRequestId, 'control-tower-build-100-1');
+  assert.equal(result.latestBuildRequestObservation.ledgerPhase, 'RESERVED');
   assert.equal(s.calls.length, 0);
 });

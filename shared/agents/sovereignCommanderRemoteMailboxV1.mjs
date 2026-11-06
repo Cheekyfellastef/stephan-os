@@ -1,3 +1,4 @@
+import { projectSovereignCapabilityCatalogTruth } from './sovereignCommanderCapabilityParityV1.mjs';
 import { createHash } from 'node:crypto';
 import { projectMaintenanceCustodyVisibilityV1, maintenanceCustodyVisibilityLightV1 } from './maintenanceCustodyVisibilityV1.mjs';
 import { parseWindowsCalibrationRemoteV1 } from './sovereignWindowsCalibrationRemoteV1.mjs';
@@ -25,6 +26,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'search-project',
   'battle-bridge-status',
   'battle-bridge-observe',
+  'diagnose-ignition',
   'original-source-custody-census',
   'original-r7-witness-readiness',
   'meter-status',
@@ -74,6 +76,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'repair-stephanos',
   'prove-vr-atlas-runtime',
   'prove-flywheel-runtime',
+  'observe-open-stephanos-tabs',
   'prove-stephanos-ai-commander',
   'reconcile-remote-commander-parity',
   'sync-vr-reference-sources',
@@ -458,9 +461,10 @@ export async function callSovereignMaintenanceOwnerV1(request, options = {}) {
   const readFileFn = options.readFileFn || readFile;
   let token = '', sessionId = '';
   try {
-    const healthExchange = await fetchTextWithDeadline(fetchFn, HEALTH_URL, { method: 'GET' }, 3_000);
+    const healthExchange = await fetchTextWithDeadline(fetchFn, HEALTH_URL + '?view=protocol', { method: 'GET' }, 3_000);
     const health = JSON.parse(healthExchange.bodyText || 'null');
     if (!healthExchange.response.ok || health?.ok !== true || health.service !== 'stephanos-sovereign-commander'
+        || health.observationScope !== 'TRANSPORT_PROTOCOL_ONLY' || health.maintenanceAdmissionProven !== false
         || health.maintenanceOwnerAdmissionVersion !== SOVEREIGN_MAINTENANCE_OWNER_VERSION) {
       return fail('SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED');
     }
@@ -559,6 +563,39 @@ function safeAiCommanderAcceptanceProjection(value = {}, processId = '') {
   });
 }
 
+export function safeBrowserObservationProjection(value = {}, processId = '') {
+  if (processId !== 'observe-open-stephanos-tabs') return null;
+  const stdout = String(value?.structuredContent?.stdout || '');
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith('SOVEREIGN_BROWSER_OBSERVATION_RESULT='));
+  let observed;
+  try { observed = JSON.parse(line.slice('SOVEREIGN_BROWSER_OBSERVATION_RESULT='.length)); } catch { return null; }
+  if (observed?.schemaVersion !== 'stephanos.sovereign-browser-observation.v1'
+    || observed.readOnly !== true || observed.observationOnly !== true
+    || observed.servedHeadVerified !== false || observed.functionalAcceptanceVerified !== false
+    || !['BROWSER_OBSERVATION_CAPTURED', 'BROWSER_OBSERVATION_DIAGNOSTIC', 'BROWSER_OBSERVATION_PARTIAL', 'BROWSER_OBSERVATION_BLOCKED'].includes(observed.finalVerdict)) return null;
+  const count = (number) => Number.isSafeInteger(number) && number >= 0 && number <= 8 ? number : null;
+  const blocker = text(observed.blocker);
+  const observedAtUtc = text(observed.observedAtUtc);
+  const evidenceHash = text(observed.evidenceHash).toLowerCase();
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-browser-observation.v1',
+    ok: browserObservationCompleteForAction(observed),
+    finalVerdict: observed.finalVerdict,
+    blocker: /^[A-Z0-9_]{0,96}$/.test(blocker) ? blocker : '',
+    observedAtUtc: browserObservationTimestampValid(observedAtUtc) ? observedAtUtc : '',
+    connectedTabCount: count(observed.connectedTabCount),
+    admittedTabCount: count(observed.admittedTabCount),
+    observedTabCount: count(observed.observedTabCount),
+    screenshotCount: count(observed.screenshotCount),
+    diagnosticTabCount: count(observed.diagnosticTabCount),
+    evidenceHash: PROOF_HASH_PATTERN.test(evidenceHash) ? evidenceHash : '',
+    observationOnly: true,
+    servedHeadVerified: false,
+    functionalAcceptanceVerified: false,
+    readOnly: true,
+  });
+}
+
 function safeRuntimeProofProjection(value = {}, processId = '') {
   const proofContract = processId === 'prove-vr-atlas-runtime'
     ? Object.freeze({
@@ -621,6 +658,38 @@ function safeRuntimeProofProjection(value = {}, processId = '') {
     receiptCaptured: Boolean(proof.receiptPath),
     blocker: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(blocker) ? blocker : '',
   });
+}
+
+function browserObservationTimestampValid(value) {
+  return typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+    && Number.isFinite(Date.parse(value))
+    && new Date(value).toISOString() === value;
+}
+
+export function browserObservationCompleteForAction(proof = null) {
+  const common = proof?.ok === true
+    && proof?.schemaVersion === 'stephanos.sovereign-browser-observation.v1'
+    && proof?.readOnly === true
+    && proof?.observationOnly === true
+    && proof?.servedHeadVerified === false
+    && proof?.functionalAcceptanceVerified === false
+    && typeof proof?.evidenceHash === 'string' && /^[a-f0-9]{64}$/.test(proof.evidenceHash)
+    && browserObservationTimestampValid(proof?.observedAtUtc)
+    && (proof?.blocker === undefined || proof.blocker === '')
+    && Number.isSafeInteger(proof?.diagnosticTabCount)
+    && proof.diagnosticTabCount >= 1 && proof.diagnosticTabCount <= 8
+    && proof?.connectedTabCount === proof.diagnosticTabCount
+    && proof?.admittedTabCount === proof.diagnosticTabCount;
+  // Match the fixed native host: one admitted foreground screenshot or a scan
+  // with no screenshots. Every reported tab count remains required evidence.
+  const visual = proof?.finalVerdict === 'BROWSER_OBSERVATION_CAPTURED'
+    && proof?.observedTabCount === 1
+    && proof?.screenshotCount === 1;
+  const diagnostic = proof?.finalVerdict === 'BROWSER_OBSERVATION_DIAGNOSTIC'
+    && proof?.observedTabCount === 0
+    && proof?.screenshotCount === 0;
+  return common && (visual || diagnostic);
 }
 
 function runtimeProofCompleteForAction(actionId = '', proof = null, expectedHead = '') {
@@ -751,6 +820,89 @@ function safeBattleBridgeObservationProjection(value = {}, processId = '') {
   });
 }
 
+
+function safeIgnitionDiagnosisProjection(value = {}, processId = '') {
+  if (processId !== 'diagnose-ignition') return null;
+  const envelope = findMaintenanceExecutionEnvelope(value);
+  const stdout = String(envelope?.structuredContent?.stdout || value?.structuredContent?.stdout || '');
+  const marker = 'SOVEREIGN_COMMANDER_IGNITION_DIAGNOSIS_RESULT=';
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
+  if (!line) return null;
+  let parsed = null;
+  try { parsed = JSON.parse(line.slice(marker.length)); } catch {}
+  if (!parsed
+    || parsed.schemaVersion !== 'stephanos.sovereign-commander-ignition-diagnosis.v1'
+    || typeof parsed.ok !== 'boolean'
+    || parsed.readOnly !== true
+    || parsed.sourceMutationAllowed !== false
+    || parsed.arbitraryShellAllowed !== false
+    || parsed.mergeAuthority !== false
+    || parsed.pcRestartAllowed !== false
+    || parsed.rawLogsReturned !== false
+    || parsed.rawPathsReturned !== false
+    || parsed.secretMaterialIncluded !== false) return null;
+  const safeToken = (input, max = 160) => {
+    const candidate = text(input).slice(0, max);
+    return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(candidate) ? candidate : '';
+  };
+  const safeTime = (input) => {
+    const milliseconds = Date.parse(text(input));
+    return Number.isFinite(milliseconds) ? new Date(milliseconds).toISOString() : '';
+  };
+  const safeService = (service = {}, requiredForIgnition = true) => Object.freeze({
+    ready: service?.ready === true,
+    requiredForIgnition,
+  });
+  const sourceHead = text(parsed.sourceHead).toLowerCase();
+  const nextRepairAction = text(parsed.nextRepairAction);
+  const allowedRepair = ['', 'restart-stephanos-runtime', 'repair-ui-4173'];
+  if ((sourceHead && !SHA_PATTERN.test(sourceHead))
+    || !allowedRepair.includes(nextRepairAction)) return null;
+  const phases = Object.freeze((Array.isArray(parsed?.supervisor?.phases) ? parsed.supervisor.phases : [])
+    .slice(0, 12).flatMap((phase) => {
+      const id = text(phase?.id).slice(0, 80);
+      const state = text(phase?.state).toLowerCase();
+      if (!id || !['pending','running','ready','degraded','blocked','failed'].includes(state)) return [];
+      return [Object.freeze({ id, state, blockerId: safeToken(phase?.blockerId) })];
+    }));
+  return Object.freeze({
+    schemaVersion: parsed.schemaVersion,
+    ok: parsed.ok === true,
+    observedAtUtc: safeTime(parsed.observedAtUtc),
+    sourceHead,
+    sourceExact: parsed.sourceExact === true,
+    readinessVerdict: safeToken(parsed.readinessVerdict, 80),
+    services: Object.freeze({
+      backend8787: safeService(parsed?.services?.backend8787),
+      stephanosUi4173: safeService(parsed?.services?.stephanosUi4173),
+      openClaw18789: safeService(parsed?.services?.openClaw18789, false),
+      sharedWorkspace: safeService(parsed?.services?.sharedWorkspace),
+    }),
+    supervisor: Object.freeze({
+      observed: parsed?.supervisor?.observed === true,
+      stale: parsed?.supervisor?.stale !== false,
+      observedAtUtc: safeTime(parsed?.supervisor?.observedAtUtc),
+      currentPhase: text(parsed?.supervisor?.currentPhase).slice(0, 80),
+      trafficLight: ['blue','green','amber','red','unknown'].includes(text(parsed?.supervisor?.trafficLight).toLowerCase())
+        ? text(parsed?.supervisor?.trafficLight).toLowerCase() : 'unknown',
+      blockerId: safeToken(parsed?.supervisor?.blockerId),
+      phases,
+    }),
+    repairRequired: parsed.repairRequired === true,
+    autoRepairEligible: parsed.autoRepairEligible === true,
+    nextRepairAction,
+    blocker: safeToken(parsed.blocker),
+    readOnly: true,
+    sourceMutationAllowed: false,
+    arbitraryShellAllowed: false,
+    mergeAuthority: false,
+    pcRestartAllowed: false,
+    rawLogsReturned: false,
+    rawPathsReturned: false,
+    secretMaterialIncluded: false,
+    finalVerdict: safeToken(parsed.finalVerdict),
+  });
+}
 
 function safeMeterStatusProjection(value = {}, processId = '') {
   if (processId !== 'meter-status') return null;
@@ -1390,36 +1542,12 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
 
 function safeCapabilityParityProjection(value = {}, processId = '') {
   if (processId !== 'reconcile-remote-commander-parity') return null;
-  const stdout = String(value?.structuredContent?.stdout || '');
   const prefix = 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RESULT=';
-  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(prefix));
+  const line = String(value?.structuredContent?.stdout || '').split(/\r?\n/).find(entry => entry.startsWith(prefix));
   if (!line) return null;
-  let parsed = null;
-  try { parsed = JSON.parse(line.slice(prefix.length)); } catch {}
-  if (!parsed || parsed.ok !== true) return null;
-  const bounded = (input) => {
-    const number = Number(input);
-    return Number.isSafeInteger(number) && number >= 0 && number <= 10000 ? number : null;
-  };
-  const retainedCapabilityCount = bounded(parsed.retainedCapabilityCount);
-  const parityPresentCount = bounded(parsed.parityPresentCount);
-  const buildableGapCount = bounded(parsed.buildableGapCount);
-  const boundaryHoldCount = bounded(parsed.boundaryHoldCount);
-  if ([retainedCapabilityCount, parityPresentCount, buildableGapCount, boundaryHoldCount].some((entry) => entry === null)) return null;
-  const finalVerdict = text(parsed.finalVerdict);
-  if (!['SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN', 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GAPS_TRACKED'].includes(finalVerdict)) return null;
-  return Object.freeze({
-    canonicalOwnerGoal: text(parsed.canonicalOwnerGoal) === '#2573' ? '#2573' : '',
-    retainedCapabilityCount,
-    parityPresentCount,
-    buildableGapCount,
-    boundaryHoldCount,
-    zeroGapInvariantSatisfied: buildableGapCount === 0,
-    closureRequired: buildableGapCount > 0,
-    daemonMayReportGreen: buildableGapCount === 0,
-    mustContinueUntilZero: true,
-    finalVerdict,
-  });
+  let parsed;
+  try { parsed = JSON.parse(line.slice(prefix.length)); } catch { return null; }
+  return parsed?.ok === true ? projectSovereignCapabilityCatalogTruth(parsed) : null;
 }
 
 function safeStarfieldVrTelemetryArchiveProjection(value = {}, processId = '') {
@@ -1783,6 +1911,7 @@ function safeMaintenanceProjection(value = {}) {
     status: Number.isInteger(status) ? status : null,
     errorCode: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(errorCode) ? errorCode : '',
     runtimeProof: safeRuntimeProofProjection(source, processId),
+    browserObservation: safeBrowserObservationProjection(source, processId),
     aiCommanderAcceptance: safeAiCommanderAcceptanceProjection(source, processId),
     observation: safeBattleBridgeObservationProjection(source, processId),
     meterStatus: safeMeterStatusProjection(source, processId),
@@ -3775,6 +3904,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       const projection = safeMaintenanceProjection(sovereignCommanderCompletionEnvelope(actionCall));
       const runtimeProofRequired = ['prove-vr-atlas-runtime', 'prove-flywheel-runtime'].includes(actionId);
       const aiProofRequired = actionId === 'prove-stephanos-ai-commander';
+      const browserObservationRequired = actionId === 'observe-open-stephanos-tabs';
+      const browserObservationComplete = !browserObservationRequired || browserObservationCompleteForAction(projection.browserObservation);
       const runtimeProofComplete = !runtimeProofRequired
         || runtimeProofCompleteForAction(actionId, projection.runtimeProof, shape.expectedHead);
       const proofComplete = projection.ok === true
@@ -3784,6 +3915,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         && projection.status === 0
         && (actionId !== FLEET_SUPERVISOR_ACTION || fleetSupervisor?.ok === true)
         && runtimeProofComplete
+        && browserObservationComplete
         && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
       if (!proofComplete) {
         return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID', {
@@ -3795,6 +3927,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           processIdMatch: projection.processId === actionId,
           successfulStatus: projection.status === 0,
           runtimeProof: projection.runtimeProof,
+          browserObservation: projection.browserObservation,
           completedSteps: Object.freeze(completedSteps),
           publicReceiptSafe: true,
           secretMaterialReturned: false,
@@ -3808,6 +3941,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         status: projection.status,
         errorCode: projection.errorCode,
         runtimeProof: projection.runtimeProof,
+        browserObservation: projection.browserObservation,
         aiCommanderAcceptance: projection.aiCommanderAcceptance,
         ...(fleetSupervisor ? { fleetSupervisor } : {}),
       }));
@@ -4249,6 +4383,57 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     });
   }
 
+  if (shape.command.remoteAction === 'diagnose-ignition') {
+    const ignitionDiagnosis = safeIgnitionDiagnosisProjection(rawMaintenance, projection.processId);
+    const diagnosisProofComplete = projection.ok === true
+      && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      && PROOF_HASH_PATTERN.test(projection.proofHash)
+      && projection.processId === shape.command.remoteAction
+      && projection.status === 0
+      && ignitionDiagnosis
+      && ignitionDiagnosis.readOnly === true
+      && ignitionDiagnosis.sourceMutationAllowed === false
+      && ignitionDiagnosis.arbitraryShellAllowed === false
+      && ignitionDiagnosis.rawLogsReturned === false
+      && ignitionDiagnosis.rawPathsReturned === false
+      && ignitionDiagnosis.secretMaterialIncluded === false
+      && ignitionDiagnosis.mergeAuthority === false
+      && ignitionDiagnosis.pcRestartAllowed === false;
+    if (!diagnosisProofComplete) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_IGNITION_DIAGNOSIS_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
+        processIdMatch: projection.processId === shape.command.remoteAction,
+        successfulStatus: projection.status === 0,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_IGNITION_DIAGNOSIS_COMPLETE',
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash,
+      ignitionDiagnosis,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false,
+      sourceMutationAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...result,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result,
+    });
+  }
+
   if (shape.command.remoteAction === 'battle-bridge-observe') {
     const observation = safeBattleBridgeObservationProjection(rawMaintenance, projection.processId);
     const observationProofComplete = projection.ok === true
@@ -4653,6 +4838,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
 
   const runtimeProofRequired = ['prove-vr-atlas-runtime', 'prove-flywheel-runtime'].includes(shape.command.remoteAction);
   const aiProofRequired = shape.command.remoteAction === 'prove-stephanos-ai-commander';
+  const browserObservationRequired = shape.command.remoteAction === 'observe-open-stephanos-tabs';
   if (aiProofRequired) {
     const acceptance = projection.aiCommanderAcceptance;
     const actionEnvelopeComplete = projection.ok === true
@@ -4726,6 +4912,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     && (shape.command.remoteAction !== FLEET_SUPERVISOR_ACTION || fleetSupervisor?.ok === true)
     && runtimeProofComplete
     && observationComplete
+    && (!browserObservationRequired || browserObservationCompleteForAction(projection.browserObservation))
     && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
   if (!proofComplete) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID', {
@@ -4735,6 +4922,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       successfulStatus: projection.status === 0,
       runtimeProof: projection.runtimeProof,
       observation: projection.observation,
+      browserObservation: projection.browserObservation,
       publicReceiptSafe: true,
       secretMaterialReturned: false,
     });
@@ -4752,6 +4940,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     runtimeProof: projection.runtimeProof,
     aiCommanderAcceptance: projection.aiCommanderAcceptance,
     observation: projection.observation,
+    browserObservation: projection.browserObservation,
     meterStatus: projection.meterStatus,
     controllerLaneStatus: projection.controllerLaneStatus,
     controllerActivityPublication: projection.controllerActivityPublication,

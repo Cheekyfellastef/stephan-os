@@ -91,6 +91,21 @@ export const WINDOWS_BROWSER_PROOF_TARGETS = Object.freeze([
 ]);
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
+const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
+const SESSION_TELEMETRY_PATTERN = /session/i;
+
+export function hasUnsafeMailboxTelemetryText(value) {
+  return UNSAFE_TELEMETRY_PATTERN.test(value) || SESSION_TELEMETRY_PATTERN.test(value);
+}
+
+export function projectMailboxReceiptRequestId(value) {
+  if (typeof value !== 'string' || value.trim() !== value || !REQUEST_ID_PATTERN.test(value)) return '';
+  if (UNSAFE_TELEMETRY_PATTERN.test(value)) return '';
+  // A public protocol ID may name a single-session operation. Exempt only
+  // that label from the session scan after checking the unmodified value.
+  const textForSessionCheck = value.replace(/-session(?=-)/gi, '-');
+  return SESSION_TELEMETRY_PATTERN.test(textForSessionCheck) ? '' : value;
+}
 const RESET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,120}$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const PR_NUMBER_PATTERN = /^[1-9][0-9]{0,9}$/;
@@ -113,10 +128,13 @@ const MISSION_CANCEL_ALLOWED_FIELDS = new Set([
   'expiresAt',
   'originalLeaseId', 'originalLeaseDigest', 'expectedMissionRevision',
   'legacyOrphanQuarantineRequested',
+  'prospectiveOrphanQuarantineRequested', 'sourceExecutionId',
+  'sourceExecutionLeaseKey', 'processingClaimSha256',
 ]);
 const MISSION_CANCEL_ONLY_FIELDS = Object.freeze(['missionId', 'commandId', 'reason',
   'originalLeaseId', 'originalLeaseDigest', 'expectedMissionRevision',
-  'legacyOrphanQuarantineRequested']);
+  'legacyOrphanQuarantineRequested', 'prospectiveOrphanQuarantineRequested',
+  'sourceExecutionId', 'sourceExecutionLeaseKey', 'processingClaimSha256']);
 const RESET_COMMAND_FIELDS = Object.freeze([
   'resetId',
   'resetExpiresAtUtc',
@@ -253,19 +271,41 @@ function validateMissionCancellation(command = {}) {
   const commandId = String(command.commandId || '').trim().toLowerCase();
   if (!MISSION_COMMAND_ID_PATTERN.test(commandId)) return fail('MISSION_CANCEL_COMMAND_ID_INVALID');
   const reason = String(command.reason || '').trim();
-  if (['originalLeaseId', 'originalLeaseDigest', 'expectedMissionRevision'].some((field) => command[field] !== undefined)
-      && (!/^critical-[1-9]\d*-elastic-goal-r(?:0|[1-9]\d*)-lease$/.test(String(command.originalLeaseId || ''))
-        || !/^[a-f0-9]{64}$/.test(String(command.originalLeaseDigest || ''))
-        || !Number.isSafeInteger(command.expectedMissionRevision) || command.expectedMissionRevision < 0
-        || command.originalLeaseId !== `${missionId}-r${command.expectedMissionRevision}-lease`)) {
-    return fail('MISSION_CANCEL_FIELD_NOT_ALLOWED');
-  }
-  if (command.legacyOrphanQuarantineRequested !== undefined
-      && (command.legacyOrphanQuarantineRequested !== true
-        || missionId !== 'critical-2962-elastic-goal'
-        || command.expectedMissionRevision !== 7
-        || command.originalLeaseId !== 'critical-2962-elastic-goal-r7-lease')) {
-    return fail('MISSION_CANCEL_LEGACY_ORPHAN_SCOPE_FORBIDDEN');
+  if (command.prospectiveOrphanQuarantineRequested === true) {
+    const actionMatch = String(command.sourceExecutionId || '').match(
+      /^critical-([1-9]\d*)-elastic-goal-r(0|[1-9]\d*)-[a-f0-9]{12}$/);
+    const actionRevision = actionMatch && missionId === 'critical-' + actionMatch[1] + '-elastic-goal'
+      ? Number(actionMatch[2]) : null;
+    if (command.legacyOrphanQuarantineRequested !== undefined
+        || command.originalLeaseId !== undefined || command.originalLeaseDigest !== undefined
+        || actionRevision === null
+        || command.sourceExecutionLeaseKey !== missionId + '-r' + actionRevision + '-lease'
+        || !/^[a-f0-9]{64}$/.test(String(command.processingClaimSha256 || ''))
+        || !Number.isSafeInteger(command.expectedMissionRevision)
+        || command.expectedMissionRevision !== actionRevision + 1) {
+      return fail('MISSION_CANCEL_PROSPECTIVE_ORPHAN_SCOPE_FORBIDDEN');
+    }
+  } else {
+    if (['originalLeaseId', 'originalLeaseDigest', 'expectedMissionRevision'].some((field) => command[field] !== undefined)
+        && (!/^critical-[1-9]\d*-elastic-goal-r(?:0|[1-9]\d*)-lease$/.test(String(command.originalLeaseId || ''))
+          || !/^[a-f0-9]{64}$/.test(String(command.originalLeaseDigest || ''))
+          || !Number.isSafeInteger(command.expectedMissionRevision) || command.expectedMissionRevision < 0
+          || command.originalLeaseId !== missionId + '-r' + command.expectedMissionRevision + '-lease')) {
+      return fail('MISSION_CANCEL_FIELD_NOT_ALLOWED');
+    }
+    if (command.legacyOrphanQuarantineRequested !== undefined
+        && (command.legacyOrphanQuarantineRequested !== true
+          || missionId !== 'critical-2962-elastic-goal'
+          || command.expectedMissionRevision !== 7
+          || command.originalLeaseId !== 'critical-2962-elastic-goal-r7-lease')) {
+      return fail('MISSION_CANCEL_LEGACY_ORPHAN_SCOPE_FORBIDDEN');
+    }
+    if (command.prospectiveOrphanQuarantineRequested !== undefined
+        || command.sourceExecutionId !== undefined
+        || command.sourceExecutionLeaseKey !== undefined
+        || command.processingClaimSha256 !== undefined) {
+      return fail('MISSION_CANCEL_PROSPECTIVE_ORPHAN_SCOPE_FORBIDDEN');
+    }
   }
   if (!reason || reason.length > MISSION_CANCEL_REASON_MAX_LENGTH || /[\u0000-\u001f\u007f]/.test(reason)) {
     return fail('MISSION_CANCEL_REASON_INVALID');
@@ -278,6 +318,13 @@ function validateMissionCancellation(command = {}) {
         expectedMissionRevision: command.expectedMissionRevision,
         ...(command.legacyOrphanQuarantineRequested === true
           ? { legacyOrphanQuarantineRequested: true } : {}) } : {}),
+      ...(command.prospectiveOrphanQuarantineRequested === true ? {
+        prospectiveOrphanQuarantineRequested: true,
+        sourceExecutionId: String(command.sourceExecutionId),
+        sourceExecutionLeaseKey: String(command.sourceExecutionLeaseKey),
+        processingClaimSha256: String(command.processingClaimSha256).toLowerCase(),
+        expectedMissionRevision: command.expectedMissionRevision,
+      } : {}),
     }),
   });
 }
@@ -391,6 +438,9 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
   }
   if (!REQUEST_ID_PATTERN.test(String(command.requestId || ''))) {
     return fail('COMMAND_REQUEST_ID_INVALID');
+  }
+  if (!projectMailboxReceiptRequestId(String(command.requestId))) {
+    return fail('COMMAND_REQUEST_ID_PUBLICATION_UNSAFE');
   }
   if (!BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(command.operation)) {
     return fail('COMMAND_OPERATION_NOT_ALLOWED', { operation: command.operation || '' });
@@ -595,7 +645,7 @@ function projectTerminalMailboxRejection(comment = {}, command = {}, validation 
   const commentId = Number(comment?.id || 0);
   if (comment?.user?.login !== BATTLE_BRIDGE_GITHUB_COMMAND_AUTHOR
     || !Number.isSafeInteger(commentId) || commentId < 1
-    || !REQUEST_ID_PATTERN.test(requestId)
+    || !projectMailboxReceiptRequestId(requestId)
     || !BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(operation)
     || command?.repository !== BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY
     || Number(command?.issueNumber) !== BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE

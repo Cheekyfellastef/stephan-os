@@ -77,7 +77,9 @@ function Start-StephanosIgnition {
 }
 
 $ignitionProcess = $null
-if (-not (Test-SpatialWorkspaceRoute) -or -not (Test-ExactHeadBattleBridgeSupervisorReady)) {
+# An already served room is a browser surface. Opening it does not assert that
+# the separate command runtime is healthy or restart unrelated runtime services.
+if (-not (Test-SpatialWorkspaceRoute)) {
     $ignitionProcess = Start-StephanosIgnition
     $deadline = (Get-Date).AddSeconds(300)
     do {
@@ -96,8 +98,17 @@ if (-not (Test-SpatialWorkspaceRoute) -or -not (Test-ExactHeadBattleBridgeSuperv
 if (-not (Test-SpatialWorkspaceRoute)) {
     throw 'Stephanos Spatial Workspace route did not become ready on port 4173.'
 }
-if (-not (Test-ExactHeadBattleBridgeSupervisorReady)) {
+if ($ignitionProcess -and -not (Test-ExactHeadBattleBridgeSupervisorReady)) {
     throw "Stephanos Spatial Workspace refused to open because canonical supervisor exact-head proof does not match repository HEAD ${requestedHead}."
+}
+
+$consoleReady = $false
+$consoleStartupError = ''
+try {
+    & (Join-Path $PSScriptRoot 'start-spatial-window-host.ps1')
+    $consoleReady = $true
+} catch {
+    $consoleStartupError = $_.Exception.Message
 }
 
 $pf = [Environment]::GetFolderPath('ProgramFiles')
@@ -119,11 +130,17 @@ else {
     Start-Process -FilePath $browser -ArgumentList @('--new-window', $WorkspaceUrl)
 }
 
+if (-not $consoleReady) {
+    Add-Type -AssemblyName System.Windows.Forms
+    [void][System.Windows.Forms.MessageBox]::Show(('The room opened, but its desktop-window connection is unavailable.' + [Environment]::NewLine + [Environment]::NewLine + $consoleStartupError), 'Stephanos Spatial Workspace')
+}
+
 [pscustomobject]@{
     schemaVersion = 'stephanos.spatial-workspace-launch.v1'
     verdict = 'SPATIAL_WORKSPACE_SPLASH_OPENED'
     url = $WorkspaceUrl
     workspaceRouteReady = $true
-    runtimeReadiness = 'canonical supervisor exact-head proof verified before browser open'
+    consoleReady = $consoleReady
+    runtimeReadiness = 'workspace route verified; separate runtime health is not inferred'
     headsetAcceptance = 'pending-operator-playtest'
 } | ConvertTo-Json -Compress

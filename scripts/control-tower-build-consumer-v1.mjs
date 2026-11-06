@@ -2,7 +2,8 @@ import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { createMailboxExecutionLedger } from './canonical-mailbox-execution-ledger-v1.mjs';
-import { readControlTowerBuildRequestV1, isAuthenticatedControlTowerBuildRequestV1 } from '../shared/agents/controlTowerBuildReaderV1.mjs';
+import { readControlTowerBuildRequestV1, readHistoricalControlTowerBuildRequestV1,
+  isAuthenticatedControlTowerBuildRequestV1 } from '../shared/agents/controlTowerBuildReaderV1.mjs';
 import { callSovereignMaintenanceOwnerV1 } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 import { resolveGithubAuth } from '../stephanos-server/services/githubAuthResolver.js';
 import { FIXED_MAINTENANCE_RUNTIME_ROUTE_V1 } from './sovereign-fixed-runtime-parent-v1.mjs';
@@ -98,6 +99,7 @@ export async function consumeControlTowerBuildRequestV1({
 } = {}) {
   if (dependencies && (!testOnly || !process.env.NODE_TEST_CONTEXT)) throw Error('test-only dependencies');
   const deps = { resolveAuth: resolveGithubAuth, readRequest: readControlTowerBuildRequestV1,
+    readHistoricalRequest: readHistoricalControlTowerBuildRequestV1,
     isAuthenticated: isAuthenticatedControlTowerBuildRequestV1,
     createLedger: createMailboxExecutionLedger, execute: callSovereignMaintenanceOwnerV1,
     inspect: inspectSovereignControlSystemV1, ...dependencies };
@@ -138,12 +140,52 @@ export async function consumeControlTowerBuildRequestV1({
       || controlTowerMissingLedgerObservationV1(latestBuildRequestId);
     latestObserve = restore(latestObserveRequestId, CONTROL_TOWER_OBSERVE_OPERATION);
     discovery = typeof ledger.discoverControlTower === 'function'
-      ? ledger.discoverControlTower({ nowMs: now().getTime() }) : null;
+      ? await ledger.discoverControlTower({ nowMs: now().getTime() }) : null;
     if (discovery?.ok) {
       if (latestBuild?.detailState !== 'MISSING') latestBuild = discovery.latestBuildRequestObservation || latestBuild;
       latestObserve = discovery.latestControlSystemObservation || latestObserve;
     }
     const auth = await deps.resolveAuth();
+    if (latestBuild?.ledgerPhase === 'RESERVED' && latestBuild.detailState === 'LEGACY_DETAIL_UNAVAILABLE'
+      && latestBuild.state === 'RESERVED' && typeof ledger.retireLegacyControlTowerReservation === 'function') {
+      const historical = await deps.readHistoricalRequest({
+        token: auth?.token, runId: latestBuild.runId, now: () => now().toISOString(),
+      });
+      const historicalRequest = historical?.ok === true ? historical.request : null;
+      const graceMs = FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.executionTimeoutMs + 60_000;
+      const expiredBeyondExecution = historicalRequest
+        && historicalRequest.requestId === latestBuild.requestId
+        && historicalRequest.operation === CONTROL_TOWER_BUILD_OPERATION
+        && Number.isFinite(Date.parse(historicalRequest.expiresAtUtc))
+        && Date.parse(historicalRequest.expiresAtUtc) + graceMs <= now().getTime();
+      if (expiredBeyondExecution) {
+        const report = await deps.inspect({
+          expectedMain: sourceHead, controlTowerRequestId: latestBuild.requestId,
+        });
+        const status = projectSovereignControlSystemStatusV1(report);
+        const quiescent = report?.schemaVersion === SOVEREIGN_CONTROL_SYSTEM_INSPECTION_SCHEMA_V1
+          && report.observationCompleted === true && status?.observationCompleted === true
+          && status.source?.sourceHead === sourceHead && status.source?.expectedMain === sourceHead
+          && status.source?.stable === true
+          && status.owner?.available === true && status.owner?.stable === true
+          && status.guardian?.available === true && status.guardian.running === false
+          && status.guardian.maintenanceInFlight === false
+          && status.guardian.custodyState === 'NOT_HELD_REPORTED'
+          && status.requestLedger?.requested === true && status.requestLedger.recordObserved === true
+          && status.requestLedger.phase === 'RESERVED';
+        if (quiescent) {
+          ledger.retireLegacyControlTowerReservation({
+            request: historicalRequest, nowMs: now().getTime(),
+          });
+          discovery = typeof ledger.discoverControlTower === 'function'
+            ? await ledger.discoverControlTower({ nowMs: now().getTime() }) : null;
+          if (discovery?.ok) {
+            latestBuild = discovery.latestBuildRequestObservation || latestBuild;
+            latestObserve = discovery.latestControlSystemObservation || latestObserve;
+          }
+        }
+      }
+    }
     const observed = await deps.readRequest({ token: auth?.token, now: () => now().toISOString(),
       observationOnly: discovery?.ok !== true || controlTowerBuildObservationUnresolvedV1(latestBuild, { nowMs: now().getTime() }),
       isRecorded: runId => ledger.has('control-tower-build-' + runId + '-1') });
@@ -157,28 +199,41 @@ export async function consumeControlTowerBuildRequestV1({
     if (request.sourceHead !== sourceHead || Date.parse(request.expiresAtUtc) <= now().getTime()
       || await readSourceHead() !== sourceHead) return finish('HELD', 'CONTROL_TOWER_BUILD_SOURCE_OR_EXPIRY_CHANGED', evidence());
     if (ledger.has(request.requestId)) { refreshStoredRequest(); return finish('REPLAY_HELD', 'CONTROL_TOWER_BUILD_REQUEST_ALREADY_RECORDED', evidence()); }
-    if (request.operation === CONTROL_TOWER_BUILD_OPERATION) {
-      // Recheck after authenticated network/source reads, immediately before
-      // the synchronous original reservation. This is not a cross-process lock.
-      discovery = typeof ledger.discoverControlTower === 'function'
-        ? ledger.discoverControlTower({ nowMs: now().getTime() }) : null;
-      if (discovery?.ok !== true)
-        return finish('HELD', discovery?.blocker || 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN', evidence());
-      if (latestBuild?.detailState !== 'MISSING') latestBuild = discovery.latestBuildRequestObservation || latestBuild;
-      latestObserve = discovery.latestControlSystemObservation || latestObserve;
-    }
+    // An independent MISSING locator is an unresolved history gap even when
+    // a full scan is empty. Never erase it before a mutating admission call.
     if (request.operation === CONTROL_TOWER_BUILD_OPERATION
       && controlTowerBuildObservationUnresolvedV1(latestBuild, { nowMs: now().getTime() }))
       return finish('HELD', 'CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED', evidence());
-    // issueNumber is the owning build-transport goal, not a mailbox routing
-    // identity. The control-tower-build namespace is never a comment command.
     const command = { ...request, issueNumber: 2315 };
-    const acceptedAtUtc = now().toISOString();
-    initialObservation = createControlTowerRequestObservationV1(request, {
-      commandDigest: mailboxRotationDigest(command), acceptedAtUtc, nowMs: now().getTime(),
-    });
-    if (!initialObservation) return finish('HELD', 'CONTROL_TOWER_BUILD_REQUEST_OBSERVATION_INVALID', evidence());
-    const reservation = ledger.reserve(command, { controlTowerObservation: initialObservation });
+    let reservation;
+    if (request.operation === CONTROL_TOWER_BUILD_OPERATION) {
+      if (typeof ledger.discoverAndReserveControlTower !== 'function')
+        return finish('HELD', 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN', evidence());
+      discovery = await ledger.discoverAndReserveControlTower(command, {
+        nowMs: now().getTime(), now: () => now().getTime(), readSourceHead,
+      });
+      if (discovery?.reservationAttempted === true) {
+        reserved = true;
+        latestBuildRequestId = request.requestId;
+      }
+      if (discovery?.ok !== true) {
+        if (reserved) refreshStoredRequest();
+        return finish(reserved ? 'UNKNOWN' : 'HELD',
+          discovery?.blocker || 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN', evidence());
+      }
+      if (latestBuild?.detailState !== 'MISSING') latestBuild = discovery.latestBuildRequestObservation || latestBuild;
+      latestObserve = discovery.latestControlSystemObservation || latestObserve;
+      reservation = discovery.reservation;
+      if (!reservation) return finish('HELD',
+        discovery.blocker || 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN', evidence());
+      initialObservation = reservation.controlTowerObservation;
+    } else {
+      initialObservation = createControlTowerRequestObservationV1(request, {
+        commandDigest: mailboxRotationDigest(command), acceptedAtUtc: now().toISOString(), nowMs: now().getTime(),
+      });
+      if (!initialObservation) return finish('HELD', 'CONTROL_TOWER_BUILD_REQUEST_OBSERVATION_INVALID', evidence());
+      reservation = ledger.reserve(command, { controlTowerObservation: initialObservation });
+    }
     reserved = true;
     // Only the original ledger establishes acceptance. Current status is a
     // locator/projection, never a second execution or dedupe authority.

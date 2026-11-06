@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { decodeBoundedSingleJsonArchiveV1 } from './mailboxFreeGoalNominationV1.mjs';
 import { readMailboxFreeGitHubJsonV1, readMailboxFreeGitHubArchiveV1 } from './mailboxFreeGitHubEvidenceReaderV1.mjs';
 import { CONTROL_TOWER_BUILD_KEYS, CONTROL_TOWER_BUILD_FILE, CONTROL_TOWER_BUILD_WORKFLOW,
-  CONTROL_TOWER_OBSERVE_OPERATION, validateControlTowerBuildRequestV1 } from './controlTowerBuildRequestV1.mjs';
+  CONTROL_TOWER_OBSERVE_OPERATION, validateControlTowerBuildRequestV1,
+  validateHistoricalControlTowerBuildRequestV1 } from './controlTowerBuildRequestV1.mjs';
 
 const authenticated = new WeakSet();
 export const isAuthenticatedControlTowerBuildRequestV1 = request => authenticated.has(request);
@@ -14,6 +15,51 @@ const workflow = '/actions/workflows/stephanos-control-tower-build.yml';
 
 // There is no caller-selected endpoint, executable, free-form operation or goal grant.
 // Only this authenticated acquisition path can mint a live request object.
+export async function readHistoricalControlTowerBuildRequestV1({
+  token, runId, now = () => new Date().toISOString(), fetchImpl = globalThis.fetch,
+} = {}) {
+  if (typeof token !== 'string' || !token || token.length > 4096) return held('CONTROL_TOWER_READ_CREDENTIAL_UNAVAILABLE');
+  if (!positive(runId)) return held('CONTROL_TOWER_BUILD_REQUEST_ID_INVALID');
+  try {
+    const deadline = AbortSignal.timeout(15000);
+    const get = path => readMailboxFreeGitHubJsonV1(fetchImpl, path, token, deadline);
+    const definition = await get(workflow);
+    if (!positive(definition?.id) || definition.path !== CONTROL_TOWER_BUILD_WORKFLOW || definition.state !== 'active')
+      return held('CONTROL_TOWER_BUILD_WORKFLOW_UNAVAILABLE');
+    const run = await get('/actions/runs/' + runId);
+    if (run.id !== runId || run.workflow_id !== definition.id || run.path !== definition.path
+      || run.status !== 'completed' || run.conclusion !== 'success')
+      return held('LATEST_CONTROL_TOWER_BUILD_REQUEST_NOT_READY');
+    const jobs = await get('/actions/runs/' + run.id + '/jobs?per_page=100');
+    if (jobs.total_count !== 2 || !Array.isArray(jobs.jobs) || jobs.jobs.length !== 2
+      || !jobs.jobs.every(j => j.run_id === run.id && j.status === 'completed')
+      || jobs.jobs.filter(j => j.name === 'request-build' && j.conclusion === 'success').length !== 1
+      || jobs.jobs.filter(j => j.name === 'contract-test' && j.conclusion === 'skipped').length !== 1)
+      return held('CONTROL_TOWER_BUILD_JOB_ESTATE_INVALID');
+    const estate = await get('/actions/runs/' + run.id + '/artifacts?per_page=100');
+    const artifact = estate.artifacts?.[0];
+    if (estate.total_count !== 1 || !Array.isArray(estate.artifacts) || estate.artifacts.length !== 1
+      || !positive(artifact?.id) || artifact.name !== 'stephanos-control-tower-build-' + run.id
+      || artifact.expired !== false || !Number.isSafeInteger(artifact.size_in_bytes)
+      || artifact.size_in_bytes < 22 || artifact.size_in_bytes > 65536
+      || artifact.workflow_run?.id !== run.id || artifact.workflow_run?.repository_id !== 1179385578
+      || artifact.workflow_run?.head_repository_id !== 1179385578
+      || artifact.workflow_run?.head_sha !== run.head_sha || artifact.workflow_run?.head_branch !== 'main')
+      return held('CONTROL_TOWER_BUILD_ARTIFACT_INVALID');
+    const archive = await readMailboxFreeGitHubArchiveV1(fetchImpl, artifact.id, token, deadline);
+    const digest = createHash('sha256').update(archive).digest('hex');
+    if (archive.length !== artifact.size_in_bytes || artifact.digest !== 'sha256:' + digest)
+      return held('CONTROL_TOWER_BUILD_ARTIFACT_DIGEST_INVALID');
+    const request = decodeBoundedSingleJsonArchiveV1(archive, CONTROL_TOWER_BUILD_FILE, CONTROL_TOWER_BUILD_KEYS);
+    const validation = validateHistoricalControlTowerBuildRequestV1(request, run, run.head_sha, now());
+    if (!validation.ok) return held(validation.blocker);
+    return Object.freeze({ ok: true, blocker: '', request: Object.freeze({
+      ...request, artifactId: artifact.id, artifactSha256: digest,
+      proofRef: 'https://github.com/Cheekyfellastef/stephan-os/actions/runs/' + run.id,
+    }) });
+  } catch { return held('CONTROL_TOWER_AUTHENTICATED_BUILD_READ_FAILED'); }
+}
+
 export async function readControlTowerBuildRequestV1({
   token, now = () => new Date().toISOString(), fetchImpl = globalThis.fetch, isRecorded = () => false,
   observationOnly = false,

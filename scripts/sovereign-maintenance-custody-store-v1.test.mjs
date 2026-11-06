@@ -326,6 +326,132 @@ test('retained migration archives stale IDLE but only creates ACTIVE and require
   assert.equal((await successor.recoverAfterBoot(approved(r.digest))).ok, true);
   assert.equal(successor.status().held, false);
 });
+test('prepared retained migration auto-recovers after successor full boot without a second approval token', async t => {
+  const root = fixture(t), first = store(root);
+  first.prepareIncident(reservation); first.release(); first.close();
+  const p = join(root, 'status', 'sovereign-commander-maintenance-custody.json');
+  const original = readFileSync(p);
+  const expectedDigest = createHash('sha256').update(original).digest('hex');
+  anchors.get(root).lose();
+  const owner = heldOwner(newBoot);
+  const migration = store(root, newBoot, { observeMigrationOwner: () => owner });
+  const prepared = await migration.prepareRetainedMigration({
+    ...approved(expectedDigest),
+    expectedReservationId: reservation.reservationId,
+    expectedOwnerDigest: owner.digest,
+    expectedMain: 'c'.repeat(40),
+  });
+  assert.equal(prepared.ok, true);
+  migration.close();
+
+  const later = { ...newBoot,
+    bootStartedAtUtc: new Date(clock + 30_000).toISOString(),
+    observedAtUtc: new Date(clock + 60_000).toISOString() };
+  const successor = store(root, later, { now: () => later.observedAtUtc, readBootWitness: () => later });
+  const recovered = await successor.recoverPreparedAfterBoot();
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.custodyReleased, true);
+  assert.equal(successor.status().held, false);
+});
+
+test('unprepared ACTIVE custody never auto-recovers merely because a later boot exists', async t => {
+  const root = fixture(t), original = store(root);
+  original.prepareIncident(reservation);
+  original.close();
+  const successor = store(root, newBoot);
+  const result = await successor.recoverPreparedAfterBoot();
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'MAINTENANCE_PREPARED_RECOVERY_UNPROVEN');
+  assert.equal(successor.status().held, true);
+});
+
+test('guardian startup resumes scheduling only after prepared custody auto-recovery succeeds', async () => {
+  const timers = [];
+  let recoverCalls = 0;
+  const timerFactory = (fn, delay) => {
+    const timer = { fn, delay, unref() {} };
+    timers.push(timer);
+    return timer;
+  };
+  const custodyStore = {
+    status: () => ({ held: true, digest: 'a'.repeat(64), reservationId: 'prepared-cycle' }),
+    preparedRecoveryEligible: () => true,
+    recoverPreparedAfterBoot: async () => {
+      recoverCalls += 1;
+      return { ok: true, custodyReleased: true, reservationId: 'prepared-cycle' };
+    },
+    close() {},
+  };
+  const guardian = startActualGuardian({
+    custodyStore,
+    enabled: true,
+    spawnImpl: () => assert.fail('startup recovery must not spawn before the scheduled repair tick'),
+    startDelayMs: 5000,
+    setTimeoutImpl: timerFactory,
+    clearTimeoutImpl() {},
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(recoverCalls, 1);
+  assert.equal(guardian.status().timeoutCustodyHeld, false);
+  assert.equal(guardian.status().maintenanceInFlight, false);
+  assert.equal(guardian.status().scheduled, true);
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delay, 5000);
+  guardian.stop();
+
+  const blockedTimers = [];
+  const held = startActualGuardian({
+    custodyStore: {
+      status: () => ({ held: true, digest: 'b'.repeat(64), reservationId: 'unprepared-cycle' }),
+      preparedRecoveryEligible: () => false,
+      recoverPreparedAfterBoot: async () => ({ ok: false, blocker: 'MAINTENANCE_PREPARED_RECOVERY_UNPROVEN' }),
+      close() {},
+    },
+    enabled: true,
+    spawnImpl: () => assert.fail('unprepared custody must not spawn'),
+    setTimeoutImpl: (fn, delay) => {
+      const timer = { fn, delay, unref() {} };
+      blockedTimers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl() {},
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(held.status().timeoutCustodyHeld, true);
+  assert.equal(held.status().scheduled, false);
+  assert.equal(blockedTimers.length, 0);
+  held.stop();
+
+  let disabledRecoverCalls = 0;
+  const disabledTimers = [];
+  const disabled = startActualGuardian({
+    custodyStore: {
+      status: () => ({ held: true, digest: 'c'.repeat(64), reservationId: 'prepared-disabled-cycle' }),
+      preparedRecoveryEligible: () => true,
+      recoverPreparedAfterBoot: async () => {
+        disabledRecoverCalls += 1;
+        return { ok: true, custodyReleased: true, reservationId: 'prepared-disabled-cycle' };
+      },
+      close() {},
+    },
+    enabled: false,
+    spawnImpl: () => assert.fail('disabled repair scheduler must not spawn'),
+    setTimeoutImpl: (fn, delay) => {
+      const timer = { fn, delay, unref() {} };
+      disabledTimers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl() {},
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(disabledRecoverCalls, 1);
+  assert.equal(disabled.status().timeoutCustodyHeld, false);
+  assert.equal(disabled.status().enabled, false);
+  assert.equal(disabled.status().scheduled, false);
+  assert.equal(disabledTimers.length, 0);
+  disabled.stop();
+});
+
 test('retained migration refuses legacy authority, owner drift, wrong source binding and changed projection', async t => {
   for (const scenario of ['legacy-present', 'legacy-unreadable', 'owner-drift', 'owner-running',
     'missing-owner-binding', 'source-invalid', 'projection-changed', 'anchor-append-failed']) {

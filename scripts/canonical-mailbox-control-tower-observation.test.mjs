@@ -59,28 +59,51 @@ test('mismatched terminal identity, outcome and proof cannot rewrite or discharg
   assert.equal(ledger.read(m.command.requestId).terminalState, 'DONE');
 });
 
-test('read-only discovery recovers a reservation with no status pointer and prefers it over a newer terminal build', t => {
+test('read-only discovery recovers a reservation with no status pointer and prefers it over a newer terminal build', async t => {
   const { root, ledger } = setup(t), older = material(100), newer = material(102);
   reserve(ledger, older); reserve(ledger, newer); complete(ledger, newer);
   const before = readFileSync(pathOf(root, older.command.requestId));
-  const discovered = createMailboxExecutionLedger(root).discoverControlTower({ nowMs: nowMs + 1000 });
+  const discovered = (await createMailboxExecutionLedger(root).discoverControlTower({ nowMs: nowMs + 1000 }));
   assert.equal(discovered.ok, true); assert.equal(discovered.latestBuildRequestObservation.requestId, older.command.requestId);
   assert.equal(discovered.latestBuildRequestObservation.state, 'RESERVED');
   assert.equal(existsSync(join(root, 'status')), false);
   assert.deepEqual(readFileSync(pathOf(root, older.command.requestId)), before);
 });
 
-test('legacy reserved and terminal entries stay ambiguous and cannot be retrofitted with new acceptance time', t => {
+test('legacy reserved and terminal entries stay ambiguous and cannot be retrofitted with new acceptance time', async t => {
   const { ledger } = setup(t), m = material(99);
   ledger.reserve(m.command);
-  const observed = ledger.discoverControlTower({ nowMs }).latestBuildRequestObservation;
+  const observed = (await ledger.discoverControlTower({ nowMs })).latestBuildRequestObservation;
   assert.equal(observed.detailState, 'LEGACY_DETAIL_UNAVAILABLE'); assert.equal(observed.state, 'RESERVED');
   assert.equal(observed.sourceHead, ''); assert.equal(observed.observedAtUtc, '');
   assert.throws(() => complete(ledger, m), /LEGACY_BINDING_UNPROVEN/);
   assert.equal(ledger.read(m.command.requestId).phase, 'RESERVED');
 });
 
-test('observation terminal hash binds only the closed status and never becomes terminal wake proof', t => {
+test('proven expired legacy reservation can retire only as terminal BLOCKED', async t => {
+  const { ledger } = setup(t), m = material(99);
+  ledger.reserve(m.command);
+  assert.throws(() => ledger.retireLegacyControlTowerReservation({
+    request: m.command, nowMs: Date.parse(m.command.expiresAtUtc) - 1,
+  }), /RETIREMENT_INVALID/);
+  assert.throws(() => ledger.retireLegacyControlTowerReservation({
+    request: { ...m.command, artifactSha256: 'd'.repeat(64) },
+    nowMs: Date.parse(m.command.expiresAtUtc) + 1,
+  }), /BINDING_UNPROVEN/);
+  const retired = ledger.retireLegacyControlTowerReservation({
+    request: m.command, nowMs: Date.parse(m.command.expiresAtUtc) + 1,
+  });
+  assert.equal(retired.phase, 'TERMINAL');
+  assert.equal(retired.terminalState, 'BLOCKED');
+  assert.equal(retired.controlTowerObservation, undefined);
+  const observed = (await ledger.discoverControlTower({ nowMs: Date.parse(m.command.expiresAtUtc) + 1 }))
+    .latestBuildRequestObservation;
+  assert.equal(observed.detailState, 'LEGACY_DETAIL_UNAVAILABLE');
+  assert.equal(observed.ledgerPhase, 'TERMINAL');
+  assert.equal(observed.terminalState, 'BLOCKED');
+});
+
+test('observation terminal hash binds only the closed status and never becomes terminal wake proof', async t => {
   const { root, ledger } = setup(t), m = material(101, 'OBSERVE_CONTROL_SYSTEM'); reserve(ledger, m);
   const status = statusProject({ schemaVersion: 'stephanos.sovereign-control-system-inspection.v1',
     observationOnly: true, observationCompleted: true, observedAtUtc: NOW,
@@ -95,38 +118,38 @@ test('observation terminal hash binds only the closed status and never becomes t
     controlTowerObservation: { ...terminal, observationProofHash: 'f'.repeat(64) } }), /TERMINAL_INVALID/);
   ledger.complete({ requestId: m.command.requestId, issueNumber: 2315, state: 'DONE', controlTowerObservation: terminal });
   assert.equal(ledger.read(m.command.requestId).terminalProofHash, undefined);
-  assert.equal(ledger.discoverControlTower({ nowMs }).latestControlSystemObservation.state, 'OBSERVATION_COMPLETED');
+  assert.equal((await ledger.discoverControlTower({ nowMs })).latestControlSystemObservation.state, 'OBSERVATION_COMPLETED');
   const stored = ledger.read(m.command.requestId); stored.controlTowerObservation.observationProofHash = 'f'.repeat(64);
   writeFileSync(pathOf(root, m.command.requestId), JSON.stringify(stored));
   assert.equal(ledger.inspectControlTower(m.command.requestId, { nowMs }).detailState, 'INVALID');
   assert.equal(ledger.has(m.command.requestId), true);
 });
 
-test('bounded discovery refuses overflow and unsafe file or shard substitutions without returning an empty success', t => {
+test('bounded discovery refuses overflow and unsafe file or shard substitutions without returning an empty success', async t => {
   const { root, ledger } = setup(t), a = material(100), b = material(101); reserve(ledger, a); reserve(ledger, b);
-  assert.equal(ledger.discoverControlTower({ nowMs, maxEntries: 1 }).blocker, 'CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED');
+  assert.equal((await ledger.discoverControlTower({ nowMs, maxEntries: 1 })).blocker, 'CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED');
   const path = pathOf(root, a.command.requestId), held = path + '.fixture'; renameSync(path, held); symlinkSync(held, path);
-  assert.equal(ledger.discoverControlTower({ nowMs }).ok, false); unlinkSync(path); renameSync(held, path);
+  assert.equal((await ledger.discoverControlTower({ nowMs })).ok, false); unlinkSync(path); renameSync(held, path);
   const shard = dirname(path), moved = shard + '-fixture'; renameSync(shard, moved); symlinkSync(moved, shard, 'junction');
-  assert.equal(ledger.discoverControlTower({ nowMs }).ok, false); unlinkSync(shard); renameSync(moved, shard);
-  assert.equal(ledger.discoverControlTower({ nowMs }).ok, true);
+  assert.equal((await ledger.discoverControlTower({ nowMs })).ok, false); unlinkSync(shard); renameSync(moved, shard);
+  assert.equal((await ledger.discoverControlTower({ nowMs })).ok, true);
 });
 
-test('hashed path identity and advisory corruption cannot hide original replay custody', t => {
+test('hashed path identity and advisory corruption cannot hide original replay custody', async t => {
   const { root, ledger } = setup(t), m = material(); reserve(ledger, m);
   const path = pathOf(root, m.command.requestId), stored = ledger.read(m.command.requestId);
   stored.controlTowerObservation.state = 'DONE'; writeFileSync(path, JSON.stringify(stored));
   assert.equal(ledger.has(m.command.requestId), true);
-  const found = ledger.discoverControlTower({ nowMs });
+  const found = (await ledger.discoverControlTower({ nowMs }));
   assert.equal(found.ok, true); assert.equal(found.latestBuildRequestObservation.state, 'RESERVED');
   assert.equal(found.latestBuildRequestObservation.detailState, 'INVALID');
   stored.requestId = 'control-tower-build-999-1'; writeFileSync(path, JSON.stringify(stored));
-  assert.equal(ledger.discoverControlTower({ nowMs }).ok, false);
+  assert.equal((await ledger.discoverControlTower({ nowMs })).ok, false);
 });
 
-test('missing ledger inspection does not create a directory or invent an outcome', t => {
+test('missing ledger inspection does not create a directory or invent an outcome', async t => {
   const { root, ledger } = setup(t);
-  assert.deepEqual(ledger.discoverControlTower({ nowMs }), { ok: true, blocker: '', latestBuildRequestObservation: null, latestControlSystemObservation: null });
+  assert.deepEqual((await ledger.discoverControlTower({ nowMs })), { ok: true, blocker: '', latestBuildRequestObservation: null, latestControlSystemObservation: null });
   assert.deepEqual(readdirSync(root), []);
 });
 

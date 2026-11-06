@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { projectKnownMalformedPatchTerminalV1 } from '../../shared/agents/knownMalformedPatchRetryV1.mjs';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { assertOriginalSourceAttemptNotFenced } from './originalSourceAttemptFenceService.js';
 import { basename, resolve } from 'node:path';
@@ -511,15 +512,10 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
             !== String(actionGrant.actionId || '').toLowerCase()
         )
       ) {
-        await quarantinePendingQueueItem(
-          paths,
-          adapter,
-          entry,
-          pendingPath,
-          bytes,
-          'MISSION_WORKER_PENDING_ITEM_GRANT_IDENTITY_INVALID',
-          options,
-        );
+        // The queue item's own filename/schema/identity was validated above.
+        // A foreign or stale *caller* grant is not evidence that these original
+        // pending bytes are a poison pill. Never quarantine another owner's
+        // legitimate work to satisfy the wrong selected grant.
         continue;
       }
       try {
@@ -643,9 +639,13 @@ export async function proveMissionWorkerRetryOwnershipReleased({
   const resultPath = resolve(paths.failed, fileName.replace(/\.json$/, '.result.json'));
   let item;
   let result;
+  let itemBytes;
+  let resultBytes;
   try {
-    item = JSON.parse(await readFile(terminalPath, 'utf8'));
-    result = JSON.parse(await readFile(resultPath, 'utf8'));
+    itemBytes = await readFile(terminalPath);
+    resultBytes = await readFile(resultPath);
+    item = JSON.parse(itemBytes.toString('utf8'));
+    result = JSON.parse(resultBytes.toString('utf8'));
   } catch (error) {
     if (error?.code === 'ENOENT') {
       return Object.freeze({
@@ -712,6 +712,8 @@ export async function proveMissionWorkerRetryOwnershipReleased({
       return Object.freeze({
         ok: true,
         classification: 'MISSION_WORKER_RETRY_PROVIDER_NEUTRAL_QUEUE_RELEASE_PROVEN',
+        knownMalformedPatchTerminal: projectKnownMalformedPatchTerminalV1(item, result,
+          createHash('sha256').update(itemBytes).digest('hex'), createHash('sha256').update(resultBytes).digest('hex')),
         missionId: normalizedMissionId,
         actionId: normalizedActionId,
         adapter: normalizedAdapter,
@@ -734,6 +736,8 @@ export async function proveMissionWorkerRetryOwnershipReleased({
   return Object.freeze({
     ok: true,
     classification: 'MISSION_WORKER_RETRY_OWNERSHIP_RELEASE_PROVEN',
+    knownMalformedPatchTerminal: projectKnownMalformedPatchTerminalV1(item, result,
+      createHash('sha256').update(itemBytes).digest('hex'), createHash('sha256').update(resultBytes).digest('hex')),
     providerTransportFailure: providerNeutralTerminalQueueReleaseProven(item, result, normalizedAdapter)
       ? projectModelTransportFailureProofV1(result, terminalReceipt) : null,
     missionId: normalizedMissionId,
@@ -799,6 +803,7 @@ async function applyClaimResult(claim, action, execution, inspection, executionR
   const applied = await appendMissionEvent(action.missionId, event, claim.options);
   const result = {
     schemaVersion: 'stephanos.mission-worker-consumption-result.v1', actionId: action.actionId, missionId: action.missionId,
+    adapter: claim.adapter,
     operation: action.operation, eventId: event.eventId, stateRevision: applied.state.revision, currentPhase: applied.state.currentPhase,
     duplicate: applied.duplicate, execution: { success: execution.success === true, commandOutputHash: execution.commandOutputHash || '', completedAt: execution.completedAt || '' },
     inspection, finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
