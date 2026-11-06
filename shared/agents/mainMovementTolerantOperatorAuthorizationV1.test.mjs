@@ -164,6 +164,50 @@ test('real GitHub compare payload shape without head_commit preserves exact-head
   assert.deepEqual(result.blockers, []);
 });
 
+
+test('same-base exact-head rejects a present malformed head_commit', () => {
+  for (const head_commit of [null, undefined, {}, { sha: null }, { sha: 'not-a-sha' }, { sha: '9'.repeat(40) }]) {
+    const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
+      authorization,
+      observed: observed({
+        currentBase: authorizationBase,
+        authorizationBaseToCurrentBaseComparison: restCompare(
+          authorizationBase, authorizationBase, [], { head_commit },
+        ),
+      }),
+    });
+    assert.equal(result.authorizationReusable, false, JSON.stringify(head_commit));
+    assert.ok(result.blockers.includes('main-movement:comparison-head-mismatch'), JSON.stringify(result.blockers));
+  }
+});
+
+test('real GitHub descendant-main compare preserves the final-commit fallback only for an absent head_commit', () => {
+  const approved = restCompare(authorizationBase, sourceHead, changedPaths, { ahead_by: 5 });
+  const movement = restCompare(authorizationBase, currentBase, ['docs/unrelated.md']);
+  const evidence = observed({
+    authorizationBaseToApprovedSourceComparison: approved,
+    authorizationBaseToCurrentBaseComparison: movement,
+  });
+  const result = evaluateMainMovementTolerantOperatorAuthorizationV1({ authorization, observed: evidence });
+  assert.equal(result.authorizationReusable, true, result.blockers.join(', '));
+  assert.equal(result.protectedExecutionReady, true);
+  assert.equal(result.mergeAuthority, false);
+
+  for (const head_commit of [null, undefined, {}, { sha: null }, { sha: 'not-a-sha' }, { sha: '9'.repeat(40) }]) {
+    for (const [key, comparison, prefix] of [
+      ['authorizationBaseToApprovedSourceComparison', approved, 'approved-change:'],
+      ['authorizationBaseToCurrentBaseComparison', movement, 'main-movement:'],
+    ]) {
+      const blocked = evaluateMainMovementTolerantOperatorAuthorizationV1({
+        authorization,
+        observed: { ...evidence, [key]: { ...comparison, head_commit } },
+      });
+      assert.equal(blocked.authorizationReusable, false, JSON.stringify({ key, head_commit }));
+      assert.ok(blocked.blockers.includes(prefix + 'comparison-head-mismatch'), JSON.stringify(blocked.blockers));
+    }
+  }
+});
+
 test('fresh evidence may expire without expiring the operator judgment itself', () => {
   const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
     authorization,

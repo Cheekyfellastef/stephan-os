@@ -102,10 +102,11 @@ function exactForwardComparison(comparison = {}, baseSha, headSha, { allowIdenti
   const observedBase = exactSha(comparison?.base_commit?.sha);
   const mergeBase = exactSha(comparison?.merge_base_commit?.sha);
   const commits = Array.isArray(comparison?.commits) ? comparison.commits : [];
+  const headCommitPresent = Object.prototype.hasOwnProperty.call(comparison || {}, 'head_commit');
   const observedHead = exactSha(
-    comparison?.head_commit?.sha
-    ?? commits.at(-1)?.sha
-    ?? (status === 'identical' ? comparison?.base_commit?.sha : ''),
+    headCommitPresent
+      ? comparison?.head_commit?.sha
+      : (commits.at(-1)?.sha ?? (status === 'identical' ? comparison?.base_commit?.sha : '')),
   );
 
   if (allowIdentical && baseSha === headSha) {
