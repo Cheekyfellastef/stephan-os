@@ -244,3 +244,79 @@ test('recovery source allowlist covers the complete canonical merge-consumer cor
   assert.ok(READY_REVIEW_RECOVERY_SOURCE_PATHS
     .includes('shared/agents/operatorPersonalRepositoryMergeDraftSkipV1.test.mjs'));
 });
+
+test('continuity admits the complete published twelve-file recovery correction and rejects an unrelated addition', () => {
+  // Actual PR #3412 estate at e4262f7, independent of the implementation allowlist.
+  const correctionPaths = [
+    '.github/workflows/stephanos-exact-head-review.yml',
+    'docs/architecture/stephanos-protected-ready-review-failure-recovery-v1.md',
+    'scripts/exact-head-qualified-escalation-v1.mjs',
+    'scripts/exact-head-qualified-escalation-v1.test.mjs',
+    'scripts/operator-protected-personal-repository-merge.mjs',
+    'scripts/protected-ready-review-lifecycle-v1.mjs',
+    'scripts/protected-ready-review-lifecycle-v1.test.mjs',
+    'shared/agents/fixtures/protectedReadyReviewLifecycleV1.fixture.mjs',
+    'shared/agents/operatorPersonalRepositoryMergeDraftSkipV1.test.mjs',
+    'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+    'shared/agents/protectedReadyReviewLifecycleV1.mjs',
+    'shared/agents/protectedReadyReviewLifecycleV1.test.mjs',
+  ];
+  const f = readyRecoveryFixture();
+  const files = correctionPaths.map(filename => ({ filename }));
+  const compare = { status: 'ahead', ahead_by: 1, behind_by: 0, total_commits: 1,
+    base_commit: { sha: f.originalIdentity.baseSha }, merge_base_commit: { sha: f.originalIdentity.baseSha },
+    commits: [{ sha: f.currentMainSha }], files };
+  const correction = { sha: f.currentMainSha, parents: [{ sha: f.originalIdentity.baseSha }], files };
+  const result = buildReadyReviewRecoveryContinuity(compare, correction, f.originalIdentity,
+    f.currentMainSha, f.input.changedFiles);
+  assert.deepEqual(result.correctionFiles, correctionPaths);
+  const expanded = [...files, { filename: 'scripts/uninspected-review-recovery-collector.mjs' }];
+  assert.throws(() => buildReadyReviewRecoveryContinuity({ ...compare, files: expanded },
+    { ...correction, files: expanded }, f.originalIdentity, f.currentMainSha, f.input.changedFiles),
+  /RECOVERY_CORRECTION_TIP/);
+});
+
+test('continuity requires a complete comparison below the 300-file API cap', () => {
+  const f = readyRecoveryFixture(), intermediate = 'e'.repeat(40);
+  const correctionFile = { filename: 'scripts/protected-ready-review-lifecycle-v1.mjs', status: 'modified' };
+  const correction = { sha: f.currentMainSha, parents: [{ sha: intermediate }],
+    files: [correctionFile] };
+  const compare = count => ({ status: 'ahead', ahead_by: 2, behind_by: 0, total_commits: 2,
+    base_commit: { sha: f.originalIdentity.baseSha }, merge_base_commit: { sha: f.originalIdentity.baseSha },
+    commits: [{ sha: intermediate }, { sha: f.currentMainSha }], files: [correctionFile,
+      ...Array.from({ length: count - 1 }, (_, index) => ({ filename: `docs/disjoint-${index}.md`, status: 'added' }))] });
+  const complete = buildReadyReviewRecoveryContinuity(compare(299), correction, f.originalIdentity,
+    f.currentMainSha, f.input.changedFiles);
+  assert.equal(complete.changedFiles.length, 299);
+  for (const count of [300, 301]) {
+    assert.throws(() => buildReadyReviewRecoveryContinuity(compare(count), correction, f.originalIdentity,
+      f.currentMainSha, f.input.changedFiles), /RECOVERY_CONTINUITY_COMPARE/, `comparison inventory of ${count}`);
+  }
+});
+
+test('continuity refuses every rename or previous-filename row before projecting either inventory', async t => {
+  const f = readyRecoveryFixture();
+  const file = { filename: 'scripts/protected-ready-review-lifecycle-v1.mjs', status: 'modified' };
+  const compare = { status: 'ahead', ahead_by: 1, behind_by: 0, total_commits: 1,
+    base_commit: { sha: f.originalIdentity.baseSha }, merge_base_commit: { sha: f.originalIdentity.baseSha },
+    commits: [{ sha: f.currentMainSha }], files: [file] };
+  const correction = { sha: f.currentMainSha, parents: [{ sha: f.originalIdentity.baseSha }], files: [file] };
+  const rows = {
+    'rename from outside correction scope': { status: 'renamed', previous_filename: 'scripts/uninspected-recovery.mjs' },
+    'rename from overlapping candidate': { status: 'renamed', previous_filename: f.input.changedFiles[0] },
+    'rename without old-path metadata': { status: 'renamed' },
+    'old-path metadata without rename status': { previous_filename: 'scripts/uninspected-recovery.mjs' },
+    'empty old-path metadata': { previous_filename: '' },
+    'null old-path metadata': { previous_filename: null },
+  };
+  for (const inventory of ['compare', 'correction']) {
+    for (const [name, metadata] of Object.entries(rows)) await t.test(`${inventory}: ${name}`, () => {
+      const changed = { ...file, ...metadata };
+      assert.throws(() => buildReadyReviewRecoveryContinuity(
+        inventory === 'compare' ? { ...compare, files: [changed] } : compare,
+        inventory === 'correction' ? { ...correction, files: [changed] } : correction,
+        f.originalIdentity, f.currentMainSha, f.input.changedFiles),
+      inventory === 'compare' ? /RECOVERY_CONTINUITY_SCOPE_OR_OVERLAP/ : /RECOVERY_CORRECTION_TIP/);
+    });
+  }
+});

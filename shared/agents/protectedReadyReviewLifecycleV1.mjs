@@ -32,6 +32,7 @@ export const READY_REVIEW_RECOVERY_SOURCE_PATHS = Object.freeze([
   'docs/architecture/stephanos-protected-ready-review-failure-recovery-v1.md',
   'scripts/exact-head-qualified-escalation-v1.mjs',
   'scripts/exact-head-qualified-escalation-v1.test.mjs',
+  'scripts/operator-protected-personal-repository-merge.mjs',
   'scripts/protected-ready-review-lifecycle-v1.mjs',
   'scripts/protected-ready-review-lifecycle-v1.test.mjs',
   'shared/agents/fixtures/protectedReadyReviewLifecycleV1.fixture.mjs',
@@ -253,6 +254,17 @@ export function assertReadyReviewRecoveryRun(run, definition, identity, { commen
       : run.status === 'in_progress' && run.conclusion === null), 'RECOVERY_RUN_PROVENANCE_OR_STATE');
 }
 
+function recoverySinglePathInventory(files, reason) {
+  // This bounded recovery contract admits no renames. Projecting filenames
+  // before checking both inventories could hide a touched old path.
+  readyReviewAssert(Array.isArray(files) && files.length > 0
+    && files.every(file => record(file) && typeof file.filename === 'string'
+      && file.status !== 'renamed' && !Object.hasOwn(file, 'previous_filename')), reason);
+  const paths = files.map(file => file.filename);
+  readyReviewAssert(new Set(paths).size === paths.length, reason);
+  return paths;
+}
+
 export function buildReadyReviewRecoveryContinuity(compare, correctionCommit, identity, currentMainSha, candidateChangedFiles) {
   readyReviewAssert(compare?.status === 'ahead' && compare?.base_commit?.sha === identity.baseSha
     && compare?.merge_base_commit?.sha === identity.baseSha
@@ -261,20 +273,17 @@ export function buildReadyReviewRecoveryContinuity(compare, correctionCommit, id
     && Array.isArray(compare.commits) && compare.commits.length === compare.total_commits
     && compare.commits.at(-1)?.sha === currentMainSha
     && Array.isArray(compare.files) && compare.files.length > 0
-    && compare.files.length <= 300, 'RECOVERY_CONTINUITY_COMPARE');
+    // A saturated compare response cannot prove the complete changed estate.
+    && compare.files.length < 300, 'RECOVERY_CONTINUITY_COMPARE');
   const commitShas = compare.commits.map(commit => commit?.sha);
-  const changedFiles = compare.files.map(file => file?.filename);
-  readyReviewAssert(changedFiles.every(path => typeof path === 'string')
-    && new Set(changedFiles).size === changedFiles.length
-    && commitShas.every(sha => SHA.test(sha)) && new Set(commitShas).size === commitShas.length
+  const changedFiles = recoverySinglePathInventory(compare.files, 'RECOVERY_CONTINUITY_SCOPE_OR_OVERLAP');
+  readyReviewAssert(commitShas.every(sha => SHA.test(sha)) && new Set(commitShas).size === commitShas.length
     && Array.isArray(candidateChangedFiles) && candidateChangedFiles.length > 0
     && !changedFiles.some(path => candidateChangedFiles.includes(path)), 'RECOVERY_CONTINUITY_SCOPE_OR_OVERLAP');
-  const correctionFiles = correctionCommit?.files?.map(file => file?.filename);
+  const correctionFiles = recoverySinglePathInventory(correctionCommit?.files, 'RECOVERY_CORRECTION_TIP');
   const expectedParent = commitShas.length === 1 ? identity.baseSha : commitShas.at(-2);
   readyReviewAssert(correctionCommit?.sha === currentMainSha && Array.isArray(correctionCommit.parents)
     && correctionCommit.parents.length === 1 && correctionCommit.parents[0]?.sha === expectedParent
-    && Array.isArray(correctionFiles) && correctionFiles.length > 0
-    && new Set(correctionFiles).size === correctionFiles.length
     && correctionFiles.every(path => READY_REVIEW_RECOVERY_SOURCE_PATHS.includes(path))
     && correctionFiles.every(path => changedFiles.includes(path)), 'RECOVERY_CORRECTION_TIP');
   return Object.freeze({ schemaVersion: 'stephanos.protected-ready-review-continuity.v1',
