@@ -232,32 +232,50 @@ if ($localResult.Healthy) {
 }
 else {
     Write-Log "Local backend unhealthy or not bound to expected head: $($localResult.Error)"
-    $startScriptPath = Join-Path $scriptDir 'start-stephanos-backend.ps1'
-    if (-not (Test-Path -LiteralPath $startScriptPath)) {
-        Write-Log "ERROR: Backend starter script is missing: $startScriptPath"
-        exit 1
-    }
-
     $powershellExe = Join-Path $PSHOME 'powershell.exe'
-    if (-not (Test-Path -LiteralPath $powershellExe)) {
-        $powershellExe = 'powershell.exe'
-    }
+    if (-not (Test-Path -LiteralPath $powershellExe)) { $powershellExe = 'powershell.exe' }
 
-    $startArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startScriptPath, '-StartupTimeoutSeconds', $BackendStartupTimeoutSeconds, '-PollIntervalSeconds', $PollIntervalSeconds, '-ExpectedHead', $ExpectedHead)
-    Write-Log ("Invoking backend starter: {0} {1}" -f $powershellExe, ($startArgs -join ' '))
+    $observedHead = ([string]$localResult.SourceHead).Trim().ToLowerInvariant()
+    $isProvenStaleCanonicalBackend = $observedHead -match '^[0-9a-f]{40}$' -and $observedHead -ne $ExpectedHead.ToLowerInvariant()
 
-    if ($PSCmdlet.ShouldProcess($startScriptPath, 'Start Stephanos backend')) {
-        Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend starter child'
-        & $powershellExe @startArgs
-        if ($LASTEXITCODE -ne 0) {
-            Write-Log "ERROR: Backend starter exited with code $LASTEXITCODE"
+    if ($isProvenStaleCanonicalBackend) {
+        $restartScriptPath = Join-Path $scriptDir 'restart-approved-stephanos-runtime.ps1'
+        if (-not (Test-Path -LiteralPath $restartScriptPath)) {
+            Write-Log "ERROR: Approved runtime restart script is missing: $restartScriptPath"
             exit 1
+        }
+        $restartArgs = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $restartScriptPath, '-Target', 'backend', '-ExpectedHead', $ExpectedHead, '-TimeoutSeconds', $BackendStartupTimeoutSeconds)
+        Write-Log "Proven stale canonical backend $observedHead detected; delegating to approved exact-head restart primitive for $ExpectedHead."
+        if ($PSCmdlet.ShouldProcess($restartScriptPath, 'Replace stale Stephanos backend through approved exact-head restart')) {
+            Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'approved stale backend restart'
+            & $powershellExe @restartArgs
+            if ($LASTEXITCODE -ne 0) {
+                Write-Log "ERROR: Approved stale backend restart exited with code $LASTEXITCODE"
+                exit 1
+            }
+        }
+    }
+    else {
+        $startScriptPath = Join-Path $scriptDir 'start-stephanos-backend.ps1'
+        if (-not (Test-Path -LiteralPath $startScriptPath)) {
+            Write-Log "ERROR: Backend starter script is missing: $startScriptPath"
+            exit 1
+        }
+        $startArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startScriptPath, '-StartupTimeoutSeconds', $BackendStartupTimeoutSeconds, '-PollIntervalSeconds', $PollIntervalSeconds, '-ExpectedHead', $ExpectedHead)
+        Write-Log ("Invoking backend starter: {0} {1}" -f $powershellExe, ($startArgs -join ' '))
+        if ($PSCmdlet.ShouldProcess($startScriptPath, 'Start Stephanos backend')) {
+            Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend starter child'
+            & $powershellExe @startArgs
+            if ($LASTEXITCODE -ne 0) {
+                Write-Log "ERROR: Backend starter exited with code $LASTEXITCODE"
+                exit 1
+            }
         }
     }
 
     $localResult = Test-BackendExactHeadHealth -Url $localHealthUrl -ExpectedSourceHead $ExpectedHead
     if (-not $localResult.Healthy) {
-        Write-Log "ERROR: Backend remains unhealthy or wrong-head after starter run: $($localResult.Error)"
+        Write-Log "ERROR: Backend remains unhealthy or wrong-head after recovery: $($localResult.Error)"
         Write-LatestBackendErrorTail -RootLogsDir $logsDir
         exit 1
     }
