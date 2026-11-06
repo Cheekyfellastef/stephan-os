@@ -89,5 +89,8 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     queue.push({...value,generation});publish({inputStatus:'Sending input to the selected app.'});return true;
   }
   return {discover,connect,stop,input,getState:()=>({...state}),getFrame:()=>state.status==='live'?image:null,
+    // A cached page retains this client. Revoke access on departure, but allow
+    // an explicit new connection after Back/Forward restores the page.
+    pagehide({persisted=false}={}){if(!persisted)disposed=true;return stop();},
     dispose(){disposed=true;void stop();}};
 }

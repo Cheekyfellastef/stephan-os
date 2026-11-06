@@ -203,7 +203,8 @@
       if (document.hidden) { cubeScene.stop(); previewTime = null; }
       else if (!immersiveActive) playPreview();
     });
-    window.addEventListener('pagehide', () => {cubeScene.stop();client.dispose();});
+    window.addEventListener('pagehide', event => {cubeScene.stop();void client.pagehide(event);});
+    window.addEventListener('pageshow', event => {if(event.persisted&&!immersiveActive)playPreview();});
     document.getElementById('preview-cube').addEventListener('change', playPreview);
     for (const [id,action] of Object.entries({
       'cube-drop': () => { const cube=selectedCube(); cube.reset(); cube.grab('preview'); const p=cube.getState().position; cube.moveHeld([p[0],1.6,p[2]]); cube.release(); },

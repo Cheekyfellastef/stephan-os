@@ -31,6 +31,25 @@ test('delayed session grants are revoked after disconnect',async()=>{
   assert.equal(h.client.getState().status,'idle');assert.equal(calls.filter(x=>x.path==='/stop').length,1);
   assert.equal(calls.at(-1).opts.headers['X-Spatial-Session'],token);
 });
+test('cached-page departure revokes access and allows explicit reconnection after restore',async()=>{
+  const calls=[];let sessions=0;
+  const h=clientHarness(async(url,opts)=>{const path=new URL(url).pathname;calls.push({path,opts});return response(
+    path==='/session'?{token:(++sessions===1?'a':'b').repeat(64)}:
+    path==='/windows'?{windows:[{id:1,title:'Test'}]}:
+    path==='/frame'?{status:'frame',serial:1,generation:1,jpeg:'fixture'}:
+    {status:path==='/bind'?'connected':'stopped'});});
+  await h.client.discover();await h.client.connect(1);await h.tick();
+  assert.equal(h.client.input({kind:'text',text:'stale'}),true);
+  await h.client.pagehide({persisted:true});await h.tick();
+  assert.equal(h.client.getState().status,'idle');assert.equal(h.client.getFrame(),null);
+  assert.equal(h.client.input({kind:'text',text:'hidden'}),false);
+  assert.equal(calls.at(-1).path,'/stop');assert.equal(calls.at(-1).opts.headers['X-Spatial-Session'],token);
+  await h.client.discover();assert.equal(h.client.getState().status,'selecting');
+  await h.client.connect(1);await h.tick();assert.equal(h.client.getState().status,'live');
+  assert.equal(calls.some(c=>c.path==='/input'),false);
+  await h.client.pagehide({persisted:false});await h.client.discover();
+  assert.equal(sessions,2);assert.equal(h.client.getState().status,'idle');
+});
 test('connecting waits for the window-list heartbeat without racing the native bind',async()=>{
   const heartbeat=deferred(),calls=[];let lists=0;
   const h=clientHarness(async(url)=>{const path=new URL(url).pathname;calls.push(path);if(path==='/windows'&&++lists===2)return heartbeat.promise;
