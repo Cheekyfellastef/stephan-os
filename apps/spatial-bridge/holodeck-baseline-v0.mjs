@@ -77,7 +77,8 @@ export async function enterHolodeckBaseline({
       });
 
     const renderer = rendererFactory({ gl });
-    const locomotion = createHolodeckLocomotion({ room: renderer.geometry.room });
+    const locomotion = createHolodeckLocomotion({ room: renderer.geometry.room,
+      obstacles: renderer.geometry.obstacles });
     let lastLocomotionStatus = '';
     let activeController = 'none';
     let active = true;

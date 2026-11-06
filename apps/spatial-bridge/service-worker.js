@@ -1,10 +1,12 @@
-const CACHE_NAME = 'stephanos-spatial-workspace-v1-locomotion-v1';
+const CACHE_NAME = 'stephanos-spatial-workspace-v1-chamber-v2';
 const CORE_ASSETS = [
   './',
   './quest-entry.html',
   './holodeck-baseline-v0.mjs',
   './holodeck-room-v1.mjs',
   './holodeck-locomotion-v1.mjs',
+  './holodeck-layout-v1.mjs',
+  './holodeck-collision-v1.mjs',
   './spatial-telemetry-client.mjs',
   './index.html',
   './bridge-state.v0.json',
