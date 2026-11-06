@@ -154,17 +154,19 @@ test('protocol drains are bounded and do not require a PowerShell callback runsp
 });
 
 test('actual bootstrap executes only its hashed bytes with isolated main-module identity', async () => {
-  const fixture = `from __future__ import annotations
-from dataclasses import dataclass
-import json,sys
-from pathlib import Path
-@dataclass
-class Proof:
-    attempts: int
-p=Path(__file__).with_suffix('.result.json')
-if p.exists(): raise RuntimeError('second execution')
-p.write_text(json.dumps({'attempts':Proof(1).attempts,'name':__name__,'digest':__VERIFIED_BRIDGE_SHA256__,'isolated':bool(sys.flags.isolated),'noSite':bool(sys.flags.no_site),'noBytecode':bool(sys.dont_write_bytecode),'args':sys.argv[1:]}),encoding='utf-8')
-`;
+  const fixture = [
+    "from __future__ import annotations",
+    "from dataclasses import dataclass",
+    "import json,sys",
+    "from pathlib import Path",
+    "@dataclass",
+    "class Proof:",
+    "    attempts: int",
+    "p=Path(__file__).with_suffix('.result.json')",
+    "if p.exists(): raise RuntimeError('second execution')",
+    "p.write_text(json.dumps({'attempts':Proof(1).attempts,'name':__name__,'digest':__VERIFIED_BRIDGE_SHA256__,'isolated':bool(sys.flags.isolated),'noSite':bool(sys.flags.no_site),'noBytecode':bool(sys.dont_write_bytecode),'args':sys.argv[1:]}),encoding='utf-8')",
+    "",
+  ].join('\n');
   const { directory, entry, result } = await executeBootstrap(fixture);
   try {
     assert.equal(result.error, undefined);
