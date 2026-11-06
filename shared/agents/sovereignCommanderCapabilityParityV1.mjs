@@ -24,8 +24,23 @@ export const SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY = Object.freeze(Object.f
   ['get-recent-tool-calls', 'get_recent_tool_calls', 'THIS_PRIVATE_SESSION_ADVISORY_HISTORY'],
   ['get-tool-result', 'get_tool_result', 'THIS_PRIVATE_SESSION_RETAINED_RECEIPTS'],
   ['list-remote-tool-calls', 'list_remote_tool_calls', 'THIS_PRIVATE_HTTP_SESSION_ADVISORY_HISTORY'],
+  ['set-config-value', 'set_config_value', 'THIS_PRIVATE_SESSION_TYPED_IO_LIMITS'],
 ].map(([id, sovereignEquivalent, functionalScope]) => [id, Object.freeze({ sovereignEquivalent,
   functionalScope, privateSessionRequired: true, runtimeParityProven: false })])));
+
+// A same-parent rename is useful partial coverage. It cannot close the broader
+// cross-directory move outcome, even if a retained ledger once called it parity.
+export const SOVEREIGN_COMMANDER_PARTIAL_PARITY_GAPS = Object.freeze({
+  'move-file': Object.freeze({
+    partialSovereignEquivalent: 'move_file',
+    partialScope: 'SAME_PARENT_REGULAR_FILE_RENAME_NO_REPLACE',
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    privateSessionRequired: true,
+    atomicContentCasProven: false,
+    parityGapReason: 'CROSS_DIRECTORY_FILE_MOVE_UNQUALIFIED',
+  }),
+});
 
 const DIRECT_PARITY = Object.freeze({
   'get-config': 'get_config',
@@ -179,7 +194,8 @@ export function classifyRemoteCommanderCapabilityObservation(entry = {}) {
   const operation = operationFromEntry(entry);
   const boundaryHold = BOUNDARY_PATTERN.test(operation) || authorityWideningRequested(entry);
   const directEquivalent = DIRECT_PARITY[operation] || '';
-  const searchGap = !directEquivalent ? SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[operation] : null;
+  const partialGap = !directEquivalent
+    ? SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[operation] || SOVEREIGN_COMMANDER_PARTIAL_PARITY_GAPS[operation] : null;
 
   const state = boundaryHold
     ? SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BOUNDARY_HOLD
@@ -195,7 +211,7 @@ export function classifyRemoteCommanderCapabilityObservation(entry = {}) {
     sovereignEquivalent: directEquivalent || suggestedEquivalent(operation),
     parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
     runtimeParityProven: false,
-    ...(searchGap || {}),
+    ...(partialGap || {}),
     ...(SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY[operation] || {}),
     canonicalOwnerGoal: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.goal,
     canonicalOwnerTitle: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.title,
@@ -263,14 +279,15 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
     const classified = current?.classified || null;
     const previousState = text(previous.state);
     const directEquivalent = DIRECT_PARITY[id];
-    const searchGap = !directEquivalent ? SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[id] : null;
+    const partialGap = !directEquivalent
+      ? SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[id] || SOVEREIGN_COMMANDER_PARTIAL_PARITY_GAPS[id] : null;
     // Repair retained false equivalence too: no new Remote Commander call is
     // required to correct a prior source-catalog classification. A boundary
     // hold still wins, and a correction cannot become a new parity proof.
     const retainedState = previousState === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BOUNDARY_HOLD
       ? previousState : directEquivalent
         ? SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT
-        : searchGap ? SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP : previousState;
+        : partialGap ? SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP : previousState;
     const state = classified?.state || retainedState || SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP;
     const stateTransition = previousState && previousState !== state
       ? `${previousState}->${state}`
@@ -299,9 +316,9 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
       runtimeParityProven: false,
       sovereignEquivalent: text(classified?.sovereignEquivalent
         || directEquivalent
-        || (searchGap ? suggestedEquivalent(id) : previous.sovereignEquivalent)
+        || (partialGap ? suggestedEquivalent(id) : previous.sovereignEquivalent)
         || suggestedEquivalent(id)),
-      ...(searchGap || {}),
+      ...(partialGap || {}),
       ...(SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY[id] || {}),
       canonicalOwnerGoal: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.goal,
       canonicalOwnerTitle: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.title,

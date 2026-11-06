@@ -19,6 +19,10 @@ const privateSessionPaths = [
   'shared/agents/sovereignMcpSessionHistoryV1.mjs',
   'scripts/windows/sovereign-search.ps1',
   'scripts/windows/SovereignSearchV1.cs',
+  'shared/agents/sovereignMcpSessionConfigV1.mjs',
+  'shared/agents/sovereignFileMoveV1.mjs',
+  'scripts/windows/sovereign-move-file.ps1',
+  'scripts/windows/SovereignFileMoveV1.cs',
 ];
 const repo = fileURLToPath(new URL('../', import.meta.url));
 const closureFixture = fileURLToPath(new URL('./fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs', import.meta.url));
@@ -62,7 +66,7 @@ function closure(root, omitted) {
 }
 
 test('directory package captures exactly three dependencies and rejects incomplete or extra records', () => {
-  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 270);
+  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 274);
   for (const path of directoryPaths) assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(path), path);
   const records = candidateRecords();
   assert.throws(() => candidate(records.filter(row => !directoryPaths.includes(row.path))), /EXACT_SOURCE_REQUIRED/);
@@ -84,7 +88,7 @@ test('isolated captured package proves imports and both source-owned runtime-rea
   const root = packagedCandidate();
   try {
     const complete = closure(root);
-    assert.equal(complete.memberCount, 270);
+    assert.equal(complete.memberCount, 274);
     assert.deepEqual(complete.missing, []);
     assert.deepEqual(complete.bare, []);
     assert.equal(complete.repositoryModulesEvaluated, false);
@@ -105,7 +109,7 @@ test('isolated captured package proves imports and both source-owned runtime-rea
   } finally { dispose(root); }
 });
 
-test('private search and history package includes all four exact members and pins both native read edges', () => {
+test('private tool package includes all eight exact members and pins every native read edge', () => {
   const records = candidateRecords();
   for (const file of privateSessionPaths) {
     assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(file));
@@ -117,7 +121,7 @@ test('private search and history package includes all four exact members and pin
     for (const file of privateSessionPaths) {
       assert.ok(closure(root, file).missing.some(row => row.target === file || row.runtimeRead === file), file);
     }
-    for (const file of privateSessionPaths.slice(2)) {
+    for (const file of privateSessionPaths.filter(path => /\.(?:ps1|cs)$/.test(path))) {
       const full = join(root, file), original = readFileSync(full);
       writeFileSync(full, Buffer.concat([original, Buffer.from('\nchanged fixture bytes\n')]));
       assert.ok(closure(root).missing.some(row => row.target === file && row.runtimeReadPinMismatch));

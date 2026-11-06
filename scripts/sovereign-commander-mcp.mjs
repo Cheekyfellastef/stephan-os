@@ -14,6 +14,8 @@ import {
 import { validateSovereignDirectoryTargetV1 } from '../shared/agents/sovereignDirectoryCreateV1.mjs';
 import { createSovereignSearchSessionsV1 } from '../shared/agents/sovereignSearchSessionsV1.mjs';
 import { createSovereignMcpSessionHistoryV1 } from '../shared/agents/sovereignMcpSessionHistoryV1.mjs';
+import { createSovereignMcpSessionConfigV1 } from '../shared/agents/sovereignMcpSessionConfigV1.mjs';
+import { runSovereignFileMoveV1 } from '../shared/agents/sovereignFileMoveV1.mjs';
 import {
   STEPHANOS_EXECUTION_SURFACE,
   buildStephanosExecutionCommandEnvelopeV1,
@@ -36,7 +38,7 @@ export const SOVEREIGN_COMMANDER_INSPECTION_ACTIONS = Object.freeze([
 
 const SEARCH_SESSION_TOOLS = Object.freeze(['start_search', 'get_more_search_results', 'stop_search', 'list_searches']);
 const HISTORY_TOOLS = Object.freeze(['get_usage_stats', 'get_recent_tool_calls', 'get_tool_result', 'list_remote_tool_calls']);
-const PRIVATE_SESSION_TOOLS = Object.freeze([...SEARCH_SESSION_TOOLS, ...HISTORY_TOOLS]);
+const PRIVATE_SESSION_TOOLS = Object.freeze([...SEARCH_SESSION_TOOLS, ...HISTORY_TOOLS, 'set_config_value', 'move_file']);
 const PRIVATE_READ_ANNOTATIONS = Object.freeze({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
 const HISTORY_PAGE_SCHEMA = Object.freeze({ type: 'object', additionalProperties: false,
   properties: { offset: { type: 'integer', minimum: 0, maximum: 256, default: 0 },
@@ -56,9 +58,23 @@ const TOOLS = Object.freeze([
   {
     name: 'get_config',
     title: 'Get Sovereign Commander configuration',
-    description: 'Return the local sovereign execution posture and authority boundaries.',
+    description: 'Return the local sovereign execution posture, authority boundaries and this private session’s effective typed file limits. Session settings are not persistent.',
     inputSchema: { type: 'object', additionalProperties: false, properties: {} },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'set_config_value',
+    title: 'Set this session’s file limits',
+    description: 'Set fileReadLineLimit (1–1000 returned LF/CRLF-delimited lines per file) or fileWriteLineLimit (1–10000 logical lines per submitted write/append/edit replacement, or null to restore the byte-only default). Requires the current revision from get_config. Affects only this private session and never changes filesystem, shell, authentication or execution authority.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['key', 'value', 'expectedRevision'],
+      properties: {
+        key: { type: 'string', enum: ['fileReadLineLimit', 'fileWriteLineLimit'] },
+        value: { type: ['integer', 'null'], minimum: 1, maximum: 10000 },
+        expectedRevision: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
     name: 'read_file',
@@ -151,6 +167,20 @@ const TOOLS = Object.freeze([
       },
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'move_file',
+    title: 'Rename one file within its current folder',
+    description: 'Rename one regular local NTFS file within the same physical parent without replacing any destination. Requires exact source, destination and expectedSha256. The hash is a bounded pre/post observation, not atomic content CAS; writable-mapping exclusion is unproven. Cross-directory moves are refused. An uncertain result does not authorize a retry.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['source', 'destination', 'expectedSha256'],
+      properties: {
+        source: { type: 'string', minLength: 1, maxLength: 1024 },
+        destination: { type: 'string', minLength: 1, maxLength: 1024 },
+        expectedSha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+      },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
   },
   {
     name: 'create_directory',
@@ -403,6 +433,7 @@ function operationForTool(name) {
 }
 
 function targetPathsForTool(name, args = {}) {
+  if (name === 'move_file') return [args.source, args.destination];
   if (name === 'start_search') return [args.path];
   if (name === 'create_directory') return [args.path];
   if (name === 'read_multiple_files') return Array.isArray(args.paths) ? args.paths : [];
@@ -475,12 +506,22 @@ export function createSovereignCommanderMcpHandler({
   now = () => new Date().toISOString(),
   searchSessionsFactory = createSovereignSearchSessionsV1,
   sessionHistoryFactory = createSovereignMcpSessionHistoryV1,
+  sessionConfigFactory = createSovereignMcpSessionConfigV1,
+  fileMoveExecutor = runSovereignFileMoveV1,
 } = {}) {
   let session = null;
   let toolsListed = false;
   let closed = false;
   const searchSessions = searchSessionsFactory();
   const sessionHistory = sessionHistoryFactory();
+  const sessionConfig = sessionConfigFactory();
+  // Only this fixed private operation reaches the native adapter. Closing an
+  // MCP session does not cancel a possible mutation or release native admission.
+  const fileMoves = Object.freeze({ execute: (operation, args) => {
+    if (operation !== 'MOVE_FILE') return { ok: false, mutationState: 'NOT_STARTED',
+      blocker: 'SOVEREIGN_MOVE_OPERATION_INVALID', retryAllowed: false };
+    return fileMoveExecutor(args);
+  } });
   // Ephemeral cancellation for this session's existing requests; no durable
   // queue, lease, retry or second executor is introduced.
   const coreRequests = new Map();
@@ -500,7 +541,7 @@ export function createSovereignCommanderMcpHandler({
       try { if (recorded?.recorded) sessionHistory.finish(envelope.commandId, value, flags); } catch {}
     };
     try {
-      const result = await executor(envelope, { ...options, searchSessions, sessionHistory });
+      const result = await executor(envelope, { ...options, searchSessions, sessionHistory, sessionConfig, fileMoves });
       recordResponse(result);
       return result;
     } catch (error) {
@@ -652,7 +693,8 @@ export function createSovereignCommanderMcpHandler({
   handle.close = async () => {
     if (closed) return;
     closed = true;
-    try { sessionHistory.dispose(); } finally { await searchSessions.dispose(); }
+    try { sessionConfig.dispose(); }
+    finally { try { sessionHistory.dispose(); } finally { await searchSessions.dispose(); } }
   };
   return handle;
 }

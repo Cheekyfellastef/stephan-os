@@ -1,9 +1,9 @@
-# Private Sovereign search sessions and command history
+# Private Sovereign search, history, configuration and file moves
 
 Owner: **#2573 — Goal: Make Sovereign Commander absorb every Remote Commander capability**.
 
 The existing Commander host previously offered only a repository search and no
-session-local command history. This source contribution adds eight operations to
+session-local command history. This source contribution adds ten operations to
 that host and its canonical command envelope. It does not introduce another
 controller, worker, scheduler, durable store, public mailbox or execution owner.
 
@@ -19,8 +19,10 @@ controller, worker, scheduler, durable store, public mailbox or execution owner.
 | `get_recent_tool_calls` | Metadata for the current handler's retained calls, without arguments, paths, content or exception text. |
 | `get_tool_result` | An eligible immutable copy of an original result from this handler, addressed by its opaque command ID; never a replay. |
 | `list_remote_tool_calls` | The current handler's authenticated HTTP calls only; local stdio and other sessions are excluded. |
+| `set_config_value` | Revision-checked read/write limits for this private handler, enforced by subsequent file calls within the original hard caps. |
+| `move_file` | A regular file renamed within the same physical local Windows parent, with matching bounded pre/post SHA-256 observations and no destination replacement. Cross-directory moves remain unqualified. |
 
-All eight require an actual MCP request after initialization and tool discovery.
+All ten require an actual MCP request after initialization and tool discovery.
 The trusted transport must be local stdio or authenticated HTTP. Caller JSON
 cannot provide transport proof, session state, an executor, a scanner or a history
 store. Unknown fields, accessors, inherited arguments and coercible numbers are
@@ -91,10 +93,62 @@ their session. DELETE, server close, failed initialization and stdio EOF dispose
 private search/history state. These actions do not release the independent
 maintenance owner or permit replay of an uncertain native command.
 
+## Typed session configuration
+
+Configuration belongs to one private MCP handler. `get_config` reports effective
+values, their revision, accepted configuration ranges and the existing byte and
+batch limits. `set_config_value` requires an
+exact `expectedRevision`; concurrent stale changes are refused. Restoring a prior
+value is another revision-checked change, not a replay of the old request.
+
+`fileReadLineLimit` constrains both single and batch reads while their existing
+request and shared output limits remain binding. Read ranges retain the existing
+LF/CRLF parsing; bare CR is not a read-line delimiter. `fileWriteLineLimit` constrains
+each supplied rewrite/append payload or edit replacement; it is not a promise about the total number of lines
+already present in an appended file. Write-payload counting recognizes CR, LF and
+CRLF; a final delimiter does not add another line. The write setting defaults to
+`null`, which keeps the original byte-only limit. Defaults preserve the prior tool behavior.
+These controls cannot change allowed paths, executable identity, shell selection,
+environment, authentication, credentials, canonical ownership, review authority,
+byte limits or mandatory receipts. Unknown keys and coerced values are rejected.
+
+The effective configuration is captured for each admitted operation. A later
+configuration change cannot rewrite an in-flight operation's policy. Successful
+changes are eligible for the same private receipt history, including before/after
+values, while another handler retains its own defaults. Closing the handler
+disposes this configuration; persistent machine settings are outside the contract.
+
+## Guarded regular-file rename coverage
+
+The move contract requires exact `source`, `destination` and `expectedSha256`
+arguments. This first slice accepts only a new basename in the same physical
+parent. It does not accept shell text, a directory tree, overwrite permission,
+cross-directory or cross-volume movement, copying or deletion instructions.
+A fixed captured Windows helper retains the parent chain, binds the source
+object, checks an observed content hash and uses a native no-replace rename with
+no destination directory reopen. Cross-directory requests are refused before
+mutation and remain a capability gap in the catalog and compiler.
+Sensitive paths, aliases, reparse points, hard links and nonregular files are
+excluded rather than passed to a path-based fallback.
+
+The expected hash is a bounded content observation, **not atomic content CAS**.
+Existing writable mappings can outlive their original file handle and cannot be
+excluded by ordinary sharing restrictions or repeated hashes. A successful
+receipt reports the same object renamed and matching bounded pre/post hash
+observations; it does not certify absence of mapped writers or immutable content.
+Atomic-content and cross-directory contracts require separate native work.
+
+Mutation evidence is separate from process completion. A timed-out, disconnected
+or malformed native result after admission retains an unknown effect unless a
+valid terminal receipt establishes the outcome. Unknown effect never creates
+automatic retry, rollback, custody-release or overwrite authority. Receipts carry
+bounded private identity and hash metadata; file contents are not returned.
+
 ## Package, proof and adoption
 
-The fixed-runtime closure grows from 266 to **270 exact members**: the search and
-history modules, the fixed search script and native source. The preparer,
+The fixed-runtime closure grows from 266 to **274 exact members**: the search,
+history, configuration and move modules, plus the two fixed scripts and native
+sources. Every original member remains present. The preparer,
 installer, native verifier and closure regressions carry the same bounded member
 count. Captured helper reads are included in the parse-only dependency proof;
 omitted or modified helper bytes must fail it. There is no dynamic discovery of
@@ -102,7 +156,8 @@ extra installer files.
 
 Focused source tests cover argument and transport admission, scope binding,
 pagination, cancellation uncertainty, session isolation, history privacy and
-resource bounds. Real disposable Windows fixtures compile the native helper and
+resource bounds. Configuration tests exercise real file behavior, stale revisions,
+rollback and independent handlers. Real disposable Windows fixtures compile the native helpers and
 exercise plain reads, sensitive-file exclusion, reparse/hard-link refusal and
 ancestor/file-handle races in the existing Windows CI job. Linux skips are not
 Windows proof. Independent exact-head review and Windows/security adjudication
@@ -111,8 +166,8 @@ remain required before the protected merge and commissioning stages.
 Neither a source commit nor passing hosted CI installs this change on Battle
 Bridge. The current protected runtime package, private host attachment and each
 per-operation terminal receipt remain separately required. This does not close
-all of #2573: process/session interaction and termination, moves, PDF output,
-typed configuration, broader service/account equivalents and the original native
+all of #2573: process/session interaction and termination, PDF output,
+broader move/configuration contracts, service/account equivalents and the original native
 acceptance register retain their own implementation or commissioning work.
 
 Reusable invariant: a session's capability state, receipt history, source catalog

@@ -54,6 +54,21 @@ test('obsolete search equivalence cannot promote a durable Flywheel lesson', () 
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_CAPABILITY_COMPILER_WORK_AVAILABLE');
 });
 
+test('partial rename cannot close the move gap or become an authenticated learning receipt', () => {
+  const result = compileSovereignCommanderCapabilityPlanV1({ capabilities: [{
+    capabilityId: 'move-file', state: 'PARITY_PRESENT', sovereignEquivalent: 'move_file', newlyProvenParity: true,
+  }] });
+  assert.equal(result.buildableCapabilityCount, 1);
+  assert.equal(result.learningCandidates.length, 0);
+  assert.equal(result.newlyProvenParityCount, 0);
+  assert.equal(result.plans[0].primitive, SOVEREIGN_COMMANDER_PRIMITIVE.MUTATE_BOUNDED);
+  assert.equal(result.plans[0].partialScope, 'SAME_PARENT_REGULAR_FILE_RENAME_NO_REPLACE');
+  assert.equal(result.plans[0].runtimeParityProven, false);
+  assert.equal(result.skillForgeCandidates[0].partialScope, result.plans[0].partialScope);
+  assert.equal(result.skillForgeCandidates[0].parityGapReason, 'CROSS_DIRECTORY_FILE_MOVE_UNQUALIFIED');
+  assert.equal(result.skillForgeCandidates[0].atomicContentCasProven, false);
+});
+
 test('compiler decomposes process parity into a guarded primitive recipe without arbitrary shell', () => {
   const result = compileSovereignCommanderCapabilityPlanV1({
     timestampUtc: '2026-10-02T14:30:00.000Z',

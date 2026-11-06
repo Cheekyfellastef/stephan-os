@@ -45,6 +45,12 @@ Project discovery is a first-class read-only capability. `search_project` perfor
 
 ## Transport layers
 
+Private handlers also expose revision-checked `set_config_value` for bounded
+read/write payload limits, and `move_file` for a no-overwrite rename within one
+physical Windows directory. The rename uses bounded pre/post hash observations;
+it does not establish atomic content CAS or cross-directory move parity. Their
+contracts and remaining gaps are documented in [private capabilities](sovereign-private-search-history-v1.md).
+
 ### Local stdio MCP
 
 `scripts/sovereign-commander-mcp.mjs` is the lowest-dependency transport. It uses newline-delimited JSON-RPC over stdin/stdout and has no external package dependency.

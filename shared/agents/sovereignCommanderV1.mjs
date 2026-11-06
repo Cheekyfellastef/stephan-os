@@ -13,16 +13,24 @@ import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 import { executeCorePublicationDirectoryActionV1 } from '../../scripts/sovereign-core-directory-action-v1.mjs';
 import { isSovereignMaintenanceObservationV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 import { executeSovereignDirectoryCreateV1, validateSovereignDirectoryTargetV1 } from './sovereignDirectoryCreateV1.mjs';
+import { validateSovereignFileMoveArgumentsV1 } from './sovereignFileMoveV1.mjs';
+import {
+  captureSovereignMcpSessionConfigArgumentsV1, captureSovereignMcpSessionConfigSnapshotV1,
+  countSovereignSubmittedLinesV1, SOVEREIGN_MCP_SESSION_CONFIG_DEFAULTS_V1,
+  SOVEREIGN_MCP_SESSION_CONFIG_LIMITS_V1, SOVEREIGN_MCP_SESSION_CONFIG_SEMANTICS_V1,
+} from './sovereignMcpSessionConfigV1.mjs';
 
 export const SOVEREIGN_COMMANDER_SCHEMA = 'stephanos.sovereign-commander.v1';
 
 export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
   GET_CONFIG: 'GET_CONFIG',
+  SET_CONFIG_VALUE: 'SET_CONFIG_VALUE',
   READ_FILE: 'READ_FILE',
   READ_MULTIPLE_FILES: 'READ_MULTIPLE_FILES',
   GET_FILE_INFO: 'GET_FILE_INFO',
   WRITE_FILE: 'WRITE_FILE',
   EDIT_FILE: 'EDIT_FILE',
+  MOVE_FILE: 'MOVE_FILE',
   LIST_DIRECTORY: 'LIST_DIRECTORY',
   CREATE_DIRECTORY: 'CREATE_DIRECTORY',
   SEARCH_PROJECT: 'SEARCH_PROJECT',
@@ -99,6 +107,8 @@ function pathWithin(root, candidate) {
 }
 
 const PRIVATE_SESSION_ARGUMENTS = Object.freeze({
+  MOVE_FILE: ['source', 'destination', 'expectedSha256'],
+  SET_CONFIG_VALUE: ['key', 'value', 'expectedRevision'],
   START_SEARCH: ['path', 'query', 'mode', 'caseSensitive', 'limit'],
   GET_MORE_SEARCH_RESULTS: ['searchId', 'offset', 'limit'],
   STOP_SEARCH: ['searchId'],
@@ -112,6 +122,11 @@ const PRIVATE_SESSION_ARGUMENTS = Object.freeze({
 // JSON schema is a discovery contract, not runtime admission. Capture only own
 // data properties before the command fabric can trim paths or read accessors.
 export function captureSovereignPrivateSessionArgumentsV1(operation, raw) {
+  if (operation === 'MOVE_FILE') {
+    const validated = validateSovereignFileMoveArgumentsV1(raw);
+    return validated.ok === true ? validated.args : null;
+  }
+  if (operation === 'SET_CONFIG_VALUE') return captureSovereignMcpSessionConfigArgumentsV1(raw);
   const allowed = Object.hasOwn(PRIVATE_SESSION_ARGUMENTS, operation) ? PRIVATE_SESSION_ARGUMENTS[operation] : null;
   if (!allowed || !raw || typeof raw !== 'object' || Array.isArray(raw)
     || Object.getPrototypeOf(raw) !== Object.prototype) return null;
@@ -562,6 +577,15 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
   const targetPaths = Array.isArray(envelope.targetPaths) ? envelope.targetPaths.map(text).filter(Boolean) : [];
   const payload = envelope.payload && typeof envelope.payload === 'object' ? envelope.payload : {};
   const registry = fixedRegistry(options.repoRoot);
+  let sessionConfiguration = null;
+  if (['GET_CONFIG', 'READ_FILE', 'READ_MULTIPLE_FILES', 'WRITE_FILE', 'EDIT_FILE'].includes(operation)
+    && Object.hasOwn(options, 'sessionConfig')) {
+    try { sessionConfiguration = captureSovereignMcpSessionConfigSnapshotV1(options.sessionConfig?.getSnapshot?.()); }
+    catch {}
+    if (!sessionConfiguration) blockers.push('SOVEREIGN_SESSION_CONFIG_UNAVAILABLE');
+  }
+  const configuration = sessionConfiguration ? { sessionConfiguration } : {};
+  const writeLineLimit = sessionConfiguration?.values.fileWriteLineLimit ?? null;
   let plan = null;
 
   if (Object.hasOwn(PRIVATE_SESSION_ARGUMENTS, operation)) {
@@ -571,12 +595,17 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     if (operation === 'START_SEARCH') {
       if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 1
         || envelope.targetPaths[0] !== args?.path) blockers.push('SOVEREIGN_SEARCH_SCOPE_BINDING_INVALID');
+    } else if (operation === 'MOVE_FILE') {
+      if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 2
+        || envelope.targetPaths[0] !== args?.source || envelope.targetPaths[1] !== args?.destination)
+        blockers.push('SOVEREIGN_MOVE_SCOPE_BINDING_INVALID');
     } else if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 0) {
       blockers.push('SOVEREIGN_PRIVATE_SESSION_SCOPE_INVALID');
     }
-    if (args) plan = frozen({ kind: 'private-session', family: search ? 'search' : 'history', operation, args });
+    if (args) plan = frozen({ kind: 'private-session',
+      family: operation === 'MOVE_FILE' ? 'move' : operation === 'SET_CONFIG_VALUE' ? 'config' : search ? 'search' : 'history', operation, args });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG) {
-    plan = frozen({ kind: 'config' });
+    plan = frozen({ kind: 'config', ...configuration });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.READ_FILE) {
     const path = targetPaths.length === 1 ? normalizedAbsolutePath(targetPaths[0]) : '';
     if (!path) blockers.push('sovereign-commander-read-requires-one-absolute-target');
@@ -584,7 +613,8 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
       kind: 'read-file',
       path,
       offset: safeInteger(payload.offset, 0, 0, 100_000_000),
-      length: safeInteger(payload.length, 200, 1, 1000),
+      length: Math.min(safeInteger(payload.length, 200, 1, 1000), sessionConfiguration?.values.fileReadLineLimit ?? 1000),
+      ...(sessionConfiguration ? { requestedLength: safeInteger(payload.length, 200, 1, 1000), ...configuration } : {}),
     });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.READ_MULTIPLE_FILES) {
     const paths = targetPaths.map(normalizedAbsolutePath);
@@ -595,7 +625,8 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
         kind: 'read-multiple-files',
         paths: frozen(paths),
         offset: safeInteger(payload.offset, 0, 0, 100_000_000),
-        length: safeInteger(payload.length, 100, 1, 200),
+        length: Math.min(safeInteger(payload.length, 100, 1, 200), sessionConfiguration?.values.fileReadLineLimit ?? 200),
+        ...(sessionConfiguration ? { requestedLength: safeInteger(payload.length, 100, 1, 200), ...configuration } : {}),
       });
     }
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.GET_FILE_INFO) {
@@ -608,12 +639,16 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     const mode = text(payload.mode, 'rewrite').toLowerCase();
     if (!path) blockers.push('sovereign-commander-write-requires-one-absolute-target');
     if (content === null || Buffer.byteLength(content, 'utf8') > 1024 * 1024) blockers.push('sovereign-commander-write-content-invalid');
+    const submittedLines = content !== null && sessionConfiguration
+      ? countSovereignSubmittedLinesV1(content, writeLineLimit ?? Number.MAX_SAFE_INTEGER) : null;
+    if (writeLineLimit !== null && submittedLines > writeLineLimit) blockers.push('SOVEREIGN_SESSION_WRITE_LINE_LIMIT_EXCEEDED');
     if (!['rewrite', 'append'].includes(mode)) blockers.push('sovereign-commander-write-mode-invalid');
     if (path && content !== null && ['rewrite', 'append'].includes(mode)) plan = frozen({
       kind: 'write-file',
       path,
       content,
       mode,
+      ...(sessionConfiguration ? { submittedLines, ...configuration } : {}),
     });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.EDIT_FILE) {
     const path = targetPaths.length === 1 ? normalizedAbsolutePath(targetPaths[0]) : '';
@@ -621,11 +656,15 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     const newString = typeof payload.newString === 'string' ? payload.newString : null;
     if (!path) blockers.push('sovereign-commander-edit-requires-one-absolute-target');
     if (!oldString || newString === null || Buffer.byteLength(newString, 'utf8') > 1024 * 1024) blockers.push('sovereign-commander-edit-payload-invalid');
+    const submittedLines = newString !== null && sessionConfiguration
+      ? countSovereignSubmittedLinesV1(newString, writeLineLimit ?? Number.MAX_SAFE_INTEGER) : null;
+    if (writeLineLimit !== null && submittedLines > writeLineLimit) blockers.push('SOVEREIGN_SESSION_WRITE_LINE_LIMIT_EXCEEDED');
     if (path && oldString && newString !== null) plan = frozen({
       kind: 'edit-file',
       path,
       oldString,
       newString,
+      ...(sessionConfiguration ? { submittedLines, ...configuration } : {}),
     });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.RUN_NODE_TEST) {
     blockers.push('sovereign-commander-node-test-disabled-use-source-controlled-maintenance-action');
@@ -1053,7 +1092,9 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
       && (options.routeProof?.transport === 'local-stdio-mcp'
         || (options.routeProof?.transport === 'authenticated-http-jsonrpc'
           && options.routeProof?.authenticatedMcp === true));
-    const service = command.plan.family === 'search' ? options.searchSessions : options.sessionHistory;
+    const service = command.plan.family === 'search' ? options.searchSessions
+      : command.plan.family === 'config' ? options.sessionConfig
+        : command.plan.family === 'move' ? options.fileMoves : options.sessionHistory;
     if (!privateRoute || !service || typeof service.execute !== 'function') return frozen({
       ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
       blocker: 'SOVEREIGN_PRIVATE_SESSION_REQUIRED',
@@ -1093,15 +1134,25 @@ async function executeAdmittedSovereignCommandV1(command, options) {
     let structuredContent = null;
 
     if (command.plan.kind === 'private-session') {
-      const service = command.plan.family === 'search' ? options.searchSessions : options.sessionHistory;
+      const service = command.plan.family === 'search' ? options.searchSessions
+        : command.plan.family === 'config' ? options.sessionConfig
+          : command.plan.family === 'move' ? options.fileMoves : options.sessionHistory;
       structuredContent = await service.execute(command.plan.family === 'history'
         ? command.plan.operation.toLowerCase() : command.plan.operation, command.plan.args);
+      const move = command.plan.family === 'move';
+      if (!structuredContent || structuredContent.ok !== true
+        || (move && structuredContent.mutationState !== 'MOVED')) {
+        const unknownMove = move && structuredContent?.mutationState !== 'NOT_STARTED';
+        if (unknownMove) structuredContent = frozen({ ...structuredContent,
+          ok: false, mutationState: 'UNKNOWN', retryAllowed: false });
+        contentText = JSON.stringify(structuredContent).slice(0, MAX_RESULT_TEXT);
+        return frozen({
+          ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command, contentText, structuredContent,
+          blocker: structuredContent?.blocker || 'SOVEREIGN_PRIVATE_SESSION_OPERATION_BLOCKED',
+          finalVerdict: unknownMove ? 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' : 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+        });
+      }
       contentText = JSON.stringify(structuredContent).slice(0, MAX_RESULT_TEXT);
-      if (!structuredContent || structuredContent.ok !== true) return frozen({
-        ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command, contentText, structuredContent,
-        blocker: structuredContent?.blocker || 'SOVEREIGN_PRIVATE_SESSION_OPERATION_BLOCKED',
-        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
-      });
     } else if (command.plan.kind === 'config') {
       structuredContent = frozen({
         schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
@@ -1117,6 +1168,12 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         arbitraryUnboundedCommandAllowed: false,
         mergeAuthority: false,
         pcRestartAuthority: false,
+        ...(command.plan.sessionConfiguration ? { sessionConfiguration: frozen({
+          ...command.plan.sessionConfiguration,
+          defaults: SOVEREIGN_MCP_SESSION_CONFIG_DEFAULTS_V1,
+          configurationLimits: SOVEREIGN_MCP_SESSION_CONFIG_LIMITS_V1,
+          semantics: SOVEREIGN_MCP_SESSION_CONFIG_SEMANTICS_V1,
+        }) } : {}),
       });
       contentText = JSON.stringify(structuredContent);
     } else if (command.plan.kind === 'read-file') {
@@ -1129,6 +1186,10 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         offset: command.plan.offset,
         length: selected.length,
         totalLines: lines.length,
+        ...(command.plan.sessionConfiguration ? {
+          sessionConfigRevision: command.plan.sessionConfiguration.revision,
+          requestedLength: command.plan.requestedLength, effectiveReadLineLimit: command.plan.length,
+        } : {}),
       });
     } else if (command.plan.kind === 'read-multiple-files') {
       const files = [];
@@ -1153,6 +1214,10 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         files: frozen(files),
         totalFiles: files.length,
         contentBudgetExhausted: remainingCharacters === 0,
+        ...(command.plan.sessionConfiguration ? {
+          sessionConfigRevision: command.plan.sessionConfiguration.revision,
+          requestedLength: command.plan.requestedLength, effectiveReadLineLimit: command.plan.length,
+        } : {}),
       });
       contentText = files.map((file) => `${file.path}\n${file.content}`).join('\n').slice(0, MAX_RESULT_TEXT);
     } else if (command.plan.kind === 'get-file-info') {
@@ -1171,6 +1236,8 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         path: command.plan.path,
         bytesWritten: Buffer.byteLength(command.plan.content, 'utf8'),
         mode: command.plan.mode,
+        ...(command.plan.sessionConfiguration ? { sessionConfigRevision: command.plan.sessionConfiguration.revision,
+          submittedLines: command.plan.submittedLines, fileWriteLineLimit: command.plan.sessionConfiguration.values.fileWriteLineLimit } : {}),
       });
       contentText = JSON.stringify(structuredContent);
     } else if (command.plan.kind === 'edit-file') {
@@ -1192,6 +1259,8 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         path: command.plan.path,
         replacements: 1,
         bytesWritten: Buffer.byteLength(updated, 'utf8'),
+        ...(command.plan.sessionConfiguration ? { sessionConfigRevision: command.plan.sessionConfiguration.revision,
+          submittedLines: command.plan.submittedLines, fileWriteLineLimit: command.plan.sessionConfiguration.values.fileWriteLineLimit } : {}),
       });
       contentText = JSON.stringify(structuredContent);
     } else if (command.plan.kind === 'node-test') {
@@ -1308,6 +1377,13 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         ? 'SOVEREIGN_COMMANDER_SESSION_OPERATION_RETURNED' : 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
     });
   } catch (error) {
+    if (command.plan?.kind === 'private-session' && command.plan.family === 'move') {
+      const structuredContent = frozen({ ok: false, mutationState: 'UNKNOWN', retryAllowed: false,
+        blocker: 'SOVEREIGN_MOVE_EFFECT_UNKNOWN' });
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
     if (command.plan?.kind === 'private-session') return frozen({
       ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
       blocker: 'SOVEREIGN_PRIVATE_SESSION_OPERATION_FAILED',

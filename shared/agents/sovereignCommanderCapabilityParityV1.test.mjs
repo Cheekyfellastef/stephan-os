@@ -111,11 +111,12 @@ test('Remote Commander device/reachability probes resolve to Sovereign visibilit
   }
 });
 
-test('scoped search and history map to their own private tools without installed acceptance', () => {
+test('scoped private capabilities map to their own tools without installed acceptance', () => {
   const project = classifyRemoteCommanderCapabilityObservation(remote('search-project'));
   assert.equal(project.sovereignEquivalent, 'search_project');
   for (const operation of ['start-search', 'get-more-search-results', 'stop-search', 'list-searches',
-    'get-usage-stats', 'get-recent-tool-calls', 'get-tool-result', 'list-remote-tool-calls']) {
+    'get-usage-stats', 'get-recent-tool-calls', 'get-tool-result', 'list-remote-tool-calls',
+    'set-config-value']) {
     const result = classifyRemoteCommanderCapabilityObservation(remote(operation));
     assert.equal(result.state, 'PARITY_PRESENT', operation);
     assert.equal(result.sovereignEquivalent, operation.replaceAll('-', '_'), operation);
@@ -132,6 +133,24 @@ test('scoped search and history map to their own private tools without installed
   const directory = classifyRemoteCommanderCapabilityObservation(remote('create-directory'));
   assert.equal(directory.sovereignEquivalent, 'create_directory');
   assert.equal(directory.runtimeParityProven, false);
+});
+
+test('same-parent rename remains a move gap and corrects retained false parity without losing provenance', () => {
+  const current = classifyRemoteCommanderCapabilityObservation(remote('move-file'));
+  assert.equal(current.state, 'BUILDABLE_GAP');
+  assert.equal(current.partialSovereignEquivalent, 'move_file');
+  assert.equal(current.partialScope, 'SAME_PARENT_REGULAR_FILE_RENAME_NO_REPLACE');
+  assert.equal(current.atomicContentCasProven, false);
+  const retained = buildSovereignCommanderCapabilityParityLedger([], { priorLedger: { capabilities: [{
+    capabilityId: 'move-file', state: 'PARITY_PRESENT', sovereignEquivalent: 'move_file',
+    newlyProvenParity: true, observationCount: 3, missionIds: ['original-move-mission'],
+  }] } });
+  assert.equal(retained.capabilities[0].state, 'BUILDABLE_GAP');
+  assert.equal(retained.capabilities[0].observationCount, 3);
+  assert.deepEqual(retained.capabilities[0].missionIds, ['original-move-mission']);
+  assert.equal(retained.capabilities[0].parityGapReason, 'CROSS_DIRECTORY_FILE_MOVE_UNQUALIFIED');
+  assert.equal(retained.newlyProvenParityCount, 0);
+  assert.equal(retained.daemonMayReportGreen, false);
 });
 
 test('retained broad-search false parity is corrected without a new call or lost provenance', () => {
