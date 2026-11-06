@@ -253,7 +253,7 @@ export function assertReadyReviewRecoveryRun(run, definition, identity, { commen
 
 export function buildReadyReviewRecoveryContinuity(compare, correctionCommit, identity, currentMainSha, candidateChangedFiles) {
   readyReviewAssert(compare?.status === 'ahead' && compare?.base_commit?.sha === identity.baseSha
-    && compare?.merge_base_commit?.sha === identity.baseSha && compare?.head_commit?.sha === currentMainSha
+    && compare?.merge_base_commit?.sha === identity.baseSha
     && Number.isSafeInteger(compare.ahead_by) && compare.ahead_by > 0 && compare.ahead_by <= 250
     && compare.behind_by === 0 && compare.total_commits === compare.ahead_by
     && Array.isArray(compare.commits) && compare.commits.length === compare.total_commits

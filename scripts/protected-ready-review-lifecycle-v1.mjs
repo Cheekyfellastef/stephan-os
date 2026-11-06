@@ -27,7 +27,7 @@ import {
   extractPersonalRepositoryArtifactZip,
 } from '../shared/agents/operatorPersonalRepositoryMergeV1.mjs';
 import { reviewExactHead } from './exact-head-review.mjs';
-import { qualifyExactHeadReviewV1, qualifyProtectedReadyDraftReviewV1,
+import { qualifyExactHeadReviewV1, qualifyProtectedReadyDraftReviewV1, qualifyProtectedReadyRecoveryReviewV1,
   validateOwnerEscalationCommentV1 } from './exact-head-qualified-escalation-v1.mjs';
 import { planProtectedReadyExecutionRoute, PROTECTED_READY_EXECUTION_ROUTE } from '../shared/agents/protectedReadyExecutionRouteV1.mjs';
 
@@ -257,13 +257,14 @@ function assertReadyReviewInput(input, identity) {
 }
 
 async function qualifyReadyReviewReceipt(input, engineReceipt, command, independentReviewMode,
-  { api, download, now, allowDraft = false }) {
+  { api, download, now, allowDraft = false, recoveryCurrentMainSha = '', recoveryLiveBaseSha = '' }) {
   let qualification = null, escalationComment = null;
   if (engineReceipt.verdict !== 'STEPHANOS_REVIEW_PASS' || engineReceipt.findings.length !== 0) {
-    const qualify = allowDraft ? qualifyProtectedReadyDraftReviewV1 : qualifyExactHeadReviewV1;
+    const qualify = recoveryCurrentMainSha ? qualifyProtectedReadyRecoveryReviewV1
+      : allowDraft ? qualifyProtectedReadyDraftReviewV1 : qualifyExactHeadReviewV1;
     qualification = await qualify(input, engineReceipt, { api, download,
       unzip: bytes => extractPersonalRepositoryArtifactZip(bytes, INDEPENDENT_REVIEW_ARTIFACT_FILE).toString('utf8'),
-      nowMs: Date.parse(now) });
+      nowMs: Date.parse(now), currentMainSha: recoveryCurrentMainSha, liveBaseSha: recoveryLiveBaseSha });
     escalationComment = await api(`/issues/comments/${apiId(qualification.ownerCommentId)}`);
     escalationMatchesReady(escalationComment, { patchSha256: sha(input.patch) }, command, input, now);
     requireProof(qualification.reviewMode === independentReviewMode, 'QUALIFICATION_MODE_CHANGED');
@@ -593,7 +594,8 @@ export async function executeReadyReviewRecovery({ prepared, env = process.env, 
       && ['AUTHORITY_SURFACE_CHANGED', 'DYNAMIC_EXECUTION'].includes(finding.code)), 'RECOVERY_ENGINE_NOT_QUALIFIABLE');
   const independentReviewMode = assertReadyReviewIndependent(prepared.independent, prepared.handoff.artifact.payload.command);
   const { qualification, escalationComment } = await qualifyReadyReviewReceipt(input, engineReceipt,
-    prepared.handoff.artifact.payload.command, independentReviewMode, { api, download, now: now() });
+    prepared.handoff.artifact.payload.command, independentReviewMode, { api, download, now: now(),
+      recoveryCurrentMainSha: sourceSha, recoveryLiveBaseSha: target.prBaseSha });
   requireProof(escalationComment?.id === prepared.comment.id
     && protectedWorkflowAuthorizationCommentSha256(escalationComment) === protectedWorkflowAuthorizationCommentSha256(prepared.comment),
   'RECOVERY_ESCALATION_NOT_TRIGGER');

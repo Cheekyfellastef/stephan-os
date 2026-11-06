@@ -223,12 +223,13 @@ test('continuity admits complete protected history only when disjoint and the co
   const f = readyRecoveryFixture(), intermediate = 'e'.repeat(40);
   const compare = { status: 'ahead', ahead_by: 2, behind_by: 0, total_commits: 2,
     base_commit: { sha: f.originalIdentity.baseSha }, merge_base_commit: { sha: f.originalIdentity.baseSha },
-    head_commit: { sha: f.currentMainSha }, commits: [{ sha: intermediate }, { sha: f.currentMainSha }],
+    commits: [{ sha: intermediate }, { sha: f.currentMainSha }],
     files: [{ filename: 'README.md' }, { filename: 'scripts/protected-ready-review-lifecycle-v1.mjs' }] };
   const correction = { sha: f.currentMainSha, parents: [{ sha: intermediate }],
     files: [{ filename: 'scripts/protected-ready-review-lifecycle-v1.mjs' }] };
   const result = buildReadyReviewRecoveryContinuity(compare, correction, f.originalIdentity,
     f.currentMainSha, f.input.changedFiles);
+  assert.equal(Object.hasOwn(compare, 'head_commit'), false);
   assert.deepEqual(result.commitShas, [intermediate, f.currentMainSha]);
   assert.deepEqual(result.correctionFiles, ['scripts/protected-ready-review-lifecycle-v1.mjs']);
   assert.throws(() => buildReadyReviewRecoveryContinuity({ ...compare,

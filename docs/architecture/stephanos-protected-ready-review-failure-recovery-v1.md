@@ -2,6 +2,12 @@
 
 This contract continues the existing protected READY and exact-head review lane. It does not create a second reviewer, READY transition, merge path, approval source or runtime authority.
 
+## Closed-world recovery identity
+
+The repeated recovery failures were reviewed as one structural contract rather than three local exceptions. One closed-world identity must cross every boundary: the real GitHub compare response proves the original base, merge base, ordered commit tip and changed-file span; recovery qualification preserves the historical owner packet, patch and independent-review base while separately pinning both live PR reads to the continuity-proved current base; and the canonical protected-merge consumer accepts exactly one ordinary lifecycle proof or one recovery proof, never both. The compare API does not promise a top-level `head_commit`, so the ordered final commit plus the separately fetched single-parent correction commit bind the tip. Ordinary exact-head qualification remains strict and unchanged.
+
+Regression coverage therefore uses the actual compare response shape without an invented `head_commit`, exercises recovery qualification with an advanced live base while retaining the historical review bindings, and passes the resulting recovery proof through the real personal-repository check validator. This is the property-level guard for the shared invariant; no boolean waiver or duplicate consumer is permitted.
+
 ## Prevention before READY
 
 Before a draft pull request is changed to READY, the protected producer must read the complete exact-head changed-file inventory and API diff, rerun the unchanged deterministic engine and, when it emits findings, validate the existing exact owner escalation against the producer's selected independent review. The producer must reread the same head, tree, base, owner command and draft state around those reads. Missing, expired, edited, ambiguous or differently bound qualification holds the draft. A later lifecycle run repeats the same checks; the preflight is not a review receipt or merge authority.

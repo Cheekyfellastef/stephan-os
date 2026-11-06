@@ -7,7 +7,10 @@ import {
   validatePersonalRepositoryReadOnlyPriorFailure
 } from './protectedMergeReadOnlyPriorFailureV1.mjs';
 import { PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR } from './protectedWorkflowDispatchMailboxV1.mjs';
-import { validateProtectedReadyReviewLifecycleEvidence } from './protectedReadyReviewLifecycleV1.mjs';
+import {
+  validateProtectedReadyReviewLifecycleEvidence,
+  validateProtectedReadyReviewRecoveryEvidence,
+} from './protectedReadyReviewLifecycleV1.mjs';
 import { inflateRawSync } from 'node:zlib';
 import {
   OPERATOR_MERGE_ENVIRONMENT,
@@ -1240,6 +1243,21 @@ export function buildPersonalRepositoryCheckExpectation({
   });
 }
 
+function validateReadyReviewProofForSkippedRun(proof, expected, skippedRun) {
+  if (!proof || typeof proof !== 'object' || Array.isArray(proof)) return null;
+  const hasLifecycle = Object.hasOwn(proof, 'review');
+  const hasRecovery = Object.hasOwn(proof, 'recovery');
+  if (hasLifecycle === hasRecovery) return null;
+  const proofRun = hasLifecycle ? proof.review?.run : proof.recovery?.run;
+  const proofCreatedAt = Date.parse(proofRun?.created_at);
+  const skippedCreatedAt = Date.parse(skippedRun?.created_at);
+  if (!Number.isFinite(proofCreatedAt) || !Number.isFinite(skippedCreatedAt)
+    || proofCreatedAt < skippedCreatedAt) return null;
+  return hasLifecycle
+    ? validateProtectedReadyReviewLifecycleEvidence(proof, expected, skippedRun.id)
+    : validateProtectedReadyReviewRecoveryEvidence(proof, expected, skippedRun.id);
+}
+
 export function validatePersonalRepositoryCheckRuns(
   checkRuns = [],
   workflowRuns = [],
@@ -1359,10 +1377,8 @@ export function validatePersonalRepositoryCheckRuns(
       && path === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
       && text(run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
       && name === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check;
-    const readyReviewLifecycle = canonicalDraftSkip && options.readyReviewLifecycleEvidence
-      && run.status === 'completed'
-      && Date.parse(options.readyReviewLifecycleEvidence.review?.run?.created_at) >= Date.parse(run.created_at)
-      ? validateProtectedReadyReviewLifecycleEvidence(options.readyReviewLifecycleEvidence, expected, run.id)
+    const readyReviewLifecycle = canonicalDraftSkip && run.status === 'completed'
+      ? validateReadyReviewProofForSkippedRun(options.readyReviewLifecycleEvidence, expected, run)
       : null;
     const supersededDraftSkip = canonicalDraftSkip && exactCheckBindings.some((candidate) => (
         candidate !== checkBinding

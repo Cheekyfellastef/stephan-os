@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   prepareReadyReviewProducer, finishReadyReviewProducer, dispatchReadyReview,
   prepareReadyReview, executeReadyReview, loadProtectedReadyReviewLifecycle, readReadyReviewCollection,
+  prepareReadyReviewRecovery, executeReadyReviewRecovery,
   loadReadyReviewHandoff, readReadyReviewUnresolvedThreads, readyReviewTransports,
 } from './protected-ready-review-lifecycle-v1.mjs';
 import { validateProtectedReadyReviewLifecycleEvidence, parseReadyReviewInputs,
@@ -42,6 +43,22 @@ test('collector composes the preserved failed run and distinct recovery receipt 
   assert.ok(transport.calls.includes(`/compare/${f.originalIdentity.baseSha}...${f.currentMainSha}`));
   assert.ok(transport.calls.includes('/actions/runs/200/artifacts?per_page=100&page=1'));
   assert.equal(transport.calls.filter(path => path.includes('event=issue_comment')).length, 2);
+});
+
+test('recovery execution qualifies the historical review against its proven live current-base target', async () => {
+  const f = readyRecoveryFixture();
+  active(f.proof.recovery.run); activeJob(f.proof.recovery.job);
+  const transport = fixtureRecoveryTransport(f);
+  const env = { ...fixtureEnv(f), GITHUB_EVENT_NAME: 'issue_comment', GITHUB_RUN_ID: '300' };
+  const prepared = await prepareReadyReviewRecovery({ comment: f.proof.escalationComment, env,
+    sourceSha: f.currentMainSha, ...transport, now: clock(72) });
+  assert.equal(prepared.target.prBaseSha, f.currentMainSha);
+  const receipt = await executeReadyReviewRecovery({ prepared, env, sourceSha: f.currentMainSha,
+    ...transport, now: () => clock(85) });
+  assert.equal(receipt.qualification.finalVerdict, 'EXACT_HEAD_QUALIFIED_ESCALATION_PASS');
+  assert.equal(receipt.target.prBaseSha, f.currentMainSha);
+  assert.equal(receipt.identity.baseSha, f.originalIdentity.baseSha);
+  assert.equal(receipt.recoverySourceSha, f.currentMainSha);
 });
 
 test('collector rejects diagnostic archive corruption, duplicate diagnostics and recovery replay inventory', async t => {

@@ -202,7 +202,7 @@ export function readyRecoveryFixture() {
     handoffRunId: 100, handoffArtifactId: 501, handoffArtifactDigest: f.proof.handoff.artifact.metadata.digest,
     handoffPayloadSha256: f.proof.handoff.artifact.payload.payloadSha256, startedAt: clock(72), finishedAt: clock(85),
     patchSha256: sha(f.input.patch), changedFilesSha256: sha(JSON.stringify(f.input.changedFiles)),
-    target: { currentMainSha, prBaseSha: originalIdentity.baseSha, sourceHead: originalIdentity.sourceHead,
+    target: { currentMainSha, prBaseSha: currentMainSha, sourceHead: originalIdentity.sourceHead,
       sourceTree: originalIdentity.sourceTree, mergeable: true }, continuity,
     engineReceipt: f.proof.review.artifact.payload.engineReceipt,
     independentReviewMode: f.proof.review.artifact.payload.independentReviewMode,
@@ -305,7 +305,7 @@ export function fixtureRecoveryTransport(fixture) {
     calls.push(path);
     let match;
     if (path === `/pulls/${current.prNumber}`) return { ...fixture.state.pull, draft: false, mergeable: true,
-      base: { ...fixture.state.pull.base, sha: original.baseSha } };
+      base: { ...fixture.state.pull.base, sha: current.baseSha } };
     if (path === '/git/ref/heads/main') return { object: { sha: current.baseSha } };
     if (path === `/git/commits/${current.sourceHead}`) return fixture.state.commit;
     if (path === '/actions/workflows/protected-workflow-dispatch-mailbox.yml') return p.handoff.definition;
@@ -329,11 +329,13 @@ export function fixtureRecoveryTransport(fixture) {
     if ((match = path.match(/^\/actions\/artifacts\/(\d+)$/))) return artifacts.get(Number(match[1]))?.metadata;
     if (path === '/issues/comments/900') return p.handoff.ownerComment;
     if (path === '/issues/comments/901') return p.escalationComment;
+    if (path === `/issues/${current.prNumber}`) return { comments: 1 };
+    if (path.startsWith(`/issues/${current.prNumber}/comments?`)) return [p.escalationComment];
     if (path === '/actions/runs/90/jobs?per_page=100') return { total_count: p.independent.jobs.length, jobs: p.independent.jobs };
     if (path === `/check-runs/${p.recovery.job.id}`) return p.recovery.check;
     if (path === `/compare/${original.baseSha}...${current.baseSha}`) return { status: 'ahead', ahead_by: 1, behind_by: 0,
       total_commits: 1, base_commit: { sha: original.baseSha }, merge_base_commit: { sha: original.baseSha },
-      head_commit: { sha: current.baseSha }, commits: [{ sha: current.baseSha }],
+      commits: [{ sha: current.baseSha }],
       files: fixture.continuity.changedFiles.map(filename => ({ filename })) };
     if (path === `/commits/${current.baseSha}`) return { sha: current.baseSha, parents: [{ sha: original.baseSha }],
       files: fixture.continuity.correctionFiles.map(filename => ({ filename })) };
