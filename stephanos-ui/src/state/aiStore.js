@@ -550,7 +550,6 @@ function normalizeUiLayout(value = {}) {
         defaultValue ? value[key] !== false : value[key] === true,
       ]),
     ),
-    commandDeck: true,
   };
 }
 
@@ -1748,9 +1747,6 @@ export function AIStoreProvider({ children }) {
 
   const setPanelState = useCallback((panelId, isOpen, source = 'unknown') => {
     if (!(panelId in DEFAULT_UI_LAYOUT)) return;
-    if (panelId === 'commandDeck') {
-      isOpen = true;
-    }
 
     setUiLayout((prev) => {
       const resolvedOpen = typeof isOpen === 'function' ? isOpen(prev[panelId]) : isOpen;
