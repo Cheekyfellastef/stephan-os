@@ -269,6 +269,43 @@ function New-MonitorProcessStartInfo {
     return $info
 }
 
+function Start-MonitorProcess {
+    param([Parameter(Mandatory)][System.Diagnostics.Process]$Process)
+    if ($Process.StartInfo.UseShellExecute -or -not $Process.StartInfo.CreateNoWindow -or
+        -not $Process.StartInfo.RedirectStandardInput -or -not $Process.StartInfo.RedirectStandardOutput -or
+        -not $Process.StartInfo.RedirectStandardError) { throw 'monitor-process-start-flags-invalid' }
+    # All callers run synchronously on the splash's single PowerShell runspace.
+    # .NET Framework creates its stdin writer and flushes its preamble inside
+    # Process.Start, before callers can replace that writer. Scope the encoding
+    # change to this start and restore the previous encoding on every path.
+    $previousEncoding = $null
+    $started = $false
+    $restoreFailed = $false
+    $failure = $null
+    try {
+        $previousEncoding = [Console]::InputEncoding
+        [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false, $true)
+        $started = $Process.Start()
+        if ($started) { $splashOwnedChildren.Add($Process) }
+        else { $failure = 'monitor-process-start-returned-false' }
+    } catch {
+        $failure = 'monitor-process-start-failed: ' + $_.Exception.Message
+    } finally {
+        if ($previousEncoding) {
+            try { [Console]::InputEncoding = $previousEncoding }
+            catch {
+                $restoreFailed = $true
+                $failure = 'monitor-input-encoding-restore-failed'
+                if ($started) {
+                    # Keep the child in the owned set, but allow no preparation.
+                    try { $Process.StandardInput.Close() } catch {}
+                }
+            }
+        }
+    }
+    return [pscustomobject]@{ Started = $started; RestoreFailed = $restoreFailed; Error = $failure }
+}
+
 function Read-MonitorProbeResult {
     param([Parameter(Mandatory)]$Process, [Parameter(Mandatory)]$Pipe)
     if (-not $Process.WaitForExit(3000)) {
@@ -316,15 +353,17 @@ print(json.dumps({'executable':buffer.value}))
         if ($candidate -eq 'py.exe') { $prefix = @('-3') }
         $probe = New-Object System.Diagnostics.Process
         $probe.StartInfo = New-MonitorProcessStartInfo -Executable $command.Source -Arguments ($prefix + @('-I', '-S', '-B', '-c', $probeCode))
-        try {
-            if (-not $probe.Start()) { $probe.Dispose(); continue }
-        } catch {
+        $start = Start-MonitorProcess -Process $probe
+        if (-not $start.Started) {
             $probe.Dispose()
+            if ($start.RestoreFailed) { throw $start.Error }
             continue
         }
         $reader = New-Object Stephanos.Starfield.MonitorPipe($probe)
         $reader.CloseInput()
+        if ($start.Error) { throw $start.Error }
         $interpreter = Read-MonitorProbeResult -Process $probe -Pipe $reader
+        [void]$splashOwnedChildren.Remove($probe)
         $reader.Dispose()
         if ($interpreter) { return $interpreter }
     }
@@ -373,9 +412,11 @@ function Read-MonitorCustodyReceipt {
     $arguments = @('-I', '-S', '-B', '-u', '-c', $monitorBootstrap, $monitorBridgePath, '--provider-custody')
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = New-MonitorProcessStartInfo -Executable $python.Executable -Arguments $arguments
-    if (-not $process.Start()) { throw 'monitor-custody-query-start-failed' }
+    $start = Start-MonitorProcess -Process $process
+    if (-not $start.Started) { $process.Dispose(); throw $start.Error }
     $reader = New-Object Stephanos.Starfield.MonitorPipe($process)
     $reader.CloseInput()
+    if ($start.Error) { throw $start.Error }
     if (-not $process.WaitForExit(20000)) { throw 'monitor-custody-query-timeout' }
     $lines = New-Object System.Collections.Generic.List[string]
     for ($attempt = 0; $attempt -lt 100; $attempt += 1) {
@@ -387,7 +428,7 @@ function Read-MonitorCustodyReceipt {
     try {
         if (-not $reader.Drained -or $reader.Fault -or $process.ExitCode -notin @(0, 2) -or $lines.Count -ne 1) { throw 'monitor-custody-query-incomplete' }
         return ($lines[0] | ConvertFrom-Json)
-    } finally { $reader.Dispose() }
+    } finally { [void]$splashOwnedChildren.Remove($process); $reader.Dispose() }
 }
 
 function Test-MonitorProviderCustody {
@@ -681,13 +722,14 @@ function Start-MonitorFromHybridCard {
             '--parent-pid', [string]$PID, '--parent-filetime', $parentCreated, '--channel', $monitorState.Channel)
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = New-MonitorProcessStartInfo -Executable $python.Executable -Arguments $arguments
-        if (-not $process.Start()) { throw 'The reviewed monitor process could not be started.' }
+        $start = Start-MonitorProcess -Process $process
+        if (-not $start.Started) { $process.Dispose(); throw $start.Error }
         $monitorState.Process = $process
-        $splashOwnedChildren.Add($process)
+        $monitorState.Pipe = New-Object Stephanos.Starfield.MonitorPipe($process)
+        if ($start.Error) { throw $start.Error }
         $monitorState.StartedAtUtc = [DateTime]::UtcNow
         $monitorState.PendingPrepare = $true
         $monitorState.Mode = 'starting'
-        $monitorState.Pipe = New-Object Stephanos.Starfield.MonitorPipe($process)
         $process.StandardInput.AutoFlush = $true
         $monitorPollTimer.Start()
         Add-MonitorDetail -Message 'Monitor test selected from Hybrid / Stephanos VR. Waiting for the reviewed runner.'

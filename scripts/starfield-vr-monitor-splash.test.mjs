@@ -60,7 +60,13 @@ test('monitor is a hidden fixed child with no automatic interpreter retry after 
   assert.match(start, /@\('-I', '-S', '-B', '-u', '-c', \$monitorBootstrap, \$monitorBridgePath,/);
   assert.match(start, /'--parent-pid', \[string\]\$PID, '--parent-filetime', \$parentCreated, '--channel', \$monitorState\.Channel/);
   assert.match(start, /ToFileTimeUtc\(\)\.ToString\(\[System\.Globalization\.CultureInfo\]::InvariantCulture\)/);
-  assert.equal([...start.matchAll(/\$process\.Start\(\)/g)].length, 1);
+  assert.equal([...start.matchAll(/Start-MonitorProcess -Process \$process/g)].length, 1);
+  const ownedStart = functionSource('Start-MonitorProcess');
+  assert.match(ownedStart, /\[Console\]::InputEncoding = New-Object System\.Text\.UTF8Encoding\(\$false, \$true\)/);
+  assert.ok(ownedStart.indexOf('UTF8Encoding($false, $true)') < ownedStart.indexOf('$Process.Start()'));
+  assert.ok(ownedStart.indexOf('$splashOwnedChildren.Add($Process)') < ownedStart.indexOf('finally'));
+  assert.match(ownedStart, /finally[\s\S]*?\[Console\]::InputEncoding = \$previousEncoding/);
+  assert.match(ownedStart, /Started = \$started; RestoreFailed = \$restoreFailed; Error = \$failure/);
   const startInfo = functionSource('New-MonitorProcessStartInfo');
   for (const property of ['CreateNoWindow', 'RedirectStandardInput', 'RedirectStandardOutput', 'RedirectStandardError']) {
     assert.match(startInfo, new RegExp(`\\$info\\.${property} = \\$true`));

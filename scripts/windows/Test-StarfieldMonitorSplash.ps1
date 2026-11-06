@@ -13,7 +13,7 @@ $parseErrors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors.Count -ne 0) { throw ($parseErrors | Out-String) }
 
-$functionNames = @('Enter-StarfieldSplashOwner', 'Exit-StarfieldSplashOwner', 'New-MonitorProcessStartInfo',
+$functionNames = @('Enter-StarfieldSplashOwner', 'Exit-StarfieldSplashOwner', 'New-MonitorProcessStartInfo', 'Start-MonitorProcess',
     'Read-MonitorProbeResult', 'Find-MonitorPython', 'Get-MonitorCustodyPaths', 'Test-MonitorCustodyPathPresent',
     'Read-MonitorCustodyReceipt', 'Test-MonitorProviderCustody', 'Add-MonitorDetail', 'Update-HybridButton',
     'Set-MonitorProviderControls', 'Stop-MonitorTransport', 'Send-MonitorCommand',
@@ -36,6 +36,7 @@ $actualRunnerSha256 = [regex]::Match($source, "\`$monitorRunnerSha256 = '([a-f0-
 $monitorBootstrap = [regex]::Match($source, "(?s)\`$monitorBootstrap = @'\r?\n(.*?)\r?\n'@").Groups[1].Value
 $monitorBridgePath = Join-Path $PSScriptRoot 'starfield-native-monitor\splash_monitor_bridge.py'
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$splashOwnedChildren = New-Object 'System.Collections.Generic.List[System.Diagnostics.Process]'
 $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("Starfield monitor's fixture " + [guid]::NewGuid().ToString('N'))
 [void][System.IO.Directory]::CreateDirectory($fixtureRoot)
 $testCount = 0
@@ -127,6 +128,34 @@ function Wait-FixtureMessages {
         [System.Threading.Thread]::Sleep(10)
     } while ([DateTime]::UtcNow -lt $deadline)
     return [pscustomobject]@{ Lines = $lines.ToArray(); Complete = ($Process.HasExited -and $Pipe.Drained); Fault = $Pipe.Fault }
+}
+function Get-FixtureEncodingSignature {
+    param([System.Text.Encoding]$Encoding)
+    return ([string]$Encoding.CodePage + ':' + [BitConverter]::ToString($Encoding.GetPreamble()) + ':' +
+        $Encoding.EncoderFallback.GetType().FullName + ':' + $Encoding.DecoderFallback.GetType().FullName)
+}
+function Invoke-FixtureWireCapture {
+    param([string]$Wire, [switch]$LegacyStart)
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = New-MonitorProcessStartInfo -Executable $python.Executable -Arguments @('-I', '-S', '-B', '-u', '-c',
+        "import json,sys;raw=sys.stdin.buffer.read(8192);print(json.dumps({'hex':raw.hex()}))")
+    if ($LegacyStart) { Assert-True ($process.Start()) 'Legacy control could not start' }
+    else {
+        $start = Start-MonitorProcess -Process $process
+        Assert-True ($start.Started -and -not $start.Error) 'Scoped wire fixture could not start'
+    }
+    $reader = New-Object Stephanos.Starfield.MonitorPipe($process)
+    try {
+        $process.StandardInput.WriteLine($Wire)
+        $process.StandardInput.Flush()
+        $reader.CloseInput()
+        $response = Wait-FixtureMessages -Process $process -Pipe $reader
+        Assert-True ($response.Complete -and $process.ExitCode -eq 0 -and -not $response.Fault -and $response.Lines.Count -eq 1) 'Raw wire fixture did not finish'
+        return ($response.Lines[0] | ConvertFrom-Json).hex
+    } finally {
+        $reader.CloseInput()
+        if ($process.HasExited) { [void]$splashOwnedChildren.Remove($process); $reader.Dispose() }
+    }
 }
 
 try {
@@ -309,25 +338,83 @@ public static class PyDiscoveryFixture {
         Assert-True ($resolved.Executable -ieq $python.Executable -and @($resolved.Prefix).Count -eq 0) 'Interposed launcher was retained'
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = New-MonitorProcessStartInfo -Executable $resolved.Executable -Arguments @('-I', '-S', '-B', '-u', '-c', "import json,os;print(json.dumps({'pid':os.getpid(),'parent':os.getppid()}))")
-        [void]$process.Start()
+        $start = Start-MonitorProcess -Process $process
+        Assert-True ($start.Started -and -not $start.Error) 'Direct interpreter start or input-encoding restoration failed'
         $reader = New-Object Stephanos.Starfield.MonitorPipe($process)
         $reader.CloseInput()
         $observed = Wait-FixtureMessages -Process $process -Pipe $reader
         Assert-True ($observed.Complete -and -not $observed.Fault -and $observed.Lines.Count -eq 1) 'Direct interpreter result missing'
         $identity = $observed.Lines[0] | ConvertFrom-Json
         Assert-True ($identity.pid -eq $process.Id -and $identity.parent -eq $PID) 'Actual child PID or parent identity was interposed'
+        [void]$splashOwnedChildren.Remove($process)
         $reader.Dispose()
+    }
+    Invoke-Fixture 'actual Windows command bytes are UTF-8 without a preamble and restore console encoding' {
+        $original = [Console]::InputEncoding
+        try {
+            [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($true, $true)
+            $expectedEncoding = Get-FixtureEncodingSignature ([Console]::InputEncoding)
+            $wire = '{"text":"' + [char]0x03A9 + [char]0x00E9 + '"}'
+            $utf8 = New-Object System.Text.UTF8Encoding($false, $true)
+            $expectedHex = [BitConverter]::ToString($utf8.GetBytes($wire + [Environment]::NewLine)).Replace('-', '').ToLowerInvariant()
+            $legacyHex = Invoke-FixtureWireCapture -Wire $wire -LegacyStart
+            Assert-True ($legacyHex -ceq ('efbbbf' + $expectedHex)) 'Legacy negative control did not demonstrate the pre-start BOM'
+            $fixedHex = Invoke-FixtureWireCapture -Wire $wire
+            Assert-True ($fixedHex -ceq $expectedHex) ('Scoped command bytes differ: ' + $fixedHex)
+            Assert-True ((Get-FixtureEncodingSignature ([Console]::InputEncoding)) -ceq $expectedEncoding) 'Successful start changed console input encoding'
+        } finally { [Console]::InputEncoding = $original }
+    }
+    Invoke-Fixture 'failed starts restore encoding and restoration failure preserves exact child custody' {
+        $original = [Console]::InputEncoding
+        $reader = $null
+        $process = $null
+        try {
+            [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($true, $true)
+            $expectedEncoding = Get-FixtureEncodingSignature ([Console]::InputEncoding)
+            $missing = New-Object System.Diagnostics.Process
+            $missing.StartInfo = New-MonitorProcessStartInfo -Executable (Join-Path $fixtureRoot 'definitely-absent-python.exe') -Arguments @()
+            $ownedBefore = $splashOwnedChildren.Count
+            $failed = Start-MonitorProcess -Process $missing
+            Assert-True (-not $failed.Started -and -not $failed.RestoreFailed -and $failed.Error -and $splashOwnedChildren.Count -eq $ownedBefore) 'Definite failed start acquired child custody'
+            Assert-True ((Get-FixtureEncodingSignature ([Console]::InputEncoding)) -ceq $expectedEncoding) 'Failed start changed console input encoding'
+            $missing.Dispose()
+
+            # Inject only the restoration fault in an extracted test-only copy.
+            # There is no runtime fault switch and no alternate dispatch path.
+            $restore = '[Console]::InputEncoding = $previousEncoding'
+            $definition = $definitions['Start-MonitorProcess']
+            Assert-True ([regex]::Matches($definition, [regex]::Escape($restore)).Count -eq 1) 'Restoration fault point is not unique'
+            $definition = $definition.Replace('function Start-MonitorProcess', 'function Invoke-FixtureRestoreFailure').Replace($restore, "throw 'fixture-encoding-restore-failed'")
+            . ([scriptblock]::Create($definition))
+            $process = New-Object System.Diagnostics.Process
+            $process.StartInfo = New-MonitorProcessStartInfo -Executable $python.Executable -Arguments @('-I', '-S', '-B', '-u', '-c',
+                "import json,sys;raw=sys.stdin.buffer.read();print(json.dumps({'received':len(raw)}))")
+            $failed = Invoke-FixtureRestoreFailure -Process $process
+            Assert-True ($failed.Started -and $failed.RestoreFailed -and $failed.Error -ceq 'monitor-input-encoding-restore-failed' -and $splashOwnedChildren.Contains($process)) 'Restoration failure lost the already-started process'
+            $reader = New-Object Stephanos.Starfield.MonitorPipe($process)
+            $response = Wait-FixtureMessages -Process $process -Pipe $reader
+            Assert-True ($response.Complete -and $process.ExitCode -eq 0 -and -not $response.Fault -and $response.Lines.Count -eq 1) 'Restoration failure did not close and drain the owned child'
+            Assert-True (($response.Lines[0] | ConvertFrom-Json).received -eq 0) 'Restoration failure forwarded a command'
+        } finally {
+            [Console]::InputEncoding = $original
+            if ($reader) {
+                $reader.CloseInput()
+                if ($process.HasExited) { [void]$splashOwnedChildren.Remove($process); $reader.Dispose() }
+            }
+        }
     }
     Invoke-Fixture 'actual C# drains oversized output and retains bounded diagnostics without deadlock' {
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = New-MonitorProcessStartInfo -Executable $python.Executable -Arguments @('-I', '-S', '-B', '-u', '-c', "import sys;sys.stdout.write('x'*40000+'\n');sys.stderr.write('e'*50000)")
-        [void]$process.Start()
+        $start = Start-MonitorProcess -Process $process
+        Assert-True ($start.Started -and -not $start.Error) 'Native adapter start or input-encoding restoration failed'
         $reader = New-Object Stephanos.Starfield.MonitorPipe($process)
         $reader.CloseInput()
         $observed = Wait-FixtureMessages -Process $process -Pipe $reader
         Assert-True $observed.Complete 'Oversized child output deadlocked'
         Assert-True ($reader.Fault -ceq 'monitor-output-line-limit') 'Oversized protocol line was not rejected'
         Assert-True ($reader.ErrorText.Length -eq 16384) 'Diagnostic retention bound failed'
+        [void]$splashOwnedChildren.Remove($process)
         $reader.Dispose()
     }
     Invoke-Fixture 'singleton blocks a second splash until owned helpers have settled' {
@@ -370,7 +457,8 @@ public static class PyDiscoveryFixture {
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = New-MonitorProcessStartInfo -Executable $python.Executable -Arguments @('-I', '-S', '-B', '-u', '-c', $monitorBootstrap, $monitorBridgePath,
             '--parent-pid', [string]$PID, '--parent-filetime', $parentTime, '--channel', $monitorState.Channel)
-        [void]$process.Start()
+        $start = Start-MonitorProcess -Process $process
+        Assert-True ($start.Started -and -not $start.Error) 'Native adapter start or input-encoding restoration failed'
         $reader = New-Object Stephanos.Starfield.MonitorPipe($process)
         $monitorState.Process = $process
         $monitorState.Pipe = $reader
@@ -395,12 +483,14 @@ public static class PyDiscoveryFixture {
             $observedExit = if ($process.HasExited) { [string]$process.ExitCode } else { 'still-running' }
             $diagnostic = $reader.ErrorText
             if ($diagnostic.Length -gt 4096) { $diagnostic = $diagnostic.Substring(0, 4096) }
+            $closedError = if ($monitorState.Result) { [string]$monitorState.Result.error } else { '' }
+            if ($closedError.Length -gt 1200) { $closedError = $closedError.Substring(0, 1200) }
             Assert-True ($response.Complete -and $process.HasExited -and $process.ExitCode -eq 0 -and -not $response.Fault) (
-                'Native adapter did not close cleanly: complete={0}; exit={1}; fault={2}; stderr={3}' -f $response.Complete, $observedExit, $response.Fault, $diagnostic)
+                'Native adapter did not close cleanly: complete={0}; exit={1}; fault={2}; mode={3}; closedError={4}; stderr={5}' -f $response.Complete, $observedExit, $response.Fault, $monitorState.Mode, $closedError, $diagnostic)
             Assert-True ($monitorState.ClosedReceived -and $monitorState.SafeToClose -and $monitorState.RequestSequence -eq 1) 'Closed receipt or command count incorrect'
             Assert-True (-not $monitorState.PrepareDispatched -and $null -eq $monitorState.RunId -and $null -eq $monitorState.GameProcess) 'Ready-close fixture crossed the game boundary'
         } finally {
-            if ($process.HasExited) { $reader.Dispose() }
+            if ($process.HasExited) { [void]$splashOwnedChildren.Remove($process); $reader.Dispose() }
             else { $reader.CloseInput() }
         }
     }
