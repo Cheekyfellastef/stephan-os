@@ -75,7 +75,9 @@ test('Spatial Workspace ignition stays hidden while the browser remains visible'
   assert.doesNotMatch(launcher, /WindowStyle\s*=\s*['"]Normal['"]/i);
   assert.doesNotMatch(launcher, /runtimeReady\s*=\s*\$true/);
   assert.match(launcher, /workspaceRouteReady\s*=\s*\$true/);
-  assert.match(launcher, /canonical supervisor exact-head proof verified before browser open/);
+  assert.match(launcher, /workspace route verified; separate runtime health is not inferred/);
+  assert.match(launcher, /start-spatial-window-host\.ps1/);
+  assert.match(launcher, /consoleReady = \$consoleReady/);
   assert.match(launcher, /\$browserCandidates = @\(\r?\n\s+@\(/);
   assert.match(launcher, /Where-Object \{ \$_ -and \(Test-Path/);
 });

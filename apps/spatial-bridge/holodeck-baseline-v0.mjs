@@ -2,6 +2,7 @@ import { createHolodeckRoomRenderer } from './holodeck-room-v1.mjs';
 import { createHolodeckLocomotion, sampleHolodeckControls } from './holodeck-locomotion-v1.mjs';
 import { createHolodeckCubeScene } from './holodeck-cube-scene-v1.mjs';
 import { createHolodeckCubeInteraction } from './holodeck-cube-interaction-v1.mjs';
+import { createHolodeckScreenInput } from './holodeck-screen-input-v1.mjs';
 
 export const HOLODECK_BASELINE_SESSION_MODE = 'immersive-vr';
 export const HOLODECK_BASELINE_MODE = 'Holodeck Baseline';
@@ -46,6 +47,7 @@ export async function enterHolodeckBaseline({
   onLocomotionStatus = () => {},
   onCubeStatus = () => {},
   cubeScene = createHolodeckCubeScene(),
+  screen,
 } = {}) {
   if (!navigatorRef?.xr || typeof navigatorRef.xr.requestSession !== 'function') {
     return { ok: false, session: null, reason: 'WebXR immersive session API unavailable' };
@@ -80,10 +82,11 @@ export async function enterHolodeckBaseline({
         return session.requestReferenceSpace(referenceSpaceType);
       });
 
-    const renderer = rendererFactory({ gl });
+    const renderer = rendererFactory({ gl, screen });
     const locomotion = createHolodeckLocomotion({ room: renderer.geometry.room,
       obstacles: renderer.geometry.obstacles });
     const cubeInteraction = createHolodeckCubeInteraction({scene:cubeScene});
+    const screenInput = createHolodeckScreenInput({screen});
     let lastCubeStatus = '';
     let lastLocomotionStatus = '';
     let activeController = 'none';
@@ -92,6 +95,7 @@ export async function enterHolodeckBaseline({
       active = false;
       renderer.dispose();
       cubeInteraction.stop();
+      screenInput.stop();
       cubeScene.stop();
       try { onLocomotionStatus({ controller: 'No active VR session', state: 'ended' }); } catch {}
     }, { once: true });
@@ -113,6 +117,8 @@ export async function enterHolodeckBaseline({
       }
       const cube = cubeInteraction.update({ time, pose, frame, referenceSpace, navigation, gamepads,
         visible: session.visibilityState === 'visible' });
+      const screenPointers = screenInput.update({frame,referenceSpace,pose,navigation,gamepads,visible:session.visibilityState==='visible'});
+      if(screenPointers.length)cube.pointers=screenPointers;
       const held = cube.cubes.find(c=>c.heldBy);
       const cubeStatus = held ? 'held' : cube.cubes.every(c=>c.sleeping) ? 'resting' : 'falling';
       if (cubeStatus !== lastCubeStatus) {

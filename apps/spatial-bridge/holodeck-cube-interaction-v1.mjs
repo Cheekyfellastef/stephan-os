@@ -5,7 +5,7 @@ import { HOLODECK_TABLE } from './holodeck-layout-v1.mjs';
 
 const pressed = button => button?.pressed===true || button?.value>0.55;
 const dot=(a,b)=>a.reduce((sum,v,i)=>sum+v*b[i],0);
-function trackedPose(pose,navigation) {
+export function trackedPose(pose,navigation) {
   const p=pose?.transform?.position,q=pose?.transform?.orientation;
   if(!p||!q||![p.x,p.y,p.z,q.x,q.y,q.z,q.w].every(Number.isFinite)) return null;
   const yaw=[0,Math.sin(navigation.yaw/2),0,Math.cos(navigation.yaw/2)];

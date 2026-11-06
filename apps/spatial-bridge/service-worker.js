@@ -1,9 +1,13 @@
-const CACHE_NAME = 'stephanos-spatial-workspace-v1-two-cubes-saved-v1';
+const CACHE_NAME = 'stephanos-spatial-workspace-v1-interactive-console-v1';
 const CORE_ASSETS = [
   './',
   './quest-entry.html',
   './holodeck-baseline-v0.mjs',
   './holodeck-room-v1.mjs',
+  './holodeck-screen-v1.mjs',
+  './holodeck-window-client-v1.mjs',
+  './holodeck-screen-input-v1.mjs',
+  './holodeck-display-renderer-v1.mjs',
   './holodeck-locomotion-v1.mjs',
   './holodeck-layout-v1.mjs',
   './holodeck-collision-v1.mjs',
