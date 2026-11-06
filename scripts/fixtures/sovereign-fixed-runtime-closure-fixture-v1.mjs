@@ -36,6 +36,10 @@ const fixedRoots = ['scripts/sovereign-commander-mcp.mjs', 'scripts/sovereign-co
   'scripts/sovereign-controller-lane-status.mjs', 'scripts/battle-bridge-goal-discovery-heartbeat.mjs'];
 const requiredRoots = maintenance ? ['scripts/sovereign-maintenance-custody-store-v1.mjs',
   'scripts/sovereign-maintenance-journal-source-proof-v2.mjs'] : fixedRoots;
+const capturedReadAdapters = {
+  'shared/agents/sovereignDirectoryCreateV1.mjs': 'b3a9f5f60d7d0990b31fa9f491c349832f9fad2cba802484e2b1c2c67106e43a',
+  'shared/agents/sovereignSearchSessionsV1.mjs': '34a3e080c0fb33f4dea59f244c019a884098daf29ed69ace2d654cb201a8d1d8',
+};
 for (const target of requiredRoots) if (!members.has(target)) missing.push({ role: 'profile-root', target });
 // Checking all admitted JS members also covers a newly reachable import in a
 // packaged library outside the previous selected-root traversal. This cannot
@@ -80,12 +84,12 @@ while (queue.length) {
     if (!literal) missing.push({ file, role: 'import', unknownDynamicImport: true });
     else edge(file, literal[2], 'import');
   }
-  if (file === 'shared/agents/sovereignDirectoryCreateV1.mjs') {
+  if (Object.hasOwn(capturedReadAdapters, file)) {
     // The finite read-edge interpretation applies to this exact reviewed adapter,
     // not to arbitrary matching declarations hidden in comments or unused code.
     // A changed adapter must have its dependency model independently reviewed.
     const normalized = source.replace(/\r\n/g, '\n');
-    if (digest(normalized) !== 'b3a9f5f60d7d0990b31fa9f491c349832f9fad2cba802484e2b1c2c67106e43a')
+    if (digest(normalized) !== capturedReadAdapters[file])
       missing.push({ file, runtimeReadSourceUnproven: true });
     for (const binding of ['SCRIPT', 'NATIVE']) {
       const declaration = source.match(new RegExp('^const ' + binding + ' = fileURLToPath\\(new URL\\(([\x22\x27])([^\x22\x27\\r\\n]+)\\1, import\\.meta\\.url\\)\\);', 'm'));
@@ -111,7 +115,7 @@ if (!maintenance) {
   // exception is limited to the production Windows fixed profile. Changed gates
   // must be reassessed; an optional-looking pathname is never a generic bypass.
   const applicabilityPins = {
-  "scripts/sovereign-commander-http.mjs": "e5b7be68fde792b07053e89e6d06d3826ec08df04c781d5c6a6717dfa574ffb0",
+  "scripts/sovereign-commander-http.mjs": "962b48eebd6dcc54e6117329acfbc5a4820bb7091c1f97493fd864cf984962c5",
   "scripts/sovereign-fixed-runtime-parent-v1.mjs": "1854a7c57c471baf3f26a0a3df1be446e91e3de243b43281497766a7d006ee64",
   "shared/agents/sovereignMaintenanceAdmissionV1.mjs": "d468e7bf73355e5daa6899d19ffe8e7b034af914837b5e66523d43ade79a8703",
   "scripts/windows/SovereignFixedRuntimeHostV1.cs": "bbe85a5dc91d9fcdcdb55be085589f57b57f71f1f9208016e4fa4e6e230996bf"

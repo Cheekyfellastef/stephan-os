@@ -8,9 +8,12 @@ import { fileURLToPath } from 'node:url';
 
 import {
   SOVEREIGN_COMMANDER_OPERATION,
+  captureSovereignPrivateSessionArgumentsV1,
   executeSovereignCommanderCommandV1,
 } from '../shared/agents/sovereignCommanderV1.mjs';
 import { validateSovereignDirectoryTargetV1 } from '../shared/agents/sovereignDirectoryCreateV1.mjs';
+import { createSovereignSearchSessionsV1 } from '../shared/agents/sovereignSearchSessionsV1.mjs';
+import { createSovereignMcpSessionHistoryV1 } from '../shared/agents/sovereignMcpSessionHistoryV1.mjs';
 import {
   STEPHANOS_EXECUTION_SURFACE,
   buildStephanosExecutionCommandEnvelopeV1,
@@ -18,7 +21,7 @@ import {
 } from '../shared/agents/stephanosExecutionCommandFabricV1.mjs';
 
 export const SOVEREIGN_COMMANDER_MCP_NAME = 'stephanos-sovereign-commander';
-export const SOVEREIGN_COMMANDER_MCP_VERSION = '0.1.0';
+export const SOVEREIGN_COMMANDER_MCP_VERSION = '0.2.0';
 export const SOVEREIGN_COMMANDER_MCP_PROTOCOL_VERSION = '2025-11-25';
 export const SOVEREIGN_COMMANDER_MCP_PROTOCOLS = Object.freeze(new Set([SOVEREIGN_COMMANDER_MCP_PROTOCOL_VERSION, '2025-06-18', '2024-11-05']));
 
@@ -30,6 +33,14 @@ export const SOVEREIGN_COMMANDER_INSPECTION_ACTIONS = Object.freeze([
   'status-recovery-mesh', 'status-worker-watchdog', 'status-stephanos-core-daemon',
   'starfield-vr-performance-diagnosis',
 ]);
+
+const SEARCH_SESSION_TOOLS = Object.freeze(['start_search', 'get_more_search_results', 'stop_search', 'list_searches']);
+const HISTORY_TOOLS = Object.freeze(['get_usage_stats', 'get_recent_tool_calls', 'get_tool_result', 'list_remote_tool_calls']);
+const PRIVATE_SESSION_TOOLS = Object.freeze([...SEARCH_SESSION_TOOLS, ...HISTORY_TOOLS]);
+const PRIVATE_READ_ANNOTATIONS = Object.freeze({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+const HISTORY_PAGE_SCHEMA = Object.freeze({ type: 'object', additionalProperties: false,
+  properties: { offset: { type: 'integer', minimum: 0, maximum: 256, default: 0 },
+    limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 } } });
 
 const TOOLS = Object.freeze([
   {
@@ -170,6 +181,72 @@ const TOOLS = Object.freeze([
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: 'start_search',
+    title: 'Start scoped private search',
+    description: 'Start a bounded literal filename or text search in one explicit local directory. Keeps a private session for paging and cancellation; excludes links and sensitive file forms. Limits or errors remain incomplete, never a full-disk completeness claim.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['path', 'query'],
+      properties: { path: { type: 'string', minLength: 1, maxLength: 1024 },
+        query: { type: 'string', minLength: 1, maxLength: 200 },
+        mode: { type: 'string', enum: ['file', 'content'], default: 'content' },
+        caseSensitive: { type: 'boolean', default: false },
+        limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 } } },
+    annotations: { ...PRIVATE_READ_ANNOTATIONS, idempotentHint: false },
+  },
+  {
+    name: 'get_more_search_results',
+    title: 'Read a private search page',
+    description: 'Return a bounded page and actual state for a search created in this MCP session. Does not accept a new path or another session’s search.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['searchId'],
+      properties: { searchId: { type: 'string', minLength: 1, maxLength: 128 },
+        offset: { type: 'integer', minimum: 0, maximum: 1000, default: 0 },
+        limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 } } },
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'stop_search',
+    title: 'Cancel a private search',
+    description: 'Cancel only the named search owned by this MCP session. Does not terminate arbitrary processes or alter files.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['searchId'],
+      properties: { searchId: { type: 'string', minLength: 1, maxLength: 128 } } },
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'list_searches',
+    title: 'List this session’s searches',
+    description: 'List bounded search metadata belonging only to the current private MCP session.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'get_usage_stats',
+    title: 'Get this session’s Sovereign usage',
+    description: 'Return bounded, local counters for recorded Commander executions in this MCP session. These are Sovereign counters, not a remote vendor account, billing or machine-wide usage report.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'get_recent_tool_calls',
+    title: 'List this session’s recent commands',
+    description: 'Return privacy-safe metadata for retained Commander calls in this MCP session. Arguments, paths and file contents are omitted; eviction and pending outcomes are explicit.',
+    inputSchema: HISTORY_PAGE_SCHEMA,
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'get_tool_result',
+    title: 'Retrieve an original private command result',
+    description: 'Retrieve an immutable, bounded result retained for an original call in this MCP session. This reads the receipt without replaying the command; unavailable or oversized results stay unavailable.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['callId'],
+      properties: { callId: { type: 'string', minLength: 1, maxLength: 160 } } },
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'list_remote_tool_calls',
+    title: 'List this private HTTP session’s commands',
+    description: 'Return metadata for this session’s retained authenticated HTTP Commander calls. Local stdio calls and other sessions are excluded; this is not a vendor-wide account registry.',
+    inputSchema: HISTORY_PAGE_SCHEMA,
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
     name: 'list_processes',
     title: 'List processes',
     description: 'List a bounded snapshot of Battle Bridge processes using the fixed local process probe.',
@@ -307,6 +384,7 @@ function defaultRepoRoot(env = process.env) {
 }
 
 function operationForTool(name) {
+  if (PRIVATE_SESSION_TOOLS.includes(name)) return name.toUpperCase();
   return Object.freeze({
     get_config: SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG,
     read_file: SOVEREIGN_COMMANDER_OPERATION.READ_FILE,
@@ -325,6 +403,7 @@ function operationForTool(name) {
 }
 
 function targetPathsForTool(name, args = {}) {
+  if (name === 'start_search') return [args.path];
   if (name === 'create_directory') return [args.path];
   if (name === 'read_multiple_files') return Array.isArray(args.paths) ? args.paths : [];
   if (['read_file', 'get_file_info', 'write_file', 'edit_file', 'list_directory', 'create_directory'].includes(name)) return [text(args.path)].filter(Boolean);
@@ -332,6 +411,7 @@ function targetPathsForTool(name, args = {}) {
 }
 
 function payloadForTool(name, args = {}) {
+  if (PRIVATE_SESSION_TOOLS.includes(name)) return args;
   if (name === 'inspect_battle_bridge') return { actionId: args.actionId };
   if (name === 'read_file' || name === 'read_multiple_files') return { offset: args.offset, length: args.length };
   if (name === 'write_file') return { content: args.content, mode: args.mode };
@@ -393,14 +473,44 @@ export function createSovereignCommanderMcpHandler({
   executor = executeSovereignCommanderCommandV1,
   withMaintenanceOwner,
   now = () => new Date().toISOString(),
+  searchSessionsFactory = createSovereignSearchSessionsV1,
+  sessionHistoryFactory = createSovereignMcpSessionHistoryV1,
 } = {}) {
   let session = null;
   let toolsListed = false;
+  let closed = false;
+  const searchSessions = searchSessionsFactory();
+  const sessionHistory = sessionHistoryFactory();
   // Ephemeral cancellation for this session's existing requests; no durable
   // queue, lease, retry or second executor is introduced.
   const coreRequests = new Map();
 
-  return async function handle(method, params = {}, message = {}) {
+  async function invokeExecutor(envelope, options, tool, message) {
+    const privateRequest = message.isRequest === true && message.isNotification !== true
+      && (message.transportKind === 'local-stdio-mcp'
+        || (message.transportKind === 'authenticated-http-jsonrpc' && message.transportAuthenticated === true));
+    let recorded = null;
+    // Advisory history must never hide the original execution receipt or turn a
+    // successful custody release into a failed action because a cache failed.
+    try {
+      if (privateRequest && !HISTORY_TOOLS.includes(tool)) recorded = sessionHistory.begin({
+        callId: envelope.commandId, tool, transportKind: message.transportKind, privateResultAllowed: true });
+    } catch {}
+    const recordResponse = (value, flags) => {
+      try { if (recorded?.recorded) sessionHistory.finish(envelope.commandId, value, flags); } catch {}
+    };
+    try {
+      const result = await executor(envelope, { ...options, searchSessions, sessionHistory });
+      recordResponse(result);
+      return result;
+    } catch (error) {
+      recordResponse(null, { threw: true });
+      throw error;
+    }
+  }
+
+  async function handle(method, params = {}, message = {}) {
+    if (closed) throw new Error('MCP_SESSION_CLOSED');
     const request = message.isRequest === true && message.isNotification !== true;
     const notification = message.isNotification === true && message.isRequest !== true;
 
@@ -455,6 +565,15 @@ export function createSovereignCommanderMcpHandler({
       let args = params.arguments && typeof params.arguments === 'object' && !Array.isArray(params.arguments)
         ? params.arguments
         : {};
+      if (PRIVATE_SESSION_TOOLS.includes(name)) {
+        const privateRequest = request && (message.transportKind === 'local-stdio-mcp'
+          || (message.transportKind === 'authenticated-http-jsonrpc' && message.transportAuthenticated === true));
+        if (!privateRequest) return asTextResult({ ok: false, blocker: 'SOVEREIGN_PRIVATE_SESSION_REQUIRED' }, true);
+        const captured = captureSovereignPrivateSessionArgumentsV1(operation,
+          params.arguments === undefined ? {} : params.arguments);
+        if (!captured) return asTextResult({ ok: false, blocker: 'SOVEREIGN_PRIVATE_SESSION_ARGUMENTS_INVALID' }, true);
+        args = captured;
+      }
       if (name === 'create_directory') {
         const raw = params.arguments;
         if (!raw || typeof raw !== 'object' || Array.isArray(raw)
@@ -486,7 +605,7 @@ export function createSovereignCommanderMcpHandler({
         surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
         actionId: `mcp-${session.sessionId}-${randomUUID()}`,
         missionId: `mcp-session-${session.sessionId}`,
-        relatedIssue: '#2519',
+        relatedIssue: PRIVATE_SESSION_TOOLS.includes(name) ? '#2573' : '#2519',
         operation,
         targetPaths,
         payload: payloadForTool(name, args),
@@ -499,7 +618,7 @@ export function createSovereignCommanderMcpHandler({
       });
       const isCoreRepair = name === 'maintenance_action' && args.actionId === 'repair-core-publication-directories';
       if (!isCoreRepair) {
-        const result = await executor(envelope, { repoRoot, routeProof, withMaintenanceOwner });
+        const result = await invokeExecutor(envelope, { repoRoot, routeProof, withMaintenanceOwner }, name, message);
         return asTextResult(result, result?.ok !== true);
       }
       if (!request || !(typeof message.id === 'string' || Number.isSafeInteger(message.id))
@@ -514,7 +633,7 @@ export function createSovereignCommanderMcpHandler({
       message.signal?.addEventListener('abort', cancel, { once: true });
       if (message.signal?.aborted) cancel();
       try {
-        const result = await executor(envelope, { repoRoot, routeProof, withMaintenanceOwner, signal: controller.signal });
+        const result = await invokeExecutor(envelope, { repoRoot, routeProof, withMaintenanceOwner, signal: controller.signal }, name, message);
         retainCustody = !explicitCoreCustodyReleased(result);
         return asTextResult(result, result?.ok !== true);
       } finally {
@@ -527,7 +646,15 @@ export function createSovereignCommanderMcpHandler({
     }
 
     throw new Error(`Unsupported MCP method: ${method}`);
+  }
+  // Transport lifecycle only. Closing a session cancels its read-only searches
+  // and forgets private history; it never releases canonical maintenance custody.
+  handle.close = async () => {
+    if (closed) return;
+    closed = true;
+    try { sessionHistory.dispose(); } finally { await searchSessions.dispose(); }
   };
+  return handle;
 }
 
 function jsonRpcError(id, error) {
@@ -540,7 +667,7 @@ export async function runSovereignCommanderStdioMcpServer({
   handler = createSovereignCommanderMcpHandler(),
 } = {}) {
   const lines = readline.createInterface({ input, crlfDelay: Infinity });
-  for await (const line of lines) {
+  try { for await (const line of lines) {
     if (!line.trim()) continue;
     let request;
     try { request = JSON.parse(line); }
@@ -575,7 +702,7 @@ export async function runSovereignCommanderStdioMcpServer({
     } catch (error) {
       if (!isNotification) output.write(`${JSON.stringify(jsonRpcError(request.id, error))}\n`);
     }
-  }
+  } } finally { await handler.close?.(); }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

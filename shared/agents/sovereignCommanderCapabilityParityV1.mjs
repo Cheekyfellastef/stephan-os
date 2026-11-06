@@ -13,6 +13,20 @@ export const SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE = Object.freeze({
   BOUNDARY_HOLD: 'BOUNDARY_HOLD',
 });
 
+// Source mappings describe only the named private-session contract. They cannot
+// authenticate an installed host, broaden a scope or grant execution authority.
+export const SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY = Object.freeze(Object.fromEntries([
+  ['start-search', 'start_search', 'ONE_EXPLICIT_LOCAL_WINDOWS_DIRECTORY'],
+  ['get-more-search-results', 'get_more_search_results', 'THIS_PRIVATE_SESSION_SEARCHES'],
+  ['stop-search', 'stop_search', 'THIS_PRIVATE_SESSION_SEARCHES'],
+  ['list-searches', 'list_searches', 'THIS_PRIVATE_SESSION_SEARCHES'],
+  ['get-usage-stats', 'get_usage_stats', 'THIS_PRIVATE_SESSION_ADVISORY_HISTORY'],
+  ['get-recent-tool-calls', 'get_recent_tool_calls', 'THIS_PRIVATE_SESSION_ADVISORY_HISTORY'],
+  ['get-tool-result', 'get_tool_result', 'THIS_PRIVATE_SESSION_RETAINED_RECEIPTS'],
+  ['list-remote-tool-calls', 'list_remote_tool_calls', 'THIS_PRIVATE_HTTP_SESSION_ADVISORY_HISTORY'],
+].map(([id, sovereignEquivalent, functionalScope]) => [id, Object.freeze({ sovereignEquivalent,
+  functionalScope, privateSessionRequired: true, runtimeParityProven: false })])));
+
 const DIRECT_PARITY = Object.freeze({
   'get-config': 'get_config',
   'read-file': 'read_file',
@@ -22,6 +36,7 @@ const DIRECT_PARITY = Object.freeze({
   'edit-file': 'edit_file',
   'edit-block': 'edit_file',
   'list-directory': 'list_directory',
+  'create-directory': 'create_directory',
   'search-project': 'search_project',
   'list-processes': 'list_processes',
   'list-devices': 'visibility-snapshot',
@@ -45,17 +60,20 @@ const DIRECT_PARITY = Object.freeze({
   'repair-battle-bridge': 'repair-battle-bridge',
   'repair-openclaw-stack': 'repair-openclaw-stack',
   'source-construction': 'sovereign-source-construction-lane',
+  ...Object.fromEntries(Object.entries(SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY)
+    .map(([id, value]) => [id, value.sovereignEquivalent])),
 });
 
 // search_project is one bounded literal search in the canonical repository.
-// It does not implement Remote Commander's whole-PC or session lifecycle API.
-// Keep this source-owned scope separate from an implementation/live-proof claim.
+// It does not implement the private search-session API. Retain this correction
+// for legacy ledgers still routing session work to search_project. The current
+// private session mappings above are source evidence, never live acceptance.
 export const SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS = Object.freeze(Object.assign(Object.create(null), Object.fromEntries([
-  ['start-search', 'WHOLE_PC_SEARCH_AND_SEARCH_SESSIONS_NOT_IMPLEMENTED'],
+  ['start-search', 'PRIVATE_SESSION_SEARCH_ROUTE_NOT_BOUND'],
   ['search-files', 'WHOLE_PC_FILE_SEARCH_NOT_IMPLEMENTED'],
-  ['get-more-search-results', 'SEARCH_SESSION_PAGINATION_NOT_IMPLEMENTED'],
-  ['stop-search', 'SEARCH_SESSION_CANCELLATION_NOT_IMPLEMENTED'],
-  ['list-searches', 'SEARCH_SESSION_INVENTORY_NOT_IMPLEMENTED'],
+  ['get-more-search-results', 'PRIVATE_SESSION_PAGINATION_ROUTE_NOT_BOUND'],
+  ['stop-search', 'PRIVATE_SESSION_CANCELLATION_ROUTE_NOT_BOUND'],
+  ['list-searches', 'PRIVATE_SESSION_INVENTORY_ROUTE_NOT_BOUND'],
 ].map(([id, parityGapReason]) => [id, Object.freeze({
   partialSovereignEquivalent: 'search_project',
   partialScope: 'CANONICAL_REPOSITORY_LITERAL_SEARCH_ONLY',
@@ -161,7 +179,7 @@ export function classifyRemoteCommanderCapabilityObservation(entry = {}) {
   const operation = operationFromEntry(entry);
   const boundaryHold = BOUNDARY_PATTERN.test(operation) || authorityWideningRequested(entry);
   const directEquivalent = DIRECT_PARITY[operation] || '';
-  const searchGap = SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[operation];
+  const searchGap = !directEquivalent ? SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[operation] : null;
 
   const state = boundaryHold
     ? SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BOUNDARY_HOLD
@@ -178,6 +196,7 @@ export function classifyRemoteCommanderCapabilityObservation(entry = {}) {
     parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
     runtimeParityProven: false,
     ...(searchGap || {}),
+    ...(SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY[operation] || {}),
     canonicalOwnerGoal: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.goal,
     canonicalOwnerTitle: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.title,
     requiresExistingGoalSearch: false,
@@ -243,13 +262,15 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
     const current = observed.get(id);
     const classified = current?.classified || null;
     const previousState = text(previous.state);
-    const searchGap = SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[id];
+    const directEquivalent = DIRECT_PARITY[id];
+    const searchGap = !directEquivalent ? SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[id] : null;
     // Repair retained false equivalence too: no new Remote Commander call is
     // required to correct a prior source-catalog classification. A boundary
     // hold still wins, and a correction cannot become a new parity proof.
-    const retainedState = searchGap && previousState !== SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BOUNDARY_HOLD
-      ? SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP
-      : previousState;
+    const retainedState = previousState === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BOUNDARY_HOLD
+      ? previousState : directEquivalent
+        ? SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT
+        : searchGap ? SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP : previousState;
     const state = classified?.state || retainedState || SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP;
     const stateTransition = previousState && previousState !== state
       ? `${previousState}->${state}`
@@ -277,9 +298,11 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
       parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
       runtimeParityProven: false,
       sovereignEquivalent: text(classified?.sovereignEquivalent
+        || directEquivalent
         || (searchGap ? suggestedEquivalent(id) : previous.sovereignEquivalent)
         || suggestedEquivalent(id)),
       ...(searchGap || {}),
+      ...(SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY[id] || {}),
       canonicalOwnerGoal: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.goal,
       canonicalOwnerTitle: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.title,
       currentObserved: Boolean(current),

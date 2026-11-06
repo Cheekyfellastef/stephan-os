@@ -1,5 +1,5 @@
 import { CLOSED_LOOP_CAPABILITY_EXAM_V1 } from './closedLoopLearningV1.mjs';
-import { SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS } from './sovereignCommanderCapabilityParityV1.mjs';
+import { SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS, SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY } from './sovereignCommanderCapabilityParityV1.mjs';
 
 export const SOVEREIGN_COMMANDER_CAPABILITY_COMPILER_SCHEMA =
   'stephanos.sovereign-commander-capability-compiler.v1';
@@ -238,7 +238,11 @@ function learningCandidate(capability, timestampUtc) {
 
 export function compileSovereignCommanderCapabilityPlanV1(ledger = {}, { nativeGaps = [] } = {}) {
   const capabilities = (Array.isArray(ledger?.capabilities) ? ledger.capabilities : []).map((capability) => {
-    const gap = SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[capabilityId(capability?.capabilityId)];
+    const id = capabilityId(capability?.capabilityId);
+    const mapping = SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY[id];
+    if (mapping && capability?.sovereignEquivalent === mapping.sovereignEquivalent)
+      return { ...capability, ...mapping, newlyProvenParity: false, parityEvidenceScope: 'SOURCE_CATALOG_ONLY' };
+    const gap = SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[id];
     if (!gap || capability?.state === 'BOUNDARY_HOLD') return capability;
     // The compiler can receive a retained pre-correction ledger directly.
     // Reuse the same source-owned scope instead of preserving a false green.
@@ -302,6 +306,7 @@ export function compileSovereignCommanderCapabilityPlanV1(ledger = {}, { nativeG
   const learningCandidates = capabilities
     .filter((item) => item?.newlyProvenParity === true
       && item?.state === 'PARITY_PRESENT'
+      && !SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY[capabilityId(item?.capabilityId)]
       && !SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[capabilityId(item?.capabilityId)])
     .map((item) => learningCandidate(item, timestampUtc));
 

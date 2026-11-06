@@ -19,6 +19,8 @@ import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, SOVEREIGN_MAINTENANCE_CUSTODY_BLOC
 export const SOVEREIGN_COMMANDER_HTTP_HOST = '127.0.0.1';
 export const SOVEREIGN_COMMANDER_HTTP_PORT = 18791;
 export const SOVEREIGN_COMMANDER_HTTP_MAX_BODY_BYTES = 1024 * 1024;
+export const SOVEREIGN_COMMANDER_HTTP_MAX_MCP_SESSIONS = 16;
+export const SOVEREIGN_COMMANDER_HTTP_MCP_IDLE_TTL_MS = 30 * 60 * 1000;
 export const SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '2026-10-18-island-action-contract-v6';
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_PATH = '/ignite';
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_NONCE_TTL_MS = 5 * 60 * 1000;
@@ -818,6 +820,8 @@ export async function createSovereignCommanderHttpServer(options = {}) {
   if (!token) throw new Error('SOVEREIGN_COMMANDER_BEARER_TOKEN_REQUIRED');
 
   const sessions = new Map();
+  const sessionActivity = new Map();
+  let initializingSessions = 0;
   const ignitionNonces = new Map();
   const handlerFactory = options.handlerFactory || (() => createSovereignCommanderMcpHandler({
     repoRoot: options.repoRoot, executor: options.commandExecutor,
@@ -830,6 +834,27 @@ export async function createSovereignCommanderHttpServer(options = {}) {
     const value = Date.parse(now());
     return Number.isFinite(value) ? value : Date.now();
   });
+  let lastSessionClock = 0;
+  const sessionClock = () => {
+    const observed = nowMs();
+    lastSessionClock = Math.max(lastSessionClock,
+      Number.isFinite(observed) && observed >= 0 ? observed : Date.now());
+    return lastSessionClock;
+  };
+  const closeSession = async sessionId => {
+    const handler = sessions.get(sessionId);
+    sessions.delete(sessionId);
+    sessionActivity.delete(sessionId);
+    await handler?.close?.();
+  };
+  const reapIdleSessions = async () => {
+    const current = sessionClock();
+    for (const [sessionId, activity] of sessionActivity) {
+      if (activity.activeRequests === 0
+        && current - activity.lastSeen >= SOVEREIGN_COMMANDER_HTTP_MCP_IDLE_TTL_MS)
+        await closeSession(sessionId);
+    }
+  };
   const continuousRepairGuardian = startSovereignCommanderContinuousRepairGuardian({
       enabled: options.continuousRepairEnabled === true,
       repoRoot: options.repoRoot,
@@ -959,7 +984,7 @@ export async function createSovereignCommanderHttpServer(options = {}) {
       if (req.method === 'DELETE') {
         const sessionId = text(req.headers['mcp-session-id']);
         if (!sessionId || !sessions.has(sessionId)) return sendJson(res, 404, { ok: false, blocker: 'MCP_SESSION_NOT_FOUND' });
-        sessions.delete(sessionId);
+        await closeSession(sessionId);
         res.writeHead(204, { 'cache-control': 'no-store' });
         return res.end();
       }
@@ -974,11 +999,19 @@ export async function createSovereignCommanderHttpServer(options = {}) {
 
       if (initializing) {
         if (handler || sessionId) return sendJson(res, 409, rpcError(message.id, -32000, 'Session already supplied for initialize'));
+        await reapIdleSessions();
+        if (sessions.size + initializingSessions >= SOVEREIGN_COMMANDER_HTTP_MAX_MCP_SESSIONS)
+          return sendJson(res, 429, rpcError(message.id, -32000, 'MCP_SESSION_CAPACITY_REACHED'));
+        initializingSessions++;
         sessionId = randomUUID();
-        handler = handlerFactory();
+        try { handler = handlerFactory(); }
+        catch (error) { initializingSessions--; throw error; }
       } else if (!handler) {
         return sendJson(res, 400, rpcError(message.id, -32001, 'MCP session required'));
       }
+
+      const activity = initializing ? null : sessionActivity.get(sessionId);
+      if (activity) { activity.activeRequests++; activity.lastSeen = sessionClock(); }
 
       const hasId = Object.prototype.hasOwnProperty.call(message, 'id');
       const isRequest = hasId;
@@ -994,8 +1027,19 @@ export async function createSovereignCommanderHttpServer(options = {}) {
         transportKind: 'authenticated-http-jsonrpc',
         transportAuthenticated: true,
         signal: requestController.signal,
-      }); } finally { res.removeListener('close', cancelDisconnected); }
-      if (initializing) sessions.set(sessionId, handler);
+      }); } catch (error) {
+        if (initializing) await handler.close?.();
+        throw error;
+      } finally {
+        if (initializing) initializingSessions--;
+        if (activity) { activity.activeRequests--; activity.lastSeen = sessionClock(); }
+        res.removeListener('close', cancelDisconnected);
+      }
+      if (initializing) {
+        if (requestController.signal.aborted) { await handler.close?.(); return; }
+        sessions.set(sessionId, handler);
+        sessionActivity.set(sessionId, { activeRequests: 0, lastSeen: sessionClock() });
+      }
       const headers = { 'mcp-session-id': sessionId };
 
       if (isNotification || result === undefined) {
@@ -1009,7 +1053,12 @@ export async function createSovereignCommanderHttpServer(options = {}) {
     }
   });
 
-  server.once('close', () => continuousRepairGuardian?.stop());
+  server.once('close', () => {
+    continuousRepairGuardian?.stop();
+    for (const handler of sessions.values()) void handler.close?.();
+    sessions.clear();
+    sessionActivity.clear();
+  });
 
   return Object.freeze({
     server,

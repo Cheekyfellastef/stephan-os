@@ -18,6 +18,12 @@ on:
       - 'shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs'
       - 'shared/agents/sovereignCommanderV1.mjs'
       - 'shared/agents/sovereignDirectoryCreateV1*'
+      - 'shared/agents/sovereignSearchSessionsV1*'
+      - 'shared/agents/sovereignMcpSessionHistoryV1*'
+      - 'shared/agents/sovereignCommanderPrivateSessionsV1.test.mjs'
+      - 'shared/agents/sovereignCommanderSessionLifecycleV1.test.mjs'
+      - 'scripts/windows/SovereignSearchV1.cs'
+      - 'scripts/windows/sovereign-search.ps1'
       - 'scripts/windows/sovereign-create-directory.ps1'
       - 'scripts/windows/SovereignDirectoryCreateV1.cs'
       - 'shared/agents/sovereignMaintenanceAdmissionV1*'
@@ -93,6 +99,12 @@ on:
       - 'shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs'
       - 'shared/agents/sovereignCommanderV1.mjs'
       - 'shared/agents/sovereignDirectoryCreateV1*'
+      - 'shared/agents/sovereignSearchSessionsV1*'
+      - 'shared/agents/sovereignMcpSessionHistoryV1*'
+      - 'shared/agents/sovereignCommanderPrivateSessionsV1.test.mjs'
+      - 'shared/agents/sovereignCommanderSessionLifecycleV1.test.mjs'
+      - 'scripts/windows/SovereignSearchV1.cs'
+      - 'scripts/windows/sovereign-search.ps1'
       - 'scripts/windows/sovereign-create-directory.ps1'
       - 'scripts/windows/SovereignDirectoryCreateV1.cs'
       - 'shared/agents/sovereignMaintenanceAdmissionV1*'
@@ -201,6 +213,7 @@ jobs:
           node --test shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs
           node --test shared/agents/sovereignCommanderV1.test.mjs shared/agents/sovereignDirectoryCreateV1.test.mjs
           node --test shared/agents/sovereignCommanderMcp.test.mjs
+          node --test shared/agents/sovereignSearchSessionsV1.test.mjs shared/agents/sovereignMcpSessionHistoryV1.test.mjs shared/agents/sovereignCommanderPrivateSessionsV1.test.mjs shared/agents/sovereignCommanderSessionLifecycleV1.test.mjs
           node --test shared/agents/sovereignCommanderHttp.test.mjs
           node --test shared/agents/sovereignWindowsQualificationWorkflow.test.mjs shared/agents/sovereignMaintenanceAdmissionV1.test.mjs scripts/sovereign-goal-builder-worker-evidence.test.mjs scripts/sovereign-commander-goal-builder-repair.test.mjs shared/agents/goalDiscoveryWorkspaceV1.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs
           node --test tests/battle-bridge-observation.test.mjs
@@ -263,5 +276,7 @@ jobs:
         run: node --experimental-vm-modules --test --test-concurrency=1 stephanos-server/services/supervisedR7RecoveryPreparationV1.test.mjs stephanos-server/services/supervisedR7RecoveryPreparationV1.integration.test.mjs stephanos-server/services/supervisedR7RecoveryRuntime.test.js
       - name: Real Windows private directory creation, exact Unicode and ancestor race regressions
         run: node --test shared/agents/sovereignDirectoryCreateV1.test.mjs shared/agents/sovereignCommanderV1.test.mjs
+      - name: Native private search confinement and MCP session lifecycle
+        run: node --test --test-concurrency=1 shared/agents/sovereignSearchSessionsV1.test.mjs shared/agents/sovereignMcpSessionHistoryV1.test.mjs shared/agents/sovereignCommanderPrivateSessionsV1.test.mjs shared/agents/sovereignCommanderSessionLifecycleV1.test.mjs
       - name: Windows VR diagnosis empty and single-value array regression
         run: node --test scripts/starfield-vr-flight-recorder.test.mjs

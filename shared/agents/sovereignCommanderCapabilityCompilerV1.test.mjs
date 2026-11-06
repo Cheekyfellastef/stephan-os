@@ -11,14 +11,14 @@ import {
 } from './sovereignCommanderCapabilityCompilerV1.mjs';
 import { buildSovereignCommanderCapabilityParityLedger } from './sovereignCommanderCapabilityParityV1.mjs';
 
-test('search session gaps reach existing compiler as bounded observation work with explicit scope', () => {
+test('implemented private session tools avoid duplicate builds while unimplemented aliases retain explicit scope', () => {
   const operations = ['start-search', 'search-files', 'get-more-search-results', 'stop-search', 'list-searches'];
   const ledger = buildSovereignCommanderCapabilityParityLedger(operations.map((operation) => ({
     adapter: 'desktop-commander-direct',
     item: { actionGrant: { operation }, missionId: 'critical-2573-parity' },
   })), { nowUtc: '2026-10-25T15:00:00.000Z' });
   const result = compileSovereignCommanderCapabilityPlanV1(ledger);
-  assert.equal(result.buildableCapabilityCount, 5);
+  assert.equal(result.buildableCapabilityCount, 1);
   assert.equal(result.primitiveGapCount, 0);
   assert.equal(result.learningCandidates.length, 0);
   assert.equal(result.automaticCapabilityConstructionAllowed, false);

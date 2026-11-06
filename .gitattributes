@@ -326,3 +326,7 @@ scripts/sovereign-high-risk-advisory-v1.mjs text eol=lf
 scripts/sovereign-high-risk-advisory-launcher-v1.mjs text eol=lf
 scripts/sovereign-windows-review-calibration-v1.mjs text eol=lf
 scripts/sovereign-windows-review-calibration-v1-engine.mjs text eol=lf
+
+# Private search verifies and runs only captured helper bytes.
+scripts/windows/SovereignSearchV1.cs text eol=lf
+scripts/windows/sovereign-search.ps1 text eol=lf

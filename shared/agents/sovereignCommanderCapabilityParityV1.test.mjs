@@ -90,8 +90,9 @@ test('direct ChatGPT Remote Commander observations feed the same parity ratchet'
     ...remote('start-search'),
     adapter: 'desktop-commander-direct',
   });
-  assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP);
-  assert.equal(result.partialSovereignEquivalent, 'search_project');
+  assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT);
+  assert.equal(result.sovereignEquivalent, 'start_search');
+  assert.equal(result.functionalScope, 'ONE_EXPLICIT_LOCAL_WINDOWS_DIRECTORY');
   assert.equal(result.runtimeParityProven, false);
   assert.equal(result.observationIngress, 'desktop-commander-direct');
   assert.equal(result.canonicalOwnerGoal, '#2573');
@@ -110,22 +111,27 @@ test('Remote Commander device/reachability probes resolve to Sovereign visibilit
   }
 });
 
-test('repository search does not claim whole-PC or search-session parity', () => {
+test('scoped search and history map to their own private tools without installed acceptance', () => {
   const project = classifyRemoteCommanderCapabilityObservation(remote('search-project'));
-  assert.equal(project.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT);
   assert.equal(project.sovereignEquivalent, 'search_project');
-  for (const operation of ['start-search', 'search-files', 'get-more-search-results', 'stop-search', 'list-searches']) {
+  for (const operation of ['start-search', 'get-more-search-results', 'stop-search', 'list-searches',
+    'get-usage-stats', 'get-recent-tool-calls', 'get-tool-result', 'list-remote-tool-calls']) {
     const result = classifyRemoteCommanderCapabilityObservation(remote(operation));
-    assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP, operation);
-    assert.equal(result.partialSovereignEquivalent, 'search_project', operation);
-    assert.equal(result.partialScope, 'CANONICAL_REPOSITORY_LITERAL_SEARCH_ONLY', operation);
-    assert.equal(result.parityEvidenceScope, 'SOURCE_CATALOG_ONLY', operation);
-    assert.equal(result.runtimeParityProven, false, operation);
-    assert.notEqual(result.sovereignEquivalent, 'search_project', operation);
-    assert.match(result.parityGapReason, /NOT_IMPLEMENTED$/, operation);
-    assert.equal(result.operatorFallbackAllowed, false, operation);
-    assert.equal(result.meterDependencyAccepted, false, operation);
+    assert.equal(result.state, 'PARITY_PRESENT', operation);
+    assert.equal(result.sovereignEquivalent, operation.replaceAll('-', '_'), operation);
+    assert.notEqual(result.sovereignEquivalent, 'search_project');
+    assert.equal(result.privateSessionRequired, true);
+    assert.equal(result.parityEvidenceScope, 'SOURCE_CATALOG_ONLY');
+    assert.equal(result.runtimeParityProven, false);
+    assert.equal(result.runtimeMutationAuthority, false);
   }
+  const alias = classifyRemoteCommanderCapabilityObservation(remote('search-files'));
+  assert.equal(alias.state, 'BUILDABLE_GAP');
+  assert.equal(alias.partialSovereignEquivalent, 'search_project');
+  assert.equal(alias.runtimeParityProven, false);
+  const directory = classifyRemoteCommanderCapabilityObservation(remote('create-directory'));
+  assert.equal(directory.sovereignEquivalent, 'create_directory');
+  assert.equal(directory.runtimeParityProven, false);
 });
 
 test('retained broad-search false parity is corrected without a new call or lost provenance', () => {
@@ -144,20 +150,21 @@ test('retained broad-search false parity is corrected without a new call or lost
     priorLedger: { capabilities: previousCapabilities },
     nowUtc: '2026-10-25T15:00:00.000Z',
   });
-  assert.equal(ledger.buildableGapCount, 3);
-  assert.equal(ledger.parityPresentCount, 0);
+  assert.equal(ledger.buildableGapCount, 1);
+  assert.equal(ledger.parityPresentCount, 2);
   assert.equal(ledger.newlyProvenParityCount, 0);
   assert.equal(ledger.daemonMayReportGreen, false);
   assert.equal(ledger.zeroGapInvariantSatisfied, false);
   assert.equal(ledger.closureRequired, true);
   for (const capability of ledger.capabilities) {
     const previous = previousCapabilities.find((item) => item.capabilityId === capability.capabilityId);
-    assert.equal(capability.state, 'BUILDABLE_GAP');
-    assert.equal(capability.stateTransition, 'PARITY_PRESENT->BUILDABLE_GAP');
+    assert.equal(capability.state, capability.capabilityId === 'search-files' ? 'BUILDABLE_GAP' : 'PARITY_PRESENT');
+    assert.equal(capability.stateTransition, capability.capabilityId === 'search-files' ? 'PARITY_PRESENT->BUILDABLE_GAP' : 'RETAINED');
     assert.equal(capability.currentObserved, false);
     assert.equal(capability.newlyProvenParity, false);
     assert.equal(capability.runtimeParityProven, false);
-    assert.equal(capability.partialSovereignEquivalent, 'search_project');
+    if (capability.capabilityId === 'search-files') assert.equal(capability.partialSovereignEquivalent, 'search_project');
+    else assert.equal(capability.sovereignEquivalent, capability.capabilityId.replaceAll('-', '_'));
     for (const key of ['firstSeenAtUtc', 'lastSeenAtUtc', 'observationCount', 'missionIds', 'actionIds', 'queuePaths'])
       assert.deepEqual(capability[key], previous[key], key);
   }
@@ -165,7 +172,7 @@ test('retained broad-search false parity is corrected without a new call or lost
     priorLedger: ledger,
     nowUtc: '2026-10-25T15:01:00.000Z',
   });
-  assert.equal(next.buildableGapCount, 3);
+  assert.equal(next.buildableGapCount, 1);
   assert.equal(next.newlyProvenParityCount, 0);
   assert.equal(next.capabilities[0].stateTransition, 'RETAINED');
   assert.equal(next.capabilities[0].observationCount, 17);

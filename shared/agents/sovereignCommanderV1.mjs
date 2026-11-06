@@ -26,6 +26,14 @@ export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
   LIST_DIRECTORY: 'LIST_DIRECTORY',
   CREATE_DIRECTORY: 'CREATE_DIRECTORY',
   SEARCH_PROJECT: 'SEARCH_PROJECT',
+  START_SEARCH: 'START_SEARCH',
+  GET_MORE_SEARCH_RESULTS: 'GET_MORE_SEARCH_RESULTS',
+  STOP_SEARCH: 'STOP_SEARCH',
+  LIST_SEARCHES: 'LIST_SEARCHES',
+  GET_USAGE_STATS: 'GET_USAGE_STATS',
+  GET_RECENT_TOOL_CALLS: 'GET_RECENT_TOOL_CALLS',
+  GET_TOOL_RESULT: 'GET_TOOL_RESULT',
+  LIST_REMOTE_TOOL_CALLS: 'LIST_REMOTE_TOOL_CALLS',
   LIST_PROCESSES: 'LIST_PROCESSES',
   RUN_NODE_TEST: 'RUN_NODE_TEST',
   START_PROCESS: 'START_PROCESS',
@@ -88,6 +96,52 @@ function pathWithin(root, candidate) {
     : relative(normalizedRoot, normalizedCandidate);
   const relativeIsAbsolute = windows ? win32.isAbsolute(relativePath) : isAbsolute(relativePath);
   return relativePath === '' || (!!relativePath && !relativePath.startsWith('..') && !relativeIsAbsolute);
+}
+
+const PRIVATE_SESSION_ARGUMENTS = Object.freeze({
+  START_SEARCH: ['path', 'query', 'mode', 'caseSensitive', 'limit'],
+  GET_MORE_SEARCH_RESULTS: ['searchId', 'offset', 'limit'],
+  STOP_SEARCH: ['searchId'],
+  LIST_SEARCHES: [],
+  GET_USAGE_STATS: [],
+  GET_RECENT_TOOL_CALLS: ['offset', 'limit'],
+  GET_TOOL_RESULT: ['callId'],
+  LIST_REMOTE_TOOL_CALLS: ['offset', 'limit'],
+});
+
+// JSON schema is a discovery contract, not runtime admission. Capture only own
+// data properties before the command fabric can trim paths or read accessors.
+export function captureSovereignPrivateSessionArgumentsV1(operation, raw) {
+  const allowed = Object.hasOwn(PRIVATE_SESSION_ARGUMENTS, operation) ? PRIVATE_SESSION_ARGUMENTS[operation] : null;
+  if (!allowed || !raw || typeof raw !== 'object' || Array.isArray(raw)
+    || Object.getPrototypeOf(raw) !== Object.prototype) return null;
+  const captured = {};
+  for (const key of Reflect.ownKeys(raw)) {
+    if (typeof key !== 'string' || !allowed.includes(key)) return null;
+    const descriptor = Object.getOwnPropertyDescriptor(raw, key);
+    if (!descriptor || !Object.hasOwn(descriptor, 'value')) return null;
+    captured[key] = descriptor.value;
+  }
+  if (operation === 'START_SEARCH') {
+    if (typeof captured.path !== 'string' || captured.path !== captured.path.trim()
+      || captured.path.length > 1024 || /[\x00-\x1f]/.test(captured.path)
+      || !normalizedAbsolutePath(captured.path)
+      || typeof captured.query !== 'string' || !captured.query.length
+      || captured.query.length > 200 || captured.query.includes('\0')
+      || (Object.hasOwn(captured, 'mode') && !['file', 'content'].includes(captured.mode))
+      || (Object.hasOwn(captured, 'caseSensitive') && typeof captured.caseSensitive !== 'boolean')) return null;
+  }
+  if (['GET_MORE_SEARCH_RESULTS', 'STOP_SEARCH'].includes(operation)
+    && (typeof captured.searchId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(captured.searchId))) return null;
+  if (operation === 'GET_TOOL_RESULT'
+    && (typeof captured.callId !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(captured.callId))) return null;
+  if (Object.hasOwn(captured, 'offset')
+    && (!Number.isSafeInteger(captured.offset) || captured.offset < 0
+      || captured.offset > (operation.includes('SEARCH') ? 1000 : 256))) return null;
+  const maxLimit = 50;
+  if (Object.hasOwn(captured, 'limit')
+    && (!Number.isSafeInteger(captured.limit) || captured.limit < 1 || captured.limit > maxLimit)) return null;
+  return Object.freeze(captured);
 }
 
 // Source-bound reviewer metadata is a bounded input to the existing fixed
@@ -510,7 +564,18 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
   const registry = fixedRegistry(options.repoRoot);
   let plan = null;
 
-  if (operation === SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG) {
+  if (Object.hasOwn(PRIVATE_SESSION_ARGUMENTS, operation)) {
+    const args = captureSovereignPrivateSessionArgumentsV1(operation, envelope.payload);
+    const search = ['START_SEARCH', 'GET_MORE_SEARCH_RESULTS', 'STOP_SEARCH', 'LIST_SEARCHES'].includes(operation);
+    if (!args) blockers.push('SOVEREIGN_PRIVATE_SESSION_ARGUMENTS_INVALID');
+    if (operation === 'START_SEARCH') {
+      if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 1
+        || envelope.targetPaths[0] !== args?.path) blockers.push('SOVEREIGN_SEARCH_SCOPE_BINDING_INVALID');
+    } else if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 0) {
+      blockers.push('SOVEREIGN_PRIVATE_SESSION_SCOPE_INVALID');
+    }
+    if (args) plan = frozen({ kind: 'private-session', family: search ? 'search' : 'history', operation, args });
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG) {
     plan = frozen({ kind: 'config' });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.READ_FILE) {
     const path = targetPaths.length === 1 ? normalizedAbsolutePath(targetPaths[0]) : '';
@@ -982,6 +1047,20 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
     });
   }
 
+  if (command.plan.kind === 'private-session') {
+    const privateRoute = options.routeProof?.mcpSessionReady === true
+      && options.routeProof?.commandPathProven === true
+      && (options.routeProof?.transport === 'local-stdio-mcp'
+        || (options.routeProof?.transport === 'authenticated-http-jsonrpc'
+          && options.routeProof?.authenticatedMcp === true));
+    const service = command.plan.family === 'search' ? options.searchSessions : options.sessionHistory;
+    if (!privateRoute || !service || typeof service.execute !== 'function') return frozen({
+      ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+      blocker: 'SOVEREIGN_PRIVATE_SESSION_REQUIRED',
+      finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+    });
+  }
+
   const run = () => executeAdmittedSovereignCommandV1(command, options);
   if (command.plan.kind === 'fixed-process' && !isSovereignMaintenanceObservationV1(command.plan.processId)) {
     if (typeof options.withMaintenanceOwner === 'function') {
@@ -1013,7 +1092,17 @@ async function executeAdmittedSovereignCommandV1(command, options) {
     let contentText = '';
     let structuredContent = null;
 
-    if (command.plan.kind === 'config') {
+    if (command.plan.kind === 'private-session') {
+      const service = command.plan.family === 'search' ? options.searchSessions : options.sessionHistory;
+      structuredContent = await service.execute(command.plan.family === 'history'
+        ? command.plan.operation.toLowerCase() : command.plan.operation, command.plan.args);
+      contentText = JSON.stringify(structuredContent).slice(0, MAX_RESULT_TEXT);
+      if (!structuredContent || structuredContent.ok !== true) return frozen({
+        ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command, contentText, structuredContent,
+        blocker: structuredContent?.blocker || 'SOVEREIGN_PRIVATE_SESSION_OPERATION_BLOCKED',
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+      });
+    } else if (command.plan.kind === 'config') {
       structuredContent = frozen({
         schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
         implementation: 'stephanos-local-node',
@@ -1215,9 +1304,15 @@ async function executeAdmittedSovereignCommandV1(command, options) {
       receiptRequired: true,
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
-      finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      finalVerdict: command.plan.kind === 'private-session'
+        ? 'SOVEREIGN_COMMANDER_SESSION_OPERATION_RETURNED' : 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
     });
   } catch (error) {
+    if (command.plan?.kind === 'private-session') return frozen({
+      ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+      blocker: 'SOVEREIGN_PRIVATE_SESSION_OPERATION_FAILED',
+      finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+    });
     // Fixed high-risk reviewer failure may happen before child spawn or before
     // a terminal calibration marker exists. Never expose the raw thrown value,
     // executable paths, Git arguments, model output, or loader implementation.
