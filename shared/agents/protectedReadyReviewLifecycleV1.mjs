@@ -25,7 +25,22 @@ export const READY_REVIEW_PATH = '.github/workflows/stephanos-exact-head-review.
 export const READY_REVIEW_NAME = 'Stephanos Exact-Head Review';
 export const READY_REVIEW_HANDOFF_FILE = 'protected-ready-review-handoff.json';
 export const READY_REVIEW_RECEIPT_FILE = 'protected-ready-review-receipt.json';
+export const READY_REVIEW_RECOVERY_RECEIPT_FILE = 'protected-ready-review-recovery-receipt.json';
 export const READY_REVIEW_MAX_BYTES = 256 * 1024;
+export const READY_REVIEW_RECOVERY_SOURCE_PATHS = Object.freeze([
+  '.github/workflows/stephanos-exact-head-review.yml',
+  'docs/architecture/stephanos-protected-ready-review-failure-recovery-v1.md',
+  'scripts/exact-head-qualified-escalation-v1.mjs',
+  'scripts/exact-head-qualified-escalation-v1.test.mjs',
+  'scripts/operator-protected-personal-repository-merge.mjs',
+  'scripts/protected-ready-review-lifecycle-v1.mjs',
+  'scripts/protected-ready-review-lifecycle-v1.test.mjs',
+  'shared/agents/fixtures/protectedReadyReviewLifecycleV1.fixture.mjs',
+  'shared/agents/operatorPersonalRepositoryMergeDraftSkipV1.test.mjs',
+  'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+  'shared/agents/protectedReadyReviewLifecycleV1.mjs',
+  'shared/agents/protectedReadyReviewLifecycleV1.test.mjs',
+]);
 const SHA = /^[a-f0-9]{40}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
@@ -71,8 +86,11 @@ export function readyReviewIdentity(command) {
 }
 export const readyReviewHandoffName = (runId, attempt = 1) => `protected-ready-review-handoff-${runId}-attempt-${attempt}`;
 export const readyReviewReceiptName = (runId, attempt = 1) => `protected-ready-review-receipt-${runId}-attempt-${attempt}`;
+export const readyReviewRecoveryReceiptName = (runId, attempt = 1) => `protected-ready-review-recovery-receipt-${runId}-attempt-${attempt}`;
 export const readyReviewRunName = ({ prNumber, sourceHead, readyRunId, handoffSha256 }) =>
   `protected-ready-review-pr-${prNumber}-head-${sourceHead}-ready-${readyRunId}-binding-${handoffSha256}`;
+export const readyReviewRecoveryRunName = ({ prNumber, commentId, sourceSha }) =>
+  `protected-ready-review-recovery-pr-${prNumber}-comment-${commentId}-source-${sourceSha}`;
 
 export function parseReadyReviewInputs(inputs) {
   exactKeys(inputs, ['pr_number', 'source_head', 'base_sha', 'ready_run_id', 'ready_artifact_id', 'ready_receipt_sha256']);
@@ -107,6 +125,29 @@ export function assertReadyReviewSourceContext(env, sourceSha, baseSha, role) {
     && env.GITHUB_JOB === role && env.GITHUB_RUN_ATTEMPT === '1'
     && /^[1-9][0-9]*$/.test(env.GITHUB_RUN_ID || '') && positive(Number(env.GITHUB_RUN_ID)),
   'TRUSTED_SOURCE_CONTEXT');
+}
+
+export function assertReadyReviewRecoverySourceContext(env, sourceSha) {
+  readyReviewAssert(env.GITHUB_ACTIONS === 'true' && env.GITHUB_REPOSITORY === REPOSITORY
+    && env.GITHUB_REF === 'refs/heads/main' && SHA.test(sourceSha)
+    && env.GITHUB_SHA === sourceSha && env.GITHUB_WORKFLOW_SHA === sourceSha
+    && env.GITHUB_WORKFLOW_REF === `${REPOSITORY}/${READY_REVIEW_PATH}@refs/heads/main`
+    && env.GITHUB_EVENT_NAME === 'issue_comment' && env.GITHUB_JOB === 'exact-head-review'
+    && env.GITHUB_RUN_ATTEMPT === '1' && /^[1-9][0-9]*$/.test(env.GITHUB_RUN_ID || '')
+    && positive(Number(env.GITHUB_RUN_ID)), 'RECOVERY_TRUSTED_SOURCE_CONTEXT');
+}
+
+export function assertReadyReviewRecoveryTarget({ pull, main, commit }, identity, currentMainSha) {
+  readyReviewAssert(identity.repository === REPOSITORY && positive(identity.prNumber)
+    && SHA.test(identity.sourceHead) && SHA.test(identity.sourceTree) && SHA.test(identity.baseSha)
+    && SHA.test(currentMainSha) && currentMainSha !== identity.baseSha
+    && pull?.number === identity.prNumber && pull?.state === 'open' && pull.merged === false && pull.draft === false
+    && pull.mergeable === true
+    && pull.head?.repo?.full_name === REPOSITORY && pull.base?.repo?.full_name === REPOSITORY
+    && pull.head?.ref === identity.branch && pull.head?.sha === identity.sourceHead
+    && pull.base?.ref === 'main' && [identity.baseSha, currentMainSha].includes(pull.base?.sha)
+    && main?.object?.sha === currentMainSha && commit?.sha === identity.sourceHead
+    && commit?.tree?.sha === identity.sourceTree, 'RECOVERY_CURRENT_PR_HEAD_TREE_OR_MAIN_CHANGED');
 }
 
 export function assertReadyReviewTarget({ pull, main, commit }, identity, { allowDraft = false } = {}) {
@@ -171,6 +212,84 @@ export function assertReadyReviewJob(job, run, name, { terminal = true } = {}) {
     && time(job.started_at)
     && (terminal ? job.status === 'completed' && job.conclusion === 'success' && time(job.completed_at)
       : job.status === 'in_progress' && job.conclusion === null), 'JOB_PROVENANCE_OR_STATE');
+}
+
+export function assertReadyReviewFailedRun(run, definition, identity, handoff, job) {
+  assertReadyReviewRunIdentity(run, definition, identity, {
+    handoffSha256: handoff.payloadSha256, readyRunId: handoff.producerRunId,
+  });
+  readyReviewAssert(run.status === 'completed' && run.conclusion === 'failure' && time(run.run_started_at),
+    'FAILED_RUN_STATE');
+  readyReviewAssert(positive(job?.id) && job.run_id === run.id && job.run_attempt === 1
+    && job.name === 'exact-head-review' && job.head_sha === run.head_sha && job.head_branch === 'main'
+    && job.status === 'completed' && job.conclusion === 'failure' && time(job.started_at) && time(job.completed_at)
+    && Array.isArray(job.steps), 'FAILED_JOB_PROVENANCE');
+  const steps = new Map(job.steps.map(step => [step?.name, step?.conclusion]));
+  const beforeFailure = [
+    'Gate hosted review on its own GitHub installation API budget', 'Resolve immutable review identity',
+    'Checkout trusted reviewer', 'Verify trusted reviewer source', 'Authenticate immutable READY handoff before review reads',
+    'Admit exact current-main review target', 'Require exact current-main admission', 'Run trusted engine regressions',
+    'Build immutable exact-head review input',
+  ];
+  readyReviewAssert(beforeFailure.every(name => steps.get(name) === 'success')
+    && steps.get('Review ready head with the unchanged engine and qualified escalation') === 'failure'
+    && steps.get('Upload separate immutable lifecycle review proof') === 'skipped'
+    && steps.get('Upload SHA-bound review receipt') === 'success'
+    && job.steps.filter(step => step?.conclusion === 'failure').length === 1
+    && !job.steps.some(step => ['cancelled', 'timed_out'].includes(step?.conclusion)), 'FAILED_JOB_STEP_TOPOLOGY');
+}
+
+export function assertReadyReviewRecoveryRun(run, definition, identity, { commentId, sourceSha, terminal = true } = {}) {
+  assertReadyReviewDefinition(definition, READY_REVIEW_PATH, READY_REVIEW_NAME);
+  const title = readyReviewRecoveryRunName({ prNumber: identity.prNumber, commentId, sourceSha });
+  readyReviewAssert(positive(commentId) && SHA.test(sourceSha) && positive(run?.id) && run.run_attempt === 1
+    && run.workflow_id === definition.id && run.path === READY_REVIEW_PATH && (run.name === READY_REVIEW_NAME || run.name === title)
+    && run.display_title === title && run.repository?.full_name === REPOSITORY && run.head_repository?.full_name === REPOSITORY
+    && run.event === 'issue_comment' && run.head_branch === 'main' && run.head_sha === sourceSha
+    && Array.isArray(run.pull_requests) && run.pull_requests.length === 0
+    && run.actor?.login === OWNER && run.actor?.id === OWNER_ID
+    && run.triggering_actor?.login === OWNER && run.triggering_actor?.id === OWNER_ID
+    && time(run.created_at) && time(run.run_started_at)
+    && (terminal ? run.status === 'completed' && run.conclusion === 'success'
+      : run.status === 'in_progress' && run.conclusion === null), 'RECOVERY_RUN_PROVENANCE_OR_STATE');
+}
+
+function recoverySinglePathInventory(files, reason) {
+  // This bounded recovery contract admits no renames. Projecting filenames
+  // before checking both inventories could hide a touched old path.
+  readyReviewAssert(Array.isArray(files) && files.length > 0
+    && files.every(file => record(file) && typeof file.filename === 'string'
+      && file.status !== 'renamed' && !Object.hasOwn(file, 'previous_filename')), reason);
+  const paths = files.map(file => file.filename);
+  readyReviewAssert(new Set(paths).size === paths.length, reason);
+  return paths;
+}
+
+export function buildReadyReviewRecoveryContinuity(compare, correctionCommit, identity, currentMainSha, candidateChangedFiles) {
+  readyReviewAssert(compare?.status === 'ahead' && compare?.base_commit?.sha === identity.baseSha
+    && compare?.merge_base_commit?.sha === identity.baseSha
+    && Number.isSafeInteger(compare.ahead_by) && compare.ahead_by > 0 && compare.ahead_by <= 250
+    && compare.behind_by === 0 && compare.total_commits === compare.ahead_by
+    && Array.isArray(compare.commits) && compare.commits.length === compare.total_commits
+    && compare.commits.at(-1)?.sha === currentMainSha
+    && Array.isArray(compare.files) && compare.files.length > 0
+    // A saturated compare response cannot prove the complete changed estate.
+    && compare.files.length < 300, 'RECOVERY_CONTINUITY_COMPARE');
+  const commitShas = compare.commits.map(commit => commit?.sha);
+  const changedFiles = recoverySinglePathInventory(compare.files, 'RECOVERY_CONTINUITY_SCOPE_OR_OVERLAP');
+  readyReviewAssert(commitShas.every(sha => SHA.test(sha)) && new Set(commitShas).size === commitShas.length
+    && Array.isArray(candidateChangedFiles) && candidateChangedFiles.length > 0
+    && !changedFiles.some(path => candidateChangedFiles.includes(path)), 'RECOVERY_CONTINUITY_SCOPE_OR_OVERLAP');
+  const correctionFiles = recoverySinglePathInventory(correctionCommit?.files, 'RECOVERY_CORRECTION_TIP');
+  const expectedParent = commitShas.length === 1 ? identity.baseSha : commitShas.at(-2);
+  readyReviewAssert(correctionCommit?.sha === currentMainSha && Array.isArray(correctionCommit.parents)
+    && correctionCommit.parents.length === 1 && correctionCommit.parents[0]?.sha === expectedParent
+    && correctionFiles.every(path => READY_REVIEW_RECOVERY_SOURCE_PATHS.includes(path))
+    && correctionFiles.every(path => changedFiles.includes(path)), 'RECOVERY_CORRECTION_TIP');
+  return Object.freeze({ schemaVersion: 'stephanos.protected-ready-review-continuity.v1',
+    fromBaseSha: identity.baseSha, toMainSha: currentMainSha, commitShas, changedFiles,
+    changedFilesSha256: readyReviewSha256(JSON.stringify(changedFiles)), correctionFiles,
+    correctionFilesSha256: readyReviewSha256(JSON.stringify(correctionFiles)) });
 }
 export function assertReadyReviewArtifact(envelope, run, name, payloadSha256) {
   const { metadata, payload, archiveSha256 } = envelope || {};
@@ -355,6 +474,124 @@ export function validateProtectedReadyReviewLifecycleEvidence(proof, expected, s
     return Object.freeze({ valid: true, identity, workflowRunId: run.id, workflowRunAttempt: 1,
       artifactId: artifact.metadata.id, artifactDigest: artifact.metadata.digest, payloadSha256: receipt.payloadSha256,
       reviewMode, handoffRunId: handoff.producerRunId, handoffPayloadSha256: handoff.payloadSha256 });
+  } catch (error) {
+    return Object.freeze({ valid: false, blocker: String(error?.message || error) });
+  }
+}
+
+export function validateProtectedReadyReviewRecoveryEvidence(proof, expected, skippedRunId) {
+  try {
+    readyReviewAssert(positive(skippedRunId), 'SKIPPED_RUN_ID');
+    const originalIdentity = assertReadyReviewHandoff(proof.handoff);
+    assertReadyReviewJob(proof.handoff.dispatchJob, proof.handoff.run, 'review-ready');
+    readyReviewAssert(['repository', 'prNumber', 'branch', 'sourceHead', 'sourceTree']
+      .every(key => originalIdentity[key] === expected[key])
+      && originalIdentity.baseSha !== expected.baseSha, 'RECOVERY_CONSUMER_IDENTITY');
+    const handoff = proof.handoff.artifact.payload;
+    const failed = proof.failedReview;
+    assertReadyReviewFailedRun(failed.run, failed.definition, originalIdentity, handoff, failed.job);
+    readyReviewAssert(failed.run.id > skippedRunId, 'RECOVERY_FAILED_RUN_AFTER_DRAFT_SKIP');
+    readyReviewAssert(failed.lifecycleArtifacts.length === 0 && failed.diagnosticArtifacts.length === 1,
+      'RECOVERY_FAILED_ARTIFACT_SET');
+    const diagnostic = failed.diagnostic;
+    readyReviewAssert(diagnostic.metadata.id === failed.diagnosticArtifacts[0].id
+      && diagnostic.metadata.name === `exact-head-review-${originalIdentity.prNumber}-${originalIdentity.sourceHead}`
+      && diagnostic.metadata.workflow_run?.id === failed.run.id && diagnostic.metadata.expired === false
+      && DIGEST.test(diagnostic.metadata.digest || '') && diagnostic.metadata.digest === `sha256:${diagnostic.archiveSha256}`,
+    'RECOVERY_DIAGNOSTIC_PROVENANCE');
+    const input = diagnostic.input;
+    readyReviewAssert(input?.repository === originalIdentity.repository && input.prNumber === originalIdentity.prNumber
+      && input.headSha === originalIdentity.sourceHead && input.baseSha === originalIdentity.baseSha
+      && Array.isArray(input.changedFiles) && input.changedFiles.length > 0
+      && new Set(input.changedFiles).size === input.changedFiles.length
+      && input.changedFiles.every(path => typeof path === 'string' && path.length > 0)
+      && typeof input.patch === 'string' && input.patch.startsWith('diff --git '), 'RECOVERY_DIAGNOSTIC_INPUT');
+    readyReviewAssert(diagnostic.changedFilesText === `${input.changedFiles.join('\n')}\n`
+      && diagnostic.patch === input.patch, 'RECOVERY_DIAGNOSTIC_FILES');
+    const { run, definition, job, check, artifact } = proof.recovery;
+    const receipt = artifact?.payload;
+    exactKeys(receipt, ['schemaVersion', 'identity', 'recoveryRunId', 'recoveryRunAttempt', 'recoverySourceSha',
+      'failedReviewRunId', 'failedReviewRunAttempt', 'failedDiagnosticArtifactId', 'failedDiagnosticArtifactDigest',
+      'failedDiagnosticArchiveSha256', 'handoffRunId', 'handoffArtifactId', 'handoffArtifactDigest', 'handoffPayloadSha256',
+      'startedAt', 'finishedAt', 'patchSha256', 'changedFilesSha256', 'target', 'continuity', 'engineReceipt',
+      'independentReviewMode', 'qualification', 'escalationCommentId', 'escalationCommentSha256', 'payloadSha256']);
+    assertReadyReviewRecoveryRun(run, definition, originalIdentity, { commentId: receipt.escalationCommentId,
+      sourceSha: expected.baseSha });
+    assertReadyReviewJob(job, run, 'exact-head-review');
+    assertReadyReviewArtifact(artifact, run, readyReviewRecoveryReceiptName(run.id));
+    readyReviewAssert(receipt.schemaVersion === 'stephanos.protected-ready-review-recovery-receipt.v1'
+      && equal(receipt.identity, originalIdentity) && receipt.recoveryRunId === run.id && receipt.recoveryRunAttempt === 1
+      && receipt.recoverySourceSha === expected.baseSha && run.id > failed.run.id
+      && receipt.failedReviewRunId === failed.run.id && receipt.failedReviewRunAttempt === 1
+      && receipt.failedDiagnosticArtifactId === diagnostic.metadata.id
+      && receipt.failedDiagnosticArtifactDigest === diagnostic.metadata.digest
+      && receipt.failedDiagnosticArchiveSha256 === diagnostic.archiveSha256
+      && receipt.handoffRunId === handoff.producerRunId && receipt.handoffArtifactId === proof.handoff.artifact.metadata.id
+      && receipt.handoffArtifactDigest === proof.handoff.artifact.metadata.digest
+      && receipt.handoffPayloadSha256 === handoff.payloadSha256
+      && time(receipt.startedAt) && time(receipt.finishedAt)
+      && Date.parse(receipt.startedAt) >= Date.parse(failed.job.completed_at)
+      && Date.parse(receipt.startedAt) >= Date.parse(job.started_at)
+      && Date.parse(receipt.finishedAt) >= Date.parse(receipt.startedAt)
+      && Date.parse(receipt.finishedAt) <= Date.parse(job.completed_at)
+      && receipt.patchSha256 === readyReviewSha256(input.patch)
+      && receipt.changedFilesSha256 === readyReviewSha256(JSON.stringify(input.changedFiles)), 'RECOVERY_RECEIPT_BINDING');
+    exactKeys(receipt.target, ['currentMainSha', 'prBaseSha', 'sourceHead', 'sourceTree', 'mergeable']);
+    readyReviewAssert(receipt.target.currentMainSha === expected.baseSha
+      && [originalIdentity.baseSha, expected.baseSha].includes(receipt.target.prBaseSha)
+      && receipt.target.sourceHead === originalIdentity.sourceHead
+      && receipt.target.sourceTree === originalIdentity.sourceTree && receipt.target.mergeable === true,
+    'RECOVERY_TARGET_RECEIPT');
+    const continuity = receipt.continuity;
+    exactKeys(continuity, ['schemaVersion', 'fromBaseSha', 'toMainSha', 'commitShas', 'changedFiles', 'changedFilesSha256',
+      'correctionFiles', 'correctionFilesSha256']);
+    readyReviewAssert(continuity.schemaVersion === 'stephanos.protected-ready-review-continuity.v1'
+      && continuity.fromBaseSha === originalIdentity.baseSha && continuity.toMainSha === expected.baseSha
+      && Array.isArray(continuity.commitShas) && continuity.commitShas.length > 0
+      && continuity.commitShas.at(-1) === expected.baseSha && new Set(continuity.commitShas).size === continuity.commitShas.length
+      && Array.isArray(continuity.changedFiles) && continuity.changedFiles.length > 0
+      && !continuity.changedFiles.some(path => input.changedFiles.includes(path))
+      && continuity.changedFilesSha256 === readyReviewSha256(JSON.stringify(continuity.changedFiles))
+      && Array.isArray(continuity.correctionFiles) && continuity.correctionFiles.length > 0
+      && continuity.correctionFiles.every(path => READY_REVIEW_RECOVERY_SOURCE_PATHS.includes(path))
+      && continuity.correctionFiles.every(path => continuity.changedFiles.includes(path))
+      && continuity.correctionFilesSha256 === readyReviewSha256(JSON.stringify(continuity.correctionFiles)),
+    'RECOVERY_CONTINUITY_RECEIPT');
+    readyReviewAssert(check?.id === job.id && check.name === 'exact-head-review' && check.head_sha === expected.baseSha
+      && check.status === 'completed' && check.conclusion === 'success'
+      && check.app?.slug === 'github-actions' && check.app?.id === 15368
+      && check.check_suite?.id === run.check_suite_id && check.details_url === job.html_url,
+    'RECOVERY_CHECK_PROVENANCE');
+    const reviewMode = assertReadyReviewIndependent(proof.independent, handoff.command);
+    readyReviewAssert(receipt.independentReviewMode === reviewMode, 'RECOVERY_INDEPENDENT_MODE');
+    const engine = receipt.engineReceipt;
+    readyReviewAssert(engine?.repository === REPOSITORY && engine.prNumber === originalIdentity.prNumber
+      && engine.headSha === originalIdentity.sourceHead && engine.baseSha === originalIdentity.baseSha
+      && engine.reviewer === 'stephanos-deterministic-review-v1'
+      && engine.authority?.readOnly === true && engine.authority?.mayEdit === false && engine.authority?.mayApprove === false
+      && engine.authority?.mayMerge === false && engine.authority?.mayDeploy === false
+      && engine.verdict === 'STEPHANOS_REVIEW_FINDINGS' && Array.isArray(engine.findings)
+      && engine.findings.length > 0 && engine.findings.length <= 40
+      && engine.findings.every(finding => finding.severity === 'P2'
+        && ['AUTHORITY_SURFACE_CHANGED', 'DYNAMIC_EXECUTION'].includes(finding.code)), 'RECOVERY_ENGINE_RECEIPT');
+    const q = receipt.qualification;
+    readyReviewAssert(q?.ok === true && q.finalVerdict === 'EXACT_HEAD_QUALIFIED_ESCALATION_PASS'
+      && q.prNumber === originalIdentity.prNumber && q.sourceHead === originalIdentity.sourceHead
+      && q.reviewMode === reviewMode && q.approvalAuthority === false && q.mergeAuthority === false
+      && q.ownerCommentId === receipt.escalationCommentId
+      && q.independentReviewRunId === handoff.command.independentReviewRunId
+      && q.independentArtifactId === handoff.command.independentReviewArtifactId
+      && proof.escalationComment?.id === receipt.escalationCommentId
+      && proof.escalationComment?.user?.login === OWNER && proof.escalationComment?.user?.id === OWNER_ID
+      && proof.escalationComment?.author_association === 'OWNER'
+      && proof.escalationComment?.issue_url === `https://api.github.com/repos/${REPOSITORY}/issues/${originalIdentity.prNumber}`
+      && proof.escalationComment?.created_at === proof.escalationComment?.updated_at
+      && protectedWorkflowAuthorizationCommentSha256(proof.escalationComment) === receipt.escalationCommentSha256,
+    'RECOVERY_QUALIFIED_FINDINGS');
+    return Object.freeze({ valid: true, identity: originalIdentity, workflowRunId: run.id, workflowRunAttempt: 1,
+      artifactId: artifact.metadata.id, artifactDigest: artifact.metadata.digest, payloadSha256: receipt.payloadSha256,
+      reviewMode, handoffRunId: handoff.producerRunId, handoffPayloadSha256: handoff.payloadSha256,
+      failedReviewRunId: failed.run.id, recoverySourceSha: expected.baseSha });
   } catch (error) {
     return Object.freeze({ valid: false, blocker: String(error?.message || error) });
   }

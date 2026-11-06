@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validatePersonalRepositoryCheckRuns } from './operatorPersonalRepositoryMergeV1.mjs';
-import { readyLifecycleFixture, clock } from './fixtures/protectedReadyReviewLifecycleV1.fixture.mjs';
+import { readyLifecycleFixture, readyRecoveryFixture, clock } from './fixtures/protectedReadyReviewLifecycleV1.fixture.mjs';
 
 function estate(f) {
   const run = { id: 50, run_attempt: 1, name: 'Stephanos Exact-Head Review',
@@ -41,6 +41,26 @@ test('a real artifact-bound lifecycle proof supersedes only the precise historic
     assert.equal(validatePersonalRepositoryCheckRuns([e.check], [altered], [], e.expected,
       { readyReviewLifecycleEvidence: f.proof }).valid, false);
   }
+});
+
+test('the canonical merge consumer accepts the distinct preserved-failure recovery proof', () => {
+  const f = readyRecoveryFixture(), e = estate(f);
+  const result = validatePersonalRepositoryCheckRuns([e.check], [e.run], [], e.expected,
+    { readyReviewLifecycleEvidence: f.proof });
+  assert.equal(result.valid, true, result.blockers.join(','));
+  assert.equal(result.evidence[0].disposition, 'reviewed-ready-lifecycle');
+  assert.equal(result.evidence[0].readyReviewLifecycle.failedReviewRunId, 200);
+  assert.equal(result.evidence[0].readyReviewLifecycle.workflowRunId, 300);
+  assert.equal(result.evidence[0].readyReviewLifecycle.recoverySourceSha, f.currentMainSha);
+});
+
+test('the canonical merge consumer rejects ambiguous lifecycle and recovery proof shapes', () => {
+  const lifecycle = readyLifecycleFixture(), lifecycleEstate = estate(lifecycle);
+  assert.equal(validatePersonalRepositoryCheckRuns([lifecycleEstate.check], [lifecycleEstate.run], [],
+    lifecycleEstate.expected, { readyReviewLifecycleEvidence: { ...lifecycle.proof, recovery: {} } }).valid, false);
+  const recovery = readyRecoveryFixture(), recoveryEstate = estate(recovery);
+  assert.equal(validatePersonalRepositoryCheckRuns([recoveryEstate.check], [recoveryEstate.run], [],
+    recoveryEstate.expected, { readyReviewLifecycleEvidence: { ...recovery.proof, review: {} } }).valid, false);
 });
 
 test('lifecycle proof cannot suppress unrelated pending, failed, skipped checks or failed commit statuses', () => {

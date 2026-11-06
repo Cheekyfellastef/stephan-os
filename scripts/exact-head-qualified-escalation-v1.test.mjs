@@ -7,8 +7,11 @@ import {
   assertQualifiableExactHeadReceiptV1,
   validateOwnerEscalationCommentV1,
   qualifyExactHeadReviewV1,
+  qualifyProtectedReadyDraftReviewV1,
+  qualifyProtectedReadyRecoveryReviewV1,
   assertCurrentExactHeadPrIdentityV1,
 } from './exact-head-qualified-escalation-v1.mjs';
+import { readyRecoveryFixture, fixtureRecoveryTransport, clock } from '../shared/agents/fixtures/protectedReadyReviewLifecycleV1.fixture.mjs';
 
 const SHA_A = 'a'.repeat(40), SHA_B = 'b'.repeat(40);
 const diff = 'diff --git a/.github/workflows/merge.yml b/.github/workflows/merge.yml\n+const authenticated = true;\n';
@@ -55,6 +58,7 @@ test('exact PR head/base and ownership remain pinned before and after independen
     base: { sha: SHA_B, ref: 'main' },
   };
   assert.equal(assertCurrentExactHeadPrIdentityV1(current, input), true);
+  assert.throws(() => assertCurrentExactHeadPrIdentityV1({ ...current, draft: true }, input), /PR_CHANGED/);
   for (const altered of [
     { ...current, head: { ...current.head, sha: 'c'.repeat(40) } },
     { ...current, base: { ...current.base, sha: 'c'.repeat(40) } },
@@ -65,7 +69,34 @@ test('exact PR head/base and ownership remain pinned before and after independen
   ]) assert.throws(() => assertCurrentExactHeadPrIdentityV1(altered, input), /PR_CHANGED/);
   const actual = readFileSync(new URL('./exact-head-qualified-escalation-v1.mjs', import.meta.url), 'utf8');
   assert.match(actual, /const prAfter = await api\('\/pulls\/' \+ input\.prNumber\)/);
-  assert.match(actual, /assertCurrentExactHeadPrIdentityV1\(prAfter, input\)/);
+  assert.match(actual, /assertCurrentExactHeadPrIdentity\(prAfter, input, allowDraft, expectedLiveBaseSha\)/);
+  assert.match(actual, /qualifyProtectedReadyDraftReviewV1[\s\S]*qualifyExactHeadReview\(input, receipt, options, true\)/);
+});
+
+test('recovery qualification preserves historical review bindings while pinning the live current base', async () => {
+  const f = readyRecoveryFixture(), transport = fixtureRecoveryTransport(f);
+  const engineReceipt = f.proof.recovery.artifact.payload.engineReceipt;
+  await assert.rejects(() => qualifyExactHeadReviewV1(f.input, engineReceipt, {
+    ...transport, unzip: async () => JSON.stringify(f.proof.independent.payload), nowMs: Date.parse(clock(80)),
+  }), /PR_CHANGED/);
+  const result = await qualifyProtectedReadyRecoveryReviewV1(f.input, engineReceipt, {
+    ...transport, unzip: async () => JSON.stringify(f.proof.independent.payload), nowMs: Date.parse(clock(80)),
+    currentMainSha: f.currentMainSha, liveBaseSha: f.currentMainSha,
+  });
+  assert.equal(result.finalVerdict, 'EXACT_HEAD_QUALIFIED_ESCALATION_PASS');
+  assert.equal(result.ownerCommentId, 901);
+  assert.equal(result.independentReviewRunId, 90);
+  assert.throws(() => qualifyProtectedReadyRecoveryReviewV1(f.input, engineReceipt, {
+    ...transport, unzip: async () => JSON.stringify(f.proof.independent.payload), nowMs: Date.parse(clock(80)),
+    currentMainSha: f.currentMainSha, liveBaseSha: 'e'.repeat(40),
+  }), /RECOVERY_LIVE_BASE_INVALID/);
+  const changed = { ...transport, api: async path => path === `/pulls/${f.identity.prNumber}`
+    ? { ...(await transport.api(path)), base: { ...(await transport.api(path)).base, sha: 'e'.repeat(40) } }
+    : transport.api(path) };
+  await assert.rejects(() => qualifyProtectedReadyRecoveryReviewV1(f.input, engineReceipt, {
+    ...changed, unzip: async () => JSON.stringify(f.proof.independent.payload), nowMs: Date.parse(clock(80)),
+    currentMainSha: f.currentMainSha, liveBaseSha: f.currentMainSha,
+  }), /PR_CHANGED/);
 });
 
 test('only P2 authority and dynamic execution findings can request external qualification', () => {

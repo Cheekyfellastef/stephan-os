@@ -1,5 +1,5 @@
 name: Stephanos Exact-Head Review
-run-name: ${{ github.event_name == 'workflow_dispatch' && format('protected-ready-review-pr-{0}-head-{1}-ready-{2}-binding-{3}', inputs.pr_number, inputs.source_head, inputs.ready_run_id, inputs.ready_receipt_sha256) || github.workflow }}
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('protected-ready-review-pr-{0}-head-{1}-ready-{2}-binding-{3}', inputs.pr_number, inputs.source_head, inputs.ready_run_id, inputs.ready_receipt_sha256) || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '```stephanos-exact-head-qualified-review-v1') && format('protected-ready-review-recovery-pr-{0}-comment-{1}-source-{2}', github.event.issue.number, github.event.comment.id, github.sha) || github.workflow) }}
 
 on:
   workflow_dispatch:
@@ -176,6 +176,17 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${{ steps.identity.outputs.base_sha }}"
 
+      - name: Probe preserved protected READY failure recovery
+        id: ready_recovery
+        if: >-
+          ${{ github.event_name == 'issue_comment' &&
+              github.event.comment.user.login == 'Cheekyfellastef' &&
+              github.event.comment.author_association == 'OWNER' &&
+              startsWith(github.event.comment.body, '```stephanos-exact-head-qualified-review-v1') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/protected-ready-review-lifecycle-v1.mjs recovery-prepare
+
       - name: Authenticate immutable READY handoff before review reads
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -184,6 +195,7 @@ jobs:
 
       - name: Admit exact current-main review target
         id: admission
+        if: steps.ready_recovery.outputs.ready_recovery != 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -195,6 +207,7 @@ jobs:
           node scripts/exact-head-review-current-main-admission-v1.mjs
 
       - name: Require exact current-main admission
+        if: steps.ready_recovery.outputs.ready_recovery != 'true'
         env:
           PR_NUMBER: ${{ steps.identity.outputs.pr_number }}
           ADMITTED_TARGETS: ${{ steps.admission.outputs.targets }}
@@ -207,6 +220,7 @@ jobs:
         run: node --test scripts/exact-head-review.test.mjs scripts/exact-head-qualified-escalation-v1.test.mjs shared/agents/protectedReadyReviewLifecycleV1.test.mjs scripts/protected-ready-review-lifecycle-v1.test.mjs
 
       - name: Build immutable exact-head review input
+        if: steps.ready_recovery.outputs.ready_recovery != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -246,7 +260,7 @@ jobs:
       # P2 findings never become approval without independently pinned records.
       # This is an atomic fail-closed qualification check, not a waiver.
       - name: Review exact head and require independently qualified escalation
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'workflow_dispatch' && steps.ready_recovery.outputs.ready_recovery != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/exact-head-qualified-escalation-v1.mjs review-proof/input.json review-proof/receipt.json
@@ -257,12 +271,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/protected-ready-review-lifecycle-v1.mjs review
 
+      - name: Recover preserved failed READY review with the unchanged engine
+        if: steps.ready_recovery.outputs.ready_recovery == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/protected-ready-review-lifecycle-v1.mjs recovery-review
+
       - name: Upload separate immutable lifecycle review proof
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: protected-ready-review-receipt-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: protected-ready-review-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload separate immutable lifecycle recovery proof
+        if: steps.ready_recovery.outputs.ready_recovery == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: protected-ready-review-recovery-receipt-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: protected-ready-review-recovery-receipt.json
           if-no-files-found: error
           retention-days: 30
 

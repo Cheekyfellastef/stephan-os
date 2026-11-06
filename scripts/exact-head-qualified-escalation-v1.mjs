@@ -71,20 +71,26 @@ export function assertQualifiableExactHeadReceiptV1(input, receipt) {
 // Exact-head review cannot outlive a concurrent PR head/base update. This
 // validation is used once before external evidence and again at conclusion.
 // It does NOT confer merge authority or waive separate branch protections.
-export function assertCurrentExactHeadPrIdentityV1(pr, input) {
-  requireProof(pr?.state === 'open' && pr?.draft === false
-    && pr?.head?.sha === input.headSha && pr?.base?.sha === input.baseSha
+function assertCurrentExactHeadPrIdentity(pr, input, allowDraft, expectedLiveBaseSha = input.baseSha) {
+  requireProof(pr?.state === 'open' && (pr?.draft === false || (allowDraft === true && pr?.draft === true))
+    && pr?.head?.sha === input.headSha && pr?.base?.sha === expectedLiveBaseSha
     && pr?.base?.ref === 'main' && pr?.head?.repo?.full_name === REPO,
     'PR_CHANGED');
   return true;
 }
 
-export async function qualifyExactHeadReviewV1(input, receipt, { api, download, unzip, nowMs } = {}) {
+export function assertCurrentExactHeadPrIdentityV1(pr, input) {
+  return assertCurrentExactHeadPrIdentity(pr, input, false);
+}
+
+async function qualifyExactHeadReview(input, receipt, { api, download, unzip, nowMs } = {}, allowDraft = false,
+  expectedLiveBaseSha = input.baseSha) {
   const context = assertQualifiableExactHeadReceiptV1(input, receipt);
+  requireProof(SHA.test(expectedLiveBaseSha), 'LIVE_BASE_INVALID');
   requireProof(typeof api === 'function' && typeof download === 'function'
     && typeof unzip === 'function', 'TRUSTED_TRANSPORT_UNAVAILABLE');
   const pr = await api('/pulls/' + input.prNumber);
-  assertCurrentExactHeadPrIdentityV1(pr, input);
+  assertCurrentExactHeadPrIdentity(pr, input, allowDraft, expectedLiveBaseSha);
   const issue = await api('/issues/' + input.prNumber);
   const pages = Math.ceil(Number(issue?.comments) / 100);
   requireProof(pages > 0 && Number.isSafeInteger(pages), 'OWNER_COMMENT_ABSENT');
@@ -114,7 +120,14 @@ export async function qualifyExactHeadReviewV1(input, receipt, { api, download, 
     expectedHead: input.headSha, expectedBase: input.baseSha,
   };
   const run = await api('/actions/runs/' + owner.reviewRunId);
-  requireProof(validateProtectedOpenClawReviewRunIdentity(run, pr, command), 'REVIEW_RUN_UNBOUND');
+  // Recovery may run after protected main advances. The independent run and
+  // owner packet remain historical evidence for input.baseSha; this projection
+  // is used only to validate that immutable evidence, never as live PR state.
+  const historicalPull = expectedLiveBaseSha === input.baseSha ? pr : {
+    ...pr,
+    base: { ...pr.base, sha: input.baseSha },
+  };
+  requireProof(validateProtectedOpenClawReviewRunIdentity(run, historicalPull, command), 'REVIEW_RUN_UNBOUND');
   const jobs = await api('/actions/runs/' + owner.reviewRunId + '/jobs?per_page=100');
   requireProof(Array.isArray(jobs?.jobs) && jobs.jobs.some(j =>
     j?.name === 'independent-security-review'
@@ -152,7 +165,7 @@ export async function qualifyExactHeadReviewV1(input, receipt, { api, download, 
   // Reject a replaced PR head or changed protected base, even if the first
   // GitHub read and the independent evidence matched the old snapshot.
   const prAfter = await api('/pulls/' + input.prNumber);
-  assertCurrentExactHeadPrIdentityV1(prAfter, input);
+  assertCurrentExactHeadPrIdentity(prAfter, input, allowDraft, expectedLiveBaseSha);
   return Object.freeze({
     ok: true, finalVerdict: 'EXACT_HEAD_QUALIFIED_ESCALATION_PASS',
     prNumber: input.prNumber, sourceHead: input.headSha,
@@ -160,6 +173,27 @@ export async function qualifyExactHeadReviewV1(input, receipt, { api, download, 
     independentArtifactId: owner.reviewArtifactId,
     reviewMode: artifact.reviewMode, approvalAuthority: false, mergeAuthority: false,
   });
+}
+
+export function qualifyExactHeadReviewV1(input, receipt, options) {
+  return qualifyExactHeadReview(input, receipt, options, false);
+}
+
+// This named entry is used only by the protected READY producer before its
+// draft-state mutation. It changes no review, approval, merge or runtime authority.
+export function qualifyProtectedReadyDraftReviewV1(input, receipt, options) {
+  return qualifyExactHeadReview(input, receipt, options, true);
+}
+
+// Recovery preserves the original owner packet, patch and independent-review
+// base while binding both live PR reads to the current base proved by the
+// protected recovery continuity contract. It grants no additional authority.
+export function qualifyProtectedReadyRecoveryReviewV1(input, receipt, options = {}) {
+  const currentMainSha = options.currentMainSha;
+  const liveBaseSha = options.liveBaseSha;
+  requireProof(SHA.test(currentMainSha) && currentMainSha !== input?.baseSha
+    && [input?.baseSha, currentMainSha].includes(liveBaseSha), 'RECOVERY_LIVE_BASE_INVALID');
+  return qualifyExactHeadReview(input, receipt, options, false, liveBaseSha);
 }
 
 async function api(path) {

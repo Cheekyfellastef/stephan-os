@@ -6,12 +6,13 @@ import { join } from 'node:path';
 import {
   prepareReadyReviewProducer, finishReadyReviewProducer, dispatchReadyReview,
   prepareReadyReview, executeReadyReview, loadProtectedReadyReviewLifecycle, readReadyReviewCollection,
+  prepareReadyReviewRecovery, executeReadyReviewRecovery,
   loadReadyReviewHandoff, readReadyReviewUnresolvedThreads, readyReviewTransports,
 } from './protected-ready-review-lifecycle-v1.mjs';
 import { validateProtectedReadyReviewLifecycleEvidence, parseReadyReviewInputs,
   sealReadyReviewPayload, READY_REVIEW_HANDOFF_FILE, READY_REVIEW_RECEIPT_FILE } from '../shared/agents/protectedReadyReviewLifecycleV1.mjs';
 import { readyLifecycleFixture, fixtureEnv, fixtureTransport, fixtureThreadPage,
-  fixtureArtifact, clock } from '../shared/agents/fixtures/protectedReadyReviewLifecycleV1.fixture.mjs';
+  readyRecoveryFixture, fixtureRecoveryTransport, fixtureArtifact, clock } from '../shared/agents/fixtures/protectedReadyReviewLifecycleV1.fixture.mjs';
 
 function active(run) { run.status = 'in_progress'; run.conclusion = null; }
 function activeJob(job) { active(job); job.completed_at = null; }
@@ -30,6 +31,83 @@ test('loads complete real-shaped GitHub evidence and keeps the base-headed revie
   assert.ok(transport.calls.includes('/actions/runs/100/attempts/1/jobs?filter=all&per_page=100&page=1'));
   assert.ok(transport.calls.includes('/check-runs/201'));
   assert.equal(transport.calls.filter(p => p.startsWith('/actions/workflows/stephanos-exact-head-review.yml/runs?')).length, 2);
+});
+
+test('collector composes the preserved failed run and distinct recovery receipt without selecting old success', async () => {
+  const f = readyRecoveryFixture(), transport = fixtureRecoveryTransport(f);
+  const currentSelection = { workflowRunId: 910, workflowRunAttempt: 1, artifactId: 911,
+    artifactDigest: `sha256:${'a'.repeat(64)}`, payloadSha256: 'b'.repeat(64),
+    reviewMode: 'clean-independent', findings: [] };
+  const proof = await loadProtectedReadyReviewLifecycle({ identity: f.identity, skippedRunIds: [50],
+    selectedReview: currentSelection, ...transport });
+  assert.equal(proof.failedReview.run.id, 200);
+  assert.equal(proof.failedReview.run.conclusion, 'failure');
+  assert.equal(proof.recovery.run.id, 300);
+  assert.equal(proof.recovery.run.event, 'issue_comment');
+  assert.ok(transport.calls.includes(`/compare/${f.originalIdentity.baseSha}...${f.currentMainSha}`));
+  assert.ok(transport.calls.includes('/actions/runs/200/artifacts?per_page=100&page=1'));
+  assert.equal(transport.calls.filter(path => path.includes('event=issue_comment')).length, 2);
+});
+
+test('ordinary READY evidence still binds the separately authenticated current review selection', async () => {
+  const f = readyLifecycleFixture(), transport = fixtureTransport(f);
+  await assert.rejects(loadProtectedReadyReviewLifecycle({ identity: f.identity, skippedRunIds: [50],
+    selectedReview: { workflowRunId: 910, workflowRunAttempt: 1, artifactId: 911,
+      artifactDigest: `sha256:${'a'.repeat(64)}`, payloadSha256: 'b'.repeat(64),
+      reviewMode: 'clean-independent', findings: [] }, ...transport }),
+  /MERGE_SELECTION_DIFFERS_FROM_OWNER_READY/);
+});
+
+test('recovery execution qualifies the historical review against its proven live current-base target', async () => {
+  const f = readyRecoveryFixture();
+  active(f.proof.recovery.run); activeJob(f.proof.recovery.job);
+  const transport = fixtureRecoveryTransport(f);
+  const env = { ...fixtureEnv(f), GITHUB_EVENT_NAME: 'issue_comment', GITHUB_RUN_ID: '300' };
+  const prepared = await prepareReadyReviewRecovery({ comment: f.proof.escalationComment, env,
+    sourceSha: f.currentMainSha, ...transport, now: clock(72) });
+  assert.equal(prepared.target.prBaseSha, f.currentMainSha);
+  const receipt = await executeReadyReviewRecovery({ prepared, env, sourceSha: f.currentMainSha,
+    ...transport, now: () => clock(85) });
+  assert.equal(receipt.qualification.finalVerdict, 'EXACT_HEAD_QUALIFIED_ESCALATION_PASS');
+  assert.equal(receipt.target.prBaseSha, f.currentMainSha);
+  assert.equal(receipt.identity.baseSha, f.originalIdentity.baseSha);
+  assert.equal(receipt.recoverySourceSha, f.currentMainSha);
+});
+
+test('collector rejects diagnostic archive corruption, duplicate diagnostics and recovery replay inventory', async t => {
+  await t.test('diagnostic archive corruption', async () => {
+    const f = readyRecoveryFixture(), transport = fixtureRecoveryTransport(f), read = transport.download;
+    transport.download = async id => {
+      const bytes = Buffer.from(await read(id));
+      if (id === 503) bytes[40] ^= 0x01;
+      return bytes;
+    };
+    await assert.rejects(loadProtectedReadyReviewLifecycle({ identity: f.identity, skippedRunIds: [50], ...transport }),
+      /DIAGNOSTIC_ZIP|DIAGNOSTIC_ARTIFACT_ARCHIVE/);
+  });
+  await t.test('duplicate diagnostic metadata', async () => {
+    const f = readyRecoveryFixture(), transport = fixtureRecoveryTransport(f), read = transport.api;
+    transport.api = async path => {
+      const value = await read(path);
+      if (path === '/actions/runs/200/artifacts?per_page=100&page=1') return { total_count: 2,
+        artifacts: [value.artifacts[0], { ...value.artifacts[0], id: 999 }] };
+      return value;
+    };
+    await assert.rejects(loadProtectedReadyReviewLifecycle({ identity: f.identity, skippedRunIds: [50], ...transport }),
+      /RECOVERY_FAILED_ARTIFACT_SET/);
+  });
+  await t.test('second recovery run', async () => {
+    const f = readyRecoveryFixture(), transport = fixtureRecoveryTransport(f), read = transport.api;
+    transport.api = async path => {
+      const value = await read(path);
+      if (path.includes('event=issue_comment')) return { total_count: 2,
+        workflow_runs: [value.workflow_runs[0], { ...value.workflow_runs[0], id: 301,
+          display_title: value.workflow_runs[0].display_title.replace('comment-901', 'comment-902') }] };
+      return value;
+    };
+    await assert.rejects(loadProtectedReadyReviewLifecycle({ identity: f.identity, skippedRunIds: [50], ...transport }),
+      /RECOVERY_RUN_NOT_UNIQUE/);
+  });
 });
 
 test('full artifact bytes and singleton immutable metadata are required before consumer admission', async t => {
@@ -80,6 +158,9 @@ test('a complete clean selection is validated before the new draft transition an
     comment: f.proof.handoff.ownerComment, ...d, now: () => clock(5) });
   assert.equal(prepared.beforeDraft, true);
   assert.equal(prepared.unresolvedReviewThreads, 0);
+  assert.equal(prepared.preflight.engineReceipt.verdict, 'STEPHANOS_REVIEW_PASS');
+  assert.equal(prepared.preflight.escalationCommentId, 0);
+  assert.ok(d.calls.includes(`exactHeadInput:2094:${f.identity.sourceHead}:${f.identity.baseSha}`));
   assert.ok(d.calls.includes('reviewThreads:2094:null'));
   const dir = mkdtempSync(join(tmpdir(), 'ready-review-test-'));
   try {
@@ -92,6 +173,44 @@ test('a complete clean selection is validated before the new draft transition an
     assert.match(readFileSync(join(dir, 'outputs'), 'utf8'), /ready_review=true/);
     assert.equal(JSON.parse(readFileSync(join(dir, 'handoff.json'), 'utf8')).payloadSha256, handoff.payloadSha256);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('READY preflight refuses engine findings before draft mutation until exact owner qualification exists', async () => {
+  const f = readyLifecycleFixture({ engineFindings: true }); active(f.proof.handoff.run); f.state.pull.draft = true;
+  f.proof.escalationComment = null;
+  const d = deps(f, 'dispatch');
+  await assert.rejects(prepareReadyReviewProducer({ command: f.command,
+    comment: f.proof.handoff.ownerComment, ...d, now: () => clock(5) }), /OWNER_(COMMENT_ABSENT|ESCALATION_NOT_POSTED)/);
+  assert.equal(d.calls.includes('reviewThreads:2094:null'), false);
+});
+
+test('READY preflight accepts only the owner qualification bound to its selected independent review', async () => {
+  const f = readyLifecycleFixture({ engineFindings: true }); active(f.proof.handoff.run); f.state.pull.draft = true;
+  const d = deps(f, 'dispatch');
+  const prepared = await prepareReadyReviewProducer({ command: f.command,
+    comment: f.proof.handoff.ownerComment, ...d, now: () => clock(5) });
+  assert.equal(prepared.preflight.engineReceipt.verdict, 'STEPHANOS_REVIEW_FINDINGS');
+  assert.equal(prepared.preflight.qualification.finalVerdict, 'EXACT_HEAD_QUALIFIED_ESCALATION_PASS');
+  assert.equal(prepared.preflight.escalationCommentId, 901);
+  f.proof.escalationComment.body = f.proof.escalationComment.body.replace('"reviewRunId":90', '"reviewRunId":91');
+  await assert.rejects(prepareReadyReviewProducer({ command: f.command,
+    comment: f.proof.handoff.ownerComment, ...deps(f, 'dispatch'), now: () => clock(5) }), /REVIEW_RUN_UNBOUND|DIFFERENT_FROM_OWNER_READY_SELECTION/);
+});
+
+test('READY preflight rejects a changed or incomplete exact-head engine input', async t => {
+  const attacks = {
+    head: input => { input.headSha = 'e'.repeat(40); },
+    base: input => { input.baseSha = 'e'.repeat(40); },
+    duplicate: input => { input.changedFiles.push(input.changedFiles[0]); },
+    patch: input => { input.patch = ''; },
+  };
+  for (const [name, attack] of Object.entries(attacks)) await t.test(name, async () => {
+    const f = readyLifecycleFixture(); active(f.proof.handoff.run); f.state.pull.draft = true;
+    const d = deps(f, 'dispatch'), input = structuredClone(f.input); attack(input);
+    d.readExactHeadInput = async () => input;
+    await assert.rejects(prepareReadyReviewProducer({ command: f.command,
+      comment: f.proof.handoff.ownerComment, ...d, now: () => clock(5) }), /PREFLIGHT_ENGINE_INPUT_BINDING/);
+  });
 });
 
 test('draft bootstrap remains HOLD; independently already-ready bootstrap is not mislabeled clean', async () => {
@@ -265,6 +384,27 @@ test('thread transport exposes only the fixed read-only query and typed variable
   assert.equal(calls.length, 1);
 });
 
+test('READY preflight transport reads only the exact bounded PR files and complete patch around identity rereads', async t => {
+  const f = readyLifecycleFixture(), calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    calls.push({ url, options });
+    const path = String(url).replace('https://api.github.com/repos/Cheekyfellastef/stephan-os', '');
+    let value;
+    if (path === '/pulls/2094' && options.headers?.Accept === 'application/vnd.github.v3.diff') value = f.input.patch;
+    else if (path === '/pulls/2094') value = JSON.stringify(f.state.pull);
+    else if (path === '/git/ref/heads/main') value = JSON.stringify(f.state.main);
+    else if (path === `/git/commits/${f.identity.sourceHead}`) value = JSON.stringify(f.state.commit);
+    else if (path === '/pulls/2094/files?per_page=100&page=1') value = JSON.stringify([{ filename: f.input.changedFiles[0] }]);
+    else throw new Error(`unexpected fetch ${path}`);
+    return { ok: true, status: 200, text: async () => value };
+  });
+  const transport = readyReviewTransports({ GITHUB_TOKEN: 'fixture-token' });
+  assert.deepEqual(await transport.readExactHeadInput(f.identity), f.input);
+  assert.equal(calls.filter(call => call.url.endsWith('/pulls/2094')).length, 3);
+  assert.equal(calls.filter(call => call.url.includes('/pulls/2094/files?')).length, 1);
+  assert.equal(calls.filter(call => call.options.headers?.Accept === 'application/vnd.github.v3.diff').length, 1);
+});
+
 test('target runs unchanged engine on full exact input and keeps a genuine clean result', async () => {
   const f = readyLifecycleFixture(); prepareActive(f);
   const d = deps(f, 'exact-head-review');
@@ -320,6 +460,11 @@ test('canonical workflows preserve draft guards, pin main source and upload sepa
   assert.match(reviewer, /github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main' && github\.sha == inputs\.base_sha/);
   assert.match(reviewer, /test "\$\{GITHUB_WORKFLOW_SHA\}" = "\$\{GITHUB_SHA\}"/);
   assert.match(reviewer, /path: protected-ready-review-receipt\.json/);
+  assert.match(reviewer, /Probe preserved protected READY failure recovery[\s\S]*recovery-prepare/);
+  assert.match(reviewer, /Recover preserved failed READY review with the unchanged engine[\s\S]*recovery-review/);
+  assert.match(reviewer, /name: protected-ready-review-recovery-receipt-\$\{\{ github\.run_id \}\}-attempt-\$\{\{ github\.run_attempt \}\}/);
+  assert.match(reviewer, /path: protected-ready-review-recovery-receipt\.json/);
+  assert.match(reviewer, /steps\.ready_recovery\.outputs\.ready_recovery != 'true'/);
   assert.match(reviewer, /path: review-proof\//);
   assert.match(reviewer, /if: github\.event_name != 'workflow_dispatch'[\s\S]*node scripts\/exact-head-qualified-escalation-v1\.mjs/);
   const collector = source('scripts/operator-protected-personal-repository-merge.mjs');
