@@ -23,12 +23,12 @@ $escapedLauncherPath = $launcherPath.Replace('"', '""')
 $actionArguments = "//B //NoLogo `"$escapedLauncherPath`" outbound-health-beacon"
 $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument $actionArguments
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
-$intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
+$intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 10) -RepetitionDuration (New-TimeSpan -Days 3650)
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
 
 if ($PSCmdlet.ShouldProcess($taskName, 'Register bounded outbound Battle Bridge health beacon')) {
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Publishes bounded read-only Battle Bridge exact-head/health truth to fixed GitHub issue #1889. No source mutation, task mutation, restart, destructive Git or OpenClaw mutation.' -Force | Out-Null
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Publishes bounded read-only Battle Bridge exact-head/health truth to fixed GitHub issue #1889 on a rate-budgeted ten-minute cadence. No source mutation, task mutation, restart, destructive Git or OpenClaw mutation.' -Force | Out-Null
     if ($StartNow) { Start-ScheduledTask -TaskName $taskName }
 }
 
@@ -37,7 +37,7 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register bounded outbound Battle Bridge 
     taskName = $taskName
     installed = $true
     startedNow = [bool]$StartNow
-    intervalMinutes = 1
+    intervalMinutes = 10
     atLogon = $true
     hidden = $true
     runLevel = 'Limited'
