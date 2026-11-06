@@ -1,5 +1,6 @@
 import { createHolodeckRoomRenderer } from './holodeck-room-v1.mjs';
 import { createHolodeckLocomotion, sampleHolodeckControls } from './holodeck-locomotion-v1.mjs';
+import { createHolodeckCubeInteraction } from './holodeck-cube-interaction-v1.mjs';
 
 export const HOLODECK_BASELINE_SESSION_MODE = 'immersive-vr';
 export const HOLODECK_BASELINE_MODE = 'Holodeck Baseline';
@@ -42,6 +43,7 @@ export async function enterHolodeckBaseline({
   rendererFactory = createHolodeckRoomRenderer,
   onFrame = () => {},
   onLocomotionStatus = () => {},
+  onCubeStatus = () => {},
 } = {}) {
   if (!navigatorRef?.xr || typeof navigatorRef.xr.requestSession !== 'function') {
     return { ok: false, session: null, reason: 'WebXR immersive session API unavailable' };
@@ -79,12 +81,15 @@ export async function enterHolodeckBaseline({
     const renderer = rendererFactory({ gl });
     const locomotion = createHolodeckLocomotion({ room: renderer.geometry.room,
       obstacles: renderer.geometry.obstacles });
+    const cubeInteraction = createHolodeckCubeInteraction();
+    let lastCubeStatus = '';
     let lastLocomotionStatus = '';
     let activeController = 'none';
     let active = true;
     session.addEventListener('end', () => {
       active = false;
       renderer.dispose();
+      cubeInteraction.stop();
       try { onLocomotionStatus({ controller: 'No active VR session', state: 'ended' }); } catch {}
     }, { once: true });
 
@@ -103,7 +108,14 @@ export async function enterHolodeckBaseline({
         lastLocomotionStatus = statusKey;
         try { onLocomotionStatus({ controller: navigation.controller, state: navigation.state }); } catch {}
       }
-      const frameTruth = renderer.drawFrame(frame, referenceSpace, { pose, navigation })
+      const cube = cubeInteraction.update({ time, pose, frame, referenceSpace, navigation, gamepads,
+        visible: session.visibilityState === 'visible' });
+      const cubeStatus = cube.heldBy ? 'held' : cube.sleeping ? 'resting' : 'falling';
+      if (cubeStatus !== lastCubeStatus) {
+        lastCubeStatus = cubeStatus;
+        try { onCubeStatus({ state: cubeStatus, controller: cube.heldBy }); } catch {}
+      }
+      const frameTruth = renderer.drawFrame(frame, referenceSpace, { pose, navigation, cube })
         || { poseAvailable: false, viewCount: 0 };
       try {
         onFrame({

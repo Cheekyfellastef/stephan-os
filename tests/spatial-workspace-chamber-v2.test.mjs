@@ -51,7 +51,7 @@ test('swept collisions stop long movements at every side, including a thin cube'
     close(p[axis]+result[axis],edge);
     assert.equal(expandedInside({x:p.x+result.x,z:p.z+result.z},obstacle),false);
   }
-  const cube=HOLODECK_OBSTACLES.find(o=>o.id==='idea-cube');
+  const cube={minX:-0.0285,maxX:0.0285,minZ:-2.2285,maxZ:-2.1715};
   const travel=resolveHolodeckMovement({x:0,z:0},{x:0,z:-5},{obstacles:[cube]});
   close(travel.z,cube.maxZ+HOLODECK_BODY_RADIUS);
 });
@@ -113,7 +113,7 @@ test('lit renderer draws both eyes with distinct tracked matrices and releases G
   const calls=[];
   const gl={drawingBufferWidth:800,drawingBufferHeight:400};
   for (const key of ['VERTEX_SHADER','FRAGMENT_SHADER','COMPILE_STATUS','LINK_STATUS','ARRAY_BUFFER',
-    'STATIC_DRAW','DEPTH_TEST','LEQUAL','BLEND','CULL_FACE','SCISSOR_TEST','FRAMEBUFFER','FLOAT','TRIANGLES','LINES']) gl[key]=key;
+    'STATIC_DRAW','DYNAMIC_DRAW','DEPTH_TEST','LEQUAL','BLEND','CULL_FACE','SCISSOR_TEST','FRAMEBUFFER','FLOAT','TRIANGLES','LINES','FRONT','BACK','SRC_ALPHA','ONE_MINUS_SRC_ALPHA']) gl[key]=key;
   gl.COLOR_BUFFER_BIT=1; gl.DEPTH_BUFFER_BIT=2;
   for (const key of ['createShader','createProgram','createBuffer']) gl[key]=()=>({});
   gl.getShaderParameter=gl.getProgramParameter=()=>true;
@@ -122,7 +122,7 @@ test('lit renderer draws both eyes with distinct tracked matrices and releases G
   for (const key of ['shaderSource','compileShader','deleteShader','attachShader','linkProgram','deleteProgram',
     'bindBuffer','bufferData','enableVertexAttribArray','vertexAttribPointer','disableVertexAttribArray',
     'vertexAttrib1f','vertexAttrib3f','bindFramebuffer','enable','depthFunc','depthMask','disable','clearColor',
-    'clear','useProgram','uniformMatrix4fv','drawArrays','viewport','deleteBuffer'])
+    'clear','useProgram','uniformMatrix4fv','uniform1f','uniform3f','blendFunc','cullFace','drawArrays','viewport','deleteBuffer'])
     gl[key]=(...args)=>calls.push([key,...args.map(v=>v instanceof Float32Array?Array.from(v):v)]);
   const renderer=createHolodeckRoomRenderer({gl});
   const identity=()=>new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,-1.7,0,1]);
@@ -134,7 +134,8 @@ test('lit renderer draws both eyes with distinct tracked matrices and releases G
   calls.length=0;
   assert.deepEqual(renderer.drawFrame(frame,{}, {pose:{views},navigation:{x:0.4,z:-1,yaw:0.2}}),{poseAvailable:true,viewCount:2});
   assert.deepEqual(calls.filter(c=>c[0]==='viewport').map(c=>c.slice(1)),[[0,0,400,400],[400,0,400,400]]);
-  assert.deepEqual(calls.filter(c=>c[0]==='drawArrays').map(c=>c[1]),['TRIANGLES','LINES','TRIANGLES','LINES']);
+  assert.deepEqual(calls.filter(c=>c[0]==='drawArrays').map(c=>c[1]),
+    ['TRIANGLES','LINES','TRIANGLES','TRIANGLES','LINES','TRIANGLES','LINES','TRIANGLES','TRIANGLES','LINES']);
   const matrices=calls.filter(c=>c[0]==='uniformMatrix4fv'&&c[1]==='uView').map(c=>c[3]);
   close(matrices[0][13],-1.7); close(matrices[1][13],-1.7);
   close(matrices[0][12]-matrices[1][12],0.064);
@@ -144,6 +145,6 @@ test('lit renderer draws both eyes with distinct tracked matrices and releases G
   renderer.drawPreview();
   for (const call of calls.filter(c=>c[0]==='uniformMatrix4fv')) assert.ok(call[3].every(Number.isFinite));
   renderer.dispose();
-  assert.equal(calls.filter(c=>c[0]==='deleteBuffer').length,6);
+  assert.equal(calls.filter(c=>c[0]==='deleteBuffer').length,12);
   assert.equal(calls.filter(c=>c[0]==='deleteProgram').length,1);
 });

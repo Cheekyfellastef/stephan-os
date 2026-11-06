@@ -70,7 +70,7 @@ or the headset for Quest Browser), and press a button if the browser has not yet
 exposed it. Quest controllers are read from the active WebXR session. Release
 both sticks on entry, after switching controller type, and after tracking resumes.
 Movement stops during tracking loss, hidden sessions, and controller disconnection.
-Stick movement stays within the chamber and stops at the table and cube, with a
+Stick movement stays within the chamber and stops at the table, with a
 28 cm body margin and sliding along edges. A swept collision check prevents
 passing through thin objects between frames. Physical tracking is never overridden:
 if room-scale walking or leaning places the viewer inside an object, stick movement
@@ -88,6 +88,37 @@ suspended ceramic workstation with a sculpted split pedestal, luminous edge
 and inlaid controls. Furniture and collision footprints share one layout module.
 The desktop preview uses the same geometry and lighting as the immersive renderer.
 Lighting is deliberately static, with no flashing effects or expensive shadow maps.
+
+## Glass cube interaction
+
+The idea cube is 57 mm across, approximately Rubik's-cube sized. It is drawn as
+transparent glass with view-dependent edge reflections. It remains intact when
+thrown. The cube is session-local and starts resting on the tabletop.
+
+- Quest: point at the cube (within 3.5 m), or reach near it above the table;
+  hold the grip/squeeze button to carry it. Release to drop or throw using the
+  measured hand motion. Either controller can hold it; one holds it at a time.
+- Xbox: look at the cube and hold RT to pick it up. Release RT to drop it, or
+  press RB while holding to throw in the direction you look. D-pad up/down
+  adjusts reach, left/right rotates it, and X recalls it to the tabletop.
+- The existing left-stick walking and right-stick smooth turning are unchanged.
+- Release grip/RT before first pickup or after a disconnect/tracking interruption.
+
+Gravity is 9.81 m/s², integrated at a bounded 120 Hz. Swept support-volume checks
+keep the cube within the floor, walls, ceiling and convex table surfaces, including
+while held. It bounces, loses energy and settles flat. This is lightweight local
+cube physics, with conservative contacts around rotated corners, not fracture or
+optical refraction simulation. Throw speed is capped at 8 m/s and tracking loss
+releases a held cube without stale throw velocity. A distant pickup must reach
+the hand before its motion contributes to a throw.
+
+The desktop Drop cube, Throw at wall, Reset cube and Inspect glass cube controls
+exercise the same physics and renderer as VR. These are preview interactions;
+physical Quest/Xbox acceptance still requires an on-headset playtest.
+
+The Quest grip and pose adapter follows the
+[WebXR Gamepads mapping](https://immersive-web.github.io/webxr-gamepads-module/)
+and [WebXR grip-space definition](https://www.w3.org/TR/webxr/#xrinputsource-interface).
 
 ## Generated packaging assets
 

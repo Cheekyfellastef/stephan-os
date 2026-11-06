@@ -1,5 +1,6 @@
 import { applyHolodeckLocomotionToView } from './holodeck-locomotion-v1.mjs';
 import { HOLODECK_ROOM, HOLODECK_TABLE, HOLODECK_CUBE, HOLODECK_OBSTACLES } from './holodeck-layout-v1.mjs';
+import { rotate3, add3, scale3, normalize3 } from './holodeck-cube-physics-v1.mjs';
 
 const CYAN = [0.32, 0.88, 1.0], ICE = [0.68, 0.9, 1.0], WARM = [1.0, 0.75, 0.43];
 const GRID = [0.18, 0.43, 0.53], GRID_SOFT = [0.10, 0.24, 0.31];
@@ -113,10 +114,6 @@ export function createHolodeckRoomGeometry() {
       [side*(0.63+i*0.09),0.895,cz+0.48],i===0?WARM:CYAN);
     line(g,[side*0.63,0.895,cz-0.38],[side*1.03,0.895,cz-0.38],CYAN);
   }
-  const cube = HOLODECK_CUBE;
-  const corners = box(g,cube.center,[cube.size,cube.size,cube.size],[0.29,0.66,0.78]);
-  for (const [a,b] of [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]])
-    line(g,corners[a],corners[b],ICE);
   ring(g,[0,0.016,cz],1.62,[0.12,0.30,0.36],true);
   ring(g,[0,1.55,f+0.03],1.0,CYAN);
   ring(g,[0,1.55,f+0.035],0.91,WARM);
@@ -124,8 +121,35 @@ export function createHolodeckRoomGeometry() {
   return Object.freeze({
     ...Object.fromEntries(Object.entries(g).map(([key,value])=>[key,new Float32Array(value)])),
     vertexCount:g.positions.length/3, solidVertexCount:g.solidPositions.length/3,
-    primitive:'LINES', room:HOLODECK_ROOM, table:t, ideaCube:cube, obstacles:HOLODECK_OBSTACLES,
+    primitive:'LINES', room:HOLODECK_ROOM, table:t, ideaCube:HOLODECK_CUBE, obstacles:HOLODECK_OBSTACLES,
   });
+}
+
+export function createHolodeckCubeGeometry(state={}) {
+  const g={positions:[],colors:[],solidPositions:[],solidColors:[],normals:[],emissions:[]};
+  const position=state.position??HOLODECK_CUBE.center,orientation=state.orientation??[0,0,0,1];
+  const size=HOLODECK_CUBE.size;
+  const corners=box(g,[0,0,0],[size,size,size],[0.66,0.88,0.96]);
+  for(let i=0;i<g.solidPositions.length;i+=3) {
+    g.solidPositions.splice(i,3,...add3(position,rotate3(g.solidPositions.slice(i,i+3),orientation)));
+    g.normals.splice(i,3,...rotate3(g.normals.slice(i,i+3),orientation));
+  }
+  const world=corners.map(p=>add3(position,rotate3(p,orientation)));
+  for(const [a,b] of [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]])
+    line(g,world[a],world[b],state.targeted||state.heldBy?ICE:[0.29,0.53,0.61]);
+  for(const pointer of state.pointers??[]) {
+    const distance=pointer.targeted?pointer.distance:Math.min(pointer.distance,1.5);
+    const end=add3(pointer.origin,scale3(pointer.direction,distance));
+    if(pointer.kind==='quest') line(g,pointer.origin,end,pointer.targeted?WARM:[0.12,0.28,0.32]);
+    if(pointer.kind==='xbox'||pointer.targeted) {
+      const right=normalize3(Math.abs(pointer.direction[1])<0.99?[-pointer.direction[2],0,pointer.direction[0]]:[1,0,0]);
+      const up=normalize3([right[1]*pointer.direction[2]-right[2]*pointer.direction[1],
+        right[2]*pointer.direction[0]-right[0]*pointer.direction[2],right[0]*pointer.direction[1]-right[1]*pointer.direction[0]]);
+      for(const axis of [right,up]) line(g,add3(end,scale3(axis,-0.006*distance)),add3(end,scale3(axis,0.006*distance)),pointer.targeted?WARM:ICE);
+    }
+  }
+  return {...Object.fromEntries(Object.entries(g).map(([key,value])=>[key,new Float32Array(value)])),
+    vertexCount:g.positions.length/3,solidVertexCount:g.solidPositions.length/3};
 }
 
 function compileShader(gl,type,source) {
@@ -156,6 +180,8 @@ function createProgram(gl) {
   let fragment;
   try { fragment=compileShader(gl,gl.FRAGMENT_SHADER,`
     precision mediump float;
+    uniform float uGlass;
+    uniform vec3 uEyePosition;
     varying vec3 vColor;
     varying vec3 vNormal;
     varying vec3 vWorld;
@@ -169,6 +195,21 @@ function createProgram(gl) {
       if (vEmission>0.99) { gl_FragColor=vec4(vColor,1.0); return; }
       vec3 normal=normalize(vNormal);
       if (!gl_FrontFacing) normal=-normal;
+      if (uGlass>0.5) {
+        vec3 viewDirection=normalize(uEyePosition-vWorld);
+        float fresnel=pow(1.0-abs(dot(normal,viewDirection)),4.0);
+        vec3 reflection=reflect(-viewDirection,normal);
+        vec3 color=vec3(0.32,0.58,0.67)+fresnel*vec3(0.36,0.37,0.33);
+        float highlight=0.0;
+        if(reflection.y>0.01) {
+          vec3 ceiling=vWorld+reflection*((3.2-vWorld.y)/reflection.y);
+          highlight=(1.0-smoothstep(0.16,0.25,abs(abs(ceiling.x)-2.6)))
+            *step(-4.8,ceiling.z)*step(ceiling.z,1.8);
+        }
+        color=mix(color,vec3(0.92,0.98,1.0),highlight*0.85);
+        gl_FragColor=vec4(color,0.10+0.42*fresnel+0.34*highlight);
+        return;
+      }
       vec3 illumination=vec3(0.36,0.40,0.44);
       illumination+=light(vec3(-2.6,3.05,-2.0),vec3(0.72,0.88,1.0),normal);
       illumination+=light(vec3(2.6,3.05,-1.0),vec3(1.0,0.88,0.70),normal);
@@ -207,6 +248,7 @@ export function createHolodeckRoomRenderer({gl}={}) {
   const geometry=createHolodeckRoomGeometry(),program=createProgram(gl),buffers=[];
   const attributes=Object.fromEntries(['Position','Color','Normal','Emission'].map(name=>[name,gl.getAttribLocation(program,`a${name}`)]));
   const projectionLocation=gl.getUniformLocation(program,'uProjection'),viewLocation=gl.getUniformLocation(program,'uView');
+  const glassLocation=gl.getUniformLocation(program,'uGlass'),eyeLocation=gl.getUniformLocation(program,'uEyePosition');
   function buffer(data) {
     const handle=gl.createBuffer(); buffers.push(handle); gl.bindBuffer(gl.ARRAY_BUFFER,handle);
     gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW); return handle;
@@ -214,6 +256,17 @@ export function createHolodeckRoomRenderer({gl}={}) {
   const solid={Position:buffer(geometry.solidPositions),Color:buffer(geometry.solidColors),
     Normal:buffer(geometry.normals),Emission:buffer(geometry.emissions)};
   const lines={Position:buffer(geometry.positions),Color:buffer(geometry.colors)};
+  const cubeSolid={Position:buffer(new Float32Array()),Color:buffer(new Float32Array()),
+    Normal:buffer(new Float32Array()),Emission:buffer(new Float32Array())};
+  const cubeLines={Position:buffer(new Float32Array()),Color:buffer(new Float32Array())};
+  function updateCube(state) {
+    const g=createHolodeckCubeGeometry(state);
+    for(const [batch,fields] of [[cubeSolid,{Position:g.solidPositions,Color:g.solidColors,Normal:g.normals,Emission:g.emissions}],
+      [cubeLines,{Position:g.positions,Color:g.colors}]]) for(const [key,data] of Object.entries(fields)) {
+      gl.bindBuffer(gl.ARRAY_BUFFER,batch[key]);gl.bufferData(gl.ARRAY_BUFFER,data,gl.DYNAMIC_DRAW);
+    }
+    return g;
+  }
   function bind(batch) {
     for (const [name,location] of Object.entries(attributes)) {
       if (batch[name]) {
@@ -231,24 +284,35 @@ export function createHolodeckRoomRenderer({gl}={}) {
     gl.disable(gl.BLEND); gl.disable(gl.CULL_FACE); gl.disable(gl.SCISSOR_TEST);
     gl.clearColor(0.06,0.10,0.14,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT); gl.useProgram(program);
   }
-  function draw(projection,view) {
+  function draw(projection,view,cube) {
     gl.uniformMatrix4fv(projectionLocation,false,projection); gl.uniformMatrix4fv(viewLocation,false,view);
+    gl.uniform1f(glassLocation,0);
     bind(solid); gl.drawArrays(gl.TRIANGLES,0,geometry.solidVertexCount);
     bind(lines); gl.drawArrays(gl.LINES,0,geometry.vertexCount);
+    gl.uniform3f(eyeLocation,-view[0]*view[12]-view[1]*view[13]-view[2]*view[14],
+      -view[4]*view[12]-view[5]*view[13]-view[6]*view[14],-view[8]*view[12]-view[9]*view[13]-view[10]*view[14]);
+    gl.uniform1f(glassLocation,1);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+    gl.depthMask(false);gl.enable(gl.CULL_FACE);bind(cubeSolid);
+    // A convex glass body is blended back faces first, then front faces.
+    gl.cullFace(gl.FRONT);gl.drawArrays(gl.TRIANGLES,0,cube.solidVertexCount);
+    gl.cullFace(gl.BACK);gl.drawArrays(gl.TRIANGLES,0,cube.solidVertexCount);
+    gl.disable(gl.CULL_FACE);gl.disable(gl.BLEND);gl.depthMask(true);gl.uniform1f(glassLocation,0);
+    bind(cubeLines);gl.drawArrays(gl.LINES,0,cube.vertexCount);
   }
   const locomotionView=new Float32Array(16);
-  function drawFrame(frame,referenceSpace,{pose=frame.getViewerPose(referenceSpace),navigation}={}) {
+  function drawFrame(frame,referenceSpace,{pose=frame.getViewerPose(referenceSpace),navigation,cube:state}={}) {
     const layer=frame.session.renderState.baseLayer; begin(layer.framebuffer);
     if (!pose) return {poseAvailable:false,viewCount:0};
+    const cube=updateCube(state);
     for (const view of pose.views) {
       const viewport=layer.getViewport(view); gl.viewport(viewport.x,viewport.y,viewport.width,viewport.height);
-      draw(view.projectionMatrix,navigation?applyHolodeckLocomotionToView(view.transform.inverse.matrix,navigation,locomotionView):view.transform.inverse.matrix);
+      draw(view.projectionMatrix,navigation?applyHolodeckLocomotionToView(view.transform.inverse.matrix,navigation,locomotionView):view.transform.inverse.matrix,cube);
     }
     return {poseAvailable:true,viewCount:pose.views.length};
   }
-  function drawPreview({width=gl.drawingBufferWidth,height=gl.drawingBufferHeight,eye=[3.4,2.35,2.1],target=[0,1.15,-2.2]}={}) {
+  function drawPreview({width=gl.drawingBufferWidth,height=gl.drawingBufferHeight,eye=[3.4,2.35,2.1],target=[0,1.15,-2.2],cube:state}={}) {
     const {projection,view}=previewMatrices(Math.max(1,width),Math.max(1,height),eye,target);
-    begin(null); gl.viewport(0,0,width,height); draw(projection,view);
+    begin(null); gl.viewport(0,0,width,height); draw(projection,view,updateCube(state));
   }
   function dispose() { buffers.forEach(handle=>gl.deleteBuffer(handle)); gl.deleteProgram(program); }
   return Object.freeze({geometry,drawFrame,drawPreview,dispose});

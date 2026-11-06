@@ -42,12 +42,19 @@
       <button type="button" id="enter-holodeck">Enter Spatial Workspace</button>
       <p id="session-reason" aria-live="polite">Inspecting WebXR capability.</p>
       <p class="muted">Xbox or Quest controllers: left stick to walk and strafe; right stick for smooth turning. Press the right stick to return to the entrance.</p>
-      <p class="muted">Walk around the illuminated table and idea cube. Controller movement stops at their edges and slides alongside them.</p>
+      <p class="muted">Quest: point at the glass cube or reach for it, hold grip to pick it up, and release to drop or throw. Xbox: look at the cube and hold RT to carry it; release RT to drop, or press RB to throw. D-pad up/down adjusts reach, left/right rotates it, and X returns it to the table.</p>
+      <p id="cube-status" class="muted" aria-live="polite">Glass cube · 5.7 cm · gravity and room collisions</p>
       <p id="controller-status" aria-live="polite">Enter VR to detect controllers. For Xbox, connect it to the device running this browser and press a button to wake it.</p>
     </section>
     <section class="panel">
       <canvas id="holodeck-canvas" aria-label="Stephanos Spatial Workspace Holodeck chamber preview surface"></canvas>
       <p id="preview-status" class="muted">Room preview · illuminated workstation and full chamber grid</p>
+      <div class="controls" aria-label="Cube preview controls">
+        <button type="button" id="cube-drop">Drop cube</button>
+        <button type="button" id="cube-throw">Throw at wall</button>
+        <button type="button" id="cube-reset">Reset cube</button>
+        <button type="button" id="cube-inspect">Inspect glass cube</button>
+      </div>
     </section>
     <section class="panel status-grid" aria-label="VR Link diagnostics">
       <div class="status-card"><span class="label">Surface</span><span class="value">Spatial Workspace</span></div>
@@ -69,6 +76,7 @@
   <script type="module">
     import { enterHolodeckBaseline, inspectHolodeckBaselineCapabilities } from './holodeck-baseline-v0.mjs';
     import { createHolodeckRoomRenderer } from './holodeck-room-v1.mjs';
+    import { createHolodeckCubePhysics } from './holodeck-cube-physics-v1.mjs';
     import { createSpatialWorkspaceTelemetryRecorderV1 } from './spatial-telemetry-client.mjs';
     const webxrStatus = document.getElementById('webxr-status');
     const sessionStatus = document.getElementById('session-status');
@@ -86,6 +94,10 @@
     let activeTelemetry = null;
     let previewRenderer = null;
     let immersiveActive = false;
+    const previewCube = createHolodeckCubePhysics();
+    let inspectCube = false;
+    let previewFrame = null;
+    let previewTime = null;
     function drawPreview() {
       if (immersiveActive) return;
       try {
@@ -93,14 +105,44 @@
         if (!gl) throw new Error('graphics unavailable');
         previewRenderer ??= createHolodeckRoomRenderer({ gl });
         const scale = Math.min(window.devicePixelRatio || 1, 2);
-        canvas.width = Math.max(1, Math.round(canvas.clientWidth * scale));
-        canvas.height = Math.max(1, Math.round(canvas.clientHeight * scale));
-        previewRenderer.drawPreview();
+        const width = Math.max(1, Math.round(canvas.clientWidth * scale));
+        const height = Math.max(1, Math.round(canvas.clientHeight * scale));
+        if (canvas.width !== width) canvas.width = width;
+        if (canvas.height !== height) canvas.height = height;
+        const cube = previewCube.getState();
+        const camera = inspectCube ? { target: cube.position,
+          eye: cube.position.map((v,i) => v + [0.16,0.10,0.23][i]) } : {};
+        previewRenderer.drawPreview({ cube, ...camera });
       } catch {
         document.getElementById('preview-status').textContent = 'Room preview unavailable on this browser.';
       }
     }
     window.addEventListener('resize', drawPreview);
+    function animatePreview(time) {
+      previewFrame = null;
+      if (immersiveActive || document.hidden) { previewTime = null; return; }
+      const cube = previewCube.advance(previewTime === null ? 0 : (time - previewTime) / 1000);
+      previewTime = time;
+      drawPreview();
+      document.getElementById('preview-status').textContent = cube.sleeping
+        ? `Preview · cube resting on ${cube.position[1] > 0.5 ? 'table' : 'floor'}`
+        : 'Preview · cube falling under gravity';
+      if (!cube.sleeping) previewFrame = requestAnimationFrame(animatePreview);
+    }
+    function playPreview() {
+      if (previewFrame !== null) cancelAnimationFrame(previewFrame);
+      previewTime = null;
+      previewFrame = requestAnimationFrame(animatePreview);
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && !immersiveActive && !previewCube.getState().sleeping) playPreview();
+    });
+    for (const [id,action] of Object.entries({
+      'cube-drop': () => { previewCube.reset(); previewCube.grab('preview'); previewCube.moveHeld([0,1.6,-2.2]); previewCube.release(); },
+      'cube-throw': () => { previewCube.reset(); previewCube.grab('preview'); previewCube.moveHeld([0,1.5,-2.2]); previewCube.release([0,2.5,-6],[3,4,1]); },
+      'cube-reset': () => previewCube.reset(),
+      'cube-inspect': () => { inspectCube = !inspectCube; document.getElementById('cube-inspect').textContent = inspectCube ? 'View whole room' : 'Inspect glass cube'; },
+    })) document.getElementById(id).addEventListener('click', () => { if (!immersiveActive) { action(); playPreview(); } });
     drawPreview();
     function refreshExternalRouteTruth() {
       const routeTruth = navigator.onLine ? 'network required · not offline-cached' : 'unavailable offline';
@@ -126,11 +168,17 @@
       });
       await activeTelemetry.start();
       immersiveActive = true;
+      if (previewFrame !== null) cancelAnimationFrame(previewFrame);
+      previewFrame = null;
+      for (const id of ['cube-drop','cube-throw','cube-reset','cube-inspect']) document.getElementById(id).disabled = true;
       previewRenderer?.dispose();
       previewRenderer = null;
       const result = await enterHolodeckBaseline({
         canvas,
         onFrame: (frameTruth) => activeTelemetry?.recordFrame(frameTruth),
+        onCubeStatus: ({ state }) => {
+          document.getElementById('cube-status').textContent = `Glass cube · ${state === 'held' ? 'held — release to drop or throw' : state}`;
+        },
         onLocomotionStatus: ({ controller, state }) => {
           const detail = state === 'ready' ? 'movement ready'
             : state === 'release-sticks' ? 'release both sticks to enable movement'
@@ -141,6 +189,7 @@
       });
       if (!result.ok) {
         immersiveActive = false;
+        for (const id of ['cube-drop','cube-throw','cube-reset','cube-inspect']) document.getElementById(id).disabled = false;
         drawPreview();
         await activeTelemetry.fail(new Error(result.reason));
         sessionStatus.textContent = 'fallback';
@@ -153,6 +202,7 @@
       sessionReason.textContent = result.reason;
       result.session.addEventListener('end', async () => {
         immersiveActive = false;
+        for (const id of ['cube-drop','cube-throw','cube-reset','cube-inspect']) document.getElementById(id).disabled = false;
         drawPreview();
         sessionStatus.textContent = 'fallback';
         sessionReason.textContent = 'Immersive session ended. Physical acceptance remains unproven.';
