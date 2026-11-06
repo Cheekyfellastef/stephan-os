@@ -1,0 +1,98 @@
+name: R7 Disposable Windows Target Capacity
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/original-r7-disposable-target-capacity.yml'
+  workflow_dispatch:
+
+# Inventory only. No repository token permissions, checkout, downloads,
+# Hyper-V enablement, VM creation, boot policy, certificates or driver loads.
+permissions: {}
+
+jobs:
+  inventory:
+    name: disposable-windows-capacity
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - name: Measure disposable target prerequisites without provisioning
+        shell: pwsh
+        env:
+          R7_CAPACITY_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $r7Unknown = 'UNKNOWN'
+          $r7Hypervisor = $null
+          $r7Cpu = @()
+          $r7Feature = $r7Unknown
+          $r7Vmms = $r7Unknown
+          $r7VmHostRead = $false
+          $r7VmHostReadError = ''
+          $r7Disks = @()
+          $r7CpuRead = $false
+          $r7DiskRead = $false
+          $r7CpuTruncated = $false
+          $r7DisksTruncated = $false
+          try { $r7Hypervisor = [bool](Get-CimInstance Win32_ComputerSystem -OperationTimeoutSec 20).HypervisorPresent } catch {}
+          try {
+            $r7RawCpu = @(Get-CimInstance Win32_Processor -OperationTimeoutSec 20)
+            $r7CpuTruncated = $r7RawCpu.Count -gt 4
+            $r7Cpu = @($r7RawCpu | Select-Object -First 4 | ForEach-Object {
+              [ordered]@{
+                virtualizationFirmwareEnabled = $_.VirtualizationFirmwareEnabled
+                vmMonitorModeExtensions = $_.VMMonitorModeExtensions
+                secondLevelAddressTranslationExtensions = $_.SecondLevelAddressTranslationExtensions
+                logicalProcessorCount = $_.NumberOfLogicalProcessors
+              }
+            })
+            $r7CpuRead = $r7RawCpu.Count -gt 0
+          } catch {}
+          try {
+            $r7Feature = [string](Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All).State
+          } catch {}
+          try { $r7Vmms = [string](Get-Service -Name vmms).Status } catch {}
+          if (Get-Command Get-VMHost -ErrorAction SilentlyContinue) {
+            try {
+              $null = Get-VMHost -ComputerName localhost
+              $r7VmHostRead = $true
+            } catch { $r7VmHostReadError = $_.Exception.GetType().Name }
+          }
+          try {
+            $r7RawDisks = @([IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq [IO.DriveType]::Fixed -and $_.IsReady })
+            $r7DisksTruncated = $r7RawDisks.Count -gt 8
+            $r7Disks = @($r7RawDisks | Select-Object -First 8 | ForEach-Object {
+              [ordered]@{totalBytes=$_.TotalSize; availableBytes=$_.AvailableFreeSpace}
+            })
+            $r7DiskRead = $r7RawDisks.Count -gt 0
+          } catch {}
+          $r7Report = [ordered]@{
+            schemaVersion = 'stephanos.r7-disposable-target-capacity-observation.v1'
+            observedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
+            sourceHead = $env:R7_CAPACITY_SOURCE_HEAD
+            runnerClass = 'windows-2022'
+            osBuild = [Environment]::OSVersion.Version.Build
+            hypervisorPresent = $r7Hypervisor
+            cpuObservationAvailable = $r7CpuRead
+            cpuObservationTruncated = $r7CpuTruncated
+            processors = $r7Cpu
+            hyperVFeatureState = $r7Feature
+            vmmsStatus = $r7Vmms
+            localVmHostQuerySucceeded = $r7VmHostRead
+            localVmHostQueryErrorType = $r7VmHostReadError
+            diskObservationAvailable = $r7DiskRead
+            diskObservationTruncated = $r7DisksTruncated
+            fixedDisks = $r7Disks
+            classification = 'INVENTORY_ONLY_VM_BOOT_AND_STORAGE_FIT_UNPROVEN'
+            virtualMachineCreated = $false
+            guestMediaAdmitted = $false
+            guestBootProven = $false
+            codeIntegrityChanged = $false
+            testCertificateCreated = $false
+            driverInstalled = $false
+            driverCallbacksExecuted = $false
+            battleBridgeTouched = $false
+            leaseReleaseAuthorized = $false
+          }
+          Write-Output ('R7_DISPOSABLE_TARGET_CAPACITY_RESULT=' + ($r7Report | ConvertTo-Json -Depth 6 -Compress))
