@@ -135,7 +135,7 @@ test('lit renderer draws both eyes with distinct tracked matrices and releases G
   assert.deepEqual(renderer.drawFrame(frame,{}, {pose:{views},navigation:{x:0.4,z:-1,yaw:0.2}}),{poseAvailable:true,viewCount:2});
   assert.deepEqual(calls.filter(c=>c[0]==='viewport').map(c=>c.slice(1)),[[0,0,400,400],[400,0,400,400]]);
   assert.deepEqual(calls.filter(c=>c[0]==='drawArrays').map(c=>c[1]),
-    ['TRIANGLES','LINES','TRIANGLES','TRIANGLES','LINES','TRIANGLES','LINES','TRIANGLES','TRIANGLES','LINES']);
+    Array(2).fill(['TRIANGLES','LINES','TRIANGLES','TRIANGLES','TRIANGLES','TRIANGLES','LINES']).flat());
   const matrices=calls.filter(c=>c[0]==='uniformMatrix4fv'&&c[1]==='uView').map(c=>c[3]);
   close(matrices[0][13],-1.7); close(matrices[1][13],-1.7);
   close(matrices[0][12]-matrices[1][12],0.064);

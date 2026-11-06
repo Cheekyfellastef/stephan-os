@@ -60,24 +60,26 @@ function sweepSolid(position,delta,planes,orientation,size) {
   return normal && enter>=-1e-8 && enter<=1 && leave>Math.max(enter,0)
     ? {time:Math.max(0,enter),normal}:null;
 }
-export function createHolodeckCubePhysics({room=HOLODECK_ROOM,table=HOLODECK_TABLE,cube=HOLODECK_CUBE}={}) {
+export function createHolodeckCubePhysics({room=HOLODECK_ROOM,table=HOLODECK_TABLE,cube=HOLODECK_CUBE,extraSolids=()=>[]}={}) {
   const solids=createCubeSolids(table);
+  const contacts=()=>[...solids,...extraSolids()];
   const walls=[[[1,0,0],-room.halfWidth],[[-1,0,0],-room.halfWidth],[[0,1,0],0],
     [[0,-1,0],-room.height],[[0,0,1],room.frontZ],[[0,0,-1],-room.backZ]];
   let position,orientation,velocity,angularVelocity,heldBy,sleeping,accumulator=0,restTime=0;
   function reset() {
-    position=[0,table.top+0.008+cube.size/2+SKIN,table.center[2]];
+    position=[...cube.center];
     orientation=[0,0,0,1];velocity=[0,0,0];angularVelocity=[0,0,0];heldBy=null;sleeping=true;accumulator=0;restTime=0;
+    depenetrate();
     return getState();
   }
   function getState() {return {position:[...position],orientation:[...orientation],velocity:[...velocity],
-    angularVelocity:[...angularVelocity],heldBy,sleeping,size:cube.size};}
+    angularVelocity:[...angularVelocity],heldBy,sleeping,size:cube.size,id:cube.id};}
   function depenetrate() {
     for(const [n,d] of walls) {
       const depth=d+cubeSupport(n,orientation,cube.size)-dot(n,position);
       if(depth>0) position=add3(position,scale3(n,depth+SKIN));
     }
-    for(const planes of solids) {
+    for(const planes of contacts()) {
       const distances=planes.map(([n,d])=>({n,distance:dot(n,position)-d-cubeSupport(n,orientation,cube.size)}));
       if(distances.every(p=>p.distance<0)) {
         const nearest=distances.reduce((a,b)=>a.distance>b.distance?a:b);
@@ -96,7 +98,7 @@ export function createHolodeckCubePhysics({room=HOLODECK_ROOM,table=HOLODECK_TAB
           if(time>=-1e-8 && time<=1 && (!hit||time<hit.time)) hit={time:Math.max(0,time),normal:n};
         }
       }
-      for(const solid of solids) {
+      for(const solid of contacts()) {
         const candidate=sweepSolid(position,remaining,solid,orientation,cube.size);
         if(candidate&&(!hit||candidate.time<hit.time)) hit=candidate;
       }
@@ -145,7 +147,13 @@ export function createHolodeckCubePhysics({room=HOLODECK_ROOM,table=HOLODECK_TAB
     depenetrate();
   }
   function advance(seconds) {
-    if(heldBy||sleeping||!Number.isFinite(seconds)||seconds<=0) return getState();
+    if(heldBy||!Number.isFinite(seconds)||seconds<=0) return getState();
+    // A stacked cube must wake when the supporting cube moves away.
+    if(sleeping) {
+      const onFloor=position[1]-cubeSupport([0,1,0],orientation,cube.size)<SKIN*3;
+      if(onFloor||contacts().some(s=>sweepSolid(position,[0,-SKIN*3,0],s,orientation,cube.size))) return getState();
+      sleeping=false;
+    }
     accumulator+=Math.min(seconds,0.1);
     while(accumulator>=STEP) {
       accumulator-=STEP;
@@ -160,6 +168,14 @@ export function createHolodeckCubePhysics({room=HOLODECK_ROOM,table=HOLODECK_TAB
     }
     return getState();
   }
+  function restore(state) {
+    if(!state || ![state.position,state.velocity,state.angularVelocity].every(v=>Array.isArray(v)&&v.length===3&&v.every(Number.isFinite))
+      || !Array.isArray(state.orientation)||state.orientation.length!==4||!state.orientation.every(Number.isFinite)) return false;
+    position=[...state.position];orientation=normalizeQuaternion(state.orientation);
+    velocity=bounded(state.velocity,8);angularVelocity=bounded(state.angularVelocity,16);
+    heldBy=null;sleeping=state.sleeping===true;accumulator=0;restTime=0;
+    depenetrate();return true;
+  }
   reset();
-  return {getState,reset,grab,moveHeld,release,advance};
+  return {getState,reset,grab,moveHeld,release,advance,restore};
 }

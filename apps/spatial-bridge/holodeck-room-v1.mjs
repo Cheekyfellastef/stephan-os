@@ -1,5 +1,5 @@
 import { applyHolodeckLocomotionToView } from './holodeck-locomotion-v1.mjs';
-import { HOLODECK_ROOM, HOLODECK_TABLE, HOLODECK_CUBE, HOLODECK_OBSTACLES } from './holodeck-layout-v1.mjs';
+import { HOLODECK_ROOM, HOLODECK_TABLE, HOLODECK_CUBE, HOLODECK_CUBES, HOLODECK_OBSTACLES } from './holodeck-layout-v1.mjs';
 import { rotate3, add3, scale3, normalize3 } from './holodeck-cube-physics-v1.mjs';
 
 const CYAN = [0.32, 0.88, 1.0], ICE = [0.68, 0.9, 1.0], WARM = [1.0, 0.75, 0.43];
@@ -128,7 +128,7 @@ export function createHolodeckRoomGeometry() {
 export function createHolodeckCubeGeometry(state={}) {
   const g={positions:[],colors:[],solidPositions:[],solidColors:[],normals:[],emissions:[]};
   const position=state.position??HOLODECK_CUBE.center,orientation=state.orientation??[0,0,0,1];
-  const size=HOLODECK_CUBE.size;
+  const size=state.size??HOLODECK_CUBE.size;
   const corners=box(g,[0,0,0],[size,size,size],[0.66,0.88,0.96]);
   for(let i=0;i<g.solidPositions.length;i+=3) {
     g.solidPositions.splice(i,3,...add3(position,rotate3(g.solidPositions.slice(i,i+3),orientation)));
@@ -260,7 +260,12 @@ export function createHolodeckRoomRenderer({gl}={}) {
     Normal:buffer(new Float32Array()),Emission:buffer(new Float32Array())};
   const cubeLines={Position:buffer(new Float32Array()),Color:buffer(new Float32Array())};
   function updateCube(state) {
-    const g=createHolodeckCubeGeometry(state);
+    const states=state?.cubes??(state?[state]:HOLODECK_CUBES.map(c=>({...c,position:c.center})));
+    const parts=states.map((cube,i)=>createHolodeckCubeGeometry({...cube,pointers:i===0?state?.pointers:[]}));
+    const g=Object.fromEntries(['positions','colors','solidPositions','solidColors','normals','emissions']
+      .map(key=>[key,new Float32Array(parts.flatMap(part=>Array.from(part[key])))]));
+    g.vertexCount=g.positions.length/3;
+    g.groups=states.map((cube,i)=>({position:cube.position,first:i*36,count:36}));
     for(const [batch,fields] of [[cubeSolid,{Position:g.solidPositions,Color:g.solidColors,Normal:g.normals,Emission:g.emissions}],
       [cubeLines,{Position:g.positions,Color:g.colors}]]) for(const [key,data] of Object.entries(fields)) {
       gl.bindBuffer(gl.ARRAY_BUFFER,batch[key]);gl.bufferData(gl.ARRAY_BUFFER,data,gl.DYNAMIC_DRAW);
@@ -289,13 +294,17 @@ export function createHolodeckRoomRenderer({gl}={}) {
     gl.uniform1f(glassLocation,0);
     bind(solid); gl.drawArrays(gl.TRIANGLES,0,geometry.solidVertexCount);
     bind(lines); gl.drawArrays(gl.LINES,0,geometry.vertexCount);
-    gl.uniform3f(eyeLocation,-view[0]*view[12]-view[1]*view[13]-view[2]*view[14],
-      -view[4]*view[12]-view[5]*view[13]-view[6]*view[14],-view[8]*view[12]-view[9]*view[13]-view[10]*view[14]);
+    const eye=[-view[0]*view[12]-view[1]*view[13]-view[2]*view[14],
+      -view[4]*view[12]-view[5]*view[13]-view[6]*view[14],-view[8]*view[12]-view[9]*view[13]-view[10]*view[14]];
+    gl.uniform3f(eyeLocation,...eye);
     gl.uniform1f(glassLocation,1);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
     gl.depthMask(false);gl.enable(gl.CULL_FACE);bind(cubeSolid);
-    // A convex glass body is blended back faces first, then front faces.
-    gl.cullFace(gl.FRONT);gl.drawArrays(gl.TRIANGLES,0,cube.solidVertexCount);
-    gl.cullFace(gl.BACK);gl.drawArrays(gl.TRIANGLES,0,cube.solidVertexCount);
+    // Sort transparent bodies for each eye, drawing each one's back faces first.
+    const distance=group=>Math.hypot(...group.position.map((v,i)=>v-eye[i]));
+    for(const group of [...cube.groups].sort((a,b)=>distance(b)-distance(a))) {
+      gl.cullFace(gl.FRONT);gl.drawArrays(gl.TRIANGLES,group.first,group.count);
+      gl.cullFace(gl.BACK);gl.drawArrays(gl.TRIANGLES,group.first,group.count);
+    }
     gl.disable(gl.CULL_FACE);gl.disable(gl.BLEND);gl.depthMask(true);gl.uniform1f(glassLocation,0);
     bind(cubeLines);gl.drawArrays(gl.LINES,0,cube.vertexCount);
   }

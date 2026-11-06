@@ -4,7 +4,11 @@ export const HOLODECK_TABLE = Object.freeze({
   center: Object.freeze([0, 0.82, -2.2]),
   halfWidth: 1.25, halfDepth: 0.72, bottom: 0.76, top: 0.88, bevel: 0.22,
 });
-export const HOLODECK_CUBE = Object.freeze({ center: Object.freeze([0, 0.9166, -2.2]), size: 0.057 });
+export const HOLODECK_CUBE = Object.freeze({ id: 'small', center: Object.freeze([0, 0.9166, -2.2]), size: 0.057 });
+export const HOLODECK_CUBES = Object.freeze([
+  HOLODECK_CUBE,
+  Object.freeze({ id: 'large', center: Object.freeze([0.28, 0.9451, -2.2]), size: HOLODECK_CUBE.size * 2 }),
+]);
 export const HOLODECK_BODY_RADIUS = 0.28;
 export const HOLODECK_OBSTACLES = Object.freeze([
   Object.freeze({ id: 'table', minX: -HOLODECK_TABLE.halfWidth, maxX: HOLODECK_TABLE.halfWidth,
