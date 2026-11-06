@@ -71,9 +71,9 @@ function Reset-MonitorFixture {
     $script:monitorRunnerSha256 = 'b' * 64
     $script:processState = [pscustomobject]@{ ProviderBusy = $false; CloseRequested = $false }
     $inputWriter = New-Object System.IO.StringWriter
-    $pipe = [pscustomobject]@{ Permit = $true; PermitCalls = 0; CloseCalls = 0 }
+    $pipe = [pscustomobject]@{ Permit = $true; PermitCalls = 0; CloseCalls = 0; Writer = $inputWriter; InputAtClose = '' }
     $pipe | Add-Member -MemberType ScriptMethod -Name PermitForeground -Value { $this.PermitCalls += 1; return $this.Permit }
-    $pipe | Add-Member -MemberType ScriptMethod -Name CloseInput -Value { $this.CloseCalls += 1 }
+    $pipe | Add-Member -MemberType ScriptMethod -Name CloseInput -Value { $this.CloseCalls += 1; $this.InputAtClose = $this.Writer.ToString() }
     $script:monitorState = [pscustomobject]@{
         Process = [pscustomobject]@{ Id = 7331; HasExited = $false; StandardInput = $inputWriter }
         Pipe = $pipe; Channel = ('c' * 32); RequestSequence = 0L; EventSequence = 0L
@@ -139,6 +139,16 @@ try {
         Reset-MonitorFixture
         Send-FixtureFrame (New-StateFrame)
         Assert-True ($monitorState.Process.StandardInput.ToString().Length -eq 0) 'Ready synthesized a command'
+        Assert-True ($monitorState.Pipe.CloseCalls -eq 0) 'Ready prematurely closed the command stream'
+        Assert-True (Send-MonitorCommand -Command 'close') 'Explicit terminal close was refused'
+        $sent = $monitorState.Pipe.InputAtClose | ConvertFrom-Json
+        Assert-True ($sent.command -ceq 'close' -and $sent.sequence -eq 1 -and $monitorState.Pipe.CloseCalls -eq 1) 'Terminal close did not flush its command before releasing input'
+        Assert-True (-not (Send-MonitorCommand -Command 'close') -and $monitorState.RequestSequence -eq 1) 'Terminal close was dispatched twice'
+        Reset-MonitorFixture
+        Assert-True (Send-MonitorCommand -Command 'cancel') 'Explicit terminal cancellation was refused'
+        $sent = $monitorState.Pipe.InputAtClose | ConvertFrom-Json
+        Assert-True ($sent.command -ceq 'cancel' -and $monitorState.Pipe.CloseCalls -eq 1 -and $monitorState.CloseSent) 'Terminal cancellation did not release input'
+        Assert-True (-not (Send-MonitorCommand -Command 'close') -and $monitorState.RequestSequence -eq 1) 'Cancellation admitted a second terminal command'
     }
     Invoke-Fixture 'waiting receipt requires the actual confirmation dispatch' {
         Reset-MonitorFixture
@@ -382,7 +392,11 @@ public static class PyDiscoveryFixture {
             Assert-True (Send-MonitorCommand -Command 'close') 'Native close request refused'
             $response = Wait-FixtureMessages -Process $process -Pipe $reader
             foreach ($line in $response.Lines) { Receive-MonitorEvent -Line $line }
-            Assert-True ($response.Complete -and $process.ExitCode -eq 0 -and -not $response.Fault) 'Native adapter did not close cleanly'
+            $observedExit = if ($process.HasExited) { [string]$process.ExitCode } else { 'still-running' }
+            $diagnostic = $reader.ErrorText
+            if ($diagnostic.Length -gt 4096) { $diagnostic = $diagnostic.Substring(0, 4096) }
+            Assert-True ($response.Complete -and $process.HasExited -and $process.ExitCode -eq 0 -and -not $response.Fault) (
+                'Native adapter did not close cleanly: complete={0}; exit={1}; fault={2}; stderr={3}' -f $response.Complete, $observedExit, $response.Fault, $diagnostic)
             Assert-True ($monitorState.ClosedReceived -and $monitorState.SafeToClose -and $monitorState.RequestSequence -eq 1) 'Closed receipt or command count incorrect'
             Assert-True (-not $monitorState.PrepareDispatched -and $null -eq $monitorState.RunId -and $null -eq $monitorState.GameProcess) 'Ready-close fixture crossed the game boundary'
         } finally {

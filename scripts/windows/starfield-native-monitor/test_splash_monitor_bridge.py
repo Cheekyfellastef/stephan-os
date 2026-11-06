@@ -9,6 +9,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import threading
@@ -378,6 +379,76 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(events[-1]["type"], "closed")
         self.assertEqual(events[-1]["allowedActions"], [])
         self.assertTrue(all(len(line.encode()) <= b.MAX_EVENT_BYTES for line in self.sink.getvalue().splitlines()))
+
+
+class InterpreterShutdownTests(unittest.TestCase):
+    def run_child_with_open_input(self, command, *, parent_loss=False, expected_exit=0):
+        # Use an actual interpreter with its normal buffered sys.stdin. Keep
+        # the parent's write pipe open until wait() proves real process exit;
+        # communicate() would close it early and conceal the shutdown defect.
+        code = """
+import importlib.util, sys, time
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('bridge_shutdown_fixture', sys.argv[1])
+bridge = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = bridge
+spec.loader.exec_module(bridge)
+factory_called = False
+def forbidden_factory(_notify):
+    global factory_called
+    factory_called = True
+    raise AssertionError('A shutdown handshake cannot prepare the monitor')
+deadline = time.monotonic() + 0.2
+alive = (lambda: time.monotonic() < deadline) if sys.argv[3] == 'lost' else (lambda: True)
+result = bridge.run_session(forbidden_factory, sys.stdin.buffer, sys.stdout, '1' * 32,
+                            Path(sys.argv[2]), parent_alive=alive)
+sys.exit(97 if factory_called else result)
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary) / "must-not-be-created"
+            child = subprocess.Popen(
+                [sys.executable, "-I", "-S", "-B", "-u", "-c", code,
+                 str(ROOT / "splash_monitor_bridge.py"), str(workspace),
+                 "lost" if parent_loss else "alive"],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                child.stdin.write(command)
+                child.stdin.flush()
+                exit_code = child.wait(timeout=10)
+                self.assertFalse(child.stdin.closed)
+                output = child.stdout.read().decode("utf-8")
+                errors = child.stderr.read().decode("utf-8", "replace")
+                self.assertEqual(exit_code, expected_exit, errors)
+                self.assertEqual(errors, "")
+                self.assertFalse(workspace.exists())
+                events = [json.loads(line) for line in output.splitlines()]
+                self.assertEqual(events[0]["type"], "state")
+                self.assertEqual(events[0]["mode"], "ready")
+                self.assertEqual(events[-1]["type"], "closed")
+                self.assertEqual(events[-1]["exitCode"], exit_code)
+                self.assertTrue(events[-1]["safeToClose"])
+                self.assertTrue(events[-1]["providerSlotReleased"])
+                self.assertIsNone(events[-1]["runId"])
+                return events
+            finally:
+                child.stdin.close()
+                if child.poll() is None:
+                    # This is only the disposable no-factory test interpreter.
+                    # There can be no game/helper child or mutation to preserve.
+                    child.kill()
+                    child.wait(timeout=5)
+                child.stdout.close()
+                child.stderr.close()
+
+    def test_close_exits_normally_with_parent_input_pipe_still_open(self):
+        self.run_child_with_open_input(wire(request("close")))
+
+    def test_invalid_command_exits_blocked_without_buffered_input_abort(self):
+        events = self.run_child_with_open_input(b'{"command": "unknown"}\n', expected_exit=2)
+        self.assertIn("outside the fixed monitor workflow", events[-1]["error"])
+
+    def test_parent_loss_during_partial_input_exits_without_buffered_input_abort(self):
+        self.run_child_with_open_input(b'{"command":', parent_loss=True)
 
 
 class PipeLifecycleTests(unittest.TestCase):

@@ -11,6 +11,7 @@ import ctypes
 from ctypes import wintypes
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -448,21 +449,38 @@ def run_session(factory, stream_in, stream_out, channel, result_root, parent_ali
                 bridge_digest=None):
     incoming = queue.Queue(maxsize=16)
     session = SplashSession(factory, stream_out, channel, result_root, bridge_digest)
+    reader_stop = threading.Event()
+    # The owning process may keep its pipe open after close or disappear while
+    # a partial command is pending. A daemon must never hold sys.stdin's
+    # BufferedReader lock during interpreter finalization. Only this reader
+    # consumes the pipe, so use its existing unbuffered FileIO from the outset.
+    command_input = stream_in.raw if isinstance(stream_in, io.BufferedReader) else stream_in
+
+    def post_input(kind, payload):
+        while not reader_stop.is_set():
+            try:
+                incoming.put((kind, payload), timeout=0.05)
+                return True
+            except queue.Full:
+                continue
+        return False
 
     def read_commands():
         try:
-            while True:
-                line = stream_in.readline(MAX_COMMAND_BYTES + 1)
+            while not reader_stop.is_set():
+                line = command_input.readline(MAX_COMMAND_BYTES + 1)
                 if line == b"":
-                    incoming.put(("eof", None))
+                    post_input("eof", None)
                     return
-                incoming.put(("line", line))
+                if not post_input("line", line):
+                    return
                 if len(line) > MAX_COMMAND_BYTES or not line.endswith(b"\n"):
                     return
         except Exception as error:
-            incoming.put(("error", short_text(error)))
+            post_input("error", short_text(error))
 
-    threading.Thread(target=read_commands, name="StarfieldSplashPipe", daemon=True).start()
+    reader = threading.Thread(target=read_commands, name="StarfieldSplashPipe", daemon=True)
+    reader.start()
     try:
         session.emit_state()
         while not session.closed:
@@ -496,6 +514,12 @@ def run_session(factory, stream_in, stream_out, channel, result_root, parent_ali
             session.pump()
             if not session.closed:
                 time.sleep(0.05)
+    finally:
+        reader_stop.set()
+        # A normal close half-closes the parent's input pipe, allowing a join.
+        # If it remains open, leave only the unbuffered read pending; never
+        # close another thread's stream, force-kill, or delay owned cleanup.
+        reader.join(timeout=0.2)
     return session.exit_code
 
 

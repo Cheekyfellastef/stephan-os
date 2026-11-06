@@ -82,6 +82,7 @@ test('command protocol binds actual confirmation and serializes mutation', () =>
   assert.match(sender, /\$monitorState\.ConfirmationToken = \$null/);
   assert.match(sender, /\$monitorState\.RequestSequence \+= 1L/);
   assert.ok(sender.indexOf('$monitorState.ProviderSlotReleased = $false') < sender.indexOf('StandardInput.WriteLine'));
+  assert.match(sender, /StandardInput\.Flush\(\)[\s\S]*?if \(\$Command -in @\('cancel', 'close'\)\) \{ \$monitorState\.Pipe\.CloseInput\(\) \}/);
   assert.match(source, /AllowSetForegroundWindow\(checked\(\(uint\)child\.Id\)\)/);
 });
 

@@ -77,7 +77,7 @@ Add-Type -AssemblyName System.Drawing
 # The third card is the attended monitor entry for the independent bridge.
 # Its protocol never admits arbitrary commands, file paths or a headset claim.
 $monitorBridgePath = Join-Path $PSScriptRoot 'starfield-native-monitor\splash_monitor_bridge.py'
-$monitorBridgeSha256 = 'ab835242007b47509a6a3a4ca4d90d9553298698a362c7188505768d7ccdc55f'
+$monitorBridgeSha256 = '77116240a5a0b21b73d03f9caca5df85bd60d1c37899720fa62b70dca52c1781'
 $monitorRunnerSha256 = 'f40df00ff7378b8d3c62714bfb32702226746735f73d804a2c5f3e3727f7ba6c'
 $monitorProtocol = 'stephanos.native-eye-output.splash.v1'
 $monitorState = [pscustomobject]@{
@@ -244,7 +244,7 @@ import hashlib,pathlib,sys,types
 p=pathlib.Path(sys.argv[1])
 raw=p.read_bytes()
 actual=hashlib.sha256(raw).hexdigest()
-if actual!='ab835242007b47509a6a3a4ca4d90d9553298698a362c7188505768d7ccdc55f': raise SystemExit('Monitor bridge hash mismatch; no monitor code executed')
+if actual!='77116240a5a0b21b73d03f9caca5df85bd60d1c37899720fa62b70dca52c1781': raise SystemExit('Monitor bridge hash mismatch; no monitor code executed')
 sys.argv=[str(p)]+sys.argv[2:]
 m=types.ModuleType('__main__')
 m.__file__=str(p)
@@ -495,7 +495,7 @@ function Stop-MonitorTransport {
 
 function Send-MonitorCommand {
     param([ValidateSet('prepare', 'confirm', 'finish', 'cancel', 'close')][string]$Command)
-    if (-not $monitorState.Process -or $monitorState.Process.HasExited -or $monitorState.TransportFailed) { return $false }
+    if (-not $monitorState.Process -or $monitorState.Process.HasExited -or $monitorState.TransportFailed -or $monitorState.CloseSent) { return $false }
     if ($Command -in @('prepare', 'confirm', 'finish') -and $Command -cnotin $monitorState.AllowedActions) { return $false }
     if ($Command -eq 'confirm') {
         if ($monitorState.Mode -cne 'waiting' -or $monitorState.Busy -or -not $monitorState.ConfirmationToken -or -not $monitorState.GameProcess) { return $false }
@@ -528,10 +528,13 @@ function Send-MonitorCommand {
         $monitorState.Busy = $true
         $monitorState.AllowedActions = @('cancel', 'close')
     }
-    if ($Command -eq 'close') { $monitorState.CloseSent = $true }
+    if ($Command -in @('cancel', 'close')) { $monitorState.CloseSent = $true }
     try {
         $monitorState.Process.StandardInput.WriteLine(($request | ConvertTo-Json -Depth 6 -Compress))
         $monitorState.Process.StandardInput.Flush()
+        # Both terminal requests stop the session. Release its input reader only
+        # after the complete request is flushed; no further command is valid.
+        if ($Command -in @('cancel', 'close')) { $monitorState.Pipe.CloseInput() }
         Set-MonitorProviderControls
         return $true
     } catch {
