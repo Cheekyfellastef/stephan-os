@@ -35,7 +35,11 @@ test('loads complete real-shaped GitHub evidence and keeps the base-headed revie
 
 test('collector composes the preserved failed run and distinct recovery receipt without selecting old success', async () => {
   const f = readyRecoveryFixture(), transport = fixtureRecoveryTransport(f);
-  const proof = await loadProtectedReadyReviewLifecycle({ identity: f.identity, skippedRunIds: [50], ...transport });
+  const currentSelection = { workflowRunId: 910, workflowRunAttempt: 1, artifactId: 911,
+    artifactDigest: `sha256:${'a'.repeat(64)}`, payloadSha256: 'b'.repeat(64),
+    reviewMode: 'clean-independent', findings: [] };
+  const proof = await loadProtectedReadyReviewLifecycle({ identity: f.identity, skippedRunIds: [50],
+    selectedReview: currentSelection, ...transport });
   assert.equal(proof.failedReview.run.id, 200);
   assert.equal(proof.failedReview.run.conclusion, 'failure');
   assert.equal(proof.recovery.run.id, 300);
@@ -43,6 +47,15 @@ test('collector composes the preserved failed run and distinct recovery receipt 
   assert.ok(transport.calls.includes(`/compare/${f.originalIdentity.baseSha}...${f.currentMainSha}`));
   assert.ok(transport.calls.includes('/actions/runs/200/artifacts?per_page=100&page=1'));
   assert.equal(transport.calls.filter(path => path.includes('event=issue_comment')).length, 2);
+});
+
+test('ordinary READY evidence still binds the separately authenticated current review selection', async () => {
+  const f = readyLifecycleFixture(), transport = fixtureTransport(f);
+  await assert.rejects(loadProtectedReadyReviewLifecycle({ identity: f.identity, skippedRunIds: [50],
+    selectedReview: { workflowRunId: 910, workflowRunAttempt: 1, artifactId: 911,
+      artifactDigest: `sha256:${'a'.repeat(64)}`, payloadSha256: 'b'.repeat(64),
+      reviewMode: 'clean-independent', findings: [] }, ...transport }),
+  /MERGE_SELECTION_DIFFERS_FROM_OWNER_READY/);
 });
 
 test('recovery execution qualifies the historical review against its proven live current-base target', async () => {

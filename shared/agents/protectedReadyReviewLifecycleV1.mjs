@@ -35,6 +35,8 @@ export const READY_REVIEW_RECOVERY_SOURCE_PATHS = Object.freeze([
   'scripts/protected-ready-review-lifecycle-v1.mjs',
   'scripts/protected-ready-review-lifecycle-v1.test.mjs',
   'shared/agents/fixtures/protectedReadyReviewLifecycleV1.fixture.mjs',
+  'shared/agents/operatorPersonalRepositoryMergeDraftSkipV1.test.mjs',
+  'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
   'shared/agents/protectedReadyReviewLifecycleV1.mjs',
   'shared/agents/protectedReadyReviewLifecycleV1.test.mjs',
 ]);

@@ -4,7 +4,7 @@ import {
   assertReadyReviewSourceContext, assertReadyReviewHandoff, assertReadyReviewIndependent, assertReadyReviewLaunchRun,
   parseReadyReviewInputs, sealReadyReviewPayload, selectReadyReviewRun,
   validateProtectedReadyReviewLifecycleEvidence, validateProtectedReadyReviewRecoveryEvidence,
-  buildReadyReviewRecoveryContinuity,
+  buildReadyReviewRecoveryContinuity, READY_REVIEW_RECOVERY_SOURCE_PATHS,
 } from './protectedReadyReviewLifecycleV1.mjs';
 import { clock, readyLifecycleFixture, readyRecoveryFixture, fixtureEnv } from './fixtures/protectedReadyReviewLifecycleV1.fixture.mjs';
 
@@ -237,4 +237,10 @@ test('continuity admits complete protected history only when disjoint and the co
   f.originalIdentity, f.currentMainSha, f.input.changedFiles), /OVERLAP/);
   assert.throws(() => buildReadyReviewRecoveryContinuity(compare, { ...correction,
     files: [{ filename: 'README.md' }] }, f.originalIdentity, f.currentMainSha, f.input.changedFiles), /CORRECTION_TIP/);
+});
+
+test('recovery source allowlist covers the complete canonical merge-consumer correction', () => {
+  assert.ok(READY_REVIEW_RECOVERY_SOURCE_PATHS.includes('shared/agents/operatorPersonalRepositoryMergeV1.mjs'));
+  assert.ok(READY_REVIEW_RECOVERY_SOURCE_PATHS
+    .includes('shared/agents/operatorPersonalRepositoryMergeDraftSkipV1.test.mjs'));
 });

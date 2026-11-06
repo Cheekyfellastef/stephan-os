@@ -638,12 +638,10 @@ export async function loadProtectedReadyReviewLifecycle({ identity, skippedRunId
       readyRunId: receipt.handoffRunId, readyArtifactId: receipt.handoffArtifactId,
       handoffSha256: receipt.handoffPayloadSha256 }, { api, download });
     const command = handoff.artifact.payload.command;
-    if (selectedReview) requireProof(command.independentReviewRunId === selectedReview.independentReviewWorkflowRunId
-      && command.independentReviewRunAttempt === selectedReview.independentReviewWorkflowRunAttempt
-      && command.independentReviewArtifactId === selectedReview.independentReviewArtifactId
-      && command.independentReviewArtifactDigest === selectedReview.independentReviewArtifactDigest
-      && command.independentReviewPayloadSha256 === selectedReview.independentReviewPayloadSha256,
-    'MERGE_SELECTION_DIFFERS_FROM_OWNER_READY');
+    // Recovery authenticates the immutable historical selection carried by the
+    // original READY handoff. The protected merge collector separately proves
+    // its current-base selection before and after check convergence; equating
+    // those two review identities would make every legitimate recovery stale.
     const failedRunId = apiId(receipt.failedReviewRunId);
     const [failedRun, failedJobs, failedArtifacts, check, independent, escalationComment] = await Promise.all([
       api(`/actions/runs/${failedRunId}`), jobsFor(api, failedRunId),
@@ -689,11 +687,16 @@ export async function loadProtectedReadyReviewLifecycle({ identity, skippedRunId
     baseSha: identity.baseSha, readyRunId: receipt.handoffRunId, readyArtifactId: receipt.handoffArtifactId,
     handoffSha256: receipt.handoffPayloadSha256 }, { api, download });
   const command = handoff.artifact.payload.command;
-  if (selectedReview) requireProof(command.independentReviewRunId === selectedReview.independentReviewWorkflowRunId
-    && command.independentReviewRunAttempt === selectedReview.independentReviewWorkflowRunAttempt
-    && command.independentReviewArtifactId === selectedReview.independentReviewArtifactId
-    && command.independentReviewArtifactDigest === selectedReview.independentReviewArtifactDigest
-    && command.independentReviewPayloadSha256 === selectedReview.independentReviewPayloadSha256,
+  if (selectedReview) requireProof(command.independentReviewRunId === (selectedReview.workflowRunId
+      ?? selectedReview.independentReviewWorkflowRunId)
+    && command.independentReviewRunAttempt === (selectedReview.workflowRunAttempt
+      ?? selectedReview.independentReviewWorkflowRunAttempt)
+    && command.independentReviewArtifactId === (selectedReview.artifactId
+      ?? selectedReview.independentReviewArtifactId)
+    && command.independentReviewArtifactDigest === (selectedReview.artifactDigest
+      ?? selectedReview.independentReviewArtifactDigest)
+    && command.independentReviewPayloadSha256 === (selectedReview.payloadSha256
+      ?? selectedReview.independentReviewPayloadSha256),
   'MERGE_SELECTION_DIFFERS_FROM_OWNER_READY');
   const job = oneJob(jobs, 'exact-head-review');
   const [check, independent, escalationComment] = await Promise.all([api(`/check-runs/${apiId(job.id)}`),

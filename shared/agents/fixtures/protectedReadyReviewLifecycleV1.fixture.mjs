@@ -184,12 +184,24 @@ export function readyRecoveryFixture() {
   const diagnostic = { metadata: diagnosticMetadata, archiveSha256: sha(diagnosticZip), input: f.input,
     changedFilesText: `${f.input.changedFiles.join('\n')}\n`, patch: f.input.patch,
     readyContext: { inputs: f.inputs, review: { run: f.proof.review.run } } };
+  const correctionFiles = [
+    'docs/architecture/stephanos-protected-ready-review-failure-recovery-v1.md',
+    'scripts/exact-head-qualified-escalation-v1.mjs',
+    'scripts/exact-head-qualified-escalation-v1.test.mjs',
+    'scripts/protected-ready-review-lifecycle-v1.mjs',
+    'scripts/protected-ready-review-lifecycle-v1.test.mjs',
+    'shared/agents/fixtures/protectedReadyReviewLifecycleV1.fixture.mjs',
+    'shared/agents/operatorPersonalRepositoryMergeDraftSkipV1.test.mjs',
+    'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+    'shared/agents/protectedReadyReviewLifecycleV1.mjs',
+    'shared/agents/protectedReadyReviewLifecycleV1.test.mjs',
+  ];
   const continuity = { schemaVersion: 'stephanos.protected-ready-review-continuity.v1',
     fromBaseSha: originalIdentity.baseSha, toMainSha: currentMainSha, commitShas: [currentMainSha],
-    changedFiles: ['scripts/protected-ready-review-lifecycle-v1.mjs'],
-    changedFilesSha256: sha(JSON.stringify(['scripts/protected-ready-review-lifecycle-v1.mjs'])),
-    correctionFiles: ['scripts/protected-ready-review-lifecycle-v1.mjs'],
-    correctionFilesSha256: sha(JSON.stringify(['scripts/protected-ready-review-lifecycle-v1.mjs'])) };
+    changedFiles: correctionFiles,
+    changedFilesSha256: sha(JSON.stringify(correctionFiles)),
+    correctionFiles,
+    correctionFilesSha256: sha(JSON.stringify(correctionFiles)) };
   const recoveryRun = run(300, f.proof.review.definition, currentMainSha,
     readyReviewRecoveryRunName({ prNumber: originalIdentity.prNumber, commentId: 901, sourceSha: currentMainSha }));
   recoveryRun.event = 'issue_comment'; recoveryRun.actor = fixtureOwner; recoveryRun.triggering_actor = fixtureOwner;
