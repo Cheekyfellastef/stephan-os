@@ -91,9 +91,22 @@ Lighting is deliberately static, with no flashing effects or expensive shadow ma
 
 ## Glass cube interaction
 
-The idea cube is 57 mm across, approximately Rubik's-cube sized. It is drawn as
-transparent glass with view-dependent edge reflections. It remains intact when
-thrown. The cube is session-local and starts resting on the tabletop.
+The original glass cube has 57 mm edges; the second has 114 mm edges (twice the
+edge length, eight times the volume). Both start on the tabletop and use the same
+transparent glass material, gravity, room contacts and controller controls.
+Each hand can hold one cube. Selection chooses the nearest aimed-at available
+cube; the Xbox X button recalls the held/aimed-at cube, or the last selected one.
+
+The preview and VR session share one room instance. A versioned, bounded local
+save stores both cubes' positions, orientations and free motion, without controller
+ownership. Saves occur during motion, on release/rest, on page hide and on VR exit.
+Reopening restores the layout; a cube left airborne continues falling. Saving is
+local to the same browser profile and origin on this device, including offline.
+It does not synchronise to a different browser/device, and clearing site data
+removes the save. Storage failure and a stale window trying to overwrite a newer
+save are reported visibly. Invalid records fall back to the tabletop layout;
+future schema versions are preserved. This is simulation state only, with no
+Stephanos execution, authority, telemetry or backend-state changes.
 
 - Quest: point at the cube (within 3.5 m), or reach near it above the table;
   hold the grip/squeeze button to carry it. Release to drop or throw using the
@@ -106,14 +119,15 @@ thrown. The cube is session-local and starts resting on the tabletop.
 
 Gravity is 9.81 m/s², integrated at a bounded 120 Hz. Swept support-volume checks
 keep the cube within the floor, walls, ceiling and convex table surfaces, including
-while held. It bounces, loses energy and settles flat. This is lightweight local
+while held. The cubes also block one another using conservative convex contacts;
+a resting stack wakes when its support moves. They bounce, loses energy and settles flat. This is lightweight local
 cube physics, with conservative contacts around rotated corners, not fracture or
 optical refraction simulation. Throw speed is capped at 8 m/s and tracking loss
 releases a held cube without stale throw velocity. A distant pickup must reach
 the hand before its motion contributes to a throw.
 
 The desktop Drop cube, Throw at wall, Reset cube and Inspect glass cube controls
-exercise the same physics and renderer as VR. These are preview interactions;
+use the selected small/large cube and the same saved room as VR. These are preview interactions;
 physical Quest/Xbox acceptance still requires an on-headset playtest.
 
 The Quest grip and pose adapter follows the
