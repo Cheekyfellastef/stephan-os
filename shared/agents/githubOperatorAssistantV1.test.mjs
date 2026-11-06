@@ -1,0 +1,530 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { buildGitHubOperatorBriefing, GITHUB_OPERATOR_ASSISTANT_ALLOWED_COMMANDS, renderGitHubOperatorBriefingHuman } from './githubOperatorAssistantV1.mjs';
+
+test('builds deterministic GitHub operator briefing from evidence fixtures', async () => {
+  const fixture = JSON.parse(await readFile(new URL('../../tests/fixtures/github-operator-assistant/input.json', import.meta.url), 'utf8'));
+  const briefing = buildGitHubOperatorBriefing(fixture);
+  assert.equal(briefing.schemaVersion, 'github-operator-assistant.v1');
+  assert.equal(briefing.status, 'BLOCKED');
+  assert.deepEqual(briefing.focusIssues, [1284, 1286, 1287]);
+  assert.equal(briefing.readyForReview.some((item) => item.number === 1448), true);
+  assert.equal(briefing.blocked.some((item) => item.number === 1444 && item.kind === 'pr-runtime-blocked'), true);
+  assert.equal(briefing.blocked.some((item) => item.number === 1450 && item.kind === 'pr-head-mismatch'), true);
+  assert.equal(briefing.waitingForImplementation.some((item) => item.number === 1286), true);
+  assert.equal(briefing.evidence.some((item) => item.prNumber === 1448 && item.marker === 'PR_PUBLICATION_VERIFIER_PASS'), true);
+});
+
+test('classifies missing publication proof separately from claimed summaries', () => {
+  const briefing = buildGitHubOperatorBriefing({
+    generatedAtUtc: '2026-07-08T00:00:00.000Z',
+    pullRequests: [{ number: 1500, title: 'Claimed ready', headSha: 'a'.repeat(40), claimedHeadSha: 'a'.repeat(40), checksStatus: 'pass', readyForReview: true }],
+    evidence: [],
+  });
+  assert.equal(briefing.readyForReview.length, 0);
+  assert.equal(briefing.waitingForProof[0].kind, 'pr-missing-publication-proof');
+});
+
+test('exposes only read-only allowlisted command shapes and renders compact human briefing', () => {
+  assert.equal(GITHUB_OPERATOR_ASSISTANT_ALLOWED_COMMANDS.every((command) => !/pr merge|issue close|branch -d|delete-branch|reset --hard|sh -c|powershell/i.test(command)), true);
+  const human = renderGitHubOperatorBriefingHuman(buildGitHubOperatorBriefing({ generatedAtUtc: '2026-07-08T00:00:00.000Z' }));
+  assert.match(human, /GitHub Operator Assistant V1/);
+  assert.match(human, /Ready for review: none/);
+});
+
+test('requires an explicit structured publication marker rather than claimed summary text', () => {
+ const briefing=buildGitHubOperatorBriefing({
+  pullRequests:[{number:1500,headSha:'a'.repeat(40),checksStatus:'pass'}],
+  evidence:[{prNumber:1500,summary:'No PR_PUBLICATION_VERIFIER_PASS was found'}],
+ });
+ assert.equal(briefing.status,'WAITING_FOR_PROOF');
+ assert.equal(briefing.readyForReview.length,0);
+ assert.equal(briefing.waitingForProof[0].kind,'pr-missing-publication-proof');
+});
+
+test('never returns PASS while proof, operator or implementation work remains', () => {
+ const withProofMissing=buildGitHubOperatorBriefing({pullRequests:[{number:1500,checksStatus:'pass'}]});
+ assert.equal(withProofMissing.status,'WAITING_FOR_PROOF');
+ const withOperator=buildGitHubOperatorBriefing({
+  pullRequests:[{number:1500,checksStatus:'pass',operatorApprovalRequired:true,publicationVerified:true}],
+ });
+ assert.equal(withOperator.status,'WAITING_FOR_OPERATOR');
+ const withImplementation=buildGitHubOperatorBriefing({issues:[{number:1286,status:'waiting-for-implementation'}]});
+ assert.equal(withImplementation.status,'WAITING_FOR_IMPLEMENTATION');
+});
+
+test('normalizes allowlisted GitHub PR HEAD, branch and complete successful check rollups', () => {
+ const briefing=buildGitHubOperatorBriefing({
+  pullRequests:[{number:1500,headRefName:'owner/feature',headRefOid:'a'.repeat(40),
+   statusCheckRollup:[{status:'COMPLETED',conclusion:'SUCCESS'},{state:'SUCCESS'}]}],
+  evidence:[{prNumber:1500,marker:'PR_PUBLICATION_VERIFIER_PASS'}],
+ });
+ assert.equal(briefing.status,'PASS');
+ assert.equal(briefing.readyForReview.length,1);
+ assert.equal(briefing.readyForReview[0].headSha,'a'.repeat(40));
+ assert.equal(briefing.readyForReview[0].branch,'owner/feature');
+});
+
+test('rejects missing, pending, failing, draft and contradictory check evidence', () => {
+ const verified=[{prNumber:1500,marker:'PR_PUBLICATION_VERIFIER_PASS'}];
+ const cases=[
+  {number:1500},
+  {number:1500,statusCheckRollup:[]},
+  {number:1500,statusCheckRollup:[{status:'IN_PROGRESS',conclusion:''}]},
+  {number:1500,statusCheckRollup:[{status:'COMPLETED',conclusion:'FAILURE'}]},
+  {number:1500,checksStatus:'pass',statusCheckRollup:[{status:'COMPLETED',conclusion:'FAILURE'}]},
+  {number:1500,checksStatus:'pass',isDraft:true},
+ ];
+ for(const pr of cases){
+  const briefing=buildGitHubOperatorBriefing({pullRequests:[pr],evidence:verified});
+  assert.equal(briefing.readyForReview.length,0);
+  assert.equal(briefing.status,'WAITING_FOR_PROOF');
+ }
+});
+
+test('rejects malformed check rollups even when a legacy status claims success', () => {
+ const pr={number:1500,headSha:'a'.repeat(40),publicationVerified:true,checksStatus:'pass'};
+ for(const statusCheckRollup of [
+  {nodes:[{status:'COMPLETED',conclusion:'FAILURE'}]},
+  {checks:[{status:'COMPLETED',conclusion:'SUCCESS'}]},
+  'SUCCESS',
+  42,
+ ]){
+  const briefing=buildGitHubOperatorBriefing({pullRequests:[{...pr,statusCheckRollup}]});
+  assert.equal(briefing.status,'WAITING_FOR_PROOF');
+  assert.equal(briefing.readyForReview.length,0);
+  assert.equal(briefing.waitingForProof[0].kind,'pr-checks-incomplete');
+ }
+ assert.equal(buildGitHubOperatorBriefing({pullRequests:[pr]}).status,'PASS');
+ assert.equal(buildGitHubOperatorBriefing({pullRequests:[{...pr,statusCheckRollup:null}]}).status,'PASS');
+ assert.equal(buildGitHubOperatorBriefing({pullRequests:[{
+  ...pr,statusCheckRollup:[{status:'COMPLETED',conclusion:'SUCCESS'}],
+ }]}).status,'PASS');
+});
+
+test('detects claimed HEAD drift and contradictory GitHub field aliases', () => {
+ const verified=[{prNumber:1500,marker:'PR_PUBLICATION_VERIFIER_PASS'}];
+ const drift=buildGitHubOperatorBriefing({pullRequests:[{
+  number:1500,headRefOid:'a'.repeat(40),claimedHeadSha:'b'.repeat(40),checksStatus:'pass'}],evidence:verified});
+ assert.equal(drift.blocked[0].kind,'pr-head-mismatch');
+ const conflict=buildGitHubOperatorBriefing({pullRequests:[{
+  number:1500,headSha:'a'.repeat(40),headRefOid:'b'.repeat(40),checksStatus:'pass'}],evidence:verified});
+ assert.equal(conflict.blocked[0].kind,'pr-head-evidence-conflict');
+});
+
+test('fails closed on contradictory per-check result aliases', () => {
+ const pr={number:1500,headSha:'a'.repeat(40),publicationVerified:true};
+ for(const statusCheckRollup of [
+  [{status:'COMPLETED',conclusion:'SUCCESS',state:'FAILURE'}],
+  [{status:'COMPLETED',conclusion:'SUCCESS',state:'PENDING'}],
+  [{status:'COMPLETED',conclusion:'FAILURE',state:'SUCCESS'}],
+ ]){
+  const briefing=buildGitHubOperatorBriefing({pullRequests:[{...pr,statusCheckRollup}]});
+  assert.equal(briefing.status,'WAITING_FOR_PROOF');
+  assert.equal(briefing.readyForReview.length,0);
+ }
+ const consistent=buildGitHubOperatorBriefing({pullRequests:[{...pr,statusCheckRollup:[{status:'COMPLETED',conclusion:'SUCCESS',state:'SUCCESS'}]}]});
+ assert.equal(consistent.status,'PASS');
+});
+
+
+test('detects overdue canonical handoff and rejects foreign acknowledgement',()=>{
+ const producer={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'producer-1',nextOwner:'protected-merge-owner',
+  nextAction:'consume-review',producedAtUtc:'2026-11-03T10:00:00Z',dueAtUtc:'2026-11-03T11:00:00Z'};
+ const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:'producer-1',
+  prNumber:1449,issueNumber:2972,sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),
+  ref:'ack-1',receiverOwner:'protected-merge-owner',nextAction:'consume-review',acknowledgedAtUtc:'2026-11-03T10:30:00Z'};
+ const f=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T12:00:00Z',evidence});
+ assert.equal(f([producer]).blocked[0].kind,'automation-debt-stale-handoff');
+ assert.equal(f([producer,{...ack,sourceHead:'c'.repeat(40)}]).status,'BLOCKED');
+ assert.equal(f([producer,{...ack,producerReceiptRef:'different'}]).status,'BLOCKED');
+ assert.equal(f([producer,ack]).status,'WAITING_FOR_PROOF');
+});
+test('projects pending and incomplete handoffs without treating summary claims as evidence',()=>{
+ const producer={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:2094,issueNumber:2670,
+  sourceHead:'d'.repeat(40),baseSha:'e'.repeat(40),ref:'receipt-2',nextOwner:'reviewer',
+  nextAction:'review-exact-head',producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T14:00:00Z'};
+ const f=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T13:00:00Z',evidence});
+ assert.equal(f([producer]).waitingForProof[0].kind,'handoff-awaiting-receiver-ack');
+ assert.equal(f([{...producer,baseSha:''}]).blocked[0].kind,'automation-debt-incomplete-handoff');
+ assert.equal(f([{...producer,marker:'CLAIMED'}]).status,'PASS');
+});
+
+test('rejects future-dated PRODUCED handoffs and retains valid acknowledgements',()=>{
+ const p={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'future-1',
+  nextOwner:'review-owner',nextAction:'consume-review',
+  producedAtUtc:'2026-11-03T13:00:01Z',dueAtUtc:'2026-11-03T14:00:00Z'};
+ const f=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T13:00:00Z',evidence});
+ for(const producedAtUtc of ['2026-11-03T13:00:01Z','2026-11-04T13:00:00Z']){
+  const b=f([{...p,producedAtUtc,dueAtUtc:'2026-11-05T13:00:00Z'}]);
+  assert.equal(b.status,'BLOCKED');
+  assert.equal(b.blocked[0].kind,'automation-debt-incomplete-handoff');
+  assert.equal(b.waitingForProof.length,0);
+ }
+ const valid={...p,producedAtUtc:'2026-11-03T12:30:00Z'};
+ assert.equal(f([valid]).status,'WAITING_FOR_PROOF');
+ const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:'future-1',ref:'ack',
+  prNumber:1449,issueNumber:2972,sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),
+  receiverOwner:'review-owner',nextAction:'consume-review',acknowledgedAtUtc:'2026-11-03T12:45:00Z'};
+ assert.equal(f([valid,ack]).status,'WAITING_FOR_PROOF');
+ assert.equal(f([p,ack]).status,'BLOCKED');
+});
+
+
+// A receiver ACK is not timely merely because it eventually arrived.
+test('retains automation debt when receiver acknowledgement missed producer deadline',()=>{
+  const producer={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+    sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'deadline-receipt-1',
+    nextOwner:'protected-merge-owner',nextAction:'consume-exact-review',
+    producedAtUtc:'2026-11-03T10:00:00Z',dueAtUtc:'2026-11-03T11:00:00Z'};
+  const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:producer.ref,
+    prNumber:1449,issueNumber:2972,sourceHead:producer.sourceHead,baseSha:producer.baseSha,
+    ref:'deadline-ack-1',receiverOwner:producer.nextOwner,nextAction:producer.nextAction,
+    acknowledgedAtUtc:'2026-11-03T11:00:01Z'};
+  const f=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T12:00:00Z',evidence});
+  const late=f([producer,ack]);
+  assert.equal(late.status,'BLOCKED');
+  assert.equal(late.blocked[0].kind,'automation-debt-stale-handoff');
+  assert.equal(f([producer,{...ack,acknowledgedAtUtc:'2026-11-03T11:00:00Z'}]).status,'WAITING_FOR_PROOF');
+  assert.equal(f([producer,{...ack,acknowledgedAtUtc:'2026-11-03T10:30:00Z'}]).status,'WAITING_FOR_PROOF');
+  assert.equal(f([producer,{...ack,acknowledgedAtUtc:'2026-11-03T09:59:59Z'}]).status,'BLOCKED');
+  assert.equal(f([producer,{...ack,acknowledgedAtUtc:'2026-11-03T12:00:01Z'}]).status,'BLOCKED');
+});
+
+
+test('fails closed on duplicate producer receipts and ambiguous receiver acknowledgements',()=>{
+ const p={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'producer-unique-1',
+  nextOwner:'merge-owner',nextAction:'guarded-merge',
+  producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T13:00:00Z'};
+ const a={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:p.ref,
+  prNumber:p.prNumber,issueNumber:p.issueNumber,sourceHead:p.sourceHead,baseSha:p.baseSha,
+  ref:'receiver-unique-1',receiverOwner:p.nextOwner,nextAction:p.nextAction,
+  acknowledgedAtUtc:'2026-11-03T12:30:00Z'};
+ const f=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T12:45:00Z',evidence});
+ assert.equal(f([p,a]).status,'WAITING_FOR_PROOF');
+ for(const collision of [{...p},{...p,nextOwner:'foreign-owner'}]){
+  const r=f([p,collision,a]);
+  assert.equal(r.status,'BLOCKED');
+  assert.equal(r.blocked[0].kind,'automation-debt-duplicate-producer-receipt');
+ }
+ for(const duplicateAck of [{...a},{...a,receiverOwner:'foreign-owner',ref:'receiver-unique-2'}]){
+  const r=f([p,a,duplicateAck]);
+  assert.equal(r.status,'BLOCKED');
+  assert.equal(r.blocked[0].kind,'automation-debt-ambiguous-receiver-ack');
+ }
+ const orphan=f([p,a,{...a,producerReceiptRef:'other-unrelated-producer'}]);
+ assert.equal(orphan.status,'BLOCKED');
+ assert.ok(orphan.blocked.some(x=>x.kind==='automation-debt-orphan-receiver-ack'));
+ const p2={...p,ref:'producer-unique-2',issueNumber:2670};
+ const a2={...a,producerReceiptRef:p2.ref,issueNumber:p2.issueNumber,ref:'receiver-unique-2'};
+ assert.equal(f([p,p2,a,a2]).status,'WAITING_FOR_PROOF');
+ assert.equal(f([p]).status,'WAITING_FOR_PROOF');
+ assert.equal(f([p,{...p},a]).blocked.length,2);
+});
+
+
+test('fails closed on a present but invalid receiver acknowledgement before producer deadline',()=>{
+ const p={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'bounded-producer-ack',
+  nextOwner:'original-merge-owner',nextAction:'consume-exact-review',
+  producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T13:00:00Z'};
+ const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',
+  producerReceiptRef:p.ref,prNumber:p.prNumber,issueNumber:p.issueNumber,
+  sourceHead:p.sourceHead,baseSha:p.baseSha,ref:'bounded-receiver-ack',
+  receiverOwner:p.nextOwner,nextAction:p.nextAction,acknowledgedAtUtc:'2026-11-03T12:10:00Z'};
+ const f=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T12:30:00Z',evidence});
+ assert.equal(f([p,ack]).status,'WAITING_FOR_PROOF');
+ assert.equal(f([p]).waitingForProof[0].kind,'handoff-awaiting-receiver-ack');
+ const cases=[
+  {prNumber:2094},{issueNumber:2670},{sourceHead:'c'.repeat(40)},
+  {baseSha:'d'.repeat(40)},{receiverOwner:'unrelated-owner'},
+  {nextAction:'wrong-action'},{ref:''},{acknowledgedAtUtc:'2026-11-03T11:59:59Z'},
+  {acknowledgedAtUtc:'2026-11-03T12:31:00Z'},
+  {acknowledgedAtUtc:'2026-11-03T13:00:01Z'},
+ ];
+ for(const altered of cases){
+  const briefing=f([p,{...ack,...altered}]);
+  assert.equal(briefing.status,'BLOCKED');
+  assert.equal(briefing.blocked[0].kind,'automation-debt-mismatched-receiver-ack');
+  assert.equal(briefing.waitingForProof.length,0);
+ }
+});
+
+
+test('flags a previously acknowledged handoff when the observed current PR identity changes',()=>{
+ const producer={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'review-stage-producer-1',
+  nextOwner:'protected-merge-owner',nextAction:'consume-exact-review',
+  producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T16:00:00Z'};
+ const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:producer.ref,
+  prNumber:producer.prNumber,issueNumber:producer.issueNumber,
+  sourceHead:producer.sourceHead,baseSha:producer.baseSha,ref:'review-stage-ack-1',
+  receiverOwner:producer.nextOwner,nextAction:producer.nextAction,
+  acknowledgedAtUtc:'2026-11-03T13:00:00Z'};
+ const project=(pr)=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T14:00:00Z',
+  evidence:[producer,ack],pullRequests:pr?[{number:1449,publicationVerified:true,
+   checksStatus:'pass',isDraft:false,...pr}]:[]});
+ assert.equal(project({headSha:producer.sourceHead,baseSha:producer.baseSha}).status,'WAITING_FOR_PROOF');
+ for(const changed of [
+  {headSha:'c'.repeat(40),baseSha:producer.baseSha},
+  {headSha:producer.sourceHead,baseSha:'d'.repeat(40)},
+  {headRefOid:'c'.repeat(40),baseRefOid:producer.baseSha},
+ ]){
+  const r=project(changed);
+  assert.equal(r.status,'BLOCKED');
+  assert.equal(r.blocked[0].kind,'automation-debt-stale-source-identity');
+  assert.equal(r.waitingForProof.length,0);
+ }
+ // A missing current PR snapshot must not be invented as a source-identity conflict.
+ assert.equal(project(null).status,'WAITING_FOR_PROOF');
+ assert.equal(project({}).status,'WAITING_FOR_PROOF');
+});
+
+test('requires exact terminal live-verification evidence after the receiver acknowledges a handoff',()=>{
+ const p={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'terminal-producer-1',nextOwner:'merge-steward',
+  nextAction:'consume-reviewed-merge',acceptancePredicate:'original-user-facing-live-outcome',
+  producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T13:00:00Z'};
+ const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:p.ref,ref:'terminal-ack-1',
+  prNumber:p.prNumber,issueNumber:p.issueNumber,sourceHead:p.sourceHead,baseSha:p.baseSha,
+  receiverOwner:p.nextOwner,nextAction:p.nextAction,acknowledgedAtUtc:'2026-11-03T12:20:00Z'};
+ const done={kind:'goal-stage-handoff',marker:'VERIFIED_DONE',producerReceiptRef:p.ref,receiverAckRef:ack.ref,
+  ref:'terminal-proof-receipt-1',verificationRef:'canonical-live-proof-1',acceptancePredicate:p.acceptancePredicate,
+  prNumber:p.prNumber,issueNumber:p.issueNumber,sourceHead:p.sourceHead,baseSha:p.baseSha,
+  receiverOwner:p.nextOwner,nextAction:p.nextAction,verifiedAtUtc:'2026-11-03T12:30:00Z'};
+ const f=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T12:40:00Z',evidence});
+ const pending=f([p,ack]);
+ assert.equal(pending.status,'WAITING_FOR_PROOF');
+ assert.equal(pending.waitingForProof[0].kind,'handoff-awaiting-terminal-verification');
+ assert.equal(f([p,ack,done]).status,'PASS');
+ for(const altered of [
+  {receiverAckRef:'different'}, {sourceHead:'c'.repeat(40)}, {baseSha:'d'.repeat(40)},
+  {receiverOwner:'other'}, {nextAction:'other'}, {acceptancePredicate:'other'},
+  {verificationRef:''}, {ref:''}, {verifiedAtUtc:'2026-11-03T12:19:59Z'},
+  {verifiedAtUtc:'2026-11-03T12:40:01Z'}
+ ]){
+  const b=f([p,ack,{...done,...altered}]);
+  assert.equal(b.status,'BLOCKED');
+  assert.equal(b.blocked[0].kind,'automation-debt-invalid-terminal-proof');
+ }
+ assert.equal(f([p,done]).blocked[0].kind,'automation-debt-terminal-without-ack');
+ assert.equal(f([p,ack,done,{...done,ref:'duplicate'}]).blocked[0].kind,'automation-debt-ambiguous-terminal-proof');
+});
+
+
+test('terminal capability proof cannot invent an acceptance predicate absent from the producer',()=>{
+ const p={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'predicate-producer-1',
+  nextOwner:'original-merge-owner',nextAction:'guarded-merge',
+  producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T14:00:00Z'};
+ const a={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:p.ref,
+  prNumber:p.prNumber,issueNumber:p.issueNumber,sourceHead:p.sourceHead,baseSha:p.baseSha,
+  ref:'predicate-ack-1',receiverOwner:p.nextOwner,nextAction:p.nextAction,
+  acknowledgedAtUtc:'2026-11-03T12:20:00Z'};
+ const v={kind:'goal-stage-handoff',marker:'VERIFIED_DONE',producerReceiptRef:p.ref,
+  receiverAckRef:a.ref,ref:'predicate-terminal-1',verificationRef:'independent-live-proof-1',
+  acceptancePredicate:'operator-visible-live-outcome',prNumber:p.prNumber,
+  issueNumber:p.issueNumber,sourceHead:p.sourceHead,baseSha:p.baseSha,
+  receiverOwner:p.nextOwner,nextAction:p.nextAction,verifiedAtUtc:'2026-11-03T12:25:00Z'};
+ const briefing=e=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T12:30:00Z',evidence:e});
+ assert.equal(briefing([p,a]).status,'WAITING_FOR_PROOF');
+ const missing=briefing([p,a,v]);
+ assert.equal(missing.status,'BLOCKED');
+ assert.equal(missing.blocked[0].kind,'automation-debt-invalid-terminal-proof');
+ assert.equal(briefing([{...p,acceptancePredicate:v.acceptancePredicate},a,v]).status,'PASS');
+ assert.equal(briefing([{...p,acceptancePredicate:'different-acceptance'},a,v]).status,'BLOCKED');
+});
+
+test('a receiver VERIFIED_FAILED outcome is terminal debt, never a successful or pending handoff',()=>{
+ const producer={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'failed-producer-1',
+  nextOwner:'original-merge-owner',nextAction:'guarded-merge',acceptancePredicate:'live-user-outcome',
+  producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T14:00:00Z'};
+ const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:producer.ref,ref:'failed-ack-1',
+  prNumber:producer.prNumber,issueNumber:producer.issueNumber,sourceHead:producer.sourceHead,
+  baseSha:producer.baseSha,receiverOwner:producer.nextOwner,nextAction:producer.nextAction,
+  acknowledgedAtUtc:'2026-11-03T12:05:00Z'};
+ const failed={kind:'goal-stage-handoff',marker:'VERIFIED_FAILED',producerReceiptRef:producer.ref,
+  receiverAckRef:ack.ref,ref:'failed-terminal-1',verificationRef:'live-failure-receipt-1',
+  acceptancePredicate:producer.acceptancePredicate,prNumber:producer.prNumber,
+  issueNumber:producer.issueNumber,sourceHead:producer.sourceHead,baseSha:producer.baseSha,
+  receiverOwner:producer.nextOwner,nextAction:producer.nextAction,verifiedAtUtc:'2026-11-03T12:10:00Z'};
+ const briefing=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T12:15:00Z',evidence});
+ const result=briefing([producer,ack,failed]);
+ assert.equal(result.status,'BLOCKED');
+ assert.equal(result.blocked[0].kind,'automation-debt-verified-failed-outcome');
+ assert.equal(briefing([producer,ack]).waitingForProof[0].kind,'handoff-awaiting-terminal-verification');
+ assert.equal(briefing([producer,ack,{...failed,marker:'VERIFIED_DONE'}]).status,'PASS');
+ assert.equal(briefing([producer,failed]).blocked[0].kind,'automation-debt-terminal-without-ack');
+ assert.equal(briefing([producer,ack,failed,{...failed,marker:'VERIFIED_DONE',ref:'other'}]).blocked[0].kind,'automation-debt-ambiguous-terminal-proof');
+ for(const invalid of [{receiverAckRef:'foreign'},{sourceHead:'c'.repeat(40)},
+  {acceptancePredicate:'other'},{verifiedAtUtc:'2026-11-03T12:30:00Z'}]){
+  assert.equal(briefing([producer,ack,{...failed,...invalid}]).blocked[0].kind,
+   'automation-debt-invalid-terminal-proof');
+ }
+});
+
+
+test('rejects duplicated current PR snapshots instead of selecting the last matching handoff identity',()=>{
+ const producer={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),ref:'duplicate-current-snapshot',
+  nextOwner:'protected-merge-owner',nextAction:'consume-review',acceptancePredicate:'live-user-outcome',
+  producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T18:00:00Z'};
+ const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:producer.ref,
+  ref:'duplicate-current-snapshot-ack',prNumber:producer.prNumber,issueNumber:producer.issueNumber,
+  sourceHead:producer.sourceHead,baseSha:producer.baseSha,receiverOwner:producer.nextOwner,
+  nextAction:producer.nextAction,acknowledgedAtUtc:'2026-11-03T13:00:00Z'};
+ const current={number:1449,headSha:producer.sourceHead,baseSha:producer.baseSha,
+  publicationVerified:true,checksStatus:'pass'};
+ const stale={...current,headSha:'c'.repeat(40)};
+ const briefing=pullRequests=>buildGitHubOperatorBriefing({
+  generatedAtUtc:'2026-11-03T14:00:00Z',evidence:[producer,ack],pullRequests});
+ assert.equal(briefing([current]).status,'WAITING_FOR_PROOF');
+ assert.equal(briefing([stale]).blocked[0].kind,'automation-debt-stale-source-identity');
+ for(const snapshots of [[stale,current],[current,stale],[current,current]]){
+  const b=briefing(snapshots);
+  assert.equal(b.status,'BLOCKED');
+  assert.equal(b.blocked[0].kind,'automation-debt-ambiguous-pr-snapshot');
+  assert.equal(b.waitingForProof.some(x=>x.kind==='handoff-awaiting-terminal-verification'),false);
+ }
+});
+
+
+test('orphan receiver and terminal claims cannot self-certify cross-run handoff', () => {
+ const head='a'.repeat(40),base='b'.repeat(40);
+ const producer={kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449,issueNumber:2972,
+  ref:'prod-1449',sourceHead:head,baseSha:base,nextOwner:'merge-owner',
+  nextAction:'consume-review',acceptancePredicate:'exact-main-live',
+  producedAtUtc:'2026-11-03T17:00:00Z',dueAtUtc:'2026-11-03T18:00:00Z'};
+ const ack={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',prNumber:1449,issueNumber:2972,
+  producerReceiptRef:'prod-1449',ref:'ack-1449',sourceHead:head,baseSha:base,
+  receiverOwner:'merge-owner',nextAction:'consume-review',acknowledgedAtUtc:'2026-11-03T17:10:00Z'};
+ const done={kind:'goal-stage-handoff',marker:'VERIFIED_DONE',prNumber:1449,issueNumber:2972,
+  producerReceiptRef:'prod-1449',ref:'done-1449',receiverAckRef:'ack-1449',
+  verificationRef:'live-physical-receipt',sourceHead:head,baseSha:base,
+  receiverOwner:'merge-owner',nextAction:'consume-review',acceptancePredicate:'exact-main-live',
+  verifiedAtUtc:'2026-11-03T17:20:00Z'};
+ const failed={...done,marker:'VERIFIED_FAILED',ref:'failed-1449'};
+ const f=(evidence)=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T17:30:00Z',evidence});
+ const cases=[
+  {name:'orphan ack',evidence:[ack],kind:'automation-debt-orphan-receiver-ack'},
+  {name:'orphan done',evidence:[done],kind:'automation-debt-orphan-terminal-receipt'},
+  {name:'orphan failed',evidence:[failed],kind:'automation-debt-orphan-terminal-receipt'},
+  {name:'orphan ack and done',evidence:[ack,done],kind:'automation-debt-orphan-receiver-ack'},
+  {name:'foreign ack alongside canonical handoff',evidence:[producer,ack,{...ack,ref:'foreign-ack',producerReceiptRef:'foreign'}],kind:'automation-debt-orphan-receiver-ack'},
+  {name:'empty producer ref',evidence:[{...ack,producerReceiptRef:''}],kind:'automation-debt-orphan-receiver-ack'},
+ ];
+ for(const c of cases){const b=f(c.evidence);assert.equal(b.status,'BLOCKED',c.name);
+  assert.ok(b.blocked.some(x=>x.kind===c.kind),c.name);}
+ assert.equal(f([producer,ack,done]).status,'PASS');
+ assert.equal(f([producer,ack]).status,'WAITING_FOR_PROOF');
+ assert.equal(f([]).status,'PASS');
+});
+
+test('cross-handoff reuse of receiver and verification receipt identities fails closed', () => {
+ const head='a'.repeat(40),base='b'.repeat(40);
+ const producers=[1,2].map(n=>({
+  kind:'goal-stage-handoff',marker:'PRODUCED',prNumber:1449+n,issueNumber:2670+n,
+  sourceHead:head,baseSha:base,ref:'producer-'+n,nextOwner:'owner-'+n,
+  nextAction:'consume-review',acceptancePredicate:'verified-live-outcome',
+  producedAtUtc:'2026-11-03T18:00:00Z',dueAtUtc:'2026-11-03T22:00:00Z'
+ }));
+ const acks=producers.map((p,i)=>({
+  kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',
+  producerReceiptRef:p.ref,ref:'ack-'+i,prNumber:p.prNumber,issueNumber:p.issueNumber,
+  sourceHead:p.sourceHead,baseSha:p.baseSha,receiverOwner:p.nextOwner,
+  nextAction:p.nextAction,acknowledgedAtUtc:'2026-11-03T18:10:00Z'
+ }));
+ const done=producers.map((p,i)=>({
+  kind:'goal-stage-handoff',marker:'VERIFIED_DONE',
+  producerReceiptRef:p.ref,receiverAckRef:acks[i].ref,ref:'done-'+i,
+  verificationRef:'live-proof-'+i,acceptancePredicate:p.acceptancePredicate,
+  prNumber:p.prNumber,issueNumber:p.issueNumber,sourceHead:p.sourceHead,
+  baseSha:p.baseSha,receiverOwner:p.nextOwner,nextAction:p.nextAction,
+  verifiedAtUtc:'2026-11-03T18:20:00Z'
+ }));
+ const classify=(a,d)=>buildGitHubOperatorBriefing({
+  generatedAtUtc:'2026-11-03T19:00:00Z',evidence:[...producers,...a,...d]
+ });
+ assert.equal(classify(acks,done).status,'PASS');
+ assert.equal(classify(acks,[]).waitingForProof.length,2);
+ const replayAck=classify([acks[0],{...acks[1],ref:acks[0].ref}],
+  [done[0],{...done[1],receiverAckRef:acks[0].ref}]);
+ assert.equal(replayAck.status,'BLOCKED');
+ assert.equal(replayAck.blocked.filter(x=>x.kind==='automation-debt-reused-receiver-ack-ref').length,2);
+ const replayTerminal=classify(acks,[done[0],{...done[1],ref:done[0].ref}]);
+ assert.equal(replayTerminal.status,'BLOCKED');
+ assert.equal(replayTerminal.blocked.filter(x=>x.kind==='automation-debt-reused-terminal-verification-ref').length,2);
+ const replayProof=classify(acks,[done[0],{...done[1],verificationRef:done[0].verificationRef}]);
+ assert.equal(replayProof.status,'BLOCKED');
+ assert.equal(replayProof.blocked.filter(x=>x.kind==='automation-debt-reused-terminal-verification-ref').length,2);
+});
+
+
+test('rejects duplicate current PR snapshots even before any producer handoff exists',()=>{
+ const head='a'.repeat(40),base='b'.repeat(40);
+ const original={number:1449,headSha:head,baseSha:base,publicationVerified:true,checksStatus:'pass',isDraft:false};
+ const project=pullRequests=>buildGitHubOperatorBriefing({
+  generatedAtUtc:'2026-11-03T22:28:00Z',pullRequests
+ });
+ assert.equal(project([original]).status,'PASS');
+ assert.equal(project([original]).readyForReview.length,1);
+ assert.equal(project([original,{...original,number:1450}]).readyForReview.length,2);
+ for(const snapshots of [[original,{...original}], [original,{...original,headSha:'c'.repeat(40)}],
+  [{...original,headSha:'c'.repeat(40)},original]]){
+  const result=project(snapshots);
+  assert.equal(result.status,'BLOCKED');
+  assert.equal(result.readyForReview.length,0);
+  assert.equal(result.blocked.filter(x=>x.kind==='pr-ambiguous-snapshot').length,1);
+  assert.equal(result.blocked[0].number,1449);
+ }
+ const partial=project([original,{...original},{...original,number:1450}]);
+ assert.equal(partial.status,'BLOCKED');
+ assert.equal(partial.readyForReview.length,1);
+ assert.equal(partial.readyForReview[0].number,1450);
+ assert.equal(partial.blocked.filter(x=>x.kind==='pr-ambiguous-snapshot').length,1);
+});
+
+test('immutable handoff receipt identities cannot be recycled across evidence stages',()=>{
+ const head='a'.repeat(40),base='b'.repeat(40);
+ const p={kind:'goal-stage-handoff',marker:'PRODUCED',ref:'stage-producer-1',
+  prNumber:1449,issueNumber:2670,sourceHead:head,baseSha:base,
+  nextOwner:'review-owner',nextAction:'consume-review',acceptancePredicate:'verified-live',
+  producedAtUtc:'2026-11-03T12:00:00Z',dueAtUtc:'2026-11-03T18:00:00Z'};
+ const a={kind:'goal-stage-handoff',marker:'ACKNOWLEDGED',producerReceiptRef:p.ref,
+  ref:'stage-ack-1',prNumber:p.prNumber,issueNumber:p.issueNumber,
+  sourceHead:head,baseSha:base,receiverOwner:p.nextOwner,nextAction:p.nextAction,
+  acknowledgedAtUtc:'2026-11-03T13:00:00Z'};
+ const v={kind:'goal-stage-handoff',marker:'VERIFIED_DONE',producerReceiptRef:p.ref,
+  receiverAckRef:a.ref,ref:'stage-terminal-1',verificationRef:'stage-live-proof-1',
+  prNumber:p.prNumber,issueNumber:p.issueNumber,sourceHead:head,baseSha:base,
+  receiverOwner:p.nextOwner,nextAction:p.nextAction,
+  acceptancePredicate:p.acceptancePredicate,verifiedAtUtc:'2026-11-03T13:15:00Z'};
+ const run=evidence=>buildGitHubOperatorBriefing({generatedAtUtc:'2026-11-03T14:00:00Z',evidence});
+ assert.equal(run([p,a,v]).status,'PASS');
+ assert.equal(run([p,a]).status,'WAITING_FOR_PROOF');
+ for(const altered of [
+  [p,{...a,ref:p.ref},{...v,receiverAckRef:p.ref}],
+  [p,a,{...v,ref:a.ref}],
+  [p,a,{...v,verificationRef:p.ref}],
+  [p,a,{...v,ref:p.ref}],
+  [p,{...a,ref:p.ref}]
+ ]){
+  const result=run(altered);
+  assert.equal(result.status,'BLOCKED');
+  assert.equal(result.blocked[0].kind,'automation-debt-cross-stage-receipt-ref');
+ }
+ const p2={...p,ref:'stage-producer-2',prNumber:1450,issueNumber:2972};
+ const a2={...a,producerReceiptRef:p2.ref,ref:p.ref,prNumber:1450,issueNumber:2972};
+ const v2={...v,producerReceiptRef:p2.ref,receiverAckRef:a2.ref,
+  ref:'stage-terminal-2',verificationRef:'stage-live-proof-2',prNumber:1450,issueNumber:2972};
+ const cross=run([p,p2,a,a2,v,v2]);
+ assert.equal(cross.status,'BLOCKED');
+ assert.equal(cross.blocked.filter(b=>b.kind==='automation-debt-cross-stage-receipt-ref').length,2);
+ const distinct=run([p,p2,a,{...a2,ref:'stage-ack-2'},v,{...v2,receiverAckRef:'stage-ack-2'}]);
+ assert.equal(distinct.status,'PASS');
+});
