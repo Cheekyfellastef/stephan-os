@@ -7,6 +7,9 @@ import {
   validateSharedWorkspaceRecord,
 } from './sharedAgentWorkspaceStore.mjs';
 import {
+  validateStephanosWorkspaceQuestionByLineage,
+} from './stephanosWorkspaceConversationLineageV1.mjs';
+import {
   evaluateStephanosCapabilityRound,
   validateStephanosCapabilityAnswer,
   validateStephanosCapabilityQuestion,
@@ -328,6 +331,104 @@ export function decodeStephanosWorkspaceQuestionRecord(record, options = {}) {
     if (decoded.record.subjectId !== decoded.payload.questionId) errors.push('question-lineage-mismatch');
   }
   return Object.freeze({ valid: errors.length === 0, question: errors.length === 0 ? decoded.payload : null, errors: Object.freeze(errors) });
+}
+
+export function decodeStephanosWorkspaceQuestionRecordByLineage(record, options = {}) {
+  const decoded = decodeRecord(record, STEPHANOS_SHARED_WORKSPACE_CONVERSATION_SUBTYPE.QUESTION, options);
+  const errors = [...decoded.errors];
+  let selected = null;
+  if (decoded.payload && decoded.record) {
+    selected = validateStephanosWorkspaceQuestionByLineage(decoded.record, decoded.payload, options);
+    errors.push(...selected.errors.map((error) => `question:${error}`));
+    if (decoded.record.participantId !== decoded.payload.askerParticipantId) errors.push('asker-participant-lineage-mismatch');
+    if (decoded.record.recipientParticipantId !== decoded.payload.targetParticipantId) errors.push('target-participant-lineage-mismatch');
+    if (decoded.record.subjectId !== decoded.payload.questionId) errors.push('question-lineage-mismatch');
+  }
+  return Object.freeze({
+    valid: errors.length === 0,
+    question: errors.length === 0 ? selected?.question || decoded.payload : null,
+    lineage: errors.length === 0 ? selected?.lineage || null : null,
+    errors: Object.freeze(errors),
+  });
+}
+
+export function createStephanosWorkspaceAnswerRecordByLineage(answer, questionRecord, options = {}) {
+  const decodedQuestion = decodeStephanosWorkspaceQuestionRecordByLineage(questionRecord, options);
+  if (!decodedQuestion.valid) return Object.freeze({ valid: false, record: null, answer: null, lineage: null, errors: decodedQuestion.errors });
+  if (decodedQuestion.lineage?.formalRound === true) {
+    const built = createStephanosWorkspaceAnswerRecord(answer, options);
+    return Object.freeze({ ...built, answer: built.valid ? answer : null, lineage: decodedQuestion.lineage });
+  }
+
+  if (!answer || typeof answer !== 'object' || Array.isArray(answer)) {
+    return Object.freeze({ valid: false, record: null, answer: null, lineage: decodedQuestion.lineage, errors: Object.freeze(['answer:record-must-be-object']) });
+  }
+  const ambientAnswer = Object.freeze(Object.fromEntries(Object.entries(answer).filter(([key]) => key !== 'roundId')));
+  const correlationId = text(questionRecord?.correlationId);
+  const validation = validateStephanosCapabilityAnswer({ ...ambientAnswer, roundId: correlationId });
+  if (!validation.valid) {
+    return Object.freeze({ valid: false, record: null, answer: null, lineage: decodedQuestion.lineage, errors: Object.freeze(validation.errors.map((error) => `answer:${error}`)) });
+  }
+  const proof = proofRefsOrError(options);
+  if (!proof.valid) return Object.freeze({ valid: false, record: null, answer: null, lineage: decodedQuestion.lineage, errors: Object.freeze(proof.errors) });
+  const recipientParticipantId = safeId(options.recipientParticipantId);
+  if (!recipientParticipantId) return Object.freeze({ valid: false, record: null, answer: null, lineage: decodedQuestion.lineage, errors: Object.freeze(['recipientParticipantId-invalid']) });
+  const relatedIssue = text(options.relatedIssue || '#1308');
+  const relatedPr = text(options.relatedPr);
+  if (!relatedIssue && !relatedPr) return Object.freeze({ valid: false, record: null, answer: null, lineage: decodedQuestion.lineage, errors: Object.freeze(['related-issue-or-pr-required']) });
+
+  const record = baseConversationRecord({
+    messageId: `qa-a-${stableHash({ correlationId, questionId: ambientAnswer.questionId, answerId: ambientAnswer.answerId }).slice(0, 24)}`,
+    participantId: ambientAnswer.responderParticipantId,
+    recipientParticipantId,
+    timestampUtc: ambientAnswer.answeredAtUtc,
+    correlationId,
+    relatedIssue,
+    relatedPr,
+    subtype: STEPHANOS_SHARED_WORKSPACE_CONVERSATION_SUBTYPE.ANSWER,
+    subjectId: ambientAnswer.questionId,
+    summary: `Answer ${ambientAnswer.answerId} to ${ambientAnswer.questionId}`,
+    body: conversationBody(STEPHANOS_SHARED_WORKSPACE_CONVERSATION_SUBTYPE.ANSWER, ambientAnswer),
+    proofRefs: proof.proofRefs,
+  });
+  const workspace = workspaceValidation(record, options);
+  return Object.freeze({
+    valid: workspace.valid,
+    record: workspace.valid ? record : null,
+    answer: workspace.valid ? ambientAnswer : null,
+    lineage: decodedQuestion.lineage,
+    errors: Object.freeze(workspace.errors.map((error) => `workspace:${error}`)),
+    workspaceValidation: workspace.validation,
+  });
+}
+
+export function decodeStephanosWorkspaceAnswerRecordByLineage(record, questionRecord, options = {}) {
+  const decodedQuestion = decodeStephanosWorkspaceQuestionRecordByLineage(questionRecord, options);
+  if (!decodedQuestion.valid) return Object.freeze({ valid: false, answer: null, lineage: null, errors: decodedQuestion.errors });
+  if (decodedQuestion.lineage?.formalRound === true) {
+    const decoded = decodeStephanosWorkspaceAnswerRecord(record, options);
+    return Object.freeze({ ...decoded, lineage: decoded.valid ? decodedQuestion.lineage : null });
+  }
+
+  const decoded = decodeRecord(record, STEPHANOS_SHARED_WORKSPACE_CONVERSATION_SUBTYPE.ANSWER, options);
+  const errors = [...decoded.errors];
+  const expectedRecipientParticipantId = safeId(options.expectedRecipientParticipantId || options.recipientParticipantId);
+  if (!expectedRecipientParticipantId) errors.push('expectedRecipientParticipantId-required');
+  if (decoded.payload && decoded.record) {
+    if (Object.hasOwn(decoded.payload, 'roundId')) errors.push('ambient-answer-roundId-forbidden');
+    const validation = validateStephanosCapabilityAnswer({ ...decoded.payload, roundId: decoded.record.correlationId });
+    errors.push(...validation.errors.map((error) => `answer:${error}`));
+    if (decoded.record.correlationId !== questionRecord.correlationId) errors.push('ambient-correlation-lineage-mismatch');
+    if (decoded.record.participantId !== decoded.payload.responderParticipantId) errors.push('responder-participant-lineage-mismatch');
+    if (decoded.record.subjectId !== decoded.payload.questionId) errors.push('question-lineage-mismatch');
+    if (expectedRecipientParticipantId && decoded.record.recipientParticipantId !== expectedRecipientParticipantId) errors.push('recipient-participant-lineage-mismatch');
+  }
+  return Object.freeze({
+    valid: errors.length === 0,
+    answer: errors.length === 0 ? decoded.payload : null,
+    lineage: errors.length === 0 ? decodedQuestion.lineage : null,
+    errors: Object.freeze(errors),
+  });
 }
 
 export function decodeStephanosWorkspaceAnswerRecord(record, options = {}) {
