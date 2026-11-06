@@ -22,7 +22,7 @@ try {
     $sha = [Security.Cryptography.SHA256]::Create()
     try { $nativeHash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($request.nativeSource)))).Replace('-','').ToLowerInvariant() }
     finally { $sha.Dispose() }
-    if ($nativeHash -cne '0969b9b67a5ec7efbf06d81506383cb86914715c80b2371f7d8c762ae4c705d1') {
+    if ($nativeHash -cne 'c0980126d050631d9788ceeee2631ecb78f0c4780c52baee6f9bb90f6c287bbf') {
         throw 'SOVEREIGN_MOVE_SOURCE_MISMATCH'
     }
     Add-Type -TypeDefinition $request.nativeSource

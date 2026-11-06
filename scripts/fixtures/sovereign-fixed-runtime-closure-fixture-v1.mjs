@@ -39,7 +39,7 @@ const requiredRoots = maintenance ? ['scripts/sovereign-maintenance-custody-stor
 const capturedReadAdapters = {
   'shared/agents/sovereignDirectoryCreateV1.mjs': 'b3a9f5f60d7d0990b31fa9f491c349832f9fad2cba802484e2b1c2c67106e43a',
   'shared/agents/sovereignSearchSessionsV1.mjs': '34a3e080c0fb33f4dea59f244c019a884098daf29ed69ace2d654cb201a8d1d8',
-  'shared/agents/sovereignFileMoveV1.mjs': 'ddbd60c0cbf3028bb7406e3f3221584dad7ffc3f8e75122d1f76a23900378bd9',
+  'shared/agents/sovereignFileMoveV1.mjs': '79ea603d77c6aa0d53366a966aef849ecc20e80019f2162e28886b6a28747190',
 };
 for (const target of requiredRoots) if (!members.has(target)) missing.push({ role: 'profile-root', target });
 // Checking all admitted JS members also covers a newly reachable import in a

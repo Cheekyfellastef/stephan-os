@@ -274,6 +274,47 @@ Add-Type -TypeDefinition $r.nativeSource
   return JSON.parse(terminal.stdout.trim());
 }
 
+test('Windows native admission accepts literal valid paths and rejects boundary BOM across cultures', WINDOWS, () => {
+  const ciSource = 'C:\\Users\\runneradmin\\sovereign-file-move-kwUPHk\\from-0.txt';
+  const ciDestination = 'C:\\Users\\runneradmin\\sovereign-file-move-kwUPHk\\José-测试-🚀-0.txt';
+  const valid = [
+    { name: 'exact-ci-unicode', source: ciSource, destination: ciDestination },
+    { name: 'ascii', source: REQUEST.source, destination: REQUEST.destination },
+    { name: 'unicode-parent', source: 'C:\\SovereignFixture\\José-测试-🚀\\from.txt', destination: 'C:\\SovereignFixture\\José-测试-🚀\\to.txt' },
+  ];
+  const invalid = ['source', 'destination'].flatMap(field => ['prefix', 'suffix'].map(boundary => ({
+    name: `${field}-${boundary}`, source: ciSource, destination: ciDestination,
+    [field]: boundary === 'prefix' ? `\ufeff${field === 'source' ? ciSource : ciDestination}`
+      : `${field === 'source' ? ciSource : ciDestination}\ufeff`,
+  })));
+  const proof = nativeFixture(String.raw`
+$prior=[Threading.Thread]::CurrentThread.CurrentCulture
+$checks=@()
+try {
+ foreach($cultureName in @('en-US','tr-TR')) {
+  [Threading.Thread]::CurrentThread.CurrentCulture=[Globalization.CultureInfo]::GetCultureInfo($cultureName)
+  foreach($pair in $r.valid) {
+   $admitted=$true
+   try {[SovereignFileMoveV1]::ValidateRequest($pair.source,$pair.destination,$r.expectedSha256)} catch {$admitted=$false}
+   $checks+=@{culture=$cultureName;name=$pair.name;kind='valid';admitted=$admitted}
+  }
+  foreach($pair in $r.invalid) {
+   $pathRefused=$false
+   try {[SovereignFileMoveV1]::ValidateRequest($pair.source,$pair.destination,$r.expectedSha256)} catch {
+    $cause=$_.Exception
+    while($null -ne $cause.InnerException){$cause=$cause.InnerException}
+    $pathRefused=$cause.Message -ceq 'SOVEREIGN_MOVE_PATH_INVALID'
+   }
+   $checks+=@{culture=$cultureName;name=$pair.name;kind='invalid';pathRefused=$pathRefused}
+  }
+ }
+} finally {[Threading.Thread]::CurrentThread.CurrentCulture=$prior}
+@{checks=$checks}|ConvertTo-Json -Compress -Depth 5
+`, { valid, invalid, expectedSha256: REQUEST.expectedSha256 });
+  assert.equal(proof.checks.length, (valid.length + invalid.length) * 2);
+  for (const check of proof.checks) assert.equal(check.kind === 'valid' ? check.admitted : check.pathRefused, true, JSON.stringify(check));
+});
+
 test('Windows fixed native helper renames Unicode and empty files without copying or exposing contents', WINDOWS, async () => {
   await withDirectory(async root => {
     for (const [index, content] of [Buffer.from('private-canary\0binary'), Buffer.alloc(0)].entries()) {

@@ -114,7 +114,10 @@ public sealed class SovereignFileMoveV1 : IDisposable {
             && !Regex.IsMatch(part, @"^(?:CON|CONIN\$|CONOUT\$|PRN|AUX|NUL|COM[1-9\u00b9\u00b2\u00b3]|LPT[1-9\u00b9\u00b2\u00b3])(?:\.|$)", RegexOptions.IgnoreCase);
     }
     static string[] ValidatePath(string path) {
-        if (path == null || path.Length > 1024 || path.Trim() != path || path.StartsWith("\ufeff") || path.EndsWith("\ufeff")
+        // A linguistic comparison can ignore BOM and match every path. These
+        // are literal boundary characters, never culture-sensitive text.
+        if (path == null || path.Length > 1024 || path.Trim() != path
+            || path.StartsWith("\ufeff", StringComparison.Ordinal) || path.EndsWith("\ufeff", StringComparison.Ordinal)
             || !Regex.IsMatch(path, @"^[A-Za-z]:\\[^\\]")) throw new InvalidOperationException("SOVEREIGN_MOVE_PATH_INVALID");
         string[] parts = path.Substring(3).Split('\\');
         if (parts.Length > 64) throw new InvalidOperationException("SOVEREIGN_MOVE_PATH_INVALID");
