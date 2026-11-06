@@ -1,5 +1,6 @@
 import { projectGoalAdmissionRequiredTestsV1, projectStrengthenedRetryTestsV1 } from './goalAdmissionRequiredTestsV1.mjs';
 import { isModelTransportFailureV1, modelTransportFailureProofMatchesV1 } from './modelTransportFailureRetryV1.mjs';
+import { isKnownMalformedPatchRetryV1, knownMalformedPatchEvidenceMatchesV1 } from './knownMalformedPatchRetryV1.mjs';
 import { validateExternalMergeObservationV1, hasExternalMergeObservationV1 } from './externalMergeObservationV1.mjs';
 
 const MAX_REPAIR_ROUNDS = 3;
@@ -440,8 +441,13 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
   state.timeline.push({ eventType, timestamp, summary: text(event.summary, eventType) });
 
   if (eventType === 'AGENT_FAILURE_RETRY_ADMITTED') {
+    // The mission store authenticates this one registered failure under its lock.
+    // Raw reducer data is never the production authorization boundary.
+    const knownPatchRetry = isKnownMalformedPatchRetryV1(currentState);
+    if (knownPatchRetry && !knownMalformedPatchEvidenceMatchesV1(event.retryKnownMalformedPatchProof,
+      currentState, event.retryPlanSourceHead)) return block(state, 'Known malformed-patch retry requires native source and terminal evidence.', timestamp);
     const parkedRetry = state.continuity.parkingStatus === MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED
-      && isRetryableParkedAgentFailure(state.blockers, state.requiredTests);
+      && (isRetryableParkedAgentFailure(state.blockers, state.requiredTests) || knownPatchRetry);
     if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE && !parkedRetry) return block(state, 'Retry admission requires active mission continuity or bounded parked agent failures.', timestamp);
     const transportRetry = state.blockers.some(isModelTransportFailureV1);
     if (transportRetry && (state.blockers.length !== 1
@@ -453,19 +459,20 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     const narrowedScope = event.retryAllowedFiles === undefined ? null
       : projectNarrowedMissionSourceScopeV1(state.allowedFiles, event.retryAllowedFiles);
     if (narrowedScope && (!narrowedScope.valid || !SHA40_PATTERN.test(text(event.retryPlanSourceHead)) || state.blockers.length !== 1
-        || state.blockers[0] !== 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED')) {
+        || (state.blockers[0] !== 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED' && !knownPatchRetry))) {
       return block(state, 'Retry scope reduction requires the original bounded source-diff failure and cannot widen authority.', timestamp);
     }
     const strengthened = event.retryRequiredTests === undefined ? null
       : projectStrengthenedRetryTestsV1(state.requiredTests, event.retryRequiredTests, narrowedScope?.allowedFiles || state.allowedFiles);
-    if ((state.blockers.includes('SOURCE_ARTIFACT_DIFF_CHECK_FAILED') && (state.blockers.length !== 1 || !strengthened?.valid)) || (strengthened && !strengthened.valid)) {
+    if (((state.blockers.includes('SOURCE_ARTIFACT_DIFF_CHECK_FAILED') || knownPatchRetry) && (state.blockers.length !== 1 || !strengthened?.valid || (knownPatchRetry && !narrowedScope?.valid))) || (strengthened && !strengthened.valid)) {
       return block(state, 'Parked source retry requires strengthened independent acceptance without weakening the consumed plan.', timestamp);
     }
     if (state.currentPhase !== 'BLOCKED' || state.dispatch?.status !== 'failed') {
       return block(state, 'Retry admission requires a BLOCKED mission with a failed agent dispatch.', timestamp);
     }
     const retryableBlockers = unique(list(event.retryableBlockers).map(text));
-    const retryable = reason => isRetryableAgentFailureBlocker(reason, state.requiredTests);
+    const retryable = reason => isRetryableAgentFailureBlocker(reason, state.requiredTests)
+      || (knownPatchRetry && reason === currentState.blockers[0]);
     const currentRetryable = state.blockers.filter(retryable);
     const nonRetryable = state.blockers.filter((reason) => !retryable(reason));
     if (!retryableBlockers.length
@@ -483,6 +490,7 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
       retryableAgentFailures: retryableBlockers,
       retryReceiptId: text(event.receipt?.receiptId || event.receipt?.id),
       previousRequiredTests: [...state.requiredTests],
+      ...(knownPatchRetry ? { retryKnownMalformedPatchProof: clone(event.retryKnownMalformedPatchProof) } : {}),
       ...(transportRetry ? { retryProviderFailureProof: clone(event.retryProviderFailureProof),
         retryPlanSourceHead: event.retryPlanSourceHead } : {}),
       ...(narrowedScope ? { previousAllowedFiles: [...state.allowedFiles], allowedFiles: [...narrowedScope.allowedFiles],

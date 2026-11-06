@@ -78,7 +78,7 @@ function runCli(args, data = '') {
 }
 
 test('complete exact closure becomes deterministic UNBOUND source evidence, never admission', () => {
-  assert.equal(sourcePackage.sourceFileCount, 263);
+  assert.equal(sourcePackage.sourceFileCount, 266);
   assert.equal(sourcePackage.sourceFileCount, FIXED_RUNTIME_SOURCE_PATHS_V1.length);
   assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes('scripts/sovereign-commander-ignition-diagnosis.mjs'));
   assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes('scripts/sovereign-commander-persistent-runtime-repair.mjs'));
