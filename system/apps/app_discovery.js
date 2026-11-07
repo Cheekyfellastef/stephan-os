@@ -68,6 +68,7 @@ function normaliseManifestApp(folder, manifest) {
     name: manifest.name,
     icon: manifest.icon || "🧩",
     entry: `apps/${folder}/${manifest.entry}`,
+    launchStrategy: manifest.launchStrategy === 'navigate' ? 'navigate' : 'workspace',
     type: manifest.type || "app",
     appType: packaging,
     packaging,
