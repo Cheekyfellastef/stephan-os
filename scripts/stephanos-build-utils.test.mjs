@@ -9,6 +9,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import '../tests/flywheel-launcher-entry.test.mjs';
+// Run the original #1717 movable-furniture and audio hardware-boundary checks in hosted CI.
+import '../tests/spatial-workspace-furniture-audio-v1.test.mjs';
 
 import {
   computeStephanosSourceFingerprint,
