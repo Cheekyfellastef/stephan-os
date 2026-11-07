@@ -76,14 +76,16 @@ function rotate(x, z, yaw) {
     z: -Math.sin(yaw) * x + Math.cos(yaw) * z };
 }
 
-export function createHolodeckLocomotion({ room = HOLODECK_ROOM, obstacles = HOLODECK_OBSTACLES } = {}) {
-  const rig = { x: 0, z: 0, yaw: 0 };
+export function createHolodeckLocomotion({ room = HOLODECK_ROOM, obstacles = HOLODECK_OBSTACLES, comfort } = {}) {
+  const rig = { x: 0, y: 0, z: 0, yaw: 0 };
   let previousTime = null;
   let previousSource = 'none';
   let headYaw = 0;
   let armed = false;
 
   function update({ time, pose, input, visible = true }) {
+    const heightOffset = Number(comfort?.getState?.()?.active?.heightOffset);
+    rig.y = Number.isFinite(heightOffset) ? heightOffset : 0;
     const head = headPose(pose, headYaw);
     const elapsed = previousTime === null ? 0 : time - previousTime;
     const validTime = Number.isFinite(time) && elapsed >= 0 && elapsed <= TRACKING_GAP_MS;
@@ -142,12 +144,13 @@ export function createHolodeckLocomotion({ room = HOLODECK_ROOM, obstacles = HOL
 export function applyHolodeckLocomotionToView(view, rig, output = new Float32Array(16)) {
   const c = Math.cos(rig.yaw), s = Math.sin(rig.yaw);
   const tx = -c * rig.x + s * rig.z;
+  const ty = -(Number.isFinite(rig.y) ? rig.y : 0);
   const tz = -s * rig.x - c * rig.z;
   for (let row = 0; row < 4; row += 1) {
     output[row] = view[row] * c + view[8 + row] * s;
     output[4 + row] = view[4 + row];
     output[8 + row] = -view[row] * s + view[8 + row] * c;
-    output[12 + row] = view[row] * tx + view[8 + row] * tz + view[12 + row];
+    output[12 + row] = view[row] * tx + view[4 + row] * ty + view[8 + row] * tz + view[12 + row];
   }
   return output;
 }
