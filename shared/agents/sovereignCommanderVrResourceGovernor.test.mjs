@@ -111,6 +111,12 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /'COOLDOWN'/);
   assert.match(governor, /PrepareGaming/);
   assert.match(governor, /CancelPrepare/);
+  assert.match(governor, /review-large-context/);
+  assert.match(governor, /SovereignReviewer/);
+  assert.match(governor, /phase = 'REVIEWING'/);
+  assert.match(governor, /reason = 'reviewer-resource-reservation'/);
+  assert.match(governor, /\$Signal\.active[\s\S]*Clear-PrepareLease[\s\S]*phase = 'GAMING'/m);
+  assert.match(governor, /\$ProfileName -eq 'review-large-context'[\s\S]*\$prepared\.prepareLeaseActive -ne \$true/m);
   assert.match(governor, /SetAuto/);
   assert.match(governor, /ForceOn/);
   assert.match(governor, /ForceOff/);

@@ -208,13 +208,31 @@ namespace Stephanos.Sovereign {
     static bool ReviewerInferencePrincipalV1(ReviewerProfilePinsV1 pins) {
       return pins.ActualSid==pins.Installation.ReviewerSid&&!pins.Administrator;
     }
+    static bool ReviewerLargeContextStateV1(string raw,DateTime now) {
+      try {
+        var state=ReviewerJsonV1().Deserialize<Dictionary<string,object>>(raw);
+        if(state==null||!Equals(state["phase"],"REVIEWING")||!(state["prepareLeaseActive"] is bool)
+          ||!(bool)state["prepareLeaseActive"]||!(state["active"] is bool)||(bool)state["active"]
+          ||!(state["profile"] is Dictionary<string,object>))return false;
+        var profile=(Dictionary<string,object>)state["profile"];
+        if(!Equals(profile["name"],"review-large-context")||!Equals(profile["processName"],"SovereignReviewer")
+          ||!(profile["lightweightOnly"] is bool)||(bool)profile["lightweightOnly"]
+          ||!(profile["parkAllModels"] is bool)||(bool)profile["parkAllModels"]
+          ||!(profile["customProfileApplied"] is bool)||(bool)profile["customProfileApplied"])return false;
+        DateTime expires;
+        if(!(state["prepareExpiresAtUtc"] is string)
+          ||!DateTime.TryParse((string)state["prepareExpiresAtUtc"],null,System.Globalization.DateTimeStyles.RoundtripKind,out expires)
+          ||expires.Kind!=DateTimeKind.Utc||expires<now.AddSeconds(-5)||expires>now.AddSeconds(125))return false;
+        return true;
+      }catch{return false;}
+    }
     static bool ReviewerGovernorStateV1(string raw,DateTime now) {
       try {
         if(String.IsNullOrEmpty(raw)||Encoding.UTF8.GetByteCount(raw)>32768)return false;
         var state=ReviewerJsonV1().Deserialize<Dictionary<string,object>>(raw);
         string[] flags={"active","flatGameActive","airLinkActive","realAirLinkActive","virtualAirLinkTestActive","prepareLeaseActive","localModelAllowed","heavyModelAllowed"};
         var critical=new HashSet<string>(flags,StringComparer.Ordinal);
-        foreach(string name in new string[]{"schemaVersion","governorVersion","ollamaLoadMode","updatedAtUtc"})critical.Add(name);
+        foreach(string name in new string[]{"schemaVersion","governorVersion","phase","ollamaLoadMode","prepareExpiresAtUtc","updatedAtUtc"})critical.Add(name);
         var seen=new HashSet<string>(StringComparer.Ordinal);
         foreach(Match match in Regex.Matches(raw,"\"(?:[^\"\\\\]|\\\\.)*\"\\s*:")) {
           string key=ReviewerJsonV1().Deserialize<string>(match.Value.Substring(0,match.Value.LastIndexOf(':')).Trim());
@@ -223,23 +241,32 @@ namespace Stephanos.Sovereign {
         if(seen.Count!=critical.Count||state==null||!Equals(state["schemaVersion"],"stephanos.vr-resource-governor.v1")
           ||!(state["governorVersion"] is int)||(int)state["governorVersion"]!=3||!Equals(state["ollamaLoadMode"],"balanced"))return false;
         foreach(string flag in flags)if(!(state[flag] is bool))return false;
-        for(int i=0;i<6;i++)if((bool)state[flags[i]])return false;
+        for(int i=0;i<5;i++)if((bool)state[flags[i]])return false;
         if(!(bool)state["localModelAllowed"]||!(bool)state["heavyModelAllowed"])return false;
         DateTime updated;
         if(!(state["updatedAtUtc"] is string)||!DateTime.TryParse((string)state["updatedAtUtc"],null,System.Globalization.DateTimeStyles.RoundtripKind,out updated)
-          ||updated.Kind!=DateTimeKind.Utc)return false;
-        return now>=updated.AddSeconds(-5)&&now<=updated.AddSeconds(30);
+          ||updated.Kind!=DateTimeKind.Utc||now<updated.AddSeconds(-5)||now>updated.AddSeconds(30))return false;
+        if(!(bool)state["prepareLeaseActive"])return Equals(state["phase"],"NORMAL");
+        return ReviewerLargeContextStateV1(raw,now);
       }catch{return false;}
     }
-    static bool ReviewerGamingSafeV1() {
+    static bool ReviewerGamingSafeV1(out bool largeContextCustodyObserved) {
+      largeContextCustodyObserved=false;
       try {
         using(var pins=new ReviewerProfilePinsV1()) {
           string path=Path.Combine(ReviewerWorkspaceV1,"vr","vr-resource-governor-current.json");
           ReviewerPinParentsV1(path,pins);
           byte[] bytes=ReviewerReadPinnedV1(path,32768,pins);
-          return ReviewerGovernorStateV1(new UTF8Encoding(false,true).GetString(bytes),DateTime.UtcNow);
+          string raw=new UTF8Encoding(false,true).GetString(bytes);DateTime now=DateTime.UtcNow;
+          bool allowed=ReviewerGovernorStateV1(raw,now);
+          largeContextCustodyObserved=allowed&&ReviewerLargeContextStateV1(raw,now);
+          return allowed;
         }
       }catch{return false;}
+    }
+    static bool ReviewerGamingSafeV1() {
+      bool largeContextCustodyObserved;
+      return ReviewerGamingSafeV1(out largeContextCustodyObserved);
     }
   }
 }

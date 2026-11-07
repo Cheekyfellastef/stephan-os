@@ -71,9 +71,14 @@ export function inspectInstalledReviewerSourceV1(expectedHead, options={}) {
 export function inspectInstalledReviewerGamingV1(_env,options={}) {
   try{
     const r=nativeRead('governor',options);
-    return Object.freeze({ok:r.schemaVersion==='stephanos.reviewer-governor-observation.v1'
-      &&r.allowed===true,reason:r.allowed===true?'':'HIGH_RISK_GAMING_RESOURCE_PROTECTED'});
-  }catch{return Object.freeze({ok:false,reason:'HIGH_RISK_GOVERNOR_UNAVAILABLE'});}
+    const schema=r.schemaVersion==='stephanos.reviewer-governor-observation.v1';
+    const standard=schema&&r.allowed===true&&r.largeContextCustodyObserved===false&&r.contextTokens===8192;
+    const large=schema&&r.allowed===true&&r.largeContextCustodyObserved===true&&r.contextTokens===262144;
+    const ok=standard||large;
+    return Object.freeze({ok,reason:ok?'':'HIGH_RISK_GAMING_RESOURCE_PROTECTED',
+      largeContextCustodyObserved:large,contextTokens:ok?r.contextTokens:0});
+  }catch{return Object.freeze({ok:false,reason:'HIGH_RISK_GOVERNOR_UNAVAILABLE',
+    largeContextCustodyObserved:false,contextTokens:0});}
 }
 
 async function main() {
