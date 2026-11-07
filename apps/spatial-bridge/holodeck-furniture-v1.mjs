@@ -17,7 +17,9 @@ const finite = array => Array.isArray(array) && array.length === 3 && array.ever
 const clamp = (value, [min,max]) => Math.max(min,Math.min(max,value));
 const bounded = (id, coords) => coords.map((value,axis) => clamp(value,FURNITURE_MATERIALS[id].bounds[axis]));
 const sum = (a,b) => a.map((v,i)=>v+b[i]);
-const place = (original,offset) => ({...original,center:sum(original.center,offset)});
+const place = (original,offset) => ({...original,center:sum(original.center,offset),
+  ...(Number.isFinite(original.top)?{top:original.top+offset[1]}:{}),
+  ...(Number.isFinite(original.bottom)?{bottom:original.bottom+offset[1]}:{})});
 const sourceState = state => targets.every(id=>finite(state?.[id])
   && state[id].every((value,axis)=>value===clamp(value,FURNITURE_MATERIALS[id].bounds[axis])));
 const boxAt = (shape,margin=0) => ({
