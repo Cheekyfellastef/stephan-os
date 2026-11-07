@@ -330,11 +330,24 @@ export function projectPostSyncRefreshBeaconFacts(record, expectedHead = '', now
     return value;
   };
   const classification = REFRESH_CLASSIFICATIONS.has(source?.classification) ? source.classification : 'UNKNOWN';
+  const spatialAdoptionRequired = boolean(source?.spatialAdoptionRequired);
+  const spatialAdoptionPathCount = Number.isSafeInteger(source?.spatialAdoptionPathCount)
+    && source.spatialAdoptionPathCount >= 0 && source.spatialAdoptionPathCount <= 2 ? source.spatialAdoptionPathCount : null;
+  const spatialSuccessContradiction = spatialAdoptionRequired === true && (
+    classification === POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_COMPLETE
+    || classification === POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED
+    || source?.phase === 'complete' || source?.finalVerdict === 'POST_SYNC_RUNTIME_REFRESH_PASS'
+    || source?.ok === true || source?.exactHeadProofOk === true);
+  const spatialMetadataInvalid = (source?.spatialAdoptionRequired !== undefined && spatialAdoptionRequired === null)
+    || (source?.spatialAdoptionPathCount !== undefined && spatialAdoptionPathCount === null)
+    || (spatialAdoptionPathCount > 0 && spatialAdoptionRequired !== true)
+    || (classification === POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_SPATIAL_ADOPTION_REQUIRED && spatialAdoptionRequired !== true)
+    || spatialSuccessContradiction;
   const targets = Array.isArray(source?.targetIds) ? source.targetIds : null;
   const results = Array.isArray(source?.resultTargets) ? source.resultTargets : null;
   const limit = REFRESH_TARGET_IDS.size;
   const truncated = Boolean((targets && targets.length > limit) || (results && results.length > limit));
-  let invalid = Boolean(source && classification === 'UNKNOWN');
+  let invalid = Boolean(source && classification === 'UNKNOWN') || spatialMetadataInvalid;
   const targetIds = [];
   const seenTargets = new Set();
   for (const targetId of targets?.slice(0, limit) || []) {
@@ -391,6 +404,8 @@ export function projectPostSyncRefreshBeaconFacts(record, expectedHead = '', now
     changedPathCount: pathCount(source?.changedPathCount),
     noRuntimePathCount: pathCount(source?.noRuntimePathCount),
     openClawPathCount: pathCount(source?.openClawPathCount),
+    spatialAdoptionPathCount,
+    spatialAdoptionRequired,
     unknownPathCount: pathCount(source?.unknownPathCount),
     unsafePathCount: pathCount(source?.unsafePathCount),
     targetIds: Object.freeze(targetIds),
@@ -399,6 +414,21 @@ export function projectPostSyncRefreshBeaconFacts(record, expectedHead = '', now
     lastSovereignCaretakerFailure: projectCaretakerBeaconFacts(source?.lastSovereignCaretakerFailure, expected, nowMs, true),
     targetFailureHistory: projectTargetFailureBeaconFacts(source?.targetFailureHistory, expected, nowMs),
   });
+}
+
+// Public completion is a statement about outstanding obligations, not the most
+// recent refresh phase. Target checkpoints and their age cannot pay Spatial debt.
+function projectPostSyncRefreshPublicState(runtimeRefresh, { rawState, blocker, stale }) {
+  if (runtimeRefresh.evidenceState === 'INVALID' || runtimeRefresh.evidenceState === 'TRUNCATED') {
+    return Object.freeze({ state: 'UNPROVEN', blocker: `POST_SYNC_REFRESH_EVIDENCE_${runtimeRefresh.evidenceState}` });
+  }
+  if (runtimeRefresh.spatialAdoptionRequired === true) {
+    return Object.freeze({
+      state: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_SPATIAL_ADOPTION_REQUIRED,
+      blocker: blocker || 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN',
+    });
+  }
+  return Object.freeze({ state: stale ? 'STALE' : (rawState || 'UNKNOWN'), blocker });
 }
 
 export function projectBeaconStatus(record, spec, nowMs = Date.now(), expectedHead = '') {
@@ -445,19 +475,23 @@ export function projectBeaconStatus(record, spec, nowMs = Date.now(), expectedHe
       missionWorkerFacts,
     });
   }
+  const runtimeRefresh = spec.id === 'postSyncRefresh' ? projectPostSyncRefreshBeaconFacts(record, expectedHead, nowMs) : null;
+  const publicState = runtimeRefresh
+    ? projectPostSyncRefreshPublicState(runtimeRefresh, { rawState, blocker, stale })
+    : { state: stale ? 'STALE' : (rawState || 'UNKNOWN'), blocker };
   return Object.freeze({
     id: spec.id,
-    state: stale ? 'STALE' : (rawState || 'UNKNOWN'),
+    state: publicState.state,
     rawState,
     observedAtUtc,
     ageMs,
     head: recordHead(record),
-    blocker,
+    blocker: publicState.blocker,
     serviceFacts: serviceFacts(record),
     dirtFacts: dirtFacts(record),
     housekeeperFacts: housekeeperFacts(record),
     runtimeHeads: runtimeHeads(record),
-    ...(spec.id === 'postSyncRefresh' ? { runtimeRefresh: projectPostSyncRefreshBeaconFacts(record, expectedHead, nowMs) } : {}),
+    ...(runtimeRefresh ? { runtimeRefresh } : {}),
   });
 }
 
