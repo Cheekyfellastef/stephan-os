@@ -31,7 +31,7 @@ export const SOVEREIGN_PROCESS_SESSION_LIMITS_V1 = Object.freeze({
 const RECOVERY_SCRIPT = fileURLToPath(new URL('../../scripts/windows/status-battle-bridge-recovery-mesh.ps1', import.meta.url));
 const WATCHDOG_SCRIPT = fileURLToPath(new URL('../../scripts/windows/status-battle-bridge-worker-watchdog.ps1', import.meta.url));
 const SYSTEM_MODULES = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules';
-const OPERATIONS = new Set(['START_PROCESS_SESSION', 'READ_PROCESS_OUTPUT', 'LIST_SESSIONS']);
+const OPERATIONS = new Set(['START_PROCESS_SESSION', 'READ_PROCESS_OUTPUT', 'LIST_SESSIONS', 'CANCEL_PROCESS_SESSION']);
 const ID = /^process-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const PRESPAWN_ERRORS = new Set(['ENOENT', 'EACCES', 'EMFILE', 'ENFILE', 'ENOMEM', 'EAGAIN', 'EINVAL', 'ENOTDIR', 'ENAMETOOLONG', 'ENOEXEC']);
 const LIMITS = SOVEREIGN_PROCESS_SESSION_LIMITS_V1;
@@ -45,6 +45,9 @@ const evidence = Object.freeze({ executionScope: 'TWO_FIXED_READ_ONLY_DIRECT_CHI
 function fail(operation, blocker, extra = {}) {
   return Object.freeze({ ok: false, schemaVersion: SOVEREIGN_PROCESS_SESSION_SCHEMA_V1,
     operation, blocker, ...(operation === 'START_PROCESS_SESSION' ? { launchState: 'NOT_STARTED', retryAllowed: false } : {}),
+    ...(operation === 'CANCEL_PROCESS_SESSION' ? { cancellationState: 'NOT_STARTED', requestRecorded: false,
+      cancellationRequested: false, signalAttempted: false, signalAttemptResult: 'NOT_ATTEMPTED',
+      signalErrorObserved: false, retryAllowed: false } : {}),
     ...evidence, ...extra });
 }
 function capture(raw, keys) {
@@ -64,13 +67,15 @@ function capture(raw, keys) {
 export function validateSovereignProcessSessionArgumentsV1(operation, raw) {
   if (!OPERATIONS.has(operation)) return fail(operation, 'SOVEREIGN_PROCESS_OPERATION_INVALID');
   const args = capture(raw, operation === 'START_PROCESS_SESSION' ? ['profile']
-    : operation === 'READ_PROCESS_OUTPUT' ? ['sessionId', 'offset', 'limit'] : []);
+    : operation === 'READ_PROCESS_OUTPUT' ? ['sessionId', 'offset', 'limit']
+      : operation === 'CANCEL_PROCESS_SESSION' ? ['sessionId'] : []);
   if (!args) return fail(operation, 'SOVEREIGN_PROCESS_ARGUMENTS_INVALID');
   if (operation === 'START_PROCESS_SESSION') {
     if (typeof args.profile !== 'string' || !own(SOVEREIGN_PROCESS_SESSION_PROFILES_V1, args.profile))
       return fail(operation, 'SOVEREIGN_PROCESS_PROFILE_INVALID');
-  } else if (operation === 'READ_PROCESS_OUTPUT') {
+  } else if (operation === 'READ_PROCESS_OUTPUT' || operation === 'CANCEL_PROCESS_SESSION') {
     if (typeof args.sessionId !== 'string' || !ID.test(args.sessionId)) return fail(operation, 'SOVEREIGN_PROCESS_SESSION_ID_INVALID');
+    if (operation === 'CANCEL_PROCESS_SESSION') return Object.freeze({ ok: true, args: Object.freeze(args) });
     const offset = own(args, 'offset') ? args.offset : 0;
     const limit = own(args, 'limit') ? args.limit : LIMITS.pageDefault;
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > LIMITS.outputChunks
@@ -113,6 +118,11 @@ export function createSovereignProcessSessionsV1(options = {}) {
     return lastNow = Math.max(lastNow, safe);
   };
   const instant = value => value === null ? null : new Date(value).toISOString();
+  const cancellationDetails = record => ({
+    cancellationRequested: record.cancellationRequested,
+    signalAttempted: record.signalAttempted, signalAttemptResult: record.signalAttemptResult,
+    signalErrorObserved: record.signalErrorObserved, terminationCause: record.terminationReason || null,
+  });
   const snapshot = record => Object.freeze({
     sessionId: record.id, profile: record.profile, state: record.state,
     launchState: record.spawnObserved ? 'SPAWN_OBSERVED' : record.provenNoSpawn ? 'NOT_STARTED' : 'UNKNOWN',
@@ -122,6 +132,7 @@ export function createSovereignProcessSessionsV1(options = {}) {
     stdioClosed: record.closed, exitCode: record.exitCode, signal: record.signal,
     outcome: record.outcome, blocker: record.blocker, terminationRequested: !!record.terminationReason,
     terminationUnproven: record.terminationUnproven && !record.closed,
+    ...cancellationDetails(record),
     outputBytesSeen: record.bytesSeen, outputBytesStored: record.bytesStored,
     outputTruncated: record.truncated, nextOffset: record.chunks.length,
     outputComplete: record.closed && record.spawnObserved && !record.truncated && !record.terminationReason && record.decodersFlushed,
@@ -165,12 +176,14 @@ export function createSovereignProcessSessionsV1(options = {}) {
       spawnObserved: false, provenNoSpawn: false, rootExitObserved: false, closed: false,
       exitCode: null, signal: null, outcome: 'PENDING', blocker: null, terminationReason: '',
       terminationUnproven: false, chunks: [], bytesSeen: 0, bytesStored: 0, truncated: false,
+      cancellationRequested: false, terminationHandleAvailable: false, lifecycleReady: false,
+      signalAttempted: false, signalAttemptResult: 'NOT_ATTEMPTED', signalErrorObserved: false,
       hidden: false, decodersFlushed: false,
       decoders: { stdout: new TextDecoder('utf-8', { fatal: true }), stderr: new TextDecoder('utf-8', { fatal: true }) } };
     sessions.set(record.id, record);
     activeNativeProcesses++;
     return new Promise(resolveStart => {
-      let child, released = false, startReturned = false, deadline, grace, knownPid = false, streamsReady = false;
+      let child, ownedKill = null, released = false, startReturned = false, deadline, grace, knownPid = false, streamsReady = false;
       const release = () => { if (!released) { released = true; activeNativeProcesses--; } };
       const finishStart = (ok, blocker) => {
         if (startReturned) return;
@@ -180,7 +193,25 @@ export function createSovereignProcessSessionsV1(options = {}) {
         resolveStart(ok ? Object.freeze({ ok: true, schemaVersion: SOVEREIGN_PROCESS_SESSION_SCHEMA_V1, operation, ...evidence, ...extra })
           : fail(operation, blocker, extra));
       };
-      const killOwned = () => { try { child?.kill?.(); } catch {} };
+      const killOwned = () => {
+        // The captured ChildProcess method is the only signalling authority.
+        // Request repetition, expiry, disposal and late spawn share this latch.
+        if (record.closed || record.provenNoSpawn || record.signalAttempted) return;
+        if (record.rootExitObserved) { record.signalAttemptResult = 'ROOT_ALREADY_EXITED'; return; }
+        if (!ownedKill) { record.signalAttemptResult = 'HANDLE_UNAVAILABLE'; return; }
+        knownPid ||= Number.isSafeInteger(child?.pid) && child.pid > 0;
+        if (!record.spawnObserved && !knownPid) {
+          record.signalAttemptResult = 'DEFERRED_UNTIL_SPAWN'; return;
+        }
+        // Latch before invoking: kill can synchronously emit error/exit/close.
+        record.signalAttempted = true;
+        record.signalAttemptResult = 'KILL_RETURN_UNRECOGNIZED';
+        try {
+          const returned = ownedKill();
+          record.signalAttemptResult = returned === true ? 'KILL_RETURNED_TRUE'
+            : returned === false ? 'KILL_RETURNED_FALSE' : 'KILL_RETURN_UNRECOGNIZED';
+        } catch { record.signalAttemptResult = 'KILL_THREW'; }
+      };
       const stopReading = () => { for (const stream of [child?.stdout, child?.stderr]) { try { stream?.destroy?.(); } catch {} } };
       record.terminate = blocker => {
         if (record.closed || record.provenNoSpawn || record.terminationReason) return;
@@ -228,11 +259,15 @@ export function createSovereignProcessSessionsV1(options = {}) {
       const onError = error => {
         if (record.closed || record.provenNoSpawn) return;
         knownPid ||= Number.isSafeInteger(child?.pid) && child.pid > 0;
-        if (!record.spawnObserved && !knownPid && !record.terminationReason && PRESPAWN_ERRORS.has(error?.code)) {
+        if (!record.spawnObserved && !knownPid && !record.signalAttempted && PRESPAWN_ERRORS.has(error?.code)) {
           record.provenNoSpawn = true; record.state = 'FAILED_TO_START'; record.outcome = 'FAILED';
+          record.terminationUnproven = false;
           record.blocker = 'SOVEREIGN_PROCESS_SPAWN_FAILED'; record.endedAt = now(); record.expiresAt = record.endedAt + ttlMs;
           clearTimeout(deadline); clearTimeout(grace); release(); finishStart(false, record.blocker);
-        } else record.terminate('SOVEREIGN_PROCESS_EXECUTION_UNPROVEN');
+        } else {
+          if (record.signalAttempted) record.signalErrorObserved = true;
+          record.terminate('SOVEREIGN_PROCESS_EXECUTION_UNPROVEN');
+        }
       };
       const onClose = (code, signal) => {
         if (record.closed) return;
@@ -264,10 +299,15 @@ export function createSovereignProcessSessionsV1(options = {}) {
         // The returned handle is absent; a synchronous exception cannot prove
         // the OS did not create a process. Admission remains held permanently.
         record.state = 'UNKNOWN'; record.outcome = 'UNKNOWN'; record.terminationUnproven = true;
+        record.signalAttemptResult = 'HANDLE_UNAVAILABLE';
         record.blocker = 'SOVEREIGN_PROCESS_SPAWN_UNPROVEN'; finishStart(false, record.blocker); return;
       }
       try {
         knownPid = Number.isSafeInteger(child?.pid) && child.pid > 0;
+        const kill = child?.kill;
+        if (typeof kill === 'function') {
+          ownedKill = kill.bind(child); record.terminationHandleAvailable = true;
+        } else record.signalAttemptResult = 'HANDLE_UNAVAILABLE';
         // Observe lifecycle before touching pipes: EMFILE can return null stdio.
         child.on('error', onError);
         child.once('close', onClose);
@@ -291,6 +331,7 @@ export function createSovereignProcessSessionsV1(options = {}) {
           }
           record.state = 'RUNNING'; finishStart(true);
         });
+        record.lifecycleReady = true;
         if (record.closed || record.provenNoSpawn) return;
         deadline = setTimeout(() => record.terminate('SOVEREIGN_PROCESS_TIME_LIMIT'), timeoutMs);
         if (!child.stdout || typeof child.stdout.on !== 'function' || !child.stderr || typeof child.stderr.on !== 'function') {
@@ -307,6 +348,38 @@ export function createSovereignProcessSessionsV1(options = {}) {
     });
   }
 
+  function cancel(record) {
+    const operation = 'CANCEL_PROCESS_SESSION';
+    let requestRecorded = false;
+    const isTerminal = () => record.provenNoSpawn || (record.rootExitObserved && record.closed);
+    // A missing/opaque handle is not a cancellation target. Preserve its
+    // original launch blocker, unknown effect and globally held admission.
+    if (!isTerminal() && !record.closed && record.terminationHandleAvailable && record.lifecycleReady
+      && !record.cancellationRequested) {
+      record.cancellationRequested = true; requestRecorded = true;
+      record.terminate('SOVEREIGN_PROCESS_CANCEL_REQUESTED');
+    }
+    const session = snapshot(record);
+    const observed = { sessionId: record.id, session, requestRecorded,
+      ...cancellationDetails(record), rootExitObserved: record.rootExitObserved,
+      stdioClosed: record.closed, retryAllowed: false };
+    const result = (cancellationState, extra = {}) => Object.freeze({
+      ok: true, schemaVersion: SOVEREIGN_PROCESS_SESSION_SCHEMA_V1, operation,
+      ...evidence, ...observed, cancellationState, ...extra,
+    });
+    if (record.provenNoSpawn) return result('ALREADY_TERMINAL', { terminalReason: 'PROVEN_NO_SPAWN' });
+    if (record.rootExitObserved && record.closed) return record.cancellationRequested
+      ? result('ROOT_EXIT_AND_STDIO_CLOSED')
+      : result('ALREADY_TERMINAL', { terminalReason: 'ROOT_EXIT_AND_STDIO_CLOSED' });
+    if (record.cancellationRequested && !record.closed && record.terminationHandleAvailable && record.lifecycleReady
+      && !record.terminationUnproven && !record.signalErrorObserved
+      && ['DEFERRED_UNTIL_SPAWN', 'KILL_RETURNED_TRUE', 'ROOT_ALREADY_EXITED'].includes(record.signalAttemptResult))
+      return result('REQUESTED');
+    return fail(operation, 'SOVEREIGN_PROCESS_CANCELLATION_UNPROVEN', {
+      ...observed, cancellationState: 'UNKNOWN',
+    });
+  }
+
   async function execute(operation, raw) {
     const validated = validateSovereignProcessSessionArgumentsV1(operation, raw);
     if (!validated.ok) return validated;
@@ -319,6 +392,7 @@ export function createSovereignProcessSessionsV1(options = {}) {
       sessions: Object.freeze([...sessions.values()].filter(record => !record.hidden).map(snapshot)) });
     const record = sessions.get(args.sessionId);
     if (!record || record.hidden) return fail(operation, 'SOVEREIGN_PROCESS_SESSION_UNAVAILABLE');
+    if (operation === 'CANCEL_PROCESS_SESSION') return cancel(record);
     if (args.offset > record.chunks.length) return fail(operation, 'SOVEREIGN_PROCESS_OFFSET_UNAVAILABLE');
     const session = snapshot(record), chunks = [];
     const page = () => ({ ...base, sessionId: record.id, session, chunks,

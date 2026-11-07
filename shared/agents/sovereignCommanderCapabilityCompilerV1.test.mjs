@@ -107,6 +107,24 @@ test('partial diagnostic streaming retains broader work in plans and cannot beco
   }
 });
 
+test('owned diagnostic cancellation leaves general termination work open and produces no learning receipt', () => {
+  const result = compileSovereignCommanderCapabilityPlanV1({ capabilities: [{
+    capabilityId: 'force-terminate', state: 'PARITY_PRESENT', sovereignEquivalent: 'cancel_process_session',
+    newlyProvenParity: true,
+  }] });
+  assert.equal(result.buildableCapabilityCount, 1);
+  assert.equal(result.learningCandidates.length, 0);
+  assert.equal(result.newlyProvenParityCount, 0);
+  for (const item of [...result.plans, ...result.skillForgeCandidates]) {
+    assert.equal(item.partialSovereignEquivalent, 'cancel_process_session');
+    assert.equal(item.partialScope, 'THIS_PRIVATE_HANDLER_TWO_FIXED_DIAGNOSTIC_CHILDREN_CANCELLATION');
+    assert.equal(item.parityGapReason, 'GENERAL_PROCESS_TERMINATION_CUSTODY_UNQUALIFIED');
+    assert.equal(item.nativeCustodyQualified, false);
+    assert.equal(item.descendantsExcluded, false);
+    assert.equal(item.runtimeParityProven, false);
+  }
+});
+
 test('compiler keeps authenticated device inventory open when only local host visibility exists', () => {
   const result = compileSovereignCommanderCapabilityPlanV1({ capabilities: [{
     capabilityId: 'list-devices', state: 'PARITY_PRESENT', sovereignEquivalent: 'visibility-snapshot',

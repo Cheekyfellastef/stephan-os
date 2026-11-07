@@ -25,6 +25,7 @@ export const SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY = Object.freeze(Object.f
   ['get-tool-result', 'get_tool_result', 'THIS_PRIVATE_SESSION_RETAINED_RECEIPTS'],
   ['list-remote-tool-calls', 'list_remote_tool_calls', 'THIS_PRIVATE_HTTP_SESSION_ADVISORY_HISTORY'],
   ['set-config-value', 'set_config_value', 'THIS_PRIVATE_SESSION_TYPED_IO_LIMITS'],
+  ['cancel-process-session', 'cancel_process_session', 'THIS_PRIVATE_HANDLER_TWO_FIXED_DIAGNOSTIC_CHILDREN_CANCELLATION'],
   ['give-feedback-to-desktop-commander', 'submit_feedback', 'THIS_SOVEREIGN_WORKSPACE_UNVERIFIED_ADVISORY_FEEDBACK'],
 ].map(([id, sovereignEquivalent, functionalScope]) => [id, Object.freeze({ sovereignEquivalent,
   functionalScope, privateTransportRequired: true, runtimeParityProven: false,
@@ -75,6 +76,16 @@ export const SOVEREIGN_COMMANDER_PARTIAL_PARITY_GAPS = Object.freeze({
     parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
     runtimeParityProven: false,
     parityGapReason: 'AUTHENTICATED_ACCOUNT_DEVICE_INVENTORY_UNIMPLEMENTED',
+  }),
+  'force-terminate': Object.freeze({
+    partialSovereignEquivalent: 'cancel_process_session',
+    partialScope: 'THIS_PRIVATE_HANDLER_TWO_FIXED_DIAGNOSTIC_CHILDREN_CANCELLATION',
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    privateTransportRequired: true,
+    descendantsExcluded: false,
+    nativeCustodyQualified: false,
+    parityGapReason: 'GENERAL_PROCESS_TERMINATION_CUSTODY_UNQUALIFIED',
   }),
 });
 

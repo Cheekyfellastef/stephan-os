@@ -10,7 +10,7 @@ import { createHash } from 'node:crypto';
 
 let moduleNumber = 0;
 const fresh = () => import(new URL(`./sovereignProcessSessionsV1.mjs?fixture=${++moduleNumber}`, import.meta.url));
-const START = 'START_PROCESS_SESSION', READ = 'READ_PROCESS_OUTPUT', LIST = 'LIST_SESSIONS';
+const START = 'START_PROCESS_SESSION', READ = 'READ_PROCESS_OUTPUT', LIST = 'LIST_SESSIONS', CANCEL = 'CANCEL_PROCESS_SESSION';
 const PROFILE = 'status-recovery-mesh';
 const environment = { USERPROFILE: 'C:\\Users\\process-fixture', SYSTEMROOT: 'C:\\Windows',
   TEMP: tmpdir(), TMP: tmpdir(), NODE_OPTIONS: '--inspect', PSModulePath: 'C:\\untrusted',
@@ -58,6 +58,13 @@ test('strict argument capture excludes inherited/getter/authority input and norm
     { sessionId, limit: '20' }, { sessionId, limit: undefined }, { sessionId, offset: NaN }, { sessionId, pid: 3 }])
     assert.equal(validate(READ, args).ok, false);
   assert.equal(validate(LIST, { other: true }).ok, false);
+  assert.deepEqual(validate(CANCEL, { sessionId }).args, { sessionId });
+  for (const args of [{}, { sessionId: '12345' }, { sessionId, pid: 12345 },
+    { sessionId, signal: 'SIGKILL' }, { sessionId, profile: PROFILE }, { sessionId, offset: 0 },
+    { sessionId, limit: 1 }, { sessionId, [Symbol('extra')]: true }, Object.create({ sessionId })])
+    assert.equal(validate(CANCEL, args).ok, false);
+  const cancelGetter = {}; Object.defineProperty(cancelGetter, 'sessionId', { get() { assert.fail('getter evaluated'); } });
+  assert.equal(validate(CANCEL, cancelGetter).ok, false);
   const captured = validate(START, { profile: PROFILE }); assert.ok(Object.isFrozen(captured.args));
 });
 
@@ -273,6 +280,316 @@ test('encoding errors, setup exceptions and close-before-spawn remain fixed-code
   assert.equal(setupResult.ok, false); assert.equal(setupResult.launchState, 'UNKNOWN');
   assert.equal(JSON.stringify(setupResult).includes('secret setup'), false);
   setup.emit('close', null, 'SIGTERM'); await broken.dispose(); await closing.dispose();
+});
+
+test('owned cancellation records one signal attempt and reports later root exit and close separately', async t => {
+  const module = await fresh(), child = childFixture({ killCloses: false });
+  const service = makeService(module, child, { terminationGraceMs: 1000 });
+  t.after(async () => { child.finish(); await service.dispose(); });
+  const started = await service.execute(START, { profile: PROFILE });
+  // Authority is the method captured from this direct child, never a PID or a
+  // method replacement obtained from subsequent requests or mutable handles.
+  child.kill = () => assert.fail('replacement kill must not be called');
+  const first = await service.execute(CANCEL, { sessionId: started.sessionId });
+  assert.equal(first.ok, true); assert.equal(first.cancellationState, 'REQUESTED');
+  assert.equal(first.requestRecorded, true); assert.equal(first.cancellationRequested, true);
+  assert.equal(first.signalAttempted, true); assert.equal(first.signalAttemptResult, 'KILL_RETURNED_TRUE');
+  assert.equal(first.rootExitObserved, false); assert.equal(first.stdioClosed, false);
+  assert.equal(first.terminationCause, 'SOVEREIGN_PROCESS_CANCEL_REQUESTED');
+  assert.equal(first.retryAllowed, false); assert.equal(child.kills, 1);
+  const repeated = await service.execute(CANCEL, { sessionId: started.sessionId });
+  assert.equal(repeated.cancellationState, 'REQUESTED'); assert.equal(repeated.requestRecorded, false);
+  assert.equal(child.kills, 1);
+  child.emit('exit', null, 'SIGTERM');
+  const exited = await service.execute(CANCEL, { sessionId: started.sessionId });
+  assert.equal(exited.rootExitObserved, true); assert.equal(exited.stdioClosed, false);
+  assert.equal(exited.cancellationState, 'REQUESTED'); assert.equal(child.kills, 1);
+  child.emit('close', null, 'SIGTERM');
+  const terminal = await service.execute(CANCEL, { sessionId: started.sessionId });
+  assert.equal(terminal.cancellationState, 'ROOT_EXIT_AND_STDIO_CLOSED');
+  assert.equal(terminal.rootExitObserved, true); assert.equal(terminal.stdioClosed, true);
+  assert.equal(terminal.requestRecorded, false); assert.equal(child.kills, 1);
+  assert.equal(terminal.session.outcome, 'UNKNOWN'); assert.equal(terminal.session.outputComplete, false);
+  const page = await service.execute(READ, { sessionId: started.sessionId });
+  const listed = await service.execute(LIST, {});
+  assert.equal(page.session.cancellationRequested, true);
+  assert.equal(listed.sessions[0].signalAttemptResult, 'KILL_RETURNED_TRUE');
+  assert.equal(first.session.stdioClosed, false);
+  for (const receipt of [first, repeated, exited, terminal]) {
+    assert.equal(receipt.operation, CANCEL);
+    assert.equal(receipt.rootExitObserved, receipt.session.rootExitObserved);
+    assert.equal(receipt.stdioClosed, receipt.session.stdioClosed);
+    for (const key of ['nativeCustodyQualified', 'descendantsExcluded', 'maintenanceCustodyReleased']) {
+      assert.equal(receipt[key], false); assert.equal(receipt.session[key], false);
+    }
+    assert.equal(Object.hasOwn(receipt.session, 'pid'), false);
+  }
+});
+
+test('post-attempt snapshots reflect synchronous close regardless of the kill return value', async () => {
+  for (const returned of [true, false]) {
+    const module = await fresh(), child = childFixture();
+    child.kill = () => { child.kills++; child.finish(null, 'SIGTERM'); return returned; };
+    const service = makeService(module, child);
+    const started = await service.execute(START, { profile: PROFILE });
+    const receipt = await service.execute(CANCEL, { sessionId: started.sessionId });
+    assert.equal(receipt.cancellationState, 'ROOT_EXIT_AND_STDIO_CLOSED');
+    assert.equal(receipt.requestRecorded, true); assert.equal(receipt.rootExitObserved, true);
+    assert.equal(receipt.stdioClosed, true);
+    assert.equal(receipt.signalAttemptResult, returned ? 'KILL_RETURNED_TRUE' : 'KILL_RETURNED_FALSE');
+    assert.equal(child.kills, 1);
+    assert.equal((await service.execute(CANCEL, { sessionId: started.sessionId })).requestRecorded, false);
+    assert.equal(child.kills, 1); await service.dispose();
+  }
+});
+
+test('already-terminal and close-without-root-proof remain different cancellation observations', async () => {
+  for (const mode of ['normal', 'pre-spawn-denied', 'close-unproven']) {
+    const module = await fresh(), child = childFixture({ killCloses: false });
+    const service = makeService(module, child, mode === 'pre-spawn-denied' ? {
+      spawnFn: () => { child.pid = undefined; queueMicrotask(() => child.emit('error', { code: 'ENOENT' })); return child; },
+    } : {});
+    const started = await service.execute(START, { profile: PROFILE });
+    if (mode === 'normal') child.finish();
+    if (mode === 'close-unproven') child.emit('close', null, null);
+    const receipt = await service.execute(CANCEL, { sessionId: started.sessionId });
+    assert.equal(receipt.requestRecorded, false); assert.equal(receipt.cancellationRequested, false);
+    assert.equal(receipt.signalAttempted, false); assert.equal(child.kills, 0);
+    if (mode === 'close-unproven') {
+      assert.equal(receipt.cancellationState, 'UNKNOWN'); assert.equal(receipt.ok, false);
+      assert.equal(receipt.rootExitObserved, false); assert.equal(receipt.stdioClosed, true);
+    } else {
+      assert.equal(receipt.cancellationState, 'ALREADY_TERMINAL');
+      assert.equal(receipt.terminalReason, mode === 'normal' ? 'ROOT_EXIT_AND_STDIO_CLOSED' : 'PROVEN_NO_SPAWN');
+      assert.equal(receipt.rootExitObserved, mode === 'normal');
+      assert.equal(receipt.terminationCause, null);
+    }
+    await service.dispose();
+  }
+});
+
+test('false, thrown, unrecognized and error-emitting kill outcomes stay UNKNOWN without repeat signalling', async () => {
+  for (const mode of ['false', 'throw', 'unrecognized', 'EPERM', 'ENOENT']) {
+    const module = await fresh(), child = childFixture({ killCloses: false });
+    child.kill = () => {
+      child.kills++;
+      if (mode === 'throw') throw Error('private-kill-error-sentinel');
+      if (mode === 'EPERM' || mode === 'ENOENT') child.emit('error', { code: mode });
+      return mode === 'false' ? false : mode === 'unrecognized' ? undefined : true;
+    };
+    const service = makeService(module, child, { terminationGraceMs: 1000 });
+    const started = await service.execute(START, { profile: PROFILE });
+    const receipt = await service.execute(CANCEL, { sessionId: started.sessionId });
+    assert.equal(receipt.ok, false, mode); assert.equal(receipt.cancellationState, 'UNKNOWN', mode);
+    assert.equal(receipt.requestRecorded, true, mode); assert.equal(receipt.signalAttempted, true, mode);
+    assert.equal(receipt.signalErrorObserved, mode === 'EPERM' || mode === 'ENOENT', mode);
+    assert.equal(receipt.terminationCause, 'SOVEREIGN_PROCESS_CANCEL_REQUESTED', mode);
+    assert.equal(receipt.session.launchState, 'SPAWN_OBSERVED', mode);
+    assert.equal(receipt.rootExitObserved, false, mode); assert.equal(receipt.stdioClosed, false, mode);
+    assert.ok(!JSON.stringify(receipt).includes('private-kill-error-sentinel'));
+    assert.equal((await service.execute(CANCEL, { sessionId: started.sessionId })).requestRecorded, false, mode);
+    assert.equal(child.kills, 1, mode);
+    child.finish(null, 'SIGTERM'); await service.dispose();
+  }
+});
+
+test('grace expiry does not prove termination or free global native admission', async t => {
+  const module = await fresh(), children = [childFixture({ killCloses: false }), childFixture({ killCloses: false }), childFixture()];
+  const services = children.map(child => makeService(module, child, { terminationGraceMs: 5 }));
+  t.after(async () => { for (const child of children) child.finish(); for (const service of services) await service.dispose(); });
+  const first = await services[0].execute(START, { profile: PROFILE });
+  await services[1].execute(START, { profile: PROFILE });
+  assert.equal((await services[0].execute(CANCEL, { sessionId: first.sessionId })).cancellationState, 'REQUESTED');
+  await until(async () => (await services[0].execute(READ, { sessionId: first.sessionId })).session.terminationUnproven);
+  const uncertain = await services[0].execute(CANCEL, { sessionId: first.sessionId });
+  assert.equal(uncertain.cancellationState, 'UNKNOWN'); assert.equal(uncertain.signalAttemptResult, 'KILL_RETURNED_TRUE');
+  assert.equal(uncertain.retryAllowed, false); assert.equal(children[0].kills, 1);
+  assert.equal((await services[2].execute(START, { profile: PROFILE })).blocker, 'SOVEREIGN_PROCESS_CAPACITY_HELD');
+  children[0].emit('exit', null, 'SIGTERM');
+  assert.equal((await services[2].execute(START, { profile: PROFILE })).blocker, 'SOVEREIGN_PROCESS_CAPACITY_HELD');
+  children[0].emit('close', null, 'SIGTERM');
+  assert.equal((await services[2].execute(START, { profile: PROFILE })).ok, true);
+});
+
+test('cancelling an exited root waits for stdio closure without another signal', async t => {
+  const module = await fresh(), child = childFixture({ killCloses: false });
+  const service = makeService(module, child, { terminationGraceMs: 1000 });
+  t.after(async () => { child.finish(); await service.dispose(); });
+  const started = await service.execute(START, { profile: PROFILE }); child.emit('exit', 0, null);
+  const receipt = await service.execute(CANCEL, { sessionId: started.sessionId });
+  assert.equal(receipt.cancellationState, 'REQUESTED'); assert.equal(receipt.rootExitObserved, true);
+  assert.equal(receipt.stdioClosed, false); assert.equal(receipt.signalAttempted, false);
+  assert.equal(receipt.signalAttemptResult, 'ROOT_ALREADY_EXITED'); assert.equal(child.kills, 0);
+  assert.equal((await service.execute(CANCEL, { sessionId: started.sessionId })).requestRecorded, false);
+  assert.equal(child.kills, 0); child.emit('close', 0, null);
+  assert.equal((await service.execute(CANCEL, { sessionId: started.sessionId })).cancellationState, 'ROOT_EXIT_AND_STDIO_CLOSED');
+});
+
+test('prior timeout, output and setup causes retain their original attempt and grace state', async () => {
+  for (const cause of ['timeout', 'output', 'setup']) {
+    const module = await fresh(), child = childFixture({ killCloses: false, missingStreams: cause === 'setup' });
+    const service = makeService(module, child, { timeoutMs: cause === 'timeout' ? 10 : 1000, terminationGraceMs: 5 });
+    const started = await service.execute(START, { profile: PROFILE });
+    if (cause === 'output') child.stdout.write('x'.repeat(20000));
+    const before = await until(async () => {
+      const page = await service.execute(READ, { sessionId: started.sessionId });
+      return page.session.terminationUnproven ? page.session : null;
+    });
+    const expected = cause === 'timeout' ? 'SOVEREIGN_PROCESS_TIME_LIMIT'
+      : cause === 'output' ? 'SOVEREIGN_PROCESS_OUTPUT_LIMIT' : 'SOVEREIGN_PROCESS_SETUP_UNPROVEN';
+    assert.equal(before.blocker, expected); assert.equal(child.kills, 1);
+    const receipt = await service.execute(CANCEL, { sessionId: started.sessionId });
+    assert.equal(receipt.cancellationState, 'UNKNOWN'); assert.equal(receipt.requestRecorded, true);
+    assert.equal(receipt.terminationCause, expected); assert.equal(receipt.session.blocker, expected);
+    assert.equal(receipt.session.terminationUnproven, true); assert.equal(child.kills, 1);
+    assert.equal((await service.execute(CANCEL, { sessionId: started.sessionId })).requestRecorded, false);
+    assert.equal(child.kills, 1); child.finish(null, 'SIGTERM'); await service.dispose();
+  }
+});
+
+test('opaque throw and absent returned handle preserve original uncertainty and refuse cancellation admission', async () => {
+  const module = await fresh();
+  const services = [
+    module.createSovereignProcessSessionsV1({ platform: 'win32', environment, spawnFn() { throw Error('opaque-private'); } }),
+    module.createSovereignProcessSessionsV1({ platform: 'win32', environment, spawnFn() { return undefined; }, terminationGraceMs: 1 }),
+  ];
+  for (const service of services) {
+    const started = await service.execute(START, { profile: PROFILE });
+    const receipt = await service.execute(CANCEL, { sessionId: started.sessionId });
+    assert.equal(receipt.cancellationState, 'UNKNOWN'); assert.equal(receipt.requestRecorded, false);
+    assert.equal(receipt.cancellationRequested, false); assert.equal(receipt.signalAttempted, false);
+    assert.equal(receipt.signalAttemptResult, 'HANDLE_UNAVAILABLE');
+    assert.equal(receipt.session.blocker, started.session.blocker);
+    assert.equal(receipt.rootExitObserved, false); assert.equal(receipt.stdioClosed, false);
+    assert.ok(!JSON.stringify(receipt).includes('opaque-private')); await service.dispose();
+  }
+  const third = makeService(module, childFixture());
+  assert.equal((await third.execute(START, { profile: PROFILE })).blocker, 'SOVEREIGN_PROCESS_CAPACITY_HELD');
+  await third.dispose(); await wait(5);
+});
+
+test('a kill method without lifecycle observation cannot admit pending caller cancellation', async () => {
+  const module = await fresh(); let kills = 0;
+  const opaque = module.createSovereignProcessSessionsV1({ platform: 'win32', environment,
+    terminationGraceMs: 1, spawnFn: () => ({ pid: 12345, kill() { kills++; return true; } }) });
+  const started = await opaque.execute(START, { profile: PROFILE });
+  assert.equal(started.session.blocker, 'SOVEREIGN_PROCESS_SETUP_UNPROVEN');
+  assert.equal(kills, 1);
+  const receipt = await opaque.execute(CANCEL, { sessionId: started.sessionId });
+  assert.equal(receipt.cancellationState, 'UNKNOWN'); assert.equal(receipt.requestRecorded, false);
+  assert.equal(receipt.cancellationRequested, false); assert.equal(receipt.signalAttempted, true);
+  assert.equal(receipt.signalAttemptResult, 'KILL_RETURNED_TRUE');
+  assert.equal(receipt.rootExitObserved, false); assert.equal(receipt.stdioClosed, false);
+  assert.equal(receipt.session.blocker, 'SOVEREIGN_PROCESS_SETUP_UNPROVEN');
+  assert.equal(kills, 1);
+  const child = childFixture(), second = makeService(module, child), third = makeService(module, childFixture());
+  assert.equal((await second.execute(START, { profile: PROFILE })).ok, true);
+  assert.equal((await third.execute(START, { profile: PROFILE })).blocker, 'SOVEREIGN_PROCESS_CAPACITY_HELD');
+  await opaque.dispose(); assert.equal(kills, 1);
+  child.finish(); await second.dispose(); await third.dispose(); await wait(5);
+});
+
+test('pre-spawn cancellation defers signalling until the captured child actually spawns', async t => {
+  const module = await fresh(), child = childFixture({ killCloses: false }); child.pid = undefined;
+  const service = makeService(module, child, { terminationGraceMs: 1000, spawnFn: () => child });
+  t.after(async () => { child.finish(null, 'SIGTERM'); await service.dispose(); });
+  const pendingStart = service.execute(START, { profile: PROFILE });
+  const listed = await service.execute(LIST, {}), sessionId = listed.sessions[0].sessionId;
+  assert.equal(listed.sessions[0].state, 'STARTING');
+  const requested = await service.execute(CANCEL, { sessionId });
+  assert.equal(requested.cancellationState, 'REQUESTED'); assert.equal(requested.requestRecorded, true);
+  assert.equal(requested.signalAttemptResult, 'DEFERRED_UNTIL_SPAWN'); assert.equal(requested.signalAttempted, false);
+  assert.equal(child.kills, 0); assert.equal((await pendingStart).launchState, 'UNKNOWN');
+  assert.equal((await service.execute(CANCEL, { sessionId })).requestRecorded, false); assert.equal(child.kills, 0);
+  child.pid = 24680; child.emit('spawn');
+  const afterSpawn = await service.execute(CANCEL, { sessionId });
+  assert.equal(afterSpawn.cancellationState, 'REQUESTED'); assert.equal(afterSpawn.requestRecorded, false);
+  assert.equal(afterSpawn.signalAttemptResult, 'KILL_RETURNED_TRUE'); assert.equal(child.kills, 1);
+  child.emit('spawn'); assert.equal(child.kills, 1);
+});
+
+test('authentic pre-spawn denial after deferred cancellation proves no spawn and releases admission', async () => {
+  const module = await fresh(), child = childFixture({ killCloses: false }); child.pid = undefined;
+  const service = makeService(module, child, { spawnFn: () => child });
+  const pendingStart = service.execute(START, { profile: PROFILE });
+  const sessionId = (await service.execute(LIST, {})).sessions[0].sessionId;
+  assert.equal((await service.execute(CANCEL, { sessionId })).signalAttemptResult, 'DEFERRED_UNTIL_SPAWN');
+  await pendingStart;
+  await until(async () => (await service.execute(READ, { sessionId })).session.terminationUnproven);
+  child.emit('error', { code: 'ENOENT' });
+  const receipt = await service.execute(CANCEL, { sessionId });
+  assert.equal(receipt.cancellationState, 'ALREADY_TERMINAL'); assert.equal(receipt.terminalReason, 'PROVEN_NO_SPAWN');
+  assert.equal(receipt.cancellationRequested, true); assert.equal(receipt.signalAttempted, false);
+  assert.equal(receipt.rootExitObserved, false); assert.equal(receipt.session.launchState, 'NOT_STARTED');
+  assert.equal(receipt.session.terminationUnproven, false);
+  assert.equal(child.kills, 0);
+  const others = [childFixture(), childFixture()], otherServices = others.map(item => makeService(module, item));
+  for (const other of otherServices) assert.equal((await other.execute(START, { profile: PROFILE })).ok, true);
+  for (const item of others) item.finish();
+  for (const other of otherServices) await other.dispose(); await service.dispose();
+});
+
+test('foreign, expired and disposed sessions cannot acquire cancellation authority or release held capacity', async () => {
+  const module = await fresh(), a = childFixture({ killCloses: false }), b = childFixture({ killCloses: false }), c = childFixture();
+  let clock = 1000;
+  const owner = makeService(module, a, { nowFn: () => clock, ttlMs: 20 });
+  const other = makeService(module, b), third = makeService(module, c);
+  const first = await owner.execute(START, { profile: PROFILE }); await other.execute(START, { profile: PROFILE });
+  const foreign = await other.execute(CANCEL, { sessionId: first.sessionId });
+  assert.equal(foreign.cancellationState, 'NOT_STARTED'); assert.equal(foreign.blocker, 'SOVEREIGN_PROCESS_SESSION_UNAVAILABLE');
+  assert.equal(a.kills, 0); assert.equal(b.kills, 0);
+  clock = 1021;
+  const expired = await owner.execute(CANCEL, { sessionId: first.sessionId });
+  assert.equal(expired.cancellationState, 'NOT_STARTED'); assert.equal(expired.blocker, 'SOVEREIGN_PROCESS_SESSION_UNAVAILABLE');
+  assert.equal(a.kills, 1);
+  assert.equal((await third.execute(START, { profile: PROFILE })).blocker, 'SOVEREIGN_PROCESS_CAPACITY_HELD');
+  await owner.dispose();
+  assert.equal((await owner.execute(CANCEL, { sessionId: first.sessionId })).blocker, 'SOVEREIGN_PROCESS_SESSION_CLOSED');
+  assert.equal(a.kills, 1);
+  assert.equal((await third.execute(START, { profile: PROFILE })).blocker, 'SOVEREIGN_PROCESS_CAPACITY_HELD');
+  a.finish(null, 'SIGTERM'); assert.equal((await third.execute(START, { profile: PROFILE })).ok, true);
+  b.finish(); c.finish(); await other.dispose(); await third.dispose();
+});
+
+test('a real child fixture exposes cancellation and actual close without claiming Windows-native proof', async t => {
+  const module = await fresh(); let nativeChild;
+  const service = module.createSovereignProcessSessionsV1({ platform: 'win32', environment,
+    spawnFn: () => nativeChild = spawn(process.execPath, ['-e', "process.stdout.write('ready\\n');setTimeout(()=>process.exit(0),5000)"],
+      { stdio: ['ignore', 'pipe', 'pipe'] }) });
+  t.after(async () => { await service.dispose(); if (nativeChild?.exitCode === null) nativeChild.kill(); });
+  const started = await service.execute(START, { profile: PROFILE });
+  const requested = await service.execute(CANCEL, { sessionId: started.sessionId });
+  assert.equal(requested.cancellationRequested, true); assert.equal(requested.signalAttempted, true);
+  assert.ok(['REQUESTED', 'ROOT_EXIT_AND_STDIO_CLOSED'].includes(requested.cancellationState));
+  const terminal = await until(async () => {
+    const page = await service.execute(READ, { sessionId: started.sessionId }); return page.session.stdioClosed ? page : null;
+  }, 3000);
+  assert.equal(terminal.session.rootExitObserved, true); assert.equal(terminal.session.cancellationRequested, true);
+  assert.equal(terminal.session.nativeCustodyQualified, false); assert.equal(terminal.session.descendantsExcluded, false);
+  assert.equal((await service.execute(CANCEL, { sessionId: started.sessionId })).cancellationState, 'ROOT_EXIT_AND_STDIO_CLOSED');
+});
+
+test('Windows cancellation observes the admitted captured diagnostic child without installation or mutation', { skip: process.platform !== 'win32', timeout: 20_000 }, async t => {
+  const module = await fresh(), root = mkdtempSync(join(tmpdir(), 'sovereign-process-cancel-'));
+  const status = join(root, 'Documents', 'Stephanos-openclaw-workspace', 'status'); mkdirSync(status, { recursive: true });
+  const service = module.createSovereignProcessSessionsV1({ environment: { ...process.env, USERPROFILE: root } });
+  t.after(async () => { await service.dispose(); rmSync(root, { recursive: true, force: true }); });
+  const started = await service.execute(START, { profile: PROFILE }); assert.equal(started.ok, true);
+  const requested = await service.execute(CANCEL, { sessionId: started.sessionId });
+  assert.ok(['REQUESTED', 'ROOT_EXIT_AND_STDIO_CLOSED', 'ALREADY_TERMINAL'].includes(requested.cancellationState), JSON.stringify(requested));
+  const terminal = await until(async () => {
+    const page = await service.execute(READ, { sessionId: started.sessionId }); return page.session.stdioClosed ? page : null;
+  }, 13_000);
+  assert.equal(terminal.session.rootExitObserved, true);
+  const receipt = await service.execute(CANCEL, { sessionId: started.sessionId });
+  assert.equal(receipt.requestRecorded, false);
+  assert.equal(receipt.cancellationState, requested.cancellationRequested ? 'ROOT_EXIT_AND_STDIO_CLOSED' : 'ALREADY_TERMINAL');
+  assert.equal(receipt.nativeCustodyQualified, false); assert.equal(receipt.descendantsExcluded, false);
+  assert.equal(receipt.maintenanceCustodyReleased, false); assert.equal(receipt.retryAllowed, false);
+  t.diagnostic(JSON.stringify({ profile: PROFILE, initialCancellationState: requested.cancellationState,
+    signalAttempted: receipt.signalAttempted, signalAttemptResult: receipt.signalAttemptResult,
+    rootExitObserved: receipt.rootExitObserved, stdioClosed: receipt.stdioClosed,
+    nativeCustodyQualified: false, descendantsExcluded: false }));
 });
 
 test('Windows executes both production captured helpers without installation or task mutation', { skip: process.platform !== 'win32', timeout: 35_000 }, async t => {

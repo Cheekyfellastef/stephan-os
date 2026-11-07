@@ -314,6 +314,35 @@ test('fixed diagnostic sessions cannot close general process outcomes in fresh o
   }
 });
 
+test('owned diagnostic cancellation does not close general termination or accept arbitrary PID authority', () => {
+  const fresh = classifyRemoteCommanderCapabilityObservation(remote('force-terminate'));
+  const retained = buildSovereignCommanderCapabilityParityLedger([], { priorLedger: { capabilities: [{
+    capabilityId: 'force-terminate', state: 'PARITY_PRESENT', sovereignEquivalent: 'cancel_process_session',
+    newlyProvenParity: true, observationCount: 9,
+  }] } });
+  assert.equal(retained.parityPresentCount, 0);
+  assert.equal(retained.buildableGapCount, 1);
+  assert.equal(retained.daemonMayReportGreen, false);
+  assert.equal(retained.capabilities[0].observationCount, 9);
+  for (const item of [fresh, retained.capabilities[0]]) {
+    assert.equal(item.state, 'BUILDABLE_GAP');
+    assert.equal(item.partialSovereignEquivalent, 'cancel_process_session');
+    assert.equal(item.partialScope, 'THIS_PRIVATE_HANDLER_TWO_FIXED_DIAGNOSTIC_CHILDREN_CANCELLATION');
+    assert.equal(item.parityGapReason, 'GENERAL_PROCESS_TERMINATION_CUSTODY_UNQUALIFIED');
+    assert.equal(item.nativeCustodyQualified, false);
+    assert.equal(item.descendantsExcluded, false);
+    assert.equal(item.runtimeParityProven, false);
+  }
+  const own = classifyRemoteCommanderCapabilityObservation(remote('cancel-process-session'));
+  assert.equal(own.sovereignEquivalent, 'cancel_process_session');
+  assert.equal(own.functionalScope, 'THIS_PRIVATE_HANDLER_TWO_FIXED_DIAGNOSTIC_CHILDREN_CANCELLATION');
+  assert.equal(own.runtimeParityProven, false);
+  const arbitrary = classifyRemoteCommanderCapabilityObservation(remote('kill-process'));
+  assert.equal(arbitrary.state, 'BUILDABLE_GAP');
+  assert.notEqual(arbitrary.sovereignEquivalent, 'cancel_process_session');
+  assert.notEqual(arbitrary.partialSovereignEquivalent, 'cancel_process_session');
+});
+
 test('one-host visibility cannot close authenticated account device inventory', () => {
   const fresh = classifyRemoteCommanderCapabilityObservation(remote('list-devices'));
   assert.equal(fresh.state, 'BUILDABLE_GAP');

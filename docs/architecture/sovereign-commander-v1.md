@@ -51,13 +51,17 @@ physical Windows directory. The rename uses bounded pre/post hash observations;
 it does not establish atomic content CAS or cross-directory move parity. Their
 contracts and remaining gaps are documented in [private capabilities](sovereign-private-search-history-v1.md).
 
-Private `start_process`, `read_process_output` and `list_sessions` add bounded
+Private `start_process`, `read_process_output`, `list_sessions` and
+`cancel_process_session` add bounded
 asynchronous output for only the existing `status-recovery-mesh` and
 `status-worker-watchdog` read-only profiles. The canonical operation
 `START_PROCESS_SESSION` preserves legacy `START_PROCESS` ownership semantics.
 These tools observe direct-child launch/output/closure without accepting input,
 arbitrary commands or PIDs, and never establish descendant custody. General
-process/session parity remains an explicit gap.
+process/session parity remains an explicit gap. Cancellation uses the captured
+child already owned by this handler. Its receipt distinguishes a recorded
+request from observed root exit and stdio closure; repeated calls do not resend
+the signal or release unresolved process admission.
 
 `submit_feedback` persists bounded, unverified suggestions in the existing Shared
 Workspace event store. Its records cannot assert failure proof, learning or

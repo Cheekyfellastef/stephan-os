@@ -18,7 +18,7 @@ export const SOVEREIGN_FEEDBACK_OPERATION_IDS_V1 = Object.freeze([
   'general', 'read_file', 'read_multiple_files', 'get_file_info', 'write_file',
   'edit_block', 'list_directory', 'list_processes', 'get_config', 'create_directory',
   'start_search', 'get_more_search_results', 'stop_search', 'list_searches',
-  'start_process', 'read_process_output', 'interact_with_process', 'list_sessions',
+  'start_process', 'cancel_process_session', 'read_process_output', 'interact_with_process', 'list_sessions',
   'kill_process', 'force_terminate', 'move_file', 'write_pdf', 'set_config_value',
   'get_usage_stats', 'get_recent_tool_calls', 'get_tool_result', 'list_remote_tool_calls',
   'ping', 'list_devices', 'who_am_i', 'shutdown', 'give_feedback_to_desktop_commander',

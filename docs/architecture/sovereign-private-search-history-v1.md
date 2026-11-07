@@ -3,7 +3,7 @@
 Owner: **#2573 — Goal: Make Sovereign Commander absorb every Remote Commander capability**.
 
 The existing Commander host previously offered only a repository search and no
-session-local command history. This source contribution adds fifteen operations to
+session-local command history. This source contribution adds sixteen operations to
 that host and its canonical command envelope. It does not introduce another
 controller, worker, scheduler, durable store, public mailbox or execution owner.
 
@@ -24,10 +24,11 @@ controller, worker, scheduler, durable store, public mailbox or execution owner.
 | `start_process` | A bounded asynchronous session for only the existing `status-recovery-mesh` and `status-worker-watchdog` read-only profiles; actual root launch evidence, no caller commands or input. |
 | `read_process_output` | Stable pages of bounded stdout/stderr chunks from a process session created by this handler, including output observed before the child closes. |
 | `list_sessions` | Only this handler's diagnostic process sessions and observed direct-child states; no host-wide terminal inventory or custody release. |
+| `cancel_process_session` | Request cancellation of one of this handler's two fixed diagnostic child profiles by opaque session ID. A request is distinct from observed root exit and closed stdio; no PID or general process-tree authority. |
 | `submit_feedback` | Unverified advisory feedback persisted in the existing local Shared Workspace, with bounded text and receipt-only history; no vendor submission, failure evidence, learning or execution grant. |
 | `write_pdf` | Create one new bounded ASCII text PDF through a retained-parent Windows helper; no overwrite, existing-PDF editing, Unicode, HTML or image rendering. |
 
-All fifteen require an actual MCP request after initialization and tool discovery.
+All sixteen require an actual MCP request after initialization and tool discovery.
 The trusted transport must be local stdio or authenticated HTTP. Caller JSON
 cannot provide transport proof, session state, an executor, a scanner or a history
 store. Unknown fields, accessors, inherited arguments and coercible numbers are
@@ -125,7 +126,7 @@ disposes this configuration; persistent machine settings are outside the contrac
 
 ## Bounded diagnostic process sessions
 
-The three process tools implement a deliberately limited asynchronous contract.
+The four process tools implement a deliberately limited asynchronous contract.
 `start_process` accepts only a `profile` of `status-recovery-mesh` or
 `status-worker-watchdog`. The canonical command builder verifies the profile's
 existing read-only registration, fixed executable, exact script path and original
@@ -156,6 +157,17 @@ establish termination when close has not been observed. Uncertain starts
 never authorize automatic retries, and uncertain child lifetime keeps admission
 held until the original child actually closes or a pre-spawn failure is proven.
 
+`cancel_process_session` accepts exactly an opaque `sessionId` created by this
+handler. It reuses the captured child termination path already used for timeout
+and disposal. It cannot select a PID, supply a signal, target another handler,
+alter the fixed profile or cancel a maintenance action. Repeated cancellation
+returns retained observations without sending another signal. The first
+termination cause is preserved, including an earlier timeout or setup failure.
+An unavailable handle, failed signal request or missing terminal evidence is
+reported as `UNKNOWN`; a kill return is never proof of exit. The receipt and
+subsequent read/list observations distinguish cancellation intent, root exit and
+stdio closure. Reading a retained cancellation receipt never repeats the action.
+
 Handler disposal removes private access to retained observations while preserving
 unresolved process admission. It cannot release maintenance reservations, native
 custody or source leases. Even a root exit and closed pipes do not establish zero
@@ -163,8 +175,10 @@ descendants: `descendantsExcluded` and `nativeCustodyQualified` remain false.
 The production scripts normally emit their JSON near completion; a real-child
 fixture separately proves that the transport can expose a chunk before exit.
 
-The catalog and compiler keep all three general process outcomes as
-`BUILDABLE_GAP`, with the precise two-profile partial scope. Interactive input,
+The catalog and compiler keep the three general process/session outcomes and
+`force_terminate` as `BUILDABLE_GAP`, with precise two-profile partial scopes.
+The cancellation tool does not provide caller-selected `kill_process` authority.
+Interactive input,
 general build/terminal profiles, arbitrary process termination and full process
 tree custody need a separately qualified contract. A local status stream does not
 close those outcomes or create a Flywheel learning receipt.

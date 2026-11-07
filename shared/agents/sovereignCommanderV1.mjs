@@ -20,6 +20,7 @@ import {
   validateSovereignProcessSessionArgumentsV1,
   SOVEREIGN_PROCESS_SESSION_PROFILES_V1,
   SOVEREIGN_PROCESS_SESSION_EXECUTABLE_V1,
+  SOVEREIGN_PROCESS_SESSION_SCHEMA_V1,
 } from './sovereignProcessSessionsV1.mjs';
 import {
   captureSovereignMcpSessionConfigArgumentsV1, captureSovereignMcpSessionConfigSnapshotV1,
@@ -55,6 +56,7 @@ export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
   RUN_NODE_TEST: 'RUN_NODE_TEST',
   START_PROCESS: 'START_PROCESS',
   START_PROCESS_SESSION: 'START_PROCESS_SESSION',
+  CANCEL_PROCESS_SESSION: 'CANCEL_PROCESS_SESSION',
   READ_PROCESS_OUTPUT: 'READ_PROCESS_OUTPUT',
   LIST_SESSIONS: 'LIST_SESSIONS',
   MAINTENANCE_ACTION: 'MAINTENANCE_ACTION',
@@ -132,6 +134,7 @@ const PRIVATE_SESSION_ARGUMENTS = Object.freeze({
   GET_TOOL_RESULT: ['callId'],
   LIST_REMOTE_TOOL_CALLS: ['offset', 'limit'],
   START_PROCESS_SESSION: ['profile'],
+  CANCEL_PROCESS_SESSION: ['sessionId'],
   READ_PROCESS_OUTPUT: ['sessionId', 'offset', 'limit'],
   LIST_SESSIONS: [],
 });
@@ -144,7 +147,7 @@ export function captureSovereignPrivateSessionArgumentsV1(operation, raw) {
     const validated = validateSovereignPdfWriteArgumentsV1(raw);
     return validated.ok === true ? validated.args : null;
   }
-  if (['START_PROCESS_SESSION', 'READ_PROCESS_OUTPUT', 'LIST_SESSIONS'].includes(operation)) {
+  if (['START_PROCESS_SESSION', 'CANCEL_PROCESS_SESSION', 'READ_PROCESS_OUTPUT', 'LIST_SESSIONS'].includes(operation)) {
     const validated = validateSovereignProcessSessionArgumentsV1(operation, raw);
     return validated.ok === true ? validated.args : null;
   }
@@ -617,7 +620,7 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
   if (Object.hasOwn(PRIVATE_SESSION_ARGUMENTS, operation)) {
     const args = captureSovereignPrivateSessionArgumentsV1(operation, envelope.payload);
     const search = ['START_SEARCH', 'GET_MORE_SEARCH_RESULTS', 'STOP_SEARCH', 'LIST_SEARCHES'].includes(operation);
-    const processSession = ['START_PROCESS_SESSION', 'READ_PROCESS_OUTPUT', 'LIST_SESSIONS'].includes(operation);
+    const processSession = ['START_PROCESS_SESSION', 'CANCEL_PROCESS_SESSION', 'READ_PROCESS_OUTPUT', 'LIST_SESSIONS'].includes(operation);
     let profileBinding = null;
     if (!args) blockers.push('SOVEREIGN_PRIVATE_SESSION_ARGUMENTS_INVALID');
     if (operation === 'START_SEARCH' || operation === 'WRITE_PDF') {
@@ -1196,6 +1199,118 @@ async function executeSovereignCommanderRouteV1(envelope = {}, options = {}) {
   return run();
 }
 
+function unknownProcessCancellation(sessionId) {
+  return frozen({ ok: false, schemaVersion: SOVEREIGN_PROCESS_SESSION_SCHEMA_V1,
+    operation: 'CANCEL_PROCESS_SESSION', sessionId, cancellationState: 'UNKNOWN', retryAllowed: false,
+    nativeCustodyQualified: false, descendantsExcluded: false, maintenanceCustodyReleased: false,
+    blocker: 'SOVEREIGN_PROCESS_CANCELLATION_UNKNOWN' });
+}
+
+// Cancellation acknowledges a narrowly owned request, never a completed
+// process from a boolean alone. Reject optimistic or contradictory receipts
+// before the canonical result and advisory history can give them authority.
+function validProcessCancellationReceipt(value, sessionId) {
+  try {
+    const receiptKeys = ['ok', 'schemaVersion', 'operation', 'blocker', 'executionScope',
+      'nativeCustodyQualified', 'descendantsExcluded', 'maintenanceCustodyReleased',
+      'sessionId', 'session', 'cancellationState', 'requestRecorded', 'cancellationRequested',
+      'signalAttempted', 'signalAttemptResult', 'signalErrorObserved', 'terminationCause',
+      'rootExitObserved', 'stdioClosed', 'retryAllowed', 'terminalReason'];
+    const snapshotKeys = ['sessionId', 'profile', 'state', 'launchState', 'createdAtUtc', 'startedAtUtc',
+      'endedAtUtc', 'expiresAtUtc', 'spawnObserved', 'rootExitObserved', 'stdioClosed', 'exitCode',
+      'signal', 'outcome', 'blocker', 'terminationRequested', 'terminationUnproven',
+      'cancellationRequested', 'signalAttempted', 'signalAttemptResult', 'signalErrorObserved',
+      'terminationCause', 'outputBytesSeen', 'outputBytesStored', 'outputTruncated', 'nextOffset',
+      'outputComplete', 'executionScope', 'nativeCustodyQualified', 'descendantsExcluded',
+      'maintenanceCustodyReleased'];
+    const plainData = (item, keys) => item && typeof item === 'object' && !Array.isArray(item)
+      && Object.getPrototypeOf(item) === Object.prototype
+      && Reflect.ownKeys(item).every(key => typeof key === 'string' && keys.includes(key)
+        && Object.hasOwn(Object.getOwnPropertyDescriptor(item, key), 'value'));
+    const boundaries = item => item.nativeCustodyQualified === false
+      && item.descendantsExcluded === false && item.maintenanceCustodyReleased === false
+      && item.executionScope === 'TWO_FIXED_READ_ONLY_DIRECT_CHILD_PROFILES';
+    const blocker = item => item === null || (typeof item === 'string'
+      && /^SOVEREIGN_PROCESS_[A-Z0-9_]{1,96}$/.test(item));
+    const timestamp = item => typeof item === 'string' && Number.isFinite(Date.parse(item))
+      && new Date(item).toISOString() === item;
+    if (!plainData(value, receiptKeys) || value.schemaVersion !== SOVEREIGN_PROCESS_SESSION_SCHEMA_V1
+      || value.operation !== 'CANCEL_PROCESS_SESSION' || value.retryAllowed !== false
+      || !boundaries(value) || typeof value.requestRecorded !== 'boolean'
+      || typeof value.cancellationRequested !== 'boolean' || typeof value.signalAttempted !== 'boolean'
+      || typeof value.signalErrorObserved !== 'boolean'
+      || (value.blocker !== undefined && !blocker(value.blocker))
+      || (value.ok === false && typeof value.blocker !== 'string')
+      || (value.requestRecorded && !value.cancellationRequested)) return false;
+    if (value.cancellationState === 'NOT_STARTED') return value.ok === false
+      && !value.requestRecorded && !value.cancellationRequested && !value.signalAttempted
+      && !value.signalErrorObserved && value.signalAttemptResult === 'NOT_ATTEMPTED'
+      && value.session === undefined && value.sessionId === undefined
+      && value.rootExitObserved === undefined && value.stdioClosed === undefined
+      && value.terminationCause === undefined && value.terminalReason === undefined;
+    const session = value.session;
+    if (!plainData(session, snapshotKeys) || snapshotKeys.some(key => !Object.hasOwn(session, key))
+      || value.sessionId !== sessionId || session.sessionId !== sessionId
+      || !boundaries(session) || !Object.hasOwn(SOVEREIGN_PROCESS_SESSION_PROFILES_V1, session.profile)
+      || typeof session.spawnObserved !== 'boolean'
+      || !['STARTING', 'RUNNING', 'ROOT_EXITED', 'UNKNOWN', 'FAILED_TO_START', 'CLOSED'].includes(session.state)
+      || !['PENDING', 'UNKNOWN', 'SUCCEEDED', 'FAILED'].includes(session.outcome)
+      || session.launchState !== (session.spawnObserved ? 'SPAWN_OBSERVED'
+        : session.state === 'FAILED_TO_START' ? 'NOT_STARTED' : 'UNKNOWN')
+      || !timestamp(session.createdAtUtc) || !timestamp(session.expiresAtUtc)
+      || (session.startedAtUtc !== null && !timestamp(session.startedAtUtc))
+      || (session.endedAtUtc !== null && !timestamp(session.endedAtUtc))
+      || (session.exitCode !== null && !Number.isSafeInteger(session.exitCode))
+      || (session.signal !== null && (typeof session.signal !== 'string' || !/^SIG[A-Z0-9]{1,24}$/.test(session.signal)))
+      || !blocker(session.blocker) || !blocker(session.terminationCause)
+      || ['terminationRequested', 'terminationUnproven', 'outputTruncated', 'outputComplete']
+        .some(key => typeof session[key] !== 'boolean')
+      || session.terminationRequested !== (session.terminationCause !== null)
+      || !Number.isSafeInteger(session.outputBytesSeen) || session.outputBytesSeen < 0
+      || !Number.isSafeInteger(session.outputBytesStored) || session.outputBytesStored < 0
+      || session.outputBytesStored > 16384 || session.outputBytesStored > session.outputBytesSeen
+      || !Number.isSafeInteger(session.nextOffset) || session.nextOffset < 0 || session.nextOffset > 256
+      || (session.stdioClosed && (session.endedAtUtc === null
+        || !['CLOSED', 'FAILED_TO_START'].includes(session.state)))
+      || (session.state === 'CLOSED' && !session.stdioClosed)
+      || (session.outputComplete && (!session.stdioClosed || !session.spawnObserved
+        || session.outputTruncated || session.terminationRequested))
+      || (session.state === 'UNKNOWN' && session.outcome !== 'UNKNOWN')
+      || (session.state === 'FAILED_TO_START' && (session.outcome !== 'FAILED'
+        || session.spawnObserved || session.rootExitObserved || session.signalAttempted))
+      || (['SUCCEEDED', 'FAILED'].includes(session.outcome) && session.state !== 'FAILED_TO_START'
+        && (session.state !== 'CLOSED' || !session.rootExitObserved || !session.spawnObserved
+          || session.terminationRequested || session.blocker !== null || session.signal !== null
+          || !Number.isInteger(session.exitCode)
+          || (session.outcome === 'SUCCEEDED' ? session.exitCode !== 0 : session.exitCode === 0)))
+      || !['NOT_ATTEMPTED', 'DEFERRED_UNTIL_SPAWN', 'HANDLE_UNAVAILABLE', 'KILL_RETURNED_TRUE',
+        'KILL_RETURNED_FALSE', 'KILL_THREW', 'KILL_RETURN_UNRECOGNIZED', 'ROOT_ALREADY_EXITED'].includes(value.signalAttemptResult)
+      || value.signalAttemptResult !== session.signalAttemptResult
+      || (value.terminationCause !== null && typeof value.terminationCause !== 'string')
+      || value.terminationCause !== session.terminationCause
+      || ['cancellationRequested', 'signalAttempted', 'signalErrorObserved', 'rootExitObserved', 'stdioClosed']
+        .some(key => typeof value[key] !== 'boolean' || value[key] !== session[key])) return false;
+    if (value.cancellationState === 'UNKNOWN') return value.ok === false && value.terminalReason === undefined;
+    if (value.ok !== true) return false;
+    if (value.cancellationState === 'ALREADY_TERMINAL') return !value.requestRecorded
+      && (value.terminalReason === 'ROOT_EXIT_AND_STDIO_CLOSED'
+        ? value.rootExitObserved && value.stdioClosed && !value.cancellationRequested
+        : value.terminalReason === 'PROVEN_NO_SPAWN' && session.launchState === 'NOT_STARTED'
+          && session.state === 'FAILED_TO_START' && !session.spawnObserved
+          && !value.rootExitObserved && !value.signalAttempted);
+    if (value.terminalReason !== undefined || !value.cancellationRequested) return false;
+    if (value.cancellationState === 'ROOT_EXIT_AND_STDIO_CLOSED')
+      return value.rootExitObserved && value.stdioClosed;
+    if (value.cancellationState !== 'REQUESTED' || value.stdioClosed || value.signalErrorObserved
+      || session.state !== 'UNKNOWN' || session.outcome !== 'UNKNOWN' || session.outputComplete
+      || session.terminationUnproven || !session.terminationRequested) return false;
+    if (value.signalAttemptResult === 'KILL_RETURNED_TRUE') return value.signalAttempted;
+    if (value.signalAttemptResult === 'DEFERRED_UNTIL_SPAWN')
+      return !value.signalAttempted && !value.rootExitObserved && !session.spawnObserved;
+    return value.signalAttemptResult === 'ROOT_ALREADY_EXITED' && value.rootExitObserved && !value.signalAttempted;
+  } catch { return false; }
+}
+
 async function executeAdmittedSovereignCommandV1(command, options) {
   try {
     let contentText = '';
@@ -1214,6 +1329,9 @@ async function executeAdmittedSovereignCommandV1(command, options) {
       const pdf = command.plan.family === 'pdf';
       const feedback = command.plan.family === 'feedback';
       const processStart = command.plan.operation === 'START_PROCESS_SESSION';
+      const processCancel = command.plan.operation === 'CANCEL_PROCESS_SESSION';
+      if (processCancel && !validProcessCancellationReceipt(structuredContent, command.plan.args.sessionId))
+        structuredContent = unknownProcessCancellation(command.plan.args.sessionId);
       if (!structuredContent || structuredContent.ok !== true
         || (move && structuredContent.mutationState !== 'MOVED')
         || (pdf && structuredContent.mutationState !== 'CREATED')
@@ -1224,6 +1342,7 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         const unknownPdf = pdf && structuredContent?.mutationState !== 'NOT_STARTED';
         const unknownFeedback = feedback && structuredContent?.feedbackState !== 'NOT_STARTED';
         const unknownProcessStart = processStart && structuredContent?.launchState !== 'NOT_STARTED';
+        const unknownProcessCancel = processCancel && structuredContent?.cancellationState !== 'NOT_STARTED';
         if (unknownMove || unknownPdf) structuredContent = frozen({ ...structuredContent,
           ok: false, mutationState: 'UNKNOWN', retryAllowed: false });
         if (unknownFeedback) structuredContent = frozen({ ...structuredContent,
@@ -1236,7 +1355,7 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         return frozen({
           ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command, contentText, structuredContent,
           blocker: structuredContent?.blocker || 'SOVEREIGN_PRIVATE_SESSION_OPERATION_BLOCKED',
-          finalVerdict: unknownMove || unknownPdf || unknownFeedback || unknownProcessStart
+          finalVerdict: unknownMove || unknownPdf || unknownFeedback || unknownProcessStart || unknownProcessCancel
             ? 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' : 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
         });
       }
@@ -1465,6 +1584,12 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         ? 'SOVEREIGN_COMMANDER_SESSION_OPERATION_RETURNED' : 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
     });
   } catch (error) {
+    if (command.plan?.kind === 'private-session' && command.plan.operation === 'CANCEL_PROCESS_SESSION') {
+      const structuredContent = unknownProcessCancellation(command.plan.args.sessionId);
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
     if (command.plan?.kind === 'private-session' && command.plan.family === 'feedback') {
       const structuredContent = frozen({ ok: false, feedbackState: 'UNKNOWN', retryAllowed: false,
         advisoryOnly: true, executionAuthority: false, blocker: 'SOVEREIGN_FEEDBACK_EFFECT_UNKNOWN' });

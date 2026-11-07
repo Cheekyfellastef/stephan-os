@@ -17,7 +17,7 @@ const KNOWN_TOOLS = new Set([
   'write_file', 'edit_file', 'move_file', 'write_pdf', 'submit_feedback', 'list_directory', 'create_directory', 'search_project',
   'list_processes', 'starfield_vr_telemetry_archive', 'maintenance_action',
   'start_search', 'get_more_search_results', 'stop_search', 'list_searches',
-  'start_process', 'read_process_output', 'list_sessions',
+  'start_process', 'cancel_process_session', 'read_process_output', 'list_sessions',
   ...SOVEREIGN_MCP_SESSION_HISTORY_TOOLS_V1,
 ]);
 const HISTORY_TOOLS = new Set(SOVEREIGN_MCP_SESSION_HISTORY_TOOLS_V1);

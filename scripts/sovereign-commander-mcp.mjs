@@ -41,7 +41,7 @@ export const SOVEREIGN_COMMANDER_INSPECTION_ACTIONS = Object.freeze([
 
 const SEARCH_SESSION_TOOLS = Object.freeze(['start_search', 'get_more_search_results', 'stop_search', 'list_searches']);
 const HISTORY_TOOLS = Object.freeze(['get_usage_stats', 'get_recent_tool_calls', 'get_tool_result', 'list_remote_tool_calls']);
-const PROCESS_SESSION_TOOLS = Object.freeze(['start_process', 'read_process_output', 'list_sessions']);
+const PROCESS_SESSION_TOOLS = Object.freeze(['start_process', 'cancel_process_session', 'read_process_output', 'list_sessions']);
 const PRIVATE_SESSION_TOOLS = Object.freeze([...SEARCH_SESSION_TOOLS, ...HISTORY_TOOLS, ...PROCESS_SESSION_TOOLS,
   'set_config_value', 'move_file', 'submit_feedback', 'write_pdf']);
 const PRIVATE_READ_ANNOTATIONS = Object.freeze({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
@@ -324,6 +324,16 @@ const TOOLS = Object.freeze([
         offset: { type: 'integer', minimum: 0, maximum: 256, default: 0 },
         limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 } } },
     annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'cancel_process_session',
+    title: 'Cancel an owned diagnostic session',
+    description: 'Request cancellation of a diagnostic process session created by this private handler. Accepts only its opaque sessionId, never a PID. A recorded request or kill return does not prove process exit. Read the original session to observe root exit and stdio closure; no descendant exclusion or maintenance-custody release is established.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['sessionId'],
+      properties: { sessionId: { type: 'string', pattern: '^process-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$' } },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'list_sessions',

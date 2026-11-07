@@ -42,7 +42,7 @@ const capturedReadAdapters = {
   'shared/agents/sovereignFileMoveV1.mjs': '79ea603d77c6aa0d53366a966aef849ecc20e80019f2162e28886b6a28747190',
   'shared/agents/sovereignPdfWriteV1.mjs': '90c5e0ecb3d1fdc354af1dbedcd04c24a2910e3fedb3277aa838168214164330',
 };
-const capturedProcessAdapterSha256 = 'ad029b85f850637d915d220463c2ecc40d1aabb46bc2462ff0ff44970d217873';
+const capturedProcessAdapterSha256 = 'c0e7d5e221ec5dc3c5579c6dd88a45cde393bc2484984ea4bfdd0c11e1e3549f';
 for (const target of requiredRoots) if (!members.has(target)) missing.push({ role: 'profile-root', target });
 // Checking all admitted JS members also covers a newly reachable import in a
 // packaged library outside the previous selected-root traversal. This cannot
