@@ -24,6 +24,7 @@ import {
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SHA = /^[a-f0-9]{40}$/;
 const OLLAMA_URL = 'http://127.0.0.1:11434/api/generate';
+export const SOVEREIGN_COMPLETE_REVIEW_MODEL_V1 = 'qwen3.5:27b';
 const text = x => String(x ?? '').trim();
 // Git status alone can hide altered executable bytes with skip-worktree or
 // assume-unchanged flags. Pin the candidate producer and critical policies
@@ -362,28 +363,35 @@ export async function localCompleteHighRiskModelV1(prompt,packet,env=process.env
     || packet.inputTokenUpperBound!==bytes || packet.outputTokenReserve!==limits.outputTokenReserve
     || !/^[a-f0-9]{64}$/.test(packet.modelDigestSha256??''))
     throw completeFailure('COMPLETE_REVIEW_PROMPT_BINDING_INVALID');
-  // There is no atomic require-resident/no-reload request in this protocol.
-  // A /ps snapshot must not authorize a large cold load after a concurrent
-  // unload. Do not expose a caller option or cached flag that opens this gate.
-  if(bytes+limits.outputTokenReserve>limits.coldContextTokens)
+  const largeContextRequired=bytes+limits.outputTokenReserve>limits.coldContextTokens;
+  const contextTokens=largeContextRequired?limits.largeContextTokens:limits.coldContextTokens;
+  const model=SOVEREIGN_COMPLETE_REVIEW_MODEL_V1;
+  const initialGovernor=gamingGuard(env,{platform});
+  if(initialGovernor?.ok!==true)throw completeFailure('HIGH_RISK_GAMING_RESOURCE_PROTECTED');
+  if(largeContextRequired && !(initialGovernor.largeContextCustodyObserved===true
+    &&initialGovernor.contextTokens===limits.largeContextTokens))
     throw completeFailure('COMPLETE_REVIEW_LARGE_CONTEXT_CUSTODY_UNPROVEN');
-  const model=text(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL||'qwen:14b');
-  if(!/^[a-z0-9][a-z0-9._:-]{0,79}$/i.test(model))throw completeFailure('COMPLETE_REVIEW_MODEL_NAME_INVALID');
   const controller=new AbortController(),started=clock(),startedAtUtc=new Date().toISOString();
   const combined=signal?AbortSignal.any([signal,controller.signal]):controller.signal;
   const deadline=setTimeout(()=>controller.abort(),limits.aggregateTimeoutMs);deadline.unref?.();
-  let monitor,lastCheck=started,maximumGap=0,checkCount=0,interrupted=0;
+  let monitor,lastCheck=started,maximumGap=0,checkCount=0,interrupted=0,contextFailure='';
   let chain=completeHash('stephanos.complete-review-gaming-observations.v1');
   const elapsed=()=>{const value=Math.ceil(clock()-started);
     if(!Number.isSafeInteger(value)||value<0||value>=limits.aggregateTimeoutMs)
       throw completeFailure('COMPLETE_REVIEW_AGGREGATE_DEADLINE');return value;};
   const check=()=>{
-    let allowed=false,at=clock();
-    try{allowed=gamingGuard(env,{platform})?.ok===true;}catch{}
+    let allowed=false,at=clock(),observation=null;
+    try{observation=gamingGuard(env,{platform});allowed=observation?.ok===true;}catch{}
+    if(allowed&&largeContextRequired
+      &&!(observation.largeContextCustodyObserved===true&&observation.contextTokens===limits.largeContextTokens)){
+      contextFailure='COMPLETE_REVIEW_LARGE_CONTEXT_CUSTODY_UNPROVEN';allowed=false;
+    }
     const gap=Math.ceil(at-lastCheck);lastCheck=at;maximumGap=Math.max(maximumGap,gap);
     if(!Number.isFinite(at)||!Number.isSafeInteger(gap)||gap<0||maximumGap>limits.maximumGovernorGapMs
       || ++checkCount>20000)allowed=false;
-    chain=completeHash(JSON.stringify([chain,Math.ceil(at-started),allowed]));
+    chain=completeHash(JSON.stringify([chain,Math.ceil(at-started),allowed,
+      largeContextRequired?observation?.largeContextCustodyObserved===true:false,
+      largeContextRequired?observation?.contextTokens??0:limits.coldContextTokens]));
     if(!allowed){interrupted++;controller.abort();}
     return allowed && !combined.aborted;
   };
@@ -410,7 +418,7 @@ export async function localCompleteHighRiskModelV1(prompt,packet,env=process.env
     const modelContextTokens=typeof architecture==='string' && /^[a-z0-9_]{1,80}$/.test(architecture)
       ?info.model_info[architecture+'.context_length']:null;
     if(!Array.isArray(info?.capabilities)||!info.capabilities.includes('completion')
-      || !Number.isSafeInteger(modelContextTokens)||modelContextTokens<limits.coldContextTokens
+      || !Number.isSafeInteger(modelContextTokens)||modelContextTokens<contextTokens
       ||modelContextTokens>limits.maximumContextTokens
       ||Object.hasOwn(info,'remote_host')||Object.hasOwn(info,'remote_model'))
       throw completeFailure('COMPLETE_REVIEW_MODEL_CONTEXT_UNPROVEN');
@@ -433,13 +441,13 @@ export async function localCompleteHighRiskModelV1(prompt,packet,env=process.env
     const generation=completeReadJson('/api/generate',{fetchImpl,signal:combined,maximum:65536,
       timeoutMs:limits.requestTimeoutMs,body:{model:binding.model,prompt,stream:false,format:'json',
         raw:true,truncate:false,shift:false,keep_alive:0,
-        options:{temperature:0,num_ctx:limits.coldContextTokens,num_predict:limits.outputTokenReserve}}})
+        options:{temperature:0,num_ctx:contextTokens,num_predict:limits.outputTokenReserve}}})
       .then(value=>{generationSettled=true;return value;},error=>{generationSettled=true;throw error;});
     const observeRunning=(async()=>{
       do {
         const observed=await resident();requireGaming();
         if(observed!==null){
-          if(observed!==limits.coldContextTokens)
+          if(observed!==contextTokens)
             throw completeFailure('COMPLETE_REVIEW_RUNNING_CONTEXT_CHANGED');
           observedContextTokens=observed;
         }else if(observedContextTokens!==null&&!generationSettled)
@@ -455,12 +463,13 @@ export async function localCompleteHighRiskModelV1(prompt,packet,env=process.env
     requireGaming();const requestDurationMs=Math.ceil(clock()-requestStarted);
     if(!Number.isSafeInteger(requestDurationMs)||requestDurationMs<0||requestDurationMs>=limits.requestTimeoutMs)
       throw completeFailure('COMPLETE_REVIEW_REQUEST_DEADLINE');
-    if(observedContextTokens!==limits.coldContextTokens)
+    if(observedContextTokens!==contextTokens)
       throw completeFailure('COMPLETE_REVIEW_RUNNING_CONTEXT_UNPROVEN');
     if(!matchesSovereignLocalOllamaCompletionV1(reply,binding)||reply.done!==true||reply.done_reason!=='stop'
       ||typeof reply.response!=='string'||Buffer.byteLength(reply.response,'utf8')>limits.responseBytes
       ||Object.hasOwn(reply,'context')||Object.hasOwn(reply,'debug_info')
       ||!Number.isSafeInteger(reply.prompt_eval_count)||reply.prompt_eval_count<1||reply.prompt_eval_count>bytes
+      ||reply.prompt_eval_count+limits.outputTokenReserve>contextTokens
       ||!Number.isSafeInteger(reply.eval_count)||reply.eval_count<1||reply.eval_count>limits.outputTokenReserve)
       throw completeFailure('COMPLETE_REVIEW_COMPLETION_UNPROVEN');
     await pin();requireGaming();
@@ -469,18 +478,19 @@ export async function localCompleteHighRiskModelV1(prompt,packet,env=process.env
       executionObservation:Object.freeze({schemaVersion:'stephanos.sovereign-complete-inference-observation.v1',
         protocolVersion:binding.protocolVersion,modelSelector:binding.model,
         promptSha256:packet.promptSha256,promptBytes:bytes,inputTokenUpperBound:bytes,
-        outputTokenReserve:limits.outputTokenReserve,contextTokens:limits.coldContextTokens,
+        outputTokenReserve:limits.outputTokenReserve,contextTokens,
         observedContextTokens,modelContextTokens,preexistingContextTokens,
-        contextAdmission:'FIXED_8K_BASELINE',residencyCustodyObserved:false,
+        contextAdmission:largeContextRequired?'RESOURCE_OWNER_256K_LEASE':'FIXED_8K_BASELINE',
+        residencyCustodyObserved:largeContextRequired,
         rawPrompt:true,promptTruncationDisabled:true,contextShiftDisabled:true,
         actualPromptTokens:reply.prompt_eval_count,actualOutputTokens:reply.eval_count,doneReason:reply.done_reason,
         responseSha256:completeHash(reply.response),startedAtUtc,finishedAtUtc,durationMs,requestDurationMs,
         gamingCheckCount:checkCount,gamingInterruptedCount:interrupted,maximumGamingCheckGapMs:maximumGap,
         gamingObservationChainSha256:chain})});
   } catch(error) {
+    if(contextFailure)throw completeFailure(contextFailure);
     if(interrupted)throw completeFailure('HIGH_RISK_GAMING_RESOURCE_PROTECTED');
     if(signal?.aborted)throw completeFailure('COMPLETE_REVIEW_AGGREGATE_DEADLINE');
-    if(contextFailure)throw completeFailure(contextFailure);
     if(typeof error?.message==='string' && /^(?:COMPLETE_REVIEW_[A-Z_]+|LOCAL_OLLAMA_DIGEST_PROTOCOL_UNSUPPORTED|LOCAL_OLLAMA_DIGEST_PROTOCOL_UNPROVEN)$/.test(error.message))throw error;
     throw completeFailure('COMPLETE_REVIEW_INFERENCE_UNPROVEN');
   } finally {
@@ -509,6 +519,7 @@ export async function runSovereignHighRiskAdvisoryV1({
   observeModel,
   invokeModel = (prompt, chunk) => localHighRiskModelV1(prompt, chunk, env),
   reviewMode = 'legacy-chunks',
+  completeContextAdmission,
   invokeCompleteModel = (prompt, packet, options) => localCompleteHighRiskModelV1(prompt, packet, env, options),
   publish = writeAtomicJson,
 } = {}) {
@@ -530,13 +541,14 @@ export async function runSovereignHighRiskAdvisoryV1({
     if(!['legacy-chunks','complete-diff'].includes(reviewMode))throw Error('COMPLETE_REVIEW_MODE_INVALID');
     identity = snapshot(env, {root});
     checkDeadline();
-    const model = text(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL || 'qwen:14b');
+    const model = complete ? SOVEREIGN_COMPLETE_REVIEW_MODEL_V1
+      : text(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL || 'qwen:14b');
     const modelBefore = await readModel(model);
     if (!modelBefore?.ok || !/^[a-f0-9]{64}$/.test(modelBefore.digest ?? ''))
       throw Error('HIGH_RISK_REVIEW_MODEL_DIGEST_UNVERIFIED');
     let bindingFailure = '';
     result = complete ? await evaluateSovereignCompleteReviewCandidateV1(identity,{
-      modelDigestSha256:modelBefore.digest,signal:controller.signal,
+      modelDigestSha256:modelBefore.digest,signal:controller.signal,completeContextAdmission,
       invokeModel:(prompt,packet,options)=>completeUntilAbort(invokeCompleteModel(prompt,packet,options),controller.signal),
     }) : await evaluateSovereignHighRiskCandidateV1(identity, {
       modelDigestSha256:modelBefore.digest,

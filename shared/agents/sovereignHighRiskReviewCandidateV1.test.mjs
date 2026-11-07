@@ -260,13 +260,14 @@ function completeInput(contents = {
   return input({...rendered,baseTree:'e'.repeat(40),sourceTree:'f'.repeat(40)});
 }
 function completeObservation(packet,response,overrides={}) {
-  const contextTokens=packet.promptBytes+packet.outputTokenReserve<=8192?8192:524288;
+  const large=packet.promptBytes+packet.outputTokenReserve>8192;
+  const contextTokens=large?262144:8192;
   return {schemaVersion:'stephanos.sovereign-complete-inference-observation.v1',
     protocolVersion:'0.40.0',modelSelector:'sha256:'+modelPin+':local',
     promptSha256:packet.promptSha256,promptBytes:packet.promptBytes,inputTokenUpperBound:packet.promptBytes,
     outputTokenReserve:packet.outputTokenReserve,contextTokens,observedContextTokens:contextTokens,
-    modelContextTokens:1048576,contextAdmission:'FIXED_8K_BASELINE',residencyCustodyObserved:false,
-    preexistingContextTokens:contextTokens===8192?null:contextTokens,
+    modelContextTokens:262144,contextAdmission:large?'RESOURCE_OWNER_256K_LEASE':'FIXED_8K_BASELINE',
+    residencyCustodyObserved:large,preexistingContextTokens:null,
     rawPrompt:true,promptTruncationDisabled:true,contextShiftDisabled:true,
     actualPromptTokens:Math.ceil(packet.promptBytes/3),actualOutputTokens:120,
     doneReason:'stop',responseSha256:digest(response),durationMs:2,requestDurationMs:1,
@@ -302,6 +303,17 @@ test('complete planning retains the entire 435KB-class diff and holds unowned la
   assert.equal(result.completeCrossFileReviewObserved,false);
   assert.equal(result.preparedDiffBytes,snapshot.fullDiffBytes);assert.equal(result.reviewedDiffBytes,0);
   assertNoAuthority(result);
+  const admitted=await evaluateComplete(snapshot,{modelDigestSha256:modelPin,
+    completeContextAdmission:{ok:true,largeContextCustodyObserved:true,contextTokens:262144},
+    invokeModel:async(prompt,packet)=>{
+      assert(prompt.includes('ENTIRE_PRODUCER_START')&&prompt.includes('ENTIRE_PRODUCER_END'));
+      return completeReply(packet);
+    }});
+  assert.equal(admitted.status,'HIGH_RISK_LOCAL_CANDIDATE_READY');
+  assert.equal(admitted.completeCrossFileReviewObserved,true);
+  assert.equal(admitted.candidateEvidence.executionObservation.contextAdmission,'RESOURCE_OWNER_256K_LEASE');
+  assert.equal(admitted.candidateEvidence.executionObservation.contextTokens,262144);
+  assertNoAuthority(admitted);
 });
 
 test('complete review keeps a cross-file finding and binds its actual content, not a count',async()=>{

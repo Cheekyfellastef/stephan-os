@@ -95,12 +95,13 @@ async function main() {
   const gamingGuard=()=>inspectInstalledReviewerGamingV1(env).ok;
   let result;
   if(entry==='advisory') {
+    const completeContextAdmission=inspectInstalledReviewerGamingV1(env);
     const observeModel=async (model,options)=>{
       if(!gamingGuard())throw Error('HIGH_RISK_GAMING_RESOURCE_PROTECTED');
       return observeCompleteHighRiskOllamaDigestV1(model,options);
     };
     result=await runSovereignHighRiskAdvisoryV1({env,root:SOVEREIGN_REVIEWER_DATA_ROOT_V1,snapshot,
-      reviewMode:'complete-diff',observeModel,
+      reviewMode:'complete-diff',observeModel,completeContextAdmission,
       invokeCompleteModel:(prompt,packet,options)=>localCompleteHighRiskModelV1(prompt,packet,env,
         {...options,platform:'win32',gamingGuard:inspectInstalledReviewerGamingV1})});
   }else if(entry==='coverage') {

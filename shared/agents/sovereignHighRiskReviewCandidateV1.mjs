@@ -269,7 +269,7 @@ export async function evaluateSovereignHighRiskCandidateV1(input = {}, { invokeM
 // These bounds are source policy, not environment/model-supplied permission.
 export const COMPLETE_HIGH_RISK_REVIEW_LIMITS_V1 = Object.freeze({
   diffBytes: 1024 * 1024, promptOverheadBytes: 65536,
-  coldContextTokens: 8192, maximumContextTokens: 1048576,
+  coldContextTokens: 8192, largeContextTokens: 262144, maximumContextTokens: 1048576,
   outputTokenReserve: 2048, responseBytes: 12288,
   requestTimeoutMs: 120000, aggregateTimeoutMs: 780000,
   governorIntervalMs: 500, maximumGovernorGapMs: 1000,
@@ -369,17 +369,22 @@ export function prepareSovereignCompleteReviewCandidateV1(input = {}) {
 
 export function validateSovereignCompleteInferenceObservationV1(observation, packet, modelDigestSha256, response) {
   const o=observation, limits=COMPLETE_HIGH_RISK_REVIEW_LIMITS_V1;
+  const smallAdmission=Boolean(o&&o.contextTokens===limits.coldContextTokens
+    &&o.contextAdmission==='FIXED_8K_BASELINE'&&o.residencyCustodyObserved===false
+    &&packet.inputTokenUpperBound+limits.outputTokenReserve<=o.contextTokens);
+  const largeAdmission=Boolean(o&&o.contextTokens===limits.largeContextTokens
+    &&o.contextAdmission==='RESOURCE_OWNER_256K_LEASE'&&o.residencyCustodyObserved===true
+    &&boundedInteger(o.actualPromptTokens,1,packet.inputTokenUpperBound)
+    &&o.actualPromptTokens+limits.outputTokenReserve<=o.contextTokens);
   return Boolean(o && o.schemaVersion==='stephanos.sovereign-complete-inference-observation.v1'
     && /^0\.40\.(?:0|[1-9][0-9]{0,4})$/.test(o.protocolVersion ?? '')
     && o.modelSelector==='sha256:'+modelDigestSha256+':local'
     && o.promptSha256===packet.promptSha256 && o.promptBytes===packet.promptBytes
     && o.inputTokenUpperBound===packet.inputTokenUpperBound
     && o.outputTokenReserve===limits.outputTokenReserve
-    && o.contextTokens===limits.coldContextTokens
+    && (smallAdmission||largeAdmission)
     && o.observedContextTokens===o.contextTokens
     && boundedInteger(o.modelContextTokens,o.contextTokens,limits.maximumContextTokens)
-    && packet.inputTokenUpperBound+limits.outputTokenReserve<=o.contextTokens
-    && o.contextAdmission==='FIXED_8K_BASELINE' && o.residencyCustodyObserved===false
     && (o.preexistingContextTokens===null
       || boundedInteger(o.preexistingContextTokens,1,limits.maximumContextTokens))
     && o.rawPrompt===true && o.promptTruncationDisabled===true && o.contextShiftDisabled===true
@@ -398,16 +403,19 @@ export function validateSovereignCompleteInferenceObservationV1(observation, pac
 }
 
 export async function evaluateSovereignCompleteReviewCandidateV1(input = {}, {
-  invokeModel,modelDigestSha256,signal,
+  invokeModel,modelDigestSha256,signal,completeContextAdmission,
 } = {}) {
   const packet=prepareSovereignCompleteReviewCandidateV1(input);
   if (packet.status!=='COMPLETE_HIGH_RISK_CANDIDATE_PREPARED') return packet;
-  // /api/ps is an observation, not an atomic no-reload reservation. Until the
-  // existing resource owner can hold an admitted larger runner through this
-  // request, neither a model capability nor saved/caller JSON may raise the
-  // existing 8K cold-allocation ceiling. Preserve the complete packet for a
-  // future admitted producer; never relabel chunk summaries as full inference.
-  if (packet.inputTokenUpperBound+packet.outputTokenReserve>COMPLETE_HIGH_RISK_REVIEW_LIMITS_V1.coldContextTokens)
+  // A large prompt may pass the 8K baseline only when the independently owned
+  // resource governor has reserved the exact fixed 256K reviewer profile.
+  // The model transport rechecks that native custody continuously; this
+  // pre-admission merely prevents any model request before the lease exists.
+  const largeContextRequired=packet.inputTokenUpperBound+packet.outputTokenReserve
+    >COMPLETE_HIGH_RISK_REVIEW_LIMITS_V1.coldContextTokens;
+  if (largeContextRequired && !(completeContextAdmission?.ok===true
+    && completeContextAdmission.largeContextCustodyObserved===true
+    && completeContextAdmission.contextTokens===COMPLETE_HIGH_RISK_REVIEW_LIMITS_V1.largeContextTokens))
     return held('COMPLETE_REVIEW_LARGE_CONTEXT_CUSTODY_UNPROVEN',{
       reviewPacketSha256:hash(JSON.stringify([packet.reviewId,packet.promptSha256])),
       completeCrossFileReviewObserved:false,reviewedDiffBytes:0,preparedDiffBytes:packet.diffBytes});

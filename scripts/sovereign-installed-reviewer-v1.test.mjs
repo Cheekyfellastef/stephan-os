@@ -92,7 +92,9 @@ for(const changed of [false,true]){
  const native=(exe,args)=>{
   assert.equal(exe,host);
   if(args[0]==='--governor'){governor++;return{status:0,stdout:'SOVEREIGN_REVIEWER_GOVERNOR_V1='+JSON.stringify({
-   schemaVersion:'stephanos.reviewer-governor-observation.v1',allowed:true,qualified:false,independentPrincipalObserved:false})};}
+   schemaVersion:'stephanos.reviewer-governor-observation.v1',allowed:true,
+   largeContextCustodyObserved:true,contextTokens:262144,
+   qualified:false,independentPrincipalObserved:false})};}
   assert.deepEqual(Array.from(args),['--inspect']);inspected++;
   return{status:0,stdout:'SOVEREIGN_REVIEWER_PROFILE_V1='+JSON.stringify({
    schemaVersion:'stephanos.reviewer-profile-observation.v1',sourceHead:changed&&inspected>1?'d'.repeat(40):'c'.repeat(40),
@@ -113,11 +115,12 @@ for(const changed of [false,true]){
     assert.equal(options.reviewMode,'complete-diff');assert.equal(options.root,'canonical-data');
     assert.equal(options.env.STEPHANOS_SHARED_AGENT_WORKSPACE,'fixed-workspace');
     assert.equal(typeof options.snapshot,'function');assert.equal(options.invokeModel,undefined);
-    assert.equal((await options.observeModel('qwen:14b',{signal:'exact-signal'})).digest,'digest');
+    assert.deepEqual(options.completeContextAdmission,{ok:true,reason:'',largeContextCustodyObserved:true,contextTokens:262144});
+    assert.equal((await options.observeModel('qwen3.5:27b',{signal:'exact-signal'})).digest,'digest');
     await options.invokeCompleteModel('entire-prompt',{reviewId:'review'},{signal:'exact-signal',platform:'linux',gamingGuard:denied});
     return{status:'HIGH_RISK_LOCAL_CANDIDATE_READY',publicationOk:true};
    },
-   observeCompleteHighRiskOllamaDigestV1:async(model,options)=>{observed++;assert.equal(model,'qwen:14b');assert.equal(options.signal,'exact-signal');return{digest:'digest'};},
+   observeCompleteHighRiskOllamaDigestV1:async(model,options)=>{observed++;assert.equal(model,'qwen3.5:27b');assert.equal(options.signal,'exact-signal');return{digest:'digest'};},
    localCompleteHighRiskModelV1:async(prompt,packet,env,options)=>{
     inferred++;assert.equal(prompt,'entire-prompt');assert.equal(packet.reviewId,'review');
     assert.equal(env.STEPHANOS_SHARED_AGENT_WORKSPACE,'fixed-workspace');assert.equal(options.platform,'win32');
@@ -133,7 +136,7 @@ for(const changed of [false,true]){
   return new SyntheticModule(Object.keys(values),function(){for(const [key,value]of Object.entries(values))this.setExport(key,value);},{context});
  });
  await entry.evaluate();await completed;
- assert.equal(inspected,2);assert.equal(governor,2);assert.equal(observed,1);assert.equal(inferred,1);
+ assert.equal(inspected,2);assert.equal(governor,3);assert.equal(observed,1);assert.equal(inferred,1);
  if(changed)assert.equal(terminal,undefined);else assert.equal(JSON.parse(terminal).publicationOk,true);
 }
 process.stdout.write('INSTALLED_COMPLETE_ENTRY_WITNESSED\n');`;

@@ -13,6 +13,7 @@ import {
   runSovereignHighRiskAdvisoryV1 as runRaw,
   localCompleteHighRiskModelV1,
   observeCompleteHighRiskOllamaDigestV1,
+  SOVEREIGN_COMPLETE_REVIEW_MODEL_V1,
 } from './sovereign-high-risk-advisory-v1.mjs';
 
 // Existing inference fixtures use the reviewed daemon protocol; dedicated
@@ -445,6 +446,7 @@ function apiResponse(url,body,options={}) {
 }
 function completeApi(packet,overrides={}) {
   const calls=[],state={tags:0,ps:0,generationStarted:false};
+  const contextTokens=packet.promptBytes+packet.outputTokenReserve>8192?262144:8192;
   const response=JSON.stringify({reviewId:packet.reviewId,fullDiffSha256:packet.fullDiffSha256,
     reviewedPathsSha256:packet.reviewedPathsSha256,verdict:'clean',findings:[]});
   const selector='sha256:'+modelPin+':local';
@@ -453,18 +455,18 @@ function completeApi(packet,overrides={}) {
     assert.equal(options.redirect,'error');assert(options.signal instanceof AbortSignal);
     if(overrides.any){const alternate=await overrides.any(url,options,state);if(alternate)return alternate;}
     if(url.endsWith('/api/tags')){
-      state.tags++;return apiResponse(url,{models:[{name:'qwen:14b',digest:overrides.digest?.(state)||modelPin}]});
+      state.tags++;return apiResponse(url,{models:[{name:SOVEREIGN_COMPLETE_REVIEW_MODEL_V1,digest:overrides.digest?.(state)||modelPin}]});
     }
     if(url.endsWith('/api/version'))return apiResponse(url,{version:overrides.version||'0.40.0'});
     if(url.endsWith('/api/show')){
       assert.deepEqual(JSON.parse(options.body),{model:selector});
       return apiResponse(url,overrides.info||{capabilities:['completion'],model_info:{
-        'general.architecture':'qwen2','qwen2.context_length':131072}});
+        'general.architecture':'qwen3','qwen3.context_length':262144}});
     }
     if(url.endsWith('/api/ps')){
       state.ps++;
       const models=overrides.models?overrides.models(state):state.generationStarted
-        ?[{digest:modelPin,context_length:8192}]:[];
+        ?[{digest:modelPin,context_length:contextTokens}]:[];
       return apiResponse(url,{models});
     }
     if(url.endsWith('/api/generate')){
@@ -473,7 +475,7 @@ function completeApi(packet,overrides={}) {
       assert.equal(request.prompt,packet.prompt);assert.equal(request.model,selector);
       assert.equal(request.raw,true);assert.equal(request.truncate,false);assert.equal(request.shift,false);
       assert.equal(request.keep_alive,0);assert.equal(request.stream,false);
-      assert.deepEqual(request.options,{temperature:0,num_ctx:8192,num_predict:2048});
+      assert.deepEqual(request.options,{temperature:0,num_ctx:contextTokens,num_predict:2048});
       if(overrides.generate)return overrides.generate(url,options,state,response);
       return apiResponse(url,{model:selector,done:true,done_reason:'stop',response,
         prompt_eval_count:Math.ceil(packet.promptBytes/3),eval_count:120,...overrides.reply});
@@ -485,7 +487,7 @@ function completeApi(packet,overrides={}) {
 function completeSettings(api,overrides={}) {
   let poll,stopped=0;
   return {options:{fetchImpl:api.fetchImpl,platform:'win32',gamingGuard:(_env,options)=>{
-    assert.equal(options.platform,'win32');return {ok:true};},
+    assert.equal(options.platform,'win32');return {ok:true,largeContextCustodyObserved:false,contextTokens:8192};},
     startPolling:(callback,interval)=>{assert.equal(interval,500);poll=callback;return 71;},
     stopPolling:id=>{assert.equal(id,71);stopped++;},...overrides},
     poll:()=>poll?.(),stopped:()=>stopped};
@@ -549,15 +551,28 @@ test('full source metadata and after-inference source changes cannot be replaced
   }
 });
 
-test('a 435KB complete prompt never cold-loads or trusts a purported resident large-context caller flag',async()=>{
+test('a 435KB complete prompt requires native resource-owner custody and then runs untruncated at fixed 256K',async()=>{
   const snapshot=completeSnapshot({'scripts/starfield.mjs':'// complete bounded line\n'.repeat(19000)});
   const packet=completePacket(snapshot);assert(packet.promptBytes>435000);let called=0;
   await assert.rejects(localCompleteHighRiskModelV1(packet.prompt,{
     ...packet,residentContextApproved:true,contextTokens:524288,
   },{...ENV,STEPHANOS_REVIEW_RESIDENT_CONTEXT_APPROVED:'true'},{
-    gamingGuard:()=>({ok:true}),fetchImpl:()=>{called++;assert.fail('large allocation must not be attempted');},
+    gamingGuard:()=>({ok:true,largeContextCustodyObserved:false,contextTokens:8192}),
+    fetchImpl:()=>{called++;assert.fail('large allocation must not be attempted');},
   }),/COMPLETE_REVIEW_LARGE_CONTEXT_CUSTODY_UNPROVEN/);
   assert.equal(called,0);
+  const api=completeApi(packet),settings=completeSettings(api,{
+    gamingGuard:()=>({ok:true,largeContextCustodyObserved:true,contextTokens:262144}),
+  });
+  const result=await localCompleteHighRiskModelV1(packet.prompt,packet,
+    {...ENV,STEPHANOS_SOVEREIGN_REVIEW_MODEL:'caller-cannot-replace-complete-model'},settings.options);
+  assert.equal(result.executionObservation.contextTokens,262144);
+  assert.equal(result.executionObservation.observedContextTokens,262144);
+  assert.equal(result.executionObservation.contextAdmission,'RESOURCE_OWNER_256K_LEASE');
+  assert.equal(result.executionObservation.residencyCustodyObserved,true);
+  assert(result.executionObservation.actualPromptTokens+2048<=262144);
+  const request=JSON.parse(api.calls.find(row=>row.url.endsWith('/api/generate')).options.body);
+  assert.equal(request.options.num_ctx,262144);assert.equal(request.truncate,false);assert.equal(request.shift,false);
 });
 
 test('unknown Ollama feature protocols never receive a full source prompt',async()=>{
