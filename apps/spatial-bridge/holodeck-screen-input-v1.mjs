@@ -20,7 +20,7 @@ function keyboardLocal(origin,direction,angleDegrees=0) {
 
 export function consoleHit(origin,direction,angleDegrees=0) {
   const c=HOLODECK_CONSOLE,local=keyboardLocal(origin,direction,angleDegrees);
-  if(local.direction[1]>=-1e-5)return null;
+  if(Math.abs(local.direction[1])<1e-5)return null;
   const distance=-local.origin[1]/local.direction[1];
   if(distance<=0||distance>8)return null;
   const x=local.origin[0]+distance*local.direction[0],z=local.origin[2]+distance*local.direction[2];
