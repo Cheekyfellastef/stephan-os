@@ -14,6 +14,7 @@ import {
 } from '../apps/spatial-bridge/holodeck-comfort-v1.mjs';
 import { HOLODECK_CONSOLE } from '../apps/spatial-bridge/holodeck-layout-v1.mjs';
 import { SCREEN_BUTTONS } from '../apps/spatial-bridge/holodeck-screen-v1.mjs';
+import { createHolodeckRoomGeometry } from '../apps/spatial-bridge/holodeck-room-v1.mjs';
 
 function memoryStorage(initial = null) {
   let value = initial;
@@ -351,6 +352,42 @@ test('rays at every key centre retain the correct key coordinates and distance t
       const hitV = (hit[2] - (c.center[2] - c.halfDepth + 0.06)) / (2 * c.halfDepth - 0.12);
       const selected = SCREEN_BUTTONS.find((b) => hitU >= b.x && hitU <= b.x + b.w && hitV >= b.y && hitV <= b.y + b.h);
       assert.equal(selected?.id, button.id);
+    }
+  }
+});
+
+
+test('both side dial mounts visibly meet the tilting keyboard tray and retain solid geometry', () => {
+  const hasPoint = (array, expected) => {
+    for (let i = 0; i < array.length; i += 3)
+      if (expected.every((n, index) => Math.abs(array[i + index] - n) < 0.00001)) return true;
+    return false;
+  };
+  const hasSegment = (array, start, end) => {
+    for (let i = 0; i < array.length; i += 6) {
+      const a = Array.from(array.subarray(i, i + 3));
+      const b = Array.from(array.subarray(i + 3, i + 6));
+      const same = (p, q) => p.every((n, index) => Math.abs(n - q[index]) < 0.00001);
+      if ((same(a, start) && same(b, end)) || (same(a, end) && same(b, start))) return true;
+    }
+    return false;
+  };
+  for (const angle of [0, 37, 90]) {
+    const room = createHolodeckRoomGeometry({ keyboardTilt: angle });
+    for (const dial of HOLODECK_KEYBOARD_DIALS) {
+      const side = Math.sign(dial.center[0]);
+      const fromX = side * (HOLODECK_CONSOLE.halfWidth - 0.06 - 0.035);
+      const toX = dial.center[0] + side * 0.02;
+      const y = dial.center[1], z = dial.center[2] - 0.028;
+      const topEdge = [fromX, y + 0.002, z - 0.05];
+      const axleEdge = [toX, y + 0.002, z - 0.05];
+      assert.ok(hasSegment(room.positions,
+        consolePointToWorld(topEdge, angle), consolePointToWorld(axleEdge, angle)),
+      dial.id + ' mount edge must continuously connect the keyboard tray to its axle at ' + angle + ' degrees');
+      assert.ok(hasPoint(room.solidPositions, consolePointToWorld([fromX, y - 0.064, z - 0.05], angle)),
+        dial.id + ' keyboard mount must overlap the tray as solid geometry');
+      assert.ok(hasPoint(room.solidPositions, consolePointToWorld([toX, y, z + 0.05], angle)),
+        dial.id + ' keyboard mount must reach the dial axle as solid geometry');
     }
   }
 });
