@@ -58,6 +58,16 @@ function box(g, center, size, color) {
 
 function keyboardDial(g,dial) {
   const [x,y,z]=dial.center,r=dial.radius,halfDepth=dial.halfDepth,segments=32;
+  // Tie each grabbable dial to the keyboard tray. The mount is generated inside
+  // keyboardRanges, so it follows the exact same 0–90 degree hinge rotation.
+  const side=x<0?-1:1;
+  const trayEdge=side*(HOLODECK_CONSOLE.halfWidth-0.06);
+  const fromX=trayEdge-side*0.035; // overlap the tray, not just touch its edge
+  const toX=x+side*0.02; // overlap the dial's axle
+  const armY=y-0.032,armZ=z-0.028;
+  box(g,[(fromX+toX)/2,armY,armZ],[Math.abs(toX-fromX),0.064,0.10],CERAMIC);
+  line(g,[fromX,y+0.002,armZ-0.05],[toX,y+0.002,armZ-0.05],CYAN);
+  box(g,[x,armY,armZ],[0.10,0.068,0.10],METAL);
   const point=(side,angle,radius=r)=>[x+side*halfDepth,y+Math.cos(angle)*radius,z+Math.sin(angle)*radius];
   for(let i=0;i<segments;i++) {
     const a=i/segments*Math.PI*2,b=(i+1)/segments*Math.PI*2;
