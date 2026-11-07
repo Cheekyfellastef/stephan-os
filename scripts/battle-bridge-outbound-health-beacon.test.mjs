@@ -61,10 +61,9 @@ test('actual pre-child guard refusal survives relay persistence into the existin
   const childRunnerPath = join(root, 'inert-child.mjs');
   const now = new Date('2026-11-07T15:20:00.000Z');
   writeFileSync(childRunnerPath, '// injected child is never invoked\n');
-  writeFileSync(statePath, JSON.stringify({ pendingReceiptPublications: [{
-    publicationId: 'PRIVATE_PUBLICATION_SENTINEL',
-    receipt: { requestId: '', state: 'DONE', privateDetail: 'PRIVATE_RECORD_SENTINEL' },
-  }] }));
+  writeFileSync(statePath, JSON.stringify({ pendingReceiptPublications: {
+    opaqueAuthorityDebt: ['PRIVATE_PUBLICATION_SENTINEL', { privateDetail: 'PRIVATE_RECORD_SENTINEL' }],
+  } }));
   const before = readFileSync(statePath);
   let invocations = 0;
   const guard = runMailboxOutboxGuard({
@@ -79,7 +78,7 @@ test('actual pre-child guard refusal survives relay persistence into the existin
   const relay = buildSovereignRelayStatus({ now, sourceHead: HEAD, cycle });
   const beacon = buildBattleBridgeOutboundBeacon({ now, sourceHead: HEAD, statusRecords: { sovereignRelay: relay } });
   assert.equal(beacon.mailboxGuard.observed, true);
-  assert.equal(beacon.mailboxGuard.reasonCode, 'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID');
+  assert.equal(beacon.mailboxGuard.reasonCode, 'MAILBOX_OUTBOX_CANONICAL_PENDING_ARRAY_REQUIRED');
   assert.equal(beacon.mailboxGuard.stage, 'STATE_VALIDATION');
   assert.equal(beacon.mailboxGuard.childInvocationAttempted, false);
   for (const key of ['commandIngressProven', 'receiptAcceptanceProven', 'executionProven',
