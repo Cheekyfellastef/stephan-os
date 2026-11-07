@@ -268,7 +268,17 @@ test('observation remains outside the immutable native execution closure', () =>
   for (const path of ['scripts/sovereign-commander-native-inspect.mjs', 'shared/agents/sovereignControlSystemStatusV1.mjs',
     'scripts/control-tower-build-consumer-v1.mjs', 'scripts/battle-bridge-sovereign-relay-daemon.mjs'])
     assert.equal(closure.paths.includes(path), false);
-  // Same 40..258 member bound enforced by the exact installed Windows runtime.
-  // Never drop required source paths to satisfy an outdated test-only cap.
-  assert.ok(closure.paths.length >= 40 && closure.paths.length <= 258);
+  // The installer and native verifier own the package bound. Check their
+  // agreement instead of retaining a third, stale cap in this observation test.
+  // This does not change either enforcing implementation or the closure.
+  const nativeSource = readFileSync(new URL('./windows/SovereignFixedRuntimeIdentityV1.cs', import.meta.url), 'utf8');
+  const installerSource = readFileSync(new URL('./sovereign-fixed-runtime-installer-candidate-v1.mjs', import.meta.url), 'utf8');
+  const nativeBounds = [...nativeSource.matchAll(/manifest\.Files\.Length\s*>\s*(\d+)\b/g)];
+  const installerBounds = [...installerSource.matchAll(/FIXED_RUNTIME_SOURCE_PATHS_V1\.length\s*>\s*(\d+)\b/g)];
+  assert.equal(nativeBounds.length, 1, 'native verifier must retain one explicit package bound');
+  assert.equal(installerBounds.length, 1, 'installer must retain one explicit package bound');
+  const maximumMembers = Number(nativeBounds[0][1]);
+  assert.equal(Number(installerBounds[0][1]), maximumMembers, 'installer/native package bounds must agree');
+  assert.ok(Number.isSafeInteger(maximumMembers) && maximumMembers >= 40);
+  assert.ok(closure.paths.length >= 40 && closure.paths.length <= maximumMembers);
 });
