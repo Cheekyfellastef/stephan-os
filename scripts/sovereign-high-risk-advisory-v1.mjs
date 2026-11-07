@@ -4,7 +4,7 @@
 import { spawnSync } from 'node:child_process';
 import { openSync, readFileSync, fstatSync, closeSync, constants } from 'node:fs';
 import { homedir } from 'node:os';
-import { resolve, dirname, join, isAbsolute, normalize } from 'node:path';
+import { resolve, dirname, join, posix, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import process from 'node:process';
@@ -51,11 +51,12 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
   if (!SHA.test(head) || !SHA.test(base) || head === base) {
     throw Error('EXACT_HEAD_AND_BASE_REQUIRED');
   }
+  const platformPath = platform === 'win32' ? win32 : posix;
   const git = (args, maxBuffer = 512 * 1024) => {
     const execution = resolveGit({ platform, environment: env });
     const result = spawn(execution.executable, [
       ...execution.fixedConfigArgs,
-      '--git-dir=' + join(root, '.git'), '--work-tree=' + root, ...args,
+      '--git-dir=' + platformPath.join(root, '.git'), '--work-tree=' + root, ...args,
     ], {
       encoding: 'utf8', shell: false, windowsHide: true, timeout: 12_000,
       maxBuffer, env: execution.environment,
@@ -116,14 +117,14 @@ export function inspectHighRiskGamingPermissionV1(env = process.env, {
   statFile = fstatSync, closeFile = closeSync,
 } = {}) {
   const workspace = text(env.STEPHANOS_SHARED_AGENT_WORKSPACE);
-  if (platform !== 'linux' || !workspace.startsWith('/') || !isAbsolute(workspace)
-    || normalize(workspace) !== workspace || /[\0\r\n]/.test(workspace)
+  if (platform !== 'linux' || !workspace.startsWith('/') || !posix.isAbsolute(workspace)
+    || posix.normalize(workspace) !== workspace || /[\0\r\n]/.test(workspace)
     || !Number.isSafeInteger(nowMs)) {
     return Object.freeze({ ok: false, reason: 'HIGH_RISK_GOVERNOR_PATH_UNTRUSTED' });
   }
   let fd;
   try {
-    fd = openFile(join(workspace, 'vr', 'vr-resource-governor-current.json'),
+    fd = openFile(posix.join(workspace, 'vr', 'vr-resource-governor-current.json'),
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const stat = statFile(fd);
     if (!stat.isFile() || stat.size < 2 || stat.size > 32768)
