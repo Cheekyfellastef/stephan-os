@@ -127,7 +127,7 @@ const mutations = [
   ['runtime reappearance bypass', '$reappearanceDetected = [bool]($runtimeReappearanceDetected -or $modelReappearanceDetected)', '$reappearanceDetected = $true'],
   ['slower active-VR guard', '{ 0.5 } else { 5 }', '{ 1 } else { 5 }'],
   ['removed immediate headset eviction', '[void](Invoke-ImmediateVrModelEviction)', '[void]$false'],
-  ['idle refresh beyond its registered interval', '$observedUtc).TotalSeconds -ge 15', '$observedUtc).TotalSeconds -ge 30'],
+  ['idle refresh beyond its registered interval', '($now.ToUniversalTime() - $observedUtc).TotalSeconds -ge 5', '($now.ToUniversalTime() - $observedUtc).TotalSeconds -ge 30'],
   ['widened Ollama command', '& $OllamaExecutable stop $Model *> $null', '& $OllamaExecutable run $Model *> $null'],
   ['missing prepare proof', '$prepared.zeroLocalModelInvariant -ne $true', '$false'],
 ];
