@@ -16,7 +16,7 @@ export const DESKTOP_COMMANDER_OPERATION = Object.freeze({
   MAINTENANCE_ACTION: 'MAINTENANCE_ACTION',
 });
 
-const DESKTOP_COMMANDER_REQUIRED_VERSION = '0.2.51';
+const DESKTOP_COMMANDER_REQUIRED_VERSION = '0.2.52';
 const MAX_RESULT_TEXT = 16 * 1024;
 
 function text(value, fallback = '') {

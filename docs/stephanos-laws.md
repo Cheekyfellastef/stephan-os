@@ -59,6 +59,15 @@ Current law categories:
 - `compatibility`
 - `cross-device-architecture`
 - `reality-forge`
+- `operator-experience`
+
+## Project-wide zero-faff law
+
+- **Best click is no click.** Safe discovery, hydration, routing, recovery, and routine orchestration should happen automatically.
+- Hosted workspaces must prefer canonical automatic route discovery over asking the operator to enter a backend or bridge URL.
+- Manual configuration is a break-glass fallback, not the normal experience.
+- A repeated manual setup step is automation debt and should be promoted into a shared-runtime improvement rather than copied into another tile.
+- Automatic behavior does not weaken approval boundaries: consequential mutations, merges, destructive actions, credential changes, and other guarded actions still require their established authority checks.
 
 ## Operator usage
 

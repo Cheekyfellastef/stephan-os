@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import {
   MISSION_CONTROLLER_ROUTE,
   FORGE_LIFEBOAT_WORKER_ID,
+  FORGE_LIFEBOAT_LOCAL_TASK_CLASSES,
   forgeLifeboatAuthorityReceiptId,
   forgeLifeboatProofRef,
 } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
@@ -19,8 +20,8 @@ export const FORGE_LIFEBOAT_CAPACITY_SCHEMA = 'stephanos.forge-lifeboat-capacity
 export const FORGE_LIFEBOAT_PROOF_SCHEMA = 'stephanos.forge-lifeboat-capacity-proof.v1';
 export const FORGE_LIFEBOAT_REPOSITORY = 'Cheekyfellastef/stephan-os';
 export const FORGE_LIFEBOAT_DEFAULT_ENDPOINT = 'http://127.0.0.1:11434';
-export const FORGE_LIFEBOAT_DEFAULT_MODEL = 'qwen:14b';
-export const FORGE_LIFEBOAT_TASK_CLASSES = Object.freeze(['FOCUSED_REPAIR', 'MULTI_MODULE_IMPLEMENTATION']);
+export const FORGE_LIFEBOAT_DEFAULT_MODEL = 'qwen3-coder:30b';
+export const FORGE_LIFEBOAT_TASK_CLASSES = FORGE_LIFEBOAT_LOCAL_TASK_CLASSES;
 
 const SHA40 = /^[0-9a-f]{40}$/i;
 const SAFE_MODEL = /^[A-Za-z0-9_.:-]{1,128}$/;

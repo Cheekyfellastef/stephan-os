@@ -16,6 +16,7 @@ import {
 import {
   promoteSharedWorkspaceLearningCandidatesV1,
 } from './flywheelLearningFabricV1.mjs';
+import { CLOSED_LOOP_CAPABILITY_EXAM_V1 } from './closedLoopLearningV1.mjs';
 
 const REPO_ROOT = process.cwd();
 const NOW = '2026-09-27T12:00:00.000Z';
@@ -117,6 +118,72 @@ test('structured incident promotes once into durable Shared Lesson current state
       join(root, 'lessons', 'ai-chat-render-loop-prevention.json'),
       'utf8',
     ));
+    assert.equal(persisted.readOnly, true);
+    assert.equal(persisted.mergeAuthority, false);
+    assert.equal(persisted.runtimeMutationAllowed, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+test('typed capability failure is promoted only after closed-loop exam and proof', async () => {
+  const root = await tempWorkspace();
+  try {
+    const answers = CLOSED_LOOP_CAPABILITY_EXAM_V1.map((question, index) => `answer-${index + 1}:${question.slice(0, 24)}`);
+    const event = createSharedWorkspaceEventRecord({
+      eventId: 'product-surface-discovery-gap',
+      participantId: 'sovereign-commander',
+      timestampUtc: NOW,
+      eventKind: 'capability-gap',
+      summary: 'Sovereign Commander could not discover and mutate the canonical Stephanos product surface.',
+      capabilityFailure: {
+        failureClass: 'CAPABILITY_GAP',
+        genuineCapabilityFailure: true,
+        capabilityId: 'PRODUCT_SURFACE_DISCOVERY_AND_MUTATION',
+        attemptedBy: 'sovereign-commander',
+        targetRefs: ['apps/stephanos', 'stephanos-ui/src', 'shared/agents'],
+        taskId: 'landing-page-stephanos-ai-tile',
+        retainedMethod: 'Discover canonical product surfaces, perform only bounded source mutation, then verify the canonical served projection before reporting success.',
+        exam: {
+          passed: true,
+          answers,
+          proofRefs: ['proof:closed-loop-product-surface-exam'],
+        },
+        verification: {
+          passed: true,
+          proofRefs: ['proof:closed-loop-product-surface-source', 'proof:closed-loop-product-surface-runtime'],
+        },
+        runtimeEvidenceRefs: ['proof:closed-loop-product-surface-runtime'],
+      },
+    });
+
+    assert.equal(event.closedLoopLearning.state, 'RETRY_READY');
+    assert.equal(event.closedLoopLearning.teacherId, 'openclaw-local');
+    assert.equal(event.closedLoopLearning.retryDirective.authorityGranted, false);
+    assert.ok(event.learningCandidate);
+
+    const write = await writeAtomicJson(
+      root,
+      ['events', 'product-surface-discovery-gap.json'],
+      event,
+      { repoRoot: REPO_ROOT, nowMs: Date.parse(NOW) },
+    );
+    assert.equal(write.ok, true);
+
+    const result = await promoteSharedWorkspaceLearningCandidatesV1({
+      root,
+      repoRoot: REPO_ROOT,
+      nowMs: Date.parse(NOW),
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.promotedLessonIds, ['closed-loop-product-surface-discovery-and-mutation']);
+
+    const persisted = JSON.parse(await readFile(
+      join(root, 'lessons', 'closed-loop-product-surface-discovery-and-mutation.json'),
+      'utf8',
+    ));
+    assert.equal(persisted.engineeringRecord.recordClass, 'REUSABLE_METHOD');
     assert.equal(persisted.readOnly, true);
     assert.equal(persisted.mergeAuthority, false);
     assert.equal(persisted.runtimeMutationAllowed, false);

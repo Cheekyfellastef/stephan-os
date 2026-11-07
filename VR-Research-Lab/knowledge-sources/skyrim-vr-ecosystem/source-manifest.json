@@ -23,7 +23,10 @@
     "higgs_version": "1.10.10",
     "higgs_updated": "2026-01-13",
     "planck_version": "0.8.0",
-    "planck_updated": "2026-06-13"
+    "planck_updated": "2026-06-13",
+    "latest_observed_skse64_commit": "25b72352adb6543fa6d0bd3795780672b2e238e0",
+    "latest_observed_skse64_date": "2026-10-03",
+    "higgs_head_matches_registered_pin": true
   },
   "licence_posture": {
     "skyrim_vr_game": "Bethesda proprietary game; metadata and lawful operator observations only",
@@ -64,6 +67,21 @@
   "refresh_owner": 1596,
   "extraction_owner": 1593,
   "parity_owner": 1591,
-  "programme_links": [1591, 1592, 1593, 1594, 1596, 1597, 1605, 1606],
-  "promotion_rule": "Use Skyrim VR as the native interaction parity benchmark. Attribute each capability to the base game, SKSE layer or exact mod and version that actually provides it."
+  "programme_links": [
+    1591,
+    1592,
+    1593,
+    1594,
+    1596,
+    1597,
+    1605,
+    1606
+  ],
+  "promotion_rule": "Use Skyrim VR as the native interaction parity benchmark. Attribute each capability to the base game, SKSE layer or exact mod and version that actually provides it.",
+  "local_reference_lock": "VR-Research-Lab/reference-source-lock.json",
+  "source_intake": {
+    "sync_source_id": "skse64-current-analysis",
+    "local_cache_allowed": false,
+    "reuse_class": "analysis-only"
+  }
 }

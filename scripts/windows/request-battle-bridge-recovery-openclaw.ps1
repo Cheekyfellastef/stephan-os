@@ -165,7 +165,7 @@ if (-not [string]::Equals($taskExecute, $wscriptPath, [System.StringComparison]:
 }
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 if (-not [string]::Equals([string]$task.Principal.UserId, $currentUser, [System.StringComparison]::OrdinalIgnoreCase)
-    -or [string]$task.Principal.LogonType -ne 'Interactive'
+    -or [string]$task.Principal.LogonType -ne 'S4U'
     -or [string]$task.Principal.RunLevel -ne 'Limited') { throw 'RECOVERY_MESH_TASK_PRINCIPAL_INVALID' }
 if ([string]$task.Settings.MultipleInstances -ne 'IgnoreNew'
     -or $task.Settings.Hidden -ne $true

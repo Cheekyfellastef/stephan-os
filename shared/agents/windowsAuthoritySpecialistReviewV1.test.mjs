@@ -8,7 +8,9 @@ import {
   WINDOWS_AUTHORITY_MAILBOX_ROLLOVER_PATHS_V1,
   WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1,
   WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1,
-  WINDOWS_AUTHORITY_SOVEREIGN_COMMANDER_PATHS_V1,
+  WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1,
+  WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_PATHS_V1,
+  WINDOWS_AUTHORITY_CANONICAL_MAILBOX_NATIVE_PATHS_V1,
   analyzeWindowsAuthoritySpecialistReview,
 } from './windowsAuthoritySpecialistReviewV1.mjs';
 
@@ -31,7 +33,9 @@ await import('./windowsAuthorityForgeM3ExecutorReviewV1.test.mjs');
 await import('./windowsAuthorityForgePodmanPrerequisiteReviewV1.test.mjs');
 await import('./windowsAuthorityIgnitionConvergenceReviewV1.test.mjs');
 await import('./windowsAuthorityStarfieldVrLauncherReviewV1.test.mjs');
-await import('./windowsAuthoritySovereignCommanderReviewV1.test.mjs');
+await import('./windowsAuthorityStarfieldVrAerObserveReviewV1.test.mjs');
+await import('./windowsAuthoritySovereignFixedRuntimeReviewV1.test.mjs');
+await import('./windowsAuthorityCanonicalMailboxNativeEvidenceReviewV1.test.mjs');
 
 const HEAD = '7acff57ddff6a506244af99d518b9b73bf1208f6';
 const BASE = 'e31861d2d74e564cd7e15434774a3a0313721baa';
@@ -129,53 +133,16 @@ test('synthetic or repinned source bytes cannot be cleared by the exact source p
   assert.equal(result.findings.filter((item) => item.code === 'mailbox-rollover-exact-source-not-pinned').length, 2);
 });
 
-test('registry source pins the two exact #2164 blobs and grants no mutation or qualification authority', async () => {
+test('registry source pins the current bounded mailbox recovery blobs and grants no mutation or qualification authority', async () => {
   const source = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
   assert.match(source, /2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba/);
-  assert.match(source, /4a9318654405855cba5b1e15aaf2e4a587530f7f/);
+  assert.match(source, /b86ac43ed02f9742bc3213b1e847707f79a6153f/);
+  assert.match(source, /f66cc26ef865bb840522b16cbb53f830f9499838/);
+  assert.match(source, /1b103fda85c371a218f38f20fe5163ca3f5042bf/);
   assert.match(source, /sourceMutationAllowed:\s*false/);
   assert.match(source, /mergeAuthority:\s*false/);
   assert.match(source, /runtimeMutationAllowed:\s*false/);
   assert.match(source, /providerQualificationAuthority:\s*false/);
-});
-
-test('routes the exact four-path Sovereign Commander authority estate through the pinned specialist first', async () => {
-  const fixtureByPath = new Map([
-    ['scripts/windows/configure-sovereign-commander-tailscale.ps1', await readFile(new URL('./fixtures/sovereignCommanderTailnetV1.fixture.txt', import.meta.url), 'utf8')],
-    ['scripts/windows/install-sovereign-commander.ps1', await readFile(new URL('./fixtures/sovereignCommanderInstallerV1.fixture.txt', import.meta.url), 'utf8')],
-    ['scripts/windows/run-sovereign-commander-hidden.ps1', await readFile(new URL('./fixtures/sovereignCommanderRunnerV1.fixture.txt', import.meta.url), 'utf8')],
-    ['scripts/windows/run-stephanos-scheduled-task-windowless.vbs', await readFile(new URL('./fixtures/sovereignCommanderWindowlessLauncherV1.fixture.txt', import.meta.url), 'utf8')],
-  ]);
-  const sources = WINDOWS_AUTHORITY_SOVEREIGN_COMMANDER_PATHS_V1.map((path) => {
-    const content = fixtureByPath.get(path);
-    return {
-      schemaVersion: 'stephanos.windows-authority-source.v1',
-      repository: 'Cheekyfellastef/stephan-os',
-      path,
-      ref: HEAD,
-      exists: true,
-      size: Buffer.byteLength(content, 'utf8'),
-      blobSha: gitBlobSha(content),
-      content,
-    };
-  });
-  const result = analyzeWindowsAuthoritySpecialistReview({
-    repository: 'Cheekyfellastef/stephan-os',
-    sourceHead: HEAD,
-    analysis: {
-      findings: WINDOWS_AUTHORITY_SOVEREIGN_COMMANDER_PATHS_V1.map((path) => ({
-        severity: 'P0',
-        code: 'unsupported-high-risk-surface',
-        path,
-      })),
-      counts: { P0: 4, P1: 0, P2: 0 },
-    },
-    sources,
-  });
-  assert.equal(result.eligible, true);
-  assert.equal(result.clean, true, JSON.stringify(result.findings));
-  assert.deepEqual(result.reviewedPaths, WINDOWS_AUTHORITY_SOVEREIGN_COMMANDER_PATHS_V1);
-  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_SOVEREIGN_COMMANDER_SPECIALIST_CLEAN');
 });
 
 test('routes exact Lifeboat principal repair through the SID specialist before the frozen fallback', () => {
@@ -256,4 +223,133 @@ test('composes exact Starfield VR splash and launcher escalations without wideni
   assert.equal(result.clean, true, JSON.stringify(result.findings));
   assert.deepEqual(result.reviewedPaths, [splashPath, launcherPath]);
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_STARFIELD_VR_COMPOSITE_SPECIALIST_CLEAN');
+});
+
+
+test('routes exact Starfield VR AER Observe escalation through the qualified specialist', async () => {
+  const path = WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1[0];
+  const content = await readFile(new URL('../../scripts/windows/run-starfield-aer-stabilizer-observe.ps1', import.meta.url), 'utf8');
+  const result = analyzeWindowsAuthoritySpecialistReview({
+    repository: 'Cheekyfellastef/stephan-os',
+    sourceHead: HEAD,
+    analysis: {
+      findings: [{ severity: 'P0', code: 'unsupported-high-risk-surface', path }],
+      counts: { P0: 1, P1: 0, P2: 0 },
+    },
+    sources: [{
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      path,
+      ref: HEAD,
+      exists: true,
+      size: Buffer.byteLength(content, 'utf8'),
+      blobSha: gitBlobSha(content),
+      content,
+    }],
+  });
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true, JSON.stringify(result.findings));
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_SPECIALIST_CLEAN');
+});
+
+test('composes exact Starfield VR splash and AER Observe escalations without widening specialist scope', async () => {
+  const splashPath = WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1.find((path) => path.endsWith('launch-starfield-vr-with-splash.ps1'));
+  const aerPath = WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1[0];
+  const [splashContent, aerContent] = await Promise.all([
+    readFile(new URL('../../scripts/windows/launch-starfield-vr-with-splash.ps1', import.meta.url), 'utf8'),
+    readFile(new URL('../../scripts/windows/run-starfield-aer-stabilizer-observe.ps1', import.meta.url), 'utf8'),
+  ]);
+  const sources = [[splashPath, splashContent], [aerPath, aerContent]].map(([path, content]) => ({
+    schemaVersion: 'stephanos.windows-authority-source.v1',
+    repository: 'Cheekyfellastef/stephan-os',
+    path,
+    ref: HEAD,
+    exists: true,
+    size: Buffer.byteLength(content, 'utf8'),
+    blobSha: gitBlobSha(content),
+    content,
+  }));
+  const result = analyzeWindowsAuthoritySpecialistReview({
+    repository: 'Cheekyfellastef/stephan-os',
+    sourceHead: HEAD,
+    analysis: {
+      findings: [splashPath, aerPath].map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })),
+      counts: { P0: 2, P1: 0, P2: 0 },
+    },
+    sources,
+  });
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true, JSON.stringify(result.findings));
+  assert.deepEqual(result.reviewedPaths, [splashPath, aerPath]);
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_STARFIELD_VR_AER_COMPOSITE_SPECIALIST_CLEAN');
+});
+
+
+test('routes exact #3362 fixed-runtime Windows escalation through the sovereign specialist', () => {
+  const head = 'a'.repeat(40);
+  const base = '2f56252825d5bbc9aa0a684808fd141eff74c84c';
+  const result = analyzeWindowsAuthoritySpecialistReview({
+    repository: 'Cheekyfellastef/stephan-os',
+    prNumber: 3362,
+    branch: 'fix/2961-fixed-runtime-closure-relay-proof-20261031',
+    sourceHead: head,
+    baseSha: base,
+    analysis: {
+      findings: WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_PATHS_V1.map(path => ({
+        severity: 'P0', code: 'unsupported-high-risk-surface', path,
+      })),
+      counts: { P0: 2, P1: 0, P2: 0 },
+    },
+    lineageEvidence: {
+      schemaVersion: 'stephanos.windows-authority-reconciliation-lineage.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      sourceHead: head,
+      sourceCommitSha: head,
+      baseSha: base,
+      liveMainBeforeSha: base,
+      liveMainAfterSha: base,
+      parents: [base],
+      comparison: { status: 'ahead', aheadBy: 1, behindBy: 0, baseCommitSha: base, mergeBaseCommitSha: base },
+    },
+    sources: [],
+  });
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.deepEqual(result.reviewedPaths, WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_PATHS_V1);
+  assert.ok(result.findings.some(item => item.code === 'fixed-runtime-specialist-exact-source-not-pinned'));
+});
+
+
+test('routes exact #3302 seven Windows source-only P0s before the frozen legacy reviewer without granting native authority', () => {
+  const head = 'a'.repeat(40), base = 'b'.repeat(40);
+  const result = analyzeWindowsAuthoritySpecialistReview({
+    repository: 'Cheekyfellastef/stephan-os',
+    prNumber: 3302,
+    branch: 'codex/2315-saturated-rotation-control-v1',
+    sourceHead: head, baseSha: base,
+    analysis: {
+      findings: WINDOWS_AUTHORITY_CANONICAL_MAILBOX_NATIVE_PATHS_V1.map(path => ({
+        severity: 'P0', code: 'unsupported-high-risk-surface', path,
+      })),
+      counts: { P0: 7, P1: 0, P2: 0 },
+    },
+    lineageEvidence: {
+      schemaVersion: 'stephanos.windows-authority-reconciliation-lineage.v1',
+      repository: 'Cheekyfellastef/stephan-os', sourceHead: head,
+      sourceCommitSha: head, baseSha: base,
+      liveMainBeforeSha: base, liveMainAfterSha: base, parents: [base],
+      comparison: { status: 'ahead', aheadBy: 1, behindBy: 0,
+        baseCommitSha: base, mergeBaseCommitSha: base },
+    },
+    sources: [],
+  });
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.equal(result.findings.filter(x => x.code === 'mailbox-native-source-blob-mismatch').length, 7);
+  assert.deepEqual(result.reviewedPaths, WINDOWS_AUTHORITY_CANONICAL_MAILBOX_NATIVE_PATHS_V1);
+  assert.equal(result.nativeProducerQualified, false);
+  assert.equal(result.nativeEvidenceAuthenticated, false);
+  assert.equal(result.freezeCertified, false);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.epochAdoptionAuthorized, false);
 });

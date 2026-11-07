@@ -1,4 +1,8 @@
 import { createHolodeckRoomRenderer } from './holodeck-room-v1.mjs';
+import { createHolodeckLocomotion, sampleHolodeckControls } from './holodeck-locomotion-v1.mjs';
+import { createHolodeckCubeScene } from './holodeck-cube-scene-v1.mjs';
+import { createHolodeckCubeInteraction } from './holodeck-cube-interaction-v1.mjs';
+import { createHolodeckScreenInput } from './holodeck-screen-input-v1.mjs';
 
 export const HOLODECK_BASELINE_SESSION_MODE = 'immersive-vr';
 export const HOLODECK_BASELINE_MODE = 'Holodeck Baseline';
@@ -38,6 +42,12 @@ export async function enterHolodeckBaseline({
   navigatorRef = globalThis.navigator,
   canvas,
   xrWebGLLayerCtor = globalThis.XRWebGLLayer,
+  rendererFactory = createHolodeckRoomRenderer,
+  onFrame = () => {},
+  onLocomotionStatus = () => {},
+  onCubeStatus = () => {},
+  cubeScene = createHolodeckCubeScene(),
+  screen,
 } = {}) {
   if (!navigatorRef?.xr || typeof navigatorRef.xr.requestSession !== 'function') {
     return { ok: false, session: null, reason: 'WebXR immersive session API unavailable' };
@@ -65,19 +75,65 @@ export async function enterHolodeckBaseline({
   try {
     if (typeof gl.makeXRCompatible === 'function') await gl.makeXRCompatible();
     session.updateRenderState({ baseLayer: new xrWebGLLayerCtor(session, gl) });
-    const referenceSpace = await session.requestReferenceSpace('local-floor')
-      .catch(() => session.requestReferenceSpace('local'));
+    let referenceSpaceType = 'local-floor';
+    const referenceSpace = await session.requestReferenceSpace(referenceSpaceType)
+      .catch(async () => {
+        referenceSpaceType = 'local';
+        return session.requestReferenceSpace(referenceSpaceType);
+      });
 
-    const renderer = createHolodeckRoomRenderer({ gl });
+    const renderer = rendererFactory({ gl, screen });
+    const locomotion = createHolodeckLocomotion({ room: renderer.geometry.room,
+      obstacles: renderer.geometry.obstacles });
+    const cubeInteraction = createHolodeckCubeInteraction({scene:cubeScene});
+    const screenInput = createHolodeckScreenInput({screen});
+    let lastCubeStatus = '';
+    let lastLocomotionStatus = '';
+    let activeController = 'none';
     let active = true;
     session.addEventListener('end', () => {
       active = false;
       renderer.dispose();
+      cubeInteraction.stop();
+      screenInput.stop();
+      cubeScene.stop();
+      try { onLocomotionStatus({ controller: 'No active VR session', state: 'ended' }); } catch {}
     }, { once: true });
 
-    const draw = (_time, frame) => {
+    const draw = (time, frame) => {
       if (!active) return;
-      renderer.drawFrame(frame, referenceSpace);
+      let gamepads = [];
+      try { gamepads = navigatorRef.getGamepads?.() ?? []; } catch {}
+      const pose = frame.getViewerPose(referenceSpace);
+      const input = sampleHolodeckControls({ inputSources: session.inputSources, gamepads,
+        preferredSource: activeController });
+      activeController = input.source;
+      const navigation = locomotion.update({ time, pose, input,
+        visible: session.visibilityState === 'visible' });
+      const statusKey = `${navigation.controller}:${navigation.state}`;
+      if (statusKey !== lastLocomotionStatus) {
+        lastLocomotionStatus = statusKey;
+        try { onLocomotionStatus({ controller: navigation.controller, state: navigation.state }); } catch {}
+      }
+      const cube = cubeInteraction.update({ time, pose, frame, referenceSpace, navigation, gamepads,
+        visible: session.visibilityState === 'visible' });
+      const screenPointers = screenInput.update({frame,referenceSpace,pose,navigation,gamepads,visible:session.visibilityState==='visible'});
+      if(screenPointers.length)cube.pointers=screenPointers;
+      const held = cube.cubes.find(c=>c.heldBy);
+      const cubeStatus = held ? 'held' : cube.cubes.every(c=>c.sleeping) ? 'resting' : 'falling';
+      if (cubeStatus !== lastCubeStatus) {
+        lastCubeStatus = cubeStatus;
+        try { onCubeStatus({ state: cubeStatus, controller: held?.heldBy }); } catch {}
+      }
+      const frameTruth = renderer.drawFrame(frame, referenceSpace, { pose, navigation, cube })
+        || { poseAvailable: false, viewCount: 0 };
+      try {
+        onFrame({
+          time,
+          poseAvailable: frameTruth.poseAvailable === true,
+          viewCount: Number(frameTruth.viewCount) || 0,
+        });
+      } catch {}
       frame.session.requestAnimationFrame(draw);
     };
     session.requestAnimationFrame(draw);
@@ -86,6 +142,7 @@ export async function enterHolodeckBaseline({
       ok: true,
       session,
       referenceSpace,
+      referenceSpaceType,
       room: renderer.geometry.room,
       ideaCube: renderer.geometry.ideaCube,
       reason: 'Stephanos Spatial Workspace chamber started; physical headset acceptance remains unproven',

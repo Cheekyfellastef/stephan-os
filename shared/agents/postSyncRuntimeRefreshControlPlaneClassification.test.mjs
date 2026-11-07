@@ -71,7 +71,10 @@ test('Desktop Commander watchdog self-heal naturally reloads through the Battle 
   ]);
 
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
-  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
   assert.equal(plan.changedPathCount, 6);
   assert.equal(plan.noRuntimePathCount, 1);
   assert.equal(plan.openClawPathCount, 0);
@@ -95,7 +98,10 @@ test('worker watchdog and Recovery Mesh liveness repair coalesces as natural rel
   ]);
 
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
-  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
   assert.equal(plan.changedPathCount, 9);
   assert.equal(plan.noRuntimePathCount, 5);
   assert.equal(plan.openClawPathCount, 0);
@@ -148,5 +154,102 @@ test('Lifeboat bounded-tail recovery consumer refreshes through the existing con
   assert.equal(plan.unknownPathCount, 0);
   assert.equal(plan.unsafePathCount, 0);
   assert.equal(plan.openClawApprovalRequired, false);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+
+test('S4U recovery identity repair estate reaches bounded control-plane reconciliation automatically', () => {
+  const changedPaths = [
+    'scripts/battle-bridge-recovery-mesh-installer.test.mjs',
+    'scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1',
+    'scripts/windows/request-battle-bridge-recovery-openclaw.ps1',
+    'scripts/windows/request-battle-bridge-recovery.ps1',
+    'scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1',
+    'shared/agents/openClawBattleBridgeRecoveryExecutorV1.test.mjs',
+    'shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.mjs',
+    'shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.test.mjs',
+    'shared/agents/windowsAuthorityMobileRecoveryExecutorReviewV1.mjs',
+    'shared/agents/windowsAuthorityMobileRecoveryExecutorReviewV1.test.mjs',
+    'shared/agents/windowsAuthorityOpenClawRecoveryReviewV1.mjs',
+    'shared/agents/windowsAuthorityOpenClawRecoveryReviewV1.test.mjs',
+    'shared/agents/windowsAuthorityRecoveryMeshGuardianReviewV1.mjs',
+    'shared/agents/windowsAuthorityRecoveryMeshGuardianReviewV1.test.mjs',
+    'shared/agents/windowsAuthoritySpecialistReviewLegacyV1.mjs',
+    'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
+    'shared/agents/windowsAuthoritySpecialistReviewV1.test.mjs',
+    'shared/agents/windowsAuthoritySpecialistReviewV1Base.mjs',
+    'shared/agents/windowsAuthoritySpecialistReviewV1LegacyRouter.mjs',
+  ];
+
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.changedPathCount, changedPaths.length);
+  assert.equal(plan.noRuntimePathCount, 7);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.unsafePathCount, 0);
+  assert.equal(plan.openClawApprovalRequired, false);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+
+test('Recovery Mesh installer change is a bounded natural reload target', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
+    'scripts/battle-bridge-recovery-mesh-installer.test.mjs',
+  ]);
+
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.changedPathCount, 2);
+  assert.equal(plan.noRuntimePathCount, 1);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+
+test('outbound beacon core telemetry change reaches the bounded natural reload path', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/battle-bridge-outbound-health-beacon-core.mjs',
+    'scripts/battle-bridge-outbound-health-beacon.test.mjs',
+  ]);
+
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.changedPathCount, 2);
+  assert.equal(plan.noRuntimePathCount, 1);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+test('Virtual Air Link acceptance delivery is fully classified for bounded post-sync refresh', () => {
+  const changedPaths = [
+    'scripts/sovereign-commander-http.mjs',
+    'scripts/sovereign-commander-ignition-autoheal.mjs',
+    'scripts/sovereign-commander-ignition-autoheal.test.mjs',
+    'scripts/windows/run-vr-virtual-airlink-acceptance.ps1',
+    'shared/agents/sovereignCommanderBattleBridgeV1.mjs',
+    'shared/agents/sovereignCommanderBattleBridgeV1.test.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs',
+    'shared/agents/sovereignCommanderVrResourceGovernor.test.mjs',
+    'shared/agents/stephanosCoreDaemonSovereign.test.mjs',
+  ];
+
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
+  assert.equal(plan.changedPathCount, changedPaths.length);
+  assert.equal(plan.noRuntimePathCount, 5);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.unsafePathCount, 0);
   assert.equal(plan.automaticExecutionAllowed, true);
 });

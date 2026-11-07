@@ -1,8 +1,10 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
   PROTECTED_OPERATOR_WORKFLOW_MERGE_MODE,
+  executeProtectedOpenClawMergeOnBattleBridge,
   buildProtectedOpenClawMergePlan,
   buildProtectedOperatorWorkflowDispatchArgs,
   resolveProtectedOperatorAuthorizationCommentId,
@@ -20,7 +22,7 @@ function command(overrides = {}) {
     requestId: 'backend-cold-start-protected-merge-2178-test',
     operation: 'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2158,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: head,
@@ -53,14 +55,14 @@ function plan() {
 function comment(id, payload = command(), overrides = {}) {
   return {
     id,
-    issue_url: 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/2158',
+    issue_url: `https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/${activeMailboxIssueForTest}`,
     user: { login: 'Cheekyfellastef' },
     body: `\`\`\`stephanos-battle-bridge-command\n${JSON.stringify(payload)}\n\`\`\``,
     ...overrides,
   };
 }
 
-test('canonical protected merge resolves only the exact owner-authored #2158 command', () => {
+test('canonical protected merge resolves only the exact owner-authored canonical mailbox command', () => {
   const exactPlan = plan();
   const comments = [
     comment(100, command({ requestId: 'different-request-id' })),
@@ -96,3 +98,22 @@ test('protected workflow dispatch always carries the exact authorization comment
     0,
   ), null);
 });
+
+for (const platform of ['win32', 'linux']) {
+  test('clean legacy merge returns the canonical mailbox handoff before execution on ' + platform, async () => {
+    let calls = 0;
+    const result = await executeProtectedOpenClawMergeOnBattleBridge(command(), {
+      now: new Date('2026-09-11T22:00:00.000Z'),
+      userProfile: 'C:\\Users\\Stef',
+      platform,
+      runCommand: () => { calls++; throw new Error('NO_CHILD_EXPECTED'); },
+    });
+    assert.equal(calls, 0);
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'PROTECTED_OPERATOR_MERGE_CANONICAL_MAILBOX_REQUIRED');
+    assert.equal(result.details.operation, 'DISPATCH_PROTECTED_OPERATOR_MERGE');
+    assert.equal(result.details.issueNumber, activeMailboxIssueForTest);
+    assert.equal(result.details.expectedHead, head);
+    assert.equal(result.details.expectedBase, base);
+  });
+}

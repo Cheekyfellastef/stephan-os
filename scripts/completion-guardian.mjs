@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { SELF_HOSTING_CRITICAL_BACKLOG } from '../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import { buildCompletionGuardianProjection } from '../shared/agents/completionGuardianV1.mjs';
+import { reconcileExternalMergeObservation } from '../stephanos-server/services/completionGuardianMergeObservationService.js';
 import {
   createSharedWorkspaceHandoffRecord,
   createSharedWorkspaceProofRecord,
@@ -73,11 +74,20 @@ function compactProjection(projection) {
 
 export async function runCompletionGuardian(options = {}) {
   const paths = resolveCompletionGuardianPaths(options);
+  // Explicit test-only injection; production always uses the canonical guarded writer.
+  const writeRecord = options.testOnly === true && typeof options.writeRecord === 'function'
+    ? options.writeRecord : writeAtomicJson;
   const observedAtUtc = options.observedAtUtc || new Date().toISOString();
-  const [goals, missions] = await Promise.all([
+  const [goals, retainedMissions] = await Promise.all([
     options.goals || readGoals(paths.workspaceRoot),
     options.missions || listMissionRecords({ root: paths.missionRoot }),
   ]);
+  const mergeObservation = await reconcileExternalMergeObservation(retainedMissions, {
+    root: paths.missionRoot, workspaceRoot: paths.workspaceRoot, env: options.env,
+    ...(options.testOnly === true ? { testOnly: true, ...options.observationTestOptions } : {}),
+  });
+  const missions = retainedMissions.map(mission => mission.missionId === mergeObservation.missionId
+    && mergeObservation.state ? mergeObservation.state : mission);
   const projection = buildCompletionGuardianProjection({
     goals,
     missions,
@@ -103,11 +113,13 @@ export async function runCompletionGuardian(options = {}) {
     }),
     schema: COMPLETION_GUARDIAN_RUNNER_SCHEMA,
     ...compact,
+    mergeObservation: { status: mergeObservation.status, reasonCode: mergeObservation.reasonCode,
+      missionId: mergeObservation.missionId },
     duplicateSchedulerCreated: false,
     mergeAuthority: false,
     runtimeMutationAuthority: false,
   };
-  const proofWrite = await writeAtomicJson(paths.workspaceRoot, ['proof', 'completion-guardian-current.json'], proof, {
+  const proofWrite = await writeRecord(paths.workspaceRoot, ['proof', 'completion-guardian-current.json'], proof, {
     repoRoot: paths.repoRoot,
     nowMs: Date.parse(observedAtUtc),
   });
@@ -129,11 +141,6 @@ export async function runCompletionGuardian(options = {}) {
     duplicateSchedulerCreated: false,
     mergeAuthority: false,
   };
-  const statusWrite = await writeAtomicJson(paths.workspaceRoot, ['status', 'completion-guardian-current.json'], status, {
-    repoRoot: paths.repoRoot,
-    nowMs: Date.parse(observedAtUtc),
-  });
-
   let handoffWrite = { ok: true, skipped: true, reason: 'NO_REPAIR_HANDOFF_REQUIRED' };
   if (projection.repairQueue.length > 0) {
     const primary = projection.repairQueue.find((item) => item.missionId === 'critical-1284-1286-completion-controller')
@@ -157,9 +164,27 @@ export async function runCompletionGuardian(options = {}) {
       duplicateBranchOrPrAllowed: false,
       mergeAuthority: false,
     };
-    handoffWrite = await writeAtomicJson(paths.workspaceRoot, ['handoffs', 'completion-guardian-repair-current.json'], handoff, {
+    handoffWrite = await writeRecord(paths.workspaceRoot, ['handoffs', 'completion-guardian-repair-current.json'], handoff, {
       repoRoot: paths.repoRoot,
       nowMs: Date.parse(observedAtUtc),
+    });
+  }
+
+  // A Windows-pinned status snapshot must not suppress an already proven repair
+  // handoff. Retain the failed publication as red truth rather than bypassing it.
+  let statusWrite;
+  try {
+    statusWrite = await writeRecord(paths.workspaceRoot, ['status', 'completion-guardian-current.json'], status, {
+      repoRoot: paths.repoRoot,
+      nowMs: Date.parse(observedAtUtc),
+    });
+  } catch (error) {
+    statusWrite = Object.freeze({
+      ok: false,
+      reason: 'COMPLETION_GUARDIAN_STATUS_PUBLICATION_FAILED',
+      errorCode: String(error?.code || 'UNKNOWN').slice(0, 80),
+      atomicRenameAttempts: Number.isInteger(error?.atomicRenameAttempts)
+        ? error.atomicRenameAttempts : null,
     });
   }
 

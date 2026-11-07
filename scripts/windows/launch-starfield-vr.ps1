@@ -17,9 +17,12 @@ if (-not $ProfilePath) {
 }
 $receiptRoot = Join-Path $workspaceRoot 'vr\starfield-vr-launch-receipts'
 $latestReceiptPath = Join-Path $workspaceRoot 'vr\starfield-vr-launch-current.json'
+$latestReadinessPath = Join-Path $workspaceRoot 'vr\starfield-vr-readiness-current.json'
 $decisionScript = Join-Path $repositoryRoot 'scripts\starfield-vr-launch-decision.mjs'
 $performanceModeScript = Join-Path $repositoryRoot 'scripts\windows\starfield-vr-performance-mode.ps1'
+$gamingResourceGovernorScript = Join-Path $repositoryRoot 'scripts\windows\run-vr-resource-governor.ps1'
 $powershellExecutable = Join-Path $PSHOME 'powershell.exe'
+$virtualDesktopOculusCompatibilityDisableEnvironment = 'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY'
 if (-not $NodeExecutablePath) {
     $nodeCommand = Get-Command -Name 'node.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($nodeCommand) {
@@ -50,8 +53,10 @@ function Write-LaunchReceipt {
     $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
     $receiptPath = Join-Path $receiptRoot "starfield-vr-launch-$timestamp.json"
     $json = $receipt | ConvertTo-Json -Depth 12
-    $json | Set-Content -LiteralPath $receiptPath -Encoding UTF8
-    $json | Set-Content -LiteralPath $latestReceiptPath -Encoding UTF8
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($receiptPath, $json + [Environment]::NewLine, $utf8NoBom)
+    $latestPath = if ($ReadinessOnly) { $latestReadinessPath } else { $latestReceiptPath }
+    [System.IO.File]::WriteAllText($latestPath, $json + [Environment]::NewLine, $utf8NoBom)
     return $receiptPath
 }
 
@@ -134,6 +139,65 @@ function Get-ActiveOpenXrRuntimePath {
     }
     catch {
         return ''
+    }
+}
+
+function Start-StarfieldWithMetaAirLinkIsolation {
+    param(
+        [Parameter(Mandatory)][string]$ExecutablePath,
+        [Parameter(Mandatory)][string]$WorkingDirectory,
+        $VisualTelemetry = $null
+    )
+
+    # Child-only environment changes keep Virtual Desktop's compatibility layer
+    # out of the Meta route while enabling the pass-through Stephanos OpenXR
+    # telemetry layer for the exact game process when a verified sensor contract exists.
+    $environmentNames = @(
+        $virtualDesktopOculusCompatibilityDisableEnvironment,
+        'XR_API_LAYER_PATH',
+        'XR_ENABLE_API_LAYERS',
+        'STEPHANOS_VR_TELEMETRY_TRACE_PATH',
+        'STEPHANOS_VR_TELEMETRY_TARGET_EXE',
+        'STEPHANOS_VR_TELEMETRY_LAUNCH_SESSION_ID',
+        'STEPHANOS_VR_TELEMETRY_GAME_ID'
+    )
+    $previous = @{}
+    foreach ($name in $environmentNames) {
+        $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    }
+    try {
+        [Environment]::SetEnvironmentVariable($virtualDesktopOculusCompatibilityDisableEnvironment, '1', 'Process')
+        if ($VisualTelemetry) {
+            if ([bool]$VisualTelemetry.capabilities.modifiesFrameData -ne $false) { throw 'VR telemetry layer must be pass-through.' }
+            $layerDirectory = [string]$VisualTelemetry.layerDirectory
+            $tracePath = [string]$VisualTelemetry.tracePath
+            $targetExecutable = [string]$VisualTelemetry.targetExecutable
+            $launchIdentity = [string]$VisualTelemetry.launchSessionId
+            $gameId = [string]$VisualTelemetry.gameId
+            if (-not (Test-Path -LiteralPath $layerDirectory -PathType Container) -or
+                [string]::IsNullOrWhiteSpace($tracePath) -or
+                $targetExecutable -notmatch '^[A-Za-z0-9._-]{1,160}$' -or
+                $launchIdentity -notmatch '^[A-Za-z0-9._-]{1,160}$' -or
+                $gameId -notmatch '^[A-Za-z0-9._-]{1,120}$') {
+                throw 'VR telemetry child environment contract is invalid.'
+            }
+            $priorLayerPath = [string]$previous['XR_API_LAYER_PATH']
+            $priorLayers = [string]$previous['XR_ENABLE_API_LAYERS']
+            $layerPath = if ($priorLayerPath) { $layerDirectory + ';' + $priorLayerPath } else { $layerDirectory }
+            $enabledLayers = if ($priorLayers) { $priorLayers + ';XR_APILAYER_STEPHANOS_telemetry_v1' } else { 'XR_APILAYER_STEPHANOS_telemetry_v1' }
+            [Environment]::SetEnvironmentVariable('XR_API_LAYER_PATH', $layerPath, 'Process')
+            [Environment]::SetEnvironmentVariable('XR_ENABLE_API_LAYERS', $enabledLayers, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_TRACE_PATH', $tracePath, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_TARGET_EXE', $targetExecutable, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_LAUNCH_SESSION_ID', $launchIdentity, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_GAME_ID', $gameId, 'Process')
+        }
+        return Start-Process -FilePath $ExecutablePath -WorkingDirectory $WorkingDirectory -PassThru
+    }
+    finally {
+        foreach ($name in $environmentNames) {
+            [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process')
+        }
     }
 }
 
@@ -291,9 +355,23 @@ if ($declaredProviderFiles) {
     }
 }
 
+$profileObservation = Get-FileObservation -Path $ProfilePath
 $gameLauncherObservation = Get-FileObservation -Path $gameLaunchPath
 $companionObservation = Get-FileObservation -Path $companionExecutablePath
 $activeOpenXrRuntimePath = Get-ActiveOpenXrRuntimePath
+$sourceHead = if ([string]$env:STEPHANOS_SOURCE_HEAD -match '^[a-fA-F0-9]{40}$') {
+    ([string]$env:STEPHANOS_SOURCE_HEAD).ToLowerInvariant()
+} else {
+    $gitCommand = Get-Command -Name 'git.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($gitCommand) {
+        try {
+            $candidateHead = (& $gitCommand.Source -C $repositoryRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim().ToLowerInvariant()
+            if ($candidateHead -match '^[a-f0-9]{40}$') { $candidateHead } else { '' }
+        }
+        catch { '' }
+    }
+    else { '' }
+}
 $observations = [ordered]@{
     platform = 'win32'
     observedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
@@ -335,7 +413,15 @@ finally {
 
 if ($ReadinessOnly) {
     $verdict = if ($decision.ok) { 'STARFIELD_VR_LAUNCH_READY' } else { 'STARFIELD_VR_LAUNCH_BLOCKED' }
-    $receiptPath = Write-LaunchReceipt -Verdict $verdict -Decision $decision -Additional @{ observations = $observations }
+    $readinessIdentity = [ordered]@{
+        provider = $selectedProvider
+        profilePath = [string]$profileObservation.path
+        profileSha256 = [string]$profileObservation.sha256
+        launchSessionId = ''
+        sourceHead = $sourceHead
+        telemetrySessionId = ''
+    }
+    $receiptPath = Write-LaunchReceipt -Verdict $verdict -Decision $decision -Additional @{ observations = $observations; routeIdentity = $readinessIdentity }
     [ordered]@{
         verdict = $verdict
         decision = $decision
@@ -351,8 +437,47 @@ if (-not $decision.ok) {
     exit 2
 }
 
+if (-not (Test-Path -LiteralPath $gamingResourceGovernorScript -PathType Leaf)) {
+    Complete-BlockedLaunch -Blockers @('gaming-resource-governor-missing')
+}
+
+$resourceGuard = $null
+try {
+    $resourceGuardJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gamingResourceGovernorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw $resourceGuardJson.Trim() }
+    $resourceGuard = $resourceGuardJson.Trim() | ConvertFrom-Json
+    if ([string]$resourceGuard.phase -notin @('PREPARING','GAMING')) { throw 'gaming-resource-phase-not-protected' }
+    if ($resourceGuard.active -ne $true) { throw 'gaming-resource-guard-not-active' }
+    if ($resourceGuard.heavyModelAllowed -ne $false) { throw 'gaming-resource-heavy-model-not-blocked' }
+    if ($resourceGuard.localModelAllowed -ne $false) { throw 'gaming-resource-local-model-not-blocked' }
+    if ($resourceGuard.evictionHealthy -ne $true) { throw 'gaming-resource-eviction-unhealthy' }
+    if (@($resourceGuard.heavyModelsAfter).Count -gt 0) { throw 'gaming-resource-heavy-model-remained' }
+    if (@($resourceGuard.loadedModelsAfter).Count -gt 0) { throw 'gaming-resource-local-model-remained' }
+}
+catch {
+    Complete-BlockedLaunch -Blockers @('starfield-vr-gaming-resource-preflight-failed') -ErrorText $_.Exception.Message
+}
+
 $launchExecutable = (Resolve-Path -LiteralPath $gameLaunchPath).Path
-$workingDirectory = (Resolve-Path -LiteralPath $gameInstallationRoot).Path
+$verifiedWorkingDirectory = [System.IO.Path]::GetDirectoryName($launchExecutable)
+$declaredWorkingDirectory = (Resolve-Path -LiteralPath $gameInstallationRoot).Path
+if (-not [string]::Equals(
+    $declaredWorkingDirectory,
+    $verifiedWorkingDirectory,
+    [System.StringComparison]::OrdinalIgnoreCase
+)) {
+    Complete-BlockedLaunch -Blockers @('game-installation-root-not-bound-to-launch-executable')
+}
+$workingDirectory = $verifiedWorkingDirectory
+$launchSessionId = [guid]::NewGuid().ToString('N')
+$routeIdentity = [ordered]@{
+    provider = $selectedProvider
+    profilePath = [string]$profileObservation.path
+    profileSha256 = [string]$profileObservation.sha256
+    launchSessionId = $launchSessionId
+    sourceHead = $sourceHead
+    telemetrySessionId = ''
+}
 $companionProcessId = $null
 $companionReused = $false
 $performanceMode = $null
@@ -362,9 +487,12 @@ if ($decision.action -eq 'LAUNCH_MUTAR_OPENXR') {
         Complete-BlockedLaunch -Blockers @('starfield-vr-performance-mode-missing')
     }
     try {
-        $performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory 2>&1 | Out-String
+        $performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory -Provider $selectedProvider -ProfilePath ([string]$profileObservation.path) -ProfileSha256 ([string]$profileObservation.sha256) -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0) { throw $performanceJson.Trim() }
         $performanceMode = $performanceJson.Trim() | ConvertFrom-Json
+        if ($performanceMode.routeIdentity) {
+            $routeIdentity.telemetrySessionId = [string]$performanceMode.routeIdentity.telemetrySessionId
+        }
     }
     catch {
         Complete-BlockedLaunch -Blockers @('starfield-vr-performance-mode-enter-failed') -ErrorText $_.Exception.Message
@@ -382,7 +510,7 @@ if ($decision.action -eq 'LAUNCH_VORPX') {
 }
 
 try {
-    $gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru
+    $gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory -VisualTelemetry $(if ($performanceMode) { $performanceMode.visualTelemetry } else { $null })
 }
 catch {
     if ($performanceMode -and $performanceMode.sessionPath) {
@@ -392,14 +520,22 @@ catch {
 }
 
 if ($performanceMode -and $performanceMode.sessionPath) {
-    $guardianArguments = @(
-        '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
-        '-File', ('"{0}"' -f $performanceModeScript), '-Action', 'Guard',
-        '-SessionPath', ('"{0}"' -f [string]$performanceMode.sessionPath),
-        '-GameProcessId', [string]$gameProcess.Id
-    )
-    $performanceGuardian = Start-Process -FilePath $powershellExecutable -ArgumentList $guardianArguments -WindowStyle Hidden -PassThru
-    $performanceGuardianProcessId = $performanceGuardian.Id
+    try {
+        $guardianJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action StartGuard -SessionPath ([string]$performanceMode.sessionPath) -GameProcessId ([int]$gameProcess.Id) 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0 -or -not $guardianJson.Trim()) { throw $guardianJson.Trim() }
+        $guardianStart = $guardianJson.Trim() | ConvertFrom-Json
+        if ($guardianStart.ok -ne $true -or [int]$guardianStart.sampleCount -lt 1 -or [string]$guardianStart.proof -ne 'FIRST_SAMPLE_RECORDED') {
+            throw 'Starfield VR telemetry guardian did not prove the first sample.'
+        }
+        $performanceGuardianProcessId = [int]$guardianStart.guardianProcessId
+    }
+    catch {
+        try { Stop-Process -Id $gameProcess.Id -Force -ErrorAction SilentlyContinue } catch {}
+        try {
+            & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null
+        } catch {}
+        Complete-BlockedLaunch -Blockers @('starfield-vr-telemetry-guardian-start-failed') -ErrorText $_.Exception.Message
+    }
 }
 
 $receiptPath = Write-LaunchReceipt `
@@ -407,19 +543,26 @@ $receiptPath = Write-LaunchReceipt `
     -Decision $decision `
     -Additional @{
         observations = $observations
+        routeIdentity = $routeIdentity
         launchExecutable = $launchExecutable
         gameProcessId = $gameProcess.Id
         companionProcessId = $companionProcessId
         companionReused = $companionReused
         performanceMode = $performanceMode
         performanceGuardianProcessId = $performanceGuardianProcessId
+        resourceGovernor = $resourceGuard
+        virtualDesktopOculusCompatibilityLayerDisabled = $true
+        virtualDesktopOculusCompatibilityDisableEnvironment = $virtualDesktopOculusCompatibilityDisableEnvironment
     }
 
 [ordered]@{
     verdict = 'STARFIELD_VR_LAUNCH_STARTED'
     selectedProvider = $decision.selectedProvider
+    routeIdentity = $routeIdentity
     gameProcessId = $gameProcess.Id
     performanceMode = $performanceMode
     performanceGuardianProcessId = $performanceGuardianProcessId
+    resourceGovernorPhase = if ($resourceGuard) { [string]$resourceGuard.phase } else { '' }
+    virtualDesktopOculusCompatibilityLayerDisabled = $true
     receiptPath = $receiptPath
 } | ConvertTo-Json -Depth 6

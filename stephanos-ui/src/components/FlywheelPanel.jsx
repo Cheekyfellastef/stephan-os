@@ -1,10 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAIStore } from '../state/aiStore';
 import CollapsiblePanel from './CollapsiblePanel';
-import { requestStephanosBackend } from '../../../shared/runtime/backendClient.mjs';
+import { requestWorkspaceHydration } from '../../../shared/runtime/workspaceHydrationBridge.mjs';
 import { deriveFlywheelTelemetryView } from '../../../shared/runtime/flywheelTelemetryModel.mjs';
+import { deriveFlywheelWorkspaceView } from '../../../shared/runtime/upliftWorkspaceProjectionV1.mjs';
+import FlywheelWorkspaceCanvas from './FlywheelWorkspaceCanvas';
 
 const REFRESH_INTERVAL_MS = 15000;
+
+function formatEvidenceAge(ageMs) {
+  const age = Number(ageMs);
+  if (!Number.isFinite(age) || age < 0) return 'unknown age';
+  if (age < 60_000) return '<1m';
+  const minutes = Math.floor(age / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
+}
 
 function isHostedBrowserSurface() {
   if (typeof window === 'undefined' || !window.location) return false;
@@ -55,37 +68,47 @@ export default function FlywheelPanel() {
     bridgeTransportTruth?.bridgeHostedExecutionTarget,
     bridgeTransportTruth?.bridgeOperatorTransportUrl,
     homeBridgeUrl,
-    runtimeStatusModel?.runtimeContext?.homeNodeBridge,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.configured,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.accepted,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.backendUrl,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.executionUrl,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.reachability,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.reason,
   ]);
 
   useEffect(() => {
     let cancelled = false;
     let timer = null;
+    const controller = new AbortController();
 
     const refresh = async () => {
       try {
-        const result = await requestStephanosBackend({
-          path: '/api/shared-workspace/dashboard-feed',
+        const hydration = await requestWorkspaceHydration({
+          workspaceId: 'flywheel',
+          datasets: ['dashboard'],
           runtimeContext,
           timeoutMs: 10000,
+          signal: controller.signal,
         });
         if (cancelled) return;
-        const view = deriveFlywheelTelemetryView(result.json);
-        if (!view.valid) {
+        const dashboardDataset = hydration?.datasets?.dashboard || null;
+        const dashboardPayload = dashboardDataset?.payload || null;
+        const view = deriveFlywheelTelemetryView(dashboardPayload || {});
+        if (!dashboardPayload || !view.valid) {
           setTelemetry({
             state: 'unreachable',
-            payload: result.json,
-            error: view.reason,
+            payload: dashboardPayload,
+            error: dashboardDataset?.reason || hydration?.reason || view.reason || 'Flywheel hydration did not return dashboard data.',
             refreshedAt: new Date().toISOString(),
-            endpoint: result.url || '',
+            endpoint: hydration?.route || '/api/shared-workspace/hydrate?workspace=flywheel',
           });
         } else {
           setTelemetry({
-            state: view.feedState,
-            payload: result.json,
+            state: dashboardDataset?.state === 'stale' ? 'stale' : view.feedState,
+            payload: dashboardPayload,
             error: '',
             refreshedAt: new Date().toISOString(),
-            endpoint: result.url || '',
+            endpoint: hydration?.route || '/api/shared-workspace/hydrate?workspace=flywheel',
           });
         }
       } catch (error) {
@@ -107,12 +130,17 @@ export default function FlywheelPanel() {
     void refresh();
     return () => {
       cancelled = true;
+      controller.abort();
       if (timer !== null) window.clearTimeout(timer);
     };
   }, [runtimeContext]);
 
   const view = useMemo(
     () => deriveFlywheelTelemetryView(telemetry.payload || {}),
+    [telemetry.payload],
+  );
+  const upliftView = useMemo(
+    () => deriveFlywheelWorkspaceView(telemetry.payload || {}),
     [telemetry.payload],
   );
 
@@ -123,6 +151,7 @@ export default function FlywheelPanel() {
       : view.statusLabel;
   const stateItems = view.valid ? view.stateItems : [];
   const metrics = view.valid ? view.metrics : [];
+  const gateLedger = telemetry.payload?.projection?.goalBuildGateObservatory || null;
 
   return (
     <CollapsiblePanel
@@ -145,8 +174,13 @@ export default function FlywheelPanel() {
           </strong>
           <span>
             {telemetry.refreshedAt
-              ? `Updated ${new Date(telemetry.refreshedAt).toLocaleTimeString()}`
+              ? `Polled ${new Date(telemetry.refreshedAt).toLocaleTimeString()}`
               : 'Waiting for first telemetry sample'}
+          </span>
+          <span>
+            {upliftView?.sourceFreshness?.observedAtUtc
+              ? `Source evidence ${formatEvidenceAge(upliftView.sourceFreshness.ageMs)} old · freshness window ${formatEvidenceAge(upliftView.sourceFreshness.staleAfterMs)}`
+              : 'Source evidence age unknown'}
           </span>
           <span>{bridgeTransportTruth?.bridgeMode || 'canonical backend route'}</span>
         </div>
@@ -163,6 +197,52 @@ export default function FlywheelPanel() {
           </p>
         )}
       </div>
+
+      <FlywheelWorkspaceCanvas
+        conversationUplift={telemetry.payload?.conversationUplift || null}
+        conversationFeedState={telemetry.state === 'unreachable' || telemetry.state === 'connecting' ? 'unavailable' : 'reachable'}
+        view={{
+          ...upliftView,
+          liveFeedState: telemetry.state,
+          liveFeedReason: telemetry.error || view.reason || 'Waiting for live Shared Workspace evidence.',
+        }}
+      />
+
+      <section className="flywheel-gate-ledger" data-testid="flywheel-goal-build-gate-ledger" aria-label="Goal to build independent security and execution gates">
+        <h3>Goal-to-Build · 23 independent checkpoints</h3>
+        <p className="muted">Diagnostic only. A heartbeat, signed receipt, controller flag or PR merge cannot approve a different gate.</p>
+        {gateLedger?.gates?.length === 23 ? (
+          <>
+            <p role="status" data-testid="flywheel-gate-ledger-summary">
+              {gateLedger.counts?.PASS || 0} proven passed · {gateLedger.counts?.FAIL || 0} failed ·{' '}
+              {gateLedger.counts?.WAITING_FOR_PREREQUISITE || 0} waiting ·{' '}
+              {gateLedger.counts?.UNVERIFIED || 0} unverified · {gateLedger.counts?.STALE || 0} stale
+            </p>
+            <p><strong>First evidenced veto:</strong>{' '}
+              {gateLedger.firstActionableGate ? `Gate #${gateLedger.firstActionableGate}` : 'None proven. Unverified does not mean clear.'}
+              {gateLedger.simultaneousVetoes?.length > 1
+                ? ` · Other independent vetoes: ${gateLedger.simultaneousVetoes.slice(1).map(id => '#'+id).join(', ')}`
+                : ''}
+            </p>
+            <details>
+              <summary>Open all 23 gate states, owners and proof references</summary>
+              <ol className="flywheel-gate-list">
+                {gateLedger.gates.map(gate => (
+                  <li key={gate.id} data-gate-id={gate.id} data-gate-status={gate.status}>
+                    <strong>{gate.title}</strong>{' '}
+                    <span>{gate.status}</span>{' '}
+                    <small>Owner: {gate.owner}
+                      {gate.typedBlocker ? ` · ${gate.typedBlocker}` : ''}
+                      {gate.waitingOnGate ? ` · Waiting for gate #${gate.waitingOnGate}` : ''}
+                      {gate.proofRef ? ` · Proof: ${gate.proofRef}` : ' · Proof not supplied'}
+                    </small>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          </>
+        ) : <p role="status">Gate observations unavailable. All 23 gates remain unverified until the canonical feed publishes them.</p>}
+      </section>
 
       {view.valid ? (
         <>
@@ -196,9 +276,9 @@ export default function FlywheelPanel() {
         </>
       ) : (
         <div className="flywheel-unavailable" data-testid="flywheel-backend-unreachable">
-          <strong>No live Flywheel data is being claimed.</strong>
+          <strong>Live Flywheel evidence is not proven yet. The observatory remains visible.</strong>
           <p>
-            The tile will retry automatically. On a hosted phone surface it requires the persisted HTTPS Home Bridge/Tailscale execution endpoint.
+            Source-proven mission contracts stay on screen while live counts, lessons, agents and proof remain UNKNOWN until the Shared Workspace feed connects.
           </p>
         </div>
       )}

@@ -38,6 +38,8 @@ function Get-IgniteRepositoryHead {
 }
 
 $requestedHead = Get-IgniteRepositoryHead
+$canonicalNodeExe = 'C:\Program Files\nodejs\node.exe'
+$sovereignCommanderIgnitionAutohealScript = Join-Path $repoRoot 'scripts\sovereign-commander-ignition-autoheal.mjs'
 $normalIgniteCommand = 'npm run stephanos:ignite'
 $approvedIgniteCommand = 'npm run stephanos:ignite -- --approve-local-merge'
 $approvedOpenClawRestartCommand = 'npm run stephanos:ignite -- --approve-openclaw-service-restart'
@@ -96,6 +98,61 @@ function Invoke-IgniteWithOpenClawStartGatewayApproval([string]$Command) {
   finally {
     [Environment]::SetEnvironmentVariable($openClawStartGatewayApprovalEnvFlag, $previousApproval, 'Process')
   }
+}
+
+function ConvertFrom-IgnitionSyncPreflightResult([string[]]$Lines) {
+  $prefix = 'BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_RESULT='
+  $line = @($Lines | Where-Object { [string]$_ -like "$prefix*" } | Select-Object -Last 1)
+  if (-not $line -or -not $line[0]) { return $null }
+  $json = ([string]$line[0]).Substring($prefix.Length)
+  try { return $json | ConvertFrom-Json }
+  catch {
+    Write-IgniteApprovalLog "failed to parse ignition sync preflight result: $($_.Exception.Message)"
+    return $null
+  }
+}
+
+function Test-CanonicalBattleBridgeAutohealCheckout {
+  if (-not $env:USERPROFILE) { return $false }
+  try {
+    $canonical = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'))
+    $selected = [System.IO.Path]::GetFullPath($repoRoot)
+    if (-not [string]::Equals($canonical, $selected, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+    $branch = (& git -C $repoRoot branch --show-current 2>$null | Out-String).Trim()
+    return ($LASTEXITCODE -eq 0 -and $branch -eq 'main')
+  }
+  catch { return $false }
+}
+
+function Test-SovereignCommanderControlPlaneAutohealEligible($Preflight) {
+  if ($null -eq $Preflight -or -not (Test-CanonicalBattleBridgeAutohealCheckout)) { return $false }
+  $allowedBlockers = @(
+    'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
+    'CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID',
+    'CONTROL_PLANE_REPAIR_BLOCKED'
+  )
+  return ([string]$Preflight.classification -eq 'IGNITION_SYNC_PREFLIGHT_BLOCKED' -and $allowedBlockers -contains [string]$Preflight.blocker)
+}
+
+function Invoke-SovereignCommanderIgnitionAutoheal {
+  if (-not (Test-Path -LiteralPath $canonicalNodeExe -PathType Leaf)) {
+    Write-IgniteApprovalLog 'Sovereign Commander auto-heal blocked: canonical Node executable missing.'
+    return $false
+  }
+  if (-not (Test-Path -LiteralPath $sovereignCommanderIgnitionAutohealScript -PathType Leaf)) {
+    Write-IgniteApprovalLog 'Sovereign Commander auto-heal blocked: fixed auto-heal client missing.'
+    return $false
+  }
+  Write-IgniteApprovalLog 'control-plane preflight blocker is eligible for one bounded Sovereign Commander repair attempt.'
+  $output = @(& $canonicalNodeExe $sovereignCommanderIgnitionAutohealScript 2>&1)
+  $exitCode = $LASTEXITCODE
+  foreach ($line in $output) { Write-Host $line }
+  if ($exitCode -eq 0) {
+    Write-IgniteApprovalLog 'Sovereign Commander reported control-plane repair green.'
+    return $true
+  }
+  Write-IgniteApprovalLog "Sovereign Commander control-plane repair blocked (exit=$exitCode). No second repair attempt will be made."
+  return $false
 }
 
 function ConvertFrom-RepairPacketLine([string[]]$Lines) {
@@ -463,7 +520,21 @@ if ($normalExitCode -eq 0) {
   exit 0
 }
 
-$lines = Get-Content -Path $transcriptPath -ErrorAction SilentlyContinue
+$lines = @(Get-Content -Path $transcriptPath -ErrorAction SilentlyContinue)
+$preflight = ConvertFrom-IgnitionSyncPreflightResult -Lines $lines
+if (Test-SovereignCommanderControlPlaneAutohealEligible -Preflight $preflight) {
+  if (Invoke-SovereignCommanderIgnitionAutoheal) {
+    Write-IgniteApprovalLog 'retrying safe default ignition once after Sovereign Commander repair.'
+    Invoke-IgniteWithOpenClawStartGatewayApproval -Command $normalIgniteCommand 2>&1 | Tee-Object -FilePath $transcriptPath
+    $normalExitCode = $LASTEXITCODE
+    if ($normalExitCode -eq 0) {
+      Write-IgniteApprovalLog 'post-repair ignition completed successfully.'
+      exit 0
+    }
+    $lines = @(Get-Content -Path $transcriptPath -ErrorAction SilentlyContinue)
+    Write-IgniteApprovalLog 'post-repair ignition still blocked; continuing through the existing bounded recovery classification without another Commander retry.'
+  }
+}
 $packet = ConvertFrom-RepairPacketLine -Lines $lines
 if ($null -ne $packet -and $packet.packetType -eq 'openclaw-startup-connect-recovery-v1') {
   $approvalAction = Show-OpenClawRestartPopup -Packet $packet

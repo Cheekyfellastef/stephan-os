@@ -75,3 +75,18 @@ export function createBuildParitySnapshot(input = {}) {
     confidence,
   };
 }
+
+// Shared serving boundary: identity evidence is reread, never inferred from HTTP reachability.
+export function evaluateServedBuildIdentity({expectedHead, observedHead, metadata, embeddedMetadata} = {}) {
+  const sha=/^[a-f0-9]{40}$/;
+  if(!sha.test(expectedHead || '') || observedHead !== expectedHead)
+    return {current:false,state:'UNKNOWN',blocker:'SERVED_SOURCE_HEAD_UNPROVEN'};
+  if(!metadata || !embeddedMetadata || !sha.test(metadata.gitCommit || '')
+    || !/^[a-f0-9]{64}$/.test(metadata.sourceFingerprint || ''))
+    return {current:false,state:'UNKNOWN',blocker:'SERVED_BUILD_IDENTITY_UNPROVEN'};
+  const marker='antifriction-live-v3::'+metadata.gitCommit+'::'+metadata.sourceFingerprint.slice(0,12);
+  const coherent=metadata.runtimeMarker===marker && ['gitCommit','sourceFingerprint','runtimeMarker'].every(key=>embeddedMetadata[key]===metadata[key]);
+  if(metadata.gitCommit!==expectedHead || !coherent)
+    return {current:false,state:'STALE',blocker:'SERVED_BUILD_SOURCE_MISMATCH'};
+  return {current:true,state:'CURRENT',blocker:''};
+}

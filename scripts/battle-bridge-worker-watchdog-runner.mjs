@@ -440,6 +440,13 @@ export async function runBattleBridgeWorkerWatchdogRunner({
     backlogConveyor,
     'CRITICAL_BACKLOG_CONVEYOR_FAILED',
   );
+  // Keep the operator conversation path independent from control-plane recovery.
+  // A degraded watchdog or slow repair must not starve an already-valid ChatGPT
+  // <-> Stephanos Shared Workspace turn.
+  const chatGptSharedWorkspaceRelayPromise = startAuxiliaryLane(
+    participantRelay,
+    'CHATGPT_SHARED_WORKSPACE_RELAY_FAILED',
+  );
   const watchdog = await watchdogPromise;
   let controlPlaneBootstrapRecovery = null;
   try {
@@ -456,10 +463,6 @@ export async function runBattleBridgeWorkerWatchdogRunner({
   const codexVisibilityPromise = startAuxiliaryLane(
     visibilityObserver,
     'REMOTE_CODEX_VISIBILITY_RECONCILIATION_FAILED',
-  );
-  const chatGptSharedWorkspaceRelayPromise = startAuxiliaryLane(
-    participantRelay,
-    'CHATGPT_SHARED_WORKSPACE_RELAY_FAILED',
   );
 
   const [

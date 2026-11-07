@@ -1295,7 +1295,7 @@ export function AIStoreProvider({ children }) {
     strategy: initialSnapshot.initialApiRuntimeContext?.strategy || 'default:local-stephanos-backend',
     backendTargetEndpoint: initialSnapshot.initialApiRuntimeContext?.backendTargetEndpoint || '',
     healthEndpoint: initialSnapshot.initialApiRuntimeContext?.healthEndpoint || '',
-    backendReachable: false,
+    backendReachable: null,
     backendDefaultProvider: DEFAULT_PROVIDER_KEY,
     runtimeContext: initialSnapshot.initialApiRuntimeContext || null,
     lastCheckedAt: null,

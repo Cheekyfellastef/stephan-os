@@ -1,0 +1,333 @@
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[0-9a-fA-F]{40}$')]
+    [string]$ExpectedHead,
+
+    [switch]$OperatorApproved,
+    [switch]$ElevatedChild
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$repoRoot = Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'
+$gitExe = 'C:\Program Files\Git\cmd\git.exe'
+$powerShellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+$wscriptExe = 'C:\Windows\System32\wscript.exe'
+$scriptPath = $MyInvocation.MyCommand.Path
+$receiptPath = Join-Path $env:USERPROFILE 'AppData\Local\Stephanos\sovereign-boot-daemon-bootstrap-v1.json'
+$expectedHeadLower = $ExpectedHead.ToLowerInvariant()
+$fixedSourcePaths = @(
+    'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
+    'scripts/windows/install-sovereign-commander.ps1',
+    'scripts/windows/run-sovereign-commander-hidden.ps1',
+    'scripts/windows/install-desktop-commander-watchdog.ps1',
+    'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
+    'scripts/windows/run-stephanos-scheduled-task-windowless.vbs'
+)
+
+function Test-Administrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Invoke-Fixed {
+    param(
+        [Parameter(Mandatory = $true)][string]$Executable,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [switch]$AllowFailure
+    )
+    $oldPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @(& $Executable @Arguments 2>&1 | ForEach-Object { [string]$_ })
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $oldPreference
+    }
+    if ($code -ne 0 -and -not $AllowFailure) {
+        throw "Fixed executable failed with exit code ${code}."
+    }
+    [pscustomobject]@{ ExitCode = $code; Output = $output }
+}
+
+function Write-Receipt {
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Payload,
+        [switch]$Persist
+    )
+    $json = $Payload | ConvertTo-Json -Depth 9 -Compress
+    if ($Persist) {
+        $directory = Split-Path -Parent $receiptPath
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        $temporaryPath = Join-Path $directory ("sovereign-boot-daemon-bootstrap-v1.{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
+        try {
+            [System.IO.File]::WriteAllText($temporaryPath, $json, (New-Object System.Text.UTF8Encoding($false)))
+            Move-Item -LiteralPath $temporaryPath -Destination $receiptPath -Force
+        } finally {
+            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+        }
+    } else {
+        $json
+    }
+}
+
+function Stop-Bootstrap {
+    param([string]$Blocker, [switch]$Persist)
+    Write-Receipt -Persist:$Persist -Payload ([ordered]@{
+        schemaVersion = 'stephanos.sovereign-boot-daemon-bootstrap.v1'
+        ok = $false
+        finalVerdict = 'SOVEREIGN_BOOT_DAEMON_BOOTSTRAP_BLOCKED'
+        blocker = $Blocker
+        expectedHead = $expectedHeadLower
+        elevated = [bool](Test-Administrator)
+        arbitraryShellAllowed = $false
+        arbitraryTaskNameAllowed = $false
+        mergeAuthority = $false
+        pcRestartAuthority = $false
+        credentialExported = $false
+        sourceMutationAllowed = $false
+        standingElevatedTaskCreated = $false
+    })
+    exit 2
+}
+
+function Assert-CanonicalSource {
+    if (-not (Test-Path -LiteralPath $repoRoot -PathType Container)) { Stop-Bootstrap 'CANONICAL_REPOSITORY_ROOT_MISSING' -Persist:$ElevatedChild }
+    if (-not (Test-Path -LiteralPath $gitExe -PathType Leaf)) { Stop-Bootstrap 'FIXED_GIT_EXECUTABLE_MISSING' -Persist:$ElevatedChild }
+    $branch = ((Invoke-Fixed -Executable $gitExe -Arguments @('-C', $repoRoot, 'branch', '--show-current')).Output -join '').Trim()
+    if ($branch -ne 'main') { Stop-Bootstrap 'CANONICAL_REPOSITORY_NOT_MAIN' -Persist:$ElevatedChild }
+    $head = ((Invoke-Fixed -Executable $gitExe -Arguments @('-C', $repoRoot, 'rev-parse', 'HEAD')).Output -join '').Trim().ToLowerInvariant()
+    if ($head -ne $expectedHeadLower) { Stop-Bootstrap 'CANONICAL_REPOSITORY_HEAD_MISMATCH' -Persist:$ElevatedChild }
+    foreach ($path in $fixedSourcePaths) {
+        $unstaged = Invoke-Fixed -Executable $gitExe -Arguments @('-C', $repoRoot, 'diff', '--quiet', '--', $path) -AllowFailure
+        $staged = Invoke-Fixed -Executable $gitExe -Arguments @('-C', $repoRoot, 'diff', '--cached', '--quiet', '--', $path) -AllowFailure
+        if ($unstaged.ExitCode -ne 0 -or $staged.ExitCode -ne 0) {
+            Stop-Bootstrap 'BOOTSTRAP_AUTHORITY_SOURCE_DIRTY' -Persist:$ElevatedChild
+        }
+    }
+}
+
+function Test-BootInstallerReceipt {
+    param([object]$Receipt, [ValidateSet('Commander','DesktopCommander','RecoveryMesh')][string]$Kind)
+    # Consume each fixed producer's declared schema; never synthesize a verdict
+    # that its real output does not contain. Missing or mistyped proof fails closed.
+    try {
+        if ($null -eq $Receipt -or $Receipt -is [array]) { return $false }
+        $schemas = @{
+            Commander = 'stephanos.sovereign-commander-install.v1'
+            DesktopCommander = 'stephanos.desktop-commander-watchdog-install.v1'
+            RecoveryMesh = 'stephanos.battle-bridge-recovery-mesh-install.v1'
+        }
+        if ($Receipt.schemaVersion -isnot [string] -or $Receipt.schemaVersion -cne $schemas[$Kind]) { return $false }
+        foreach ($field in @('installed','startedNow')) {
+            if ($Receipt.$field -isnot [bool] -or $Receipt.$field -ne $true) { return $false }
+        }
+        if ($Receipt.logonType -isnot [string]) { return $false }
+        if ($Kind -eq 'Commander') {
+            return ($Receipt.finalVerdict -is [string] -and $Receipt.finalVerdict -ceq 'SOVEREIGN_COMMANDER_TASK_INSTALLED' -and
+                $Receipt.requiresInteractiveLogon -is [bool] -and $Receipt.requiresInteractiveLogon -eq $true -and
+                [string]$Receipt.logonType -ceq 'Interactive' -and
+                $Receipt.normalOperatorRuntimeProven -is [bool] -and $Receipt.normalOperatorRuntimeProven -eq $false -and
+                $Receipt.preLoginExecutionProven -is [bool] -and $Receipt.preLoginExecutionProven -eq $false)
+        }
+        if ($Receipt.atStartup -isnot [bool] -or $Receipt.atStartup -ne $true -or
+            [string]$Receipt.logonType -cne 'S4U') { return $false }
+        if ($Kind -eq 'DesktopCommander') { return $true }
+        foreach ($field in @('guardianInstalled','guardianStartedNow','taskPresentAfter','guardianTaskPresentAfter')) {
+            if ($Receipt.$field -isnot [bool] -or $Receipt.$field -ne $true) { return $false }
+        }
+        foreach ($field in @('whatIf','recoveryMeshOnly')) {
+            if ($Receipt.$field -isnot [bool] -or $Receipt.$field -ne $false) { return $false }
+        }
+        return ($Receipt.runLevel -is [string] -and $Receipt.runLevel -ceq 'Limited' -and
+            $Receipt.guardianAuthority -is [string] -and
+            [string]$Receipt.guardianAuthority -ceq 'REREGISTER_AND_START_CANONICAL_RECOVERY_MESH_ONLY')
+    } catch { return $false }
+}
+
+function Get-BootTaskProof {
+    param(
+        [Parameter(Mandatory = $true)][string]$TaskName,
+        [Parameter(Mandatory = $true)][string]$ExpectedArguments,
+        [switch]$RequiresInteractiveOperator
+    )
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    [xml]$xml = Export-ScheduledTask -TaskName $TaskName
+    $singleAction = @($task.Actions).Count -eq 1
+    $action = @($task.Actions)[0]
+    $bootTriggerPresent = $null -ne $xml.Task.Triggers.BootTrigger
+    $logonType = [string]$xml.Task.Principals.Principal.LogonType
+    $hidden = [string]$xml.Task.Settings.Hidden -eq 'true'
+    $startWhenAvailable = [string]$xml.Task.Settings.StartWhenAvailable -eq 'true'
+    $multipleInstances = [string]$xml.Task.Settings.MultipleInstancesPolicy
+    $restartCount = [int]$xml.Task.Settings.RestartOnFailure.Count
+    $restartInterval = [string]$xml.Task.Settings.RestartOnFailure.Interval
+    $executeMatches = [string]::Equals([string]$action.Execute, $wscriptExe, [System.StringComparison]::OrdinalIgnoreCase)
+    $argumentsMatch = [string]::Equals([string]$action.Arguments, $ExpectedArguments, [System.StringComparison]::Ordinal)
+    # Task Scheduler may omit the default XML RunLevel. The normalized live
+    # CIM principal must independently prove Limited; missing CIM is never a default.
+    $taskNamespace = 'http://schemas.microsoft.com/windows/2004/02/mit/task'
+    $namespaces = [System.Xml.XmlNamespaceManager]::new($xml.NameTable)
+    $namespaces.AddNamespace('task', $taskNamespace)
+    $taskSchemaMatches = $xml.DocumentElement.LocalName -ceq 'Task' -and $xml.DocumentElement.NamespaceURI -ceq $taskNamespace
+    $principalNodes = $xml.SelectNodes('/task:Task/task:Principals/task:Principal', $namespaces)
+    $runLevelNodes = $xml.SelectNodes('/task:Task/task:Principals/task:Principal/task:RunLevel', $namespaces)
+    $allRunLevelNodes = $xml.SelectNodes("/*[local-name()='Task']/*[local-name()='Principals']/*[local-name()='Principal']/*[local-name()='RunLevel']")
+    $xmlRunLevel = if ($runLevelNodes.Count -eq 1) { [string]$runLevelNodes[0].InnerText } else { '' }
+    $cimRunLevel = $task.Principal.RunLevel
+    $limitedCim = $cimRunLevel -is [Microsoft.PowerShell.Cmdletization.GeneratedTypes.ScheduledTask.RunLevelEnum] -and [string]$cimRunLevel -ceq 'Limited'
+    $consistentXml = $taskSchemaMatches -and $principalNodes.Count -eq 1 -and $allRunLevelNodes.Count -eq $runLevelNodes.Count -and
+        ($runLevelNodes.Count -eq 0 -or ($runLevelNodes.Count -eq 1 -and $xmlRunLevel -ceq 'LeastPrivilege'))
+    $runLevel = if ($limitedCim -and $consistentXml) { 'LeastPrivilege' } else { 'UNPROVEN' }
+    $expectedLogonType = if ($RequiresInteractiveOperator) { 'InteractiveToken' } else { 'S4U' }
+    $operatorIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    try {
+        $operatorSid = [string]$operatorIdentity.User.Value
+        $operatorAccountName = [string]$operatorIdentity.Name
+    } finally { $operatorIdentity.Dispose() }
+    $principalMatches = [string]$xml.Task.Principals.Principal.UserId -ceq $operatorSid
+    $logonTriggerMatches = -not $RequiresInteractiveOperator -or (
+        $null -ne $xml.Task.Triggers.LogonTrigger -and
+        (
+            [string]$xml.Task.Triggers.LogonTrigger.UserId -ceq $operatorSid -or
+            ($operatorAccountName.Contains('\') -and [string]::Equals([string]$xml.Task.Triggers.LogonTrigger.UserId, $operatorAccountName, [System.StringComparison]::OrdinalIgnoreCase))
+        )
+    )
+    $configurationVerified = $singleAction -and $bootTriggerPresent -and $logonType -eq $expectedLogonType -and $principalMatches -and $logonTriggerMatches -and $runLevel -eq 'LeastPrivilege' -and $hidden -and $startWhenAvailable -and $multipleInstances -eq 'IgnoreNew' -and $restartCount -eq 3 -and $restartInterval -eq 'PT1M' -and $executeMatches -and $argumentsMatch
+    # This is task-registration evidence only. It cannot certify an actual
+    # runtime token, pre-login execution, custody release or helper admission.
+    $bootSafe = $configurationVerified -and -not $RequiresInteractiveOperator
+    [pscustomobject]@{
+        taskName = $TaskName
+        singleAction = [bool]$singleAction
+        bootTriggerPresent = [bool]$bootTriggerPresent
+        logonType = $logonType
+        runLevel = $runLevel
+        hidden = [bool]$hidden
+        startWhenAvailable = [bool]$startWhenAvailable
+        multipleInstances = $multipleInstances
+        restartCount = $restartCount
+        restartInterval = $restartInterval
+        windowlessWscript = [bool]$executeMatches
+        fixedArgumentsMatch = [bool]$argumentsMatch
+        principalMatches = [bool]$principalMatches
+        logonTriggerMatches = [bool]$logonTriggerMatches
+        configurationVerified = [bool]$configurationVerified
+        requiresInteractiveLogon = [bool]$RequiresInteractiveOperator
+        normalOperatorRuntimeProven = $false
+        preLoginExecutionProven = $false
+        bootSafe = [bool]$bootSafe
+    }
+}
+
+Assert-CanonicalSource
+if (-not $OperatorApproved) { Stop-Bootstrap 'EXACT_OPERATOR_APPROVAL_REQUIRED' -Persist:$ElevatedChild }
+if (-not (Test-Path -LiteralPath $powerShellExe -PathType Leaf)) { Stop-Bootstrap 'FIXED_POWERSHELL_EXECUTABLE_MISSING' -Persist:$ElevatedChild }
+if (-not (Test-Path -LiteralPath $wscriptExe -PathType Leaf)) { Stop-Bootstrap 'FIXED_WSCRIPT_EXECUTABLE_MISSING' -Persist:$ElevatedChild }
+
+if (-not (Test-Administrator)) {
+    if ($ElevatedChild) { Stop-Bootstrap 'BOOT_TASK_ELEVATION_NOT_EFFECTIVE' -Persist }
+    Remove-Item -LiteralPath $receiptPath -Force -ErrorAction SilentlyContinue
+    $quotedScriptPath = '"' + $scriptPath + '"'
+    $brokerArguments = @(
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', $quotedScriptPath,
+        '-ExpectedHead', $expectedHeadLower,
+        '-OperatorApproved',
+        '-ElevatedChild'
+    )
+    try {
+        $broker = Start-Process -FilePath $powerShellExe -ArgumentList $brokerArguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+    } catch {
+        Stop-Bootstrap 'BOOT_TASK_ELEVATION_CANCELLED_OR_FAILED'
+    }
+    $receiptDeadline = [DateTimeOffset]::UtcNow.AddSeconds(20)
+    while (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf) -and [DateTimeOffset]::UtcNow -lt $receiptDeadline) {
+        Start-Sleep -Milliseconds 250
+    }
+    if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
+        Stop-Bootstrap 'BOOT_TASK_ELEVATED_RECEIPT_MISSING'
+    }
+    try {
+        $json = Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8
+        $receipt = $json | ConvertFrom-Json -ErrorAction Stop
+        if ([string]$receipt.schemaVersion -ne 'stephanos.sovereign-boot-daemon-bootstrap.v1' -or [string]$receipt.expectedHead -ne $expectedHeadLower) {
+            Stop-Bootstrap 'BOOT_TASK_ELEVATED_RECEIPT_INVALID'
+        }
+        $json.Trim()
+        exit $broker.ExitCode
+    } finally {
+        Remove-Item -LiteralPath $receiptPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Assert-CanonicalSource
+
+$commanderInstaller = Join-Path $repoRoot 'scripts\windows\install-sovereign-commander.ps1'
+$desktopCommanderInstaller = Join-Path $repoRoot 'scripts\windows\install-desktop-commander-watchdog.ps1'
+$recoveryInstaller = Join-Path $repoRoot 'scripts\windows\install-battle-bridge-recovery-mesh.ps1'
+$commanderRaw = (& $powerShellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $commanderInstaller -StartNow 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) { Stop-Bootstrap 'SOVEREIGN_COMMANDER_ELEVATED_INSTALL_FAILED' -Persist }
+$desktopCommanderRaw = (& $powerShellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $desktopCommanderInstaller -StartNow 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) { Stop-Bootstrap 'DESKTOP_COMMANDER_ELEVATED_INSTALL_FAILED' -Persist }
+$recoveryRaw = (& $powerShellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $recoveryInstaller -StartNow 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) { Stop-Bootstrap 'RECOVERY_MESH_ELEVATED_INSTALL_FAILED' -Persist }
+
+try {
+    $commanderReceipt = $commanderRaw | ConvertFrom-Json -ErrorAction Stop
+    $desktopCommanderReceipt = $desktopCommanderRaw | ConvertFrom-Json -ErrorAction Stop
+    $recoveryReceipt = $recoveryRaw | ConvertFrom-Json -ErrorAction Stop
+} catch {
+    Stop-Bootstrap 'BOOT_TASK_INSTALL_RECEIPT_INVALID' -Persist
+}
+if (-not (Test-BootInstallerReceipt -Receipt $commanderReceipt -Kind Commander)) {
+    Stop-Bootstrap 'SOVEREIGN_COMMANDER_ELEVATED_INSTALL_UNPROVEN' -Persist
+}
+if (-not (Test-BootInstallerReceipt -Receipt $desktopCommanderReceipt -Kind DesktopCommander)) {
+    Stop-Bootstrap 'DESKTOP_COMMANDER_ELEVATED_INSTALL_UNPROVEN' -Persist
+}
+if (-not (Test-BootInstallerReceipt -Receipt $recoveryReceipt -Kind RecoveryMesh)) {
+    Stop-Bootstrap 'RECOVERY_MESH_ELEVATED_INSTALL_UNPROVEN' -Persist
+}
+
+$launcherPath = Join-Path $repoRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs'
+$quotedLauncher = '"' + $launcherPath + '"'
+try {
+    $commanderProof = Get-BootTaskProof -TaskName 'Stephanos Sovereign Commander' -ExpectedArguments ("//B //NoLogo {0} sovereign-commander-watchdog" -f $quotedLauncher) -RequiresInteractiveOperator
+    $desktopCommanderProof = Get-BootTaskProof -TaskName 'Stephanos Commander Watchdog' -ExpectedArguments ("//B //NoLogo {0} desktop-commander-watchdog" -f $quotedLauncher)
+    $recoveryProof = Get-BootTaskProof -TaskName 'Stephanos Battle Bridge Recovery Mesh' -ExpectedArguments ("//B //NoLogo {0} recovery-mesh" -f $quotedLauncher)
+    $guardianProof = Get-BootTaskProof -TaskName 'Stephanos Battle Bridge Recovery Mesh Guardian' -ExpectedArguments ("//B //NoLogo {0} recovery-mesh-guardian" -f $quotedLauncher)
+} catch {
+    Stop-Bootstrap 'BOOT_TASK_DEFINITION_UNREADABLE' -Persist
+}
+$allConfigurationsVerified = $commanderProof.configurationVerified -and $desktopCommanderProof.configurationVerified -and $recoveryProof.configurationVerified -and $guardianProof.configurationVerified
+if (-not $allConfigurationsVerified) { Stop-Bootstrap 'BOOT_TASK_LIFECYCLE_PROOF_FAILED' -Persist }
+
+Write-Receipt -Persist -Payload ([ordered]@{
+    schemaVersion = 'stephanos.sovereign-boot-daemon-bootstrap.v1'
+    ok = $true
+    finalVerdict = 'SOVEREIGN_DAEMON_TASK_CONFIGURATION_VERIFIED'
+    blocker = ''
+    expectedHead = $expectedHeadLower
+    elevated = $true
+    oneTimeElevationOnly = $true
+    tasks = @($commanderProof, $desktopCommanderProof, $recoveryProof, $guardianProof)
+    requiresInteractiveLogon = $true
+    normalOperatorRuntimeProven = $false
+    preLoginExecutionProven = $false
+    runtimeActivationGranted = $false
+    visiblePowerShellRequired = $false
+    arbitraryShellAllowed = $false
+    arbitraryTaskNameAllowed = $false
+    mergeAuthority = $false
+    pcRestartAuthority = $false
+    credentialExported = $false
+    sourceMutationAllowed = $false
+    standingElevatedTaskCreated = $false
+})
+exit 0

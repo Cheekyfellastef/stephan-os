@@ -683,9 +683,11 @@ export function createVrResearchQaGapObservation(request = {}, answer = {}) {
   const safeAnswer = normalizedRecord(answer) || Object.create(null);
   const questionClass = text(safeRequest.questionClass).toUpperCase();
   const gapId = `vr-qgap-${hash({
-    questionId: safeRequest.questionId,
     questionClass,
     verdict: safeAnswer.answerVerdict,
+    // A repeat question about the same evidence gap has one durable identity.
+    subjectRef: text(safeRequest.subjectRef).toLowerCase(),
+    reason: text(safeAnswer.cannotAnswerReason),
   }).slice(0, 20)}`;
   const goalCandidatesByClass = {
     SOURCE_STACK: ['#1596', '#1597'],
