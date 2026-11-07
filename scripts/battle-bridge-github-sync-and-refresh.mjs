@@ -19,7 +19,7 @@ export const MAX_SYNC_REFRESH_CYCLES = 3;
 // consume the whole Windows Scheduled Task window.
 export const SYNC_AND_REFRESH_CHILD_BUDGET_MS = 180_000;
 export const SYNC_AND_REFRESH_MIN_REMAINING_MS = 5_000;
-export const SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS = Object.freeze({ sync: 60_000, refresh: 90_000, mailbox: 30_000 });
+export const SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS = Object.freeze({ sync: 60_000, refresh: 150_000, mailbox: 30_000 });
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
 function text(value) {
@@ -387,6 +387,7 @@ export async function runBattleBridgeSyncAndRefresh({
   let pendingSpans = pending?.ok === true ? pending.spans || [{ beforeHead: pending.beforeHead, afterHead: pending.afterHead }] : [];
   let requiredTargetIds = pending?.requiredTargetIds || [];
   let sovereignRelayRefreshRequired = pending?.ok === true ? pending.sovereignRelayRefreshRequired : false;
+  let spatialAdoptionRequired = pending?.ok === true && pending.spatialAdoptionRequired === true;
   let completion = pending?.completion || null;
   let pendingRefreshObserved = pendingSpans.length > 0;
   let sourceForwardedBeforeRefresh = false;
@@ -410,6 +411,7 @@ export async function runBattleBridgeSyncAndRefresh({
       pendingSpans = [...new Map([...pendingSpans, ...freshDebt.spans].map(span => [`${span.beforeHead}:${span.afterHead}`, span])).values()];
       requiredTargetIds = [...new Set([...requiredTargetIds, ...freshDebt.requiredTargetIds])];
       if (freshDebt.sovereignRelayRefreshRequired) sovereignRelayRefreshRequired = true;
+      if (freshDebt.spatialAdoptionRequired) spatialAdoptionRequired = true;
       pendingRefreshObserved ||= freshDebt.spans.length > 0;
     }
 
@@ -444,6 +446,7 @@ export async function runBattleBridgeSyncAndRefresh({
     const pendingAfterHead = pendingSpans.at(-1)?.afterHead || '';
     const resolved = resolvePostSyncRefreshDebt({
       spans: pendingSpans, requestedSpans: currentHeads ? [currentHeads] : [], requiredTargetIds, completion, sovereignRelayRefreshRequired,
+      spatialAdoptionRequired,
       currentHead: currentSourceHead,
       isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot),
     });
@@ -470,7 +473,10 @@ export async function runBattleBridgeSyncAndRefresh({
       }));
       if (!refresh.ok || refresh.result?.ok !== true) {
         const refreshBlocker = refresh.result?.blocker || refresh.blocker || 'POST_SYNC_RUNTIME_REFRESH_BLOCKED';
-        if (refreshBlocker === 'POST_SYNC_REFRESH_ALREADY_RUNNING') {
+        // A concurrent generic completion/disappearance cannot pay an earlier
+        // Spatial obligation. No Spatial verifier exists in this wrapper, so
+        // keep the original debt instead of entering its legacy settlement path.
+        if (refreshBlocker === 'POST_SYNC_REFRESH_ALREADY_RUNNING' && resolved.debt.spatialAdoptionRequired !== true) {
           let settled = false;
           while (safeRemaining() > 1_000) {
             await sleepFn(Math.min(1_000, safeRemaining()));
@@ -492,6 +498,12 @@ export async function runBattleBridgeSyncAndRefresh({
                 finalVerdict: 'SYNC_AND_REFRESH_REFRESH_DEBT_BLOCKED',
               });
             }
+            if (observedPending.spatialAdoptionRequired === true) {
+              // Another invocation can first discover Spatial debt while this
+              // one waits. Keep it monotonic; later disappearance is not proof.
+              spatialAdoptionRequired = true;
+              break;
+            }
             const observedSpans = Array.isArray(observedPending?.spans)
               ? observedPending.spans
               : (observedPending?.beforeHead && observedPending?.afterHead
@@ -506,6 +518,7 @@ export async function runBattleBridgeSyncAndRefresh({
             pendingSpans = [];
             requiredTargetIds = [];
             sovereignRelayRefreshRequired = false;
+            spatialAdoptionRequired = false;
             completion = null;
             continue;
           }
@@ -526,6 +539,7 @@ export async function runBattleBridgeSyncAndRefresh({
       const covered = completed.ok ? resolvePostSyncRefreshDebt({
         spans: [resolved.debt], requiredTargetIds: resolved.debt.requiredTargetIds, completion: completed,
         sovereignRelayRefreshRequired: resolved.debt.sovereignRelayRefreshRequired,
+        spatialAdoptionRequired: resolved.debt.spatialAdoptionRequired,
         currentHead: currentSourceHead,
         isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot),
       }) : completed;
@@ -538,6 +552,7 @@ export async function runBattleBridgeSyncAndRefresh({
       pendingSpans = [];
       requiredTargetIds = [];
       sovereignRelayRefreshRequired = false;
+      spatialAdoptionRequired = false;
       completion = completed;
       continue;
     }

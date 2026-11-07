@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { makeParallelSeedReceiptV1 } from './seedCanopyParallelForgeV1.mjs';
 
 export const SEED_PARALLEL_AUTHORITY_SCHEMA = 'stephanos.seed-parallel-exact-task-approval.v1';
 const text = (value) => typeof value === 'string' ? value.trim() : '';
@@ -136,6 +137,32 @@ export function selectParallelSeedInventoryBatchTaskV1(candidates, nowMs, attemp
     conflictingParallelSeedTargetsV1(candidates, nowMs));
 }
 
+// Status observes a local claim; it does not authenticate source ownership.
+// Missing legacy identities cannot become a valid binding merely because the
+// corresponding receipt fields are missing too.
+function hasParallelSeedStatusIdentityV1(claim) {
+  const exactText = value => typeof value === 'string' && value.length > 0 && value === value.trim();
+  return claim && typeof claim === 'object' && !Array.isArray(claim)
+    && exactText(claim.taskId) && safeTask(claim.taskId)
+    && exactText(claim.seedId) && safeTask(claim.seedId)
+    && typeof claim.ownerIssue === 'string' && /^#[1-9][0-9]*$/.test(claim.ownerIssue)
+    && exactText(claim.baseSha) && safeCommit(claim.baseSha)
+    && exactText(claim.targetPath);
+}
+
+function isParallelSeedStatusReceiptBoundV1(claim, receipt) {
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return false;
+  try {
+    // Reuse the real producer's schema, stage validation and branch naming.
+    // Matching only taskId would relabel another seed/base/path's progress.
+    const expected = makeParallelSeedReceiptV1(claim, receipt.stage);
+    return ['schemaVersion', 'taskId', 'seedId', 'ownerIssue', 'exactBaseSha',
+      'targetPath', 'branch'].every(field => receipt[field] === expected[field]);
+  } catch {
+    return false;
+  }
+}
+
 export function projectParallelSeedReceiptStatusV1(claims = [], receipts = [], nowMs = Date.now()) {
   // A duplicate task/receipt identity cannot select a winner by array order.
   // Park only the ambiguous task; retain visibility of independent candidates.
@@ -156,14 +183,22 @@ export function projectParallelSeedReceiptStatusV1(claims = [], receipts = [], n
   for (const claim of safeClaims) {
     if (!safeTask(claim?.taskId)) continue;
     const ambiguous = claimCounts.get(claim.taskId) > 1 || (receiptCounts.get(claim.taskId) || 0) > 1;
-    const receipt = ambiguous ? null : receiptsByTask.get(claim.taskId);
+    const invalidClaim = !hasParallelSeedStatusIdentityV1(claim);
+    const candidate = receiptsByTask.get(claim.taskId);
+    const invalidReceipt = !invalidClaim && candidate !== undefined
+      && !isParallelSeedStatusReceiptBoundV1(claim, candidate);
+    const invalidIdentity = invalidClaim || invalidReceipt;
+    const receipt = ambiguous || invalidIdentity ? null : candidate;
     const timestamp = Date.parse(receipt?.recordedAtUtc || claim?.createdAtUtc);
-    const stale = ambiguous || !Number.isFinite(timestamp) || timestamp > nowMs || nowMs - timestamp > 2 * 3600 * 1000;
+    const stale = ambiguous || invalidIdentity || !Number.isFinite(nowMs)
+      || !Number.isFinite(timestamp) || timestamp > nowMs || nowMs - timestamp > 2 * 3600 * 1000;
     tasks.push(Object.freeze({
       taskId: claim.taskId,
       seedId: claim.seedId,
       targetPath: claim.targetPath,
-      stage: ambiguous ? 'AMBIGUOUS_SOURCE_CUSTODY' : receipt?.stage || 'CLAIM_ONLY_UNKNOWN',
+      stage: ambiguous ? 'AMBIGUOUS_SOURCE_CUSTODY'
+        : invalidClaim ? 'INVALID_SOURCE_CLAIM'
+          : invalidReceipt ? 'INVALID_SOURCE_RECEIPT' : receipt?.stage || 'CLAIM_ONLY_UNKNOWN',
       sourceTruth: stale ? 'STALE_OR_UNKNOWN' : 'CURRENT',
       // Local Git readback is observable and useful for diagnosis, but the
       // receipt and candidate branch are both mutable by the same account.
@@ -175,7 +210,7 @@ export function projectParallelSeedReceiptStatusV1(claims = [], receipts = [], n
       merged: false,
       deployed: false,
       requiresReview: true,
-      recovery: ambiguous || (stale && receipt?.stage !== 'COMMITTED')
+      recovery: ambiguous || invalidIdentity || (stale && receipt?.stage !== 'COMMITTED')
         ? 'INSPECT_TASK_WORKTREE_NO_AUTO_RELEASE' : 'NONE',
     }));
   }

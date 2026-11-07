@@ -20,6 +20,7 @@ export const POST_SYNC_REFRESH_CLASSIFICATIONS = Object.freeze({
   APPROVAL_REQUIRED_OPENCLAW: 'APPROVAL_REQUIRED_OPENCLAW',
   BLOCKED_UNSAFE_CHANGED_PATH: 'BLOCKED_UNSAFE_CHANGED_PATH',
   BLOCKED_UNCLASSIFIED_RUNTIME_PATH: 'BLOCKED_UNCLASSIFIED_RUNTIME_PATH',
+  BLOCKED_SPATIAL_ADOPTION_REQUIRED: 'BLOCKED_SPATIAL_ADOPTION_REQUIRED',
   BLOCKED_REFRESH_FAILED: 'BLOCKED_REFRESH_FAILED',
 });
 
@@ -53,6 +54,15 @@ const TARGET_ORDER = Object.freeze([
 const SOVEREIGN_COMMANDER_PLUGIN_MANIFESTS = new Set([
   'plugins/sovereign-commander/plugin.json',
   'plugins/sovereign-commander/.codex-plugin/plugin.json',
+]);
+
+// These two resident components belong only to the explicit Spatial launcher.
+// None of the existing refresh targets imports or launches them. Keep their
+// adoption debt separate: source sync and unrelated target success cannot prove
+// a loaded Spatial host, nor grant permission to start, stop or replace one.
+const SPATIAL_RESIDENT_ADOPTION_PATHS = new Set([
+  'scripts/spatial-window-host.mjs',
+  'shared/vr/spatialDesktopSurfaceContractV1.mjs',
 ]);
 
 // The Commander watchdog owns this long-running relay and its static imports.
@@ -95,6 +105,32 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
 ]);
 
 const NATURAL_EXACT = new Set([
+  // On-demand VR owners load these on their next explicit invocation. This
+  // confirms source adoption only; never launch/restart games or recorders.
+  'scripts/report-starfield-vr-telemetry.mjs',
+  'scripts/windows/launch-starfield-vr-with-splash.ps1',
+  'scripts/windows/launch-starfield-vr.ps1',
+  'scripts/windows/new-vr-telemetry-session.ps1',
+  'scripts/windows/read-starfield-vr-performance-diagnosis.ps1',
+  'scripts/windows/run-starfield-aer-stabilizer-observe.ps1',
+  'scripts/windows/starfield-vr-flight-recorder.ps1',
+  'scripts/windows/starfield-vr-performance-mode.ps1',
+  'scripts/windows/starfield-vr-runtime-metrics-producer.ps1',
+  'scripts/windows/vr-visual-fault-marker.ps1',
+  'shared/vr/vrTelemetrySensorContractV1.mjs',
+  // Commander invokes these bounded Node children afresh. Source adoption
+  // confirms the checkout only; it never invokes observation or reconciliation.
+  'scripts/sovereign-commander-browser-observe.mjs',
+  'scripts/sovereign-commander-capability-parity-reconcile.mjs',
+  // The directory action captures and hash-checks both helpers on each call,
+  // then compiles the captured C# in its fresh PowerShell child.
+  'scripts/windows/SovereignDirectoryCreateV1.cs',
+  'scripts/windows/sovereign-create-directory.ps1',
+  // Attended lock recovery loads this policy and native helper in a fresh
+  // child. Its installation, qualification and operator gates remain separate.
+  'scripts/windows/StephanosCoreLockRecoveryV1.cs',
+  'scripts/windows/recover-stephanos-core-lock.ps1',
+  'scripts/windows/stephanos-core-lock-recovery-policy.ps1',
   'scripts/canonical-mailbox-execution-ledger-v1.mjs',
   'scripts/canonical-mailbox-rotation-transaction-v2.mjs',
   'scripts/canonical-mailbox-rotation-host-v1.mjs',
@@ -123,6 +159,9 @@ const NATURAL_EXACT = new Set([
   REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH,
   'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
   'scripts/battle-bridge-github-sync-executor.mjs',
+  // The fixed sync executor spawns this bounded one-shot child afresh each cycle.
+  // Natural reload confirms source adoption; never run housekeeping as refresh.
+  'scripts/battle-bridge-sync-housekeeper-runner.mjs',
   'scripts/battle-bridge-github-sync-and-refresh.mjs',
   'scripts/stephanos-codex-dispatch-mcp.mjs',
   'scripts/battle-bridge-post-sync-refresh.mjs',
@@ -165,6 +204,9 @@ const NATURAL_PREFIXES = Object.freeze([
 
 const OPENCLAW_APPROVAL_EXEMPT_EXACT = new Set([
   'shared/agents/openClawProviderPoolQualificationV1.mjs',
+  // The specialist review model is imported by backend-side protected merge
+  // adapters; it is not the running OpenClaw gateway or its plugin bundle.
+  'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.mjs',
   'scripts/windows/repair-openclaw-full-stack.ps1',
 ]);
 
@@ -175,10 +217,22 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
   'docs/',
   'tests/',
   'src/windows/Stephanos.CanonicalMailboxNativeEvidence/',
+  // This host is an offline native package, not a live Windows service.
+  // Distinct sibling versions deliberately remain unclassified and blocked.
+  'src/windows/Stephanos.CanonicalMailboxNativeEvidenceHost/',
   'VR-Research-Lab/docs/',
 ]);
 
 const NO_RUNTIME_EXACT = new Set([
+  // Offline/attended native package sources. Source adoption cannot compile,
+  // install, sign, commission, or qualify their separately installed binaries.
+  'scripts/windows/install-vr-openxr-telemetry-layer.ps1',
+  'src/vr/Stephanos.OpenXrTelemetryLayer/layer.json',
+  'src/vr/Stephanos.OpenXrTelemetryLayer/stephanos-openxr-telemetry-layer.cpp',
+  'src/vr/Stephanos.OpenXrTelemetryLayer/stephanos-openxr-telemetry-layer.test.cpp',
+  'src/windows/Stephanos.OriginalR7CustodyWitness.Tests/LegacySigningInterop.mjs',
+  'src/windows/Stephanos.OriginalR7CustodyWitness.Tests/OriginalR7SigningProviderTests.cs',
+  'src/windows/Stephanos.OriginalR7CustodyWitness/OriginalR7SigningPrimitives.cs',
   // Manual offline source-package construction; no runtime root imports it.
   'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs',
   'scripts/sovereign-fixed-runtime-install-current-v1.mjs',
@@ -191,6 +245,9 @@ const NO_RUNTIME_EXACT = new Set([
   // long-running service; the later exact-head installation/boot gate owns them.
   'scripts/sovereign-fixed-runtime-installer-candidate-v1.mjs',
   'scripts/windows/SovereignFixedRuntimeIdentityV1.cs',
+  // Protected host C# source is compiled only by the attended installer. A
+  // source change never activates or qualifies the installed native binary.
+  'scripts/windows/SovereignFixedRuntimeHostV1.cs',
   'scripts/windows/install-sovereign-fixed-runtime-v1.ps1',
   'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',
   'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs',
@@ -222,11 +279,58 @@ const NO_RUNTIME_EXACT = new Set([
   'scripts/ignition-cockpit-model.mjs',
   'scripts/run-battle-bridge-ignition.mjs',
   'scripts/battle-bridge-ignition-sync-preflight.mjs',
+  // These are one-shot advisory/review children loaded afresh by their fixed callers;
+  // source adoption must not restart a long-running runtime. Keep exact-only.
+  'scripts/starfield-vr-project-performance-loop.mjs',
+  'scripts/sovereign-windows-review-calibration-v1-engine.mjs',
+  // One-shot protected review entries. Adoption never installs/trusts the
+  // launcher or invokes inference; their existing installation gates remain.
+  'scripts/sovereign-high-risk-advisory-launcher-v1.mjs',
+  'scripts/sovereign-high-risk-advisory-v1.mjs',
   'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
+  // Exact test fixtures have no production caller. Do not generalize this
+  // allowance to neighboring native sources or PowerShell scripts.
+  'scripts/fixtures/sovereign-directory-package-fixture-v1.mjs',
+  'scripts/windows/stephanos-core-absent-bootstrap.test.ps1',
+  'scripts/windows/test-starfield-vr-telemetry-invocation.ps1',
+  // Hosted protected-review and bounded reviewer entrypoints load afresh;
+  // adoption neither runs inference nor grants review or merge authority.
+  'scripts/protected-ready-review-lifecycle-v1.mjs',
+  'scripts/sovereign-reviewer-ollama-calibration-v1.mjs',
+  'scripts/sovereign-reviewer-v1.mjs',
+  'scripts/sovereign-reviewer-wsl-bridge-v1.mjs',
+  // Browser registration compiles this native source only during an explicit
+  // install. Checkout adoption does not update or attest the registered binary.
+  'scripts/windows/SovereignBrowserWitnessHost.cs',
+  'scripts/windows/install-sovereign-browser-witness.ps1',
+  'scripts/windows/uninstall-sovereign-browser-witness.ps1',
+  // Offline R7 build/test inputs and the hosted-only capacity probe have no
+  // resident consumer. Signing, loading and native qualification stay gated.
+  'scripts/windows/build-original-r7-native-qualification.ps1',
+  'scripts/windows/inspect-r7-hosted-linux-lab-capacity.py',
+  'src/windows/Stephanos.OriginalR7CustodyWitness/ProspectiveNativeScopeCapture.cs',
+  'src/windows/Stephanos.OriginalR7CustodyWitness/ProspectiveProcessingClaimContext.cs',
+  'src/windows/Stephanos.OriginalR7NativeQualification/.gitignore',
+  'src/windows/Stephanos.OriginalR7NativeQualification/Client.c',
+  'src/windows/Stephanos.OriginalR7NativeQualification/NativeQualification.c',
+  'src/windows/Stephanos.OriginalR7NativeQualification/Protocol.h',
+  'src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests/.gitignore',
+  'src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests/Program.cs',
+  'src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests/Stephanos.ProspectiveProcessingClaimContext.Tests.csproj',
+  // These Spatial wrappers load on explicit invocation; native C++ is consumed
+  // only by the attended build. No installer, launcher or restart is dispatched.
+  // The resident host and its static JS contract retain separate adoption debt.
+  'scripts/windows/build-spatial-window.ps1',
+  'scripts/windows/install-spatial-window.ps1',
+  'scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1',
+  'scripts/windows/launch-stephanos-spatial-workspace.ps1',
+  'scripts/windows/start-spatial-window-host.ps1',
+  'src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp',
 ]);
 
 const LAUNCHER_CRITICAL_SOURCE_PATHS = new Set([
   'main.js',
+  'style.css',
   'modules/command-deck/command-deck.js',
   'system/module_loader.js',
   'system/workspace.js',
@@ -348,6 +452,9 @@ function isBackendPath(path) {
 
 function isMissionWorkerPath(path) {
   if (path === MISSION_WORKER_POST_SYNC_COORDINATOR_PATH || path === GOAL_DISCOVERY_HEARTBEAT_RUNTIME_PATH) return true;
+  // The supervised worker statically imports this guardian and calls it on
+  // recurring ticks; its CLI entrypoint does not make it invocation-only.
+  if (path === 'scripts/completion-guardian.mjs') return true;
   if (NATURAL_EXACT.has(path)) return false;
   return (path.startsWith('shared/agents/') && !NATURAL_EXACT.has(path))
     || path.startsWith('scripts/mission-orchestrator-worker')
@@ -381,7 +488,9 @@ function isNaturalReloadPath(path) {
     || NATURAL_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
-export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefreshRequired = false } = {}) {
+export function classifyPostSyncRefresh(changedPaths = [], {
+  sovereignRelayRefreshRequired = false, spatialAdoptionRequired = false,
+} = {}) {
   const safePaths = [];
   const unsafePaths = [];
   for (const rawPath of Array.isArray(changedPaths) ? changedPaths : []) {
@@ -394,10 +503,15 @@ export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefre
   const noRuntimePaths = [];
   const unknownPaths = [];
   const openClawPaths = [];
+  const spatialAdoptionPaths = [];
 
   for (const path of [...new Set(safePaths)]) {
     if (isTestOrDocumentation(path)) {
       noRuntimePaths.push(path);
+      continue;
+    }
+    if (SPATIAL_RESIDENT_ADOPTION_PATHS.has(path)) {
+      spatialAdoptionPaths.push(path);
       continue;
     }
     let classified = false;
@@ -438,6 +552,7 @@ export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefre
 
   const relayRequired = sovereignRelayRefreshRequired === true
     || safePaths.some((path) => SOVEREIGN_RELAY_RUNTIME_EXACT.has(path));
+  const spatialRequired = spatialAdoptionRequired === true || spatialAdoptionPaths.length > 0;
   // A later revert can remove a path from the net diff without proving that an
   // earlier partially refreshed relay stopped using it. Preserve its debt.
   if (relayRequired) targets.add(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER);
@@ -446,6 +561,7 @@ export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefre
   if (unsafePaths.length) classification = POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNSAFE_CHANGED_PATH;
   else if (unknownPaths.length) classification = POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH;
   else if (openClawPaths.length) classification = POST_SYNC_REFRESH_CLASSIFICATIONS.APPROVAL_REQUIRED_OPENCLAW;
+  else if (spatialRequired) classification = POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_SPATIAL_ADOPTION_REQUIRED;
   else if (targetIds.length) classification = POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY;
 
   return Object.freeze({
@@ -456,6 +572,8 @@ export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefre
     safePathCount: safePaths.length,
     noRuntimePathCount: noRuntimePaths.length,
     openClawPathCount: openClawPaths.length,
+    spatialAdoptionPathCount: spatialAdoptionPaths.length,
+    spatialAdoptionRequired: spatialRequired,
     unknownPathCount: unknownPaths.length,
     unsafePathCount: unsafePaths.length,
     openClawApprovalRequired: openClawPaths.length > 0,
@@ -469,6 +587,7 @@ export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefre
       safePaths: Object.freeze([...new Set(safePaths)]),
       noRuntimePaths: Object.freeze(noRuntimePaths),
       openClawPaths: Object.freeze(openClawPaths),
+      spatialAdoptionPaths: Object.freeze(spatialAdoptionPaths),
       unknownPaths: Object.freeze(unknownPaths),
       unsafePaths: Object.freeze(unsafePaths),
     }),
@@ -579,6 +698,7 @@ export async function executePostSyncRefreshPlan({
   adapters = {},
   completedResults = [],
   sovereignRelayRefreshRequired = false,
+  spatialAdoptionRequired = false,
   onTargetComplete,
 } = {}) {
   if (!validHead(beforeHead) || !validHead(afterHead) || beforeHead === afterHead) {
@@ -591,7 +711,7 @@ export async function executePostSyncRefreshPlan({
     });
   }
 
-  const plan = classifyPostSyncRefresh(changedPaths, { sovereignRelayRefreshRequired });
+  const plan = classifyPostSyncRefresh(changedPaths, { sovereignRelayRefreshRequired, spatialAdoptionRequired });
   if (!plan.automaticExecutionAllowed) {
     return Object.freeze({
       ok: false,
@@ -730,6 +850,22 @@ export async function executePostSyncRefreshPlan({
     }
   }
 
+  // All established target gates remain independent and run in their existing
+  // order. There is deliberately no Spatial adapter or success predicate here.
+  // A future qualified Spatial owner must implement actual adoption before this
+  // durable hold can be discharged; a revert or cached target receipt cannot.
+  if (plan.spatialAdoptionRequired) {
+    return Object.freeze({
+      ok: false,
+      classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_SPATIAL_ADOPTION_REQUIRED,
+      blocker: 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN',
+      plan,
+      exactHeadProofOk: false,
+      safeRefreshesCompleted: true,
+      results: Object.freeze(results),
+    });
+  }
+
   return Object.freeze({
     ok: true,
     classification: plan.targetIds.length
@@ -756,6 +892,8 @@ export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', a
     changedPathCount: Number(plan.changedPathCount || 0),
     noRuntimePathCount: Number(plan.noRuntimePathCount || 0),
     openClawPathCount: Number(plan.openClawPathCount || 0),
+    spatialAdoptionPathCount: Number(plan.spatialAdoptionPathCount || 0),
+    spatialAdoptionRequired: plan.spatialAdoptionRequired === true,
     pluginHostActivationRequired: plan.pluginHostActivationRequired === true,
     sovereignRelayRefreshRequired: plan.sovereignRelayRefreshRequired === true,
     unknownPathCount: Number(plan.unknownPathCount || 0),

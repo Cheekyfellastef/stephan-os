@@ -39,9 +39,9 @@ agent / controller intent
   -> deterministic proof hash / receipt
 ```
 
-The executor exposes no general shell tool. File mutation is explicit-path write/append or exact unique-string replacement. Focused tests are limited to explicit `.test.js` / `.test.mjs` files within the proved Stephanos repository. Process starts are selected from a source-controlled registry.
+The executor exposes no general shell tool. File mutation is explicit-path write/append or exact unique-string replacement. Caller-selected test files are not execution authority. Process starts are selected from a source-controlled registry.
 
-Project discovery is a first-class read-only capability. `search_project` performs a bounded literal search rooted only at the trusted canonical repository, skips known dependency/build directories and common secret-bearing file forms, caps file size and result count, and uses no shell. Remote Commander search operations such as `start-search` and `get-more-search-results` therefore resolve to proven Sovereign parity rather than a permanent meter dependency.
+Project discovery is a first-class read-only capability. `search_project` performs one bounded literal search rooted only at the trusted canonical repository, skips known dependency/build directories and common secret-bearing file forms, caps file size and result count, and uses no shell. It provides partial project-search coverage only. Remote Commander’s `start_search`, `get_more_search_results`, `stop_search`, and `list_searches` still require scoped whole-PC search, tracked search sessions, pagination and cancellation under #2573; this source mapping is not evidence of full functional parity or installed runtime capability.
 
 ## Transport layers
 
@@ -186,3 +186,22 @@ This is functional repair delegation, not arbitrary-shell parity. Remote chats m
 The local authenticated Sovereign Commander MCP exposes `read_multiple_files` (one to eight absolute paths, no more than 200 selected lines per file and a shared 16 KiB content budget) and `get_file_info` (file type, byte size and modification time, never the file contents). These are read-only, source-controlled operations implemented by the local Node executor, not a Remote Desktop Commander call or an arbitrary shell command. They complement the existing `read_file`, `search_project`, process telemetry and fixed maintenance actions.
 
 These tools are **private MCP only**. The public GitHub/mobile command mailbox must not expose private path reads, whole-PC metadata or arbitrary file contents. Their presence in source and a parity mapping is *capability coverage*, not a claim of a live Battle Bridge execution receipt. Verify on the exact PR head with independent review, protected merge, safe machine sync, local MCP tool advertisement and a fresh authenticated command proof before marking runtime parity green.
+
+
+### Catalog evidence is not installed parity
+
+The #2573 capability queue ledger classifies source mappings and buildable gaps. Its
+compatibility state PARITY_PRESENT means a catalog mapping exists, with
+parityEvidenceScope=SOURCE_CATALOG_ONLY; it does not authenticate a live tool.
+An empty queue, source-construction mapping, retained GREEN record, or 31 caller-
+asserted successful operations cannot close installed acceptance. The canonical
+ledger and both public mailbox projections report installed parity UNKNOWN and
+never promote these observations into a proven-parity lesson. Existing private
+per-operation receipts are preserved separately and are not invalidated by this
+classification. Scheduling and unrelated dispatch continue while this acceptance
+remains unproven.
+
+Convergence invariant: gap inventory, source implementation, runtime adoption and
+physical acceptance are distinct facts. The existing #2573 acceptance programme
+still owes an authenticated per-operation installed-acceptance adapter; this
+catalog correction adds no substitute registry or new execution authority.

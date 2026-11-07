@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { SELF_HOSTING_CRITICAL_BACKLOG } from '../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import { buildCompletionGuardianProjection } from '../shared/agents/completionGuardianV1.mjs';
+import { reconcileExternalMergeObservation } from '../stephanos-server/services/completionGuardianMergeObservationService.js';
 import {
   createSharedWorkspaceHandoffRecord,
   createSharedWorkspaceProofRecord,
@@ -77,10 +78,16 @@ export async function runCompletionGuardian(options = {}) {
   const writeRecord = options.testOnly === true && typeof options.writeRecord === 'function'
     ? options.writeRecord : writeAtomicJson;
   const observedAtUtc = options.observedAtUtc || new Date().toISOString();
-  const [goals, missions] = await Promise.all([
+  const [goals, retainedMissions] = await Promise.all([
     options.goals || readGoals(paths.workspaceRoot),
     options.missions || listMissionRecords({ root: paths.missionRoot }),
   ]);
+  const mergeObservation = await reconcileExternalMergeObservation(retainedMissions, {
+    root: paths.missionRoot, workspaceRoot: paths.workspaceRoot, env: options.env,
+    ...(options.testOnly === true ? { testOnly: true, ...options.observationTestOptions } : {}),
+  });
+  const missions = retainedMissions.map(mission => mission.missionId === mergeObservation.missionId
+    && mergeObservation.state ? mergeObservation.state : mission);
   const projection = buildCompletionGuardianProjection({
     goals,
     missions,
@@ -106,6 +113,8 @@ export async function runCompletionGuardian(options = {}) {
     }),
     schema: COMPLETION_GUARDIAN_RUNNER_SCHEMA,
     ...compact,
+    mergeObservation: { status: mergeObservation.status, reasonCode: mergeObservation.reasonCode,
+      missionId: mergeObservation.missionId },
     duplicateSchedulerCreated: false,
     mergeAuthority: false,
     runtimeMutationAuthority: false,

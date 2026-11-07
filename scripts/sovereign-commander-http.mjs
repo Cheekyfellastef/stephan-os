@@ -62,6 +62,17 @@ export function projectGoalBuilderChildBlockerV1(processId, stdout) {
   }
 }
 
+export function classifySovereignMaintenanceExecutionRouteV1(
+  processId,
+  { nativeWindows = process.platform === 'win32' } = {},
+) {
+  const actionId = text(processId);
+  if (!nativeWindows) return 'DIRECT_CHILD';
+  if (fixedRuntimeMaintenanceActionQualifiedV1(actionId)) return 'FIXED_RUNTIME';
+  if (actionId === 'sovereign-windows-reviewer-calibration') return 'DIRECT_CHILD_REVIEWER';
+  return 'BLOCKED_UNQUALIFIED';
+}
+
 function loopbackHost(value) {
   return ['127.0.0.1', '::1', 'localhost'].includes(text(value).toLowerCase());
 }
@@ -186,10 +197,12 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     if (stopped) return blocked('SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE');
     if (child || state.running || state.maintenanceInFlight) return blocked('SOVEREIGN_MAINTENANCE_OWNER_BUSY');
     const nativeWindows = process.platform === 'win32' && !options.spawnImpl;
-    if (nativeWindows && !fixedRuntimeMaintenanceActionQualifiedV1(command?.plan?.processId))
+    const maintenanceRoute = classifySovereignMaintenanceExecutionRouteV1(
+      command?.plan?.processId, { nativeWindows },
+    );
+    if (maintenanceRoute === 'BLOCKED_UNQUALIFIED')
       return blocked('FIXED_RUNTIME_PROFILE_NOT_QUALIFIED');
-    const nativeGoal = nativeWindows
-      && fixedRuntimeMaintenanceActionQualifiedV1(command?.plan?.processId);
+    const nativeGoal = maintenanceRoute === 'FIXED_RUNTIME';
     const qualification = nativeGoal ? inspectFixedRuntimeQualificationV1() : null;
     if (nativeGoal && (!custodyStore || qualification?.ok !== true))
       return blocked(qualification?.reason || 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
@@ -834,6 +847,19 @@ export async function createSovereignCommanderHttpServer(options = {}) {
     try {
       const url = new URL(req.url || '/', 'http://localhost');
       if (req.method === 'GET' && url.pathname === '/health') {
+        // Delegation needs protocol identity, not a native journal read. The
+        // latter can exceed the transport's preflight deadline and block the
+        // HTTP event loop. This projection conveys no custody or admission;
+        // the authenticated tool still enters the existing maintenance owner.
+        if (url.searchParams.get('view') === 'protocol') {
+          return sendJson(res, 200, {
+            ok: true,
+            service: 'stephanos-sovereign-commander',
+            maintenanceOwnerAdmissionVersion: SOVEREIGN_MAINTENANCE_OWNER_VERSION,
+            observationScope: 'TRANSPORT_PROTOCOL_ONLY',
+            maintenanceAdmissionProven: false,
+          });
+        }
         return sendJson(res, 200, {
           ok: true,
           service: 'stephanos-sovereign-commander',

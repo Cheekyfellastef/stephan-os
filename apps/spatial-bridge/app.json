@@ -27,6 +27,13 @@
   "aiAddressable": false,
   "authority": "read-only",
   "implementationStage": "v1-spatial-workspace-starting-chamber-source",
+  "spatialConsole": {
+    "entry": "quest-entry.html",
+    "platform": "Windows PC browser with Quest Link or Air Link",
+    "authority": "explicit human input to one locally confirmed desktop window",
+    "agentExecutionAuthority": false,
+    "physicalHeadsetAcceptance": "pending"
+  },
   "questDistribution": {
     "preferredType": "immersive-webxr-pwa",
     "preferredChannel": "private-alpha-release-channel",

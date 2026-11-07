@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<style>body{font:14px system-ui,sans-serif;width:310px;padding:14px;background:#111b29;color:#f5f7ff}button{display:block;width:100%;margin:10px 0;padding:10px;background:#314d78;border:1px solid #7891b3;color:white;border-radius:8px;cursor:pointer}button:disabled{opacity:.55}#status{white-space:pre-wrap;overflow-wrap:anywhere}small{color:#becbdf}</style>
+</head><body><h2>Sovereign Browser Witness</h2>
+<p>Inspect only operator-approved Stephanos origins. Other websites are not captured.</p>
+<button id="grant">Allow this workspace</button>
+<button id="inspect">Capture current workspace proof</button>
+<button id="scan">Scan permitted workspaces</button>
+<button id="auto-on">Enable 15-minute diagnostic checks</button>
+<button id="auto-off">Pause automatic checks</button>
+<button id="revoke">Revoke this workspace</button>
+<small>Capture saves a local screenshot of the visible authorised tab. Scan and optional 15-minute checks collect bounded diagnostics only, with no screenshots. Checks are off by default. No cookies or page text leave your browser.</small>
+<p id="status" role="status" aria-live="polite">Not connected.</p>
+<script src="popup.js"></script></body></html>

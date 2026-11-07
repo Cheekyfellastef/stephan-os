@@ -254,6 +254,10 @@ test("workspace launch does not recreate iframe for duplicate open requests", as
     assert.equal(debugState.repeatedLaunchCount, 1);
     assert.equal(debugState.chromeHideCount, 1);
     assert.equal(iframeCount, 1);
+    const mountedFrame = documentRef.nodes["workspace-content"].children
+      .flatMap((node) => node.children || [])
+      .find((node) => node.tagName === "iframe");
+    assert.equal(mountedFrame.getAttribute("data-stephanos-workspace-id"), "wealthapp");
     assert.equal(documentRef.nodes.workspace.classList.contains("stephanos-root-workspace-shell"), true);
     assert.equal(documentRef.nodes.workspace.getAttribute("data-workspace-shell"), "canonical");
     assert.equal(documentRef.nodes["workspace-content"].classList.contains("stephanos-root-workspace-canvas"), true);
