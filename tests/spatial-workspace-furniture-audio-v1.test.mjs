@@ -6,6 +6,8 @@ import { createHolodeckRoomGeometry } from '../apps/spatial-bridge/holodeck-room
 import { createCubeSolids } from '../apps/spatial-bridge/holodeck-cube-physics-v1.mjs';
 import { createHolodeckComfortSolids } from '../apps/spatial-bridge/holodeck-comfort-v1.mjs';
 import { consoleHit } from '../apps/spatial-bridge/holodeck-screen-input-v1.mjs';
+import { SCREEN_KEYS } from '../apps/spatial-bridge/holodeck-screen-v1.mjs';
+import { KEYCAP_RISE_METRES } from '../apps/spatial-bridge/holodeck-keycaps-v1.mjs';
 import { createHolodeckCubeScene } from '../apps/spatial-bridge/holodeck-cube-scene-v1.mjs';
 import {
   createHolodeckFurniture, createHolodeckFurnitureInteraction, FURNITURE_MATERIALS,
@@ -86,10 +88,18 @@ test('live furniture shape/collision moves with saved position and no longer blo
   assert.notDeepEqual(solids[1],unshifted[1]);
   const refreshed=createHolodeckComfortSolids({keyboardTilt:37,furnitureOffset:furniture.getOffset('keyboard')});
   assert.equal(refreshed.length,4);
-  const rayOrigin=[0.5,2.5,-4.12],ray=[0,-1,0];
-  // Fixed image/hit coordinates are transformed together by the moved keyboard.
-  const same=[0,2,-5];
-  assert.equal(typeof consoleHit(same,ray,0,furniture.getOffset('keyboard')),'object');
+  // Fixed atlas coordinates and ray hits translate with the moved keyboard.
+  const key=SCREEN_KEYS.find(item=>item.id==='key:g');
+  const flat=[
+    -HOLODECK_CONSOLE.halfWidth+0.1+
+      (key.x+key.w/2)*(2*HOLODECK_CONSOLE.halfWidth-0.2),
+    HOLODECK_CONSOLE.top+KEYCAP_RISE_METRES,
+    HOLODECK_CONSOLE.center[2]-HOLODECK_CONSOLE.halfDepth+0.06+
+      (key.y+key.h/2)*(2*HOLODECK_CONSOLE.halfDepth-0.12),
+  ];
+  const offset=furniture.getOffset('keyboard'),origin=flat.map((v,i)=>v+offset[i]+(i===1?1:0));
+  assert.equal(consoleHit(origin,[0,-1,0],0,offset)?.id,key.id);
+  assert.notEqual(consoleHit(origin,[0,-1,0],0,[0,0,0])?.id,key.id);
   const geometry=createHolodeckRoomGeometry();
   assert.ok(geometry.furnitureRanges.table.positions.end>geometry.furnitureRanges.table.positions.start);
   assert.ok(geometry.furnitureRanges.keyboard.solidPositions.end>geometry.furnitureRanges.keyboard.solidPositions.start);
