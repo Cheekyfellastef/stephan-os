@@ -6,14 +6,15 @@ import { atomicWriteJson, readJsonObject } from './battle-bridge-github-command-
 import { MAILBOX_ROTATION_REQUEST_ID, mailboxRotationDigest } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 import { projectControlTowerRequestObservationV1, projectControlTowerLedgerObservationV1,
   controlTowerBuildObservationUnresolvedV1, createControlTowerRequestObservationV1 } from '../shared/agents/controlTowerRequestObservationV1.mjs';
-import { CONTROL_TOWER_BUILD_OPERATION } from '../shared/agents/controlTowerBuildRequestV1.mjs';
+import { CONTROL_TOWER_BUILD_OPERATION, parseControlTowerRequestIdV1 } from '../shared/agents/controlTowerBuildRequestV1.mjs';
 const SCHEMA = 'stephanos.mailbox-execution-ledger-entry.v1';
 const INVENTORY_MAX_ENTRIES = 8192;
 const ENTRY_MAX_BYTES = 4096;
 const DISCOVERY_BATCH_SIZE = 128;
 const DISCOVERY_MAX_DURATION_MS = 10_000;
 const CONTROL_TOWER_IDENTITY = ['requestId', 'runId', 'runAttempt', 'operation', 'sourceHead',
-  'artifactId', 'artifactSha256', 'commandDigest', 'createdAtUtc', 'expiresAtUtc', 'acceptedAtUtc'];
+  'artifactId', 'artifactSha256', 'commandDigest', 'createdAtUtc', 'expiresAtUtc', 'acceptedAtUtc',
+  'ownerCommentId', 'ownerCommentIssueNumber', 'ownerCommentSha256'];
 const observationHashValid = observation => !observation?.controlSystemStatus
   || observation.observationProofHash === createHash('sha256')
     .update(JSON.stringify(observation.controlSystemStatus)).digest('hex');
@@ -290,7 +291,7 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
           if (maxEntries !== undefined && ++count > maxEntries) bound();
           const record = readEntry(entry.path, entry.before);
           if (!same(entry.before, inspectEntry(entry.path))) unproven();
-          if (/^control-tower-build-[1-9][0-9]{0,15}-1$/.test(record.requestId)) {
+          if (parseControlTowerRequestIdV1(record.requestId)) {
             const observed = observeControlTowerRecord(record, { nowMs });
             if (!observed) unproven();
             if (observed.operation === 'OBSERVE_CONTROL_SYSTEM')
