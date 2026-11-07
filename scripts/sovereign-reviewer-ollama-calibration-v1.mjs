@@ -10,6 +10,7 @@ import { resolve } from 'node:path';
 import { evaluateSovereignCalibrationV1, SOVEREIGN_CALIBRATION_MANIFEST_SHA256 } from '../shared/agents/sovereignCalibrationV1.mjs';
 import { resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
+import { admitSovereignLocalOllamaBindingV1, matchesSovereignLocalOllamaCompletionV1, sovereignLocalOllamaFailureReasonV1 } from '../shared/agents/sovereignReviewerOllamaBindingV1.mjs';
 
 const MODEL_RE = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
 const SOURCE_ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
@@ -19,6 +20,7 @@ const SHA40 = /^[a-f0-9]{40}$/;
 const CRITICAL_REVIEW_FILES = Object.freeze([
   'scripts/sovereign-reviewer-ollama-calibration-v1.mjs',
   'shared/agents/sovereignCalibrationV1.mjs',
+  'shared/agents/sovereignReviewerOllamaBindingV1.mjs',
   'scripts/sovereign-reviewer-v1.mjs',
   'shared/agents/providerNeutralReviewV1.mjs',
   'scripts/battle-bridge-github-sync-policy.mjs',
@@ -204,7 +206,7 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
   const beforePin = await modelPin(model, {fetchImpl});
   if (!beforePin?.ok || !/^[a-f0-9]{64}$/.test(beforePin.digest??''))
     return held(beforePin?.reason || 'CALIBRATION_MODEL_DIGEST_UNPROVEN');
-  const immutableModel = 'sha256:' + beforePin.digest;
+  let bindingFailure = '';
   const input = {
     repository: env.STEPHANOS_REVIEW_REPOSITORY,
     sourceHead: env.STEPHANOS_REVIEW_EXACT_HEAD,
@@ -246,6 +248,19 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
         }
       }, 500);
       try {
+      let binding;
+      try {
+        binding = await admitSovereignLocalOllamaBindingV1(beforePin.digest, {
+          fetchImpl, signal: gamingAbort.signal,
+        });
+      } catch (error) {
+        bindingFailure = sovereignLocalOllamaFailureReasonV1(error);
+        throw error;
+      }
+      if (gamingDenied || gamingAbort.signal.aborted
+        || !gamingGuard(env, { platform })?.ok) {
+        throw new Error('CALIBRATION_GAMING_RESOURCE_PROTECTED');
+      }
       const response = await fetchImpl('http://127.0.0.1:11434/api/generate', {
         // Never follow a redirect to a nonlocal endpoint with private diff text.
         // Node fetch follows 3xx by default, including cross-origin redirects.
@@ -253,7 +268,7 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: immutableModel, prompt, stream: false, format: 'json',
+          model: binding.model, prompt, stream: false, format: 'json',
           // Release GPU residency after each bounded candidate challenge.
           keep_alive: 0,
           options: { temperature: 0, num_ctx: 8192 },
@@ -272,10 +287,8 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
         throw new Error('LOCAL_OLLAMA_RESPONSE_UNBOUNDED');
       }
       const result = JSON.parse(bytes);
-      // An incomplete/truncated response or different actual model cannot
-      // substantiate the claimed ten-case security qualification exam.
-      const completedModel = String(result?.model ?? '').toLowerCase();
-      if (![immutableModel, 'sha256-' + beforePin.digest].includes(completedModel)
+      // The selector echo is protocol consistency, not served-model attestation.
+      if (!matchesSovereignLocalOllamaCompletionV1(result, binding)
         || result?.done !== true
         || result?.done_reason !== 'stop'
         || typeof result.response !== 'string'
@@ -300,7 +313,9 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
   const afterPin=await modelPin(model,{fetchImpl});
   if (!afterPin?.ok || afterPin.digest!==beforePin.digest)
     return held('CALIBRATION_MODEL_DIGEST_CHANGED_OR_UNOBSERVED');
-  return Object.freeze({...evaluation,modelDigestSha256:beforePin.digest});
+  return Object.freeze({...evaluation,
+    ...(bindingFailure ? { reason: bindingFailure } : {}),
+    modelDigestSha256:beforePin.digest});
 }
 // Read-only model availability preflight. Ollama's /api/tags endpoint does
 // NOT load a model or modify the host. No user path, URL, tokens, inventory,

@@ -7,7 +7,21 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { deflateSync } from 'node:zlib';
 import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
-import { main, persistReview, localModel, authenticatedReviewDiff } from './sovereign-reviewer-v1.mjs';
+import { main, persistReview, localModel as localModelActual, authenticatedReviewDiff } from './sovereign-reviewer-v1.mjs';
+
+// Existing inference fixtures use the reviewed daemon protocol; dedicated
+// tests below exercise the production callers without this adapter.
+const withSupportedProtocol = generate => async (url, options) => {
+  if (url === 'http://127.0.0.1:11434/api/version') {
+    assert.equal(options.method, 'GET');
+    assert.equal(options.redirect, 'error');
+    assert.equal(options.body, undefined);
+    return new Response('{"version":"0.40.15"}');
+  }
+  return generate(url, options);
+};
+const localModel = (prompt, environment, options) => localModelActual(prompt, environment,
+  { ...options, fetchImpl: withSupportedProtocol(options.fetchImpl) });
 
 const canonicalConfig = 'remote.origin.url\nhttps://github.com/Cheekyfellastef/stephan-os.git\0';
 
@@ -361,7 +375,7 @@ test('localModel uses fixed localhost, digest pin, gaming guard, redirect denial
     fetchImpl: async (url, opts) => {
       calls.push({ url, opts });
       return { ok: true, text: async () => JSON.stringify({
-        model: 'sha256:' + pin, done: true, done_reason: 'stop',
+        model: 'sha256:' + pin + ':local', done: true, done_reason: 'stop',
         response: JSON.stringify({ verdict: 'clean', reviewedPaths: [], findings: [] }),
       }) };
     },
@@ -373,7 +387,7 @@ test('localModel uses fixed localhost, digest pin, gaming guard, redirect denial
   assert.equal(calls[0].opts.redirect, 'error');
   assert.equal(calls[0].opts.method, 'POST');
   assert.equal(JSON.parse(calls[0].opts.body).keep_alive, 0);
-  assert.equal(JSON.parse(calls[0].opts.body).model, 'sha256:' + pin,
+  assert.equal(JSON.parse(calls[0].opts.body).model, 'sha256:' + pin + ':local',
     'the actual private prompt MUST use an immutable digest, never a mutable tag');
   assert.ok(guard.length >= 4, 'resource state must be rechecked around inference');
   assert.equal(clear.length, 1, 'inference governor monitor is always cleared');
@@ -417,7 +431,7 @@ test('localModel refuses gaming, tag replacement, redirected results, and aborts
   }), /LOCAL_MODEL_COMPLETION_IDENTITY_UNPROVEN/);
   await assert.rejects(localModel('private', {}, { ...ready,
     fetchImpl: async (_url, options) => {
-      assert.equal(JSON.parse(options.body).model, 'sha256:' + good,
+      assert.equal(JSON.parse(options.body).model, 'sha256:' + good + ':local',
         'tag replacement immediately before generation cannot change requested weights');
       return { ok: true, text: async () => JSON.stringify({
         model: 'qwen:14b', done: true, done_reason: 'stop', response: '{}',
@@ -427,9 +441,72 @@ test('localModel refuses gaming, tag replacement, redirected results, and aborts
     'older Ollama runtimes reporting only mutable tag must fail closed');
   await assert.rejects(localModel('private', {}, { ...ready,
     fetchImpl: async (_url, options) => {
-      assert.equal(JSON.parse(options.body).model, 'sha256:' + good);
+      assert.equal(JSON.parse(options.body).model, 'sha256:' + good + ':local');
       return { ok: false, status: 404, text: async () => 'model digest not supported' };
     },
   }), /LOCAL_MODEL_REQUEST_FAILED/,
     'older Ollama builds lacking immutable digest addressing MUST NOT fall back to mutable tag');
+});
+
+test('production standard reviewer refuses unsupported protocol before sending a private prompt', async () => {
+  const ready = { platform:'linux', gamingGuard:()=>({ok:true}),
+    modelPin:async()=>({ok:true,digest:'b'.repeat(64)}),
+    startPolling:()=>1,stopPolling:()=>{} };
+  for (const version of ['0.35.1','0.40.0-rc.1','0.41.0']) {
+    const calls=[];
+    await assert.rejects(localModelActual('private source',{}, {...ready,
+      fetchImpl:async(url,options)=>{
+        calls.push({url,options});
+        return new Response(JSON.stringify({version}));
+      },
+    }), /LOCAL_OLLAMA_DIGEST_PROTOCOL_UNSUPPORTED/);
+    assert.equal(calls.length,1);
+    assert.equal(calls[0].url,'http://127.0.0.1:11434/api/version');
+    assert.equal(calls[0].options.body,undefined);
+  }
+});
+
+test('standard reviewer rejects remote metadata even with the exact local selector', async () => {
+  const digest='b'.repeat(64),selector='sha256:'+digest+':local';
+  for(const patch of [{remote_host:''},{remote_model:'remote'},{model:'sha256:'+digest}]) {
+    await assert.rejects(localModelActual('private source',{},{
+      platform:'linux',gamingGuard:()=>({ok:true}),
+      modelPin:async()=>({ok:true,digest}),startPolling:()=>1,stopPolling:()=>{},
+      fetchImpl:withSupportedProtocol(async()=>({ok:true,text:async()=>JSON.stringify({
+        model:selector,done:true,done_reason:'stop',response:'{}',...patch,
+      })})),
+    }),/LOCAL_MODEL_COMPLETION_IDENTITY_UNPROVEN/);
+  }
+});
+
+test('standard runner publishes fixed protocol refusal codes without leaking arbitrary model errors', async () => {
+  const snapshot=()=>({
+    repository:'Cheekyfellastef/stephan-os',issueNumber:1574,prNumber:3005,
+    branch:'goal/1574-sovereign-reviewer-local-v1',
+    sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),changedFiles:['src/test.js'],
+    diff:'diff --git a/src/test.js b/src/test.js\n-old\n+new\n',
+    implementerProvider:'github-builder',implementerSessionId:'builder-1',
+    reviewerSessionId:'reviewer-2',modelClass:'qwen-14b',
+  });
+  const ready={platform:'linux',gamingGuard:()=>({ok:true}),
+    modelPin:async()=>({ok:true,digest:'b'.repeat(64)}),
+    startPolling:()=>1,stopPolling:()=>{}};
+  for(const [fetchImpl,reason] of [
+    [async()=>new Response('{"version":"0.35.1"}'),'LOCAL_OLLAMA_DIGEST_PROTOCOL_UNSUPPORTED'],
+    [async()=>new Response('{}',{status:503}),'LOCAL_OLLAMA_DIGEST_PROTOCOL_UNPROVEN'],
+    [null,'LOCAL_MODEL_UNAVAILABLE'],
+  ]) {
+    let published;
+    const result=await main({},{
+      snapshot,persist:value=>{published=value},
+      invokeModel:fetchImpl
+        ? prompt=>localModelActual(prompt,{}, {...ready,fetchImpl})
+        : async()=>{throw new Error('private provider error payload')},
+    });
+    assert.equal(result.status,'SOVEREIGN_REVIEW_HELD');
+    assert.equal(result.reason,reason);
+    assert.equal(published.reason,reason);
+    assert.equal(result.mergeAuthority,false);
+    assert.equal(JSON.stringify(result).includes('private provider error payload'),false);
+  }
 });

@@ -79,12 +79,11 @@ export function assertCurrentExactHeadPrIdentityV1(pr, input) {
   return true;
 }
 
-export async function qualifyExactHeadReviewV1(input, receipt, { api, download, unzip, nowMs } = {}) {
-  const context = assertQualifiableExactHeadReceiptV1(input, receipt);
-  requireProof(typeof api === 'function' && typeof download === 'function'
-    && typeof unzip === 'function', 'TRUSTED_TRANSPORT_UNAVAILABLE');
-  const pr = await api('/pulls/' + input.prNumber);
-  assertCurrentExactHeadPrIdentityV1(pr, input);
+// Shared read-only selection for preflight and final qualification. An owner
+// fence is authorization to inspect the pinned independent evidence; this
+// function alone does not qualify a review or authorize a READY transition.
+export async function readOwnerEscalationCommentV1(input, patchDigest, { api, nowMs } = {}) {
+  requireProof(typeof api === 'function', 'TRUSTED_TRANSPORT_UNAVAILABLE');
   const issue = await api('/issues/' + input.prNumber);
   const pages = Math.ceil(Number(issue?.comments) / 100);
   requireProof(pages > 0 && Number.isSafeInteger(pages), 'OWNER_COMMENT_ABSENT');
@@ -104,8 +103,18 @@ export async function qualifyExactHeadReviewV1(input, receipt, { api, download, 
     && c?.issue_url === 'https://api.github.com/repos/' + REPO + '/issues/' + input.prNumber
     && String(c?.body || '').includes('stephanos-exact-head-qualified-review-v1'));
   requireProof(ownerCandidates.length > 0, 'OWNER_ESCALATION_NOT_POSTED');
-  const owner = validateOwnerEscalationCommentV1(ownerCandidates.at(-1), input,
-    context.patchSha256, nowMs ?? Date.now());
+  const comment = ownerCandidates.at(-1);
+  const owner = validateOwnerEscalationCommentV1(comment, input, patchDigest, nowMs ?? Date.now());
+  return Object.freeze({ comment, owner });
+}
+
+export async function qualifyExactHeadReviewV1(input, receipt, { api, download, unzip, nowMs } = {}) {
+  const context = assertQualifiableExactHeadReceiptV1(input, receipt);
+  requireProof(typeof api === 'function' && typeof download === 'function'
+    && typeof unzip === 'function', 'TRUSTED_TRANSPORT_UNAVAILABLE');
+  const pr = await api('/pulls/' + input.prNumber);
+  assertCurrentExactHeadPrIdentityV1(pr, input);
+  const { owner } = await readOwnerEscalationCommentV1(input, context.patchSha256, { api, nowMs });
   const command = {
     // Bind the exact PR to the trusted workflow-run name and association.
     prNumber: input.prNumber,
