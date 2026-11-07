@@ -10,6 +10,7 @@ import { evaluateSovereignReviewSnapshot } from '../shared/agents/sovereignRevie
 import { resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { inspectLocalSovereignGamingPermissionV1, observeLocalSovereignOllamaDigestV1 } from './sovereign-reviewer-ollama-calibration-v1.mjs';
 import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
+import { admitSovereignLocalOllamaBindingV1, matchesSovereignLocalOllamaCompletionV1, sovereignLocalOllamaFailureReasonV1 } from '../shared/agents/sovereignReviewerOllamaBindingV1.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const OLLAMA_URL = 'http://127.0.0.1:11434/api/generate';
@@ -185,11 +186,6 @@ export async function localModel(prompt, env, {
   if (!duringPin?.ok || duringPin.digest !== pinned.digest) {
     throw new Error('LOCAL_REVIEW_MODEL_DIGEST_CHANGED');
   }
-  // Never send sensitive review input to a mutable Ollama model tag.
-  // Ollama versions with immutable manifest digest references can resolve the
-  // digest directly. Older versions must fail CLOSED, not retry with 'model'.
-  // The digest comes from a bounded exact local /api/tags observation.
-  const immutableModel = 'sha256:' + pinned.digest;
   const abort = new AbortController();
   let preempted = false;
   const monitor = startPolling(() => {
@@ -204,11 +200,17 @@ export async function localModel(prompt, env, {
     }
   }, 500);
   try {
+    const binding = await admitSovereignLocalOllamaBindingV1(pinned.digest, {
+      fetchImpl, signal: abort.signal,
+    });
+    if (preempted || abort.signal.aborted || !allowed()) {
+      throw new Error('LOCAL_REVIEW_GAMING_RESOURCE_PROTECTED');
+    }
     const response = await fetchImpl(OLLAMA_URL, {
       method: 'POST', redirect: 'error',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: immutableModel, prompt, stream: false, format: 'json',
+        model: binding.model, prompt, stream: false, format: 'json',
         keep_alive: 0,
         options: { temperature: 0, num_ctx: 8192 },
       }),
@@ -225,11 +227,8 @@ export async function localModel(prompt, env, {
       throw new Error('LOCAL_MODEL_OUTPUT_UNBOUNDED');
     }
     const parsed = JSON.parse(raw);
-    // A reply echoing only the caller-selected mutable tag is not proof of
-    // which manifest actually generated this private code-review verdict.
-    // Require an exact digest-addressed completion on supported Ollama.
-    const returned = String(parsed?.model ?? '').toLowerCase();
-    if (![immutableModel, 'sha256-' + pinned.digest].includes(returned)
+    // This validates the local protocol exchange, not independent attestation.
+    if (!matchesSovereignLocalOllamaCompletionV1(parsed, binding)
       || parsed?.done !== true
       || parsed?.done_reason !== 'stop' || typeof parsed?.response !== 'string'
       || Buffer.byteLength(parsed.response, 'utf8') > 12_288) {
@@ -240,6 +239,11 @@ export async function localModel(prompt, env, {
       throw new Error('LOCAL_REVIEW_MODEL_OR_GAMING_CHANGED_DURING_INFERENCE');
     }
     return parsed.response;
+  } catch (error) {
+    if (preempted || abort.signal.aborted) {
+      throw new Error('LOCAL_REVIEW_GAMING_RESOURCE_PROTECTED');
+    }
+    throw error;
   } finally {
     stopPolling(monitor);
   }
@@ -397,7 +401,15 @@ export async function main(env = process.env, dependencies = {}) {
   let snapshot;
   try {
     snapshot = capture(env);
-    result = await evaluateSovereignReviewSnapshot(snapshot, { invokeModel: invoke });
+    let bindingFailure = '';
+    result = await evaluateSovereignReviewSnapshot(snapshot, { invokeModel: async (...args) => {
+      try { return await invoke(...args); }
+      catch (error) { bindingFailure = sovereignLocalOllamaFailureReasonV1(error); throw error; }
+    } });
+    if (bindingFailure && result.status === 'SOVEREIGN_REVIEW_HELD'
+      && result.reason === 'LOCAL_MODEL_UNAVAILABLE') {
+      result = { ...result, reason: bindingFailure };
+    }
   } catch (error) {
     result = {
       status: 'SOVEREIGN_REVIEW_HELD',
