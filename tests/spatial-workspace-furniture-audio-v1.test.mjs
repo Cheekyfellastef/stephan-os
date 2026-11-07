@@ -1,3 +1,4 @@
+import './spatial-workspace-carry-locomotion-v1.test.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
