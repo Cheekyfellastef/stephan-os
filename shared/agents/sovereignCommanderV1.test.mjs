@@ -632,11 +632,10 @@ test('Windows calibration requires exact bounded identity and authenticated rout
   ), { repoRoot: REPO, routeProof, spawnSyncFn(_exe, _args, options) {
     calls++;
     assert.equal(options.shell, false);
-    assert.equal(_args[0], '--experimental-loader');
-    assert.match(_args[1], /^data:text\/javascript;base64,/);
-    assert.match(_args[2], /sovereign-windows-review-calibration-v1\.mjs$/);
-    assert.equal(_args[3], '--commander-once');
-    assert.equal(_args.length, 4);
+    assert.equal(_exe, 'C:\\Program Files\\Stephanos\\SovereignReviewerV1\\host.exe');
+    assert.deepEqual(_args, ['--windows-calibration-remote']);
+    assert.equal(valid.plan.executable, _exe);
+    assert.deepEqual(valid.plan.args, _args);
     assert.equal(options.env.NODE_OPTIONS, undefined);
     assert.equal(options.env.NODE_PATH, undefined);
     assert.equal(options.env.STEPHANOS_REVIEW_EXACT_HEAD, identity.sourceHead);
@@ -774,13 +773,9 @@ test('Windows calibration preserves authenticated exact-source launch in both as
       spawnFn(_executable, args, options) {
         calls++;
         assert.equal(options.shell, false);
-        assert.equal(args[0], '--experimental-loader');
-        assert.match(args[1], /^data:text\/javascript;base64,/);
-        assert.match(args[2], /sovereign-windows-review-calibration-v1\.mjs$/);
-        assert.equal(args[3], '--commander-once');
-        assert.equal(args.length, 4);
-        const loader = Buffer.from(args[1].slice('data:text/javascript;base64,'.length), 'base64').toString();
-        assert.ok(loader.includes(identity.sourceHead));
+        assert.equal(_executable, 'C:\\Program Files\\Stephanos\\SovereignReviewerV1\\host.exe');
+        assert.deepEqual(args, ['--windows-calibration-remote']);
+        assert.ok(args.every(value=>!value.includes(identity.sourceHead)), 'review head never selects executable code');
         assert.equal(options.env.NODE_OPTIONS, undefined);
         assert.equal(options.env.NODE_PATH, undefined);
         assert.equal(options.env.STEPHANOS_REVIEW_EXACT_HEAD, identity.sourceHead);

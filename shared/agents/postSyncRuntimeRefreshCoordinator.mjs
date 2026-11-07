@@ -239,6 +239,16 @@ const NO_RUNTIME_EXACT = new Set([
   // source change never activates or qualifies the installed native binary.
   'scripts/windows/SovereignFixedRuntimeHostV1.cs',
   'scripts/windows/install-sovereign-fixed-runtime-v1.ps1',
+  // Separate original-reviewer installation/code custody. These exact sources
+  // are built only by the attended reviewer installer; sync never runs it,
+  // creates an identity, starts inference or grants specialist authority.
+  'scripts/sovereign-installed-reviewer-v1.mjs',
+  'scripts/sovereign-installed-reviewer-loader-v1.mjs',
+  'scripts/build-sovereign-reviewer-installation-v1.mjs',
+  'shared/agents/sovereignInstalledReviewerProfileV1.mjs',
+  'scripts/windows/SovereignReviewerProfileV1.cs',
+  'scripts/windows/SovereignReviewerHostV1.cs',
+  'scripts/windows/install-sovereign-reviewer-profile-v1.ps1',
   'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',
   'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs',
   'scripts/canonical-mailbox-rollover-github-adapter.mjs',

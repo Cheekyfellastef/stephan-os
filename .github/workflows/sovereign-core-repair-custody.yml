@@ -11,6 +11,42 @@ on:
       - 'scripts/fixtures/sovereign-fixed-runtime-*'
       - 'scripts/windows/install-sovereign-fixed-runtime-v1.ps1'
       - 'scripts/windows/SovereignFixedRuntime*'
+      - 'scripts/sovereign-installed-reviewer*'
+      - 'scripts/build-sovereign-reviewer-installation*'
+      - 'scripts/windows/SovereignReviewer*'
+      - 'scripts/windows/install-sovereign-reviewer-profile-v1.ps1'
+      - 'shared/agents/sovereignInstalledReviewerProfileV1*'
+      # Complete exact installed reviewer estate. A dependency-only change
+      # must still compile/test the physical profile and closed module graph.
+      - 'scripts/sovereign-installed-reviewer-v1.mjs'
+      - 'scripts/sovereign-installed-reviewer-loader-v1.mjs'
+      - 'scripts/build-sovereign-reviewer-installation-v1.mjs'
+      - 'scripts/sovereign-high-risk-advisory-v1.mjs'
+      - 'scripts/battle-bridge-github-sync-policy.mjs'
+      - 'scripts/sovereign-windows-review-calibration-v1-engine.mjs'
+      - 'scripts/sovereign-review-coverage-v1-engine.mjs'
+      - 'shared/agents/sovereignInstalledReviewerProfileV1.mjs'
+      - 'shared/agents/sovereignWindowsCalibrationV1.mjs'
+      - 'shared/agents/sovereignReviewerOllamaBindingV1.mjs'
+      - 'shared/agents/sovereignWindowsCalibrationRemoteV1.mjs'
+      - 'shared/agents/battleBridgeExecutionBoundaryV1.mjs'
+      - 'shared/agents/battleBridgeWindowsHosts.mjs'
+      - 'shared/agents/sovereignHighRiskReviewCandidateV1.mjs'
+      - 'shared/agents/sovereignReviewCoverageV1.mjs'
+      - 'shared/agents/sovereignAuthenticatedReviewDiffV1.mjs'
+      - 'shared/agents/sharedAgentWorkspaceStore.mjs'
+      - 'shared/agents/closedLoopLearningV1.mjs'
+      - 'shared/agents/sharedWorkspaceRuntimeConfig.mjs'
+      - 'shared/agents/sharedAgentWorkspace.mjs'
+      - 'shared/agents/engineeringIncidentMethodMemoryV1.mjs'
+      - 'scripts/windows/SovereignReviewerProfileV1.cs'
+      - 'scripts/windows/SovereignReviewerHostV1.cs'
+      - 'scripts/sovereign-high-risk-advisory-launcher-v1.mjs'
+      - 'scripts/sovereign-high-risk-advisory-launcher-v1.test.mjs'
+      - 'scripts/sovereign-reviewer-wsl-bridge-v1.mjs'
+      - 'scripts/sovereign-reviewer-wsl-bridge-v1.test.mjs'
+      - 'shared/agents/postSyncRuntimeRefreshCoordinator.mjs'
+      - 'shared/agents/postSyncRuntimeRefreshCoordinator.test.mjs'
       - 'scripts/windows/test-sovereign-fixed-runtime*'
       - 'scripts/sovereign-core-directory-action*'
       - 'scripts/sovereign-commander-mcp.mjs'
@@ -74,6 +110,10 @@ jobs:
         run: node --test scripts/sovereign-maintenance-os-anchor-v1.test.mjs
       - name: Native installer source Job and pinned bootstrap proof
         run: node --test scripts/sovereign-maintenance-installer-source-job-v3.test.mjs
+      - name: Separate installed reviewer code custody and native physical fixtures
+        env:
+          STEPHANOS_REVIEWER_NATIVE_FIXTURE: ${{ runner.os == 'Windows' && '1' || '0' }}
+        run: node --test scripts/sovereign-installed-reviewer-v1.test.mjs scripts/sovereign-installed-reviewer-native-v1.test.mjs
       - name: Bootstrap-isolated source proof and native racy-index regression
         env:
           STEPHANOS_SHARED_WORKSPACE: ${{ runner.temp }}/stephanos-source-proof-fixture
