@@ -15,6 +15,7 @@ namespace Stephanos.Sovereign {
 
   public sealed class FixedRuntimeRequestV1 {
     public string SchemaVersion="", RequestId="", Profile="", RuntimeSourceHead="";
+    public string InstallationSourceHead="", SourceProofSha256="";
     public int OwnerPid;
     public string TaskFrameBase64="", TaskBindingSha256="";
   }
@@ -85,7 +86,7 @@ namespace Stephanos.Sovereign {
       var parser=new JavaScriptSerializer { MaxJsonLength=32768,RecursionLimit=4 };
       var objectValue=RuntimeObjectV1(parser.DeserializeObject(raw));
       string[] keys={"SchemaVersion","RequestId","Profile","RuntimeSourceHead","OwnerPid",
-        "TaskFrameBase64","TaskBindingSha256"};
+        "TaskFrameBase64","TaskBindingSha256","InstallationSourceHead","SourceProofSha256"};
       var seen=new HashSet<string>(StringComparer.Ordinal);
       foreach(Match match in Regex.Matches(raw,@"""([A-Za-z0-9]+)""\s*:")) {
         if(!seen.Add(match.Groups[1].Value)) throw new InvalidOperationException("RUNTIME_FRAME_DUPLICATE_FIELD");
@@ -99,12 +100,15 @@ namespace Stephanos.Sovereign {
         SchemaVersion=RuntimeStringV1(objectValue,"SchemaVersion"),
         RequestId=RuntimeStringV1(objectValue,"RequestId"),Profile=RuntimeStringV1(objectValue,"Profile"),
         RuntimeSourceHead=RuntimeStringV1(objectValue,"RuntimeSourceHead"),
+        InstallationSourceHead=RuntimeStringV1(objectValue,"InstallationSourceHead"),
+        SourceProofSha256=RuntimeStringV1(objectValue,"SourceProofSha256"),
         OwnerPid=owner>0 && owner<=Int32.MaxValue?(int)owner:0,
         TaskFrameBase64=RuntimeStringV1(objectValue,"TaskFrameBase64"),
         TaskBindingSha256=RuntimeStringV1(objectValue,"TaskBindingSha256") };
       if(frame.SchemaVersion!="stephanos.fixed-runtime-request.v1" ||
         !Regex.IsMatch(frame.RequestId,@"^[a-z0-9][a-z0-9._-]{7,79}$") ||
-        !RuntimeHexV1(frame.RuntimeSourceHead,40) || frame.OwnerPid<=0 ||
+        !RuntimeHexV1(frame.RuntimeSourceHead,40) || !RuntimeHexV1(frame.InstallationSourceHead,40) ||
+        !RuntimeHexV1(frame.SourceProofSha256,64) || frame.OwnerPid<=0 ||
         (frame.Profile!="MAINTENANCE_GOAL_BUILDER_V1" && frame.Profile!="SOURCE_TASK_V1" &&
           frame.Profile!="CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1") ||
         frame.TaskFrameBase64.Length>24000 || !RuntimeHexV1(frame.TaskBindingSha256,64))
@@ -160,14 +164,17 @@ namespace Stephanos.Sovereign {
       // A read-only inventory, not an execution or enrolment endpoint.
       // The original parent still owns admission and reservation adjudication.
       try {
-        using(var pins=OpenFixedRuntimeIdentityV1()) {
+        string sourceProof=RuntimeReadLineV1(3145728,10000);
+        using(var pins=OpenFixedRuntimeIdentityForSourceV1(sourceProof)) {
           var custody=ReadRuntimeCustodyV1(pins);
           bool sameMachine=custody.MachineHash==pins.MachineHash;
           bool bootOrdered=RuntimeInstantV1(custody.BootStartedAtUtc)<=RuntimeInstantV1(pins.BootStartedAtUtc);
           bool idle=sameMachine && bootOrdered && custody.Phase=="IDLE" && !RuntimeCurrentBootFenceExistsV1(pins);
           Console.WriteLine("SOVEREIGN_RUNTIME_INVENTORY_V1="+new JavaScriptSerializer().Serialize(new {
-            SchemaVersion="stephanos.fixed-runtime-inventory.v1",Ok=true,SourceHead=pins.SourceHead,
-            SourceTree=pins.SourceTree,HelperSha256=pins.HelperSha256,ManifestSha256=pins.ManifestSha256,
+            SchemaVersion="stephanos.fixed-runtime-inventory.v1",Ok=true,SourceHead=pins.ExecutionHead,
+            SourceTree=pins.ExecutionTree,InstallationSourceHead=pins.SourceHead,InstallationSourceTree=pins.SourceTree,
+            SourceProofSha256=pins.SourceProofSha256,GitClosureSha256=pins.GitClosureSha256,
+            HelperSha256=pins.HelperSha256,ManifestSha256=pins.ManifestSha256,
             BootStartedAtUtc=pins.BootStartedAtUtc,AuthenticatedCustodyPhase=custody.Phase,
             AuthenticatedCustodyIdle=idle,CustodyRecordSha256=custody.RecordSha256,NativeRecordId=custody.NativeRecordId,Profiles=new string[]{"MAINTENANCE_GOAL_BUILDER_V1","SOURCE_TASK_V1","CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1"},
             RuntimeActivationGranted=false,MutationAttempted=false }));
@@ -191,6 +198,7 @@ namespace Stephanos.Sovereign {
         var frame=ParseFixedRuntimeRequestV1(raw);
         receipt.RequestId=frame.RequestId; receipt.Profile=frame.Profile;
         receipt.RuntimeSourceHead=frame.RuntimeSourceHead;
+        receipt.InstallationSourceHead=frame.InstallationSourceHead;receipt.SourceProofSha256=frame.SourceProofSha256;
         receipt.FrameSha256=RuntimeHashV1(Encoding.UTF8.GetBytes(raw));
         receipt.OwnerPid=frame.OwnerPid; receipt.LauncherPid=frame.OwnerPid;
         if(RuntimeActualParentV1()!=frame.OwnerPid)
@@ -209,8 +217,12 @@ namespace Stephanos.Sovereign {
         Require(RuntimeOwnerImageV1(owner,0,image,ref imageLength));
         if(!String.Equals(image.ToString(),@"C:\Program Files\nodejs\node.exe",StringComparison.OrdinalIgnoreCase))
           throw new InvalidOperationException("RUNTIME_CANONICAL_PARENT_IMAGE_UNPROVEN");
-        pins=OpenFixedRuntimeIdentityV1();
-        if(frame.RuntimeSourceHead!=pins.SourceHead)
+        string sourceProof=RuntimeReadLineV1(3145728,10000);
+        if(sourceProof==null || RuntimeHashV1(Encoding.UTF8.GetBytes(sourceProof))!=frame.SourceProofSha256)
+          throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_BINDING_UNPROVEN");
+        pins=OpenFixedRuntimeIdentityForSourceV1(sourceProof);
+        if(frame.RuntimeSourceHead!=pins.ExecutionHead || frame.InstallationSourceHead!=pins.SourceHead ||
+          frame.SourceProofSha256!=pins.SourceProofSha256)
           throw new InvalidOperationException("RUNTIME_INSTALLED_SOURCE_HEAD_CHANGED");
         receipt.SourceHeadMatched=true;
         var custody=ReadRuntimeCustodyV1(pins);
@@ -243,7 +255,7 @@ namespace Stephanos.Sovereign {
         byte[] taskInput=source?Encoding.UTF8.GetBytes(new JavaScriptSerializer().Serialize(new {
           schemaVersion="stephanos.fixed-source-task-input.v1",requestId=frame.RequestId,
           actionId=sourceBinding.ActionId,missionId=sourceBinding.MissionId,claimSha256=sourceBinding.ClaimSha256,
-          frameSha256=receipt.FrameSha256,sourceHead=pins.SourceHead,
+          frameSha256=receipt.FrameSha256,sourceHead=pins.ExecutionHead,
           remainingMs=(int)Math.Max(0,deadline-clock.ElapsedMilliseconds-30000) })):new byte[0];
         receipt.TaskStage=RunRuntimeStageV1(job,frame.Profile,
           @"C:\Program Files\nodejs\node.exe",
@@ -253,6 +265,7 @@ namespace Stephanos.Sovereign {
           delegate(FixedRuntimeStageV1 root) {
             var prepared=new { SchemaVersion="stephanos.fixed-runtime-prepared.v1",RequestId=frame.RequestId,
               FrameSha256=receipt.FrameSha256,Profile=frame.Profile,RuntimeSourceHead=frame.RuntimeSourceHead,
+              InstallationSourceHead=pins.SourceHead,SourceProofSha256=pins.SourceProofSha256,
               OwnerPid=frame.OwnerPid,OwnerCreatedAtUtc=receipt.OwnerCreatedAtUtc,
               RootPid=root.RootPid,RootCreatedAtUtc=root.RootCreatedAtUtc,
               HelperSha256=pins.HelperSha256,ManifestSha256=pins.ManifestSha256,

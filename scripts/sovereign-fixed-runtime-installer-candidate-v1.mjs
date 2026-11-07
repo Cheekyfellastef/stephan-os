@@ -6,6 +6,22 @@ import {createBattleBridgeMinimalChildEnvironment} from '../shared/agents/battle
 const closure=JSON.parse(readFileSync(new URL('../shared/agents/sovereignFixedRuntimeSourceClosureV1.json',import.meta.url)));
 export const FIXED_RUNTIME_SOURCE_PATHS_V1=Object.freeze([...closure.paths]);
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
+// Content identity only. Protected installation, current canonical main and
+// native custody remain independent requirements at the existing parent.
+export function fixedRuntimeGitClosureSha256V1(members) {
+ if(!Array.isArray(members) || members.length<1 || members.length>266)
+   throw new Error('FIXED_RUNTIME_GIT_CLOSURE_UNPROVEN');
+ const seen=new Set(), rows=[];
+ for(const row of members) {
+  if(!row || typeof row.Path!=='string' || !/^[A-Za-z0-9._/-]{1,240}$/.test(row.Path) ||
+    row.Path.includes('..') || row.Path.includes('//') || row.Path.startsWith('/') || row.Path.endsWith('/') ||
+    seen.has(row.Path.toLowerCase()) || row.GitMode!=='100644' || !/^[a-f0-9]{40}$/.test(row.GitBlobSha??''))
+    throw new Error('FIXED_RUNTIME_GIT_CLOSURE_UNPROVEN');
+  seen.add(row.Path.toLowerCase());rows.push(row);
+ }
+ rows.sort((a,b)=>a.Path<b.Path?-1:a.Path>b.Path?1:0);
+ return sha('stephanos.fixed-runtime-git-closure.v1\0'+rows.map(row=>row.Path+'\0'+row.GitMode+'\0'+row.GitBlobSha+'\n').join(''));
+}
 export function buildFixedRuntimeInstallerCandidateV1({expectedMain,sourceTree,operatorSid,records}={}) {
  if(!/^[a-f0-9]{40}$/.test(expectedMain??'') || !/^[a-f0-9]{40}$/.test(sourceTree??'') ||
    !/^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$/.test(operatorSid??'') ||
@@ -32,7 +48,7 @@ export function buildFixedRuntimeInstallerCandidateV1({expectedMain,sourceTree,o
   if(!/^[a-f0-9]{64}$/.test(materializedSha256??''))
     throw new Error('FIXED_INSTALL_SOURCE_RECORD_INVALID');
   new TextDecoder('utf-8',{fatal:true}).decode(bytes);
-  seen.add(row.path);captured.push({Path:row.path,Sha256:blobSha256,
+  seen.add(row.path);captured.push({Path:row.path,GitBlobSha:row.blobSha,GitMode:'100644',Sha256:blobSha256,
     MaterializedSha256:materializedSha256,ContentBase64:row.contentBase64});
  }
  captured.sort((a,b)=>a.Path.localeCompare(b.Path));

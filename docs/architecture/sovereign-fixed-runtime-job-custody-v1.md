@@ -435,3 +435,66 @@ reviewed HTTP, parent, admission and native-host source identities. Any change
 to those predicates holds the exclusion for reassessment. Non-Windows/injected
 legacy execution remains optional-profile debt and is not qualified by this
 package. Constructing a URL is not evidence that its target was read or executed.
+
+## 7 November 2026: retain a qualified installation across unrelated main updates
+
+The installation commit and the current execution commit have separate roles.
+The embedded manifest, protected version directory, PENDING receipt, compiler
+completion, machine, genuine later boot, helper image and tool identities remain
+bound to the installation commit. Neither source synchronization nor an equal
+file digest can rewrite those identities or discharge historical custody.
+
+The existing parent now obtains the current execution head through the real
+canonical source observer used by maintenance recovery. That observer fetches
+the fixed canonical repository, validates configuration and checkout topology,
+and requires a stable clean main equal to the freshly fetched origin/main.
+There is no caller-supplied current-main assertion. Original maintenance
+reservation, source grant, active-claim heartbeat, gaming and native custody
+requirements continue to apply to this execution head.
+
+A newly prepared installer retains each canonical Git blob identity alongside
+its original-source and Windows-materialized SHA256 digests. Its complete
+reviewed 266-member set admits regular mode 100644 only. The protected pending
+receipt commits to the ordered path/mode/blob set; the native helper independently
+recomputes that commitment from its embedded manifest. The commitment is a
+selection aid, never runtime qualification or deployment authority. Legacy
+pending records without these pins cannot adopt another head.
+
+If the exact current version directory exists, it remains the only candidate,
+including when incomplete or unsafe. Otherwise the parent considers at most
+64 entries beneath the existing protected version root and requires exactly
+one matching protected installation. Missing, ambiguous, redirected, malformed
+or unsafe versions remain held. There is no writable active-version pointer,
+new download route, implicit installation, service owner or fallback command.
+
+The parent captures raw commit/tree objects through the existing fixed Git
+boundary and private probe context. A separate bounded ASCII input record keeps
+the task request at its existing 32 KiB bound. The proof allows at most 64 KiB of
+commit bytes, 128 trees, 2 MiB aggregate tree bytes, 32,768 entries and 3 MiB of
+wire data. Both parsers reject missing or unused objects, duplicate or aliased
+names, malformed UTF8/base64, noncanonical ordering, unsupported modes and
+incomplete membership. The protected native helper independently verifies Git
+object hashes and every member against its embedded blob pins, holds the
+existing physical source and metadata pins, and requires main and origin/main
+to equal the proved execution head. Changed executable closure still refuses
+reuse and requires the existing reviewed installation path.
+
+Request, prepared and terminal evidence bind the immutable installation head,
+current execution head and exact source-proof digest separately. The worker
+heartbeat, launch identity and original grant continue to match the execution
+head. Neither the historical reservation nor the PENDING record is relabelled.
+Qualification stays a short-lived, one-use in-process object; copied JSON and
+source-membership results cannot dispatch or release custody.
+Its 25-second qualification budget starts before the canonical source observer;
+an expired return cannot start source capture or native inspection. Inspection
+receives only the remaining budget, and the one-use ceiling is 30 seconds from
+that same start. Slow source observation cannot mint a new freshness window.
+
+These are integrated source changes and synthetic regression fixtures. They
+do not establish an installed helper, actual Windows qualification, calibration,
+Spatial resident adoption or playtest acceptance. The two Spatial resident
+obligations, unresolved Control Tower BUILD, mailbox signer commissioning and
+all original fences remain independent. No reboot is initiated or authorized
+by this implementation. A newly bound installation package still requires its
+existing current-main, private operator, exact-artifact review and operator
+approval gates, followed by the genuine later boot and physical qualification.
