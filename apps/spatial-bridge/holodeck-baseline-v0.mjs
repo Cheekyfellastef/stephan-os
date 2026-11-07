@@ -48,6 +48,7 @@ export async function enterHolodeckBaseline({
   onCubeStatus = () => {},
   cubeScene = createHolodeckCubeScene(),
   screen,
+  comfort,
 } = {}) {
   if (!navigatorRef?.xr || typeof navigatorRef.xr.requestSession !== 'function') {
     return { ok: false, session: null, reason: 'WebXR immersive session API unavailable' };
@@ -82,11 +83,11 @@ export async function enterHolodeckBaseline({
         return session.requestReferenceSpace(referenceSpaceType);
       });
 
-    const renderer = rendererFactory({ gl, screen });
+    const renderer = rendererFactory({ gl, screen, comfort });
     const locomotion = createHolodeckLocomotion({ room: renderer.geometry.room,
-      obstacles: renderer.geometry.obstacles });
+      obstacles: renderer.geometry.obstacles, comfort });
     const cubeInteraction = createHolodeckCubeInteraction({scene:cubeScene});
-    const screenInput = createHolodeckScreenInput({screen});
+    const screenInput = createHolodeckScreenInput({screen,comfort});
     let lastCubeStatus = '';
     let lastLocomotionStatus = '';
     let activeController = 'none';
