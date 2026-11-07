@@ -262,10 +262,10 @@ function previewMatrices(width,height,eye,target) {
   return {view,projection};
 }
 
-export function createHolodeckRoomRenderer({gl,screen}={}) {
+export function createHolodeckRoomRenderer({gl,screen,comfort}={}) {
   if (!gl) throw new Error('WebGL context required');
   const geometry=createHolodeckRoomGeometry(),program=createProgram(gl),buffers=[];
-  const display=screen?createHolodeckDisplayRenderer({gl,screen}):null;
+  const display=screen?createHolodeckDisplayRenderer({gl,screen,comfort}):null;
   const attributes=Object.fromEntries(['Position','Color','Normal','Emission'].map(name=>[name,gl.getAttribLocation(program,`a${name}`)]));
   const projectionLocation=gl.getUniformLocation(program,'uProjection'),viewLocation=gl.getUniformLocation(program,'uView');
   const glassLocation=gl.getUniformLocation(program,'uGlass'),eyeLocation=gl.getUniformLocation(program,'uEyePosition');
