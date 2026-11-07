@@ -151,14 +151,17 @@ Require ($actual -ne [IntPtr]::Zero) 'ACTUAL_PARENT_HANDLE_MISSING'
 [void]$type.GetMethod('CloseHandle',$flags).Invoke($null,@($actual))
 $parent=[Diagnostics.Process]::GetCurrentProcess()
 $runner=$type.GetMethod('ReviewerRunChildV1',$flags)
-$exe='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+$exe='C:\Program Files\nodejs\node.exe'
 $environment='SystemRoot=C:\Windows'+[char]0+'WINDIR=C:\Windows'+[char]0+'PATH=C:\Windows\System32'+[char]0+[char]0
-$safe=[Func[bool]]{$true}
+$safe=[Func[bool]]{$true};$script:childSequence=0
 function Child([string]$command,[int]$deadline,[Func[bool]]$guard){
- $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
- return $runner.Invoke($null,@($exe,('-NoLogo -NoProfile -NonInteractive -EncodedCommand '+$encoded),$area,$environment,$parent.Handle,$guard,$deadline))
+ # Production runs this fixed Node tool under DETACHED_PROCESS. Exercise its
+ # actual I/O and descendants, not a PowerShell console-host substitute.
+ $script:childSequence++;$childScript=[IO.Path]::Combine($area,'child-vector-'+$script:childSequence+'.cjs')
+ [IO.File]::WriteAllText($childScript,$command,[Text.UTF8Encoding]::new($false))
+ return $runner.Invoke($null,@([string]$exe,('"'+$childScript+'"'),[string]$area,[string]$environment,[IntPtr]$parent.Handle,$guard,[int]$deadline))
 }
-$child=Child "[Console]::WriteLine('fixture-complete')" 10000 $safe
+$child=Child "process.stdout.write('fixture-complete\n');" 10000 $safe
 Require ([bool](Field $child 'Ok')) 'NATIVE_BENIGN_CHILD_FAILED'
 Require ([bool](Field $child 'ZeroActive')) 'NATIVE_SUCCESS_NOT_DRAINED'
 $nativeOutput=[string](Field $child 'Output')
@@ -170,7 +173,7 @@ if($nativeOutput.Trim() -ne 'fixture-complete'){
   $codes=@($prefix.ToCharArray()|ForEach-Object{([int]$_).ToString('X4')})
   return @{length=$value.Length;prefixUtf16=$codes}
  }
- $rawCommand='[byte[]]$bytes=[Text.Encoding]::UTF8.GetBytes(''fixture-complete'');$stdout=[Console]::OpenStandardOutput();$stdout.Write($bytes,0,$bytes.Length);$stdout.Flush()'
+ $rawCommand='process.stdout.write(Buffer.from(''fixture-complete'',''utf8''));'
  $rawProbe=Child $rawCommand 10000 $safe
  $observation=@{consoleOutput=(NativeTextObservation $nativeOutput);rawUtf8Probe=@{
   ok=[bool](Field $rawProbe 'Ok');zeroActive=[bool](Field $rawProbe 'ZeroActive');
@@ -189,21 +192,41 @@ $child=$runner.Invoke($null,@('C:\Program Files\nodejs\node.exe',$nodeArguments,
 Require ([bool](Field $child 'Ok')) 'NATIVE_LOADER_FILE_URL_FAILED'
 Require ([bool](Field $child 'ZeroActive')) 'NATIVE_LOADER_JOB_NOT_DRAINED'
 Require ((Field $child 'Output').Trim() -eq 'native-loader-file-url-complete') 'NATIVE_LOADER_ENTRY_NOT_EXECUTED'
-$child=Child "[Console]::Error.WriteLine('fixture-private-stderr');[Console]::WriteLine('good-looking')" 10000 $safe
+$child=Child "process.stderr.write('fixture-private-stderr');process.stdout.write('good-looking');" 10000 $safe
 Require (-not [bool](Field $child 'Ok')) 'STDERR_PROMOTED'
 Require ([bool](Field $child 'ZeroActive')) 'STDERR_JOB_NOT_DRAINED'
 Require ((Field $child 'Output') -eq '') 'PRIVATE_STDERR_OR_AMBIGUOUS_OUTPUT_LEAKED'
-$child=Child "Start-Sleep -Seconds 20" 500 $safe
+$child=Child 'setTimeout(()=>{},20000);' 500 $safe
 Require (-not [bool](Field $child 'Ok')) 'DEADLINE_CHILD_ACCEPTED'
 Require ([bool](Field $child 'ZeroActive')) 'DEADLINE_JOB_NOT_DRAINED'
 $script:gameClock=[Diagnostics.Stopwatch]::StartNew();$unsafe=[Func[bool]]{$script:gameClock.ElapsedMilliseconds -lt 750}
-$child=Child "Start-Sleep -Seconds 20" 10000 $unsafe
+$child=Child 'setTimeout(()=>{},20000);' 10000 $unsafe
 Require (-not [bool](Field $child 'Ok')) 'GAMING_CANCELLATION_ACCEPTED'
 Require ([bool](Field $child 'ZeroActive')) 'GAMING_JOB_NOT_DRAINED'
-$descendant="Start-Process -FilePath '"+$exe+"' -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 20' -WindowStyle Hidden|Out-Null"
-$child=Child $descendant 2000 $safe
-Require (-not [bool](Field $child 'Ok')) 'LIVE_DESCENDANT_ACCEPTED'
-Require ([bool](Field $child 'ZeroActive')) 'DESCENDANT_JOB_NOT_DRAINED'
+$descendantMarker=[IO.Path]::Combine($area,'descendant-started.json');$rootMarker=[IO.Path]::Combine($area,'root-exited.json')
+$descendantCode='require("node:fs").writeFileSync('+[string]($descendantMarker|ConvertTo-Json -Compress)+',JSON.stringify({pid:process.pid}));setTimeout(()=>{},20000);'
+$descendant='const child=require("node:child_process").spawn(process.execPath,["-e",'+[string]($descendantCode|ConvertTo-Json -Compress)+'],{stdio:"ignore",detached:false});'
+$descendant+='child.once("error",()=>process.exit(91));child.once("spawn",()=>child.unref());'
+$descendant+='process.on("exit",()=>require("node:fs").writeFileSync('+[string]($rootMarker|ConvertTo-Json -Compress)+',JSON.stringify({pid:process.pid})));'
+$script:descendantProcess=$null
+$observeDescendant=[Func[bool]]{
+ if($null -eq $script:descendantProcess -and [IO.File]::Exists($descendantMarker)){
+  $witness=[IO.File]::ReadAllText($descendantMarker)|ConvertFrom-Json
+  $process=[Diagnostics.Process]::GetProcessById([int]$witness.pid)
+  [void]$process.Handle
+  if($process.HasExited){$process.Dispose();return $false}
+  $script:descendantProcess=$process
+ }
+ return $true
+}
+try{
+ $child=Child $descendant 2000 $observeDescendant
+ Require ([IO.File]::Exists($rootMarker)) 'DESCENDANT_VECTOR_ROOT_DID_NOT_EXIT'
+ Require ($null -ne $script:descendantProcess) 'LIVE_DESCENDANT_NOT_WITNESSED'
+ Require (-not [bool](Field $child 'Ok')) 'LIVE_DESCENDANT_ACCEPTED'
+ Require ([bool](Field $child 'ZeroActive')) 'DESCENDANT_JOB_NOT_DRAINED'
+ Require ($script:descendantProcess.WaitForExit(0)) 'WITNESSED_DESCENDANT_SURVIVED_DRAIN'
+}finally{if($null -ne $script:descendantProcess){$script:descendantProcess.Dispose()}}
 $parent.Dispose()
 [Console]::WriteLine('REVIEWER_NATIVE_FIXTURE='+(@{checks=$checks;aclChecks=$aclChecks;nativeCompiled=$true;qualified=$false;physicalBattleBridgeCommissioning=$false}|ConvertTo-Json -Compress))
 `.replace('__NATIVE__',native.join(',')).replace('__FIXTURE__',literal(fixture));
