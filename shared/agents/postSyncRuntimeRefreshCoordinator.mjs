@@ -108,6 +108,19 @@ const NATURAL_EXACT = new Set([
   'scripts/windows/starfield-vr-runtime-metrics-producer.ps1',
   'scripts/windows/vr-visual-fault-marker.ps1',
   'shared/vr/vrTelemetrySensorContractV1.mjs',
+  // Commander invokes these bounded Node children afresh. Source adoption
+  // confirms the checkout only; it never invokes observation or reconciliation.
+  'scripts/sovereign-commander-browser-observe.mjs',
+  'scripts/sovereign-commander-capability-parity-reconcile.mjs',
+  // The directory action captures and hash-checks both helpers on each call,
+  // then compiles the captured C# in its fresh PowerShell child.
+  'scripts/windows/SovereignDirectoryCreateV1.cs',
+  'scripts/windows/sovereign-create-directory.ps1',
+  // Attended lock recovery loads this policy and native helper in a fresh
+  // child. Its installation, qualification and operator gates remain separate.
+  'scripts/windows/StephanosCoreLockRecoveryV1.cs',
+  'scripts/windows/recover-stephanos-core-lock.ps1',
+  'scripts/windows/stephanos-core-lock-recovery-policy.ps1',
   'scripts/canonical-mailbox-execution-ledger-v1.mjs',
   'scripts/canonical-mailbox-rotation-transaction-v2.mjs',
   'scripts/canonical-mailbox-rotation-host-v1.mjs',
@@ -269,6 +282,44 @@ const NO_RUNTIME_EXACT = new Set([
   'scripts/sovereign-high-risk-advisory-launcher-v1.mjs',
   'scripts/sovereign-high-risk-advisory-v1.mjs',
   'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
+  // Exact test fixtures have no production caller. Do not generalize this
+  // allowance to neighboring native sources or PowerShell scripts.
+  'scripts/fixtures/sovereign-directory-package-fixture-v1.mjs',
+  'scripts/windows/stephanos-core-absent-bootstrap.test.ps1',
+  'scripts/windows/test-starfield-vr-telemetry-invocation.ps1',
+  // Hosted protected-review and bounded reviewer entrypoints load afresh;
+  // adoption neither runs inference nor grants review or merge authority.
+  'scripts/protected-ready-review-lifecycle-v1.mjs',
+  'scripts/sovereign-reviewer-ollama-calibration-v1.mjs',
+  'scripts/sovereign-reviewer-v1.mjs',
+  'scripts/sovereign-reviewer-wsl-bridge-v1.mjs',
+  // Browser registration compiles this native source only during an explicit
+  // install. Checkout adoption does not update or attest the registered binary.
+  'scripts/windows/SovereignBrowserWitnessHost.cs',
+  'scripts/windows/install-sovereign-browser-witness.ps1',
+  'scripts/windows/uninstall-sovereign-browser-witness.ps1',
+  // Offline R7 build/test inputs and the hosted-only capacity probe have no
+  // resident consumer. Signing, loading and native qualification stay gated.
+  'scripts/windows/build-original-r7-native-qualification.ps1',
+  'scripts/windows/inspect-r7-hosted-linux-lab-capacity.py',
+  'src/windows/Stephanos.OriginalR7CustodyWitness/ProspectiveNativeScopeCapture.cs',
+  'src/windows/Stephanos.OriginalR7CustodyWitness/ProspectiveProcessingClaimContext.cs',
+  'src/windows/Stephanos.OriginalR7NativeQualification/.gitignore',
+  'src/windows/Stephanos.OriginalR7NativeQualification/Client.c',
+  'src/windows/Stephanos.OriginalR7NativeQualification/NativeQualification.c',
+  'src/windows/Stephanos.OriginalR7NativeQualification/Protocol.h',
+  'src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests/.gitignore',
+  'src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests/Program.cs',
+  'src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests/Stephanos.ProspectiveProcessingClaimContext.Tests.csproj',
+  // These Spatial wrappers load on explicit invocation; native C++ is consumed
+  // only by the attended build. No installer, launcher or restart is dispatched.
+  // The resident host and its static JS contract deliberately remain unknown.
+  'scripts/windows/build-spatial-window.ps1',
+  'scripts/windows/install-spatial-window.ps1',
+  'scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1',
+  'scripts/windows/launch-stephanos-spatial-workspace.ps1',
+  'scripts/windows/start-spatial-window-host.ps1',
+  'src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp',
 ]);
 
 const LAUNCHER_CRITICAL_SOURCE_PATHS = new Set([
@@ -394,6 +445,9 @@ function isBackendPath(path) {
 
 function isMissionWorkerPath(path) {
   if (path === MISSION_WORKER_POST_SYNC_COORDINATOR_PATH || path === GOAL_DISCOVERY_HEARTBEAT_RUNTIME_PATH) return true;
+  // The supervised worker statically imports this guardian and calls it on
+  // recurring ticks; its CLI entrypoint does not make it invocation-only.
+  if (path === 'scripts/completion-guardian.mjs') return true;
   if (NATURAL_EXACT.has(path)) return false;
   return (path.startsWith('shared/agents/') && !NATURAL_EXACT.has(path))
     || path.startsWith('scripts/mission-orchestrator-worker')
