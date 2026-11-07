@@ -99,7 +99,7 @@ function reviewHost(source, path, findings) {
     ['&&!output.Overflow&&!error.Overflow&&error.Text.Length==0&&result.ExitCode==0&&alive()','reviewer-host-terminal-proof-weakened'],
     ['entry!="--inspect"&&entry!="--governor"&&entry!="--advisory"&&entry!="--coverage"','reviewer-host-entry-allowlist-missing'],
     ['&&entry!="--windows-calibration"&&entry!="--windows-calibration-remote"','reviewer-host-calibration-allowlist-missing'],
-    ['SOVEREIGN_REVIEWER_PROFILE_HELD={\"reason\":\"PROTECTED_REVIEWER_PROFILE_UNAVAILABLE\",\"qualified\":false','reviewer-host-failclosed-terminal-missing'],
+    ['SOVEREIGN_REVIEWER_PROFILE_HELD={\\\"reason\\\":\\\"PROTECTED_REVIEWER_PROFILE_UNAVAILABLE\\\",\\\"qualified\\\":false','reviewer-host-failclosed-terminal-missing'],
   ]) requireLiteral(findings, source, literal, code, path);
   for (const [pattern, code] of [
     [/\bProcess\.Start\s*\(/,'reviewer-host-generic-process-authority-forbidden'],
