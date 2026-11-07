@@ -460,6 +460,18 @@ recomputes that commitment from its embedded manifest. The commitment is a
 selection aid, never runtime qualification or deployment authority. Legacy
 pending records without these pins cannot adopt another head.
 
+The bounded package and source-proof capacity is 284 members so the separate
+private-capability expansion can be integrated without conflicting 266-member
+verifier limits. The checked-in closure here remains exactly 266 members. The
+candidate builder and source package still require that exact declared set;
+raising the capacity does not enroll additional paths. An eventual 284-member
+installation must carry its own complete reviewed manifest and immutable blob
+pins. An old 266-member installation cannot borrow that expanded identity.
+The Node and real Windows verifier fixtures cover exact 266 and 284 members,
+refuse 285 members, and reject changed, missing, mode-substituted or unknown
+last members against the installed closure. Combined private-capability source
+integration and its Windows checks remain separate prerequisites.
+
 If the exact current version directory exists, it remains the only candidate,
 including when incomplete or unsafe. Otherwise the parent considers at most
 64 entries beneath the existing protected version root and requires exactly

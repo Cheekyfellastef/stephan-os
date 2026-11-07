@@ -5,11 +5,14 @@ import {readFileSync} from 'node:fs';
 import {createBattleBridgeMinimalChildEnvironment} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 const closure=JSON.parse(readFileSync(new URL('../shared/agents/sovereignFixedRuntimeSourceClosureV1.json',import.meta.url)));
 export const FIXED_RUNTIME_SOURCE_PATHS_V1=Object.freeze([...closure.paths]);
+// Capacity for the reviewed private-capability expansion. This is only a bound:
+// installation still requires every exact member of the checked-in closure.
+export const FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1=284;
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 // Content identity only. Protected installation, current canonical main and
 // native custody remain independent requirements at the existing parent.
 export function fixedRuntimeGitClosureSha256V1(members) {
- if(!Array.isArray(members) || members.length<1 || members.length>266)
+ if(!Array.isArray(members) || members.length<1 || members.length>FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1)
    throw new Error('FIXED_RUNTIME_GIT_CLOSURE_UNPROVEN');
  const seen=new Set(), rows=[];
  for(const row of members) {
@@ -26,7 +29,7 @@ export function buildFixedRuntimeInstallerCandidateV1({expectedMain,sourceTree,o
  if(!/^[a-f0-9]{40}$/.test(expectedMain??'') || !/^[a-f0-9]{40}$/.test(sourceTree??'') ||
    !/^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$/.test(operatorSid??'') ||
    closure.schemaVersion!=='stephanos.fixed-runtime-source-closure.v1' ||
-   FIXED_RUNTIME_SOURCE_PATHS_V1.length>266 || !Array.isArray(records) || records.length!==FIXED_RUNTIME_SOURCE_PATHS_V1.length)
+   FIXED_RUNTIME_SOURCE_PATHS_V1.length>FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1 || !Array.isArray(records) || records.length!==FIXED_RUNTIME_SOURCE_PATHS_V1.length)
    throw new Error('FIXED_INSTALL_EXACT_SOURCE_REQUIRED');
  const seen=new Set(),captured=[];let total=0;
  for(const row of records) {

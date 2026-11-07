@@ -44,6 +44,8 @@ namespace Stephanos.Sovereign {
     }
   }
   public static partial class CoreJobCustodyV1 {
+    // A capacity bound, never a replacement for exact installed membership.
+    const int RuntimeSourceMemberLimitV1 = 284;
     const string RuntimeSourceRootV1 = @"C:\Users\Stephan Callear\Documents\GitHub\stephan-os";
     const string RuntimeProtectedRootV1 = @"C:\Program Files\Stephanos\SovereignFixedRuntimeV1";
     static bool RuntimeHexV1(string value,int length) {
@@ -260,7 +262,7 @@ namespace Stephanos.Sovereign {
       return rows;
     }
     static string RuntimeGitClosureV1(FixedRuntimeManifestFileV1[] members) {
-      if(members==null || members.Length<1 || members.Length>266)
+      if(members==null || members.Length<1 || members.Length>RuntimeSourceMemberLimitV1)
         throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_CLOSURE");
       var rows=(FixedRuntimeManifestFileV1[])members.Clone();
       Array.Sort(rows,delegate(FixedRuntimeManifestFileV1 a,FixedRuntimeManifestFileV1 b) {
@@ -344,7 +346,7 @@ namespace Stephanos.Sovereign {
         var manifest=json.Deserialize<FixedRuntimeManifestV1>(new UTF8Encoding(false,true).GetString(manifestBytes));
         if(manifest==null || manifest.SchemaVersion!="stephanos.fixed-runtime-manifest.v1" ||
           !RuntimeHexV1(manifest.SourceHead,40) || !RuntimeHexV1(manifest.SourceTree,40) ||
-          manifest.Files==null || manifest.Files.Length<40 || manifest.Files.Length>266)
+          manifest.Files==null || manifest.Files.Length<40 || manifest.Files.Length>RuntimeSourceMemberLimitV1)
           throw new InvalidOperationException("RUNTIME_MANIFEST_IDENTITY_UNPROVEN");
         string version=Path.Combine(RuntimeProtectedRootV1,manifest.SourceHead);
         string helper=Path.Combine(version,"host.exe"),pendingPath=Path.Combine(version,"pending.json");

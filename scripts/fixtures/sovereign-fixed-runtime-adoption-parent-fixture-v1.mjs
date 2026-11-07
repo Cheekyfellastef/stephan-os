@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import {EventEmitter} from 'node:events';
 import {win32} from 'node:path';
 import {makeFixedRuntimeSourceProofFixtureV1,fixtureSha256 as hash} from './sovereign-fixed-runtime-source-proof-fixture-v1.mjs';
-import {fixedRuntimeGitClosureSha256V1} from '../sovereign-fixed-runtime-installer-candidate-v1.mjs';
+import {FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1,fixedRuntimeGitClosureSha256V1} from '../sovereign-fixed-runtime-installer-candidate-v1.mjs';
 const source=readFileSync(new URL('../sovereign-fixed-runtime-parent-v1.mjs',import.meta.url),'utf8');
 const current=makeFixedRuntimeSourceProofFixtureV1({extras:[{path:'README.md',content:'unrelated update\n'}]});
 const installed=makeFixedRuntimeSourceProofFixtureV1({extras:[{path:'README.md',content:'original unrelated content\n'}]});
@@ -130,7 +130,7 @@ for(const mode of modes) {
       if(mode==='authority-deadline')time=25000;
       if(mode==='authority-expired')time=25001;
       return current.head;}},
-    './sovereign-fixed-runtime-installer-candidate-v1.mjs':{FIXED_RUNTIME_SOURCE_PATHS_V1:current.paths,fixedRuntimeGitClosureSha256V1},
+    './sovereign-fixed-runtime-installer-candidate-v1.mjs':{FIXED_RUNTIME_SOURCE_PATHS_V1:current.paths,FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1,fixedRuntimeGitClosureSha256V1},
   };
   const module=new vm.SourceTextModule(source,{context});
   await module.link(specifier=>{const values=mocks[specifier];assert.ok(values,specifier);

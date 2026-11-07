@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import {EventEmitter} from 'node:events';
 import {win32} from 'node:path';
 import {makeFixedRuntimeSourceProofFixtureV1} from './sovereign-fixed-runtime-source-proof-fixture-v1.mjs';
-import {fixedRuntimeGitClosureSha256V1} from '../sovereign-fixed-runtime-installer-candidate-v1.mjs';
+import {FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1,fixedRuntimeGitClosureSha256V1} from '../sovereign-fixed-runtime-installer-candidate-v1.mjs';
 const source=readFileSync(new URL('../sovereign-fixed-runtime-parent-v1.mjs',import.meta.url),'utf8');
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const evidence=makeFixedRuntimeSourceProofFixtureV1(),head=evidence.head;
@@ -85,7 +85,7 @@ for(const mode of ['success','compatibility','cancel','refuse','reject','late','
     resolveBattleBridgeGitExecution:()=>({executable:'FIXTURE_GIT',fixedConfigArgs:[],environment:{}})},
   '../shared/agents/battleBridgeGitProbeContextV1.mjs':{createBattleBridgeGitProbeContextV1:()=>({assert(){},close(){},repositoryArgs:()=>[]}),isBattleBridgeGitProbeContextV1:()=>true},
   './sovereign-maintenance-custody-store-v1.mjs':{readMaintenanceRecoverySourceV1:()=>head},
-  './sovereign-fixed-runtime-installer-candidate-v1.mjs':{FIXED_RUNTIME_SOURCE_PATHS_V1:evidence.paths,fixedRuntimeGitClosureSha256V1}};
+  './sovereign-fixed-runtime-installer-candidate-v1.mjs':{FIXED_RUNTIME_SOURCE_PATHS_V1:evidence.paths,FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1,fixedRuntimeGitClosureSha256V1}};
  const module=new vm.SourceTextModule(source,{context});
  await module.link(specifier=>{const values=mocks[specifier];assert.ok(values,specifier);return new vm.SyntheticModule(Object.keys(values),function(){for(const [k,v]of Object.entries(values))this.setExport(k,v);},{context});});
  await module.evaluate();const api=module.namespace;

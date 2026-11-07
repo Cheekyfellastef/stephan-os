@@ -66,6 +66,31 @@ add('missing Git blob pins cannot adopt',original.raw,{members:original.members.
 add('missing Git mode pins cannot adopt',original.raw,{members:original.members.map(row=>({...row,GitMode:''}))});
 add('case aliased manifest member refuses',original.raw,{members:[...original.members,{...original.members[1],Path:'Scripts/fixture.mjs'}]});
 add('empty closure refuses',original.raw,{members:[]});
+// Exercise both sides of the pending 266-to-284 source composition in the same
+// Node and independently compiled Windows verifier, including the last member.
+const capacityFiles=Array.from({length:285},(_,i)=>({
+  path:'scripts/capacity/member-'+String(i+1).padStart(3,'0')+'.mjs',
+  content:'export const member = '+(i+1)+';\n',
+}));
+for(const count of [266,284,285]) {
+  const proof=fixture({files:capacityFiles.slice(0,count)});
+  add(count+' exact members '+(count<=284?'preserve bounded proof':'exceed capacity'),
+    proof.raw,{members:proof.members,valid:count<=284});
+}
+const expanded=fixture({files:capacityFiles.slice(0,284)});
+add('unrelated main update preserves all 284 members',
+  fixture({files:capacityFiles.slice(0,284),extras:[{path:'README.md',content:'updated\n'}]}).raw,
+  {members:expanded.members,valid:true});
+add('changed 284th blob cannot borrow installed closure',
+  fixture({files:capacityFiles.slice(0,284).map((row,i)=>i===283?{...row,content:'changed last member\n'}:row)}).raw,
+  {members:expanded.members});
+add('missing 284th member refuses',fixture({files:capacityFiles.slice(0,283)}).raw,
+  {members:expanded.members});
+add('284th member mode substitution refuses',
+  fixture({files:capacityFiles.slice(0,284).map((row,i)=>i===283?{...row,mode:'100755'}:row)}).raw,
+  {members:expanded.members});
+add('unknown replacement for 284th member refuses',expanded.raw,
+  {members:expanded.members.map((row,i)=>i===283?{...row,Path:'scripts/capacity/unknown.mjs'}:row)});
 add('tree object size is bounded',wire(original.commit,new Map([['a'.repeat(40),Buffer.alloc(2097153,65)]])));
 function manyRows(count,prefix,padding=0) {
   return Buffer.concat(Array.from({length:count},(_,i)=>rowBytes('100644',prefix+i.toString().padStart(5,'0')+'x'.repeat(padding),'a'.repeat(40))));

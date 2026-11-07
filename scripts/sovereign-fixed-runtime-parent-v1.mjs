@@ -9,7 +9,7 @@ import {createBattleBridgeMinimalChildEnvironment, resolveBattleBridgeGitExecuti
 import {createBattleBridgeGitProbeContextV1, isBattleBridgeGitProbeContextV1}
   from '../shared/agents/battleBridgeGitProbeContextV1.mjs';
 import {readMaintenanceRecoverySourceV1} from './sovereign-maintenance-custody-store-v1.mjs';
-import {FIXED_RUNTIME_SOURCE_PATHS_V1, fixedRuntimeGitClosureSha256V1}
+import {FIXED_RUNTIME_SOURCE_PATHS_V1, FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1, fixedRuntimeGitClosureSha256V1}
   from './sovereign-fixed-runtime-installer-candidate-v1.mjs';
 
 // One canonical route for the already compiled maintenance profile. This is
@@ -138,7 +138,7 @@ export function verifyFixedRuntimeSourceProofV1(raw,paths=FIXED_RUNTIME_SOURCE_P
     if(!/^[a-f0-9]{40}$/.test(id) || id<=previous || gitHash('tree',bytes)!==id)sourceDenied('TREE_HASH');
     previous=id;trees.set(id,proofTree(bytes,budget));
   }
-  if(!Array.isArray(paths) || paths.length<1 || paths.length>266)sourceDenied('CLOSURE');
+  if(!Array.isArray(paths) || paths.length<1 || paths.length>FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1)sourceDenied('CLOSURE');
   const members=[],used=new Set(),seen=new Set();
   for(const path of paths) {
     if(typeof path!=='string' || !/^[A-Za-z0-9._/-]{1,240}$/.test(path) || path.includes('..') ||
