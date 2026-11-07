@@ -26,6 +26,63 @@ The existing capture helper supplies window images and bounded input. It does no
 
 Disconnect revokes the local connection. Refreshing requires choosing and confirming a window again. Closing an abandoned tab expires its session within 90 seconds. Reload asks for a second press, saves the cubes, ends the current VR session, and reloads installed source. Reconnect the app and enter VR again. It does not apply or approve source changes: request changes through the existing chat and its normal review/installation gates.
 
+## Movable furniture, mass and permanent placement
+
+The existing #1717 room now treats its **table and keyboard console as separate
+movable assemblies**. Hold Quest grip over the table edge or keyboard body and
+translate the controller. The plastic material mass response is deliberately
+damped: the table has an approximate 10 kg feel and the keyboard about 3.8 kg.
+No virtual object is a weight-bearing real-world support. Xbox can aim, hold
+the left bumper and use the left stick for slower positioning; the launcher
+also exposes bounded 10 cm translation and 5 cm height nudges.
+
+**Release freezes the new location and saves both independent offsets** in
+`stephanos.spatial.furniture.v1`. Reopening the same local browser workspace
+restores exactly those saved positions; the assemblies do not spring back or
+reset merely because the controller releases, VR exits, the page reloads, or
+Seated/Standing changes. An explicit per-assembly Reset is the only way to
+return a saved assembly to its starting place. An unavailable or full storage
+store makes the movement session-only and reports that limitation visibly.
+
+The scene renderer, holographic keycaps, keyboard ray targets, grip/side-dial
+targets, walking obstacles, and movable cube collision contacts track the
+same furniture offsets. The original keyboard tilt and independent
+Seated/Standing height settings remain separate and unaffected. World bounds
+limit dragging; navigation and cube grab sources cannot simultaneously own
+a captured furniture controller. This is a physics-inspired heavy-mass visual
+feel with fixed stops, **not** haptic hardware resistance.
+
+## ChatGPT harness and real headset audio controls
+
+The **Check ChatGPT screen connection** button performs a read-only health
+check of the already installed private `127.0.0.1:4180` desktop capture
+helper. It cannot install, start or bypass that helper. When absent, launch
+the normal reviewed Spatial Workspace Windows shortcut, then use **Choose
+window**, select the real ChatGPT/Codex desktop window and accept the
+original Windows consent prompt. The **Show connected ChatGPT screen** button
+expands the actual native window preview; it does not invent a harness frame.
+Only after the helper supplies a current frame can keyboard actions and the
+original app's Voice button work.
+
+The launcher now also has a real **Find microphone & speakers**, **Test
+microphone**, **Stop mic test** and **Play speaker test** control. Device
+enumeration is browser-local; an explicit microphone test asks for microphone
+permission, analyzes audio level without recording/transmitting it, and
+stops and releases tracks when the user stops, hides the page or exits.
+Speaker test plays a short, low-volume local tone, selecting an output
+only if the browser provides a supported audio sink API. These tests **do
+not** route audio in the original ChatGPT app, do not start a ChatGPT Voice
+session, and do not claim real Quest headphones or microphone were verified.
+Open the connected app's **own Voice** button on the hologram and check the
+Windows sound output and input when necessary. PC browser via Quest Link /
+Air Link is required for the current private Windows helper; standalone Quest
+Browser cannot reach the PC's loopback service.
+
+These changes are accepted as delivered only after the original #1717
+independent source review, protected merge, exact-head local UI refresh and
+real physical headset trials. Source tests/host health alone are not full
+Quest/ChatGPT audio acceptance.
+
 ## Seated and standing comfort
 
 The existing launcher, keyboard and upright display share two explicit comfort
