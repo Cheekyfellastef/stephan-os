@@ -44,6 +44,7 @@ import {
   MAILBOX_OUTBOX_SEGMENT_MAX_BYTES,
   normalizePendingReceiptPublications,
   parseMailboxChildStatus,
+  projectMailboxGuardDiagnosticV1,
   pendingReceiptPublicationDigest,
   readJsonObject,
   runMailboxOutboxGuard,
@@ -318,6 +319,84 @@ function runGuard(f, options = {}) {
     ...options,
   });
 }
+
+test('typed guard diagnostics distinguish untouched invalid debt before and after child invocation', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const now = () => new Date('2026-11-07T15:20:00.000Z');
+  const invalid = { publicationId: 'fixture-original-publication', receipt: { requestId: '', state: 'DONE' } };
+  writeJson(f.statePath, { acceptedRequestIds: [], consumedRequestIds: [], pendingReceiptPublications: [invalid] });
+  const before = readFileSync(f.statePath);
+  let invoked = 0;
+  const denied = runGuard(f, { now, spawnSyncFn: () => { invoked++; throw Error('unexpected child'); } });
+  assert.equal(invoked, 0);
+  assert.equal(denied.blocker, 'MAILBOX_OUTBOX_GUARD_FAILED');
+  assert.equal(denied.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID');
+  assert.equal(denied.guardDiagnostic.stage, 'STATE_VALIDATION');
+  assert.equal(denied.guardDiagnostic.outcome, 'GUARD_BLOCKED');
+  assert.equal(denied.guardDiagnostic.childInvocationAttempted, false);
+  assert.equal(denied.guardDiagnostic.observedAtUtc, now().toISOString());
+  assert.deepEqual(readFileSync(f.statePath), before);
+  assert.equal(existsSync(f.deferredPath), false);
+  assert.equal(existsSync(`${f.deferredPath}.lock-v1.json`), false);
+  writeJson(f.statePath, { acceptedRequestIds: [], consumedRequestIds: [], pendingReceiptPublications: [] });
+  let postChildBytes;
+  const after = runGuard(f, { now, spawnSyncFn: () => {
+    invoked++;
+    writeJson(f.statePath, { acceptedRequestIds: [], consumedRequestIds: [], pendingReceiptPublications: [invalid] });
+    postChildBytes = readFileSync(f.statePath);
+    return { status: 0, stdout: '{}', stderr: '' };
+  } });
+  assert.equal(invoked, 1);
+  assert.equal(after.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID');
+  assert.equal(after.guardDiagnostic.stage, 'POST_CHILD_VALIDATION');
+  assert.equal(after.guardDiagnostic.childInvocationAttempted, true);
+  assert.deepEqual(readFileSync(f.statePath), postChildBytes);
+});
+
+test('typed guard diagnostics preserve single-flight busy and disclose no unknown error text', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const now = () => new Date('2026-11-07T15:20:00.000Z');
+  writeJson(f.statePath, { pendingReceiptPublications: [] });
+  let nested;
+  const completed = runGuard(f, { now, spawnSyncFn: () => {
+    nested = runGuard(f, { now, spawnSyncFn: () => { throw Error('overlapping child'); } });
+    return { status: 0, stdout: '{}', stderr: '' };
+  } });
+  assert.equal(completed.ok, true);
+  assert.equal(completed.guardDiagnostic.outcome, 'CHILD_SUCCEEDED');
+  assert.equal(completed.guardDiagnostic.reasonCode, 'NONE');
+  assert.equal(completed.guardDiagnostic.childInvocationAttempted, true);
+  assert.equal(nested.ok, false);
+  assert.equal(nested.guardDiagnostic.outcome, 'GUARD_BUSY');
+  assert.equal(nested.guardDiagnostic.stage, 'LOCK');
+  assert.equal(nested.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
+  assert.equal(nested.guardDiagnostic.childInvocationAttempted, false);
+  const secret = 'private-token=fixture C:\\private\\fixture.json';
+  const unknown = runGuard(f, { now, spawnSyncFn: () => { throw Error(secret); } });
+  assert.equal(unknown.guardDiagnostic.stage, 'CHILD_INVOCATION');
+  assert.equal(unknown.guardDiagnostic.reasonCode, 'MAILBOX_GUARD_FAILURE_UNCLASSIFIED');
+  assert.equal(unknown.guardDiagnostic.childInvocationAttempted, true);
+  assert.equal(JSON.stringify(unknown.guardDiagnostic).includes('private-token=fixture'), false);
+});
+
+test('guard diagnostic projection rejects open fields, accessors and inconsistent execution stages', () => {
+  const valid = { schemaVersion: 'stephanos.mailbox-guard-diagnostic.v1',
+    observedAtUtc: '2026-11-07T15:20:00.000Z', stage: 'STATE_VALIDATION',
+    outcome: 'GUARD_BLOCKED', reasonCode: 'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID', childInvocationAttempted: false };
+  assert.deepEqual(projectMailboxGuardDiagnosticV1(valid), valid);
+  for (const value of [null, [], { ...valid, requestId: 'private-request' },
+    { ...valid, reasonCode: 'PRIVATE_SECRET_VALUE' }, { ...valid, stage: 'INVENTED' },
+    { ...valid, outcome: 'CHILD_SUCCEEDED' }, { ...valid, childInvocationAttempted: true },
+    { ...valid, observedAtUtc: 'not-a-date' }, { ...valid, reasonCode: 'NONE' },
+    { ...valid, outcome: 'GUARD_BUSY' }, Object.assign(Object.create({ private: true }), valid)]) {
+    assert.equal(projectMailboxGuardDiagnosticV1(value), null);
+  }
+  let reads = 0;
+  const accessor = { ...valid };
+  Object.defineProperty(accessor, 'reasonCode', { enumerable: true, get() { reads++; return valid.reasonCode; } });
+  assert.equal(projectMailboxGuardDiagnosticV1(accessor), null);
+  assert.equal(reads, 0);
+});
 
 function writeLedgerFixture(f, entries, { headSequence = 0, storeId = '0123456789abcdef0123456789abcdef' } = {}) {
   const manifest = {
