@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const workflowUrl = new URL('../../.github/workflows/build-stephanos-ui.yml', import.meta.url);
 const pagesWorkflowUrl = new URL('../../.github/workflows/deploy-stephanos-pages.yml', import.meta.url);
-const proofJobs = ['scheduler-tests', 'runtime-guardrail-tests', 'surface-ignition-tests', 'vr-research-tests', 'build'];
+const proofJobs = ['scheduler-tests', 'runtime-guardrail-tests', 'surface-ignition-tests', 'vr-research-tests', 'spatial-browser-proof', 'build'];
 
 function rootBlock(source, name) {
   const lines = source.replace(/\r\n/g, '\n').split('\n');
@@ -102,7 +102,7 @@ test('workflow separation rejects PR deployment, missing required proof and cred
   }
 });
 
-test('Build Stephanos UI fans independent proof families into five parallel jobs with reviewer suites in separate custody lanes', async () => {
+test('Build Stephanos UI preserves the five existing parallel proof families alongside Spatial browser proof', async () => {
   const workflow = await readFile(workflowUrl, 'utf8');
   for (const job of ['scheduler-tests','runtime-guardrail-tests','surface-ignition-tests','vr-research-tests','build']) {
     assert.match(workflow, new RegExp(`^  ${job}:$`, 'm'));
@@ -203,4 +203,55 @@ test('Seed canonical imports use the exact release executable only after digest 
     workflow.replace('& $nodePath --test-reporter=tap', 'node --test-reporter=tap'),
     workflow.replace('Get-Command node -CommandType Application -ErrorAction Stop', 'Get-Command node'),
   ]) assert.throws(() => assertSeedNodeExecutableIdentity(changed));
+});
+
+
+function assertSpatialBrowserProofAuthority(workflow) {
+  const job = childBlock(rootBlock(workflow, 'jobs'), 'spatial-browser-proof');
+  for (const required of [
+    "    if: github.event_name == 'pull_request'",
+    '    runs-on: ubuntu-latest',
+    '    timeout-minutes: 10',
+    '          ref: ${{ github.event.pull_request.head.sha }}',
+    '          fetch-depth: 0',
+    '          persist-credentials: false',
+    '          SPATIAL_BASE_SHA: ${{ github.event.pull_request.base.sha }}',
+    '          SPATIAL_HEAD_SHA: ${{ github.event.pull_request.head.sha }}',
+    '          test "$(git rev-parse HEAD)" = "$SPATIAL_HEAD_SHA"',
+    '          if git diff --quiet "$SPATIAL_BASE_SHA" "$SPATIAL_HEAD_SHA" --',
+    "            apps/spatial-bridge 'tests/spatial-*'",
+    '            .github/workflows/build-stephanos-ui.yml package.json; then',
+    '            if [ "$status" -ne 1 ]; then exit "$status"; fi',
+    '        run: node --test tests/spatial-*.test.mjs',
+    '        run: npm install --ignore-scripts --no-save --no-package-lock --no-audit --no-fund @playwright/test@1.54.0',
+    '        run: npx --no-install playwright install --with-deps chromium',
+    '        run: node tests/spatial-workspace-comfort.browser.mjs --output-dir "${{ runner.temp }}/spatial-comfort-browser-proof"',
+    "        if: always() && steps.spatial.outputs.required == 'true'",
+    '          name: spatial-comfort-browser-${{ github.event.pull_request.head.sha }}',
+    '          path: ${{ runner.temp }}/spatial-comfort-browser-proof',
+    '          if-no-files-found: error',
+  ]) assert.ok(job.includes(required), `missing browser-proof boundary: ${required}`);
+  assert.doesNotMatch(job, /(?:permissions|secrets|environment):|continue-on-error|self-hosted|pull_request_target/);
+  assert.doesNotMatch(job, /\$\{\{\s*secrets\./);
+}
+
+test('Spatial browser proof uses the exact PR head with read-only hosted custody and bounded evidence output', async () => {
+  assertSpatialBrowserProofAuthority(await readFile(workflowUrl, 'utf8'));
+});
+
+test('Spatial browser proof rejects authority widening, head substitution, concealed failures and missing evidence', async () => {
+  const workflow = await readFile(workflowUrl, 'utf8');
+  for (const [before, after] of [
+    ["    if: github.event_name == 'pull_request'", '    if: always()'],
+    ['          ref: ${{ github.event.pull_request.head.sha }}', '          ref: main'],
+    ['          persist-credentials: false', '          persist-credentials: true'],
+    ['          fetch-depth: 0', '          fetch-depth: 1'],
+    ['            if [ "$status" -ne 1 ]; then exit "$status"; fi', '            true'],
+    ['        run: npx --no-install playwright install --with-deps chromium', '        run: true'],
+    ['          if-no-files-found: error', '          if-no-files-found: ignore'],
+    ['    timeout-minutes: 10', '    timeout-minutes: 10\n    permissions:\n      contents: write'],
+  ]) {
+    assert.notEqual(workflow.replace(before, after), workflow, before);
+    assert.throws(() => assertSpatialBrowserProofAuthority(workflow.replace(before, after)));
+  }
 });

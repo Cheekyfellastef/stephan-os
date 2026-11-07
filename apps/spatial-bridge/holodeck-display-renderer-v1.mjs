@@ -1,5 +1,6 @@
 import { HOLODECK_DISPLAY as d, HOLODECK_CONSOLE as c } from './holodeck-layout-v1.mjs';
-export function createHolodeckDisplayRenderer({gl,screen}) {
+import { consolePointToWorld } from './holodeck-comfort-v1.mjs';
+export function createHolodeckDisplayRenderer({gl,screen,comfort=screen?.comfort}) {
   const shaders=[],buffers=[],textures=[];let program,version=-1;
   function dispose(){buffers.forEach(b=>gl.deleteBuffer(b));textures.forEach(t=>gl.deleteTexture(t));shaders.forEach(s=>gl.deleteShader(s));if(program)gl.deleteProgram(program);}
   try {
@@ -22,6 +23,7 @@ export function createHolodeckDisplayRenderer({gl,screen}) {
     const uv=[[0,0],[1,0],[1,1],[0,1]],vertices=[];
     for(const offset of [0,4])for(const index of [0,1,2,0,2,3])vertices.push(...positions[offset+index],...uv[index]);
     const buffer=gl.createBuffer();buffers.push(buffer);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(vertices),gl.STATIC_DRAW);
+    let tiltVersion=0;
     for(let i=0;i<2;i++) {
       const texture=gl.createTexture();textures.push(texture);gl.bindTexture(gl.TEXTURE_2D,texture);
       for(const key of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T])gl.texParameteri(gl.TEXTURE_2D,key,gl.CLAMP_TO_EDGE);
@@ -31,6 +33,14 @@ export function createHolodeckDisplayRenderer({gl,screen}) {
     const projection=gl.getUniformLocation(program,'uDisplayProjection'),view=gl.getUniformLocation(program,'uDisplayView'),sampler=gl.getUniformLocation(program,'uDisplayTexture');
     return {
       update(){
+        const tilt=comfort?.getState().keyboardTilt??0;
+        if(tilt!==tiltVersion){
+          tiltVersion=tilt;
+          const tilted=[];
+          for(const offset of [0,4])for(const index of [0,1,2,0,2,3])
+            tilted.push(...(offset?consolePointToWorld(positions[offset+index],tilt):positions[index]),...uv[index]);
+          gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(tilted),gl.DYNAMIC_DRAW);
+        }
         const frame=screen.render();if(frame.revision===version)return;version=frame.revision;
         gl.activeTexture(gl.TEXTURE0);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);
         [frame.screen,frame.console].forEach((canvas,i)=>{gl.bindTexture(gl.TEXTURE_2D,textures[i]);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,canvas);});
