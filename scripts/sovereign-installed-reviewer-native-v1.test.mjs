@@ -161,7 +161,23 @@ function Child([string]$command,[int]$deadline,[Func[bool]]$guard){
 $child=Child "[Console]::WriteLine('fixture-complete')" 10000 $safe
 Require ([bool](Field $child 'Ok')) 'NATIVE_BENIGN_CHILD_FAILED'
 Require ([bool](Field $child 'ZeroActive')) 'NATIVE_SUCCESS_NOT_DRAINED'
-Require ((Field $child 'Output').Trim() -eq 'fixture-complete') 'NATIVE_OUTPUT_CHANGED'
+$nativeOutput=[string](Field $child 'Output')
+if($nativeOutput.Trim() -ne 'fixture-complete'){
+ # Diagnose only these test-controlled children. Retain the exact failing
+ # assertion and production UTF-8/terminal checks; never normalize output.
+ function NativeTextObservation([string]$value){
+  $prefix=$value.Substring(0,[Math]::Min(64,$value.Length))
+  $codes=@($prefix.ToCharArray()|ForEach-Object{([int]$_).ToString('X4')})
+  return @{length=$value.Length;prefixUtf16=$codes}
+ }
+ $rawCommand='[byte[]]$bytes=[Text.Encoding]::UTF8.GetBytes(''fixture-complete'');$stdout=[Console]::OpenStandardOutput();$stdout.Write($bytes,0,$bytes.Length);$stdout.Flush()'
+ $rawProbe=Child $rawCommand 10000 $safe
+ $observation=@{consoleOutput=(NativeTextObservation $nativeOutput);rawUtf8Probe=@{
+  ok=[bool](Field $rawProbe 'Ok');zeroActive=[bool](Field $rawProbe 'ZeroActive');
+  output=(NativeTextObservation ([string](Field $rawProbe 'Output')))};qualified=$false}
+ [Console]::Error.WriteLine('REVIEWER_NATIVE_OUTPUT_DIAGNOSTIC='+($observation|ConvertTo-Json -Compress -Depth 5))
+}
+Require ($nativeOutput.Trim() -eq 'fixture-complete') 'NATIVE_OUTPUT_CHANGED'
 $loaderSource=[IO.Path]::Combine($area,'loader fixture with spaces');[IO.Directory]::CreateDirectory([IO.Path]::Combine($loaderSource,'scripts'))|Out-Null
 [IO.File]::WriteAllText([IO.Path]::Combine($loaderSource,'scripts','sovereign-installed-reviewer-loader-v1.mjs'),
  'export async function resolve(s,c,next){return next(s,c);}');
