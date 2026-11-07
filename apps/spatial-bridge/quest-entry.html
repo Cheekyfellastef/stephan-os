@@ -190,12 +190,12 @@
     }
     const previewKeyboardScroll=document.createElement('div');previewKeyboardScroll.className='console-keyboard-scroll';
     previewKeyboardScroll.setAttribute('role','region');previewKeyboardScroll.setAttribute('aria-label','Console keyboard scroll area');previewKeyboardScroll.tabIndex=0;
-    const previewKeyboard=document.createElement('div');previewKeyboard.style.cssText='position:relative;aspect-ratio:4/1;min-width:900px;background:#071c29';
+    const previewKeyboard=document.createElement('div');previewKeyboard.style.cssText='position:relative;aspect-ratio:4/1;min-width:960px;background:#071c29';
     previewKeyboard.setAttribute('aria-label','Spatial console keyboard preview');
     for(const control of SCREEN_BUTTONS){
       const button=document.createElement('button');button.type='button';button.textContent=control.label;
       button.setAttribute('aria-label',control.id.startsWith('key:')?`Type ${control.label}`:control.label);
-      button.style.cssText=`position:absolute;left:${control.x*100}%;top:${control.y*100}%;width:${control.w*100}%;height:${control.h*100}%;min-height:0;padding:2px;border-radius:0;font-size:12px;`;
+      button.style.cssText=`position:absolute;left:${control.x*100}%;top:${control.y*100}%;width:${control.w*100}%;height:${control.h*100}%;min-height:0;padding:2px;border-radius:0;font-size:12px;white-space:nowrap;`;
       button.addEventListener('click',()=>{if(!immersiveActive){screen.action(control.id);comfort.flush();}});previewKeyboard.append(button);
     }
     previewKeyboardScroll.append(previewKeyboard);document.getElementById('console-preview').append(previewKeyboardScroll);
