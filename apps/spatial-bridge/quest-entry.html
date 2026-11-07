@@ -31,6 +31,11 @@
     #session-reason { margin: 0; min-height: 1.4em; color: #ffd38a; }
     #holodeck-canvas { width: 100%; aspect-ratio: 16 / 8; border: 1px solid rgba(120,216,255,.25); border-radius: 12px; background: linear-gradient(#061226, #02040a); }
     .truth-boundary { color: #ffd38a; line-height: 1.5; }
+    .comfort-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; margin: 18px 0; }
+    .comfort-grid label { display: flex; justify-content: space-between; gap: 12px; font-weight: 650; }
+    .comfort-grid input { width: 100%; min-height: 44px; accent-color: #78d8ff; cursor: pointer; }
+    .comfort-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .comfort-modes [aria-pressed="true"] { border-color: #8ff7c1; background: #155248; color: #d9fff0; }
   </style>
 </head>
 <body>
@@ -47,6 +52,30 @@
       <p id="cube-status" class="muted" aria-live="polite">Glass cubes · 5.7 cm and 11.4 cm · gravity and room collisions</p>
       <p id="cube-save-status" class="muted" aria-live="polite">Loading saved cube positions.</p>
       <p id="controller-status" aria-live="polite">Enter VR to detect controllers. For Xbox, connect it to the device running this browser and press a button to wake it.</p>
+    </section>
+    <section class="panel" aria-label="Seated and standing comfort">
+      <span class="eyebrow">Make the room fit you</span>
+      <h2>Seated &amp; standing</h2>
+      <div class="comfort-modes" aria-label="Comfort profile">
+        <button id="comfort-seated" type="button" aria-pressed="true">Seated</button>
+        <button id="comfort-standing" type="button" aria-pressed="false">Standing</button>
+      </div>
+      <p class="muted">Each mode remembers its own height offset and keyboard angle. Positive height lifts your viewpoint.</p>
+      <div class="comfort-grid">
+        <div>
+          <label for="comfort-height">Height offset <output id="comfort-height-value" for="comfort-height">+0 cm</output></label>
+          <input id="comfort-height" type="range" min="-100" max="100" step="1" value="0" />
+          <div class="comfort-modes"><button id="comfort-lower" type="button">Lower 1 cm</button><button id="comfort-raise" type="button">Raise 1 cm</button></div>
+        </div>
+        <div>
+          <label for="comfort-tilt">Keyboard angle <output id="comfort-tilt-value" for="comfort-tilt">0.0° · flat</output></label>
+          <input id="comfort-tilt" type="range" min="0" max="90" step="0.1" value="0" />
+          <div class="comfort-modes"><button id="comfort-flat" type="button">Flat · 0°</button><button id="comfort-vertical" type="button">Vertical · 90°</button></div>
+        </div>
+      </div>
+      <div class="comfort-modes"><button id="comfort-reset" type="button">Reset Seated profile</button><button id="comfort-preview" type="button" aria-pressed="false">View keyboard</button></div>
+      <p class="muted">In VR, hold trigger or grip on either large side dial and turn your controller to tilt the keyboard. Release to keep the angle. You can also point at the height and tilt buttons on the upright display or keyboard; press Quest trigger or Xbox A, and hold to adjust.</p>
+      <p id="comfort-save-status" class="muted" role="status"></p>
     </section>
     <section class="panel" aria-label="Spatial ChatGPT console">
       <h2>Holographic console</h2>
@@ -98,6 +127,7 @@
     import { createHolodeckCubeStore } from './holodeck-cube-store-v1.mjs';
     import { createHolodeckWindowClient } from './holodeck-window-client-v1.mjs';
     import { createHolodeckScreen, SCREEN_BUTTONS } from './holodeck-screen-v1.mjs';
+    import { createHolodeckComfort } from './holodeck-comfort-v1.mjs';
     import { createSpatialWorkspaceTelemetryRecorderV1 } from './spatial-telemetry-client.mjs';
     const webxrStatus = document.getElementById('webxr-status');
     const sessionStatus = document.getElementById('session-status');
@@ -116,6 +146,21 @@
     let previewRenderer = null;
     let immersiveActive = false;
     let immersiveSession = null;
+    let inspectKeyboard = false;
+    function refreshComfortUI(state) {
+      for(const mode of ['seated','standing'])document.getElementById('comfort-'+mode).setAttribute('aria-pressed',String(state.mode===mode));
+      const height=Math.round(state.heightOffset*100),tilt=state.keyboardTilt;
+      document.getElementById('comfort-height').value=height;
+      document.getElementById('comfort-height-value').textContent=(height>=0?'+':'')+height+' cm';
+      document.getElementById('comfort-tilt').value=tilt;
+      document.getElementById('comfort-tilt-value').textContent=tilt.toFixed(1)+'°'+(tilt===0?' · flat':tilt===90?' · vertical':'');
+      document.getElementById('comfort-reset').textContent='Reset '+(state.mode==='seated'?'Seated':'Standing')+' profile';
+    }
+    const comfort=createHolodeckComfort({
+      onChange:state=>{refreshComfortUI(state);if(!immersiveActive)drawPreview();},
+      onStatus:status=>{document.getElementById('comfort-save-status').textContent=status.message;},
+    });
+    refreshComfortUI(comfort.getState());
     const windowSelector=document.getElementById('desktop-window');
     const client=createHolodeckWindowClient({onChange:state=>{
       document.getElementById('window-status').textContent=state.message;
@@ -127,8 +172,8 @@
       }));
       if(!immersiveActive)drawPreview();
     }});
-    const screen=createHolodeckScreen({client,onStatus:()=>{if(!immersiveActive)drawPreview();},onReload:async()=>{
-      cubeScene.stop();await client.stop();try{await immersiveSession?.end();}catch{}location.reload();
+    const screen=createHolodeckScreen({client,comfort,onStatus:()=>{if(!immersiveActive)drawPreview();},onReload:async()=>{
+      comfort.flush();cubeScene.stop();await client.stop();try{await immersiveSession?.end();}catch{}location.reload();
     }});
     const surfaces=screen.render();
     for(const [kind,element] of [['screen',surfaces.screen]]){
@@ -136,7 +181,7 @@
       element.addEventListener('click',event=>{
         if(immersiveActive)return;
         const r=element.getBoundingClientRect(),u=(event.clientX-r.left)/r.width,v=(event.clientY-r.top)/r.height;
-        if(kind==='screen')screen.point(u,v,true);
+        if(kind==='screen'){screen.point(u,v,true);comfort.flush();}
         else{const button=SCREEN_BUTTONS.find(b=>u>=b.x&&u<=b.x+b.w&&v>=b.y&&v<=b.y+b.h);if(button)screen.action(button.id);}
       });document.getElementById('console-preview').append(element);
     }
@@ -146,7 +191,7 @@
       const button=document.createElement('button');button.type='button';button.textContent=control.label;
       button.setAttribute('aria-label',control.id.startsWith('key:')?`Type ${control.label}`:control.label);
       button.style.cssText=`position:absolute;left:${control.x*100}%;top:${control.y*100}%;width:${control.w*100}%;height:${control.h*100}%;min-height:0;padding:2px;border-radius:0;font-size:12px;`;
-      button.addEventListener('click',()=>{if(!immersiveActive)screen.action(control.id);});previewKeyboard.append(button);
+      button.addEventListener('click',()=>{if(!immersiveActive){screen.action(control.id);comfort.flush();}});previewKeyboard.append(button);
     }
     document.getElementById('console-preview').append(previewKeyboard);
     document.getElementById('choose-window').addEventListener('click',()=>client.discover());
@@ -156,6 +201,20 @@
       document.getElementById('cube-save-status').textContent = message;
     }});
     const cubeScene = createHolodeckCubeScene({store:cubeStore});
+    for(const mode of ['seated','standing'])document.getElementById('comfort-'+mode).addEventListener('click',()=>comfort.setMode(mode));
+    for(const [id,set] of [['comfort-height',value=>comfort.setHeightOffset(value/100)],['comfort-tilt',value=>comfort.setKeyboardTilt(value)]]) {
+      const input=document.getElementById(id);
+      input.addEventListener('input',()=>set(Number(input.value)));
+      input.addEventListener('change',()=>comfort.flush());
+    }
+    for(const [id,action] of [['comfort-lower','height-down'],['comfort-raise','height-up'],['comfort-flat','tilt-flat'],['comfort-vertical','tilt-vertical'],['comfort-reset','comfort-reset']])
+      document.getElementById(id).addEventListener('click',()=>{screen.action(action);comfort.flush();});
+    document.getElementById('comfort-preview').addEventListener('click',()=>{
+      inspectKeyboard=!inspectKeyboard;
+      document.getElementById('comfort-preview').setAttribute('aria-pressed',String(inspectKeyboard));
+      document.getElementById('comfort-preview').textContent=inspectKeyboard?'View whole room':'View keyboard';
+      drawPreview();canvas.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
+    });
     const selectedCube = () => cubeScene.getBody(document.getElementById('preview-cube').value);
     let inspectCube = false;
     let previewFrame = null;
@@ -165,7 +224,7 @@
       try {
         const gl = canvas.getContext('webgl', { xrCompatible: true, alpha: false, antialias: true });
         if (!gl) throw new Error('graphics unavailable');
-        previewRenderer ??= createHolodeckRoomRenderer({ gl,screen });
+        previewRenderer ??= createHolodeckRoomRenderer({ gl,screen,comfort });
         const scale = Math.min(window.devicePixelRatio || 1, 2);
         const width = Math.max(1, Math.round(canvas.clientWidth * scale));
         const height = Math.max(1, Math.round(canvas.clientHeight * scale));
@@ -174,7 +233,8 @@
         const cubes = cubeScene.getStates();
         const target = cubes[0].position.map((v,i)=>(v+cubes[1].position[i])/2);
         const distance = Math.max(0.55, Math.hypot(...cubes[0].position.map((v,i)=>v-cubes[1].position[i])) * 1.4);
-        const camera = inspectCube ? { target, eye:target.map((v,i)=>v+distance*[0.5,0.4,1.1][i]) } : {eye:[3.7,2.2,1.7],target:[0,1.5,-4.0]};
+        const camera = inspectKeyboard ? {eye:[2.4,1.6+comfort.getState().heightOffset,-2.4],target:[0,1.3,-5.05]}
+          : inspectCube ? { target, eye:target.map((v,i)=>v+distance*[0.5,0.4,1.1][i]) } : {eye:[3.7,2.2,1.7],target:[0,1.5,-4.0]};
         previewRenderer.drawPreview({ cube:{cubes}, ...camera });
       } catch {
         document.getElementById('preview-status').textContent = 'Room preview unavailable on this browser.';
@@ -200,10 +260,10 @@
       previewFrame = requestAnimationFrame(animatePreview);
     }
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden) { cubeScene.stop(); previewTime = null; }
+      if (document.hidden) { comfort.flush();cubeScene.stop(); previewTime = null; }
       else if (!immersiveActive) playPreview();
     });
-    window.addEventListener('pagehide', event => {cubeScene.stop();void client.pagehide(event);});
+    window.addEventListener('pagehide', event => {comfort.flush();cubeScene.stop();void client.pagehide(event);});
     window.addEventListener('pageshow', event => {if(event.persisted&&!immersiveActive)playPreview();});
     document.getElementById('preview-cube').addEventListener('change', playPreview);
     for (const [id,action] of Object.entries({
@@ -243,7 +303,7 @@
       previewRenderer?.dispose();
       previewRenderer = null;
       const result = await enterHolodeckBaseline({
-        canvas, cubeScene,screen,
+        canvas, cubeScene,screen,comfort,
         onFrame: (frameTruth) => activeTelemetry?.recordFrame(frameTruth),
         onCubeStatus: ({ state }) => {
           document.getElementById('cube-status').textContent = `Glass cubes · ${state === 'held' ? 'held — release to drop or throw' : state}`;

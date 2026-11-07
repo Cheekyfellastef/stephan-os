@@ -14,6 +14,44 @@ The original app's image attachment and microphone controls remain on the hologr
 
 Disconnect revokes the local connection. Refreshing requires choosing and confirming a window again. Closing an abandoned tab expires its session within 90 seconds. Reload room asks for a second press, saves the cubes, ends the current VR session, and reloads installed source. Reconnect the app and enter VR again. It does not apply or approve source changes: request changes through the existing chat and its normal review/installation gates.
 
+## Seated and standing comfort
+
+The existing launcher, keyboard and upright display share two explicit comfort
+profiles: **Seated** and **Standing**. Each remembers its own height offset
+(-100 to +100 cm) and continuous keyboard tilt (0° flat to 90° vertical).
+The launcher sliders also offer 0.1° angle adjustment; in VR, the height and
+tilt buttons step by 1 cm and 1°, with hold-to-repeat.
+
+Use either large side dial with a Quest controller: point and hold trigger,
+or grab with grip, then turn the controller about the keyboard's hinge axis.
+The current angle is the starting point; release holds and saves it. Both
+knobs drive the same hinge. Only one hand owns adjustment at a time, and
+tracking loss, disconnection, hidden sessions or a mode change end a grab.
+While a dial is held, its grip cannot also pick up a cube and stick movement
+is paused. A fresh press is required after tracking recovers.
+
+Quest trigger and Xbox gaze plus A can select the comfort controls on the
+upright display even when the keyboard starts below or above the seated
+viewpoint. These controls work without connecting a desktop window. Existing
+walking, smooth turning and cube controls retain their normal mappings.
+
+The selected height translates both eyes and controller interactions together,
+without changing physical headset tracking. Recentring preserves that profile's
+height. Switching modes uses the saved absolute offset once; it does not add
+one profile's offset to another. Reset affects only the selected profile.
+
+The keyboard surface and its hit targets share one front-edge hinge transform.
+Its supporting desk and cube collision surface stay fixed. Both profiles and
+the selected mode are saved as local room preferences; privacy-restricted or
+full browser storage falls back to session-only adjustment with a visible
+message. Settings save on release, profile switching, reset and session/page
+exit, rather than writing storage every XR frame. No native input permissions,
+adapter binaries or desktop-window connection are changed by these controls.
+
+Source and browser checks do not establish Quest fit or comfort. Final headset
+acceptance checks both postures, 0°/37°/90° key selection, either knob, Xbox
+adjustment, tracking loss and reopening the room with saved profiles.
+
 ## Windows installation
 
 After protected review and installation approval, run `scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1` from the reviewed canonical checkout. It builds the helper with Visual Studio Build Tools (Desktop development with C++) and a Windows SDK containing C++/WinRT, verifies its source/binary hashes, and installs the normal shortcut. Generated binaries and receipts live under ignored `.stephanos/local-state-checkpoints/spatial-window`, never in source control.

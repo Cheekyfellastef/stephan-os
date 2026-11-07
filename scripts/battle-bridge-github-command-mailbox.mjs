@@ -42,7 +42,9 @@ import {
   buildBattleBridgeGitHubCommandReceipt,
   executeBattleBridgeGitHubCommand,
   executeBattleBridgeGitHubCommandBatch,
+  hasUnsafeMailboxTelemetryText,
   isTerminalizableOwnerCommandBlocker,
+  projectMailboxReceiptRequestId,
   selectBattleBridgeGitHubCommandBatch,
 } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 import { dispatchExactHeadWindowsBrowserProof } from '../shared/agents/exactHeadWindowsBrowserProofDispatch.mjs';
@@ -123,7 +125,6 @@ const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
   FRONTEND_VISIBILITY_START_OPERATION,
 ]);
-const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
 const SAFE_CONVEYOR_DECISIONS = new Set(Object.values(CRITICAL_BACKLOG_DECISION));
 const RECOVERY_MESH_SAFE_WAKE_ADAPTER_BLOCKERS = Object.freeze(new Set([
   'RECOVERY_PATH_REPARSE_ANCESTOR_REJECTED',
@@ -260,7 +261,7 @@ function safeOptionalNonNegativeInteger(value) {
 
 function safeTelemetryText(value, limit = 500) {
   const normalized = String(value ?? '').trim();
-  if (UNSAFE_TELEMETRY_PATTERN.test(normalized)) return '';
+  if (hasUnsafeMailboxTelemetryText(normalized)) return '';
   return normalized.length > limit ? normalized.slice(0, limit) : normalized;
 }
 
@@ -2453,7 +2454,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   const { requested: requestedPullRequestHead, observed: observedPullRequestHead } = projectedPullRequestHeads(receipt, operationResult);
   return Object.freeze({
     schemaVersion: safeTelemetryText(receipt?.schemaVersion, 120),
-    requestId: safeTelemetryText(receipt?.requestId, 160),
+    requestId: projectMailboxReceiptRequestId(receipt?.requestId),
     operation: safeTelemetryText(receipt?.operation, 120),
     state: safeTelemetryText(receipt?.state, 80).toUpperCase(),
     acceptedAt: safeTelemetryText(receipt?.acceptedAt, 80),
@@ -2489,7 +2490,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       ok: execution?.ok !== false,
       verdict: safeTelemetryText(execution?.verdict, 120).toUpperCase(),
       operation: safeTelemetryText(execution?.operation || receipt?.operation, 120),
-      requestId: safeTelemetryText(execution?.requestId || receipt?.requestId, 160),
+      requestId: projectMailboxReceiptRequestId(receipt?.requestId),
     }),
     workerTelemetry,
     operationResult: Object.freeze({
@@ -2945,7 +2946,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
   const { requested: requestedPullRequestHead, observed: observedPullRequestHead } = projectedPullRequestHeads(receipt, operationResult);
   const compactReceipt = {
     schemaVersion: safeTelemetryText(receipt?.schemaVersion, 120),
-    requestId: safeTelemetryText(receipt?.requestId, 160),
+    requestId: projectMailboxReceiptRequestId(receipt?.requestId),
     operation: safeTelemetryText(receipt?.operation, 120),
     repository: safeTelemetryText(receipt?.repository, 180),
     issueNumber: Number(receipt?.issueNumber || 0),
@@ -2983,7 +2984,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
       ok: execution?.ok !== false,
       verdict: safeTelemetryText(execution?.verdict, 120).toUpperCase(),
       operation: safeTelemetryText(execution?.operation || receipt?.operation, 120),
-      requestId: safeTelemetryText(execution?.requestId || receipt?.requestId, 160),
+      requestId: projectMailboxReceiptRequestId(receipt?.requestId),
       result: {
         ok: operationResult?.ok !== false,
         blocker: safeTelemetryText(operationResult?.blocker, 240),
@@ -3102,7 +3103,7 @@ export function checkpointTerminalMailboxReceipt(state, receipt, {
   persist = saveState,
 } = {}) {
   if (!state || typeof state !== 'object' || !receipt || !['DONE', 'BLOCKED'].includes(receipt.state)
-    || !SAFE_REQUEST_ID_PATTERN.test(String(receipt.requestId || '')) || typeof persist !== 'function') {
+    || !projectMailboxReceiptRequestId(receipt.requestId) || typeof persist !== 'function') {
     throw new Error('MAILBOX_TERMINAL_CHECKPOINT_INVALID');
   }
   state.consumedRequestIds = [...new Set([
@@ -3120,7 +3121,7 @@ export function checkpointAcceptedMailboxReceipt(state, receipt, {
   persist = saveState,
 } = {}) {
   if (!state || typeof state !== 'object' || !receipt || receipt.state !== 'ACCEPTED'
-    || !SAFE_REQUEST_ID_PATTERN.test(String(receipt.requestId || '')) || typeof persist !== 'function') {
+    || !projectMailboxReceiptRequestId(receipt.requestId) || typeof persist !== 'function') {
     throw new Error('MAILBOX_ACCEPTED_CHECKPOINT_INVALID');
   }
   state.acceptedRequestIds = [...new Set([
@@ -3138,7 +3139,7 @@ export function renewAcceptedMailboxReceiptHeartbeat(state, receipt, heartbeatAt
 } = {}) {
   const timestampMs = Date.parse(String(heartbeatAt || ''));
   if (!state || typeof state !== 'object' || !receipt || receipt.state !== 'ACCEPTED'
-    || !SAFE_REQUEST_ID_PATTERN.test(String(receipt.requestId || ''))
+    || !projectMailboxReceiptRequestId(receipt.requestId)
     || !Number.isFinite(timestampMs) || typeof persist !== 'function' || typeof writeReceiptFn !== 'function') {
     throw new Error('MAILBOX_ACCEPTED_HEARTBEAT_RENEWAL_INVALID');
   }
@@ -3152,7 +3153,7 @@ export function renewAcceptedMailboxReceiptHeartbeat(state, receipt, heartbeatAt
 }
 
 export function buildRejectedMailboxTerminalReceipt(rejection, completedAt) {
-  if (!rejection?.command || !SAFE_REQUEST_ID_PATTERN.test(String(rejection.command.requestId || ''))
+  if (!rejection?.command || !projectMailboxReceiptRequestId(rejection.command.requestId)
     || !isTerminalizableOwnerCommandBlocker(rejection.blocker)
     || !Number.isFinite(Date.parse(String(completedAt || '')))) {
     throw new Error('MAILBOX_REJECTION_RECEIPT_INVALID');
@@ -3188,6 +3189,9 @@ export function checkpointMailboxReceiptPublication(state, receipt, publication,
   if (!state || typeof state !== 'object' || !receipt || typeof persist !== 'function') {
     throw new Error('MAILBOX_RECEIPT_PUBLICATION_CHECKPOINT_INVALID');
   }
+  if (!projectMailboxReceiptRequestId(receipt.requestId)) {
+    throw new Error('MAILBOX_RECEIPT_PUBLICATION_IDENTITY_UNSAFE');
+  }
   const publicationId = receiptPublicationId(receipt);
   const pending = (Array.isArray(state.pendingReceiptPublications) ? state.pendingReceiptPublications : [])
     .filter((entry) => entry?.publicationId !== publicationId)
@@ -3215,6 +3219,9 @@ export function flushMailboxReceiptPublicationOutbox(state, {
     throw new Error('MAILBOX_RECEIPT_OUTBOX_INVALID');
   }
   const pending = Array.isArray(state.pendingReceiptPublications) ? state.pendingReceiptPublications : [];
+  if (pending.some((entry) => !projectMailboxReceiptRequestId(entry?.receipt?.requestId))) {
+    throw new Error('MAILBOX_PENDING_RECEIPT_IDENTITY_UNSAFE');
+  }
   const retained = [];
   let attemptedCount = 0;
   let publishedCount = 0;

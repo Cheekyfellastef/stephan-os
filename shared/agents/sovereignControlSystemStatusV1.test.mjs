@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { SOVEREIGN_MAINTENANCE_OWNER_VERSION } from './sovereignMaintenanceAdmissionV1.mjs';
 import { SOVEREIGN_CONTROL_SYSTEM_INSPECTION_SCHEMA_V1, SOVEREIGN_CONTROL_SYSTEM_STATUS_SCHEMA_V1,
   SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1, projectSovereignControlSystemStatusV1,
   sovereignControlSystemDiagnosticCodeV1 } from './sovereignControlSystemStatusV1.mjs';
@@ -56,6 +58,100 @@ test('persisted public observation revalidates identically through ledger, beaco
   const denied = projectSovereignControlSystemStatusV1(input);
   assert.equal(denied.observationCompleted, true);
   assert.deepEqual(projectSovereignControlSystemStatusV1(denied), denied);
+});
+
+function protocol(failedPredicates = []) {
+  return { available: true, matches: true, failedPredicates,
+    expectedVersion: SOVEREIGN_MAINTENANCE_OWNER_VERSION,
+    observedVersion: failedPredicates.includes('OWNER_VERSION') ? 'OTHER' : SOVEREIGN_MAINTENANCE_OWNER_VERSION,
+    observedAtUtc: NOW, reason: failedPredicates.length ? 'SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED' : '' };
+}
+
+test('historical observations without protocol retain their exact persisted bytes and hash', () => {
+  const projected = projectSovereignControlSystemStatusV1(inspection());
+  assert.equal(Object.hasOwn(projected, 'protocol'), false);
+  // Captured from the unchanged db8c public projection before this extension.
+  const bytes = JSON.stringify(projected);
+  assert.equal(Buffer.byteLength(bytes), 1317);
+  assert.equal(createHash('sha256').update(bytes).digest('hex'),
+    '5dfe16f064029a63a139a4e54d245661916ef5c3d202d9791a2f9d03299fe555');
+  assert.equal(JSON.stringify(projectSovereignControlSystemStatusV1(JSON.parse(bytes))), bytes);
+});
+
+test('closed protocol diagnostics derive matches and never change existing completion or qualification', () => {
+  const baseline = projectSovereignControlSystemStatusV1(inspection());
+  for (const failed of [[], ['OBSERVATION_SCOPE'], ['NO_ADMISSION', 'OWNER_VERSION'],
+    ['HTTP_OK', 'HEALTH_OK', 'SERVICE', 'OBSERVATION_SCOPE', 'NO_ADMISSION', 'OWNER_VERSION']]) {
+    const input = inspection(); input.protocol = { ...protocol(failed),
+      secret: 'PRIVATE_TOKEN', dispatchAllowed: true, executionCustodyReleased: true };
+    const result = projectSovereignControlSystemStatusV1(input);
+    assert.equal(result.protocol.available, true);
+    assert.equal(result.protocol.matches, failed.length === 0);
+    assert.deepEqual(result.protocol.failedPredicates, failed);
+    const { protocol: observed, ...original } = result;
+    assert.deepEqual(original, baseline);
+    assert.equal(JSON.stringify(observed).includes('PRIVATE'), false);
+    assert.equal(Object.hasOwn(observed, 'dispatchAllowed'), false);
+    assert.equal(Object.hasOwn(observed, 'executionCustodyReleased'), false);
+    assert.equal(Object.isFrozen(observed.failedPredicates), true);
+    assert.deepEqual(projectSovereignControlSystemStatusV1(JSON.parse(JSON.stringify(result))), result);
+  }
+});
+
+test('protocol rejects inconsistent versions, order, timestamps and accessor arrays without evaluating them', () => {
+  let invoked = 0;
+  const accessor = []; Object.defineProperty(accessor, '0', { get() { invoked++; return 'OWNER_VERSION'; } });
+  const symbol = ['OWNER_VERSION']; symbol[Symbol('secret')] = true;
+  const extra = ['OWNER_VERSION']; extra.secret = 'PRIVATE_TOKEN';
+  const inherited = ['OWNER_VERSION']; Object.setPrototypeOf(inherited, null);
+  const leaf = {}; Object.defineProperty(leaf, 'available', { get() { invoked++; return true; } });
+  const malformed = [leaf,
+    { ...protocol(), expectedVersion: 'PRIVATE_VERSION' },
+    { ...protocol(), observedVersion: 'PRIVATE_VERSION' },
+    { ...protocol(), observedVersion: 'OTHER' }, { ...protocol(['OWNER_VERSION']), observedVersion: SOVEREIGN_MAINTENANCE_OWNER_VERSION },
+    { ...protocol(), reason: 'PRIVATE_ERROR' }, { ...protocol(), observedAtUtc: '2026-02-31T13:00:00.000Z' },
+    { ...protocol(), observedAtUtc: '2026-10-31T13:00:01.000Z' },
+    { ...protocol(), observedAtUtc: '2026-10-31T12:59:44.000Z' },
+    ...[['PRIVATE_TOKEN'], ['HTTP_OK', 'HTTP_OK'], ['OWNER_VERSION', 'HTTP_OK'],
+      accessor, symbol, extra, inherited, Array(1)].map(failedPredicates => ({ ...protocol(['OWNER_VERSION']), failedPredicates })),
+  ];
+  for (const bad of malformed) {
+    const input = inspection(); input.protocol = bad;
+    const result = projectSovereignControlSystemStatusV1(input);
+    assert.equal(result.protocol.available, false); assert.equal(result.protocol.matches, false);
+    assert.equal(Object.hasOwn(result.protocol, 'failedPredicates'), false);
+    assert.equal(JSON.stringify(result.protocol).includes('PRIVATE'), false);
+    assert.deepEqual(projectSovereignControlSystemStatusV1(result), result);
+  }
+  assert.equal(invoked, 0);
+});
+
+test('protocol cannot outlive its source or native owner bracket', () => {
+  for (const alter of [row => { row.source.stable = false; }, row => { row.source.expectedMain = 'e'.repeat(40); },
+    row => { row.owner.stable = false; }, row => { row.owner.available = false; },
+    row => { row.protocol.available = false; row.protocol.matches = true; }]) {
+    const input = inspection(); input.protocol = protocol(); alter(input);
+    const result = projectSovereignControlSystemStatusV1(input);
+    assert.equal(result.protocol.available, false); assert.equal(result.protocol.matches, false);
+    assert.equal(Object.hasOwn(result.protocol, 'observedVersion'), false);
+    assert.deepEqual(projectSovereignControlSystemStatusV1(result), result);
+  }
+});
+
+test('protocol maximum failures preserve the original public byte bound without dropping existing evidence', () => {
+  const labels = ['HTTP_OK', 'HEALTH_OK', 'SERVICE', 'OBSERVATION_SCOPE', 'NO_ADMISSION', 'OWNER_VERSION'];
+  for (const failures of [labels, labels.slice(0, 5)]) {
+    const input = inspection(), reason = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN';
+    input.protocol = protocol(failures); input.blocker = reason;
+    for (const key of ['source', 'caller', 'owner', 'nativeRuntime', 'requestLedger']) input[key].reason = reason;
+    input.guardian.blocker = reason;
+    const result = projectSovereignControlSystemStatusV1(input);
+    assert.ok(Buffer.byteLength(JSON.stringify(result)) <= SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1);
+    if (!result.source) assert.equal(result.blocker, 'SOVEREIGN_CONTROL_SYSTEM_STATUS_BOUND_EXCEEDED');
+    else for (const key of ['source', 'caller', 'owner', 'guardian', 'nativeRuntime', 'requestLedger'])
+      assert.equal(Object.hasOwn(result, key), true);
+    assert.deepEqual(projectSovereignControlSystemStatusV1(result), result);
+  }
 });
 
 test('typed native refusal remains a successful observation, never successful native execution', () => {

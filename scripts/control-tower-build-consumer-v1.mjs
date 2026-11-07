@@ -4,7 +4,8 @@ import { createHash } from 'node:crypto';
 import { createMailboxExecutionLedger } from './canonical-mailbox-execution-ledger-v1.mjs';
 import { readControlTowerBuildRequestV1, readHistoricalControlTowerBuildRequestV1,
   isAuthenticatedControlTowerBuildRequestV1 } from '../shared/agents/controlTowerBuildReaderV1.mjs';
-import { callSovereignMaintenanceOwnerV1 } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
+import { callSovereignMaintenanceOwnerV1,
+  consumeSovereignMaintenancePreDispatchRefusalV1 } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 import { resolveGithubAuth } from '../stephanos-server/services/githubAuthResolver.js';
 import { FIXED_MAINTENANCE_RUNTIME_ROUTE_V1 } from './sovereign-fixed-runtime-parent-v1.mjs';
 import { CONTROL_TOWER_BUILD_OPERATION, CONTROL_TOWER_OBSERVE_OPERATION,
@@ -277,8 +278,14 @@ export async function consumeControlTowerBuildRequestV1({
     // deadline. A legacy heartbeat is not an admitted native Windows operation.
     // Request authentication grants intent only; the original owner retains
     // every identity/qualification/lease/goal/resource/custody gate.
-    const owned = await deps.execute({ actionId: ACTION, arguments: { actionId: ACTION },
+    const ownerRequest = Object.freeze({ actionId: ACTION, arguments: Object.freeze({ actionId: ACTION }),
       timeoutMs: FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.executionTimeoutMs });
+    const owned = await deps.execute(ownerRequest);
+    // Only a one-use fact retained by this actual delegation can establish
+    // that the health rejection happened before credentials or an MCP POST.
+    // This never claims an authenticated owner refusal or resolves an older
+    // RESERVED request after a crash, timeout, lost response or process restart.
+    const blockedBeforeDispatch = consumeSovereignMaintenancePreDispatchRefusalV1(owned, ownerRequest);
     const exactOwnerAction = owned?.command?.plan?.processId === ACTION;
     const completed = exactOwnerAction && owned?.ok === true
       && owned.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' && /^[a-f0-9]{64}$/.test(owned.proofHash || '');
@@ -287,7 +294,7 @@ export async function consumeControlTowerBuildRequestV1({
       && typeof owned.blocker === 'string' && code(owned.blocker) === owned.blocker;
     // A transport failure may arrive after owner pickup. Without a matching
     // completed/refused owner response, retain custody and never terminalize.
-    if (!completed && !refused) return finish('UNKNOWN', code(owned?.blocker), evidence());
+    if (!completed && !refused && !blockedBeforeDispatch) return finish('UNKNOWN', code(owned?.blocker), evidence());
     const blocker = completed ? '' : controlTowerObservationBlockerV1(owned?.blocker);
     const terminal = createControlTowerRequestObservationV1(request, {
       commandDigest: initialObservation.commandDigest, acceptedAtUtc: initialObservation.acceptedAtUtc,
