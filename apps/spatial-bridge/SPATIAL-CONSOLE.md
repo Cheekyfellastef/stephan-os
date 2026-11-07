@@ -9,6 +9,7 @@ The far wall is a holographic display with an attached keyboard console. It is a
 3. Enter VR through the PC browser and Quest Link/Air Link. This local Windows window adapter does not connect a standalone Quest browser to the PC.
 4. Point at a field or control on the hologram and press Quest trigger, or look at it and press Xbox A. Use the console keyboard for text. Send/Enter sends the original app's Enter key; the original app decides its meaning.
 5. Fit and Zoom change the display view; Scroll up/down scroll at the last point indicated on the app. Sticks still walk and turn smoothly. Grip/RT still manipulates cubes.
+6. **Seated** and **Standing** are separate saved comfort profiles. Each remembers its own virtual height offset and keyboard angle. Use the holographic comfort strip before reaching the keyboard, or grab either large side dial and turn it continuously from flat (0°) to vertical (90°). Releasing the dial holds that angle. Height and tilt changes are absolute profile settings, so switching profiles does not accumulate drift.
 
 The original app's image attachment and microphone controls remain on the hologram. Audio help explains headset microphone/speaker selection; it does not start a recording or claim an independent voice connection. Windows and the original app route sound through the selected headset. Audio and physical headset acceptance require an operator test.
 
