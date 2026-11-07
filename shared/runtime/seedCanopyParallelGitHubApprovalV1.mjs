@@ -45,7 +45,7 @@ export async function verifySeedParallelOwnerGitHubApprovalV1({
   const created = Date.parse(comment.created_at || '');
   const updated = Date.parse(comment.updated_at || '');
   if (!Number.isFinite(created) || created > nowMs || nowMs - created > TIMESPAN
-    || !Number.isFinite(updated) || updated > nowMs)
+    || !Number.isFinite(updated) || updated !== created || updated > nowMs)
     return blocked('GITHUB_APPROVAL_NOT_FRESH');
   const body = String(comment.body || '');
   const match = body.match(new RegExp('\\`\\`\\`' + MARKER + '\\s*([\\s\\S]*?)\\`\\`\\`'));
