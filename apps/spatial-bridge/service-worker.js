@@ -1,10 +1,11 @@
-const CACHE_NAME = 'stephanos-spatial-workspace-v1-console-view-v3';
+const CACHE_NAME = 'stephanos-spatial-workspace-v1-raised-keys-v4';
 const CORE_ASSETS = [
   './',
   './quest-entry.html',
   './holodeck-baseline-v0.mjs',
   './holodeck-room-v1.mjs',
   './holodeck-screen-v1.mjs',
+  './holodeck-keycaps-v1.mjs',
   './holodeck-window-client-v1.mjs',
   './holodeck-screen-input-v1.mjs',
   './holodeck-display-renderer-v1.mjs',

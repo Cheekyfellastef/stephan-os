@@ -43,11 +43,14 @@ export function screenPointToSource(u,v,width,height,zoom=1,panX=0,panY=0) {
   if(x<r.x||x>r.x+r.w||y<r.y||y>r.y+r.h)return null;
   return {x:(r.crop.x+(x-r.x)/r.w*r.crop.w)/width,y:(r.crop.y+(y-r.y)/r.h*r.crop.h)/height};
 }
-export function createHolodeckScreen({client,comfort,documentRef=globalThis.document,onReload=()=>{},onStatus=()=>{}}={}) {
+export function createHolodeckScreen({client,comfort,documentRef=globalThis.document,onReload=()=>{},onStatus=()=>{},now=()=>globalThis.performance?.now?.()??Date.now()}={}) {
   const screen=documentRef.createElement('canvas'),consoleCanvas=documentRef.createElement('canvas');
   screen.width=3072;screen.height=954;consoleCanvas.width=2048;consoleCanvas.height=512;
   const ctx=screen.getContext('2d'),keys=consoleCanvas.getContext('2d');
   let revision=0,drawn='',zoom=1,panX=0,panY=0,viewPending=false,inputFeedback=null,shift=false,hover=null,voiceHelp=false,reloadConfirm=false,lastPoint={x:0.5,y:0.5};
+  let lastKeyPress=null;
+  const pressKeycap=id=>{if(SCREEN_KEYS.some(key=>key.id===id))lastKeyPress={id,at:now()};};
+  const getKeycapMotion=()=>lastKeyPress?{id:lastKeyPress.id,ageMs:now()-lastKeyPress.at}:null;
   const changed=()=>{revision++;try{onStatus(getState());}catch{}};
   function appInputBlocker(state,viewPainted=false){
     const reason=!client.getFrame()?'connection':voiceHelp?'audio-help':reloadConfirm?'reload':viewPending&&!viewPainted?'view-pending':null;
@@ -101,11 +104,11 @@ export function createHolodeckScreen({client,comfort,documentRef=globalThis.docu
     if(id==='reload'){
       if(reloadConfirm)onReload();else{reloadConfirm=true;voiceHelp=false;viewPending=true;inputFeedback=null;changed();}return;
     }
-    if(id==='shift'){shift=!shift;changed();return;}
+    if(id==='shift'){pressKeycap(id);shift=!shift;changed();return;}
     const input=id==='scroll-up'||id==='scroll-down'?{kind:'scroll',...lastPoint,delta:id==='scroll-up'?120:-120}:
       id==='enter'||id==='backspace'?{kind:'key',key:id==='enter'?'Enter':'Backspace'}:
       id.startsWith('key:')?{kind:'text',text:screenKeyText(id.slice(4),shift)}:null;
-    if(input){forwardAppInput(input);changed();return;}
+    if(input){pressKeycap(id);forwardAppInput(input);changed();return;}
     const previousView=`${zoom}:${panX}:${panY}:${reloadConfirm}`;
     inputFeedback=null;
     reloadConfirm=false;
@@ -181,5 +184,5 @@ export function createHolodeckScreen({client,comfort,documentRef=globalThis.docu
     viewPending=false;
     return {screen,console:consoleCanvas,revision:drawn};
   }
-  return {action,point,getState,render,comfort,hover:id=>{if(id!==hover){hover=id;changed();}}};
+  return {action,point,getState,getKeycapMotion,render,comfort,hover:id=>{if(id!==hover){hover=id;changed();}}};
 }

@@ -1,5 +1,6 @@
 import { HOLODECK_CONSOLE, HOLODECK_DISPLAY } from './holodeck-layout-v1.mjs';
-import { SCREEN_BUTTONS, screenComfortHit } from './holodeck-screen-v1.mjs';
+import { SCREEN_BUTTONS, SCREEN_KEYS, screenComfortHit } from './holodeck-screen-v1.mjs';
+import { KEYCAP_RISE_METRES } from './holodeck-keycaps-v1.mjs';
 import { trackedPose } from './holodeck-cube-interaction-v1.mjs';
 import { rotate3, multiplyQuaternion } from './holodeck-cube-physics-v1.mjs';
 import { consolePointFromWorld, consoleDirectionFromWorld, HOLODECK_KEYBOARD_DIALS } from './holodeck-comfort-v1.mjs';
@@ -14,13 +15,19 @@ export function consoleHit(origin,direction,tiltDegrees=0) {
   origin=consolePointFromWorld(origin,tiltDegrees);
   direction=consoleDirectionFromWorld(direction,tiltDegrees);
   if(direction[1]>=-1e-5||origin[1]<c.top)return null;
-  const distance=(c.top+0.002-origin[1])/direction[1];
-  if(distance<=0||distance>8)return null;
-  const x=origin[0]+distance*direction[0],z=origin[2]+distance*direction[2];
-  const u=(x+c.halfWidth-0.10)/(2*c.halfWidth-0.20);
-  const v=(z-(c.center[2]-c.halfDepth+0.06))/(2*c.halfDepth-0.12);
-  const button=SCREEN_BUTTONS.find(b=>u>=b.x&&u<=b.x+b.w&&v>=b.y&&v<=b.y+b.h);
-  return button?{id:button.id,distance}:null;
+  const hitAt=(height,buttons)=>{
+    const distance=(height-origin[1])/direction[1];
+    if(distance<=0||distance>8)return null;
+    const x=origin[0]+distance*direction[0],z=origin[2]+distance*direction[2];
+    const u=(x+c.halfWidth-0.10)/(2*c.halfWidth-0.20);
+    const v=(z-(c.center[2]-c.halfDepth+0.06))/(2*c.halfDepth-0.12);
+    const button=buttons.find(b=>u>=b.x&&u<=b.x+b.w&&v>=b.y&&v<=b.y+b.h);
+    return button?{id:button.id,distance}:null;
+  };
+  // Select the visible raised keycap surface first. Retain the legacy lower
+  // plane for console actions and conservatively for marginal/grazing rays.
+  return hitAt(c.top+KEYCAP_RISE_METRES,SCREEN_KEYS)
+    ??hitAt(c.top+0.002,SCREEN_BUTTONS);
 }
 
 // Spherical targets work from the front even when rays are parallel to a dial's side face.
