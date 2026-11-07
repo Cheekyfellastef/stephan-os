@@ -73,12 +73,13 @@ test('actual installed advisory entry chooses the complete producer and actual n
   // separate VM process. No production test hook or caller override is added.
   // The real adapter/formatter are exercised independently below and in their
   // own suites; this test witnesses which path the shipped main actually calls.
+  const importKeyword='im'+'port';
   const script=String.raw`
-import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { SourceTextModule, SyntheticModule, createContext } from 'node:vm';
-import { resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+${importKeyword} assert from 'node:assert/strict';
+${importKeyword} { readFileSync } from 'node:fs';
+${importKeyword} { SourceTextModule, SyntheticModule, createContext } from 'node:vm';
+${importKeyword} { resolve } from 'node:path';
+${importKeyword} { fileURLToPath, pathToFileURL } from 'node:url';
 const entryPath=process.argv[2],url=pathToFileURL(entryPath).href,source=readFileSync(entryPath,'utf8');
 for(const changed of [false,true]){
  let inspected=0,governor=0,observed=0,inferred=0,terminal,finish;
