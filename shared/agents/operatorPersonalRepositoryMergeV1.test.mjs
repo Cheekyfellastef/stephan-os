@@ -1969,6 +1969,126 @@ test('Control Tower PR request-build skip requires same-run green contract-test'
   assert.equal(validatePersonalRepositoryCheckRuns([skipped], [run], [], expectedEvidence).valid, false);
 });
 
+function mailboxFreeInspectionChecks() {
+  const run = {
+    ...workflowRuns()[0],
+    id: 9927,
+    check_suite_id: 8927,
+    name: 'Stephanos Control Tower - Mailbox-Free Read-Only Pilot',
+    path: `${repository}/.github/workflows/stephanos-mailbox-free-readonly.yml@refs/heads/${branch}`,
+    head_branch: branch,
+    event: 'pull_request',
+    status: 'completed',
+    conclusion: 'success',
+  };
+  return {
+    run,
+    contract: checkRun(run, { id: 9928, name: 'contract-test', conclusion: 'success' }),
+    inspect: checkRun(run, { id: 9929, name: 'inspect-goal', conclusion: 'skipped' }),
+  };
+}
+
+test('mailbox-free PR inspect-goal skip requires its exact successful contract-test sibling', () => {
+  const { run, contract, inspect } = mailboxFreeInspectionChecks();
+  for (const path of [run.path, '.github/workflows/stephanos-mailbox-free-readonly.yml']) {
+    const result = validatePersonalRepositoryCheckRuns(
+      [contract, inspect], [{ ...run, path }], [], expectedEvidence,
+    );
+    assert.equal(result.valid, true, JSON.stringify(result.blockers));
+    assert.equal(result.evidence[0].disposition, 'green');
+    assert.equal(result.evidence[1].disposition, 'pr-mailbox-free-inspection-not-requested');
+    assert.equal(result.admittedReviewEscalations, 0);
+  }
+});
+
+test('mailbox-free inspection neutrality rejects wrong workflow, trigger, run and PR identities', () => {
+  const { run } = mailboxFreeInspectionChecks();
+  const binding = run.pull_requests[0];
+  const mutations = [
+    { event: 'push' }, { event: 'workflow_dispatch' }, { event: 'pull_request_target' },
+    { name: 'Unknown Mailbox-Free Pilot' }, { path: '.github/workflows/other.yml' },
+    { path: `another/repository/.github/workflows/stephanos-mailbox-free-readonly.yml@refs/heads/${branch}` },
+    { path: `${repository}/.github/workflows/stephanos-mailbox-free-readonly.yml@refs/heads/other` },
+    { status: 'in_progress' }, { conclusion: 'failure' }, { conclusion: 'cancelled' },
+    { repository: { full_name: 'another/repository' } },
+    { head_branch: 'main' }, { head_branch: 'other-branch' }, { head_branch: '' },
+    { head_sha: 'f'.repeat(40) }, { pull_requests: [] },
+    { pull_requests: [binding, binding] },
+    { pull_requests: [{ ...binding, number: prNumber + 1 }] },
+    { pull_requests: [{ ...binding, head: { ...binding.head, sha: 'f'.repeat(40) } }] },
+    { pull_requests: [{ ...binding, head: { ...binding.head, ref: 'other-branch' } }] },
+    { pull_requests: [{ ...binding, base: { ...binding.base, sha: 'f'.repeat(40) } }] },
+    { pull_requests: [{ ...binding, base: { ...binding.base, ref: 'other-base' } }] },
+  ];
+  for (const mutation of mutations) {
+    const altered = { ...run, ...mutation };
+    const result = validatePersonalRepositoryCheckRuns([
+      checkRun(altered, { id: 9928, name: 'contract-test', conclusion: 'success' }),
+      checkRun(altered, { id: 9929, name: 'inspect-goal', conclusion: 'skipped' }),
+    ], [altered], [], expectedEvidence);
+    assert.equal(result.valid, false, JSON.stringify(mutation));
+    assert.notEqual(result.evidence.find(({ checkId }) => checkId === 9929)?.disposition,
+      'pr-mailbox-free-inspection-not-requested', JSON.stringify(mutation));
+  }
+  const mainBinding = { ...binding, head: { ...binding.head, ref: 'main' } };
+  const mainRun = { ...run, head_branch: 'main', path: '.github/workflows/stephanos-mailbox-free-readonly.yml',
+    pull_requests: [mainBinding] };
+  assert.equal(validatePersonalRepositoryCheckRuns([
+    checkRun(mainRun, { id: 9928, name: 'contract-test', conclusion: 'success' }),
+    checkRun(mainRun, { id: 9929, name: 'inspect-goal', conclusion: 'skipped' }),
+  ], [mainRun], [], { ...expectedEvidence, branch: 'main' }).valid, false);
+});
+
+test('mailbox-free inspection neutrality rejects untrusted or non-successful sibling checks', () => {
+  const { run, contract, inspect } = mailboxFreeInspectionChecks();
+  const mutations = [
+    { name: 'not-contract-test' }, { status: 'queued' },
+    { conclusion: 'failure' }, { conclusion: 'skipped' }, { conclusion: 'neutral' },
+    { head_sha: 'f'.repeat(40) }, { check_suite: { id: run.check_suite_id + 1 } },
+    { app: { id: 15368, slug: 'other-app' } }, { app: { id: 1, slug: 'github-actions' } },
+    { app: null }, { id: 0 },
+    { details_url: `https://github.com/another/repository/actions/runs/${run.id}/job/${contract.id}` },
+    { id: inspect.id, details_url: inspect.details_url },
+  ];
+  for (const mutation of mutations) {
+    const result = validatePersonalRepositoryCheckRuns(
+      [{ ...contract, ...mutation }, inspect], [run], [], expectedEvidence,
+    );
+    assert.equal(result.valid, false, JSON.stringify(mutation));
+    assert.notEqual(result.evidence.find(({ name }) => name === 'inspect-goal')?.disposition,
+      'pr-mailbox-free-inspection-not-requested', JSON.stringify(mutation));
+  }
+  assert.equal(validatePersonalRepositoryCheckRuns([inspect], [run], [], expectedEvidence).valid, false);
+  const otherRun = { ...run, id: run.id + 1, check_suite_id: run.check_suite_id + 1 };
+  const otherContract = checkRun(otherRun, { id: 9930, name: 'contract-test', conclusion: 'success' });
+  const wrongSuite = validatePersonalRepositoryCheckRuns(
+    [otherContract, inspect], [run, otherRun], [], expectedEvidence,
+  );
+  assert.equal(wrongSuite.valid, false);
+  assert.equal(wrongSuite.evidence.find(({ name }) => name === 'inspect-goal').disposition, 'blocked');
+});
+
+test('mailbox-free inspection neutrality preserves check identity and all other failures', () => {
+  const { run, contract, inspect } = mailboxFreeInspectionChecks();
+  for (const mutation of [
+    { name: 'other-skipped-job' }, { status: 'in_progress' }, { conclusion: 'failure' },
+    { head_sha: 'f'.repeat(40) }, { check_suite: { id: run.check_suite_id + 1 } },
+    { app: { id: 1, slug: 'github-actions' } }, { app: { id: 15368, slug: 'other-app' } },
+    { details_url: `https://github.com/${repository}/actions/runs/${run.id + 1}/job/${inspect.id}` },
+  ]) {
+    const result = validatePersonalRepositoryCheckRuns(
+      [contract, { ...inspect, ...mutation }], [run], [], expectedEvidence,
+    );
+    assert.equal(result.valid, false, JSON.stringify(mutation));
+  }
+  for (const conclusion of ['failure', 'skipped']) {
+    const extra = checkRun(run, { id: 9931, name: 'unrelated-check', conclusion });
+    const result = validatePersonalRepositoryCheckRuns([contract, inspect, extra], [run], [], expectedEvidence);
+    assert.equal(result.valid, false);
+    assert.equal(result.evidence.find(({ name }) => name === 'unrelated-check').disposition, 'blocked');
+  }
+});
+
 test('a successful exact PR build does not require the intentionally excluded live Pages deployment', () => {
   const buildRun = { ...workflowRuns().find((run) => run.name === 'Build Stephanos UI'), head_branch: branch };
   const checks = [checkRun(buildRun, { id: 9401, name: 'build', conclusion: 'success' }),
