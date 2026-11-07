@@ -59,6 +59,16 @@ These tools observe direct-child launch/output/closure without accepting input,
 arbitrary commands or PIDs, and never establish descendant custody. General
 process/session parity remains an explicit gap.
 
+`submit_feedback` persists bounded, unverified suggestions in the existing Shared
+Workspace event store. Its records cannot assert failure proof, learning or
+execution approval; receipts and history omit the caller's message. This is
+Sovereign feedback intake, with no third-party vendor submission.
+
+`write_pdf` creates one new bounded ASCII text PDF on a permitted local Windows
+path using a retained-parent, no-overwrite helper. It supports fixed Letter pages
+and Courier text only. Existing-PDF editing and richer rendering remain gaps;
+uncertain creation can leave a partial file and must never trigger automatic retry.
+
 ### Local stdio MCP
 
 `scripts/sovereign-commander-mcp.mjs` is the lowest-dependency transport. It uses newline-delimited JSON-RPC over stdin/stdout and has no external package dependency.

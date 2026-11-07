@@ -26,6 +26,10 @@ const privateSessionPaths = [
   'shared/agents/sovereignProcessSessionsV1.mjs',
   'scripts/windows/status-battle-bridge-recovery-mesh.ps1',
   'scripts/windows/status-battle-bridge-worker-watchdog.ps1',
+  'shared/agents/sovereignFeedbackIntakeV1.mjs',
+  'shared/agents/sovereignPdfWriteV1.mjs',
+  'scripts/windows/sovereign-write-pdf.ps1',
+  'scripts/windows/SovereignPdfWriteV1.cs',
 ];
 const repo = fileURLToPath(new URL('../', import.meta.url));
 const closureFixture = fileURLToPath(new URL('./fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs', import.meta.url));
@@ -69,7 +73,7 @@ function closure(root, omitted) {
 }
 
 test('directory package captures exactly three dependencies and rejects incomplete or extra records', () => {
-  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 277);
+  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 281);
   for (const path of directoryPaths) assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(path), path);
   const records = candidateRecords();
   assert.throws(() => candidate(records.filter(row => !directoryPaths.includes(row.path))), /EXACT_SOURCE_REQUIRED/);
@@ -91,7 +95,7 @@ test('isolated captured package proves imports and both source-owned runtime-rea
   const root = packagedCandidate();
   try {
     const complete = closure(root);
-    assert.equal(complete.memberCount, 277);
+    assert.equal(complete.memberCount, 281);
     assert.deepEqual(complete.missing, []);
     assert.deepEqual(complete.bare, []);
     assert.equal(complete.repositoryModulesEvaluated, false);
@@ -112,7 +116,7 @@ test('isolated captured package proves imports and both source-owned runtime-rea
   } finally { dispose(root); }
 });
 
-test('private tool package includes all eleven exact members and pins every native read edge', () => {
+test('private tool package includes all fifteen exact members and pins every native read edge', () => {
   const records = candidateRecords();
   for (const file of privateSessionPaths) {
     assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(file));

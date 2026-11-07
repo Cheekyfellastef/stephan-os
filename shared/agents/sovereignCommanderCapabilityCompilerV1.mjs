@@ -164,6 +164,9 @@ function skillPacketFromPlan(plan, capability, timestampUtc) {
       ...(plan.atomicContentCasProven === false ? { atomicContentCasProven: false } : {}),
       ...(plan.descendantsExcluded === false ? { descendantsExcluded: false } : {}),
       ...(plan.nativeCustodyQualified === false ? { nativeCustodyQualified: false } : {}),
+      ...(plan.wholeDocumentAtomicityProven === false ? { wholeDocumentAtomicityProven: false } : {}),
+      ...(plan.existingPdfEditingSupported === false ? { existingPdfEditingSupported: false } : {}),
+      ...(plan.unicodeTextSupported === false ? { unicodeTextSupported: false } : {}),
     } : {}),
     whySuggested: capability?.origin === 'sovereign-native-event'
       ? `An existing validated Sovereign Commander learning event reported ${id} as an unmet ability. This is discovery evidence, not implementation proof.`

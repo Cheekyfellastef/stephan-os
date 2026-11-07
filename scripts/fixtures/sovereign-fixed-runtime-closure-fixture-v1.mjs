@@ -40,6 +40,7 @@ const capturedReadAdapters = {
   'shared/agents/sovereignDirectoryCreateV1.mjs': 'b3a9f5f60d7d0990b31fa9f491c349832f9fad2cba802484e2b1c2c67106e43a',
   'shared/agents/sovereignSearchSessionsV1.mjs': '34a3e080c0fb33f4dea59f244c019a884098daf29ed69ace2d654cb201a8d1d8',
   'shared/agents/sovereignFileMoveV1.mjs': '79ea603d77c6aa0d53366a966aef849ecc20e80019f2162e28886b6a28747190',
+  'shared/agents/sovereignPdfWriteV1.mjs': '90c5e0ecb3d1fdc354af1dbedcd04c24a2910e3fedb3277aa838168214164330',
 };
 const capturedProcessAdapterSha256 = 'ad029b85f850637d915d220463c2ecc40d1aabb46bc2462ff0ff44970d217873';
 for (const target of requiredRoots) if (!members.has(target)) missing.push({ role: 'profile-root', target });

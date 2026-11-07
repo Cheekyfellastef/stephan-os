@@ -14,6 +14,8 @@ import { executeCorePublicationDirectoryActionV1 } from '../../scripts/sovereign
 import { isSovereignMaintenanceObservationV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 import { executeSovereignDirectoryCreateV1, validateSovereignDirectoryTargetV1 } from './sovereignDirectoryCreateV1.mjs';
 import { validateSovereignFileMoveArgumentsV1 } from './sovereignFileMoveV1.mjs';
+import { captureSovereignFeedbackArgumentsV1 } from './sovereignFeedbackIntakeV1.mjs';
+import { validateSovereignPdfWriteArgumentsV1 } from './sovereignPdfWriteV1.mjs';
 import {
   validateSovereignProcessSessionArgumentsV1,
   SOVEREIGN_PROCESS_SESSION_PROFILES_V1,
@@ -34,6 +36,8 @@ export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
   READ_MULTIPLE_FILES: 'READ_MULTIPLE_FILES',
   GET_FILE_INFO: 'GET_FILE_INFO',
   WRITE_FILE: 'WRITE_FILE',
+  WRITE_PDF: 'WRITE_PDF',
+  SUBMIT_FEEDBACK: 'SUBMIT_FEEDBACK',
   EDIT_FILE: 'EDIT_FILE',
   MOVE_FILE: 'MOVE_FILE',
   LIST_DIRECTORY: 'LIST_DIRECTORY',
@@ -115,6 +119,8 @@ function pathWithin(root, candidate) {
 }
 
 const PRIVATE_SESSION_ARGUMENTS = Object.freeze({
+  SUBMIT_FEEDBACK: ['category', 'operation', 'message'],
+  WRITE_PDF: ['path', 'pages'],
   MOVE_FILE: ['source', 'destination', 'expectedSha256'],
   SET_CONFIG_VALUE: ['key', 'value', 'expectedRevision'],
   START_SEARCH: ['path', 'query', 'mode', 'caseSensitive', 'limit'],
@@ -133,6 +139,11 @@ const PRIVATE_SESSION_ARGUMENTS = Object.freeze({
 // JSON schema is a discovery contract, not runtime admission. Capture only own
 // data properties before the command fabric can trim paths or read accessors.
 export function captureSovereignPrivateSessionArgumentsV1(operation, raw) {
+  if (operation === 'SUBMIT_FEEDBACK') return captureSovereignFeedbackArgumentsV1(raw);
+  if (operation === 'WRITE_PDF') {
+    const validated = validateSovereignPdfWriteArgumentsV1(raw);
+    return validated.ok === true ? validated.args : null;
+  }
   if (['START_PROCESS_SESSION', 'READ_PROCESS_OUTPUT', 'LIST_SESSIONS'].includes(operation)) {
     const validated = validateSovereignProcessSessionArgumentsV1(operation, raw);
     return validated.ok === true ? validated.args : null;
@@ -609,9 +620,10 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     const processSession = ['START_PROCESS_SESSION', 'READ_PROCESS_OUTPUT', 'LIST_SESSIONS'].includes(operation);
     let profileBinding = null;
     if (!args) blockers.push('SOVEREIGN_PRIVATE_SESSION_ARGUMENTS_INVALID');
-    if (operation === 'START_SEARCH') {
+    if (operation === 'START_SEARCH' || operation === 'WRITE_PDF') {
       if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 1
-        || envelope.targetPaths[0] !== args?.path) blockers.push('SOVEREIGN_SEARCH_SCOPE_BINDING_INVALID');
+        || envelope.targetPaths[0] !== args?.path) blockers.push(operation === 'WRITE_PDF'
+          ? 'SOVEREIGN_PDF_SCOPE_BINDING_INVALID' : 'SOVEREIGN_SEARCH_SCOPE_BINDING_INVALID');
     } else if (operation === 'MOVE_FILE') {
       if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 2
         || envelope.targetPaths[0] !== args?.source || envelope.targetPaths[1] !== args?.destination)
@@ -637,6 +649,7 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     }
     if (args) plan = frozen({ kind: 'private-session',
       family: operation === 'MOVE_FILE' ? 'move' : operation === 'SET_CONFIG_VALUE' ? 'config'
+        : operation === 'SUBMIT_FEEDBACK' ? 'feedback' : operation === 'WRITE_PDF' ? 'pdf'
         : processSession ? 'process' : search ? 'search' : 'history', operation, args,
       ...(profileBinding ? { profileBinding } : {}) });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG) {
@@ -1107,7 +1120,24 @@ function listProcesses(options = {}) {
   });
 }
 
+// These document/advisory inputs are needed only while executing the admitted
+// command. Receipts and retained tool history never repeat their text or paths.
+// The resulting proof binds the returned metadata, not a concealed input body.
 export async function executeSovereignCommanderCommandV1(envelope = {}, options = {}) {
+  const result = await executeSovereignCommanderRouteV1(envelope, options);
+  const command = result?.command;
+  if (!['SUBMIT_FEEDBACK', 'WRITE_PDF'].includes(command?.operation) || !command.plan) return result;
+  const { args: omitted, ...plan } = command.plan;
+  const receiptCommand = frozen({ ...command, plan: frozen({ ...plan, inputOmitted: true }) });
+  return frozen({ ...result, command: receiptCommand,
+    ...(typeof result.proofHash === 'string' ? { proofHash: hash({
+      commandId: receiptCommand.commandId, missionId: receiptCommand.missionId,
+      operation: receiptCommand.operation, plan: receiptCommand.plan,
+      contentText: result.contentText, structuredContent: result.structuredContent,
+    }) } : {}) });
+}
+
+async function executeSovereignCommanderRouteV1(envelope = {}, options = {}) {
   const command = buildSovereignCommanderCommandV1(envelope, options);
   if (!command.dispatchAllowed) {
     return frozen({
@@ -1130,6 +1160,8 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
     const service = command.plan.family === 'search' ? options.searchSessions
       : command.plan.family === 'config' ? options.sessionConfig
         : command.plan.family === 'move' ? options.fileMoves
+          : command.plan.family === 'feedback' ? options.feedbackIntake
+            : command.plan.family === 'pdf' ? options.pdfWrites
           : command.plan.family === 'process' ? options.processSessions : options.sessionHistory;
     if (!privateRoute || !service || typeof service.execute !== 'function') return frozen({
       ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
@@ -1173,19 +1205,30 @@ async function executeAdmittedSovereignCommandV1(command, options) {
       const service = command.plan.family === 'search' ? options.searchSessions
         : command.plan.family === 'config' ? options.sessionConfig
           : command.plan.family === 'move' ? options.fileMoves
+            : command.plan.family === 'feedback' ? options.feedbackIntake
+              : command.plan.family === 'pdf' ? options.pdfWrites
             : command.plan.family === 'process' ? options.processSessions : options.sessionHistory;
       structuredContent = await service.execute(command.plan.family === 'history'
-        ? command.plan.operation.toLowerCase() : command.plan.operation, command.plan.args);
+        ? command.plan.operation.toLowerCase() : command.plan.operation, command.plan.args, options.routeProof);
       const move = command.plan.family === 'move';
+      const pdf = command.plan.family === 'pdf';
+      const feedback = command.plan.family === 'feedback';
       const processStart = command.plan.operation === 'START_PROCESS_SESSION';
       if (!structuredContent || structuredContent.ok !== true
         || (move && structuredContent.mutationState !== 'MOVED')
+        || (pdf && structuredContent.mutationState !== 'CREATED')
+        || (feedback && structuredContent.feedbackState !== 'PERSISTED')
         || (processStart && (structuredContent.launchState !== 'SPAWN_OBSERVED'
           || structuredContent.session?.spawnObserved !== true))) {
         const unknownMove = move && structuredContent?.mutationState !== 'NOT_STARTED';
+        const unknownPdf = pdf && structuredContent?.mutationState !== 'NOT_STARTED';
+        const unknownFeedback = feedback && structuredContent?.feedbackState !== 'NOT_STARTED';
         const unknownProcessStart = processStart && structuredContent?.launchState !== 'NOT_STARTED';
-        if (unknownMove) structuredContent = frozen({ ...structuredContent,
+        if (unknownMove || unknownPdf) structuredContent = frozen({ ...structuredContent,
           ok: false, mutationState: 'UNKNOWN', retryAllowed: false });
+        if (unknownFeedback) structuredContent = frozen({ ...structuredContent,
+          ok: false, feedbackState: 'UNKNOWN', retryAllowed: false,
+          advisoryOnly: true, executionAuthority: false });
         if (unknownProcessStart) structuredContent = frozen({ ...structuredContent,
           ok: false, launchState: 'UNKNOWN', retryAllowed: false,
           nativeCustodyQualified: false, descendantsExcluded: false });
@@ -1193,7 +1236,7 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         return frozen({
           ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command, contentText, structuredContent,
           blocker: structuredContent?.blocker || 'SOVEREIGN_PRIVATE_SESSION_OPERATION_BLOCKED',
-          finalVerdict: unknownMove || unknownProcessStart
+          finalVerdict: unknownMove || unknownPdf || unknownFeedback || unknownProcessStart
             ? 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' : 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
         });
       }
@@ -1422,6 +1465,20 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         ? 'SOVEREIGN_COMMANDER_SESSION_OPERATION_RETURNED' : 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
     });
   } catch (error) {
+    if (command.plan?.kind === 'private-session' && command.plan.family === 'feedback') {
+      const structuredContent = frozen({ ok: false, feedbackState: 'UNKNOWN', retryAllowed: false,
+        advisoryOnly: true, executionAuthority: false, blocker: 'SOVEREIGN_FEEDBACK_EFFECT_UNKNOWN' });
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
+    if (command.plan?.kind === 'private-session' && command.plan.family === 'pdf') {
+      const structuredContent = frozen({ ok: false, mutationState: 'UNKNOWN', retryAllowed: false,
+        blocker: 'SOVEREIGN_PDF_EFFECT_UNKNOWN' });
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
     if (command.plan?.kind === 'private-session' && command.plan.operation === 'START_PROCESS_SESSION') {
       const structuredContent = frozen({ ok: false, launchState: 'UNKNOWN', retryAllowed: false,
         nativeCustodyQualified: false, descendantsExcluded: false,

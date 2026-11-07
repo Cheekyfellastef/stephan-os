@@ -121,6 +121,29 @@ test('compiler keeps authenticated device inventory open when only local host vi
   }
 });
 
+test('feedback source mapping cannot create a failure lesson and partial PDF scope survives compiler publication', () => {
+  const ledger = buildSovereignCommanderCapabilityParityLedger([
+    'give-feedback-to-desktop-commander', 'write-pdf',
+  ].map(operation => ({ adapter: 'desktop-commander', item: { actionGrant: { operation } } })));
+  const result = compileSovereignCommanderCapabilityPlanV1(ledger);
+  assert.equal(result.buildableCapabilityCount, 1);
+  assert.equal(result.learningCandidates.length, 0);
+  assert.equal(result.newlyProvenParityCount, 0);
+  for (const item of [...result.plans, ...result.skillForgeCandidates]) {
+    assert.equal(item.capabilityId, 'write-pdf');
+    assert.equal(item.partialScope, 'CREATE_ONLY_BOUNDED_ASCII_TEXT_PDF');
+    assert.equal(item.parityGapReason, 'GENERAL_PDF_EDITING_AND_RENDERING_UNIMPLEMENTED');
+    assert.equal(item.wholeDocumentAtomicityProven, false);
+    assert.equal(item.existingPdfEditingSupported, false);
+    assert.equal(item.unicodeTextSupported, false);
+    assert.equal(item.runtimeParityProven, false);
+  }
+  const stale = compileSovereignCommanderCapabilityPlanV1({ capabilities: [{
+    capabilityId: 'write-pdf', state: 'PARITY_PRESENT', sovereignEquivalent: 'write_pdf', newlyProvenParity: true,
+  }] });
+  assert.equal(stale.buildableCapabilityCount, 1); assert.equal(stale.learningCandidates.length, 0);
+});
+
 test('unknown capability proves a minimum primitive need instead of inventing a broad shell', () => {
   const result = compileSovereignCommanderCapabilityPlanV1({
     capabilities: [{

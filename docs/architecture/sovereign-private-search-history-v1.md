@@ -3,7 +3,7 @@
 Owner: **#2573 — Goal: Make Sovereign Commander absorb every Remote Commander capability**.
 
 The existing Commander host previously offered only a repository search and no
-session-local command history. This source contribution adds thirteen operations to
+session-local command history. This source contribution adds fifteen operations to
 that host and its canonical command envelope. It does not introduce another
 controller, worker, scheduler, durable store, public mailbox or execution owner.
 
@@ -24,8 +24,10 @@ controller, worker, scheduler, durable store, public mailbox or execution owner.
 | `start_process` | A bounded asynchronous session for only the existing `status-recovery-mesh` and `status-worker-watchdog` read-only profiles; actual root launch evidence, no caller commands or input. |
 | `read_process_output` | Stable pages of bounded stdout/stderr chunks from a process session created by this handler, including output observed before the child closes. |
 | `list_sessions` | Only this handler's diagnostic process sessions and observed direct-child states; no host-wide terminal inventory or custody release. |
+| `submit_feedback` | Unverified advisory feedback persisted in the existing local Shared Workspace, with bounded text and receipt-only history; no vendor submission, failure evidence, learning or execution grant. |
+| `write_pdf` | Create one new bounded ASCII text PDF through a retained-parent Windows helper; no overwrite, existing-PDF editing, Unicode, HTML or image rendering. |
 
-All thirteen require an actual MCP request after initialization and tool discovery.
+All fifteen require an actual MCP request after initialization and tool discovery.
 The trusted transport must be local stdio or authenticated HTTP. Caller JSON
 cannot provide transport proof, session state, an executor, a scanner or a history
 store. Unknown fields, accessors, inherited arguments and coercible numbers are
@@ -201,8 +203,84 @@ bounded private identity and hash metadata; file contents are not returned.
 
 ## Package, proof and adoption
 
-The fixed-runtime closure grows from 266 to **277 exact members**: five private
-session/adapter modules, four search/move native helper files, and the two existing
+### Advisory feedback in the existing workspace
+
+`submit_feedback` accepts exactly `category`, `operation` and `message`. Category
+is `problem`, `improvement` or `other`; the operation is a fixed feedback subject,
+not an executable grant. Text is capped at 1,024 UTF-8 bytes before normalization
+or redaction. The handler captures own data properties and sanitizes recognized
+credential assignments, key blocks, addresses, URLs and absolute paths before
+the canonical envelope sees the message. This pattern-based redaction cannot
+recognize every possible secret; callers must not submit credentials.
+
+The host supplies the existing Shared Workspace root. A caller cannot supply a
+path, participant identity, event ID, timestamp, proof, approval or failure flag.
+Only existing safe directories are used. Publication calls the unchanged
+`createSharedWorkspaceEventRecord` and `writeAtomicJson`, then verifies bounded
+record bytes through a regular-file read handle. This preserves the canonical
+store's trusted-workspace assumptions; it does not claim atomic ancestor
+namespace confinement against a hostile concurrent local writer.
+
+Records have kind `sovereign-user-feedback`, canonical owner `#2573` and
+`CALLER_SUBMITTED_UNVERIFIED` provenance. Authentication admits a private client;
+it does not identify a human author. No capability-failure, learning-candidate or
+build-proposal field is accepted or generated. Existing native-gap and Flywheel
+readers demonstrably leave these events advisory. PR #2648 owns the separate
+evidence-bearing capability-gap/automatic-learning work.
+
+Each handler admits at most sixteen publications, with one in flight. An event
+ID derives from sanitized feedback, so identical submissions reuse its record
+and may refresh the advisory timestamp. This is neither an exactly-once nor a
+first-seen claim. Only matching readback returns `PERSISTED`; lost acknowledgement
+or uncertain readback returns `UNKNOWN`, with no automatic retry. Disposal blocks
+new work without claiming to cancel a write already owned by the store. Receipts
+and retained history contain event identity, stored-record digest/size, timestamp
+and boundaries, never the message or workspace path.
+
+The source catalog maps the vendor feedback outcome to this clearly named
+Sovereign feedback destination. `externalVendorDelivery`, `automaticLearning`,
+`verifiedFailureEvidence` and `runtimeParityProven` remain false.
+
+### Create-only text PDF coverage
+
+`write_pdf` accepts one explicit permitted local Windows `path` ending in `.pdf`
+and `pages`, each containing only a `lines` array. The fixed recipe accepts one
+to eight pages, up to sixty lines per page, eighty printable ASCII characters
+per line and 16,384 total text characters. It renders at most 65,536 bytes of
+PDF 1.4 with US Letter pages, Courier 10 point, twelve-point leading and fixed
+margins. Hexadecimal text operands keep PDF-looking caller text inert. Stream
+lengths and cross-reference offsets derive from final bytes. There is no runtime
+package installation, system renderer, caller PDF/base64, font, image, script or
+external resource input. Unicode is refused rather than silently replaced.
+
+The fixed, captured PowerShell and C# helpers receive only internally generated
+bytes and their hash. They retain local NTFS parent handles, refuse reparse and
+alias paths, create a single basename with native `FILE_CREATE`, and hold the
+new regular file exclusively through write, flush and same-handle length/hash
+and identity verification. Existing targets are never replaced. The constructor
+does not create a target; the explicit write method records mutation admission
+before the create syscall. No pathname cleanup follows an uncertain attempt.
+
+Successful completion is an observed `CREATED` receipt, not atomic visibility
+of the whole document or permanent immutability. Failure or interruption after
+creation may leave a partial new file and remains `UNKNOWN`; clients must not
+automatically retry. The adapter has one cross-handler native admission slot,
+a five-second native budget and twenty-second host deadline. A timeout or
+requested kill does not release admission before actual child close. Root
+closure does not prove compiler-descendant exclusion or maintenance custody.
+Receipts omit raw paths and document text and bind generated byte count/hash,
+page count and target hash. Retained history never reruns the creator.
+
+The catalog and compiler retain `write-pdf` as `BUILDABLE_GAP` with
+`CREATE_ONLY_BOUNDED_ASCII_TEXT_PDF` partial coverage. Existing-PDF editing,
+Unicode, images and richer rendering remain unimplemented. Source renderer
+validation uses independent strict PDF parsing, text extraction and rendered
+page inspection; these checks do not establish Battle Bridge native execution.
+
+### Finite source package and acceptance
+
+The fixed-runtime closure grows from 266 to **281 exact members**: seven private
+session/adapter modules, six search/move/PDF native helper files, and the two existing
 fixed read-only status scripts. Every original member remains present. The preparer,
 installer, native verifier and closure regressions carry the same bounded member
 count. Captured helper reads are included in the parse-only dependency proof;
@@ -223,7 +301,7 @@ remain required before the protected merge and commissioning stages.
 Neither a source commit nor passing hosted CI installs this change on Battle
 Bridge. The current protected runtime package, private host attachment and each
 per-operation terminal receipt remain separately required. This does not close
-all of #2573: process/session interaction and termination, PDF output,
+all of #2573: process/session interaction and termination, broader PDF editing/rendering,
 broader move/configuration contracts, service/account equivalents and the original native
 acceptance register retain their own implementation or commissioning work.
 

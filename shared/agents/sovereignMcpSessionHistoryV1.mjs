@@ -14,7 +14,7 @@ const HARD_LIMITS = Object.freeze({
 });
 const KNOWN_TOOLS = new Set([
   'inspect_battle_bridge', 'get_config', 'set_config_value', 'read_file', 'read_multiple_files', 'get_file_info',
-  'write_file', 'edit_file', 'move_file', 'list_directory', 'create_directory', 'search_project',
+  'write_file', 'edit_file', 'move_file', 'write_pdf', 'submit_feedback', 'list_directory', 'create_directory', 'search_project',
   'list_processes', 'starfield_vr_telemetry_archive', 'maintenance_action',
   'start_search', 'get_more_search_results', 'stop_search', 'list_searches',
   'start_process', 'read_process_output', 'list_sessions',

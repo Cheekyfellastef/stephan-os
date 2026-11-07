@@ -253,6 +253,43 @@ test('forbidden authority is held at the boundary instead of cloned for parity',
   assert.equal(result.pcRestartAuthority, false);
 });
 
+test('own advisory feedback maps to Sovereign intake without vendor delivery or verified failure claims', () => {
+  const current = classifyRemoteCommanderCapabilityObservation(remote('give-feedback-to-desktop-commander'));
+  assert.equal(current.state, 'PARITY_PRESENT');
+  assert.equal(current.sovereignEquivalent, 'submit_feedback');
+  assert.equal(current.functionalScope, 'THIS_SOVEREIGN_WORKSPACE_UNVERIFIED_ADVISORY_FEEDBACK');
+  assert.equal(current.externalVendorDelivery, false);
+  assert.equal(current.automaticLearning, false);
+  assert.equal(current.verifiedFailureEvidence, false);
+  assert.equal(current.runtimeParityProven, false);
+  const retained = buildSovereignCommanderCapabilityParityLedger([], { priorLedger: { capabilities: [{
+    capabilityId: 'give-feedback-to-desktop-commander', state: 'BUILDABLE_GAP', observationCount: 3,
+  }] } });
+  assert.equal(retained.capabilities[0].sovereignEquivalent, 'submit_feedback');
+  assert.equal(retained.capabilities[0].newlyProvenParity, false);
+  assert.equal(retained.capabilities[0].externalVendorDelivery, false);
+  assert.equal(retained.daemonMayReportGreen, false);
+});
+
+test('bounded create-only text PDFs never close general PDF outcomes in fresh or retained ledgers', () => {
+  const fresh = classifyRemoteCommanderCapabilityObservation(remote('write-pdf'));
+  assert.equal(fresh.state, 'BUILDABLE_GAP');
+  assert.equal(fresh.partialSovereignEquivalent, 'write_pdf');
+  assert.equal(fresh.partialScope, 'CREATE_ONLY_BOUNDED_ASCII_TEXT_PDF');
+  const retained = buildSovereignCommanderCapabilityParityLedger([], { priorLedger: { capabilities: [{
+    capabilityId: 'write-pdf', state: 'PARITY_PRESENT', sovereignEquivalent: 'write_pdf',
+    newlyProvenParity: true, observationCount: 5,
+  }] } });
+  assert.equal(retained.parityPresentCount, 0); assert.equal(retained.buildableGapCount, 1);
+  for (const item of [fresh, retained.capabilities[0]]) {
+    assert.equal(item.runtimeParityProven, false);
+    assert.equal(item.wholeDocumentAtomicityProven, false);
+    assert.equal(item.existingPdfEditingSupported, false);
+    assert.equal(item.unicodeTextSupported, false);
+    assert.equal(item.parityGapReason, 'GENERAL_PDF_EDITING_AND_RENDERING_UNIMPLEMENTED');
+  }
+});
+
 test('fixed diagnostic sessions cannot close general process outcomes in fresh or retained ledgers', () => {
   const ids = ['start-process', 'read-process-output', 'list-sessions'];
   for (const id of ids) {

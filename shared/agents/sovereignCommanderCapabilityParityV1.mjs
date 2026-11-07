@@ -13,7 +13,7 @@ export const SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE = Object.freeze({
   BOUNDARY_HOLD: 'BOUNDARY_HOLD',
 });
 
-// Source mappings describe only the named private-session contract. They cannot
+// Source mappings describe only the named private contract. They cannot
 // authenticate an installed host, broaden a scope or grant execution authority.
 export const SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY = Object.freeze(Object.fromEntries([
   ['start-search', 'start_search', 'ONE_EXPLICIT_LOCAL_WINDOWS_DIRECTORY'],
@@ -25,12 +25,27 @@ export const SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY = Object.freeze(Object.f
   ['get-tool-result', 'get_tool_result', 'THIS_PRIVATE_SESSION_RETAINED_RECEIPTS'],
   ['list-remote-tool-calls', 'list_remote_tool_calls', 'THIS_PRIVATE_HTTP_SESSION_ADVISORY_HISTORY'],
   ['set-config-value', 'set_config_value', 'THIS_PRIVATE_SESSION_TYPED_IO_LIMITS'],
+  ['give-feedback-to-desktop-commander', 'submit_feedback', 'THIS_SOVEREIGN_WORKSPACE_UNVERIFIED_ADVISORY_FEEDBACK'],
 ].map(([id, sovereignEquivalent, functionalScope]) => [id, Object.freeze({ sovereignEquivalent,
-  functionalScope, privateTransportRequired: true, runtimeParityProven: false })])));
+  functionalScope, privateTransportRequired: true, runtimeParityProven: false,
+  ...(id === 'give-feedback-to-desktop-commander' ? {
+    externalVendorDelivery: false, automaticLearning: false, verifiedFailureEvidence: false,
+  } : {}) })])));
 
 // Useful scoped implementations do not close their broader vendor outcomes,
 // even if a retained ledger once called the limited route parity.
 export const SOVEREIGN_COMMANDER_PARTIAL_PARITY_GAPS = Object.freeze({
+  'write-pdf': Object.freeze({
+    partialSovereignEquivalent: 'write_pdf',
+    partialScope: 'CREATE_ONLY_BOUNDED_ASCII_TEXT_PDF',
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    privateTransportRequired: true,
+    wholeDocumentAtomicityProven: false,
+    existingPdfEditingSupported: false,
+    unicodeTextSupported: false,
+    parityGapReason: 'GENERAL_PDF_EDITING_AND_RENDERING_UNIMPLEMENTED',
+  }),
   'move-file': Object.freeze({
     partialSovereignEquivalent: 'move_file',
     partialScope: 'SAME_PARENT_REGULAR_FILE_RENAME_NO_REPLACE',

@@ -17,6 +17,8 @@ import { createSovereignMcpSessionHistoryV1 } from '../shared/agents/sovereignMc
 import { createSovereignMcpSessionConfigV1 } from '../shared/agents/sovereignMcpSessionConfigV1.mjs';
 import { runSovereignFileMoveV1 } from '../shared/agents/sovereignFileMoveV1.mjs';
 import { createSovereignProcessSessionsV1 } from '../shared/agents/sovereignProcessSessionsV1.mjs';
+import { createSovereignFeedbackIntakeV1, SOVEREIGN_FEEDBACK_OPERATION_IDS_V1 } from '../shared/agents/sovereignFeedbackIntakeV1.mjs';
+import { runSovereignPdfWriteV1 } from '../shared/agents/sovereignPdfWriteV1.mjs';
 import {
   STEPHANOS_EXECUTION_SURFACE,
   buildStephanosExecutionCommandEnvelopeV1,
@@ -40,7 +42,8 @@ export const SOVEREIGN_COMMANDER_INSPECTION_ACTIONS = Object.freeze([
 const SEARCH_SESSION_TOOLS = Object.freeze(['start_search', 'get_more_search_results', 'stop_search', 'list_searches']);
 const HISTORY_TOOLS = Object.freeze(['get_usage_stats', 'get_recent_tool_calls', 'get_tool_result', 'list_remote_tool_calls']);
 const PROCESS_SESSION_TOOLS = Object.freeze(['start_process', 'read_process_output', 'list_sessions']);
-const PRIVATE_SESSION_TOOLS = Object.freeze([...SEARCH_SESSION_TOOLS, ...HISTORY_TOOLS, ...PROCESS_SESSION_TOOLS, 'set_config_value', 'move_file']);
+const PRIVATE_SESSION_TOOLS = Object.freeze([...SEARCH_SESSION_TOOLS, ...HISTORY_TOOLS, ...PROCESS_SESSION_TOOLS,
+  'set_config_value', 'move_file', 'submit_feedback', 'write_pdf']);
 const PRIVATE_READ_ANNOTATIONS = Object.freeze({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
 const HISTORY_PAGE_SCHEMA = Object.freeze({ type: 'object', additionalProperties: false,
   properties: { offset: { type: 'integer', minimum: 0, maximum: 256, default: 0 },
@@ -76,6 +79,32 @@ const TOOLS = Object.freeze([
         expectedRevision: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
       },
     },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'submit_feedback',
+    title: 'Submit Sovereign Commander feedback',
+    description: 'Save bounded problem reports or improvement suggestions in the existing local Sovereign Shared Workspace. Caller text is unverified advisory feedback, never failure evidence, a build request or approval. Credential/path-shaped text is redacted where recognized; do not include secrets. Private local stdio or authenticated HTTP MCP only.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['category', 'operation', 'message'],
+      properties: {
+        category: { type: 'string', enum: ['problem', 'improvement', 'other'] },
+        operation: { type: 'string', enum: SOVEREIGN_FEEDBACK_OPERATION_IDS_V1 },
+        message: { type: 'string', minLength: 1, maxLength: 1024, description: 'At most 1024 UTF-8 bytes; no control characters other than LF.' },
+      } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'write_pdf',
+    title: 'Create a bounded text PDF',
+    description: 'Create one new PDF at an explicit permitted local Windows path. Up to eight US Letter pages, Courier 10 pt, sixty lines per page, eighty printable ASCII characters per line and 16384 total characters. Existing files are refused. No PDF editing, Unicode, images, HTML, fonts, scripts or caller PDF bytes. A failed or interrupted creation may leave a partial new file; never retry an UNKNOWN result automatically. Private local stdio or authenticated HTTP MCP only.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['path', 'pages'],
+      properties: {
+        path: { type: 'string', minLength: 1, maxLength: 240 },
+        pages: { type: 'array', minItems: 1, maxItems: 8,
+          items: { type: 'object', additionalProperties: false, required: ['lines'],
+            properties: { lines: { type: 'array', maxItems: 60,
+              items: { type: 'string', maxLength: 80, pattern: '^[ -~]*$' } } } } },
+      } },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
@@ -461,6 +490,7 @@ function operationForTool(name) {
 }
 
 function targetPathsForTool(name, args = {}) {
+  if (name === 'write_pdf') return [args.path];
   if (name === 'move_file') return [args.source, args.destination];
   if (name === 'start_search') return [args.path];
   if (name === 'create_directory') return [args.path];
@@ -536,6 +566,8 @@ export function createSovereignCommanderMcpHandler({
   sessionHistoryFactory = createSovereignMcpSessionHistoryV1,
   sessionConfigFactory = createSovereignMcpSessionConfigV1,
   processSessionsFactory = createSovereignProcessSessionsV1,
+  feedbackIntakeFactory = createSovereignFeedbackIntakeV1,
+  pdfWriteExecutor = runSovereignPdfWriteV1,
   fileMoveExecutor = runSovereignFileMoveV1,
 } = {}) {
   let session = null;
@@ -545,6 +577,12 @@ export function createSovereignCommanderMcpHandler({
   const sessionHistory = sessionHistoryFactory();
   const sessionConfig = sessionConfigFactory();
   const processSessions = processSessionsFactory();
+  const feedbackIntake = feedbackIntakeFactory({ repoRoot, now });
+  const pdfWrites = Object.freeze({ execute: (operation, args) => {
+    if (operation !== 'WRITE_PDF') return { ok: false, mutationState: 'NOT_STARTED',
+      blocker: 'SOVEREIGN_PDF_OPERATION_INVALID', retryAllowed: false };
+    return pdfWriteExecutor(args);
+  } });
   // Only this fixed private operation reaches the native adapter. Closing an
   // MCP session does not cancel a possible mutation or release native admission.
   const fileMoves = Object.freeze({ execute: (operation, args) => {
@@ -571,7 +609,8 @@ export function createSovereignCommanderMcpHandler({
       try { if (recorded?.recorded) sessionHistory.finish(envelope.commandId, value, flags); } catch {}
     };
     try {
-      const result = await executor(envelope, { ...options, searchSessions, sessionHistory, sessionConfig, fileMoves, processSessions });
+      const result = await executor(envelope, { ...options, searchSessions, sessionHistory, sessionConfig,
+        fileMoves, processSessions, feedbackIntake, pdfWrites });
       recordResponse(result);
       return result;
     } catch (error) {
@@ -726,8 +765,11 @@ export function createSovereignCommanderMcpHandler({
     closed = true;
     try { sessionConfig.dispose(); }
     finally {
-      try { sessionHistory.dispose(); }
-      finally { try { await searchSessions.dispose(); } finally { await processSessions.dispose(); } }
+      try { await feedbackIntake.dispose(); }
+      finally {
+        try { sessionHistory.dispose(); }
+        finally { try { await searchSessions.dispose(); } finally { await processSessions.dispose(); } }
+      }
     }
   };
   return handle;
