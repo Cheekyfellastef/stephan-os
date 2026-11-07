@@ -167,6 +167,62 @@ jobs:
             scripts/starfield-vr-crash-recovery.test.mjs \
             scripts/starfield-vr-telemetry-reporter-runtime.test.mjs
 
+  spatial-browser-proof:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select Spatial Workspace browser proof
+        id: spatial
+        env:
+          SPATIAL_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SPATIAL_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SPATIAL_HEAD_SHA"
+          if git diff --quiet "$SPATIAL_BASE_SHA" "$SPATIAL_HEAD_SHA" -- \
+            apps/spatial-bridge 'tests/spatial-*' \
+            .github/workflows/build-stephanos-ui.yml package.json; then
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            if [ "$status" -ne 1 ]; then exit "$status"; fi
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Setup Node.js
+        if: steps.spatial.outputs.required == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run Spatial Workspace source tests
+        if: steps.spatial.outputs.required == 'true'
+        run: node --test tests/spatial-*.test.mjs
+      - name: Install declared browser-test dependency
+        if: steps.spatial.outputs.required == 'true'
+        run: npm install --ignore-scripts --no-save --no-package-lock --no-audit --no-fund @playwright/test@1.54.0
+      - name: Install Chromium for Spatial Workspace proof
+        if: steps.spatial.outputs.required == 'true'
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Run Spatial Workspace browser proof
+        if: steps.spatial.outputs.required == 'true'
+        env:
+          CI: 'true'
+        run: node tests/spatial-workspace-comfort.browser.mjs --output-dir "${{ runner.temp }}/spatial-comfort-browser-proof"
+      - name: Upload Spatial Workspace browser evidence
+        if: always() && steps.spatial.outputs.required == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: spatial-comfort-browser-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/spatial-comfort-browser-proof
+          if-no-files-found: error
+          retention-days: 14
+
   build:
     if: >-
       github.event_name != 'issue_comment' ||
