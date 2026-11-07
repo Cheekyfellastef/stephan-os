@@ -3,6 +3,19 @@
 export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRef=globalThis.document,
   locationRef=globalThis.location,onChange=()=>{},setTimer=setTimeout,clearTimer=clearTimeout,sessionStore=globalThis.sessionStorage}={}) {
   const endpoint=`http://127.0.0.1:${locationRef?.port==='4174'?4184:4180}`;
+  // Diagnostic only: this never starts a native service or binds a window.
+  async function probeHelper(){
+    try{
+      const response=await fetchRef(endpoint+'/health',{method:'GET',cache:'no-store',
+        signal:AbortSignal.timeout(4000)});
+      if(!response.ok)return {ok:false,reason:'Spatial local capture helper refused health check.'};
+      const data=await response.json();
+      if(data?.schema!=='stephanos.spatial-window-health.v1')
+        return {ok:false,reason:'Unexpected local capture helper identity.'};
+      return {ok:true,reason:'Local Spatial window capture helper reachable.'};
+    }catch{return {ok:false,reason:'Local window helper unavailable on port '+(locationRef?.port==='4174'?'4184':'4180')+
+      '. Open Spatial Workspace using its Windows desktop shortcut.'};}
+  }
   let image=null,epoch=0,refreshPromise=null;
   let token=null,active=false,disposed=false,generation=0,serial=0,sequence=0,timer=null,queue=[],busy=false;
   const storageKey='stephanos.spatial-window.session.v1';
@@ -111,7 +124,7 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     if(!active||!generation||state.status!=='live'||queue.length>=16){publish({inputStatus:'Input paused. Wait for a live connection.'});return false;}
     queue.push({...value,generation});publish({inputStatus:'Sending input to the selected app.'});return true;
   }
-  return {discover,connect,stop,input,getState:()=>({...state}),getFrame:()=>state.status==='live'?image:null,
+  return {discover,connect,stop,input,probeHelper,getState:()=>({...state}),getFrame:()=>state.status==='live'?image:null,
     // A cached page retains this client. Revoke access on departure, but allow
     // an explicit new connection after Back/Forward restores the page.
     pagehide({persisted=false}={}){if(!persisted)disposed=true;return stop();},
