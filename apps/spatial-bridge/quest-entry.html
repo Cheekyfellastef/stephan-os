@@ -48,6 +48,20 @@
       <p id="cube-save-status" class="muted" aria-live="polite">Loading saved cube positions.</p>
       <p id="controller-status" aria-live="polite">Enter VR to detect controllers. For Xbox, connect it to the device running this browser and press a button to wake it.</p>
     </section>
+    <section class="panel" aria-label="Spatial Workspace comfort profiles">
+      <h2>Comfort profiles</h2>
+      <p class="muted">Seated and Standing remember their own height offset and keyboard angle. These are virtual room adjustments; they do not change Quest guardian or physical tracking.</p>
+      <div class="controls">
+        <button type="button" id="comfort-seated">Seated</button>
+        <button type="button" id="comfort-standing">Standing</button>
+        <button type="button" id="comfort-height-down">Height -</button>
+        <button type="button" id="comfort-height-up">Height +</button>
+        <button type="button" id="comfort-tilt-down">Keyboard -</button>
+        <button type="button" id="comfort-tilt-up">Keyboard +</button>
+        <button type="button" id="comfort-reset">Reset profile</button>
+      </div>
+      <p id="comfort-status" class="muted" aria-live="polite"></p>
+    </section>
     <section class="panel" aria-label="Spatial ChatGPT console">
       <h2>Holographic console</h2>
       <p>Connect your existing ChatGPT or Codex window on this Windows PC. Use Quest Link / Air Link for VR. Its conversation, images, tools and approvals stay in the original app.</p>
@@ -97,6 +111,7 @@
     import { createHolodeckCubeScene } from './holodeck-cube-scene-v1.mjs';
     import { createHolodeckCubeStore } from './holodeck-cube-store-v1.mjs';
     import { createHolodeckWindowClient } from './holodeck-window-client-v1.mjs';
+    import { createHolodeckComfortStore } from './holodeck-comfort-v1.mjs';
     import { createHolodeckScreen, SCREEN_BUTTONS } from './holodeck-screen-v1.mjs';
     import { createSpatialWorkspaceTelemetryRecorderV1 } from './spatial-telemetry-client.mjs';
     const webxrStatus = document.getElementById('webxr-status');
@@ -111,6 +126,16 @@
     const enterButton = document.getElementById('enter-holodeck');
     const pingButton = document.getElementById('ping-stephanos');
     const canvas = document.getElementById('holodeck-canvas');
+    const comfortStatus = document.getElementById('comfort-status');
+    const comfort = createHolodeckComfortStore();
+    function refreshComfortStatus() {
+      const state=comfort.getState(),active=state.active;
+      comfortStatus.textContent=`${state.activeProfile === 'standing' ? 'Standing' : 'Seated'} · height ${active.heightOffset>=0?'+':''}${active.heightOffset.toFixed(2)} m · keyboard ${Math.round(active.keyboardAngle)}°`;
+      document.getElementById('comfort-seated').setAttribute('aria-pressed',String(state.activeProfile==='seated'));
+      document.getElementById('comfort-standing').setAttribute('aria-pressed',String(state.activeProfile==='standing'));
+    }
+    comfort.subscribe(refreshComfortStatus);
+    refreshComfortStatus();
     let lastCapability = null;
     let activeTelemetry = null;
     let previewRenderer = null;
@@ -127,7 +152,7 @@
       }));
       if(!immersiveActive)drawPreview();
     }});
-    const screen=createHolodeckScreen({client,onStatus:()=>{if(!immersiveActive)drawPreview();},onReload:async()=>{
+    const screen=createHolodeckScreen({client,comfort,onStatus:()=>{if(!immersiveActive)drawPreview();},onReload:async()=>{
       cubeScene.stop();await client.stop();try{await immersiveSession?.end();}catch{}location.reload();
     }});
     const surfaces=screen.render();
@@ -152,6 +177,15 @@
     document.getElementById('choose-window').addEventListener('click',()=>client.discover());
     document.getElementById('connect-window').addEventListener('click',()=>client.connect(Number(windowSelector.value)));
     document.getElementById('disconnect-window').addEventListener('click',()=>client.stop());
+    for(const [id,action] of Object.entries({
+      'comfort-seated':()=>comfort.setActiveProfile('seated'),
+      'comfort-standing':()=>comfort.setActiveProfile('standing'),
+      'comfort-height-down':()=>comfort.adjustHeight(-0.05),
+      'comfort-height-up':()=>comfort.adjustHeight(0.05),
+      'comfort-tilt-down':()=>comfort.adjustKeyboardAngle(-5),
+      'comfort-tilt-up':()=>comfort.adjustKeyboardAngle(5),
+      'comfort-reset':()=>comfort.resetActive(),
+    })) document.getElementById(id).addEventListener('click',action);
     const cubeStore = createHolodeckCubeStore({onStatus:message => {
       document.getElementById('cube-save-status').textContent = message;
     }});
@@ -165,7 +199,7 @@
       try {
         const gl = canvas.getContext('webgl', { xrCompatible: true, alpha: false, antialias: true });
         if (!gl) throw new Error('graphics unavailable');
-        previewRenderer ??= createHolodeckRoomRenderer({ gl,screen });
+        previewRenderer ??= createHolodeckRoomRenderer({ gl,screen,comfort });
         const scale = Math.min(window.devicePixelRatio || 1, 2);
         const width = Math.max(1, Math.round(canvas.clientWidth * scale));
         const height = Math.max(1, Math.round(canvas.clientHeight * scale));
@@ -243,7 +277,7 @@
       previewRenderer?.dispose();
       previewRenderer = null;
       const result = await enterHolodeckBaseline({
-        canvas, cubeScene,screen,
+        canvas, cubeScene,screen,comfort,
         onFrame: (frameTruth) => activeTelemetry?.recordFrame(frameTruth),
         onCubeStatus: ({ state }) => {
           document.getElementById('cube-status').textContent = `Glass cubes · ${state === 'held' ? 'held — release to drop or throw' : state}`;
