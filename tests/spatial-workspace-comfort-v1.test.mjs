@@ -107,7 +107,7 @@ test('holding a dial and moving the ray updates keyboard angle until release',()
 test('comfort height translates tracked head and controller rays together',()=>{
   const raw={transform:{position:{x:0.2,y:1.1,z:-0.3},orientation:{x:0,y:0,z:0,w:1}}};
   const shifted=trackedPose(raw,{x:0.4,y:0.35,z:-0.2,yaw:0});
-  assert.deepEqual(shifted.position,[0.6000000000000001,1.4500000000000002,-0.5]);
+  close(shifted.position[0],0.6,1e-9);close(shifted.position[1],1.45,1e-9);close(shifted.position[2],-0.5,1e-9);
 });
 
 test('offline Spatial shell contains the comfort module and launcher exposes both profiles',()=>{
