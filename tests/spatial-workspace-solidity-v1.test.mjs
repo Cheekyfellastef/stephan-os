@@ -71,6 +71,7 @@ test('every movable cube produces a conservative player obstacle at any orientat
   assert.equal(obstacles.length, 2);
   for (const obstacle of obstacles) {
     assert.ok(obstacle.maxX > obstacle.minX);
+    assert.ok(obstacle.maxY > obstacle.minY);
     assert.ok(obstacle.maxZ > obstacle.minZ);
   }
   const cube = obstacles[0];
@@ -93,11 +94,60 @@ test('controller locomotion composes static geometry with current cube obstacles
   close(state.z, cube.maxZ + HOLODECK_BODY_RADIUS);
 });
 
+test('floor-relative locomotion ignores overhead cubes without weakening solid room geometry', () => {
+  const [floorCube, overheadCube, unreachableCube] = [
+    ['floor', 0.3], ['overhead', 2.9], ['unreachable', 50],
+  ].map(([id, y]) => createHolodeckDynamicObstacles([
+    { id, position:[0,y,-1.8], size:0.114 },
+  ])[0]);
+  const pose = { transform: {
+    position: { x:0, y:1.25, z:0 }, orientation: { x:0, y:0, z:0, w:1 },
+  } };
+  const neutral = { source:'test', label:'test', moveX:0, moveY:0, turn:0, reset:false };
+  const forward = { ...neutral, moveY:-1 };
+
+  const travel = (obstacle, floorRelativeY = true) => {
+    const nav = createHolodeckLocomotion({ obstacles: [], floorRelativeY });
+    nav.update({ time:0, pose, input:neutral, dynamicObstacles:[obstacle] });
+    let state;
+    for (let time = 50; time <= 5000; time += 50)
+      state = nav.update({ time, pose, input:forward, dynamicObstacles:[obstacle] });
+    return state;
+  };
+
+  close(travel(floorCube).z, floorCube.maxZ + HOLODECK_BODY_RADIUS);
+  close(travel(overheadCube).z, -5.72);
+  close(travel(unreachableCube).z, -5.72);
+  // Without a floor-relative reference, fail conservatively rather than guessing
+  // body height from an arbitrary local-space Y value.
+  close(travel(overheadCube, false).z, overheadCube.maxZ + HOLODECK_BODY_RADIUS);
+});
+
+test('direct collision filtering preserves static solids and rejects invalid body-span shortcuts', () => {
+  const [overheadCube] = createHolodeckDynamicObstacles([
+    { id:'overhead', position:[0,2.9,-2], size:0.114 },
+  ]);
+  const free = resolveHolodeckMovement({ x:0, z:0 }, { x:0, z:-5 }, {
+    obstacles:[overheadCube], bodyBottomY:0, bodyTopY:1.37,
+  });
+  close(free.z, -5);
+  const conservative = resolveHolodeckMovement({ x:0, z:0 }, { x:0, z:-5 }, {
+    obstacles:[overheadCube], bodyBottomY:2, bodyTopY:1,
+  });
+  assert.ok(conservative.z > -5);
+  const staticWall = { minX:-0.5, maxX:0.5, minZ:-2.1, maxZ:-1.9 };
+  const staticBlocked = resolveHolodeckMovement({ x:0, z:0 }, { x:0, z:-5 }, {
+    obstacles:[staticWall], bodyBottomY:0, bodyTopY:1.37,
+  });
+  assert.ok(staticBlocked.z > -5);
+});
+
 test('runtime and documentation retain the solid-by-default integration boundary', () => {
   const baseline = readFileSync(new URL('../apps/spatial-bridge/holodeck-baseline-v0.mjs', import.meta.url), 'utf8');
   const docs = readFileSync(new URL('../apps/spatial-bridge/SPATIAL-CONSOLE.md', import.meta.url), 'utf8');
   assert.match(baseline, /setEnvironmentSolids/);
   assert.match(baseline, /createHolodeckDynamicObstacles/);
+  assert.match(baseline, /floorRelativeY:\s*referenceSpaceType === 'local-floor'/);
   assert.match(docs, /Solid-by-default room contract/i);
   assert.match(docs, /future physical room objects/i);
 });

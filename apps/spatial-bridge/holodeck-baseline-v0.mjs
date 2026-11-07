@@ -87,7 +87,8 @@ export async function enterHolodeckBaseline({
 
     const renderer = rendererFactory({ gl, screen, comfort });
     const locomotion = createHolodeckLocomotion({ room: renderer.geometry.room,
-      obstacles: renderer.geometry.obstacles, comfort });
+      obstacles: renderer.geometry.obstacles, comfort,
+      floorRelativeY: referenceSpaceType === 'local-floor' });
     const cubeInteraction = createHolodeckCubeInteraction({scene:cubeScene});
     const screenInput = createHolodeckScreenInput({screen,comfort});
     let collisionTilt = NaN, environmentSolids = [];

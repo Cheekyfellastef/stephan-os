@@ -41,14 +41,25 @@ export function createHolodeckDynamicObstacles(states = []) {
     obstacles.push({
       id: `cube:${state.id ?? 'unknown'}`,
       minX: position[0] - half, maxX: position[0] + half,
+      minY: position[1] - half, maxY: position[1] + half,
       minZ: position[2] - half, maxZ: position[2] + half,
     });
   }
   return obstacles;
 }
 
+function verticallyOverlaps(obstacle, bodyBottomY, bodyTopY) {
+  // Static room geometry intentionally has no Y bounds and remains solid. Dynamic
+  // bodies opt into 3-D overlap only when a trustworthy floor-relative body span
+  // is supplied; otherwise fail conservatively and keep the old X/Z collision.
+  if (!Number.isFinite(obstacle?.minY) || !Number.isFinite(obstacle?.maxY)) return true;
+  if (!Number.isFinite(bodyBottomY) || !Number.isFinite(bodyTopY) || bodyBottomY >= bodyTopY) return true;
+  return obstacle.maxY > bodyBottomY + EPSILON && obstacle.minY < bodyTopY - EPSILON;
+}
+
 export function resolveHolodeckMovement(position, delta, {
   room = HOLODECK_ROOM, obstacles = HOLODECK_OBSTACLES, radius = HOLODECK_BODY_RADIUS,
+  bodyBottomY, bodyTopY,
 } = {}) {
   const p = { x: position.x, z: position.z };
   if (![p.x, p.z, delta.x, delta.z, radius].every(Number.isFinite) || radius < 0) return { x: 0, z: 0 };
@@ -56,8 +67,10 @@ export function resolveHolodeckMovement(position, delta, {
     x: boundedDelta(p.x, delta.x, -room.halfWidth + radius, room.halfWidth - radius),
     z: boundedDelta(p.z, delta.z, room.frontZ + radius, room.backZ - radius),
   };
-  const expanded = obstacles.map(b => ({ minX: b.minX - radius, maxX: b.maxX + radius,
-    minZ: b.minZ - radius, maxZ: b.maxZ + radius }));
+  const expanded = obstacles
+    .filter((b) => verticallyOverlaps(b, bodyBottomY, bodyTopY))
+    .map(b => ({ minX: b.minX - radius, maxX: b.maxX + radius,
+      minZ: b.minZ - radius, maxZ: b.maxZ + radius }));
   // The cube sits above the table. Remove contained footprints so physical
   // overlap recovery has one coherent nearest exit, even inside both objects.
   const boxes = expanded.filter((b, i) => !expanded.some((other, j) => j !== i
