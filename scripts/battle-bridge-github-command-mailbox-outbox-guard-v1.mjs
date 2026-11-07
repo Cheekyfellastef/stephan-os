@@ -551,12 +551,14 @@ function executionLedgerRecordPath(statePath, requestId) {
 }
 
 function sameLegacyTerminalIdentity(pendingReceipt, canonicalReceipt) {
-  const fields = [
-    'schemaVersion', 'operation', 'repository', 'issueNumber', 'branch',
-    'expectedHead', 'state', 'acceptedAt', 'completedAt', 'processSourceHead',
-  ];
-  return fields.every((key) => stableJson(pendingReceipt?.[key] ?? null)
-    === stableJson(canonicalReceipt?.[key] ?? null));
+  if (!isPlainObject(pendingReceipt) || !isPlainObject(canonicalReceipt)
+    || !Object.hasOwn(pendingReceipt, 'requestId')
+    || pendingReceipt.requestId !== '') return false;
+  const pendingTerminal = { ...pendingReceipt };
+  const canonicalTerminal = { ...canonicalReceipt };
+  delete pendingTerminal.requestId;
+  delete canonicalTerminal.requestId;
+  return stableJson(pendingTerminal) === stableJson(canonicalTerminal);
 }
 
 function proveSingleLegacyPendingDebt(statePath, receiptRoot, state, entry, metrics) {
