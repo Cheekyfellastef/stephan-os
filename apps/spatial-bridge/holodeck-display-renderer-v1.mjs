@@ -4,7 +4,7 @@ import { buildHolodeckKeycaps, keycapPressTravel, KEYCAP_VERTEX_COUNT, KEYCAP_VE
 
 // The same labelled canvas now covers individually extruded 3D keycaps.
 // Sidewalls and cap tops share the room's stereo depth, hinge and hit targets.
-export function createHolodeckDisplayRenderer({gl,screen,comfort=screen?.comfort}) {
+export function createHolodeckDisplayRenderer({gl,screen,comfort=screen?.comfort,furniture=null}) {
   const shaders=[],buffers=[],textures=[];let program,version=-1;
   function dispose(){buffers.forEach(b=>gl.deleteBuffer(b));textures.forEach(t=>gl.deleteTexture(t));shaders.forEach(s=>gl.deleteShader(s));if(program)gl.deleteProgram(program);}
   try {
@@ -32,14 +32,15 @@ export function createHolodeckDisplayRenderer({gl,screen,comfort=screen?.comfort
     const uv=[[0,0],[1,0],[1,1],[0,1]],buffer=gl.createBuffer();buffers.push(buffer);
     let poseVersion='';
     function updateGeometry(tilt,motion) {
+      const offset=furniture?.getOffset?.('keyboard')??[0,0,0];
       const travel=motion?keycapPressTravel(motion.ageMs):0;
-      const next=`${tilt}:${motion?.id||''}:${Math.round(travel*1000000)}`;
+      const next=`${tilt}:${offset.join(',')}:${motion?.id||''}:${Math.round(travel*1000000)}`;
       if(next===poseVersion)return;
       poseVersion=next;
       const vertices=[];
-      for(const offset of [0,4])for(const index of [0,1,2,0,2,3])
-        vertices.push(...(offset?consolePointToWorld(positions[offset+index],tilt):positions[index]),...uv[index],0);
-      const cap=buildHolodeckKeycaps({keyboardTilt:tilt,pressedId:motion?.id,pressAgeMs:motion?.ageMs});
+      for(const surfaceOffset of [0,4])for(const index of [0,1,2,0,2,3])
+        vertices.push(...(surfaceOffset?consolePointToWorld(positions[surfaceOffset+index],tilt).map((value,i)=>value+offset[i]):positions[index]),...uv[index],0);
+      const cap=buildHolodeckKeycaps({keyboardTilt:tilt,pressedId:motion?.id,pressAgeMs:motion?.ageMs,furnitureOffset:offset});
       vertices.push(...cap);
       gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(vertices),gl.DYNAMIC_DRAW);
     }
