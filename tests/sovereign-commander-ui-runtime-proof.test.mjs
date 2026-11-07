@@ -39,6 +39,11 @@ test('VR Atlas runtime proof accepts compact centered overflow-free status pills
   const result = evaluateVrAtlasStatusPillsObservation({
     pageTitleMatches: true,
     methodsGridVisible: true,
+    evidencePanelVisible: true,
+    evidenceState: 'ready',
+    corpusCount: 26,
+    agentAction: 'PROPOSE_CANONICAL_VR_CORRELATION',
+    evidenceTitlePresent: true,
     pills: [
       pill('ACTIVE'),
       pill('NEW-SOURCE-EXTRACTION'),
@@ -55,6 +60,11 @@ test('VR Atlas runtime proof rejects the stretched ellipse regression', () => {
   const result = evaluateVrAtlasStatusPillsObservation({
     pageTitleMatches: true,
     methodsGridVisible: true,
+    evidencePanelVisible: true,
+    evidenceState: 'ready',
+    corpusCount: 26,
+    agentAction: 'PROPOSE_CANONICAL_VR_CORRELATION',
+    evidenceTitlePresent: true,
     pills: [
       pill('ACTIVE', { compact: false, centered: false }),
       pill('NEW-SOURCE-EXTRACTION'),
@@ -65,6 +75,29 @@ test('VR Atlas runtime proof rejects the stretched ellipse regression', () => {
   assert.equal(result.accepted, false);
   assert.ok(result.blockers.includes('VR_ATLAS_STATUS_PILL_NOT_COMPACT:ACTIVE'));
   assert.ok(result.blockers.includes('VR_ATLAS_STATUS_PILL_NOT_CENTERED:ACTIVE'));
+});
+
+test('VR Atlas runtime proof rejects a page whose canonical evidence panel is not live', () => {
+  const result = evaluateVrAtlasStatusPillsObservation({
+    pageTitleMatches: true,
+    methodsGridVisible: true,
+    evidencePanelVisible: true,
+    evidenceState: 'unavailable',
+    corpusCount: 0,
+    agentAction: '',
+    evidenceTitlePresent: false,
+    pills: [
+      pill('ACTIVE'),
+      pill('NEW-SOURCE-EXTRACTION'),
+      pill('REFERENCE-PROVEN'),
+      pill('DESIGN-ACTIVE'),
+    ],
+  });
+  assert.equal(result.accepted, false);
+  assert.ok(result.blockers.includes('VR_ATLAS_CANONICAL_EVIDENCE_NOT_READY'));
+  assert.ok(result.blockers.includes('VR_ATLAS_REFERENCE_CORPUS_EMPTY'));
+  assert.ok(result.blockers.includes('VR_ATLAS_RESEARCH_AGENT_ACTION_MISSING'));
+  assert.ok(result.blockers.includes('VR_ATLAS_CANONICAL_EVIDENCE_TITLE_MISSING'));
 });
 
 test('Commander UI proof profile remains closed-world', () => {

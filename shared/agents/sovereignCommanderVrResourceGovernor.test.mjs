@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import { SOVEREIGN_COMMANDER_REMOTE_ACTIONS } from './sovereignCommanderRemoteMailboxV1.mjs';
+import { coreGamingProtectionFromGovernor } from './stephanosCoreDaemonV1.mjs';
 
 const governor = await readFile(new URL('../../scripts/windows/run-vr-resource-governor.ps1', import.meta.url), 'utf8');
+const qwen35Canary = await readFile(new URL('../../scripts/qwen35-canary.mjs', import.meta.url), 'utf8');
+const ollamaLoadGovernor = await readFile(new URL('../ai/ollamaLoadGovernor.mjs', import.meta.url), 'utf8');
 const virtualAcceptance = await readFile(new URL('../../scripts/windows/run-vr-virtual-airlink-acceptance.ps1', import.meta.url), 'utf8');
 const gamingAcceptance = await readFile(new URL('../../scripts/windows/run-gaming-resource-acceptance.ps1', import.meta.url), 'utf8');
 const starfieldPerformance = await readFile(new URL('../../scripts/windows/starfield-vr-performance-mode.ps1', import.meta.url), 'utf8');
@@ -16,6 +19,7 @@ const installer = await readFile(new URL('../../scripts/windows/install-sovereig
 const provider = await readFile(new URL('../../stephanos-server/services/llm/providers/ollamaProvider.js', import.meta.url), 'utf8');
 const commander = await readFile(new URL('./sovereignCommanderV1.mjs', import.meta.url), 'utf8');
 const mcp = await readFile(new URL('../../scripts/sovereign-commander-mcp.mjs', import.meta.url), 'utf8');
+const remoteMailbox = await readFile(new URL('./sovereignCommanderRemoteMailboxV1.mjs', import.meta.url), 'utf8');
 const gamingService = await readFile(new URL('../../stephanos-server/services/gamingResourceService.js', import.meta.url), 'utf8');
 const gamingRoute = await readFile(new URL('../../stephanos-server/routes/gaming-resource.js', import.meta.url), 'utf8');
 const server = await readFile(new URL('../../stephanos-server/server.js', import.meta.url), 'utf8');
@@ -23,8 +27,46 @@ const gamingTile = await readFile(new URL('../../stephanos-ui/src/components/Gam
 const aiClient = await readFile(new URL('../../stephanos-ui/src/ai/aiClient.js', import.meta.url), 'utf8');
 const app = await readFile(new URL('../../stephanos-ui/src/App.jsx', import.meta.url), 'utf8');
 
+test('idle VR governor refreshes its verified state before consumer freshness budgets expire', () => {
+  assert.match(governor, /\$idleHeartbeatDue = \$false/);
+  assert.match(governor, /if \(-not \$effective\.active\)/);
+  assert.match(governor, /\$idleHeartbeatDue = \(\$now\.ToUniversalTime\(\) - \$observedUtc\)\.TotalSeconds -ge 5/);
+  assert.match(governor, /\$guardDue -or \$idleHeartbeatDue/);
+  assert.match(governor, /Get-GamingSignal -ThrottleFlatGameScan/);
+  assert.match(governor, /Start-Sleep -Milliseconds \$poll/);
+});
+
+test('idle publisher cadence leaves Core fresh through observation latency but never masks a stopped governor', () => {
+  const match = governor.match(/\$idleHeartbeatDue = \(\$now\.ToUniversalTime\(\) - \$observedUtc\)\.TotalSeconds -ge (\d+)/);
+  assert.ok(match, 'Read the actual publisher cadence, not a duplicate test setting');
+  const intervalMs = Number(match[1]) * 1000;
+  assert.ok(intervalMs >= 1000, 'Idle reconciliation must remain bounded');
+  const start = Date.parse('2026-10-26T12:00:00Z');
+  const normal = { schemaVersion: 'stephanos.vr-resource-governor.v1', governorVersion: 3,
+    active: false, phase: 'NORMAL', flatGameActive: false, airLinkActive: false,
+    realAirLinkActive: false, virtualAirLinkTestActive: false, prepareLeaseActive: false };
+  for (const observationDelayMs of [0, 2500, 5000]) {
+    const period = intervalMs + observationDelayMs;
+    for (let elapsed = 0; elapsed < period * 3; elapsed += 250) {
+      const publishedAt = start + Math.floor(elapsed / period) * period;
+      assert.equal(coreGamingProtectionFromGovernor({ ...normal,
+        updatedAtUtc: new Date(publishedAt).toISOString() }, start + elapsed), false,
+      `Idle evidence expired at cadence ${intervalMs}ms plus ${observationDelayMs}ms observation delay`);
+    }
+  }
+  const stopped = { ...normal, updatedAtUtc: new Date(start).toISOString() };
+  assert.equal(coreGamingProtectionFromGovernor(stopped, start + 15001), true);
+  assert.equal(coreGamingProtectionFromGovernor({ ...stopped, active: true }, start), true);
+});
+
 test('gaming resource governor detects VR and flat-game sessions and parks non-lightweight Ollama models', () => {
-  assert.match(governor, /'OculusDash', 'vrcompositor', 'vrdashboard'/);
+  assert.match(governor, /'vrcompositor', 'vrdashboard'/);
+  assert.match(governor, /function Test-StaleOculusDashAfterCrash/);
+  assert.match(governor, /Get-Process -Name 'OculusDash'/);
+  assert.match(governor, /HMD Reporting state change/);
+  assert.match(governor, /current_session_type:/);
+  assert.match(governor, /Groups\[2\]\.Value -eq 'streaming'/);
+  assert.match(governor, /return -not \(Test-StaleOculusDashAfterCrash\)/);
   assert.match(governor, /starfield-vr-sim-air-link\.json/);
   assert.match(governor, /stephanos\.starfield-vr-sim-air-link\.v1/);
   assert.match(governor, /virtual-air-link-test-active/);
@@ -62,7 +104,7 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /parentExecutablePath/);
   assert.match(governor, /flat-game-inactive/);
   assert.match(governor, /gaming-session-cooldown/);
-  assert.match(governor, /governorVersion = 2/);
+  assert.match(governor, /governorVersion = 3/);
   assert.match(governor, /'NORMAL'/);
   assert.match(governor, /'PREPARING'/);
   assert.match(governor, /'GAMING'/);
@@ -83,9 +125,35 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /vramReleasedMiB/);
   assert.match(governor, /lightweightOnly/);
   assert.match(governor, /parkAllModels/);
+  assert.match(governor, /Normalize legacy\/custom profile shapes before StrictMode consumers/);
+  assert.match(governor, /\$profile\.PSObject\.Properties\['processName'\]/);
+  assert.match(governor, /\$profile\.PSObject\.Properties\['parkAllModels'\]/);
+  assert.match(governor, /function Normalize-GovernorState/);
+  assert.match(governor, /function Add-MissingGovernorProperty/);
+  assert.match(governor, /Normalize older shapes before StrictMode reads any field/);
+  assert.match(governor, /return Normalize-GovernorState -State \$state/);
   assert.match(governor, /localModelAllowed/);
+  assert.match(governor, /loadedModelsBefore/);
   assert.match(governor, /loadedModelsAfter/);
+  assert.match(governor, /zeroLocalModelInvariant/);
+  assert.match(governor, /reappearanceDetected/);
+  assert.match(governor, /reappearanceCount/);
   assert.match(governor, /\$modelsToPark = if \(\$parkAllModels\) \{ @\(\$loadedBefore\) \} else \{ @\(\$heavyBefore\) \}/);
+  assert.match(governor, /\$guardIntervalSeconds = if \(\$effective\.active -and \$effective\.profile\.parkAllModels\) \{ 0\.5 \} else \{ 5 \}/);
+  assert.match(governor, /PollMilliseconds = 500/);
+  assert.match(governor, /function Invoke-ImmediateVrModelEviction/);
+  assert.match(governor, /function Get-OllamaVrRuntimeProcesses/);
+  assert.match(governor, /function Stop-OllamaRuntimeForRealVr/);
+  assert.match(governor, /'llama-server\.exe','ollama\.exe','ollama app\.exe'/);
+  assert.match(governor, /\$hardBlockRealVr = \[bool\]\(\$parkAllModels -and \$Signal\.realAirLinkActive\)/);
+  assert.match(governor, /ollamaRuntimeHardBlocked/);
+  assert.match(governor, /A synchronous 'ollama stop' can itself stall for minutes/);
+  assert.match(governor, /Headset detection is the highest-priority signal/);
+  assert.match(governor, /First bite: headset presence wins over every other workload/);
+  assert.match(governor, /\$priorParkAllModels/);
+  assert.match(governor, /An explicitly prepared VR session must not silently downgrade/);
+  assert.match(governor, /\$profile = \$PriorState\.profile/);
+  assert.match(governor, /\$prepared\.zeroLocalModelInvariant -ne \$true/);
   assert.match(governor, /cooldownSeconds/);
   assert.match(governor, /evictionHealthy/);
   assert.match(governor, /heavyModelsBefore/);
@@ -95,6 +163,16 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /stephanos\.gaming-resource-profiles\.v1/);
   assert.match(profileExample, /stephanos\.gaming-resource-profiles\.v1/);
   assert.match(profileExample, /"processName": "Starfield"/);
+});
+
+
+test('Qwen 3.5 canary cannot strand a heavyweight model during VR', () => {
+  assert.match(ollamaLoadGovernor, /qwen3\.5:27b/);
+  assert.match(qwen35Canary, /vr-resource-governor-current\.json/);
+  assert.match(qwen35Canary, /QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR/);
+  assert.match(qwen35Canary, /localModelAllowed === false/);
+  assert.match(qwen35Canary, /keep_alive: 0/);
+  assert.match(qwen35Canary, /unloadCanaryModel/);
 });
 
 test('Stephanos router honours the gaming governor heavy-model policy', () => {
@@ -119,6 +197,10 @@ test('Sovereign Commander owns and self-heals the hidden VR resource governor', 
   assert.match(runner, /-WindowStyle Hidden/);
   assert.match(runner, /vrResourceGovernorHealthy/);
   assert.match(runner, /VR protection is intentionally independent of daemon health/);
+  assert.match(runner, /function Test-VrResourceGovernorProcessCurrent/);
+  assert.match(runner, /vrGovernorRestartRequested/);
+  assert.match(runner, /SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_STALE_RECYCLE_FAILED/);
+  assert.match(runner, /PowerShell loads the governor script into memory/);
   assert.doesNotMatch(runner, /if \(\$ok\) \{\s*if \(-not \(Test-Path -LiteralPath \$vrGovernorScript/s);
   assert.match(runner, /if \(-not \$vrGovernorOk\) \{ exit 4 \}/);
   assert.match(installer, /vrResourceGovernorEnabled = \$true/);
@@ -140,6 +222,8 @@ test('Sovereign Commander exposes bounded gaming resource controls and acceptanc
   for (const action of [
     'gaming-resource-status',
     'gaming-resource-prepare',
+    'starfield-vr-resource-preflight',
+    'gaming-resource-cancel-prepare',
     'gaming-resource-auto',
     'gaming-resource-force-on',
     'gaming-resource-force-off',
@@ -151,6 +235,13 @@ test('Sovereign Commander exposes bounded gaming resource controls and acceptanc
   }
 
   assert.match(commander, /run-gaming-resource-acceptance\.ps1/);
+  assert.match(commander, /'starfield-vr-resource-preflight': frozen\(\{/);
+  assert.match(commander, /'-Action', 'PrepareGaming',[\s\S]*?'-ProcessName', 'Starfield',[\s\S]*?'-ProfileName', 'vr-maximum'/);
+  assert.match(commander, /'gaming-resource-cancel-prepare': frozen\(\{[\s\S]*?'-Action', 'CancelPrepare'/);
+  assert.match(mcp, /'starfield-vr-resource-preflight'/);
+  assert.match(mcp, /'gaming-resource-cancel-prepare'/);
+  assert.match(remoteMailbox, /STARFIELD_VR_RESOURCE_PREFLIGHT_STRICTMODE_PROPERTY/);
+  assert.match(remoteMailbox, /SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_PREFLIGHT_COMPLETE/);
   assert.match(gamingAcceptance, /stephanos\.gaming-resource-acceptance\.v1/);
   assert.match(gamingAcceptance, /PrepareGaming/);
   assert.match(gamingAcceptance, /ForceOn/);
@@ -172,6 +263,9 @@ test('Starfield VR telemetry is richer and Sovereign Commander can diagnose the 
   assert.match(starfieldPerformance, /metaVrProcessCount/);
   assert.match(starfieldPerformance, /metaVrWorkingSetMiB/);
   assert.match(starfieldPerformance, /airLinkRuntimeActive/);
+  assert.match(starfieldPerformance, /ollamaRestoreDeferred/);
+  assert.match(starfieldPerformance, /A Starfield exit does not necessarily mean VR has ended/);
+  assert.match(starfieldPerformance, /\$ollamaRestoreDeferred = \[bool\]\$gamingResourceReconcile\.active/);
   assert.match(starfieldPerformance, /avgGpuUtilPct/);
   assert.match(starfieldPerformance, /avgStarfieldCpuPct/);
   assert.match(starfieldPerformance, /airLinkRuntimeSamplePct/);
@@ -250,6 +344,7 @@ test('Sovereign Commander owns a bounded Virtual AirLink acceptance cycle', () =
   assert.match(virtualAcceptance, /heavyModelSamplesDuringGuard/);
   assert.match(virtualAcceptance, /nvidia-smi\.exe/);
   assert.match(virtualAcceptance, /vramReleasedMiB/);
+  assert.doesNotMatch(virtualAcceptance, /governorState = \$governorStateDuringTest/);
   assert.match(virtualAcceptance, /launchAllowed = \$false/);
   assert.match(virtualAcceptance, /realHeadsetProofClaimed = \$false/);
   assert.match(virtualAcceptance, /localModelAllowed -ne \$false/);
@@ -289,4 +384,15 @@ test('Gaming Resource Guard exposes only bounded trusted UI controls', () => {
   assert.match(gamingTile, />Run self-test<\/button>/);
   assert.match(app, /id: 'gamingResourcePanel'/);
   assert.match(app, /<GamingResourceTile uiLayout=\{safeUiLayout\} togglePanel=\{togglePanel\}/);
+});
+
+
+test('VR Watch throttles heavyweight desktop scans without slowing VR headset protection', () => {
+  assert.match(governor, /param\(\[switch\]\$ThrottleFlatGameScan\)/);
+  assert.match(governor, /\$script:flatGameScanIntervalSeconds = 3/);
+  assert.match(governor, /\$script:cachedFlatGameSignal = Get-FlatGameSignal/);
+  assert.match(governor, /\$signal = Get-GamingSignal -ThrottleFlatGameScan/);
+  assert.match(governor, /if \(\$airLink\.active\) \{[\s\S]{0,170}cachedFlatGameSignal = \$null/);
+  assert.match(governor, /\[void\]\(Invoke-ImmediateVrModelEviction\)[\s\S]{0,500}\$signal = Get-GamingSignal -ThrottleFlatGameScan/);
+  assert.match(governor, /\$flatGame = Get-FlatGameSignal[\s\S]{0,170}\$flatGame\.active/);
 });

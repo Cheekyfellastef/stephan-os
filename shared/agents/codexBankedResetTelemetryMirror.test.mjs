@@ -1,7 +1,8 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildCodexBankedResetTelemetryIssueBody,
+  buildCodexBankedResetTelemetryIssueBodyV2,
   createCodexBankedResetTelemetryRecord,
   extractTrustedCodexResetReceipt,
   projectCodexResetExecutionReceipt,
@@ -23,7 +24,7 @@ function receipt(operation, result, overrides = {}) {
     requestId: overrides.requestId || `request-${operation.toLowerCase().replace(/_/g, '-')}`,
     operation,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: overrides.issueNumber ?? 2590,
+    issueNumber: overrides.issueNumber ?? activeMailboxIssueForTest,
     branch: 'main',
     state: overrides.state || (result.ok === false ? 'BLOCKED' : 'DONE'),
     acceptedAt: overrides.acceptedAt || '2026-07-21T09:00:00.000Z',
@@ -117,7 +118,7 @@ test('projects bounded status error evidence and re-filters unsafe historical re
     }, { requestId: `reset-status-unsafe-error-00${index + 1}` });
     const unsafeRecord = createCodexBankedResetTelemetryRecord([comment(unsafeStatus)], { ownerLogin });
     assert.equal(unsafeRecord.latestStatus.error, '');
-    assert.equal(buildCodexBankedResetTelemetryIssueBody(unsafeRecord).includes(diagnostic), false);
+    assert.equal(buildCodexBankedResetTelemetryIssueBodyV2(unsafeRecord).includes(diagnostic), false);
   }
 });
 
@@ -221,7 +222,7 @@ test('confirms exactly one successful press with changed before and after proof'
   assert.equal(record.latestExecution.matchedUsageLabel, '1 reset available');
   assert.equal(record.latestExecution.usageControlResolution, 'labeled-ancestor');
   assert.equal(record.latestExecution.meterAfter, 'Codex weekly remaining 100%');
-  assert.match(buildCodexBankedResetTelemetryIssueBody(record), /"status": "CONFIRMED"/);
+  assert.match(buildCodexBankedResetTelemetryIssueBodyV2(record), /"status": "CONFIRMED"/);
 });
 
 test('latest receipt wins and unsafe telemetry text is suppressed', () => {

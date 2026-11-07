@@ -1,7 +1,11 @@
+import './githubGoalEstateBoundedConcurrency.test.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { fetchGithubGoalIssues } from './githubPrEvidenceService.js';
+import {
+  deriveGoalBodyResourceIds,
+  fetchGithubGoalIssues,
+} from './githubPrEvidenceService.js';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const OWNER = 'Cheekyfellastef';
@@ -45,6 +49,99 @@ function priorMirror(overrides = {}) {
   };
 }
 async function observe(issue, comments = [], commentStatus = 200, events = [ownerGoalLabelEvent()]) { return fetchGithubGoalIssues({ owner: OWNER, repo: REPO, auth: { configured: true, token: 'test-only', authority: 'test-only' }, fetchImpl: async (url) => { if (url.includes('/events?')) return response(events); if (url.includes('/comments?')) return response(comments, commentStatus); return response([issue]); }, maxPages: 1 }); }
+
+test('one authenticated owner acceptance plan keeps tests outside mutation scope despite unrelated comments', async () => {
+  const requiredTests = ['node --test scripts/sovereign-goal-builder-worker-evidence.test.mjs'];
+  const resourceIds = ['repo:cheekyfellastef/stephan-os:path:shared/agents/canonicalMissionWorkerEvidenceV1.mjs'];
+  const result = await observe(canonicalGoal({ comments: 2 }), [ownerAdmissionComment({ body: admissionBody({ resourceIds, requiredTests }) }),
+    { user: { login: 'contributor' }, author_association: 'CONTRIBUTOR', body: 'ordinary discussion' }]);
+  assert.deepEqual(result.issues[0].admission.requiredTests, requiredTests);
+  assert.deepEqual(result.issues[0].admission.resourceIds, resourceIds);
+  assert.equal(result.issues[0].admissionProofSource, 'OWNER_AUTHENTICATED_COMMENT');
+});
+
+test('invalid or ambiguous owner acceptance cannot silently fall back to general-only label admission', async () => {
+  for (const commands of [[], ['node --test ../escape.test.mjs'], ['npm run arbitrary']]) {
+    const result = await observe(canonicalGoal({ comments: 1 }), [ownerAdmissionComment({ body: admissionBody({ requiredTests: commands }) })]);
+    assert.deepEqual(result.issues, []);
+  }
+  const body = admissionBody({ requiredTests: ['node --test scripts/a.test.mjs'] });
+  assert.deepEqual((await observe(canonicalGoal({ comments: 2 }), [ownerAdmissionComment({ body }), ownerAdmissionComment({ body })])).issues, []);
+  const escaped = admissionBody({ requiredTests: [] }).replace('requiredTests', 'required\\u0054ests');
+  assert.deepEqual((await observe(canonicalGoal({ comments: 1 }), [ownerAdmissionComment({ body: escaped })])).issues, []);
+});
+
+test('an owner test-only admission preserves the label-derived mutation scope', async () => {
+  const commands = ['node --test scripts/sovereign-goal-builder-worker-evidence.test.mjs'];
+  const result = await observe(canonicalGoal({ comments: 1, body: 'Repair shared/agents/canonicalMissionWorkerEvidenceV1.mjs.' }),
+    [ownerAdmissionComment({ body: admissionBody({ requiredTests: commands }) })]);
+  assert.deepEqual(result.issues[0].admission.requiredTests, commands);
+  assert.deepEqual(result.issues[0].admission.resourceIds,
+    ['repo:cheekyfellastef/stephan-os:path:shared/agents/canonicalMissionWorkerEvidenceV1.mjs']);
+});
+
+test('contributor test plans never acquire owner test execution authority', async () => {
+  const result = await observe(canonicalGoal({ comments: 1 }), [ownerAdmissionComment({ user: { login: 'contributor' },
+    author_association: 'CONTRIBUTOR', body: admissionBody({ requiredTests: ['node --test scripts/a.test.mjs'] }) })]);
+  assert.equal(result.issues[0].admission.requiredTests, undefined);
+});
+
+test('unchanged canonical mirror retains the admitted acceptance plan on bounded revalidation', async () => {
+  const requiredTests = ['node --test scripts/a.test.mjs'];
+  const result = await fetchGithubGoalIssues({ owner: OWNER, repo: REPO, auth: { configured: true, token: 'test-only' },
+    fetchImpl: async url => { assert.equal(url.includes('/comments?'), false); return response([canonicalGoal()]); },
+    priorGoalRecords: [priorMirror({ requiredTests })], maxPages: 1, cacheEnabled: false });
+  assert.deepEqual(result.issues[0].admission.requiredTests, requiredTests);
+});
+
+test('derives bounded canonical resource scopes only from explicit repo-relative files in goal text', () => {
+  const result = deriveGoalBodyResourceIds([
+    'Reuse shared/agents/platformStatusProofFlow.mjs.',
+    'Wire apps/goal-dashboard/index.html.',
+    'Ignore C:\\Windows\\System32\\cmd.exe and https://example.com/not-a-repo-file.js.',
+    'Ignore ../unsafe.js and ordinary prose.',
+  ].join('\n'), REPOSITORY);
+  assert.deepEqual(result, [
+    'repo:cheekyfellastef/stephan-os:path:apps/goal-dashboard/index.html',
+    'repo:cheekyfellastef/stephan-os:path:shared/agents/platformStatusProofFlow.mjs',
+  ]);
+});
+
+test('owner-authenticated goal label admission carries explicit goal-body file scopes', async () => {
+  const result = await observe(canonicalGoal({
+    body: [
+      'Canonical modules:',
+      'shared/agents/platformStatusProofFlow.mjs',
+      'apps/goal-dashboard/index.html',
+    ].join('\n'),
+  }));
+  assert.deepEqual(result.issues[0].admission.resourceIds, [
+    'repo:cheekyfellastef/stephan-os:path:apps/goal-dashboard/index.html',
+    'repo:cheekyfellastef/stephan-os:path:shared/agents/platformStatusProofFlow.mjs',
+  ]);
+});
+
+test('prior admitted mirror can safely enrich an empty scope from unchanged owner goal text', async () => {
+  let requestCount = 0;
+  const result = await fetchGithubGoalIssues({
+    owner: OWNER,
+    repo: REPO,
+    auth: { configured: true, token: 'test-only', authority: 'test-only' },
+    fetchImpl: async () => {
+      requestCount += 1;
+      return response([canonicalGoal({
+        body: 'Implement docs/architecture/multiplexer-autonomous-goal-build-v1.md',
+      })]);
+    },
+    priorGoalRecords: [priorMirror()],
+    maxPages: 1,
+    cacheEnabled: false,
+  });
+  assert.equal(requestCount, 1);
+  assert.deepEqual(result.issues[0].admission.resourceIds, [
+    'repo:cheekyfellastef/stephan-os:path:docs/architecture/multiplexer-autonomous-goal-build-v1.md',
+  ]);
+});
 
 test('owner-authenticated goal label event admits an owner-authored canonical goal', async () => { const result = await observe(canonicalGoal()); assert.equal(result.status, 'fetched'); assert.equal(result.ownerAuthoredGoalsAutoAdmitted, false); assert.equal(result.discoveredIssues.length, 1); assert.equal(result.issues.length, 1); const admitted = result.issues[0]; assert.equal(admitted.issueNumber, 2314); assert.equal(admitted.admissionState, 'ADMISSION_PROVEN'); assert.equal(admitted.admissionProofSource, 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT'); assert.equal(admitted.schedulerEligible, true); assert.equal(admitted.admission.sourceImplementationAllowed, true); assert.equal(admitted.admission.mergeAuthority, false); assert.equal(admitted.admission.deploymentAuthority, false); assert.equal(admitted.admission.runtimeMutationAuthority, false); assert.equal(admitted.admission.arbitraryShellAllowed, false); });
 test('owner-authored goal without owner-authenticated label event remains discovery-only', async () => { const result = await observe(canonicalGoal(), [], 200, [{ event: 'labeled', label: { name: 'goal' }, actor: { login: 'collaborator' } }]); assert.equal(result.discoveredIssues.length, 1); assert.equal(result.discoveredIssues[0].schedulerEligible, false); assert.deepEqual(result.issues, []); });
@@ -198,6 +295,39 @@ test('goal-estate request is aborted by a bounded timeout', async () => { const 
 
 test('401 primary credential rejection falls back to approved gh-cli token', async () => { const seenTokens = []; const result = await fetchGithubGoalIssues({ owner: OWNER, repo: REPO, auth: { configured: true, token: 'expired-primary', authority: 'env' }, ghTokenProvider: async () => 'approved-gh-cli-token', fetchImpl: async (url, options) => { const token = options.headers.Authorization.replace('Bearer ', ''); seenTokens.push(token); if (token === 'expired-primary') return response({}, 401); if (url.includes('/events?')) return response([ownerGoalLabelEvent()]); return url.includes('/comments?') ? response([ownerAdmissionComment()]) : response([canonicalGoal()]); }, maxPages: 1 }); assert.equal(seenTokens[0], 'expired-primary'); assert.ok(seenTokens.includes('approved-gh-cli-token')); assert.equal(result.status, 'fetched'); assert.equal(result.issues.length, 1); });
 
-test('entire goal-estate observation is bounded by one total deadline across pagination', async () => { let requestCount = 0; const result = await fetchGithubGoalIssues({ owner: OWNER, repo: 'stephan-os-total-deadline-test', auth: { configured: true, token: 'test-only', authority: 'test-only' }, fetchImpl: async (_url, options) => { requestCount += 1; return new Promise((resolve, reject) => { const timer = setTimeout(() => resolve(response(Array.from({ length: 100 }, () => canonicalGoal()))), 700); options.signal.addEventListener('abort', () => { clearTimeout(timer); const error = new Error('aborted'); error.name = 'AbortError'; reject(error); }, { once: true }); }); }, cacheEnabled: false, requestTimeoutMs: 1_000, maxPages: 10 }); assert.equal(result.status, 'error'); assert.match(result.recommendedNextAction, /408/); assert.ok(requestCount <= 2, `expected total deadline to stop pagination, saw ${requestCount} requests`); });
+test('entire goal-estate observation is bounded by one total deadline across pagination', async () => {
+  let listRequests = 0, eventRequests = 0, active = 0;
+  const result = await fetchGithubGoalIssues({
+    owner: OWNER, repo: 'stephan-os-total-deadline-test',
+    auth: { configured: true, token: 'test-only', authority: 'test-only' },
+    fetchImpl: async (url, { signal }) => {
+      const isList = url.includes('/issues?');
+      if (isList) listRequests++; else eventRequests++;
+      active++;
+      try {
+        return await new Promise((resolve, reject) => {
+          const finish = () => {
+            signal.removeEventListener('abort', abort);
+            resolve(response(isList ? Array.from({ length: 100 }, () => canonicalGoal()) : [ownerGoalLabelEvent()]));
+          };
+          const timer = setTimeout(finish, 700);
+          const abort = () => {
+            clearTimeout(timer);
+            signal.removeEventListener('abort', abort);
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          };
+          if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+        });
+      } finally { active--; }
+    },
+    cacheEnabled: false, requestTimeoutMs: 1000, maxPages: 10,
+  });
+  assert.equal(result.status, 'error');
+  assert.match(result.recommendedNextAction, /408/);
+  assert.deepEqual(result.issues, []);
+  assert.equal(listRequests, 1, 'deadline must prevent a second estate page');
+  assert.ok(eventRequests <= 4, 'only the bounded in-flight authority reads may start');
+  assert.equal(active, 0, 'all started requests must drain before returning');
+});
 
 test('unavailable authentication resolution participates in failure backoff', async () => { let clockMs = 3_000_000; const options = { owner: OWNER, repo: 'stephan-os-auth-backoff-test', auth: { configured: false, token: '', authority: 'none' }, cacheEnabled: true, failureBackoffMs: 30_000, nowMs: () => clockMs }; const first = await fetchGithubGoalIssues(options); assert.equal(first.status, 'error'); clockMs += 2_000; const backedOff = await fetchGithubGoalIssues(options); assert.equal(backedOff, first); });

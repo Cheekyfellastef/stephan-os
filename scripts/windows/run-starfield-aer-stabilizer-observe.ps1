@@ -26,6 +26,7 @@ $powershellExe = Join-Path $PSHOME 'powershell.exe'
 $expectedBaselineHash = '63db15c370d3b8f15faa292a95d5c3abd4c6571cef0d35a45310d998adfeae41'
 $expectedCustomHash = 'b0046baf0e4487c76d6a7c85c04b338e402f50f7557189e5e46a5b8c0932a76c'
 $expectedLoaderHash = '663f021e6ace3a5624ce1d273d4a2714bf8e42bd595dee4481190ad2aea31f60'
+$virtualDesktopOculusCompatibilityDisableEnvironment = 'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY'
 
 function Get-Sha256([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -36,6 +37,81 @@ function Write-JsonNoBom([string]$Path, $Value) {
 function Require-File([string]$Path, [string]$Label) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "$Label missing: $Path" }
 }
+function Start-StarfieldWithMetaAirLinkIsolation {
+    param($VisualTelemetry = $null)
+
+    $environmentNames = @(
+        $virtualDesktopOculusCompatibilityDisableEnvironment,
+        'XR_API_LAYER_PATH',
+        'XR_ENABLE_API_LAYERS',
+        'STEPHANOS_VR_TELEMETRY_TRACE_PATH',
+        'STEPHANOS_VR_TELEMETRY_TARGET_EXE',
+        'STEPHANOS_VR_TELEMETRY_LAUNCH_SESSION_ID',
+        'STEPHANOS_VR_TELEMETRY_GAME_ID'
+    )
+    $previous = @{}
+    foreach ($name in $environmentNames) {
+        $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    }
+    try {
+        [Environment]::SetEnvironmentVariable($virtualDesktopOculusCompatibilityDisableEnvironment, '1', 'Process')
+        if ($VisualTelemetry) {
+            if ([bool]$VisualTelemetry.capabilities.modifiesFrameData -ne $false) {
+                throw 'VR telemetry layer must remain pass-through.'
+            }
+            $layerDirectory = [string]$VisualTelemetry.layerDirectory
+            $tracePath = [string]$VisualTelemetry.tracePath
+            $targetExecutable = [string]$VisualTelemetry.targetExecutable
+            $launchIdentity = [string]$VisualTelemetry.launchSessionId
+            $gameId = [string]$VisualTelemetry.gameId
+            if (-not (Test-Path -LiteralPath $layerDirectory -PathType Container) -or
+                [string]::IsNullOrWhiteSpace($tracePath) -or
+                $targetExecutable -notmatch '^[A-Za-z0-9._-]{1,160}$' -or
+                $launchIdentity -notmatch '^[A-Za-z0-9._-]{1,160}$' -or
+                $gameId -notmatch '^[A-Za-z0-9._-]{1,120}$') {
+                throw 'VR telemetry child environment contract is invalid.'
+            }
+            $priorLayerPath = [string]$previous['XR_API_LAYER_PATH']
+            $priorLayers = [string]$previous['XR_ENABLE_API_LAYERS']
+            $layerPath = if ($priorLayerPath) { $layerDirectory + ';' + $priorLayerPath } else { $layerDirectory }
+            $enabledLayers = if ($priorLayers) { $priorLayers + ';XR_APILAYER_STEPHANOS_telemetry_v1' } else { 'XR_APILAYER_STEPHANOS_telemetry_v1' }
+            [Environment]::SetEnvironmentVariable('XR_API_LAYER_PATH', $layerPath, 'Process')
+            [Environment]::SetEnvironmentVariable('XR_ENABLE_API_LAYERS', $enabledLayers, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_TRACE_PATH', $tracePath, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_TARGET_EXE', $targetExecutable, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_LAUNCH_SESSION_ID', $launchIdentity, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_GAME_ID', $gameId, 'Process')
+        }
+        return Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru
+    }
+    finally {
+        foreach ($name in $environmentNames) {
+            [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process')
+        }
+    }
+}
+function Set-MutarConfigValue([string]$Content, [string]$Name, [string]$Value) {
+    $pattern = '(?m)^' + [regex]::Escape($Name) + '=.*$'
+    $line = "$Name=$Value"
+    if ([regex]::IsMatch($Content, $pattern)) {
+        return [regex]::Replace($Content, $pattern, $line, 1)
+    }
+    return $Content.TrimEnd() + [Environment]::NewLine + $line + [Environment]::NewLine
+}
+function Repair-ComfortableAerConfig([string]$ConfigPath) {
+    Require-File $ConfigPath 'MutaR config'
+    $before = Get-Content -LiteralPath $ConfigPath -Raw
+    $after = Set-MutarConfigValue $before 'VR_AsyncAER' 'false'
+    $after = Set-MutarConfigValue $after 'DLSS_AER_Enabled' 'true'
+    if ($after -match '(?m)^CreationEngine_MotionVectorFix=true\s*$') {
+        $after = [regex]::Replace($after, '(?m)^CreationEngine_MotionVectorFix=true\s*$', 'CreationEngine_MotionVectorFix=false', 1)
+    }
+    if ($after -ne $before) {
+        [IO.File]::WriteAllText($ConfigPath, $after, (New-Object Text.UTF8Encoding($false)))
+    }
+    return $after
+}
+
 function Validate-LocalState {
     Require-File $gameExe 'Starfield executable'
     Require-File $liveDll 'Live MutaR injection DLL'
@@ -58,10 +134,10 @@ function Validate-LocalState {
     if ($loaderHash -ne $expectedLoaderHash) { throw "OpenXR loader hash mismatch: $loaderHash" }
 
     $configPath = Join-Path $gameRoot 'vr_config.txt'
-    Require-File $configPath 'MutaR config'
-    $config = Get-Content -LiteralPath $configPath -Raw
+    $config = Repair-ComfortableAerConfig $configPath
     if ($config -notmatch '(?m)^VR_AsyncAER=false\s*$') { throw 'Expected comfortable baseline VR_AsyncAER=false is not active.' }
     if ($config -notmatch '(?m)^DLSS_AER_Enabled=true\s*$') { throw 'Expected comfortable baseline DLSS_AER_Enabled=true is not active.' }
+    if ($config -match '(?m)^CreationEngine_MotionVectorFix=true\s*$') { throw 'Rejected CreationEngine_MotionVectorFix=true is active.' }
 
     $protectFlagPresent = Test-Path -LiteralPath $protectFlag -PathType Leaf
 
@@ -77,6 +153,27 @@ function Validate-LocalState {
     }
 }
 
+$runtimeSourceHead = ''
+try { $runtimeSourceHead = (& git -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim().ToLowerInvariant() } catch { $runtimeSourceHead = '' }
+if ($runtimeSourceHead.Length -ne 40 -or $runtimeSourceHead -notmatch '^[a-f0-9]{40}') {
+    throw 'AER Observe cannot prove the current repository source head.'
+}
+$runtimeSourcePaths = @(
+    'scripts/windows/run-starfield-aer-stabilizer-observe.ps1',
+    'scripts/windows/launch-starfield-vr-with-splash.ps1',
+    'scripts/windows/launch-starfield-vr.ps1',
+    'scripts/windows/starfield-vr-performance-mode.ps1',
+    'scripts/windows/run-vr-resource-governor.ps1',
+    'scripts/windows/starfield-aer-stabilizer-guardian.ps1'
+)
+$dirtyRuntimeSource = (& git -C $repoRoot status --porcelain --untracked-files=no -- $runtimeSourcePaths 2>$null | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw 'AER Observe cannot verify the reviewed runtime source against the current repository head.'
+}
+if ($dirtyRuntimeSource) {
+    throw "AER Observe blocked dirty reviewed runtime source: $dirtyRuntimeSource"
+}
+
 $validated = Validate-LocalState
 
 if ($ValidateOnly) {
@@ -85,6 +182,9 @@ if ($ValidateOnly) {
         ready = -not [bool]$validated.protectFlagPresent
         mode = 'OBSERVE'
         rollbackArmed = $true
+        runtimeSourceHead = $runtimeSourceHead
+        runtimeSourceClean = $true
+        runtimeSourcePaths = $runtimeSourcePaths
         validation = $validated
         validatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     } | ConvertTo-Json -Depth 8
@@ -96,6 +196,7 @@ if ([bool]$validated.protectFlagPresent) {
     throw 'AER Observe is blocked because protect mode is explicitly armed. Validation did not change it.'
 }
 
+$env:STEPHANOS_SOURCE_HEAD = $runtimeSourceHead
 $readinessText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $canonicalLauncher -ReadinessOnly -ProfilePath $profilePath 2>&1 | Out-String
 if ($LASTEXITCODE -ne 0) {
     throw "Canonical MutaR readiness gate did not pass. Nothing was changed. $($readinessText.Trim())"
@@ -122,12 +223,15 @@ $routeIdentity = $readinessReceipt.routeIdentity
 if (-not $routeIdentity -or [string]$routeIdentity.provider -ne 'mutar-openxr') {
     throw 'Canonical MutaR readiness receipt did not carry verified mutar-openxr route identity.'
 }
-$launchSessionId = [guid]::NewGuid().ToString('N')
-$sourceHead = [string]$routeIdentity.sourceHead
-if (-not $sourceHead) {
-    try { $sourceHead = (& git -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim().ToLowerInvariant() } catch { $sourceHead = '' }
+$sourceHead = ([string]$routeIdentity.sourceHead).ToLowerInvariant()
+if ($sourceHead.Length -ne 40 -or $sourceHead -notmatch '^[a-f0-9]{40}') {
+    throw 'Canonical MutaR readiness receipt did not carry a valid source head.'
 }
-$profileSha256 = [string]$routeIdentity.profileSha256
+if ($sourceHead -ne $runtimeSourceHead) {
+    throw "AER Observe blocked a stale readiness receipt: receipt=$sourceHead runtime=$runtimeSourceHead"
+}
+$launchSessionId = [guid]::NewGuid().ToString('N')
+$profileSha256 = ([string]$routeIdentity.profileSha256).ToLowerInvariant()
 
 $resourceText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $resourceGovernorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 | Out-String
 if ($LASTEXITCODE -ne 0) { throw "VR gaming resource preflight failed. $($resourceText.Trim())" }
@@ -178,16 +282,47 @@ Write-JsonNoBom $modeStatePath $state
 
 $performanceMode = $null
 $swapped = $false
+$game = $null
+$perfGuardian = $null
+$rollbackGuardian = $null
 try {
     Copy-Item -LiteralPath $customDll -Destination $liveDll -Force
     $swapped = $true
     if ((Get-Sha256 $liveDll) -ne $expectedCustomHash) { throw 'Experimental DLL swap verification failed.' }
 
-    $perfText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $gameRoot -Provider 'mutar-openxr' -ProfilePath $profilePath -ProfileSha256 $profileSha256 -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String
+    $perfText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $gameRoot -Provider 'mutar-openxr' -ProfilePath $profilePath -ProfileSha256 $profileSha256 -LaunchSessionId $launchSessionId -SourceHead $sourceHead -ProviderSensors @('mutar.aer-presenter-sequence','mutar.aer-parity') -ProviderTelemetryPath $liveLog 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { throw "Performance mode enter failed: $($perfText.Trim())" }
     $performanceMode = $perfText.Trim() | ConvertFrom-Json
+    if (-not $performanceMode.mutarComfortProfile -or
+        [string]$performanceMode.mutarComfortProfile.VR_AsyncAER -ne 'false' -or
+        [string]$performanceMode.mutarComfortProfile.DLSS_AER_Enabled -ne 'true') {
+        throw 'Performance mode did not prove the MutaR comfort baseline before launch.'
+    }
+    $motionVectorApplied = $performanceMode.mutarComfortProfile.PSObject.Properties['CreationEngine_MotionVectorFix']
+    if ($motionVectorApplied -and [string]$motionVectorApplied.Value -ne 'false') {
+        throw 'Performance mode left the rejected CreationEngine_MotionVectorFix enabled.'
+    }
 
-    $game = Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru
+    $performanceSessionPath = [string]$performanceMode.sessionPath
+    $telemetrySessionId = [string]$performanceMode.routeIdentity.telemetrySessionId
+    if (-not $performanceSessionPath -or -not (Test-Path -LiteralPath $performanceSessionPath -PathType Leaf) -or -not $telemetrySessionId) {
+        throw 'Fresh canonical telemetry session was not created before Starfield launch.'
+    }
+    try {
+        $performanceSession = Get-Content -LiteralPath $performanceSessionPath -Raw | ConvertFrom-Json
+    }
+    catch {
+        throw 'Fresh canonical telemetry session could not be read before Starfield launch.'
+    }
+    if ([string]$performanceSession.routeIdentity.provider -ne 'mutar-openxr' -or
+        [string]$performanceSession.routeIdentity.launchSessionId -ne $launchSessionId -or
+        ([string]$performanceSession.routeIdentity.sourceHead).ToLowerInvariant() -ne $sourceHead -or
+        ([string]$performanceSession.routeIdentity.profileSha256).ToLowerInvariant() -ne $profileSha256 -or
+        [string]$performanceSession.routeIdentity.telemetrySessionId -ne $telemetrySessionId) {
+        throw 'Fresh canonical telemetry session identity does not match this exact launch.'
+    }
+
+    $game = Start-StarfieldWithMetaAirLinkIsolation -VisualTelemetry $performanceMode.visualTelemetry
 
     $session = [ordered]@{
         schemaVersion = 'stephanos.starfield-vr-aer-stabilizer-session.v1'
@@ -203,7 +338,8 @@ try {
         modeStatePath = $modeStatePath
         sharedWorkspaceRoot = $workspaceRoot
         repoRoot = $repoRoot
-        performanceSessionPath = [string]$performanceMode.sessionPath
+        performanceSessionPath = $performanceSessionPath
+        visualTelemetry = $performanceMode.visualTelemetry
         gameProcessId = $game.Id
         canonicalReadinessReceipt = [string]$readiness.receiptPath
         routeIdentity = [ordered]@{
@@ -212,20 +348,13 @@ try {
             profileSha256 = $profileSha256
             launchSessionId = $launchSessionId
             sourceHead = $sourceHead
-            telemetrySessionId = [string]$performanceMode.routeIdentity.telemetrySessionId
+            telemetrySessionId = $telemetrySessionId
         }
         resourceGovernor = $resourceGuard
+        virtualDesktopOculusCompatibilityLayerDisabled = $true
+        virtualDesktopOculusCompatibilityDisableEnvironment = $virtualDesktopOculusCompatibilityDisableEnvironment
     }
     Write-JsonNoBom $sessionPath $session
-
-    $perfArgs = @(
-        '-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass',
-        '-File',('"{0}"' -f $performanceScript),
-        '-Action','Guard',
-        '-SessionPath',('"{0}"' -f [string]$performanceMode.sessionPath),
-        '-GameProcessId',[string]$game.Id
-    )
-    $perfGuardian = Start-Process -FilePath $powershellExe -ArgumentList $perfArgs -WindowStyle Hidden -PassThru
 
     $rollbackArgs = @(
         '-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass',
@@ -234,6 +363,16 @@ try {
         '-GameProcessId',[string]$game.Id
     )
     $rollbackGuardian = Start-Process -FilePath $powershellExe -ArgumentList $rollbackArgs -WindowStyle Hidden -PassThru
+
+    $perfGuardianJson = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action StartGuard -SessionPath ([string]$performanceMode.sessionPath) -GameProcessId ([int]$game.Id) 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -or -not $perfGuardianJson.Trim()) {
+        throw "Performance telemetry guardian failed to start: $($perfGuardianJson.Trim())"
+    }
+    $perfGuardianStart = $perfGuardianJson.Trim() | ConvertFrom-Json
+    if ($perfGuardianStart.ok -ne $true -or [int]$perfGuardianStart.sampleCount -lt 1 -or [string]$perfGuardianStart.proof -ne 'FIRST_SAMPLE_RECORDED') {
+        throw 'Performance telemetry guardian did not prove the first sample.'
+    }
+    $perfGuardian = Get-Process -Id ([int]$perfGuardianStart.guardianProcessId) -ErrorAction Stop
 
     $state.status = 'RUNNING'
     $state.rollback = 'ARMED'
@@ -248,6 +387,8 @@ try {
         verdict = 'STARFIELD_AER_STABILIZER_OBSERVE_STARTED'
         gameProcessId = $game.Id
         performanceGuardianProcessId = $perfGuardian.Id
+        telemetryFirstSampleAtUtc = [string]$perfGuardianStart.firstSampleAtUtc
+        mutarComfortProfile = $performanceMode.mutarComfortProfile
         rollbackGuardianProcessId = $rollbackGuardian.Id
         sessionPath = $sessionPath
         modeStatePath = $modeStatePath
@@ -255,28 +396,102 @@ try {
         rollbackBaselineHash = $expectedBaselineHash
         routeIdentity = $session.routeIdentity
         resourceGovernorPhase = [string]$resourceGuard.phase
+        virtualDesktopOculusCompatibilityLayerDisabled = $true
     } | ConvertTo-Json -Depth 8
     exit 0
 }
 catch {
+    $failure = $_
+    $rollbackErrors = New-Object System.Collections.Generic.List[string]
+
+    if ($perfGuardian) {
+        try {
+            $perfGuardian.Refresh()
+            if (-not $perfGuardian.HasExited) { $perfGuardian.Kill() }
+            $perfGuardian.WaitForExit()
+            $perfGuardian.Dispose()
+            $perfGuardian = $null
+        }
+        catch {
+            $rollbackErrors.Add("Performance guardian reap failed: $($_.Exception.Message)")
+        }
+    }
+
+    if ($rollbackGuardian) {
+        try {
+            $rollbackGuardian.Refresh()
+            if (-not $rollbackGuardian.HasExited) { $rollbackGuardian.Kill() }
+            $rollbackGuardian.WaitForExit()
+            $rollbackGuardian.Dispose()
+            $rollbackGuardian = $null
+        }
+        catch {
+            $rollbackErrors.Add("AER rollback guardian reap failed: $($_.Exception.Message)")
+        }
+    }
+
+    if ($game) {
+        try {
+            $game.Refresh()
+            if (-not $game.HasExited) { Stop-Process -Id $game.Id -Force -ErrorAction SilentlyContinue }
+            if (-not $game.WaitForExit(15000)) {
+                $rollbackErrors.Add("Starfield handoff process did not exit during rollback: $($game.Id)")
+            }
+        }
+        catch {
+            $rollbackErrors.Add("Starfield handoff process reap failed: $($_.Exception.Message)")
+        }
+    }
+
     if ($performanceMode -and $performanceMode.sessionPath) {
         try {
             & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null
-        } catch {}
+        }
+        catch {
+            $rollbackErrors.Add("Performance-mode restore failed: $($_.Exception.Message)")
+        }
     }
+
     try {
         & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $resourceGovernorScript -Action CancelPrepare | Out-Null
-    } catch {}
+    }
+    catch {
+        $rollbackErrors.Add("Resource-governor rollback failed: $($_.Exception.Message)")
+    }
+
     if ($swapped -and (Test-Path -LiteralPath $baselineBackup -PathType Leaf)) {
-        Copy-Item -LiteralPath $baselineBackup -Destination $liveDll -Force
+        $rollbackDeadline = (Get-Date).AddSeconds(20)
+        $rollbackLastError = ''
+        do {
+            try {
+                Copy-Item -LiteralPath $baselineBackup -Destination $liveDll -Force
+                if ((Get-Sha256 $liveDll) -eq $expectedBaselineHash) {
+                    $rollbackLastError = ''
+                    break
+                }
+                $rollbackLastError = 'restored DLL hash did not match the validated baseline'
+            }
+            catch {
+                $rollbackLastError = $_.Exception.Message
+            }
+            Start-Sleep -Milliseconds 250
+        } while ((Get-Date) -lt $rollbackDeadline)
+        if ($rollbackLastError) {
+            $rollbackErrors.Add("Validated baseline DLL could not be restored after 20 seconds: $rollbackLastError")
+        }
     }
     Remove-Item -LiteralPath $protectFlag -Force -ErrorAction SilentlyContinue
 
+    $rollbackRestored = $false
+    try { $rollbackRestored = (Get-Sha256 $liveDll) -eq $expectedBaselineHash } catch {}
     $state.status = 'PRELAUNCH_FAILED'
-    $state.rollback = if ((Get-Sha256 $liveDll) -eq $expectedBaselineHash) { 'RESTORED' } else { 'FAILED' }
-    $state.trafficLight = if ($state.rollback -eq 'RESTORED') { 'yellow' } else { 'red' }
-    $state.error = $_.Exception.Message
+    $state.rollback = if ($rollbackRestored) { 'RESTORED' } else { 'FAILED' }
+    $state.trafficLight = if ($rollbackRestored) { 'yellow' } else { 'red' }
+    $state.error = $failure.Exception.Message
+    if ($rollbackErrors.Count -gt 0) {
+        $state.error = "$($state.error) | rollback: $($rollbackErrors -join '; ')"
+    }
     $state.updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     Write-JsonNoBom $modeStatePath $state
-    throw
+    throw $failure
 }

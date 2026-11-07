@@ -1,3 +1,6 @@
+import FlywheelSeedCanopy from './FlywheelSeedCanopy.jsx';
+import ConversationLearningJourney from './ConversationLearningJourney.jsx';
+
 const DIMENSION_LABELS = Object.freeze({
   'reasoning-quality': 'Reason',
   'execution-reliability': 'Execute',
@@ -40,12 +43,13 @@ function HeatCell({ dimension }) {
   );
 }
 
-export default function FlywheelWorkspaceCanvas({ view }) {
+export default function FlywheelWorkspaceCanvas({ view, conversationUplift = null, conversationFeedState = 'unavailable' }) {
   const participants = Array.isArray(view?.participants) ? view.participants : [];
   const timeline = Array.isArray(view?.timeline) ? view.timeline : [];
   const stats = view?.stats || {};
   const brain = view?.brainBay || {};
   const seed = view?.outcomeSeedGrowth || {};
+  const wholeSeed = view?.wholeSystemSeedGrowth || {};
   const routes = Array.isArray(seed.preservedRoutes) ? seed.preservedRoutes : [];
   const operatingLoop = Array.isArray(seed.operatingLoop) ? seed.operatingLoop : [];
   const qualityDimensions = Array.isArray(seed.qualityDimensions) ? seed.qualityDimensions : [];
@@ -53,6 +57,11 @@ export default function FlywheelWorkspaceCanvas({ view }) {
   const seedStatus = seed.planted
     ? `LIVE · ${seed.stage || 'UNKNOWN'}`
     : seed.declared
+      ? 'CONTRACT READY · LIVE UNPROVEN'
+      : 'UNDECLARED';
+  const wholeSeedStatus = wholeSeed.planted
+    ? `LIVE · ${wholeSeed.healthState || wholeSeed.stage || 'UNKNOWN'}`
+    : wholeSeed.declared
       ? 'CONTRACT READY · LIVE UNPROVEN'
       : 'UNDECLARED';
 
@@ -80,11 +89,19 @@ export default function FlywheelWorkspaceCanvas({ view }) {
         <article><span>Need uplift</span><strong>{stats.agentsNeedingUplift ?? 0}</strong><small>Evidence-backed gaps</small></article>
         <article><span>Lessons</span><strong>{stats.lessons ?? 0}</strong><small>Durable learning records</small></article>
         <article>
-          <span>Learning events</span>
+          <span>Learning history</span>
           <strong>{stats.timelineEvents ?? 0} recent / {stats.learningRecordsTotal ?? stats.timelineEvents ?? 0} total</strong>
-          <small>Visible timeline / complete event + receipt + lesson history</small>
+          <small>{stats.actionableLearningEvents ?? 0} actionable gap event(s) · history is not a 1:1 goal count</small>
         </article>
       </div>
+
+      <FlywheelSeedCanopy seeds={view?.outcomeSeeds} />
+
+      <ConversationLearningJourney
+        placement="flywheel"
+        uplift={conversationUplift}
+        feedState={conversationFeedState}
+      />
 
       <section className="uplift-deck-card outcome-seed-observatory" data-testid="flywheel-outcome-seed-growth">
         <div className="uplift-section-heading">
@@ -172,6 +189,78 @@ export default function FlywheelWorkspaceCanvas({ view }) {
         <div className="uplift-next-action">
           <span>Seed next move</span>
           <strong>{seed.nextBestAction || 'Establish the live Shared Workspace feed and begin evidence-backed growth.'}</strong>
+        </div>
+      </section>
+
+      <section className="uplift-deck-card outcome-seed-observatory" data-testid="flywheel-whole-system-capability-seed">
+        <div className="uplift-section-heading">
+          <div><span className="uplift-kicker">OUTCOME OWNERSHIP · PERSISTENT SELF-IMPROVEMENT</span><h4>{wholeSeed.title || 'Stephanos Whole-System Capability Closure'}</h4></div>
+          <span className={`uplift-status-chip ${wholeSeed.planted ? truthClass(wholeSeed.sourceTruth) : 'unknown'}`}>{wholeSeedStatus}</span>
+        </div>
+
+        <div className="outcome-seed-truth-grid" aria-label="Whole-system capability closure truth layers">
+          <article className="current">
+            <span>Mission contract</span>
+            <strong>{wholeSeed.contractTruth || (wholeSeed.declared ? 'SOURCE_PROVEN' : 'UNKNOWN')}</strong>
+            <small>{wholeSeed.issueRef || '#2670'} · persistent mission · zero known gaps is healthy, not terminal.</small>
+          </article>
+          <article className={truthClass(wholeSeed.sourceTruth)}>
+            <span>Live growth evidence</span>
+            <strong>{wholeSeed.sourceTruth || 'UNKNOWN'}</strong>
+            <small>{feedState} · {view?.liveFeedReason || 'Shared Workspace evidence has not arrived yet.'}</small>
+          </article>
+        </div>
+
+        <div className="outcome-seed-north-star">
+          <span className="uplift-kicker">NORTH STAR</span>
+          <strong>{wholeSeed.northStar || 'Whole-system capability closure contract unavailable.'}</strong>
+          <small>Operator role: {wholeSeed.operatorRole || 'intent-judgment-protected-approval'}</small>
+        </div>
+
+        <div className="outcome-seed-loop" aria-label="Whole-system capability closure operating loop">
+          <span className="uplift-kicker">OPERATING LOOP</span>
+          <div>
+            {(wholeSeed.operatingLoop || []).length
+              ? wholeSeed.operatingLoop.map((step, index) => (
+                <span key={step}><b>{step}</b>{index < wholeSeed.operatingLoop.length - 1 ? <i>›</i> : null}</span>
+              ))
+              : <span><b>UNKNOWN</b></span>}
+          </div>
+        </div>
+
+        <div className="outcome-seed-growth-grid" aria-label="Whole-system capability closure telemetry">
+          <article><span>Material gaps</span><strong>{wholeSeed.planted ? (wholeSeed.knownMaterialGapCount ?? 'UNKNOWN') : 'UNKNOWN'}</strong></article>
+          <article><span>Unknowns</span><strong>{wholeSeed.planted ? (wholeSeed.unknownCount ?? 'UNKNOWN') : 'UNKNOWN'}</strong></article>
+          <article><span>Regressions</span><strong>{wholeSeed.planted ? (wholeSeed.regressionCount ?? 'UNKNOWN') : 'UNKNOWN'}</strong></article>
+          <article><span>Active goals</span><strong>{wholeSeed.planted ? (wholeSeed.activeGoalCount ?? 'UNKNOWN') : 'UNKNOWN'}</strong></article>
+          <article><span>Learning events</span><strong>{wholeSeed.planted ? (wholeSeed.learningEventCount ?? 'UNKNOWN') : 'UNKNOWN'}</strong></article>
+          <article><span>Retained lessons</span><strong>{wholeSeed.planted ? (wholeSeed.retainedLessonCount ?? 'UNKNOWN') : 'UNKNOWN'}</strong></article>
+          <article><span>Proof refs</span><strong>{wholeSeed.planted ? (wholeSeed.proofCount ?? 'UNKNOWN') : 'UNKNOWN'}</strong></article>
+          <article><span>Health</span><strong>{wholeSeed.healthState || wholeSeed.stage || 'UNKNOWN'}</strong></article>
+        </div>
+
+        <div className="outcome-seed-evidence-row">
+          <span>Latest live evidence</span>
+          <strong>{wholeSeed.planted ? (wholeSeed.latestEvidenceAt || 'UNKNOWN') : 'UNKNOWN · waiting for Shared Workspace publication'}</strong>
+        </div>
+
+        {(wholeSeed.currentGaps || []).length ? (
+          <div className="outcome-seed-gap-list">
+            <span className="uplift-kicker">CURRENT WHOLE-SYSTEM GAPS</span>
+            <ul>
+              {wholeSeed.currentGaps.map((gap, index) => (
+                <li key={`${gap.capabilityId || 'gap'}-${index}`}>
+                  <strong>{gap.capabilityId || 'material-gap'}</strong>
+                  <span>{gap.state || 'OPEN'} · owner {gap.owner || 'UNKNOWN'}</span>
+                  <small>{gap.summary}</small>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : <p className="muted">No live #2670 gap record is currently evidenced. The source-proven mission remains visible and UNKNOWN stays UNKNOWN until Shared Workspace publishes growth.</p>}
+        <div className="uplift-next-action">
+          <span>Seed next move</span>
+          <strong>{wholeSeed.nextBestAction || 'Publish the #2670 mission heartbeat into Shared Workspace.'}</strong>
         </div>
       </section>
 

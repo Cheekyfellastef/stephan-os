@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -15,7 +16,7 @@ function command(overrides = {}) {
     requestId: 'sovereign-install-20260930-001',
     operation: SOVEREIGN_COMMANDER_INSTALL_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -109,7 +110,7 @@ test('sovereign bootstrap installs fixed task and proves authenticated MCP postu
     body: {
       ok: true,
       service: 'stephanos-sovereign-commander',
-      capabilityVersion: '2026-10-02-controller-lane-status-v1',
+      capabilityVersion: '2026-10-18-island-action-contract-v6',
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
     },
@@ -177,7 +178,7 @@ test('sovereign bootstrap installs fixed task and proves authenticated MCP postu
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_INSTALLED_STARTED_AND_AUTHENTICATED');
   assert.equal(result.expectedHeadMatch, true);
   assert.equal(result.healthReady, true);
-  assert.equal(result.capabilityVersion, '2026-10-02-controller-lane-status-v1');
+  assert.equal(result.capabilityVersion, '2026-10-18-island-action-contract-v6');
   assert.equal(result.authenticatedMcpReady, true);
   assert.equal(result.tailnetIgnitionReady, true);
   assert.equal(result.remoteIgnitionPath, '/ignite');
@@ -200,7 +201,7 @@ test('sovereign bootstrap installs fixed task and proves authenticated MCP postu
   const runnerCall = processCalls.find((call) => call.args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1')));
   assert.ok(runnerCall);
   assert.ok(runnerCall.args.includes('-RequireCapabilityVersion'));
-  assert.ok(runnerCall.args.includes('2026-10-02-controller-lane-status-v1'));
+  assert.ok(runnerCall.args.includes('2026-10-18-island-action-contract-v6'));
 });
 
 
@@ -225,7 +226,7 @@ test('sovereign bootstrap reuses an existing healthy task without reinstalling i
     body: {
       ok: true,
       service: 'stephanos-sovereign-commander',
-      capabilityVersion: '2026-10-02-controller-lane-status-v1',
+      capabilityVersion: '2026-10-18-island-action-contract-v6',
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
     },
@@ -297,7 +298,7 @@ test('sovereign bootstrap rejects failed outer config receipts even when nested 
     body: {
       ok: true,
       service: 'stephanos-sovereign-commander',
-      capabilityVersion: '2026-10-02-controller-lane-status-v1',
+      capabilityVersion: '2026-10-18-island-action-contract-v6',
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
     },
@@ -346,7 +347,7 @@ test('sovereign bootstrap rejects failed outer config receipts even when nested 
   assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_AUTHENTICATED_CONFIG_PROOF_FAILED');
 });
 
-test('sovereign bootstrap repairs an existing unhealthy scheduled task instead of trusting task presence', async () => {
+test('sovereign bootstrap recycles an existing unhealthy scheduled task without reinstalling it', async () => {
   const processCalls = [];
   const spawnSyncFn = (executable, args) => {
     processCalls.push({ executable, args });
@@ -355,24 +356,6 @@ test('sovereign bootstrap repairs an existing unhealthy scheduled task instead o
     if (args.includes('status')) return { status: 0, stdout: '', stderr: '' };
     if (args.includes('/Query') && args.includes('Stephanos Sovereign Commander')) {
       return { status: 0, stdout: 'TaskName: Stephanos Sovereign Commander', stderr: '' };
-    }
-    if (args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))) {
-      return {
-        status: 0,
-        stdout: JSON.stringify({
-          finalVerdict: 'SOVEREIGN_COMMANDER_TASK_INSTALLED',
-          installed: true,
-          startedNow: true,
-          taskName: 'Stephanos Sovereign Commander',
-          hidden: true,
-          intervalMinutes: 1,
-          vendorMeterRequired: false,
-          externalSaasRelayRequired: false,
-          arbitraryShellAllowed: false,
-          pcRestartAllowed: false,
-        }),
-        stderr: '',
-      };
     }
     if (args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1'))) {
       return { status: 0, stdout: JSON.stringify({ healthy: true, blocker: '', startRequested: false, afterProcessCount: 1 }), stderr: '' };
@@ -388,7 +371,7 @@ test('sovereign bootstrap repairs an existing unhealthy scheduled task instead o
     body: {
       ok: true,
       service: 'stephanos-sovereign-commander',
-      capabilityVersion: '2026-10-02-controller-lane-status-v1',
+      capabilityVersion: '2026-10-18-island-action-contract-v6',
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
     },
@@ -435,8 +418,12 @@ test('sovereign bootstrap repairs an existing unhealthy scheduled task instead o
 
   assert.equal(result.ok, true);
   assert.equal(result.taskAlreadyInstalled, true);
-  assert.equal(result.installerRun, true);
-  assert.ok(processCalls.some((call) => call.args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))));
+  assert.equal(result.installerRun, false);
+  assert.equal(processCalls.some((call) => call.args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))), false);
+  const runnerCall = processCalls.find((call) => call.args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1')));
+  assert.ok(runnerCall);
+  assert.ok(runnerCall.args.includes('-RequireCapabilityVersion'));
+  assert.ok(runnerCall.args.includes('2026-10-18-island-action-contract-v6'));
 });
 
 
@@ -446,7 +433,7 @@ test('sovereign bootstrap classifies installer access denied as a safe blocker w
     if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n', stderr: '' };
     if (args.includes('status')) return { status: 0, stdout: '', stderr: '' };
     if (args.includes('/Query') && args.includes('Stephanos Sovereign Commander')) {
-      return { status: 0, stdout: 'TaskName: Stephanos Sovereign Commander', stderr: '' };
+      return { status: 1, stdout: '', stderr: 'ERROR: The system cannot find the file specified.', };
     }
     if (args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))) {
       return { status: 1, stdout: '', stderr: 'Access is denied by the current Windows security context.' };
@@ -478,7 +465,7 @@ test('sovereign bootstrap classifies task-registration access denied before the 
     if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n', stderr: '' };
     if (args.includes('status')) return { status: 0, stdout: '', stderr: '' };
     if (args.includes('/Query') && args.includes('Stephanos Sovereign Commander')) {
-      return { status: 0, stdout: 'TaskName: Stephanos Sovereign Commander', stderr: '' };
+      return { status: 1, stdout: '', stderr: 'ERROR: The system cannot find the file specified.', };
     }
     if (args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))) {
       return { status: 1, stdout: '', stderr: 'Register-ScheduledTask : Access is denied.' };
@@ -504,7 +491,7 @@ test('sovereign bootstrap classifies token ACL access denied before the generic 
     if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n', stderr: '' };
     if (args.includes('status')) return { status: 0, stdout: '', stderr: '' };
     if (args.includes('/Query') && args.includes('Stephanos Sovereign Commander')) {
-      return { status: 0, stdout: 'TaskName: Stephanos Sovereign Commander', stderr: '' };
+      return { status: 1, stdout: '', stderr: 'ERROR: The system cannot find the file specified.', };
     }
     if (args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))) {
       return { status: 1, stdout: '', stderr: 'Set-Acl : Access is denied.' };

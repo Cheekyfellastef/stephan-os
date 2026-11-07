@@ -16,19 +16,92 @@ export const SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE = Object.freeze({
 const DIRECT_PARITY = Object.freeze({
   'get-config': 'get_config',
   'read-file': 'read_file',
+  'read-multiple-files': 'read_multiple_files',
+  'get-file-info': 'get_file_info',
   'write-file': 'write_file',
   'edit-file': 'edit_file',
   'edit-block': 'edit_file',
   'list-directory': 'list_directory',
-  'start-search': 'search_project',
-  'search-files': 'search_project',
   'search-project': 'search_project',
-  'get-more-search-results': 'search_project',
   'list-processes': 'list_processes',
+  'list-devices': 'visibility-snapshot',
+  'device-status': 'visibility-snapshot',
+  'connection-status': 'visibility-snapshot',
+  // Exact semantic actions already implemented by the canonical fixed registry.
+  // General PowerShell, service control and process termination are not aliases.
+  'battle-bridge-status': 'battle-bridge-status',
+  'battle-bridge-observe': 'battle-bridge-observe',
+  'visibility-snapshot': 'visibility-snapshot',
+  'cpu-pressure-snapshot': 'cpu-pressure-snapshot',
+  'meter-status': 'meter-status',
+  'controller-lane-status': 'controller-lane-status',
+  'status-recovery-mesh': 'status-recovery-mesh',
+  'status-worker-watchdog': 'status-worker-watchdog',
+  'status-stephanos-core-daemon': 'status-stephanos-core-daemon',
+  'gaming-resource-status': 'gaming-resource-status',
+  'starfield-vr-performance-diagnosis': 'starfield-vr-performance-diagnosis',
+  'repair-ui-4173': 'repair-ui-4173',
+  'repair-control-plane': 'repair-control-plane',
+  'repair-battle-bridge': 'repair-battle-bridge',
+  'repair-openclaw-stack': 'repair-openclaw-stack',
+  'source-construction': 'sovereign-source-construction-lane',
 });
+
+// search_project is one bounded literal search in the canonical repository.
+// It does not implement Remote Commander's whole-PC or session lifecycle API.
+// Keep this source-owned scope separate from an implementation/live-proof claim.
+export const SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS = Object.freeze(Object.assign(Object.create(null), Object.fromEntries([
+  ['start-search', 'WHOLE_PC_SEARCH_AND_SEARCH_SESSIONS_NOT_IMPLEMENTED'],
+  ['search-files', 'WHOLE_PC_FILE_SEARCH_NOT_IMPLEMENTED'],
+  ['get-more-search-results', 'SEARCH_SESSION_PAGINATION_NOT_IMPLEMENTED'],
+  ['stop-search', 'SEARCH_SESSION_CANCELLATION_NOT_IMPLEMENTED'],
+  ['list-searches', 'SEARCH_SESSION_INVENTORY_NOT_IMPLEMENTED'],
+].map(([id, parityGapReason]) => [id, Object.freeze({
+  partialSovereignEquivalent: 'search_project',
+  partialScope: 'CANONICAL_REPOSITORY_LITERAL_SEARCH_ONLY',
+  parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+  runtimeParityProven: false,
+  parityGapReason,
+})]))));
 
 const BOUNDARY_PATTERN =
   /(?:^|[-_])(arbitrary[-_]?shell|run[-_]?shell|force[-_]?push|destructive[-_]?git|delete[-_]?file|pc[-_]?restart|credential[-_]?export|secret[-_]?export|merge)(?:$|[-_])/i;
+
+function catalogTruth(buildableGapCount, boundaryHoldCount) {
+  return Object.freeze({
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    installedParityState: 'UNKNOWN',
+    zeroGapInvariantSatisfied: buildableGapCount === 0 && boundaryHoldCount === 0,
+    sourceGapClosureRequired: buildableGapCount > 0 || boundaryHoldCount > 0,
+    closureRequired: true,
+    daemonMayReportGreen: false,
+    mustContinueUntilZero: true,
+    finalVerdict: buildableGapCount > 0
+      ? 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GAPS_TRACKED'
+      : boundaryHoldCount > 0
+        ? 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_BOUNDARY_HOLD'
+        : 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RUNTIME_UNPROVEN',
+  });
+}
+
+// Queue observations and catalog equivalence cannot authenticate installed
+// acceptance. Both public transports use this same projection, including when
+// receiving an older producer's unsupported GREEN claim. Physical receipts
+// remain in their existing acceptance surfaces; this does not erase them.
+export function projectSovereignCapabilityCatalogTruth(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.canonicalOwnerGoal !== '#2573') return null;
+  const keys = ['retainedCapabilityCount', 'parityPresentCount', 'buildableGapCount', 'boundaryHoldCount'];
+  if (keys.some(key => !Number.isSafeInteger(value[key]) || value[key] < 0 || value[key] > 10000)) return null;
+  if (value.retainedCapabilityCount !== value.parityPresentCount + value.buildableGapCount + value.boundaryHoldCount) return null;
+  if (!['SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN', 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GAPS_TRACKED',
+    'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RUNTIME_UNPROVEN', 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_BOUNDARY_HOLD'].includes(value.finalVerdict)) return null;
+  return Object.freeze({ canonicalOwnerGoal: '#2573',
+    ...Object.fromEntries(keys.map(key => [key, value[key]])),
+    ...catalogTruth(value.buildableGapCount, value.boundaryHoldCount),
+  });
+}
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -53,7 +126,8 @@ function operationFromEntry(entry = {}) {
     item?.operation,
     item?.actionKind,
   ];
-  return capabilityId(candidates.map(text).find(Boolean) || 'source-construction');
+  const observed = candidates.map((value) => text(value)).find(Boolean) || 'source-construction';
+  return capabilityId(observed === 'agent-handoff' ? 'source-construction' : observed);
 }
 
 function authorityWideningRequested(entry = {}) {
@@ -87,6 +161,7 @@ export function classifyRemoteCommanderCapabilityObservation(entry = {}) {
   const operation = operationFromEntry(entry);
   const boundaryHold = BOUNDARY_PATTERN.test(operation) || authorityWideningRequested(entry);
   const directEquivalent = DIRECT_PARITY[operation] || '';
+  const searchGap = SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[operation];
 
   const state = boundaryHold
     ? SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BOUNDARY_HOLD
@@ -100,6 +175,9 @@ export function classifyRemoteCommanderCapabilityObservation(entry = {}) {
     observationIngress: observedAdapter,
     state,
     sovereignEquivalent: directEquivalent || suggestedEquivalent(operation),
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    ...(searchGap || {}),
     canonicalOwnerGoal: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.goal,
     canonicalOwnerTitle: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.title,
     requiresExistingGoalSearch: false,
@@ -165,37 +243,54 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
     const current = observed.get(id);
     const classified = current?.classified || null;
     const previousState = text(previous.state);
-    const state = classified?.state || previousState || SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP;
+    const searchGap = SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[id];
+    // Repair retained false equivalence too: no new Remote Commander call is
+    // required to correct a prior source-catalog classification. A boundary
+    // hold still wins, and a correction cannot become a new parity proof.
+    const retainedState = searchGap && previousState !== SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BOUNDARY_HOLD
+      ? SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP
+      : previousState;
+    const state = classified?.state || retainedState || SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP;
     const stateTransition = previousState && previousState !== state
       ? `${previousState}->${state}`
       : current
         ? 'OBSERVED'
         : 'RETAINED';
-    const newlyProvenParity = previousState === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP
+    const newlyMappedCapability = previousState === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP
       && state === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT;
     const firstSeenAtUtc = validTimestamp(previous.firstSeenAtUtc, timestampUtc);
     const priorCount = Number.isSafeInteger(Number(previous.observationCount))
       ? Math.max(0, Number(previous.observationCount))
       : 0;
     const currentCount = current?.currentObservationCount || 0;
+    const retainedReferences = (key, currentValues) => [...new Set([
+      ...(Array.isArray(previous[key]) ? previous[key].map((value) => text(value)).filter(Boolean) : []),
+      ...(currentValues || []),
+    ])].sort();
     return Object.freeze({
       capabilityId: id,
       state,
       previousState: previousState || null,
       stateTransition,
-      newlyProvenParity,
-      sovereignEquivalent: text(classified?.sovereignEquivalent || previous.sovereignEquivalent || suggestedEquivalent(id)),
+      newlyProvenParity: false,
+      newlyMappedCapability,
+      parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+      runtimeParityProven: false,
+      sovereignEquivalent: text(classified?.sovereignEquivalent
+        || (searchGap ? suggestedEquivalent(id) : previous.sovereignEquivalent)
+        || suggestedEquivalent(id)),
+      ...(searchGap || {}),
       canonicalOwnerGoal: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.goal,
       canonicalOwnerTitle: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.title,
       currentObserved: Boolean(current),
       firstSeenAtUtc,
       lastSeenAtUtc: current ? timestampUtc : validTimestamp(previous.lastSeenAtUtc, firstSeenAtUtc),
       observationCount: priorCount + currentCount,
-      missionIds: Object.freeze([...(current?.missionIds || [])].sort()),
-      actionIds: Object.freeze([...(current?.actionIds || [])].sort()),
-      queuePaths: Object.freeze([...(current?.queuePaths || [])].sort()),
+      missionIds: Object.freeze(retainedReferences('missionIds', current?.missionIds)),
+      actionIds: Object.freeze(retainedReferences('actionIds', current?.actionIds)),
+      queuePaths: Object.freeze(retainedReferences('queuePaths', current?.queuePaths)),
       nextAction: state === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT
-        ? 'Use Sovereign Commander by default; keep Remote Commander break-glass only.'
+        ? 'Prefer the mapped Sovereign route after live capability admission; verify each result.'
         : state === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BOUNDARY_HOLD
           ? 'Preserve the authority boundary. Do not clone forbidden authority merely for parity.'
           : 'Advance #2573 through the canonical goal-building fabric until guarded Sovereign parity is proven.',
@@ -230,12 +325,10 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
     retainedCapabilityCount: capabilities.length,
     parityPresentCount,
     newlyProvenParityCount,
+    newlyMappedCapabilityCount: capabilities.filter(item => item.newlyMappedCapability).length,
     buildableGapCount,
     boundaryHoldCount,
-    zeroGapInvariantSatisfied: buildableGapCount === 0,
-    closureRequired: buildableGapCount > 0,
-    daemonMayReportGreen: buildableGapCount === 0,
-    mustContinueUntilZero: true,
+    ...catalogTruth(buildableGapCount, boundaryHoldCount),
     capabilities: Object.freeze(capabilities),
     schedulerBypassAllowed: false,
     duplicateSchedulerAllowed: false,
@@ -247,8 +340,5 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
     arbitraryShellAllowed: false,
     pcRestartAuthority: false,
     destructiveGitAllowed: false,
-    finalVerdict: buildableGapCount > 0
-      ? 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GAPS_TRACKED'
-      : 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
   });
 }

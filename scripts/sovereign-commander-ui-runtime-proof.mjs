@@ -61,6 +61,11 @@ export function evaluateVrAtlasStatusPillsObservation(observation = {}) {
   if (observation?.pageTitleMatches !== true) blockers.push('VR_ATLAS_PAGE_TITLE_MISMATCH');
   if (rows.length < 4) blockers.push('VR_ATLAS_STATUS_PILLS_INCOMPLETE');
   if (observation?.methodsGridVisible !== true) blockers.push('VR_ATLAS_METHODS_GRID_NOT_VISIBLE');
+  if (observation?.evidencePanelVisible !== true) blockers.push('VR_ATLAS_CANONICAL_EVIDENCE_PANEL_NOT_VISIBLE');
+  if (text(observation?.evidenceState).toLowerCase() !== 'ready') blockers.push('VR_ATLAS_CANONICAL_EVIDENCE_NOT_READY');
+  if (!Number.isSafeInteger(Number(observation?.corpusCount)) || Number(observation?.corpusCount) <= 0) blockers.push('VR_ATLAS_REFERENCE_CORPUS_EMPTY');
+  if (!text(observation?.agentAction)) blockers.push('VR_ATLAS_RESEARCH_AGENT_ACTION_MISSING');
+  if (observation?.evidenceTitlePresent !== true) blockers.push('VR_ATLAS_CANONICAL_EVIDENCE_TITLE_MISSING');
   for (const row of rows) {
     const label = text(row?.label) || 'unknown';
     if (row?.compact !== true) blockers.push(`VR_ATLAS_STATUS_PILL_NOT_COMPACT:${label}`);
@@ -144,10 +149,13 @@ export async function collectVrAtlasStatusPillProof({
     const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15_000 });
     if (!response || !response.ok() || page.url() !== url) throw new Error('VR_ATLAS_PROOF_RUNTIME_URL_MISMATCH');
     await page.waitForSelector('#methodsGrid .method > .status', { state: 'visible', timeout: 15_000 });
+    await page.waitForSelector('.atlas-canonical-vr-evidence', { state: 'visible', timeout: 15_000 });
+    await page.waitForFunction(() => document.querySelector('.atlas-canonical-vr-evidence')?.dataset?.evidenceState === 'ready', null, { timeout: 15_000 });
     await page.waitForTimeout(500);
 
     const observation = await page.evaluate(() => {
       const methodsGrid = document.querySelector('#methodsGrid');
+      const evidencePanel = document.querySelector('.atlas-canonical-vr-evidence');
       const pills = [...document.querySelectorAll('#methodsGrid .method > .status')].map((status) => {
         const card = status.closest('.method');
         const style = getComputedStyle(status);
@@ -173,6 +181,13 @@ export async function collectVrAtlasStatusPillProof({
       return {
         pageTitleMatches: /VR Capability Atlas/i.test(document.title),
         methodsGridVisible: !!methodsGrid && getComputedStyle(methodsGrid).display !== 'none',
+        evidencePanelVisible: !!evidencePanel && getComputedStyle(evidencePanel).display !== 'none',
+        evidenceState: String(evidencePanel?.dataset?.evidenceState || ''),
+        corpusCount: Number(evidencePanel?.dataset?.corpusCount || 0),
+        agentAction: String(evidencePanel?.dataset?.agentAction || ''),
+        sessionId: String(evidencePanel?.dataset?.sessionId || ''),
+        correlationCount: Number(evidencePanel?.dataset?.correlationCount || 0),
+        evidenceTitlePresent: /Stephanos VR evidence view/i.test(String(evidencePanel?.textContent || '')),
         pills,
       };
     });
@@ -203,6 +218,11 @@ export async function collectVrAtlasStatusPillProof({
       screenshotPath: relative(repoRoot, screenshotPath).replaceAll('\\', '/'),
       screenshotSha256,
       pillCount: evaluation.pillCount,
+      corpusCount: Number(observation.corpusCount || 0),
+      agentAction: text(observation.agentAction),
+      sessionId: text(observation.sessionId),
+      correlationCount: Number(observation.correlationCount || 0),
+      evidencePanelReady: observation.evidenceState === 'ready',
       blockers: runtimeBlockers,
       consoleErrorCount: consoleErrors.length,
       pageErrorCount: pageErrors.length,

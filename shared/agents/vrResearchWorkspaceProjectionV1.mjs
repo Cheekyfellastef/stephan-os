@@ -90,6 +90,9 @@ export function buildVrResearchWorkspaceProjection(input = {}) {
   const workspace = input.workspaceModel && typeof input.workspaceModel === 'object'
     ? input.workspaceModel
     : {};
+  const canonicalEvidence = input.canonicalEvidenceFanout && typeof input.canonicalEvidenceFanout === 'object'
+    ? input.canonicalEvidenceFanout
+    : null;
   const sources = Object.freeze(list(registry.sources).map(projectSource));
   const sourceHealth = Object.freeze(sources.reduce((counts, source) => {
     counts[source.health] = (counts[source.health] || 0) + 1;
@@ -119,6 +122,9 @@ export function buildVrResearchWorkspaceProjection(input = {}) {
       registrySchema: registry.schema_version || registry.schemaVersion,
       sourceIds: sources.map((source) => source.sourceId),
       workspaceSchema: workspace.schemaVersion,
+      referenceCorpusSchema: canonicalEvidence?.referenceCorpus?.schemaVersion || '',
+      referenceCorpusCount: canonicalEvidence?.referenceCorpus?.sourceCount || 0,
+      latestEvidenceSessionId: canonicalEvidence?.latestEvidence?.sessionId || '',
       updatedAt,
     }).slice(0, 24)}`,
     updatedAt,
@@ -135,6 +141,10 @@ export function buildVrResearchWorkspaceProjection(input = {}) {
       licenceHealth,
       sources,
     }),
+    referenceCorpus: canonicalEvidence?.referenceCorpus || null,
+    canonicalEvidence: canonicalEvidence?.latestEvidence || null,
+    correlationCandidates: Object.freeze(list(canonicalEvidence?.correlationCandidates)),
+    analysisQuestions: Object.freeze(list(canonicalEvidence?.analysisQuestions)),
     facts,
     hypotheses: Object.freeze(list(input.hypotheses)),
     decisions: Object.freeze(list(input.decisions)),
@@ -146,7 +156,10 @@ export function buildVrResearchWorkspaceProjection(input = {}) {
     battleBridgeEvidence: Object.freeze(list(input.battleBridgeEvidence)),
     methodLibrary: Object.freeze(list(input.methodLibrary)),
     blockers,
-    proofRefs: Object.freeze(list(input.proofRefs).map(String)),
+    proofRefs: Object.freeze([...new Set([
+      ...list(input.proofRefs).map(String),
+      ...list(canonicalEvidence?.proofRefs).map(String),
+    ])]),
     evidencePlanes: Object.freeze([
       'NORMATIVE_OR_OFFICIAL_SPECIFICATION',
       'OFFICIAL_AUTHORING_EVIDENCE',

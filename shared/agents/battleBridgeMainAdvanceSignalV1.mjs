@@ -94,3 +94,66 @@ export function validateBattleBridgeMainAdvanceSignal(value = {}) {
     return Object.freeze({ ok: false, signal: null, blocker: error?.message || 'MAIN_ADVANCE_SIGNAL_INVALID' });
   }
 }
+
+// Read-only orchestration for the existing signal publisher. Production owns
+// its HTTPS reader; injected readers are test fixtures, never authentication.
+// Every endpoint is fixed or derived from a validated SHA/positive numeric ID.
+export async function readMergedMainAdvanceSignalV1({
+  repository, eventName, event, mainHead, workflowRunId, readJson,
+} = {}) {
+  const root = '/repos/' + BATTLE_BRIDGE_MAIN_ADVANCE_REPOSITORY;
+  const positive = v => Number.isSafeInteger(v) && v > 0;
+  const sha = v => typeof v === 'string' && /^[a-f0-9]{40}$/.test(v);
+  const stop = code => { throw new Error(code); };
+  if (repository !== BATTLE_BRIDGE_MAIN_ADVANCE_REPOSITORY
+      || event?.repository?.full_name !== repository || !sha(mainHead)
+      || typeof workflowRunId !== 'string' || !RUN_ID_PATTERN.test(workflowRunId)
+      || typeof readJson !== 'function') stop('MAIN_ADVANCE_EVENT_IDENTITY_INVALID');
+  let parent = null, sourceHead = '';
+  if (eventName === 'push') {
+    if (event.ref !== 'refs/heads/main' || event.after !== mainHead || event.deleted !== false)
+      stop('MAIN_ADVANCE_PUSH_NOT_EXACT_MAIN');
+  } else if (eventName === 'workflow_run') {
+    const hinted = event.workflow_run;
+    if (event.action !== 'completed' || !positive(hinted?.id)) stop('MAIN_ADVANCE_PARENT_HINT_INVALID');
+    parent = await readJson(root + '/actions/runs/' + hinted.id);
+    const match = typeof parent?.display_title === 'string'
+      ? parent.display_title.match(/^Protected operator merge ([a-f0-9]{40})$/) : null;
+    if (parent?.id !== hinted.id || parent.repository?.full_name !== repository
+        || parent.head_repository?.full_name !== repository
+        || parent.path !== '.github/workflows/operator-merge-approval-gate.yml'
+        || parent.event !== 'workflow_dispatch' || parent.head_branch !== 'main'
+        || parent.status !== 'completed' || parent.conclusion !== 'success'
+        || !sha(parent.head_sha) || !match)
+      stop('MAIN_ADVANCE_PROTECTED_PARENT_UNPROVEN');
+    sourceHead = match[1];
+  } else stop('MAIN_ADVANCE_EVENT_NOT_MAIN_ASSOCIATED');
+
+  const exactMain = value => value?.ref === 'refs/heads/main' && value.object?.sha === mainHead;
+  if (!exactMain(await readJson(root + '/git/ref/heads/main'))) stop('MAIN_ADVANCE_MAIN_MOVED');
+  const associated = await readJson(root + '/commits/' + mainHead + '/pulls?per_page=100');
+  if (!Array.isArray(associated) || associated.length >= 100) stop('MAIN_ADVANCE_PR_INVENTORY_UNPROVEN');
+  const merged = associated.filter(pr => positive(pr?.number) && pr.state === 'closed'
+    && pr.merge_commit_sha === mainHead && pr.base?.ref === 'main'
+    && pr.base?.repo?.full_name === repository && canonicalUtc(pr.merged_at)
+    && (!sourceHead || pr.head?.sha === sourceHead));
+  if (merged.length === 0) return Object.freeze({ disposition: 'NO_MATCHING_MERGED_PR', signal: null });
+  if (merged.length !== 1) stop('MAIN_ADVANCE_MERGED_PR_AMBIGUOUS');
+  const pr = await readJson(root + '/pulls/' + merged[0].number);
+  if (pr?.number !== merged[0].number || pr.merged !== true || pr.state !== 'closed'
+      || pr.merge_commit_sha !== mainHead || pr.base?.ref !== 'main'
+      || pr.base?.repo?.full_name !== repository || !canonicalUtc(pr.merged_at)
+      || pr.merged_at !== merged[0].merged_at || !sha(pr.head?.sha)
+      || pr.head.sha !== merged[0].head?.sha || (sourceHead && pr.head.sha !== sourceHead))
+    stop('MAIN_ADVANCE_MERGED_PR_CHANGED_OR_UNPROVEN');
+  if (parent) {
+    const commit = await readJson(root + '/git/commits/' + mainHead);
+    if (commit?.sha !== mainHead || !Array.isArray(commit.parents) || commit.parents.length !== 1
+        || commit.parents[0]?.sha !== parent.head_sha)
+      stop('MAIN_ADVANCE_PARENT_MERGE_NOT_EXACT');
+  }
+  if (!exactMain(await readJson(root + '/git/ref/heads/main'))) stop('MAIN_ADVANCE_MAIN_MOVED');
+  return Object.freeze({ disposition: 'MERGED_MAIN_SIGNAL_OBSERVED', signal: createBattleBridgeMainAdvanceSignal({
+    repository, prNumber: pr.number, mainHead, mergedAtUtc: pr.merged_at, workflowRunId,
+  }) });
+}

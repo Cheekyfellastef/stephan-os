@@ -1,14 +1,17 @@
 ﻿import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSharedWorkspaceRouter } from '../stephanos-server/routes/shared-workspace.js';
 import { readBackendSharedWorkspaceDashboardFeed } from '../stephanos-server/services/sharedWorkspaceDashboardFeedService.js';
+import { readWorkspaceHydrationBundle } from '../stephanos-server/services/workspaceHydrationService.js';
 import { startBattleBridgePublisherLoopForBackend } from '../stephanos-server/services/battleBridgePublisherLifecycle.js';
 import {
   createAgentCapabilityRecord,
   createSharedWorkspaceEventRecord,
+  createSharedWorkspaceGoalRecord,
   createSharedWorkspaceProofRecord,
   createSharedWorkspaceStatusRecord,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
@@ -134,7 +137,7 @@ test('backend dashboard feed route uses read-only adapter and maps unavailable t
 
   await layer.route.stack[0].handle(
     {},
-    {
+    Object.assign(new EventEmitter(), {
       set(headers) {
         responseHeaders = { ...responseHeaders, ...headers };
         return this;
@@ -146,7 +149,7 @@ test('backend dashboard feed route uses read-only adapter and maps unavailable t
       json(value) {
         payload = value;
       },
-    },
+    }),
   );
 
   assert.equal(statusCode, 503);
@@ -309,7 +312,108 @@ test('full-history backend projection exposes latest closed-loop learning state 
   assert.equal(full.projection.closedLoopLearning.state, 'TEACHING_REQUIRED');
   assert.equal(full.projection.closedLoopLearning.teacherId, 'openclaw-local');
 
-  const flywheelSource = await import('node:fs/promises')
-    .then(({ readFile }) => readFile(new URL('../stephanos-ui/src/components/FlywheelPanel.jsx', import.meta.url), 'utf8'));
-  assert.match(flywheelSource, /dashboard-feed\?scope=full-history/);
+  const hydration = await readWorkspaceHydrationBundle({
+    workspaceId: 'flywheel', datasets: ['dashboard'],
+    env: { ...context.env, STEPHANOS_SHARED_AGENT_WORKSPACE: root },
+    repoRoot: context.repoRoot, nowMs: Date.parse(NOW), staleAfterMs: 60_000,
+  });
+  assert.equal(hydration.datasets.dashboard.payload.recordScope, 'full-history');
+  assert.equal(hydration.datasets.dashboard.payload.projection.closedLoopLearning.state, 'TEACHING_REQUIRED');
+
+  // Flywheel now consumes canonical workspace hydration. The backend explicitly
+  // selects full-history for that workspace, without a direct UI dashboard URL.
+  const { readFile } = await import('node:fs/promises');
+  const flywheelSource = await readFile(new URL('../stephanos-ui/src/components/FlywheelPanel.jsx', import.meta.url), 'utf8');
+  const hydrationSource = await readFile(new URL('../stephanos-server/services/workspaceHydrationService.js', import.meta.url), 'utf8');
+  assert.match(flywheelSource, /requestWorkspaceHydration\s*\(\s*\{/);
+  assert.match(flywheelSource, /workspaceId:\s*['"]flywheel['"]/);
+  assert.match(flywheelSource, /datasets:\s*\[\s*['"]dashboard['"]\s*\]/);
+  assert.match(hydrationSource, /normalizedWorkspaceId\s*===\s*['"]flywheel['"]/);
+  assert.match(hydrationSource, /\?\s*['"]full-history['"]/);
+  assert.match(hydrationSource, /recordScope:\s*dashboardRecordScope/);
+});
+
+
+test('backend dashboard feed overlays Sovereign build truth onto complete live goal cards', async () => {
+  const context = await isolatedContext();
+  const root = await readyWorkspace();
+  await writeJson(root, 'goals', 'goal-2002.json', createSharedWorkspaceGoalRecord({
+    goalId: 'goal-2002',
+    participantId: 'mission-scheduler',
+    timestampUtc: NOW,
+    relatedIssue: '#2002',
+    title: 'Stephanos Goal Building Agent',
+    status: 'ACTIVE',
+    summary: 'Autonomous builder goal is active.',
+    nextAction: 'Continue autonomous build.',
+  }));
+  await writeJson(root, 'status', 'stephanos-build-truth-current.json', {
+    ...createSharedWorkspaceStatusRecord({
+      statusId: 'stephanos-build-truth-current',
+      participantId: 'sovereign-commander',
+      timestampUtc: NOW,
+      relatedIssue: '#2002',
+      status: 'BUILDING',
+      summary: 'Stephanos foreman BUILDING.',
+    }),
+    stephanosBuildTruth: {
+      schemaVersion: 'stephanos.sovereign-build-truth.v1',
+      observedAtUtc: NOW,
+      state: 'BUILDING',
+      trafficLight: 'GREEN',
+      autonomous: true,
+      activeGoalCount: 1,
+      buildingGoalCount: 1,
+      activeMaterialLaneCount: 1,
+      targetMaterialLaneCount: 15,
+      lastMaterialProgressAtUtc: NOW,
+      blockers: [],
+      nextAction: 'Continue autonomous building.',
+      goals: [{
+        issue: '#2002',
+        title: 'Stephanos Goal Building Agent',
+        state: 'BUILDING',
+        controllerId: 'controller-1',
+        controllerTitle: 'Stephanos Autonomous Goal Builder',
+        logicalLaneId: 'logical-goal-2002',
+        builder: 'mission-worker-1',
+        currentPhase: 'SOURCE_CHANGED',
+        lastMaterialProgressAtUtc: NOW,
+        prNumber: 2800,
+        proofRefs: ['proof/build-2002'],
+        blocker: '',
+        nextAction: 'Run focused tests.',
+        autonomous: true,
+        selectedForAdmission: true,
+      }],
+    },
+  });
+
+  const payload = await readBackendSharedWorkspaceDashboardFeed({
+    env: { ...context.env, STEPHANOS_SHARED_AGENT_WORKSPACE: root },
+    repoRoot: context.repoRoot,
+    nowMs: Date.parse(NOW),
+    staleAfterMs: 60_000,
+    liveProjection: null,
+  });
+  const card = payload.projection.goals.find((goal) => goal.issue === '#2002');
+  assert.equal(payload.projection.stephanosBuildTruth.state, 'BUILDING');
+  assert.equal(card.buildState, 'BUILDING');
+  assert.equal(card.buildTrafficLight, 'GREEN');
+  assert.equal(card.autonomous, true);
+  assert.equal(card.controllerTitle, 'Stephanos Autonomous Goal Builder');
+  assert.equal(card.logicalLaneId, 'logical-goal-2002');
+  assert.equal(card.builder, 'mission-worker-1');
+  assert.equal(card.prNumber, 2800);
+  assert.equal(card.selectedForAdmission, true);
+  assert.equal(card.buildJourney.schemaVersion, 'stephanos.goal-build-conveyor.v1');
+  assert.equal(card.buildJourney.builder, 'mission-worker-1');
+  assert.equal(card.buildJourney.stages.find((stage) => stage.id === 'GOAL').trafficLight, 'GREEN');
+  assert.equal(card.buildJourney.stages.find((stage) => stage.id === 'SELECTED').trafficLight, 'GREEN');
+  assert.equal(card.buildJourney.stages.find((stage) => stage.id === 'PICKED_UP').trafficLight, 'GREEN');
+  assert.equal(card.buildJourney.stages.find((stage) => stage.id === 'BUILDING').trafficLight, 'GREEN');
+  assert.equal(card.buildJourney.stages.find((stage) => stage.id === 'COMPLETED').trafficLight, 'GREY');
+  assert.equal(payload.projection.goalBuildConveyor.visibleGoalCount > 0, true);
+  assert.equal(payload.projection.goalBuildConveyor.provenToBuilderCount, 1);
+  assert.equal(payload.projection.goalBuildConveyor.buildingCount, 1);
 });

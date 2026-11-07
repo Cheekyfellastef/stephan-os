@@ -219,7 +219,7 @@ test('protected merge entry constructs one repository-bound check expectation', 
     source,
     /const checkExpectation = buildPersonalRepositoryCheckExpectation\(\{[\s\S]*repository: context\.repository,[\s\S]*identity,[\s\S]*mergeStateStatus: review\.mergeStateStatus,[\s\S]*\}\);/,
   );
-  assert.match(source, /expected: checkExpectation\.expected,/);
+  assert.match(source, /expected: \{ \.\.\.checkExpectation\.expected, sourceTree: identity\.sourceTree \},/);
   assert.doesNotMatch(source, /expected:\s*\{\s*\.\.\.identity,\s*mergeStateStatus:/);
 });
 
@@ -1269,6 +1269,8 @@ test('current protected dispatch binds every exact dynamic run identity field', 
     ['workflow-path', { path: `${repository}/${PERSONAL_REPOSITORY_WORKFLOW_PATH}@feature` }],
     ['triggering-actor', { triggering_actor: { login: 'lookalike-operator' } }],
     ['run-status', { status: 'completed' }],
+    ['run-status', { status: 'completed', conclusion: 'success' }],
+    ['run-status', { status: 'cancelled' }],
   ];
   for (const [field, mutation] of mutations) {
     const blocked = validatePersonalRepositoryDispatchExecution(
@@ -1287,10 +1289,11 @@ test('current protected dispatch binds every exact dynamic run identity field', 
   assert.ok(widened.currentMismatches.length > 0);
 });
 
-test('mailbox authorization binds the exact owner actor and rejects legacy bot or lookalike transport identities', () => {
+test('mailbox authorization separates the owner from the authenticated carrier and requires immutable comment proof', () => {
   const mailboxAuthorization = {
     authorizedAtUtc: '2026-09-20T11:55:03Z',
     commentId: 5749628881,
+    commentSha256: 'a'.repeat(64),
     operatorAuthor: 'Cheekyfellastef',
     requestId: 'multiplexer-control-plane-protected-merge-2300-cdb875c6-20260920-v1',
     transportActor: 'Cheekyfellastef',
@@ -1302,7 +1305,7 @@ test('mailbox authorization binds the exact owner actor and rejects legacy bot o
   assert.equal(ready.valid, true);
   assert.deepEqual(ready.currentMismatches, []);
 
-  for (const transportActor of ['github-actions[bot]', 'lookalike-operator']) {
+  for (const transportActor of ['lookalike-operator']) {
     const blocked = validatePersonalRepositoryDispatchExecution(
       dispatchExecutionInput(),
       {
@@ -1326,6 +1329,27 @@ test('mailbox authorization binds the exact owner actor and rejects legacy bot o
   assert.equal(wrongRunActor.valid, false);
   assert.deepEqual(wrongRunActor.currentMismatches, ['triggering-actor']);
   assert.ok(wrongRunActor.blockers.includes('personal-repository-workflow-run-identity-mismatch'));
+  const botInput = dispatchExecutionInput({ run: dispatchRun({ triggering_actor: { login: 'github-actions[bot]' } }) });
+  const botProof = { ...mailboxAuthorization, transportActor: 'github-actions[bot]' };
+  assert.equal(validatePersonalRepositoryDispatchExecution(botInput, {
+    ...expectedDispatchExecution, mailboxAuthorization: botProof,
+  }).valid, true);
+  for (const mutation of [{ operatorAuthor: 'github-actions[bot]' }, { commentSha256: '' }, { commentId: 0 }]) {
+    assert.equal(validatePersonalRepositoryDispatchExecution(botInput, {
+      ...expectedDispatchExecution, mailboxAuthorization: { ...botProof, ...mutation },
+    }).valid, false);
+  }
+  assert.equal(validatePersonalRepositoryDispatchExecution(botInput, expectedDispatchExecution).valid, false);
+  // Replays remain visible when a subsequent request changes transport.
+  for (const currentActor of ['Cheekyfellastef', 'github-actions[bot]']) {
+    for (const priorActor of ['Cheekyfellastef', 'github-actions[bot]']) {
+      const blocked = validatePersonalRepositoryDispatchExecution(dispatchExecutionInput({
+        run: dispatchRun({ triggering_actor: { login: currentActor } }),
+        priorRuns: [dispatchRun({ id: runId + 10, triggering_actor: { login: priorActor } })],
+      }), { ...expectedDispatchExecution, mailboxAuthorization: { ...mailboxAuthorization, transportActor: currentActor } });
+      assert.deepEqual(blocked.replayRunIds, [runId + 10]);
+    }
+  }
 });
 
 test('prior authority jobs bind one complete canonical parent-run envelope', () => {
@@ -1892,6 +1916,188 @@ test('GitHub BLOCKED state still requires exact green check bindings', () => {
   );
   assert.equal(failed.valid, false);
   assert.ok(failed.blockers.includes('personal-repository-check-run-not-exact-green'));
+});
+
+test('Control Tower PR request-build skip requires same-run green contract-test', () => {
+  const run = {
+    ...workflowRuns()[0],
+    id: 9917,
+    check_suite_id: 8917,
+    name: 'Stephanos Control Tower - Sovereign Control',
+    path: repository + '/.github/workflows/stephanos-control-tower-build.yml@refs/heads/' + branch,
+    event: 'pull_request',
+    status: 'completed',
+    conclusion: 'success',
+  };
+  const contract = checkRun(run, { id: 9918, name: 'contract-test', conclusion: 'success' });
+  const skipped = checkRun(run, { id: 9919, name: 'request-build', conclusion: 'skipped' });
+  const checks = [contract, skipped];
+  const admitted = validatePersonalRepositoryCheckRuns(checks, [run], [], expectedEvidence);
+  assert.equal(admitted.valid, true, JSON.stringify(admitted.blockers));
+  assert.equal(admitted.evidence[1].disposition, 'pr-control-tower-build-not-requested');
+  for (const mutation of [
+    { event: 'push' }, { event: 'workflow_dispatch' }, { event: 'pull_request_target' },
+    { name: 'Unknown Control Tower' }, { path: '.github/workflows/other.yml' },
+    { status: 'in_progress' }, { conclusion: 'failure' }, { pull_requests: [] },
+  ]) {
+    const altered = { ...run, ...mutation };
+    const result = validatePersonalRepositoryCheckRuns(
+      [checkRun(altered, { id: 9918, name: 'contract-test', conclusion: 'success' }),
+       checkRun(altered, { id: 9919, name: 'request-build', conclusion: 'skipped' })],
+      [altered], [], expectedEvidence,
+    );
+    assert.equal(result.valid, false, JSON.stringify(mutation));
+  }
+  for (const bad of [
+    { name: 'unknown-job' }, { conclusion: 'failure' }, { status: 'queued' },
+    { head_sha: 'f'.repeat(40) }, { check_suite: { id: 9999 } },
+  ]) {
+    const result = validatePersonalRepositoryCheckRuns(
+      [contract, { ...skipped, ...bad }], [run], [], expectedEvidence,
+    );
+    assert.equal(result.valid, false, JSON.stringify(bad));
+  }
+  for (const badContract of [
+    { conclusion: 'failure' }, { conclusion: 'skipped' },
+    { status: 'queued' }, { name: 'not-contract-test' },
+  ]) {
+    const result = validatePersonalRepositoryCheckRuns(
+      [{ ...contract, ...badContract }, skipped], [run], [], expectedEvidence,
+    );
+    assert.equal(result.valid, false, JSON.stringify(badContract));
+  }
+  assert.equal(validatePersonalRepositoryCheckRuns([skipped], [run], [], expectedEvidence).valid, false);
+});
+
+test('a successful exact PR build does not require the intentionally excluded live Pages deployment', () => {
+  const buildRun = { ...workflowRuns().find((run) => run.name === 'Build Stephanos UI'), head_branch: branch };
+  const checks = [checkRun(buildRun, { id: 9401, name: 'build', conclusion: 'success' }),
+    checkRun(buildRun, { id: 9402, name: 'pages-deploy', conclusion: 'skipped' })];
+  const result = validatePersonalRepositoryCheckRuns(checks, [buildRun], [], expectedEvidence);
+  assert.equal(result.valid, true, JSON.stringify(result.blockers));
+  assert.equal(result.evidence[1].disposition, 'pr-pages-deployment-not-requested');
+  const failedBuild = validatePersonalRepositoryCheckRuns([
+    { ...checks[0], conclusion: 'failure' }, checks[1],
+  ], [buildRun], [], expectedEvidence);
+  assert.equal(failedBuild.valid, false);
+});
+
+test('the PR-only deployment exclusion rejects other triggers, failed runs and substituted bindings', () => {
+  const buildRun = { ...workflowRuns().find((run) => run.name === 'Build Stephanos UI'), head_branch: branch };
+  for (const mutation of [
+    { event: 'push' }, { event: 'workflow_dispatch' }, { event: 'schedule' },
+    { event: 'pull_request_target' }, { event: 'issue_comment' },
+    { path: '.github/workflows/unrelated-build.yml' }, { name: 'Unrelated Build' },
+    { conclusion: 'failure' }, { status: 'in_progress' }, { head_branch: 'main' },
+    { pull_requests: [] },
+  ]) {
+    const run = { ...buildRun, ...mutation };
+    const result = validatePersonalRepositoryCheckRuns([
+      checkRun(run, { name: 'pages-deploy', conclusion: 'skipped' }),
+    ], [run], [], expectedEvidence);
+    assert.equal(result.valid, false, JSON.stringify(mutation));
+  }
+  for (const mutation of [
+    { name: 'build' }, { name: 'unknown-check' }, { conclusion: 'failure' },
+    { conclusion: 'cancelled' }, { status: 'in_progress' }, { head_sha: 'f'.repeat(40) },
+    { check_suite: { id: buildRun.check_suite_id + 1 } },
+  ]) {
+    assert.equal(validatePersonalRepositoryCheckRuns([
+      checkRun(buildRun, { name: 'pages-deploy', conclusion: 'skipped', ...mutation }),
+    ], [buildRun], [], expectedEvidence).valid, false, JSON.stringify(mutation));
+  }
+});
+
+test('a successful exact PR mailbox proof preserves the intentionally excluded receipt mirror', () => {
+  const mailboxRun = {
+    id: 9201,
+    run_number: 201,
+    run_attempt: 1,
+    workflow_id: 7201,
+    check_suite_id: 8201,
+    name: 'Mailbox Receipt Index',
+    path: `${repository}/.github/workflows/mailbox-receipt-index.yml@refs/heads/${branch}`,
+    event: 'pull_request',
+    repository: { full_name: repository },
+    head_sha: sourceHead,
+    head_branch: branch,
+    status: 'completed',
+    conclusion: 'success',
+    pull_requests: [{
+      number: prNumber,
+      head: { sha: sourceHead, ref: branch },
+      base: { sha: baseSha, ref: 'main' },
+    }],
+  };
+  const checks = [
+    checkRun(mailboxRun, { id: 9403, name: 'proof', conclusion: 'success' }),
+    checkRun(mailboxRun, { id: 9404, name: 'mirror', conclusion: 'skipped' }),
+  ];
+  const result = validatePersonalRepositoryCheckRuns(checks, [mailboxRun], [], expectedEvidence);
+  assert.equal(result.valid, true, JSON.stringify(result.blockers));
+  assert.equal(result.evidence[1].disposition, 'pr-mailbox-mirror-not-requested');
+});
+
+test('the PR-only mailbox mirror exclusion rejects trigger, workflow, run and binding substitutions', () => {
+  const mailboxRun = {
+    id: 9202,
+    run_number: 202,
+    run_attempt: 1,
+    workflow_id: 7202,
+    check_suite_id: 8202,
+    name: 'Mailbox Receipt Index',
+    path: `${repository}/.github/workflows/mailbox-receipt-index.yml@refs/heads/${branch}`,
+    event: 'pull_request',
+    repository: { full_name: repository },
+    head_sha: sourceHead,
+    head_branch: branch,
+    status: 'completed',
+    conclusion: 'success',
+    pull_requests: [{
+      number: prNumber,
+      head: { sha: sourceHead, ref: branch },
+      base: { sha: baseSha, ref: 'main' },
+    }],
+  };
+  for (const mutation of [
+    { event: 'push' }, { event: 'workflow_dispatch' }, { event: 'issue_comment' },
+    { path: `${repository}/.github/workflows/unrelated-mailbox.yml@refs/heads/${branch}` },
+    { name: 'Unrelated Mailbox' }, { conclusion: 'failure' },
+    { status: 'in_progress' }, { head_branch: 'main' }, { pull_requests: [] },
+    { pull_requests: [{
+      number: prNumber + 1,
+      head: { sha: sourceHead, ref: branch },
+      base: { sha: baseSha, ref: 'main' },
+    }] },
+    { pull_requests: [{
+      number: prNumber,
+      head: { sha: 'f'.repeat(40), ref: branch },
+      base: { sha: baseSha, ref: 'main' },
+    }] },
+    { pull_requests: [{
+      number: prNumber,
+      head: { sha: sourceHead, ref: branch },
+      base: { sha: 'e'.repeat(40), ref: 'main' },
+    }] },
+  ]) {
+    const run = { ...mailboxRun, ...mutation };
+    const result = validatePersonalRepositoryCheckRuns([
+      checkRun(run, { name: 'mirror', conclusion: 'skipped' }),
+    ], [run], [], expectedEvidence);
+    assert.equal(result.valid, false, JSON.stringify(mutation));
+  }
+  for (const mutation of [
+    { name: 'proof' }, { name: 'unknown-check' }, { conclusion: 'failure' },
+    { conclusion: 'cancelled' }, { status: 'in_progress' }, { head_sha: 'f'.repeat(40) },
+    { check_suite: { id: mailboxRun.check_suite_id + 1 } },
+    { app: { id: 15368, slug: 'not-github-actions' } },
+    { app: { id: 1, slug: 'github-actions' } },
+  ]) {
+    const result = validatePersonalRepositoryCheckRuns([
+      checkRun(mailboxRun, { name: 'mirror', conclusion: 'skipped', ...mutation }),
+    ], [mailboxRun], [], expectedEvidence);
+    assert.equal(result.valid, false, JSON.stringify(mutation));
+  }
 });
 
 test('UNSTABLE admission binds the one failing check to the exact reviewed escalation workflow', () => {
@@ -2490,5 +2696,109 @@ test('unbound push duplicate is neutral only when the same check has an exact PR
     );
     assert.equal(hostile.valid, false, label);
     assert.ok(hostile.blockers.includes('personal-repository-check-run-identity-invalid'), label);
+  }
+});
+
+
+test('reviewed UNSTABLE failed exact-head check safely supersedes a historical draft skip', () => {
+  const draft = escalationWorkflowRun({ id: 9198, check_suite_id: 8198, conclusion: 'skipped' });
+  const reviewed = escalationWorkflowRun({ id: 9199, check_suite_id: 8199, conclusion: 'failure' });
+  const checks = [
+    checkRun(draft, { id: 9298, conclusion: 'skipped' }),
+    checkRun(reviewed, { id: 9299, conclusion: 'failure' }),
+  ];
+  const expected = { ...expectedEvidence, mergeStateStatus: 'UNSTABLE' };
+  const admitted = validatePersonalRepositoryCheckRuns(checks, [draft, reviewed], [], expected, {
+    cleanIndependentReviewProved: true,
+  });
+  assert.equal(admitted.valid, true, admitted.blockers.join(', '));
+  assert.equal(admitted.admittedReviewEscalations, 1);
+  assert.deepEqual(admitted.evidence.map(item => item.disposition),
+    ['superseded-draft-skip', 'clean-independent-review']);
+
+  const noIndependentProof = validatePersonalRepositoryCheckRuns(
+    checks, [draft, reviewed], [], expected,
+  );
+  assert.equal(noIndependentProof.valid, false);
+
+  const unrelatedLaterReview = { ...reviewed, path: `${repository}/.github/workflows/untrusted-review.yml@refs/heads/main` };
+  assert.equal(validatePersonalRepositoryCheckRuns(
+    checks, [draft, unrelatedLaterReview], [], expected, { cleanIndependentReviewProved: true },
+  ).valid, false);
+});
+
+test('BLOCKED exact-head escalation requires clean independent review of only that exact failed check', () => {
+  const reviewRun = escalationWorkflowRun();
+  const greenRun = workflowRuns()[0];
+  const expected = { ...expectedEvidence, mergeStateStatus: 'BLOCKED' };
+  const checks = [
+    checkRun(greenRun, { id: 9301, name: 'verify-mission-operations', conclusion: 'success' }),
+    checkRun(reviewRun, { id: 9302, name: 'exact-head-review', conclusion: 'failure' }),
+  ];
+  const runs = [...workflowRuns(), reviewRun];
+  const admitted = validatePersonalRepositoryCheckRuns(checks, runs, [], expected, {
+    cleanIndependentReviewProved: true,
+  });
+  assert.equal(admitted.valid, true, admitted.blockers.join(', '));
+  assert.equal(admitted.admittedReviewEscalations, 1);
+  assert.equal(admitted.evidence[1].disposition, 'clean-independent-review');
+
+  const unproved = validatePersonalRepositoryCheckRuns(checks, runs, [], expected);
+  assert.equal(unproved.valid, false);
+  assert.ok(unproved.blockers.includes('personal-repository-check-run-not-exact-green'));
+
+  const otherFailure = checkRun(greenRun, {
+    id: 9303, name: 'unrelated-security-check', conclusion: 'failure',
+  });
+  const rejected = validatePersonalRepositoryCheckRuns(
+    [...checks, otherFailure], runs, [], expected, { cleanIndependentReviewProved: true },
+  );
+  assert.equal(rejected.valid, false);
+  assert.ok(rejected.blockers.includes('personal-repository-check-run-not-exact-green'));
+
+  for (const badReview of [
+    { ...checks[1], name: 'other-review' },
+    { ...checks[1], head_sha: 'f'.repeat(40) },
+    { ...checks[1], status: 'in_progress' },
+    { ...checks[1], app: { id: 999, slug: 'github-actions' } },
+  ]) {
+    assert.equal(validatePersonalRepositoryCheckRuns(
+      [checks[0], badReview], runs, [], expected, { cleanIndependentReviewProved: true },
+    ).valid, false);
+  }
+});
+
+// The same owner-authorised protected merge job can observe a still-waiting
+// top-level run immediately after GitHub has approved the environment and
+// released the job. Status is informational here; this validator must not
+// confer approval, admission or merge authority from the status alone.
+test('protected GitHub run state may remain waiting without waiving identity or replay protection', () => {
+  const waiting = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({run: dispatchRun({status:'waiting'})}),
+    expectedDispatchExecution,
+  );
+  assert.equal(waiting.valid,true);
+  assert.deepEqual(waiting.currentMismatches,[]);
+
+  const wrongActor = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({run:dispatchRun({
+      status:'waiting',triggering_actor:{login:'untrusted-bot'},
+    })}),expectedDispatchExecution,
+  );
+  assert.equal(wrongActor.valid,false);
+  assert.ok(wrongActor.currentMismatches.includes('triggering-actor'));
+
+  const wrongHead = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({run:dispatchRun({status:'waiting',head_sha:'f'.repeat(40)})}),
+    expectedDispatchExecution,
+  );
+  assert.equal(wrongHead.valid,false);
+  assert.ok(wrongHead.currentMismatches.includes('base-head'));
+
+  for(const status of ['completed','cancelled','failure','success']){
+    const terminal=validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({run:dispatchRun({status})}),expectedDispatchExecution);
+    assert.equal(terminal.valid,false,status);
+    assert.ok(terminal.currentMismatches.includes('run-status'),status);
   }
 });

@@ -17,6 +17,20 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { CANONICAL_MAILBOX_ISSUE } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
+import {
+  buildBattleBridgeGitHubCommandReceipt,
+  selectBattleBridgeGitHubCommandBatch,
+  validateBattleBridgeGitHubCommand,
+} from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
+import {
+  checkpointAcceptedMailboxReceipt,
+  checkpointMailboxReceiptPublication,
+  createSanitizedMailboxReceiptProjection,
+  flushMailboxReceiptPublicationOutbox,
+  serializeBoundedReceiptJson,
+} from './battle-bridge-github-command-mailbox.mjs';
+import { reconcileStaleAcceptedMailboxReceipts } from './battle-bridge-github-command-mailbox-with-receipt-index.mjs';
 
 import {
   atomicWriteJson,
@@ -30,11 +44,191 @@ import {
   MAILBOX_OUTBOX_SEGMENT_MAX_BYTES,
   normalizePendingReceiptPublications,
   parseMailboxChildStatus,
+  projectMailboxGuardDiagnosticV1,
   pendingReceiptPublicationDigest,
   readJsonObject,
   runMailboxOutboxGuard,
   verifyMailboxOutboxGuardLease,
 } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
+
+const identityTestNow = new Date('2026-11-06T12:00:00.000Z');
+
+function receiptIdentityCommand(requestId) {
+  return {
+    schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+    requestId,
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
+    branch: 'main',
+    operatorApproval: 'operator-approved',
+    expectedHead: '1'.repeat(40),
+    expiresAt: '2026-11-06T12:10:00.000Z',
+    remoteAction: 'status',
+  };
+}
+
+test('admitted session request identity survives compact receipt and deferred publication', () => {
+  const requestId = 'fixture-single-session-receipt-v1';
+  const admitted = validateBattleBridgeGitHubCommand(receiptIdentityCommand(requestId), {
+    authorLogin: 'Cheekyfellastef',
+    now: identityTestNow,
+  });
+  assert.equal(admitted.ok, true, admitted.blocker);
+  const completedAt = identityTestNow.toISOString();
+  const receipt = buildBattleBridgeGitHubCommandReceipt({
+    command: admitted.command,
+    state: 'DONE',
+    completedAt,
+    blocker: 'fixture-single-session-text',
+    result: {
+      ok: true,
+      requestId: 'fixture-session-token-marker',
+      privatePayload: 'x'.repeat(9_000),
+    },
+  });
+  const publicReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, 6_000));
+  const compactFallback = JSON.parse(serializeBoundedReceiptJson(receipt, 3_000));
+  assert.equal(publicReceipt.githubProjectionTruncated, true);
+  const sanitized = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(publicReceipt.requestId, requestId);
+  assert.equal(publicReceipt.result.requestId, requestId);
+  assert.equal(compactFallback.requestId, requestId);
+  assert.equal(compactFallback.result.requestId, requestId);
+  assert.equal(publicReceipt.blocker, '');
+  assert.equal(sanitized.requestId, requestId);
+  assert.equal(sanitized.execution.requestId, requestId);
+  assert.equal(sanitized.blocker, '');
+
+  const state = { pendingReceiptPublications: [] };
+  let checkpointed;
+  checkpointMailboxReceiptPublication(state, receipt, { ok: false }, {
+    persist: (snapshot) => { checkpointed = structuredClone(snapshot); },
+  });
+  const queue = normalizePendingReceiptPublications(checkpointed.pendingReceiptPublications);
+  assert.equal(queue.length, 1);
+  assert.equal(queue[0].publicationId, `${requestId}:DONE:${completedAt}`);
+  assert.equal(queue[0].receipt.requestId, requestId);
+});
+
+test('credential-shaped IDs cannot enter execution or deferred rejection receipts', () => {
+  const unsafeIds = [
+    'fixture-session-token-marker',
+    'fixture-secret-marker-v1',
+    'fixture-cookie-marker-v1',
+    'fixture-ghp-placeholder012345',
+    'ghp-session-x',
+    'sk-session-x',
+    'github_pat-session-x',
+  ];
+  for (const requestId of unsafeIds) {
+    const command = receiptIdentityCommand(requestId);
+    const validation = validateBattleBridgeGitHubCommand(command, {
+      authorLogin: 'Cheekyfellastef',
+      now: identityTestNow,
+    });
+    assert.equal(validation.blocker, 'COMMAND_REQUEST_ID_PUBLICATION_UNSAFE');
+    const rejectedBatch = selectBattleBridgeGitHubCommandBatch([{
+      id: 1,
+      user: { login: 'Cheekyfellastef' },
+      created_at: identityTestNow.toISOString(),
+      body: '\`\`\`stephanos-battle-bridge-command\n'
+        + JSON.stringify({ ...command, remoteAction: 'unsupported-fixture-action' }) + '\n\`\`\`',
+    }], { now: identityTestNow });
+    assert.equal(rejectedBatch.ok, true);
+    assert.equal(rejectedBatch.commands.length, 0);
+    assert.equal(rejectedBatch.terminalRejections.length, 0);
+    assert.equal(rejectedBatch.rejected[0].blocker, 'COMMAND_REQUEST_ID_PUBLICATION_UNSAFE');
+    const receipt = buildBattleBridgeGitHubCommandReceipt({ command, state: 'BLOCKED' });
+    assert.equal(JSON.parse(serializeBoundedReceiptJson(receipt)).requestId, '');
+    assert.equal(JSON.parse(serializeBoundedReceiptJson(receipt, 3_000)).result.requestId, '');
+    assert.equal(createSanitizedMailboxReceiptProjection(receipt).execution.requestId, '');
+    const state = { pendingReceiptPublications: [] };
+    assert.throws(() => checkpointMailboxReceiptPublication(state, receipt, { ok: false }, {
+      persist: () => assert.fail('invalid publication must not persist'),
+    }), /MAILBOX_RECEIPT_PUBLICATION_IDENTITY_UNSAFE/);
+    assert.deepEqual(state.pendingReceiptPublications, []);
+    assert.throws(() => checkpointAcceptedMailboxReceipt(state, { ...receipt, state: 'ACCEPTED' }, {
+      persist: () => assert.fail('unsafe accepted identity must not persist'),
+    }), /MAILBOX_ACCEPTED_CHECKPOINT_INVALID/);
+  }
+});
+
+test('publication holds an unsafe legacy queue before publishing or removing any entry', () => {
+  const state = { pendingReceiptPublications: [pending('fixture-single-flight-v1'), pending('ghp-session-x')] };
+  const before = structuredClone(state);
+  assert.throws(() => flushMailboxReceiptPublicationOutbox(state, {
+    publish: () => assert.fail('unsafe queue must not publish'),
+    persist: () => assert.fail('unsafe queue must not persist'),
+  }), /MAILBOX_PENDING_RECEIPT_IDENTITY_UNSAFE/);
+  assert.deepEqual(state, before);
+});
+
+test('accepted recovery retains a historical unsafe identity before writing any receipt', (t) => {
+  const f = fixture();
+  t.after(f.cleanup);
+  const state = {
+    acceptedRequestIds: ['fixture-session-token-marker'],
+    consumedRequestIds: [],
+    pendingReceiptPublications: [],
+  };
+  writeJson(f.statePath, state);
+  const before = readFileSync(f.statePath);
+  const result = reconcileStaleAcceptedMailboxReceipts({
+    env: { STEPHANOS_SHARED_WORKSPACE_ROOT: dirname(dirname(f.statePath)) },
+    workspaceRoot: join(f.root, 'canonical-receipts'),
+    now: () => identityTestNow,
+  });
+  assert.equal(result.blocker, 'MAILBOX_ACCEPTED_RECEIPT_IDENTITY_UNSAFE');
+  assert.equal(result.reconciledCount, 0);
+  assert.deepEqual(readFileSync(f.statePath), before);
+  assert.deepEqual(readdirSync(dirname(f.statePath)), ['state.json']);
+});
+
+test('stale accepted recovery preserves the admitted ID through reload and a single publication', (t) => {
+  const f = fixture();
+  t.after(f.cleanup);
+  const requestId = 'fixture-single-session-accepted-v1';
+  const admitted = validateBattleBridgeGitHubCommand(receiptIdentityCommand(requestId), {
+    authorLogin: 'Cheekyfellastef',
+    now: identityTestNow,
+  });
+  assert.equal(admitted.ok, true);
+  const accepted = buildBattleBridgeGitHubCommandReceipt({
+    command: admitted.command,
+    state: 'ACCEPTED',
+    acceptedAt: identityTestNow.toISOString(),
+    heartbeatAt: identityTestNow.toISOString(),
+  });
+  checkpointAcceptedMailboxReceipt({}, accepted, { persist: (state) => writeJson(f.statePath, state) });
+  assert.equal(readJson(f.statePath).lastAcceptedReceipt.requestId, requestId);
+
+  const recovery = reconcileStaleAcceptedMailboxReceipts({
+    env: { STEPHANOS_SHARED_WORKSPACE_ROOT: dirname(dirname(f.statePath)) },
+    workspaceRoot: join(f.root, 'canonical-receipts'),
+    now: () => new Date('2026-11-06T12:30:00.000Z'),
+  });
+  assert.equal(recovery.expiredCount, 1);
+  assert.equal(recovery.replayPerformed, false);
+  const recoveredState = readJson(f.statePath);
+  assert.deepEqual(recoveredState.acceptedRequestIds, []);
+  assert.deepEqual(recoveredState.consumedRequestIds, [requestId]);
+  const [entry] = normalizePendingReceiptPublications(recoveredState.pendingReceiptPublications);
+  assert.equal(entry.receipt.requestId, requestId);
+  assert.equal(entry.receipt.result.requestId, requestId);
+  let calls = 0;
+  const result = flushMailboxReceiptPublicationOutbox(recoveredState, {
+    publish: (receipt) => {
+      calls += 1;
+      assert.equal(JSON.parse(serializeBoundedReceiptJson(receipt)).requestId, requestId);
+      return { ok: true };
+    },
+    persist: (state) => writeJson(f.statePath, state),
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.publishedCount, 1);
+  assert.deepEqual(readJson(f.statePath).pendingReceiptPublications, []);
+});
 
 function pending(id, state = 'BLOCKED', extra = {}) {
   return {
@@ -125,6 +319,84 @@ function runGuard(f, options = {}) {
     ...options,
   });
 }
+
+test('typed guard diagnostics distinguish untouched invalid debt before and after child invocation', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const now = () => new Date('2026-11-07T15:20:00.000Z');
+  const invalid = { publicationId: 'fixture-original-publication', receipt: { requestId: '', state: 'DONE' } };
+  writeJson(f.statePath, { acceptedRequestIds: [], consumedRequestIds: [], pendingReceiptPublications: [invalid] });
+  const before = readFileSync(f.statePath);
+  let invoked = 0;
+  const denied = runGuard(f, { now, spawnSyncFn: () => { invoked++; throw Error('unexpected child'); } });
+  assert.equal(invoked, 0);
+  assert.equal(denied.blocker, 'MAILBOX_OUTBOX_GUARD_FAILED');
+  assert.equal(denied.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID');
+  assert.equal(denied.guardDiagnostic.stage, 'STATE_VALIDATION');
+  assert.equal(denied.guardDiagnostic.outcome, 'GUARD_BLOCKED');
+  assert.equal(denied.guardDiagnostic.childInvocationAttempted, false);
+  assert.equal(denied.guardDiagnostic.observedAtUtc, now().toISOString());
+  assert.deepEqual(readFileSync(f.statePath), before);
+  assert.equal(existsSync(f.deferredPath), false);
+  assert.equal(existsSync(`${f.deferredPath}.lock-v1.json`), false);
+  writeJson(f.statePath, { acceptedRequestIds: [], consumedRequestIds: [], pendingReceiptPublications: [] });
+  let postChildBytes;
+  const after = runGuard(f, { now, spawnSyncFn: () => {
+    invoked++;
+    writeJson(f.statePath, { acceptedRequestIds: [], consumedRequestIds: [], pendingReceiptPublications: [invalid] });
+    postChildBytes = readFileSync(f.statePath);
+    return { status: 0, stdout: '{}', stderr: '' };
+  } });
+  assert.equal(invoked, 1);
+  assert.equal(after.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID');
+  assert.equal(after.guardDiagnostic.stage, 'POST_CHILD_VALIDATION');
+  assert.equal(after.guardDiagnostic.childInvocationAttempted, true);
+  assert.deepEqual(readFileSync(f.statePath), postChildBytes);
+});
+
+test('typed guard diagnostics preserve single-flight busy and disclose no unknown error text', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const now = () => new Date('2026-11-07T15:20:00.000Z');
+  writeJson(f.statePath, { pendingReceiptPublications: [] });
+  let nested;
+  const completed = runGuard(f, { now, spawnSyncFn: () => {
+    nested = runGuard(f, { now, spawnSyncFn: () => { throw Error('overlapping child'); } });
+    return { status: 0, stdout: '{}', stderr: '' };
+  } });
+  assert.equal(completed.ok, true);
+  assert.equal(completed.guardDiagnostic.outcome, 'CHILD_SUCCEEDED');
+  assert.equal(completed.guardDiagnostic.reasonCode, 'NONE');
+  assert.equal(completed.guardDiagnostic.childInvocationAttempted, true);
+  assert.equal(nested.ok, false);
+  assert.equal(nested.guardDiagnostic.outcome, 'GUARD_BUSY');
+  assert.equal(nested.guardDiagnostic.stage, 'LOCK');
+  assert.equal(nested.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
+  assert.equal(nested.guardDiagnostic.childInvocationAttempted, false);
+  const secret = 'private-token=fixture C:\\private\\fixture.json';
+  const unknown = runGuard(f, { now, spawnSyncFn: () => { throw Error(secret); } });
+  assert.equal(unknown.guardDiagnostic.stage, 'CHILD_INVOCATION');
+  assert.equal(unknown.guardDiagnostic.reasonCode, 'MAILBOX_GUARD_FAILURE_UNCLASSIFIED');
+  assert.equal(unknown.guardDiagnostic.childInvocationAttempted, true);
+  assert.equal(JSON.stringify(unknown.guardDiagnostic).includes('private-token=fixture'), false);
+});
+
+test('guard diagnostic projection rejects open fields, accessors and inconsistent execution stages', () => {
+  const valid = { schemaVersion: 'stephanos.mailbox-guard-diagnostic.v1',
+    observedAtUtc: '2026-11-07T15:20:00.000Z', stage: 'STATE_VALIDATION',
+    outcome: 'GUARD_BLOCKED', reasonCode: 'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID', childInvocationAttempted: false };
+  assert.deepEqual(projectMailboxGuardDiagnosticV1(valid), valid);
+  for (const value of [null, [], { ...valid, requestId: 'private-request' },
+    { ...valid, reasonCode: 'PRIVATE_SECRET_VALUE' }, { ...valid, stage: 'INVENTED' },
+    { ...valid, outcome: 'CHILD_SUCCEEDED' }, { ...valid, childInvocationAttempted: true },
+    { ...valid, observedAtUtc: 'not-a-date' }, { ...valid, reasonCode: 'NONE' },
+    { ...valid, outcome: 'GUARD_BUSY' }, Object.assign(Object.create({ private: true }), valid)]) {
+    assert.equal(projectMailboxGuardDiagnosticV1(value), null);
+  }
+  let reads = 0;
+  const accessor = { ...valid };
+  Object.defineProperty(accessor, 'reasonCode', { enumerable: true, get() { reads++; return valid.reasonCode; } });
+  assert.equal(projectMailboxGuardDiagnosticV1(accessor), null);
+  assert.equal(reads, 0);
+});
 
 function writeLedgerFixture(f, entries, { headSequence = 0, storeId = '0123456789abcdef0123456789abcdef' } = {}) {
   const manifest = {
@@ -700,6 +972,13 @@ test('guard publishes only bounded child blocker fields when the guarded mailbox
     finalVerdict: 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED',
     mailboxBlocker: 'MAILBOX_ACCEPTED_LEASE_EXPIRED',
     indexBlocker: '',
+    mailboxSelectedCount: 0,
+    mailboxReadyCount: 0,
+    mailboxDeferredCount: 0,
+    mailboxControlCount: 0,
+    mailboxObservationCount: 0,
+    mailboxBlockedCount: 0,
+    mailboxMaxConcurrencyObserved: 0,
   });
 
   const f = fixture();
@@ -728,6 +1007,37 @@ test('guard publishes only bounded child blocker fields when the guarded mailbox
   } finally {
     f.cleanup();
   }
+});
+
+test('guard exposes only bounded mailbox activity counters for relay cadence decisions', () => {
+  const parsed = parseMailboxChildStatus(JSON.stringify({
+    ok: true,
+    finalVerdict: 'MAILBOX_WITH_RECEIPT_INDEX_READY',
+    mailboxSelectedCount: 3,
+    mailboxReadyCount: 2,
+    mailboxDeferredCount: 1,
+    mailboxControlCount: 1,
+    mailboxObservationCount: 1,
+    mailboxBlockedCount: 1,
+    mailboxMaxConcurrencyObserved: 2,
+    secret: 'must-not-leak',
+  }));
+  assert.equal(parsed.mailboxSelectedCount, 3);
+  assert.equal(parsed.mailboxReadyCount, 2);
+  assert.equal(parsed.mailboxDeferredCount, 1);
+  assert.equal(parsed.mailboxControlCount, 1);
+  assert.equal(parsed.mailboxObservationCount, 1);
+  assert.equal(parsed.mailboxBlockedCount, 1);
+  assert.equal(parsed.mailboxMaxConcurrencyObserved, 2);
+
+  const invalid = parseMailboxChildStatus(JSON.stringify({
+    mailboxSelectedCount: -1,
+    mailboxReadyCount: Number.MAX_SAFE_INTEGER,
+    mailboxControlCount: 'not-a-number',
+  }));
+  assert.equal(invalid.mailboxSelectedCount, 0);
+  assert.equal(invalid.mailboxReadyCount, 0);
+  assert.equal(invalid.mailboxControlCount, 0);
 });
 
 test('single-writer lock blocks overlap and recovers one dead stale owner without a permanent wedge', () => {
@@ -771,6 +1081,111 @@ test('single-writer lock blocks overlap and recovers one dead stale owner withou
     });
     assert.equal(recovered.staleLockRecovered, true);
     assert.equal(existsSync(`${f.deferredPath}.lock-v1.json`), false);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('power-cut empty guard lock is reclaimed only after the full stale window', () => {
+  const f = fixture();
+  try {
+    writeJson(f.statePath, { pendingReceiptPublications: [] });
+    const lock = `${f.deferredPath}.lock-v1.json`;
+    writeFileSync(lock, '');
+    const oldTime = new Date('2026-10-06T11:30:00.000Z');
+    utimesSync(lock, oldTime, oldTime);
+
+    const recovered = runGuard(f, {
+      now: () => new Date('2026-10-06T12:00:00.000Z'),
+      lockTokenFn: () => '45454545454545454545454545454545',
+      staleAfterMs: 20 * 60 * 1000,
+      processIdentityFn: (pid) => pid === process.pid
+        ? { state: 'known', bootId: 'windows-boot-current', processStartId: 'windows-process-current' }
+        : { state: 'unknown' },
+      spawnSyncFn: () => ({ status: 1 }),
+    });
+
+    assert.equal(recovered.staleLockRecovered, true);
+    assert.equal(recovered.blocker, 'MAILBOX_CHILD_RUN_BLOCKED');
+    assert.equal(existsSync(lock), false);
+
+    writeFileSync(lock, '');
+    const recentTime = new Date('2026-10-06T11:55:00.000Z');
+    utimesSync(lock, recentTime, recentTime);
+    const recent = runGuard(f, {
+      now: () => new Date('2026-10-06T12:00:00.000Z'),
+      lockTokenFn: () => '67676767676767676767676767676767',
+      staleAfterMs: 20 * 60 * 1000,
+      processIdentityFn: (pid) => pid === process.pid
+        ? { state: 'known', bootId: 'windows-boot-current', processStartId: 'windows-process-current' }
+        : { state: 'unknown' },
+      spawnSyncFn: () => ({ status: 1 }),
+    });
+    assert.equal(recent.ok, false);
+    assert.match(recent.error, /MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING/);
+    assert.equal(existsSync(lock), true);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('prior-boot stale guard owner is reclaimed even when the historical PID probe is inconclusive', () => {
+  const f = fixture();
+  try {
+    writeJson(f.statePath, { pendingReceiptPublications: [] });
+    writeJson(`${f.deferredPath}.lock-v1.json`, {
+      schemaVersion: 'stephanos.battle-bridge-mailbox-outbox-lock.v1',
+      token: '34343434343434343434343434343434',
+      pid: 42424,
+      ownerBootId: 'windows-boot-prior',
+      ownerProcessStartId: 'windows-process-prior',
+      acquiredAtUtc: '2026-10-06T11:59:40.000Z',
+    });
+
+    const result = runGuard(f, {
+      now: () => new Date('2026-10-06T12:00:00.000Z'),
+      lockTokenFn: () => '56565656565656565656565656565656',
+      staleAfterMs: 20 * 60 * 1000,
+      processIdentityFn: (pid) => pid === process.pid
+        ? { state: 'known', bootId: 'windows-boot-current', processStartId: 'windows-process-current' }
+        : { state: 'unknown' },
+      spawnSyncFn: () => ({ status: 1 }),
+    });
+
+    assert.equal(result.staleLockRecovered, true);
+    assert.equal(result.blocker, 'MAILBOX_CHILD_RUN_BLOCKED');
+    assert.equal(existsSync(`${f.deferredPath}.lock-v1.json`), false);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('same-boot stale guard stays fail-closed when the owner PID identity is inconclusive', () => {
+  const f = fixture();
+  try {
+    writeJson(f.statePath, { pendingReceiptPublications: [] });
+    writeJson(`${f.deferredPath}.lock-v1.json`, {
+      schemaVersion: 'stephanos.battle-bridge-mailbox-outbox-lock.v1',
+      token: '78787878787878787878787878787878',
+      pid: 52525,
+      ownerBootId: 'windows-boot-current',
+      ownerProcessStartId: 'windows-process-unknown',
+      acquiredAtUtc: '2026-10-06T10:00:00.000Z',
+    });
+
+    const result = runGuard(f, {
+      now: () => new Date('2026-10-06T12:00:00.000Z'),
+      lockTokenFn: () => '90909090909090909090909090909090',
+      staleAfterMs: 60_000,
+      processIdentityFn: (pid) => pid === process.pid
+        ? { state: 'known', bootId: 'windows-boot-current', processStartId: 'windows-process-current' }
+        : { state: 'unknown' },
+      spawnSyncFn: () => ({ status: 1 }),
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.error, /MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING/);
+    assert.equal(existsSync(`${f.deferredPath}.lock-v1.json`), true);
   } finally {
     f.cleanup();
   }

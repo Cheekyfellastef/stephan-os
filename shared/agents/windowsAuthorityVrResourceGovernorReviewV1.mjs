@@ -10,6 +10,23 @@ const SHA = /^[a-f0-9]{40}$/;
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const PATH = WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1[0];
 
+// Closed source contracts for current main ca89e8b0 and the original #3155
+// idle-refresh delta c90b7caa. Both preserve ObserveAdmission, immediate
+// headset eviction, the 0.5s/5s guard, real-VR-bound Ollama runtime suppression,
+// and prior-protection-bound model/runtime reappearance evidence.
+//
+// Do not normalize PowerShell. Comments can contain #Requires directives and
+// # inside an argument need not start a comment. A helper/literal match cannot
+// qualify executable additions, action reassignment, aliases or shadowing.
+// Every other byte sequence requires a newly qualified source contract.
+// Changing these registrations is an approval-boundary self-change, not
+// independent review, runtime proof, or permission to merge/install.
+const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
+  Object.freeze({ blobSha: 'ae71e1e79ead63efeb5a4d73f4bce6a01ee0f1d9', size: 48838 }),
+  Object.freeze({ blobSha: '9513dfe995a35087e1d715ef0c4dff4ca3578295', size: 49674 }),
+  Object.freeze({ blobSha: '5d9af55d09c4cdd11b3ea264afa4d8ca67ef3913', size: 51644 }),
+]);
+
 const text = (value) => String(value ?? '').trim();
 const finding = (code, summary = code) => Object.freeze({
   severity: 'P0',
@@ -70,8 +87,16 @@ function parameterPrefix(source) {
 }
 
 function reviewGovernor(source, findings) {
+  const observed = { blobSha: blobSha(source), size: Buffer.byteLength(source, 'utf8') };
+  if (!CURRENT_GOVERNOR_SOURCE_CONTRACTS.some((entry) =>
+    entry.blobSha === observed.blobSha && entry.size === observed.size)) {
+    findings.push(finding('vr-governor-source-contract-unregistered',
+      'Governor bytes do not match a registered complete source contract; unknown variants require independent qualification.'));
+    return;
+  }
   for (const [literal, code, summary] of [
-    ["[ValidateSet('Watch','Reconcile','Status','PrepareGaming','CancelPrepare','SetAuto','ForceOn','ForceOff')][string]$Action = 'Watch'", 'vr-governor-action-estate-widened', 'Governor actions must remain the fixed eight-value control surface.'],
+    ["[ValidateSet('Watch','Reconcile','Status','ObserveAdmission','PrepareGaming','CancelPrepare','SetAuto','ForceOn','ForceOff')][string]$Action = 'Watch'", 'vr-governor-action-estate-widened', 'Governor actions must remain the fixed nine-value surface including read-only observation.'],
+    ["if ($Action -eq 'ObserveAdmission') {", 'vr-governor-readonly-admission-observation-missing', 'The fresh read-only admission observation must remain separate from reconciliation.'],
     ["$workspaceRoot = Join-Path $env:USERPROFILE 'Documents\\Stephanos-openclaw-workspace'", 'vr-governor-workspace-root-not-fixed', 'Governor state must remain inside the fixed Stephanos workspace.'],
     ["$statePath = Join-Path $stateRoot 'vr-resource-governor-current.json'", 'vr-governor-state-path-not-fixed', 'Canonical governor state path must remain fixed.'],
     ["$overridePath = Join-Path $stateRoot 'gaming-resource-override.json'", 'vr-governor-override-path-not-fixed', 'Gaming override state path must remain fixed.'],
@@ -79,7 +104,8 @@ function reviewGovernor(source, findings) {
     ["$profilesPath = Join-Path $stateRoot 'gaming-resource-profiles.json'", 'vr-governor-profiles-path-not-fixed', 'Gaming profile path must remain fixed.'],
     ["$telemetryPath = Join-Path $stateRoot 'gaming-resource-governor-events.jsonl'", 'vr-governor-telemetry-path-not-fixed', 'Governor telemetry path must remain fixed.'],
     ["$lightweightModel = 'llama3.2:3b'", 'vr-governor-lightweight-identity-not-fixed', 'The lightweight fallback identity must remain explicit.'],
-    ["foreach ($name in @('OculusDash', 'vrcompositor', 'vrdashboard'))", 'vr-governor-vr-runtime-signal-estate-widened', 'VR runtime detection must remain a closed process-name set.'],
+    ["foreach ($name in @('vrcompositor', 'vrdashboard'))", 'vr-governor-vr-runtime-signal-estate-widened', 'SteamVR detection must retain its closed process-name set.'],
+    ['return -not (Test-StaleOculusDashAfterCrash)', 'vr-governor-vr-runtime-signal-estate-widened', 'OculusDash must remain protected unless the complete stale-crash evidence holds.'],
     ["$name = 'vr-maximum'", 'vr-governor-vr-profile-missing', 'VR maximum profile must remain explicit.'],
     ["$parkAllModels = $true", 'vr-governor-park-all-contract-missing', 'VR maximum must retain park-all-models behavior.'],
     ["if ($RequestedProfileName -eq 'vr-maximum')", 'vr-governor-explicit-vr-profile-gate-missing', 'Explicit VR preparation must remain a dedicated profile gate.'],
@@ -95,9 +121,18 @@ function reviewGovernor(source, findings) {
     ["$zeroLocalModelInvariant = [bool](", 'vr-governor-zero-model-evaluation-missing', 'The zero-model invariant must be evaluated after eviction.'],
     ["$priorParkAllModels = $false", 'vr-governor-prior-vr-latch-missing', 'VR park-all state must be carried across transient runtime-signal loss.'],
     ["$profile = $PriorState.profile", 'vr-governor-prior-profile-latch-missing', 'A protected prior VR profile must be retained for the active game session.'],
-    ["$guardIntervalSeconds = if ($effective.active -and $effective.profile.parkAllModels) { 1 } else { 5 }", 'vr-governor-vr-guard-cadence-not-fixed', 'Active park-all VR protection must reconcile once per second.'],
+    ["$guardIntervalSeconds = if ($effective.active -and $effective.profile.parkAllModels) { 0.5 } else { 5 }", 'vr-governor-vr-guard-cadence-not-fixed', 'Active park-all VR protection must retain the stronger half-second guard.'],
+    ['[void](Invoke-ImmediateVrModelEviction)', 'vr-governor-immediate-headset-eviction-missing', 'Every Watch tick must retain immediate real-headset model eviction.'],
+    ['Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop', 'vr-governor-bounded-runtime-suppression-missing', 'The exact source contract permits only observed-PID stopping inside real-VR Ollama suppression.'],
     ["@($prepared.loadedModelsAfter).Count -gt 0", 'vr-governor-prepare-loaded-model-failclose-missing', 'VR preparation must fail closed if any model remains loaded.'],
     ["$prepared.zeroLocalModelInvariant -ne $true", 'vr-governor-prepare-invariant-failclose-missing', 'VR preparation must fail closed when zero-model proof is absent.'],
+    ["$RequestedProfileName -eq 'review-large-context'", 'vr-governor-reviewer-profile-not-fixed', 'Large-context reviewer reservation must use the fixed profile identity.'],
+    ["$process -eq 'SovereignReviewer'", 'vr-governor-reviewer-process-not-fixed', 'Large-context reservation must remain bound to SovereignReviewer.'],
+    ["$custom = if ($reviewerReservation) { $null } else { Get-ProfileOverride -RequestedProcessName $process }", 'vr-governor-reviewer-custom-profile-forbidden', 'Reviewer reservation must never inherit caller profile overrides.'],
+    ["phase = 'REVIEWING'", 'vr-governor-reviewer-phase-missing', 'Reviewer reservation must publish a distinct non-gaming REVIEWING phase.'],
+    ["reason = 'reviewer-resource-reservation'", 'vr-governor-reviewer-reason-missing', 'Reviewer reservation must publish its fixed bounded reason.'],
+    ["$ProfileName -eq 'review-large-context'", 'vr-governor-reviewer-prepare-gate-missing', 'PrepareGaming must separately verify the fixed reviewer reservation.'],
+    ["$ProcessName -ne 'SovereignReviewer' -or", 'vr-governor-reviewer-prepare-process-failclose-missing', 'Reviewer preparation must fail closed for any other process identity.'],
   ]) requireLiteral(findings, source, literal, code, summary);
 
   requirePattern(
@@ -110,10 +145,35 @@ function reviewGovernor(source, findings) {
   requirePattern(
     findings,
     source,
-    /\$reappearanceDetected = \[bool\]\([\s\S]{0,700}\$PriorState\.localModelAllowed -eq \$false/,
-    'vr-governor-reappearance-not-protection-bound',
-    'Reappearance detection must be bound to an already protected session.',
+    /\$reviewerReservation = \[bool\]\([\s\S]{0,260}\$RequestedProfileName -eq 'review-large-context'[\s\S]{0,260}\$process -eq 'SovereignReviewer'[\s\S]{0,260}-not \$Signal\.active[\s\S]{0,260}\)/,
+    'vr-governor-reviewer-reservation-not-closed',
+    'Reviewer reservation must require the fixed profile, fixed process and an idle gaming signal.',
   );
+  requirePattern(
+    findings,
+    source,
+    /if \(\$Signal\.active\) \{[\s\S]{0,180}Clear-PrepareLease[\s\S]{0,500}phase = 'GAMING'[\s\S]{0,1200}phase = 'REVIEWING'/,
+    'vr-governor-gaming-not-ahead-of-reviewer',
+    'A real game/headset signal must clear preparation and win before REVIEWING can be projected.',
+  );
+  requirePattern(
+    findings,
+    source,
+    /\[string\]\$profile\.name -eq 'review-large-context'[\s\S]{0,180}\[string\]\$profile\.processName -eq 'SovereignReviewer'[\s\S]{0,220}phase = 'REVIEWING'[\s\S]{0,160}active = \$false/,
+    'vr-governor-reviewer-effective-state-widened',
+    'REVIEWING must remain an inactive fixed-profile reservation rather than gaming authority.',
+  );
+  requirePattern(
+    findings,
+    source,
+    /\$runtimeReappearanceDetected = \[bool\]\([\s\S]{0,700}\$PriorState\.localModelAllowed -eq \$false[\s\S]{0,700}\$modelReappearanceDetected = \[bool\]\([\s\S]{0,700}\$PriorState\.localModelAllowed -eq \$false/,
+    'vr-governor-reappearance-not-protection-bound',
+    'Both runtime and model reappearance must remain bound to an already protected session.',
+  );
+  requireLiteral(findings, source,
+    '$reappearanceDetected = [bool]($runtimeReappearanceDetected -or $modelReappearanceDetected)',
+    'vr-governor-reappearance-composition-missing',
+    'Reappearance evidence must retain both independently protected sources.');
   requirePattern(
     findings,
     source,
@@ -131,7 +191,7 @@ function reviewGovernor(source, findings) {
 
   for (const [pattern, code, summary] of [
     [/\b(?:Invoke-Expression|Invoke-Command|Start-Job|ScriptBlock::Create)\b|\biex\b|cmd\.exe/i, 'vr-governor-dynamic-execution-forbidden', 'Dynamic shell or PowerShell execution is forbidden.'],
-    [/\bStart-Process\b|\bStop-Process\b|taskkill/i, 'vr-governor-process-mutation-widened', 'The governor may evict Ollama models but may not start or kill arbitrary processes.'],
+    [/\bStart-Process\b|taskkill/i, 'vr-governor-process-mutation-widened', 'The registered real-VR stop helper grants no additional process-start or arbitrary kill authority.'],
     [/\b(?:Register|New|Start|Stop|Unregister)-ScheduledTask(?:Action|Trigger|Principal|SettingsSet)?\b/i, 'vr-governor-scheduled-task-authority-forbidden', 'Scheduled-task mutation is outside the governor.'],
     [/\b(?:Start|Stop|Restart|Set|New|Remove)-Service\b|sc\.exe/i, 'vr-governor-service-authority-forbidden', 'Windows service mutation is outside the governor.'],
     [/\b(?:Set-ItemProperty|New-ItemProperty|Remove-ItemProperty)\b/i, 'vr-governor-registry-mutation-forbidden', 'Registry mutation is outside the governor.'],

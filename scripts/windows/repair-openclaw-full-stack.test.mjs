@@ -30,3 +30,13 @@ test('OpenClaw full-stack repair does not emit raw OpenClaw status or plugin ins
   assert.doesNotMatch(script, /Write-Output\s+\$inspect\.output/);
   assert.match(script, /runtimeIdPresent/);
 });
+
+
+test('OpenClaw full-stack repair bounds gateway restart and repeated readiness probes', async () => {
+  const script = await readFile(scriptPath, 'utf8');
+  assert.match(script, /gateway','restart','--wait','20s','--json'/);
+  assert.match(script, /\$readinessAttemptLimit = 6/);
+  assert.match(script, /attempt -le \$readinessAttemptLimit/);
+  assert.match(script, /readinessAttemptLimit = \[int\]\$readinessAttemptLimit/);
+  assert.match(script, /127\.0\.0\.1:18789\/health[\s\S]*-TimeoutSec 2/);
+});

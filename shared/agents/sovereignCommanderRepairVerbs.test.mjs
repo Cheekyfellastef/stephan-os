@@ -21,6 +21,7 @@ test('guarded remote Commander exposes semantic recovery and proof verbs', () =>
     'prove-vr-atlas-runtime',
     'prove-flywheel-runtime',
     'controller-lane-status',
+    'sync-vr-reference-sources',
   ]) {
     assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(remoteAction));
     const checked = validateSovereignCommanderRemoteCommandShape({
@@ -62,6 +63,7 @@ test('local Commander MCP advertises the same recovery and proof verbs', async (
     'prove-vr-atlas-runtime',
     'prove-flywheel-runtime',
     'controller-lane-status',
+    'sync-vr-reference-sources',
   ]) {
     assert.ok(maintenance.inputSchema.properties.actionId.enum.includes(actionId), actionId);
   }

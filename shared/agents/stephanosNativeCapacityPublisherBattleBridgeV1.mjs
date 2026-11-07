@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
 import { classifyDirt } from '../../scripts/battle-bridge-github-sync-policy.mjs';
+import { readVerifiedStephanosNativeRoutingCandidate } from './stephanosNativeCapacityRoutingAdmissionV1.mjs';
 
 export const STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION = 'INSTALL_STEPHANOS_NATIVE_CAPACITY_PUBLISHER';
 
@@ -96,6 +97,51 @@ function lastJsonObject(stdout = '') {
   return null;
 }
 
+export async function proveNativePublisherSignedReadbackV1({
+  expectedHead = '', repositoryRoot = '', env = process.env,
+  verify = readVerifiedStephanosNativeRoutingCandidate,
+  sleep = (ms) => new Promise(resolveWait => setTimeout(resolveWait, ms)),
+  now = () => new Date(),
+} = {}) {
+  // Task registration and StartNow do not prove a fresh signed capacity record.
+  let lastReason = 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_STATUS_NOT_YET_PROVEN';
+  // Local model cold starts are bounded by a 120s qualification timeout.
+  // Poll for up to 150s so a healthy first 27B load is not falsely rejected.
+  for (let attempt = 1; attempt <= 16; attempt += 1) {
+    try {
+      const v = await verify({
+        nowUtc: now().toISOString(),
+        repository: 'Cheekyfellastef/stephan-os',
+        sourceHead: expectedHead,
+        taskClass: 'FOCUSED_REPAIR',
+        root: resolve(env.USERPROFILE, 'Documents', 'Stephanos-openclaw-workspace'),
+        repoRoot: repositoryRoot, env,
+      });
+      const c = v?.candidate;
+      if (v?.ok === true && c?.sourceHead === expectedHead
+        && c?.repository === 'Cheekyfellastef/stephan-os'
+        && c?.taskClass === 'FOCUSED_REPAIR'
+        && c?.sourceMutationAllowed === true
+        && c?.mergeAuthority === false && c?.leaseSeizureAllowed === false) {
+        return Object.freeze({
+          ok: true, attempt, sourceHead: expectedHead,
+          finalVerdict: 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_CAPACITY_LIVE_PROVEN',
+        });
+      }
+      const reason = text(v?.reason);
+      lastReason = /^[A-Za-z0-9][A-Za-z0-9._:-]{1,119}$/.test(reason)
+        ? reason : 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_TRUST_NOT_PROVEN';
+    } catch {
+      lastReason = 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_UNAVAILABLE';
+    }
+    if (attempt < 16) await sleep(10_000);
+  }
+  return Object.freeze({
+    ok: false, attempt: 16, sourceHead: expectedHead, reason: lastReason,
+    finalVerdict: 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_HELD',
+  });
+}
+
 export async function executeStephanosNativeCapacityPublisherInstallOnBattleBridge(command = {}, options = {}) {
   const shape = validateStephanosNativeCapacityPublisherInstallCommandShape(command);
   if (!shape.ok || !shape.requested) return shape;
@@ -156,12 +202,29 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
     return fail('STEPHANOS_NATIVE_PUBLISHER_INSTALL_RECEIPT_INVALID');
   }
 
+  const signed = await proveNativePublisherSignedReadbackV1({
+    expectedHead: shape.expectedHead, repositoryRoot, env,
+    verify: options.verifyCandidateFn || readVerifiedStephanosNativeRoutingCandidate,
+    sleep: options.sleepFn,
+    now: options.now || (() => new Date()),
+  });
+  if (!signed.ok) {
+    return fail('STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_NOT_PROVEN', {
+      operation: STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION,
+      sourceHead: shape.expectedHead, taskInstalled: true, startRequested: true,
+      signedCapacityProven: false, signedReadbackReason: signed.reason,
+      mergeAuthority: false, leaseSeizureAllowed: false,
+    });
+  }
   return Object.freeze({
     ok: true,
     verdict: 'COMMAND_EXECUTION_COMPLETE',
     operation: STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION,
     requestId: text(command.requestId),
-    finalVerdict: 'STEPHANOS_NATIVE_CAPACITY_PUBLISHER_TASK_INSTALLED_AND_STARTED',
+    finalVerdict: 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_CAPACITY_LIVE_PROVEN',
+    taskInstalled: true,
+    signedCapacityProven: true,
+    signedReadbackAttempt: signed.attempt,
     sourceHead: shape.expectedHead,
     expectedHead: shape.expectedHead,
     expectedHeadMatch: true,

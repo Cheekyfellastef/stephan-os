@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   planIndependentReviewTerminalFindingsPublicationV1,
   renderIndependentReviewTerminalFindingsCommentV1,
+  renderIndependentReviewBlockedJobSummaryV1,
 } from '../shared/agents/independentReviewTerminalFindingsPublicationV1.mjs';
 import {
   planIndependentReviewPreArtifactFailureReceiptV1,
@@ -181,6 +182,15 @@ async function main() {
   });
   console.log(`INDEPENDENT_REVIEW_TERMINAL_FINDINGS=${plan.decision}`);
   appendOutput('decision', plan.decision);
+  // The job summary is GitHub-hosted read-only proof visibility, not a review
+  // receipt or an attempt to retry/reclassify a P0. It remains available even
+  // if issue-comment publication returns GitHub installation HTTP 403.
+  const holdSummary = renderIndependentReviewBlockedJobSummaryV1(plan);
+  const summaryPath = text(process.env.GITHUB_STEP_SUMMARY);
+  if (holdSummary && summaryPath && process.env.GITHUB_ACTIONS === 'true') {
+    fs.appendFileSync(summaryPath, holdSummary + '\n', { encoding: 'utf8' });
+    console.log(`INDEPENDENT_REVIEW_BLOCKER_SUMMARY=HOLD_P0_${plan.counts.P0}_P1_${plan.counts.P1}_P2_${plan.counts.P2}`);
+  }
   if (plan.publishAllowed !== true) return;
 
   const published = await publishExactComment(

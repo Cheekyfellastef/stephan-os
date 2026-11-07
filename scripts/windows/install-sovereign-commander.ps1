@@ -33,10 +33,10 @@ function Set-CurrentUserOnlyFileDacl {
     if ($rules.Count -ne 1) { throw 'SOVEREIGN_COMMANDER_TOKEN_ACL_NOT_EXCLUSIVE' }
     $verifiedRule = $rules[0]
     $verifiedSid = $verifiedRule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
-    if ($verifiedSid -ne $UserSid
-        -or $verifiedRule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow
-        -or (($verifiedRule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -ne [System.Security.AccessControl.FileSystemRights]::FullControl)
-        -or $verifiedRule.IsInherited) {
+    if ($verifiedSid -ne $UserSid -or
+        $verifiedRule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
+        (($verifiedRule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -ne [System.Security.AccessControl.FileSystemRights]::FullControl) -or
+        $verifiedRule.IsInherited) {
         throw 'SOVEREIGN_COMMANDER_TOKEN_ACL_VERIFY_FAILED'
     }
 }
@@ -99,8 +99,10 @@ if (-not $shouldApply) {
         intervalMinutes = 1
         atStartup = $true
         atLogon = $true
-        requiresInteractiveLogon = $false
-        logonType = 'S4U'
+        requiresInteractiveLogon = $true
+        logonType = 'Interactive'
+        normalOperatorRuntimeProven = $false
+        preLoginExecutionProven = $false
         restartCount = 3
         restartIntervalMinutes = 1
         hidden = $true
@@ -146,12 +148,12 @@ $escapedLauncherPath = $launcherPath.Replace('"', '""')
 $actionArguments = "//B //NoLogo `"$escapedLauncherPath`" sovereign-commander-watchdog"
 $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument $actionArguments
 $startupTrigger = New-ScheduledTaskTrigger -AtStartup
-$logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
+$logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUserSid
 $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
-$principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType S4U -RunLevel Limited
+$principal = New-ScheduledTaskPrincipal -UserId $currentUserSid -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($startupTrigger, $logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Boot-safe hidden Sovereign Commander daemon watchdog. Starts before interactive logon, self-recovers, and wakes the canonical fleet/goal conveyor once per minute; source mutation remains with the Mission Worker.' -Force | Out-Null
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($startupTrigger, $logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Operator-session Sovereign Commander watchdog. Requires Windows sign-in and rejects privileged runtime context. Reuses the canonical fleet/goal conveyor; source mutation remains with the Mission Worker.' -Force | Out-Null
 $startedNow = $false
 if ($StartNow) {
     Start-ScheduledTask -TaskName $taskName
@@ -185,8 +187,10 @@ $finalVerdict = if ($installed) { 'SOVEREIGN_COMMANDER_TASK_INSTALLED' } else { 
     intervalMinutes = 1
     atStartup = $true
     atLogon = $true
-    requiresInteractiveLogon = $false
-    logonType = 'S4U'
+    requiresInteractiveLogon = $true
+    logonType = 'Interactive'
+    normalOperatorRuntimeProven = $false
+    preLoginExecutionProven = $false
     restartCount = 3
     restartIntervalMinutes = 1
     hidden = $true

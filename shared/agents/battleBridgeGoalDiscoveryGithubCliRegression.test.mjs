@@ -5,8 +5,9 @@ import { readFile } from 'node:fs/promises';
 
 import {
   BATTLE_BRIDGE_CANONICAL_GITHUB_CLI,
-  runBattleBridgeGoalDiscoveryHeartbeat,
+  runBattleBridgeGoalDiscoveryHeartbeat as runActualHeartbeat,
 } from '../../scripts/battle-bridge-goal-discovery-heartbeat.mjs';
+const runBattleBridgeGoalDiscoveryHeartbeat = options => runActualHeartbeat({ readWorkerHeartbeatAgeMs: () => 0, ...options });
 
 const githubReady = Object.freeze({
   ok: true,

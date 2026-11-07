@@ -403,6 +403,8 @@ test('server mounts bounded approve/cancel controls without exposing direct miss
   assert.match(mount, /backendIdentity/);
   assert.match(mount, /missionOperationsRouter/);
   assert.match(route, /router\.get\('\/', async/);
+  assert.match(route, /identityOnly/);
+  assert.match(route, /stephanos\.mission-operations-feed\.v1/);
   assert.match(route, /router\.post\('\/missions\/:missionId\/approve'/);
   assert.match(route, /router\.post\('\/missions\/:missionId\/cancel'/);
   assert.match(route, /cancelBoundedMission\(\{/);

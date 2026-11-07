@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAIStore } from '../state/aiStore';
 import CollapsiblePanel from './CollapsiblePanel';
-import { requestStephanosBackend } from '../../../shared/runtime/backendClient.mjs';
+import { requestWorkspaceHydration } from '../../../shared/runtime/workspaceHydrationBridge.mjs';
 import { deriveFlywheelTelemetryView } from '../../../shared/runtime/flywheelTelemetryModel.mjs';
 import { deriveFlywheelWorkspaceView } from '../../../shared/runtime/upliftWorkspaceProjectionV1.mjs';
 import FlywheelWorkspaceCanvas from './FlywheelWorkspaceCanvas';
@@ -68,37 +68,47 @@ export default function FlywheelPanel() {
     bridgeTransportTruth?.bridgeHostedExecutionTarget,
     bridgeTransportTruth?.bridgeOperatorTransportUrl,
     homeBridgeUrl,
-    runtimeStatusModel?.runtimeContext?.homeNodeBridge,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.configured,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.accepted,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.backendUrl,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.executionUrl,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.reachability,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge?.reason,
   ]);
 
   useEffect(() => {
     let cancelled = false;
     let timer = null;
+    const controller = new AbortController();
 
     const refresh = async () => {
       try {
-        const result = await requestStephanosBackend({
-          path: '/api/shared-workspace/dashboard-feed?scope=full-history',
+        const hydration = await requestWorkspaceHydration({
+          workspaceId: 'flywheel',
+          datasets: ['dashboard'],
           runtimeContext,
           timeoutMs: 10000,
+          signal: controller.signal,
         });
         if (cancelled) return;
-        const view = deriveFlywheelTelemetryView(result.json);
-        if (!view.valid) {
+        const dashboardDataset = hydration?.datasets?.dashboard || null;
+        const dashboardPayload = dashboardDataset?.payload || null;
+        const view = deriveFlywheelTelemetryView(dashboardPayload || {});
+        if (!dashboardPayload || !view.valid) {
           setTelemetry({
             state: 'unreachable',
-            payload: result.json,
-            error: view.reason,
+            payload: dashboardPayload,
+            error: dashboardDataset?.reason || hydration?.reason || view.reason || 'Flywheel hydration did not return dashboard data.',
             refreshedAt: new Date().toISOString(),
-            endpoint: result.url || '',
+            endpoint: hydration?.route || '/api/shared-workspace/hydrate?workspace=flywheel',
           });
         } else {
           setTelemetry({
-            state: view.feedState,
-            payload: result.json,
+            state: dashboardDataset?.state === 'stale' ? 'stale' : view.feedState,
+            payload: dashboardPayload,
             error: '',
             refreshedAt: new Date().toISOString(),
-            endpoint: result.url || '',
+            endpoint: hydration?.route || '/api/shared-workspace/hydrate?workspace=flywheel',
           });
         }
       } catch (error) {
@@ -120,6 +130,7 @@ export default function FlywheelPanel() {
     void refresh();
     return () => {
       cancelled = true;
+      controller.abort();
       if (timer !== null) window.clearTimeout(timer);
     };
   }, [runtimeContext]);
@@ -140,6 +151,7 @@ export default function FlywheelPanel() {
       : view.statusLabel;
   const stateItems = view.valid ? view.stateItems : [];
   const metrics = view.valid ? view.metrics : [];
+  const gateLedger = telemetry.payload?.projection?.goalBuildGateObservatory || null;
 
   return (
     <CollapsiblePanel
@@ -187,12 +199,50 @@ export default function FlywheelPanel() {
       </div>
 
       <FlywheelWorkspaceCanvas
+        conversationUplift={telemetry.payload?.conversationUplift || null}
+        conversationFeedState={telemetry.state === 'unreachable' || telemetry.state === 'connecting' ? 'unavailable' : 'reachable'}
         view={{
           ...upliftView,
           liveFeedState: telemetry.state,
           liveFeedReason: telemetry.error || view.reason || 'Waiting for live Shared Workspace evidence.',
         }}
       />
+
+      <section className="flywheel-gate-ledger" data-testid="flywheel-goal-build-gate-ledger" aria-label="Goal to build independent security and execution gates">
+        <h3>Goal-to-Build · 23 independent checkpoints</h3>
+        <p className="muted">Diagnostic only. A heartbeat, signed receipt, controller flag or PR merge cannot approve a different gate.</p>
+        {gateLedger?.gates?.length === 23 ? (
+          <>
+            <p role="status" data-testid="flywheel-gate-ledger-summary">
+              {gateLedger.counts?.PASS || 0} proven passed · {gateLedger.counts?.FAIL || 0} failed ·{' '}
+              {gateLedger.counts?.WAITING_FOR_PREREQUISITE || 0} waiting ·{' '}
+              {gateLedger.counts?.UNVERIFIED || 0} unverified · {gateLedger.counts?.STALE || 0} stale
+            </p>
+            <p><strong>First evidenced veto:</strong>{' '}
+              {gateLedger.firstActionableGate ? `Gate #${gateLedger.firstActionableGate}` : 'None proven. Unverified does not mean clear.'}
+              {gateLedger.simultaneousVetoes?.length > 1
+                ? ` · Other independent vetoes: ${gateLedger.simultaneousVetoes.slice(1).map(id => '#'+id).join(', ')}`
+                : ''}
+            </p>
+            <details>
+              <summary>Open all 23 gate states, owners and proof references</summary>
+              <ol className="flywheel-gate-list">
+                {gateLedger.gates.map(gate => (
+                  <li key={gate.id} data-gate-id={gate.id} data-gate-status={gate.status}>
+                    <strong>{gate.title}</strong>{' '}
+                    <span>{gate.status}</span>{' '}
+                    <small>Owner: {gate.owner}
+                      {gate.typedBlocker ? ` · ${gate.typedBlocker}` : ''}
+                      {gate.waitingOnGate ? ` · Waiting for gate #${gate.waitingOnGate}` : ''}
+                      {gate.proofRef ? ` · Proof: ${gate.proofRef}` : ' · Proof not supplied'}
+                    </small>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          </>
+        ) : <p role="status">Gate observations unavailable. All 23 gates remain unverified until the canonical feed publishes them.</p>}
+      </section>
 
       {view.valid ? (
         <>

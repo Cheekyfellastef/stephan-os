@@ -7,6 +7,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  opendirSync,
   readSync,
   renameSync,
   unlinkSync,
@@ -15,8 +16,9 @@ import {
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, parse, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { settleMailboxRotationDrain } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 
 export const MAILBOX_OUTBOX_GUARD_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-guard.v1';
 export const MAILBOX_OUTBOX_DEFERRED_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-deferred.v1';
@@ -38,6 +40,108 @@ export const MAILBOX_OUTBOX_MAX_ENTRIES = 500;
 export const MAILBOX_OUTBOX_SEGMENT_MAX_BYTES = 2 * 1024 * 1024;
 export const MAILBOX_OUTBOX_MANIFEST_MAX_BYTES = 64 * 1024;
 
+// Diagnostic metadata only. These fixed codes never carry error text, paths or
+// request identities, and are never consumed for admission or custody release.
+export const MAILBOX_GUARD_DIAGNOSTIC_SCHEMA_V1 = 'stephanos.mailbox-guard-diagnostic.v1';
+const MAILBOX_GUARD_STAGES_V1 = new Set([
+  'PRECHECK', 'LOCK', 'STATE_VALIDATION', 'DEFERRED_VALIDATION',
+  'PRE_CHILD_CHECKPOINT', 'CHILD_INVOCATION', 'POST_CHILD_VALIDATION', 'COMPLETE',
+]);
+const MAILBOX_GUARD_PRE_CHILD_STAGES_V1 = new Set([
+  'PRECHECK', 'LOCK', 'STATE_VALIDATION', 'DEFERRED_VALIDATION', 'PRE_CHILD_CHECKPOINT',
+]);
+const MAILBOX_GUARD_REASON_CODES_V1 = new Set([
+  'NONE',
+  'CANONICAL_CHECKOUT_REQUIRED',
+  'MAILBOX_ACCEPTED_RECONCILIATION_BLOCKED',
+  'MAILBOX_CHILD_RUN_BLOCKED',
+  'MAILBOX_COMMAND_POLL_BLOCKED',
+  'MAILBOX_GUARD_FAILURE_UNCLASSIFIED',
+  'MAILBOX_OUTBOX_CANONICAL_PENDING_ARRAY_REQUIRED',
+  'MAILBOX_OUTBOX_DEFERRED_MANIFEST_INVALID',
+  'MAILBOX_OUTBOX_DEFERRED_MANIFEST_TOO_LARGE',
+  'MAILBOX_OUTBOX_DEFERRED_RECORD_INVALID',
+  'MAILBOX_OUTBOX_DEFERRED_SEGMENT_DIRECTORY_MISSING',
+  'MAILBOX_OUTBOX_DEFERRED_SEGMENT_INVALID',
+  'MAILBOX_OUTBOX_DIRECTORY_IDENTITY_CHANGED',
+  'MAILBOX_OUTBOX_DIRECTORY_IDENTITY_INVALID',
+  'MAILBOX_OUTBOX_DIRECTORY_MISSING',
+  'MAILBOX_OUTBOX_DRAIN_ARGUMENTS_NOT_ALLOWED',
+  'MAILBOX_OUTBOX_DRAIN_SESSION_CLOSED',
+  'MAILBOX_OUTBOX_FILE_IDENTITY_CHANGED',
+  'MAILBOX_OUTBOX_FILE_IDENTITY_INVALID',
+  'MAILBOX_OUTBOX_FILE_MISSING',
+  'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
+  'MAILBOX_OUTBOX_GUARD_FAILED',
+  'MAILBOX_OUTBOX_GUARD_LOCK_LOST',
+  'MAILBOX_OUTBOX_JSON_OBJECT_REQUIRED',
+  'MAILBOX_OUTBOX_JSON_TOO_LARGE',
+  'MAILBOX_OUTBOX_LEDGER_FUTURE_SEGMENT_CONFLICT',
+  'MAILBOX_OUTBOX_LEDGER_INDEX_CONFLICT',
+  'MAILBOX_OUTBOX_LEDGER_INDEX_INVALID',
+  'MAILBOX_OUTBOX_LEDGER_INDEX_UNREACHABLE',
+  'MAILBOX_OUTBOX_LEDGER_MANIFEST_INVALID',
+  'MAILBOX_OUTBOX_LEDGER_MANIFEST_TOO_LARGE',
+  'MAILBOX_OUTBOX_LEDGER_SEGMENT_DIRECTORY_MISSING',
+  'MAILBOX_OUTBOX_LEDGER_SEGMENT_INVALID',
+  'MAILBOX_OUTBOX_LEDGER_SEQUENCE_EXHAUSTED',
+  'MAILBOX_OUTBOX_LEDGER_SEQUENCE_INVALID',
+  'MAILBOX_OUTBOX_LEDGER_TRANSACTION_BASE_MISMATCH',
+  'MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID',
+  'MAILBOX_OUTBOX_LEDGER_TRANSACTION_SEGMENT_MISMATCH',
+  'MAILBOX_OUTBOX_LEGACY_CURSOR_INVALID',
+  'MAILBOX_OUTBOX_LEGACY_DESCRIPTOR_INVALID',
+  'MAILBOX_OUTBOX_LEGACY_DUPLICATE_INVALID',
+  'MAILBOX_OUTBOX_LEGACY_V1_MIGRATION_WORK_LIMIT_EXCEEDED',
+  'MAILBOX_OUTBOX_LOCK_PROCESS_IDENTITY_UNPROVEN',
+  'MAILBOX_OUTBOX_LOCK_TOKEN_INVALID',
+  'MAILBOX_OUTBOX_OPERATION_REQUIRED',
+  'MAILBOX_OUTBOX_PENDING_ARRAY_REQUIRED',
+  'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID',
+  'MAILBOX_OUTBOX_PENDING_LIMIT_EXCEEDED',
+  'MAILBOX_OUTBOX_PUBLICATION_ID_CONFLICT',
+  'MAILBOX_OUTBOX_STORE_PATH_INVALID',
+  'MAILBOX_OUTBOX_SYNCHRONOUS_OPERATION_REQUIRED',
+  'MAILBOX_PENDING_RECEIPT_IDENTITY_UNSAFE',
+  'MAILBOX_RECEIPT_INDEX_BLOCKED',
+  'MAILBOX_RECEIPT_INDEX_REFRESH_FAILED',
+  'WINDOWS_REQUIRED',
+]);
+const MAILBOX_GUARD_DIAGNOSTIC_KEYS_V1 = [
+  'childInvocationAttempted', 'observedAtUtc', 'outcome', 'reasonCode', 'schemaVersion', 'stage',
+].join(',');
+
+export function projectMailboxGuardDiagnosticV1(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return null;
+  const keys = Reflect.ownKeys(value), descriptors = Object.getOwnPropertyDescriptors(value);
+  if (keys.some(key => typeof key !== 'string' || !Object.hasOwn(descriptors[key], 'value'))
+    || keys.sort().join(',') !== MAILBOX_GUARD_DIAGNOSTIC_KEYS_V1) return null;
+  const { schemaVersion, observedAtUtc, stage, outcome, reasonCode, childInvocationAttempted } = value;
+  if (schemaVersion !== MAILBOX_GUARD_DIAGNOSTIC_SCHEMA_V1
+    || typeof observedAtUtc !== 'string' || observedAtUtc.length !== 24
+    || !Number.isFinite(Date.parse(observedAtUtc))
+    || new Date(observedAtUtc).toISOString() !== observedAtUtc
+    || !MAILBOX_GUARD_STAGES_V1.has(stage) || !MAILBOX_GUARD_REASON_CODES_V1.has(reasonCode)
+    || typeof childInvocationAttempted !== 'boolean'
+    || MAILBOX_GUARD_PRE_CHILD_STAGES_V1.has(stage) === childInvocationAttempted) return null;
+  if (outcome === 'CHILD_SUCCEEDED') {
+    if (stage !== 'COMPLETE' || reasonCode !== 'NONE') return null;
+  } else if (outcome === 'CHILD_FAILED') {
+    if (stage !== 'COMPLETE' || reasonCode === 'NONE') return null;
+  } else if (outcome === 'GUARD_BUSY') {
+    if (stage !== 'LOCK' || reasonCode !== 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING') return null;
+  } else if (outcome !== 'GUARD_BLOCKED' || reasonCode === 'NONE'
+    || reasonCode === 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING') return null;
+  return Object.freeze({ schemaVersion, observedAtUtc, stage, outcome, reasonCode, childInvocationAttempted });
+}
+
+function mailboxGuardReasonCodeV1(value) {
+  return typeof value === 'string' && value !== 'NONE' && MAILBOX_GUARD_REASON_CODES_V1.has(value)
+    ? value : 'MAILBOX_GUARD_FAILURE_UNCLASSIFIED';
+}
+
+
 const MAILBOX_STATE_MAX_BYTES = 32 * 1024 * 1024;
 const MAILBOX_LEGACY_V1_MIGRATION_MAX_BYTES = 2 * 1024 * 1024;
 const MAILBOX_LEDGER_INDEX_MAX_BYTES = 8 * 1024;
@@ -51,6 +155,7 @@ const MAILBOX_LOCK_STALE_AFTER_MS = 20 * 60 * 1000;
 const MAILBOX_DEAD_OWNER_RECOVERY_GRACE_MS = 10 * 1000;
 const MAILBOX_LEGACY_V1_MAX_MIGRATION_ENTRIES = 500;
 const MAILBOX_MAX_SEQUENCE = 9_007_199_254_740_000;
+const MAILBOX_DRAIN_INVENTORY_MAX_ENTRIES = 8192;
 
 const defaultRepoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
@@ -100,20 +205,43 @@ function boundedChildStatusText(value, fallback = '') {
   return normalized;
 }
 
+function boundedChildStatusCount(value) {
+  const normalized = Number(value);
+  return Number.isSafeInteger(normalized) && normalized >= 0 && normalized <= 100_000 ? normalized : 0;
+}
+
 export function parseMailboxChildStatus(stdout = '') {
+  const empty = Object.freeze({
+    blocker: '',
+    finalVerdict: '',
+    mailboxBlocker: '',
+    indexBlocker: '',
+    mailboxSelectedCount: 0,
+    mailboxReadyCount: 0,
+    mailboxDeferredCount: 0,
+    mailboxControlCount: 0,
+    mailboxObservationCount: 0,
+    mailboxBlockedCount: 0,
+    mailboxMaxConcurrencyObserved: 0,
+  });
   try {
     const value = JSON.parse(String(stdout || ''));
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      return Object.freeze({ blocker: '', finalVerdict: '', mailboxBlocker: '', indexBlocker: '' });
-    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return empty;
     return Object.freeze({
       blocker: boundedChildStatusText(value.blocker),
       finalVerdict: boundedChildStatusText(value.finalVerdict),
       mailboxBlocker: boundedChildStatusText(value.mailboxBlocker),
       indexBlocker: boundedChildStatusText(value.indexBlocker),
+      mailboxSelectedCount: boundedChildStatusCount(value.mailboxSelectedCount),
+      mailboxReadyCount: boundedChildStatusCount(value.mailboxReadyCount),
+      mailboxDeferredCount: boundedChildStatusCount(value.mailboxDeferredCount),
+      mailboxControlCount: boundedChildStatusCount(value.mailboxControlCount),
+      mailboxObservationCount: boundedChildStatusCount(value.mailboxObservationCount),
+      mailboxBlockedCount: boundedChildStatusCount(value.mailboxBlockedCount),
+      mailboxMaxConcurrencyObserved: boundedChildStatusCount(value.mailboxMaxConcurrencyObserved),
     });
   } catch {
-    return Object.freeze({ blocker: '', finalVerdict: '', mailboxBlocker: '', indexBlocker: '' });
+    return empty;
   }
 }
 
@@ -1309,10 +1437,25 @@ function acquireGuardLock(path, now, {
     const exactOwnerAlive = validKnownProcessIdentity(liveIdentity)
       && liveIdentity.bootId === existing?.ownerBootId
       && liveIdentity.processStartId === existing?.ownerProcessStartId;
-    const exactOwnerAbsent = liveIdentity?.state === 'dead'
+    // The lock already carries the Windows boot identity that owned it. When the
+    // current guard can prove it is running in a different boot, the old owner
+    // cannot still be alive even if querying that historical PID is inconclusive.
+    // This matters after abrupt power loss, where a stale lock can survive while
+    // Get-Process/CIM temporarily reports the old PID identity as unknown.
+    const priorBootOwner = PROCESS_IDENTITY_COMPONENT.test(String(existing?.ownerBootId || ''))
+      && existing.ownerBootId !== selfIdentity.bootId;
+    const exactOwnerAbsent = priorBootOwner
+      || liveIdentity?.state === 'dead'
       || (validKnownProcessIdentity(liveIdentity) && !exactOwnerAlive);
+    const unreadableStaleLock = !existing
+      && Number.isFinite(info.mtimeMs)
+      && info.mtimeMs <= latestTrustedTimeMs
+      && (now.getTime() - info.mtimeMs) > staleAfterMs;
     const deadOwnerRecoveryAfterMs = Math.min(staleAfterMs, MAILBOX_DEAD_OWNER_RECOVERY_GRACE_MS);
-    if (allowRecovery && Number.isFinite(ageMs) && ageMs > deadOwnerRecoveryAfterMs && exactOwnerAbsent) {
+    if (allowRecovery && (
+      (Number.isFinite(ageMs) && ageMs > deadOwnerRecoveryAfterMs && exactOwnerAbsent)
+      || unreadableStaleLock
+    )) {
       const currentInfo = assertRegularUnlinkedFile(target);
       if (!sameFileIdentity(info, currentInfo)) throw new Error('MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
       const stalePath = `${target}.stale-${token}`;
@@ -1411,6 +1554,199 @@ function releaseGuardLock(lock) {
   } catch {}
 }
 
+function freezeDrainInput(value) {
+  if (value && typeof value === 'object') {
+    for (const item of Object.values(value)) freezeDrainInput(item);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+// Read-only capture has stricter absence/link semantics than the normal outbox
+// runner. It must never initialize, migrate, recover, normalize or retire debt.
+function readMailboxDrainInputEstate(deferredPath) {
+  const stateRoot = dirname(deferredPath), statePath = join(stateRoot, 'state.json');
+  const directories = new Map(), files = new Map();
+  let totalBytes = 0;
+  const deny = reason => { throw Error('MAILBOX_OUTBOX_DRAIN_' + reason); };
+  function directory(path) {
+    const absolute = resolve(path), root = parse(absolute).root;
+    let current = root;
+    for (const component of ['', ...absolute.slice(root.length).split(/[\\/]+/).filter(Boolean)]) {
+      if (component) current = join(current, component);
+      const info = assertUnlinkedDirectory(current), previous = directories.get(current);
+      const inEstate = current === stateRoot || current.startsWith(stateRoot + sep);
+      if (previous && (!sameDirectoryIdentity(previous.info, info)
+        || (inEstate && (previous.info.mtimeMs !== info.mtimeMs || previous.info.ctimeMs !== info.ctimeMs)))) deny('DIRECTORY_CHANGED');
+      if (!previous) directories.set(current, { info, names: null });
+    }
+  }
+  function names(path, limit) {
+    directory(path);
+    const result = [], stream = opendirSync(path);
+    try {
+      for (;;) {
+        const entry = stream.readSync(); if (!entry) break;
+        if (result.length >= limit) deny('INVENTORY_LIMIT');
+        result.push(entry.name);
+      }
+    } finally { stream.closeSync(); }
+    result.sort();
+    const before = directories.get(path).names;
+    if (before && stableJson(before) !== stableJson(result)) deny('DIRECTORY_CHANGED');
+    directories.get(path).names = result;
+    return result;
+  }
+  function json(path, maxBytes) {
+    directory(dirname(path));
+    const before = assertRegularUnlinkedFile(path);
+    if (before.nlink !== 1) deny('LINKED_FILE');
+    if (files.size >= MAILBOX_DRAIN_INVENTORY_MAX_ENTRIES + MAILBOX_OUTBOX_MAX_ENTRIES + 2
+      || before.size > maxBytes || (totalBytes += before.size) > MAILBOX_STATE_MAX_BYTES) deny('INVENTORY_LIMIT');
+    const value = readJsonObject(path, { maxBytes });
+    const after = assertRegularUnlinkedFile(path);
+    if (after.nlink !== 1 || !sameFileIdentity(before, after)) deny('FILE_CHANGED');
+    files.set(path, { info: before, maxBytes, digest: recordDigest(value) });
+    return value;
+  }
+  function verify() {
+    for (const [path, item] of files) {
+      const before = assertRegularUnlinkedFile(path);
+      if (before.nlink !== 1 || !sameFileIdentity(item.info, before)
+        || recordDigest(readJsonObject(path, { maxBytes: item.maxBytes })) !== item.digest) deny('FILE_CHANGED');
+      const after = assertRegularUnlinkedFile(path);
+      if (after.nlink !== 1 || !sameFileIdentity(item.info, after)) deny('FILE_CHANGED');
+    }
+    for (const [path, item] of directories) {
+      directory(path);
+      if (item.names) names(path, item.names.length);
+    }
+  }
+  const rootNames = names(stateRoot, MAILBOX_DRAIN_INVENTORY_MAX_ENTRIES);
+  if (rootNames.some(name => name === basename(transactionPath(deferredPath))
+    || name.startsWith(basename(transactionPath(deferredPath)) + '.tmp-')
+    || name.startsWith('state.json.tmp-') || name.startsWith(basename(deferredPath) + '.tmp-'))) deny('RECOVERY_REQUIRED');
+  const state = json(statePath, MAILBOX_STATE_MAX_BYTES);
+  if (!Array.isArray(state.acceptedRequestIds) || !Array.isArray(state.pendingReceiptPublications)) deny('STATE_INCOMPLETE');
+  if (state.acceptedRequestIds.length > MAILBOX_DRAIN_INVENTORY_MAX_ENTRIES
+    || state.pendingReceiptPublications.length > MAILBOX_OUTBOX_MAX_ENTRIES) deny('INVENTORY_LIMIT');
+  const accepted = state.acceptedRequestIds;
+  if (accepted.some(id => typeof id !== 'string' || !REQUEST_ID.test(id))
+    || new Set(accepted).size !== accepted.length) deny('ACCEPTED_INVALID');
+  const manifest = json(deferredPath, MAILBOX_OUTBOX_MANIFEST_MAX_BYTES);
+  if (typeof manifest.storeId !== 'string') deny('MANIFEST_INVALID');
+  validateLedgerManifest(manifest);
+  if (!Object.hasOwn(manifest, 'legacy') || manifest.legacy !== null) deny('RECOVERY_REQUIRED');
+  const span = manifest.nextSequence - manifest.headSequence;
+  if (span > MAILBOX_OUTBOX_MAX_ENTRIES) deny('INVENTORY_LIMIT');
+  const estateRoot = ledgerRoot(deferredPath);
+  const estateNames = names(estateRoot, 2);
+  if (stableJson(estateNames) !== '["index","segments"]') deny('STORE_INCOMPLETE');
+  const segmentsRoot = join(estateRoot, 'segments'), indexRoot = join(estateRoot, 'index');
+  const segments = new Map(), indexes = new Map();
+  for (const bucket of names(segmentsRoot, MAILBOX_OUTBOX_MAX_ENTRIES)) {
+    if (!/^[0-9]{13}$/.test(bucket)) deny('SEGMENT_PATH_INVALID');
+    const bucketPath = join(segmentsRoot, bucket);
+    for (const name of names(bucketPath, MAILBOX_OUTBOX_MAX_ENTRIES - segments.size)) {
+      if (!/^segment-[0-9]{16}\.json$/.test(name)) deny('SEGMENT_PATH_INVALID');
+      const sequence = Number(name.slice(8, -5));
+      if (!validSequence(sequence) || sequenceBucket(sequence) !== bucket
+        || basename(segmentPath(deferredPath, sequence)) !== name
+        || sequence < manifest.headSequence || sequence >= manifest.nextSequence || segments.has(sequence)) deny('SEGMENT_OUTSIDE_MANIFEST');
+      const value = json(join(bucketPath, name), MAILBOX_OUTBOX_SEGMENT_MAX_BYTES);
+      if (typeof value.entryDigest !== 'string' || typeof value.storeId !== 'string') deny('SEGMENT_INVALID');
+      const segment = validateSegment(value, manifest, sequence);
+      segments.set(sequence, segment);
+    }
+  }
+  if (segments.size !== span) deny('SEGMENT_INVENTORY_INCOMPLETE');
+  for (const bucket of names(indexRoot, 256)) {
+    if (!/^[a-f0-9]{2}$/.test(bucket)) deny('INDEX_PATH_INVALID');
+    const bucketPath = join(indexRoot, bucket);
+    for (const name of names(bucketPath, MAILBOX_DRAIN_INVENTORY_MAX_ENTRIES - indexes.size)) {
+      if (!/^[a-f0-9]{64}\.json$/.test(name)) deny('INDEX_PATH_INVALID');
+      const value = json(join(bucketPath, name), MAILBOX_LEDGER_INDEX_MAX_BYTES);
+      if (typeof value.publicationId !== 'string' || typeof value.entryDigest !== 'string') deny('INDEX_INVALID');
+      const index = validateIndexRecord(value);
+      const digest = sha256(index.publicationId);
+      if (name !== digest + '.json' || bucket !== digest.slice(0, 2) || indexes.has(index.publicationId)) deny('INDEX_PATH_INVALID');
+      indexes.set(index.publicationId, index);
+    }
+  }
+  const queued = new Map();
+  for (const segment of segments.values()) {
+    const index = indexes.get(segment.entry.publicationId);
+    if (!index || index.status !== 'QUEUED' || index.source !== 'ledger-v3' || index.sequence !== segment.sequence
+      || index.entryDigest !== segment.entryDigest || queued.has(index.publicationId)) deny('SEGMENT_INDEX_MISMATCH');
+    queued.set(index.publicationId, segment.entry);
+  }
+  for (const index of indexes.values()) if (index.status === 'QUEUED' && !queued.has(index.publicationId)) deny('ORPHAN_QUEUED_INDEX');
+  function publication(entry) {
+    if (!validatePendingEntry(entry) || typeof entry.publicationId !== 'string'
+      || typeof entry.receipt.requestId !== 'string' || typeof entry.receipt.state !== 'string'
+      || !Number.isSafeInteger(entry.receipt.issueNumber) || entry.receipt.issueNumber <= 0) deny('PUBLICATION_INVALID');
+    return { publicationId: entry.publicationId, requestId: entry.receipt.requestId,
+      issueNumber: entry.receipt.issueNumber, receiptState: entry.receipt.state, entrySha256: pendingReceiptPublicationDigest(entry) };
+  }
+  const inline = new Map();
+  for (const entry of state.pendingReceiptPublications) {
+    const item = publication(entry);
+    if (inline.has(item.publicationId)) deny('INLINE_DUPLICATE');
+    const index = indexes.get(item.publicationId);
+    if (index && index.entryDigest !== item.entrySha256) deny('PUBLICATION_CONFLICT');
+    inline.set(item.publicationId, item);
+  }
+  const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+  const fileIdentity = info => [info.dev, info.ino, info.nlink, info.size, info.mtimeMs, info.ctimeMs];
+  const physicalIdentitySha256 = recordDigest({
+    files: [...files].map(([path, item]) => [path, fileIdentity(item.info)]).sort(([a], [b]) => compare(a, b)),
+    directories: [...directories].map(([path, item]) => [path,
+      path === stateRoot || path.startsWith(stateRoot + sep) ? fileIdentity(item.info) : [item.info.dev, item.info.ino]])
+      .sort(([a], [b]) => compare(a, b)),
+  });
+  const queuedPublications = [...queued.values()].map(publication).sort((a, b) => compare(a.publicationId, b.publicationId));
+  const result = {
+    stateSha256: recordDigest(state), physicalIdentitySha256, acceptedRequestIds: [...accepted].sort(),
+    inlinePublications: [...inline.values()].sort((a, b) => compare(a.publicationId, b.publicationId)),
+    outbox: { manifestSha256: recordDigest(manifest), storeId: manifest.storeId,
+      headSequence: manifest.headSequence, nextSequence: manifest.nextSequence,
+      queuedPublications, indexCount: indexes.size,
+      indexInventorySha256: recordDigest([...indexes].sort(([a], [b]) => compare(a, b))),
+      segmentInventorySha256: recordDigest([...segments].sort(([a], [b]) => a - b)) },
+  };
+  verify();
+  return freezeDrainInput({ ...result, inventorySha256: recordDigest(result) });
+}
+
+// The existing source-sync operation uses the same singleton guard during an
+// epoch transition. This is an internal synchronous adapter, not a new worker,
+// caller-selected path, shell capability or alternate source authority.
+export function withMailboxOutboxGuardLock(operation, { env = process.env } = {}) {
+  if (typeof operation !== 'function') throw new Error('MAILBOX_OUTBOX_OPERATION_REQUIRED');
+  const deferredPath = join(mailboxStateRootFromEnv(env), 'receipt-publication-deferred-v1.json');
+  const lock = acquireGuardLock(deferredPath, new Date(), { tokenFn: () => randomUUID().replaceAll('-', ''),
+    processIdentityFn: defaultProcessIdentity, staleAfterMs: MAILBOX_LOCK_STALE_AFTER_MS });
+  let active = true;
+  const readDrainInputs = Object.freeze(function () {
+    if (!active) throw Error('MAILBOX_OUTBOX_DRAIN_SESSION_CLOSED');
+    if (arguments.length) throw Error('MAILBOX_OUTBOX_DRAIN_ARGUMENTS_NOT_ALLOWED');
+    verifyGuardLock(lock);
+    const result = readMailboxDrainInputEstate(deferredPath);
+    verifyGuardLock(lock);
+    return freezeDrainInput({ ...result, storageOnly: true, readOnly: true, fullDrainProofComplete: false,
+      nativeExecutionAuthorized: false, freezeCertified: false, publicHistoryAuthenticated: false, actionsAuthenticated: false,
+      guardGenerationSha256: recordDigest({ token: lock.token,
+      pid: process.pid, ownerBootId: lock.processIdentity?.bootId, ownerProcessStartId: lock.processIdentity?.processStartId }) });
+  });
+  try {
+    verifyGuardLock(lock);
+    const result = operation(lock, readDrainInputs);
+    if (result && typeof result.then === 'function') throw new Error('MAILBOX_OUTBOX_SYNCHRONOUS_OPERATION_REQUIRED');
+    verifyGuardLock(lock);
+    return result;
+  } finally { active = false; releaseGuardLock(lock); }
+}
+
 function resolveProductionPaths({ env = process.env, repoRoot = defaultRepoRoot } = {}) {
   const actualRepoRoot = resolve(repoRoot);
   const expectedRepoRoot = resolve(env.USERPROFILE || homedir(), 'Documents', 'GitHub', 'stephan-os');
@@ -1436,11 +1772,25 @@ export function runMailboxOutboxGuard({
   faultFn = () => {},
   pathOverrides = null,
 } = {}) {
-  if (platform !== 'win32') return fail('WINDOWS_REQUIRED');
+  let diagnosticStage = 'PRECHECK';
+  let childInvocationAttempted = false;
+  const observedResult = (result, outcome, reason) => {
+    // A diagnostic clock failure must not change the existing guard outcome.
+    let observedAtUtc = '';
+    try { observedAtUtc = now().toISOString(); } catch {}
+    return Object.freeze({ ...result, guardDiagnostic: projectMailboxGuardDiagnosticV1({
+      schemaVersion: MAILBOX_GUARD_DIAGNOSTIC_SCHEMA_V1,
+      observedAtUtc, stage: diagnosticStage, outcome,
+      reasonCode: outcome === 'CHILD_SUCCEEDED' ? 'NONE' : mailboxGuardReasonCodeV1(reason),
+      childInvocationAttempted,
+    }) });
+  };
+  if (platform !== 'win32') return observedResult(fail('WINDOWS_REQUIRED'), 'GUARD_BLOCKED', 'WINDOWS_REQUIRED');
   const resolved = pathOverrides || resolveProductionPaths({ env, repoRoot });
   const actualRepoRoot = resolve(resolved.actualRepoRoot || repoRoot);
   const expectedRepoRoot = resolve(resolved.expectedRepoRoot || actualRepoRoot);
-  if (actualRepoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase()) return fail('CANONICAL_CHECKOUT_REQUIRED');
+  if (actualRepoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase())
+    return observedResult(fail('CANONICAL_CHECKOUT_REQUIRED'), 'GUARD_BLOCKED', 'CANONICAL_CHECKOUT_REQUIRED');
 
   const statePath = resolve(resolved.statePath);
   const deferredPath = resolve(resolved.deferredPath);
@@ -1448,7 +1798,7 @@ export function runMailboxOutboxGuard({
   if (dirname(statePath).toLowerCase() !== dirname(deferredPath).toLowerCase()
     || basename(statePath).toLowerCase() !== 'state.json'
     || basename(deferredPath).toLowerCase() !== 'receipt-publication-deferred-v1.json') {
-    return fail('MAILBOX_OUTBOX_STORE_PATH_INVALID');
+    return observedResult(fail('MAILBOX_OUTBOX_STORE_PATH_INVALID'), 'GUARD_BLOCKED', 'MAILBOX_OUTBOX_STORE_PATH_INVALID');
   }
   const metrics = createIoMetrics();
   let lock = null;
@@ -1457,11 +1807,13 @@ export function runMailboxOutboxGuard({
     mkdirSync(dirname(statePath), { recursive: true });
     assertUnlinkedDirectory(dirname(statePath));
     const timestamp = now();
+    diagnosticStage = 'LOCK';
     lock = acquireGuardLock(deferredPath, timestamp, {
       tokenFn: lockTokenFn,
       processIdentityFn,
       staleAfterMs,
     });
+    diagnosticStage = 'STATE_VALIDATION';
     const state = readJsonObject(statePath, {
       allowMissing: true,
       missingValue: { consumedRequestIds: [], acceptedRequestIds: [], pendingReceiptPublications: [] },
@@ -1469,12 +1821,14 @@ export function runMailboxOutboxGuard({
       metrics,
     });
     const statePendingBefore = canonicalPendingFromState(state);
+    diagnosticStage = 'DEFERRED_VALIDATION';
     let manifest = loadOrInitializeLedger(deferredPath, timestamp.toISOString(), metrics);
     manifest = appendCanonicalDebt(deferredPath, manifest, statePendingBefore, now().toISOString(), metrics, faultFn);
     const peeked = peekLedgerHead(deferredPath, manifest, now().toISOString(), metrics, faultFn);
     manifest = peeked.manifest;
     const head = peeked.head;
     const pendingBeforeChild = pendingCount(manifest);
+    diagnosticStage = 'PRE_CHILD_CHECKPOINT';
     atomicWriteJson(statePath, {
       ...state,
       pendingReceiptPublications: head ? [head.entry] : [],
@@ -1482,6 +1836,8 @@ export function runMailboxOutboxGuard({
     verifyGuardLock(lock);
     const preIngressIo = snapshotIo(metrics);
 
+    diagnosticStage = 'CHILD_INVOCATION';
+    childInvocationAttempted = true;
     const child = spawnSyncFn(process.execPath, [childRunnerPath], {
       cwd: actualRepoRoot,
       env: createMailboxOutboxGuardChildEnvironment(env, lock),
@@ -1492,6 +1848,7 @@ export function runMailboxOutboxGuard({
       maxBuffer: 2 * 1024 * 1024,
     });
 
+    diagnosticStage = 'POST_CHILD_VALIDATION';
     verifyGuardLock(lock);
     const stateAfter = readJsonObject(statePath, { maxBytes: MAILBOX_STATE_MAX_BYTES, metrics });
     const statePendingAfter = canonicalPendingFromState(stateAfter);
@@ -1504,15 +1861,16 @@ export function runMailboxOutboxGuard({
       metrics,
       faultFn,
     );
-    atomicWriteJson(statePath, {
+    atomicWriteJson(statePath, settleMailboxRotationDrain({
       ...stateAfter,
       pendingReceiptPublications: [],
-    }, { maxBytes: MAILBOX_STATE_MAX_BYTES, metrics });
+    }, { outboxPendingCount: pendingCount(manifest), now: now().toISOString() }), { maxBytes: MAILBOX_STATE_MAX_BYTES, metrics });
 
     const childOk = !child?.error && child?.status === 0;
     const childStatus = parseMailboxChildStatus(child?.stdout);
     const childBlocker = childOk ? '' : (childStatus.blocker || childStatus.mailboxBlocker || childStatus.indexBlocker || 'MAILBOX_CHILD_RUN_BLOCKED');
-    return Object.freeze({
+    diagnosticStage = 'COMPLETE';
+    return observedResult({
       ok: childOk,
       blocker: childBlocker,
       finalVerdict: childOk ? 'MAILBOX_OUTBOX_GUARD_READY' : 'MAILBOX_OUTBOX_GUARD_BLOCKED',
@@ -1520,6 +1878,13 @@ export function runMailboxOutboxGuard({
       childFinalVerdict: childStatus.finalVerdict,
       childMailboxBlocker: childStatus.mailboxBlocker,
       childIndexBlocker: childStatus.indexBlocker,
+      childMailboxSelectedCount: childStatus.mailboxSelectedCount,
+      childMailboxReadyCount: childStatus.mailboxReadyCount,
+      childMailboxDeferredCount: childStatus.mailboxDeferredCount,
+      childMailboxControlCount: childStatus.mailboxControlCount,
+      childMailboxObservationCount: childStatus.mailboxObservationCount,
+      childMailboxBlockedCount: childStatus.mailboxBlockedCount,
+      childMailboxMaxConcurrencyObserved: childStatus.mailboxMaxConcurrencyObserved,
       attemptedPublicationCount: head ? 1 : 0,
       deferredPublicationCountBeforeChild: Math.max(0, pendingBeforeChild - (head ? 1 : 0)),
       pendingPublicationCountAfterChild: pendingCount(manifest),
@@ -1537,12 +1902,13 @@ export function runMailboxOutboxGuard({
       arbitraryShellAllowed: false,
       arbitraryPathAllowed: false,
       sourceMutationAllowed: false,
-    });
+    }, childOk ? 'CHILD_SUCCEEDED' : 'CHILD_FAILED', childBlocker);
   } catch (error) {
-    return fail('MAILBOX_OUTBOX_GUARD_FAILED', {
+    return observedResult(fail('MAILBOX_OUTBOX_GUARD_FAILED', {
       error: String(error?.message || error).slice(0, 240),
       ledgerIo: snapshotIo(metrics),
-    });
+    }), diagnosticStage === 'LOCK' && error?.message === 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING'
+      ? 'GUARD_BUSY' : 'GUARD_BLOCKED', error?.message);
   } finally {
     releaseGuardLock(lock);
   }

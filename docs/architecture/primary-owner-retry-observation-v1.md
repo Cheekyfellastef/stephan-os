@@ -1,0 +1,17 @@
+# Primary owner evidence and retained reservation continuity
+
+The blocked-goal repair steward (Goal #2961 — Goal: Core Daemon Blocked-Goal Repair Steward and Proof-Gated Re-Admission) repairs the existing continuation mission (Goal #1557 — Goal: Autonomous Build Continuity Controller V1) without creating another worker or authority surface.
+
+Retained workspace reservations, fresh owner source intent, prior-mirror admission revalidation, discovery and execution eligibility are distinct truths. Ordinary scheduling may use its bounded prior-mirror observation. A source retry that needs a fresh owner contract must request stronger evidence from the same canonical observer.
+
+The internal requiredPrimaryOwnerCommentIssueNumbers read requirement is a bounded, unique positive issue set derived from the existing source-failure scan. It grants no authority. It passes through the shared snapshot, the in-process GitHub cache and the actual reader. Requested issues bypass the prior-mirror optimization and use the existing complete owner-comment validation; unrelated issues retain their optimized reads. Global rate-limit holds, failure backoff, paging and deadlines remain binding.
+
+Cache applicability and successful primary proof are separate. A cached authentic primary observation can answer the stronger request while fresh. The producer can also record the exact requested lookup scope to cache a missing, invalid or unavailable contract for the existing lifetime, preventing repeated comment scans every tick. That scope metadata is only negative-cache/read-intent coverage. It never changes admissionProofSource, renews evidence timestamps or authorizes a retry. A prior-mirror result without stronger lookup coverage cannot answer that request.
+
+The production programme projection returns only the requested evidence fields in a bounded internal githubGoalEstateRead DTO. It derives that DTO from the actual canonical observation, never from retained reservations. Normal telemetry responses gain no raw estate payload. Oversized authority evidence holds the requested retry; it is not truncated into apparent validity.
+
+The existing retry repeats the same read requirement after ownership and clean-worktree awaits. Its selector still requires actual fresh OWNER_AUTHENTICATED_COMMENT proof, exact identity, a proper subset and false consequential grants. Original scope, stronger outside tests, terminal prior execution/queue release, repair budget, clean current-main worktree and mission revision checks remain mandatory. Stored reservations, manual provenance, claims and historical outcomes are unchanged.
+
+The real-reader regression traverses complete comment normalization, repeated retained mirror rounds, both caches, the real programme projection and the real mission retry/store consumer. Only external GitHub responses and process identity/worktree/ownership boundaries are fixtures. It does not fabricate a complete programme DTO. The unchanged86e372 tree fails the positive actual-adapter case; the candidate passes. The existing hosted goal-scope test entry imports this suite.
+
+Reusable invariant: a consumer test must verify the actual producer supplies its required evidence; a richer mocked DTO is not an end-to-end proof. Source publication and installation remain infrastructure receipts. A real canonical worker claim and material source build remain the operator outcome.

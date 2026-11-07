@@ -10,7 +10,8 @@ async function workflow() {
 
 test('observer listens only for the owner-authored fixed read-only prerequisite marker', async () => {
   const source = await workflow();
-  assert.match(source, /github\.event\.issue\.number == 2590/);
+  assert.match(source, /github\.event\.issue\.number > 0/);
+  assert.match(source, /canonical-mailbox-workflow-event-gate/);
   assert.doesNotMatch(source, /github\.event\.issue\.number == 1507/);
   assert.match(source, /github\.actor == 'Cheekyfellastef'/);
   assert.match(source, /stephanos-battle-bridge-tailscale-bootstrap-prerequisites/);

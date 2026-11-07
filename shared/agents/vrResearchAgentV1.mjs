@@ -36,6 +36,7 @@ export const VR_RESEARCH_AGENT_ACTIONS = Object.freeze({
   REFRESH_WORKSPACE: 'PROPOSE_WORKSPACE_REFRESH',
   TRIAGE_DISCOVERY: 'PROPOSE_DISCOVERY_TRIAGE',
   PREPARE_RESEARCH: 'PROPOSE_RESEARCH_PACKET',
+  CORRELATE_EVIDENCE: 'PROPOSE_CANONICAL_VR_CORRELATION',
   REQUEST_RUNTIME_EVIDENCE: 'PROPOSE_BATTLE_BRIDGE_EVIDENCE_REQUEST',
   UPDATE_CAPABILITY_GRAPH: 'PROPOSE_CAPABILITY_GRAPH_UPDATE',
   NO_ACTION: 'NO_ACTION',
@@ -153,6 +154,10 @@ export function buildVrResearchAgentReadModel(input = {}) {
     target: text(workspaceProjection.currentTarget || workspaceProjection.target, 'Starfield VR'),
     programmeStage: text(workspaceProjection.programmeStage || workspaceProjection.stage, 'unknown'),
     sourceSummary: boundedSourceSummary(input.sourceRegistry),
+    referenceCorpus: workspaceProjection.referenceCorpus || null,
+    canonicalEvidence: workspaceProjection.canonicalEvidence || null,
+    correlationCandidates: list(workspaceProjection.correlationCandidates),
+    analysisQuestions: list(workspaceProjection.analysisQuestions),
     researchQueue: list(workspaceProjection.researchQueue),
     discoveryCandidates: list(workspaceProjection.discoveryCandidates),
     graphCandidates: list(workspaceProjection.capabilityGraphCandidates),
@@ -267,7 +272,10 @@ export function planVrResearchAgentCycle(input = {}) {
 
   let action = VR_RESEARCH_AGENT_ACTIONS.NO_ACTION;
   let reason = 'no-material-vr-research-change';
-  if (readModel.runtimeEvidenceRequests.length > 0) {
+  if (readModel.canonicalEvidence?.current === true && readModel.correlationCandidates.length > 0) {
+    action = VR_RESEARCH_AGENT_ACTIONS.CORRELATE_EVIDENCE;
+    reason = 'fresh-canonical-vr-evidence-correlation-candidates-present';
+  } else if (readModel.runtimeEvidenceRequests.length > 0) {
     action = VR_RESEARCH_AGENT_ACTIONS.REQUEST_RUNTIME_EVIDENCE;
     reason = 'runtime-or-headset-evidence-required';
   } else if (readModel.discoveryCandidates.length > 0) {
@@ -321,6 +329,9 @@ export function createVrResearchAgentWorkspaceRecords(input = {}) {
       requiresOperator: cycle.proposal.requiresOperator,
       freshness: cycle.readModel.freshness,
       sourceCount: cycle.readModel.sourceSummary.sourceCount,
+      referenceCorpusSourceCount: cycle.readModel.referenceCorpus?.sourceCount || 0,
+      canonicalEvidenceSessionId: cycle.readModel.canonicalEvidence?.sessionId || null,
+      correlationCandidateCount: cycle.readModel.correlationCandidates?.length || 0,
       spatialTelemetryState: cycle.readModel.spatialTelemetry?.state || 'unavailable',
       spatialTelemetryRunId: cycle.readModel.spatialTelemetry?.runId || null,
       spatialTelemetrySourceHead: cycle.readModel.spatialTelemetry?.sourceHead || null,

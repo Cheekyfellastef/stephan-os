@@ -227,6 +227,49 @@ export async function executeGuardedCodexTaskOnBattleBridge(command = {}, option
       ...(options.providerNeutralContinuity ? { providerNeutralContinuity: options.providerNeutralContinuity } : {}),
       ...(options.readLiveProviderNeutralCapacity ? { readLiveProviderNeutralCapacity: options.readLiveProviderNeutralCapacity } : {}),
     });
+    const providerNeutralPickupPending = (
+      String(result?.dispatcherState || '') === 'ROUTED_PROVIDER_NEUTRAL'
+      || String(result?.decision || '') === 'CODEX_CAPACITY_REROUTE_READY'
+      || String(result?.finalVerdict || '') === 'CODEX_CAPACITY_REROUTE_READY'
+    ) && result?.providerExecutionStarted !== true;
+
+    if (providerNeutralPickupPending) {
+      return Object.freeze({
+        ok: false,
+        verdict: 'COMMAND_EXECUTION_BLOCKED',
+        blocker: 'PROVIDER_NEUTRAL_PICKUP_NOT_PROVEN',
+        operation: GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+        requestId: shape.command.requestId,
+        expectedHead: shape.expectedHead,
+        taskId: '',
+        dispatchJobId: String(result?.dispatchJobId || ''),
+        providerTaskId: '',
+        providerExecutionStarted: false,
+        pickupProven: false,
+        handoffResponsibilityRetained: true,
+        publicationIsTerminal: false,
+        retryCodexAllowed: false,
+        resultReadbackOperation: '',
+        dispatcherState: String(result?.dispatcherState || 'ROUTED_PROVIDER_NEUTRAL'),
+        decision: String(result?.decision || 'CODEX_CAPACITY_REROUTE_READY'),
+        finalVerdict: 'CODEX_CAPACITY_REROUTE_PENDING_PICKUP',
+        selectedProvider: String(result?.selectedRoute?.providerFamily || ''),
+        executionProvider: String(result?.selectedRoute?.adapterId || result?.selectedRoute?.providerFamily || ''),
+        selectedRoute: result?.selectedRoute || null,
+        providerNeutralHandoff: result?.providerNeutralHandoff || null,
+        providerNeutralBaton: result?.providerNeutralBaton || null,
+        nextAutomaticAction: String(result?.nextAutomaticAction || 'Continue through the canonical provider router until the selected route produces durable pickup/execution proof.'),
+        nextOperatorAction: String(result?.nextOperatorAction || ''),
+        transport: String(result?.transport || 'battle-bridge-native'),
+        mcpSessionRequired: result?.mcpSessionRequired === true,
+        result,
+        mergeAuthority: false,
+        sourceMutationAuthority: false,
+        arbitraryShellAllowed: false,
+        credentialsMayBeReadOrExported: false,
+      });
+    }
+
     if (result?.ok !== true) {
       return Object.freeze({
         ok: false,

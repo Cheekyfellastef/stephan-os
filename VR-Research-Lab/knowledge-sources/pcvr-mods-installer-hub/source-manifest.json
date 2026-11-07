@@ -22,7 +22,25 @@
     "Starfield VR discovery route"
   ],
   "execution_policy": "Do not execute Hub installers or downloaded mods automatically. Use static analysis first; route approved local execution through the Battle Bridge worker and normal approval gates.",
-  "programme_links": [1591, 1593, 1595, 1596, 1597, 1611],
+  "programme_links": [
+    1591,
+    1593,
+    1595,
+    1596,
+    1597,
+    1611
+  ],
   "refresh_owner": 1596,
-  "promotion_rule": "Reuse MIT Hub patterns with attribution, but independently verify the licence, provenance, integrity and safety of each third-party mod or download route."
+  "promotion_rule": "Reuse MIT Hub patterns with attribution, but independently verify the licence, provenance, integrity and safety of each third-party mod or download route.",
+  "latest_observed": {
+    "date": "2026-10-03",
+    "commit": "d6310d87208b38ec5453769356d8a256aa5a4f60",
+    "commits_ahead_of_registered_snapshot": 40,
+    "status": "candidate-until-reviewed"
+  },
+  "local_reference_lock": "VR-Research-Lab/reference-source-lock.json",
+  "source_intake": {
+    "sync_source_id": "pcvr-mods-installer-hub-current",
+    "local_cache_allowed": true
+  }
 }

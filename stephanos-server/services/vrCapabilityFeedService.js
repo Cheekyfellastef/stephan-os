@@ -9,6 +9,7 @@ import {
   SHARED_WORKSPACE_FEED_RECORD_SCOPES,
 } from '../../shared/agents/shared-workspace-dashboard-feed.mjs';
 import { validateExistingSharedWorkspaceRuntimeConfig } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
+import { readVrPlaytestFeed } from './vrPlaytestFeedService.js';
 
 export const VR_CAPABILITY_FEED_ROUTE = '/api/shared-workspace/vr-capability-feed';
 
@@ -49,12 +50,27 @@ export async function readVrCapabilityFeed({ env = process.env, repoRoot = proce
     workspaceConceptCandidates: workspace.conceptCandidates || workspace.vrConceptCandidates || [],
     nowMs,
   });
+  const playtestFeed = await readVrPlaytestFeed({
+    env,
+    repoRoot,
+    ...(runtimeConfig.ok ? { root: runtimeConfig.root } : {}),
+    nowMs,
+    staleAfterMs,
+  });
 
   return Object.freeze({
     ...projection,
     schemaVersion: VR_CAPABILITY_LIVE_FEED_SCHEMA,
     route: VR_CAPABILITY_FEED_ROUTE,
     readOnly: true,
+    canonicalVrEvidence: playtestFeed.intelligence || null,
+    vrResearchAgent: playtestFeed.intelligence?.vrResearchAgent || null,
+    playtest: Object.freeze({
+      state: playtestFeed.state,
+      reason: playtestFeed.reason,
+      sessionId: playtestFeed.latest?.sessionId || '',
+      observedAtUtc: playtestFeed.latest?.observedAtUtc || '',
+    }),
     workspace: Object.freeze({
       state: workspaceState,
       reason: workspaceReason,

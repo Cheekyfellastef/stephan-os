@@ -51,6 +51,55 @@ function requireLiteral(findings, source, literal, code, summary, path) {
 function forbid(findings, source, pattern, code, summary, path) {
   if (pattern.test(source)) findings.push(finding(code, summary, path));
 }
+function extractPowerShellFunction(source, signature) {
+  const lines = String(source ?? '').split(/\r?\n/);
+  const starts = lines.map((line, index) => line.trim() === signature ? index : -1).filter((index) => index >= 0);
+  if (starts.length !== 1) return '';
+  let depth = 0;
+  let entered = false;
+  const body = [];
+  for (let index = starts[0]; index < lines.length; index += 1) {
+    const line = lines[index];
+    body.push(line);
+    const structural = line.replace(/#.*$/, '');
+    for (const char of structural) {
+      if (char === '{') {
+        depth += 1;
+        entered = true;
+      } else if (char === '}') {
+        depth -= 1;
+      }
+    }
+    if (entered && depth === 0) return body.join('\n');
+    if (depth < 0) return '';
+  }
+  return '';
+}
+function metaAirLinkIsolationHelperClean(source, {
+  signature,
+  exactStartProcess,
+}) {
+  const helper = extractPowerShellFunction(source, signature);
+  if (!helper) return false;
+  // Exact current-main child-only telemetry contract. This is deliberately a
+  // byte-closed alternative, not a general permission for environment changes.
+  // Any helper edit requires a new independently reviewed contract digest.
+  const environmentSets = value => value.match(/\[Environment\]::SetEnvironmentVariable\(/g)?.length ?? 0;
+  if (environmentSets(source) !== environmentSets(helper)) return false;
+  if (createHash('sha256').update(helper).digest('hex') === 'c01ffa6d92b40028e6e2e5e948a13977be727231d2fbb9ae8900673182394576') return true;
+  const executableLines = helper.split(/\r?\n/)
+    .map((line) => line.replace(/#.*$/, '').trim())
+    .filter(Boolean);
+  const processStarts = executableLines.filter((line) => /\bStart-Process\b/i.test(line));
+  const disableSet = /\[Environment\]::SetEnvironmentVariable\(\s*\$virtualDesktopOculusCompatibilityDisableEnvironment\s*,\s*'1'\s*,\s*'Process'\s*\)/m.test(helper);
+  const restoreSet = /\[Environment\]::SetEnvironmentVariable\(\s*\$virtualDesktopOculusCompatibilityDisableEnvironment\s*,\s*\$previous\s*,\s*'Process'\s*\)/m.test(helper);
+  const previousRead = /\$previous\s*=\s*\[Environment\]::GetEnvironmentVariable\(\s*\$virtualDesktopOculusCompatibilityDisableEnvironment\s*,\s*'Process'\s*\)/m.test(helper);
+  return disableSet
+    && restoreSet
+    && previousRead
+    && processStarts.length === 1
+    && processStarts[0] === exactStartProcess;
+}
 function parsePowerShellExecutableLines(source) {
   const rows = [];
   let blockComment = false;
@@ -186,33 +235,66 @@ function requireExactExecutableSequence(findings, rows, sequence, depth, code, s
   }
   if (matches !== 1) findings.push(finding(code, summary, path));
 }
-function requireClosedProcessEstate(findings, rows, path) {
-  const expectedStarts = new Map([
+function requireClosedProcessEstate(findings, rows, path, source) {
+  const commonStarts = new Map([
     ['Start-Process -FilePath $metaClientPath | Out-Null', 1],
     ['$companionProcess = Start-Process -FilePath $companionExecutable -PassThru', 1],
-    ['$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru', 1],
-    ['$performanceGuardian = Start-Process -FilePath $powershellExecutable -ArgumentList $guardianArguments -WindowStyle Hidden -PassThru', 1],
   ]);
+  const legacyGameStart = '$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru';
+  const isolatedGameStart = 'return Start-Process -FilePath $ExecutablePath -WorkingDirectory $WorkingDirectory -PassThru';
   const starts = rows.filter((row) => /\bStart-Process\b/i.test(row.structural));
-  const startsClean = starts.length === expectedStarts.size &&
-    starts.every((row) => expectedStarts.get(row.code) === row.depthBefore);
+  const commonClean = [...commonStarts.entries()].every(([code, depth]) =>
+    starts.some((row) => row.code === code && row.depthBefore === depth));
+  const legacyShape = starts.length === 3
+    && commonClean
+    && starts.some((row) => row.code === legacyGameStart && row.depthBefore === 1);
+  const isolationUses = rows.filter((row) => /\bStart-StarfieldWithMetaAirLinkIsolation\b/i.test(row.structural));
+  const isolatedShape = starts.length === 3
+    && commonClean
+    && starts.some((row) => row.code === isolatedGameStart && row.depthBefore === 2)
+    && isolationUses.length === 2
+    && isolationUses.some((row) => row.code === 'function Start-StarfieldWithMetaAirLinkIsolation {' && row.depthBefore === 0)
+    && isolationUses.some((row) => ["$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory", "$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory -VisualTelemetry $(if ($performanceMode) { $performanceMode.visualTelemetry } else { $null })"].includes(row.code) && row.depthBefore === 1)
+    && source.includes("$virtualDesktopOculusCompatibilityDisableEnvironment = 'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY'")
+    && metaAirLinkIsolationHelperClean(source, {
+      signature: 'function Start-StarfieldWithMetaAirLinkIsolation {',
+      exactStartProcess: isolatedGameStart,
+    });
+  const startsClean = legacyShape || isolatedShape;
   if (!startsClean) {
     findings.push(finding(
       'starfield-launcher-process-estate-not-closed',
-      'Launcher process starts must remain exactly the reviewed Meta client, vorpX companion, verified game executable and hidden performance guardian boundaries.',
+      'Launcher process starts must remain exactly the reviewed Meta client, vorpX companion and verified game executable boundaries; telemetry guardian creation stays inside the fixed performance helper.',
       path,
     ));
   }
 
-  const expectedCalls = new Map([
+  const expectedCalls = [
     ['$decisionJson = & $NodeExecutablePath $decisionScript --profile $ProfilePath --observations $observationsPath 2>&1 | Out-String', 1],
     ["$resourceGuardJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gamingResourceGovernorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 | Out-String", 1],
     ['$performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory -Provider $selectedProvider -ProfilePath ([string]$profileObservation.path) -ProfileSha256 ([string]$profileObservation.sha256) -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String', 2],
     ['& $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null', 2],
-  ]);
+    ['$guardianJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action StartGuard -SessionPath ([string]$performanceMode.sessionPath) -GameProcessId ([int]$gameProcess.Id) 2>&1 | Out-String', 2],
+    ['& $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null', 3],
+  ];
+  // Admit only the complete fixed application lookup/read-head block. Merely
+  // matching the call line would permit an arbitrary executable rebinding.
+  const sourceHeadBlock = extractPowerShellFunction(source, "$sourceHead = if ([string]$env:STEPHANOS_SOURCE_HEAD -match '^[a-fA-F0-9]{40}$') {");
+  if (createHash('sha256').update(sourceHeadBlock).digest('hex') === 'ece043bf80990b5c7d03c76dfbefb1b93b7621cd4b77df504d27a624e3cff2d7') {
+    requireUniqueExecutableAssignment(findings, rows, 'sourceHead', "$sourceHead = if ([string]$env:STEPHANOS_SOURCE_HEAD -match '^[a-fA-F0-9]{40}$') {",
+      'starfield-launcher-source-head-binding-not-immutable', 'The read-head decision must remain one executable assignment.', path);
+    requireExecutableStatement(findings, rows, "$sourceHead = if ([string]$env:STEPHANOS_SOURCE_HEAD -match '^[a-fA-F0-9]{40}$') {", 0,
+      'starfield-launcher-source-head-not-top-level', 'The fixed source-head observation must remain executable at the top level.', path);
+    requireUniqueExecutableAssignment(findings, rows, 'gitCommand',
+      "$gitCommand = Get-Command -Name 'git.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1",
+      'starfield-launcher-git-observation-binding-not-immutable', 'The read-head Git application binding must remain unique and fixed.', path);
+    expectedCalls.push(['$candidateHead = (& $gitCommand.Source -C $repositoryRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim().ToLowerInvariant()', 3]);
+  }
   const calls = rows.filter((row) => /(^|[=;(]\s*)&\s+\$/i.test(row.structural));
-  const callsClean = calls.length === expectedCalls.size
-    && calls.every((row) => expectedCalls.get(row.code) === row.depthBefore);
+  const actualEstate = calls.map((row) => `${row.depthBefore}:${row.code}`).sort();
+  const expectedEstate = expectedCalls.map(([code, depth]) => `${depth}:${code}`).sort();
+  const callsClean = actualEstate.length === expectedEstate.length
+    && actualEstate.every((value, index) => value === expectedEstate[index]);
   if (!callsClean) {
     findings.push(finding(
       'starfield-launcher-call-operator-estate-not-closed',
@@ -241,7 +323,9 @@ function reviewLauncher(source, path, findings) {
     ["if (-not $decision.ok)", 'starfield-launcher-decision-gate-missing', 'Game launch must remain gated on a successful canonical decision.'],
     ["if ($decision.action -eq 'LAUNCH_VORPX')", 'starfield-launcher-vorpx-action-gate-missing', 'vorpX companion launch must remain gated on the canonical vorpX action.'],
     ["$launchExecutable = (Resolve-Path -LiteralPath $gameLaunchPath).Path", 'starfield-launcher-verified-executable-resolution-missing', 'Launch executable must be resolved only from the verified profile path.'],
-    ["Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru", 'starfield-launcher-game-start-boundary-missing', 'Game start must remain bound to the verified executable and working directory.'],
+    ["$verifiedWorkingDirectory = [System.IO.Path]::GetDirectoryName($launchExecutable)", 'starfield-launcher-verified-working-directory-missing', 'Writable MutaR state must derive from the verified executable directory.'],
+    ["game-installation-root-not-bound-to-launch-executable", 'starfield-launcher-installation-root-binding-missing', 'Declared installationRoot must fail closed when it differs from the verified executable directory.'],
+    ["$workingDirectory = $verifiedWorkingDirectory", 'starfield-launcher-working-directory-binding-missing', 'Launch and MutaR mutation must use the verified executable directory.'],
     ["Nothing was changed and flat Starfield was not started.", 'starfield-launcher-flat-fallback-boundary-missing', 'Fail-closed flat-game boundary must remain explicit.'],
   ];
   for (const [literal, code, summary] of required) {
@@ -261,22 +345,17 @@ function reviewLauncher(source, path, findings) {
     'starfield-launcher-powershell-binding-not-immutable',
     'The PowerShell host binding must have exactly one executable assignment to the canonical host.', path,
   );
-  requireUniqueExecutableAssignment(
-    findings, executableRows, 'guardianArguments', '$guardianArguments = @(',
-    'starfield-launcher-guardian-arguments-binding-not-immutable',
-    'Guardian arguments must be assigned exactly once from the reviewed fixed argument estate.', path,
+  requireExecutableStatement(
+    findings, executableRows, '$verifiedWorkingDirectory = [System.IO.Path]::GetDirectoryName($launchExecutable)', 0,
+    'starfield-launcher-verified-working-directory-not-top-level',
+    'The writable game root must be derived from the verified executable at the reviewed top-level launch boundary.',
+    path,
   );
-  requireExactExecutableSequence(
-    findings, executableRows, [
-      '$guardianArguments = @(',
-      "'-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',",
-      "'-File', ('\"{0}\"' -f $performanceModeScript), '-Action', 'Guard',",
-      "'-SessionPath', ('\"{0}\"' -f [string]$performanceMode.sessionPath),",
-      "'-GameProcessId', [string]$gameProcess.Id",
-      ')',
-    ], 1,
-    'starfield-launcher-guardian-arguments-not-bound',
-    'Guardian arguments must remain bound to the reviewed helper, Guard action, exact session path and launched game PID.', path,
+  requireExecutableStatement(
+    findings, executableRows, '$workingDirectory = $verifiedWorkingDirectory', 0,
+    'starfield-launcher-working-directory-not-verified',
+    'The launch working directory must remain the verified executable directory.',
+    path,
   );
   requireExecutableStatement(
     findings, executableRows, 'if ($ReadinessOnly) {', 0,
@@ -302,13 +381,21 @@ function reviewLauncher(source, path, findings) {
     'The vorpX companion must remain behind the executable canonical action gate.',
     path,
   );
-  requireExecutableStatementWithin(
-    findings, executableRows, '$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru', 1,
-    ['try {'],
-    'starfield-launcher-game-start-not-top-level',
-    'The game process start must remain directly inside the reviewed top-level launch try/catch boundary.',
-    path,
-  );
+  const gameStartAtReviewedBoundary = executableRows.some((row) =>
+    row.depthBefore === 1
+    && row.enclosingBlocks.at(-1) === 'try {'
+    && (
+      row.code === '$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru'
+      || "$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory" === row.code
+      || "$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory -VisualTelemetry $(if ($performanceMode) { $performanceMode.visualTelemetry } else { $null })" === row.code
+    ));
+  if (!gameStartAtReviewedBoundary) {
+    findings.push(finding(
+      'starfield-launcher-game-start-not-top-level',
+      'The game process must start directly, or enter the reviewed Meta Air Link isolation helper, inside the top-level launch try/catch boundary.',
+      path,
+    ));
+  }
   requireExecutableStatementWithin(
     findings, executableRows, '$performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory -Provider $selectedProvider -ProfilePath ([string]$profileObservation.path) -ProfileSha256 ([string]$profileObservation.sha256) -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String', 2,
     ["if ($decision.action -eq 'LAUNCH_MUTAR_OPENXR') {", 'try {'],
@@ -324,13 +411,13 @@ function reviewLauncher(source, path, findings) {
     path,
   );
   requireExecutableStatementWithin(
-    findings, executableRows, '$performanceGuardian = Start-Process -FilePath $powershellExecutable -ArgumentList $guardianArguments -WindowStyle Hidden -PassThru', 1,
-    ['if ($performanceMode -and $performanceMode.sessionPath) {'],
+    findings, executableRows, '$guardianJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action StartGuard -SessionPath ([string]$performanceMode.sessionPath) -GameProcessId ([int]$gameProcess.Id) 2>&1 | Out-String', 2,
+    ['if ($performanceMode -and $performanceMode.sessionPath) {', 'try {'],
     'starfield-launcher-performance-guardian-not-bounded',
-    'MutaR performance guardian must remain behind the proven performance-session gate.',
+    'MutaR telemetry startup must remain behind the proven performance-session gate and the fixed StartGuard helper boundary.',
     path,
   );
-  requireClosedProcessEstate(findings, executableRows, path);
+  requireClosedProcessEstate(findings, executableRows, path, source);
 
   forbid(findings, source, /Invoke-Expression|Invoke-Command|ScriptBlock::Create/i,
     'starfield-launcher-dynamic-execution-forbidden', 'Dynamic PowerShell execution is forbidden.', path);
