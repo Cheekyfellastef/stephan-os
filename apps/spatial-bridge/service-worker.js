@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stephanos-spatial-workspace-v1-raised-keys-v4';
+const CACHE_NAME = 'stephanos-spatial-workspace-v1-movable-furniture-audio-v5';
 const CORE_ASSETS = [
   './',
   './quest-entry.html',
@@ -8,6 +8,8 @@ const CORE_ASSETS = [
   './holodeck-keycaps-v1.mjs',
   './holodeck-window-client-v1.mjs',
   './holodeck-screen-input-v1.mjs',
+  './holodeck-furniture-v1.mjs',
+  './holodeck-audio-v1.mjs',
   './holodeck-display-renderer-v1.mjs',
   './holodeck-locomotion-v1.mjs',
   './holodeck-layout-v1.mjs',
