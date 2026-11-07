@@ -131,7 +131,7 @@ function Test-ExpectedSourceProofRefusal([Exception]$exception){
  }
  if($null -eq $cause){return $false}
  $kind=$cause.GetType().FullName
- return (($kind -ceq 'System.InvalidOperationException' -and $cause.Message -cmatch '^RUNTIME_SOURCE_PROOF_[A-Z_]{1,64}$') -or
+ return (($kind -ceq 'System.InvalidOperationException' -and $cause.Message -cmatch '^RUNTIME_SOURCE_PROOF_[A-Z0-9_]{1,64}$') -or
   $kind -ceq 'System.Text.DecoderFallbackException')
 }
 $refusal=[InvalidOperationException]::new('RUNTIME_SOURCE_PROOF_MEMBER_CHANGED')
@@ -139,6 +139,7 @@ $deep=$refusal
 for($i=0;$i -lt 5;$i++){$deep=[Reflection.TargetInvocationException]::new($deep)}
 $wrapperCases=@(
  @{error=$refusal;expected=$true},
+ @{error=[InvalidOperationException]::new('RUNTIME_SOURCE_PROOF_BASE64');expected=$true},
  @{error=[Reflection.TargetInvocationException]::new($refusal);expected=$true},
  @{error=[Reflection.TargetInvocationException]::new([Reflection.TargetInvocationException]::new($refusal));expected=$true},
  @{error=[Text.DecoderFallbackException]::new('fixture');expected=$true},
@@ -216,7 +217,7 @@ foreach($row in $rows){
   finally {unlinkSync(driver);unlinkSync(input);rmdirSync(directory);}
   const lines=out.trim().split(/\r?\n/);
   assert.match(lines[0],/^NATIVE_SOURCE_WRAPPER_OBSERVED:(?:System\.Reflection\.TargetInvocationException|System\.Management\.Automation\.MethodInvocationException|System\.InvalidOperationException)$/);
-  assert.equal(lines[1],'NATIVE_SOURCE_WRAPPER_FIXTURE_PASS_9');
+  assert.equal(lines[1],'NATIVE_SOURCE_WRAPPER_FIXTURE_PASS_10');
   assert.equal(lines.length,3+2*vectors.length);
   for(const [index,vector]of vectors.entries()) {
     assert.equal(lines[2+2*index],'NATIVE_SOURCE_VECTOR_START_'+(index+1)+':'+vector.name);
