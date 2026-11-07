@@ -7,6 +7,14 @@ import { createHolodeckFurnitureInteraction } from './holodeck-furniture-v1.mjs'
 import { createHolodeckComfortSolids } from './holodeck-comfort-v1.mjs';
 import { createHolodeckDynamicObstacles } from './holodeck-collision-v1.mjs';
 
+// Held items follow the controller, so they cannot obstruct the operator's
+// own virtual walking body. All released objects and fixed room geometry remain solid.
+export function createHolodeckNavigationObstacles({cubeStates=[],furnitureObstacles=[],heldFurnitureId=null}={}) {
+  const cubes=createHolodeckDynamicObstacles(cubeStates);
+  const objects=Array.isArray(furnitureObstacles)?furnitureObstacles:[];
+  return [...cubes,...objects.filter(item=>!heldFurnitureId||item.id!==`furniture:${heldFurnitureId}`)];
+}
+
 export const HOLODECK_BASELINE_SESSION_MODE = 'immersive-vr';
 export const HOLODECK_BASELINE_MODE = 'Holodeck Baseline';
 
@@ -129,12 +137,12 @@ export async function enterHolodeckBaseline({
       const input = sampleHolodeckControls({ inputSources: session.inputSources, gamepads,
         preferredSource: activeController });
       activeController = input.source;
-      const dynamicObstacles = [
-        ...createHolodeckDynamicObstacles(cubeScene.getStates?.() ?? []),
-        ...(furniture?.obstacles?.()??[]),
-      ];
-      const navigation = locomotion.update({ time, pose, input:screenInput.isAdjusting()||furnitureInput.isHolding()
-        ? {...input,moveX:0,moveY:0,turn:0,reset:false}:input,
+      const dynamicObstacles=createHolodeckNavigationObstacles({
+        cubeStates:cubeScene.getStates?.()??[],furnitureObstacles:furniture?.obstacles?.()??[],
+        heldFurnitureId:furnitureInput.getHeldId(),
+      });
+      // Gripping a cube, furniture or dial never commandeers the sticks.
+      const navigation = locomotion.update({ time, pose, input,
         visible: session.visibilityState === 'visible', dynamicObstacles });
       const statusKey = `${navigation.controller}:${navigation.state}`;
       if (statusKey !== lastLocomotionStatus) {

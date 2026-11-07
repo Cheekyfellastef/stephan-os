@@ -48,8 +48,7 @@ The scene renderer, holographic keycaps, keyboard ray targets, grip/side-dial
 targets, walking obstacles, and movable cube collision contacts track the
 same furniture offsets. The original keyboard tilt and independent
 Seated/Standing height settings remain separate and unaffected. World bounds
-limit dragging; navigation and cube grab sources cannot simultaneously own
-a captured furniture controller. This is a physics-inspired heavy-mass visual
+limit dragging; navigation remains active while carrying a cube, dragging furniture or turning a dial. A single controller cannot simultaneously grip both a cube and furniture. This is a physics-inspired heavy-mass visual
 feel with fixed stops, **not** haptic hardware resistance.
 
 ## ChatGPT harness and real headset audio controls

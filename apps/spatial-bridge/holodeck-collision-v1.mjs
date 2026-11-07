@@ -34,6 +34,8 @@ export function createHolodeckDynamicObstacles(states = []) {
   if (!Array.isArray(states)) return [];
   const obstacles = [];
   for (const state of states) {
+    // Carried cubes still collide with their environment, but not their owner.
+    if (state?.heldBy) continue;
     const position = state?.position, size = state?.size;
     if (!Array.isArray(position) || position.length !== 3 || !position.every(Number.isFinite)
       || !Number.isFinite(size) || size <= 0) continue;

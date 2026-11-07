@@ -104,6 +104,20 @@ export function furnitureGrabTarget(origin,direction,furniture) {
   return matches.sort((a,b)=>a.distance-b.distance)[0]??null;
 }
 
+// Direct Quest grip is allowed on the physical body, not only a narrow ray edge.
+export function furnitureGripTarget(point,furniture) {
+  if(!finite(point)||!furniture)return null;
+  const matches=targets.flatMap(id=>{
+    const s=furniture.shape(id);
+    const min=[s.center[0]-s.halfWidth,s.bottom,s.center[2]-s.halfDepth];
+    const max=[s.center[0]+s.halfWidth,s.top,s.center[2]+s.halfDepth];
+    const gap=point.map((v,i)=>Math.max(min[i]-v,0,v-max[i]));
+    const distance=Math.hypot(...gap);
+    return distance<=0.19?[{id,distance,near:true}]:[];
+  });
+  return matches.sort((a,b)=>a.distance-b.distance)[0]??null;
+}
+
 // Physics-inspired bounded follower: heavy plastic furniture visibly lags a held
 // controller and settles when released. Not an external-force/haptic simulation.
 export function furnitureFollow(current,target,massKg,seconds) {
@@ -146,10 +160,15 @@ export function createHolodeckFurnitureInteraction({furniture,cubeScene=null}={}
     for(const hand of hands) {
       const last=buttons.get(hand.id)??hand.down;
       const forward=rotate3([0,0,-1],hand.ray.orientation);
-      const target=furnitureGrabTarget(hand.ray.position,forward,furniture);
-      const cubeInWay=cubeScene?.getStates?.().some(cube=>cubeTargeted({
-        kind:hand.kind,position:hand.grip.position,rayOrigin:hand.ray.position,forward,
-      },cube))??false;
+      const nearby=hand.kind==='quest'?furnitureGripTarget(hand.grip.position,furniture):null;
+      const target=nearby??furnitureGrabTarget(hand.ray.position,forward,furniture);
+      const cubeInWay=!nearby&&Boolean(target)&&(cubeScene?.getStates?.().some(cube=>{
+        if(cube.heldBy||!cubeTargeted({kind:hand.kind,position:hand.grip.position,
+          rayOrigin:hand.ray.position,forward},cube))return false;
+        const delta=subtract3(cube.position,hand.ray.position);
+        const along=delta.reduce((v,x,i)=>v+x*forward[i],0);
+        return along>=0&&along<target.distance-0.02;
+      })??false);
       if(!hold&&hand.down&&!last&&target&&!cubeInWay) {
         hold={id:target.id,handId:hand.id,source:hand.source??null,
           handStart:[...hand.grip.position],offsetStart:furniture.getOffset(target.id),
@@ -162,8 +181,9 @@ export function createHolodeckFurnitureInteraction({furniture,cubeScene=null}={}
           if(hand.kind==='quest') hold.target=add3(hold.offsetStart,
             subtract3(hand.grip.position,hold.handStart));
           else {
-            const dx=Number.isFinite(hand.axes?.[0])?hand.axes[0]:0,dy=Number.isFinite(hand.axes?.[1])?hand.axes[1]:0;
-            hold.target=add3(hold.target,[dx*Math.min(dt,0.05)*0.65,0,dy*Math.min(dt,0.05)*0.65]);
+            // Xbox LB + walking stick carries furniture with the operator.
+            // Do not apply the same stick a second time as furniture velocity.
+            hold.target=add3(hold.offsetStart,subtract3(hand.grip.position,hold.handStart));
           }
           furniture.setOffset(hold.id,furnitureFollow(furniture.getOffset(hold.id),
             hold.target,FURNITURE_MATERIALS[hold.id].massKg,dt));
@@ -173,5 +193,5 @@ export function createHolodeckFurnitureInteraction({furniture,cubeScene=null}={}
     }
     return new Set(capturedSources);
   }
-  return {update,stop,isHolding,getCapturedSources:()=>new Set(capturedSources)};
+  return {update,stop,isHolding,getHeldId:()=>hold?.id??null,getCapturedSources:()=>new Set(capturedSources)};
 }

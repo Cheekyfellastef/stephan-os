@@ -115,5 +115,5 @@ test('selecting a key or Shift animates the real cap, then releases without addi
 test('offline shell carries the keycap renderer and changes its asset epoch', () => {
   const source = readFileSync(new URL('../apps/spatial-bridge/service-worker.js', import.meta.url), 'utf8');
   assert.match(source, /\.\/holodeck-keycaps-v1\.mjs/);
-  assert.match(source, /stephanos-spatial-workspace-v1-raised-keys-v4/);
+  assert.match(source, /stephanos-spatial-workspace-v1-carry-walk-v6/);
 });
