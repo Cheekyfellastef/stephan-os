@@ -4,6 +4,7 @@
 // This script is an explicit browser gate, not an automatically discovered Node test.
 import { chromium } from '@playwright/test';
 import { DISPLAY_COMFORT_BUTTONS } from '../apps/spatial-bridge/holodeck-screen-v1.mjs';
+import { generateSpatialBridgeIcon } from '../apps/spatial-bridge/tools/build-icons.mjs';
 import { mkdir, writeFile, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { resolve, relative, isAbsolute, extname, sep } from 'node:path';
@@ -37,6 +38,16 @@ const result = { startedAt: new Date().toISOString(), checks: [], pageErrors: []
   serviceWorkerTested: false, nativeWindowConnected: false, physicalHeadsetVerified: false,
   screenshotVisualReview: 'pending',
   sourceBefore: await sourceSnapshot() };
+// Packaging intentionally generates these PNGs rather than committing binaries.
+// Use the existing generator in memory so a clean source checkout is testable.
+const iconSpecBytes = await readFile(resolve(sourceRoot, 'icons/icon-source.json'));
+const iconSpec = JSON.parse(iconSpecBytes);
+const packagedIcons = new Map([192, 512].map(size => [
+  '/apps/spatial-bridge/icons/icon-' + size + '.png', generateSpatialBridgeIcon(size, iconSpec),
+]));
+result.packagedIcons = [...packagedIcons].map(([path, bytes]) => ({
+  path, sha256: digest(bytes), specSha256: digest(iconSpecBytes), generatedInMemory: true,
+}));
 let browser, server, deadline;
 const contentTypes = new Map([
   ['.html', 'text/html; charset=utf-8'], ['.mjs', 'text/javascript; charset=utf-8'],
@@ -64,6 +75,13 @@ async function startStaticServer() {
       if (requestedUrl.origin !== 'http://' + authority) return reject(403);
       const requested = decodeURIComponent(requestedUrl.pathname);
       if (/[\\\x00:]/.test(requested) || requested.split('/').some(segment => segment.startsWith('.'))) return reject(403);
+      if (packagedIcons.has(requested)) {
+        const bytes = packagedIcons.get(requested);
+        response.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': bytes.length,
+          'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+        response.end(request.method === 'HEAD' ? undefined : bytes);
+        return;
+      }
       let path = resolve(repoRoot, '.' + requested);
       if (!insideRoot(path)) return reject(403);
       if ((await stat(path)).isDirectory()) path = resolve(path, 'index.html');
