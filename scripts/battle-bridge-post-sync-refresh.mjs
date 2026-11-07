@@ -530,6 +530,7 @@ export async function runBattleBridgePostSyncRefresh({
 
     const plan = classifyPostSyncRefresh(changed.paths, {
       sovereignRelayRefreshRequired: retained.debt.sovereignRelayRefreshRequired,
+      spatialAdoptionRequired: retained.debt.spatialAdoptionRequired,
     });
     if (retained.debt.requiredTargetIds.some(id => !plan.targetIds.includes(id))) {
       return Object.freeze({ ok: false, blocker: 'POST_SYNC_RETAINED_TARGET_COVERAGE_UNPROVEN', exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
@@ -573,6 +574,7 @@ export async function runBattleBridgePostSyncRefresh({
       afterHead: normalizedAfter,
       changedPaths: changed.paths,
       sovereignRelayRefreshRequired: retained.debt.sovereignRelayRefreshRequired,
+      spatialAdoptionRequired: retained.debt.spatialAdoptionRequired,
       completedResults,
       adapters: {
         refreshUi: ({ afterHead: head }) => adapter.refreshUi({ afterHead: head }),
