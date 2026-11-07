@@ -205,7 +205,9 @@ Require (-not [bool](Field $child 'Ok')) 'GAMING_CANCELLATION_ACCEPTED'
 Require ([bool](Field $child 'ZeroActive')) 'GAMING_JOB_NOT_DRAINED'
 $descendantMarker=[IO.Path]::Combine($area,'descendant-started.json');$rootMarker=[IO.Path]::Combine($area,'root-exited.json')
 $descendantCode='require("node:fs").writeFileSync('+[string]($descendantMarker|ConvertTo-Json -Compress)+',JSON.stringify({pid:process.pid}));setTimeout(()=>{},20000);'
-$descendant='const child=require("node:child_process").spawn(process.execPath,["-e",'+[string]($descendantCode|ConvertTo-Json -Compress)+'],{stdio:"ignore",detached:false});'
+# On Windows, detached skips Node/libuv's kill-on-parent-exit job. It does
+# not request CREATE_BREAKAWAY_FROM_JOB; our outer native Job still owns it.
+$descendant='const child=require("node:child_process").spawn(process.execPath,["-e",'+[string]($descendantCode|ConvertTo-Json -Compress)+'],{stdio:"ignore",detached:true});'
 $descendant+='child.once("error",()=>process.exit(91));child.once("spawn",()=>child.unref());'
 $descendant+='process.on("exit",()=>require("node:fs").writeFileSync('+[string]($rootMarker|ConvertTo-Json -Compress)+',JSON.stringify({pid:process.pid})));'
 $script:descendantProcess=$null
@@ -238,6 +240,7 @@ $parent.Dispose()
   assert.ok(line,result.stdout);const receipt=JSON.parse(line.split('=')[1]);
   assert.ok(receipt.checks>=40);assert.equal(receipt.nativeCompiled,true);assert.equal(receipt.qualified,false);
   if(process.env.STEPHANOS_REVIEWER_NATIVE_FIXTURE==='1')assert.equal(receipt.aclChecks,7);
+  t.diagnostic('REVIEWER_NATIVE_FIXTURE_COUNTS='+JSON.stringify({checks:receipt.checks,aclChecks:receipt.aclChecks}));
 });
 
 test('isolated hosted Windows installer and actual reader prove source custody without identity enrollment',
@@ -346,4 +349,5 @@ try{
   const line=result.stdout.split(/\r?\n/).find(x=>x.startsWith('REVIEWER_PROTECTED_HOSTED_FIXTURE='));
   assert.ok(line,result.stdout);const receipt=JSON.parse(line.split('=')[1]);
   assert.ok(receipt.checks>=12);assert.equal(receipt.actualNativeReader,true);assert.equal(receipt.qualified,false);
+  t.diagnostic('REVIEWER_PROTECTED_HOSTED_FIXTURE_COUNTS='+JSON.stringify({checks:receipt.checks}));
 });

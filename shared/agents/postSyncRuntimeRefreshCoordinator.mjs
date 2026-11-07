@@ -20,6 +20,7 @@ export const POST_SYNC_REFRESH_CLASSIFICATIONS = Object.freeze({
   APPROVAL_REQUIRED_OPENCLAW: 'APPROVAL_REQUIRED_OPENCLAW',
   BLOCKED_UNSAFE_CHANGED_PATH: 'BLOCKED_UNSAFE_CHANGED_PATH',
   BLOCKED_UNCLASSIFIED_RUNTIME_PATH: 'BLOCKED_UNCLASSIFIED_RUNTIME_PATH',
+  BLOCKED_SPATIAL_ADOPTION_REQUIRED: 'BLOCKED_SPATIAL_ADOPTION_REQUIRED',
   BLOCKED_REFRESH_FAILED: 'BLOCKED_REFRESH_FAILED',
 });
 
@@ -53,6 +54,15 @@ const TARGET_ORDER = Object.freeze([
 const SOVEREIGN_COMMANDER_PLUGIN_MANIFESTS = new Set([
   'plugins/sovereign-commander/plugin.json',
   'plugins/sovereign-commander/.codex-plugin/plugin.json',
+]);
+
+// These two resident components belong only to the explicit Spatial launcher.
+// None of the existing refresh targets imports or launches them. Keep their
+// adoption debt separate: source sync and unrelated target success cannot prove
+// a loaded Spatial host, nor grant permission to start, stop or replace one.
+const SPATIAL_RESIDENT_ADOPTION_PATHS = new Set([
+  'scripts/spatial-window-host.mjs',
+  'shared/vr/spatialDesktopSurfaceContractV1.mjs',
 ]);
 
 // The Commander watchdog owns this long-running relay and its static imports.
@@ -319,7 +329,7 @@ const NO_RUNTIME_EXACT = new Set([
   'src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests/Stephanos.ProspectiveProcessingClaimContext.Tests.csproj',
   // These Spatial wrappers load on explicit invocation; native C++ is consumed
   // only by the attended build. No installer, launcher or restart is dispatched.
-  // The resident host and its static JS contract deliberately remain unknown.
+  // The resident host and its static JS contract retain separate adoption debt.
   'scripts/windows/build-spatial-window.ps1',
   'scripts/windows/install-spatial-window.ps1',
   'scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1',
@@ -330,6 +340,7 @@ const NO_RUNTIME_EXACT = new Set([
 
 const LAUNCHER_CRITICAL_SOURCE_PATHS = new Set([
   'main.js',
+  'style.css',
   'modules/command-deck/command-deck.js',
   'system/module_loader.js',
   'system/workspace.js',
@@ -487,7 +498,9 @@ function isNaturalReloadPath(path) {
     || NATURAL_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
-export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefreshRequired = false } = {}) {
+export function classifyPostSyncRefresh(changedPaths = [], {
+  sovereignRelayRefreshRequired = false, spatialAdoptionRequired = false,
+} = {}) {
   const safePaths = [];
   const unsafePaths = [];
   for (const rawPath of Array.isArray(changedPaths) ? changedPaths : []) {
@@ -500,10 +513,15 @@ export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefre
   const noRuntimePaths = [];
   const unknownPaths = [];
   const openClawPaths = [];
+  const spatialAdoptionPaths = [];
 
   for (const path of [...new Set(safePaths)]) {
     if (isTestOrDocumentation(path)) {
       noRuntimePaths.push(path);
+      continue;
+    }
+    if (SPATIAL_RESIDENT_ADOPTION_PATHS.has(path)) {
+      spatialAdoptionPaths.push(path);
       continue;
     }
     let classified = false;
@@ -544,6 +562,7 @@ export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefre
 
   const relayRequired = sovereignRelayRefreshRequired === true
     || safePaths.some((path) => SOVEREIGN_RELAY_RUNTIME_EXACT.has(path));
+  const spatialRequired = spatialAdoptionRequired === true || spatialAdoptionPaths.length > 0;
   // A later revert can remove a path from the net diff without proving that an
   // earlier partially refreshed relay stopped using it. Preserve its debt.
   if (relayRequired) targets.add(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER);
@@ -552,6 +571,7 @@ export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefre
   if (unsafePaths.length) classification = POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNSAFE_CHANGED_PATH;
   else if (unknownPaths.length) classification = POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH;
   else if (openClawPaths.length) classification = POST_SYNC_REFRESH_CLASSIFICATIONS.APPROVAL_REQUIRED_OPENCLAW;
+  else if (spatialRequired) classification = POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_SPATIAL_ADOPTION_REQUIRED;
   else if (targetIds.length) classification = POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY;
 
   return Object.freeze({
@@ -562,6 +582,8 @@ export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefre
     safePathCount: safePaths.length,
     noRuntimePathCount: noRuntimePaths.length,
     openClawPathCount: openClawPaths.length,
+    spatialAdoptionPathCount: spatialAdoptionPaths.length,
+    spatialAdoptionRequired: spatialRequired,
     unknownPathCount: unknownPaths.length,
     unsafePathCount: unsafePaths.length,
     openClawApprovalRequired: openClawPaths.length > 0,
@@ -575,6 +597,7 @@ export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefre
       safePaths: Object.freeze([...new Set(safePaths)]),
       noRuntimePaths: Object.freeze(noRuntimePaths),
       openClawPaths: Object.freeze(openClawPaths),
+      spatialAdoptionPaths: Object.freeze(spatialAdoptionPaths),
       unknownPaths: Object.freeze(unknownPaths),
       unsafePaths: Object.freeze(unsafePaths),
     }),
@@ -685,6 +708,7 @@ export async function executePostSyncRefreshPlan({
   adapters = {},
   completedResults = [],
   sovereignRelayRefreshRequired = false,
+  spatialAdoptionRequired = false,
   onTargetComplete,
 } = {}) {
   if (!validHead(beforeHead) || !validHead(afterHead) || beforeHead === afterHead) {
@@ -697,7 +721,7 @@ export async function executePostSyncRefreshPlan({
     });
   }
 
-  const plan = classifyPostSyncRefresh(changedPaths, { sovereignRelayRefreshRequired });
+  const plan = classifyPostSyncRefresh(changedPaths, { sovereignRelayRefreshRequired, spatialAdoptionRequired });
   if (!plan.automaticExecutionAllowed) {
     return Object.freeze({
       ok: false,
@@ -836,6 +860,22 @@ export async function executePostSyncRefreshPlan({
     }
   }
 
+  // All established target gates remain independent and run in their existing
+  // order. There is deliberately no Spatial adapter or success predicate here.
+  // A future qualified Spatial owner must implement actual adoption before this
+  // durable hold can be discharged; a revert or cached target receipt cannot.
+  if (plan.spatialAdoptionRequired) {
+    return Object.freeze({
+      ok: false,
+      classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_SPATIAL_ADOPTION_REQUIRED,
+      blocker: 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN',
+      plan,
+      exactHeadProofOk: false,
+      safeRefreshesCompleted: true,
+      results: Object.freeze(results),
+    });
+  }
+
   return Object.freeze({
     ok: true,
     classification: plan.targetIds.length
@@ -862,6 +902,8 @@ export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', a
     changedPathCount: Number(plan.changedPathCount || 0),
     noRuntimePathCount: Number(plan.noRuntimePathCount || 0),
     openClawPathCount: Number(plan.openClawPathCount || 0),
+    spatialAdoptionPathCount: Number(plan.spatialAdoptionPathCount || 0),
+    spatialAdoptionRequired: plan.spatialAdoptionRequired === true,
     pluginHostActivationRequired: plan.pluginHostActivationRequired === true,
     sovereignRelayRefreshRequired: plan.sovereignRelayRefreshRequired === true,
     unknownPathCount: Number(plan.unknownPathCount || 0),
