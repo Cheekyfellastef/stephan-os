@@ -318,8 +318,9 @@ function projectTargetFailureBeaconFacts(value, expectedHead, nowMs) {
 
 export function projectPostSyncRefreshBeaconFacts(record, expectedHead = '', nowMs = Date.now()) {
   const source = record && typeof record === 'object' && !Array.isArray(record) ? record : null;
-  const strictHead = (value) => typeof value === 'string' && /^[a-f0-9]{40}$/i.test(value)
+  const strictHead = (value) => typeof value === 'string' && value.length === 40 && /^[a-f0-9]{40}$/i.test(value)
     ? value.toLowerCase() : '';
+  const pathCount = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null;
   const boolean = (value) => typeof value === 'boolean' ? value : null;
   const typedBlocker = (value) => {
     if (typeof value !== 'string' || value.length > 160) return '';
@@ -351,6 +352,8 @@ export function projectPostSyncRefreshBeaconFacts(record, expectedHead = '', now
     resultCounts.set(entry.targetId, (resultCounts.get(entry.targetId) || 0) + 1);
   }
   const expected = strictHead(expectedHead);
+  const beforeHead = strictHead(source?.beforeHead);
+  const afterHead = strictHead(source?.afterHead);
   const resultTargets = [];
   // An oversized result list could hide a later contradictory observation.
   // Preserve the plan, but do not select a favorable prefix as target proof.
@@ -381,6 +384,15 @@ export function projectPostSyncRefreshBeaconFacts(record, expectedHead = '', now
     classification,
     evidenceState: truncated ? 'TRUNCATED' : invalid ? 'INVALID' : !source || !targets || !results ? 'MISSING' : 'OBSERVED',
     truncated,
+    // Existing Git-range observations only; no path values or refresh authority.
+    beforeHead,
+    afterHead,
+    afterHeadMatchesExpected: afterHead && expected ? afterHead === expected : null,
+    changedPathCount: pathCount(source?.changedPathCount),
+    noRuntimePathCount: pathCount(source?.noRuntimePathCount),
+    openClawPathCount: pathCount(source?.openClawPathCount),
+    unknownPathCount: pathCount(source?.unknownPathCount),
+    unsafePathCount: pathCount(source?.unsafePathCount),
     targetIds: Object.freeze(targetIds),
     resultTargets: Object.freeze(resultTargets),
     sovereignCaretakerExecution: projectCaretakerBeaconFacts(source?.sovereignCaretakerExecution, expected, nowMs),
