@@ -42,7 +42,7 @@ export function checkParallelSeedModelResourceV1({ governor, modelInventory, sel
     reasons.push('RESIDENT_ROUTER_GOVERNOR_CUSTODY_UNIMPLEMENTED');
   if (governor?.schemaVersion !== 'stephanos.vr-resource-governor.v1') reasons.push('VR_GOVERNOR_TRUTH_MISSING');
   if (governor?.active !== false || governor?.phase !== 'NORMAL'
-    || governor?.localModelAllowed !== true)
+    || governor?.localModelAllowed !== true || governor?.prepareLeaseActive !== false)
     reasons.push('VR_OR_GAMING_MODEL_PROTECTION_ACTIVE');
   if (!isParallelSeedGovernorSnapshotFreshV1(governor, nowMs))
     reasons.push('VR_GOVERNOR_SNAPSHOT_STALE_OR_UNPROVEN');

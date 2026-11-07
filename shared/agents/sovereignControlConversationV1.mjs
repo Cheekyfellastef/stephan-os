@@ -13,13 +13,20 @@ const INTENTS = new Set(['STATUS', 'CAPABILITIES', 'OBSERVE_CONTROL_SYSTEM', 'BU
 const HEALTH_CODES = new Set(['COMMANDER_HEALTH_UNVERIFIED', 'COMMANDER_HEALTH_IDENTITY_MISMATCH',
   'COMMANDER_HEALTH_TIMESTAMP_NOT_CURRENT', 'COMMANDER_HEALTH_NOT_READY', 'COMMANDER_HEALTH_HTTP_NOT_READY',
   'COMMANDER_HEALTH_RESPONSE_TOO_LARGE', 'COMMANDER_HEALTH_UNREACHABLE']);
-const TOPIC = /\b(?:sovereign commander|control tower|control-tower|sovereign(?=\s*[:,!?]|\s+(?:status|health|repair|fix|restore|resume|build|inspect|observe|diagnos\w*|help|meter|quota)\b))\b/i;
-const OPERATIONAL = /\b(?:status|health|working|running|awake|blocked|stopped|progress|latest|receipt|result|history|why|repair|fix|restore|resume|build|start|observe|inspect|diagnos\w*|check|capabilit\w*|help|what can|talk|meter|quota|model)\b/i;
+const TOPIC = /\b(?:sovereign commander|control tower|control-tower|sovereign(?=\s*[:,!?]|\s+(?:status|health|repair|fix|restore|resume|build|continue|keep|get|inspect|observe|diagnos\w*|help|meter|quota)\b))\b/i;
+const OPERATIONAL = /\b(?:status|health|working|running|awake|blocked|stopped|progress|latest|receipt|result|history|why|repair|fix|restore|resume|build(?:ing)?|continue|keep\s+going|start|observe|inspect|diagnos\w*|check|capabilit\w*|help|what can|talk|meter|quota|model)\b/i;
 const UNSUPPORTED = /\b(?:powershell|cmd\.exe|arbitrary shell|run shell|force[- ]?kill|force[- ]?push|reboot|shutdown|shut down|delete all|disable (?:custody|guard|approval)|bypass (?:custody|guard|approval)|install (?:a |the )?(?:driver|runtime|helper))\b/i;
-const EXPLANATORY = /\b(?:explain|describe|how does|how do|how would|what can|what is|what are|can you talk|can we talk|do not|don't|never)\b/i;
+const EXPLANATORY = /\b(?:explain(?:ing)?|explanation|describ(?:e|ing)|description|how\s+(?:does|do|would|can|could|should|to)|what\s+(?:can|is|are|would|could|should)|can\s+(?:you|we)\s+talk|do\s+not|don['’]t|never)\b/i;
 const STATUS_QUESTION = /\b(?:status|health|working|running|awake|blocked|stopped|progress|latest|receipt|result|history|why|when|last|previous)\b/i;
-const REPAIR_REQUEST = /^(?:(?:please|can you|could you|would you|will you|help me|prepare|request|run)\s+)*(?:repair|fix|restore|resume|build|start building|keep building)\b/i;
-const OBSERVE_REQUEST = /^(?:(?:please|can you|could you|would you|will you|prepare|request|run)\s+)*(?:inspect|diagnos\w*|observe|(?:a )?check|check (?:the )?(?:native|control|system))\b/i;
+const REQUEST_PREFIX = /^(?:(?:please|can (?:you|we)|could (?:you|we)|would you|will you|help me|prepare|request|run|let['’]?s|let us)\s+)*/i;
+const REPAIR_REQUEST = /^(?:repair|fix|restore|resume|build|start building|keep building)\b/i;
+const GET_WORKING_REQUEST = /^get\s+(?:stephanos|(?:the\s+)?(?:project|builders|control[ -]tower))\s+(?:working|building)\b/i;
+const CONDITIONAL_REQUEST = /\b(?:if|when|unless|until|after|before)\b|\bonce\s+\S/i;
+// Short continuation requests have no open-ended suffix: asking to continue an
+// explanation or to build when a future condition holds is not a build request.
+const CONTINUE_REQUEST = /^(?:keep\s+going|continue(?:\s+(?:building|repairing|working))?)(?:\s+(?:now|please))?[.!?]*$/i;
+const STATUS_NOUN_QUERY = /^(?:repair|build)\s+(?:status|health|progress|history|receipts?|results?|outcomes?)\b/i;
+const OBSERVE_REQUEST = /^(?:inspect|diagnos\w*|observe|(?:a )?check|check (?:the )?(?:native|control|system))\b/i;
 
 const text = (value, max = 160) => typeof value === 'string' && value.length <= max ? value.trim() : '';
 const code = value => typeof value === 'string' && CODE.test(value) ? value : '';
@@ -41,7 +48,8 @@ export function classifySovereignControlConversationV1(input = {}) {
   const direct = TARGETS.has(requestedTargetId);
   const prefix = typeof input.prompt === 'string' ? input.prompt.slice(0, 6000).trim() : '';
   const slash = /^\/(?:sovereign|control-tower|controltower)(?:\s|$)/i.test(prefix);
-  const addressed = direct || slash || (requestedTargetId === 'everyone' && TOPIC.test(prefix) && OPERATIONAL.test(prefix));
+  const addressed = direct || slash || (requestedTargetId === 'everyone' && TOPIC.test(prefix)
+    && (OPERATIONAL.test(prefix) || UNSUPPORTED.test(prefix)));
   // A pasted diagnostic must never fall through into a metered model merely
   // because its body exceeds this bounded control grammar.
   if (addressed && typeof input.prompt === 'string' && input.prompt.length > 6000)
@@ -53,11 +61,16 @@ export function classifySovereignControlConversationV1(input = {}) {
   if (!applies) return freeze({ applies: false, requestedTargetId, intent: null });
   const command = prompt.replace(/^\/(?:sovereign|control-tower|controltower)\s*/i, '')
     .replace(/^(?:(?:hey|hi)\s+)?(?:sovereign(?: commander)?|control[ -]tower)\s*[:,]?\s*/i, '').trim();
+  const request = command.replace(REQUEST_PREFIX, '');
   let intent = 'CAPABILITIES';
   if (UNSUPPORTED.test(prompt)) intent = 'UNSUPPORTED_OPERATION';
+  // Explicit repairs retain their intent when the object contains status words
+  // (for example, "fix the blocked build"). Noun queries stay observations.
+  else if (!EXPLANATORY.test(prompt) && !CONDITIONAL_REQUEST.test(request) && !STATUS_NOUN_QUERY.test(request)
+    && (REPAIR_REQUEST.test(request) || GET_WORKING_REQUEST.test(request) || CONTINUE_REQUEST.test(request)))
+    intent = 'BUILD_NEXT_ELIGIBLE_GOAL';
   else if (STATUS_QUESTION.test(prompt)) intent = 'STATUS';
-  else if (!EXPLANATORY.test(prompt) && REPAIR_REQUEST.test(command)) intent = 'BUILD_NEXT_ELIGIBLE_GOAL';
-  else if (!EXPLANATORY.test(prompt) && OBSERVE_REQUEST.test(command)) intent = 'OBSERVE_CONTROL_SYSTEM';
+  else if (!EXPLANATORY.test(prompt) && OBSERVE_REQUEST.test(request)) intent = 'OBSERVE_CONTROL_SYSTEM';
   return freeze({ applies: true, requestedTargetId, intent });
 }
 

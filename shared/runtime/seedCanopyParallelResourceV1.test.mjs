@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkParallelSeedModelResourceV1, isParallelSeedGovernorSnapshotFreshV1, isParallelSeedLocalWorkAllowedV1, SEED_PARALLEL_TARGET_WRITE_CUSTODY_IMPLEMENTED } from './seedCanopyParallelResourceV1.mjs';
+import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
+import { checkParallelSeedModelResourceV1, isParallelSeedGovernorSnapshotFreshV1, isParallelSeedLocalWorkAllowedV1, SEED_PARALLEL_ROUTER_GOVERNOR_CUSTODY_IMPLEMENTED, SEED_PARALLEL_TARGET_WRITE_CUSTODY_IMPLEMENTED } from './seedCanopyParallelResourceV1.mjs';
 
 test('source write custody remains uncommissioned independently of model residency', () => {
   assert.equal(SEED_PARALLEL_TARGET_WRITE_CUSTODY_IMPLEMENTED, false);
@@ -88,6 +90,137 @@ test('local work requires explicit inactive gaming preparation lease evidence', 
   const missing = { ...idle };
   delete missing.prepareLeaseActive;
   assert.equal(isParallelSeedLocalWorkAllowedV1(missing, NOW), false);
+});
+
+const preparationLeaseCases = [
+  ['inactive', false], ['active', true], ['undefined', undefined], ['null', null],
+  ['string', 'false'], ['number', 0], ['object', {}], ['array', []], ['absent'],
+];
+
+function preparationLeaseGovernor([name, value]) {
+  const governor = { ...idle, prepareLeaseActive: value };
+  if (name === 'absent') delete governor.prepareLeaseActive;
+  return governor;
+}
+
+test('model preflight identifies unsafe preparation leases independently of the custody hold', async (t) => {
+  assert.equal(SEED_PARALLEL_ROUTER_GOVERNOR_CUSTODY_IMPLEMENTED, false);
+  for (const leaseCase of preparationLeaseCases) {
+    await t.test(leaseCase[0], () => {
+      const result = checkParallelSeedModelResourceV1({
+        governor: preparationLeaseGovernor(leaseCase),
+        modelInventory: loaded, selectedModel: 'qwen3-coder:30b', nowMs: NOW,
+      });
+      assert.equal(result.ok, false, 'production residency custody stays uncommissioned');
+      assert.ok(result.reasonCodes.includes('RESIDENT_ROUTER_GOVERNOR_CUSTODY_UNIMPLEMENTED'));
+      assert.equal(result.reasonCodes.includes('VR_OR_GAMING_MODEL_PROTECTION_ACTIVE'),
+        leaseCase[0] !== 'inactive', 'custody denial must not conceal a missing lease decision');
+    });
+  }
+});
+
+async function runInferenceWatcherFixture(watcherMs, {
+  governors = [idle], readError = false, reconcileError = false, ticks = 1,
+} = {}) {
+  const worker = await readFile(new URL('../../scripts/seed-canopy-parallel-builder.mjs', import.meta.url), 'utf8');
+  const start = worker.indexOf('async function localModelWrite(');
+  const end = worker.indexOf('\nasync function safeTarget(', start);
+  assert.ok(start >= 0 && end > start, 'exercise the complete existing inference function');
+  const callbacks = new Map();
+  const clearedIntervals = [];
+  const clearedTimeouts = [];
+  let reads = 0, reconciles = 0, signal;
+  const proposal = { path: 'docs/fixture.md', content: '# Fixture\n' };
+  // Run the actual inference function with bounded in-memory dependencies.
+  // The preflight stub isolates its running-inference watchers; it neither
+  // changes the production custody constants nor starts a model or Windows command.
+  const localModelWrite = runInNewContext('(' + worker.slice(start, end) + ')', {
+    localModelPreflight: async () => ({ model: 'fixture-model', port: 8080 }),
+    AbortController,
+    setTimeout: () => 120000,
+    clearTimeout: (id) => clearedTimeouts.push(id),
+    setInterval: (callback, ms) => { callbacks.set(ms, callback); return ms; },
+    clearInterval: (id) => clearedIntervals.push(id),
+    process: { platform: 'win32' },
+    repoRoot: '/fixture', governorFile: '/fixture/governor.json',
+    join: (...parts) => parts.join('/'),
+    readFile: async () => {
+      const governor = governors[Math.min(reads++, governors.length - 1)];
+      if (readError) throw new Error('fixture governor read failure');
+      return JSON.stringify(governor);
+    },
+    processExec: async () => {
+      reconciles += 1;
+      if (reconcileError) throw new Error('fixture reconcile failure');
+    },
+    isParallelSeedGovernorSnapshotFreshV1: (governor) =>
+      isParallelSeedGovernorSnapshotFreshV1(governor, NOW),
+    fetch: async (_url, options) => {
+      signal = options.signal;
+      assert.deepEqual([...callbacks.keys()].sort((a, b) => a - b), [500, 15000]);
+      for (let tick = 0; tick < ticks; tick += 1) await callbacks.get(watcherMs)();
+      if (signal.aborted) throw new Error('fixture request aborted');
+      return { ok: true, json: async () => ({ choices: [{ text: JSON.stringify(proposal) }] }) };
+    },
+    parseParallelSeedModelResponseV1: (text) => JSON.parse(text),
+  }, { timeout: 1000 });
+  let result, error = '';
+  try {
+    result = await localModelWrite(
+      { targetPath: proposal.path, intent: 'fixture only' }, '',
+      { title: 'Fixture', seedId: 'fixture', issue: '#3096', source: 'fixture' },
+      { model: 'fixture-model', port: 8080 },
+    );
+  } catch (caught) {
+    error = caught.message;
+  }
+  assert.deepEqual(clearedIntervals.sort((a, b) => a - b), [500, 15000]);
+  assert.deepEqual(clearedTimeouts, [120000]);
+  return { result, error, aborted: signal?.aborted, reads, reconciles, proposal };
+}
+
+for (const [watcherName, watcherMs] of [['gameWatch', 500], ['refreshWatch', 15000]]) {
+  test(watcherName + ' aborts unsafe preparation leases and continues only on explicit false', async (t) => {
+    for (const leaseCase of preparationLeaseCases) {
+      await t.test(leaseCase[0], async () => {
+        const observed = await runInferenceWatcherFixture(watcherMs, {
+          governors: [preparationLeaseGovernor(leaseCase)],
+        });
+        const allowed = leaseCase[0] === 'inactive';
+        assert.equal(observed.aborted, !allowed);
+        assert.equal(observed.error, allowed ? '' : 'GAME_PRIORITY_ABORTED_LOCAL_INFERENCE');
+        assert.deepEqual(observed.result, allowed ? observed.proposal : undefined);
+        assert.equal(observed.reads, 1);
+        assert.equal(observed.reconciles, watcherMs === 15000 ? 1 : 0);
+      });
+    }
+    await t.test('new active lease aborts after an allowed tick', async () => {
+      const observed = await runInferenceWatcherFixture(watcherMs, {
+        governors: [idle, { ...idle, prepareLeaseActive: true }], ticks: 2,
+      });
+      assert.equal(observed.aborted, true);
+      assert.equal(observed.error, 'GAME_PRIORITY_ABORTED_LOCAL_INFERENCE');
+      assert.equal(observed.result, undefined);
+      assert.equal(observed.reads, 2);
+      assert.equal(observed.reconciles, watcherMs === 15000 ? 2 : 0);
+    });
+    await t.test('unreadable governor aborts', async () => {
+      const observed = await runInferenceWatcherFixture(watcherMs, { readError: true });
+      assert.equal(observed.aborted, true);
+      assert.equal(observed.error, watcherMs === 500
+        ? 'GAME_PRIORITY_GOVERNOR_TRUTH_UNAVAILABLE' : 'GAME_PRIORITY_GOVERNOR_LIVE_REFRESH_FAILED');
+      assert.equal(observed.result, undefined);
+    });
+  });
+}
+
+test('refreshWatch aborts a failed canonical reconcile before reading advisory state', async () => {
+  const observed = await runInferenceWatcherFixture(15000, { reconcileError: true });
+  assert.equal(observed.aborted, true);
+  assert.equal(observed.error, 'GAME_PRIORITY_GOVERNOR_LIVE_REFRESH_FAILED');
+  assert.equal(observed.result, undefined);
+  assert.equal(observed.reads, 0);
+  assert.equal(observed.reconciles, 1);
 });
 
 test('direct autoload-capable Ollama generation is not an admissible Seed Forge route', async () => {

@@ -1,4 +1,60 @@
-# Pure decision policy, shared by production and native fixture tests.
+# Pure recovery decisions plus the bounded attended-child observation adapter.
+# Ordinary watchdog inventory remains in its unchanged reviewed helper.
+function Assert-StephanosCoreAbsentInventoryPair {
+    param($Before, $After, [double]$ElapsedSeconds)
+    if ([double]::IsNaN($ElapsedSeconds) -or [double]::IsInfinity($ElapsedSeconds) -or
+        $ElapsedSeconds -lt 0 -or $ElapsedSeconds -gt 10) { throw 'CORE_RECOVERY_INVENTORY_EXPIRED' }
+    foreach ($capture in @($Before, $After)) {
+        if ($null -eq $capture -or $capture.inventory.complete -isnot [bool] -or
+            -not $capture.inventory.complete -or $capture.inventory.processCount -isnot [int] -or
+            $capture.inventory.processCount -ne 0 -or $capture.identities -isnot [hashtable] -or
+            $capture.identities.Count -gt 128) { throw 'CORE_PROCESS_INVENTORY_UNPROVEN' }
+        foreach ($key in $capture.identities.Keys) {
+            if ($key -isnot [string] -or $key -cnotmatch '^[1-9][0-9]{0,9}$' -or
+                $capture.identities[$key] -isnot [string] -or
+                [string]::IsNullOrWhiteSpace($capture.identities[$key])) { throw 'CORE_RECOVERY_PROCESS_IDENTITY_UNPROVEN' }
+        }
+    }
+    if ($Before.identities.Count -ne $After.identities.Count) { throw 'CORE_RECOVERY_PROCESS_SET_CHANGED' }
+    foreach ($key in $Before.identities.Keys) {
+        if (-not $After.identities.ContainsKey($key) -or
+            $Before.identities[$key] -cne $After.identities[$key]) { throw 'CORE_RECOVERY_PROCESS_IDENTITY_CHANGED' }
+    }
+}
+
+function Assert-StephanosCoreLockAbsent {
+    param([Parameter(Mandatory = $true)][string]$LockPath)
+    try { [void][IO.File]::GetAttributes($LockPath) }
+    catch [IO.FileNotFoundException] { return }
+    catch [IO.DirectoryNotFoundException] { return }
+    # Access denied, malformed paths and all other failures remain unknown.
+    throw 'CORE_RECOVERY_LOCK_NOT_ABSENT'
+}
+
+function Assert-StephanosCoreAttendedChildContinuation {
+    param($Child, [double]$ElapsedSeconds, [DateTime]$AttemptUtc,
+        [DateTime]$NowUtc, [int]$ExpectedPid, [DateTime]$ExpectedStartedUtc)
+    if ($null -eq $Child -or -not $Child.HasExited -or $Child.ExitCode -isnot [int] -or
+        $Child.ExitCode -ne 0 -or [double]::IsNaN($ElapsedSeconds) -or
+        [double]::IsInfinity($ElapsedSeconds) -or $ElapsedSeconds -lt 0 -or
+        $ElapsedSeconds -gt 120) { throw 'CORE_RECOVERY_CHILD_BLOCKED_OR_EXPIRED' }
+    # ExitTime/StartTime are read from the actual Process returned by this
+    # parent's fixed RunAs launch. No receipt or caller-supplied PID is loaded.
+    if ($ExpectedPid -le 0 -or $Child.Id -ne $ExpectedPid -or
+        $Child.StartTime -isnot [DateTime] -or $Child.ExitTime -isnot [DateTime] -or
+        $AttemptUtc.Kind -ne [DateTimeKind]::Utc -or $NowUtc.Kind -ne [DateTimeKind]::Utc -or
+        $ExpectedStartedUtc.Kind -ne [DateTimeKind]::Utc) { throw 'CORE_RECOVERY_CHILD_IDENTITY_UNPROVEN' }
+    $started = $Child.StartTime.ToUniversalTime()
+    $exited = $Child.ExitTime.ToUniversalTime()
+    $age = ($NowUtc - $exited).TotalSeconds
+    $wallElapsed = ($NowUtc - $AttemptUtc).TotalSeconds
+    if ($started -ne $ExpectedStartedUtc -or $started -lt $AttemptUtc -or
+        $exited -lt $started -or $age -lt 0 -or $age -gt 4.9 -or
+        [Math]::Abs($wallElapsed - $ElapsedSeconds) -gt 0.1) {
+        throw 'CORE_RECOVERY_CHILD_BLOCKED_OR_EXPIRED'
+    }
+}
+
 function Test-StephanosRecoveredCoreHeartbeat {
     param($Lock, $Status, [int]$StartedPid, [string]$ExpectedHead, [DateTime]$AttemptUtc, [DateTime]$NowUtc)
     try {
@@ -44,4 +100,28 @@ function Invoke-StephanosCoreLockRetirement {
     if ($after.bootUtc -ne $before.bootUtc) { throw 'CORE_RECOVERY_BOOT_CHANGED' }
     Assert-StephanosCoreLockRecoveryEvidence -Lock $lock -Digest $Handle.Digest -ExpectedDigest $ExpectedDigest -Observation $after.inventory -BootUtc $after.bootUtc -NowUtc $after.nowUtc -CreatedUtc $Handle.CreatedUtc -WrittenUtc $Handle.WrittenUtc -LockPidPresent $after.pidPresent
     $Handle.Commit($ExpectedDigest)
+}
+
+# Attended native child only. Never serialized into a startup grant. The
+# ordinary watchdog continues to use its original complete-inventory gate.
+function Get-StephanosCoreProcessIdentityObservation {
+    param([Parameter(Mandatory = $true)][string]$CoreScript)
+    $rows = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction Stop)
+    if ($rows.Count -gt 128) { throw 'CORE_RECOVERY_INVENTORY_BOUND_EXCEEDED' }
+    $inventory = ConvertTo-StephanosCoreProcessObservation -ProcessRows $rows -ObservationSucceeded $true -CoreScript $CoreScript
+    if (-not $inventory.complete -or $inventory.processCount -ne 0) { throw 'CORE_RECOVERY_INVENTORY_NOT_EMPTY' }
+    $identities = @{}
+    foreach ($row in $rows) {
+        if ($row.Name -ine 'node.exe' -or $null -eq $row.CreationDate -or
+            $row.CreationDate -isnot [DateTime] -or $row.ProcessId -le 0 -or
+            [string]::IsNullOrWhiteSpace([string]$row.ExecutablePath) -or
+            [string]::IsNullOrWhiteSpace([string]$row.CommandLine)) { throw 'CORE_RECOVERY_PROCESS_IDENTITY_UNPROVEN' }
+        $key = [string]$row.ProcessId
+        if ($identities.ContainsKey($key)) { throw 'CORE_RECOVERY_DUPLICATE_PROCESS_IDENTITY' }
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $commandDigest = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$row.CommandLine)))).Replace('-', '').ToLowerInvariant() }
+        finally { $sha.Dispose() }
+        $identities[$key] = $row.CreationDate.ToUniversalTime().ToString('o') + '|' + [string]$row.ExecutablePath + '|' + $commandDigest
+    }
+    [pscustomobject]@{ inventory = $inventory; identities = $identities }
 }
