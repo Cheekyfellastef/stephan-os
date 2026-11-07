@@ -59,7 +59,9 @@ test('actual pre-child guard refusal survives relay persistence into the existin
   const statePath = join(root, 'state.json');
   const deferredPath = join(root, 'receipt-publication-deferred-v1.json');
   const childRunnerPath = join(root, 'inert-child.mjs');
+  const receiptRoot = join(root, 'canonical-receipts');
   const now = new Date('2026-11-07T15:20:00.000Z');
+  mkdirSync(receiptRoot, { recursive: true });
   writeFileSync(childRunnerPath, '// injected child is never invoked\n');
   writeFileSync(statePath, JSON.stringify({ pendingReceiptPublications: {
     opaqueAuthorityDebt: ['PRIVATE_PUBLICATION_SENTINEL', { privateDetail: 'PRIVATE_RECORD_SENTINEL' }],
@@ -68,7 +70,7 @@ test('actual pre-child guard refusal survives relay persistence into the existin
   let invocations = 0;
   const guard = runMailboxOutboxGuard({
     platform: 'win32', repoRoot: root, now: () => now,
-    pathOverrides: { actualRepoRoot: root, expectedRepoRoot: root, statePath, deferredPath, childRunnerPath },
+    pathOverrides: { actualRepoRoot: root, expectedRepoRoot: root, statePath, deferredPath, childRunnerPath, receiptRoot },
     processIdentityFn: () => ({ state: 'known', bootId: 'fixture-boot-current', processStartId: 'fixture-process-current' }),
     spawnSyncFn: () => { invocations++; throw Error('must not invoke'); },
   });
