@@ -24,6 +24,7 @@ const PATH = WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1[0];
 const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: 'ae71e1e79ead63efeb5a4d73f4bce6a01ee0f1d9', size: 48838 }),
   Object.freeze({ blobSha: '9513dfe995a35087e1d715ef0c4dff4ca3578295', size: 49674 }),
+  Object.freeze({ blobSha: '5d9af55d09c4cdd11b3ea264afa4d8ca67ef3913', size: 51644 }),
 ]);
 
 const text = (value) => String(value ?? '').trim();
@@ -125,6 +126,13 @@ function reviewGovernor(source, findings) {
     ['Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop', 'vr-governor-bounded-runtime-suppression-missing', 'The exact source contract permits only observed-PID stopping inside real-VR Ollama suppression.'],
     ["@($prepared.loadedModelsAfter).Count -gt 0", 'vr-governor-prepare-loaded-model-failclose-missing', 'VR preparation must fail closed if any model remains loaded.'],
     ["$prepared.zeroLocalModelInvariant -ne $true", 'vr-governor-prepare-invariant-failclose-missing', 'VR preparation must fail closed when zero-model proof is absent.'],
+    ["$RequestedProfileName -eq 'review-large-context'", 'vr-governor-reviewer-profile-not-fixed', 'Large-context reviewer reservation must use the fixed profile identity.'],
+    ["$process -eq 'SovereignReviewer'", 'vr-governor-reviewer-process-not-fixed', 'Large-context reservation must remain bound to SovereignReviewer.'],
+    ["$custom = if ($reviewerReservation) { $null } else { Get-ProfileOverride -RequestedProcessName $process }", 'vr-governor-reviewer-custom-profile-forbidden', 'Reviewer reservation must never inherit caller profile overrides.'],
+    ["phase = 'REVIEWING'", 'vr-governor-reviewer-phase-missing', 'Reviewer reservation must publish a distinct non-gaming REVIEWING phase.'],
+    ["reason = 'reviewer-resource-reservation'", 'vr-governor-reviewer-reason-missing', 'Reviewer reservation must publish its fixed bounded reason.'],
+    ["$ProfileName -eq 'review-large-context'", 'vr-governor-reviewer-prepare-gate-missing', 'PrepareGaming must separately verify the fixed reviewer reservation.'],
+    ["$ProcessName -ne 'SovereignReviewer' -or", 'vr-governor-reviewer-prepare-process-failclose-missing', 'Reviewer preparation must fail closed for any other process identity.'],
   ]) requireLiteral(findings, source, literal, code, summary);
 
   requirePattern(
@@ -133,6 +141,27 @@ function reviewGovernor(source, findings) {
     /if \(\$RequestedProfileName -eq 'vr-maximum'\)[\s\S]{0,500}\$parkAllModels = \$true/,
     'vr-governor-requested-vr-profile-not-park-all',
     'An explicitly requested VR maximum profile must force park-all behavior.',
+  );
+  requirePattern(
+    findings,
+    source,
+    /\$reviewerReservation = \[bool\]\([\s\S]{0,260}\$RequestedProfileName -eq 'review-large-context'[\s\S]{0,260}\$process -eq 'SovereignReviewer'[\s\S]{0,260}-not \$Signal\.active[\s\S]{0,260}\)/,
+    'vr-governor-reviewer-reservation-not-closed',
+    'Reviewer reservation must require the fixed profile, fixed process and an idle gaming signal.',
+  );
+  requirePattern(
+    findings,
+    source,
+    /if \(\$Signal\.active\) \{[\s\S]{0,180}Clear-PrepareLease[\s\S]{0,500}phase = 'GAMING'[\s\S]{0,1200}phase = 'REVIEWING'/,
+    'vr-governor-gaming-not-ahead-of-reviewer',
+    'A real game/headset signal must clear preparation and win before REVIEWING can be projected.',
+  );
+  requirePattern(
+    findings,
+    source,
+    /\[string\]\$profile\.name -eq 'review-large-context'[\s\S]{0,180}\[string\]\$profile\.processName -eq 'SovereignReviewer'[\s\S]{0,220}phase = 'REVIEWING'[\s\S]{0,160}active = \$false/,
+    'vr-governor-reviewer-effective-state-widened',
+    'REVIEWING must remain an inactive fixed-profile reservation rather than gaming authority.',
   );
   requirePattern(
     findings,

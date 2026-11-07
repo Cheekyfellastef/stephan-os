@@ -19,37 +19,11 @@ function blobSha(content) {
   return createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex');
 }
 
-// Use the actual preserved governor, not a bag of literals that omits its
-// executable control flow. Both fixture identities are authenticated source
-// blobs from ca89e8b0 and c90b7caa; neither is runtime/qualification evidence.
-const source = await readFile(new URL('../../scripts/windows/run-vr-resource-governor.ps1', import.meta.url), 'utf8');
-const idleStart = source.indexOf('    # Keep an independently observed idle-state heartbeat fresh');
-const idleEnd = idleStart < 0 ? -1 : source.indexOf('    if ($phaseChanged', idleStart);
-const mainGovernor = idleStart < 0 ? source
-  : (source.slice(0, idleStart) + '\n' + source.slice(idleEnd))
-    .replace(' -or $idleHeartbeatDue', '');
-const idleAddition = [
-  '    # Keep an independently observed idle-state heartbeat fresh for bounded',
-  '    # GPU/CPU model admission. Without this, Watch refreshes its JSON only on',
-  "    # transitions and a safe idle state ages past the reviewer's 30s window.",
-  '    # The watcher still scans game/headset signals on every tick BEFORE this.',
-  '    $idleHeartbeatDue = $false',
-  '    if (-not $effective.active) {',
-  '        try {',
-  '            $observedUtc = [DateTime]::Parse(',
-  '                [string]$prior.updatedAtUtc,',
-  '                [System.Globalization.CultureInfo]::InvariantCulture,',
-  '                [System.Globalization.DateTimeStyles]::RoundtripKind',
-  '            ).ToUniversalTime()',
-  '            $idleHeartbeatDue = ($now.ToUniversalTime() - $observedUtc).TotalSeconds -ge 15',
-  '        } catch {',
-  '            $idleHeartbeatDue = $true',
-  '        }',
-  '    }',
-].join('\n') + '\n';
-const guardStatement = '    $guardDue = $effective.active -and ($now - $lastGuardAt).TotalSeconds -ge $guardIntervalSeconds\n';
-const governor = mainGovernor.replace(guardStatement, guardStatement + idleAddition)
-  .replace('$processChanged -or $guardDue)', '$processChanged -or $guardDue -or $idleHeartbeatDue)');
+// Use the exact current reviewed governor as the adversarial mutation base.
+// Historic complete-source registrations remain retained by production code.
+// This candidate registration is still a protected self-change and the
+// separate bootstrap regression at the end of this file must keep holding.
+const governor = await readFile(new URL('../../scripts/windows/run-vr-resource-governor.ps1', import.meta.url), 'utf8');
 
 function input(content = governor, overrides = {}) {
   return {
@@ -92,12 +66,12 @@ function rejects(content) {
   assert.equal(result.runtimeMutationAllowed, false);
 }
 
-test('fixtures preserve exact current-main and original idle-repair source blobs', () => {
-  assert.equal(blobSha(mainGovernor), 'ae71e1e79ead63efeb5a4d73f4bce6a01ee0f1d9');
-  assert.equal(blobSha(governor), '9513dfe995a35087e1d715ef0c4dff4ca3578295');
+test('fixture preserves exact current reviewer governor source blob', () => {
+  assert.equal(blobSha(governor), '5d9af55d09c4cdd11b3ea264afa4d8ca67ef3913');
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 51644);
 });
 
-for (const [name, content] of [['current main', mainGovernor], ['existing idle repair', governor]]) {
+for (const [name, content] of [['current reviewer governor', governor]]) {
   test(name + ' retains the registered current protection contracts without granting authority', () => {
     const result = analyzeWindowsAuthorityVrResourceGovernorReviewV1(input(content));
     assert.equal(result.eligible, true);
