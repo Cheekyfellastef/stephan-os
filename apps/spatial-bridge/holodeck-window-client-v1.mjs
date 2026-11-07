@@ -1,7 +1,7 @@
 // One explicit local desktop connection; images and keystrokes are never logged
 // or sent through Stephanos telemetry, GitHub, a relay, or an AI provider API.
 export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRef=globalThis.document,
-  locationRef=globalThis.location,onChange=()=>{},setTimer=setTimeout,clearTimer=clearTimeout,sessionStore=globalThis.sessionStorage}={}) {
+  locationRef=globalThis.location,navigatorRef=globalThis.navigator,onChange=()=>{},setTimer=setTimeout,clearTimer=clearTimeout,sessionStore=globalThis.sessionStorage}={}) {
   const endpoint=`http://127.0.0.1:${locationRef?.port==='4174'?4184:4180}`;
   // Diagnostic only: this never starts a native service or binds a window.
   async function probeHelper(){
@@ -18,10 +18,71 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
   }
   let image=null,epoch=0,refreshPromise=null;
   let token=null,active=false,disposed=false,generation=0,serial=0,sequence=0,timer=null,queue=[],busy=false;
+  let sharedStream=null,sharedVideo=null,sharedFrame=null,sharedTimer=null;
   const storageKey='stephanos.spatial-window.session.v1';
   try{const saved=sessionStore?.getItem(storageKey);if(/^[a-f0-9]{64}$/.test(saved??''))token=saved;}catch{}
   let state={status:'idle',message:'Connect your ChatGPT or Codex window.',inputStatus:'',windows:[],title:'',revision:0};
   function publish(changes){state={...state,...changes,revision:state.revision+1};try{onChange({...state});}catch{}}
+  function stopShared(){
+    if(sharedTimer!==null)clearTimer(sharedTimer);
+    sharedTimer=null;
+    const stream=sharedStream,video=sharedVideo;
+    sharedStream=null;sharedVideo=null;sharedFrame=null;
+    for(const track of stream?.getTracks?.()??[])try{track.stop();}catch{}
+    if(video)try{video.pause?.();video.srcObject=null;}catch{}
+  }
+  // Local browser capture is an explicit view-only alternative when the
+  // independently installed native 4180 adapter is not ready. No window input
+  // or remote streaming is granted by a display capture permission.
+  async function shareScreen(){
+    const hostname=String(locationRef?.hostname||'').toLowerCase();
+    if(disposed||!['127.0.0.1','localhost'].includes(hostname)){
+      publish({inputStatus:'Desktop sharing is available only in the PC local Spatial Workspace.'});return false;
+    }
+    const media=navigatorRef?.mediaDevices;
+    if(typeof media?.getDisplayMedia!=='function'){
+      publish({inputStatus:'This browser cannot share a window. Use the reviewed Windows Spatial shortcut for the native console.'});return false;
+    }
+    const startingEpoch=epoch;
+    let stream;
+    // This call must happen immediately inside the real button click. Never
+    // invoke the browser picker automatically or restore an old capture grant.
+    try {stream=await media.getDisplayMedia({video:true,audio:false});}
+    catch {publish({inputStatus:'Window sharing was cancelled or blocked. No screen was connected.'});return false;}
+    const endStream=()=>{for(const track of stream?.getTracks?.()??[])try{track.stop();}catch{}};
+    if(disposed||startingEpoch!==epoch){endStream();return false;}
+    const track=stream?.getVideoTracks?.()[0];
+    if(!track||track.readyState==='ended'){endStream();publish({inputStatus:'Window capture provided no live picture.'});return false;}
+    await stop(); // Revoke any old native session before accepting a new view.
+    const current=epoch;
+    let video;
+    try {
+      video=documentRef.createElement('video');
+      video.muted=true;video.autoplay=true;video.playsInline=true;
+      video.srcObject=stream;
+      await video.play();
+    }catch{
+      endStream();publish({status:'unavailable',message:'The browser could not display the selected window.'});return false;
+    }
+    if(disposed||current!==epoch){endStream();video.pause?.();video.srcObject=null;return false;}
+    sharedStream=stream;sharedVideo=video;
+    sharedFrame={drawable:video,get naturalWidth(){return video.videoWidth;},get naturalHeight(){return video.videoHeight;}};
+    const label='Shared PC window visible on the hologram (view-only). Native helper required for typing and clicking.';
+    const frameTick=()=>{
+      if(sharedStream!==stream||disposed||current!==epoch)return;
+      if(track.readyState==='ended'){
+        stopShared();publish({status:'idle',message:'Browser window sharing ended.',inputStatus:''});return;
+      }
+      const ready=Number.isFinite(video.videoWidth)&&video.videoWidth>0&&Number.isFinite(video.videoHeight)&&video.videoHeight>0;
+      publish({status:ready?'view-only':'waiting',message:ready?label:'Waiting for the selected window to draw.',inputStatus:''});
+      sharedTimer=setTimer(frameTick,100);
+    };
+    track.addEventListener?.('ended',()=>{
+      if(sharedStream===stream){stopShared();publish({status:'idle',message:'Browser window sharing ended.',inputStatus:''});}
+    },{once:true});
+    frameTick();
+    return true;
+  }
   function showWindows(windows,message){
     windows=Array.isArray(windows)?windows:[];
     publish({status:'selecting',windows,message:message??(windows.length
@@ -43,6 +104,7 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     const data=await response.json();if(!response.ok)throw new Error(data.status);return data;
   }
   async function stop() {
+    stopShared();
     epoch++;active=false;clearTimer(timer);refreshPromise=null;queue=[];generation=0;serial=0;busy=false;
     let old=token;
     if(!old)try{old=sessionStore?.getItem(storageKey);}catch{}
@@ -121,10 +183,12 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     }catch{if(current===epoch){active=false;generation=0;queue=[];image=null;publish({status:'unavailable',inputStatus:'Input paused. Reconnect the selected app.',message:'Window connection lost. Your conversation remains in the original app.'});}}
   }
   function input(value){
+    if(sharedStream){publish({inputStatus:'View-only capture: connect the native Windows helper to type or click.'});return false;}
     if(!active||!generation||state.status!=='live'||queue.length>=16){publish({inputStatus:'Input paused. Wait for a live connection.'});return false;}
     queue.push({...value,generation});publish({inputStatus:'Sending input to the selected app.'});return true;
   }
-  return {discover,connect,stop,input,probeHelper,getState:()=>({...state}),getFrame:()=>state.status==='live'?image:null,
+  return {discover,connect,shareScreen,stop,input,probeHelper,getState:()=>({...state}),
+    getFrame:()=>sharedStream&&sharedFrame?.naturalWidth>0&&sharedFrame?.naturalHeight>0?sharedFrame:state.status==='live'?image:null,
     // A cached page retains this client. Revoke access on departure, but allow
     // an explicit new connection after Back/Forward restores the page.
     pagehide({persisted=false}={}){if(!persisted)disposed=true;return stop();},

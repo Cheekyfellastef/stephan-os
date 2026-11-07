@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stephanos-spatial-workspace-v1-carry-walk-v6';
+const CACHE_NAME = 'stephanos-spatial-workspace-v1-consented-window-v7';
 const CACHE_PREFIX = 'stephanos-spatial-workspace-v1-';
 const CORE_ASSETS = [
   './',

@@ -100,11 +100,13 @@
       <h2>Holographic console</h2>
       <p>Connect your existing ChatGPT or Codex window on this Windows PC. Use Quest Link / Air Link for VR. Its conversation, images, tools and approvals stay in the original app.</p>
       <div class="controls">
-        <button id="choose-window" type="button">Choose window</button>
+        <button id="choose-window" type="button">Connect interactive ChatGPT window</button>
+        <button id="share-window" type="button">Show ChatGPT window (view only)</button>
         <select id="desktop-window" aria-label="Desktop window" hidden></select>
         <button id="connect-window" type="button" hidden>Connect selected window</button>
         <button id="disconnect-window" type="button">Disconnect</button>
       </div>
+      <p class="muted">On the Battle Bridge, “Show ChatGPT window” opens the browser's sharing picker. Select your actual ChatGPT window. Its picture stays local and is view-only until the original Windows helper is installed and authorised for clicks and typing. On phone and iPad, the 3D preview still works, but it cannot remotely capture your PC's ChatGPT window.</p>
       <p id="window-status" role="status">No window connected.</p>
       <p id="window-input-status" class="muted" role="status"></p>
       <p class="muted">In VR, point and press Quest trigger or Xbox A to click the screen or type on the console keyboard. The sticks still move and turn; grip / RT still picks up cubes. Audio uses the original app and your PC headset microphone and speakers.</p>
@@ -243,8 +245,10 @@
     const client=createHolodeckWindowClient({onChange:state=>{
       document.getElementById('window-status').textContent=state.message;
       document.getElementById('audio-connection-status').textContent=state.status==='live'
-        ?'ChatGPT/Codex harness screen connected: '+state.title+'. Its original Voice button is shown in that window.'
-        :'ChatGPT harness not connected: '+state.message;
+        ?'Interactive desktop window connected: '+state.title+'. Its original Voice button is shown in that window.'
+        :state.status==='view-only'
+          ?'Live PC window visible on the hologram (view-only). Native helper required for pointer and keyboard actions.'
+          :'ChatGPT harness not connected: '+state.message;
       windowSelector.hidden=state.status!=='selecting';
       connectWindowButton.hidden=state.status!=='selecting';
       windowSelector.disabled=!state.windows.length;
@@ -303,9 +307,12 @@
       consoleDetails.scrollIntoView({block:'center',behavior:'auto'});
       const state=client.getState();
       document.getElementById('audio-connection-status').textContent=state.status==='live'
-        ?'Real ChatGPT/Codex screen visible. Use its own Voice button.':'Connect the original ChatGPT/Codex window first.';
+        ?'Real interactive ChatGPT/Codex screen visible. Use its own Voice button.'
+        :state.status==='view-only'?'Real selected window visible, but interaction requires the native Windows helper.'
+          :'Connect the original ChatGPT/Codex window first.';
     });
     document.getElementById('choose-window').addEventListener('click',()=>client.discover());
+    document.getElementById('share-window').addEventListener('click',()=>{void client.shareScreen();});
     windowSelector.addEventListener('change',()=>{connectWindowButton.disabled=!windowSelector.value;});
     connectWindowButton.addEventListener('click',()=>client.connect(Number(windowSelector.value)));
     document.getElementById('disconnect-window').addEventListener('click',()=>client.stop());

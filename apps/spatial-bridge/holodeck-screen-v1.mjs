@@ -53,9 +53,10 @@ export function createHolodeckScreen({client,comfort,documentRef=globalThis.docu
   const getKeycapMotion=()=>lastKeyPress?{id:lastKeyPress.id,ageMs:now()-lastKeyPress.at}:null;
   const changed=()=>{revision++;try{onStatus(getState());}catch{}};
   function appInputBlocker(state,viewPainted=false){
-    const reason=!client.getFrame()?'connection':voiceHelp?'audio-help':reloadConfirm?'reload':viewPending&&!viewPainted?'view-pending':null;
+    const reason=state.status==='view-only'?'view-only':!client.getFrame()?'connection':voiceHelp?'audio-help':reloadConfirm?'reload':viewPending&&!viewPainted?'view-pending':null;
     if(!reason)return null;
-    const message=reason==='audio-help'?'Input paused. Close Audio help to use the connected app.':
+    const message=reason==='view-only'?'The shared window is view-only. Connect the native Windows helper to use the keyboard or click.':
+      reason==='audio-help'?'Input paused. Close Audio help to use the connected app.':
       reason==='reload'?'Input paused. Press Fit to cancel Reload before using the app.':
       reason==='view-pending'?'Input paused. Wait for the updated view.':
       state.status==='unavailable'?'Input paused. Reconnect the selected app.':
@@ -141,7 +142,7 @@ export function createHolodeckScreen({client,comfort,documentRef=globalThis.docu
     const image=client.getFrame();
     if(image&&!voiceHelp&&!reloadConfirm) {
       const r=screenImageRect(image.naturalWidth,image.naturalHeight,zoom,panX,panY),crop=r.crop;
-      ctx.drawImage(image,crop.x,crop.y,crop.w,crop.h,r.x,r.y,r.w,r.h);
+      ctx.drawImage(image.drawable??image,crop.x,crop.y,crop.w,crop.h,r.x,r.y,r.w,r.h);
     } else {
       text(ctx,reloadConfirm?'SAVE & RELOAD ROOM':voiceHelp?'AUDIO HELP / HEADSET SETUP':'YOUR WORKSPACE, EXPANDED',160,290,82,'#eefcff');
       const lines=reloadConfirm?[
