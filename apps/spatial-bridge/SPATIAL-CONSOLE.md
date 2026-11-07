@@ -85,3 +85,10 @@ The installer compiles before stopping an older helper. It stops only the proces
 Candidate checks on 6 November 2026: native C++ build; 75 deterministic room/input/connection tests; real Edge-window click, typing, Shift/Backspace, exactly-once Enter and scrolling; unsent `test` in the actual ChatGPT desktop composer, then removal and disconnect; isolated helper build, replacement, hash verification and repeated-start reuse. No actual chat message or attachment was sent. These candidate checks do not prove protected publication, merge, installation, physical controller accuracy, headset readability, image-dialog behavior, or live audio.
 
 Reusable invariant: a spatial surface forwards explicit human input to the original application and preserves that application's authority boundaries. It must never translate an on-screen status, a queued input, or a source build into a claim of successful application action or physical headset acceptance.
+
+
+## Solid-by-default room contract
+
+Spatial Workspace physical geometry is **solid by default**. Controller locomotion must not pass through room walls, the workstation, console/keyboard, display, dials, movable cubes, or future physical room objects. The adjustable keyboard uses the same hinge transform for rendering, input and cube collision. Movable cubes become live walking obstacles, and the wall display and dial bodies participate in cube physics.
+
+Grid lines, light strips, pointer rays and other explicitly decorative effects may remain non-solid. Any future visible object intended to represent physical matter must register collision geometry with the canonical room/cube collision model rather than relying on rendering alone. Physical headset room-scale movement remains real-world tracking and is never silently rewritten by Stephanos.

@@ -3,6 +3,8 @@ import { createHolodeckLocomotion, sampleHolodeckControls } from './holodeck-loc
 import { createHolodeckCubeScene } from './holodeck-cube-scene-v1.mjs';
 import { createHolodeckCubeInteraction } from './holodeck-cube-interaction-v1.mjs';
 import { createHolodeckScreenInput } from './holodeck-screen-input-v1.mjs';
+import { createHolodeckComfortSolids } from './holodeck-comfort-v1.mjs';
+import { createHolodeckDynamicObstacles } from './holodeck-collision-v1.mjs';
 
 export const HOLODECK_BASELINE_SESSION_MODE = 'immersive-vr';
 export const HOLODECK_BASELINE_MODE = 'Holodeck Baseline';
@@ -88,6 +90,15 @@ export async function enterHolodeckBaseline({
       obstacles: renderer.geometry.obstacles, comfort });
     const cubeInteraction = createHolodeckCubeInteraction({scene:cubeScene});
     const screenInput = createHolodeckScreenInput({screen,comfort});
+    let collisionTilt = NaN, environmentSolids = [];
+    cubeScene.setEnvironmentSolids?.(() => {
+      const tilt = comfort?.getState().keyboardTilt ?? 0;
+      if (tilt !== collisionTilt) {
+        collisionTilt = tilt;
+        environmentSolids = createHolodeckComfortSolids({ keyboardTilt: tilt });
+      }
+      return environmentSolids;
+    });
     let lastCubeStatus = '';
     let lastLocomotionStatus = '';
     let activeController = 'none';
@@ -110,9 +121,10 @@ export async function enterHolodeckBaseline({
       const input = sampleHolodeckControls({ inputSources: session.inputSources, gamepads,
         preferredSource: activeController });
       activeController = input.source;
+      const dynamicObstacles = createHolodeckDynamicObstacles(cubeScene.getStates?.() ?? []);
       const navigation = locomotion.update({ time, pose, input:screenInput.isAdjusting()
         ? {...input,moveX:0,moveY:0,turn:0,reset:false}:input,
-        visible: session.visibilityState === 'visible' });
+        visible: session.visibilityState === 'visible', dynamicObstacles });
       const statusKey = `${navigation.controller}:${navigation.state}`;
       if (statusKey !== lastLocomotionStatus) {
         lastLocomotionStatus = statusKey;

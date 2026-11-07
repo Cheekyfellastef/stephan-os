@@ -30,6 +30,23 @@ function sweep(p, d, b) {
     ? { time: Math.max(0, enter), normal } : null;
 }
 
+export function createHolodeckDynamicObstacles(states = []) {
+  if (!Array.isArray(states)) return [];
+  const obstacles = [];
+  for (const state of states) {
+    const position = state?.position, size = state?.size;
+    if (!Array.isArray(position) || position.length !== 3 || !position.every(Number.isFinite)
+      || !Number.isFinite(size) || size <= 0) continue;
+    const half = size * Math.sqrt(3) / 2;
+    obstacles.push({
+      id: `cube:${state.id ?? 'unknown'}`,
+      minX: position[0] - half, maxX: position[0] + half,
+      minZ: position[2] - half, maxZ: position[2] + half,
+    });
+  }
+  return obstacles;
+}
+
 export function resolveHolodeckMovement(position, delta, {
   room = HOLODECK_ROOM, obstacles = HOLODECK_OBSTACLES, radius = HOLODECK_BODY_RADIUS,
 } = {}) {

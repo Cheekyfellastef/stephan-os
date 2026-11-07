@@ -1,7 +1,7 @@
-import { HOLODECK_CONSOLE } from './holodeck-layout-v1.mjs';
+import { HOLODECK_CONSOLE, HOLODECK_DISPLAY } from './holodeck-layout-v1.mjs';
 
-// Room presentation preferences only. This does not change headset tracking,
-// browser permissions, native input authority, or the room's collision model.
+// Room presentation preferences and their matching physical geometry. This does not change
+// headset tracking, browser permissions, native input authority, or execution authority.
 export const HOLODECK_COMFORT_STORAGE_KEY = 'stephanos.spatial.holodeck.comfort.v1';
 export const HOLODECK_COMFORT_DEFAULTS = Object.freeze({ heightOffset: 0, keyboardTilt: 0 });
 export const HOLODECK_COMFORT_MODES = Object.freeze(['seated', 'standing']);
@@ -205,4 +205,51 @@ export function consolePointToWorld(point, tiltDegrees = 0) {
 
 export function consolePointFromWorld(point, tiltDegrees = 0) {
   return transformPoint(point, tiltDegrees, true);
+}
+
+
+const dot3 = (a, b) => a.reduce((sum, value, index) => sum + value * b[index], 0);
+const planeAt = (normal, point) => [normal, dot3(normal, point)];
+
+function axisAlignedSolid({ minX, maxX, minY, maxY, minZ, maxZ }) {
+  return [
+    planeAt([1,0,0], [maxX,0,0]), planeAt([-1,0,0], [minX,0,0]),
+    planeAt([0,1,0], [0,maxY,0]), planeAt([0,-1,0], [0,minY,0]),
+    planeAt([0,0,1], [0,0,maxZ]), planeAt([0,0,-1], [0,0,minZ]),
+  ];
+}
+
+function tiltedKeyboardSolid(tiltDegrees) {
+  const c = HOLODECK_CONSOLE;
+  const halfWidth = c.halfWidth - 0.06;
+  const halfDepth = c.halfDepth - 0.02;
+  const faces = [
+    [[1,0,0], [halfWidth,c.top,c.center[2]]],
+    [[-1,0,0], [-halfWidth,c.top,c.center[2]]],
+    [[0,1,0], [0,c.top+0.003,c.center[2]]],
+    [[0,-1,0], [0,c.top-0.02,c.center[2]]],
+    [[0,0,1], [0,c.top,c.center[2]+halfDepth]],
+    [[0,0,-1], [0,c.top,c.center[2]-halfDepth]],
+  ];
+  return faces.map(([normal, point]) => {
+    const worldNormal = consoleDirectionToWorld(normal, tiltDegrees);
+    const worldPoint = consolePointToWorld(point, tiltDegrees);
+    return planeAt(worldNormal, worldPoint);
+  });
+}
+
+// Physical-by-default contract for the adjustable console surfaces. Decorative grid/light
+// lines remain non-solid; the display, keyboard tray and both visible dial bodies do not.
+export function createHolodeckComfortSolids({ keyboardTilt = 0 } = {}) {
+  const d = HOLODECK_DISPLAY;
+  const display = axisAlignedSolid({
+    minX: -d.halfWidth, maxX: d.halfWidth, minY: d.bottom, maxY: d.top,
+    minZ: d.z - 0.02, maxZ: d.z + 0.02,
+  });
+  const dials = HOLODECK_KEYBOARD_DIALS.map((dial) => axisAlignedSolid({
+    minX: dial.center[0] - dial.halfDepth, maxX: dial.center[0] + dial.halfDepth,
+    minY: dial.center[1] - dial.radius, maxY: dial.center[1] + dial.radius,
+    minZ: dial.center[2] - dial.radius, maxZ: dial.center[2] + dial.radius,
+  }));
+  return [tiltedKeyboardSolid(keyboardTilt), display, ...dials];
 }

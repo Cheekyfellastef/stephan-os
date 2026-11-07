@@ -83,7 +83,7 @@ export function createHolodeckLocomotion({ room = HOLODECK_ROOM, obstacles = HOL
   let headYaw = 0;
   let armed = false;
 
-  function update({ time, pose, input, visible = true }) {
+  function update({ time, pose, input, visible = true, dynamicObstacles = [] }) {
     rig.y = comfort?.getState().heightOffset ?? 0;
     const head = headPose(pose, headYaw);
     const elapsed = previousTime === null ? 0 : time - previousTime;
@@ -128,8 +128,10 @@ export function createHolodeckLocomotion({ room = HOLODECK_ROOM, obstacles = HOL
     }
     const direction = rotate(input.moveX, input.moveY, rig.yaw + headYaw);
     const tracked = rotate(head.x, head.z, rig.yaw);
+    const collisionObstacles = Array.isArray(dynamicObstacles) && dynamicObstacles.length
+      ? [...obstacles, ...dynamicObstacles] : obstacles;
     const travel = resolveHolodeckMovement({ x: rig.x + tracked.x, z: rig.z + tracked.z },
-      { x: direction.x * SPEED * dt, z: direction.z * SPEED * dt }, { room, obstacles });
+      { x: direction.x * SPEED * dt, z: direction.z * SPEED * dt }, { room, obstacles: collisionObstacles });
     rig.x += travel.x;
     rig.z += travel.z;
     return { ...rig, controller: input.label, state: 'ready' };
