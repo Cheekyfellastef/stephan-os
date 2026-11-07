@@ -33,10 +33,10 @@ export const KEYCAP_VERTEX_COUNT = SCREEN_KEYS.length * vertexCountPerKey;
 
 // Textured top plus shaded solid sidewalls. The top is slightly inset, so there
 // are real air gaps rather than one continuous holographic touch surface.
-export function buildHolodeckKeycaps({ keyboardTilt = 0, pressedId = '', pressAgeMs = Infinity } = {}) {
+export function buildHolodeckKeycaps({ keyboardTilt = 0, pressedId = '', pressAgeMs = Infinity, furnitureOffset = [0,0,0] } = {}) {
   const vertices = [];
   const vertex = (point, uv, material) => {
-    const position = consolePointToWorld(point, keyboardTilt);
+    const position = consolePointToWorld(point, keyboardTilt).map((value,i)=>value+furnitureOffset[i]);
     vertices.push(...position, ...uv, material);
   };
   const quad = (p, uv, material) => {

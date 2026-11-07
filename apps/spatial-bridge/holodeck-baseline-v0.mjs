@@ -3,6 +3,7 @@ import { createHolodeckLocomotion, sampleHolodeckControls } from './holodeck-loc
 import { createHolodeckCubeScene } from './holodeck-cube-scene-v1.mjs';
 import { createHolodeckCubeInteraction } from './holodeck-cube-interaction-v1.mjs';
 import { createHolodeckScreenInput } from './holodeck-screen-input-v1.mjs';
+import { createHolodeckFurnitureInteraction } from './holodeck-furniture-v1.mjs';
 import { createHolodeckComfortSolids } from './holodeck-comfort-v1.mjs';
 import { createHolodeckDynamicObstacles } from './holodeck-collision-v1.mjs';
 
@@ -51,6 +52,7 @@ export async function enterHolodeckBaseline({
   cubeScene = createHolodeckCubeScene(),
   screen,
   comfort=screen?.comfort,
+  furniture=null,
 } = {}) {
   if (!navigatorRef?.xr || typeof navigatorRef.xr.requestSession !== 'function') {
     return { ok: false, session: null, reason: 'WebXR immersive session API unavailable' };
@@ -85,18 +87,21 @@ export async function enterHolodeckBaseline({
         return session.requestReferenceSpace(referenceSpaceType);
       });
 
-    const renderer = rendererFactory({ gl, screen, comfort });
+    const renderer = rendererFactory({ gl, screen, comfort, furniture });
     const locomotion = createHolodeckLocomotion({ room: renderer.geometry.room,
-      obstacles: renderer.geometry.obstacles, comfort,
+      obstacles: furniture?[]:renderer.geometry.obstacles, comfort,
       floorRelativeY: referenceSpaceType === 'local-floor' });
     const cubeInteraction = createHolodeckCubeInteraction({scene:cubeScene});
-    const screenInput = createHolodeckScreenInput({screen,comfort});
-    let collisionTilt = NaN, environmentSolids = [];
+    const screenInput = createHolodeckScreenInput({screen,comfort,furniture});
+    const furnitureInput = createHolodeckFurnitureInteraction({furniture,cubeScene});
+    let collisionKey = '', environmentSolids = [];
     cubeScene.setEnvironmentSolids?.(() => {
       const tilt = comfort?.getState().keyboardTilt ?? 0;
-      if (tilt !== collisionTilt) {
-        collisionTilt = tilt;
-        environmentSolids = createHolodeckComfortSolids({ keyboardTilt: tilt });
+      const offset=furniture?.getOffset?.('keyboard')??[0,0,0];
+      const key=tilt+':'+offset.join(',');
+      if (key !== collisionKey) {
+        collisionKey = key;
+        environmentSolids = createHolodeckComfortSolids({ keyboardTilt: tilt, furnitureOffset: offset });
       }
       return environmentSolids;
     });
@@ -109,6 +114,8 @@ export async function enterHolodeckBaseline({
       renderer.dispose();
       cubeInteraction.stop();
       screenInput.stop();
+      furnitureInput.stop();
+      furniture?.flush();
       comfort?.flush();
       cubeScene.stop();
       try { onLocomotionStatus({ controller: 'No active VR session', state: 'ended' }); } catch {}
@@ -122,8 +129,11 @@ export async function enterHolodeckBaseline({
       const input = sampleHolodeckControls({ inputSources: session.inputSources, gamepads,
         preferredSource: activeController });
       activeController = input.source;
-      const dynamicObstacles = createHolodeckDynamicObstacles(cubeScene.getStates?.() ?? []);
-      const navigation = locomotion.update({ time, pose, input:screenInput.isAdjusting()
+      const dynamicObstacles = [
+        ...createHolodeckDynamicObstacles(cubeScene.getStates?.() ?? []),
+        ...(furniture?.obstacles?.()??[]),
+      ];
+      const navigation = locomotion.update({ time, pose, input:screenInput.isAdjusting()||furnitureInput.isHolding()
         ? {...input,moveX:0,moveY:0,turn:0,reset:false}:input,
         visible: session.visibilityState === 'visible', dynamicObstacles });
       const statusKey = `${navigation.controller}:${navigation.state}`;
@@ -132,8 +142,11 @@ export async function enterHolodeckBaseline({
         try { onLocomotionStatus({ controller: navigation.controller, state: navigation.state }); } catch {}
       }
       const screenPointers = screenInput.update({time,frame,referenceSpace,pose,navigation,gamepads,visible:session.visibilityState==='visible'});
+      furnitureInput.update({time,frame,referenceSpace,pose,navigation,gamepads,
+        blockedSources:screenInput.getCapturedSources(),visible:session.visibilityState==='visible'});
       const cube = cubeInteraction.update({ time, pose, frame, referenceSpace, navigation, gamepads,
-        blockedSources:screenInput.getCapturedSources(),visible: session.visibilityState === 'visible' });
+        blockedSources:new Set([...screenInput.getCapturedSources(),...furnitureInput.getCapturedSources()]),
+        visible: session.visibilityState === 'visible' });
       if(screenPointers.length)cube.pointers=screenPointers;
       const held = cube.cubes.find(c=>c.heldBy);
       const cubeStatus = held ? 'held' : cube.cubes.every(c=>c.sleeping) ? 'resting' : 'falling';

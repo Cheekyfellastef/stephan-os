@@ -9,10 +9,10 @@ const down=button=>button?.pressed===true||button?.value>0.55;
 const finiteVector=value=>Array.isArray(value)&&value.length===3&&value.every(Number.isFinite);
 const repeatable=new Set(['height-down','height-up','tilt-down','tilt-up']);
 
-export function consoleHit(origin,direction,tiltDegrees=0) {
+export function consoleHit(origin,direction,tiltDegrees=0,furnitureOffset=[0,0,0]) {
   if(!finiteVector(origin)||!finiteVector(direction))return null;
   const c=HOLODECK_CONSOLE;
-  origin=consolePointFromWorld(origin,tiltDegrees);
+  origin=consolePointFromWorld(origin.map((value,i)=>value-furnitureOffset[i]),tiltDegrees);
   direction=consoleDirectionFromWorld(direction,tiltDegrees);
   if(direction[1]>=-1e-5||origin[1]<c.top)return null;
   const hitAt=(height,buttons)=>{
@@ -31,13 +31,13 @@ export function consoleHit(origin,direction,tiltDegrees=0) {
 }
 
 // Spherical targets work from the front even when rays are parallel to a dial's side face.
-export function keyboardDialHit(origin,direction) {
+export function keyboardDialHit(origin,direction,furnitureOffset=[0,0,0]) {
   if(!finiteVector(origin)||!finiteVector(direction))return null;
   const a=direction.reduce((sum,v)=>sum+v*v,0);
   if(a<1e-8)return null;
   const hits=[];
   for(const dial of HOLODECK_KEYBOARD_DIALS) {
-    const delta=origin.map((v,i)=>v-dial.center[i]);
+    const delta=origin.map((v,i)=>v-dial.center[i]-furnitureOffset[i]);
     const b=delta.reduce((sum,v,i)=>sum+v*direction[i],0);
     const c=delta.reduce((sum,v)=>sum+v*v,0)-dial.hitRadius*dial.hitRadius;
     const discriminant=b*b-a*c;
@@ -65,7 +65,7 @@ function pitchDelta(before,after) {
   return Math.atan2(Math.sin(angle),Math.cos(angle))*180/Math.PI;
 }
 
-export function createHolodeckScreenInput({screen,comfort=screen?.comfort}={}) {
+export function createHolodeckScreenInput({screen,comfort=screen?.comfort,furniture=null}={}) {
   const previous=new Map(),ids=new WeakMap();let serial=0,grab=null,lastTime=null;
   let mode=comfort?.getState().mode;
   const capturedSources=new Set();
@@ -100,14 +100,15 @@ export function createHolodeckScreenInput({screen,comfort=screen?.comfort}={}) {
     const pointers=[];let hover=null;
     for(const sample of samples) {
       const direction=rotate3([0,0,-1],sample.ray.orientation);
-      const keyboard=consoleHit(sample.ray.position,direction,comfort?.getState().keyboardTilt??0);
-      const dial=comfort?keyboardDialHit(sample.ray.position,direction):null;
+      const offset=furniture?.getOffset?.('keyboard')??[0,0,0];
+      const keyboard=consoleHit(sample.ray.position,direction,comfort?.getState().keyboardTilt??0,offset);
+      const dial=comfort?keyboardDialHit(sample.ray.position,direction,offset):null;
       const display=displayHit(sample.ray.position,direction);
       const displayControl=display&&comfort&&screenComfortHit(display.u,display.v);
       let nearDial=null;
       if(comfort&&sample.grip) {
-        const nearest=HOLODECK_KEYBOARD_DIALS.find(d=>Math.hypot(...d.center.map((v,i)=>v-sample.grip.position[i]))<=d.radius+0.06);
-        if(nearest)nearDial={id:'dial:'+nearest.id,dial:nearest,distance:Math.hypot(...nearest.center.map((v,i)=>v-sample.ray.position[i]))};
+        const nearest=HOLODECK_KEYBOARD_DIALS.find(d=>Math.hypot(...d.center.map((v,i)=>v+offset[i]-sample.grip.position[i]))<=d.radius+0.06);
+        if(nearest)nearDial={id:'dial:'+nearest.id,dial:nearest,distance:Math.hypot(...nearest.center.map((v,i)=>v+offset[i]-sample.ray.position[i]))};
       }
       const hit=[keyboard,dial,displayControl?{...display,id:displayControl.id}:display]
         .filter(Boolean).sort((a,b)=>a.distance-b.distance)

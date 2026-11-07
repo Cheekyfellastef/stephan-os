@@ -2,7 +2,7 @@ import { HOLODECK_CUBES } from './holodeck-layout-v1.mjs';
 import { createHolodeckCubePhysics, rotate3 } from './holodeck-cube-physics-v1.mjs';
 
 // One room owns both bodies. Preview and XR share this same instance.
-export function createHolodeckCubeScene({ store = null, environmentSolids = () => [] } = {}) {
+export function createHolodeckCubeScene({ store = null, environmentSolids = () => [], furniture = null } = {}) {
   const bodies = new Map();
   let restoring = true;
   let environmentSource = typeof environmentSolids === 'function' ? environmentSolids : () => [];
@@ -26,7 +26,8 @@ export function createHolodeckCubeScene({ store = null, environmentSolids = () =
     })];
   }
   for (const cube of HOLODECK_CUBES) bodies.set(cube.id,
-    createHolodeckCubePhysics({ cube, extraSolids: () => otherSolids(cube.id) }));
+    createHolodeckCubePhysics({ cube, extraSolids: () => otherSolids(cube.id),
+      furnitureSource: () => furniture?.physicsShapes?.()??null }));
   const getStates = () => [...bodies.values()].map(body => body.getState());
   const saved = store?.load();
   if (saved) for (const state of saved) bodies.get(state.id)?.restore(state);

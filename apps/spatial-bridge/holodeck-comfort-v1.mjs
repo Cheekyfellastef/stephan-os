@@ -219,7 +219,7 @@ function axisAlignedSolid({ minX, maxX, minY, maxY, minZ, maxZ }) {
   ];
 }
 
-function tiltedKeyboardSolid(tiltDegrees) {
+function tiltedKeyboardSolid(tiltDegrees, furnitureOffset=[0,0,0]) {
   const c = HOLODECK_CONSOLE;
   const halfWidth = c.halfWidth - 0.06;
   const halfDepth = c.halfDepth - 0.02;
@@ -233,23 +233,23 @@ function tiltedKeyboardSolid(tiltDegrees) {
   ];
   return faces.map(([normal, point]) => {
     const worldNormal = consoleDirectionToWorld(normal, tiltDegrees);
-    const worldPoint = consolePointToWorld(point, tiltDegrees);
+    const worldPoint = consolePointToWorld(point, tiltDegrees).map((v,i)=>v+furnitureOffset[i]);
     return planeAt(worldNormal, worldPoint);
   });
 }
 
 // Physical-by-default contract for the adjustable console surfaces. Decorative grid/light
 // lines remain non-solid; the display, keyboard tray and both visible dial bodies do not.
-export function createHolodeckComfortSolids({ keyboardTilt = 0 } = {}) {
+export function createHolodeckComfortSolids({ keyboardTilt = 0, furnitureOffset = [0,0,0] } = {}) {
   const d = HOLODECK_DISPLAY;
   const display = axisAlignedSolid({
     minX: -d.halfWidth, maxX: d.halfWidth, minY: d.bottom, maxY: d.top,
     minZ: d.z - 0.02, maxZ: d.z + 0.02,
   });
   const dials = HOLODECK_KEYBOARD_DIALS.map((dial) => axisAlignedSolid({
-    minX: dial.center[0] - dial.halfDepth, maxX: dial.center[0] + dial.halfDepth,
-    minY: dial.center[1] - dial.radius, maxY: dial.center[1] + dial.radius,
-    minZ: dial.center[2] - dial.radius, maxZ: dial.center[2] + dial.radius,
+    minX: dial.center[0] + furnitureOffset[0] - dial.halfDepth, maxX: dial.center[0] + furnitureOffset[0] + dial.halfDepth,
+    minY: dial.center[1] + furnitureOffset[1] - dial.radius, maxY: dial.center[1] + furnitureOffset[1] + dial.radius,
+    minZ: dial.center[2] + furnitureOffset[2] - dial.radius, maxZ: dial.center[2] + furnitureOffset[2] + dial.radius,
   }));
-  return [tiltedKeyboardSolid(keyboardTilt), display, ...dials];
+  return [tiltedKeyboardSolid(keyboardTilt,furnitureOffset), display, ...dials];
 }
