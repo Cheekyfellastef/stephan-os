@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 
 const workflowUrl = new URL('../../.github/workflows/build-stephanos-ui.yml', import.meta.url);
 const pagesWorkflowUrl = new URL('../../.github/workflows/deploy-stephanos-pages.yml', import.meta.url);
@@ -220,6 +223,12 @@ function assertSpatialBrowserProofAuthority(workflow) {
     '          test "$(git rev-parse HEAD)" = "$SPATIAL_HEAD_SHA"',
     '          if git diff --quiet "$SPATIAL_BASE_SHA" "$SPATIAL_HEAD_SHA" --',
     "            apps/spatial-bridge 'tests/spatial-*'",
+    '            shared/runtime/commandDeckReturnControls.mjs',
+    '            shared/runtime/commandDeckReturnButton.mjs',
+    '            shared/runtime/commandDeckDestination.mjs',
+    '            shared/runtime/backendClient.mjs',
+    '            shared/runtime/stephanosHomeNode.mjs',
+    '            shared/vr/spatialWorkspaceTelemetryContractV1.mjs',
     '            .github/workflows/build-stephanos-ui.yml package.json; then',
     '            if [ "$status" -ne 1 ]; then exit "$status"; fi',
     '        run: node --test tests/spatial-*.test.mjs',
@@ -253,5 +262,65 @@ test('Spatial browser proof rejects authority widening, head substitution, conce
   ]) {
     assert.notEqual(workflow.replace(before, after), workflow, before);
     assert.throws(() => assertSpatialBrowserProofAuthority(workflow.replace(before, after)));
+  }
+});
+
+
+test('Spatial selection includes every shared module observed by the browser while skipping unrelated changes', async () => {
+  const workflow = await readFile(workflowUrl, 'utf8');
+  const job = childBlock(rootBlock(workflow, 'jobs'), 'spatial-browser-proof');
+  const selection = job.match(/if git diff --quiet "\$SPATIAL_BASE_SHA" "\$SPATIAL_HEAD_SHA" -- ([\s\S]*?); then/);
+  assert.ok(selection, 'missing exact-head source selection');
+  const paths = selection[1].replace(/\\\r?\n/g, ' ').trim().split(/\s+/)
+    .map(token => token.replace(/^'([^']+)'$/, '$1'));
+  assert.ok(paths.every(path => /^[A-Za-z0-9_./*-]+$/.test(path)), 'only fixed repository pathspecs are allowed');
+  const fixture = await mkdtemp(join(tmpdir(), 'spatial-browser-selection-'));
+  const config = join(fixture, 'empty-global-gitconfig');
+  await writeFile(config, '');
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
+  const invoke = (...args) => spawnSync('git', args, { cwd: fixture, env, encoding: 'utf8' });
+  const git = (...args) => {
+    const result = invoke(...args);
+    assert.equal(result.status, 0, result.stderr || String(result.error || args));
+    return result.stdout.trim();
+  };
+  const commit = async (path, value) => {
+    await mkdir(dirname(join(fixture, path)), { recursive: true });
+    await writeFile(join(fixture, path), value);
+    git('add', '--', path);
+    git('-c', 'user.name=Spatial selection fixture', '-c', 'user.email=fixture@example.invalid',
+      '-c', 'commit.gpgSign=false', 'commit', '-m', 'selection fixture');
+    return git('rev-parse', 'HEAD');
+  };
+  try {
+    git('init', '--initial-branch=fixture');
+    let base = await commit('README.md', 'base\n');
+    const sharedInputs = [
+      'shared/runtime/commandDeckReturnControls.mjs',
+      'shared/runtime/commandDeckReturnButton.mjs',
+      'shared/runtime/commandDeckDestination.mjs',
+      'shared/runtime/backendClient.mjs',
+      'shared/runtime/stephanosHomeNode.mjs',
+      'shared/vr/spatialWorkspaceTelemetryContractV1.mjs',
+    ];
+    const cases = [
+      ...sharedInputs.map(path => [path, 1]),
+      ['apps/spatial-bridge/quest-entry.html', 1],
+      ['tests/spatial-workspace-comfort.browser.mjs', 1],
+      ['.github/workflows/build-stephanos-ui.yml', 1],
+      ['package.json', 1],
+      ['docs/unrelated.md', 0],
+      ['shared/agents/unrelated.mjs', 0],
+    ];
+    for (const [path, expectedStatus] of cases) {
+      const head = await commit(path, 'changed\n');
+      const selected = invoke('diff', '--quiet', base, head, '--', ...paths);
+      assert.equal(selected.status, expectedStatus, `wrong browser selection for ${path}: ${selected.stderr}`);
+      base = head;
+    }
+    const missingBase = invoke('diff', '--quiet', '0'.repeat(40), base, '--', ...paths);
+    assert.ok(missingBase.status > 1, 'missing history must remain an error, not a skipped proof');
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
   }
 });

@@ -188,6 +188,12 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SPATIAL_HEAD_SHA"
           if git diff --quiet "$SPATIAL_BASE_SHA" "$SPATIAL_HEAD_SHA" -- \
             apps/spatial-bridge 'tests/spatial-*' \
+            shared/runtime/commandDeckReturnControls.mjs \
+            shared/runtime/commandDeckReturnButton.mjs \
+            shared/runtime/commandDeckDestination.mjs \
+            shared/runtime/backendClient.mjs \
+            shared/runtime/stephanosHomeNode.mjs \
+            shared/vr/spatialWorkspaceTelemetryContractV1.mjs \
             .github/workflows/build-stephanos-ui.yml package.json; then
             echo "required=false" >> "$GITHUB_OUTPUT"
           else
