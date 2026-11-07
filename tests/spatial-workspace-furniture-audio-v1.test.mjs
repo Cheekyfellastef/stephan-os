@@ -160,5 +160,5 @@ test('launcher exposes persistent furniture and real device testing without inve
     'audio-test-microphone','audio-test-speakers','audio-voice-help','probe-capture'])assert.ok(page.includes(marker),marker);
   assert.match(worker,/holodeck-furniture-v1\.mjs/);
   assert.match(worker,/holodeck-audio-v1\.mjs/);
-  assert.match(worker,/stephanos-spatial-workspace-v1-movable-furniture-audio-v5/);
+  assert.match(worker,/stephanos-spatial-workspace-v1-carry-walk-v6/);
 });
