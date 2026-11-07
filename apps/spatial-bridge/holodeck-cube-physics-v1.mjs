@@ -40,7 +40,7 @@ export function createCubeSolids(table=HOLODECK_TABLE, console=HOLODECK_CONSOLE)
   const tableOffset=subtract3(table.center,HOLODECK_TABLE.center);
   const consoleOffset=subtract3(console.center,HOLODECK_CONSOLE.center);
   const shapes=[prism(table.halfWidth,table.halfDepth,table.bottom,table.top+0.008,table.bevel,table.center[0],table.center[2]),
-    prism(console.halfWidth,console.halfDepth,console.bottom,console.top,console.bevel,0,console.center[2]),
+    prism(console.halfWidth,console.halfDepth,console.bottom,console.top,console.bevel,console.center[0],console.center[2]),
     ...[-1,1].map(side=>prism(0.09,0.38,0.05,console.bottom,0,side*1.3,console.center[2])),
     ...[-1,1].map(side=>prism(0.09,0.28,0.84,1.10,0,side*1.3,-5.72)),
     prism(0.68,0.44,0.035,0.13,0.20),prism(0.20,0.20,0.18,0.58,0.08),
