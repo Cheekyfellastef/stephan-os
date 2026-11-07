@@ -326,3 +326,13 @@ scripts/sovereign-high-risk-advisory-v1.mjs text eol=lf
 scripts/sovereign-high-risk-advisory-launcher-v1.mjs text eol=lf
 scripts/sovereign-windows-review-calibration-v1.mjs text eol=lf
 scripts/sovereign-windows-review-calibration-v1-engine.mjs text eol=lf
+
+# The attended Starfield monitor verifies raw Python bytes before every child.
+scripts/windows/starfield-native-monitor/splash_monitor_bridge.py text eol=lf
+scripts/windows/starfield-native-monitor/run_native_eye_output_monitor.py text eol=lf
+scripts/windows/starfield-native-monitor/start_native_eye_output_session.py text eol=lf
+scripts/windows/starfield-native-monitor/analyze_native_eye_output_session.py text eol=lf
+scripts/windows/starfield-native-monitor/test_splash_monitor_bridge.py text eol=lf
+scripts/windows/starfield-native-monitor/test_run_native_eye_output_monitor.py text eol=lf
+scripts/windows/starfield-native-monitor/test_start_native_eye_output_session.py text eol=lf
+scripts/windows/starfield-native-monitor/test_analyze_native_eye_output_session.py text eol=lf

@@ -208,7 +208,7 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
 
   assert.match(splash, /STABILIZED AER \/ AUTO RECORD \(REQUIRED\)/);
   assert.match(splash, /Launch Stabilized MutaR/);
-  assert.match(splash, /\$mutarButton\.Enabled = \(\$mutarProfileConfigured -and \$mutarPackageStaged\)/);
+  assert.match(splash, /\$mutarButton\.Enabled = \(\$mutarProfileConfigured -and \$mutarPackageStaged -and \$monitorState\.DurableCustodyReleased\)/);
   assert.match(splash, /\$aerReadyAfterSlot = Test-AerObserveReady[\s\S]*?Start-AerObserveProcess/);
   assert.match(splash, /\$aerObserveCheckbox\.Enabled = \$false/);
   assert.match(splash, /-Mode 'AER_OBSERVE'/);
