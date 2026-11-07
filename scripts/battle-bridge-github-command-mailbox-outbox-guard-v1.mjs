@@ -40,6 +40,108 @@ export const MAILBOX_OUTBOX_MAX_ENTRIES = 500;
 export const MAILBOX_OUTBOX_SEGMENT_MAX_BYTES = 2 * 1024 * 1024;
 export const MAILBOX_OUTBOX_MANIFEST_MAX_BYTES = 64 * 1024;
 
+// Diagnostic metadata only. These fixed codes never carry error text, paths or
+// request identities, and are never consumed for admission or custody release.
+export const MAILBOX_GUARD_DIAGNOSTIC_SCHEMA_V1 = 'stephanos.mailbox-guard-diagnostic.v1';
+const MAILBOX_GUARD_STAGES_V1 = new Set([
+  'PRECHECK', 'LOCK', 'STATE_VALIDATION', 'DEFERRED_VALIDATION',
+  'PRE_CHILD_CHECKPOINT', 'CHILD_INVOCATION', 'POST_CHILD_VALIDATION', 'COMPLETE',
+]);
+const MAILBOX_GUARD_PRE_CHILD_STAGES_V1 = new Set([
+  'PRECHECK', 'LOCK', 'STATE_VALIDATION', 'DEFERRED_VALIDATION', 'PRE_CHILD_CHECKPOINT',
+]);
+const MAILBOX_GUARD_REASON_CODES_V1 = new Set([
+  'NONE',
+  'CANONICAL_CHECKOUT_REQUIRED',
+  'MAILBOX_ACCEPTED_RECONCILIATION_BLOCKED',
+  'MAILBOX_CHILD_RUN_BLOCKED',
+  'MAILBOX_COMMAND_POLL_BLOCKED',
+  'MAILBOX_GUARD_FAILURE_UNCLASSIFIED',
+  'MAILBOX_OUTBOX_CANONICAL_PENDING_ARRAY_REQUIRED',
+  'MAILBOX_OUTBOX_DEFERRED_MANIFEST_INVALID',
+  'MAILBOX_OUTBOX_DEFERRED_MANIFEST_TOO_LARGE',
+  'MAILBOX_OUTBOX_DEFERRED_RECORD_INVALID',
+  'MAILBOX_OUTBOX_DEFERRED_SEGMENT_DIRECTORY_MISSING',
+  'MAILBOX_OUTBOX_DEFERRED_SEGMENT_INVALID',
+  'MAILBOX_OUTBOX_DIRECTORY_IDENTITY_CHANGED',
+  'MAILBOX_OUTBOX_DIRECTORY_IDENTITY_INVALID',
+  'MAILBOX_OUTBOX_DIRECTORY_MISSING',
+  'MAILBOX_OUTBOX_DRAIN_ARGUMENTS_NOT_ALLOWED',
+  'MAILBOX_OUTBOX_DRAIN_SESSION_CLOSED',
+  'MAILBOX_OUTBOX_FILE_IDENTITY_CHANGED',
+  'MAILBOX_OUTBOX_FILE_IDENTITY_INVALID',
+  'MAILBOX_OUTBOX_FILE_MISSING',
+  'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
+  'MAILBOX_OUTBOX_GUARD_FAILED',
+  'MAILBOX_OUTBOX_GUARD_LOCK_LOST',
+  'MAILBOX_OUTBOX_JSON_OBJECT_REQUIRED',
+  'MAILBOX_OUTBOX_JSON_TOO_LARGE',
+  'MAILBOX_OUTBOX_LEDGER_FUTURE_SEGMENT_CONFLICT',
+  'MAILBOX_OUTBOX_LEDGER_INDEX_CONFLICT',
+  'MAILBOX_OUTBOX_LEDGER_INDEX_INVALID',
+  'MAILBOX_OUTBOX_LEDGER_INDEX_UNREACHABLE',
+  'MAILBOX_OUTBOX_LEDGER_MANIFEST_INVALID',
+  'MAILBOX_OUTBOX_LEDGER_MANIFEST_TOO_LARGE',
+  'MAILBOX_OUTBOX_LEDGER_SEGMENT_DIRECTORY_MISSING',
+  'MAILBOX_OUTBOX_LEDGER_SEGMENT_INVALID',
+  'MAILBOX_OUTBOX_LEDGER_SEQUENCE_EXHAUSTED',
+  'MAILBOX_OUTBOX_LEDGER_SEQUENCE_INVALID',
+  'MAILBOX_OUTBOX_LEDGER_TRANSACTION_BASE_MISMATCH',
+  'MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID',
+  'MAILBOX_OUTBOX_LEDGER_TRANSACTION_SEGMENT_MISMATCH',
+  'MAILBOX_OUTBOX_LEGACY_CURSOR_INVALID',
+  'MAILBOX_OUTBOX_LEGACY_DESCRIPTOR_INVALID',
+  'MAILBOX_OUTBOX_LEGACY_DUPLICATE_INVALID',
+  'MAILBOX_OUTBOX_LEGACY_V1_MIGRATION_WORK_LIMIT_EXCEEDED',
+  'MAILBOX_OUTBOX_LOCK_PROCESS_IDENTITY_UNPROVEN',
+  'MAILBOX_OUTBOX_LOCK_TOKEN_INVALID',
+  'MAILBOX_OUTBOX_OPERATION_REQUIRED',
+  'MAILBOX_OUTBOX_PENDING_ARRAY_REQUIRED',
+  'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID',
+  'MAILBOX_OUTBOX_PENDING_LIMIT_EXCEEDED',
+  'MAILBOX_OUTBOX_PUBLICATION_ID_CONFLICT',
+  'MAILBOX_OUTBOX_STORE_PATH_INVALID',
+  'MAILBOX_OUTBOX_SYNCHRONOUS_OPERATION_REQUIRED',
+  'MAILBOX_PENDING_RECEIPT_IDENTITY_UNSAFE',
+  'MAILBOX_RECEIPT_INDEX_BLOCKED',
+  'MAILBOX_RECEIPT_INDEX_REFRESH_FAILED',
+  'WINDOWS_REQUIRED',
+]);
+const MAILBOX_GUARD_DIAGNOSTIC_KEYS_V1 = [
+  'childInvocationAttempted', 'observedAtUtc', 'outcome', 'reasonCode', 'schemaVersion', 'stage',
+].join(',');
+
+export function projectMailboxGuardDiagnosticV1(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return null;
+  const keys = Reflect.ownKeys(value), descriptors = Object.getOwnPropertyDescriptors(value);
+  if (keys.some(key => typeof key !== 'string' || !Object.hasOwn(descriptors[key], 'value'))
+    || keys.sort().join(',') !== MAILBOX_GUARD_DIAGNOSTIC_KEYS_V1) return null;
+  const { schemaVersion, observedAtUtc, stage, outcome, reasonCode, childInvocationAttempted } = value;
+  if (schemaVersion !== MAILBOX_GUARD_DIAGNOSTIC_SCHEMA_V1
+    || typeof observedAtUtc !== 'string' || observedAtUtc.length !== 24
+    || !Number.isFinite(Date.parse(observedAtUtc))
+    || new Date(observedAtUtc).toISOString() !== observedAtUtc
+    || !MAILBOX_GUARD_STAGES_V1.has(stage) || !MAILBOX_GUARD_REASON_CODES_V1.has(reasonCode)
+    || typeof childInvocationAttempted !== 'boolean'
+    || MAILBOX_GUARD_PRE_CHILD_STAGES_V1.has(stage) === childInvocationAttempted) return null;
+  if (outcome === 'CHILD_SUCCEEDED') {
+    if (stage !== 'COMPLETE' || reasonCode !== 'NONE') return null;
+  } else if (outcome === 'CHILD_FAILED') {
+    if (stage !== 'COMPLETE' || reasonCode === 'NONE') return null;
+  } else if (outcome === 'GUARD_BUSY') {
+    if (stage !== 'LOCK' || reasonCode !== 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING') return null;
+  } else if (outcome !== 'GUARD_BLOCKED' || reasonCode === 'NONE'
+    || reasonCode === 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING') return null;
+  return Object.freeze({ schemaVersion, observedAtUtc, stage, outcome, reasonCode, childInvocationAttempted });
+}
+
+function mailboxGuardReasonCodeV1(value) {
+  return typeof value === 'string' && value !== 'NONE' && MAILBOX_GUARD_REASON_CODES_V1.has(value)
+    ? value : 'MAILBOX_GUARD_FAILURE_UNCLASSIFIED';
+}
+
+
 const MAILBOX_STATE_MAX_BYTES = 32 * 1024 * 1024;
 const MAILBOX_LEGACY_V1_MIGRATION_MAX_BYTES = 2 * 1024 * 1024;
 const MAILBOX_LEDGER_INDEX_MAX_BYTES = 8 * 1024;
@@ -1670,11 +1772,25 @@ export function runMailboxOutboxGuard({
   faultFn = () => {},
   pathOverrides = null,
 } = {}) {
-  if (platform !== 'win32') return fail('WINDOWS_REQUIRED');
+  let diagnosticStage = 'PRECHECK';
+  let childInvocationAttempted = false;
+  const observedResult = (result, outcome, reason) => {
+    // A diagnostic clock failure must not change the existing guard outcome.
+    let observedAtUtc = '';
+    try { observedAtUtc = now().toISOString(); } catch {}
+    return Object.freeze({ ...result, guardDiagnostic: projectMailboxGuardDiagnosticV1({
+      schemaVersion: MAILBOX_GUARD_DIAGNOSTIC_SCHEMA_V1,
+      observedAtUtc, stage: diagnosticStage, outcome,
+      reasonCode: outcome === 'CHILD_SUCCEEDED' ? 'NONE' : mailboxGuardReasonCodeV1(reason),
+      childInvocationAttempted,
+    }) });
+  };
+  if (platform !== 'win32') return observedResult(fail('WINDOWS_REQUIRED'), 'GUARD_BLOCKED', 'WINDOWS_REQUIRED');
   const resolved = pathOverrides || resolveProductionPaths({ env, repoRoot });
   const actualRepoRoot = resolve(resolved.actualRepoRoot || repoRoot);
   const expectedRepoRoot = resolve(resolved.expectedRepoRoot || actualRepoRoot);
-  if (actualRepoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase()) return fail('CANONICAL_CHECKOUT_REQUIRED');
+  if (actualRepoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase())
+    return observedResult(fail('CANONICAL_CHECKOUT_REQUIRED'), 'GUARD_BLOCKED', 'CANONICAL_CHECKOUT_REQUIRED');
 
   const statePath = resolve(resolved.statePath);
   const deferredPath = resolve(resolved.deferredPath);
@@ -1682,7 +1798,7 @@ export function runMailboxOutboxGuard({
   if (dirname(statePath).toLowerCase() !== dirname(deferredPath).toLowerCase()
     || basename(statePath).toLowerCase() !== 'state.json'
     || basename(deferredPath).toLowerCase() !== 'receipt-publication-deferred-v1.json') {
-    return fail('MAILBOX_OUTBOX_STORE_PATH_INVALID');
+    return observedResult(fail('MAILBOX_OUTBOX_STORE_PATH_INVALID'), 'GUARD_BLOCKED', 'MAILBOX_OUTBOX_STORE_PATH_INVALID');
   }
   const metrics = createIoMetrics();
   let lock = null;
@@ -1691,11 +1807,13 @@ export function runMailboxOutboxGuard({
     mkdirSync(dirname(statePath), { recursive: true });
     assertUnlinkedDirectory(dirname(statePath));
     const timestamp = now();
+    diagnosticStage = 'LOCK';
     lock = acquireGuardLock(deferredPath, timestamp, {
       tokenFn: lockTokenFn,
       processIdentityFn,
       staleAfterMs,
     });
+    diagnosticStage = 'STATE_VALIDATION';
     const state = readJsonObject(statePath, {
       allowMissing: true,
       missingValue: { consumedRequestIds: [], acceptedRequestIds: [], pendingReceiptPublications: [] },
@@ -1703,12 +1821,14 @@ export function runMailboxOutboxGuard({
       metrics,
     });
     const statePendingBefore = canonicalPendingFromState(state);
+    diagnosticStage = 'DEFERRED_VALIDATION';
     let manifest = loadOrInitializeLedger(deferredPath, timestamp.toISOString(), metrics);
     manifest = appendCanonicalDebt(deferredPath, manifest, statePendingBefore, now().toISOString(), metrics, faultFn);
     const peeked = peekLedgerHead(deferredPath, manifest, now().toISOString(), metrics, faultFn);
     manifest = peeked.manifest;
     const head = peeked.head;
     const pendingBeforeChild = pendingCount(manifest);
+    diagnosticStage = 'PRE_CHILD_CHECKPOINT';
     atomicWriteJson(statePath, {
       ...state,
       pendingReceiptPublications: head ? [head.entry] : [],
@@ -1716,6 +1836,8 @@ export function runMailboxOutboxGuard({
     verifyGuardLock(lock);
     const preIngressIo = snapshotIo(metrics);
 
+    diagnosticStage = 'CHILD_INVOCATION';
+    childInvocationAttempted = true;
     const child = spawnSyncFn(process.execPath, [childRunnerPath], {
       cwd: actualRepoRoot,
       env: createMailboxOutboxGuardChildEnvironment(env, lock),
@@ -1726,6 +1848,7 @@ export function runMailboxOutboxGuard({
       maxBuffer: 2 * 1024 * 1024,
     });
 
+    diagnosticStage = 'POST_CHILD_VALIDATION';
     verifyGuardLock(lock);
     const stateAfter = readJsonObject(statePath, { maxBytes: MAILBOX_STATE_MAX_BYTES, metrics });
     const statePendingAfter = canonicalPendingFromState(stateAfter);
@@ -1746,7 +1869,8 @@ export function runMailboxOutboxGuard({
     const childOk = !child?.error && child?.status === 0;
     const childStatus = parseMailboxChildStatus(child?.stdout);
     const childBlocker = childOk ? '' : (childStatus.blocker || childStatus.mailboxBlocker || childStatus.indexBlocker || 'MAILBOX_CHILD_RUN_BLOCKED');
-    return Object.freeze({
+    diagnosticStage = 'COMPLETE';
+    return observedResult({
       ok: childOk,
       blocker: childBlocker,
       finalVerdict: childOk ? 'MAILBOX_OUTBOX_GUARD_READY' : 'MAILBOX_OUTBOX_GUARD_BLOCKED',
@@ -1778,12 +1902,13 @@ export function runMailboxOutboxGuard({
       arbitraryShellAllowed: false,
       arbitraryPathAllowed: false,
       sourceMutationAllowed: false,
-    });
+    }, childOk ? 'CHILD_SUCCEEDED' : 'CHILD_FAILED', childBlocker);
   } catch (error) {
-    return fail('MAILBOX_OUTBOX_GUARD_FAILED', {
+    return observedResult(fail('MAILBOX_OUTBOX_GUARD_FAILED', {
       error: String(error?.message || error).slice(0, 240),
       ledgerIo: snapshotIo(metrics),
-    });
+    }), diagnosticStage === 'LOCK' && error?.message === 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING'
+      ? 'GUARD_BUSY' : 'GUARD_BLOCKED', error?.message);
   } finally {
     releaseGuardLock(lock);
   }
