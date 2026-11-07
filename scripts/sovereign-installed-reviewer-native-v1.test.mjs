@@ -21,7 +21,7 @@ $ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue'
 $code=(@(__NATIVE__)|ForEach-Object{[IO.File]::ReadAllText($_)}) -join [Environment]::NewLine
 Add-Type -TypeDefinition $code -ReferencedAssemblies 'System.Core','System.Web.Extensions' -ErrorAction Stop
 $type=[Stephanos.Sovereign.CoreJobCustodyV1];$flags=[Reflection.BindingFlags]'NonPublic,Static'
-$instance=[Reflection.BindingFlags]'NonPublic,Instance';$checks=0
+$instance=[Reflection.BindingFlags]'NonPublic,Instance';$checks=0;$aclChecks=0
 function Require([bool]$ok,[string]$reason){if(-not $ok){throw $reason};$script:checks++}
 $read=$type.GetMethod('ReviewerReadPinnedV1',$flags)
 $pinsType=$type.Assembly.GetType('Stephanos.Sovereign.ReviewerProfilePinsV1',$true)
@@ -57,20 +57,20 @@ $state=[ordered]@{schemaVersion='stephanos.vr-resource-governor.v1';governorVers
  active=$false;flatGameActive=$false;airLinkActive=$false;realAirLinkActive=$false;virtualAirLinkTestActive=$false;prepareLeaseActive=$false;
  localModelAllowed=$true;heavyModelAllowed=$true;ollamaLoadMode='balanced'}
 $governor=$type.GetMethod('ReviewerGovernorStateV1',$flags)
-$raw=$state|ConvertTo-Json -Compress
-Require ([bool]$governor.Invoke($null,@($raw,$now))) 'FRESH_IDLE_NATIVE_GOVERNOR_REFUSED'
+$raw=[string]($state|ConvertTo-Json -Compress)
+Require ([bool]$governor.Invoke($null,@([string]$raw,[DateTime]$now))) 'FRESH_IDLE_NATIVE_GOVERNOR_REFUSED'
 foreach($name in @('active','flatGameActive','airLinkActive','realAirLinkActive','virtualAirLinkTestActive','prepareLeaseActive','localModelAllowed','heavyModelAllowed')){
  $before=$state[$name];$state[$name]=-not $before
- Require (-not [bool]$governor.Invoke($null,@(($state|ConvertTo-Json -Compress),$now))) ('UNSAFE_GOVERNOR_'+$name)
+ Require (-not [bool]$governor.Invoke($null,@([string]($state|ConvertTo-Json -Compress),[DateTime]$now))) ('UNSAFE_GOVERNOR_'+$name)
  $state[$name]=$before
 }
 foreach($bad in @($raw.Replace('"active":false','"active":"false"'),$raw.Replace('"active":false','"active":false,"active":false'),
  $raw.Replace('"active":false','"active":false,"\u0061ctive":false'),$raw.Replace('"governorVersion":3','"governorVersion":2'),
  $raw.Replace('"active":false,',''),$raw.Replace('"ollamaLoadMode":"balanced"','"ollamaLoadMode":"cool"'))){
- Require (-not [bool]$governor.Invoke($null,@($bad,$now))) 'MALFORMED_GOVERNOR_ACCEPTED'
+ Require (-not [bool]$governor.Invoke($null,@([string]$bad,[DateTime]$now))) 'MALFORMED_GOVERNOR_ACCEPTED'
 }
-Require (-not [bool]$governor.Invoke($null,@($raw,$now.AddSeconds(31)))) 'STALE_GOVERNOR_ACCEPTED'
-Require (-not [bool]$governor.Invoke($null,@($raw,$now.AddSeconds(-6)))) 'FUTURE_GOVERNOR_ACCEPTED'
+Require (-not [bool]$governor.Invoke($null,@([string]$raw,[DateTime]$now.AddSeconds(31)))) 'STALE_GOVERNOR_ACCEPTED'
+Require (-not [bool]$governor.Invoke($null,@([string]$raw,[DateTime]$now.AddSeconds(-6)))) 'FUTURE_GOVERNOR_ACCEPTED'
 $pins=Pins;$installation=[Stephanos.Sovereign.ReviewerInstallationV1]::new()
 $installation.ReviewerSid='S-1-5-21-111-222-333-1001'
 $pinsType.GetField('Installation',$instance).SetValue($pins,$installation)
@@ -83,6 +83,58 @@ $pinsType.GetField('Administrator',$instance).SetValue($pins,$false)
 $pinsType.GetField('ActualSid',$instance).SetValue($pins,'S-1-5-21-111-222-333-1002')
 Require (-not [bool]$principal.Invoke($null,@($pins))) 'MISMATCHED_PRINCIPAL_ACCEPTED'
 ([IDisposable]$pins).Dispose()
+if($env:STEPHANOS_REVIEWER_NATIVE_FIXTURE -ceq '1'){
+ # Only this test-owned temporary tree receives fixture ACLs. Existing tool,
+ # Program Files and profile ACLs are observed, never repaired by this test.
+ $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
+ $administrator=([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+ Require ($env:GITHUB_ACTIONS -ceq 'true' -and $env:RUNNER_ENVIRONMENT -ceq 'github-hosted' -and $administrator) 'HOSTED_ACL_FIXTURE_ONLY'
+ $aclCheck=$type.GetMethod('ReviewerProtectedAclV1',$flags)
+ function AclAllowed([string]$path){
+  try{$aclCheck.Invoke($null,@([string]$path,[bool]$true))|Out-Null;return $true}
+  catch{if($_.Exception.InnerException.Message -eq 'REVIEWER_PROTECTED_WRITE_AUTHORITY_UNPROVEN'){return $false};throw}
+ }
+ function AclRequire([bool]$ok,[string]$reason){Require $ok $reason;$script:aclChecks++}
+ function FixtureAcl([bool]$directory){
+  $acl=if($directory){[Security.AccessControl.DirectorySecurity]::new()}else{[Security.AccessControl.FileSecurity]::new()}
+  $acl.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'));$acl.SetAccessRuleProtection($true,$false)
+  foreach($sid in @('S-1-5-18','S-1-5-32-544')){
+   $inherit=if($directory){[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'}else{[Security.AccessControl.InheritanceFlags]::None}
+   $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($sid),
+    [Security.AccessControl.FileSystemRights]::FullControl,$inherit,[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow))
+  }
+  return $acl
+ }
+ foreach($sid in @('S-1-1-0','S-1-3-0')){
+  $aclParent=[IO.Path]::Combine($area,'acl-'+$sid);[IO.Directory]::CreateDirectory($aclParent)|Out-Null
+  $parentAcl=FixtureAcl $true
+  $parentAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($sid),
+   [Security.AccessControl.FileSystemRights]::Write,[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit',
+   [Security.AccessControl.PropagationFlags]::InheritOnly,[Security.AccessControl.AccessControlType]::Allow))
+  [IO.Directory]::SetAccessControl($aclParent,$parentAcl)
+  $protectedChild=[IO.Path]::Combine($aclParent,'protected.txt');[IO.File]::WriteAllText($protectedChild,'fixture child')
+  [IO.File]::SetAccessControl($protectedChild,(FixtureAcl $false))
+  AclRequire (AclAllowed $aclParent) 'INHERIT_ONLY_PARENT_FALSELY_WRITABLE'
+  AclRequire (AclAllowed $protectedChild) 'PROTECTED_CHILD_FALSELY_WRITABLE'
+  if($sid -ceq 'S-1-1-0'){
+   $inheritedChild=[IO.Path]::Combine($aclParent,'inherited.txt');[IO.File]::WriteAllText($inheritedChild,'ordinary inherited writer')
+   $childAcl=[IO.File]::GetAccessControl($inheritedChild)
+   $childAcl.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'));[IO.File]::SetAccessControl($inheritedChild,$childAcl)
+   $effective=@($childAcl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])|Where-Object{
+    $_.IdentityReference.Value -ceq 'S-1-1-0' -and $_.IsInherited -and $_.AccessControlType -eq 'Allow' -and
+    ($_.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and
+    ($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::Write) -ne 0})
+   AclRequire ($effective.Count -gt 0) 'FIXTURE_INHERITED_EFFECTIVE_WRITER_MISSING'
+   AclRequire (-not (AclAllowed $inheritedChild)) 'INHERITED_EFFECTIVE_CHILD_WRITER_ACCEPTED'
+   $effectiveAcl=FixtureAcl $true
+   $effectiveAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($sid),
+    [Security.AccessControl.FileSystemRights]::Write,[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit',
+    [Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow))
+   [IO.Directory]::SetAccessControl($aclParent,$effectiveAcl)
+   AclRequire (-not (AclAllowed $aclParent)) 'EFFECTIVE_PARENT_WRITER_ACCEPTED'
+  }
+ }
+}
 $terminal=$type.GetMethod('ReviewerTerminalV1',$flags)
 foreach($publication in @($true,$false)){
  $raw=@{status='HIGH_RISK_LOCAL_CANDIDATE_READY';publicationOk=$publication;mergeAuthority=$false;specialistAuthority=$false}|ConvertTo-Json -Compress
@@ -110,6 +162,17 @@ $child=Child "[Console]::WriteLine('fixture-complete')" 10000 $safe
 Require ([bool](Field $child 'Ok')) 'NATIVE_BENIGN_CHILD_FAILED'
 Require ([bool](Field $child 'ZeroActive')) 'NATIVE_SUCCESS_NOT_DRAINED'
 Require ((Field $child 'Output').Trim() -eq 'fixture-complete') 'NATIVE_OUTPUT_CHANGED'
+$loaderSource=[IO.Path]::Combine($area,'loader fixture with spaces');[IO.Directory]::CreateDirectory([IO.Path]::Combine($loaderSource,'scripts'))|Out-Null
+[IO.File]::WriteAllText([IO.Path]::Combine($loaderSource,'scripts','sovereign-installed-reviewer-loader-v1.mjs'),
+ 'export async function resolve(s,c,next){return next(s,c);}');
+[IO.File]::WriteAllText([IO.Path]::Combine($loaderSource,'scripts','sovereign-installed-reviewer-v1.mjs'),
+ 'console.log("native-loader-file-url-complete");');
+$nodeArguments=[string]$type.GetMethod('ReviewerNodeArgumentsV1',$flags).Invoke($null,@([string]$loaderSource,'coverage'))
+Require ($nodeArguments.StartsWith('--no-warnings --experimental-loader "file:///')) 'NATIVE_LOADER_ARGUMENT_NOT_FILE_URL'
+$child=$runner.Invoke($null,@('C:\Program Files\nodejs\node.exe',$nodeArguments,[string]$loaderSource,[string]$environment,[IntPtr]$parent.Handle,$safe,[int]10000))
+Require ([bool](Field $child 'Ok')) 'NATIVE_LOADER_FILE_URL_FAILED'
+Require ([bool](Field $child 'ZeroActive')) 'NATIVE_LOADER_JOB_NOT_DRAINED'
+Require ((Field $child 'Output').Trim() -eq 'native-loader-file-url-complete') 'NATIVE_LOADER_ENTRY_NOT_EXECUTED'
 $child=Child "[Console]::Error.WriteLine('fixture-private-stderr');[Console]::WriteLine('good-looking')" 10000 $safe
 Require (-not [bool](Field $child 'Ok')) 'STDERR_PROMOTED'
 Require ([bool](Field $child 'ZeroActive')) 'STDERR_JOB_NOT_DRAINED'
@@ -126,7 +189,7 @@ $child=Child $descendant 2000 $safe
 Require (-not [bool](Field $child 'Ok')) 'LIVE_DESCENDANT_ACCEPTED'
 Require ([bool](Field $child 'ZeroActive')) 'DESCENDANT_JOB_NOT_DRAINED'
 $parent.Dispose()
-[Console]::WriteLine('REVIEWER_NATIVE_FIXTURE='+(@{checks=$checks;nativeCompiled=$true;qualified=$false;physicalBattleBridgeCommissioning=$false}|ConvertTo-Json -Compress))
+[Console]::WriteLine('REVIEWER_NATIVE_FIXTURE='+(@{checks=$checks;aclChecks=$aclChecks;nativeCompiled=$true;qualified=$false;physicalBattleBridgeCommissioning=$false}|ConvertTo-Json -Compress))
 `.replace('__NATIVE__',native.join(',')).replace('__FIXTURE__',literal(fixture));
   const scriptPath=join(fixture,'native-fixture.ps1');writeFileSync(scriptPath,script);
   const result=spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
@@ -135,6 +198,7 @@ $parent.Dispose()
   const line=result.stdout.split(/\r?\n/).find(x=>x.startsWith('REVIEWER_NATIVE_FIXTURE='));
   assert.ok(line,result.stdout);const receipt=JSON.parse(line.split('=')[1]);
   assert.ok(receipt.checks>=40);assert.equal(receipt.nativeCompiled,true);assert.equal(receipt.qualified,false);
+  if(process.env.STEPHANOS_REVIEWER_NATIVE_FIXTURE==='1')assert.equal(receipt.aclChecks,7);
 });
 
 test('isolated hosted Windows installer and actual reader prove source custody without identity enrollment',
@@ -169,6 +233,32 @@ function Inspect([string]$hostPath){
  if($LASTEXITCODE -ne 0 -or $raw.Count -ne 1 -or -not $raw[0].StartsWith('SOVEREIGN_REVIEWER_PROFILE_V1=')){return $null}
  return $raw[0].Substring('SOVEREIGN_REVIEWER_PROFILE_V1='.Length)|ConvertFrom-Json
 }
+function FixedToolAclDiagnostics{
+ # Read-only and test-only: identify the failing fixed tool chain without
+ # changing its ACL or exposing account names/unknown principal identifiers.
+ function PrincipalRole([string]$sid){
+  switch($sid){
+   'S-1-5-18'{return 'SYSTEM'};'S-1-5-32-544'{return 'ADMINISTRATORS'}
+   'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'{return 'TRUSTED_INSTALLER'}
+   'S-1-1-0'{return 'EVERYONE'};'S-1-5-32-545'{return 'USERS'};'S-1-5-11'{return 'AUTHENTICATED_USERS'}
+   'S-1-3-0'{return 'CREATOR_OWNER'};'S-1-3-1'{return 'CREATOR_GROUP'};default{return 'OTHER'}
+  }
+ }
+ foreach($fixed in @(@('node-parent','C:\Program Files\nodejs'),@('node','C:\Program Files\nodejs\node.exe'),
+  @('git-parent','C:\Program Files\Git'),@('git-cmd-parent','C:\Program Files\Git\cmd'),@('git','C:\Program Files\Git\cmd\git.exe'))){
+  try{
+   $directory=[IO.Directory]::Exists($fixed[1]);$acl=if($directory){[IO.Directory]::GetAccessControl($fixed[1])}else{[IO.File]::GetAccessControl($fixed[1])}
+   $rules=@();foreach($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])){
+    if($rules.Count -ge 32){break}
+    $rules+=@{principal=(PrincipalRole $rule.IdentityReference.Value);type=[string]$rule.AccessControlType;
+     rightsHex=[Convert]::ToString([int64]$rule.FileSystemRights,16);inheritance=[string]$rule.InheritanceFlags;
+     propagation=[string]$rule.PropagationFlags;inherited=[bool]$rule.IsInherited}
+   }
+   [Console]::Error.WriteLine('REVIEWER_FIXED_TOOL_ACL_DIAGNOSTIC='+(@{tool=$fixed[0];directory=$directory;
+    owner=(PrincipalRole $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value);rules=$rules}|ConvertTo-Json -Compress -Depth 5))
+  }catch{[Console]::Error.WriteLine('REVIEWER_FIXED_TOOL_ACL_DIAGNOSTIC='+(@{tool=$fixed[0];unavailable=$true}|ConvertTo-Json -Compress))}
+ }
+}
 try{
  $created=$true
  & __PACKAGE__ -ReviewerSid ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)|Out-Null
@@ -200,6 +290,9 @@ try{
  $acl.SetSecurityDescriptorBinaryForm($original);[IO.File]::SetAccessControl($path,$acl)
  $last=Inspect $hostPath;Require ($null -ne $last -and $last.codeCustodyObserved -eq $true) 'RESTORED_EXACT_PROFILE_FAILED'
  [Console]::WriteLine('REVIEWER_PROTECTED_HOSTED_FIXTURE='+(@{checks=$checks;actualNativeReader=$true;qualified=$false;physicalBattleBridgeCommissioning=$false}|ConvertTo-Json -Compress))
+}catch{
+ FixedToolAclDiagnostics
+ throw
 }finally{
  if($created -and [IO.Directory]::Exists($root)){
   if(([IO.File]::GetAttributes($root) -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'FIXTURE_CLEANUP_REDIRECTION'}

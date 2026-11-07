@@ -82,7 +82,10 @@ test('fixed action has no caller command and fits the existing transport timeout
   const registry=readFileSync(new URL('./sovereignCommanderV1.mjs',import.meta.url),'utf8');
   const mcp=readFileSync(new URL('../../scripts/sovereign-commander-mcp.mjs',import.meta.url),'utf8');
   const remote=readFileSync(new URL('./sovereignCommanderRemoteMailboxV1.mjs',import.meta.url),'utf8');
-  assert.match(registry,/'sovereign-windows-reviewer-calibration':[\s\S]*?--commander-once[\s\S]*?timeoutMs: 180_000/);
+  const fixed = registry.match(/'sovereign-windows-reviewer-calibration': frozen\(\{([\s\S]*?)\n    \}\),/)?.[1] || '';
+  assert.ok(fixed.includes("executable: 'C:\\\\Program Files\\\\Stephanos\\\\SovereignReviewerV1\\\\host.exe'"));
+  assert.match(fixed,/args: frozen\(\['--windows-calibration-remote'\]\),/);
+  assert.match(fixed,/timeoutMs: 180_000,/);
   assert.ok(mcp.includes("'"+action+"'"));
   assert.ok(remote.includes("'"+action+"'"));
   assert.match(remote,/parseWindowsCalibrationRemoteV1/);

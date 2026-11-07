@@ -59,11 +59,16 @@ namespace Stephanos.Sovereign {
       return sid==ReviewerSystemV1 || sid==ReviewerAdminsV1 || (tool && sid==ReviewerTrustedInstallerV1);
     }
     static void ReviewerProtectedAclV1(string path,bool tool) {
-      FileSystemSecurity acl=Directory.Exists(path) ? (FileSystemSecurity)Directory.GetAccessControl(path) : File.GetAccessControl(path);
+      bool directory=Directory.Exists(path);
+      FileSystemSecurity acl=directory ? (FileSystemSecurity)Directory.GetAccessControl(path) : File.GetAccessControl(path);
       if(!ReviewerTrustedOwnerV1(acl.GetOwner(typeof(SecurityIdentifier)).Value,tool))
         throw new IOException("REVIEWER_PROTECTED_OWNER_UNPROVEN");
       const uint mutate=0x500D0156u;
       foreach(FileSystemAccessRule rule in acl.GetAccessRules(true,true,typeof(SecurityIdentifier))) {
+        // An inherit-only directory ACE applies to descendants, not this
+        // directory. Each actual child directory and tool/file is checked in
+        // its own right; effective inherited write authority remains denied.
+        if(directory && (rule.PropagationFlags&PropagationFlags.InheritOnly)!=0)continue;
         if(rule.AccessControlType==AccessControlType.Allow && (unchecked((uint)rule.FileSystemRights)&mutate)!=0
           && !ReviewerTrustedOwnerV1(rule.IdentityReference.Value,tool))
           throw new IOException("REVIEWER_PROTECTED_WRITE_AUTHORITY_UNPROVEN");

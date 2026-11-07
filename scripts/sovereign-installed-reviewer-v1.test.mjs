@@ -138,13 +138,13 @@ test('authenticated PR objects remain review data when the PR changes the produc
   const invoke=`const m=await import(${JSON.stringify(pathToFileURL(join(installed,'source/scripts/sovereign-installed-reviewer-v1.mjs')).href)});`
     +`const r=m.captureInstalledReviewerDataV1(${JSON.stringify({...env,STEPHANOS_REVIEW_EXACT_HEAD:head,STEPHANOS_REVIEW_EXACT_BASE:base})}, {root:${JSON.stringify(data)}});`
     +`process.stdout.write(JSON.stringify({head:r.sourceHead,changed:r.changedFiles,diff:r.diff}));`;
-  const r=spawnSync(process.execPath,['--no-warnings','--experimental-loader',join(installed,'source/scripts/sovereign-installed-reviewer-loader-v1.mjs'),
+  const r=spawnSync(process.execPath,['--no-warnings','--experimental-loader',pathToFileURL(join(installed,'source/scripts/sovereign-installed-reviewer-loader-v1.mjs')).href,
     '--input-type=module','--eval',invoke],{encoding:'utf8',timeout:30000,env:{...process.env,NODE_OPTIONS:''}});
   assert.equal(r.status,0,r.stderr);const result=JSON.parse(r.stdout);
   assert.equal(result.head,head);assert.ok(result.diff.includes('executed-marker'));assert.equal(existsSync(sentinel),false);
   // Complete graph capture refuses a changed final dependency before ANY entry.
   put(installed,'source/shared/agents/engineeringIncidentMethodMemoryV1.mjs','throw Error("tampered");\n');
-  const denied=spawnSync(process.execPath,['--no-warnings','--experimental-loader',join(installed,'source/scripts/sovereign-installed-reviewer-loader-v1.mjs'),
+  const denied=spawnSync(process.execPath,['--no-warnings','--experimental-loader',pathToFileURL(join(installed,'source/scripts/sovereign-installed-reviewer-loader-v1.mjs')).href,
     '--input-type=module','--eval','process.stdout.write("UNSAFE_ENTRY");'],{encoding:'utf8',timeout:30000});
   assert.notEqual(denied.status,0);assert.equal(denied.stdout,'');assert.match(denied.stderr,/SOURCE_CHANGED/);
 });

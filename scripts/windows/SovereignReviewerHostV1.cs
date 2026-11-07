@@ -191,6 +191,13 @@ namespace Stephanos.Sovereign {
         payload=line;return true;
       }catch{return false;}
     }
+    static string ReviewerNodeArgumentsV1(string source,string entry) {
+      // Node's ESM loader flag requires a URL on Windows: a drive-letter path
+      // is otherwise parsed as the unsupported URL scheme "c:".
+      string loader=new Uri(Path.Combine(source,"scripts","sovereign-installed-reviewer-loader-v1.mjs")).AbsoluteUri;
+      return "--no-warnings --experimental-loader "+Quote(loader)
+        +" "+Quote(Path.Combine(source,"scripts","sovereign-installed-reviewer-v1.mjs"))+" "+entry;
+    }
     internal static int ReviewerMainV1(string[] args) {
       try {
         if(args==null||args.Length!=1)throw new IOException("REVIEWER_FIXED_ENTRY_REQUIRED");
@@ -210,8 +217,7 @@ namespace Stephanos.Sovereign {
           if(!ReviewerInferencePrincipalV1(pins))throw new IOException("REVIEWER_PRINCIPAL_NOT_ADMITTED");
           string environment=ReviewerEnvironmentV1();entry=entry.Substring(2);
           string source=Path.Combine(pins.VersionRoot,"source");
-          string arguments="--no-warnings --experimental-loader "+Quote(Path.Combine(source,"scripts","sovereign-installed-reviewer-loader-v1.mjs"))
-            +" "+Quote(Path.Combine(source,"scripts","sovereign-installed-reviewer-v1.mjs"))+" "+entry;
+          string arguments=ReviewerNodeArgumentsV1(source,entry);
           IntPtr parent=ReviewerActualParentV1();ReviewerChildV1 child;
           try{child=ReviewerRunChildV1(ReviewerNodeV1,arguments,source,environment,parent,
             entry=="coverage"?(Func<bool>)delegate{return true;}:ReviewerGamingSafeV1,
