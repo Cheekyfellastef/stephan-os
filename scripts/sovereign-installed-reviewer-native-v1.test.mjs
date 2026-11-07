@@ -222,12 +222,29 @@ $observeDescendant=[Func[bool]]{
  return $true
 }
 try{
+ $descendantRunClock=[Diagnostics.Stopwatch]::StartNew()
  $child=Child $descendant 2000 $observeDescendant
  Require ([IO.File]::Exists($rootMarker)) 'DESCENDANT_VECTOR_ROOT_DID_NOT_EXIT'
  Require ($null -ne $script:descendantProcess) 'LIVE_DESCENDANT_NOT_WITNESSED'
  Require (-not [bool](Field $child 'Ok')) 'LIVE_DESCENDANT_ACCEPTED'
  Require ([bool](Field $child 'ZeroActive')) 'DESCENDANT_JOB_NOT_DRAINED'
- Require ($script:descendantProcess.WaitForExit(0)) 'WITNESSED_DESCENDANT_SURVIVED_DRAIN'
+ $immediateExit=$script:descendantProcess.WaitForExit(0)
+ if(-not $immediateExit){
+  # Observe this held, test-created process only. The original immediate-exit
+  # assertion remains binding while we distinguish signal latency from escape.
+  $nativeElapsed=$descendantRunClock.ElapsedMilliseconds
+  $kernelWait=$type.GetMethod('WaitForSingleObject',$flags)
+  $nativeWaitBefore=[uint32]$kernelWait.Invoke($null,@([IntPtr]$script:descendantProcess.Handle,[uint32]0))
+  $waitClock=[Diagnostics.Stopwatch]::StartNew();$boundedExit=$script:descendantProcess.WaitForExit(5000);$waitClock.Stop()
+  $nativeWaitAfter=[uint32]$kernelWait.Invoke($null,@([IntPtr]$script:descendantProcess.Handle,[uint32]0))
+  $exitCode=$null;if($boundedExit){$exitCode=$script:descendantProcess.ExitCode}
+  $observation=@{immediateExit=$immediateExit;boundedExit=$boundedExit;waitMs=$waitClock.ElapsedMilliseconds;
+   nativeRunMs=$nativeElapsed;nativeWaitBefore=$nativeWaitBefore;nativeWaitAfter=$nativeWaitAfter;exitCode=$exitCode;
+   nativeAccepted=[bool](Field $child 'Ok');nativeZeroActive=[bool](Field $child 'ZeroActive');
+   nativeDeadlineMs=2000;fixtureLifetimeMs=20000;qualified=$false}
+  [Console]::Error.WriteLine('REVIEWER_DESCENDANT_EXIT_DIAGNOSTIC='+($observation|ConvertTo-Json -Compress))
+ }
+ Require $immediateExit 'WITNESSED_DESCENDANT_SURVIVED_DRAIN'
 }finally{if($null -ne $script:descendantProcess){$script:descendantProcess.Dispose()}}
 $parent.Dispose()
 [Console]::WriteLine('REVIEWER_NATIVE_FIXTURE='+(@{checks=$checks;aclChecks=$aclChecks;nativeCompiled=$true;qualified=$false;physicalBattleBridgeCommissioning=$false}|ConvertTo-Json -Compress))
