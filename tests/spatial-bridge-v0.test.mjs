@@ -197,7 +197,7 @@ test('Spatial Workspace tile opens same-site 3D preview on Battle Bridge, hosted
         {type:'user-click'});
       assert.equal(new URL(assigned).origin,new URL(home).origin);
       assert.equal(new URL(assigned).pathname,pathname);
-      if(!home.startsWith('http://127.0.0.1')) assert.doesNotMatch(assigned,/127\\.0\\.0\\.1|localhost/i);
+      if(!home.startsWith('http://127.0.0.1')) assert.doesNotMatch(assigned,/127\.0\.0\.1|localhost/i);
     }
   } finally {globalThis.window=originalWindow;}
 });
@@ -208,6 +208,6 @@ test('flat preview remains available without WebXR; native ChatGPT desktop captu
   assert.match(entry,/playPreview/);
   assert.match(entry,/drawPreview/);
   assert.match(entry,/Enter Spatial Workspace/);
-  assert.match(capture,/127\\.0\\.0\\.1/);
+  assert.match(capture,/127\.0\.0\.1/);
   assert.doesNotMatch(readJson(manifestPath).entry,/^https?:/);
 });
