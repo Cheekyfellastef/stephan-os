@@ -781,6 +781,7 @@ test('mailbox runtime changes require a fresh mailbox process before natural rel
 test('launcher-critical shell sources select the UI refresh target', () => {
   for (const path of [
     'main.js',
+    'style.css',
     'modules/command-deck/command-deck.js',
     'system/module_loader.js',
     'system/workspace.js',
@@ -788,6 +789,70 @@ test('launcher-critical shell sources select the UI refresh target', () => {
     const plan = classifyPostSyncRefresh([path]);
     assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
     assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173]);
+  }
+});
+
+test('canonical launcher stylesheet requires served UI proof and cannot use natural reload proof', async () => {
+  const calls = [];
+  const stale = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: ['style.css'],
+    adapters: {
+      refreshUi: async () => { calls.push('ui'); return pass(A); },
+      confirmNaturalReload: async () => { calls.push('natural'); return pass(); },
+    },
+  });
+  assert.equal(stale.ok, false);
+  assert.equal(stale.exactHeadProofOk, false);
+  assert.equal(stale.blocker, `REFRESH_PROOF_FAILED:${POST_SYNC_REFRESH_TARGETS.UI_4173}`);
+  assert.deepEqual(calls, ['ui']);
+
+  const missing = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: ['style.css'],
+    adapters: { confirmNaturalReload: () => assert.fail('Stylesheet needs the served UI owner') },
+  });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.blocker, `REFRESH_HANDLER_MISSING:${POST_SYNC_REFRESH_TARGETS.UI_4173}`);
+});
+
+test('Control Tower launcher update refreshes its established owners while retaining Spatial adoption debt', async () => {
+  const changedPaths = [
+    'apps/control-tower/app.json', 'apps/control-tower/index.html', 'apps/index.json',
+    'main.js', 'modules/command-deck/command-deck.js', 'style.css',
+    'shared/runtime/launcherTileLayout.mjs', 'shared/runtime/launcherTileLayout.test.mjs',
+    'shared/runtime/paneOrder.mjs', 'shared/runtime/stephanosSessionMemory.mjs',
+    'stephanos-ui/src/utils/paneOrderPersistence.js', 'system/apps/app_discovery.js',
+    'tests/control-tower-launcher-entry.test.mjs', 'tests/session-memory-launcher-order.test.mjs',
+    'scripts/spatial-window-host.mjs', 'shared/vr/spatialDesktopSurfaceContractV1.mjs',
+  ];
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths,
+    adapters: {
+      refreshUi: async () => { calls.push('ui'); return pass(); },
+      restartBackend: async () => { calls.push('backend'); return pass(); },
+    },
+  });
+  assert.deepEqual(result.plan.internal.unknownPaths, []);
+  assert.equal(result.plan.automaticExecutionAllowed, true);
+  assert.deepEqual(result.plan.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173, POST_SYNC_REFRESH_TARGETS.BACKEND_8787]);
+  assert.deepEqual(calls, ['ui', 'backend']);
+  assert.equal(result.safeRefreshesCompleted, true);
+  assert.equal(result.plan.spatialAdoptionPathCount, 2);
+  assert.equal(result.ok, false);
+  assert.equal(result.exactHeadProofOk, false);
+  assert.equal(result.blocker, 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN');
+});
+
+test('unregistered root stylesheets still block every refresh before invoking an owner', async () => {
+  for (const path of ['styles.css', 'style-v2.css', 'style.css.bak', 'unknown-root.css']) {
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths: ['style.css', path],
+      adapters: { refreshUi: () => assert.fail('Unknown neighboring CSS must retain its hold') },
+    });
+    assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH, path);
+    assert.equal(result.plan.automaticExecutionAllowed, false, path);
+    assert.deepEqual(result.plan.internal.unknownPaths, [path], path);
+    assert.deepEqual(result.results, [], path);
   }
 });
 
@@ -1667,7 +1732,7 @@ test('audited pending 853343 partition assigns 35 exact paths to their existing 
   assert.equal(result.exactHeadProofOk, true);
 });
 
-test('audited pending 853343 full unknown estate retains both spatial holds and all existing obligations', async () => {
+test('audited pending 853343 estate retains Spatial debt and independent plugin/relay obligations', async () => {
   const calls = [];
   const targets = [
     POST_SYNC_REFRESH_TARGETS.UI_4173,
@@ -1689,18 +1754,23 @@ test('audited pending 853343 full unknown estate retains both spatial holds and 
     })),
   });
   assert.equal(result.ok, false);
-  assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+  assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED);
+  assert.equal(result.blocker, 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN');
   assert.equal(result.plan.changedPathCount, 42);
   assert.equal(result.plan.noRuntimePathCount, 27);
-  assert.equal(result.plan.unknownPathCount, 2);
-  assert.deepEqual(result.plan.internal.unknownPaths, PENDING_853343_UNRESOLVED_PATHS);
+  assert.equal(result.plan.unknownPathCount, 0);
+  assert.equal(result.plan.spatialAdoptionPathCount, 2);
+  assert.equal(result.plan.spatialAdoptionRequired, true);
+  assert.deepEqual(result.plan.internal.unknownPaths, []);
+  assert.deepEqual(result.plan.internal.spatialAdoptionPaths, PENDING_853343_UNRESOLVED_PATHS);
   assert.deepEqual(result.plan.targetIds, targets);
   assert.equal(result.plan.pluginHostActivationRequired, true);
   assert.equal(result.plan.sovereignRelayRefreshRequired, true);
-  assert.equal(result.plan.automaticExecutionAllowed, false);
+  assert.equal(result.plan.automaticExecutionAllowed, true);
   assert.equal(result.exactHeadProofOk, false);
-  assert.deepEqual(result.results, []);
-  assert.deepEqual(calls, []);
+  assert.deepEqual(result.results.map(row => row.targetId), targets);
+  assert.ok(result.results.every(row => row.resumed === true));
+  assert.deepEqual(calls, ['verifySovereignPluginHost']);
 });
 
 test('audited pending 853343 offline sources do not invoke installers observers reviewers or refresh adapters', async () => {

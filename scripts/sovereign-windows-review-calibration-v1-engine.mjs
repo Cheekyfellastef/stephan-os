@@ -8,6 +8,7 @@ import { join, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { captureHighRiskAdvisorySnapshotV1 } from './sovereign-high-risk-advisory-v1.mjs';
 import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { admitSovereignLocalOllamaBindingV1, matchesSovereignLocalOllamaCompletionV1, sovereignLocalOllamaFailureReasonV1 } from '../shared/agents/sovereignReviewerOllamaBindingV1.mjs';
 import {
   evaluateSovereignWindowsCalibrationV1,
   SOVEREIGN_WINDOWS_CALIBRATION_FINDING_CODES,
@@ -17,6 +18,7 @@ const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const FILES = Object.freeze([
   'scripts/sovereign-windows-review-calibration-v1.mjs',
   'shared/agents/sovereignWindowsCalibrationV1.mjs',
+  'shared/agents/sovereignReviewerOllamaBindingV1.mjs',
   'scripts/sovereign-windows-review-calibration-v1-engine.mjs',
   'shared/agents/sovereignHighRiskReviewCandidateV1.mjs',
   'shared/agents/sovereignReviewCoverageV1.mjs',
@@ -165,6 +167,7 @@ export async function runWindowsCalibrationCandidateV1(env = process.env, {
   const firstDigest = await digest(model, fetchImpl);
   if (!SHA64.test(firstDigest)) return held('LOCAL_MODEL_DIGEST_UNPROVEN');
   if (expired()) return held('CALIBRATION_TOTAL_DEADLINE_EXCEEDED');
+  let bindingFailure = '';
   const identity = {
     repository: before.repository, sourceHead: before.sourceHead, baseSha: before.baseSha,
     implementerPrincipal: env.STEPHANOS_REVIEW_IMPLEMENTER_PRINCIPAL,
@@ -185,10 +188,23 @@ export async function runWindowsCalibrationCandidateV1(env = process.env, {
         if (expired() || !gamingGuard(env)) controller.abort();
       }, 500);
       try {
+        let binding;
+        try {
+          binding = await admitSovereignLocalOllamaBindingV1(firstDigest, {
+            fetchImpl, signal: AbortSignal.any([controller.signal,
+              AbortSignal.timeout(Math.max(1, Math.floor(deadline - clock())))]),
+          });
+        } catch (error) {
+          bindingFailure = sovereignLocalOllamaFailureReasonV1(error);
+          throw error;
+        }
+        if (expired() || controller.signal.aborted || !gamingGuard(env)) {
+          throw Error('GAMING_OR_CALIBRATION_DEADLINE_CHANGED');
+        }
         const r = await fetchImpl('http://127.0.0.1:11434/api/generate', {
           method:'POST', redirect:'error',
           headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ model, prompt, stream:false, think:false, format:modelResponseFormatV1(challenge),
+          body: JSON.stringify({ model:binding.model, prompt, stream:false, think:false, format:modelResponseFormatV1(challenge),
             keep_alive:'5s', options:{temperature:0,num_ctx:8192} }),
           signal: AbortSignal.any([AbortSignal.timeout(Math.max(1, Math.min(45_000, Math.floor(deadline - clock())))), controller.signal]),
         });
@@ -197,7 +213,7 @@ export async function runWindowsCalibrationCandidateV1(env = process.env, {
         if (controller.signal.aborted || typeof raw !== 'string'
           || Buffer.byteLength(raw, 'utf8') > 64 * 1024) throw Error('LOCAL_MODEL_OUTPUT_UNSAFE');
         const response = JSON.parse(raw);
-        if (response?.model !== model || response?.done !== true
+        if (!matchesSovereignLocalOllamaCompletionV1(response, binding) || response?.done !== true
           || response?.done_reason !== 'stop' || typeof response.response !== 'string') {
           throw Error('MODEL_COMPLETION_IDENTITY_UNPROVEN');
         }
@@ -221,6 +237,7 @@ export async function runWindowsCalibrationCandidateV1(env = process.env, {
   }
   return Object.freeze({
     ...result,
+    ...(bindingFailure ? { reason: bindingFailure } : {}),
     modelDigestSha256: firstDigest,
     qualification: 'PENDING_INDEPENDENT_WINDOWS_SPECIALIST_ATTESTATION',
     ...NO_AUTHORITY,
