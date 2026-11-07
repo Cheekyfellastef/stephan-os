@@ -51,6 +51,12 @@ Seated/Standing height settings remain separate and unaffected. World bounds
 limit dragging; navigation remains active while carrying a cube, dragging furniture or turning a dial. A single controller cannot simultaneously grip both a cube and furniture. This is a physics-inspired heavy-mass visual
 feel with fixed stops, **not** haptic hardware resistance.
 
+## Consent-gated PC browser window sharing when the native helper is not installed
+
+The launcher offers **Show ChatGPT window (view only)** on the Battle Bridge's local `127.0.0.1`/localhost address. This invokes the browser's standard `getDisplayMedia` window chooser **only on the operator's button click**. Select the actual open ChatGPT/Codex window. The displayed live video frames are composited into the same stereo hologram and flat preview but are not recorded, relayed, cached, uploaded, or granted to an agent. The browser sharing indicator and Stop/Disconnect revoke the live track; leaving the page or a track ending also releases it. This is a genuine live window picture, not a simulated harness, but it is deliberately **view-only**: clicking the hologram or typing on the virtual keyboard cannot control the captured window, and requests are visibly refused. ChatGPT audio continues in the original Windows app; this browser capture requests no audio. Phone/iPad remote sessions have the flat 3D preview, not remote access to PC screen capture or the private Windows helper.
+
+For fully **interactive** ChatGPT, the existing trusted Windows Spatial helper on `127.0.0.1:4180` must be installed, verified and started, then the operator must select and explicitly consent to their original ChatGPT window. The existing launcher **Connect interactive ChatGPT window** uses that native path, preserving keyboard, clicking and original Voice controls. Opening the web landing tile by itself cannot install or launch a Windows program. Original #1717/#2961 native commissioning must close that attended installation gap through its existing authority, not mint a new public capture server or pretend that a source merge proves a live adapter.
+
 ## ChatGPT harness and real headset audio controls
 
 The **Check ChatGPT screen connection** button performs a read-only health
