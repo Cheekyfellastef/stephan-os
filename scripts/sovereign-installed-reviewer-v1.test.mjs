@@ -115,7 +115,10 @@ for(const changed of [false,true]){
     assert.equal(options.reviewMode,'complete-diff');assert.equal(options.root,'canonical-data');
     assert.equal(options.env.STEPHANOS_SHARED_AGENT_WORKSPACE,'fixed-workspace');
     assert.equal(typeof options.snapshot,'function');assert.equal(options.invokeModel,undefined);
-    assert.deepEqual(options.completeContextAdmission,{ok:true,reason:'',largeContextCustodyObserved:true,contextTokens:262144});
+    assert.equal(options.completeContextAdmission.ok,true);
+    assert.equal(options.completeContextAdmission.reason,'');
+    assert.equal(options.completeContextAdmission.largeContextCustodyObserved,true);
+    assert.equal(options.completeContextAdmission.contextTokens,262144);
     assert.equal((await options.observeModel('qwen3.5:27b',{signal:'exact-signal'})).digest,'digest');
     await options.invokeCompleteModel('entire-prompt',{reviewId:'review'},{signal:'exact-signal',platform:'linux',gamingGuard:denied});
     return{status:'HIGH_RISK_LOCAL_CANDIDATE_READY',publicationOk:true};
@@ -194,6 +197,7 @@ test('native observations are bounded diagnostics and never accept qualification
 test('native governor wrapper invokes only the fixed physical read and refuses missing or ambiguous observation',()=>{
   let calls=0;
   const observation={schemaVersion:'stephanos.reviewer-governor-observation.v1',allowed:true,
+    largeContextCustodyObserved:false,contextTokens:8192,
     independentPrincipalObserved:false,qualified:false};
   const run=(exe,args)=>{calls++;assert.equal(exe,SOVEREIGN_INSTALLED_REVIEWER_HOST_V1);
     assert.deepEqual(args,['--governor']);return{status:0,stdout:'SOVEREIGN_REVIEWER_GOVERNOR_V1='+JSON.stringify(observation)};};
