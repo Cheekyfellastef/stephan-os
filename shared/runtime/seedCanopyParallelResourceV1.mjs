@@ -32,6 +32,7 @@ export function isParallelSeedLocalWorkAllowedV1(governor, nowMs = Date.now()) {
   return governor?.schemaVersion === 'stephanos.vr-resource-governor.v1'
     && governor.active === false && governor.phase === 'NORMAL'
     && governor.localModelAllowed === true
+    && governor.prepareLeaseActive === false
     && isParallelSeedGovernorSnapshotFreshV1(governor, nowMs);
 }
 
