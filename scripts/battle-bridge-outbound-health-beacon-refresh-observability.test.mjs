@@ -12,6 +12,7 @@ import {
   POST_SYNC_REFRESH_CLASSIFICATIONS,
   POST_SYNC_REFRESH_TARGETS,
   buildPostSyncRefreshProjection,
+  classifyPostSyncRefresh,
   reducePostSyncTargetFailureHistory,
 } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 
@@ -116,6 +117,112 @@ test('a real coordinator plan remains REFRESH_READY with no completed target', (
   assert.deepEqual(surface.runtimeRefresh.resultTargets, []);
   assert.equal('complete' in surface.runtimeRefresh, false);
   assert.equal('freshProcessLoaded' in surface.runtimeRefresh, false);
+});
+
+test('complete beacon retains the actual pending Git range and counts without publishing paths or granting execution', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/unmapped-source-fixture.mjs',
+    'scripts/battle-bridge-outbound-health-beacon-core.mjs',
+    'docs/refresh-fixture.md',
+  ]);
+  const projection = buildPostSyncRefreshProjection({ classification: plan.classification, plan, results: [] },
+    { beforeHead: OTHER_HEAD, afterHead: HEAD });
+  const beacon = buildCompleteBeacon({ sourceHead: HEAD, now: NOW, statusRecords: {
+    postSyncRefresh: { ...projection, timestampUtc: NOW.toISOString(),
+      internal: { unknownPaths: ['C:/Users/PRIVATE_OPERATOR/PRIVATE_SOURCE'] },
+      paths: ['PRIVATE_PATH'], stdout: 'PRIVATE_CONTENT', executionAuthority: true },
+  } });
+  const runtime = beacon.surfaces.find(row => row.id === 'postSyncRefresh').runtimeRefresh;
+  assert.equal(runtime.beforeHead, OTHER_HEAD);
+  assert.equal(runtime.afterHead, HEAD);
+  assert.equal(runtime.afterHeadMatchesExpected, true);
+  assert.equal(runtime.changedPathCount, 3);
+  assert.equal(runtime.noRuntimePathCount, 1);
+  assert.equal(runtime.openClawPathCount, 0);
+  assert.equal(runtime.unknownPathCount, 1);
+  assert.equal(runtime.unsafePathCount, 0);
+  assert.equal(runtime.classification, 'BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
+  assert.equal(runtime.evidenceState, 'OBSERVED');
+  assert.deepEqual(runtime.targetIds, plan.targetIds);
+  assert.deepEqual(runtime.resultTargets, []);
+  assert.equal('executionAuthority' in runtime, false);
+  assert.equal(beacon.processRestartAllowed, false);
+  assert.equal(beacon.sourceMutationAllowed, false);
+  const body = buildBattleBridgeOutboundBeaconBody(beacon);
+  assert.doesNotMatch(body, /PRIVATE_|unmapped-source-fixture|refresh-fixture/);
+});
+
+test('pending range heads require complete SHA strings and preserve independent expected-head truth', () => {
+  const input = record({ beforeHead: OTHER_HEAD.toUpperCase(), afterHead: HEAD.toUpperCase() });
+  const accepted = projectPostSyncRefreshBeaconFacts(input, HEAD.toUpperCase());
+  assert.equal(accepted.beforeHead, OTHER_HEAD);
+  assert.equal(accepted.afterHead, HEAD);
+  assert.equal(accepted.afterHeadMatchesExpected, true);
+  assert.equal(projectPostSyncRefreshBeaconFacts(input, OTHER_HEAD).afterHeadMatchesExpected, false);
+  for (const value of [undefined, null, '', ` ${HEAD}`, `${HEAD} `, `${HEAD}\n`, `${HEAD}\r`, `${HEAD}\r\n`, `${HEAD}/PRIVATE_PATH`,
+    HEAD.slice(1), `${HEAD}a`, [HEAD], { head: HEAD }, new String(HEAD), 1]) {
+    const before = projectPostSyncRefreshBeaconFacts(record({ beforeHead: value }), HEAD);
+    assert.equal(before.beforeHead, '');
+    assert.equal(before.afterHead, HEAD);
+    const after = projectPostSyncRefreshBeaconFacts(record({ beforeHead: OTHER_HEAD, afterHead: value }), HEAD);
+    assert.equal(after.beforeHead, OTHER_HEAD);
+    assert.equal(after.afterHead, '');
+    assert.equal(after.afterHeadMatchesExpected, null);
+    assert.equal(projectPostSyncRefreshBeaconFacts(input, value).afterHeadMatchesExpected, null);
+  }
+});
+
+test('missing pending range fields stay unknown without changing legacy target evidence', () => {
+  const fields = ['changedPathCount', 'noRuntimePathCount', 'openClawPathCount', 'unknownPathCount', 'unsafePathCount'];
+  const missing = projectPostSyncRefreshBeaconFacts(null, HEAD);
+  assert.equal(missing.beforeHead, '');
+  assert.equal(missing.afterHead, '');
+  assert.equal(missing.afterHeadMatchesExpected, null);
+  assert.equal(missing.evidenceState, 'MISSING');
+  const legacy = projectPostSyncRefreshBeaconFacts(record(), HEAD);
+  assert.equal(legacy.beforeHead, '');
+  assert.equal(legacy.afterHead, HEAD);
+  assert.equal(legacy.afterHeadMatchesExpected, true);
+  assert.equal(legacy.evidenceState, 'OBSERVED');
+  assert.deepEqual(legacy.targetIds, [TARGET]);
+  assert.deepEqual(legacy.resultTargets, []);
+  for (const field of fields) {
+    assert.equal(missing[field], null, field);
+    assert.equal(legacy[field], null, field);
+  }
+});
+
+test('pending path counts accept only nonnegative safe integers without coercion', () => {
+  const fields = ['changedPathCount', 'noRuntimePathCount', 'openClawPathCount', 'unknownPathCount', 'unsafePathCount'];
+  for (const field of fields) {
+    for (const value of [0, 1, 4000]) {
+      assert.equal(projectPostSyncRefreshBeaconFacts(record({ [field]: value }), HEAD)[field], value, field);
+    }
+    for (const value of [undefined, null, '', '0', '12', false, true, {}, [], [1], new Number(1),
+      -1, 0.5, Infinity, -Infinity, NaN, Number.MAX_SAFE_INTEGER + 1]) {
+      const runtime = projectPostSyncRefreshBeaconFacts(record({ [field]: value }), HEAD);
+      assert.equal(runtime[field], null, field);
+      assert.equal(runtime.classification, 'REFRESH_READY');
+      assert.deepEqual(runtime.targetIds, [TARGET]);
+      assert.deepEqual(runtime.resultTargets, []);
+    }
+  }
+});
+
+test('a stale pending range retains its own head while changed range and counts remain publishable', () => {
+  const input = record({ beforeHead: 'c'.repeat(40), afterHead: OTHER_HEAD, unknownPathCount: 33,
+    timestampUtc: '2026-10-28T20:33:22.997Z', classification: 'BLOCKED_UNCLASSIFIED_RUNTIME_PATH' });
+  const surface = beaconSurface(input);
+  assert.equal(surface.state, 'STALE');
+  assert.equal(surface.runtimeRefresh.beforeHead, 'c'.repeat(40));
+  assert.equal(surface.runtimeRefresh.afterHead, OTHER_HEAD);
+  assert.equal(surface.runtimeRefresh.afterHeadMatchesExpected, false);
+  assert.equal(surface.runtimeRefresh.unknownPathCount, 33);
+  assert.deepEqual(surface.runtimeRefresh.resultTargets, []);
+  const material = overrides => buildBattleBridgeOutboundBeaconMaterialBody(buildBattleBridgeOutboundBeaconBody(
+    buildCompleteBeacon({ sourceHead: HEAD, now: NOW, statusRecords: { postSyncRefresh: { ...input, ...overrides } } })));
+  assert.notEqual(material({}), material({ beforeHead: 'd'.repeat(40) }));
+  assert.notEqual(material({}), material({ unknownPathCount: 34 }));
 });
 
 test('blocked target facts remain visible without inventing a result for a later target', () => {
