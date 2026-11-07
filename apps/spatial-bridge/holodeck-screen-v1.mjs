@@ -75,7 +75,7 @@ export function createHolodeckScreen({client,comfort,documentRef=globalThis.docu
   }
   function render() {
     const state=getState(),version=`${revision}:${state.revision}`;
-    if(drawn===version)return {screen,console:consoleCanvas,revision:drawn};drawn=version;
+    if(drawn===version)return {screen,console:consoleCanvas,knob:knobCanvas,revision:drawn};drawn=version;
     ctx.clearRect(0,0,screen.width,screen.height);ctx.fillStyle='#03131ff5';ctx.fillRect(0,0,screen.width,screen.height);
     ctx.fillStyle='#5de6ff';ctx.fillRect(0,0,8,954);ctx.fillRect(3064,0,8,954);
     text(ctx,'STEPHANOS  /  SPATIAL CONSOLE',64,65,37);
