@@ -1630,7 +1630,7 @@ test('audited pending 853343 partition assigns 35 exact paths to their existing 
   assert.equal(result.exactHeadProofOk, true);
 });
 
-test('audited pending 853343 full unknown estate retains both spatial holds and all existing obligations', async () => {
+test('audited pending 853343 estate retains Spatial debt and independent plugin/relay obligations', async () => {
   const calls = [];
   const targets = [
     POST_SYNC_REFRESH_TARGETS.UI_4173,
@@ -1652,18 +1652,23 @@ test('audited pending 853343 full unknown estate retains both spatial holds and 
     })),
   });
   assert.equal(result.ok, false);
-  assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+  assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED);
+  assert.equal(result.blocker, 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN');
   assert.equal(result.plan.changedPathCount, 42);
   assert.equal(result.plan.noRuntimePathCount, 27);
-  assert.equal(result.plan.unknownPathCount, 2);
-  assert.deepEqual(result.plan.internal.unknownPaths, PENDING_853343_UNRESOLVED_PATHS);
+  assert.equal(result.plan.unknownPathCount, 0);
+  assert.equal(result.plan.spatialAdoptionPathCount, 2);
+  assert.equal(result.plan.spatialAdoptionRequired, true);
+  assert.deepEqual(result.plan.internal.unknownPaths, []);
+  assert.deepEqual(result.plan.internal.spatialAdoptionPaths, PENDING_853343_UNRESOLVED_PATHS);
   assert.deepEqual(result.plan.targetIds, targets);
   assert.equal(result.plan.pluginHostActivationRequired, true);
   assert.equal(result.plan.sovereignRelayRefreshRequired, true);
-  assert.equal(result.plan.automaticExecutionAllowed, false);
+  assert.equal(result.plan.automaticExecutionAllowed, true);
   assert.equal(result.exactHeadProofOk, false);
-  assert.deepEqual(result.results, []);
-  assert.deepEqual(calls, []);
+  assert.deepEqual(result.results.map(row => row.targetId), targets);
+  assert.ok(result.results.every(row => row.resumed === true));
+  assert.deepEqual(calls, ['verifySovereignPluginHost']);
 });
 
 test('audited pending 853343 offline sources do not invoke installers observers reviewers or refresh adapters', async () => {
