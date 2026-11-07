@@ -332,6 +332,8 @@ scripts/windows/SovereignSearchV1.cs text eol=lf
 scripts/windows/sovereign-search.ps1 text eol=lf
 scripts/windows/SovereignFileMoveV1.cs text eol=lf
 scripts/windows/sovereign-move-file.ps1 text eol=lf
+scripts/windows/SovereignFileCopyV1.cs text eol=lf
+scripts/windows/sovereign-copy-file-content.ps1 text eol=lf
 scripts/windows/status-battle-bridge-recovery-mesh.ps1 text eol=lf
 scripts/windows/status-battle-bridge-worker-watchdog.ps1 text eol=lf
 
