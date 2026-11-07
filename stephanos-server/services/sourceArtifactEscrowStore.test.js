@@ -335,3 +335,100 @@ test('captured identity completion preserves the original unsuccessful no-op beh
   });
   assert.equal(finalized, execution);
 });
+
+test('escrow denies generated-state roots and duplicate changed-file identities', async () => {
+  const options = await roots();
+  const original = input();
+  for (const forbiddenPath of [
+    'apps/stephanos/dist/index.js',
+    'apps/stephanos/dist/assets/module.css',
+    'apps/stephanos/./dist/index.js',
+    'apps/stephanos/dist./index.js',
+    'apps/stephanos/dist /index.js',
+    'stephanos-server/data./state.json',
+    'shared/runtime./state.json',
+    'apps/./stephanos/dist/index.js',
+    'stephanos-server/./data/state.json',
+    'shared/agents/./example.mjs',
+    'shared/runtime/./stephanosMemory.mjs',
+    'data/runtime-state.json',
+    'tmp/model-output.json',
+    'root-data/state.json',
+    'root data/cache.txt',
+  ]) {
+    const changed = { ...original.changedFiles[0], path: forbiddenPath };
+    const artifact = { ...original.artifactFiles[0], path: forbiddenPath };
+    const result = await persistSourceArtifactEscrowV1(input({
+      changedFiles: [changed], artifactFiles: [artifact],
+    }), options);
+    assert.equal(result, null, `generated/state path ${forbiddenPath} must not enter escrow`);
+  }
+  const sourcePath = 'shared/runtime/stephanosMemory.mjs';
+  const valid = await persistSourceArtifactEscrowV1(input({
+    changedFiles: [{ ...original.changedFiles[0], path: sourcePath }],
+    artifactFiles: [{ ...original.artifactFiles[0], path: sourcePath }],
+  }), options);
+  assert.ok(valid, 'preserve the already integrated shared/runtime tracked-source exception');
+
+  const changedA = original.changedFiles[0];
+  const artifactA = original.artifactFiles[0];
+  const changedB = { ...changedA, path: 'shared/agents/second.mjs' };
+  const artifactB = { ...artifactA, path: 'shared/agents/second.mjs' };
+  for (const duplicate of [changedA, { ...changedA, path: './shared/agents/example.mjs' }]) {
+    const invalid = await persistSourceArtifactEscrowV1(input({
+      changedFiles: [changedA, duplicate],
+      artifactFiles: [artifactA, artifactB],
+    }), options);
+    assert.equal(invalid, null, 'duplicate canonical changed paths must not crowd out B');
+  }
+  const distinct = await persistSourceArtifactEscrowV1(input({
+    changedFiles: [changedA, changedB],
+    artifactFiles: [artifactA, artifactB],
+  }), options);
+  assert.ok(distinct, 'legitimate distinct complete-file bundle remains supported');
+  assert.deepEqual(distinct.changedFiles.map((file) => file.path),
+    ['shared/agents/example.mjs', 'shared/agents/second.mjs']);
+});
+
+test('escrow refuses outer whitespace aliases and case-insensitive Windows collisions', async () => {
+  const options = await roots();
+  const original = input();
+  const changedA = original.changedFiles[0];
+  const artifactA = original.artifactFiles[0];
+  for (const rawPath of [
+    ' shared/agents/example.mjs',
+    'shared/agents/example.mjs ',
+    '\tshared/agents/example.mjs',
+    'shared/agents/example.mjs\n',
+  ]) {
+    for (const changedOnly of [false, true]) {
+      const bad = await persistSourceArtifactEscrowV1(input({
+        changedFiles: [{ ...changedA, path: rawPath }],
+        artifactFiles: [{ ...artifactA, path: changedOnly ? changedA.path : rawPath }],
+      }), options);
+      assert.equal(bad, null, `outer whitespace path must fail closed: ${JSON.stringify(rawPath)}`);
+    }
+  }
+  const caseChanged = { ...changedA, path: 'shared/agents/Example.mjs' };
+  const caseArtifact = { ...artifactA, path: caseChanged.path };
+  const secondChanged = { ...changedA, path: 'shared/agents/second.mjs' };
+  for (const [changedFiles, artifactFiles] of [
+    [[changedA, caseChanged], [artifactA, caseArtifact]],
+    [[changedA, secondChanged], [artifactA, caseArtifact]],
+    [[changedA, caseChanged], [artifactA, { ...artifactA, path: changedA.path }]],
+  ]) {
+    assert.equal(await persistSourceArtifactEscrowV1(input({ changedFiles, artifactFiles }), options),
+      null, 'Win32 casefold collision must not enter escrow');
+  }
+  const goodChanged = { ...changedA, path: 'shared/runtime/stephanosMemory.mjs' };
+  const goodArtifact = { ...artifactA, path: goodChanged.path };
+  assert.ok(await persistSourceArtifactEscrowV1(input({
+    changedFiles: [changedA, goodChanged],
+    artifactFiles: [artifactA, goodArtifact],
+  }), options), 'distinct tracked shared/runtime source remains valid');
+  const internalSpacePath = 'shared/agents/valid name.mjs';
+  assert.ok(await persistSourceArtifactEscrowV1(input({
+    changedFiles: [{ ...changedA, path: internalSpacePath }],
+    artifactFiles: [{ ...artifactA, path: internalSpacePath }],
+  }), options), 'legitimate internal spaces remain valid');
+});
