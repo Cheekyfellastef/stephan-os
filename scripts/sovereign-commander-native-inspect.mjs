@@ -18,7 +18,7 @@ const REPOSITORY = 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os';
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const SHA = /^[a-f0-9]{40}$/, DIGEST = /^[a-f0-9]{64}$/;
-const REQUEST_ID = /^control-tower-build-[1-9][0-9]{0,19}-1$/;
+const REQUEST_ID = /^control-tower-(?:build|comment)-[1-9][0-9]{0,15}-1$/;
 const PROFILES = new Set(['MAINTENANCE_GOAL_BUILDER_V1', 'SOURCE_TASK_V1']);
 const UNKNOWN = 'SOVEREIGN_CONTROL_SYSTEM_OBSERVATION_UNPROVEN';
 const fail = code => { throw new Error(code); };

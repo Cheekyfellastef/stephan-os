@@ -31,6 +31,15 @@ test('unknown retained outcomes and prepared handoffs are never displayed as com
   assert.equal(view.handoff.available, true);
 });
 
+test('authenticated comment request locators remain visible without claiming a new browser submission', () => {
+  const result = fixture();
+  result.data.sovereign_control_conversation.controlTower.latestRequestObservation.requestId = 'control-tower-comment-700-1';
+  const view = projectControlReplyForSurfaceV1(result, NOW);
+  assert.equal(view.request.requestId, 'control-tower-comment-700-1');
+  assert.equal(view.request.label, 'Outcome unproven');
+  assert.equal(view.handoff.status, 'Prepared · not submitted');
+});
+
 test('forged links, inputs, authority and invalid clocks never become actionable handoff links', () => {
   for (const edit of [
     h => { h.workflowUrl = 'javascript:alert(1)'; },

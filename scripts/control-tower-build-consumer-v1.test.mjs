@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { consumeControlTowerBuildRequestV1, createControlTowerBuildConsumerV1 } from './control-tower-build-consumer-v1.mjs';
@@ -9,15 +9,19 @@ import { readControlTowerBuildRequestV1 } from '../shared/agents/controlTowerBui
 import { fixture, HEAD, NOW } from '../shared/agents/fixtures/controlTowerBuildV1.mjs';
 import { runSovereignRelayCycleWithHeartbeat, buildSovereignRelayStatus } from './battle-bridge-sovereign-relay-daemon.mjs';
 import { FIXED_MAINTENANCE_RUNTIME_ROUTE_V1, fixedRuntimeMaintenanceActionQualifiedV1 } from './sovereign-fixed-runtime-parent-v1.mjs';
+import { mailboxRotationDigest } from '../shared/agents/canonicalMailboxRotationV1.mjs';
+import { projectControlTowerBuildBeaconFactsV1 } from '../shared/agents/controlTowerBuildBeaconFactsV1.mjs';
+import { controlTowerRequestPointersFromRelayStatusV1 } from './control-tower-build-consumer-v1.mjs';
+import { createControlTowerRequestObservationV1 } from '../shared/agents/controlTowerRequestObservationV1.mjs';
 
 const poll = (state, blocker = '', extra = {}) => ({ schemaVersion: 'stephanos.control-tower-build-consumer.v1',
   state, blocker, observedAtUtc: NOW, buildStartedProven: false, nativePickupProven: false,
   goalCompletionProven: false, sourceMutationAllowed: false, mergeAuthority: false, leaseSeizureAllowed: false, ...extra });
 
-function setup(t, overrides = {}) {
+function setup(t, overrides = {}, fixtureOptions = {}) {
   const parent = resolve(tmpdir()), root = mkdtempSync(join(parent, 'control-tower-test-'));
   t.after(() => { if (!root.startsWith(parent + sep + 'control-tower-test-')) throw Error('Unsafe fixture cleanup'); rmSync(root, { recursive: true }); });
-  const f = fixture(), calls = [];
+  const f = fixture(fixtureOptions), calls = [];
   const options = { sourceHead: HEAD, env: { STEPHANOS_SHARED_WORKSPACE_ROOT: root }, repoRoot: root, readSourceHead: async () => HEAD,
     now: () => new Date(NOW), testOnly: true, dependencies: {
       resolveAuth: async () => ({ token: 'fixture-only' }),
@@ -35,6 +39,71 @@ function setup(t, overrides = {}) {
     } };
   return { root, f, calls, options, consume: extra => consumeControlTowerBuildRequestV1({ ...options, ...extra }) };
 }
+
+test('owner comment uses the original fixed owner and keeps its first run receipt on a later authenticated redelivery', async t => {
+  const s = setup(t, {}, { ownerComment: true }), first = await s.consume();
+  assert.equal(first.state, 'WAKE_COMPLETED'); assert.equal(first.requestId, 'control-tower-comment-700-1');
+  assert.equal(first.runId, 100); assert.equal(first.ownerCommentId, 700);
+  assert.deepEqual(s.calls, [{ actionId: 'repair-goal-builder-flow', arguments: { actionId: 'repair-goal-builder-flow' }, timeoutMs: 160000 }]);
+  const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+  const original = ledger.read(first.requestId);
+  assert.equal(original.issueNumber, 2315); assert.equal(original.phase, 'TERMINAL');
+  assert.equal(original.controlTowerObservation.runId, 100);
+  assert.equal(original.controlTowerObservation.ownerCommentId, 700);
+  const secondCarrier = fixture({ ownerComment: true, runId: 101 });
+  s.options.dependencies.readRequest = args => readControlTowerBuildRequestV1({ ...args, fetchImpl: secondCarrier.fetchImpl });
+  const second = await s.consume();
+  assert.equal(second.state, 'WAITING'); assert.equal(s.calls.length, 1);
+  assert.deepEqual(ledger.read(first.requestId), original, 'original run, time, head, digest and outcome must not be reconstructed');
+  assert.equal(second.latestBuildRequestObservation.runId, 100);
+  const relay = { schema: 'stephanos.sovereign-relay-daemon.v1', statusId: 'sovereign-relay-current',
+    heartbeatAtUtc: NOW, sourceHead: HEAD, controlTowerBuild: first };
+  const facts = projectControlTowerBuildBeaconFactsV1(relay, { expectedHead: HEAD, nowMs: Date.parse(NOW) });
+  assert.equal(facts.observed, true); assert.equal(facts.runId, 100); assert.equal(facts.ownerCommentId, 700);
+  assert.deepEqual(controlTowerRequestPointersFromRelayStatusV1(relay), {
+    latestBuildRequestId: first.requestId, latestObserveRequestId: '',
+  });
+});
+
+test('competing authenticated runs of one owner comment cannot obtain two original ledger reservations', async t => {
+  const s = setup(t, {}, { ownerComment: true });
+  const secondCarrier = fixture({ ownerComment: true, runId: 101 }); let readers = 0;
+  s.options.dependencies.readRequest = args => readControlTowerBuildRequestV1({ ...args,
+    fetchImpl: (++readers === 1 ? s.f : secondCarrier).fetchImpl });
+  const results = await Promise.all([s.consume(), s.consume()]);
+  assert.equal(results.filter(result => result.state === 'WAKE_COMPLETED').length, 1);
+  assert.equal(s.calls.length, 1);
+  const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+  const inventory = ledger.inventory(); assert.equal(inventory.recordCount, 1);
+  assert.equal(inventory.records[0].requestId, 'control-tower-comment-700-1');
+  assert([100, 101].includes(inventory.records[0].controlTowerObservation.runId));
+});
+
+test('comment reservations, corrupt records and missing pointers retain custody across restart and later dispatches', async t => {
+  for (const mode of ['reserved', 'corrupt', 'metadata-less-terminal', 'missing']) {
+    let ownerCalls = 0;
+    const s = setup(t, { execute: async () => { ownerCalls++; throw Error('outcome unknown'); } }, { ownerComment: true });
+    const first = await s.consume(); assert.equal(first.state, 'UNKNOWN');
+    const mailboxRoot = join(s.root, 'github-command-mailbox');
+    const ledger = createMailboxExecutionLedger(mailboxRoot);
+    const digest = mailboxRotationDigest(first.requestId);
+    const recordPath = join(mailboxRoot, 'execution-ledger-v1', digest.slice(0, 2), digest + '.json');
+    if (mode === 'corrupt') {
+      const record = JSON.parse(readFileSync(recordPath)); record.controlTowerObservation.runId = 0;
+      writeFileSync(recordPath, JSON.stringify(record));
+    } else if (mode === 'metadata-less-terminal') {
+      const record = JSON.parse(readFileSync(recordPath)); delete record.controlTowerObservation;
+      record.phase = 'TERMINAL'; record.terminalState = 'DONE'; writeFileSync(recordPath, JSON.stringify(record));
+    } else if (mode === 'missing') unlinkSync(recordPath);
+    const nextCarrier = fixture({ runId: 102 });
+    s.options.dependencies.readRequest = args => readControlTowerBuildRequestV1({ ...args, fetchImpl: nextCarrier.fetchImpl });
+    const afterRestart = await s.consume({ latestBuildRequestId: first.requestId });
+    assert.equal(afterRestart.state, 'HELD', mode); assert.equal(ownerCalls, 1, mode);
+    assert.equal(afterRestart.latestBuildRequestObservation.requestId, first.requestId, mode);
+    if (mode !== 'reserved') assert.equal(afterRestart.latestBuildRequestObservation.runId, null, 'never infer run ID from comment ID');
+    assert.equal(ledger.has('control-tower-build-102-1'), false, mode);
+  }
+});
 
 test('owner dispatch to authenticated artifact to original guarded build action has one durable invocation', async t => {
   const s = setup(t), result = await s.consume();
@@ -167,6 +236,48 @@ const inspectedStatus = () => ({ schemaVersion: 'stephanos.sovereign-control-sys
   source: { available: true, stable: true, sourceHead: HEAD, expectedMain: HEAD, reason: '' },
   nativeRuntime: { available: true, qualificationObserved: false, observedAtUtc: NOW,
     reason: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING' },
+});
+
+test('comment observation completes through the real reader and ledger while an earlier build retains its original reservation', async t => {
+  for (const priorIsComment of [false, true]) {
+    const inspected = [];
+    const s = setup(t, { inspect: async args => { inspected.push(args); return inspectedStatus(); } },
+      { ownerComment: true, operation: 'OBSERVE_CONTROL_SYSTEM', runId: 101, commentId: 701 });
+    const priorCarrier = fixture({ ownerComment: priorIsComment });
+    const acquired = await readControlTowerBuildRequestV1({ token: 'fixture-only', fetchImpl: priorCarrier.fetchImpl, now: () => NOW });
+    assert.equal(acquired.ok, true);
+    const command = { ...acquired.request, issueNumber: 2315 };
+    const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+    ledger.reserve(command, { controlTowerObservation: createControlTowerRequestObservationV1(command, {
+      commandDigest: mailboxRotationDigest(command), acceptedAtUtc: NOW, nowMs: Date.parse(NOW),
+    }) });
+    const reserved = ledger.read(command.requestId);
+    const result = await s.consume();
+    assert.equal(result.state, 'OBSERVATION_COMPLETED');
+    assert.equal(result.requestId, 'control-tower-comment-701-1');
+    assert.equal(result.runId, 101); assert.equal(result.ownerCommentId, 701);
+    assert.equal(s.calls.length, 0);
+    assert.deepEqual(inspected, [{ expectedMain: HEAD, controlTowerRequestId: command.requestId }]);
+    assert.deepEqual(ledger.read(command.requestId), reserved, 'inspection cannot release or rewrite the original build');
+    assert.equal(result.latestBuildRequestObservation.requestId, command.requestId);
+    assert.equal(result.latestBuildRequestObservation.state, 'RESERVED');
+    const terminal = ledger.read(result.requestId);
+    assert.equal(terminal.phase, 'TERMINAL'); assert.equal(terminal.terminalState, 'DONE');
+    assert.equal(terminal.terminalProofHash, undefined, 'read-only proof is never a wake proof');
+    assert(Buffer.byteLength(JSON.stringify(terminal.controlTowerObservation)) <= 3500);
+    assert(Buffer.byteLength(JSON.stringify(terminal)) <= 4096);
+    const facts = projectControlTowerBuildBeaconFactsV1({ schema: 'stephanos.sovereign-relay-daemon.v1',
+      statusId: 'sovereign-relay-current', heartbeatAtUtc: NOW, sourceHead: HEAD, controlTowerBuild: result },
+    { expectedHead: HEAD, nowMs: Date.parse(NOW) });
+    assert.equal(facts.observationCompleted, true);
+    assert.equal(facts.latestControlSystemObservation.ownerCommentId, 701);
+    assert.equal(facts.latestBuildRequestObservation.requestId, command.requestId);
+    const later = fixture({ ownerComment: true, runId: 102, commentId: 702 });
+    s.options.dependencies.readRequest = args => readControlTowerBuildRequestV1({ ...args, fetchImpl: later.fetchImpl });
+    const restart = await s.consume({ latestBuildRequestId: command.requestId, latestObserveRequestId: result.requestId });
+    assert.equal(restart.state, 'HELD'); assert.equal(s.calls.length, 0);
+    assert.equal(ledger.has('control-tower-comment-702-1'), false);
+  }
 });
 
 const legacyRequest = (id = 99) => ({
