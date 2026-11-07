@@ -11,7 +11,7 @@ import { resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfigurat
 import { installedReviewerRequestEnvironmentV1, SOVEREIGN_INSTALLED_REVIEWER_HOST_V1,
   SOVEREIGN_REVIEWER_DATA_ROOT_V1, SOVEREIGN_REVIEWER_WORKSPACE_V1 }
   from '../shared/agents/sovereignInstalledReviewerProfileV1.mjs';
-import { runSovereignHighRiskAdvisoryV1, localHighRiskModelV1, observeHighRiskOllamaDigestV1 }
+import { runSovereignHighRiskAdvisoryV1, localCompleteHighRiskModelV1, observeCompleteHighRiskOllamaDigestV1 }
   from './sovereign-high-risk-advisory-v1.mjs';
 import { runWindowsCalibrationCandidateV1 } from './sovereign-windows-review-calibration-v1-engine.mjs';
 import { runSovereignReviewCoverageV1 } from './sovereign-review-coverage-v1-engine.mjs';
@@ -90,13 +90,14 @@ async function main() {
   const gamingGuard=()=>inspectInstalledReviewerGamingV1(env).ok;
   let result;
   if(entry==='advisory') {
-    const observeModel=async model=>{
+    const observeModel=async (model,options)=>{
       if(!gamingGuard())throw Error('HIGH_RISK_GAMING_RESOURCE_PROTECTED');
-      return observeHighRiskOllamaDigestV1(model);
+      return observeCompleteHighRiskOllamaDigestV1(model,options);
     };
     result=await runSovereignHighRiskAdvisoryV1({env,root:SOVEREIGN_REVIEWER_DATA_ROOT_V1,snapshot,
-      observeModel,invokeModel:(prompt,chunk)=>localHighRiskModelV1(prompt,chunk,env,
-        {platform:'win32',gamingGuard:inspectInstalledReviewerGamingV1})});
+      reviewMode:'complete-diff',observeModel,
+      invokeCompleteModel:(prompt,packet,options)=>localCompleteHighRiskModelV1(prompt,packet,env,
+        {...options,platform:'win32',gamingGuard:inspectInstalledReviewerGamingV1})});
   }else if(entry==='coverage') {
     result=runSovereignReviewCoverageV1(env,{snapshot});
   }else{

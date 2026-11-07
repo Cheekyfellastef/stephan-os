@@ -62,9 +62,84 @@ test('existing Windows custody workflow covers every installed dependency and ch
   const triggers=new Set([...workflow.split('\npermissions:')[0].matchAll(/^\s+- '([^']+)'\s*$/gm)].map(m=>m[1]));
   for(const path of [...files,'scripts/sovereign-high-risk-advisory-launcher-v1.mjs',
     'scripts/sovereign-high-risk-advisory-launcher-v1.test.mjs','scripts/sovereign-reviewer-wsl-bridge-v1.mjs',
-    'scripts/sovereign-reviewer-wsl-bridge-v1.test.mjs','shared/agents/postSyncRuntimeRefreshCoordinator.mjs'])
+    'scripts/sovereign-reviewer-wsl-bridge-v1.test.mjs','shared/agents/postSyncRuntimeRefreshCoordinator.mjs',
+    'scripts/sovereign-high-risk-advisory-v1.test.mjs','shared/agents/sovereignHighRiskReviewCandidateV1.test.mjs'])
     assert.ok(triggers.has(path),'missing exact native-profile workflow trigger: '+path);
   assert.match(workflow,/node --test scripts\/sovereign-installed-reviewer-v1\.test\.mjs scripts\/sovereign-installed-reviewer-native-v1\.test\.mjs/);
+  assert.match(workflow,/scripts\/sovereign-high-risk-advisory-v1\.test\.mjs shared\/agents\/sovereignHighRiskReviewCandidateV1\.test\.mjs/);
+});
+test('actual installed advisory entry chooses the complete producer and actual native guard, with final source reread',()=>{
+  // Evaluate the exact entry bytes with synthetic dependency endpoints in a
+  // separate VM process. No production test hook or caller override is added.
+  // The real adapter/formatter are exercised independently below and in their
+  // own suites; this test witnesses which path the shipped main actually calls.
+  const script=String.raw`
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { SourceTextModule, SyntheticModule, createContext } from 'node:vm';
+import { resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+const entryPath=process.argv[2],url=pathToFileURL(entryPath).href,source=readFileSync(entryPath,'utf8');
+for(const changed of [false,true]){
+ let inspected=0,governor=0,observed=0,inferred=0,terminal,finish;
+ const completed=new Promise(r=>{finish=r;});
+ const processStub={argv:[process.execPath,entryPath,'advisory'],platform:'win32',
+  env:{STEPHANOS_SOVEREIGN_REVIEW_MODEL:'qwen:14b',STEPHANOS_REVIEW_MODE:'legacy-chunks',STEPHANOS_OLLAMA_HOST:'https://invalid'},
+  stdout:{write:value=>{terminal=value;finish();}},set exitCode(value){assert.equal(value,1);finish();}};
+ const context=createContext({process:processStub,URL});
+ const host='C:\\Program Files\\Stephanos\\SovereignReviewerV1\\host.exe';
+ const native=(exe,args)=>{
+  assert.equal(exe,host);
+  if(args[0]==='--governor'){governor++;return{status:0,stdout:'SOVEREIGN_REVIEWER_GOVERNOR_V1='+JSON.stringify({
+   schemaVersion:'stephanos.reviewer-governor-observation.v1',allowed:true,qualified:false,independentPrincipalObserved:false})};}
+  assert.deepEqual(Array.from(args),['--inspect']);inspected++;
+  return{status:0,stdout:'SOVEREIGN_REVIEWER_PROFILE_V1='+JSON.stringify({
+   schemaVersion:'stephanos.reviewer-profile-observation.v1',sourceHead:changed&&inspected>1?'d'.repeat(40):'c'.repeat(40),
+   codeCustodyObserved:true,principalMatchesProfile:true,principalAdministrator:false,qualified:false,independentPrincipalObserved:false})};
+ };
+ const denied=()=>{throw Error('wrong production route');};
+ const modules={
+  'node:child_process':{spawnSync:native},
+  'node:fs':{readFileSync:()=>JSON.stringify({SourceHead:'c'.repeat(40)})},
+  'node:path':{resolve},'node:url':{fileURLToPath},
+  '../shared/agents/sovereignAuthenticatedReviewDiffV1.mjs':{captureAuthenticatedReviewDiffV1:denied},
+  '../shared/agents/battleBridgeExecutionBoundaryV1.mjs':{resolveBattleBridgeGitExecution:denied,validateBattleBridgeLocalGitConfiguration:denied},
+  '../shared/agents/sovereignInstalledReviewerProfileV1.mjs':{
+   installedReviewerRequestEnvironmentV1:value=>value,SOVEREIGN_INSTALLED_REVIEWER_HOST_V1:host,
+   SOVEREIGN_REVIEWER_DATA_ROOT_V1:'canonical-data',SOVEREIGN_REVIEWER_WORKSPACE_V1:'fixed-workspace'},
+  './sovereign-high-risk-advisory-v1.mjs':{
+   runSovereignHighRiskAdvisoryV1:async options=>{
+    assert.equal(options.reviewMode,'complete-diff');assert.equal(options.root,'canonical-data');
+    assert.equal(options.env.STEPHANOS_SHARED_AGENT_WORKSPACE,'fixed-workspace');
+    assert.equal(typeof options.snapshot,'function');assert.equal(options.invokeModel,undefined);
+    assert.equal((await options.observeModel('qwen:14b',{signal:'exact-signal'})).digest,'digest');
+    await options.invokeCompleteModel('entire-prompt',{reviewId:'review'},{signal:'exact-signal',platform:'linux',gamingGuard:denied});
+    return{status:'HIGH_RISK_LOCAL_CANDIDATE_READY',publicationOk:true};
+   },
+   observeCompleteHighRiskOllamaDigestV1:async(model,options)=>{observed++;assert.equal(model,'qwen:14b');assert.equal(options.signal,'exact-signal');return{digest:'digest'};},
+   localCompleteHighRiskModelV1:async(prompt,packet,env,options)=>{
+    inferred++;assert.equal(prompt,'entire-prompt');assert.equal(packet.reviewId,'review');
+    assert.equal(env.STEPHANOS_SHARED_AGENT_WORKSPACE,'fixed-workspace');assert.equal(options.platform,'win32');
+    assert.equal(options.signal,'exact-signal');assert.equal(options.gamingGuard(env).ok,true);
+   }},
+  './sovereign-windows-review-calibration-v1-engine.mjs':{runWindowsCalibrationCandidateV1:denied},
+  './sovereign-review-coverage-v1-engine.mjs':{runSovereignReviewCoverageV1:denied},
+  '../shared/agents/sovereignWindowsCalibrationRemoteV1.mjs':{projectWindowsCalibrationForRemoteV1:denied},
+ };
+ const entry=new SourceTextModule(source,{context,identifier:url,initializeImportMeta(meta){meta.url=url;}});
+ await entry.link(specifier=>{
+  assert.ok(Object.hasOwn(modules,specifier),specifier);const values=modules[specifier];
+  return new SyntheticModule(Object.keys(values),function(){for(const [key,value]of Object.entries(values))this.setExport(key,value);},{context});
+ });
+ await entry.evaluate();await completed;
+ assert.equal(inspected,2);assert.equal(governor,2);assert.equal(observed,1);assert.equal(inferred,1);
+ if(changed)assert.equal(terminal,undefined);else assert.equal(JSON.parse(terminal).publicationOk,true);
+}
+process.stdout.write('INSTALLED_COMPLETE_ENTRY_WITNESSED\n');`;
+  const r=spawnSync(process.execPath,['--no-warnings','--experimental-vm-modules','--input-type=module','-',
+    join(root,'scripts/sovereign-installed-reviewer-v1.mjs')],
+    {input:script,encoding:'utf8',timeout:15000,env:{...process.env,NODE_OPTIONS:''},maxBuffer:16384});
+  assert.equal(r.status,0,r.stderr);assert.equal(r.stdout,'INSTALLED_COMPLETE_ENTRY_WITNESSED\n');
 });
 test('fixed installed launcher discards caller code roots, executables, loader injection and workspace',()=>{
   const p=buildHighRiskAdvisoryLaunchPlanV1({platform:'win32',root:'C:\\attacker',env:{...env,
@@ -137,11 +212,18 @@ test('authenticated PR objects remain review data when the PR changes the produc
   writeFileSync(join(installed,'manifest.json'),JSON.stringify(manifest));
   const invoke=`const m=await import(${JSON.stringify(pathToFileURL(join(installed,'source/scripts/sovereign-installed-reviewer-v1.mjs')).href)});`
     +`const r=m.captureInstalledReviewerDataV1(${JSON.stringify({...env,STEPHANOS_REVIEW_EXACT_HEAD:head,STEPHANOS_REVIEW_EXACT_BASE:base})}, {root:${JSON.stringify(data)}});`
-    +`process.stdout.write(JSON.stringify({head:r.sourceHead,changed:r.changedFiles,diff:r.diff}));`;
+    +`process.stdout.write(JSON.stringify({head:r.sourceHead,changed:r.changedFiles,diff:r.diff,fullDiff:r.fullDiff,fullDiffSha256:r.fullDiffSha256,fullDiffBytes:r.fullDiffBytes,sourceEvidence:r.sourceEvidence,representation:r.representation,baseTree:r.baseTree,sourceTree:r.sourceTree}));`;
   const r=spawnSync(process.execPath,['--no-warnings','--experimental-loader',pathToFileURL(join(installed,'source/scripts/sovereign-installed-reviewer-loader-v1.mjs')).href,
     '--input-type=module','--eval',invoke],{encoding:'utf8',timeout:30000,env:{...process.env,NODE_OPTIONS:''}});
   assert.equal(r.status,0,r.stderr);const result=JSON.parse(r.stdout);
   assert.equal(result.head,head);assert.ok(result.diff.includes('executed-marker'));assert.equal(existsSync(sentinel),false);
+  assert.equal(result.fullDiff,result.diff);assert.equal(result.fullDiffSha256,hash(result.diff));
+  assert.equal(result.fullDiffBytes,Buffer.byteLength(result.diff));assert.equal(result.sourceEvidence.length,1);
+  assert.equal(result.sourceEvidence[0].path,'scripts/sovereign-high-risk-advisory-v1.mjs');
+  assert.equal(result.sourceEvidence[0].newContentSha256,hash(malicious));
+  assert.equal(result.representation,'authenticated-replacement-hunks-v1');
+  assert.equal(result.baseTree,command(data,['rev-parse',base+'^{tree}']));
+  assert.equal(result.sourceTree,command(data,['rev-parse',head+'^{tree}']));
   // Complete graph capture refuses a changed final dependency before ANY entry.
   put(installed,'source/shared/agents/engineeringIncidentMethodMemoryV1.mjs','throw Error("tampered");\n');
   const denied=spawnSync(process.execPath,['--no-warnings','--experimental-loader',pathToFileURL(join(installed,'source/scripts/sovereign-installed-reviewer-loader-v1.mjs')).href,

@@ -100,6 +100,7 @@ test('base reviewer skips external review evidence only for deterministic approv
   const text = await baseReviewerSource();
   assert.match(text, /const \[files, diff\] = await Promise\.all\(\[/);
   assert.match(text, /const deterministicBootstrapRequired = isApprovalBoundaryBootstrapAnalysis\(deterministicAnalysis\);[\s\S]*?const specialistProbe = adjudicateQualifiedSpecialistReview\(\{[\s\S]*?reviews: \[\],[\s\S]*?comments: \[\],[\s\S]*?\}\);/);
+  assert.equal((text.match(/adjudicateQualifiedSpecialistReview\(\{[\s\S]*?codexRequired: false,/g) || []).length, 2);
   assert.match(text, /if \(!deterministicBootstrapRequired && specialistProbe\.required\) \{[\s\S]*?pulls\/\$\{prNumber\}\/reviews[\s\S]*?issues\/\$\{prNumber\}\/comments[\s\S]*?resolveQualifiedSpecialistCommentHeads\(owner, repo, rawComments\)[\s\S]*?adjudicateQualifiedSpecialistReview\(\{[\s\S]*?reviews,[\s\S]*?comments,[\s\S]*?\}\);/);
   assert.match(text, /\/commits\/\$\{encodeURIComponent\(reviewedCommitRef\)\}/);
   assert.match(text, /const analysis = !deterministicBootstrapRequired && specialist\.required && specialist\.valid\s*\? specialist\.analysis\s*:\s*deterministicAnalysis;/);
