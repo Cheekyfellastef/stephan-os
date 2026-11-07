@@ -29,6 +29,7 @@ import {
   createSanitizedMailboxReceiptProjection,
   flushMailboxReceiptPublicationOutbox,
   serializeBoundedReceiptJson,
+  createWindowsSafeMailboxReceiptFilename,
 } from './battle-bridge-github-command-mailbox.mjs';
 import { reconcileStaleAcceptedMailboxReceipts } from './battle-bridge-github-command-mailbox-with-receipt-index.mjs';
 
@@ -40,10 +41,12 @@ import {
   MAILBOX_OUTBOX_LEDGER_INDEX_SCHEMA,
   MAILBOX_OUTBOX_LEDGER_SCHEMA,
   MAILBOX_OUTBOX_LEDGER_SEGMENT_SCHEMA,
+  MAILBOX_OUTBOX_INVALID_QUARANTINE_SCHEMA,
   MAILBOX_OUTBOX_MAX_ATTEMPTS_PER_CYCLE,
   MAILBOX_OUTBOX_SEGMENT_MAX_BYTES,
   normalizePendingReceiptPublications,
   parseMailboxChildStatus,
+  projectMailboxGuardDiagnosticV1,
   pendingReceiptPublicationDigest,
   readJsonObject,
   runMailboxOutboxGuard,
@@ -258,6 +261,8 @@ function fixture() {
   const statePath = join(stateRoot, 'state.json');
   const deferredPath = join(stateRoot, 'receipt-publication-deferred-v1.json');
   const childRunnerPath = join(root, 'child.mjs');
+  const receiptRoot = join(root, 'canonical-receipts');
+  mkdirSync(receiptRoot, { recursive: true });
   writeFileSync(childRunnerPath, 'process.exitCode = 0;\n', 'utf8');
   return {
     root,
@@ -270,9 +275,62 @@ function fixture() {
       statePath,
       deferredPath,
       childRunnerPath,
+      receiptRoot,
     },
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
+}
+
+function executionLedgerPathForRequest(statePath, requestId) {
+  const digest = createHash('sha256').update(JSON.stringify(requestId), 'utf8').digest('hex');
+  return join(dirname(statePath), 'execution-ledger-v1', digest.slice(0, 2), digest + '.json');
+}
+
+function installLegacyReconciliationProof(f, {
+  requestId = 'fixture-single-session-historical-v1',
+  completedAt = '2026-11-05T19:52:52.846Z',
+  publicationId = null,
+  receipt = {},
+  state = {},
+  ledger = {},
+} = {}) {
+  const canonicalReceipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId,
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
+    branch: 'main',
+    expectedHead: '1'.repeat(40),
+    state: 'DONE',
+    acceptedAt: '2026-11-05T19:51:00.000Z',
+    completedAt,
+    processSourceHead: '1'.repeat(40),
+    ...receipt,
+  };
+  const invalidReceipt = { ...canonicalReceipt, requestId: '' };
+  const invalid = {
+    publicationId: publicationId || requestId + ':DONE:' + completedAt,
+    receipt: invalidReceipt,
+  };
+  writeJson(join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(requestId)), canonicalReceipt);
+  writeJson(executionLedgerPathForRequest(f.statePath, requestId), {
+    schemaVersion: 'stephanos.mailbox-execution-ledger-entry.v1',
+    requestId,
+    issueNumber: canonicalReceipt.issueNumber,
+    phase: 'TERMINAL',
+    terminalState: 'DONE',
+    commandDigest: 'a'.repeat(64),
+    ...ledger,
+  });
+  const mailboxState = {
+    acceptedRequestIds: [],
+    consumedRequestIds: [requestId],
+    pendingReceiptPublications: [invalid],
+    ...state,
+  };
+  writeJson(f.statePath, mailboxState);
+  return { requestId, canonicalReceipt, invalid, state: mailboxState };
 }
 
 function sequenceText(sequence) {
@@ -318,6 +376,239 @@ function runGuard(f, options = {}) {
     ...options,
   });
 }
+
+test('guard quarantines malformed legacy inline debt before child but keeps post-child corruption fail closed', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const now = () => new Date('2026-11-07T15:20:00.000Z');
+  const { invalid, requestId } = installLegacyReconciliationProof(f);
+  const quarantinePath = join(dirname(f.statePath), 'receipt-publication-invalid-quarantine-v1.json');
+  let invoked = 0;
+  let childPending = null;
+  const recovered = runGuard(f, { now, spawnSyncFn: () => {
+    invoked++;
+    childPending = readJson(f.statePath).pendingReceiptPublications;
+    return { status: 0, stdout: '{}', stderr: '' };
+  } });
+  assert.equal(invoked, 1);
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.quarantinedInvalidPublicationCount, 1);
+  assert.deepEqual(childPending, []);
+  assert.deepEqual(readJson(f.statePath).pendingReceiptPublications, []);
+  const quarantine = readJson(quarantinePath);
+  assert.equal(quarantine.schemaVersion, MAILBOX_OUTBOX_INVALID_QUARANTINE_SCHEMA);
+  assert.equal(quarantine.records.length, 1);
+  assert.deepEqual(quarantine.records[0].entry, invalid);
+  assert.equal(quarantine.records[0].capturedAtUtc, now().toISOString());
+  assert.match(quarantine.records[0].entrySha256, /^[a-f0-9]{64}$/);
+  assert.equal(recovered.guardDiagnostic.outcome, 'CHILD_SUCCEEDED');
+  assert.equal(recovered.guardDiagnostic.reasonCode, 'NONE');
+
+  const second = runGuard(f, { now, spawnSyncFn: () => {
+    invoked++;
+    return { status: 0, stdout: '{}', stderr: '' };
+  } });
+  assert.equal(second.ok, true);
+  assert.equal(second.quarantinedInvalidPublicationCount, 0);
+  assert.equal(readJson(quarantinePath).records.length, 1);
+
+  let postChildBytes;
+  const after = runGuard(f, { now, spawnSyncFn: () => {
+    invoked++;
+    writeJson(f.statePath, { acceptedRequestIds: [], consumedRequestIds: [requestId], pendingReceiptPublications: [invalid] });
+    postChildBytes = readFileSync(f.statePath);
+    return { status: 0, stdout: '{}', stderr: '' };
+  } });
+  assert.equal(invoked, 3);
+  assert.equal(after.ok, false);
+  assert.equal(after.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID');
+  assert.equal(after.guardDiagnostic.stage, 'POST_CHILD_VALIDATION');
+  assert.equal(after.guardDiagnostic.childInvocationAttempted, true);
+  assert.deepEqual(readFileSync(f.statePath), postChildBytes);
+  assert.equal(readJson(quarantinePath).records.length, 1);
+});
+
+test('guard preserves valid debt while quarantining only malformed legacy entries', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const { invalid, requestId } = installLegacyReconciliationProof(f);
+  const valid = pending('mailbox-quarantine-valid');
+  writeJson(f.statePath, {
+    acceptedRequestIds: [],
+    consumedRequestIds: [requestId],
+    pendingReceiptPublications: [invalid, valid],
+  });
+  let childPending = [];
+  const result = runGuard(f, { spawnSyncFn: () => {
+    childPending = readJson(f.statePath).pendingReceiptPublications;
+    writeJson(f.statePath, { acceptedRequestIds: [], consumedRequestIds: [], pendingReceiptPublications: [] });
+    return { status: 0, stdout: '{}', stderr: '' };
+  } });
+  assert.equal(result.ok, true);
+  assert.equal(result.quarantinedInvalidPublicationCount, 1);
+  assert.deepEqual(childPending.map((entry) => entry.receipt.requestId), ['mailbox-quarantine-valid']);
+  const quarantine = readJson(join(dirname(f.statePath), 'receipt-publication-invalid-quarantine-v1.json'));
+  assert.deepEqual(quarantine.records.map((record) => record.entry), [invalid]);
+});
+
+test('existing malformed quarantine blocks even when current pending queue is empty', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  writeJson(f.statePath, { acceptedRequestIds: [], consumedRequestIds: [], pendingReceiptPublications: [] });
+  writeJson(join(dirname(f.statePath), 'receipt-publication-invalid-quarantine-v1.json'), {
+    schemaVersion: 'wrong-schema',
+    updatedAtUtc: '2026-11-07T15:20:00.000Z',
+    records: [],
+  });
+  const before = readFileSync(f.statePath);
+  let invoked = 0;
+  const result = runGuard(f, { spawnSyncFn: () => { invoked++; return { status: 0 }; } });
+  assert.equal(result.ok, false);
+  assert.equal(invoked, 0);
+  assert.equal(result.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_INVALID_QUARANTINE_INVALID');
+  assert.deepEqual(readFileSync(f.statePath), before);
+});
+
+test('legacy reconciliation refuses more than one malformed pending publication', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const proof = installLegacyReconciliationProof(f);
+  const second = structuredClone(proof.invalid);
+  second.publicationId = 'other-valid-looking-id:DONE:' + proof.canonicalReceipt.completedAt;
+  writeJson(f.statePath, { acceptedRequestIds: [], consumedRequestIds: [proof.requestId],
+    pendingReceiptPublications: [proof.invalid, second] });
+  const before = readFileSync(f.statePath);
+  let invoked = 0;
+  const result = runGuard(f, { spawnSyncFn: () => { invoked++; return { status: 0 }; } });
+  assert.equal(result.ok, false);
+  assert.equal(invoked, 0);
+  assert.equal(result.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_MULTIPLE_INVALID');
+  assert.deepEqual(readFileSync(f.statePath), before);
+});
+
+test('legacy reconciliation accepts identical terminal content except the known blank requestId', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  installLegacyReconciliationProof(f, {
+    receipt: {
+      result: { outcome: 'fixture-terminal-success', count: 1 },
+      blocker: '',
+      proofRefs: ['proofs/fixture-terminal-content'],
+    },
+  });
+  let invoked = 0;
+  const result = runGuard(f, { spawnSyncFn: () => { invoked++; return { status: 0, stdout: '{}', stderr: '' }; } });
+  assert.equal(result.ok, true);
+  assert.equal(invoked, 1);
+  assert.equal(result.quarantinedInvalidPublicationCount, 1);
+});
+
+test('legacy one-record reconciliation requires publication, canonical receipt, consumed index and execution ledger to agree', (t) => {
+  const cases = [
+    ['pending-result-content', (f) => {
+      const state = readJson(f.statePath);
+      state.pendingReceiptPublications[0].receipt.result = { outcome: 'contradictory-terminal-result' };
+      writeJson(f.statePath, state);
+    }],
+    ['pending-blocker-content', (f) => {
+      const state = readJson(f.statePath);
+      state.pendingReceiptPublications[0].receipt.blocker = 'CONTRADICTORY_TERMINAL_BLOCKER';
+      writeJson(f.statePath, state);
+    }],
+    ['pending-proof-refs-content', (f) => {
+      const state = readJson(f.statePath);
+      state.pendingReceiptPublications[0].receipt.proofRefs = ['proofs/contradictory-terminal-content'];
+      writeJson(f.statePath, state);
+    }],
+    ['publication', (f, proof) => {
+      const state = readJson(f.statePath);
+      state.pendingReceiptPublications[0].publicationId = 'wrong:DONE:' + proof.canonicalReceipt.completedAt;
+      writeJson(f.statePath, state);
+    }],
+    ['canonical-receipt', (f, proof) => {
+      const path = join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(proof.requestId));
+      const receipt = readJson(path); receipt.operation = 'OTHER_OPERATION'; writeJson(path, receipt);
+    }],
+    ['consumed-index', (f) => {
+      const state = readJson(f.statePath); state.consumedRequestIds = []; writeJson(f.statePath, state);
+    }],
+    ['execution-ledger', (f, proof) => {
+      const path = executionLedgerPathForRequest(f.statePath, proof.requestId);
+      const record = readJson(path); record.phase = 'RESERVED'; delete record.terminalState; writeJson(path, record);
+    }],
+  ];
+  for (const [label, mutate] of cases) {
+    const f = fixture(); t.after(f.cleanup);
+    const proof = installLegacyReconciliationProof(f);
+    mutate(f, proof);
+    const before = readFileSync(f.statePath);
+    let invoked = 0;
+    const result = runGuard(f, { spawnSyncFn: () => { invoked++; return { status: 0 }; } });
+    assert.equal(result.ok, false, label);
+    assert.equal(invoked, 0, label);
+    assert.equal(result.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN', label);
+    assert.deepEqual(readFileSync(f.statePath), before, label);
+  }
+});
+
+test('malformed quarantine blocks without deleting legacy debt or invoking child', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const invalid = { publicationId: 'legacy-invalid', receipt: { requestId: '', state: 'DONE' } };
+  writeJson(f.statePath, { acceptedRequestIds: [], consumedRequestIds: [], pendingReceiptPublications: [invalid] });
+  const before = readFileSync(f.statePath);
+  writeJson(join(dirname(f.statePath), 'receipt-publication-invalid-quarantine-v1.json'), {
+    schemaVersion: 'wrong-schema',
+    updatedAtUtc: '2026-11-07T15:20:00.000Z',
+    records: [],
+  });
+  let invoked = 0;
+  const result = runGuard(f, { spawnSyncFn: () => { invoked++; return { status: 0 }; } });
+  assert.equal(result.ok, false);
+  assert.equal(invoked, 0);
+  assert.equal(result.guardDiagnostic.stage, 'STATE_VALIDATION');
+  assert.equal(result.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_INVALID_QUARANTINE_INVALID');
+  assert.deepEqual(readFileSync(f.statePath), before);
+});
+
+test('typed guard diagnostics preserve single-flight busy and disclose no unknown error text', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const now = () => new Date('2026-11-07T15:20:00.000Z');
+  writeJson(f.statePath, { pendingReceiptPublications: [] });
+  let nested;
+  const completed = runGuard(f, { now, spawnSyncFn: () => {
+    nested = runGuard(f, { now, spawnSyncFn: () => { throw Error('overlapping child'); } });
+    return { status: 0, stdout: '{}', stderr: '' };
+  } });
+  assert.equal(completed.ok, true);
+  assert.equal(completed.guardDiagnostic.outcome, 'CHILD_SUCCEEDED');
+  assert.equal(completed.guardDiagnostic.reasonCode, 'NONE');
+  assert.equal(completed.guardDiagnostic.childInvocationAttempted, true);
+  assert.equal(nested.ok, false);
+  assert.equal(nested.guardDiagnostic.outcome, 'GUARD_BUSY');
+  assert.equal(nested.guardDiagnostic.stage, 'LOCK');
+  assert.equal(nested.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
+  assert.equal(nested.guardDiagnostic.childInvocationAttempted, false);
+  const secret = 'private-token=fixture C:\\private\\fixture.json';
+  const unknown = runGuard(f, { now, spawnSyncFn: () => { throw Error(secret); } });
+  assert.equal(unknown.guardDiagnostic.stage, 'CHILD_INVOCATION');
+  assert.equal(unknown.guardDiagnostic.reasonCode, 'MAILBOX_GUARD_FAILURE_UNCLASSIFIED');
+  assert.equal(unknown.guardDiagnostic.childInvocationAttempted, true);
+  assert.equal(JSON.stringify(unknown.guardDiagnostic).includes('private-token=fixture'), false);
+});
+
+test('guard diagnostic projection rejects open fields, accessors and inconsistent execution stages', () => {
+  const valid = { schemaVersion: 'stephanos.mailbox-guard-diagnostic.v1',
+    observedAtUtc: '2026-11-07T15:20:00.000Z', stage: 'STATE_VALIDATION',
+    outcome: 'GUARD_BLOCKED', reasonCode: 'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID', childInvocationAttempted: false };
+  assert.deepEqual(projectMailboxGuardDiagnosticV1(valid), valid);
+  for (const value of [null, [], { ...valid, requestId: 'private-request' },
+    { ...valid, reasonCode: 'PRIVATE_SECRET_VALUE' }, { ...valid, stage: 'INVENTED' },
+    { ...valid, outcome: 'CHILD_SUCCEEDED' }, { ...valid, childInvocationAttempted: true },
+    { ...valid, observedAtUtc: 'not-a-date' }, { ...valid, reasonCode: 'NONE' },
+    { ...valid, outcome: 'GUARD_BUSY' }, Object.assign(Object.create({ private: true }), valid)]) {
+    assert.equal(projectMailboxGuardDiagnosticV1(value), null);
+  }
+  let reads = 0;
+  const accessor = { ...valid };
+  Object.defineProperty(accessor, 'reasonCode', { enumerable: true, get() { reads++; return valid.reasonCode; } });
+  assert.equal(projectMailboxGuardDiagnosticV1(accessor), null);
+  assert.equal(reads, 0);
+});
 
 function writeLedgerFixture(f, entries, { headSequence = 0, storeId = '0123456789abcdef0123456789abcdef' } = {}) {
   const manifest = {
