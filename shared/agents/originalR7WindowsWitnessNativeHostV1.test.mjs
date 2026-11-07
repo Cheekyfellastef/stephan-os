@@ -38,7 +38,7 @@ test('every executable action in both R7 source-proof workflows has an immutable
     assert.deepEqual(observed, required);
   }
   const scmActions = ['actions/checkout', 'actions/setup-dotnet', 'actions/setup-node', 'actions/upload-artifact'];
-  inspect(nativeCi, ['actions/checkout', 'actions/setup-dotnet']);
+  inspect(nativeCi, ['actions/checkout', 'actions/setup-dotnet', 'actions/checkout']);
   inspect(scmCi, scmActions);
   // A new/movable/short/mistyped identity fails even if every other action
   // remains pinned. The invariant covers pre-build and artifact-upload code.

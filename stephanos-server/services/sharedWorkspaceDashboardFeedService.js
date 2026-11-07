@@ -220,8 +220,16 @@ function buildTruthAwareGoals(goalEstate, buildTruth, autonomyBuildTrack = null,
           : buildState === 'QUEUED' ? 'BLUE'
             : buildState === 'STALE' ? 'GREY'
               : 'GREY';
+    // Explain missing display evidence without restoring a stale execution owner
+    // or changing any handoff, goal state, blocker or next action.
+    const buildEvidenceDiagnostic = buildTruthTruth === 'STALE' || buildState === 'STALE'
+      ? 'Build activity evidence is stale. Refresh controller activity and worker receipts to confirm current ownership and progress.'
+      : !currentBuildTruth || !live
+        ? 'Current build activity evidence is unavailable for this goal. Refresh controller activity and worker receipts to confirm ownership and progress.'
+        : '';
     const enriched = {
       ...goal,
+      buildEvidenceDiagnostic,
       buildState,
       buildTrafficLight,
       buildTruthTruth,

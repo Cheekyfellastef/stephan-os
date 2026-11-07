@@ -588,7 +588,9 @@ if ($Action -eq 'Enter') {
                 -SourceHead $routeIdentity.sourceHead `
                 -ProviderSensors $ProviderSensors `
                 -ProviderTelemetryPath $ProviderTelemetryPath 2>&1 | Out-String
-            if ($LASTEXITCODE -ne 0 -or -not $sensorText.Trim()) {
+            # This in-process PowerShell helper throws on failure; it does not set LASTEXITCODE.
+            # A native exit code here can be absent or left over from an unrelated command.
+            if (-not $sensorText.Trim()) {
                 throw "VR visual telemetry session contract was not created: $($sensorText.Trim())"
             }
             $visualTelemetry = $sensorText.Trim() | ConvertFrom-Json
