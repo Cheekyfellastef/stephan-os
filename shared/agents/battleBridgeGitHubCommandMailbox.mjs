@@ -1,90 +1,216 @@
-import * as base from './battleBridgeGitHubCommandMailboxBaseV1.mjs';
 import {
-  BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
-  executeApprovedBackendRestartOnBattleBridge,
-  normalizeApprovedBackendRestartCommand,
-  validateApprovedBackendRestartCommandShape,
-} from './battleBridgeApprovedBackendRestartMailboxV1.mjs';
+  SOVEREIGN_COMMANDER_INSTALL_OPERATION,
+  executeSovereignCommanderInstallOnBattleBridge,
+  isTerminalizableSovereignCommanderInstallBlocker,
+  validateSovereignCommanderInstallCommandShape,
+} from './sovereignCommanderBattleBridgeV1.mjs';
+import {
+  SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+  executeSovereignCommanderRemoteOnBattleBridge,
+  isTerminalizableSovereignCommanderRemoteBlocker,
+  validateSovereignCommanderRemoteCommandShape,
+} from './sovereignCommanderRemoteMailboxV1.mjs';
+import {
+  RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
+  RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION,
+  executeRescueIslandSupervisedDocumentOnBattleBridge,
+  isTerminalizableRescueIslandSupervisedDocumentBlocker,
+  validateRescueIslandSupervisedDocumentCommandShape,
+} from './rescueIslandSupervisedMailboxV1.mjs';
+import * as core from './battleBridgeGitHubCommandMailboxCoreV1.mjs';
+import { MAILBOX_ROTATION_OPERATION, validateMailboxRotationCommandShape,
+  isTerminalizableMailboxRotationBlocker } from './canonicalMailboxRotationV1.mjs';
+import { MAINTENANCE_RECOVERY_OPERATIONS, validateMaintenanceRecoveryCommandShape,
+  isTerminalizableMaintenanceRecoveryBlocker, executeMaintenanceRecoveryOnBattleBridge,
+} from './sovereignMaintenanceRecoveryMailboxV1.mjs';
+import {
+  FRONTEND_VISIBILITY_OPERATIONS, FRONTEND_VISIBILITY_OBSERVE_OPERATION,
+  validateFrontendVisibilityCommandShape, isTerminalizableFrontendVisibilityBlocker,
+  executeFrontendVisibilityOnBattleBridge,
+} from './sovereignFrontendVisibilityMailboxV1.mjs';
+import {
+  OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
+  executeOperatorEnvironmentApprovalOnBattleBridge,
+  isTerminalizableOperatorEnvironmentApprovalBlocker,
+  validateOperatorEnvironmentApprovalBattleBridgeCommandShape,
+} from './operatorEnvironmentApprovalBattleBridgeV1.mjs';
+import {
+  STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION,
+  executeStephanosNativeCapacityPublisherInstallOnBattleBridge,
+  isTerminalizableStephanosNativeCapacityPublisherBlocker,
+  validateStephanosNativeCapacityPublisherInstallCommandShape,
+} from './stephanosNativeCapacityPublisherBattleBridgeV1.mjs';
+import {
+  GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+  executeGuardedCodexTaskOnBattleBridge,
+  isTerminalizableGuardedCodexTaskDispatchBlocker,
+  validateGuardedCodexTaskDispatchCommandShape,
+} from './battleBridgeCodexTaskDispatchV1.mjs';
+import {
+  GUARDED_CODEX_TASK_READBACK_OPERATION,
+  executeGuardedCodexTaskReadbackOnBattleBridge,
+  isTerminalizableGuardedCodexTaskReadbackBlocker,
+  validateGuardedCodexTaskReadbackCommandShape,
+} from './battleBridgeCodexTaskReadbackV1.mjs';
 
-export * from './battleBridgeGitHubCommandMailboxBaseV1.mjs';
+export * from './battleBridgeGitHubCommandMailboxCoreV1.mjs';
 
 export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
-  ...base.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
-  BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
+  MAILBOX_ROTATION_OPERATION,
+  ...core.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
+  ...MAINTENANCE_RECOVERY_OPERATIONS,
+  ...FRONTEND_VISIBILITY_OPERATIONS,
+  OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
+  STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION,
+  GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+  GUARDED_CODEX_TASK_READBACK_OPERATION,
+  SOVEREIGN_COMMANDER_INSTALL_OPERATION,
+  SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+  RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
+  RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION,
+]);
+
+const CORE_TRANSLATION_OPERATION = 'RUN_WORKER_WATCHDOG_ACCEPTANCE';
+const STANDARD_FIELDS = Object.freeze([
+  'schemaVersion',
+  'requestId',
+  'repository',
+  'issueNumber',
+  'branch',
+  'operatorApproval',
+  'expectedHead',
+  'expiresAt',
 ]);
 
 function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
 }
 
-function translateApprovedBackendRestartForBase(command = {}, { shapeValid = true } = {}) {
-  return {
-    ...command,
-    operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
-    ...(shapeValid ? {} : { targetRequestId: 'invalid-restart-shape' }),
-  };
+function customOperationKind(operation = '') {
+  const normalized = String(operation || '');
+  if (normalized === MAILBOX_ROTATION_OPERATION) return 'mailbox-rotation';
+  if (MAINTENANCE_RECOVERY_OPERATIONS.includes(normalized)) return 'maintenance-recovery';
+  if (FRONTEND_VISIBILITY_OPERATIONS.includes(normalized)) return 'frontend-visibility';
+  if (normalized === OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION) return 'environment';
+  if (normalized === STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION) return 'native-publisher';
+  if (normalized === GUARDED_CODEX_TASK_DISPATCH_OPERATION) return 'codex-dispatch';
+  if (normalized === GUARDED_CODEX_TASK_READBACK_OPERATION) return 'codex-readback';
+  if (normalized === SOVEREIGN_COMMANDER_INSTALL_OPERATION) return 'sovereign-install';
+  if (normalized === SOVEREIGN_COMMANDER_REMOTE_OPERATION) return 'sovereign-remote';
+  if (normalized === RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION
+      || normalized === RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION) {
+    return 'rescue-island-supervised-document';
+  }
+  return '';
+}
+
+function validateCustomCommandShape(command = {}) {
+  const kind = customOperationKind(command?.operation);
+  if (kind === 'mailbox-rotation') return validateMailboxRotationCommandShape(command);
+  if (kind === 'maintenance-recovery') return validateMaintenanceRecoveryCommandShape(command);
+  if (kind === 'frontend-visibility') return validateFrontendVisibilityCommandShape(command);
+  if (kind === 'environment') return validateOperatorEnvironmentApprovalBattleBridgeCommandShape(command);
+  if (kind === 'native-publisher') return validateStephanosNativeCapacityPublisherInstallCommandShape(command);
+  if (kind === 'codex-dispatch') return validateGuardedCodexTaskDispatchCommandShape(command);
+  if (kind === 'codex-readback') return validateGuardedCodexTaskReadbackCommandShape(command);
+  if (kind === 'sovereign-install') return validateSovereignCommanderInstallCommandShape(command);
+  if (kind === 'sovereign-remote') return validateSovereignCommanderRemoteCommandShape(command);
+  if (kind === 'rescue-island-supervised-document') return validateRescueIslandSupervisedDocumentCommandShape(command);
+  return Object.freeze({ ok: true, requested: false });
+}
+
+function containsCustomCommand(comments = []) {
+  return (Array.isArray(comments) ? comments : []).some((comment) => {
+    const extracted = core.extractBattleBridgeGitHubCommand(comment?.body || '');
+    return extracted?.ok && Boolean(customOperationKind(extracted.command?.operation));
+  });
+}
+
+function projectCustomCommand(command = {}, shape = {}) {
+  if (shape?.ok === true && shape?.requested === true && shape?.command) return shape.command;
+  return command;
+}
+
+function translateForCore(command = {}, shape = {}) {
+  const translated = {};
+  for (const field of STANDARD_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(command || {}, field)) translated[field] = command[field];
+  }
+  translated.operation = command.operation === FRONTEND_VISIBILITY_OBSERVE_OPERATION
+    ? 'READ_DEPLOYMENT_STATUS' : CORE_TRANSLATION_OPERATION;
+  translated.expectedHead = shape?.ok === true
+    ? String(shape?.command?.expectedHead || shape?.expectedHead || command?.expectedHead || '')
+    : 'invalid';
+  return Object.freeze(translated);
 }
 
 function translatedComment(comment = {}, translatedCommand = {}) {
   return {
     ...comment,
-    body: `\`\`\`${base.BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(translatedCommand)}\n\`\`\``,
+    body: `\`\`\`${core.BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(translatedCommand)}\n\`\`\``,
   };
 }
 
+export function isTerminalizableOwnerCommandBlocker(value) {
+  return isTerminalizableMailboxRotationBlocker(value)
+    || isTerminalizableMaintenanceRecoveryBlocker(value)
+    || isTerminalizableFrontendVisibilityBlocker(value)
+    || isTerminalizableOperatorEnvironmentApprovalBlocker(value)
+    || isTerminalizableStephanosNativeCapacityPublisherBlocker(value)
+    || isTerminalizableGuardedCodexTaskDispatchBlocker(value)
+    || isTerminalizableGuardedCodexTaskReadbackBlocker(value)
+    || isTerminalizableSovereignCommanderInstallBlocker(value)
+    || isTerminalizableSovereignCommanderRemoteBlocker(value)
+    || isTerminalizableRescueIslandSupervisedDocumentBlocker(value)
+    || core.isTerminalizableOwnerCommandBlocker(value);
+}
+
 export function validateBattleBridgeGitHubCommand(command = {}, options = {}) {
-  if (String(command?.operation || '') !== BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION) {
-    return base.validateBattleBridgeGitHubCommand(command, options);
-  }
-  const shape = validateApprovedBackendRestartCommandShape(command);
+  const kind = customOperationKind(command?.operation);
+  if (!kind) return core.validateBattleBridgeGitHubCommand(command, options);
+
+  const shape = validateCustomCommandShape(command);
   if (!shape.ok) return shape;
-  const envelope = base.validateBattleBridgeGitHubCommand(
-    translateApprovedBackendRestartForBase(command),
+  const envelope = core.validateBattleBridgeGitHubCommand(
+    translateForCore(command, shape),
     options,
   );
-  return normalizeApprovedBackendRestartCommand(command, envelope);
+  if (!envelope?.ok) return envelope;
+  return Object.freeze({
+    ...envelope,
+    command: projectCustomCommand(command, shape),
+  });
 }
 
 export function classifyBattleBridgeMailboxOperation(operation = '') {
-  if (String(operation || '') === BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION) {
-    return base.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL;
-  }
-  return base.classifyBattleBridgeMailboxOperation(operation);
+  if (operation === FRONTEND_VISIBILITY_OBSERVE_OPERATION) return core.BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION;
+  if (customOperationKind(operation)) return core.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL;
+  return core.classifyBattleBridgeMailboxOperation(operation);
 }
 
 export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}) {
+  if (!containsCustomCommand(comments)) return core.selectBattleBridgeGitHubCommandBatch(comments, options);
+
   const originals = new Map();
   const translated = (Array.isArray(comments) ? comments : []).map((comment) => {
-    const extracted = base.extractBattleBridgeGitHubCommand(comment?.body || '');
-    if (!extracted.ok || extracted.command?.operation !== BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION) {
-      return comment;
-    }
-    const shape = validateApprovedBackendRestartCommandShape(extracted.command);
-    originals.set(String(comment?.id ?? ''), Object.freeze({
-      command: extracted.command,
-      shapeValid: shape.ok === true,
-    }));
-    return translatedComment(
-      comment,
-      translateApprovedBackendRestartForBase(extracted.command, { shapeValid: shape.ok === true }),
-    );
+    const extracted = core.extractBattleBridgeGitHubCommand(comment?.body || '');
+    if (!extracted?.ok || !customOperationKind(extracted.command?.operation)) return comment;
+    const shape = validateCustomCommandShape(extracted.command);
+    originals.set(String(comment?.id ?? ''), Object.freeze({ command: extracted.command, shape }));
+    return translatedComment(comment, translateForCore(extracted.command, shape));
   });
 
-  const selected = base.selectBattleBridgeGitHubCommandBatch(translated, options);
+  const selected = core.selectBattleBridgeGitHubCommandBatch(translated, options);
   if (!selected?.ok) return selected;
 
   const commands = Array.isArray(selected.commands)
     ? selected.commands.map((entry) => {
       const original = originals.get(String(entry?.commentId ?? ''));
-      if (!original?.shapeValid) return entry;
+      if (!original?.shape?.ok) return entry;
       return Object.freeze({
         ...entry,
-        command: Object.freeze({
-          ...entry.command,
-          operation: BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
-          expectedHead: String(original.command.expectedHead || '').toLowerCase(),
-        }),
-        partition: base.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL,
+        command: projectCustomCommand(original.command, original.shape),
+        partition: classifyBattleBridgeMailboxOperation(original.command.operation),
       });
     })
     : [];
@@ -95,22 +221,54 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
       if (!original) return entry;
       return Object.freeze({
         ...entry,
-        command: Object.freeze({
-          ...entry.command,
-          operation: BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
-        }),
+        blocker: original.shape?.ok === true ? entry.blocker : original.shape.blocker,
+        command: projectCustomCommand(original.command, original.shape),
       });
     })
     : [];
 
+  const terminalCommentIds = new Set(
+    terminalRejections.map((entry) => String(entry?.commentId ?? '')).filter(Boolean),
+  );
+  const rejected = [];
+  if (Array.isArray(selected.rejected)) {
+    for (const entry of selected.rejected) {
+      const original = originals.get(String(entry?.commentId ?? ''));
+      if (original && !core.projectMailboxReceiptRequestId(String(original.command?.requestId || ''))) {
+        rejected.push(entry);
+        continue;
+      }
+      const blocker = original?.shape?.ok === false ? original.shape.blocker : entry.blocker;
+      if (
+        original?.shape?.ok === false
+        && isTerminalizableOwnerCommandBlocker(blocker)
+      ) {
+        const requestId = String(original.command?.requestId || '');
+        const commentId = String(entry?.commentId ?? '');
+        if (!options?.consumedRequestIds?.has?.(requestId) && !terminalCommentIds.has(commentId)) {
+          terminalCommentIds.add(commentId);
+          terminalRejections.push(Object.freeze({
+            ...entry,
+            blocker,
+            command: projectCustomCommand(original.command, original.shape),
+          }));
+        }
+        continue;
+      }
+      rejected.push(original?.shape?.ok === false ? Object.freeze({ ...entry, blocker }) : entry);
+    }
+  }
+
   return Object.freeze({
     ...selected,
-    ...(Array.isArray(selected.commands) ? { commands: Object.freeze(commands) } : {}),
+    commands: Object.freeze(commands),
+    ...(Array.isArray(selected.rejected) ? { rejected: Object.freeze(rejected) } : {}),
     terminalRejections: Object.freeze(terminalRejections),
   });
 }
 
 export function selectNextBattleBridgeGitHubCommand(comments = [], options = {}) {
+  if (!containsCustomCommand(comments)) return core.selectNextBattleBridgeGitHubCommand(comments, options);
   const batch = selectBattleBridgeGitHubCommandBatch(comments, { ...options, maxBatch: 1 });
   if (!batch.ok || batch.verdict === 'NO_COMMAND_READY') return batch;
   const selected = batch.commands[0];
@@ -127,28 +285,84 @@ export function selectNextBattleBridgeGitHubCommand(comments = [], options = {})
 }
 
 export async function executeBattleBridgeGitHubCommand(command, options = {}) {
-  if (String(command?.operation || '') !== BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION) {
-    return base.executeBattleBridgeGitHubCommand(command, options);
-  }
-  const shape = validateApprovedBackendRestartCommandShape(command);
+  const kind = customOperationKind(command?.operation);
+  if (!kind) return core.executeBattleBridgeGitHubCommand(command, options);
+
+  const shape = validateCustomCommandShape(command);
   if (!shape.ok) return shape;
-  const executor = typeof options?.restartApprovedBackend === 'function'
-    ? options.restartApprovedBackend
-    : executeApprovedBackendRestartOnBattleBridge;
   try {
-    const result = await executor(command);
-    return Object.freeze({
-      ok: result?.ok !== false,
-      verdict: result?.ok === false ? 'COMMAND_EXECUTION_BLOCKED' : 'COMMAND_EXECUTION_COMPLETE',
-      operation: BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
+    if (kind === 'mailbox-rotation') {
+      if (typeof options.executeMailboxRotationFn !== 'function') return fail('MAILBOX_ROTATION_HOST_CONTEXT_UNPROVEN');
+      const result = await options.executeMailboxRotationFn(shape.command);
+      return { ok: result.ok === true, operation: command.operation, requestId: command.requestId,
+        verdict: result.ok ? 'COMMAND_EXECUTION_COMPLETE' : 'COMMAND_EXECUTION_BLOCKED',
+        ...(result.blocker ? { blocker: result.blocker } : {}), result };
+    }
+    if (kind === 'maintenance-recovery') return await executeMaintenanceRecoveryOnBattleBridge(shape.command, options);
+    if (kind === 'frontend-visibility') return await executeFrontendVisibilityOnBattleBridge(shape.command, options);
+    if (kind === 'environment') {
+      const executor = typeof options?.executeOperatorEnvironmentApprovalOnBattleBridgeFn === 'function'
+        ? options.executeOperatorEnvironmentApprovalOnBattleBridgeFn
+        : executeOperatorEnvironmentApprovalOnBattleBridge;
+      return await executor(shape.command, options);
+    }
+    if (kind === 'codex-dispatch' || kind === 'codex-readback') {
+      const executor = kind === 'codex-dispatch'
+        ? (typeof options?.executeGuardedCodexTaskOnBattleBridgeFn === 'function'
+          ? options.executeGuardedCodexTaskOnBattleBridgeFn
+          : executeGuardedCodexTaskOnBattleBridge)
+        : (typeof options?.executeGuardedCodexTaskReadbackOnBattleBridgeFn === 'function'
+          ? options.executeGuardedCodexTaskReadbackOnBattleBridgeFn
+          : executeGuardedCodexTaskReadbackOnBattleBridge);
+      const result = await executor(shape.command, options);
+      return Object.freeze({
+        ok: result?.ok !== false,
+        verdict: result?.ok === false ? 'COMMAND_EXECUTION_BLOCKED' : 'COMMAND_EXECUTION_COMPLETE',
+        ...(result?.blocker ? { blocker: String(result.blocker) } : {}),
+        operation: String(shape.command.operation || ''),
+        requestId: String(shape.command.requestId || ''),
+        mergeAuthority: result?.mergeAuthority === true,
+        sourceMutationAuthority: result?.sourceMutationAuthority === true,
+        arbitraryShellAllowed: result?.arbitraryShellAllowed === true,
+        result,
+      });
+    }
+    if (kind === 'sovereign-install') {
+      const executor = typeof options?.executeSovereignCommanderInstallOnBattleBridgeFn === 'function'
+        ? options.executeSovereignCommanderInstallOnBattleBridgeFn
+        : executeSovereignCommanderInstallOnBattleBridge;
+      return await executor(shape.command, options);
+    }
+    if (kind === 'rescue-island-supervised-document') {
+      const executor = typeof options?.executeRescueIslandSupervisedDocumentOnBattleBridgeFn === 'function'
+        ? options.executeRescueIslandSupervisedDocumentOnBattleBridgeFn
+        : executeRescueIslandSupervisedDocumentOnBattleBridge;
+      return await executor(shape.command, options);
+    }
+    if (kind === 'sovereign-remote') {
+      const executor = typeof options?.executeSovereignCommanderRemoteOnBattleBridgeFn === 'function'
+        ? options.executeSovereignCommanderRemoteOnBattleBridgeFn
+        : executeSovereignCommanderRemoteOnBattleBridge;
+      return await executor(shape.command, options);
+    }
+    const executor = typeof options?.executeStephanosNativeCapacityPublisherInstallOnBattleBridgeFn === 'function'
+      ? options.executeStephanosNativeCapacityPublisherInstallOnBattleBridgeFn
+      : executeStephanosNativeCapacityPublisherInstallOnBattleBridge;
+    return await executor(shape.command, options);
+  } catch {
+    return fail(kind === 'environment'
+      ? 'OPERATOR_ENVIRONMENT_APPROVAL_EXECUTION_FAILED'
+      : (kind === 'codex-dispatch' || kind === 'codex-readback')
+        ? 'GUARDED_CODEX_EXECUTION_FAILED'
+        : kind === 'sovereign-install'
+          ? 'SOVEREIGN_COMMANDER_INSTALL_EXECUTION_FAILED'
+          : kind === 'sovereign-remote'
+            ? 'SOVEREIGN_COMMANDER_REMOTE_EXECUTION_FAILED'
+            : kind === 'rescue-island-supervised-document'
+              ? 'RESCUE_ISLAND_REMOTE_EXECUTION_FAILED'
+              : 'STEPHANOS_NATIVE_PUBLISHER_INSTALL_EXECUTION_FAILED', {
+      operation: command?.operation || '',
       requestId: String(command?.requestId || ''),
-      result,
-    });
-  } catch (error) {
-    return fail('COMMAND_EXECUTION_FAILED', {
-      operation: BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
-      requestId: String(command?.requestId || ''),
-      error: error?.message || String(error),
     });
   }
 }

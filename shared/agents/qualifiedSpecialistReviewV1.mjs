@@ -3,6 +3,11 @@ import {
   createProviderNeutralReviewReceipt,
   validateProviderNeutralReviewReceipt,
 } from './providerNeutralReviewV1.mjs';
+import {
+  SOVEREIGN_SPECIALIST_ARTIFACT_SCHEMA_V1,
+  validateSovereignQualifiedSpecialistArtifactV1,
+  sovereignQualifiedSpecialistCommentCandidatesV1,
+} from './sovereignQualifiedSpecialistReviewV1.mjs';
 
 export const QUALIFIED_SPECIALIST_REVIEW_MARKER = '<!-- stephanos-qualified-specialist-review -->';
 export const QUALIFIED_SPECIALIST_REVIEWER_LOGIN = 'chatgpt-codex-connector';
@@ -152,6 +157,16 @@ function commentBody(comment = {}) {
   return text(comment?.body);
 }
 
+// Preserve the full raw authenticated GitHub comment in digest-bound receipts.
+// Only normalize this one canonical, fixed Codex bot preamble for matching.
+// Reviewer App identity, immutable timestamps, exact HEAD and scoped operator
+// request are still independently mandatory before any specialist admission.
+function canonicalCodexReviewText(body = '') {
+  const original = text(body);
+  const receiptPreamble = /^<!-- codex-review-receipt:v1 -->(?:\r?\n){2}(?=Codex Review:)/;
+  return original.replace(receiptPreamble, '');
+}
+
 function commentActor(comment = {}) {
   return comment?.user && typeof comment.user === 'object'
     ? comment.user
@@ -215,17 +230,20 @@ export function qualifiedSpecialistCommentHeadRef(comment = {}) {
 }
 
 function responseMatches(comment = {}, options = {}) {
-  const body = commentBody(comment);
+  const body = canonicalCodexReviewText(commentBody(comment));
   const createdAtMs = commentCreatedAtMs(comment);
   const updatedAtMs = commentUpdatedAtMs(comment);
   const reviewedCommitRef = qualifiedSpecialistCommentHeadRef(comment);
   const resolvedCommitId = text(comment?.resolved_commit_id ?? comment?.resolvedCommitId).toLowerCase();
   const sourceHead = text(options.sourceHead).toLowerCase();
+  const reviewedHeadMatches = reviewedCommitRef.length >= 7
+    && sourceHead.startsWith(reviewedCommitRef);
+  const resolvedHeadMatches = !resolvedCommitId || resolvedCommitId === sourceHead;
   return isTrustedProviderResponse(comment)
     && Buffer.byteLength(body, 'utf8') <= MAX_SPECIALIST_COMMENT_BODY_BYTES
     && /^Codex Review:\s*Didn't find any major issues\./i.test(body)
-    && reviewedCommitRef.length >= 7
-    && resolvedCommitId === sourceHead
+    && reviewedHeadMatches
+    && resolvedHeadMatches
     && Number.isFinite(createdAtMs)
     && Number.isFinite(updatedAtMs)
     && updatedAtMs === createdAtMs;
@@ -347,6 +365,11 @@ function buildQualifiedSpecialistReviewArtifact(requestComment, responseComment,
 }
 
 export function validateQualifiedSpecialistReviewArtifact(artifact = {}, options = {}) {
+  // Revalidate the same signed native proof whenever the existing immutable
+  // independent-review artifact is consumed. No alternate merge consumer.
+  if (artifact?.schemaVersion === SOVEREIGN_SPECIALIST_ARTIFACT_SCHEMA_V1) {
+    return validateSovereignQualifiedSpecialistArtifactV1(artifact, options);
+  }
   const repository = text(options.repository);
   const prNumber = positiveInteger(options.prNumber);
   const branch = text(options.branch);
@@ -448,7 +471,7 @@ function providerNeutralArtifactCandidates(comments = [], options = {}) {
       commentComesAfter(comment, request)
       && (!nextInvocation || commentComesBefore(comment, nextInvocation))
       && isTrustedProviderResponse(comment)
-      && /^Codex Review:/i.test(commentBody(comment))
+      && /^Codex Review:/i.test(canonicalCodexReviewText(commentBody(comment)))
     ));
     if (providerResults.length !== 1 || !responseMatches(providerResults[0], options)) continue;
     const artifact = buildQualifiedSpecialistReviewArtifact(request, providerResults[0], options);
@@ -466,21 +489,29 @@ function providerNeutralArtifactCandidates(comments = [], options = {}) {
 
 export function qualifiedSpecialistEscalationPaths(analysis = {}) {
   const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
+  const counts = analysis?.counts && typeof analysis.counts === 'object' && !Array.isArray(analysis.counts)
+    ? analysis.counts
+    : null;
   if (analysis?.schemaVersion !== 'stephanos.independent-security-analysis.v1'
     || analysis?.finalVerdict !== 'INDEPENDENT_SECURITY_REVIEW_FINDINGS'
     || analysis?.verdict !== 'findings'
     || findings.length < 1
     || findings.some((item) => (
       text(item?.severity).toUpperCase() !== 'P0'
-      || text(item?.code) !== QUALIFIED_SPECIALIST_FINDING_CODE
       || !text(item?.path)
     ))
-    || Number(analysis?.counts?.P0) !== findings.length
-    || Number(analysis?.counts?.P1) !== 0
-    || Number(analysis?.counts?.P2) !== 0) {
+    || !counts
+    || !Number.isSafeInteger(counts.P0)
+    || !Number.isSafeInteger(counts.P1)
+    || !Number.isSafeInteger(counts.P2)
+    || counts.P0 !== findings.length
+    || counts.P1 !== 0
+    || counts.P2 !== 0) {
     return Object.freeze([]);
   }
-  return Object.freeze(unique(findings.map((item) => text(item.path))).sort());
+  return Object.freeze(unique(findings
+    .filter((item) => text(item?.code) === QUALIFIED_SPECIALIST_FINDING_CODE)
+    .map((item) => text(item.path))).sort());
 }
 
 function validateSpecialistReviewCandidate(review = {}, options = {}) {
@@ -623,7 +654,13 @@ export function adjudicateQualifiedSpecialistReview(input = {}) {
       paths,
     },
   );
-  const candidates = [...legacyCandidates, ...artifactCandidates];
+  const sovereign = sovereignQualifiedSpecialistCommentCandidatesV1(
+    Array.isArray(input.comments) ? input.comments : [],
+    { repository: input.repository, prNumber: input.prNumber, branch: input.branch,
+      sourceHead: input.sourceHead, baseSha: input.baseSha, paths,
+      sovereignSourceBinding: input.sovereignSourceBinding },
+  );
+  const candidates = [...legacyCandidates, ...artifactCandidates, ...sovereign.candidates];
 
   if (candidates.length !== 1) {
     return Object.freeze({
@@ -639,6 +676,7 @@ export function adjudicateQualifiedSpecialistReview(input = {}) {
             ? 'qualified-specialist-review-missing'
             : 'qualified-specialist-review-provider-route-not-admitted')
           : 'qualified-specialist-review-ambiguous',
+        ...(candidates.length === 0 && sovereign.observed ? sovereign.blockers : []),
       ]),
     });
   }
@@ -659,19 +697,33 @@ export function adjudicateQualifiedSpecialistReview(input = {}) {
       `proofs/specialist-review/reviewer-${QUALIFIED_SPECIALIST_REVIEWER_LOGIN}`,
     ]),
   ]);
-  const cleanAnalysis = Object.freeze({
+  const coveredPaths = new Set(paths);
+  const residualFindings = (Array.isArray(analysis.findings) ? analysis.findings : [])
+    .filter((item) => !(
+      text(item?.code) === QUALIFIED_SPECIALIST_FINDING_CODE
+      && coveredPaths.has(text(item?.path))
+    ));
+  const residualCounts = Object.freeze({
+    P0: residualFindings.filter((item) => text(item?.severity).toUpperCase() === 'P0').length,
+    P1: residualFindings.filter((item) => text(item?.severity).toUpperCase() === 'P1').length,
+    P2: residualFindings.filter((item) => text(item?.severity).toUpperCase() === 'P2').length,
+  });
+  const residualClean = residualFindings.length === 0;
+  const adjudicatedAnalysis = Object.freeze({
     schemaVersion: 'stephanos.independent-security-analysis.v1',
-    findings: Object.freeze([]),
-    counts: Object.freeze({ P0: 0, P1: 0, P2: 0 }),
-    verdict: 'clean',
+    findings: Object.freeze(residualFindings),
+    counts: residualCounts,
+    verdict: residualClean ? 'clean' : 'findings',
     proofRefs: Object.freeze(proofRefs),
-    finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_CLEAN',
+    finalVerdict: residualClean
+      ? 'INDEPENDENT_SECURITY_REVIEW_CLEAN'
+      : 'INDEPENDENT_SECURITY_REVIEW_FINDINGS',
   });
 
   return Object.freeze({
     required: true,
     valid: true,
-    analysis: cleanAnalysis,
+    analysis: adjudicatedAnalysis,
     receipt: candidate.receipt,
     artifact: candidate.artifact || null,
     reviewId: candidate.reviewId,

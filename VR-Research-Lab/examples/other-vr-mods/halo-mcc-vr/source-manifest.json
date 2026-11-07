@@ -24,7 +24,27 @@
       "Halo: Reach"
     ],
     "announced_next_title": "Halo 4",
-    "later_announced_titles": ["Halo: Combat Evolved", "Halo 2"]
+    "later_announced_titles": [
+      "Halo: Combat Evolved",
+      "Halo 2"
+    ],
+    "accessible_repository": "dafurman/halo-mcc-vr",
+    "accessible_repository_commit": "202f026d6b5789972bc0916dda5388b4a8bf38ea",
+    "observed_date": "2026-10-03",
+    "community_continuations": [
+      {
+        "repository": "moistman42069/MCCVR-Halo-Build",
+        "commit": "b243af2256a1a3b424cbccd940f8e8a674cef608",
+        "licence": "MIT",
+        "status": "experimental-continuation"
+      },
+      {
+        "repository": "RyanCraighead/Halo-MCC-VR-xr",
+        "commit": "e235131f5a5fcd120e3c401b3e66fd018fdc2a96",
+        "licence": "MIT",
+        "status": "experimental-fork"
+      }
+    ]
   },
   "accepted_runtime_evidence": {
     "headset": "Quest 3",
@@ -48,7 +68,7 @@
   "deferred_full_snapshot": {
     "status": "not-vendored",
     "reason": "Avoid a stale duplicate codebase in canonical knowledge. A bounded research worker should clone the pinned commit into an isolated research workspace when source-level analysis is required.",
-    "required_command": "git clone https://github.com/pancreations/Halo-MCC-VR.git && git checkout c37dd3c8596343c4dc8fbe4d4d5d4440b8acee98"
+    "required_command": "powershell -ExecutionPolicy Bypass -File .\\scripts\\sync-vr-reference-sources.ps1 -SourceId halo-mcc-vr-relocated,halo-mcc-vr-community-continuation,halo-mcc-vr-xr-fork"
   },
   "refresh_policy": {
     "owner_goal": 1596,
@@ -57,12 +77,20 @@
     "preserve_revision_and_provenance": true,
     "never_auto_promote_claims": true
   },
-  "programme_links": [1593, 1596, 1597, 1605, 1606, 1607],
+  "programme_links": [
+    1593,
+    1596,
+    1597,
+    1605,
+    1606,
+    1607
+  ],
   "trust": {
     "source_type": "public third-party repository",
     "code_execution": "prohibited during passive ingestion",
     "binary_ingestion": "prohibited",
     "game_files": "prohibited",
     "claims_require_independent_verification": true
-  }
+  },
+  "local_reference_lock": "VR-Research-Lab/reference-source-lock.json"
 }

@@ -1,0 +1,495 @@
+#!/usr/bin/env node
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+
+export const STARFIELD_VR_PROJECT_PERFORMANCE_LOOP_SCHEMA =
+  'stephanos.starfield-vr-project-performance-loop.v1';
+
+function text(value = '') {
+  return String(value ?? '').trim();
+}
+
+async function readJson(path) {
+  try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; }
+}
+
+// A syntactically present field is not necessarily a measured value.
+// Keep the producer's units and numeric trust contract in one place rather
+// than treating placeholders (NaN, strings, -1, Infinity) as telemetry.
+const NUMERIC_TELEMETRY_CONTRACTS = Object.freeze({
+  avgApplicationFrameTimeMs: 'positive',
+  p95ApplicationFrameTimeMs: 'positive',
+  avgDeliveredCadenceHz: 'positive',
+  headsetRefreshRateHz: 'positive',
+  droppedFrames: 'count',
+  avgEncodeLatencyMs: 'nonnegative',
+  avgNetworkLatencyMs: 'nonnegative',
+  avgDecodeLatencyMs: 'nonnegative',
+  avgAirLinkBitrateMbps: 'nonnegative',
+  maxPacketLossPct: 'percent',
+  maxJitterMs: 'nonnegative',
+  openXrRenderWidth: 'positive-integer',
+  openXrRenderHeight: 'positive-integer',
+  renderScalePct: 'positive',
+  runtimeSeconds: 'positive',
+});
+
+function metricPresent(metrics, key) {
+  const value = metrics?.[key];
+  if (key === 'longSessionDriftVerdict') {
+    // Unknown/pending producer states are not a completed drift observation.
+    return typeof value === 'string' && value.trim().length > 0
+      && !['UNKNOWN', 'UNAVAILABLE', 'NOT_OBSERVED', 'WAITING', 'PENDING'].includes(value.trim().toUpperCase());
+  }
+  if (key === 'reprojectionState') {
+    // The Windows runtime producer emits NONE_OBSERVED both for measured zero
+    // and for an unavailable reprojection count. Do not turn missing source
+    // evidence into a healthy headset claim without a positive sample count.
+    if (value === 'REPROJECTING') return true;
+    return value === 'NONE_OBSERVED'
+      && Number.isSafeInteger(metrics?.reprojectionObservedSampleCount)
+      && metrics.reprojectionObservedSampleCount > 0;
+  }
+  const numericContract = NUMERIC_TELEMETRY_CONTRACTS[key];
+  if (numericContract) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return false;
+    if (numericContract === 'positive') return value > 0;
+    if (numericContract === 'positive-integer') return Number.isSafeInteger(value) && value > 0;
+    if (numericContract === 'count') return Number.isSafeInteger(value) && value >= 0;
+    if (numericContract === 'percent') return value >= 0 && value <= 100;
+    return value >= 0; // nonnegative observed latency / bitrate / jitter.
+  }
+  return value !== null && value !== undefined && value !== '' && value !== false;
+}
+
+function measuredCpuPercent(metrics, key) {
+  const value = metrics?.[key];
+  return typeof value === 'number' && Number.isFinite(value)
+    && value >= 0 && value <= 100;
+}
+
+function measuredCpuSampleCount(metrics, key) {
+  const count = metrics?.[key];
+  return Number.isSafeInteger(count) && count > 0;
+}
+
+function sourceRevision(registry, sourceId) {
+  const source = Array.isArray(registry?.sources)
+    ? registry.sources.find((entry) => text(entry?.source_id) === sourceId)
+    : null;
+  return text(
+    source?.snapshot_commit ||
+    source?.snapshot_release ||
+    source?.snapshot_version ||
+    source?.snapshot_date ||
+    'unresolved',
+  );
+}
+
+function requirement({
+  id,
+  title,
+  metricKeys = [],
+  sourceRef,
+  rationale,
+  available = null,
+}) {
+  return Object.freeze({
+    id,
+    title,
+    metricKeys,
+    sourceRef,
+    rationale,
+    available,
+  });
+}
+
+function technique({
+  id,
+  title,
+  sources,
+  rationale,
+  experiment,
+  compatibleWhen = 'measure-before-enable',
+  priority = 0,
+}) {
+  return Object.freeze({
+    id,
+    title,
+    sources,
+    rationale,
+    experiment,
+    compatibleWhen,
+    priority,
+    authority: Object.freeze({
+      advisoryOnly: true,
+      automaticMutation: false,
+      rollbackRequired: true,
+      oneChangePerExperiment: true,
+    }),
+  });
+}
+
+export async function buildStarfieldVrProjectPerformanceLoop({
+  repoRoot,
+  runIdentity = {},
+  diagnosis = {},
+  metrics = {},
+  recommendationPlan = {},
+} = {}) {
+  const root = resolve(repoRoot || '.');
+  const [registry, workspace] = await Promise.all([
+    readJson(resolve(root, 'VR-Research-Lab', 'knowledge-sources.json')),
+    readJson(resolve(root, 'VR-Research-Lab', 'lab-workspace.json')),
+  ]);
+
+  const provider = text(runIdentity?.provider || 'UNKNOWN');
+  const identityStatus = text(runIdentity?.status || 'UNKNOWN_PROVIDER');
+  const signals = new Set(Array.isArray(diagnosis?.signals) ? diagnosis.signals.map(text) : []);
+  const focus = text(diagnosis?.focus || 'UNCLASSIFIED');
+  const cpuPressureObserved = focus === 'CPU_LOAD'
+    || signals.has('system-cpu-load-high')
+    || signals.has('starfield-single-thread-saturation-observed');
+  // RENDERING_OR_STEREO also covers pose-age pressure; it cannot by itself
+  // establish AER/eye-history instability. Require a stereo-specific signal.
+  const stereoMotionObserved = signals.has('stereo-eye-timing-skew-observed');
+  // The canonical diagnosis currently measures total system CPU and Starfield
+  // process CPU over the same session. That is enough for a coarse game-vs-rest
+  // split, but not enough to name a specific desktop/Meta process or busiest
+  // Starfield thread. Keep the experiment at that truthful resolution.
+  const cpuAttributionReady = ['avgSystemCpuPct', 'avgStarfieldCpuPct']
+    .every((key) => measuredCpuPercent(metrics, key))
+    && measuredCpuSampleCount(metrics, 'sampleCount');
+
+  const sources = Object.freeze({
+    mutar: {
+      sourceId: 'github-mutars-nomoreflat',
+      revision: sourceRevision(registry, 'github-mutars-nomoreflat'),
+      path: 'VR-Research-Lab/knowledge-sources/mutar-nomoreflat/knowledge-extraction.md',
+    },
+    airLink: {
+      sourceId: 'official-meta-quest-link-air-link',
+      revision: sourceRevision(registry, 'official-meta-quest-link-air-link'),
+      path: 'VR-Research-Lab/knowledge-sources/meta-quest-link-air-link/knowledge-extraction.md',
+    },
+    quadViews: {
+      sourceId: 'github-mbucchia-quad-views-foveated',
+      revision: sourceRevision(registry, 'github-mbucchia-quad-views-foveated'),
+      path: 'VR-Research-Lab/knowledge-sources/quad-views-foveated/knowledge-extraction.md',
+    },
+    installedCorpus: {
+      sourceId: 'battle-bridge-installed-vr-corpus',
+      revision: 'sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8',
+      path: 'VR-Research-Lab/knowledge-sources/battle-bridge-installed-vr-corpus/knowledge-extraction.md',
+    },
+    referenceImplementations: {
+      sourceId: 'starfield-vr-reference-implementations',
+      revision: 'repository-main',
+      path: 'VR-Research-Lab/examples/starfield-vr/reference-implementations.md',
+    },
+    parityRoadmap: {
+      sourceId: 'starfield-vr-skyrim-parity-roadmap',
+      revision: 'repository-main',
+      path: 'VR-Research-Lab/examples/starfield-vr/skyrim-vr-parity-roadmap.md',
+    },
+    cyberpunk: {
+      sourceId: 'github-dariulone-cyberpunk-vr-port',
+      revision: sourceRevision(registry, 'github-dariulone-cyberpunk-vr-port'),
+      path: 'VR-Research-Lab/knowledge-sources/cyberpunk-vr-port/knowledge-extraction.md',
+    },
+  });
+
+  const requirements = [
+    requirement({
+      id: 'application-frame-time',
+      title: 'Application frame time',
+      metricKeys: ['avgApplicationFrameTimeMs', 'p95ApplicationFrameTimeMs'],
+      sourceRef: sources.airLink.path,
+      rationale: 'Project Air Link acceptance requires application frame time and delivered cadence.',
+      available: ['avgApplicationFrameTimeMs', 'p95ApplicationFrameTimeMs']
+        .every((key) => metricPresent(metrics, key)),
+    }),
+    requirement({
+      id: 'delivered-cadence',
+      title: 'Delivered headset cadence',
+      metricKeys: ['avgDeliveredCadenceHz'],
+      sourceRef: sources.airLink.path,
+      rationale: 'Low or oscillating delivered cadence distinguishes render misses from transport instability.',
+      available: metricPresent(metrics, 'avgDeliveredCadenceHz'),
+    }),
+    requirement({
+      id: 'headset-refresh',
+      title: 'Quest refresh rate',
+      metricKeys: ['headsetRefreshRateHz'],
+      sourceRef: sources.airLink.path,
+      rationale: 'Delivered cadence must be interpreted against the selected Quest refresh rate.',
+      available: metricPresent(metrics, 'headsetRefreshRateHz'),
+    }),
+    requirement({
+      id: 'dropped-frames-reprojection',
+      title: 'Dropped frames and reprojection',
+      metricKeys: ['droppedFrames', 'reprojectionState'],
+      sourceRef: sources.airLink.path,
+      rationale: 'The project explicitly requires dropped-frame and smoothing/reprojection evidence.',
+      available: metricPresent(metrics, 'droppedFrames') && metricPresent(metrics, 'reprojectionState'),
+    }),
+    requirement({
+      id: 'air-link-latency-chain',
+      title: 'Encode, network and decode latency',
+      metricKeys: ['avgEncodeLatencyMs', 'avgNetworkLatencyMs', 'avgDecodeLatencyMs'],
+      sourceRef: sources.airLink.path,
+      rationale: 'Air Link is a pipeline; latency must be attributed to the correct stage.',
+      available: ['avgEncodeLatencyMs', 'avgNetworkLatencyMs', 'avgDecodeLatencyMs'].every((key) => metricPresent(metrics, key)),
+    }),
+    requirement({
+      id: 'air-link-network-quality',
+      title: 'Bitrate, packet loss and jitter',
+      metricKeys: ['avgAirLinkBitrateMbps', 'maxPacketLossPct', 'maxJitterMs'],
+      sourceRef: sources.airLink.path,
+      rationale: 'Project transport proof requires bitrate, loss, jitter and congestion evidence where available.',
+      available: ['avgAirLinkBitrateMbps', 'maxPacketLossPct', 'maxJitterMs'].every((key) => metricPresent(metrics, key)),
+    }),
+    requirement({
+      id: 'render-resolution',
+      title: 'OpenXR/render resolution',
+      metricKeys: ['openXrRenderWidth', 'openXrRenderHeight', 'renderScalePct'],
+      sourceRef: sources.mutar.path,
+      rationale: 'MutaR exposes OpenXR resolution scaling as a first-class performance surface.',
+      available: metricPresent(metrics, 'renderScalePct') ||
+        (metricPresent(metrics, 'openXrRenderWidth') && metricPresent(metrics, 'openXrRenderHeight')),
+    }),
+    requirement({
+      id: 'resource-pressure',
+      title: 'GPU, VRAM, CPU and storage pressure',
+      metricKeys: ['avgGpuUtilPct', 'maxGpuMemoryPct', 'avgSystemCpuPct', 'minGameDriveFreePct'],
+      sourceRef: sources.installedCorpus.path,
+      rationale: 'Resource attribution remains the first coarse performance split.',
+      available: ['avgGpuUtilPct', 'maxGpuMemoryPct', 'avgSystemCpuPct', 'minGameDriveFreePct']
+        .every((key) => measuredCpuPercent(metrics, key)),
+    }),
+    requirement({
+      id: 'long-session-drift',
+      title: 'Long-session thermal/network drift',
+      metricKeys: ['runtimeSeconds', 'longSessionDriftVerdict'],
+      sourceRef: sources.airLink.path,
+      rationale: 'The canonical diagnosis producer does not yet publish runtimeSeconds or longSessionDriftVerdict, so caller-injected lookalikes cannot qualify this requirement.',
+      available: false,
+    }),
+  ];
+
+  if (cpuPressureObserved) {
+    requirements.push(requirement({
+      id: 'starfield-cpu-attribution',
+      title: 'System and Starfield CPU attribution',
+      metricKeys: ['sampleCount', 'avgSystemCpuPct', 'avgStarfieldCpuPct'],
+      sourceRef: sources.installedCorpus.path,
+      rationale: 'The canonical diagnosis can separate measured Starfield process CPU from total system CPU; the remaining CPU stays explicitly unattributed until richer process/thread telemetry exists.',
+      available: cpuAttributionReady,
+    }));
+  }
+  const missingTelemetry = requirements.filter((item) => item.available !== true);
+
+  const techniques = [];
+  const add = (item) => techniques.push(technique(item));
+  if (cpuPressureObserved) {
+    add({
+      id: 'starfield-cpu-stage-isolation',
+      title: 'Separate Starfield CPU from remaining system CPU pressure',
+      sources: [sources.installedCorpus, sources.airLink],
+      rationale: 'A pegged whole-system CPU with a partly idle GPU can first be split into measured Starfield process load versus unattributed remainder without pretending the current producer identifies individual background processes.',
+      experiment: 'Repeat stationary, yaw and strafe segments without changing the profile; compare Starfield process CPU against total system CPU, frame time and compositor cadence. Treat the remainder as unattributed until richer telemetry is independently available.',
+      priority: 115,
+    });
+  }
+  if (stereoMotionObserved) {
+    add({
+      id: 'starfield-aer-motion-isolation',
+      title: 'Isolate AER eye history during rotation and lateral motion',
+      sources: [sources.referenceImplementations, sources.installedCorpus],
+      rationale: 'Zero presenter-sequence faults cannot exclude stereo temporal-history contamination or frame interpolation artefacts.',
+      experiment: 'Compare identical camera-yaw and lateral-strafe segments on the accepted baseline and separately qualified AER candidate; bind eye identity, frame timing, ASW and rollback before accepting a change.',
+      priority: 116,
+    });
+  }
+
+  if (provider === 'mutar-openxr') {
+    add({
+      id: 'mutar-openxr-resolution-scaling',
+      title: 'MutaR OpenXR resolution-scaling experiment',
+      sources: [sources.mutar],
+      rationale: 'The project records OpenXR resolution scaling as a directly evidenced MutaR capability.',
+      experiment: 'Keep the same save and movement route; lower only OpenXR/render scale one bounded step, record frame timing and image quality, then keep or roll back.',
+      priority: focus === 'VRAM_PRESSURE' || focus === 'GPU_RENDER_LOAD' || focus === 'MULTI_RESOURCE_PRESSURE' ? 110 : 80,
+    });
+    add({
+      id: 'mutar-alternate-eye-temporal-isolation',
+      title: 'MutaR alternate-eye / temporal-stereo isolation',
+      sources: [sources.referenceImplementations, sources.installedCorpus],
+      rationale: 'The project explicitly records alternate-eye temporal disparity and lateral-motion instability as Starfield acceptance risks.',
+      experiment: 'Use a repeatable lateral-motion segment and compare temporal/stereo repair settings independently from transport and HUD changes.',
+      priority: focus === 'FRAME_TIME_PROOF' ? 105 : 86,
+    });
+  }
+
+  add({
+    id: 'quad-view-foveation-compatibility',
+    title: 'Quad-view / foveation compatibility experiment',
+    sources: [sources.mutar, sources.quadViews],
+    rationale: 'MutaR records quad-view compatibility and the project has a dedicated performance reference for negotiated foveation.',
+    experiment: 'First prove the application/runtime/headset capability chain. If compatible, compare focus/peripheral resolution and frame time with an explicit disable path.',
+    compatibleWhen: 'only-after-capability-proof',
+    priority: focus === 'VRAM_PRESSURE' || focus === 'GPU_RENDER_LOAD' ? 96 : 62,
+  });
+
+  add({
+    id: 'rdr2-layer-cost-isolation',
+    title: 'RDR2-style conversion-layer cost isolation',
+    sources: [sources.installedCorpus],
+    rationale: 'The installed RDR2 route teaches framework → title adapter → stereo/temporal repair → camera/HUD separation.',
+    experiment: 'Attribute cost and instability to rendering, temporal/stereo repair, camera/HUD or transport before changing unrelated quality settings.',
+    priority: 88,
+  });
+
+  add({
+    id: 'cyberpunk-stage-instrumentation',
+    title: 'Cyberpunk-style stage instrumentation',
+    sources: [sources.cyberpunk],
+    rationale: 'The project records stage-by-stage stereo, view capture, frame submission and pose diagnostics as a reusable method.',
+    experiment: 'Instrument the Starfield route so a bad run can identify view generation, submission, pose or presentation as the failing stage.',
+    priority: missingTelemetry.some((item) => ['application-frame-time', 'delivered-cadence'].includes(item.id)) ? 94 : 70,
+  });
+
+  add({
+    id: 'air-link-pipeline-isolation',
+    title: 'Air Link render/encode/network/decode isolation',
+    sources: [sources.airLink],
+    rationale: 'The project treats Air Link as a layered transport and forbids collapsing all latency into one supported/not-supported flag.',
+    experiment: 'Correlate game frame time, encode, network and decode evidence over the same route before changing bitrate or render settings.',
+    priority: signals.has('air-link-runtime-not-observed') || signals.has('gpu-encoder-load-high') ? 108 : 76,
+  });
+
+  add({
+    id: 'vorpx-control-baseline',
+    title: 'VorpX controlled comparison baseline',
+    sources: [sources.referenceImplementations],
+    rationale: 'The project explicitly requires same-save-route MutaR versus VorpX comparison while preserving rollback.',
+    experiment: 'Use VorpX only as a measured control: exact versions, same save, same movement, one variable at a time, then restore the active MutaR route.',
+    priority: 58,
+  });
+
+  add({
+    id: 'skyrim-vr-quality-guardrail',
+    title: 'Skyrim VR parity guardrail',
+    sources: [sources.parityRoadmap],
+    rationale: 'Performance gains must not silently destroy stable stereo, head tracking, scale, frame pacing or comfort.',
+    experiment: 'After every retained performance change, re-check stereo stability, head-motion comfort, scale and seated gameplay against the parity criteria.',
+    priority: 45,
+  });
+
+  // The generic VR technique list is never empty, so it must not suppress a
+  // same-provider, measured storage diagnosis from the canonical recommendation
+  // planner. Do not accept an arbitrary or authority-widening caller packet.
+  const storageAdvice = recommendationPlan?.nextExperiment;
+  const storageAdviceQualified = focus === 'STORAGE_PRESSURE'
+    && signals.has('drive-space-pressure-high')
+    && measuredCpuPercent(metrics, 'minGameDriveFreePct')
+    && metrics.minGameDriveFreePct <= 10
+    && recommendationPlan?.schemaVersion === 'stephanos.starfield-vr-performance-recommendations.v1'
+    && recommendationPlan?.verdict === 'RECOMMENDATIONS_READY'
+    && recommendationPlan?.diagnosisFocus === focus
+    && recommendationPlan?.currentProvider === provider
+    && recommendationPlan?.boundaries?.advisoryOnly === true
+    && recommendationPlan?.boundaries?.automaticRuntimeMutation === false
+    && recommendationPlan?.boundaries?.providerAutoSwitch === false
+    && recommendationPlan?.boundaries?.graphicsAutoMutation === false
+    && storageAdvice?.id === 'storage-pressure-first'
+    && storageAdvice?.kind === 'system-diagnostic'
+    && storageAdvice?.authority?.advisoryOnly === true
+    && storageAdvice?.authority?.mutatesGameConfig === false
+    && storageAdvice?.authority?.switchesProvider === false
+    && storageAdvice?.authority?.launchesGame === false
+    && storageAdvice?.authority?.requiresOperatorAcceptanceForRuntimeChange === true;
+  const measuredStorageExperiment = storageAdviceQualified
+    ? technique({
+      id: 'storage-pressure-first',
+      title: 'Isolate measured game-drive pressure before renderer changes',
+      sources: [sources.installedCorpus],
+      rationale: 'The same-provider session has measured low drive headroom; first separate storage stalls from CPU, GPU, Air Link and AER instability.',
+      experiment: 'Observe drive capacity and I/O on the pinned playtest route. Do not delete, move or modify game data without separate operator approval and rollback proof.',
+      priority: 120,
+    })
+    : null;
+  const ranked = techniques.sort((a, b) => b.priority - a.priority);
+  const identityBlocked = identityStatus !== 'VERIFIED_PROVIDER';
+  const nextExperiment = identityBlocked
+    ? {
+        id: 'prove-run-provider-identity',
+        title: 'Prove exact VR run identity before tuning',
+        rationale: 'Provider-specific fixes are unsafe when the run identity is unknown or conflicting.',
+      }
+    : cpuPressureObserved && !cpuAttributionReady
+      ? {
+          id: 'capture-canonical-starfield-cpu-attribution',
+          title: 'Capture canonical Starfield and system CPU samples',
+          rationale: 'CPU pressure is evidenced, but the current session lacks the canonical sample count and/or measured Starfield/system CPU pair required for a truthful coarse attribution.',
+          sourceRef: sources.installedCorpus.path,
+        }
+    : missingTelemetry.some((item) => ['application-frame-time', 'delivered-cadence', 'headset-refresh'].includes(item.id))
+      ? {
+          id: 'close-frame-timing-telemetry-gap',
+          title: 'Capture application frame time, delivered cadence and headset refresh rate',
+          rationale: 'The project requires these measurements before frame-pacing diagnosis can be considered complete.',
+          sourceRef: sources.airLink.path,
+        }
+      : measuredStorageExperiment || ranked[0] || null;
+
+  const benchmarkProtocol = Object.freeze({
+    saveRoutePinned: true,
+    oneChangeAtATime: true,
+    exactProviderIdentityRequired: true,
+    exactProfileHashRequired: true,
+    captureFrameTiming: true,
+    recordHeadsetAndTransportState: true,
+    rollbackRequired: true,
+    compareAgainstVorpXControlWhenUseful: true,
+    retainOnlyMeasuredImprovements: true,
+  });
+
+  const qualityGuardrails = Object.freeze([
+    'Stable stereo without alternate-eye discomfort or temporal divergence.',
+    'Low-latency 6DoF head tracking and coherent world scale.',
+    'Stable frame pacing and seated Quest 3 comfort.',
+    'No regression in HUD readability, aiming alignment or cockpit usability.',
+    'No silent provider switch and no unproven runtime substitution.',
+  ]);
+
+  return {
+    schemaVersion: STARFIELD_VR_PROJECT_PERFORMANCE_LOOP_SCHEMA,
+    generatedFromProject: true,
+    projectWorkspaceSchema: text(workspace?.schemaVersion || 'unknown'),
+    runIdentity,
+    focus,
+    signals: [...signals],
+    telemetryRequirements: requirements,
+    telemetryGapCount: missingTelemetry.length,
+    missingTelemetry,
+    sources,
+    candidateTechniques: ranked,
+    nextExperiment,
+    benchmarkProtocol,
+    qualityGuardrails,
+    loopState: identityBlocked
+      ? identityStatus
+      : missingTelemetry.length
+        ? 'MEASURE_GAPS_THEN_EXPERIMENT'
+        : 'EXPERIMENT_READY',
+    authority: {
+      automaticObservation: true,
+      automaticPlanning: true,
+      automaticGraphicsMutation: false,
+      automaticProviderSwitch: false,
+      automaticRuntimeMutation: false,
+      operatorAcceptancePreserved: true,
+    },
+  };
+}

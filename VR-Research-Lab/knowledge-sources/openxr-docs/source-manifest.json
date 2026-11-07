@@ -19,5 +19,17 @@
     "isolated_ephemeral_clone_for_analysis": true,
     "compact_citation_and_paraphrase": true,
     "wholesale_specification_copy": false
+  },
+  "latest_observed": {
+    "date": "2026-10-03",
+    "commit": "5a82d45bc9e0adbaa24b6c4a3e5b6d50e08c887d",
+    "commits_ahead_of_registered_snapshot": 5,
+    "status": "authoritative-reference-candidate"
+  },
+  "local_reference_lock": "VR-Research-Lab/reference-source-lock.json",
+  "source_intake": {
+    "sync_source_id": "openxr-docs-current-analysis",
+    "local_cache_allowed": false,
+    "reuse_class": "analysis-only"
   }
 }

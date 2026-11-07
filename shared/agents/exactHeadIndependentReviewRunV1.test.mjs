@@ -11,6 +11,8 @@ import {
   INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_LAUNCH_MARKER,
 } from './independentReviewWorkflowDispatchLaunchReceiptV1.mjs';
 import {
+  mapGitHubIndependentReviewJobV1,
+  mapGitHubIndependentReviewRunV1,
   validateExactHeadIndependentReviewRunV1,
 } from './exactHeadIndependentReviewRunV1.mjs';
 
@@ -141,6 +143,32 @@ test('admits the exact acknowledged workflow-dispatch review shape through exist
   assert.equal(result.valid, true);
   assert.equal(result.mode, 'workflow_dispatch');
   assert.deepEqual(result.blockers, []);
+});
+
+test('preserves every authority field needed when mapping GitHub workflow-dispatch API evidence', () => {
+  const original = input();
+  const rawRun = {
+    ...original.run,
+    display_title: original.run.name,
+    head_branch: 'main',
+    created_at: '2026-08-25T17:35:02Z',
+    updated_at: '2026-08-25T17:35:20Z',
+    run_started_at: '2026-08-25T17:35:03Z',
+  };
+  const mappedRun = mapGitHubIndependentReviewRunV1(rawRun);
+  const mappedJobs = original.jobs.map(mapGitHubIndependentReviewJobV1);
+  const result = validateExactHeadIndependentReviewRunV1({
+    ...original,
+    run: mappedRun,
+    allRuns: [mappedRun],
+    jobs: mappedJobs,
+  });
+
+  assert.equal(mappedRun.display_title, original.run.name);
+  assert.equal(mappedRun.created_at, rawRun.created_at);
+  assert.equal(mappedRun.head_branch, 'main');
+  assert.equal(result.valid, true);
+  assert.equal(result.mode, 'workflow_dispatch');
 });
 
 test('accepts the historical static workflow-name representation for the same exact dispatch', () => {

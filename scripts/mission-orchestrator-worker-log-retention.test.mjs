@@ -86,10 +86,14 @@ test('launcher binds retention to the canonical worker log and all output routes
     '[System.IO.Directory]::CreateDirectory($logRoot) | Out-Null',
     'Invoke-BoundedWorkerLogRetention -LogRoot $logRoot -LogPath $logPath -ArchivePath $workerLogArchivePath',
     'Write-BoundedWorkerLogLine -LogRoot $logRoot -LogPath $logPath -ArchivePath $workerLogArchivePath -Line "[$([DateTime]::UtcNow.ToString(\'o\'))] Mission Orchestrator worker starting from canonical main $headSha"',
-    '& $node.Source $workerScript 2>&1 | ForEach-Object {',
-    'Write-BoundedWorkerLogLine -LogRoot $logRoot -LogPath $logPath -ArchivePath $workerLogArchivePath -Line ([string]$_)',
+    '$ordinaryWorker = Start-ExactWorkerWithLaunchIdentity',
+    '-CaptureOutput',
+    '$stdoutRead = $ordinaryWorker.Process.StandardOutput.ReadToEndAsync()',
+    '$stderrRead = $ordinaryWorker.Process.StandardError.ReadToEndAsync()',
+    'foreach ($line in @($stdoutText, $stderrText))',
+    'Write-BoundedWorkerLogLine -LogRoot $logRoot -LogPath $logPath -ArchivePath $workerLogArchivePath -Line ([string]$line)',
     'Write-BoundedWorkerLogLine -LogRoot $logRoot -LogPath $logPath -ArchivePath $workerLogArchivePath -Line "[$([DateTime]::UtcNow.ToString(\'o\'))] Mission Orchestrator worker exited with code $exitCode"',
-  ], 'launcher must retain before startup and route every worker line through the bounded writer');
+  ], 'launcher must retain before startup and route immutable-process output through the bounded writer');
   assert.equal(occurrences(source, 'Write-BoundedWorkerLogLine -LogRoot $logRoot -LogPath $logPath -ArchivePath $workerLogArchivePath'), 3);
   assert.doesNotMatch(source, /Out-File[^\r\n]*worker\.log|Add-Content[^\r\n]*worker\.log/i);
 });

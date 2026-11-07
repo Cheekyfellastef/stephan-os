@@ -57,6 +57,22 @@ function run(executable, args, options = {}) {
   return { stdout: result.stdout || '', stderr: result.stderr || '' };
 }
 
+export function parseWorkspaceChangedFiles(statusOutput) {
+  return String(statusOutput || '')
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((entry) => {
+      if (entry.length < 4 || entry[2] !== ' ') throw new Error('invalid git porcelain status entry');
+      return entry.slice(3).replace(/^"|"$/g, '');
+    });
+}
+
+function statusChangedFiles(repositoryRoot) {
+  return parseWorkspaceChangedFiles(
+    run('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: repositoryRoot }).stdout,
+  );
+}
+
 async function githubRequest(path, options = {}) {
   const token = text(process.env.GITHUB_TOKEN);
   const apiUrl = text(process.env.GITHUB_API_URL, 'https://api.github.com');
@@ -119,7 +135,7 @@ function applyPatchToWorkspace(repositoryRoot, manifest, patchPath) {
   run('git', ['checkout', '--detach', manifest.baseSha], { cwd: repositoryRoot });
   run('git', ['apply', '--check', '--binary', patchPath], { cwd: repositoryRoot });
   run('git', ['apply', '--binary', patchPath], { cwd: repositoryRoot });
-  const actualChangedFiles = lines(run('git', ['diff', '--name-only'], { cwd: repositoryRoot }).stdout);
+  const actualChangedFiles = statusChangedFiles(repositoryRoot);
   if (!sameStrings(actualChangedFiles, manifest.changedFiles)) throw new Error('applied validated patch changed files do not match manifest');
   run('git', ['diff', '--check'], { cwd: repositoryRoot });
   return Object.freeze(actualChangedFiles);
@@ -177,6 +193,54 @@ function validateEventArtifactBinding(eventValidation, artifact) {
   if (eventValidation.bundleId !== artifact.bundleId) blockers.push('event-bundle-does-not-match-validated-artifact');
   if (eventValidation.patchSha256 !== artifact.patchSha256) blockers.push('event-full-patch-hash-does-not-match-validated-artifact');
   return Object.freeze({ valid: blockers.length === 0, blockers: Object.freeze(sortedUnique(blockers)) });
+}
+
+export function isVerifiedPatchEscrowPrCreation403(error) {
+  return error?.message === 'GitHub API POST /repos/Cheekyfellastef/stephan-os/pulls failed with 403'
+    && error?.details?.status === 403
+    && error?.details?.payload?.message === 'GitHub Actions is not permitted to create or approve pull requests.';
+}
+
+// This pure planner never grants a mutation. The publisher supplies actual
+// authenticated GitHub readbacks and retains all original approval boundaries.
+export function validateEscrowBranchOnlyHandoff({
+  error, manifest, artifact, currentBaseSha, branchRef, branchCommit, pull,
+} = {}) {
+  if (!isVerifiedPatchEscrowPrCreation403(error)) return Object.freeze({ ok: false, blocker: 'PR_CREATION_DENIAL_NOT_EXACT' });
+  if (pull) return Object.freeze({ ok: false, blocker: 'ESCROW_PR_ALREADY_EXISTS_OR_COLLIDES' });
+  if (!artifact || currentBaseSha !== artifact.baseSha) return Object.freeze({ ok: false, blocker: 'ESCROW_BASE_DRIFTED' });
+  const evidence = validateExistingPublicationEvidence({
+    manifest,
+    defaultBranch: manifest?.baseBranch,
+    expectedTreeSha: artifact.expectedTreeSha,
+    branchRef,
+    branchCommit,
+    pull: null,
+  });
+  if (!evidence.valid) return Object.freeze({ ok: false, blocker: 'ESCROW_REMOTE_BRANCH_IDENTITY_UNPROVEN' });
+  return Object.freeze({
+    ok: true, blocker: '',
+    branch: manifest.targetBranch, remoteHeadSha: evidence.branchSha,
+    exactTreeSha: artifact.expectedTreeSha,
+  });
+}
+
+async function recoverProvenEscrowBranchOnly(artifact, validation, error) {
+  const manifest = validation.manifest;
+  const [branchRef, pull, currentBase] = await Promise.all([
+    existingBranch(artifact.repository, manifest.targetBranch),
+    existingPullRequest(artifact.repository, artifact.ownerLogin, manifest.targetBranch, validation.prepared.defaultBranch),
+    githubRequest('/repos/' + artifact.repository + '/commits/' + encodeURIComponent(validation.prepared.defaultBranch)),
+  ]);
+  const branchCommit = branchRef?.object?.sha
+    ? await githubRequest('/repos/' + artifact.repository + '/git/commits/' + branchRef.object.sha)
+    : null;
+  const evidence = validateEscrowBranchOnlyHandoff({
+    error, manifest, artifact, currentBaseSha: currentBase?.sha,
+    branchRef, branchCommit, pull,
+  });
+  if (!evidence.ok) throw new Error(evidence.blocker);
+  return evidence;
 }
 
 async function publishValidatedBundle(event, artifact, validation, options = {}) {
@@ -254,7 +318,37 @@ export async function runValidatedPatchEscrowPublisher(event, artifactPath, opti
   const eventValidation = validatePatchEscrowPublishEvent(event);
   const binding = validateEventArtifactBinding(eventValidation, artifact);
   if (!binding.valid) throw new Error(`publish event is not bound to validated artifact: ${binding.blockers.join(', ')}`);
-  const result = await publishValidatedBundle(event, artifact, validation, options);
+  let result;
+  try {
+    result = await publishValidatedBundle(event, artifact, validation, options);
+  } catch (error) {
+    if (!isVerifiedPatchEscrowPrCreation403(error)) throw error;
+    // A verified source push can succeed even when GitHub Actions cannot
+    // create a pull request. Reprove the exact remote branch, tree, ancestry,
+    // signed main and absence of an existing PR before recording a handoff.
+    const proof = await recoverProvenEscrowBranchOnly(artifact, validation, error);
+    await postIssueComment(artifact.repository, artifact.issueNumber, [
+      '### PATCH_ESCROW_BRANCH_PUBLISHED_PR_ATTACHMENT_PENDING_V1',
+      '',
+      '- Bundle: `' + artifact.bundleId + '`',
+      '- Branch: `' + proof.branch + '`',
+      '- REMOTE_HEAD: `' + proof.remoteHeadSha + '`',
+      '- Exact remote tree: `' + proof.exactTreeSha + '`',
+      '- Signed base: `' + artifact.baseSha + '`',
+      '- Validated artifact SHA-256: `' + artifact.artifactSha256 + '`',
+      '- Patch SHA-256: `' + artifact.patchSha256 + '`',
+      '- PR: NOT CREATED; GitHub Actions PR creation permission denied',
+      '- Next owner action: verify original source authority and attach ONE PR to this exact branch through an already-qualified connected GitHub App.',
+      '- No duplicate execution, force push, merge, new source lease or main write authorised.',
+    ].join('\n'));
+    return Object.freeze({
+      finalVerdict: 'PATCH_ESCROW_BRANCH_PUBLISHED_PR_ATTACHMENT_PENDING',
+      bundleId: artifact.bundleId, patchSha256: artifact.patchSha256,
+      validatedArtifactSha256: artifact.artifactSha256,
+      ...proof, prNumber: null, prUrl: null,
+      mergePerformed: false, rebuildRequired: false,
+    });
+  }
   await postIssueComment(artifact.repository, artifact.issueNumber, [
     '### PATCH_ESCROW_PUBLICATION_RECEIPT_V1',
     '',

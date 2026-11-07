@@ -58,7 +58,7 @@ test('M7 detects an interrupted previous owner and refuses ambiguous replay', as
   const text = await source();
   const repairIndex = text.indexOf('function Terminalize-InterruptedClaims');
   const callIndex = text.indexOf('Terminalize-InterruptedClaims\n');
-  const fetchIndex = text.indexOf('Invoke-WebRequest -Uri $apiUrl');
+  const fetchIndex = text.indexOf('Invoke-WebRequest -Uri $issueApiUrl');
   assert.ok(repairIndex >= 0);
   assert.ok(callIndex > repairIndex);
   assert.ok(fetchIndex > callIndex);

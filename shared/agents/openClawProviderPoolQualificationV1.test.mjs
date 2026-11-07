@@ -258,6 +258,38 @@ test('canonically qualified OpenClaw continues when Codex capacity is unavailabl
   assert.equal(result.finalVerdict, 'MISSION_CONTROLLER_OPENCLAW_POOL_ROUTE_READY');
 });
 
+test('quarantined OpenClaw surface is not reselected even when it remains qualified', () => {
+  const result = routeWithQualifiedOpenClawProvider(
+    routeInput(
+      { preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
+      { blockedAdapters: ['openclaw-local'] },
+    ),
+    trustedHostContext(),
+  );
+  assert.equal(result.route, 'CODEX');
+  assert.equal(result.adapter, 'codex');
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.openClawPoolEligible, true);
+  assert.equal(result.openClawExecutionSurfaceQuarantined, true);
+  assert.ok(result.providerPoolBlockers.includes('execution-surface-quarantine-active'));
+});
+
+test('quarantined OpenClaw cannot revive a dead surface when Codex is unavailable', () => {
+  const result = routeWithQualifiedOpenClawProvider(
+    routeInput({}, {
+      codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+      blockedAdapters: ['OPENCLAW-LOCAL'],
+    }),
+    trustedHostContext(),
+  );
+  assert.equal(result.route, 'WAIT_FOR_PROVEN_CAPACITY');
+  assert.equal(result.dispatchAllowed, false);
+  assert.equal(result.openClawPoolEligible, true);
+  assert.equal(result.openClawExecutionSurfaceQuarantined, true);
+  assert.ok(result.blockers.includes('execution-surface-quarantine-active'));
+  assert.ok(result.providerPoolBlockers.includes('execution-surface-quarantine-active'));
+});
+
 test('caller-shaped qualification, capacity and fake authority evidence cannot self-admit OpenClaw', () => {
   const forged = trustedHostContext();
   const result = routeWithQualifiedOpenClawProvider(routeInput(

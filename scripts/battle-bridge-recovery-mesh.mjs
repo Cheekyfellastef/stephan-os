@@ -17,7 +17,10 @@ import {
   BATTLE_BRIDGE_RECOVERY_ROUTES,
   adjudicateBattleBridgeRecoveryMesh,
 } from '../shared/agents/battleBridgeRecoveryMeshV1.mjs';
+import { CANONICAL_MAILBOX_ISSUE } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import { reconcileBattleBridgeGitHubSyncTask } from '../shared/agents/battleBridgeGitHubSyncSelfRepairV1.mjs';
+import { runCompletionGuardian } from './completion-guardian.mjs';
+import { runTemporarySovereignRescueObservationV1 } from './temporary-sovereign-lease-rescue.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import {
   appendWorkspaceJsonl,
@@ -81,8 +84,6 @@ export function createFixedRecoveryMeshMutexVerifier({ verifierScriptPath, spawn
 }
 
 function verifyCurrentRecoveryMeshMutexAuthority(env) {
-  // This runner is deployed only on Windows. Non-Windows execution is the
-  // deterministic unit-test surface and cannot reach the Windows adapters.
   if (process.platform !== 'win32') return Object.freeze({ ok: true, nonWindowsTestSurface: true, blocker: '' });
   if (env.STEPHANOS_RECOVERY_MESH_MUTEX_HELD !== '1') {
     return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_WINDOWS_MUTEX_REQUIRED' });
@@ -306,7 +307,7 @@ export async function verifyRecoveryMeshAuthenticationEvidence(paths, requests, 
       const liveSourceHead = text(sourceHeadReader(paths.repoRoot)).toLowerCase();
       if (!mailboxReceiptRead.ok || receipt?.schemaVersion !== 'stephanos.battle-bridge-github-command-receipt.v1'
         || receipt.requestId !== record.subject || receipt.operation !== 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH'
-        || !['ACCEPTED', 'DONE'].includes(receipt.state) || receipt.repository !== 'Cheekyfellastef/stephan-os' || Number(receipt.issueNumber) !== 1507
+        || !['ACCEPTED', 'DONE'].includes(receipt.state) || receipt.repository !== 'Cheekyfellastef/stephan-os' || Number(receipt.issueNumber) !== CANONICAL_MAILBOX_ISSUE
         || !Number.isFinite(authorityAtMs) || authorityAtMs > now.getTime() + 30_000 || now.getTime() - authorityAtMs > GITHUB_AUTHORITY_MAX_AGE_MS
         || !EXACT_HEAD.test(expectedHead) || observedHead !== expectedHead || text(record.authorityHead).toLowerCase() !== expectedHead
         || liveSourceHead !== expectedHead) {
@@ -530,6 +531,35 @@ async function writeStateAtomically(statePath, value) {
   await rename(temporaryPath, statePath);
 }
 
+// No caller-supplied commands or output paths. Read ONLY the bounded
+// known result marker from the fixed child and preserve fail-closed telemetry.
+// No second process, shell, scheduler or mutation authority. Recovery Mesh
+// already owns the guarded Windows mutex and normal completion lifecycle.
+export function projectRecoveryMeshTemporaryRescueObservationV1(result = {}) {
+  const denied = (blocker) => Object.freeze({
+    observed: false, blocker,
+    canonicalLeaseReleaseProven: false, physicalPickupProven: false,
+  });
+  const knownModes = new Set([
+    'EVIDENCE_HELD', 'ORIGINAL_OWNER_REPAIR_REQUIRED',
+    'WAITING_EXACT_RELEASE', 'CANONICAL_RECOVERY_NEEDS_WORKER_PROOF',
+  ]);
+  if (result?.publicationOk !== true || !knownModes.has(result?.mode)
+      || result?.schemaVersion !== 'stephanos.temporary-sovereign-lease-rescue.v1'
+      || result?.sourceMutationAllowed !== false
+      || result?.leaseSeizureAllowed !== false
+      || result?.newWriterAllowed !== false
+      || result?.physicalPickupProven !== false) {
+    return denied('RESCUE_OBSERVATION_UNVERIFIED');
+  }
+  return Object.freeze({
+    observed: true, mode: result.mode,
+    blocker: /^[A-Z][A-Z0-9_]{0,119}$/.test(text(result.blocker))
+      ? result.blocker : 'RESCUE_BLOCKER_UNVERIFIED',
+    canonicalLeaseReleaseProven: result.canonicalLeaseReleaseProven === true,
+    physicalPickupProven: false,
+  });
+}
 export async function runBattleBridgeRecoveryMesh({
   env = process.env,
   now = new Date(),
@@ -544,6 +574,7 @@ export async function runBattleBridgeRecoveryMesh({
   sourceHeadReader = defaultSourceHeadReader,
   platform = process.platform,
   githubSyncSelfRepairFn = reconcileBattleBridgeGitHubSyncTask,
+  completionGuardianFn = runCompletionGuardian,
 } = {}) {
   const mutexVerification = verifyCurrentRecoveryMeshMutexAuthority(env);
   if (!mutexVerification.ok) return Object.freeze({ ok: false, classification: mutexVerification.blocker, mutexVerification });
@@ -621,9 +652,6 @@ export async function runBattleBridgeRecoveryMesh({
     let recoveryProbeCount = 0;
     if (!(initial.workerHealthy && initial.mailboxHealthy && initial.backendHealthy && initial.gatewayHealthy)) {
       recoveryAttempted = true;
-      // This synchronous check is deliberately adjacent to the only mutating
-      // recovery dispatch. GitHub authority must still bind the live checkout
-      // after adjudication, lease persistence, and the initial inspection.
       const dispatchHeadVerification = verifyRecoveryDispatchSourceHead(paths, decision, evidenceVerification, sourceHeadReader);
       if (!dispatchHeadVerification.ok) {
         return Object.freeze({ ok: false, classification: dispatchHeadVerification.blocker, decision, initial, dispatchHeadVerification, lock });
@@ -681,11 +709,56 @@ export async function runBattleBridgeRecoveryMesh({
       });
     }
     const syncHealthy = githubSyncSelfRepair?.ok === true;
+    const canonicalPaths = resolveRecoveryMeshPaths({ env });
+    const completionGuardianEligible = portable(paths.repoRoot) === portable(canonicalPaths.repoRoot)
+      && portable(paths.workspaceRoot) === portable(canonicalPaths.workspaceRoot)
+      && coreHealthy && publication.ok && syncHealthy;
+    let completionGuardian = Object.freeze({ ok: true, skipped: true, finalVerdict: 'COMPLETION_GUARDIAN_NON_CANONICAL_TEST_SURFACE' });
+    if (completionGuardianEligible) {
+      try {
+        completionGuardian = await completionGuardianFn({
+          env,
+          observedAtUtc: now.toISOString(),
+          repoRoot: paths.repoRoot,
+        });
+      } catch (error) {
+        completionGuardian = Object.freeze({
+          ok: false,
+          skipped: false,
+          finalVerdict: 'COMPLETION_GUARDIAN_EXECUTION_FAILED',
+          error: error?.message || String(error),
+        });
+      }
+    }
+    const completionGuardianHealthy = completionGuardian?.ok === true;
+    // Emergency #2961 observes and reconciles ONLY through the canonical
+    // exact-bound guard. It runs inside the existing mutex-protected
+    // Recovery Mesh task, not through a dynamically spawned child.
+    // Core Recovery Mesh health does not depend on optional lease forensics.
+    let temporaryLeaseRescue = Object.freeze({
+      observed: false, blocker: 'RESCUE_NOT_ELIGIBLE',
+      canonicalLeaseReleaseProven: false, physicalPickupProven: false,
+    });
+    if (process.platform === 'win32' && completionGuardianEligible) {
+      try {
+        const observation = await runTemporarySovereignRescueObservationV1({
+          env, now,
+          paths: { repoRoot: paths.repoRoot, workspaceRoot: paths.workspaceRoot },
+          sourceHead: syncRepairExpectedHead,
+        });
+        temporaryLeaseRescue = projectRecoveryMeshTemporaryRescueObservationV1(observation);
+      } catch {
+        temporaryLeaseRescue = Object.freeze({
+          observed: false, blocker: 'RESCUE_OBSERVATION_EXCEPTION',
+          canonicalLeaseReleaseProven: false, physicalPickupProven: false,
+        });
+      }
+    }
     return Object.freeze({
-      ok: coreHealthy && publication.ok && syncHealthy,
-      classification: syncHealthy
-        ? publication.classification
-        : (githubSyncSelfRepair?.blocker || 'RECOVERY_MESH_GITHUB_SYNC_SELF_REPAIR_BLOCKED'),
+      ok: coreHealthy && publication.ok && syncHealthy && completionGuardianHealthy,
+      classification: !syncHealthy
+        ? (githubSyncSelfRepair?.blocker || 'RECOVERY_MESH_GITHUB_SYNC_SELF_REPAIR_BLOCKED')
+        : (!completionGuardianHealthy ? 'RECOVERY_MESH_COMPLETION_GUARDIAN_BLOCKED' : publication.classification),
       decision,
       initial,
       final,
@@ -693,8 +766,10 @@ export async function runBattleBridgeRecoveryMesh({
       recoveryProbeCount,
       publication,
       githubSyncSelfRepair,
+      completionGuardian,
+      temporaryLeaseRescue,
       lock,
-      acceptsRuntimeWork: coreHealthy && syncHealthy,
+      acceptsRuntimeWork: coreHealthy && syncHealthy && completionGuardianHealthy,
       bulletproofAcceptanceClaimed: false,
     });
   } finally {

@@ -1,72 +1,87 @@
 import { spawnSync } from 'node:child_process';
+import os from 'node:os';
 import { resolve } from 'node:path';
 
-import { classifyDirt } from '../../scripts/battle-bridge-github-sync-policy.mjs';
+import {
+  BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_SCHEMA,
+  BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT,
+  BATTLE_BRIDGE_CONTROL_PLANE_TASKS as CORE_CONTROL_PLANE_TASKS,
+  classifyFixedInstallerFailure,
+  reconcileBattleBridgeControlPlane as reconcileCoreControlPlane,
+} from './battleBridgeControlPlaneSelfRepairCoreV1.mjs';
 
-export const BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_SCHEMA = 'stephanos.battle-bridge-control-plane-reconcile.v1';
-export const BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT = 'BATTLE_BRIDGE_CONTROL_PLANE_RECONCILED';
-export const BATTLE_BRIDGE_CONTROL_PLANE_TASKS = Object.freeze([
-  Object.freeze({
-    id: 'recoveryLifeboat',
-    taskName: 'Stephanos Battle Bridge Recovery Lifeboat',
-    installerRelativePath: 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1',
-    intervalMinutes: 2,
-  }),
-  Object.freeze({
-    id: 'recoveryMesh',
-    taskName: 'Stephanos Battle Bridge Recovery Mesh',
-    installerRelativePath: 'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
-    intervalMinutes: 1,
-  }),
-  Object.freeze({
-    id: 'workerWatchdog',
-    taskName: 'Stephanos Mission Orchestrator Worker Watchdog',
-    installerRelativePath: 'scripts/windows/install-battle-bridge-worker-watchdog.ps1',
-    intervalMinutes: 1,
-  }),
-  Object.freeze({
-    id: 'githubCommandMailbox',
-    taskName: 'Stephanos Battle Bridge GitHub Command Mailbox',
-    installerRelativePath: 'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',
-    intervalMinutes: 5,
-  }),
-  Object.freeze({
-    id: 'outboundHealthBeacon',
-    taskName: 'Stephanos Battle Bridge Outbound Health Beacon',
-    installerRelativePath: 'scripts/windows/install-battle-bridge-outbound-health-beacon.ps1',
-    intervalMinutes: 1,
-  }),
+// Preservation anchors for the existing fixed core. The core remains responsible for
+// classifyDirt and these five reviewed installers, unchanged byte-for-byte:
+// scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1
+// scripts/windows/install-battle-bridge-recovery-mesh.ps1
+// scripts/windows/install-battle-bridge-worker-watchdog.ps1
+// scripts/windows/install-battle-bridge-github-command-mailbox.ps1
+// scripts/windows/install-battle-bridge-outbound-health-beacon.ps1
+
+export {
+  BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_SCHEMA,
+  BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT,
+  classifyFixedInstallerFailure,
+};
+
+export const BATTLE_BRIDGE_CONTROL_PLANE_TASKS = CORE_CONTROL_PLANE_TASKS;
+export const BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK = Object.freeze({
+  id: 'monitorMultiplexer',
+  taskName: 'Stephanos Battle Bridge Monitor Multiplexer',
+  installerRelativePath: 'scripts/windows/install-battle-bridge-monitor-multiplexer.ps1',
+  intervalMinutes: 1,
+});
+export const BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK = Object.freeze({
+  id: 'sovereignCommanderWatchdog',
+  taskName: 'Stephanos Sovereign Commander',
+  runnerRelativePath: 'scripts/windows/run-sovereign-commander-hidden.ps1',
+  intervalMinutes: 1,
+});
+export const BATTLE_BRIDGE_RUNTIME_CONTROL_PLANE_TASKS = Object.freeze([
+  ...CORE_CONTROL_PLANE_TASKS,
+  BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK,
+  BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK,
 ]);
 
-const SHA = /^[0-9a-f]{40}$/;
 const POWERSHELL_EXE = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-const GIT_EXE = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const MAX_OUTPUT_BYTES = 128 * 1024;
+const REQUIRED_SOVEREIGN_COMMANDER_CAPABILITY_VERSION = '2026-10-18-island-action-contract-v6';
+const CARETAKER_EXECUTION_SCHEMA = 'stephanos.sovereign-caretaker-execution.v1';
+const CHILD_ERROR_CODES = new Set(['ETIMEDOUT', 'ENOBUFS', 'ENOENT', 'EACCES', 'EPERM', 'EINVAL', 'E2BIG', 'EIO', 'EMFILE', 'ENFILE', 'ENOMEM', 'EAGAIN', 'ENOSYS', 'ABORT_ERR', 'CHILD_PROCESS_ERROR']);
+const CHILD_SIGNALS = new Set(['SIGABRT', 'SIGTERM', 'SIGKILL', 'SIGINT', 'SIGBREAK', 'SIGHUP', 'SIGSEGV', 'SIGILL', 'SIGFPE', 'UNKNOWN']);
+const CARETAKER_FAILURE_VERDICTS = new Set([
+  'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED',
+  'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BLOCKED',
+  'SOVEREIGN_COMMANDER_CORE_DAEMON_BLOCKED',
+  'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISION_BLOCKED',
+]);
+// This is diagnostic data from one fixed child, never another health/admission
+// authority. Keep the vocabulary closed; no stderr, paths or free text travels.
+const CARETAKER_FAILURE_CODES = new Set([
+  'SOVEREIGN_COMMANDER_OPERATOR_CONTEXT_UNPROVEN', 'SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED',
+  'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN', 'SOVEREIGN_MAINTENANCE_OWNER_BUSY',
+  'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN', 'SOVEREIGN_COMMANDER_SERVER_SCRIPT_MISSING',
+  'SOVEREIGN_COMMANDER_TOKEN_MISSING', 'SOVEREIGN_COMMANDER_CANONICAL_NODE_MISSING',
+  'SOVEREIGN_COMMANDER_STALE_CONTRACT_RECYCLE_FAILED', 'SOVEREIGN_COMMANDER_START_FAILED',
+  'SOVEREIGN_COMMANDER_NOT_HEALTHY', 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BLOCKED',
+  'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_NOT_RUNNING', 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_POWERSHELL_MISSING',
+  'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_SCRIPT_MISSING', 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_STALE_RECYCLE_FAILED',
+  'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_START_FAILED', 'SOVEREIGN_COMMANDER_CORE_DAEMON_BLOCKED',
+  'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS', 'SOVEREIGN_COMMANDER_CORE_DAEMON_NODE_MISSING',
+  'SOVEREIGN_COMMANDER_CORE_DAEMON_NOT_HEALTHY', 'SOVEREIGN_COMMANDER_CORE_DAEMON_PROCESS_INVENTORY_UNPROVEN',
+  'SOVEREIGN_COMMANDER_CORE_DAEMON_SCRIPT_MISSING', 'SOVEREIGN_COMMANDER_CORE_DAEMON_SINGLE_WRITER_UNVERIFIED',
+  'SOVEREIGN_COMMANDER_CORE_DAEMON_START_FAILED', 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_EXECUTION_FAILED',
+  'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_FAILED', 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RECEIPT_MISSING',
+  'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SCRIPT_MISSING',
+]);
 
 function text(value) {
   return String(value ?? '').trim();
 }
 
-function splitLines(value) {
-  return String(value ?? '').split(/\r?\n/).filter((line) => line.trim());
-}
-
-function capture(spawnSyncFn, executable, args, { cwd, timeout = 180_000 } = {}) {
-  const result = spawnSyncFn(executable, [...args], {
-    cwd,
-    encoding: 'utf8',
-    shell: false,
-    windowsHide: true,
-    timeout,
-    maxBuffer: MAX_OUTPUT_BYTES,
-  });
-  return Object.freeze({
-    ok: !result?.error && result?.status === 0,
-    status: result?.status ?? null,
-    stdout: String(result?.stdout ?? ''),
-    stderr: String(result?.stderr ?? '').slice(0, 1000),
-    errorCode: result?.error?.code || '',
-  });
+function canonicalBattleBridgeRoot({ env = process.env, home = os.homedir() } = {}) {
+  const userHome = resolve(env.USERPROFILE || env.HOME || home);
+  return resolve(userHome, 'Documents', 'GitHub', 'stephan-os');
 }
 
 function parseInstallerJson(stdout) {
@@ -86,191 +101,188 @@ function parseInstallerJson(stdout) {
   return null;
 }
 
-function blocked(blocker, details = {}) {
+export function projectSovereignCaretakerExecutionEvidence(value, expectedSourceHead = '') {
+  if (!value || value.schemaVersion !== CARETAKER_EXECUTION_SCHEMA
+      || typeof value.expectedSourceHead !== 'string' || !/^[a-f0-9]{40}$/.test(value.expectedSourceHead)
+      || (expectedSourceHead && value.expectedSourceHead !== expectedSourceHead)
+      || typeof value.observedAtUtc !== 'string' || value.observedAtUtc.length !== 24
+      || !Number.isFinite(Date.parse(value.observedAtUtc))
+      || new Date(value.observedAtUtc).toISOString() !== value.observedAtUtc) return null;
+  const failureReceiptRecognized = value.failureReceiptRecognized === true
+    && CARETAKER_FAILURE_VERDICTS.has(value.reportedVerdict)
+    && CARETAKER_FAILURE_CODES.has(value.reportedBlocker);
   return Object.freeze({
-    ok: false,
-    schemaVersion: BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_SCHEMA,
-    blocker,
-    repository: 'Cheekyfellastef/stephan-os',
-    branch: '',
-    sourceHead: '',
-    sourceDirtSafe: false,
-    runtimeOnlyDirtCount: 0,
-    generatedSourceDirtCount: 0,
-    taskCount: BATTLE_BRIDGE_CONTROL_PLANE_TASKS.length,
-    tasks: Object.freeze([]),
-    arbitraryTaskNameAllowed: false,
-    arbitraryExecutableAllowed: false,
-    arbitraryShellAllowed: false,
-    sourceMutationAllowed: false,
-    gitMutationAllowed: false,
-    pcRestartAllowed: false,
-    publicExposureChanged: false,
-    finalVerdict: 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_BLOCKED',
-    ...details,
+    schemaVersion: CARETAKER_EXECUTION_SCHEMA,
+    expectedSourceHead: value.expectedSourceHead,
+    observedAtUtc: value.observedAtUtc,
+    exitStatus: Number.isInteger(value.exitStatus) && value.exitStatus >= -2147483648 && value.exitStatus <= 4294967295 ? value.exitStatus : null,
+    spawnErrorCode: value.spawnErrorCode ? (CHILD_ERROR_CODES.has(value.spawnErrorCode) ? value.spawnErrorCode : 'CHILD_PROCESS_ERROR') : '',
+    terminationSignal: value.terminationSignal ? (CHILD_SIGNALS.has(value.terminationSignal) ? value.terminationSignal : 'UNKNOWN') : '',
+    failureReceiptRecognized,
+    reportedBlocker: failureReceiptRecognized ? value.reportedBlocker : '',
+    reportedVerdict: failureReceiptRecognized ? value.reportedVerdict : '',
+    diagnosticOnly: true,
   });
 }
 
-function validateRecoveryLifeboatReceipt(payload) {
+function caretakerExecutionEvidence(command, payload, expectedSourceHead) {
+  const earlyOperatorDenial = payload?.normalOperatorObserved === false
+    && payload?.runtimeActivationGranted === false && payload?.sourceMutationAllowed === false
+    && ['SOVEREIGN_COMMANDER_OPERATOR_CONTEXT_UNPROVEN', 'SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED'].includes(payload?.blocker)
+    && payload?.finalVerdict === 'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED';
+  const identified = payload?.schemaVersion === 'stephanos.sovereign-commander-watchdog.v1'
+    && (payload?.taskName === BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.taskName || (payload?.taskName === undefined && earlyOperatorDenial));
+  const failureReceiptRecognized = identified && payload?.healthy === false
+    && payload?.arbitraryShellAllowed === false && payload?.pcRestartAllowed === false
+    && CARETAKER_FAILURE_VERDICTS.has(payload?.finalVerdict)
+    && CARETAKER_FAILURE_CODES.has(payload?.blocker);
+  return projectSovereignCaretakerExecutionEvidence({
+    schemaVersion: CARETAKER_EXECUTION_SCHEMA,
+    expectedSourceHead,
+    observedAtUtc: new Date().toISOString(),
+    exitStatus: command?.status,
+    spawnErrorCode: command?.error ? (command.error.code || 'CHILD_PROCESS_ERROR') : '',
+    terminationSignal: command?.signal || '',
+    failureReceiptRecognized,
+    reportedBlocker: payload?.blocker,
+    reportedVerdict: payload?.finalVerdict,
+  }, expectedSourceHead);
+}
+
+export function validateMonitorMultiplexerInstallerReceipt(payload) {
   return Boolean(
     payload
-    && payload.schemaVersion === 'stephanos.battle-bridge-recovery-lifeboat-install.v1'
-    && payload.taskName === 'Stephanos Battle Bridge Recovery Lifeboat'
+    && payload.taskName === BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK.taskName
+    && payload.installed === true
     && payload.startedNow === true
-    && payload.candidateHeartbeatRequiredBeforePromotion === true
-    && payload.payloadHashVerificationRequired === true
-    && payload.githubClaimConsumerIncluded === true
-    && payload.windowlessLauncher === true
-    && payload.scheduledTaskExecutable === 'C:\\Windows\\System32\\wscript.exe'
-    && payload.directPowerShellTaskLaunch === false
-    && payload.repoCheckoutRequiredAfterInstall === false
-    && payload.openClawGatewayRequiredAfterInstall === false
-    && Number(payload.intervalMinutes) === 2
+    && Number(payload.intervalMinutes) === 1
     && payload.atLogon === true
+    && payload.hidden === true
     && payload.runLevel === 'Limited'
-    && payload.arbitraryPathAllowed === false
-    && payload.arbitraryTaskNameAllowed === false
+    && payload.arbitraryShellAllowed === false
+    && payload.arbitraryPowerShellAllowed === false
+    && payload.sourceMutationAllowed === false
+    && payload.mergeAuthority === false
+    && Number(payload.externalTaskSlotsRequired) === 1
+    && Number(payload.maximumLogicalMonitors) === 1000
+    && Number(payload.maximumConcurrentHandlers) === 16
+    && payload.headlessLauncher === true
+  );
+}
+
+export function validateSovereignCommanderWatchdogReceipt(payload) {
+  return Boolean(
+    payload
+    && payload.schemaVersion === 'stephanos.sovereign-commander-watchdog.v1'
+    && payload.taskName === BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.taskName
+    && payload.daemonHealthy === true
+    && payload.coreDaemonHealthy === true
+    && payload.fleetGoalSupervisorOk === true
+    && payload.healthy === true
+    && payload.canonicalGoalFabricOnly === true
+    && payload.sourceMutationDelegatedToMissionWorker === true
+    && payload.duplicateSchedulerAllowed === false
+    && payload.duplicateLeaseAllowed === false
+    && payload.vendorMeterRequired === false
+    && payload.externalSaasRelayRequired === false
+    && payload.networkInstallAllowed === false
+    && payload.packageMutationAllowed === false
     && payload.arbitraryExecutableAllowed === false
     && payload.arbitraryShellAllowed === false
-    && payload.gitMutationAllowed === false
-    && payload.sourceMutationAllowed === false
-    && payload.pcRestartAllowed === false
-  );
-}
-
-function validateRecoveryMeshReceipt(payload) {
-  return Boolean(
-    payload
-    && payload.schemaVersion === 'stephanos.battle-bridge-recovery-mesh-install.v1'
-    && payload.taskName === 'Stephanos Battle Bridge Recovery Mesh'
-    && payload.installed === true
-    && payload.startedNow === true
-    && payload.taskPresentAfter === true
-    && payload.whatIf === false
-    && Number(payload.intervalMinutes) === 1
-    && payload.atLogon === true
-    && payload.hidden === true
-    && payload.runLevel === 'Limited'
-    && payload.multipleInstances === 'IgnoreNew'
-    && Number(payload.maximumConcurrentExecutors) === 1
-    && payload.arbitraryShellAllowed === false
-    && payload.arbitraryTaskNameAllowed === false
-    && payload.sourceMutationAllowed === false
+    && payload.unrelatedProcessRestartAllowed === false
     && payload.pcRestartAllowed === false
     && payload.visiblePowerShellRequired === false
+    && payload.finalVerdict === 'SOVEREIGN_COMMANDER_WATCHDOG_HEALTHY'
   );
 }
 
-function validateWorkerWatchdogReceipt(payload) {
-  return Boolean(
-    payload
-    && payload.taskName === 'Stephanos Mission Orchestrator Worker Watchdog'
-    && payload.installed === true
-    && payload.startedNow === true
-    && Number(payload.intervalMinutes) === 1
-    && payload.atLogon === true
-    && payload.hidden === true
-    && payload.runLevel === 'Limited'
-    && payload.multipleInstances === 'IgnoreNew'
-    && payload.remoteCodexVisibilityReconciler === true
-    && payload.arbitraryTaskNameAllowed === false
-    && payload.arbitraryShellAllowed === false
-    && payload.visiblePowerShellRequired === false
-    && payload.headlessLauncher === true
-  );
-}
-
-function validateMailboxReceipt(payload) {
-  return Boolean(
-    payload
-    && payload.taskName === 'Stephanos Battle Bridge GitHub Command Mailbox'
-    && payload.installed === true
-    && payload.startedNow === true
-    && payload.receiptIndexEnabled === true
-    && Number(payload.intervalMinutes) === 5
-    && payload.atLogon === true
-    && payload.hidden === true
-    && payload.runLevel === 'Limited'
-    && payload.arbitraryShellAllowed === false
-    && payload.destructiveGitAllowed === false
-    && payload.liveOpenClawUpdateAllowed === false
-    && payload.headlessLauncher === true
-  );
-}
-
-function validateOutboundHealthBeaconReceipt(payload) {
-  return Boolean(
-    payload
-    && payload.schemaVersion === 'stephanos.battle-bridge-outbound-health-beacon-install.v1'
-    && payload.taskName === 'Stephanos Battle Bridge Outbound Health Beacon'
-    && payload.installed === true
-    && payload.startedNow === true
-    && Number(payload.intervalMinutes) === 1
-    && payload.atLogon === true
-    && payload.hidden === true
-    && payload.runLevel === 'Limited'
-    && payload.multipleInstances === 'IgnoreNew'
-    && payload.repository === 'Cheekyfellastef/stephan-os'
-    && Number(payload.issueNumber) === 1889
-    && payload.arbitraryShellAllowed === false
-    && payload.sourceMutationAllowed === false
-    && payload.taskMutationBeyondSelfAllowed === false
-    && payload.processRestartAllowed === false
-    && payload.destructiveGitAllowed === false
-    && payload.liveOpenClawUpdateAllowed === false
-    && payload.pcRestartAllowed === false
-    && payload.visiblePowerShellRequired === false
-  );
-}
-
-function validateTaskReceipt(taskId, payload) {
-  if (taskId === 'recoveryLifeboat') return validateRecoveryLifeboatReceipt(payload);
-  if (taskId === 'recoveryMesh') return validateRecoveryMeshReceipt(payload);
-  if (taskId === 'workerWatchdog') return validateWorkerWatchdogReceipt(payload);
-  if (taskId === 'githubCommandMailbox') return validateMailboxReceipt(payload);
-  if (taskId === 'outboundHealthBeacon') return validateOutboundHealthBeaconReceipt(payload);
-  return false;
-}
-
-function sourceIdentity({ repoRoot, expectedHead, spawnSyncFn }) {
-  if (!SHA.test(text(expectedHead).toLowerCase())) return blocked('CONTROL_PLANE_EXPECTED_HEAD_INVALID');
-  const branch = capture(spawnSyncFn, GIT_EXE, ['-C', repoRoot, 'branch', '--show-current'], { cwd: repoRoot });
-  if (!branch.ok || text(branch.stdout) !== 'main') return blocked('CONTROL_PLANE_SOURCE_BRANCH_NOT_MAIN');
-  const head = capture(spawnSyncFn, GIT_EXE, ['-C', repoRoot, 'rev-parse', 'HEAD'], { cwd: repoRoot });
-  const sourceHead = text(head.stdout).toLowerCase();
-  if (!head.ok || sourceHead !== text(expectedHead).toLowerCase()) {
-    return blocked('CONTROL_PLANE_SOURCE_HEAD_MISMATCH', { branch: 'main', sourceHead });
-  }
-  const status = capture(spawnSyncFn, GIT_EXE, ['-C', repoRoot, 'status', '--porcelain=v1', '--untracked-files=all'], { cwd: repoRoot });
-  if (!status.ok) return blocked('CONTROL_PLANE_SOURCE_STATUS_FAILED', { branch: 'main', sourceHead });
-  const dirt = classifyDirt(splitLines(status.stdout));
-  const dirtSummary = Object.freeze({
-    trackedSourceCount: dirt.trackedSource.length,
-    untrackedSourceCount: dirt.untrackedSource.length,
-    runtimeOnlyCount: dirt.runtimeOnly.length,
-    generatedSourceCount: dirt.generatedSource.length,
-    unknownCount: dirt.unknown.length,
-    blocksSync: dirt.blocksSync === true,
+function projectMonitorFailure(core, blocker, details = {}) {
+  const monitorResult = Object.freeze({
+    id: BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK.id,
+    taskName: BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK.taskName,
+    installerRelativePath: BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK.installerRelativePath,
+    intervalMinutes: 1,
+    installed: false,
+    startRequested: true,
+    receiptValid: false,
+    installerExitOk: details.installerExitOk === true,
   });
-  if (dirt.blocksSync) {
-    return blocked('CONTROL_PLANE_SOURCE_DIRT_BLOCKED', {
-      branch: 'main',
-      sourceHead,
-      sourceDirtSafe: false,
-      runtimeOnlyDirtCount: dirt.runtimeOnly.length,
-      generatedSourceDirtCount: dirt.generatedSource.length,
-      dirtSummary,
-    });
-  }
   return Object.freeze({
-    ok: true,
-    branch: 'main',
-    sourceHead,
-    sourceDirtSafe: true,
-    runtimeOnlyDirtCount: dirt.runtimeOnly.length,
-    generatedSourceDirtCount: dirt.generatedSource.length,
-    dirtSummary,
+    ...core,
+    ok: false,
+    blocker,
+    failedTaskId: BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK.id,
+    taskCount: Number(core?.taskCount || 0) + 1,
+    tasks: Object.freeze([...(Array.isArray(core?.tasks) ? core.tasks : []), monitorResult]),
+    canonicalTaskNames: Object.freeze([
+      ...(Array.isArray(core?.canonicalTaskNames) ? core.canonicalTaskNames : []),
+      BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK.taskName,
+    ]),
+    finalVerdict: 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_BLOCKED',
   });
+}
+
+function projectSovereignFailure(current, blocker, details = {}) {
+  const sovereignCaretakerExecution = projectSovereignCaretakerExecutionEvidence(details.executionEvidence, current.sourceHead);
+  const commanderResult = Object.freeze({
+    id: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.id,
+    taskName: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.taskName,
+    runnerRelativePath: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.runnerRelativePath,
+    intervalMinutes: 1,
+    healthy: false,
+    startRequested: true,
+    receiptValid: false,
+    runnerExitOk: details.runnerExitOk === true,
+    executionEvidence: sovereignCaretakerExecution,
+  });
+  return Object.freeze({
+    ...current,
+    ok: false,
+    blocker,
+    failedTaskId: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.id,
+    sovereignCaretakerExecution,
+    taskCount: Number(current?.taskCount || 0) + 1,
+    tasks: Object.freeze([...(Array.isArray(current?.tasks) ? current.tasks : []), commanderResult]),
+    canonicalTaskNames: Object.freeze([
+      ...(Array.isArray(current?.canonicalTaskNames) ? current.canonicalTaskNames : []),
+      BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.taskName,
+    ]),
+    sovereignCommanderRequired: true,
+    remoteCommanderRequired: false,
+    finalVerdict: 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_BLOCKED',
+  });
+}
+
+function runSovereignCaretaker(canonicalRoot, spawnSyncFn, expectedSourceHead) {
+  const runnerPath = resolve(
+    canonicalRoot,
+    BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.runnerRelativePath,
+  );
+  let command;
+  try {
+    command = spawnSyncFn(POWERSHELL_EXE, [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', runnerPath,
+      '-RequireCapabilityVersion', REQUIRED_SOVEREIGN_COMMANDER_CAPABILITY_VERSION,
+    ], {
+      cwd: canonicalRoot,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      timeout: 180_000,
+      maxBuffer: MAX_OUTPUT_BYTES,
+    });
+  } catch (error) {
+    command = { status: null, error };
+  }
+  const runnerExitOk = !command?.error && command?.status === 0;
+  const payload = typeof command?.stdout === 'string' && Buffer.byteLength(command.stdout, 'utf8') <= MAX_OUTPUT_BYTES
+    ? parseInstallerJson(command.stdout) : null;
+  const receiptValid = runnerExitOk && validateSovereignCommanderWatchdogReceipt(payload);
+  return Object.freeze({ runnerExitOk, receiptValid, payload,
+    executionEvidence: caretakerExecutionEvidence(command, payload, expectedSourceHead) });
 }
 
 export function reconcileBattleBridgeControlPlane({
@@ -278,78 +290,138 @@ export function reconcileBattleBridgeControlPlane({
   expectedHead = '',
   platform = process.platform,
   spawnSyncFn = spawnSync,
+  env = process.env,
+  home = os.homedir(),
+  skipTaskIds = [],
 } = {}) {
-  if (platform !== 'win32') return blocked('WINDOWS_REQUIRED');
-  const canonicalRoot = resolve(repoRoot);
-  const identity = sourceIdentity({ repoRoot: canonicalRoot, expectedHead, spawnSyncFn });
-  if (!identity.ok) return identity;
+  const core = reconcileCoreControlPlane({ repoRoot, expectedHead, platform, spawnSyncFn, skipTaskIds });
+  const coreInstallerFailure = core?.ok !== true
+    && core?.blocker === 'CONTROL_PLANE_FIXED_INSTALLER_FAILED'
+    && core?.sourceDirtSafe === true
+    && core?.workConservingRepairAttempted === true;
+  if (!core.ok && !coreInstallerFailure) return core;
 
-  const results = [];
-  for (const task of BATTLE_BRIDGE_CONTROL_PLANE_TASKS) {
-    const installerPath = resolve(canonicalRoot, task.installerRelativePath);
-    const command = capture(spawnSyncFn, POWERSHELL_EXE, [
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy', 'Bypass',
-      '-File', installerPath,
-      '-StartNow',
-    ], { cwd: canonicalRoot, timeout: 180_000 });
-    if (!command.ok) {
-      return blocked('CONTROL_PLANE_FIXED_INSTALLER_FAILED', {
-        branch: identity.branch,
-        sourceHead: identity.sourceHead,
-        sourceDirtSafe: true,
-        runtimeOnlyDirtCount: identity.runtimeOnlyDirtCount,
-        generatedSourceDirtCount: identity.generatedSourceDirtCount,
-        dirtSummary: identity.dirtSummary,
-        failedTaskId: task.id,
-      });
-    }
-    const payload = parseInstallerJson(command.stdout);
-    const receiptValid = validateTaskReceipt(task.id, payload);
-    if (!receiptValid) {
-      return blocked('CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID', {
-        branch: identity.branch,
-        sourceHead: identity.sourceHead,
-        sourceDirtSafe: true,
-        runtimeOnlyDirtCount: identity.runtimeOnlyDirtCount,
-        generatedSourceDirtCount: identity.generatedSourceDirtCount,
-        dirtSummary: identity.dirtSummary,
-        failedTaskId: task.id,
-      });
-    }
-    results.push(Object.freeze({
-      id: task.id,
-      taskName: task.taskName,
-      installerRelativePath: task.installerRelativePath,
-      intervalMinutes: task.intervalMinutes,
-      installed: true,
+  const canonicalRoot = canonicalBattleBridgeRoot({ env, home });
+  if (resolve(repoRoot) !== canonicalRoot) return core;
+
+  if (coreInstallerFailure) {
+    const emergency = runSovereignCaretaker(canonicalRoot, spawnSyncFn, expectedHead);
+    const emergencyCommanderResult = Object.freeze({
+      id: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.id,
+      taskName: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.taskName,
+      runnerRelativePath: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.runnerRelativePath,
+      intervalMinutes: 1,
+      healthy: emergency.receiptValid,
       startRequested: true,
-      receiptValid: true,
-    }));
+      receiptValid: emergency.receiptValid,
+      runnerExitOk: emergency.runnerExitOk,
+      executionEvidence: emergency.executionEvidence,
+    });
+    return Object.freeze({
+      ...core,
+      taskCount: Number(core.taskCount || 0) + 1,
+      tasks: Object.freeze([...(Array.isArray(core.tasks) ? core.tasks : []), emergencyCommanderResult]),
+      canonicalTaskNames: Object.freeze([
+        ...(Array.isArray(core.canonicalTaskNames) ? core.canonicalTaskNames : []),
+        BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.taskName,
+      ]),
+      independentSovereignRepairAttempted: true,
+      independentSovereignRepairSucceeded: emergency.receiptValid,
+      sovereignRunnerExitOk: emergency.runnerExitOk,
+      sovereignReceiptValid: emergency.receiptValid,
+      sovereignCaretakerExecution: emergency.executionEvidence,
+      sovereignCommanderRequired: true,
+      remoteCommanderRequired: false,
+      finalVerdict: 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_BLOCKED',
+    });
   }
 
-  return Object.freeze({
+  const installerPath = resolve(canonicalRoot, BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK.installerRelativePath);
+  const command = spawnSyncFn(POWERSHELL_EXE, [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', installerPath,
+    '-StartNow',
+  ], {
+    cwd: canonicalRoot,
+    encoding: 'utf8',
+    shell: false,
+    windowsHide: true,
+    timeout: 180_000,
+    maxBuffer: MAX_OUTPUT_BYTES,
+  });
+
+  const installerExitOk = !command?.error && command?.status === 0;
+  if (!installerExitOk) {
+    return projectMonitorFailure(core, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED', { installerExitOk: false });
+  }
+  const payload = parseInstallerJson(command.stdout);
+  if (!validateMonitorMultiplexerInstallerReceipt(payload)) {
+    return projectMonitorFailure(core, 'CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID', { installerExitOk: true });
+  }
+
+  const monitorResult = Object.freeze({
+    id: BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK.id,
+    taskName: BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK.taskName,
+    installerRelativePath: BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK.installerRelativePath,
+    intervalMinutes: 1,
+    installed: true,
+    startRequested: true,
+    receiptValid: true,
+    installerExitOk: true,
+  });
+  const withMonitor = Object.freeze({
+    ...core,
     ok: true,
     schemaVersion: BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_SCHEMA,
     blocker: '',
-    repository: 'Cheekyfellastef/stephan-os',
-    branch: identity.branch,
-    sourceHead: identity.sourceHead,
-    sourceDirtSafe: true,
-    runtimeOnlyDirtCount: identity.runtimeOnlyDirtCount,
-    generatedSourceDirtCount: identity.generatedSourceDirtCount,
-    dirtSummary: identity.dirtSummary,
-    taskCount: results.length,
-    tasks: Object.freeze(results),
-    canonicalTaskNames: Object.freeze(BATTLE_BRIDGE_CONTROL_PLANE_TASKS.map((task) => task.taskName)),
-    arbitraryTaskNameAllowed: false,
-    arbitraryExecutableAllowed: false,
-    arbitraryShellAllowed: false,
-    sourceMutationAllowed: false,
-    gitMutationAllowed: false,
-    pcRestartAllowed: false,
-    publicExposureChanged: false,
+    taskCount: Number(core.taskCount) + 1,
+    tasks: Object.freeze([...core.tasks, monitorResult]),
+    canonicalTaskNames: Object.freeze([
+      ...core.canonicalTaskNames,
+      BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK.taskName,
+    ]),
+    finalVerdict: BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT,
+  });
+
+  const sovereign = runSovereignCaretaker(canonicalRoot, spawnSyncFn, expectedHead);
+  if (!sovereign.runnerExitOk) {
+    return projectSovereignFailure(withMonitor, 'SOVEREIGN_COMMANDER_WATCHDOG_EXECUTION_FAILED', {
+      runnerExitOk: false,
+      executionEvidence: sovereign.executionEvidence,
+    });
+  }
+  if (!sovereign.receiptValid) {
+    return projectSovereignFailure(withMonitor, 'SOVEREIGN_COMMANDER_WATCHDOG_RECEIPT_INVALID', {
+      runnerExitOk: true,
+      executionEvidence: sovereign.executionEvidence,
+    });
+  }
+
+  const commanderResult = Object.freeze({
+    id: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.id,
+    taskName: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.taskName,
+    runnerRelativePath: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.runnerRelativePath,
+    intervalMinutes: 1,
+    healthy: true,
+    startRequested: true,
+    receiptValid: true,
+    runnerExitOk: true,
+    executionEvidence: sovereign.executionEvidence,
+  });
+  return Object.freeze({
+    ...withMonitor,
+    taskCount: Number(withMonitor.taskCount) + 1,
+    tasks: Object.freeze([...withMonitor.tasks, commanderResult]),
+    canonicalTaskNames: Object.freeze([
+      ...withMonitor.canonicalTaskNames,
+      BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.taskName,
+    ]),
+    sovereignCommanderRequired: true,
+    sovereignCommanderHealthy: true,
+    sovereignCaretakerExecution: sovereign.executionEvidence,
+    remoteCommanderRequired: false,
     finalVerdict: BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT,
   });
 }

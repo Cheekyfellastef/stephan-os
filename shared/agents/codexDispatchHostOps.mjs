@@ -19,6 +19,8 @@ import {
   preserveBattleBridgeDirtyData,
 } from './battleBridgeDirtyDataPreservationV1.mjs';
 import { classifyDirt } from '../../scripts/battle-bridge-github-sync-policy.mjs';
+import { preflightCanonicalMailboxRotationSync } from '../../scripts/canonical-mailbox-rotation-sync-preflight-v1.mjs';
+import { withMailboxOutboxGuardLock } from '../../scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 
 export const DEFAULT_CODEX_DISPATCH_REPO_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 export const DEFAULT_BATTLE_BRIDGE_ENDPOINTS = Object.freeze([
@@ -40,6 +42,7 @@ export const CODEX_DISPATCH_TEST_ARGS = Object.freeze([
   'scripts/remote-codex-task-visibility-observer.test.mjs',
   'scripts/remote-codex-github-mirror-publisher.test.mjs',
   'scripts/battle-bridge-worker-watchdog-runner.test.mjs',
+  'scripts/stephanos-codex-dispatch-host-operation-v1.test.mjs',
 ]);
 
 const EXACT_GIT_HEAD = /^[0-9a-f]{40}$/i;
@@ -49,6 +52,17 @@ const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
 const MAX_TELEMETRY_JSON_BYTES = 256 * 1024;
 const ACTIVE_TASK_STATUSES = new Set(['DISPATCHED', 'CLAIMED', 'RUNNING', 'WAITING_PROOF']);
 const CANONICAL_ORIGIN = /^(?:https:\/\/github\.com\/Cheekyfellastef\/stephan-os(?:\.git)?\/?|git@github\.com:Cheekyfellastef\/stephan-os(?:\.git)?|ssh:\/\/git@github\.com\/Cheekyfellastef\/stephan-os(?:\.git)?\/?)$/i;
+
+export const BATTLE_BRIDGE_DIRECT_PROOF_SCHEMA = 'stephanos.battle-bridge-direct-proof.v1';
+const DIRECT_NODE_TEST_PATH_PATTERN = /^(?:shared\/agents|scripts|stephanos-server\/services)\/[A-Za-z0-9._/-]+\.test\.(?:mjs|js)$/;
+const DIRECT_GIT_PROOF_COMMANDS = Object.freeze(new Map([
+  ['git rev-parse HEAD', Object.freeze(['rev-parse', 'HEAD'])],
+  ['git rev-parse --show-toplevel', Object.freeze(['rev-parse', '--show-toplevel'])],
+  ['git branch --show-current', Object.freeze(['branch', '--show-current'])],
+  ['git status --branch --untracked-files=all', Object.freeze(['status', '--branch', '--untracked-files=all'])],
+  ['git status --porcelain=v1 --untracked-files=all', Object.freeze(['status', '--porcelain=v1', '--untracked-files=all'])],
+  ['git rev-list --left-right --count HEAD...@{upstream}', Object.freeze(['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'])],
+]));
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -322,6 +336,7 @@ export function collectBattleBridgeWorkerTelemetry({
   if (!processHealthy) blockers.push('WORKER_PROCESS_NOT_PROVEN_CANONICAL');
   if (!heartbeatProjection.valid) blockers.push(...(heartbeatProjection.errors || ['WORKER_HEARTBEAT_INVALID']));
   else if (!heartbeatProjection.fresh) blockers.push('WORKER_HEARTBEAT_STALE');
+  else if (heartbeatProjection.lastTickAffirmative !== true) blockers.push('WORKER_LAST_TICK_DEGRADED');
   if (safeSha(fullHead) && heartbeatProjection.headSha && heartbeatProjection.headSha !== safeSha(fullHead)) blockers.push('WORKER_HEARTBEAT_HEAD_MISMATCH');
   if (activeTask && !leaseActive) blockers.push('SOURCE_MUTATION_LEASE_NOT_OBSERVED');
   if (activeTask && !taskId) blockers.push('ACTIVE_TASK_ID_NOT_OBSERVED');
@@ -330,6 +345,7 @@ export function collectBattleBridgeWorkerTelemetry({
   if (releaseMarker.state === 'unverifiable') blockers.push(releaseMarker.blocker || 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_INVALID');
   if (releaseMarker.state === 'present' && !releaseValidation.valid) blockers.push('SOURCE_MUTATION_LEASE_RELEASE_RECORD_INVALID');
   const workerActive = inspectionProven && processHealthy && heartbeatProjection.valid && heartbeatProjection.fresh;
+  const workerDegraded = workerActive && heartbeatProjection.lastTickAffirmative !== true;
   const operatorActionRequired = activeTask?.operatorActionRequired === true
     || latestReceipt?.operatorActionRequired === true;
   const uniqueBlockers = [...new Set(blockers.filter(Boolean))];
@@ -339,7 +355,11 @@ export function collectBattleBridgeWorkerTelemetry({
     ok,
     workerActive,
     workerAlive: inspectionProven ? processHealthy : null,
-    workerStatus: ok ? (activeTask ? 'RUNNING' : 'IDLE') : 'NOT_PROVEN',
+    workerStatus: ok
+      ? (activeTask ? 'RUNNING' : 'IDLE')
+      : workerDegraded
+        ? 'DEGRADED'
+        : 'NOT_PROVEN',
     worker: Object.freeze({
       pid: Number.parseInt(processEvidence.pid ?? heartbeat?.pid ?? 0, 10) || 0,
       observedPid: Number.parseInt(processEvidence.pid ?? heartbeat?.pid ?? 0, 10) || 0,
@@ -356,6 +376,7 @@ export function collectBattleBridgeWorkerTelemetry({
       headSha: safeSha(heartbeat?.headSha),
       branch: text(heartbeat?.branch),
       tickVerdict: text(heartbeat?.lastTickVerdict),
+      lastTickAffirmative: heartbeatProjection.lastTickAffirmative === true,
       errors: [...(heartbeatProjection.errors || [])],
     }),
     lease: lease ? Object.freeze({
@@ -462,6 +483,176 @@ function git(spawnSyncFn, repoRoot, args, timeout) {
   });
 }
 
+function directProofCommandPlan(requestedCommand, nodeCommand) {
+  const command = String(requestedCommand || '').trim();
+  const gitArgs = DIRECT_GIT_PROOF_COMMANDS.get(command);
+  if (gitArgs) {
+    return Object.freeze({
+      requestedCommand: command,
+      executable: 'git',
+      args: Object.freeze([...gitArgs]),
+      captureTapSummary: false,
+      resultKind: command === 'git rev-parse HEAD' ? 'git-head' : 'git-readonly',
+    });
+  }
+
+  const prefix = 'node --test ';
+  if (!command.startsWith(prefix)) return null;
+  const testPaths = command.slice(prefix.length).trim().split(/\s+/).filter(Boolean);
+  if (!testPaths.length || testPaths.length > 16
+      || testPaths.some((candidate) => (
+        !DIRECT_NODE_TEST_PATH_PATTERN.test(candidate)
+        || candidate.includes('..')
+        || candidate.startsWith('/')
+        || /^[A-Za-z]:[\\/]/.test(candidate)
+      ))) return null;
+  return Object.freeze({
+    requestedCommand: command,
+    executable: nodeCommand,
+    args: Object.freeze(['--test', ...testPaths]),
+    captureTapSummary: true,
+    resultKind: 'node-test',
+  });
+}
+
+function directProofResultProjection(plan, result) {
+  return Object.freeze({
+    requestedCommand: plan.requestedCommand,
+    resultKind: plan.resultKind,
+    ok: result.ok === true,
+    status: result.status,
+    signal: result.signal,
+    error: bounded(result.error, 500),
+    observedValue: plan.resultKind === 'git-head' ? safeSha(result.stdout) : '',
+    ...(plan.captureTapSummary ? { tapSummary: result.tapSummary } : {}),
+  });
+}
+
+export function runApprovedBattleBridgeProofCommands({
+  repoRoot = DEFAULT_CODEX_DISPATCH_REPO_ROOT,
+  expectedHead = '',
+  requestId = '',
+  requestedProofCommands = [],
+  platform = process.platform,
+  spawnSyncFn = spawnSync,
+  nodeCommand = process.execPath,
+  nowFn = () => new Date(),
+} = {}) {
+  const commands = Array.isArray(requestedProofCommands)
+    ? requestedProofCommands.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  const plans = commands.map((command) => directProofCommandPlan(command, nodeCommand));
+  if (!commands.length || plans.some((plan) => !plan)) {
+    return Object.freeze({
+      schemaVersion: BATTLE_BRIDGE_DIRECT_PROOF_SCHEMA,
+      handled: false,
+      ok: false,
+      blocker: 'DIRECT_BATTLE_BRIDGE_PROOF_COMMAND_NOT_ALLOWLISTED',
+      executionStarted: false,
+      providerTaskId: '',
+      finalVerdict: 'DIRECT_BATTLE_BRIDGE_PROOF_NOT_APPLICABLE',
+    });
+  }
+  if (!['win32', 'windows'].includes(String(platform || '').toLowerCase())) {
+    return Object.freeze({
+      schemaVersion: BATTLE_BRIDGE_DIRECT_PROOF_SCHEMA,
+      handled: false,
+      ok: false,
+      blocker: 'DIRECT_BATTLE_BRIDGE_PROOF_WINDOWS_REQUIRED',
+      executionStarted: false,
+      providerTaskId: '',
+      finalVerdict: 'DIRECT_BATTLE_BRIDGE_PROOF_NOT_APPLICABLE',
+    });
+  }
+
+  const normalizedExpectedHead = safeSha(expectedHead);
+  const beforeHead = git(spawnSyncFn, repoRoot, ['rev-parse', 'HEAD']);
+  const beforeStatus = git(spawnSyncFn, repoRoot, ['status', '--porcelain=v1', '--untracked-files=all']);
+  if (!normalizedExpectedHead || !beforeHead.ok || safeSha(beforeHead.stdout) !== normalizedExpectedHead || !beforeStatus.ok) {
+    return Object.freeze({
+      schemaVersion: BATTLE_BRIDGE_DIRECT_PROOF_SCHEMA,
+      handled: true,
+      ok: false,
+      blocker: !normalizedExpectedHead
+        ? 'DIRECT_BATTLE_BRIDGE_PROOF_EXPECTED_HEAD_INVALID'
+        : !beforeHead.ok
+          ? 'DIRECT_BATTLE_BRIDGE_PROOF_HEAD_READ_FAILED'
+          : safeSha(beforeHead.stdout) !== normalizedExpectedHead
+            ? 'DIRECT_BATTLE_BRIDGE_PROOF_HEAD_MISMATCH'
+            : 'DIRECT_BATTLE_BRIDGE_PROOF_STATUS_READ_FAILED',
+      expectedHead: normalizedExpectedHead,
+      observedHead: safeSha(beforeHead.stdout),
+      executionStarted: false,
+      providerTaskId: '',
+      proofResults: Object.freeze([]),
+      sourceMutationDetected: false,
+      arbitraryShellAllowed: false,
+      mergePerformed: false,
+      deploymentPerformed: false,
+      finalVerdict: 'DIRECT_BATTLE_BRIDGE_PROOF_BLOCKED',
+    });
+  }
+
+  const providerTaskId = safeId(`host-proof-${text(requestId).slice(0, 100)}`)
+    || `host-proof-${normalizedExpectedHead.slice(0, 20)}`;
+  const proofResults = [];
+  for (const plan of plans) {
+    const result = capture(spawnSyncFn, plan.executable, plan.args, {
+      cwd: repoRoot,
+      timeout: plan.captureTapSummary ? 180000 : 120000,
+      captureTapSummary: plan.captureTapSummary,
+      preserveGitStatusColumns: plan.executable === 'git'
+        && plan.args[0] === 'status'
+        && plan.args.includes('--porcelain=v1'),
+    });
+    proofResults.push(directProofResultProjection(plan, result));
+  }
+
+  const afterHead = git(spawnSyncFn, repoRoot, ['rev-parse', 'HEAD']);
+  const afterStatus = git(spawnSyncFn, repoRoot, ['status', '--porcelain=v1', '--untracked-files=all']);
+  const observedAfterHead = safeSha(afterHead.stdout);
+  const exactHeadStable = afterHead.ok
+    && observedAfterHead === normalizedExpectedHead
+    && observedAfterHead === safeSha(beforeHead.stdout);
+  const worktreeStable = afterStatus.ok && afterStatus.stdout === beforeStatus.stdout;
+  const commandsPassed = proofResults.every((result) => result.ok);
+  const ok = exactHeadStable && worktreeStable && commandsPassed;
+  const blocker = ok
+    ? ''
+    : !afterHead.ok
+      ? 'DIRECT_BATTLE_BRIDGE_PROOF_POST_HEAD_READ_FAILED'
+      : !exactHeadStable
+        ? 'DIRECT_BATTLE_BRIDGE_PROOF_HEAD_CHANGED'
+        : !afterStatus.ok
+          ? 'DIRECT_BATTLE_BRIDGE_PROOF_POST_STATUS_READ_FAILED'
+          : !worktreeStable
+            ? 'DIRECT_BATTLE_BRIDGE_PROOF_WORKTREE_CHANGED'
+            : 'DIRECT_BATTLE_BRIDGE_PROOF_COMMAND_FAILED';
+
+  return Object.freeze({
+    schemaVersion: BATTLE_BRIDGE_DIRECT_PROOF_SCHEMA,
+    handled: true,
+    ok,
+    blocker,
+    requestId: text(requestId),
+    providerTaskId,
+    expectedHead: normalizedExpectedHead,
+    observedHead: observedAfterHead,
+    executionStarted: true,
+    completedAtUtc: nowFn().toISOString(),
+    proofResults: Object.freeze(proofResults),
+    exactHeadStable,
+    worktreeStable,
+    sourceMutationDetected: !worktreeStable,
+    arbitraryShellAllowed: false,
+    mergePerformed: false,
+    deploymentPerformed: false,
+    finalVerdict: ok
+      ? 'DIRECT_BATTLE_BRIDGE_PROOF_PASS'
+      : 'DIRECT_BATTLE_BRIDGE_PROOF_BLOCKED',
+  });
+}
+
 function parseAheadBehind(output = '') {
   const [aheadText = '0', behindText = '0'] = String(output).trim().split(/\s+/);
   const ahead = Number.parseInt(aheadText, 10);
@@ -476,18 +667,212 @@ function changedFiles(output = '') {
   return String(output || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
+function safeGitRelativePath(value = '') {
+  const candidate = String(value || '');
+  return Boolean(candidate)
+    && candidate === candidate.trim()
+    && !candidate.startsWith('-')
+    && !candidate.startsWith('/')
+    && !/^[A-Za-z]:[\\/]/.test(candidate)
+    && !candidate.includes('\\')
+    && !/[\0\r\n\t]/.test(candidate)
+    && !candidate.split('/').includes('..');
+}
+
+function absorbTargetIdenticalDirt({
+  spawnSyncFn,
+  repoRoot,
+  beforeHead,
+  targetHead,
+} = {}) {
+  const stableHead = git(spawnSyncFn, repoRoot, ['rev-parse', 'HEAD']);
+  if (!stableHead.ok || stableHead.stdout !== beforeHead) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'TARGET_IDENTICAL_DIRT_HEAD_CHANGED',
+      stableHead,
+      indexMutationPerformed: false,
+      worktreeMutationPerformed: false,
+      destructiveCleanupPerformed: false,
+    });
+  }
+
+  const targetChangedPaths = git(spawnSyncFn, repoRoot, ['diff', '--name-only', `${beforeHead}..${targetHead}`]);
+  if (!targetChangedPaths.ok) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'TARGET_IDENTICAL_DIRT_PATHS_UNAVAILABLE',
+      targetChangedPaths,
+      indexMutationPerformed: false,
+      worktreeMutationPerformed: false,
+      destructiveCleanupPerformed: false,
+    });
+  }
+
+  const proofs = [];
+  for (const path of [...new Set(changedFiles(targetChangedPaths.stdout))]) {
+    if (!safeGitRelativePath(path)) {
+      return Object.freeze({
+        ok: false,
+        blocker: 'TARGET_IDENTICAL_DIRT_PATH_INVALID',
+        path,
+        targetChangedPaths,
+        proofs: Object.freeze(proofs),
+        indexMutationPerformed: false,
+        worktreeMutationPerformed: false,
+        destructiveCleanupPerformed: false,
+      });
+    }
+    const pathStatus = git(spawnSyncFn, repoRoot, ['status', '--porcelain=v1', '--untracked-files=all', '--', path]);
+    if (!pathStatus.ok) {
+      return Object.freeze({
+        ok: false,
+        blocker: 'TARGET_IDENTICAL_DIRT_STATUS_UNAVAILABLE',
+        path,
+        pathStatus,
+        targetChangedPaths,
+        proofs: Object.freeze(proofs),
+        indexMutationPerformed: false,
+        worktreeMutationPerformed: false,
+        destructiveCleanupPerformed: false,
+      });
+    }
+    if (!pathStatus.stdout) continue;
+
+    const targetBlob = git(spawnSyncFn, repoRoot, ['rev-parse', `${targetHead}:${path}`]);
+    const worktreeBlob = git(spawnSyncFn, repoRoot, ['hash-object', `--path=${path}`, '--', path]);
+    const exact = targetBlob.ok
+      && worktreeBlob.ok
+      && EXACT_GIT_HEAD.test(targetBlob.stdout)
+      && worktreeBlob.stdout === targetBlob.stdout;
+    if (!exact) {
+      proofs.push(Object.freeze({
+        path,
+        status: pathStatus.stdout,
+        targetBlob: targetBlob.stdout,
+        worktreeBlob: worktreeBlob.stdout,
+        exact,
+      }));
+      return Object.freeze({
+        ok: false,
+        blocker: 'TARGET_IDENTICAL_DIRT_MISMATCH',
+        path,
+        targetChangedPaths,
+        proofs: Object.freeze(proofs),
+        indexMutationPerformed: false,
+        worktreeMutationPerformed: false,
+        destructiveCleanupPerformed: false,
+      });
+    }
+
+    const headBlob = git(spawnSyncFn, repoRoot, ['rev-parse', `${beforeHead}:${path}`]);
+    const indexBlob = git(spawnSyncFn, repoRoot, ['rev-parse', `:${path}`]);
+    const headBlobPresent = headBlob.ok && EXACT_GIT_HEAD.test(headBlob.stdout);
+    const indexBlobPresent = indexBlob.ok && EXACT_GIT_HEAD.test(indexBlob.stdout);
+    const indexSafe = indexBlobPresent
+      ? indexBlob.stdout === targetBlob.stdout || (headBlobPresent && indexBlob.stdout === headBlob.stdout)
+      : !headBlobPresent;
+    proofs.push(Object.freeze({
+      path,
+      status: pathStatus.stdout,
+      targetBlob: targetBlob.stdout,
+      worktreeBlob: worktreeBlob.stdout,
+      headBlob: headBlob.stdout,
+      indexBlob: indexBlob.stdout,
+      exact,
+      indexSafe,
+    }));
+    if (!indexSafe) {
+      return Object.freeze({
+        ok: false,
+        blocker: 'TARGET_IDENTICAL_DIRT_INDEX_CONTENT_MISMATCH',
+        path,
+        targetChangedPaths,
+        proofs: Object.freeze(proofs),
+        indexMutationPerformed: false,
+        worktreeMutationPerformed: false,
+        destructiveCleanupPerformed: false,
+      });
+    }
+  }
+
+  if (!proofs.length) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'TARGET_IDENTICAL_DIRT_NOT_PRESENT',
+      targetChangedPaths,
+      proofs: Object.freeze([]),
+      indexMutationPerformed: false,
+      worktreeMutationPerformed: false,
+      destructiveCleanupPerformed: false,
+    });
+  }
+
+  const paths = proofs.map((proof) => proof.path);
+  const stage = git(spawnSyncFn, repoRoot, ['add', '--', ...paths]);
+  const exactIndex = stage.ok
+    ? git(spawnSyncFn, repoRoot, ['diff', '--cached', '--quiet', targetHead, '--', ...paths])
+    : null;
+  if (!stage.ok || !exactIndex?.ok) {
+    return Object.freeze({
+      ok: false,
+      blocker: stage.ok ? 'TARGET_IDENTICAL_DIRT_INDEX_MISMATCH' : 'TARGET_IDENTICAL_DIRT_STAGE_FAILED',
+      targetChangedPaths,
+      proofs: Object.freeze(proofs),
+      paths: Object.freeze(paths),
+      stage,
+      exactIndex,
+      indexMutationPerformed: stage.ok,
+      worktreeMutationPerformed: false,
+      destructiveCleanupPerformed: false,
+    });
+  }
+
+  return Object.freeze({
+    ok: true,
+    blocker: '',
+    targetChangedPaths,
+    proofs: Object.freeze(proofs),
+    paths: Object.freeze(paths),
+    stage,
+    exactIndex,
+    indexMutationPerformed: true,
+    worktreeMutationPerformed: false,
+    destructiveCleanupPerformed: false,
+  });
+}
+
 function classifyCompletedSyncBlocker({ afterHead, approvedTargetHead, statusAfter, diffNames, tests } = {}) {
   if (!afterHead?.ok) return 'POST_SYNC_HEAD_READ_FAILED';
   if (afterHead.stdout !== approvedTargetHead) return 'POST_SYNC_HEAD_MISMATCH';
   if (!statusAfter?.ok) return 'POST_SYNC_STATUS_READ_FAILED';
   if (!diffNames?.ok) return 'POST_SYNC_CHANGED_FILES_READ_FAILED';
-  if (!tests?.ok) return 'POST_SYNC_VERIFICATION_FAILED';
+  if (!tests?.ok) return 'POST_SYNC_VERIFICATION_TEST_FAILURE';
   return '';
 }
 
-export function syncCodexDispatchBridge({
+export function syncCodexDispatchBridge(options = {}) {
+  if (resolve(options.repoRoot || DEFAULT_CODEX_DISPATCH_REPO_ROOT) !== resolve(DEFAULT_CODEX_DISPATCH_REPO_ROOT)) return syncCodexDispatchBridgeCore(options);
+  if (options.operatorApproval !== 'operator-approved' || process.platform !== 'win32'
+    || (options.spawnSyncFn && options.spawnSyncFn !== spawnSync)) return syncCodexDispatchBridgeCore(options);
+  try {
+    const admission = preflightCanonicalMailboxRotationSync({ repoRoot: options.repoRoot || DEFAULT_CODEX_DISPATCH_REPO_ROOT,
+      expectedHead: options.expectedHead || '' });
+    if (!admission.ok) return { ok: false, status: 'BLOCKED', verdict: 'FAIL', blocker: admission.blocker };
+    if (!admission.required) return syncCodexDispatchBridgeCore(options);
+    return withMailboxOutboxGuardLock(lock => {
+      const fresh = preflightCanonicalMailboxRotationSync({ repoRoot: options.repoRoot || DEFAULT_CODEX_DISPATCH_REPO_ROOT,
+        expectedHead: admission.sourceHead, guardToken: lock.token });
+      if (!fresh.ok || !fresh.required) return { ok: false, status: 'BLOCKED', verdict: 'FAIL', blocker: fresh.blocker || 'MAILBOX_ROTATION_SYNC_TRANSITION_CHANGED' };
+      return syncCodexDispatchBridgeCore({ ...options, expectedHead: fresh.sourceHead });
+    });
+  } catch { return { ok: false, status: 'BLOCKED', verdict: 'FAIL', blocker: 'MAILBOX_ROTATION_SYNC_PREFLIGHT_UNPROVEN' }; }
+}
+
+function syncCodexDispatchBridgeCore({
   repoRoot = DEFAULT_CODEX_DISPATCH_REPO_ROOT,
   expectedBranch = 'main',
+  expectedHead = '',
   operatorApproval = '',
   spawnSyncFn = spawnSync,
   nodeCommand = process.execPath,
@@ -562,6 +947,9 @@ export function syncCodexDispatchBridge({
   const remoteRef = `origin/${expectedBranch}`;
   const remoteHead = git(spawnSyncFn, repoRoot, ['rev-parse', remoteRef]);
   const approvedTargetHead = remoteHead.stdout;
+  if (expectedHead && (!EXACT_GIT_HEAD.test(expectedHead) || approvedTargetHead !== expectedHead)) {
+    return Object.freeze({ ok: false, status: 'BLOCKED', verdict: 'FAIL', blocker: 'SOURCE_SYNC_EXPECTED_HEAD_MISMATCH', beforeHead: beforeHead.stdout, remoteHead: remoteHead.stdout });
+  }
   const divergence = git(spawnSyncFn, repoRoot, ['rev-list', '--left-right', '--count', `HEAD...${approvedTargetHead}`]);
   if (!remoteHead.ok || !divergence.ok) {
     return Object.freeze({ ok: false, status: 'FAILED', verdict: 'FAIL', blocker: 'REMOTE_STATE_READ_FAILED', remoteHead, divergence });
@@ -643,8 +1031,22 @@ export function syncCodexDispatchBridge({
   }
 
   let fastForward = null;
+  let initialFastForward = null;
+  let identicalDirtAbsorption = null;
   if (counts.behind > 0) {
     fastForward = git(spawnSyncFn, repoRoot, ['merge', '--ff-only', approvedTargetHead], 120000);
+    initialFastForward = fastForward;
+    if (!fastForward.ok && statusBeforeSync.stdout) {
+      identicalDirtAbsorption = absorbTargetIdenticalDirt({
+        spawnSyncFn,
+        repoRoot,
+        beforeHead: beforeHead.stdout,
+        targetHead: approvedTargetHead,
+      });
+      if (identicalDirtAbsorption.ok) {
+        fastForward = git(spawnSyncFn, repoRoot, ['merge', '--ff-only', approvedTargetHead], 120000);
+      }
+    }
     if (!fastForward.ok) {
       return Object.freeze({
         ok: false,
@@ -657,6 +1059,8 @@ export function syncCodexDispatchBridge({
         behind: counts.behind,
         statusBefore: statusBefore.stdout,
         fastForward,
+        initialFastForward,
+        identicalDirtAbsorption,
         nextOperatorAction: 'Inspect the exact Git blocker. Existing work was not cleaned, stashed, reset, or discarded.',
       });
     }
@@ -679,11 +1083,18 @@ export function syncCodexDispatchBridge({
     'shared/agents/codexDispatchHostOps.mjs',
     'shared/agents/stephanosChatUpdate.mjs',
   ].includes(path));
-  const passed = afterHead.ok
-    && afterHead.stdout === approvedTargetHead
+  const sourceConverged = afterHead.ok && afterHead.stdout === approvedTargetHead;
+  const verificationPassed = tests.ok === true;
+  const verification = Object.freeze({
+    ok: verificationPassed,
+    summaryComplete: tests.tapSummary.summaryComplete,
+    failCount: tests.tapSummary.fail,
+    failingTests: tests.tapSummary.failingTests,
+  });
+  const passed = sourceConverged
     && statusAfter.ok
     && diffNames.ok
-    && tests.ok;
+    && verificationPassed;
   const blocker = passed ? '' : classifyCompletedSyncBlocker({
     afterHead,
     approvedTargetHead,
@@ -704,6 +1115,9 @@ export function syncCodexDispatchBridge({
     beforeHead: beforeHead.stdout,
     remoteHead: remoteHead.stdout,
     afterHead: afterHead.stdout,
+    sourceConverged,
+    verificationPassed,
+    verification,
     aheadBeforeSync: counts.ahead,
     behindBeforeSync: counts.behind,
     updated: beforeHead.stdout !== afterHead.stdout,
@@ -714,6 +1128,8 @@ export function syncCodexDispatchBridge({
     statusAfter: statusAfter.stdout,
     fetchResult,
     fastForward,
+    initialFastForward,
+    identicalDirtAbsorption,
     tests,
     preservation,
     restartRequired,

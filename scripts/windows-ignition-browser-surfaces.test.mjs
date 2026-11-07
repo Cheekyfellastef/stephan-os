@@ -2,9 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
+import './battle-bridge-ignition-sync-preflight.test.mjs';
+import './battle-bridge-ignition-sync-package-contract.test.mjs';
+import './battle-bridge-github-sync-and-refresh.test.mjs';
+
 const launcherCmd = new URL('../windows/Launch-Stephanos-Local.cmd', import.meta.url);
 const launcherPs1 = new URL('../windows/Launch-Stephanos-Local.ps1', import.meta.url);
 const aiCoreHtml = new URL('../stephanos-ui/index.html', import.meta.url);
+const aiCoreMain = new URL('../stephanos-ui/src/main.jsx', import.meta.url);
 const packageJson = new URL('../package.json', import.meta.url);
 const ignitionEntry = new URL('./run-battle-bridge-ignition.mjs', import.meta.url);
 
@@ -61,6 +66,13 @@ test('ignition truth files use one BOM-free UTF-8 persistence boundary', async (
 test('the built runtime browser surface is Stephanos AI Core', async () => {
   const html = await readFile(aiCoreHtml, 'utf8');
   assert.match(html, /<title>Stephanos AI Core<\/title>/);
+  assert.match(html, /<link rel="icon" href="data:," \/>/);
+});
+
+test('dist runtime health diagnostics do not probe the optional Vite dev server', async () => {
+  const main = await readFile(aiCoreMain, 'utf8');
+  assert.match(main, /startupFingerprint\.runtimeRole === "mission-control-dev-runtime"[\s\S]*?fetch\("http:\/\/127\.0\.0\.1:5173\//);
+  assert.match(main, /: Promise\.resolve\(false\)/);
 });
 
 test('AI Core remains a browser surface rather than a dedicated PowerShell console', async () => {

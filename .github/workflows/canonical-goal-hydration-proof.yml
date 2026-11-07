@@ -1,0 +1,49 @@
+name: Canonical Goal Hydration Proof
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'shared/agents/programmeAuthorityV1.mjs'
+      - 'shared/agents/programmeAuthorityV1.test.mjs'
+      - 'stephanos-server/services/programmeAuthorityService.js'
+      - 'stephanos-server/services/programmeAuthorityService.test.js'
+      - '.github/workflows/canonical-goal-hydration-proof.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canonical-goal-hydration-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Parse hydration seam sources
+        run: |
+          node --check shared/agents/programmeAuthorityV1.mjs
+          node --check stephanos-server/services/programmeAuthorityService.js
+
+      - name: Prove canonical goal hydration handoff
+        run: >-
+          node --test
+          shared/agents/programmeAuthorityV1.test.mjs
+          stephanos-server/services/programmeAuthorityService.test.js
+
+      - name: Check pull request diff
+        if: always()
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"

@@ -1,20 +1,42 @@
 import assert from 'node:assert/strict';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import test from 'node:test';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import vm from 'node:vm';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
   BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
+  FORGE_LIFEBOAT_WORKER_ID,
+  FORGE_LIFEBOAT_LOCAL_TASK_CLASSES,
+  FORGE_LIFEBOAT_MAX_ALLOWED_FILES,
   MISSION_CONTROLLER_ROUTE,
   createBuildLaneCapacityStatusRecord,
+  forgeLifeboatAuthorityReceiptId,
+  forgeLifeboatProofRef,
   publishBuildLaneCapacityToSharedWorkspace,
+  projectForgeLifeboatSourceCompatibilityV1,
+  projectMissionControllerTaskV1,
   routeMissionControllerCapacity,
   validateBuildLaneCapacityReceipt,
 } from './missionControllerCapacityRouterV1.mjs';
+import { CODEX_TASK_CLASS } from './codexCapacityGovernorV1.mjs';
+import { resolveElasticExternalCapacityCandidates } from '../../stephanos-server/services/elasticOpenClawProviderPoolService.js';
+import {
+  createStephanosNativeCapacityReceipt,
+  createStephanosNativeSourceAuthority,
+} from './stephanosNativeCapacityReceiptV1.mjs';
+import {
+  isVerifiedStephanosNativeRoutingCandidate,
+  readVerifiedStephanosNativeRoutingCandidate,
+} from './stephanosNativeCapacityRoutingAdmissionV1.mjs';
 
 const NOW = '2026-08-10T12:00:00.000Z';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
+const SOURCE_HEAD = 'a'.repeat(40);
+const NATIVE_WORKER_ID = 'stephanos-native-battle-bridge';
+const NATIVE_KEY_ID = 'stephanos-native-capacity-key-v1';
 
 function mission(overrides = {}) {
   return {
@@ -64,6 +86,150 @@ function githubReceipt(overrides = {}) {
   };
 }
 
+function commanderReceipt(overrides = {}) {
+  return {
+    ...githubReceipt(),
+    receiptId: 'desktop-commander-capacity-20260810t1159z',
+    route: MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
+    sourceHead: SOURCE_HEAD,
+    workerId: 'desktop-commander-battle-bridge-01',
+    p95StartLatencySeconds: 5,
+    proofRefs: ['receipts/desktop-commander/capacity.json'],
+    ...overrides,
+  };
+}
+
+function forgeReceipt(overrides = {}) {
+  return {
+    ...githubReceipt(),
+    receiptId: 'forge-builder-capacity-20260810t1159z',
+    route: MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
+    workerId: 'stephanos-forge-builder-01',
+    authorityReceiptIds: ['forge-m2-runtime-001', 'forge-m3-runtime-001'],
+    proofRefs: ['receipts/forge-builder/capacity.json'],
+    ...overrides,
+  };
+}
+
+function lifeboatReceipt(sourceHead = SOURCE_HEAD, overrides = {}) {
+  return {
+    ...forgeReceipt(),
+    receiptId: 'forge-lifeboat-capacity-20260810t1159z',
+    workerId: FORGE_LIFEBOAT_WORKER_ID,
+    queueDepth: 0,
+    p95StartLatencySeconds: 3,
+    authorityReceiptIds: [forgeLifeboatAuthorityReceiptId(sourceHead)],
+    proofRefs: [forgeLifeboatProofRef(sourceHead)],
+    ...overrides,
+  };
+}
+
+function nativeKeyPair() {
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  return {
+    privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+  };
+}
+
+function nativeStatus(keyPair, overrides = {}) {
+  const payload = {
+    schemaVersion: 'stephanos.native-capacity-payload.v1',
+    receiptId: 'native-capacity-aaaaaaaaaaaa-20260810115900',
+    repository: REPOSITORY,
+    sourceHead: SOURCE_HEAD,
+    workerId: NATIVE_WORKER_ID,
+    provider: 'ollama-local',
+    transport: 'http-loopback-fixed',
+    endpoint: 'http://127.0.0.1:11434',
+    model: 'qwen:14b',
+    modelInventorySha256: '1'.repeat(64),
+    qualificationId: 'native-source-qualification-v1',
+    supportedTaskClasses: ['FOCUSED_REPAIR'],
+    supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+    observedAtUtc: '2026-08-10T11:59:00.000Z',
+    expiresAtUtc: '2026-08-10T12:04:00.000Z',
+    queueDepth: 0,
+    p95StartLatencySeconds: 2,
+    loadState: 'READY',
+    requestSha256: '2'.repeat(64),
+    responseSha256: '3'.repeat(64),
+    proofRefs: ['proof/native-capacity-runtime-test.json'],
+    ...(overrides.payload || {}),
+  };
+  const capacityReceipt = createStephanosNativeCapacityReceipt(payload, {
+    privateKeyPem: keyPair.privateKeyPem,
+    keyId: NATIVE_KEY_ID,
+  });
+  const expected = {
+    repository: REPOSITORY,
+    sourceHead: payload.sourceHead,
+    workerId: NATIVE_WORKER_ID,
+    nowUtc: NOW,
+    keyId: NATIVE_KEY_ID,
+  };
+  const sourceAuthority = createStephanosNativeSourceAuthority(capacityReceipt, {
+    publicKeyPem: keyPair.publicKeyPem,
+    expected,
+  });
+  const receiptSha256 = createHash('sha256').update(JSON.stringify(capacityReceipt)).digest('hex');
+  return {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    statusId: 'stephanos-native-capacity-current',
+    participantId: NATIVE_WORKER_ID,
+    timestampUtc: payload.observedAtUtc,
+    status: 'READY',
+    capacityReceipt,
+    sourceAuthority,
+    publisherAttestation: {
+      keyId: NATIVE_KEY_ID,
+      receiptSha256,
+      sourceHead: payload.sourceHead,
+      proofRef: payload.proofRefs[0],
+    },
+    sourceMutationAllowed: true,
+    supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+    arbitraryCommandAllowed: false,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+    duplicateDispatchAllowed: false,
+    ...(overrides.status || {}),
+  };
+}
+
+async function nativeFixture(options = {}) {
+  const parent = await mkdtemp(join(tmpdir(), 'native-routing-'));
+  const root = join(parent, 'workspace');
+  const repoRoot = join(parent, 'repo');
+  const missionRunnerRoot = join(parent, 'mission-runner');
+  const keyDir = join(missionRunnerRoot, 'keys');
+  await mkdir(join(root, 'status'), { recursive: true });
+  await mkdir(repoRoot, { recursive: true });
+  await mkdir(keyDir, { recursive: true });
+  const signer = nativeKeyPair();
+  const status = nativeStatus(signer, options.statusOverrides);
+  await writeFile(join(root, 'status', 'stephanos-native-capacity-current.json'), `${JSON.stringify(status, null, 2)}\n`, 'utf8');
+  if (!options.omitPublicKey) {
+    await writeFile(
+      join(keyDir, 'stephanos-native-capacity-public.pem'),
+      options.publicKeyPem || signer.publicKeyPem,
+      'utf8',
+    );
+  }
+  return { root, repoRoot, env: { STEPHANOS_MISSION_RUNNER_ROOT: missionRunnerRoot } };
+}
+
+async function verifiedNativeAdmission(options = {}) {
+  const fixture = await nativeFixture(options);
+  return readVerifiedStephanosNativeRoutingCandidate({
+    ...fixture,
+    repository: REPOSITORY,
+    sourceHead: options.sourceHead || SOURCE_HEAD,
+    taskClass: options.taskClass || 'FOCUSED_REPAIR',
+    nowUtc: NOW,
+  });
+}
+
 test('keeps an eligible implementation on Codex when fresh meter capacity covers it', () => {
   const result = routeMissionControllerCapacity({ nowUtc: NOW, mission: mission(), codexStatus: codexStatus() });
   assert.equal(result.route, MISSION_CONTROLLER_ROUTE.CODEX);
@@ -85,6 +251,103 @@ test('low Codex capacity routes an unowned source repair to a freshly proven Git
   assert.equal(result.selectedCapacityReceiptId, githubReceipt().receiptId);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.duplicateDispatchAllowed, false);
+});
+
+test('low Codex capacity routes scheduler-approved source work to fresh Desktop Commander capacity', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 3 }),
+    desktopCommanderLaneReceipt: commanderReceipt(),
+  });
+  assert.equal(result.codex.dispatchAllowed, false);
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER);
+  assert.equal(result.adapter, 'desktop-commander');
+  assert.equal(result.workerId, 'desktop-commander-battle-bridge-01');
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.selectedCapacityReceiptId, commanderReceipt().receiptId);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.leaseSeizureAllowed, false);
+  assert.equal(result.duplicateDispatchAllowed, false);
+});
+
+test('Desktop Commander capacity is rejected after the source head moves', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: 'b'.repeat(40),
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 3 }),
+    desktopCommanderLaneReceipt: commanderReceipt(),
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+  assert.ok(result.blockers.includes('proven-build-fallback-unavailable'));
+});
+
+test('Windows-bound work is not widened into Desktop Commander source authority', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    mission: mission({
+      allowedFiles: ['scripts/windows/repair-worker.ps1'],
+      requiredEvidence: ['Windows runtime proof'],
+    }),
+    task: { taskClass: 'WINDOWS_RUNTIME_PROOF', windowsBound: true },
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+    desktopCommanderLaneReceipt: commanderReceipt({ supportedTaskClasses: ['WINDOWS_RUNTIME_PROOF'] }),
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+  assert.ok(result.blockers.includes('proven-windows-capable-fallback-unavailable'));
+});
+
+test('Lane 6 routes a source-only repair from the exact-head local lifeboat receipt without Forge sidecar M2/M3', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+    forgeLaneReceipt: lifeboatReceipt(),
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE);
+  assert.equal(result.adapter, 'foundry-forge');
+  assert.equal(result.workerId, FORGE_LIFEBOAT_WORKER_ID);
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.selectedCapacityReceiptId, lifeboatReceipt().receiptId);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.leaseSeizureAllowed, false);
+  assert.equal(result.duplicateDispatchAllowed, false);
+});
+
+test('ordinary Forge capacity still cannot self-admit without the existing M2/M3 sidecar proof', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+    forgeLaneReceipt: forgeReceipt(),
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+});
+
+test('Lane 6 receipt is rejected when its authority or proof is bound to another source head', () => {
+  const otherHead = 'b'.repeat(40);
+  for (const receipt of [
+    lifeboatReceipt(otherHead),
+    lifeboatReceipt(SOURCE_HEAD, { authorityReceiptIds: ['forge-lifeboat-local-source-wrong'] }),
+    lifeboatReceipt(SOURCE_HEAD, { proofRefs: ['proof/forge-lifeboat-local-capacity-wrong.json'] }),
+  ]) {
+    const result = routeMissionControllerCapacity({
+      nowUtc: NOW,
+      sourceHead: SOURCE_HEAD,
+      mission: mission(),
+      codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+      forgeLaneReceipt: receipt,
+    });
+    assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+    assert.equal(result.dispatchAllowed, false);
+  }
 });
 
 test('missing or stale meter truth cannot be silently treated as Codex capacity', () => {
@@ -122,6 +385,23 @@ test('Windows-bound work is not sent to a GitHub-only construction lane', () => 
   assert.ok(result.blockers.includes('proven-windows-capable-fallback-unavailable'));
 });
 
+test('Windows/runtime work is never sent through the simple Lane 6 lifeboat', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission({
+      allowedFiles: ['scripts/windows/repair-worker.ps1'],
+      requiredEvidence: ['Windows runtime proof'],
+    }),
+    task: { taskClass: 'WINDOWS_RUNTIME_PROOF', windowsBound: true },
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+    forgeLaneReceipt: lifeboatReceipt(SOURCE_HEAD, { supportedTaskClasses: ['WINDOWS_RUNTIME_PROOF'] }),
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+  assert.ok(result.blockers.includes('proven-windows-capable-fallback-unavailable'));
+});
+
 test('fallback receipts must be exact, fresh, bounded and repository-scoped', () => {
   assert.equal(validateBuildLaneCapacityReceipt(githubReceipt(), {
     repository: REPOSITORY,
@@ -140,6 +420,119 @@ test('fallback receipts must be exact, fresh, bounded and repository-scoped', ()
   }).valid, false);
 });
 
+test('OpenClaw is a first-class route identity but generic build-lane receipts cannot self-admit it', () => {
+  assert.equal(MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL, 'OPENCLAW_LOCAL');
+  const forgedGenericOpenClaw = githubReceipt({
+    receiptId: 'openclaw-generic-capacity-20260810t1159z',
+    route: MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL,
+    workerId: 'openclaw-worker-01',
+    proofRefs: ['receipts/openclaw/capacity.json'],
+  });
+  const result = validateBuildLaneCapacityReceipt(forgedGenericOpenClaw, {
+    repository: REPOSITORY,
+    taskClass: 'FOCUSED_REPAIR',
+    nowUtc: NOW,
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL);
+  assert.equal(result.valid, false);
+});
+
+test('STEPHANOS_NATIVE is first-class but a generic build-lane receipt cannot self-admit it', () => {
+  assert.equal(MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE, 'STEPHANOS_NATIVE');
+  const forgedGenericNative = githubReceipt({
+    receiptId: 'native-generic-capacity-20260810t1159z',
+    route: MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE,
+    workerId: NATIVE_WORKER_ID,
+    proofRefs: ['proof/native-generic-capacity.json'],
+  });
+  const result = validateBuildLaneCapacityReceipt(forgedGenericNative, {
+    repository: REPOSITORY,
+    taskClass: 'FOCUSED_REPAIR',
+    nowUtc: NOW,
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE);
+  assert.equal(result.valid, false);
+});
+
+test('router selects only a protected-key-verified Stephanos-native candidate when Codex is unavailable', async () => {
+  const admission = await verifiedNativeAdmission();
+  assert.equal(admission.ok, true, admission.reason);
+  assert.equal(isVerifiedStephanosNativeRoutingCandidate(admission.candidate), true);
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+    nativeRoutingCandidate: admission.candidate,
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE);
+  assert.equal(result.adapter, 'stephanos-native');
+  assert.equal(result.workerId, NATIVE_WORKER_ID);
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.selectedCapacityReceiptId, 'native-capacity-aaaaaaaaaaaa-20260810115900');
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.leaseSeizureAllowed, false);
+  assert.equal(result.duplicateDispatchAllowed, false);
+});
+
+test('caller-shaped Stephanos-native candidate cannot route even when every visible field looks valid', () => {
+  const forged = Object.freeze({
+    schemaVersion: 'stephanos.native-routing-admission.v1',
+    route: 'STEPHANOS_NATIVE',
+    adapter: 'stephanos-native',
+    workerId: NATIVE_WORKER_ID,
+    repository: REPOSITORY,
+    sourceHead: SOURCE_HEAD,
+    taskClass: 'FOCUSED_REPAIR',
+    queueDepth: 0,
+    p95StartLatencySeconds: 1,
+    capacityReceiptId: 'native-capacity-forged',
+    authorityReceiptIds: ['native-authority-forged'],
+    proofRefs: ['proof/native-forged.json'],
+    sourceMutationAllowed: true,
+    arbitraryCommandAllowed: false,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+    duplicateDispatchAllowed: false,
+  });
+  assert.equal(isVerifiedStephanosNativeRoutingCandidate(forged), false);
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+    nativeRoutingCandidate: forged,
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+});
+
+test('native admission fails closed for wrong protected key, head drift, unsupported task class and widened status authority', async () => {
+  const wrongKey = nativeKeyPair();
+  const wrongKeyAdmission = await verifiedNativeAdmission({ publicKeyPem: wrongKey.publicKeyPem });
+  assert.equal(wrongKeyAdmission.ok, false);
+  assert.match(wrongKeyAdmission.reason, /^STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:/);
+
+  const headDrift = await verifiedNativeAdmission({ sourceHead: 'b'.repeat(40) });
+  assert.equal(headDrift.ok, false);
+  assert.match(headDrift.reason, /^STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:/);
+
+  const unsupported = await verifiedNativeAdmission({ taskClass: 'MULTI_MODULE_IMPLEMENTATION' });
+  assert.equal(unsupported.ok, false);
+  assert.equal(unsupported.reason, 'STEPHANOS_NATIVE_TASK_NOT_QUALIFIED');
+
+  const widened = await verifiedNativeAdmission({ statusOverrides: { status: { mergeAuthority: true } } });
+  assert.equal(widened.ok, false);
+  assert.equal(widened.reason, 'STEPHANOS_NATIVE_CAPACITY_STATUS_BINDING_INVALID');
+});
+
+test('native admission fails dark when the protected public key is missing', async () => {
+  const missing = await verifiedNativeAdmission({ omitPublicKey: true });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.reason, 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING');
+  assert.equal(missing.candidate, null);
+});
+
 test('a lane worker can publish its fresh capacity receipt to the canonical fabric status path', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'build-lane-capacity-'));
   const root = join(parent, 'workspace');
@@ -155,3 +548,217 @@ test('a lane worker can publish its fresh capacity receipt to the canonical fabr
   assert.equal(persisted.capacityReceipt.route, 'CHATGPT_GITHUB');
   assert.equal(persisted.mergeAuthority, false);
 });
+
+
+test('quarantined Codex surface routes the same mission through proven GitHub capacity', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    mission: mission(),
+    codexStatus: codexStatus(),
+    githubLaneReceipt: githubReceipt(),
+    blockedAdapters: ['codex'],
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
+  assert.equal(result.adapter, 'chatgpt-github');
+  assert.equal(result.dispatchAllowed, true);
+  assert.deepEqual(result.blockedAdapters, ['codex']);
+});
+
+test('quarantined GitHub writer is skipped in favour of the already-proven Forge lifeboat', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+    githubLaneReceipt: githubReceipt({ p95StartLatencySeconds: 1 }),
+    forgeLaneReceipt: lifeboatReceipt(),
+    blockedAdapters: ['chatgpt-github'],
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE);
+  assert.equal(result.adapter, 'foundry-forge');
+  assert.equal(result.workerId, FORGE_LIFEBOAT_WORKER_ID);
+  assert.equal(result.dispatchAllowed, true);
+  assert.deepEqual(result.blockedAdapters, ['chatgpt-github']);
+});
+
+test('quarantining every currently proven writer holds only capacity rather than widening authority', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus(),
+    githubLaneReceipt: githubReceipt(),
+    forgeLaneReceipt: lifeboatReceipt(),
+    blockedAdapters: ['codex', 'chatgpt-github', 'foundry-forge'],
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+  assert.ok(result.blockers.includes('execution-surface-quarantine-active'));
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.leaseSeizureAllowed, false);
+  assert.equal(result.duplicateDispatchAllowed, false);
+});
+test('capacity receipts match canonical GitHub repository identity case-insensitively', () => {
+  const receipt = lifeboatReceipt(SOURCE_HEAD, {
+    repository: 'Cheekyfellastef/stephan-os',
+  });
+  const candidateMission = mission({
+    repository: 'cheekyfellastef/stephan-os',
+    allowedFiles: ['docs/architecture/canary.md'],
+  });
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: candidateMission,
+    codexStatus: null,
+    githubLaneReceipt: null,
+    forgeLaneReceipt: receipt,
+    forgeSidecar: null,
+  });
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE);
+  assert.equal(result.adapter, 'foundry-forge');
+  assert.equal(result.selectedCapacityReceiptId, receipt.receiptId);
+});
+
+test('local Forge compatibility retains the actual raw scope bound and task class', () => {
+  assert.deepEqual(FORGE_LIFEBOAT_LOCAL_TASK_CLASSES, ['FOCUSED_REPAIR']);
+  assert.equal(FORGE_LIFEBOAT_MAX_ALLOWED_FILES, 4);
+  for (let count = 0; count <= 18; count++) {
+    const allowedFiles = Array.from({ length: count }, (_, i) => `shared/agents/file${i}.mjs`);
+    const candidate = mission({ currentPhase: 'AGENT_IMPLEMENTATION', allowedFiles });
+    const before = JSON.stringify(candidate);
+    const projected = projectForgeLifeboatSourceCompatibilityV1(candidate);
+    assert.equal(projected.compatible, count >= 1 && count <= 4, `raw scope count ${count}`);
+    assert.equal(projected.allowedFileCount, count);
+    assert.equal(JSON.stringify(candidate), before, 'projection cannot rewrite source permissions');
+  }
+  const fiveScopes = ['a.mjs', 'a.mjs/**', 'b.mjs', 'b.mjs/**', 'b.mjs'];
+  for (const currentPhase of ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED']) {
+    assert.equal(projectForgeLifeboatSourceCompatibilityV1(mission({ currentPhase, allowedFiles: fiveScopes }),
+      { taskClass: 'FOCUSED_REPAIR' }).compatible, false, 'class override or duplicate paths cannot shrink native scope');
+  }
+  for (const allowedFiles of [undefined, null, 'a.mjs', [''], [null]]) {
+    assert.equal(projectForgeLifeboatSourceCompatibilityV1(mission({ allowedFiles })).compatible, false);
+  }
+  assert.equal(projectForgeLifeboatSourceCompatibilityV1(mission(), { taskClass: 'MULTI_MODULE_IMPLEMENTATION' }).compatible, false);
+  assert.equal(projectForgeLifeboatSourceCompatibilityV1(mission({ requiredEvidence: ['Battle Bridge proof'] }),
+    { taskClass: 'FOCUSED_REPAIR' }).compatible, false);
+});
+
+test('shared compatibility agrees with the actual worker preclaim gate and compiled native scope bound', async () => {
+  const worker = await readFile(new URL('../../scripts/mission-orchestrator-worker.mjs', import.meta.url), 'utf8');
+  const start = worker.indexOf('async function processFixedSourceTaskInWorker(options) {');
+  const end = worker.indexOf('  const resource=()=>', start);
+  assert.ok(start >= 0 && end > start, 'inspect only the actual existing preclaim gate');
+  const gate = worker.slice(start, end) + "return {processed:false,reason:'consumer-envelope-admitted'};\n}";
+  for (const currentPhase of ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED']) {
+    for (let count = 0; count <= 18; count++) {
+      const candidate = mission({ currentPhase, allowedFiles: Array.from({ length: count }, (_, i) => `shared/agents/file${i}.mjs`) });
+      const context = vm.createContext({ fixedSourceGrantClass: () => true,
+        readMissionRecord: async () => ({ state: candidate }), projectMissionControllerTaskV1, CODEX_TASK_CLASS });
+      vm.runInContext(gate + '\nglobalThis.check = processFixedSourceTaskInWorker;', context);
+      const observed = await context.check({ actionGrant: { missionId: candidate.missionId } });
+      assert.equal(projectForgeLifeboatSourceCompatibilityV1(candidate).compatible,
+        observed.reason === 'consumer-envelope-admitted', `${currentPhase}/${count}`);
+    }
+  }
+  const native = await readFile(new URL('../../scripts/windows/SovereignFixedRuntimeSourceV1.cs', import.meta.url), 'utf8');
+  const bound = native.match(/\(\(object\[\]\)pathsValue\)\.Length>(\d+)/);
+  assert.ok(bound, 'compiled source binding must retain its explicit independent scope bound');
+  assert.equal(Number(bound[1]), FORGE_LIFEBOAT_MAX_ALLOWED_FILES);
+});
+
+test('cached multi-module local Forge advertising cannot select a consumer that rejects the task', () => {
+  for (const currentPhase of ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED']) {
+    for (const count of [5, 18]) {
+      const result = routeMissionControllerCapacity({ nowUtc: NOW, sourceHead: SOURCE_HEAD,
+        mission: mission({ currentPhase, allowedFiles: Array.from({ length: count }, (_, i) => `shared/agents/file${i}.mjs`) }),
+        codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+        forgeLaneReceipt: lifeboatReceipt(),
+      });
+      assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+      assert.equal(result.dispatchAllowed, false);
+    }
+  }
+  const result = routeMissionControllerCapacity({ nowUtc: NOW, sourceHead: SOURCE_HEAD,
+    mission: mission(), task: { taskClass: 'MULTI_MODULE_IMPLEMENTATION' },
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }), forgeLaneReceipt: lifeboatReceipt() });
+  assert.equal(result.dispatchAllowed, false);
+});
+
+test('focused local Forge keeps one through four raw scopes despite old extra advertised classes', () => {
+  for (let count = 1; count <= 4; count++) {
+    const result = routeMissionControllerCapacity({ nowUtc: NOW, sourceHead: SOURCE_HEAD,
+      mission: mission({ currentPhase: 'AGENT_IMPLEMENTATION', allowedFiles: Array.from({ length: count }, (_, i) => `shared/agents/file${i}.mjs`) }),
+      codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }), forgeLaneReceipt: lifeboatReceipt() });
+    assert.equal(result.dispatchAllowed, true);
+    assert.equal(result.workerId, FORGE_LIFEBOAT_WORKER_ID);
+  }
+});
+
+function admittedForgeSidecar() {
+  const canonical = value => value === null || typeof value !== 'object' ? JSON.stringify(value)
+    : Array.isArray(value) ? `[${value.map(canonical).join(',')}]`
+      : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+  const seal = core => ({ ...core, payloadSha256: createHash('sha256').update(canonical(core)).digest('hex') });
+  const tree = 'c'.repeat(40);
+  return { goalId: '#1671', repository: REPOSITORY, canonicalMainHead: SOURCE_HEAD,
+    canonicalMainTree: tree, mirrorHead: SOURCE_HEAD, mirrorTree: tree, sourceReady: true,
+    m2Receipt: seal({ schemaVersion: 'stephanos.forge-shadow-m2-runtime-receipt.v1', receiptId: 'forge-m2-runtime-001',
+      repository: REPOSITORY, sourceHead: SOURCE_HEAD, sourceTree: tree, mirrorHead: SOURCE_HEAD, mirrorTree: tree,
+      operation: 'INSTALL_FORGE_SHADOW_M2', state: 'DONE', finalVerdict: 'FORGE_SHADOW_M2_READY',
+      completedAt: '2026-08-10T11:59:00Z', proofRefs: ['receipts/forge/m2.json'] }),
+    m3RuntimeReceipt: seal({ schemaVersion: 'stephanos.forge-shadow-m3-runner-runtime-receipt.v1', receiptId: 'forge-m3-runtime-001',
+      repository: REPOSITORY, sourceHead: SOURCE_HEAD, sourceTree: tree, artifactSetDigest: `sha256:${'e'.repeat(64)}`,
+      runnerIdentities: ['stephanos-forge-linux-runner-01', 'stephanos-forge-windows-proof-runner-01'],
+      linuxReviewRunnerConnected: true, windowsProofRunnerConnected: true, teardownComplete: true,
+      zeroResidualRegistration: true, zeroResidualCredential: true, zeroResidualWorkspace: true, canCarryRealWork: true,
+      finalVerdict: 'FORGE_SHADOW_M3_RUNNER_RUNTIME_READY', completedAt: '2026-08-10T11:59:00Z', proofRefs: ['receipts/forge/m3.json'] }),
+    evidenceRefs: ['receipts/forge/m2.json', 'receipts/forge/m3.json'] };
+}
+
+test('local Forge cannot borrow sidecar authority while a distinct qualified Forge worker retains multi-module routing', () => {
+  const input = { nowUtc: NOW, sourceHead: SOURCE_HEAD,
+    mission: mission({ currentPhase: 'AGENT_IMPLEMENTATION', allowedFiles: Array.from({ length: 6 }, (_, i) => `shared/agents/file${i}.mjs`) }),
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }), forgeSidecar: admittedForgeSidecar() };
+  const other = routeMissionControllerCapacity({ ...input, forgeLaneReceipt: forgeReceipt() });
+  assert.equal(other.dispatchAllowed, true, 'the sidecar fixture must actually qualify the distinct worker');
+  assert.equal(other.workerId, 'stephanos-forge-builder-01');
+  const local = routeMissionControllerCapacity({ ...input, forgeLaneReceipt: forgeReceipt({ workerId: FORGE_LIFEBOAT_WORKER_ID }) });
+  assert.equal(local.dispatchAllowed, false);
+  assert.equal(local.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  const github = routeMissionControllerCapacity({ ...input, forgeLaneReceipt: lifeboatReceipt(), githubLaneReceipt: githubReceipt() });
+  assert.equal(github.dispatchAllowed, true);
+  assert.equal(github.route, MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
+});
+
+test('elastic resolution cannot trim a padded local Forge identity into a wider source consumer', () => {
+  const wide = mission({ currentPhase: 'AGENT_IMPLEMENTATION',
+    allowedFiles: Array.from({ length: 18 }, (_, i) => `shared/agents/file${i}.mjs`) });
+  for (const workerId of [FORGE_LIFEBOAT_WORKER_ID, ` ${FORGE_LIFEBOAT_WORKER_ID} `, `\t${FORGE_LIFEBOAT_WORKER_ID}\n`]) {
+    const capacity = { forgeSidecar: admittedForgeSidecar(), forgeLaneReceipt: forgeReceipt({ workerId }) };
+    const direct = routeMissionControllerCapacity({ nowUtc: NOW, sourceHead: SOURCE_HEAD, mission: wide,
+      codexStatus: stalledForIdentityRegression(), ...capacity });
+    assert.equal(direct.dispatchAllowed, false);
+    assert.deepEqual(resolveElasticExternalCapacityCandidates(wide, capacity, SOURCE_HEAD, NOW), []);
+  }
+  const genuine = resolveElasticExternalCapacityCandidates(wide,
+    { forgeSidecar: admittedForgeSidecar(), forgeLaneReceipt: forgeReceipt() }, SOURCE_HEAD, NOW);
+  assert.equal(genuine.length, 1);
+  assert.equal(genuine[0].workerId, 'stephanos-forge-builder-01');
+
+  const focused = mission({ currentPhase: 'AGENT_IMPLEMENTATION' });
+  const capacity = { forgeLaneReceipt: lifeboatReceipt(SOURCE_HEAD, { workerId: ` ${FORGE_LIFEBOAT_WORKER_ID} ` }) };
+  const direct = routeMissionControllerCapacity({ nowUtc: NOW, sourceHead: SOURCE_HEAD, mission: focused,
+    codexStatus: stalledForIdentityRegression(), ...capacity });
+  assert.equal(direct.dispatchAllowed, true);
+  assert.equal(direct.workerId, FORGE_LIFEBOAT_WORKER_ID, 'the local route emits the same canonical identity consumed downstream');
+  const admitted = resolveElasticExternalCapacityCandidates(focused, capacity, SOURCE_HEAD, NOW);
+  assert.equal(admitted.length, 1);
+  assert.equal(admitted[0].workerId, FORGE_LIFEBOAT_WORKER_ID);
+});
+
+function stalledForIdentityRegression() {
+  return codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' });
+}

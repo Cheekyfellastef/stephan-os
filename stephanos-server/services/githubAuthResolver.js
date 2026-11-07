@@ -4,6 +4,8 @@ import { providerSecretStore } from './providerSecretStore.js';
 import { fixedBackendExecutable } from './fixedBackendExecutable.js';
 
 const execFileAsync = promisify(execFile);
+const GITHUB_AUTH_UNAVAILABLE_BACKOFF_MS = 30 * 1000;
+let unavailableGhCliAuthUntilMs = 0;
 
 function asText(value, fallback = '') {
   const text = String(value ?? '').trim();
@@ -29,23 +31,43 @@ async function readGhCliToken(options = {}) {
 }
 
 export async function resolveGithubAuth(options = {}) {
-  const env = options.env || process.env;
+  const testSandboxed = Boolean(process.env.NODE_TEST_CONTEXT) && options.allowLiveGithubInTests !== true;
+  const explicitEnv = Object.prototype.hasOwnProperty.call(options, 'env');
+  const explicitCliProvider = typeof options.ghTokenProvider === 'function' || typeof options.execFile === 'function';
+  const env = explicitEnv ? options.env : (testSandboxed ? {} : process.env);
   const secretStoreToken = Object.prototype.hasOwnProperty.call(options, 'secretStoreToken')
     ? options.secretStoreToken
-    : providerSecretStore.getSecret('github');
+    : (testSandboxed ? '' : providerSecretStore.getSecret('github'));
   const secretToken = asText(secretStoreToken, '');
   if (secretToken) return { token: secretToken, configured: true, authority: GITHUB_AUTH_AUTHORITIES.SECRET_STORE, source: GITHUB_AUTH_AUTHORITIES.SECRET_STORE };
 
   const envToken = asText(env.STEPHANOS_GITHUB_TOKEN || env.GITHUB_TOKEN, '');
   if (envToken) return { token: envToken, configured: true, authority: GITHUB_AUTH_AUTHORITIES.ENVIRONMENT, source: GITHUB_AUTH_AUTHORITIES.ENVIRONMENT };
 
-  const ghToken = await readGhCliToken(options);
-  if (ghToken) return { token: ghToken, configured: true, authority: GITHUB_AUTH_AUTHORITIES.GH_CLI, source: GITHUB_AUTH_AUTHORITIES.GH_CLI };
+  const productionCliResolution = typeof options.ghTokenProvider !== 'function' && typeof options.execFile !== 'function';
+  if (testSandboxed && !explicitCliProvider) {
+    return { token: '', configured: false, authority: GITHUB_AUTH_AUTHORITIES.UNAVAILABLE, source: GITHUB_AUTH_AUTHORITIES.UNAVAILABLE };
+  }
+  if (productionCliResolution && Date.now() < unavailableGhCliAuthUntilMs) {
+    return { token: '', configured: false, authority: GITHUB_AUTH_AUTHORITIES.UNAVAILABLE, source: GITHUB_AUTH_AUTHORITIES.UNAVAILABLE };
+  }
 
+  const ghToken = await readGhCliToken(options);
+  if (ghToken) {
+    unavailableGhCliAuthUntilMs = 0;
+    return { token: ghToken, configured: true, authority: GITHUB_AUTH_AUTHORITIES.GH_CLI, source: GITHUB_AUTH_AUTHORITIES.GH_CLI };
+  }
+
+  if (productionCliResolution) unavailableGhCliAuthUntilMs = Date.now() + GITHUB_AUTH_UNAVAILABLE_BACKOFF_MS;
   return { token: '', configured: false, authority: GITHUB_AUTH_AUTHORITIES.UNAVAILABLE, source: GITHUB_AUTH_AUTHORITIES.UNAVAILABLE };
 }
 
 export async function resolveGithubGhCliAuth(options = {}) {
+  const testSandboxed = Boolean(process.env.NODE_TEST_CONTEXT) && options.allowLiveGithubInTests !== true;
+  const explicitCliProvider = typeof options.ghTokenProvider === 'function' || typeof options.execFile === 'function';
+  if (testSandboxed && !explicitCliProvider) {
+    return { token: '', configured: false, authority: GITHUB_AUTH_AUTHORITIES.UNAVAILABLE, source: GITHUB_AUTH_AUTHORITIES.UNAVAILABLE };
+  }
   const ghToken = await readGhCliToken(options);
   if (ghToken) return { token: ghToken, configured: true, authority: GITHUB_AUTH_AUTHORITIES.GH_CLI, source: GITHUB_AUTH_AUTHORITIES.GH_CLI };
   return { token: '', configured: false, authority: GITHUB_AUTH_AUTHORITIES.UNAVAILABLE, source: GITHUB_AUTH_AUTHORITIES.UNAVAILABLE };

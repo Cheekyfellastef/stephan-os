@@ -1,7 +1,9 @@
 import {
   STEPHANOS_HOME_BRIDGE_URL_GLOBAL,
+  STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL_GLOBAL,
   isMalformedStephanosHost,
   readPersistedStephanosHomeBridgeUrl,
+  resolveStephanosHostedExecutionBridgeUrl,
   readPersistedStephanosHomeNode,
   readPersistedStephanosLastKnownNode,
   resolveStephanosBackendBaseUrl,
@@ -25,8 +27,23 @@ function isLoopbackHost(hostname = '') {
 }
 
 function getStoredHomeNodeContext() {
+  const frontendOrigin = getFrontendOrigin();
+  const directBridgeUrl = globalThis?.[STEPHANOS_HOME_BRIDGE_URL_GLOBAL] || readPersistedStephanosHomeBridgeUrl() || '';
+  const hostedExecutionBridgeUrl = resolveStephanosHostedExecutionBridgeUrl({
+    frontendOrigin,
+    candidates: [globalThis?.[STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL_GLOBAL] || ''],
+  });
+  let preferHostedExecution = false;
+  try {
+    const frontend = new URL(frontendOrigin);
+    preferHostedExecution = frontend.protocol === 'https:' && !isLoopbackHost(frontend.hostname);
+  } catch {
+    preferHostedExecution = false;
+  }
+
   return {
-    bridgeUrl: globalThis?.[STEPHANOS_HOME_BRIDGE_URL_GLOBAL] || readPersistedStephanosHomeBridgeUrl() || '',
+    bridgeUrl: preferHostedExecution ? (hostedExecutionBridgeUrl || directBridgeUrl) : directBridgeUrl,
+    hostedExecutionBridgeUrl,
     manualNode: readPersistedStephanosHomeNode(),
     lastKnownNode: readPersistedStephanosLastKnownNode(),
   };
@@ -141,7 +158,7 @@ export function getApiTargetLabel(baseUrl = getResolvedApiBaseUrl()) {
 
 export function getApiRuntimeConfig() {
   const config = getApiConfig();
-  const { bridgeUrl, manualNode, lastKnownNode } = getStoredHomeNodeContext();
+  const { bridgeUrl, hostedExecutionBridgeUrl, manualNode, lastKnownNode } = getStoredHomeNodeContext();
   const hostedProxyUrl = normalizeOptionalUrl(runtimeEnv.VITE_HOSTED_COGNITION_PROXY_URL);
   const hostedGroqProxyUrl = normalizeOptionalUrl(runtimeEnv.VITE_HOSTED_GROQ_PROXY_URL);
   const hostedGeminiProxyUrl = normalizeOptionalUrl(runtimeEnv.VITE_HOSTED_GEMINI_PROXY_URL);
@@ -167,6 +184,7 @@ export function getApiRuntimeConfig() {
       backendOnlySecrets,
     },
     bridgeUrl,
+    hostedExecutionBridgeUrl,
     homeNode: manualNode || lastKnownNode || null,
   };
 }
@@ -209,6 +227,7 @@ export function getApiRuntimeConfigSnapshotKey(runtimeConfig = getApiRuntimeConf
     backendTargetEndpoint: runtimeConfig?.backendTargetEndpoint || '',
     healthEndpoint: runtimeConfig?.healthEndpoint || '',
     bridgeUrl: runtimeConfig?.bridgeUrl || '',
+    hostedExecutionBridgeUrl: runtimeConfig?.hostedExecutionBridgeUrl || '',
     homeNode: homeNode ? {
       host: homeNode.host || '',
       uiPort: Number(homeNode.uiPort) || 0,

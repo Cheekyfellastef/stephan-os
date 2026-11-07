@@ -12,6 +12,7 @@ import {
   createSharedWorkspaceHandoffRecord,
   validateSharedWorkspaceRecord,
 } from './sharedAgentWorkspaceStore.mjs';
+import { gateSourceWorkerCompletionV1 } from './sourceArtifactEscrowCompletionGateV1.mjs';
 
 export const GITHUB_CONTINUITY_EXTERNAL_HANDOFF_SCHEMA = 'stephanos.github-continuity-external-handoff.v1';
 export const GITHUB_CONTINUITY_EXTERNAL_COMPLETION_SCHEMA = 'stephanos.github-continuity-external-completion.v1';
@@ -44,10 +45,11 @@ const GRANT_KEYS = Object.freeze([
 ]);
 const COMPLETION_KEYS = Object.freeze([
   'schemaVersion','handoffId','grantId','missionId','taskId','repository','expectedSourceHead','adapter',
-  'capacityRoute','success','resultId','changedFiles','receipt','proofRefs','completedAtUtc','error',
+  'capacityRoute','success','resultId','changedFiles','receipt','proofRefs','completedAtUtc','error','sourceArtifactEscrow',
   'sourceMutationAuthorityAdded','mergeAuthorityAdded','deploymentAuthorityAdded','runtimeMutationAuthorityAdded',
   'protectedMergeDispatchAllowed','duplicateDispatchAllowed','arbitraryCommandAllowed',
 ]);
+const LEGACY_COMPLETION_KEYS = Object.freeze(COMPLETION_KEYS.filter((key)=>key!=='sourceArtifactEscrow'));
 const ZERO_AUTHORITY = Object.freeze({
   queueWriteAllowed:false, sharedWorkspaceWriteAllowed:false, existingDispatchTakeoverAllowed:false,
   sourceMutationAuthorityAdded:false, mergeAuthorityAdded:false, deploymentAuthorityAdded:false,
@@ -243,6 +245,9 @@ function blockedCompletion(blocker) {
   return Object.freeze({schemaVersion:GITHUB_CONTINUITY_EXTERNAL_COMPLETION_SCHEMA,valid:false,eventCandidate:null,projectedMissionState:null,
     blockers:Object.freeze([blocker]),authority:ZERO_AUTHORITY,finalVerdict:'GITHUB_CONTINUITY_EXTERNAL_COMPLETION_BLOCKED'});
 }
+function preparedHandoffBody(h) {
+  try { return JSON.parse(h?.sharedWorkspaceHandoffCandidate?.body || ''); } catch { return null; }
+}
 function validPreparedHandoff(h) {
   if (!h||h.schemaVersion!==GITHUB_CONTINUITY_EXTERNAL_HANDOFF_SCHEMA||h.state!==GITHUB_CONTINUITY_EXTERNAL_HANDOFF_STATE.EXTERNAL_HANDOFF_CANDIDATE_READY
       ||!h.queueItemCandidate||!h.sharedWorkspaceHandoffCandidate||h.handoffId!==h.actionId) return false;
@@ -250,11 +255,15 @@ function validPreparedHandoff(h) {
   if (q.schemaVersion!==MISSION_WORKER_QUEUE_ITEM_SCHEMA||q.actionId!==h.actionId||q.missionId!==w.correlationId||w.handoffId!==h.actionId) return false;
   const expectedTarget=q.adapter==='chatgpt-github'?'chatgpt':q.adapter==='foundry-forge'?'future-agent':'';
   if (!expectedTarget||w.toParticipantId!==expectedTarget) return false;
-  let b;
-  try { b=JSON.parse(w.body); } catch { return false; }
+  const b=preparedHandoffBody(h);
   return b?.schemaVersion===GITHUB_CONTINUITY_EXTERNAL_HANDOFF_BODY_SCHEMA&&b.actionId===h.actionId&&b.grantId===h.grantId
     &&b.taskId===h.taskId&&b.repository===h.repository&&b.expectedSourceHead===h.expectedSourceHead&&b.adapter===q.adapter
     &&text(b.capacityRoute).toUpperCase()===text(q.payload?.capacityRoute).toUpperCase();
+}
+function escrowChangedFilePaths(escrow) {
+  if (!escrow || !Array.isArray(escrow.changedFiles)) return null;
+  const paths=escrow.changedFiles.map((file)=>text(file?.path).replace(/\\/g,'/'));
+  return paths.some((path)=>!safePath(path)) || new Set(paths).size!==paths.length ? null : paths.sort();
 }
 
 export function adjudicateGitHubContinuityExternalCompletionV1(rawInput={}) {
@@ -262,7 +271,7 @@ export function adjudicateGitHubContinuityExternalCompletionV1(rawInput={}) {
   if (!input) return blockedCompletion('completion-input-not-data-only-or-closed-world');
   const h=input.handoff,c=input.completionReceipt,s=input.missionState;
   if (!validPreparedHandoff(h)) return blockedCompletion('handoff-candidate-invalid');
-  if (!c||!exactKeys(c,COMPLETION_KEYS)||c.schemaVersion!==GITHUB_CONTINUITY_EXTERNAL_COMPLETION_SCHEMA) return blockedCompletion('completion-receipt-shape-invalid');
+  if (!c||(!exactKeys(c,COMPLETION_KEYS)&&!exactKeys(c,LEGACY_COMPLETION_KEYS))||c.schemaVersion!==GITHUB_CONTINUITY_EXTERNAL_COMPLETION_SCHEMA) return blockedCompletion('completion-receipt-shape-invalid');
   const proofRefs=refs(c.proofRefs,1), files=changedFiles(c.changedFiles), completedAt=isoMs(c.completedAtUtc);
   if (!proofRefs||!files||completedAt===null) return blockedCompletion('completion-evidence-invalid');
   if (c.repository!==h.repository||text(c.expectedSourceHead).toLowerCase()!==h.expectedSourceHead||c.handoffId!==h.handoffId
@@ -276,6 +285,27 @@ export function adjudicateGitHubContinuityExternalCompletionV1(rawInput={}) {
   } else if (!text(c.error)||files.length>0||c.resultId!=='') return blockedCompletion('completion-failure-payload-invalid');
   if (!s||s.schemaVersion!==MISSION_ORCHESTRATOR_SCHEMA_VERSION||s.missionId!==c.missionId||s.repository!==c.repository
       ||text(s.dispatch?.status).toLowerCase()!=='running'||text(s.dispatch?.adapter)!==c.adapter) return blockedCompletion('completion-mission-state-mismatch');
+
+  if (c.success===true && files.length>0) {
+    const handoffBody=preparedHandoffBody(h);
+    if (!handoffBody || text(handoffBody.branch)!==text(s.git?.branch)) return blockedCompletion('SOURCE_ARTIFACT_ESCROW_IDENTITY_MISMATCH');
+    if (!Object.hasOwn(c,'sourceArtifactEscrow') || c.sourceArtifactEscrow===null) return blockedCompletion('SOURCE_ARTIFACT_ESCROW_REQUIRED');
+    const escrow=c.sourceArtifactEscrow;
+    const escrowPaths=escrowChangedFilePaths(escrow);
+    if (!escrowPaths || JSON.stringify(escrowPaths)!==JSON.stringify([...files].sort())) return blockedCompletion('SOURCE_ARTIFACT_ESCROW_IDENTITY_MISMATCH');
+    const identity=issueIdentity(c.missionId);
+    const gate=gateSourceWorkerCompletionV1({
+      stage:'TESTED',sourceChanged:true,testsPassed:true,terminalRequested:true,escrow,nowUtc:c.completedAtUtc,
+      expectedIdentity:{
+        missionId:c.missionId,actionId:h.actionId,repository:c.repository,canonicalIssue:identity.issueNumber,
+        canonicalPr:identity.prNumber,canonicalBranch:handoffBody.branch,exactParentHead:h.expectedSourceHead,
+        exactParentTree:text(escrow?.exactParentTree),exactResultTree:text(escrow?.exactResultTree),executorIdentity:c.adapter,
+        changedFiles:escrow?.changedFiles,
+      },
+    });
+    if (gate.finalVerdict!=='SOURCE_ARTIFACT_ESCROW_PROVEN_FOR_COMPLETION') return blockedCompletion(gate.blocker||'SOURCE_ARTIFACT_ESCROW_REQUIRED');
+  }
+
   const event=Object.freeze({schemaVersion:MISSION_ORCHESTRATOR_EVENT_SCHEMA_VERSION,missionId:c.missionId,eventType:'AGENT_RESULT_RECEIVED',timestamp:c.completedAtUtc,
     summary:c.success?`GitHub Continuity external lane completed ${c.taskId}.`:`GitHub Continuity external lane failed ${c.taskId}.`,
     success:c.success,resultId:c.resultId,changedFiles:files,receipt:c.receipt,error:c.error});

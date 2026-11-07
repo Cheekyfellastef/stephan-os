@@ -133,7 +133,7 @@ function installerReceiptValid(payload) {
     && payload.taskName === BATTLE_BRIDGE_GITHUB_SYNC_TASK
     && payload.installed === true
     && payload.startedNow === true
-    && Number(payload.intervalMinutes) === 15
+    && Number(payload.intervalMinutes) === 1
     && payload.atLogon === true
     && payload.hidden === true
     && payload.runLevel === 'Limited'

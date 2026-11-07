@@ -21,6 +21,7 @@ export const CODEX_WORKSPACE_STATE = Object.freeze({
 export const CODEX_RECOVERY_DECISION = Object.freeze({
   REUSE_ACTIVE_ATTEMPT: 'REUSE_ACTIVE_ATTEMPT',
   PUBLISH_ESCROW: 'PUBLISH_ESCROW',
+  PRESERVE_LOCAL_FOR_ESCROW: 'PRESERVE_LOCAL_FOR_ESCROW',
   TRACK_LIVE_PR: 'TRACK_LIVE_PR',
   START_NEW_ATTEMPT: 'START_NEW_ATTEMPT',
   BLOCK_CORRUPT_ESCROW: 'BLOCK_CORRUPT_ESCROW',
@@ -407,6 +408,22 @@ export function planCodexWorkspaceRecovery(input = {}) {
   if (escrowed) return Object.freeze({ decision: CODEX_RECOVERY_DECISION.PUBLISH_ESCROW, attempt: escrowed, finalVerdict: 'CODEX_RECOVERY_PUBLISH_ESCROW' });
   const corrupt = sorted.find((attempt) => attempt.state === CODEX_WORKSPACE_STATE.PATCH_ESCROWED);
   if (corrupt) return Object.freeze({ decision: CODEX_RECOVERY_DECISION.BLOCK_CORRUPT_ESCROW, attempt: corrupt, finalVerdict: 'CODEX_RECOVERY_BLOCK_CORRUPT_ESCROW' });
+  const testedLocal = sorted.find((attempt) => attempt.state === CODEX_WORKSPACE_STATE.TESTED_LOCAL && SHA_PATTERN.test(attempt.localHeadSha));
+  if (testedLocal) return Object.freeze({
+    decision: CODEX_RECOVERY_DECISION.PRESERVE_LOCAL_FOR_ESCROW,
+    attempt: testedLocal,
+    rebuildRequired: false,
+    exactNextAction: 'Preserve the existing tested local head and recover its exact source bytes into the canonical patch escrow/publication route before admitting any replacement attempt.',
+    finalVerdict: 'CODEX_RECOVERY_PRESERVE_LOCAL_FOR_ESCROW',
+  });
+  const builtLocal = sorted.find((attempt) => attempt.state === CODEX_WORKSPACE_STATE.BUILT_LOCAL && SHA_PATTERN.test(attempt.localHeadSha));
+  if (builtLocal) return Object.freeze({
+    decision: CODEX_RECOVERY_DECISION.PRESERVE_LOCAL_FOR_ESCROW,
+    attempt: builtLocal,
+    rebuildRequired: false,
+    exactNextAction: 'Preserve the existing local head and recover its exact source bytes into the canonical patch escrow/publication route before admitting any replacement attempt.',
+    finalVerdict: 'CODEX_RECOVERY_PRESERVE_LOCAL_FOR_ESCROW',
+  });
   return Object.freeze({
     decision: CODEX_RECOVERY_DECISION.START_NEW_ATTEMPT,
     nextAttemptNumber: sorted.length ? sorted[0].attemptNumber + 1 : 1,

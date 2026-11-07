@@ -9,7 +9,9 @@ import {
 export const BATTLE_BRIDGE_LIFEBOAT_GITHUB_CLAIM_SCHEMA = 'stephanos.battle-bridge-lifeboat-github-claim.v1';
 export const BATTLE_BRIDGE_LIFEBOAT_GITHUB_REQUEST_MARKER = '<!-- stephanos-battle-bridge-mobile-recovery-request -->';
 export const BATTLE_BRIDGE_LIFEBOAT_GITHUB_ATTESTATION_MARKER = '<!-- stephanos-battle-bridge-mobile-recovery-attestation -->';
-export const BATTLE_BRIDGE_LIFEBOAT_GITHUB_API_URL = `https://api.github.com/repos/${BATTLE_BRIDGE_RECOVERY_REPOSITORY}/issues/${BATTLE_BRIDGE_RECOVERY_ISSUE}/comments?per_page=100&page=1`;
+export const BATTLE_BRIDGE_LIFEBOAT_GITHUB_ISSUE_API_URL = `https://api.github.com/repos/${BATTLE_BRIDGE_RECOVERY_REPOSITORY}/issues/${BATTLE_BRIDGE_RECOVERY_ISSUE}`;
+export const BATTLE_BRIDGE_LIFEBOAT_GITHUB_COMMENTS_API_BASE = `${BATTLE_BRIDGE_LIFEBOAT_GITHUB_ISSUE_API_URL}/comments?per_page=100&page=`;
+export const BATTLE_BRIDGE_LIFEBOAT_GITHUB_API_URL = BATTLE_BRIDGE_LIFEBOAT_GITHUB_COMMENTS_API_BASE;
 export const BATTLE_BRIDGE_LIFEBOAT_EXECUTABLE_ACTIONS_V1 = Object.freeze([
   'PROBE_BATTLE_BRIDGE',
   'WAKE_CANONICAL_MAILBOX',
@@ -18,9 +20,22 @@ export const BATTLE_BRIDGE_LIFEBOAT_EXECUTABLE_ACTIONS_V1 = Object.freeze([
 
 const EXECUTABLE_ACTION_SET = new Set(BATTLE_BRIDGE_LIFEBOAT_EXECUTABLE_ACTIONS_V1);
 const MAX_COMMENT_BYTES = 16 * 1024;
-const MAX_COMMENT_COUNT = 100;
+const MAX_COMMENT_COUNT = 200;
 const SAFE_REQUEST_ID = /^mobile-recovery-[a-z0-9][a-z0-9-]{7,63}$/;
 const SAFE_COMMENT_ID = /^[1-9][0-9]{0,19}$/;
+
+export function boundedLifeboatRecoveryCommentPages(commentCount, perPage = 100) {
+  const count = Number(commentCount);
+  const pageSize = Number(perPage);
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    throw new Error('LIFEBOAT_COMMENT_PAGE_SIZE_INVALID');
+  }
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error('LIFEBOAT_COMMENT_COUNT_INVALID');
+  }
+  const latest = Math.max(1, Math.ceil(count / pageSize));
+  return Object.freeze([...new Set([Math.max(1, latest - 1), latest])]);
+}
 
 function ownDataSnapshot(value, keys) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
