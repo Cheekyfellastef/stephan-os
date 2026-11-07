@@ -30,6 +30,7 @@ export const READY_REVIEW_MAX_BYTES = 256 * 1024;
 export const READY_REVIEW_RECOVERY_SOURCE_PATHS = Object.freeze([
   '.github/workflows/stephanos-exact-head-review.yml',
   'docs/architecture/stephanos-protected-ready-review-failure-recovery-v1.md',
+  'scripts/dispatch-protected-merge-from-mailbox.mjs',
   'scripts/exact-head-qualified-escalation-v1.mjs',
   'scripts/exact-head-qualified-escalation-v1.test.mjs',
   'scripts/operator-protected-personal-repository-merge.mjs',

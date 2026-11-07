@@ -155,6 +155,7 @@ export function readyLifecycleFixture({ bootstrap = false, alreadyReady = false,
   const inputs = { pr_number: String(identity.prNumber), source_head: identity.sourceHead, base_sha: identity.baseSha,
     ready_run_id: '100', ready_artifact_id: '501', ready_receipt_sha256: handoffPayload.payloadSha256 };
   const state = { pull: { number: identity.prNumber, node_id: 'PR_fixture', state: 'open', merged: false, draft: false,
+    changed_files: input.changedFiles.length,
     head: { sha: identity.sourceHead, ref: identity.branch, repo: { full_name: repository } },
     base: { sha: identity.baseSha, ref: 'main', repo: { full_name: repository } } },
     main: { object: { sha: identity.baseSha } }, commit: { sha: identity.sourceHead, tree: { sha: identity.sourceTree } } };

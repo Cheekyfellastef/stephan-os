@@ -190,6 +190,64 @@ export async function readReadyReviewTarget(api, identity, options) {
   assertReadyReviewTarget(state, identity, options);
   return state;
 }
+
+// Count the whole live file estate and bind both ends of its full diff read.
+// A partial page or a draft transition cannot become reviewed source input.
+function assertReadyReviewPatchEstate(patch, files) {
+  let output;
+  try {
+    // --numstat disables application. Git parses the unchanged stdin patch,
+    // including every hunk count; no path argument, shell or write is allowed.
+    output = execFileSync('git', ['apply', '--numstat', '-z', '--'], {
+      input: patch, shell: false, timeout: 10_000, maxBuffer: MAX_PATCH_BYTES,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  } catch { requireProof(false, 'PREFLIGHT_PATCH_STRUCTURE'); }
+  const stats = new TextDecoder('utf-8', { fatal: true }).decode(output);
+  requireProof(stats.endsWith('\0'), 'PREFLIGHT_PATCH_FILE_ESTATE');
+  const records = stats.slice(0, -1).split('\0');
+  requireProof(records.length === files.length, 'PREFLIGHT_PATCH_FILE_ESTATE');
+  const expected = new Map(files.map(file => [file.filename, file])), seen = new Set();
+  for (const record of records) {
+    const match = record.match(/^(0|[1-9][0-9]*|-)\t(0|[1-9][0-9]*|-)\t([^\0]+)$/);
+    requireProof(match && expected.has(match[3]) && !seen.has(match[3]), 'PREFLIGHT_PATCH_FILE_ESTATE');
+    const file = expected.get(match[3]);
+    const binary = match[1] === '-' && match[2] === '-';
+    requireProof(binary ? file.additions === 0 && file.deletions === 0
+      : match[1] !== '-' && match[2] !== '-'
+        && Number(match[1]) === file.additions && Number(match[2]) === file.deletions,
+    'PREFLIGHT_PATCH_FILE_STATS');
+    seen.add(match[3]);
+  }
+}
+
+export async function readReadyReviewInput(identity, { api, readPatch, expectedDraft } = {}) {
+  requireProof(typeof readPatch === 'function' && typeof expectedDraft === 'boolean', 'PREFLIGHT_INPUT_TRANSPORT');
+  const before = await readReadyReviewTarget(api, identity, { allowDraft: expectedDraft });
+  const count = before.pull.changed_files;
+  requireProof(before.pull.draft === expectedDraft && Number.isSafeInteger(count)
+    && count > 0 && count <= MAX_PAGES * 100, 'PREFLIGHT_FILE_ESTATE_UNPROVEN');
+  const changedFiles = [], files = [], seen = new Set();
+  for (let page = 1; changedFiles.length < count; page += 1) {
+    const rows = await api(`/pulls/${apiId(identity.prNumber)}/files?per_page=100&page=${page}`);
+    requireProof(Array.isArray(rows) && rows.length === Math.min(100, count - changedFiles.length),
+      'PREFLIGHT_FILES_INCOMPLETE');
+    for (const row of rows) {
+      requireProof(typeof row?.filename === 'string' && row.filename.length > 0 && row.filename.length <= 1024
+        && !/[\u0000\r\n]/.test(row.filename) && !seen.has(row.filename), 'PREFLIGHT_FILE_INVALID_OR_DUPLICATE');
+      requireProof(Number.isSafeInteger(row.additions) && row.additions >= 0
+        && Number.isSafeInteger(row.deletions) && row.deletions >= 0, 'PREFLIGHT_FILE_STATS_UNPROVEN');
+      seen.add(row.filename); changedFiles.push(row.filename); files.push(row);
+    }
+  }
+  const patch = await readPatch(identity.prNumber);
+  const input = assertReadyReviewInput({ repository: REPO, prNumber: identity.prNumber,
+    headSha: identity.sourceHead, baseSha: identity.baseSha, changedFiles, patch }, identity);
+  assertReadyReviewPatchEstate(patch, files);
+  const after = await readReadyReviewTarget(api, identity, { allowDraft: expectedDraft });
+  requireProof(after.pull.draft === expectedDraft && after.pull.changed_files === count, 'PREFLIGHT_FILE_ESTATE_CHANGED');
+  return input;
+}
 export async function loadReadyReviewIndependent(command, { api, download }) {
   readyReviewIdentity(command);
   const [definition, run, jobs, artifacts] = await Promise.all([
@@ -272,6 +330,22 @@ async function qualifyReadyReviewReceipt(input, engineReceipt, command, independ
   return { qualification, escalationComment };
 }
 
+async function preflightReadyReviewExactHead({ command, independent, expectedDraft, api, download, readExactHeadInput,
+  now = () => new Date().toISOString() }) {
+  const identity = readyReviewIdentity(command);
+  const mode = assertReadyReviewIndependent(independent, command);
+  requireProof(expectedDraft === false || mode === 'clean-independent', 'DRAFT_BOOTSTRAP_READY_NOT_AUTHORIZED');
+  requireProof(typeof readExactHeadInput === 'function', 'PREFLIGHT_ENGINE_INPUT_READER_UNAVAILABLE');
+  const input = assertReadyReviewInput(await readExactHeadInput(identity, { expectedDraft }), identity);
+  const engineReceipt = reviewExactHead(input);
+  const qualification = await qualifyReadyReviewReceipt(input, engineReceipt, command, mode,
+    { api, download, now: now(), allowDraft: expectedDraft });
+  const final = await readReadyReviewTarget(api, identity, { allowDraft: expectedDraft });
+  requireProof(final.pull.draft === expectedDraft && final.pull.changed_files === input.changedFiles.length,
+    'PREFLIGHT_FILE_ESTATE_CHANGED');
+  return { input, engineReceipt, ...qualification };
+}
+
 // This happens before the new route mutates draft state. A legacy READY packet
 // without a full review selection keeps its old behavior and never gets a proof.
 export async function prepareReadyReviewProducer({ command, comment, env = process.env,
@@ -290,11 +364,12 @@ export async function prepareReadyReviewProducer({ command, comment, env = proce
   requireProof(run.id === Number(env.GITHUB_RUN_ID), 'PRODUCER_RUN_ID');
   const mode = assertReadyReviewIndependent(independent, command);
   requireProof(state.pull.draft === false || mode === 'clean-independent', 'DRAFT_BOOTSTRAP_READY_NOT_AUTHORIZED');
-  requireProof(typeof readExactHeadInput === 'function', 'PREFLIGHT_ENGINE_INPUT_READER_UNAVAILABLE');
-  const input = assertReadyReviewInput(await readExactHeadInput(identity), identity);
-  const engineReceipt = reviewExactHead(input);
-  const preflight = await qualifyReadyReviewReceipt(input, engineReceipt, command, mode,
-    { api, download, now: now(), allowDraft: state.pull.draft });
+  const preflight = await preflightReadyReviewExactHead({ command, independent,
+    expectedDraft: state.pull.draft, api, download, readExactHeadInput, now });
+  const { input, engineReceipt } = preflight;
+  // Read the immutable owner before the final complete thread inventory. The
+  // synchronous check below still expires that same owner window after it.
+  const finalOwner = await api(`/issues/comments/${apiId(comment.id)}`);
   const unresolvedReviewThreads = state.pull.draft
     ? await readReadyReviewUnresolvedThreads(readThreadsPage, identity) : null;
   const route = planProtectedReadyExecutionRoute({ repository: identity.repository, prNumber: identity.prNumber,
@@ -303,7 +378,7 @@ export async function prepareReadyReviewProducer({ command, comment, env = proce
     unresolvedReviewThreads, protectedMailboxAvailable: true });
   requireProof(route.route === (state.pull.draft ? PROTECTED_READY_EXECUTION_ROUTE.PROTECTED_MAILBOX
     : PROTECTED_READY_EXECUTION_ROUTE.ALREADY_READY), route.blocker || 'READY_ROUTE_NOT_AUTHORIZED');
-  assertReadyReviewOwner(await api(`/issues/comments/${apiId(comment.id)}`), command, now(),
+  assertReadyReviewOwner(finalOwner, command, now(),
     comment.id, protectedWorkflowAuthorizationCommentSha256(comment));
   return { command, comment: liveComment, run, definition, sourceSha, beforeDraft: state.pull.draft,
     unresolvedReviewThreads, preflight: { patchSha256: sha(input.patch),
@@ -381,7 +456,7 @@ function handoffInputs(handoff, artifactId) {
     ready_artifact_id: String(artifactId), ready_receipt_sha256: handoff.payloadSha256 };
 }
 export async function dispatchReadyReview({ inputs, env = process.env, sourceSha = ownSource(), api, download,
-  dispatch, now = () => new Date().toISOString(), wait = waitForObservation }) {
+  dispatch, readExactHeadInput, now = () => new Date().toISOString(), wait = waitForObservation }) {
   const parsed = parseReadyReviewInputs(inputs);
   assertReadyReviewSourceContext(env, sourceSha, parsed.baseSha, 'review-ready');
   requireProof(parsed.readyRunId === Number(env.GITHUB_RUN_ID), 'DISPATCH_PRODUCER_MUST_BE_SELF');
@@ -392,6 +467,11 @@ export async function dispatchReadyReview({ inputs, env = process.env, sourceSha
   // ALREADY_READY, a second comment, a failed prior run, or a rerun never grants
   // another launch for the same PR/head/base. No retry counter or time renewal.
   requireProof(existing === null, 'REVIEW_ALREADY_DISPATCHED_FOR_EXACT_TUPLE');
+  const independent = await loadReadyReviewIndependent(payload.command, { api, download });
+  await preflightReadyReviewExactHead({ command: payload.command, independent, expectedDraft: false,
+    api, download, readExactHeadInput, now });
+  requireProof(selectReadyReviewRun(await lifecycleRuns(api, identity), identity, { absentAllowed: true }) === null,
+    'REVIEW_ALREADY_DISPATCHED_FOR_EXACT_TUPLE');
   await readReadyReviewTarget(api, identity);
   const owner = await api(`/issues/comments/${apiId(payload.authorizationCommentId)}`);
   assertReadyReviewOwner(owner, payload.command, now(), payload.authorizationCommentId, payload.authorizationCommentSha256);
@@ -728,6 +808,35 @@ export function readyReviewTransports(env = process.env) {
     requireProof(Buffer.byteLength(raw) <= 8 * 1024 * 1024, 'API_RESPONSE_TOO_LARGE');
     return JSON.parse(raw);
   };
+  const readPatch = async prNumber => {
+    const response = await fetch(`https://api.github.com${ROOT}/pulls/${apiId(prNumber)}`, {
+      method: 'GET', redirect: 'error',
+      headers: { ...headers, Accept: 'application/vnd.github.v3.diff', 'Accept-Encoding': 'identity' },
+      signal: AbortSignal.timeout(30_000),
+    });
+    requireProof(response.status === 200 && response.headers?.get?.('content-range') === null,
+      'PREFLIGHT_PATCH_RESPONSE_NOT_COMPLETE');
+    const mediaType = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
+    requireProof(['application/vnd.github.diff', 'application/vnd.github.v3.diff'].includes(mediaType),
+      'PREFLIGHT_PATCH_MEDIA_TYPE');
+    const encoding = response.headers.get('content-encoding');
+    requireProof(encoding === null || encoding.trim().toLowerCase() === 'identity', 'PREFLIGHT_PATCH_CONTENT_ENCODING');
+    const length = response.headers.get('content-length');
+    requireProof(length === null || (/^(?:0|[1-9][0-9]*)$/.test(length)
+      && Number.isSafeInteger(Number(length)) && Number(length) <= MAX_PATCH_BYTES), 'PREFLIGHT_PATCH_LENGTH');
+    requireProof(typeof response.body?.[Symbol.asyncIterator] === 'function', 'PREFLIGHT_PATCH_STREAM_UNAVAILABLE');
+    const chunks = []; let size = 0;
+    // Retain only bounded bytes, require normal EOF, and bind any declared wire
+    // length to identity encoding. The fetch deadline also aborts body reads.
+    for await (const chunk of response.body) {
+      requireProof(chunk instanceof Uint8Array, 'PREFLIGHT_PATCH_STREAM_INVALID');
+      size += chunk.byteLength;
+      requireProof(size <= MAX_PATCH_BYTES, 'PREFLIGHT_PATCH_TOO_LARGE');
+      chunks.push(chunk);
+    }
+    requireProof(length === null || size === Number(length), 'PREFLIGHT_PATCH_LENGTH');
+    return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, size));
+  };
   const download = id => executePersonalRepositoryArtifactArchiveTransport({ repository: REPO,
     path: `${ROOT}/actions/artifacts/${apiId(id)}/zip`, maxBytes: READY_REVIEW_MAX_BYTES,
     requestApiRedirect: r => fetch(r.url, { method: r.method, body: r.body, redirect: r.redirect,
@@ -754,39 +863,9 @@ export function readyReviewTransports(env = process.env) {
     requireProof(Buffer.byteLength(raw) <= READY_REVIEW_MAX_BYTES, 'REVIEW_THREADS_RESPONSE_TOO_LARGE');
     return JSON.parse(raw);
   };
-  const readExactHeadInput = async identity => {
-    requireProof(identity?.repository === REPO && Number.isSafeInteger(identity.prNumber) && identity.prNumber > 0
-      && typeof identity.branch === 'string' && apiSha(identity.sourceHead) && apiSha(identity.sourceTree)
-      && apiSha(identity.baseSha), 'PREFLIGHT_IDENTITY');
-    await readReadyReviewTarget(api, identity, { allowDraft: true });
-    const changedFiles = [], seen = new Set();
-    for (let page = 1; page <= MAX_PAGES; page += 1) {
-      const response = await fetch(`https://api.github.com${ROOT}/pulls/${apiId(identity.prNumber)}/files?per_page=100&page=${page}`,
-        { redirect: 'error', headers });
-      requireProof(response.ok, `PREFLIGHT_FILES_API_${response.status}`);
-      const raw = await response.text();
-      requireProof(Buffer.byteLength(raw) <= READY_REVIEW_MAX_BYTES, 'PREFLIGHT_FILES_RESPONSE_TOO_LARGE');
-      let rows;
-      try { rows = JSON.parse(raw); } catch { requireProof(false, 'PREFLIGHT_FILES_JSON'); }
-      requireProof(Array.isArray(rows) && rows.length <= 100, 'PREFLIGHT_FILES_PAGE');
-      for (const row of rows) {
-        requireProof(typeof row?.filename === 'string' && row.filename.length > 0 && row.filename.length <= 1024
-          && !seen.has(row.filename), 'PREFLIGHT_FILES_IDENTITY');
-        seen.add(row.filename); changedFiles.push(row.filename);
-      }
-      if (rows.length < 100) break;
-      requireProof(page < MAX_PAGES, 'PREFLIGHT_FILES_LIMIT');
-    }
-    const patchResponse = await fetch(`https://api.github.com${ROOT}/pulls/${apiId(identity.prNumber)}`,
-      { redirect: 'error', headers: { ...headers, Accept: 'application/vnd.github.v3.diff' } });
-    requireProof(patchResponse.ok, `PREFLIGHT_PATCH_API_${patchResponse.status}`);
-    const patch = await patchResponse.text();
-    const input = assertReadyReviewInput({ repository: REPO, prNumber: identity.prNumber,
-      headSha: identity.sourceHead, baseSha: identity.baseSha, changedFiles, patch }, identity);
-    await readReadyReviewTarget(api, identity, { allowDraft: true });
-    return input;
-  };
-  return { api, download, dispatch, readThreadsPage, readExactHeadInput };
+  const readExactHeadInput = (identity, { expectedDraft } = {}) =>
+    readReadyReviewInput(identity, { api, readPatch, expectedDraft });
+  return { api, download, dispatch, readThreadsPage, readExactHeadInput, readPatch };
 }
 async function main() {
   const mode = process.argv[2], transport = readyReviewTransports();

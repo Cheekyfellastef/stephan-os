@@ -243,13 +243,16 @@ test('recovery source allowlist covers the complete canonical merge-consumer cor
   assert.ok(READY_REVIEW_RECOVERY_SOURCE_PATHS.includes('shared/agents/operatorPersonalRepositoryMergeV1.mjs'));
   assert.ok(READY_REVIEW_RECOVERY_SOURCE_PATHS
     .includes('shared/agents/operatorPersonalRepositoryMergeDraftSkipV1.test.mjs'));
+  assert.ok(READY_REVIEW_RECOVERY_SOURCE_PATHS.includes('scripts/dispatch-protected-merge-from-mailbox.mjs'));
 });
 
-test('continuity admits the complete published twelve-file recovery correction and rejects an unrelated addition', () => {
-  // Actual PR #3412 estate at e4262f7, independent of the implementation allowlist.
+test('continuity admits the original recovery estate plus its existing READY caller and rejects an unrelated addition', () => {
+  // Original PR #3412 estate plus the necessary final-mutation ordering fix,
+  // declared independently of the implementation's closed correction inventory.
   const correctionPaths = [
     '.github/workflows/stephanos-exact-head-review.yml',
     'docs/architecture/stephanos-protected-ready-review-failure-recovery-v1.md',
+    'scripts/dispatch-protected-merge-from-mailbox.mjs',
     'scripts/exact-head-qualified-escalation-v1.mjs',
     'scripts/exact-head-qualified-escalation-v1.test.mjs',
     'scripts/operator-protected-personal-repository-merge.mjs',
@@ -270,6 +273,10 @@ test('continuity admits the complete published twelve-file recovery correction a
   const result = buildReadyReviewRecoveryContinuity(compare, correction, f.originalIdentity,
     f.currentMainSha, f.input.changedFiles);
   assert.deepEqual(result.correctionFiles, correctionPaths);
+  assert.equal(correctionPaths.length, 13);
+  const originalFiles = files.filter(file => file.filename !== 'scripts/dispatch-protected-merge-from-mailbox.mjs');
+  assert.equal(buildReadyReviewRecoveryContinuity({ ...compare, files: originalFiles },
+    { ...correction, files: originalFiles }, f.originalIdentity, f.currentMainSha, f.input.changedFiles).correctionFiles.length, 12);
   const expanded = [...files, { filename: 'scripts/uninspected-review-recovery-collector.mjs' }];
   assert.throws(() => buildReadyReviewRecoveryContinuity({ ...compare, files: expanded },
     { ...correction, files: expanded }, f.originalIdentity, f.currentMainSha, f.input.changedFiles),
