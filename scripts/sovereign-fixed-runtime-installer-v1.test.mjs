@@ -1,6 +1,6 @@
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
-import {FIXED_RUNTIME_SOURCE_PATHS_V1,buildFixedRuntimeInstallerCandidateV1} from './sovereign-fixed-runtime-installer-candidate-v1.mjs';
+import {FIXED_RUNTIME_SOURCE_PATHS_V1,FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1,buildFixedRuntimeInstallerCandidateV1,fixedRuntimeGitClosureSha256V1} from './sovereign-fixed-runtime-installer-candidate-v1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
@@ -38,6 +38,14 @@ test('fixed installation candidate preserves exact blobs and stays below the exi
  const payload=JSON.parse(candidate.payloadBytes.toString('utf8'));
  assert.equal(payload.Records.length,records.length);
  assert.ok(payload.Records.every(row=>/^[a-f0-9]{64}$/.test(row.MaterializedSha256)));
+ for(const row of payload.Records) {
+  assert.equal(row.GitBlobSha,records.find(record=>record.path===row.Path).blobSha);
+  assert.equal(row.GitMode,'100644');
+ }
+ assert.equal(fixedRuntimeGitClosureSha256V1(payload.Records),
+  fixedRuntimeGitClosureSha256V1([...payload.Records].reverse()));
+ assert.throws(()=>fixedRuntimeGitClosureSha256V1(payload.Records.map((row,i)=>i===0?{...row,GitBlobSha:''}:row)),
+  /FIXED_RUNTIME_GIT_CLOSURE_UNPROVEN/);
  assert.match(candidate.payloadPath,/StephanosFixedRuntimeInstall-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json$/);
  assert.equal(candidate.environment.NODE_OPTIONS,undefined);
  assert.throws(()=>buildFixedRuntimeInstallerCandidateV1({...input,records:[...records,records[0]]}),/EXACT_SOURCE_REQUIRED/);
@@ -51,12 +59,13 @@ test('fixed installation candidate preserves exact blobs and stays below the exi
  const legacyCandidate=buildFixedRuntimeInstallerCandidateV1({...input,records:legacy});
  const legacyPayload=JSON.parse(legacyCandidate.payloadBytes.toString('utf8'));
  assert.ok(legacyPayload.Records.every(row=>row.MaterializedSha256===row.Sha256));
+ assert.equal(fixedRuntimeGitClosureSha256V1(legacyPayload.Records),fixedRuntimeGitClosureSha256V1(payload.Records));
 });
 
 
 test('fixed manifest covers current static and literal dynamic imports plus custody runtime-read inputs',()=>{
  const output=execFileSync(process.execPath,['--experimental-vm-modules',fileURLToPath(new URL('./fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',import.meta.url))],{encoding:'utf8',windowsHide:true,timeout:10000});
- const result=JSON.parse(output);assert.ok(result.memberCount<=284);
+ const result=JSON.parse(output);assert.ok(result.memberCount<=FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1);
   assert.equal(result.memberCount,284);
   assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes('scripts/sovereign-commander-ignition-diagnosis.mjs'));
   assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes('scripts/sovereign-commander-persistent-runtime-repair.mjs'));assert.deepEqual(result.missing,[]);

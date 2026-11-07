@@ -257,6 +257,7 @@ export const WINDOWS_CALIBRATION_SOURCE_PATHS = Object.freeze([
   'scripts/sovereign-windows-review-calibration-v1.mjs',
   'scripts/sovereign-high-risk-advisory-v1.mjs',
   'shared/agents/sovereignWindowsCalibrationV1.mjs',
+  'shared/agents/sovereignReviewerOllamaBindingV1.mjs',
   'shared/agents/sovereignWindowsCalibrationRemoteV1.mjs',
   'shared/agents/sovereignHighRiskReviewCandidateV1.mjs',
   'shared/agents/sovereignReviewCoverageV1.mjs',

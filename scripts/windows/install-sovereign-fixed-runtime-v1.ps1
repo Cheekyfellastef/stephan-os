@@ -25,6 +25,11 @@ function Get-Digest([byte[]]$bytes){
  $sha=[Security.Cryptography.SHA256]::Create()
  try{return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
 }
+function Get-GitBlob([byte[]]$bytes){
+ $prefix=[Text.Encoding]::ASCII.GetBytes('blob '+$bytes.Length+[char]0)
+ $sha=[Security.Cryptography.SHA1]::Create()
+ try{return ([BitConverter]::ToString($sha.ComputeHash([byte[]]($prefix+$bytes)))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
+}
 function Assert-Physical([string]$path){
  $full=[IO.Path]::GetFullPath($path)
  while($null -ne $full){
@@ -60,10 +65,12 @@ $records=@{};$total=0
 foreach($row in $bootstrap.Records){
  if($row.Path -cnotmatch '^(?:(?:scripts|shared|stephanos-server)/[A-Za-z0-9._/-]+|package\.json|\.gitattributes|integrations/openclaw/stephanos-builder-provider/lib/oc1-(?:gateway-provider|repository-scout)\.mjs)$' -or
   $row.Path.Contains('..') -or $row.Path.Contains('//') -or $records.ContainsKey($row.Path) -or
-  $row.Sha256 -cnotmatch '^[a-f0-9]{64}$' -or $row.MaterializedSha256 -cnotmatch '^[a-f0-9]{64}$'){throw 'FIXED_INSTALL_SOURCE_MEMBER_REFUSED'}
+  $row.Sha256 -cnotmatch '^[a-f0-9]{64}$' -or $row.MaterializedSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+  $row.GitBlobSha -cnotmatch '^[a-f0-9]{40}$' -or $row.GitMode -cne '100644'){throw 'FIXED_INSTALL_SOURCE_MEMBER_REFUSED'}
  $bytes=[Convert]::FromBase64String($row.ContentBase64);$total+=$bytes.Length
- if($bytes.Length -gt 2097152 -or $total -gt 8388608 -or (Get-Digest $bytes) -cne $row.Sha256){throw 'FIXED_INSTALL_SOURCE_BYTES_UNPROVEN'}
- $records[$row.Path]=[pscustomobject]@{Path=$row.Path;Sha256=$row.Sha256;MaterializedSha256=$row.MaterializedSha256;Bytes=$bytes}
+ if($bytes.Length -gt 2097152 -or $total -gt 8388608 -or (Get-Digest $bytes) -cne $row.Sha256 -or
+  (Get-GitBlob $bytes) -cne $row.GitBlobSha){throw 'FIXED_INSTALL_SOURCE_BYTES_UNPROVEN'}
+ $records[$row.Path]=[pscustomobject]@{Path=$row.Path;GitBlobSha=$row.GitBlobSha;GitMode=$row.GitMode;Sha256=$row.Sha256;MaterializedSha256=$row.MaterializedSha256;Bytes=$bytes}
 }
 $native=@('SovereignCoreJobCustodyV1.cs','SovereignFixedRuntimeJobV1.cs','SovereignFixedRuntimeIdentityV1.cs','SovereignFixedRuntimeAuthorityV1.cs','SovereignFixedRuntimeHostV1.cs','SovereignFixedRuntimeSourceV1.cs')
 foreach($name in $native){if(-not $records.ContainsKey('scripts/windows/'+$name) -or $records['scripts/windows/'+$name].Bytes.Length -gt 32768){throw 'FIXED_INSTALL_NATIVE_UNIT_UNPROVEN'}}
@@ -81,8 +88,11 @@ $handles=[Collections.Generic.List[IO.FileStream]]::new()
 $nativePins=$null;$provider=$null
 try{
  $manifest=[ordered]@{SchemaVersion='stephanos.fixed-runtime-manifest.v1';SourceHead=$ExpectedMain;SourceTree=$bootstrap.SourceTree;Files=@()}
- foreach($key in @($records.Keys|Sort-Object)){
-  $row=$records[$key];$manifest.Files+=@{Path=$row.Path;Sha256=$row.Sha256;MaterializedSha256=$row.MaterializedSha256}
+ [string[]]$orderedPaths=@($records.Keys);[Array]::Sort($orderedPaths,[StringComparer]::Ordinal)
+ $closureText='stephanos.fixed-runtime-git-closure.v1'+[char]0
+ foreach($key in $orderedPaths){
+  $row=$records[$key];$manifest.Files+=@{Path=$row.Path;GitBlobSha=$row.GitBlobSha;GitMode=$row.GitMode;Sha256=$row.Sha256;MaterializedSha256=$row.MaterializedSha256}
+  $closureText+=$row.Path+[char]0+$row.GitMode+[char]0+$row.GitBlobSha+[char]10
   $path=[IO.Path]::Combine($sourceRoot,$key.Replace('/','\'));Assert-Physical $path
   $file=[IO.FileStream]::new($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read);$handles.Add($file)
   $memory=[IO.MemoryStream]::new();try{$file.CopyTo($memory);$actual=$memory.ToArray()}finally{$memory.Dispose()}
@@ -133,6 +143,7 @@ try{
  if([DateTime]::Parse($installed) -le [DateTime]::Parse($compileCompleted)){throw 'FIXED_INSTALL_TIME_ORDER_UNPROVEN'}
  $pending=[ordered]@{SchemaVersion='stephanos.fixed-runtime-pending.v1';SourceHead=$ExpectedMain;SourceTree=$bootstrap.SourceTree;
   HelperSha256=(Get-Digest ([IO.File]::ReadAllBytes([IO.Path]::Combine($version,'host.exe'))));ManifestSha256=(Get-Digest $manifestBytes);
+  GitClosureSha256=(Get-Digest ([Text.UTF8Encoding]::new($false).GetBytes($closureText)));
   MachineHash=$type.GetMethod('RuntimeMachineHashV1',$flags).Invoke($null,@());CompilerCompletedAtUtc=$compileCompleted;InstalledAtUtc=$installed;OperatorSid=$bootstrap.OperatorSid;
   NodeExecutableSha256=$observations[0].Sha256;GitExecutableSha256=$observations[1].Sha256;PowerShellExecutableSha256=$observations[2].Sha256;
   NodeExecutableLinkCount=$observations[0].LinkCount;GitExecutableLinkCount=$observations[1].LinkCount;PowerShellExecutableLinkCount=$observations[2].LinkCount}

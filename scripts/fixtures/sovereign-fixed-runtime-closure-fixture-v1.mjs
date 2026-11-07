@@ -136,9 +136,9 @@ if (!maintenance) {
   // must be reassessed; an optional-looking pathname is never a generic bypass.
   const applicabilityPins = {
   "scripts/sovereign-commander-http.mjs": "962b48eebd6dcc54e6117329acfbc5a4820bb7091c1f97493fd864cf984962c5",
-  "scripts/sovereign-fixed-runtime-parent-v1.mjs": "1854a7c57c471baf3f26a0a3df1be446e91e3de243b43281497766a7d006ee64",
+  "scripts/sovereign-fixed-runtime-parent-v1.mjs": "fce1242364c1e991959066f2d1fe65025dfa765b946c497bb5bc224648909edc",
   "shared/agents/sovereignMaintenanceAdmissionV1.mjs": "d468e7bf73355e5daa6899d19ffe8e7b034af914837b5e66523d43ade79a8703",
-  "scripts/windows/SovereignFixedRuntimeHostV1.cs": "bbe85a5dc91d9fcdcdb55be085589f57b57f71f1f9208016e4fa4e6e230996bf"
+  "scripts/windows/SovereignFixedRuntimeHostV1.cs": "d13700a76f873e38fdac7ba25661df873f7b4c2c70bfc705f73b9887ab40a04f"
 };
   let scopeProven = true;
   for (const [file, pin] of Object.entries(applicabilityPins)) {

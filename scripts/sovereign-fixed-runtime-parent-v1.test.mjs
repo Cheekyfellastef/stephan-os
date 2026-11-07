@@ -129,7 +129,7 @@ public static class StephanosFrameAliasRegressionV1 {
 Add-Type -TypeDefinition $h
 $parser=[Stephanos.Sovereign.CoreJobCustodyV1].GetMethod('ParseFixedRuntimeRequestV1',[Reflection.BindingFlags]'NonPublic,Static')
 $sha=([BitConverter]::ToString(([Security.Cryptography.SHA256]::Create()).ComputeHash([byte[]]@()))).Replace('-','').ToLowerInvariant()
-$f=[ordered]@{SchemaVersion='stephanos.fixed-runtime-request.v1';RequestId='mailboxnative-2315-review';Profile='CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1';RuntimeSourceHead='a'*40;OwnerPid=$PID;TaskFrameBase64='';TaskBindingSha256=$sha}
+$f=[ordered]@{SchemaVersion='stephanos.fixed-runtime-request.v1';RequestId='mailboxnative-2315-review';Profile='CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1';RuntimeSourceHead='a'*40;InstallationSourceHead='a'*40;SourceProofSha256='b'*64;OwnerPid=$PID;TaskFrameBase64='';TaskBindingSha256=$sha}
 $json=ConvertTo-Json -InputObject $f -Compress -Depth 5
 $canonical='"Profile":"CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1"'
 if(-not $json.Contains($canonical)){throw 'CANONICAL_FRAME_MISSING'}
