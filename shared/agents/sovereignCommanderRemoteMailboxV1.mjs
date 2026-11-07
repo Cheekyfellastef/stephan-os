@@ -453,6 +453,29 @@ async function postMcp(fetchFn, token, message, sessionId = '', timeoutMs = SOVE
   });
 }
 
+// A parsed health rejection occurs before credentials or any MCP POST. Preserve
+// that local fact in process memory only; it is not an authenticated owner
+// refusal and cannot be reconstructed from a blocker, JSON or a saved receipt.
+const maintenancePreDispatchRefusals = new WeakMap();
+function maintenanceProtocolRefusal(request) {
+  const blocked = fail('SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED');
+  if (request && typeof request === 'object' && !Array.isArray(request)
+    && Object.isFrozen(request) && request.arguments && Object.isFrozen(request.arguments)
+    && SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(request.actionId)
+    && request.arguments.actionId === request.actionId) {
+    maintenancePreDispatchRefusals.set(blocked, Object.freeze({ request, actionId: request.actionId }));
+  }
+  return blocked;
+}
+
+export function consumeSovereignMaintenancePreDispatchRefusalV1(blocked, request) {
+  const binding = maintenancePreDispatchRefusals.get(blocked);
+  maintenancePreDispatchRefusals.delete(blocked);
+  return Boolean(binding && binding.request === request && binding.actionId === request.actionId
+    && request.arguments.actionId === binding.actionId
+    && blocked.ok === false && blocked.blocker === 'SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED');
+}
+
 // Private local callers reuse the existing bounded authenticated MCP transport.
 // No health snapshot grants admission, no local child fallback, and no attempt
 // to start/recycle an unavailable owner is permitted on this delegation path.
@@ -466,7 +489,7 @@ export async function callSovereignMaintenanceOwnerV1(request, options = {}) {
     if (!healthExchange.response.ok || health?.ok !== true || health.service !== 'stephanos-sovereign-commander'
         || health.observationScope !== 'TRANSPORT_PROTOCOL_ONLY' || health.maintenanceAdmissionProven !== false
         || health.maintenanceOwnerAdmissionVersion !== SOVEREIGN_MAINTENANCE_OWNER_VERSION) {
-      return fail('SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED');
+      return maintenanceProtocolRefusal(request);
     }
     token = text(await readFileFn(fixedTokenPath(options.env || process.env), 'utf8'));
     if (token.length < 32) return fail('SOVEREIGN_MAINTENANCE_OWNER_TOKEN_UNAVAILABLE');
