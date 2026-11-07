@@ -9,6 +9,8 @@ import { deflateSync } from 'node:zlib';
 import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { main, persistReview, localModel, authenticatedReviewDiff } from './sovereign-reviewer-v1.mjs';
 
+const canonicalConfig = 'remote.origin.url\nhttps://github.com/Cheekyfellastef/stephan-os.git\0';
+
 function reviewedObjects() {
   const objects = new Map();
   const put = (type, value) => {
@@ -132,7 +134,7 @@ test('runner publishes only a candidate proof, with no GitHub, merge or deployme
 test('trusted Git boundary ignores hostile PATH and Git overrides', async () => {
   const calls = [];
   const fixture = reviewedObjects();
-  const outputs = [fixture.head, 'goal/review', '', fixture.base, ''];
+  const outputs = [Buffer.from(canonicalConfig), fixture.head, 'goal/review', Buffer.alloc(0), fixture.base, ''];
   const result = await main({
     PATH: '/attacker', GIT_EXEC_PATH: '/attacker', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.hooksPath',
     GIT_CONFIG_VALUE_0: '/attacker', STEPHANOS_REVIEW_EXACT_HEAD: fixture.head, STEPHANOS_REVIEW_EXACT_BASE: fixture.base,
@@ -150,9 +152,86 @@ test('trusted Git boundary ignores hostile PATH and Git overrides', async () => 
   });
   assert.equal(result.status, 'LOCAL_REVIEW_EVIDENCE_READY');
   assert.equal(calls.every(call => call.executable === '/usr/bin/git'), true);
+  assert.ok(calls.some(call => call.args.includes('status.renames=false')));
   assert.equal(calls.every(call => call.env.PATH === '/usr/bin:/bin' && call.env.GIT_EXEC_PATH === undefined), true);
   assert.equal(calls.every(call => call.env.GIT_CONFIG_COUNT !== '99' && call.args.includes('core.fsmonitor=false')), true);
   assert.equal(calls.some(call => call.args.includes('diff')), false);
+});
+
+test('standard reviewer admits canonical runtime dirt but denies source and malformed status before model use', async () => {
+  const fixture = reviewedObjects();
+  const inputs = {
+    STEPHANOS_REVIEW_EXACT_HEAD: fixture.head, STEPHANOS_REVIEW_EXACT_BASE: fixture.base,
+    STEPHANOS_REVIEW_EXACT_BRANCH: 'goal/review', STEPHANOS_REVIEW_REPOSITORY: 'owner/repo',
+    STEPHANOS_REVIEW_ISSUE: '1', STEPHANOS_REVIEW_PR: '3005',
+    STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER: 'builder', STEPHANOS_REVIEW_IMPLEMENTER_SESSION: 'build-1',
+    STEPHANOS_REVIEW_SESSION: 'review-2',
+  };
+  const accepted = [
+    '', ' M stephanos-server/data/memory/durable-memory.json\n',
+    '?? apps/stephanos/dist/assets/new.js\r\n M logs/reviewer.log\r\n',
+  ];
+  const denied = [
+    ' M scripts/reviewer.mjs\n', '?? scripts/new-reviewer.mjs\n',
+    '?? apps/stephanos/dist/assets/new.js\n M scripts/reviewer.mjs\n',
+    'M  stephanos-server/data/memory/durable-memory.json\n',
+    'R  apps/stephanos/dist/old.js -> scripts/new.js\n',
+    'XX apps/stephanos/dist/new.js\n', ' M\tapps/stephanos/dist/new.js\n',
+    '?? tmp/../scripts/new.mjs\n', '?? tmp/./new.mjs\n',
+    '?? tmp/new\0.mjs\n', '?? tmp/new\r.mjs\n',
+    '??  tmp/new.mjs\n', '?? tmp/new.mjs \n',
+    '?? tmp/first\n\n?? tmp/second\n',
+  ];
+  for (const status of [...accepted, ...denied]) {
+    const outputs = [Buffer.from(canonicalConfig), fixture.head, 'goal/review', Buffer.from(status), fixture.base, ''];
+    let modelCalls = 0;
+    const result = await main(inputs, {
+      platform: 'linux',
+      spawn(_executable, args, options) {
+        if (args.includes('status')) {
+          assert.ok(args.includes('status.renames=false'));
+          assert.equal(options.encoding, null, 'porcelain must retain its leading status space');
+        }
+        const index = args.indexOf('cat-file');
+        return { status: 0, stdout: index < 0 ? outputs.shift() : fixture.read(args[index + 1], args[index + 2]) };
+      },
+      invokeModel: async () => {
+        modelCalls++;
+        return JSON.stringify({ verdict: 'clean', reviewedPaths: ['src/test.js'], findings: [] });
+      },
+      persist: () => true,
+    });
+    assert.equal(result.status, accepted.includes(status) ? 'LOCAL_REVIEW_EVIDENCE_READY' : 'SOVEREIGN_REVIEW_HELD', status);
+    assert.equal(modelCalls, accepted.includes(status) ? 1 : 0, status);
+    if (denied.includes(status)) assert.equal(result.reason, 'REVIEW_WORKTREE_NOT_CLEAN', status);
+    assert.equal(result.mergeAuthority, false);
+  }
+});
+
+test('standard review rejects unsafe or noncanonical local Git configuration before status or model use', async () => {
+  for (const config of [
+    '', canonicalConfig + canonicalConfig,
+    'remote.origin.url\nhttps://example.invalid/repository.git\0',
+    canonicalConfig + 'filter.fixture.clean\n/tmp/fixture-helper\0',
+    canonicalConfig + 'include.path\n/tmp/fixture-config\0',
+    canonicalConfig + 'core.fsmonitor\n/tmp/fixture-helper\0',
+    canonicalConfig + 'extensions.worktreeconfig\ntrue\0',
+  ]) {
+    let reads = 0, modelCalls = 0;
+    const result = await main({ STEPHANOS_REVIEW_EXACT_HEAD: 'a'.repeat(40),
+      STEPHANOS_REVIEW_EXACT_BASE: 'b'.repeat(40), STEPHANOS_REVIEW_PR: '3005' }, {
+      platform: 'linux',
+      spawn(_executable, args, options) {
+        reads++;
+        assert.deepEqual(args.slice(-5), ['config', '--local', '--null', '--list', '--no-includes']);
+        assert.equal(options.encoding, null);
+        return { status: 0, stdout: Buffer.from(config) };
+      }, invokeModel: async () => { modelCalls++; }, persist: () => true,
+    });
+    assert.equal(result.reason, 'LOCAL_GIT_PROOF_UNAVAILABLE');
+    assert.equal(reads, 1, 'configuration denial must precede every status read');
+    assert.equal(modelCalls, 0);
+  }
 });
 
 test('publication rejects linked workspace ancestors', (t) => {

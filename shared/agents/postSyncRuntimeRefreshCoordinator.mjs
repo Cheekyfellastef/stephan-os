@@ -142,6 +142,9 @@ const NATURAL_EXACT = new Set([
   REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH,
   'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
   'scripts/battle-bridge-github-sync-executor.mjs',
+  // The fixed sync executor spawns this bounded one-shot child afresh each cycle.
+  // Natural reload confirms source adoption; never run housekeeping as refresh.
+  'scripts/battle-bridge-sync-housekeeper-runner.mjs',
   'scripts/battle-bridge-github-sync-and-refresh.mjs',
   'scripts/stephanos-codex-dispatch-mcp.mjs',
   'scripts/battle-bridge-post-sync-refresh.mjs',
