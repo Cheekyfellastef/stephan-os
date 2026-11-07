@@ -403,7 +403,7 @@ export async function localCompleteHighRiskModelV1(prompt,packet,env=process.env
     if(observed.digest!==packet.modelDigestSha256)throw completeFailure('COMPLETE_REVIEW_MODEL_DIGEST_CHANGED');
     requireGaming();return observed.digest;
   };
-  let generationSettled=false,observedContextTokens=null,contextFailure='';
+  let generationSettled=false,observedContextTokens=null;
   try {
     requireGaming();monitor=startPolling(()=>{check();},limits.governorIntervalMs);
     await pin();
