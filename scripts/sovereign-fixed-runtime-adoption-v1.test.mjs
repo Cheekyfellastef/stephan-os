@@ -122,8 +122,54 @@ if($digest -cne '__INPUT_HASH__'){throw 'FIXTURE_INPUT_CHANGED'}
 $json=[Web.Script.Serialization.JavaScriptSerializer]::new()
 $json.MaxJsonLength=67108864
 $rows=$json.DeserializeObject([Text.UTF8Encoding]::new($false,$true).GetString($bytes))
+function Test-ExpectedSourceProofRefusal([Exception]$exception){
+ $cause=$exception;$depth=0
+ $wrappers=@('System.Reflection.TargetInvocationException','System.Management.Automation.MethodInvocationException')
+ while($null -ne $cause -and ($wrappers -ccontains $cause.GetType().FullName)){
+  if($depth -ge 4 -or $null -eq $cause.InnerException){return $false}
+  $cause=$cause.InnerException;$depth++
+ }
+ if($null -eq $cause){return $false}
+ $kind=$cause.GetType().FullName
+ return (($kind -ceq 'System.InvalidOperationException' -and $cause.Message -cmatch '^RUNTIME_SOURCE_PROOF_[A-Z_]{1,64}$') -or
+  $kind -ceq 'System.Text.DecoderFallbackException')
+}
+$refusal=[InvalidOperationException]::new('RUNTIME_SOURCE_PROOF_MEMBER_CHANGED')
+$deep=$refusal
+for($i=0;$i -lt 5;$i++){$deep=[Reflection.TargetInvocationException]::new($deep)}
+$wrapperCases=@(
+ @{error=$refusal;expected=$true},
+ @{error=[Reflection.TargetInvocationException]::new($refusal);expected=$true},
+ @{error=[Reflection.TargetInvocationException]::new([Reflection.TargetInvocationException]::new($refusal));expected=$true},
+ @{error=[Text.DecoderFallbackException]::new('fixture');expected=$true},
+ @{error=[Exception]::new('RUNTIME_SOURCE_PROOF_MEMBER_CHANGED');expected=$false},
+ @{error=[Exception]::new('unknown wrapper',$refusal);expected=$false},
+ @{error=[InvalidOperationException]::new('UNRELATED_FAILURE');expected=$false},
+ @{error=$deep;expected=$false}
+)
+$wrapperCount=0
+foreach($case in $wrapperCases){
+ if((Test-ExpectedSourceProofRefusal $case.error) -ne [bool]$case.expected){throw 'NATIVE_SOURCE_WRAPPER_FIXTURE_FAILED'}
+ $wrapperCount++
+}
+# Capture the actual PowerShell adapter around this exact reflection boundary.
+# Only the two known wrappers above may be unwrapped; unknown chains still fail.
+$observedWrapper=$null
+$invalidArgs=[object[]]::new(2)
+$invalidArgs[0]='invalid wire'
+$invalidArgs[1]=[Stephanos.Sovereign.FixedRuntimeManifestFileV1[]]::new(0)
+try{[void]$verify.Invoke($null,$invalidArgs)}
+catch{$observedWrapper=$_.Exception}
+if($null -eq $observedWrapper -or -not (Test-ExpectedSourceProofRefusal $observedWrapper)){throw 'NATIVE_SOURCE_ACTUAL_WRAPPER_UNPROVEN'}
+[Console]::WriteLine('NATIVE_SOURCE_WRAPPER_OBSERVED:'+$observedWrapper.GetType().FullName)
+$wrapperCount++
+[Console]::WriteLine('NATIVE_SOURCE_WRAPPER_FIXTURE_PASS_'+$wrapperCount)
 $count=0
 foreach($row in $rows){
+ $count++;$indexText=$count.ToString([Globalization.CultureInfo]::InvariantCulture)
+ $label=[string]$row['name']
+ if($label.Length -lt 1 -or $label.Length -gt 120 -or $label -cmatch '[^\x20-\x7e]'){throw 'NATIVE_SOURCE_VECTOR_LABEL_UNPROVEN'}
+ [Console]::WriteLine('NATIVE_SOURCE_VECTOR_START_'+$indexText+':'+$label)
  $members=[Collections.Generic.List[Stephanos.Sovereign.FixedRuntimeManifestFileV1]]::new()
  foreach($item in $row['members']){
   $member=[Stephanos.Sovereign.FixedRuntimeManifestFileV1]::new()
@@ -132,17 +178,20 @@ foreach($row in $rows){
  }
  $accepted=$false;$proof=$null
  try{$proof=$verify.Invoke($null,@([string]$row['raw'],$members.ToArray()));$accepted=$true}
- catch [Reflection.TargetInvocationException]{
-  $cause=$_.Exception.InnerException
-  if($cause.Message -cnotmatch '^RUNTIME_SOURCE_PROOF_' -and $cause -isnot [Text.DecoderFallbackException]){throw}
+ catch{
+  if(-not (Test-ExpectedSourceProofRefusal $_.Exception)){
+   [Console]::WriteLine('NATIVE_SOURCE_VECTOR_RESULT_'+$indexText+':UNEXPECTED_EXCEPTION:'+$label)
+   throw 'NATIVE_SOURCE_VECTOR_UNEXPECTED_EXCEPTION'
+  }
  }
+ $disposition=if($accepted){'ACCEPTED'}else{'REJECTED'}
+ [Console]::WriteLine('NATIVE_SOURCE_VECTOR_RESULT_'+$indexText+':'+$disposition+':'+$label)
  if($accepted -ne [bool]$row['valid']){throw ('NATIVE_MEMBERSHIP_VECTOR_FAILED:'+ $row['name'])}
  if($accepted){
   $instance=[Reflection.BindingFlags]'NonPublic,Instance'
   if($proof.GetType().GetField('Digest',$instance).GetValue($proof) -cne [string]$row['expectedDigest']){throw 'NATIVE_PROOF_DIGEST_CHANGED'}
   if($proof.GetType().GetField('Closure',$instance).GetValue($proof) -cne [string]$row['expectedClosure']){throw 'NATIVE_CLOSURE_CHANGED'}
  }
- $count++
 }
 [Console]::WriteLine('NATIVE_SOURCE_MEMBERSHIP_FIXTURE_PASS_'+$count)
 `.replace('__NATIVE__',native.map(name=>literal(fileURLToPath(new URL('./windows/'+name,import.meta.url)))).join(','))
@@ -155,6 +204,23 @@ foreach($row in $rows){
   try {out=execFileSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
     ['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(bootstrap,'utf16le').toString('base64')],
     {encoding:'utf8',windowsHide:true,timeout:55000,maxBuffer:65536});}
+  catch(error) {
+    // Report bounded fixture labels and outcomes, never proof payloads or the
+    // encoded invocation. Unknown driver failures remain failures.
+    const diagnostics=String(error.stdout??'').split(/\r?\n/)
+      .filter(line=>/^NATIVE_SOURCE_(?:VECTOR_(?:START|RESULT)_[0-9]+:|WRAPPER_)/.test(line))
+      .map(line=>line.slice(0,240)).slice(-8);
+    const codes=[...new Set(String(error.stderr??'').match(/\b(?:NATIVE_SOURCE|FIXTURE)_[A-Z_]{1,80}\b/g)??[])].slice(0,8);
+    throw new Error(['NATIVE_SOURCE_DRIVER_FAILED_EXIT_'+String(error.status??'UNKNOWN'),...diagnostics,...codes].join('\n'));
+  }
   finally {unlinkSync(driver);unlinkSync(input);rmdirSync(directory);}
-  assert.equal(out.trim(),'NATIVE_SOURCE_MEMBERSHIP_FIXTURE_PASS_'+vectors.length);
+  const lines=out.trim().split(/\r?\n/);
+  assert.match(lines[0],/^NATIVE_SOURCE_WRAPPER_OBSERVED:(?:System\.Reflection\.TargetInvocationException|System\.Management\.Automation\.MethodInvocationException|System\.InvalidOperationException)$/);
+  assert.equal(lines[1],'NATIVE_SOURCE_WRAPPER_FIXTURE_PASS_9');
+  assert.equal(lines.length,3+2*vectors.length);
+  for(const [index,vector]of vectors.entries()) {
+    assert.equal(lines[2+2*index],'NATIVE_SOURCE_VECTOR_START_'+(index+1)+':'+vector.name);
+    assert.equal(lines[3+2*index],'NATIVE_SOURCE_VECTOR_RESULT_'+(index+1)+':'+(vector.valid?'ACCEPTED':'REJECTED')+':'+vector.name);
+  }
+  assert.equal(lines.at(-1),'NATIVE_SOURCE_MEMBERSHIP_FIXTURE_PASS_'+vectors.length);
 });
