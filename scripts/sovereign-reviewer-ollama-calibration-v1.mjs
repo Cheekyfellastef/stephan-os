@@ -8,7 +8,8 @@ import { createHash } from 'node:crypto';
 import { join, isAbsolute, normalize } from 'node:path';
 import { resolve } from 'node:path';
 import { evaluateSovereignCalibrationV1, SOVEREIGN_CALIBRATION_MANIFEST_SHA256 } from '../shared/agents/sovereignCalibrationV1.mjs';
-import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
 
 const MODEL_RE = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
 const SOURCE_ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
@@ -20,6 +21,7 @@ const CRITICAL_REVIEW_FILES = Object.freeze([
   'shared/agents/sovereignCalibrationV1.mjs',
   'scripts/sovereign-reviewer-v1.mjs',
   'shared/agents/providerNeutralReviewV1.mjs',
+  'scripts/battle-bridge-github-sync-policy.mjs',
 ]);
 const BRANCH = /^[a-z0-9][a-z0-9._/-]{0,180}$/i;
 const NO_AUTHORITY = Object.freeze({
@@ -48,7 +50,7 @@ export function inspectLocalCalibrationGitIdentityV1(env = process.env, {
     || branch.includes('..') || branch.endsWith('/')) {
     return Object.freeze({ ok: false, reason: 'CALIBRATION_EXACT_SOURCE_IDENTITY_INVALID' });
   }
-  const readGit = args => {
+  const readGit = (args, raw = false) => {
     const execution = resolveBattleBridgeGitExecution({ platform: 'linux', environment: env });
     const r = gitSpawn(execution.executable, [...execution.fixedConfigArgs, '-C', sourceRoot, ...args], {
       encoding: 'utf8', shell: false, timeout: 12_000, maxBuffer: 4096,
@@ -56,12 +58,25 @@ export function inspectLocalCalibrationGitIdentityV1(env = process.env, {
     });
     if (r?.error || r?.status !== 0 || typeof r.stdout !== 'string')
       throw new Error('LOCAL_GIT_UNAVAILABLE');
-    return r.stdout.trim();
+    return raw ? r.stdout : r.stdout.trim();
   };
   try {
+    const localConfig = readGit(['config', '--local', '--null', '--list', '--no-includes'], true);
+    if (!validateBattleBridgeLocalGitConfiguration(localConfig).ok) {
+      return Object.freeze({ ok: false, reason: 'CALIBRATION_SOURCE_GIT_UNPROVEN' });
+    }
     if (readGit(['rev-parse', 'HEAD']).toLowerCase() !== head
-      || readGit(['symbolic-ref', '--quiet', '--short', 'HEAD']) !== branch
-      || readGit(['status', '--porcelain', '--untracked-files=normal']) !== '') {
+      || readGit(['symbolic-ref', '--quiet', '--short', 'HEAD']) !== branch) {
+      return Object.freeze({ ok: false, reason: 'CALIBRATION_CLEAN_EXACT_CHECKOUT_REQUIRED' });
+    }
+    // Keep raw status columns and both sides of a rename; runtime-only state
+    // may coexist with exact committed reviewer source, which is pinned below.
+    const statusOutput = readGit(['-c', 'status.renames=false', 'status', '--porcelain', '--untracked-files=normal'], true);
+    const statusLines = statusOutput === '' ? [] : statusOutput.replace(/\r?\n$/, '').split(/\r?\n/);
+    if (statusLines.some(line => !/^(?:[ MADTU]{2}|\?\?) [^\x00-\x1f\x7f]+$/.test(line)
+      || line.startsWith('  ') || line.slice(3) !== line.slice(3).trim()
+      || line.slice(3).split('/').some(part => part === '.' || part === '..'))
+      || classifyDirt(statusLines).blocksSync) {
       return Object.freeze({ ok: false, reason: 'CALIBRATION_CLEAN_EXACT_CHECKOUT_REQUIRED' });
     }
     readGit(['merge-base', '--is-ancestor', base, head]);

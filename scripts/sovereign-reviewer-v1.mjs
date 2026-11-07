@@ -7,8 +7,9 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { evaluateSovereignReviewSnapshot } from '../shared/agents/sovereignReviewerV1.mjs';
-import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { inspectLocalSovereignGamingPermissionV1, observeLocalSovereignOllamaDigestV1 } from './sovereign-reviewer-ollama-calibration-v1.mjs';
+import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const OLLAMA_URL = 'http://127.0.0.1:11434/api/generate';
@@ -129,9 +130,22 @@ function exactLocalSnapshot(env, dependencies = {}) {
   const branch = text(env.STEPHANOS_REVIEW_EXACT_BRANCH);
   if (!SHA.test(sourceHead) || !SHA.test(baseSha)) throw new Error('EXACT_SOURCE_IDS_REQUIRED');
   const runGit = (args, maxBuffer) => git(args, maxBuffer, dependencies);
+  // Status can invoke attribute-driven clean filters. Admit the canonical
+  // local configuration without following includes before any source scan.
+  const localConfig = git(['config', '--local', '--null', '--list', '--no-includes'],
+    16 * 1024, dependencies, true).toString('utf8');
+  if (!validateBattleBridgeLocalGitConfiguration(localConfig).ok) throw new Error('LOCAL_GIT_PROOF_UNAVAILABLE');
   if (runGit(['rev-parse', 'HEAD']).toLowerCase() !== sourceHead) throw new Error('REVIEWED_HEAD_NOT_CHECKED_OUT');
   if (runGit(['symbolic-ref', '--quiet', '--short', 'HEAD']) !== branch) throw new Error('REVIEW_BRANCH_NOT_CHECKED_OUT');
-  if (runGit(['status', '--porcelain', '--untracked-files=normal'])) throw new Error('REVIEW_WORKTREE_NOT_CLEAN');
+  // Generated runtime state is not source. Preserve porcelain's two status
+  // columns and expose both sides of staged renames before classifying dirt.
+  const statusOutput = git(['-c', 'status.renames=false', 'status', '--porcelain', '--untracked-files=normal'],
+    256 * 1024, dependencies, true).toString('utf8');
+  const statusLines = statusOutput === '' ? [] : statusOutput.replace(/\r?\n$/, '').split(/\r?\n/);
+  if (statusLines.some(line => !/^(?:[ MADTU]{2}|\?\?) [^\x00-\x1f\x7f]+$/.test(line)
+    || line.startsWith('  ') || line.slice(3) !== line.slice(3).trim()
+    || line.slice(3).split('/').some(part => part === '.' || part === '..'))
+    || classifyDirt(statusLines).blocksSync) throw new Error('REVIEW_WORKTREE_NOT_CLEAN');
   if (runGit(['rev-parse', '--verify', `${baseSha}^{commit}`]).toLowerCase() !== baseSha) throw new Error('REVIEW_BASE_UNPROVEN');
   runGit(['merge-base', '--is-ancestor', baseSha, sourceHead]);
   const { changedFiles, diff } = authenticatedReviewDiff(baseSha, sourceHead,
