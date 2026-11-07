@@ -12,6 +12,10 @@ import {
   routeMissionControllerCapacity,
 } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
 import {
+  isProviderIndependentSourceCapacityCandidateV1,
+  providerIndependentSourceCapacityInputV1,
+} from '../../shared/agents/providerIndependentMissionCapacityRouteV1.mjs';
+import {
   OPENCLAW_PROVIDER_ROUTE,
   routeWithQualifiedOpenClawProvider,
 } from '../../shared/agents/openClawProviderPoolQualificationV1.mjs';
@@ -287,8 +291,9 @@ export function resolveElasticExternalCapacityCandidates(
   const routeOpenClaw = dependencies.routeOpenClaw ?? routeWithQualifiedOpenClawProvider;
   const openAiBlackout = capacityRouting.openAiBlackout === true;
   const baseInput = {
-    ...capacityRouting,
-    githubLaneReceipt: openAiBlackout ? null : capacityRouting.githubLaneReceipt,
+    ...(openAiBlackout
+      ? providerIndependentSourceCapacityInputV1(capacityRouting)
+      : capacityRouting),
     nowUtc,
     sourceHead: text(sourceRevision).toLowerCase(),
     mission,
@@ -333,8 +338,11 @@ export function resolveElasticExternalCapacityCandidates(
     if (standalone && !blocked.has(standalone.adapter)) candidates.push(standalone);
   }
 
-  const deduped = dedupeCandidates(candidates);
-  return Object.freeze(openAiBlackout
-    ? deduped.filter((candidate) => text(candidate?.route).toUpperCase() !== MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB)
-    : deduped);
+  // Snapshot before admission so mutable dependency results cannot change the
+  // route/adapter pair after the blackout filter. Filter before deduplication so
+  // a faster mismatched candidate cannot conceal an already-qualified worker.
+  const admittedCandidates = openAiBlackout
+    ? candidates.map(normalizedCandidate).filter(Boolean).filter(isProviderIndependentSourceCapacityCandidateV1)
+    : candidates;
+  return Object.freeze(dedupeCandidates(admittedCandidates));
 }
