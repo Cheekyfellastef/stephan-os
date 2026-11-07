@@ -209,6 +209,158 @@ test('pending path counts accept only nonnegative safe integers without coercion
   }
 });
 
+test('Spatial metadata remains bounded and malformed values cannot produce public completion', () => {
+  const success = { classification: 'REFRESH_COMPLETE', phase: 'complete', finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_PASS' };
+  for (const fields of [
+    ...['true', 1, null, {}, []].map(spatialAdoptionRequired => ({ spatialAdoptionRequired })),
+    ...[-1, 3, 0.5, '0', null, Infinity].map(spatialAdoptionPathCount => ({ spatialAdoptionRequired: false, spatialAdoptionPathCount })),
+    { spatialAdoptionRequired: false, spatialAdoptionPathCount: 1 },
+    { spatialAdoptionPathCount: 1 },
+    { classification: undefined },
+    { classification: 'UNRECOGNIZED_REFRESH_CLASSIFICATION' },
+  ]) {
+    const surface = beaconSurface(record({ ...success, ...fields }));
+    assert.equal(surface.runtimeRefresh.evidenceState, 'INVALID', JSON.stringify(fields));
+    assert.equal(surface.state, 'UNPROVEN', JSON.stringify(fields));
+    assert.equal(surface.blocker, 'POST_SYNC_REFRESH_EVIDENCE_INVALID');
+    assert.equal(surface.rawState, String(fields.classification ?? (Object.hasOwn(fields, 'classification')
+      ? success.finalVerdict : success.classification)).toUpperCase());
+  }
+  const legacy = beaconSurface(record(success));
+  assert.equal(legacy.state, 'REFRESH_COMPLETE');
+  assert.equal(legacy.runtimeRefresh.evidenceState, 'OBSERVED');
+  assert.equal(legacy.runtimeRefresh.spatialAdoptionRequired, null);
+  assert.equal(legacy.runtimeRefresh.spatialAdoptionPathCount, null);
+});
+
+test('Spatial adoption hold stays visible after net revert and contradicts every success signal', () => {
+  const hold = { classification: 'BLOCKED_SPATIAL_ADOPTION_REQUIRED', phase: 'blocked',
+    finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED', blocker: 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN',
+    spatialAdoptionRequired: true, spatialAdoptionPathCount: 0, exactHeadProofOk: false, ok: false };
+  for (const spatialAdoptionPathCount of [0, 1, 2]) {
+    const surface = beaconSurface(record({ ...hold, spatialAdoptionPathCount }));
+    assert.equal(surface.state, 'BLOCKED_SPATIAL_ADOPTION_REQUIRED');
+    assert.equal(surface.runtimeRefresh.evidenceState, 'OBSERVED');
+    assert.equal(surface.runtimeRefresh.spatialAdoptionRequired, true);
+    assert.equal(surface.runtimeRefresh.spatialAdoptionPathCount, spatialAdoptionPathCount);
+    for (const contradiction of [
+      { classification: 'REFRESH_COMPLETE' }, { classification: 'NO_RUNTIME_REFRESH_REQUIRED' },
+      { phase: 'complete' }, { finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_PASS' }, { ok: true }, { exactHeadProofOk: true },
+    ]) {
+      const invalid = beaconSurface(record({ ...hold, spatialAdoptionPathCount, ...contradiction }));
+      assert.equal(invalid.runtimeRefresh.evidenceState, 'INVALID');
+      assert.equal(invalid.state, 'UNPROVEN');
+      assert.equal(invalid.blocker, 'POST_SYNC_REFRESH_EVIDENCE_INVALID');
+    }
+  }
+  for (const spatialAdoptionRequired of [false, undefined]) {
+    const invalid = beaconSurface(record({ ...hold, spatialAdoptionRequired }));
+    assert.equal(invalid.runtimeRefresh.evidenceState, 'INVALID');
+    assert.equal(invalid.state, 'UNPROVEN');
+  }
+});
+
+test('stale contradictory Spatial success cannot regain public event-proof status', () => {
+  const input = record({ classification: 'REFRESH_COMPLETE', phase: 'complete', finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_PASS',
+    spatialAdoptionRequired: true, spatialAdoptionPathCount: 0, exactHeadProofOk: true,
+    timestampUtc: new Date(NOW.getTime() - 3_600_000).toISOString() });
+  const beacon = buildCompleteBeacon({ sourceHead: HEAD, now: NOW, statusRecords: { postSyncRefresh: input } });
+  const surface = beacon.surfaces.find(row => row.id === 'postSyncRefresh');
+  assert.equal(surface.runtimeRefresh.evidenceState, 'INVALID');
+  assert.equal(surface.state, 'UNPROVEN');
+  assert.equal(surface.rawState, 'REFRESH_COMPLETE');
+  const coverage = beacon.telemetry.coverage.find(row => row.surfaceId === 'postSyncRefresh');
+  assert.ok(coverage);
+  assert.notEqual(coverage?.state, 'CURRENT_EXACT_HEAD_EVENT_PROOF');
+  assert.equal(coverage?.answered, false);
+});
+
+function assertSpatialPublicHold(input, label = '') {
+  const beacon = buildCompleteBeacon({ sourceHead: HEAD, now: NOW, statusRecords: { postSyncRefresh: input } });
+  const surface = beacon.surfaces.find(row => row.id === 'postSyncRefresh');
+  const coverage = beacon.telemetry.coverage.find(row => row.surfaceId === 'postSyncRefresh');
+  const health = beacon.telemetry.executive.questions.find(row => row.questionClass === 'POST_SYNC_REFRESH_HEALTH');
+  assert.equal(coverage.answered, false, label);
+  assert.equal(health.answered, false, label);
+  assert.notEqual(coverage.gapClass, 'NONE', label);
+  assert.notEqual(coverage.state, 'CURRENT_EXACT_HEAD_EVENT_PROOF', label);
+  assert.equal(surface.runtimeRefresh.spatialAdoptionRequired, true, label);
+  return surface;
+}
+
+test('a real successful target checkpoint leaves Spatial publicly unpaid at every age', () => {
+  const mailbox = POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX;
+  const plan = classifyPostSyncRefresh(['scripts/battle-bridge-github-command-mailbox.mjs', 'scripts/spatial-window-host.mjs']);
+  const checkpoint = buildPostSyncRefreshProjection({ ok: false, classification: 'REFRESH_READY', plan,
+    results: [{ targetId: mailbox, ok: true, exactHeadProofOk: true, sourceHead: HEAD, blocker: '' }],
+    exactHeadProofOk: false }, { beforeHead: OTHER_HEAD, afterHead: HEAD });
+  for (const age of [0, 3_600_000]) {
+    const surface = assertSpatialPublicHold({ ...checkpoint, phase: 'checkpoint-1', timestampUtc: new Date(NOW.getTime() - age).toISOString() });
+    assert.equal(surface.runtimeRefresh.evidenceState, 'OBSERVED');
+    assert.equal(surface.runtimeRefresh.classification, 'REFRESH_READY');
+    assert.equal(surface.rawState, 'REFRESH_READY');
+    assert.equal(surface.state, 'BLOCKED_SPATIAL_ADOPTION_REQUIRED');
+    assert.equal(surface.blocker, 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN');
+  }
+});
+
+test('Spatial public debt is invariant across canonical classifications, persisted phases, age and target outcomes', () => {
+  const classifications = Object.values(POST_SYNC_REFRESH_CLASSIFICATIONS);
+  const phases = ['plan', 'blocked', 'complete', ...Array.from({ length: 7 }, (_, index) => `checkpoint-${index + 1}`)];
+  const mailbox = POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX;
+  let combinations = 0;
+  for (const classification of classifications) for (const phase of phases) for (const age of [0, 3_600_000])
+    for (const spatialAdoptionPathCount of [0, 1, 2]) for (const outcome of ['absent', 'pass', 'failure']) {
+      const failure = outcome === 'failure';
+      const blocker = failure ? 'GITHUB_MAILBOX_EXACT_HEAD_PROOF_FAILED'
+        : classification === 'APPROVAL_REQUIRED_OPENCLAW' ? 'OPENCLAW_REFRESH_APPROVAL_REQUIRED' : '';
+      const input = record({ beforeHead: OTHER_HEAD, classification, phase, timestampUtc: new Date(NOW.getTime() - age).toISOString(),
+        finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED', ok: false, exactHeadProofOk: false, blocker,
+        targetIds: [mailbox], resultTargets: outcome === 'absent' ? [] : [{ targetId: mailbox,
+          ok: !failure, exactHeadProofOk: !failure, sourceHead: HEAD, blocker: failure ? blocker : '' }],
+        spatialAdoptionRequired: true, spatialAdoptionPathCount });
+      const label = JSON.stringify({ classification, phase, age, spatialAdoptionPathCount, outcome });
+      const surface = assertSpatialPublicHold(input, label);
+      assert.equal(surface.rawState, classification, label);
+      assert.equal(surface.runtimeRefresh.classification, classification, label);
+      if (surface.runtimeRefresh.evidenceState === 'OBSERVED') {
+        assert.equal(surface.state, 'BLOCKED_SPATIAL_ADOPTION_REQUIRED', label);
+        assert.equal(surface.blocker, blocker || 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN', label);
+      } else {
+        assert.equal(surface.state, 'UNPROVEN', label);
+      }
+      combinations += 1;
+    }
+  assert.equal(combinations, classifications.length * phases.length * 2 * 3 * 3);
+});
+
+test('partially populated refresh evidence retains a typed Spatial obligation', () => {
+  for (const shape of [
+    { targetIds: undefined }, { resultTargets: undefined },
+    { targetIds: undefined, resultTargets: undefined }, { targetIds: null, resultTargets: null },
+  ]) {
+    const surface = assertSpatialPublicHold(record({ spatialAdoptionRequired: true, spatialAdoptionPathCount: 0, ...shape }));
+    assert.equal(surface.runtimeRefresh.evidenceState, 'MISSING');
+    assert.equal(surface.state, 'BLOCKED_SPATIAL_ADOPTION_REQUIRED');
+    assert.equal(surface.blocker, 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN');
+  }
+});
+
+test('omitted or false Spatial metadata preserves legacy public state, age and blocker behavior', () => {
+  for (const classification of Object.values(POST_SYNC_REFRESH_CLASSIFICATIONS).filter(value => value !== 'BLOCKED_SPATIAL_ADOPTION_REQUIRED')) {
+    for (const age of [0, 3_600_000]) {
+      const input = record({ classification, blocker: 'EXISTING_BLOCKER', timestampUtc: new Date(NOW.getTime() - age).toISOString() });
+      for (const spatial of [{}, { spatialAdoptionRequired: false, spatialAdoptionPathCount: 0 }]) {
+        const surface = beaconSurface({ ...input, ...spatial });
+        assert.equal(surface.state, age ? 'STALE' : classification);
+        assert.equal(surface.rawState, classification);
+        assert.equal(surface.blocker, 'EXISTING_BLOCKER');
+        assert.equal(surface.runtimeRefresh.evidenceState, 'OBSERVED');
+      }
+    }
+  }
+});
+
 test('a stale pending range retains its own head while changed range and counts remain publishable', () => {
   const input = record({ beforeHead: 'c'.repeat(40), afterHead: OTHER_HEAD, unknownPathCount: 33,
     timestampUtc: '2026-10-28T20:33:22.997Z', classification: 'BLOCKED_UNCLASSIFIED_RUNTIME_PATH' });
