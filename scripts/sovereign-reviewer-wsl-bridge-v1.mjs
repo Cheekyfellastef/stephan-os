@@ -112,6 +112,7 @@ export const REVIEWER_CRITICAL_SOURCE_PATHS = Object.freeze([
   'scripts/sovereign-reviewer-ollama-calibration-v1.mjs',
   'scripts/battle-bridge-github-sync-policy.mjs',
   'shared/agents/sovereignReviewerV1.mjs',
+  'shared/agents/sovereignReviewerOllamaBindingV1.mjs',
   'shared/agents/sovereignCalibrationV1.mjs',
   'shared/agents/battleBridgeExecutionBoundaryV1.mjs',
   'shared/agents/battleBridgeWindowsHosts.mjs',
