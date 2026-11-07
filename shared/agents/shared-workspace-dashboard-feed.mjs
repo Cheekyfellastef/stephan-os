@@ -1,5 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { throwIfWorkspaceReadAborted, waitForWorkspaceRead } from '../runtime/workspaceReadCancellation.mjs';
 import { projectWorkspaceAutonomyBuildTrack } from './autonomyBuildTrackV1.mjs';
 import { projectSharedWorkspaceProofIndexV1 } from './sharedWorkspaceProofIndexV1.mjs';
 import { projectGoalBuildGateObservatoryV1 } from '../runtime/goalBuildGateObservatoryV1.mjs';
@@ -34,6 +35,26 @@ export const MIN_DASHBOARD_FEED_POLL_INTERVAL_MS = 15_000;
 export const DEFAULT_DASHBOARD_FEED_POLL_INTERVAL_MS = 30_000;
 const RECORD_READ_CONCURRENCY = 16;
 const directoryReadFlights = new WeakMap();
+const readerBudgets = new WeakMap();
+
+// Share the I/O allowance across directories and overlapping consumers. A slow
+// file occupies one slot, never an entire batch; FIFO admission prevents a
+// large history scan from continually overtaking another waiting directory.
+async function withinReaderBudget(reader, operation) {
+  let budget = readerBudgets.get(reader);
+  if (!budget) {
+    budget = { active: 0, waiting: [] };
+    readerBudgets.set(reader, budget);
+  }
+  if (budget.active < RECORD_READ_CONCURRENCY) budget.active += 1;
+  else await new Promise(resolve => budget.waiting.push(resolve));
+  try { return await operation(); }
+  finally {
+    const next = budget.waiting.shift();
+    if (next) next();
+    else budget.active -= 1;
+  }
+}
 
 const DIRECTORY_BY_KIND = Object.freeze({
   goals: 'goalRecords',
@@ -119,6 +140,7 @@ function classifyFeed({ resolved, records, projection, errors }) {
 }
 
 export async function readSharedWorkspaceRecordDirectory(root, directory, options = {}) {
+  throwIfWorkspaceReadAborted(options.signal);
   const resolved = resolveSharedWorkspacePath({ root, repoRoot: options.repoRoot, segments: [directory] });
   if (!resolved.ok) return { records: [], errors: [`${directory}:${resolved.reason}`] };
   const reader = options.readFile || readFile;
@@ -128,10 +150,14 @@ export async function readSharedWorkspaceRecordDirectory(root, directory, option
   if (!flight) {
     flight = readDirectorySnapshot(resolved.path, directory, reader);
     flights.set(resolved.path, flight);
+    // The operation owns this registry entry until actual settlement. A caller
+    // leaving early must not remove it and admit a duplicate directory scan.
+    const ownedFlight = flight;
+    const retire = () => { if (flights.get(resolved.path) === ownedFlight) flights.delete(resolved.path); };
+    ownedFlight.then(retire, retire);
   }
-  let snapshot;
-  try { snapshot = await flight; }
-  finally { if (flights.get(resolved.path) === flight) flights.delete(resolved.path); }
+  const snapshot = await waitForWorkspaceRead(flight, options.signal);
+  throwIfWorkspaceReadAborted(options.signal);
   // Share only I/O in progress, never a cached authority/freshness verdict.
   // Each caller owns its returned objects and validates against its own clock.
   const records = [];
@@ -183,12 +209,17 @@ async function readDirectorySnapshot(path, directory, reader) {
       return { error: `${directory}/${name}:PARSE_FAILED:${error?.message || 'unknown'}` };
     }
   };
-  for (let offset = 0; offset < selectedNames.length; offset += RECORD_READ_CONCURRENCY) {
-    const batch = await Promise.all(selectedNames.slice(offset, offset + RECORD_READ_CONCURRENCY).map(readRecord));
-    for (const result of batch) {
-      if (result.entry) entries.push(result.entry);
-      if (result.error) errors.push(result.error);
+  const results = new Array(selectedNames.length);
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: Math.min(RECORD_READ_CONCURRENCY, selectedNames.length) }, async () => {
+    while (nextIndex < selectedNames.length) {
+      const index = nextIndex++;
+      results[index] = await withinReaderBudget(reader, () => readRecord(selectedNames[index]));
     }
+  }));
+  for (const result of results) {
+    if (result.entry) entries.push(result.entry);
+    if (result.error) errors.push(result.error);
   }
   return { entries, errors };
 }
@@ -335,6 +366,7 @@ export function createLoadingSharedWorkspaceDashboardFeed(input = {}) {
 }
 
 export async function readSharedWorkspaceDashboardFeed(input = {}) {
+  throwIfWorkspaceReadAborted(input.signal);
   let nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : DEFAULT_STALE_AFTER_MS;
   const polling = createSharedWorkspaceDashboardPollingContract(input);
@@ -343,12 +375,18 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
   const records = emptyRecords();
   const errors = [];
   if (resolved.ok) {
-    for (const [directory, key] of Object.entries(DIRECTORY_BY_KIND)) {
-      if (
-        recordScope === SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE
-        && HISTORICAL_DIRECTORIES.has(directory)
-      ) continue;
-      const result = await readSharedWorkspaceRecordDirectory(resolved.root, directory, { repoRoot: input.repoRoot, nowMs, staleAfterMs });
+    const directories = Object.entries(DIRECTORY_BY_KIND).filter(([directory]) => !(
+      recordScope === SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE
+      && HISTORICAL_DIRECTORIES.has(directory)
+    ));
+    // Enumerations can overlap, while all generic record reads still share the
+    // same bounded allowance. Collect in canonical directory order, not finish order.
+    const results = await Promise.all(directories.map(([directory]) =>
+      readSharedWorkspaceRecordDirectory(resolved.root, directory, {
+        repoRoot: input.repoRoot, nowMs, staleAfterMs, readFile: input.readFile, signal: input.signal,
+      })));
+    for (const [index, [, key]] of directories.entries()) {
+      const result = results[index];
       records[key] = result.records;
       errors.push(...result.errors);
     }
@@ -359,6 +397,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
   const stephanosBuildTruthStatus = resolved.ok
     ? await readStephanosBuildTruthStatus(resolved.root, { repoRoot: input.repoRoot, nowMs, staleAfterMs })
     : Object.freeze({ truth: 'UNKNOWN', blocker: resolved.reason, record: null });
+  throwIfWorkspaceReadAborted(input.signal);
   // A live observation is sampled after the asynchronous record reads.
   if (!Number.isFinite(input.nowMs)) nowMs = Date.now();
   const latest = {
@@ -385,6 +424,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     ? await readSharedWorkspaceBrainStateStatus(resolved.root, { repoRoot: input.repoRoot, nowMs })
     : projectSharedWorkspaceBrainStateV1({ statusRecords: [], nowMs });
   const classification = classifyFeed({ resolved, records, projection, errors });
+  throwIfWorkspaceReadAborted(input.signal);
   return Object.freeze({
     schemaVersion: SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION,
     kind: 'stephanos.shared_workspace.dashboard_feed',

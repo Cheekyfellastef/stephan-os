@@ -34,6 +34,11 @@ export const MISSION_CONTROLLER_ROUTE = Object.freeze({
 export const FORGE_LIFEBOAT_WORKER_ID = 'stephanos-forge-lifeboat-local';
 export const FORGE_LIFEBOAT_AUTHORITY_PREFIX = 'forge-lifeboat-local-source-';
 export const FORGE_LIFEBOAT_PROOF_PREFIX = 'proof/forge-lifeboat-local-capacity-';
+// The current Mission Worker and compiled SOURCE_TASK_V1 consumer admit only
+// focused work with one to four raw scope entries. Capacity is not native
+// qualification; the original worker still obtains that at actual pickup.
+export const FORGE_LIFEBOAT_LOCAL_TASK_CLASSES = Object.freeze([CODEX_TASK_CLASS.FOCUSED_REPAIR]);
+export const FORGE_LIFEBOAT_MAX_ALLOWED_FILES = 4;
 
 const RECEIPT_KEYS = Object.freeze([
   'schemaVersion', 'receiptId', 'route', 'repository', 'workerId', 'state',
@@ -97,6 +102,28 @@ export function forgeLifeboatAuthorityReceiptId(sourceHead = '') {
 export function forgeLifeboatProofRef(sourceHead = '') {
   const normalized = text(sourceHead).toLowerCase();
   return FULL_SHA.test(normalized) ? `${FORGE_LIFEBOAT_PROOF_PREFIX}${normalized}.json` : '';
+}
+
+export { taskForMission as projectMissionControllerTaskV1 };
+
+export function projectForgeLifeboatSourceCompatibilityV1(mission = {}, explicitTask = {}) {
+  const task = taskForMission(mission, explicitTask);
+  const scopes = mission.allowedFiles;
+  // Count the original representation, including path/** companions. Neither
+  // de-duplication nor path rewriting may make a wider contract appear focused.
+  const allowedFileCount = Array.isArray(scopes) ? scopes.length : 0;
+  const scopeSupported = Array.isArray(scopes) && allowedFileCount >= 1
+    && allowedFileCount <= FORGE_LIFEBOAT_MAX_ALLOWED_FILES
+    && scopes.every(scope => typeof scope === 'string' && scope.trim().length > 0);
+  const taskSupported = !task.windowsBound && FORGE_LIFEBOAT_LOCAL_TASK_CLASSES.includes(task.taskClass);
+  return frozen({
+    compatible: scopeSupported && taskSupported,
+    reason: !scopeSupported ? 'FORGE_LIFEBOAT_LOCAL_SOURCE_SCOPE_UNSUPPORTED'
+      : !taskSupported ? 'FORGE_LIFEBOAT_LOCAL_TASK_CLASS_UNSUPPORTED' : '',
+    taskClass: task.taskClass,
+    allowedFileCount,
+    maxAllowedFiles: FORGE_LIFEBOAT_MAX_ALLOWED_FILES,
+  });
 }
 
 function taskForMission(mission = {}, explicitTask = {}) {
@@ -293,7 +320,7 @@ function nativeCandidateForAdmission(candidate, expected, sourceHead) {
 
 function forgeLifeboatCandidate(receipt, expected, sourceHead) {
   const normalizedHead = text(sourceHead).toLowerCase();
-  if (!FULL_SHA.test(normalizedHead) || receipt?.workerId !== FORGE_LIFEBOAT_WORKER_ID) return null;
+  if (!FULL_SHA.test(normalizedHead) || text(receipt?.workerId) !== FORGE_LIFEBOAT_WORKER_ID) return null;
   const candidate = candidateForReceipt(receipt, expected);
   if (candidate?.route !== MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE) return null;
   const authorityId = forgeLifeboatAuthorityReceiptId(normalizedHead);
@@ -301,7 +328,7 @@ function forgeLifeboatCandidate(receipt, expected, sourceHead) {
   if (candidate.authorityReceiptIds.length !== 1 || candidate.authorityReceiptIds[0] !== authorityId) return null;
   if (candidate.proofRefs.length !== 1 || candidate.proofRefs[0] !== proofRef) return null;
   if (candidate.p95StartLatencySeconds > 600 || candidate.queueDepth > 64) return null;
-  return candidate;
+  return frozen({ ...candidate, workerId: FORGE_LIFEBOAT_WORKER_ID });
 }
 
 function selectFallback(input, task, nowUtc, blockedAdapters = new Set()) {
@@ -331,14 +358,16 @@ function selectFallback(input, task, nowUtc, blockedAdapters = new Set()) {
     }
   }
   const forge = adjudicateForgeSidecarCapacity(input.forgeSidecar, { nowUtc });
-  const lifeboat = !task.windowsBound
+  const localForgeCompatible = projectForgeLifeboatSourceCompatibilityV1(input.mission, task).compatible;
+  const lifeboat = localForgeCompatible
     ? forgeLifeboatCandidate(input.forgeLaneReceipt, expected, input.sourceHead)
     : null;
   const forgeCandidate = candidateForReceipt(input.forgeLaneReceipt, expected);
   if (lifeboat) {
     candidates.push(lifeboat);
   } else if (
-    forge?.canCarryRealWork === true
+    text(input.forgeLaneReceipt?.workerId) !== FORGE_LIFEBOAT_WORKER_ID
+    && forge?.canCarryRealWork === true
     && forgeCandidate?.route === MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE
     && forgeCandidate.authorityReceiptIds.includes(forge.m2ReceiptId)
     && forgeCandidate.authorityReceiptIds.includes(forge.m3RuntimeReceiptId)

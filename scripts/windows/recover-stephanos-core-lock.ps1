@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][ValidatePattern('^[a-f0-9]{40}$')][string]$ExpectedHead,
-    [Parameter(Mandatory = $true)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedLockSha256,
+    [ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedLockSha256,
+    [switch]$AbsentLock,
     [switch]$OperatorApproved,
     [switch]$RetireOnlyChild
 )
@@ -63,6 +64,9 @@ function Write-CoreRecoveryResult {
 
 try {
     if (-not $OperatorApproved) { throw 'CORE_RECOVERY_EXACT_OPERATOR_APPROVAL_REQUIRED' }
+    if (($AbsentLock -and $ExpectedLockSha256) -or (-not $AbsentLock -and -not $ExpectedLockSha256)) {
+        throw 'CORE_RECOVERY_EXACTLY_ONE_LOCK_MODE_REQUIRED'
+    }
     Assert-CoreRecoveryEnvironment
     if ($env:NODE_OPTIONS -or $env:NODE_PATH) { throw 'CORE_RECOVERY_NODE_LOADER_OVERRIDE_REFUSED' }
     if (-not [string]::Equals([IO.Path]::GetFullPath($PSCommandPath), $entry, [StringComparison]::OrdinalIgnoreCase)) { throw 'CORE_RECOVERY_CANONICAL_ENTRY_REQUIRED' }
@@ -91,6 +95,25 @@ try {
         . $inventoryPath
         Import-Module (Join-Path $PSHOME 'Modules\CimCmdlets\CimCmdlets.psd1') -ErrorAction Stop
         Add-Type -TypeDefinition ([IO.File]::ReadAllText($nativePath))
+        if ($AbsentLock) {
+            # Same attended child/limited parent, no retirement and no report
+            # accepted by the parent. Reuse existing native ancestor pins; the
+            # absence handle cannot archive or commit any lock object.
+            $absence = [StephanosCoreLockRecoveryV1]::new($lockPath, $true)
+            try {
+                $captureClock = [Diagnostics.Stopwatch]::StartNew()
+                $absence.AssertAbsent()
+                $before = Get-StephanosCoreProcessIdentityObservation -CoreScript $coreScript
+                Assert-CoreRecoverySource
+                $after = Get-StephanosCoreProcessIdentityObservation -CoreScript $coreScript
+                $absence.AssertAbsent()
+                Assert-StephanosCoreAbsentInventoryPair -Before $before -After $after -ElapsedSeconds $captureClock.Elapsed.TotalSeconds
+                Assert-CoreRecoverySource
+                Assert-StephanosCoreAbsentInventoryPair -Before $before -After $after -ElapsedSeconds $captureClock.Elapsed.TotalSeconds
+            } finally { $absence.Dispose() }
+            Write-CoreRecoveryResult $true 'CORE_ABSENT_INVENTORY_OBSERVED'
+            exit 0
+        }
         $handle = [StephanosCoreLockRecoveryV1]::new($lockPath)
         try {
             $observe = {
@@ -113,12 +136,29 @@ try {
     # A real child process exit is the continuation signal; no writable receipt
     # or caller-authored observation can authorise starting the limited Core.
     $arguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', ('"' + $entry + '"'),
-        '-ExpectedHead', $ExpectedHead, '-ExpectedLockSha256', $ExpectedLockSha256,
+        '-ExpectedHead', $ExpectedHead,
         '-OperatorApproved', '-RetireOnlyChild')
-    $child = Start-Process -FilePath $powerShell -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+    if ($AbsentLock) { $arguments += '-AbsentLock' }
+    else { $arguments += @('-ExpectedLockSha256', $ExpectedLockSha256) }
+    $childAttemptUtc = [DateTime]::UtcNow
+    $childClock = [Diagnostics.Stopwatch]::StartNew()
+    if ($AbsentLock) {
+        $child = Start-Process -FilePath $powerShell -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -PassThru
+        $childExpectedPid = $child.Id
+        $childExpectedStartedUtc = $child.StartTime.ToUniversalTime()
+        if (-not $child.WaitForExit(120000)) { throw 'CORE_RECOVERY_CHILD_TERMINAL_UNPROVEN' }
+    } else {
+        $child = Start-Process -FilePath $powerShell -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+    }
     if ($child.ExitCode -ne 0) { throw 'CORE_RECOVERY_CHILD_BLOCKED_OR_UNCERTAIN' }
-    $lockRetired = $true
+    if (-not $AbsentLock) { $lockRetired = $true }
     Assert-CoreRecoverySource
+    if ($AbsentLock) {
+        Assert-StephanosCoreLockAbsent -LockPath $lockPath
+        # Last operation before fixed start: age the native terminal timestamp,
+        # including suspended-parent and source/path-check time. No reset clock.
+        Assert-StephanosCoreAttendedChildContinuation -Child $child -ElapsedSeconds $childClock.Elapsed.TotalSeconds -AttemptUtc $childAttemptUtc -NowUtc ([DateTime]::UtcNow) -ExpectedPid $childExpectedPid -ExpectedStartedUtc $childExpectedStartedUtc
+    }
     # The canonical daemon still uses its unchanged exclusive-create lock.
     # A competing admitted start can win; it cannot cause a second owner.
     $core = Start-Process -FilePath $node -ArgumentList ('"' + $coreScript + '"') -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru

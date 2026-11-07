@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -23,7 +24,7 @@ function receipt(operation, result, overrides = {}) {
     requestId: overrides.requestId || `request-${operation.toLowerCase().replace(/_/g, '-')}`,
     operation,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: overrides.issueNumber ?? 3149,
+    issueNumber: overrides.issueNumber ?? activeMailboxIssueForTest,
     branch: 'main',
     state: overrides.state || (result.ok === false ? 'BLOCKED' : 'DONE'),
     acceptedAt: overrides.acceptedAt || '2026-07-21T09:00:00.000Z',

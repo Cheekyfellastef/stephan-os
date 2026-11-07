@@ -8,7 +8,9 @@ import { fileURLToPath } from 'node:url';
 import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import { createSharedWorkspaceStatusRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
-import { createControlTowerBuildConsumerV1 } from './control-tower-build-consumer-v1.mjs';
+import { createControlTowerBuildConsumerV1, controlTowerRequestPointersFromRelayStatusV1,
+  controlTowerBuildInitialStatusV1, retainControlTowerBuildStatusV1 } from './control-tower-build-consumer-v1.mjs';
+import { readJsonObject } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 
 export const SOVEREIGN_RELAY_SCHEMA = 'stephanos.sovereign-relay-daemon.v1';
 export const SOVEREIGN_RELAY_HOT_POLL_MS = 2500;
@@ -280,8 +282,12 @@ export async function runSovereignRelayCycleWithHeartbeat({
   let buildTask = null;
   const refreshBuild = () => {
     if (typeof observeBuild !== 'function' || buildTask) return;
-    buildTask = Promise.resolve().then(observeBuild).then(value => { buildStatus = value; })
-      .catch(() => { buildStatus = { state: 'HELD', blocker: 'CONTROL_TOWER_BUILD_OBSERVATION_FAILED' }; })
+    // Timestamp the actual fixed consumer observation, not just this relay's
+    // heartbeat. Otherwise an old cached wake could appear newly verified.
+    buildTask = Promise.resolve().then(observeBuild).then(value => {
+      buildStatus = retainControlTowerBuildStatusV1(buildStatus, value, { nowMs: now().getTime() });
+    })
+      .catch(() => { buildStatus = retainControlTowerBuildStatusV1(buildStatus, null, { nowMs: now().getTime() }); })
       .finally(() => { buildTask = null; });
   };
 
@@ -320,6 +326,13 @@ export async function runSovereignRelayCycleWithHeartbeat({
     const cycle = await runCycle({ env });
     if (buildTask) await buildTask;
     return observeBuild ? Object.freeze({ ...cycle, controlTowerBuild: buildStatus }) : cycle;
+  } catch (error) {
+    if (buildTask) await buildTask;
+    buildStatus = retainControlTowerBuildStatusV1(buildStatus, null,
+      { nowMs: now().getTime(), failureBlocker: 'CONTROL_TOWER_RELAY_CYCLE_FAILED' });
+    return Object.freeze({ ok: false, busy: false, blocker: 'SOVEREIGN_RELAY_GUARD_CYCLE_EXCEPTION',
+      guardVerdict: '', detail: boundedText(error?.message || error), childExitCode: null,
+      controlTowerBuild: buildStatus });
   } finally {
     stopped = true;
     if (heartbeatTimer) clearTimeoutFn(heartbeatTimer);
@@ -508,12 +521,21 @@ export async function runSovereignRelayDaemon({
   const workspace = resolveSharedWorkspaceRuntimeConfig({ repoRoot, env });
   if (!workspace.ok) throw new Error(`SOVEREIGN_RELAY_WORKSPACE_BLOCKED:${workspace.reason}`);
   const statusPath = resolve(workspace.root, 'status', 'sovereign-relay-current.json');
+  // This existing status file carries locators only. The consumer re-reads the
+  // original execution ledger for every retained outcome after a restart.
+  let restoredRequestPointers = {};
+  try {
+    restoredRequestPointers = controlTowerRequestPointersFromRelayStatusV1(
+      readJsonObject(statusPath, { allowMissing: true, maxBytes: 65536 }));
+  } catch { /* Missing or unsafe status never creates an execution receipt. */ }
   const observeBuild = createControlTowerBuildConsumerV1({
-    sourceHead, repoRoot, env, now,
+    sourceHead, repoRoot, env, now, ...restoredRequestPointers,
     readSourceHead: () => sourceHeadFn({ env, platform: process.platform, cwd: repoRoot }),
   });
 
-  let lastStatus = null;
+  // Preserve only bounded request locators in the first in-flight write too;
+  // a crash before the first consumer result must not erase the saved pointers.
+  let lastStatus = { controlTowerBuild: controlTowerBuildInitialStatusV1(restoredRequestPointers) };
   let lastActivityAtMs = Date.now();
   let consecutiveCarrierFailures = 0;
   let lastCarrierHealthyAtMs = null;
@@ -540,6 +562,8 @@ export async function runSovereignRelayDaemon({
         guardVerdict: '',
         detail: boundedText(error?.message || error),
         childExitCode: null,
+        controlTowerBuild: retainControlTowerBuildStatusV1(lastStatus?.controlTowerBuild, null,
+          { nowMs: now().getTime(), failureBlocker: 'CONTROL_TOWER_RELAY_CYCLE_FAILED' }),
       });
     }
     const completedAtMs = Date.now();

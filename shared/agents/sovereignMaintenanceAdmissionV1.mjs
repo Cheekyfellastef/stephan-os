@@ -4,19 +4,20 @@ import {
   FLEET_SUPERVISOR_ACTION, FLEET_SUPERVISOR_SCHEMA, FLEET_SUPERVISOR_MARKER,
 } from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 const READ_ONLY_ACTIONS = new Set([
-  'battle-bridge-status', 'battle-bridge-observe', 'meter-status',
+  'battle-bridge-status', 'battle-bridge-observe', 'diagnose-ignition', 'meter-status',
   'controller-lane-status', 'rescue-island-readonly-boundary', 'visibility-snapshot',
   'cpu-pressure-snapshot', 'status-recovery-mesh', 'status-worker-watchdog',
   'status-stephanos-core-daemon',
   'status-mission-orchestrator-worker', 'status-stephanos-backend',
   'starfield-vr-telemetry-archive',
+  'observe-open-stephanos-tabs', // fixed --native-receipt-only; no CDP or writes
 ]);
 // Names do not prove observation-only behavior. Gaming Status can reconcile
 // missing state and evict Ollama; the opaque OpenClaw CLI can load plugins.
 // Both retain ordinary owner admission rather than bypassing a custody hold.
 export const SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER =
   'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN';
-export const SOVEREIGN_MAINTENANCE_OWNER_VERSION = '2026-10-21-guardian-reservation-v1';
+export const SOVEREIGN_MAINTENANCE_OWNER_VERSION = '2026-10-28-fixed-runtime-reservation-v2';
 
 // Shared disposition for automatic broad Core repair. Native custody has not
 // been enrolled. Neither a healthy worker nor the manual maintenance route

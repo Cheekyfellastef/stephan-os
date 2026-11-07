@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
+import { FORGE_LIFEBOAT_WORKER_ID, MISSION_CONTROLLER_ROUTE } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
 import { withOriginalSourceAttemptMutationGuard } from './originalSourceAttemptFenceService.js';
-import { existsSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { lstat, readFile, realpath as fsRealpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -12,7 +13,7 @@ import {
   finalizeMissionWorkerQueueClaim,
 } from './missionOrchestratorWorkerConsumer.js';
 import { collectAgentWorkerResult } from './missionOrchestratorWorkerService.js';
-import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
+import { captureSourceArtifactIdentityFromWorktreeV1, finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 import { analyzeImportStructureInSource } from '../../scripts/guard-import-structure.mjs';
 import { projectGoalTestContextPathsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 import { requestBoundedOllamaJsonReplyV1 } from '../../shared/ai/boundedOllamaJsonReplyV1.mjs';
@@ -23,6 +24,11 @@ import {
 } from './githubPrEvidenceService.js';
 
 export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutral-source-builder.v1';
+// Capture this once when the module loads. A later disk read alone cannot bind
+// an already-loaded module to the source revision being inspected.
+const LOADED_SOURCE_SHA256 = createHash('sha256')
+  .update(readFileSync(new URL(import.meta.url)))
+  .digest('hex');
 const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github', 'sovereign-commander']);
 
 // Source context caps
@@ -405,6 +411,57 @@ function normalizeStructuredEdits(edits, allowedFiles, sourceSnapshots) {
     normalized.push(Object.freeze({ path, old: oldText, new: newText }));
   }
   return Object.freeze(normalized);
+}
+
+// A fixed in-memory contract inspection, not build, custody or acceptance proof.
+// It cannot take a caller-selected path, edit, model, command or proof result.
+export function inspectStructuredNewFileContractV1() {
+  if (arguments.length !== 0) throw new TypeError('STRUCTURED_NEW_FILE_INSPECTION_TAKES_NO_INPUT');
+  const file = 'shared/agents/structured-new-file-inspection.mjs';
+  const contents = 'export const created = true;\n';
+  const edit = { path: file, old: '', new: contents };
+  const observe = operation => {
+    try { return operation() === true; } catch { return false; }
+  };
+  const rejects = (candidate, snapshots, expected) => {
+    try { normalizeStructuredEdits([candidate], [file], snapshots); return false; }
+    catch (error) { return error?.message === expected; }
+  };
+  const observations = {
+    acceptsEmptySnapshotNewFile: observe(() => {
+      const normalized = normalizeStructuredEdits([edit], [file], []);
+      return modelStructuredEditsContractValid([edit])
+        && normalized.length === 1 && normalized[0].path === file
+        && normalized[0].old === '' && normalized[0].new === contents;
+    }),
+    rejectsInventedOldContents: rejects({ ...edit, old: 'invented prior contents' }, [],
+      `PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTEXT_REQUIRED:${file}`),
+    rejectsEmptyOldForExistingFile: rejects(edit, [{ path: file, content: contents }],
+      `PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:${file}`),
+    rejectsOutOfScope: rejects({ ...edit, path: 'shared/agents/outside-inspection.mjs' }, [],
+      'PROVIDER_NEUTRAL_SCOPE_VIOLATION:shared/agents/outside-inspection.mjs'),
+    rejectsTraversal: rejects({ ...edit, path: 'shared/agents/../outside-inspection.mjs' }, [],
+      'PROVIDER_NEUTRAL_SCOPE_VIOLATION:shared/agents/../outside-inspection.mjs'),
+    rejectsEmptyNewFile: rejects({ ...edit, new: '' }, [],
+      `PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:${file}`),
+    modelRequestAcceptsStructuredEditsWithoutSnapshots: observe(() => {
+      const request = createLocalBuilderModelRequestV1({ model: 'contract-inspection',
+        prompt: localBuilderPrompt({ allowedFiles: [file], requiredTests: [] }, []),
+        patchFallbackAllowed: modelPatchFallbackAllowed({}, []) });
+      const alternatives = request.format?.anyOf || [request.format];
+      return alternatives.some(schema => schema?.type === 'object'
+        && schema.additionalProperties === false
+        && JSON.stringify(schema.required) === JSON.stringify(['edits', 'summary'])
+        && schema.properties?.edits?.type === 'array'
+        && schema.properties.edits.minItems === 1
+        && schema.properties.edits.items?.additionalProperties === false
+        && JSON.stringify(schema.properties.edits.items.required) === JSON.stringify(['path', 'old', 'new'])
+        && ['path', 'old', 'new'].every(key =>
+          JSON.stringify(schema.properties.edits.items.properties?.[key]) === '{"type":"string"}'));
+    }),
+  };
+  return Object.freeze({ schemaVersion: 'stephanos.structured-new-file-contract.v1',
+    loadedSourceSha256: LOADED_SOURCE_SHA256, observations: Object.freeze(observations) });
 }
 
 async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, options = {}) {
@@ -888,6 +945,48 @@ async function claimExternal(options = {}) {
   return null;
 }
 
+
+export const PROVIDER_NEUTRAL_SOURCE_BUILD_PROPOSAL_SCHEMA = 'stephanos.provider-neutral-source-build-proposal.v1';
+// Only the explicit proposal entry can select this internal behavior. Serialized
+// options cannot turn ordinary legacy execution into a different authority lane.
+const SOURCE_BUILD_PROPOSAL_MODE = Symbol('source-build-proposal');
+
+function requireLocalOwnedSourceProposalClaim(claim) {
+  const item = claim?.item;
+  const action = item?.payload;
+  const grant = item?.actionGrant;
+  const same = key => text(grant?.[key]).toLowerCase() === text(action?.[key]).toLowerCase();
+  if (claim?.adapter !== 'foundry-forge' || item?.adapter !== 'foundry-forge'
+      || item?.schemaVersion !== 'stephanos.mission-worker-queue-item.v1'
+      || action?.adapter !== 'foundry-forge' || action?.actionKind !== 'agent-handoff'
+      || grant?.schemaVersion !== 'stephanos.mission-worker-action-grant.v1'
+      || grant.adapter !== 'foundry-forge' || grant.actionKind !== 'agent-handoff'
+      || grant.capacityRoute !== MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE
+      || grant.workerId !== FORGE_LIFEBOAT_WORKER_ID
+      || grant.boundedActionCount !== 1 || grant.mergeAuthority !== false
+      || grant.leaseSeizureAllowed !== false || !text(claim.processingPath)
+      || !text(action.missionId) || !text(action.actionId)
+      || !same('missionId') || !same('actionId') || !same('repository')
+      || text(item.missionId).toLowerCase() !== text(action.missionId).toLowerCase()
+      || text(item.actionId).toLowerCase() !== text(action.actionId).toLowerCase()
+      || text(grant.branch) !== text(action.branch)
+      || text(action.repository).toLowerCase() !== 'cheekyfellastef/stephan-os'
+      || !/^[a-f0-9]{40}$/.test(text(grant.sourceRevision).toLowerCase())) {
+    throw new Error('PROVIDER_NEUTRAL_LOCAL_SOURCE_PROPOSAL_CLAIM_REQUIRED');
+  }
+}
+
+// Data producer for an ALREADY-OWNED parent claim, not a claim/qualification API.
+// The fixed native driver and original parent remain responsible for authentic
+// admission, native lifetime, original ownership, scope/test binding and CAS.
+export async function produceProviderNeutralSourceBuildProposalV1(claim, options = {}) {
+  if (typeof options.runCommand !== 'function') {
+    throw new Error('PROVIDER_NEUTRAL_SOURCE_PROPOSAL_BOUNDED_RUNNER_REQUIRED');
+  }
+  requireLocalOwnedSourceProposalClaim(claim);
+  return runClaimedProviderNeutralSourceBuild(claim, options, SOURCE_BUILD_PROPOSAL_MODE);
+}
+
 export async function processNextProviderNeutralSourceBuild(options = {}) {
   const pendingQueueDiagnostics = [];
   const claim = await claimExternal({
@@ -912,6 +1011,11 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       finalVerdict: quarantined ? 'PROVIDER_NEUTRAL_PENDING_QUEUE_RECOVERY' : '',
     });
   }
+  return runClaimedProviderNeutralSourceBuild(claim, options);
+}
+
+async function runClaimedProviderNeutralSourceBuild(claim, options, mode) {
+  const proposalOnly = mode === SOURCE_BUILD_PROPOSAL_MODE;
   const action = claim.item?.payload || {};
   const worktreePath = text(action.worktreePath);
   // Future native Job Object execution needs its own independent Windows
@@ -922,6 +1026,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
   let completedAt = '';
   let patchPath = '';
   let mutationApplied = false;
+  let mutationAttempted = false;
   let structuredEditsApplied = false;
   let patchRecountUsed = false;
   let succeeded = false;
@@ -940,7 +1045,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     if (!worktreePath || !existsSync(worktreePath)) throw new Error('PROVIDER_NEUTRAL_WORKTREE_REQUIRED');
     if (!Array.isArray(action.allowedFiles) || action.allowedFiles.length === 0) throw new Error('PROVIDER_NEUTRAL_ALLOWED_FILES_REQUIRED');
 
-    executionReceipt = await beginMissionWorkerExecutionReceiptChain(claim, options);
+    if (!proposalOnly) executionReceipt = await beginMissionWorkerExecutionReceiptChain(claim, options);
 
     const startingChanges = changedFiles(worktreePath, run);
     if (startingChanges.length) throw new Error(`PROVIDER_NEUTRAL_WORKTREE_NOT_CLEAN:${startingChanges.join(',')}`);
@@ -979,7 +1084,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       { ...options, sourceSnapshots, testSnapshots },
     );
     providerCompleted = true;
-    const { finalized, receipt, sourceTestReceipts } = await guardMutation(async () => {
+    const { finalized, receipt, sourceTestReceipts, proposalExecution, proposalIdentity } = await guardMutation(async () => {
 
       if (Array.isArray(generated.edits)) {
         const structuredEditSnapshots = await hydrateStructuredEditTargetSnapshots(
@@ -990,6 +1095,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
           options,
         );
         const edits = normalizeStructuredEdits(generated.edits, sourceBuildAction.allowedFiles, structuredEditSnapshots);
+        mutationAttempted = true;
         mutationSnapshot = await applyStructuredEdits(worktreePath, edits, structuredEditSnapshots, options);
         mutationEvidence = JSON.stringify(edits);
         structuredEditsApplied = true;
@@ -1017,6 +1123,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
           patchRecountUsed = true;
           applyArgs = ['-C', worktreePath, 'apply', '--recount', '--whitespace=error-all', patchPath];
         }
+        mutationAttempted = true;
         const apply = run('git.exe', applyArgs, { cwd: worktreePath });
         if (apply.error || apply.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_APPLY_FAILED:${text(apply.stderr || apply.stdout)}`);
         mutationEvidence = patch;
@@ -1040,7 +1147,16 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
         }
       }
 
-      const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
+      const requiredTestReceipts = runRequiredTests(action, worktreePath, run, options);
+      // Newly owned regression files are additive evidence; never rewrite the
+      // immutable owner-required command identity to make them an oracle.
+      const ownedRegressionCommands = mutationSnapshot
+        .filter(saved => saved.existed === false && files.includes(saved.path)
+          && /\.(?:test|spec)\.(?:mjs|js)$/.test(saved.path))
+        .map(saved => 'node --test ' + saved.path);
+      const ownedRegressionReceipts = ownedRegressionCommands.length
+        ? runRequiredTests({ ...action, requiredTests: ownedRegressionCommands }, worktreePath, run, options) : [];
+      const sourceTestReceipts = Object.freeze([...requiredTestReceipts, ...ownedRegressionReceipts]);
       // options.now is an admission snapshot, not the completion clock.
       completedAt = new Date().toISOString();
       const receipt = Object.freeze({
@@ -1061,10 +1177,20 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
         receipt,
         evidenceReceipts: sourceTestReceipts,
         sourceTestReceipts,
+        ownedRegressionReceipts,
         stage: 'TESTED',
         testsPassed: true,
         summary: generated.summary,
       });
+      if (proposalOnly) {
+        const identity = await captureSourceArtifactIdentityFromWorktreeV1(action, execution, claim, {
+          ...options,
+          actionGrant: claim.item?.actionGrant || options.actionGrant,
+          runCommand: run,
+          repoRoot: options.repoRoot || action.repositoryRoot,
+        });
+        return { proposalExecution: execution, proposalIdentity: identity, receipt, sourceTestReceipts };
+      }
       const finalized = await finalizeSourceArtifactEscrowFromWorktreeV1(
         action,
         execution,
@@ -1081,6 +1207,28 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       }
       return { finalized, receipt, sourceTestReceipts };
     });
+
+    if (proposalOnly) {
+      succeeded = true;
+      return Object.freeze({
+        schemaVersion: PROVIDER_NEUTRAL_SOURCE_BUILD_PROPOSAL_SCHEMA,
+        processed: true,
+        success: true,
+        adapter: claim.adapter,
+        missionId: text(action.missionId),
+        actionId: text(action.actionId),
+        providerInvoked,
+        providerCompleted,
+        failureStage: '',
+        sourceState: 'SOURCE_CHANGED_TESTED_CAPTURED',
+        sourceInspection: Object.freeze({ known: true, error: '' }),
+        changedFiles: proposalExecution.changedFiles,
+        partialSourcePossible: false,
+        execution: proposalExecution,
+        sourceArtifactIdentity: proposalIdentity,
+        finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_PROPOSAL_READY',
+      });
+    }
 
     await collectResult({
       missionId: action.missionId,
@@ -1132,6 +1280,55 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     return completedResult;
   } catch (error) {
     let failure = error?.message || 'provider-neutral source build failed';
+
+    if (proposalOnly) {
+      let rollbackState = 'NOT_ATTEMPTED';
+      if (mutationApplied && !succeeded) {
+        try {
+          const rollbackPaths = changedFiles(worktreePath, run);
+          await guardMutation(async () => {
+            if (structuredEditsApplied) {
+              await restoreStructuredEditSnapshot(worktreePath, mutationSnapshot, run);
+            } else if (patchPath) {
+              await reverseAppliedPatch(worktreePath, patchPath, run, rollbackPaths, mutationSnapshot, patchRecountUsed);
+            }
+          });
+          rollbackState = 'RESTORED';
+        } catch (rollbackError) {
+          rollbackState = 'FAILED';
+          failure += ';' + (rollbackError?.message || 'PROVIDER_NEUTRAL_MUTATION_ROLLBACK_FAILED');
+        }
+      }
+      let observedFiles = null;
+      let inspectionError = '';
+      try { observedFiles = changedFiles(worktreePath, run); }
+      catch (inspectionFailure) {
+        inspectionError = inspectionFailure?.message || 'PROVIDER_NEUTRAL_SOURCE_INSPECTION_FAILED';
+      }
+      return Object.freeze({
+        schemaVersion: PROVIDER_NEUTRAL_SOURCE_BUILD_PROPOSAL_SCHEMA,
+        processed: true,
+        success: false,
+        adapter: claim.adapter,
+        missionId: text(action.missionId),
+        actionId: text(action.actionId),
+        providerInvoked,
+        providerCompleted,
+        failureStage: providerInvoked && !providerCompleted ? 'PROVIDER'
+          : providerCompleted ? 'SOURCE_OR_TEST' : 'WORKER_PRE_PROVIDER',
+        sourceState: observedFiles === null ? 'UNKNOWN'
+          : observedFiles.length ? (mutationAttempted ? 'PARTIAL_SOURCE_PRESERVED' : 'PREEXISTING_SOURCE_PRESERVED')
+            : 'UNCHANGED_OBSERVED',
+        sourceInspection: Object.freeze({ known: observedFiles !== null, error: inspectionError }),
+        changedFiles: observedFiles === null ? null : Object.freeze(observedFiles),
+        partialSourcePossible: mutationAttempted && (observedFiles === null || observedFiles.length > 0),
+        rollbackState,
+        execution: null,
+        sourceArtifactIdentity: null,
+        error: failure,
+        finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_PROPOSAL_BLOCKED',
+      });
+    }
     if (mutationApplied && !succeeded) {
       const rollbackPaths = changedFiles(worktreePath, run);
       try {

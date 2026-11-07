@@ -1,4 +1,5 @@
 import test from 'node:test';
+import './programmeAuthorityPrimaryOwnerObservation.test.js';
 import './programmeAuthorityOwnerScopeNarrowing.test.js';
 import assert from 'node:assert/strict';
 

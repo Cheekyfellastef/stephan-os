@@ -1,3 +1,5 @@
+import { FORGE_LIFEBOAT_WORKER_ID, MISSION_CONTROLLER_ROUTE, projectMissionControllerTaskV1 } from '../shared/agents/missionControllerCapacityRouterV1.mjs';
+import { CODEX_TASK_CLASS } from '../shared/agents/codexCapacityGovernorV1.mjs';
 import { createHash } from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -11,6 +13,7 @@ export const MISSION_WORKER_ACTIVE_CLAIM_MAX_BYTES = 128 * 1024;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
 const ACTIVE_WORKER_ADAPTERS = new Set([
   'codex',
+  'foundry-forge',
   'openclaw-github-readonly',
   'openclaw-readonly',
   'openclaw-signed',
@@ -38,6 +41,10 @@ function exactGrantIdentity(actionGrant = {}) {
     || !actionId
     || !ACTIVE_WORKER_ADAPTERS.has(adapter)
   ) return null;
+  if (adapter === 'foundry-forge' && (actionKind !== 'agent-handoff' || operation !== ''
+    || actionGrant.capacityRoute !== MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE
+    || actionGrant.workerId !== FORGE_LIFEBOAT_WORKER_ID || actionGrant.mergeAuthority !== false
+    || actionGrant.leaseSeizureAllowed !== false)) return null;
   return Object.freeze({ missionId, actionId, adapter, actionKind, operation });
 }
 
@@ -98,6 +105,14 @@ export async function readMissionWorkerActiveClaim({
     || safeId(item.actionId) !== grant.actionId
     || !payloadMatchesGrant(item.payload, grant)
   ) return null;
+
+  if (grant.adapter === 'foundry-forge') {
+    const normalized = value => Array.isArray(value) ? value.map(normalized) : value && typeof value === 'object'
+      ? Object.fromEntries(Object.keys(value).sort().map(key => [key, normalized(value[key])])) : value;
+    if (JSON.stringify(normalized(item.actionGrant)) !== JSON.stringify(normalized(actionGrant))
+      || !Array.isArray(item.payload.allowedFiles) || item.payload.allowedFiles.length < 1 || item.payload.allowedFiles.length > 4
+      || projectMissionControllerTaskV1({ ...item.payload, currentPhase: actionGrant.currentPhase }).taskClass !== CODEX_TASK_CLASS.FOCUSED_REPAIR) return null;
+  }
 
   const claimDigest = createHash('sha256').update(bytes).digest('hex');
   return Object.freeze({

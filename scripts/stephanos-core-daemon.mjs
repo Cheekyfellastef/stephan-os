@@ -55,6 +55,7 @@ import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-disc
 import { readCanonicalMissionWorkerHeartbeatAgeMs, canonicalMissionWorkerEvidenceAllowsWork } from '../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
 import { createSovereignOuterBridgeSupervisorV1 } from './sovereign-outer-bridge-service.mjs';
 import { CORE_LOCK_SCHEMA, exactCoreLockOwnerV1 } from '../shared/agents/stephanosCoreLockOwnerV1.mjs';
+import { inspectFixedRuntimeQualificationV1 } from './sovereign-fixed-runtime-parent-v1.mjs';
 import { unqualifiedCoreWindowsRepairV1 } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 import {
   buildStephanosBuildTruth,
@@ -458,13 +459,26 @@ async function runBoundedOctopusMaintenance(actionId, sourceHead, phase) {
     return Object.freeze({ ok: false, attempted: false, blocker: 'MISSION_WORKER_CUSTODY_UNPROVEN',
       finalVerdict: 'OCTOPUS_WORKER_CUSTODY_HELD', sourceMutationAllowed: false });
   }
-  // This is an automatic caller, including its escalation/retry phases.
-  // Routing it through a manual fixed action bypassed the continuous runner's
-  // native-custody refusal and could create another durable timeout hold.
-  // Keep the existing manual actions available to their operator-owned callers;
-  // automatic broad repair cannot reserve or spawn until its native backend is
-  // independently qualified. Dependency-specific maintenance remains separate.
-  return unqualifiedCoreWindowsRepairV1();
+  // Compute actual installed identity here, then let the authenticated owner
+  // independently qualify again at reservation. No qualification flag crosses
+  // the transport and an unsupported escalation never reserves custody.
+  if (actionId !== 'repair-goal-builder-flow' || typeof inspectFixedRuntimeQualificationV1 !== 'function')
+    return unqualifiedCoreWindowsRepairV1();
+  const native = inspectFixedRuntimeQualificationV1();
+  if (native?.ok !== true || native.sourceHead !== sourceHead
+      || !native.profiles?.includes('MAINTENANCE_GOAL_BUILDER_V1'))
+    return unqualifiedCoreWindowsRepairV1();
+  const catalog = buildStephanosExecutionSurfaceCatalogV1({
+    repositoryRoot: repoRoot, sharedWorkspaceRoot: workspaceRoot,
+  });
+  const envelope = buildStephanosExecutionCommandEnvelopeV1({
+    catalog, surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+    actionId: `stephanos-core-native-goal-repair-${lastOctopusSelfHealAttemptCount}-${phase}`,
+    missionId: 'stephanos-core-octopus-self-heal', relatedIssue: OCTOPUS_SELF_HEAL_RELATED_ISSUE,
+    operation: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    payload: { actionId }, proofRefs: [PROOF_REF, `source:${sourceHead}`],
+  });
+  return executeSovereignCommanderCommandV1(envelope, { repoRoot });
 }
 
 async function runBoundedOctopusSelfHeal(sourceHead) {

@@ -1,5 +1,9 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { resolveRescueIslandNativeHostV1 } from './rescueIslandNativeHostLocationV1.mjs';
 
 import {
   RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
@@ -35,7 +39,7 @@ const command = overrides => ({
   requestId: 'island02-mailbox-proof-01',
   operation: RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
   repository: 'Cheekyfellastef/stephan-os',
-  issueNumber: 3149,
+  issueNumber: activeMailboxIssueForTest,
   branch: 'main',
   operatorApproval: 'operator-approved',
   expectedHead: HEAD,
@@ -71,7 +75,7 @@ const statusCommand = overrides => ({
   requestId: 'island02-mailbox-proof-01-status',
   operation: RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION,
   repository: 'Cheekyfellastef/stephan-os',
-  issueNumber: 3149,
+  issueNumber: activeMailboxIssueForTest,
   branch: 'main',
   operatorApproval: 'operator-approved',
   expectedHead: 'e'.repeat(40),
@@ -107,6 +111,8 @@ test('executes only the fixed native supervised ingress and projects all materia
     },
   });
   assert.equal(result.ok, true);
+  assert.equal(observed.executable, resolveRescueIslandNativeHostV1(
+    resolve(dirname(fileURLToPath(import.meta.url)), '../..')));
   assert.deepEqual(observed.args, ['--supervised-once']);
   assert.equal(observed.options.shell, false);
   assert.equal(JSON.parse(observed.options.input).commentId, 6399501164);

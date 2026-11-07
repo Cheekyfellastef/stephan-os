@@ -1,4 +1,5 @@
 import { resolveGithubAuth, resolveGithubGhCliAuth } from './githubAuthResolver.js';
+import { externalMergeCandidateV1, EXTERNAL_MERGE_OBSERVATION_SCHEMA, validateExternalMergeObservationV1 } from '../../shared/agents/externalMergeObservationV1.mjs';
 import { readBrokeredGithubRateLimitHold, recordBrokeredGithubRateLimitHold } from '../../shared/agents/githubObservationBrokerV1.mjs';
 import {
   PROTECTED_APPROVAL_MARKER,
@@ -7,7 +8,7 @@ import {
 } from '../../shared/agents/operatorMergeApprovalGate.mjs';
 import { projectCanonicalResourceIds } from '../../shared/agents/elasticBuildCapacityV1.mjs';
 import { evaluateOperatorLaneContainmentV1 } from '../../shared/agents/operatorLaneContainmentV1.mjs';
-import { projectGoalAdmissionRequiredTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
+import { projectGoalAdmissionRequiredTestsV1, projectPrimaryOwnerCommentReadRequirementV1, goalEstateCoversPrimaryOwnerCommentReadV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 
 export const GITHUB_GOAL_ADMISSION_SCHEMA = 'stephanos.github-goal-admission.v1';
 export const GITHUB_GOAL_ADMISSION_MARKER = 'stephanos-goal-admission-v1';
@@ -228,6 +229,74 @@ export function resolveGithubRepoConfig(env = process.env) {
 function normalizeChecksState(conclusions = []) { const lowered = conclusions.map((value) => asText(value).toLowerCase()); if (lowered.some((state) => ['failure','failed','timed_out','cancelled','action_required'].includes(state))) return 'failed'; if (lowered.some((state) => ['queued','in_progress','pending','waiting'].includes(state))) return 'pending'; if (lowered.length > 0 && lowered.every((state) => ['success','skipped','neutral'].includes(state))) return 'passed'; return 'unknown'; }
 export async function resolveGithubTokenConfig(options = {}) { return resolveGithubAuth(options); }
 
+// Fixed read-only reconciliation: the retained PR, immutable ancestry, then a
+// fresh main ref. This cannot approve a merge or authorize a runtime action.
+export async function fetchExternalMergeObservation(mission, options = {}) {
+  if (!externalMergeCandidateV1(mission)) return { status: 'skipped', reasonCode: 'MISSION_INELIGIBLE' };
+  const test = options.testOnly === true;
+  const fetchImpl = test && options.fetchImpl ? options.fetchImpl : fetch;
+  const owner = 'Cheekyfellastef', repo = 'stephan-os', key = `${owner}/${repo}`.toLowerCase();
+  const useSharedHold = !test || Boolean(options.workspaceRoot);
+  const shared = useSharedHold ? readBrokeredGithubRateLimitHold({ repository: key, workspaceRoot: options.workspaceRoot }) : null;
+  const until = Math.max(githubPrRateLimitBackoff.get(key) || 0, shared?.untilMs || 0);
+  if (until > Date.now()) return githubPrRateLimitHold(owner, repo, mission.pullRequest.number, 'observation', until);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), test ? (options.timeoutMs || 25_000) : 25_000);
+  let activeAuth;
+  const fail = reasonCode => ({ status: 'error', reasonCode });
+  try {
+    activeAuth = test && options.auth ? options.auth : await resolveGithubTokenConfig({ env: options.env || process.env });
+    if (controller.signal.aborted) return fail('GITHUB_OBSERVATION_DEADLINE');
+    if (!activeAuth.configured) return fail('GITHUB_AUTH_UNAVAILABLE');
+    const request = async (suffix, allowFallback = false) => {
+      if (controller.signal.aborted) throw new Error('GITHUB_OBSERVATION_DEADLINE');
+      let response = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/${suffix}`, {
+        headers: githubHeaders(activeAuth, 'stephanos-completion-guardian'), signal: controller.signal,
+        redirect: 'error',
+      });
+      const hold = await checkPrRateLimitResponse(response, key, owner, repo, mission.pullRequest.number,
+        activeAuth.authority, options.workspaceRoot, useSharedHold);
+      if (hold) throw Object.assign(new Error(hold.reasonCode), { observationFailure: hold });
+      if (allowFallback && [401, 403].includes(response.status) && activeAuth.authority !== 'gh-cli') {
+        const fallback = await resolveGithubGhCliAuth(test ? { ghTokenProvider: options.ghTokenProvider || (async () => '') } : {});
+        if (fallback.configured) { activeAuth = fallback; return request(suffix); }
+      }
+      if (!response.ok) throw new Error('GITHUB_OBSERVATION_READ_FAILED');
+      return response.json();
+    };
+    const pr = await request(`pulls/${mission.pullRequest.number}`, true);
+    if (pr.number !== mission.pullRequest.number || pr.merged !== true || pr.state !== 'closed'
+        || pr.head?.repo?.full_name !== mission.repository || pr.base?.repo?.full_name !== mission.repository
+        || pr.head?.sha !== mission.pullRequest.headSha || pr.head?.ref !== mission.git.branch
+        || pr.base?.ref !== 'main' || !/^[a-f0-9]{40}$/.test(pr.merge_commit_sha || '')) {
+      return fail('GITHUB_MERGE_IDENTITY_UNPROVEN');
+    }
+    const main = await request('git/ref/heads/main');
+    if (main.ref !== 'refs/heads/main' || main.object?.type !== 'commit'
+        || !/^[a-f0-9]{40}$/.test(main.object?.sha || '')) return fail('GITHUB_MAIN_IDENTITY_UNPROVEN');
+    const comparison = await request(`compare/${pr.merge_commit_sha}...${main.object.sha}`);
+    if (!['ahead', 'identical'].includes(comparison.status)
+        || comparison.merge_base_commit?.sha !== pr.merge_commit_sha
+        || comparison.base_commit?.sha !== pr.merge_commit_sha) return fail('GITHUB_MERGE_ANCESTRY_UNPROVEN');
+    const recheck = await request('git/ref/heads/main');
+    if (controller.signal.aborted) return fail('GITHUB_OBSERVATION_DEADLINE');
+    if (recheck.ref !== main.ref || recheck.object?.type !== 'commit'
+        || recheck.object?.sha !== main.object.sha) return fail('GITHUB_MAIN_MOVED');
+    const observation = {
+      schemaVersion: EXTERNAL_MERGE_OBSERVATION_SCHEMA, source: 'github-api', repository: mission.repository,
+      missionId: mission.missionId, expectedRevision: mission.revision, prNumber: pr.number,
+      headSha: pr.head.sha, branch: pr.head.ref, baseBranch: pr.base.ref, merged: true, prState: pr.state,
+      mergeCommitSha: pr.merge_commit_sha, mergedAtUtc: pr.merged_at, mainHead: main.object.sha,
+      ancestorCommit: pr.merge_commit_sha, ancestryMainHead: main.object.sha, mainRecheckHead: recheck.object.sha,
+      mergeAncestorOfMain: true, observedAtUtc: new Date().toISOString(),
+    };
+    return validateExternalMergeObservationV1(mission, observation, new Date().toISOString()).valid
+      ? { status: 'fetched', observation } : fail('GITHUB_MERGE_OBSERVATION_INVALID');
+  } catch (error) {
+    return error.observationFailure || fail(controller.signal.aborted ? 'GITHUB_OBSERVATION_DEADLINE' : 'GITHUB_OBSERVATION_READ_FAILED');
+  } finally { clearTimeout(timeout); }
+}
+
 // Fresh owner-decision evidence for the existing recovery service. Reuse the
 // canonical credential reader; this performs GET only and cannot create a
 // decision. A connector-authored comment is not a direct operator decision.
@@ -382,10 +451,12 @@ export async function closeGithubGoalIssue({
   return issue;
 }
 
-export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenProvider, fetchImpl = fetch, maxPages = 10, maxCommentPages = 10, maxEventPages = 10, priorGoalRecords = [], cacheEnabled, cacheTtlMs = GITHUB_GOAL_ESTATE_CACHE_TTL_MS, failureBackoffMs = GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS, requestTimeoutMs = GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS, nowMs = Date.now, workspaceRoot } = {}) {
+export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenProvider, fetchImpl = fetch, maxPages = 10, maxCommentPages = 10, maxEventPages = 10, priorGoalRecords = [], requiredPrimaryOwnerCommentIssueNumbers, cacheEnabled, cacheTtlMs = GITHUB_GOAL_ESTATE_CACHE_TTL_MS, failureBackoffMs = GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS, requestTimeoutMs = GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS, nowMs = Date.now, workspaceRoot } = {}) {
   const repository = `${asText(owner)}/${asText(repo)}`;
   if (!parseRepoSlug(repository).owner) return Object.freeze({ status: 'error', source: 'github-api', repository, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), recommendedNextAction: 'GitHub goal-estate repository identity is invalid.' });
 
+  const primaryRequirement = projectPrimaryOwnerCommentReadRequirementV1(requiredPrimaryOwnerCommentIssueNumbers);
+  if (!primaryRequirement.valid) return Object.freeze({ status: 'error', source: 'github-api', repository, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), reasonCode: 'PRIMARY_OWNER_READ_REQUIREMENT_INVALID' });
   const rawNowMs = Number(typeof nowMs === 'function' ? nowMs() : nowMs); const observedNowMs = Number.isFinite(rawNowMs) ? rawNowMs : Date.now();
   // All production goal discovery uses the same durable rate-limit HOLD as
   // dashboard telemetry, PR evidence and the gh observation broker. Injected
@@ -408,7 +479,8 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
   if (shouldUseCache) {
     const cached = githubGoalEstateCache.get(cacheKey); const cacheAgeMs = cached ? observedNowMs - cached.cachedAtMs : Number.POSITIVE_INFINITY;
     const ttl = cached?.failure ? boundedFailureBackoffMs : boundedCacheTtlMs;
-    if (cached && cacheAgeMs >= 0 && cacheAgeMs < ttl) return cached.result;
+    if (cached && cacheAgeMs >= 0 && cacheAgeMs < ttl
+        && (cached.failure || goalEstateCoversPrimaryOwnerCommentReadV1(cached.result, primaryRequirement, new Date(observedNowMs).toISOString()))) return cached.result;
   }
   const cacheFailure = (result) => { if (shouldUseCache) githubGoalEstateCache.set(cacheKey, { cachedAtMs: observedNowMs, result, failure: true }); return result; };
 
@@ -465,7 +537,7 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
   const goalDeadlineError = () => Object.assign(new Error('Goal estate deadline exceeded'), { code: 'GITHUB_GOAL_ESTATE_DEADLINE' });
   const inspectGoal = async (issue) => {
     const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt); if (!discovery) return; discoveredIssues.push(discovery);
-    const priorMirrorAdmission = trustedPriorGoalMirrorAdmission(
+    const priorMirrorAdmission = primaryRequirement.issueNumbers.includes(discovery.issueNumber) ? null : trustedPriorGoalMirrorAdmission(
       discovery,
       priorGoalRecords,
       owner,
@@ -566,7 +638,7 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
   }
   const deduped = [...new Map(issues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
   const dedupedDiscoveries = [...new Map(discoveredIssues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
-  const result = Object.freeze({ status: 'fetched', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze(deduped), discoveredIssues: Object.freeze(dedupedDiscoveries), retrievedAt, readOnly: true, admissionContractRequired: true, ownerAuthoredGoalsAutoAdmitted: false, admissionProofSources: Object.freeze(['OWNER_AUTHENTICATED_GOAL_LABEL_EVENT', 'OWNER_AUTHENTICATED_COMMENT', 'PRIOR_MIRROR_ADMISSION_REVALIDATED']), admissionReadFailureCount, admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA, mergeAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
+  const result = Object.freeze({ ...(primaryRequirement.requested ? { primaryOwnerCommentRequestIssueNumbers: primaryRequirement.issueNumbers } : {}), status: 'fetched', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze(deduped), discoveredIssues: Object.freeze(dedupedDiscoveries), retrievedAt, readOnly: true, admissionContractRequired: true, ownerAuthoredGoalsAutoAdmitted: false, admissionProofSources: Object.freeze(['OWNER_AUTHENTICATED_GOAL_LABEL_EVENT', 'OWNER_AUTHENTICATED_COMMENT', 'PRIOR_MIRROR_ADMISSION_REVALIDATED']), admissionReadFailureCount, admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA, mergeAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
   clearTimeout(observationTimer);
   if (shouldUseCache) githubGoalEstateCache.set(cacheKey, { cachedAtMs: observedNowMs, result, failure: false }); return result;
 }
