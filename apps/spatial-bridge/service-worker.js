@@ -69,7 +69,7 @@ self.addEventListener('fetch', (event) => {
     .then(response=>{
       const policy=response?.headers?.get?.('cache-control')??'';
       if(response?.ok&&response.status===200&&response.type!=='opaque'
-        &&!/\\b(?:private|no-store)\\b/i.test(policy)){
+        &&!/\b(?:private|no-store)\b/i.test(policy)){
         const copy=response.clone();
         event.waitUntil(caches.open(CACHE_NAME).then(cache=>cache.put(event.request,copy)).catch(()=>{}));
       }
