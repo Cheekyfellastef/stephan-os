@@ -4,6 +4,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { writeSpatialBridgeIcons } from '../apps/spatial-bridge/tools/build-icons.mjs';
+import { discoverApps } from '../system/apps/app_discovery.js';
+import { launchProject } from '../modules/command-deck/command-deck.js';
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -26,8 +28,14 @@ test('spatial bridge is launcher discoverable and explicitly read-only', () => {
   const appIndex = readJson(appIndexPath);
   const manifest = readJson(manifestPath);
   assert.equal(appIndex.includes('spatial-bridge'), true);
-  assert.equal(manifest.name, 'Stephanos Spatial Bridge');
-  assert.equal(manifest.entry, 'index.html');
+  assert.equal(manifest.name, 'Stephanos Spatial Workspace');
+  assert.equal(manifest.entry, 'quest-entry.html');
+  assert.equal(manifest.spatialConsole.entry, manifest.entry);
+  assert.equal(manifest.packaging, 'classic-static');
+  assert.equal(manifest.launchStrategy, 'navigate');
+  assert.equal(manifest.launcherActionLabel, 'Open Spatial Workspace');
+  assert.match(manifest.description, /3D Holodeck preview.*PC.*iPad.*phone/i);
+  assert.equal(appIndex.filter(id => id === 'spatial-bridge').length, 1);
   assert.equal(manifest.authority, 'read-only');
   assert.equal(manifest.implementationStage, 'v1-spatial-workspace-starting-chamber-source');
   assert.equal(manifest.aiAddressable, false);
@@ -141,4 +149,65 @@ test('Quest entry contract selects Alpha release distribution and keeps source r
   assert.match(contract.mergeGate, /ALPHA-channel installation/);
   assert.equal(assetLinks[0].target.package_name, 'com.stephanos.spatialbridge');
   assert.match(assetLinks[0].target.sha256_cert_fingerprints[0], /REPLACE_WITH_SIGNING_KEY/);
+});
+
+test('landing discovers one valid Spatial Workspace preview tile instead of rejecting old packaging', async () => {
+  const originalFetch=globalThis.fetch;
+  const manifest=readJson(manifestPath);
+  const requests=[];
+  globalThis.fetch=async (url, options={})=>{
+    requests.push({url:String(url),method:options.method||'GET'});
+    if(url==='./apps/index.json') return new Response(JSON.stringify(['spatial-bridge']));
+    if(url==='./apps/spatial-bridge/app.json') return new Response(JSON.stringify(manifest));
+    if(url==='./apps/spatial-bridge/quest-entry.html') return new Response('Spatial Workspace');
+    return new Response('',{status:404});
+  };
+  try {
+    const {apps,validationReport}=await discoverApps();
+    const spatial=apps.filter(project=>project.id==='spatial-bridge');
+    assert.equal(spatial.length,1,'reuse the original tile, never inject a duplicate');
+    assert.equal(validationReport.invalid,0);
+    assert.equal(spatial[0].disabled,false);
+    assert.equal(spatial[0].validationState,'unknown');
+    assert.equal(spatial[0].entry,'apps/spatial-bridge/quest-entry.html');
+    assert.equal(spatial[0].launchStrategy,'navigate');
+    assert.equal(spatial[0].launcherActionLabel,'Open Spatial Workspace');
+    assert.equal(spatial[0].launcherBadges.includes('3D Preview'),true);
+    assert.ok(requests.some(req=>req.method==='HEAD'&&req.url==='./apps/spatial-bridge/quest-entry.html'));
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+test('Spatial Workspace tile opens same-site 3D preview on Battle Bridge, hosted mobile and remote Stephanos', () => {
+  const originalWindow=globalThis.window;
+  const manifest=readJson(manifestPath);
+  const cases=[
+    ['http://127.0.0.1:4173/', '/apps/spatial-bridge/quest-entry.html'],
+    ['https://cheekyfellastef.github.io/stephan-os/', '/stephan-os/apps/spatial-bridge/quest-entry.html'],
+    ['https://battle-bridge.example.ts.net/', '/apps/spatial-bridge/quest-entry.html'],
+  ];
+  try {
+    for(const [home,pathname] of cases) {
+      let assigned='';
+      globalThis.window={location:{href:home,origin:new URL(home).origin,
+        pathname:new URL(home).pathname,assign:url=>{assigned=url;}},document:{querySelector:()=>null}};
+      launchProject({id:'spatial-bridge',folder:'spatial-bridge',
+        name:manifest.name,entry:'apps/spatial-bridge/'+manifest.entry,
+        launchStrategy:manifest.launchStrategy},
+        {workspace:{open:()=>assert.fail('WebXR must open top-level, not a nested iframe')}},
+        {type:'user-click'});
+      assert.equal(new URL(assigned).origin,new URL(home).origin);
+      assert.equal(new URL(assigned).pathname,pathname);
+      if(!home.startsWith('http://127.0.0.1')) assert.doesNotMatch(assigned,/127\\.0\\.0\\.1|localhost/i);
+    }
+  } finally {globalThis.window=originalWindow;}
+});
+
+test('flat preview remains available without WebXR; native ChatGPT desktop capture stays local',()=>{
+  const entry=readFileSync(questEntryPath,'utf8');
+  const capture=readFileSync(new URL('../apps/spatial-bridge/holodeck-window-client-v1.mjs',import.meta.url),'utf8');
+  assert.match(entry,/playPreview/);
+  assert.match(entry,/drawPreview/);
+  assert.match(entry,/Enter Spatial Workspace/);
+  assert.match(capture,/127\\.0\\.0\\.1/);
+  assert.doesNotMatch(readJson(manifestPath).entry,/^https?:/);
 });
