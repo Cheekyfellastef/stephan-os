@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -20,11 +21,14 @@ export const STARFIELD_VR_BATTLE_BRIDGE_OPERATIONS = Object.freeze([
 export const STARFIELD_VR_BATTLE_BRIDGE_SCHEMA = 'stephanos.starfield-vr-battle-bridge-mailbox.v1';
 
 const LOCAL_SCHEMA = 'stephanos.starfield-vr-local-delivery-observation.v1';
-const INSTALL_SCHEMA = 'stephanos.starfield-vr-shortcut-install.v1';
+const INSTALL_SCHEMA = 'stephanos.starfield-vr-shortcut-install.v2';
 const SHA = /^[0-9a-f]{40}$/i;
+const SHA256 = /^[0-9a-f]{64}$/i;
 const INSTALLER_RELATIVE_PATH = 'scripts/windows/install-starfield-vr-desktop-shortcut.ps1';
 const PROBE_RELATIVE_PATH = 'scripts/starfield-vr-delivery-truth-probe.mjs';
 const LAUNCHER_RELATIVE_PATH = 'scripts/windows/launch-starfield-vr.ps1';
+const SPLASH_RELATIVE_PATH = 'scripts/windows/launch-starfield-vr-with-splash.ps1';
+const SHORTCUT_SOURCE_PATHS = Object.freeze([INSTALLER_RELATIVE_PATH, SPLASH_RELATIVE_PATH, LAUNCHER_RELATIVE_PATH]);
 const DECISION_RELATIVE_PATH = 'scripts/starfield-vr-launch-decision.mjs';
 const POLICY_RELATIVE_PATH = 'shared/agents/starfieldVrLaunchPolicy.mjs';
 const SHORTCUT_INSPECTION_COMMAND = [
@@ -74,13 +78,14 @@ function fixedPaths({ env = process.env, home = homedir() } = {}) {
   if (!userProfile || !systemRoot) return null;
   const repoRoot = win32.resolve(userProfile, 'Documents', 'GitHub', 'stephan-os');
   return Object.freeze({
+    userProfile: win32.resolve(userProfile),
     repoRoot,
     installerScript: win32.resolve(repoRoot, INSTALLER_RELATIVE_PATH),
     probeScript: win32.resolve(repoRoot, PROBE_RELATIVE_PATH),
     launcherScript: win32.resolve(repoRoot, LAUNCHER_RELATIVE_PATH),
     decisionScript: win32.resolve(repoRoot, DECISION_RELATIVE_PATH),
     policyScript: win32.resolve(repoRoot, POLICY_RELATIVE_PATH),
-    splashScript: win32.resolve(repoRoot, 'scripts', 'windows', 'launch-starfield-vr-with-splash.ps1'),
+    splashScript: win32.resolve(repoRoot, SPLASH_RELATIVE_PATH),
     profilePath: win32.resolve(userProfile, 'Documents', 'Stephanos-openclaw-workspace', 'vr', 'starfield-vr-launch-profile.json'),
     mutarProfilePath: win32.resolve(userProfile, 'Documents', 'Stephanos-openclaw-workspace', 'vr', 'starfield-vr-launch-profile-mutar-openxr.json'),
     simAirLinkStatePath: win32.resolve(userProfile, 'Documents', 'Stephanos-openclaw-workspace', 'vr', 'starfield-vr-sim-air-link.json'),
@@ -90,6 +95,43 @@ function fixedPaths({ env = process.env, home = homedir() } = {}) {
 
 function expectedShortcutArguments(paths) {
   return `-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${paths.splashScript}" -ProfilePath "${paths.profilePath}"`;
+}
+
+function receiptPathMatches(value, expected) {
+  return typeof value === 'string' && win32.isAbsolute(value)
+    && normalizeWindowsPath(value) === normalizeWindowsPath(expected);
+}
+
+function validInstallReceipt(receipt, expectedHead, paths, readFileSyncFn) {
+  if (!receipt
+    || receipt.schemaVersion !== INSTALL_SCHEMA
+    || receipt.finalVerdict !== 'STARFIELD_VR_SHORTCUT_INSTALLED'
+    || receipt.created !== true
+    || receipt.shortcutName !== 'Starfield VR'
+    || receipt.sourceHead !== expectedHead
+    || receipt.sourceClean !== true
+    || !Array.isArray(receipt.sourcePaths)
+    || receipt.sourcePaths.length !== SHORTCUT_SOURCE_PATHS.length
+    || !receipt.sourcePaths.every((path, index) => path === SHORTCUT_SOURCE_PATHS[index])
+    || !receiptPathMatches(receipt.splashLauncherScript, paths.splashScript)
+    || !receiptPathMatches(receipt.launcherScript, paths.launcherScript)
+    || !receiptPathMatches(receipt.profilePath, paths.profilePath)
+    || !receiptPathMatches(receipt.workingDirectory, paths.repoRoot)
+    || !receiptPathMatches(receipt.targetPath, paths.powershellExe)
+    || receipt.arguments !== expectedShortcutArguments(paths)
+    || typeof receipt.splashLauncherSha256 !== 'string'
+    || !SHA256.test(receipt.splashLauncherSha256)
+    || typeof receipt.shortcutPath !== 'string'
+    || !win32.isAbsolute(receipt.shortcutPath)
+    || win32.basename(receipt.shortcutPath).toLowerCase() !== 'starfield vr.lnk') return false;
+  const shortcutRelative = win32.relative(paths.userProfile, receipt.shortcutPath);
+  if (shortcutRelative.startsWith('..') || win32.isAbsolute(shortcutRelative)) return false;
+  try {
+    const splashSha256 = createHash('sha256').update(readFileSyncFn(paths.splashScript)).digest('hex');
+    return splashSha256 === receipt.splashLauncherSha256.toLowerCase();
+  } catch {
+    return false;
+  }
 }
 
 function invocationOptions(cwd, timeout = 120_000) {
@@ -194,7 +236,8 @@ function validateObservation(value, expectedHead, shortcutInspection) {
     return fail('STARFIELD_VR_DELIVERY_SOURCE_HEAD_MISMATCH', { sourceHead, expectedHead });
   }
   const installerReceiptVerdict = String(value.installerReceiptVerdict || '');
-  const shortcutRoutesThroughSplash = shortcutInspection.routesThroughSplash === true;
+  const shortcutRoutesThroughSplash = value.shortcutRoutesThroughSplash === true
+    && shortcutInspection.routesThroughSplash === true;
   const desktopIconPresent = value.desktopIconPresent === true && shortcutInspection.present === true;
   const installed = desktopIconPresent
     && value.splashWrapperPresent === true
@@ -276,6 +319,7 @@ export async function executeStarfieldVrBattleBridgeCommand(command = {}, {
   home = homedir(),
   spawnSyncFn = spawnSync,
   existsSyncFn = existsSync,
+  readFileSyncFn = readFileSync,
   nodeExecutable = process.execPath,
 } = {}) {
   const shape = validateStarfieldVrBattleBridgeCommandShape(command);
@@ -412,6 +456,7 @@ export async function executeStarfieldVrBattleBridgeCommand(command = {}, {
   );
   if (!probeIdentity.ok) return probeIdentity;
 
+  let installReceipt = null;
   if (shape.operation === STARFIELD_VR_SHORTCUT_INSTALL_OPERATION) {
     const installInvocation = spawnSyncFn(paths.powershellExe, [
       '-NoProfile',
@@ -419,15 +464,11 @@ export async function executeStarfieldVrBattleBridgeCommand(command = {}, {
       '-ExecutionPolicy', 'Bypass',
       '-File', paths.installerScript,
     ], invocationOptions(paths.repoRoot, 120_000));
-    const installReceipt = parseJson(installInvocation?.stdout);
+    installReceipt = parseJson(installInvocation?.stdout);
     if (installInvocation?.error || installInvocation?.status !== 0) {
       return fail('STARFIELD_VR_SHORTCUT_INSTALL_EXECUTION_FAILED');
     }
-    if (!installReceipt
-      || installReceipt.schemaVersion !== INSTALL_SCHEMA
-      || installReceipt.finalVerdict !== 'STARFIELD_VR_SHORTCUT_INSTALLED'
-      || installReceipt.created !== true
-      || String(installReceipt.shortcutName || '') !== 'Starfield VR') {
+    if (!validInstallReceipt(installReceipt, shape.expectedHead, paths, readFileSyncFn)) {
       return fail('STARFIELD_VR_SHORTCUT_INSTALL_RECEIPT_INVALID');
     }
   }
@@ -438,6 +479,9 @@ export async function executeStarfieldVrBattleBridgeCommand(command = {}, {
   }
   const shortcutInspection = inspectShortcut(paths, spawnSyncFn);
   if (!shortcutInspection.ok) return shortcutInspection;
+  if (installReceipt && !receiptPathMatches(installReceipt.shortcutPath, shortcutInspection.shortcutPath)) {
+    return fail('STARFIELD_VR_SHORTCUT_INSTALL_RECEIPT_INVALID');
+  }
   const observed = validateObservation(parseJson(probeInvocation?.stdout), shape.expectedHead, shortcutInspection);
   if (!observed.ok) return observed;
   if (shape.operation === STARFIELD_VR_SHORTCUT_INSTALL_OPERATION && !observed.installed) {
