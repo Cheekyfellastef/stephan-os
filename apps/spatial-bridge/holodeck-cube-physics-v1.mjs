@@ -36,9 +36,10 @@ function prism(w,d,bottom,top,bevel=0,cx=0,cz=HOLODECK_TABLE.center[2]) {
     planes.push([[x/Math.SQRT2,0,z/Math.SQRT2],(w+d-bevel+x*cx+z*cz)/Math.SQRT2]);
   return planes;
 }
-export function createCubeSolids(table=HOLODECK_TABLE) {
-  const console=HOLODECK_CONSOLE;
-  return [prism(table.halfWidth,table.halfDepth,table.bottom,table.top+0.008,table.bevel,0,table.center[2]),
+export function createCubeSolids(table=HOLODECK_TABLE, console=HOLODECK_CONSOLE) {
+  const tableOffset=subtract3(table.center,HOLODECK_TABLE.center);
+  const consoleOffset=subtract3(console.center,HOLODECK_CONSOLE.center);
+  const shapes=[prism(table.halfWidth,table.halfDepth,table.bottom,table.top+0.008,table.bevel,table.center[0],table.center[2]),
     prism(console.halfWidth,console.halfDepth,console.bottom,console.top,console.bevel,0,console.center[2]),
     ...[-1,1].map(side=>prism(0.09,0.38,0.05,console.bottom,0,side*1.3,console.center[2])),
     ...[-1,1].map(side=>prism(0.09,0.28,0.84,1.10,0,side*1.3,-5.72)),
@@ -46,8 +47,15 @@ export function createCubeSolids(table=HOLODECK_TABLE) {
     ...[-1,1].map(side=>{
       const slope=side*0.38/0.55,centre=side*0.24-slope*0.13,n=Math.hypot(1,slope);
       return [[[1/n,-slope/n,0],(centre+0.13)/n],[[-1/n,slope/n,0],(-centre+0.13)/n],
-        [[0,1,0],0.68],[[0,-1,0],-0.13],[[0,0,1],table.center[2]+0.32],[[0,0,-1],-table.center[2]+0.32]];
+        [[0,1,0],0.68],[[0,-1,0],-0.13],[[0,0,1],HOLODECK_TABLE.center[2]+0.32],[[0,0,-1],-HOLODECK_TABLE.center[2]+0.32]];
     })];
+  // The first two prisms already use current absolute placement. All their
+  // supports inherit that same furniture transform, without ghost collisions
+  // at the former table/keyboard position.
+  return shapes.map((planes,index)=>{
+    const offset=index===0||index===1?[0,0,0]:index<=5?consoleOffset:tableOffset;
+    return planes.map(([normal,d])=>[normal,d+dot(normal,offset)]);
+  });
 }
 
 // Sweep the cube centre through the support-expanded convex furniture volume.
@@ -64,9 +72,12 @@ function sweepSolid(position,delta,planes,orientation,size) {
   return normal && enter>=-1e-8 && enter<=1 && leave>Math.max(enter,0)
     ? {time:Math.max(0,enter),normal}:null;
 }
-export function createHolodeckCubePhysics({room=HOLODECK_ROOM,table=HOLODECK_TABLE,cube=HOLODECK_CUBE,extraSolids=()=>[]}={}) {
+export function createHolodeckCubePhysics({room=HOLODECK_ROOM,table=HOLODECK_TABLE,cube=HOLODECK_CUBE,extraSolids=()=>[],furnitureSource=null}={}) {
   const solids=createCubeSolids(table);
-  const contacts=()=>[...solids,...extraSolids()];
+  const contacts=()=>{
+    const furniture=typeof furnitureSource==='function'?furnitureSource():null;
+    return [...(furniture?.table&&furniture?.keyboard?createCubeSolids(furniture.table,furniture.keyboard):solids),...extraSolids()];
+  };
   const walls=[[[1,0,0],-room.halfWidth],[[-1,0,0],-room.halfWidth],[[0,1,0],0],
     [[0,-1,0],-room.height],[[0,0,1],room.frontZ],[[0,0,-1],-room.backZ]];
   let position,orientation,velocity,angularVelocity,heldBy,sleeping,accumulator=0,restTime=0;
