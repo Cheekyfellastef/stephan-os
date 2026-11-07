@@ -59,17 +59,18 @@ test('actual pre-child guard refusal survives relay persistence into the existin
   const statePath = join(root, 'state.json');
   const deferredPath = join(root, 'receipt-publication-deferred-v1.json');
   const childRunnerPath = join(root, 'inert-child.mjs');
+  const receiptRoot = join(root, 'canonical-receipts');
   const now = new Date('2026-11-07T15:20:00.000Z');
+  mkdirSync(receiptRoot, { recursive: true });
   writeFileSync(childRunnerPath, '// injected child is never invoked\n');
-  writeFileSync(statePath, JSON.stringify({ pendingReceiptPublications: [{
-    publicationId: 'PRIVATE_PUBLICATION_SENTINEL',
-    receipt: { requestId: '', state: 'DONE', privateDetail: 'PRIVATE_RECORD_SENTINEL' },
-  }] }));
+  writeFileSync(statePath, JSON.stringify({ pendingReceiptPublications: {
+    opaqueAuthorityDebt: ['PRIVATE_PUBLICATION_SENTINEL', { privateDetail: 'PRIVATE_RECORD_SENTINEL' }],
+  } }));
   const before = readFileSync(statePath);
   let invocations = 0;
   const guard = runMailboxOutboxGuard({
     platform: 'win32', repoRoot: root, now: () => now,
-    pathOverrides: { actualRepoRoot: root, expectedRepoRoot: root, statePath, deferredPath, childRunnerPath },
+    pathOverrides: { actualRepoRoot: root, expectedRepoRoot: root, statePath, deferredPath, childRunnerPath, receiptRoot },
     processIdentityFn: () => ({ state: 'known', bootId: 'fixture-boot-current', processStartId: 'fixture-process-current' }),
     spawnSyncFn: () => { invocations++; throw Error('must not invoke'); },
   });
@@ -79,7 +80,7 @@ test('actual pre-child guard refusal survives relay persistence into the existin
   const relay = buildSovereignRelayStatus({ now, sourceHead: HEAD, cycle });
   const beacon = buildBattleBridgeOutboundBeacon({ now, sourceHead: HEAD, statusRecords: { sovereignRelay: relay } });
   assert.equal(beacon.mailboxGuard.observed, true);
-  assert.equal(beacon.mailboxGuard.reasonCode, 'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID');
+  assert.equal(beacon.mailboxGuard.reasonCode, 'MAILBOX_OUTBOX_CANONICAL_PENDING_ARRAY_REQUIRED');
   assert.equal(beacon.mailboxGuard.stage, 'STATE_VALIDATION');
   assert.equal(beacon.mailboxGuard.childInvocationAttempted, false);
   for (const key of ['commandIngressProven', 'receiptAcceptanceProven', 'executionProven',
