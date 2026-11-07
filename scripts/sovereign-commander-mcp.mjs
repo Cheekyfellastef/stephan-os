@@ -16,6 +16,7 @@ import { createSovereignSearchSessionsV1 } from '../shared/agents/sovereignSearc
 import { createSovereignMcpSessionHistoryV1 } from '../shared/agents/sovereignMcpSessionHistoryV1.mjs';
 import { createSovereignMcpSessionConfigV1 } from '../shared/agents/sovereignMcpSessionConfigV1.mjs';
 import { runSovereignFileMoveV1 } from '../shared/agents/sovereignFileMoveV1.mjs';
+import { runSovereignFileCopyV1, runSovereignFileHashV1 } from '../shared/agents/sovereignFileCopyV1.mjs';
 import { createSovereignProcessSessionsV1 } from '../shared/agents/sovereignProcessSessionsV1.mjs';
 import { createSovereignFeedbackIntakeV1, SOVEREIGN_FEEDBACK_OPERATION_IDS_V1 } from '../shared/agents/sovereignFeedbackIntakeV1.mjs';
 import { runSovereignPdfWriteV1 } from '../shared/agents/sovereignPdfWriteV1.mjs';
@@ -43,7 +44,7 @@ const SEARCH_SESSION_TOOLS = Object.freeze(['start_search', 'get_more_search_res
 const HISTORY_TOOLS = Object.freeze(['get_usage_stats', 'get_recent_tool_calls', 'get_tool_result', 'list_remote_tool_calls']);
 const PROCESS_SESSION_TOOLS = Object.freeze(['start_process', 'cancel_process_session', 'read_process_output', 'list_sessions']);
 const PRIVATE_SESSION_TOOLS = Object.freeze([...SEARCH_SESSION_TOOLS, ...HISTORY_TOOLS, ...PROCESS_SESSION_TOOLS,
-  'set_config_value', 'move_file', 'submit_feedback', 'write_pdf']);
+  'set_config_value', 'move_file', 'copy_file_content', 'get_file_hash', 'submit_feedback', 'write_pdf']);
 const PRIVATE_READ_ANNOTATIONS = Object.freeze({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
 const HISTORY_PAGE_SCHEMA = Object.freeze({ type: 'object', additionalProperties: false,
   properties: { offset: { type: 'integer', minimum: 0, maximum: 256, default: 0 },
@@ -198,6 +199,28 @@ const TOOLS = Object.freeze([
       },
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'get_file_hash',
+    title: 'Inspect a file content hash',
+    description: 'Observe SHA-256 and byte length of one regular file’s unnamed data stream on a fixed local NTFS volume, up to 8 MiB. Two bounded matching reads use the same retained file and parent handles. The hash can be supplied to copy_file_content or move_file; those actions independently recheck it. No file content is returned. The source is read only; this is a bounded observation without atomic content CAS or writable-mapping exclusion.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['path'],
+      properties: { path: { type: 'string', minLength: 1, maxLength: 1024 } } },
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'copy_file_content',
+    title: 'Copy file content into a new file',
+    description: 'Copy up to 8 MiB of one regular file’s unnamed data stream into a new destination on the same fixed local NTFS volume, including another folder. Requires explicit source, destination and expectedSha256. The source is read only; an existing destination is never replaced. File metadata, permissions, timestamps and alternate streams are not copied. Hash checks are bounded observations, not atomic content CAS or writable-mapping exclusion. An uncertain result can leave a partial destination and does not authorize retry or cleanup.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['source', 'destination', 'expectedSha256'],
+      properties: {
+        source: { type: 'string', minLength: 1, maxLength: 1024 },
+        destination: { type: 'string', minLength: 1, maxLength: 1024 },
+        expectedSha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+      },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
     name: 'move_file',
@@ -500,8 +523,8 @@ function operationForTool(name) {
 }
 
 function targetPathsForTool(name, args = {}) {
-  if (name === 'write_pdf') return [args.path];
-  if (name === 'move_file') return [args.source, args.destination];
+  if (name === 'write_pdf' || name === 'get_file_hash') return [args.path];
+  if (name === 'move_file' || name === 'copy_file_content') return [args.source, args.destination];
   if (name === 'start_search') return [args.path];
   if (name === 'create_directory') return [args.path];
   if (name === 'read_multiple_files') return Array.isArray(args.paths) ? args.paths : [];
@@ -579,6 +602,8 @@ export function createSovereignCommanderMcpHandler({
   feedbackIntakeFactory = createSovereignFeedbackIntakeV1,
   pdfWriteExecutor = runSovereignPdfWriteV1,
   fileMoveExecutor = runSovereignFileMoveV1,
+  fileCopyExecutor = runSovereignFileCopyV1,
+  fileHashExecutor = runSovereignFileHashV1,
 } = {}) {
   let session = null;
   let toolsListed = false;
@@ -600,6 +625,12 @@ export function createSovereignCommanderMcpHandler({
       blocker: 'SOVEREIGN_MOVE_OPERATION_INVALID', retryAllowed: false };
     return fileMoveExecutor(args);
   } });
+  const fileCopies = Object.freeze({ execute: (operation, args) => {
+    if (operation === 'GET_FILE_HASH') return fileHashExecutor(args);
+    if (operation !== 'COPY_FILE_CONTENT') return { ok: false, mutationState: 'NOT_STARTED',
+      blocker: 'SOVEREIGN_COPY_OPERATION_INVALID', retryAllowed: false };
+    return fileCopyExecutor(args);
+  } });
   // Ephemeral cancellation for this session's existing requests; no durable
   // queue, lease, retry or second executor is introduced.
   const coreRequests = new Map();
@@ -620,7 +651,7 @@ export function createSovereignCommanderMcpHandler({
     };
     try {
       const result = await executor(envelope, { ...options, searchSessions, sessionHistory, sessionConfig,
-        fileMoves, processSessions, feedbackIntake, pdfWrites });
+        fileMoves, fileCopies, processSessions, feedbackIntake, pdfWrites });
       recordResponse(result);
       return result;
     } catch (error) {

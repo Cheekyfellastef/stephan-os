@@ -20,6 +20,9 @@ const privateSessionPaths = [
   'scripts/windows/sovereign-search.ps1',
   'scripts/windows/SovereignSearchV1.cs',
   'shared/agents/sovereignMcpSessionConfigV1.mjs',
+  'shared/agents/sovereignFileCopyV1.mjs',
+  'scripts/windows/sovereign-copy-file-content.ps1',
+  'scripts/windows/SovereignFileCopyV1.cs',
   'shared/agents/sovereignFileMoveV1.mjs',
   'scripts/windows/sovereign-move-file.ps1',
   'scripts/windows/SovereignFileMoveV1.cs',
@@ -73,7 +76,7 @@ function closure(root, omitted) {
 }
 
 test('directory package captures exactly three dependencies and rejects incomplete or extra records', () => {
-  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 281);
+  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 284);
   for (const path of directoryPaths) assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(path), path);
   const records = candidateRecords();
   assert.throws(() => candidate(records.filter(row => !directoryPaths.includes(row.path))), /EXACT_SOURCE_REQUIRED/);
@@ -95,7 +98,7 @@ test('isolated captured package proves imports and both source-owned runtime-rea
   const root = packagedCandidate();
   try {
     const complete = closure(root);
-    assert.equal(complete.memberCount, 281);
+    assert.equal(complete.memberCount, 284);
     assert.deepEqual(complete.missing, []);
     assert.deepEqual(complete.bare, []);
     assert.equal(complete.repositoryModulesEvaluated, false);

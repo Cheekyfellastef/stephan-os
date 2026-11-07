@@ -3,7 +3,7 @@
 Owner: **#2573 — Goal: Make Sovereign Commander absorb every Remote Commander capability**.
 
 The existing Commander host previously offered only a repository search and no
-session-local command history. This source contribution adds sixteen operations to
+session-local command history. This source contribution adds eighteen operations to
 that host and its canonical command envelope. It does not introduce another
 controller, worker, scheduler, durable store, public mailbox or execution owner.
 
@@ -21,6 +21,8 @@ controller, worker, scheduler, durable store, public mailbox or execution owner.
 | `list_remote_tool_calls` | The current handler's authenticated HTTP calls only; local stdio and other sessions are excluded. |
 | `set_config_value` | Revision-checked read/write limits for this private handler, enforced by subsequent file calls within the original hard caps. |
 | `move_file` | A regular file renamed within the same physical local Windows parent, with matching bounded pre/post SHA-256 observations and no destination replacement. Cross-directory moves remain unqualified. |
+| `get_file_hash` | Two bounded matching SHA-256 observations of one regular file's unnamed data stream, using retained file and parent handles; returns no content. |
+| `copy_file_content` | Copy an explicitly selected regular file's unnamed data stream into one new file on the same fixed local NTFS volume, including another folder; expected hash required, source read only, no overwrite. |
 | `start_process` | A bounded asynchronous session for only the existing `status-recovery-mesh` and `status-worker-watchdog` read-only profiles; actual root launch evidence, no caller commands or input. |
 | `read_process_output` | Stable pages of bounded stdout/stderr chunks from a process session created by this handler, including output observed before the child closes. |
 | `list_sessions` | Only this handler's diagnostic process sessions and observed direct-child states; no host-wide terminal inventory or custody release. |
@@ -28,7 +30,7 @@ controller, worker, scheduler, durable store, public mailbox or execution owner.
 | `submit_feedback` | Unverified advisory feedback persisted in the existing local Shared Workspace, with bounded text and receipt-only history; no vendor submission, failure evidence, learning or execution grant. |
 | `write_pdf` | Create one new bounded ASCII text PDF through a retained-parent Windows helper; no overwrite, existing-PDF editing, Unicode, HTML or image rendering. |
 
-All sixteen require an actual MCP request after initialization and tool discovery.
+All eighteen require an actual MCP request after initialization and tool discovery.
 The trusted transport must be local stdio or authenticated HTTP. Caller JSON
 cannot provide transport proof, session state, an executor, a scanner or a history
 store. Unknown fields, accessors, inherited arguments and coercible numbers are
@@ -123,6 +125,61 @@ configuration change cannot rewrite an in-flight operation's policy. Successful
 changes are eligible for the same private receipt history, including before/after
 values, while another handler retains its own defaults. Closing the handler
 disposes this configuration; persistent machine settings are outside the contract.
+
+## File content hashes and copies
+
+`get_file_hash` accepts exactly `{ path }`. It observes one permitted regular
+file of at most 8 MiB through a retained source handle and the complete retained
+parent chain. Two reads must produce the same SHA-256, length, file identity and
+bounded metadata observations. It returns the hash and byte count without file
+content. `HASHED` means those observations completed; `NOT_OBSERVED` means no
+complete validated result is available, and does not mean no read was attempted.
+Neither outcome grants write, process, maintenance or execution authority.
+
+The hash supplies the input for `copy_file_content` or the existing `move_file`.
+Both mutations independently observe the source again. A changed source fails
+the expected-hash precondition instead of silently copying or renaming different
+content. No hash observation promises an atomic content compare-and-swap or
+excludes a previously established writable mapping.
+
+`copy_file_content` accepts exactly `{ source, destination, expectedSha256 }`.
+The two absolute paths must use the same drive letter and resolve to the same
+fixed local NTFS volume. The volume GUID and native identities are checked through retained handles. Both
+complete parent chains stay retained. The source is opened for reads only;
+the helper never writes, deletes or renames it. The destination is created once
+relative to its retained parent, using kernel `FILE_CREATE` and exclusive
+sharing. An existing destination is never opened for replacement. Paths with
+reparse points, hard-linked source files, sensitive locations, alternate-stream
+syntax, ambiguous names or encrypted content are refused.
+
+The helper hashes the source before attempting creation, hashes bytes while
+copying, flushes the destination, verifies its length and hash through the same
+handle, and observes the source hash again. The file limit is 8 MiB, with at most
+32 MiB of reads for copying or 16 MiB for hashing, and a five-second native
+deadline. Both operations use the same bounded host admission: one native child,
+twenty seconds for the host and two seconds of termination grace. A missing
+terminal child observation keeps admission held, including after a hash request.
+
+This operation copies **only the unnamed data stream**. It does not copy source
+permissions, ownership, timestamps, file IDs, alternate streams or other metadata.
+The destination receives the ordinary filesystem defaults at its selected parent.
+The source's automatic access-time behavior is not presented as metadata
+invariance. Content copy is a separate useful capability and does not close the
+cross-directory `move_file` gap.
+
+A copy returns `COPIED` only after the native postconditions and strict canonical
+receipt validation pass. A failure before any create attempt is `NOT_STARTED`.
+Once creation is attempted, missing, contradictory, timed-out or lost terminal
+evidence is `UNKNOWN`; a partial destination may remain. There is no automatic
+retry, pathname cleanup or source deletion. `wholeFileAtomicityProven` and
+`mappedWriterExclusionProven` remain false. Retained receipts never repeat either
+operation, and another private handler cannot retrieve them.
+
+The implementation uses Microsoft's documented
+[relative native file opens and no-replace creation](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile)
+and [handle-based identity observations](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle).
+Actual Windows tests and independent specialist review remain separate gates;
+these API contracts do not qualify an installed Battle Bridge host.
 
 ## Bounded diagnostic process sessions
 
@@ -293,8 +350,8 @@ page inspection; these checks do not establish Battle Bridge native execution.
 
 ### Finite source package and acceptance
 
-The fixed-runtime closure grows from 266 to **281 exact members**: seven private
-session/adapter modules, six search/move/PDF native helper files, and the two existing
+The fixed-runtime closure grows from 266 to **284 exact members**: eight private
+session/adapter modules, eight search/move/copy/PDF native helper files, and the two existing
 fixed read-only status scripts. Every original member remains present. The preparer,
 installer, native verifier and closure regressions carry the same bounded member
 count. Captured helper reads are included in the parse-only dependency proof;

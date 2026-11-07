@@ -51,6 +51,16 @@ physical Windows directory. The rename uses bounded pre/post hash observations;
 it does not establish atomic content CAS or cross-directory move parity. Their
 contracts and remaining gaps are documented in [private capabilities](sovereign-private-search-history-v1.md).
 
+`get_file_hash` supplies a bounded private SHA-256 observation for a regular file,
+including binary assets, without returning its content. `copy_file_content` uses
+that expected hash to copy up to 8 MiB into a new file on the same fixed local
+NTFS volume, including another folder. It keeps the source read only and never
+replaces an existing destination. Only the unnamed data stream is copied;
+permissions, timestamps, alternate streams and other metadata are outside this
+contract. A failed or uncertain create attempt may leave a partial destination,
+and does not authorize automatic retry or deletion. Both operations share one
+pinned helper and the existing private command/history route.
+
 Private `start_process`, `read_process_output`, `list_sessions` and
 `cancel_process_session` add bounded
 asynchronous output for only the existing `status-recovery-mesh` and

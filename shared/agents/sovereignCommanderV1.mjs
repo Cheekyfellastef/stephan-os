@@ -14,6 +14,9 @@ import { executeCorePublicationDirectoryActionV1 } from '../../scripts/sovereign
 import { isSovereignMaintenanceObservationV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 import { executeSovereignDirectoryCreateV1, validateSovereignDirectoryTargetV1 } from './sovereignDirectoryCreateV1.mjs';
 import { validateSovereignFileMoveArgumentsV1 } from './sovereignFileMoveV1.mjs';
+import { validateSovereignFileCopyArgumentsV1, captureSovereignFileCopyResultV1,
+  validateSovereignFileHashArgumentsV1, captureSovereignFileHashResultV1,
+  SOVEREIGN_FILE_COPY_SCHEMA_V1, SOVEREIGN_FILE_HASH_SCHEMA_V1 } from './sovereignFileCopyV1.mjs';
 import { captureSovereignFeedbackArgumentsV1 } from './sovereignFeedbackIntakeV1.mjs';
 import { validateSovereignPdfWriteArgumentsV1 } from './sovereignPdfWriteV1.mjs';
 import {
@@ -41,6 +44,8 @@ export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
   SUBMIT_FEEDBACK: 'SUBMIT_FEEDBACK',
   EDIT_FILE: 'EDIT_FILE',
   MOVE_FILE: 'MOVE_FILE',
+  COPY_FILE_CONTENT: 'COPY_FILE_CONTENT',
+  GET_FILE_HASH: 'GET_FILE_HASH',
   LIST_DIRECTORY: 'LIST_DIRECTORY',
   CREATE_DIRECTORY: 'CREATE_DIRECTORY',
   SEARCH_PROJECT: 'SEARCH_PROJECT',
@@ -124,6 +129,8 @@ const PRIVATE_SESSION_ARGUMENTS = Object.freeze({
   SUBMIT_FEEDBACK: ['category', 'operation', 'message'],
   WRITE_PDF: ['path', 'pages'],
   MOVE_FILE: ['source', 'destination', 'expectedSha256'],
+  COPY_FILE_CONTENT: ['source', 'destination', 'expectedSha256'],
+  GET_FILE_HASH: ['path'],
   SET_CONFIG_VALUE: ['key', 'value', 'expectedRevision'],
   START_SEARCH: ['path', 'query', 'mode', 'caseSensitive', 'limit'],
   GET_MORE_SEARCH_RESULTS: ['searchId', 'offset', 'limit'],
@@ -153,6 +160,14 @@ export function captureSovereignPrivateSessionArgumentsV1(operation, raw) {
   }
   if (operation === 'MOVE_FILE') {
     const validated = validateSovereignFileMoveArgumentsV1(raw);
+    return validated.ok === true ? validated.args : null;
+  }
+  if (operation === 'COPY_FILE_CONTENT') {
+    const validated = validateSovereignFileCopyArgumentsV1(raw);
+    return validated.ok === true ? validated.args : null;
+  }
+  if (operation === 'GET_FILE_HASH') {
+    const validated = validateSovereignFileHashArgumentsV1(raw);
     return validated.ok === true ? validated.args : null;
   }
   if (operation === 'SET_CONFIG_VALUE') return captureSovereignMcpSessionConfigArgumentsV1(raw);
@@ -623,14 +638,16 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     const processSession = ['START_PROCESS_SESSION', 'CANCEL_PROCESS_SESSION', 'READ_PROCESS_OUTPUT', 'LIST_SESSIONS'].includes(operation);
     let profileBinding = null;
     if (!args) blockers.push('SOVEREIGN_PRIVATE_SESSION_ARGUMENTS_INVALID');
-    if (operation === 'START_SEARCH' || operation === 'WRITE_PDF') {
+    if (operation === 'START_SEARCH' || operation === 'WRITE_PDF' || operation === 'GET_FILE_HASH') {
       if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 1
         || envelope.targetPaths[0] !== args?.path) blockers.push(operation === 'WRITE_PDF'
-          ? 'SOVEREIGN_PDF_SCOPE_BINDING_INVALID' : 'SOVEREIGN_SEARCH_SCOPE_BINDING_INVALID');
-    } else if (operation === 'MOVE_FILE') {
+          ? 'SOVEREIGN_PDF_SCOPE_BINDING_INVALID' : operation === 'GET_FILE_HASH'
+            ? 'SOVEREIGN_HASH_SCOPE_BINDING_INVALID' : 'SOVEREIGN_SEARCH_SCOPE_BINDING_INVALID');
+    } else if (operation === 'MOVE_FILE' || operation === 'COPY_FILE_CONTENT') {
       if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 2
         || envelope.targetPaths[0] !== args?.source || envelope.targetPaths[1] !== args?.destination)
-        blockers.push('SOVEREIGN_MOVE_SCOPE_BINDING_INVALID');
+        blockers.push(operation === 'COPY_FILE_CONTENT'
+          ? 'SOVEREIGN_COPY_SCOPE_BINDING_INVALID' : 'SOVEREIGN_MOVE_SCOPE_BINDING_INVALID');
     } else if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 0) {
       blockers.push('SOVEREIGN_PRIVATE_SESSION_SCOPE_INVALID');
     }
@@ -652,6 +669,7 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     }
     if (args) plan = frozen({ kind: 'private-session',
       family: operation === 'MOVE_FILE' ? 'move' : operation === 'SET_CONFIG_VALUE' ? 'config'
+        : ['COPY_FILE_CONTENT', 'GET_FILE_HASH'].includes(operation) ? 'copy'
         : operation === 'SUBMIT_FEEDBACK' ? 'feedback' : operation === 'WRITE_PDF' ? 'pdf'
         : processSession ? 'process' : search ? 'search' : 'history', operation, args,
       ...(profileBinding ? { profileBinding } : {}) });
@@ -1163,6 +1181,7 @@ async function executeSovereignCommanderRouteV1(envelope = {}, options = {}) {
     const service = command.plan.family === 'search' ? options.searchSessions
       : command.plan.family === 'config' ? options.sessionConfig
         : command.plan.family === 'move' ? options.fileMoves
+          : command.plan.family === 'copy' ? options.fileCopies
           : command.plan.family === 'feedback' ? options.feedbackIntake
             : command.plan.family === 'pdf' ? options.pdfWrites
           : command.plan.family === 'process' ? options.processSessions : options.sessionHistory;
@@ -1311,6 +1330,18 @@ function validProcessCancellationReceipt(value, sessionId) {
   } catch { return false; }
 }
 
+function unknownFileCopyResult() {
+  return frozen({ ok: false, schemaVersion: SOVEREIGN_FILE_COPY_SCHEMA_V1,
+    mutationState: 'UNKNOWN', mutationAttempted: null, retryAllowed: false,
+    blocker: 'SOVEREIGN_COPY_EFFECT_UNKNOWN' });
+}
+
+function unobservedFileHashResult() {
+  return frozen({ ok: false, schemaVersion: SOVEREIGN_FILE_HASH_SCHEMA_V1,
+    observationState: 'NOT_OBSERVED', mutationAttempted: false, retryAllowed: false,
+    blocker: 'SOVEREIGN_HASH_OBSERVATION_UNPROVEN' });
+}
+
 async function executeAdmittedSovereignCommandV1(command, options) {
   try {
     let contentText = '';
@@ -1320,30 +1351,40 @@ async function executeAdmittedSovereignCommandV1(command, options) {
       const service = command.plan.family === 'search' ? options.searchSessions
         : command.plan.family === 'config' ? options.sessionConfig
           : command.plan.family === 'move' ? options.fileMoves
+            : command.plan.family === 'copy' ? options.fileCopies
             : command.plan.family === 'feedback' ? options.feedbackIntake
               : command.plan.family === 'pdf' ? options.pdfWrites
             : command.plan.family === 'process' ? options.processSessions : options.sessionHistory;
       structuredContent = await service.execute(command.plan.family === 'history'
         ? command.plan.operation.toLowerCase() : command.plan.operation, command.plan.args, options.routeProof);
       const move = command.plan.family === 'move';
+      const copy = command.plan.operation === 'COPY_FILE_CONTENT';
+      const fileHash = command.plan.operation === 'GET_FILE_HASH';
       const pdf = command.plan.family === 'pdf';
       const feedback = command.plan.family === 'feedback';
       const processStart = command.plan.operation === 'START_PROCESS_SESSION';
       const processCancel = command.plan.operation === 'CANCEL_PROCESS_SESSION';
+      if (copy) structuredContent = captureSovereignFileCopyResultV1(structuredContent, command.plan.args)
+        || unknownFileCopyResult();
+      if (fileHash) structuredContent = captureSovereignFileHashResultV1(structuredContent, command.plan.args)
+        || unobservedFileHashResult();
       if (processCancel && !validProcessCancellationReceipt(structuredContent, command.plan.args.sessionId))
         structuredContent = unknownProcessCancellation(command.plan.args.sessionId);
       if (!structuredContent || structuredContent.ok !== true
         || (move && structuredContent.mutationState !== 'MOVED')
+        || (copy && structuredContent.mutationState !== 'COPIED')
+        || (fileHash && structuredContent.observationState !== 'HASHED')
         || (pdf && structuredContent.mutationState !== 'CREATED')
         || (feedback && structuredContent.feedbackState !== 'PERSISTED')
         || (processStart && (structuredContent.launchState !== 'SPAWN_OBSERVED'
           || structuredContent.session?.spawnObserved !== true))) {
         const unknownMove = move && structuredContent?.mutationState !== 'NOT_STARTED';
+        const unknownCopy = copy && structuredContent?.mutationState !== 'NOT_STARTED';
         const unknownPdf = pdf && structuredContent?.mutationState !== 'NOT_STARTED';
         const unknownFeedback = feedback && structuredContent?.feedbackState !== 'NOT_STARTED';
         const unknownProcessStart = processStart && structuredContent?.launchState !== 'NOT_STARTED';
         const unknownProcessCancel = processCancel && structuredContent?.cancellationState !== 'NOT_STARTED';
-        if (unknownMove || unknownPdf) structuredContent = frozen({ ...structuredContent,
+        if (unknownMove || unknownCopy || unknownPdf) structuredContent = frozen({ ...structuredContent,
           ok: false, mutationState: 'UNKNOWN', retryAllowed: false });
         if (unknownFeedback) structuredContent = frozen({ ...structuredContent,
           ok: false, feedbackState: 'UNKNOWN', retryAllowed: false,
@@ -1355,7 +1396,7 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         return frozen({
           ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command, contentText, structuredContent,
           blocker: structuredContent?.blocker || 'SOVEREIGN_PRIVATE_SESSION_OPERATION_BLOCKED',
-          finalVerdict: unknownMove || unknownPdf || unknownFeedback || unknownProcessStart || unknownProcessCancel
+          finalVerdict: unknownMove || unknownCopy || unknownPdf || unknownFeedback || unknownProcessStart || unknownProcessCancel
             ? 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' : 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
         });
       }
@@ -1618,6 +1659,13 @@ async function executeAdmittedSovereignCommandV1(command, options) {
       return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
         blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
         finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
+    if (command.plan?.kind === 'private-session' && command.plan.family === 'copy') {
+      const readOnly = command.plan.operation === 'GET_FILE_HASH';
+      const structuredContent = readOnly ? unobservedFileHashResult() : unknownFileCopyResult();
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: readOnly ? 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' : 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
     }
     if (command.plan?.kind === 'private-session') return frozen({
       ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,

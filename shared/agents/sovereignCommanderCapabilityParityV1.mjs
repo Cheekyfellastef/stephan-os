@@ -25,6 +25,8 @@ export const SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY = Object.freeze(Object.f
   ['get-tool-result', 'get_tool_result', 'THIS_PRIVATE_SESSION_RETAINED_RECEIPTS'],
   ['list-remote-tool-calls', 'list_remote_tool_calls', 'THIS_PRIVATE_HTTP_SESSION_ADVISORY_HISTORY'],
   ['set-config-value', 'set_config_value', 'THIS_PRIVATE_SESSION_TYPED_IO_LIMITS'],
+  ['copy-file-content', 'copy_file_content', 'CREATE_ONLY_SAME_VOLUME_REGULAR_FILE_CONTENT_COPY'],
+  ['get-file-hash', 'get_file_hash', 'BOUNDED_LOCAL_REGULAR_FILE_CONTENT_HASH_OBSERVATION'],
   ['cancel-process-session', 'cancel_process_session', 'THIS_PRIVATE_HANDLER_TWO_FIXED_DIAGNOSTIC_CHILDREN_CANCELLATION'],
   ['give-feedback-to-desktop-commander', 'submit_feedback', 'THIS_SOVEREIGN_WORKSPACE_UNVERIFIED_ADVISORY_FEEDBACK'],
 ].map(([id, sovereignEquivalent, functionalScope]) => [id, Object.freeze({ sovereignEquivalent,
