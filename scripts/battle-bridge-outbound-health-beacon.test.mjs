@@ -7,6 +7,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
+import { runMailboxOutboxGuard } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
+import { buildSovereignRelayStatus, buildSovereignRelayInFlightStatus,
+  classifySovereignRelayGuardCycle } from './battle-bridge-sovereign-relay-daemon.mjs';
 import {
   buildSovereignCommanderRepairReport,
   SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE,
@@ -29,12 +32,120 @@ import {
   projectSovereignRepairBeaconFacts,
   projectSovereignRepairContinuity,
   projectSovereignCommanderBeaconFacts,
+  projectMailboxGuardBeaconFacts,
   readSovereignRepairCycleTail,
   mirrorBattleBridgeCompleteStateToSharedWorkspace,
 } from './battle-bridge-outbound-health-beacon.mjs';
 
 const HEAD = 'a'.repeat(40);
 const OWNER = 'Cheekyfellastef';
+
+
+function mailboxRelayDiagnosticFixture(overrides = {}) {
+  const diagnostic = { schemaVersion: 'stephanos.mailbox-guard-diagnostic.v1',
+    observedAtUtc: '2026-11-07T15:20:00.000Z', stage: 'STATE_VALIDATION',
+    outcome: 'GUARD_BLOCKED', reasonCode: 'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID',
+    childInvocationAttempted: false, ...overrides };
+  const cycle = classifySovereignRelayGuardCycle({ exitCode: 1, stdout: JSON.stringify({
+    ok: false, blocker: 'MAILBOX_OUTBOX_GUARD_FAILED', finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+    error: 'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID', guardDiagnostic: diagnostic,
+  }) });
+  return buildSovereignRelayStatus({ now: new Date('2026-11-07T15:20:00.000Z'), sourceHead: HEAD, cycle });
+}
+
+test('actual pre-child guard refusal survives relay persistence into the existing public beacon', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'mailbox-beacon-diagnostic-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const statePath = join(root, 'state.json');
+  const deferredPath = join(root, 'receipt-publication-deferred-v1.json');
+  const childRunnerPath = join(root, 'inert-child.mjs');
+  const now = new Date('2026-11-07T15:20:00.000Z');
+  writeFileSync(childRunnerPath, '// injected child is never invoked\n');
+  writeFileSync(statePath, JSON.stringify({ pendingReceiptPublications: [{
+    publicationId: 'PRIVATE_PUBLICATION_SENTINEL',
+    receipt: { requestId: '', state: 'DONE', privateDetail: 'PRIVATE_RECORD_SENTINEL' },
+  }] }));
+  const before = readFileSync(statePath);
+  let invocations = 0;
+  const guard = runMailboxOutboxGuard({
+    platform: 'win32', repoRoot: root, now: () => now,
+    pathOverrides: { actualRepoRoot: root, expectedRepoRoot: root, statePath, deferredPath, childRunnerPath },
+    processIdentityFn: () => ({ state: 'known', bootId: 'fixture-boot-current', processStartId: 'fixture-process-current' }),
+    spawnSyncFn: () => { invocations++; throw Error('must not invoke'); },
+  });
+  assert.equal(invocations, 0);
+  assert.deepEqual(readFileSync(statePath), before);
+  const cycle = classifySovereignRelayGuardCycle({ exitCode: 1, stdout: JSON.stringify(guard) });
+  const relay = buildSovereignRelayStatus({ now, sourceHead: HEAD, cycle });
+  const beacon = buildBattleBridgeOutboundBeacon({ now, sourceHead: HEAD, statusRecords: { sovereignRelay: relay } });
+  assert.equal(beacon.mailboxGuard.observed, true);
+  assert.equal(beacon.mailboxGuard.reasonCode, 'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID');
+  assert.equal(beacon.mailboxGuard.stage, 'STATE_VALIDATION');
+  assert.equal(beacon.mailboxGuard.childInvocationAttempted, false);
+  for (const key of ['commandIngressProven', 'receiptAcceptanceProven', 'executionProven',
+    'sourceMutationAllowed', 'mergeAuthority', 'custodyReleaseAllowed']) assert.equal(beacon.mailboxGuard[key], false);
+  const publicBody = buildBattleBridgeOutboundBeaconBody(beacon);
+  for (const privateValue of ['PRIVATE_PUBLICATION_SENTINEL', 'PRIVATE_RECORD_SENTINEL', root, 'privateDetail'])
+    assert.equal(publicBody.includes(privateValue), false);
+});
+
+test('mailbox guard beacon requires current source and both heartbeat and original observation freshness', () => {
+  const nowMs = Date.parse('2026-11-07T15:20:00.000Z');
+  const current = mailboxRelayDiagnosticFixture();
+  assert.equal(projectMailboxGuardBeaconFacts(current, { expectedHead: HEAD, nowMs }).observed, true);
+  const cases = [
+    [{ ...current, sourceHead: 'b'.repeat(40) }, 'MAILBOX_GUARD_SOURCE_MISMATCH'],
+    [{ ...current, heartbeatAtUtc: '2026-11-07T15:16:59.000Z' }, 'MAILBOX_GUARD_RELAY_STALE'],
+    [{ ...current, heartbeatAtUtc: '2026-11-07T15:20:06.000Z' }, 'MAILBOX_GUARD_RELAY_STALE'],
+    [{ ...current, guardDiagnostic: { ...current.guardDiagnostic, observedAtUtc: '2026-11-07T15:16:59.000Z' } }, 'MAILBOX_GUARD_DIAGNOSTIC_STALE'],
+    [{ ...current, guardDiagnostic: { ...current.guardDiagnostic, observedAtUtc: '2026-11-07T15:20:06.000Z' } }, 'MAILBOX_GUARD_DIAGNOSTIC_STALE'],
+    [{ ...current, guardDiagnostic: null }, 'MAILBOX_GUARD_DIAGNOSTIC_UNPROVEN'],
+    [{ ...current, guardVerdict: 'MAILBOX_OUTBOX_GUARD_READY' }, 'MAILBOX_GUARD_DIAGNOSTIC_UNPROVEN'],
+    [{ ...current, schema: 'other' }, 'MAILBOX_GUARD_RELAY_INVALID'],
+    [{ ...current, sourceMutationAllowed: true }, 'MAILBOX_GUARD_RELAY_INVALID'],
+  ];
+  for (const [record, blocker] of cases) {
+    const value = projectMailboxGuardBeaconFacts(record, { expectedHead: HEAD, nowMs });
+    assert.equal(value.observed, false);
+    assert.equal(value.blocker, blocker);
+    assert.equal(value.reasonCode, '');
+  }
+  const inFlight = buildSovereignRelayInFlightStatus({ now: new Date(nowMs + 181000),
+    cycleStartedAtMs: nowMs + 180000, previousStatus: current, sourceHead: HEAD });
+  const stale = projectMailboxGuardBeaconFacts(inFlight, { expectedHead: HEAD, nowMs: nowMs + 181000 });
+  assert.equal(stale.blocker, 'MAILBOX_GUARD_DIAGNOSTIC_STALE');
+  assert.equal(inFlight.guardDiagnostic.observedAtUtc, current.guardDiagnostic.observedAtUtc);
+});
+
+test('mailbox guard beacon projects closed codes only and never grants ingress from child success', () => {
+  const nowMs = Date.parse('2026-11-07T15:20:00.000Z');
+  const record = mailboxRelayDiagnosticFixture();
+  const extras = { ...record, error: 'SECRET_ERROR_SENTINEL', detail: 'PRIVATE_PATH_SENTINEL',
+    requestId: 'PRIVATE_REQUEST_SENTINEL', executionProven: true };
+  const safe = projectMailboxGuardBeaconFacts(extras, { expectedHead: HEAD, nowMs });
+  assert.equal(safe.observed, true);
+  assert.equal(/SENTINEL/.test(JSON.stringify(safe)), false);
+  const childSucceeded = { ...record, guardVerdict: 'MAILBOX_OUTBOX_GUARD_READY', guardDiagnostic: {
+    ...record.guardDiagnostic, stage: 'COMPLETE', outcome: 'CHILD_SUCCEEDED', reasonCode: 'NONE',
+    childInvocationAttempted: true,
+  } };
+  const observed = projectMailboxGuardBeaconFacts(childSucceeded, { expectedHead: HEAD, nowMs });
+  assert.equal(observed.outcome, 'CHILD_SUCCEEDED');
+  assert.equal(observed.commandIngressProven, false);
+  assert.equal(observed.receiptAcceptanceProven, false);
+  assert.equal(observed.executionProven, false);
+  for (const guardDiagnostic of [
+    { ...record.guardDiagnostic, privatePath: 'PRIVATE_PATH_SENTINEL' },
+    { ...record.guardDiagnostic, reasonCode: 'SECRET_ERROR_SENTINEL' },
+    { ...record.guardDiagnostic, childInvocationAttempted: true },
+  ]) assert.equal(projectMailboxGuardBeaconFacts({ ...record, guardDiagnostic },
+    { expectedHead: HEAD, nowMs }).observed, false);
+  let reads = 0;
+  const accessor = { ...record };
+  Object.defineProperty(accessor, 'guardDiagnostic', { enumerable: true, get() { reads++; return record.guardDiagnostic; } });
+  assert.equal(projectMailboxGuardBeaconFacts(accessor, { expectedHead: HEAD, nowMs }).observed, false);
+  assert.equal(reads, 0);
+});
 
 function status(overrides = {}) {
   return {
@@ -1504,6 +1615,7 @@ test('complete sovereign local telemetry is saved before an external publication
       projectPublicGoalGateObservatoryV1: () => ({}),
       readCommissionedGateLedger: () => null,
       projectSovereignRepairContinuity, readSovereignRepairCycleTail, projectSovereignCommanderBeaconFacts,
+      projectMailboxGuardBeaconFacts,
       options: {
         env: { USERPROFILE: root, STEPHANOS_SHARED_AGENT_WORKSPACE: workspace },
         mirror: mirrorBattleBridgeCompleteStateToSharedWorkspace,
