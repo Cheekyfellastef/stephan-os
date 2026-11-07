@@ -129,7 +129,7 @@
     import { createHolodeckCubeScene } from './holodeck-cube-scene-v1.mjs';
     import { createHolodeckCubeStore } from './holodeck-cube-store-v1.mjs';
     import { createHolodeckWindowClient } from './holodeck-window-client-v1.mjs';
-    import { createHolodeckScreen, SCREEN_BUTTONS } from './holodeck-screen-v1.mjs';
+    import { createHolodeckScreen, SCREEN_BUTTONS, screenButtonLabel } from './holodeck-screen-v1.mjs';
     import { createHolodeckComfort } from './holodeck-comfort-v1.mjs';
     import { createSpatialWorkspaceTelemetryRecorderV1 } from './spatial-telemetry-client.mjs';
     const webxrStatus = document.getElementById('webxr-status');
@@ -165,17 +165,43 @@
     });
     refreshComfortUI(comfort.getState());
     const windowSelector=document.getElementById('desktop-window');
+    const connectWindowButton=document.getElementById('connect-window');
+    const previewKeyButtons=[];
+    let windowListSignature='',keyboardShift=null,screen;
+    function refreshInputStatus(state){
+      const element=document.getElementById('window-input-status'),message=state.inputStatus??'';
+      if(element.textContent!==message)element.textContent=message;
+    }
+    function refreshKeyboardLabels(state){
+      if(keyboardShift===state.shift)return;keyboardShift=state.shift;
+      for(const [control,button] of previewKeyButtons){
+        const label=screenButtonLabel(control,state.shift);button.textContent=label;
+        button.setAttribute('aria-label',control.id.startsWith('key:')?`Type ${label}`:label);
+        if(control.id==='shift')button.setAttribute('aria-pressed',String(state.shift));
+      }
+    }
     const client=createHolodeckWindowClient({onChange:state=>{
       document.getElementById('window-status').textContent=state.message;
-      document.getElementById('window-input-status').textContent=state.inputStatus;
       windowSelector.hidden=state.status!=='selecting';
-      document.getElementById('connect-window').hidden=state.status!=='selecting';
-      if(state.status==='selecting')windowSelector.replaceChildren(...state.windows.map(window=>{
-        const option=document.createElement('option');option.value=window.id;option.textContent=window.title;return option;
-      }));
+      connectWindowButton.hidden=state.status!=='selecting';
+      windowSelector.disabled=!state.windows.length;
+      if(state.status==='selecting'){
+        const signature=JSON.stringify(state.windows.map(({id,pid,title})=>[id,pid,title]));
+        if(signature!==windowListSignature){
+          const selected=windowSelector.value,selectedPid=windowSelector.selectedOptions[0]?.dataset.pid;windowListSignature=signature;
+          windowSelector.replaceChildren(...state.windows.map(window=>{
+            const option=document.createElement('option');option.value=window.id;option.dataset.pid=String(window.pid);option.textContent=window.title;return option;
+          }));
+          if(selected)windowSelector.value=state.windows.some(window=>String(window.id)===selected&&String(window.pid)===selectedPid)?selected:'';
+        }
+      }
+      connectWindowButton.disabled=!state.windows.some(window=>String(window.id)===windowSelector.value);
       if(!immersiveActive)drawPreview();
+      refreshInputStatus(screen?.getState()??state);
     }});
-    const screen=createHolodeckScreen({client,comfort,onStatus:()=>{if(!immersiveActive)drawPreview();},onReload:async()=>{
+    screen=createHolodeckScreen({client,comfort,onStatus:state=>{
+      refreshKeyboardLabels(state);if(!immersiveActive)drawPreview();refreshInputStatus(screen?.getState()??state);
+    },onReload:async()=>{
       comfort.flush();cubeScene.stop();await client.stop();try{await immersiveSession?.end();}catch{}location.reload();
     }});
     const surfaces=screen.render();
@@ -193,17 +219,18 @@
     const previewKeyboard=document.createElement('div');previewKeyboard.style.cssText='position:relative;aspect-ratio:4/1;min-width:960px;background:#071c29';
     previewKeyboard.setAttribute('aria-label','Spatial console keyboard preview');
     for(const control of SCREEN_BUTTONS){
-      const button=document.createElement('button');button.type='button';button.textContent=control.label;
-      button.setAttribute('aria-label',control.id.startsWith('key:')?`Type ${control.label}`:control.label);
+      const button=document.createElement('button');button.type='button';previewKeyButtons.push([control,button]);
       button.style.cssText=`position:absolute;left:${control.x*100}%;top:${control.y*100}%;width:${control.w*100}%;height:${control.h*100}%;min-height:0;padding:2px;border-radius:0;font-size:12px;white-space:nowrap;`;
       button.addEventListener('click',()=>{if(!immersiveActive){screen.action(control.id);comfort.flush();}});previewKeyboard.append(button);
     }
+    refreshKeyboardLabels(screen.getState());
     previewKeyboardScroll.append(previewKeyboard);document.getElementById('console-preview').append(previewKeyboardScroll);
     const previewKeyboardHint=document.createElement('p');previewKeyboardHint.className='muted console-keyboard-hint';
     previewKeyboardHint.textContent='On a small screen, swipe sideways through the keyboard to reach all keys.';
     document.getElementById('console-preview').append(previewKeyboardHint);
     document.getElementById('choose-window').addEventListener('click',()=>client.discover());
-    document.getElementById('connect-window').addEventListener('click',()=>client.connect(Number(windowSelector.value)));
+    windowSelector.addEventListener('change',()=>{connectWindowButton.disabled=!windowSelector.value;});
+    connectWindowButton.addEventListener('click',()=>client.connect(Number(windowSelector.value)));
     document.getElementById('disconnect-window').addEventListener('click',()=>client.stop());
     const cubeStore = createHolodeckCubeStore({onStatus:message => {
       document.getElementById('cube-save-status').textContent = message;

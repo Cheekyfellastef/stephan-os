@@ -5,14 +5,26 @@ The far wall is a holographic display with an attached keyboard console. It is a
 ## Using it
 
 1. Open ChatGPT/Codex on the Windows PC, then use the normal **Stephanos Spatial Workspace** desktop shortcut.
-2. Choose the intended window, connect it, and confirm that exact window in the Windows prompt. Keep it restored rather than minimized. The native prompt also supports Alt+Y/Alt+N.
+2. Choose the intended window, connect it, and confirm that exact window in the Windows prompt. Keep it restored rather than minimized. The list refreshes automatically while you choose, so opening ChatGPT after opening the chooser works. A valid selection stays selected; if that window disappears, choose again. Connect is disabled when no window is selected. The native prompt also supports Alt+Y/Alt+N.
 3. Enter VR through the PC browser and Quest Link/Air Link. This local Windows window adapter does not connect a standalone Quest browser to the PC.
 4. Point at a field or control on the hologram and press Quest trigger, or look at it and press Xbox A. Use the console keyboard for text. Send/Enter sends the original app's Enter key; the original app decides its meaning.
-5. Fit and Zoom change the display view; Scroll up/down scroll at the last point indicated on the app. Sticks still walk and turn smoothly. Grip/RT still manipulates cubes.
+5. Zoom enlarges the app; the four **View** arrows move the enlarged view to reach the composer, Voice or attachment controls at its edges. **Fit** restores the full image and centres the view. **Scroll** arrows scroll the original app at the last point indicated on it, or the view centre after a view adjustment. Sticks still walk and turn smoothly. Grip/RT still manipulates cubes.
+6. Shift changes the displayed letters and punctuation to match what the keyboard sends. The input status appears below the hologram as well as on the launcher. “Input sent” means the adapter posted it to the selected app; it does not prove the app accepted a message or produced a reply. A rejection, paused picture or lost connection has its own visible status.
 
 The original app's image attachment and microphone controls remain on the hologram. Audio help explains headset microphone/speaker selection; it does not start a recording or claim an independent voice connection. Windows and the original app route sound through the selected headset. Audio and physical headset acceptance require an operator test.
 
-Disconnect revokes the local connection. Refreshing requires choosing and confirming a window again. Closing an abandoned tab expires its session within 90 seconds. Reload room asks for a second press, saves the cubes, ends the current VR session, and reloads installed source. Reconnect the app and enter VR again. It does not apply or approve source changes: request changes through the existing chat and its normal review/installation gates.
+### ChatGPT Voice and Quest audio
+
+**Audio help** is a setup guide. It does not configure Windows, obtain microphone permission, enable Voice or verify your headset. Use the PC browser with Quest Link / Air Link, then:
+
+1. In Windows **Settings → System → Sound → Input**, select the headset microphone, open its properties and run the microphone test. Play the recording back to check what Windows actually captured. See [Microsoft’s microphone setup and test guide](https://support.microsoft.com/en-us/windows/hardware/drivers/how-to-set-up-and-test-microphones-in-windows).
+2. In **Sound → Volume mixer → Apps**, make sure ChatGPT (or its browser) is unmuted and its output uses the headset speakers. See [Microsoft’s app audio routing guide](https://support.microsoft.com/en-us/windows/hardware/audio/fix-app-audio-not-working-while-system-sounds-work-in-windows). Device names depend on the actual Windows installation.
+3. Press **Audio help** again to return to the connected app. Use **Fit**, **Zoom** and the **View** arrows to reach ChatGPT’s own **Voice** button, start Voice and allow microphone access when prompted. Voice starts a spoken conversation; microphone dictation enters text. Availability depends on the app, account and workspace. See [OpenAI’s Voice guide](https://learn.chatgpt.com/docs/features/voice).
+4. For headset acceptance, say a short phrase, confirm ChatGPT hears it, and check that its spoken response plays through the Quest speakers. End Voice using the original app’s control. This live test is separate from browser/source checks and has not been established by a synthetic frame or an Audio help screen.
+
+The existing capture helper supplies window images and bounded input. It does not capture or stream audio. ChatGPT and Windows retain microphone permission, recording and playback control; this room does not add another audio connection.
+
+Disconnect revokes the local connection. Refreshing requires choosing and confirming a window again. Closing an abandoned tab expires its session within 90 seconds. Reload asks for a second press, saves the cubes, ends the current VR session, and reloads installed source. Reconnect the app and enter VR again. It does not apply or approve source changes: request changes through the existing chat and its normal review/installation gates.
 
 ## Seated and standing comfort
 

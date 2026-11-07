@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stephanos-spatial-workspace-v1-comfort-profiles-v2';
+const CACHE_NAME = 'stephanos-spatial-workspace-v1-console-view-v3';
 const CORE_ASSETS = [
   './',
   './quest-entry.html',

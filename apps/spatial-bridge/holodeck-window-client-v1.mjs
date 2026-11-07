@@ -9,13 +9,28 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
   try{const saved=sessionStore?.getItem(storageKey);if(/^[a-f0-9]{64}$/.test(saved??''))token=saved;}catch{}
   let state={status:'idle',message:'Connect your ChatGPT or Codex window.',inputStatus:'',windows:[],title:'',revision:0};
   function publish(changes){state={...state,...changes,revision:state.revision+1};try{onChange({...state});}catch{}}
+  function showWindows(windows,message){
+    windows=Array.isArray(windows)?windows:[];
+    publish({status:'selecting',windows,message:message??(windows.length
+      ?'Select the ChatGPT or Codex window you want to use in VR.'
+      :'No open windows found. Open ChatGPT on this PC; this list refreshes automatically.')});
+  }
+  function scheduleDiscovery(current){timer=setTimer(()=>refreshWindows(current),3000);}
+  async function refreshWindows(current){
+    if(state.status!=='selecting'||current!==epoch)return;
+    try{
+      refreshPromise=request('/windows');const result=await refreshPromise;
+      if(current===epoch&&state.status==='selecting'){showWindows(result.windows);scheduleDiscovery(current);}
+    }catch{if(current===epoch&&state.status==='selecting')publish({status:'unavailable',inputStatus:'',message:'Connection expired. Choose window again.'});}
+    finally{if(current===epoch)refreshPromise=null;}
+  }
   async function request(path,body={}) {
     const response=await fetchRef(endpoint+path,{method:'POST',headers:{'Content-Type':'application/json',...(token?{'X-Spatial-Session':token}:{})},
       body:JSON.stringify(body),cache:'no-store',signal:AbortSignal.timeout(path==='/bind'?125000:20000)});
     const data=await response.json();if(!response.ok)throw new Error(data.status);return data;
   }
   async function stop() {
-    epoch++;active=false;clearTimer(timer);queue=[];generation=0;serial=0;busy=false;
+    epoch++;active=false;clearTimer(timer);refreshPromise=null;queue=[];generation=0;serial=0;busy=false;
     let old=token;
     if(!old)try{old=sessionStore?.getItem(storageKey);}catch{}
     token=null;image=null;publish({status:'idle',windows:[],title:'',inputStatus:'',message:'Window disconnected.'});
@@ -40,20 +55,28 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       try{sessionStore?.setItem(storageKey,token);}catch{}
       const result=await request('/windows');
       if(current!==epoch)return;
-      publish({status:'selecting',windows:result.windows??[],message:'Select the ChatGPT or Codex window you want to use in VR.'});
+      showWindows(result.windows);
       // Keep the unbound selection alive while the person reads the window list.
-      const heartbeat=async()=>{if(state.status!=='selecting'||current!==epoch)return;try{refreshPromise=request('/windows');await refreshPromise;if(current===epoch&&state.status==='selecting')timer=setTimer(heartbeat,3000);}catch{if(current===epoch)publish({status:'unavailable',message:'Connection expired. Choose window again.'});}finally{if(current===epoch)refreshPromise=null;}};
-      timer=setTimer(heartbeat,3000);
+      scheduleDiscovery(current);
     }catch(error){if(current===epoch)publish({status:'unavailable',message:error.message==='another-surface-active'
       ?'Another workspace has the connection. Disconnect it first, or wait for it to close.'
       :'The local window connection is unavailable. Start Spatial Workspace from its desktop button.'});}
   }
   async function connect(id) {
-    clearTimer(timer);const selected=state.windows.find(w=>w.id===id);if(!selected||busy)return false;
+    let selected=state.windows.find(w=>w.id===id);if(!selected||busy||state.status!=='selecting')return false;
+    clearTimer(timer);
     const current=epoch;
     busy=true;publish({status:'connecting',message:'Confirm the selected window in the Windows connection prompt.'});
     try{
-      if(refreshPromise)await refreshPromise;
+      if(refreshPromise){
+        const refreshed=await refreshPromise;
+        if(current!==epoch||disposed)return false;
+        const sameWindow=refreshed.windows?.find(window=>window.id===selected.id&&window.pid===selected.pid);
+        if(!sameWindow){
+          showWindows(refreshed.windows,'The window list changed. Select the intended app again.');scheduleDiscovery(current);return false;
+        }
+        selected=sameWindow;
+      }
       if(current!==epoch||disposed)return false;
       const result=await request('/bind',{id});if(current!==epoch)return false;if(result.status!=='connected')throw new Error('bind');
       active=true;sequence=0;queue=[];publish({status:'waiting',windows:[],title:selected.title,message:'Waiting for the selected app to draw.'});
@@ -78,11 +101,11 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
           const next=documentRef.createElement('img');next.src='data:image/jpeg;base64,'+frame.jpeg;await next.decode();
           if(!active||current!==epoch)return;
           if(generation!==frame.generation)queue=[];
-          image=next;generation=frame.generation;serial=frame.serial;publish({status:'live',message:'Connected to your original app. Point at its controls to interact.'});
+          image=next;generation=frame.generation;serial=frame.serial;publish({status:'live',...(state.status!=='live'?{inputStatus:''}:{}),message:'Connected to your original app. Point at its controls to interact.'});
         }
-      }else{generation=0;queue=[];publish({status:'waiting',message:'Waiting for your app. Restore a minimized window or reconnect if it closed.'});}
+      }else{generation=0;queue=[];publish({status:'waiting',inputStatus:'Input paused. Wait for a live picture of your app.',message:'Waiting for your app. Restore a minimized window or reconnect if it closed.'});}
       timer=setTimer(()=>poll(current),queue.length?0:67);
-    }catch{if(current===epoch){active=false;generation=0;queue=[];image=null;publish({status:'unavailable',message:'Window connection lost. Your conversation remains in the original app.'});}}
+    }catch{if(current===epoch){active=false;generation=0;queue=[];image=null;publish({status:'unavailable',inputStatus:'Input paused. Reconnect the selected app.',message:'Window connection lost. Your conversation remains in the original app.'});}}
   }
   function input(value){
     if(!active||!generation||state.status!=='live'||queue.length>=16){publish({inputStatus:'Input paused. Wait for a live connection.'});return false;}
