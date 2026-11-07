@@ -7,7 +7,23 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { deflateSync } from 'node:zlib';
 import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
-import { main, persistReview, localModel, authenticatedReviewDiff } from './sovereign-reviewer-v1.mjs';
+import { main, persistReview, localModel as localModelActual, authenticatedReviewDiff } from './sovereign-reviewer-v1.mjs';
+
+// Existing inference fixtures use the reviewed daemon protocol; dedicated
+// tests below exercise the production callers without this adapter.
+const withSupportedProtocol = generate => async (url, options) => {
+  if (url === 'http://127.0.0.1:11434/api/version') {
+    assert.equal(options.method, 'GET');
+    assert.equal(options.redirect, 'error');
+    assert.equal(options.body, undefined);
+    return new Response('{"version":"0.40.15"}');
+  }
+  return generate(url, options);
+};
+const localModel = (prompt, environment, options) => localModelActual(prompt, environment,
+  { ...options, fetchImpl: withSupportedProtocol(options.fetchImpl) });
+
+const canonicalConfig = 'remote.origin.url\nhttps://github.com/Cheekyfellastef/stephan-os.git\0';
 
 function reviewedObjects() {
   const objects = new Map();
@@ -132,7 +148,7 @@ test('runner publishes only a candidate proof, with no GitHub, merge or deployme
 test('trusted Git boundary ignores hostile PATH and Git overrides', async () => {
   const calls = [];
   const fixture = reviewedObjects();
-  const outputs = [fixture.head, 'goal/review', '', fixture.base, ''];
+  const outputs = [Buffer.from(canonicalConfig), fixture.head, 'goal/review', Buffer.alloc(0), fixture.base, ''];
   const result = await main({
     PATH: '/attacker', GIT_EXEC_PATH: '/attacker', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.hooksPath',
     GIT_CONFIG_VALUE_0: '/attacker', STEPHANOS_REVIEW_EXACT_HEAD: fixture.head, STEPHANOS_REVIEW_EXACT_BASE: fixture.base,
@@ -150,9 +166,86 @@ test('trusted Git boundary ignores hostile PATH and Git overrides', async () => 
   });
   assert.equal(result.status, 'LOCAL_REVIEW_EVIDENCE_READY');
   assert.equal(calls.every(call => call.executable === '/usr/bin/git'), true);
+  assert.ok(calls.some(call => call.args.includes('status.renames=false')));
   assert.equal(calls.every(call => call.env.PATH === '/usr/bin:/bin' && call.env.GIT_EXEC_PATH === undefined), true);
   assert.equal(calls.every(call => call.env.GIT_CONFIG_COUNT !== '99' && call.args.includes('core.fsmonitor=false')), true);
   assert.equal(calls.some(call => call.args.includes('diff')), false);
+});
+
+test('standard reviewer admits canonical runtime dirt but denies source and malformed status before model use', async () => {
+  const fixture = reviewedObjects();
+  const inputs = {
+    STEPHANOS_REVIEW_EXACT_HEAD: fixture.head, STEPHANOS_REVIEW_EXACT_BASE: fixture.base,
+    STEPHANOS_REVIEW_EXACT_BRANCH: 'goal/review', STEPHANOS_REVIEW_REPOSITORY: 'owner/repo',
+    STEPHANOS_REVIEW_ISSUE: '1', STEPHANOS_REVIEW_PR: '3005',
+    STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER: 'builder', STEPHANOS_REVIEW_IMPLEMENTER_SESSION: 'build-1',
+    STEPHANOS_REVIEW_SESSION: 'review-2',
+  };
+  const accepted = [
+    '', ' M stephanos-server/data/memory/durable-memory.json\n',
+    '?? apps/stephanos/dist/assets/new.js\r\n M logs/reviewer.log\r\n',
+  ];
+  const denied = [
+    ' M scripts/reviewer.mjs\n', '?? scripts/new-reviewer.mjs\n',
+    '?? apps/stephanos/dist/assets/new.js\n M scripts/reviewer.mjs\n',
+    'M  stephanos-server/data/memory/durable-memory.json\n',
+    'R  apps/stephanos/dist/old.js -> scripts/new.js\n',
+    'XX apps/stephanos/dist/new.js\n', ' M\tapps/stephanos/dist/new.js\n',
+    '?? tmp/../scripts/new.mjs\n', '?? tmp/./new.mjs\n',
+    '?? tmp/new\0.mjs\n', '?? tmp/new\r.mjs\n',
+    '??  tmp/new.mjs\n', '?? tmp/new.mjs \n',
+    '?? tmp/first\n\n?? tmp/second\n',
+  ];
+  for (const status of [...accepted, ...denied]) {
+    const outputs = [Buffer.from(canonicalConfig), fixture.head, 'goal/review', Buffer.from(status), fixture.base, ''];
+    let modelCalls = 0;
+    const result = await main(inputs, {
+      platform: 'linux',
+      spawn(_executable, args, options) {
+        if (args.includes('status')) {
+          assert.ok(args.includes('status.renames=false'));
+          assert.equal(options.encoding, null, 'porcelain must retain its leading status space');
+        }
+        const index = args.indexOf('cat-file');
+        return { status: 0, stdout: index < 0 ? outputs.shift() : fixture.read(args[index + 1], args[index + 2]) };
+      },
+      invokeModel: async () => {
+        modelCalls++;
+        return JSON.stringify({ verdict: 'clean', reviewedPaths: ['src/test.js'], findings: [] });
+      },
+      persist: () => true,
+    });
+    assert.equal(result.status, accepted.includes(status) ? 'LOCAL_REVIEW_EVIDENCE_READY' : 'SOVEREIGN_REVIEW_HELD', status);
+    assert.equal(modelCalls, accepted.includes(status) ? 1 : 0, status);
+    if (denied.includes(status)) assert.equal(result.reason, 'REVIEW_WORKTREE_NOT_CLEAN', status);
+    assert.equal(result.mergeAuthority, false);
+  }
+});
+
+test('standard review rejects unsafe or noncanonical local Git configuration before status or model use', async () => {
+  for (const config of [
+    '', canonicalConfig + canonicalConfig,
+    'remote.origin.url\nhttps://example.invalid/repository.git\0',
+    canonicalConfig + 'filter.fixture.clean\n/tmp/fixture-helper\0',
+    canonicalConfig + 'include.path\n/tmp/fixture-config\0',
+    canonicalConfig + 'core.fsmonitor\n/tmp/fixture-helper\0',
+    canonicalConfig + 'extensions.worktreeconfig\ntrue\0',
+  ]) {
+    let reads = 0, modelCalls = 0;
+    const result = await main({ STEPHANOS_REVIEW_EXACT_HEAD: 'a'.repeat(40),
+      STEPHANOS_REVIEW_EXACT_BASE: 'b'.repeat(40), STEPHANOS_REVIEW_PR: '3005' }, {
+      platform: 'linux',
+      spawn(_executable, args, options) {
+        reads++;
+        assert.deepEqual(args.slice(-5), ['config', '--local', '--null', '--list', '--no-includes']);
+        assert.equal(options.encoding, null);
+        return { status: 0, stdout: Buffer.from(config) };
+      }, invokeModel: async () => { modelCalls++; }, persist: () => true,
+    });
+    assert.equal(result.reason, 'LOCAL_GIT_PROOF_UNAVAILABLE');
+    assert.equal(reads, 1, 'configuration denial must precede every status read');
+    assert.equal(modelCalls, 0);
+  }
 });
 
 test('publication rejects linked workspace ancestors', (t) => {
@@ -282,7 +375,7 @@ test('localModel uses fixed localhost, digest pin, gaming guard, redirect denial
     fetchImpl: async (url, opts) => {
       calls.push({ url, opts });
       return { ok: true, text: async () => JSON.stringify({
-        model: 'sha256:' + pin, done: true, done_reason: 'stop',
+        model: 'sha256:' + pin + ':local', done: true, done_reason: 'stop',
         response: JSON.stringify({ verdict: 'clean', reviewedPaths: [], findings: [] }),
       }) };
     },
@@ -294,7 +387,7 @@ test('localModel uses fixed localhost, digest pin, gaming guard, redirect denial
   assert.equal(calls[0].opts.redirect, 'error');
   assert.equal(calls[0].opts.method, 'POST');
   assert.equal(JSON.parse(calls[0].opts.body).keep_alive, 0);
-  assert.equal(JSON.parse(calls[0].opts.body).model, 'sha256:' + pin,
+  assert.equal(JSON.parse(calls[0].opts.body).model, 'sha256:' + pin + ':local',
     'the actual private prompt MUST use an immutable digest, never a mutable tag');
   assert.ok(guard.length >= 4, 'resource state must be rechecked around inference');
   assert.equal(clear.length, 1, 'inference governor monitor is always cleared');
@@ -338,7 +431,7 @@ test('localModel refuses gaming, tag replacement, redirected results, and aborts
   }), /LOCAL_MODEL_COMPLETION_IDENTITY_UNPROVEN/);
   await assert.rejects(localModel('private', {}, { ...ready,
     fetchImpl: async (_url, options) => {
-      assert.equal(JSON.parse(options.body).model, 'sha256:' + good,
+      assert.equal(JSON.parse(options.body).model, 'sha256:' + good + ':local',
         'tag replacement immediately before generation cannot change requested weights');
       return { ok: true, text: async () => JSON.stringify({
         model: 'qwen:14b', done: true, done_reason: 'stop', response: '{}',
@@ -348,9 +441,72 @@ test('localModel refuses gaming, tag replacement, redirected results, and aborts
     'older Ollama runtimes reporting only mutable tag must fail closed');
   await assert.rejects(localModel('private', {}, { ...ready,
     fetchImpl: async (_url, options) => {
-      assert.equal(JSON.parse(options.body).model, 'sha256:' + good);
+      assert.equal(JSON.parse(options.body).model, 'sha256:' + good + ':local');
       return { ok: false, status: 404, text: async () => 'model digest not supported' };
     },
   }), /LOCAL_MODEL_REQUEST_FAILED/,
     'older Ollama builds lacking immutable digest addressing MUST NOT fall back to mutable tag');
+});
+
+test('production standard reviewer refuses unsupported protocol before sending a private prompt', async () => {
+  const ready = { platform:'linux', gamingGuard:()=>({ok:true}),
+    modelPin:async()=>({ok:true,digest:'b'.repeat(64)}),
+    startPolling:()=>1,stopPolling:()=>{} };
+  for (const version of ['0.35.1','0.40.0-rc.1','0.41.0']) {
+    const calls=[];
+    await assert.rejects(localModelActual('private source',{}, {...ready,
+      fetchImpl:async(url,options)=>{
+        calls.push({url,options});
+        return new Response(JSON.stringify({version}));
+      },
+    }), /LOCAL_OLLAMA_DIGEST_PROTOCOL_UNSUPPORTED/);
+    assert.equal(calls.length,1);
+    assert.equal(calls[0].url,'http://127.0.0.1:11434/api/version');
+    assert.equal(calls[0].options.body,undefined);
+  }
+});
+
+test('standard reviewer rejects remote metadata even with the exact local selector', async () => {
+  const digest='b'.repeat(64),selector='sha256:'+digest+':local';
+  for(const patch of [{remote_host:''},{remote_model:'remote'},{model:'sha256:'+digest}]) {
+    await assert.rejects(localModelActual('private source',{},{
+      platform:'linux',gamingGuard:()=>({ok:true}),
+      modelPin:async()=>({ok:true,digest}),startPolling:()=>1,stopPolling:()=>{},
+      fetchImpl:withSupportedProtocol(async()=>({ok:true,text:async()=>JSON.stringify({
+        model:selector,done:true,done_reason:'stop',response:'{}',...patch,
+      })})),
+    }),/LOCAL_MODEL_COMPLETION_IDENTITY_UNPROVEN/);
+  }
+});
+
+test('standard runner publishes fixed protocol refusal codes without leaking arbitrary model errors', async () => {
+  const snapshot=()=>({
+    repository:'Cheekyfellastef/stephan-os',issueNumber:1574,prNumber:3005,
+    branch:'goal/1574-sovereign-reviewer-local-v1',
+    sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),changedFiles:['src/test.js'],
+    diff:'diff --git a/src/test.js b/src/test.js\n-old\n+new\n',
+    implementerProvider:'github-builder',implementerSessionId:'builder-1',
+    reviewerSessionId:'reviewer-2',modelClass:'qwen-14b',
+  });
+  const ready={platform:'linux',gamingGuard:()=>({ok:true}),
+    modelPin:async()=>({ok:true,digest:'b'.repeat(64)}),
+    startPolling:()=>1,stopPolling:()=>{}};
+  for(const [fetchImpl,reason] of [
+    [async()=>new Response('{"version":"0.35.1"}'),'LOCAL_OLLAMA_DIGEST_PROTOCOL_UNSUPPORTED'],
+    [async()=>new Response('{}',{status:503}),'LOCAL_OLLAMA_DIGEST_PROTOCOL_UNPROVEN'],
+    [null,'LOCAL_MODEL_UNAVAILABLE'],
+  ]) {
+    let published;
+    const result=await main({},{
+      snapshot,persist:value=>{published=value},
+      invokeModel:fetchImpl
+        ? prompt=>localModelActual(prompt,{}, {...ready,fetchImpl})
+        : async()=>{throw new Error('private provider error payload')},
+    });
+    assert.equal(result.status,'SOVEREIGN_REVIEW_HELD');
+    assert.equal(result.reason,reason);
+    assert.equal(published.reason,reason);
+    assert.equal(result.mergeAuthority,false);
+    assert.equal(JSON.stringify(result).includes('private provider error payload'),false);
+  }
 });

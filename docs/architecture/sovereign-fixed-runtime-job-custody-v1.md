@@ -191,3 +191,310 @@ protocol matrix covers independent parent and native interruption origins;
 temporary-store integration tests cover success/failure proposal combinations,
 missing/forged evidence, and cancellation at durable commit boundaries. These
 are deterministic regression proofs, not native installation or commissioning.
+
+## Existing guardian continuation through the qualified maintenance profile
+
+The production Windows guardian previously rejected its broad `repair-stephanos`
+profile after consuming the first timer, then left no next tick. The broad
+profile remains unenrolled. Its replacement timer request is restricted to the
+already declared `repair-goal-builder-flow` / `MAINTENANCE_GOAL_BUILDER_V1`
+descriptor. It compiles the ordinary fixed command and enters the same existing
+maintenance owner before the first asynchronous boundary. No public action,
+qualification option, profile, scheduler or separate mutation owner is added.
+
+Each tick rechecks actual native qualification. Governor or installation denials
+are recorded as not completed and retried with bounded backoff. Native operation
+failure remains failure even after authentic descendant exclusion. Forged,
+missing or unreleased native terminal evidence retains the original hold and
+does not schedule a replacement. A successful existing authenticated custody
+recovery resumes the next qualified tick; recovery itself is not repair proof.
+Manual work and automatic reporting remain single-flight. Stopping requests
+cancellation of the same native operation, waits for its terminal adjudication
+before closing the journal, and never schedules another cycle.
+
+The existing Shared Workspace repair status and event stream carry the closed
+`QUALIFIED_GOAL_BUILDER_MAINTENANCE` scope. A proven completed action is
+`MAINTENANCE_COMPLETED` / `OBSERVED`, with its source and native terminal digest.
+Whole-system readiness remains `UNPROVEN`, and these reporting fields grant no
+runtime qualification. Failed reporting preserves the actual action result but
+cannot count as a successful reported cycle. Existing broad repair callers
+retain their separate whole-system verification contract.
+
+This continuation does not enroll broad caretaker, Core, UI or service repair,
+qualify a source builder, or prove a physical goal build. Commander retains its
+current normal-operator Interactive task; pre-login execution is still
+unproven. Exact-head independent Windows/security review, protected source
+integration and actual host acceptance remain necessary. The deterministic VM
+regression exercises the production Windows branch with isolated native/report
+adapters and no production qualification injection; it is not Windows kernel
+or installed-host proof.
+
+## Offline immutable installation package preparation
+
+The existing fixed-runtime installer now has a manual, source-only preparation
+adapter at `scripts/sovereign-fixed-runtime-install-source-package-v1.mjs`.
+It continues the original fixed-runtime implementation under Goal #2961 and
+merged PR #3303. It creates no installer transport, service, source owner,
+credential reader, native action or approval gate. No runtime root imports this
+tool; the canonical runtime closure has an exact 261-file limit, including the directory adapter and its two pinned runtime-read helpers.
+
+The preparer consumes bounded JSON on stdin and emits deterministic JSON on
+stdout. It neither fetches data nor reads caller-selected paths. A separately
+authenticated source collector supplies the complete raw Git commit object,
+the minimal raw tree objects needed to prove every closed source path, and the
+261 exact blob records. Git object IDs include their object type and length.
+The preparer checks the commit's tree header, every tree/blob hash, canonical
+tree modes and ordering, absence of duplicate or Windows-case-aliased entries,
+exact path membership, strict UTF-8 source, and the unchanged local closure
+declaration. Symlinks, submodules, unused proof objects, incomplete source,
+rebound paths and excess data refuse. No captured source is evaluated.
+Identity decoding preserves every UTF-8 byte, including a leading BOM; it never
+trims or normalizes a Git path or commit header. The package preserves source
+bytes through base64 and never converts CRLF to LF to satisfy a blob hash.
+The existing authenticated `.gitattributes` is itself a closure member and pins
+the installed closure's line endings. The pending installer independently
+compares actual Windows materialization to those exact captured bytes; a changed
+checkout refuses rather than silently repairing or normalizing it.
+
+Input schema:
+
+```json
+{
+  "schemaVersion": "stephanos.fixed-runtime-source-package-input.v1",
+  "repository": "Cheekyfellastef/stephan-os",
+  "commit": { "sha": "<exact commit SHA>", "contentBase64": "<raw Git commit bytes>" },
+  "trees": [{ "sha": "<exact tree SHA>", "contentBase64": "<raw binary Git tree bytes>" }],
+  "records": [{ "path": "<canonical closure member>", "blobSha": "<exact blob SHA>", "contentBase64": "<exact source bytes>" }]
+}
+```
+
+The exact input/output bound is 16 MiB, with at most 128 tree objects, 2 MiB
+decoded tree data and 32,768 tree entries. Existing source bounds remain 2 MiB
+per file and 8 MiB total. The bundle preserves raw object evidence, normalized
+source records, per-file hashes/modes/sizes and a deterministic bundle SHA-256.
+It reports `UNBOUND` and `NOT_INSTALLABLE`. Git object integrity is not an
+authenticated GitHub observation, signature verification, current protected
+main, installed source, identity observation, independent review or approval.
+Those authority fields remain false even if the source collector independently
+holds such evidence; caller flags cannot elevate this artifact.
+
+The `prepare` CLI is usable directly on a curator's POSIX environment:
+
+```sh
+node scripts/sovereign-fixed-runtime-install-source-package-v1.mjs prepare < immutable-source-input.json > source-package.json
+```
+
+Windows PowerShell 5 has different redirection/encoding semantics. For an
+already prepared local input, use explicit UTF-8 reads and writes; the following
+only runs the offline preparer. `$inputPath` and `$outputPath` are private local
+artifact locations chosen by the curator, not parameters accepted by the tool.
+
+```powershell
+$utf8 = [Text.UTF8Encoding]::new($false, $true)
+$previousOutputEncoding = $OutputEncoding
+try {
+  $OutputEncoding = $utf8
+  $inputJson = [IO.File]::ReadAllText($inputPath, $utf8)
+  $packageJson = $inputJson | & 'C:\Program Files\nodejs\node.exe' 'C:\Users\Stephan Callear\Documents\GitHub\stephan-os\scripts\sovereign-fixed-runtime-install-source-package-v1.mjs' prepare
+  if ($LASTEXITCODE -ne 0) { throw 'FIXED_INSTALL_PACKAGE_PREPARATION_REFUSED' }
+  [IO.File]::WriteAllText($outputPath, [String]::Join([Environment]::NewLine, [string[]]$packageJson), $utf8)
+} finally {
+  $OutputEncoding = $previousOutputEncoding
+}
+```
+
+`bind` takes one JSON object with schema
+`stephanos.fixed-runtime-package-bind-input.v1`, the exact `sourcePackage`,
+`expectedMain`, `sourceTree` and private `operatorSid`. It revalidates the entire
+package, refuses changed metadata/flags or a different expected head/tree, checks
+the captured builder against the existing local builder bytes, then delegates
+only to `buildFixedRuntimeInstallerCandidateV1`. It does not import captured
+code. Use the same stdin/stdout invocation with `bind` in place of `prepare`.
+The command does not obtain an SID or infer it from a username. The existing
+local native inspector can observe the real caller SID privately; the public
+Control Tower projection deliberately excludes it. SID syntax and equality are
+not proof that an identity was observed.
+
+The private binding output is `BOUND_FOR_PRIVATE_REVIEW`, still
+`NOT_INSTALLABLE`. Its `publicReview` contains only repository/source/bundle/
+artifact hashes and sizes. Its `privateCandidate` contains the exact payload,
+literal bootstrap and encoded command from the existing builder; the payload
+contains the private operator identity. No off-host environment is serialized
+as a Windows launch environment. Keep that payload local/private. The embedded
+installer's `-OperatorApproved` argument is part of the existing generated
+program, not evidence that the surrounding operator gate has been satisfied.
+
+Before an actual installation, independently establish the ultimate admitted
+main/tree, real private operator identity, qualified exact-artifact review and
+concrete operator approval. Run the existing pinned bootstrap through the
+existing same-operator elevated route only after those gates; this preparer has
+no execution, elevation, copy-to-host or restart option. A source movement
+requires a newly bound package, including when executable bytes happen to be
+unchanged. A pending installation still requires a genuinely later full boot
+and authenticated current custody IDLE before runtime qualification. Neither
+package form releases the unresolved Control Tower BUILD, any source claim or
+native custody, or qualifies the separate mailbox-rotation producer.
+
+
+## 4 November 2026: goal repair deadline composition
+
+The installed goal-builder profile bounds native execution to 145 seconds.
+Its discovery and supervisor children previously had 25-second limits even
+though their existing GitHub goal observation can take 30 seconds. Independent
+per-child limits also allowed the complete sequence to exceed its native parent.
+This is a deadline-composition defect, not evidence of worker readiness or
+permission to increase the native deadline.
+
+The candidate gives those children 35 seconds and shares one 135-second
+monotonic work budget across the existing sequence. Every child is clamped to
+remaining time; exhausted budget refuses another launch with a typed failure.
+The existing native deadline, Job custody, terminal drain, resource checks,
+worker validation, source ownership and proof requirements remain binding.
+Deadline cloning preserves discovery's pipe-free execution and the production
+resource/ignition checks; an adapter wrapper must not select fixture behavior.
+
+Regression proof includes cold observations exceeding the old 25-second limit,
+aggregate exhaustion that refuses the next child, and actual cloned discovery
+execution with output pipes disabled. These are source regressions, not live
+conveyor recovery or qualification of another native profile.
+
+Core repair is a separate unresolved authority surface. The current fixed host
+admits goal-builder maintenance and source tasks; the broad control-plane
+reconciler starts persistent scheduled work outside a short-lived native Job.
+Aliasing that reconciler to the goal-builder profile would not contain it.
+Core qualification therefore requires a reviewed lifecycle design for the
+existing Core owner, protected installed closure and principal, original process
+identity and singleton custody, resource cancellation, and durable terminal or
+persistent ownership evidence. Retain FIXED_RUNTIME_PROFILE_NOT_QUALIFIED until
+that implementation and physical acceptance exist. Do not qualify it with a
+caller flag, add an unrestricted profile, or run the rejected action via another
+commander. Installation still requires the existing exact-artifact review and
+operator gates; a later boot must not be invented or automatically requested.
+
+
+### Exact directory dependency closure
+
+The directory capability adds exactly three members to the prior 258-member set:
+shared/agents/sovereignDirectoryCreateV1.mjs,
+scripts/windows/sovereign-create-directory.ps1, and
+scripts/windows/SovereignDirectoryCreateV1.cs. Every prior member is retained.
+The module resolves the two helper buffers relative to its own package, verifies
+raw-byte hashes, then executes captured bytes. It cannot fall back to a checkout
+when a packaged helper is absent. Import closure and finite source-owned runtime
+read edges are both tested against the same manifest; an isolated captured
+package proves missing, tampered, CRLF/BOM-altered and post-capture replacements
+cannot change the admitted bytes or trigger an unproven retry.
+
+Candidate, package verifier, installer and native identity use the same bounded
+261-member estate. The 2 MiB per-file, 8 MiB aggregate and command-size limits,
+exact membership, Git identity, source/working-byte distinction, operator and
+native custody checks remain unchanged. Windows WAIT_TIMEOUT values of 258 are
+unrelated and unchanged. The frozen PR #3362 reviewer and its historical pins
+remain unchanged; fresh independent specialist review must cover this package
+boundary and the changed installer/native identity. Source membership does not
+prove installation or grant directory target, execution, elevation or restart
+authority. Final installed qualification remains a separate exact-package gate.
+
+### Shared dependency invariant and coordinated releases
+
+The parse-only guard selects its fixed or maintenance profile before reading any
+profile data. It inspects every JavaScript member in the declared package as well
+as the compiled/source-owned entry roots; a newly added import cannot evade the
+check merely because its parent was outside the old selected-root walk. Unknown
+computed dynamic imports, unsupported module types and outside-package targets
+remain explicit failures. Required membership is an inclusion invariant, never
+permission to copy files, shrink the retained set or execute repository modules.
+
+Directory runtime-read edges are interpreted only for the reviewed adapter source
+identity, with exact literal declarations and raw helper-byte pins. A changed
+adapter must requalify that finite edge model. Isolated-package tests prove the
+five additional module-omission shapes seen in the independent completion/lesson
+repairs, plus directory omissions, order invariance and duplicate-edge discovery.
+Those synthetic graphs are regression fixtures, not a combined source tree or
+proof that the other goals have been integrated. Each producer retains its own
+source, overlap reconciliation, review and protected integration authority. The
+packaging owner serializes actual manifest changes against files present in the
+admitted source tree, recalculates release limits and prepares one final installed
+package after source convergence. No future/absent file is authorized by a count.
+
+The existing node-changed publication profile does not automatically replay this
+unchanged guard or changed .test.js files. Its original validator owner retains
+that recorded coverage debt. Current source qualification explicitly runs the
+full closure/package checks and existing Windows/Linux custody workflow; a
+syntax-only publication receipt is not complete package qualification. The
+historical PR #3362 review profile remains frozen and cannot self-approve this
+release. Core attended startup and unrelated source repairs do not acquire a
+new dependency on completing every package producer.
+
+The legacy HTTP repairScript target is an explicit conditional execution edge,
+not a packaged dependency of the production Windows fixed profile: Windows
+without injected test spawn selects the fixed native owner before direct spawn,
+and the supplied legacy fallback throws. Direct repair-stephanos is unqualified.
+The guard reports this exclusion visibly and binds its applicability to the
+reviewed HTTP, parent, admission and native-host source identities. Any change
+to those predicates holds the exclusion for reassessment. Non-Windows/injected
+legacy execution remains optional-profile debt and is not qualified by this
+package. Constructing a URL is not evidence that its target was read or executed.
+
+## 7 November 2026: retain a qualified installation across unrelated main updates
+
+The installation commit and the current execution commit have separate roles.
+The embedded manifest, protected version directory, PENDING receipt, compiler
+completion, machine, genuine later boot, helper image and tool identities remain
+bound to the installation commit. Neither source synchronization nor an equal
+file digest can rewrite those identities or discharge historical custody.
+
+The existing parent now obtains the current execution head through the real
+canonical source observer used by maintenance recovery. That observer fetches
+the fixed canonical repository, validates configuration and checkout topology,
+and requires a stable clean main equal to the freshly fetched origin/main.
+There is no caller-supplied current-main assertion. Original maintenance
+reservation, source grant, active-claim heartbeat, gaming and native custody
+requirements continue to apply to this execution head.
+
+A newly prepared installer retains each canonical Git blob identity alongside
+its original-source and Windows-materialized SHA256 digests. Its complete
+reviewed 266-member set admits regular mode 100644 only. The protected pending
+receipt commits to the ordered path/mode/blob set; the native helper independently
+recomputes that commitment from its embedded manifest. The commitment is a
+selection aid, never runtime qualification or deployment authority. Legacy
+pending records without these pins cannot adopt another head.
+
+If the exact current version directory exists, it remains the only candidate,
+including when incomplete or unsafe. Otherwise the parent considers at most
+64 entries beneath the existing protected version root and requires exactly
+one matching protected installation. Missing, ambiguous, redirected, malformed
+or unsafe versions remain held. There is no writable active-version pointer,
+new download route, implicit installation, service owner or fallback command.
+
+The parent captures raw commit/tree objects through the existing fixed Git
+boundary and private probe context. A separate bounded ASCII input record keeps
+the task request at its existing 32 KiB bound. The proof allows at most 64 KiB of
+commit bytes, 128 trees, 2 MiB aggregate tree bytes, 32,768 entries and 3 MiB of
+wire data. Both parsers reject missing or unused objects, duplicate or aliased
+names, malformed UTF8/base64, noncanonical ordering, unsupported modes and
+incomplete membership. The protected native helper independently verifies Git
+object hashes and every member against its embedded blob pins, holds the
+existing physical source and metadata pins, and requires main and origin/main
+to equal the proved execution head. Changed executable closure still refuses
+reuse and requires the existing reviewed installation path.
+
+Request, prepared and terminal evidence bind the immutable installation head,
+current execution head and exact source-proof digest separately. The worker
+heartbeat, launch identity and original grant continue to match the execution
+head. Neither the historical reservation nor the PENDING record is relabelled.
+Qualification stays a short-lived, one-use in-process object; copied JSON and
+source-membership results cannot dispatch or release custody.
+Its 25-second qualification budget starts before the canonical source observer;
+an expired return cannot start source capture or native inspection. Inspection
+receives only the remaining budget, and the one-use ceiling is 30 seconds from
+that same start. Slow source observation cannot mint a new freshness window.
+
+These are integrated source changes and synthetic regression fixtures. They
+do not establish an installed helper, actual Windows qualification, calibration,
+Spatial resident adoption or playtest acceptance. The two Spatial resident
+obligations, unresolved Control Tower BUILD, mailbox signer commissioning and
+all original fences remain independent. No reboot is initiated or authorized
+by this implementation. A newly bound installation package still requires its
+existing current-main, private operator, exact-artifact review and operator
+approval gates, followed by the genuine later boot and physical qualification.

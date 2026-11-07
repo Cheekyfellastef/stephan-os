@@ -9,7 +9,7 @@ import { SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, SOVEREIGN_MAINTENANCE_OWNER_VERS
 import { callSovereignMaintenanceOwnerV1 } from './sovereignCommanderRemoteMailboxV1.mjs';
 import { executeSovereignCommanderCommandV1 } from './sovereignCommanderV1.mjs';
 import { buildStephanosExecutionCommandEnvelopeV1, buildStephanosExecutionSurfaceCatalogV1, STEPHANOS_EXECUTION_SURFACE } from './stephanosExecutionCommandFabricV1.mjs';
-import { createSovereignCommanderHttpServer, startSovereignCommanderContinuousRepairGuardian } from '../../scripts/sovereign-commander-http.mjs';
+import { classifySovereignMaintenanceExecutionRouteV1, createSovereignCommanderHttpServer, startSovereignCommanderContinuousRepairGuardian } from '../../scripts/sovereign-commander-http.mjs';
 
 const root = 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os';
 const idle = { enabled: true, running: false, timeoutCustodyHeld: false };
@@ -142,7 +142,7 @@ test('actual gaming Status reconciles absent state and therefore cannot receive 
 
 test('delegation requires the fixed owner protocol before reading credentials or invoking a tool', async () => {
   const result = await callSovereignMaintenanceOwnerV1({ actionId: 'repair-stephanos' }, {
-    fetchFn: async url => { assert.equal(url, 'http://127.0.0.1:18791/health'); return new Response(JSON.stringify({ ok: true,
+    fetchFn: async url => { assert.equal(url, 'http://127.0.0.1:18791/health?view=protocol'); return new Response(JSON.stringify({ ok: true,
       service: 'stephanos-sovereign-commander', continuousRepairGuardian: idle })); },
     readFileFn() { assert.fail('old idle health cannot qualify the owner protocol'); },
   });
@@ -431,6 +431,14 @@ test('Core reopens only its fixed goal repair after current actual qualification
   assert.equal(calls.length,1,'unsupported profile and source drift never reach owner');
 });
 
+
+test('native maintenance route preserves reviewer calibration direct-child custody without widening fixed runtime', () => {
+  assert.equal(classifySovereignMaintenanceExecutionRouteV1('repair-goal-builder-flow', { nativeWindows: true }), 'FIXED_RUNTIME');
+  assert.equal(classifySovereignMaintenanceExecutionRouteV1('sovereign-windows-reviewer-calibration', { nativeWindows: true }), 'DIRECT_CHILD_REVIEWER');
+  assert.equal(classifySovereignMaintenanceExecutionRouteV1('repair-control-plane', { nativeWindows: true }), 'BLOCKED_UNQUALIFIED');
+  assert.equal(classifySovereignMaintenanceExecutionRouteV1('status-stephanos-core-daemon', { nativeWindows: true }), 'BLOCKED_UNQUALIFIED');
+  assert.equal(classifySovereignMaintenanceExecutionRouteV1('sovereign-windows-reviewer-calibration', { nativeWindows: false }), 'DIRECT_CHILD');
+});
 
 test('default Windows owner cannot reserve or run an unsupported profile', {skip:process.platform!=='win32'}, async () => {
   const guardian=startSovereignCommanderContinuousRepairGuardian({setTimeoutImpl:()=>({unref(){}}),clearTimeoutImpl(){}});

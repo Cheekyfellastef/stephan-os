@@ -1,5 +1,6 @@
 ﻿import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -136,7 +137,7 @@ test('backend dashboard feed route uses read-only adapter and maps unavailable t
 
   await layer.route.stack[0].handle(
     {},
-    {
+    Object.assign(new EventEmitter(), {
       set(headers) {
         responseHeaders = { ...responseHeaders, ...headers };
         return this;
@@ -148,7 +149,7 @@ test('backend dashboard feed route uses read-only adapter and maps unavailable t
       json(value) {
         payload = value;
       },
-    },
+    }),
   );
 
   assert.equal(statusCode, 503);

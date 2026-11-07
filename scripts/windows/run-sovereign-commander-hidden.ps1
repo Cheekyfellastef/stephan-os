@@ -17,6 +17,50 @@ if (-not [string]::Equals($repoRoot, $expectedRepoRoot, [System.StringComparison
     throw "Sovereign Commander runner must use canonical checkout: $expectedRepoRoot"
 }
 
+# S4U/LeastPrivilege metadata did not exclude an enabled administrator token on
+# the installed machine. Observe this process before any lifecycle mutation.
+# Read-only adapter. Task configuration is never actual token proof, and this
+# preflight grants no runtime/helper, custody, source, lease or restart authority.
+function Resolve-SovereignCommanderOperatorContextV1 {
+    param([object]$UserSid, [object]$AdministratorRole)
+    if ($UserSid -isnot [string] -or $UserSid -cnotmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$' -or
+        $AdministratorRole -isnot [bool]) {
+        return [pscustomobject]@{ normalOperatorObserved = $false; blocker = 'SOVEREIGN_COMMANDER_OPERATOR_CONTEXT_UNPROVEN' }
+    }
+    if ($AdministratorRole) {
+        return [pscustomobject]@{ normalOperatorObserved = $false; blocker = 'SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED' }
+    }
+    [pscustomobject]@{ normalOperatorObserved = $true; blocker = '' }
+}
+
+function Get-SovereignCommanderOperatorContextV1 {
+    $identity = $null
+    try {
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+        Resolve-SovereignCommanderOperatorContextV1 -UserSid $identity.User.Value -AdministratorRole ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))
+    } catch {
+        [pscustomobject]@{ normalOperatorObserved = $false; blocker = 'SOVEREIGN_COMMANDER_OPERATOR_CONTEXT_UNPROVEN' }
+    } finally {
+        if ($null -ne $identity) { $identity.Dispose() }
+    }
+}
+$operatorContext = Get-SovereignCommanderOperatorContextV1
+if ($null -eq $operatorContext -or $operatorContext.normalOperatorObserved -isnot [bool] -or $operatorContext.normalOperatorObserved -ne $true) {
+    [pscustomobject]@{
+        schemaVersion = 'stephanos.sovereign-commander-watchdog.v1'
+        healthy = $false
+        blocker = $operatorContext.blocker
+        normalOperatorObserved = $false
+        runtimeActivationGranted = $false
+        sourceMutationAllowed = $false
+        arbitraryShellAllowed = $false
+        pcRestartAllowed = $false
+        finalVerdict = 'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED'
+    } | ConvertTo-Json -Compress
+    exit 2
+}
+
 $serverScript = Join-Path $repoRoot 'scripts\sovereign-commander-http.mjs'
 $fleetSupervisorScript = Join-Path $repoRoot 'scripts\sovereign-commander-fleet-goal-supervisor.mjs'
 $fleetSupervisorMarker = 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT='
@@ -239,6 +283,32 @@ function Get-SovereignRelayDaemonHealth {
             finalVerdict = 'UNKNOWN'
             blocker = 'SOVEREIGN_RELAY_STATUS_INVALID'
         }
+    }
+}
+
+function Wait-SovereignRelayDaemonReady {
+    param(
+        [int]$Attempts = 40,
+        [int]$DelayMilliseconds = 500
+    )
+    $lastProcesses = @()
+    $lastHealth = $null
+    for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
+        $lastProcesses = @(Get-SovereignRelayDaemonProcesses)
+        $lastHealth = Get-SovereignRelayDaemonHealth
+        if ($lastProcesses.Count -eq 1 -and [bool]$lastHealth.healthy) {
+            return [pscustomobject]@{
+                ready = $true
+                processes = $lastProcesses
+                health = $lastHealth
+            }
+        }
+        Start-Sleep -Milliseconds $DelayMilliseconds
+    }
+    return [pscustomobject]@{
+        ready = $false
+        processes = $lastProcesses
+        health = $lastHealth
     }
 }
 
@@ -724,6 +794,23 @@ if (-not (Test-Path -LiteralPath $relayDaemonScript -PathType Leaf)) {
 } else {
     $relayBefore = @(Get-SovereignRelayDaemonProcesses)
     $relayHealthBefore = Get-SovereignRelayDaemonHealth
+    # More than one matching relay can never satisfy the exact singleton proof.
+    # Quiesce only these fixed-identity relay processes, then re-observe before
+    # entering the existing absent/unhealthy recycle path reviewed below.
+    if ($relayBefore.Count -gt 1) {
+        $relayDaemonRestartRequested = $true
+        try {
+            foreach ($process in $relayBefore) {
+                Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
+                $relayDaemonStoppedPidCount += 1
+            }
+            Start-Sleep -Milliseconds 300
+            $relayBefore = @(Get-SovereignRelayDaemonProcesses)
+            $relayHealthBefore = Get-SovereignRelayDaemonHealth
+        } catch {
+            $relayDaemonBlocker = 'SOVEREIGN_RELAY_DAEMON_STALE_RECYCLE_FAILED'
+        }
+    }
     if ($relayBefore.Count -eq 0 -or -not [bool]$relayHealthBefore.healthy) {
         if ($relayBefore.Count -gt 0) {
             $relayDaemonRestartRequested = $true
@@ -743,20 +830,24 @@ if (-not (Test-Path -LiteralPath $relayDaemonScript -PathType Leaf)) {
                 $quotedRelayDaemonScript = '"' + $relayDaemonScript.Replace('"', '\"') + '"'
                 $relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
                 $relayDaemonStartedPid = [int]$relayStarted.Id
-                Start-Sleep -Seconds 6
             } catch {
                 $relayDaemonBlocker = 'SOVEREIGN_RELAY_DAEMON_START_FAILED'
             }
         }
     }
-    $relayAfter = @(Get-SovereignRelayDaemonProcesses)
-    $relayHealthAfter = Get-SovereignRelayDaemonHealth
+    $relayReady = if ($relayDaemonBlocker) {
+        [pscustomobject]@{ ready = $false; processes = @(Get-SovereignRelayDaemonProcesses); health = Get-SovereignRelayDaemonHealth }
+    } else {
+        Wait-SovereignRelayDaemonReady
+    }
+    $relayAfter = @($relayReady.processes)
+    $relayHealthAfter = $relayReady.health
     $relayDaemonProcessCount = $relayAfter.Count
     $relayDaemonHeartbeatAgeSeconds = $relayHealthAfter.heartbeatAgeSeconds
     $relayDaemonSourceHead = [string]$relayHealthAfter.sourceHead
     $relayDaemonSourceHeadMatchesLive = [bool]$relayHealthAfter.sourceHeadMatchesLive
     $relayDaemonVerdict = [string]$relayHealthAfter.finalVerdict
-    $relayDaemonHealthy = [bool]($relayAfter.Count -ge 1 -and $relayHealthAfter.healthy)
+    $relayDaemonHealthy = [bool]($relayReady.ready -and $relayAfter.Count -eq 1 -and $relayHealthAfter.healthy)
     if (-not $relayDaemonHealthy -and -not $relayDaemonBlocker) {
         $relayDaemonBlocker = if ($relayHealthAfter.blocker) { [string]$relayHealthAfter.blocker } else { 'SOVEREIGN_RELAY_DAEMON_NOT_HEALTHY' }
     }

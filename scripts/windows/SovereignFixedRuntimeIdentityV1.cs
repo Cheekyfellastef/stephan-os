@@ -16,7 +16,8 @@ namespace Stephanos.Sovereign {
   using Microsoft.Win32;
 
   public sealed class FixedRuntimeManifestFileV1 {
-    public string Path = "", Sha256 = "";
+    public string Path = "", Sha256 = "", MaterializedSha256 = "";
+    public string GitBlobSha = "", GitMode = "";
   }
   public sealed class FixedRuntimeManifestV1 {
     public string SchemaVersion = "", SourceHead = "", SourceTree = "";
@@ -25,12 +26,14 @@ namespace Stephanos.Sovereign {
   public sealed class FixedRuntimePendingV1 {
     public string SchemaVersion = "", SourceHead = "", SourceTree = "";
     public string HelperSha256 = "", ManifestSha256 = "", MachineHash = "";
+    public string GitClosureSha256 = "";
     public string CompilerCompletedAtUtc = "", InstalledAtUtc = "", OperatorSid = "";
     public string NodeExecutableSha256 = "", GitExecutableSha256 = "", PowerShellExecutableSha256 = "";
     public int NodeExecutableLinkCount, GitExecutableLinkCount, PowerShellExecutableLinkCount;
   }
   sealed class FixedRuntimeIdentityPinsV1 : IDisposable {
     internal string SourceHead, SourceTree, HelperSha256, ManifestSha256, MachineHash, BootStartedAtUtc;
+    internal string ExecutionHead, ExecutionTree, SourceProofSha256, GitClosureSha256;
     internal List<FileStream> Files = new List<FileStream>();
     internal List<Microsoft.Win32.SafeHandles.SafeFileHandle> Directories =
       new List<Microsoft.Win32.SafeHandles.SafeFileHandle>();
@@ -207,7 +210,124 @@ namespace Stephanos.Sovereign {
     static void RuntimePinParentsV1(string path,FixedRuntimeIdentityPinsV1 pins) {
       PinDirectoryChain(Path.GetDirectoryName(path),pins.Directories);
     }
+    sealed class RuntimeGitLeafV1 { internal string Mode, Sha; }
+    sealed class RuntimeGitProofV1 { internal string Head, Tree, Digest, Closure; }
+    static string RuntimeGitHashV1(string kind,byte[] bytes) {
+      byte[] header=Encoding.ASCII.GetBytes(kind+" "+bytes.Length.ToString(CultureInfo.InvariantCulture)+"\0");
+      byte[] input=new byte[header.Length+bytes.Length];
+      Buffer.BlockCopy(header,0,input,0,header.Length);Buffer.BlockCopy(bytes,0,input,header.Length,bytes.Length);
+      using(var sha=System.Security.Cryptography.SHA1.Create())
+        return BitConverter.ToString(sha.ComputeHash(input)).Replace("-","").ToLowerInvariant();
+    }
+    static byte[] RuntimeProofBytesV1(string value,int maximum) {
+      if(value==null || value.Length>4*((maximum+2)/3) ||
+        !System.Text.RegularExpressions.Regex.IsMatch(value,@"^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"))
+        throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_BASE64");
+      byte[] bytes=Convert.FromBase64String(value);
+      if(bytes.Length>maximum || Convert.ToBase64String(bytes)!=value)
+        throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_BASE64");
+      return bytes;
+    }
+    static int RuntimeCompareBytesV1(byte[] a,byte[] b) {
+      for(int i=0;i<Math.Min(a.Length,b.Length);i++)if(a[i]!=b[i])return a[i]<b[i]?-1:1;
+      return a.Length.CompareTo(b.Length);
+    }
+    static Dictionary<string,RuntimeGitLeafV1> RuntimeProofTreeV1(byte[] bytes,ref int entries) {
+      var rows=new Dictionary<string,RuntimeGitLeafV1>(StringComparer.Ordinal);
+      var folded=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+      byte[] previous=null;int offset=0;var utf8=new UTF8Encoding(false,true);
+      while(offset<bytes.Length) {
+        if(++entries>32768)throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_TREE_BOUND");
+        int space=Array.IndexOf(bytes,(byte)32,offset);
+        int end=space<0?-1:Array.IndexOf(bytes,(byte)0,space+1);
+        if(space<offset+1 || end<=space+1 || end+21>bytes.Length)
+          throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_TREE_SHAPE");
+        string mode=utf8.GetString(bytes,offset,space-offset),name=utf8.GetString(bytes,space+1,end-space-1);
+        if(mode!="40000" && mode!="100644" && mode!="100755")
+          throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_TREE_MODE");
+        if(end-space-1>255 || name=="." || name==".." ||
+          System.Text.RegularExpressions.Regex.IsMatch(name,@"[\\/:<>""|?*\x00-\x1f\x7f]") ||
+          name.EndsWith(".",StringComparison.Ordinal) || name.EndsWith(" ",StringComparison.Ordinal))
+          throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_TREE_PATH");
+        if(!folded.Add(name))throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_TREE_ALIAS");
+        byte[] sortKey=utf8.GetBytes(name+(mode=="40000"?"/":""));
+        if(previous!=null && RuntimeCompareBytesV1(previous,sortKey)>=0)
+          throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_TREE_ORDER");
+        previous=sortKey;byte[] hash=new byte[20];Buffer.BlockCopy(bytes,end+1,hash,0,20);
+        rows.Add(name,new RuntimeGitLeafV1 {Mode=mode,Sha=BitConverter.ToString(hash).Replace("-","").ToLowerInvariant()});
+        offset=end+21;
+      }
+      return rows;
+    }
+    static string RuntimeGitClosureV1(FixedRuntimeManifestFileV1[] members) {
+      if(members==null || members.Length<1 || members.Length>266)
+        throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_CLOSURE");
+      var rows=(FixedRuntimeManifestFileV1[])members.Clone();
+      Array.Sort(rows,delegate(FixedRuntimeManifestFileV1 a,FixedRuntimeManifestFileV1 b) {
+        return StringComparer.Ordinal.Compare(a==null?null:a.Path,b==null?null:b.Path); });
+      var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+      var text=new StringBuilder("stephanos.fixed-runtime-git-closure.v1\0");
+      foreach(var row in rows) {
+        if(row==null || row.Path==null || !System.Text.RegularExpressions.Regex.IsMatch(row.Path,@"^[A-Za-z0-9._/-]{1,240}$") ||
+          row.Path.Contains("..") || row.Path.Contains("//") || row.Path.StartsWith("/",StringComparison.Ordinal) ||
+          row.Path.EndsWith("/",StringComparison.Ordinal) || !seen.Add(row.Path) ||
+          row.GitMode!="100644" || !RuntimeHexV1(row.GitBlobSha,40))
+          throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_LEGACY_MANIFEST");
+        text.Append(row.Path).Append('\0').Append(row.GitMode).Append('\0').Append(row.GitBlobSha).Append('\n');
+      }
+      return RuntimeHashV1(Encoding.UTF8.GetBytes(text.ToString()));
+    }
+    // Raw Git objects prove membership only. The original parent separately
+    // authenticates canonical main, and this helper pins the matching main and
+    // origin refs. Compile/boot/custody identity is never rewritten to this head.
+    static RuntimeGitProofV1 RuntimeVerifySourceProofV1(string raw,FixedRuntimeManifestFileV1[] members) {
+      if(raw==null || raw.Length>3145728)throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_WIRE_BOUND");
+      foreach(char ch in raw)if(ch<32 || ch>126)throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_WIRE_BOUND");
+      string[] fields=raw.Split(' ');
+      if(fields.Length<4 || fields.Length>131 || fields[0]!="STEPHANOS_FIXED_RUNTIME_SOURCE_V1" || !RuntimeHexV1(fields[1],40))
+        throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_WIRE_SHAPE");
+      byte[] commit=RuntimeProofBytesV1(fields[2],65536);
+      if(RuntimeGitHashV1("commit",commit)!=fields[1])throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_COMMIT_HASH");
+      string commitText=new UTF8Encoding(false,true).GetString(commit);int separator=commitText.IndexOf("\n\n",StringComparison.Ordinal);
+      if(separator<0 || !System.Text.RegularExpressions.Regex.IsMatch(commitText,@"\Atree [a-f0-9]{40}\n"))
+        throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_COMMIT_TREE");
+      int treeHeaders=0;
+      foreach(string line in commitText.Substring(0,separator).Split('\n'))
+        if(line.StartsWith("tree ",StringComparison.Ordinal))treeHeaders++;
+      if(treeHeaders!=1)throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_COMMIT_TREE");
+      string root=commitText.Substring(5,40),previous="";int total=0,entries=0;
+      var trees=new Dictionary<string,Dictionary<string,RuntimeGitLeafV1>>(StringComparer.Ordinal);
+      for(int i=3;i<fields.Length;i++) {
+        string field=fields[i];if(field.IndexOf(':')!=40)throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_TREE_SHAPE");
+        string id=field.Substring(0,40);byte[] bytes=RuntimeProofBytesV1(field.Substring(41),2097152);
+        total+=bytes.Length;
+        if(total>2097152)throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_TREE_BOUND");
+        if(!RuntimeHexV1(id,40) || StringComparer.Ordinal.Compare(id,previous)<=0 || RuntimeGitHashV1("tree",bytes)!=id)
+          throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_TREE_HASH");
+        previous=id;trees.Add(id,RuntimeProofTreeV1(bytes,ref entries));
+      }
+      string closure=RuntimeGitClosureV1(members);var used=new HashSet<string>(StringComparer.Ordinal);
+      foreach(var row in members) {
+        string id=root;string[] parts=row.Path.Split('/');RuntimeGitLeafV1 leaf=null;
+        for(int i=0;i<parts.Length;i++) {
+          Dictionary<string,RuntimeGitLeafV1> tree;
+          if(!trees.TryGetValue(id,out tree) || !tree.TryGetValue(parts[i],out leaf))
+            throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_MEMBERSHIP");
+          used.Add(id);
+          if(i<parts.Length-1) {
+            if(leaf.Mode!="40000")throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_MEMBERSHIP");
+            id=leaf.Sha;
+          } else if(leaf.Mode!=row.GitMode || leaf.Sha!=row.GitBlobSha)
+            throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_MEMBER_CHANGED");
+        }
+      }
+      if(used.Count!=trees.Count)throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_TREE_UNUSED");
+      return new RuntimeGitProofV1 {Head=fields[1],Tree=root,Digest=RuntimeHashV1(Encoding.ASCII.GetBytes(raw)),Closure=closure};
+    }
     static FixedRuntimeIdentityPinsV1 OpenFixedRuntimeIdentityV1() {
+      return OpenFixedRuntimeIdentityForSourceV1(null);
+    }
+    static FixedRuntimeIdentityPinsV1 OpenFixedRuntimeIdentityForSourceV1(string sourceProof) {
       var pins=new FixedRuntimeIdentityPinsV1();
       try {
         byte[] manifestBytes;
@@ -224,7 +344,7 @@ namespace Stephanos.Sovereign {
         var manifest=json.Deserialize<FixedRuntimeManifestV1>(new UTF8Encoding(false,true).GetString(manifestBytes));
         if(manifest==null || manifest.SchemaVersion!="stephanos.fixed-runtime-manifest.v1" ||
           !RuntimeHexV1(manifest.SourceHead,40) || !RuntimeHexV1(manifest.SourceTree,40) ||
-          manifest.Files==null || manifest.Files.Length<40 || manifest.Files.Length>256)
+          manifest.Files==null || manifest.Files.Length<40 || manifest.Files.Length>266)
           throw new InvalidOperationException("RUNTIME_MANIFEST_IDENTITY_UNPROVEN");
         string version=Path.Combine(RuntimeProtectedRootV1,manifest.SourceHead);
         string helper=Path.Combine(version,"host.exe"),pendingPath=Path.Combine(version,"pending.json");
@@ -272,12 +392,13 @@ namespace Stephanos.Sovereign {
               row.Path=="integrations/openclaw/stephanos-builder-provider/lib/oc1-gateway-provider.mjs" ||
               row.Path=="integrations/openclaw/stephanos-builder-provider/lib/oc1-repository-scout.mjs" ||
               System.Text.RegularExpressions.Regex.IsMatch(row.Path,@"^(scripts|shared|stephanos-server)/[A-Za-z0-9._/-]+$")) ||
-            row.Path.Contains("..") || row.Path.Contains("//") || !RuntimeHexV1(row.Sha256,64) || !seen.Add(row.Path))
+            row.Path.Contains("..") || row.Path.Contains("//") || !RuntimeHexV1(row.Sha256,64) ||
+            !RuntimeHexV1(row.MaterializedSha256,64) || !seen.Add(row.Path))
             throw new InvalidOperationException("RUNTIME_SOURCE_MEMBER_UNPROVEN");
           string path=Path.Combine(RuntimeSourceRootV1,row.Path.Replace('/',Path.DirectorySeparatorChar));
           RuntimePinParentsV1(path,pins);
           byte[] bytes=RuntimeReadPinnedV1(path,2097152,pins); total+=bytes.Length;
-          if(total>8388608 || RuntimeHashV1(bytes)!=row.Sha256)
+          if(total>8388608 || RuntimeHashV1(bytes)!=row.MaterializedSha256)
             throw new InvalidOperationException("RUNTIME_SOURCE_MEMBER_CHANGED");
         }
         foreach(string required in new string[]{
@@ -287,11 +408,15 @@ namespace Stephanos.Sovereign {
           "scripts/sovereign-fixed-runtime-source-task-v1.mjs",
           "scripts/sovereign-commander-goal-builder-repair.mjs","package.json",".gitattributes"})
           if(!seen.Contains(required)) throw new InvalidOperationException("RUNTIME_MANIFEST_CLOSURE_INCOMPLETE");
-        foreach(string relative in new string[]{".git/HEAD",".git/refs/heads/main",".git/index",".git/config"}) {
+        RuntimeGitProofV1 source=sourceProof==null?null:RuntimeVerifySourceProofV1(sourceProof,manifest.Files);
+        if(source!=null && (!RuntimeHexV1(pending.GitClosureSha256,64) || pending.GitClosureSha256!=source.Closure))
+          throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_PROTECTED_CLOSURE_CHANGED");
+        string executionHead=source==null?manifest.SourceHead:source.Head;
+        foreach(string relative in new string[]{".git/HEAD",".git/refs/heads/main",".git/refs/remotes/origin/main",".git/index",".git/config"}) {
           string path=Path.Combine(RuntimeSourceRootV1,relative.Replace('/',Path.DirectorySeparatorChar));
           RuntimePinParentsV1(path,pins); byte[] bytes=RuntimeReadPinnedV1(path,33554432,pins);
-          if(relative==".git/HEAD" || relative==".git/refs/heads/main") {
-            string expected=relative==".git/HEAD"?"ref: refs/heads/main":manifest.SourceHead;
+          if(relative==".git/HEAD" || relative==".git/refs/heads/main" || relative==".git/refs/remotes/origin/main") {
+            string expected=relative==".git/HEAD"?"ref: refs/heads/main":executionHead;
             if(new UTF8Encoding(false,true).GetString(bytes).Trim()!=expected)
               throw new InvalidOperationException("RUNTIME_SOURCE_REF_CHANGED");
           }
@@ -299,6 +424,8 @@ namespace Stephanos.Sovereign {
         string optionalConfig=Path.Combine(RuntimeSourceRootV1,@".git\config.worktree");
         if(File.Exists(optionalConfig)) RuntimeReadPinnedV1(optionalConfig,2097152,pins);
         pins.SourceHead=manifest.SourceHead; pins.SourceTree=manifest.SourceTree;
+        pins.ExecutionHead=executionHead;pins.ExecutionTree=source==null?manifest.SourceTree:source.Tree;
+        pins.SourceProofSha256=source==null?"":source.Digest;pins.GitClosureSha256=source==null?"":source.Closure;
         pins.HelperSha256=pending.HelperSha256; pins.ManifestSha256=manifestDigest;
         pins.MachineHash=machine; pins.BootStartedAtUtc=boot.ToString("O");
         return pins;

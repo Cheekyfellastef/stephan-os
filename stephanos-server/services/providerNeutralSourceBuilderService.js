@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { FORGE_LIFEBOAT_WORKER_ID, MISSION_CONTROLLER_ROUTE } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
 import { withOriginalSourceAttemptMutationGuard } from './originalSourceAttemptFenceService.js';
-import { existsSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { lstat, readFile, realpath as fsRealpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -24,6 +24,11 @@ import {
 } from './githubPrEvidenceService.js';
 
 export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutral-source-builder.v1';
+// Capture this once when the module loads. A later disk read alone cannot bind
+// an already-loaded module to the source revision being inspected.
+const LOADED_SOURCE_SHA256 = createHash('sha256')
+  .update(readFileSync(new URL(import.meta.url)))
+  .digest('hex');
 const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github', 'sovereign-commander']);
 
 // Source context caps
@@ -406,6 +411,57 @@ function normalizeStructuredEdits(edits, allowedFiles, sourceSnapshots) {
     normalized.push(Object.freeze({ path, old: oldText, new: newText }));
   }
   return Object.freeze(normalized);
+}
+
+// A fixed in-memory contract inspection, not build, custody or acceptance proof.
+// It cannot take a caller-selected path, edit, model, command or proof result.
+export function inspectStructuredNewFileContractV1() {
+  if (arguments.length !== 0) throw new TypeError('STRUCTURED_NEW_FILE_INSPECTION_TAKES_NO_INPUT');
+  const file = 'shared/agents/structured-new-file-inspection.mjs';
+  const contents = 'export const created = true;\n';
+  const edit = { path: file, old: '', new: contents };
+  const observe = operation => {
+    try { return operation() === true; } catch { return false; }
+  };
+  const rejects = (candidate, snapshots, expected) => {
+    try { normalizeStructuredEdits([candidate], [file], snapshots); return false; }
+    catch (error) { return error?.message === expected; }
+  };
+  const observations = {
+    acceptsEmptySnapshotNewFile: observe(() => {
+      const normalized = normalizeStructuredEdits([edit], [file], []);
+      return modelStructuredEditsContractValid([edit])
+        && normalized.length === 1 && normalized[0].path === file
+        && normalized[0].old === '' && normalized[0].new === contents;
+    }),
+    rejectsInventedOldContents: rejects({ ...edit, old: 'invented prior contents' }, [],
+      `PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTEXT_REQUIRED:${file}`),
+    rejectsEmptyOldForExistingFile: rejects(edit, [{ path: file, content: contents }],
+      `PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:${file}`),
+    rejectsOutOfScope: rejects({ ...edit, path: 'shared/agents/outside-inspection.mjs' }, [],
+      'PROVIDER_NEUTRAL_SCOPE_VIOLATION:shared/agents/outside-inspection.mjs'),
+    rejectsTraversal: rejects({ ...edit, path: 'shared/agents/../outside-inspection.mjs' }, [],
+      'PROVIDER_NEUTRAL_SCOPE_VIOLATION:shared/agents/../outside-inspection.mjs'),
+    rejectsEmptyNewFile: rejects({ ...edit, new: '' }, [],
+      `PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:${file}`),
+    modelRequestAcceptsStructuredEditsWithoutSnapshots: observe(() => {
+      const request = createLocalBuilderModelRequestV1({ model: 'contract-inspection',
+        prompt: localBuilderPrompt({ allowedFiles: [file], requiredTests: [] }, []),
+        patchFallbackAllowed: modelPatchFallbackAllowed({}, []) });
+      const alternatives = request.format?.anyOf || [request.format];
+      return alternatives.some(schema => schema?.type === 'object'
+        && schema.additionalProperties === false
+        && JSON.stringify(schema.required) === JSON.stringify(['edits', 'summary'])
+        && schema.properties?.edits?.type === 'array'
+        && schema.properties.edits.minItems === 1
+        && schema.properties.edits.items?.additionalProperties === false
+        && JSON.stringify(schema.properties.edits.items.required) === JSON.stringify(['path', 'old', 'new'])
+        && ['path', 'old', 'new'].every(key =>
+          JSON.stringify(schema.properties.edits.items.properties?.[key]) === '{"type":"string"}'));
+    }),
+  };
+  return Object.freeze({ schemaVersion: 'stephanos.structured-new-file-contract.v1',
+    loadedSourceSha256: LOADED_SOURCE_SHA256, observations: Object.freeze(observations) });
 }
 
 async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, options = {}) {

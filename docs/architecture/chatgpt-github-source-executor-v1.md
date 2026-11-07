@@ -19,7 +19,7 @@ authority, so it does not depend on unmerged picker bytes.
 2. Read the complete current GitHub PR estate with the existing authenticated
    discovery adapter. Obtain fresh task/path/head-bound canonical, Seed, Island
    and ChatGPT custody observations from the independently trusted host observer.
-   Unknown custody holds this task; the original #2962/r7 hold is never cleared.
+   Unknown custody holds this task. The original #2962/R7 attempt was RETIRED, with historical outcome UNKNOWN: it must never be reopened or released again. Any current, later source writer/maintenance hold is an independent identity requiring its own owner-authenticated proof.
 3. Use `createBoundedParallelConstructionAuthority` for admission and its atomic
    reservation callback. An inventory check alone cannot acquire ownership.
    Keep that reservation when execution becomes uncertain; do not auto-release.

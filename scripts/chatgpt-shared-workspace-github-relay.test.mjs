@@ -8,6 +8,7 @@ import {
   CHATGPT_SHARED_WORKSPACE_RESPONSE_COMMENT_ID,
   createFixedChatGptSharedWorkspaceGitHubAdapter,
   parseChatGptSharedWorkspaceRequestComment,
+  renderChatGptSharedWorkspaceResponse,
   runChatGptSharedWorkspaceGitHubRelay,
   validateChatGptSharedWorkspaceResponseBody,
 } from './chatgpt-shared-workspace-github-relay.mjs';
@@ -38,6 +39,31 @@ function request(overrides = {}) {
     ...overrides,
   };
 }
+
+test('response validation checks decoded JSON values rather than harmless transport escapes', () => {
+  for (const answerText of ['Plan\\nNext outcome', 'A quoted "goal" and a single \\ separator', 'A normal\nparagraph']) {
+    const body = renderChatGptSharedWorkspaceResponse({ sanitizedAnswer: { answerText } });
+    assert.equal(validateChatGptSharedWorkspaceResponseBody(body).valid, true, answerText);
+  }
+});
+
+test('decoded private paths and secret-shaped values remain forbidden including JSON unicode escapes', () => {
+  for (const value of ['C:\\Users\\private', '\\\\server\\private', '/home/private', 'ghp_' + 'a'.repeat(30)]) {
+    const json = JSON.stringify({ nested: [value] }).replaceAll('C', '\\u0043').replaceAll('g', '\\u0067');
+    const body = '<!-- stephanos-chatgpt-shared-workspace-response-v1 -->\n```json\n' + json + '\n```';
+    assert.deepEqual(validateChatGptSharedWorkspaceResponseBody(body).errors, ['unsafe-response-text']);
+  }
+  const safeBody = renderChatGptSharedWorkspaceResponse({ ok: true });
+  assert.equal(validateChatGptSharedWorkspaceResponseBody(safeBody + '\n/home/private').valid, false);
+});
+
+test('malformed, multiple and non-object response JSON fail closed', () => {
+  const prefix = '<!-- stephanos-chatgpt-shared-workspace-response-v1 -->\n';
+  for (const json of ['{bad}', 'null', '[]']) {
+    assert.equal(validateChatGptSharedWorkspaceResponseBody(prefix + '```json\n' + json + '\n```').valid, false);
+  }
+  assert.equal(validateChatGptSharedWorkspaceResponseBody(prefix + '```json\n{}\n```\n```json\n{}\n```').valid, false);
+});
 
 function projection() {
   return {

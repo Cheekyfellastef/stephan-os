@@ -116,6 +116,11 @@ test('served Goal Dashboard visibly distinguishes and renders a stale canonical 
       response.end(JSON.stringify(staleFeed));
       return;
     }
+    if (path === '/api/health') {
+      response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify({ok:true, service:'stephanos-server', api_status:'online'}));
+      return;
+    }
     if (path === '/favicon.ico') {
       response.writeHead(204, { 'cache-control': 'no-store' });
       response.end();
@@ -189,7 +194,8 @@ test('served Goal Dashboard visibly distinguishes and renders a stale canonical 
     assert.equal(await page.locator('[data-health="scheduler"]').getAttribute('data-truth'), 'STALE');
     assert.equal(await page.locator('[data-health="review"]').getAttribute('data-truth'), 'STALE');
     assert.equal(await page.locator('[data-health="openclaw"]').getAttribute('data-truth'), 'STALE');
-    assert.equal(await page.locator('[data-health="autonomy"]').getAttribute('data-truth'), 'CONFLICTING');
+    assert.equal(await page.locator('[data-health="autonomy"]').getAttribute('data-truth'), 'UNKNOWN',
+      'a stale feed without an autonomy observation must not manufacture a conflicting autonomy verdict');
     assert.equal(await page.locator('[data-live-telemetry-field="active-goal-queue"]').textContent(), 'job-42');
     assert.equal(await page.locator('[data-live-telemetry-field="active-proof-lane"]').textContent(), 'lane-42');
     assert.match(await page.locator('#truth-boundary').textContent(), /Live backend projection loaded in read-only mode/);

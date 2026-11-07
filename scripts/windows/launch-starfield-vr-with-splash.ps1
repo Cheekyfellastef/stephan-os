@@ -723,8 +723,17 @@ $statusHint.Font = New-Object System.Drawing.Font($fontFamily, 10)
 $statusHint.Text = 'Cards show configured state only. Canonical readiness runs after you select a provider.'
 $statusPanel.Controls.Add($statusHint)
 
+$telemetryLabel = New-Object System.Windows.Forms.Label
+$telemetryLabel.AutoSize = $false
+$telemetryLabel.Location = New-Object System.Drawing.Point(25, 76)
+$telemetryLabel.Size = New-Object System.Drawing.Size(836, 18)
+$telemetryLabel.ForeColor = [System.Drawing.Color]::FromArgb(126, 231, 194)
+$telemetryLabel.Font = New-Object System.Drawing.Font($fontFamily, 8.5, [System.Drawing.FontStyle]::Bold)
+$telemetryLabel.Text = 'FLIGHT RECORDER AUTO | FPS + frame time + stereo/pose/OpenXR -> Shared Workspace'
+$statusPanel.Controls.Add($telemetryLabel)
+
 $progressTrack = New-Object System.Windows.Forms.Panel
-$progressTrack.Location = New-Object System.Drawing.Point(26, 90)
+$progressTrack.Location = New-Object System.Drawing.Point(26, 101)
 $progressTrack.Size = New-Object System.Drawing.Size(850, 4)
 $progressTrack.BackColor = [System.Drawing.Color]::FromArgb(48, 73, 94)
 $statusPanel.Controls.Add($progressTrack)
@@ -945,7 +954,11 @@ $readinessPollTimer.Add_Tick({
     }
 
     $statusLabel.Text = 'Ready to launch'
-    $statusHint.Text = 'Quest 3, OpenXR and the verified VR provider passed the launch gate.'
+    $statusHint.Text = if ($processState.Provider -eq 'mutar-openxr') {
+        'Quest 3 and MutaR passed the gate. The VR flight recorder is armed: frame time, stereo, pose and OpenXR submission.'
+    } else {
+        'Quest 3 and the verified VR provider passed the launch gate.'
+    }
     $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(174, 255, 221)
     $progressFill.BackColor = [System.Drawing.Color]::FromArgb(113, 236, 193)
     $progressFill.Width = 850
@@ -966,13 +979,17 @@ $launchPollTimer.Add_Tick({
     if ($launchResult.ExitCode -eq 0) {
         if ($processState.Mode -eq 'AER_OBSERVE') {
             $statusLabel.Text = 'AER Observe launched'
-            $statusHint.Text = 'Play normally. AER recording begins automatically once the OpenXR VR runtime is active.'
+            $statusHint.Text = 'Flight recorder live. Mark a visible glitch with View + L3 + R3 on the Xbox pad, or F12.'
             $observeModeCell.Label.ForeColor = [System.Drawing.Color]::FromArgb(235, 250, 255)
             $baselineModeCell.Label.ForeColor = [System.Drawing.Color]::FromArgb(174, 198, 220)
         }
         else {
             $statusLabel.Text = 'Starfield VR launched'
-            $statusHint.Text = 'The verified launcher accepted the route and started the game.'
+            $statusHint.Text = if ($processState.Provider -eq 'mutar-openxr') {
+                'Flight recorder proved its first sample. Mark a visible glitch with View + L3 + R3, or F12; the session seals on exit.'
+            } else {
+                'The verified launcher accepted the route and started the game.'
+            }
         }
         $finishTimer.Start()
     }

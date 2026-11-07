@@ -15,7 +15,7 @@ This document is the first independent source change through a ChatGPT authentic
 6. After the protected merge, record merged SHA and, if this goal changes Battle Bridge behaviour, verify that installed/served source actually matches. Completion belongs to the original goal only after its own acceptance evidence; a merged child PR alone is not completion.
 
 ## No common failure point
-- **No polling daemon, controller, worker pool, queue, database, lease, or source-custody writer is introduced** by this pilot. The original conveyor's #2962/r7 hold remains untouched.
+- **No polling daemon, controller, worker pool, queue, database, lease, or source-custody writer is introduced** by this pilot. The original #2962/R7 attempt is RETIRED with historical execution outcome UNKNOWN; do not reopen or re-release it. Independently verify any later/current source claim or maintenance custody by its own identity.
 - A blocked task must not block another disjoint task. A blocked *review* or GitHub quota also pauses only that PR; retain exact branch/head and switch to unrelated work, not a duplicate builder.
 - External limits (ChatGPT usage, GitHub API/CI, independent specialist reviewers and owner-protected merge) remain real. This route is *not* a promise of unattended ChatGPT turns or limitless capacity.
 - Gaming has priority: ChatGPT/GitHub-only source planning need not consume the Battle Bridge GPU; no local inference or physical mutation without fresh resource proof.
