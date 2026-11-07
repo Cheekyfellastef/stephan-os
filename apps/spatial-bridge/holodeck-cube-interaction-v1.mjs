@@ -9,7 +9,7 @@ export function trackedPose(pose,navigation) {
   const p=pose?.transform?.position,q=pose?.transform?.orientation;
   if(!p||!q||![p.x,p.y,p.z,q.x,q.y,q.z,q.w].every(Number.isFinite)) return null;
   const yaw=[0,Math.sin(navigation.yaw/2),0,Math.cos(navigation.yaw/2)];
-  return {position:add3(rotate3([p.x,p.y,p.z],yaw),[navigation.x,0,navigation.z]),
+  return {position:add3(rotate3([p.x,p.y,p.z],yaw),[navigation.x,Number.isFinite(navigation.y)?navigation.y:0,navigation.z]),
     orientation:normalizeQuaternion(multiplyQuaternion(yaw,normalizeQuaternion([q.x,q.y,q.z,q.w])))};
 }
 export function cubeTargeted(hand,cube) {
