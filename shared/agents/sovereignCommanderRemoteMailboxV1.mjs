@@ -790,14 +790,54 @@ function safeBattleBridgeObservationProjection(value = {}, processId = '') {
       })];
     }),
   );
-  const safeService = (service = {}) => Object.freeze({
-    reachable: service?.reachable === true,
-    ready: service?.ready === true,
-    httpStatus: safeIntegerOrNull(service?.httpStatus, 599) ?? 0,
-  });
+  const safeBackendConnection = (value, probe) => {
+    const identity = value?.backendIdentity;
+    const origin = 'https://stephanos-control-tower.timelesspearl.chatgpt.site';
+    const observed = probe.reachable && probe.ready && probe.httpStatus >= 200 && probe.httpStatus < 300
+      && value?.schemaVersion === 'stephanos.battle-bridge-backend-connection.v1'
+      && value?.observed === true
+      && value?.healthSchemaVersion === 'stephanos.backend-health.v1'
+      && value?.service === 'stephanos-server'
+      && identity?.schemaVersion === 'stephanos.backend-runtime-identity.v1'
+      && identity?.runtimeId === 'stephanos-battle-bridge-backend'
+      && typeof identity?.sourceHead === 'string' && /^[a-f0-9]{40}$/.test(identity.sourceHead)
+      && value?.controlTowerOrigin === origin
+      && value?.browserAccessProven === false
+      && value?.loadedSourceBytesProven === false
+      && value?.executionAuthority === false;
+    return Object.freeze({
+      schemaVersion: 'stephanos.battle-bridge-backend-connection.v1',
+      observed,
+      healthSchemaVersion: observed ? 'stephanos.backend-health.v1' : '',
+      service: observed ? 'stephanos-server' : '',
+      backendIdentity: observed ? Object.freeze({
+        schemaVersion: 'stephanos.backend-runtime-identity.v1',
+        runtimeId: 'stephanos-battle-bridge-backend',
+        sourceHead: identity.sourceHead,
+      }) : null,
+      controlTowerOrigin: origin,
+      controlTowerOriginConfigured: observed && typeof value.controlTowerOriginConfigured === 'boolean'
+        ? value.controlTowerOriginConfigured : null,
+      browserAccessProven: false,
+      loadedSourceBytesProven: false,
+      executionAuthority: false,
+    });
+  };
+  const safeService = (service = {}, id) => {
+    const probe = {
+      reachable: service?.reachable === true,
+      ready: service?.ready === true,
+      httpStatus: safeIntegerOrNull(service?.httpStatus, 599) ?? 0,
+    };
+    return Object.freeze({ ...probe,
+      ...(id === 'backend' ? { connection: safeBackendConnection(
+        Number.isInteger(service?.httpStatus) ? service?.connection : null, probe,
+      ) } : {}),
+    });
+  };
   const services = Object.freeze(Object.fromEntries(
     ['ui', 'backend', 'openclaw', 'sovereign-commander', 'ollama']
-      .map((id) => [id, safeService(parsed?.services?.[id])]),
+      .map((id) => [id, safeService(parsed?.services?.[id], id)]),
   ));
   const gpuName = safeShortText(parsed?.gpu?.name, /^[A-Za-z0-9][A-Za-z0-9 ._()+/\-]{0,119}$/, 120);
   const installedModels = safeModels(parsed?.ollama?.installedModels, false);

@@ -13,6 +13,7 @@ import { STEPHANOS_EXECUTION_SURFACE, buildStephanosExecutionCommandEnvelopeV1,
 import { checkpointTerminalMailboxReceipt, createSanitizedMailboxReceiptProjection,
   serializeBoundedReceiptJson } from '../../scripts/battle-bridge-github-command-mailbox.mjs';
 import { projectBoundedRemoteControllerLaneStatus } from '../../scripts/sovereign-controller-lane-status.mjs';
+import { collectBattleBridgeObservation } from '../../scripts/battle-bridge-observation.mjs';
 
 import {
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
@@ -28,6 +29,113 @@ import {
 } from './sovereignCommanderRemoteMailboxV1.mjs';
 
 const HEAD = 'e42d31670da802cc15d4c323dd8dcff10a03033f';
+
+function backendConnection(overrides = {}) {
+  return {
+    schemaVersion: 'stephanos.battle-bridge-backend-connection.v1',
+    observed: true,
+    healthSchemaVersion: 'stephanos.backend-health.v1',
+    service: 'stephanos-server',
+    backendIdentity: {
+      schemaVersion: 'stephanos.backend-runtime-identity.v1',
+      runtimeId: 'stephanos-battle-bridge-backend',
+      sourceHead: HEAD,
+    },
+    controlTowerOrigin: 'https://stephanos-control-tower.timelesspearl.chatgpt.site',
+    controlTowerOriginConfigured: true,
+    browserAccessProven: false,
+    loadedSourceBytesProven: false,
+    executionAuthority: false,
+    ...overrides,
+  };
+}
+
+async function remoteBackendObservation(connection, serviceOverrides = {}, collected = null) {
+  const observation = collected || {
+    schemaVersion: 'stephanos.battle-bridge-observation.v1', ok: true,
+    capturedAtUtc: '2026-11-07T15:00:00.000Z', hostRole: 'battle-bridge',
+    services: { backend: { reachable: true, ready: true, httpStatus: 200, connection, ...serviceOverrides } },
+    readOnly: true, arbitraryShellAllowed: false, secretMaterialIncluded: false,
+    finalVerdict: 'BATTLE_BRIDGE_OBSERVATION_READY',
+  };
+  const maintenance = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED', proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'battle-bridge-observe' } },
+    structuredContent: { ok: true, status: 0, stdout: JSON.stringify(observation), stderr: '', errorCode: '' },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  return executeSovereignCommanderRemoteOnBattleBridge(command({ remoteAction: 'battle-bridge-observe' }), {
+    spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn, env: { USERPROFILE: 'C:\\Users\\Operator' },
+  });
+}
+
+test('backend identity and pinned origin decision survive the existing observer and public receipt path', async () => {
+  const health = {
+    ok: true, schemaVersion: 'stephanos.backend-health.v1', service: 'stephanos-server',
+    backendIdentity: { ...backendConnection().backendIdentity, privatePath: 'SECRET_LOCAL_PATH' },
+    cors: { allowed_origin_count: 1, allowed_origins: [backendConnection().controlTowerOrigin] },
+    provider_secret_status: { secret: 'PRIVATE_PROVIDER_VALUE' },
+  };
+  const collected = await collectBattleBridgeObservation({
+    fetchFn: async url => new Response(JSON.stringify(String(url).includes(':8787/') ? health : { models: [] }), {
+      headers: { 'content-type': 'application/json' },
+    }),
+    spawnSyncFn: () => ({ status: 1, stdout: '', stderr: '' }),
+    now: () => new Date('2026-11-07T15:00:00.000Z'),
+    memory: () => ({ totalBytes: 16, freeBytes: 8 }), uptimeFn: () => 123, env: {},
+  });
+  const result = await remoteBackendObservation(null, {}, collected);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.observation.services.backend.connection, backendConnection());
+  assert.doesNotMatch(JSON.stringify(result), /SECRET_LOCAL_PATH|PRIVATE_PROVIDER_VALUE|allowed_origins|provider_secret_status/);
+});
+
+test('public backend diagnostics retain false and unknown without publishing raw origins or configuration', async () => {
+  for (const configured of [true, false, null, 'true']) {
+    const connection = backendConnection({
+      controlTowerOriginConfigured: configured,
+      privateOrigins: ['https://PRIVATE_ORIGIN.invalid'], secret: 'PRIVATE_CONNECTION_SECRET',
+    });
+    connection.backendIdentity.privatePath = 'PRIVATE_IDENTITY_PATH';
+    const result = await remoteBackendObservation(connection);
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.observation.services.backend.connection, backendConnection({
+      controlTowerOriginConfigured: typeof configured === 'boolean' ? configured : null,
+    }));
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_ORIGIN|PRIVATE_CONNECTION_SECRET|PRIVATE_IDENTITY_PATH/);
+  }
+});
+
+test('public backend diagnostic projection refuses foreign identity, target and authority claims', async () => {
+  const identity = backendConnection().backendIdentity;
+  const variants = [
+    undefined, null, {}, backendConnection({ observed: 'true' }),
+    backendConnection({ schemaVersion: 'foreign' }), backendConnection({ healthSchemaVersion: 'foreign' }),
+    backendConnection({ service: 'foreign' }),
+    backendConnection({ backendIdentity: { ...identity, schemaVersion: 'foreign' } }),
+    backendConnection({ backendIdentity: { ...identity, runtimeId: 'foreign' } }),
+    backendConnection({ backendIdentity: { ...identity, sourceHead: 'PRIVATE_IDENTITY_SECRET' } }),
+    backendConnection({ controlTowerOrigin: 'https://foreign.invalid' }),
+    backendConnection({ browserAccessProven: true }), backendConnection({ loadedSourceBytesProven: true }),
+    backendConnection({ executionAuthority: true }),
+  ];
+  for (const connection of variants) {
+    const result = await remoteBackendObservation(connection);
+    assert.equal(result.ok, true); // The original observation action still ran.
+    const projected = result.observation.services.backend.connection;
+    assert.equal(projected.observed, false);
+    assert.equal(projected.backendIdentity, null);
+    assert.equal(projected.controlTowerOriginConfigured, null);
+    assert.equal(projected.executionAuthority, false);
+    assert.equal(projected.browserAccessProven, false);
+    assert.equal(projected.loadedSourceBytesProven, false);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_IDENTITY_SECRET|foreign.invalid/);
+  }
+  for (const service of [{ ready: false }, { reachable: false }, { httpStatus: 503 }, { httpStatus: '200' }]) {
+    const result = await remoteBackendObservation(backendConnection(), service);
+    assert.equal(result.observation.services.backend.connection.observed, false);
+  }
+});
 
 function command(overrides = {}) {
   return {
@@ -3283,7 +3391,7 @@ test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge pack
     ollama: { reachable: true, installedModelCount: 1, loadedModelCount: 0, installedModels: [{ name: 'qwen3.5:27b', sizeBytes: 1 }], loadedModels: [] },
     services: {
       ui: { reachable: true, ready: true, httpStatus: 200 },
-      backend: { reachable: true, ready: true, httpStatus: 200 },
+      backend: { reachable: true, ready: true, httpStatus: 200, connection: backendConnection({ controlTowerOriginConfigured: false }) },
       openclaw: { reachable: true, ready: true, httpStatus: 200 },
       'sovereign-commander': { reachable: true, ready: true, httpStatus: 200 },
       ollama: { reachable: true, ready: true, httpStatus: 200 },
@@ -3449,6 +3557,7 @@ test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge pack
   );
 
   assert.equal(result.ok, true);
+  assert.deepEqual(result.visibilitySnapshot.observation.services.backend.connection, backendConnection({ controlTowerOriginConfigured: false }));
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_VISIBILITY_SNAPSHOT_COMPLETE');
   assert.equal(result.visibilitySnapshot.repository.head, HEAD);
   assert.equal(result.visibilitySnapshot.repository.remoteMainHead, HEAD);
