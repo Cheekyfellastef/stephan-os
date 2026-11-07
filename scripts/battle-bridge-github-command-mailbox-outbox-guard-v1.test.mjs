@@ -482,8 +482,39 @@ test('legacy reconciliation refuses more than one malformed pending publication'
   assert.deepEqual(readFileSync(f.statePath), before);
 });
 
+test('legacy reconciliation accepts identical terminal content except the known blank requestId', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  installLegacyReconciliationProof(f, {
+    receipt: {
+      result: { outcome: 'fixture-terminal-success', count: 1 },
+      blocker: '',
+      proofRefs: ['proofs/fixture-terminal-content'],
+    },
+  });
+  let invoked = 0;
+  const result = runGuard(f, { spawnSyncFn: () => { invoked++; return { status: 0, stdout: '{}', stderr: '' }; } });
+  assert.equal(result.ok, true);
+  assert.equal(invoked, 1);
+  assert.equal(result.quarantinedInvalidPublicationCount, 1);
+});
+
 test('legacy one-record reconciliation requires publication, canonical receipt, consumed index and execution ledger to agree', (t) => {
   const cases = [
+    ['pending-result-content', (f) => {
+      const state = readJson(f.statePath);
+      state.pendingReceiptPublications[0].receipt.result = { outcome: 'contradictory-terminal-result' };
+      writeJson(f.statePath, state);
+    }],
+    ['pending-blocker-content', (f) => {
+      const state = readJson(f.statePath);
+      state.pendingReceiptPublications[0].receipt.blocker = 'CONTRADICTORY_TERMINAL_BLOCKER';
+      writeJson(f.statePath, state);
+    }],
+    ['pending-proof-refs-content', (f) => {
+      const state = readJson(f.statePath);
+      state.pendingReceiptPublications[0].receipt.proofRefs = ['proofs/contradictory-terminal-content'];
+      writeJson(f.statePath, state);
+    }],
     ['publication', (f, proof) => {
       const state = readJson(f.statePath);
       state.pendingReceiptPublications[0].publicationId = 'wrong:DONE:' + proof.canonicalReceipt.completedAt;
