@@ -26,6 +26,7 @@ const env = Object.freeze({
   STEPHANOS_REVIEW_SESSION: 'reviewer-two',
   STEPHANOS_SOVEREIGN_REVIEW_MODEL: 'qwen:14b',
 });
+const canonicalConfig = 'remote.origin.url\nhttps://github.com/Cheekyfellastef/stephan-os.git\0';
 const gitProof = (overrides = {}) => ({
   platform: 'linux', sourceRoot: '/tmp/nonproduction-review-fixture',
   gamingGuard: allowGaming,
@@ -51,20 +52,72 @@ const gitProof = (overrides = {}) => ({
       return { status: 0, stdout: (overrides.badExpectedBlob ? 'invalid' : 'c'.repeat(40)) + '\n' };
     }
     if (cmd.startsWith('hash-object --no-filters -- ')) {
-      return { status: 0, stdout: (overrides.badWorkingBlob ? 'f'.repeat(40) : 'c'.repeat(40)) + '\n' };
+      return { status: 0, stdout: (overrides.badWorkingBlob || overrides.badWorkingFile === file
+        ? 'f'.repeat(40) : 'c'.repeat(40)) + '\n' };
     }
     const results = {
+      'config --local --null --list --no-includes': overrides.configuration ?? canonicalConfig,
       'rev-parse HEAD': overrides.head ?? 'a'.repeat(40),
       'symbolic-ref --quiet --short HEAD': overrides.branch ?? 'reviewer/exam-only',
-      'status --porcelain --untracked-files=normal': overrides.status ?? '',
+      '-c status.renames=false status --porcelain --untracked-files=normal': overrides.status ?? '',
       ['merge-base --is-ancestor ' + 'b'.repeat(40) + ' ' + 'a'.repeat(40)]: '',
     };
     return Object.hasOwn(results, cmd) && !(cmd.startsWith('merge-base') && overrides.ancestor === false)
-      ? { status: 0, stdout: results[cmd] + '\n' }
+      ? { status: 0, stdout: cmd.startsWith('config ') || cmd.includes('status --porcelain') ? results[cmd] : results[cmd] + '\n' }
       : { status: 1, stdout: '' };
   },
 });
 const allowGaming = () => ({ ok: true });
+
+test('baseline refuses unsafe or noncanonical Git configuration before source status or model use', async () => {
+  for (const configuration of [
+    '', canonicalConfig + canonicalConfig,
+    'remote.origin.url\nhttps://example.invalid/repository.git\0',
+    canonicalConfig + 'filter.fixture.clean\n/tmp/fixture-helper\0',
+    canonicalConfig + 'include.path\n/tmp/fixture-config\0',
+    canonicalConfig + 'core.fsmonitor\n/tmp/fixture-helper\0',
+    canonicalConfig + 'extensions.worktreeconfig\ntrue\0',
+  ]) {
+    const fixture = gitProof({ configuration });
+    let reads = 0, modelCalls = 0;
+    const result = await run(env, { ...fixture,
+      gitSpawn(...args) { reads++; return fixture.gitSpawn(...args); },
+      fetchImpl: async () => { modelCalls++; },
+    });
+    assert.equal(result.reason, 'CALIBRATION_SOURCE_GIT_UNPROVEN');
+    assert.equal(reads, 1, 'configuration denial must precede every status read');
+    assert.equal(modelCalls, 0);
+  }
+});
+
+test('baseline source proof admits runtime-only state and retains strict source, status and policy-byte denial', async () => {
+  for (const status of [
+    '', ' M stephanos-server/data/memory/durable-memory.json\n',
+    '?? apps/stephanos/dist/assets/new.js\r\n M logs/reviewer.log\r\n',
+  ]) assert.equal(inspectGit(env, gitProof({ status })).ok, true, status);
+  for (const status of [
+    ' M scripts/reviewer.mjs\n', '?? scripts/new-reviewer.mjs\n',
+    '?? apps/stephanos/dist/assets/new.js\n M scripts/reviewer.mjs\n',
+    'M  stephanos-server/data/memory/durable-memory.json\n',
+    'R  apps/stephanos/dist/old.js -> scripts/new.js\n',
+    'XX apps/stephanos/dist/new.js\n', ' M\tapps/stephanos/dist/new.js\n',
+    '?? tmp/../scripts/new.mjs\n', '?? tmp/./new.mjs\n',
+    '?? tmp/new\0.mjs\n', '?? tmp/new\r.mjs\n',
+    '??  tmp/new.mjs\n', '?? tmp/new.mjs \n',
+    '?? tmp/first\n\n?? tmp/second\n',
+  ]) {
+    let modelCalls = 0;
+    const result = await run(env, { ...gitProof({ status }), fetchImpl: async () => {
+      modelCalls++;
+      throw Error('source denial must precede Ollama');
+    } });
+    assert.equal(result.reason, 'CALIBRATION_CLEAN_EXACT_CHECKOUT_REQUIRED', status);
+    assert.equal(modelCalls, 0, status);
+  }
+  const policyChanged = inspectGit(env, gitProof({ status: '?? tmp/runtime.json\n',
+    badWorkingFile: 'scripts/battle-bridge-github-sync-policy.mjs' }));
+  assert.equal(policyChanged.reason, 'CALIBRATION_EXECUTABLE_BYTES_NOT_HEAD');
+});
 
 test('real WSL calibration rejects replacement-object checkout and never executes local fsmonitor',
   { skip: process.platform !== 'linux' }, () => {
@@ -78,11 +131,12 @@ test('real WSL calibration rejects replacement-object checkout and never execute
       return r.stdout.trim();
     };
     git(['init','-b','fixture']);
+    git(['remote','add','origin','https://github.com/Cheekyfellastef/stephan-os.git']);
     mkdirSync(join(root,'scripts'));
     mkdirSync(join(root,'shared','agents'),{recursive:true});
     const files = ['scripts/sovereign-reviewer-ollama-calibration-v1.mjs',
       'shared/agents/sovereignCalibrationV1.mjs','scripts/sovereign-reviewer-v1.mjs',
-      'shared/agents/providerNeutralReviewV1.mjs'];
+      'shared/agents/providerNeutralReviewV1.mjs','scripts/battle-bridge-github-sync-policy.mjs'];
     for(const file of files) writeFileSync(join(root,file),'// genuine\n');
     git(['add','.']); git(['commit','-m','base']);
     const base=git(['rev-parse','HEAD']);
