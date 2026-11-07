@@ -38,7 +38,6 @@
     .comfort-modes [aria-pressed="true"] { border-color: #8ff7c1; background: #155248; color: #d9fff0; }
     .console-keyboard-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
     .console-keyboard-hint { margin-bottom: 0; }
-    @media (min-width: 1000px) { .console-keyboard-hint { display: none; } }
   </style>
 </head>
 <body>
@@ -216,7 +215,7 @@
     }
     const previewKeyboardScroll=document.createElement('div');previewKeyboardScroll.className='console-keyboard-scroll';
     previewKeyboardScroll.setAttribute('role','region');previewKeyboardScroll.setAttribute('aria-label','Console keyboard scroll area');previewKeyboardScroll.tabIndex=0;
-    const previewKeyboard=document.createElement('div');previewKeyboard.style.cssText='position:relative;aspect-ratio:4/1;min-width:960px;background:#071c29';
+    const previewKeyboard=document.createElement('div');previewKeyboard.style.cssText='position:relative;aspect-ratio:4/1;min-width:1120px;background:#071c29';
     previewKeyboard.setAttribute('aria-label','Spatial console keyboard preview');
     for(const control of SCREEN_BUTTONS){
       const button=document.createElement('button');button.type='button';previewKeyButtons.push([control,button]);
@@ -226,7 +225,7 @@
     refreshKeyboardLabels(screen.getState());
     previewKeyboardScroll.append(previewKeyboard);document.getElementById('console-preview').append(previewKeyboardScroll);
     const previewKeyboardHint=document.createElement('p');previewKeyboardHint.className='muted console-keyboard-hint';
-    previewKeyboardHint.textContent='On a small screen, swipe sideways through the keyboard to reach all keys.';
+    previewKeyboardHint.textContent='Scroll or swipe sideways through the keyboard to reach every key.';
     document.getElementById('console-preview').append(previewKeyboardHint);
     document.getElementById('choose-window').addEventListener('click',()=>client.discover());
     windowSelector.addEventListener('change',()=>{connectWindowButton.disabled=!windowSelector.value;});
