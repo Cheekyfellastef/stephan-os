@@ -11,6 +11,10 @@ export const SCREEN_KEYS=Object.freeze([
   {id:'enter',label:'Send / Enter',x:0.78,y:0.83,w:0.18,h:0.12},
 ].map(Object.freeze));
 export const SCREEN_BUTTONS=Object.freeze([...SCREEN_ACTIONS,...SCREEN_KEYS]);
+export const DISPLAY_COMFORT_CONTROLS=Object.freeze([
+  ['comfort:seated','Seated'],['comfort:standing','Standing'],['comfort:height-down','Height -'],
+  ['comfort:height-up','Height +'],['comfort:tilt-down','Tilt -'],['comfort:tilt-up','Tilt +'],['comfort:reset','Reset'],
+].map(([id,label],i)=>Object.freeze({id,label,x:0.02+i*0.138,y:0.884,w:0.124,h:0.078})));
 export const SCREEN_CONTENT=Object.freeze({x:56,y:112,w:2960,h:726,width:3072,height:954});
 export function screenCrop(width,height,zoom=1,panX=0,panY=0) {
   const w=width/zoom,h=height/zoom;return {x:(width-w)*(panX+1)/2,y:(height-h)*(panY+1)/2,w,h};
@@ -24,14 +28,17 @@ export function screenPointToSource(u,v,width,height,zoom=1) {
   if(x<r.x||x>r.x+r.w||y<r.y||y>r.y+r.h)return null;
   return {x:(r.crop.x+(x-r.x)/r.w*r.crop.w)/width,y:(r.crop.y+(y-r.y)/r.h*r.crop.h)/height};
 }
-export function createHolodeckScreen({client,documentRef=globalThis.document,onReload=()=>{},onStatus=()=>{}}={}) {
-  const screen=documentRef.createElement('canvas'),consoleCanvas=documentRef.createElement('canvas');
-  screen.width=3072;screen.height=954;consoleCanvas.width=2048;consoleCanvas.height=512;
-  const ctx=screen.getContext('2d'),keys=consoleCanvas.getContext('2d');
+export function createHolodeckScreen({client,comfort,documentRef=globalThis.document,onReload=()=>{},onStatus=()=>{}}={}) {
+  const screen=documentRef.createElement('canvas'),consoleCanvas=documentRef.createElement('canvas'),knobCanvas=documentRef.createElement('canvas');
+  screen.width=3072;screen.height=954;consoleCanvas.width=2048;consoleCanvas.height=512;knobCanvas.width=256;knobCanvas.height=256;
+  const ctx=screen.getContext('2d'),keys=consoleCanvas.getContext('2d'),knob=knobCanvas.getContext('2d');
   let revision=0,drawn='',zoom=1,shift=false,hover=null,voiceHelp=false,reloadConfirm=false,lastPoint={x:0.5,y:0.5};
   const changed=()=>{revision++;try{onStatus(getState());}catch{}};
-  function getState(){return {...client.getState(),zoom,voiceHelp,shift};}
+  comfort?.subscribe?.(()=>changed());
+  function getState(){return {...client.getState(),zoom,voiceHelp,shift,comfort:comfort?.getState?.()??null};}
   function point(u,v,activate=false) {
+    const local=DISPLAY_COMFORT_CONTROLS.find(button=>u>=button.x&&u<=button.x+button.w&&v>=button.y&&v<=button.y+button.h);
+    if(local){if(activate)action(local.id);return true;}
     const image=client.getFrame();if(!image||voiceHelp||reloadConfirm)return false;
     const source=screenPointToSource(u,v,image.naturalWidth,image.naturalHeight,zoom);
     if(!source)return false;lastPoint=source;
@@ -40,6 +47,13 @@ export function createHolodeckScreen({client,documentRef=globalThis.document,onR
   function action(id) {
     if(id==='stop'){void client.stop();changed();return;}
     if(id==='voice'){voiceHelp=!voiceHelp;changed();return;}
+    if(id==='comfort:seated'){comfort?.setActiveProfile?.('seated');return;}
+    if(id==='comfort:standing'){comfort?.setActiveProfile?.('standing');return;}
+    if(id==='comfort:height-down'){comfort?.adjustHeight?.(-0.05);return;}
+    if(id==='comfort:height-up'){comfort?.adjustHeight?.(0.05);return;}
+    if(id==='comfort:tilt-down'){comfort?.adjustKeyboardAngle?.(-5);return;}
+    if(id==='comfort:tilt-up'){comfort?.adjustKeyboardAngle?.(5);return;}
+    if(id==='comfort:reset'){comfort?.resetActive?.();return;}
     if(id==='reload'){
       if(reloadConfirm)onReload();else{reloadConfirm=true;changed();}return;
     }
@@ -91,8 +105,23 @@ export function createHolodeckScreen({client,documentRef=globalThis.document,onR
       ];
       lines.forEach((line,i)=>text(ctx,line,166,405+i*67,35));
     }
-    text(ctx,state.message,64,892,30,'#aad0db');
-    text(ctx,'Quest trigger / Xbox A: select  |  Grip / RT: cubes  |  Sticks: walk & smooth turn',64,938,27,'#73dfe9');
+    const comfortState=state.comfort;
+    for(const button of DISPLAY_COMFORT_CONTROLS){
+      const active=(button.id==='comfort:seated'&&comfortState?.activeProfile==='seated')
+        ||(button.id==='comfort:standing'&&comfortState?.activeProfile==='standing');
+      ctx.fillStyle=active?'#246678':'#102c3a';ctx.fillRect(button.x*3072,button.y*954,button.w*3072,button.h*954);
+      ctx.strokeStyle='#62e7ff';ctx.lineWidth=2;ctx.strokeRect(button.x*3072,button.y*954,button.w*3072,button.h*954);
+      text(ctx,button.label,button.x*3072+16,(button.y+0.052)*954,24);
+    }
+    const profile=comfortState?.activeProfile==='standing'?'STANDING':'SEATED';
+    const height=Number(comfortState?.active?.heightOffset??0),angle=Number(comfortState?.active?.keyboardAngle??0);
+    text(ctx,`${profile}  ·  HEIGHT ${height>=0?'+':''}${height.toFixed(2)} m  ·  KEYBOARD ${Math.round(angle)}°`,64,842,27,'#73dfe9');
+    text(ctx,state.message,64,946,24,'#aad0db');
+    knob.clearRect(0,0,256,256);knob.fillStyle='#071c29';knob.fillRect(0,0,256,256);
+    knob.strokeStyle='#62e7ff';knob.lineWidth=12;knob.beginPath();knob.arc(128,128,92,0,Math.PI*2);knob.stroke();
+    knob.strokeStyle='#f5c77b';knob.lineWidth=10;const dial=angle*Math.PI/180;
+    knob.beginPath();knob.moveTo(128,128);knob.lineTo(128+Math.cos(dial)*72,128-Math.sin(dial)*72);knob.stroke();
+    knob.fillStyle='#c9f6ff';knob.font='bold 30px system-ui, sans-serif';knob.textAlign='center';knob.fillText(`${Math.round(angle)}°`,128,226);knob.textAlign='start';
     keys.fillStyle='#071c29';keys.fillRect(0,0,2048,512);
     for(const button of SCREEN_BUTTONS) {
       const {x,y,w,h,id,label}=button;
@@ -100,7 +129,7 @@ export function createHolodeckScreen({client,documentRef=globalThis.document,onR
       keys.strokeStyle=id==='enter'?'#f5c77b':'#62e7ff';keys.lineWidth=2;keys.strokeRect(x*2048,y*512,w*2048,h*512);
       text(keys,shift&&id.startsWith('key:')?label.toUpperCase():label,x*2048+12,y*512+h*512*0.64,26);
     }
-    return {screen,console:consoleCanvas,revision:drawn};
+    return {screen,console:consoleCanvas,knob:knobCanvas,revision:drawn};
   }
   return {action,point,getState,render,hover:id=>{if(id!==hover){hover=id;changed();}}};
 }
