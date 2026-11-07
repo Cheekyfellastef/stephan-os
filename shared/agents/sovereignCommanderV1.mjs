@@ -13,22 +13,57 @@ import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 import { executeCorePublicationDirectoryActionV1 } from '../../scripts/sovereign-core-directory-action-v1.mjs';
 import { isSovereignMaintenanceObservationV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 import { executeSovereignDirectoryCreateV1, validateSovereignDirectoryTargetV1 } from './sovereignDirectoryCreateV1.mjs';
+import { validateSovereignFileMoveArgumentsV1 } from './sovereignFileMoveV1.mjs';
+import { validateSovereignFileCopyArgumentsV1, captureSovereignFileCopyResultV1,
+  validateSovereignFileHashArgumentsV1, captureSovereignFileHashResultV1,
+  SOVEREIGN_FILE_COPY_SCHEMA_V1, SOVEREIGN_FILE_HASH_SCHEMA_V1 } from './sovereignFileCopyV1.mjs';
+import { captureSovereignFeedbackArgumentsV1 } from './sovereignFeedbackIntakeV1.mjs';
+import { validateSovereignPdfWriteArgumentsV1 } from './sovereignPdfWriteV1.mjs';
+import {
+  validateSovereignProcessSessionArgumentsV1,
+  SOVEREIGN_PROCESS_SESSION_PROFILES_V1,
+  SOVEREIGN_PROCESS_SESSION_EXECUTABLE_V1,
+  SOVEREIGN_PROCESS_SESSION_SCHEMA_V1,
+} from './sovereignProcessSessionsV1.mjs';
+import {
+  captureSovereignMcpSessionConfigArgumentsV1, captureSovereignMcpSessionConfigSnapshotV1,
+  countSovereignSubmittedLinesV1, SOVEREIGN_MCP_SESSION_CONFIG_DEFAULTS_V1,
+  SOVEREIGN_MCP_SESSION_CONFIG_LIMITS_V1, SOVEREIGN_MCP_SESSION_CONFIG_SEMANTICS_V1,
+} from './sovereignMcpSessionConfigV1.mjs';
 
 export const SOVEREIGN_COMMANDER_SCHEMA = 'stephanos.sovereign-commander.v1';
 
 export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
   GET_CONFIG: 'GET_CONFIG',
+  SET_CONFIG_VALUE: 'SET_CONFIG_VALUE',
   READ_FILE: 'READ_FILE',
   READ_MULTIPLE_FILES: 'READ_MULTIPLE_FILES',
   GET_FILE_INFO: 'GET_FILE_INFO',
   WRITE_FILE: 'WRITE_FILE',
+  WRITE_PDF: 'WRITE_PDF',
+  SUBMIT_FEEDBACK: 'SUBMIT_FEEDBACK',
   EDIT_FILE: 'EDIT_FILE',
+  MOVE_FILE: 'MOVE_FILE',
+  COPY_FILE_CONTENT: 'COPY_FILE_CONTENT',
+  GET_FILE_HASH: 'GET_FILE_HASH',
   LIST_DIRECTORY: 'LIST_DIRECTORY',
   CREATE_DIRECTORY: 'CREATE_DIRECTORY',
   SEARCH_PROJECT: 'SEARCH_PROJECT',
+  START_SEARCH: 'START_SEARCH',
+  GET_MORE_SEARCH_RESULTS: 'GET_MORE_SEARCH_RESULTS',
+  STOP_SEARCH: 'STOP_SEARCH',
+  LIST_SEARCHES: 'LIST_SEARCHES',
+  GET_USAGE_STATS: 'GET_USAGE_STATS',
+  GET_RECENT_TOOL_CALLS: 'GET_RECENT_TOOL_CALLS',
+  GET_TOOL_RESULT: 'GET_TOOL_RESULT',
+  LIST_REMOTE_TOOL_CALLS: 'LIST_REMOTE_TOOL_CALLS',
   LIST_PROCESSES: 'LIST_PROCESSES',
   RUN_NODE_TEST: 'RUN_NODE_TEST',
   START_PROCESS: 'START_PROCESS',
+  START_PROCESS_SESSION: 'START_PROCESS_SESSION',
+  CANCEL_PROCESS_SESSION: 'CANCEL_PROCESS_SESSION',
+  READ_PROCESS_OUTPUT: 'READ_PROCESS_OUTPUT',
+  LIST_SESSIONS: 'LIST_SESSIONS',
   MAINTENANCE_ACTION: 'MAINTENANCE_ACTION',
 });
 
@@ -88,6 +123,84 @@ function pathWithin(root, candidate) {
     : relative(normalizedRoot, normalizedCandidate);
   const relativeIsAbsolute = windows ? win32.isAbsolute(relativePath) : isAbsolute(relativePath);
   return relativePath === '' || (!!relativePath && !relativePath.startsWith('..') && !relativeIsAbsolute);
+}
+
+const PRIVATE_SESSION_ARGUMENTS = Object.freeze({
+  SUBMIT_FEEDBACK: ['category', 'operation', 'message'],
+  WRITE_PDF: ['path', 'pages'],
+  MOVE_FILE: ['source', 'destination', 'expectedSha256'],
+  COPY_FILE_CONTENT: ['source', 'destination', 'expectedSha256'],
+  GET_FILE_HASH: ['path'],
+  SET_CONFIG_VALUE: ['key', 'value', 'expectedRevision'],
+  START_SEARCH: ['path', 'query', 'mode', 'caseSensitive', 'limit'],
+  GET_MORE_SEARCH_RESULTS: ['searchId', 'offset', 'limit'],
+  STOP_SEARCH: ['searchId'],
+  LIST_SEARCHES: [],
+  GET_USAGE_STATS: [],
+  GET_RECENT_TOOL_CALLS: ['offset', 'limit'],
+  GET_TOOL_RESULT: ['callId'],
+  LIST_REMOTE_TOOL_CALLS: ['offset', 'limit'],
+  START_PROCESS_SESSION: ['profile'],
+  CANCEL_PROCESS_SESSION: ['sessionId'],
+  READ_PROCESS_OUTPUT: ['sessionId', 'offset', 'limit'],
+  LIST_SESSIONS: [],
+});
+
+// JSON schema is a discovery contract, not runtime admission. Capture only own
+// data properties before the command fabric can trim paths or read accessors.
+export function captureSovereignPrivateSessionArgumentsV1(operation, raw) {
+  if (operation === 'SUBMIT_FEEDBACK') return captureSovereignFeedbackArgumentsV1(raw);
+  if (operation === 'WRITE_PDF') {
+    const validated = validateSovereignPdfWriteArgumentsV1(raw);
+    return validated.ok === true ? validated.args : null;
+  }
+  if (['START_PROCESS_SESSION', 'CANCEL_PROCESS_SESSION', 'READ_PROCESS_OUTPUT', 'LIST_SESSIONS'].includes(operation)) {
+    const validated = validateSovereignProcessSessionArgumentsV1(operation, raw);
+    return validated.ok === true ? validated.args : null;
+  }
+  if (operation === 'MOVE_FILE') {
+    const validated = validateSovereignFileMoveArgumentsV1(raw);
+    return validated.ok === true ? validated.args : null;
+  }
+  if (operation === 'COPY_FILE_CONTENT') {
+    const validated = validateSovereignFileCopyArgumentsV1(raw);
+    return validated.ok === true ? validated.args : null;
+  }
+  if (operation === 'GET_FILE_HASH') {
+    const validated = validateSovereignFileHashArgumentsV1(raw);
+    return validated.ok === true ? validated.args : null;
+  }
+  if (operation === 'SET_CONFIG_VALUE') return captureSovereignMcpSessionConfigArgumentsV1(raw);
+  const allowed = Object.hasOwn(PRIVATE_SESSION_ARGUMENTS, operation) ? PRIVATE_SESSION_ARGUMENTS[operation] : null;
+  if (!allowed || !raw || typeof raw !== 'object' || Array.isArray(raw)
+    || Object.getPrototypeOf(raw) !== Object.prototype) return null;
+  const captured = {};
+  for (const key of Reflect.ownKeys(raw)) {
+    if (typeof key !== 'string' || !allowed.includes(key)) return null;
+    const descriptor = Object.getOwnPropertyDescriptor(raw, key);
+    if (!descriptor || !Object.hasOwn(descriptor, 'value')) return null;
+    captured[key] = descriptor.value;
+  }
+  if (operation === 'START_SEARCH') {
+    if (typeof captured.path !== 'string' || captured.path !== captured.path.trim()
+      || captured.path.length > 1024 || /[\x00-\x1f]/.test(captured.path)
+      || !normalizedAbsolutePath(captured.path)
+      || typeof captured.query !== 'string' || !captured.query.length
+      || captured.query.length > 200 || captured.query.includes('\0')
+      || (Object.hasOwn(captured, 'mode') && !['file', 'content'].includes(captured.mode))
+      || (Object.hasOwn(captured, 'caseSensitive') && typeof captured.caseSensitive !== 'boolean')) return null;
+  }
+  if (['GET_MORE_SEARCH_RESULTS', 'STOP_SEARCH'].includes(operation)
+    && (typeof captured.searchId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(captured.searchId))) return null;
+  if (operation === 'GET_TOOL_RESULT'
+    && (typeof captured.callId !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(captured.callId))) return null;
+  if (Object.hasOwn(captured, 'offset')
+    && (!Number.isSafeInteger(captured.offset) || captured.offset < 0
+      || captured.offset > (operation.includes('SEARCH') ? 1000 : 256))) return null;
+  const maxLimit = 50;
+  if (Object.hasOwn(captured, 'limit')
+    && (!Number.isSafeInteger(captured.limit) || captured.limit < 1 || captured.limit > maxLimit)) return null;
+  return Object.freeze(captured);
 }
 
 // Source-bound reviewer metadata is a bounded input to the existing fixed
@@ -508,10 +621,60 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
   const targetPaths = Array.isArray(envelope.targetPaths) ? envelope.targetPaths.map(text).filter(Boolean) : [];
   const payload = envelope.payload && typeof envelope.payload === 'object' ? envelope.payload : {};
   const registry = fixedRegistry(options.repoRoot);
+  let sessionConfiguration = null;
+  if (['GET_CONFIG', 'READ_FILE', 'READ_MULTIPLE_FILES', 'WRITE_FILE', 'EDIT_FILE'].includes(operation)
+    && Object.hasOwn(options, 'sessionConfig')) {
+    try { sessionConfiguration = captureSovereignMcpSessionConfigSnapshotV1(options.sessionConfig?.getSnapshot?.()); }
+    catch {}
+    if (!sessionConfiguration) blockers.push('SOVEREIGN_SESSION_CONFIG_UNAVAILABLE');
+  }
+  const configuration = sessionConfiguration ? { sessionConfiguration } : {};
+  const writeLineLimit = sessionConfiguration?.values.fileWriteLineLimit ?? null;
   let plan = null;
 
-  if (operation === SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG) {
-    plan = frozen({ kind: 'config' });
+  if (Object.hasOwn(PRIVATE_SESSION_ARGUMENTS, operation)) {
+    const args = captureSovereignPrivateSessionArgumentsV1(operation, envelope.payload);
+    const search = ['START_SEARCH', 'GET_MORE_SEARCH_RESULTS', 'STOP_SEARCH', 'LIST_SEARCHES'].includes(operation);
+    const processSession = ['START_PROCESS_SESSION', 'CANCEL_PROCESS_SESSION', 'READ_PROCESS_OUTPUT', 'LIST_SESSIONS'].includes(operation);
+    let profileBinding = null;
+    if (!args) blockers.push('SOVEREIGN_PRIVATE_SESSION_ARGUMENTS_INVALID');
+    if (operation === 'START_SEARCH' || operation === 'WRITE_PDF' || operation === 'GET_FILE_HASH') {
+      if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 1
+        || envelope.targetPaths[0] !== args?.path) blockers.push(operation === 'WRITE_PDF'
+          ? 'SOVEREIGN_PDF_SCOPE_BINDING_INVALID' : operation === 'GET_FILE_HASH'
+            ? 'SOVEREIGN_HASH_SCOPE_BINDING_INVALID' : 'SOVEREIGN_SEARCH_SCOPE_BINDING_INVALID');
+    } else if (operation === 'MOVE_FILE' || operation === 'COPY_FILE_CONTENT') {
+      if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 2
+        || envelope.targetPaths[0] !== args?.source || envelope.targetPaths[1] !== args?.destination)
+        blockers.push(operation === 'COPY_FILE_CONTENT'
+          ? 'SOVEREIGN_COPY_SCOPE_BINDING_INVALID' : 'SOVEREIGN_MOVE_SCOPE_BINDING_INVALID');
+    } else if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 0) {
+      blockers.push('SOVEREIGN_PRIVATE_SESSION_SCOPE_INVALID');
+    }
+    if (operation === 'START_PROCESS_SESSION' && args) {
+      const fixed = registry[args.profile];
+      const profile = SOVEREIGN_PROCESS_SESSION_PROFILES_V1[args.profile];
+      const root = normalizedAbsolutePath(options.repoRoot);
+      const expectedArgs = profile && root ? ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', resolve(root, profile.scriptPath)] : [];
+      // A private streaming route cannot turn a registered maintenance action
+      // into an observation or borrow its execution/owner authority.
+      if (!root || !fixed || !profile || !isSovereignMaintenanceObservationV1(args.profile)
+        || fixed.executable !== SOVEREIGN_PROCESS_SESSION_EXECUTABLE_V1
+        || fixed.timeoutMs !== profile.timeoutMs || profile.timeoutMs !== 10_000
+        || JSON.stringify(fixed.args) !== JSON.stringify(expectedArgs)) {
+        blockers.push('SOVEREIGN_PROCESS_PROFILE_BINDING_INVALID');
+      } else profileBinding = frozen({ profile: args.profile, scriptPath: profile.scriptPath,
+        scriptSha256: profile.scriptSha256, timeoutMs: profile.timeoutMs });
+    }
+    if (args) plan = frozen({ kind: 'private-session',
+      family: operation === 'MOVE_FILE' ? 'move' : operation === 'SET_CONFIG_VALUE' ? 'config'
+        : ['COPY_FILE_CONTENT', 'GET_FILE_HASH'].includes(operation) ? 'copy'
+        : operation === 'SUBMIT_FEEDBACK' ? 'feedback' : operation === 'WRITE_PDF' ? 'pdf'
+        : processSession ? 'process' : search ? 'search' : 'history', operation, args,
+      ...(profileBinding ? { profileBinding } : {}) });
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG) {
+    plan = frozen({ kind: 'config', ...configuration });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.READ_FILE) {
     const path = targetPaths.length === 1 ? normalizedAbsolutePath(targetPaths[0]) : '';
     if (!path) blockers.push('sovereign-commander-read-requires-one-absolute-target');
@@ -519,7 +682,8 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
       kind: 'read-file',
       path,
       offset: safeInteger(payload.offset, 0, 0, 100_000_000),
-      length: safeInteger(payload.length, 200, 1, 1000),
+      length: Math.min(safeInteger(payload.length, 200, 1, 1000), sessionConfiguration?.values.fileReadLineLimit ?? 1000),
+      ...(sessionConfiguration ? { requestedLength: safeInteger(payload.length, 200, 1, 1000), ...configuration } : {}),
     });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.READ_MULTIPLE_FILES) {
     const paths = targetPaths.map(normalizedAbsolutePath);
@@ -530,7 +694,8 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
         kind: 'read-multiple-files',
         paths: frozen(paths),
         offset: safeInteger(payload.offset, 0, 0, 100_000_000),
-        length: safeInteger(payload.length, 100, 1, 200),
+        length: Math.min(safeInteger(payload.length, 100, 1, 200), sessionConfiguration?.values.fileReadLineLimit ?? 200),
+        ...(sessionConfiguration ? { requestedLength: safeInteger(payload.length, 100, 1, 200), ...configuration } : {}),
       });
     }
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.GET_FILE_INFO) {
@@ -543,12 +708,16 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     const mode = text(payload.mode, 'rewrite').toLowerCase();
     if (!path) blockers.push('sovereign-commander-write-requires-one-absolute-target');
     if (content === null || Buffer.byteLength(content, 'utf8') > 1024 * 1024) blockers.push('sovereign-commander-write-content-invalid');
+    const submittedLines = content !== null && sessionConfiguration
+      ? countSovereignSubmittedLinesV1(content, writeLineLimit ?? Number.MAX_SAFE_INTEGER) : null;
+    if (writeLineLimit !== null && submittedLines > writeLineLimit) blockers.push('SOVEREIGN_SESSION_WRITE_LINE_LIMIT_EXCEEDED');
     if (!['rewrite', 'append'].includes(mode)) blockers.push('sovereign-commander-write-mode-invalid');
     if (path && content !== null && ['rewrite', 'append'].includes(mode)) plan = frozen({
       kind: 'write-file',
       path,
       content,
       mode,
+      ...(sessionConfiguration ? { submittedLines, ...configuration } : {}),
     });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.EDIT_FILE) {
     const path = targetPaths.length === 1 ? normalizedAbsolutePath(targetPaths[0]) : '';
@@ -556,11 +725,15 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     const newString = typeof payload.newString === 'string' ? payload.newString : null;
     if (!path) blockers.push('sovereign-commander-edit-requires-one-absolute-target');
     if (!oldString || newString === null || Buffer.byteLength(newString, 'utf8') > 1024 * 1024) blockers.push('sovereign-commander-edit-payload-invalid');
+    const submittedLines = newString !== null && sessionConfiguration
+      ? countSovereignSubmittedLinesV1(newString, writeLineLimit ?? Number.MAX_SAFE_INTEGER) : null;
+    if (writeLineLimit !== null && submittedLines > writeLineLimit) blockers.push('SOVEREIGN_SESSION_WRITE_LINE_LIMIT_EXCEEDED');
     if (path && oldString && newString !== null) plan = frozen({
       kind: 'edit-file',
       path,
       oldString,
       newString,
+      ...(sessionConfiguration ? { submittedLines, ...configuration } : {}),
     });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.RUN_NODE_TEST) {
     blockers.push('sovereign-commander-node-test-disabled-use-source-controlled-maintenance-action');
@@ -968,7 +1141,24 @@ function listProcesses(options = {}) {
   });
 }
 
+// These document/advisory inputs are needed only while executing the admitted
+// command. Receipts and retained tool history never repeat their text or paths.
+// The resulting proof binds the returned metadata, not a concealed input body.
 export async function executeSovereignCommanderCommandV1(envelope = {}, options = {}) {
+  const result = await executeSovereignCommanderRouteV1(envelope, options);
+  const command = result?.command;
+  if (!['SUBMIT_FEEDBACK', 'WRITE_PDF'].includes(command?.operation) || !command.plan) return result;
+  const { args: omitted, ...plan } = command.plan;
+  const receiptCommand = frozen({ ...command, plan: frozen({ ...plan, inputOmitted: true }) });
+  return frozen({ ...result, command: receiptCommand,
+    ...(typeof result.proofHash === 'string' ? { proofHash: hash({
+      commandId: receiptCommand.commandId, missionId: receiptCommand.missionId,
+      operation: receiptCommand.operation, plan: receiptCommand.plan,
+      contentText: result.contentText, structuredContent: result.structuredContent,
+    }) } : {}) });
+}
+
+async function executeSovereignCommanderRouteV1(envelope = {}, options = {}) {
   const command = buildSovereignCommanderCommandV1(envelope, options);
   if (!command.dispatchAllowed) {
     return frozen({
@@ -978,6 +1168,26 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
       blocker: command.blockers[0] || 'sovereign-commander-command-blocked',
       ...(envelope.payload?.actionId === 'repair-core-publication-directories'
         ? { executionCustodyReleased: true } : {}), // rejected before any execution
+      finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+    });
+  }
+
+  if (command.plan.kind === 'private-session') {
+    const privateRoute = options.routeProof?.mcpSessionReady === true
+      && options.routeProof?.commandPathProven === true
+      && (options.routeProof?.transport === 'local-stdio-mcp'
+        || (options.routeProof?.transport === 'authenticated-http-jsonrpc'
+          && options.routeProof?.authenticatedMcp === true));
+    const service = command.plan.family === 'search' ? options.searchSessions
+      : command.plan.family === 'config' ? options.sessionConfig
+        : command.plan.family === 'move' ? options.fileMoves
+          : command.plan.family === 'copy' ? options.fileCopies
+          : command.plan.family === 'feedback' ? options.feedbackIntake
+            : command.plan.family === 'pdf' ? options.pdfWrites
+          : command.plan.family === 'process' ? options.processSessions : options.sessionHistory;
+    if (!privateRoute || !service || typeof service.execute !== 'function') return frozen({
+      ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+      blocker: 'SOVEREIGN_PRIVATE_SESSION_REQUIRED',
       finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
     });
   }
@@ -1008,12 +1218,190 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
   return run();
 }
 
+function unknownProcessCancellation(sessionId) {
+  return frozen({ ok: false, schemaVersion: SOVEREIGN_PROCESS_SESSION_SCHEMA_V1,
+    operation: 'CANCEL_PROCESS_SESSION', sessionId, cancellationState: 'UNKNOWN', retryAllowed: false,
+    nativeCustodyQualified: false, descendantsExcluded: false, maintenanceCustodyReleased: false,
+    blocker: 'SOVEREIGN_PROCESS_CANCELLATION_UNKNOWN' });
+}
+
+// Cancellation acknowledges a narrowly owned request, never a completed
+// process from a boolean alone. Reject optimistic or contradictory receipts
+// before the canonical result and advisory history can give them authority.
+function validProcessCancellationReceipt(value, sessionId) {
+  try {
+    const receiptKeys = ['ok', 'schemaVersion', 'operation', 'blocker', 'executionScope',
+      'nativeCustodyQualified', 'descendantsExcluded', 'maintenanceCustodyReleased',
+      'sessionId', 'session', 'cancellationState', 'requestRecorded', 'cancellationRequested',
+      'signalAttempted', 'signalAttemptResult', 'signalErrorObserved', 'terminationCause',
+      'rootExitObserved', 'stdioClosed', 'retryAllowed', 'terminalReason'];
+    const snapshotKeys = ['sessionId', 'profile', 'state', 'launchState', 'createdAtUtc', 'startedAtUtc',
+      'endedAtUtc', 'expiresAtUtc', 'spawnObserved', 'rootExitObserved', 'stdioClosed', 'exitCode',
+      'signal', 'outcome', 'blocker', 'terminationRequested', 'terminationUnproven',
+      'cancellationRequested', 'signalAttempted', 'signalAttemptResult', 'signalErrorObserved',
+      'terminationCause', 'outputBytesSeen', 'outputBytesStored', 'outputTruncated', 'nextOffset',
+      'outputComplete', 'executionScope', 'nativeCustodyQualified', 'descendantsExcluded',
+      'maintenanceCustodyReleased'];
+    const plainData = (item, keys) => item && typeof item === 'object' && !Array.isArray(item)
+      && Object.getPrototypeOf(item) === Object.prototype
+      && Reflect.ownKeys(item).every(key => typeof key === 'string' && keys.includes(key)
+        && Object.hasOwn(Object.getOwnPropertyDescriptor(item, key), 'value'));
+    const boundaries = item => item.nativeCustodyQualified === false
+      && item.descendantsExcluded === false && item.maintenanceCustodyReleased === false
+      && item.executionScope === 'TWO_FIXED_READ_ONLY_DIRECT_CHILD_PROFILES';
+    const blocker = item => item === null || (typeof item === 'string'
+      && /^SOVEREIGN_PROCESS_[A-Z0-9_]{1,96}$/.test(item));
+    const timestamp = item => typeof item === 'string' && Number.isFinite(Date.parse(item))
+      && new Date(item).toISOString() === item;
+    if (!plainData(value, receiptKeys) || value.schemaVersion !== SOVEREIGN_PROCESS_SESSION_SCHEMA_V1
+      || value.operation !== 'CANCEL_PROCESS_SESSION' || value.retryAllowed !== false
+      || !boundaries(value) || typeof value.requestRecorded !== 'boolean'
+      || typeof value.cancellationRequested !== 'boolean' || typeof value.signalAttempted !== 'boolean'
+      || typeof value.signalErrorObserved !== 'boolean'
+      || (value.blocker !== undefined && !blocker(value.blocker))
+      || (value.ok === false && typeof value.blocker !== 'string')
+      || (value.requestRecorded && !value.cancellationRequested)) return false;
+    if (value.cancellationState === 'NOT_STARTED') return value.ok === false
+      && !value.requestRecorded && !value.cancellationRequested && !value.signalAttempted
+      && !value.signalErrorObserved && value.signalAttemptResult === 'NOT_ATTEMPTED'
+      && value.session === undefined && value.sessionId === undefined
+      && value.rootExitObserved === undefined && value.stdioClosed === undefined
+      && value.terminationCause === undefined && value.terminalReason === undefined;
+    const session = value.session;
+    if (!plainData(session, snapshotKeys) || snapshotKeys.some(key => !Object.hasOwn(session, key))
+      || value.sessionId !== sessionId || session.sessionId !== sessionId
+      || !boundaries(session) || !Object.hasOwn(SOVEREIGN_PROCESS_SESSION_PROFILES_V1, session.profile)
+      || typeof session.spawnObserved !== 'boolean'
+      || !['STARTING', 'RUNNING', 'ROOT_EXITED', 'UNKNOWN', 'FAILED_TO_START', 'CLOSED'].includes(session.state)
+      || !['PENDING', 'UNKNOWN', 'SUCCEEDED', 'FAILED'].includes(session.outcome)
+      || session.launchState !== (session.spawnObserved ? 'SPAWN_OBSERVED'
+        : session.state === 'FAILED_TO_START' ? 'NOT_STARTED' : 'UNKNOWN')
+      || !timestamp(session.createdAtUtc) || !timestamp(session.expiresAtUtc)
+      || (session.startedAtUtc !== null && !timestamp(session.startedAtUtc))
+      || (session.endedAtUtc !== null && !timestamp(session.endedAtUtc))
+      || (session.exitCode !== null && !Number.isSafeInteger(session.exitCode))
+      || (session.signal !== null && (typeof session.signal !== 'string' || !/^SIG[A-Z0-9]{1,24}$/.test(session.signal)))
+      || !blocker(session.blocker) || !blocker(session.terminationCause)
+      || ['terminationRequested', 'terminationUnproven', 'outputTruncated', 'outputComplete']
+        .some(key => typeof session[key] !== 'boolean')
+      || session.terminationRequested !== (session.terminationCause !== null)
+      || !Number.isSafeInteger(session.outputBytesSeen) || session.outputBytesSeen < 0
+      || !Number.isSafeInteger(session.outputBytesStored) || session.outputBytesStored < 0
+      || session.outputBytesStored > 16384 || session.outputBytesStored > session.outputBytesSeen
+      || !Number.isSafeInteger(session.nextOffset) || session.nextOffset < 0 || session.nextOffset > 256
+      || (session.stdioClosed && (session.endedAtUtc === null
+        || !['CLOSED', 'FAILED_TO_START'].includes(session.state)))
+      || (session.state === 'CLOSED' && !session.stdioClosed)
+      || (session.outputComplete && (!session.stdioClosed || !session.spawnObserved
+        || session.outputTruncated || session.terminationRequested))
+      || (session.state === 'UNKNOWN' && session.outcome !== 'UNKNOWN')
+      || (session.state === 'FAILED_TO_START' && (session.outcome !== 'FAILED'
+        || session.spawnObserved || session.rootExitObserved || session.signalAttempted))
+      || (['SUCCEEDED', 'FAILED'].includes(session.outcome) && session.state !== 'FAILED_TO_START'
+        && (session.state !== 'CLOSED' || !session.rootExitObserved || !session.spawnObserved
+          || session.terminationRequested || session.blocker !== null || session.signal !== null
+          || !Number.isInteger(session.exitCode)
+          || (session.outcome === 'SUCCEEDED' ? session.exitCode !== 0 : session.exitCode === 0)))
+      || !['NOT_ATTEMPTED', 'DEFERRED_UNTIL_SPAWN', 'HANDLE_UNAVAILABLE', 'KILL_RETURNED_TRUE',
+        'KILL_RETURNED_FALSE', 'KILL_THREW', 'KILL_RETURN_UNRECOGNIZED', 'ROOT_ALREADY_EXITED'].includes(value.signalAttemptResult)
+      || value.signalAttemptResult !== session.signalAttemptResult
+      || (value.terminationCause !== null && typeof value.terminationCause !== 'string')
+      || value.terminationCause !== session.terminationCause
+      || ['cancellationRequested', 'signalAttempted', 'signalErrorObserved', 'rootExitObserved', 'stdioClosed']
+        .some(key => typeof value[key] !== 'boolean' || value[key] !== session[key])) return false;
+    if (value.cancellationState === 'UNKNOWN') return value.ok === false && value.terminalReason === undefined;
+    if (value.ok !== true) return false;
+    if (value.cancellationState === 'ALREADY_TERMINAL') return !value.requestRecorded
+      && (value.terminalReason === 'ROOT_EXIT_AND_STDIO_CLOSED'
+        ? value.rootExitObserved && value.stdioClosed && !value.cancellationRequested
+        : value.terminalReason === 'PROVEN_NO_SPAWN' && session.launchState === 'NOT_STARTED'
+          && session.state === 'FAILED_TO_START' && !session.spawnObserved
+          && !value.rootExitObserved && !value.signalAttempted);
+    if (value.terminalReason !== undefined || !value.cancellationRequested) return false;
+    if (value.cancellationState === 'ROOT_EXIT_AND_STDIO_CLOSED')
+      return value.rootExitObserved && value.stdioClosed;
+    if (value.cancellationState !== 'REQUESTED' || value.stdioClosed || value.signalErrorObserved
+      || session.state !== 'UNKNOWN' || session.outcome !== 'UNKNOWN' || session.outputComplete
+      || session.terminationUnproven || !session.terminationRequested) return false;
+    if (value.signalAttemptResult === 'KILL_RETURNED_TRUE') return value.signalAttempted;
+    if (value.signalAttemptResult === 'DEFERRED_UNTIL_SPAWN')
+      return !value.signalAttempted && !value.rootExitObserved && !session.spawnObserved;
+    return value.signalAttemptResult === 'ROOT_ALREADY_EXITED' && value.rootExitObserved && !value.signalAttempted;
+  } catch { return false; }
+}
+
+function unknownFileCopyResult() {
+  return frozen({ ok: false, schemaVersion: SOVEREIGN_FILE_COPY_SCHEMA_V1,
+    mutationState: 'UNKNOWN', mutationAttempted: null, retryAllowed: false,
+    blocker: 'SOVEREIGN_COPY_EFFECT_UNKNOWN' });
+}
+
+function unobservedFileHashResult() {
+  return frozen({ ok: false, schemaVersion: SOVEREIGN_FILE_HASH_SCHEMA_V1,
+    observationState: 'NOT_OBSERVED', mutationAttempted: false, retryAllowed: false,
+    blocker: 'SOVEREIGN_HASH_OBSERVATION_UNPROVEN' });
+}
+
 async function executeAdmittedSovereignCommandV1(command, options) {
   try {
     let contentText = '';
     let structuredContent = null;
 
-    if (command.plan.kind === 'config') {
+    if (command.plan.kind === 'private-session') {
+      const service = command.plan.family === 'search' ? options.searchSessions
+        : command.plan.family === 'config' ? options.sessionConfig
+          : command.plan.family === 'move' ? options.fileMoves
+            : command.plan.family === 'copy' ? options.fileCopies
+            : command.plan.family === 'feedback' ? options.feedbackIntake
+              : command.plan.family === 'pdf' ? options.pdfWrites
+            : command.plan.family === 'process' ? options.processSessions : options.sessionHistory;
+      structuredContent = await service.execute(command.plan.family === 'history'
+        ? command.plan.operation.toLowerCase() : command.plan.operation, command.plan.args, options.routeProof);
+      const move = command.plan.family === 'move';
+      const copy = command.plan.operation === 'COPY_FILE_CONTENT';
+      const fileHash = command.plan.operation === 'GET_FILE_HASH';
+      const pdf = command.plan.family === 'pdf';
+      const feedback = command.plan.family === 'feedback';
+      const processStart = command.plan.operation === 'START_PROCESS_SESSION';
+      const processCancel = command.plan.operation === 'CANCEL_PROCESS_SESSION';
+      if (copy) structuredContent = captureSovereignFileCopyResultV1(structuredContent, command.plan.args)
+        || unknownFileCopyResult();
+      if (fileHash) structuredContent = captureSovereignFileHashResultV1(structuredContent, command.plan.args)
+        || unobservedFileHashResult();
+      if (processCancel && !validProcessCancellationReceipt(structuredContent, command.plan.args.sessionId))
+        structuredContent = unknownProcessCancellation(command.plan.args.sessionId);
+      if (!structuredContent || structuredContent.ok !== true
+        || (move && structuredContent.mutationState !== 'MOVED')
+        || (copy && structuredContent.mutationState !== 'COPIED')
+        || (fileHash && structuredContent.observationState !== 'HASHED')
+        || (pdf && structuredContent.mutationState !== 'CREATED')
+        || (feedback && structuredContent.feedbackState !== 'PERSISTED')
+        || (processStart && (structuredContent.launchState !== 'SPAWN_OBSERVED'
+          || structuredContent.session?.spawnObserved !== true))) {
+        const unknownMove = move && structuredContent?.mutationState !== 'NOT_STARTED';
+        const unknownCopy = copy && structuredContent?.mutationState !== 'NOT_STARTED';
+        const unknownPdf = pdf && structuredContent?.mutationState !== 'NOT_STARTED';
+        const unknownFeedback = feedback && structuredContent?.feedbackState !== 'NOT_STARTED';
+        const unknownProcessStart = processStart && structuredContent?.launchState !== 'NOT_STARTED';
+        const unknownProcessCancel = processCancel && structuredContent?.cancellationState !== 'NOT_STARTED';
+        if (unknownMove || unknownCopy || unknownPdf) structuredContent = frozen({ ...structuredContent,
+          ok: false, mutationState: 'UNKNOWN', retryAllowed: false });
+        if (unknownFeedback) structuredContent = frozen({ ...structuredContent,
+          ok: false, feedbackState: 'UNKNOWN', retryAllowed: false,
+          advisoryOnly: true, executionAuthority: false });
+        if (unknownProcessStart) structuredContent = frozen({ ...structuredContent,
+          ok: false, launchState: 'UNKNOWN', retryAllowed: false,
+          nativeCustodyQualified: false, descendantsExcluded: false });
+        contentText = JSON.stringify(structuredContent).slice(0, MAX_RESULT_TEXT);
+        return frozen({
+          ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command, contentText, structuredContent,
+          blocker: structuredContent?.blocker || 'SOVEREIGN_PRIVATE_SESSION_OPERATION_BLOCKED',
+          finalVerdict: unknownMove || unknownCopy || unknownPdf || unknownFeedback || unknownProcessStart || unknownProcessCancel
+            ? 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' : 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+        });
+      }
+      contentText = JSON.stringify(structuredContent).slice(0, MAX_RESULT_TEXT);
+    } else if (command.plan.kind === 'config') {
       structuredContent = frozen({
         schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
         implementation: 'stephanos-local-node',
@@ -1028,6 +1416,12 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         arbitraryUnboundedCommandAllowed: false,
         mergeAuthority: false,
         pcRestartAuthority: false,
+        ...(command.plan.sessionConfiguration ? { sessionConfiguration: frozen({
+          ...command.plan.sessionConfiguration,
+          defaults: SOVEREIGN_MCP_SESSION_CONFIG_DEFAULTS_V1,
+          configurationLimits: SOVEREIGN_MCP_SESSION_CONFIG_LIMITS_V1,
+          semantics: SOVEREIGN_MCP_SESSION_CONFIG_SEMANTICS_V1,
+        }) } : {}),
       });
       contentText = JSON.stringify(structuredContent);
     } else if (command.plan.kind === 'read-file') {
@@ -1040,6 +1434,10 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         offset: command.plan.offset,
         length: selected.length,
         totalLines: lines.length,
+        ...(command.plan.sessionConfiguration ? {
+          sessionConfigRevision: command.plan.sessionConfiguration.revision,
+          requestedLength: command.plan.requestedLength, effectiveReadLineLimit: command.plan.length,
+        } : {}),
       });
     } else if (command.plan.kind === 'read-multiple-files') {
       const files = [];
@@ -1064,6 +1462,10 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         files: frozen(files),
         totalFiles: files.length,
         contentBudgetExhausted: remainingCharacters === 0,
+        ...(command.plan.sessionConfiguration ? {
+          sessionConfigRevision: command.plan.sessionConfiguration.revision,
+          requestedLength: command.plan.requestedLength, effectiveReadLineLimit: command.plan.length,
+        } : {}),
       });
       contentText = files.map((file) => `${file.path}\n${file.content}`).join('\n').slice(0, MAX_RESULT_TEXT);
     } else if (command.plan.kind === 'get-file-info') {
@@ -1082,6 +1484,8 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         path: command.plan.path,
         bytesWritten: Buffer.byteLength(command.plan.content, 'utf8'),
         mode: command.plan.mode,
+        ...(command.plan.sessionConfiguration ? { sessionConfigRevision: command.plan.sessionConfiguration.revision,
+          submittedLines: command.plan.submittedLines, fileWriteLineLimit: command.plan.sessionConfiguration.values.fileWriteLineLimit } : {}),
       });
       contentText = JSON.stringify(structuredContent);
     } else if (command.plan.kind === 'edit-file') {
@@ -1103,6 +1507,8 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         path: command.plan.path,
         replacements: 1,
         bytesWritten: Buffer.byteLength(updated, 'utf8'),
+        ...(command.plan.sessionConfiguration ? { sessionConfigRevision: command.plan.sessionConfiguration.revision,
+          submittedLines: command.plan.submittedLines, fileWriteLineLimit: command.plan.sessionConfiguration.values.fileWriteLineLimit } : {}),
       });
       contentText = JSON.stringify(structuredContent);
     } else if (command.plan.kind === 'node-test') {
@@ -1215,9 +1621,57 @@ async function executeAdmittedSovereignCommandV1(command, options) {
       receiptRequired: true,
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
-      finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      finalVerdict: command.plan.kind === 'private-session'
+        ? 'SOVEREIGN_COMMANDER_SESSION_OPERATION_RETURNED' : 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
     });
   } catch (error) {
+    if (command.plan?.kind === 'private-session' && command.plan.operation === 'CANCEL_PROCESS_SESSION') {
+      const structuredContent = unknownProcessCancellation(command.plan.args.sessionId);
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
+    if (command.plan?.kind === 'private-session' && command.plan.family === 'feedback') {
+      const structuredContent = frozen({ ok: false, feedbackState: 'UNKNOWN', retryAllowed: false,
+        advisoryOnly: true, executionAuthority: false, blocker: 'SOVEREIGN_FEEDBACK_EFFECT_UNKNOWN' });
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
+    if (command.plan?.kind === 'private-session' && command.plan.family === 'pdf') {
+      const structuredContent = frozen({ ok: false, mutationState: 'UNKNOWN', retryAllowed: false,
+        blocker: 'SOVEREIGN_PDF_EFFECT_UNKNOWN' });
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
+    if (command.plan?.kind === 'private-session' && command.plan.operation === 'START_PROCESS_SESSION') {
+      const structuredContent = frozen({ ok: false, launchState: 'UNKNOWN', retryAllowed: false,
+        nativeCustodyQualified: false, descendantsExcluded: false,
+        blocker: 'SOVEREIGN_PROCESS_LAUNCH_UNKNOWN' });
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
+    if (command.plan?.kind === 'private-session' && command.plan.family === 'move') {
+      const structuredContent = frozen({ ok: false, mutationState: 'UNKNOWN', retryAllowed: false,
+        blocker: 'SOVEREIGN_MOVE_EFFECT_UNKNOWN' });
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
+    if (command.plan?.kind === 'private-session' && command.plan.family === 'copy') {
+      const readOnly = command.plan.operation === 'GET_FILE_HASH';
+      const structuredContent = readOnly ? unobservedFileHashResult() : unknownFileCopyResult();
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: readOnly ? 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' : 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
+    if (command.plan?.kind === 'private-session') return frozen({
+      ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+      blocker: 'SOVEREIGN_PRIVATE_SESSION_OPERATION_FAILED',
+      finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+    });
     // Fixed high-risk reviewer failure may happen before child spawn or before
     // a terminal calibration marker exists. Never expose the raw thrown value,
     // executable paths, Git arguments, model output, or loader implementation.

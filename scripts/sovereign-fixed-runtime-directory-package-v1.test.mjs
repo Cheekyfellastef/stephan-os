@@ -14,6 +14,26 @@ const directoryPaths = [
   'scripts/windows/sovereign-create-directory.ps1',
   'scripts/windows/SovereignDirectoryCreateV1.cs',
 ];
+const privateSessionPaths = [
+  'shared/agents/sovereignSearchSessionsV1.mjs',
+  'shared/agents/sovereignMcpSessionHistoryV1.mjs',
+  'scripts/windows/sovereign-search.ps1',
+  'scripts/windows/SovereignSearchV1.cs',
+  'shared/agents/sovereignMcpSessionConfigV1.mjs',
+  'shared/agents/sovereignFileCopyV1.mjs',
+  'scripts/windows/sovereign-copy-file-content.ps1',
+  'scripts/windows/SovereignFileCopyV1.cs',
+  'shared/agents/sovereignFileMoveV1.mjs',
+  'scripts/windows/sovereign-move-file.ps1',
+  'scripts/windows/SovereignFileMoveV1.cs',
+  'shared/agents/sovereignProcessSessionsV1.mjs',
+  'scripts/windows/status-battle-bridge-recovery-mesh.ps1',
+  'scripts/windows/status-battle-bridge-worker-watchdog.ps1',
+  'shared/agents/sovereignFeedbackIntakeV1.mjs',
+  'shared/agents/sovereignPdfWriteV1.mjs',
+  'scripts/windows/sovereign-write-pdf.ps1',
+  'scripts/windows/SovereignPdfWriteV1.cs',
+];
 const repo = fileURLToPath(new URL('../', import.meta.url));
 const closureFixture = fileURLToPath(new URL('./fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs', import.meta.url));
 const executionFixture = fileURLToPath(new URL('./fixtures/sovereign-directory-package-fixture-v1.mjs', import.meta.url));
@@ -56,7 +76,7 @@ function closure(root, omitted) {
 }
 
 test('directory package captures exactly three dependencies and rejects incomplete or extra records', () => {
-  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 266);
+  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 284);
   for (const path of directoryPaths) assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(path), path);
   const records = candidateRecords();
   assert.throws(() => candidate(records.filter(row => !directoryPaths.includes(row.path))), /EXACT_SOURCE_REQUIRED/);
@@ -78,7 +98,7 @@ test('isolated captured package proves imports and both source-owned runtime-rea
   const root = packagedCandidate();
   try {
     const complete = closure(root);
-    assert.equal(complete.memberCount, 266);
+    assert.equal(complete.memberCount, 284);
     assert.deepEqual(complete.missing, []);
     assert.deepEqual(complete.bare, []);
     assert.equal(complete.repositoryModulesEvaluated, false);
@@ -95,6 +115,27 @@ test('isolated captured package proves imports and both source-owned runtime-rea
       writeFileSync(modulePath, changed);
       const unknown = closure(root);
       assert.ok(unknown.missing.some(row => row.outsideRepository || row.runtimeReadBinding === 'SCRIPT'));
+    }
+  } finally { dispose(root); }
+});
+
+test('private tool package includes all fifteen exact members and pins every native read edge', () => {
+  const records = candidateRecords();
+  for (const file of privateSessionPaths) {
+    assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(file));
+    assert.throws(() => candidate(records.filter(row => row.path !== file)), /EXACT_SOURCE_REQUIRED/);
+  }
+  const root = packagedCandidate();
+  try {
+    assert.deepEqual(closure(root).missing, []);
+    for (const file of privateSessionPaths) {
+      assert.ok(closure(root, file).missing.some(row => row.target === file || row.runtimeRead === file), file);
+    }
+    for (const file of privateSessionPaths.filter(path => /\.(?:ps1|cs)$/.test(path))) {
+      const full = join(root, file), original = readFileSync(full);
+      writeFileSync(full, Buffer.concat([original, Buffer.from('\nchanged fixture bytes\n')]));
+      assert.ok(closure(root).missing.some(row => row.target === file && row.runtimeReadPinMismatch));
+      writeFileSync(full, original);
     }
   } finally { dispose(root); }
 });
