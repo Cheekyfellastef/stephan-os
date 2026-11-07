@@ -18,7 +18,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, dirname, join, parse, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { settleMailboxRotationDrain } from '../shared/agents/canonicalMailboxRotationV1.mjs';
+import { mailboxRotationDigest, settleMailboxRotationDrain } from '../shared/agents/canonicalMailboxRotationV1.mjs';
+import { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
 export const MAILBOX_OUTBOX_GUARD_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-guard.v1';
 export const MAILBOX_OUTBOX_DEFERRED_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-deferred.v1';
@@ -40,7 +41,7 @@ export const MAILBOX_OUTBOX_MAX_ENTRIES = 500;
 export const MAILBOX_OUTBOX_SEGMENT_MAX_BYTES = 2 * 1024 * 1024;
 export const MAILBOX_OUTBOX_MANIFEST_MAX_BYTES = 64 * 1024;
 export const MAILBOX_OUTBOX_INVALID_QUARANTINE_SCHEMA = 'stephanos.battle-bridge-mailbox-invalid-pending-quarantine.v1';
-export const MAILBOX_OUTBOX_INVALID_QUARANTINE_MAX_ENTRIES = 500;
+export const MAILBOX_OUTBOX_INVALID_QUARANTINE_MAX_ENTRIES = 1;
 
 // Diagnostic metadata only. These fixed codes never carry error text, paths or
 // request identities, and are never consumed for admission or custody release.
@@ -78,6 +79,8 @@ const MAILBOX_GUARD_REASON_CODES_V1 = new Set([
   'MAILBOX_OUTBOX_GUARD_LOCK_LOST',
   'MAILBOX_OUTBOX_INVALID_QUARANTINE_INVALID',
   'MAILBOX_OUTBOX_INVALID_QUARANTINE_LIMIT_EXCEEDED',
+  'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_MULTIPLE_INVALID',
+  'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN',
   'MAILBOX_OUTBOX_JSON_OBJECT_REQUIRED',
   'MAILBOX_OUTBOX_JSON_TOO_LARGE',
   'MAILBOX_OUTBOX_LEDGER_FUTURE_SEGMENT_CONFLICT',
@@ -155,6 +158,8 @@ const MAILBOX_LEDGER_INDEX_MAX_BYTES = 8 * 1024;
 // publication resumable instead of leaving unauthorised future segments behind.
 const MAILBOX_LEDGER_TRANSACTION_MAX_BYTES = 40 * 1024 * 1024;
 const MAILBOX_LOCK_MAX_BYTES = 8 * 1024;
+const MAILBOX_CANONICAL_RECEIPT_MAX_BYTES = 256 * 1024;
+const MAILBOX_EXECUTION_LEDGER_ENTRY_MAX_BYTES = 4096;
 const MAILBOX_LOCK_STALE_AFTER_MS = 20 * 60 * 1000;
 const MAILBOX_DEAD_OWNER_RECOVERY_GRACE_MS = 10 * 1000;
 const MAILBOX_LEGACY_V1_MAX_MIGRATION_ENTRIES = 500;
@@ -526,23 +531,83 @@ function validateInvalidPendingQuarantine(value) {
   return value;
 }
 
-function quarantineInvalidPendingDebt(statePath, state, timestampUtc, metrics) {
+function legacyPublicationRequestId(entry) {
+  if (!isPlainObject(entry) || !isPlainObject(entry.receipt)
+    || String(entry.receipt.requestId || '') !== ''
+    || String(entry.receipt.state || '') !== 'DONE') return '';
+  const completedAt = String(entry.receipt.completedAt || '');
+  if (!Number.isFinite(Date.parse(completedAt))
+    || new Date(completedAt).toISOString() !== completedAt) return '';
+  const suffix = ':DONE:' + completedAt;
+  const publicationId = safePublicationId(entry.publicationId);
+  if (!publicationId || !publicationId.endsWith(suffix)) return '';
+  const requestId = publicationId.slice(0, -suffix.length);
+  return REQUEST_ID.test(requestId) ? requestId : '';
+}
+
+function executionLedgerRecordPath(statePath, requestId) {
+  const digest = mailboxRotationDigest(requestId);
+  return join(dirname(statePath), 'execution-ledger-v1', digest.slice(0, 2), digest + '.json');
+}
+
+function sameLegacyTerminalIdentity(pendingReceipt, canonicalReceipt) {
+  const fields = [
+    'schemaVersion', 'operation', 'repository', 'issueNumber', 'branch',
+    'expectedHead', 'state', 'acceptedAt', 'completedAt', 'processSourceHead',
+  ];
+  return fields.every((key) => stableJson(pendingReceipt?.[key] ?? null)
+    === stableJson(canonicalReceipt?.[key] ?? null));
+}
+
+function proveSingleLegacyPendingDebt(statePath, receiptRoot, state, entry, metrics) {
+  const requestId = legacyPublicationRequestId(entry);
+  if (!requestId) throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN');
+  const consumed = Array.isArray(state?.consumedRequestIds) ? state.consumedRequestIds : [];
+  const accepted = Array.isArray(state?.acceptedRequestIds) ? state.acceptedRequestIds : [];
+  if (consumed.filter((value) => value === requestId).length !== 1 || accepted.includes(requestId)) {
+    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN');
+  }
+
+  assertUnlinkedDirectory(receiptRoot);
+  const canonicalReceipt = readJsonObject(
+    join(receiptRoot, createWindowsSafeMailboxReceiptFilename(requestId)),
+    { maxBytes: MAILBOX_CANONICAL_RECEIPT_MAX_BYTES, metrics },
+  );
+  if (!isPlainObject(canonicalReceipt)
+    || canonicalReceipt.requestId !== requestId
+    || canonicalReceipt.state !== 'DONE'
+    || !sameLegacyTerminalIdentity(entry.receipt, canonicalReceipt)
+    || entry.publicationId !== [
+      requestId,
+      canonicalReceipt.state,
+      canonicalReceipt.completedAt || canonicalReceipt.acceptedAt || 'unknown',
+    ].join(':')) {
+    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN');
+  }
+
+  const ledgerRecord = readJsonObject(executionLedgerRecordPath(statePath, requestId), {
+    maxBytes: MAILBOX_EXECUTION_LEDGER_ENTRY_MAX_BYTES,
+    metrics,
+  });
+  if (!isPlainObject(ledgerRecord)
+    || ledgerRecord.schemaVersion !== 'stephanos.mailbox-execution-ledger-entry.v1'
+    || ledgerRecord.requestId !== requestId
+    || ledgerRecord.issueNumber !== canonicalReceipt.issueNumber
+    || ledgerRecord.phase !== 'TERMINAL'
+    || ledgerRecord.terminalState !== 'DONE'
+    || !/^[a-f0-9]{64}$/.test(String(ledgerRecord.commandDigest || ''))
+    || (Object.hasOwn(ledgerRecord, 'terminalProofHash')
+      && ledgerRecord.terminalProofHash !== canonicalReceipt.proofHash)) {
+    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN');
+  }
+  return Object.freeze({ requestId, canonicalReceipt, ledgerRecord });
+}
+
+function quarantineInvalidPendingDebt(statePath, receiptRoot, state, timestampUtc, metrics) {
   if (Object.prototype.hasOwnProperty.call(state, 'pendingReceiptPublications')
     && !Array.isArray(state.pendingReceiptPublications)) {
     throw new Error('MAILBOX_OUTBOX_CANONICAL_PENDING_ARRAY_REQUIRED');
   }
-  const rawPending = state.pendingReceiptPublications || [];
-  const valid = [];
-  const invalid = [];
-  for (const entry of rawPending) {
-    if (validatePendingEntry(entry)) valid.push(entry);
-    else invalid.push(structuredClone(entry));
-  }
-  const pending = normalizePendingReceiptPublications(valid);
-  if (invalid.length === 0) {
-    return Object.freeze({ state, pending, quarantinedCount: 0 });
-  }
-
   const quarantinePath = invalidPendingQuarantinePath(statePath);
   const existing = readJsonObject(quarantinePath, {
     allowMissing: true,
@@ -555,16 +620,36 @@ function quarantineInvalidPendingDebt(statePath, state, timestampUtc, metrics) {
     metrics,
   });
   const quarantine = validateInvalidPendingQuarantine(existing);
+
+  const rawPending = state.pendingReceiptPublications || [];
+  const valid = [];
+  const invalid = [];
+  for (const entry of rawPending) {
+    if (validatePendingEntry(entry)) valid.push(entry);
+    else invalid.push(structuredClone(entry));
+  }
+  const pending = normalizePendingReceiptPublications(valid);
+  if (invalid.length === 0) {
+    return Object.freeze({ state, pending, quarantinedCount: 0 });
+  }
+  if (invalid.length !== 1) {
+    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_MULTIPLE_INVALID');
+  }
+
+  // Historical recovery is deliberately one-record and proof-bound.  The
+  // private request identity comes only from the retained publication ID, then
+  // must independently agree with canonical receipt, consumed index and the
+  // execution ledger before any live queue mutation is permitted.
+  proveSingleLegacyPendingDebt(statePath, receiptRoot, state, invalid[0], metrics);
+
+  const entry = invalid[0];
+  const entrySha256 = sha256(stableJson(entry));
   const records = quarantine.records.map((record) => structuredClone(record));
-  const known = new Set(records.map((record) => record.entrySha256));
-  for (const entry of invalid) {
-    const entrySha256 = sha256(stableJson(entry));
-    if (known.has(entrySha256)) continue;
-    if (records.length >= MAILBOX_OUTBOX_INVALID_QUARANTINE_MAX_ENTRIES) {
-      throw new Error('MAILBOX_OUTBOX_INVALID_QUARANTINE_LIMIT_EXCEEDED');
-    }
+  if (records.length === 1 && records[0].entrySha256 !== entrySha256) {
+    throw new Error('MAILBOX_OUTBOX_INVALID_QUARANTINE_LIMIT_EXCEEDED');
+  }
+  if (records.length === 0) {
     records.push({ entrySha256, capturedAtUtc: timestampUtc, entry });
-    known.add(entrySha256);
   }
 
   atomicWriteJson(quarantinePath, {
@@ -572,16 +657,9 @@ function quarantineInvalidPendingDebt(statePath, state, timestampUtc, metrics) {
     updatedAtUtc: timestampUtc,
     records,
   }, { maxBytes: MAILBOX_STATE_MAX_BYTES, metrics });
-  const recoveredState = {
-    ...state,
-    pendingReceiptPublications: pending,
-  };
+  const recoveredState = { ...state, pendingReceiptPublications: pending };
   atomicWriteJson(statePath, recoveredState, { maxBytes: MAILBOX_STATE_MAX_BYTES, metrics });
-  return Object.freeze({
-    state: recoveredState,
-    pending,
-    quarantinedCount: invalid.length,
-  });
+  return Object.freeze({ state: recoveredState, pending, quarantinedCount: 1 });
 }
 
 function ledgerRoot(path) {
@@ -1848,6 +1926,7 @@ function resolveProductionPaths({ env = process.env, repoRoot = defaultRepoRoot 
     statePath: join(mailboxStateRoot, 'state.json'),
     deferredPath: join(mailboxStateRoot, 'receipt-publication-deferred-v1.json'),
     childRunnerPath: join(actualRepoRoot, 'scripts', 'battle-bridge-github-command-mailbox-with-receipt-index.mjs'),
+    receiptRoot: join(resolve(env.STEPHANOS_SHARED_AGENT_WORKSPACE || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace')), 'receipts', 'github-command-mailbox'),
   });
 }
 
@@ -1886,6 +1965,7 @@ export function runMailboxOutboxGuard({
   const statePath = resolve(resolved.statePath);
   const deferredPath = resolve(resolved.deferredPath);
   const childRunnerPath = resolve(resolved.childRunnerPath);
+  const receiptRoot = resolve(resolved.receiptRoot || join(resolve(env.STEPHANOS_SHARED_AGENT_WORKSPACE || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace')), 'receipts', 'github-command-mailbox'));
   if (dirname(statePath).toLowerCase() !== dirname(deferredPath).toLowerCase()
     || basename(statePath).toLowerCase() !== 'state.json'
     || basename(deferredPath).toLowerCase() !== 'receipt-publication-deferred-v1.json') {
@@ -1895,6 +1975,7 @@ export function runMailboxOutboxGuard({
   let lock = null;
   try {
     assertRegularUnlinkedFile(childRunnerPath);
+    assertUnlinkedDirectory(receiptRoot);
     mkdirSync(dirname(statePath), { recursive: true });
     assertUnlinkedDirectory(dirname(statePath));
     const timestamp = now();
@@ -1913,6 +1994,7 @@ export function runMailboxOutboxGuard({
     });
     const recoveredPending = quarantineInvalidPendingDebt(
       statePath,
+      receiptRoot,
       stateBeforeRecovery,
       timestamp.toISOString(),
       metrics,
