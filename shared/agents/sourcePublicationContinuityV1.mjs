@@ -34,21 +34,24 @@ const RECEIPT_KEYS = Object.freeze([
   'branch', 'state', 'observedAtUtc', 'expiresAtUtc', 'operations',
 ]);
 
-function text(value) { return String(value ?? '').trim(); }
+function text(value) { return typeof value === 'string' ? value.trim() : ''; }
 function list(value) { return Array.isArray(value) ? value : []; }
 function sameKeys(value, expected) {
   return value && typeof value === 'object' && !Array.isArray(value)
     && JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort());
 }
 function safeCanonicalBranch(value) {
-  const branch = text(value);
+  const branch = typeof value === 'string' ? value : '';
   return SAFE_BRANCH.test(branch)
-    && !['main', 'master'].includes(branch)
-    && !branch.startsWith('refs/')
+    && !['main', 'master', 'head', 'fetch_head', 'merge_head', 'revert_head', 'bisect_head', 'auto_merge', 'orig_head', 'cherry_pick_head', 'rebase_head'].includes(branch.toLowerCase())
+    && !['main/', 'master/'].some((prefix) => branch.toLowerCase().startsWith(prefix))
+    && !branch.toLowerCase().startsWith('refs/')
     && !branch.startsWith('/')
     && !branch.endsWith('/')
     && !branch.includes('..')
-    && !branch.includes('//');
+    && !branch.includes('//')
+    && !branch.split('/').some((component) =>
+      component.startsWith('.') || component.endsWith('.') || component.toLowerCase().endsWith('.lock'));
 }
 
 function exactArtifact(artifact = {}) {
@@ -56,14 +59,20 @@ function exactArtifact(artifact = {}) {
     exactBase: text(artifact.exactBase).toLowerCase(),
     exactTree: text(artifact.exactTree).toLowerCase(),
     exactCommit: text(artifact.exactCommit).toLowerCase(),
-    branch: text(artifact.branch),
+    branch: typeof artifact.branch === 'string' ? artifact.branch : '',
   });
 }
 
 function receiptEvidence(route, capability, artifact, nowMs) {
   const receipt = capability?.receipt;
   if (!receipt) return Object.freeze({ state: 'missing', receipt: null, operations: new Set() });
-  if (!sameKeys(receipt, RECEIPT_KEYS)) return Object.freeze({ state: 'invalid', receipt, operations: new Set() });
+  if (!sameKeys(receipt, RECEIPT_KEYS)
+    || !RECEIPT_KEYS.filter((key) => key !== 'operations')
+      .every((key) => typeof receipt[key] === 'string')
+    || !Array.isArray(receipt.operations)
+    || !receipt.operations.every((operation) => typeof operation === 'string' && operation === operation.trim())) {
+    return Object.freeze({ state: 'invalid', receipt, operations: new Set() });
+  }
   const observedAtMs = Date.parse(text(receipt.observedAtUtc));
   const expiresAtMs = Date.parse(text(receipt.expiresAtUtc));
   const operations = new Set(list(receipt.operations).map(text));
@@ -73,7 +82,7 @@ function receiptEvidence(route, capability, artifact, nowMs) {
     && text(receipt.exactBase).toLowerCase() === artifact.exactBase
     && text(receipt.exactTree).toLowerCase() === artifact.exactTree
     && text(receipt.exactCommit).toLowerCase() === artifact.exactCommit
-    && text(receipt.branch) === artifact.branch
+    && receipt.branch === artifact.branch
     && ['ready', 'unavailable'].includes(receipt.state)
     && EXPLICIT_TIMEZONE.test(text(receipt.observedAtUtc))
     && EXPLICIT_TIMEZONE.test(text(receipt.expiresAtUtc))
@@ -99,7 +108,7 @@ function routeCompatible(route, artifact, evidence, existingBranch = false) {
     // An escrow recovery needs genuine fast-forward ref-update capability.
     return coreReady && (existingBranch
       ? operations.has('UPDATE_BRANCH_REF')
-      : (operations.has('UPDATE_BRANCH_REF') || operations.has('CREATE_BRANCH_REF')));
+      : operations.has('CREATE_BRANCH_REF'));
   }
   if (route === SOURCE_PUBLICATION_ROUTE.FORGE_SIDECAR) {
     return ['M2_READY', 'M3_RUNNER_READY', 'PUBLISH_SOURCE_BRANCH'].every((item) => operations.has(item));
@@ -129,8 +138,9 @@ function baseProjection(artifact = {}) {
 }
 
 export function buildSourcePublicationContinuityV1(input = {}) {
+  input = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   const workspace = input.workspace || {};
-  const artifact = exactArtifact(input.artifact);
+  const artifact = exactArtifact(input.artifact && typeof input.artifact === 'object' && !Array.isArray(input.artifact) ? input.artifact : {});
   const base = baseProjection(artifact);
   const nowMs = Date.parse(text(input.nowUtc));
   if (workspace.discoveryCompleted !== true) {
@@ -147,7 +157,13 @@ export function buildSourcePublicationContinuityV1(input = {}) {
   }
 
   const capabilities = input.capabilities || {};
-  const failedRoutes = new Set(list(input.failedRoutes).map(text));
+  if (input.failedRoutes !== undefined && (!Array.isArray(input.failedRoutes)
+    || input.failedRoutes.some((route) => typeof route !== 'string' || (!ROUTE_PRIORITY.includes(route) && route !== 'GH_CLI_MISSING')))) {
+    return Object.freeze({ ...base, evaluatedRoutes: ROUTE_PRIORITY, blocker: SOURCE_PUBLICATION_BLOCKER.PROBES_PENDING,
+      exactNextAction: 'Reconcile invalid failed-route evidence before selecting a publisher; do not mutate the canonical branch.',
+      finalVerdict: SOURCE_PUBLICATION_BLOCKER.PROBES_PENDING });
+  }
+  const failedRoutes = new Set(list(input.failedRoutes));
   const evidence = Object.fromEntries(ROUTE_PRIORITY.map((route) => [route, receiptEvidence(route, capabilities[route], artifact, nowMs)]));
   const selectedRoute = ROUTE_PRIORITY.find((route) => !failedRoutes.has(route)
     && routeCompatible(route, artifact, evidence[route], input.existingBranch === true));
