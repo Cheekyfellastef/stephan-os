@@ -201,18 +201,23 @@ test('pre-spawn EMFILE with null streams releases admission; missing streams aft
   missing.emit('close', null, 'SIGTERM'); await service.dispose(); await second.dispose();
 });
 
-test('post-spawn kill EPERM and timeout retain admission; neither is a no-launch refusal', async () => {
+test('post-spawn kill EPERM and timeout retain admission; neither is a no-launch refusal', async t => {
   const module = await fresh(), children = [childFixture({ killCloses: false, killError: true }), childFixture({ killCloses: false })];
   const a = makeService(module, children[0], { timeoutMs: 15 }), b = makeService(module, children[1], { timeoutMs: 15 });
+  const services = [a, b];
+  t.after(async () => {
+    for (const child of children) child.finish(null, 'SIGTERM');
+    for (const service of services) await service.dispose();
+  });
   const first = await a.execute(START, { profile: PROFILE }); await b.execute(START, { profile: PROFILE });
-  await wait(30);
-  const state = (await a.execute(READ, { sessionId: first.sessionId })).session;
+  const state = await until(async () => {
+    const observed = (await a.execute(READ, { sessionId: first.sessionId })).session;
+    return observed.terminationUnproven ? observed : null;
+  });
   assert.equal(state.state, 'UNKNOWN'); assert.equal(state.launchState, 'SPAWN_OBSERVED');
   assert.equal(state.terminationUnproven, true); assert.equal(state.stdioClosed, false);
-  const c = makeService(module, childFixture());
+  const c = makeService(module, childFixture()); services.push(c);
   assert.equal((await c.execute(START, { profile: PROFILE })).blocker, 'SOVEREIGN_PROCESS_CAPACITY_HELD');
-  for (const child of children) child.finish(null, 'SIGTERM');
-  await a.dispose(); await b.dispose(); await c.dispose();
 });
 
 test('opaque synchronous spawn throws cannot manufacture process exit or free admission', async () => {
