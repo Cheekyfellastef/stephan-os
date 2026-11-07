@@ -3,9 +3,23 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 
 const entry = new URL('./windows/recover-stephanos-core-lock.ps1', import.meta.url);
 const nativeTest = new URL('./windows/stephanos-core-lock-recovery.native.test.ps1', import.meta.url);
+test('attended capture preserves the exact qualified watchdog helper and original load boundary', async () => {
+  const helper = await readFile(new URL('./windows/stephanos-core-process-observation.ps1', import.meta.url));
+  const blob = createHash('sha1').update(`blob ${helper.length}\0`).update(helper).digest('hex');
+  assert.equal(blob, '9e00ce659859b0274fce36e13cb20045b1b337b1');
+  const functions = [...helper.toString('utf8').matchAll(/^function ([\w-]+)/gm)].map(m => m[1]);
+  assert.deepEqual(functions, ['ConvertTo-StephanosCoreProcessObservation', 'Get-StephanosCoreProcessObservation']);
+  const policy = await readFile(new URL('./windows/stephanos-core-lock-recovery-policy.ps1', import.meta.url), 'utf8');
+  assert.match(policy, /function Get-StephanosCoreProcessIdentityObservation/);
+  const source = await readFile(entry, 'utf8');
+  assert.ok(source.indexOf('. $policyPath') < source.indexOf('if ($RetireOnlyChild) {'));
+  assert.ok(source.indexOf('. $inventoryPath') < source.indexOf('$before = Get-StephanosCoreProcessIdentityObservation'));
+  assert.match(source, /\$sourceFiles = @\(\$entry, \$nativePath, \$policyPath, \$inventoryPath, \$coreScript\)/);
+});
 test('fixed recovery keeps elevation limited to retirement and preserves canonical startup lock', async () => {
   const source = await readFile(entry, 'utf8');
   assert.match(source, /CORE_RECOVERY_LIMITED_PARENT_REQUIRED/);
@@ -22,6 +36,15 @@ test('Windows native recovery refuses competing owners, replacements and ambiguo
   ], { windowsHide: true, encoding: 'utf8', timeout: 30_000 });
   assert.equal(result.status, 0, result.stderr || result.error?.message);
   assert.match(result.stdout, /CORE_RECOVERY_NATIVE_FIXTURES_PASS=12/);
+});
+
+test('Windows attended absent bootstrap rejects stale terminal identity and parent delays', { skip: process.platform !== 'win32' }, () => {
+  const fixture = new URL('./windows/stephanos-core-absent-bootstrap.test.ps1', import.meta.url);
+  const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', fileURLToPath(fixture),
+  ], { windowsHide: true, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  assert.match(result.stdout, /CORE_ABSENT_BOOTSTRAP_POLICY_TESTS_PASS=49/);
 });
 test('recovery entry refuses missing approval before any native observation or mutation', { skip: process.platform !== 'win32' }, () => {
   const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', [

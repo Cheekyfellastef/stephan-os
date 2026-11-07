@@ -17,6 +17,20 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { CANONICAL_MAILBOX_ISSUE } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
+import {
+  buildBattleBridgeGitHubCommandReceipt,
+  selectBattleBridgeGitHubCommandBatch,
+  validateBattleBridgeGitHubCommand,
+} from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
+import {
+  checkpointAcceptedMailboxReceipt,
+  checkpointMailboxReceiptPublication,
+  createSanitizedMailboxReceiptProjection,
+  flushMailboxReceiptPublicationOutbox,
+  serializeBoundedReceiptJson,
+} from './battle-bridge-github-command-mailbox.mjs';
+import { reconcileStaleAcceptedMailboxReceipts } from './battle-bridge-github-command-mailbox-with-receipt-index.mjs';
 
 import {
   atomicWriteJson,
@@ -35,6 +49,185 @@ import {
   runMailboxOutboxGuard,
   verifyMailboxOutboxGuardLease,
 } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
+
+const identityTestNow = new Date('2026-11-06T12:00:00.000Z');
+
+function receiptIdentityCommand(requestId) {
+  return {
+    schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+    requestId,
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
+    branch: 'main',
+    operatorApproval: 'operator-approved',
+    expectedHead: '1'.repeat(40),
+    expiresAt: '2026-11-06T12:10:00.000Z',
+    remoteAction: 'status',
+  };
+}
+
+test('admitted session request identity survives compact receipt and deferred publication', () => {
+  const requestId = 'fixture-single-session-receipt-v1';
+  const admitted = validateBattleBridgeGitHubCommand(receiptIdentityCommand(requestId), {
+    authorLogin: 'Cheekyfellastef',
+    now: identityTestNow,
+  });
+  assert.equal(admitted.ok, true, admitted.blocker);
+  const completedAt = identityTestNow.toISOString();
+  const receipt = buildBattleBridgeGitHubCommandReceipt({
+    command: admitted.command,
+    state: 'DONE',
+    completedAt,
+    blocker: 'fixture-single-session-text',
+    result: {
+      ok: true,
+      requestId: 'fixture-session-token-marker',
+      privatePayload: 'x'.repeat(9_000),
+    },
+  });
+  const publicReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, 6_000));
+  const compactFallback = JSON.parse(serializeBoundedReceiptJson(receipt, 3_000));
+  assert.equal(publicReceipt.githubProjectionTruncated, true);
+  const sanitized = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(publicReceipt.requestId, requestId);
+  assert.equal(publicReceipt.result.requestId, requestId);
+  assert.equal(compactFallback.requestId, requestId);
+  assert.equal(compactFallback.result.requestId, requestId);
+  assert.equal(publicReceipt.blocker, '');
+  assert.equal(sanitized.requestId, requestId);
+  assert.equal(sanitized.execution.requestId, requestId);
+  assert.equal(sanitized.blocker, '');
+
+  const state = { pendingReceiptPublications: [] };
+  let checkpointed;
+  checkpointMailboxReceiptPublication(state, receipt, { ok: false }, {
+    persist: (snapshot) => { checkpointed = structuredClone(snapshot); },
+  });
+  const queue = normalizePendingReceiptPublications(checkpointed.pendingReceiptPublications);
+  assert.equal(queue.length, 1);
+  assert.equal(queue[0].publicationId, `${requestId}:DONE:${completedAt}`);
+  assert.equal(queue[0].receipt.requestId, requestId);
+});
+
+test('credential-shaped IDs cannot enter execution or deferred rejection receipts', () => {
+  const unsafeIds = [
+    'fixture-session-token-marker',
+    'fixture-secret-marker-v1',
+    'fixture-cookie-marker-v1',
+    'fixture-ghp-placeholder012345',
+    'ghp-session-x',
+    'sk-session-x',
+    'github_pat-session-x',
+  ];
+  for (const requestId of unsafeIds) {
+    const command = receiptIdentityCommand(requestId);
+    const validation = validateBattleBridgeGitHubCommand(command, {
+      authorLogin: 'Cheekyfellastef',
+      now: identityTestNow,
+    });
+    assert.equal(validation.blocker, 'COMMAND_REQUEST_ID_PUBLICATION_UNSAFE');
+    const rejectedBatch = selectBattleBridgeGitHubCommandBatch([{
+      id: 1,
+      user: { login: 'Cheekyfellastef' },
+      created_at: identityTestNow.toISOString(),
+      body: '\`\`\`stephanos-battle-bridge-command\n'
+        + JSON.stringify({ ...command, remoteAction: 'unsupported-fixture-action' }) + '\n\`\`\`',
+    }], { now: identityTestNow });
+    assert.equal(rejectedBatch.ok, true);
+    assert.equal(rejectedBatch.commands.length, 0);
+    assert.equal(rejectedBatch.terminalRejections.length, 0);
+    assert.equal(rejectedBatch.rejected[0].blocker, 'COMMAND_REQUEST_ID_PUBLICATION_UNSAFE');
+    const receipt = buildBattleBridgeGitHubCommandReceipt({ command, state: 'BLOCKED' });
+    assert.equal(JSON.parse(serializeBoundedReceiptJson(receipt)).requestId, '');
+    assert.equal(JSON.parse(serializeBoundedReceiptJson(receipt, 3_000)).result.requestId, '');
+    assert.equal(createSanitizedMailboxReceiptProjection(receipt).execution.requestId, '');
+    const state = { pendingReceiptPublications: [] };
+    assert.throws(() => checkpointMailboxReceiptPublication(state, receipt, { ok: false }, {
+      persist: () => assert.fail('invalid publication must not persist'),
+    }), /MAILBOX_RECEIPT_PUBLICATION_IDENTITY_UNSAFE/);
+    assert.deepEqual(state.pendingReceiptPublications, []);
+    assert.throws(() => checkpointAcceptedMailboxReceipt(state, { ...receipt, state: 'ACCEPTED' }, {
+      persist: () => assert.fail('unsafe accepted identity must not persist'),
+    }), /MAILBOX_ACCEPTED_CHECKPOINT_INVALID/);
+  }
+});
+
+test('publication holds an unsafe legacy queue before publishing or removing any entry', () => {
+  const state = { pendingReceiptPublications: [pending('fixture-single-flight-v1'), pending('ghp-session-x')] };
+  const before = structuredClone(state);
+  assert.throws(() => flushMailboxReceiptPublicationOutbox(state, {
+    publish: () => assert.fail('unsafe queue must not publish'),
+    persist: () => assert.fail('unsafe queue must not persist'),
+  }), /MAILBOX_PENDING_RECEIPT_IDENTITY_UNSAFE/);
+  assert.deepEqual(state, before);
+});
+
+test('accepted recovery retains a historical unsafe identity before writing any receipt', (t) => {
+  const f = fixture();
+  t.after(f.cleanup);
+  const state = {
+    acceptedRequestIds: ['fixture-session-token-marker'],
+    consumedRequestIds: [],
+    pendingReceiptPublications: [],
+  };
+  writeJson(f.statePath, state);
+  const before = readFileSync(f.statePath);
+  const result = reconcileStaleAcceptedMailboxReceipts({
+    env: { STEPHANOS_SHARED_WORKSPACE_ROOT: dirname(dirname(f.statePath)) },
+    workspaceRoot: join(f.root, 'canonical-receipts'),
+    now: () => identityTestNow,
+  });
+  assert.equal(result.blocker, 'MAILBOX_ACCEPTED_RECEIPT_IDENTITY_UNSAFE');
+  assert.equal(result.reconciledCount, 0);
+  assert.deepEqual(readFileSync(f.statePath), before);
+  assert.deepEqual(readdirSync(dirname(f.statePath)), ['state.json']);
+});
+
+test('stale accepted recovery preserves the admitted ID through reload and a single publication', (t) => {
+  const f = fixture();
+  t.after(f.cleanup);
+  const requestId = 'fixture-single-session-accepted-v1';
+  const admitted = validateBattleBridgeGitHubCommand(receiptIdentityCommand(requestId), {
+    authorLogin: 'Cheekyfellastef',
+    now: identityTestNow,
+  });
+  assert.equal(admitted.ok, true);
+  const accepted = buildBattleBridgeGitHubCommandReceipt({
+    command: admitted.command,
+    state: 'ACCEPTED',
+    acceptedAt: identityTestNow.toISOString(),
+    heartbeatAt: identityTestNow.toISOString(),
+  });
+  checkpointAcceptedMailboxReceipt({}, accepted, { persist: (state) => writeJson(f.statePath, state) });
+  assert.equal(readJson(f.statePath).lastAcceptedReceipt.requestId, requestId);
+
+  const recovery = reconcileStaleAcceptedMailboxReceipts({
+    env: { STEPHANOS_SHARED_WORKSPACE_ROOT: dirname(dirname(f.statePath)) },
+    workspaceRoot: join(f.root, 'canonical-receipts'),
+    now: () => new Date('2026-11-06T12:30:00.000Z'),
+  });
+  assert.equal(recovery.expiredCount, 1);
+  assert.equal(recovery.replayPerformed, false);
+  const recoveredState = readJson(f.statePath);
+  assert.deepEqual(recoveredState.acceptedRequestIds, []);
+  assert.deepEqual(recoveredState.consumedRequestIds, [requestId]);
+  const [entry] = normalizePendingReceiptPublications(recoveredState.pendingReceiptPublications);
+  assert.equal(entry.receipt.requestId, requestId);
+  assert.equal(entry.receipt.result.requestId, requestId);
+  let calls = 0;
+  const result = flushMailboxReceiptPublicationOutbox(recoveredState, {
+    publish: (receipt) => {
+      calls += 1;
+      assert.equal(JSON.parse(serializeBoundedReceiptJson(receipt)).requestId, requestId);
+      return { ok: true };
+    },
+    persist: (state) => writeJson(f.statePath, state),
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.publishedCount, 1);
+  assert.deepEqual(readJson(f.statePath).pendingReceiptPublications, []);
+});
 
 function pending(id, state = 'BLOCKED', extra = {}) {
   return {

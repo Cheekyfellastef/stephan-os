@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   FORGE_LIFEBOAT_WORKER_ID,
+  FORGE_LIFEBOAT_LOCAL_TASK_CLASSES,
   forgeLifeboatAuthorityReceiptId,
   forgeLifeboatProofRef,
 } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
@@ -72,6 +73,8 @@ test('publishes one short-lived Lane 6 receipt from a real local-model probe and
   assert.equal(publications.length, 1);
   assert.equal(publications[0].route, 'FOUNDRY_FORGE');
   assert.equal(publications[0].workerId, FORGE_LIFEBOAT_WORKER_ID);
+  assert.deepEqual(publications[0].supportedTaskClasses, ['FOCUSED_REPAIR']);
+  assert.equal(publications[0].supportedTaskClasses, FORGE_LIFEBOAT_LOCAL_TASK_CLASSES);
   assert.equal(publications[0].queueDepth, 2);
   assert.equal(publications[0].p95StartLatencySeconds, 1.25);
   assert.deepEqual(publications[0].authorityReceiptIds, [forgeLifeboatAuthorityReceiptId(HEAD)]);
@@ -140,4 +143,14 @@ test('proof publication must succeed before the lifeboat can advertise source ca
   assert.equal(result.available, false);
   assert.match(result.reason, /^FORGE_LIFEBOAT_PROOF_PUBLICATION_FAILED:/);
   assert.equal(publications.length, 0);
+});
+
+test('caller class declarations cannot turn liveness publication into broader execution capacity', async () => {
+  const { options, publications } = baseOptions({
+    supportedTaskClasses: ['FOCUSED_REPAIR', 'MULTI_MODULE_IMPLEMENTATION'],
+  });
+  const result = await refreshForgeLifeboatCapacity(options);
+  assert.equal(result.ok, true);
+  assert.deepEqual(publications[0].supportedTaskClasses, ['FOCUSED_REPAIR'], 'caller advertisement cannot widen the implemented class');
+  assert.equal(Object.hasOwn(result, 'dispatchAllowed'), false, 'capacity refresh does not mint native execution qualification');
 });

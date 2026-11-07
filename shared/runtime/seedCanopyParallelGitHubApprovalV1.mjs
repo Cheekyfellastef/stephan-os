@@ -12,8 +12,11 @@ const ID_PATTERN = /^[1-9][0-9]{0,12}$/;
 const TIMESPAN = 24 * 60 * 60 * 1000;
 
 export function validateSeedParallelApprovalReferenceV1(reference) {
-  return reference?.schemaVersion === SEED_PARALLEL_APPROVAL_REF_SCHEMA
-    && ID_PATTERN.test(String(reference?.commentId || ''))
+  if (reference?.schemaVersion !== SEED_PARALLEL_APPROVAL_REF_SCHEMA) return false;
+  const commentId = reference.commentId;
+  return (typeof commentId === 'string'
+      || (typeof commentId === 'number' && Number.isSafeInteger(commentId)))
+    && ID_PATTERN.test(String(commentId))
     && Object.keys(reference || {}).sort().join(',') === 'commentId,schemaVersion';
 }
 

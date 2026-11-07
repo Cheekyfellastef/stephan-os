@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { makeParallelSeedExactApprovalV1 } from './seedCanopyParallelSupervisorV1.mjs';
 import {
   SEED_PARALLEL_APPROVAL_REF_SCHEMA, resolveSeedParallelOwnerIssueLabelV1,
-  verifySeedParallelOwnerGitHubApprovalV1,
+  validateSeedParallelApprovalReferenceV1, verifySeedParallelOwnerGitHubApprovalV1,
 } from './seedCanopyParallelGitHubApprovalV1.mjs';
 
 const NOW = Date.parse('2026-10-13T18:00:00.000Z');
@@ -30,13 +30,85 @@ function fakeFetch(comment, status = 200) {
     return { status, text: async () => JSON.stringify(comment) };
   };
 }
-test('fixed official GitHub API authenticates owner issue and exact task approval', async () => {
-  const result = await verifySeedParallelOwnerGitHubApprovalV1({
-    request, manifestSha256: digest, reference: ref, nowMs: NOW, fetchFn: fakeFetch(source),
-  });
-  assert.equal(result.ok, true, result.reason);
-  assert.equal(result.source, 'GITHUB_OWNER_AUTHENTICATED_COMMENT');
+test('fixed official GitHub API authenticates numeric and decimal-string owner references', async () => {
+  for (const commentId of [7654321, '7654321']) {
+    const reference = { ...ref, commentId };
+    assert.equal(validateSeedParallelApprovalReferenceV1(reference), true);
+    const result = await verifySeedParallelOwnerGitHubApprovalV1({
+      request, manifestSha256: digest, reference, nowMs: NOW, fetchFn: fakeFetch(source),
+    });
+    assert.equal(result.ok, true, result.reason);
+    assert.equal(result.source, 'GITHUB_OWNER_AUTHENTICATED_COMMENT');
+    assert.equal(result.commentId, source.id);
+  }
 });
+
+async function assertRejectedCommentId(commentId) {
+  let fetches = 0;
+  const reference = { ...ref, commentId };
+  const result = await verifySeedParallelOwnerGitHubApprovalV1({
+    request, manifestSha256: digest, reference, nowMs: NOW,
+    fetchFn: async (...args) => { fetches++; return fakeFetch(source)(...args); },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'NO_OWNER_COMMENT_REFERENCE');
+  assert.equal(validateSeedParallelApprovalReferenceV1(reference), false);
+  assert.equal(fetches, 0);
+}
+
+test('invalid reference schema is rejected before reading its comment ID', async () => {
+  let reads = 0;
+  let fetches = 0;
+  const reference = {
+    schemaVersion: 'not-an-approval-reference',
+    get commentId() { reads++; throw new Error('COMMENT_ID_READ'); },
+  };
+  assert.equal(validateSeedParallelApprovalReferenceV1(reference), false);
+  const result = await verifySeedParallelOwnerGitHubApprovalV1({
+    request, manifestSha256: digest, reference, nowMs: NOW,
+    fetchFn: async (...args) => { fetches++; return fakeFetch(source)(...args); },
+  });
+  assert.equal(result.reason, 'NO_OWNER_COMMENT_REFERENCE');
+  assert.equal(reads, 0);
+  assert.equal(fetches, 0);
+});
+
+for (const [label, commentId] of [
+  ['numeric array', [7654321]], ['string array', ['7654321']],
+  ['empty array', []], ['multiple IDs', [7654321, 7654322]],
+  ['boxed number', Object(7654321)], ['boxed string', Object('7654321')],
+  ['plain object', {}], ['null', null], ['undefined', undefined],
+  ['true', true], ['false', false], ['symbol', Symbol('7654321')],
+  ['bigint', 7654321n], ['NaN', NaN], ['infinity', Infinity],
+  ['negative infinity', -Infinity], ['fraction', 7654321.5],
+  ['unsafe integer', Number.MAX_SAFE_INTEGER + 1], ['zero', 0], ['negative', -1],
+  ['overlong number', 10000000000000], ['overlong string', '10000000000000'],
+  ['leading zero', '07654321'], ['leading plus', '+7654321'],
+  ['leading space', ' 7654321'], ['trailing space', '7654321 '], ['empty string', ''],
+]) {
+  test('noncanonical comment ID is rejected before lookup: ' + label, async () => {
+    await assertRejectedCommentId(commentId);
+  });
+}
+
+test('canonical comment ID bounds preserve existing numeric and string semantics', () => {
+  for (const commentId of [1, '1', 9999999999999, '9999999999999']) {
+    assert.equal(validateSeedParallelApprovalReferenceV1({ ...ref, commentId }), true);
+  }
+});
+
+for (const [label, makeCommentId] of [
+  ['object primitive hook', (convert) => ({ [Symbol.toPrimitive]: convert })],
+  ['object string/value hooks', (convert) => ({ toString: convert, valueOf: convert })],
+  ['array primitive hook', (convert) => Object.assign([7654321], { [Symbol.toPrimitive]: convert })],
+]) {
+  test('comment ID conversion is never invoked: ' + label, async () => {
+    let conversions = 0;
+    const commentId = makeCommentId(() => { conversions++; throw new Error('COMMENT_ID_COERCION'); });
+    await assertRejectedCommentId(commentId);
+    assert.equal(conversions, 0);
+  });
+}
 test('same-account local pointer forgery cannot stand in for GitHub owner signature', async () => {
   for (const changed of [
     { user: { login: 'untrusted-agent' } },
