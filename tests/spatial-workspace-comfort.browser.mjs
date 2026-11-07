@@ -271,6 +271,29 @@ try {
     assert.ok(expanded.html <= expanded.viewport && expanded.body <= expanded.viewport, JSON.stringify(expanded));
     return { collapsed: widths, expanded, image: await shot('spatial-console-phone', page.locator('#console-preview')) };
   });
+  await check('phone console labels fit and rightmost controls remain reachable', async () => {
+    const keyboard = page.locator('[aria-label="Spatial console keyboard preview"]');
+    const viewport = page.getByRole('region', { name: 'Console keyboard scroll area', exact: true });
+    const layout = await keyboard.evaluate(element => ({
+      width: element.getBoundingClientRect().width,
+      clippedLabels: [...element.querySelectorAll('button')].filter(button =>
+        button.scrollWidth > button.clientWidth + 1 || button.scrollHeight > button.clientHeight + 1)
+        .map(button => button.textContent),
+    }));
+    assert.deepEqual(layout.clippedLabels, [], 'Every console keyboard label must fit its button.');
+    const scroll = await viewport.evaluate(element => ({ width: element.clientWidth, contentWidth: element.scrollWidth }));
+    assert.ok(scroll.contentWidth > scroll.width, 'Only the keyboard should scroll horizontally on a phone.');
+    for (const name of ['Reset profile', 'Send / Enter']) {
+      const button = keyboard.getByRole('button', { name, exact: true });
+      await button.focus();
+      const bounds = await button.boundingBox(), visible = await viewport.boundingBox();
+      assert.ok(bounds.x >= visible.x - 1 && bounds.x + bounds.width <= visible.x + visible.width + 1,
+        `${name} must scroll fully into view when focused.`);
+    }
+    const pageWidth = await page.evaluate(() => ({ viewport: innerWidth, html: document.documentElement.scrollWidth, body: document.body.scrollWidth }));
+    assert.ok(pageWidth.html <= pageWidth.viewport && pageWidth.body <= pageWidth.viewport, JSON.stringify(pageWidth));
+    return { ...layout, scroll, pageWidth, image: await shot('spatial-console-phone-end', page.locator('#console-preview')) };
+  });
   await check('no JavaScript runtime errors throughout browser interactions', async () => {
     assert.deepEqual(result.pageErrors, []);
     assert.deepEqual(result.badResponses, [], 'All requested local resources must load successfully.');

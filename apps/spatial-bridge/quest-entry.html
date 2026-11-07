@@ -14,7 +14,7 @@
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; color: #e6f5ff; background: radial-gradient(circle at 50% -10%, rgba(51,107,178,.35), transparent 42%), #02040a; }
     .shell { min-height: 100vh; width: min(1040px, 100%); margin: 0 auto; padding: 18px; display: grid; align-content: start; gap: 14px; }
-    .panel { border: 1px solid rgba(120,216,255,.35); border-radius: 14px; background: rgba(5,13,27,.92); padding: 16px; }
+    .panel { min-width: 0; border: 1px solid rgba(120,216,255,.35); border-radius: 14px; background: rgba(5,13,27,.92); padding: 16px; }
     .launch-card { padding: 24px; border-color: rgba(143,235,255,.7); box-shadow: 0 0 46px rgba(70,173,232,.18); background: radial-gradient(circle at 50% 0%, rgba(50,115,171,.22), transparent 55%), rgba(5,13,27,.95); }
     .launch-card button { width: 100%; margin-top: 14px; min-height: 58px; font-size: 1.05rem; }
     .eyebrow { color: #78d8ff; text-transform: uppercase; letter-spacing: .14em; font-size: .72rem; }
@@ -36,6 +36,9 @@
     .comfort-grid input { width: 100%; min-height: 44px; accent-color: #78d8ff; cursor: pointer; }
     .comfort-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .comfort-modes [aria-pressed="true"] { border-color: #8ff7c1; background: #155248; color: #d9fff0; }
+    .console-keyboard-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+    .console-keyboard-hint { margin-bottom: 0; }
+    @media (min-width: 1000px) { .console-keyboard-hint { display: none; } }
   </style>
 </head>
 <body>
@@ -185,7 +188,9 @@
         else{const button=SCREEN_BUTTONS.find(b=>u>=b.x&&u<=b.x+b.w&&v>=b.y&&v<=b.y+b.h);if(button)screen.action(button.id);}
       });document.getElementById('console-preview').append(element);
     }
-    const previewKeyboard=document.createElement('div');previewKeyboard.style.cssText='position:relative;aspect-ratio:4/1;background:#071c29';
+    const previewKeyboardScroll=document.createElement('div');previewKeyboardScroll.className='console-keyboard-scroll';
+    previewKeyboardScroll.setAttribute('role','region');previewKeyboardScroll.setAttribute('aria-label','Console keyboard scroll area');previewKeyboardScroll.tabIndex=0;
+    const previewKeyboard=document.createElement('div');previewKeyboard.style.cssText='position:relative;aspect-ratio:4/1;min-width:900px;background:#071c29';
     previewKeyboard.setAttribute('aria-label','Spatial console keyboard preview');
     for(const control of SCREEN_BUTTONS){
       const button=document.createElement('button');button.type='button';button.textContent=control.label;
@@ -193,7 +198,10 @@
       button.style.cssText=`position:absolute;left:${control.x*100}%;top:${control.y*100}%;width:${control.w*100}%;height:${control.h*100}%;min-height:0;padding:2px;border-radius:0;font-size:12px;`;
       button.addEventListener('click',()=>{if(!immersiveActive){screen.action(control.id);comfort.flush();}});previewKeyboard.append(button);
     }
-    document.getElementById('console-preview').append(previewKeyboard);
+    previewKeyboardScroll.append(previewKeyboard);document.getElementById('console-preview').append(previewKeyboardScroll);
+    const previewKeyboardHint=document.createElement('p');previewKeyboardHint.className='muted console-keyboard-hint';
+    previewKeyboardHint.textContent='On a small screen, swipe sideways through the keyboard to reach all keys.';
+    document.getElementById('console-preview').append(previewKeyboardHint);
     document.getElementById('choose-window').addEventListener('click',()=>client.discover());
     document.getElementById('connect-window').addEventListener('click',()=>client.connect(Number(windowSelector.value)));
     document.getElementById('disconnect-window').addEventListener('click',()=>client.stop());
