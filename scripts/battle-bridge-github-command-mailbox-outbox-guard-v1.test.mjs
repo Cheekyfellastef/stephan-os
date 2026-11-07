@@ -40,6 +40,7 @@ import {
   MAILBOX_OUTBOX_LEDGER_INDEX_SCHEMA,
   MAILBOX_OUTBOX_LEDGER_SCHEMA,
   MAILBOX_OUTBOX_LEDGER_SEGMENT_SCHEMA,
+  MAILBOX_OUTBOX_INVALID_QUARANTINE_SCHEMA,
   MAILBOX_OUTBOX_MAX_ATTEMPTS_PER_CYCLE,
   MAILBOX_OUTBOX_SEGMENT_MAX_BYTES,
   normalizePendingReceiptPublications,
@@ -320,25 +321,41 @@ function runGuard(f, options = {}) {
   });
 }
 
-test('typed guard diagnostics distinguish untouched invalid debt before and after child invocation', (t) => {
+test('guard quarantines malformed legacy inline debt before child but keeps post-child corruption fail closed', (t) => {
   const f = fixture(); t.after(f.cleanup);
   const now = () => new Date('2026-11-07T15:20:00.000Z');
   const invalid = { publicationId: 'fixture-original-publication', receipt: { requestId: '', state: 'DONE' } };
+  const quarantinePath = join(dirname(f.statePath), 'receipt-publication-invalid-quarantine-v1.json');
   writeJson(f.statePath, { acceptedRequestIds: [], consumedRequestIds: [], pendingReceiptPublications: [invalid] });
-  const before = readFileSync(f.statePath);
   let invoked = 0;
-  const denied = runGuard(f, { now, spawnSyncFn: () => { invoked++; throw Error('unexpected child'); } });
-  assert.equal(invoked, 0);
-  assert.equal(denied.blocker, 'MAILBOX_OUTBOX_GUARD_FAILED');
-  assert.equal(denied.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID');
-  assert.equal(denied.guardDiagnostic.stage, 'STATE_VALIDATION');
-  assert.equal(denied.guardDiagnostic.outcome, 'GUARD_BLOCKED');
-  assert.equal(denied.guardDiagnostic.childInvocationAttempted, false);
-  assert.equal(denied.guardDiagnostic.observedAtUtc, now().toISOString());
-  assert.deepEqual(readFileSync(f.statePath), before);
-  assert.equal(existsSync(f.deferredPath), false);
-  assert.equal(existsSync(`${f.deferredPath}.lock-v1.json`), false);
-  writeJson(f.statePath, { acceptedRequestIds: [], consumedRequestIds: [], pendingReceiptPublications: [] });
+  let childPending = null;
+  const recovered = runGuard(f, { now, spawnSyncFn: () => {
+    invoked++;
+    childPending = readJson(f.statePath).pendingReceiptPublications;
+    return { status: 0, stdout: '{}', stderr: '' };
+  } });
+  assert.equal(invoked, 1);
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.quarantinedInvalidPublicationCount, 1);
+  assert.deepEqual(childPending, []);
+  assert.deepEqual(readJson(f.statePath).pendingReceiptPublications, []);
+  const quarantine = readJson(quarantinePath);
+  assert.equal(quarantine.schemaVersion, MAILBOX_OUTBOX_INVALID_QUARANTINE_SCHEMA);
+  assert.equal(quarantine.records.length, 1);
+  assert.deepEqual(quarantine.records[0].entry, invalid);
+  assert.equal(quarantine.records[0].capturedAtUtc, now().toISOString());
+  assert.match(quarantine.records[0].entrySha256, /^[a-f0-9]{64}$/);
+  assert.equal(recovered.guardDiagnostic.outcome, 'CHILD_SUCCEEDED');
+  assert.equal(recovered.guardDiagnostic.reasonCode, 'NONE');
+
+  const second = runGuard(f, { now, spawnSyncFn: () => {
+    invoked++;
+    return { status: 0, stdout: '{}', stderr: '' };
+  } });
+  assert.equal(second.ok, true);
+  assert.equal(second.quarantinedInvalidPublicationCount, 0);
+  assert.equal(readJson(quarantinePath).records.length, 1);
+
   let postChildBytes;
   const after = runGuard(f, { now, spawnSyncFn: () => {
     invoked++;
@@ -346,11 +363,54 @@ test('typed guard diagnostics distinguish untouched invalid debt before and afte
     postChildBytes = readFileSync(f.statePath);
     return { status: 0, stdout: '{}', stderr: '' };
   } });
-  assert.equal(invoked, 1);
+  assert.equal(invoked, 3);
+  assert.equal(after.ok, false);
   assert.equal(after.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID');
   assert.equal(after.guardDiagnostic.stage, 'POST_CHILD_VALIDATION');
   assert.equal(after.guardDiagnostic.childInvocationAttempted, true);
   assert.deepEqual(readFileSync(f.statePath), postChildBytes);
+  assert.equal(readJson(quarantinePath).records.length, 1);
+});
+
+test('guard preserves valid debt while quarantining only malformed legacy entries', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const invalid = { publicationId: 'legacy-invalid', receipt: { requestId: '', state: 'DONE' } };
+  const valid = pending('mailbox-quarantine-valid');
+  writeJson(f.statePath, {
+    acceptedRequestIds: [],
+    consumedRequestIds: [],
+    pendingReceiptPublications: [invalid, valid],
+  });
+  let childPending = [];
+  const result = runGuard(f, { spawnSyncFn: () => {
+    childPending = readJson(f.statePath).pendingReceiptPublications;
+    writeJson(f.statePath, { acceptedRequestIds: [], consumedRequestIds: [], pendingReceiptPublications: [] });
+    return { status: 0, stdout: '{}', stderr: '' };
+  } });
+  assert.equal(result.ok, true);
+  assert.equal(result.quarantinedInvalidPublicationCount, 1);
+  assert.deepEqual(childPending.map((entry) => entry.receipt.requestId), ['mailbox-quarantine-valid']);
+  const quarantine = readJson(join(dirname(f.statePath), 'receipt-publication-invalid-quarantine-v1.json'));
+  assert.deepEqual(quarantine.records.map((record) => record.entry), [invalid]);
+});
+
+test('malformed quarantine blocks without deleting legacy debt or invoking child', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const invalid = { publicationId: 'legacy-invalid', receipt: { requestId: '', state: 'DONE' } };
+  writeJson(f.statePath, { acceptedRequestIds: [], consumedRequestIds: [], pendingReceiptPublications: [invalid] });
+  const before = readFileSync(f.statePath);
+  writeJson(join(dirname(f.statePath), 'receipt-publication-invalid-quarantine-v1.json'), {
+    schemaVersion: 'wrong-schema',
+    updatedAtUtc: '2026-11-07T15:20:00.000Z',
+    records: [],
+  });
+  let invoked = 0;
+  const result = runGuard(f, { spawnSyncFn: () => { invoked++; return { status: 0 }; } });
+  assert.equal(result.ok, false);
+  assert.equal(invoked, 0);
+  assert.equal(result.guardDiagnostic.stage, 'STATE_VALIDATION');
+  assert.equal(result.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_INVALID_QUARANTINE_INVALID');
+  assert.deepEqual(readFileSync(f.statePath), before);
 });
 
 test('typed guard diagnostics preserve single-flight busy and disclose no unknown error text', (t) => {
