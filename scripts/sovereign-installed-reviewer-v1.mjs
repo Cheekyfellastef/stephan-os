@@ -71,14 +71,9 @@ export function inspectInstalledReviewerSourceV1(expectedHead, options={}) {
 export function inspectInstalledReviewerGamingV1(_env,options={}) {
   try{
     const r=nativeRead('governor',options);
-    const schema=r.schemaVersion==='stephanos.reviewer-governor-observation.v1';
-    const standard=schema&&r.allowed===true&&r.largeContextCustodyObserved===false&&r.contextTokens===8192;
-    const large=schema&&r.allowed===true&&r.largeContextCustodyObserved===true&&r.contextTokens===262144;
-    const ok=standard||large;
-    return Object.freeze({ok,reason:ok?'':'HIGH_RISK_GAMING_RESOURCE_PROTECTED',
-      largeContextCustodyObserved:large,contextTokens:ok?r.contextTokens:0});
-  }catch{return Object.freeze({ok:false,reason:'HIGH_RISK_GOVERNOR_UNAVAILABLE',
-    largeContextCustodyObserved:false,contextTokens:0});}
+    return Object.freeze({ok:r.schemaVersion==='stephanos.reviewer-governor-observation.v1'
+      &&r.allowed===true,reason:r.allowed===true?'':'HIGH_RISK_GAMING_RESOURCE_PROTECTED'});
+  }catch{return Object.freeze({ok:false,reason:'HIGH_RISK_GOVERNOR_UNAVAILABLE'});}
 }
 
 async function main() {
@@ -95,13 +90,12 @@ async function main() {
   const gamingGuard=()=>inspectInstalledReviewerGamingV1(env).ok;
   let result;
   if(entry==='advisory') {
-    const completeContextAdmission=inspectInstalledReviewerGamingV1(env);
     const observeModel=async (model,options)=>{
       if(!gamingGuard())throw Error('HIGH_RISK_GAMING_RESOURCE_PROTECTED');
       return observeCompleteHighRiskOllamaDigestV1(model,options);
     };
     result=await runSovereignHighRiskAdvisoryV1({env,root:SOVEREIGN_REVIEWER_DATA_ROOT_V1,snapshot,
-      reviewMode:'complete-diff',observeModel,completeContextAdmission,
+      reviewMode:'complete-diff',observeModel,
       invokeCompleteModel:(prompt,packet,options)=>localCompleteHighRiskModelV1(prompt,packet,env,
         {...options,platform:'win32',gamingGuard:inspectInstalledReviewerGamingV1})});
   }else if(entry==='coverage') {

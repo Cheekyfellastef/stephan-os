@@ -53,9 +53,9 @@ try{
  Require $denied 'CALLER_TOOL_PATH_ACCEPTED'
 }finally{([IDisposable]$pins).Dispose()}
 $now=[DateTime]::UtcNow
-$state=[ordered]@{schemaVersion='stephanos.vr-resource-governor.v1';governorVersion=3;phase='NORMAL';updatedAtUtc=$now.ToString('o');
+$state=[ordered]@{schemaVersion='stephanos.vr-resource-governor.v1';governorVersion=3;updatedAtUtc=$now.ToString('o');
  active=$false;flatGameActive=$false;airLinkActive=$false;realAirLinkActive=$false;virtualAirLinkTestActive=$false;prepareLeaseActive=$false;
- prepareExpiresAtUtc='';localModelAllowed=$true;heavyModelAllowed=$true;ollamaLoadMode='balanced'}
+ localModelAllowed=$true;heavyModelAllowed=$true;ollamaLoadMode='balanced'}
 $governor=$type.GetMethod('ReviewerGovernorStateV1',$flags)
 $raw=[string]($state|ConvertTo-Json -Compress)
 Require ([bool]$governor.Invoke($null,@([string]$raw,[DateTime]$now))) 'FRESH_IDLE_NATIVE_GOVERNOR_REFUSED'
@@ -71,25 +71,6 @@ foreach($bad in @($raw.Replace('"active":false','"active":"false"'),$raw.Replace
 }
 Require (-not [bool]$governor.Invoke($null,@([string]$raw,[DateTime]$now.AddSeconds(31)))) 'STALE_GOVERNOR_ACCEPTED'
 Require (-not [bool]$governor.Invoke($null,@([string]$raw,[DateTime]$now.AddSeconds(-6)))) 'FUTURE_GOVERNOR_ACCEPTED'
-$largeContext=$type.GetMethod('ReviewerLargeContextStateV1',$flags)
-$review=[ordered]@{};foreach($key in $state.Keys){$review[$key]=$state[$key]}
-$review.phase='REVIEWING';$review.prepareLeaseActive=$true;$review.prepareExpiresAtUtc=$now.AddSeconds(90).ToString('o')
-$review.profile=[ordered]@{name='review-large-context';processName='SovereignReviewer';minFreeVramMiB=2048;
- lightweightOnly=$false;parkAllModels=$false;cooldownSeconds=30;customProfileApplied=$false}
-$reviewRaw=[string]($review|ConvertTo-Json -Compress -Depth 5)
-Require ([bool]$governor.Invoke($null,@([string]$reviewRaw,[DateTime]$now))) 'REVIEW_RESERVATION_GOVERNOR_REFUSED'
-Require ([bool]$largeContext.Invoke($null,@([string]$reviewRaw,[DateTime]$now))) 'REVIEW_LARGE_CONTEXT_CUSTODY_NOT_OBSERVED'
-foreach($bad in @(
- ($reviewRaw.Replace('"processName":"SovereignReviewer"','"processName":"Starfield"')),
- ($reviewRaw.Replace('"phase":"REVIEWING"','"phase":"NORMAL"')),
- ($reviewRaw.Replace('"prepareLeaseActive":true','"prepareLeaseActive":false')),
- ($reviewRaw.Replace('"customProfileApplied":false','"customProfileApplied":true'))
-)){
- Require (-not [bool]$governor.Invoke($null,@([string]$bad,[DateTime]$now))) 'INVALID_REVIEW_RESERVATION_ACCEPTED'
- Require (-not [bool]$largeContext.Invoke($null,@([string]$bad,[DateTime]$now))) 'INVALID_LARGE_CONTEXT_CUSTODY_ACCEPTED'
-}
-$expired=$reviewRaw.Replace($review.prepareExpiresAtUtc,$now.AddSeconds(-10).ToString('o'))
-Require (-not [bool]$governor.Invoke($null,@([string]$expired,[DateTime]$now))) 'EXPIRED_REVIEW_RESERVATION_ACCEPTED'
 $pins=Pins;$installation=[Stephanos.Sovereign.ReviewerInstallationV1]::new()
 $installation.ReviewerSid='S-1-5-21-111-222-333-1001'
 $pinsType.GetField('Installation',$instance).SetValue($pins,$installation)

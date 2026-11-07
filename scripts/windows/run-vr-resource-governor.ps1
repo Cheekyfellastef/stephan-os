@@ -540,22 +540,8 @@ function Resolve-GamingProfile {
     $lightweightOnly = $true
     $parkAllModels = $false
     $cooldown = [Math]::Max([Math]::Max(30, $CooldownSeconds), [Math]::Max(5, $ReleaseGraceSeconds))
-    $reviewerReservation = [bool](
-        $RequestedProfileName -eq 'review-large-context' -and
-        $process -eq 'SovereignReviewer' -and
-        -not $Signal.active
-    )
 
-    if ($reviewerReservation) {
-        # Fixed reviewer reservation only. It never parks a model itself; real
-        # game/headset signals are evaluated before this lease and still win.
-        $name = 'review-large-context'
-        $minFree = 2048
-        $lightweightOnly = $false
-        $parkAllModels = $false
-        $cooldown = 30
-    }
-    elseif ($Signal.airLinkActive) {
+    if ($Signal.airLinkActive) {
         $name = 'vr-maximum'
         $minFree = 12288
         $parkAllModels = $true
@@ -566,7 +552,7 @@ function Resolve-GamingProfile {
         $minFree = 10240
     }
 
-    if ($RequestedProfileName -and -not $reviewerReservation) {
+    if ($RequestedProfileName) {
         $name = $RequestedProfileName
         if ($RequestedProfileName -eq 'vr-maximum') {
             $minFree = 12288
@@ -575,7 +561,7 @@ function Resolve-GamingProfile {
         if ($RequestedProfileName -eq 'heavy-game-maximum') { $minFree = 10240 }
     }
 
-    $custom = if ($reviewerReservation) { $null } else { Get-ProfileOverride -RequestedProcessName $process }
+    $custom = Get-ProfileOverride -RequestedProcessName $process
     if ($custom) {
         if ([string]$custom.name) { $name = [string]$custom.name }
         if ($null -ne $custom.minFreeVramMiB) {
@@ -948,22 +934,6 @@ function Resolve-EffectiveState {
         }
     }
 
-    if (
-        $lease.active -and
-        [string]$profile.name -eq 'review-large-context' -and
-        [string]$profile.processName -eq 'SovereignReviewer'
-    ) {
-        return [pscustomobject]@{
-            phase = 'REVIEWING'
-            active = $false
-            reason = 'reviewer-resource-reservation'
-            overrideMode = $override
-            profile = $profile
-            lease = $lease
-            cooldownUntilUtc = ''
-        }
-    }
-
     if ($lease.active) {
         return [pscustomobject]@{
             phase = 'PREPARING'
@@ -1203,24 +1173,6 @@ if ($Action -eq 'PrepareGaming') {
     Write-PrepareLease -RequestedProcessName $ProcessName -RequestedProfileName $ProfileName | Out-Null
     $prepared = Invoke-CurrentReconcile
     $prepared | ConvertTo-Json -Depth 8
-    if ($ProfileName -eq 'review-large-context') {
-        if (
-            $ProcessName -ne 'SovereignReviewer' -or
-            [string]$prepared.phase -ne 'REVIEWING' -or
-            $prepared.active -ne $false -or
-            $prepared.prepareLeaseActive -ne $true -or
-            [string]$prepared.profile.name -ne 'review-large-context' -or
-            [string]$prepared.profile.processName -ne 'SovereignReviewer' -or
-            $prepared.profile.customProfileApplied -ne $false -or
-            $prepared.localModelAllowed -ne $true -or
-            $prepared.heavyModelAllowed -ne $true -or
-            [string]$prepared.ollamaLoadMode -ne 'balanced'
-        ) {
-            Clear-PrepareLease
-            exit 4
-        }
-        exit 0
-    }
     if (-not $prepared.evictionHealthy -or $prepared.heavyModelAllowed -ne $false) { exit 2 }
     if (
         $prepared.profile.parkAllModels -eq $true -and

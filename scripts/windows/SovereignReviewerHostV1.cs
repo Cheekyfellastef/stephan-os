@@ -209,14 +209,9 @@ namespace Stephanos.Sovereign {
             Console.WriteLine("SOVEREIGN_REVIEWER_PROFILE_V1="+ReviewerJsonV1().Serialize(ReviewerObservationV1(pins)));return 0;
           }
           if(entry=="--governor") {
-            bool largeContextCustodyObserved=false;
-            bool safe=ReviewerGamingSafeV1(out largeContextCustodyObserved);
-            bool allowed=ReviewerInferencePrincipalV1(pins)&&safe;
-            largeContextCustodyObserved=allowed&&largeContextCustodyObserved;
+            bool allowed=ReviewerInferencePrincipalV1(pins)&&ReviewerGamingSafeV1();
             Console.WriteLine("SOVEREIGN_REVIEWER_GOVERNOR_V1="+ReviewerJsonV1().Serialize(new {
               schemaVersion="stephanos.reviewer-governor-observation.v1",allowed=allowed,
-              largeContextCustodyObserved=largeContextCustodyObserved,
-              contextTokens=allowed?(largeContextCustodyObserved?262144:8192):0,
               independentPrincipalObserved=false,qualified=false}));return allowed?0:1;
           }
           if(!ReviewerInferencePrincipalV1(pins))throw new IOException("REVIEWER_PRINCIPAL_NOT_ADMITTED");
