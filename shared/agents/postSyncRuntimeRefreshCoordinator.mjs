@@ -330,6 +330,7 @@ const NO_RUNTIME_EXACT = new Set([
 
 const LAUNCHER_CRITICAL_SOURCE_PATHS = new Set([
   'main.js',
+  'style.css',
   'modules/command-deck/command-deck.js',
   'system/module_loader.js',
   'system/workspace.js',
