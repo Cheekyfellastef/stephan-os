@@ -39,6 +39,8 @@ export const MAILBOX_OUTBOX_MAX_ATTEMPTS_PER_CYCLE = 1;
 export const MAILBOX_OUTBOX_MAX_ENTRIES = 500;
 export const MAILBOX_OUTBOX_SEGMENT_MAX_BYTES = 2 * 1024 * 1024;
 export const MAILBOX_OUTBOX_MANIFEST_MAX_BYTES = 64 * 1024;
+export const MAILBOX_OUTBOX_INVALID_QUARANTINE_SCHEMA = 'stephanos.battle-bridge-mailbox-invalid-pending-quarantine.v1';
+export const MAILBOX_OUTBOX_INVALID_QUARANTINE_MAX_ENTRIES = 500;
 
 // Diagnostic metadata only. These fixed codes never carry error text, paths or
 // request identities, and are never consumed for admission or custody release.
@@ -74,6 +76,8 @@ const MAILBOX_GUARD_REASON_CODES_V1 = new Set([
   'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
   'MAILBOX_OUTBOX_GUARD_FAILED',
   'MAILBOX_OUTBOX_GUARD_LOCK_LOST',
+  'MAILBOX_OUTBOX_INVALID_QUARANTINE_INVALID',
+  'MAILBOX_OUTBOX_INVALID_QUARANTINE_LIMIT_EXCEEDED',
   'MAILBOX_OUTBOX_JSON_OBJECT_REQUIRED',
   'MAILBOX_OUTBOX_JSON_TOO_LARGE',
   'MAILBOX_OUTBOX_LEDGER_FUTURE_SEGMENT_CONFLICT',
@@ -491,6 +495,93 @@ function canonicalPendingFromState(state) {
     throw new Error('MAILBOX_OUTBOX_CANONICAL_PENDING_ARRAY_REQUIRED');
   }
   return normalizePendingReceiptPublications(state.pendingReceiptPublications || []);
+}
+
+function invalidPendingQuarantinePath(statePath) {
+  return join(dirname(statePath), 'receipt-publication-invalid-quarantine-v1.json');
+}
+
+function validateInvalidPendingQuarantine(value) {
+  if (!isPlainObject(value)
+    || value.schemaVersion !== MAILBOX_OUTBOX_INVALID_QUARANTINE_SCHEMA
+    || !Array.isArray(value.records)
+    || value.records.length > MAILBOX_OUTBOX_INVALID_QUARANTINE_MAX_ENTRIES
+    || typeof value.updatedAtUtc !== 'string'
+    || !Number.isFinite(Date.parse(value.updatedAtUtc))) {
+    throw new Error('MAILBOX_OUTBOX_INVALID_QUARANTINE_INVALID');
+  }
+  const seen = new Set();
+  for (const record of value.records) {
+    if (!isPlainObject(record)
+      || Object.keys(record).sort().join(',') !== 'capturedAtUtc,entry,entrySha256'
+      || typeof record.capturedAtUtc !== 'string'
+      || !Number.isFinite(Date.parse(record.capturedAtUtc))
+      || !HEX_64.test(String(record.entrySha256 || ''))
+      || sha256(stableJson(record.entry)) !== record.entrySha256
+      || seen.has(record.entrySha256)) {
+      throw new Error('MAILBOX_OUTBOX_INVALID_QUARANTINE_INVALID');
+    }
+    seen.add(record.entrySha256);
+  }
+  return value;
+}
+
+function quarantineInvalidPendingDebt(statePath, state, timestampUtc, metrics) {
+  if (Object.prototype.hasOwnProperty.call(state, 'pendingReceiptPublications')
+    && !Array.isArray(state.pendingReceiptPublications)) {
+    throw new Error('MAILBOX_OUTBOX_CANONICAL_PENDING_ARRAY_REQUIRED');
+  }
+  const rawPending = state.pendingReceiptPublications || [];
+  const valid = [];
+  const invalid = [];
+  for (const entry of rawPending) {
+    if (validatePendingEntry(entry)) valid.push(entry);
+    else invalid.push(structuredClone(entry));
+  }
+  const pending = normalizePendingReceiptPublications(valid);
+  if (invalid.length === 0) {
+    return Object.freeze({ state, pending, quarantinedCount: 0 });
+  }
+
+  const quarantinePath = invalidPendingQuarantinePath(statePath);
+  const existing = readJsonObject(quarantinePath, {
+    allowMissing: true,
+    missingValue: {
+      schemaVersion: MAILBOX_OUTBOX_INVALID_QUARANTINE_SCHEMA,
+      updatedAtUtc: timestampUtc,
+      records: [],
+    },
+    maxBytes: MAILBOX_STATE_MAX_BYTES,
+    metrics,
+  });
+  const quarantine = validateInvalidPendingQuarantine(existing);
+  const records = quarantine.records.map((record) => structuredClone(record));
+  const known = new Set(records.map((record) => record.entrySha256));
+  for (const entry of invalid) {
+    const entrySha256 = sha256(stableJson(entry));
+    if (known.has(entrySha256)) continue;
+    if (records.length >= MAILBOX_OUTBOX_INVALID_QUARANTINE_MAX_ENTRIES) {
+      throw new Error('MAILBOX_OUTBOX_INVALID_QUARANTINE_LIMIT_EXCEEDED');
+    }
+    records.push({ entrySha256, capturedAtUtc: timestampUtc, entry });
+    known.add(entrySha256);
+  }
+
+  atomicWriteJson(quarantinePath, {
+    schemaVersion: MAILBOX_OUTBOX_INVALID_QUARANTINE_SCHEMA,
+    updatedAtUtc: timestampUtc,
+    records,
+  }, { maxBytes: MAILBOX_STATE_MAX_BYTES, metrics });
+  const recoveredState = {
+    ...state,
+    pendingReceiptPublications: pending,
+  };
+  atomicWriteJson(statePath, recoveredState, { maxBytes: MAILBOX_STATE_MAX_BYTES, metrics });
+  return Object.freeze({
+    state: recoveredState,
+    pending,
+    quarantinedCount: invalid.length,
+  });
 }
 
 function ledgerRoot(path) {
@@ -1814,13 +1905,20 @@ export function runMailboxOutboxGuard({
       staleAfterMs,
     });
     diagnosticStage = 'STATE_VALIDATION';
-    const state = readJsonObject(statePath, {
+    const stateBeforeRecovery = readJsonObject(statePath, {
       allowMissing: true,
       missingValue: { consumedRequestIds: [], acceptedRequestIds: [], pendingReceiptPublications: [] },
       maxBytes: MAILBOX_STATE_MAX_BYTES,
       metrics,
     });
-    const statePendingBefore = canonicalPendingFromState(state);
+    const recoveredPending = quarantineInvalidPendingDebt(
+      statePath,
+      stateBeforeRecovery,
+      timestamp.toISOString(),
+      metrics,
+    );
+    const state = recoveredPending.state;
+    const statePendingBefore = recoveredPending.pending;
     diagnosticStage = 'DEFERRED_VALIDATION';
     let manifest = loadOrInitializeLedger(deferredPath, timestamp.toISOString(), metrics);
     manifest = appendCanonicalDebt(deferredPath, manifest, statePendingBefore, now().toISOString(), metrics, faultFn);
@@ -1886,6 +1984,7 @@ export function runMailboxOutboxGuard({
       childMailboxBlockedCount: childStatus.mailboxBlockedCount,
       childMailboxMaxConcurrencyObserved: childStatus.mailboxMaxConcurrencyObserved,
       attemptedPublicationCount: head ? 1 : 0,
+      quarantinedInvalidPublicationCount: recoveredPending.quarantinedCount,
       deferredPublicationCountBeforeChild: Math.max(0, pendingBeforeChild - (head ? 1 : 0)),
       pendingPublicationCountAfterChild: pendingCount(manifest),
       deferredLedgerVersion: 3,
