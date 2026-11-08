@@ -238,6 +238,10 @@ Case 'actual fixed local Git continuity and adversarial drift' {
         if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_ADD_FAILED' }
         & $git -C $scratch -c 'user.name=Fixture' -c 'user.email=fixture@example.invalid' commit -m initial | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_COMMIT_FAILED' }
+        # A configured local-only remote is required for Git to recognise
+        # refs/remotes/origin/main as a tracking branch. Never fetch from it.
+        & $git -C $scratch remote add origin $scratch
+        if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_ORIGIN_FAILED' }
         & $git -C $scratch update-ref refs/remotes/origin/main HEAD
         if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_REMOTE_FAILED' }
         & $git -C $scratch branch --set-upstream-to=origin/main main | Out-Null
@@ -291,7 +295,14 @@ Case 'actual fixed local Git continuity and adversarial drift' {
         Assert-CoreRecoveryLocalSource
     } finally {
         foreach ($row in $savedGitEnv) { [Environment]::SetEnvironmentVariable($row.Name, $row.Value, 'Process') }
-        if ([IO.Directory]::Exists($scratch)) { [IO.Directory]::Delete($scratch, $true) }
+        if ([IO.Directory]::Exists($scratch)) {
+            # Git object files are read-only on Windows; clear only this
+            # uniquely generated temporary fixture's file attributes.
+            foreach ($file in [IO.Directory]::EnumerateFiles($scratch, '*', [IO.SearchOption]::AllDirectories)) {
+                [IO.File]::SetAttributes($file, [IO.FileAttributes]::Normal)
+            }
+            [IO.Directory]::Delete($scratch, $true)
+        }
     }
 }
 
