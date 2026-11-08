@@ -9,6 +9,8 @@ import { readControlTowerBuildRequestV1 } from '../shared/agents/controlTowerBui
 import { fixture, HEAD, NOW } from '../shared/agents/fixtures/controlTowerBuildV1.mjs';
 import { runSovereignRelayCycleWithHeartbeat, buildSovereignRelayStatus } from './battle-bridge-sovereign-relay-daemon.mjs';
 import { FIXED_MAINTENANCE_RUNTIME_ROUTE_V1, fixedRuntimeMaintenanceActionQualifiedV1 } from './sovereign-fixed-runtime-parent-v1.mjs';
+import { callSovereignMaintenanceOwnerV1,
+  consumeSovereignMaintenancePreDispatchRefusalV1 } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 
 const poll = (state, blocker = '', extra = {}) => ({ schemaVersion: 'stephanos.control-tower-build-consumer.v1',
   state, blocker, observedAtUtc: NOW, buildStartedProven: false, nativePickupProven: false,
@@ -82,6 +84,106 @@ test('an unavailable owner response may follow pickup and must retain an unknown
   const result = await s.consume(); assert.equal(result.state, 'UNKNOWN');
   assert.equal(createMailboxExecutionLedger(join(s.root, 'github-command-mailbox')).read(result.requestId).phase, 'RESERVED');
   await s.consume(); assert.equal(calls, 1);
+});
+
+test('real protocol rejection before token or POST is a blocked wake, not an unresolved invocation', async t => {
+  let credentialReads = 0, requests = 0, ownerCalls = 0;
+  const s = setup(t, { execute: async request => {
+    ownerCalls++;
+    return callSovereignMaintenanceOwnerV1(request, {
+      readFileFn: async () => { credentialReads++; assert.fail('protocol rejection read credentials'); },
+      fetchFn: async (url, options) => {
+        requests++;
+        assert.equal(url, 'http://127.0.0.1:18791/health?view=protocol');
+        assert.equal(options.method, 'GET');
+        return Response.json({ ok: true, service: 'stephanos-sovereign-commander' });
+      },
+    });
+  } });
+  const actual = await s.consume();
+  assert.equal(credentialReads, 0); assert.equal(requests, 1); assert.equal(ownerCalls, 1);
+  assert.equal(actual.state, 'WAKE_BLOCKED');
+  assert.equal(actual.blocker, 'SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED');
+  const record = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox')).read(actual.requestId);
+  assert.equal(record.phase, 'TERMINAL'); assert.equal(record.terminalState, 'BLOCKED');
+  assert.equal(Object.hasOwn(record, 'terminalProofHash'), false, 'a blocked preflight has no completion proof');
+  for (const flag of ['buildStartedProven', 'nativePickupProven', 'goalCompletionProven', 'sourceMutationAllowed', 'mergeAuthority', 'leaseSeizureAllowed'])
+    assert.equal(actual[flag], false);
+  await s.consume(); assert.equal(ownerCalls, 1, 'same request must never be replayed after a blocked wake');
+});
+
+test('plain flags, copied refusals and another invocation cannot prove pre-dispatch exclusion', async t => {
+  const refuse = request => callSovereignMaintenanceOwnerV1(request, {
+    readFileFn: async () => assert.fail('unexpected token read'),
+    fetchFn: async (_url, options) => {
+      assert.equal(options.method, 'GET'); return Response.json({ ok: true });
+    },
+  });
+  for (const mode of ['plain', 'copied', 'other-request', 'already-consumed']) {
+    const s = setup(t, { execute: async request => {
+      if (mode === 'plain') return { ok: false, blocker: 'SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED',
+        beforeDispatchProven: true, localPreDispatchRefusal: true };
+      if (mode === 'other-request') return refuse(Object.freeze({ ...request,
+        arguments: Object.freeze({ ...request.arguments }) }));
+      const actual = await refuse(request);
+      if (mode === 'already-consumed') {
+        assert.equal(consumeSovereignMaintenancePreDispatchRefusalV1(actual, request), true);
+        return actual;
+      }
+      return { ...actual };
+    } });
+    const actual = await s.consume();
+    assert.equal(actual.state, 'UNKNOWN', mode);
+    assert.equal(createMailboxExecutionLedger(join(s.root, 'github-command-mailbox')).read(actual.requestId).phase,
+      'RESERVED', mode);
+  }
+});
+
+test('a crash publishing pre-dispatch refusal retains the same reservation across restart', async t => {
+  let healthReads = 0;
+  const s = setup(t, {
+    createLedger: root => ({ ...createMailboxExecutionLedger(root),
+      complete: () => { throw Error('terminal publication lost'); } }),
+    execute: request => callSovereignMaintenanceOwnerV1(request, {
+      readFileFn: async () => assert.fail('unexpected token read'),
+      fetchFn: async (_url, options) => {
+        healthReads++; assert.equal(options.method, 'GET'); return Response.json({ ok: true });
+      },
+    }),
+  });
+  const first = await s.consume();
+  assert.equal(first.state, 'UNKNOWN'); assert.equal(healthReads, 1);
+  const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+  assert.equal(ledger.read(first.requestId).phase, 'RESERVED');
+  const second = await s.consume({ latestBuildRequestId: first.requestId });
+  assert.equal(second.state, 'HELD'); assert.equal(second.blocker, 'CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED');
+  assert.equal(healthReads, 1, 'lost terminal publication must not permit another attempt');
+  assert.equal(ledger.read(first.requestId).phase, 'RESERVED');
+});
+
+test('a terminal local preflight refusal preserves dedupe without blocking a distinct later request', async t => {
+  let transport = requestTransport(701), healthReads = 0;
+  const s = setup(t, {
+    readRequest: args => transport(args),
+    execute: request => callSovereignMaintenanceOwnerV1(request, {
+      readFileFn: async () => assert.fail('unexpected token read'),
+      fetchFn: async (_url, options) => {
+        healthReads++; assert.equal(options.method, 'GET'); return Response.json({ ok: true });
+      },
+    }),
+  });
+  const first = await s.consume(); assert.equal(first.state, 'WAKE_BLOCKED');
+  await s.consume(); assert.equal(healthReads, 1, 'recorded request must not repeat');
+  transport = requestTransport(702);
+  const second = await s.consume({ latestBuildRequestId: first.requestId });
+  assert.equal(second.state, 'WAKE_BLOCKED'); assert.equal(healthReads, 2);
+  assert.notEqual(first.requestId, second.requestId);
+  const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+  for (const value of [first, second]) {
+    const record = ledger.read(value.requestId);
+    assert.equal(record.phase, 'TERMINAL'); assert.equal(record.terminalState, 'BLOCKED');
+    assert.equal(value.nativePickupProven, false); assert.equal(value.buildStartedProven, false);
+  }
 });
 test('forged objects, source drift and expired observations cannot reach the owner', async t => {
   const s = setup(t, { readRequest: async () => ({ ok: true, request: { ...fixture().request } }) });
@@ -320,7 +422,10 @@ test('fixed observation never calls maintenance and malformed or wrong-source re
 test('unproven ledger discovery restricts acquisition to observation and cannot wake or reserve a new build', async t => {
   let mode;
   const s = setup(t, { createLedger: root => ({ ...createMailboxExecutionLedger(root),
-    discoverControlTower: () => ({ ok: false, blocker: 'CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED' }) }),
+    discoverControlTower: async () => {
+      await new Promise(resolve => setImmediate(resolve));
+      return { ok: false, blocker: 'CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED' };
+    } }),
     readRequest: async args => { mode = args.observationOnly; return requestTransport(101, 'OBSERVE_CONTROL_SYSTEM')(args); },
     inspect: async () => inspectedStatus() });
   const observed = await s.consume(); assert.equal(mode, true); assert.equal(observed.state, 'OBSERVATION_COMPLETED');
@@ -466,5 +571,51 @@ test('successful reservation advances the locator before a diagnostic re-read ca
   assert.equal(observed.latestBuildRequestObservation.state, 'RESERVED');
   assert.equal(observed.latestBuildRequestObservation.ledgerPhase, 'RESERVED');
   assert.equal(createMailboxExecutionLedger(join(s.root, 'github-command-mailbox')).read(observed.requestId).phase, 'RESERVED');
+  assert.equal(s.calls.length, 0);
+});
+
+for (const existingHistory of [false, true]) {
+  test('two distinct authenticated requests retain one unresolved build with existing history ' + existingHistory, async t => {
+    const s = setup(t, { execute: async args => { s.calls.push(args); return { ok: false, blocker: 'TRANSPORT_OUTCOME_UNKNOWN' }; } });
+    const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+    if (existingHistory) ledger.importHistorical('ordinary-mailbox-history', 3258, 'TERMINAL');
+    const consume = runId => consumeControlTowerBuildRequestV1({ ...s.options,
+      dependencies: { ...s.options.dependencies, readRequest: requestTransport(runId) } });
+    const results = await Promise.all([consume(100), consume(101)]);
+    assert.equal(s.calls.length, 1);
+    assert.equal([100, 101].filter(id => ledger.read('control-tower-build-' + id + '-1')?.phase === 'RESERVED').length, 1);
+    assert.equal(results.filter(result => result.state === 'UNKNOWN').length, 1);
+    assert.equal(results.filter(result => result.state === 'HELD').length, 1);
+  });
+}
+
+test('a missing original locator prevents combined admission and owner invocation', async t => {
+  let admissions = 0;
+  const s = setup(t, { createLedger: root => {
+    const real = createMailboxExecutionLedger(root);
+    return { ...real, discoverAndReserveControlTower: (...args) => { admissions++; return real.discoverAndReserveControlTower(...args); } };
+  } });
+  const result = await s.consume({ latestBuildRequestId: 'control-tower-build-99-1' });
+  assert.equal(result.state, 'HELD');
+  assert.equal(result.blocker, 'CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED');
+  assert.equal(admissions, 0);
+  assert.equal(s.calls.length, 0);
+  assert.equal(result.latestBuildRequestObservation.detailState, 'MISSING');
+});
+
+test('uncertain combined reservation keeps its locator and never calls the owner', async t => {
+  const s = setup(t, { createLedger: root => {
+    const real = createMailboxExecutionLedger(root);
+    return { ...real, discoverAndReserveControlTower: async (command, options) => {
+      await real.discoverAndReserveControlTower(command, options);
+      return { ok: false, blocker: 'CONTROL_TOWER_BUILD_DELIVERY_UNPROVEN',
+        reservation: null, reservationAttempted: true,
+        latestBuildRequestObservation: null, latestControlSystemObservation: null };
+    } };
+  } });
+  const result = await s.consume();
+  assert.equal(result.state, 'UNKNOWN');
+  assert.equal(result.requestPointers.latestBuildRequestId, 'control-tower-build-100-1');
+  assert.equal(result.latestBuildRequestObservation.ledgerPhase, 'RESERVED');
   assert.equal(s.calls.length, 0);
 });

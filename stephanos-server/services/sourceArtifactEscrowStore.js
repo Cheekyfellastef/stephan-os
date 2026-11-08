@@ -23,7 +23,7 @@ const SHA40 = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const ZERO_SHA = '0'.repeat(40);
 const SAFE_PATH = /^(?!\/)(?![A-Za-z]:\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._@+ -]+(?:\/[A-Za-z0-9._@+ -]+)*$/;
-const FORBIDDEN_PATH = /^(?:apps\/stephanos\/dist|root-data|root data|data|tmp)(?:\/|$)|(^|\/)(?:\.git|node_modules|runtime-data|stephanos-server\/data)(?:\/|$)|(^|\/)\.env(?:\.|$)|\.(?:pem|pfx|key)$/i;
+const FORBIDDEN_PATH = /^(?:apps\/stephanos\/dist|root-data|root data|data|tmp)(?:\/|$)|(^|\/)(?:\.git|node_modules|runtime-data|stephanos-server\/data)(?:\/|$)|(^|\/)[^/]*\.env(?:\.|$)|\.(?:pem|pfx|key)$/i;
 const RUNTIME_STATE_SEGMENT = /(^|\/)runtime(?:\/|$)/i;
 
 function text(value) { return String(value ?? '').trim(); }
@@ -43,14 +43,17 @@ function within(parent, child) {
 function safePath(value) {
   // Preserve raw Git path identity before handling separator/dot aliases.
   if (typeof value !== 'string' || value !== value.trim()) return '';
-  const normalized = value.replace(/\\/g, '/').replace(/^\.\/+/, '');
+  // Never rewrite the raw Git path into an alias of a different tracked object.
+  if (value.includes('\\') || value.startsWith('./')) return '';
+  const normalized = value;
   // shared/runtime contains tracked Stephanos source modules, not mutable
   // root runtime state. Keep every other nested runtime segment excluded.
   const canonicalSourceRuntime = normalized.startsWith('shared/runtime/')
     && !RUNTIME_STATE_SEGMENT.test(normalized.slice('shared/runtime/'.length));
   const runtimeState = RUNTIME_STATE_SEGMENT.test(normalized) && !canonicalSourceRuntime;
   // Interior dot components are aliases that can bypass generated/state path exclusions.
-  if (normalized.split('/').some((part) => part === '.' || /[. ]$/.test(part))) return '';
+  if (normalized.split('/').some((part) => part === '.' || /[. ]$/.test(part)
+      || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:[.]|$)/i.test(part))) return '';
   return SAFE_PATH.test(normalized) && !FORBIDDEN_PATH.test(normalized) && !runtimeState
     ? normalized : '';
 }
@@ -75,6 +78,9 @@ function validateArtifactFile(file = {}, changedFile = {}) {
   const digest = text(file.sha256).toLowerCase();
   const mode = text(file.mode);
   const deleted = file.deleted === true;
+  // The shared/runtime source exception admits real tracked executable files,
+  // never a Git link that can redirect into excluded state or secret paths.
+  if (mode === '120000' && path.startsWith('shared/runtime/')) return { ok: false, reason: 'SOURCE_ARTIFACT_FILE_MODE_INVALID' };
   if (!path || path !== safePath(changedFile.path)) return { ok: false, reason: 'SOURCE_ARTIFACT_FILE_PATH_INVALID' };
   if (!SHA40.test(beforeBlobSha) || !SHA40.test(afterBlobSha) || !SHA256.test(digest)) return { ok: false, reason: 'SOURCE_ARTIFACT_FILE_IDENTITY_INVALID' };
   if (beforeBlobSha !== text(changedFile.beforeBlobSha).toLowerCase()

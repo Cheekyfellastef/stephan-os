@@ -847,6 +847,19 @@ export async function createSovereignCommanderHttpServer(options = {}) {
     try {
       const url = new URL(req.url || '/', 'http://localhost');
       if (req.method === 'GET' && url.pathname === '/health') {
+        // Delegation needs protocol identity, not a native journal read. The
+        // latter can exceed the transport's preflight deadline and block the
+        // HTTP event loop. This projection conveys no custody or admission;
+        // the authenticated tool still enters the existing maintenance owner.
+        if (url.searchParams.get('view') === 'protocol') {
+          return sendJson(res, 200, {
+            ok: true,
+            service: 'stephanos-sovereign-commander',
+            maintenanceOwnerAdmissionVersion: SOVEREIGN_MAINTENANCE_OWNER_VERSION,
+            observationScope: 'TRANSPORT_PROTOCOL_ONLY',
+            maintenanceAdmissionProven: false,
+          });
+        }
         return sendJson(res, 200, {
           ok: true,
           service: 'stephanos-sovereign-commander',

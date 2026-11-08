@@ -7,6 +7,8 @@ import { inspectSovereignControlSystemV1, parseSovereignControlSystemInspectionA
   from './sovereign-commander-native-inspect.mjs';
 import { projectSovereignControlSystemStatusV1, SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1 }
   from '../shared/agents/sovereignControlSystemStatusV1.mjs';
+import { callSovereignMaintenanceOwnerV1 } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
+import { SOVEREIGN_MAINTENANCE_OWNER_VERSION } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 
 const HEAD = 'a'.repeat(40), NOW = '2026-10-31T13:00:00.000Z';
 const REQUEST = 'control-tower-build-41192328171-1';
@@ -30,6 +32,7 @@ function fixture(overrides = {}) {
         sid: SID, administratorEnabled: false, observedAtUtc: NOW }; },
       readOwner: () => { calls.push('owner'); return nativeOwner(); },
       fetchFn: async (url, options) => {
+        if (url === PROTOCOL_URL) { calls.push('protocol'); return Response.json(protocolHealth()); }
         calls.push('health'); assert.equal(url, 'http://127.0.0.1:18791/health');
         assert.equal(options.method, 'GET'); assert.equal(options.redirect, 'error');
         assert.ok(options.signal instanceof AbortSignal);
@@ -44,9 +47,131 @@ function fixture(overrides = {}) {
     } } };
 }
 
+const PROTOCOL_URL = 'http://127.0.0.1:18791/health?view=protocol';
+const protocolHealth = (extra = {}) => ({ ok: true, service: 'stephanos-sovereign-commander',
+  observationScope: 'TRANSPORT_PROTOCOL_ONLY', maintenanceAdmissionProven: false,
+  maintenanceOwnerAdmissionVersion: SOVEREIGN_MAINTENANCE_OWNER_VERSION, ...extra });
+function protocolFixture(response = () => Response.json(protocolHealth()), overrides = {}) {
+  const value = fixture(overrides), fetchGeneral = value.options.dependencies.fetchFn;
+  value.options.dependencies.fetchFn = async (url, options) => {
+    if (url !== PROTOCOL_URL) return fetchGeneral(url, options);
+    value.calls.push('protocol');
+    assert.equal(options.method, 'GET'); assert.equal(options.redirect, 'error');
+    assert.equal(options.credentials, 'omit');
+    assert.deepEqual(options.headers, { accept: 'application/json' });
+    assert.ok(options.signal instanceof AbortSignal);
+    return response(options.signal);
+  };
+  return value;
+}
+
+test('fixed protocol view reports each actual delegation predicate without credentials or authority', async () => {
+  for (const [predicate, extra, status] of [
+    ['HTTP_OK', {}, 503], ['HEALTH_OK', { ok: false }, 200],
+    ['SERVICE', { service: 'PRIVATE_SERVICE' }, 200],
+    ['OBSERVATION_SCOPE', { observationScope: 'PRIVATE_SCOPE' }, 200],
+    ['NO_ADMISSION', { maintenanceAdmissionProven: true }, 200],
+    ['OWNER_VERSION', { maintenanceOwnerAdmissionVersion: 'PRIVATE_VERSION' }, 200],
+  ]) {
+    const response = () => Response.json(protocolHealth(extra), { status });
+    const f = protocolFixture(response), report = await inspectSovereignControlSystemV1(f.options);
+    assert.equal(report.protocol?.available, true, predicate);
+    assert.equal(report.protocol.matches, false);
+    assert.deepEqual(report.protocol.failedPredicates, [predicate]);
+    assert.equal(report.protocol.expectedVersion, SOVEREIGN_MAINTENANCE_OWNER_VERSION);
+    assert.equal(report.protocol.observedVersion, predicate === 'OWNER_VERSION' ? 'OTHER' : SOVEREIGN_MAINTENANCE_OWNER_VERSION);
+    const published = projectSovereignControlSystemStatusV1(report);
+    assert.deepEqual(published.protocol, report.protocol);
+    assert.equal(published.nativeRuntime.qualificationObserved, false);
+    assert.equal(published.source.loadedSourceBytesProven, false);
+    assert.equal(published.requestLedger.relayWorkspaceIdentityProven, false);
+    assert.equal(JSON.stringify(published).includes('PRIVATE_'), false);
+    let credentials = 0, requests = 0;
+    const refused = await callSovereignMaintenanceOwnerV1({ actionId: 'repair-goal-builder-flow',
+      arguments: { actionId: 'repair-goal-builder-flow' } }, {
+      readFileFn: async () => { credentials++; assert.fail('protocol refusal must not read credentials'); },
+      fetchFn: async (url, options) => { requests++; assert.equal(url, PROTOCOL_URL);
+        assert.equal(options.method, 'GET'); return response(); },
+    });
+    assert.equal(refused.blocker, 'SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED');
+    assert.equal(credentials, 0); assert.equal(requests, 1);
+    assert.equal(f.calls.filter(call => call === 'native').length, 1, 'existing native observation is not repeated');
+  }
+});
+
+test('matching protocol is an owner-bracketed observation and survives bounded public reprojection', async () => {
+  const f = protocolFixture(), report = await inspectSovereignControlSystemV1(f.options);
+  assert.equal(report.protocol?.matches, true); assert.deepEqual(report.protocol.failedPredicates, []);
+  assert.equal(report.protocol.observedVersion, SOVEREIGN_MAINTENANCE_OWNER_VERSION);
+  assert.equal(report.protocol.expectedVersion, SOVEREIGN_MAINTENANCE_OWNER_VERSION);
+  assert.equal(report.protocol.reason, ''); assert.equal(report.protocol.observedAtUtc, NOW);
+  assert.deepEqual(f.calls, ['source', 'caller', 'owner', 'health', 'protocol', 'owner', 'native', 'ledger', 'source']);
+  const published = projectSovereignControlSystemStatusV1(report);
+  assert.equal(published.protocol.matches, true);
+  assert.deepEqual(projectSovereignControlSystemStatusV1(JSON.parse(JSON.stringify(published))), published);
+  assert.ok(Buffer.byteLength(JSON.stringify(published)) <= SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1);
+});
+
+test('protocol version observations are closed and never publish unknown response strings', async () => {
+  for (const [value, expected] of [[undefined, 'MISSING'], [null, 'INVALID'], [123, 'INVALID'], ['x'.repeat(129), 'INVALID'],
+    ['C:\\PRIVATE_TOKEN', 'OTHER'], ['2026-10-27-private-token-v1', 'OTHER']]) {
+    const report = await inspectSovereignControlSystemV1(protocolFixture(() => Response.json(
+      protocolHealth({ maintenanceOwnerAdmissionVersion: value }))).options);
+    assert.equal(report.protocol?.observedVersion, expected);
+    assert.deepEqual(report.protocol.failedPredicates, ['OWNER_VERSION']);
+    assert.equal(JSON.stringify(report).includes('PRIVATE_TOKEN'), false);
+    assert.equal(JSON.stringify(report).includes('private-token'), false);
+  }
+});
+
+test('owner or source movement invalidates protocol observation without inferring custody release', async () => {
+  let owners = 0, source = 0;
+  const changedOwner = protocolFixture(undefined, { readOwner: () => nativeOwner({ pid: ++owners }) });
+  const first = await inspectSovereignControlSystemV1(changedOwner.options);
+  assert.equal(first.protocol?.available, false); assert.equal(first.protocol.matches, false);
+  assert.equal(first.protocol.reason, 'SOVEREIGN_CONTROL_SYSTEM_OWNER_CHANGED');
+  const changedSource = protocolFixture(undefined, { readSourceHead: () => ++source === 1 ? HEAD : 'e'.repeat(40) });
+  const second = await inspectSovereignControlSystemV1(changedSource.options);
+  assert.equal(second.protocol?.available, false); assert.equal(second.protocol.matches, false);
+  assert.equal(second.protocol.reason, 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED');
+  for (const report of [first, second]) {
+    assert.equal(Object.hasOwn(report.protocol, 'failedPredicates'), false);
+    assert.equal(Object.hasOwn(report.protocol, 'observedVersion'), false);
+    assert.equal(JSON.stringify(report).includes('executionCustodyReleased'), false);
+  }
+});
+
+test('invalid or oversized protocol bodies remain closed failures and do not erase general health', async () => {
+  for (const [response, reason] of [
+    [() => Promise.reject(Error('PRIVATE_NETWORK_ERROR')), 'SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_UNPROVEN'],
+    [() => new Response('PRIVATE_NOT_JSON'), 'SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_UNPROVEN'],
+    [() => new Response(new Uint8Array([0xff])), 'SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_UNPROVEN'],
+    [() => new Response('x'.repeat(65537)), 'SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_BOUND_EXCEEDED'],
+  ]) {
+    const report = await inspectSovereignControlSystemV1(protocolFixture(response).options);
+    assert.equal(report.protocol?.available, false); assert.equal(report.protocol.reason, reason);
+    assert.equal(report.guardian.available, true); assert.equal(report.observationCompleted, true);
+    assert.equal(JSON.stringify(report).includes('PRIVATE_'), false);
+  }
+});
+
+test('protocol deadline bounds a stalled response body even when a reader ignores abort', { timeout: 10000 }, async () => {
+  let cancelled = false, released = false, signal;
+  const f = protocolFixture(value => { signal = value; return { ok: true, body: { getReader: () => ({
+    read: () => new Promise(() => {}), cancel: () => { cancelled = true; return new Promise(() => {}); },
+    releaseLock: () => { released = true; },
+  }) } }; });
+  const started = performance.now(), report = await inspectSovereignControlSystemV1(f.options);
+  assert.equal(report.protocol?.reason, 'SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_TIMEOUT');
+  assert.equal(report.protocol.available, false); assert.equal(signal.aborted, true);
+  assert.equal(cancelled, true); assert.equal(released, true);
+  assert.ok(performance.now() - started < 9000);
+  assert.equal(report.guardian.available, true);
+});
+
 test('completed source-bound observation preserves refusal without granting repair or claiming loaded bytes', async () => {
   const { options, calls } = fixture(), report = await inspectSovereignControlSystemV1(options);
-  assert.deepEqual(calls, ['source', 'caller', 'owner', 'health', 'owner', 'native', 'ledger', 'source']);
+  assert.deepEqual(calls, ['source', 'caller', 'owner', 'health', 'protocol', 'owner', 'native', 'ledger', 'source']);
   assert.equal(report.observationCompleted, true);
   assert.equal(report.owner.stable, true);
   assert.equal(report.caller.sid, SID);
@@ -268,7 +393,17 @@ test('observation remains outside the immutable native execution closure', () =>
   for (const path of ['scripts/sovereign-commander-native-inspect.mjs', 'shared/agents/sovereignControlSystemStatusV1.mjs',
     'scripts/control-tower-build-consumer-v1.mjs', 'scripts/battle-bridge-sovereign-relay-daemon.mjs'])
     assert.equal(closure.paths.includes(path), false);
-  // Same 40..258 member bound enforced by the exact installed Windows runtime.
-  // Never drop required source paths to satisfy an outdated test-only cap.
-  assert.ok(closure.paths.length >= 40 && closure.paths.length <= 258);
+  // The installer and native verifier own the package bound. Check their
+  // agreement instead of retaining a third, stale cap in this observation test.
+  // This does not change either enforcing implementation or the closure.
+  const nativeSource = readFileSync(new URL('./windows/SovereignFixedRuntimeIdentityV1.cs', import.meta.url), 'utf8');
+  const installerSource = readFileSync(new URL('./sovereign-fixed-runtime-installer-candidate-v1.mjs', import.meta.url), 'utf8');
+  const nativeBounds = [...nativeSource.matchAll(/manifest\.Files\.Length\s*>\s*(\d+)\b/g)];
+  const installerBounds = [...installerSource.matchAll(/FIXED_RUNTIME_SOURCE_PATHS_V1\.length\s*>\s*(\d+)\b/g)];
+  assert.equal(nativeBounds.length, 1, 'native verifier must retain one explicit package bound');
+  assert.equal(installerBounds.length, 1, 'installer must retain one explicit package bound');
+  const maximumMembers = Number(nativeBounds[0][1]);
+  assert.equal(Number(installerBounds[0][1]), maximumMembers, 'installer/native package bounds must agree');
+  assert.ok(Number.isSafeInteger(maximumMembers) && maximumMembers >= 40);
+  assert.ok(closure.paths.length >= 40 && closure.paths.length <= maximumMembers);
 });

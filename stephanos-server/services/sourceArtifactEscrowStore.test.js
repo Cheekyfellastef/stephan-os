@@ -432,3 +432,92 @@ test('escrow refuses outer whitespace aliases and case-insensitive Windows colli
     artifactFiles: [{ ...artifactA, path: internalSpacePath }],
   }), options), 'legitimate internal spaces remain valid');
 });
+
+test('Forge escrow rejects raw Git aliases, Win32 device basenames and env suffixes', async () => {
+  const options = await roots();
+  const original = input();
+  const deniedPaths = [
+    "shared/runtime/CON",
+    "shared/runtime/CON.txt",
+    "shared/runtime/COM1.js",
+    "shared/runtime/LPT9.test.mjs",
+    "shared/agents/prn.js",
+    "shared/agents/AUX",
+    "shared/agents/NUL.log",
+    "shared/agents/inner/com9.js",
+    "shared/runtime\\stephanosMemory.mjs",
+    "./shared/runtime/stephanosMemory.mjs",
+    ".//shared/runtime/stephanosMemory.mjs",
+    "shared\\agents/example.mjs",
+    "shared/agents/token.env",
+    "shared/agents/secrets.env",
+    "shared/agents/config.env.local",
+    "shared/agents/CONFIG.ENV.STAGING",
+    "shared/runtime/.env.production",
+    "shared/agents/./example.mjs",
+    "runtime/file.mjs",
+    "apps/stephanos/dist/index.js",
+    "shared/runtime/nested/runtime/payload.mjs"
+];
+  for (const path of deniedPaths) {
+    const changed = { ...original.changedFiles[0], path };
+    const artifact = { ...original.artifactFiles[0], path };
+    assert.equal(await persistSourceArtifactEscrowV1(input({
+      changedFiles: [changed], artifactFiles: [artifact],
+    }), options), null, `unsafe or noncanonical tracked path: ${path}`);
+  }
+});
+
+test('Forge escrow keeps legitimate canonical tracked runtime modules and benign names', async () => {
+  const options = await roots();
+  const original = input();
+  const allowedPaths = [
+    "shared/runtime/stephanosMemory.mjs",
+    "shared/agents/valid name.mjs",
+    "shared/agents/CONSOLE.mjs",
+    "shared/agents/COM10.js",
+    "shared/agents/env-example.mjs",
+    "shared/agents/example.mjs"
+];
+  for (const path of allowedPaths) {
+    const changed = { ...original.changedFiles[0], path };
+    const artifact = { ...original.artifactFiles[0], path };
+    assert.ok(await persistSourceArtifactEscrowV1(input({
+      changedFiles: [changed], artifactFiles: [artifact],
+    }), options), `canonical tracked source stays admissible: ${path}`);
+  }
+});
+
+test('Forge escrow denies shared/runtime symlink modes while preserving regular tracked source', async () => {
+  const options = await roots();
+  const original = input();
+  const runtimePath = 'shared/runtime/stephanosMemory.mjs';
+  const changeFor = (path, bytes) => {
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    const afterBlobSha = createHash('sha1')
+      .update(Buffer.from(`blob ${bytes.length}\0`, 'utf8'))
+      .update(bytes).digest('hex');
+    return { ...original.changedFiles[0], path, afterBlobSha, sha256: digest };
+  };
+  for (const target of ['../../.env', '../../runtime-data/private.json', 'otherSource.mjs']) {
+    const bytes = Buffer.from(target, 'utf8');
+    const changed = changeFor(runtimePath, bytes);
+    const artifact = { ...changed, mode: '120000', deleted: false, contentBase64: bytes.toString('base64') };
+    assert.equal(await persistSourceArtifactEscrowV1(input({
+      changedFiles: [changed], artifactFiles: [artifact],
+    }), options), null, `shared/runtime symlink must not reach escrow: ${target}`);
+  }
+  for (const mode of ['100644', '100755']) {
+    const changed = { ...original.changedFiles[0], path: runtimePath };
+    const artifact = { ...original.artifactFiles[0], path: runtimePath, mode };
+    assert.ok(await persistSourceArtifactEscrowV1(input({
+      changedFiles: [changed], artifactFiles: [artifact],
+    }), options), `regular shared/runtime source stays admissible: ${mode}`);
+  }
+  const target = Buffer.from('other.mjs', 'utf8');
+  const changed = changeFor('shared/agents/source-link.mjs', target);
+  const artifact = { ...changed, mode: '120000', deleted: false, contentBase64: target.toString('base64') };
+  assert.ok(await persistSourceArtifactEscrowV1(input({
+    changedFiles: [changed], artifactFiles: [artifact],
+  }), options), 'unrelated tracked symlink policy remains unchanged');
+});

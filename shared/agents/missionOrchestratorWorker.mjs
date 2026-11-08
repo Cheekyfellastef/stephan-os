@@ -200,6 +200,11 @@ export function projectMissionWorkerActionState(state, options = {}) {
 
 export function buildMissionWorkerAction(state, options = {}) {
   if (!state || typeof state !== 'object') return blocked({ missionId: 'invalid', revision: 0, currentPhase: 'BLOCKED' }, 'Mission state is required.');
+  if (state.nextAction?.type === 'RECONCILE_GOAL_ACCEPTANCE') {
+    return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'wait'),
+      missionId: state.missionId, actionKind: 'wait', executable: false,
+      reason: 'EXTERNAL_MERGE_GOAL_ACCEPTANCE_REQUIRED', finalVerdict: 'NO_ACTION_REQUIRED' };
+  }
   if (['COMPLETE', 'CANCELLED', 'BLOCKED', 'AWAITING_OPERATOR_APPROVAL'].includes(state.currentPhase)) {
     return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'wait'), missionId: state.missionId, actionKind: 'wait', executable: false, reason: state.currentPhase, finalVerdict: 'NO_ACTION_REQUIRED' };
   }
