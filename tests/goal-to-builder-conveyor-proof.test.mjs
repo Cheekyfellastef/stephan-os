@@ -3,6 +3,15 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+// Exercise the original #2002 continuation predicate in the existing
+// GitHub-hosted Goal-to-Builder Conveyor proof, without a new workflow.
+import '../shared/agents/goalBuildingAgentV1.continuation.test.mjs';
+// Original Goal #1558 PR Estate proof runs inside the existing conveyor CI, no extra workflow.
+import '../shared/agents/prEstateReconciler.test.mjs';
+// Original #1558 CLI mode-boundary regression executes in the existing hosted Node conveyor proof.
+import '../scripts/pr-estate-reconcile.test.mjs';
+// Original Goal #1451/#2670 Captain Bridge PR-open-state truth, using the existing conveyor CI.
+import '../shared/agents/captains-bridge-orchestrator.test.mjs';
 
 import {
   buildSchedulerGoalsFromProgrammeSources,

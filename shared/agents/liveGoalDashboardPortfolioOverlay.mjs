@@ -35,7 +35,9 @@ function timestampMs(value) {
 function freshness(timestamp, nowMs, staleAfterMs) {
   const observedMs = timestampMs(timestamp);
   if (!Number.isFinite(observedMs)) return { truth: UNKNOWN, ageMs: null };
-  const ageMs = Math.max(0, nowMs - observedMs);
+  // Future observations cannot prove current execution or completion.
+  if (observedMs > nowMs) return { truth: UNKNOWN, ageMs: null };
+  const ageMs = nowMs - observedMs;
   return { truth: ageMs > staleAfterMs ? STALE : CURRENT, ageMs };
 }
 
@@ -94,19 +96,41 @@ function workspaceGoalCard(record, input, options) {
   const proofFreshness = proofRecord
     ? freshness(proofRecord.timestampUtc || proofRecord.checkedAtUtc || proofRecord.publishedAtUtc || proofRecord.createdAt, options.nowMs, options.staleAfterMs)
     : { truth: UNKNOWN, ageMs: null };
+  // A fresh receipt is not passing proof unless its explicit outcome succeeds
+  // and it links to a nonempty canonical proof reference. Never infer live
+  // completion from timestamp freshness alone.
+  const proofStatus = text(proofRecord?.status || proofRecord?.verdict).toUpperCase();
+  const proofPassed = ['PASS', 'PASSED', 'SUCCESS', 'SUCCEEDED', 'VERIFIED'].includes(proofStatus);
+  const proofRefs = [...new Set([...list(proofRecord?.refs), ...list(proofRecord?.proofRefs)]
+    .filter((ref) => typeof ref === 'string').map((ref) => ref.trim()).filter(Boolean))];
+  // A passing receipt from a different or unidentified source head does not
+  // acknowledge this goal's current source identity. Preserve legacy displays
+  // only when neither record declares a source head.
+  const goalHead = text(record.sourceHead || record.headSha || record.expectedHead).toLowerCase();
+  const proofHead = text(proofRecord?.sourceHead || proofRecord?.headSha || proofRecord?.expectedHead).toLowerCase();
+  const sourceIdentityDeclared = Boolean(goalHead || proofHead);
+  const proofHeadBound = !sourceIdentityDeclared
+    || (SHA40.test(goalHead) && SHA40.test(proofHead) && goalHead === proofHead);
+  const proofTruth = proofFreshness.truth === CURRENT && (!proofPassed || !proofRefs.length || !proofHeadBound)
+    ? UNKNOWN : proofFreshness.truth;
   const blockers = [];
   if (statusFreshness.truth !== CURRENT) blockers.push(`${statusFreshness.truth}_STATUS_RECORD`);
-  if (proofFreshness.truth !== CURRENT) blockers.push(`${proofFreshness.truth}_PROOF_RECORD`);
+  if (proofTruth !== CURRENT) blockers.push(`${proofTruth}_PROOF_RECORD`);
+  if (proofFreshness.truth === CURRENT && !proofPassed) blockers.push('PROOF_RESULT_NOT_PASSED');
+  if (proofFreshness.truth === CURRENT && proofPassed && !proofRefs.length) blockers.push('PROOF_REFERENCE_MISSING');
+  if (proofFreshness.truth === CURRENT && proofPassed && proofRefs.length && !proofHeadBound) blockers.push('PROOF_SOURCE_HEAD_UNBOUND');
   return Object.freeze({
     issue: identity,
     title: text(record.title, 'Shared Workspace goal'),
     statusTruth: statusFreshness.truth,
-    proofTruth: proofFreshness.truth,
+    proofTruth,
     capabilityTruth: 'not-required',
     summary: text(record.summary, `Status: ${text(record.status, 'open')}`),
-    proofRefs: list(proofRecord?.refs || proofRecord?.proofRefs),
+    proofRefs,
     blockers,
-    exactNextAction: blockers.length
+    exactNextAction: !proofHeadBound && proofFreshness.truth === CURRENT
+      ? `Reconcile exact source head for ${identity} between the goal and its proof receipt before claiming completion.`
+      : blockers.length
       ? 'Refresh the goal/proof records from canonical programme evidence before claiming current completion.'
       : text(record.nextAction, 'Continue the current bounded goal through its proof and completion contract.'),
     source: 'shared-workspace-goal-record',
@@ -143,22 +167,31 @@ function workflowChecksStatus(pr = {}, workflows = []) {
 
 function effectiveChecksStatus(pr = {}, workflows = []) {
   const direct = text(pr.checksStatus, 'unknown').toLowerCase();
+  // An exact-head check rollup outranks stale workflow summaries; invalid
+  // or partial batches remain UNKNOWN and never inherit a historical green.
+  if (pr.checkBatchObserved === true) {
+    if (direct === 'failed' || direct === 'pending') return direct;
+    return exactPrHead(pr) && direct === 'passed' ? 'passed' : 'unknown';
+  }
   const fromWorkflows = workflowChecksStatus(pr, workflows);
   if (direct === 'failed' || fromWorkflows === 'failed') return 'failed';
   if (direct === 'pending' || fromWorkflows === 'pending') return 'pending';
   if (!exactPrHead(pr)) return 'unknown';
-  if (direct === 'passed' || fromWorkflows === 'passed') return 'passed';
+  if (direct === 'passed') return 'passed';
+  if (fromWorkflows === 'passed') return 'passed';
   return 'unknown';
 }
 
 function prState(pr = {}) {
   const checks = text(pr.checksStatus, 'unknown').toLowerCase();
-  if (pr.draft === true) return 'BUILDING';
   if (checks === 'failed') return 'BLOCKED';
+  // A draft is source preparation, not evidence of a live worker heartbeat.
+  if (pr.draft === true) return 'VERIFYING';
   if (checks === 'pending') return 'VERIFYING';
   if (checks === 'passed' && /approval/i.test(text(pr.mergeReadiness))) return 'APPROVAL_REQUIRED';
-  if (checks === 'passed') return 'REVIEWED';
-  return 'ACTIVE';
+  if (checks === 'passed') return 'VERIFYING';
+  // A PR without exact-head checks or an execution heartbeat is not an active builder.
+  return 'UNKNOWN';
 }
 
 function prNextAction(pr = {}) {
@@ -211,6 +244,11 @@ export function overlayGoalDashboardWithLivePortfolio(input = {}) {
   const baseProjection = input.baseProjection || {};
   const liveProjection = input.liveProjection || {};
   const githubTelemetry = liveProjection.githubTelemetry || {};
+  const observedGithubPrCount = githubTelemetry.adapterAvailable === true
+    ? list(githubTelemetry.pullRequests).length : 0;
+  const totalOpenPullRequestCount = Number.isSafeInteger(githubTelemetry.totalOpenPullRequestCount)
+    && githubTelemetry.totalOpenPullRequestCount >= observedGithubPrCount
+    ? githubTelemetry.totalOpenPullRequestCount : null;
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : 60 * 60 * 1000;
   const githubFreshness = githubTelemetry.adapterAvailable === true
@@ -272,7 +310,15 @@ export function overlayGoalDashboardWithLivePortfolio(input = {}) {
     portfolioObservedAt: new Date(nowMs).toISOString(),
     sourceTruth: dynamicTruth,
     goals,
-    liveGithubPrCount: githubCards.length,
+    liveGithubPrCount: githubTelemetry.adapterAvailable === true
+      // The REST adapter observes at most one 100-row page. All existing
+      // consumers display this value as text; a saturated page is a lower
+      // bound until the independent repository total is available.
+      ? (totalOpenPullRequestCount ?? (observedGithubPrCount >= 100 ? `${observedGithubPrCount}+` : observedGithubPrCount)) : 0,
+    observedGithubPrCount,
+    githubPrCountIsExact: githubTelemetry.adapterAvailable === true
+      && (totalOpenPullRequestCount !== null || observedGithubPrCount < 100),
+    renderedGithubPrCount: githubCards.length,
     liveWorkspaceGoalCount: workspaceCards.length,
     operatorAttention,
     finalVerdict: blockers.length ? 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED' : (dynamicTruth === CURRENT ? 'LANDING_GOAL_DASHBOARD_CURRENT' : 'LANDING_GOAL_DASHBOARD_STALE_OR_UNKNOWN'),

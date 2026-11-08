@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { refreshMailboxReceiptIndex } from '../shared/agents/mailboxReceiptIndex.mjs';
+import { projectMailboxReceiptRequestId } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import {
   MAILBOX_PROCESS_SOURCE_HEAD,
@@ -301,6 +302,17 @@ export function reconcileStaleAcceptedMailboxReceipts({
   const timestampUtc = new Date(nowMs).toISOString();
   const acceptedIds = [...new Set(Array.isArray(state.acceptedRequestIds) ? state.acceptedRequestIds.map(String) : [])]
     .filter((requestId) => SAFE_REQUEST_ID_PATTERN.test(requestId));
+  if (acceptedIds.some((requestId) => !projectMailboxReceiptRequestId(requestId))) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'MAILBOX_ACCEPTED_RECEIPT_IDENTITY_UNSAFE',
+      finalVerdict: 'MAILBOX_ACCEPTED_RECONCILIATION_BLOCKED',
+      reconciledCount: 0,
+      expiredCount: 0,
+      freshCount: 0,
+      replayPerformed: false,
+    });
+  }
   let reconciledCount = 0;
   let expiredCount = 0;
   let freshCount = 0;

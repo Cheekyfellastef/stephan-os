@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Stephanos Control Tower</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; box-sizing: border-box; font: 16px/1.6 system-ui, sans-serif; background: #0b0f1a; color: #e5eef4; }
+      main { max-width: 36rem; text-align: center; }
+      a { display: inline-block; padding: 12px 18px; border-radius: 8px; background: #214b43; color: #b8f1df; }
+      a:focus-visible { outline: 3px solid #b8f1df; outline-offset: 4px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Control Tower</h1>
+      <p>Opening your private Stephanos project control surface.</p>
+      <a id="control-tower-destination" href="https://stephanos-control-tower.timelesspearl.chatgpt.site" target="_top" rel="noreferrer">Open Control Tower</a>
+    </main>
+    <script>
+      // This fixed shortcut has no execution authority. Never forward launcher
+      // query parameters or frame the private Site and its sign-in flow.
+      if (window.self === window.top) {
+        window.location.replace(document.getElementById('control-tower-destination').href);
+      }
+    </script>
+  </body>
+</html>
