@@ -223,7 +223,7 @@ Case 'actual native process terminal time is consumed and ages out' {
 # No protected checkout, network, elevation or Core process is touched.
 Case 'actual fixed local Git continuity and adversarial drift' {
     $git = 'C:\Program Files\Git\cmd\git.exe'
-    $scratch = Join-Path ([IO.Path]::GetTempPath()) ('core-local-git-' + [Guid]::NewGuid().ToString('N'))
+    $scratch = Join-Path ([IO.Path]::GetTempPath()) ('core local git ' + [Guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($scratch)
     $savedGitEnv = @(Get-ChildItem Env: | Where-Object { $_.Name -match '^GIT_' } | ForEach-Object {
         [pscustomobject]@{ Name=$_.Name; Value=$_.Value }
@@ -261,7 +261,11 @@ Case 'actual fixed local Git continuity and adversarial drift' {
         function Assert-CoreRecoveryEnvironment { }
         $sourceDigests[$pin] = Get-CoreRecoveryDigest $pin
         foreach ($file in $gitMetadataPaths) { $gitMetadataDigests[$file] = Get-CoreRecoveryDigest $file }
+        $fastLocalClock = [Diagnostics.Stopwatch]::StartNew()
         Assert-CoreRecoveryLocalSource
+        $fastLocalClock.Stop()
+        if ($fastLocalClock.Elapsed.TotalSeconds -gt 4.9) { throw 'CORE_RECOVERY_LOCAL_PROOF_EXCEEDS_PARENT_FRESHNESS_BUDGET' }
+        Write-Output ('CORE_RECOVERY_LOCAL_GIT_PROOF_SECONDS=' + [Math]::Round($fastLocalClock.Elapsed.TotalSeconds, 3))
 
         [IO.File]::WriteAllText($pin, 'changed')
         Denied { Assert-CoreRecoveryLocalSource }
