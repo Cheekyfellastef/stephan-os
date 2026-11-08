@@ -74,8 +74,9 @@ test('watchdog telemetry fails closed for unallowlisted or ambiguous-looking res
   const facts = projectWorkerWatchdogBeaconFacts(record, HEAD);
   assert.equal(facts.restartBlocker, '');
   assert.equal(facts.restartVerdict, '');
-  assert.equal(facts.sourceHead, HEAD);
-  assert.equal(facts.exactHeadMatch, true);
+  // An explicitly malformed restart head must NOT fall back to older evidence.
+  assert.equal(facts.sourceHead, '');
+  assert.equal(facts.exactHeadMatch, false);
   assert.equal(facts.exactNextAction, 'READ_WATCHDOG_FAILURE_BOUNDARY');
 
   const projected = projectBeaconStatus(record, SPEC, NOW, HEAD);
@@ -125,6 +126,7 @@ test('typed original watchdog Inspect failure reaches beacon without leaking pri
   for (const scenario of cases) {
     const record = failedWatchdog({
       classification: 'WORKER_WATCHDOG_PROBE_FAILED',
+      restartAttempted: false,
       restartBlocker: '',
       restartSourceHead: '',
       initialAssessment: null,
@@ -135,7 +137,7 @@ test('typed original watchdog Inspect failure reaches beacon without leaking pri
     assert.equal(facts.classification, 'WORKER_WATCHDOG_PROBE_FAILED', scenario.label);
     assert.equal(facts.probeFailureCode, scenario.code, scenario.label);
     assert.equal(facts.exactNextAction, scenario.action, scenario.label);
-    assert.equal(facts.restartAttempted, true);
+    assert.equal(facts.restartAttempted, false);
     assert.equal(facts.rawErrorPublished, false);
     const projected = projectBeaconStatus(record, SPEC, NOW, HEAD);
     assert.equal(projected.blocker, scenario.code === 'WATCHDOG_INSPECT_CAUSE_UNPROVEN'
