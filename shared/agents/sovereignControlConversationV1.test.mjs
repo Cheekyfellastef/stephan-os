@@ -62,6 +62,85 @@ test('unrelated synthesis and the existing exact /sovereign tool retain their ro
   assert.equal(classifySovereignControlConversationV1({ prompt: 'Sovereign repair status', requestedTargetId: 'openclaw-local' }).applies, false);
 });
 
+test('continuation and explicit repairs retain their intent without a metered fallback or invented submission', () => {
+  for (const [prompt, requestedTargetId] of [
+    ['keep going', 'control-tower'],
+    ['continue', 'control-tower'],
+    ['please continue building now', 'sovereign-commander'],
+    ['get Stephanos working properly', 'control-tower'],
+    ['can we get Stephanos working properly?', 'control-tower'],
+    ['can we keep building?', 'control-tower'],
+    ['keep building the project', 'control-tower'],
+    ['keep building the next eligible goal', 'control-tower'],
+    ['please keep building Stephanos', 'control-tower'],
+    ['build once', 'control-tower'],
+    ['Control Tower keep going', 'everyone'],
+    ['Control Tower, can we keep building?', 'everyone'],
+    ['Control Tower, continue', 'everyone'],
+    ['Sovereign keep going', 'everyone'],
+    ['Sovereign, let’s keep going', 'everyone'],
+    ['/control-tower keep going', 'everyone'],
+    ['Control Tower can you fix the blocked build', 'everyone'],
+    ['Control Tower fix the stopped workers', 'everyone'],
+    ['resume the stopped worker', 'control-tower'],
+    ['repair the status projection', 'control-tower'],
+    ['fix the latest receipt display', 'control-tower'],
+  ]) {
+    const classification = classifySovereignControlConversationV1({ prompt, requestedTargetId });
+    assert.equal(classification.applies, true, prompt);
+    assert.equal(classification.intent, 'BUILD_NEXT_ELIGIBLE_GOAL', prompt);
+    const result = reply({ classification });
+    assert.equal(result.modelInvoked, false, prompt);
+    assert.equal(result.nativeActionSubmitted, false, prompt);
+    assert.equal(result.handoff.state, 'NOT_SUBMITTED', prompt);
+    assert.equal(result.handoff.requestSubmitted, false, prompt);
+    assert.equal(result.handoff.executionAuthority, false, prompt);
+    assert.equal(result.sourceMutationAllowed, false, prompt);
+  }
+});
+
+test('negation, explanation, conditional continuation and status nouns never become action handoffs', () => {
+  for (const [prompt, expectedIntent] of [
+    ['Control Tower, do not keep going', 'CAPABILITIES'],
+    ['Control Tower, don’t keep building', 'CAPABILITIES'],
+    ['Control Tower, can’t you keep going?', 'CAPABILITIES'],
+    ['Control Tower, never continue building', 'CAPABILITIES'],
+    ['Control Tower, continue explaining the repair', 'CAPABILITIES'],
+    ['Control Tower, continue showing the build status', 'STATUS'],
+    ['Control Tower, keep going with the explanation', 'CAPABILITIES'],
+    ['Control Tower, explain how to get Stephanos working', 'STATUS'],
+    ['Control Tower, how can we keep building?', 'CAPABILITIES'],
+    ['Control Tower, should we keep going?', 'CAPABILITIES'],
+    ['Control Tower, if the meter resets, keep going', 'CAPABILITIES'],
+    ['Control Tower, continue when the worker is ready', 'STATUS'],
+    ['Control Tower, keep building if there is capacity', 'CAPABILITIES'],
+    ['Control Tower, build when the worker is ready', 'STATUS'],
+    ['Control Tower, build only when I ask', 'STATUS'],
+    ['Control Tower, get Stephanos working when there is capacity', 'STATUS'],
+    ['Control Tower, get Stephanos working after the current task finishes', 'STATUS'],
+    ['Control Tower, get Stephanos working once there is capacity', 'STATUS'],
+    ['Control Tower, resume before the old worker has stopped', 'STATUS'],
+    ['Control Tower, fix the build if a reviewer becomes available', 'CAPABILITIES'],
+    ['Control Tower, build status', 'STATUS'],
+    ['Control Tower, please repair status', 'STATUS'],
+    ['Control Tower, can you show build history?', 'STATUS'],
+    ['Control Tower, why is the build blocked?', 'STATUS'],
+  ]) {
+    const classification = classifySovereignControlConversationV1({ prompt, requestedTargetId: 'everyone' });
+    assert.equal(classification.applies, true, prompt);
+    assert.equal(classification.intent, expectedIntent, prompt);
+    const result = reply({ classification });
+    assert.equal(result.handoff, null, prompt);
+    assert.equal(result.modelInvoked, false, prompt);
+    assert.equal(result.nativeActionSubmitted, false, prompt);
+  }
+  for (const prompt of ['keep going', 'continue', 'get Stephanos working properly', 'Please keep building the CSS layout']) {
+    assert.equal(classifySovereignControlConversationV1({ prompt, requestedTargetId: 'everyone' }).applies, false, prompt);
+  }
+  assert.equal(classifySovereignControlConversationV1({ prompt: 'Control Tower keep going', requestedTargetId: 'openclaw-local' }).applies, false);
+  assert.equal(classifySovereignControlConversationV1({ prompt: 'Control Tower reboot', requestedTargetId: 'everyone' }).intent, 'UNSUPPORTED_OPERATION');
+});
+
 test('oversized addressed diagnostics stay on a bounded no-model refusal path', () => {
   for (const [prefix, requestedTargetId] of [
     ['', 'control-tower'], ['', 'sovereign-commander'], ['/control-tower inspect ', 'everyone'],

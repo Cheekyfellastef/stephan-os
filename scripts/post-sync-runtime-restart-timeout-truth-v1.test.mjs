@@ -48,7 +48,7 @@ test('approved runtime restart bounds every Win32 process CIM observation', asyn
 
 test('cleanup process observation fails closed when its bounded CIM query fails', async () => {
   const source = await readFile(new URL('./windows/restart-approved-stephanos-runtime.ps1', import.meta.url), 'utf8');
-  const cleanupBlock = source.match(/if \(\$ExpectedProcessId -gt 0[\s\S]*?MISSION_WORKER_CLEANUP_PROCESS_DID_NOT_STOP' \}/)?.[0] ?? '';
+  const cleanupBlock = source.match(/if \(\$ExpectedProcessId -gt 0 -and -not \(Wait-UntilOperationDeadline\b[\s\S]*?MISSION_WORKER_CLEANUP_PROCESS_DID_NOT_STOP' \}/)?.[0] ?? '';
 
   assert.ok(cleanupBlock, 'expected the canonical cleanup process observation block');
   assert.match(cleanupBlock, /Get-CimInstance Win32_Process[^\r\n]*-OperationTimeoutSec\s+1\b[^\r\n]*-ErrorAction\s+Stop\b/);

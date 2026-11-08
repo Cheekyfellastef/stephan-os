@@ -2,6 +2,7 @@ import { applyHolodeckLocomotionToView } from './holodeck-locomotion-v1.mjs';
 import { HOLODECK_ROOM, HOLODECK_TABLE, HOLODECK_CUBE, HOLODECK_CUBES, HOLODECK_OBSTACLES, HOLODECK_DISPLAY, HOLODECK_CONSOLE } from './holodeck-layout-v1.mjs';
 import { createHolodeckDisplayRenderer } from './holodeck-display-renderer-v1.mjs';
 import { rotate3, add3, scale3, normalize3 } from './holodeck-cube-physics-v1.mjs';
+import { consolePointToWorld, consoleDirectionToWorld, HOLODECK_KEYBOARD_DIALS } from './holodeck-comfort-v1.mjs';
 
 const CYAN = [0.32, 0.88, 1.0], ICE = [0.68, 0.9, 1.0], WARM = [1.0, 0.75, 0.43];
 const GRID = [0.18, 0.43, 0.53], GRID_SOFT = [0.10, 0.24, 0.31];
@@ -55,9 +56,47 @@ function box(g, center, size, color) {
   return p;
 }
 
-export function createHolodeckRoomGeometry() {
+function keyboardDial(g,dial) {
+  const [x,y,z]=dial.center,r=dial.radius,halfDepth=dial.halfDepth,segments=32;
+  // Tie each grabbable dial to the keyboard tray. The mount is generated inside
+  // keyboardRanges, so it follows the exact same 0–90 degree hinge rotation.
+  const side=x<0?-1:1;
+  const trayEdge=side*(HOLODECK_CONSOLE.halfWidth-0.06);
+  const fromX=trayEdge-side*0.035; // overlap the tray, not just touch its edge
+  const toX=x+side*0.02; // overlap the dial's axle
+  const armY=y-0.032,armZ=z-0.028;
+  box(g,[(fromX+toX)/2,armY,armZ],[Math.abs(toX-fromX),0.064,0.10],CERAMIC);
+  line(g,[fromX,y+0.002,armZ-0.05],[toX,y+0.002,armZ-0.05],CYAN);
+  box(g,[x,armY,armZ],[0.10,0.068,0.10],METAL);
+  const point=(side,angle,radius=r)=>[x+side*halfDepth,y+Math.cos(angle)*radius,z+Math.sin(angle)*radius];
+  for(let i=0;i<segments;i++) {
+    const a=i/segments*Math.PI*2,b=(i+1)/segments*Math.PI*2;
+    quad(g,point(-1,a),point(1,a),point(1,b),point(-1,b),i%2?METAL:CERAMIC);
+    for(const side of [-1,1]) {
+      triangle(g,[x+side*halfDepth,y,z],point(side,a),point(side,b),METAL);
+      line(g,point(side,a),point(side,b),CYAN);
+      if(i%4===0)line(g,point(side,a,r*0.76),point(side,a),ICE);
+    }
+  }
+  // A bright index follows the hinge angle; a wide rib is visible head-on.
+  for(const side of [-1,1])line(g,[x+side*(halfDepth+0.002),y,z],
+    [x+side*(halfDepth+0.002),y+r*0.85,z],WARM);
+  line(g,[x-halfDepth,y,z+r+0.002],[x+halfDepth,y,z+r+0.002],WARM);
+}
+
+function tiltKeyboardArrays(source,target,ranges,angle) {
+  for(const [key,range] of Object.entries(ranges))for(let i=range.start;i<range.end;i+=3) {
+    const point=Array.from(source[key].slice(i,i+3));
+    target[key].set(key==='normals'?consoleDirectionToWorld(point,angle):consolePointToWorld(point,angle),i);
+  }
+}
+
+export function createHolodeckRoomGeometry({keyboardTilt=0}={}) {
   const g = { positions: [], colors: [], solidPositions: [], solidColors: [], normals: [], emissions: [] };
   const { halfWidth:w, frontZ:f, backZ:b, height:h } = HOLODECK_ROOM;
+  const furnitureRanges={};
+  const startFurniture=id=>{furnitureRanges[id]=Object.fromEntries(['positions','solidPositions'].map(key=>[key,{start:g[key].length}]));};
+  const endFurniture=id=>{for(const key of ['positions','solidPositions'])furnitureRanges[id][key].end=g[key].length;};
   // Solid, inward-facing room shell. Grid lines are inset to avoid depth flicker.
   quad(g,[-w,0,f],[-w,0,b],[w,0,b],[w,0,f],[0.13,0.19,0.23]);
   quad(g,[-w,h,f],[w,h,f],[w,h,b],[-w,h,b],[0.19,0.26,0.31]);
@@ -90,6 +129,7 @@ export function createHolodeckRoomGeometry() {
   }
   // Thirty-second-century workstation: suspended ceramic deck, dark inset
   // work surface, detached luminous edge, and a split sculpted pedestal.
+  startFurniture('table');
   const t = HOLODECK_TABLE, cz=t.center[2];
   slab(g,{w:t.halfWidth,d:t.halfDepth,bevel:t.bevel,bottom:t.bottom,top:0.785,color:CERAMIC});
   slab(g,{w:t.halfWidth,d:t.halfDepth,bevel:t.bevel,bottom:0.803,top:t.top,color:CERAMIC});
@@ -116,6 +156,7 @@ export function createHolodeckRoomGeometry() {
     line(g,[side*0.63,0.895,cz-0.38],[side*1.03,0.895,cz-0.38],CYAN);
   }
   ring(g,[0,0.016,cz],1.62,[0.12,0.30,0.36],true);
+  endFurniture('table');
   // Wall-wide suspended holographic field; separated light rails give it depth.
   const display=HOLODECK_DISPLAY,c=HOLODECK_CONSOLE;
   for(const depth of [0.02,-0.08]) {
@@ -130,15 +171,25 @@ export function createHolodeckRoomGeometry() {
   for(const x of [-3.6,-2.4,2.4,3.6]) {
     quad(g,[x-0.04,0.40,f+0.04],[x+0.04,0.40,f+0.04],[x+0.04,0.58,display.z],[x-0.04,0.58,display.z],CYAN,1);
   }
+  startFurniture('keyboard');
   slab(g,{cz:c.center[2],w:c.halfWidth,d:c.halfDepth,bevel:c.bevel,bottom:c.bottom,top:c.top,color:CERAMIC});
   slab(g,{cz:c.center[2],w:c.halfWidth+0.012,d:c.halfDepth+0.012,bevel:c.bevel,bottom:0.88,top:0.90,color:CYAN,emissive:1});
+  const keyboardRanges=Object.fromEntries(['positions','solidPositions','normals'].map(key=>[key,{start:g[key].length}]));
+  // The thin keyboard tray tilts above the fixed desk/cube support surface.
+  slab(g,{cz:c.center[2],w:c.halfWidth-0.06,d:c.halfDepth-0.02,bevel:c.bevel,
+    bottom:c.top-0.02,top:c.top+0.001,color:DARK});
+  HOLODECK_KEYBOARD_DIALS.forEach(dial=>keyboardDial(g,dial));
+  for(const [key,range] of Object.entries(keyboardRanges))range.end=g[key].length;
   for(const side of [-1,1]) {
     box(g,[side*1.3,0.435,c.center[2]],[0.18,0.77,0.76],METAL);
     box(g,[side*1.3,0.97,-5.72],[0.18,0.26,0.56],CERAMIC);
     line(g,[side*1.3,0.08,-4.734],[side*1.3,0.82,-4.734],CYAN);
   }
+  endFurniture('keyboard');
+  const arrays=Object.fromEntries(Object.entries(g).map(([key,value])=>[key,new Float32Array(value)]));
+  if(keyboardTilt!==0)tiltKeyboardArrays(arrays,arrays,keyboardRanges,keyboardTilt);
   return Object.freeze({
-    ...Object.fromEntries(Object.entries(g).map(([key,value])=>[key,new Float32Array(value)])),
+    ...arrays,keyboardRanges,furnitureRanges,
     vertexCount:g.positions.length/3, solidVertexCount:g.solidPositions.length/3,
     primitive:'LINES', room:HOLODECK_ROOM, table:t, ideaCube:HOLODECK_CUBE, obstacles:HOLODECK_OBSTACLES,
   });
@@ -262,10 +313,10 @@ function previewMatrices(width,height,eye,target) {
   return {view,projection};
 }
 
-export function createHolodeckRoomRenderer({gl,screen}={}) {
+export function createHolodeckRoomRenderer({gl,screen,comfort=screen?.comfort,furniture=null}={}) {
   if (!gl) throw new Error('WebGL context required');
   const geometry=createHolodeckRoomGeometry(),program=createProgram(gl),buffers=[];
-  const display=screen?createHolodeckDisplayRenderer({gl,screen}):null;
+  const display=screen?createHolodeckDisplayRenderer({gl,screen,comfort,furniture}):null;
   const attributes=Object.fromEntries(['Position','Color','Normal','Emission'].map(name=>[name,gl.getAttribLocation(program,`a${name}`)]));
   const projectionLocation=gl.getUniformLocation(program,'uProjection'),viewLocation=gl.getUniformLocation(program,'uView');
   const glassLocation=gl.getUniformLocation(program,'uGlass'),eyeLocation=gl.getUniformLocation(program,'uEyePosition');
@@ -276,6 +327,29 @@ export function createHolodeckRoomRenderer({gl,screen}={}) {
   const solid={Position:buffer(geometry.solidPositions),Color:buffer(geometry.solidColors),
     Normal:buffer(geometry.normals),Emission:buffer(geometry.emissions)};
   const lines={Position:buffer(geometry.positions),Color:buffer(geometry.colors)};
+  const roomArrays=Object.fromEntries(['positions','solidPositions','normals']
+    .map(key=>[key,geometry[key].slice()]));
+  let roomVersion='';
+  function updateRoom() {
+    const tilt=comfort?.getState().keyboardTilt??0;
+    const offsets=furniture?.getState?.()??{table:[0,0,0],keyboard:[0,0,0]};
+    const version=JSON.stringify([tilt,offsets.table,offsets.keyboard]);
+    if(version===roomVersion)return;
+    roomVersion=version;
+    for(const key of ['positions','solidPositions','normals'])roomArrays[key].set(geometry[key]);
+    tiltKeyboardArrays(geometry,roomArrays,geometry.keyboardRanges,tilt);
+    for(const id of ['table','keyboard']) {
+      const offset=offsets[id]??[0,0,0];
+      for(const key of ['positions','solidPositions']) {
+        const range=geometry.furnitureRanges[id][key];
+        for(let i=range.start;i<range.end;i+=3)for(let axis=0;axis<3;axis++)roomArrays[key][i+axis]+=offset[axis];
+      }
+    }
+    for(const [handle,data] of [[solid.Position,roomArrays.solidPositions],
+      [solid.Normal,roomArrays.normals],[lines.Position,roomArrays.positions]]) {
+      gl.bindBuffer(gl.ARRAY_BUFFER,handle);gl.bufferData(gl.ARRAY_BUFFER,data,gl.DYNAMIC_DRAW);
+    }
+  }
   const cubeSolid={Position:buffer(new Float32Array()),Color:buffer(new Float32Array()),
     Normal:buffer(new Float32Array()),Emission:buffer(new Float32Array())};
   const cubeLines={Position:buffer(new Float32Array()),Color:buffer(new Float32Array())};
@@ -332,6 +406,7 @@ export function createHolodeckRoomRenderer({gl,screen}={}) {
   }
   const locomotionView=new Float32Array(16);
   function drawFrame(frame,referenceSpace,{pose=frame.getViewerPose(referenceSpace),navigation,cube:state}={}) {
+    updateRoom();
     display?.update();
     const layer=frame.session.renderState.baseLayer; begin(layer.framebuffer);
     if (!pose) return {poseAvailable:false,viewCount:0};
@@ -343,6 +418,7 @@ export function createHolodeckRoomRenderer({gl,screen}={}) {
     return {poseAvailable:true,viewCount:pose.views.length};
   }
   function drawPreview({width=gl.drawingBufferWidth,height=gl.drawingBufferHeight,eye=[3.4,2.35,2.1],target=[0,1.15,-2.2],cube:state}={}) {
+    updateRoom();
     display?.update();
     const {projection,view}=previewMatrices(Math.max(1,width),Math.max(1,height),eye,target);
     begin(null); gl.viewport(0,0,width,height); draw(projection,view,updateCube(state));

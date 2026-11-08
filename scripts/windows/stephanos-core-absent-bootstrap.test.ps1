@@ -103,13 +103,15 @@ foreach ($fault in @('none','source-drift','node-birth-race','lock-arrival')) {
         $script:rows = @($goodRow.PSObject.Copy())
         $script:sourceFault = $fault
         $script:sourceChecks = 0
+        $script:localChecks = 0
         $coreScript = $core
         $lockPath = Join-Path $PSScriptRoot ('core-native-test-' + [Guid]::NewGuid().ToString('N'))
-        function Assert-CoreRecoverySource {
-            $script:sourceChecks++
+        function Assert-CoreRecoverySource { throw 'SLOW_REMOTE_SOURCE_IN_NATIVE_WINDOW' }
+        function Assert-CoreRecoveryLocalSource {
+            $script:localChecks++
             if ($script:sourceFault -eq 'source-drift') { throw 'SOURCE_DRIFT_FIXTURE' }
             if ($script:sourceFault -eq 'node-birth-race') { $script:rows[0].CreationDate = $goodRow.CreationDate.AddSeconds(1) }
-            if ($script:sourceFault -eq 'lock-arrival' -and $script:sourceChecks -eq 1) { [IO.File]::WriteAllText($lockPath, 'another-owner') }
+            if ($script:sourceFault -eq 'lock-arrival' -and $script:localChecks -eq 1) { [IO.File]::WriteAllText($lockPath, 'another-owner') }
         }
         try {
             if ($fault -eq 'none') { . $nativeBody }
@@ -139,7 +141,8 @@ foreach ($fault in @('none','child-nonzero','child-not-terminal','child-timeout'
         $repoRoot = 'fixed-root'
         $lockPath = Join-Path $PSScriptRoot ('core-race-test-' + [Guid]::NewGuid().ToString('N'))
         $coreStartRequested = $false
-        function Assert-CoreRecoverySource {
+        function Assert-CoreRecoverySource { throw 'SLOW_REMOTE_SOURCE_AFTER_CHILD_EXIT' }
+        function Assert-CoreRecoveryLocalSource {
             $script:sourceChecks++
             if ($script:testFault -eq 'source-change') { throw 'SOURCE_CHANGED_FIXTURE' }
             if ($script:testFault -eq 'delayed-continuation') { Start-Sleep -Milliseconds 5100 }

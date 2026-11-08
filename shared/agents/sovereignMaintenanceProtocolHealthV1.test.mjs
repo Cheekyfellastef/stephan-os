@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createSovereignCommanderHttpServer } from '../../scripts/sovereign-commander-http.mjs';
-import { callSovereignMaintenanceOwnerV1 } from './sovereignCommanderRemoteMailboxV1.mjs';
+import { callSovereignMaintenanceOwnerV1,
+  consumeSovereignMaintenancePreDispatchRefusalV1 } from './sovereignCommanderRemoteMailboxV1.mjs';
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION } from './sovereignMaintenanceAdmissionV1.mjs';
 
 const token = 'fixture-only-token-'.repeat(3);
@@ -105,4 +106,88 @@ test('an unbound response is not retried or accepted after a possible dispatch',
   const actual = await callSovereignMaintenanceOwnerV1({ actionId: 'repair-goal-builder-flow' }, fixture.options);
   assert.equal(actual.blocker, 'SOVEREIGN_MAINTENANCE_OWNER_RECEIPT_INVALID');
   assert.equal(fixture.calls.filter(x => x.message?.method === 'tools/call').length, 1);
+});
+
+const frozenRequest = actionId => Object.freeze({ actionId,
+  arguments: Object.freeze({ actionId }), timeoutMs: 160000 });
+
+test('only the actual parsed protocol refusal has one-use exact-request provenance without owner claims', async () => {
+  const request = frozenRequest('repair-goal-builder-flow');
+  for (const health of [null, {}, { ...protocol, maintenanceOwnerAdmissionVersion: 'old' },
+    { ...protocol, observationScope: undefined }, { ...protocol, maintenanceAdmissionProven: true }]) {
+    const fixture = delegationFixture(health);
+    const actual = await callSovereignMaintenanceOwnerV1(request, fixture.options);
+    assert.equal(fixture.credentials(), 0); assert.equal(fixture.calls.length, 1);
+    assert.equal(Object.isFrozen(actual), true);
+    for (const field of ['command', 'finalVerdict', 'proofHash', 'ownerAuthenticated', 'executionCustodyReleased'])
+      assert.equal(Object.hasOwn(actual, field), false, 'local transport fact must not impersonate owner evidence');
+    assert.equal(consumeSovereignMaintenancePreDispatchRefusalV1({ ...actual }, request), false);
+    assert.equal(consumeSovereignMaintenancePreDispatchRefusalV1(JSON.parse(JSON.stringify(actual)), request), false);
+    assert.equal(consumeSovereignMaintenancePreDispatchRefusalV1(actual, request), true);
+    assert.equal(consumeSovereignMaintenancePreDispatchRefusalV1(actual, request), false);
+  }
+});
+
+test('pre-dispatch proof is bound to the exact immutable request and action, not an equivalent object', async () => {
+  for (const other of [frozenRequest('repair-goal-builder-flow'), frozenRequest('repair-stephanos')]) {
+    const request = frozenRequest('repair-goal-builder-flow'), fixture = delegationFixture({});
+    const actual = await callSovereignMaintenanceOwnerV1(request, fixture.options);
+    assert.equal(consumeSovereignMaintenancePreDispatchRefusalV1(actual, other), false);
+    assert.equal(consumeSovereignMaintenancePreDispatchRefusalV1(actual, request), false,
+      'a mismatched consumption cannot leave reusable provenance');
+  }
+  for (const request of [{ actionId: 'repair-goal-builder-flow', arguments: { actionId: 'repair-goal-builder-flow' } },
+    Object.freeze({ actionId: 'repair-goal-builder-flow', arguments: { actionId: 'repair-goal-builder-flow' } }),
+    frozenRequest('unknown-action')]) {
+    const fixture = delegationFixture({});
+    const actual = await callSovereignMaintenanceOwnerV1(request, fixture.options);
+    assert.equal(consumeSovereignMaintenancePreDispatchRefusalV1(actual, request), false);
+  }
+  let accessed = false;
+  const forged = Object.defineProperty({}, 'blocker', { get() { accessed = true; throw Error('untrusted getter'); } });
+  assert.equal(consumeSovereignMaintenancePreDispatchRefusalV1(forged, frozenRequest('repair-goal-builder-flow')), false);
+  assert.equal(accessed, false);
+});
+
+test('health transport and parsing failures retain uncertainty rather than creating a local refusal proof', async () => {
+  for (const mode of ['network-error', 'malformed-json', 'timeout']) {
+    const request = frozenRequest('repair-goal-builder-flow'); let reads = 0, calls = 0;
+    const actual = await callSovereignMaintenanceOwnerV1(request, {
+      readFileFn: async () => { reads++; assert.fail('unexpected token read'); },
+      fetchFn: async (_url, options) => {
+        calls++; assert.equal(options.method, 'GET');
+        if (mode === 'network-error') throw Error('connection lost');
+        if (mode === 'malformed-json') return new Response('not JSON');
+        return new Promise(() => {});
+      },
+    });
+    assert.equal(actual.blocker, 'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE', mode);
+    assert.equal(reads, 0); assert.equal(calls, 1);
+    assert.equal(consumeSovereignMaintenancePreDispatchRefusalV1(actual, request), false, mode);
+  }
+});
+
+test('initialization and post-call uncertainty never acquire health pre-dispatch provenance', async () => {
+  for (const mode of ['initialize-refused', 'initialize-lost', 'call-lost', 'unbound-call-result']) {
+    const request = frozenRequest('repair-goal-builder-flow'), fixture = delegationFixture();
+    const original = fixture.options.fetchFn; let toolCalls = 0;
+    fixture.options.fetchFn = async (url, options) => {
+      const message = options.body ? JSON.parse(options.body) : null;
+      if (message?.method === 'initialize' && mode === 'initialize-refused')
+        return Response.json({ error: { message: 'refused' } }, { status: 403 });
+      if (message?.method === 'initialize' && mode === 'initialize-lost') throw Error('lost initialization');
+      if (message?.method === 'tools/call') {
+        toolCalls++;
+        if (mode === 'call-lost') throw Error('lost after potential owner pickup');
+        if (mode === 'unbound-call-result') return Response.json({ result: { structuredContent: {
+          ok: false, blocker: 'SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED', beforeDispatchProven: true,
+        } } });
+      }
+      return original(url, options);
+    };
+    const actual = await callSovereignMaintenanceOwnerV1(request, fixture.options);
+    assert.equal(consumeSovereignMaintenancePreDispatchRefusalV1(actual, request), false, mode);
+    assert.equal(fixture.credentials(), 1);
+    assert.equal(toolCalls, mode.startsWith('initialize-') ? 0 : 1);
+  }
 });

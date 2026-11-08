@@ -72,3 +72,19 @@ for (const variable of ['USERPROFILE', 'HOME', 'LOCALAPPDATA', 'STEPHANOS_SHARED
     assert.equal(receipt.coreStartRequested, false);
   });
 }
+
+test('attended source proof is separate from both short native freshness windows', async () => {
+  const entry = await readFile(new URL('./windows/recover-stephanos-core-lock.ps1', import.meta.url), 'utf8');
+  const native = entry.slice(entry.indexOf('            $absence = [StephanosCoreLockRecoveryV1]::new'), entry.indexOf("            Write-CoreRecoveryResult $true 'CORE_ABSENT_INVENTORY_OBSERVED'"));
+  const parent = entry.slice(entry.indexOf("    $arguments = @('-NoLogo'"), entry.indexOf('    $statusPath = Join-Path'));
+  assert.match(entry, /Assert-CoreRecoverySource\s+# Full canonical proof/);
+  assert.match(native, /Assert-CoreRecoveryLocalSource[\s\S]*Get-StephanosCoreProcessIdentityObservation/);
+  assert.equal([...native.matchAll(/Assert-CoreRecoveryLocalSource/g)].length, 2);
+  assert.doesNotMatch(native, /Assert-CoreRecoverySource/);
+  assert.match(parent, /if \(\$AbsentLock\) \{ Assert-CoreRecoveryLocalSource \}\s*else \{ Assert-CoreRecoverySource \}/);
+  assert.doesNotMatch(parent.slice(parent.indexOf('if ($AbsentLock) { Assert-CoreRecoveryLocalSource }'), parent.indexOf('Assert-StephanosCoreAttendedChildContinuation')), /--source-truth-json|& \$node/);
+  assert.match(entry, /Assert-StephanosCoreAttendedChildContinuation/);
+  assert.match(entry, /Assert-CoreRecoverySource\s+Write-CoreRecoveryResult \$true 'CORE_RECOVERY_FRESH_HEARTBEAT_PROVEN'/);
+  assert.match(entry, /Assert-CoreRecoveryLocalSource[\s\S]*CORE_RECOVERY_LOCAL_HEAD_CHANGED/);
+  assert.match(entry, /CORE_RECOVERY_LOCAL_GIT_METADATA_CHANGED/);
+});
