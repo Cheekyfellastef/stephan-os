@@ -209,7 +209,8 @@ test('preflight rejects stale, forged, edited, expired or differently selected e
 
 test('serious engine findings never become eligible because an independent artifact is clean', async () => {
   const f = readyLifecycleFixture(); active(f.proof.handoff.run); f.state.pull.draft = true;
-  f.input.patch += '+<<<<<<< unresolved\n';
+  // Keep a complete counted hunk so the engine, not input preflight, must flag the actual conflict.
+  f.input.patch = f.input.patch.replace('+new\n', '+<<<<<<< unresolved\n');
   await assert.rejects(prepareReadyReviewProducer({ command: f.command, comment: f.proof.handoff.ownerComment,
     ...deps(f, 'dispatch'), now: () => clock(6) }), /UNRELATED_OR_SERIOUS_FINDINGS/);
 });
