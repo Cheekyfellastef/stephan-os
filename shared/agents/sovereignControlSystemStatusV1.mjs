@@ -1,8 +1,12 @@
 // One public, observation-only projection for the existing Control Tower receipt.
 // This module has no native imports, credentials, persistence or execution path.
+import { SOVEREIGN_MAINTENANCE_OWNER_VERSION } from './sovereignMaintenanceAdmissionV1.mjs';
 export const SOVEREIGN_CONTROL_SYSTEM_INSPECTION_SCHEMA_V1 = 'stephanos.sovereign-control-system-inspection.v1';
 export const SOVEREIGN_CONTROL_SYSTEM_STATUS_SCHEMA_V1 = 'stephanos.sovereign-control-system-status.v1';
 export const SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1 = 2048;
+export const SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_PREDICATES_V1 = Object.freeze([
+  'HTTP_OK', 'HEALTH_OK', 'SERVICE', 'OBSERVATION_SCOPE', 'NO_ADMISSION', 'OWNER_VERSION',
+]);
 
 const SHA = /^[a-f0-9]{40}$/;
 const PROFILES = new Set(['MAINTENANCE_GOAL_BUILDER_V1', 'SOURCE_TASK_V1']);
@@ -24,6 +28,8 @@ const CODES = new Set([
   'SOVEREIGN_CONTROL_SYSTEM_HEALTH_UNPROVEN',
   'SOVEREIGN_CONTROL_SYSTEM_HEALTH_BOUND_EXCEEDED',
   'SOVEREIGN_CONTROL_SYSTEM_HEALTH_IDENTITY_UNPROVEN',
+  'SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_UNPROVEN', 'SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_TIMEOUT',
+  'SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_BOUND_EXCEEDED', 'SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED',
   'SOVEREIGN_CONTROL_SYSTEM_LEDGER_UNPROVEN',
   'SOVEREIGN_CONTROL_SYSTEM_REQUEST_NOT_OBSERVED',
   'SOVEREIGN_CONTROL_SYSTEM_STATUS_INVALID',
@@ -126,6 +132,39 @@ function base(value) {
     ...(utc(row.observedAtUtc) ? { observedAtUtc: utc(row.observedAtUtc) } : {}) } };
 }
 
+function projectProtocol(value, source, owner) {
+  const row = record(value), observedAtUtc = utc(row.observedAtUtc);
+  const unavailable = reason => frozen({ available: false, matches: false,
+    reason: sovereignControlSystemDiagnosticCodeV1(reason || 'SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_UNPROVEN') });
+  if (!source.available || !source.stable || source.expectedMainMatches === false)
+    return unavailable(source.reason || 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_UNPROVEN');
+  if (!owner.available || !owner.stable) return unavailable(owner.reason || 'SOVEREIGN_CONTROL_SYSTEM_OWNER_UNPROVEN');
+  if (row.available !== true) return unavailable(row.reason);
+  const labels = row.failedPredicates;
+  if (!Array.isArray(labels) || Object.getPrototypeOf(labels) !== Array.prototype || labels.length > 6
+    || Reflect.ownKeys(labels).length !== labels.length + 1) return unavailable();
+  const failedPredicates = [];
+  for (let index = 0; index < labels.length; index++) {
+    const descriptor = Object.getOwnPropertyDescriptor(labels, String(index));
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || typeof descriptor.value !== 'string')
+      return unavailable();
+    failedPredicates.push(descriptor.value);
+  }
+  const canonical = SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_PREDICATES_V1.filter(label => failedPredicates.includes(label));
+  const observedVersion = row.observedVersion;
+  if (canonical.length !== failedPredicates.length || canonical.some((label, index) => label !== failedPredicates[index])
+    || row.expectedVersion !== SOVEREIGN_MAINTENANCE_OWNER_VERSION
+    || ![SOVEREIGN_MAINTENANCE_OWNER_VERSION, 'MISSING', 'OTHER', 'INVALID'].includes(observedVersion)
+    || failedPredicates.includes('OWNER_VERSION') !== (observedVersion !== SOVEREIGN_MAINTENANCE_OWNER_VERSION)
+    || !observedAtUtc || Date.parse(observedAtUtc) > Date.parse(owner.observedAtUtc)
+    || Date.parse(owner.observedAtUtc) - Date.parse(observedAtUtc) > 15000
+    || row.reason !== (failedPredicates.length ? 'SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED' : ''))
+    return unavailable();
+  return frozen({ available: true, matches: failedPredicates.length === 0,
+    failedPredicates: Object.freeze(failedPredicates), expectedVersion: SOVEREIGN_MAINTENANCE_OWNER_VERSION,
+    observedVersion, observedAtUtc, reason: row.reason });
+}
+
 // Accepts an inspection or an already-public receipt. Re-projecting a valid
 // public receipt is idempotent, so ledger/beacon/chat share this single boundary.
 export function projectSovereignControlSystemStatusV1(value) {
@@ -193,7 +232,9 @@ export function projectSovereignControlSystemStatusV1(value) {
         && (nativeRuntime.available || guardian.available),
       blocker: sovereignControlSystemDiagnosticCodeV1(input.blocker ?? ''),
       source: frozen(source), caller: frozen(caller), owner: frozen(owner), guardian: frozen(guardian),
-      nativeRuntime: frozen(nativeRuntime), requestLedger: frozen(requestLedger) });
+      nativeRuntime: frozen(nativeRuntime), requestLedger: frozen(requestLedger),
+      // Historical receipt hashes remain unchanged when no protocol leaf existed.
+      ...(Object.hasOwn(input, 'protocol') ? { protocol: projectProtocol(input.protocol, source, owner) } : {}) });
     if (new TextEncoder().encode(JSON.stringify(projected)).byteLength > SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1)
       return refusal('SOVEREIGN_CONTROL_SYSTEM_STATUS_BOUND_EXCEEDED', observedAtUtc);
     return projected;

@@ -26,6 +26,14 @@ const runBattleBridgeSyncAndRefresh = options => runSyncAndRefreshWithRealAncest
   ...options, adapter: { isAncestor: linearAncestry, ...options.adapter },
 });
 
+test('refresh child ceiling exceeds every fixed inner refresh target while staying inside the parent child budget', () => {
+  assert.equal(SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.refresh, 150_000);
+  assert.ok(SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.refresh > 120_000);
+  assert.ok(SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.refresh > 100_000);
+  assert.ok(SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.refresh <= SYNC_AND_REFRESH_CHILD_BUDGET_MS);
+  assert.equal(SYNC_AND_REFRESH_CHILD_BUDGET_MS, 180_000);
+});
+
 function completedRefresh(beforeHead = A, afterHead = B) {
   return { ok: true, phase: 'complete', beforeHead, afterHead, sourceHead: afterHead,
     classification: 'NO_RUNTIME_REFRESH_REQUIRED', finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_PASS',
@@ -584,6 +592,64 @@ test('refresh blocker stops without starting another sync cycle', async () => {
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'OPENCLAW_REFRESH_APPROVAL_REQUIRED');
   assert.equal(syncCalls, 1);
+});
+
+test('retained Spatial debt cannot settle through concurrent disappearance or generic completion', async () => {
+  for (const laterPending of [null, { ok: true, spans: [], requiredTargetIds: [], completion: completedRefresh() }]) {
+    const calls = { pending: 0, sync: 0, refresh: 0, sleep: 0, repair: 0, mailbox: 0, discovery: 0 };
+    const result = await runBattleBridgeSyncAndRefresh({
+      paths,
+      expectedPaths: paths,
+      platform: 'win32',
+      nowMs: () => 0,
+      sleepFn: async () => { calls.sleep += 1; },
+      pendingReader: async () => ++calls.pending === 1
+        ? { ok: true, spans: [{ beforeHead: A, afterHead: B }], requiredTargetIds: [], spatialAdoptionRequired: true, completion: null }
+        : laterPending,
+      adapter: {
+        runSync() { calls.sync += 1; return { ok: true, result: noChange(B) }; },
+        runRefresh() { calls.refresh += 1; return { ok: true, result: { ok: false, blocker: 'POST_SYNC_REFRESH_ALREADY_RUNNING' } }; },
+        runMailboxPulse() { calls.mailbox += 1; return { ok: true }; },
+      },
+      controlPlaneReconciler() { calls.repair += 1; return { ok: true }; },
+      goalDiscoveryHeartbeat: async () => { calls.discovery += 1; return { ok: true }; },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'POST_SYNC_REFRESH_ALREADY_RUNNING');
+    assert.equal(result.finalVerdict, 'SYNC_AND_REFRESH_BLOCKED');
+    assert.deepEqual(calls, { pending: 1, sync: 1, refresh: 1, sleep: 0, repair: 0, mailbox: 0, discovery: 0 });
+  }
+});
+
+test('Spatial debt first observed during concurrent refresh polling remains held', async () => {
+  for (const laterPending of [null, { ok: true, spans: [], requiredTargetIds: [], completion: completedRefresh() }]) {
+    const calls = { pending: 0, sync: 0, refresh: 0, sleep: 0, repair: 0, mailbox: 0, discovery: 0 };
+    const pending = { ok: true, spans: [{ beforeHead: A, afterHead: B }], requiredTargetIds: [], completion: null };
+    const result = await runBattleBridgeSyncAndRefresh({
+      paths,
+      expectedPaths: paths,
+      platform: 'win32',
+      nowMs: () => 0,
+      sleepFn: async () => { calls.sleep += 1; },
+      pendingReader: async () => {
+        calls.pending += 1;
+        if (calls.pending === 1) return pending;
+        if (calls.pending === 2) return { ...pending, spatialAdoptionRequired: true };
+        return laterPending;
+      },
+      adapter: {
+        runSync() { calls.sync += 1; return { ok: true, result: noChange(B) }; },
+        runRefresh() { calls.refresh += 1; return { ok: true, result: { ok: false, blocker: 'POST_SYNC_REFRESH_ALREADY_RUNNING' } }; },
+        runMailboxPulse() { calls.mailbox += 1; return { ok: true }; },
+      },
+      controlPlaneReconciler() { calls.repair += 1; return { ok: true }; },
+      goalDiscoveryHeartbeat: async () => { calls.discovery += 1; return { ok: true }; },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'POST_SYNC_REFRESH_ALREADY_RUNNING');
+    assert.equal(result.finalVerdict, 'SYNC_AND_REFRESH_BLOCKED');
+    assert.deepEqual(calls, { pending: 2, sync: 1, refresh: 1, sleep: 1, repair: 0, mailbox: 0, discovery: 0 });
+  }
 });
 
 test('malformed refresh debt cannot block a safe source-forward but still blocks runtime completion', async () => {

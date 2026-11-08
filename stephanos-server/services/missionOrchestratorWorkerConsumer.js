@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { projectKnownMalformedPatchTerminalV1 } from '../../shared/agents/knownMalformedPatchRetryV1.mjs';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { assertOriginalSourceAttemptNotFenced } from './originalSourceAttemptFenceService.js';
 import { basename, resolve } from 'node:path';
@@ -638,9 +639,13 @@ export async function proveMissionWorkerRetryOwnershipReleased({
   const resultPath = resolve(paths.failed, fileName.replace(/\.json$/, '.result.json'));
   let item;
   let result;
+  let itemBytes;
+  let resultBytes;
   try {
-    item = JSON.parse(await readFile(terminalPath, 'utf8'));
-    result = JSON.parse(await readFile(resultPath, 'utf8'));
+    itemBytes = await readFile(terminalPath);
+    resultBytes = await readFile(resultPath);
+    item = JSON.parse(itemBytes.toString('utf8'));
+    result = JSON.parse(resultBytes.toString('utf8'));
   } catch (error) {
     if (error?.code === 'ENOENT') {
       return Object.freeze({
@@ -707,6 +712,8 @@ export async function proveMissionWorkerRetryOwnershipReleased({
       return Object.freeze({
         ok: true,
         classification: 'MISSION_WORKER_RETRY_PROVIDER_NEUTRAL_QUEUE_RELEASE_PROVEN',
+        knownMalformedPatchTerminal: projectKnownMalformedPatchTerminalV1(item, result,
+          createHash('sha256').update(itemBytes).digest('hex'), createHash('sha256').update(resultBytes).digest('hex')),
         missionId: normalizedMissionId,
         actionId: normalizedActionId,
         adapter: normalizedAdapter,
@@ -729,6 +736,8 @@ export async function proveMissionWorkerRetryOwnershipReleased({
   return Object.freeze({
     ok: true,
     classification: 'MISSION_WORKER_RETRY_OWNERSHIP_RELEASE_PROVEN',
+    knownMalformedPatchTerminal: projectKnownMalformedPatchTerminalV1(item, result,
+      createHash('sha256').update(itemBytes).digest('hex'), createHash('sha256').update(resultBytes).digest('hex')),
     providerTransportFailure: providerNeutralTerminalQueueReleaseProven(item, result, normalizedAdapter)
       ? projectModelTransportFailureProofV1(result, terminalReceipt) : null,
     missionId: normalizedMissionId,
