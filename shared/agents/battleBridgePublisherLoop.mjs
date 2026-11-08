@@ -47,7 +47,7 @@ export function buildBattleBridgePublisherLoopContract(input = {}) {
     stoppable: true,
     shutdownMethod: 'stop',
     workspaceMustPreexist: true,
-    hiddenLoggingRoute: 'Shared Workspace events/battle-bridge-current.json',
+    hiddenLoggingRoute: 'Shared Workspace events/battle-bridge-backend-loop-current.json',
     guardrails: {
       arbitraryShellAllowed: false,
       processKillingAllowed: false,

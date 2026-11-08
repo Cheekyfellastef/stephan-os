@@ -56,6 +56,8 @@ test('registry is a status-only boundary with unique fixed filenames and narrowl
   }
   assert.equal(isSharedWorkspaceSpecializedStatusFile({ directory: 'status', fileName: `mission-orchestrator-worker-launch-identity-${'a'.repeat(63)}.json` }), false);
   assert.equal(isSharedWorkspaceSpecializedStatusFile({ directory: 'status', fileName: 'mission-orchestrator-worker-restart-claim-not-a-digest.json' }), false);
+  assert.equal(isSharedWorkspaceSpecializedStatusFile({ directory: 'status', fileName: 'battle-bridge-backend-loop-current.json' }), true);
+  assert.equal(isSharedWorkspaceSpecializedStatusFile({ directory: 'status', fileName: 'battle-bridge-current.json' }), false);
   assert.equal(isSharedWorkspaceSpecializedStatusFile({ directory: 'status', fileName: 'attacker-selected-specialized-record.json' }), false);
 });
 

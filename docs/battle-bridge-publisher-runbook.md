@@ -24,13 +24,14 @@ Use this from the Battle Bridge machine only after the workspace directory exist
 ```powershell
 $env:STEPHANOS_SHARED_AGENT_WORKSPACE="$env:USERPROFILE\Documents\Stephanos-openclaw-workspace"
 node --input-type=module -e "import { createBattleBridgeSupervisorStartupPublisher } from './shared/agents/battleBridgePublisherLoop.mjs'; const loop = createBattleBridgeSupervisorStartupPublisher({ root: process.env.STEPHANOS_SHARED_AGENT_WORKSPACE, repoRoot: process.cwd(), intervalMs: 60000 }); setTimeout(() => { console.log(loop.stop()); }, 1500);"
-Get-Content "$env:STEPHANOS_SHARED_AGENT_WORKSPACE\status\battle-bridge-current.json" -Raw
+Get-Content "$env:STEPHANOS_SHARED_AGENT_WORKSPACE\status\battle-bridge-backend-loop-current.json" -Raw
 Get-Content "$env:STEPHANOS_SHARED_AGENT_WORKSPACE\events\battle-bridge-publisher-loop.ndjson" -Tail 5
 ```
 
 ## Interpreting the publisher records
 
-- `status/battle-bridge-current.json` is the live dashboard status input.
+- `status/battle-bridge-current.json` is the direct-observation canonical dashboard status input. If its evidence is missing or stale, readiness stays UNKNOWN/STALE.
+- `status/battle-bridge-backend-loop-current.json` is a separate diagnostic-only backend loop projection; it must not overwrite or promote canonical status.
 - `proof/battle-bridge-current.json` carries the proof references used by the feed.
 - `capabilities/openclaw.json` keeps OpenClaw in the existing Shared Workspace capability format.
 - `events/battle-bridge-current.json` is a dashboard-compatible current event record.
@@ -78,7 +79,7 @@ $workspace = Join-Path $env:TEMP ('stephanos-openclaw-workspace-' + [guid]::NewG
 New-Item -ItemType Directory -Force -Path $workspace | Out-Null
 $env:STEPHANOS_SHARED_AGENT_WORKSPACE=$workspace
 node --input-type=module -e "import { startBattleBridgePublisherLoopForBackend } from './stephanos-server/services/battleBridgePublisherLifecycle.js'; const handle = await startBattleBridgePublisherLoopForBackend({ env: process.env, repoRoot: process.cwd(), runImmediately: true, intervalMs: 30000 }); setTimeout(() => { console.log(JSON.stringify({ started: handle.started, state: handle.state, reason: handle.reason, stop: handle.stop() }, null, 2)); }, 1500);"
-Get-Content (Join-Path $workspace 'status\battle-bridge-current.json') -Raw
+Get-Content (Join-Path $workspace 'status\battle-bridge-backend-loop-current.json') -Raw
 Get-Content (Join-Path $workspace 'events\battle-bridge-publisher-loop.ndjson') -Tail 5
 ```
 
