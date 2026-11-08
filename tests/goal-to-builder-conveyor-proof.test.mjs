@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 // Exercise the original #2002 continuation predicate in the existing
 // GitHub-hosted Goal-to-Builder Conveyor proof, without a new workflow.
 import '../shared/agents/goalBuildingAgentV1.continuation.test.mjs';
+// Original Goal #1558 PR Estate proof runs inside the existing conveyor CI, no extra workflow.
+import '../shared/agents/prEstateReconciler.test.mjs';
 
 import {
   buildSchedulerGoalsFromProgrammeSources,
