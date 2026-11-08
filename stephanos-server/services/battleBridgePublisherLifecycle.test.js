@@ -108,6 +108,60 @@ test('health HTTP 200 with error, stale runtime, redirect or oversized body cann
     assert.equal(Object.values(facts.observedFacts.services).every(x=>x.ready===false),true);
   }
 });
+test('contradictory JSON health never promotes UNKNOWN, OFFLINE or string freshness to READY', async () => {
+  const conflicting = [
+    { ok: true, status: 'UNKNOWN' },
+    { ok: true, status: 'OFFLINE' },
+    { ok: true, status: 'HOLD' },
+    { ok: true, status: 'FAILED' },
+    { ok: true, state: 'UNKNOWN' },
+    { ok: true, status: 'ready', state: 'blocked' },
+    { ok: true, runtimeBuildCurrent: 'false' },
+    { ok: true, runtimeBuildCurrent: 0 },
+    { ok: true, runtimeBuildCurrent: null },
+    { ok: true, api_status: 'offline' },
+    { ok: true, status: 200 },
+    { ok: true, status: '' },
+    { ok: 'true', status: 'ready' },
+    { ok: true, mode: 'visibility-only' },
+    { ok: true, mode: 'readonly_status_only' },
+    { ok: true, mode: 'design_only' },
+    { ok: false, status: 'ready' },
+  ];
+  for (const payload of conflicting) {
+    const facts = await collectBackendCanonicalLocalServiceFactsV1({
+      fetchFn: async () => new Response(JSON.stringify(payload), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      }),
+    });
+    assert.equal(Object.values(facts.observedFacts.services).every(value => value.ready === false),
+      true, JSON.stringify(payload));
+    assert.equal(facts.authority.servedHeadAttested, false);
+  }
+});
+
+test('known-positive health survives strict contradiction validation on three fixed endpoints', async () => {
+  const valid = [
+    { ok: true, api_status: 'online', service: 'stephanos-server' },
+    { ok: true, runtimeBuildCurrent: true, service: 'stephanos-dist-server' },
+    { ok: true, status: 'ready' },
+    { status: 'live' },
+    { state: 'ok' },
+    { ok: true, status: 'ready', state: 'live' },
+  ];
+  for (const payload of valid) {
+    const facts = await collectBackendCanonicalLocalServiceFactsV1({
+      fetchFn: async () => new Response(JSON.stringify(payload), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      }),
+    });
+    assert.equal(Object.values(facts.observedFacts.services).every(value => value.ready === true),
+      true, JSON.stringify(payload));
+    assert.equal(facts.authority.sourceMutationAllowed, false);
+    assert.equal(facts.authority.servedHeadAttested, false);
+  }
+});
+
 test('one healthy JSON response per fixed endpoint qualifies local service observation only', async () => {
   const facts = await collectBackendCanonicalLocalServiceFactsV1({fetchFn:async url =>
     new Response(JSON.stringify(url.includes('18789') ? {status:'live'} : {ok:true}), {

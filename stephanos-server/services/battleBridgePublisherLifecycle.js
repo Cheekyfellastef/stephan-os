@@ -160,13 +160,27 @@ const BACKEND_CANONICAL_PORTS = Object.freeze([
 ]);
 const BACKEND_CANONICAL_HEALTH_MAX_BYTES = 256 * 1024;
 const BACKEND_CANONICAL_HEALTH_TIMEOUT_MS = 1800;
+// Reject contradictory or malformed explicit health evidence before declaring
+// a service ready. A positive 'ok' cannot override UNKNOWN/OFFLINE status,
+// a stale build, or an unqualified read-only/visibility response.
 function backendCanonicalHealthReadyV1(body) {
-  if (!body || typeof body !== 'object' || Array.isArray(body)
-    || body.ok === false || body.runtimeBuildCurrent === false
-    || body.mode === 'visibility-only') return false;
-  const status = String(body.status || body.state || '').toLowerCase();
-  if (['degraded','blocked','stale','unavailable','error'].includes(status)) return false;
-  return body.ok === true || ['ok','live','ready'].includes(status);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  const has = key => Object.hasOwn(body, key);
+  if (has('ok') && typeof body.ok !== 'boolean') return false;
+  if (body.ok === false) return false;
+  if (has('runtimeBuildCurrent') && body.runtimeBuildCurrent !== true) return false;
+  if (has('api_status') && body.api_status !== 'online') return false;
+  if (has('mode')) {
+    if (typeof body.mode !== 'string') return false;
+    const mode = body.mode.trim().toLowerCase();
+    if (!mode || ['visibility-only', 'readonly_status_only', 'design_only', 'offline'].includes(mode))
+      return false;
+  }
+  const explicitPositive = value => typeof value === 'string'
+    && ['ok', 'live', 'ready'].includes(value.trim().toLowerCase());
+  if (has('status') && !explicitPositive(body.status)) return false;
+  if (has('state') && !explicitPositive(body.state)) return false;
+  return body.ok === true || has('status') || has('state');
 }
 // A bound TCP listener is not proof of a healthy service. Use the existing
 // fixed JSON health routes, with no redirects, secrets or arbitrary target.
