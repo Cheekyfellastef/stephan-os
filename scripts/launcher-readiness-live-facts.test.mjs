@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { collectLauncherReadinessLiveFacts as collectRealLauncherFacts, defaultWindowsSharedWorkspacePath, LIVE_COLLECTOR_AUTHORITY, main, resolveSharedWorkspaceRoot } from './launcher-readiness-live-facts.mjs';
+import { collectLauncherReadinessLiveFacts as collectRealLauncherFacts, collectLauncherReadinessServiceFactsV1, defaultWindowsSharedWorkspacePath, LIVE_COLLECTOR_AUTHORITY, main, resolveSharedWorkspaceRoot } from './launcher-readiness-live-facts.mjs';
 import { createLauncherReadinessReport } from './launcher-readiness-report.mjs';
 import { createSharedWorkspaceStatusRecord, createSharedWorkspaceProofRecord, createSharedWorkspaceEventRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 
@@ -44,6 +44,37 @@ function serviceProbeFor(readyIds) {
 }
 
 const cleanGit = () => '';
+
+test('periodic service-only observation probes exactly three fixed localhost ports and claims no source truth', async () => {
+  const called = [];
+  const facts = await collectLauncherReadinessServiceFactsV1({
+    serviceProbe: async service => {
+      called.push([service.id, service.host, service.port]);
+      return { ready: service.id !== 'stephanos-ui',
+        evidence: { probe: 'tcp-connect', port: service.port } };
+    },
+  });
+  assert.deepEqual(called, [
+    ['backend', '127.0.0.1', 8787],
+    ['stephanos-ui', '127.0.0.1', 4173],
+    ['openclaw-gateway', '127.0.0.1', 18789],
+  ]);
+  assert.equal(facts.observedFacts.services.backend.ready, true);
+  assert.equal(facts.observedFacts.services['stephanos-ui'].ready, false);
+  assert.equal(Object.hasOwn(facts, 'sourceFacts'), false);
+  assert.equal(facts.authority.executesCommands, false);
+  assert.equal(facts.authority.mutatesRuntime, false);
+});
+
+test('periodic service-only observation preserves negative reachability instead of fabricating READY', async () => {
+  const facts = await collectLauncherReadinessServiceFactsV1({
+    serviceProbe: async service => ({
+      ready: false, evidence: { probe: 'tcp-connect', detail: 'timeout', port: service.port },
+    }),
+  });
+  assert.equal(Object.values(facts.observedFacts.services).every(v => v.ready === false), true);
+  assert.equal(Object.hasOwn(facts, 'sourceFacts'), false);
+});
 
 test('fixture: backend ready and OpenClaw ready with UI missing returns PARTIAL_UI_MISSING', async () => withRepo(async (repoRoot) => {
   writeCurrentRecord(repoRoot);

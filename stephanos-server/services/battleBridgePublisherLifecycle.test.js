@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   BATTLE_BRIDGE_PUBLISHER_LIVE_SLICE_MAX_AGE_MS,
   buildBattleBridgePublisherLiveSlice,
+  refreshPeriodicBattleBridgeDirectObservationV1,
 } from './battleBridgePublisherLifecycle.js';
 import {
   DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS,
@@ -55,6 +56,51 @@ function liveSlice({ supervisor = freshSupervisor(), worker = freshWorker() } = 
     expectedHeadSha: HEAD_SHA,
   });
 }
+
+test('same existing tick refreshes observed direct services without claiming source or served identity', async () => {
+  const called = [];
+  const serviceFacts = { observedFacts: { services: Object.fromEntries(
+    ['backend', 'stephanos-ui', 'openclaw-gateway'].map(id => [
+      id, { ready: id !== 'stephanos-ui',
+        evidence: { probe: 'tcp-connect', detail: id === 'stephanos-ui' ? 'timeout' : 'connected' } },
+    ])) } };
+  const result = await refreshPeriodicBattleBridgeDirectObservationV1({
+    workspaceRoot: '/fixture-existing-workspace', repoRoot: REPOSITORY_ROOT, timestampUtc: NOW,
+    factsFn: async () => { called.push('bounded-direct-probe'); return serviceFacts; },
+    publishFn: async input => {
+      called.push('direct-publish');
+      assert.equal(input.mode, 'periodic-bounded-local-service-observation');
+      assert.equal(input.sharedWorkspace, '/fixture-existing-workspace');
+      assert.equal(input.facts.observedFacts.services['stephanos-ui'].ready, false);
+      assert.equal(Object.hasOwn(input.facts, 'sourceFacts'), false);
+      return { ok: true, status: 'DEGRADED' };
+    },
+  });
+  assert.deepEqual(called, ['bounded-direct-probe', 'direct-publish']);
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'DEGRADED');
+  assert.equal(result.authority, 'source-limited-service-observation-only');
+});
+
+test('periodic direct refresh refuses missing probes, synthetic clean source and publication failure', async () => {
+  const services = Object.fromEntries(['backend', 'stephanos-ui', 'openclaw-gateway']
+    .map(id => [id, { ready: true, evidence: { probe: 'tcp-connect' } }]));
+  const observations = { observedFacts: { services } };
+  const base = { workspaceRoot: '/fixture-existing-workspace',
+    repoRoot: REPOSITORY_ROOT, timestampUtc: NOW };
+  let attempted = 0;
+  const publishFn = async () => { attempted++; return { ok: true }; };
+  await assert.rejects(refreshPeriodicBattleBridgeDirectObservationV1({
+    ...base, factsFn: async () => ({ observedFacts: { services: {} } }), publishFn,
+  }), /BATTLE_BRIDGE_PERIODIC_DIRECT_TCP_EVIDENCE_UNPROVEN/);
+  await assert.rejects(refreshPeriodicBattleBridgeDirectObservationV1({
+    ...base, factsFn: async () => ({ ...observations, sourceFacts: { dirtyPaths: [] } }), publishFn,
+  }), /BATTLE_BRIDGE_PERIODIC_DIRECT_SOURCE_SCOPE_UNSAFE/);
+  assert.equal(attempted, 0);
+  await assert.rejects(refreshPeriodicBattleBridgeDirectObservationV1({
+    ...base, factsFn: async () => observations, publishFn: async () => ({ ok: false }),
+  }), /BATTLE_BRIDGE_PERIODIC_DIRECT_PUBLISH_REFUSED/);
+});
 
 test('fresh canonical supervisor and exact-head worker evidence produce a ready live publisher slice', () => {
   const slice = liveSlice();

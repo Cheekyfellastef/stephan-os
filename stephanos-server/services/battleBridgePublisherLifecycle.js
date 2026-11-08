@@ -10,6 +10,8 @@ import {
   DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS,
   projectMissionWorkerHeartbeat,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
+import { collectLauncherReadinessServiceFactsV1 } from '../../scripts/launcher-readiness-live-facts.mjs';
+import { refreshBattleBridgeSharedWorkspacePublisher } from '../../scripts/battle-bridge-shared-workspace-publisher.mjs';
 import { validateSharedWorkspaceFeedConfig, MISSING_WORKSPACE_NEXT_ACTION } from './sharedWorkspaceDashboardFeedService.js';
 
 export const BATTLE_BRIDGE_PUBLISHER_LIVE_SLICE_MAX_AGE_MS = 5 * 60 * 1000;
@@ -150,6 +152,36 @@ export async function buildBattleBridgePublisherLiveSliceFromWorkspace(root, {
   });
 }
 
+// Keep the canonical directly observed status fresh on the EXISTING
+// single-flight backend minute publisher, even without an Ignition restart.
+// The old stale-supervisor model remains a separate diagnostic-only record.
+export async function refreshPeriodicBattleBridgeDirectObservationV1({
+  workspaceRoot, repoRoot, timestampUtc,
+  factsFn = collectLauncherReadinessServiceFactsV1,
+  publishFn = refreshBattleBridgeSharedWorkspacePublisher,
+} = {}) {
+  if (typeof workspaceRoot !== 'string' || !workspaceRoot ||
+    typeof repoRoot !== 'string' || !repoRoot ||
+    !Number.isFinite(Date.parse(timestampUtc || '')))
+    throw new Error('BATTLE_BRIDGE_PERIODIC_DIRECT_INPUT_INVALID');
+  const facts = await factsFn();
+  const services = facts?.observedFacts?.services;
+  if (!['backend', 'stephanos-ui', 'openclaw-gateway'].every(id =>
+    typeof services?.[id]?.ready === 'boolean' &&
+    services[id].evidence?.probe === 'tcp-connect'))
+    throw new Error('BATTLE_BRIDGE_PERIODIC_DIRECT_TCP_EVIDENCE_UNPROVEN');
+  if (Object.hasOwn(facts, 'sourceFacts'))
+    throw new Error('BATTLE_BRIDGE_PERIODIC_DIRECT_SOURCE_SCOPE_UNSAFE');
+  const result = await publishFn({
+    repoRoot, sharedWorkspace: workspaceRoot, timestampUtc,
+    facts, mode: 'periodic-bounded-local-service-observation',
+  });
+  if (result?.ok !== true)
+    throw new Error('BATTLE_BRIDGE_PERIODIC_DIRECT_PUBLISH_REFUSED');
+  return Object.freeze({ ok: true, observedAtUtc: timestampUtc,
+    status: result.status, authority: 'source-limited-service-observation-only' });
+}
+
 export async function startBattleBridgePublisherLoopForBackend(input = {}) {
   const validation = await validateSharedWorkspaceFeedConfig(input);
   if (!validation.ok) {
@@ -169,11 +201,14 @@ export async function startBattleBridgePublisherLoopForBackend(input = {}) {
     repoRoot: input.repoRoot,
     intervalMs: input.intervalMs,
     runImmediately: input.runImmediately,
-    buildSlice: ({ timestampUtc }) => buildBattleBridgePublisherLiveSliceFromWorkspace(validation.root, {
-      timestampUtc,
-      expectedRepositoryRoot,
-      expectedHeadSha,
-    }),
+    buildSlice: async ({ timestampUtc }) => {
+      await refreshPeriodicBattleBridgeDirectObservationV1({
+        workspaceRoot: validation.root, repoRoot: input.repoRoot, timestampUtc,
+      });
+      return buildBattleBridgePublisherLiveSliceFromWorkspace(validation.root, {
+        timestampUtc, expectedRepositoryRoot, expectedHeadSha,
+      });
+    },
   });
   return Object.freeze({
     started: true,

@@ -32,6 +32,7 @@ Get-Content "$env:STEPHANOS_SHARED_AGENT_WORKSPACE\events\battle-bridge-publishe
 
 - `status/battle-bridge-current.json` is the direct-observation canonical dashboard status input. If its evidence is missing or stale, readiness stays UNKNOWN/STALE.
 - `status/battle-bridge-backend-loop-current.json` is a separate diagnostic-only backend loop projection; it must not overwrite or promote canonical status.
+- The **existing backend publisher's same single-flight minute tick** now refreshes canonical direct service observations via the three fixed localhost TCP probes (8787/4173/18789, each bounded at 700 ms), before publishing its separate stale-Ignition/worker diagnostic. No additional timer, daemon, mailbox, credential, PowerShell script, privileged action or restart is required by the design. Negative reachability stays DEGRADED rather than READY, a failed refresh refuses the tick, and these TCP observations do **not** attest the served source commit, exact process identity, or physical builder pickup.
 - `proof/battle-bridge-current.json` carries the proof references used by the feed.
 - `capabilities/openclaw.json` keeps OpenClaw in the existing Shared Workspace capability format.
 - `events/battle-bridge-current.json` is a dashboard-compatible current event record.
