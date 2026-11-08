@@ -51,7 +51,7 @@ const outputPath = valueAfter('--output');
 const humanOutputPath = valueAfter('--human-output');
 const generatedAt = valueAfter('--timestamp') || new Date().toISOString();
 
-if (inputPath && has('--from-gh')) {
+if (has('--input') && has('--from-gh')) {
   console.error('PR_ESTATE_RECONCILER_BLOCKED: --input and --from-gh are mutually exclusive; no live estate was collected');
   process.exit(2);
 }
