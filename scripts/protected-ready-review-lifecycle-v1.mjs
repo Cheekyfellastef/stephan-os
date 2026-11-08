@@ -692,6 +692,21 @@ export function readyReviewTransports(env = process.env) {
       headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     requireProof(response.status === 204, `DISPATCH_${response.status}`);
   };
+// Authenticated GitHub Actions job logs use short-lived signed HTTPS redirects.
+// Current GitHub Actions also uses productionresultssa Azure Blob hosts.
+// Keep the host allowlist fixed and never forward the GitHub token.
+export function trustedReadyReviewLogRedirectLocationV1(location) {
+  if (typeof location !== 'string' || location.length < 1 || location.length > 8192) return false;
+  let url;
+  try { url = new URL(location); } catch { return false; }
+  if (url.protocol !== 'https:' || url.port !== '' || url.username !== ''
+    || url.password !== '' || url.hash !== '' || !url.pathname || url.pathname === '/')
+    return false;
+  if (/^([a-z0-9-]+\.)*actions\.githubusercontent\.com$/.test(url.hostname)) return true;
+  const blob = /^productionresultssa([0-9]{1,3})\.blob\.core\.windows\.net$/.exec(url.hostname);
+  return blob !== null && /^(?:[1-9]|[1-9][0-9]|1[0-9][0-9])$/.test(blob[1]);
+}
+
   const readJobLog = async jobId => {
     // The authenticated API returns a short-lived signed log URL. NEVER forward
     // the GitHub token to that CDN, allow another redirect, or disclose its body.
@@ -701,11 +716,10 @@ export function readyReviewTransports(env = process.env) {
       signal: AbortSignal.timeout(15000),
     });
     requireProof(first.status === 302, 'RECOVERY_LOG_API_NOT_SIGNED_REDIRECT');
-    const signed = new URL(first.headers?.get?.('location') || '');
-    requireProof(signed.protocol === 'https:' && signed.port === ''
-      && signed.username === '' && signed.password === ''
-      && /^([a-z0-9-]+\.)*actions\.githubusercontent\.com$/.test(signed.hostname),
-    'RECOVERY_LOG_REDIRECT_UNTRUSTED');
+    const location = first.headers?.get?.('location');
+    requireProof(trustedReadyReviewLogRedirectLocationV1(location),
+      'RECOVERY_LOG_REDIRECT_UNTRUSTED');
+    const signed = new URL(location);
     const response = await fetch(signed.toString(), {
       method: 'GET', redirect: 'error', signal: AbortSignal.timeout(20000),
     });

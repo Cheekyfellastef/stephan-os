@@ -9,6 +9,7 @@ import {
   loadReadyReviewHandoff, readReadyReviewUnresolvedThreads, readyReviewTransports,
   readReadyReviewInput, preflightReadyReviewExactHead,
   readReadyReviewIssueTimelineV1, inspectReadyReviewRecoveryReadOnlyV1,
+  trustedReadyReviewLogRedirectLocationV1,
 } from './protected-ready-review-lifecycle-v1.mjs';
 import { validateProtectedReadyReviewLifecycleEvidence, parseReadyReviewInputs,
   sealReadyReviewPayload, READY_REVIEW_HANDOFF_FILE, READY_REVIEW_RECEIPT_FILE } from '../shared/agents/protectedReadyReviewLifecycleV1.mjs';
@@ -728,4 +729,57 @@ test('job log CDN transport stays tokenless and refuses arbitrary redirect hosts
     status:302,headers:{get:()=> 'https://evil.example.com/leak'}
   }));
   await assert.rejects(bad.readJobLog(201),/RECOVERY_LOG_REDIRECT_UNTRUSTED/);
+});
+
+
+test('GitHub official Actions Azure log hosts are permitted by the bounded allowlist', () => {
+  for (const n of [1, 9, 30, 49, 100, 149, 199]) {
+    assert.equal(trustedReadyReviewLogRedirectLocationV1(
+      'https://productionresultssa' + n + '.blob.core.windows.net/actions-results/job-logs.txt?sig=fixture'), true);
+  }
+  for (const host of ['pipelines.actions.githubusercontent.com',
+    'results-receiver.actions.githubusercontent.com', 'actions.githubusercontent.com']) {
+    assert.equal(trustedReadyReviewLogRedirectLocationV1('https://' + host + '/logs.txt'), true);
+  }
+});
+test('GitHub signed job logs refuse untrusted hosts and authorization-bearing URLs', () => {
+  const invalid = [
+    '', 'https://',
+    'http://productionresultssa30.blob.core.windows.net/log',
+    'https://productionresultssa0.blob.core.windows.net/log',
+    'https://productionresultssa030.blob.core.windows.net/log',
+    'https://productionresultssa000.blob.core.windows.net/log',
+    'https://productionresultssa200.blob.core.windows.net/log',
+    'https://productionresultssa300.blob.core.windows.net/log',
+    'https://productionresultssa30.blob.core.windows.net.evil.example/log',
+    'https://productionresultssa30.blob.core.windows.net/',
+    'https://productionresultssa30.blob.core.windows.net/log#fragment',
+    'https://user:pass@productionresultssa30.blob.core.windows.net/log',
+    'https://pipelines.actions.githubusercontent.com.evil.example/log',
+    'https://productionresultssa30.blob.core.windows.net:444/log',
+    'https://localhost/log', 'https://evil.example/log',
+    'file:///tmp/log.txt',
+    'https://productionresultssa30.blob.core.windows.net/' + 'a'.repeat(8200),
+  ];
+  for (const url of invalid)
+    assert.equal(trustedReadyReviewLogRedirectLocationV1(url), false, url.slice(0, 100));
+});
+test('Azure signed log redirects are tokenless and preserve exact failure bytes', async t => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, opts) => {
+    calls.push({ url: String(url), opts });
+    if (calls.length === 1)
+      return { status: 302, headers: { get: name => name === 'location'
+        ? 'https://productionresultssa149.blob.core.windows.net/actions-results/job-logs.txt?sig=fixed'
+        : null } };
+    return new Response('PROTECTED_READY_REVIEW_BLOCKED:CURRENT_PR_HEAD_TREE_BASE_OR_DRAFT_CHANGED',
+      { status: 200 });
+  });
+  const transport = readyReviewTransports({ GITHUB_TOKEN: 'fixture-token' });
+  const text = await transport.readJobLog(201);
+  assert.match(text, /CURRENT_PR_HEAD_TREE_BASE_OR_DRAFT_CHANGED/);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].opts.headers.Authorization, 'Bearer fixture-token');
+  assert.equal(Object.hasOwn(calls[1].opts, 'headers'), false);
+  assert.equal(calls[1].opts.redirect, 'error');
 });
