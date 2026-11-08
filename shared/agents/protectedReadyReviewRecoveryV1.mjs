@@ -112,7 +112,8 @@ export function classifyProtectedReadyReviewDraftRecoveryV1({
  * NEVER permission to dispatch or approve a second one-use review.
  */
 export function classifyProtectedReadyReviewGitHubReadbackV1({
-  identity, pull, main, commit, workflow, runs, job, log, events,
+  identity, pull, main, commit, workflow, runs, runInventoryTotalCount,
+  job, log, events, eventInventoryTotalCount,
   ownerComment = null, nowUtc,
 } = {}) {
   const held = code => Object.freeze({
@@ -133,15 +134,26 @@ export function classifyProtectedReadyReviewGitHubReadbackV1({
     if (!workflow || !integer(workflow.id)
       || workflow.path !== '.github/workflows/stephanos-exact-head-review.yml'
       || workflow.name !== 'Stephanos Exact-Head Review' || workflow.state !== 'active'
-      || !Array.isArray(runs) || runs.length !== 1)
+      || !Array.isArray(runs) || !integer(runInventoryTotalCount)
+      || runInventoryTotalCount !== runs.length || runInventoryTotalCount > 600)
       return held('GITHUB_RUN_INVENTORY_UNPROVEN');
-    const run = runs[0];
-    const title = new RegExp('^protected-ready-review-pr-' + identity.prNumber
-      + '-head-' + identity.sourceHead + '-ready-([1-9][0-9]*)-binding-([a-f0-9]{64})$');
+    const allNames = /^protected-ready-review-pr-([1-9][0-9]*)-head-([a-f0-9]{40})-ready-([1-9][0-9]*)-binding-([a-f0-9]{64})$/;
+    const matched = [], seenRuns = new Set();
+    for (const candidate of runs) {
+      const name = allNames.exec(String(candidate?.display_title || ''));
+      if (!integer(candidate?.id) || seenRuns.has(candidate.id) || !name
+        || candidate.workflow_id !== workflow.id || candidate.path !== workflow.path
+        || candidate.event !== 'workflow_dispatch' || candidate.head_sha !== identity.baseSha)
+        return held('GITHUB_RUN_INVENTORY_UNPROVEN');
+      seenRuns.add(candidate.id);
+      if (Number(name[1]) === identity.prNumber && name[2] === identity.sourceHead)
+        matched.push(candidate);
+    }
+    if (matched.length !== 1) return held('GITHUB_RUN_INVENTORY_UNPROVEN');
+    const run = matched[0];
     const ownerActor = actor => (actor?.login === OPERATOR && actor?.id === 267490109)
       || (actor?.login === 'github-actions[bot]' && actor?.id === 41898282);
     if (!integer(run?.id) || run.workflow_id !== workflow.id
-      || !title.test(run.display_title || '')
       || run.event !== 'workflow_dispatch' || run.path !== workflow.path
       || run.head_sha !== identity.baseSha || run.head_branch !== 'main'
       || run.repository?.full_name !== REPOSITORY
@@ -163,7 +175,9 @@ export function classifyProtectedReadyReviewGitHubReadbackV1({
     const codes = [...log.matchAll(/PROTECTED_READY_REVIEW_BLOCKED:([A-Z_]+)/g)];
     if (codes.length !== 1 || codes[0][1] !== READY_REVIEW_DRAFT_INTERLEAVE_CODE)
       return held('GITHUB_TERMINAL_FAILURE_UNPROVEN');
-    if (!Array.isArray(events) || events.length > 600) return held('GITHUB_TIMELINE_UNPROVEN');
+    if (!Array.isArray(events) || !integer(eventInventoryTotalCount)
+      || events.length !== eventInventoryTotalCount || events.length > 600)
+      return held('GITHUB_TIMELINE_UNPROVEN');
     const ids = new Set(), timeline = [];
     for (const event of events) {
       if (!integer(event?.id) || ids.has(event.id)) return held('GITHUB_TIMELINE_UNPROVEN');

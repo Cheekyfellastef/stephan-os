@@ -125,6 +125,7 @@ function githubFixture() {
       repository: { full_name: identity.repository }, head_repository: { full_name: identity.repository },
       actor, triggering_actor: bot, run_attempt: 1, status: 'completed',
       conclusion: 'failure', run_started_at: '2026-11-08T15:45:16Z' }],
+    runInventoryTotalCount: 1,
     job: { id: 128779581121, run_id: 42496400604, run_attempt: 1,
       name: 'exact-head-review', status: 'completed', conclusion: 'failure',
       started_at: '2026-11-08T15:45:19Z', completed_at: '2026-11-08T15:45:32Z',
@@ -140,6 +141,7 @@ function githubFixture() {
       { id: 35500258891, event: 'ready_for_review', actor: bot,
         created_at: '2026-11-08T15:58:27Z' },
     ],
+    eventInventoryTotalCount: 3,
     ownerComment: null, nowUtc: '2026-11-08T18:00:00Z',
   };
 }
@@ -191,6 +193,31 @@ test('GitHub-shaped readback adversarial provenance rejects without dispatch', a
     const f = githubFixture();
     mutate(f);
     const result = githubReadback(f);
+    assert.equal(result.ok, false);
+    assert.equal(result.reviewLaunchAllowed, false);
+    assert.equal(result.mergeAuthority, false);
+  });
+});
+
+test('GitHub raw inventory rejects omissions, extra matching runs and hidden timeline events', async sub => {
+  const cases = [
+    ['run count incomplete', x => { x.runInventoryTotalCount = 2; }],
+    ['event count incomplete', x => { x.eventInventoryTotalCount = 4; }],
+    ['two matching reviewer launches', x => {
+      x.runs.push({ ...x.runs[0], id: 42500000001 }); x.runInventoryTotalCount = 2;
+    }],
+    ['duplicate run identity', x => {
+      x.runs.push({ ...x.runs[0] }); x.runInventoryTotalCount = 2;
+    }],
+    ['unbound extra workflow run', x => {
+      x.runs.push({ ...x.runs[0], id: 42500000002, display_title: 'manual' });
+      x.runInventoryTotalCount = 2;
+    }],
+  ];
+  for (const [name, mutate] of cases) await sub.test(name, () => {
+    const x = githubFixture();
+    mutate(x);
+    const result = githubReadback(x);
     assert.equal(result.ok, false);
     assert.equal(result.reviewLaunchAllowed, false);
     assert.equal(result.mergeAuthority, false);
