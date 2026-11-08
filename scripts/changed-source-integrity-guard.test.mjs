@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -63,4 +64,35 @@ test('ambiguous newline-delimited Git output fails closed', () => {
   assert.throws(() => collectChangedJavaScriptFiles({
     execGit: () => 'safe.js\nunsafe.js\n',
   }), /CHANGED_SOURCE_DIFF_PATH_ENCODING_INVALID/);
+});
+
+test('leading-dash changed JavaScript paths use genuine Git discovery and Node syntax checks', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stephanos-source-integrity-dash-'));
+  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
+  const commit = (message) => git(
+    '-c', 'user.name=CI Fixture',
+    '-c', 'user.email=ci-fixture@example.invalid',
+    'commit', '-qm', message,
+  );
+
+  git('init', '-q');
+  writeFileSync(join(root, 'baseline.txt'), 'baseline\n');
+  git('add', '--', 'baseline.txt');
+  commit('baseline');
+
+  const dashPaths = ['-literal.mjs', '--guard.js', '-worker.cjs'];
+  for (const path of dashPaths) {
+    writeFileSync(
+      join(root, path),
+      path.endsWith('.cjs') ? 'module.exports = { value: 1 };\n' : 'const value = 1;\n',
+    );
+  }
+  git('add', '--', ...dashPaths);
+  commit('add leading-dash JavaScript filenames');
+
+  const discovered = collectChangedJavaScriptFiles({ cwd: root, baseRef: 'HEAD~1' });
+  assert.deepEqual(discovered, [...dashPaths].sort());
+  const result = validateJavaScriptFiles(discovered, { cwd: root });
+  assert.equal(result.ok, true, JSON.stringify(result.failures));
+  assert.deepEqual(result.checked, discovered);
 });

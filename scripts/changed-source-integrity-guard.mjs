@@ -45,7 +45,7 @@ export function validateJavaScriptFiles(files = [], {
   cwd = process.cwd(),
   runNodeCheck = (path) => spawnSync(
     process.execPath,
-    ['--check', path],
+    ['--check', resolve(cwd, path)],
     { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
   ),
   stat = (path) => lstatSync(resolve(cwd, path)),
