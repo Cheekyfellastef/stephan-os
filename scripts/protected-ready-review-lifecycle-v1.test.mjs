@@ -732,6 +732,10 @@ test('job log CDN transport stays tokenless and refuses arbitrary redirect hosts
 });
 
 
+test('signed Actions URL validator remains a top-level named export', () => {
+  assert.equal(typeof trustedReadyReviewLogRedirectLocationV1, 'function');
+});
+
 test('GitHub official Actions Azure log hosts are permitted by the bounded allowlist', () => {
   for (const n of [1, 9, 30, 49, 100, 149, 199]) {
     assert.equal(trustedReadyReviewLogRedirectLocationV1(

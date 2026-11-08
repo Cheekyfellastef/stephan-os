@@ -646,6 +646,21 @@ export async function loadProtectedReadyReviewLifecycle({ identity, skippedRunId
   return proof;
 }
 
+// Authenticated GitHub Actions job logs use short-lived signed HTTPS redirects.
+// Current GitHub Actions also uses productionresultssa Azure Blob hosts.
+// Keep the host allowlist fixed and never forward the GitHub token.
+export function trustedReadyReviewLogRedirectLocationV1(location) {
+  if (typeof location !== 'string' || location.length < 1 || location.length > 8192) return false;
+  let url;
+  try { url = new URL(location); } catch { return false; }
+  if (url.protocol !== 'https:' || url.port !== '' || url.username !== ''
+    || url.password !== '' || url.hash !== '' || !url.pathname || url.pathname === '/')
+    return false;
+  if (/^([a-z0-9-]+\.)*actions\.githubusercontent\.com$/.test(url.hostname)) return true;
+  const blob = /^productionresultssa([0-9]{1,3})\.blob\.core\.windows\.net$/.exec(url.hostname);
+  return blob !== null && /^(?:[1-9]|[1-9][0-9]|1[0-9][0-9])$/.test(blob[1]);
+}
+
 export function readyReviewTransports(env = process.env) {
   const token = env.GH_TOKEN || env.GITHUB_TOKEN;
   requireProof(Boolean(token), 'GITHUB_TOKEN_REQUIRED');
@@ -692,21 +707,6 @@ export function readyReviewTransports(env = process.env) {
       headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     requireProof(response.status === 204, `DISPATCH_${response.status}`);
   };
-// Authenticated GitHub Actions job logs use short-lived signed HTTPS redirects.
-// Current GitHub Actions also uses productionresultssa Azure Blob hosts.
-// Keep the host allowlist fixed and never forward the GitHub token.
-export function trustedReadyReviewLogRedirectLocationV1(location) {
-  if (typeof location !== 'string' || location.length < 1 || location.length > 8192) return false;
-  let url;
-  try { url = new URL(location); } catch { return false; }
-  if (url.protocol !== 'https:' || url.port !== '' || url.username !== ''
-    || url.password !== '' || url.hash !== '' || !url.pathname || url.pathname === '/')
-    return false;
-  if (/^([a-z0-9-]+\.)*actions\.githubusercontent\.com$/.test(url.hostname)) return true;
-  const blob = /^productionresultssa([0-9]{1,3})\.blob\.core\.windows\.net$/.exec(url.hostname);
-  return blob !== null && /^(?:[1-9]|[1-9][0-9]|1[0-9][0-9])$/.test(blob[1]);
-}
-
   const readJobLog = async jobId => {
     // The authenticated API returns a short-lived signed log URL. NEVER forward
     // the GitHub token to that CDN, allow another redirect, or disclose its body.
