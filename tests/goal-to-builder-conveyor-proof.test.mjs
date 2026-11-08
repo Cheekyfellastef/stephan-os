@@ -8,6 +8,8 @@ import { tmpdir } from 'node:os';
 import '../shared/agents/goalBuildingAgentV1.continuation.test.mjs';
 // Original Goal #1558 PR Estate proof runs inside the existing conveyor CI, no extra workflow.
 import '../shared/agents/prEstateReconciler.test.mjs';
+// Original Goal #1451/#2670 Captain Bridge PR-open-state truth, using the existing conveyor CI.
+import '../shared/agents/captains-bridge-orchestrator.test.mjs';
 
 import {
   buildSchedulerGoalsFromProgrammeSources,
