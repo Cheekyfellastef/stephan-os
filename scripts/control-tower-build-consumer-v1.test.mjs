@@ -777,3 +777,43 @@ test('uncertain combined reservation keeps its locator and never calls the owner
   assert.equal(result.latestBuildRequestObservation.ledgerPhase, 'RESERVED');
   assert.equal(s.calls.length, 0);
 });
+
+test('a retained unresolved BUILD avoids an expensive full scan without granting mutation or starving OBSERVE', async t => {
+  let discoveryCalls = 0;
+  const s = setup(t, {
+    createLedger: path => {
+      const original = createMailboxExecutionLedger(path);
+      return { ...original, discoverControlTower: async () => {
+        discoveryCalls++;
+        return { ok: false, blocker: 'CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED' };
+      } };
+    },
+    inspect: async () => inspectedStatus(),
+  });
+  const command = { ...s.f.request, issueNumber: 2315 };
+  const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+  const prior = createControlTowerRequestObservationV1(command, {
+    commandDigest: mailboxRotationDigest(command), acceptedAtUtc: NOW, nowMs: Date.parse(NOW),
+  });
+  assert(prior, 'fixture must be a valid real observation');
+  ledger.reserve(command, { controlTowerObservation: prior });
+  const original = ledger.read(command.requestId);
+  assert.equal(original.phase, 'RESERVED');
+
+  const held = await s.consume({ latestBuildRequestId: command.requestId });
+  assert.equal(held.state, 'HELD');
+  assert.equal(held.blocker, 'CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED');
+  assert.equal(discoveryCalls, 0, 'no full scan for a known unresolved original BUILD');
+  assert.equal(s.calls.length, 0);
+  assert.deepEqual(ledger.read(command.requestId), original);
+
+  const observation = fixture({ operation: 'OBSERVE_CONTROL_SYSTEM', runId: 101 });
+  s.options.dependencies.readRequest = args => readControlTowerBuildRequestV1({
+    ...args, fetchImpl: observation.fetchImpl,
+  });
+  const observed = await s.consume({ latestBuildRequestId: command.requestId });
+  assert.equal(observed.state, 'OBSERVATION_COMPLETED');
+  assert.equal(discoveryCalls, 0, 'read-only OBSERVE does not need a second scan');
+  assert.equal(s.calls.length, 0, 'the previous BUILD cannot dispatch a worker');
+  assert.deepEqual(ledger.read(command.requestId), original, 'original reserved custody unchanged');
+});

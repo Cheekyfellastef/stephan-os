@@ -141,8 +141,16 @@ export async function consumeControlTowerBuildRequestV1({
     latestBuild = restore(latestBuildRequestId, CONTROL_TOWER_BUILD_OPERATION)
       || controlTowerMissingLedgerObservationV1(latestBuildRequestId);
     latestObserve = restore(latestObserveRequestId, CONTROL_TOWER_OBSERVE_OPERATION);
-    discovery = typeof ledger.discoverControlTower === 'function'
-      ? await ledger.discoverControlTower({ nowMs: now().getTime() }) : null;
+    // A validated original BUILD reservation or missing retained record is
+    // already enough to refuse new BUILD. Do not spend an expensive exhaustive
+    // scan on that known HOLD. A later admitted BUILD still requires the
+    // original complete read-set scan; this never retires or replays custody.
+    const knownBuildUnresolved = controlTowerBuildObservationUnresolvedV1(
+      latestBuild, { nowMs: now().getTime() });
+    discovery = knownBuildUnresolved
+      ? { ok: false, blocker: 'CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED' }
+      : typeof ledger.discoverControlTower === 'function'
+        ? await ledger.discoverControlTower({ nowMs: now().getTime() }) : null;
     if (discovery?.ok) {
       if (latestBuild?.detailState !== 'MISSING') latestBuild = discovery.latestBuildRequestObservation || latestBuild;
       latestObserve = discovery.latestControlSystemObservation || latestObserve;
