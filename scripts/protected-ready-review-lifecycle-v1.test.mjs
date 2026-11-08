@@ -8,6 +8,7 @@ import {
   prepareReadyReview, executeReadyReview, loadProtectedReadyReviewLifecycle, readReadyReviewCollection,
   loadReadyReviewHandoff, readReadyReviewUnresolvedThreads, readyReviewTransports,
   readReadyReviewInput, preflightReadyReviewExactHead,
+  readReadyReviewIssueTimelineV1, inspectReadyReviewRecoveryReadOnlyV1,
 } from './protected-ready-review-lifecycle-v1.mjs';
 import { validateProtectedReadyReviewLifecycleEvidence, parseReadyReviewInputs,
   sealReadyReviewPayload, READY_REVIEW_HANDOFF_FILE, READY_REVIEW_RECEIPT_FILE } from '../shared/agents/protectedReadyReviewLifecycleV1.mjs';
@@ -631,4 +632,100 @@ test('canonical workflows preserve draft guards, pin main source and upload sepa
   assert.match(collector, /readyReviewLifecycleEvidence: refreshedReadyReview/);
   const dispatcher = source('scripts/dispatch-protected-merge-from-mailbox.mjs');
   assert.ok(dispatcher.indexOf('await prepareReadyReviewProducer') < dispatcher.indexOf('await graphqlReady(before.pull.node_id)'));
+});
+
+
+test('read-only recovery transport obtains complete bounded raw PR timeline', async () => {
+  const a = Array.from({ length: 100 }, (_, id) => ({ id: id + 1, event: 'commented' }));
+  const final = [{ id: 101, event: 'ready_for_review' }];
+  const calls = [];
+  const api = async path => {
+    calls.push(path);
+    if (path.endsWith('page=1')) return a;
+    if (path.endsWith('page=2')) return final;
+    throw new Error('unexpected page');
+  };
+  const result = await readReadyReviewIssueTimelineV1(api, 2094);
+  assert.equal(result.length, 101);
+  assert.deepEqual(calls, ['/issues/2094/timeline?per_page=100&page=1',
+    '/issues/2094/timeline?per_page=100&page=2']);
+});
+test('read-only recovery refuses duplicate events, incomplete pages and unsafe IDs', async t => {
+  const attacks = [
+    ['duplicate', async()=>[{id:1},{id:1}]],
+    ['missing id', async()=>[{}]],
+    ['nonarray', async()=>({events:[]})],
+    ['bad number', async()=>[{id:'12'}]],
+  ];
+  for(const [name,api] of attacks) await t.test(name,async()=>{
+    await assert.rejects(readReadyReviewIssueTimelineV1(api,2094),/RECOVERY_TIMELINE/);
+  });
+  await assert.rejects(readReadyReviewIssueTimelineV1(async()=>[], '2094/../7'),/API_ID_INVALID/);
+});
+test('existing source path inspects a failed original run but never dispatches a new review', async () => {
+  const f = readyLifecycleFixture({ alreadyReady: true }), d = fixtureTransport(f);
+  f.proof.review.run.conclusion = 'failure';
+  f.proof.review.job.conclusion = 'failure';
+  f.proof.review.job.steps = [
+    { name: 'Build immutable exact-head review input', conclusion: 'success' },
+    { name: 'Review ready head with the unchanged engine and qualified escalation', conclusion: 'failure' },
+  ];
+  const eventTimeline = [
+    { id: 801, event: 'ready_for_review',
+      actor: { login: 'github-actions[bot]', id: 41898282 }, created_at: clock(13) },
+    { id: 802, event: 'convert_to_draft',
+      actor: { login: 'Cheekyfellastef', id: 267490109 }, created_at: clock(17) },
+    { id: 803, event: 'ready_for_review',
+      actor: { login: 'github-actions[bot]', id: 41898282 }, created_at: clock(61) },
+  ];
+  const api = async path => path === '/issues/2094/timeline?per_page=100&page=1'
+    ? eventTimeline : d.api(path);
+  const observed = await inspectReadyReviewRecoveryReadOnlyV1({
+    identity:f.identity,api,readJobLog:async id=>{
+      assert.equal(id,201);
+      return 'PROTECTED_READY_REVIEW_BLOCKED:CURRENT_PR_HEAD_TREE_BASE_OR_DRAFT_CHANGED';
+    },now:()=>clock(65),
+  });
+  assert.equal(observed.blocker,'READY_REVIEW_RECOVERY_FRESH_OWNER_RECOVERY_AUTHORITY_UNPROVEN');
+  assert.equal(observed.reviewLaunchAllowed,false);
+  assert.equal(observed.mergeAuthority,false);
+  assert.equal(observed.sourceMutationAllowed,false);
+  assert.equal(d.calls.some(path=>path.includes('/dispatches')),false);
+});
+test('terminal healthy previous review does not fetch private failure log',async()=>{
+  const f=readyLifecycleFixture({alreadyReady:true}), d=fixtureTransport(f);
+  let logs=0;
+  await assert.rejects(inspectReadyReviewRecoveryReadOnlyV1({
+    identity:f.identity,api:d.api,readJobLog:async()=>{logs++;return 'irrelevant';},
+    now:()=>clock(65),
+  }),/RECOVERY_PRIOR_TERMINAL_FAILURE_UNPROVEN/);
+  assert.equal(logs,0);
+});
+test('job log CDN transport stays tokenless and refuses arbitrary redirect hosts', async t=>{
+  const first='https://api.github.com/repos/Cheekyfellastef/stephan-os/actions/jobs/201/logs';
+  const calls=[];
+  t.mock.method(globalThis,'fetch',async(url,opts)=>{
+    calls.push({url:String(url),opts});
+    if(String(url)===first) return {
+      status:302,headers:{get:key=>key==='location'
+        ? 'https://pipelines.actions.githubusercontent.com/fixture/log.txt' : null}
+    };
+    return new Response('PROTECTED_READY_REVIEW_BLOCKED:CURRENT_PR_HEAD_TREE_BASE_OR_DRAFT_CHANGED',{
+      status:200,headers:{'content-type':'text/plain'}
+    });
+  });
+  const reader=readyReviewTransports({GITHUB_TOKEN:'fixture-token'});
+  const log=await reader.readJobLog(201);
+  assert.match(log,/CURRENT_PR_HEAD_TREE_BASE_OR_DRAFT_CHANGED/);
+  assert.equal(calls.length,2);
+  assert.equal(calls[0].opts.headers.Authorization,'Bearer fixture-token');
+  assert.equal(Object.hasOwn(calls[1].opts,'headers'),false,'never send bearer token to log CDN');
+  calls.length=0;
+  const bad=readyReviewTransports({GITHUB_TOKEN:'fixture-token'});
+  const original=globalThis.fetch;
+  t.mock.restoreAll();
+  t.mock.method(globalThis,'fetch',async()=>({
+    status:302,headers:{get:()=> 'https://evil.example.com/leak'}
+  }));
+  await assert.rejects(bad.readJobLog(201),/RECOVERY_LOG_REDIRECT_UNTRUSTED/);
 });

@@ -28,6 +28,7 @@ import { reviewExactHead } from './exact-head-review.mjs';
 import { qualifyExactHeadReviewV1, validateOwnerEscalationCommentV1,
   assertQualifiableExactHeadReceiptV1, readOwnerEscalationCommentV1 } from './exact-head-qualified-escalation-v1.mjs';
 import { planProtectedReadyExecutionRoute, PROTECTED_READY_EXECUTION_ROUTE } from '../shared/agents/protectedReadyExecutionRouteV1.mjs';
+import { classifyProtectedReadyReviewGitHubReadbackV1 } from '../shared/agents/protectedReadyReviewRecoveryV1.mjs';
 
 const MAX_PAGES = 6;
 const DISPATCH_OBSERVATIONS = 6;
@@ -424,6 +425,65 @@ function handoffInputs(handoff, artifactId) {
     base_sha: handoff.identity.baseSha, ready_run_id: String(handoff.producerRunId),
     ready_artifact_id: String(artifactId), ready_receipt_sha256: handoff.payloadSha256 };
 }
+// Read every issue timeline page through the existing authenticated GitHub API.
+// The raw event estate is passed WHOLE to the pure recovery classifier.
+export async function readReadyReviewIssueTimelineV1(api, prNumber) {
+  requireProof(typeof api === 'function', 'RECOVERY_TIMELINE_API');
+  const number = apiId(prNumber), events = [], seen = new Set();
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
+    const batch = await api('/issues/' + number + '/timeline?per_page=100&page=' + page);
+    requireProof(Array.isArray(batch) && batch.length <= 100, 'RECOVERY_TIMELINE_PAGE_INVALID');
+    for (const event of batch) {
+      requireProof(Number.isSafeInteger(event?.id) && event.id > 0 && !seen.has(event.id),
+        'RECOVERY_TIMELINE_UNKNOWN_OR_DUPLICATE');
+      seen.add(event.id); events.push(event);
+    }
+    if (batch.length < 100) return events;
+  }
+  throw new Error('PROTECTED_READY_REVIEW_BLOCKED:RECOVERY_TIMELINE_OVER_BOUND');
+}
+
+// The same canonical trusted-source reader can inspect an already consumed
+// review WITHOUT ever permitting a POST. The distinct source owner must later
+// qualify a prospective one-use repair and its production dispatch contract.
+export async function inspectReadyReviewRecoveryReadOnlyV1({
+  identity, api, readJobLog, now = () => new Date().toISOString(),
+} = {}) {
+  requireProof(typeof api === 'function' && typeof readJobLog === 'function'
+    && typeof now === 'function', 'RECOVERY_READONLY_TRANSPORT');
+  await readReadyReviewTarget(api, identity);
+  const runs = await lifecycleRuns(api, identity);
+  const old = selectReadyReviewRun(runs, identity);
+  const [definition, run, jobs] = await Promise.all([
+    api('/actions/workflows/stephanos-exact-head-review.yml'),
+    api('/actions/runs/' + apiId(old.id)),
+    jobsFor(api, old.id),
+  ]);
+  requireProof(jobs.length === 1, 'RECOVERY_JOB_ESTATE_NOT_UNIQUE');
+  const job = oneJob(jobs, 'exact-head-review');
+  // Never download a private log for a nonterminal or successful run.
+  requireProof(run?.id === old.id && run.status === 'completed'
+    && run.conclusion === 'failure' && job.status === 'completed'
+    && job.conclusion === 'failure' && job.run_id === old.id,
+  'RECOVERY_PRIOR_TERMINAL_FAILURE_UNPROVEN');
+  const [log, events] = await Promise.all([
+    readJobLog(apiId(job.id)),
+    readReadyReviewIssueTimelineV1(api, identity.prNumber),
+  ]);
+  const target = await readReadyReviewTarget(api, identity);
+  const verdict = classifyProtectedReadyReviewGitHubReadbackV1({
+    identity, pull: target.pull, main: target.main, commit: target.commit,
+    workflow: definition, runs, runInventoryTotalCount: runs.length,
+    job, log, events, eventInventoryTotalCount: events.length,
+    // This is observation, not a protected owner authority parser.
+    ownerComment: null, nowUtc: now(),
+  });
+  requireProof(verdict.readOnly === true && verdict.reviewLaunchAllowed === false
+    && verdict.mergeAuthority === false && verdict.sourceMutationAllowed === false,
+  'RECOVERY_READONLY_AUTHORITY_FENCE');
+  return verdict;
+}
+
 export async function dispatchReadyReview({ inputs, env = process.env, sourceSha = ownSource(), api, download, readPatch,
   dispatch, now = () => new Date().toISOString(), wait = waitForObservation }) {
   const parsed = parseReadyReviewInputs(inputs);
@@ -632,6 +692,38 @@ export function readyReviewTransports(env = process.env) {
       headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     requireProof(response.status === 204, `DISPATCH_${response.status}`);
   };
+  const readJobLog = async jobId => {
+    // The authenticated API returns a short-lived signed log URL. NEVER forward
+    // the GitHub token to that CDN, allow another redirect, or disclose its body.
+    const first = await fetch('https://api.github.com' + ROOT
+      + '/actions/jobs/' + apiId(jobId) + '/logs', {
+      method: 'GET', redirect: 'manual', headers,
+      signal: AbortSignal.timeout(15000),
+    });
+    requireProof(first.status === 302, 'RECOVERY_LOG_API_NOT_SIGNED_REDIRECT');
+    const signed = new URL(first.headers?.get?.('location') || '');
+    requireProof(signed.protocol === 'https:' && signed.port === ''
+      && signed.username === '' && signed.password === ''
+      && /^([a-z0-9-]+\.)*actions\.githubusercontent\.com$/.test(signed.hostname),
+    'RECOVERY_LOG_REDIRECT_UNTRUSTED');
+    const response = await fetch(signed.toString(), {
+      method: 'GET', redirect: 'error', signal: AbortSignal.timeout(20000),
+    });
+    requireProof(response.status === 200
+      && response.headers?.get?.('content-range') === null
+      && typeof response.body?.[Symbol.asyncIterator] === 'function',
+    'RECOVERY_LOG_RESPONSE_INVALID');
+    const chunks = []; let bytes = 0;
+    for await (const chunk of response.body) {
+      requireProof(chunk instanceof Uint8Array, 'RECOVERY_LOG_STREAM_INVALID');
+      bytes += chunk.byteLength;
+      requireProof(bytes <= 250000, 'RECOVERY_LOG_TOO_LARGE');
+      chunks.push(chunk);
+    }
+    requireProof(bytes > 0, 'RECOVERY_LOG_EMPTY');
+    return new TextDecoder('utf-8', { fatal: true })
+      .decode(Buffer.concat(chunks, bytes));
+  };
   const readThreadsPage = async (prNumber, after) => {
     apiId(prNumber);
     requireProof(prNumber <= 2147483647 && (after === null || (typeof after === 'string'
@@ -644,7 +736,7 @@ export function readyReviewTransports(env = process.env) {
     requireProof(Buffer.byteLength(raw) <= READY_REVIEW_MAX_BYTES, 'REVIEW_THREADS_RESPONSE_TOO_LARGE');
     return JSON.parse(raw);
   };
-  return { api, download, dispatch, readThreadsPage, readPatch };
+  return { api, download, dispatch, readThreadsPage, readPatch, readJobLog };
 }
 async function main() {
   const mode = process.argv[2], transport = readyReviewTransports();
