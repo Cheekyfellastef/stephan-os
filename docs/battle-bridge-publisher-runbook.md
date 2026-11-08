@@ -30,7 +30,10 @@ Get-Content "$env:STEPHANOS_SHARED_AGENT_WORKSPACE\events\battle-bridge-publishe
 
 ## Interpreting the publisher records
 
-- `status/battle-bridge-current.json` is the live dashboard status input.
+- `status/battle-bridge-current.json` stays the single canonical dashboard health record from the original directly observed publisher, unchanged.
+- The EXISTING backend minute publisher calls that original writer with bounded probes of only the fixed 127.0.0.1 ports 8787, 4173 and 18789 (700 ms each), before reading stale Ignition or worker diagnostics. It does not claim Git source cleanliness, served head, or actual worker pickup.
+- Stale Ignition/worker observations remain in `events/battle-bridge-publisher-loop.ndjson` as an event-only diagnostic. They cannot overwrite canonical status/proof/event or capability records.
+- Failed direct refresh gives an event-only refusal. The prior canonical record ages to STALE under the normal freshness gate; no false READY is created. This source patch does not require a new timer, installer, protected Sovereign runtime file, or reboot.
 - `proof/battle-bridge-current.json` carries the proof references used by the feed.
 - `capabilities/openclaw.json` keeps OpenClaw in the existing Shared Workspace capability format.
 - `events/battle-bridge-current.json` is a dashboard-compatible current event record.
