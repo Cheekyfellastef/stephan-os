@@ -82,3 +82,78 @@ test('watchdog telemetry fails closed for unallowlisted or ambiguous-looking res
   assert.equal(projected.blocker, 'WORKER_WATCHDOG_START_FAILED');
   assert.doesNotMatch(JSON.stringify(projected), /ATTACKER_SELECTED|attacker-controlled/i);
 });
+
+test('typed original watchdog Inspect failure reaches beacon without leaking private process errors', () => {
+  const cases = [
+    {
+      label: 'timed out fixed 5-second Inspect',
+      probeError: 'spawnSync C:\\private\\powershell.exe ETIMEDOUT',
+      code: 'WATCHDOG_INSPECT_TIMEOUT',
+      action: 'QUALIFY_WATCHDOG_INSPECT_LATENCY',
+    },
+    {
+      label: 'missing canonical executable',
+      probeError: 'spawnSync C:\\private\\powershell.exe ENOENT',
+      code: 'WATCHDOG_INSPECT_EXECUTABLE_MISSING',
+      action: 'VERIFY_CANONICAL_POWERSHELL_PROBE_PATH',
+    },
+    {
+      label: 'unexpected JSON output',
+      probeError: 'Worker watchdog probe returned invalid JSON.',
+      code: 'WATCHDOG_INSPECT_INVALID_JSON',
+      action: 'REPAIR_WATCHDOG_PROBE_JSON_BOUNDARY',
+    },
+    {
+      label: 'ambiguous competing error codes',
+      probeError: 'C:\\private ETIMEDOUT ENOENT',
+      code: 'WATCHDOG_INSPECT_CAUSE_UNPROVEN',
+      action: 'READ_WATCHDOG_FAILURE_BOUNDARY',
+    },
+    {
+      label: 'unrecognized script exception',
+      probeError: 'C:\\private\\user\\secret\\custom-error',
+      code: 'WATCHDOG_INSPECT_CAUSE_UNPROVEN',
+      action: 'READ_WATCHDOG_FAILURE_BOUNDARY',
+    },
+    {
+      label: 'oversized private diagnostic',
+      probeError: 'ETIMEDOUT' + 'x'.repeat(2048),
+      code: 'WATCHDOG_INSPECT_CAUSE_UNPROVEN',
+      action: 'READ_WATCHDOG_FAILURE_BOUNDARY',
+    },
+  ];
+  for (const scenario of cases) {
+    const record = failedWatchdog({
+      classification: 'WORKER_WATCHDOG_PROBE_FAILED',
+      restartBlocker: '',
+      restartSourceHead: '',
+      initialAssessment: null,
+      finalAssessment: null,
+      probeError: scenario.probeError,
+    });
+    const facts = projectWorkerWatchdogBeaconFacts(record, HEAD);
+    assert.equal(facts.classification, 'WORKER_WATCHDOG_PROBE_FAILED', scenario.label);
+    assert.equal(facts.probeFailureCode, scenario.code, scenario.label);
+    assert.equal(facts.exactNextAction, scenario.action, scenario.label);
+    assert.equal(facts.restartAttempted, true);
+    assert.equal(facts.rawErrorPublished, false);
+    const projected = projectBeaconStatus(record, SPEC, NOW, HEAD);
+    assert.equal(projected.blocker, scenario.code === 'WATCHDOG_INSPECT_CAUSE_UNPROVEN'
+      ? 'WORKER_WATCHDOG_PROBE_FAILED' : scenario.code, scenario.label);
+    assert.doesNotMatch(JSON.stringify(projected), /private|secret|ETIMEDOUT|ENOENT|probeError/i, scenario.label);
+    assert.equal(projected.workerWatchdogFacts.sourceHead, '');
+    assert.equal(projected.workerWatchdogFacts.exactHeadMatch, false);
+  }
+});
+
+test('successful and start-failed watchdog cases never promote an irrelevant Inspect error', () => {
+  for (const classification of ['WORKER_WATCHDOG_HEALTHY', 'WORKER_WATCHDOG_START_FAILED']) {
+    const facts = projectWorkerWatchdogBeaconFacts(failedWatchdog({
+      classification,
+      probeError: 'ETIMEDOUT C:\\private',
+    }), HEAD);
+    assert.equal(facts.probeFailureCode, '');
+    assert.notEqual(facts.exactNextAction, 'QUALIFY_WATCHDOG_INSPECT_LATENCY');
+    assert.doesNotMatch(JSON.stringify(facts), /private|ETIMEDOUT|probeError/i);
+  }
+});
