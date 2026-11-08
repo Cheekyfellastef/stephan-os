@@ -518,7 +518,7 @@ test('canonical mailbox wires the shared publication budget across every receipt
   assert.match(source, /flushMailboxReceiptPublicationOutbox\(state, \{\s*publish: publicationBudget\.publish,/);
   assert.match(source, /terminalizeRejectedMailboxCommands\(state, batch\.terminalRejections, \{\s*now,\s*publish: publicationBudget\.publish,/);
   assert.equal(
-    [...source.matchAll(/checkpointMailboxReceiptPublication\(state, publishable, publicationBudget\.publish\(publishable\)\)/g)].length,
+    [...source.matchAll(/checkpointMailboxReceiptPublication\(state, receipt, publicationBudget\.publish\(publishable\)\)/g)].length,
     2,
   );
 });
