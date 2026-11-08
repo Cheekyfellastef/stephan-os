@@ -9,7 +9,7 @@ export function trackedPose(pose,navigation) {
   const p=pose?.transform?.position,q=pose?.transform?.orientation;
   if(!p||!q||![p.x,p.y,p.z,q.x,q.y,q.z,q.w].every(Number.isFinite)) return null;
   const yaw=[0,Math.sin(navigation.yaw/2),0,Math.cos(navigation.yaw/2)];
-  return {position:add3(rotate3([p.x,p.y,p.z],yaw),[navigation.x,0,navigation.z]),
+  return {position:add3(rotate3([p.x,p.y,p.z],yaw),[navigation.x,navigation.y??0,navigation.z]),
     orientation:normalizeQuaternion(multiplyQuaternion(yaw,normalizeQuaternion([q.x,q.y,q.z,q.w])))};
 }
 export function cubeTargeted(hand,cube) {
@@ -40,9 +40,10 @@ export function createHolodeckCubeInteraction({physics,scene}={}) {
   const sourceIds=new WeakMap();let serial=0,lastTime=null,lastSelected='small';
   const carries=new Map();
   const buttons=new Map();
-  function sample({frame,referenceSpace,pose,navigation,gamepads=[]}) {
+  function sample({frame,referenceSpace,pose,navigation,gamepads=[],blockedSources=new Set()}) {
     const hands=[];
     for(const source of frame?.session?.inputSources??[]) {
+      if(blockedSources.has(source))continue;
       const pad=source.gamepad;
       if(source.targetRayMode!=='tracked-pointer'||pad?.mapping!=='xr-standard'||pad.connected===false||!source.gripSpace) continue;
       let grip,ray;
@@ -84,14 +85,14 @@ export function createHolodeckCubeInteraction({physics,scene}={}) {
     for(const cube of cubes) cube.targeted=pointers.some(p=>p.targetedId===cube.id);
     return {...cubes[0],cubes,pointers,targeted:pointers.some(p=>p.targeted)};
   }
-  function update({time,pose,frame,referenceSpace,navigation={x:0,z:0,yaw:0},gamepads=[],visible=true,hands:providedHands}) {
+  function update({time,pose,frame,referenceSpace,navigation={x:0,z:0,yaw:0},gamepads=[],visible=true,hands:providedHands,blockedSources}) {
     const seconds=lastTime===null?0:(time-lastTime)/1000;
     const tracked=providedHands!==undefined||trackedPose(pose,navigation);
     if(!visible||!tracked||!Number.isFinite(time)||seconds<0||seconds>0.25) {
       safeDrop();lastTime=null;return result();
     }
     lastTime=time;
-    const dt=Math.min(seconds,0.05),hands=providedHands??sample({frame,referenceSpace,pose,navigation,gamepads});
+    const dt=Math.min(seconds,0.05),hands=providedHands??sample({frame,referenceSpace,pose,navigation,gamepads,blockedSources});
     const ids=new Set(hands.map(h=>h.id));
     for(const id of buttons.keys()) if(!ids.has(id)) {buttons.delete(id);carries.delete(id);}
     let released=false;
