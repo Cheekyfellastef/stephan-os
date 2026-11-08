@@ -53,20 +53,19 @@ test('verification harness accepts publisher workspace records deterministically
   assert.equal(verification.checks.length, 4);
 });
 
-test('safe secondary writer keeps canonical dashboard status absent without dashboard writes', async () => {
+test('safe writer publishes records consumed by dashboard feed without dashboard writes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'stephanos-battle-bridge-workspace-'));
   const slice = createBattleBridgePublisherSlice({ timestampUtc, services: readyServices() });
   const result = await publishBattleBridgeSliceToSharedWorkspace(root, slice, { repoRoot: process.cwd(), nowMs, timestampUtc });
 
   assert.equal(result.ok, true);
-  const status = JSON.parse(await readFile(join(root, 'status', 'battle-bridge-backend-loop-current.json'), 'utf8'));
+  const status = JSON.parse(await readFile(join(root, 'status', 'battle-bridge-current.json'), 'utf8'));
   assert.equal(status.status, 'READY');
 
   const feed = await readSharedWorkspaceDashboardFeed({ root, repoRoot: process.cwd(), nowMs, staleAfterMs: 60_000 });
   assert.equal(feed.readOnly, true);
   assert.equal(feed.polling.dashboardWritesAllowed, false);
-  assert.equal(feed.records.statusRecords.some((record) => record.statusId === 'battle-bridge-backend-loop-current'), false);
-  assert.equal(feed.records.statusRecords.some((record) => record.statusId === 'battle-bridge-current'), false);
-  assert.equal(status.statusId, 'battle-bridge-backend-loop-current');
+  assert.equal(feed.state, 'ready');
+  assert.equal(feed.records.statusRecords[0].statusId, 'battle-bridge-current');
   assert.equal(feed.records.capabilityRecords[0].agentId, 'openclaw');
 });

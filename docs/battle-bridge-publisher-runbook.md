@@ -24,15 +24,16 @@ Use this from the Battle Bridge machine only after the workspace directory exist
 ```powershell
 $env:STEPHANOS_SHARED_AGENT_WORKSPACE="$env:USERPROFILE\Documents\Stephanos-openclaw-workspace"
 node --input-type=module -e "import { createBattleBridgeSupervisorStartupPublisher } from './shared/agents/battleBridgePublisherLoop.mjs'; const loop = createBattleBridgeSupervisorStartupPublisher({ root: process.env.STEPHANOS_SHARED_AGENT_WORKSPACE, repoRoot: process.cwd(), intervalMs: 60000 }); setTimeout(() => { console.log(loop.stop()); }, 1500);"
-Get-Content "$env:STEPHANOS_SHARED_AGENT_WORKSPACE\status\battle-bridge-backend-loop-current.json" -Raw
+Get-Content "$env:STEPHANOS_SHARED_AGENT_WORKSPACE\status\battle-bridge-current.json" -Raw
 Get-Content "$env:STEPHANOS_SHARED_AGENT_WORKSPACE\events\battle-bridge-publisher-loop.ndjson" -Tail 5
 ```
 
 ## Interpreting the publisher records
 
-- `status/battle-bridge-current.json` is the direct-observation canonical dashboard status input. If its evidence is missing or stale, readiness stays UNKNOWN/STALE.
-- `status/battle-bridge-backend-loop-current.json` is a separate diagnostic-only backend loop projection; it must not overwrite or promote canonical status.
-- The **existing backend publisher's same single-flight minute tick** now refreshes canonical direct service observations via the three fixed localhost TCP probes (8787/4173/18789, each bounded at 700 ms), before publishing its separate stale-Ignition/worker diagnostic. No additional timer, daemon, mailbox, credential, PowerShell script, privileged action or restart is required by the design. Negative reachability stays DEGRADED rather than READY, a failed refresh refuses the tick, and these TCP observations do **not** attest the served source commit, exact process identity, or physical builder pickup.
+- `status/battle-bridge-current.json` stays the single canonical dashboard health record from the original directly observed publisher, unchanged.
+- The EXISTING backend minute publisher calls that original writer with bounded probes of only the fixed 127.0.0.1 ports 8787, 4173 and 18789 (700 ms each), before reading stale Ignition or worker diagnostics. It does not claim Git source cleanliness, served head, or actual worker pickup.
+- Stale Ignition/worker observations remain in `events/battle-bridge-publisher-loop.ndjson` as an event-only diagnostic. They cannot overwrite canonical status/proof/event or capability records.
+- Failed direct refresh gives an event-only refusal. The prior canonical record ages to STALE under the normal freshness gate; no false READY is created. This source patch does not require a new timer, installer, protected Sovereign runtime file, or reboot.
 - `proof/battle-bridge-current.json` carries the proof references used by the feed.
 - `capabilities/openclaw.json` keeps OpenClaw in the existing Shared Workspace capability format.
 - `events/battle-bridge-current.json` is a dashboard-compatible current event record.
@@ -80,7 +81,7 @@ $workspace = Join-Path $env:TEMP ('stephanos-openclaw-workspace-' + [guid]::NewG
 New-Item -ItemType Directory -Force -Path $workspace | Out-Null
 $env:STEPHANOS_SHARED_AGENT_WORKSPACE=$workspace
 node --input-type=module -e "import { startBattleBridgePublisherLoopForBackend } from './stephanos-server/services/battleBridgePublisherLifecycle.js'; const handle = await startBattleBridgePublisherLoopForBackend({ env: process.env, repoRoot: process.cwd(), runImmediately: true, intervalMs: 30000 }); setTimeout(() => { console.log(JSON.stringify({ started: handle.started, state: handle.state, reason: handle.reason, stop: handle.stop() }, null, 2)); }, 1500);"
-Get-Content (Join-Path $workspace 'status\battle-bridge-backend-loop-current.json') -Raw
+Get-Content (Join-Path $workspace 'status\battle-bridge-current.json') -Raw
 Get-Content (Join-Path $workspace 'events\battle-bridge-publisher-loop.ndjson') -Tail 5
 ```
 

@@ -92,17 +92,6 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_PATTERNS = Object.freeze([
 
 export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
   record({
-    fileName: 'battle-bridge-backend-loop-current.json',
-    // The actual published statusRecord is created by sharedAgentWorkspaceStore,
-    // not the internal publisher-slice model's battle-bridge-publisher.v1.
-    schemaIds: ['shared-agent-workspace-record.v1'],
-    sourcePaths: [
-      'shared/agents/battleBridgePublisher.mjs',
-      'shared/agents/sharedAgentWorkspaceStore.mjs',
-    ],
-    role: 'secondary-backend-publisher-diagnostic-only',
-  }),
-  record({
     fileName: 'battle-bridge-break-glass-nonce.json',
     schemaIds: ['stephanos.battle-bridge-break-glass-nonce.v1'],
     sourcePaths: ['scripts/windows/request-battle-bridge-recovery.ps1'],

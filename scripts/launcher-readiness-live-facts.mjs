@@ -91,18 +91,6 @@ async function collectServiceFacts({ serviceProbe = probeTcpService } = {}) {
   return Object.fromEntries(entries);
 }
 
-// Bounded three-fixed-localhost-port observation for the EXISTING backend
-// publisher cadence. No Git subprocess or old workspace health is read, and
-// no source/head/worker authority or mutation is inferred from TCP reachability.
-export async function collectLauncherReadinessServiceFactsV1(options = {}) {
-  const services = await collectServiceFacts(options);
-  return Object.freeze({
-    schema: LAUNCHER_READINESS_LIVE_FACTS_SCHEMA,
-    observedFacts: Object.freeze({ services }),
-    authority: LIVE_COLLECTOR_AUTHORITY,
-  });
-}
-
 function readWorkspaceRecord(filePath) {
   let stat = null, parsed = null, safeFile = false, fd = null;
   const safe = row => row.isFile() && !row.isSymbolicLink() && row.nlink === 1 && row.size <= 1_048_576;

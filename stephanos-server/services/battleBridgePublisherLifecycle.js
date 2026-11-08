@@ -1,7 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { createConnection } from 'node:net';
 import { createBattleBridgeSupervisorStartupPublisher } from '../../shared/agents/battleBridgePublisherLoop.mjs';
+import { refreshBattleBridgeSharedWorkspacePublisher } from '../../scripts/battle-bridge-shared-workspace-publisher.mjs';
 import {
   BATTLE_BRIDGE_SERVICE_STATUS,
   createBattleBridgePublisherSlice,
@@ -10,8 +12,6 @@ import {
   DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS,
   projectMissionWorkerHeartbeat,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
-import { collectLauncherReadinessServiceFactsV1 } from '../../scripts/launcher-readiness-live-facts.mjs';
-import { refreshBattleBridgeSharedWorkspacePublisher } from '../../scripts/battle-bridge-shared-workspace-publisher.mjs';
 import { validateSharedWorkspaceFeedConfig, MISSING_WORKSPACE_NEXT_ACTION } from './sharedWorkspaceDashboardFeedService.js';
 
 export const BATTLE_BRIDGE_PUBLISHER_LIVE_SLICE_MAX_AGE_MS = 5 * 60 * 1000;
@@ -152,34 +152,71 @@ export async function buildBattleBridgePublisherLiveSliceFromWorkspace(root, {
   });
 }
 
-// Keep the canonical directly observed status fresh on the EXISTING
-// single-flight backend minute publisher, even without an Ignition restart.
-// The old stale-supervisor model remains a separate diagnostic-only record.
-export async function refreshPeriodicBattleBridgeDirectObservationV1({
-  workspaceRoot, repoRoot, timestampUtc,
-  factsFn = collectLauncherReadinessServiceFactsV1,
-  publishFn = refreshBattleBridgeSharedWorkspacePublisher,
-} = {}) {
-  if (typeof workspaceRoot !== 'string' || !workspaceRoot ||
-    typeof repoRoot !== 'string' || !repoRoot ||
-    !Number.isFinite(Date.parse(timestampUtc || '')))
-    throw new Error('BATTLE_BRIDGE_PERIODIC_DIRECT_INPUT_INVALID');
-  const facts = await factsFn();
-  const services = facts?.observedFacts?.services;
-  if (!['backend', 'stephanos-ui', 'openclaw-gateway'].every(id =>
-    typeof services?.[id]?.ready === 'boolean' &&
-    services[id].evidence?.probe === 'tcp-connect'))
-    throw new Error('BATTLE_BRIDGE_PERIODIC_DIRECT_TCP_EVIDENCE_UNPROVEN');
-  if (Object.hasOwn(facts, 'sourceFacts'))
-    throw new Error('BATTLE_BRIDGE_PERIODIC_DIRECT_SOURCE_SCOPE_UNSAFE');
-  const result = await publishFn({
-    repoRoot, sharedWorkspace: workspaceRoot, timestampUtc,
-    facts, mode: 'periodic-bounded-local-service-observation',
+// Fixed read-only localhost observation in the already-existing backend loop.
+// It does not perform Git network I/O, create source authority or claim a served head.
+const BACKEND_CANONICAL_PORTS = Object.freeze([
+  Object.freeze({ id: 'backend', host: '127.0.0.1', port: 8787 }),
+  Object.freeze({ id: 'stephanos-ui', host: '127.0.0.1', port: 4173 }),
+  Object.freeze({ id: 'openclaw-gateway', host: '127.0.0.1', port: 18789 }),
+]);
+function probeBackendCanonicalPortV1(service) {
+  return new Promise(resolve => {
+    const socket = createConnection({ host: service.host, port: service.port });
+    let settled = false;
+    const finish = (ready, detail) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve({ ready, evidence: { probe: 'tcp-connect', host: service.host,
+        port: service.port, detail } });
+    };
+    socket.setTimeout(700);
+    socket.once('connect', () => finish(true, 'connected'));
+    socket.once('timeout', () => finish(false, 'timeout'));
+    socket.once('error', error =>
+      finish(false, error?.code === 'ECONNREFUSED' ? 'refused' : 'socket-error'));
   });
-  if (result?.ok !== true)
-    throw new Error('BATTLE_BRIDGE_PERIODIC_DIRECT_PUBLISH_REFUSED');
-  return Object.freeze({ ok: true, observedAtUtc: timestampUtc,
-    status: result.status, authority: 'source-limited-service-observation-only' });
+}
+export async function collectBackendCanonicalLocalServiceFactsV1({ probe = probeBackendCanonicalPortV1 } = {}) {
+  if (typeof probe !== 'function') throw new Error('BACKEND_CANONICAL_PROBE_UNAVAILABLE');
+  const observed = await Promise.all(BACKEND_CANONICAL_PORTS.map(probe));
+  const services = {};
+  for (const [index, service] of BACKEND_CANONICAL_PORTS.entries()) {
+    const value = observed[index];
+    if (typeof value?.ready !== 'boolean' || value?.evidence?.probe !== 'tcp-connect'
+      || value.evidence.host !== service.host || value.evidence.port !== service.port)
+      throw new Error('BACKEND_CANONICAL_PROBE_IDENTITY_UNPROVEN');
+    services[service.id] = value;
+  }
+  return Object.freeze({ observedFacts: Object.freeze({ services }),
+    authority: Object.freeze({ executesCommands: false, mutatesRuntime: false,
+      sourceMutationAllowed: false, servedHeadAttested: false }) });
+}
+export async function refreshBackendPublisherCanonicalV1({
+  repoRoot, workspaceRoot, timestampUtc,
+  observe = collectBackendCanonicalLocalServiceFactsV1,
+  publisher = refreshBattleBridgeSharedWorkspacePublisher,
+} = {}) {
+  if (typeof repoRoot !== 'string' || !repoRoot ||
+    typeof workspaceRoot !== 'string' || !workspaceRoot ||
+    !Number.isFinite(Date.parse(timestampUtc || '')))
+    throw new Error('BACKEND_CANONICAL_REFRESH_INPUT_INVALID');
+  const facts = await observe();
+  const services = facts?.observedFacts?.services;
+  if (!BACKEND_CANONICAL_PORTS.every(item =>
+    typeof services?.[item.id]?.ready === 'boolean'
+    && services[item.id].evidence?.probe === 'tcp-connect'
+    && services[item.id].evidence.host === item.host
+    && services[item.id].evidence.port === item.port)
+    || Object.hasOwn(facts, 'sourceFacts'))
+    throw new Error('BACKEND_CANONICAL_REFRESH_PROOF_UNPROVEN');
+  const result = await publisher({
+    repoRoot, sharedWorkspace: workspaceRoot, timestampUtc,
+    facts, mode: 'periodic-existing-backend-publisher',
+  });
+  if (result?.ok !== true) throw new Error('BACKEND_CANONICAL_REFRESH_FAILED');
+  return Object.freeze({ ok: true, status: result.status,
+    sourceAuthority: false, servedHeadAttested: false, workerPickupProven: false });
 }
 
 export async function startBattleBridgePublisherLoopForBackend(input = {}) {
@@ -201,9 +238,10 @@ export async function startBattleBridgePublisherLoopForBackend(input = {}) {
     repoRoot: input.repoRoot,
     intervalMs: input.intervalMs,
     runImmediately: input.runImmediately,
+    secondaryDiagnosticOnly: true,
     buildSlice: async ({ timestampUtc }) => {
-      await refreshPeriodicBattleBridgeDirectObservationV1({
-        workspaceRoot: validation.root, repoRoot: input.repoRoot, timestampUtc,
+      await refreshBackendPublisherCanonicalV1({
+        repoRoot: input.repoRoot, workspaceRoot: validation.root, timestampUtc,
       });
       return buildBattleBridgePublisherLiveSliceFromWorkspace(validation.root, {
         timestampUtc, expectedRepositoryRoot, expectedHeadSha,

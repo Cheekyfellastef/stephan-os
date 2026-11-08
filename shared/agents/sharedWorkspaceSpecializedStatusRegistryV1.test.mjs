@@ -13,27 +13,7 @@ import {
   isSharedWorkspaceSpecializedStatusFile,
 } from './sharedWorkspaceSpecializedStatusRegistryV1.mjs';
 
-import {
-  createBattleBridgePublisherSlice,
-  createBattleBridgePublisherWorkspaceRecords,
-} from './battleBridgePublisher.mjs';
-
 const REPOSITORY_ROOT = fileURLToPath(new URL('../../', import.meta.url));
-
-test('secondary backend publisher specialized registry matches the REAL persisted status schema', () => {
-  const fileName = 'battle-bridge-backend-loop-current.json';
-  const declared = getSharedWorkspaceSpecializedStatusRecord(fileName);
-  const real = createBattleBridgePublisherWorkspaceRecords(
-    createBattleBridgePublisherSlice({ timestampUtc: '2026-11-08T20:30:00.000Z' }),
-  ).statusRecord;
-  assert.equal(real.statusId, 'battle-bridge-backend-loop-current');
-  assert.equal(real.kind, 'stephanos.shared_workspace.status');
-  assert.deepEqual(declared.schemaIds, [real.schemaVersion]);
-  assert.equal(declared.dashboardAuthority, false);
-  assert.equal(declared.authority, 'specialized-consumer-only');
-  assert.equal(isSharedWorkspaceSpecializedStatusFile({ directory: 'status', fileName }), true);
-  assert.equal(isSharedWorkspaceSpecializedStatusFile({ directory: 'status', fileName: 'battle-bridge-current.json' }), false);
-});
 
 test('registry is a status-only boundary with unique fixed filenames and narrowly bounded patterns', () => {
   assert.equal(SHARED_WORKSPACE_SPECIALIZED_STATUS_REGISTRY.records, SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS);
@@ -76,8 +56,6 @@ test('registry is a status-only boundary with unique fixed filenames and narrowl
   }
   assert.equal(isSharedWorkspaceSpecializedStatusFile({ directory: 'status', fileName: `mission-orchestrator-worker-launch-identity-${'a'.repeat(63)}.json` }), false);
   assert.equal(isSharedWorkspaceSpecializedStatusFile({ directory: 'status', fileName: 'mission-orchestrator-worker-restart-claim-not-a-digest.json' }), false);
-  assert.equal(isSharedWorkspaceSpecializedStatusFile({ directory: 'status', fileName: 'battle-bridge-backend-loop-current.json' }), true);
-  assert.equal(isSharedWorkspaceSpecializedStatusFile({ directory: 'status', fileName: 'battle-bridge-current.json' }), false);
   assert.equal(isSharedWorkspaceSpecializedStatusFile({ directory: 'status', fileName: 'attacker-selected-specialized-record.json' }), false);
 });
 

@@ -13,7 +13,6 @@ import {
   resolveExistingSharedWorkspace,
   startBattleBridgePublisherLoop,
 } from './battleBridgePublisherLoop.mjs';
-import { refreshBattleBridgeSharedWorkspacePublisher } from '../../scripts/battle-bridge-shared-workspace-publisher.mjs';
 
 const timestampUtc = '2026-07-07T12:00:00.000Z';
 const repoRoot = process.cwd();
@@ -28,7 +27,7 @@ async function settled(loop) {
 test('persistent rename failure preserves prior bytes and the same loop can recover next tick', async () => {
   const root = await mkdtemp(join(tmpdir(), 'stephanos-publisher-rename-'));
   await publishBattleBridgeLoopTick({ root, repoRoot, timestampUtc, nowMs: Date.parse(timestampUtc) });
-  const path = join(root, 'status', 'battle-bridge-backend-loop-current.json'), before = await readFile(path);
+  const path = join(root, 'status', 'battle-bridge-current.json'), before = await readFile(path);
   let intervalFn, fail = true, renameCalls = 0;
   const loop = startBattleBridgePublisherLoop({ root, repoRoot, timestampUtc,
     nowMs: Date.parse(timestampUtc), runImmediately: false,
@@ -59,7 +58,7 @@ test('an unavailable audit-event sink does not reject an otherwise published tic
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'PUBLISHER_LOOP_EVENT_WRITE_FAILED');
   assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_PUBLISHER_LOOP_TICK_BLOCKED');
-  assert.equal(JSON.parse(await readFile(join(root, 'status', 'battle-bridge-backend-loop-current.json'), 'utf8')).status, 'UNKNOWN');
+  assert.equal(JSON.parse(await readFile(join(root, 'status', 'battle-bridge-current.json'), 'utf8')).status, 'UNKNOWN');
 });
 
 test('a real backend-like HTTP process survives detached immediate and scheduled publication failures', () => {
@@ -94,45 +93,50 @@ test('loop tick publishes UNKNOWN records and hidden Shared Workspace event', as
   const result = await publishBattleBridgeLoopTick({ root, repoRoot, timestampUtc, nowMs: Date.parse(timestampUtc) });
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_PUBLISHER_LOOP_TICK_PUBLISHED');
-  const status = JSON.parse(await readFile(join(root, 'status', 'battle-bridge-backend-loop-current.json'), 'utf8'));
+  const status = JSON.parse(await readFile(join(root, 'status', 'battle-bridge-current.json'), 'utf8'));
   assert.equal(status.status, 'UNKNOWN');
   const event = await readFile(join(root, 'events', 'battle-bridge-publisher-loop.ndjson'), 'utf8');
   assert.match(event, /publisher loop tick published/);
 });
 
-test('backend stale loop cannot overwrite fresh canonical direct READY or its provenance', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'stephanos-two-publisher-interleave-'));
-  const directAt = timestampUtc;
-  const later = new Date(Date.parse(directAt) + 26_000).toISOString();
-  const services = Object.fromEntries(['backend', 'stephanos-ui', 'openclaw-gateway', 'shared-workspace']
-    .map(id => [id, { ready: true, evidence: { probe: 'fresh-direct' } }]));
-  const direct = await refreshBattleBridgeSharedWorkspacePublisher({
-    repoRoot, sharedWorkspace: root, timestampUtc: directAt,
-    facts: { observedFacts: { services }, sourceFacts: { dirtyPaths: [] } },
-  });
-  assert.equal(direct.ok, true);
-  const canonical = join(root, 'status', 'battle-bridge-current.json');
-  const before = await readFile(canonical, 'utf8');
-  assert.equal(JSON.parse(before).status, 'READY');
-  const backend = await publishBattleBridgeLoopTick({ root, repoRoot, timestampUtc: later, nowMs: Date.parse(later) });
-  assert.equal(backend.ok, true);
-  assert.equal(await readFile(canonical, 'utf8'), before,
-    'stale backend publisher must not replace current directly observed status');
-  const secondary = JSON.parse(await readFile(join(root, 'status', 'battle-bridge-backend-loop-current.json'), 'utf8'));
-  assert.equal(secondary.status, 'UNKNOWN');
-  assert.equal(secondary.statusId, 'battle-bridge-backend-loop-current');
-  assert.equal(JSON.parse(before).observedServiceFacts.backend.ready, true);
+test('backend event-only observation never replaces canonical direct READY', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-backend-diagnostic-'));
+  const status = join(root, 'status', 'battle-bridge-current.json');
+  await mkdir(join(root, 'status'), { recursive: true });
+  const before = JSON.stringify({ schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.status', statusId: 'battle-bridge-current',
+    timestampUtc, status: 'READY', observedServiceFacts: { backend: { ready: true } } }) + '\\n';
+  await import('node:fs/promises').then(fs => fs.writeFile(status, before));
+  const result = await publishBattleBridgeLoopTick({ root, repoRoot, timestampUtc,
+    nowMs: Date.parse(timestampUtc), secondaryDiagnosticOnly: true,
+    buildSlice: () => ({ status: 'UNKNOWN', services: [] }) });
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_BACKEND_DIAGNOSTIC_OBSERVED');
+  assert.equal(await readFile(status, 'utf8'), before);
+  assert.match(await readFile(join(root, 'events', 'battle-bridge-publisher-loop.ndjson'), 'utf8'),
+    /Backend diagnostic observed UNKNOWN; no canonical status write/);
+  await assert.rejects(readFile(join(root, 'proof', 'battle-bridge-current.json')), /ENOENT/);
 });
-
+test('backend source failure remains non-green and avoids private error disclosure', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-backend-source-fail-'));
+  const result = await publishBattleBridgeLoopTick({ root, repoRoot, timestampUtc,
+    nowMs: Date.parse(timestampUtc), secondaryDiagnosticOnly: true,
+    buildSlice() { throw new Error('PRIVATE_SOURCE_FAILURE'); } });
+  assert.equal(result.ok, false);
+  assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_BACKEND_DIAGNOSTIC_SOURCE_FAILED');
+  const event = await readFile(join(root, 'events', 'battle-bridge-publisher-loop.ndjson'), 'utf8');
+  assert.match(event, /Backend periodic direct observation failed/);
+  assert.doesNotMatch(event, /PRIVATE_SOURCE_FAILURE/);
+});
 test('publisher source failure publishes STALE with exact next action', async () => {
   const root = await mkdtemp(join(tmpdir(), 'stephanos-battle-bridge-loop-failure-'));
   const result = await publishBattleBridgeLoopTick({ root, repoRoot, timestampUtc, nowMs: Date.parse(timestampUtc), buildSlice() { throw new Error('boom'); } });
   assert.equal(result.errorHandled, true);
   assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_PUBLISHER_LOOP_FAILURE_PUBLISHED_STALE');
-  const status = JSON.parse(await readFile(join(root, 'status', 'battle-bridge-backend-loop-current.json'), 'utf8'));
+  const status = JSON.parse(await readFile(join(root, 'status', 'battle-bridge-current.json'), 'utf8'));
   assert.equal(status.status, 'UNKNOWN');
   assert.match(status.summary, /stale publisher/);
-  const proof = JSON.parse(await readFile(join(root, 'proof', 'battle-bridge-backend-loop-current.json'), 'utf8'));
+  const proof = JSON.parse(await readFile(join(root, 'proof', 'battle-bridge-current.json'), 'utf8'));
   assert.match(proof.summary, /Inspect Battle Bridge publisher loop error event/);
 });
 

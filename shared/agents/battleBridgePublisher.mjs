@@ -67,10 +67,10 @@ export function buildBattleBridgePublisherContract() {
     statusValues: Object.values(BATTLE_BRIDGE_SERVICE_STATUS),
     sharedWorkspaceWriter: 'publishBattleBridgeSliceToSharedWorkspace',
     workspaceRoutes: {
-      status: 'status/battle-bridge-backend-loop-current.json',
-      proof: 'proof/battle-bridge-backend-loop-current.json',
+      status: 'status/battle-bridge-current.json',
+      proof: 'proof/battle-bridge-current.json',
       capabilities: 'capabilities/openclaw.json',
-      event: 'events/battle-bridge-backend-loop-current.json',
+      event: 'events/battle-bridge-current.json',
     },
     guardrails: {
       arbitraryShellAllowed: false,
@@ -119,7 +119,7 @@ export function createBattleBridgePublisherSlice(input = {}) {
   return Object.freeze({
     schemaVersion: BATTLE_BRIDGE_PUBLISHER_SCHEMA_VERSION,
     kind: BATTLE_BRIDGE_PUBLISHER_RECORD_KIND,
-    recordId: safeId(input.recordId, 'battle-bridge-backend-loop-current'),
+    recordId: safeId(input.recordId, 'battle-bridge-current'),
     timestampUtc,
     services: publications,
     status: blocked.length === 0 ? 'READY' : 'UNKNOWN',
@@ -132,26 +132,26 @@ export function createBattleBridgePublisherSlice(input = {}) {
 
 export function createBattleBridgePublisherWorkspaceRecords(slice = {}) {
   const timestampUtc = safeText(slice.timestampUtc, 'pending');
-  const proofRefs = slice.proofRefs?.length ? slice.proofRefs : ['proof/battle-bridge-backend-loop-current.json'];
+  const proofRefs = slice.proofRefs?.length ? slice.proofRefs : ['proof/battle-bridge-current.json'];
   const statusRecord = createSharedWorkspaceStatusRecord({
-    statusId: 'battle-bridge-backend-loop-current',
+    statusId: 'battle-bridge-current',
     timestampUtc,
     status: slice.status || 'UNKNOWN',
     summary: slice.summary || 'Battle Bridge publisher status unavailable.',
     proofRefs,
   });
   const proofRecord = createSharedWorkspaceProofRecord({
-    proofId: 'battle-bridge-backend-loop-current',
+    proofId: 'battle-bridge-current',
     timestampUtc,
     status: slice.status || 'UNKNOWN',
     summary: slice.exactNextAction || 'Battle Bridge publisher proof requires refresh.',
-    correlationId: slice.correlationId || 'battle-bridge-backend-loop-current',
+    correlationId: slice.correlationId || 'battle-bridge-current',
     relatedIssue: slice.relatedIssue || '#1287',
     proofRefs,
     refs: proofRefs,
   });
   const eventRecord = createSharedWorkspaceEventRecord({
-    eventId: 'battle-bridge-backend-loop-current',
+    eventId: 'battle-bridge-current',
     timestampUtc,
     eventKind: 'health-check-result',
     summary: slice.summary || 'Battle Bridge current status published.',
@@ -195,10 +195,10 @@ export async function publishBattleBridgeSliceToSharedWorkspace(root, sliceInput
   if (!layout.ok) return { ok: false, reason: layout.reason, slice, verification };
   const records = createBattleBridgePublisherWorkspaceRecords(slice);
   const writes = [];
-  writes.push(await writeAtomicJson(layout.root, ['status', 'battle-bridge-backend-loop-current.json'], records.statusRecord, options));
-  writes.push(await writeAtomicJson(layout.root, ['proof', 'battle-bridge-backend-loop-current.json'], records.proofRecord, options));
+  writes.push(await writeAtomicJson(layout.root, ['status', 'battle-bridge-current.json'], records.statusRecord, options));
+  writes.push(await writeAtomicJson(layout.root, ['proof', 'battle-bridge-current.json'], records.proofRecord, options));
   writes.push(await writeAtomicJson(layout.root, ['capabilities', 'openclaw.json'], records.capabilityRecord, options));
-  writes.push(await writeAtomicJson(layout.root, ['events', 'battle-bridge-backend-loop-current.json'], records.eventRecord, options));
+  writes.push(await writeAtomicJson(layout.root, ['events', 'battle-bridge-current.json'], records.eventRecord, options));
   const failed = writes.find((write) => !write.ok);
   if (failed) return { ok: false, reason: failed.reason, slice, verification, records, writes };
   return { ok: true, reason: 'BATTLE_BRIDGE_PUBLISHER_SLICE_WRITTEN', slice, verification, records, writes };

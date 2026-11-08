@@ -47,7 +47,7 @@ export function buildBattleBridgePublisherLoopContract(input = {}) {
     stoppable: true,
     shutdownMethod: 'stop',
     workspaceMustPreexist: true,
-    hiddenLoggingRoute: 'Shared Workspace events/battle-bridge-backend-loop-current.json',
+    hiddenLoggingRoute: 'Shared Workspace events/battle-bridge-publisher-loop.ndjson',
     guardrails: {
       arbitraryShellAllowed: false,
       processKillingAllowed: false,
@@ -137,8 +137,13 @@ export async function publishBattleBridgeLoopTick(input = {}) {
   }
   let result;
   try {
-    result = await publishBattleBridgeSliceToSharedWorkspace(workspace.root, sliceInput,
-      { ...input.options, repoRoot: input.repoRoot, timestampUtc, nowMs: input.nowMs });
+    // The backend minute loop keeps stale supervisor projection as an event
+    // only. The original public publisher contract is unchanged for other users.
+    result = input.secondaryDiagnosticOnly === true
+      ? { ok: !sourceFailed, diagnosticOnly: true, slice: sliceInput, writes: [],
+        reason: sourceFailed ? 'BACKEND_DIRECT_OBSERVATION_FAILED' : 'BACKEND_DIAGNOSTIC_ONLY' }
+      : await publishBattleBridgeSliceToSharedWorkspace(workspace.root, sliceInput,
+        { ...input.options, repoRoot: input.repoRoot, timestampUtc, nowMs: input.nowMs });
   } catch (error) {
     // Storage failure cannot be repaired by a second write to the same sink.
     // Preserve the atomic writer's refusal and keep the host process alive.
@@ -148,16 +153,22 @@ export async function publishBattleBridgeLoopTick(input = {}) {
   try {
     event = await appendLoopEvent(workspace.root, createLoopEvent({ timestampUtc,
       eventKind: sourceFailed ? 'operator-action-required' : 'health-check-result',
-      summary: sourceFailed ? 'Battle Bridge publisher loop marked status STALE: publisher source failed.'
-        : result.ok ? 'Battle Bridge publisher loop tick published current Shared Workspace records.'
-          : 'Battle Bridge publisher loop publication was blocked.',
+      summary: input.secondaryDiagnosticOnly === true
+        ? sourceFailed ? 'Backend periodic direct observation failed; canonical status not refreshed.'
+          : 'Backend diagnostic observed ' + (sliceInput?.status === 'READY' ? 'READY' : 'UNKNOWN') + '; no canonical status write.'
+        : sourceFailed ? 'Battle Bridge publisher loop marked status STALE: publisher source failed.'
+          : result.ok ? 'Battle Bridge publisher loop tick published current Shared Workspace records.'
+            : 'Battle Bridge publisher loop publication was blocked.',
     }), { repoRoot: input.repoRoot, timestampUtc, nowMs: input.nowMs });
   } catch (error) { return blockedTick('PUBLISHER_LOOP_EVENT_WRITE_FAILED', error, workspace.root); }
   if (event?.ok !== true) return blockedTick('PUBLISHER_LOOP_EVENT_WRITE_FAILED', null, workspace.root);
   return { ...result, workspaceRoot: workspace.root,
     ...(sourceFailed ? { errorHandled: true, exactNextAction } : {}),
-    finalVerdict: result.ok ? sourceFailed ? 'BATTLE_BRIDGE_PUBLISHER_LOOP_FAILURE_PUBLISHED_STALE'
-      : 'BATTLE_BRIDGE_PUBLISHER_LOOP_TICK_PUBLISHED' : 'BATTLE_BRIDGE_PUBLISHER_LOOP_TICK_BLOCKED',
+    finalVerdict: input.secondaryDiagnosticOnly === true
+      ? result.ok ? 'BATTLE_BRIDGE_BACKEND_DIAGNOSTIC_OBSERVED'
+        : 'BATTLE_BRIDGE_BACKEND_DIAGNOSTIC_SOURCE_FAILED'
+      : result.ok ? sourceFailed ? 'BATTLE_BRIDGE_PUBLISHER_LOOP_FAILURE_PUBLISHED_STALE'
+        : 'BATTLE_BRIDGE_PUBLISHER_LOOP_TICK_PUBLISHED' : 'BATTLE_BRIDGE_PUBLISHER_LOOP_TICK_BLOCKED',
   };
 }
 
