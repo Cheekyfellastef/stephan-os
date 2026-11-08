@@ -81,6 +81,40 @@ function launch(env) {
   });
 }
 
+// GitHub pull_request_target payload is hosted runner-owned. Reject drafts
+// before invoking the authenticated specialist (no PR/file/commit API reads).
+// Unknown or inconsistent event identity also fails closed without a read.
+function draftReviewHeld() {
+  const eventPath = text(process.env.GITHUB_EVENT_PATH);
+  if (!eventPath) throw new Error('INDEPENDENT_REVIEW_EVENT_PATH_REQUIRED');
+  const event = JSON.parse(fs.readFileSync(eventPath, 'utf8'));
+  const repository = text(process.env.GITHUB_REPOSITORY);
+  if (!repository
+      || text(event?.repository?.full_name).toLowerCase() !== repository.toLowerCase()
+      || text(event?.pull_request?.base?.ref) !== 'main'
+      || typeof event?.pull_request?.draft !== 'boolean') {
+    throw new Error('INDEPENDENT_REVIEW_DRAFT_IDENTITY_UNVERIFIED');
+  }
+  // Preserve cheap draft hold; READY requires complete hosted identity before
+  // resource-intensive specialist launch. Do not change workflow_dispatch.
+  if (event.pull_request.draft) return true;
+  const pr = event.pull_request;
+  const safePrNumber = (value) => Number.isSafeInteger(value) && value > 0;
+  const fullSha = (value) => /^[0-9a-f]{40}$/i.test(text(value));
+  const sameRepository = (value) => text(value).toLowerCase() === repository.toLowerCase();
+  if (!safePrNumber(event.number)
+      || !safePrNumber(pr.number)
+      || event.number !== pr.number
+      || !fullSha(pr?.head?.sha)
+      || !fullSha(pr?.base?.sha)
+      || !text(pr?.head?.ref)
+      || !sameRepository(pr?.head?.repo?.full_name)
+      || !sameRepository(pr?.base?.repo?.full_name)) {
+    throw new Error('INDEPENDENT_REVIEW_READY_IDENTITY_UNVERIFIED');
+  }
+  return false;
+}
+
 function main() {
   if (process.env.GITHUB_ACTIONS !== 'true') {
     throw new Error('Independent review entry may run only inside GitHub Actions.');
@@ -90,6 +124,11 @@ function main() {
   }
   const eventName = text(process.env.GITHUB_EVENT_NAME);
   if (eventName === 'pull_request_target') {
+    if (draftReviewHeld()) {
+      console.error('INDEPENDENT_REVIEW_DRAFT_HELD_NO_API_READS');
+      process.exitCode = 2;
+      return;
+    }
     const child = launch(process.env);
     process.exitCode = Number.isInteger(child.status) ? child.status : 1;
     return;

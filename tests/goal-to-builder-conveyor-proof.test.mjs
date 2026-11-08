@@ -8,6 +8,8 @@ import { tmpdir } from 'node:os';
 import '../shared/agents/goalBuildingAgentV1.continuation.test.mjs';
 // Original Goal #1558 PR Estate proof runs inside the existing conveyor CI, no extra workflow.
 import '../shared/agents/prEstateReconciler.test.mjs';
+// Exercise the existing original #2954 GitHub quota-admission repair in hosted conveyor CI.
+import '../scripts/independent-merge-security-review-entry-v1.test.mjs';
 
 import {
   buildSchedulerGoalsFromProgrammeSources,
