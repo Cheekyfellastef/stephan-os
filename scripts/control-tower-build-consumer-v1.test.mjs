@@ -790,7 +790,11 @@ test('a retained unresolved BUILD avoids an expensive full scan without granting
     },
     inspect: async () => inspectedStatus(),
   });
-  const command = { ...s.f.request, issueNumber: 2315 };
+  const acquired = await readControlTowerBuildRequestV1({
+    token: 'fixture-only', fetchImpl: s.f.fetchImpl, now: () => NOW,
+  });
+  assert.equal(acquired.ok, true, 'fixture must authenticate through the original reader');
+  const command = { ...acquired.request, issueNumber: 2315 };
   const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
   const prior = createControlTowerRequestObservationV1(command, {
     commandDigest: mailboxRotationDigest(command), acceptedAtUtc: NOW, nowMs: Date.parse(NOW),
