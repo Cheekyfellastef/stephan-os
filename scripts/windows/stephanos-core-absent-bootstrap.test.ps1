@@ -218,4 +218,81 @@ Case 'actual native process terminal time is consumed and ages out' {
         Denied { Assert-StephanosCoreAttendedChildContinuation -Child $native -ElapsedSeconds ($late - $request).TotalSeconds -AttemptUtc $request -NowUtc $late -ExpectedPid $nativePid -ExpectedStartedUtc $nativeStarted }
     } finally { $native.Dispose() }
 }
+
+# Exercise production local Git continuity on real disposable Windows metadata.
+# No protected checkout, network, elevation or Core process is touched.
+Case 'actual fixed local Git continuity and adversarial drift' {
+    $git = 'C:\Program Files\Git\cmd\git.exe'
+    $scratch = Join-Path ([IO.Path]::GetTempPath()) ('core-local-git-' + [Guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($scratch)
+    $savedGitEnv = @(Get-ChildItem Env: | Where-Object { $_.Name -match '^GIT_' } | ForEach-Object {
+        [pscustomobject]@{ Name=$_.Name; Value=$_.Value }
+    })
+    try {
+        foreach ($row in $savedGitEnv) { [Environment]::SetEnvironmentVariable($row.Name, $null, 'Process') }
+        & $git init --initial-branch=main $scratch | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_INIT_FAILED' }
+        $pin = Join-Path $scratch 'pinned-source.txt'
+        [IO.File]::WriteAllText($pin, 'canonical')
+        & $git -C $scratch add pinned-source.txt
+        if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_ADD_FAILED' }
+        & $git -C $scratch -c 'user.name=Fixture' -c 'user.email=fixture@example.invalid' commit -m initial | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_COMMIT_FAILED' }
+        & $git -C $scratch update-ref refs/remotes/origin/main HEAD
+        if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_REMOTE_FAILED' }
+        & $git -C $scratch branch --set-upstream-to=origin/main main | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_UPSTREAM_FAILED' }
+        $ExpectedHead = (& $git -C $scratch rev-parse HEAD).Trim()
+        $repoRoot = $scratch
+        $sourceFiles = @($pin)
+        $sourceDigests = @{}
+        $gitMetadataPaths = @((Join-Path $scratch '.git\config'), (Join-Path $scratch '.git\index'))
+        $gitMetadataDigests = @{}
+        $digestStart = $entrySource.IndexOf('function Get-CoreRecoveryDigest')
+        $localStart = $entrySource.IndexOf('function Assert-CoreRecoveryLocalSource', $digestStart)
+        $envStart = $entrySource.IndexOf('function Assert-CoreRecoveryEnvironment', $localStart)
+        if ($digestStart -lt 0 -or $localStart -le $digestStart -or $envStart -le $localStart) { throw 'LOCAL_GIT_ACTUAL_SOURCE_BOUNDARY_MISSING' }
+        . ([scriptblock]::Create($entrySource.Substring($digestStart, $localStart - $digestStart)))
+        . ([scriptblock]::Create($entrySource.Substring($localStart, $envStart - $localStart)))
+        function Assert-CoreRecoveryEnvironment { }
+        $sourceDigests[$pin] = Get-CoreRecoveryDigest $pin
+        foreach ($file in $gitMetadataPaths) { $gitMetadataDigests[$file] = Get-CoreRecoveryDigest $file }
+        Assert-CoreRecoveryLocalSource
+
+        [IO.File]::WriteAllText($pin, 'changed')
+        Denied { Assert-CoreRecoveryLocalSource }
+        [IO.File]::WriteAllText($pin, 'canonical')
+        Assert-CoreRecoveryLocalSource
+
+        $config = $gitMetadataPaths[0]
+        $originalConfig = [IO.File]::ReadAllBytes($config)
+        [IO.File]::AppendAllText($config, [Environment]::NewLine + '# injected')
+        Denied { Assert-CoreRecoveryLocalSource }
+        [IO.File]::WriteAllBytes($config, $originalConfig)
+        Assert-CoreRecoveryLocalSource
+
+        $index = $gitMetadataPaths[1]
+        $originalIndex = [IO.File]::ReadAllBytes($index)
+        [IO.File]::AppendAllText($index, '!')
+        Denied { Assert-CoreRecoveryLocalSource }
+        [IO.File]::WriteAllBytes($index, $originalIndex)
+        Assert-CoreRecoveryLocalSource
+
+        $env:GIT_DIR = $scratch
+        Denied { Assert-CoreRecoveryLocalSource }
+        [Environment]::SetEnvironmentVariable('GIT_DIR', $null, 'Process')
+        Assert-CoreRecoveryLocalSource
+
+        & $git -C $scratch symbolic-ref HEAD refs/heads/other
+        if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_REPOINT_FAILED' }
+        Denied { Assert-CoreRecoveryLocalSource }
+        & $git -C $scratch symbolic-ref HEAD refs/heads/main
+        if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_RESTORE_FAILED' }
+        Assert-CoreRecoveryLocalSource
+    } finally {
+        foreach ($row in $savedGitEnv) { [Environment]::SetEnvironmentVariable($row.Name, $row.Value, 'Process') }
+        if ([IO.Directory]::Exists($scratch)) { [IO.Directory]::Delete($scratch, $true) }
+    }
+}
+
 Write-Output ('CORE_ABSENT_BOOTSTRAP_POLICY_TESTS_PASS=' + $script:passed)

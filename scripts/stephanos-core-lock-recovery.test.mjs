@@ -44,7 +44,7 @@ test('Windows attended absent bootstrap rejects stale terminal identity and pare
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', fileURLToPath(fixture),
   ], { windowsHide: true, encoding: 'utf8', timeout: 30_000 });
   assert.equal(result.status, 0, result.stderr || result.error?.message);
-  assert.match(result.stdout, /CORE_ABSENT_BOOTSTRAP_POLICY_TESTS_PASS=49/);
+  assert.match(result.stdout, /CORE_ABSENT_BOOTSTRAP_POLICY_TESTS_PASS=50/);
 });
 test('recovery entry refuses missing approval before any native observation or mutation', { skip: process.platform !== 'win32' }, () => {
   const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', [
