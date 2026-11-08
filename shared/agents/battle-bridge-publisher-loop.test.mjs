@@ -105,14 +105,17 @@ test('backend event-only observation never replaces canonical direct READY', asy
   await mkdir(join(root, 'status'), { recursive: true });
   const before = JSON.stringify({ schemaVersion: 'shared-agent-workspace-record.v1',
     kind: 'stephanos.shared_workspace.status', statusId: 'battle-bridge-current',
-    timestampUtc, status: 'READY', observedServiceFacts: { backend: { ready: true } } }) + '\\n';
+    timestampUtc, status: 'READY', observedServiceFacts: { backend: { ready: true } } }) + '\n';
   await import('node:fs/promises').then(fs => fs.writeFile(status, before));
   const result = await publishBattleBridgeLoopTick({ root, repoRoot, timestampUtc,
     nowMs: Date.parse(timestampUtc), secondaryDiagnosticOnly: true,
     buildSlice: () => ({ status: 'UNKNOWN', services: [] }) });
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_BACKEND_DIAGNOSTIC_OBSERVED');
-  assert.equal(await readFile(status, 'utf8'), before);
+  const after = await readFile(status, 'utf8');
+  assert.equal(after, before);
+  assert.equal(JSON.parse(after).status, 'READY');
+  assert.equal(JSON.parse(after).observedServiceFacts.backend.ready, true);
   assert.match(await readFile(join(root, 'events', 'battle-bridge-publisher-loop.ndjson'), 'utf8'),
     /Backend diagnostic observed UNKNOWN; no canonical status write/);
   await assert.rejects(readFile(join(root, 'proof', 'battle-bridge-current.json')), /ENOENT/);
