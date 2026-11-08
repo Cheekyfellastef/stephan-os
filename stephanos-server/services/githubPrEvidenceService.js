@@ -1,4 +1,5 @@
 import { resolveGithubAuth, resolveGithubGhCliAuth } from './githubAuthResolver.js';
+import { externalMergeCandidateV1, EXTERNAL_MERGE_OBSERVATION_SCHEMA, validateExternalMergeObservationV1 } from '../../shared/agents/externalMergeObservationV1.mjs';
 import { readBrokeredGithubRateLimitHold, recordBrokeredGithubRateLimitHold } from '../../shared/agents/githubObservationBrokerV1.mjs';
 import {
   PROTECTED_APPROVAL_MARKER,
@@ -227,6 +228,74 @@ export function resolveGithubRepoConfig(env = process.env) {
 }
 function normalizeChecksState(conclusions = []) { const lowered = conclusions.map((value) => asText(value).toLowerCase()); if (lowered.some((state) => ['failure','failed','timed_out','cancelled','action_required'].includes(state))) return 'failed'; if (lowered.some((state) => ['queued','in_progress','pending','waiting'].includes(state))) return 'pending'; if (lowered.length > 0 && lowered.every((state) => ['success','skipped','neutral'].includes(state))) return 'passed'; return 'unknown'; }
 export async function resolveGithubTokenConfig(options = {}) { return resolveGithubAuth(options); }
+
+// Fixed read-only reconciliation: the retained PR, immutable ancestry, then a
+// fresh main ref. This cannot approve a merge or authorize a runtime action.
+export async function fetchExternalMergeObservation(mission, options = {}) {
+  if (!externalMergeCandidateV1(mission)) return { status: 'skipped', reasonCode: 'MISSION_INELIGIBLE' };
+  const test = options.testOnly === true;
+  const fetchImpl = test && options.fetchImpl ? options.fetchImpl : fetch;
+  const owner = 'Cheekyfellastef', repo = 'stephan-os', key = `${owner}/${repo}`.toLowerCase();
+  const useSharedHold = !test || Boolean(options.workspaceRoot);
+  const shared = useSharedHold ? readBrokeredGithubRateLimitHold({ repository: key, workspaceRoot: options.workspaceRoot }) : null;
+  const until = Math.max(githubPrRateLimitBackoff.get(key) || 0, shared?.untilMs || 0);
+  if (until > Date.now()) return githubPrRateLimitHold(owner, repo, mission.pullRequest.number, 'observation', until);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), test ? (options.timeoutMs || 25_000) : 25_000);
+  let activeAuth;
+  const fail = reasonCode => ({ status: 'error', reasonCode });
+  try {
+    activeAuth = test && options.auth ? options.auth : await resolveGithubTokenConfig({ env: options.env || process.env });
+    if (controller.signal.aborted) return fail('GITHUB_OBSERVATION_DEADLINE');
+    if (!activeAuth.configured) return fail('GITHUB_AUTH_UNAVAILABLE');
+    const request = async (suffix, allowFallback = false) => {
+      if (controller.signal.aborted) throw new Error('GITHUB_OBSERVATION_DEADLINE');
+      let response = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/${suffix}`, {
+        headers: githubHeaders(activeAuth, 'stephanos-completion-guardian'), signal: controller.signal,
+        redirect: 'error',
+      });
+      const hold = await checkPrRateLimitResponse(response, key, owner, repo, mission.pullRequest.number,
+        activeAuth.authority, options.workspaceRoot, useSharedHold);
+      if (hold) throw Object.assign(new Error(hold.reasonCode), { observationFailure: hold });
+      if (allowFallback && [401, 403].includes(response.status) && activeAuth.authority !== 'gh-cli') {
+        const fallback = await resolveGithubGhCliAuth(test ? { ghTokenProvider: options.ghTokenProvider || (async () => '') } : {});
+        if (fallback.configured) { activeAuth = fallback; return request(suffix); }
+      }
+      if (!response.ok) throw new Error('GITHUB_OBSERVATION_READ_FAILED');
+      return response.json();
+    };
+    const pr = await request(`pulls/${mission.pullRequest.number}`, true);
+    if (pr.number !== mission.pullRequest.number || pr.merged !== true || pr.state !== 'closed'
+        || pr.head?.repo?.full_name !== mission.repository || pr.base?.repo?.full_name !== mission.repository
+        || pr.head?.sha !== mission.pullRequest.headSha || pr.head?.ref !== mission.git.branch
+        || pr.base?.ref !== 'main' || !/^[a-f0-9]{40}$/.test(pr.merge_commit_sha || '')) {
+      return fail('GITHUB_MERGE_IDENTITY_UNPROVEN');
+    }
+    const main = await request('git/ref/heads/main');
+    if (main.ref !== 'refs/heads/main' || main.object?.type !== 'commit'
+        || !/^[a-f0-9]{40}$/.test(main.object?.sha || '')) return fail('GITHUB_MAIN_IDENTITY_UNPROVEN');
+    const comparison = await request(`compare/${pr.merge_commit_sha}...${main.object.sha}`);
+    if (!['ahead', 'identical'].includes(comparison.status)
+        || comparison.merge_base_commit?.sha !== pr.merge_commit_sha
+        || comparison.base_commit?.sha !== pr.merge_commit_sha) return fail('GITHUB_MERGE_ANCESTRY_UNPROVEN');
+    const recheck = await request('git/ref/heads/main');
+    if (controller.signal.aborted) return fail('GITHUB_OBSERVATION_DEADLINE');
+    if (recheck.ref !== main.ref || recheck.object?.type !== 'commit'
+        || recheck.object?.sha !== main.object.sha) return fail('GITHUB_MAIN_MOVED');
+    const observation = {
+      schemaVersion: EXTERNAL_MERGE_OBSERVATION_SCHEMA, source: 'github-api', repository: mission.repository,
+      missionId: mission.missionId, expectedRevision: mission.revision, prNumber: pr.number,
+      headSha: pr.head.sha, branch: pr.head.ref, baseBranch: pr.base.ref, merged: true, prState: pr.state,
+      mergeCommitSha: pr.merge_commit_sha, mergedAtUtc: pr.merged_at, mainHead: main.object.sha,
+      ancestorCommit: pr.merge_commit_sha, ancestryMainHead: main.object.sha, mainRecheckHead: recheck.object.sha,
+      mergeAncestorOfMain: true, observedAtUtc: new Date().toISOString(),
+    };
+    return validateExternalMergeObservationV1(mission, observation, new Date().toISOString()).valid
+      ? { status: 'fetched', observation } : fail('GITHUB_MERGE_OBSERVATION_INVALID');
+  } catch (error) {
+    return error.observationFailure || fail(controller.signal.aborted ? 'GITHUB_OBSERVATION_DEADLINE' : 'GITHUB_OBSERVATION_READ_FAILED');
+  } finally { clearTimeout(timeout); }
+}
 
 // Fresh owner-decision evidence for the existing recovery service. Reuse the
 // canonical credential reader; this performs GET only and cannot create a

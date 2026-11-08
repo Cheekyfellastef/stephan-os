@@ -87,3 +87,47 @@ test('owned blocker is lane-scoped and cannot consume otherwise usable build cap
   assert.equal(result.mayRequestCapacityRefill, true);
   assert.equal(result.refillTarget, 'EXISTING_1947_CAPACITY_REFILL');
 });
+
+test('no ACTIVE exact-resource source claim or material source proof can advertise AUTO_CONTINUE', () => {
+  const originalLease = checkpoint().leases[0];
+  const cases = [
+    { label: 'missing leases', changes: { leases: [] }, reason: 'continuation-active-owned-resource-lease-unproven' },
+    { label: 'only released lease', changes: { leases: [{ ...originalLease, disposition: 'RELEASED' }] }, reason: 'continuation-active-owned-resource-lease-unproven' },
+    { label: 'only parked lease', changes: { leases: [{ ...originalLease, disposition: 'PARKED' }] }, reason: 'continuation-active-owned-resource-lease-unproven' },
+    { label: 'wrong resource lease', changes: { leases: [{ ...originalLease, resourceId: 'pr:9999' }] }, reason: 'continuation-active-owned-resource-lease-unproven' },
+    { label: 'no declared scheduler resources', candidateChanges: { resourceIds: [] }, reason: 'continuation-active-owned-resource-lease-unproven' },
+    { label: 'missing source tree', changes: { sourceTree: '' }, reason: 'continuation-source-tree-unproven' },
+    { label: 'malformed source tree', changes: { sourceTree: 'unproven' }, reason: 'continuation-source-tree-unproven' },
+    { label: 'missing material receipt id', changes: { lastMaterialReceiptId: '' }, reason: 'continuation-exact-head-material-receipt-unproven' },
+    { label: 'missing material receipt head', changes: { lastMaterialReceiptHead: '' }, reason: 'continuation-exact-head-material-receipt-unproven' },
+    { label: 'stale material receipt head', changes: { lastMaterialReceiptHead: '4'.repeat(40) }, reason: 'continuation-exact-head-material-receipt-unproven' },
+  ];
+  for (const item of cases) {
+    const result = projectStephanosGoalContinuation({
+      checkpoint: checkpoint(item.changes),
+      current: current(),
+      schedulerCandidate: candidate(item.candidateChanges),
+    });
+    assert.equal(result.state, GOAL_BUILDING_CONTINUATION_STATES.BLOCKED_ROUTE_OWNER_REQUIRED, item.label);
+    assert.equal(result.mayRequestExistingControllerContinuation, false, item.label);
+    assert.equal(result.continuationTarget, '', item.label);
+    assert.equal(result.mayRequestCapacityRefill, true, item.label);
+    assert.equal(result.refillTarget, 'EXISTING_1947_CAPACITY_REFILL', item.label);
+    assert.ok(result.reasons.includes(item.reason), item.label);
+    assert.equal(result.protectedMergeAuthority, false, item.label);
+    assert.equal(result.runtimeMutationAuthority, false, item.label);
+  }
+});
+
+test('a competing ACTIVE source owner stays SAFE_HOLD even with an otherwise valid checkpoint', () => {
+  const lease = checkpoint().leases[0];
+  const result = projectStephanosGoalContinuation({
+    checkpoint: checkpoint({ leases: [{ ...lease, ownerId: 'other-writer' }] }),
+    current: current(),
+    schedulerCandidate: candidate(),
+  });
+  assert.equal(result.state, GOAL_BUILDING_CONTINUATION_STATES.SAFE_HOLD);
+  assert.ok(result.reasons.includes('active-lease-owner-mismatch'));
+  assert.equal(result.mayRequestExistingControllerContinuation, false);
+  assert.equal(result.mayRequestCapacityRefill, false);
+});

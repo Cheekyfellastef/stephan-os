@@ -168,3 +168,44 @@ test('READY prelaunch binds exact PR identity before specialist launch', async (
     });
   }
 });
+
+test('trusted original #2954 pre-budget draft gate stops REST reads before GitHub quota, checkout and reviewer', async (t) => {
+  const workflow = await readFile(new URL('../.github/workflows/independent-merge-security-review.yml', import.meta.url), 'utf8');
+  const guardLabel = '      - name: Hold draft reviews before installation GitHub API reads';
+  const guardStart = workflow.indexOf(guardLabel);
+  const quotaStart = workflow.indexOf('      - name: Gate hosted review on its own GitHub installation API budget');
+  const checkoutStart = workflow.indexOf('      - name: Check out trusted exact-base reviewer');
+  const reviewerStart = workflow.indexOf('      - name: Review the complete exact-head and exact-base diff without mutation authority');
+  assert.ok(guardStart > workflow.indexOf('jobs:'), 'only the original protected job can own this gate');
+  assert.ok(quotaStart > guardStart, 'gate precedes the first gh api rate_limit call');
+  assert.ok(checkoutStart > quotaStart && reviewerStart > checkoutStart, 'no expensive reviewer work before gate');
+  const guard = workflow.slice(guardStart, quotaStart);
+  assert.match(guard, /id: prebudget_draft_gate/);
+  assert.match(guard, /REVIEW_EVENT_KIND: \$\{\{ github\.event_name \}\}/);
+  assert.match(guard, /REVIEW_DRAFT_JSON: \$\{\{ toJSON\(github\.event\.pull_request\.draft\) \}\}/);
+  assert.match(workflow, /if: \$\{\{ always\(\) && steps\.github_budget\.outcome == 'success' \}\}/);
+  assert.doesNotMatch(guard, /GH_TOKEN|GITHUB_TOKEN|gh api|curl |wget |actions\/checkout|pull-requests: write/);
+  const scriptMatch = guard.match(/        run: \|\n((?:          [^\n]*\n)+)/);
+  assert.ok(scriptMatch, 'exact first-step shell script exists');
+  const script = scriptMatch[1].split('\n').filter(line => line.startsWith('          ')).map(line => line.slice(10)).join('\n');
+  const cases = [
+    ['draft opened', 'pull_request_target', 'true', 1],
+    ['draft synchronized', 'pull_request_target', 'true', 1],
+    ['ready for review', 'pull_request_target', 'false', 0],
+    ['draft field missing', 'pull_request_target', 'null', 1],
+    ['string false is not boolean false', 'pull_request_target', '"false"', 1],
+    ['foreign event not admitted', 'push', 'false', 1],
+    ['existing coordinator dispatched with absent draft', 'workflow_dispatch', 'null', 0],
+  ];
+  for (const [label, kind, draft, expected] of cases) {
+    await t.test(label, () => {
+      const result = spawnSync('bash', ['-c', script], {
+        encoding: 'utf8', timeout: 5_000,
+        env: { ...process.env, REVIEW_EVENT_KIND: kind, REVIEW_DRAFT_JSON: draft },
+      });
+      assert.equal(result.status, expected, result.stderr);
+      if (expected) assert.match(result.stdout, /INDEPENDENT_REVIEW_DRAFT_PRE_BUDGET_HOLD/);
+      else assert.doesNotMatch(result.stdout, /INDEPENDENT_REVIEW_DRAFT_PRE_BUDGET_HOLD/);
+    });
+  }
+});

@@ -139,7 +139,7 @@ test('Control Tower inventory snapshot cannot mutate nested metadata or status a
 });
 
 for (const operation of ['BUILD_NEXT_ELIGIBLE_GOAL', 'OBSERVE_CONTROL_SYSTEM'])
-  test('Control Tower inventory preserves ' + operation + ' reservation and terminal metadata under the original drain guard', t => {
+  test('Control Tower inventory preserves ' + operation + ' reservation and terminal metadata under the original drain guard', async t => {
     const f = fixture(t), material = reserveControlTower(f, operation), before = bytes(f.root);
     const reserved = f.ledger.inventory();
     assert.equal(reserved.recordCount, 2); assert.equal(reserved.counts.RESERVED, 2);
@@ -157,7 +157,7 @@ for (const operation of ['BUILD_NEXT_ELIGIBLE_GOAL', 'OBSERVE_CONTROL_SYSTEM'])
     assert.deepEqual(terminal.counts, { RESERVED: 1, TERMINAL: 1, RETIRED: 0 });
     assert.notEqual(terminal.inventorySha256, reserved.inventorySha256);
     assert.equal(reloaded.inspectControlTower(material.command.requestId).detailState, 'OBSERVED');
-    assert.equal(reloaded.discoverControlTower().ok, true);
+    assert.equal((await reloaded.discoverControlTower()).ok, true);
     const last = capture(f).drainInputCandidate;
     assert.equal(last.counts.terminalCount, 1); assert.equal(last.counts.reservedCount, 1);
     assert.equal(last.executionLedgerSha256, terminal.inventorySha256);

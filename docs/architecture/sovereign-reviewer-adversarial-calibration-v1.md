@@ -123,8 +123,8 @@ signals are still candidate-only without qualified security authority.
 
 ## Raw-byte source verification against Git HEAD (index-flag bypass closure)
 
-The local Ollama examiner now verifies each of its four critical execution and
-review policy files with fixed read-only Git queries: `ls-files -v` must
+The local Ollama examiner verifies each critical execution and
+review policy file with fixed read-only Git queries: `ls-files -v` must
 report a normally tracked `H` entry (no skip-worktree/assume-unchanged),
 and `hash-object --no-filters` of the **actual current file bytes** must
 exactly match `rev-parse HEAD:<path>`. This runs before and after the
@@ -133,15 +133,16 @@ since Git index flags could hide substitutions. Missing, unsafe or modified
 modules fail closed **before** Ollama can be called, with no file changes,
 lease/merge permission or independently qualified reviewer attestation.
 
-## Ollama weight-digest pin across the full adversarial exam
+## Ollama manifest-digest pin across the full adversarial exam
 
 A mutable tag is not a stable model identity. Fixed read-only loopback
 `GET /api/tags` now checks that exactly one matching local Ollama model has
 a 64-character content digest **before and after** the ten-case assessment.
-Missing, ambiguous or changed weights HOLD the candidate. Any passing
-candidate record and Windows bridge receipt bind that weight digest to the
-exact checked source HEAD, manifest and observations. This is local unsigned
-model identity only, not an independently audited specialist approval.
+Missing, ambiguous or changed manifest identities HOLD the candidate. Any passing
+candidate record and Windows bridge receipt bind that manifest digest to the
+exact checked source HEAD, exam manifest and observations. The existing
+`modelDigestSha256` field stores Ollama's root manifest digest; it is not an
+independent measurement of the loaded model weights or a specialist approval.
 
 ## Safe read-only preflight refusal diagnosis
 
@@ -203,3 +204,56 @@ request on gaming activity/stale/missing evidence and clears the monitor in
 monitor cleanup for completed requests; this is still source contract proof,
 not a physical Battle Bridge gaming acceptance receipt or a substitute for
 the governor's own model-eviction daemon. Candidate/lease authority stays false.
+
+## Shared local digest protocol for all four Reviewer inference paths
+
+The standard Reviewer, baseline ten-case calibration, high-risk advisory and
+native Windows thirteen-case calibration use the same
+`shared/agents/sovereignReviewerOllamaBindingV1.mjs` boundary. Every inference
+first performs a fixed read-only loopback `GET /api/version`. The response has
+a 4 KiB streaming limit and a six-second deadline combined with the caller's
+cancellation. Only stable `0.40.x` versions are admitted by this reviewed
+protocol contract. Unsupported, unknown, malformed, redirected or unavailable
+responses stop the caller before it submits a prompt. A failed version check
+is retained for the rest of that exam; a successful check is repeated before
+each subsequent question to detect an observed daemon downgrade or restart.
+
+Requests use exactly `sha256:<full-lowercase-64-hex-manifest-digest>:local`.
+The digest is captured by the existing bounded tag observation, but the
+inference request never uses the mutable tag. The explicit local source
+suffix makes a compatible Ollama daemon reject a cloud-stub manifest before
+its remote proxy path. There is no fallback to a named model, a bare digest,
+an external URL or a remote provider. Existing per-question digest checks,
+source-byte checks, inference deadlines, gaming preemption and GPU residency
+limits still apply.
+
+This contract follows the released Ollama v0.40.0 implementation of
+[digest resolution](https://github.com/ollama/ollama/blob/0d0720e51fb2fd9aa58781c3d720c06d720c2e7b/server/model_resolver.go),
+[manifest lookup](https://github.com/ollama/ollama/blob/0d0720e51fb2fd9aa58781c3d720c06d720c2e7b/manifest/paths.go) and
+[local source enforcement](https://github.com/ollama/ollama/blob/0d0720e51fb2fd9aa58781c3d720c06d720c2e7b/server/routes.go).
+Ollama echoes the requested selector in its reply. The Reviewer checks that
+exact echo, completion state and bounded output for protocol consistency, and
+rejects replies containing `remote_host` or `remote_model` fields, including
+empty ones. Neither the echo nor a daemon's version declaration independently
+authenticates the served binary, process, weights or reviewer principal.
+
+The helper is part of the existing raw-byte inventories for source capture,
+the WSL bridge, the high-risk launcher and Commander's Windows calibration
+launcher. A missing or substituted helper must fail the same existing source
+custody checks as the caller. The helper has no imports, arbitrary endpoint,
+model installation, signing, trust enrollment, review admission or merge
+operation.
+
+| Refusal | Meaning |
+| --- | --- |
+| `LOCAL_OLLAMA_MANIFEST_DIGEST_INVALID` | The caller has no complete canonical manifest digest. |
+| `LOCAL_OLLAMA_DIGEST_PROTOCOL_UNPROVEN` | The bounded local version exchange could not be verified. |
+| `LOCAL_OLLAMA_DIGEST_PROTOCOL_UNSUPPORTED` | The observed version is outside the reviewed stable protocol family. |
+
+Adapter regressions exercise transient tag replacement, remote-model replies,
+unsupported versions and mid-exam protocol changes without sending prompts
+after a refusal. Those tests prove the source behavior only. Physical
+calibration still requires a compatible installed daemon, authenticated current
+source custody, free gaming resources and a real model run. Passing output
+remains an unattested candidate with all existing review, specialist, lease,
+runtime, approval and merge authority denied until independent qualification.

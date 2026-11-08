@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { SOVEREIGN_CALIBRATION_MANIFEST_SHA256 } from '../shared/agents/sovereignCalibrationV1.mjs';
 import assert from 'node:assert/strict';
 import {
-  runSovereignOllamaCalibrationV1 as run,
+  runSovereignOllamaCalibrationV1 as runActual,
   projectSovereignOllamaCalibrationV1 as project,
   probeLocalSovereignOllamaV1 as probe,
   inspectLocalCalibrationGitIdentityV1 as inspectGit,
@@ -15,6 +15,20 @@ import {
   persistSovereignCalibrationCandidateV1 as persist,
   observeLocalSovereignOllamaDigestV1 as modelDigest,
 } from './sovereign-reviewer-ollama-calibration-v1.mjs';
+
+// Existing inference fixtures use the reviewed daemon protocol; dedicated
+// tests below exercise the production callers without this adapter.
+const withSupportedProtocol = generate => async (url, options) => {
+  if (url === 'http://127.0.0.1:11434/api/version') {
+    assert.equal(options.method, 'GET');
+    assert.equal(options.redirect, 'error');
+    assert.equal(options.body, undefined);
+    return new Response('{"version":"0.40.15"}');
+  }
+  return generate(url, options);
+};
+const run = (environment, options) => runActual(environment,
+  { ...options, fetchImpl: withSupportedProtocol(options.fetchImpl) });
 
 const env = Object.freeze({
   STEPHANOS_REVIEW_REPOSITORY: 'Cheekyfellastef/stephan-os',
@@ -26,6 +40,7 @@ const env = Object.freeze({
   STEPHANOS_REVIEW_SESSION: 'reviewer-two',
   STEPHANOS_SOVEREIGN_REVIEW_MODEL: 'qwen:14b',
 });
+const canonicalConfig = 'remote.origin.url\nhttps://github.com/Cheekyfellastef/stephan-os.git\0';
 const gitProof = (overrides = {}) => ({
   platform: 'linux', sourceRoot: '/tmp/nonproduction-review-fixture',
   gamingGuard: allowGaming,
@@ -51,20 +66,75 @@ const gitProof = (overrides = {}) => ({
       return { status: 0, stdout: (overrides.badExpectedBlob ? 'invalid' : 'c'.repeat(40)) + '\n' };
     }
     if (cmd.startsWith('hash-object --no-filters -- ')) {
-      return { status: 0, stdout: (overrides.badWorkingBlob ? 'f'.repeat(40) : 'c'.repeat(40)) + '\n' };
+      return { status: 0, stdout: (overrides.badWorkingBlob || overrides.badWorkingFile === file
+        ? 'f'.repeat(40) : 'c'.repeat(40)) + '\n' };
     }
     const results = {
+      'config --local --null --list --no-includes': overrides.configuration ?? canonicalConfig,
       'rev-parse HEAD': overrides.head ?? 'a'.repeat(40),
       'symbolic-ref --quiet --short HEAD': overrides.branch ?? 'reviewer/exam-only',
-      'status --porcelain --untracked-files=normal': overrides.status ?? '',
+      '-c status.renames=false status --porcelain --untracked-files=normal': overrides.status ?? '',
       ['merge-base --is-ancestor ' + 'b'.repeat(40) + ' ' + 'a'.repeat(40)]: '',
     };
     return Object.hasOwn(results, cmd) && !(cmd.startsWith('merge-base') && overrides.ancestor === false)
-      ? { status: 0, stdout: results[cmd] + '\n' }
+      ? { status: 0, stdout: cmd.startsWith('config ') || cmd.includes('status --porcelain') ? results[cmd] : results[cmd] + '\n' }
       : { status: 1, stdout: '' };
   },
 });
 const allowGaming = () => ({ ok: true });
+
+test('baseline refuses unsafe or noncanonical Git configuration before source status or model use', async () => {
+  for (const configuration of [
+    '', canonicalConfig + canonicalConfig,
+    'remote.origin.url\nhttps://example.invalid/repository.git\0',
+    canonicalConfig + 'filter.fixture.clean\n/tmp/fixture-helper\0',
+    canonicalConfig + 'include.path\n/tmp/fixture-config\0',
+    canonicalConfig + 'core.fsmonitor\n/tmp/fixture-helper\0',
+    canonicalConfig + 'extensions.worktreeconfig\ntrue\0',
+  ]) {
+    const fixture = gitProof({ configuration });
+    let reads = 0, modelCalls = 0;
+    const result = await run(env, { ...fixture,
+      gitSpawn(...args) { reads++; return fixture.gitSpawn(...args); },
+      fetchImpl: async () => { modelCalls++; },
+    });
+    assert.equal(result.reason, 'CALIBRATION_SOURCE_GIT_UNPROVEN');
+    assert.equal(reads, 1, 'configuration denial must precede every status read');
+    assert.equal(modelCalls, 0);
+  }
+});
+
+test('baseline source proof admits runtime-only state and retains strict source, status and policy-byte denial', async () => {
+  for (const status of [
+    '', ' M stephanos-server/data/memory/durable-memory.json\n',
+    '?? apps/stephanos/dist/assets/new.js\r\n M logs/reviewer.log\r\n',
+  ]) assert.equal(inspectGit(env, gitProof({ status })).ok, true, status);
+  for (const status of [
+    ' M scripts/reviewer.mjs\n', '?? scripts/new-reviewer.mjs\n',
+    '?? apps/stephanos/dist/assets/new.js\n M scripts/reviewer.mjs\n',
+    'M  stephanos-server/data/memory/durable-memory.json\n',
+    'R  apps/stephanos/dist/old.js -> scripts/new.js\n',
+    'XX apps/stephanos/dist/new.js\n', ' M\tapps/stephanos/dist/new.js\n',
+    '?? tmp/../scripts/new.mjs\n', '?? tmp/./new.mjs\n',
+    '?? tmp/new\0.mjs\n', '?? tmp/new\r.mjs\n',
+    '??  tmp/new.mjs\n', '?? tmp/new.mjs \n',
+    '?? tmp/first\n\n?? tmp/second\n',
+  ]) {
+    let modelCalls = 0;
+    const result = await run(env, { ...gitProof({ status }), fetchImpl: async () => {
+      modelCalls++;
+      throw Error('source denial must precede Ollama');
+    } });
+    assert.equal(result.reason, 'CALIBRATION_CLEAN_EXACT_CHECKOUT_REQUIRED', status);
+    assert.equal(modelCalls, 0, status);
+  }
+  const policyChanged = inspectGit(env, gitProof({ status: '?? tmp/runtime.json\n',
+    badWorkingFile: 'scripts/battle-bridge-github-sync-policy.mjs' }));
+  assert.equal(policyChanged.reason, 'CALIBRATION_EXECUTABLE_BYTES_NOT_HEAD');
+  assert.equal(inspectGit(env, gitProof({
+    badWorkingFile:'shared/agents/sovereignReviewerOllamaBindingV1.mjs',
+  })).reason, 'CALIBRATION_EXECUTABLE_BYTES_NOT_HEAD');
+});
 
 test('real WSL calibration rejects replacement-object checkout and never executes local fsmonitor',
   { skip: process.platform !== 'linux' }, () => {
@@ -78,11 +148,13 @@ test('real WSL calibration rejects replacement-object checkout and never execute
       return r.stdout.trim();
     };
     git(['init','-b','fixture']);
+    git(['remote','add','origin','https://github.com/Cheekyfellastef/stephan-os.git']);
     mkdirSync(join(root,'scripts'));
     mkdirSync(join(root,'shared','agents'),{recursive:true});
     const files = ['scripts/sovereign-reviewer-ollama-calibration-v1.mjs',
       'shared/agents/sovereignCalibrationV1.mjs','scripts/sovereign-reviewer-v1.mjs',
-      'shared/agents/providerNeutralReviewV1.mjs'];
+      'shared/agents/sovereignReviewerOllamaBindingV1.mjs',
+      'shared/agents/providerNeutralReviewV1.mjs','scripts/battle-bridge-github-sync-policy.mjs'];
     for(const file of files) writeFileSync(join(root,file),'// genuine\n');
     git(['add','.']); git(['commit','-m','base']);
     const base=git(['rev-parse','HEAD']);
@@ -129,16 +201,16 @@ test('real-model route submits ten fixed untrusted patches only to loopback Olla
     // All-clean model is unsafe and must FAIL calibration (eight seeded defects).
     const output = JSON.stringify({ challengeId, diffSha256, verdict: 'clean', findings: [] });
     return { ok: true, text: async () => JSON.stringify({
-      model: 'sha256:' + 'f'.repeat(64), done: true, done_reason: 'stop', response: output,
+      model: 'sha256:' + 'f'.repeat(64) + ':local', done: true, done_reason: 'stop', response: output,
     }) };
   }});
   assert.equal(calls.length, 10);
-  assert.equal(calls.every(x => x.request.model === 'sha256:' + 'f'.repeat(64)), true,
+  assert.equal(calls.every(x => x.request.model === 'sha256:' + 'f'.repeat(64) + ':local'), true,
     'ALL ten private challenges must address pinned immutable bytes');
   assert.equal(calls.every(x => x.url === 'http://127.0.0.1:11434/api/generate'), true);
   assert.equal(calls.every(x => x.options.method === 'POST'
     && x.options.redirect === 'error'
-    && x.request.model === 'sha256:' + 'f'.repeat(64) && x.request.stream === false
+    && x.request.model === 'sha256:' + 'f'.repeat(64) + ':local' && x.request.stream === false
     && x.request.format === 'json' && x.request.options.temperature === 0
     && x.request.keep_alive === 0), true);
   assert.equal(result.status, 'CALIBRATION_HELD');
@@ -253,7 +325,7 @@ test('calibration checks Git source again after the full ten-model-case exam', a
       const challengeId = prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
       const diffSha256 = prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
       return { ok: true, text: async () => JSON.stringify({
-        model: 'sha256:' + 'f'.repeat(64), done: true, done_reason: 'stop',
+        model: 'sha256:' + 'f'.repeat(64) + ':local', done: true, done_reason: 'stop',
         response: JSON.stringify({ challengeId, diffSha256,
           verdict: 'clean', findings: [] }),
       }) };
@@ -374,7 +446,7 @@ test('Ollama polling monitor is cleared on completed or failed generation', asyn
       const challengeId = prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
       const diffSha256 = prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
       return { ok: true, text: async () => JSON.stringify({
-        model: 'sha256:' + 'f'.repeat(64), done: true, done_reason: 'stop',
+        model: 'sha256:' + 'f'.repeat(64) + ':local', done: true, done_reason: 'stop',
         response: JSON.stringify({ challengeId, diffSha256, verdict: 'clean', findings: [] }),
       }) };
     },
@@ -385,18 +457,19 @@ test('Ollama polling monitor is cleared on completed or failed generation', asyn
   noAuthority(result);
 });
 test('local-model exam immediately holds when gaming activates between cases', async () => {
-  let games = 0;
+  let active = false;
   let modelCalls = 0;
   const result = await run(env, {
     ...gitProof(),
-    gamingGuard: () => ({ ok: ++games < 4, reason: 'CALIBRATION_GAMING_RESOURCE_PROTECTED' }),
+    gamingGuard: () => ({ ok: !active, reason: 'CALIBRATION_GAMING_RESOURCE_PROTECTED' }),
     fetchImpl: async (_url, options) => {
       modelCalls++;
+      if (modelCalls === 2) active = true;
       const prompt = JSON.parse(options.body).prompt;
       const id = prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
       const digest = prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
       return {ok: true, text: async () => JSON.stringify({
-        model: 'sha256:' + 'f'.repeat(64), done: true, done_reason: 'stop',
+        model: 'sha256:' + 'f'.repeat(64) + ':local', done: true, done_reason: 'stop',
         response: JSON.stringify({
           challengeId: id, diffSha256: digest, verdict:'clean', findings: [],
         }),
@@ -451,7 +524,7 @@ test('calibration holds if model weights change during ten cases',async()=>{
       const prompt=JSON.parse(options.body).prompt;
       const challengeId=prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
       const diffSha256=prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
-      return {ok:true,text:async()=>JSON.stringify({model:'sha256:' + 'a'.repeat(64),
+      return {ok:true,text:async()=>JSON.stringify({model:'sha256:' + 'a'.repeat(64) + ':local',
         done:true,done_reason:'stop',response:JSON.stringify({
           challengeId,diffSha256,verdict:'clean',findings:[],
         })})};
@@ -473,7 +546,7 @@ test('calibration rejects a model tag changed mid-exam even when restored at com
       const challengeId = prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
       const diffSha256 = prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
       return { ok: true, text: async () => JSON.stringify({
-        model: 'sha256:' + 'a'.repeat(64), done: true, done_reason: 'stop',
+        model: 'sha256:' + 'a'.repeat(64) + ':local', done: true, done_reason: 'stop',
         response: JSON.stringify({ challengeId, diffSha256,
           verdict: 'clean', findings: [] }),
       }) };
@@ -608,7 +681,7 @@ test('calibration never falls back to a mutable model tag if digest-addressing i
   const result = await run(env, { ...gitProof(),
     fetchImpl: async (_url, options) => {
       count++;
-      assert.equal(JSON.parse(options.body).model, 'sha256:' + 'f'.repeat(64));
+      assert.equal(JSON.parse(options.body).model, 'sha256:' + 'f'.repeat(64) + ':local');
       return { ok: false, status: 404, text: async () => 'unknown digest' };
     },
   });
@@ -621,7 +694,7 @@ test('calibration rejects mutable-tag completion even if all digest observations
   const result = await run(env, { ...gitProof(),
     fetchImpl: async (_url, options) => {
       count++;
-      assert.equal(JSON.parse(options.body).model, 'sha256:' + 'f'.repeat(64));
+      assert.equal(JSON.parse(options.body).model, 'sha256:' + 'f'.repeat(64) + ':local');
       return { ok: true, text: async () => JSON.stringify({
         model: 'qwen:14b', done: true, done_reason: 'stop', response: '{}',
       }) };
@@ -629,5 +702,68 @@ test('calibration rejects mutable-tag completion even if all digest observations
   });
   assert.equal(count, 1);
   assert.equal(result.status, 'CALIBRATION_HELD');
+  noAuthority(project(result));
+});
+
+test('production baseline calibration holds unsupported protocol before any challenge prompt', async () => {
+  for(const version of ['0.35.1','0.40.0-rc.1','0.41.0']) {
+    const calls=[];
+    const result=await runActual(env,{...gitProof(),
+      fetchImpl:async(url,options)=>{
+        calls.push({url,options});
+        return new Response(JSON.stringify({version}));
+      },
+    });
+    assert.equal(result.status,'CALIBRATION_HELD');
+    assert.equal(result.reason,'LOCAL_OLLAMA_DIGEST_PROTOCOL_UNSUPPORTED');
+    assert.equal(result.completedCases,0);
+    assert.equal(calls.length,1);
+    assert.equal(calls[0].url,'http://127.0.0.1:11434/api/version');
+    assert.equal(calls[0].options.body,undefined);
+    noAuthority(project(result));
+  }
+});
+
+test('baseline calibration rejects remote metadata on an otherwise matching completion', async () => {
+  for(const patch of [{remote_host:''},{remote_model:'remote'}]) {
+    let generationCalls=0;
+    const result=await runActual(env,{...gitProof(),
+      fetchImpl:withSupportedProtocol(async(_url,options)=>{
+        generationCalls++;
+        const request=JSON.parse(options.body);
+        assert.equal(request.model,'sha256:'+'f'.repeat(64)+':local');
+        return {ok:true,text:async()=>JSON.stringify({
+          model:request.model,done:true,done_reason:'stop',response:'{}',...patch,
+        })};
+      }),
+    });
+    assert.equal(result.status,'CALIBRATION_HELD');
+    assert.equal(result.completedCases,0);
+    assert.equal(generationCalls,1);
+    noAuthority(project(result));
+  }
+});
+
+test('baseline rechecks daemon protocol before every question and holds an observed downgrade', async () => {
+  let versions=0,generations=0;
+  const result=await runActual(env,{...gitProof(),
+    fetchImpl:async(url,options)=>{
+      if(url==='http://127.0.0.1:11434/api/version') {
+        return new Response(JSON.stringify({version:++versions===1?'0.40.15':'0.35.1'}));
+      }
+      generations++;
+      const request=JSON.parse(options.body);
+      const challengeId=request.prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
+      const diffSha256=request.prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
+      return {ok:true,text:async()=>JSON.stringify({
+        model:request.model,done:true,done_reason:'stop',
+        response:JSON.stringify({challengeId,diffSha256,verdict:'clean',findings:[]}),
+      })};
+    },
+  });
+  assert.equal(result.reason,'LOCAL_OLLAMA_DIGEST_PROTOCOL_UNSUPPORTED');
+  assert.equal(result.completedCases,1);
+  assert.equal(versions,2);
+  assert.equal(generations,1,'no private prompt reaches the downgraded daemon');
   noAuthority(project(result));
 });

@@ -1,3 +1,4 @@
+import { projectSovereignCapabilityCatalogTruth } from './sovereignCommanderCapabilityParityV1.mjs';
 import { createHash } from 'node:crypto';
 import { projectMaintenanceCustodyVisibilityV1, maintenanceCustodyVisibilityLightV1 } from './maintenanceCustodyVisibilityV1.mjs';
 import { parseWindowsCalibrationRemoteV1 } from './sovereignWindowsCalibrationRemoteV1.mjs';
@@ -75,6 +76,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'repair-stephanos',
   'prove-vr-atlas-runtime',
   'prove-flywheel-runtime',
+  'observe-open-stephanos-tabs',
   'prove-stephanos-ai-commander',
   'reconcile-remote-commander-parity',
   'sync-vr-reference-sources',
@@ -451,6 +453,29 @@ async function postMcp(fetchFn, token, message, sessionId = '', timeoutMs = SOVE
   });
 }
 
+// A parsed health rejection occurs before credentials or any MCP POST. Preserve
+// that local fact in process memory only; it is not an authenticated owner
+// refusal and cannot be reconstructed from a blocker, JSON or a saved receipt.
+const maintenancePreDispatchRefusals = new WeakMap();
+function maintenanceProtocolRefusal(request) {
+  const blocked = fail('SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED');
+  if (request && typeof request === 'object' && !Array.isArray(request)
+    && Object.isFrozen(request) && request.arguments && Object.isFrozen(request.arguments)
+    && SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(request.actionId)
+    && request.arguments.actionId === request.actionId) {
+    maintenancePreDispatchRefusals.set(blocked, Object.freeze({ request, actionId: request.actionId }));
+  }
+  return blocked;
+}
+
+export function consumeSovereignMaintenancePreDispatchRefusalV1(blocked, request) {
+  const binding = maintenancePreDispatchRefusals.get(blocked);
+  maintenancePreDispatchRefusals.delete(blocked);
+  return Boolean(binding && binding.request === request && binding.actionId === request.actionId
+    && request.arguments.actionId === binding.actionId
+    && blocked.ok === false && blocked.blocker === 'SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED');
+}
+
 // Private local callers reuse the existing bounded authenticated MCP transport.
 // No health snapshot grants admission, no local child fallback, and no attempt
 // to start/recycle an unavailable owner is permitted on this delegation path.
@@ -459,11 +484,12 @@ export async function callSovereignMaintenanceOwnerV1(request, options = {}) {
   const readFileFn = options.readFileFn || readFile;
   let token = '', sessionId = '';
   try {
-    const healthExchange = await fetchTextWithDeadline(fetchFn, HEALTH_URL, { method: 'GET' }, 3_000);
+    const healthExchange = await fetchTextWithDeadline(fetchFn, HEALTH_URL + '?view=protocol', { method: 'GET' }, 3_000);
     const health = JSON.parse(healthExchange.bodyText || 'null');
     if (!healthExchange.response.ok || health?.ok !== true || health.service !== 'stephanos-sovereign-commander'
+        || health.observationScope !== 'TRANSPORT_PROTOCOL_ONLY' || health.maintenanceAdmissionProven !== false
         || health.maintenanceOwnerAdmissionVersion !== SOVEREIGN_MAINTENANCE_OWNER_VERSION) {
-      return fail('SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED');
+      return maintenanceProtocolRefusal(request);
     }
     token = text(await readFileFn(fixedTokenPath(options.env || process.env), 'utf8'));
     if (token.length < 32) return fail('SOVEREIGN_MAINTENANCE_OWNER_TOKEN_UNAVAILABLE');
@@ -560,6 +586,39 @@ function safeAiCommanderAcceptanceProjection(value = {}, processId = '') {
   });
 }
 
+export function safeBrowserObservationProjection(value = {}, processId = '') {
+  if (processId !== 'observe-open-stephanos-tabs') return null;
+  const stdout = String(value?.structuredContent?.stdout || '');
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith('SOVEREIGN_BROWSER_OBSERVATION_RESULT='));
+  let observed;
+  try { observed = JSON.parse(line.slice('SOVEREIGN_BROWSER_OBSERVATION_RESULT='.length)); } catch { return null; }
+  if (observed?.schemaVersion !== 'stephanos.sovereign-browser-observation.v1'
+    || observed.readOnly !== true || observed.observationOnly !== true
+    || observed.servedHeadVerified !== false || observed.functionalAcceptanceVerified !== false
+    || !['BROWSER_OBSERVATION_CAPTURED', 'BROWSER_OBSERVATION_DIAGNOSTIC', 'BROWSER_OBSERVATION_PARTIAL', 'BROWSER_OBSERVATION_BLOCKED'].includes(observed.finalVerdict)) return null;
+  const count = (number) => Number.isSafeInteger(number) && number >= 0 && number <= 8 ? number : null;
+  const blocker = text(observed.blocker);
+  const observedAtUtc = text(observed.observedAtUtc);
+  const evidenceHash = text(observed.evidenceHash).toLowerCase();
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-browser-observation.v1',
+    ok: browserObservationCompleteForAction(observed),
+    finalVerdict: observed.finalVerdict,
+    blocker: /^[A-Z0-9_]{0,96}$/.test(blocker) ? blocker : '',
+    observedAtUtc: browserObservationTimestampValid(observedAtUtc) ? observedAtUtc : '',
+    connectedTabCount: count(observed.connectedTabCount),
+    admittedTabCount: count(observed.admittedTabCount),
+    observedTabCount: count(observed.observedTabCount),
+    screenshotCount: count(observed.screenshotCount),
+    diagnosticTabCount: count(observed.diagnosticTabCount),
+    evidenceHash: PROOF_HASH_PATTERN.test(evidenceHash) ? evidenceHash : '',
+    observationOnly: true,
+    servedHeadVerified: false,
+    functionalAcceptanceVerified: false,
+    readOnly: true,
+  });
+}
+
 function safeRuntimeProofProjection(value = {}, processId = '') {
   const proofContract = processId === 'prove-vr-atlas-runtime'
     ? Object.freeze({
@@ -622,6 +681,38 @@ function safeRuntimeProofProjection(value = {}, processId = '') {
     receiptCaptured: Boolean(proof.receiptPath),
     blocker: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(blocker) ? blocker : '',
   });
+}
+
+function browserObservationTimestampValid(value) {
+  return typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+    && Number.isFinite(Date.parse(value))
+    && new Date(value).toISOString() === value;
+}
+
+export function browserObservationCompleteForAction(proof = null) {
+  const common = proof?.ok === true
+    && proof?.schemaVersion === 'stephanos.sovereign-browser-observation.v1'
+    && proof?.readOnly === true
+    && proof?.observationOnly === true
+    && proof?.servedHeadVerified === false
+    && proof?.functionalAcceptanceVerified === false
+    && typeof proof?.evidenceHash === 'string' && /^[a-f0-9]{64}$/.test(proof.evidenceHash)
+    && browserObservationTimestampValid(proof?.observedAtUtc)
+    && (proof?.blocker === undefined || proof.blocker === '')
+    && Number.isSafeInteger(proof?.diagnosticTabCount)
+    && proof.diagnosticTabCount >= 1 && proof.diagnosticTabCount <= 8
+    && proof?.connectedTabCount === proof.diagnosticTabCount
+    && proof?.admittedTabCount === proof.diagnosticTabCount;
+  // Match the fixed native host: one admitted foreground screenshot or a scan
+  // with no screenshots. Every reported tab count remains required evidence.
+  const visual = proof?.finalVerdict === 'BROWSER_OBSERVATION_CAPTURED'
+    && proof?.observedTabCount === 1
+    && proof?.screenshotCount === 1;
+  const diagnostic = proof?.finalVerdict === 'BROWSER_OBSERVATION_DIAGNOSTIC'
+    && proof?.observedTabCount === 0
+    && proof?.screenshotCount === 0;
+  return common && (visual || diagnostic);
 }
 
 function runtimeProofCompleteForAction(actionId = '', proof = null, expectedHead = '') {
@@ -1474,36 +1565,12 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
 
 function safeCapabilityParityProjection(value = {}, processId = '') {
   if (processId !== 'reconcile-remote-commander-parity') return null;
-  const stdout = String(value?.structuredContent?.stdout || '');
   const prefix = 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RESULT=';
-  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(prefix));
+  const line = String(value?.structuredContent?.stdout || '').split(/\r?\n/).find(entry => entry.startsWith(prefix));
   if (!line) return null;
-  let parsed = null;
-  try { parsed = JSON.parse(line.slice(prefix.length)); } catch {}
-  if (!parsed || parsed.ok !== true) return null;
-  const bounded = (input) => {
-    const number = Number(input);
-    return Number.isSafeInteger(number) && number >= 0 && number <= 10000 ? number : null;
-  };
-  const retainedCapabilityCount = bounded(parsed.retainedCapabilityCount);
-  const parityPresentCount = bounded(parsed.parityPresentCount);
-  const buildableGapCount = bounded(parsed.buildableGapCount);
-  const boundaryHoldCount = bounded(parsed.boundaryHoldCount);
-  if ([retainedCapabilityCount, parityPresentCount, buildableGapCount, boundaryHoldCount].some((entry) => entry === null)) return null;
-  const finalVerdict = text(parsed.finalVerdict);
-  if (!['SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN', 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GAPS_TRACKED'].includes(finalVerdict)) return null;
-  return Object.freeze({
-    canonicalOwnerGoal: text(parsed.canonicalOwnerGoal) === '#2573' ? '#2573' : '',
-    retainedCapabilityCount,
-    parityPresentCount,
-    buildableGapCount,
-    boundaryHoldCount,
-    zeroGapInvariantSatisfied: buildableGapCount === 0,
-    closureRequired: buildableGapCount > 0,
-    daemonMayReportGreen: buildableGapCount === 0,
-    mustContinueUntilZero: true,
-    finalVerdict,
-  });
+  let parsed;
+  try { parsed = JSON.parse(line.slice(prefix.length)); } catch { return null; }
+  return parsed?.ok === true ? projectSovereignCapabilityCatalogTruth(parsed) : null;
 }
 
 function safeStarfieldVrTelemetryArchiveProjection(value = {}, processId = '') {
@@ -1867,6 +1934,7 @@ function safeMaintenanceProjection(value = {}) {
     status: Number.isInteger(status) ? status : null,
     errorCode: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(errorCode) ? errorCode : '',
     runtimeProof: safeRuntimeProofProjection(source, processId),
+    browserObservation: safeBrowserObservationProjection(source, processId),
     aiCommanderAcceptance: safeAiCommanderAcceptanceProjection(source, processId),
     observation: safeBattleBridgeObservationProjection(source, processId),
     meterStatus: safeMeterStatusProjection(source, processId),
@@ -3859,6 +3927,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       const projection = safeMaintenanceProjection(sovereignCommanderCompletionEnvelope(actionCall));
       const runtimeProofRequired = ['prove-vr-atlas-runtime', 'prove-flywheel-runtime'].includes(actionId);
       const aiProofRequired = actionId === 'prove-stephanos-ai-commander';
+      const browserObservationRequired = actionId === 'observe-open-stephanos-tabs';
+      const browserObservationComplete = !browserObservationRequired || browserObservationCompleteForAction(projection.browserObservation);
       const runtimeProofComplete = !runtimeProofRequired
         || runtimeProofCompleteForAction(actionId, projection.runtimeProof, shape.expectedHead);
       const proofComplete = projection.ok === true
@@ -3868,6 +3938,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         && projection.status === 0
         && (actionId !== FLEET_SUPERVISOR_ACTION || fleetSupervisor?.ok === true)
         && runtimeProofComplete
+        && browserObservationComplete
         && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
       if (!proofComplete) {
         return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID', {
@@ -3879,6 +3950,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           processIdMatch: projection.processId === actionId,
           successfulStatus: projection.status === 0,
           runtimeProof: projection.runtimeProof,
+          browserObservation: projection.browserObservation,
           completedSteps: Object.freeze(completedSteps),
           publicReceiptSafe: true,
           secretMaterialReturned: false,
@@ -3892,6 +3964,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         status: projection.status,
         errorCode: projection.errorCode,
         runtimeProof: projection.runtimeProof,
+        browserObservation: projection.browserObservation,
         aiCommanderAcceptance: projection.aiCommanderAcceptance,
         ...(fleetSupervisor ? { fleetSupervisor } : {}),
       }));
@@ -4788,6 +4861,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
 
   const runtimeProofRequired = ['prove-vr-atlas-runtime', 'prove-flywheel-runtime'].includes(shape.command.remoteAction);
   const aiProofRequired = shape.command.remoteAction === 'prove-stephanos-ai-commander';
+  const browserObservationRequired = shape.command.remoteAction === 'observe-open-stephanos-tabs';
   if (aiProofRequired) {
     const acceptance = projection.aiCommanderAcceptance;
     const actionEnvelopeComplete = projection.ok === true
@@ -4861,6 +4935,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     && (shape.command.remoteAction !== FLEET_SUPERVISOR_ACTION || fleetSupervisor?.ok === true)
     && runtimeProofComplete
     && observationComplete
+    && (!browserObservationRequired || browserObservationCompleteForAction(projection.browserObservation))
     && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
   if (!proofComplete) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID', {
@@ -4870,6 +4945,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       successfulStatus: projection.status === 0,
       runtimeProof: projection.runtimeProof,
       observation: projection.observation,
+      browserObservation: projection.browserObservation,
       publicReceiptSafe: true,
       secretMaterialReturned: false,
     });
@@ -4887,6 +4963,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     runtimeProof: projection.runtimeProof,
     aiCommanderAcceptance: projection.aiCommanderAcceptance,
     observation: projection.observation,
+    browserObservation: projection.browserObservation,
     meterStatus: projection.meterStatus,
     controllerLaneStatus: projection.controllerLaneStatus,
     controllerActivityPublication: projection.controllerActivityPublication,
