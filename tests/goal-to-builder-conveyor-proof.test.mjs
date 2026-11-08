@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+// Exercise the original #2002 continuation predicate in the existing
+// GitHub-hosted Goal-to-Builder Conveyor proof, without a new workflow.
+import '../shared/agents/goalBuildingAgentV1.continuation.test.mjs';
 
 import {
   buildSchedulerGoalsFromProgrammeSources,
