@@ -238,6 +238,62 @@ test('preflight reads every changed file and observes authority changes on later
   assert.ok(d.calls.includes('diff:2094'));
 });
 
+test('preflight binds every diff section to the authenticated changed-file estate', async t => {
+  const diff = file => `diff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n@@ -1 +1 @@\n-old\n+new\n`;
+  const cases = [
+    ['complete two-file response', ['README.md','src/feature.js'], diff('README.md') + diff('src/feature.js'), null],
+    ['200 OK but missing second security-sensitive file', ['README.md','src/feature.js'], diff('README.md'), /PREFLIGHT_DIFF_COVERAGE_UNPROVEN/],
+    ['unlisted extra section', ['README.md'], diff('README.md') + diff('src/feature.js'), /PREFLIGHT_DIFF_COVERAGE_UNPROVEN/],
+    ['duplicate section', ['README.md'], diff('README.md') + diff('README.md'), /PREFLIGHT_DIFF_COVERAGE_UNPROVEN/],
+    ['quoted whitespace path', ['docs/a b.md'], 'diff --git "a/docs/a b.md" "b/docs/a b.md"\nnew file mode 100644\n', null],
+    ['quoted UTF-8 octal path', ['docs/café.md'], 'diff --git "a/docs/caf\\303\\251.md" "b/docs/caf\\303\\251.md"\nnew file mode 100644\n', null],
+    ['rename target', ['src/new.js'], 'diff --git a/src/old.js b/src/new.js\nsimilarity index 100%\nrename from src/old.js\nrename to src/new.js\n', null],
+    ['deletion target', ['src/old.js'], 'diff --git a/src/old.js b/src/old.js\ndeleted file mode 100644\n--- a/src/old.js\n+++ /dev/null\n', null],
+    ['unreviewable binary', ['media/pic.png'], 'diff --git a/media/pic.png b/media/pic.png\nBinary files a/media/pic.png and b/media/pic.png differ\n', /PREFLIGHT_DIFF_BINARY_UNREVIEWABLE/],
+  ];
+  for (const [label, changedFiles, patch, rejection] of cases) await t.test(label, async () => {
+    const f = readyLifecycleFixture();
+    f.input.changedFiles = changedFiles; f.state.pull.changed_files = changedFiles.length; f.input.patch = patch;
+    const d = fixtureTransport(f);
+    const run = () => readReadyReviewInput(f.identity, { api: d.api, readPatch: d.readPatch, expectedDraft: false });
+    if (rejection) await assert.rejects(run(), rejection);
+    else assert.deepEqual((await run()).changedFiles, changedFiles);
+  });
+});
+
+test('complete-diff preflight validates every Git hunk length before protected READY', async t => {
+  const complete = 'diff --git a/README.md b/README.md\n'
+    + 'index 1111111..2222222 100644\n--- a/README.md\n+++ b/README.md\n'
+    + '@@ -1 +1 @@\n-old\n+new\n';
+  const cases = [
+    ['complete hunk', complete, false],
+    ['two complete separate hunks', complete + '@@ -3 +3 @@\n-old2\n+new2\n', false],
+    ['no-newline marker', complete + '\\ No newline at end of file\n', false],
+    ['removed last new line', complete.replace('+new\n', ''), true],
+    ['removed last old line', complete.replace('-old\n', ''), true],
+    ['overstated old count', complete.replace('@@ -1 +1 @@', '@@ -1,2 +1 @@'), true],
+    ['overstated new count', complete.replace('@@ -1 +1 @@', '@@ -1 +1,2 @@'), true],
+    ['extra uncounted body', complete.replace('+new\n', '+new\n extra\n'), true],
+    ['malformed hunk header', complete.replace('@@ -1 +1 @@', '@@ -x +1 @@'), true],
+    ['zero-length hunk', complete.replace('@@ -1 +1 @@', '@@ -1,0 +1,0 @@'), true],
+    ['header-only forged section', complete.slice(0, complete.indexOf('@@ -1')), true],
+    ['overlapping hunks', complete + '@@ -1 +1 @@\n-old2\n+new2\n', true],
+    ['unrecognised metadata', complete.replace('index 1111111..2222222 100644', 'UNREVIEWABLE_METADATA'), true],
+  ];
+  for (const [name, patch, denied] of cases) await t.test(name, async () => {
+    const f = readyLifecycleFixture();
+    f.input.changedFiles = ['README.md'];
+    f.state.pull.changed_files = 1;
+    f.input.patch = patch;
+    const d = fixtureTransport(f);
+    const attempt = () => readReadyReviewInput(f.identity, {
+      api: d.api, readPatch: d.readPatch, expectedDraft: false,
+    });
+    if (denied) await assert.rejects(attempt(), /PREFLIGHT_DIFF_HUNK_UNPROVEN/);
+    else assert.deepEqual((await attempt()).changedFiles, ['README.md']);
+  });
+});
+
 test('complete input preflight fails closed on missing, duplicate, truncated, oversized or changing evidence', async t => {
   const attacks = {
     'unknown count': f => { delete f.state.pull.changed_files; },

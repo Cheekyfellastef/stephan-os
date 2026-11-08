@@ -111,6 +111,122 @@ export async function readReadyReviewTarget(api, identity, options) {
   return state;
 }
 
+function decodeReadyGitDiffPath(token) {
+  if (typeof token !== 'string' || !token) return '';
+  if (!token.startsWith('"')) return /[\s"]/.test(token) ? '' : token;
+  if (!token.endsWith('"')) return '';
+  const inner = token.slice(1, -1);
+  const escapes = Object.freeze({ a: '\x07', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\x0b', '"': '"', '\\': '\\' });
+  let encoded = '';
+  try {
+    for (let i = 0; i < inner.length;) {
+      if (inner[i] !== '\\') {
+        const point = inner.codePointAt(i);
+        encoded += encodeURIComponent(String.fromCodePoint(point));
+        i += point > 0xffff ? 2 : 1;
+        continue;
+      }
+      i += 1;
+      const escaped = inner[i];
+      if (escaped === undefined) return '';
+      if (/[0-7]/.test(escaped)) {
+        const octal = inner.slice(i, i + 3);
+        if (!/^[0-7]{3}$/.test(octal)) return '';
+        encoded += '%' + Number.parseInt(octal, 8).toString(16).padStart(2, '0');
+        i += 3;
+      } else {
+        if (!Object.hasOwn(escapes, escaped)) return '';
+        encoded += encodeURIComponent(escapes[escaped]);
+        i += 1;
+      }
+    }
+    return decodeURIComponent(encoded);
+  } catch { return ''; }
+}
+
+function assertReadyDiffFileCoverage(changedFiles, patch) {
+  const expected = new Set(changedFiles), observed = new Set();
+  requireProof(expected.size === changedFiles.length, 'PREFLIGHT_DIFF_COVERAGE_UNPROVEN');
+  for (const line of patch.split('\n')) {
+    if (/^(?:GIT binary patch|Binary files .+ differ)\r?$/.test(line)) {
+      requireProof(false, 'PREFLIGHT_DIFF_BINARY_UNREVIEWABLE');
+    }
+    if (!line.startsWith('diff --git ')) continue;
+    const match = /^diff --git ("(?:[^"\\]|\\.)*"|[^ \t"]+) ("(?:[^"\\]|\\.)*"|[^ \t"]+)\r?$/.exec(line);
+    requireProof(Boolean(match), 'PREFLIGHT_DIFF_COVERAGE_UNPROVEN');
+    const oldPath = decodeReadyGitDiffPath(match[1]);
+    const newPath = decodeReadyGitDiffPath(match[2]);
+    requireProof(oldPath.startsWith('a/') && newPath.startsWith('b/')
+      && oldPath.length > 2 && newPath.length > 2, 'PREFLIGHT_DIFF_COVERAGE_UNPROVEN');
+    const filename = newPath.slice(2);
+    requireProof(expected.has(filename) && !observed.has(filename), 'PREFLIGHT_DIFF_COVERAGE_UNPROVEN');
+    observed.add(filename);
+  }
+  requireProof(observed.size === expected.size && observed.size > 0, 'PREFLIGHT_DIFF_COVERAGE_UNPROVEN');
+}
+
+function assertReadyDiffHunkCompleteness(patch) {
+  const lines = patch.split('\n');
+  let inSection = false, sectionEvidence = false, inHunk = false;
+  let oldRemaining = 0, newRemaining = 0, previousOldEnd = -1, previousNewEnd = -1, previousBody = false;
+  const finishHunk = () => {
+    requireProof(!inHunk || (oldRemaining === 0 && newRemaining === 0), 'PREFLIGHT_DIFF_HUNK_UNPROVEN');
+    inHunk = false;
+  };
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index];
+    const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+    if (line.startsWith('diff --git ')) {
+      finishHunk();
+      requireProof(!inSection || sectionEvidence, 'PREFLIGHT_DIFF_HUNK_UNPROVEN');
+      inSection = true; sectionEvidence = false;
+      previousOldEnd = -1; previousNewEnd = -1; previousBody = false;
+      continue;
+    }
+    requireProof(inSection, 'PREFLIGHT_DIFF_HUNK_UNPROVEN');
+    if (line.startsWith('@@ ')) {
+      finishHunk();
+      const match = /^@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+)(?:,([0-9]+))? @@(?: .*)?$/.exec(line);
+      requireProof(Boolean(match), 'PREFLIGHT_DIFF_HUNK_UNPROVEN');
+      const oldStart = Number(match[1]), newStart = Number(match[3]);
+      const oldCount = match[2] === undefined ? 1 : Number(match[2]);
+      const newCount = match[4] === undefined ? 1 : Number(match[4]);
+      requireProof([oldStart, newStart, oldCount, newCount, oldStart + oldCount, newStart + newCount]
+        .every(Number.isSafeInteger) && (oldCount > 0 || newCount > 0)
+        && oldStart >= previousOldEnd && newStart >= previousNewEnd,
+        'PREFLIGHT_DIFF_HUNK_UNPROVEN');
+      previousOldEnd = oldStart + oldCount; previousNewEnd = newStart + newCount;
+      oldRemaining = oldCount; newRemaining = newCount;
+      inHunk = true; sectionEvidence = true; previousBody = false;
+      continue;
+    }
+    if (inHunk) {
+      if (index === lines.length - 1 && line === '') { finishHunk(); continue; }
+      if (line === '\\ No newline at end of file') {
+        requireProof(previousBody, 'PREFLIGHT_DIFF_HUNK_UNPROVEN');
+        continue;
+      }
+      requireProof(oldRemaining > 0 || newRemaining > 0, 'PREFLIGHT_DIFF_HUNK_UNPROVEN');
+      if (line.startsWith(' ')) { oldRemaining -= 1; newRemaining -= 1; }
+      else if (line.startsWith('-')) oldRemaining -= 1;
+      else if (line.startsWith('+')) newRemaining -= 1;
+      else requireProof(false, 'PREFLIGHT_DIFF_HUNK_UNPROVEN');
+      requireProof(oldRemaining >= 0 && newRemaining >= 0, 'PREFLIGHT_DIFF_HUNK_UNPROVEN');
+      previousBody = true;
+      continue;
+    }
+    if (line === '') continue;
+    requireProof(!/^(?:GIT binary patch|Binary files )/.test(line), 'PREFLIGHT_DIFF_BINARY_UNREVIEWABLE');
+    if (/^(?:new file mode|deleted file mode|old mode|new mode|rename from|rename to|copy from|copy to|similarity index|dissimilarity index) /.test(line)) {
+      sectionEvidence = true;
+      continue;
+    }
+    requireProof(/^(?:index |--- |\+\+\+ )/.test(line), 'PREFLIGHT_DIFF_HUNK_UNPROVEN');
+  }
+  finishHunk();
+  requireProof(!inSection || sectionEvidence, 'PREFLIGHT_DIFF_HUNK_UNPROVEN');
+}
+
 // Read the complete live PR input before either irreversible lifecycle step.
 // The ordinary JSON API cannot stand in for the fixed full-diff transport.
 export async function readReadyReviewInput(identity, { api, readPatch, expectedDraft } = {}) {
@@ -133,6 +249,8 @@ export async function readReadyReviewInput(identity, { api, readPatch, expectedD
   const patch = await readPatch(identity.prNumber);
   requireProof(typeof patch === 'string' && patch.startsWith('diff --git ')
     && Buffer.byteLength(patch) <= MAX_REVIEW_PATCH_BYTES, 'PREFLIGHT_COMPLETE_PATCH_UNPROVEN');
+  assertReadyDiffFileCoverage(changedFiles, patch);
+  assertReadyDiffHunkCompleteness(patch);
   const after = await readReadyReviewTarget(api, identity, { allowDraft: expectedDraft });
   requireProof(after.pull.draft === expectedDraft && after.pull.changed_files === count, 'PREFLIGHT_FILE_ESTATE_CHANGED');
   return { repository: identity.repository, prNumber: identity.prNumber,

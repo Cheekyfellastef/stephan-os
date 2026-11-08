@@ -9,6 +9,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import '../tests/flywheel-launcher-entry.test.mjs';
+// Exercise #1717's cross-device Spatial landing tile in the existing hosted CI.
+import '../tests/spatial-bridge-v0.test.mjs';
+// Run the consented, PC-only holographic window fallback lifecycle checks on hosted CI.
+import '../tests/spatial-workspace-consented-window-share-v1.test.mjs';
+// Run the original #1717 movable-furniture and audio hardware-boundary checks in hosted CI.
+import '../tests/spatial-workspace-furniture-audio-v1.test.mjs';
 
 import {
   computeStephanosSourceFingerprint,

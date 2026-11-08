@@ -7,6 +7,7 @@ const TURN_RADIANS_PER_SECOND = Math.PI / 2;
 const SPEED = 1.2;
 const MAX_FRAME_SECONDS = 0.05;
 const TRACKING_GAP_MS = 250;
+const BODY_HEAD_CLEARANCE = 0.12;
 
 const axis = (value) => Number.isFinite(value) ? Math.max(-1, Math.min(1, value)) : 0;
 const pressed = (button) => button?.pressed === true;
@@ -60,7 +61,7 @@ export function sampleHolodeckControls({ inputSources = [], gamepads = [], prefe
 function headPose(pose, previousYaw) {
   const p = pose?.transform?.position;
   const q = pose?.transform?.orientation;
-  if (!p || !q || ![p.x, p.z, q.x, q.y, q.z, q.w].every(Number.isFinite)) return null;
+  if (!p || !q || ![p.x, p.y, p.z, q.x, q.y, q.z, q.w].every(Number.isFinite)) return null;
   const norm = Math.hypot(q.x, q.y, q.z, q.w);
   if (norm < 0.0001) return null;
   const x = q.x / norm, y = q.y / norm, z = q.z / norm, w = q.w / norm;
@@ -68,7 +69,7 @@ function headPose(pose, previousYaw) {
   const forwardZ = -(1 - 2 * (x * x + y * y));
   const yaw = Math.hypot(forwardX, forwardZ) > 0.1
     ? Math.atan2(-forwardX, -forwardZ) : previousYaw;
-  return { x: p.x, z: p.z, yaw };
+  return { x: p.x, y: p.y, z: p.z, yaw };
 }
 
 function rotate(x, z, yaw) {
@@ -76,14 +77,17 @@ function rotate(x, z, yaw) {
     z: -Math.sin(yaw) * x + Math.cos(yaw) * z };
 }
 
-export function createHolodeckLocomotion({ room = HOLODECK_ROOM, obstacles = HOLODECK_OBSTACLES } = {}) {
-  const rig = { x: 0, z: 0, yaw: 0 };
+export function createHolodeckLocomotion({
+  room = HOLODECK_ROOM, obstacles = HOLODECK_OBSTACLES, comfort, floorRelativeY = false,
+} = {}) {
+  const rig = { x: 0, y: 0, z: 0, yaw: 0 };
   let previousTime = null;
   let previousSource = 'none';
   let headYaw = 0;
   let armed = false;
 
-  function update({ time, pose, input, visible = true }) {
+  function update({ time, pose, input, visible = true, dynamicObstacles = [] }) {
+    rig.y = comfort?.getState().heightOffset ?? 0;
     const head = headPose(pose, headYaw);
     const elapsed = previousTime === null ? 0 : time - previousTime;
     const validTime = Number.isFinite(time) && elapsed >= 0 && elapsed <= TRACKING_GAP_MS;
@@ -127,8 +131,13 @@ export function createHolodeckLocomotion({ room = HOLODECK_ROOM, obstacles = HOL
     }
     const direction = rotate(input.moveX, input.moveY, rig.yaw + headYaw);
     const tracked = rotate(head.x, head.z, rig.yaw);
+    const collisionObstacles = Array.isArray(dynamicObstacles) && dynamicObstacles.length
+      ? [...obstacles, ...dynamicObstacles] : obstacles;
+    const bodyBottomY = floorRelativeY ? rig.y : undefined;
+    const bodyTopY = floorRelativeY ? rig.y + head.y + BODY_HEAD_CLEARANCE : undefined;
     const travel = resolveHolodeckMovement({ x: rig.x + tracked.x, z: rig.z + tracked.z },
-      { x: direction.x * SPEED * dt, z: direction.z * SPEED * dt }, { room, obstacles });
+      { x: direction.x * SPEED * dt, z: direction.z * SPEED * dt },
+      { room, obstacles: collisionObstacles, bodyBottomY, bodyTopY });
     rig.x += travel.x;
     rig.z += travel.z;
     return { ...rig, controller: input.label, state: 'ready' };
@@ -142,12 +151,13 @@ export function createHolodeckLocomotion({ room = HOLODECK_ROOM, obstacles = HOL
 export function applyHolodeckLocomotionToView(view, rig, output = new Float32Array(16)) {
   const c = Math.cos(rig.yaw), s = Math.sin(rig.yaw);
   const tx = -c * rig.x + s * rig.z;
+  const ty = -(rig.y ?? 0);
   const tz = -s * rig.x - c * rig.z;
   for (let row = 0; row < 4; row += 1) {
     output[row] = view[row] * c + view[8 + row] * s;
     output[4 + row] = view[4 + row];
     output[8 + row] = -view[row] * s + view[8 + row] * c;
-    output[12 + row] = view[row] * tx + view[8 + row] * tz + view[12 + row];
+    output[12 + row] = view[row] * tx + view[4 + row] * ty + view[8 + row] * tz + view[12 + row];
   }
   return output;
 }
