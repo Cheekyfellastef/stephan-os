@@ -103,3 +103,106 @@ export function classifyProtectedReadyReviewDraftRecoveryV1({
     ok: true, blocker: '', priorRunId: prior.id, reviewLaunchAllowed: true,
     sourceMutationAllowed: false, reviewApprovalGranted: false, mergeAuthority: false });
 }
+
+
+/**
+ * Source-owned read-only adapter for ACTUAL GitHub REST provenance. A trusted
+ * transport must supply complete bounded lists and the authenticated job log.
+ * The returned eligibility is evidence for future QUALIFIED source admission,
+ * NEVER permission to dispatch or approve a second one-use review.
+ */
+export function classifyProtectedReadyReviewGitHubReadbackV1({
+  identity, pull, main, commit, workflow, runs, job, log, events,
+  ownerComment = null, nowUtc,
+} = {}) {
+  const held = code => Object.freeze({
+    ...refusal(code), eligibleForOwnerQualifiedRecovery: false,
+    readOnly: true,
+  });
+  try {
+    if (!identity || identity.repository !== REPOSITORY || !integer(identity.prNumber)
+      || !sha(identity.sourceHead) || !sha(identity.sourceTree) || !sha(identity.baseSha)
+      || !pull || pull.number !== identity.prNumber || pull.state !== 'open'
+      || pull.merged !== false || pull.draft !== false
+      || pull.head?.repo?.full_name !== REPOSITORY || pull.base?.repo?.full_name !== REPOSITORY
+      || pull.head.ref !== identity.branch || pull.head.sha !== identity.sourceHead
+      || pull.base.ref !== 'main' || pull.base.sha !== identity.baseSha
+      || main?.object?.sha !== identity.baseSha
+      || commit?.sha !== identity.sourceHead || commit.tree?.sha !== identity.sourceTree)
+      return held('GITHUB_SOURCE_NOT_PROVEN');
+    if (!workflow || !integer(workflow.id)
+      || workflow.path !== '.github/workflows/stephanos-exact-head-review.yml'
+      || workflow.name !== 'Stephanos Exact-Head Review' || workflow.state !== 'active'
+      || !Array.isArray(runs) || runs.length !== 1)
+      return held('GITHUB_RUN_INVENTORY_UNPROVEN');
+    const run = runs[0];
+    const title = new RegExp('^protected-ready-review-pr-' + identity.prNumber
+      + '-head-' + identity.sourceHead + '-ready-([1-9][0-9]*)-binding-([a-f0-9]{64})$');
+    const ownerActor = actor => (actor?.login === OPERATOR && actor?.id === 267490109)
+      || (actor?.login === 'github-actions[bot]' && actor?.id === 41898282);
+    if (!integer(run?.id) || run.workflow_id !== workflow.id
+      || !title.test(run.display_title || '')
+      || run.event !== 'workflow_dispatch' || run.path !== workflow.path
+      || run.head_sha !== identity.baseSha || run.head_branch !== 'main'
+      || run.repository?.full_name !== REPOSITORY
+      || run.head_repository?.full_name !== REPOSITORY
+      || !ownerActor(run.actor) || !ownerActor(run.triggering_actor)
+      || run.run_attempt !== 1 || run.status !== 'completed'
+      || run.conclusion !== 'failure' || !Number.isFinite(time(run.run_started_at)))
+      return held('GITHUB_PRIOR_RUN_UNPROVEN');
+    if (!job || !integer(job.id) || job.run_id !== run.id
+      || job.run_attempt !== 1 || job.name !== 'exact-head-review'
+      || job.status !== 'completed' || job.conclusion !== 'failure'
+      || !Number.isFinite(time(job.started_at)) || !Number.isFinite(time(job.completed_at))
+      || time(job.started_at) < time(run.run_started_at)
+      || time(job.completed_at) < time(job.started_at)
+      || !Array.isArray(job.steps) || job.steps.length === 0)
+      return held('GITHUB_PRIOR_JOB_UNPROVEN');
+    if (typeof log !== 'string' || log.length === 0 || log.length > 250000)
+      return held('GITHUB_JOB_LOG_UNPROVEN');
+    const codes = [...log.matchAll(/PROTECTED_READY_REVIEW_BLOCKED:([A-Z_]+)/g)];
+    if (codes.length !== 1 || codes[0][1] !== READY_REVIEW_DRAFT_INTERLEAVE_CODE)
+      return held('GITHUB_TERMINAL_FAILURE_UNPROVEN');
+    if (!Array.isArray(events) || events.length > 600) return held('GITHUB_TIMELINE_UNPROVEN');
+    const ids = new Set(), timeline = [];
+    for (const event of events) {
+      if (!integer(event?.id) || ids.has(event.id)) return held('GITHUB_TIMELINE_UNPROVEN');
+      ids.add(event.id);
+      if (event.event === 'ready_for_review' || event.event === 'convert_to_draft') {
+        if (!ownerActor(event.actor) || !Number.isFinite(time(event.created_at)))
+          return held('GITHUB_TIMELINE_UNPROVEN');
+        timeline.push({ id: event.id, event: event.event,
+          actor: event.actor.login, createdAtUtc: event.created_at });
+      }
+    }
+    // Unknown, partial or duplicated READY history is refused by the original
+    // three-event classifier; this layer never projects a convenient subset.
+    if (timeline.length !== 3) return held('GITHUB_TIMELINE_UNPROVEN');
+    // Raw owner data must be authenticated, expiry-checked and digest-bound by
+    // the original protected mailbox transport before being supplied here.
+    // An object with matching fields alone can never dispatch a review.
+    const result = classifyProtectedReadyReviewDraftRecoveryV1({
+      identity, currentPr: { repository: REPOSITORY, number: pull.number,
+        state: pull.state, draft: pull.draft, merged: pull.merged,
+        branch: pull.head.ref, headSha: pull.head.sha, headTree: commit.tree.sha,
+        baseSha: pull.base.sha }, mainSha: main.object.sha,
+      priorRuns: [{ id: run.id, repository: REPOSITORY, prNumber: identity.prNumber,
+        sourceHead: identity.sourceHead, baseSha: identity.baseSha,
+        status: run.status, conclusion: run.conclusion, runAttempt: run.run_attempt,
+        startedAtUtc: run.run_started_at, completedAtUtc: job.completed_at }],
+      priorJob: { id: job.id, runId: job.run_id, runAttempt: job.run_attempt,
+        name: job.name, status: job.status, conclusion: job.conclusion,
+        steps: job.steps.map(step => ({ name: step.name, conclusion: step.conclusion })) },
+      priorFailure: { source: 'authenticated-github-job-log',
+        jobId: job.id, runId: run.id, code: codes[0][1] },
+      timeline, ownerComment, nowUtc,
+    });
+    return Object.freeze({ ...result,
+      eligibleForOwnerQualifiedRecovery: result.ok,
+      readOnly: true, reviewLaunchAllowed: false,
+      sourceMutationAllowed: false, reviewApprovalGranted: false,
+      mergeAuthority: false });
+  } catch {
+    return held('GITHUB_EVIDENCE_INVALID');
+  }
+}

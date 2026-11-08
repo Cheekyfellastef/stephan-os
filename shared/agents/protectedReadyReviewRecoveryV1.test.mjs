@@ -97,3 +97,102 @@ test('fresh original owner recovery only: no replay, expired window, wrong scope
   ];
   for (const [name, attack] of cases) await t.test(name, () => { const f = fixture(); attack(f); assert.equal(classify(f).ok, false); });
 });
+
+
+// Read-only GitHub-shape evidence regressions for ORIGINAL #1802, not
+// qualification of a second review or authorization of a source mutation.
+import { classifyProtectedReadyReviewGitHubReadbackV1 as githubReadback } from './protectedReadyReviewRecoveryV1.mjs';
+function githubFixture() {
+  const sourceHead = 'b'.repeat(40), sourceTree = 'a'.repeat(40), baseSha = 'e'.repeat(40);
+  const identity = { repository: 'Cheekyfellastef/stephan-os', prNumber: 3451,
+    branch: 'fix/2963-mailbox-legacy-reconciliation-proof-v1',
+    sourceHead, sourceTree, baseSha };
+  const actor = { login: 'Cheekyfellastef', id: 267490109 };
+  const bot = { login: 'github-actions[bot]', id: 41898282 };
+  return {
+    identity,
+    pull: { number: 3451, state: 'open', merged: false, draft: false,
+      head: { ref: identity.branch, sha: sourceHead, repo: { full_name: identity.repository } },
+      base: { ref: 'main', sha: baseSha, repo: { full_name: identity.repository } } },
+    main: { object: { sha: baseSha } }, commit: { sha: sourceHead, tree: { sha: sourceTree } },
+    workflow: { id: 123, path: '.github/workflows/stephanos-exact-head-review.yml',
+      name: 'Stephanos Exact-Head Review', state: 'active' },
+    runs: [{ id: 42496400604, workflow_id: 123,
+      display_title: 'protected-ready-review-pr-3451-head-' + sourceHead
+        + '-ready-42496363172-binding-' + 'c'.repeat(64),
+      path: '.github/workflows/stephanos-exact-head-review.yml',
+      event: 'workflow_dispatch', head_sha: baseSha, head_branch: 'main',
+      repository: { full_name: identity.repository }, head_repository: { full_name: identity.repository },
+      actor, triggering_actor: bot, run_attempt: 1, status: 'completed',
+      conclusion: 'failure', run_started_at: '2026-11-08T15:45:16Z' }],
+    job: { id: 128779581121, run_id: 42496400604, run_attempt: 1,
+      name: 'exact-head-review', status: 'completed', conclusion: 'failure',
+      started_at: '2026-11-08T15:45:19Z', completed_at: '2026-11-08T15:45:32Z',
+      steps: [{ name: 'Build immutable exact-head review input', conclusion: 'success' },
+        { name: 'Review ready head with the unchanged engine and qualified escalation',
+          conclusion: 'failure' }] },
+    log: 'PROTECTED_READY_REVIEW_BLOCKED:CURRENT_PR_HEAD_TREE_BASE_OR_DRAFT_CHANGED',
+    events: [
+      { id: 35499411849, event: 'ready_for_review', actor: bot,
+        created_at: '2026-11-08T15:39:02Z' },
+      { id: 35499690108, event: 'convert_to_draft', actor,
+        created_at: '2026-11-08T15:45:27Z' },
+      { id: 35500258891, event: 'ready_for_review', actor: bot,
+        created_at: '2026-11-08T15:58:27Z' },
+    ],
+    ownerComment: null, nowUtc: '2026-11-08T18:00:00Z',
+  };
+}
+test('GitHub-shaped actual history refuses without new qualified owner evidence', () => {
+  const result = githubReadback(githubFixture());
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'READY_REVIEW_RECOVERY_FRESH_OWNER_RECOVERY_AUTHORITY_UNPROVEN');
+  assert.equal(result.reviewLaunchAllowed, false);
+  assert.equal(result.mergeAuthority, false);
+});
+test('GitHub-shaped synthetic author record never grants execution even if eligible', () => {
+  const f = githubFixture();
+  f.ownerComment = { id: 99800001, author: 'Cheekyfellastef',
+    issueNumber: 3258, operation: 'MARK_PROTECTED_PR_READY',
+    scope: 'review-recovery-only', prNumber: 3451,
+    headSha: f.identity.sourceHead, treeSha: f.identity.sourceTree,
+    baseSha: f.identity.baseSha, bodySha256: 'd'.repeat(64),
+    createdAtUtc: '2026-11-08T18:00:10Z', expiresAtUtc: '2026-11-08T18:07:10Z' };
+  f.nowUtc = '2026-11-08T18:00:11Z';
+  const result = githubReadback(f);
+  assert.equal(result.eligibleForOwnerQualifiedRecovery, true);
+  assert.equal(result.reviewLaunchAllowed, false);
+  assert.equal(result.mergeAuthority, false);
+});
+test('GitHub-shaped readback adversarial provenance rejects without dispatch', async t => {
+  const bad = [
+    ['head changed', x => { x.pull.head.sha = '0'.repeat(40); }],
+    ['main changed', x => { x.main.object.sha = '0'.repeat(40); }],
+    ['tree changed', x => { x.commit.tree.sha = '0'.repeat(40); }],
+    ['draft', x => { x.pull.draft = true; }],
+    ['wrong workflow', x => { x.workflow.path = 'evil'; }],
+    ['missing run', x => { x.runs = []; }],
+    ['duplicate run', x => { x.runs.push({...x.runs[0], id: 42500000000}); }],
+    ['different review identity', x => { x.runs[0].display_title = 'foreign'; }],
+    ['wrong base', x => { x.runs[0].head_sha = '0'.repeat(40); }],
+    ['wrong actor', x => { x.runs[0].actor = {login:'other', id:1}; }],
+    ['rerun', x => { x.runs[0].run_attempt = 2; }],
+    ['pending', x => { x.runs[0].status = 'in_progress'; }],
+    ['bad job', x => { x.job.run_id += 1; }],
+    ['wrong job step', x => { x.job.steps[1].name = 'unrelated'; }],
+    ['other refusal', x => { x.log = 'PROTECTED_READY_REVIEW_BLOCKED:OWNER_BINDING'; }],
+    ['two errors', x => { x.log += '\n' + x.log; }],
+    ['missing history', x => { x.events.shift(); }],
+    ['extra history', x => { x.events.push({...x.events[2], id:1}); }],
+    ['duplicate event', x => { x.events.push({...x.events[2]}); }],
+    ['false actor', x => { x.events[1].actor = {login:'other',id:1}; }],
+  ];
+  for (const [label, mutate] of bad) await t.test(label, () => {
+    const f = githubFixture();
+    mutate(f);
+    const result = githubReadback(f);
+    assert.equal(result.ok, false);
+    assert.equal(result.reviewLaunchAllowed, false);
+    assert.equal(result.mergeAuthority, false);
+  });
+});
