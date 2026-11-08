@@ -51,6 +51,11 @@ const outputPath = valueAfter('--output');
 const humanOutputPath = valueAfter('--human-output');
 const generatedAt = valueAfter('--timestamp') || new Date().toISOString();
 
+if (inputPath && has('--from-gh')) {
+  console.error('PR_ESTATE_RECONCILER_BLOCKED: --input and --from-gh are mutually exclusive; no live estate was collected');
+  process.exit(2);
+}
+
 if (!inputPath && !has('--from-gh')) {
   console.error('Usage: node scripts/pr-estate-reconcile.mjs --input snapshot.json [--families config/pr-estate-families.v1.json]');
   console.error('   or: node scripts/pr-estate-reconcile.mjs --from-gh --repository owner/name [--compare]');
