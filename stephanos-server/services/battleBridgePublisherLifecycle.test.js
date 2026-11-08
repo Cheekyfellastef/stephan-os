@@ -63,7 +63,7 @@ test('periodic direct observation probes only three fixed local services', async
   const facts = await collectBackendCanonicalLocalServiceFactsV1({ probe: async service => {
     seen.push([service.id, service.host, service.port]);
     return { ready: service.id !== 'stephanos-ui', evidence: {
-      probe: 'tcp-connect', host: service.host, port: service.port, detail: 'fixture' } };
+      probe: 'http-json-health', host: service.host, port: service.port, path: service.path, detail: 'fixture' } };
   } });
   assert.deepEqual(seen, [['backend','127.0.0.1',8787],['stephanos-ui','127.0.0.1',4173],
     ['openclaw-gateway','127.0.0.1',18789]]);
@@ -71,12 +71,58 @@ test('periodic direct observation probes only three fixed local services', async
   assert.equal(Object.hasOwn(facts, 'sourceFacts'), false);
   assert.equal(facts.authority.servedHeadAttested, false);
 });
+
+test('canonical backend status refuses a TCP-only listener, HTML SPA fallback and HTTP 503', async () => {
+  const seen = [];
+  const facts = await collectBackendCanonicalLocalServiceFactsV1({ fetchFn: async (url, options) => {
+    seen.push([url, options.method, options.redirect]);
+    if (url.includes(':8787')) return new Response(JSON.stringify({ok:true}), {
+      status:200, headers:{'content-type':'application/json'} });
+    if (url.includes(':4173')) return new Response(JSON.stringify({ok:false}), {
+      status:503, headers:{'content-type':'application/json'} });
+    return new Response('<html>fallback</html>', {
+      status:200, headers:{'content-type':'text/html'} });
+  } });
+  assert.deepEqual(seen, [
+    ['http://127.0.0.1:8787/api/health','GET','manual'],
+    ['http://127.0.0.1:4173/__stephanos/health','GET','manual'],
+    ['http://127.0.0.1:18789/health','GET','manual'],
+  ]);
+  assert.equal(facts.observedFacts.services.backend.ready,true);
+  assert.equal(facts.observedFacts.services['stephanos-ui'].ready,false);
+  assert.equal(facts.observedFacts.services['openclaw-gateway'].ready,false);
+  assert.equal(facts.authority.servedHeadAttested,false);
+});
+test('health HTTP 200 with error, stale runtime, redirect or oversized body cannot become READY', async () => {
+  const invalid = [
+    new Response(JSON.stringify({ok:false,status:'ready'}), {status:200,headers:{'content-type':'application/json'}}),
+    new Response(JSON.stringify({ok:true,runtimeBuildCurrent:false}), {status:200,headers:{'content-type':'application/json'}}),
+    new Response(JSON.stringify({ok:true,mode:'visibility-only'}), {status:200,headers:{'content-type':'application/json'}}),
+    new Response('', {status:302,headers:{location:'http://evil.invalid/', 'content-type':'application/json'}}),
+    new Response('x'.repeat(256 * 1024 + 1), {status:200,headers:{'content-type':'application/json'}}),
+  ];
+  for (const response of invalid) {
+    const facts = await collectBackendCanonicalLocalServiceFactsV1({
+      fetchFn:async () => response.clone(),
+    });
+    assert.equal(Object.values(facts.observedFacts.services).every(x=>x.ready===false),true);
+  }
+});
+test('one healthy JSON response per fixed endpoint qualifies local service observation only', async () => {
+  const facts = await collectBackendCanonicalLocalServiceFactsV1({fetchFn:async url =>
+    new Response(JSON.stringify(url.includes('18789') ? {status:'live'} : {ok:true}), {
+      status:200,headers:{'content-type':'application/json'}})});
+  assert.equal(Object.values(facts.observedFacts.services).every(x=>x.ready),true);
+  assert.equal(facts.authority.sourceMutationAllowed,false);
+  assert.equal(facts.authority.servedHeadAttested,false);
+});
+
 test('existing backend tick calls canonical direct writer once with bounded facts', async () => {
   const seen = [];
   const facts = { observedFacts: { services: Object.fromEntries([
     ['backend',8787],['stephanos-ui',4173],['openclaw-gateway',18789]
   ].map(([id,port]) => [id,{ready:id !== 'stephanos-ui',
-    evidence:{probe:'tcp-connect',host:'127.0.0.1',port}}])) } };
+    evidence:{probe:'http-json-health',host:'127.0.0.1',port,path:id==='backend'?'/api/health':id==='stephanos-ui'?'/__stephanos/health':'/health'}}])) } };
   const result = await refreshBackendPublisherCanonicalV1({
     repoRoot: REPOSITORY_ROOT, workspaceRoot:'/fixture-existing-workspace', timestampUtc:NOW,
     observe: async () => { seen.push('observe'); return facts; },
@@ -96,7 +142,7 @@ test('unknown local probe, forged source-clean record and failed canonical write
   const facts = { observedFacts: { services: Object.fromEntries([
     ['backend',8787],['stephanos-ui',4173],['openclaw-gateway',18789]
   ].map(([id,port]) => [id,{ready:true,
-    evidence:{probe:'tcp-connect',host:'127.0.0.1',port}}])) } };
+    evidence:{probe:'http-json-health',host:'127.0.0.1',port,path:id==='backend'?'/api/health':id==='stephanos-ui'?'/__stephanos/health':'/health'}}])) } };
   const input = {repoRoot:REPOSITORY_ROOT,workspaceRoot:'/fixture-existing-workspace',timestampUtc:NOW};
   await assert.rejects(refreshBackendPublisherCanonicalV1({
     ...input, observe: async () => ({observedFacts:{services:{}}}),
