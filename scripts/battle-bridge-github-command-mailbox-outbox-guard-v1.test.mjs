@@ -499,6 +499,16 @@ test('legacy reconciliation accepts identical terminal content except the known 
 });
 
 test('legacy one-record reconciliation requires publication, canonical receipt, consumed index and execution ledger to agree', (t) => {
+  // Four exact redacted failure stages; no original state or identity disclosed.
+  const expectedCode = Object.freeze({
+    'pending-result-content': 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_UNPROVEN',
+    'pending-blocker-content': 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_UNPROVEN',
+    'pending-proof-refs-content': 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_UNPROVEN',
+    'publication': 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_IDENTITY_UNPROVEN',
+    'canonical-receipt': 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_UNPROVEN',
+    'consumed-index': 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_INDEX_UNPROVEN',
+    'execution-ledger': 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_LEDGER_UNPROVEN',
+  });
   const cases = [
     ['pending-result-content', (f) => {
       const state = readJson(f.statePath);
@@ -541,7 +551,10 @@ test('legacy one-record reconciliation requires publication, canonical receipt, 
     const result = runGuard(f, { spawnSyncFn: () => { invoked++; return { status: 0 }; } });
     assert.equal(result.ok, false, label);
     assert.equal(invoked, 0, label);
-    assert.equal(result.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN', label);
+    assert.equal(result.guardDiagnostic.reasonCode, expectedCode[label], label);
+    assert.equal(result.guardDiagnostic.stage, 'STATE_VALIDATION', label);
+    assert.equal(result.guardDiagnostic.childInvocationAttempted, false, label);
+    assert.equal(JSON.stringify(result.guardDiagnostic).includes(proof.requestId), false, label);
     assert.deepEqual(readFileSync(f.statePath), before, label);
   }
 });
@@ -589,6 +602,20 @@ test('typed guard diagnostics preserve single-flight busy and disclose no unknow
   assert.equal(unknown.guardDiagnostic.reasonCode, 'MAILBOX_GUARD_FAILURE_UNCLASSIFIED');
   assert.equal(unknown.guardDiagnostic.childInvocationAttempted, true);
   assert.equal(JSON.stringify(unknown.guardDiagnostic).includes('private-token=fixture'), false);
+});
+
+test('four exact legacy failure codes are fixed-shape redacted diagnostics only', () => {
+  const codes = ["MAILBOX_OUTBOX_LEGACY_RECONCILIATION_IDENTITY_UNPROVEN","MAILBOX_OUTBOX_LEGACY_RECONCILIATION_INDEX_UNPROVEN","MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_UNPROVEN","MAILBOX_OUTBOX_LEGACY_RECONCILIATION_LEDGER_UNPROVEN"];
+  for (const code of codes) {
+    const diagnostic = { schemaVersion: 'stephanos.mailbox-guard-diagnostic.v1',
+      observedAtUtc: '2026-11-07T15:20:00.000Z',
+      stage: 'STATE_VALIDATION', outcome: 'GUARD_BLOCKED',
+      reasonCode: code, childInvocationAttempted: false };
+    assert.deepEqual(projectMailboxGuardDiagnosticV1(diagnostic), diagnostic);
+    assert.equal(projectMailboxGuardDiagnosticV1({ ...diagnostic, privateRecord: 'forbidden' }), null);
+    assert.equal(projectMailboxGuardDiagnosticV1({ ...diagnostic, childInvocationAttempted: true }), null);
+    assert.equal(projectMailboxGuardDiagnosticV1({ ...diagnostic, outcome: 'CHILD_SUCCEEDED' }), null);
+  }
 });
 
 test('guard diagnostic projection rejects open fields, accessors and inconsistent execution stages', () => {

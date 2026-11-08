@@ -81,6 +81,10 @@ const MAILBOX_GUARD_REASON_CODES_V1 = new Set([
   'MAILBOX_OUTBOX_INVALID_QUARANTINE_LIMIT_EXCEEDED',
   'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_MULTIPLE_INVALID',
   'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN',
+  'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_IDENTITY_UNPROVEN',
+  'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_INDEX_UNPROVEN',
+  'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_UNPROVEN',
+  'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_LEDGER_UNPROVEN',
   'MAILBOX_OUTBOX_JSON_OBJECT_REQUIRED',
   'MAILBOX_OUTBOX_JSON_TOO_LARGE',
   'MAILBOX_OUTBOX_LEDGER_FUTURE_SEGMENT_CONFLICT',
@@ -563,11 +567,11 @@ function sameLegacyTerminalIdentity(pendingReceipt, canonicalReceipt) {
 
 function proveSingleLegacyPendingDebt(statePath, receiptRoot, state, entry, metrics) {
   const requestId = legacyPublicationRequestId(entry);
-  if (!requestId) throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN');
+  if (!requestId) throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_IDENTITY_UNPROVEN');
   const consumed = Array.isArray(state?.consumedRequestIds) ? state.consumedRequestIds : [];
   const accepted = Array.isArray(state?.acceptedRequestIds) ? state.acceptedRequestIds : [];
   if (consumed.filter((value) => value === requestId).length !== 1 || accepted.includes(requestId)) {
-    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN');
+    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_INDEX_UNPROVEN');
   }
 
   assertUnlinkedDirectory(receiptRoot);
@@ -584,7 +588,7 @@ function proveSingleLegacyPendingDebt(statePath, receiptRoot, state, entry, metr
       canonicalReceipt.state,
       canonicalReceipt.completedAt || canonicalReceipt.acceptedAt || 'unknown',
     ].join(':')) {
-    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN');
+    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_UNPROVEN');
   }
 
   const ledgerRecord = readJsonObject(executionLedgerRecordPath(statePath, requestId), {
@@ -600,7 +604,7 @@ function proveSingleLegacyPendingDebt(statePath, receiptRoot, state, entry, metr
     || !/^[a-f0-9]{64}$/.test(String(ledgerRecord.commandDigest || ''))
     || (Object.hasOwn(ledgerRecord, 'terminalProofHash')
       && ledgerRecord.terminalProofHash !== canonicalReceipt.proofHash)) {
-    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN');
+    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_LEDGER_UNPROVEN');
   }
   return Object.freeze({ requestId, canonicalReceipt, ledgerRecord });
 }
