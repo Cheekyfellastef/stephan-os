@@ -1,9 +1,9 @@
 {
-  "name": "Stephanos Spatial Bridge",
+  "name": "Stephanos Spatial Workspace",
   "icon": "🖖",
-  "entry": "index.html",
+  "entry": "quest-entry.html",
   "type": "command-surface",
-  "packaging": "classic-static-plus-quest-pwa-scaffold",
+  "packaging": "classic-static",
   "capabilities": [
     "spatial-bridge-preview",
     "read-only-captain-view",
@@ -42,5 +42,12 @@
     "packageReady": false,
     "proofPending": true,
     "immersiveRendererSourceReady": true
-  }
+  },
+  "launchStrategy": "navigate",
+  "description": "Open the interactive 3D Holodeck preview on PC, iPad or phone. Quest 3 VR when supported.",
+  "launcherBadges": [
+    "3D Preview",
+    "Quest 3"
+  ],
+  "launcherActionLabel": "Open Spatial Workspace"
 }
