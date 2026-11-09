@@ -143,7 +143,7 @@ test('inconsistent runtime BUILDING claims cannot turn the Q&A or shared status 
   });
   assert.equal(response.runtimeTruthState, GOAL_BUILDING_RUNTIME_STATES.BUILDING);
   assert.equal(response.isActuallyBuilding, false);
-  assert.match(response.answer, /^No\\. BUILDING is not physically proven/);
+  assert.match(response.answer, /^No\. BUILDING is not physically proven/);
 
   const records = createGoalBuildingAgentWorkspaceRecords({
     certificate: certificate(),
@@ -154,7 +154,7 @@ test('inconsistent runtime BUILDING claims cannot turn the Q&A or shared status 
   });
   const status = JSON.parse(records.status.body);
   assert.equal(status.isActuallyBuilding, false);
-  assert.match(records.status.summary, /^No\\. BUILDING is not physically proven/);
+  assert.match(records.status.summary, /^No\. BUILDING is not physically proven/);
 });
 
 test('neither a contrary programme certificate nor a contrary runtime state can prove BUILDING', () => {
@@ -172,7 +172,7 @@ test('neither a contrary programme certificate nor a contrary runtime state can 
     runtimeTruth: claimedBuilding,
   });
   assert.equal(notCertified.isActuallyBuilding, false);
-  assert.match(notCertified.answer, /^No\\. BUILDING is not physically proven/);
+  assert.match(notCertified.answer, /^No\. BUILDING is not physically proven/);
 
   const contraryState = answerGoalBuildingQuestion({
     question: 'Is Stephanos actually building?',
@@ -180,5 +180,5 @@ test('neither a contrary programme certificate nor a contrary runtime state can 
     runtimeTruth: { ...claimedBuilding, state: GOAL_BUILDING_RUNTIME_STATES.BLOCKED, blocker: 'LEASE_UNPROVEN' },
   });
   assert.equal(contraryState.isActuallyBuilding, false);
-  assert.match(contraryState.answer, /^No\\. Goal building is BLOCKED/);
+  assert.match(contraryState.answer, /^No\. Goal building is BLOCKED/);
 });
