@@ -564,4 +564,21 @@ test('Goal #2002 conveyor: exact scheduler identity is required even with an oth
   assert.equal(missingOwner.mayRequestCapacityRefill, false);
   assert.equal(missingOwner.protectedMergeAuthority, false);
   assert.equal(missingOwner.runtimeMutationAuthority, false);
+  const partial = projectStephanosGoalContinuation({
+    checkpoint, current, schedulerCandidate: { ...schedulerCandidate, resourceIds: ['pr:2003', 'pr:2004'] },
+  });
+  assert.equal(partial.state, GOAL_BUILDING_CONTINUATION_STATES.BLOCKED_ROUTE_OWNER_REQUIRED);
+  assert.equal(partial.mayRequestExistingControllerContinuation, false);
+  assert.ok(partial.reasons.includes('continuation-active-owned-resource-lease-unproven'));
+
+  // Previous normalization could collapse two different resource keys into the
+  // same 180-character prefix. This remains SAFE_HOLD without a new lease.
+  const alias = 'r'.repeat(180);
+  const oversize = projectStephanosGoalContinuation({
+    checkpoint: { ...checkpoint, leases: [{ ...checkpoint.leases[0], resourceId: alias + 'extra' }] },
+    current, schedulerCandidate: { ...schedulerCandidate, resourceIds: [alias] },
+  });
+  assert.equal(oversize.state, GOAL_BUILDING_CONTINUATION_STATES.SAFE_HOLD);
+  assert.ok(oversize.reasons.includes('checkpoint-lease-resource-identity-invalid'));
+  assert.equal(oversize.mayRequestExistingControllerContinuation, false);
 });
