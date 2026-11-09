@@ -131,3 +131,32 @@ test('a competing ACTIVE source owner stays SAFE_HOLD even with an otherwise val
   assert.equal(result.mayRequestExistingControllerContinuation, false);
   assert.equal(result.mayRequestCapacityRefill, false);
 });
+
+test('Goal #2002: missing scheduler principal identity cannot advertise AUTO_CONTINUE_ELIGIBLE', () => {
+  const cases = [
+    ['goalId', 'scheduler-goal-unproven'],
+    ['missionId', 'scheduler-mission-unproven'],
+    ['canonicalOwnerId', 'scheduler-owner-unproven'],
+  ];
+  for (const [field, reason] of cases) {
+    const result = projectStephanosGoalContinuation({
+      checkpoint: checkpoint(),
+      current: current(),
+      schedulerCandidate: candidate({ [field]: '' }),
+    });
+    assert.equal(result.state, GOAL_BUILDING_CONTINUATION_STATES.SAFE_HOLD, field);
+    assert.ok(result.reasons.includes(reason), field);
+    assert.equal(result.mayRequestExistingControllerContinuation, false, field);
+    assert.equal(result.mayRequestCapacityRefill, false, field);
+    assert.equal(result.continuationTarget, '', field);
+    assert.equal(result.protectedMergeAuthority, false, field);
+    assert.equal(result.runtimeMutationAuthority, false, field);
+  }
+  const allAbsent = projectStephanosGoalContinuation({
+    checkpoint: checkpoint(), current: current(),
+    schedulerCandidate: candidate({ goalId: '', missionId: '', canonicalOwnerId: '' }),
+  });
+  assert.deepEqual(allAbsent.reasons.filter(reason => reason.endsWith('-unproven')),
+    cases.map(([, reason]) => reason));
+  assert.equal(allAbsent.mayRequestExistingControllerContinuation, false);
+});
