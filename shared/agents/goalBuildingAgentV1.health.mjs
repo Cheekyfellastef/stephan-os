@@ -244,7 +244,10 @@ export function validateOperatorAction(input = {}) {
   if (targetField && !Object.hasOwn(targetField, 'value')) evidenceProblems.push('operator-action-target-accessor');
   if (required && !target) evidenceProblems.push('operator-action-target-missing');
   if (!required && target) evidenceProblems.push('operator-action-target-without-requirement');
-  return Object.freeze({ required, target, evidenceProblems });
+  // Contradictory evidence must not publish even a partial approval flag or
+  // target: callers may display these fields independently of the HOLD verdict.
+  return Object.freeze({ required: evidenceProblems.length === 0 && required,
+    target: evidenceProblems.length === 0 ? target : '', evidenceProblems });
 }
 
 export function prioritizeBlockers(blockers = []) {
