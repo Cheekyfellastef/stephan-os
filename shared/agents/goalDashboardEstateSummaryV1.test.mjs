@@ -103,10 +103,10 @@ function input() {
         owner: 'Existing owner', status: 'PASS', observedAtUtc: at(-1000), proofRef: 'workspace:proof/gate-'+id })),
       exactNextAction: 'Continue through the existing owner.' },
     stephanosBuildTruth: { schemaVersion: 'stephanos.sovereign-build-truth.v1', truth: 'CURRENT',
-      observedAtUtc: at(-1000), state: 'BUILDING', activeMaterialLaneCount: 2, targetMaterialLaneCount: 15,
+      sourceHead: 'a'.repeat(40), observedAtUtc: at(-1000), state: 'BUILDING', activeMaterialLaneCount: 2, targetMaterialLaneCount: 15,
       lastMaterialProgressAtUtc: at(-3000), blockers: [], nextAction: 'Continue bounded build.',
       goals: [1, 2].map(n => ({ issue: '#'+n, title: 'Goal '+n, state: 'BUILDING', builder: 'worker-one',
-        lastMaterialProgressAtUtc: at(-3000), proofRefs: ['proof/material-'+n] })) },
+        lastMaterialProgressAtUtc: at(-3000), proofRefs: ['workspace:proof/gate-19', 'proof/material-'+n] })) },
     goalEstate: { schemaVersion: 'stephanos.goal-dashboard-estate-summary.v1', totalOpenGoals: 9,
       stateCounts: { eligible: 3, active: 2, parked: 2, waitingDependency: 1, operatorReady: 1 },
       goals: [{ statusTruth: 'CURRENT', observedAtUtc: at(-1000) }, { statusTruth: 'STALE', observedAtUtc: at(-900000) }] },
@@ -170,6 +170,37 @@ test('selection, running controllers and forged summary counts never prove a mat
   data.stephanosBuildTruth.buildingGoalCount = 15;
   const result = project(data, options);
   assert.equal(result.workers.length, 0);assert.equal(result.buildingGoalCount, 0);
+});
+test('Goal #2002: source-only BUILDING cannot green without signed, bound pickup evidence', () => {
+  const valid = input();
+  const unsigned = structuredClone(valid); delete unsigned.goalBuildGateObservatory;
+  const arbitrary = project(unsigned, options);
+  assert.equal(arbitrary.state, 'UNKNOWN');
+  assert.equal(arbitrary.buildingGoalCount, 0);
+  assert.equal(arbitrary.workers.length, 0);
+  assert.notEqual(arbitrary.trafficLight, 'GREEN');
+  assert.ok(arbitrary.octopusFleet.builders.every(builder => builder.light !== 'GREEN'));
+  const mismatched = structuredClone(valid);
+  mismatched.stephanosBuildTruth.goals.forEach(goal => goal.proofRefs = ['arbitrary-self-report']);
+  assert.equal(project(mismatched, options).buildingGoalCount, 0);
+  const wrongHead = structuredClone(valid);
+  wrongHead.stephanosBuildTruth.sourceHead = 'b'.repeat(40);
+  assert.equal(project(wrongHead, options).buildingGoalCount, 0);
+  const positive = project(valid, options);
+  assert.equal(positive.state, 'BUILDING');
+  assert.equal(positive.buildingGoalCount, 2);
+  assert.equal(positive.octopusFleet.builders[0].state, 'PROVEN_BUILD');
+});
+test('Goal #2002: global BLOCKED worker vetoes reported BUILDING and Octopus green', () => {
+  const data = input();
+  data.stephanosBuildTruth.state = 'BLOCKED';
+  data.stephanosBuildTruth.blockers = ['CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED'];
+  const result = project(data, options);
+  assert.equal(result.state, 'BLOCKED');
+  assert.equal(result.trafficLight, 'RED');
+  assert.equal(result.buildingGoalCount, 0);
+  assert.equal(result.workers.length, 0);
+  assert.ok(result.octopusFleet.builders.every(builder => builder.light !== 'GREEN'));
 });
 test('first real veto retains owner and proof even outside the nine display stages; stale veto clears', () => {
   const data = input();
@@ -395,7 +426,7 @@ test('live canonical watchdog and exact-head Backend refresh stay green with an 
 }
 
 
-test('Octopus named lanes are all visible in the projection but only lane-exact proof may turn one green', () => {
+test('Octopus named lanes remain visible but unbound self-reported proof cannot turn green', () => {
   const nowMs=Date.parse('2026-10-26T15:00:00Z'), at=ms=>new Date(nowMs+ms).toISOString();
   const projection={
     controllerFleet:{controllers:Array.from({length:5},(_,i)=>({
@@ -421,8 +452,10 @@ test('Octopus named lanes are all visible in the projection but only lane-exact 
   assert.deepEqual(value.octopusFleet.lanes.map(lane=>lane.laneId),['lane-1','lane-2','lane-3']);
   assert.equal(value.octopusFleet.observedLaneCount,3);
   assert.equal(value.octopusFleet.targetMaterialLanes,15);
-  assert.equal(value.octopusFleet.provenMaterialLaneCount,1);
-  assert.equal(value.octopusFleet.lanes[0].state,'PROVEN_BUILD');
+  assert.equal(value.octopusFleet.provenMaterialLaneCount,0);
+  assert.equal(value.octopusFleet.lanes[0].state,'REPORTED_UNVERIFIED');
+  assert.equal(value.octopusFleet.controllers[0].materialActions,null);
+  assert.notEqual(value.octopusFleet.builders[0].light,'GREEN');
   assert.equal(value.octopusFleet.lanes[1].state,'ACTIVE_CLAIM');
   assert.equal(value.octopusFleet.lanes[1].light,'AMBER');
   assert.equal(value.octopusFleet.lanes[2].state,'PARKED_CLAIM');

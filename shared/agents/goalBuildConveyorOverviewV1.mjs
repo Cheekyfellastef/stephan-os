@@ -61,6 +61,11 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
   const gates = admittedLedger ? array(ledger.gates) : [];
   const gateLive = gate => ledgerLive && fresh(gate?.observedAtUtc, nowMs, maxAgeMs)
     && Boolean(gate?.proofRef);
+  // Source-only BUILDING reports cannot certify a physical pickup.
+  // This read-only adapter consumes only the upstream qualified signed gate.
+  const signedPickup = ledgerLive ? gates.find(gate => gate?.id === 19
+    && gate.status === 'PASS' && gateLive(gate)) : null;
+  const signedPickupRef = signedPickup?.proofRef || '';
   const stages = FLOW.map(([id, label, gateIds]) => {
     const observations = gateIds.map(number => gates.find(gate => gate.id === number));
     const failure = observations.find(gate => gateLive(gate) && gate.status === 'FAIL');
@@ -98,8 +103,14 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
   const buildLive = buildKnown && build.truth === 'CURRENT'
     && ['BUILDING', 'BLOCKED', 'HELD', 'QUEUED', 'IDLE_GREEN'].includes(build.state)
     && fresh(build.observedAtUtc, nowMs, maxAgeMs);
-  const buildingGoals = buildLive ? array(build.goals).filter(goal => goal.state === 'BUILDING'
-    && goal.builder && array(goal.proofRefs).length && fresh(goal.lastMaterialProgressAtUtc, nowMs, maxAgeMs)) : [];
+  const sameSourceAsSignedPickup = Boolean(signedPickupRef) && buildLive
+    && /^[a-f0-9]{40}$/.test(String(build?.sourceHead || ''))
+    && build.sourceHead === ledger.sourceHead;
+  const buildingGoals = sameSourceAsSignedPickup && build.state === 'BUILDING'
+    ? array(build.goals).filter(goal => goal.state === 'BUILDING'
+      && goal.builder && array(goal.proofRefs).includes(signedPickupRef)
+      && (!goal.sourceHead || goal.sourceHead === build.sourceHead)
+      && fresh(goal.lastMaterialProgressAtUtc, nowMs, maxAgeMs)) : [];
   const workers = [...new Map(buildingGoals.map(goal => [goal.builder, {
     id: goal.builder, goals: buildingGoals.filter(other => other.builder === goal.builder)
       .map(other => ({ issue: other.issue, title: other.title })),
@@ -115,7 +126,9 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
       state: controller.activityState || 'UNKNOWN',
       truth: current ? 'CURRENT' : controller.freshness === 'UNKNOWN' ? 'UNKNOWN' : 'STALE',
       trafficLight: current && ['GREEN', 'AMBER', 'RED', 'GREY'].includes(reportedLight)
-        ? reportedLight : 'GREY',
+        ? reportedLight === 'GREEN' && controller.activityState === 'BUILDING'
+          && (!signedPickupRef || !array(controller.proofRefs).includes(signedPickupRef))
+          ? 'AMBER' : reportedLight : 'GREY',
       expiresAtUtc: current ? new Date(time(controller.timestampUtc) + maxAgeMs).toISOString() : '',
     };
   });
@@ -131,7 +144,8 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
       observedAtUtc, live, expiresAtUtc: live ? new Date(time(observedAtUtc) + maxAgeMs).toISOString() : '',
       state: live ? String(item.activityState || 'UNKNOWN') : observedAtUtc ? 'STALE' : 'UNKNOWN',
       blocker: live ? String(item.blocker || '') : '',
-      materialActions: live && item.activityState === 'BUILDING' && array(item.proofRefs).length
+      materialActions: live && item.activityState === 'BUILDING' && signedPickupRef
+        && array(item.proofRefs).includes(signedPickupRef)
         ? count(item.materialActionsSucceeded) : null,
       namedLanes: array(item.materialLanes).length + array(item.activeLanes).length + array(item.parkedLanes).length,
     };
@@ -145,8 +159,11 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     const source = array(controller.materialLanes).map((lane, index) => {
       const laneId = String(lane?.laneId || ownerId + '-material-' + (index + 1));
       const proofRef = String(lane?.proofRef || '');
-      const proven = live && controller.activityState === 'BUILDING' && proofRef
-        && verified.has(proofRef) && fresh(lane?.lastMaterialActionAtUtc, nowMs, maxAgeMs);
+      const proven = live && controller.activityState === 'BUILDING'
+        && Boolean(signedPickupRef) && proofRef === signedPickupRef
+        && verified.has(proofRef) && fresh(lane?.lastMaterialActionAtUtc, nowMs, maxAgeMs)
+        && buildingGoals.some(goal => goal.builder === lane?.workerId
+          && String(goal.issue || '') === String(lane?.goalId || ''));
       return { id:ownerId + ':' + laneId, laneId, controller:owner,
         workerId:String(lane?.workerId || ''), goalId:String(lane?.goalId || ''),
         source:'material-lane observation', blocker:String(lane?.blocker || ''),
@@ -173,12 +190,11 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     .map(goal=>String(goal?.builder||'')).filter(Boolean))];
   const octopusBuilders=observedBuilderIds.map(id=>{
     const goals=array(build.goals).filter(goal=>goal.builder===id);
-    const proven=buildLive && goals.some(goal=>goal.state==='BUILDING'
-      && array(goal.proofRefs).length && fresh(goal.lastMaterialProgressAtUtc,nowMs,maxAgeMs));
-    const blocked=buildLive && goals.some(goal=>goal.state==='BLOCKED');
-    return {id,state:!buildLive?'STALE_OR_UNKNOWN':proven?'PROVEN_BUILD'
-      :blocked?'BLOCKED_REPORTED':'REPORTED_UNVERIFIED',
-      light:!buildLive?'GREY':proven?'GREEN':blocked?'RED':'AMBER',
+    const proven=buildingGoals.some(goal=>goal.builder===id);
+    const blocked=buildLive && (build.state==='BLOCKED' || goals.some(goal=>goal.state==='BLOCKED'));
+    return {id,state:!buildLive?'STALE_OR_UNKNOWN':blocked?'BLOCKED_REPORTED'
+      :proven?'PROVEN_BUILD':'REPORTED_UNVERIFIED',
+      light:!buildLive?'GREY':blocked?'RED':proven?'GREEN':'AMBER',
       goals:goals.map(goal=>({issue:String(goal.issue||''),state:String(goal.state||'UNKNOWN')})),
       expiresAtUtc:buildLive?new Date(time(build.observedAtUtc)+maxAgeMs).toISOString():''};
   });
