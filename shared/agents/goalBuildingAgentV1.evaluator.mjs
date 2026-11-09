@@ -32,8 +32,11 @@ export function evaluateGoalBuildingProgramme(input = {}) {
   const physicalExecutionRequired = input.physicalExecutionRequired === true;
   // Explicitly malformed scope must never downgrade physical acceptance
   // into source-only health, even when every hosted surface looks healthy.
-  if (Object.prototype.hasOwnProperty.call(input, 'physicalExecutionRequired')
-    && typeof input.physicalExecutionRequired !== 'boolean') {
+  // A value inherited through an input prototype is not an authenticated
+  // execution-scope choice. Only an own boolean flag can set this boundary.
+  const scopePresent = 'physicalExecutionRequired' in Object(input);
+  const scopeOwned = Object.prototype.hasOwnProperty.call(input, 'physicalExecutionRequired');
+  if (scopePresent && (!scopeOwned || typeof input.physicalExecutionRequired !== 'boolean')) {
     evidenceProblems.push('physical-execution-required-not-boolean');
   }
   if (!SHA_40.test(protectedMainHead)) evidenceProblems.push('protected-main-head-invalid');

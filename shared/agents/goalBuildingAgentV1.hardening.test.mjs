@@ -482,3 +482,43 @@ test('Goal #2002: malformed physical-execution scope cannot be laundered into ho
     assert.equal(certificate.safetyLocks.deploymentAuthority, false, String(malformed));
   }
 });
+
+test('Goal #2002: inherited physical scope cannot silently erase installed runtime proof', () => {
+  const absent = baseInput({ installedMainHead: '' });
+  delete absent.physicalExecutionRequired;
+  const legitimateOmission = evaluateGoalBuildingProgramme(absent);
+  assert.equal(legitimateOmission.state, GOAL_BUILDING_OPERATING_STATES.FULLY_OPERATIONAL);
+  assert.equal(legitimateOmission.isActuallyBuilding, true);
+
+  // An inherited scope is not an own, canonical execution-scope decision,
+  // even when its value happens to be a boolean.
+  for (const inherited of ['true', 'false', 1, 0, null, undefined, true, false]) {
+    const input = { ...absent };
+    Object.setPrototypeOf(input, { physicalExecutionRequired: inherited });
+    assert.equal(Object.hasOwn(input, 'physicalExecutionRequired'), false);
+    const certificate = evaluateGoalBuildingProgramme(input);
+    assert.equal(certificate.state, GOAL_BUILDING_OPERATING_STATES.SAFE_HOLD, String(inherited));
+    assert.ok(certificate.evidenceProblems.includes('physical-execution-required-not-boolean'), String(inherited));
+    assert.equal(certificate.isCapableOfBuilding, false, String(inherited));
+    assert.equal(certificate.isActuallyBuilding, false, String(inherited));
+    assert.equal(certificate.programmeMode, 'SAFE_HOLD', String(inherited));
+    assert.equal(certificate.safetyLocks.mutationAuthority, false, String(inherited));
+    assert.equal(certificate.safetyLocks.deploymentAuthority, false, String(inherited));
+  }
+
+  const ownFalse = evaluateGoalBuildingProgramme(baseInput({
+    physicalExecutionRequired: false, installedMainHead: '',
+  }));
+  assert.equal(ownFalse.state, GOAL_BUILDING_OPERATING_STATES.FULLY_OPERATIONAL);
+  const ownTrue = evaluateGoalBuildingProgramme(baseInput({
+    physicalExecutionRequired: true,
+    surfaces: [
+      ...healthySurfaces(),
+      surface('battleBridge', 'READY'),
+      surface('ignition', 'READY'),
+      surface('recoveryMesh', 'READY', { head: '' }),
+      surface('mailbox', 'READY', { head: '' }),
+    ],
+  }));
+  assert.equal(ownTrue.evidenceProblems.includes('physical-execution-required-not-boolean'), false);
+});
