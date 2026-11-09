@@ -459,3 +459,26 @@ test('genuine governed approval wait preserves independent productive mission tr
   assert.equal(continuing.programmeMode, 'ACTIVE_PROGRESS_PROVEN');
   assert.equal(continuing.productiveMissionCount, 1);
 });
+
+// Goal #2002: a malformed physical scope is not an authorization to use hosted-only proof.
+test('Goal #2002: malformed physical-execution scope cannot be laundered into hosted GREEN', () => {
+  const sourceOnly = evaluateGoalBuildingProgramme(baseInput({ installedMainHead: '' }));
+  assert.equal(sourceOnly.state, GOAL_BUILDING_OPERATING_STATES.FULLY_OPERATIONAL);
+  const omitted = baseInput({ installedMainHead: '' });
+  delete omitted.physicalExecutionRequired;
+  assert.equal(evaluateGoalBuildingProgramme(omitted).state, GOAL_BUILDING_OPERATING_STATES.FULLY_OPERATIONAL);
+
+  for (const malformed of ['true', 'false', 1, 0, null, [], {}, '', undefined]) {
+    const certificate = evaluateGoalBuildingProgramme(baseInput({
+      physicalExecutionRequired: malformed,
+      installedMainHead: '',
+    }));
+    assert.equal(certificate.state, GOAL_BUILDING_OPERATING_STATES.SAFE_HOLD, String(malformed));
+    assert.ok(certificate.evidenceProblems.includes('physical-execution-required-not-boolean'), String(malformed));
+    assert.equal(certificate.isCapableOfBuilding, false, String(malformed));
+    assert.equal(certificate.isActuallyBuilding, false, String(malformed));
+    assert.equal(certificate.programmeMode, 'SAFE_HOLD', String(malformed));
+    assert.equal(certificate.safetyLocks.mergeAuthority, false, String(malformed));
+    assert.equal(certificate.safetyLocks.deploymentAuthority, false, String(malformed));
+  }
+});

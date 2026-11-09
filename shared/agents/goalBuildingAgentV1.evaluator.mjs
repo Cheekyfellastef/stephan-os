@@ -30,6 +30,12 @@ export function evaluateGoalBuildingProgramme(input = {}) {
   const protectedMainHead = text(input.protectedMainHead).toLowerCase();
   const installedMainHead = text(input.installedMainHead).toLowerCase();
   const physicalExecutionRequired = input.physicalExecutionRequired === true;
+  // Explicitly malformed scope must never downgrade physical acceptance
+  // into source-only health, even when every hosted surface looks healthy.
+  if (Object.prototype.hasOwnProperty.call(input, 'physicalExecutionRequired')
+    && typeof input.physicalExecutionRequired !== 'boolean') {
+    evidenceProblems.push('physical-execution-required-not-boolean');
+  }
   if (!SHA_40.test(protectedMainHead)) evidenceProblems.push('protected-main-head-invalid');
   if (physicalExecutionRequired && !SHA_40.test(installedMainHead)) evidenceProblems.push('installed-main-head-invalid');
   if (!physicalExecutionRequired && installedMainHead && !SHA_40.test(installedMainHead)) evidenceProblems.push('installed-main-head-invalid');
