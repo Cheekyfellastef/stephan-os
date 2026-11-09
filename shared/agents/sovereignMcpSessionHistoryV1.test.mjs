@@ -408,3 +408,29 @@ test('credential-shaped JSON keys cannot leak through successful private respons
   assert.equal(stored(history, 'ordinary-name-still-retained').resultAvailable, true);
   assert.equal(usage(history).retainedResults, 1);
 });
+
+
+test('proxy traps never execute during private history inspection', () => {
+  const { history } = fixture();
+  let trapCalls = 0;
+  const proxy = new Proxy({ ok: true, safeValue: 'ordinary' }, {
+    getPrototypeOf(target) { trapCalls++; return Reflect.getPrototypeOf(target); },
+    ownKeys(target) { trapCalls++; return Reflect.ownKeys(target); },
+    getOwnPropertyDescriptor(target, key) {
+      trapCalls++; return Reflect.getOwnPropertyDescriptor(target, key);
+    },
+  });
+  assert.equal(history.begin(proxy).reason, 'CALL_METADATA_INVALID');
+  assert.equal(history.execute('get_usage_stats', proxy).blocker, 'SOVEREIGN_HISTORY_ARGUMENTS_INVALID');
+  assert.throws(() => createSovereignMcpSessionHistoryV1({ limits: proxy }), /SOVEREIGN_HISTORY_LIMITS_INVALID/);
+  assert.equal(start(history, 'proxy-root').recorded, true);
+  assert.equal(history.finish('proxy-root', proxy).recorded, true);
+  assert.equal(stored(history, 'proxy-root').call.responseOk, null);
+  complete(history, 'proxy-nested', { ok: true, nested: { value: proxy } });
+  const nested = stored(history, 'proxy-nested');
+  assert.equal(nested.resultAvailable, false);
+  assert.equal(nested.call.retentionReason, 'RESULT_SHAPE_UNSAFE');
+  assert.equal(trapCalls, 0);
+  complete(history, 'ordinary-result-after-proxy', { ok: true, safeValue: 'ordinary' });
+  assert.equal(stored(history, 'ordinary-result-after-proxy').resultAvailable, true);
+});

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { types as utilTypes } from 'node:util';
 
 export const SOVEREIGN_MCP_SESSION_HISTORY_SCHEMA_V1 = 'stephanos.sovereign-mcp-session-history.v1';
 export const SOVEREIGN_MCP_SESSION_HISTORY_TOOLS_V1 = Object.freeze([
@@ -43,7 +44,7 @@ const result = value => freeze({ ok: true, ...base(), ...value });
 
 function data(value, allowed) {
   try {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value) || utilTypes.isProxy(value)) return null;
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) return null;
   const keys = Reflect.ownKeys(value);
@@ -60,7 +61,7 @@ function data(value, allowed) {
 
 function ownBoolean(value, key) {
   try {
-  if (!value || typeof value !== 'object') return null;
+  if (!value || typeof value !== 'object' || utilTypes.isProxy(value)) return null;
   const descriptor = Object.getOwnPropertyDescriptor(value, key);
   return descriptor && Object.hasOwn(descriptor, 'value') && typeof descriptor.value === 'boolean'
     ? descriptor.value : null;
@@ -102,6 +103,8 @@ function privateSnapshot(value, maximum) {
       return item;
     }
     if (!item || typeof item !== 'object') refuse('RESULT_SHAPE_UNSAFE');
+    // Refuse proxies before ownKeys/prototype/descriptor inspection can invoke traps.
+    if (utilTypes.isProxy(item)) refuse('RESULT_SHAPE_UNSAFE');
     if (ancestors.has(item)) refuse('RESULT_SHAPE_UNSAFE');
     const isArray = Array.isArray(item), prototype = Object.getPrototypeOf(item);
     if (isArray ? prototype !== Array.prototype
