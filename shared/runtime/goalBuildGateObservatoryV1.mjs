@@ -78,6 +78,11 @@ export function projectGoalBuildGateObservatoryV1({
         && e?.signingKeyId === 'stephanos-goal-build-gates-v1'
         && e?.sourceHead === trustedHead
         && Array.isArray(e?.gates) && e.gates.length <= GOAL_BUILD_GATE_DEFINITIONS_V1.length
+        // A signed envelope must not silently retain only the first of two
+        // contradictory checkpoints or discard an unknown checkpoint identity.
+        // Check the complete signed set BEFORE projecting any PASS.
+        && e.gates.every(g => GOAL_BUILD_GATE_DEFINITIONS_V1.some(def => def.id === g?.id))
+        && new Set(e.gates.map(g => g.id)).size === e.gates.length
         && Number.isFinite(time(e.observedAtUtc))
         && time(e.observedAtUtc) <= nowMs + MAX_CLOCK_SKEW_MS
         && typeof e.signatureBase64 === 'string')
