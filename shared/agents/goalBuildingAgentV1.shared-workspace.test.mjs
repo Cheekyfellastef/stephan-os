@@ -121,3 +121,36 @@ test('forged consequential authority in the handoff body is rejected', () => {
   assert.equal(checked.valid, false);
   assert.ok(checked.reasons.includes('runtime-mutation-authority-widened'));
 });
+
+
+test('missing, false or stringified custody guards cannot validate a continuation handoff', () => {
+  const guards = [
+    ['sameMissionRequired', 'same-mission-guard-missing'],
+    ['sameCanonicalOwnerRequired', 'same-canonical-owner-guard-missing'],
+    ['duplicateControllerForbidden', 'duplicate-controller-guard-missing'],
+    ['duplicateMissionForbidden', 'duplicate-mission-guard-missing'],
+    ['duplicateBranchOrPrForbidden', 'duplicate-branch-or-pr-guard-missing'],
+  ];
+  for (const [field, reason] of guards) {
+    for (const untrustedValue of [undefined, false, 'true']) {
+      const record = createGoalBuildingSharedWorkspaceContinuationRecord(input());
+      const body = JSON.parse(record.body);
+      if (untrustedValue === undefined) delete body.constraints[field];
+      else body.constraints[field] = untrustedValue;
+      const forged = { ...record, body: JSON.stringify(body) };
+      const checked = validateGoalBuildingSharedWorkspaceContinuationRecord({ ...input(), record: forged });
+      assert.equal(checked.valid, false, `${field}: ${String(untrustedValue)}`);
+      assert.ok(checked.reasons.includes(reason), `${field}: ${String(untrustedValue)}`);
+    }
+  }
+});
+
+test('a complete original-owner handoff preserves all five strict custody guards', () => {
+  const record = createGoalBuildingSharedWorkspaceContinuationRecord(input());
+  const body = JSON.parse(record.body);
+  const checked = validateGoalBuildingSharedWorkspaceContinuationRecord({ ...input(), record });
+  assert.equal(checked.valid, true);
+  for (const field of ['sameMissionRequired', 'sameCanonicalOwnerRequired', 'duplicateControllerForbidden', 'duplicateMissionForbidden', 'duplicateBranchOrPrForbidden']) {
+    assert.equal(body.constraints[field], true, field);
+  }
+});
