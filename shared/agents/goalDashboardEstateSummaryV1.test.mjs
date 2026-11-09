@@ -116,11 +116,11 @@ function input() {
       activityState: 'BUILDING', timestampUtc: at(-1000), lastMaterialActionAtUtc: at(-3000), proofRefs: ['proof/material'] }] },
   };
 }
-test('reuses signed gates, keeps commit unknown, distinguishes workers, goals and slots', () => {
+test('keeps unsigned goal-to-worker attribution separate from generic signed stage gates', () => {
   const original = input(), snapshot = structuredClone(original), result = project(original, options);
-  assert.equal(result.state, 'BUILDING');
-  assert.equal(result.workers.length, 1);
-  assert.equal(result.buildingGoalCount, 2);
+  assert.equal(result.state, 'UNKNOWN');
+  assert.equal(result.workers.length, 0);
+  assert.equal(result.buildingGoalCount, 0);
   assert.equal(result.materialLanes, 2);
   assert.equal(result.targetMaterialLanes, 15);
   assert.equal(result.stages.find(s => s.id === 'commit').state, 'UNKNOWN');
@@ -189,9 +189,62 @@ test('Goal #2002: source-only BUILDING cannot green without signed, bound pickup
   wrongHead.stephanosBuildTruth.sourceHead = 'b'.repeat(40);
   assert.equal(project(wrongHead, options).buildingGoalCount, 0);
   const positive = project(valid, options);
-  assert.equal(positive.state, 'BUILDING');
-  assert.equal(positive.buildingGoalCount, 2);
-  assert.equal(positive.octopusFleet.builders[0].state, 'PROVEN_BUILD');
+  assert.equal(positive.state, 'UNKNOWN');
+  assert.equal(positive.buildingGoalCount, 0);
+  assert.equal(positive.octopusFleet.builders[0].state, 'REPORTED_UNVERIFIED');
+});
+test('Goal #2002: one diagnostic pickup cannot be replayed across goals, workers or controllers', () => {
+  const data = input();
+  const ref = 'workspace:proof/gate-19';
+  const original = structuredClone(data);
+  // The original fixture already provides two goals that share one gate ref.
+  // Even a current gate 18 and gate 19 pair has no authenticated goal or
+  // worker execution identity in the verified *public* 23-gate schema.
+  data.stephanosBuildTruth.goals[0].sourceHead = 'a'.repeat(40);
+  data.stephanosBuildTruth.goals[1].builder = 'different-worker';
+  data.stephanosBuildTruth.goals[1].sourceHead = 'a'.repeat(40);
+  data.controllerFleet.controllers[0].trafficLight = 'GREEN';
+  data.controllerFleet.controllers[0].proofRefs = [ref];
+  data.controllerFleet.controllers[0].materialActionsSucceeded = 9;
+  const duplicated = project(data, options);
+  assert.equal(duplicated.stages.find(stage => stage.id === 'pickup').state, 'PROVEN',
+    'the separately signed diagnostic stage stays visible');
+  assert.equal(duplicated.state, 'UNKNOWN');
+  assert.equal(duplicated.buildingGoalCount, 0);
+  assert.equal(duplicated.workers.length, 0);
+  assert.equal(duplicated.controllers[0].trafficLight, 'AMBER');
+  assert.equal(duplicated.octopusFleet.controllers[0].materialActions, null);
+  assert.equal(duplicated.octopusFleet.provenMaterialLaneCount, 0);
+  assert.ok(duplicated.octopusFleet.builders.every(builder => builder.light !== 'GREEN'));
+  // A lone matching worker is still unsigned as an *identity*: a string match
+  // is not a proof of which goal/claim/execution produced gate 19.
+  data.stephanosBuildTruth.goals = [data.stephanosBuildTruth.goals[0]];
+  assert.equal(project(data, options).buildingGoalCount, 0);
+  data.stephanosBuildTruth.goals[0].sourceHead = '';
+  assert.equal(project(data, options).buildingGoalCount, 0);
+  assert.equal(original.goalBuildGateObservatory.gates.length, 9, 'fixture was not altered');
+});
+test('Goal #2002: pickup stage requires a current, successful claim without any gate veto', () => {
+  const valid = input();
+  assert.equal(project(valid, options).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
+  const noClaim = structuredClone(valid);
+  noClaim.goalBuildGateObservatory.gates = noClaim.goalBuildGateObservatory.gates.filter(gate => gate.id !== 18);
+  assert.notEqual(project(noClaim, options).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
+  const failedClaim = structuredClone(valid);
+  failedClaim.goalBuildGateObservatory.gates.find(gate => gate.id === 18).status = 'FAIL';
+  assert.equal(project(failedClaim, options).state, 'BLOCKED');
+  assert.equal(project(failedClaim, options).buildingGoalCount, 0);
+  assert.notEqual(project(failedClaim, options).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
+  const staleClaim = structuredClone(valid);
+  staleClaim.goalBuildGateObservatory.gates.find(gate => gate.id === 18).observedAtUtc = at(-600001);
+  assert.notEqual(project(staleClaim, options).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
+  const separateVeto = structuredClone(valid);
+  separateVeto.goalBuildGateObservatory.gates.push({
+    id: 8, status: 'FAIL', observedAtUtc: at(-1000), proofRef: 'workspace:proof/veto',
+    title: 'Original source custody', owner: 'Existing original owner', typedBlocker: 'CUSTODY_UNPROVEN',
+  });
+  assert.equal(project(separateVeto, options).state, 'BLOCKED');
+  assert.notEqual(project(separateVeto, options).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
 });
 test('Goal #2002: global BLOCKED worker vetoes reported BUILDING and Octopus green', () => {
   const data = input();
