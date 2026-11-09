@@ -112,8 +112,9 @@ export function validateProgramme(input, expectedHead, timing) {
 
   if (activeMissions.length > MAX_ACTIVE_MISSIONS) evidenceProblems.push('active-mission-limit-exceeded');
   if (!isNonNegativeInteger(eligibleQueuedGoalCount)) evidenceProblems.push('eligible-queued-goal-count-invalid');
-  if (!isNonNegativeInteger(qualifiedCapacity)) evidenceProblems.push('qualified-capacity-invalid');
-  if (!isNonNegativeInteger(idleQualifiedCapacity)) evidenceProblems.push('idle-qualified-capacity-invalid');
+  // Unsafe IEEE-754 integers can round away occupied mission slots. Fail closed before accounting.
+  if (!Number.isSafeInteger(qualifiedCapacity) || qualifiedCapacity < 0) evidenceProblems.push('qualified-capacity-invalid');
+  if (!Number.isSafeInteger(idleQualifiedCapacity) || idleQualifiedCapacity < 0) evidenceProblems.push('idle-qualified-capacity-invalid');
   if (isNonNegativeInteger(qualifiedCapacity) && activeMissions.length > qualifiedCapacity) evidenceProblems.push('active-missions-exceed-qualified-capacity');
   if (isNonNegativeInteger(qualifiedCapacity) && isNonNegativeInteger(idleQualifiedCapacity) && idleQualifiedCapacity > qualifiedCapacity) evidenceProblems.push('idle-capacity-exceeds-qualified-capacity');
   if (isNonNegativeInteger(qualifiedCapacity) && isNonNegativeInteger(idleQualifiedCapacity)
