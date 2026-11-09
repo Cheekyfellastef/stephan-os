@@ -338,3 +338,47 @@ test('programme accepts one active slot and exact remaining idle slots at the sa
   assert.ok(!certificate.evidenceProblems.includes('qualified-capacity-invalid'));
   assert.ok(!certificate.evidenceProblems.includes('idle-qualified-capacity-invalid'));
 });
+
+
+test('malformed operator-action gate flags fail closed instead of silently dropping approvals', () => {
+  // Before this regression, all of these coerced to required=false with no
+  // evidenceProblem, so otherwise current programme evidence claimed GREEN.
+  const cases = [
+    [{ required: 'true', target: '' }, 'operator-action-required-not-boolean'],
+    [{ required: 'false', target: '' }, 'operator-action-required-not-boolean'],
+    [{ required: 1, target: '' }, 'operator-action-required-not-boolean'],
+    [{ required: 0, target: '' }, 'operator-action-required-not-boolean'],
+    [{ required: null, target: '' }, 'operator-action-required-not-boolean'],
+    [null, 'operator-action-record-invalid'],
+    [[], 'operator-action-record-invalid'],
+    ['APPROVAL_REQUIRED', 'operator-action-record-invalid'],
+  ];
+  for (const [operatorAction, reason] of cases) {
+    const certificate = evaluateGoalBuildingProgramme(baseInput({ operatorAction }));
+    assert.equal(certificate.state, GOAL_BUILDING_OPERATING_STATES.SAFE_HOLD, JSON.stringify(operatorAction));
+    assert.equal(certificate.isCapableOfBuilding, false);
+    assert.equal(certificate.isActuallyBuilding, false);
+    assert.equal(certificate.programmeMode, 'SAFE_HOLD');
+    assert.ok(certificate.evidenceProblems.includes(reason), JSON.stringify(operatorAction));
+    assert.match(certificate.nextAction, /^Repair contradictory or invalid programme evidence/);
+  }
+});
+
+test('strict boolean operator-action gates and an omitted optional record preserve existing behaviour', () => {
+  const quiet = [
+    baseInput({ operatorAction: { required: false, target: '' } }),
+    (() => { const value = baseInput(); delete value.operatorAction; return value; })(),
+  ];
+  for (const value of quiet) {
+    const certificate = evaluateGoalBuildingProgramme(value);
+    assert.equal(certificate.state, GOAL_BUILDING_OPERATING_STATES.FULLY_OPERATIONAL);
+    assert.equal(certificate.isActuallyBuilding, true);
+    assert.ok(!certificate.evidenceProblems.includes('operator-action-record-invalid'));
+    assert.ok(!certificate.evidenceProblems.includes('operator-action-required-not-boolean'));
+  }
+  const realGate = evaluateGoalBuildingProgramme(baseInput({
+    operatorAction: { required: true, target: 'Approve the exact protected operator environment.' },
+  }));
+  assert.equal(realGate.operatorActionRequired, true);
+  assert.equal(realGate.operatorActionTarget, 'Approve the exact protected operator environment.');
+});
