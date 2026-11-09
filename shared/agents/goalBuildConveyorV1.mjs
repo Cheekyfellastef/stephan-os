@@ -109,8 +109,11 @@ function replaceStage(stages, id, replacement) {
 
 function greenStage(stages, id, proof, source) {
   const definition = GOAL_BUILD_CONVEYOR_STAGES.find((stage) => stage.id === id);
-  // A later logical label may not erase contradictory or blocked gate evidence.
-  if (!definition || stages.find((stage) => stage.id === id)?.blocked) return;
+  // A logical label never overrules a contradictory BLOCKED or WAITING
+  // canonical autonomy gate. Material downstream evidence is handled separately.
+  const observed = stages.find((stage) => stage.id === id);
+  if (!definition || observed?.blocked || (observed?.waiting
+    && observed.source.startsWith('autonomy-build-track:'))) return;
   replaceStage(stages, id, stageRecord(id, definition.label, 'GREEN', proof, '', source));
 }
 
@@ -167,21 +170,25 @@ export function projectGoalBuildJourneyV1(goal = {}, autonomyBuildTrack = null) 
 
   const buildState = text(goal?.buildState, 'UNKNOWN').toUpperCase();
   const builder = text(goal?.builder || exactTrack?.providerAdapter, 'UNKNOWN');
-  // A logical BUILDING label is not a physical worker pickup. The matching
-  // goal, current canonical source, CLAIM and unique WORKER must agree.
+  // Physical stages need an uninterrupted same-goal and CURRENT dependency
+  // chain. Even a WORKER PASS cannot erase an earlier ELIGIBLE/SELECT/MISSION
+  // BLOCKED or WAITING. A downstream logical PASS is not a native witness.
+  const requiredPhysicalGates = ['ELIGIBLE_GOAL', 'SELECT', 'MISSION', 'CLAIM', 'WORKER'];
   const exactWorkerPickupProven = Boolean(exactTrack
     && stages[0].trafficLight === 'GREEN'
-    && text(gates.get('CLAIM')?.state).toUpperCase() === 'PASS'
-    && text(gates.get('WORKER')?.state).toUpperCase() === 'PASS'
+    && currentBuildTruth
+    && requiredPhysicalGates.every((id) => text(gates.get(id)?.state).toUpperCase() === 'PASS')
     && !hasConflictingGateEvidence);
   const pickup = stages.find((stage) => stage.id === 'PICKED_UP');
   const dispatch = stages.find((stage) => stage.id === 'DISPATCHED');
   if (pickup?.trafficLight === 'GREEN' && !exactWorkerPickupProven) {
+    const upstreamBlocked = ['READY', 'SELECTED', 'MISSION', 'DISPATCHED']
+      .some((id) => stages.find((item) => item.id === id)?.trafficLight === 'RED');
     replaceStage(stages, 'PICKED_UP', stageRecord(
-      'PICKED_UP', 'Picked up', dispatch?.trafficLight === 'RED' ? 'RED' : 'AMBER', '',
-      dispatch?.trafficLight === 'RED'
-        ? 'UPSTREAM_CLAIM_BLOCKED'
-        : 'EXACT_GOAL_CLAIM_AND_WORKER_CUSTODY_UNPROVEN',
+      'PICKED_UP', 'Picked up', upstreamBlocked ? 'RED' : 'AMBER', '',
+      upstreamBlocked
+        ? 'UPSTREAM_GOAL_HANDOFF_BLOCKED'
+        : 'CURRENT_EXACT_GOAL_FULL_HANDOFF_CUSTODY_UNPROVEN',
       'autonomy-build-track',
     ));
   }
@@ -278,7 +285,7 @@ export function projectGoalBuildConveyorV1(goals = []) {
   // A downstream logical label can never count as a material lane without
   // matching current-goal dispatch and physical worker custody proof.
   const hasCurrentPickup = (journey) => journey.exactAutonomyTrackBound === true
-    && ['GOAL', 'DISPATCHED', 'PICKED_UP'].every(
+    && ['GOAL', 'READY', 'SELECTED', 'MISSION', 'DISPATCHED', 'PICKED_UP'].every(
       (id) => journey.stages.find((stage) => stage.id === id)?.proven === true,
     );
   return Object.freeze({

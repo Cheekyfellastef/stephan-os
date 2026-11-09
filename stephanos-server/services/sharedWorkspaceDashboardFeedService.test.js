@@ -283,3 +283,26 @@ test('Goal #2961 hosted display never counts downstream PASS when worker custody
     }
   }
 });
+
+// The hosted dashboard cannot claim physical material work when an earlier
+// eligibility/selection/mission gate is missing or contradicts a later WORKER.
+test('Goal #2961 hosted dashboard keeps physical stages amber/red for upstream mission holds', () => {
+  const goal = {
+    issue: '#2002', state: 'ACTIVE', statusTruth: 'CURRENT',
+    selectedForAdmission: true, buildState: 'BUILDING',
+    buildTruthTruth: 'CURRENT', builder: 'mission-worker-1',
+  };
+  const gateIds = ['ELIGIBLE_GOAL', 'SELECT', 'MISSION', 'CLAIM', 'WORKER', 'TERMINAL_RECEIPT'];
+  for (const bad of ['ELIGIBLE_GOAL', 'SELECT', 'MISSION']) {
+    for (const state of ['BLOCKED', 'WAITING']) {
+      const gates = gateIds.map((id) => ({ id, state: id === bad ? state : 'PASS' }));
+      const journey = projectGoalBuildJourneyV1(goal, {
+        issueNumber: 2002, missionId: 'critical-2002-goal-building-self-hosting', gates,
+      });
+      assert.notEqual(journey.stages.find((s) => s.id === 'PICKED_UP')?.trafficLight, 'GREEN');
+      for (const id of ['BUILDING', 'BUILT', 'TESTED', 'COMPLETED']) {
+        assert.notEqual(journey.stages.find((s) => s.id === id)?.trafficLight, 'GREEN', bad + ':' + state + ':' + id);
+      }
+    }
+  }
+});
