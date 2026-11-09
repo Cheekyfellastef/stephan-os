@@ -63,3 +63,16 @@ test('non-Windows or non-EPERM rename failures remain fail-closed', async () => 
   assert.deepEqual((await readdir(root)).sort(), ['mission.state.json']);
   await rm(root, { recursive: true, force: true });
 });
+
+test('durable supervised state refuses the Windows non-atomic fallback', async t => {
+  const root = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const statePath = path.join(root, 'mission.state.json');
+  await writeFile(statePath, '{"old":true}\n');
+  await assert.rejects(writeMissionJsonAtomically(statePath, { approvalConsumed: true }, {
+    durable: true, platform: 'win32',
+    renameFn: async () => { throw Object.assign(new Error('replacement denied'), { code: 'EPERM' }); },
+  }), /replacement denied/);
+  assert.deepEqual(JSON.parse(await readFile(statePath, 'utf8')), { old: true });
+  assert.deepEqual((await readdir(root)).sort(), ['mission.state.json']);
+});

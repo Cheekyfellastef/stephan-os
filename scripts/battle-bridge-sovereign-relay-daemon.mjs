@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url';
 import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import { createSharedWorkspaceStatusRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
+import { createControlTowerBuildConsumerV1, controlTowerRequestPointersFromRelayStatusV1,
+  controlTowerBuildInitialStatusV1, retainControlTowerBuildStatusV1 } from './control-tower-build-consumer-v1.mjs';
+import { readJsonObject, projectMailboxGuardDiagnosticV1 } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 
 export const SOVEREIGN_RELAY_SCHEMA = 'stephanos.sovereign-relay-daemon.v1';
 export const SOVEREIGN_RELAY_HOT_POLL_MS = 2500;
@@ -195,6 +198,7 @@ export function buildSovereignRelayInFlightStatus({
   previousStatus = null,
   consecutiveCarrierFailures = 0,
   sourceHead = '',
+  controlTowerBuild = previousStatus?.controlTowerBuild || null,
 } = {}) {
   const timestamp = now instanceof Date ? now : new Date(now);
   const timestampUtc = timestamp.toISOString();
@@ -225,6 +229,7 @@ export function buildSovereignRelayInFlightStatus({
     executionOwner: 'sovereign-commander',
     authorityOwner: 'stephanos',
     sourceHead: normalizeSourceHead(sourceHead),
+    controlTowerBuild,
     cycleInFlight: true,
     cycleStartedAtUtc: new Date(cycleStartedAtMs).toISOString(),
     heartbeatAtUtc: timestamp.toISOString(),
@@ -234,6 +239,9 @@ export function buildSovereignRelayInFlightStatus({
     carrierConsecutiveFailures: boundedCount(consecutiveCarrierFailures),
     blocker: priorBlocker || (fastCycleStalled ? 'SOVEREIGN_RELAY_GUARD_CYCLE_STALLED' : ''),
     guardVerdict: boundedText(previousStatus?.guardVerdict || ''),
+    // Keep the settled observation's own time; a heartbeat is not another guard result.
+    guardDiagnostic: previousStatus?.sourceHead === normalizeSourceHead(sourceHead)
+      ? projectMailboxGuardDiagnosticV1(previousStatus?.guardDiagnostic) : null,
     lastCarrierHealthyAtUtc: previousStatus?.lastCarrierHealthyAtUtc || null,
     scheduledMailboxFallbackExpected: true,
     fallbackCovered,
@@ -261,6 +269,7 @@ export async function runSovereignRelayCycleWithHeartbeat({
   previousStatus = null,
   consecutiveCarrierFailures = 0,
   sourceHead = '',
+  observeBuild = null,
   heartbeatMs = SOVEREIGN_RELAY_INFLIGHT_HEARTBEAT_MS,
   writeStatus = atomicWriteJson,
   setTimeoutFn = setTimeout,
@@ -272,14 +281,29 @@ export async function runSovereignRelayCycleWithHeartbeat({
     throw new Error('SOVEREIGN_RELAY_INFLIGHT_HEARTBEAT_INTERVAL_INVALID');
   }
 
+  let buildStatus = previousStatus?.controlTowerBuild || null;
+  let buildTask = null;
+  const refreshBuild = () => {
+    if (typeof observeBuild !== 'function' || buildTask) return;
+    // Timestamp the actual fixed consumer observation, not just this relay's
+    // heartbeat. Otherwise an old cached wake could appear newly verified.
+    buildTask = Promise.resolve().then(observeBuild).then(value => {
+      buildStatus = retainControlTowerBuildStatusV1(buildStatus, value, { nowMs: now().getTime() });
+    })
+      .catch(() => { buildStatus = retainControlTowerBuildStatusV1(buildStatus, null, { nowMs: now().getTime() }); })
+      .finally(() => { buildTask = null; });
+  };
+
   const inFlightStatus = () => buildSovereignRelayInFlightStatus({
     now: now(),
     cycleStartedAtMs,
     previousStatus,
     consecutiveCarrierFailures,
     sourceHead,
+    controlTowerBuild: buildStatus,
   });
   await writeStatus(statusPath, inFlightStatus());
+  refreshBuild();
 
   let stopped = false;
   let heartbeatTimer = null;
@@ -290,6 +314,7 @@ export async function runSovereignRelayCycleWithHeartbeat({
       heartbeatWrite = heartbeatWrite
         .then(async () => {
           if (!stopped) await writeStatus(statusPath, inFlightStatus());
+          if (!stopped) refreshBuild();
         })
         .catch(() => undefined);
       heartbeatWrite.then(() => {
@@ -301,11 +326,21 @@ export async function runSovereignRelayCycleWithHeartbeat({
 
   scheduleHeartbeat();
   try {
-    return await runCycle({ env });
+    const cycle = await runCycle({ env });
+    if (buildTask) await buildTask;
+    return observeBuild ? Object.freeze({ ...cycle, controlTowerBuild: buildStatus }) : cycle;
+  } catch (error) {
+    if (buildTask) await buildTask;
+    buildStatus = retainControlTowerBuildStatusV1(buildStatus, null,
+      { nowMs: now().getTime(), failureBlocker: 'CONTROL_TOWER_RELAY_CYCLE_FAILED' });
+    return Object.freeze({ ok: false, busy: false, blocker: 'SOVEREIGN_RELAY_GUARD_CYCLE_EXCEPTION',
+      guardVerdict: '', detail: boundedText(error?.message || error), childExitCode: null,
+      controlTowerBuild: buildStatus });
   } finally {
     stopped = true;
     if (heartbeatTimer) clearTimeoutFn(heartbeatTimer);
     await heartbeatWrite;
+    if (buildTask) await buildTask;
   }
 }
 
@@ -315,11 +350,19 @@ export function classifySovereignRelayGuardCycle({ exitCode = null, stdout = '',
   const detail = boundedText(parsed?.error || stderr || error?.message || '');
   const busy = blocker === 'MAILBOX_OUTBOX_GUARD_FAILED' && /MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING/i.test(detail);
   const ok = exitCode === 0 && parsed?.ok === true;
+  const diagnostic = projectMailboxGuardDiagnosticV1(parsed?.guardDiagnostic);
+  const diagnosticConsistent = diagnostic && (
+    diagnostic.outcome === 'CHILD_SUCCEEDED'
+      ? ok && !error && parsed?.finalVerdict === 'MAILBOX_OUTBOX_GUARD_READY'
+      : !ok && parsed?.ok === false && parsed?.finalVerdict === 'MAILBOX_OUTBOX_GUARD_BLOCKED'
+        && (diagnostic.outcome === 'GUARD_BUSY' ? busy : !busy)
+  );
   return Object.freeze({
     ok: ok || busy,
     busy,
     blocker: ok || busy ? '' : (blocker || 'SOVEREIGN_RELAY_GUARD_CYCLE_BLOCKED'),
     guardVerdict: boundedText(parsed?.finalVerdict || ''),
+    guardDiagnostic: diagnosticConsistent ? diagnostic : null,
     detail: ok || busy ? '' : detail,
     childExitCode: Number.isInteger(exitCode) ? exitCode : null,
     mailboxSelectedCount: boundedCount(parsed?.childMailboxSelectedCount),
@@ -412,6 +455,7 @@ export function buildSovereignRelayStatus({
     executionOwner: 'sovereign-commander',
     authorityOwner: 'stephanos',
     sourceHead: normalizeSourceHead(sourceHead),
+    controlTowerBuild: cycle?.controlTowerBuild || null,
     fastPollMs: SOVEREIGN_RELAY_FAST_POLL_MS,
     adaptivePollingEnabled: poll?.mode !== 'FIXED',
     adaptivePollMode: boundedText(poll?.mode || 'UNKNOWN'),
@@ -440,6 +484,7 @@ export function buildSovereignRelayStatus({
     carrierBusy: cycle?.busy === true,
     blocker: boundedText(cycle?.blocker || ''),
     guardVerdict: boundedText(cycle?.guardVerdict || ''),
+    guardDiagnostic: projectMailboxGuardDiagnosticV1(cycle?.guardDiagnostic),
     childExitCode: Number.isInteger(cycle?.childExitCode) ? cycle.childExitCode : null,
     externalCarrierRequiredForCloudChat: true,
     externalCarrierOwnsExecution: false,
@@ -488,8 +533,21 @@ export async function runSovereignRelayDaemon({
   const workspace = resolveSharedWorkspaceRuntimeConfig({ repoRoot, env });
   if (!workspace.ok) throw new Error(`SOVEREIGN_RELAY_WORKSPACE_BLOCKED:${workspace.reason}`);
   const statusPath = resolve(workspace.root, 'status', 'sovereign-relay-current.json');
+  // This existing status file carries locators only. The consumer re-reads the
+  // original execution ledger for every retained outcome after a restart.
+  let restoredRequestPointers = {};
+  try {
+    restoredRequestPointers = controlTowerRequestPointersFromRelayStatusV1(
+      readJsonObject(statusPath, { allowMissing: true, maxBytes: 65536 }));
+  } catch { /* Missing or unsafe status never creates an execution receipt. */ }
+  const observeBuild = createControlTowerBuildConsumerV1({
+    sourceHead, repoRoot, env, now, ...restoredRequestPointers,
+    readSourceHead: () => sourceHeadFn({ env, platform: process.platform, cwd: repoRoot }),
+  });
 
-  let lastStatus = null;
+  // Preserve only bounded request locators in the first in-flight write too;
+  // a crash before the first consumer result must not erase the saved pointers.
+  let lastStatus = { controlTowerBuild: controlTowerBuildInitialStatusV1(restoredRequestPointers) };
   let lastActivityAtMs = Date.now();
   let consecutiveCarrierFailures = 0;
   let lastCarrierHealthyAtMs = null;
@@ -506,6 +564,7 @@ export async function runSovereignRelayDaemon({
         previousStatus: lastStatus,
         consecutiveCarrierFailures,
         sourceHead,
+        observeBuild,
       });
     } catch (error) {
       cycle = Object.freeze({
@@ -515,6 +574,8 @@ export async function runSovereignRelayDaemon({
         guardVerdict: '',
         detail: boundedText(error?.message || error),
         childExitCode: null,
+        controlTowerBuild: retainControlTowerBuildStatusV1(lastStatus?.controlTowerBuild, null,
+          { nowMs: now().getTime(), failureBlocker: 'CONTROL_TOWER_RELAY_CYCLE_FAILED' }),
       });
     }
     const completedAtMs = Date.now();

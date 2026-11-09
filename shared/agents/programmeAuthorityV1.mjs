@@ -59,6 +59,8 @@ const ACTIVE_LANE_CONTROLLER_STATES = new Set(['ACTIVE_LANE']);
 const IDLE_SELECTION_CONTROLLER_STATES = new Set(['IDLE', 'RECONCILING']);
 const TERMINAL_LANE_CONTROLLER_STATES = new Set(['FINALIZING', 'RECONCILING']);
 const ACTIVE_EXECUTION_RECEIPT_STATES = new Set(['queued', 'accepted', 'started', 'progress']);
+// A dispatch or claim is not physical source execution.
+const PICKED_UP_EXECUTION_RECEIPT_STATES = new Set(['started', 'progress']);
 const FAILED_EXECUTION_RECEIPT_STATES = new Set(['failed', 'cancelled']);
 const AFFIRMATIVE_PROGRESS_PROOF_STATUSES = new Set([
   'COMPLETE',
@@ -416,15 +418,30 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
   const githubPr = number(input.github?.prNumber ?? input.github?.number);
   const githubBranch = text(input.github?.headBranch);
   const githubRepository = text(input.github?.repository);
+  const githubHead = sha(input.github?.headSha ?? input.github?.head?.sha);
   const leaseIssue = number(lease?.issueNumber);
   const leasePr = number(lease?.prNumber);
+  const leaseHead = sha(lease?.headSha);
   const issueNumber = identityConflict('issue', [encoded.issueNumber, explicitIssue, leaseIssue], blockers);
   const prNumber = identityConflict('pr', [encoded.prNumber, explicitPr, leasePr, githubPr], blockers);
-  const headSha = identityConflict('head', [
-    sha(input.headSha),
-    sha(lease?.headSha),
-    sha(input.github?.headSha ?? input.github?.head?.sha),
-  ], blockers);
+  const advance = input.terminalHeadAdvance;
+  const advanceRequested = advance !== undefined && advance !== null;
+  const terminalHeadAdvanceProven = Boolean(
+    advanceRequested
+    && isBoundedPlainData(advance)
+    && lease
+    && leaseHead
+    && githubHead
+    && leaseHead !== githubHead
+    && sha(advance.leaseHeadSha) === leaseHead
+    && sha(advance.mergedHeadSha) === githubHead
+    && advance.leaseHeadIsAncestor === true
+    && input.github?.merged === true
+  );
+  if (advanceRequested && !terminalHeadAdvanceProven) blockers.push('terminal-head-advance-unproven');
+  const headSha = terminalHeadAdvanceProven
+    ? identityConflict('head', [sha(input.headSha), githubHead], blockers)
+    : identityConflict('head', [sha(input.headSha), leaseHead, githubHead], blockers);
   const branch = identityConflict('branch', [text(input.branch), text(lease?.branch), githubBranch], blockers);
   const repository = identityConflict('repository', [text(input.repository), text(lease?.repository), githubRepository], blockers);
   if (!laneId || !SAFE_ID.test(laneId)) blockers.push('lane-id-invalid');
@@ -456,7 +473,11 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
   if (lease) {
     const leaseValidation = validateSourceMutationLease(lease, {
       nowUtc: input.nowUtc,
-      expected: { laneId, issueNumber, prNumber, headSha, branch, repository },
+      expected: {
+        laneId, issueNumber, prNumber,
+        headSha: terminalHeadAdvanceProven ? leaseHead : headSha,
+        branch, repository,
+      },
     });
     if (!leaseValidation.valid) blockers.push(...leaseValidation.errors.map((error) => `lease:${error}`));
     if (elasticPhaseBound && (leaseValidation.active !== true || leaseValidation.stale === true)) {
@@ -479,7 +500,7 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
       repository,
       issueNumber,
       branch,
-      expectedHead: headSha,
+      expectedHead: terminalHeadAdvanceProven ? leaseHead : headSha,
     });
     if (!validation.valid) {
       blockers.push(`execution-receipt:${validation.refusalReason || 'invalid'}`);
@@ -498,7 +519,22 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
   ].map((value) => text(value)).filter(Boolean));
   const materialPhasePermitted = !elasticPhaseBound
     || phaseBinding?.materialImplementation === true;
-  const active = blockers.length === 0 && github.active && materialPhasePermitted;
+  // A GitHub OPEN PR and an independent source lease are not a material
+  // Goal Conveyor worker. This binds the current single worker-started
+  // receipt to the exact live lease, worker, issue, PR, branch and head.
+  // Actual OS pickup and custody remain separate production authority gates.
+  const currentExecution = executionReceipts.length === 1 ? executionReceipts[0] : null;
+  const executionStartedOnLease = Boolean(
+    lease && currentExecution && executionReceiptRefs.length === 1
+    && PICKED_UP_EXECUTION_RECEIPT_STATES.has(currentExecution.state)
+    && validateExecutionReceiptAgainstMutationLease(currentExecution, lease, { nowUtc: input.nowUtc }).valid
+  );
+  const active = blockers.length === 0 && github.active && materialPhasePermitted
+    && executionStartedOnLease;
+  // A stopped/failed run is a repair HOLD, not a fresh pending pickup.
+  const pickupPending = blockers.length === 0 && github.active && materialPhasePermitted
+    && !executionStartedOnLease
+    && (!currentExecution || ['queued', 'accepted'].includes(currentExecution.state));
   const reviewPending = blockers.length === 0 && github.active
     && elasticPhaseBound && phaseBinding?.reviewOnly === true;
   const terminal = blockers.length === 0 && github.affirmativelyMerged;
@@ -520,8 +556,15 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
     prState: github.prState,
     merged: github.affirmativelyMerged,
     mergeEvidence: github,
+    terminalHeadAdvance: terminalHeadAdvanceProven ? Object.freeze({
+      leaseHeadSha: leaseHead,
+      mergedHeadSha: headSha,
+      leaseHeadIsAncestor: true,
+    }) : null,
     status: terminal ? 'TERMINAL' : active ? 'ACTIVE' : reviewPending ? 'REVIEW_PENDING' : 'HOLD',
     active,
+    pickupPending,
+    executionStartedOnLease,
     reviewPending,
     elasticMissionPhaseBinding: elasticPhaseBound ? phaseBinding : null,
     terminal,
@@ -1372,11 +1415,17 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
   if (lease && !lane) blockers.push('mutation-lease-without-lane-projection');
   if (lane && !lane.valid) blockers.push(...list(lane.blockers).map((blocker) => `lane:${blocker}`));
   if (lane?.active && !lease) blockers.push('active-lane-without-source-mutation-lease');
+  if (lane && input.executionReceipt && !lease) blockers.push('execution-receipt-without-source-mutation-lease');
   if (!lane && input.executionReceipt) blockers.push('execution-receipt-cannot-create-lane-authority');
 
   const controllerHeartbeat = input.controllerHeartbeatProjection;
   if (!controllerHeartbeat?.valid || !controllerHeartbeat?.fresh) {
     blockers.push(`controller-heartbeat-${controllerHeartbeat?.valid ? 'stale' : 'invalid-or-missing'}`);
+  }
+  // Controller activity is not authenticated construction when its claimed
+  // lane lacks exact current worker-started receipt and source custody.
+  if (!lane?.active && ACTIVE_LANE_CONTROLLER_STATES.has(controllerHeartbeat?.cycleState)) {
+    blockers.push('controller-heartbeat-phantom-active-lane');
   }
   if (lane?.active && controllerHeartbeat?.activeLaneId !== lane.laneId) {
     blockers.push('controller-heartbeat-active-lane-mismatch');
@@ -1418,7 +1467,7 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     else {
       const executionBinding = validateExecutionReceiptAgainstMutationLease(input.executionReceipt, lease, { nowUtc });
       if (!executionBinding.valid) blockers.push(...executionBinding.errors.map((error) => `execution:${error}`));
-      else if (!ACTIVE_EXECUTION_RECEIPT_STATES.has(input.executionReceipt.state)) {
+      else if (!PICKED_UP_EXECUTION_RECEIPT_STATES.has(input.executionReceipt.state)) {
         blockers.push('active-lane-execution-receipt-state-not-executable');
       }
     }
@@ -1427,7 +1476,7 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
   const scheduler = input.scheduler;
   if (!scheduler || typeof scheduler !== 'object') blockers.push('mission-scheduler-source-missing');
   else if (scheduler.failClosed === true) blockers.push(...list(scheduler.contradictions).map((item) => `scheduler:${text(item.code, 'contradiction')}`));
-  if (!lane && scheduler?.decisionReceipt?.status === 'ACTIVE_LANE') blockers.push('scheduler-active-lane-without-canonical-projection');
+  if (!lane?.active && scheduler?.decisionReceipt?.status === 'ACTIVE_LANE') blockers.push('scheduler-active-lane-without-canonical-projection');
   if (lane?.active && scheduler?.decisionReceipt?.status !== 'ACTIVE_LANE') blockers.push('scheduler-active-lane-status-mismatch');
   if (lane?.active && number(scheduler?.decisionReceipt?.activeIssue) !== lane.issueNumber) blockers.push('scheduler-active-lane-identity-mismatch');
 
@@ -1696,8 +1745,8 @@ function boundedProgressTimestamp(value, nowMs) {
     : null;
 }
 
-function isAffirmativeLaneProgressProof(proof, lane, nowMs) {
-  if (!lane?.active || !proof || typeof proof !== 'object' || Array.isArray(proof)) return false;
+function isAffirmativeLaneProgressProof(proof, lane, nowMs, executionObserved = lane?.active) {
+  if (!executionObserved || !proof || typeof proof !== 'object' || Array.isArray(proof)) return false;
   if (proof.kind !== SHARED_WORKSPACE_RECORD_KINDS.PROOF) return false;
   if (!validateSharedWorkspaceRecord(proof, { nowMs: nowMs ?? undefined }).valid) return false;
   if (boundedProgressTimestamp(proof.timestampUtc ?? proof.at, nowMs) === null) return false;
@@ -1732,8 +1781,36 @@ export function diagnoseProgrammeStall(projection = {}, options = {}) {
   if (nowMs === null) blockers.push('stall-observation-time-invalid');
   if (safeProjection !== projection) blockers.push('programme-projection-missing');
   const lane = safeProjection.lane;
+  const observedExecution = safeProjection.executionReceipt;
+  const executionBinding = lane?.valid === true && observedExecution && safeProjection.mutationLease
+    && lane.mutationLeaseIdentity?.leaseId && lane.mutationLeaseIdentity?.ownerId
+    && list(lane.executionReceiptRefs).includes(observedExecution.receiptId)
+    ? validateExecutionReceiptAgainstMutationLease(
+      observedExecution, safeProjection.mutationLease, {
+        nowUtc: options.nowUtc ?? safeProjection.observedAtUtc,
+        expectedLease: {
+          leaseId: lane.mutationLeaseIdentity.leaseId, ownerId: lane.mutationLeaseIdentity.ownerId,
+          laneId: lane.laneId, issueNumber: lane.issueNumber,
+          prNumber: lane.prNumber, branch: lane.branch,
+          repository: lane.repository, headSha: lane.headSha,
+        },
+      },
+    ) : null;
+  // Execution identity and present liveness are distinct diagnostic dimensions.
+  // Only receipt heartbeat expiry may be ignored for diagnosis, never for
+  // ACTIVE or mutation authority. Every other validator error still refuses
+  // attribution, including expired lease, wrong owner and impossible timestamps.
+  const executionIdentityBound = Boolean(executionBinding
+    && (executionBinding.valid || (executionBinding.errors.length === 1
+      && executionBinding.errors[0] === 'receipt-heartbeat-expired')));
+  const runningExecutionBound = executionIdentityBound
+    && PICKED_UP_EXECUTION_RECEIPT_STATES.has(observedExecution.state)
+    && lane.terminal !== true && lane.reviewPending !== true
+    && (!lane.elasticMissionPhaseBinding
+      || lane.elasticMissionPhaseBinding.materialImplementation === true);
+  const executionObserved = lane?.active || runningExecutionBound;
   const proofProgressTimes = list(safeProjection.battleBridgeProofs)
-    .filter((proof) => isAffirmativeLaneProgressProof(proof, lane, nowMs))
+    .filter((proof) => isAffirmativeLaneProgressProof(proof, lane, nowMs, executionObserved))
     .map((proof) => boundedProgressTimestamp(proof.timestampUtc ?? proof.at, nowMs));
   const progressTimes = [
     boundedProgressTimestamp(safeProjection.executionReceipt?.timestampUtc, nowMs),
@@ -1742,14 +1819,19 @@ export function diagnoseProgrammeStall(projection = {}, options = {}) {
   ].filter(Number.isFinite);
   const lastProgressMs = progressTimes.length ? Math.max(...progressTimes) : null;
   const progressAgeMs = lastProgressMs === null || nowMs === null ? null : Math.max(0, nowMs - lastProgressMs);
-  if (safeProjection.lane?.active && safeProjection.controllerHeartbeat?.fresh !== true) blockers.push('controller-heartbeat-not-fresh');
-  if (safeProjection.lane?.active && safeProjection.workerHeartbeat?.fresh !== true) blockers.push('worker-heartbeat-not-fresh');
-  if (safeProjection.lane?.active && safeProjection.executionReceipt?.state === 'stalled') blockers.push('execution-receipt-reports-stall');
-  if (safeProjection.lane?.active && FAILED_EXECUTION_RECEIPT_STATES.has(safeProjection.executionReceipt?.state)) {
+  if (executionObserved && safeProjection.controllerHeartbeat?.fresh !== true) blockers.push('controller-heartbeat-not-fresh');
+  if (executionObserved && safeProjection.workerHeartbeat?.fresh !== true) blockers.push('worker-heartbeat-not-fresh');
+  if (runningExecutionBound && executionBinding.errors.includes('receipt-heartbeat-expired')) {
+    blockers.push('execution-receipt-heartbeat-expired');
+  }
+  if (executionIdentityBound && observedExecution.state === 'stalled') {
+    blockers.push('execution-receipt-reports-stall');
+  }
+  if (executionIdentityBound && FAILED_EXECUTION_RECEIPT_STATES.has(observedExecution.state)) {
     blockers.push('execution-receipt-terminal-failure');
   }
-  if (safeProjection.lane?.active && lastProgressMs === null) blockers.push('active-lane-progress-evidence-missing');
-  if (safeProjection.lane?.active && !EXECUTION_TERMINAL_STATES.has(safeProjection.executionReceipt?.state) && progressAgeMs !== null && progressAgeMs > threshold) blockers.push('active-lane-progress-stale');
+  if (executionObserved && lastProgressMs === null) blockers.push('active-lane-progress-evidence-missing');
+  if (executionObserved && !EXECUTION_TERMINAL_STATES.has(safeProjection.executionReceipt?.state) && progressAgeMs !== null && progressAgeMs > threshold) blockers.push('active-lane-progress-stale');
   if (safeProjection.lane?.terminal && safeProjection.mutationLease) blockers.push('terminal-lane-cleanup-pending');
   const stalled = blockers.length > 0;
   return freeze({
@@ -1829,7 +1911,7 @@ export function buildTerminalLaneFinalizationPlan(input = {}) {
       issueNumber: lane?.issueNumber,
       prNumber: lane?.prNumber,
       branch: lane?.branch,
-      headSha: lane?.headSha,
+      headSha: lane?.terminalHeadAdvance?.leaseHeadSha || lane?.headSha,
       ownerId: input.ownerId,
     },
   });
@@ -1858,7 +1940,7 @@ export function createTerminalLaneEvidenceId(lane = {}, lease = {}) {
     number(lane.issueNumber),
     number(lane.prNumber),
     text(lane.branch),
-    sha(lane.headSha),
+    sha(lease.headSha) || sha(lane.headSha),
     text(lease.leaseId),
     text(lease.ownerId),
   ])).digest('hex').slice(0, 32);
@@ -1879,7 +1961,9 @@ export function createTerminalLaneEvidenceRecords(plan, input = {}) {
       relatedIssue: `#${plan.lane.issueNumber}`,
       relatedPr: `#${plan.lane.prNumber}`,
       status: 'MERGED',
-      summary: `GitHub affirmatively merged PR #${plan.lane.prNumber} at exact head ${plan.lane.headSha}.`,
+      summary: plan.lane.terminalHeadAdvance
+        ? `GitHub affirmatively merged PR #${plan.lane.prNumber} at descendant head ${plan.lane.headSha}; lease head ${plan.mutationLease.headSha} was proven as its ancestor.`
+        : `GitHub affirmatively merged PR #${plan.lane.prNumber} at exact head ${plan.lane.headSha}.`,
       refs: [proofRef],
       proofRefs: [proofRef],
     }),
@@ -1889,7 +1973,10 @@ export function createTerminalLaneEvidenceRecords(plan, input = {}) {
     issueNumber: plan.lane.issueNumber,
     prNumber: plan.lane.prNumber,
     branch: plan.lane.branch,
-    headSha: plan.lane.headSha,
+    headSha: plan.mutationLease.headSha,
+    mergedHeadSha: plan.lane.headSha,
+    leaseHeadSha: plan.mutationLease.headSha,
+    leaseHeadIsAncestor: plan.lane.terminalHeadAdvance?.leaseHeadIsAncestor === true,
     leaseId: plan.mutationLease.leaseId,
     ownerId: plan.mutationLease.ownerId,
     mergeCommitSha: plan.mergeEvidence.mergeCommitSha,
@@ -1916,7 +2003,7 @@ export function createTerminalLaneEvidenceRecords(plan, input = {}) {
     issueNumber: plan.lane.issueNumber,
     prNumber: plan.lane.prNumber,
     branch: plan.lane.branch,
-    headSha: plan.lane.headSha,
+    headSha: plan.mutationLease.headSha,
     leaseId: plan.mutationLease.leaseId,
     ownerId: plan.mutationLease.ownerId,
     releaseOnlyExactLease: true,

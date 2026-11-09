@@ -23,7 +23,32 @@ function text(value, fallback = '') { const normalized = String(value ?? '').tri
 function freezeGate(id, state, reason = '') { return Object.freeze({ id, state, reason: text(reason) }); }
 function issueFromMission(mission = {}) { const direct=Number(mission.issueNumber||mission.issue||0); if(Number.isSafeInteger(direct)&&direct>0)return direct; const parsed=Number(text(mission.missionId).match(/^critical-([1-9]\d*)-elastic-goal/i)?.[1]||0); return Number.isSafeInteger(parsed)&&parsed>0?parsed:null; }
 function selectedMission(conveyor={}) { return conveyor?.elasticAdmission?.selectedMission||conveyor?.projection?.activeMission||conveyor?.missionRecord||null; }
-function dispatchFacts(conveyor={}) { const elastic=conveyor?.elasticIgnition||{}, active=conveyor?.activeMissionIgnition||{}; const dispatched=Number(elastic.dispatchCount||0)>0||active.published===true||active.classification==='CRITICAL_ACTIVE_MISSION_ALREADY_RUNNING'; const blocked=elastic.ok===false||active.ok===false; const reason=(Array.isArray(elastic.held)&&elastic.held.length?elastic.held.map(i=>text(i?.reason)).filter(Boolean).join(','):'')||(Array.isArray(active.blockers)?active.blockers.map(text).filter(Boolean).join(','):'')||text(elastic.classification||active.classification); return Object.freeze({dispatched,blocked,reason}); }
+function dispatchFacts(conveyor={}) {
+  const elastic=conveyor?.elasticIgnition||{}, active=conveyor?.activeMissionIgnition||{};
+  const selected=selectedMission(conveyor);
+  const selectedMissionId=text(selected?.missionId).toLowerCase();
+  const activeMissions=Array.isArray(conveyor?.elasticAdmission?.activeMissions)
+    ? conveyor.elasticAdmission.activeMissions : [];
+  const incumbent=selectedMissionId
+    ? activeMissions.find(item=>text(item?.missionId).toLowerCase()===selectedMissionId)
+    : null;
+  const incumbentRunning=text(incumbent?.dispatch?.status).toLowerCase()==='running';
+  const noNewExternalDispatch=elastic.ok===true
+    && text(elastic.classification)==='ELASTIC_EXTERNAL_BUILD_DISPATCH_NOT_REQUIRED'
+    && Number(elastic.dispatchCount||0)===0;
+  const dispatched=Number(elastic.dispatchCount||0)>0
+    || active.published===true
+    || (active.classification==='CRITICAL_ACTIVE_MISSION_ALREADY_RUNNING'&&!noNewExternalDispatch);
+  const blocked=elastic.ok===false||active.ok===false;
+  const heldReason=(Array.isArray(elastic.held)&&elastic.held.length
+    ? elastic.held.map(i=>text(i?.reason)).filter(Boolean).join(','):'')
+    || (Array.isArray(active.blockers)?active.blockers.map(text).filter(Boolean).join(','):'');
+  const reason=heldReason
+    || (noNewExternalDispatch
+      ? incumbentRunning ? 'INCUMBENT_DISPATCH_TERMINAL_OUTCOME_UNPROVEN' : 'SOURCE_CLAIM_NOT_OBSERVED'
+      : text(elastic.classification||active.classification));
+  return Object.freeze({dispatched,blocked,reason});
+}
 function firstActionableGate(gates=[]) { return gates.find(g=>g.state===AUTONOMY_BUILD_TRACK_STATES.BLOCKED)||gates.find(g=>g.state===AUTONOMY_BUILD_TRACK_STATES.WAITING)||gates.find(g=>g.state===AUTONOMY_BUILD_TRACK_STATES.UNKNOWN)||gates.find(g=>g.state===AUTONOMY_BUILD_TRACK_STATES.NOT_REACHED)||null; }
 function lastPassedGate(gates=[]) { return [...gates].reverse().find(g=>g.state===AUTONOMY_BUILD_TRACK_STATES.PASS)?.id||''; }
 
@@ -39,7 +64,9 @@ function gateGuidance(gate={}) {
       : ['No eligible goal reached the autonomous conveyor'+detail,'Inspect canonical goal discovery, admission and eligibility. Confirm an open goal becomes scheduler-visible.'],
     SELECT:['A goal is visible but scheduler selection is not proven'+detail,'Inspect the scheduler decision and contradictions for the visible goal.'],
     MISSION:['The scheduler selected work but no durable mission is visible'+detail,'Inspect mission creation/publication and mission-store persistence for the selected goal.'],
-    CLAIM:['A mission exists but no source claim/dispatch is proven'+detail,'Inspect lease/claim creation and the provider-neutral dispatch handoff for this mission.'],
+    CLAIM: reason==='INCUMBENT_DISPATCH_TERMINAL_OUTCOME_UNPROVEN'
+      ? ['An incumbent mission is already running but its claim/terminal outcome is not proven'+detail,'Reconcile the incumbent ORIGINAL processing claim and authentic terminal result/receipt. Do not create a duplicate dispatch or delete/release its lease.']
+      : ['A mission exists but no source claim/dispatch is proven'+detail,'Inspect lease/claim creation and the provider-neutral dispatch handoff for this mission.'],
     WORKER:['A claim exists but the source worker has not picked it up'+detail,'Inspect the Mission Worker heartbeat, queue claim and worker acceptance for this mission.'],
     PROVIDER:['The worker reached provider execution but the provider did not complete'+detail,'Inspect the selected provider/adapter result and route around unavailable capacity without changing mission identity.'],
     SOURCE_CHANGED:['Provider execution did not produce a valid source change'+detail,'Inspect the bounded source-builder failure and preserve the exact mission/branch/worktree identity.'],

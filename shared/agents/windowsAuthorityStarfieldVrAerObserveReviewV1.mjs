@@ -76,6 +76,12 @@ function extractPowerShellFunction(source, signature) {
 function metaAirLinkIsolationHelperClean(source, exactStartProcess) {
   const helper = extractPowerShellFunction(source, 'function Start-StarfieldWithMetaAirLinkIsolation {');
   if (!helper) return false;
+  // Exact current-main child-only telemetry contract. This is deliberately a
+  // byte-closed alternative, not a general permission for environment changes.
+  // Any helper edit requires a new independently reviewed contract digest.
+  const environmentSets = value => value.match(/\[Environment\]::SetEnvironmentVariable\(/g)?.length ?? 0;
+  if (environmentSets(source) !== environmentSets(helper)) return false;
+  if (createHash('sha256').update(helper).digest('hex') === 'e7b10ffb0477f4bd5fdccf34a50b61f10c125103f3be251940292ffbba96ac8a') return true;
   const executableLines = helper.split(/\r?\n/)
     .map((line) => line.replace(/#.*$/, '').trim())
     .filter(Boolean);
@@ -149,7 +155,7 @@ function reviewAerObserve(source, path, findings) {
     && processStarts.includes(rollbackStart)
     && isolationUses.length === 2
     && isolationUses.includes('function Start-StarfieldWithMetaAirLinkIsolation {')
-    && isolationUses.includes('$game = Start-StarfieldWithMetaAirLinkIsolation')
+    && isolationUses.some(line => ['$game = Start-StarfieldWithMetaAirLinkIsolation', '$game = Start-StarfieldWithMetaAirLinkIsolation -VisualTelemetry $performanceMode.visualTelemetry'].includes(line))
     && source.includes("$virtualDesktopOculusCompatibilityDisableEnvironment = 'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY'")
     && metaAirLinkIsolationHelperClean(source, isolatedGameStart);
   if (!legacyProcessShape && !isolatedProcessShape) {
@@ -180,7 +186,7 @@ function reviewAerObserve(source, path, findings) {
     /^try \{ \$runtimeSourceHead = \(& git -C \$repoRoot rev-parse HEAD 2>\$null \| Select-Object -First 1\)\.Trim\(\)\.ToLowerInvariant\(\) \} catch \{ \$runtimeSourceHead = '' \}$/,
     /^\$dirtyRuntimeSource = \(& git -C \$repoRoot status --porcelain --untracked-files=no -- \$runtimeSourcePaths 2>\$null \| Out-String\)\.Trim\(\)$/,
     /^\$resourceText = & \$powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$resourceGovernorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 \| Out-String$/,
-    /^\$perfText = & \$powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$performanceScript -Action Enter -WorkspaceRoot \$workspaceRoot -GameRoot \$gameRoot -Provider 'mutar-openxr' -ProfilePath \$profilePath -ProfileSha256 \$profileSha256 -LaunchSessionId \$launchSessionId -SourceHead \$sourceHead 2>&1 \| Out-String$/,
+    /^\$perfText = & \$powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$performanceScript -Action Enter -WorkspaceRoot \$workspaceRoot -GameRoot \$gameRoot -Provider 'mutar-openxr' -ProfilePath \$profilePath -ProfileSha256 \$profileSha256 -LaunchSessionId \$launchSessionId -SourceHead \$sourceHead(?: -ProviderSensors @\('mutar\.aer-presenter-sequence','mutar\.aer-parity'\) -ProviderTelemetryPath \$liveLog)? 2>&1 \| Out-String$/,
     /^\$perfGuardianJson = & \$powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$performanceScript -Action StartGuard -SessionPath \(\[string\]\$performanceMode\.sessionPath\) -GameProcessId \(\[int\]\$game\.Id\) 2>&1 \| Out-String$/,
     /^& \$powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$performanceScript -Action Restore -SessionPath \(\[string\]\$performanceMode\.sessionPath\) \| Out-Null$/,
     /^& \$powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$resourceGovernorScript -Action CancelPrepare \| Out-Null$/,

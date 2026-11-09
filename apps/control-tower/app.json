@@ -1,0 +1,11 @@
+{
+  "name": "Control Tower",
+  "icon": "🧭",
+  "entry": "index.html",
+  "type": "system",
+  "packaging": "classic-static",
+  "launchStrategy": "navigate",
+  "description": "Your private Stephanos project control surface.",
+  "launcherBadges": ["Private Site"],
+  "launcherActionLabel": "Open Control Tower"
+}

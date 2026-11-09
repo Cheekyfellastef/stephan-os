@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { runBattleBridgeGoalDiscoveryHeartbeat } from '../../scripts/battle-bridge-goal-discovery-heartbeat.mjs';
+import { runBattleBridgeGoalDiscoveryHeartbeat as runActualHeartbeat } from '../../scripts/battle-bridge-goal-discovery-heartbeat.mjs';
+const runBattleBridgeGoalDiscoveryHeartbeat = options => runActualHeartbeat({ readWorkerHeartbeatAgeMs: () => 0, ...options });
 import { ensureCriticalBacklogMission } from './criticalBacklogConveyorService.js';
 
 const CURRENT_MAIN = 'a'.repeat(40);

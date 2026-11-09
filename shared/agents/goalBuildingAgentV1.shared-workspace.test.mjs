@@ -47,6 +47,8 @@ function input(overrides = {}) {
       schedulerEligible: true,
       qualifiedProviderAvailable: true,
       operatorGate: false,
+      // Match the existing ACTIVE checkpoint lease for a genuine resumable handoff.
+      resourceIds: ['pr:2003'],
     },
     validationOptions: { nowMs: Date.parse('2026-09-04T09:10:10.000Z') },
     ...overrides,

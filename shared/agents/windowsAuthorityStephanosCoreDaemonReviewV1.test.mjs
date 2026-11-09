@@ -8,10 +8,12 @@ import {
   analyzeWindowsAuthorityStephanosCoreDaemonReviewV1,
 } from './windowsAuthorityStephanosCoreDaemonReviewV1.mjs';
 import { analyzeWindowsAuthoritySpecialistReview } from './windowsAuthoritySpecialistReviewV1.mjs';
+import { analyzeIndependentSecurityReview, isApprovalBoundaryBootstrapAnalysis } from './operatorMergeApprovalGateV2.mjs';
+import { adjudicateQualifiedSpecialistReview } from './qualifiedSpecialistReviewV1.mjs';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const HEAD = 'a'.repeat(40);
-const [RUNNER_PATH, STATUS_PATH] = WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1;
+const [RUNNER_PATH, STATUS_PATH, HELPER_PATH] = WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1;
 
 function blobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
@@ -37,23 +39,32 @@ const analysis = {
   })),
 };
 
-const runner = await readFile(
+// Historical review coverage must not silently enroll the current checkout's
+// runner. JSON keeps the inert fixture's source string stable across checkout
+// line endings. Its decoded bytes are the protected-main v6 blob 47022203...;
+// production reviewer pins remain unchanged. The candidate is tested separately.
+const historicalRunnerFixture = JSON.parse(await readFile(
+  new URL('./fixtures/sovereignCommanderReviewedCoreRunnerV6.json', import.meta.url), 'utf8',
+));
+const runner = historicalRunnerFixture.source;
+const candidateRunner = await readFile(
   new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8',
 );
 const status = await readFile(
   new URL('../../scripts/windows/status-stephanos-core-daemon.ps1', import.meta.url), 'utf8',
 );
+const helper = await readFile(new URL('../../scripts/windows/stephanos-core-process-observation.ps1', import.meta.url), 'utf8');
 
 function review(runnerSource = runner, statusSource = status, extra = []) {
   return analyzeWindowsAuthorityStephanosCoreDaemonReviewV1({
     repository: REPOSITORY,
     sourceHead: HEAD,
     analysis,
-    sources: [source(RUNNER_PATH, runnerSource), source(STATUS_PATH, statusSource), ...extra],
+    sources: [source(RUNNER_PATH, runnerSource), source(STATUS_PATH, statusSource), source(HELPER_PATH, helper), ...extra],
   });
 }
 
-test('clean Core Daemon Windows estate is qualified with zero authority', () => {
+test('successor candidate covers the complete Core Windows estate and grants zero authority', () => {
   const result = review();
   assert.equal(result.eligible, true);
   assert.equal(result.clean, true, result.findings.map(x => x.code).join(','));
@@ -64,16 +75,49 @@ test('clean Core Daemon Windows estate is qualified with zero authority', () => 
   assert.equal(result.providerQualificationAuthority, false);
 });
 
-test('top-level trusted specialist routes the Core Daemon pair before fallback', () => {
+test('top-level candidate specialist plans all three transitive Core sources before fallback', () => {
   const result = analyzeWindowsAuthoritySpecialistReview({
     repository: REPOSITORY,
     sourceHead: HEAD,
     analysis,
-    sources: [source(RUNNER_PATH, runner), source(STATUS_PATH, status)],
+    sources: [source(RUNNER_PATH, runner), source(STATUS_PATH, status), source(HELPER_PATH, helper)],
   });
   assert.equal(result.eligible, true);
   assert.equal(result.clean, true, result.findings.map(x => x.code).join(','));
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_SPECIALIST_CLEAN');
+});
+
+test('omitted, duplicated, extra, wrong-head or rehashed altered helpers never inherit the two-consumer qualification', () => {
+  const sources = [source(RUNNER_PATH, runner), source(STATUS_PATH, status), source(HELPER_PATH, helper)];
+  const invoke = rows => analyzeWindowsAuthorityStephanosCoreDaemonReviewV1({ repository: REPOSITORY,
+    sourceHead: HEAD, analysis, sources: rows });
+  for (const rows of [sources.slice(0, 2), [...sources, sources[2]],
+    [...sources, source('scripts/windows/other.ps1', 'x')],
+    [sources[0], sources[1], { ...sources[2], ref: 'b'.repeat(40) }]]) {
+    assert.equal(invoke(rows).clean, false);
+  }
+  for (const altered of [helper + '\nStop-Process -Id 12 -Force',
+    helper.replace('$complete = $false', '$complete = $true'),
+    helper.replace('else { $null }', 'else { 0 }'),
+    helper.replace('-ErrorAction Stop', '-ErrorAction SilentlyContinue'),
+    helper + '\n$script:unexpected = 1']) {
+    assert.notEqual(altered, helper);
+    const result = invoke([sources[0], sources[1], source(HELPER_PATH, altered)]);
+    assert.equal(result.clean, false);
+    assert.ok(result.findings.some(x => x.code === 'windows-authority-core-source-blob-unreviewed'));
+  }
+});
+
+test('incomplete inventory and timeout hold cannot be bypassed while safe snippets remain', () => {
+  for (const changed of [
+    runner.replace('if ($healthBefore.timeoutCustodyHeld -eq $true)', 'if ($false)'),
+    runner.replace('elseif ($healthBefore.maintenanceInFlight -eq $true)', 'elseif ($false)'),
+    runner.replace('if (-not $coreBeforeComplete -or -not $script:coreProcessObservation.complete)', 'if ($false)'),
+    runner.replace('$script:coreProcessObservation.complete -and', '$true -and'),
+  ]) {
+    assert.notEqual(changed, runner);
+    assert.equal(review(changed).clean, false);
+  }
 });
 
 test('widened execution, process kill, task, Git and writable-status authority fail closed', () => {
@@ -154,11 +198,16 @@ test('specialist rejects a Core writer mass-recycle even when relay recycle is a
   assert.ok(result.findings.some((x) => x.code === 'windows-authority-core-source-blob-unreviewed'));
 });
 
-test('specialist applies no-kill custody invariants to actual checked-in Windows sources', async () => {
+test('actual successor retains no-kill checks while its new bytes remain externally unqualified', async () => {
   const realRunner = await readFile(new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
   const realStatus = await readFile(new URL('../../scripts/windows/status-stephanos-core-daemon.ps1', import.meta.url), 'utf8');
   const result = review(realRunner, realStatus);
-  assert.equal(result.clean, true, result.findings.map(x => x.code).join(','));
+  assert.equal(result.clean, false);
+  // All existing textual custody checks still run. The sole finding is the
+  // intentionally unlisted successor blob, never an automatic new pin.
+  assert.deepEqual(result.findings.map(item => ({ code: item.code, path: item.path })), [{
+    code: 'windows-authority-core-source-blob-unreviewed', path: RUNNER_PATH,
+  }]);
 });
 
 test('trusted switchboard byte-pins and invokes the Core Daemon specialist', async () => {
@@ -195,5 +244,89 @@ test('only the two exact pinned v4 and v6 runner blobs qualify, never an arbitra
     const rejected = review(candidate, status);
     assert.equal(rejected.clean, false);
     assert.ok(rejected.findings.some(x => x.code === 'windows-authority-core-source-blob-unreviewed'));
+  }
+});
+
+
+test('historical fixture is the exact reviewed v6 byte source, independent of the guarded successor', () => {
+  assert.equal(historicalRunnerFixture.schemaVersion, 'stephanos.test-only-reviewed-core-runner-fixture.v1');
+  assert.equal(historicalRunnerFixture.repository, REPOSITORY);
+  assert.equal(historicalRunnerFixture.sourcePath, RUNNER_PATH);
+  assert.equal(historicalRunnerFixture.sourceHead, '76981a1dcb50cef38691e7b11a2b680952784603');
+  assert.equal(historicalRunnerFixture.gitBlob, '47022203dd3948fe1744327ca0d94eeb91ef60c2');
+  assert.equal(blobSha(runner), '47022203dd3948fe1744327ca0d94eeb91ef60c2');
+  assert.notEqual(candidateRunner, runner);
+  assert.match(candidateRunner, /function Resolve-SovereignCommanderOperatorContextV1/);
+  assert.match(candidateRunner, /WindowsIdentity\]::GetCurrent\(\)/);
+  assert.match(candidateRunner, /SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED/);
+});
+
+test('new actual-token runner cannot inherit a historical internal specialist qualification', () => {
+  const direct = review(candidateRunner, status);
+  assert.equal(direct.clean, false);
+  assert.ok(direct.findings.some(item => item.code === 'windows-authority-core-source-blob-unreviewed'
+    && item.path === RUNNER_PATH));
+  const routed = analyzeWindowsAuthoritySpecialistReview({
+    repository: REPOSITORY, sourceHead: HEAD, analysis,
+    sources: [source(RUNNER_PATH, candidateRunner), source(STATUS_PATH, status), source(HELPER_PATH, helper)],
+  });
+  assert.equal(routed.clean, false);
+  assert.ok(routed.findings.some(item => item.code === 'windows-authority-core-source-blob-unreviewed'));
+});
+
+test('the real external-first classifier holds the three new Windows surfaces without authentic exact-head evidence', () => {
+  const paths = [
+    'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
+    'scripts/windows/install-sovereign-commander.ps1',
+    RUNNER_PATH,
+  ];
+  // Exercise the production classifier and adjudicator. These are test-only
+  // identities, never a receipt, review of this candidate, or native proof.
+  const actualRunnerDiff = [
+    `diff --git a/${RUNNER_PATH} b/${RUNNER_PATH}`,
+    `--- a/${RUNNER_PATH}`, `+++ b/${RUNNER_PATH}`,
+    `@@ -1,${runner.split('\n').length - 1} +1,${candidateRunner.split('\n').length - 1} @@`,
+    ...runner.split('\n').slice(0, -1).map(line => '-' + line),
+    ...candidateRunner.split('\n').slice(0, -1).map(line => '+' + line),
+    '',
+  ].join('\n');
+  const deterministic = analyzeIndependentSecurityReview({ changedFiles: paths, diff: actualRunnerDiff });
+  const noPatch = analyzeIndependentSecurityReview({ changedFiles: paths, diff: '' });
+  assert.ok(noPatch.findings.some(item => item.code === 'review-patch-missing'));
+  assert.equal(isApprovalBoundaryBootstrapAnalysis(deterministic), false);
+  assert.deepEqual(deterministic.counts, { P0: 3, P1: 0, P2: 0 });
+  assert.deepEqual(deterministic.findings.map(item => item.path).sort(), [...paths].sort());
+  assert.ok(deterministic.findings.every(item => item.code === 'unsupported-high-risk-surface'));
+  const request = {
+    id: 8001, user: { login: 'fixture-owner', id: 71, type: 'User' }, author_association: 'OWNER',
+    created_at: '2026-08-20T18:46:20Z', updated_at: '2026-08-20T18:46:20Z',
+    body: ['@codex Perform exactly one read-only qualified Windows-authority specialist review.',
+      `Exact head ${HEAD} against exact base ${'b'.repeat(40)}.`,
+      'Review the complete exact-head diff with fixed executable identity.', ...paths].join('\n'),
+  };
+  const response = {
+    id: 8002, user: { login: 'chatgpt-codex-connector[bot]', id: 199175422, type: 'Bot' },
+    performed_via_github_app: { slug: 'chatgpt-codex-connector', id: 1144995 },
+    created_at: '2026-08-20T18:49:15Z', updated_at: '2026-08-20T18:49:15Z',
+    body: "Codex Review: Didn't find any major issues. Nice work!\n\n**Reviewed commit:** `" + HEAD.slice(0, 10) + '`',
+    resolved_commit_id: HEAD,
+  };
+  for (const comments of [
+    [], [request],
+    [request, { ...response, user: { login: 'fixture-owner', id: 71, type: 'User' }, performed_via_github_app: null }],
+    [request, { ...response, resolved_commit_id: 'c'.repeat(40),
+      body: response.body.replace(HEAD.slice(0, 10), 'c'.repeat(10)) }],
+    [{ ...request, body: request.body.replace('b'.repeat(40), 'c'.repeat(40)) }, response],
+    [{ ...request, body: request.body.replace(RUNNER_PATH, 'scripts/windows/unrelated.ps1') }, response],
+  ]) {
+    const result = adjudicateQualifiedSpecialistReview({
+      repository: REPOSITORY, prNumber: 3319, branch: 'fixture/original-owner-candidate',
+      sourceHead: HEAD, baseSha: 'b'.repeat(40), analysis: deterministic, reviews: [], comments,
+    });
+    assert.equal(result.required, true);
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.length > 0);
+    assert.equal(result.analysis.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_FINDINGS');
+    assert.equal(result.artifact, null);
   }
 });

@@ -189,6 +189,34 @@ function Get-StarfieldVrRuntimeMetricSample {
         eyePresentationSkewMs = Get-StarfieldVrBoundedNumber -Object $payload -Name 'eyePresentationSkewMs' -Minimum 0 -Maximum 60000
         poseAgeMs = Get-StarfieldVrBoundedNumber -Object $payload -Name 'poseAgeMs' -Minimum 0 -Maximum 60000
         stereoMode = Get-StarfieldVrOptionalString -Object $payload -Name 'stereoMode'
+        visualTelemetryAvailable = [bool](Get-StarfieldVrOptionalProperty -Object $payload -Name 'visualTelemetryAvailable' -Default $false)
+        visualFrameSerial = Get-StarfieldVrBoundedNumber -Object $payload -Name 'visualFrameSerial' -Minimum 0 -Maximum 1000000000000
+        visualFrameState = Get-StarfieldVrOptionalString -Object $payload -Name 'visualFrameState'
+        visualProjectionLayers = Get-StarfieldVrBoundedNumber -Object $payload -Name 'visualProjectionLayers' -Minimum 0 -Maximum 64
+        visualProjectionViews = Get-StarfieldVrBoundedNumber -Object $payload -Name 'visualProjectionViews' -Minimum 0 -Maximum 16
+        visualLocatedViews = Get-StarfieldVrBoundedNumber -Object $payload -Name 'visualLocatedViews' -Minimum 0 -Maximum 16
+        visualShouldRender = [bool](Get-StarfieldVrOptionalProperty -Object $payload -Name 'visualShouldRender' -Default $false)
+        visualReleaseMissing = [bool](Get-StarfieldVrOptionalProperty -Object $payload -Name 'visualReleaseMissing' -Default $false)
+        visualReleaseReused = [bool](Get-StarfieldVrOptionalProperty -Object $payload -Name 'visualReleaseReused' -Default $false)
+        visualEndFrameResult = Get-StarfieldVrOptionalNumber -Object $payload -Name 'visualEndFrameResult'
+        visualPredictionDeltaMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'visualPredictionDeltaMs'
+        visualPoseDisplayDeltaMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'visualPoseDisplayDeltaMs'
+        visualPixelContentState = Get-StarfieldVrOptionalString -Object $payload -Name 'visualPixelContentState'
+        operatorMarkerCount = Get-StarfieldVrBoundedNumber -Object $payload -Name 'operatorMarkerCount' -Minimum 0 -Maximum 1000000
+        lastOperatorMarkerAtUtc = Get-StarfieldVrOptionalString -Object $payload -Name 'lastOperatorMarkerAtUtc'
+        lastOperatorMarkerSource = Get-StarfieldVrOptionalString -Object $payload -Name 'lastOperatorMarkerSource'
+        providerTelemetryAvailable = [bool](Get-StarfieldVrOptionalProperty -Object $payload -Name 'providerTelemetryAvailable' -Default $false)
+        aerTelemetryEvent = Get-StarfieldVrOptionalString -Object $payload -Name 'aerTelemetryEvent'
+        aerSequenceFaultCount = Get-StarfieldVrBoundedNumber -Object $payload -Name 'aerSequenceFaultCount' -Minimum 0 -Maximum 1000000000
+        aerPrevPresenterFrame = Get-StarfieldVrOptionalNumber -Object $payload -Name 'aerPrevPresenterFrame'
+        aerCurrentPresenterFrame = Get-StarfieldVrOptionalNumber -Object $payload -Name 'aerCurrentPresenterFrame'
+        aerPresenterDelta = Get-StarfieldVrOptionalNumber -Object $payload -Name 'aerPresenterDelta'
+        aerPrevParity = Get-StarfieldVrOptionalNumber -Object $payload -Name 'aerPrevParity'
+        aerCurrentParity = Get-StarfieldVrOptionalNumber -Object $payload -Name 'aerCurrentParity'
+        aerEngineFrame = Get-StarfieldVrOptionalNumber -Object $payload -Name 'aerEngineFrame'
+        aerRenderFrame = Get-StarfieldVrOptionalNumber -Object $payload -Name 'aerRenderFrame'
+        aerPresenterFrame = Get-StarfieldVrOptionalNumber -Object $payload -Name 'aerPresenterFrame'
+        aerRenderLoopFrame = Get-StarfieldVrOptionalNumber -Object $payload -Name 'aerRenderLoopFrame'
     }
 }
 
@@ -273,6 +301,8 @@ function Get-StarfieldVrTelemetryCompleteness {
         airLinkNetworkQuality = [bool]((& $has 'airLinkBitrateMbps') -and (& $has 'packetLossPct') -and (& $has 'jitterMs'))
         stereoEyeTiming = [bool]((& $has 'leftEyePresentMs') -and (& $has 'rightEyePresentMs'))
         poseTiming = [bool](& $has 'poseAgeMs')
+        openXrVisualSubmission = [bool](& $has 'visualFrameSerial')
+        visualFaultMarkerCapability = $false
         controller = [bool](& $has 'controllerDeviceCount')
         audioLifecycle = [bool]($null -ne $Summary)
         configurationFingerprint = $false
@@ -280,6 +310,9 @@ function Get-StarfieldVrTelemetryCompleteness {
     }
     if ($Summary -and $Summary.PSObject.Properties['configurationFingerprint']) {
         $result.configurationFingerprint = [bool]([string]$Summary.configurationFingerprint.sha256)
+    }
+    if ($Summary -and $Summary.PSObject.Properties['visualTelemetry'] -and $Summary.visualTelemetry) {
+        try { $result.visualFaultMarkerCapability = [bool]$Summary.visualTelemetry.capabilities.operatorFaultMarkers } catch {}
     }
     $missing = @($result.Keys | Where-Object { $_ -ne 'physicalAcceptance' -and -not [bool]$result[$_] })
     return [pscustomobject]@{

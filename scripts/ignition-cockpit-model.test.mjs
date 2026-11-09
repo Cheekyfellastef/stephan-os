@@ -71,3 +71,43 @@ test('captain status separates latest main build output and runtime proof', () =
   assert.equal(cockpit.captainStatusSummary.runtimeProofReady, true);
   assert.match(cockpit.captainStatusSummary.exactNextAction, /Enter Stephanos/);
 });
+
+
+test('pending required Local AI proof prevents a green ready cockpit', () => {
+  const cockpit = projectIgnitionCockpit({
+    buildPassed: true,
+    verifyPassed: true,
+    serverStarted: true,
+    servedProof: goodProof,
+    stages: [
+      { id: 'source-update', label: 'Source update', status: 'complete' },
+      { id: 'build-output', label: 'Build Output', status: 'passed' },
+      { id: 'verify', label: 'Verify', status: 'passed' },
+      { id: 'local-ai', label: 'Local AI', status: 'pending', detail: 'Ollama readiness not yet proven' },
+      { id: 'runtime', label: 'Runtime', status: 'passed' },
+    ],
+  });
+  assert.equal(cockpit.readyToEnterStephanos, false);
+  assert.notEqual(cockpit.trafficLight, 'green');
+  assert.equal(cockpit.proofSummary.localAiReady, false);
+  assert.match(cockpit.exactNextOperatorAction, /Local AI readiness proof/);
+});
+
+test('not-needed Local AI stage does not block non-Windows ignition readiness', () => {
+  const cockpit = projectIgnitionCockpit({
+    buildPassed: true,
+    verifyPassed: true,
+    serverStarted: true,
+    servedProof: goodProof,
+    stages: [
+      { id: 'source-update', label: 'Source update', status: 'complete' },
+      { id: 'build-output', label: 'Build Output', status: 'passed' },
+      { id: 'verify', label: 'Verify', status: 'passed' },
+      { id: 'local-ai', label: 'Local AI', status: 'not-needed' },
+      { id: 'runtime', label: 'Runtime', status: 'passed' },
+    ],
+  });
+  assert.equal(cockpit.readyToEnterStephanos, true);
+  assert.equal(cockpit.trafficLight, 'green');
+  assert.equal(cockpit.proofSummary.localAiReady, true);
+});
