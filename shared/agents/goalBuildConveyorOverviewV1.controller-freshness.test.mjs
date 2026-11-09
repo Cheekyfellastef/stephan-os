@@ -45,9 +45,9 @@ test('Goal #2961: fresh negative and degraded lights survive while stale ones ex
   assert.equal(cards[4].truth, 'CURRENT');
 });
 
-// A fresh controller report is not physical pickup. A separate qualified
-// signed pickup and matching proof reference permit the positive control.
-test('Goal #2002: current controller GREEN needs source-qualified signed pickup', () => {
+// A current system-wide signed gate-19 proof is not bound to an individual
+// controller or worker and cannot promote its self-reported BUILDING light.
+test('Goal #2002: a reusable gate-19 proof cannot certify controller BUILDING', () => {
   const proofRef = 'workspace:proof/gate-19';
   const input = projection([item('with-proof', { proofRefs: [proofRef] }),
     item('without-proof', { proofRefs: ['self-declared'] })]);
@@ -56,10 +56,11 @@ test('Goal #2002: current controller GREEN needs source-qualified signed pickup'
     diagnosticOnly: true, approvalAuthority: false, mergeAuthority: false,
     sourceHead: 'a'.repeat(40), observedAtUtc: at(-1000),
     observationStatus: 'EVIDENCE_AVAILABLE', gates: [
+      { id: 18, status: 'PASS', observedAtUtc: at(-1000), proofRef: 'workspace:proof/gate-18' },
       { id: 19, status: 'PASS', observedAtUtc: at(-1000), proofRef },
     ],
   };
   const output = overview(input, { nowMs: NOW });
-  assert.deepEqual(output.controllers.map(c => c.trafficLight), ['GREEN', 'AMBER']);
+  assert.deepEqual(output.controllers.map(c => c.trafficLight), ['AMBER', 'AMBER']);
   assert.equal(output.stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
 });
