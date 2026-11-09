@@ -109,8 +109,20 @@ function runtimeTruthFor(input, certificate) {
   return projectGoalBuildingRuntimeTruth({ ...input, certificate });
 }
 
+function runtimeBuildingProven(runtimeTruth, certificate) {
+  // A supplied runtime state is a projection, not physical proof by itself.
+  // A contradictory state/flag or programme certificate must never print Yes
+  // while the accompanying structured status reports no proven build.
+  return runtimeTruth?.state === GOAL_BUILDING_RUNTIME_STATES.BUILDING
+    && runtimeTruth.buildingProven === true
+    && certificate?.isActuallyBuilding === true;
+}
+
 function runtimeBuildingAnswer(runtimeTruth, certificate) {
   if (runtimeTruth.state === GOAL_BUILDING_RUNTIME_STATES.BUILDING) {
+    if (!runtimeBuildingProven(runtimeTruth, certificate)) {
+      return `No. BUILDING is not physically proven because the runtime state, proof flag or programme certificate disagrees. ${runtimeTruth.blocker || certificate.summary}`;
+    }
     const identity = runtimeTruth.currentGoalId || runtimeTruth.currentMissionId || runtimeTruth.workerTaskId || 'current goal';
     const movement = runtimeTruth.secondsSinceMeaningfulMovement === null
       ? 'meaningful movement is current'
@@ -181,7 +193,7 @@ export function answerGoalBuildingQuestion(input = {}) {
     answer: boundedText(answer, 'Programme status unavailable.', 1200),
     state: certificate.state,
     isCapableOfBuilding: certificate.isCapableOfBuilding,
-    isActuallyBuilding: runtimeTruth ? runtimeTruth.buildingProven : certificate.isActuallyBuilding,
+    isActuallyBuilding: runtimeTruth ? runtimeBuildingProven(runtimeTruth, certificate) : certificate.isActuallyBuilding,
     runtimeTruthState: runtimeTruth?.state || '',
     secondsSinceMeaningfulMovement: runtimeTruth?.secondsSinceMeaningfulMovement ?? null,
     evidenceHead: certificate.expectedHead,
@@ -193,7 +205,7 @@ function statusBody(certificate, runtimeTruth = null) {
   const body = {
     state: certificate.state,
     isCapableOfBuilding: certificate.isCapableOfBuilding,
-    isActuallyBuilding: runtimeTruth ? runtimeTruth.buildingProven : certificate.isActuallyBuilding,
+    isActuallyBuilding: runtimeTruth ? runtimeBuildingProven(runtimeTruth, certificate) : certificate.isActuallyBuilding,
     programmeMode: certificate.programmeMode,
     expectedHead: certificate.expectedHead,
     activeMissionCount: certificate.activeMissionCount,
