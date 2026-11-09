@@ -45,9 +45,23 @@ export function evaluateGoalBuildingProgramme(input = {}) {
   degradedReasons.push(...surfaceResult.degradedReasons, ...programmeResult.degradedReasons, ...blockerResult.degradedReasons);
 
   const activeMissionById = new Map(programmeResult.activeMissions.map((mission) => [mission.missionId, mission]));
+  const activeMissionByGoalId = new Map(programmeResult.activeMissions.map((mission) => [mission.goalId, mission]));
   const accountedMissionIds = new Set();
   for (const blocker of blockerResult.blockers) {
     const correlatedMission = blocker.missionId ? activeMissionById.get(blocker.missionId) : null;
+    const approvalMission = correlatedMission || (!blocker.missionId && blocker.goalId
+      ? activeMissionByGoalId.get(blocker.goalId)
+      : null);
+    // An exact operator approval pending on this mission cannot coexist with
+    // its own productive/BUILDING claim. Do not hold genuinely disjoint work.
+    if (blocker.route === 'REQUEST_EXACT_OPERATOR_APPROVAL' && approvalMission) {
+      if (!operatorAction.required) {
+        evidenceProblems.push(`operator-approval-action-unreported:${blocker.blockerId || 'missing'}`);
+      }
+      if (programmeResult.productiveMissions.some((mission) => mission.missionId === approvalMission.missionId)) {
+        evidenceProblems.push(`operator-approval-mission-still-productive:${blocker.blockerId || 'missing'}`);
+      }
+    }
     if (blocker.missionId && !correlatedMission) {
       evidenceProblems.push(`blocker-mission-unknown:${blocker.blockerId || 'missing'}`);
     }
@@ -100,7 +114,9 @@ export function evaluateGoalBuildingProgramme(input = {}) {
     && !uniqueBlockingReasons.some((reason) => reason.startsWith('surface-') || reason.includes('head-mismatch') || reason.includes('head-unbound'));
   const missionWorker = surfaceResult.byId.get('missionWorker');
   const workerCurrent = missionWorker
-    && SURFACE_POLICIES.missionWorker.states.includes(missionWorker.state)
+    // READY proves a responsive worker surface, not a physical or hosted pickup.
+    // Only active execution states can contribute to an actual-building claim.
+    && (missionWorker.state === 'RUNNING' || missionWorker.state === 'ACTIVE')
     && missionWorker.head === expectedHead
     && timestampVerdict(missionWorker.observedAtUtc, { ...timing, maxAgeMs: SURFACE_POLICIES.missionWorker.maxAgeMs }) === 'CURRENT';
   const isActuallyBuilding = isCapableOfBuilding
