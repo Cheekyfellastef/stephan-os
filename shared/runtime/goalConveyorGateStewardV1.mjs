@@ -32,9 +32,13 @@ export function projectCoreGateEvidenceV1({
     state?.sovereignCommanderHealthy === true && state?.backendHealthy === true) {
     proof(3, 'PASS', 'workspace:status/stephanos-core-daemon-current.json');
   }
+  // The canonical HOLD fingerprint is a sorted set of whole blockers.
+  // A substring match could falsely assign gate 7/8 custody failure to a
+  // different similarly named blocker, causing unnecessary original-owner work.
+  const canonicalBlockers = typeof refillSummary?.refillCanonicalProgrammeBlockerIdentity === 'string'
+    ? refillSummary.refillCanonicalProgrammeBlockerIdentity.split('|') : [];
   if (refillSummary?.refillCanonicalProgrammeHeld === true &&
-    typeof refillSummary?.refillCanonicalProgrammeBlockerIdentity === 'string' &&
-    refillSummary.refillCanonicalProgrammeBlockerIdentity.includes('elastic-lease-expired-or-not-active')) {
+    canonicalBlockers.includes('lane:elastic-lease-expired-or-not-active')) {
     proof(7, 'FAIL', 'workspace:status/stephanos-core-daemon-current.json', 'LANE:ELASTIC-LEASE-EXPIRED-OR-NOT-ACTIVE');
     // This authoritatively confirms the expired source lease symptom, but
     // cannot establish physical custody or approval to release it.
