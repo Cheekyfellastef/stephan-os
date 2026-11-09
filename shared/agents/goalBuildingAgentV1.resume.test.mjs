@@ -152,6 +152,9 @@ test('reconstructed handoff refuses injected authority even when normalization w
     { label: 'unknown authority', authority: { ...canonical, arbitraryShell: true }, reason: 'checkpoint-supplied-authority-unknown-field' },
     { label: 'null authority', authority: null, reason: 'checkpoint-supplied-authority-invalid' },
     { label: 'array authority', authority: [], reason: 'checkpoint-supplied-authority-invalid' },
+    { label: 'explicit undefined authority', authority: undefined, reason: 'checkpoint-supplied-authority-invalid' },
+    { label: 'inherited policy without own fields', authority: Object.create(canonical), reason: 'checkpoint-supplied-authority-mismatch:sourceBuildWithinExistingOwner' },
+    { label: 'symbol extra authority field', authority: { ...canonical, [Symbol('extra')]: true }, reason: 'checkpoint-supplied-authority-unknown-field' },
   ];
   for (const { label, authority, reason } of cases) {
     const result = reconstructGoalBuildHandoff({ checkpoint: checkpointInput({ authority }), current });
@@ -175,6 +178,7 @@ test('explicitly malformed operator gate never becomes a resumable handoff', () 
     ['null', null],
     ['array', []],
     ['object', {}],
+    ['explicit undefined', undefined],
   ];
   for (const [label, operatorGate] of malformed) {
     const result = reconstructGoalBuildHandoff({ checkpoint: checkpointInput({ operatorGate }), current });
