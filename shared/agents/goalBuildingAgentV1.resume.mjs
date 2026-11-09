@@ -38,6 +38,36 @@ function normalizedLease(value = {}) {
   });
 }
 
+const CANONICAL_CHECKPOINT_AUTHORITY = Object.freeze({
+  sourceBuildWithinExistingOwner: true,
+  protectedMerge: false,
+  readyTransition: false,
+  runtimeMutation: false,
+  windowsMutation: false,
+  openClawMutation: false,
+  credentialsOrSpending: false,
+  destructiveGit: false,
+  authorityWidening: false,
+});
+
+function suppliedAuthorityProblems(input) {
+  if (!Object.hasOwn(input, 'authority') || input.authority === undefined) return [];
+  const supplied = input.authority;
+  if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) {
+    return ['checkpoint-supplied-authority-invalid'];
+  }
+  const problems = [];
+  for (const [field, expected] of Object.entries(CANONICAL_CHECKPOINT_AUTHORITY)) {
+    if (supplied[field] !== expected) problems.push(`checkpoint-supplied-authority-mismatch:${field}`);
+  }
+  for (const field of Object.keys(supplied)) {
+    if (!Object.hasOwn(CANONICAL_CHECKPOINT_AUTHORITY, field)) {
+      problems.push('checkpoint-supplied-authority-unknown-field');
+    }
+  }
+  return problems;
+}
+
 export function createGoalBuildResumeCheckpoint(input = {}) {
   const allowedPaths = unique(list(input.allowedPaths).map(boundedPath).filter(Boolean));
   const leases = list(input.leases).map(normalizedLease);
@@ -63,24 +93,17 @@ export function createGoalBuildResumeCheckpoint(input = {}) {
     lastMaterialReceiptHead: sha(input.lastMaterialReceiptHead),
     blockers: Object.freeze(blockers),
     operatorGate,
+    // Preserve an explicit forged/malformed supplied authority signal even
+    // though the projection itself always emits safe canonical authority.
+    authorityInputProblems: Object.freeze(suppliedAuthorityProblems(input)),
     nextLegalAction: boundedText(input.nextLegalAction, '', 320),
     createdAtUtc: text(input.createdAtUtc),
-    authority: Object.freeze({
-      sourceBuildWithinExistingOwner: true,
-      protectedMerge: false,
-      readyTransition: false,
-      runtimeMutation: false,
-      windowsMutation: false,
-      openClawMutation: false,
-      credentialsOrSpending: false,
-      destructiveGit: false,
-      authorityWidening: false,
-    }),
+    authority: CANONICAL_CHECKPOINT_AUTHORITY,
   });
 }
 
 export function evaluateGoalBuildResumeCheckpoint(checkpoint, current = {}) {
-  const reasons = [];
+  const reasons = [...list(checkpoint?.authorityInputProblems)];
   if (!checkpoint || checkpoint.schemaVersion !== GOAL_BUILDING_RESUME_SCHEMA_VERSION) reasons.push('resume-schema-invalid');
   if (!checkpoint?.checkpointId) reasons.push('checkpoint-id-invalid');
   if (!checkpoint?.missionId) reasons.push('mission-id-invalid');
