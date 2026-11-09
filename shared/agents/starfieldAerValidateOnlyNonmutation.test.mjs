@@ -125,7 +125,7 @@ for (const [name, contents, accepted] of scenarios) {
           "$ValidateOnly = $true",
           validateLocalState,
           "try { $null = Validate-LocalState; Write-Output 'VERDICT_ACCEPT' }",
-          "catch { Write-Output 'VERDICT_REJECT' }",
+          "catch { Write-Output ('VERDICT_REJECT: ' + $_.Exception.Message) }",
         ].join("\n");
         writeFileSync(harness, setup, "utf8");
         const result = spawnSync("powershell.exe", [
