@@ -72,9 +72,20 @@ function exactTrackForGoal(goal, autonomyBuildTrack) {
   return goalIssue && trackIssue && goalIssue === trackIssue ? autonomyBuildTrack : null;
 }
 
+// Logical trace gates are diagnostic observations, not independent custody proof.
+// A repeated identity is ambiguous even when the later state looks successful.
 function gateMap(track) {
-  return new Map((Array.isArray(track?.gates) ? track.gates : [])
-    .map((gate) => [text(gate?.id).toUpperCase(), gate]));
+  const gates = new Map();
+  for (const gate of Array.isArray(track?.gates) ? track.gates : []) {
+    const id = text(gate?.id).toUpperCase();
+    if (!id) continue;
+    if (gates.has(id)) {
+      gates.set(id, Object.freeze({
+        id, state: 'BLOCKED', reason: 'DUPLICATE_AUTONOMY_GATE_ID',
+      }));
+    } else gates.set(id, gate);
+  }
+  return gates;
 }
 
 function recordFromGate(definition, gate, track) {
@@ -98,7 +109,8 @@ function replaceStage(stages, id, replacement) {
 
 function greenStage(stages, id, proof, source) {
   const definition = GOAL_BUILD_CONVEYOR_STAGES.find((stage) => stage.id === id);
-  if (!definition) return;
+  // A later logical label may not erase contradictory or blocked gate evidence.
+  if (!definition || stages.find((stage) => stage.id === id)?.blocked) return;
   replaceStage(stages, id, stageRecord(id, definition.label, 'GREEN', proof, '', source));
 }
 
@@ -123,6 +135,9 @@ function firstUnprovenStage(stages) {
 export function projectGoalBuildJourneyV1(goal = {}, autonomyBuildTrack = null) {
   const exactTrack = exactTrackForGoal(goal, autonomyBuildTrack);
   const gates = gateMap(exactTrack);
+  const hasConflictingGateEvidence = [...gates.values()].some(
+    (gate) => gate?.reason === 'DUPLICATE_AUTONOMY_GATE_ID',
+  );
   const stages = GOAL_BUILD_CONVEYOR_STAGES.map((definition) => {
     if (definition.id === 'GOAL') {
       const truth = text(goal?.statusTruth || goal?.sourceTruth, 'UNKNOWN').toUpperCase();
@@ -152,7 +167,7 @@ export function projectGoalBuildJourneyV1(goal = {}, autonomyBuildTrack = null) 
 
   const buildState = text(goal?.buildState, 'UNKNOWN').toUpperCase();
   const builder = text(goal?.builder || exactTrack?.providerAdapter, 'UNKNOWN');
-  if (currentBuildTruth && buildState === 'BUILDING' && builder !== 'UNKNOWN') {
+  if (currentBuildTruth && buildState === 'BUILDING' && builder !== 'UNKNOWN' && !hasConflictingGateEvidence) {
     greenStage(stages, 'DISPATCHED', `Current build truth binds the goal to ${builder}.`, 'stephanos-build-truth');
     greenStage(stages, 'PICKED_UP', `${builder} is the current execution owner for this goal.`, 'stephanos-build-truth');
     greenStage(stages, 'BUILDING', `Fresh build truth reports BUILDING on ${builder}.`, 'stephanos-build-truth');

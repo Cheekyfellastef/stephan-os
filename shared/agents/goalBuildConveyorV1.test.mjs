@@ -131,6 +131,25 @@ test('non-issue goal identities do not bind to an issue track just because they 
   assert.notEqual(journey.stages.find((stage) => stage.id === 'PICKED_UP')?.trafficLight, 'GREEN');
 });
 
+test('Goal #2961: duplicate worker gate identities refuse false-green physical pickup', () => {
+  for (const states of [['BLOCKED', 'PASS'], ['PASS', 'BLOCKED'], ['PASS', 'PASS']]) {
+    const journey = projectGoalBuildJourneyV1({
+      issue: '#7009', state: 'ACTIVE', statusTruth: 'CURRENT',
+      buildState: 'BUILDING', buildTruthTruth: 'CURRENT', builder: 'openclaw-local',
+    }, track(7009, [
+      gate('CLAIM', 'PASS'),
+      gate('WORKER', states[0], 'WORKER_CUSTODY_UNPROVEN'),
+      gate('worker', states[1]),
+    ]));
+    const pickup = journey.stages.find((stage) => stage.id === 'PICKED_UP');
+    assert.equal(pickup.trafficLight, 'RED', states.join('/'));
+    assert.equal(pickup.reason, 'DUPLICATE_AUTONOMY_GATE_ID');
+    assert.notEqual(journey.stages.find((stage) => stage.id === 'BUILDING').trafficLight, 'GREEN');
+    assert.equal(journey.currentTrafficLight, 'RED');
+    assert.equal(journey.stages.find((stage) => stage.id === 'GOAL').trafficLight, 'GREEN');
+  }
+});
+
 test('blocked build truth paints the first unresolved handoff red', () => {
   const journey = projectGoalBuildJourneyV1({
     issue: '#7004',
