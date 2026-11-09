@@ -307,3 +307,34 @@ test('programme accepts exact active plus idle capacity and preserves truly idle
   assert.equal(idle.state, GOAL_BUILDING_OPERATING_STATES.FULLY_OPERATIONAL);
   assert.equal(idle.isActuallyBuilding, false);
 });
+
+// Goal #2002: IEEE-754 unsafe capacity counts must never certify a fully utilised programme.
+test('programme refuses unsafe integer capacity before rounded arithmetic can hide a slot', () => {
+  const scenarios = [
+    { qualifiedCapacity: 2 ** 53, idleQualifiedCapacity: 2 ** 53, reason: 'qualified-capacity-invalid' },
+    { qualifiedCapacity: 2 ** 53, idleQualifiedCapacity: 0, reason: 'qualified-capacity-invalid' },
+    { qualifiedCapacity: Number.MAX_SAFE_INTEGER, idleQualifiedCapacity: 2 ** 53, reason: 'idle-qualified-capacity-invalid' },
+  ];
+  for (const { qualifiedCapacity, idleQualifiedCapacity, reason } of scenarios) {
+    const certificate = evaluateGoalBuildingProgramme(baseInput({
+      programme: { activeMissions: [mission()], eligibleQueuedGoalCount: 0,
+        qualifiedCapacity, idleQualifiedCapacity },
+    }));
+    assert.equal(certificate.state, GOAL_BUILDING_OPERATING_STATES.SAFE_HOLD);
+    assert.equal(certificate.isCapableOfBuilding, false);
+    assert.equal(certificate.isActuallyBuilding, false);
+    assert.ok(certificate.evidenceProblems.includes(reason));
+  }
+});
+
+test('programme accepts one active slot and exact remaining idle slots at the safe-integer maximum', () => {
+  const certificate = evaluateGoalBuildingProgramme(baseInput({
+    programme: { activeMissions: [mission()], eligibleQueuedGoalCount: 0,
+      qualifiedCapacity: Number.MAX_SAFE_INTEGER,
+      idleQualifiedCapacity: Number.MAX_SAFE_INTEGER - 1 },
+  }));
+  assert.equal(certificate.state, GOAL_BUILDING_OPERATING_STATES.FULLY_OPERATIONAL);
+  assert.equal(certificate.isActuallyBuilding, true);
+  assert.ok(!certificate.evidenceProblems.includes('qualified-capacity-invalid'));
+  assert.ok(!certificate.evidenceProblems.includes('idle-qualified-capacity-invalid'));
+});
