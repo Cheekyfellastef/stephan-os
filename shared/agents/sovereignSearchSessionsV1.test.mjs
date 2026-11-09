@@ -213,6 +213,38 @@ test('malformed, escaping, secret-bearing and falsely complete native receipts f
   }
 });
 
+test('native receipt Proxy arrays fail closed without invoking traps or unhandled rejections', async () => {
+  for (const field of ['reasons', 'results']) {
+    let invoked = 0;
+    const native = receipt();
+    native[field] = new Proxy(native[field], {
+      get() { invoked++; throw new Error('UNTRUSTED_RECEIPT_TRAP'); },
+      ownKeys() { invoked++; throw new Error('UNTRUSTED_RECEIPT_TRAP'); },
+      getOwnPropertyDescriptor() { invoked++; throw new Error('UNTRUSTED_RECEIPT_TRAP'); },
+    });
+    const service = createSovereignSearchSessionsV1({ scanFn: () => native });
+    const first = await started(service);
+    const outcome = await service.execute('GET_MORE_SEARCH_RESULTS', { searchId: first.searchId });
+    assert.equal(outcome.status, 'FAILED');
+    assert.equal(outcome.blocker, 'SOVEREIGN_SEARCH_RECEIPT_INVALID');
+    assert.equal(invoked, 0, field);
+    assert.deepEqual(outcome.results, []);
+    service.dispose();
+  }
+  for (const field of ['reasons', 'results']) {
+    const native = receipt();
+    const proxy = Proxy.revocable([], {});
+    proxy.revoke();
+    native[field] = proxy.proxy;
+    const service = createSovereignSearchSessionsV1({ scanFn: () => native });
+    const first = await started(service);
+    const outcome = await service.execute('GET_MORE_SEARCH_RESULTS', { searchId: first.searchId });
+    assert.equal(outcome.status, 'FAILED');
+    assert.equal(outcome.blocker, 'SOVEREIGN_SEARCH_RECEIPT_INVALID');
+    service.dispose();
+  }
+});
+
 test('page byte budget preserves a resumable cursor and all final results exactly once', async () => {
   const names = Array.from({ length: 100 }, (_, i) => `${String(i).padStart(3, '0')}-${'a'.repeat(190)}.txt`);
   const native = receipt(REQUEST, names); native.results.forEach(row => { row.preview = 'x'.repeat(240); });

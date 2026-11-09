@@ -103,6 +103,10 @@ export function validateSovereignSearchArgumentsV1(operation, raw) {
 function validateSnapshot(raw, request) {
   const keys = ['schemaVersion', 'ok', 'complete', 'path', 'query', 'mode', 'caseSensitive', 'scopeIdentity',
     'confinement', 'snapshotConsistency', 'reasons', 'stats', 'results'];
+  // Native receipts may be substituted by in-process scan adapters. Refuse
+  // Proxy arrays before Array.isArray/length/some/iteration can invoke traps.
+  // A revoked Proxy must also be rejected without calling into the target.
+  if (!plain(raw, keys) || utilTypes.isProxy(raw.reasons) || utilTypes.isProxy(raw.results)) return null;
   if (!plain(raw, keys) || keys.some(key => !Object.hasOwn(raw, key)) || raw.schemaVersion !== SNAPSHOT_SCHEMA || raw.ok !== true
     || raw.path !== request.path || raw.query !== request.query || raw.mode !== request.mode
     || raw.caseSensitive !== request.caseSensitive || raw.confinement !== CONFINEMENT
