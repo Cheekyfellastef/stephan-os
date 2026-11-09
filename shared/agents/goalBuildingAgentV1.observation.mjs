@@ -81,27 +81,46 @@ function explicitMovement(input, worker, activeMissions) {
   });
 }
 
-// An operator approval on the active goal cannot be laundered into green BUILDING
-// by a fresh worker heartbeat. The unstructured action title is not proof of scope.
-// Only a separately recorded, lineage-bound approval blocker for a *different*
-// active mission can coexist with truthful progress on the productive mission.
-function operatorApprovalProvenDisjoint(certificate, activeMissions, productiveMissions) {
-  const approvals = list(certificate.blockers).filter(
-    (blocker) => blocker && typeof blocker === 'object' && blocker.route === 'REQUEST_EXACT_OPERATOR_APPROVAL',
+// A fresh worker cannot turn any unresolved blocker on productive work green.
+// Every structured blocker, including review/proof holds, needs exact independent
+// mission AND goal lineage before disjoint work can proceed. The approval summary
+// must agree with structured approval blockers; unstructured titles are never grants.
+function programmeBlockerScopeProblem(certificate, activeMissions, productiveMissions) {
+  const blockers = list(certificate.blockers);
+  const approvals = blockers.filter(
+    (item) => item && typeof item === 'object' && text(item.route).toUpperCase() === 'REQUEST_EXACT_OPERATOR_APPROVAL',
   );
-  if (approvals.length === 0) return false;
-  return approvals.every((approval) => {
-    const missionId = text(approval.missionId);
-    const goalId = text(approval.goalId);
-    if (!missionId && !goalId) return false;
-    const matches = activeMissions.filter((mission) =>
-      (!missionId || mission.missionId === missionId)
-      && (!goalId || mission.goalId === goalId));
-    if (matches.length === 0) return false;
-    return productiveMissions.every((mission) =>
-      (!missionId || mission.missionId !== missionId)
-      && (!goalId || mission.goalId !== goalId));
-  });
+  const approvalRequired = certificate.operatorActionRequired === true;
+  if (approvalRequired !== (approvals.length > 0)) return 'PROGRAMME_OPERATOR_GATE_SCOPE_UNPROVEN';
+
+  for (const item of blockers) {
+    const isApproval = text(item?.route).toUpperCase() === 'REQUEST_EXACT_OPERATOR_APPROVAL';
+    const problem = isApproval ? 'PROGRAMME_OPERATOR_GATE_SCOPE_UNPROVEN' : 'PROGRAMME_BLOCKER_SCOPE_UNPROVEN';
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return problem;
+    const missionId = text(item.missionId);
+    const goalId = text(item.goalId);
+    // A partial identity is insufficient to assert that a blocker is disjoint.
+    if (!missionId || !goalId) return problem;
+    const matches = activeMissions.filter((mission) => mission.missionId === missionId && mission.goalId === goalId);
+    if (matches.length !== 1) return problem;
+    if (productiveMissions.some((mission) => mission.missionId === missionId || mission.goalId === goalId)) {
+      return problem;
+    }
+  }
+
+  if (approvalRequired) {
+    // Negative consistency check only: a title mentioning a productive identity
+    // disproves disjointness; it can NEVER establish operator scope or authority.
+    const target = text(certificate.operatorActionTarget);
+    const productiveIds = productiveMissions.flatMap((mission) => [text(mission.missionId), text(mission.goalId)]);
+    const targetMentionsProductiveWork = productiveIds.some((id) => {
+      if (!id) return false;
+      const escaped = id.replace(/[^a-z0-9_-]/gi, '\\$&');
+      return new RegExp('(^|[^a-z0-9._-])' + escaped + '($|[^a-z0-9._-])', 'i').test(target);
+    });
+    if (targetMentionsProductiveWork) return 'PROGRAMME_OPERATOR_GATE_SCOPE_UNPROVEN';
+  }
+  return '';
 }
 
 function firstProblem(certificate, worker, movementBlocker) {
@@ -149,6 +168,7 @@ export function projectGoalBuildingRuntimeTruth(input = {}) {
   const hasActiveProgrammeWork = activeMissions.length > 0 || nonNegativeInteger(certificate.activeMissionCount) > 0;
   const queuedWork = nonNegativeInteger(certificate.eligibleQueuedGoalCount);
   const certificateProblem = firstProblem(certificate, worker, explicit.blocker);
+  const structuredBlockerProblem = programmeBlockerScopeProblem(certificate, activeMissions, productiveMissions);
 
   let state = GOAL_BUILDING_RUNTIME_STATES.UNKNOWN;
   let stallReason = '';
@@ -171,11 +191,10 @@ export function projectGoalBuildingRuntimeTruth(input = {}) {
       // or authority evidence. Never project BUILDING while hard proof is invalid.
       state = GOAL_BUILDING_RUNTIME_STATES.BLOCKED;
       blocker ||= 'PROGRAMME_BUILDING_CONTRADICTION';
-    } else if (certificate.operatorActionRequired === true
-      && !operatorApprovalProvenDisjoint(certificate, activeMissions, productiveMissions)) {
+    } else if (structuredBlockerProblem) {
       state = GOAL_BUILDING_RUNTIME_STATES.BLOCKED;
-      // The operator gate is the hard reason; do not let soft degradation text mask it.
-      blocker = 'PROGRAMME_OPERATOR_GATE_SCOPE_UNPROVEN';
+      // A structured gate is hard proof; soft degradation cannot mask it.
+      blocker = structuredBlockerProblem;
     } else if (certificate.isActuallyBuilding === true && productiveMissions.length > 0) {
       state = GOAL_BUILDING_RUNTIME_STATES.BUILDING;
       blocker = '';

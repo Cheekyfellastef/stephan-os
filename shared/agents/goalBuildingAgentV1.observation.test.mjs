@@ -358,3 +358,76 @@ test('contradictory operator blocker mission and goal identities fail closed', (
   assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BLOCKED);
   assert.equal(result.buildingProven, false);
 });
+
+
+test('same-goal structured approval cannot be hidden by false operatorActionRequired summary', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({
+      operatorActionRequired: false,
+      blockers: [{ blockerId: 'approval-1', route: 'REQUEST_EXACT_OPERATOR_APPROVAL', missionId: 'mission-1', goalId: 'goal-1' }],
+    }),
+    workerBeacon: runningBeacon(),
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BLOCKED);
+  assert.equal(result.buildingProven, false);
+  assert.equal(result.blocker, 'PROGRAMME_OPERATOR_GATE_SCOPE_UNPROVEN');
+});
+
+test('disjoint operator approval cannot hide a same-goal qualified-review hold', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({
+      activeMissions: [mission(), mission({ missionId: 'mission-2', goalId: 'goal-2', phase: 'WAITING_FOR_OPERATOR' })],
+      operatorActionRequired: true,
+      operatorActionTarget: 'Approve exact protected merge for mission-2.',
+      blockers: [
+        { blockerId: 'approval-2', route: 'REQUEST_EXACT_OPERATOR_APPROVAL', missionId: 'mission-2', goalId: 'goal-2' },
+        { blockerId: 'review-1', route: 'REQUEST_QUALIFIED_REVIEW_OR_PROOF', missionId: 'mission-1', goalId: 'goal-1' },
+      ],
+    }),
+    workerBeacon: runningBeacon(),
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BLOCKED);
+  assert.equal(result.buildingProven, false);
+  assert.equal(result.blocker, 'PROGRAMME_BLOCKER_SCOPE_UNPROVEN');
+});
+
+test('disjoint structured approval conflicting with productive-mission action target fails closed', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({
+      activeMissions: [mission(), mission({ missionId: 'mission-2', goalId: 'goal-2', phase: 'WAITING_FOR_OPERATOR' })],
+      operatorActionRequired: true,
+      operatorActionTarget: 'Approve the active mission-1 protected merge.',
+      blockers: [{ blockerId: 'approval-2', route: 'REQUEST_EXACT_OPERATOR_APPROVAL', missionId: 'mission-2', goalId: 'goal-2' }],
+    }),
+    workerBeacon: runningBeacon(),
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BLOCKED);
+  assert.equal(result.buildingProven, false);
+  assert.equal(result.blocker, 'PROGRAMME_OPERATOR_GATE_SCOPE_UNPROVEN');
+});
+
+test('fully lineage-bound disjoint non-operator review gate preserves real productive progress', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({
+      activeMissions: [mission(), mission({ missionId: 'mission-2', goalId: 'goal-2', phase: 'WAIT_INDEPENDENT_REVIEW' })],
+      blockers: [{ blockerId: 'review-2', route: 'REQUEST_QUALIFIED_REVIEW_OR_PROOF', missionId: 'mission-2', goalId: 'goal-2' }],
+    }),
+    workerBeacon: runningBeacon(),
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BUILDING);
+  assert.equal(result.buildingProven, true);
+});
+
+test('unbound structured review gate fails closed even when summary does not declare an operator action', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({ blockers: [{ blockerId: 'review-unbound', route: 'REQUEST_QUALIFIED_REVIEW_OR_PROOF', missionId: '', goalId: 'goal-2' }] }),
+    workerBeacon: runningBeacon(),
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BLOCKED);
+  assert.equal(result.blocker, 'PROGRAMME_BLOCKER_SCOPE_UNPROVEN');
+});
