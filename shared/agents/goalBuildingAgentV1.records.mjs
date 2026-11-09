@@ -109,6 +109,11 @@ function workerBeaconSupplied(input) {
   return Boolean(input?.workerBeacon || input?.missionWorkerBeacon);
 }
 
+// Physical-building assertions require a current native worker observation.
+// Programme-health certificates remain diagnostic but never stand in for pickup.
+const PHYSICAL_BUILDING_UNPROVEN_NO_WORKER =
+  'No. Current physical BUILDING is not proven without a fresh worker observation.';
+
 function runtimeTruthFor(input, certificate) {
   // A live worker observation must take precedence over an older caller-supplied
   // projection. Never let a cached BUILDING claim hide a new IDLE/BLOCKED beacon.
@@ -181,9 +186,9 @@ export function answerGoalBuildingQuestion(input = {}) {
     if (runtimeTruth) {
       answer = runtimeBuildingAnswer(runtimeTruth, certificate, input);
     } else {
-      answer = certificate.isActuallyBuilding
-        ? `Yes. Durable progress is proven for ${certificate.productiveMissionCount} active mission(s): ${certificate.activeMissions.filter((mission) => PRODUCTIVE_MISSION_PHASES.has(mission.phase)).slice(0, 5).map((mission) => `${mission.goalId} at ${mission.phase}`).join('; ')}.`
-        : `No. Active goal-building progress is not currently proven. ${certificate.summary}`;
+      // A positive programme certificate can report source-side progress but
+      // cannot assert native physical BUILDING in the absence of worker evidence.
+      answer = PHYSICAL_BUILDING_UNPROVEN_NO_WORKER;
     }
   } else if (/who.*own|owner|who.*fix/.test(question)) {
     questionKind = 'BLOCKER_OWNERSHIP';
@@ -219,7 +224,7 @@ export function answerGoalBuildingQuestion(input = {}) {
     answer: boundedText(answer, 'Programme status unavailable.', 1200),
     state: certificate.state,
     isCapableOfBuilding: certificate.isCapableOfBuilding,
-    isActuallyBuilding: runtimeTruth ? runtimeBuildingProven(runtimeTruth, certificate, input) : certificate.isActuallyBuilding,
+    isActuallyBuilding: runtimeBuildingProven(runtimeTruth, certificate, input),
     runtimeTruthState: runtimeTruth?.state || '',
     secondsSinceMeaningfulMovement: runtimeTruth?.secondsSinceMeaningfulMovement ?? null,
     evidenceHead: certificate.expectedHead,
@@ -231,7 +236,7 @@ function statusBody(certificate, runtimeTruth = null, input = {}) {
   const body = {
     state: certificate.state,
     isCapableOfBuilding: certificate.isCapableOfBuilding,
-    isActuallyBuilding: runtimeTruth ? runtimeBuildingProven(runtimeTruth, certificate, input) : certificate.isActuallyBuilding,
+    isActuallyBuilding: runtimeBuildingProven(runtimeTruth, certificate, input),
     programmeMode: certificate.programmeMode,
     expectedHead: certificate.expectedHead,
     activeMissionCount: certificate.activeMissionCount,
@@ -285,7 +290,9 @@ export function createGoalBuildingAgentParticipantStatusRecord(input = {}) {
     correlationId: safeId(input.correlationId, 'goal-building-agent-v1'),
     relatedIssue: GOAL_BUILDING_AGENT_RELATED_ISSUE,
     status: certificate.state,
-    summary: runtimeTruth ? runtimeBuildingAnswer(runtimeTruth, certificate, input) : certificate.summary,
+    summary: runtimeTruth
+      ? runtimeBuildingAnswer(runtimeTruth, certificate, input)
+      : boundedText(`${PHYSICAL_BUILDING_UNPROVEN_NO_WORKER} Programme status: ${certificate.summary}`, '', 400),
     body: statusBody(certificate, runtimeTruth, input),
     proofRefs,
   });

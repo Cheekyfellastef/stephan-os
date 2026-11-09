@@ -301,3 +301,41 @@ test('complete cached BUILDING fields cannot impersonate a fresh native worker o
   assert.equal(observed.isActuallyBuilding, true);
   assert.match(observed.answer, /^Yes\. BUILDING is physically proven/);
 });
+
+test('omitted or null runtime truth without a worker cannot promote programme progress to physical BUILDING', () => {
+  const positive = certificate();
+  assert.equal(positive.isActuallyBuilding, true); // source/programme truth is kept separate
+  for (const [label, options] of [
+    ['runtime object omitted', {}],
+    ['explicit runtime null', { runtimeTruth: null }],
+    ['explicit runtime undefined', { runtimeTruth: undefined }],
+  ]) {
+    const response = answerGoalBuildingQuestion({
+      question: 'Is Stephanos actually building now?',
+      certificate: positive, nowMs, ...options,
+    });
+    assert.equal(response.questionKind, 'ACTIVE_BUILD_TRUTH', label);
+    assert.equal(response.runtimeTruthState, '', label);
+    assert.equal(response.isActuallyBuilding, false, label);
+    assert.match(response.answer, /^No\. Current physical BUILDING is not proven/, label);
+    assert.equal(response.isCapableOfBuilding, true, label);
+
+    const records = createGoalBuildingAgentWorkspaceRecords({
+      certificate: positive, timestampUtc, validationOptions: { nowMs }, nowMs,
+      proofRefs: ['evidence/receipts/mission-worker-heartbeat-current.json'], ...options,
+    });
+    assert.equal(records.runtimeTruth, null, label);
+    const body = JSON.parse(records.status.body);
+    assert.equal(body.isActuallyBuilding, false, label);
+    assert.equal(body.productiveMissionCount, 1, label);
+    assert.match(records.status.summary, /^No\. Current physical BUILDING is not proven/, label);
+  }
+
+  // An actual same-goal, current-head worker beacon still proves physical work.
+  const live = answerGoalBuildingQuestion({
+    question: 'Is Stephanos actually building now?', certificate: positive,
+    workerBeacon: workerBeacon(), nowMs,
+  });
+  assert.equal(live.isActuallyBuilding, true);
+  assert.equal(live.runtimeTruthState, GOAL_BUILDING_RUNTIME_STATES.BUILDING);
+});
