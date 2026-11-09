@@ -144,17 +144,23 @@ function freeze(value) {
 
 export function deriveElasticBuildWidth(input = {}) {
   const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const minimum = integer(source.minimumLanes) ?? MINIMUM_BUILD_LANES;
-  const maximum = integer(source.maximumLanes) ?? MAXIMUM_BUILD_LANES;
+  // An omitted optional policy uses the default. An explicitly supplied but
+  // malformed limit MUST NOT silently widen capacity to the default.
+  const minimum = source.minimumLanes === undefined ? MINIMUM_BUILD_LANES : integer(source.minimumLanes);
+  const maximum = source.maximumLanes === undefined ? MAXIMUM_BUILD_LANES : integer(source.maximumLanes);
   const active = integer(source.activeLaneCount);
   const ready = integer(source.readyIndependentWorkCount);
   const available = integer(source.availableExecutorSlots);
-  const invalid = minimum < MINIMUM_BUILD_LANES
+  const invalid = minimum === null
+    || maximum === null
+    || minimum < MINIMUM_BUILD_LANES
     || maximum < minimum
     || maximum > MAXIMUM_BUILD_LANES
     || active === null
     || ready === null
-    || available === null;
+    || available === null
+    // Independently safe integer counts can sum to an unsafe/rounded width.
+    || (active !== null && ready !== null && !Number.isSafeInteger(active + ready));
 
   if (invalid) return freeze({
     schemaVersion:ELASTIC_BUILD_CAPACITY_SCHEMA,
