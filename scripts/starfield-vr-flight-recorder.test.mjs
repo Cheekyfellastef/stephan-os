@@ -437,3 +437,52 @@ test('native Windows VR teardown never restarts Ollama unless governor reconcile
     { encoding: 'utf8', timeout: 20_000, windowsHide: true, shell: false });
   assert.equal(result.status, 0, [result.error?.message, result.stdout, result.stderr].filter(Boolean).join('\n'));
 });
+
+
+test('native Windows governor JSON field types fail closed before Ollama restore eligibility', { skip: process.platform !== 'win32' }, async () => {
+  const actualFunction = performance.match(/function Invoke-GamingResourceReconcile \{[\s\S]*?(?=\r?\nfunction Restore-Session \{)/)?.[0];
+  assert.ok(actualFunction, 'invoke the actual production governor reconciliation parser');
+  const disposable = await mkdtemp(join(tmpdir(), 'stephanos-vr-governor-json-'));
+  try {
+    const childScript = join(disposable, 'mock-governor.ps1');
+    await writeFile(childScript, [
+      '[CmdletBinding()]',
+      'param([string]$Action)',
+      "if ($Action -ne 'Reconcile') { exit 7 }",
+      'Write-Output $env:STEPHANOS_VR_TEST_GOVERNOR_JSON',
+    ].join('\n'));
+    const childQuoted = "'" + childScript.replaceAll("'", "''") + "'";
+    const commands = [
+      'Set-StrictMode -Version Latest',
+      "$ErrorActionPreference = 'Stop'",
+      actualFunction,
+      '$gamingResourceGovernorScript = ' + childQuoted,
+      "$powershellExecutable = Join-Path $PSHOME 'powershell.exe'",
+      '$cases = @(',
+      " @{name='valid-normal-inactive'; json='{\"Phase\":\"NORMAL\",\"Active\":false}'; valid=$true; active=$false}",
+      " @{name='valid-gaming-active'; json='{\"Phase\":\"GAMING\",\"Active\":true}'; valid=$true; active=$true}",
+      " @{name='missing-active'; json='{\"Phase\":\"NORMAL\"}'; valid=$false; active=$false}",
+      " @{name='null-active'; json='{\"Phase\":\"NORMAL\",\"Active\":null}'; valid=$false; active=$false}",
+      " @{name='text-false'; json='{\"Phase\":\"NORMAL\",\"Active\":\"false\"}'; valid=$false; active=$false}",
+      " @{name='numeric-zero'; json='{\"Phase\":\"NORMAL\",\"Active\":0}'; valid=$false; active=$false}",
+      " @{name='missing-phase'; json='{\"Active\":false}'; valid=$false; active=$false}",
+      " @{name='null-phase'; json='{\"Phase\":null,\"Active\":false}'; valid=$false; active=$false}",
+      ')',
+      'foreach ($case in $cases) {',
+      ' $env:STEPHANOS_VR_TEST_GOVERNOR_JSON = $case.json',
+      ' $observed = Invoke-GamingResourceReconcile',
+      ' if ([bool]$observed.reconciled -ne [bool]$case.valid) { throw "unexpected reconciled flag: $($case.name)" }',
+      ' if ([bool]$observed.active -ne [bool]$case.active) { throw "unexpected active flag: $($case.name)" }',
+      ' if (-not $case.valid -and [string]$observed.error -notlike "*GOVERNOR_RECONCILE_SCHEMA_INVALID*") { throw "missing fail-closed error: $($case.name)" }',
+      ' if ($case.valid -and -not [string]::IsNullOrWhiteSpace([string]$observed.error)) { throw "valid child refused: $($case.name)" }',
+      '}',
+      'Remove-Item Env:STEPHANOS_VR_TEST_GOVERNOR_JSON -ErrorAction SilentlyContinue',
+    ];
+    const result = spawnSync('powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(commands.join('\n'), 'utf16le').toString('base64')],
+      { encoding: 'utf8', timeout: 90_000, windowsHide: true, shell: false });
+    assert.equal(result.status, 0, [result.error?.message, result.stdout, result.stderr].filter(Boolean).join('\n'));
+  } finally {
+    await rm(disposable, { recursive: true, force: true });
+  }
+});

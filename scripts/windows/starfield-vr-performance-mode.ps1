@@ -247,9 +247,20 @@ function Invoke-GamingResourceReconcile {
         $json = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gamingResourceGovernorScript -Action Reconcile 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0 -or -not $json.Trim()) { throw $json.Trim() }
         $state = $json.Trim() | ConvertFrom-Json
+        # Absent, null, or string-valued Active is not proof that gaming ended.
+        # Casting any of those to [bool] could authorize an Ollama restart.
+        if ($null -eq $state) { throw 'GOVERNOR_RECONCILE_SCHEMA_INVALID' }
+        $phaseProperty = $state.PSObject.Properties['phase']
+        $activeProperty = $state.PSObject.Properties['active']
+        if ($null -eq $phaseProperty -or $null -eq $activeProperty -or
+            $phaseProperty.Value -isnot [string] -or
+            [string]::IsNullOrWhiteSpace([string]$phaseProperty.Value) -or
+            $activeProperty.Value -isnot [bool]) {
+            throw 'GOVERNOR_RECONCILE_SCHEMA_INVALID'
+        }
         $result.reconciled = $true
-        $result.phase = [string]$state.phase
-        $result.active = [bool]$state.active
+        $result.phase = [string]$phaseProperty.Value
+        $result.active = [bool]$activeProperty.Value
     } catch {
         $result.error = $_.Exception.Message
     }
