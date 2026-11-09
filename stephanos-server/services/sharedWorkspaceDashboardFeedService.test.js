@@ -10,6 +10,7 @@ import {
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { SHARED_WORKSPACE_FEED_RECORD_SCOPES } from '../../shared/agents/shared-workspace-dashboard-feed.mjs';
 import { readBackendSharedWorkspaceDashboardFeed } from './sharedWorkspaceDashboardFeedService.js';
+import { projectGoalBuildJourneyV1 } from '../../shared/agents/goalBuildConveyorV1.mjs';
 
 async function createWorkspace() {
   const root = await mkdtemp(join(tmpdir(), 'stephanos-backend-dashboard-feed-'));
@@ -236,4 +237,27 @@ test('complete Shared Workspace estate reaches the local dashboard without the l
   assert.equal(feed.projection.goalEstate.stateCounts.active, 6);
   assert.equal(feed.projection.goalEstate.stateCounts.eligible, 80);
   assert.equal(feed.diagnosticTrace.find((hop) => hop.hop === 'goal-estate-summary')?.openGoalCount, 86);
+});
+
+// Included in the real hosted surface/ignition Node job, not only a local trace fixture.
+test('Goal #2961 hosted dashboard: repeated worker gates fail closed under current-looking BUILDING truth', () => {
+  const goal = {
+    issue: '#2002', statusTruth: 'CURRENT', state: 'ACTIVE',
+    buildTruthTruth: 'CURRENT', buildState: 'BUILDING', builder: 'mission-worker-1',
+  };
+  for (const states of [['BLOCKED', 'PASS'], ['PASS', 'BLOCKED'], ['PASS', 'PASS']]) {
+    const journey = projectGoalBuildJourneyV1(goal, {
+      issueNumber: 2002, missionId: 'critical-2002-goal-building-self-hosting',
+      gates: [
+        { id: 'WORKER', state: states[0] },
+        { id: 'worker', state: states[1] },
+      ],
+    });
+    assert.equal(journey.exactAutonomyTrackBound, true);
+    assert.equal(journey.stages.find(stage => stage.id === 'PICKED_UP').trafficLight, 'RED');
+    assert.equal(journey.stages.find(stage => stage.id === 'PICKED_UP').reason, 'DUPLICATE_AUTONOMY_GATE_ID');
+    assert.notEqual(journey.stages.find(stage => stage.id === 'BUILDING').trafficLight, 'GREEN');
+    assert.equal(journey.currentTrafficLight, 'RED');
+    assert.equal(journey.stages.find(stage => stage.id === 'GOAL').trafficLight, 'GREEN');
+  }
 });
