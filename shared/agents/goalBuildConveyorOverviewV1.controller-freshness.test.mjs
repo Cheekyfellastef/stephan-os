@@ -23,7 +23,7 @@ test('Goal #2961: old, future and declared-stale reports never retain a green co
   const cards = overview(input, { nowMs: NOW }).controllers;
   assert.deepEqual(input, snapshot, 'pure read-only projection');
   assert.deepEqual(cards.map(card => card.trafficLight),
-    ['GREEN', 'GREY', 'GREY', 'GREY', 'GREY', 'GREY', 'GREY']);
+    ['AMBER', 'GREY', 'GREY', 'GREY', 'GREY', 'GREY', 'GREY']);
   assert.deepEqual(cards.map(card => card.truth),
     ['CURRENT', 'STALE', 'STALE', 'STALE', 'UNKNOWN', 'STALE', 'CURRENT']);
   assert.equal(cards[0].expiresAtUtc, at(-1000 + 600000));
@@ -39,8 +39,27 @@ test('Goal #2961: fresh negative and degraded lights survive while stale ones ex
     item('fresh-unknown', { trafficLight: null }),
   ]), { nowMs: NOW }).controllers;
   assert.deepEqual(cards.map(card => card.trafficLight),
-    ['RED', 'AMBER', 'GREEN', 'GREY', 'GREY']);
+    ['RED', 'AMBER', 'AMBER', 'GREY', 'GREY']);
   assert.equal(cards[3].truth, 'STALE');
   assert.equal(cards[3].expiresAtUtc, '');
   assert.equal(cards[4].truth, 'CURRENT');
+});
+
+// A fresh controller report is not physical pickup. A separate qualified
+// signed pickup and matching proof reference permit the positive control.
+test('Goal #2002: current controller GREEN needs source-qualified signed pickup', () => {
+  const proofRef = 'workspace:proof/gate-19';
+  const input = projection([item('with-proof', { proofRefs: [proofRef] }),
+    item('without-proof', { proofRefs: ['self-declared'] })]);
+  input.goalBuildGateObservatory = {
+    schemaVersion: 'stephanos.goal-build-gate-observatory.v1',
+    diagnosticOnly: true, approvalAuthority: false, mergeAuthority: false,
+    sourceHead: 'a'.repeat(40), observedAtUtc: at(-1000),
+    observationStatus: 'EVIDENCE_AVAILABLE', gates: [
+      { id: 19, status: 'PASS', observedAtUtc: at(-1000), proofRef },
+    ],
+  };
+  const output = overview(input, { nowMs: NOW });
+  assert.deepEqual(output.controllers.map(c => c.trafficLight), ['GREEN', 'AMBER']);
+  assert.equal(output.stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
 });
