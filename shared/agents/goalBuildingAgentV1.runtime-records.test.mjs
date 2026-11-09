@@ -182,3 +182,85 @@ test('neither a contrary programme certificate nor a contrary runtime state can 
   assert.equal(contraryState.isActuallyBuilding, false);
   assert.match(contraryState.answer, /^No\. Goal building is BLOCKED/);
 });
+
+test('a fresh IDLE worker beacon overrides a stale supplied positive runtime projection', () => {
+  const earlierProjection = {
+    schemaVersion: 'stephanos.goal-building-runtime-truth.v1',
+    state: GOAL_BUILDING_RUNTIME_STATES.BUILDING,
+    buildingProven: true,
+    expectedHead: head,
+    workerState: 'RUNNING',
+    exactWorkerHeadMatches: true,
+    meaningfulMovementFresh: true,
+    workerTaskId: 'task-runtime-1',
+    workerReceiptId: 'receipt-runtime-1',
+    proofBasis: { workerBeaconProven: true, productiveMissionCount: 1 },
+  };
+  const idleWorker = {
+    ...workerBeacon(),
+    workerState: 'MISSION_WORKER_TICK_PASS',
+    activeTaskId: '',
+    activeReceiptId: '',
+    executionPhase: '',
+  };
+  const result = answerGoalBuildingQuestion({
+    question: 'Is Stephanos actually building now?',
+    certificate: certificate(),
+    runtimeTruth: earlierProjection,
+    workerBeacon: idleWorker,
+    nowMs,
+  });
+  assert.equal(result.isActuallyBuilding, false);
+  assert.notEqual(result.runtimeTruthState, GOAL_BUILDING_RUNTIME_STATES.BUILDING);
+  assert.match(result.answer, /^No\./);
+
+  const records = createGoalBuildingAgentWorkspaceRecords({
+    certificate: certificate(),
+    runtimeTruth: earlierProjection,
+    workerBeacon: idleWorker,
+    timestampUtc,
+    validationOptions: { nowMs },
+    nowMs,
+    proofRefs: ['evidence/receipts/mission-worker-heartbeat-current.json'],
+  });
+  const body = JSON.parse(records.status.body);
+  assert.equal(body.isActuallyBuilding, false);
+  assert.notEqual(body.runtimeTruth.state, GOAL_BUILDING_RUNTIME_STATES.BUILDING);
+});
+
+test('partial precomputed BUILDING claims cannot supply missing native pickup proof', () => {
+  const complete = {
+    schemaVersion: 'stephanos.goal-building-runtime-truth.v1',
+    state: GOAL_BUILDING_RUNTIME_STATES.BUILDING,
+    buildingProven: true,
+    expectedHead: head,
+    workerState: 'RUNNING',
+    exactWorkerHeadMatches: true,
+    meaningfulMovementFresh: true,
+    workerTaskId: 'task-runtime-1',
+    workerReceiptId: 'receipt-runtime-1',
+    proofBasis: { workerBeaconProven: true, productiveMissionCount: 1 },
+  };
+  for (const runtimeTruth of [
+    { ...complete, proofBasis: undefined },
+    { ...complete, proofBasis: { workerBeaconProven: false, productiveMissionCount: 1 } },
+    { ...complete, proofBasis: { workerBeaconProven: true, productiveMissionCount: 0 } },
+    { ...complete, workerReceiptId: '' },
+    { ...complete, exactWorkerHeadMatches: false },
+    { ...complete, meaningfulMovementFresh: false },
+    { ...complete, expectedHead: '0'.repeat(40) },
+  ]) {
+    const answer = answerGoalBuildingQuestion({
+      question: 'Is Stephanos actually building now?',
+      certificate: certificate(),
+      runtimeTruth,
+    });
+    assert.equal(answer.isActuallyBuilding, false, JSON.stringify(runtimeTruth));
+    assert.match(answer.answer, /^No\. BUILDING is not physically proven/);
+    const records = createGoalBuildingAgentWorkspaceRecords({
+      certificate: certificate(), runtimeTruth, timestampUtc,
+      validationOptions: { nowMs }, proofRefs: ['evidence/receipts/mission-worker-heartbeat-current.json'],
+    });
+    assert.equal(JSON.parse(records.status.body).isActuallyBuilding, false);
+  }
+});
