@@ -52,7 +52,7 @@ function ledger(required = [OPENCLAW_TASK_CLASS.OC1]) {
     capabilities: [{
       protected: true,
       updateDisposition: OPENCLAW_UPDATE_DISPOSITION.PRESERVE,
-      affectedTaskClasses: [],
+      affectedTaskClasses: required.slice(0, 1),
     }],
     updateAllowed: true,
   };
@@ -497,6 +497,60 @@ test('same-version protected implementation changes cannot bypass producer task-
         updateDisposition: OPENCLAW_UPDATE_DISPOSITION.PRESERVE,
         affectedTaskClasses: [] }],
     },
+    qualificationReplay: [],
+  });
+  assert.equal(preserved.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(preserved.updatePromotionAllowed, true);
+});
+
+test('cross-version protected PRESERVE requires its own replay, not an unrelated success', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const unrelated = ledger([OPENCLAW_TASK_CLASS.OC6]);
+  unrelated.capabilities[0].affectedTaskClasses = [OPENCLAW_TASK_CLASS.OC1];
+  const missingOwnReplay = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: verified,
+    capabilityLedger: unrelated,
+    qualificationReplay: [replay(OPENCLAW_TASK_CLASS.OC6)],
+  });
+  assert.equal(missingOwnReplay.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.equal(missingOwnReplay.updatePromotionAllowed, false);
+  assert.ok(missingOwnReplay.blockers.includes('PROTECTED_CAPABILITY_REPLAY_CONTRACT_INVALID'));
+
+  const missingAffected = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: verified,
+    capabilityLedger: {
+      ...unrelated,
+      capabilities: [{ ...unrelated.capabilities[0], affectedTaskClasses: [] }],
+    },
+    qualificationReplay: [replay(OPENCLAW_TASK_CLASS.OC6)],
+  });
+  assert.equal(missingAffected.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.ok(missingAffected.blockers.includes('PROTECTED_CAPABILITY_REPLAY_CONTRACT_INVALID'));
+
+  const qualified = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: verified,
+    capabilityLedger: {
+      ...ledger([OPENCLAW_TASK_CLASS.OC1, OPENCLAW_TASK_CLASS.OC6]),
+      capabilities: [{
+        protected: true,
+        updateDisposition: OPENCLAW_UPDATE_DISPOSITION.PRESERVE,
+        affectedTaskClasses: [OPENCLAW_TASK_CLASS.OC1],
+      }],
+    },
+    qualificationReplay: [
+      replay(OPENCLAW_TASK_CLASS.OC1),
+      replay(OPENCLAW_TASK_CLASS.OC6),
+    ],
+  });
+  assert.equal(qualified.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(qualified.updatePromotionAllowed, true);
+
+  const sameVersion = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  sameVersion.exactIdentity.targetVersion = '1.2.3';
+  const sameVersionLedger = { ...ledger([]), targetVersion: '1.2.3' };
+  const preserved = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: sameVersion,
+    capabilityLedger: sameVersionLedger,
     qualificationReplay: [],
   });
   assert.equal(preserved.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);

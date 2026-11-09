@@ -243,7 +243,12 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
           blockers.push('CAPABILITY_LEDGER_CAPABILITY_INVALID');
           continue;
         }
-        if (capability.protected && CHANGED_DISPOSITIONS.has(text(capability.updateDisposition))) {
+        // The source ledger requires affected-task replay for a protected PRESERVE
+        // across versions too. Unrelated successful replays cannot satisfy it.
+        const requiresProtectedReplay = CHANGED_DISPOSITIONS.has(text(capability.updateDisposition))
+          || (text(capability.updateDisposition) === OPENCLAW_UPDATE_DISPOSITION.PRESERVE
+            && currentVersion !== targetVersion);
+        if (capability.protected && requiresProtectedReplay) {
           const affected = denseArray(capability.affectedTaskClasses, MAX_PROOF_REFS);
           if (!affected || affected.length === 0 || affected.some((taskClass) =>
             !TASK_CLASSES.has(text(taskClass)) || !required.includes(text(taskClass)))) {
