@@ -181,3 +181,32 @@ test('independent per-gate cooldown does not park native capacity behind origina
   assert.match(coreSource, /lastGateStewardAttempts = \[/);
   assert.match(coreSource, /\.slice\(-23\)/);
 });
+
+test('exact canonical lease HOLD token is required before signed custody failure projection', () => {
+  const canonical = 'lane:elastic-lease-expired-or-not-active';
+  const idsFor = (identity, held = true) => {
+    const result = projectCoreGateEvidenceV1({
+      sourceHead: head, observedAtUtc,
+      refillSummary: {
+        refillCanonicalProgrammeHeld: held,
+        refillCanonicalProgrammeBlockerIdentity: identity,
+      },
+    });
+    assert.equal(result.ok, true);
+    return result.evidence.gates.map(gate => gate.id);
+  };
+  assert.deepEqual(idsFor(canonical), [7, 8]);
+  assert.deepEqual(idsFor('lane:other-blocker|' + canonical), [7, 8]);
+  assert.deepEqual(idsFor(canonical + '|owner:another-blocker'), [7, 8]);
+  for (const forged of [
+    'lane:not-' + canonical,
+    canonical + '-unrelated',
+    'other:' + canonical,
+    'lane:unrelated|' + canonical + '-spoof',
+    'elastic-lease-expired-or-not-active',
+  ]) {
+    assert.deepEqual(idsFor(forged), [], 'forged lease identity ' + forged);
+  }
+  assert.deepEqual(idsFor(canonical, false), []);
+  assert.deepEqual(idsFor(''), []);
+});
