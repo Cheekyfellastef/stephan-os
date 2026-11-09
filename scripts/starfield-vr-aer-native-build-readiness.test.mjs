@@ -57,6 +57,17 @@ test('untrusted host CMake configure-script and compiler overrides fail closed',
     assert.equal(observation.deploymentAllowed, false);
     assert.equal(observation.sourceMutationAllowed, false);
   }
+  // CMake's standard CC/CXX environment selectors are executable inputs too.
+  // A disposable real CMake configure executed a custom CXX wrapper without
+  // any CMAKE_* override; reject that route before declaring native readiness.
+  for (const key of ['CC', 'CXX', 'cxx']) {
+    const observation = inspect({inheritedEnvironment: {[key]: '/tmp/disposable-compiler-wrapper'}});
+    assert.equal(observation.status, 'BLOCKED', key);
+    assert.ok(observation.blockers.includes('HOST_CMAKE_EXECUTION_INPUT_PRESENT'), key);
+    assert.equal(observation.deploymentAllowed, false);
+  }
+  assert.equal(inspect({inheritedEnvironment: {CXX: ''}}).status,
+    'SOURCE_READY_FOR_SEPARATE_QUALIFIED_NATIVE_BUILD');
   const mixedCase = inspect({inheritedEnvironment: {'cmake_toolchain_file': 'escape.cmake'}});
   assert.ok(mixedCase.blockers.includes('HOST_CMAKE_EXECUTION_INPUT_PRESENT'));
   assert.equal(inspect({inheritedEnvironment: {CMAKE_TOOLCHAIN_FILE: ''}}).status,
