@@ -29,6 +29,7 @@ import {
 import { evaluateGoalBuildingProgramme } from './goalBuildingAgentV1.evaluator.mjs';
 import {
   GOAL_BUILDING_RUNTIME_STATES,
+  GOAL_BUILDING_RUNTIME_TRUTH_SCHEMA_VERSION,
   projectGoalBuildingRuntimeTruth,
 } from './goalBuildingAgentV1.observation.mjs';
 
@@ -104,17 +105,34 @@ export function buildGoalBuildingAgentReadiness(input = {}) {
 }
 
 function runtimeTruthFor(input, certificate) {
-  if (input.runtimeTruth && typeof input.runtimeTruth === 'object') return input.runtimeTruth;
-  if (!input.workerBeacon && !input.missionWorkerBeacon) return null;
-  return projectGoalBuildingRuntimeTruth({ ...input, certificate });
+  // A live worker observation must take precedence over an older caller-supplied
+  // projection. Never let a cached BUILDING claim hide a new IDLE/BLOCKED beacon.
+  if (input.workerBeacon || input.missionWorkerBeacon) {
+    return projectGoalBuildingRuntimeTruth({ ...input, certificate });
+  }
+  if (input.runtimeTruth && typeof input.runtimeTruth === 'object' && !Array.isArray(input.runtimeTruth)) {
+    return input.runtimeTruth;
+  }
+  return null;
 }
 
 function runtimeBuildingProven(runtimeTruth, certificate) {
-  // A supplied runtime state is a projection, not physical proof by itself.
-  // A contradictory state/flag or programme certificate must never print Yes
-  // while the accompanying structured status reports no proven build.
-  return runtimeTruth?.state === GOAL_BUILDING_RUNTIME_STATES.BUILDING
+  // A self-reported BUILDING state and true flag are not evidence of native
+  // pickup. Require the complete projected worker/receipt/movement proof basis.
+  const basis = runtimeTruth?.proofBasis;
+  return runtimeTruth?.schemaVersion === GOAL_BUILDING_RUNTIME_TRUTH_SCHEMA_VERSION
+    && runtimeTruth.state === GOAL_BUILDING_RUNTIME_STATES.BUILDING
     && runtimeTruth.buildingProven === true
+    && runtimeTruth.workerState === 'RUNNING'
+    && runtimeTruth.exactWorkerHeadMatches === true
+    && runtimeTruth.meaningfulMovementFresh === true
+    && typeof runtimeTruth.workerTaskId === 'string' && runtimeTruth.workerTaskId.length > 0
+    && typeof runtimeTruth.workerReceiptId === 'string' && runtimeTruth.workerReceiptId.length > 0
+    && /^[0-9a-f]{40}$/.test(runtimeTruth.expectedHead || '')
+    && runtimeTruth.expectedHead === certificate?.expectedHead
+    && basis?.workerBeaconProven === true
+    && Number.isSafeInteger(basis.productiveMissionCount)
+    && basis.productiveMissionCount > 0
     && certificate?.isActuallyBuilding === true;
 }
 
