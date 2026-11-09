@@ -257,6 +257,7 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
     const capabilities = denseArray(ledger.capabilities, OPENCLAW_UPDATE_CAPABILITY_LEDGER_MAX_CAPABILITIES);
     if (!capabilities || capabilities.length === 0) blockers.push('CAPABILITY_LEDGER_CAPABILITIES_UNPROVEN');
     else {
+      let protectedCapabilitySeen = false;
       for (const raw of capabilities) {
         const capability = plainDataRecord(raw);
         if (!capability || typeof capability.protected !== 'boolean'
@@ -264,6 +265,7 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
           blockers.push('CAPABILITY_LEDGER_CAPABILITY_INVALID');
           continue;
         }
+        if (capability.protected) protectedCapabilitySeen = true;
         // The source ledger requires affected-task replay for a protected PRESERVE
         // across versions too. Unrelated successful replays cannot satisfy it.
         const requiresProtectedReplay = CHANGED_DISPOSITIONS.has(text(capability.updateDisposition))
@@ -277,6 +279,9 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
           }
         }
       }
+      // The source ledger rejects readiness with no protected capability.
+      // Recheck it here so an asserted ready verdict cannot promote an empty protection estate.
+      if (!protectedCapabilitySeen) blockers.push('CAPABILITY_LEDGER_PROTECTED_INVENTORY_EMPTY');
     }
   }
 

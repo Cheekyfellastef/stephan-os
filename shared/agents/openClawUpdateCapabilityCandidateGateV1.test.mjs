@@ -599,3 +599,37 @@ test('cross-version protected PRESERVE requires its own replay, not an unrelated
   assert.equal(preserved.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
   assert.equal(preserved.updatePromotionAllowed, true);
 });
+
+
+test('a fabricated ready ledger without protected capabilities cannot promote', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const qualifiedReplay = [replay(OPENCLAW_TASK_CLASS.OC1)];
+  const positive = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: verified,
+    capabilityLedger: ledger(),
+    qualificationReplay: qualifiedReplay,
+  });
+  assert.equal(positive.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(positive.updatePromotionAllowed, true);
+
+  // The original producer would reject this as NO_PROTECTED_CAPABILITIES.
+  // A contradictory ready verdict must not bypass that invariant at the consumer.
+  const unprotectedLedger = {
+    ...ledger(),
+    capabilities: [{
+      protected: false,
+      updateDisposition: OPENCLAW_UPDATE_DISPOSITION.PRESERVE,
+      affectedTaskClasses: [],
+    }],
+    protectedCapabilityCount: 0,
+  };
+  const rejected = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: verified,
+    capabilityLedger: unprotectedLedger,
+    qualificationReplay: qualifiedReplay,
+  });
+  assert.equal(rejected.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.equal(rejected.updatePromotionAllowed, false);
+  assert.equal(rejected.providerRoutingResumeAllowed, false);
+  assert.ok(rejected.blockers.includes('CAPABILITY_LEDGER_PROTECTED_INVENTORY_EMPTY'));
+});
