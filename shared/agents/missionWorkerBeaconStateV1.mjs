@@ -19,7 +19,9 @@ function text(value, limit = 180) {
 }
 
 function safeSha(value) {
-  const normalized = text(value, 40).toLowerCase();
+  // Validate the complete supplied identity before bounding presentation.
+  // Truncating to 40 first silently accepts a spoofed SHA prefix.
+  const normalized = String(value ?? '').trim().toLowerCase();
   return SHA.test(normalized) ? normalized : '';
 }
 
@@ -66,6 +68,9 @@ export function projectMissionWorkerBeaconState(record = {}, {
   const timestampUtc = observedAt(record);
   const timestampMs = Date.parse(timestampUtc);
   const ageMs = Number.isFinite(timestampMs) ? Math.max(0, nowMs - timestampMs) : null;
+  // A future heartbeat must never become current merely because age was
+  // clamped to zero. Permit only bounded five-second cross-clock skew.
+  const futureDated = Number.isFinite(timestampMs) && timestampMs > nowMs + 5_000;
   const stale = ageMs === null || ageMs > staleAfterMs;
   const head = safeSha(record.headSha || record.sourceHead || record.expectedHead);
   const normalizedExpectedHead = safeSha(expectedHead);
@@ -75,15 +80,18 @@ export function projectMissionWorkerBeaconState(record = {}, {
   const executionPhase = safePhase(record.executionPhase || record.activeExecutionPhase);
   const activeExecutionIdentityComplete = Boolean(activeTaskId && activeReceiptId && executionPhase);
 
-  const state = stale
-    ? 'STALE'
+  const state = futureDated
+    ? 'BLOCKED'
+    : stale
+      ? 'STALE'
     : !exactHeadMatch
       ? 'BLOCKED'
       : mappedState;
   const buildingProven = state === 'RUNNING' && activeExecutionIdentityComplete;
 
   let blocker = '';
-  if (stale) blocker = 'MISSION_WORKER_HEARTBEAT_STALE';
+  if (futureDated) blocker = 'MISSION_WORKER_HEARTBEAT_FUTURE_DATED';
+  else if (stale) blocker = 'MISSION_WORKER_HEARTBEAT_STALE';
   else if (!exactHeadMatch) blocker = 'MISSION_WORKER_HEAD_MISMATCH';
   else if (state === 'UNKNOWN') blocker = 'MISSION_WORKER_STATE_UNKNOWN';
   else if (state === 'BLOCKED') blocker = text(record.blocker || rawState, 180);
@@ -95,6 +103,7 @@ export function projectMissionWorkerBeaconState(record = {}, {
     rawState,
     observedAtUtc: timestampUtc,
     ageMs,
+    futureDated,
     head,
     expectedHead: normalizedExpectedHead,
     exactHeadMatch,

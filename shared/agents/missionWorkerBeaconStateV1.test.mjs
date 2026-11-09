@@ -98,3 +98,44 @@ test('unsafe receipt identity is rejected rather than echoed into telemetry', ()
   assert.equal(state.buildingProven, false);
   assert.equal(state.blocker, 'MISSION_WORKER_ACTIVE_RECEIPT_UNPROVEN');
 });
+
+test('future-dated RUNNING heartbeat cannot promote unobserved physical pickup', () => {
+  const state = projectMissionWorkerBeaconState(heartbeat({
+    timestampUtc: '2026-08-26T18:46:00.000Z',
+    lastTickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+    activeTaskId: 'task-physical-1', activeReceiptId: 'receipt-physical-1',
+    executionPhase: 'source-build',
+  }), { nowMs: NOW, expectedHead: HEAD });
+  assert.equal(state.futureDated, true);
+  assert.equal(state.state, 'BLOCKED');
+  assert.equal(state.blocker, 'MISSION_WORKER_HEARTBEAT_FUTURE_DATED');
+  assert.equal(state.buildingProven, false);
+  assert.equal(state.falseBuildingRejected, true);
+});
+
+test('bounded five-second clock skew retains legitimate running exact-head proof', () => {
+  const state = projectMissionWorkerBeaconState(heartbeat({
+    timestampUtc: '2026-08-26T18:45:03.000Z',
+    lastTickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+    activeTaskId: 'task-physical-2', activeReceiptId: 'receipt-physical-2',
+    executionPhase: 'source-build',
+  }), { nowMs: NOW, expectedHead: HEAD });
+  assert.equal(state.futureDated, false);
+  assert.equal(state.state, 'RUNNING');
+  assert.equal(state.buildingProven, true);
+});
+
+test('extra SHA suffix is not an exact head despite matching 40-hex prefix', () => {
+  for (const invalid of [HEAD + 'b', HEAD + '-suffix']) {
+    const state = projectMissionWorkerBeaconState(heartbeat({
+      headSha: invalid,
+      lastTickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+      activeTaskId: 'task-physical-3', activeReceiptId: 'receipt-physical-3',
+      executionPhase: 'source-build',
+    }), { nowMs: NOW, expectedHead: HEAD });
+    assert.equal(state.head, '', invalid);
+    assert.equal(state.exactHeadMatch, false, invalid);
+    assert.equal(state.blocker, 'MISSION_WORKER_HEAD_MISMATCH', invalid);
+    assert.equal(state.buildingProven, false, invalid);
+  }
+});

@@ -1,3 +1,5 @@
+// Goal #2961: real hosted Node runner validates exact-head and temporal worker beacons.
+import '../shared/agents/missionWorkerBeaconStateV1.test.mjs';
 // Fleet acceptance: every executable builder exit must retain proof-backed pickup and terminal truth.
 import test from 'node:test';
 import assert from 'node:assert/strict';
