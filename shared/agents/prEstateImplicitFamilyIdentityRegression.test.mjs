@@ -73,3 +73,57 @@ test('explicit owner family ID cannot silently shadow a generated family', () =>
     pr(301, 'Exact title'), pr(302, 'Exact title'), pr(900, 'Owner family'),
   ], [{ id: generatedId, members: [900] }]), /duplicate PR estate family id:/);
 });
+
+
+test('punctuation-distinct runtime titles stay in two separate exact-title families', () => {
+  const records = [
+    pr(91001, 'Fix C++ runtime regression'),
+    pr(91002, 'Fix C++ runtime regression'),
+    pr(92001, 'Fix C# runtime regression'),
+    pr(92002, 'Fix C# runtime regression'),
+  ];
+  const result = ledger(records);
+  const byNumber = new Map(result.entries.map((entry) => [entry.number, entry]));
+  assert.equal(result.families.length, 2);
+  assert.equal(byNumber.get(91001).familyId, byNumber.get(91002).familyId);
+  assert.equal(byNumber.get(92001).familyId, byNumber.get(92002).familyId);
+  assert.notEqual(byNumber.get(91001).familyId, byNumber.get(92001).familyId);
+  assert.deepEqual(
+    result.families.map((family) => family.members).sort((left, right) => left[0] - right[0]),
+    [[91001, 91002], [92001, 92002]],
+  );
+  assert.equal(result.finalVerdict, 'PR_ESTATE_RECONCILIATION_REQUIRED');
+  assert.equal(validatePrEstateLedger(result).valid, true);
+  const reversed = ledger([...records].reverse());
+  for (const entry of reversed.entries) {
+    assert.equal(entry.familyId, byNumber.get(entry.number).familyId);
+  }
+});
+
+test('case and whitespace normalize but punctuation-sensitive family identity survives member retirement', () => {
+  const before = ledger([
+    pr(101, '  FIX  C++   runtime regression '),
+    pr(102, 'fix c++ runtime regression'),
+    pr(103, 'Fix C++ runtime regression'),
+  ]);
+  const after = ledger([pr(102, 'fix c++ runtime regression'), pr(103, 'Fix C++ runtime regression')]);
+  assert.equal(before.families.length, 1);
+  assert.equal(after.families.length, 1);
+  assert.equal(before.entries[0].familyId, before.entries[1].familyId);
+  assert.equal(before.entries[1].familyId, before.entries[2].familyId);
+  assert.equal(after.entries[0].familyId, before.entries[0].familyId);
+  assert.equal(after.entries[1].familyId, before.entries[0].familyId);
+  assert.equal(validatePrEstateLedger(before).valid, true);
+  assert.equal(validatePrEstateLedger(after).valid, true);
+});
+
+test('generic Codex placeholder punctuation variants remain excluded from implicit grouping', () => {
+  const result = ledger([
+    pr(81, 'Codex-generated pull request'),
+    pr(181, 'Codex generated pull request'),
+    pr(281, 'Codex_generated_pull_request'),
+  ]);
+  assert.equal(result.families.length, 3);
+  assert.ok(result.entries.every((entry) => entry.familyId === null));
+  assert.equal(validatePrEstateLedger(result).valid, true);
+});
