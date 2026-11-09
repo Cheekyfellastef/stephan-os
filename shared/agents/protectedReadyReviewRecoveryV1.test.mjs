@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyProtectedReadyReviewDraftRecoveryV1 as classify,
-  READY_REVIEW_DRAFT_INTERLEAVE_CODE, READY_REVIEW_RECOVERY_STEP } from './protectedReadyReviewRecoveryV1.mjs';
+  READY_REVIEW_DRAFT_INTERLEAVE_CODE, READY_REVIEW_RECOVERY_STEP,
+  classifyProtectedReadyReviewGitHubReadbackV1 as githubReadback } from './protectedReadyReviewRecoveryV1.mjs';
 const head = 'b'.repeat(40), base = 'e'.repeat(40), tree = 'a'.repeat(40);
 function fixture() {
   return {
@@ -101,7 +102,6 @@ test('fresh original owner recovery only: no replay, expired window, wrong scope
 
 // Read-only GitHub-shape evidence regressions for ORIGINAL #1802, not
 // qualification of a second review or authorization of a source mutation.
-import { classifyProtectedReadyReviewGitHubReadbackV1 as githubReadback } from './protectedReadyReviewRecoveryV1.mjs';
 function githubFixture() {
   const sourceHead = 'b'.repeat(40), sourceTree = 'a'.repeat(40), baseSha = 'e'.repeat(40);
   const identity = { repository: 'Cheekyfellastef/stephan-os', prNumber: 3451,
