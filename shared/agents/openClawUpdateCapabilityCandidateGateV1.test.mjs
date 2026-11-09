@@ -633,3 +633,37 @@ test('a fabricated ready ledger without protected capabilities cannot promote', 
   assert.equal(rejected.providerRoutingResumeAllowed, false);
   assert.ok(rejected.blockers.includes('CAPABILITY_LEDGER_PROTECTED_INVENTORY_EMPTY'));
 });
+
+
+test('a ready capability ledger cannot contradict its own protected count', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const qualifications = [replay(OPENCLAW_TASK_CLASS.OC1)];
+  const producerLedger = { ...ledger(), protectedCapabilityCount: 1 };
+  const good = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: verified,
+    capabilityLedger: producerLedger,
+    qualificationReplay: qualifications,
+  });
+  assert.equal(good.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(good.updatePromotionAllowed, true);
+
+  // Older source-only acceptance fixtures omit this optional producer field.
+  const legacy = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: verified,
+    capabilityLedger: ledger(),
+    qualificationReplay: qualifications,
+  });
+  assert.equal(legacy.updatePromotionAllowed, true);
+
+  for (const malformedCount of [0, 2, -1, '1', null, NaN, Infinity]) {
+    const rejected = evaluateOpenClawUpdateCapabilityCandidateV1({
+      stagedUpdate: verified,
+      capabilityLedger: { ...producerLedger, protectedCapabilityCount: malformedCount },
+      qualificationReplay: qualifications,
+    });
+    assert.equal(rejected.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE, String(malformedCount));
+    assert.equal(rejected.updatePromotionAllowed, false);
+    assert.equal(rejected.providerRoutingResumeAllowed, false);
+    assert.ok(rejected.blockers.includes('CAPABILITY_LEDGER_PROTECTED_COUNT_MISMATCH'));
+  }
+});
