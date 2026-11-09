@@ -159,3 +159,14 @@ test('signed unknown checkpoint identity cannot be silently dropped while anothe
   assert.equal(r.counts.PASS, 0);
   assert.equal(r.counts.UNVERIFIED, 23);
 });
+
+
+test('fresh signed envelope cannot resuscitate an expired immutable proof as green', () => {
+  const old = observation(1, 'PASS');
+  old.proof.timestampUtc = new Date(nowMs - 11 * 60_000).toISOString();
+  old.gate.proofRecordSha256 = sha256(old.proof);
+  const r = projectGoalBuildGateObservatoryV1(buildPacket([old]));
+  assert.equal(r.counts.PASS, 0);
+  assert.equal(r.observationStatus, 'UNVERIFIED');
+  assert.equal(r.approvalAuthority, false);
+});
