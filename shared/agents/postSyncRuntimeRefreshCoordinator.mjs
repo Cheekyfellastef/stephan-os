@@ -1,3 +1,4 @@
+import { types as nodeTypes } from 'node:util';
 import {
   POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
   POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
@@ -10,6 +11,29 @@ export {
   projectPostSyncSovereignRelayObservation,
   projectPostSyncSovereignRelayProof,
 };
+
+// Source-side validation only: an adapter is not a commissioned native host.
+// Proof flags must be inert own data, never inherited or accessor-mediated.
+function sovereignPluginHostProofPass(proof, expectedHead) {
+  if (!proof || typeof proof !== 'object' || nodeTypes.isProxy(proof)) return false;
+  let fields;
+  try {
+    const prototype = Object.getPrototypeOf(proof);
+    if (prototype !== Object.prototype && prototype !== null) return false;
+    fields = Object.getOwnPropertyDescriptors(proof);
+  } catch {
+    return false;
+  }
+  for (const key of ['ok', 'exactHeadProofOk', 'desktopPluginHostHandshakeVerified', 'loadedManifestVerified']) {
+    const field = fields[key];
+    if (!field || !Object.hasOwn(field, 'value') || field.value !== true) return false;
+  }
+  const sourceHead = fields.sourceHead;
+  return Boolean(sourceHead && Object.hasOwn(sourceHead, 'value')
+    && typeof sourceHead.value === 'string'
+    && SHA_PATTERN.test(sourceHead.value)
+    && sourceHead.value.toLowerCase() === String(expectedHead).toLowerCase());
+}
 
 export const POST_SYNC_REFRESH_SCHEMA = 'stephanos.post-sync-runtime-refresh.v1';
 
@@ -853,11 +877,7 @@ export async function executePostSyncRefreshPlan({
         clearTimeout(deadlineTimer);
       }
     }
-    const hostVerified = hostProof?.ok === true
-      && hostProof?.exactHeadProofOk === true
-      && hostProof?.desktopPluginHostHandshakeVerified === true
-      && hostProof?.loadedManifestVerified === true
-      && String(hostProof?.sourceHead || '').toLowerCase() === String(afterHead).toLowerCase();
+    const hostVerified = sovereignPluginHostProofPass(hostProof, afterHead);
     if (!hostVerified) {
       return Object.freeze({
         ok: false,

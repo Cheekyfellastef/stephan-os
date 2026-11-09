@@ -1405,6 +1405,41 @@ test('versioned Sovereign manifests never claim desktop skill activation from th
   assert.equal(witnessed.finalVerdict, 'POST_SYNC_RUNTIME_REFRESH_PASS');
 });
 
+test('private Sovereign plugin host proof refuses accessor, inherited and Proxy success fields', async () => {
+  const changedPaths = ['plugins/sovereign-commander/plugin.json'];
+  const accepted = { ...pass(), desktopPluginHostHandshakeVerified: true, loadedManifestVerified: true };
+  const run = (hostProof) => executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths,
+    adapters: {
+      refreshSovereignCommander: () => pass(),
+      verifySovereignPluginHost: async () => hostProof,
+    },
+  });
+  let getterCalls = 0;
+  const accessor = { ...accepted };
+  Object.defineProperty(accessor, 'desktopPluginHostHandshakeVerified', {
+    enumerable: true, get() { getterCalls += 1; return true; },
+  });
+  const getterResult = await run(accessor);
+  assert.equal(getterResult.ok, false);
+  assert.equal(getterResult.blocker, 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN');
+  assert.equal(getterCalls, 0, 'host proof flag getter must not run');
+  assert.equal((await run(Object.create(accepted))).ok, false, 'inherited flags cannot authenticate');
+  let proxyFlagReads = 0;
+  const proxy = new Proxy(accepted, {
+    get(target, key, receiver) {
+      if (key === 'ok') proxyFlagReads += 1;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  assert.equal((await run(proxy)).ok, false, 'host evidence cannot come from a Proxy');
+  assert.equal(proxyFlagReads, 0, 'Proxy success field must not be read');
+  const revoked = Proxy.revocable(accepted, {});
+  revoked.revoke();
+  assert.equal((await run(revoked.proxy)).ok, false, 'revoked Proxy must fail closed');
+  assert.equal((await run(accepted)).ok, true, 'ordinary owned data remains valid');
+});
+
 test('unresponsive Sovereign plugin host inspection is bounded and fails closed without a repeat', { timeout: 8_000 }, async () => {
   let inspected = 0;
   let signal;
