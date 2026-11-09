@@ -63,13 +63,23 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     && Boolean(gate?.proofRef);
   // Source-only BUILDING reports cannot certify a physical pickup.
   // This read-only adapter consumes only the upstream qualified signed gate.
-  const signedPickup = ledgerLive ? gates.find(gate => gate?.id === 19
-    && gate.status === 'PASS' && gateLive(gate)) : null;
+  // A signed gate-19 status does not, by itself, establish a causally valid
+  // pickup. Its signed prerequisite (gate 18) must be current and PASS, and
+  // no current veto may contradict the admission. A diagnostic gate remains
+  // different from a worker-scoped STARTED receipt.
+  const claimGate = gates.find(gate => gate?.id === 18);
+  const currentVeto = gates.some(gate => gateLive(gate) && gate.status === 'FAIL');
+  const signedPickup = ledgerLive && !currentVeto
+    && claimGate?.status === 'PASS' && gateLive(claimGate)
+    ? gates.find(gate => gate?.id === 19
+      && gate.status === 'PASS' && gateLive(gate)) : null;
   const signedPickupRef = signedPickup?.proofRef || '';
   const stages = FLOW.map(([id, label, gateIds]) => {
     const observations = gateIds.map(number => gates.find(gate => gate.id === number));
     const failure = observations.find(gate => gateLive(gate) && gate.status === 'FAIL');
-    const passed = observations.length > 0 && observations.every(gate => gateLive(gate) && gate.status === 'PASS');
+    const passed = observations.length > 0
+      && observations.every(gate => gateLive(gate) && gate.status === 'PASS')
+      && (id !== 'pickup' || Boolean(signedPickup));
     const stale = observations.some(gate => gate && (gate.status === 'STALE' || !gateLive(gate)) && gate.proofRef);
     const waiting = ledgerLive && observations.some(gate => gate?.status === 'WAITING_FOR_PREREQUISITE');
     const state = failure ? 'BLOCKED' : passed ? 'PROVEN' : stale ? 'STALE' : waiting ? 'WAITING' : 'UNKNOWN';
@@ -103,14 +113,14 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
   const buildLive = buildKnown && build.truth === 'CURRENT'
     && ['BUILDING', 'BLOCKED', 'HELD', 'QUEUED', 'IDLE_GREEN'].includes(build.state)
     && fresh(build.observedAtUtc, nowMs, maxAgeMs);
-  const sameSourceAsSignedPickup = Boolean(signedPickupRef) && buildLive
-    && /^[a-f0-9]{40}$/.test(String(build?.sourceHead || ''))
-    && build.sourceHead === ledger.sourceHead;
-  const buildingGoals = sameSourceAsSignedPickup && build.state === 'BUILDING'
-    ? array(build.goals).filter(goal => goal.state === 'BUILDING'
-      && goal.builder && array(goal.proofRefs).includes(signedPickupRef)
-      && (!goal.sourceHead || goal.sourceHead === build.sourceHead)
-      && fresh(goal.lastMaterialProgressAtUtc, nowMs, maxAgeMs)) : [];
+  // The verified 23-gate public projection contains *no signed goal/worker
+  // execution identity*. Its one gate-19 proofRef can be copied into arbitrary
+  // goal, controller or lane reports; matching that string is NOT an authentic
+  // worker-specific pickup. Fail closed on physical per-goal GREEN/count until
+  // the existing original publisher exposes independently qualified, distinct
+  // source/claim/goal/worker-bound pickup records. Preserve reported goals
+  // separately in the Octopus inventory rather than manufacturing pickups.
+  const buildingGoals = [];
   const workers = [...new Map(buildingGoals.map(goal => [goal.builder, {
     id: goal.builder, goals: buildingGoals.filter(other => other.builder === goal.builder)
       .map(other => ({ issue: other.issue, title: other.title })),
@@ -127,7 +137,6 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
       truth: current ? 'CURRENT' : controller.freshness === 'UNKNOWN' ? 'UNKNOWN' : 'STALE',
       trafficLight: current && ['GREEN', 'AMBER', 'RED', 'GREY'].includes(reportedLight)
         ? reportedLight === 'GREEN' && controller.activityState === 'BUILDING'
-          && (!signedPickupRef || !array(controller.proofRefs).includes(signedPickupRef))
           ? 'AMBER' : reportedLight : 'GREY',
       expiresAtUtc: current ? new Date(time(controller.timestampUtc) + maxAgeMs).toISOString() : '',
     };
@@ -144,9 +153,9 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
       observedAtUtc, live, expiresAtUtc: live ? new Date(time(observedAtUtc) + maxAgeMs).toISOString() : '',
       state: live ? String(item.activityState || 'UNKNOWN') : observedAtUtc ? 'STALE' : 'UNKNOWN',
       blocker: live ? String(item.blocker || '') : '',
-      materialActions: live && item.activityState === 'BUILDING' && signedPickupRef
-        && array(item.proofRefs).includes(signedPickupRef)
-        ? count(item.materialActionsSucceeded) : null,
+      // A shared diagnostic gate ref cannot credit material work to a
+      // specific controller without a scoped independent execution receipt.
+      materialActions: null,
       namedLanes: array(item.materialLanes).length + array(item.activeLanes).length + array(item.parkedLanes).length,
     };
   });
