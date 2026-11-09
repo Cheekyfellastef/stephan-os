@@ -56,24 +56,38 @@ function explicitMovement(input, worker, activeMissions) {
   const observed = timestamp(candidate.observedAtUtc || candidate.timestampUtc);
   if (!observed) return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_TIMESTAMP_INVALID' });
   const missionId = text(candidate.missionId);
-  const receiptId = text(candidate.receiptId);
+  const goalId = text(candidate.goalId);
   const taskId = text(candidate.taskId);
-  if (missionId && !activeMissions.some((mission) => mission.missionId === missionId)) {
-    return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_MISSION_MISMATCH' });
+  const receiptId = text(candidate.receiptId);
+
+  // A fresh timestamp is not material progress. Require the exact productive
+  // mission/goal and the active worker task/receipt before accepting movement.
+  if (!missionId) return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_MISSION_UNPROVEN' });
+  if (!goalId) return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_GOAL_UNPROVEN' });
+  if (!taskId) return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_TASK_UNPROVEN' });
+  if (!receiptId) return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_RECEIPT_UNPROVEN' });
+
+  const matches = activeMissions.filter((mission) => text(mission?.missionId) === missionId);
+  if (matches.length !== 1) return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_MISSION_MISMATCH' });
+  const mission = matches[0];
+  if (text(mission.goalId) !== goalId) {
+    return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_GOAL_MISMATCH' });
   }
-  if (receiptId && worker.activeReceiptId && receiptId !== worker.activeReceiptId) {
+  if (!PRODUCTIVE_MISSION_PHASES.has(text(mission.phase).toUpperCase())) {
+    return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_MISSION_NOT_PRODUCTIVE' });
+  }
+  if (!worker.activeReceiptId || receiptId !== worker.activeReceiptId) {
     return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_RECEIPT_MISMATCH' });
   }
-  if (taskId && worker.activeTaskId && taskId !== worker.activeTaskId) {
+  if (!worker.activeTaskId || taskId !== worker.activeTaskId) {
     return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_TASK_MISMATCH' });
   }
-  const mission = missionId ? activeMissions.find((item) => item.missionId === missionId) : null;
   return Object.freeze({
     movement: Object.freeze({
       observedAtUtc: observed.iso,
       observedAtMs: observed.ms,
-      missionId: missionId || text(mission?.missionId),
-      goalId: text(candidate.goalId || mission?.goalId),
+      missionId,
+      goalId,
       description: boundedText(candidate.description || candidate.stateMovement, 'Execution state advanced.', 240),
       source: 'execution-movement',
     }),
@@ -213,7 +227,8 @@ export function projectGoalBuildingRuntimeTruth(input = {}) {
     blocker ||= 'PROGRAMME_BLOCKED';
   }
 
-  const currentMission = mostRecentProductiveMission || latestMission(activeMissions);
+  const currentMission = (explicit.movement && productiveMissions.find((mission) => mission.missionId === explicit.movement.missionId))
+    || mostRecentProductiveMission || latestMission(activeMissions);
   const protectedMainHead = text(input.protectedMainHead || certificate.protectedMainHead).toLowerCase();
   const installedMainHead = text(input.installedMainHead || certificate.installedMainHead).toLowerCase();
   const servedHead = text(input.servedHead).toLowerCase();
