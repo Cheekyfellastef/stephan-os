@@ -306,3 +306,23 @@ test('Goal #2961 hosted dashboard keeps physical stages amber/red for upstream m
     }
   }
 });
+
+test('Goal #2961 hosted dashboard refuses synthetic logical PASS as native pickup', () => {
+  const goal = {
+    issue: '#2002', state: 'ACTIVE', statusTruth: 'CURRENT',
+    buildState: 'BUILDING', buildTruthTruth: 'CURRENT', builder: 'simulated-worker',
+    selectedForAdmission: true, buildProofRefs: ['receipt:synthetic'],
+    physicalPickupProven: true,
+  };
+  const gates = ['ELIGIBLE_GOAL', 'SELECT', 'MISSION', 'CLAIM', 'WORKER',
+    'SOURCE_CHANGED', 'TESTED', 'TERMINAL_RECEIPT'].map((id) => ({ id, state: 'PASS' }));
+  const j = projectGoalBuildJourneyV1(goal, {
+    issueNumber: 2002, missionId: 'synthetic-no-private-witness', gates,
+    physicalPickupProven: true,
+  });
+  assert.equal(j.logicalWorkerHandoffReported, true);
+  assert.equal(j.physicalPickupProven, false);
+  for (const id of ['PICKED_UP', 'BUILDING', 'BUILT', 'TESTED', 'COMPLETED']) {
+    assert.notEqual(j.stages.find(s => s.id === id)?.trafficLight, 'GREEN', id);
+  }
+});

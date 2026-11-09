@@ -174,11 +174,17 @@ export function projectGoalBuildJourneyV1(goal = {}, autonomyBuildTrack = null) 
   // chain. Even a WORKER PASS cannot erase an earlier ELIGIBLE/SELECT/MISSION
   // BLOCKED or WAITING. A downstream logical PASS is not a native witness.
   const requiredPhysicalGates = ['ELIGIBLE_GOAL', 'SELECT', 'MISSION', 'CLAIM', 'WORKER'];
-  const exactWorkerPickupProven = Boolean(exactTrack
+  const logicalWorkerHandoffReported = Boolean(exactTrack
     && stages[0].trafficLight === 'GREEN'
     && currentBuildTruth
     && requiredPhysicalGates.every((id) => text(gates.get(id)?.state).toUpperCase() === 'PASS')
     && !hasConflictingGateEvidence);
+  // These gates are a diagnostic trace, not an authenticated native STARTED
+  // receipt. Neither a logical PASS nor an arbitrary buildProofRefs array can
+  // establish physical pickup. Do not create a caller-selectable trust flag.
+  // A future positive path must consume independent exact-goal/head native
+  // receipt verification, not this caller-owned autonomy trace.
+  const exactWorkerPickupProven = false;
   const pickup = stages.find((stage) => stage.id === 'PICKED_UP');
   const dispatch = stages.find((stage) => stage.id === 'DISPATCHED');
   if (pickup?.trafficLight === 'GREEN' && !exactWorkerPickupProven) {
@@ -268,9 +274,11 @@ export function projectGoalBuildJourneyV1(goal = {}, autonomyBuildTrack = null) 
     totalStageCount: stages.length,
     progressPercent: Math.round((provenStageCount / stages.length) * 100),
     exactAutonomyTrackBound: Boolean(exactTrack),
+    logicalWorkerHandoffReported,
+    physicalPickupProven: exactWorkerPickupProven,
     proofRefs,
     stages: Object.freeze(stages),
-    truthBoundary: 'Green means this exact goal has evidence for that handoff. Amber means waiting/held, red means an evidenced blocker, and grey means no proof is available. Proof is never borrowed from another goal.',
+    truthBoundary: 'Logical autonomy PASS gates are diagnostic. Physical pickup and downstream material progress stay non-green until a separately authenticated exact-goal/current-head native STARTED receipt is integrated. Caller-supplied proof references cannot establish custody.',
   });
 }
 
@@ -300,6 +308,6 @@ export function projectGoalBuildConveyorV1(goals = []) {
     blockedCount: journeys.filter((journey) => journey.stages.some((stage) => stage.blocked)).length,
     exactTrackBoundCount: journeys.filter((journey) => journey.exactAutonomyTrackBound).length,
     currentStageCounts: Object.freeze(currentStageCounts),
-    truthBoundary: 'This is a read-only projection over canonical goal, build-truth, and autonomy-track evidence. It creates no new scheduler, controller, worker, queue, or execution authority.',
+    truthBoundary: 'This read-only logical projection never converts autonomy PASS gates into physical STARTED, BUILDING or completed proof. A separate verified exact-goal native receipt is required; no scheduler, controller, worker, queue or authority is created.',
   });
 }
