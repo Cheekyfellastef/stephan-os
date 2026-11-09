@@ -547,7 +547,16 @@ test('Goal #2002 conveyor: exact scheduler identity is required even with an oth
     blockers: [], operatorGate: false, nextLegalAction: 'Continue original work.',
     createdAtUtc: '2026-09-04T09:10:00.000Z',
   };
-  const current = { protectedMainHead, sourceHead, canonicalOwnerId: 'goal-building-agent' };
+  const current = {
+    protectedMainHead, sourceHead, canonicalOwnerId: 'goal-building-agent',
+    leaseReadback: {
+      protectedMainHead, sourceHead, canonicalOwnerId: 'goal-building-agent',
+      observedAtUtc: new Date().toISOString(),
+      leases: checkpoint.leases.map((lease) => ({
+        ...lease, expiresAtUtc: new Date(Date.now() + 120_000).toISOString(),
+      })),
+    },
+  };
   const schedulerCandidate = {
     goalId: '2002', missionId: 'mission-goal-building-continuity',
     canonicalOwnerId: 'goal-building-agent', schedulerEligible: true,
