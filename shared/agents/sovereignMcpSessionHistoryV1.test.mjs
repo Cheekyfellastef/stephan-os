@@ -434,3 +434,27 @@ test('proxy traps never execute during private history inspection', () => {
   complete(history, 'ordinary-result-after-proxy', { ok: true, safeValue: 'ordinary' });
   assert.equal(stored(history, 'ordinary-result-after-proxy').resultAvailable, true);
 });
+
+
+test('prefixed and camel-case credential field aliases cannot enter private session history', () => {
+  const { history } = fixture();
+  const credentialFields = [
+    'X-API-Key', 'x_auth_token', 'aws_secret_access_key',
+    'proxyAuthorization', 'githubToken', 'clientSecret',
+    'session_password', 'vendorCredentials', 'AWS_ACCESS_KEY_ID',
+    'clientJWT',
+  ];
+  credentialFields.forEach((field, index) => {
+    const callId = 'prefixed-credential-' + index;
+    complete(history, callId, { ok: true, nested: { [field]: 'ordinary-looking-value' } });
+    const response = stored(history, callId);
+    assert.equal(response.resultAvailable, false, field);
+    assert.equal(response.call.retentionReason, 'RESULT_SENSITIVE_KEY', field);
+    assert.equal(JSON.stringify(response).includes(field), false, field);
+  });
+  complete(history, 'ordinary-structured-result', {
+    ok: true, nested: { status: 'READY', ticketCount: 3, projectTitle: 'safe' },
+  });
+  assert.equal(stored(history, 'ordinary-structured-result').resultAvailable, true);
+  assert.equal(usage(history).retainedResults, 1);
+});

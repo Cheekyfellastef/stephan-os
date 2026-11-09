@@ -31,6 +31,23 @@ const SECRET_KEYS = new Set([
   'stderr', 'stack', 'exception', 'error', 'errors', '__proto__', 'prototype', 'constructor',
 ]);
 const SECRET_TEXT = /\bBearer\s+\S{6,}|\b(?:sk|ghp|gho|ghu|ghs|github_pat)_[a-zA-Z0-9_]{8,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\bAKIA[A-Z0-9]{16}\b/i;
+// Fail closed on credential fields nested under vendor/prefix/camel-case names.
+// Testing only complete words avoids inspecting values or invoking object getters.
+const SENSITIVE_RESULT_KEY_WORDS = new Set([
+  'auth', 'authorization', 'token', 'tokens', 'password', 'passwd', 'pwd',
+  'secret', 'secrets', 'credential', 'credentials', 'cookie', 'env',
+  'environment', 'stderr', 'stack', 'exception', 'error', 'errors', 'jwt',
+]);
+function sensitiveResultKey(key) {
+  const lower = key.toLowerCase();
+  const compact = lower.replace(/[._-]/g, '');
+  if (SECRET_KEYS.has(lower) || SECRET_KEYS.has(compact) || SECRET_TEXT.test(key)) return true;
+  const words = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().split(/[._-]+/);
+  return words.some((word, index) => SENSITIVE_RESULT_KEY_WORDS.has(word)
+    || (word === 'api' && ['key', 'keys'].includes(words[index + 1]))
+    || (word === 'access' && word !== words[index + 1] && words[index + 1] === 'key')
+    || (word === 'private' && words[index + 1] === 'key'));
+}
 const MAX_NODES = 4096, MAX_DEPTH = 12;
 const freeze = value => Object.freeze(value);
 const base = () => ({
@@ -121,9 +138,7 @@ function privateSnapshot(value, maximum) {
       if (typeof key !== 'string' || Buffer.byteLength(key) > 160) refuse('RESULT_SHAPE_UNSAFE');
       if (isArray && (!/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= item.length))
         refuse('RESULT_SHAPE_UNSAFE');
-      const normalized = key.toLowerCase().replace(/[._-]/g, '');
-      if (SECRET_KEYS.has(key.toLowerCase()) || SECRET_KEYS.has(normalized) || SECRET_TEXT.test(key))
-        refuse('RESULT_SENSITIVE_KEY');
+      if (sensitiveResultKey(key)) refuse('RESULT_SENSITIVE_KEY');
       const descriptor = Object.getOwnPropertyDescriptor(item, key);
       if (!descriptor || !Object.hasOwn(descriptor, 'value')) refuse('RESULT_SHAPE_UNSAFE');
       reserve(Buffer.byteLength(JSON.stringify(key)) + 2);
