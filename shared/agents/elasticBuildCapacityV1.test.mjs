@@ -6,6 +6,7 @@ import {
   MAXIMUM_BUILD_LANES,
   MINIMUM_BUILD_LANES,
   deriveElasticBuildWidth,
+  projectCanonicalResourceIds,
   selectResourceDisjointCandidates,
 } from './elasticBuildCapacityV1.mjs';
 
@@ -123,6 +124,37 @@ test('repository-wide scope conflicts with every path inside that repository', (
   assert.equal(pathAlreadyActive.held[0].reasonCode, 'RESOURCE_CONFLICT');
 });
 
+test('reserved repository namespace refuses malformed roots and pseudo-paths before concurrent admission', () => {
+  const root = 'repo:cheekyfellastef/stephan-os';
+  const path = 'repo:cheekyfellastef/stephan-os:path:shared/agents/goalBuildingAgentV1.mjs';
+  assert.equal(projectCanonicalResourceIds([root]).finalVerdict, 'RESOURCE_IDS_CANONICAL');
+  assert.equal(projectCanonicalResourceIds([path]).finalVerdict, 'RESOURCE_IDS_CANONICAL');
+  assert.deepEqual(projectCanonicalResourceIds(['goal:42']).resourceIds, ['goal:42']);
+  for (const malformed of [
+    'repo:main',
+    'repo:cheekyfellastef/stephan-os/path:shared/agents/goalBuildingAgentV1.mjs',
+    'repo:cheekyfellastef/stephan-os/third',
+    'repo:cheekyfellastef/stephan-os:file:shared/agents/x.mjs',
+    'repo:cheekyfellastef/stephan-os/third:path:shared/x.mjs',
+  ]) {
+    const projected = projectCanonicalResourceIds([malformed]);
+    assert.equal(projected.valid, false, malformed);
+    assert.equal(projected.finalVerdict, 'RESOURCE_IDS_INVALID', malformed);
+    const selected = selectResourceDisjointCandidates([
+      { candidateId:'repository-owner', resourceIds:[root] },
+      { candidateId:'malformed-candidate', resourceIds:[malformed] },
+    ], { limit:5, activeResourceIds:[] });
+    assert.deepEqual(selected.selected.map(({ candidateId }) => candidateId), ['repository-owner'], malformed);
+    assert.equal(selected.held[0].reasonCode, 'RESOURCE_SCOPE_REQUIRED', malformed);
+  }
+  const overlapping = selectResourceDisjointCandidates([
+    { candidateId:'repository-owner', resourceIds:[root] },
+    { candidateId:'path-owner', resourceIds:[path] },
+  ], { limit:5, activeResourceIds:[] });
+  assert.deepEqual(overlapping.selected.map(({ candidateId }) => candidateId), ['repository-owner']);
+  assert.equal(overlapping.held[0].reasonCode, 'RESOURCE_CONFLICT');
+});
+
 test('resource selection admits five isolated candidates and holds only conflicts or overflow', () => {
   const candidates = Array.from({ length:7 }, (_, index) => ({
     candidateId:`goal-${index + 1}`,
@@ -139,9 +171,9 @@ test('missing, malformed, sparse or active-conflicting resource scope is never a
   const result = selectResourceDisjointCandidates([
     { candidateId:'missing' },
     { candidateId:'malformed', resourceIds:['../unsafe'] },
-    { candidateId:'conflict', resourceIds:['repo:main'] },
+    { candidateId:'conflict', resourceIds:['goal:main'] },
     { candidateId:'safe', resourceIds:['goal:42'] },
-  ], { limit:5, activeResourceIds:['repo:main'] });
+  ], { limit:5, activeResourceIds:['goal:main'] });
   assert.deepEqual(result.selected.map(({ candidateId }) => candidateId), ['safe']);
   assert.equal(result.held.find(({ candidateId }) => candidateId === 'conflict').reasonCode, 'RESOURCE_CONFLICT');
 

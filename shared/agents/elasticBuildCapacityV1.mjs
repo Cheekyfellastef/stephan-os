@@ -24,6 +24,10 @@ function denseArray(value) {
 function repositoryPathResource(value) {
   const match = value.match(/^repo:([^:]+\/[^:]+):path:(.+)$/);
   if (!match) return null;
+  // The owner/repository prefix must itself be a canonical repository root.
+  // Otherwise extra slash segments would escape the root/path conflict index.
+  const root = repositoryRootResource(`repo:${match[1]}`);
+  if (!root) return null;
   const segments = match[2].split('/');
   if (segments.some((segment) => (
     !segment
@@ -34,7 +38,7 @@ function repositoryPathResource(value) {
     || segment.endsWith(' ')
     || WIN32_RESERVED_PATH_STEM.test(segment)
   ))) return null;
-  return { repository:match[1], path:segments.join('/') };
+  return { repository:root.repository, path:segments.join('/') };
 }
 
 function repositoryRootResource(value) {
@@ -51,7 +55,12 @@ function repositoryRootResource(value) {
 function canonicalResourceId(value) {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
   if (!SAFE_RESOURCE_ID.test(normalized)) return null;
-  if (!normalized.startsWith('repo:') || !normalized.includes(':path:')) return normalized;
+  if (!normalized.startsWith('repo:')) return normalized;
+  // 'repo:' is a reserved hierarchical resource namespace, never an opaque ID.
+  // Reject malformed repo claims instead of treating them as disjoint from a
+  // repository-wide owner. Only canonical root and :path: scopes are admitted.
+  const root = repositoryRootResource(normalized);
+  if (root) return `repo:${root.repository}`;
   const parsed = repositoryPathResource(normalized);
   return parsed ? `repo:${parsed.repository}:path:${parsed.path}` : null;
 }
