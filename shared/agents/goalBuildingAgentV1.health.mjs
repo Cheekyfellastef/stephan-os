@@ -116,6 +116,10 @@ export function validateProgramme(input, expectedHead, timing) {
   if (!isNonNegativeInteger(idleQualifiedCapacity)) evidenceProblems.push('idle-qualified-capacity-invalid');
   if (isNonNegativeInteger(qualifiedCapacity) && activeMissions.length > qualifiedCapacity) evidenceProblems.push('active-missions-exceed-qualified-capacity');
   if (isNonNegativeInteger(qualifiedCapacity) && isNonNegativeInteger(idleQualifiedCapacity) && idleQualifiedCapacity > qualifiedCapacity) evidenceProblems.push('idle-capacity-exceeds-qualified-capacity');
+  if (isNonNegativeInteger(qualifiedCapacity) && isNonNegativeInteger(idleQualifiedCapacity)
+    && activeMissions.length + idleQualifiedCapacity > qualifiedCapacity) {
+    evidenceProblems.push('active-plus-idle-exceeds-qualified-capacity');
+  }
 
   const missionIds = new Set();
   const goalIds = new Set();

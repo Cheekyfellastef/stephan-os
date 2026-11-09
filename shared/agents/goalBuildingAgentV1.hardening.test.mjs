@@ -272,3 +272,38 @@ test('optional installed-head evidence remains contradiction-sensitive when it i
   assert.equal(certificate.isCapableOfBuilding, false);
   assert.ok(certificate.blockingReasons.includes('installed-main-head-mismatch'));
 });
+
+// Goal #2002: active mission slots and idle qualified slots cannot both claim the same capacity.
+test('programme rejects contradictory active plus idle qualified capacity before claiming 100 percent operations', () => {
+  const certificate = evaluateGoalBuildingProgramme(baseInput({
+    programme: {
+      activeMissions: [mission()],
+      eligibleQueuedGoalCount: 0,
+      qualifiedCapacity: 1,
+      idleQualifiedCapacity: 1,
+    },
+  }));
+  assert.equal(certificate.state, GOAL_BUILDING_OPERATING_STATES.SAFE_HOLD);
+  assert.equal(certificate.isCapableOfBuilding, false);
+  assert.equal(certificate.isActuallyBuilding, false);
+  assert.equal(certificate.programmeMode, 'SAFE_HOLD');
+  assert.ok(certificate.evidenceProblems.includes('active-plus-idle-exceeds-qualified-capacity'));
+});
+
+test('programme accepts exact active plus idle capacity and preserves truly idle spare capacity', () => {
+  for (const [qualifiedCapacity, idleQualifiedCapacity] of [[1, 0], [2, 1], [4, 3]]) {
+    const certificate = evaluateGoalBuildingProgramme(baseInput({
+      programme: { activeMissions: [mission()], eligibleQueuedGoalCount: 0,
+        qualifiedCapacity, idleQualifiedCapacity },
+    }));
+    assert.equal(certificate.state, GOAL_BUILDING_OPERATING_STATES.FULLY_OPERATIONAL);
+    assert.equal(certificate.isActuallyBuilding, true);
+    assert.ok(!certificate.evidenceProblems.includes('active-plus-idle-exceeds-qualified-capacity'));
+  }
+  const idle = evaluateGoalBuildingProgramme(baseInput({
+    programme: { activeMissions: [], eligibleQueuedGoalCount: 0,
+      qualifiedCapacity: 2, idleQualifiedCapacity: 2 },
+  }));
+  assert.equal(idle.state, GOAL_BUILDING_OPERATING_STATES.FULLY_OPERATIONAL);
+  assert.equal(idle.isActuallyBuilding, false);
+});
