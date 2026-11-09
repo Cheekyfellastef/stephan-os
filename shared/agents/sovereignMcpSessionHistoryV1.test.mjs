@@ -453,7 +453,8 @@ test('prefixed and camel-case credential field aliases cannot enter private sess
     assert.equal(JSON.stringify(response).includes(field), false, field);
   });
   complete(history, 'ordinary-structured-result', {
-    ok: true, nested: { status: 'READY', ticketCount: 3, projectTitle: 'safe' },
+    ok: true, nested: { status: 'READY', ticketCount: 3, projectTitle: 'safe',
+      signalErrorObserved: false, stderrTruncated: false, environmentReady: true },
   });
   assert.equal(stored(history, 'ordinary-structured-result').resultAvailable, true);
   assert.equal(usage(history).retainedResults, 1);

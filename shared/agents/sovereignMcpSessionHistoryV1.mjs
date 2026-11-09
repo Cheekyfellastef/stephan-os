@@ -34,9 +34,11 @@ const SECRET_TEXT = /\bBearer\s+\S{6,}|\b(?:sk|ghp|gho|ghu|ghs|github_pat)_[a-zA
 // Fail closed on credential fields nested under vendor/prefix/camel-case names.
 // Testing only complete words avoids inspecting values or invoking object getters.
 const SENSITIVE_RESULT_KEY_WORDS = new Set([
-  'auth', 'authorization', 'token', 'tokens', 'password', 'passwd', 'pwd',
-  'secret', 'secrets', 'credential', 'credentials', 'cookie', 'env',
-  'environment', 'stderr', 'stack', 'exception', 'error', 'errors', 'jwt',
+  // Keep ordinary process/status evidence fields (signalErrorObserved,
+  // stderrTruncated, environmentReady) retainable; the existing exact-key
+  // denylist still rejects raw error, stderr, env and authority values.
+  'authorization', 'token', 'tokens', 'password', 'passwd', 'pwd',
+  'secret', 'secrets', 'credential', 'credentials', 'cookie', 'jwt',
 ]);
 function sensitiveResultKey(key) {
   const lower = key.toLowerCase();
