@@ -104,7 +104,13 @@ export function projectGoalBuildGateObservatoryV1({
           const matches = knownProofs.filter(p => ['proof', 'stephanos.shared_workspace.proof'].includes(p?.kind)
             && p?.proofId === id && p?.sourceHead === trustedHead
             && time(p.timestampUtc) <= time(e.observedAtUtc) + MAX_CLOCK_SKEW_MS
-            && nowMs - time(p.timestampUtc) <= maxAge
+            // Preserve an authenticated old checkpoint as STALE. A fresh
+            // signed envelope still requires a fresh immutable proof, so an
+            // old receipt can never be republished as current-green.
+            && Number.isFinite(time(p.timestampUtc))
+            && time(p.timestampUtc) <= nowMs + MAX_CLOCK_SKEW_MS
+            && (nowMs - time(p.timestampUtc) <= maxAge
+              || nowMs - time(e.observedAtUtc) > maxAge)
             && createHash('sha256').update(JSON.stringify(p)).digest('hex') === proofDigest);
           return matches.length === 1;
         });
