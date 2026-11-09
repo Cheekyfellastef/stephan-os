@@ -261,3 +261,25 @@ test('Goal #2961 hosted dashboard: repeated worker gates fail closed under curre
     assert.equal(journey.stages.find(stage => stage.id === 'GOAL').trafficLight, 'GREEN');
   }
 });
+
+// Hosted dashboard/surface CI must execute the same physical proof regressions.
+test('Goal #2961 hosted display never counts downstream PASS when worker custody is contradictory', () => {
+  const goal = {
+    issue: '#2002', state: 'ACTIVE', statusTruth: 'CURRENT',
+    buildState: 'BUILDING', buildTruthTruth: 'CURRENT', builder: 'mission-worker-1',
+  };
+  for (const downstream of ['SOURCE_CHANGED', 'TESTED', 'TERMINAL_RECEIPT']) {
+    const journey = projectGoalBuildJourneyV1(goal, {
+      issueNumber: 2002, missionId: 'critical-2002-goal-building-self-hosting',
+      gates: [
+        { id: 'CLAIM', state: 'PASS' },
+        { id: 'WORKER', state: 'PASS' }, { id: 'worker', state: 'PASS' },
+        { id: downstream, state: 'PASS' },
+      ],
+    });
+    assert.equal(journey.stages.find((s) => s.id === 'PICKED_UP').trafficLight, 'RED');
+    for (const id of ['BUILDING', 'BUILT', 'TESTED', 'COMPLETED']) {
+      assert.notEqual(journey.stages.find((s) => s.id === id).trafficLight, 'GREEN', downstream + ':' + id);
+    }
+  }
+});

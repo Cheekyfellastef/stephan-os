@@ -75,22 +75,42 @@ test('a goal never borrows another goal autonomy proof', () => {
   assert.notEqual(journey.stages.find((stage) => stage.id === 'PICKED_UP')?.trafficLight, 'GREEN');
 });
 
-test('build truth can prove live builder pickup without fabricating later completion', () => {
-  const journey = projectGoalBuildJourneyV1({
-    issue: '#7003',
-    title: 'Live builder truth',
-    state: 'ACTIVE',
-    statusTruth: 'CURRENT',
-    buildState: 'BUILDING',
-    buildTruthTruth: 'CURRENT',
-    builder: 'foundry-forge',
-  });
-
-  assert.equal(journey.stages.find((stage) => stage.id === 'DISPATCHED')?.trafficLight, 'GREEN');
-  assert.equal(journey.stages.find((stage) => stage.id === 'PICKED_UP')?.trafficLight, 'GREEN');
-  assert.equal(journey.stages.find((stage) => stage.id === 'BUILDING')?.trafficLight, 'GREEN');
-  assert.equal(journey.stages.find((stage) => stage.id === 'BUILT')?.trafficLight, 'GREY');
-  assert.equal(journey.stages.find((stage) => stage.id === 'COMPLETED')?.trafficLight, 'GREY');
+test('logical BUILDING needs exact same-goal CLAIM and WORKER proof before physical green', () => {
+  const goal = {
+    issue: '#7003', title: 'Logical builder label only', state: 'ACTIVE',
+    statusTruth: 'CURRENT', buildState: 'BUILDING',
+    buildTruthTruth: 'CURRENT', builder: 'foundry-forge',
+  };
+  const cases = [
+    ['no track', null],
+    ['wrong goal', track(7004, [gate('CLAIM', 'PASS'), gate('WORKER', 'PASS')])],
+    ['worker waiting', track(7003, [gate('CLAIM', 'PASS'), gate('WORKER', 'WAITING')])],
+    ['worker blocked', track(7003, [gate('CLAIM', 'PASS'), gate('WORKER', 'BLOCKED')])],
+    ['claim missing', track(7003, [gate('WORKER', 'PASS')])],
+    ['claim waiting', track(7003, [gate('CLAIM', 'WAITING'), gate('WORKER', 'PASS')])],
+    ['claim blocked', track(7003, [gate('CLAIM', 'BLOCKED'), gate('WORKER', 'PASS')])],
+  ];
+  for (const [label, observed] of cases) {
+    const journey = projectGoalBuildJourneyV1(goal, observed);
+    assert.notEqual(journey.stages.find((s) => s.id === 'PICKED_UP')?.trafficLight, 'GREEN', label);
+    assert.notEqual(journey.stages.find((s) => s.id === 'BUILDING')?.trafficLight, 'GREEN', label);
+    assert.equal(projectGoalBuildConveyorV1([{ buildJourney: journey }]).buildingCount, 0, label);
+  }
+  const noTrack = projectGoalBuildJourneyV1(goal);
+  assert.equal(noTrack.stages.find((s) => s.id === 'PICKED_UP')?.trafficLight, 'AMBER');
+  assert.notEqual(noTrack.stages.find((s) => s.id === 'DISPATCHED')?.trafficLight, 'GREEN');
+  const qualified = projectGoalBuildJourneyV1(goal, track(7003, [
+    gate('CLAIM', 'PASS'), gate('WORKER', 'PASS'),
+  ]));
+  for (const id of ['DISPATCHED', 'PICKED_UP', 'BUILDING']) {
+    assert.equal(qualified.stages.find((s) => s.id === id)?.trafficLight, 'GREEN', id);
+  }
+  assert.equal(projectGoalBuildConveyorV1([{ buildJourney: qualified }]).buildingCount, 1);
+  const staleGoal = projectGoalBuildJourneyV1({ ...goal, statusTruth: 'STALE' }, track(7003, [
+    gate('CLAIM', 'PASS'), gate('WORKER', 'PASS'),
+  ]));
+  assert.notEqual(staleGoal.stages.find((s) => s.id === 'PICKED_UP')?.trafficLight, 'GREEN');
+  assert.equal(projectGoalBuildConveyorV1([{ buildJourney: staleGoal }]).buildingCount, 0);
 });
 
 test('stale build truth cannot paint dispatch pickup or building green', () => {
@@ -150,6 +170,41 @@ test('Goal #2961: duplicate worker gate identities refuse false-green physical p
   }
 });
 
+test('Goal #2961: a blocked/duplicate worker cannot be revived by downstream gate PASS', () => {
+  const goal = {
+    issue: '#2002', state: 'ACTIVE', statusTruth: 'CURRENT',
+    buildState: 'BUILDING', buildTruthTruth: 'CURRENT', builder: 'mission-worker-1',
+  };
+  const later = ['SOURCE_CHANGED', 'TESTED', 'TERMINAL_RECEIPT'];
+  for (const states of [['BLOCKED', 'PASS'], ['PASS', 'BLOCKED'], ['PASS', 'PASS']]) {
+    for (const finalGate of later) {
+      const gates = [
+        gate('CLAIM', 'PASS'), gate('WORKER', states[0]), gate('worker', states[1]),
+        gate(finalGate, 'PASS'),
+      ];
+      const journey = projectGoalBuildJourneyV1(goal, track(2002, gates));
+      assert.equal(journey.stages.find((s) => s.id === 'PICKED_UP')?.trafficLight, 'RED');
+      for (const id of ['BUILDING', 'BUILT', 'TESTED', 'COMPLETED']) {
+        assert.notEqual(journey.stages.find((s) => s.id === id)?.trafficLight, 'GREEN',
+          states.join('/') + ':' + finalGate + ':' + id);
+      }
+      const summary = projectGoalBuildConveyorV1([{ buildJourney: journey }]);
+      assert.equal(summary.provenToBuilderCount, 0);
+      assert.equal(summary.buildingCount, 0);
+      assert.equal(summary.completedCount, 0);
+      assert.equal(summary.blockedCount, 1);
+    }
+  }
+  const good = projectGoalBuildJourneyV1(goal, track(2002, [
+    gate('CLAIM', 'PASS'), gate('WORKER', 'PASS'),
+    gate('SOURCE_CHANGED', 'PASS'), gate('TESTED', 'PASS'),
+    gate('TERMINAL_RECEIPT', 'PASS'),
+  ]));
+  assert.equal(good.stages.find((s) => s.id === 'PICKED_UP')?.trafficLight, 'GREEN');
+  assert.equal(good.stages.find((s) => s.id === 'COMPLETED')?.trafficLight, 'GREEN');
+  assert.equal(projectGoalBuildConveyorV1([{ buildJourney: good }]).completedCount, 1);
+});
+
 test('blocked build truth paints the first unresolved handoff red', () => {
   const journey = projectGoalBuildJourneyV1({
     issue: '#7004',
@@ -189,8 +244,8 @@ test('fleet conveyor summarizes per-goal journeys without creating authority', (
   ];
   const conveyor = projectGoalBuildConveyorV1(goals);
   assert.equal(conveyor.visibleGoalCount, 2);
-  assert.equal(conveyor.provenToBuilderCount, 1);
-  assert.equal(conveyor.buildingCount, 1);
+  assert.equal(conveyor.provenToBuilderCount, 0);
+  assert.equal(conveyor.buildingCount, 0);
   assert.equal(conveyor.completedCount, 0);
   assert.match(conveyor.truthBoundary, /read-only projection/i);
 });

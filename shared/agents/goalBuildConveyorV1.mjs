@@ -167,10 +167,34 @@ export function projectGoalBuildJourneyV1(goal = {}, autonomyBuildTrack = null) 
 
   const buildState = text(goal?.buildState, 'UNKNOWN').toUpperCase();
   const builder = text(goal?.builder || exactTrack?.providerAdapter, 'UNKNOWN');
-  if (currentBuildTruth && buildState === 'BUILDING' && builder !== 'UNKNOWN' && !hasConflictingGateEvidence) {
-    greenStage(stages, 'DISPATCHED', `Current build truth binds the goal to ${builder}.`, 'stephanos-build-truth');
-    greenStage(stages, 'PICKED_UP', `${builder} is the current execution owner for this goal.`, 'stephanos-build-truth');
-    greenStage(stages, 'BUILDING', `Fresh build truth reports BUILDING on ${builder}.`, 'stephanos-build-truth');
+  // A logical BUILDING label is not a physical worker pickup. The matching
+  // goal, current canonical source, CLAIM and unique WORKER must agree.
+  const exactWorkerPickupProven = Boolean(exactTrack
+    && stages[0].trafficLight === 'GREEN'
+    && text(gates.get('CLAIM')?.state).toUpperCase() === 'PASS'
+    && text(gates.get('WORKER')?.state).toUpperCase() === 'PASS'
+    && !hasConflictingGateEvidence);
+  const pickup = stages.find((stage) => stage.id === 'PICKED_UP');
+  const dispatch = stages.find((stage) => stage.id === 'DISPATCHED');
+  if (pickup?.trafficLight === 'GREEN' && !exactWorkerPickupProven) {
+    replaceStage(stages, 'PICKED_UP', stageRecord(
+      'PICKED_UP', 'Picked up', dispatch?.trafficLight === 'RED' ? 'RED' : 'AMBER', '',
+      dispatch?.trafficLight === 'RED'
+        ? 'UPSTREAM_CLAIM_BLOCKED'
+        : 'EXACT_GOAL_CLAIM_AND_WORKER_CUSTODY_UNPROVEN',
+      'autonomy-build-track',
+    ));
+  }
+  if (currentBuildTruth && buildState === 'BUILDING' && builder !== 'UNKNOWN') {
+    if (exactWorkerPickupProven) {
+      greenStage(stages, 'BUILDING',
+        `Current build truth follows exact-goal CLAIM and WORKER pickup for ${builder}.`,
+        'autonomy-build-track+stephanos-build-truth');
+    } else {
+      amberStage(stages, 'PICKED_UP',
+        'Logical BUILDING is current, but physical CLAIM/WORKER pickup is not proven.',
+        'stephanos-build-truth');
+    }
   } else if (stages.find((stage) => stage.id === 'PICKED_UP')?.trafficLight === 'GREEN') {
     amberStage(stages, 'BUILDING', 'Builder pickup is proven; waiting for current material-build evidence.', 'autonomy-build-track');
   }
@@ -185,6 +209,25 @@ export function projectGoalBuildJourneyV1(goal = {}, autonomyBuildTrack = null) 
     greenStage(stages, 'BUILDING', 'Terminal execution proof confirms the builder ran.', 'autonomy-build-track');
     greenStage(stages, 'BUILT', 'Terminal execution proof confirms build completion.', 'autonomy-build-track');
     greenStage(stages, 'TESTED', 'Terminal execution proof follows the canonical tested stage.', 'autonomy-build-track');
+  }
+
+  // Later SOURCE_CHANGED, TESTED and TERMINAL_RECEIPT logical gates cannot
+  // retroactively prove a blocked, missing or contradictory worker pickup.
+  // Keep their observations visible as AMBER, never aggregate false BUILDING.
+  const physicalPickupCurrent = exactWorkerPickupProven
+    && stages.find((stage) => stage.id === 'DISPATCHED')?.trafficLight === 'GREEN'
+    && stages.find((stage) => stage.id === 'PICKED_UP')?.trafficLight === 'GREEN';
+  if (!physicalPickupCurrent) {
+    for (const id of ['BUILDING', 'BUILT', 'TESTED', 'COMPLETED']) {
+      const stage = stages.find((item) => item.id === id);
+      if (stage?.trafficLight === 'GREEN') {
+        replaceStage(stages, id, stageRecord(
+          id, stage.label, 'AMBER', '',
+          'DOWNSTREAM_PROOF_NEEDS_CURRENT_EXACT_GOAL_WORKER_CUSTODY',
+          'autonomy-build-track',
+        ));
+      }
+    }
   }
 
   const exactBlocked = stages.find((stage) => stage.trafficLight === 'RED');
@@ -232,12 +275,21 @@ export function projectGoalBuildConveyorV1(goals = []) {
   journeys.forEach((journey) => {
     currentStageCounts[journey.currentStage] = (currentStageCounts[journey.currentStage] || 0) + 1;
   });
+  // A downstream logical label can never count as a material lane without
+  // matching current-goal dispatch and physical worker custody proof.
+  const hasCurrentPickup = (journey) => journey.exactAutonomyTrackBound === true
+    && ['GOAL', 'DISPATCHED', 'PICKED_UP'].every(
+      (id) => journey.stages.find((stage) => stage.id === id)?.proven === true,
+    );
   return Object.freeze({
     schemaVersion: GOAL_BUILD_CONVEYOR_SCHEMA,
     visibleGoalCount: journeys.length,
-    provenToBuilderCount: journeys.filter((journey) => journey.stages.find((stage) => stage.id === 'PICKED_UP')?.proven === true).length,
-    buildingCount: journeys.filter((journey) => journey.stages.find((stage) => stage.id === 'BUILDING')?.proven === true && journey.stages.find((stage) => stage.id === 'COMPLETED')?.proven !== true).length,
-    completedCount: journeys.filter((journey) => journey.stages.find((stage) => stage.id === 'COMPLETED')?.proven === true).length,
+    provenToBuilderCount: journeys.filter(hasCurrentPickup).length,
+    buildingCount: journeys.filter((journey) => hasCurrentPickup(journey)
+      && journey.stages.find((stage) => stage.id === 'BUILDING')?.proven === true
+      && journey.stages.find((stage) => stage.id === 'COMPLETED')?.proven !== true).length,
+    completedCount: journeys.filter((journey) => hasCurrentPickup(journey)
+      && journey.stages.find((stage) => stage.id === 'COMPLETED')?.proven === true).length,
     blockedCount: journeys.filter((journey) => journey.stages.some((stage) => stage.blocked)).length,
     exactTrackBoundCount: journeys.filter((journey) => journey.exactAutonomyTrackBound).length,
     currentStageCounts: Object.freeze(currentStageCounts),
