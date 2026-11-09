@@ -32,6 +32,9 @@ shell.Environment("PROCESS")("USERPROFILE") = profileRoot
 powershellExe = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
 
 Select Case taskId
+  Case "frontend"
+    targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-stephanos-frontend-hidden.ps1")
+    command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
   Case "worker-watchdog"
     targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-battle-bridge-worker-watchdog-hidden.ps1")
     command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
@@ -55,7 +58,7 @@ Select Case taskId
     command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
   Case "sovereign-commander-watchdog"
     targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-sovereign-commander-hidden.ps1")
-    command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath) & " -RequireCapabilityVersion 2026-10-13-private-mcp-batch-metadata-v5"
+    command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath) & " -RequireCapabilityVersion 2026-10-18-island-action-contract-v6"
   Case "sovereign-chatgpt-tunnel"
     targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-sovereign-commander-chatgpt-tunnel-hidden.ps1")
     command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)

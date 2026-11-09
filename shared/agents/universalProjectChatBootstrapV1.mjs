@@ -199,6 +199,11 @@ export function buildUniversalProjectChatBootstrapV1({
       standingApprovalMustBeReadNotInferred: true,
       activeExecutionLaneMustBeReadNotGuessed: true,
       alternateQualifiedRouteMustBeTriedBeforeGlobalBlocker: true,
+      workConservingControllerCycleRequired: true,
+      safeCapacityRefillAfterMaterialActionRequired: true,
+      waitingLaneMayTerminateControllerCycle: false,
+      sharedWorkConservingPolicyOwnerIssue: 1947,
+      elasticWidthPolicyOwnerIssue: 1637,
       operatorApprovalMayBeInferred: false,
     }),
   });

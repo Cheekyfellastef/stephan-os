@@ -32,6 +32,10 @@ const test = (name, fn) => nodeTest('uncommissioned disposable fixture: ' + name
 const NOW = '2026-10-13T23:10:00.000Z';
 const ISSUE_TITLE = 'Rescue Island: two independent proof-gated builders outside Goal Conveyor';
 const CONTENT = '# Rescue Island pilot\n\nA scoped, verified first source proposal.\n';
+const FIXTURE_ATTRIBUTES = [
+  'shared/agents/rescueIslandPreflightV1.mjs -text',
+  'shared/agents/rescueIslandPreflightV1.test.mjs -text',
+].join('\n') + '\n';
 const status = (command, args, cwd) => {
   const x = spawnSync(command, args, { cwd, shell: false, encoding: 'utf8' });
   assert.equal(x.status, 0, command + ' ' + args.join(' ') + ': ' + x.stderr);
@@ -50,11 +54,16 @@ async function fixture() {
     const source = await readFile(new URL('./' + target, import.meta.url), 'utf8');
     await writeFile(join(repoRoot, 'shared', 'agents', target), source);
   }
+  // The guarded Git wrapper pins core.autocrlf=true on Windows. Force these
+  // exact copied test dependencies to remain binary-identical in the fixture
+  // commit and subsequent isolated checkout; never weaken the source guard.
+  await writeFile(join(repoRoot, '.gitattributes'), FIXTURE_ATTRIBUTES);
   git(repoRoot, 'init', '-b', 'main');
   git(repoRoot, 'config', 'user.name', 'Island Test');
   git(repoRoot, 'config', 'user.email', 'island-test@example.invalid');
   git(repoRoot, 'remote', 'add', 'origin', 'https://github.com/Cheekyfellastef/stephan-os.git');
-  git(repoRoot, 'add', '--', 'shared/agents/rescueIslandPreflightV1.mjs',
+  git(repoRoot, 'add', '--', '.gitattributes',
+    'shared/agents/rescueIslandPreflightV1.mjs',
     'shared/agents/rescueIslandPreflightV1.test.mjs');
   git(repoRoot, '-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'preflight baseline');
   const head = git(repoRoot, 'rev-parse', 'HEAD');
@@ -152,7 +161,7 @@ test('untrusted manifest, scope, gaming and approval paths remain held', async (
   for (const bad of [
     { content: '# unrelated\n' },
     { targetPath: '../bad.md' },
-    { workerId: 'rescue-island-02' },
+    { workerId: 'rescue-island-03' },
     { approvalSource: 'self-approved' },
     { issueTitle: '' },
     { expiresAtUtc: '2026-10-13T23:00:00.000Z' },
@@ -306,6 +315,18 @@ test('config-driven SSH signing cannot invoke another executable', async () => {
 test('Git CRLF normalization cannot replace the exact approved committed bytes', async () => {
   const ctx = await fixture();
   ctx.task.content = '# Rescue Island pilot\n\nExact approved CRLF bytes.\r\nSecond line.\r\n';
+  // Preserve the trusted dependency identities while forcing LF conversion
+  // ONLY for the target pilot document. The blob guard must still refuse it.
+  await writeFile(join(ctx.repoRoot, '.gitattributes'),
+    FIXTURE_ATTRIBUTES + 'docs/architecture/rescue-island-pilot-*.md text eol=lf\n');
+  git(ctx.repoRoot, 'add', '--', '.gitattributes');
+  git(ctx.repoRoot, '-c', 'core.hooksPath=/dev/null', 'commit',
+    '-m', 'test fixture: track forced LF normalization');
+  const newBase = git(ctx.repoRoot, 'rev-parse', 'HEAD');
+  git(ctx.repoRoot, 'update-ref', 'refs/remotes/origin/main', newBase);
+  ctx.task.baseHead = newBase;
+  ctx.observed.mainHead = newBase;
+  ctx.observed.worktreeHead = newBase;
   git(ctx.repoRoot, 'config', 'core.autocrlf', 'input');
   await assert.rejects(() => build(ctx), /RESCUE_ISLAND_COMMIT_BLOB_UNPROVEN/);
   assert.equal(git(ctx.repoRoot, 'rev-parse', 'HEAD'), ctx.task.baseHead);
@@ -493,4 +514,12 @@ nodeTest('installed same-owner recovery preserves previous claims and blocked ev
   await assert.rejects(access(join(claims, ctx.task.taskId + '.recovery.lock')), { code: 'ENOENT' });
   await assert.rejects(access(ctx.worktreeRoot), { code: 'ENOENT' });
   assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), '');
+});
+
+nodeTest('production worker02 document validation binds the parent owner and keeps strict custody refused',async()=>{
+  const ctx=await fixture(),task={...ctx.task,workerId:'rescue-island-02'};
+  assert.equal(validate(task,ctx.nowUtc),true);
+  assert.equal(validate({...task,issueNumber:3109,issueTitle:'Rescue Island 01: authenticated one-shot intake and first physical source pickup (#3103)'},ctx.nowUtc),false);
+  await assert.rejects(productionBuild({...ctx,task,observed:{...ctx.observed,firstWorkerMaterialProof:true}}),/RESCUE_ISLAND_EXECUTION_CUSTODY_UNIMPLEMENTED/);
+  await assert.rejects(access(join(ctx.receiptRoot,'claims')));
 });

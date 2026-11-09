@@ -544,7 +544,7 @@ test('fully blocked non-unsafe cycle remains enabled for the next scheduled run'
   assert.equal(result.controllerLevelUnsafeProven, false);
 });
 
-test('disablement is restricted to explicit operator intent, terminal completion, or proven controller-wide unsafety', () => {
+test('individual goal completion never self-disables a recurring controller; only operator intent or proven controller-wide unsafety does', () => {
   const operator = evaluateControllerLivenessDecision({ operatorDisableRequested: true });
   assert.equal(operator.disableAllowed, true);
   assert.equal(operator.reason, 'EXPLICIT_OPERATOR_DISABLE');
@@ -553,8 +553,25 @@ test('disablement is restricted to explicit operator intent, terminal completion
     terminalCompletion: true,
     safeEligibleWorkRemaining: false,
   });
-  assert.equal(terminal.disableAllowed, true);
-  assert.equal(terminal.reason, 'TERMINAL_SCOPE_COMPLETE');
+  assert.equal(terminal.disableAllowed, false);
+  assert.equal(terminal.controllerShouldRemainEnabled, true);
+  assert.equal(terminal.retryNextScheduledRun, true);
+  assert.equal(terminal.reason, 'TERMINAL_GOAL_COMPLETE_CONTROLLER_LIVE');
+
+  // A held native source worker cannot turn terminal goal status into a fleet-wide stop.
+  for (const work of [false, true]) {
+    const state = evaluateControllerLivenessDecision({
+      terminalCompletion: true,
+      safeEligibleWorkRemaining: work,
+      surfaceFailures: [
+        { surfaceId: 'native-source', failureClass: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING' },
+        { surfaceId: 'native-source', failureClass: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING' },
+      ],
+    });
+    assert.equal(state.disableAllowed, false);
+    assert.equal(state.controllerShouldRemainEnabled, true);
+    assert.deepEqual(state.blockedSurfaceIds, ['native-source']);
+  }
 
   const incompleteUnsafe = evaluateControllerLivenessDecision({
     controllerLevelUnsafe: true,
@@ -569,8 +586,32 @@ test('disablement is restricted to explicit operator intent, terminal completion
     scopedActions: ['research', 'spatial', 'starfield'],
     unsafeScopedActions: ['research', 'spatial', 'starfield'],
   });
-  assert.equal(provenUnsafe.disableAllowed, true);
-  assert.equal(provenUnsafe.reason, 'CONTROLLER_LEVEL_UNSAFE');
+  assert.equal(provenUnsafe.disableAllowed, false);
+  assert.equal(provenUnsafe.reason, 'SCOPED_UNSAFE_CONTROLLER_LIVE');
+  assert.equal(provenUnsafe.controllerShouldRemainEnabled, true);
+  assert.equal(provenUnsafe.retryNextScheduledRun, true);
+  assert.equal(provenUnsafe.controllerLevelUnsafeProven, false);
+  assert.equal(provenUnsafe.scopedUnsafeActionsReported, true);
+
+  // Native runtime unsafety cannot disable a disjoint qualified GitHub builder.
+  const splitSurface = evaluateControllerLivenessDecision({
+    controllerLevelUnsafe: true,
+    scopedActions: ['native-source'],
+    unsafeScopedActions: ['native-source'],
+    qualifiedSurfaces: ['github-raw-writer'],
+    safeEligibleWorkRemaining: true,
+    surfaceFailures: [
+      { surfaceId: 'native-source', failureClass: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING' },
+      { surfaceId: 'native-source', failureClass: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING' },
+    ],
+  });
+  assert.equal(splitSurface.decision, 'REMAIN_ENABLED');
+  assert.equal(splitSurface.disableAllowed, false);
+  assert.equal(splitSurface.controllerShouldRemainEnabled, true);
+  assert.equal(splitSurface.selectedAlternateSurface, 'github-raw-writer');
+  assert.deepEqual(splitSurface.blockedSurfaceIds, ['native-source']);
+  assert.equal(splitSurface.controllerLevelUnsafeProven, false);
+  assert.equal(splitSurface.scopedUnsafeActionsReported, true);
 });
 
 
@@ -897,4 +938,103 @@ test('READY elastic grant refuses parked PR inspection', async () => {
     nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {},
   });
   assert.equal(result.workerActionGrant, undefined);
+});
+
+function publishedElasticReviewFixture() {
+  const mission = {
+    missionId: 'critical-3029-elastic-goal', revision: 6,
+    currentPhase: 'CHECK_PULL_REQUEST', repository: REPOSITORY,
+    continuity: { parkingStatus: 'ACTIVE' }, dispatch: { status: 'complete' },
+    git: { branch: 'openclaw/elastic-goal-3029' },
+    pullRequest: { number: 3218, headSha: LANE_HEAD }, cancelled: false,
+  };
+  const lease = { leaseId: 'critical-3029-elastic-goal-r6-lease', ownerId: 'mission-worker',
+    repository: REPOSITORY, issueNumber: 3029, prNumber: 3218,
+    branch: mission.git.branch, headSha: LANE_HEAD };
+  const lane = { valid: true, active: false, terminal: false, reviewPending: true,
+    status: 'REVIEW_PENDING', laneId: mission.missionId, repository: REPOSITORY,
+    issueNumber: 3029, prNumber: 3218, branch: mission.git.branch, headSha: LANE_HEAD,
+    mutationLeaseIdentity: { active: true, stale: false, leaseId: lease.leaseId },
+    elasticMissionPhaseBinding: { valid: true, reviewOnly: true, materialImplementation: false,
+      phase: 'CHECK_PULL_REQUEST', missionId: mission.missionId, revision: 6, issueNumber: 3029 } };
+  return { mission, p: projection('IDLE', { lane, mutationLease: lease,
+    criticalBacklog: { activeMission: null } }) };
+}
+async function runPublishedElasticReview(fixture) {
+  let reads = 0;
+  const f = machineryFor(fixture.p, {
+    readMissionRecord: async id => { reads++; assert.equal(id, fixture.mission.missionId); return { state: fixture.mission }; },
+    loadCapacityRoutingInput: async () => null,
+    ensureBacklogMission: async () => { throw new Error('review must not create another mission'); },
+  });
+  const result = await runDurableFlywheelStartupCycle(f.machinery, {
+    nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {},
+  });
+  return { result, reads };
+}
+test('published elastic review advances through its existing lease without a legacy backlog mission', async () => {
+  const { result, reads } = await runPublishedElasticReview(publishedElasticReviewFixture());
+  assert.equal(reads, 1);
+  assert.equal(result.allowWorkerTick, true);
+  assert.equal(result.workerActionGrant?.missionId, 'critical-3029-elastic-goal');
+  assert.equal(result.workerActionGrant?.missionRevision, 6);
+  assert.equal(result.workerActionGrant?.adapter, 'openclaw-github-readonly');
+  assert.equal(result.workerActionGrant?.operation, 'check-pr');
+  assert.equal(result.workerActionGrant?.boundedActionCount, 1);
+  assert.equal(result.workerActionGrant?.mergeAuthority, false);
+  assert.equal(result.workerActionGrant?.leaseSeizureAllowed, false);
+});
+test('published review grant refuses stale, foreign, parked and source-writing mission states', async () => {
+  for (const mutate of [
+    f => { f.mission.revision++; },
+    f => { f.mission.currentPhase = 'AGENT_IMPLEMENTATION'; },
+    f => { f.mission.pullRequest.headSha = 'f'.repeat(40); },
+    f => { f.mission.pullRequest.number++; },
+    f => { f.mission.git.branch = 'other/branch'; },
+    f => { f.mission.continuity.parkingStatus = 'PARKED_BLOCKED'; },
+    f => { f.mission.cancelled = true; },
+    f => { f.mission.dispatch.status = 'running'; },
+    f => { f.mission.storeMetadata = { originalSourceAttemptFence: { active: true } }; },
+    f => { f.p.mutationLease.leaseId = 'other-lease'; },
+    f => { f.p.lane.headSha = 'f'.repeat(40); },
+    f => { f.p.lane.mutationLeaseIdentity.stale = true; },
+    f => { f.p.lane.elasticMissionPhaseBinding.valid = false; },
+    f => { f.p.lane.active = true; },
+    f => { f.p.criticalBacklog.activeMission = { missionId: 'different-owner' }; },
+    f => { f.p.status = 'HOLD'; f.p.blockers = ['existing-authority-hold']; },
+  ]) {
+    const fixture = publishedElasticReviewFixture();
+    mutate(fixture);
+    const { result } = await runPublishedElasticReview(fixture);
+    assert.equal(result.workerActionGrant, undefined, JSON.stringify(fixture));
+    assert.equal(result.allowWorkerTick, false);
+  }
+});
+
+
+test('live controller preparation does not freeze later authority observation clocks', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
+  const seen = [];
+  const f = machineryFor(projection('IDLE'), {
+    reconcileLearningGoals: async () => { t.mock.timers.tick(90000); return { ok: true }; },
+    loadAuthoritativeProjection: async options => { seen.push(options.nowUtc); return projection('IDLE'); },
+  });
+  const result = await runDurableFlywheelStartupCycle(f.machinery, { sourceRevision: SOURCE_REVISION, env: {} });
+  assert.ok(seen.length > 0);
+  assert.ok(seen.every(value => value === undefined), 'live observation inherited the cycle-start snapshot');
+  assert.equal(result.status, 'IDLE');
+  assert.ok(Date.parse(f.heartbeats.at(-1).timestampUtc) >= Date.parse(NOW) + 90000);
+});
+
+test('live authority refresh failure holds before any projection or worker grant', async () => {
+  let publications = 0, reads = 0;
+  const f = machineryFor(projection('IDLE'), {
+    publishControllerHeartbeat: async () => ({ ok: ++publications === 1 }),
+    loadAuthoritativeProjection: async () => { reads++; return projection('IDLE'); },
+  });
+  const result = await runDurableFlywheelStartupCycle(f.machinery, { sourceRevision: SOURCE_REVISION, env: {} });
+  assert.equal(result.status, 'HOLD');
+  assert.equal(result.allowWorkerTick, false);
+  assert.equal(reads, 0);
+  assert.ok(result.blockers.includes('controller-heartbeat:observation-refresh-failed'));
 });

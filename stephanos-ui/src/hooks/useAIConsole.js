@@ -3608,12 +3608,48 @@ export function useAIConsole() {
     }
     healthRefreshInFlightRef.current = true;
     let resolvedRuntimeContext = runtimeConfig;
+    let backendHealthPublished = false;
 
     try {
       ({ runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig());
       recordPerfCounter('polling', 'checkApiHealth.attempt');
       const health = await checkApiHealth(resolvedRuntimeContext);
       const hydratedRuntimeContext = buildRuntimeContextFromHealth(resolvedRuntimeContext, health);
+      // Publish service evidence as soon as /api/health resolves. Optional
+      // provider telemetry can be slow or fail without erasing this receipt.
+      const healthFinalized = finalizeRuntimeContext(hydratedRuntimeContext, providerHealthRef.current, health.ok);
+      setApiStatus({
+        state: health.ok ? 'online' : 'error',
+        label: `Connected to ${health.target} API`,
+        detail: health.ok
+          ? `Backend reachable. Default provider: ${health.data?.default_provider || 'mock'}.`
+          : `Health check failed (${health.status}).`,
+        target: health.target,
+        baseUrl: health.baseUrl,
+        frontendOrigin: healthFinalized.runtimeContext.frontendOrigin,
+        strategy: healthFinalized.runtimeContext.strategy,
+        backendTargetEndpoint: health.data?.backend_target_endpoint || healthFinalized.runtimeContext.backendTargetEndpoint,
+        healthEndpoint: healthFinalized.runtimeContext.healthEndpoint,
+        backendReachable: health.ok,
+        backendDefaultProvider: health.data?.default_provider || 'mock',
+        runtimeContext: {
+          ...healthFinalized.runtimeContext,
+          healthProbeTruth: reconcileBackendHealthTruth({
+            runtimeContext: healthFinalized.runtimeContext,
+            healthOk: health.ok === true,
+            source: 'refresh-health-poll',
+            status: health.status || 0,
+            hadRouteUnavailableFailure: ['ROUTE_UNAVAILABLE', 'BACKEND_ROUTE_UNAVAILABLE'].includes(String(lastExecutionMetadata?.command_pipeline_last_failure_reason || '').trim().toUpperCase()),
+          }),
+        },
+        lastCheckedAt: new Date().toISOString(),
+        meta: {
+          ...(health.data || {}),
+          final_route: healthFinalized.runtimeStatus.finalRoute,
+        },
+      });
+      recordPerfCounter('store_writes', 'apiStatus');
+      backendHealthPublished = true;
       // Backend reachability is independent of provider telemetry. A provider
       // probe exception must not turn a successful /api/health into "backend dead".
       let providerHealth = { data: {} };
@@ -3647,38 +3683,12 @@ export function useAIConsole() {
           source: finalized.runtimeContext.nodeAddressSource || finalized.runtimeContext.homeNode.source || 'route-diagnostics',
         });
       }
-      setApiStatus({
-        state: health.ok ? 'online' : 'error',
-        label: `Connected to ${health.target} API`,
-        detail: health.ok
-          ? `Backend reachable. Default provider: ${health.data?.default_provider || 'mock'}.`
-          : `Health check failed (${health.status}).`,
-        target: health.target,
-        baseUrl: health.baseUrl,
-        frontendOrigin: finalized.runtimeContext.frontendOrigin,
-        strategy: finalized.runtimeContext.strategy,
-        backendTargetEndpoint: health.data?.backend_target_endpoint || finalized.runtimeContext.backendTargetEndpoint,
-        healthEndpoint: finalized.runtimeContext.healthEndpoint,
-        backendReachable: health.ok,
-        backendDefaultProvider: health.data?.default_provider || 'mock',
-        runtimeContext: {
-          ...finalized.runtimeContext,
-          healthProbeTruth: reconcileBackendHealthTruth({
-            runtimeContext: finalized.runtimeContext,
-            healthOk: health.ok === true,
-            source: 'refresh-health-poll',
-            status: health.status || 0,
-            hadRouteUnavailableFailure: ['ROUTE_UNAVAILABLE', 'BACKEND_ROUTE_UNAVAILABLE'].includes(String(lastExecutionMetadata?.command_pipeline_last_failure_reason || '').trim().toUpperCase()),
-          }),
-        },
-        lastCheckedAt: new Date().toISOString(),
-        meta: {
-          ...(health.data || {}),
-          final_route: finalized.runtimeStatus.finalRoute,
-        },
-      });
-      recordPerfCounter('store_writes', 'apiStatus');
+
     } catch (error) {
+      if (backendHealthPublished) {
+        recordPerfEvent('polling', 'optionalHealthTelemetry.error', error?.message || 'unknown');
+        return;
+      }
       recordPerfEvent('polling', 'checkApiHealth.error', error?.message || 'unknown');
       healthRefreshBackoffUntilMsRef.current = Date.now() + 30_000;
       const uiError = transportErrorToUi(error);

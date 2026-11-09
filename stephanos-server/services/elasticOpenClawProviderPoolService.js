@@ -1,3 +1,4 @@
+import { resolveStephanosNativeFocusedSourceFile } from '../../shared/agents/stephanosNativeFocusedTaskV1.mjs';
 import { readFile, readdir } from 'node:fs/promises';
 
 import { MAXIMUM_BUILD_LANES } from '../../shared/agents/elasticBuildCapacityV1.mjs';
@@ -10,6 +11,10 @@ import {
   MISSION_CONTROLLER_ROUTE,
   routeMissionControllerCapacity,
 } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
+import {
+  isProviderIndependentSourceCapacityCandidateV1,
+  providerIndependentSourceCapacityInputV1,
+} from '../../shared/agents/providerIndependentMissionCapacityRouteV1.mjs';
 import {
   OPENCLAW_PROVIDER_ROUTE,
   routeWithQualifiedOpenClawProvider,
@@ -286,8 +291,9 @@ export function resolveElasticExternalCapacityCandidates(
   const routeOpenClaw = dependencies.routeOpenClaw ?? routeWithQualifiedOpenClawProvider;
   const openAiBlackout = capacityRouting.openAiBlackout === true;
   const baseInput = {
-    ...capacityRouting,
-    githubLaneReceipt: openAiBlackout ? null : capacityRouting.githubLaneReceipt,
+    ...(openAiBlackout
+      ? providerIndependentSourceCapacityInputV1(capacityRouting)
+      : capacityRouting),
     nowUtc,
     sourceHead: text(sourceRevision).toLowerCase(),
     mission,
@@ -295,9 +301,7 @@ export function resolveElasticExternalCapacityCandidates(
   const probe = routeCapacity({ ...baseInput, codexStatus: null, nativeRoutingCandidate: null });
   const taskClass = text(probe?.task?.taskClass).toUpperCase();
   const singleFileNativeMission = taskClass === STEPHANOS_NATIVE_SOURCE_TASK_CLASS
-    && Array.isArray(mission?.allowedFiles)
-    && mission.allowedFiles.length === 1
-    && text(mission.allowedFiles[0]);
+    && Boolean(resolveStephanosNativeFocusedSourceFile(mission?.allowedFiles));
   const nativeRoutingCandidate = singleFileNativeMission
     ? capacityRouting.nativeRoutingCandidatesByTaskClass?.[STEPHANOS_NATIVE_SOURCE_TASK_CLASS] ?? null
     : null;
@@ -334,8 +338,11 @@ export function resolveElasticExternalCapacityCandidates(
     if (standalone && !blocked.has(standalone.adapter)) candidates.push(standalone);
   }
 
-  const deduped = dedupeCandidates(candidates);
-  return Object.freeze(openAiBlackout
-    ? deduped.filter((candidate) => text(candidate?.route).toUpperCase() !== MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB)
-    : deduped);
+  // Snapshot before admission so mutable dependency results cannot change the
+  // route/adapter pair after the blackout filter. Filter before deduplication so
+  // a faster mismatched candidate cannot conceal an already-qualified worker.
+  const admittedCandidates = openAiBlackout
+    ? candidates.map(normalizedCandidate).filter(Boolean).filter(isProviderIndependentSourceCapacityCandidateV1)
+    : candidates;
+  return Object.freeze(dedupeCandidates(admittedCandidates));
 }

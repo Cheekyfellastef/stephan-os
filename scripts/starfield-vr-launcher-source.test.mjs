@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { buildStarfieldVrTelemetryHeadlineProjection } from './report-starfield-vr-telemetry.mjs';
-
 // The hosted vr-research-tests entry point also exercises bounded CPU recorder regressions.
 import './starfield-vr-flight-recorder.test.mjs';
 
@@ -13,6 +12,7 @@ const flightRecorderUrl = new URL('./windows/starfield-vr-flight-recorder.ps1', 
 const vrDiagnosisUrl = new URL('./windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url);
 const audioEndpointUrl = new URL('./windows/starfield-vr-audio-endpoint.ps1', import.meta.url);
 const splashUrl = new URL('./windows/launch-starfield-vr-with-splash.ps1', import.meta.url);
+const diagnosisUrl = new URL('./windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url);
 const aerObserveUrl = new URL('./windows/run-starfield-aer-stabilizer-observe.ps1', import.meta.url);
 const aerGuardianUrl = new URL('./windows/starfield-aer-stabilizer-guardian.ps1', import.meta.url);
 const installerUrl = new URL('./windows/install-starfield-vr-desktop-shortcut.ps1', import.meta.url);
@@ -45,6 +45,11 @@ test('launcher delegates authority to the canonical shared decision policy throu
   assert.match(source, /FIRST_SAMPLE_RECORDED/);
   assert.match(source, /starfield-vr-telemetry-guardian-start-failed/);
   assert.match(source, /performanceGuardianProcessId/);
+  assert.match(source, /Get-Command -Name 'git\.exe' -CommandType Application/);
+  assert.match(source, /-C \$repositoryRoot rev-parse HEAD/);
+  assert.match(source, /starfield-vr-readiness-current\.json/);
+  assert.match(source, /UTF8Encoding\(\$false\)/);
+  assert.match(source, /\$latestPath = if \(\$ReadinessOnly\) \{ \$latestReadinessPath \} else \{ \$latestReceiptPath \}/);
   assert.match(source, /\$verifiedWorkingDirectory = \[System\.IO\.Path\]::GetDirectoryName\(\$launchExecutable\)/);
   assert.match(source, /game-installation-root-not-bound-to-launch-executable/);
   assert.match(source, /\$workingDirectory = \$verifiedWorkingDirectory/);
@@ -52,10 +57,19 @@ test('launcher delegates authority to the canonical shared decision policy throu
   assert.match(source, /Nothing was changed and flat Starfield was not started/);
   assert.match(source, /DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY/);
   assert.match(source, /function Start-StarfieldWithMetaAirLinkIsolation/);
-  assert.match(source, /Virtual Desktop registers an implicit Oculus-compatibility OpenXR layer/);
+  assert.match(source, /STEPHANOS_VR_TELEMETRY_TRACE_PATH/);
+  assert.match(source, /XR_APILAYER_STEPHANOS_telemetry_v1/);
+  assert.match(source, /capabilities\.modifiesFrameData/);
   assert.match(source, /SetEnvironmentVariable\([\s\S]*?\$virtualDesktopOculusCompatibilityDisableEnvironment,[\s\S]*?'1',[\s\S]*?'Process'/);
   assert.match(source, /Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath \$launchExecutable -WorkingDirectory \$workingDirectory/);
   assert.match(source, /virtualDesktopOculusCompatibilityLayerDisabled = \$true/);
+});
+
+test('performance diagnosis keeps scalar and empty metrics safe under strict mode', async () => {
+  const source = await readFile(diagnosisUrl, 'utf8');
+  assert.match(source, /\$providerValues = @\(@\(\$sessionProvider, \$summaryProvider\)[\s\S]*?Select-Object -Unique\)/);
+  assert.equal((source.match(/\$null -eq \$Values -or \$Values\.Length -eq 0/g) ?? []).length, 3);
+  assert.doesNotMatch(source, /@\(\$Values\)\.Count/);
 });
 
 test('Mutar performance mode parks local AI, applies VR-safe settings, switches Quest audio, records telemetry, and restores state', async () => {
@@ -231,6 +245,9 @@ test('splash is presentation-only, requires provider selection, and delegates re
   assert.match(source, /Checking OpenXR runtime/);
   assert.match(source, /Checking verified VR provider/);
   assert.match(source, /Ready to launch/);
+  assert.match(source, /FLIGHT RECORDER AUTO \| FPS \+ frame time \+ stereo\/pose\/OpenXR -> Shared Workspace/);
+  assert.match(source, /Flight recorder proved its first sample/);
+  assert.match(source, /View \+ L3 \+ R3/);
   assert.match(source, /Launching Starfield VR/);
   assert.match(source, /Start-StarfieldVrLauncherProcess -SelectedProfilePath \$processState\.ProfilePath -ReadinessOnly/);
   assert.match(source, /Start-StarfieldVrLauncherProcess/);
@@ -330,8 +347,10 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(observe, /AER Observe blocked a stale readiness receipt/);
   assert.match(observe, /DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY/);
   assert.match(observe, /function Start-StarfieldWithMetaAirLinkIsolation/);
-  assert.match(observe, /Virtual Desktop's implicit Oculus compatibility layer/);
-  assert.match(observe, /\$game = Start-StarfieldWithMetaAirLinkIsolation/);
+  assert.match(observe, /XR_APILAYER_STEPHANOS_telemetry_v1/);
+  assert.match(observe, /-ProviderSensors @\('mutar\.aer-presenter-sequence','mutar\.aer-parity'\)/);
+  assert.match(observe, /-ProviderTelemetryPath \$liveLog/);
+  assert.match(observe, /\$game = Start-StarfieldWithMetaAirLinkIsolation -VisualTelemetry \$performanceMode\.visualTelemetry/);
   assert.match(observe, /virtualDesktopOculusCompatibilityLayerDisabled = \$true/);
   assert.match(observe, /Fresh canonical telemetry session was not created before Starfield launch/);
   assert.match(observe, /Fresh canonical telemetry session identity does not match this exact launch/);

@@ -84,7 +84,82 @@ export function validateGoalBuildingSharedWorkspaceContinuationRecord(input = {}
   if (!body?.continuation) reasons.push('goal-building-continuation-missing');
   if (body?.constraints?.protectedMergeAuthority !== false) reasons.push('protected-merge-authority-widened');
   if (body?.constraints?.runtimeMutationAuthority !== false) reasons.push('runtime-mutation-authority-widened');
-  if (body?.constraints?.duplicateControllerForbidden !== true) reasons.push('duplicate-controller-guard-missing');
+  // A handoff is a custody-preserving hint, never permission to switch mission,
+  // owner, controller, branch or PR. Check every declared invariant on READ,
+  // including records written by another producer or mutated after publication.
+  const requiredGuards = [
+    ['sameMissionRequired', 'same-mission-guard-missing'],
+    ['sameCanonicalOwnerRequired', 'same-canonical-owner-guard-missing'],
+    ['duplicateControllerForbidden', 'duplicate-controller-guard-missing'],
+    ['duplicateMissionForbidden', 'duplicate-mission-guard-missing'],
+    ['duplicateBranchOrPrForbidden', 'duplicate-branch-or-pr-guard-missing'],
+  ];
+  for (const [field, reason] of requiredGuards) {
+    if (body?.constraints?.[field] !== true) reasons.push(reason);
+  }
+  // Declared guards cannot substitute for the identity they claim to bind.
+  // Keep this a read-only handoff consistency test: no grants or execution.
+  const checkpoint = body?.checkpoint;
+  const continuation = body?.continuation;
+  if (checkpoint && continuation) {
+    for (const [field, reason] of [
+      ['missionId', 'handoff-mission-identity-mismatch'],
+      ['goalId', 'handoff-goal-identity-mismatch'],
+      ['canonicalOwnerId', 'handoff-owner-identity-mismatch'],
+      ['checkpointId', 'handoff-checkpoint-identity-mismatch'],
+      ['protectedMainHead', 'handoff-main-identity-mismatch'],
+      ['sourceHead', 'handoff-source-identity-mismatch'],
+    ]) {
+      if (typeof checkpoint[field] !== 'string' || !checkpoint[field]
+        || continuation[field] !== checkpoint[field]) reasons.push(reason);
+    }
+    if (continuation.mayRequestExistingControllerContinuation === true) {
+      if (continuation.state !== 'AUTO_CONTINUE_ELIGIBLE'
+        || continuation.continuationTarget !== 'EXISTING_1557_CONTINUITY_CONTROLLER') {
+        reasons.push('handoff-continuity-controller-target-invalid');
+      }
+    } else if (continuation.continuationTarget) {
+      reasons.push('handoff-continuity-controller-target-invalid');
+    }
+    if (continuation.mayRequestCapacityRefill === true) {
+      if (continuation.refillTarget !== 'EXISTING_1947_CAPACITY_REFILL') {
+        reasons.push('handoff-capacity-refill-target-invalid');
+      }
+    } else if (continuation.refillTarget) {
+      reasons.push('handoff-capacity-refill-target-invalid');
+    }
+    if (record.toParticipantId !== (
+      continuation.mayRequestExistingControllerContinuation === true
+        ? 'mission-orchestrator' : 'goal-building-agent'
+    )) reasons.push('handoff-receiver-identity-mismatch');
+  }
+
+  // Canonical targets are fixed original owners, never caller-selectable.
+  for (const [key, id] of [
+    ['scheduler', '1556'],
+    ['continuityController', '1557'],
+    ['capacityRefill', '1947'],
+    ['goalBuildingAgent', '2002'],
+  ]) {
+    if (body?.canonicalTargets?.[key] !== id) reasons.push(`handoff-canonical-target-mismatch:${key}`);
+  }
+
+  // Bind the record's stored custody snapshot to the original caller-supplied
+  // checkpoint whenever a reference is available; this is NOT authentication
+  // of that reference or an independent source lease.
+  if (input.checkpoint && checkpoint) {
+    for (const field of [
+      'checkpointId', 'missionId', 'goalId', 'canonicalOwnerId',
+      'repository', 'prNumber', 'branch', 'protectedMainHead',
+      'sourceHead', 'sourceTree', 'allowedPaths', 'leases',
+    ]) {
+      if (JSON.stringify(checkpoint[field]) !== JSON.stringify(input.checkpoint[field])) {
+        reasons.push(`handoff-original-checkpoint-mismatch:${field}`);
+      }
+    }
+  } else if (input.record && !input.checkpoint) {
+    reasons.push('handoff-original-checkpoint-reference-unproven');
+  }
   return Object.freeze({
     valid: reasons.length === 0,
     reasons: Object.freeze([...new Set(reasons)]),

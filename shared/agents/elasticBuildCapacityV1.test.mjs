@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+// Goal #3006: exercise the surge-capacity contract in existing hosted scheduler tests.
+import './surgeBuilderQualificationV1.test.mjs';
 import {
   MAXIMUM_BUILD_LANES,
   MINIMUM_BUILD_LANES,
   deriveElasticBuildWidth,
+  projectCanonicalResourceIds,
   selectResourceDisjointCandidates,
 } from './elasticBuildCapacityV1.mjs';
 
@@ -51,6 +54,84 @@ test('capacity evidence fails closed below the five-lane baseline without imposi
   assert.ok(degraded.reasonCodes.includes('BASELINE_CAPACITY_SHORTFALL'));
 });
 
+// Goal #2002: supplied policy limits are authority-bearing bounds, not hints.
+// Before this correction malformed maximumLanes silently selected MAX_SAFE_INTEGER.
+test('malformed supplied elastic policy limits fail closed rather than silently widening capacity', () => {
+  const base = { activeLaneCount:2, readyIndependentWorkCount:10, availableExecutorSlots:20 };
+  for (const supplied of [
+    { maximumLanes:-1 }, { maximumLanes:null }, { maximumLanes:'8' },
+    { maximumLanes:2 ** 53 }, { minimumLanes:null }, { minimumLanes:'5' },
+  ]) {
+    const held = deriveElasticBuildWidth({ ...base, ...supplied });
+    assert.equal(held.status, 'SAFE_HOLD_INVALID_CAPACITY', JSON.stringify(supplied));
+    assert.equal(held.scaleAction, 'SAFE_HOLD');
+    assert.equal(held.desiredWidth, 0);
+    assert.equal(held.remainingAdmissionSlots, 0);
+    assert.ok(held.reasonCodes.includes('INVALID_CAPACITY_EVIDENCE'));
+  }
+  const valid = deriveElasticBuildWidth({ ...base, maximumLanes:8 });
+  assert.equal(valid.status, 'RUNNING');
+  assert.equal(valid.desiredWidth, 8);
+  assert.equal(valid.remainingAdmissionSlots, 6);
+  assert.equal(deriveElasticBuildWidth(base).desiredWidth, 12);
+});
+
+test('combined elastic demand exceeding safe integer precision cannot certify a lane width', () => {
+  const held = deriveElasticBuildWidth({
+    activeLaneCount:Number.MAX_SAFE_INTEGER,
+    readyIndependentWorkCount:1,
+    availableExecutorSlots:Number.MAX_SAFE_INTEGER,
+  });
+  assert.equal(held.status, 'SAFE_HOLD_INVALID_CAPACITY');
+  assert.equal(held.scaleAction, 'SAFE_HOLD');
+  assert.equal(held.desiredWidth, 0);
+  assert.ok(held.reasonCodes.includes('INVALID_CAPACITY_EVIDENCE'));
+  const exact = deriveElasticBuildWidth({
+    activeLaneCount:Number.MAX_SAFE_INTEGER - 1,
+    readyIndependentWorkCount:1,
+    availableExecutorSlots:Number.MAX_SAFE_INTEGER,
+  });
+  assert.equal(exact.status, 'RUNNING');
+  assert.equal(exact.desiredWidth, Number.MAX_SAFE_INTEGER);
+  assert.equal(exact.remainingAdmissionSlots, 1);
+});
+
+// Original independent review P2: availableExecutorSlots bounds TOTAL qualified
+// active capacity. Overcommit is degraded, and must not admit another lane.
+test('overcommitted active lanes fail closed before further resource admission', () => {
+  for (const sample of [
+    { activeLaneCount:6, readyIndependentWorkCount:0, availableExecutorSlots:5 },
+    { activeLaneCount:8, readyIndependentWorkCount:0, availableExecutorSlots:6 },
+  ]) {
+    const result = deriveElasticBuildWidth(sample);
+    assert.equal(result.status, 'DEGRADED_CAPACITY');
+    assert.equal(result.scaleAction, 'SAFE_HOLD');
+    assert.equal(result.remainingAdmissionSlots, 0);
+    assert.equal(result.activeLaneCount, sample.activeLaneCount);
+    assert.ok(result.reasonCodes.includes('ACTIVE_EXECUTOR_CAPACITY_EXCEEDED'));
+    assert.equal(result.reasonCodes.includes('BASELINE_CAPACITY_SHORTFALL'), false);
+  }
+  const policy = deriveElasticBuildWidth({
+    activeLaneCount:6, readyIndependentWorkCount:0, availableExecutorSlots:10, maximumLanes:5,
+  });
+  assert.equal(policy.status, 'DEGRADED_CAPACITY');
+  assert.equal(policy.scaleAction, 'SAFE_HOLD');
+  assert.equal(policy.remainingAdmissionSlots, 0);
+  assert.ok(policy.reasonCodes.includes('ACTIVE_POLICY_MAXIMUM_EXCEEDED'));
+  assert.ok(policy.reasonCodes.includes('POLICY_MAXIMUM_REACHED'));
+  const healthy = deriveElasticBuildWidth({ activeLaneCount:5, readyIndependentWorkCount:0, availableExecutorSlots:5 });
+  assert.equal(healthy.status, 'RUNNING');
+  assert.equal(healthy.scaleAction, 'HOLD');
+  const shortfall = deriveElasticBuildWidth({ activeLaneCount:3, readyIndependentWorkCount:0, availableExecutorSlots:4 });
+  assert.equal(shortfall.status, 'DEGRADED_CAPACITY');
+  assert.equal(shortfall.scaleAction, 'SAFE_HOLD');
+  assert.ok(shortfall.reasonCodes.includes('BASELINE_CAPACITY_SHORTFALL'));
+  const widening = deriveElasticBuildWidth({ activeLaneCount:4, readyIndependentWorkCount:2, availableExecutorSlots:8 });
+  assert.equal(widening.status, 'RUNNING');
+  assert.equal(widening.scaleAction, 'SCALE_OUT');
+  assert.equal(widening.remainingAdmissionSlots, 2);
+});
+
 test('resource selection admits more than sixteen proven disjoint candidates when capacity exists', () => {
   const candidates = Array.from({ length:24 }, (_, index) => ({
     candidateId:`goal-wide-${index + 1}`,
@@ -79,6 +160,37 @@ test('repository-wide scope conflicts with every path inside that repository', (
   assert.equal(pathAlreadyActive.held[0].reasonCode, 'RESOURCE_CONFLICT');
 });
 
+test('reserved repository namespace refuses malformed roots and pseudo-paths before concurrent admission', () => {
+  const root = 'repo:cheekyfellastef/stephan-os';
+  const path = 'repo:cheekyfellastef/stephan-os:path:shared/agents/goalBuildingAgentV1.mjs';
+  assert.equal(projectCanonicalResourceIds([root]).finalVerdict, 'RESOURCE_IDS_CANONICAL');
+  assert.equal(projectCanonicalResourceIds([path]).finalVerdict, 'RESOURCE_IDS_CANONICAL');
+  assert.deepEqual(projectCanonicalResourceIds(['goal:42']).resourceIds, ['goal:42']);
+  for (const malformed of [
+    'repo:main',
+    'repo:cheekyfellastef/stephan-os/path:shared/agents/goalBuildingAgentV1.mjs',
+    'repo:cheekyfellastef/stephan-os/third',
+    'repo:cheekyfellastef/stephan-os:file:shared/agents/x.mjs',
+    'repo:cheekyfellastef/stephan-os/third:path:shared/x.mjs',
+  ]) {
+    const projected = projectCanonicalResourceIds([malformed]);
+    assert.equal(projected.valid, false, malformed);
+    assert.equal(projected.finalVerdict, 'RESOURCE_IDS_INVALID', malformed);
+    const selected = selectResourceDisjointCandidates([
+      { candidateId:'repository-owner', resourceIds:[root] },
+      { candidateId:'malformed-candidate', resourceIds:[malformed] },
+    ], { limit:5, activeResourceIds:[] });
+    assert.deepEqual(selected.selected.map(({ candidateId }) => candidateId), ['repository-owner'], malformed);
+    assert.equal(selected.held[0].reasonCode, 'RESOURCE_SCOPE_REQUIRED', malformed);
+  }
+  const overlapping = selectResourceDisjointCandidates([
+    { candidateId:'repository-owner', resourceIds:[root] },
+    { candidateId:'path-owner', resourceIds:[path] },
+  ], { limit:5, activeResourceIds:[] });
+  assert.deepEqual(overlapping.selected.map(({ candidateId }) => candidateId), ['repository-owner']);
+  assert.equal(overlapping.held[0].reasonCode, 'RESOURCE_CONFLICT');
+});
+
 test('resource selection admits five isolated candidates and holds only conflicts or overflow', () => {
   const candidates = Array.from({ length:7 }, (_, index) => ({
     candidateId:`goal-${index + 1}`,
@@ -95,9 +207,9 @@ test('missing, malformed, sparse or active-conflicting resource scope is never a
   const result = selectResourceDisjointCandidates([
     { candidateId:'missing' },
     { candidateId:'malformed', resourceIds:['../unsafe'] },
-    { candidateId:'conflict', resourceIds:['repo:main'] },
+    { candidateId:'conflict', resourceIds:['goal:main'] },
     { candidateId:'safe', resourceIds:['goal:42'] },
-  ], { limit:5, activeResourceIds:['repo:main'] });
+  ], { limit:5, activeResourceIds:['goal:main'] });
   assert.deepEqual(result.selected.map(({ candidateId }) => candidateId), ['safe']);
   assert.equal(result.held.find(({ candidateId }) => candidateId === 'conflict').reasonCode, 'RESOURCE_CONFLICT');
 

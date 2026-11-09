@@ -112,10 +112,15 @@ export function validateProgramme(input, expectedHead, timing) {
 
   if (activeMissions.length > MAX_ACTIVE_MISSIONS) evidenceProblems.push('active-mission-limit-exceeded');
   if (!isNonNegativeInteger(eligibleQueuedGoalCount)) evidenceProblems.push('eligible-queued-goal-count-invalid');
-  if (!isNonNegativeInteger(qualifiedCapacity)) evidenceProblems.push('qualified-capacity-invalid');
-  if (!isNonNegativeInteger(idleQualifiedCapacity)) evidenceProblems.push('idle-qualified-capacity-invalid');
+  // Unsafe IEEE-754 integers can round away occupied mission slots. Fail closed before accounting.
+  if (!Number.isSafeInteger(qualifiedCapacity) || qualifiedCapacity < 0) evidenceProblems.push('qualified-capacity-invalid');
+  if (!Number.isSafeInteger(idleQualifiedCapacity) || idleQualifiedCapacity < 0) evidenceProblems.push('idle-qualified-capacity-invalid');
   if (isNonNegativeInteger(qualifiedCapacity) && activeMissions.length > qualifiedCapacity) evidenceProblems.push('active-missions-exceed-qualified-capacity');
   if (isNonNegativeInteger(qualifiedCapacity) && isNonNegativeInteger(idleQualifiedCapacity) && idleQualifiedCapacity > qualifiedCapacity) evidenceProblems.push('idle-capacity-exceeds-qualified-capacity');
+  if (isNonNegativeInteger(qualifiedCapacity) && isNonNegativeInteger(idleQualifiedCapacity)
+    && activeMissions.length + idleQualifiedCapacity > qualifiedCapacity) {
+    evidenceProblems.push('active-plus-idle-exceeds-qualified-capacity');
+  }
 
   const missionIds = new Set();
   const goalIds = new Set();
@@ -210,12 +215,20 @@ export function validateBlockers(input, timing) {
 }
 
 export function validateOperatorAction(input = {}) {
-  const operatorAction = input.operatorAction && typeof input.operatorAction === 'object' && !Array.isArray(input.operatorAction)
-    ? input.operatorAction
-    : {};
+  // Approval gates are security boundaries: a malformed supplied flag must not
+  // silently become false and make an otherwise healthy programme look green.
+  // Absent optional operatorAction remains a valid "no action published" input.
+  const supplied = Object.hasOwn(input, 'operatorAction') && input.operatorAction !== undefined;
+  const validShape = !supplied || (input.operatorAction !== null
+    && typeof input.operatorAction === 'object' && !Array.isArray(input.operatorAction));
+  const operatorAction = validShape && input.operatorAction ? input.operatorAction : {};
   const required = operatorAction.required === true;
   const target = boundedText(operatorAction.target, '', 280);
   const evidenceProblems = [];
+  if (!validShape) evidenceProblems.push('operator-action-record-invalid');
+  if (validShape && Object.hasOwn(operatorAction, 'required') && typeof operatorAction.required !== 'boolean') {
+    evidenceProblems.push('operator-action-required-not-boolean');
+  }
   if (required && !target) evidenceProblems.push('operator-action-target-missing');
   if (!required && target) evidenceProblems.push('operator-action-target-without-requirement');
   return Object.freeze({ required, target, evidenceProblems });

@@ -28,6 +28,8 @@ if (-not (Test-Path -LiteralPath $launcherScript -PathType Leaf)) {
     throw "Spatial Workspace launcher is missing: $launcherScript"
 }
 
+& (Join-Path $PSScriptRoot 'install-spatial-window.ps1')
+
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $powershellExecutable
@@ -37,7 +39,7 @@ $iconLibrary = Join-Path $env:SystemRoot 'System32\imageres.dll'
 if (Test-Path -LiteralPath $iconLibrary -PathType Leaf) {
     $shortcut.IconLocation = $iconLibrary + ',72'
 }
-$shortcut.Description = 'Open the Stephanos Spatial Workspace VR entry card.'
+$shortcut.Description = 'Open Spatial Workspace and its local ChatGPT window console.'
 $shortcut.Save()
 
 [pscustomobject]@{
