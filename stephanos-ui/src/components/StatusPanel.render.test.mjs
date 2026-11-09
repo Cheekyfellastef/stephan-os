@@ -432,26 +432,42 @@ test('App route/provider labels are sourced from finalRouteTruth', async () => {
 });
 
 
-test('Meaning strip projects finalRouteTruth and fails transparently when missing', async () => {
+test('Meaning strip projects canonical route truth and keeps unprobed runtime status unverified', async () => {
   const { renderApp } = await importBundledModule(path.join(srcRoot, 'test/renderAppEntry.jsx'), appAliases);
 
   globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({
     runtimeStatusModel: {
-      finalRouteTruth: {
-        routeKind: 'local-desktop',
+      appLaunchState: 'ready',
+      canonicalRouteRuntimeTruth: {
+        winningRoute: 'local-desktop',
         backendReachable: true,
-        providerExecution: { executableProvider: 'ollama' },
+        routeReachable: true,
+        routeUsable: true,
+        currentBackendHealthFresh: 'yes',
+        routeTruthHealthSource: 'refresh-health-poll',
+        selectedProvider: 'ollama',
+        executedProvider: 'ollama',
+        providerHealthState: 'READY',
         fallbackActive: false,
+      },
+      finalRouteTruth: {
         memoryMode: 'shared',
       },
     },
   });
   const renderedWithTruth = renderApp();
-  assert.match(renderedWithTruth, /🟢 SYSTEM HEALTHY \| 🧠 AI: OLLAMA \| 📡 ROUTE: LOCAL-DESKTOP \| ✅ NO FALLBACK \| 💾 MEMORY: SHARED/);
+  assert.match(renderedWithTruth, /🟢 BACKEND REACHABLE \| 🧠 AI: OLLAMA \(SELECTED\) \| 📡 ROUTE: LOCAL-DESKTOP \| ✅ NO FALLBACK \| 💾 MEMORY: SHARED/);
 
   globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({ runtimeStatusModel: undefined });
   const renderedWithoutTruth = renderApp();
-  assert.match(renderedWithoutTruth, /⚠️ NO RUNTIME TRUTH AVAILABLE/);
+  assert.match(renderedWithoutTruth, /BACKEND UNVERIFIED/);
+  assert.match(renderedWithoutTruth, /AI: UNVERIFIED/);
+  assert.doesNotMatch(renderedWithoutTruth, /BACKEND REACHABLE|BACKEND UNREACHABLE/);
+
+  const { renderMeaningStrip } = await importBundledModule(
+    path.join(srcRoot, 'test/renderMeaningStripEntry.jsx'), {}, 'meaning-strip-missing-truth',
+  );
+  assert.match(renderMeaningStrip(null), /NO RUNTIME TRUTH AVAILABLE/);
 });
 
 test('AIConsole route/provider banner is sourced from finalRouteTruth', async () => {
@@ -545,4 +561,107 @@ test('StatusPanel renders mission synthesis rows without crashing on partial met
   assert.match(rendered, /\[MISSION SYNTHESIS\] Proposal Eligible: true/);
   assert.match(rendered, /\[MEMORY ELEVATION\] Active: true/);
   assert.match(rendered, /\[MEMORY ELEVATION\] Top Influencers: build-relevant-memory · dist parity recurrence · durable-memory · graph-deferred/);
+});
+
+test('runtime meaning strip uses canonical backend reachability and selected AI provider without claiming execution', async () => {
+  const { renderMeaningStrip } = await importBundledModule(
+    path.join(srcRoot, 'test/renderMeaningStripEntry.jsx'),
+    {}, 'runtime-meaning-strip',
+  );
+
+  const reachable = renderMeaningStrip({
+    routeKind: 'local-desktop',
+    backendReachableState: 'yes',
+    currentBackendHealthFresh: 'yes',
+    routeTruthHealthSource: 'refresh-health-poll',
+    selectedProvider: 'ollama',
+    executedProvider: 'unknown',
+    providerExecutionGateStatus: 'pending-selection',
+    routeLayerStatus: 'healthy',
+    fallbackActive: false,
+  }, 'recording-only');
+  assert.match(reachable, /BACKEND REACHABLE/);
+  assert.match(reachable, /AI: OLLAMA \(SELECTED\)/);
+  assert.match(reachable, /MEMORY: RECORDING-ONLY/);
+  assert.doesNotMatch(reachable, /AI: UNKNOWN|AI: OLLAMA \(EXECUTED\)/);
+
+  const unreachable = renderMeaningStrip({
+    routeKind: 'local-desktop',
+    backendReachableState: 'no',
+    currentBackendHealthFresh: 'yes',
+    routeTruthHealthSource: 'refresh-health-poll',
+    selectedProvider: 'ollama',
+    executedProvider: 'none',
+    providerExecutionGateStatus: 'route-blocked',
+    routeLayerStatus: 'route-failure',
+  });
+  assert.match(unreachable, /BACKEND UNREACHABLE FROM UI/);
+  assert.match(unreachable, /AI: OLLAMA \(SELECTED\)/);
+  assert.match(unreachable, /ROUTE ISSUE/);
+  assert.doesNotMatch(unreachable, /BACKEND REACHABLE/);
+
+  const unknown = renderMeaningStrip({
+    routeKind: 'unavailable',
+    backendReachableState: 'unknown',
+    selectedProvider: 'unknown',
+    executedProvider: 'none',
+  });
+  assert.match(unknown, /BACKEND UNVERIFIED/);
+  assert.match(unknown, /AI: UNVERIFIED/);
+  assert.doesNotMatch(unknown, /BACKEND UNREACHABLE|BACKEND REACHABLE/);
+
+  const stalePositive = renderMeaningStrip({
+    routeKind: 'local-desktop',
+    backendReachableState: 'yes',
+    currentBackendHealthFresh: 'no',
+    routeTruthHealthSource: 'stale-route-candidate',
+    selectedProvider: 'ollama',
+    executedProvider: 'groq',
+    fallbackActive: true,
+  }, '', { actual_provider_used: 'groq' });
+  assert.match(stalePositive, /BACKEND UNVERIFIED/);
+  assert.doesNotMatch(stalePositive, /BACKEND REACHABLE/);
+  assert.match(stalePositive, /AI: GROQ \(EXECUTION RECORDED; OLLAMA SELECTED\)/);
+  assert.match(stalePositive, /FALLBACK ACTIVE/);
+
+  const noRequestYet = renderMeaningStrip({
+    routeKind: 'local-desktop',
+    backendReachableState: 'yes',
+    currentBackendHealthFresh: 'yes',
+    routeTruthHealthSource: 'refresh-health-poll',
+    selectedProvider: 'ollama',
+    executedProvider: 'groq',
+  });
+  assert.match(noRequestYet, /AI: OLLAMA \(SELECTED\)/);
+  assert.doesNotMatch(noRequestYet, /EXECUTION RECORDED/);
+
+  const staleNegative = renderMeaningStrip({
+    backendReachableState: 'no', currentBackendHealthFresh: 'no',
+    routeTruthHealthSource: 'stale-route-candidate',
+  });
+  assert.match(staleNegative, /BACKEND UNVERIFIED/);
+  assert.doesNotMatch(staleNegative, /BACKEND UNREACHABLE FROM UI/);
+});
+
+test('Command Deck status wiring uses the final route projection and transport failure text does not assert service outage', async () => {
+  const fs = await import('node:fs/promises');
+  const app = await fs.readFile(path.join(srcRoot, 'App.jsx'), 'utf8');
+  const consoleHook = await fs.readFile(path.join(srcRoot, 'hooks/useAIConsole.js'), 'utf8');
+
+  assert.match(app, /<MeaningStrip finalRouteTruth=\{routeTruthView\} memoryMode=\{runtimeStatusModel\?\.finalRouteTruth\?\.memoryMode\} lastExecutionMetadata=\{lastExecutionMetadata\} \/>/);
+  assert.doesNotMatch(app, /<MeaningStrip finalRouteTruth=\{runtimeStatusModel\?\.finalRouteTruth\}/);
+  assert.match(consoleHook, /label: 'Backend connection unreachable from this browser'/);
+  assert.doesNotMatch(consoleHook, /label: 'Backend offline'/);
+});
+
+test('local browser health preserves explicitly configured loopback backend host, not frontend hostname', async () => {
+  const fs = await import('node:fs/promises');
+  const hook = await fs.readFile(path.join(srcRoot, 'hooks/useAIConsole.js'), 'utf8');
+
+  assert.match(hook, /const configuredLoopbackHost = extractHostname\(nextRuntimeConfig\.baseUrl\)/);
+  assert.match(hook, /const configuredLocalBackend = localDesktopSession && isLoopbackHost\(configuredLoopbackHost\.replace\(/);
+  assert.match(hook, /shouldIgnoreHomeNodeForThisSession && !configuredLocalBackend[\s\S]*?\? localDesktopBackendUrl[\s\S]*?: nextRuntimeConfig\.baseUrl/);
+  assert.match(hook, /actualTargetUsed: configuredLocalBackend[\s\S]*?\? compatibleBackendBaseUrl/);
+  assert.doesNotMatch(hook, /loopbackHostMismatch/, 'frontend origin must not override an explicit IPv4 loopback target');
+  assert.match(hook, /const health = await checkApiHealth\(resolvedRuntimeContext\)/);
 });

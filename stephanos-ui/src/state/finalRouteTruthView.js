@@ -149,6 +149,10 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
   );
   const executableProviderValid = isKnownProvider(providerTruth.executedProvider);
   const backendReachable = canonicalTruth.backendReachable === true;
+  // A pending startup uses false as a placeholder, not as a completed failed probe.
+  const backendReachableState = runtimeStatus.appLaunchState === 'pending' && !backendReachable
+    ? 'unknown'
+    : asBooleanState(canonicalTruth.backendReachable);
   const networkReachabilityState = pickTruth(canonicalTruth.networkReachabilityState) || 'unknown';
   const currentBackendHealthFresh = pickTruth(canonicalTruth.currentBackendHealthFresh) || 'no';
   const routeTruthHealthSource = pickTruth(canonicalTruth.routeTruthHealthSource) || 'stale-route-candidate';
@@ -199,7 +203,7 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
         ? 'no'
         : 'unknown',
     routeUsableState,
-    backendReachableState: asBooleanState(canonicalTruth.backendReachable),
+    backendReachableState,
   });
   const backendExecutionContractStatus = routeLayerStatus === 'healthy'
     && !executableProviderValid
@@ -224,7 +228,7 @@ export function buildFinalRouteTruthView(runtimeStatusModel) {
   return {
     routeKind,
     fallbackActive: canonicalTruth.fallbackActive === true,
-    backendReachableState: asBooleanState(canonicalTruth.backendReachable),
+    backendReachableState,
     networkReachabilityState,
     currentBackendHealthFresh,
     routeTruthHealthSource,
