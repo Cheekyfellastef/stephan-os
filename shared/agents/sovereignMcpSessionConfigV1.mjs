@@ -1,3 +1,4 @@
+import { types as utilTypes } from 'node:util';
 export const SOVEREIGN_MCP_SESSION_CONFIG_SCHEMA_V1 = 'stephanos.sovereign-mcp-session-config.v1';
 export const SOVEREIGN_MCP_SESSION_CONFIG_SCOPE_V1 = 'THIS_PRIVATE_MCP_SESSION';
 export const SOVEREIGN_MCP_SESSION_CONFIG_DEFAULTS_V1 = Object.freeze({
@@ -25,7 +26,7 @@ const failure = (blocker, extra = {}) => freeze({ ok: false,
 
 function captureData(raw, fields, exact = true) {
   try {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+    if (!raw || typeof raw !== 'object' || utilTypes.isProxy(raw) || Array.isArray(raw)
       || Object.getPrototypeOf(raw) !== Object.prototype) return null;
     const keys = Reflect.ownKeys(raw);
     if ((exact && keys.length !== fields.length)

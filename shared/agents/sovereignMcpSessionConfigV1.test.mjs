@@ -75,6 +75,35 @@ test('strict allowed keys, typed bounds and revision cannot be widened by hidden
   service.dispose();
 });
 
+test('hostile Proxy arguments and snapshot records fail closed before any reflection trap', () => {
+  const service = createSovereignMcpSessionConfigV1();
+  const original = service.getSnapshot();
+  let traps = 0;
+  const hostile = value => new Proxy(value, {
+    getPrototypeOf() { traps++; return Object.prototype; },
+    ownKeys() { traps++; return Reflect.ownKeys(value); },
+    getOwnPropertyDescriptor(target, key) { traps++; return Reflect.getOwnPropertyDescriptor(target, key); },
+  });
+  const argumentsProxy = hostile({ key: 'fileReadLineLimit', value: 3, expectedRevision: 0 });
+  assert.equal(captureSovereignMcpSessionConfigArgumentsV1(argumentsProxy), null);
+  assert.equal(service.execute('SET_CONFIG_VALUE', argumentsProxy).blocker,
+    'SOVEREIGN_SESSION_CONFIG_ARGUMENTS_INVALID');
+  assert.equal(captureSovereignMcpSessionConfigSnapshotV1(
+    hostile({ ...original, values: { ...original.values } })), null);
+  assert.equal(captureSovereignMcpSessionConfigSnapshotV1(
+    { ...original, values: hostile({ ...original.values }) }), null);
+  const revokedArgs = Proxy.revocable({ key: 'fileWriteLineLimit', value: 10, expectedRevision: 0 }, {});
+  revokedArgs.revoke();
+  assert.equal(captureSovereignMcpSessionConfigArgumentsV1(revokedArgs.proxy), null);
+  const revokedValues = Proxy.revocable({ ...original.values }, {});
+  revokedValues.revoke();
+  assert.equal(captureSovereignMcpSessionConfigSnapshotV1(
+    { ...original, values: revokedValues.proxy }), null);
+  assert.equal(traps, 0, 'untrusted proxy traps must never run');
+  assert.deepEqual(service.getSnapshot(), original, 'rejected input cannot mutate session state');
+  service.dispose();
+});
+
 test('captured config state rejects invalid or externally mutable policy snapshots', () => {
   const service = createSovereignMcpSessionConfigV1();
   const original = service.getSnapshot();
