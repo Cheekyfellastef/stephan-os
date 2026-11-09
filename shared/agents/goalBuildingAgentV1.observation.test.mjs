@@ -279,7 +279,7 @@ test('unbound operator gate fails closed even with a plausible action title', ()
   });
   assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BLOCKED);
   assert.equal(result.buildingProven, false);
-  assert.equal(result.blocker, 'unrelated-health-surface-stale');
+  assert.equal(result.blocker, 'PROGRAMME_OPERATOR_GATE_SCOPE_UNPROVEN');
   assert.equal(result.falseBuildingRejected, true);
 });
 
