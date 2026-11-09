@@ -27,12 +27,23 @@ const REPROOF_REASONS = new Set([
   'source-head-moved-reprove-required',
 ]);
 
+// Resource identities are custody keys, not display strings. Never permit a
+// truncated or whitespace-normalized value to alias an ACTIVE lease.
+function exactResourceId(value) {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= 180
+    && value === value.trim()
+    && !/[\r\n\t]/.test(value)
+    ? value : '';
+}
+
 function normalizeCandidate(candidate = {}) {
   return Object.freeze({
     goalId: safeId(candidate.goalId),
     missionId: safeId(candidate.missionId),
     canonicalOwnerId: safeId(candidate.canonicalOwnerId),
-    resourceIds: Object.freeze(unique(list(candidate.resourceIds).map((value) => boundedText(value, '', 180)).filter(Boolean))),
+    resourceIds: Object.freeze(unique(list(candidate.resourceIds).map(exactResourceId).filter(Boolean))),
     nextLegalAction: boundedText(candidate.nextLegalAction, '', 320),
     schedulerEligible: candidate.schedulerEligible === true,
     qualifiedProviderAvailable: candidate.qualifiedProviderAvailable === true,
@@ -46,9 +57,10 @@ function normalizeCandidate(candidate = {}) {
 function continuationProofGaps(checkpoint, candidate) {
   const gaps = [];
   const hasActiveOwnedResourceLease = candidate.resourceIds.length > 0
-    && list(checkpoint.leases).some((lease) => lease.disposition === 'ACTIVE'
+    && candidate.resourceIds.every((resourceId) => list(checkpoint.leases).some((lease) =>
+      lease.disposition === 'ACTIVE'
       && lease.ownerId === checkpoint.canonicalOwnerId
-      && candidate.resourceIds.includes(lease.resourceId));
+      && lease.resourceId === resourceId));
   if (!hasActiveOwnedResourceLease) gaps.push('continuation-active-owned-resource-lease-unproven');
   if (!SHA_40.test(text(checkpoint.sourceTree))) gaps.push('continuation-source-tree-unproven');
   if (!checkpoint.lastMaterialReceiptId
@@ -66,6 +78,39 @@ export function projectStephanosGoalContinuation(input = {}) {
   const evaluation = reconstructed.evaluation;
   const candidate = normalizeCandidate(input.schedulerCandidate || {});
   const reasons = [...evaluation.reasons];
+
+  // The resume checkpoint normalizes lease resource strings for presentation.
+  // Check the original input before normalization can erase an oversize suffix.
+  // A single malformed scheduler key is a contradiction, even when another
+  // valid candidate resource has an ACTIVE lease.
+  if (list(input.schedulerCandidate?.resourceIds).some((id) => !exactResourceId(id))) {
+    reasons.push('scheduler-resource-identity-invalid');
+  }
+  if (list(input.checkpoint?.leases).some((lease) => !exactResourceId(lease?.resourceId))) {
+    reasons.push('checkpoint-lease-resource-identity-invalid');
+  }
+
+  // The resume checkpoint is a current custody snapshot, not a historical
+  // event log. A lease identity cannot name two scopes or dispositions, and
+  // one resource cannot be concurrently projected under multiple leases.
+  // Refuse ambiguous snapshots rather than granting a continuation hint.
+  const observedLeaseIds = new Set();
+  const observedResources = new Set();
+  for (const lease of list(input.checkpoint?.leases)) {
+    const leaseId = lease?.leaseId;
+    const resourceId = exactResourceId(lease?.resourceId);
+    if (typeof leaseId !== 'string' || !leaseId || safeId(leaseId) !== leaseId) {
+      reasons.push('checkpoint-lease-id-invalid');
+    } else if (observedLeaseIds.has(leaseId)) {
+      reasons.push('checkpoint-lease-identity-conflict');
+    } else {
+      observedLeaseIds.add(leaseId);
+    }
+    if (resourceId) {
+      if (observedResources.has(resourceId)) reasons.push('checkpoint-lease-resource-conflict');
+      else observedResources.add(resourceId);
+    }
+  }
 
   // A scheduler candidate must prove its three principal identities before a
   // status projection can request existing-controller continuation. Omitted
