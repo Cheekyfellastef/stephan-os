@@ -141,6 +141,31 @@ test('malformed or authority-widened checkpoint fails closed', () => {
   assert.ok(result.reasons.includes('authority-widened:protectedMerge'));
 });
 
+test('reconstructed handoff refuses injected authority even when normalization would hide it', () => {
+  const canonical = createGoalBuildResumeCheckpoint(checkpointInput()).authority;
+  const current = { protectedMainHead: main, sourceHead: head, canonicalOwnerId: 'goal-building-agent' };
+  const cases = [
+    { label: 'merge enabled', authority: { ...canonical, protectedMerge: true }, reason: 'checkpoint-supplied-authority-mismatch:protectedMerge' },
+    { label: 'runtime enabled', authority: { ...canonical, runtimeMutation: true }, reason: 'checkpoint-supplied-authority-mismatch:runtimeMutation' },
+    { label: 'source scope downgraded', authority: { ...canonical, sourceBuildWithinExistingOwner: false }, reason: 'checkpoint-supplied-authority-mismatch:sourceBuildWithinExistingOwner' },
+    { label: 'partial policy', authority: { protectedMerge: false }, reason: 'checkpoint-supplied-authority-mismatch:sourceBuildWithinExistingOwner' },
+    { label: 'unknown authority', authority: { ...canonical, arbitraryShell: true }, reason: 'checkpoint-supplied-authority-unknown-field' },
+    { label: 'null authority', authority: null, reason: 'checkpoint-supplied-authority-invalid' },
+    { label: 'array authority', authority: [], reason: 'checkpoint-supplied-authority-invalid' },
+  ];
+  for (const { label, authority, reason } of cases) {
+    const result = reconstructGoalBuildHandoff({ checkpoint: checkpointInput({ authority }), current });
+    assert.equal(result.evaluation.state, GOAL_BUILDING_RESUME_STATES.SAFE_HOLD, label);
+    assert.equal(result.evaluation.resumable, false, label);
+    assert.ok(result.evaluation.reasons.includes(reason), label);
+    assert.equal(result.checkpoint.authority.protectedMerge, false, label);
+    assert.equal(result.checkpoint.authority.runtimeMutation, false, label);
+  }
+  const legitimate = reconstructGoalBuildHandoff({ checkpoint: checkpointInput({ authority: canonical }), current });
+  assert.equal(legitimate.evaluation.state, GOAL_BUILDING_RESUME_STATES.RESUMABLE);
+  assert.deepEqual(legitimate.checkpoint.authorityInputProblems, []);
+});
+
 test('a saved checkpoint cannot self-prove live protected main, source, or canonical owner', () => {
   const checkpoint = createGoalBuildResumeCheckpoint(checkpointInput());
   const cases = [
