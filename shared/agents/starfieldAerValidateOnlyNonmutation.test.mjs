@@ -77,3 +77,66 @@ for (const [name, contents, accepted] of scenarios) {
       }
     });
 }
+
+const validateLocalState = section("function Validate-LocalState {", "\n$runtimeSourceHead");
+
+// Call the actual local-state validation next in the entry-point flow, not only
+// the extracted config helper. All file dependencies are disposable fixtures.
+// Override process inventory so there is no access to a running Starfield game.
+for (const [name, contents, accepted] of scenarios) {
+  test("full Validate-LocalState preserves disposable config: " + name,
+    { skip: process.platform !== "win32" },
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), "stephanos-vr2707-full-"));
+      try {
+        const paths = {
+          gameRoot: dir,
+          gameExe: join(dir, "Starfield.exe"),
+          liveDll: join(dir, "dxgi.dll"),
+          liveLoader: join(dir, "openxr_loader.dll"),
+          customDll: join(dir, "custom.dll"),
+          guardianScript: join(dir, "guardian.ps1"),
+          profilePath: join(dir, "profile.json"),
+          canonicalLauncher: join(dir, "launcher.ps1"),
+          performanceScript: join(dir, "performance.ps1"),
+          resourceGovernorScript: join(dir, "governor.ps1"),
+          protectFlag: join(dir, "protect.flag"),
+        };
+        for (const [key, file] of Object.entries(paths)) {
+          if (key !== "gameRoot" && key !== "protectFlag") writeFileSync(file, "fixture:" + key + "\n");
+        }
+        const config = join(dir, "vr_config.txt");
+        const harness = join(dir, "validate.ps1");
+        writeFileSync(config, contents, "utf8");
+        const initialHash = hash(readFileSync(config));
+        const originalTime = new Date("2020-01-01T00:00:00.000Z");
+        utimesSync(config, originalTime, originalTime);
+        const initialMtime = statSync(config).mtimeMs;
+        const setup = [
+          "$ErrorActionPreference = 'Stop'",
+          "Set-StrictMode -Version Latest",
+          helpers,
+          "function Get-Sha256([string]$Path) { return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }",
+          "function Get-Process { [CmdletBinding()] param([string]$Name) return $null }",
+          ...Object.entries(paths).map(([key, file]) => "$" + key + " = " + quote(file)),
+          "$expectedBaselineHash = " + quote(hash(readFileSync(paths.liveDll))),
+          "$expectedCustomHash = " + quote(hash(readFileSync(paths.customDll))),
+          "$expectedLoaderHash = " + quote(hash(readFileSync(paths.liveLoader))),
+          "$ValidateOnly = $true",
+          validateLocalState,
+          "try { $null = Validate-LocalState; Write-Output 'VERDICT_ACCEPT' }",
+          "catch { Write-Output 'VERDICT_REJECT' }",
+        ].join("\n");
+        writeFileSync(harness, setup, "utf8");
+        const result = spawnSync("powershell.exe", [
+          "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", harness
+        ], { encoding: "utf8", timeout: 30000 });
+        assert.equal(result.status, 0, result.stderr);
+        assert.ok(result.stdout.includes(accepted ? "VERDICT_ACCEPT" : "VERDICT_REJECT"), result.stdout);
+        assert.equal(hash(readFileSync(config)), initialHash, "full validation modified disposable config");
+        assert.equal(statSync(config).mtimeMs, initialMtime, "full validation touched config mtime");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+}
