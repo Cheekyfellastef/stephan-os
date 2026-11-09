@@ -21,6 +21,7 @@ function staged(status = OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY) {
   return {
     schema: OPENCLAW_STAGED_UPDATE_SCHEMA,
     status,
+    blockers: [],
     exactIdentity: {
       repository: 'Cheekyfellastef/stephan-os',
       sourceHead: HEAD,
@@ -43,6 +44,7 @@ function ledger(required = [OPENCLAW_TASK_CLASS.OC1]) {
   return {
     schemaVersion: OPENCLAW_UPDATE_CAPABILITY_LEDGER_SCHEMA,
     verdict: 'CAPABILITY_LEDGER_READY_FOR_CANDIDATE_PROOF',
+    blockers: [],
     currentVersion: '1.2.3',
     targetVersion: '1.3.0',
     requiredQualificationReplay: required,
@@ -391,4 +393,37 @@ test('staged states without complete authority preflight cannot masquerade as ca
   });
   assert.equal(ready.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.PRE_UPDATE_CAPABILITY_GATE_READY);
   assert.equal(ready.updatePromotionAllowed, false);
+});
+
+test('contradictory staged or ledger producer blockers cannot masquerade as ready', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const qualified = [replay(OPENCLAW_TASK_CLASS.OC1)];
+  const positive = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: verified,
+    capabilityLedger: ledger(),
+    qualificationReplay: qualified,
+  });
+  assert.equal(positive.updatePromotionAllowed, true);
+
+  for (const badBlockers of [['POST_UPDATE_HEALTH_UNPROVEN'], undefined, null, '']) {
+    const result = evaluateOpenClawUpdateCapabilityCandidateV1({
+      stagedUpdate: { ...verified, blockers: badBlockers },
+      capabilityLedger: ledger(),
+      qualificationReplay: qualified,
+    });
+    assert.equal(result.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+    assert.equal(result.updatePromotionAllowed, false);
+    assert.ok(result.blockers.includes('STAGED_UPDATE_BLOCKERS_NOT_EMPTY'));
+  }
+
+  for (const badBlockers of [['PROTECTED_CAPABILITY_NOT_QUALIFIED'], undefined, null, '']) {
+    const result = evaluateOpenClawUpdateCapabilityCandidateV1({
+      stagedUpdate: verified,
+      capabilityLedger: { ...ledger(), blockers: badBlockers },
+      qualificationReplay: qualified,
+    });
+    assert.equal(result.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+    assert.equal(result.providerRoutingResumeAllowed, false);
+    assert.ok(result.blockers.includes('CAPABILITY_LEDGER_BLOCKERS_NOT_EMPTY'));
+  }
 });
