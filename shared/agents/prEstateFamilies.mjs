@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
   GENERIC_PLACEHOLDER_TITLE_KEY,
   PR_DISPOSITIONS,
@@ -99,9 +101,11 @@ export function deriveImplicitFamilies(prs, familyByPr) {
     if (members.length < 2) continue;
     members.sort((a, b) => a - b);
     const family = {
-      // Group identity comes from an actual unique member, never a lossy title prefix.
-      // Distinct long duplicate-title groups must not share an estate family ID.
-      id: `title-pr-${members[0]}`,
+      // Use the *whole* normalized title for a stable identity across rolling OPEN-PR
+      // snapshots. A member-derived ID changes when the oldest PR closes, even when
+      // other duplicate-title family members remain open. SHA-256 also avoids the
+      // previous lossily truncated-title collision without expanding the safe ID.
+      id: `title-key-${createHash('sha256').update(key, 'utf8').digest('hex')}`,
       label: `Exact-title duplicate: ${key}`,
       members,
       canonicalPr: null,

@@ -33,6 +33,7 @@ test('different long duplicate titles cannot collapse into one PR estate family'
   assert.equal(beta, byNumber.get(402).familyId);
   assert.notEqual(alpha, beta);
   assert.match(alpha, SAFE_FAMILY_ID);
+  assert.match(alpha, /^title-key-[a-f0-9]{64}$/);
   assert.match(beta, SAFE_FAMILY_ID);
   assert.deepEqual(result.families.map((family) => family.members), [[301, 302], [401, 402]]);
   assert.equal(result.finalVerdict, 'PR_ESTATE_RECONCILIATION_REQUIRED');
@@ -49,11 +50,26 @@ test('short exact-title groups retain their own distinct membership', () => {
   ]);
   assert.equal(result.families.length, 2);
   assert.deepEqual(result.families.map((family) => family.members), [[21, 22], [23, 24]]);
-  assert.ok(result.entries.every((entry) => entry.familyId?.startsWith('title-pr-')));
+  assert.ok(result.entries.every((entry) => entry.familyId?.startsWith('title-key-')));
+});
+
+test('rolling inventory retains the same duplicate-title family ID after oldest member closes', () => {
+  const title = 'Maintain stable review custody of this duplicate PR family';
+  const before = ledger([pr(201, title), pr(202, title), pr(203, title)]);
+  const after = ledger([pr(203, title), pr(202, title)]);
+  const beforeIds = new Map(before.entries.map((entry) => [entry.number, entry.familyId]));
+  const afterIds = new Map(after.entries.map((entry) => [entry.number, entry.familyId]));
+  assert.equal(beforeIds.get(201), beforeIds.get(202));
+  assert.equal(beforeIds.get(202), beforeIds.get(203));
+  assert.equal(afterIds.get(202), beforeIds.get(202));
+  assert.equal(afterIds.get(203), beforeIds.get(203));
+  assert.equal(validatePrEstateLedger(before).valid, true);
+  assert.equal(validatePrEstateLedger(after).valid, true);
 });
 
 test('explicit owner family ID cannot silently shadow a generated family', () => {
+  const generatedId = ledger([pr(301, 'Exact title'), pr(302, 'Exact title')]).entries[0].familyId;
   assert.throws(() => ledger([
     pr(301, 'Exact title'), pr(302, 'Exact title'), pr(900, 'Owner family'),
-  ], [{ id: 'title-pr-301', members: [900] }]), /duplicate PR estate family id: title-pr-301/);
+  ], [{ id: generatedId, members: [900] }]), /duplicate PR estate family id:/);
 });
