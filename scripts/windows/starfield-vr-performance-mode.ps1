@@ -292,7 +292,14 @@ function Restore-Session {
     # A Starfield exit does not necessarily mean VR has ended. If Air Link or
     # the gaming governor is still active, restoring Ollama here immediately
     # fights the governor and can refill VRAM while the headset is still live.
-    $ollamaRestoreDeferred = [bool]$gamingResourceReconcile.active
+    # A failed or ambiguous governor reconciliation cannot prove that VR has ended.
+    # Never let a failed child invocation silently restore Ollama while Air Link
+    # or the gaming-resource cooldown might still own RAM/VRAM.
+    $governorConfirmedInactive = [bool]$gamingResourceReconcile.reconciled -and
+        [string]::IsNullOrWhiteSpace([string]$gamingResourceReconcile.error) -and
+        [string]$gamingResourceReconcile.phase -ceq 'NORMAL' -and
+        -not [bool]$gamingResourceReconcile.active
+    $ollamaRestoreDeferred = -not $governorConfirmedInactive
     if (-not $ollamaRestoreDeferred) {
         if ($Session.ollama.appWasRunning -and $Session.ollama.appPath -and (Test-Path -LiteralPath $Session.ollama.appPath)) {
             if (-not (Get-Process -Name 'ollama app' -ErrorAction SilentlyContinue)) {

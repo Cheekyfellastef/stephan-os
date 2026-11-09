@@ -400,3 +400,40 @@ test('Starfield thread inspection native Windows regression: failure, cap and re
     { encoding: 'utf8', timeout: 20000, windowsHide: true });
   assert.equal(result.status, 0, [result.error?.message, result.stdout, result.stderr].filter(Boolean).join('\n'));
 });
+
+
+test('native Windows VR teardown never restarts Ollama unless governor reconcile proves NORMAL inactive', { skip: process.platform !== 'win32' }, () => {
+  const restoredFunction = performance.match(/function Restore-Session \{[\s\S]*?(?=\r?\nfunction Get-GameDriveSample \{)/)?.[0];
+  assert.ok(restoredFunction, 'extract actual source Restore-Session function without running the game script');
+  const safeExistingFile = fileURLToPath(new URL('./windows/starfield-vr-performance-mode.ps1', import.meta.url)).replaceAll("'", "''");
+  const script = [
+    'Set-StrictMode -Version Latest',
+    "$ErrorActionPreference = 'Stop'",
+    restoredFunction,
+    'function Restore-AudioState { param($Session) return [pscustomobject]@{ restored=$true; attempts=0; stableConfirmations=0; finalEndpointId=""; finalEndpoints=$null; error="" } }',
+    'function Invoke-GamingResourceReconcile { return $script:governor }',
+    'function Get-Process { [CmdletBinding()] param([string[]]$Name) return $null }',
+    'function Start-Process { [CmdletBinding()] param([string]$FilePath) $script:launchCount++ }',
+    "$session = [pscustomobject]@{prefsPath=''; mutarConfig=$null; originalSettings=[pscustomobject]@{}; ollama=[pscustomobject]@{appWasRunning=$true; appPath='" + safeExistingFile + "'; serveWasRunning=$false; servePath=''}}",
+    '$cases = @(',
+    "  @{label='failure';reconciled=$false;phase='';active=$false;error='GOVERNOR_UNAVAILABLE';defer=$true}",
+    "  @{label='missing-phase';reconciled=$true;phase='';active=$false;error='';defer=$true}",
+    "  @{label='reported-error';reconciled=$true;phase='NORMAL';active=$false;error='PARSE_FAILURE';defer=$true}",
+    "  @{label='gaming';reconciled=$true;phase='GAMING';active=$true;error='';defer=$true}",
+    "  @{label='cooldown';reconciled=$true;phase='COOLDOWN';active=$true;error='';defer=$true}",
+    "  @{label='normal-inactive';reconciled=$true;phase='NORMAL';active=$false;error='';defer=$false}",
+    ')',
+    'foreach ($case in $cases) {',
+    ' $script:governor = [pscustomobject]@{ reconciled=$case.reconciled; phase=$case.phase; active=$case.active; error=$case.error }',
+    ' $script:launchCount = 0',
+    ' $receipt = Restore-Session -Session $session',
+    ' if ([bool]$receipt.ollamaRestoreDeferred -ne [bool]$case.defer) { throw "incorrect defer $($case.label)" }',
+    ' $expectedLaunches = if ($case.defer) { 0 } else { 1 }',
+    ' if ($script:launchCount -ne $expectedLaunches) { throw "unapproved process start $($case.label): $script:launchCount" }',
+    '}',
+  ].join('\n');
+  const result = spawnSync('powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    { encoding: 'utf8', timeout: 20_000, windowsHide: true, shell: false });
+  assert.equal(result.status, 0, [result.error?.message, result.stdout, result.stderr].filter(Boolean).join('\n'));
+});
