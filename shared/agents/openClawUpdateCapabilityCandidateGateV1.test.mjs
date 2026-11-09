@@ -321,3 +321,37 @@ test('prototype-named data fields cannot launder inherited update identity or le
   assert.equal(spoofedLedger.updatePromotionAllowed, false);
   assert.ok(spoofedLedger.blockers.includes('CAPABILITY_LEDGER_SCHEMA_MISMATCH'));
 });
+
+test('cross-version promotion requires a non-empty qualification replay contract at the consumer', () => {
+  // A fabricated "ready" ledger with no required classes must not promote across versions.
+  // This is independent of the protected producer fix in #1727.
+  const unsafe = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED),
+    capabilityLedger: ledger([]),
+    qualificationReplay: [],
+  });
+  assert.equal(unsafe.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.equal(unsafe.updatePromotionAllowed, false);
+  assert.equal(unsafe.providerRoutingResumeAllowed, false);
+  assert.ok(unsafe.blockers.includes('CROSS_VERSION_QUALIFICATION_REPLAY_REQUIRED'));
+
+  // A legitimate same-version PRESERVE with no changed capabilities may need no replay.
+  const sameVersionStaged = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  sameVersionStaged.exactIdentity.targetVersion = '1.2.3';
+  const sameVersionLedger = { ...ledger([]), targetVersion: '1.2.3' };
+  const preserved = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: sameVersionStaged,
+    capabilityLedger: sameVersionLedger,
+    qualificationReplay: [],
+  });
+  assert.equal(preserved.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(preserved.updatePromotionAllowed, true);
+
+  const qualified = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED),
+    capabilityLedger: ledger([OPENCLAW_TASK_CLASS.OC1]),
+    qualificationReplay: [replay(OPENCLAW_TASK_CLASS.OC1)],
+  });
+  assert.equal(qualified.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(qualified.updatePromotionAllowed, true);
+});
