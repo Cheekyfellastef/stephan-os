@@ -248,6 +248,19 @@ export function buildSovereignControllerLaneStatus({
     refillState = 'SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE';
   }
 
+  // Reuse the per-goal build-truth witness. Global material-lane occupancy
+  // cannot attest that any particular selected goal was physically picked up.
+  const selectedMaterialPickupProvenCount = buildStephanosBuildTruth({
+    capturedAtUtc: new Date(safeNowMs).toISOString(),
+    physical,
+    logical,
+    lanes: { activeMaterialLaneCount, refillHealth, refillState },
+  }).goals.filter((goal) => (
+    goal.selectedForAdmission === true
+    && goal.state === 'BUILDING'
+    && goal.proofRefs.length > 0
+  )).length;
+
   const finalVerdict = refillHealth === 'RED'
     ? 'SOVEREIGN_CONTROLLER_LANE_STATUS_ATTENTION_REQUIRED'
     : refillHealth === 'AMBER'
@@ -265,6 +278,7 @@ export function buildSovereignControllerLaneStatus({
     lanes: Object.freeze({
       targetMaterialLanes,
       activeMaterialLaneCount,
+      selectedMaterialPickupProvenCount,
       activeLaneClaimCount,
       reportedMaterialLaneCountSum,
       occupancyPercent: targetMaterialLanes > 0
@@ -303,11 +317,24 @@ export function buildStephanosBuildTruth(status = {}) {
     const lanes = Array.isArray(host?.materialLanes) ? host.materialLanes : [];
     const lane = lanes.find((candidate) => canonicalGoalKey(candidate?.goalId) === goalKey) || null;
     const continuityState = text(logical?.continuityState, 40).toUpperCase() || 'TRACKING';
-    let state = continuityState === 'ACTIVE' ? 'BUILDING' : continuityState === 'PARKED' ? 'HELD' : 'QUEUED';
+    const hostState = text(host?.activityState, 80).toUpperCase();
+    // A scheduler ACTIVE/selected goal and a BUILDING host are not proof that
+    // this particular logical goal was picked up by a material worker.
+    // Only a current host plus a same-goal, worker-bound material receipt
+    // can promote this goal to BUILDING. Keep the canonical scheduler as owner.
+    const materialPickupProven = Boolean(
+      lane
+      && text(lane.workerId, 120)
+      && text(lane.proofRef, 220)
+      && Array.isArray(host.proofRefs)
+      && host.proofRefs.includes(text(lane.proofRef, 220))
+      && timestamp(lane.lastMaterialActionAtUtc)
+    );
+    let state = continuityState === 'PARKED' ? 'HELD' : 'QUEUED';
     if (text(host?.freshness, 40).toUpperCase() !== 'CURRENT') state = 'STALE';
     else if (text(host?.trafficLight, 20).toUpperCase() === 'RED') state = 'BLOCKED';
-    else if (text(host?.activityState, 80).toUpperCase() === 'BUILDING' && (logical?.selectedForAdmission === true || continuityState === 'ACTIVE')) state = 'BUILDING';
-    else if (logical?.selectedForAdmission === true && text(host?.activityState, 80).toUpperCase().includes('ELIGIBLE_WORK')) state = 'BLOCKED';
+    else if (continuityState !== 'PARKED' && hostState === 'BUILDING' && materialPickupProven) state = 'BUILDING';
+    else if (logical?.selectedForAdmission === true && hostState.includes('ELIGIBLE_WORK')) state = 'BLOCKED';
     const blocker = text(lane?.blocker || host?.blocker, 160);
     if (blocker && state !== 'STALE') state = 'BLOCKED';
     return Object.freeze({
@@ -318,14 +345,18 @@ export function buildStephanosBuildTruth(status = {}) {
       controllerTitle: text(logical?.hostControllerTitle, 120),
       logicalLaneId: text(logical?.logicalControllerId, 120),
       builder: text(lane?.workerId || logical?.executionOwner, 120) || 'canonical-mission-worker',
-      currentPhase: text(lane?.lastMaterialAction || host?.activityState || logical?.route, 160).toUpperCase(),
-      lastMaterialProgressAtUtc: latestTimestamp([lane?.lastMaterialActionAtUtc, host?.lastMaterialActionAtUtc]),
+      currentPhase: text(lane?.lastMaterialAction || logical?.route || hostState, 160).toUpperCase(),
+      lastMaterialProgressAtUtc: state === 'BUILDING' ? timestamp(lane?.lastMaterialActionAtUtc) : '',
       prNumber: integer(lane?.prNumber) || null,
-      proofRefs: Object.freeze([...new Set([text(lane?.proofRef, 220), ...(Array.isArray(host?.proofRefs) ? host.proofRefs : [])].filter(Boolean))].slice(0, 12)),
+      // Per-goal truth must never inherit unrelated verified host proofs.
+      // materialPickupProven already confirms this exact lane ref is verified.
+      proofRefs: Object.freeze(state === 'BUILDING'
+        ? [text(lane?.proofRef, 220)]
+        : []),
       blocker,
       nextAction: text(lane?.nextAutomaticAction || host?.exactNextAction, 220) || 'Continue through the canonical goal fabric.',
-      autonomous: autonomyProvenanceProved(lane?.autonomyProvenance),
-      autonomyTruth: autonomyProvenanceProved(lane?.autonomyProvenance) ? 'PROVEN' : 'UNPROVEN',
+      autonomous: state === 'BUILDING' && autonomyProvenanceProved(lane?.autonomyProvenance),
+      autonomyTruth: state === 'BUILDING' && autonomyProvenanceProved(lane?.autonomyProvenance) ? 'PROVEN' : 'UNPROVEN',
       selectedForAdmission: logical?.selectedForAdmission === true,
     });
   });
@@ -591,17 +622,98 @@ export async function collectSovereignControllerLaneStatus({
   });
 }
 
+// The existing Sovereign Commander fixed-process boundary preserves at most
+// 16 KiB of stdout. The full 75-goal logical fabric can exceed that and truncate
+// the JSON line, turning a healthy *observation transport* into an invalid
+// receipt. Emit an allowlisted count/host/physical summary ONLY for the remote
+// --snapshot-only verb. The full local publisher and build-truth evidence remain
+// unchanged. No lease, admission or physical-pickup authority is conferred.
+export function projectBoundedRemoteControllerLaneStatus(status = {}) {
+  if (status?.schemaVersion !== SOVEREIGN_CONTROLLER_LANE_STATUS_SCHEMA
+      || status?.ok !== true
+      || status?.readOnly !== true
+      || status?.arbitraryShellAllowed !== false
+      || status?.sourceMutationAllowed !== false
+      || status?.mergeAuthority !== false
+      || status?.secretMaterialIncluded !== false
+      || status?.unknownMeansGreen !== false) {
+    throw new Error('CONTROLLER_LANE_STATUS_REMOTE_SOURCE_INVALID');
+  }
+  const pick = (source, keys) => Object.fromEntries(
+    keys.filter((key) => source?.[key] !== undefined).map((key) => [key, source[key]]),
+  );
+  return Object.freeze({
+    ...pick(status, [
+      'schemaVersion', 'ok', 'capturedAtUtc', 'finalVerdict',
+      'readOnly', 'arbitraryShellAllowed', 'sourceMutationAllowed',
+      'mergeAuthority', 'secretMaterialIncluded', 'unknownMeansGreen',
+    ]),
+    physical: Object.freeze({
+      ...pick(status.physical, [
+        'expected', 'building', 'amber', 'red', 'unknown', 'allCurrent',
+        'allObservedEnabled', 'finalVerdict',
+      ]),
+      controllers: Object.freeze((status.physical?.controllers || []).slice(0, 5)
+        .map((row) => Object.freeze(pick(row, [
+          'controllerId', 'title', 'freshness', 'activityState', 'trafficLight',
+          'materialLaneCount', 'activeLaneCount', 'parkedLaneCount',
+          'safeEligibleWorkRemaining', 'blocker',
+        ])))),
+    }),
+    logical: Object.freeze({
+      ...pick(status.logical, [
+        'current', 'valid', 'observedAtUtc', 'physicalControllerCount', 'total',
+        'active', 'tracking', 'parked', 'retired', 'selectedForAdmission',
+        'finalVerdict',
+      ]),
+      hostLoads: Object.freeze((status.logical?.hostLoads || []).slice(0, 5)
+        .map((host) => Object.freeze(pick(host, [
+          'controllerId', 'title', 'logicalControllerCount', 'activeCount',
+          'trackingCount', 'parkedCount',
+        ])))),
+    }),
+    lanes: Object.freeze(pick(status.lanes, [
+      'targetMaterialLanes', 'activeMaterialLaneCount',
+      'selectedMaterialPickupProvenCount', 'activeLaneClaimCount',
+      'reportedMaterialLaneCountSum', 'occupancyPercent', 'freeTargetLaneSlots',
+      'runnableBacklogCount', 'parkedPhysicalLaneCount',
+      'currentPhysicalControllerCount', 'stalePhysicalControllerCount',
+      'nonCurrentPhysicalControllerCount', 'currentPhysicalHardRedCount',
+      'reportedSafeEligibleWorkMax', 'reportedSafeEligibleWorkSum',
+      'refillHealth', 'refillState',
+    ])),
+  });
+}
+
+// The MCP fixed read-only diagnostic must not wait on mutable Shared Workspace
+// publications. The periodic publisher keeps both existing writes unchanged.
 export async function runSovereignControllerLaneStatus(options = {}) {
-  const status = await collectSovereignControllerLaneStatus(options);
-  await publishSharedWorkspaceControllerLaneStatus(status, options);
-  await publishSharedWorkspaceStephanosBuildTruth(buildStephanosBuildTruth(status), options);
-  process.stdout.write(`${SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER}${JSON.stringify(status)}\n`);
+  const status = await (options.collectStatusFn || collectSovereignControllerLaneStatus)(options);
+  if (options.snapshotOnly !== true) {
+    await (options.publishStatusFn || publishSharedWorkspaceControllerLaneStatus)(status, options);
+    await (options.publishBuildTruthFn || publishSharedWorkspaceStephanosBuildTruth)(buildStephanosBuildTruth(status), options);
+  }
+  const output = options.snapshotOnly === true
+    ? projectBoundedRemoteControllerLaneStatus(status)
+    : status;
+  const line = `${SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER}${JSON.stringify(output)}\n`;
+  // Never silently truncate a purported complete structured receipt.
+  if (options.snapshotOnly === true && Buffer.byteLength(line, 'utf8') > 12 * 1024) {
+    throw new Error('CONTROLLER_LANE_STATUS_REMOTE_OUTPUT_TOO_LARGE');
+  }
+  (options.emitFn || ((value) => process.stdout.write(value)))(line);
   return status;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  runSovereignControllerLaneStatus().catch((error) => {
-    process.stderr.write(`${text(error?.message || error, 240)}\n`);
+  const args = process.argv.slice(2);
+  if (args.length > 1 || (args.length === 1 && args[0] !== '--snapshot-only')) {
+    process.stderr.write('CONTROLLER_LANE_STATUS_ARGUMENTS_INVALID\n');
     process.exitCode = 1;
-  });
+  } else {
+    runSovereignControllerLaneStatus({ snapshotOnly: args[0] === '--snapshot-only' }).catch((error) => {
+      process.stderr.write(`${text(error?.message || error, 240)}\n`);
+      process.exitCode = 1;
+    });
+  }
 }

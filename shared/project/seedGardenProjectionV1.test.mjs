@@ -6,9 +6,9 @@ test('projects high-level Flywheel seeds above the static capability baseline wi
   const garden = buildSeedGardenProjectionV1({ observedAtUtc: '2026-10-04T19:00:00.000Z' });
   assert.equal(garden.schemaVersion, 'stephanos.seed-garden-projection.v1');
   assert.equal(garden.freshness, 'STATIC');
-  assert.equal(garden.highLevelSeedCount, 8);
+  assert.equal(garden.highLevelSeedCount, 9);
   assert.equal(garden.capabilitySeedCount, 15);
-  assert.equal(garden.seedCount, 23);
+  assert.equal(garden.seedCount, 24);
   assert.deepEqual(garden.highLevelSeeds.map((seed) => seed.seedId), [
     'starfield-vr-outcome-ownership',
     'stephanos-whole-system-capability-closure',
@@ -16,6 +16,7 @@ test('projects high-level Flywheel seeds above the static capability baseline wi
     'stephanos-flywheel-conversational-intelligence',
     'sovereign-commander-safe-parity',
     'stephanos-sovereign-meter-independence',
+    'stephanos-full-sovereignty-every-function',
     'workspace-integrity-provenance',
     'goal-conveyor-fleet-care',
   ]);
@@ -35,11 +36,15 @@ test('projects high-level Flywheel seeds above the static capability baseline wi
   assert.equal(garden.highLevelSeeds[5].issue, '#2968');
   assert.match(garden.highLevelSeeds[5].northStar, /third-party metered tool/i);
   assert.equal(garden.highLevelSeeds[5].source, 'shared/runtime/sovereignMeterIndependenceSeedV1.mjs');
-  assert.equal(garden.highLevelSeeds[6].title, 'Every Workspace, Card and Visualiser Has Verified End-to-End Provenance');
-  assert.equal(garden.highLevelSeeds[6].issue, '#2898');
-  assert.match(garden.highLevelSeeds[6].northStar, /canonical source through transport and transformation/i);
-  assert.equal(garden.highLevelSeeds[7].issue, '#2972');
-  assert.equal(garden.highLevelSeeds[7].canonicalOwnerGoals.some((owner) => owner.issue === '#2961'), true);
+  assert.equal(garden.highLevelSeeds[6].title, 'Stephanos Full Sovereignty: Every Function, Zero External Critical Dependencies');
+  assert.equal(garden.highLevelSeeds[6].issue, '#3026');
+  assert.match(garden.highLevelSeeds[6].northStar, /every core function independently/i);
+  assert.equal(garden.highLevelSeeds[6].source, 'shared/runtime/fullSovereigntySeedV1.mjs');
+  assert.equal(garden.highLevelSeeds[7].title, 'Every Workspace, Card and Visualiser Has Verified End-to-End Provenance');
+  assert.equal(garden.highLevelSeeds[7].issue, '#2898');
+  assert.match(garden.highLevelSeeds[7].northStar, /canonical source through transport and transformation/i);
+  assert.equal(garden.highLevelSeeds[8].issue, '#2972');
+  assert.equal(garden.highLevelSeeds[8].canonicalOwnerGoals.some((owner) => owner.issue === '#2961'), true);
   assert.ok(garden.capabilitySeeds.some((seed) => seed.seedId === 'openclaw-control' && seed.status === 'blocked'));
   assert.ok(garden.capabilitySeeds.some((seed) => seed.seedId === 'vr-spatial-surface' && seed.status === 'not-started'));
 });

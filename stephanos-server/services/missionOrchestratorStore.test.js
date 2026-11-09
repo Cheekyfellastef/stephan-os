@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -49,6 +49,22 @@ async function roots() {
 async function append(rootOptions, missionId, eventId, eventType, fields = {}) {
   return appendMissionEvent(missionId, { eventId, eventType, ...fields }, rootOptions);
 }
+
+test('exhausted mission lock acquisition reports typed contention and preserves exact state and lock bytes', async () => {
+  const options = await roots();
+  await createMissionRecord(base, options);
+  const lockPath = join(options.root, base.missionId + '.lock');
+  const lockBytes = JSON.stringify({ pid: 51028, acquiredAt: '2026-10-24T19:46:38.712Z' }) + '\n';
+  await writeFile(lockPath, lockBytes);
+  const statePath = join(options.root, base.missionId + '.state.json');
+  const stateBefore = await readFile(statePath, 'utf8');
+  await assert.rejects(appendMissionEvent(base.missionId, {
+    eventId: 'busy-lock-event-0001', eventType: 'MISSION_CANCELLED',
+  }, options), error => error.code === 'MISSION_STATE_LOCK_BUSY'
+    && error.missionId === base.missionId && error.message === 'Mission state lock is busy.');
+  assert.equal(await readFile(lockPath, 'utf8'), lockBytes);
+  assert.equal(await readFile(statePath, 'utf8'), stateBefore);
+});
 
 test('default roots live outside the repository under the Mission Runner directory', () => {
   const env = { USERPROFILE: 'C:\\Users\\Operator' };

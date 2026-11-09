@@ -1,3 +1,8 @@
+import { projectGoalAdmissionRequiredTestsV1, projectStrengthenedRetryTestsV1 } from './goalAdmissionRequiredTestsV1.mjs';
+import { isModelTransportFailureV1, modelTransportFailureProofMatchesV1 } from './modelTransportFailureRetryV1.mjs';
+import { isKnownMalformedPatchRetryV1, knownMalformedPatchEvidenceMatchesV1 } from './knownMalformedPatchRetryV1.mjs';
+import { validateExternalMergeObservationV1, hasExternalMergeObservationV1 } from './externalMergeObservationV1.mjs';
+
 const MAX_REPAIR_ROUNDS = 3;
 const SHA40_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
@@ -14,6 +19,7 @@ export const RETRYABLE_AGENT_FAILURE_BLOCKERS = Object.freeze([
   'PROVIDER_NEUTRAL_MODEL_RESULT_INVALID_JSON',
   'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING',
   'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING',
+  'SOURCE_ARTIFACT_DIFF_CHECK_FAILED',
 ]);
 const RETRYABLE_AGENT_FAILURE_BLOCKER_SET = new Set(RETRYABLE_AGENT_FAILURE_BLOCKERS);
 const RETRYABLE_AGENT_FAILURE_PATH_PREFIXES = Object.freeze([
@@ -39,13 +45,27 @@ function unique(values) {
   return [...new Set(values)];
 }
 
-export function isRetryableAgentFailureBlocker(value) {
+export function isRetryableAgentFailureBlocker(value, requiredTests = []) {
   const blocker = text(value);
+  if (isModelTransportFailureV1(blocker)) return true;
+  const testPrefix = 'PROVIDER_NEUTRAL_TEST_FAILED:';
+  if (blocker.startsWith(testPrefix)) {
+    const plan = projectGoalAdmissionRequiredTestsV1(requiredTests);
+    return plan.valid && plan.supplied && plan.commands.includes(blocker.slice(testPrefix.length));
+  }
   if (RETRYABLE_AGENT_FAILURE_BLOCKER_SET.has(blocker)) return true;
   return RETRYABLE_AGENT_FAILURE_PATH_PREFIXES.some((prefix) => {
     if (!blocker.startsWith(prefix) || blocker.length <= prefix.length) return false;
     return !isUnsafePath(blocker.slice(prefix.length));
   });
+}
+
+// Parking releases a construction slot; it must not change the existing bounded
+// failure policy. Custody, clean worktree, CAS, acceptance and budget remain
+// separate retry gates. This predicate is shared by selection and reduction.
+export function isRetryableParkedAgentFailure(blockers, requiredTests = []) {
+  return Array.isArray(blockers) && blockers.length > 0
+    && blockers.every(reason => isRetryableAgentFailureBlocker(reason, requiredTests));
 }
 
 function normalizePath(value) {
@@ -74,6 +94,29 @@ function scopeAllowsPath(scope, value) {
     return pathIdentity === base || pathIdentity.startsWith(`${base}/`);
   }
   return false;
+}
+
+// A repaired failed-task plan may reduce mutation authority, never enlarge it.
+// Evaluate containment with the same path semantics used at result ingestion.
+export function projectNarrowedMissionSourceScopeV1(previous, next) {
+  const invalid = () => Object.freeze({ valid: false, allowedFiles: Object.freeze([]) });
+  const validScope = value => typeof value === 'string' && value === normalizePath(value)
+    && !isUnsafePath(value)
+    && (value === '**' || /^[A-Za-z0-9._/-]+(?:\/\*\*)?$/.test(value))
+    && !value.split('/').some(part => !part || part === '.')
+    && !value.replace(/\/\*\*$/, '').includes('*');
+  if (!Array.isArray(previous) || !previous.length || !Array.isArray(next) || !next.length
+      || [...previous].some(value => value !== '**' && !validScope(value))
+      || [...next].some(value => value === '**' || !validScope(value))) return invalid();
+  const allowedFiles = [...new Set(next)];
+  if (new Set(allowedFiles.map(value => value.toLowerCase())).size !== allowedFiles.length) return invalid();
+  for (const candidate of allowedFiles) {
+    const recursive = candidate.endsWith('/**');
+    const base = recursive ? candidate.slice(0, -3) : candidate;
+    if (!previous.some(scope => scopeAllowsPath(scope, base)
+        && (!recursive || scope === '**' || scope.endsWith('/**')))) return invalid();
+  }
+  return Object.freeze({ valid: true, allowedFiles: Object.freeze(allowedFiles) });
 }
 
 function iso(value, fallback = '') {
@@ -204,6 +247,7 @@ function activeAgentForPhase(state) {
 function derivePhase(state) {
   if (state.cancelled) return 'CANCELLED';
   if (state.blockers.length) return 'BLOCKED';
+  if (hasExternalMergeObservationV1(state)) return 'VERIFYING';
   if (state.currentMainAcceptance?.verified === true) return 'COMPLETE';
   if (state.missionKind === 'live-runtime-investigation') {
     if (!state.dispatch.startedAt) return 'LIVE_RUNTIME_INVESTIGATION';
@@ -228,6 +272,10 @@ function derivePhase(state) {
 }
 
 function nextActionForPhase(state) {
+  if (state.currentPhase === 'VERIFYING' && hasExternalMergeObservationV1(state)) {
+    return { type: 'RECONCILE_GOAL_ACCEPTANCE', owner: 'Verification Judge', approvalRequired: false,
+      sourceIntegrationObserved: true, historicalApprovalProven: false, runtimeMutationAuthority: false };
+  }
   const actions = {
     CREATE_WORKTREE: { type: 'OPENCLAW_SIGNED_OPERATION', operation: 'create-worktree', owner: 'OpenClaw', approvalRequired: false },
     AGENT_IMPLEMENTATION: { type: 'DISPATCH_AGENT', adapter: text(state.dispatch?.adapter, 'codex'), owner: text(state.dispatch?.adapter, 'codex'), approvalRequired: false },
@@ -393,15 +441,42 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
   state.timeline.push({ eventType, timestamp, summary: text(event.summary, eventType) });
 
   if (eventType === 'AGENT_FAILURE_RETRY_ADMITTED') {
-    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE) return block(state, 'Retry admission requires active mission continuity.', timestamp);
+    // The mission store authenticates this one registered failure under its lock.
+    // Raw reducer data is never the production authorization boundary.
+    const knownPatchRetry = isKnownMalformedPatchRetryV1(currentState);
+    if (knownPatchRetry && !knownMalformedPatchEvidenceMatchesV1(event.retryKnownMalformedPatchProof,
+      currentState, event.retryPlanSourceHead)) return block(state, 'Known malformed-patch retry requires native source and terminal evidence.', timestamp);
+    const parkedRetry = state.continuity.parkingStatus === MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED
+      && (isRetryableParkedAgentFailure(state.blockers, state.requiredTests) || knownPatchRetry);
+    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE && !parkedRetry) return block(state, 'Retry admission requires active mission continuity or bounded parked agent failures.', timestamp);
+    const transportRetry = state.blockers.some(isModelTransportFailureV1);
+    if (transportRetry && (state.blockers.length !== 1
+        || !SHA40_PATTERN.test(text(event.retryPlanSourceHead))
+        || !modelTransportFailureProofMatchesV1(event.retryProviderFailureProof,
+          state.missionId, state.dispatch.resultId, state.blockers[0]))) {
+      return block(state, 'Model transport retry requires the exact failed provider terminal receipt and current owner plan.', timestamp);
+    }
+    const narrowedScope = event.retryAllowedFiles === undefined ? null
+      : projectNarrowedMissionSourceScopeV1(state.allowedFiles, event.retryAllowedFiles);
+    if (narrowedScope && (!narrowedScope.valid || !SHA40_PATTERN.test(text(event.retryPlanSourceHead)) || state.blockers.length !== 1
+        || (state.blockers[0] !== 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED' && !knownPatchRetry))) {
+      return block(state, 'Retry scope reduction requires the original bounded source-diff failure and cannot widen authority.', timestamp);
+    }
+    const strengthened = event.retryRequiredTests === undefined ? null
+      : projectStrengthenedRetryTestsV1(state.requiredTests, event.retryRequiredTests, narrowedScope?.allowedFiles || state.allowedFiles);
+    if (((state.blockers.includes('SOURCE_ARTIFACT_DIFF_CHECK_FAILED') || knownPatchRetry) && (state.blockers.length !== 1 || !strengthened?.valid || (knownPatchRetry && !narrowedScope?.valid))) || (strengthened && !strengthened.valid)) {
+      return block(state, 'Parked source retry requires strengthened independent acceptance without weakening the consumed plan.', timestamp);
+    }
     if (state.currentPhase !== 'BLOCKED' || state.dispatch?.status !== 'failed') {
       return block(state, 'Retry admission requires a BLOCKED mission with a failed agent dispatch.', timestamp);
     }
     const retryableBlockers = unique(list(event.retryableBlockers).map(text));
-    const currentRetryable = state.blockers.filter(isRetryableAgentFailureBlocker);
-    const nonRetryable = state.blockers.filter((reason) => !isRetryableAgentFailureBlocker(reason));
+    const retryable = reason => isRetryableAgentFailureBlocker(reason, state.requiredTests)
+      || (knownPatchRetry && reason === currentState.blockers[0]);
+    const currentRetryable = state.blockers.filter(retryable);
+    const nonRetryable = state.blockers.filter((reason) => !retryable(reason));
     if (!retryableBlockers.length
-      || retryableBlockers.some((reason) => !isRetryableAgentFailureBlocker(reason) || !state.blockers.includes(reason))
+      || retryableBlockers.some((reason) => !retryable(reason) || !state.blockers.includes(reason))
       || nonRetryable.length
       || retryableBlockers.length !== currentRetryable.length) {
       return block(state, 'Retry admission can only clear the complete current set of bounded retryable agent failures.', timestamp);
@@ -414,7 +489,25 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
       startedAt: timestamp,
       retryableAgentFailures: retryableBlockers,
       retryReceiptId: text(event.receipt?.receiptId || event.receipt?.id),
+      previousRequiredTests: [...state.requiredTests],
+      ...(knownPatchRetry ? { retryKnownMalformedPatchProof: clone(event.retryKnownMalformedPatchProof) } : {}),
+      ...(transportRetry ? { retryProviderFailureProof: clone(event.retryProviderFailureProof),
+        retryPlanSourceHead: event.retryPlanSourceHead } : {}),
+      ...(narrowedScope ? { previousAllowedFiles: [...state.allowedFiles], allowedFiles: [...narrowedScope.allowedFiles],
+        retryPlanSourceHead: event.retryPlanSourceHead } : {}),
+      previousDispatch: clone(state.dispatch),
+      previousParkingStatus: state.continuity.parkingStatus,
+      requiredTests: [...(strengthened?.commands || state.requiredTests)],
     });
+    if (strengthened) state.requiredTests = [...strengthened.commands];
+    if (narrowedScope) state.allowedFiles = [...narrowedScope.allowedFiles];
+    if (parkedRetry) state.continuity = { ...state.continuity,
+      parkingStatus: MISSION_CONTINUITY_PARKING_STATUS.ACTIVE,
+      pendingResolvedBlockers: [],
+      history: [...state.continuity.history, { eventType, timestamp,
+        previousParkingStatus: MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED,
+        receiptId: text(event.receipt?.receiptId || event.receipt?.id) }],
+    };
     state.blockers = state.blockers.filter((reason) => !retryableBlockers.includes(reason));
     state.dispatch = { ...state.dispatch, status: 'pending', startedAt: '', completedAt: '', resultId: '' };
   } else if (eventType === 'MISSION_PARKED_FOR_REPAIR') {
@@ -740,6 +833,20 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     state.approval.status = 'approved';
     state.approval.decidedAt = timestamp;
     state.approval.suppliedTokenHash = SHA256_PATTERN.test(text(event.approvalTokenHash)) ? text(event.approvalTokenHash) : '';
+  } else if (eventType === 'EXTERNAL_PULL_REQUEST_MERGE_OBSERVED') {
+    const validation = validateExternalMergeObservationV1(currentState, event.observation, timestamp);
+    if (!validation.valid) return block(state, validation.errors.join(':'), timestamp);
+    if (event.expectedRevision !== currentState.revision
+        || event.expectedCurrentPhase !== currentState.currentPhase
+        || event.receipt?.source !== 'completion-guardian-github-observation'
+        || event.receipt?.evidenceType !== 'github-merged-observation'
+        || !SHA256_PATTERN.test(event.receipt?.commandOutputHash || '')
+        || !appendReceipt(state, event.receipt)) {
+      return block(state, 'EXTERNAL_MERGE_RECEIPT_UNPROVEN', timestamp);
+    }
+    state.externalMergeObservation = { ...event.observation,
+      receiptId: event.receipt.receiptId, evidenceSha256: event.receipt.commandOutputHash,
+      historicalApprovalProven: false, runtimeMutationAuthority: false, goalAcceptanceProven: false };
   } else if (eventType === 'PULL_REQUEST_MERGED') {
     if (state.currentPhase !== 'MERGE_PULL_REQUEST' || state.approval.status !== 'approved') return block(state, 'Merge receipt arrived without exact approved merge authority.', timestamp);
     if (!appendReceipt(state, event.receipt)) return block(state, 'Merge requires a valid deterministic receipt.', timestamp);

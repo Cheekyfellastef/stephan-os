@@ -8,7 +8,14 @@ import {
   SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES,
   projectSelfHostingCriticalMissionRecords,
 } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
-import { isRetryableAgentFailureBlocker } from '../../shared/agents/missionOrchestrator.mjs';
+import { isRetryableAgentFailureBlocker, isRetryableParkedAgentFailure, projectNarrowedMissionSourceScopeV1 } from '../../shared/agents/missionOrchestrator.mjs';
+import { projectOwnerGoalRequiredTestsV1, projectStrengthenedRetryTestsV1, projectFreshOwnerGoalRetryContractV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
+import { isModelTransportFailureV1, modelTransportFailureProofMatchesV1 } from '../../shared/agents/modelTransportFailureRetryV1.mjs';
+import { isKnownMalformedPatchRetryV1, knownMalformedPatchDigestV1 } from '../../shared/agents/knownMalformedPatchRetryV1.mjs';
+import { projectKnownMalformedPatchOwnerPlanV1 } from '../../shared/agents/knownMalformedPatchOwnerPlanV1.mjs';
+import { collectKnownMalformedPatchRetryEvidenceV1 } from './knownMalformedPatchRetryService.js';
+import { createFleetRetryScanObservationV1, fleetRetryAcceptanceGateCodeV1 } from '../../shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
+import { projectCanonicalResourceIds } from '../../shared/agents/elasticBuildCapacityV1.mjs';
 import {
   createSharedWorkspaceEventRecord,
   resolveSharedWorkspacePath,
@@ -32,7 +39,7 @@ import {
 import { dispatchElasticPrHeadBuildsFromCanonicalLease } from './elasticPrHeadLeaseService.js';
 import { proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
 import { publishMissionWorkerAction, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
-import { appendMissionEvent, listMissionRecords } from './missionOrchestratorStore.js';
+import { appendMissionEvent, listMissionRecords, MISSION_STATE_LOCK_BUSY } from './missionOrchestratorStore.js';
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const ACTIVE_SOURCE_PHASES = new Set(['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED']);
@@ -56,7 +63,7 @@ function defaultGitCommand(executable, args, options = {}) {
   });
 }
 
-export function refreshRetryWorktreeToCurrentMain({ mission, repoRoot, runCommand = defaultGitCommand } = {}) {
+export function refreshRetryWorktreeToCurrentMain({ mission, repoRoot, expectedSourceHead, runCommand = defaultGitCommand } = {}) {
   const worktreePath = text(mission?.git?.worktreePath);
   const expectedBranch = text(mission?.git?.branch);
   const repositoryRoot = text(repoRoot || mission?.repositoryRoot);
@@ -72,6 +79,7 @@ export function refreshRetryWorktreeToCurrentMain({ mission, repoRoot, runComman
   const targetHead = text(currentHeadResult.stdout).toLowerCase();
   const beforeHead = text(worktreeHeadResult.stdout).toLowerCase();
   if (currentHeadResult.error || currentHeadResult.status !== 0 || worktreeHeadResult.error || worktreeHeadResult.status !== 0 || !SHA_40.test(targetHead) || !SHA_40.test(beforeHead)) return Object.freeze({ ok: false, classification: 'RETRY_WORKTREE_HEAD_UNPROVEN', worktreePath, beforeHead, targetHead });
+  if (expectedSourceHead !== undefined && (!SHA_40.test(expectedSourceHead) || targetHead !== expectedSourceHead)) return Object.freeze({ ok: false, classification: 'RETRY_WORKTREE_EXPECTED_HEAD_MOVED', worktreePath, beforeHead, targetHead });
   if (beforeHead !== targetHead) {
     const ancestor = runGit(worktreePath, ['merge-base', '--is-ancestor', beforeHead, targetHead]);
     if (ancestor.error || ancestor.status !== 0) return Object.freeze({ ok: false, classification: 'RETRY_WORKTREE_NOT_FAST_FORWARDABLE', worktreePath, beforeHead, targetHead });
@@ -401,6 +409,17 @@ export async function recoverOrphanedLegacyCriticalMission({
   });
 }
 
+function selectRetryOwnerPlan(authority, issueNumber, repository, nowUtc, allowFreshOwnerContract, knownMission) {
+  const mirrors = (authority?.goalMirrorEstate?.records || []).filter(record => record?.issueNumber === issueNumber);
+  const record = mirrors.length === 1 ? mirrors[0] : null;
+  const contract = knownMission ? projectKnownMalformedPatchOwnerPlanV1(knownMission, record, authority?.githubGoalEstateRead, nowUtc)
+    : allowFreshOwnerContract ? projectFreshOwnerGoalRetryContractV1(record,
+      authority?.githubGoalEstateRead, issueNumber, repository, nowUtc) : null;
+  return { ownerPlan: contract?.valid ? contract : projectOwnerGoalRequiredTestsV1(record, issueNumber, repository),
+    ownerResources: contract?.valid ? contract.resourceIds : record?.resourceIds,
+    freshOwnerContract: contract?.valid === true, ownerContractUpdatedAt: contract?.valid ? contract.updatedAtUtc : '' };
+}
+
 export async function retrySafelyBlockedAgentFailure({
   backlog = SELF_HOSTING_CRITICAL_BACKLOG,
   env = process.env,
@@ -410,24 +429,68 @@ export async function retrySafelyBlockedAgentFailure({
   appendEvent = appendMissionEvent,
   proveRetryOwnershipReleased = proveMissionWorkerRetryOwnershipReleased,
   refreshRetryWorktree = refreshRetryWorktreeToCurrentMain,
+  readProgrammeProjection = readAuthoritativeProgrammeProjection,
+  collectKnownPatchEvidence = collectKnownMalformedPatchRetryEvidenceV1,
+  blockedAdapters = [],
 } = {}) {
+  const retryClockStart = performance.now();
+  const retryEpoch = Date.now();
+  // Anchor freshness at entry, including time already spent by the caller.
+  // Neither a backward wall clock nor a snapshot timestamp can renew evidence.
+  const retryNow = () => new Date(Math.max(Date.now(),
+    retryEpoch + Math.max(0, performance.now() - retryClockStart))).toISOString();
+  const readKnownPatchRetryCapacity = async (mission, allowedFiles, requiredTests, sourceRevision) => {
+    try {
+      const capacityRouting = capacityRoutingWithBlockedAdapters(await readElasticMissionControllerCapacityRoutingInput({
+        root: paths.workspaceRoot, repoRoot: paths.repoRoot, env,
+        nowUtc: retryNow(), sourceRevision,
+      }), blockedAdapters);
+      const proposed = { ...mission, currentPhase: 'AGENT_IMPLEMENTATION', allowedFiles,
+        requiredTests, dispatch: { ...mission.dispatch, status: 'pending' } };
+      // Re-evaluate freshness after the awaited native reads. Serialized
+      // caller options cannot supply a capacity verdict or replace this reader.
+      const [selected] = resolveElasticExternalCapacityCandidates(proposed,
+        capacityRouting, sourceRevision, retryNow());
+      return selected ? JSON.stringify({ route: selected.route, adapter: selected.adapter,
+        workerId: selected.workerId, receiptId: selected.receiptId, proofRefs: selected.proofRefs }) : null;
+    } catch {
+      return null;
+    }
+  };
   const records = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
+  // Observe the existing scan without selecting work or evaluating extra proof.
+  // Scalar snapshots are captured before a possible retry event mutates state.
+  const observation = createFleetRetryScanObservationV1(records);
+  const filterPassed = new Set();
+  let evaluatedCount = 0;
   const candidates = orderedContinuityCandidates(backlog, records, (record) => {
     const blockers = Array.isArray(record?.blockers) ? record.blockers.map((item) => text(item)).filter(Boolean) : [];
+    const knownPatchRetry = isKnownMalformedPatchRetryV1(record);
     const currentRound = Number(record?.repair?.currentRound);
     const maximumRounds = Number(record?.repair?.maximumRounds);
-    return text(record?.currentPhase).toUpperCase() === 'BLOCKED'
-      && continuityStatus(record) === ACTIVE_CONTINUITY
-      && text(record?.dispatch?.status).toLowerCase() === 'failed'
-      && blockers.length > 0
-      && blockers.every(isRetryableAgentFailureBlocker)
-      && Number.isSafeInteger(currentRound)
-      && currentRound >= 0
-      && Number.isSafeInteger(maximumRounds)
-      && maximumRounds > 0
-      && currentRound < maximumRounds;
+    const checked = (gateCode, passed) => {
+      if (!passed) observation.note(record, gateCode);
+      return passed;
+    };
+    const eligible = checked('PHASE_NOT_BLOCKED', text(record?.currentPhase).toUpperCase() === 'BLOCKED')
+      && checked('CONTINUITY_NOT_RETRYABLE', continuityStatus(record) === ACTIVE_CONTINUITY
+        || (continuityStatus(record) === PARKED_BLOCKED && (isRetryableParkedAgentFailure(blockers, record.requiredTests) || knownPatchRetry)))
+      && checked('DISPATCH_NOT_FAILED', text(record?.dispatch?.status).toLowerCase() === 'failed')
+      && checked('NO_RETRYABLE_BLOCKERS', blockers.length > 0)
+      && checked('NON_RETRYABLE_BLOCKER', knownPatchRetry || blockers.every(reason => isRetryableAgentFailureBlocker(reason, record.requiredTests)))
+      && checked('REPAIR_BUDGET_INVALID', Number.isSafeInteger(currentRound))
+      && checked('REPAIR_BUDGET_INVALID', currentRound >= 0)
+      && checked('REPAIR_BUDGET_INVALID', Number.isSafeInteger(maximumRounds))
+      && checked('REPAIR_BUDGET_INVALID', maximumRounds > 0)
+      && checked('REPAIR_BUDGET_EXHAUSTED', currentRound < maximumRounds);
+    if (eligible) filterPassed.add(record);
+    return eligible;
   });
-  if (!candidates.length) return Object.freeze({
+  const candidateSet = new Set(candidates);
+  for (const record of filterPassed) if (!candidateSet.has(record)) observation.note(record, 'MISSION_OUTSIDE_RETRY_DOMAIN');
+  const observedResult = result => Object.freeze({ ...result,
+    retryScan: observation.snapshot(candidates, evaluatedCount) });
+  if (!candidates.length) return observedResult({
     ok: true,
     classification: 'NO_RETRYABLE_BLOCKED_AGENT_FAILURE',
     retried: false,
@@ -435,9 +498,17 @@ export async function retrySafelyBlockedAgentFailure({
   });
 
   let candidate = null;
+  let candidateRecord = null;
   let firstBlockedCandidate = null;
+  let retryAuthority;
+  // One bounded cohort request keeps negative owner lookups cached across the scan.
+  const requiredPrimaryOwnerCommentIssueNumbers = [...new Set(candidates.filter(record =>
+    (record.blockers.includes('SOURCE_ARTIFACT_DIFF_CHECK_FAILED') || isKnownMalformedPatchRetryV1(record)) && !record.blockers.some(isModelTransportFailureV1))
+    .map(record => issueFromMissionId(record.missionId)).filter(id => Number.isSafeInteger(id) && id > 0))];
   for (const currentCandidate of candidates) {
+    evaluatedCount += 1;
     if (!Number.isSafeInteger(currentCandidate.revision) || currentCandidate.revision < 0) {
+      observation.note(currentCandidate, 'REVISION_UNPROVEN');
       firstBlockedCandidate ??= {
         ok: false,
         classification: 'RETRYABLE_AGENT_FAILURE_REVISION_UNPROVEN',
@@ -445,6 +516,75 @@ export async function retrySafelyBlockedAgentFailure({
         missionId: text(currentCandidate.missionId),
       };
       continue;
+    }
+
+    let retryRequiredTests;
+    let retryAllowedFiles;
+    let retryPlanBinding;
+    const knownPatchRetry = isKnownMalformedPatchRetryV1(currentCandidate);
+    const transportRetry = currentCandidate.blockers.some(isModelTransportFailureV1);
+    if (currentCandidate.blockers.includes('SOURCE_ARTIFACT_DIFF_CHECK_FAILED') || transportRetry || knownPatchRetry) {
+      // Re-admission is not repair/completion proof. Require a newly strengthened
+      // owner-authenticated acceptance contract before another consumed attempt.
+      retryAuthority ??= await readProgrammeProjection({ env, nowUtc: retryNow(),
+        ...(requiredPrimaryOwnerCommentIssueNumbers.length ? { requiredPrimaryOwnerCommentIssueNumbers } : {}),
+        root: paths.workspaceRoot, repoRoot: paths.repoRoot,
+        orchestratorRoot: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot });
+      const issueNumber = issueFromMissionId(currentCandidate.missionId);
+      const mirrors = (retryAuthority?.goalMirrorEstate?.records || []).filter(record => record?.issueNumber === issueNumber);
+      const selectedOwner = selectRetryOwnerPlan(retryAuthority, issueNumber, currentCandidate.repository,
+        retryNow(), !transportRetry, knownPatchRetry ? currentCandidate : undefined);
+      const { ownerPlan, ownerResources } = selectedOwner;
+      // Admission expands each resource path to path and path/**. Match its
+      // resource reconstruction: remove representation duplicates before validation.
+      const retainedScopes = projectCanonicalResourceIds([...new Set((currentCandidate.allowedFiles || []).map(path =>
+        path === '**' ? `repo:${currentCandidate.repository}`
+          : `repo:${currentCandidate.repository}:path:${path.endsWith('/**') ? path.slice(0, -3) : path}`))]);
+      const currentScopes = projectCanonicalResourceIds(ownerResources || []);
+      const sameSourceScope = retainedScopes.valid && currentScopes.valid && currentScopes.resourceIds.length > 0
+        && JSON.stringify(retainedScopes.resourceIds) === JSON.stringify(currentScopes.resourceIds);
+      const prefix = `repo:${currentCandidate.repository.toLowerCase()}:path:`;
+      const narrowedScope = !transportRetry && !sameSourceScope && currentScopes.valid && Array.isArray(ownerResources)
+        && ownerResources.length > 0 && ownerResources.every(value => typeof value === 'string' && value.toLowerCase().startsWith(prefix))
+        ? projectNarrowedMissionSourceScopeV1(currentCandidate.allowedFiles,
+          ownerResources.flatMap(value => {
+            const scope = value.slice(prefix.length);
+            return projectNarrowedMissionSourceScopeV1(currentCandidate.allowedFiles, [`${scope}/**`]).valid
+              ? [scope, `${scope}/**`] : [scope];
+          }))
+        : null;
+      const admittedScope = sameSourceScope || narrowedScope?.valid === true;
+      const nextRequiredTests = admittedScope && ownerPlan?.valid && ownerPlan.supplied
+        ? [...new Set(['npm run stephanos:verify', ...ownerPlan.commands])] : null;
+      const strengthened = nextRequiredTests
+        ? (transportRetry
+          ? { valid: JSON.stringify(currentCandidate.requiredTests) === JSON.stringify(nextRequiredTests), commands: nextRequiredTests }
+          : projectStrengthenedRetryTestsV1(currentCandidate.requiredTests, nextRequiredTests, narrowedScope?.allowedFiles || currentCandidate.allowedFiles))
+        : null;
+      if (currentCandidate.blockers.length !== 1 || !strengthened?.valid
+          || (knownPatchRetry && (!selectedOwner.freshOwnerContract || !narrowedScope?.valid))) {
+        observation.note(currentCandidate, fleetRetryAcceptanceGateCodeV1({
+          singleBlocker: currentCandidate.blockers.length === 1, mirrorCount: mirrors.length,
+          sameSourceScope: admittedScope, ownerPlan, previousRequiredTests: currentCandidate.requiredTests, nextRequiredTests,
+        }));
+        firstBlockedCandidate ??= { ok: true, classification: 'SOURCE_DIFF_RETRY_REQUIRES_STRONGER_OWNER_ACCEPTANCE',
+          retried: false, missionId: currentCandidate.missionId };
+        continue;
+      }
+      if (!transportRetry) retryRequiredTests = strengthened.commands;
+      if (narrowedScope?.valid || transportRetry || selectedOwner.freshOwnerContract) {
+        const sourceHead = text(retryAuthority?.machineryInventory?.sourceHead).toLowerCase();
+        if (!SHA_40.test(sourceHead)) {
+          observation.note(currentCandidate, 'OWNER_PLAN_INVALID');
+          firstBlockedCandidate ??= { ok: true, classification: 'NARROWED_RETRY_PLAN_HEAD_UNPROVEN',
+            retried: false, missionId: currentCandidate.missionId };
+          continue;
+        }
+        if (narrowedScope?.valid) retryAllowedFiles = narrowedScope.allowedFiles;
+        retryPlanBinding = { sourceHead, ownerResources: JSON.stringify(ownerResources),
+          requiredTests: JSON.stringify(ownerPlan.commands), freshOwnerContract: selectedOwner.freshOwnerContract,
+          ownerContractUpdatedAt: selectedOwner.ownerContractUpdatedAt };
+      }
     }
 
     const missionId = text(currentCandidate.missionId).toLowerCase();
@@ -460,6 +600,7 @@ export async function retrySafelyBlockedAgentFailure({
       || terminalResultEventId.replace(/^result-/, '');
     const failedAdapter = text(currentCandidate?.dispatch?.adapter).toLowerCase();
     if (!failedActionId || !failedAdapter) {
+      observation.note(currentCandidate, 'TERMINAL_IDENTITY_UNPROVEN');
       firstBlockedCandidate ??= {
         ok: true,
         classification: 'RETRYABLE_AGENT_FAILURE_TERMINAL_IDENTITY_UNPROVEN',
@@ -474,13 +615,16 @@ export async function retrySafelyBlockedAgentFailure({
       root: env.STEPHANOS_SHARED_AGENT_WORKSPACE || paths.workspaceRoot,
       repoRoot: paths.repoRoot,
     });
-    if (workspaceResolution.ok !== true) return Object.freeze({
-      ok: false,
-      classification: 'RETRYABLE_AGENT_FAILURE_WORKSPACE_UNRESOLVED',
-      retried: false,
-      missionId: text(currentCandidate.missionId),
-      workspaceReason: text(workspaceResolution.reason),
-    });
+    if (workspaceResolution.ok !== true) {
+      observation.note(currentCandidate, 'WORKSPACE_UNRESOLVED');
+      return observedResult({
+        ok: false,
+        classification: 'RETRYABLE_AGENT_FAILURE_WORKSPACE_UNRESOLVED',
+        retried: false,
+        missionId: text(currentCandidate.missionId),
+        workspaceReason: text(workspaceResolution.reason),
+      });
+    }
     const ownershipRelease = await proveRetryOwnershipReleased({
       missionId: currentCandidate.missionId,
       actionId: failedActionId,
@@ -491,6 +635,7 @@ export async function retrySafelyBlockedAgentFailure({
       env,
     });
     if (ownershipRelease?.ok !== true) {
+      observation.note(currentCandidate, 'OWNERSHIP_RELEASE_UNPROVEN');
       firstBlockedCandidate ??= {
         ok: true,
         classification: ownershipRelease?.classification || 'RETRYABLE_AGENT_FAILURE_OWNERSHIP_RELEASE_UNPROVEN',
@@ -501,19 +646,79 @@ export async function retrySafelyBlockedAgentFailure({
       continue;
     }
 
-    const worktreeRefresh = await refreshRetryWorktree({ mission: currentCandidate, repoRoot: paths.repoRoot, env });
+    if (transportRetry && !modelTransportFailureProofMatchesV1(ownershipRelease.providerTransportFailure,
+      currentCandidate.missionId, failedActionId, currentCandidate.blockers[0])) {
+      observation.note(currentCandidate, 'OWNERSHIP_RELEASE_UNPROVEN');
+      firstBlockedCandidate ??= { ok: true, classification: 'MODEL_TRANSPORT_RETRY_TERMINAL_FAILURE_UNPROVEN',
+        retried: false, missionId: currentCandidate.missionId };
+      continue;
+    }
+    let knownPatchEvidence;
+    let retryCapacityBinding;
+    if (knownPatchRetry) {
+      knownPatchEvidence = await collectKnownPatchEvidence({ mission: currentCandidate,
+        sourceHead: retryPlanBinding.sourceHead, ownershipRelease, repoRoot: paths.repoRoot });
+      if (knownPatchEvidence?.ok !== true) {
+        firstBlockedCandidate ??= { ok: true, classification: knownPatchEvidence?.reason || 'KNOWN_PATCH_SOURCE_QUALIFICATION_FAILED',
+          retried: false, missionId: currentCandidate.missionId };
+        continue;
+      }
+      // Read the same native capacity estate and use the same planner as normal
+      // elastic dispatch, against the proposed scope, not the retained '**'.
+      // This is a readiness precondition, never a grant or a queue reservation.
+      retryCapacityBinding = await readKnownPatchRetryCapacity(currentCandidate,
+        retryAllowedFiles, retryRequiredTests, retryPlanBinding.sourceHead);
+      if (!retryCapacityBinding) {
+        firstBlockedCandidate ??= { ok: true, classification: 'KNOWN_PATCH_COMPATIBLE_CAPACITY_UNPROVEN',
+          retried: false, missionId: currentCandidate.missionId };
+        continue;
+      }
+    }
+    // This newly admitted failure must not fast-forward a subsequently fenced
+    // mission. Preserve its branch only inside the store's existing CAS lock.
+    const worktreeRefresh = knownPatchRetry ? { ok: true, deferredUntilMissionLock: true }
+      : await refreshRetryWorktree({ mission: currentCandidate, repoRoot: paths.repoRoot, env });
     if (worktreeRefresh?.ok !== true) {
+      observation.note(currentCandidate, 'WORKTREE_REFRESH_BLOCKED');
       firstBlockedCandidate ??= {
         ok: true, classification: 'RETRYABLE_AGENT_FAILURE_WORKTREE_REFRESH_BLOCKED', retried: false,
         missionId: text(currentCandidate.missionId), worktreeRefresh,
       };
       continue;
     }
-    candidate = { ...currentCandidate, retryWorktreeRefresh: worktreeRefresh };
+    if (retryPlanBinding) {
+      // Custody and worktree checks await external reads. Re-observe the same
+      // authenticated plan/head before the existing revision-guarded event.
+      const refreshed = await readProgrammeProjection({ env,
+        ...(requiredPrimaryOwnerCommentIssueNumbers.length ? { requiredPrimaryOwnerCommentIssueNumbers } : {}),
+        root: paths.workspaceRoot, repoRoot: paths.repoRoot,
+        orchestratorRoot: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot });
+      const issueNumber = issueFromMissionId(currentCandidate.missionId);
+      const selectedOwner = selectRetryOwnerPlan(refreshed, issueNumber, currentCandidate.repository,
+        retryNow(), !transportRetry, knownPatchRetry ? currentCandidate : undefined);
+      const { ownerPlan, ownerResources } = selectedOwner;
+      if (!ownerPlan?.valid || !ownerPlan.supplied
+          || text(refreshed?.machineryInventory?.sourceHead).toLowerCase() !== retryPlanBinding.sourceHead
+          || (!knownPatchRetry && (worktreeRefresh.clean !== true || worktreeRefresh.afterHead !== retryPlanBinding.sourceHead))
+          || selectedOwner.freshOwnerContract !== retryPlanBinding.freshOwnerContract
+          || selectedOwner.ownerContractUpdatedAt !== retryPlanBinding.ownerContractUpdatedAt
+          || JSON.stringify(ownerResources) !== retryPlanBinding.ownerResources
+          || JSON.stringify(ownerPlan.commands) !== retryPlanBinding.requiredTests) {
+        observation.note(currentCandidate, 'OWNER_PLAN_INVALID');
+        firstBlockedCandidate ??= { ok: true, classification: 'NARROWED_RETRY_PLAN_CHANGED_OR_WORKTREE_UNBOUND',
+          retried: false, missionId: currentCandidate.missionId };
+        continue;
+      }
+    }
+    observation.note(currentCandidate, 'RETRY_SELECTED');
+    candidateRecord = currentCandidate;
+    candidate = { ...currentCandidate, retryRequiredTests, retryAllowedFiles, retryPlanBinding, knownPatchEvidence, retryCapacityBinding, retryWorkspaceRoot: workspaceResolution.root,
+      retryProviderFailureProof: transportRetry ? ownershipRelease.providerTransportFailure : undefined,
+      retryWorktreeRefresh: worktreeRefresh };
     break;
   }
 
-  if (!candidate) return Object.freeze({
+  if (!candidate) return observedResult({
     ...(firstBlockedCandidate || {
       ok: true,
       classification: 'NO_RETRYABLE_BLOCKED_AGENT_FAILURE',
@@ -524,12 +729,56 @@ export async function retrySafelyBlockedAgentFailure({
   });
 
   const retryableBlockers = Object.freeze(candidate.blockers.map((item) => text(item)).filter(Boolean));
-  const timestamp = now instanceof Date ? now.toISOString() : new Date().toISOString();
+  const timestamp = candidate.retryPlanBinding?.freshOwnerContract ? retryNow()
+    : now instanceof Date ? now.toISOString() : new Date().toISOString();
   const digest = createHash('sha256')
     .update([text(candidate.missionId), candidate.revision, retryableBlockers.join('|'), timestamp].join(':'))
     .digest('hex')
     .slice(0, 20);
   const receiptId = 'agent-retry-' + digest;
+  const authorizeKnownMalformedPatchRetry = candidate.knownPatchEvidence ? async (current, event) => {
+    const reject = () => { throw new Error('KNOWN_MALFORMED_PATCH_RETRY_REVALIDATION_FAILED'); };
+    if (!isKnownMalformedPatchRetryV1(current) || current.revision !== candidate.revision
+        || event.retryPlanSourceHead !== candidate.retryPlanBinding.sourceHead
+        || JSON.stringify(event.retryAllowedFiles) !== JSON.stringify(candidate.retryAllowedFiles)
+        || JSON.stringify(event.retryRequiredTests) !== JSON.stringify(candidate.retryRequiredTests)
+        || JSON.stringify(event.retryableBlockers) !== JSON.stringify(retryableBlockers)) reject();
+    const reobserve = async () => {
+      const authority = await readProgrammeProjection({ env, nowUtc: retryNow(),
+        requiredPrimaryOwnerCommentIssueNumbers, root: paths.workspaceRoot, repoRoot: paths.repoRoot,
+        orchestratorRoot: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot });
+      const owner = selectRetryOwnerPlan(authority, issueFromMissionId(current.missionId), current.repository, retryNow(), true, current);
+      if (!owner.freshOwnerContract || !owner.ownerPlan?.valid
+          || text(authority?.machineryInventory?.sourceHead).toLowerCase() !== candidate.retryPlanBinding.sourceHead
+          || owner.ownerContractUpdatedAt !== candidate.retryPlanBinding.ownerContractUpdatedAt
+          || JSON.stringify(owner.ownerResources) !== candidate.retryPlanBinding.ownerResources
+          || JSON.stringify(owner.ownerPlan.commands) !== candidate.retryPlanBinding.requiredTests) reject();
+      const ownershipRelease = await proveRetryOwnershipReleased({ missionId: current.missionId,
+        actionId: current.dispatch.resultId, adapter: current.dispatch.adapter,
+        queueRoot: resolveMissionWorkerQueueRoot(env), sharedWorkspaceRoot: candidate.retryWorkspaceRoot, repoRoot: paths.repoRoot, env });
+      const evidence = await collectKnownPatchEvidence({ mission: current, sourceHead: candidate.retryPlanBinding.sourceHead,
+        ownershipRelease, repoRoot: paths.repoRoot });
+      if (evidence?.ok !== true
+          || knownMalformedPatchDigestV1(evidence.proof) !== knownMalformedPatchDigestV1(candidate.knownPatchEvidence.proof)) reject();
+      const capacity = await readKnownPatchRetryCapacity(current, candidate.retryAllowedFiles,
+        candidate.retryRequiredTests, candidate.retryPlanBinding.sourceHead);
+      if (!capacity || capacity !== candidate.retryCapacityBinding) reject();
+      // Awaited custody/source reads cannot extend the owner observation's TTL.
+      const finalOwner = selectRetryOwnerPlan(authority, issueFromMissionId(current.missionId), current.repository, retryNow(), true, current);
+      if (!finalOwner.freshOwnerContract || !finalOwner.ownerPlan?.valid
+          || finalOwner.ownerContractUpdatedAt !== candidate.retryPlanBinding.ownerContractUpdatedAt
+          || JSON.stringify(finalOwner.ownerResources) !== candidate.retryPlanBinding.ownerResources
+          || JSON.stringify(finalOwner.ownerPlan.commands) !== candidate.retryPlanBinding.requiredTests) reject();
+      return evidence.proof;
+    };
+    await reobserve();
+    const refreshed = await refreshRetryWorktree({ mission: current, repoRoot: paths.repoRoot,
+      expectedSourceHead: candidate.retryPlanBinding.sourceHead, env });
+    if (refreshed?.ok !== true || refreshed.clean !== true || refreshed.afterHead !== candidate.retryPlanBinding.sourceHead) reject();
+    const proof = await reobserve();
+    candidate.retryWorktreeRefresh = refreshed;
+    return proof;
+  } : undefined;
   const result = await appendEvent(candidate.missionId, {
     eventId: 'agent-retry-' + digest,
     eventType: 'AGENT_FAILURE_RETRY_ADMITTED',
@@ -537,6 +786,10 @@ export async function retrySafelyBlockedAgentFailure({
     expectedCurrentPhase: 'BLOCKED',
     timestamp,
     retryableBlockers,
+    ...(candidate.retryRequiredTests ? { retryRequiredTests: candidate.retryRequiredTests } : {}),
+    ...(candidate.retryAllowedFiles ? { retryAllowedFiles: candidate.retryAllowedFiles } : {}),
+    ...(candidate.retryPlanBinding ? { retryPlanSourceHead: candidate.retryPlanBinding.sourceHead } : {}),
+    ...(candidate.retryProviderFailureProof ? { retryProviderFailureProof: candidate.retryProviderFailureProof } : {}),
     receipt: {
       receiptId,
       requirement: 'bounded retry admission for retryable agent execution failure',
@@ -552,19 +805,24 @@ export async function retrySafelyBlockedAgentFailure({
     snapshotRoot: paths.snapshotRoot,
     env,
     now,
+    ...(authorizeKnownMalformedPatchRetry ? { authorizeKnownMalformedPatchRetry } : {}),
   });
-  if (result?.preconditionFailed === true) return Object.freeze({
-    ok: true,
-    classification: 'RETRYABLE_AGENT_FAILURE_PRECONDITION_MOVED',
-    retried: false,
-    missionId: text(candidate.missionId),
-  });
+  if (result?.preconditionFailed === true || result?.duplicate === true) {
+    observation.note(candidateRecord, 'RETRY_PRECONDITION_MOVED');
+    return observedResult({
+      ok: true,
+      classification: 'RETRYABLE_AGENT_FAILURE_PRECONDITION_MOVED',
+      retried: false,
+      missionId: text(candidate.missionId),
+    });
+  }
   const state = result?.state;
   const retried = continuityStatus(state) === ACTIVE_CONTINUITY
     && text(state?.dispatch?.status).toLowerCase() === 'pending'
     && text(state?.currentPhase).toUpperCase() === 'AGENT_IMPLEMENTATION'
-    && !(Array.isArray(state?.blockers) && state.blockers.some(isRetryableAgentFailureBlocker));
-  return Object.freeze({
+    && !(Array.isArray(state?.blockers) && state.blockers.some(reason => isRetryableAgentFailureBlocker(reason, state.requiredTests)));
+  observation.note(candidateRecord, retried ? 'RETRY_READMITTED' : 'RETRY_READMISSION_BLOCKED');
+  return observedResult({
     ok: retried,
     classification: retried ? 'RETRYABLE_AGENT_FAILURE_READMITTED' : 'RETRYABLE_AGENT_FAILURE_READMISSION_BLOCKED',
     retried,
@@ -1259,6 +1517,7 @@ export async function ensureCriticalBacklogMission(options = {}) {
     paths,
     listMissions,
     appendEvent,
+    blockedAdapters: normalized.blockedAdapters,
   });
   if (retryAdmission?.ok === false) {
     return Object.freeze({
@@ -1275,7 +1534,23 @@ export async function ensureCriticalBacklogMission(options = {}) {
     });
   }
 
-  const parking = await parkSafelyBlockedCriticalMission({ backlog, env, now, paths, listMissions, appendEvent });
+  let parking;
+  try {
+    parking = await parkSafelyBlockedCriticalMission({ backlog, env, now, paths, listMissions, appendEvent });
+  } catch (error) {
+    if (error?.code !== MISSION_STATE_LOCK_BUSY
+        || !/^[a-z0-9][a-z0-9._-]{2,127}$/.test(error?.missionId || '')) throw error;
+    // Parking is mission-local housekeeping. Retain its exact failed state,
+    // lock and claim; ordinary authority still decides unrelated admission.
+    parking = Object.freeze({
+      ok: true,
+      classification: 'BLOCKED_MISSION_PARKING_LOCK_BUSY',
+      blocker: MISSION_STATE_LOCK_BUSY,
+      missionId: error.missionId,
+      parked: false,
+      stateTransitionDeferred: true,
+    });
+  }
   if (parking?.ok === false) {
     return Object.freeze({
       schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,

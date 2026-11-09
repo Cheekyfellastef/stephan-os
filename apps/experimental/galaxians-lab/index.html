@@ -15,9 +15,11 @@
         <button type="button" data-mode="original" class="mode-btn is-active">Original</button>
         <button type="button" data-mode="basic" class="mode-btn">Basic</button>
         <button type="button" data-mode="deluxe" class="mode-btn">Deluxe</button>
+        <button type="button" id="lab-diagnostics-toggle" class="mode-btn" aria-controls="lab-diagnostics" aria-expanded="false" aria-keyshortcuts="F1">Diagnostics (F1)</button>
       </section>
 
       <p class="mode-readout">Current mode: <strong id="mode-label">original</strong></p>
+      <pre id="lab-diagnostics" class="diagnostics-readout" aria-label="Experimental rendering diagnostics" hidden></pre>
 
       <canvas id="lab-canvas" width="640" height="360" aria-label="Galaxians rendering canvas"></canvas>
     </main>

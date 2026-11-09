@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { serializeBoundedReceiptJson } from './battle-bridge-github-command-mailbox.mjs';
 import {
-  serializeBoundedReceiptJson,
   MAILBOX_ACCEPTED_LEASE_EXPIRED_BLOCKER,
   MAILBOX_ACCEPTED_LEASE_MS,
   MAILBOX_SELF_UPDATE_GENERATION_ORPHANED_BLOCKER,
@@ -190,6 +190,60 @@ test('accepted ownership outlives the guarded child, then expires without replay
   state = JSON.parse(await readFile(join(stateRoot, 'state.json'), 'utf8'));
   assert.deepEqual(state.acceptedRequestIds, []);
   assert.deepEqual(state.consumedRequestIds, [requestId]);
+}));
+
+test('heartbeats cannot extend ACCEPTED ownership past the guarded child hard deadline', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
+  const requestId = 'accepted-heartbeat-kept-fresh-but-child-expired-1';
+  const original = acceptedReceipt(requestId, '2026-09-09T12:00:00.000Z');
+  const refreshed = { ...original, heartbeatAt: '2026-09-09T12:16:10.000Z' };
+  await writeState(stateRoot, {
+    consumedRequestIds: [],
+    acceptedRequestIds: [requestId],
+    lastAcceptedReceipt: refreshed,
+    pendingReceiptPublications: [],
+  });
+  const receiptPath = await writeReceipt(receiptRoot, refreshed);
+
+  const inFlight = reconcileStaleAcceptedMailboxReceipts({
+    env,
+    workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+    now: () => new Date('2026-09-09T12:15:30.000Z'),
+  });
+  assert.equal(inFlight.ok, true);
+  assert.equal(inFlight.expiredCount, 0);
+  assert.equal(inFlight.freshCount, 1);
+
+  const expired = reconcileStaleAcceptedMailboxReceipts({
+    env,
+    workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+    now: () => new Date('2026-09-09T12:16:30.000Z'),
+  });
+  assert.equal(expired.ok, true);
+  assert.equal(expired.expiredCount, 1);
+  assert.equal(expired.reconciledCount, 1);
+  assert.equal(expired.replayPerformed, false);
+  assert.equal(expired.duplicateMutationAllowed, false);
+
+  const state = JSON.parse(await readFile(join(stateRoot, 'state.json'), 'utf8'));
+  assert.deepEqual(state.acceptedRequestIds, []);
+  assert.deepEqual(state.consumedRequestIds, [requestId]);
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  assert.equal(state.pendingReceiptPublications[0].receipt.state, 'BLOCKED');
+  assert.equal(state.pendingReceiptPublications[0].receipt.blocker, MAILBOX_ACCEPTED_LEASE_EXPIRED_BLOCKER);
+  assert.equal(state.pendingReceiptPublications[0].receipt.result.result.replayPerformed, false);
+  assert.equal(state.pendingReceiptPublications[0].receipt.result.result.duplicateMutationAllowed, false);
+  const terminal = JSON.parse(await readFile(receiptPath, 'utf8'));
+  assert.equal(terminal.state, 'BLOCKED');
+  assert.equal(terminal.blocker, MAILBOX_ACCEPTED_LEASE_EXPIRED_BLOCKER);
+
+  // Recovery is idempotent, not another command invocation.
+  const again = reconcileStaleAcceptedMailboxReceipts({
+    env,
+    workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+    now: () => new Date('2026-09-09T12:17:30.000Z'),
+  });
+  assert.equal(again.reconciledCount, 0);
+  assert.equal(again.replayPerformed, false);
 }));
 
 test('terminal local truth clears stranded accepted state without executing again', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {

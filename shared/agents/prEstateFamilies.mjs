@@ -13,15 +13,25 @@ export function normalizeFamily(input = {}) {
   if (!isPlainObject(input)) throw new Error('PR estate family record must be an object');
   const id = asText(input.id, '');
   if (!SAFE_FAMILY_ID.test(id)) throw new Error(`invalid PR estate family id: ${id || '<empty>'}`);
-  const membersField = hasOwn(input, 'members') ? input.members : input.prs;
-  if (!Array.isArray(membersField)) throw new Error(`family ${id} members array is required`);
-  const members = membersField.map((value) => {
-    const parsed = asPositiveInteger(value, null);
-    if (parsed === null) throw new Error(`invalid family member in ${id}: ${String(value)}`);
-    return parsed;
-  });
-  if (new Set(members).size !== members.length) throw new Error(`duplicate family member in ${id}`);
-  members.sort((a, b) => a - b);
+  // Both family-member aliases must describe exactly the same PR identities.
+  // Silently preferring one would discard contradictory operator-supplied custody.
+  function parseMembers(value) {
+    if (!Array.isArray(value)) throw new Error(`family ${id} members array is required`);
+    const parsed = value.map((member) => {
+      const number = asPositiveInteger(member, null);
+      if (number === null) throw new Error(`invalid family member in ${id}: ${String(member)}`);
+      return number;
+    });
+    if (new Set(parsed).size !== parsed.length) throw new Error(`duplicate family member in ${id}`);
+    return parsed.sort((a, b) => a - b);
+  }
+  const members = parseMembers(hasOwn(input, 'members') ? input.members : input.prs);
+  if (hasOwn(input, 'members') && hasOwn(input, 'prs')) {
+    const aliasMembers = parseMembers(input.prs);
+    if (members.length !== aliasMembers.length || members.some((number, index) => number !== aliasMembers[index])) {
+      throw new Error(`conflicting family member aliases in ${id}`);
+    }
+  }
 
   const canonicalProvided = hasOwn(input, 'canonicalPr') && input.canonicalPr !== null && input.canonicalPr !== undefined;
   const canonicalPr = canonicalProvided ? asPositiveInteger(input.canonicalPr, null) : null;

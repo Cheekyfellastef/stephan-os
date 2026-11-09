@@ -32,3 +32,22 @@ export function isVerifiedCandidateTrack(track = {}) {
   const status = getCandidateVerificationStatus(track);
   return status === AI_CANDIDATE_STATUSES.verified || status === AI_CANDIDATE_STATUSES.userConfirmed;
 }
+
+/**
+ * Provider-verified Spotify identity is allowed independently of where the song
+ * originally entered the Listening Room. The original card remains a journey
+ * candidate after native catalogue enrichment, so sourceKind alone is insufficient.
+ * This proves an exact Spotify recording identity, not browser playback.
+ */
+export function hasVerifiedCatalogSpotifyTrack(track = {}) {
+  const spotify = resolveSpotifyReference(track.spotifyUrl || track.spotifyUri || '');
+  return Boolean(
+    spotify.valid
+    && spotify.type === 'track'
+    && /^[A-Za-z0-9]{22}$/.test(String(spotify.id || ''))
+    && String(track.catalogProvider || '').toLowerCase() === 'spotify'
+    && String(track.catalogProviderItemId || '') === spotify.id
+    && track.catalogVerificationStatus === 'metadata_verified'
+    && track.catalogLinkSource === 'native-catalog-search'
+  );
+}

@@ -180,7 +180,7 @@ test('flywheel question stays non-executing but writes a provenance-bound dialog
   const receipt = harness.writes[0].record;
   const validation = validateSharedWorkspaceRecord(receipt, { nowMs: Date.parse(NOW) });
   assert.equal(validation.valid, true, validation.errors.join(', '));
-  assert.equal(receipt.dialogueSchemaVersion, 'stephanos.flywheel-dialogue-receipt.v1');
+  assert.equal(receipt.exchangeSchemaVersion, 'stephanos.flywheel-dialogue-receipt.v1');
   assert.equal(receipt.receivedRecordId, 'durable-flywheel-20260925175500000');
   assert.deepEqual(receipt.flywheelCreatedCanonicalGoals, [2999]);
   assert.equal(receipt.authority.mergeAuthorityAdded, false);
@@ -290,6 +290,54 @@ test('explicit action without any Knowledge Twin alignment evidence fails closed
   assert.equal(result.blocker, 'OPERATOR_ALIGNMENT_EVIDENCE_REQUIRED');
   assert.equal(harness.writes.length, 0);
   assert.equal(harness.wakeCalls.length, 0);
+});
+
+test('sovereign up-stack requests address the guarded Commander without treating status questions as execution', () => {
+  const actions = [
+    'Take Sovereign Commander up the stack and improve its skills.',
+    'Keep taking Stephanos AI up the stack.',
+    'Can we elevate Sovereign Commander to the next level?',
+    'Please improve OpenClaw Local.',
+  ];
+  for (const prompt of actions) {
+    const result = classifyStephanosExecutiveChatIntent(prompt);
+    assert.equal(result.applies, true, prompt);
+    assert.equal(result.explicitActionRequested, true, prompt);
+    assert.equal(result.commandClass, 'REQUEST_SYSTEM_ACTION', prompt);
+    if (/sovereign commander/i.test(prompt)) assert.equal(result.targetSystem, 'sovereign-commander');
+  }
+  for (const prompt of [
+    'Can we get a status report on Sovereign Commander?',
+    'How is Sovereign Commander getting on?',
+  ]) {
+    const result = classifyStephanosExecutiveChatIntent(prompt);
+    assert.equal(result.applies, true, prompt);
+    assert.equal(result.explicitActionRequested, false, prompt);
+  }
+});
+
+test('Stephanos repair phrasing becomes an action without classifying read-only updates as work', () => {
+  const actions = [
+    'Can we get Stephanos AI up to the level of ChatGPT or above and use it to repair Stephanos?',
+    'Can we repair the goal builder now?',
+    'Can we get the workers building?',
+    'Can we get #2962 over the line?',
+    'Could we get the daemon to fix Stephanos?',
+  ];
+  for (const prompt of actions) {
+    const result = classifyStephanosExecutiveChatIntent(prompt);
+    assert.equal(result.explicitActionRequested, true, prompt);
+    assert.equal(result.commandClass, 'REQUEST_SYSTEM_ACTION', prompt);
+  }
+  const readOnly = [
+    'Can we get a status report on repairs?',
+    'Can we get a report on what was merged?',
+    'Why are the repairs blocked?',
+  ];
+  for (const prompt of readOnly) {
+    const result = classifyStephanosExecutiveChatIntent(prompt);
+    assert.equal(result.explicitActionRequested, false, prompt);
+  }
 });
 
 test('classifier keeps natural questions separate from explicit action requests', () => {
