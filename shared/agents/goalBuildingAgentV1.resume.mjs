@@ -51,17 +51,19 @@ const CANONICAL_CHECKPOINT_AUTHORITY = Object.freeze({
 });
 
 function suppliedAuthorityProblems(input) {
-  if (!Object.hasOwn(input, 'authority') || input.authority === undefined) return [];
+  if (!Object.hasOwn(input, 'authority')) return [];
   const supplied = input.authority;
   if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) {
     return ['checkpoint-supplied-authority-invalid'];
   }
   const problems = [];
   for (const [field, expected] of Object.entries(CANONICAL_CHECKPOINT_AUTHORITY)) {
-    if (supplied[field] !== expected) problems.push(`checkpoint-supplied-authority-mismatch:${field}`);
+    if (!Object.hasOwn(supplied, field) || supplied[field] !== expected) {
+      problems.push(`checkpoint-supplied-authority-mismatch:${field}`);
+    }
   }
-  for (const field of Object.keys(supplied)) {
-    if (!Object.hasOwn(CANONICAL_CHECKPOINT_AUTHORITY, field)) {
+  for (const field of Reflect.ownKeys(supplied)) {
+    if (typeof field !== 'string' || !Object.hasOwn(CANONICAL_CHECKPOINT_AUTHORITY, field)) {
       problems.push('checkpoint-supplied-authority-unknown-field');
     }
   }
@@ -71,7 +73,7 @@ function suppliedAuthorityProblems(input) {
 function suppliedOperatorGateProblems(input) {
   // An absent optional gate is false. An explicitly malformed gate is UNKNOWN,
   // never a silent authorization to continue.
-  if (!Object.hasOwn(input, 'operatorGate') || input.operatorGate === undefined) return [];
+  if (!Object.hasOwn(input, 'operatorGate')) return [];
   return typeof input.operatorGate === 'boolean' ? [] : ['checkpoint-supplied-operator-gate-invalid'];
 }
 
