@@ -67,9 +67,15 @@ export function projectStephanosGoalContinuation(input = {}) {
   const candidate = normalizeCandidate(input.schedulerCandidate || {});
   const reasons = [...evaluation.reasons];
 
-  if (candidate.goalId && candidate.goalId !== evaluation.goalId) reasons.push('scheduler-goal-mismatch');
-  if (candidate.missionId && candidate.missionId !== evaluation.missionId) reasons.push('scheduler-mission-mismatch');
-  if (candidate.canonicalOwnerId && candidate.canonicalOwnerId !== evaluation.canonicalOwnerId) reasons.push('scheduler-owner-mismatch');
+  // A scheduler candidate must prove its three principal identities before a
+  // status projection can request existing-controller continuation. Omitted
+  // identities are not wildcards; this grants no runtime or source authority.
+  if (!candidate.goalId) reasons.push('scheduler-goal-unproven');
+  else if (candidate.goalId !== evaluation.goalId) reasons.push('scheduler-goal-mismatch');
+  if (!candidate.missionId) reasons.push('scheduler-mission-unproven');
+  else if (candidate.missionId !== evaluation.missionId) reasons.push('scheduler-mission-mismatch');
+  if (!candidate.canonicalOwnerId) reasons.push('scheduler-owner-unproven');
+  else if (candidate.canonicalOwnerId !== evaluation.canonicalOwnerId) reasons.push('scheduler-owner-mismatch');
 
   let state = GOAL_BUILDING_CONTINUATION_STATES.SAFE_HOLD;
   let mayRequestExistingControllerContinuation = false;
