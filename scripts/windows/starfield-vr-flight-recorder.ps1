@@ -394,9 +394,11 @@ function Get-StarfieldVrGameThreadCpuSample {
         $out.threadCount = $threads.Count
         $out.reason = 'THREAD_WARMUP'
         $prior = @{}
-        if ($Previous.processId -eq $GameProcessId -and
-            $Previous.processStartTicks -eq $processStartedTicks -and
-            $Previous.ContainsKey('threadCpu')) {
+        if ($Previous.ContainsKey('processId') -and
+            $Previous.ContainsKey('processStartTicks') -and
+            $Previous.ContainsKey('threadCpu') -and
+            $Previous.processId -eq $GameProcessId -and
+            $Previous.processStartTicks -eq $processStartedTicks) {
             $prior = $Previous.threadCpu
         }
         $fresh = @{}
