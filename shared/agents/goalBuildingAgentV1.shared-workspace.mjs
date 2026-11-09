@@ -84,7 +84,19 @@ export function validateGoalBuildingSharedWorkspaceContinuationRecord(input = {}
   if (!body?.continuation) reasons.push('goal-building-continuation-missing');
   if (body?.constraints?.protectedMergeAuthority !== false) reasons.push('protected-merge-authority-widened');
   if (body?.constraints?.runtimeMutationAuthority !== false) reasons.push('runtime-mutation-authority-widened');
-  if (body?.constraints?.duplicateControllerForbidden !== true) reasons.push('duplicate-controller-guard-missing');
+  // A handoff is a custody-preserving hint, never permission to switch mission,
+  // owner, controller, branch or PR. Check every declared invariant on READ,
+  // including records written by another producer or mutated after publication.
+  const requiredGuards = [
+    ['sameMissionRequired', 'same-mission-guard-missing'],
+    ['sameCanonicalOwnerRequired', 'same-canonical-owner-guard-missing'],
+    ['duplicateControllerForbidden', 'duplicate-controller-guard-missing'],
+    ['duplicateMissionForbidden', 'duplicate-mission-guard-missing'],
+    ['duplicateBranchOrPrForbidden', 'duplicate-branch-or-pr-guard-missing'],
+  ];
+  for (const [field, reason] of requiredGuards) {
+    if (body?.constraints?.[field] !== true) reasons.push(reason);
+  }
   return Object.freeze({
     valid: reasons.length === 0,
     reasons: Object.freeze([...new Set(reasons)]),
