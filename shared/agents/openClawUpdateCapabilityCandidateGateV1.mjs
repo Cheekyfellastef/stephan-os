@@ -192,6 +192,12 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   }
   const required = [...new Set((requiredReplay || []).map(text))].sort();
   if (requiredReplay && required.length !== requiredReplay.length) blockers.push('REQUIRED_QUALIFICATION_REPLAY_DUPLICATE');
+  // A protected cross-version capability change cannot be approved with zero task-class replay.
+  // The ledger producer requires replay for every protected cross-version disposition;
+  // enforce that invariant again at the promotion consumer boundary.
+  if (currentVersion && targetVersion && currentVersion !== targetVersion && required.length === 0) {
+    blockers.push('CROSS_VERSION_QUALIFICATION_REPLAY_REQUIRED');
+  }
 
   if (blockers.length) return blocked(blockers, stagedStatus || null);
 
