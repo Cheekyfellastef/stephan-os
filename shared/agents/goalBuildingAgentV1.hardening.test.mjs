@@ -382,3 +382,80 @@ test('strict boolean operator-action gates and an omitted optional record preser
   assert.equal(realGate.operatorActionRequired, true);
   assert.equal(realGate.operatorActionTarget, 'Approve the exact protected operator environment.');
 });
+
+
+test('exact same-mission operator approval cannot claim active BUILDING', () => {
+  const active = mission();
+  const pending = {
+    blockerId: 'pending-exact-mission-approval',
+    severity: 'P0',
+    ownerId: 'operator-approval-owner',
+    route: 'REQUEST_EXACT_OPERATOR_APPROVAL',
+    missionId: active.missionId,
+    goalId: active.goalId,
+    firstObservedAtUtc: observed(3),
+    nextAction: 'Approve exact mission-goal-2002.',
+    independentWorkContinues: false,
+  };
+  for (const action of [
+    undefined,
+    { required: false, target: '' },
+    { required: true, target: 'Approve exact mission-goal-2002.' },
+  ]) {
+    const input = baseInput({ blockers: [pending] });
+    if (action === undefined) delete input.operatorAction;
+    else input.operatorAction = action;
+    const certificate = evaluateGoalBuildingProgramme(input);
+    assert.equal(certificate.state, GOAL_BUILDING_OPERATING_STATES.SAFE_HOLD, JSON.stringify(action));
+    assert.equal(certificate.isCapableOfBuilding, false);
+    assert.equal(certificate.isActuallyBuilding, false);
+    assert.equal(certificate.programmeMode, 'SAFE_HOLD');
+    assert.ok(certificate.evidenceProblems.includes('operator-approval-mission-still-productive:pending-exact-mission-approval'));
+    if (!action || !action.required) {
+      assert.ok(certificate.evidenceProblems.includes('operator-approval-action-unreported:pending-exact-mission-approval'));
+    }
+  }
+});
+
+test('genuine governed approval wait preserves independent productive mission truth', () => {
+  const waiting = mission({
+    phase: 'WAITING_FOR_OPERATOR',
+    nextAction: 'Await the existing exact operator approval.',
+  });
+  const pending = {
+    blockerId: 'waiting-exact-approval',
+    severity: 'P0',
+    ownerId: 'operator-approval-owner',
+    route: 'REQUEST_EXACT_OPERATOR_APPROVAL',
+    missionId: waiting.missionId,
+    goalId: waiting.goalId,
+    firstObservedAtUtc: observed(3),
+    nextAction: 'Approve exact mission-goal-2002.',
+    independentWorkContinues: false,
+  };
+  const action = { required: true, target: 'Approve exact mission-goal-2002.' };
+  const alone = evaluateGoalBuildingProgramme(baseInput({
+    programme: { activeMissions: [waiting], eligibleQueuedGoalCount: 0, qualifiedCapacity: 1, idleQualifiedCapacity: 0 },
+    blockers: [pending],
+    operatorAction: action,
+  }));
+  assert.equal(alone.state, GOAL_BUILDING_OPERATING_STATES.FULLY_OPERATIONAL);
+  assert.equal(alone.isActuallyBuilding, false);
+  assert.equal(alone.programmeMode, 'GOVERNED_WAIT');
+
+  const disjoint = mission({ missionId: 'mission-goal-2003', goalId: 'goal-2003', laneId: 'lane-2' });
+  const continuing = evaluateGoalBuildingProgramme(baseInput({
+    programme: {
+      activeMissions: [waiting, disjoint],
+      eligibleQueuedGoalCount: 0,
+      qualifiedCapacity: 2,
+      idleQualifiedCapacity: 0,
+    },
+    blockers: [pending],
+    operatorAction: action,
+  }));
+  assert.equal(continuing.state, GOAL_BUILDING_OPERATING_STATES.FULLY_OPERATIONAL);
+  assert.equal(continuing.isActuallyBuilding, true);
+  assert.equal(continuing.programmeMode, 'ACTIVE_PROGRESS_PROVEN');
+  assert.equal(continuing.productiveMissionCount, 1);
+});
