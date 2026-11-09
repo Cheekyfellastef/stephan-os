@@ -143,12 +143,14 @@ export function projectGoalBuildingRuntimeTruth(input = {}) {
       stallReason = explicit.blocker
         || (movementFutureDated ? 'MEANINGFUL_MOVEMENT_FUTURE_DATED' : movement ? 'NO_RECENT_MEANINGFUL_MOVEMENT' : 'MEANINGFUL_MOVEMENT_UNPROVEN');
       blocker ||= stallReason;
+    } else if (list(certificate.blockingReasons).length > 0 || list(certificate.evidenceProblems).length > 0) {
+      // A fresh worker heartbeat and movement cannot erase contradictory programme
+      // or authority evidence. Never project BUILDING while hard proof is invalid.
+      state = GOAL_BUILDING_RUNTIME_STATES.BLOCKED;
+      blocker ||= 'PROGRAMME_BUILDING_CONTRADICTION';
     } else if (certificate.isActuallyBuilding === true && productiveMissions.length > 0) {
       state = GOAL_BUILDING_RUNTIME_STATES.BUILDING;
       blocker = '';
-    } else if (list(certificate.blockingReasons).length > 0 || list(certificate.evidenceProblems).length > 0) {
-      state = GOAL_BUILDING_RUNTIME_STATES.BLOCKED;
-      blocker ||= 'PROGRAMME_BUILDING_CONTRADICTION';
     } else {
       state = GOAL_BUILDING_RUNTIME_STATES.UNKNOWN;
       blocker ||= 'PRODUCTIVE_PROGRAMME_EXECUTION_UNPROVEN';
