@@ -38,7 +38,7 @@ const requiredRoots = maintenance ? ['scripts/sovereign-maintenance-custody-stor
   'scripts/sovereign-maintenance-journal-source-proof-v2.mjs'] : fixedRoots;
 const capturedReadAdapters = {
   'shared/agents/sovereignDirectoryCreateV1.mjs': 'b3a9f5f60d7d0990b31fa9f491c349832f9fad2cba802484e2b1c2c67106e43a',
-  'shared/agents/sovereignSearchSessionsV1.mjs': '3b1e6b55973edd0848aa5e69286510e3edca5867022d6239d9b82f78404c7ea7',
+  'shared/agents/sovereignSearchSessionsV1.mjs': '3c96169032127a0b7bee86a949422efc1030a12474d2845a2e97a6236b822a47',
   'shared/agents/sovereignFileCopyV1.mjs': 'f0903634deda4888e65b5a806f53292578c42930481ec77f0e3ebf34685619ff',
   'shared/agents/sovereignFileMoveV1.mjs': '79ea603d77c6aa0d53366a966aef849ecc20e80019f2162e28886b6a28747190',
   'shared/agents/sovereignPdfWriteV1.mjs': '90c5e0ecb3d1fdc354af1dbedcd04c24a2910e3fedb3277aa838168214164330',
@@ -136,7 +136,7 @@ if (!maintenance) {
   // must be reassessed; an optional-looking pathname is never a generic bypass.
   const applicabilityPins = {
   "scripts/sovereign-commander-http.mjs": "962b48eebd6dcc54e6117329acfbc5a4820bb7091c1f97493fd864cf984962c5",
-  "scripts/sovereign-fixed-runtime-parent-v1.mjs": "fce1242364c1e991959066f2d1fe65025dfa765b946c497bb5bc224648909edc",
+  "scripts/sovereign-fixed-runtime-parent-v1.mjs": "436a9e9d23d85f942d6264ffe15ff4aea4f8724cacdf094ce127fc561e785dab",
   "shared/agents/sovereignMaintenanceAdmissionV1.mjs": "d468e7bf73355e5daa6899d19ffe8e7b034af914837b5e66523d43ade79a8703",
   "scripts/windows/SovereignFixedRuntimeHostV1.cs": "d13700a76f873e38fdac7ba25661df873f7b4c2c70bfc705f73b9887ab40a04f"
 };
