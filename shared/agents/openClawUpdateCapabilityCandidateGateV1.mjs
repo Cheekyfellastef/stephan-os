@@ -279,6 +279,7 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
     if (!capabilities || capabilities.length === 0) blockers.push('CAPABILITY_LEDGER_CAPABILITIES_UNPROVEN');
     else {
       let protectedCapabilityCount = 0;
+      const observedDispositionCounts = Object.fromEntries([...VALID_DISPOSITIONS].map((disposition) => [disposition, 0]));
       for (const raw of capabilities) {
         const capability = plainDataRecord(raw);
         if (!capability || typeof capability.protected !== 'boolean'
@@ -286,7 +287,10 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
           blockers.push('CAPABILITY_LEDGER_CAPABILITY_INVALID');
           continue;
         }
-        if (capability.protected) protectedCapabilityCount += 1;
+        if (capability.protected) {
+          protectedCapabilityCount += 1;
+          observedDispositionCounts[text(capability.updateDisposition)] += 1;
+        }
         // A protected BLOCK_UPDATE disposition is a producer-level veto. A
         // fabricated READY verdict must not erase that veto at this consumer.
         if (capability.protected && text(capability.updateDisposition) === OPENCLAW_UPDATE_DISPOSITION.BLOCK_UPDATE) {
@@ -308,6 +312,17 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
       // The source ledger rejects readiness with no protected capability.
       // Recheck it here so an asserted ready verdict cannot promote an empty protection estate.
       if (!protectedCapabilityCount) blockers.push('CAPABILITY_LEDGER_PROTECTED_INVENTORY_EMPTY');
+      // A forged READY envelope must not contradict the producer's exact
+      // per-disposition inventory, even if its overall protected count matches.
+      // Older accepted source fixtures may omit this optional producer field.
+      if (Object.prototype.hasOwnProperty.call(ledger, 'dispositionCounts')) {
+        const declared = plainDataRecord(ledger.dispositionCounts, [...VALID_DISPOSITIONS]);
+        if (!declared || [...VALID_DISPOSITIONS].some((disposition) =>
+          !Number.isSafeInteger(declared[disposition])
+          || declared[disposition] !== observedDispositionCounts[disposition])) {
+          blockers.push('CAPABILITY_LEDGER_DISPOSITION_COUNTS_MISMATCH');
+        }
+      }
       // The producer reports the number of protected capabilities. A purported
       // READY ledger with a contradictory explicit count is not an authenticated
       // inventory; retain compatibility with older source fixtures that omit it.

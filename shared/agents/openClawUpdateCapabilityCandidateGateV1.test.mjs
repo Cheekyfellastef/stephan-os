@@ -735,3 +735,42 @@ test('a ready capability ledger cannot contradict its own protected count', () =
     assert.ok(rejected.blockers.includes('CAPABILITY_LEDGER_PROTECTED_COUNT_MISMATCH'));
   }
 });
+
+test('READY protected disposition summary must match producer inventory exactly', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const proof = [replay(OPENCLAW_TASK_CLASS.OC1)];
+  const counts = Object.fromEntries(Object.values(OPENCLAW_UPDATE_DISPOSITION).map((name) => [name, 0]));
+  counts[OPENCLAW_UPDATE_DISPOSITION.PRESERVE] = 1;
+  const ready = { ...ledger(), protectedCapabilityCount: 1, dispositionCounts: counts };
+  const evaluate = (capabilityLedger) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: verified, capabilityLedger, qualificationReplay: proof,
+  });
+  const positive = evaluate(ready);
+  assert.equal(positive.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(positive.updatePromotionAllowed, true);
+
+  // Legacy pre-envelope fixtures remain compatible until the producer migration.
+  assert.equal(evaluate(ledger()).updatePromotionAllowed, true);
+  const swapped = { ...counts, [OPENCLAW_UPDATE_DISPOSITION.PRESERVE]: 0,
+    [OPENCLAW_UPDATE_DISPOSITION.BLOCK_UPDATE]: 1 };
+  const missing = { ...counts };
+  delete missing[OPENCLAW_UPDATE_DISPOSITION.IMPROVE];
+  const badRecords = [
+    { ...counts, [OPENCLAW_UPDATE_DISPOSITION.PRESERVE]: 0 },
+    swapped,
+    missing,
+    { ...counts, [OPENCLAW_UPDATE_DISPOSITION.PRESERVE]: 1.5 },
+    { ...counts, [OPENCLAW_UPDATE_DISPOSITION.PRESERVE]: '1' },
+    { ...counts, [OPENCLAW_UPDATE_DISPOSITION.PRESERVE]: null },
+    { ...counts, [OPENCLAW_UPDATE_DISPOSITION.PRESERVE]: Infinity },
+    { ...counts, UNKNOWN_DISPOSITION: 0 },
+    null,
+  ];
+  for (const candidate of badRecords) {
+    const rejected = evaluate({ ...ready, dispositionCounts: candidate });
+    assert.equal(rejected.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+    assert.equal(rejected.updatePromotionAllowed, false);
+    assert.equal(rejected.providerRoutingResumeAllowed, false);
+    assert.ok(rejected.blockers.includes('CAPABILITY_LEDGER_DISPOSITION_COUNTS_MISMATCH'));
+  }
+});
