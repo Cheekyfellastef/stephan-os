@@ -152,10 +152,20 @@ export function projectGoalBuildJourneyV1(goal = {}, autonomyBuildTrack = null) 
 
   const buildState = text(goal?.buildState, 'UNKNOWN').toUpperCase();
   const builder = text(goal?.builder || exactTrack?.providerAdapter, 'UNKNOWN');
+  // A logical BUILDING label and named builder are not a native worker receipt.
+  // An exact-goal WORKER PASS gate must precede green physical pickup.
+  const exactWorkerPickupProven = exactTrack
+    && text(gates.get('WORKER')?.state).toUpperCase() === 'PASS';
   if (currentBuildTruth && buildState === 'BUILDING' && builder !== 'UNKNOWN') {
-    greenStage(stages, 'DISPATCHED', `Current build truth binds the goal to ${builder}.`, 'stephanos-build-truth');
-    greenStage(stages, 'PICKED_UP', `${builder} is the current execution owner for this goal.`, 'stephanos-build-truth');
-    greenStage(stages, 'BUILDING', `Fresh build truth reports BUILDING on ${builder}.`, 'stephanos-build-truth');
+    if (exactWorkerPickupProven) {
+      greenStage(stages, 'BUILDING',
+        `Fresh build truth follows exact-goal worker pickup proof for ${builder}.`,
+        'autonomy-build-track+stephanos-build-truth');
+    } else {
+      amberStage(stages, 'PICKED_UP',
+        'Logical BUILDING status is current, but exact-goal physical worker pickup is not proven.',
+        'stephanos-build-truth');
+    }
   } else if (stages.find((stage) => stage.id === 'PICKED_UP')?.trafficLight === 'GREEN') {
     amberStage(stages, 'BUILDING', 'Builder pickup is proven; waiting for current material-build evidence.', 'autonomy-build-track');
   }

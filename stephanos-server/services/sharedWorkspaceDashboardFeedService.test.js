@@ -1,4 +1,5 @@
 import test from 'node:test';
+import '../../shared/agents/goalBuildConveyorV1.test.mjs'; // #2961 existing hosted Node dashboard guardrail proof
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';

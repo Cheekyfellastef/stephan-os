@@ -75,22 +75,33 @@ test('a goal never borrows another goal autonomy proof', () => {
   assert.notEqual(journey.stages.find((stage) => stage.id === 'PICKED_UP')?.trafficLight, 'GREEN');
 });
 
-test('build truth can prove live builder pickup without fabricating later completion', () => {
-  const journey = projectGoalBuildJourneyV1({
-    issue: '#7003',
-    title: 'Live builder truth',
-    state: 'ACTIVE',
-    statusTruth: 'CURRENT',
-    buildState: 'BUILDING',
-    buildTruthTruth: 'CURRENT',
-    builder: 'foundry-forge',
-  });
-
-  assert.equal(journey.stages.find((stage) => stage.id === 'DISPATCHED')?.trafficLight, 'GREEN');
-  assert.equal(journey.stages.find((stage) => stage.id === 'PICKED_UP')?.trafficLight, 'GREEN');
-  assert.equal(journey.stages.find((stage) => stage.id === 'BUILDING')?.trafficLight, 'GREEN');
-  assert.equal(journey.stages.find((stage) => stage.id === 'BUILT')?.trafficLight, 'GREY');
-  assert.equal(journey.stages.find((stage) => stage.id === 'COMPLETED')?.trafficLight, 'GREY');
+test('fresh logical BUILDING cannot claim physical pickup without exact worker evidence', () => {
+  const goal = { issue: '#7003', title: 'Logical builder label only',
+    state: 'ACTIVE', statusTruth: 'CURRENT', buildState: 'BUILDING',
+    buildTruthTruth: 'CURRENT', builder: 'foundry-forge',
+    buildProofRefs: ['status/current-builder-label-only'] };
+  const cases = [
+    ['no track', null],
+    ['wrong goal', track(7004, [gate('CLAIM', 'PASS'), gate('WORKER', 'PASS')])],
+    ['worker waiting', track(7003, [gate('CLAIM', 'PASS'), gate('WORKER', 'WAITING')])],
+    ['worker blocked', track(7003, [gate('CLAIM', 'PASS'), gate('WORKER', 'BLOCKED')])],
+  ];
+  for (const [label, autonomyTrack] of cases) {
+    const journey = projectGoalBuildJourneyV1(goal, autonomyTrack);
+    assert.notEqual(journey.stages.find(s => s.id === 'DISPATCHED')?.trafficLight === 'GREEN'
+      && label === 'no track', true, label);
+    assert.notEqual(journey.stages.find(s => s.id === 'PICKED_UP')?.trafficLight, 'GREEN', label);
+    assert.notEqual(journey.stages.find(s => s.id === 'BUILDING')?.trafficLight, 'GREEN', label);
+  }
+  const noTrack = projectGoalBuildJourneyV1(goal);
+  assert.equal(noTrack.stages.find(s => s.id === 'PICKED_UP')?.trafficLight, 'AMBER');
+  assert.match(noTrack.stages.find(s => s.id === 'PICKED_UP')?.reason, /physical worker pickup is not proven/);
+  assert.equal(noTrack.stages.find(s => s.id === 'COMPLETED')?.trafficLight, 'GREY');
+  const qualified = projectGoalBuildJourneyV1(goal,
+    track(7003, [gate('CLAIM', 'PASS'), gate('WORKER', 'PASS')]));
+  assert.equal(qualified.stages.find(s => s.id === 'DISPATCHED')?.trafficLight, 'GREEN');
+  assert.equal(qualified.stages.find(s => s.id === 'PICKED_UP')?.trafficLight, 'GREEN');
+  assert.equal(qualified.stages.find(s => s.id === 'BUILDING')?.trafficLight, 'GREEN');
 });
 
 test('stale build truth cannot paint dispatch pickup or building green', () => {
@@ -170,8 +181,8 @@ test('fleet conveyor summarizes per-goal journeys without creating authority', (
   ];
   const conveyor = projectGoalBuildConveyorV1(goals);
   assert.equal(conveyor.visibleGoalCount, 2);
-  assert.equal(conveyor.provenToBuilderCount, 1);
-  assert.equal(conveyor.buildingCount, 1);
+  assert.equal(conveyor.provenToBuilderCount, 0);
+  assert.equal(conveyor.buildingCount, 0);
   assert.equal(conveyor.completedCount, 0);
   assert.match(conveyor.truthBoundary, /read-only projection/i);
 });
