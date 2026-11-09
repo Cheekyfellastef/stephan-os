@@ -140,3 +140,48 @@ test('malformed or authority-widened checkpoint fails closed', () => {
   assert.ok(result.reasons.includes('next-legal-action-missing'));
   assert.ok(result.reasons.includes('authority-widened:protectedMerge'));
 });
+
+test('a saved checkpoint cannot self-prove live protected main, source, or canonical owner', () => {
+  const checkpoint = createGoalBuildResumeCheckpoint(checkpointInput());
+  const cases = [
+    { label: 'all current observations omitted', current: {}, reasons: [
+      'current-protected-main-head-unproven',
+      'current-source-head-unproven',
+      'current-canonical-owner-unproven',
+    ] },
+    { label: 'protected main omitted', current: { sourceHead: head, canonicalOwnerId: 'goal-building-agent' }, reasons: ['current-protected-main-head-unproven'] },
+    { label: 'source head omitted', current: { protectedMainHead: main, canonicalOwnerId: 'goal-building-agent' }, reasons: ['current-source-head-unproven'] },
+    { label: 'canonical owner omitted', current: { protectedMainHead: main, sourceHead: head }, reasons: ['current-canonical-owner-unproven'] },
+    { label: 'malformed current main', current: { protectedMainHead: 'not-a-sha', sourceHead: head, canonicalOwnerId: 'goal-building-agent' }, reasons: ['current-protected-main-head-unproven'] },
+    { label: 'malformed current source', current: { protectedMainHead: main, sourceHead: 'not-a-sha', canonicalOwnerId: 'goal-building-agent' }, reasons: ['current-source-head-unproven'] },
+  ];
+  for (const { label, current, reasons } of cases) {
+    const result = evaluateGoalBuildResumeCheckpoint(checkpoint, current);
+    assert.equal(result.state, GOAL_BUILDING_RESUME_STATES.SAFE_HOLD, label);
+    assert.equal(result.resumable, false, label);
+    assert.equal(result.mustReprove, false, label);
+    for (const reason of reasons) assert.ok(result.reasons.includes(reason), label + ': ' + reason);
+  }
+});
+
+test('missing live observations cannot wake existing continuity controller or refill', async () => {
+  const { projectStephanosGoalContinuation } = await import('./goalBuildingAgentV1.continuation.mjs');
+  const result = projectStephanosGoalContinuation({
+    checkpoint: checkpointInput(),
+    current: {},
+    schedulerCandidate: {
+      goalId: '2002',
+      missionId: 'mission-goal-building-continuity',
+      canonicalOwnerId: 'goal-building-agent',
+      schedulerEligible: true,
+      qualifiedProviderAvailable: true,
+      operatorGate: false,
+      resourceIds: ['pr:2003'],
+    },
+  });
+  assert.equal(result.state, 'SAFE_HOLD');
+  assert.equal(result.mayRequestExistingControllerContinuation, false);
+  assert.equal(result.mayRequestCapacityRefill, false);
+  assert.equal(result.protectedMergeAuthority, false);
+  assert.equal(result.runtimeMutationAuthority, false);
+});

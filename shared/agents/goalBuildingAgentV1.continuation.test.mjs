@@ -20,7 +20,22 @@ function checkpoint(overrides = {}) {
     nextLegalAction: 'Continue through the existing continuity controller.', createdAtUtc: '2026-09-04T09:10:00.000Z', ...overrides,
   };
 }
-function current(overrides = {}) { return { protectedMainHead: main, sourceHead: head, canonicalOwnerId: 'goal-building-agent', ...overrides }; }
+function currentLeaseReadback(leases = checkpoint().leases, overrides = {}) {
+  return {
+    protectedMainHead: main, sourceHead: head, canonicalOwnerId: 'goal-building-agent',
+    observedAtUtc: new Date().toISOString(),
+    leases: leases.map((lease) => ({
+      ...lease, expiresAtUtc: new Date(Date.now() + 120_000).toISOString(),
+    })),
+    ...overrides,
+  };
+}
+function current(overrides = {}) {
+  return {
+    protectedMainHead: main, sourceHead: head, canonicalOwnerId: 'goal-building-agent',
+    leaseReadback: currentLeaseReadback(), ...overrides,
+  };
+}
 function candidate(overrides = {}) { return { goalId: '2002', missionId: 'mission-goal-building-continuity', canonicalOwnerId: 'goal-building-agent', schedulerEligible: true, qualifiedProviderAvailable: true, operatorGate: false, nextLegalAction: 'Continue through the existing continuity controller.', resourceIds: ['pr:2003'], ...overrides }; }
 
 test('Stephanos may request the existing continuity controller to resume a proven same-owner mission', () => {
@@ -178,7 +193,10 @@ test('Goal #2002: every scheduler resource needs its own exact ACTIVE same-owner
       checkpoint().leases[0],
       { leaseId: 'lease-continuation-2', resourceId: extra, ownerId: 'goal-building-agent', disposition: 'ACTIVE' },
     ] }),
-    current: current(),
+    current: current({ leaseReadback: currentLeaseReadback([
+      checkpoint().leases[0],
+      { leaseId: 'lease-continuation-2', resourceId: extra, ownerId: 'goal-building-agent', disposition: 'ACTIVE' },
+    ]) }),
     schedulerCandidate: candidate({ resourceIds: ['pr:2003', extra] }),
   });
   assert.equal(complete.state, GOAL_BUILDING_CONTINUATION_STATES.AUTO_CONTINUE_ELIGIBLE);
@@ -190,7 +208,7 @@ test('Goal #2002: oversized or control-character resource identities cannot alia
   const lease = { ...checkpoint().leases[0], resourceId: prefix };
   const valid = projectStephanosGoalContinuation({
     checkpoint: checkpoint({ leases: [lease] }),
-    current: current(),
+    current: current({ leaseReadback: currentLeaseReadback([lease]) }),
     schedulerCandidate: candidate({ resourceIds: [prefix] }),
   });
   assert.equal(valid.state, GOAL_BUILDING_CONTINUATION_STATES.AUTO_CONTINUE_ELIGIBLE);
@@ -285,11 +303,40 @@ test('original lease identities cannot be reused across resources, dispositions 
   }
   const distinctValid = projectStephanosGoalContinuation({
     checkpoint: checkpoint({ leases: [original, alternate] }),
-    current: current(),
+    current: current({ leaseReadback: currentLeaseReadback([original, alternate]) }),
     schedulerCandidate: candidate({ resourceIds: ['pr:2003', 'pr:2004'] }),
   });
   assert.equal(distinctValid.state, GOAL_BUILDING_CONTINUATION_STATES.AUTO_CONTINUE_ELIGIBLE);
   assert.equal(distinctValid.mayRequestExistingControllerContinuation, true);
   assert.equal(distinctValid.protectedMergeAuthority, false);
   assert.equal(distinctValid.runtimeMutationAuthority, false);
+});
+
+
+test('a historical ACTIVE checkpoint cannot substitute for fresh exact-current live lease observations', () => {
+  const original = checkpoint().leases[0];
+  const live = currentLeaseReadback();
+  const cases = [
+    { label: 'missing current readback', value: current({ leaseReadback: undefined }), reason: 'continuation-current-lease-readback-unproven' },
+    { label: 'missing current leases', value: current({ leaseReadback: { ...live, leases: [] } }), reason: 'continuation-current-active-lease-unproven' },
+    { label: 'released current lease', value: current({ leaseReadback: currentLeaseReadback([{ ...original, disposition: 'RELEASED' }]) }), reason: 'continuation-current-lease-record-invalid' },
+    { label: 'foreign current lease owner', value: current({ leaseReadback: currentLeaseReadback([{ ...original, ownerId: 'foreign-owner' }]) }), reason: 'continuation-current-active-lease-unproven' },
+    { label: 'wrong current lease ID', value: current({ leaseReadback: currentLeaseReadback([{ ...original, leaseId: 'other-lease' }]) }), reason: 'continuation-current-active-lease-unproven' },
+    { label: 'expired live lease', value: current({ leaseReadback: currentLeaseReadback([original], { leases: [{ ...original, expiresAtUtc: '2020-01-01T00:00:00.000Z' }] }) }), reason: 'continuation-current-lease-record-invalid' },
+    { label: 'stale readback observation', value: current({ leaseReadback: currentLeaseReadback([original], { observedAtUtc: '2020-01-01T00:00:00.000Z' }) }), reason: 'continuation-current-lease-readback-stale' },
+    { label: 'wrong readback source head', value: current({ leaseReadback: currentLeaseReadback([original], { sourceHead: '4'.repeat(40) }) }), reason: 'continuation-current-lease-readback-identity-mismatch' },
+    { label: 'duplicate current lease identity', value: current({ leaseReadback: currentLeaseReadback([original, original]) }), reason: 'continuation-current-lease-identity-conflict' },
+    { label: 'malformed live resource', value: current({ leaseReadback: currentLeaseReadback([{ ...original, resourceId: 'pr:2003\nx' }]) }), reason: 'continuation-current-lease-record-invalid' },
+  ];
+  for (const { label, value, reason } of cases) {
+    const result = projectStephanosGoalContinuation({
+      checkpoint: checkpoint(), current: value, schedulerCandidate: candidate(),
+    });
+    assert.equal(result.state, GOAL_BUILDING_CONTINUATION_STATES.BLOCKED_ROUTE_OWNER_REQUIRED, label);
+    assert.equal(result.mayRequestExistingControllerContinuation, false, label);
+    assert.equal(result.continuationTarget, '', label);
+    assert.ok(result.reasons.includes(reason), label);
+    assert.equal(result.protectedMergeAuthority, false, label);
+    assert.equal(result.runtimeMutationAuthority, false, label);
+  }
 });
