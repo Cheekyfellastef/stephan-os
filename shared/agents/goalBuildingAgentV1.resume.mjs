@@ -68,6 +68,13 @@ function suppliedAuthorityProblems(input) {
   return problems;
 }
 
+function suppliedOperatorGateProblems(input) {
+  // An absent optional gate is false. An explicitly malformed gate is UNKNOWN,
+  // never a silent authorization to continue.
+  if (!Object.hasOwn(input, 'operatorGate') || input.operatorGate === undefined) return [];
+  return typeof input.operatorGate === 'boolean' ? [] : ['checkpoint-supplied-operator-gate-invalid'];
+}
+
 export function createGoalBuildResumeCheckpoint(input = {}) {
   const allowedPaths = unique(list(input.allowedPaths).map(boundedPath).filter(Boolean));
   const leases = list(input.leases).map(normalizedLease);
@@ -93,6 +100,7 @@ export function createGoalBuildResumeCheckpoint(input = {}) {
     lastMaterialReceiptHead: sha(input.lastMaterialReceiptHead),
     blockers: Object.freeze(blockers),
     operatorGate,
+    operatorGateInputProblems: Object.freeze(suppliedOperatorGateProblems(input)),
     // Preserve an explicit forged/malformed supplied authority signal even
     // though the projection itself always emits safe canonical authority.
     authorityInputProblems: Object.freeze(suppliedAuthorityProblems(input)),
@@ -103,7 +111,11 @@ export function createGoalBuildResumeCheckpoint(input = {}) {
 }
 
 export function evaluateGoalBuildResumeCheckpoint(checkpoint, current = {}) {
-  const reasons = [...list(checkpoint?.authorityInputProblems)];
+  const reasons = [
+    ...list(checkpoint?.authorityInputProblems),
+    ...list(checkpoint?.operatorGateInputProblems),
+  ];
+  if (typeof checkpoint?.operatorGate !== 'boolean') reasons.push('operator-gate-invalid');
   if (!checkpoint || checkpoint.schemaVersion !== GOAL_BUILDING_RESUME_SCHEMA_VERSION) reasons.push('resume-schema-invalid');
   if (!checkpoint?.checkpointId) reasons.push('checkpoint-id-invalid');
   if (!checkpoint?.missionId) reasons.push('mission-id-invalid');
@@ -140,6 +152,9 @@ export function evaluateGoalBuildResumeCheckpoint(checkpoint, current = {}) {
   }
 
   const authority = checkpoint?.authority || {};
+  // Direct evaluation of persisted checkpoints must not trust the constructor
+  // to have normalized away missing or forged positive source authority.
+  if (authority.sourceBuildWithinExistingOwner !== true) reasons.push('authority-source-scope-unproven');
   for (const forbidden of [
     'protectedMerge',
     'readyTransition',

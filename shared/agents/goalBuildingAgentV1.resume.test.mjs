@@ -166,6 +166,48 @@ test('reconstructed handoff refuses injected authority even when normalization w
   assert.deepEqual(legitimate.checkpoint.authorityInputProblems, []);
 });
 
+test('explicitly malformed operator gate never becomes a resumable handoff', () => {
+  const current = { protectedMainHead: main, sourceHead: head, canonicalOwnerId: 'goal-building-agent' };
+  const malformed = [
+    ['string true', 'true'],
+    ['numeric true', 1],
+    ['numeric false', 0],
+    ['null', null],
+    ['array', []],
+    ['object', {}],
+  ];
+  for (const [label, operatorGate] of malformed) {
+    const result = reconstructGoalBuildHandoff({ checkpoint: checkpointInput({ operatorGate }), current });
+    assert.equal(result.evaluation.state, GOAL_BUILDING_RESUME_STATES.SAFE_HOLD, label);
+    assert.equal(result.evaluation.resumable, false, label);
+    assert.ok(result.evaluation.reasons.includes('checkpoint-supplied-operator-gate-invalid'), label);
+    assert.equal(result.checkpoint.operatorGate, false, label);
+  }
+  const omittedCheckpoint = checkpointInput();
+  delete omittedCheckpoint.operatorGate;
+  assert.equal(reconstructGoalBuildHandoff({ checkpoint: omittedCheckpoint, current }).evaluation.state, GOAL_BUILDING_RESUME_STATES.RESUMABLE);
+  assert.equal(reconstructGoalBuildHandoff({ checkpoint: checkpointInput({ operatorGate: false }), current }).evaluation.state, GOAL_BUILDING_RESUME_STATES.RESUMABLE);
+  assert.equal(reconstructGoalBuildHandoff({ checkpoint: checkpointInput({ operatorGate: true }), current }).evaluation.state, GOAL_BUILDING_RESUME_STATES.APPROVAL_PARKED);
+});
+
+test('direct persisted checkpoint evaluation rejects missing positive authority and malformed gate', () => {
+  const valid = createGoalBuildResumeCheckpoint(checkpointInput());
+  const current = { protectedMainHead: main, sourceHead: head, canonicalOwnerId: 'goal-building-agent' };
+  assert.equal(evaluateGoalBuildResumeCheckpoint(valid, current).state, GOAL_BUILDING_RESUME_STATES.RESUMABLE);
+  for (const invalidValue of [false, null, undefined, 'true']) {
+    const forgedAuthority = { ...valid.authority, sourceBuildWithinExistingOwner: invalidValue };
+    const result = evaluateGoalBuildResumeCheckpoint({ ...valid, authority: forgedAuthority }, current);
+    assert.equal(result.state, GOAL_BUILDING_RESUME_STATES.SAFE_HOLD, String(invalidValue));
+    assert.equal(result.resumable, false);
+    assert.ok(result.reasons.includes('authority-source-scope-unproven'));
+  }
+  for (const invalidGate of ['true', 1, null, undefined]) {
+    const result = evaluateGoalBuildResumeCheckpoint({ ...valid, operatorGate: invalidGate }, current);
+    assert.equal(result.state, GOAL_BUILDING_RESUME_STATES.SAFE_HOLD, String(invalidGate));
+    assert.ok(result.reasons.includes('operator-gate-invalid'));
+  }
+});
+
 test('a saved checkpoint cannot self-prove live protected main, source, or canonical owner', () => {
   const checkpoint = createGoalBuildResumeCheckpoint(checkpointInput());
   const cases = [
