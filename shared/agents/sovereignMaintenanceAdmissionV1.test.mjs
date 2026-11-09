@@ -142,7 +142,7 @@ test('actual gaming Status reconciles absent state and therefore cannot receive 
 
 test('delegation requires the fixed owner protocol before reading credentials or invoking a tool', async () => {
   const result = await callSovereignMaintenanceOwnerV1({ actionId: 'repair-stephanos' }, {
-    fetchFn: async url => { assert.equal(url, 'http://127.0.0.1:18791/health'); return new Response(JSON.stringify({ ok: true,
+    fetchFn: async url => { assert.equal(url, 'http://127.0.0.1:18791/health?view=protocol'); return new Response(JSON.stringify({ ok: true,
       service: 'stephanos-sovereign-commander', continuousRepairGuardian: idle })); },
     readFileFn() { assert.fail('old idle health cannot qualify the owner protocol'); },
   });

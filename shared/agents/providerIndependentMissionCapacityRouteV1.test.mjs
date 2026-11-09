@@ -249,6 +249,23 @@ test('a sovereign Commander receipt wins over faster metered Desktop Commander i
   assert.equal(result.openAiCriticalPathRequired, false);
 });
 
+test('blackout rejects a metered adapter carrying a sovereign route label', () => {
+  for (const [route, adapter] of [
+    [MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER, 'desktop-commander'],
+    [MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE, 'chatgpt-github'],
+    [MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL, 'codex'],
+    [MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER, 'sovereign-commander'],
+  ]) {
+    const result = routeProviderIndependentMissionCapacityV1({ openAiBlackout: true }, TEST_OPTIONS(() => ({
+      route, adapter, dispatchAllowed: true, blockers: [],
+      finalVerdict: 'MISSION_CONTROLLER_FALLBACK_ROUTE_READY',
+    })));
+    assert.equal(result.dispatchAllowed, false, `${route}/${adapter}`);
+    assert.equal(result.nonOpenAiRouteSelected, false);
+    assert.equal(result.finalVerdict, 'MISSION_CONTROLLER_OPENAI_BLACKOUT_HELD');
+  }
+});
+
 test('explicit ordinary overflow still permits independently qualified Desktop Commander', () => {
   const planner = () => Object.freeze({
     route: MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
