@@ -213,6 +213,37 @@ test('canonical mission trace remains visible without being promoted to physical
     assert.equal(project(data, options).stages.find(s => s.id === 'select').traceState, '');
   }
 });
+test('Goal #2961: unsigned logical PASS remains amber even when the original report is fresh', () => {
+  const stamp = at(-1000);
+  const track = { schemaVersion: 'stephanos.autonomy-build-track.v1',
+    sourceHead: '', missionId: '', issueNumber: null, timestampUtc: stamp,
+    gates: [{ id: 'SELECT', state: 'PASS' }, { id: 'CLAIM', state: 'PASS' },
+      { id: 'WORKER', state: 'PASS' }] };
+  const data = input(); delete data.goalBuildGateObservatory;
+  const report = { statusId: 'autonomy-build-track-current', timestampUtc: stamp, autonomyTrack: track };
+  const original = structuredClone(data);
+  const result = project(data, { ...options, statusRecords: [report] });
+  assert.deepEqual(data, original);
+  assert.equal(result.trace.truth, 'CURRENT');
+  assert.equal(result.trace.sourceBinding, 'SOURCE_HEAD_MISSING');
+  for (const stageId of ['select', 'claim', 'pickup']) {
+    const stage = result.stages.find(s => s.id === stageId);
+    assert.equal(stage.state, 'UNKNOWN', 'no signed stage evidence');
+    assert.equal(stage.operational.truth, 'CURRENT', 'keep fresh report visible');
+    assert.equal(stage.operational.trafficLight, 'AMBER', 'reported PASS cannot be signed-green');
+  }
+});
+test('Goal #2961: signed checkpoint stays independently green while a logical PASS stays amber', () => {
+  const data = input();
+  data.autonomyBuildTrack = { schemaVersion: 'stephanos.autonomy-build-track.v1',
+    sourceHead: 'a'.repeat(40), missionId: 'mission-42', issueNumber: 42,
+    timestampUtc: at(-1000), gates: [{ id: 'SELECT', state: 'PASS' }] };
+  const stage = project(data, options).stages.find(s => s.id === 'select');
+  assert.equal(stage.state, 'PROVEN');
+  assert.equal(stage.trafficLight, 'GREEN', 'separate signed gate proof retains green');
+  assert.equal(stage.operational.trafficLight, 'AMBER', 'the logical report does not self-approve');
+});
+
 test('a trace with a different source head cannot annotate the signed ledger', () => {
   const data = input();data.autonomyBuildTrack = { schemaVersion: 'stephanos.autonomy-build-track.v1',
     sourceHead: 'b'.repeat(40), issueNumber: 42, missionId: 'mission-42', timestampUtc: at(-1),
