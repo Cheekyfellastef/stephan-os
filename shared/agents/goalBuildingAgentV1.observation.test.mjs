@@ -209,3 +209,36 @@ test('retry and operator-boundary telemetry remains visible without inventing pr
   assert.equal(result.operatorActionRequired, true);
   assert.equal(result.operatorActionTarget, 'Approve exact protected merge of PR #999.');
 });
+
+for (const [field, reason] of [
+  ['evidenceProblems', 'source-lease-identity-contradictory'],
+  ['blockingReasons', 'physical-build-pickup-unproven'],
+]) {
+  test(`hard programme ${field} cannot be erased by a fresh RUNNING worker`, () => {
+    const result = projectGoalBuildingRuntimeTruth({
+      certificate: certificate({ [field]: [reason] }),
+      workerBeacon: runningBeacon(),
+      protectedMainHead: head,
+      installedMainHead: head,
+      servedHead: head,
+      nowMs,
+    });
+    assert.equal(result.workerState, 'RUNNING');
+    assert.equal(result.proofBasis.workerBeaconProven, true);
+    assert.equal(result.meaningfulMovementFresh, true);
+    assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BLOCKED);
+    assert.equal(result.buildingProven, false);
+    assert.equal(result.falseBuildingRejected, true);
+    assert.equal(result.blocker, reason);
+  });
+}
+
+test('soft degraded reasons alone do not erase otherwise qualified worker progress', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({ degradedReasons: ['unrelated-read-only-surface-stale'] }),
+    workerBeacon: runningBeacon(),
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BUILDING);
+  assert.equal(result.buildingProven, true);
+});
