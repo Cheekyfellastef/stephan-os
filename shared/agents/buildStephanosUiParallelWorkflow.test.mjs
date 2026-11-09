@@ -1,4 +1,6 @@
 import test from 'node:test';
+// Exercise original #2002 capacity-accounting regressions in existing hosted Node proof.
+import './goalBuildingAgentV1.hardening.test.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
