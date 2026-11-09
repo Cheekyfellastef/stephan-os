@@ -215,12 +215,20 @@ export function validateBlockers(input, timing) {
 }
 
 export function validateOperatorAction(input = {}) {
-  const operatorAction = input.operatorAction && typeof input.operatorAction === 'object' && !Array.isArray(input.operatorAction)
-    ? input.operatorAction
-    : {};
+  // Approval gates are security boundaries: a malformed supplied flag must not
+  // silently become false and make an otherwise healthy programme look green.
+  // Absent optional operatorAction remains a valid "no action published" input.
+  const supplied = Object.hasOwn(input, 'operatorAction') && input.operatorAction !== undefined;
+  const validShape = !supplied || (input.operatorAction !== null
+    && typeof input.operatorAction === 'object' && !Array.isArray(input.operatorAction));
+  const operatorAction = validShape && input.operatorAction ? input.operatorAction : {};
   const required = operatorAction.required === true;
   const target = boundedText(operatorAction.target, '', 280);
   const evidenceProblems = [];
+  if (!validShape) evidenceProblems.push('operator-action-record-invalid');
+  if (validShape && Object.hasOwn(operatorAction, 'required') && typeof operatorAction.required !== 'boolean') {
+    evidenceProblems.push('operator-action-required-not-boolean');
+  }
   if (required && !target) evidenceProblems.push('operator-action-target-missing');
   if (!required && target) evidenceProblems.push('operator-action-target-without-requirement');
   return Object.freeze({ required, target, evidenceProblems });

@@ -45,9 +45,23 @@ export function evaluateGoalBuildingProgramme(input = {}) {
   degradedReasons.push(...surfaceResult.degradedReasons, ...programmeResult.degradedReasons, ...blockerResult.degradedReasons);
 
   const activeMissionById = new Map(programmeResult.activeMissions.map((mission) => [mission.missionId, mission]));
+  const activeMissionByGoalId = new Map(programmeResult.activeMissions.map((mission) => [mission.goalId, mission]));
   const accountedMissionIds = new Set();
   for (const blocker of blockerResult.blockers) {
     const correlatedMission = blocker.missionId ? activeMissionById.get(blocker.missionId) : null;
+    const approvalMission = correlatedMission || (!blocker.missionId && blocker.goalId
+      ? activeMissionByGoalId.get(blocker.goalId)
+      : null);
+    // An exact operator approval pending on this mission cannot coexist with
+    // its own productive/BUILDING claim. Do not hold genuinely disjoint work.
+    if (blocker.route === 'REQUEST_EXACT_OPERATOR_APPROVAL' && approvalMission) {
+      if (!operatorAction.required) {
+        evidenceProblems.push(`operator-approval-action-unreported:${blocker.blockerId || 'missing'}`);
+      }
+      if (programmeResult.productiveMissions.some((mission) => mission.missionId === approvalMission.missionId)) {
+        evidenceProblems.push(`operator-approval-mission-still-productive:${blocker.blockerId || 'missing'}`);
+      }
+    }
     if (blocker.missionId && !correlatedMission) {
       evidenceProblems.push(`blocker-mission-unknown:${blocker.blockerId || 'missing'}`);
     }
