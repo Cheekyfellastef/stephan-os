@@ -1405,6 +1405,37 @@ test('versioned Sovereign manifests never claim desktop skill activation from th
   assert.equal(witnessed.finalVerdict, 'POST_SYNC_RUNTIME_REFRESH_PASS');
 });
 
+test('unresponsive Sovereign plugin host inspection is bounded and fails closed without a repeat', { timeout: 8_000 }, async () => {
+  let inspected = 0;
+  let signal;
+  let finish;
+  const started = Date.now();
+  const blocked = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B,
+    changedPaths: ['plugins/sovereign-commander/plugin.json'],
+    adapters: {
+      refreshSovereignCommander: () => pass(),
+      verifySovereignPluginHost: ({ signal: issuedSignal }) => {
+        inspected += 1;
+        signal = issuedSignal;
+        return new Promise(resolve => { finish = resolve; });
+      },
+    },
+  });
+  assert.equal(inspected, 1);
+  assert.equal(signal?.aborted, true);
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.exactHeadProofOk, false);
+  assert.equal(blocked.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED);
+  assert.equal(blocked.blocker, 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN');
+  assert.equal(blocked.pluginHostActivationRequired, true);
+  assert.ok(Date.now() - started >= 2_900);
+  assert.ok(Date.now() - started < 7_000);
+  finish({ ...pass(), desktopPluginHostHandshakeVerified: true, loadedManifestVerified: true });
+  await Promise.resolve();
+  assert.equal(blocked.ok, false, 'late settlement must not promote a persisted success');
+});
+
 test('ordinary Commander script refreshes remain independent of desktop-plugin reattachment', async () => {
   const changedPaths = ['scripts/sovereign-commander-http.mjs'];
   const result = await executePostSyncRefreshPlan({

@@ -830,10 +830,27 @@ export async function executePostSyncRefreshPlan({
     // the exact loaded source, manifest and fresh host session.
     let hostProof = null;
     if (typeof adapters.verifySovereignPluginHost === 'function') {
+      // The private adapter is not commissioned yet. A future host transport
+      // must not strand the original post-sync lock on an unanswered request.
+      // This finite read-only deadline adds no retry or native mutation right.
+      const abortController = new AbortController();
+      let deadlineTimer;
       try {
-        hostProof = await adapters.verifySovereignPluginHost({ beforeHead, afterHead, plan });
+        hostProof = await Promise.race([
+          Promise.resolve().then(() => adapters.verifySovereignPluginHost({
+            beforeHead, afterHead, plan, signal: abortController.signal,
+          })),
+          new Promise(resolve => {
+            deadlineTimer = setTimeout(() => {
+              abortController.abort();
+              resolve(null);
+            }, 3_000);
+          }),
+        ]);
       } catch {
         hostProof = null;
+      } finally {
+        clearTimeout(deadlineTimer);
       }
     }
     const hostVerified = hostProof?.ok === true
