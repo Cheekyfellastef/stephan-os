@@ -133,12 +133,20 @@ test('pose-latency focus alone cannot masquerade as evidence of AER stereo fault
 
 test('CPU stage isolation requires the canonical measured session count and finite Starfield/system percentages', async () => {
   const producer = await readFile(new URL('./windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url), 'utf8');
-  for (const key of ['sampleCount', 'avgSystemCpuPct', 'avgStarfieldCpuPct']) {
-    assert.match(producer, new RegExp('\\b' + key + '\\s*='));
+  // The current producer now emits these fields from measured rows. Keep
+  // availability tied to real samples, rather than preserving a stale
+  // "unproduced" assertion or treating missing process CPU as measured zero.
+  for (const key of [
+    'sampleCount', 'avgSystemCpuPct', 'avgStarfieldCpuPct',
+    'maxStarfieldBusiestThreadCpuPct', 'starfieldThreadCpuMeasuredSampleCount',
+    'cpuConsumersAvailableSampleCount', 'avgChatGptCpuPct', 'avgMetaVrCpuPct',
+  ]) {
+    assert.match(producer, new RegExp('\\\\b' + key + '\\\\s*='));
   }
-  for (const unproduced of ['maxStarfieldBusiestThreadCpuPct', 'avgChatGptCpuPct', 'avgMetaVrCpuPct']) {
-    assert.doesNotMatch(producer, new RegExp('\\b' + unproduced + '\\s*='));
-  }
+  assert.match(producer, /maxStarfieldBusiestThreadCpuPct\\s*=\\s*Get-Maximum -Values \\$starfieldThreadCpu/);
+  assert.match(producer, /avgChatGptCpuPct\\s*=\\s*Get-Average -Values \\$chatGptCpu/);
+  assert.match(producer, /avgMetaVrCpuPct\\s*=\\s*Get-Average -Values \\$metaVrCpu/);
+  assert.match(producer, /cpuAttributionAvailable\\s*=\\s*@\\(\\$chatGptCpu\\)\\.Count -gt 0/);
 
   const base = {
     sampleCount: 4, avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7,
