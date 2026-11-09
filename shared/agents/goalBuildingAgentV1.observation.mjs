@@ -174,7 +174,8 @@ export function projectGoalBuildingRuntimeTruth(input = {}) {
     } else if (certificate.operatorActionRequired === true
       && !operatorApprovalProvenDisjoint(certificate, activeMissions, productiveMissions)) {
       state = GOAL_BUILDING_RUNTIME_STATES.BLOCKED;
-      blocker ||= 'PROGRAMME_OPERATOR_GATE_SCOPE_UNPROVEN';
+      // The operator gate is the hard reason; do not let soft degradation text mask it.
+      blocker = 'PROGRAMME_OPERATOR_GATE_SCOPE_UNPROVEN';
     } else if (certificate.isActuallyBuilding === true && productiveMissions.length > 0) {
       state = GOAL_BUILDING_RUNTIME_STATES.BUILDING;
       blocker = '';
