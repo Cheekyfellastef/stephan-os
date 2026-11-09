@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { types as utilTypes } from 'node:util';
 import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -48,7 +49,8 @@ const bytes = value => Buffer.byteLength(JSON.stringify(value), 'utf8');
 const validBlocker = value => typeof value === 'string' && value.length <= 96 && /^SOVEREIGN_SEARCH_[A-Z_]+$/.test(value);
 const blocked = blocker => ({ ok: false, schemaVersion: SOVEREIGN_SEARCH_SESSION_SCHEMA, blocker });
 function plain(object, allowed) {
-  return !!object && typeof object === 'object' && !Array.isArray(object)
+  // Untrusted in-process objects must not run Proxy traps during admission.
+  return !!object && typeof object === 'object' && !utilTypes.isProxy(object) && !Array.isArray(object)
     && Object.getPrototypeOf(object) === Object.prototype
     && Reflect.ownKeys(object).every(key => typeof key === 'string' && allowed.includes(key)
       && Object.hasOwn(Object.getOwnPropertyDescriptor(object, key), 'value'));

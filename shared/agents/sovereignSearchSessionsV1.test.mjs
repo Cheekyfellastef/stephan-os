@@ -75,6 +75,27 @@ test('search accepts one literal Windows scope and rejects aliases, coercion, in
   assert.equal(validateSovereignSearchArgumentsV1('LIST_SEARCHES', { path: PATH }).ok, false);
 });
 
+
+test('search operations reject Proxy arguments before invoking hostile reflection traps', () => {
+  let traps = 0;
+  const hostile = new Proxy(REQUEST, {
+    getPrototypeOf() { traps++; throw new Error('getPrototypeOf must never execute'); },
+    ownKeys() { traps++; throw new Error('ownKeys must never execute'); },
+    get() { traps++; throw new Error('get must never execute'); },
+  });
+  for (const operation of ['START_SEARCH', 'LIST_SEARCHES', 'GET_MORE_SEARCH_RESULTS', 'STOP_SEARCH']) {
+    const response = validateSovereignSearchArgumentsV1(operation, hostile);
+    assert.equal(response.ok, false, operation);
+    assert.equal(response.blocker, 'SOVEREIGN_SEARCH_ARGUMENTS_INVALID', operation);
+  }
+  assert.equal(traps, 0);
+  const revocable = Proxy.revocable(REQUEST, {});
+  revocable.revoke();
+  assert.equal(validateSovereignSearchArgumentsV1('START_SEARCH', revocable.proxy).blocker,
+    'SOVEREIGN_SEARCH_ARGUMENTS_INVALID');
+});
+
+
 test('sessions return immediately, retain stable paginated snapshots and isolate response mutations', async () => {
   const scanner = deferredScanner(); const service = createSovereignSearchSessionsV1(scanner);
   const first = await started(service);
