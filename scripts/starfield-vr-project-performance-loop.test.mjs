@@ -141,12 +141,12 @@ test('CPU stage isolation requires the canonical measured session count and fini
     'maxStarfieldBusiestThreadCpuPct', 'starfieldThreadCpuMeasuredSampleCount',
     'cpuConsumersAvailableSampleCount', 'avgChatGptCpuPct', 'avgMetaVrCpuPct',
   ]) {
-    assert.match(producer, new RegExp('\\\\b' + key + '\\\\s*='));
+    assert.match(producer, new RegExp('\\b' + key + '\\s*='));
   }
-  assert.match(producer, /maxStarfieldBusiestThreadCpuPct\\s*=\\s*Get-Maximum -Values \\$starfieldThreadCpu/);
-  assert.match(producer, /avgChatGptCpuPct\\s*=\\s*Get-Average -Values \\$chatGptCpu/);
-  assert.match(producer, /avgMetaVrCpuPct\\s*=\\s*Get-Average -Values \\$metaVrCpu/);
-  assert.match(producer, /cpuAttributionAvailable\\s*=\\s*@\\(\\$chatGptCpu\\)\\.Count -gt 0/);
+  assert.match(producer, /maxStarfieldBusiestThreadCpuPct\s*=\s*Get-Maximum -Values \$starfieldThreadCpu/);
+  assert.match(producer, /avgChatGptCpuPct\s*=\s*Get-Average -Values \$chatGptCpu/);
+  assert.match(producer, /avgMetaVrCpuPct\s*=\s*Get-Average -Values \$metaVrCpu/);
+  assert.match(producer, /cpuAttributionAvailable\s*=\s*@\(\$chatGptCpu\)\.Count -gt 0/);
 
   const base = {
     sampleCount: 4, avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7,
