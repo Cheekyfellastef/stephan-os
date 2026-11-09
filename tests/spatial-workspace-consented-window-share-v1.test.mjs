@@ -63,3 +63,61 @@ test('launcher exposes both real native interactive and user-consented view-only
   assert.match(html,/client.shareScreen\(\)/);assert.match(html,/client.connect\(Number\(windowSelector.value\)\)/);
   assert.match(html,/native Windows helper/i);
 });
+
+
+function delayedWindowCaptureHarness(){
+  let releasePlay,enteredPlay,acquisitions=0;
+  const entered=new Promise(resolve=>{enteredPlay=resolve;});
+  const pendingPlay=new Promise(resolve=>{releasePlay=resolve;});
+  const tracks=[],videos=[];
+  const client=createHolodeckWindowClient({
+    locationRef:{hostname:'localhost',port:'4173'},sessionStore:null,
+    navigatorRef:{mediaDevices:{getDisplayMedia:async()=>{
+      acquisitions++;
+      const track={readyState:'live',stopCount:0,
+        stop(){this.stopCount++;this.readyState='ended';},addEventListener(){}};
+      tracks.push(track);
+      return {getTracks:()=>[track],getVideoTracks:()=>[track]};
+    }}},
+    documentRef:{createElement(){
+      const n=videos.length;
+      const video={videoWidth:640,videoHeight:480,srcObject:null,pause(){},
+        play(){if(n===0){enteredPlay();return pendingPlay;}return Promise.resolve();}};
+      videos.push(video);return video;
+    }},
+    setTimer:()=>1,clearTimer:()=>{},fetchRef:async()=>{throw Error('No native request is allowed.');},
+  });
+  return {client,entered,releasePlay:()=>releasePlay(),tracks,videos,count:()=>acquisitions};
+}
+test('pending browser video playback is revoked immediately by stop, pagehide and dispose',async()=>{
+  for(const method of ['stop','pagehide','dispose']){
+    const h=delayedWindowCaptureHarness(),share=h.client.shareScreen();
+    await h.entered;
+    assert.equal(h.tracks[0].readyState,'live');
+    await h.client[method]();
+    assert.equal(h.tracks[0].readyState,'ended',method+' must not await video.play()');
+    assert.equal(h.tracks[0].stopCount,1);
+    assert.equal(h.client.getFrame(),null);
+    h.releasePlay();
+    assert.equal(await share,false,'revoked capture must never be adopted later');
+    assert.equal(h.tracks[0].stopCount,1);
+  }
+});
+test('overlapping user clicks do not create orphaned captures and explicit stop permits a fresh share',async()=>{
+  const h=delayedWindowCaptureHarness(),first=h.client.shareScreen();
+  await h.entered;
+  assert.equal(await h.client.shareScreen(),false);
+  assert.equal(h.count(),1,'only the original browser picker may run');
+  await h.client.stop();
+  assert.equal(h.tracks[0].readyState,'ended');
+  assert.equal(h.tracks[0].stopCount,1);
+  assert.equal(await h.client.shareScreen(),true,'a deliberate new click may start after Stop');
+  assert.equal(h.count(),2);
+  h.releasePlay();
+  assert.equal(await first,false,'old play promise cannot resurrect the old capture');
+  assert.equal(h.tracks[0].stopCount,1);
+  assert.equal(h.tracks[1].readyState,'live');
+  assert.equal(h.client.getFrame()?.drawable,h.videos[1]);
+  await h.client.stop();
+  assert.equal(h.tracks[1].stopCount,1);
+});

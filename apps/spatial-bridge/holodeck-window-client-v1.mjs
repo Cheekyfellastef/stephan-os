@@ -19,6 +19,7 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
   let image=null,epoch=0,refreshPromise=null;
   let token=null,active=false,disposed=false,generation=0,serial=0,sequence=0,timer=null,queue=[],busy=false;
   let sharedStream=null,sharedVideo=null,sharedFrame=null,sharedTimer=null;
+  let pendingStream=null,pendingVideo=null,shareAttempt=null;
   const storageKey='stephanos.spatial-window.session.v1';
   try{const saved=sessionStore?.getItem(storageKey);if(/^[a-f0-9]{64}$/.test(saved??''))token=saved;}catch{}
   let state={status:'idle',message:'Connect your ChatGPT or Codex window.',inputStatus:'',windows:[],title:'',revision:0};
@@ -26,10 +27,11 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
   function stopShared(){
     if(sharedTimer!==null)clearTimer(sharedTimer);
     sharedTimer=null;
-    const stream=sharedStream,video=sharedVideo;
-    sharedStream=null;sharedVideo=null;sharedFrame=null;
-    for(const track of stream?.getTracks?.()??[])try{track.stop();}catch{}
-    if(video)try{video.pause?.();video.srcObject=null;}catch{}
+    const streams=[sharedStream,pendingStream],videos=[sharedVideo,pendingVideo];
+    sharedStream=null;sharedVideo=null;sharedFrame=null;pendingStream=null;pendingVideo=null;
+    for(const stream of streams)for(const track of stream?.getTracks?.()??[])
+      if(track.readyState!=='ended')try{track.stop();}catch{}
+    for(const video of videos)if(video)try{video.pause?.();video.srcObject=null;}catch{}
   }
   // Local browser capture is an explicit view-only alternative when the
   // independently installed native 4180 adapter is not ready. No window input
@@ -43,45 +45,70 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     if(typeof media?.getDisplayMedia!=='function'){
       publish({inputStatus:'This browser cannot share a window. Use the reviewed Windows Spatial shortcut for the native console.'});return false;
     }
-    const startingEpoch=epoch;
-    let stream;
-    // This call must happen immediately inside the real button click. Never
-    // invoke the browser picker automatically or restore an old capture grant.
-    try {stream=await media.getDisplayMedia({video:true,audio:false});}
-    catch {publish({inputStatus:'Window sharing was cancelled or blocked. No screen was connected.'});return false;}
-    const endStream=()=>{for(const track of stream?.getTracks?.()??[])try{track.stop();}catch{}};
-    if(disposed||startingEpoch!==epoch){endStream();return false;}
-    const track=stream?.getVideoTracks?.()[0];
-    if(!track||track.readyState==='ended'){endStream();publish({inputStatus:'Window capture provided no live picture.'});return false;}
-    await stop(); // Revoke any old native session before accepting a new view.
-    const current=epoch;
-    let video;
-    try {
-      video=documentRef.createElement('video');
-      video.muted=true;video.autoplay=true;video.playsInline=true;
-      video.srcObject=stream;
-      await video.play();
-    }catch{
-      endStream();publish({status:'unavailable',message:'The browser could not display the selected window.'});return false;
+    // A second click must not create an unowned capture during the first
+    // picker, native stop, or video.play() promise.
+    if(shareAttempt?.epoch===epoch){
+      publish({inputStatus:'Finish or stop the current window-sharing request first.'});return false;
     }
-    if(disposed||current!==epoch){endStream();video.pause?.();video.srcObject=null;return false;}
-    sharedStream=stream;sharedVideo=video;
-    sharedFrame={drawable:video,get naturalWidth(){return video.videoWidth;},get naturalHeight(){return video.videoHeight;}};
-    const label='Shared PC window visible on the hologram (view-only). Native helper required for typing and clicking.';
-    const frameTick=()=>{
-      if(sharedStream!==stream||disposed||current!==epoch)return;
-      if(track.readyState==='ended'){
-        stopShared();publish({status:'idle',message:'Browser window sharing ended.',inputStatus:''});return;
+    const startingEpoch=epoch,attempt={epoch};
+    shareAttempt=attempt;
+    let stream=null,video=null,accepted=false;
+    const revoke=()=>{for(const track of stream?.getTracks?.()??[])
+      if(track.readyState!=='ended')try{track.stop();}catch{}};
+    try {
+      // The picker remains directly inside the real user-initiated click.
+      try {stream=await media.getDisplayMedia({video:true,audio:false});}
+      catch {publish({inputStatus:'Window sharing was cancelled or blocked. No screen was connected.'});return false;}
+      if(disposed||startingEpoch!==epoch)return false;
+      const track=stream?.getVideoTracks?.()[0];
+      if(!track||track.readyState==='ended'){
+        publish({inputStatus:'Window capture provided no live picture.'});return false;
       }
-      const ready=Number.isFinite(video.videoWidth)&&video.videoWidth>0&&Number.isFinite(video.videoHeight)&&video.videoHeight>0;
-      publish({status:ready?'view-only':'waiting',message:ready?label:'Waiting for the selected window to draw.',inputStatus:''});
-      sharedTimer=setTimer(frameTick,100);
-    };
-    track.addEventListener?.('ended',()=>{
-      if(sharedStream===stream){stopShared();publish({status:'idle',message:'Browser window sharing ended.',inputStatus:''});}
-    },{once:true});
-    frameTick();
-    return true;
+      // Snapshot this attempt's own stop epoch before awaiting its native
+      // request, never after a later user Stop or page departure.
+      const oldStop=stop(),current=epoch;
+      attempt.epoch=current;
+      pendingStream=stream;
+      await oldStop;
+      if(disposed||current!==epoch)return false;
+      try {
+        video=documentRef.createElement('video');
+        video.muted=true;video.autoplay=true;video.playsInline=true;
+        video.srcObject=stream;pendingVideo=video;
+        await video.play();
+      }catch{
+        publish({status:'unavailable',message:'The browser could not display the selected window.'});return false;
+      }
+      if(disposed||current!==epoch||track.readyState==='ended')return false;
+      // The uncommitted stream can be revoked immediately on Stop even
+      // while play() never settles; only this exact epoch may adopt it.
+      pendingStream=null;pendingVideo=null;
+      sharedStream=stream;sharedVideo=video;
+      sharedFrame={drawable:video,get naturalWidth(){return video.videoWidth;},get naturalHeight(){return video.videoHeight;}};
+      accepted=true;
+      const label='Shared PC window visible on the hologram (view-only). Native helper required for typing and clicking.';
+      const frameTick=()=>{
+        if(sharedStream!==stream||disposed||current!==epoch)return;
+        if(track.readyState==='ended'){
+          stopShared();publish({status:'idle',message:'Browser window sharing ended.',inputStatus:''});return;
+        }
+        const ready=Number.isFinite(video.videoWidth)&&video.videoWidth>0&&Number.isFinite(video.videoHeight)&&video.videoHeight>0;
+        publish({status:ready?'view-only':'waiting',message:ready?label:'Waiting for the selected window to draw.',inputStatus:''});
+        sharedTimer=setTimer(frameTick,100);
+      };
+      track.addEventListener?.('ended',()=>{
+        if(sharedStream===stream){stopShared();publish({status:'idle',message:'Browser window sharing ended.',inputStatus:''});}
+      },{once:true});
+      frameTick();
+      return true;
+    } finally {
+      if(shareAttempt===attempt)shareAttempt=null;
+      if(!accepted){
+        if(pendingStream===stream){pendingStream=null;pendingVideo=null;}
+        revoke();
+        if(video)try{video.pause?.();video.srcObject=null;}catch{}
+      }
+    }
   }
   function showWindows(windows,message){
     windows=Array.isArray(windows)?windows:[];
