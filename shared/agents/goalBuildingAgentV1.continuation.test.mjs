@@ -326,6 +326,11 @@ test('a historical ACTIVE checkpoint cannot substitute for fresh exact-current l
     { label: 'stale readback observation', value: current({ leaseReadback: currentLeaseReadback([original], { observedAtUtc: '2020-01-01T00:00:00.000Z' }) }), reason: 'continuation-current-lease-readback-stale' },
     { label: 'wrong readback source head', value: current({ leaseReadback: currentLeaseReadback([original], { sourceHead: '4'.repeat(40) }) }), reason: 'continuation-current-lease-readback-identity-mismatch' },
     { label: 'duplicate current lease identity', value: current({ leaseReadback: currentLeaseReadback([original, original]) }), reason: 'continuation-current-lease-identity-conflict' },
+    { label: 'future-dated current lease observation', value: current({ leaseReadback: currentLeaseReadback([original], { observedAtUtc: new Date(Date.now() + 120_000).toISOString() }) }), reason: 'continuation-current-lease-readback-stale' },
+    { label: 'wrong current main in readback', value: current({ leaseReadback: currentLeaseReadback([original], { protectedMainHead: '8'.repeat(40) }) }), reason: 'continuation-current-lease-readback-identity-mismatch' },
+    { label: 'wrong current custodian in readback', value: current({ leaseReadback: currentLeaseReadback([original], { canonicalOwnerId: 'other-custodian' }) }), reason: 'continuation-current-lease-readback-identity-mismatch' },
+    { label: 'missing exact live lease expiry', value: current({ leaseReadback: currentLeaseReadback([original], { leases: [{ ...original }] }) }), reason: 'continuation-current-lease-record-invalid' },
+    { label: 'same resource with competing live lease IDs', value: current({ leaseReadback: currentLeaseReadback([original, { ...original, leaseId: 'other-live-lease' }]) }), reason: 'continuation-current-lease-identity-conflict' },
     { label: 'malformed live resource', value: current({ leaseReadback: currentLeaseReadback([{ ...original, resourceId: 'pr:2003\nx' }]) }), reason: 'continuation-current-lease-record-invalid' },
   ];
   for (const { label, value, reason } of cases) {
