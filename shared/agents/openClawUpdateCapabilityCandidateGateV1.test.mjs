@@ -280,3 +280,44 @@ test('authority flags must be explicit own boolean false before any capability p
   assert.equal(blocked.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
   assert.ok(blocked.blockers.includes('STAGED_UPDATE_AUTHORITY_WIDENED'));
 });
+
+test('prototype-named data fields cannot launder inherited update identity or ledger approval', () => {
+  const ready = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const legitimate = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: ready,
+    capabilityLedger: ledger(),
+    qualificationReplay: [replay(OPENCLAW_TASK_CLASS.OC1)],
+  });
+  assert.equal(legitimate.updatePromotionAllowed, true);
+
+  const missingHead = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  delete missingHead.exactIdentity.sourceHead;
+  Object.defineProperty(missingHead.exactIdentity, '__proto__', {
+    value: { sourceHead: HEAD },
+    enumerable: true,
+    configurable: true,
+  });
+  const spoofedIdentity = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: missingHead,
+    capabilityLedger: ledger(),
+    qualificationReplay: [replay(OPENCLAW_TASK_CLASS.OC1)],
+  });
+  assert.equal(spoofedIdentity.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.equal(spoofedIdentity.updatePromotionAllowed, false);
+  assert.ok(spoofedIdentity.blockers.includes('SOURCE_HEAD_INVALID'));
+
+  const inheritedLedger = {};
+  Object.defineProperty(inheritedLedger, '__proto__', {
+    value: ledger(),
+    enumerable: true,
+    configurable: true,
+  });
+  const spoofedLedger = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: ready,
+    capabilityLedger: inheritedLedger,
+    qualificationReplay: [replay(OPENCLAW_TASK_CLASS.OC1)],
+  });
+  assert.equal(spoofedLedger.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.equal(spoofedLedger.updatePromotionAllowed, false);
+  assert.ok(spoofedLedger.blockers.includes('CAPABILITY_LEDGER_SCHEMA_MISMATCH'));
+});

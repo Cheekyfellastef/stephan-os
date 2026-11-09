@@ -43,7 +43,9 @@ function plainDataRecord(value, expectedKeys = null) {
       const wanted = [...expectedKeys].sort();
       if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) return null;
     }
-    const snapshot = {};
+    // Null-prototype copies prevent an own "__proto__" data field from
+    // manufacturing inherited identity or approval fields during validation.
+    const snapshot = Object.create(null);
     for (const key of actual) {
       const descriptor = descriptors[key];
       if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) return null;
