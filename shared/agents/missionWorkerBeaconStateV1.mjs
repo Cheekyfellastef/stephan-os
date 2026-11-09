@@ -26,12 +26,15 @@ function safeSha(value) {
 }
 
 function safeId(value) {
-  const normalized = text(value, 128);
+  // Validate the complete normalized execution identity before any presentation limit.
+  // Prefix truncation can turn an unsafe receipt/task into false BUILDING proof.
+  const normalized = String(value ?? '').trim();
   return SAFE_ID.test(normalized) ? normalized : '';
 }
 
 function safePhase(value) {
-  const normalized = text(value, 160);
+  // The bounded SAFE_PHASE expression already enforces the full length contract.
+  const normalized = String(value ?? '').trim();
   return SAFE_PHASE.test(normalized) ? normalized : '';
 }
 

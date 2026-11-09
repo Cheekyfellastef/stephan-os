@@ -139,3 +139,37 @@ test('extra SHA suffix is not an exact head despite matching 40-hex prefix', () 
     assert.equal(state.buildingProven, false, invalid);
   }
 });
+
+test('overlong task or receipt identity cannot be truncated into false BUILDING proof', () => {
+  for (const [field, invalid] of [
+    ['activeTaskId', 't'.repeat(128) + '!'],
+    ['activeReceiptId', 'r'.repeat(128) + '!'],
+    ['executionPhase', 'p'.repeat(160) + '!'],
+  ]) {
+    const state = projectMissionWorkerBeaconState(heartbeat({
+      lastTickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+      activeTaskId: 'task-exact',
+      activeReceiptId: 'receipt-exact',
+      executionPhase: 'source-build',
+      [field]: invalid,
+    }), { nowMs: NOW, expectedHead: HEAD });
+    assert.equal(state.state, 'RUNNING', field);
+    assert.equal(state[field], '', field);
+    assert.equal(state.activeExecutionIdentityComplete, false, field);
+    assert.equal(state.buildingProven, false, field);
+    assert.equal(state.falseBuildingRejected, true, field);
+    assert.equal(state.blocker, 'MISSION_WORKER_ACTIVE_RECEIPT_UNPROVEN', field);
+  }
+});
+
+test('maximum valid full-length worker identities retain legitimate running proof', () => {
+  const state = projectMissionWorkerBeaconState(heartbeat({
+    lastTickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+    activeTaskId: 't'.repeat(128),
+    activeReceiptId: 'r'.repeat(128),
+    executionPhase: 'p'.repeat(160),
+  }), { nowMs: NOW, expectedHead: HEAD });
+  assert.equal(state.activeExecutionIdentityComplete, true);
+  assert.equal(state.buildingProven, true);
+  assert.equal(state.blocker, '');
+});
