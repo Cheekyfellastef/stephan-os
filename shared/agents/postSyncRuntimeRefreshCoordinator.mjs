@@ -28,11 +28,43 @@ function sovereignPluginHostProofPass(proof, expectedHead) {
     const field = fields[key];
     if (!field || !Object.hasOwn(field, 'value') || field.value !== true) return false;
   }
-  const sourceHead = fields.sourceHead;
-  return Boolean(sourceHead && Object.hasOwn(sourceHead, 'value')
-    && typeof sourceHead.value === 'string'
-    && SHA_PATTERN.test(sourceHead.value)
-    && sourceHead.value.toLowerCase() === String(expectedHead).toLowerCase());
+  const ownData = key => {
+    const descriptor = fields[key];
+    return descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined;
+  };
+  if (typeof ownData('sourceHead') !== 'string' || !SHA_PATTERN.test(ownData('sourceHead'))
+    || ownData('sourceHead').toLowerCase() !== String(expectedHead).toLowerCase()) return false;
+
+  // A boolean success claim is not evidence of a loaded native host. The
+  // original private verifier must additionally establish process/session
+  // identity, a loaded manifest and a fresh observation. These checks alone
+  // do NOT create authenticated transport, reviewer authority or provenance.
+  if (ownData('schemaVersion') !== 'stephanos.sovereign-plugin-host-activation.v1'
+    || ownData('hostPrincipalVerified') !== true
+    || ownData('hostProcessBirthVerified') !== true
+    || ownData('sessionRevoked') !== false
+    || ownData('sessionExpired') !== false) return false;
+  const processId = ownData('hostProcessId');
+  const sessionId = ownData('sessionId');
+  if (!Number.isSafeInteger(processId) || processId <= 0 || processId > 0xffffffff
+    || typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(sessionId)) return false;
+  const loadedDigest = ownData('loadedManifestSha256');
+  const expectedDigest = ownData('expectedManifestSha256');
+  if (typeof loadedDigest !== 'string' || !/^[a-f0-9]{64}$/.test(loadedDigest)
+    || typeof expectedDigest !== 'string' || loadedDigest !== expectedDigest
+    || ownData('manifestDigestVerified') !== true) return false;
+  const birth = ownData('hostProcessStartedAtUtc');
+  const observed = ownData('observedAtUtc');
+  const expiry = ownData('expiresAtUtc');
+  const iso = value => typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+    && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+  if (![birth, observed, expiry].every(iso)) return false;
+  const now = Date.now();
+  const birthMs = Date.parse(birth), observedMs = Date.parse(observed), expiryMs = Date.parse(expiry);
+  return birthMs <= observedMs && observedMs <= now + 2_000
+    && observedMs >= now - 15_000
+    && expiryMs > now && expiryMs <= observedMs + 30_000;
 }
 
 export const POST_SYNC_REFRESH_SCHEMA = 'stephanos.post-sync-runtime-refresh.v1';

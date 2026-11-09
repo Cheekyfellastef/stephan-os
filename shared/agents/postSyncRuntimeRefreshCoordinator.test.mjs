@@ -1396,18 +1396,59 @@ test('versioned Sovereign manifests never claim desktop skill activation from th
     beforeHead: A, afterHead: B, changedPaths,
     adapters: {
       refreshSovereignCommander: async () => pass(),
-      verifySovereignPluginHost: async () => ({
-        ...pass(), desktopPluginHostHandshakeVerified: true, loadedManifestVerified: true,
-      }),
+      verifySovereignPluginHost: async () => authenticatedHostProof(),
     },
   });
   assert.equal(witnessed.ok, true);
   assert.equal(witnessed.finalVerdict, 'POST_SYNC_RUNTIME_REFRESH_PASS');
 });
 
+function authenticatedHostProof(sourceHead = B) {
+  const now = Date.now();
+  return {
+    ...pass(sourceHead), schemaVersion: 'stephanos.sovereign-plugin-host-activation.v1',
+    desktopPluginHostHandshakeVerified: true, loadedManifestVerified: true,
+    hostPrincipalVerified: true, hostProcessBirthVerified: true,
+    hostProcessId: 456, sessionId: 'session_0123456789abcdef',
+    sessionRevoked: false, sessionExpired: false,
+    hostProcessStartedAtUtc: new Date(now - 60_000).toISOString(),
+    observedAtUtc: new Date(now - 1_000).toISOString(),
+    expiresAtUtc: new Date(now + 10_000).toISOString(),
+    expectedManifestSha256: 'd'.repeat(64), loadedManifestSha256: 'd'.repeat(64),
+    manifestDigestVerified: true,
+  };
+}
+
+test('private plugin host proof refuses absent stale revoked and contradictory process-session identity', async () => {
+  const changedPaths = ['plugins/sovereign-commander/plugin.json'];
+  const run = proof => executePostSyncRefreshPlan({ beforeHead: A, afterHead: B, changedPaths,
+    adapters: { refreshSovereignCommander: () => pass(), verifySovereignPluginHost: () => proof } });
+  const valid = authenticatedHostProof();
+  assert.equal((await run(valid)).ok, true, 'inert synthetic well-formed receipt only');
+  const bad = [
+    { ...valid, sessionId: '' },
+    { ...valid, hostProcessId: 0 },
+    { ...valid, sessionRevoked: true },
+    { ...valid, sessionExpired: true },
+    { ...valid, hostPrincipalVerified: false },
+    { ...valid, hostProcessBirthVerified: false },
+    { ...valid, loadedManifestSha256: 'e'.repeat(64) },
+    { ...valid, manifestDigestVerified: false },
+    { ...valid, observedAtUtc: new Date(Date.now() - 60_000).toISOString() },
+    { ...valid, expiresAtUtc: new Date(Date.now() - 100).toISOString() },
+    { ...valid, hostProcessStartedAtUtc: new Date(Date.now() + 60_000).toISOString() },
+    { ...valid, schemaVersion: 'foreign.proof.v1' },
+  ];
+  for (const [index, receipt] of bad.entries()) {
+    const result = await run(receipt);
+    assert.equal(result.ok, false, 'negative case '+index);
+    assert.equal(result.blocker, 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN', 'negative case '+index);
+  }
+});
+
 test('private Sovereign plugin host proof refuses accessor, inherited and Proxy success fields', async () => {
   const changedPaths = ['plugins/sovereign-commander/plugin.json'];
-  const accepted = { ...pass(), desktopPluginHostHandshakeVerified: true, loadedManifestVerified: true };
+  const accepted = authenticatedHostProof();
   const run = (hostProof) => executePostSyncRefreshPlan({
     beforeHead: A, afterHead: B, changedPaths,
     adapters: {
@@ -1466,7 +1507,7 @@ test('unresponsive Sovereign plugin host inspection is bounded and fails closed 
   assert.equal(blocked.pluginHostActivationRequired, true);
   assert.ok(Date.now() - started >= 2_900);
   assert.ok(Date.now() - started < 7_000);
-  finish({ ...pass(), desktopPluginHostHandshakeVerified: true, loadedManifestVerified: true });
+  finish(authenticatedHostProof());
   await Promise.resolve();
   assert.equal(blocked.ok, false, 'late settlement must not promote a persisted success');
 });
