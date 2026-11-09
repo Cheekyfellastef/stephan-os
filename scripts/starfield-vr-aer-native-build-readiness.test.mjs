@@ -16,21 +16,10 @@ const lock = {sources: [{
   source_id: 'mutar-starfield2vr', repository: 'mutars/starfield2vr',
   commit: MUTAR_PIN, licence: 'MIT', code_reuse_allowed: true, local_cache_allowed: true,
 }]};
-const p1 = [
-  'Subject: [PATCH] Add observable AER frame-pair stabilizer',
-  'diff --git a/CMakeLists.txt b/CMakeLists.txt',
-  'diff --git a/src/CreationEngine/CreationEngineRendererModule.cpp b/src/CreationEngine/CreationEngineRendererModule.cpp',
-  '+AER-STABILIZER',
-  'This patch has verifiable nontrivial metadata and only the two expected filenames',
-].join('\n');
-const p2 = [
-  'Subject: [PATCH] Isolate temporal camera history by stereo eye',
-  'Apply on top of stabilizer source b25bb9f9bf7f02ec87660a34ce3a2ef129d2fd3d',
-  'diff --git a/src/CreationEngine/CreationEngineRendererModule.cpp b/src/CreationEngine/CreationEngineRendererModule.cpp',
-  '+struct StereoCameraHistory',
-  '+stereoHistory.eye[eye]',
-  'This stereo patch has more than 100 bytes of independently reviewable history identity',
-].join('\n');
+// Use the authentic immutable source patches, not abbreviated fake headers.
+// This makes the exact Git blob gate testable against the actual accepted data.
+const p1 = await readFile(join(repoRoot, 'VR-Research-Lab/patches/starfield2vr-aer-stabilizer-v1.patch'), 'utf8');
+const p2 = await readFile(join(repoRoot, 'VR-Research-Lab/patches/starfield2vr-aer-v2-stereo-history-v1.patch'), 'utf8');
 const cmakePreset = {
   cmakeMinimumRequired: {major: 3, minor: 27},
   configurePresets: [{name: 'build-release-msvc'}],
@@ -73,6 +62,40 @@ test('untrusted host CMake configure-script and compiler overrides fail closed',
   assert.equal(inspect({inheritedEnvironment: {CMAKE_TOOLCHAIN_FILE: ''}}).status,
     'SOURCE_READY_FOR_SEPARATE_QUALIFIED_NATIVE_BUILD');
   assert.equal(inspect({inheritedEnvironment: null}).status, 'BLOCKED');
+});
+
+test('complete original Git blob identity rejects patch header, mode and prelude escape', () => {
+  const good = inspect();
+  assert.equal(good.status, 'SOURCE_READY_FOR_SEPARATE_QUALIFIED_NATIVE_BUILD');
+  assert.equal(good.blockers.length, 0);
+  const hostilePrelude = [
+    '--- a/forbidden.txt',
+    '+++ b/forbidden.txt',
+    '@@ -1 +1 @@',
+    '-safe=1',
+    '+unsafe=1',
+    '',
+  ].join('\n');
+  const changes = [
+    {patchV1: hostilePrelude + p1, reason: 'STABILIZER_PATCH_BLOB_IDENTITY_INVALID'},
+    {patchV1: p1.replace('--- a/CMakeLists.txt', '--- a/forbidden.txt'),
+      reason: 'STABILIZER_PATCH_BLOB_IDENTITY_INVALID'},
+    {patchV1: p1.replace('100644', '120000'),
+      reason: 'STABILIZER_PATCH_BLOB_IDENTITY_INVALID'},
+    {patchV1: p1 + '\\n', reason: 'STABILIZER_PATCH_BLOB_IDENTITY_INVALID'},
+    {patchV2: hostilePrelude + p2, reason: 'STEREO_PATCH_BLOB_IDENTITY_INVALID'},
+    {patchV2: p2.replace('+++ b/src/CreationEngine/CreationEngineRendererModule.cpp',
+      '+++ b/forbidden.txt'), reason: 'STEREO_PATCH_BLOB_IDENTITY_INVALID'},
+    {patchV2: p2.replace('--- a/src/CreationEngine/CreationEngineRendererModule.cpp',
+      '--- a/forbidden.txt'), reason: 'STEREO_PATCH_BLOB_IDENTITY_INVALID'},
+  ];
+  for (const {reason,...override} of changes) {
+    const result = inspect(override);
+    assert.equal(result.status, 'BLOCKED', reason);
+    assert.ok(result.blockers.includes(reason), reason);
+    assert.equal(result.deploymentAllowed, false);
+    assert.equal(result.sourceMutationAllowed, false);
+  }
 });
 
 test('missing, dirty or drifted source must hold', () => {

@@ -11,6 +11,18 @@ import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeEx
 export const NATIVE_BUILD_READINESS_SCHEMA = 'stephanos.starfield-aer-native-build-readiness.v1';
 export const MUTAR_PIN = 'c8a2b200710cdf70db22fd0fcac498cba02da676';
 export const STABILIZER_SOURCE_PIN = 'b25bb9f9bf7f02ec87660a34ce3a2ef129d2fd3d';
+// These immutable original Git blobs define the complete admissible patch bytes.
+// Path-header scanning alone misses Git's traditional prelude, mode and
+// ---/+++ target interpretation. Do not accept caller-computed pins.
+const PATCH_V1_GIT_BLOB = '82962e65ee295dc2852db1d24272293d54456289';
+const PATCH_V2_GIT_BLOB = '3a4928471836abdd4e291dca7a801514f3d6d244';
+function gitBlobIdentity(value) {
+  if (typeof value !== 'string') return '';
+  return createHash('sha1')
+    .update('blob ' + Buffer.byteLength(value, 'utf8') + '\0', 'utf8')
+    .update(value, 'utf8')
+    .digest('hex');
+}
 const PATCH_V1_PATH = 'VR-Research-Lab/patches/starfield2vr-aer-stabilizer-v1.patch';
 const PATCH_V2_PATH = 'VR-Research-Lab/patches/starfield2vr-aer-v2-stereo-history-v1.patch';
 const RENDERER = 'src/CreationEngine/CreationEngineRendererModule.cpp';
@@ -61,6 +73,15 @@ export function inspectStarfieldAerNativeBuildContract({
       || patchV1.length < 100 || patchV2.length < 100
       || patchV1.length > 30000 || patchV2.length > 30000) {
     blockers.push('EXPERIMENTAL_PATCH_BYTES_MISSING');
+  }
+  // Verify the entire immutable patch BEFORE trusting any declared path.
+  // Original V2 is intentionally index-less; that is safe only for this
+  // exact byte-identical reviewed Git blob, never for an arbitrary replacement.
+  if (gitBlobIdentity(patchV1) !== PATCH_V1_GIT_BLOB) {
+    blockers.push('STABILIZER_PATCH_BLOB_IDENTITY_INVALID');
+  }
+  if (gitBlobIdentity(patchV2) !== PATCH_V2_GIT_BLOB) {
+    blockers.push('STEREO_PATCH_BLOB_IDENTITY_INVALID');
   }
   const p1 = patchPaths(patchV1);
   const p2 = patchPaths(patchV2);
