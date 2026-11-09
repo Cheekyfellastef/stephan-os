@@ -78,6 +78,20 @@ add('redirected version',{fsFailure:'version-link',expectedInspections:0},
 add('helper changed',{pendingChange:'helper',expectedInspections:0},'FIXED_RUNTIME_PENDING_IDENTITY_UNPROVEN');
 add('pending source changed',{pendingChange:'head',expectedInspections:0},'FIXED_RUNTIME_PENDING_IDENTITY_UNPROVEN');
 add('denial on zero remains unqualified',{row:base,status:0},'FIXED_RUNTIME_AUTHENTICATED_IDLE_UNPROVEN');
+const gamingHold=reason=>({ok:false,finalVerdict:'STEPHANOS_NATIVE_CAPACITY_GAMING_HOLD',reason});
+for(const [name,reason,code] of [
+  ['prepare lease retained','native-capacity-gaming-prepare-pending','FIXED_RUNTIME_GOVERNOR_PREPARE_PENDING'],
+  ['stale observation','native-capacity-gaming-observation-stale','FIXED_RUNTIME_GOVERNOR_OBSERVATION_STALE'],
+  ['gaming active','native-capacity-gaming-permission-denied','FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED'],
+  ['workspace proof missing','native-capacity-gaming-workspace-unproved','FIXED_RUNTIME_GOVERNOR_WORKSPACE_UNPROVEN'],
+  ['hostile private reason',privateText,'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE'],
+])add(name,{governorReceipt:gamingHold(reason),governorHoldCode:code,expectedInspections:0},'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+add('untrusted hold envelope',{governorReceipt:{...gamingHold('native-capacity-gaming-prepare-pending'),
+  finalVerdict:'FOREIGN_GOVERNOR'},governorHoldCode:'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE',
+  expectedInspections:0},'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+add('governor read failure',{governorThrow:true,
+  governorHoldCode:'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE',expectedInspections:0},
+  'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
 cases.push({name:'unchanged positive inventory',row:success,status:0,ok:true});
 
 for(const entry of cases) {
@@ -111,7 +125,7 @@ for(const entry of cases) {
   };
   const mocks={'node:child_process':{spawn:()=>{executions++;throw new Error('EXECUTION_NOT_PERMITTED_IN_FIXTURE');},spawnSync},
     'node:crypto':{createHash},'node:fs':fs,'node:path':{dirname:win32.dirname,join:win32.join},
-    '../shared/agents/stephanosNativeCapacityGamingAdmissionV1.mjs':{inspectStephanosNativeCapacityGamingAdmissionV1:()=>({ok:true})},
+    '../shared/agents/stephanosNativeCapacityGamingAdmissionV1.mjs':{inspectStephanosNativeCapacityGamingAdmissionV1:()=>entry.governorThrow?fail('EACCES'):(entry.governorReceipt??{ok:true})},
     '../shared/agents/battleBridgeExecutionBoundaryV1.mjs':{createBattleBridgeMinimalChildEnvironment:()=>({}),
       resolveBattleBridgeGitExecution:()=>({executable:'FIXTURE_GIT',fixedConfigArgs:[],environment:{}})},
     '../shared/agents/battleBridgeGitProbeContextV1.mjs':{createBattleBridgeGitProbeContextV1:()=>({assert(){},close(){},repositoryArgs:()=>[]}),isBattleBridgeGitProbeContextV1:()=>true},
@@ -132,6 +146,8 @@ for(const entry of cases) {
   assert.equal(JSON.stringify(result).includes(privateText),false,entry.name);
   assert.equal(Object.hasOwn(result,'stdout'),false,entry.name);
   assert.equal(Object.hasOwn(result,'stderr'),false,entry.name);
+  if(entry.governorHoldCode)assert.equal(result.governorHoldCode,entry.governorHoldCode,entry.name);
+  else assert.equal(Object.hasOwn(result,'governorHoldCode'),false,entry.name);
   if(entry.ok) {
     assert.equal(result.sourceHead,head,entry.name);
     assert.equal(result.dispatchAllowed,true,entry.name);

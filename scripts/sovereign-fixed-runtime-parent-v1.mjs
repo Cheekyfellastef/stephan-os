@@ -38,7 +38,31 @@ const ROOT = 'C:\\Program Files\\Stephanos\\SovereignFixedRuntimeV1';
 const SOURCE = 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os';
 const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const WORKSPACE='C:\\Users\\Stephan Callear\\Documents\\Stephanos-openclaw-workspace';
-const resourceAllowed=()=>{try{return inspectStephanosNativeCapacityGamingAdmissionV1({workspaceRoot:WORKSPACE,repoRoot:SOURCE}).ok===true;}catch{return false;}};
+// Preserve original governor admission; project only authenticated closed-word
+// refusal codes. This diagnostic cannot grant maintenance or clear a gaming lease.
+const GOVERNOR_HOLD_CODES_V1=Object.freeze({
+  'native-capacity-gaming-workspace-unproved':'FIXED_RUNTIME_GOVERNOR_WORKSPACE_UNPROVEN',
+  'native-capacity-gaming-workspace-mismatch':'FIXED_RUNTIME_GOVERNOR_WORKSPACE_MISMATCH',
+  'native-capacity-gaming-prepare-pending':'FIXED_RUNTIME_GOVERNOR_PREPARE_PENDING',
+  'native-capacity-gaming-override-unproved':'FIXED_RUNTIME_GOVERNOR_OVERRIDE_UNPROVEN',
+  'native-capacity-gaming-state-invalid':'FIXED_RUNTIME_GOVERNOR_STATE_INVALID',
+  'native-capacity-gaming-clock-unproved':'FIXED_RUNTIME_GOVERNOR_CLOCK_UNPROVEN',
+  'native-capacity-gaming-observation-future':'FIXED_RUNTIME_GOVERNOR_OBSERVATION_FUTURE',
+  'native-capacity-gaming-observation-stale':'FIXED_RUNTIME_GOVERNOR_OBSERVATION_STALE',
+  'native-capacity-gaming-permission-denied':'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED',
+  'native-capacity-gaming-evidence-unavailable':'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE',
+});
+const resourceObservation=()=>{
+  try {
+    const receipt=inspectStephanosNativeCapacityGamingAdmissionV1({workspaceRoot:WORKSPACE,repoRoot:SOURCE});
+    if(receipt?.ok===true)return Object.freeze({ok:true,governorHoldCode:''});
+    const code=receipt?.ok===false && receipt.finalVerdict==='STEPHANOS_NATIVE_CAPACITY_GAMING_HOLD'
+      && typeof receipt.reason==='string' && Object.hasOwn(GOVERNOR_HOLD_CODES_V1,receipt.reason)
+      ? GOVERNOR_HOLD_CODES_V1[receipt.reason] : 'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE';
+    return Object.freeze({ok:false,governorHoldCode:code});
+  } catch {return Object.freeze({ok:false,governorHoldCode:'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE'});}
+};
+const resourceAllowed=()=>resourceObservation().ok;
 const SHA = /^[a-f0-9]{64}$/;
 // Closed diagnostic vocabulary emitted by the fixed native inventory. These
 // failures never qualify an installation or carry native execution provenance.
@@ -206,8 +230,9 @@ function captureFixedRuntimeSourceProofV1(head) {
     return Object.freeze({...observed,raw});
   } finally {context.close();}
 }
-const denied = (reason,binding) => {const result=Object.freeze({ok:false, reason, executionCustodyReleased:true,
-  taskRootCreated:false, taskExecuted:false, dispatchAllowed:false});if(binding)exclusions.set(result,Object.freeze({...binding}));return result;};
+const denied = (reason,binding,governorHoldCode='') => {const result=Object.freeze({ok:false, reason, executionCustodyReleased:true,
+  taskRootCreated:false, taskExecuted:false, dispatchAllowed:false,
+  ...(governorHoldCode?{governorHoldCode}:{})});if(binding)exclusions.set(result,Object.freeze({...binding}));return result;};
 export function consumeFixedRuntimePrelaunchExclusionV1(result,binding) {
   const stored=exclusions.get(result);exclusions.delete(result);
   return Boolean(stored && binding && ['requestId','sourceHead','custodyRecordSha256','nativeRecordId','actionId','missionId','claimSha256'].every(k=>stored[k]===binding[k]));
@@ -370,7 +395,8 @@ export function inspectFixedRuntimeInstallationPresenceV1() {
 export function inspectFixedRuntimeQualificationV1() {
   if(process.platform!=='win32') return denied('FIXED_RUNTIME_WINDOWS_REQUIRED');
   try {
-    if(!resourceAllowed())return denied('FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+    const initialGovernor=resourceObservation();
+    if(!initialGovernor.ok)return denied('FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD',null,initialGovernor.governorHoldCode);
     // This is the real fixed-URL canonical source observer, not an injectable
     // success flag or caller-selected head. Merkle integrity cannot replace it.
     const authorityStarted=performance.now();
@@ -399,7 +425,8 @@ export function inspectFixedRuntimeQualificationV1() {
       !Array.isArray(row.Profiles) || row.Profiles.some(p=>!['MAINTENANCE_GOAL_BUILDER_V1','SOURCE_TASK_V1',FIXED_MAILBOX_NATIVE_EVIDENCE_RUNTIME_PROFILE_V1.profile].includes(p)) ||
       !SHA.test(row.CustodyRecordSha256??'') || !Number.isSafeInteger(row.NativeRecordId) || row.NativeRecordId<1)
       return denied('FIXED_RUNTIME_AUTHENTICATED_IDLE_UNPROVEN');
-    if(!resourceAllowed())return denied('FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+    const terminalGovernor=resourceObservation();
+    if(!terminalGovernor.ok)return denied('FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD',null,terminalGovernor.governorHoldCode);
     if(performance.now()-authorityStarted>=25000 || exactHead()!==executionHead)
       return denied('FIXED_RUNTIME_CANONICAL_SOURCE_EXPIRED');
     const qualified=Object.freeze({ok:true,sourceHead:installation.executionHead,installationSourceHead:installation.head,
