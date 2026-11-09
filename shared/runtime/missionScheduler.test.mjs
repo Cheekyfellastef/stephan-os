@@ -113,8 +113,8 @@ test('five resource-disjoint active lanes remain authoritative together', () => 
 
 test('resource conflict and active width overflow fail closed', () => {
   const conflicting = buildMissionScheduler({ now:NOW, goals:[
-    goal(1,{state:'ACTIVE',branch:'feature/one',resourceIds:['repo:main']}),
-    goal(2,{state:'ACTIVE',branch:'feature/two',resourceIds:['repo:main']}),
+    goal(1,{state:'ACTIVE',branch:'feature/one',resourceIds:['repo:cheekyfellastef/stephan-os']}),
+    goal(2,{state:'ACTIVE',branch:'feature/two',resourceIds:['repo:cheekyfellastef/stephan-os']}),
   ] });
   assert.equal(conflicting.failClosed,true);
   assert.ok(conflicting.contradictions.some(({code}) => code === 'ACTIVE_RESOURCE_CONFLICT'));
