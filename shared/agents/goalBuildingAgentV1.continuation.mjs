@@ -1,4 +1,4 @@
-import { boundedText, list, safeId, text, unique } from './goalBuildingAgentV1.contract.mjs';
+import { SHA_40, boundedText, list, safeId, text, unique } from './goalBuildingAgentV1.contract.mjs';
 import {
   GOAL_BUILDING_RESUME_STATES,
   reconstructGoalBuildHandoff,
@@ -40,6 +40,24 @@ function normalizeCandidate(candidate = {}) {
   });
 }
 
+// Presentation-only eligibility must never turn an unclaimed or receipt-free
+// mission into an executable continuation. The existing #1557 controller still
+// owns admission and lease acquisition; this check grants no source authority.
+function continuationProofGaps(checkpoint, candidate) {
+  const gaps = [];
+  const hasActiveOwnedResourceLease = candidate.resourceIds.length > 0
+    && list(checkpoint.leases).some((lease) => lease.disposition === 'ACTIVE'
+      && lease.ownerId === checkpoint.canonicalOwnerId
+      && candidate.resourceIds.includes(lease.resourceId));
+  if (!hasActiveOwnedResourceLease) gaps.push('continuation-active-owned-resource-lease-unproven');
+  if (!SHA_40.test(text(checkpoint.sourceTree))) gaps.push('continuation-source-tree-unproven');
+  if (!checkpoint.lastMaterialReceiptId
+    || checkpoint.lastMaterialReceiptHead !== checkpoint.sourceHead) {
+    gaps.push('continuation-exact-head-material-receipt-unproven');
+  }
+  return gaps;
+}
+
 export function projectStephanosGoalContinuation(input = {}) {
   const reconstructed = reconstructGoalBuildHandoff({
     checkpoint: input.checkpoint,
@@ -49,9 +67,15 @@ export function projectStephanosGoalContinuation(input = {}) {
   const candidate = normalizeCandidate(input.schedulerCandidate || {});
   const reasons = [...evaluation.reasons];
 
-  if (candidate.goalId && candidate.goalId !== evaluation.goalId) reasons.push('scheduler-goal-mismatch');
-  if (candidate.missionId && candidate.missionId !== evaluation.missionId) reasons.push('scheduler-mission-mismatch');
-  if (candidate.canonicalOwnerId && candidate.canonicalOwnerId !== evaluation.canonicalOwnerId) reasons.push('scheduler-owner-mismatch');
+  // A scheduler candidate must prove its three principal identities before a
+  // status projection can request existing-controller continuation. Omitted
+  // identities are not wildcards; this grants no runtime or source authority.
+  if (!candidate.goalId) reasons.push('scheduler-goal-unproven');
+  else if (candidate.goalId !== evaluation.goalId) reasons.push('scheduler-goal-mismatch');
+  if (!candidate.missionId) reasons.push('scheduler-mission-unproven');
+  else if (candidate.missionId !== evaluation.missionId) reasons.push('scheduler-mission-mismatch');
+  if (!candidate.canonicalOwnerId) reasons.push('scheduler-owner-unproven');
+  else if (candidate.canonicalOwnerId !== evaluation.canonicalOwnerId) reasons.push('scheduler-owner-mismatch');
 
   let state = GOAL_BUILDING_CONTINUATION_STATES.SAFE_HOLD;
   let mayRequestExistingControllerContinuation = false;
@@ -64,7 +88,14 @@ export function projectStephanosGoalContinuation(input = {}) {
       : GOAL_BUILDING_CONTINUATION_STATES.SAFE_HOLD;
     mayRequestCapacityRefill = exclusivelyReproof;
   } else if (evaluation.state === GOAL_BUILDING_RESUME_STATES.RESUMABLE) {
-    if (candidate.schedulerEligible && candidate.qualifiedProviderAvailable && !candidate.operatorGate) {
+    const proofGaps = continuationProofGaps(reconstructed.checkpoint, candidate);
+    if (proofGaps.length > 0) {
+      // Only this lane is unqualified. Reproof belongs to the original owner
+      // while resource-disjoint work remains available to existing refill.
+      reasons.push(...proofGaps);
+      state = GOAL_BUILDING_CONTINUATION_STATES.BLOCKED_ROUTE_OWNER_REQUIRED;
+      mayRequestCapacityRefill = true;
+    } else if (candidate.schedulerEligible && candidate.qualifiedProviderAvailable && !candidate.operatorGate) {
       state = GOAL_BUILDING_CONTINUATION_STATES.AUTO_CONTINUE_ELIGIBLE;
       mayRequestExistingControllerContinuation = true;
     } else {

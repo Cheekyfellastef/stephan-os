@@ -172,6 +172,7 @@ test('mismatched explicit movement identity does not count as progress', () => {
     executionMovement: {
       observedAtUtc: '2026-08-28T09:29:59.000Z',
       missionId: 'mission-1',
+      goalId: 'goal-1',
       taskId: 'task-1',
       receiptId: 'receipt-other',
       description: 'Tests advanced.',
@@ -208,4 +209,338 @@ test('retry and operator-boundary telemetry remains visible without inventing pr
   assert.equal(result.nextRetryAt, '2026-08-28T09:35:00.000Z');
   assert.equal(result.operatorActionRequired, true);
   assert.equal(result.operatorActionTarget, 'Approve exact protected merge of PR #999.');
+});
+
+for (const [field, reason] of [
+  ['evidenceProblems', 'source-lease-identity-contradictory'],
+  ['blockingReasons', 'physical-build-pickup-unproven'],
+]) {
+  test(`hard programme ${field} cannot be erased by a fresh RUNNING worker`, () => {
+    const result = projectGoalBuildingRuntimeTruth({
+      certificate: certificate({ [field]: [reason] }),
+      workerBeacon: runningBeacon(),
+      protectedMainHead: head,
+      installedMainHead: head,
+      servedHead: head,
+      nowMs,
+    });
+    assert.equal(result.workerState, 'RUNNING');
+    assert.equal(result.proofBasis.workerBeaconProven, true);
+    assert.equal(result.meaningfulMovementFresh, true);
+    assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BLOCKED);
+    assert.equal(result.buildingProven, false);
+    assert.equal(result.falseBuildingRejected, true);
+    assert.equal(result.blocker, reason);
+  });
+}
+
+test('soft degraded reasons alone do not erase otherwise qualified worker progress', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({ degradedReasons: ['unrelated-read-only-surface-stale'] }),
+    workerBeacon: runningBeacon(),
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BUILDING);
+  assert.equal(result.buildingProven, true);
+});
+
+test('same-mission operator approval cannot be masked by a fresh worker and movement', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({
+      operatorActionRequired: true,
+      operatorActionTarget: 'Approve the protected merge for goal-1.',
+      blockers: [{
+        blockerId: 'approval-goal-1',
+        route: 'REQUEST_EXACT_OPERATOR_APPROVAL',
+        missionId: 'mission-1',
+        goalId: 'goal-1',
+      }],
+    }),
+    workerBeacon: runningBeacon(),
+    nowMs,
+  });
+  assert.equal(result.workerState, 'RUNNING');
+  assert.equal(result.meaningfulMovementFresh, true);
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BLOCKED);
+  assert.equal(result.buildingProven, false);
+  assert.equal(result.falseBuildingRejected, true);
+  assert.equal(result.blocker, 'PROGRAMME_OPERATOR_GATE_SCOPE_UNPROVEN');
+  assert.equal(result.operatorActionRequired, true);
+});
+
+test('unbound operator gate fails closed even with a plausible action title', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({
+      operatorActionRequired: true,
+      operatorActionTarget: 'Approve goal-2 while goal-1 builds.',
+      degradedReasons: ['unrelated-health-surface-stale'],
+    }),
+    workerBeacon: runningBeacon(),
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BLOCKED);
+  assert.equal(result.buildingProven, false);
+  assert.equal(result.blocker, 'PROGRAMME_OPERATOR_GATE_SCOPE_UNPROVEN');
+  assert.equal(result.falseBuildingRejected, true);
+});
+
+test('lineage-proven disjoint operator wait does not hide genuinely productive work', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({
+      activeMissions: [
+        mission(),
+        mission({
+          missionId: 'mission-2',
+          goalId: 'goal-2',
+          phase: 'WAITING_FOR_OPERATOR',
+          lastProgressAtUtc: '2026-08-28T09:20:00.000Z',
+        }),
+      ],
+      operatorActionRequired: true,
+      operatorActionTarget: 'Approve exact protected merge for mission-2.',
+      blockers: [{
+        blockerId: 'approval-goal-2',
+        route: 'REQUEST_EXACT_OPERATOR_APPROVAL',
+        missionId: 'mission-2',
+        goalId: 'goal-2',
+      }],
+    }),
+    workerBeacon: runningBeacon(),
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BUILDING);
+  assert.equal(result.buildingProven, true);
+  assert.equal(result.currentMissionId, 'mission-1');
+  assert.equal(result.operatorActionRequired, true);
+});
+
+test('a gate on either productive mission cannot be masked by the other mission', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({
+      activeMissions: [
+        mission(),
+        mission({ missionId: 'mission-2', goalId: 'goal-2' }),
+      ],
+      operatorActionRequired: true,
+      operatorActionTarget: 'Approve goal-2 merge.',
+      blockers: [{
+        blockerId: 'approval-goal-2',
+        route: 'REQUEST_EXACT_OPERATOR_APPROVAL',
+        missionId: 'mission-2',
+        goalId: 'goal-2',
+      }],
+    }),
+    workerBeacon: runningBeacon(),
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BLOCKED);
+  assert.equal(result.buildingProven, false);
+});
+
+test('contradictory operator blocker mission and goal identities fail closed', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({
+      activeMissions: [
+        mission(),
+        mission({ missionId: 'mission-2', goalId: 'goal-2', phase: 'WAITING_FOR_OPERATOR' }),
+      ],
+      operatorActionRequired: true,
+      operatorActionTarget: 'Approve exact protected merge.',
+      blockers: [{
+        blockerId: 'mixed-identity',
+        route: 'REQUEST_EXACT_OPERATOR_APPROVAL',
+        missionId: 'mission-2',
+        goalId: 'goal-1',
+      }],
+    }),
+    workerBeacon: runningBeacon(),
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BLOCKED);
+  assert.equal(result.buildingProven, false);
+});
+
+
+test('same-goal structured approval cannot be hidden by false operatorActionRequired summary', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({
+      operatorActionRequired: false,
+      blockers: [{ blockerId: 'approval-1', route: 'REQUEST_EXACT_OPERATOR_APPROVAL', missionId: 'mission-1', goalId: 'goal-1' }],
+    }),
+    workerBeacon: runningBeacon(),
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BLOCKED);
+  assert.equal(result.buildingProven, false);
+  assert.equal(result.blocker, 'PROGRAMME_OPERATOR_GATE_SCOPE_UNPROVEN');
+});
+
+test('disjoint operator approval cannot hide a same-goal qualified-review hold', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({
+      activeMissions: [mission(), mission({ missionId: 'mission-2', goalId: 'goal-2', phase: 'WAITING_FOR_OPERATOR' })],
+      operatorActionRequired: true,
+      operatorActionTarget: 'Approve exact protected merge for mission-2.',
+      blockers: [
+        { blockerId: 'approval-2', route: 'REQUEST_EXACT_OPERATOR_APPROVAL', missionId: 'mission-2', goalId: 'goal-2' },
+        { blockerId: 'review-1', route: 'REQUEST_QUALIFIED_REVIEW_OR_PROOF', missionId: 'mission-1', goalId: 'goal-1' },
+      ],
+    }),
+    workerBeacon: runningBeacon(),
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BLOCKED);
+  assert.equal(result.buildingProven, false);
+  assert.equal(result.blocker, 'PROGRAMME_BLOCKER_SCOPE_UNPROVEN');
+});
+
+test('disjoint structured approval conflicting with productive-mission action target fails closed', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({
+      activeMissions: [mission(), mission({ missionId: 'mission-2', goalId: 'goal-2', phase: 'WAITING_FOR_OPERATOR' })],
+      operatorActionRequired: true,
+      operatorActionTarget: 'Approve the active mission-1 protected merge.',
+      blockers: [{ blockerId: 'approval-2', route: 'REQUEST_EXACT_OPERATOR_APPROVAL', missionId: 'mission-2', goalId: 'goal-2' }],
+    }),
+    workerBeacon: runningBeacon(),
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BLOCKED);
+  assert.equal(result.buildingProven, false);
+  assert.equal(result.blocker, 'PROGRAMME_OPERATOR_GATE_SCOPE_UNPROVEN');
+});
+
+test('fully lineage-bound disjoint non-operator review gate preserves real productive progress', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({
+      activeMissions: [mission(), mission({ missionId: 'mission-2', goalId: 'goal-2', phase: 'WAIT_INDEPENDENT_REVIEW' })],
+      blockers: [{ blockerId: 'review-2', route: 'REQUEST_QUALIFIED_REVIEW_OR_PROOF', missionId: 'mission-2', goalId: 'goal-2' }],
+    }),
+    workerBeacon: runningBeacon(),
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BUILDING);
+  assert.equal(result.buildingProven, true);
+});
+
+test('unbound structured review gate fails closed even when summary does not declare an operator action', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({ blockers: [{ blockerId: 'review-unbound', route: 'REQUEST_QUALIFIED_REVIEW_OR_PROOF', missionId: '', goalId: 'goal-2' }] }),
+    workerBeacon: runningBeacon(),
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BLOCKED);
+  assert.equal(result.blocker, 'PROGRAMME_BLOCKER_SCOPE_UNPROVEN');
+});
+
+test('fresh unbound execution timestamps cannot revive an otherwise stalled mission', () => {
+  const complete = {
+    observedAtUtc: '2026-08-28T09:29:59.000Z',
+    missionId: 'mission-1',
+    goalId: 'goal-1',
+    taskId: 'task-1',
+    receiptId: 'receipt-1',
+  };
+  for (const [missing, expectedBlocker] of [
+    ['missionId', 'MEANINGFUL_MOVEMENT_MISSION_UNPROVEN'],
+    ['goalId', 'MEANINGFUL_MOVEMENT_GOAL_UNPROVEN'],
+    ['taskId', 'MEANINGFUL_MOVEMENT_TASK_UNPROVEN'],
+    ['receiptId', 'MEANINGFUL_MOVEMENT_RECEIPT_UNPROVEN'],
+  ]) {
+    const executionMovement = { ...complete };
+    delete executionMovement[missing];
+    const result = projectGoalBuildingRuntimeTruth({
+      certificate: certificate({ activeMissions: [mission({ lastProgressAtUtc: '2026-08-28T09:20:00.000Z' })] }),
+      workerBeacon: runningBeacon(),
+      executionMovement,
+      nowMs,
+    });
+    assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.ALIVE_BUT_STALLED, missing);
+    assert.equal(result.stallReason, expectedBlocker, missing);
+    assert.equal(result.proofBasis.explicitMovementIdentityAccepted, false, missing);
+    assert.equal(result.buildingProven, false, missing);
+  }
+});
+
+test('an explicit movement with wrong goal or nonproductive mission cannot prove BUILDING', () => {
+  const stale = mission({ lastProgressAtUtc: '2026-08-28T09:20:00.000Z' });
+  const baseMovement = {
+    observedAtUtc: '2026-08-28T09:29:59.000Z',
+    missionId: 'mission-1',
+    goalId: 'goal-1',
+    taskId: 'task-1',
+    receiptId: 'receipt-1',
+  };
+  const scenarios = [
+    ['contradictory goal lineage', { ...baseMovement, goalId: 'goal-other' }, 'MEANINGFUL_MOVEMENT_GOAL_MISMATCH'],
+    ['unknown mission', { ...baseMovement, missionId: 'mission-other' }, 'MEANINGFUL_MOVEMENT_MISSION_MISMATCH'],
+    ['waiting-mission substitution', { ...baseMovement, missionId: 'mission-2', goalId: 'goal-2' }, 'MEANINGFUL_MOVEMENT_MISSION_NOT_PRODUCTIVE'],
+  ];
+  for (const [label, executionMovement, expectedBlocker] of scenarios) {
+    const result = projectGoalBuildingRuntimeTruth({
+      certificate: certificate({
+        activeMissions: [
+          stale,
+          mission({ missionId: 'mission-2', goalId: 'goal-2', phase: 'WAITING_FOR_OPERATOR', lastProgressAtUtc: '2026-08-28T09:20:00.000Z' }),
+        ],
+      }),
+      workerBeacon: runningBeacon(),
+      executionMovement,
+      nowMs,
+    });
+    assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.ALIVE_BUT_STALLED, label);
+    assert.equal(result.stallReason, expectedBlocker, label);
+    assert.equal(result.proofBasis.explicitMovementIdentityAccepted, false, label);
+    assert.equal(result.buildingProven, false, label);
+  }
+});
+
+test('duplicate mission identity cannot turn one explicit progress event into BUILDING', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({
+      activeMissions: [
+        mission({ lastProgressAtUtc: '2026-08-28T09:20:00.000Z' }),
+        mission({ lastProgressAtUtc: '2026-08-28T09:19:00.000Z' }),
+      ],
+    }),
+    workerBeacon: runningBeacon(),
+    executionMovement: {
+      observedAtUtc: '2026-08-28T09:29:59.000Z',
+      missionId: 'mission-1',
+      goalId: 'goal-1',
+      taskId: 'task-1',
+      receiptId: 'receipt-1',
+    },
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.ALIVE_BUT_STALLED);
+  assert.equal(result.stallReason, 'MEANINGFUL_MOVEMENT_MISSION_MISMATCH');
+  assert.equal(result.buildingProven, false);
+});
+
+test('fully bound fresh movement on another productive mission preserves accurate current identity', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({
+      activeMissions: [
+        mission({ lastProgressAtUtc: '2026-08-28T09:20:00.000Z' }),
+        mission({ missionId: 'mission-2', goalId: 'goal-2', phase: 'TEST', lastProgressAtUtc: '2026-08-28T09:19:00.000Z' }),
+      ],
+    }),
+    workerBeacon: runningBeacon(),
+    executionMovement: {
+      observedAtUtc: '2026-08-28T09:29:59.000Z',
+      missionId: 'mission-2',
+      goalId: 'goal-2',
+      taskId: 'task-1',
+      receiptId: 'receipt-1',
+      description: 'Exact productive test evidence advanced.',
+    },
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BUILDING);
+  assert.equal(result.buildingProven, true);
+  assert.equal(result.currentMissionId, 'mission-2');
+  assert.equal(result.currentGoalId, 'goal-2');
+  assert.equal(result.proofBasis.explicitMovementIdentityAccepted, true);
+  assert.equal(result.proofBasis.meaningfulMovementSource, 'execution-movement');
 });

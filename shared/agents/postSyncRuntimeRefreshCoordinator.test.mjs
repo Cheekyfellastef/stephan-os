@@ -546,6 +546,47 @@ test('classifies docs and tests as no-runtime changes', () => {
   assert.equal(plan.noRuntimePathCount, 2);
 });
 
+test('one-shot PR estate source is no-runtime, but unregistered sibling scripts stay blocked', () => {
+  const exact = classifyPostSyncRefresh(['scripts/pr-estate-reconcile.mjs']);
+  assert.equal(exact.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.deepEqual(exact.targetIds, []);
+  assert.equal(exact.noRuntimePathCount, 1);
+  assert.equal(exact.unknownPathCount, 0);
+  const sibling = classifyPostSyncRefresh(['scripts/pr-estate-reconcile-unregistered.mjs']);
+  assert.equal(sibling.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+  assert.deepEqual(sibling.internal.unknownPaths, ['scripts/pr-estate-reconcile-unregistered.mjs']);
+  assert.equal(sibling.automaticExecutionAllowed, false);
+});
+
+test('imported Stephanos card stylesheet requires exact UI refresh without widening shared styles', () => {
+  const css = 'shared/styles/stephanos-card-layout.css';
+  const exact = classifyPostSyncRefresh([css, 'stephanos-ui/src/main.jsx']);
+  assert.equal(exact.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(exact.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173]);
+  assert.equal(exact.unknownPathCount, 0);
+  const sibling = classifyPostSyncRefresh(['shared/styles/stephanos-card-layout-other.css']);
+  assert.equal(sibling.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+  assert.deepEqual(sibling.internal.unknownPaths, ['shared/styles/stephanos-card-layout-other.css']);
+});
+
+test('both exact 9 November unknowns clear while Spatial host and unsafe-path holds survive', () => {
+  const sources = ['scripts/pr-estate-reconcile.mjs', 'shared/styles/stephanos-card-layout.css'];
+  const clear = classifyPostSyncRefresh(sources);
+  assert.equal(clear.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(clear.unknownPathCount, 0);
+  assert.equal(clear.noRuntimePathCount, 1);
+  assert.deepEqual(clear.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173]);
+  const spatial = classifyPostSyncRefresh([...sources, 'scripts/spatial-window-host.mjs']);
+  assert.equal(spatial.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_SPATIAL_ADOPTION_REQUIRED);
+  assert.equal(spatial.spatialAdoptionRequired, true);
+  assert.equal(spatial.unknownPathCount, 0);
+  assert.deepEqual(spatial.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173]);
+  const unsafe = classifyPostSyncRefresh([...sources, '../untrusted.js']);
+  assert.equal(unsafe.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNSAFE_CHANGED_PATH);
+  assert.equal(unsafe.unsafePathCount, 1);
+  assert.equal(unsafe.automaticExecutionAllowed, false);
+});
+
 test('classifies the exact GitHub-hosted review toolchain as no-runtime', () => {
   const hostedReviewPaths = [
     'scripts/exact-head-review-dispatch.mjs',
