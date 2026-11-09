@@ -1436,6 +1436,12 @@ test('private plugin host proof refuses absent stale revoked and contradictory p
     { ...valid, manifestDigestVerified: false },
     { ...valid, observedAtUtc: new Date(Date.now() - 60_000).toISOString() },
     { ...valid, expiresAtUtc: new Date(Date.now() - 100).toISOString() },
+    // A future-dated observation must not accept an earlier expiry, even if
+    // both timestamps individually sit within their wall-clock allowances.
+    { ...valid, observedAtUtc: new Date(Date.now() + 1_500).toISOString(),
+      expiresAtUtc: new Date(Date.now() + 1_000).toISOString() },
+    { ...valid, observedAtUtc: new Date(Date.now() + 1_200).toISOString(),
+      expiresAtUtc: new Date(Date.now() + 1_200).toISOString() },
     { ...valid, hostProcessStartedAtUtc: new Date(Date.now() + 60_000).toISOString() },
     { ...valid, schemaVersion: 'foreign.proof.v1' },
   ];

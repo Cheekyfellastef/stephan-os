@@ -64,7 +64,7 @@ function sovereignPluginHostProofPass(proof, expectedHead) {
   const birthMs = Date.parse(birth), observedMs = Date.parse(observed), expiryMs = Date.parse(expiry);
   return birthMs <= observedMs && observedMs <= now + 2_000
     && observedMs >= now - 15_000
-    && expiryMs > now && expiryMs <= observedMs + 30_000;
+    && expiryMs > now && expiryMs > observedMs && expiryMs <= observedMs + 30_000;
 }
 
 export const POST_SYNC_REFRESH_SCHEMA = 'stephanos.post-sync-runtime-refresh.v1';
