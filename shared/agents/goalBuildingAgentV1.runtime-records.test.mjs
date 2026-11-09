@@ -264,3 +264,40 @@ test('partial precomputed BUILDING claims cannot supply missing native pickup pr
     assert.equal(JSON.parse(records.status.body).isActuallyBuilding, false);
   }
 });
+
+test('complete cached BUILDING fields cannot impersonate a fresh native worker observation', () => {
+  const cached = {
+    schemaVersion: 'stephanos.goal-building-runtime-truth.v1',
+    state: GOAL_BUILDING_RUNTIME_STATES.BUILDING,
+    buildingProven: true,
+    expectedHead: head,
+    workerState: 'RUNNING',
+    exactWorkerHeadMatches: true,
+    meaningfulMovementFresh: true,
+    workerTaskId: 'task-runtime-1',
+    workerReceiptId: 'receipt-runtime-1',
+    proofBasis: { workerBeaconProven: true, productiveMissionCount: 1 },
+  };
+  const question = 'Is Stephanos actually building now?';
+  const result = answerGoalBuildingQuestion({
+    question, certificate: certificate(), runtimeTruth: cached, nowMs,
+  });
+  assert.equal(result.runtimeTruthState, GOAL_BUILDING_RUNTIME_STATES.BUILDING);
+  assert.equal(result.isActuallyBuilding, false);
+  assert.match(result.answer, /^No\. BUILDING is not physically proven/);
+
+  const records = createGoalBuildingAgentWorkspaceRecords({
+    certificate: certificate(), runtimeTruth: cached, timestampUtc,
+    validationOptions: { nowMs }, nowMs,
+    proofRefs: ['evidence/receipts/mission-worker-heartbeat-current.json'],
+  });
+  assert.equal(JSON.parse(records.status.body).isActuallyBuilding, false);
+  assert.match(records.status.summary, /^No\. BUILDING is not physically proven/);
+
+  const observed = answerGoalBuildingQuestion({
+    question, certificate: certificate(), runtimeTruth: cached,
+    workerBeacon: workerBeacon(), nowMs,
+  });
+  assert.equal(observed.isActuallyBuilding, true);
+  assert.match(observed.answer, /^Yes\. BUILDING is physically proven/);
+});
