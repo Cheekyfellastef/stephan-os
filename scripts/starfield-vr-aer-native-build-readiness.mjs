@@ -17,6 +17,24 @@ const RENDERER = 'src/CreationEngine/CreationEngineRendererModule.cpp';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sha = (value) => createHash('sha256').update(value).digest('hex');
 const sha40 = (value) => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
+// Host CMake environment input is not evidence from the pinned source tree.
+// CMake evaluates these variables when it configures a project, including
+// possible toolchain and project-inclusion scripts supplied by its caller.
+// Block a readiness claim rather than accidentally promoting a host override
+// into an authenticated source/build provenance receipt.
+const HOST_CMAKE_EXECUTION_VARIABLES = new Set([
+  'CMAKE_TOOLCHAIN_FILE', 'CMAKE_PROJECT_INCLUDE', 'CMAKE_PROJECT_INCLUDE_BEFORE',
+  'CMAKE_PROJECT_TOP_LEVEL_INCLUDES', 'CMAKE_USER_MAKE_RULES_OVERRIDE',
+  'CMAKE_USER_MAKE_RULES_OVERRIDE_C', 'CMAKE_USER_MAKE_RULES_OVERRIDE_CXX',
+  'CMAKE_C_COMPILER', 'CMAKE_CXX_COMPILER',
+  'CMAKE_C_COMPILER_LAUNCHER', 'CMAKE_CXX_COMPILER_LAUNCHER',
+]);
+function hostCmakeExecutionInputPresent(environment) {
+  if (!environment || typeof environment !== 'object' || Array.isArray(environment)) return true;
+  return Object.entries(environment).some(([key, value]) =>
+    HOST_CMAKE_EXECUTION_VARIABLES.has(key.toUpperCase())
+    && value !== null && value !== undefined && String(value).length > 0);
+}
 
 function patchPaths(patch) {
   return [...patch.matchAll(/^diff --git a\/(.+?) b\/(.+?)\s*$/gm)]
@@ -25,8 +43,12 @@ function patchPaths(patch) {
 
 export function inspectStarfieldAerNativeBuildContract({
   sourceLock = {}, patchV1 = '', patchV2 = '', cmakePreset = {}, sourceState = null,
+  inheritedEnvironment = {},
 } = {}) {
   const blockers = [];
+  if (hostCmakeExecutionInputPresent(inheritedEnvironment)) {
+    blockers.push('HOST_CMAKE_EXECUTION_INPUT_PRESENT');
+  }
   const source = Array.isArray(sourceLock.sources)
     ? sourceLock.sources.find((entry) => entry.source_id === 'mutar-starfield2vr')
     : null;
@@ -278,6 +300,7 @@ export function inspectPinnedSourceCheckout(sourceRoot, {run = spawnSync} = {}) 
 
 export async function createStarfieldAerNativeBuildReadiness({
   repoRoot = ROOT, sourceRoot = '', sourceProbe = inspectPinnedSourceCheckout,
+  inheritedEnvironment = process.env,
 } = {}) {
   const fromRepo = (p) => readFile(resolve(repoRoot, p), 'utf8');
   const [sourceLock, patchV1, patchV2] = await Promise.all([
@@ -292,6 +315,7 @@ export async function createStarfieldAerNativeBuildReadiness({
   return inspectStarfieldAerNativeBuildContract({
     sourceLock: JSON.parse(sourceLock), patchV1, patchV2, cmakePreset,
     sourceState: sourceRoot ? sourceProbe(sourceRoot) : null,
+    inheritedEnvironment,
   });
 }
 
