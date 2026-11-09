@@ -75,12 +75,14 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
       pickup: 'Pickup reported', edit: 'Edit reported', test: 'Test run reported', proof: 'Review handoff reported' };
     const operationalLabels = { PASS: passedLabels[id] || 'Observed',
       WAITING: 'Waiting here', FAIL: 'Blocked here', BLOCKED: 'Blocked here', NOT_REACHED: 'Not reached' };
+    // Logical PASS is an unqualified report, not a signed material gate receipt.
+    // Only the separate independently verified checkpoint can display GREEN.
     const operational = historicalGate ? { state: historicalGate.state, truth: trackLive ? 'CURRENT' : 'STALE',
       label: operationalLabels[historicalGate.state] || 'No stage report',
       reason: historicalGate.reason || '', observedAtUtc: trackAt, expiresAtUtc: trace.expiresAtUtc,
       trafficLight: !trackLive ? 'AMBER' : ['FAIL', 'BLOCKED'].includes(historicalGate.state) ? 'RED'
         : historicalGate.state === 'WAITING' || (id === 'pickup' && historicalGate.state === 'PASS') ? 'AMBER'
-          : historicalGate.state === 'PASS' ? 'GREEN' : 'GREY' } : null;
+          : historicalGate.state === 'PASS' ? 'AMBER' : 'GREY' } : null;
     return { id, label, state, trafficLight: failure ? 'RED' : passed ? 'GREEN' : stale || waiting ? 'AMBER' : 'GREY',
       operational,
       traceState: traceGate?.state || '', traceReason: traceGate?.reason || '',
