@@ -96,6 +96,42 @@ test('combined elastic demand exceeding safe integer precision cannot certify a 
   assert.equal(exact.remainingAdmissionSlots, 1);
 });
 
+// Original independent review P2: availableExecutorSlots bounds TOTAL qualified
+// active capacity. Overcommit is degraded, and must not admit another lane.
+test('overcommitted active lanes fail closed before further resource admission', () => {
+  for (const sample of [
+    { activeLaneCount:6, readyIndependentWorkCount:0, availableExecutorSlots:5 },
+    { activeLaneCount:8, readyIndependentWorkCount:0, availableExecutorSlots:6 },
+  ]) {
+    const result = deriveElasticBuildWidth(sample);
+    assert.equal(result.status, 'DEGRADED_CAPACITY');
+    assert.equal(result.scaleAction, 'SAFE_HOLD');
+    assert.equal(result.remainingAdmissionSlots, 0);
+    assert.equal(result.activeLaneCount, sample.activeLaneCount);
+    assert.ok(result.reasonCodes.includes('ACTIVE_EXECUTOR_CAPACITY_EXCEEDED'));
+    assert.equal(result.reasonCodes.includes('BASELINE_CAPACITY_SHORTFALL'), false);
+  }
+  const policy = deriveElasticBuildWidth({
+    activeLaneCount:6, readyIndependentWorkCount:0, availableExecutorSlots:10, maximumLanes:5,
+  });
+  assert.equal(policy.status, 'DEGRADED_CAPACITY');
+  assert.equal(policy.scaleAction, 'SAFE_HOLD');
+  assert.equal(policy.remainingAdmissionSlots, 0);
+  assert.ok(policy.reasonCodes.includes('ACTIVE_POLICY_MAXIMUM_EXCEEDED'));
+  assert.ok(policy.reasonCodes.includes('POLICY_MAXIMUM_REACHED'));
+  const healthy = deriveElasticBuildWidth({ activeLaneCount:5, readyIndependentWorkCount:0, availableExecutorSlots:5 });
+  assert.equal(healthy.status, 'RUNNING');
+  assert.equal(healthy.scaleAction, 'HOLD');
+  const shortfall = deriveElasticBuildWidth({ activeLaneCount:3, readyIndependentWorkCount:0, availableExecutorSlots:4 });
+  assert.equal(shortfall.status, 'DEGRADED_CAPACITY');
+  assert.equal(shortfall.scaleAction, 'SAFE_HOLD');
+  assert.ok(shortfall.reasonCodes.includes('BASELINE_CAPACITY_SHORTFALL'));
+  const widening = deriveElasticBuildWidth({ activeLaneCount:4, readyIndependentWorkCount:2, availableExecutorSlots:8 });
+  assert.equal(widening.status, 'RUNNING');
+  assert.equal(widening.scaleAction, 'SCALE_OUT');
+  assert.equal(widening.remainingAdmissionSlots, 2);
+});
+
 test('resource selection admits more than sixteen proven disjoint candidates when capacity exists', () => {
   const candidates = Array.from({ length:24 }, (_, index) => ({
     candidateId:`goal-wide-${index + 1}`,

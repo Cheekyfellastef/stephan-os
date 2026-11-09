@@ -187,7 +187,12 @@ export function deriveElasticBuildWidth(input = {}) {
   });
 
   const demandedWidth = active + ready;
-  const healthyBaseline = available >= minimum;
+  // Executor slots are the total evidenced capacity, not free slots. If
+  // active lanes already exceed executor or policy limits, stop new admission
+  // without terminating active work or fabricating healthy RUNNING status.
+  const executorOvercommitted = active > available;
+  const policyOvercommitted = active > maximum;
+  const healthyBaseline = available >= minimum && !executorOvercommitted && !policyOvercommitted;
   const desiredWidth = Math.min(maximum, available, Math.max(minimum, demandedWidth));
   const remainingAdmissionSlots = Math.max(0, desiredWidth - active);
   const status = healthyBaseline ? 'RUNNING' : 'DEGRADED_CAPACITY';
@@ -199,7 +204,9 @@ export function deriveElasticBuildWidth(input = {}) {
         ? 'SCALE_IN'
         : 'HOLD';
   const reasonCodes = [
-    ...(!healthyBaseline ? ['BASELINE_CAPACITY_SHORTFALL'] : []),
+    ...(available < minimum ? ['BASELINE_CAPACITY_SHORTFALL'] : []),
+    ...(executorOvercommitted ? ['ACTIVE_EXECUTOR_CAPACITY_EXCEEDED'] : []),
+    ...(policyOvercommitted ? ['ACTIVE_POLICY_MAXIMUM_EXCEEDED'] : []),
     ...(demandedWidth > maximum ? ['POLICY_MAXIMUM_REACHED'] : []),
     ...(ready > remainingAdmissionSlots ? ['ELIGIBLE_WORK_REMAINS_QUEUED'] : []),
   ];
