@@ -160,3 +160,136 @@ test('Goal #2002: missing scheduler principal identity cannot advertise AUTO_CON
     cases.map(([, reason]) => reason));
   assert.equal(allAbsent.mayRequestExistingControllerContinuation, false);
 });
+
+test('Goal #2002: every scheduler resource needs its own exact ACTIVE same-owner lease', () => {
+  const extra = 'pr:2004';
+  const partial = projectStephanosGoalContinuation({
+    checkpoint: checkpoint(),
+    current: current(),
+    schedulerCandidate: candidate({ resourceIds: ['pr:2003', extra] }),
+  });
+  assert.equal(partial.state, GOAL_BUILDING_CONTINUATION_STATES.BLOCKED_ROUTE_OWNER_REQUIRED);
+  assert.ok(partial.reasons.includes('continuation-active-owned-resource-lease-unproven'));
+  assert.equal(partial.mayRequestExistingControllerContinuation, false);
+  assert.equal(partial.continuationTarget, '');
+  assert.equal(partial.runtimeMutationAuthority, false);
+  const complete = projectStephanosGoalContinuation({
+    checkpoint: checkpoint({ leases: [
+      checkpoint().leases[0],
+      { leaseId: 'lease-continuation-2', resourceId: extra, ownerId: 'goal-building-agent', disposition: 'ACTIVE' },
+    ] }),
+    current: current(),
+    schedulerCandidate: candidate({ resourceIds: ['pr:2003', extra] }),
+  });
+  assert.equal(complete.state, GOAL_BUILDING_CONTINUATION_STATES.AUTO_CONTINUE_ELIGIBLE);
+  assert.equal(complete.mayRequestExistingControllerContinuation, true);
+});
+
+test('Goal #2002: oversized or control-character resource identities cannot alias an ACTIVE lease', () => {
+  const prefix = 'r'.repeat(180);
+  const lease = { ...checkpoint().leases[0], resourceId: prefix };
+  const valid = projectStephanosGoalContinuation({
+    checkpoint: checkpoint({ leases: [lease] }),
+    current: current(),
+    schedulerCandidate: candidate({ resourceIds: [prefix] }),
+  });
+  assert.equal(valid.state, GOAL_BUILDING_CONTINUATION_STATES.AUTO_CONTINUE_ELIGIBLE);
+  const cases = [
+    { name: 'overlong candidate', lease, resources: [prefix + 'x'], reason: 'scheduler-resource-identity-invalid' },
+    { name: 'overlong lease', lease: { ...lease, resourceId: prefix + 'x' }, resources: [prefix], reason: 'checkpoint-lease-resource-identity-invalid' },
+    { name: 'hidden candidate newline', lease, resources: [prefix + '\n'], reason: 'scheduler-resource-identity-invalid' },
+    { name: 'extra malformed candidate', lease, resources: [prefix, ''], reason: 'scheduler-resource-identity-invalid' },
+  ];
+  for (const item of cases) {
+    const result = projectStephanosGoalContinuation({
+      checkpoint: checkpoint({ leases: [item.lease] }),
+      current: current(),
+      schedulerCandidate: candidate({ resourceIds: item.resources }),
+    });
+    assert.equal(result.state, GOAL_BUILDING_CONTINUATION_STATES.SAFE_HOLD, item.name);
+    assert.ok(result.reasons.includes(item.reason), item.name);
+    assert.equal(result.mayRequestExistingControllerContinuation, false, item.name);
+    assert.equal(result.mayRequestCapacityRefill, false, item.name);
+    assert.equal(result.protectedMergeAuthority, false, item.name);
+    assert.equal(result.runtimeMutationAuthority, false, item.name);
+  }
+});
+
+test('original lease identities cannot be reused across resources, dispositions or owners', () => {
+  const original = checkpoint().leases[0];
+  const alternate = { leaseId: 'lease-continuation-2', resourceId: 'pr:2004', ownerId: 'goal-building-agent', disposition: 'ACTIVE' };
+  const scenarios = [
+    {
+      name: 'one ID claimed for two distinct resources',
+      leases: [original, { ...alternate, leaseId: original.leaseId }],
+      resourceIds: ['pr:2003', 'pr:2004'],
+      reason: 'checkpoint-lease-identity-conflict',
+    },
+    {
+      name: 'same ID contradicts ACTIVE with RELEASED',
+      leases: [original, { ...original, disposition: 'RELEASED' }],
+      resourceIds: ['pr:2003'],
+      reason: 'checkpoint-lease-identity-conflict',
+    },
+    {
+      name: 'same ID contradicts ACTIVE with PARKED',
+      leases: [original, { ...original, disposition: 'PARKED' }],
+      resourceIds: ['pr:2003'],
+      reason: 'checkpoint-lease-identity-conflict',
+    },
+    {
+      name: 'same resource is claimed by distinct active IDs',
+      leases: [original, { ...alternate, resourceId: original.resourceId }],
+      resourceIds: ['pr:2003'],
+      reason: 'checkpoint-lease-resource-conflict',
+    },
+    {
+      name: 'same resource is ACTIVE under one ID and PARKED under another',
+      leases: [original, { ...alternate, resourceId: original.resourceId, disposition: 'PARKED' }],
+      resourceIds: ['pr:2003'],
+      reason: 'checkpoint-lease-resource-conflict',
+    },
+    {
+      name: 'redundant duplicate snapshot is not independent custody',
+      leases: [original, { ...original }],
+      resourceIds: ['pr:2003'],
+      reason: 'checkpoint-lease-identity-conflict',
+    },
+    {
+      name: 'noncanonical whitespace aliases the lease ID',
+      leases: [{ ...original, leaseId: original.leaseId + ' ' }],
+      resourceIds: ['pr:2003'],
+      reason: 'checkpoint-lease-id-invalid',
+    },
+    {
+      name: 'numeric lease ID cannot be coerced into authoritative identity',
+      leases: [{ ...original, leaseId: 123 }],
+      resourceIds: ['pr:2003'],
+      reason: 'checkpoint-lease-id-invalid',
+    },
+  ];
+  for (const scenario of scenarios) {
+    const result = projectStephanosGoalContinuation({
+      checkpoint: checkpoint({ leases: scenario.leases }),
+      current: current(),
+      schedulerCandidate: candidate({ resourceIds: scenario.resourceIds }),
+    });
+    assert.equal(result.state, GOAL_BUILDING_CONTINUATION_STATES.SAFE_HOLD, scenario.name);
+    assert.equal(result.mayRequestExistingControllerContinuation, false, scenario.name);
+    assert.equal(result.mayRequestCapacityRefill, false, scenario.name);
+    assert.equal(result.continuationTarget, '', scenario.name);
+    assert.equal(result.refillTarget, '', scenario.name);
+    assert.ok(result.reasons.includes(scenario.reason), scenario.name);
+    assert.equal(result.protectedMergeAuthority, false, scenario.name);
+    assert.equal(result.runtimeMutationAuthority, false, scenario.name);
+  }
+  const distinctValid = projectStephanosGoalContinuation({
+    checkpoint: checkpoint({ leases: [original, alternate] }),
+    current: current(),
+    schedulerCandidate: candidate({ resourceIds: ['pr:2003', 'pr:2004'] }),
+  });
+  assert.equal(distinctValid.state, GOAL_BUILDING_CONTINUATION_STATES.AUTO_CONTINUE_ELIGIBLE);
+  assert.equal(distinctValid.mayRequestExistingControllerContinuation, true);
+  assert.equal(distinctValid.protectedMergeAuthority, false);
+  assert.equal(distinctValid.runtimeMutationAuthority, false);
+});
