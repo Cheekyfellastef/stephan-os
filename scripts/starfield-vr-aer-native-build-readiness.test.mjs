@@ -55,6 +55,26 @@ test('source lock, patch scope and MSVC CMake metadata qualify only isolated pre
   assert.equal(result.windowsMutationAllowed,false);
 });
 
+test('untrusted host CMake configure-script and compiler overrides fail closed', () => {
+  for (const key of [
+    'CMAKE_TOOLCHAIN_FILE', 'CMAKE_PROJECT_INCLUDE',
+    'CMAKE_PROJECT_INCLUDE_BEFORE', 'CMAKE_PROJECT_TOP_LEVEL_INCLUDES',
+    'CMAKE_USER_MAKE_RULES_OVERRIDE', 'CMAKE_C_COMPILER',
+    'CMAKE_CXX_COMPILER_LAUNCHER',
+  ]) {
+    const observation = inspect({inheritedEnvironment: {[key]: '/tmp/untrusted.cmake'}});
+    assert.equal(observation.status, 'BLOCKED', key);
+    assert.ok(observation.blockers.includes('HOST_CMAKE_EXECUTION_INPUT_PRESENT'), key);
+    assert.equal(observation.deploymentAllowed, false);
+    assert.equal(observation.sourceMutationAllowed, false);
+  }
+  const mixedCase = inspect({inheritedEnvironment: {'cmake_toolchain_file': 'escape.cmake'}});
+  assert.ok(mixedCase.blockers.includes('HOST_CMAKE_EXECUTION_INPUT_PRESENT'));
+  assert.equal(inspect({inheritedEnvironment: {CMAKE_TOOLCHAIN_FILE: ''}}).status,
+    'SOURCE_READY_FOR_SEPARATE_QUALIFIED_NATIVE_BUILD');
+  assert.equal(inspect({inheritedEnvironment: null}).status, 'BLOCKED');
+});
+
 test('missing, dirty or drifted source must hold', () => {
   for (const state of [null, {...sourceState,ok:false,clean:false}, {...sourceState,ok:false,commit:'f'.repeat(40)}]) {
     const result=inspect({sourceState:state});
