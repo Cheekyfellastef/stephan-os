@@ -100,7 +100,9 @@ export function evaluateGoalBuildingProgramme(input = {}) {
     && !uniqueBlockingReasons.some((reason) => reason.startsWith('surface-') || reason.includes('head-mismatch') || reason.includes('head-unbound'));
   const missionWorker = surfaceResult.byId.get('missionWorker');
   const workerCurrent = missionWorker
-    && SURFACE_POLICIES.missionWorker.states.includes(missionWorker.state)
+    // READY proves a responsive worker surface, not a physical or hosted pickup.
+    // Only active execution states can contribute to an actual-building claim.
+    && (missionWorker.state === 'RUNNING' || missionWorker.state === 'ACTIVE')
     && missionWorker.head === expectedHead
     && timestampVerdict(missionWorker.observedAtUtc, { ...timing, maxAgeMs: SURFACE_POLICIES.missionWorker.maxAgeMs }) === 'CURRENT';
   const isActuallyBuilding = isCapableOfBuilding
