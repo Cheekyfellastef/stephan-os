@@ -71,6 +71,46 @@ function replay(taskClass, overrides = {}) {
   };
 }
 
+test('READY ledger cannot smuggle mutation, approval or qualification authority', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const proof = [replay(OPENCLAW_TASK_CLASS.OC1)];
+  const noAuthority = {
+    sourceMutationAllowed: false,
+    runtimeMutationAllowed: false,
+    updateExecutionAllowed: false,
+    approvalAllowed: false,
+    mergeAllowed: false,
+    deploymentAllowed: false,
+    providerQualificationAllowed: false,
+    qualificationInvalidationRequired: true,
+  };
+  const evaluate = (authority) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: verified,
+    capabilityLedger: { ...ledger(), authority },
+    qualificationReplay: proof,
+  });
+  const positive = evaluate(noAuthority);
+  assert.equal(positive.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(positive.updatePromotionAllowed, true);
+
+  for (const key of [
+    'sourceMutationAllowed', 'runtimeMutationAllowed', 'updateExecutionAllowed',
+    'approvalAllowed', 'mergeAllowed', 'deploymentAllowed', 'providerQualificationAllowed',
+  ]) {
+    for (const bad of [true, 0, 'false', null, undefined]) {
+      const negative = evaluate({ ...noAuthority, [key]: bad });
+      assert.equal(negative.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE, key);
+      assert.equal(negative.updatePromotionAllowed, false, key);
+      assert.equal(negative.providerRoutingResumeAllowed, false, key);
+      assert.ok(negative.blockers.includes('CAPABILITY_LEDGER_AUTHORITY_WIDENED'), key);
+    }
+    const partial = { ...noAuthority };
+    delete partial[key];
+    assert.ok(evaluate(partial).blockers.includes('CAPABILITY_LEDGER_AUTHORITY_WIDENED'), key);
+  }
+  assert.ok(evaluate(null).blockers.includes('CAPABILITY_LEDGER_AUTHORITY_WIDENED'));
+});
+
 test('explicitly contradictory producer safety flags cannot promote a candidate', () => {
   const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
   const evidence = [replay(OPENCLAW_TASK_CLASS.OC1)];
