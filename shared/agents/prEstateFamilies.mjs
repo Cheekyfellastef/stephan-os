@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
   GENERIC_PLACEHOLDER_TITLE_KEY,
   PR_DISPOSITIONS,
@@ -80,7 +82,17 @@ export function buildFamilyMaps(families) {
 }
 
 function titleKey(title) {
-  return asText(title, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  // Exact-title custody must not erase meaning-bearing punctuation (C++, C#).
+  // Only presentation differences in Unicode composition, case, and whitespace
+  // are normalized before the stable full-title SHA-256 family identity.
+  return asText(title, '').normalize('NFC').toLowerCase().replace(/\s+/gu, ' ').trim();
+}
+
+function isGenericPlaceholderTitle(key) {
+  // Legacy Codex placeholders have distinct hyphen/underscore/space spellings.
+  // Exclude those from implicit family selection without using their lossy
+  // punctuation-folding rule for any real source-work title.
+  return key.replace(/[^a-z0-9]+/g, ' ').trim() === GENERIC_PLACEHOLDER_TITLE_KEY;
 }
 
 export function deriveImplicitFamilies(prs, familyByPr) {
@@ -88,7 +100,7 @@ export function deriveImplicitFamilies(prs, familyByPr) {
   for (const pr of prs) {
     if (familyByPr.has(pr.number)) continue;
     const key = titleKey(pr.title);
-    if (!key || key === GENERIC_PLACEHOLDER_TITLE_KEY) continue;
+    if (!key || isGenericPlaceholderTitle(key)) continue;
     const group = groups.get(key) || [];
     group.push(pr.number);
     groups.set(key, group);
@@ -99,7 +111,11 @@ export function deriveImplicitFamilies(prs, familyByPr) {
     if (members.length < 2) continue;
     members.sort((a, b) => a - b);
     const family = {
-      id: `title-${key.replace(/\s+/g, '-').slice(0, 80)}`,
+      // Use the *whole* normalized title for a stable identity across rolling OPEN-PR
+      // snapshots. A member-derived ID changes when the oldest PR closes, even when
+      // other duplicate-title family members remain open. SHA-256 also avoids the
+      // previous lossily truncated-title collision without expanding the safe ID.
+      id: `title-key-${createHash('sha256').update(key, 'utf8').digest('hex')}`,
       label: `Exact-title duplicate: ${key}`,
       members,
       canonicalPr: null,
