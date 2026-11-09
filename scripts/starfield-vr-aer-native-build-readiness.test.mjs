@@ -152,6 +152,27 @@ test('hosted VR source tests remain disjoint from the R7 SAFE_HOLD and active ga
   assert.equal(result.authority.sourceMutationAllowed, false);
 });
 
+test('ambiguous active-resource owner identities fail closed before disjoint classification', () => {
+  const protectedId='vr/2707/pinned-source-read';
+  const ambiguous=[
+    ' '+protectedId, protectedId+' ', protectedId+'\\t',
+    protectedId+'\\n', protectedId+'\\r', protectedId+'\\u200b',
+    protectedId+':shadow', protectedId+'//shadow',
+  ];
+  for(const activeId of ambiguous){
+    const result=classifyStarfieldNativeR7Isolation({activeResourceIds:[activeId]});
+    assert.equal(result.classification,'NATIVE_VR_WORK_PARKED',JSON.stringify(activeId));
+    assert.equal(result.sourceTestCandidateEligible,false);
+    assert.ok(result.blockers.includes('NATIVE_VR_RESOURCE_IDENTITY_INVALID'));
+    assert.equal(result.deploymentAllowed,false);
+  }
+  const exact=classifyStarfieldNativeR7Isolation({activeResourceIds:[protectedId]});
+  assert.ok(exact.blockers.includes('NATIVE_VR_RESOURCE_CONFLICT'));
+  assert.equal(exact.sourceTestCandidateEligible,false);
+  const safe=classifyStarfieldNativeR7Isolation({activeResourceIds:['r7/independent-safe-hold']});
+  assert.equal(safe.classification,'HOSTED_SOURCE_TEST_R7_DISJOINT');
+});
+
 test('nonhosted, native build, competing writers and forged R7 work remain parked', () => {
   const options = [
     {action:'ISOLATED_NATIVE_BUILD'},

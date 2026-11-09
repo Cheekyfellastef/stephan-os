@@ -116,8 +116,13 @@ export function classifyStarfieldNativeR7Isolation({
   originalR7LeaseState = 'UNVERIFIED',
 } = {}) {
   const blockers = [];
+  // Resource identities are protocol tokens, not free-form labels. A claim
+  // containing whitespace, controls, Unicode lookalikes or delimiters can
+  // disguise a competing owner if merely compared with exact string equality.
+  // Reject ambiguous active claims, rather than declaring hosted work disjoint.
   const strings = (value) => Array.isArray(value)
-    && value.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 120);
+    && value.every((id) => typeof id === 'string' && id.length <= 120
+      && /^[a-z0-9]+(?:[./_-][a-z0-9]+)*$/.test(id));
   // Reject malformed/duplicate/foreign resource claims rather than pretending
   // that an unrelated R7 or game-directory owner has become available.
   if (!strings(requestedResourceIds) || !strings(activeResourceIds)
