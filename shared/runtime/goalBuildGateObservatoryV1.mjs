@@ -144,15 +144,25 @@ export function projectGoalBuildGateObservatoryV1({
   const all = new Map();
   const gates = GOAL_BUILD_GATE_DEFINITIONS_V1.map(def => {
     const observed = byId.get(def.id);
+    // Preserve individually signed historical facts, but do not advertise an
+    // operational PASS until every prerequisite has an effective current PASS.
+    // An upstream FAIL, WAITING, UNVERIFIED or STALE cannot be overridden by a
+    // downstream signed PASS in this read-only operational projection.
+    const prerequisiteNotProven = def.prerequisites.find(id => all.get(id)?.status !== 'PASS');
     const priorFail = def.prerequisites.find(id =>
       ['FAIL', 'WAITING_FOR_PREREQUISITE'].includes(all.get(id)?.status));
-    const status = observed?.status || (priorFail ? 'WAITING_FOR_PREREQUISITE' : 'UNVERIFIED');
+    const status = observed?.status === 'PASS' && prerequisiteNotProven
+      ? 'WAITING_FOR_PREREQUISITE'
+      : observed?.status || (priorFail ? 'WAITING_FOR_PREREQUISITE' : 'UNVERIFIED');
     const gate = Object.freeze({
       ...def, status,
+      // Retain a signed historic observation for audit without promoting it.
+      reportedSignedStatus: observed?.status || null,
       proofRef: observed?.proofRef || '',
       observedAtUtc: observed?.observedAtUtc || '',
       typedBlocker: observed?.typedBlocker || '',
-      waitingOnGate: observed ? null : priorFail || null,
+      waitingOnGate: status === 'WAITING_FOR_PREREQUISITE'
+        ? prerequisiteNotProven || priorFail || null : null,
     });
     all.set(def.id, gate);
     return gate;

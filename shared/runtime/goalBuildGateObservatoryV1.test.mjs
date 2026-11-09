@@ -170,3 +170,54 @@ test('fresh signed envelope cannot resuscitate an expired immutable proof as gre
   assert.equal(r.observationStatus, 'UNVERIFIED');
   assert.equal(r.approvalAuthority, false);
 });
+
+
+test('signed downstream PASS cannot override a failed physical CLAIM prerequisite', () => {
+  const r = projectGoalBuildGateObservatoryV1(buildPacket([
+    observation(18, 'FAIL', 'CLAIM_HELD'), observation(19, 'PASS'),
+  ]));
+  assert.equal(r.gates[17].status, 'FAIL');
+  assert.equal(r.gates[18].status, 'WAITING_FOR_PREREQUISITE');
+  assert.equal(r.gates[18].reportedSignedStatus, 'PASS');
+  assert.equal(r.gates[18].waitingOnGate, 18);
+  assert.equal(r.counts.PASS, 0);
+  assert.equal(r.firstActionableGate, 18);
+  assert.equal(r.approvalAuthority, false);
+});
+
+test('signed final completion cannot turn GREEN without merge predecessor', () => {
+  const r = projectGoalBuildGateObservatoryV1(buildPacket([observation(23, 'PASS')]));
+  assert.equal(r.gates[22].status, 'WAITING_FOR_PREREQUISITE');
+  assert.equal(r.gates[22].reportedSignedStatus, 'PASS');
+  assert.equal(r.gates[22].waitingOnGate, 22);
+  assert.equal(r.counts.PASS, 0);
+  assert.equal(r.observationStatus, 'EVIDENCE_AVAILABLE');
+});
+
+test('a signed source-head PASS cannot bypass failed authenticated ingress', () => {
+  const r = projectGoalBuildGateObservatoryV1(buildPacket([
+    observation(1, 'FAIL', 'ROOT_HELD'), observation(2, 'PASS'),
+  ]));
+  assert.equal(r.gates[0].status, 'FAIL');
+  assert.equal(r.gates[1].status, 'WAITING_FOR_PREREQUISITE');
+  assert.equal(r.gates[1].reportedSignedStatus, 'PASS');
+  assert.equal(r.gates[1].waitingOnGate, 1);
+});
+
+test('a signed downstream failure is retained as a real veto despite missing prerequisites', () => {
+  const r = projectGoalBuildGateObservatoryV1(buildPacket([observation(19, 'FAIL', 'PICKUP_HELD')]));
+  assert.equal(r.gates[18].status, 'FAIL');
+  assert.equal(r.gates[18].reportedSignedStatus, 'FAIL');
+  assert.equal(r.firstActionableGate, 19);
+});
+
+test('fully independent signed and proof-backed prerequisite chain retains all 23 PASS', () => {
+  const r = projectGoalBuildGateObservatoryV1(buildPacket(
+    GOAL_BUILD_GATE_DEFINITIONS_V1.map(def => observation(def.id, 'PASS'))));
+  assert.equal(r.counts.PASS, 23);
+  assert.equal(r.gates[18].status, 'PASS');
+  assert.equal(r.gates[22].status, 'PASS');
+  assert.equal(r.gates[22].waitingOnGate, null);
+  assert.equal(r.diagnosticOnly, true);
+  assert.equal(r.mergeAuthority, false);
+});
