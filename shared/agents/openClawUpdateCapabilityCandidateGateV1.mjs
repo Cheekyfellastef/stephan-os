@@ -55,6 +55,18 @@ const OPTIONAL_STAGED_SAFETY = Object.freeze({
   absolutePathsPublished: false,
 });
 
+// The source ledger producer grants no mutation, approval, merge or qualification
+// authority. A self-reported READY verdict cannot override contradictory authority.
+const LEDGER_FORBIDDEN_AUTHORITY_FLAGS = Object.freeze([
+  'sourceMutationAllowed',
+  'runtimeMutationAllowed',
+  'updateExecutionAllowed',
+  'approvalAllowed',
+  'mergeAllowed',
+  'deploymentAllowed',
+  'providerQualificationAllowed',
+]);
+
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -205,6 +217,15 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   if (text(ledger.schemaVersion) !== OPENCLAW_UPDATE_CAPABILITY_LEDGER_SCHEMA) blockers.push('CAPABILITY_LEDGER_SCHEMA_MISMATCH');
   if (ledger.updateAllowed !== true || text(ledger.verdict) !== 'CAPABILITY_LEDGER_READY_FOR_CANDIDATE_PROOF') {
     blockers.push('CAPABILITY_LEDGER_NOT_READY');
+  }
+  // Older acceptance fixtures omit this envelope. Once supplied it must be a
+  // complete fail-closed no-authority record, matching the actual producer.
+  if (Object.prototype.hasOwnProperty.call(ledger, 'authority')) {
+    const ledgerAuthority = plainDataRecord(ledger.authority);
+    if (!ledgerAuthority || LEDGER_FORBIDDEN_AUTHORITY_FLAGS.some((key) =>
+      !Object.prototype.hasOwnProperty.call(ledgerAuthority, key) || ledgerAuthority[key] !== false)) {
+      blockers.push('CAPABILITY_LEDGER_AUTHORITY_WIDENED');
+    }
   }
 
   const safety = plainDataRecord(staged.safety);
