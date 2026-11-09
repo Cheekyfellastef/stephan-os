@@ -121,3 +121,21 @@ test('overlapping user clicks do not create orphaned captures and explicit stop 
   await h.client.stop();
   assert.equal(h.tracks[1].stopCount,1);
 });
+
+test('accepted window share rejects another picker until explicit Stop',async()=>{
+  const h=delayedWindowCaptureHarness(),first=h.client.shareScreen();
+  h.releasePlay();
+  assert.equal(await first,true);
+  assert.equal(h.count(),1);
+  assert.equal(h.tracks[0].readyState,'live');
+  assert.equal(await h.client.shareScreen(),false,'a duplicate click must not request another capture grant');
+  assert.equal(h.count(),1,'a live view may own only one granted browser stream');
+  assert.match(h.client.getState().inputStatus,/Stop the current shared window/);
+  assert.equal(h.tracks[0].readyState,'live','rejecting duplicate must not disrupt the active view');
+  await h.client.stop();
+  assert.equal(h.tracks[0].readyState,'ended');
+  assert.equal(await h.client.shareScreen(),true,'a new explicit click after Stop can request a fresh stream');
+  assert.equal(h.count(),2);
+  await h.client.stop();
+  assert.equal(h.tracks[1].readyState,'ended');
+});

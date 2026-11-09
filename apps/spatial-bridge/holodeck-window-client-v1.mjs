@@ -47,8 +47,10 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     }
     // A second click must not create an unowned capture during the first
     // picker, native stop, or video.play() promise.
-    if(shareAttempt?.epoch===epoch){
-      publish({inputStatus:'Finish or stop the current window-sharing request first.'});return false;
+    // Do not open a second browser picker while an accepted stream is live.
+    // Replacing a view requires a deliberate Stop and a new user grant.
+    if(sharedStream || shareAttempt?.epoch===epoch){
+      publish({inputStatus:'Stop the current shared window or pending request before sharing another.'});return false;
     }
     const startingEpoch=epoch,attempt={epoch};
     shareAttempt=attempt;
