@@ -355,3 +355,40 @@ test('cross-version promotion requires a non-empty qualification replay contract
   assert.equal(qualified.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
   assert.equal(qualified.updatePromotionAllowed, true);
 });
+
+test('staged states without complete authority preflight cannot masquerade as candidate-ready', () => {
+  // Test at the consumer boundary, not just in the staged-update producer.
+  // A post-update health gap must never appear to be a pre-update green signal.
+  const unqualifiedStatuses = [
+    OPENCLAW_STAGED_UPDATE_STATUS.APPROVAL_REQUIRED,
+    OPENCLAW_STAGED_UPDATE_STATUS.STAGING_REQUIRED,
+    OPENCLAW_STAGED_UPDATE_STATUS.POST_UPDATE_PROOF_REQUIRED,
+    'UPDATED_AND_VERIFED',
+    'PRE_UPDATE_CAPABILITY_GATE_READY',
+    undefined,
+    null,
+    '',
+  ];
+  for (const status of unqualifiedStatuses) {
+    const unsafe = staged(OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY);
+    unsafe.status = status;
+    const result = evaluateOpenClawUpdateCapabilityCandidateV1({
+      stagedUpdate: unsafe,
+      capabilityLedger: ledger([OPENCLAW_TASK_CLASS.OC1]),
+      qualificationReplay: [replay(OPENCLAW_TASK_CLASS.OC1)],
+    });
+    assert.equal(result.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE, String(status));
+    assert.ok(result.blockers.includes('STAGED_UPDATE_STATUS_NOT_CANDIDATE_READY'), String(status));
+    assert.equal(result.updatePromotionAllowed, false, String(status));
+    assert.equal(result.providerRoutingResumeAllowed, false, String(status));
+  }
+
+  // Real READY_TO_APPLY still has the existing no-authority preflight classification.
+  const ready = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: staged(OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY),
+    capabilityLedger: ledger(),
+    qualificationReplay: [],
+  });
+  assert.equal(ready.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.PRE_UPDATE_CAPABILITY_GATE_READY);
+  assert.equal(ready.updatePromotionAllowed, false);
+});
