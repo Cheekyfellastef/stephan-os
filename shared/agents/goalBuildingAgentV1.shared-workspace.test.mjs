@@ -39,6 +39,13 @@ function input(overrides = {}) {
       protectedMainHead: main,
       sourceHead: head,
       canonicalOwnerId: 'goal-building-agent',
+      leaseReadback: {
+        protectedMainHead: main, sourceHead: head, canonicalOwnerId: 'goal-building-agent',
+        observedAtUtc: new Date().toISOString(),
+        leases: [{ leaseId: 'lease-resume-1', resourceId: 'pr:2003',
+          ownerId: 'goal-building-agent', disposition: 'ACTIVE',
+          expiresAtUtc: new Date(Date.now() + 120_000).toISOString() }],
+      },
     },
     schedulerCandidate: {
       goalId: '2002',

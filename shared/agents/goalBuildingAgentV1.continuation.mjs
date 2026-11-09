@@ -51,6 +51,65 @@ function normalizeCandidate(candidate = {}) {
   });
 }
 
+
+// This is read-only eligibility, not source-lease admission. An old ACTIVE
+// checkpoint cannot prove the lease still exists. The original #1557 owner
+// must independently authenticate the same live lease before any execution.
+function currentLeaseReadbackGaps(checkpoint, candidate, current = {}) {
+  const readback = current?.leaseReadback;
+  if (!readback || typeof readback !== 'object' || Array.isArray(readback)
+    || !Array.isArray(readback.leases)) {
+    return ['continuation-current-lease-readback-unproven'];
+  }
+
+  const gaps = [];
+  const now = Date.now();
+  const observed = Date.parse(readback.observedAtUtc);
+  if (!Number.isFinite(observed) || observed > now + 30_000 || now - observed > 60_000) {
+    gaps.push('continuation-current-lease-readback-stale');
+  }
+  if (readback.protectedMainHead !== checkpoint.protectedMainHead
+    || readback.sourceHead !== checkpoint.sourceHead
+    || readback.canonicalOwnerId !== checkpoint.canonicalOwnerId) {
+    gaps.push('continuation-current-lease-readback-identity-mismatch');
+  }
+
+  const byResource = new Map();
+  const leaseIds = new Set();
+  for (const lease of readback.leases) {
+    const leaseId = lease?.leaseId;
+    const resourceId = exactResourceId(lease?.resourceId);
+    const expiresAt = Date.parse(lease?.expiresAtUtc);
+    if (typeof leaseId !== 'string' || !leaseId || safeId(leaseId) !== leaseId
+      || !resourceId || typeof lease?.ownerId !== 'string'
+      || safeId(lease.ownerId) !== lease.ownerId
+      || lease.disposition !== 'ACTIVE'
+      || !Number.isFinite(expiresAt) || expiresAt <= now) {
+      gaps.push('continuation-current-lease-record-invalid');
+    }
+    if (leaseIds.has(leaseId) || (resourceId && byResource.has(resourceId))) {
+      gaps.push('continuation-current-lease-identity-conflict');
+    }
+    leaseIds.add(leaseId);
+    if (resourceId) byResource.set(resourceId, lease);
+  }
+
+  for (const resourceId of candidate.resourceIds) {
+    const saved = list(checkpoint.leases).find((lease) =>
+      lease.resourceId === resourceId && lease.ownerId === checkpoint.canonicalOwnerId
+      && lease.disposition === 'ACTIVE');
+    const live = byResource.get(resourceId);
+    if (!saved || !live || live.leaseId !== saved.leaseId
+      || live.resourceId !== saved.resourceId
+      || live.ownerId !== saved.ownerId
+      || live.disposition !== 'ACTIVE'
+      || Date.parse(live.expiresAtUtc) <= now) {
+      gaps.push('continuation-current-active-lease-unproven');
+    }
+  }
+  return gaps;
+}
+
 // Presentation-only eligibility must never turn an unclaimed or receipt-free
 // mission into an executable continuation. The existing #1557 controller still
 // owns admission and lease acquisition; this check grants no source authority.
@@ -133,7 +192,8 @@ export function projectStephanosGoalContinuation(input = {}) {
       : GOAL_BUILDING_CONTINUATION_STATES.SAFE_HOLD;
     mayRequestCapacityRefill = exclusivelyReproof;
   } else if (evaluation.state === GOAL_BUILDING_RESUME_STATES.RESUMABLE) {
-    const proofGaps = continuationProofGaps(reconstructed.checkpoint, candidate);
+    const proofGaps = [...continuationProofGaps(reconstructed.checkpoint, candidate),
+      ...currentLeaseReadbackGaps(reconstructed.checkpoint, candidate, input.current)];
     if (proofGaps.length > 0) {
       // Only this lane is unqualified. Reproof belongs to the original owner
       // while resource-disjoint work remains available to existing refill.
