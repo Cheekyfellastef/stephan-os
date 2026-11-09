@@ -210,3 +210,33 @@ test('exact canonical lease HOLD token is required before signed custody failure
   assert.deepEqual(idsFor(canonical, false), []);
   assert.deepEqual(idsFor(''), []);
 });
+
+
+
+test('malformed numeric and prototype-name gate IDs never create action proposals', () => {
+  const invalidIds = [
+    'toString', 'constructor', '__proto__', 'hasOwnProperty', 'valueOf',
+    '7', '8', '08', -1, 0, 24, 7.5, NaN, null, {}, [],
+  ];
+  for (const id of invalidIds) {
+    const result = planCoreGateStewardV1({
+      sourceHead: head,
+      gates: [{ id, sourceHead: head, status: 'FAIL', typedBlocker: 'TEST_INVALID_GATE' }],
+    }, { nowMs });
+    assert.equal(result.decision, 'AWAIT_FRESH_GATE_PROOF', String(id));
+    assert.deepEqual(result.proposals, [], String(id));
+    assert.equal(result.nextAction, null, String(id));
+    assert.equal(result.proofKey, '', String(id));
+    assert.equal(result.autoExecuteAllowed, false, String(id));
+    assert.equal(result.approvalAuthority, false, String(id));
+  }
+  const positive = planCoreGateStewardV1({
+    sourceHead: head,
+    gates: [{ id: 8, sourceHead: head, status: 'FAIL', typedBlocker: 'TEST_CANONICAL_GATE' }],
+  }, { nowMs });
+  assert.equal(positive.decision, 'PROPOSE_EXISTING_AUTHORITY_ACTION');
+  assert.equal(positive.nextAction.gateId, 8);
+  assert.equal(positive.nextAction.action, 'REQUEST_ORIGINAL_WRITER_CUSTODY_WITNESS');
+  assert.equal(positive.nextAction.authority, 'independent-windows-custody');
+  assert.equal(positive.autoExecuteAllowed, false);
+});

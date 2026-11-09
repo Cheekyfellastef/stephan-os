@@ -76,7 +76,11 @@ export function planCoreGateStewardV1(observatory = {}, {
       && HEAD.test(observatory?.sourceHead || '')
       && g.sourceHead === observatory.sourceHead) : [];
   const actions = failures.map(gate => {
-    const policy = SAFE_GATE_ACTIONS_V1[gate.id];
+    // Only canonical numeric gate IDs can select an existing safe proposal.
+    // Prototype names and numeric strings must not inherit policy entries.
+    const policy = Number.isInteger(gate.id) && gate.id >= 1 && gate.id <= 23
+      && Object.hasOwn(SAFE_GATE_ACTIONS_V1, gate.id)
+      ? SAFE_GATE_ACTIONS_V1[gate.id] : null;
     return policy ? Object.freeze({
       gateId: gate.id, reason: gate.typedBlocker || 'GATE_EVIDENCE_BLOCKED',
       ...policy, proofRef: gate.proofRef || '',
