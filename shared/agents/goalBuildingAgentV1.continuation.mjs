@@ -90,6 +90,28 @@ export function projectStephanosGoalContinuation(input = {}) {
     reasons.push('checkpoint-lease-resource-identity-invalid');
   }
 
+  // The resume checkpoint is a current custody snapshot, not a historical
+  // event log. A lease identity cannot name two scopes or dispositions, and
+  // one resource cannot be concurrently projected under multiple leases.
+  // Refuse ambiguous snapshots rather than granting a continuation hint.
+  const observedLeaseIds = new Set();
+  const observedResources = new Set();
+  for (const lease of list(input.checkpoint?.leases)) {
+    const leaseId = lease?.leaseId;
+    const resourceId = exactResourceId(lease?.resourceId);
+    if (typeof leaseId !== 'string' || !leaseId || safeId(leaseId) !== leaseId) {
+      reasons.push('checkpoint-lease-id-invalid');
+    } else if (observedLeaseIds.has(leaseId)) {
+      reasons.push('checkpoint-lease-identity-conflict');
+    } else {
+      observedLeaseIds.add(leaseId);
+    }
+    if (resourceId) {
+      if (observedResources.has(resourceId)) reasons.push('checkpoint-lease-resource-conflict');
+      else observedResources.add(resourceId);
+    }
+  }
+
   // A scheduler candidate must prove its three principal identities before a
   // status projection can request existing-controller continuation. Omitted
   // identities are not wildcards; this grants no runtime or source authority.
