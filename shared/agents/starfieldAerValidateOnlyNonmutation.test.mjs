@@ -116,7 +116,7 @@ for (const [name, contents, accepted] of scenarios) {
           "$ErrorActionPreference = 'Stop'",
           "Set-StrictMode -Version Latest",
           helpers,
-          "function Get-Sha256([string]$Path) { return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }",
+          "function Get-Sha256([string]$Path) { return [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes($Path))).Replace('-', '').ToLowerInvariant() }",
           "function Get-Process { [CmdletBinding()] param([string]$Name) return $null }",
           ...Object.entries(paths).map(([key, file]) => "$" + key + " = " + quote(file)),
           "$expectedBaselineHash = " + quote(hash(readFileSync(paths.liveDll))),
