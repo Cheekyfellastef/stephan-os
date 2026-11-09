@@ -23,6 +23,15 @@ const FULL_SHA = /^[a-f0-9]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:/+-]{0,127}$/i;
 const SAFE_VERSION = /^[a-z0-9][a-z0-9._+-]{0,63}$/i;
 const TASK_CLASSES = new Set(Object.values(OPENCLAW_TASK_CLASS));
+// Candidate-readiness is narrower than the staged-update state universe.
+// Approval/staging/post-update-health gaps must not be reported as PRE_UPDATE_CAPABILITY_GATE_READY.
+const CANDIDATE_STAGED_STATUSES = new Set([
+  OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY,
+  OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED,
+  OPENCLAW_STAGED_UPDATE_STATUS.ROLLED_BACK_AND_VERIFIED,
+  OPENCLAW_STAGED_UPDATE_STATUS.BLOCKED_WITH_RESTORE_PATH,
+  OPENCLAW_STAGED_UPDATE_STATUS.ROLLBACK_REQUIRED,
+]);
 const INPUT_KEYS = Object.freeze(['stagedUpdate', 'capabilityLedger', 'qualificationReplay']);
 const REPLAY_KEYS = Object.freeze(['schemaVersion', 'taskClass', 'qualificationId', 'sourceHead', 'providerVersion', 'verdict', 'proofRefs']);
 const MAX_REPLAY_RECORDS = 16;
@@ -163,6 +172,7 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   const stagedStatus = text(staged.status);
   const blockers = [];
   if (text(staged.schema) !== OPENCLAW_STAGED_UPDATE_SCHEMA) blockers.push('STAGED_UPDATE_SCHEMA_MISMATCH');
+  if (!CANDIDATE_STAGED_STATUSES.has(stagedStatus)) blockers.push('STAGED_UPDATE_STATUS_NOT_CANDIDATE_READY');
   if (text(ledger.schemaVersion) !== OPENCLAW_UPDATE_CAPABILITY_LEDGER_SCHEMA) blockers.push('CAPABILITY_LEDGER_SCHEMA_MISMATCH');
   if (ledger.updateAllowed !== true || text(ledger.verdict) !== 'CAPABILITY_LEDGER_READY_FOR_CANDIDATE_PROOF') {
     blockers.push('CAPABILITY_LEDGER_NOT_READY');
