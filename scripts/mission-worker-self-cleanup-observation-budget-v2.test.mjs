@@ -18,7 +18,8 @@ test('post-authority cleanup observation consumes the existing fixed cleanup bud
 
   assert.match(runtimeSource, /\$missionWorkerCleanupTimeoutSeconds\s*=\s*10\b/);
   assert.match(observer, /\$observationDeadlineUtc\s*=\s*\[datetime\]::UtcNow\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/);
-  assert.match(observer, /\$reserveDeadlineUtc\s*=\s*\$script:operationDeadlineUtc\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/);
+  assert.doesNotMatch(observer, /\$reserveDeadlineUtc/);
+  assert.doesNotMatch(observer, /operationDeadlineUtc/);
   assert.match(observer, /\$observationOperationReserveSeconds\s*=\s*2\b/);
   assert.match(observer, /while \(\[datetime\]::UtcNow\.AddSeconds\(\$observationOperationReserveSeconds\) -lt \$observationDeadlineUtc\)/);
   assert.match(observer, /if \(\[datetime\]::UtcNow\.AddSeconds\(1\) -ge \$observationDeadlineUtc\) \{ return \$false \}/);

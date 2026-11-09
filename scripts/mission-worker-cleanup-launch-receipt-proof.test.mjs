@@ -4,16 +4,14 @@ import test from 'node:test';
 
 const source = await readFile(new URL('./windows/restart-approved-stephanos-runtime.ps1', import.meta.url), 'utf8');
 
-test('post-authority cleanup observation uses the fixed cleanup budget inside child-exit reserve', () => {
+test('post-authority cleanup observation gets a fresh fixed cleanup budget after mutation authority expires', () => {
   const observer = sliceFunction('Wait-MissionWorkerSelfCleanupObservation', 'Write-BoundedAtomicJson');
   assert.match(observer, /\$observationDeadlineUtc = \[datetime\]::UtcNow\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/);
-  assert.match(observer, /\$reserveDeadlineUtc = \$script:operationDeadlineUtc\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/);
-  assert.match(observer, /if \(\$observationDeadlineUtc -gt \$reserveDeadlineUtc\)/);
-  assert.match(observer, /\$observationDeadlineUtc = \$reserveDeadlineUtc/);
+  assert.doesNotMatch(observer, /\$reserveDeadlineUtc/);
+  assert.doesNotMatch(observer, /operationDeadlineUtc/);
   assert.match(observer, /\$observationOperationReserveSeconds = 2/);
   assert.match(observer, /while \(\[datetime\]::UtcNow\.AddSeconds\(\$observationOperationReserveSeconds\) -lt \$observationDeadlineUtc\)/);
   assert.match(observer, /if \(\[datetime\]::UtcNow\.AddSeconds\(1\) -ge \$observationDeadlineUtc\) \{ return \$false \}/);
-  assert.doesNotMatch(observer, /\$script:operationDeadlineUtc\s*=/);
 });
 
 test('self-cleanup observation requires terminal fixed task and absent canonical worker', () => {
