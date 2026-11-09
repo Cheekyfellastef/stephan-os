@@ -243,3 +243,40 @@ test('nested staged safety accessors are rejected without invoking hidden author
   assert.equal(result.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
   assert.ok(result.blockers.includes('STAGED_UPDATE_SAFETY_INVALID'));
 });
+
+test('authority flags must be explicit own boolean false before any capability promotion', () => {
+  const legitimate = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED),
+    capabilityLedger: ledger(),
+    qualificationReplay: [replay(OPENCLAW_TASK_CLASS.OC1)],
+  });
+  assert.equal(legitimate.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(legitimate.updatePromotionAllowed, true);
+
+  for (const key of ['mutationAllowed', 'sourceMutationAllowed', 'mergeAuthority', 'deploymentAuthority']) {
+    for (const variation of ['missing', undefined, null, 0, 'false', true]) {
+      const candidate = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+      if (variation === 'missing') delete candidate.safety[key];
+      else candidate.safety[key] = variation;
+      const result = evaluateOpenClawUpdateCapabilityCandidateV1({
+        stagedUpdate: candidate,
+        capabilityLedger: ledger(),
+        qualificationReplay: [replay(OPENCLAW_TASK_CLASS.OC1)],
+      });
+      assert.equal(result.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE, `${key}=${String(variation)}`);
+      assert.equal(result.updatePromotionAllowed, false, key);
+      assert.equal(result.providerRoutingResumeAllowed, false, key);
+      assert.ok(result.blockers.includes('STAGED_UPDATE_AUTHORITY_WIDENED'), key);
+    }
+  }
+
+  const noFlags = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  noFlags.safety = {};
+  const blocked = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: noFlags,
+    capabilityLedger: ledger(),
+    qualificationReplay: [replay(OPENCLAW_TASK_CLASS.OC1)],
+  });
+  assert.equal(blocked.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.ok(blocked.blockers.includes('STAGED_UPDATE_AUTHORITY_WIDENED'));
+});

@@ -168,8 +168,9 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
 
   const safety = plainDataRecord(staged.safety);
   if (!safety) blockers.push('STAGED_UPDATE_SAFETY_INVALID');
-  if (safety && (safety.mutationAllowed === true || safety.sourceMutationAllowed === true
-    || safety.mergeAuthority === true || safety.deploymentAuthority === true)) {
+  // Absence, non-boolean values and a self-reported 'false' must never imply no authority.
+  if (safety && ['mutationAllowed', 'sourceMutationAllowed', 'mergeAuthority', 'deploymentAuthority']
+    .some((key) => !Object.prototype.hasOwnProperty.call(safety, key) || safety[key] !== false)) {
     blockers.push('STAGED_UPDATE_AUTHORITY_WIDENED');
   }
 
