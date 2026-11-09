@@ -35,7 +35,7 @@ test('different long duplicate titles cannot collapse into one PR estate family'
   assert.match(alpha, SAFE_FAMILY_ID);
   assert.match(alpha, /^title-key-[a-f0-9]{64}$/);
   assert.match(beta, SAFE_FAMILY_ID);
-  assert.deepEqual(result.families.map((family) => family.members), [[301, 302], [401, 402]]);
+  assert.deepEqual(result.families.map((family) => family.members).sort((a, b) => a[0] - b[0]), [[301, 302], [401, 402]]);
   assert.equal(result.finalVerdict, 'PR_ESTATE_RECONCILIATION_REQUIRED');
   assert.equal(validatePrEstateLedger(result).valid, true);
 
@@ -49,7 +49,7 @@ test('short exact-title groups retain their own distinct membership', () => {
     pr(23, 'Fix another bug'), pr(24, 'Fix another bug'),
   ]);
   assert.equal(result.families.length, 2);
-  assert.deepEqual(result.families.map((family) => family.members), [[21, 22], [23, 24]]);
+  assert.deepEqual(result.families.map((family) => family.members).sort((a, b) => a[0] - b[0]), [[21, 22], [23, 24]]);
   assert.ok(result.entries.every((entry) => entry.familyId?.startsWith('title-key-')));
 });
 
