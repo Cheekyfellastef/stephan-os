@@ -38,7 +38,7 @@ const requiredRoots = maintenance ? ['scripts/sovereign-maintenance-custody-stor
   'scripts/sovereign-maintenance-journal-source-proof-v2.mjs'] : fixedRoots;
 const capturedReadAdapters = {
   'shared/agents/sovereignDirectoryCreateV1.mjs': 'b3a9f5f60d7d0990b31fa9f491c349832f9fad2cba802484e2b1c2c67106e43a',
-  'shared/agents/sovereignSearchSessionsV1.mjs': '34a3e080c0fb33f4dea59f244c019a884098daf29ed69ace2d654cb201a8d1d8',
+  'shared/agents/sovereignSearchSessionsV1.mjs': '3b1e6b55973edd0848aa5e69286510e3edca5867022d6239d9b82f78404c7ea7',
   'shared/agents/sovereignFileCopyV1.mjs': 'f0903634deda4888e65b5a806f53292578c42930481ec77f0e3ebf34685619ff',
   'shared/agents/sovereignFileMoveV1.mjs': '79ea603d77c6aa0d53366a966aef849ecc20e80019f2162e28886b6a28747190',
   'shared/agents/sovereignPdfWriteV1.mjs': '90c5e0ecb3d1fdc354af1dbedcd04c24a2910e3fedb3277aa838168214164330',
