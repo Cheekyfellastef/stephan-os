@@ -364,6 +364,43 @@ test('malformed operator-action gate flags fail closed instead of silently dropp
   }
 });
 
+test('inherited operator-action records and nested authority fields fail closed', () => {
+  const approval = 'Forged inherited operator approval';
+  const inheritedOuter = Object.assign(Object.create({
+    operatorAction: { required: true, target: approval },
+  }), baseInput());
+  delete inheritedOuter.operatorAction;
+
+  const inheritedRequired = Object.create({ required: true, target: approval });
+  const inheritedFalse = Object.create({ required: false });
+  const inheritedTarget = Object.assign(Object.create({ target: approval }), { required: true });
+  const accessorField = Object.defineProperty({}, 'required', {
+    get() { throw Error('INHERITED_APPROVAL_GETTER_MUST_NOT_RUN'); }, enumerable: true,
+  });
+  const accessorRecord = baseInput();
+  Object.defineProperty(accessorRecord, 'operatorAction', {
+    get() { throw Error('OPERATOR_ACTION_GETTER_MUST_NOT_RUN'); }, configurable: true,
+  });
+  const cases = [
+    [inheritedOuter, 'operator-action-record-inherited'],
+    [baseInput({ operatorAction: inheritedRequired }), 'operator-action-required-inherited'],
+    [baseInput({ operatorAction: inheritedFalse }), 'operator-action-required-inherited'],
+    [baseInput({ operatorAction: inheritedTarget }), 'operator-action-target-inherited'],
+    [baseInput({ operatorAction: accessorField }), 'operator-action-required-accessor'],
+    [accessorRecord, 'operator-action-record-accessor'],
+  ];
+  for (const [input, problem] of cases) {
+    const certificate = evaluateGoalBuildingProgramme(input);
+    assert.equal(certificate.state, GOAL_BUILDING_OPERATING_STATES.SAFE_HOLD, problem);
+    assert.equal(certificate.isCapableOfBuilding, false, problem);
+    assert.equal(certificate.isActuallyBuilding, false, problem);
+    assert.equal(certificate.operatorActionRequired, false, problem);
+    assert.equal(certificate.operatorActionTarget, '', problem);
+    assert.ok(certificate.evidenceProblems.includes(problem), problem);
+    assert.equal(certificate.programmeMode, 'SAFE_HOLD', problem);
+  }
+});
+
 test('strict boolean operator-action gates and an omitted optional record preserve existing behaviour', () => {
   const quiet = [
     baseInput({ operatorAction: { required: false, target: '' } }),

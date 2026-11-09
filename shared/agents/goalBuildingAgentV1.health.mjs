@@ -215,20 +215,33 @@ export function validateBlockers(input, timing) {
 }
 
 export function validateOperatorAction(input = {}) {
-  // Approval gates are security boundaries: a malformed supplied flag must not
-  // silently become false and make an otherwise healthy programme look green.
-  // Absent optional operatorAction remains a valid "no action published" input.
-  const supplied = Object.hasOwn(input, 'operatorAction') && input.operatorAction !== undefined;
-  const validShape = !supplied || (input.operatorAction !== null
-    && typeof input.operatorAction === 'object' && !Array.isArray(input.operatorAction));
-  const operatorAction = validShape && input.operatorAction ? input.operatorAction : {};
-  const required = operatorAction.required === true;
-  const target = boundedText(operatorAction.target, '', 280);
+  // A status projection cannot inherit an approval requirement or target
+  // through a prototype, nor execute a supplied accessor while reading it.
+  // Only data fields owned by the actual record count as operator evidence.
+  const source = Object(input);
+  const record = Object.getOwnPropertyDescriptor(source, 'operatorAction');
+  const inheritedRecord = !record && 'operatorAction' in source;
+  const accessorRecord = Boolean(record && !Object.hasOwn(record, 'value'));
+  const supplied = Boolean(record && !accessorRecord && record.value !== undefined);
+  const validShape = !accessorRecord && (!supplied || (record.value !== null
+    && typeof record.value === 'object' && !Array.isArray(record.value)));
+  const operatorAction = validShape && supplied ? record.value : {};
+  const requiredField = Object.getOwnPropertyDescriptor(operatorAction, 'required');
+  const targetField = Object.getOwnPropertyDescriptor(operatorAction, 'target');
+  const required = Boolean(requiredField && Object.hasOwn(requiredField, 'value')
+    && requiredField.value === true);
+  const target = targetField && Object.hasOwn(targetField, 'value')
+    ? boundedText(targetField.value, '', 280) : '';
   const evidenceProblems = [];
+  if (inheritedRecord) evidenceProblems.push('operator-action-record-inherited');
+  if (accessorRecord) evidenceProblems.push('operator-action-record-accessor');
   if (!validShape) evidenceProblems.push('operator-action-record-invalid');
-  if (validShape && Object.hasOwn(operatorAction, 'required') && typeof operatorAction.required !== 'boolean') {
-    evidenceProblems.push('operator-action-required-not-boolean');
-  }
+  if (!requiredField && 'required' in operatorAction) evidenceProblems.push('operator-action-required-inherited');
+  if (requiredField && !Object.hasOwn(requiredField, 'value')) evidenceProblems.push('operator-action-required-accessor');
+  if (requiredField && Object.hasOwn(requiredField, 'value')
+    && typeof requiredField.value !== 'boolean') evidenceProblems.push('operator-action-required-not-boolean');
+  if (!targetField && 'target' in operatorAction) evidenceProblems.push('operator-action-target-inherited');
+  if (targetField && !Object.hasOwn(targetField, 'value')) evidenceProblems.push('operator-action-target-accessor');
   if (required && !target) evidenceProblems.push('operator-action-target-missing');
   if (!required && target) evidenceProblems.push('operator-action-target-without-requirement');
   return Object.freeze({ required, target, evidenceProblems });
