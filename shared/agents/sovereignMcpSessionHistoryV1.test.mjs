@@ -386,3 +386,25 @@ test('dispose clears session history and cannot release custody or turn pending 
   assert.equal(history.finish('pending-record', { ok: true }).reason, 'SESSION_CLOSED');
   assert.equal(fixture().history.execute('get_recent_tool_calls', {}).retainedMatchingCalls, 0);
 });
+
+
+test('credential-shaped JSON keys cannot leak through successful private response snapshots', () => {
+  const { history } = fixture();
+  const syntheticNames = [
+    'Bearer abcdefghijklmnopqrstuvwxyz',
+    'ghp_abcdefghijklmnopqrstuvwxyz12345',
+    '-----BEGIN PRIVATE KEY-----',
+    'AKIAABCDEFGHIJKLMNOP',
+  ];
+  syntheticNames.forEach((secretKey, index) => {
+    const callId = 'synthetic-secret-name-' + index;
+    complete(history, callId, { ok: true, nested: { [secretKey]: 'ordinary value' } });
+    const response = stored(history, callId);
+    assert.equal(response.resultAvailable, false);
+    assert.equal(response.call.retentionReason, 'RESULT_SENSITIVE_KEY');
+    assert.equal(JSON.stringify(response).includes(secretKey), false);
+  });
+  complete(history, 'ordinary-name-still-retained', { ok: true, nested: { ordinaryKey: 'safe' } });
+  assert.equal(stored(history, 'ordinary-name-still-retained').resultAvailable, true);
+  assert.equal(usage(history).retainedResults, 1);
+});

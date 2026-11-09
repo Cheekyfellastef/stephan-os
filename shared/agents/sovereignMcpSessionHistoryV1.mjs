@@ -119,7 +119,8 @@ function privateSnapshot(value, maximum) {
       if (isArray && (!/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= item.length))
         refuse('RESULT_SHAPE_UNSAFE');
       const normalized = key.toLowerCase().replace(/[._-]/g, '');
-      if (SECRET_KEYS.has(key.toLowerCase()) || SECRET_KEYS.has(normalized)) refuse('RESULT_SENSITIVE_KEY');
+      if (SECRET_KEYS.has(key.toLowerCase()) || SECRET_KEYS.has(normalized) || SECRET_TEXT.test(key))
+        refuse('RESULT_SENSITIVE_KEY');
       const descriptor = Object.getOwnPropertyDescriptor(item, key);
       if (!descriptor || !Object.hasOwn(descriptor, 'value')) refuse('RESULT_SHAPE_UNSAFE');
       reserve(Buffer.byteLength(JSON.stringify(key)) + 2);
