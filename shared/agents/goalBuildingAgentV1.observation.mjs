@@ -81,6 +81,29 @@ function explicitMovement(input, worker, activeMissions) {
   });
 }
 
+// An operator approval on the active goal cannot be laundered into green BUILDING
+// by a fresh worker heartbeat. The unstructured action title is not proof of scope.
+// Only a separately recorded, lineage-bound approval blocker for a *different*
+// active mission can coexist with truthful progress on the productive mission.
+function operatorApprovalProvenDisjoint(certificate, activeMissions, productiveMissions) {
+  const approvals = list(certificate.blockers).filter(
+    (blocker) => blocker && typeof blocker === 'object' && blocker.route === 'REQUEST_EXACT_OPERATOR_APPROVAL',
+  );
+  if (approvals.length === 0) return false;
+  return approvals.every((approval) => {
+    const missionId = text(approval.missionId);
+    const goalId = text(approval.goalId);
+    if (!missionId && !goalId) return false;
+    const matches = activeMissions.filter((mission) =>
+      (!missionId || mission.missionId === missionId)
+      && (!goalId || mission.goalId === goalId));
+    if (matches.length === 0) return false;
+    return productiveMissions.every((mission) =>
+      (!missionId || mission.missionId !== missionId)
+      && (!goalId || mission.goalId !== goalId));
+  });
+}
+
 function firstProblem(certificate, worker, movementBlocker) {
   if (movementBlocker) return movementBlocker;
   if (worker.blocker) return worker.blocker;
@@ -148,6 +171,10 @@ export function projectGoalBuildingRuntimeTruth(input = {}) {
       // or authority evidence. Never project BUILDING while hard proof is invalid.
       state = GOAL_BUILDING_RUNTIME_STATES.BLOCKED;
       blocker ||= 'PROGRAMME_BUILDING_CONTRADICTION';
+    } else if (certificate.operatorActionRequired === true
+      && !operatorApprovalProvenDisjoint(certificate, activeMissions, productiveMissions)) {
+      state = GOAL_BUILDING_RUNTIME_STATES.BLOCKED;
+      blocker ||= 'PROGRAMME_OPERATOR_GATE_SCOPE_UNPROVEN';
     } else if (certificate.isActuallyBuilding === true && productiveMissions.length > 0) {
       state = GOAL_BUILDING_RUNTIME_STATES.BUILDING;
       blocker = '';
