@@ -266,6 +266,11 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
           continue;
         }
         if (capability.protected) protectedCapabilityCount += 1;
+        // A protected BLOCK_UPDATE disposition is a producer-level veto. A
+        // fabricated READY verdict must not erase that veto at this consumer.
+        if (capability.protected && text(capability.updateDisposition) === OPENCLAW_UPDATE_DISPOSITION.BLOCK_UPDATE) {
+          blockers.push('PROTECTED_CAPABILITY_BLOCKS_UPDATE');
+        }
         // The source ledger requires affected-task replay for a protected PRESERVE
         // across versions too. Unrelated successful replays cannot satisfy it.
         const requiresProtectedReplay = CHANGED_DISPOSITIONS.has(text(capability.updateDisposition))

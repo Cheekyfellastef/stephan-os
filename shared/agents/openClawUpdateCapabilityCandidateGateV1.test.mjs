@@ -114,6 +114,34 @@ test('explicitly contradictory producer safety flags cannot promote a candidate'
   assert.ok(negativePreflight.blockers.includes('STAGED_UPDATE_SAFETY_CONTRADICTION'));
 });
 
+test('forged READY ledger cannot promote a protected BLOCK_UPDATE capability', () => {
+  const updated = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const evidence = [replay(OPENCLAW_TASK_CLASS.OC1)];
+  const eligible = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: updated,
+    capabilityLedger: ledger(),
+    qualificationReplay: evidence,
+  });
+  assert.equal(eligible.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(eligible.updatePromotionAllowed, true);
+
+  const forged = ledger();
+  forged.capabilities[0] = {
+    ...forged.capabilities[0],
+    updateDisposition: OPENCLAW_UPDATE_DISPOSITION.BLOCK_UPDATE,
+    affectedTaskClasses: [],
+  };
+  const rejected = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: updated,
+    capabilityLedger: forged,
+    qualificationReplay: evidence,
+  });
+  assert.equal(rejected.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.equal(rejected.updatePromotionAllowed, false);
+  assert.equal(rejected.providerRoutingResumeAllowed, false);
+  assert.ok(rejected.blockers.includes('PROTECTED_CAPABILITY_BLOCKS_UPDATE'));
+});
+
 test('pre-update candidate gate is ready but grants no execution authority', () => {
   const result = evaluateOpenClawUpdateCapabilityCandidateV1({
     stagedUpdate: staged(),
