@@ -154,3 +154,78 @@ test('a complete original-owner handoff preserves all five strict custody guards
     assert.equal(body.constraints[field], true, field);
   }
 });
+
+test('handoff rejects forged continuation identities while preserving original valid record', () => {
+  const canonical = input();
+  const record = createGoalBuildingSharedWorkspaceContinuationRecord(canonical);
+  assert.equal(validateGoalBuildingSharedWorkspaceContinuationRecord({ ...canonical, record }).valid, true);
+  for (const [field, altered, reason] of [
+    ['missionId', 'foreign-mission', 'handoff-mission-identity-mismatch'],
+    ['goalId', 'foreign-goal', 'handoff-goal-identity-mismatch'],
+    ['canonicalOwnerId', 'foreign-owner', 'handoff-owner-identity-mismatch'],
+    ['checkpointId', 'foreign-checkpoint', 'handoff-checkpoint-identity-mismatch'],
+    ['protectedMainHead', '4'.repeat(40), 'handoff-main-identity-mismatch'],
+    ['sourceHead', '5'.repeat(40), 'handoff-source-identity-mismatch'],
+  ]) {
+    const body = JSON.parse(record.body);
+    body.continuation[field] = altered;
+    const result = validateGoalBuildingSharedWorkspaceContinuationRecord({
+      ...canonical, record: { ...record, body: JSON.stringify(body) },
+    });
+    assert.equal(result.valid, false, field);
+    assert.ok(result.reasons.includes(reason), field);
+  }
+});
+
+test('handoff cannot redirect canonical controller targets or receipt recipient', () => {
+  const canonical = input();
+  const record = createGoalBuildingSharedWorkspaceContinuationRecord(canonical);
+  for (const field of ['scheduler', 'continuityController', 'capacityRefill', 'goalBuildingAgent']) {
+    const body = JSON.parse(record.body);
+    body.canonicalTargets[field] = 'other-controller';
+    const result = validateGoalBuildingSharedWorkspaceContinuationRecord({
+      ...canonical, record: { ...record, body: JSON.stringify(body) },
+    });
+    assert.equal(result.valid, false, field);
+    assert.ok(result.reasons.includes(`handoff-canonical-target-mismatch:${field}`), field);
+  }
+  const wrongRecipient = validateGoalBuildingSharedWorkspaceContinuationRecord({
+    ...canonical, record: { ...record, toParticipantId: 'other-controller' },
+  });
+  assert.equal(wrongRecipient.valid, false);
+  assert.ok(wrongRecipient.reasons.includes('handoff-receiver-identity-mismatch'));
+
+  for (const altered of ['EXISTING_OTHER_CONTROLLER', '']) {
+    const body = JSON.parse(record.body);
+    body.continuation.continuationTarget = altered;
+    const result = validateGoalBuildingSharedWorkspaceContinuationRecord({
+      ...canonical, record: { ...record, body: JSON.stringify(body) },
+    });
+    assert.equal(result.valid, false);
+    assert.ok(result.reasons.includes('handoff-continuity-controller-target-invalid'));
+  }
+});
+
+test('original checkpoint branch PR lease and source bindings cannot be changed by the record', () => {
+  const canonical = input();
+  const record = createGoalBuildingSharedWorkspaceContinuationRecord(canonical);
+  for (const [field, altered] of [
+    ['branch', 'foreign-branch'],
+    ['prNumber', 2999],
+    ['repository', 'foreign/repo'],
+    ['sourceTree', '7'.repeat(40)],
+    ['leases', [{ leaseId: 'lease-foreign', resourceId: 'pr:2999', ownerId: 'foreign-owner', disposition: 'ACTIVE' }]],
+    ['allowedPaths', ['foreign-source.mjs']],
+  ]) {
+    const body = JSON.parse(record.body);
+    body.checkpoint[field] = altered;
+    const result = validateGoalBuildingSharedWorkspaceContinuationRecord({
+      ...canonical, record: { ...record, body: JSON.stringify(body) },
+    });
+    assert.equal(result.valid, false, field);
+    assert.ok(result.reasons.includes(`handoff-original-checkpoint-mismatch:${field}`), field);
+  }
+  const unbound = validateGoalBuildingSharedWorkspaceContinuationRecord({ record });
+  assert.equal(unbound.valid, false);
+  assert.ok(unbound.reasons.includes('handoff-original-checkpoint-reference-unproven'));
+});
