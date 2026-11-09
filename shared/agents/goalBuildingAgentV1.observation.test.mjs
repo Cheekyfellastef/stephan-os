@@ -172,6 +172,7 @@ test('mismatched explicit movement identity does not count as progress', () => {
     executionMovement: {
       observedAtUtc: '2026-08-28T09:29:59.000Z',
       missionId: 'mission-1',
+      goalId: 'goal-1',
       taskId: 'task-1',
       receiptId: 'receipt-other',
       description: 'Tests advanced.',
@@ -430,4 +431,116 @@ test('unbound structured review gate fails closed even when summary does not dec
   });
   assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BLOCKED);
   assert.equal(result.blocker, 'PROGRAMME_BLOCKER_SCOPE_UNPROVEN');
+});
+
+test('fresh unbound execution timestamps cannot revive an otherwise stalled mission', () => {
+  const complete = {
+    observedAtUtc: '2026-08-28T09:29:59.000Z',
+    missionId: 'mission-1',
+    goalId: 'goal-1',
+    taskId: 'task-1',
+    receiptId: 'receipt-1',
+  };
+  for (const [missing, expectedBlocker] of [
+    ['missionId', 'MEANINGFUL_MOVEMENT_MISSION_UNPROVEN'],
+    ['goalId', 'MEANINGFUL_MOVEMENT_GOAL_UNPROVEN'],
+    ['taskId', 'MEANINGFUL_MOVEMENT_TASK_UNPROVEN'],
+    ['receiptId', 'MEANINGFUL_MOVEMENT_RECEIPT_UNPROVEN'],
+  ]) {
+    const executionMovement = { ...complete };
+    delete executionMovement[missing];
+    const result = projectGoalBuildingRuntimeTruth({
+      certificate: certificate({ activeMissions: [mission({ lastProgressAtUtc: '2026-08-28T09:20:00.000Z' })] }),
+      workerBeacon: runningBeacon(),
+      executionMovement,
+      nowMs,
+    });
+    assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.ALIVE_BUT_STALLED, missing);
+    assert.equal(result.stallReason, expectedBlocker, missing);
+    assert.equal(result.proofBasis.explicitMovementIdentityAccepted, false, missing);
+    assert.equal(result.buildingProven, false, missing);
+  }
+});
+
+test('an explicit movement with wrong goal or nonproductive mission cannot prove BUILDING', () => {
+  const stale = mission({ lastProgressAtUtc: '2026-08-28T09:20:00.000Z' });
+  const baseMovement = {
+    observedAtUtc: '2026-08-28T09:29:59.000Z',
+    missionId: 'mission-1',
+    goalId: 'goal-1',
+    taskId: 'task-1',
+    receiptId: 'receipt-1',
+  };
+  const scenarios = [
+    ['contradictory goal lineage', { ...baseMovement, goalId: 'goal-other' }, 'MEANINGFUL_MOVEMENT_GOAL_MISMATCH'],
+    ['unknown mission', { ...baseMovement, missionId: 'mission-other' }, 'MEANINGFUL_MOVEMENT_MISSION_MISMATCH'],
+    ['waiting-mission substitution', { ...baseMovement, missionId: 'mission-2', goalId: 'goal-2' }, 'MEANINGFUL_MOVEMENT_MISSION_NOT_PRODUCTIVE'],
+  ];
+  for (const [label, executionMovement, expectedBlocker] of scenarios) {
+    const result = projectGoalBuildingRuntimeTruth({
+      certificate: certificate({
+        activeMissions: [
+          stale,
+          mission({ missionId: 'mission-2', goalId: 'goal-2', phase: 'WAITING_FOR_OPERATOR', lastProgressAtUtc: '2026-08-28T09:20:00.000Z' }),
+        ],
+      }),
+      workerBeacon: runningBeacon(),
+      executionMovement,
+      nowMs,
+    });
+    assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.ALIVE_BUT_STALLED, label);
+    assert.equal(result.stallReason, expectedBlocker, label);
+    assert.equal(result.proofBasis.explicitMovementIdentityAccepted, false, label);
+    assert.equal(result.buildingProven, false, label);
+  }
+});
+
+test('duplicate mission identity cannot turn one explicit progress event into BUILDING', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({
+      activeMissions: [
+        mission({ lastProgressAtUtc: '2026-08-28T09:20:00.000Z' }),
+        mission({ lastProgressAtUtc: '2026-08-28T09:19:00.000Z' }),
+      ],
+    }),
+    workerBeacon: runningBeacon(),
+    executionMovement: {
+      observedAtUtc: '2026-08-28T09:29:59.000Z',
+      missionId: 'mission-1',
+      goalId: 'goal-1',
+      taskId: 'task-1',
+      receiptId: 'receipt-1',
+    },
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.ALIVE_BUT_STALLED);
+  assert.equal(result.stallReason, 'MEANINGFUL_MOVEMENT_MISSION_MISMATCH');
+  assert.equal(result.buildingProven, false);
+});
+
+test('fully bound fresh movement on another productive mission preserves accurate current identity', () => {
+  const result = projectGoalBuildingRuntimeTruth({
+    certificate: certificate({
+      activeMissions: [
+        mission({ lastProgressAtUtc: '2026-08-28T09:20:00.000Z' }),
+        mission({ missionId: 'mission-2', goalId: 'goal-2', phase: 'TEST', lastProgressAtUtc: '2026-08-28T09:19:00.000Z' }),
+      ],
+    }),
+    workerBeacon: runningBeacon(),
+    executionMovement: {
+      observedAtUtc: '2026-08-28T09:29:59.000Z',
+      missionId: 'mission-2',
+      goalId: 'goal-2',
+      taskId: 'task-1',
+      receiptId: 'receipt-1',
+      description: 'Exact productive test evidence advanced.',
+    },
+    nowMs,
+  });
+  assert.equal(result.state, GOAL_BUILDING_RUNTIME_STATES.BUILDING);
+  assert.equal(result.buildingProven, true);
+  assert.equal(result.currentMissionId, 'mission-2');
+  assert.equal(result.currentGoalId, 'goal-2');
+  assert.equal(result.proofBasis.explicitMovementIdentityAccepted, true);
+  assert.equal(result.proofBasis.meaningfulMovementSource, 'execution-movement');
 });
