@@ -308,6 +308,6 @@ export function projectGoalBuildConveyorV1(goals = []) {
     blockedCount: journeys.filter((journey) => journey.stages.some((stage) => stage.blocked)).length,
     exactTrackBoundCount: journeys.filter((journey) => journey.exactAutonomyTrackBound).length,
     currentStageCounts: Object.freeze(currentStageCounts),
-    truthBoundary: 'This read-only logical projection never converts autonomy PASS gates into physical STARTED, BUILDING or completed proof. A separate verified exact-goal native receipt is required; no scheduler, controller, worker, queue or authority is created.',
+    truthBoundary: 'This read-only projection of logical autonomy gates never converts PASS into physical STARTED, BUILDING or completed proof. A separate verified exact-goal native receipt is required; no scheduler, controller, worker, queue or authority is created.',
   });
 }
