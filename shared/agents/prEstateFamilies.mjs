@@ -99,7 +99,9 @@ export function deriveImplicitFamilies(prs, familyByPr) {
     if (members.length < 2) continue;
     members.sort((a, b) => a - b);
     const family = {
-      id: `title-${key.replace(/\s+/g, '-').slice(0, 80)}`,
+      // Group identity comes from an actual unique member, never a lossy title prefix.
+      // Distinct long duplicate-title groups must not share an estate family ID.
+      id: `title-pr-${members[0]}`,
       label: `Exact-title duplicate: ${key}`,
       members,
       canonicalPr: null,
