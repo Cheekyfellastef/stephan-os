@@ -98,6 +98,13 @@ export function evaluateGoalBuildResumeCheckpoint(checkpoint, current = {}) {
   const currentOwnerId = safeId(current.canonicalOwnerId);
   const competingOwnerId = safeId(current.competingOwnerId);
 
+  // A checkpoint's historical identity is not evidence of the live branch,
+  // protected main, or current canonical writer. Missing or malformed live
+  // observations must not promote a stale continuation to RESUMABLE.
+  if (!currentProtectedMain) reasons.push('current-protected-main-head-unproven');
+  if (!currentSourceHead) reasons.push('current-source-head-unproven');
+  if (!currentOwnerId) reasons.push('current-canonical-owner-unproven');
+
   if (currentProtectedMain && currentProtectedMain !== checkpoint?.protectedMainHead) reasons.push('protected-main-moved-reprove-required');
   if (currentSourceHead && currentSourceHead !== checkpoint?.sourceHead) reasons.push('source-head-moved-reprove-required');
   if (currentOwnerId && currentOwnerId !== checkpoint?.canonicalOwnerId) reasons.push('canonical-owner-changed');
