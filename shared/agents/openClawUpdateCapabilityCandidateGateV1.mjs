@@ -5,6 +5,8 @@ import {
 import {
   OPENCLAW_TASK_CLASS,
   OPENCLAW_UPDATE_CAPABILITY_LEDGER_SCHEMA,
+  OPENCLAW_UPDATE_CAPABILITY_LEDGER_MAX_CAPABILITIES,
+  OPENCLAW_UPDATE_DISPOSITION,
 } from './openClawUpdateCapabilityLedgerV1.mjs';
 
 export const OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_GATE_SCHEMA = 'stephanos.openclaw-update-capability-candidate-gate.v1';
@@ -23,6 +25,12 @@ const FULL_SHA = /^[a-f0-9]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:/+-]{0,127}$/i;
 const SAFE_VERSION = /^[a-z0-9][a-z0-9._+-]{0,63}$/i;
 const TASK_CLASSES = new Set(Object.values(OPENCLAW_TASK_CLASS));
+const VALID_DISPOSITIONS = new Set(Object.values(OPENCLAW_UPDATE_DISPOSITION));
+const CHANGED_DISPOSITIONS = new Set([
+  OPENCLAW_UPDATE_DISPOSITION.MIGRATE,
+  OPENCLAW_UPDATE_DISPOSITION.IMPROVE,
+  OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM,
+]);
 // Candidate-readiness is narrower than the staged-update state universe.
 // Approval/staging/post-update-health gaps must not be reported as PRE_UPDATE_CAPABILITY_GATE_READY.
 const CANDIDATE_STAGED_STATUSES = new Set([
@@ -218,6 +226,32 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   // enforce that invariant again at the promotion consumer boundary.
   if (currentVersion && targetVersion && currentVersion !== targetVersion && required.length === 0) {
     blockers.push('CROSS_VERSION_QUALIFICATION_REPLAY_REQUIRED');
+  }
+  // Producer/consumer parity: a same-version protected implementation change also
+  // needs its affected task classes replayed. Never infer an empty replay contract
+  // solely from currentVersion === targetVersion or an unverified "ready" verdict.
+  // Only post-update promotion requires this expanded ledger evidence; earlier
+  // preflight/rollback classifications grant no capability-promotion authority.
+  if (stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED) {
+    const capabilities = denseArray(ledger.capabilities, OPENCLAW_UPDATE_CAPABILITY_LEDGER_MAX_CAPABILITIES);
+    if (!capabilities || capabilities.length === 0) blockers.push('CAPABILITY_LEDGER_CAPABILITIES_UNPROVEN');
+    else {
+      for (const raw of capabilities) {
+        const capability = plainDataRecord(raw);
+        if (!capability || typeof capability.protected !== 'boolean'
+          || !VALID_DISPOSITIONS.has(text(capability.updateDisposition))) {
+          blockers.push('CAPABILITY_LEDGER_CAPABILITY_INVALID');
+          continue;
+        }
+        if (capability.protected && CHANGED_DISPOSITIONS.has(text(capability.updateDisposition))) {
+          const affected = denseArray(capability.affectedTaskClasses, MAX_PROOF_REFS);
+          if (!affected || affected.length === 0 || affected.some((taskClass) =>
+            !TASK_CLASSES.has(text(taskClass)) || !required.includes(text(taskClass)))) {
+            blockers.push('PROTECTED_CAPABILITY_REPLAY_CONTRACT_INVALID');
+          }
+        }
+      }
+    }
   }
 
   if (blockers.length) return blocked(blockers, stagedStatus || null);
