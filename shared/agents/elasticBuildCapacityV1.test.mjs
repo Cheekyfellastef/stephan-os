@@ -53,6 +53,48 @@ test('capacity evidence fails closed below the five-lane baseline without imposi
   assert.ok(degraded.reasonCodes.includes('BASELINE_CAPACITY_SHORTFALL'));
 });
 
+// Goal #2002: supplied policy limits are authority-bearing bounds, not hints.
+// Before this correction malformed maximumLanes silently selected MAX_SAFE_INTEGER.
+test('malformed supplied elastic policy limits fail closed rather than silently widening capacity', () => {
+  const base = { activeLaneCount:2, readyIndependentWorkCount:10, availableExecutorSlots:20 };
+  for (const supplied of [
+    { maximumLanes:-1 }, { maximumLanes:null }, { maximumLanes:'8' },
+    { maximumLanes:2 ** 53 }, { minimumLanes:null }, { minimumLanes:'5' },
+  ]) {
+    const held = deriveElasticBuildWidth({ ...base, ...supplied });
+    assert.equal(held.status, 'SAFE_HOLD_INVALID_CAPACITY', JSON.stringify(supplied));
+    assert.equal(held.scaleAction, 'SAFE_HOLD');
+    assert.equal(held.desiredWidth, 0);
+    assert.equal(held.remainingAdmissionSlots, 0);
+    assert.ok(held.reasonCodes.includes('INVALID_CAPACITY_EVIDENCE'));
+  }
+  const valid = deriveElasticBuildWidth({ ...base, maximumLanes:8 });
+  assert.equal(valid.status, 'RUNNING');
+  assert.equal(valid.desiredWidth, 8);
+  assert.equal(valid.remainingAdmissionSlots, 6);
+  assert.equal(deriveElasticBuildWidth(base).desiredWidth, 12);
+});
+
+test('combined elastic demand exceeding safe integer precision cannot certify a lane width', () => {
+  const held = deriveElasticBuildWidth({
+    activeLaneCount:Number.MAX_SAFE_INTEGER,
+    readyIndependentWorkCount:1,
+    availableExecutorSlots:Number.MAX_SAFE_INTEGER,
+  });
+  assert.equal(held.status, 'SAFE_HOLD_INVALID_CAPACITY');
+  assert.equal(held.scaleAction, 'SAFE_HOLD');
+  assert.equal(held.desiredWidth, 0);
+  assert.ok(held.reasonCodes.includes('INVALID_CAPACITY_EVIDENCE'));
+  const exact = deriveElasticBuildWidth({
+    activeLaneCount:Number.MAX_SAFE_INTEGER - 1,
+    readyIndependentWorkCount:1,
+    availableExecutorSlots:Number.MAX_SAFE_INTEGER,
+  });
+  assert.equal(exact.status, 'RUNNING');
+  assert.equal(exact.desiredWidth, Number.MAX_SAFE_INTEGER);
+  assert.equal(exact.remainingAdmissionSlots, 1);
+});
+
 test('resource selection admits more than sixteen proven disjoint candidates when capacity exists', () => {
   const candidates = Array.from({ length:24 }, (_, index) => ({
     candidateId:`goal-wide-${index + 1}`,
