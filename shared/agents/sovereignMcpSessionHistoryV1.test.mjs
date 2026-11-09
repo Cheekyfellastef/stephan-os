@@ -459,3 +459,24 @@ test('prefixed and camel-case credential field aliases cannot enter private sess
   assert.equal(stored(history, 'ordinary-structured-result').resultAvailable, true);
   assert.equal(usage(history).retainedResults, 1);
 });
+
+
+test('authentication key and header aliases cannot hide credentials in private result keys', () => {
+  const { history } = fixture();
+  const credentialFields = [
+    'X-Auth-Key', 'xAuthKey', 'ProxyAuthHeader',
+    'authenticationHeader', 'service_auth_headers', 'X-Authentication-Key',
+  ];
+  credentialFields.forEach((field, index) => {
+    const callId = 'auth-key-alias-' + index;
+    complete(history, callId, { ok: true, nested: { [field]: 'ordinary-looking-value' } });
+    const response = stored(history, callId);
+    assert.equal(response.resultAvailable, false, field);
+    assert.equal(response.call.retentionReason, 'RESULT_SENSITIVE_KEY', field);
+    assert.equal(JSON.stringify(response).includes(field), false, field);
+  });
+  complete(history, 'ordinary-auth-status', {
+    ok: true, nested: { authStatus: 'READY', authenticationState: 'VERIFIED', authMode: 'local' },
+  });
+  assert.equal(stored(history, 'ordinary-auth-status').resultAvailable, true);
+});

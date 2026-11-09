@@ -48,7 +48,11 @@ function sensitiveResultKey(key) {
   return words.some((word, index) => SENSITIVE_RESULT_KEY_WORDS.has(word)
     || (word === 'api' && ['key', 'keys'].includes(words[index + 1]))
     || (word === 'access' && word !== words[index + 1] && words[index + 1] === 'key')
-    || (word === 'private' && words[index + 1] === 'key'));
+    || (word === 'private' && words[index + 1] === 'key')
+    // Authentication key/header aliases carry credentials even if the value
+    // lacks a recognizable token prefix. Do not reject safe authStatus fields.
+    || (['auth', 'authentication'].includes(word)
+      && ['key', 'keys', 'header', 'headers'].includes(words[index + 1])));
 }
 const MAX_NODES = 4096, MAX_DEPTH = 12;
 const freeze = value => Object.freeze(value);
