@@ -126,3 +126,59 @@ test('stalled runtime truth overrides a falsely green programme certificate in Q
   assert.equal(result.isActuallyBuilding, false);
   assert.match(result.answer, /^No\. The Mission Worker is alive but stalled/);
 });
+
+test('inconsistent runtime BUILDING claims cannot turn the Q&A or shared status green', () => {
+  const unprovenRuntime = {
+    state: GOAL_BUILDING_RUNTIME_STATES.BUILDING,
+    buildingProven: false,
+    currentGoalId: 'goal-runtime-1',
+    currentPhase: 'publishing-proof',
+    secondsSinceMeaningfulMovement: 10,
+    blocker: 'WORKER_PICKUP_UNPROVEN',
+  };
+  const response = answerGoalBuildingQuestion({
+    question: 'Is Stephanos actually building now?',
+    certificate: certificate(),
+    runtimeTruth: unprovenRuntime,
+  });
+  assert.equal(response.runtimeTruthState, GOAL_BUILDING_RUNTIME_STATES.BUILDING);
+  assert.equal(response.isActuallyBuilding, false);
+  assert.match(response.answer, /^No\\. BUILDING is not physically proven/);
+
+  const records = createGoalBuildingAgentWorkspaceRecords({
+    certificate: certificate(),
+    runtimeTruth: unprovenRuntime,
+    timestampUtc,
+    validationOptions: { nowMs },
+    proofRefs: ['evidence/receipts/mission-worker-heartbeat-current.json'],
+  });
+  const status = JSON.parse(records.status.body);
+  assert.equal(status.isActuallyBuilding, false);
+  assert.match(records.status.summary, /^No\\. BUILDING is not physically proven/);
+});
+
+test('neither a contrary programme certificate nor a contrary runtime state can prove BUILDING', () => {
+  const claimedBuilding = {
+    state: GOAL_BUILDING_RUNTIME_STATES.BUILDING,
+    buildingProven: true,
+    currentGoalId: 'goal-runtime-1',
+    currentPhase: 'publishing-proof',
+    secondsSinceMeaningfulMovement: 10,
+  };
+  const disprovenCertificate = { ...certificate(), isActuallyBuilding: false, summary: 'Physical pickup unproven.' };
+  const notCertified = answerGoalBuildingQuestion({
+    question: 'What is building now?',
+    certificate: disprovenCertificate,
+    runtimeTruth: claimedBuilding,
+  });
+  assert.equal(notCertified.isActuallyBuilding, false);
+  assert.match(notCertified.answer, /^No\\. BUILDING is not physically proven/);
+
+  const contraryState = answerGoalBuildingQuestion({
+    question: 'Is Stephanos actually building?',
+    certificate: certificate(),
+    runtimeTruth: { ...claimedBuilding, state: GOAL_BUILDING_RUNTIME_STATES.BLOCKED, blocker: 'LEASE_UNPROVEN' },
+  });
+  assert.equal(contraryState.isActuallyBuilding, false);
+  assert.match(contraryState.answer, /^No\\. Goal building is BLOCKED/);
+});
