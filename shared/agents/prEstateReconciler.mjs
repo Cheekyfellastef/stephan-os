@@ -53,7 +53,12 @@ export function buildPrEstateLedger(input = {}) {
   const { byId: explicitFamiliesById, byPr: explicitFamilyByPr } = buildFamilyMaps(input.families || []);
   const implicitFamilyByPr = deriveImplicitFamilies(normalizedPrs, explicitFamilyByPr);
   const allFamiliesById = new Map(explicitFamiliesById);
-  for (const family of implicitFamilyByPr.values()) allFamiliesById.set(family.id, family);
+  for (const family of new Set(implicitFamilyByPr.values())) {
+    if (allFamiliesById.has(family.id)) {
+      throw new Error(`duplicate PR estate family id: ${family.id}`);
+    }
+    allFamiliesById.set(family.id, family);
+  }
 
   const entries = normalizedPrs.map((pr) => {
     const family = Number.isInteger(pr.number)

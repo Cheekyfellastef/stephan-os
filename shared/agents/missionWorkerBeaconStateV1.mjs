@@ -21,44 +21,47 @@ function text(value, limit = 180) {
 function safeSha(value) {
   // Validate the complete supplied identity before bounding presentation.
   // Truncating to 40 first silently accepts a spoofed SHA prefix.
-  const normalized = String(value ?? '').trim().toLowerCase();
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim().toLowerCase();
   return SHA.test(normalized) ? normalized : '';
 }
 
 function safeId(value) {
   // Validate the complete normalized execution identity before any presentation limit.
   // Prefix truncation can turn an unsafe receipt/task into false BUILDING proof.
-  const normalized = String(value ?? '').trim();
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim();
   return SAFE_ID.test(normalized) ? normalized : '';
 }
 
 function safePhase(value) {
   // The bounded SAFE_PHASE expression already enforces the full length contract.
-  const normalized = String(value ?? '').trim();
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim();
   return SAFE_PHASE.test(normalized) ? normalized : '';
 }
 
 function observedAt(record = {}) {
-  const value = text(
-    record.timestampUtc
+  const supplied = record.timestampUtc
     || record.observedAtUtc
     || record.heartbeatAt
-    || record.updatedAtUtc,
-  );
-  const parsed = Date.parse(value);
+    || record.updatedAtUtc;
+  // Only an actual source-supplied string may qualify a worker timestamp.
+  // Date.parse(String(arrayOrObject)) could manufacture a fresh heartbeat.
+  if (typeof supplied !== 'string') return '';
+  const parsed = Date.parse(supplied.trim());
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : '';
 }
 
 function rawWorkerState(record = {}) {
-  return text(
-    record.workerState
+  const supplied = record.workerState
     || record.lastTickVerdict
     || record.status
     || record.state
     || record.phase
-    || 'UNKNOWN',
-    120,
-  ).toUpperCase();
+    || 'UNKNOWN';
+  if (typeof supplied !== 'string') return 'UNKNOWN';
+  return text(supplied, 120).toUpperCase();
 }
 
 export function projectMissionWorkerBeaconState(record = {}, {

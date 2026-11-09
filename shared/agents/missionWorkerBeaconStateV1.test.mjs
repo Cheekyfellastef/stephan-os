@@ -173,3 +173,51 @@ test('maximum valid full-length worker identities retain legitimate running proo
   assert.equal(state.buildingProven, true);
   assert.equal(state.blocker, '');
 });
+
+test('Goal #2961: non-string worker identities cannot be coerced into false BUILDING', () => {
+  const ordinary = heartbeat({
+    lastTickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+    activeTaskId: 'task-1', activeReceiptId: 'receipt-1',
+    executionPhase: 'source-build',
+  });
+  const baseline = projectMissionWorkerBeaconState(ordinary, { nowMs: NOW, expectedHead: HEAD });
+  assert.equal(baseline.buildingProven, true);
+  const adversarial = [
+    ['activeTaskId-array', { activeTaskId: ['task-1'] }],
+    ['activeReceiptId-array', { activeReceiptId: ['receipt-1'] }],
+    ['executionPhase-array', { executionPhase: ['source-build'] }],
+    ['headSha-array', { headSha: [HEAD] }],
+    ['timestampUtc-array', { timestampUtc: ['2026-08-26T18:44:55.000Z'] }],
+    ['activeTaskId-number', { activeTaskId: 123 }],
+    ['activeReceiptId-boolean', { activeReceiptId: true }],
+    ['lastTickVerdict-array', { lastTickVerdict: ['MISSION_WORKER_TICK_RUNNING'] }],
+    ['executionPhase-object', { executionPhase: { value: 'source-build' } }],
+  ];
+  for (const [label, change] of adversarial) {
+    const result = projectMissionWorkerBeaconState({ ...ordinary, ...change },
+      { nowMs: NOW, expectedHead: HEAD });
+    assert.equal(result.buildingProven, false, label);
+    assert.equal(result.falseBuildingRejected, true, label);
+    assert.notEqual(result.blocker, '', label);
+  }
+  const wrongExpected = projectMissionWorkerBeaconState(ordinary,
+    { nowMs: NOW, expectedHead: [HEAD] });
+  assert.equal(wrongExpected.buildingProven, false);
+  assert.equal(wrongExpected.exactHeadMatch, false);
+});
+
+test('Goal #2961: hostile object coercion is never called for trusted worker fields', () => {
+  const hostile = { toString() { throw new Error('Untrusted coercion executed'); } };
+  const valid = heartbeat({
+    lastTickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+    activeTaskId: 'task-1', activeReceiptId: 'receipt-1',
+    executionPhase: 'source-build',
+  });
+  for (const key of ['headSha', 'activeTaskId', 'activeReceiptId',
+    'executionPhase', 'timestampUtc', 'lastTickVerdict']) {
+    const result = projectMissionWorkerBeaconState({ ...valid, [key]: hostile },
+      { nowMs: NOW, expectedHead: HEAD });
+    assert.equal(result.buildingProven, false, key);
+    assert.equal(result.falseBuildingRejected, true, key);
+  }
+});
