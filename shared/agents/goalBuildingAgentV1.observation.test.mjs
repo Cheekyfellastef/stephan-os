@@ -5,6 +5,7 @@ import {
   GOAL_BUILDING_RUNTIME_STATES,
   projectGoalBuildingRuntimeTruth,
 } from './goalBuildingAgentV1.observation.mjs';
+import { evaluateGoalBuildingProgramme } from './goalBuildingAgentV1.evaluator.mjs';
 
 const head = 'a'.repeat(40);
 const otherHead = 'b'.repeat(40);
@@ -543,4 +544,72 @@ test('fully bound fresh movement on another productive mission preserves accurat
   assert.equal(result.currentGoalId, 'goal-2');
   assert.equal(result.proofBasis.explicitMovementIdentityAccepted, true);
   assert.equal(result.proofBasis.meaningfulMovementSource, 'execution-movement');
+});
+
+test('a READY worker cannot certify active building in source-only or physical reporting', () => {
+  for (const physicalExecutionRequired of [false, true]) {
+    const physicalSurfaces = physicalExecutionRequired
+      ? ['battleBridge', 'ignition', 'recoveryMesh', 'mailbox'].map((id) => ({ id, state: 'READY' }))
+      : [];
+    const surfaces = [
+      { id: 'sourceSync', state: 'SYNC_NO_CHANGE' },
+      { id: 'scheduler', state: 'ACTIVE' },
+      { id: 'continuityController', state: 'ACTIVE' },
+      { id: 'missionWorker', state: 'READY' },
+      { id: 'providerRouter', state: 'ROUTING' },
+      { id: 'proofRoute', state: 'READY' },
+      { id: 'reviewRoute', state: 'READY' },
+      { id: 'statusFabric', state: 'READY' },
+      ...physicalSurfaces,
+    ].map((surface) => ({
+      ...surface,
+      head,
+      observedAtUtc: '2026-08-28T09:29:55.000Z',
+      blocker: '',
+    }));
+    const input = {
+      expectedHead: head,
+      protectedMainHead: head,
+      installedMainHead: head,
+      physicalExecutionRequired,
+      surfaces,
+      programme: {
+        activeMissions: [mission()],
+        eligibleQueuedGoalCount: 0,
+        qualifiedCapacity: 1,
+        idleQualifiedCapacity: 0,
+      },
+      blockers: [],
+      operatorAction: { required: false, target: '' },
+      validationOptions: { nowMs },
+    };
+    const ready = evaluateGoalBuildingProgramme(input);
+    assert.equal(ready.isCapableOfBuilding, true, 'READY is permitted for capability');
+    assert.equal(ready.isActuallyBuilding, false, 'READY is not productive worker pickup');
+    assert.equal(ready.state, 'GOAL_BUILDING_BLOCKED');
+    assert.equal(ready.programmeMode, 'BLOCKED');
+    const observed = projectGoalBuildingRuntimeTruth({
+      certificate: ready,
+      workerBeacon: runningBeacon({
+        workerState: 'MISSION_WORKER_TICK_PASS',
+        activeTaskId: '',
+        activeReceiptId: '',
+        executionPhase: '',
+      }),
+      protectedMainHead: head,
+      installedMainHead: head,
+      servedHead: head,
+      nowMs,
+    });
+    assert.equal(observed.buildingProven, false);
+    assert.notEqual(observed.state, GOAL_BUILDING_RUNTIME_STATES.BUILDING);
+
+    const executing = evaluateGoalBuildingProgramme({
+      ...input,
+      surfaces: surfaces.map((surface) => surface.id === 'missionWorker'
+        ? { ...surface, state: 'RUNNING' }
+        : surface),
+    });
+    assert.equal(executing.isActuallyBuilding, true, 'unchanged current RUNNING proof stays eligible');
+  }
 });
