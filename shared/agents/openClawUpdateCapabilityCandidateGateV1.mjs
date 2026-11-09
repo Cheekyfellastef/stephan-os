@@ -44,6 +44,16 @@ const INPUT_KEYS = Object.freeze(['stagedUpdate', 'capabilityLedger', 'qualifica
 const REPLAY_KEYS = Object.freeze(['schemaVersion', 'taskClass', 'qualificationId', 'sourceHead', 'providerVersion', 'verdict', 'proofRefs']);
 const MAX_REPLAY_RECORDS = 16;
 const MAX_PROOF_REFS = 32;
+// The producer also asserts these source-harness properties. Older accepted
+// fixtures omit them, but explicitly contradictory values cannot be trusted.
+const OPTIONAL_STAGED_SAFETY = Object.freeze({
+  sourceHarnessOnly: true,
+  arbitraryShellAllowed: false,
+  arbitraryPathAllowed: false,
+  battleBridgeAdapterRequired: true,
+  secretsIncluded: false,
+  absolutePathsPublished: false,
+});
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -203,6 +213,17 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   if (safety && ['mutationAllowed', 'sourceMutationAllowed', 'mergeAuthority', 'deploymentAuthority']
     .some((key) => !Object.prototype.hasOwnProperty.call(safety, key) || safety[key] !== false)) {
     blockers.push('STAGED_UPDATE_AUTHORITY_WIDENED');
+  }
+  if (safety && (
+    Object.entries(OPTIONAL_STAGED_SAFETY).some(([key, expected]) =>
+      Object.prototype.hasOwnProperty.call(safety, key) && safety[key] !== expected)
+    || (Object.prototype.hasOwnProperty.call(safety, 'operatorApprovalRequired')
+      && safety.operatorApprovalRequired !== ![
+        OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED,
+        OPENCLAW_STAGED_UPDATE_STATUS.ROLLED_BACK_AND_VERIFIED,
+      ].includes(stagedStatus))
+  )) {
+    blockers.push('STAGED_UPDATE_SAFETY_CONTRADICTION');
   }
 
   const identity = plainDataRecord(staged.exactIdentity);

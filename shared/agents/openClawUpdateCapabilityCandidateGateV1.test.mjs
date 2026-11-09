@@ -71,6 +71,49 @@ function replay(taskClass, overrides = {}) {
   };
 }
 
+test('explicitly contradictory producer safety flags cannot promote a candidate', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const evidence = [replay(OPENCLAW_TASK_CLASS.OC1)];
+  const validProducerFlags = {
+    sourceHarnessOnly: true,
+    arbitraryShellAllowed: false,
+    arbitraryPathAllowed: false,
+    battleBridgeAdapterRequired: true,
+    secretsIncluded: false,
+    absolutePathsPublished: false,
+    operatorApprovalRequired: false,
+  };
+  const positive = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: { ...verified, safety: { ...verified.safety, ...validProducerFlags } },
+    capabilityLedger: ledger(),
+    qualificationReplay: evidence,
+  });
+  assert.equal(positive.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(positive.updatePromotionAllowed, true);
+
+  for (const [key, goodValue] of Object.entries(validProducerFlags)) {
+    const negative = evaluateOpenClawUpdateCapabilityCandidateV1({
+      stagedUpdate: { ...verified, safety: { ...verified.safety, [key]: !goodValue } },
+      capabilityLedger: ledger(),
+      qualificationReplay: evidence,
+    });
+    assert.equal(negative.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE, key);
+    assert.equal(negative.updatePromotionAllowed, false, key);
+    assert.equal(negative.providerRoutingResumeAllowed, false, key);
+    assert.ok(negative.blockers.includes('STAGED_UPDATE_SAFETY_CONTRADICTION'), key);
+  }
+
+  const preflight = staged(OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY);
+  preflight.safety.operatorApprovalRequired = false;
+  const negativePreflight = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: preflight,
+    capabilityLedger: ledger(),
+    qualificationReplay: [],
+  });
+  assert.equal(negativePreflight.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.ok(negativePreflight.blockers.includes('STAGED_UPDATE_SAFETY_CONTRADICTION'));
+});
+
 test('pre-update candidate gate is ready but grants no execution authority', () => {
   const result = evaluateOpenClawUpdateCapabilityCandidateV1({
     stagedUpdate: staged(),
