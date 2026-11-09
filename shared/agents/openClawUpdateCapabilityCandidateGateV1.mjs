@@ -171,6 +171,12 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
 
   const stagedStatus = text(staged.status);
   const blockers = [];
+  // Both original producers report an explicit empty blocker list only when ready.
+  // Never promote a contradictory ready status with unresolved producer blockers.
+  const stagedBlockers = denseArray(staged.blockers, MAX_PROOF_REFS);
+  if (!stagedBlockers || stagedBlockers.length !== 0) blockers.push('STAGED_UPDATE_BLOCKERS_NOT_EMPTY');
+  const ledgerBlockers = denseArray(ledger.blockers, MAX_PROOF_REFS);
+  if (!ledgerBlockers || ledgerBlockers.length !== 0) blockers.push('CAPABILITY_LEDGER_BLOCKERS_NOT_EMPTY');
   if (text(staged.schema) !== OPENCLAW_STAGED_UPDATE_SCHEMA) blockers.push('STAGED_UPDATE_SCHEMA_MISMATCH');
   if (!CANDIDATE_STAGED_STATUSES.has(stagedStatus)) blockers.push('STAGED_UPDATE_STATUS_NOT_CANDIDATE_READY');
   if (text(ledger.schemaVersion) !== OPENCLAW_UPDATE_CAPABILITY_LEDGER_SCHEMA) blockers.push('CAPABILITY_LEDGER_SCHEMA_MISMATCH');
