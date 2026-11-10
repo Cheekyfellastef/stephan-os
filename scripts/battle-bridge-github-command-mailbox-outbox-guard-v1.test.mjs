@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
+  lstatSync,
+  unlinkSync,
   mkdtempSync,
   mkdirSync,
   openSync,
@@ -16,8 +18,10 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { runInNewContext } from 'node:vm';
 import { dirname, join } from 'node:path';
 import { CANONICAL_MAILBOX_ISSUE } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
+import { mailboxRotationDigest } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 import {
   buildBattleBridgeGitHubCommandReceipt,
   selectBattleBridgeGitHubCommandBatch,
@@ -287,7 +291,7 @@ function executionLedgerPathForRequest(statePath, requestId) {
 }
 
 function installLegacyReconciliationProof(f, {
-  requestId = 'fixture-single-session-historical-v1',
+  requestId = 'vr2707-20261105T1953Z-cf7-archive-single-session-v1',
   completedAt = '2026-11-05T19:52:52.846Z',
   publicationId = null,
   receipt = {},
@@ -301,11 +305,11 @@ function installLegacyReconciliationProof(f, {
     repository: 'Cheekyfellastef/stephan-os',
     issueNumber: CANONICAL_MAILBOX_ISSUE,
     branch: 'main',
-    expectedHead: '1'.repeat(40),
+    expectedHead: 'cf7cd85b7afa96a696fd092b1ceb2e734f198a77',
     state: 'DONE',
     acceptedAt: '2026-11-05T19:51:00.000Z',
     completedAt,
-    processSourceHead: '1'.repeat(40),
+    processSourceHead: 'cf7cd85b7afa96a696fd092b1ceb2e734f198a77',
     ...receipt,
   };
   const invalidReceipt = { ...canonicalReceipt, requestId: '' };
@@ -313,14 +317,16 @@ function installLegacyReconciliationProof(f, {
     publicationId: publicationId || requestId + ':DONE:' + completedAt,
     receipt: invalidReceipt,
   };
-  writeJson(join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(requestId)), canonicalReceipt);
+  // Reproduce the actual legacy producer: canonical disk receipt ALSO lost its ID.
+  writeJson(join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(requestId)),
+    { ...canonicalReceipt, requestId: '' });
   writeJson(executionLedgerPathForRequest(f.statePath, requestId), {
     schemaVersion: 'stephanos.mailbox-execution-ledger-entry.v1',
     requestId,
     issueNumber: canonicalReceipt.issueNumber,
     phase: 'TERMINAL',
     terminalState: 'DONE',
-    commandDigest: 'a'.repeat(64),
+    commandDigest: 'f7dcdce00eac8e109bdd41d56740a248694056d5b6bb587db72c0c8105902fe6',
     ...ledger,
   });
   const mailboxState = {
@@ -376,6 +382,173 @@ function runGuard(f, options = {}) {
     ...options,
   });
 }
+
+const SEALED_NOV5_SINGLE_SESSION_ID = 'vr2707-20261105T1953Z-cf7-archive-single-session-v1';
+const SEALED_NOV5_SINGLE_SESSION_DIGEST = 'f7dcdce00eac8e109bdd41d56740a248694056d5b6bb587db72c0c8105902fe6';
+const SEALED_NOV5_HEAD = 'cf7cd85b7afa96a696fd092b1ceb2e734f198a77';
+
+test('sealed one-record digest equals the exact canonical command from owner issue comment 6667748867', () => {
+  const originalCommand = {
+    schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+    requestId: SEALED_NOV5_SINGLE_SESSION_ID,
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 3258,
+    branch: 'main',
+    operatorApproval: 'operator-approved',
+    expectedHead: SEALED_NOV5_HEAD,
+    expiresAt: '2026-11-05T20:20:00.000Z',
+    remoteAction: 'starfield-vr-telemetry-archive',
+    telemetryOffset: 0,
+    telemetryLimit: 1,
+  };
+  assert.equal(mailboxRotationDigest(originalCommand), SEALED_NOV5_SINGLE_SESSION_DIGEST);
+  assert.notEqual(mailboxRotationDigest({ ...originalCommand, telemetryLimit: 2 }),
+    SEALED_NOV5_SINGLE_SESSION_DIGEST);
+});
+
+// Original owner comment #6667748867; old serializer blanked "-session" IDs.
+// Test the exact old persistent format, never invent a DONE from a public ACCEPTED.
+function installSealedNov5BlankReceipt(f, {
+  requestId = SEALED_NOV5_SINGLE_SESSION_ID,
+  digest = SEALED_NOV5_SINGLE_SESSION_DIGEST,
+} = {}) {
+  const proof = installLegacyReconciliationProof(f, {
+    requestId,
+    completedAt: '2026-11-05T19:53:27.000Z',
+    receipt: { expectedHead: SEALED_NOV5_HEAD, processSourceHead: SEALED_NOV5_HEAD,
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION' },
+    ledger: { commandDigest: digest },
+  });
+  writeJson(join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(requestId)),
+    { ...proof.canonicalReceipt, requestId: '' });
+  return proof;
+}
+
+test('sealed original 5 November blank request ID is reconciled only with its exact command digest and terminal ledger', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const proof = installSealedNov5BlankReceipt(f);
+  let childCalled = 0;
+  const result = runGuard(f, { spawnSyncFn: () => {
+    childCalled += 1;
+    assert.deepEqual(readJson(f.statePath).pendingReceiptPublications, []);
+    return { status: 0, stdout: '{}', stderr: '' };
+  } });
+  assert.equal(result.ok, true);
+  assert.equal(result.quarantinedInvalidPublicationCount, 1);
+  assert.equal(childCalled, 1);
+  const quarantine = readJson(join(dirname(f.statePath), 'receipt-publication-invalid-quarantine-v1.json'));
+  assert.equal(quarantine.records.length, 1);
+  assert.deepEqual(quarantine.records[0].entry, proof.invalid);
+  assert.deepEqual(readJson(f.statePath).consumedRequestIds, [proof.requestId]);
+  assert.equal(readJson(f.statePath).acceptedRequestIds.includes(proof.requestId), false);
+});
+
+test('old terminal proof hash is optional only when original receipt also omitted it', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const hash = 'b'.repeat(64);
+  installLegacyReconciliationProof(f, {
+    receipt: { proofHash: hash },
+    ledger: { terminalProofHash: hash },
+  });
+  let invoked = 0;
+  const result = runGuard(f, { spawnSyncFn: () => {
+    invoked += 1;
+    return { status: 0, stdout: '{}', stderr: '' };
+  } });
+  assert.equal(result.ok, true);
+  assert.equal(invoked, 1);
+});
+
+test('sealed legacy blank receipt does not release other requests or mismatched historical evidence', (t) => {
+  const cases = [
+    ['different digest', (f, proof) => {
+      const file = executionLedgerPathForRequest(f.statePath, proof.requestId);
+      const ledger = readJson(file);
+      ledger.commandDigest = 'a'.repeat(64);
+      writeJson(file, ledger);
+    }],
+    ['terminal hash omitted despite receipt hash', (f, proof) => {
+      const receiptPath = join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(proof.requestId));
+      const receipt = readJson(receiptPath);
+      receipt.proofHash = 'b'.repeat(64);
+      writeJson(receiptPath, receipt);
+      const state = readJson(f.statePath);
+      state.pendingReceiptPublications[0].receipt.proofHash = 'b'.repeat(64);
+      writeJson(f.statePath, state);
+      // Original terminal ledger intentionally has no terminalProofHash.
+    }],
+    ['terminal hash present despite missing receipt hash', (f, proof) => {
+      const file = executionLedgerPathForRequest(f.statePath, proof.requestId);
+      const ledger = readJson(file);
+      ledger.terminalProofHash = 'b'.repeat(64);
+      writeJson(file, ledger);
+    }],
+    ['terminal hash malformed but matching', (f, proof) => {
+      const receiptPath = join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(proof.requestId));
+      const receipt = readJson(receiptPath);
+      receipt.proofHash = 'not-a-sha';
+      writeJson(receiptPath, receipt);
+      const state = readJson(f.statePath);
+      state.pendingReceiptPublications[0].receipt.proofHash = 'not-a-sha';
+      writeJson(f.statePath, state);
+      const file = executionLedgerPathForRequest(f.statePath, proof.requestId);
+      const ledger = readJson(file);
+      ledger.terminalProofHash = 'not-a-sha';
+      writeJson(file, ledger);
+    }],
+    ['missing terminal ledger', (f, proof) => {
+      const file = executionLedgerPathForRequest(f.statePath, proof.requestId);
+      const ledger = readJson(file);
+      ledger.phase = 'RESERVED';
+      writeJson(file, ledger);
+    }],
+    ['wrong canonical source', (f, proof) => {
+      const file = join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(proof.requestId));
+      const receipt = readJson(file);
+      receipt.processSourceHead = '2'.repeat(40);
+      writeJson(file, receipt);
+    }],
+    ['unconsumed command', (f) => {
+      const state = readJson(f.statePath);
+      state.consumedRequestIds = [];
+      writeJson(f.statePath, state);
+    }],
+    ['unknown publication binding', (f) => {
+      const state = readJson(f.statePath);
+      state.pendingReceiptPublications[0].publicationId = 'unrelated:DONE:2026-11-05T19:53:27.000Z';
+      writeJson(f.statePath, state);
+    }],
+    ['not terminal DONE', (f, proof) => {
+      const file = join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(proof.requestId));
+      const receipt = readJson(file);
+      receipt.state = 'ACCEPTED';
+      writeJson(file, receipt);
+    }],
+  ];
+  for (const [name, corrupt] of cases) {
+    const f = fixture(); t.after(f.cleanup);
+    const proof = installSealedNov5BlankReceipt(f);
+    corrupt(f, proof);
+    const originalBytes = readFileSync(f.statePath);
+    let invoked = 0;
+    const result = runGuard(f, { spawnSyncFn: () => {
+      invoked += 1;
+      return { status: 0 };
+    } });
+    assert.equal(result.ok, false, name);
+    assert.equal(invoked, 0, name);
+    assert.equal(result.guardDiagnostic.childInvocationAttempted, false, name);
+    assert.deepEqual(readFileSync(f.statePath), originalBytes, name);
+  }
+
+  const outsider = fixture(); t.after(outsider.cleanup);
+  installSealedNov5BlankReceipt(outsider, { requestId: 'other-sanitized-single-session-command-v1' });
+  let invoked = 0;
+  const result = runGuard(outsider, { spawnSyncFn: () => { invoked++; return { status: 0 }; } });
+  assert.equal(result.ok, false);
+  assert.equal(invoked, 0);
+});
 
 test('guard quarantines malformed legacy inline debt before child but keeps post-child corruption fail closed', (t) => {
   const f = fixture(); t.after(f.cleanup);
@@ -499,6 +672,16 @@ test('legacy reconciliation accepts identical terminal content except the known 
 });
 
 test('legacy one-record reconciliation requires publication, canonical receipt, consumed index and execution ledger to agree', (t) => {
+  // Four exact redacted failure stages; no original state or identity disclosed.
+  const expectedCode = Object.freeze({
+    'pending-result-content': 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_UNPROVEN',
+    'pending-blocker-content': 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_UNPROVEN',
+    'pending-proof-refs-content': 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_UNPROVEN',
+    'publication': 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_IDENTITY_UNPROVEN',
+    'canonical-receipt': 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_UNPROVEN',
+    'consumed-index': 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_INDEX_UNPROVEN',
+    'execution-ledger': 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_LEDGER_UNPROVEN',
+  });
   const cases = [
     ['pending-result-content', (f) => {
       const state = readJson(f.statePath);
@@ -541,7 +724,10 @@ test('legacy one-record reconciliation requires publication, canonical receipt, 
     const result = runGuard(f, { spawnSyncFn: () => { invoked++; return { status: 0 }; } });
     assert.equal(result.ok, false, label);
     assert.equal(invoked, 0, label);
-    assert.equal(result.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN', label);
+    assert.equal(result.guardDiagnostic.reasonCode, expectedCode[label], label);
+    assert.equal(result.guardDiagnostic.stage, 'STATE_VALIDATION', label);
+    assert.equal(result.guardDiagnostic.childInvocationAttempted, false, label);
+    assert.equal(JSON.stringify(result.guardDiagnostic).includes(proof.requestId), false, label);
     assert.deepEqual(readFileSync(f.statePath), before, label);
   }
 });
@@ -589,6 +775,20 @@ test('typed guard diagnostics preserve single-flight busy and disclose no unknow
   assert.equal(unknown.guardDiagnostic.reasonCode, 'MAILBOX_GUARD_FAILURE_UNCLASSIFIED');
   assert.equal(unknown.guardDiagnostic.childInvocationAttempted, true);
   assert.equal(JSON.stringify(unknown.guardDiagnostic).includes('private-token=fixture'), false);
+});
+
+test('four exact legacy failure codes are fixed-shape redacted diagnostics only', () => {
+  const codes = ["MAILBOX_OUTBOX_LEGACY_RECONCILIATION_IDENTITY_UNPROVEN","MAILBOX_OUTBOX_LEGACY_RECONCILIATION_INDEX_UNPROVEN","MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_UNPROVEN","MAILBOX_OUTBOX_LEGACY_RECONCILIATION_LEDGER_UNPROVEN"];
+  for (const code of codes) {
+    const diagnostic = { schemaVersion: 'stephanos.mailbox-guard-diagnostic.v1',
+      observedAtUtc: '2026-11-07T15:20:00.000Z',
+      stage: 'STATE_VALIDATION', outcome: 'GUARD_BLOCKED',
+      reasonCode: code, childInvocationAttempted: false };
+    assert.deepEqual(projectMailboxGuardDiagnosticV1(diagnostic), diagnostic);
+    assert.equal(projectMailboxGuardDiagnosticV1({ ...diagnostic, privateRecord: 'forbidden' }), null);
+    assert.equal(projectMailboxGuardDiagnosticV1({ ...diagnostic, childInvocationAttempted: true }), null);
+    assert.equal(projectMailboxGuardDiagnosticV1({ ...diagnostic, outcome: 'CHILD_SUCCEEDED' }), null);
+  }
 });
 
 test('guard diagnostic projection rejects open fields, accessors and inconsistent execution stages', () => {
@@ -1531,6 +1731,48 @@ test('manifest-controlled legacy path components fail closed before traversal or
   } finally {
     f.cleanup();
   }
+});
+
+test('dangling receipt alias is not treated as a missing regular file by atomic writes', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const target = join(f.root, 'uncreated-receipt-target.json');
+  const alias = join(f.root, 'dangling-receipt-alias.json');
+  symlinkSync(target, alias, 'file');
+  assert.equal(existsSync(alias), false, 'following a dangling link reports missing');
+  assert.equal(lstatSync(alias).isSymbolicLink(), true);
+  assert.throws(() => atomicWriteJson(alias, { terminal: true }), /MAILBOX_OUTBOX_FILE_IDENTITY_INVALID/);
+  assert.equal(lstatSync(alias).isSymbolicLink(), true, 'the unsafe alias must remain untouched');
+  assert.equal(existsSync(target), false);
+
+  const legitimate = join(f.root, 'new-regular-receipt.json');
+  atomicWriteJson(legitimate, { status: 'DONE' });
+  assert.deepEqual(readJson(legitimate), { status: 'DONE' });
+});
+
+test('cleanup helper checks dangling aliases before unlink and preserves ordinary absence', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const source = readFileSync(new URL('./battle-bridge-github-command-mailbox-outbox-guard-v1.mjs', import.meta.url), 'utf8');
+  const checkedFunction = (start, end) => {
+    const i = source.indexOf(start), j = source.indexOf(end, i + start.length);
+    assert.ok(i >= 0 && j > i, 'test must execute the checked-in helper source');
+    return source.slice(i, j);
+  };
+  const sourceBodies = checkedFunction('function assertRegularUnlinkedFile(', 'function assertUnlinkedDirectory(')
+    + '\n' + checkedFunction('function removeRegularFile(', 'function canonicalPendingFromState(');
+  const { removeRegularFile } = runInNewContext(sourceBodies + '\n({ removeRegularFile })', {
+    lstatSync, unlinkSync, dirname, syncDirectoryBestEffort: () => {},
+  });
+  const alias = join(f.root, 'dangling-cleanup-alias.json');
+  symlinkSync(join(f.root, 'missing-cleanup-target.json'), alias, 'file');
+  assert.equal(existsSync(alias), false);
+  assert.throws(() => removeRegularFile(alias), /MAILBOX_OUTBOX_FILE_IDENTITY_INVALID/);
+  assert.equal(lstatSync(alias).isSymbolicLink(), true);
+  const missing = join(f.root, 'legitimately-absent.json');
+  assert.equal(removeRegularFile(missing), undefined);
+  const regular = join(f.root, 'regular-cleanup.json');
+  writeFileSync(regular, '{}');
+  removeRegularFile(regular);
+  assert.equal(existsSync(regular), false);
 });
 
 test('fixed receipt-store paths and ledger directories reject path redirection', () => {
