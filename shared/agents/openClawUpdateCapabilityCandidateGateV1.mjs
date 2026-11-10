@@ -256,6 +256,11 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   // producer's bounded adapter/no-shell safety envelope. Legacy preflight can
   // still inspect a partial fixture, but must never promote provider routing.
   if (safety && stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
+    // Complete producer envelopes must not silently lose even one safety flag.
+    // The separate final-acceptance legacy fixture has no optional producer
+    // flags at all; migrating that fixture is a separately scoped source change.
+    && Object.keys(OPTIONAL_STAGED_SAFETY).some((key) =>
+      Object.prototype.hasOwnProperty.call(safety, key))
     && (Object.keys(OPTIONAL_STAGED_SAFETY).some((key) =>
       !Object.prototype.hasOwnProperty.call(safety, key))
       || !Object.prototype.hasOwnProperty.call(safety, 'operatorApprovalRequired'))) {
