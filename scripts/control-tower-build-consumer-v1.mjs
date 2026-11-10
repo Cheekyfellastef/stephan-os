@@ -21,6 +21,12 @@ const SCHEMA = 'stephanos.control-tower-build-consumer.v1';
 const POLL_STATES = new Set(['WAITING', 'HELD', 'REPLAY_HELD', 'UNKNOWN', 'WAKE_BLOCKED', 'WAKE_COMPLETED',
   'OBSERVATION_COMPLETED', 'OBSERVATION_BLOCKED']);
 const ACTION = FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId;
+// A protected-main BUILD wake can arrive before the local Sovereign Commander
+// has adopted the same head. Only the process-memory-bound protocol refusal
+// proves that no credential read or MCP POST happened, so only that refusal is
+// safe to retry on the same durable reservation.
+export const CONTROL_TOWER_PROTOCOL_RETRY_ATTEMPTS = 12;
+export const CONTROL_TOWER_PROTOCOL_RETRY_INTERVAL_MS = 5_000;
 const SHA = /^[a-f0-9]{40}$/;
 const REQUEST = /^control-tower-build-[1-9][0-9]{0,15}-1$/;
 const requestId = value => typeof value === 'string' && REQUEST.test(value)
@@ -103,7 +109,9 @@ export async function consumeControlTowerBuildRequestV1({
     readHistoricalRequest: readHistoricalControlTowerBuildRequestV1,
     isAuthenticated: isAuthenticatedControlTowerBuildRequestV1,
     createLedger: createMailboxExecutionLedger, execute: callSovereignMaintenanceOwnerV1,
-    inspect: inspectSovereignControlSystemV1, ...dependencies };
+    inspect: inspectSovereignControlSystemV1,
+    sleep: delayMs => new Promise(resolveDelay => setTimeout(resolveDelay, delayMs)),
+    ...dependencies };
   let request = null, reserved = false, ledger = null, initialObservation = null;
   let latestBuild = null, latestObserve = null, discovery = null;
   const restore = (id, operation) => {
@@ -311,12 +319,34 @@ export async function consumeControlTowerBuildRequestV1({
     // every identity/qualification/lease/goal/resource/custody gate.
     const ownerRequest = Object.freeze({ actionId: ACTION, arguments: Object.freeze({ actionId: ACTION }),
       timeoutMs: FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.executionTimeoutMs });
-    const owned = await deps.execute(ownerRequest);
+    let owned = await deps.execute(ownerRequest);
     // Only a one-use fact retained by this actual delegation can establish
     // that the health rejection happened before credentials or an MCP POST.
-    // This never claims an authenticated owner refusal or resolves an older
-    // RESERVED request after a crash, timeout, lost response or process restart.
-    const blockedBeforeDispatch = consumeSovereignMaintenancePreDispatchRefusalV1(owned, ownerRequest);
+    // That narrow fact permits a bounded same-process retry while protected
+    // main and the authenticated request remain unchanged. Any other failure
+    // still retains the existing custody/terminal semantics.
+    let blockedBeforeDispatch = consumeSovereignMaintenancePreDispatchRefusalV1(owned, ownerRequest);
+    let preDispatchEnvironmentChanged = false;
+    for (let attempt = 0;
+      blockedBeforeDispatch
+      && owned?.blocker === 'SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED'
+      && attempt < CONTROL_TOWER_PROTOCOL_RETRY_ATTEMPTS;
+      attempt += 1) {
+      const expiresAtMs = Date.parse(request.expiresAtUtc);
+      if (await readSourceHead() !== sourceHead
+        || !Number.isFinite(expiresAtMs)
+        || expiresAtMs <= now().getTime() + CONTROL_TOWER_PROTOCOL_RETRY_INTERVAL_MS) {
+        preDispatchEnvironmentChanged = true;
+        break;
+      }
+      await deps.sleep(CONTROL_TOWER_PROTOCOL_RETRY_INTERVAL_MS);
+      if (await readSourceHead() !== sourceHead || expiresAtMs <= now().getTime()) {
+        preDispatchEnvironmentChanged = true;
+        break;
+      }
+      owned = await deps.execute(ownerRequest);
+      blockedBeforeDispatch = consumeSovereignMaintenancePreDispatchRefusalV1(owned, ownerRequest);
+    }
     const exactOwnerAction = owned?.command?.plan?.processId === ACTION;
     const completed = exactOwnerAction && owned?.ok === true
       && owned.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' && /^[a-f0-9]{64}$/.test(owned.proofHash || '');
@@ -326,7 +356,9 @@ export async function consumeControlTowerBuildRequestV1({
     // A transport failure may arrive after owner pickup. Without a matching
     // completed/refused owner response, retain custody and never terminalize.
     if (!completed && !refused && !blockedBeforeDispatch) return finish('UNKNOWN', code(owned?.blocker), evidence());
-    const blocker = completed ? '' : controlTowerObservationBlockerV1(owned?.blocker);
+    const blocker = completed ? '' : preDispatchEnvironmentChanged
+      ? 'CONTROL_TOWER_BUILD_SOURCE_OR_EXPIRY_CHANGED'
+      : controlTowerObservationBlockerV1(owned?.blocker);
     const terminal = createControlTowerRequestObservationV1(request, {
       commandDigest: initialObservation.commandDigest, acceptedAtUtc: initialObservation.acceptedAtUtc,
       observedAtUtc: now().toISOString(), nowMs: now().getTime(), state: completed ? 'WAKE_COMPLETED' : 'WAKE_BLOCKED',
