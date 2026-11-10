@@ -1250,3 +1250,48 @@ test('post-update promotion requires the complete producer adapter and source-on
   assert.equal(legacy.updatePromotionAllowed, false);
   assert.equal(legacy.providerRoutingResumeAllowed, false);
 });
+
+test('post-update changed unprotected capabilities require the producer implementation identity', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const original = ledger();
+  const proof = [replay(OPENCLAW_TASK_CLASS.OC1)];
+  const changed = {
+    capabilityId: 'oc4:unprotected',
+    protected: false,
+    updateDisposition: OPENCLAW_UPDATE_DISPOSITION.MIGRATE,
+    affectedTaskClasses: [OPENCLAW_TASK_CLASS.OC1],
+    currentImplementation: 'oc4:old',
+    candidateImplementation: 'oc4:new',
+    origin: 'stephanos-extension',
+    candidateOrigin: 'stephanos-extension',
+    tests: ['test:oc4'],
+    evidenceRefs: ['evidence:oc4'],
+  };
+  const evaluate = (capability) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: verified,
+    capabilityLedger: { ...original, capabilities: [...original.capabilities, capability] },
+    qualificationReplay: proof,
+  });
+  const positive = evaluate(changed);
+  assert.equal(positive.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(positive.updatePromotionAllowed, true);
+  const missingAll = { ...changed };
+  for (const key of ['currentImplementation', 'candidateImplementation', 'origin', 'candidateOrigin']) {
+    delete missingAll[key];
+  }
+  const negatives = [missingAll, ...['currentImplementation', 'candidateImplementation', 'origin', 'candidateOrigin']
+    .map((key) => {
+      const incomplete = { ...changed };
+      delete incomplete[key];
+      return incomplete;
+    })];
+  for (const candidate of negatives) {
+    const blocked = evaluate(candidate);
+    assert.equal(blocked.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE,
+      JSON.stringify(candidate));
+    assert.equal(blocked.updatePromotionAllowed, false);
+    assert.equal(blocked.providerRoutingResumeAllowed, false);
+    assert.ok(blocked.blockers.includes('CAPABILITY_LEDGER_CHANGED_DISPOSITION_IDENTITY_CONTRADICTION'),
+      JSON.stringify(candidate));
+  }
+});
