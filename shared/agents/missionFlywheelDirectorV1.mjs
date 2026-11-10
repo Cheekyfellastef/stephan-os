@@ -98,10 +98,10 @@ export function selectNextGoal(input = {}) {
   const goals = (Array.isArray(input.goals) ? input.goals : []).map(classifyGoal);
   const completed = goals.filter((goal) => goal.state === GOAL_STATE.DONE);
   const active = goals.filter((goal) => goal.state !== GOAL_STATE.DONE);
-  const unblocked = active.filter((goal) => goal.state !== GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION)
+  const eligible = active
+    .filter((goal) => goal.state !== GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION)
     .filter((goal) => goal.dependsOn.every((dependency) => completed.some((done) => done.goalId === dependency)));
-  const candidates = unblocked.length ? unblocked : active;
-  const sorted = [...candidates].sort((a, b) => b.priority - a.priority || a.goalId.localeCompare(b.goalId));
+  const sorted = [...eligible].sort((a, b) => b.priority - a.priority || a.goalId.localeCompare(b.goalId));
   return sorted[0] || null;
 }
 
@@ -139,17 +139,32 @@ export function createSourceSlicePacket(input = {}) {
 
 export function createDirectorStatusPacket(input = {}) {
   const goals = (Array.isArray(input.goals) ? input.goals : []).map(classifyGoal);
-  const nextGoal = input.nextGoal ? classifyGoal(input.nextGoal) : selectNextGoal({ goals });
+  const selectedGoal = input.nextGoal ? classifyGoal(input.nextGoal) : selectNextGoal({ goals });
+  const nextGoal = selectedGoal
+    && selectedGoal.state !== GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION
+    ? selectedGoal
+    : null;
   const packet = nextGoal ? createSourceSlicePacket({ goal: nextGoal, ...input.slice }) : null;
+  const unfinished = goals.some((goal) => goal.state !== GOAL_STATE.DONE);
+  const directorState = nextGoal
+    ? GOAL_STATE.BUILDING
+    : unfinished
+      ? GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION
+      : GOAL_STATE.DONE;
+  const finalVerdict = nextGoal
+    ? 'MISSION_FLYWHEEL_DIRECTOR_ACTIVE'
+    : unfinished
+      ? 'MISSION_FLYWHEEL_DIRECTOR_HELD'
+      : 'MISSION_FLYWHEEL_DIRECTOR_IDLE';
   return {
     schemaVersion: MISSION_FLYWHEEL_DIRECTOR_SCHEMA_VERSION,
     kind: 'stephanos.mission_flywheel_director.status_packet',
-    directorState: nextGoal ? GOAL_STATE.BUILDING : GOAL_STATE.DONE,
+    directorState,
     goals,
     nextGoal,
     nextSourceSlice: packet,
     lastActivity: text(input.lastActivity, 'director-status-created'),
-    finalVerdict: nextGoal ? 'MISSION_FLYWHEEL_DIRECTOR_ACTIVE' : 'MISSION_FLYWHEEL_DIRECTOR_IDLE',
+    finalVerdict,
   };
 }
 
