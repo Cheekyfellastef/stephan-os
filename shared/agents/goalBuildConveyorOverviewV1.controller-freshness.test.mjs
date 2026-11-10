@@ -138,3 +138,56 @@ test('Goal #2002: duplicate signed gate identities cannot independently certify 
   assert.notEqual(physicalStage(duplicatedSelect).trafficLight, 'GREEN');
   assert.equal(physicalStage(valid).state, 'PROVEN');
 });
+
+const signedDisplayStages = gateRecords => overview({
+  goalBuildGateObservatory: {
+    schemaVersion: 'stephanos.goal-build-gate-observatory.v1',
+    diagnosticOnly: true, approvalAuthority: false, mergeAuthority: false,
+    sourceHead: 'a'.repeat(40), observedAtUtc: at(-1000),
+    observationStatus: 'EVIDENCE_AVAILABLE', gates: gateRecords,
+  },
+}, { nowMs: NOW }).stages;
+
+test('Goal #2961: non-pickup signed stage cards require own nonblank string proof refs', () => {
+  const all = [4, 5, 7, 6, 18, 19, 20, 21, 22].map(id => signedGate(id));
+  const accepted = signedDisplayStages(all);
+  for (const name of ['admission', 'select', 'claim', 'pickup', 'edit', 'test', 'proof', 'merge']) {
+    assert.equal(accepted.find(stage => stage.id === name).trafficLight, 'GREEN',
+      'valid distinct proof stays eligible: ' + name);
+  }
+  for (const [id, invalid, stageNames] of [
+    [4, {}, ['admission', 'pickup']],
+    [6, [], ['select', 'pickup']],
+    [18, '   ', ['claim', 'pickup']],
+    [20, {}, ['edit', 'test']],
+    [21, [], ['proof']],
+    [22, '   ', ['merge']],
+  ]) {
+    const stages = signedDisplayStages(all.map(gate => gate.id === id
+      ? { ...gate, proofRef: invalid } : gate));
+    for (const name of stageNames) {
+      assert.notEqual(stages.find(stage => stage.id === name).trafficLight, 'GREEN',
+        'malformed reference must not make stage green: ' + id + '/' + name);
+    }
+  }
+  const inherited = Object.assign(Object.create({ proofRef: 'workspace:proof/inherited' }), {
+    id: 6, status: 'PASS', observedAtUtc: at(-1000),
+  });
+  assert.notEqual(signedDisplayStages(all.map(g => g.id === 6 ? inherited : g))
+    .find(stage => stage.id === 'select').trafficLight, 'GREEN');
+});
+
+test('Goal #2961: conflicting signed gate identities or malformed veto cannot greenlight stages', () => {
+  const all = [4, 5, 7, 6, 18, 19, 20, 21, 22].map(id => signedGate(id));
+  for (const corrupted of [
+    [...all, signedGate(6, 'FAIL', { proofRef: 'workspace:proof/veto' })],
+    [...all, signedGate(6, 'PASS', { proofRef: 'workspace:proof/duplicated' })],
+    [...all, signedGate(24, 'PASS')],
+    [...all, { status: 'PASS', observedAtUtc: at(-1000), proofRef: 'workspace:proof/no-id' }],
+    [...all, signedGate(8, 'FAIL', { proofRef: {} })],
+  ]) {
+    const stages = signedDisplayStages(corrupted);
+    assert.ok(stages.every(stage => stage.trafficLight !== 'GREEN'),
+      'inconsistent identities/unproven veto must not produce green');
+  }
+});

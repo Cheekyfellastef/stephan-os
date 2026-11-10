@@ -59,8 +59,30 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
   const traceGateByStage = { admission: 'ELIGIBLE_GOAL', select: 'SELECT', claim: 'CLAIM',
     pickup: 'WORKER', edit: 'SOURCE_CHANGED', test: 'TESTED', proof: 'REVIEW_HANDOFF' };
   const gates = admittedLedger ? array(ledger.gates) : [];
-  const gateLive = gate => ledgerLive && fresh(gate?.observedAtUtc, nowMs, maxAgeMs)
-    && Boolean(gate?.proofRef);
+  // A diagnostic feed is not native execution authority. Only canonical,
+  // unique, own gate IDs and own nonblank string refs can promote signed
+  // stage GREEN. Do not choose an arbitrary first PASS for conflicting IDs.
+  const ownGateValue = (gate, key) => gate && typeof gate === 'object'
+    && !Array.isArray(gate) ? Object.getOwnPropertyDescriptor(gate, key)?.value : undefined;
+  const gateId = gate => ownGateValue(gate, 'id');
+  const proofRef = gate => {
+    const value = ownGateValue(gate, 'proofRef');
+    return typeof value === 'string' && value.trim() ? value.trim() : '';
+  };
+  const seenGateIds = new Set();
+  const gateIdentitiesQualified = gates.every(gate => {
+    const id = gateId(gate);
+    if (!Number.isInteger(id) || id < 1 || id > 23 || seenGateIds.has(id)) return false;
+    seenGateIds.add(id);
+    return true;
+  });
+  // A malformed current FAIL must not be silently discarded, letting
+  // otherwise positive stages appear GREEN with unknown opposing evidence.
+  const failedGateEvidenceQualified = gates.every(gate =>
+    ownGateValue(gate, 'status') !== 'FAIL' || Boolean(proofRef(gate)));
+  const gateLive = gate => ledgerLive && gateIdentitiesQualified
+    && failedGateEvidenceQualified && Boolean(proofRef(gate))
+    && fresh(ownGateValue(gate, 'observedAtUtc'), nowMs, maxAgeMs);
   // Source-only BUILDING reports cannot certify a physical pickup.
   // This read-only adapter consumes only the upstream qualified signed gate.
   // A signed gate-19 status does not, by itself, establish a causally valid
@@ -75,26 +97,25 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
   // A shared proofRef does not independently prove multiple prerequisite gates.
   // This diagnostic is never a worker-scoped authenticated STARTED receipt.
   const pickupProofRefs = pickupPrerequisites.map(id => {
-    const matching = gates.filter(gate => gate?.id === id);
-    return matching.length === 1 && typeof matching[0].proofRef === 'string'
-      ? matching[0].proofRef.trim() : '';
+    const matching = gates.filter(gate => gateId(gate) === id);
+    return matching.length === 1 ? proofRef(matching[0]) : '';
   });
   const distinctPickupProofRefs = pickupProofRefs.every(Boolean)
     && new Set(pickupProofRefs).size === pickupPrerequisites.length;
   const signedPickup = ledgerLive && !currentVeto && distinctPickupProofRefs
     && pickupPrerequisites.every(id => {
-      const matching = gates.filter(gate => gate?.id === id);
-      return matching.length === 1 && matching[0].status === 'PASS'
+      const matching = gates.filter(gate => gateId(gate) === id);
+      return matching.length === 1 && ownGateValue(matching[0], 'status') === 'PASS'
         && gateLive(matching[0]);
-    }) ? gates.find(gate => gate?.id === 19) : null;
+    }) ? gates.find(gate => gateId(gate) === 19) : null;
   const signedPickupRef = signedPickup?.proofRef || '';
   const stages = FLOW.map(([id, label, gateIds]) => {
-    const observations = gateIds.map(number => gates.find(gate => gate.id === number));
-    const failure = observations.find(gate => gateLive(gate) && gate.status === 'FAIL');
+    const observations = gateIds.map(number => gates.find(gate => gateId(gate) === number));
+    const failure = observations.find(gate => gateLive(gate) && ownGateValue(gate, 'status') === 'FAIL');
     const passed = observations.length > 0
-      && observations.every(gate => gateLive(gate) && gate.status === 'PASS')
+      && observations.every(gate => gateLive(gate) && ownGateValue(gate, 'status') === 'PASS')
       && (id !== 'pickup' || Boolean(signedPickup));
-    const stale = observations.some(gate => gate && (gate.status === 'STALE' || !gateLive(gate)) && gate.proofRef);
+    const stale = observations.some(gate => gate && (gate.status === 'STALE' || !gateLive(gate)) && proofRef(gate));
     const waiting = ledgerLive && observations.some(gate => gate?.status === 'WAITING_FOR_PREREQUISITE');
     const state = failure ? 'BLOCKED' : passed ? 'PROVEN' : stale ? 'STALE' : waiting ? 'WAITING' : 'UNKNOWN';
     const historicalGate = trackKnown && Number.isFinite(time(trackAt)) && time(trackAt) <= nowMs
@@ -117,7 +138,7 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
       traceState: traceGate?.state || '', traceReason: traceGate?.reason || '',
       gateIds, expiresAtUtc: passed || failure ? new Date(Math.min(time(ledger.observedAtUtc),
         ...observations.filter(gateLive).map(gate => time(gate.observedAtUtc))) + maxAgeMs).toISOString() : '',
-      proofRefs: observations.flatMap(gate => gate?.proofRef ? [gate.proofRef] : []),
+      proofRefs: observations.flatMap(gate => proofRef(gate) ? [proofRef(gate)] : []),
       reason: failure?.typedBlocker || (id === 'commit' ? 'No distinct commit receipt is published by the current feed.'
         : id === 'edit' || id === 'test' ? 'Gate 20 proves source diff and tests together.'
           : passed ? 'Current signed checkpoint proof.' : 'Awaiting current signed checkpoint proof.') };
