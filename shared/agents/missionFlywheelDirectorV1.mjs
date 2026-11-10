@@ -139,9 +139,17 @@ export function createSourceSlicePacket(input = {}) {
 
 export function createDirectorStatusPacket(input = {}) {
   const goals = (Array.isArray(input.goals) ? input.goals : []).map(classifyGoal);
-  const selectedGoal = input.nextGoal ? classifyGoal(input.nextGoal) : selectNextGoal({ goals });
+  // An explicit nextGoal is only a selector hint, never a new source of goal authority.
+  // Resolve it through the canonical graph, then enforce the same dependency gate.
+  const selectedId = input.nextGoal ? classifyGoal(input.nextGoal).goalId : '';
+  const selectedGoal = selectedId
+    ? goals.find((goal) => goal.goalId === selectedId) || null
+    : selectNextGoal({ goals });
+  const completedIds = new Set(goals.filter((goal) => goal.state === GOAL_STATE.DONE).map((goal) => goal.goalId));
   const nextGoal = selectedGoal
     && selectedGoal.state !== GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION
+    && selectedGoal.state !== GOAL_STATE.DONE
+    && selectedGoal.dependsOn.every((id) => completedIds.has(id))
     ? selectedGoal
     : null;
   const packet = nextGoal ? createSourceSlicePacket({ goal: nextGoal, ...input.slice }) : null;
