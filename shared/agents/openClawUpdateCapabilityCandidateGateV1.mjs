@@ -269,6 +269,16 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   }
   const required = [...new Set((requiredReplay || []).map(text))].sort();
   if (requiredReplay && required.length !== requiredReplay.length) blockers.push('REQUIRED_QUALIFICATION_REPLAY_DUPLICATE');
+  // The READY ledger producer binds qualification invalidation to its replay set.
+  // A self-reported false cannot promote a verified update needing qualification replay.
+  if (stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
+    && Object.prototype.hasOwnProperty.call(ledger, 'authority')) {
+    const replayAuthority = plainDataRecord(ledger.authority);
+    if (replayAuthority && typeof replayAuthority.qualificationInvalidationRequired === 'boolean'
+      && replayAuthority.qualificationInvalidationRequired !== (required.length > 0)) {
+      blockers.push('CAPABILITY_LEDGER_QUALIFICATION_INVALIDATION_MISMATCH');
+    }
+  }
   // A protected cross-version capability change cannot be approved with zero task-class replay.
   // The ledger producer requires replay for every protected cross-version disposition;
   // enforce that invariant again at the promotion consumer boundary.
