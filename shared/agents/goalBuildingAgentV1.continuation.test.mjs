@@ -345,3 +345,32 @@ test('a historical ACTIVE checkpoint cannot substitute for fresh exact-current l
     assert.equal(result.runtimeMutationAuthority, false, label);
   }
 });
+
+test('Goal #2002: malformed scheduler operator gates never authorize continuation or refill', () => {
+  const valid = projectStephanosGoalContinuation({
+    checkpoint: checkpoint(), current: current(), schedulerCandidate: candidate({ operatorGate: false }),
+  });
+  assert.equal(valid.state, GOAL_BUILDING_CONTINUATION_STATES.AUTO_CONTINUE_ELIGIBLE);
+  assert.equal(valid.mayRequestExistingControllerContinuation, true);
+
+  const expresslyGated = projectStephanosGoalContinuation({
+    checkpoint: checkpoint(), current: current(), schedulerCandidate: candidate({ operatorGate: true }),
+  });
+  assert.notEqual(expresslyGated.state, GOAL_BUILDING_CONTINUATION_STATES.AUTO_CONTINUE_ELIGIBLE);
+  assert.equal(expresslyGated.mayRequestExistingControllerContinuation, false);
+
+  for (const malformed of ['true', 'false', 1, 0, null, [], {}, '', undefined]) {
+    const result = projectStephanosGoalContinuation({
+      checkpoint: checkpoint(), current: current(),
+      schedulerCandidate: candidate({ operatorGate: malformed }),
+    });
+    assert.equal(result.state, GOAL_BUILDING_CONTINUATION_STATES.SAFE_HOLD, String(malformed));
+    assert.ok(result.reasons.includes('scheduler-operator-gate-nonboolean'), String(malformed));
+    assert.equal(result.mayRequestExistingControllerContinuation, false, String(malformed));
+    assert.equal(result.mayRequestCapacityRefill, false, String(malformed));
+    assert.equal(result.continuationTarget, '', String(malformed));
+    assert.equal(result.refillTarget, '', String(malformed));
+    assert.equal(result.protectedMergeAuthority, false, String(malformed));
+    assert.equal(result.runtimeMutationAuthority, false, String(malformed));
+  }
+});

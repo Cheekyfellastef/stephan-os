@@ -138,6 +138,14 @@ export function projectStephanosGoalContinuation(input = {}) {
   const candidate = normalizeCandidate(input.schedulerCandidate || {});
   const reasons = [...evaluation.reasons];
 
+  // An explicitly supplied operator gate is authority-sensitive evidence.
+  // A string, number or null is NOT the same as an authenticated boolean
+  // false. Never project AUTO_CONTINUE_ELIGIBLE from a malformed gate.
+  if (Object.hasOwn(input.schedulerCandidate || {}, 'operatorGate')
+    && typeof input.schedulerCandidate.operatorGate !== 'boolean') {
+    reasons.push('scheduler-operator-gate-nonboolean');
+  }
+
   // The resume checkpoint normalizes lease resource strings for presentation.
   // Check the original input before normalization can erase an oversize suffix.
   // A single malformed scheduler key is a contradiction, even when another
