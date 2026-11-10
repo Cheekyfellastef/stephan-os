@@ -797,9 +797,9 @@ test('READY protected capability identities must be unique and complete when sup
   assert.equal(evaluate(one).updatePromotionAllowed, true);
   const missingId = { ...ledger().capabilities[0] };
   delete missingId.capabilityId;
-  const anonymous = evaluate({ ...ledger(), capabilities: [missingId] });
-  assert.equal(anonymous.updatePromotionAllowed, false);
-  assert.ok(anonymous.blockers.includes('CAPABILITY_LEDGER_PROTECTED_IDENTITY_UNPROVEN'));
+  const missingIdentityVerdict = evaluate({ ...ledger(), capabilities: [missingId] });
+  assert.equal(missingIdentityVerdict.updatePromotionAllowed, false);
+  assert.ok(missingIdentityVerdict.blockers.includes('CAPABILITY_LEDGER_PROTECTED_IDENTITY_UNPROVEN'));
 
   const duplicate = {
     ...one, capabilities: [first, { ...first }],
