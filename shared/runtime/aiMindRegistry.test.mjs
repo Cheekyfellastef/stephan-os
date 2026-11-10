@@ -70,3 +70,51 @@ test('blocked external source and OpenClaw gating stay denied without explicit a
   assert.equal(source.openClawAllowed, false);
   assert.equal(registry.openClawApprovalGate, 'unapproved');
 });
+
+test('rediscovering an approved local model retains its configured qualification', () => {
+  const modelId = 'qwen3.5:27b';
+  const mindId = `ollama:${modelId}`;
+  const result = buildAIMindRegistry({
+    providerHealth: { ollama: { ok: true, models: [{ name: modelId }] } },
+    registry: [{
+      mindId, modelId, providerId: 'ollama', displayName: 'Operator-qualified local reasoning',
+      location: 'local', privacyClass: 'local-private', costClass: 'zero',
+      approvalState: 'approved', routeEligibility: true, toolAccessLevel: 'read-only',
+      evaluationScore: 0.92, lastEvaluatedAt: '2026-11-10T19:00:00Z',
+    }],
+  });
+  const matches = result.minds.filter((mind) => mind.mindId === mindId);
+  assert.equal(matches.length, 1, 'discovery must not duplicate a registered model');
+  assert.equal(matches[0].approvalState, 'approved');
+  assert.equal(matches[0].evaluationScore, 0.92);
+  assert.equal(matches[0].toolAccessLevel, 'read-only');
+  assert.equal(matches[0].lastEvaluatedAt, '2026-11-10T19:00:00Z');
+  assert.deepEqual(result.routeEligibleMindIds, [mindId]);
+  assert.equal(result.supportSnapshot.approvedMindCount, 1);
+});
+
+test('rediscovering a blocked local model cannot restore route eligibility', () => {
+  const result = buildAIMindRegistry({
+    providerHealth: { ollama: { ok: true, models: [{ name: 'qwen:14b' }] } },
+    registry: [{
+      mindId: 'ollama:qwen:14b', providerId: 'ollama', modelId: 'qwen:14b',
+      approvalState: 'blocked', routeEligibility: true, toolAccessLevel: 'none',
+    }],
+  });
+  assert.equal(result.minds.length, 1);
+  assert.equal(result.minds[0].approvalState, 'blocked');
+  assert.equal(result.minds[0].routeEligibility, false);
+  assert.deepEqual(result.routeEligibleMindIds, []);
+});
+
+test('fresh Ollama discovery alone never fabricates approval or tools', () => {
+  const result = buildAIMindRegistry({
+    providerHealth: { ollama: { ok: true, models: [{ name: 'llama3.2:3b' }] } },
+    registry: [],
+  });
+  assert.equal(result.minds.length, 1);
+  assert.equal(result.minds[0].approvalState, 'discovered');
+  assert.equal(result.minds[0].routeEligibility, false);
+  assert.equal(result.minds[0].toolAccessLevel, 'none');
+  assert.deepEqual(result.routeEligibleMindIds, []);
+});
