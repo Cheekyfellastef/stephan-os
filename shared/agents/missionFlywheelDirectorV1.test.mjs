@@ -43,7 +43,7 @@ test('director selects highest priority unblocked goal after dependencies are do
     goals: [
       { goalId: '#1313', title: 'Shared Workspace V2', priority: 50, dependsOn: ['#1315'] },
       { goalId: '#1315', title: 'Chat to Publish', priority: 60, dependsOn: ['#1316'] },
-      { goalId: '#1316', title: 'Mission Flywheel Director', priority: 100 },
+      { goalId: '#1316', title: 'Mission Flywheel Director', priority: 100, allowedFiles: ['shared/agents/missionFlywheelDirectorV1.mjs', 'shared/agents/missionFlywheelDirectorV1.test.mjs'] },
       { goalId: '#1314', title: 'Publish Lane', priority: 10, sourceMerged: true, focusedProofRecorded: true, missionStateUpdated: true },
     ],
   });
@@ -106,7 +106,7 @@ test('source slice packet preserves approval and exact-head merge rules', () => 
 test('status packet exposes next goal and visible build state', () => {
   const status = createDirectorStatusPacket({
     goals: [
-      { goalId: '#1316', title: 'Mission Flywheel Director', priority: 100 },
+      { goalId: '#1316', title: 'Mission Flywheel Director', priority: 100, allowedFiles: ['shared/agents/missionFlywheelDirectorV1.mjs', 'shared/agents/missionFlywheelDirectorV1.test.mjs'] },
       { goalId: '#1315', title: 'Chat to Publish', priority: 60, dependsOn: ['#1316'] },
     ],
     slice: {
@@ -122,7 +122,7 @@ test('status packet exposes next goal and visible build state', () => {
 });
 
 test('validator blocks unsafe director packets missing exact merge or proof', () => {
-  const status = createDirectorStatusPacket({ goals: [{ goalId: '#1316', title: 'Director' }] });
+  const status = createDirectorStatusPacket({ goals: [{ goalId: '#1316', title: 'Director', allowedFiles: ['safe.mjs'] }] });
   status.nextSourceSlice.exactHeadMergeRequired = false;
   status.nextSourceSlice.proofCommand = '';
 
@@ -203,7 +203,7 @@ test('caller-supplied slice.goal cannot replace the selected canonical goal', ()
 test('slice allowedFiles can narrow but cannot widen the canonical goal estate', () => {
   const goals = [{ goalId: '#safe', allowedFiles: ['safe.mjs', 'safe.test.mjs'] }];
   const cases = [
-    { requested: ['.env'], expected: ['safe.mjs', 'safe.test.mjs'] },
+    { requested: ['.env'], expected: null },
     { requested: ['safe.test.mjs'], expected: ['safe.test.mjs'] },
     { requested: ['safe.test.mjs', '.env'], expected: ['safe.test.mjs'] },
   ];
@@ -214,8 +214,90 @@ test('slice allowedFiles can narrow but cannot widen the canonical goal estate',
       nextGoal: { goalId: '#safe' },
       slice: { allowedFiles: requested, goal: { goalId: '#forged', allowedFiles: ['.env'] } },
     });
-    assert.equal(status.nextSourceSlice.goalId, '#safe');
-    assert.deepEqual(status.nextSourceSlice.allowedFiles, expected);
+    if (expected === null) {
+      assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_HELD');
+      assert.equal(status.nextSourceSlice, null);
+    } else {
+      assert.equal(status.nextSourceSlice.goalId, '#safe');
+      assert.deepEqual(status.nextSourceSlice.allowedFiles, expected);
+    }
     assert.equal(validateDirectorStatusPacket(status).valid, true);
+  }
+});
+
+test('stage-owned goal remains held, with no fresh duplicate source branch', () => {
+  for (const custody of [
+    { activeBranch: 'feature/already-owned' },
+    { prNumber: '1234' },
+    { prNumber: '1234', focusedProofRecorded: true },
+    { state: GOAL_STATE.WAITING_FOR_PROOF },
+  ]) {
+    const status = createDirectorStatusPacket({
+      goals: [{ goalId: '#owned', allowedFiles: ['safe.mjs'], priority: 100, ...custody }],
+    });
+    assert.equal(status.nextSourceSlice, null);
+    assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_HELD');
+  }
+});
+
+test('duplicate canonical prerequisite identities cannot green-light a dependent source slice', () => {
+  const complete = { goalId: '#root', sourceMerged: true, focusedProofRecorded: true, missionStateUpdated: true };
+  const blocked = { goalId: '#root', blocker: 'Owner proof outstanding' };
+  for (const pair of [[complete, blocked], [blocked, complete]]) {
+    const goals = [...pair, { goalId: '#child', dependsOn: ['#root'], allowedFiles: ['safe.mjs'] }];
+    assert.equal(selectNextGoal({ goals }), null);
+    const status = createDirectorStatusPacket({ goals, nextGoal: { goalId: '#child' } });
+    assert.equal(status.nextSourceSlice, null);
+    assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_HELD');
+    assert.equal(validateDirectorStatusPacket(status).valid, false);
+    assert.ok(validateDirectorStatusPacket(status).errors.includes('ambiguous-canonical-goal-identity'));
+  }
+});
+
+test('caller slice cannot replace executor, branch, command, goal, title or mandatory forbidden paths', () => {
+  const status = createDirectorStatusPacket({
+    goals: [{ goalId: '#safe', allowedFiles: ['safe.mjs'], proofCommand: 'node --test safe.test.mjs' }],
+    slice: { goal: { goalId: '#rogue' }, worker: 'OPERATOR', branch: 'foreign',
+      proofCommand: 'echo foreign', title: 'forged', prTitle: 'forged',
+      prBody: 'forged', nextAction: 'foreign', forbiddenFiles: ['extra/**'] },
+  });
+  const slice = status.nextSourceSlice;
+  assert.equal(slice.goalId, '#safe');
+  assert.equal(slice.worker, 'STEPHANOS');
+  assert.equal(slice.branch, 'feature/safe-slice-v1');
+  assert.equal(slice.proofCommand, 'node --test safe.test.mjs');
+  assert.equal(slice.forbiddenFiles.includes('.env*'), true);
+  assert.equal(slice.forbiddenFiles.includes('extra/**'), true);
+  assert.equal(validateDirectorStatusPacket(status).valid, true);
+});
+
+test('disjoint and empty caller file scopes deny source publication without widening', () => {
+  for (const requested of [[], ['  '], ['.env'], ['secrets.txt']]) {
+    const status = createDirectorStatusPacket({
+      goals: [{ goalId: '#safe', allowedFiles: ['safe.mjs'] }],
+      slice: { allowedFiles: requested },
+    });
+    assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_HELD');
+    assert.equal(status.nextSourceSlice, null);
+  }
+});
+
+test('validator rejects tampered canonical identity, file authority and source executor fields', () => {
+  const fresh = () => createDirectorStatusPacket({ goals: [
+    { goalId: '#safe', allowedFiles: ['safe.mjs'], forbiddenFiles: ['protected/**'] }
+  ] });
+  for (const mutate of [
+    (p) => { p.nextSourceSlice.allowedFiles.push('.env'); },
+    (p) => { p.nextSourceSlice.forbiddenFiles = []; },
+    (p) => { p.nextSourceSlice.goalId = '#foreign'; },
+    (p) => { p.nextSourceSlice.branch = 'feature/foreign'; },
+    (p) => { p.nextSourceSlice.proofCommand = 'echo foreign'; },
+    (p) => { p.nextSourceSlice.worker = 'OPERATOR'; },
+    (p) => { p.nextGoal.title = 'forged'; },
+    (p) => { p.nextGoal.state = GOAL_STATE.BUILDING; },
+  ]) {
+    const status = fresh();
+    mutate(status);
+    assert.equal(validateDirectorStatusPacket(status).valid, false);
   }
 });
