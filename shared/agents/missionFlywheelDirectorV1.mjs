@@ -102,6 +102,10 @@ export function classifyGoal(record = {}) {
   if (goal.activeBranch) {
     return { ...goal, state: GOAL_STATE.BUILDING, finalVerdict: 'GOAL_BUILDING' };
   }
+  // Partial completion or a previous merge belongs to the original acceptance owner, not a fresh build.
+  if (goal.state === GOAL_STATE.DONE || goal.sourceMerged) {
+    return { ...goal, state: GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION, finalVerdict: 'GOAL_COMPLETION_CUSTODY_UNPROVEN' };
+  }
   // Unproven existing custody must never be reclassified as fresh implementation work.
   if (goal.state !== GOAL_STATE.PLANNED && goal.state !== GOAL_STATE.DONE) {
     return { ...goal, state: GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION, finalVerdict: 'GOAL_STAGE_CUSTODY_UNPROVEN' };

@@ -26,7 +26,7 @@ test('goal classification never marks done without all completion evidence', () 
   const partial = classifyGoal({ goalId: '#1316', sourceMerged: true, focusedProofRecorded: true });
   const complete = classifyGoal({ goalId: '#1316', sourceMerged: true, focusedProofRecorded: true, missionStateUpdated: true });
 
-  assert.equal(partial.state, GOAL_STATE.PLANNED);
+  assert.equal(partial.state, GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION);
   assert.equal(complete.state, GOAL_STATE.DONE);
   assert.equal(complete.finalVerdict, 'GOAL_DONE');
 });
@@ -300,4 +300,33 @@ test('validator rejects tampered canonical identity, file authority and source e
     mutate(status);
     assert.equal(validateDirectorStatusPacket(status).valid, false);
   }
+});
+
+test('partial DONE or merged custody never dispatches a second source slice', () => {
+  for (const goal of [
+    { goalId: '#done-no-proof', state: GOAL_STATE.DONE, allowedFiles: ['safe.mjs'] },
+    { goalId: '#merged-no-proof', sourceMerged: true, allowedFiles: ['safe.mjs'] },
+    { goalId: '#merged-one-proof', sourceMerged: true, focusedProofRecorded: true, allowedFiles: ['safe.mjs'] },
+  ]) {
+    const status = createDirectorStatusPacket({ goals: [goal] });
+    assert.equal(classifyGoal(goal).finalVerdict, 'GOAL_COMPLETION_CUSTODY_UNPROVEN');
+    assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_HELD');
+    assert.equal(status.nextSourceSlice, null);
+    assert.equal(validateDirectorStatusPacket(status).valid, true);
+  }
+});
+
+test('existing PR and fully-proven completion retain their dedicated stages', () => {
+  const pr = { goalId: '#merged-pr', sourceMerged: true, prNumber: '3258', allowedFiles: ['safe.mjs'] };
+  const waiting = createDirectorStatusPacket({ goals: [pr] });
+  assert.equal(classifyGoal(pr).state, GOAL_STATE.WAITING_FOR_PROOF);
+  assert.equal(waiting.nextSourceSlice, null);
+  assert.equal(waiting.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_HELD');
+  const done = { goalId: '#proven-done', state: GOAL_STATE.DONE, sourceMerged: true,
+    focusedProofRecorded: true, missionStateUpdated: true, allowedFiles: ['safe.mjs'] };
+  const finished = createDirectorStatusPacket({ goals: [done] });
+  assert.equal(classifyGoal(done).state, GOAL_STATE.DONE);
+  assert.equal(finished.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_IDLE');
+  assert.equal(finished.nextSourceSlice, null);
+  assert.equal(validateDirectorStatusPacket(finished).valid, true);
 });
