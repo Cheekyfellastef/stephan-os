@@ -444,12 +444,57 @@ test('sealed original 5 November blank request ID is reconciled only with its ex
   assert.equal(readJson(f.statePath).acceptedRequestIds.includes(proof.requestId), false);
 });
 
+test('old terminal proof hash is optional only when original receipt also omitted it', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const hash = 'b'.repeat(64);
+  installLegacyReconciliationProof(f, {
+    receipt: { proofHash: hash },
+    ledger: { terminalProofHash: hash },
+  });
+  let invoked = 0;
+  const result = runGuard(f, { spawnSyncFn: () => {
+    invoked += 1;
+    return { status: 0, stdout: '{}', stderr: '' };
+  } });
+  assert.equal(result.ok, true);
+  assert.equal(invoked, 1);
+});
+
 test('sealed legacy blank receipt does not release other requests or mismatched historical evidence', (t) => {
   const cases = [
     ['different digest', (f, proof) => {
       const file = executionLedgerPathForRequest(f.statePath, proof.requestId);
       const ledger = readJson(file);
       ledger.commandDigest = 'a'.repeat(64);
+      writeJson(file, ledger);
+    }],
+    ['terminal hash omitted despite receipt hash', (f, proof) => {
+      const receiptPath = join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(proof.requestId));
+      const receipt = readJson(receiptPath);
+      receipt.proofHash = 'b'.repeat(64);
+      writeJson(receiptPath, receipt);
+      const state = readJson(f.statePath);
+      state.pendingReceiptPublications[0].receipt.proofHash = 'b'.repeat(64);
+      writeJson(f.statePath, state);
+      // Original terminal ledger intentionally has no terminalProofHash.
+    }],
+    ['terminal hash present despite missing receipt hash', (f, proof) => {
+      const file = executionLedgerPathForRequest(f.statePath, proof.requestId);
+      const ledger = readJson(file);
+      ledger.terminalProofHash = 'b'.repeat(64);
+      writeJson(file, ledger);
+    }],
+    ['terminal hash malformed but matching', (f, proof) => {
+      const receiptPath = join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(proof.requestId));
+      const receipt = readJson(receiptPath);
+      receipt.proofHash = 'not-a-sha';
+      writeJson(receiptPath, receipt);
+      const state = readJson(f.statePath);
+      state.pendingReceiptPublications[0].receipt.proofHash = 'not-a-sha';
+      writeJson(f.statePath, state);
+      const file = executionLedgerPathForRequest(f.statePath, proof.requestId);
+      const ledger = readJson(file);
+      ledger.terminalProofHash = 'not-a-sha';
       writeJson(file, ledger);
     }],
     ['missing terminal ledger', (f, proof) => {
