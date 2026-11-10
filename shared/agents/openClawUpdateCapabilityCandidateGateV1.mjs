@@ -269,6 +269,16 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
 
   const identity = plainDataRecord(staged.exactIdentity);
   if (!identity) blockers.push('STAGED_UPDATE_IDENTITY_MISSING');
+  // The staged producer binds repository, manifest and packet identities. A
+  // verified update must retain these pins before routing may resume; preflight
+  // legacy fixtures remain read-only until their contract is migrated.
+  if (stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
+    && (!safeId(identity?.repository).includes('/')
+      || !/^[a-f0-9]{64}$/i.test(text(identity?.manifestSha256))
+      || !safeId(identity?.packetId)
+      || !/^[a-f0-9]{64}$/i.test(text(identity?.packetSha256)))) {
+    blockers.push('STAGED_UPDATE_EXACT_IDENTITY_INCOMPLETE');
+  }
   const sourceHead = exactSha(identity?.sourceHead);
   const currentVersion = safeVersion(identity?.currentVersion);
   const targetVersion = safeVersion(identity?.targetVersion);

@@ -1295,3 +1295,48 @@ test('post-update changed unprotected capabilities require the producer implemen
       JSON.stringify(candidate));
   }
 });
+
+test('post-update promotion retains preflight manifest and packet identity pins', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const candidate = ledger();
+  const qualificationReplay = [replay(OPENCLAW_TASK_CLASS.OC1)];
+  const evaluate = (stage) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: stage,
+    capabilityLedger: candidate,
+    qualificationReplay,
+  });
+  assert.equal(evaluate(verified).updatePromotionAllowed, true);
+
+  // The producer refuses these malformed/absent identities before a stage can
+  // claim UPDATED_AND_VERIFIED. A forged consumer envelope must not restore routing.
+  for (const key of ['repository', 'manifestSha256', 'packetId', 'packetSha256']) {
+    for (const value of [undefined, null, '', 0]) {
+      const result = evaluate({ ...verified, exactIdentity: { ...verified.exactIdentity, [key]: value } });
+      assert.equal(result.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE, key);
+      assert.equal(result.updatePromotionAllowed, false, key);
+      assert.equal(result.providerRoutingResumeAllowed, false, key);
+      assert.ok(result.blockers.includes('STAGED_UPDATE_EXACT_IDENTITY_INCOMPLETE'), key);
+    }
+  }
+  for (const [key, value] of [
+    ['repository', 'repository-without-owner'],
+    ['manifestSha256', 'a'.repeat(63)],
+    ['manifestSha256', 'z'.repeat(64)],
+    ['packetSha256', 'z'.repeat(64)],
+  ]) {
+    const result = evaluate({ ...verified, exactIdentity: { ...verified.exactIdentity, [key]: value } });
+    assert.equal(result.updatePromotionAllowed, false, key);
+    assert.ok(result.blockers.includes('STAGED_UPDATE_EXACT_IDENTITY_INCOMPLETE'), key);
+  }
+  const noPacket = { ...verified.exactIdentity };
+  delete noPacket.packetId;
+  assert.equal(evaluate({ ...verified, exactIdentity: noPacket }).updatePromotionAllowed, false);
+
+  // A read-only legacy preflight does not gain runtime promotion authority.
+  const preflight = staged(OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY);
+  delete preflight.exactIdentity.packetSha256;
+  const legacy = evaluate(preflight);
+  assert.equal(legacy.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.PRE_UPDATE_CAPABILITY_GATE_READY);
+  assert.equal(legacy.updatePromotionAllowed, false);
+  assert.equal(legacy.providerRoutingResumeAllowed, false);
+});
