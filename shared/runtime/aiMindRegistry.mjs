@@ -127,7 +127,15 @@ export function buildAIMindRegistry({ providerHealth = {}, runtimeContext = {}, 
   const minds = [...merged.values()];
   const missionPrivacy = asText(runtimeContext?.providerExecutionIntent?.answerMode).toLowerCase();
   const privateMission = missionPrivacy === 'local-private';
-  const filteredEligible = minds.filter((mind) => mind.routeEligibility && !(privateMission && mind.privacyClass === 'cloud'));
+  // Approval is durable configuration. Readiness is a separate *live* fact:
+  // a saved local model may be absent, renamed, or have an unreachable Ollama.
+  // Never revoke its approval on an outage, but never recommend it as runnable.
+  const ollamaModelsObserved = providerHealth?.ollama?.ok === true;
+  const observedOllamaMindIds = new Set(discovered.map((mind) => mind.mindId));
+  const filteredEligible = minds.filter((mind) => mind.routeEligibility
+    && !(privateMission && mind.privacyClass === 'cloud')
+    && (mind.providerId !== 'ollama'
+      || (ollamaModelsObserved && observedOllamaMindIds.has(mind.mindId))));
   const recommended = minds.find((m) => m.approvalState === 'recommended') || minds.find((m) => m.approvalState === 'sandboxed') || minds[0] || null;
   const counts = {
     discoveredMindCount: minds.length,
