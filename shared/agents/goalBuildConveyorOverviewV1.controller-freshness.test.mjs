@@ -56,6 +56,8 @@ test('Goal #2002: a reusable gate-19 proof cannot certify controller BUILDING', 
     diagnosticOnly: true, approvalAuthority: false, mergeAuthority: false,
     sourceHead: 'a'.repeat(40), observedAtUtc: at(-1000),
     observationStatus: 'EVIDENCE_AVAILABLE', gates: [
+      ...[4, 5, 7, 6].map(id => ({ id, status: 'PASS',
+        observedAtUtc: at(-1000), proofRef: 'workspace:proof/gate-' + id })),
       { id: 18, status: 'PASS', observedAtUtc: at(-1000), proofRef: 'workspace:proof/gate-18' },
       { id: 19, status: 'PASS', observedAtUtc: at(-1000), proofRef },
     ],
@@ -63,4 +65,54 @@ test('Goal #2002: a reusable gate-19 proof cannot certify controller BUILDING', 
   const output = overview(input, { nowMs: NOW });
   assert.deepEqual(output.controllers.map(c => c.trafficLight), ['AMBER', 'AMBER']);
   assert.equal(output.stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
+});
+
+const signedGate = (id, status = 'PASS', extra = {}) => ({
+  id, status, observedAtUtc: at(-1000), proofRef: 'workspace:proof/gate-' + id,
+  ...extra,
+});
+const physicalStage = signedGates => {
+  const input = projection([]);
+  input.goalBuildGateObservatory = {
+    schemaVersion: 'stephanos.goal-build-gate-observatory.v1',
+    diagnosticOnly: true, approvalAuthority: false, mergeAuthority: false,
+    sourceHead: 'a'.repeat(40), observedAtUtc: at(-1000),
+    observationStatus: 'EVIDENCE_AVAILABLE', gates: signedGates,
+  };
+  return overview(input, { nowMs: NOW }).stages.find(stage => stage.id === 'pickup');
+};
+
+test('Goal #2002: signed pickup requires admission, SELECT, CLAIM and pickup proofs', () => {
+  const validIds = [4, 5, 7, 6, 18, 19];
+  const valid = validIds.map(id => signedGate(id));
+  assert.equal(physicalStage(valid).state, 'PROVEN');
+  assert.equal(physicalStage(valid).trafficLight, 'GREEN');
+  for (const missing of validIds) {
+    const stage = physicalStage(valid.filter(gate => gate.id !== missing));
+    assert.notEqual(stage.state, 'PROVEN', 'missing required gate ' + missing);
+    assert.notEqual(stage.trafficLight, 'GREEN', 'missing required gate ' + missing);
+  }
+});
+
+test('Goal #2002: WAITING, STALE and proofless SELECT cannot certify pickup', () => {
+  const valid = [4, 5, 7, 6, 18, 19].map(id => signedGate(id));
+  for (const invalid of [
+    { status: 'WAITING_FOR_PREREQUISITE' },
+    { status: 'STALE' },
+    { proofRef: '' },
+    { observedAtUtc: at(1000) },
+  ]) {
+    const gates = valid.map(gate => gate.id === 6 ? signedGate(6, 'PASS', invalid) : gate);
+    assert.notEqual(physicalStage(gates).trafficLight, 'GREEN',
+      'unproven SELECT must not certify pickup: ' + JSON.stringify(invalid));
+  }
+  const failed = valid.map(gate => gate.id === 6 ? signedGate(6, 'FAIL') : gate);
+  assert.notEqual(physicalStage(failed).trafficLight, 'GREEN');
+});
+
+test('Goal #2002: duplicate signed gate identities cannot independently certify pickup', () => {
+  const valid = [4, 5, 7, 6, 18, 19].map(id => signedGate(id));
+  const duplicatedSelect = [...valid, signedGate(6)];
+  assert.notEqual(physicalStage(duplicatedSelect).trafficLight, 'GREEN');
+  assert.equal(physicalStage(valid).state, 'PROVEN');
 });

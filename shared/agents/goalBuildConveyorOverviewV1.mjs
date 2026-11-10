@@ -67,12 +67,17 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
   // pickup. Its signed prerequisite (gate 18) must be current and PASS, and
   // no current veto may contradict the admission. A diagnostic gate remains
   // different from a worker-scoped STARTED receipt.
-  const claimGate = gates.find(gate => gate?.id === 18);
   const currentVeto = gates.some(gate => gateLive(gate) && gate.status === 'FAIL');
+  // A signed pickup cannot be operationally GREEN before its admission,
+  // SELECT and CLAIM predecessors have their own distinct current proof.
+  // A gate-19 diagnostic is still not a worker-scoped STARTED receipt.
+  const pickupPrerequisites = [4, 5, 7, 6, 18, 19];
   const signedPickup = ledgerLive && !currentVeto
-    && claimGate?.status === 'PASS' && gateLive(claimGate)
-    ? gates.find(gate => gate?.id === 19
-      && gate.status === 'PASS' && gateLive(gate)) : null;
+    && pickupPrerequisites.every(id => {
+      const matching = gates.filter(gate => gate?.id === id);
+      return matching.length === 1 && matching[0].status === 'PASS'
+        && gateLive(matching[0]);
+    }) ? gates.find(gate => gate?.id === 19) : null;
   const signedPickupRef = signedPickup?.proofRef || '';
   const stages = FLOW.map(([id, label, gateIds]) => {
     const observations = gateIds.map(number => gates.find(gate => gate.id === number));
