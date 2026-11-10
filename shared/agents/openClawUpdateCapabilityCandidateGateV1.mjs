@@ -372,24 +372,24 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
             const refs = proofRefs(capability[field]);
             if (!refs || refs.length === 0) blockers.push('CAPABILITY_LEDGER_CHANGED_PROOF_UNPROVEN');
           }
-          const identityKeys = ['currentImplementation', 'candidateImplementation', 'origin', 'candidateOrigin'];
-          if (capability.protected || identityKeys.some((key) => Object.prototype.hasOwnProperty.call(capability, key))) {
-            const currentImplementation = safeId(capability.currentImplementation);
-            const candidateImplementation = safeId(capability.candidateImplementation);
-            const origin = text(capability.origin);
-            const candidateOrigin = text(capability.candidateOrigin);
-            const validOrigins = Object.values(OPENCLAW_UPDATE_CAPABILITY_ORIGIN);
-            const disposition = text(capability.updateDisposition);
-            const identityInvalid = !currentImplementation || !candidateImplementation
-              || !validOrigins.includes(origin) || !validOrigins.includes(candidateOrigin);
-            const noChange = currentImplementation === candidateImplementation && origin === candidateOrigin;
-            const replacementInvalid = disposition === OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM
-              && (origin === OPENCLAW_UPDATE_CAPABILITY_ORIGIN.UPSTREAM
-                || candidateOrigin !== OPENCLAW_UPDATE_CAPABILITY_ORIGIN.UPSTREAM);
-            if (identityInvalid || replacementInvalid
-              || (disposition !== OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM && noChange)) {
-              blockers.push('CAPABILITY_LEDGER_CHANGED_DISPOSITION_IDENTITY_CONTRADICTION');
-            }
+          // The READY producer requires complete implementation/origin identities for
+          // every changed capability. A self-declared unprotected flag cannot
+          // turn missing identities into a positive routing-promotion proof.
+          const currentImplementation = safeId(capability.currentImplementation);
+          const candidateImplementation = safeId(capability.candidateImplementation);
+          const origin = text(capability.origin);
+          const candidateOrigin = text(capability.candidateOrigin);
+          const validOrigins = Object.values(OPENCLAW_UPDATE_CAPABILITY_ORIGIN);
+          const disposition = text(capability.updateDisposition);
+          const identityInvalid = !currentImplementation || !candidateImplementation
+            || !validOrigins.includes(origin) || !validOrigins.includes(candidateOrigin);
+          const noChange = currentImplementation === candidateImplementation && origin === candidateOrigin;
+          const replacementInvalid = disposition === OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM
+            && (origin === OPENCLAW_UPDATE_CAPABILITY_ORIGIN.UPSTREAM
+              || candidateOrigin !== OPENCLAW_UPDATE_CAPABILITY_ORIGIN.UPSTREAM);
+          if (identityInvalid || replacementInvalid
+            || (disposition !== OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM && noChange)) {
+            blockers.push('CAPABILITY_LEDGER_CHANGED_DISPOSITION_IDENTITY_CONTRADICTION');
           }
         }
         if (capability.protected) {
