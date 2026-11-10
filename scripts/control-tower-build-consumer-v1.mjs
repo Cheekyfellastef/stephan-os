@@ -154,22 +154,23 @@ export async function consumeControlTowerBuildRequestV1({
       const historicalRequest = historical?.ok === true ? historical.request : null;
       const historicalDigest = historicalRequest
         ? mailboxRotationDigest({ ...historicalRequest, issueNumber: 2315 }) : '';
+      // Metadata-bearing rows bind recovery to the exact original command
+      // digest. Legacy rows deliberately lack that projected digest and retain
+      // the older retirement function's own binding check instead.
+      const legacyReservation = latestBuild.detailState === 'LEGACY_DETAIL_UNAVAILABLE'
+        && typeof ledger.retireLegacyControlTowerReservation === 'function';
+      const supersededObservedReservation = latestBuild.detailState === 'OBSERVED'
+        && latestBuild.operation === CONTROL_TOWER_BUILD_OPERATION
+        && SHA.test(latestBuild.sourceHead || '') && latestBuild.sourceHead !== sourceHead;
       const historicalBindingProven = historicalRequest
         && historicalRequest.requestId === latestBuild.requestId
         && historicalRequest.operation === CONTROL_TOWER_BUILD_OPERATION
-        && historicalDigest === latestBuild.commandDigest;
+        && (legacyReservation || (supersededObservedReservation
+          && historicalDigest === latestBuild.commandDigest));
       const graceMs = FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.executionTimeoutMs + 60_000;
       const expiredBeyondExecution = historicalBindingProven
         && Number.isFinite(Date.parse(historicalRequest.expiresAtUtc))
         && Date.parse(historicalRequest.expiresAtUtc) + graceMs <= now().getTime();
-      // A metadata-bearing reservation is eligible for recovery only after its
-      // source epoch has been superseded. Same-head ambiguous execution remains
-      // held, preserving the original exactly-once boundary.
-      const supersededObservedReservation = latestBuild.detailState === 'OBSERVED'
-        && latestBuild.operation === CONTROL_TOWER_BUILD_OPERATION
-        && SHA.test(latestBuild.sourceHead || '') && latestBuild.sourceHead !== sourceHead;
-      const legacyReservation = latestBuild.detailState === 'LEGACY_DETAIL_UNAVAILABLE'
-        && typeof ledger.retireLegacyControlTowerReservation === 'function';
       if (expiredBeyondExecution && (legacyReservation || supersededObservedReservation)) {
         const report = await deps.inspect({
           expectedMain: sourceHead, controlTowerRequestId: latestBuild.requestId,
