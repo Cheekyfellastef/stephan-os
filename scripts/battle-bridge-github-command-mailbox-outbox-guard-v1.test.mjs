@@ -425,6 +425,69 @@ function installSealedNov5BlankReceipt(f, {
   return proof;
 }
 
+test('Nov 5 publishable receiptRef is transport-only when bound to the exact historical disk receipt', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const proof = installSealedNov5BlankReceipt(f);
+  const expectedRef = `receipts/github-command-mailbox/${createWindowsSafeMailboxReceiptFilename(proof.requestId)}`;
+  // The original cf7 source wrote receipt to canonical disk BEFORE adding
+  // receiptRef to its publication payload and durable pending outbox.
+  const diskPath = join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(proof.requestId));
+  const canonicalBytesBefore = readFileSync(diskPath);
+  assert.equal(Object.hasOwn(readJson(diskPath), 'receiptRef'), false);
+  const state = readJson(f.statePath);
+  state.pendingReceiptPublications[0].receipt.receiptRef = expectedRef;
+  writeJson(f.statePath, state);
+  let childInvocations = 0;
+  const result = runGuard(f, { spawnSyncFn: () => {
+    childInvocations += 1;
+    assert.deepEqual(readJson(f.statePath).pendingReceiptPublications, []);
+    return { status: 0, stdout: '{}', stderr: '' };
+  } });
+  assert.equal(result.ok, true);
+  assert.equal(result.quarantinedInvalidPublicationCount, 1);
+  assert.equal(childInvocations, 1);
+  assert.deepEqual(readFileSync(diskPath), canonicalBytesBefore, 'canonical historical receipt must stay immutable');
+  const quarantine = readJson(join(dirname(f.statePath), 'receipt-publication-invalid-quarantine-v1.json'));
+  assert.equal(quarantine.records.length, 1);
+  assert.equal(quarantine.records[0].entry.receipt.receiptRef, expectedRef);
+  assert.deepEqual(readJson(f.statePath).consumedRequestIds, [proof.requestId]);
+});
+
+test('Nov 5 transport-only receiptRef exception rejects alias, foreign or changed terminal content without execution', (t) => {
+  const scenarios = [
+    ['unrelated file', (ref) => ref.replace(/[^/]+$/, 'other.json'), false],
+    ['parent directory traversal', () => 'receipts/github-command-mailbox/../other.json', false],
+    ['non-string ref', () => ({ path: 'hostile' }), false],
+    ['valid ref with unrelated extra field', ref => ref, true],
+    ['canonical receipt illegally includes receiptRef', ref => ref, 'canonical-ref'],
+  ];
+  for (const [label, refFn, mutation] of scenarios) {
+    const f = fixture(); t.after(f.cleanup);
+    const proof = installSealedNov5BlankReceipt(f);
+    const legitimateRef = `receipts/github-command-mailbox/${createWindowsSafeMailboxReceiptFilename(proof.requestId)}`;
+    const state = readJson(f.statePath);
+    state.pendingReceiptPublications[0].receipt.receiptRef = refFn(legitimateRef);
+    if (mutation === true) state.pendingReceiptPublications[0].receipt.unexpectedContent = 'forged';
+    writeJson(f.statePath, state);
+    const diskPath = join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(proof.requestId));
+    if (mutation === 'canonical-ref') {
+      const disk = readJson(diskPath);
+      disk.receiptRef = legitimateRef;
+      writeJson(diskPath, disk);
+    }
+    const stateBytesBefore = readFileSync(f.statePath);
+    const diskBytesBefore = readFileSync(diskPath);
+    let childInvocations = 0;
+    const result = runGuard(f, { spawnSyncFn: () => { childInvocations++; return { status: 0 }; } });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.guardDiagnostic.reasonCode, 'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_UNPROVEN', label);
+    assert.equal(result.guardDiagnostic.childInvocationAttempted, false, label);
+    assert.equal(childInvocations, 0, label);
+    assert.deepEqual(readFileSync(f.statePath), stateBytesBefore, label);
+    assert.deepEqual(readFileSync(diskPath), diskBytesBefore, label);
+  }
+});
+
 test('sealed original 5 November blank request ID is reconciled only with its exact command digest and terminal ledger', (t) => {
   const f = fixture(); t.after(f.cleanup);
   const proof = installSealedNov5BlankReceipt(f);
