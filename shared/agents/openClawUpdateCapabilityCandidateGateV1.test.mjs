@@ -1085,3 +1085,50 @@ test('absent protected post-update evidence fails as closed as explicit empty ev
   assert.equal(preflight.updatePromotionAllowed, false);
   assert.equal(preflight.providerRoutingResumeAllowed, false);
 });
+
+test('changed protected capabilities cannot promote without producer-required test and evidence proofs', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const full = ledger();
+  const qualificationReplay = [replay(OPENCLAW_TASK_CLASS.OC1)];
+  const dispositions = [
+    OPENCLAW_UPDATE_DISPOSITION.MIGRATE,
+    OPENCLAW_UPDATE_DISPOSITION.IMPROVE,
+    OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM,
+  ];
+  const evaluate = (capability) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: verified,
+    capabilityLedger: { ...full, capabilities: [capability] },
+    qualificationReplay,
+  });
+  for (const updateDisposition of dispositions) {
+    const good = {
+      ...full.capabilities[0],
+      updateDisposition,
+      candidateImplementation: 'oc8:new',
+      candidateOrigin: updateDisposition === OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM
+        ? 'upstream' : 'stephanos-extension',
+    };
+    assert.equal(evaluate(good).updatePromotionAllowed, true, updateDisposition);
+    for (const field of ['tests', 'evidenceRefs']) {
+      for (const value of [undefined, null, [], [null], ['invalid proof reference']]) {
+        const malformed = { ...good };
+        if (value === undefined) delete malformed[field];
+        else malformed[field] = value;
+        const rejected = evaluate(malformed);
+        assert.equal(rejected.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE,
+          `${updateDisposition} ${field} ${String(value)}`);
+        assert.equal(rejected.updatePromotionAllowed, false);
+        assert.equal(rejected.providerRoutingResumeAllowed, false);
+        assert.ok(rejected.blockers.includes('CAPABILITY_LEDGER_CHANGED_PROOF_UNPROVEN'));
+      }
+    }
+  }
+  // A legacy source-only preflight is still readable, but never self-authorizes promotion.
+  const preflight = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: staged(OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY),
+    capabilityLedger: { ...full, capabilities: [{ ...full.capabilities[0], tests: [], evidenceRefs: [] }] },
+    qualificationReplay: [],
+  });
+  assert.equal(preflight.updatePromotionAllowed, false);
+  assert.equal(preflight.providerRoutingResumeAllowed, false);
+});

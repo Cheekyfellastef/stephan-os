@@ -336,6 +336,13 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
         // Earlier fixture records with no identity fields remain source-only
         // compatible until the reviewed producer/consumer migration.
         if (CHANGED_DISPOSITIONS.has(text(capability.updateDisposition))) {
+          // The original producer requires test and candidate evidence for every
+          // changed disposition. A claimed READY ledger must not lose those proofs
+          // between production and post-update routing promotion.
+          for (const field of ['tests', 'evidenceRefs']) {
+            const refs = proofRefs(capability[field]);
+            if (!refs || refs.length === 0) blockers.push('CAPABILITY_LEDGER_CHANGED_PROOF_UNPROVEN');
+          }
           const identityKeys = ['currentImplementation', 'candidateImplementation', 'origin', 'candidateOrigin'];
           if (capability.protected || identityKeys.some((key) => Object.prototype.hasOwnProperty.call(capability, key))) {
             const currentImplementation = safeId(capability.currentImplementation);
