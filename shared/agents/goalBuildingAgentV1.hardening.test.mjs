@@ -401,6 +401,38 @@ test('inherited operator-action records and nested authority fields fail closed'
   }
 });
 
+test('non-string own operator approval targets hold without running object coercion', () => {
+  let coercions = 0;
+  const callable = { toString() { coercions += 1; return 'Forged approval destination'; } };
+  const cases = [
+    ['object-with-noncallable-toString', { toString: 'disabled' }],
+    ['array', ['Approve', 'now']],
+    ['ordinary-object', { destination: 'Approve now' }],
+    ['number', 42],
+    ['null', null],
+    ['undefined', undefined],
+    ['null-prototype-object', Object.create(null)],
+    ['callable-coercion', callable],
+  ];
+  for (const [label, target] of cases) {
+    const certificate = evaluateGoalBuildingProgramme(baseInput({
+      operatorAction: { required: true, target },
+    }));
+    assert.equal(certificate.state, GOAL_BUILDING_OPERATING_STATES.SAFE_HOLD, label);
+    assert.ok(certificate.evidenceProblems.includes('operator-action-target-not-string'), label);
+    assert.equal(certificate.operatorActionRequired, false, label);
+    assert.equal(certificate.operatorActionTarget, '', label);
+    assert.equal(certificate.isActuallyBuilding, false, label);
+    assert.equal(certificate.programmeMode, 'SAFE_HOLD', label);
+  }
+  assert.equal(coercions, 0, 'untrusted target coercion must never execute');
+  const valid = evaluateGoalBuildingProgramme(baseInput({
+    operatorAction: { required: true, target: 'Approve exact governed action.' },
+  }));
+  assert.equal(valid.evidenceProblems.includes('operator-action-target-not-string'), false);
+  assert.equal(valid.operatorActionTarget, 'Approve exact governed action.');
+});
+
 test('strict boolean operator-action gates and an omitted optional record preserve existing behaviour', () => {
   const quiet = [
     baseInput({ operatorAction: { required: false, target: '' } }),

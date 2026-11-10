@@ -230,7 +230,11 @@ export function validateOperatorAction(input = {}) {
   const targetField = Object.getOwnPropertyDescriptor(operatorAction, 'target');
   const required = Boolean(requiredField && Object.hasOwn(requiredField, 'value')
     && requiredField.value === true);
-  const target = targetField && Object.hasOwn(targetField, 'value')
+  const targetIsData = Boolean(targetField && Object.hasOwn(targetField, 'value'));
+  // Approval destinations are text records, never objects with executable coercion.
+  // Reject malformed own values before boundedText can call String(value).
+  const invalidTargetType = targetIsData && typeof targetField.value !== 'string';
+  const target = targetIsData && !invalidTargetType
     ? boundedText(targetField.value, '', 280) : '';
   const evidenceProblems = [];
   if (inheritedRecord) evidenceProblems.push('operator-action-record-inherited');
@@ -242,6 +246,7 @@ export function validateOperatorAction(input = {}) {
     && typeof requiredField.value !== 'boolean') evidenceProblems.push('operator-action-required-not-boolean');
   if (!targetField && 'target' in operatorAction) evidenceProblems.push('operator-action-target-inherited');
   if (targetField && !Object.hasOwn(targetField, 'value')) evidenceProblems.push('operator-action-target-accessor');
+  if (invalidTargetType) evidenceProblems.push('operator-action-target-not-string');
   if (required && !target) evidenceProblems.push('operator-action-target-missing');
   if (!required && target) evidenceProblems.push('operator-action-target-without-requirement');
   // Contradictory evidence must not publish even a partial approval flag or
