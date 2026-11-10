@@ -147,19 +147,31 @@ export async function consumeControlTowerBuildRequestV1({
       latestObserve = discovery.latestControlSystemObservation || latestObserve;
     }
     const auth = await deps.resolveAuth();
-    if (latestBuild?.ledgerPhase === 'RESERVED' && latestBuild.detailState === 'LEGACY_DETAIL_UNAVAILABLE'
-      && latestBuild.state === 'RESERVED' && typeof ledger.retireLegacyControlTowerReservation === 'function') {
+    if (latestBuild?.ledgerPhase === 'RESERVED' && latestBuild.state === 'RESERVED') {
       const historical = await deps.readHistoricalRequest({
         token: auth?.token, runId: latestBuild.runId, now: () => now().toISOString(),
       });
       const historicalRequest = historical?.ok === true ? historical.request : null;
-      const graceMs = FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.executionTimeoutMs + 60_000;
-      const expiredBeyondExecution = historicalRequest
+      const historicalDigest = historicalRequest
+        ? mailboxRotationDigest({ ...historicalRequest, issueNumber: 2315 }) : '';
+      // Metadata-bearing rows bind recovery to the exact original command
+      // digest. Legacy rows deliberately lack that projected digest and retain
+      // the older retirement function's own binding check instead.
+      const legacyReservation = latestBuild.detailState === 'LEGACY_DETAIL_UNAVAILABLE'
+        && typeof ledger.retireLegacyControlTowerReservation === 'function';
+      const supersededObservedReservation = latestBuild.detailState === 'OBSERVED'
+        && latestBuild.operation === CONTROL_TOWER_BUILD_OPERATION
+        && SHA.test(latestBuild.sourceHead || '') && latestBuild.sourceHead !== sourceHead;
+      const historicalBindingProven = historicalRequest
         && historicalRequest.requestId === latestBuild.requestId
         && historicalRequest.operation === CONTROL_TOWER_BUILD_OPERATION
+        && (legacyReservation || (supersededObservedReservation
+          && historicalDigest === latestBuild.commandDigest));
+      const graceMs = FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.executionTimeoutMs + 60_000;
+      const expiredBeyondExecution = historicalBindingProven
         && Number.isFinite(Date.parse(historicalRequest.expiresAtUtc))
         && Date.parse(historicalRequest.expiresAtUtc) + graceMs <= now().getTime();
-      if (expiredBeyondExecution) {
+      if (expiredBeyondExecution && (legacyReservation || supersededObservedReservation)) {
         const report = await deps.inspect({
           expectedMain: sourceHead, controlTowerRequestId: latestBuild.requestId,
         });
@@ -175,9 +187,28 @@ export async function consumeControlTowerBuildRequestV1({
           && status.requestLedger?.requested === true && status.requestLedger.recordObserved === true
           && status.requestLedger.phase === 'RESERVED';
         if (quiescent) {
-          ledger.retireLegacyControlTowerReservation({
-            request: historicalRequest, nowMs: now().getTime(),
-          });
+          if (legacyReservation) {
+            ledger.retireLegacyControlTowerReservation({
+              request: historicalRequest, nowMs: now().getTime(),
+            });
+          } else {
+            // Preserve uncertainty as an explicit terminal carrier failure.
+            // This does not claim that the old build ran or did not run. The
+            // fresh request still re-enters the original goal/lease/custody
+            // gates and cannot inherit execution authority from this repair.
+            const terminal = createControlTowerRequestObservationV1(historicalRequest, {
+              commandDigest: latestBuild.commandDigest,
+              acceptedAtUtc: latestBuild.acceptedAtUtc,
+              observedAtUtc: now().toISOString(),
+              nowMs: now().getTime(),
+              state: 'WAKE_BLOCKED',
+              blocker: 'CONTROL_TOWER_BUILD_DELIVERY_UNPROVEN',
+            });
+            if (terminal) ledger.complete({
+              requestId: historicalRequest.requestId, issueNumber: 2315, state: 'BLOCKED',
+              controlTowerObservation: terminal,
+            });
+          }
           discovery = typeof ledger.discoverControlTower === 'function'
             ? await ledger.discoverControlTower({ nowMs: now().getTime() }) : null;
           if (discovery?.ok) {
