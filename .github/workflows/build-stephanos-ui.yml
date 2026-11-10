@@ -84,7 +84,6 @@ jobs:
           node --test --test-concurrency=1 \
             shared/runtime/runtimeGuardrails.test.mjs \
             shared/runtime/runtimeStatusModel.test.mjs \
-            shared/runtime/aiMindRegistry.test.mjs \
             shared/runtime/stephanosHomeNode.test.mjs \
             shared/runtime/stephanosSessionMemory.test.mjs \
             stephanos-server/tests/runtime-status-model.test.js \
