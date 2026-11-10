@@ -495,3 +495,45 @@ test('Windows path aliases, devices and invalid components deny director source 
     assert.equal(validateDirectorStatusPacket(status).valid,true);
   }
 });
+
+
+test('canonical allowedFiles must preserve exact original path bytes', () => {
+  for (const path of [' src/safe.mjs', 'src/safe.mjs ', 'src/safe.mjs\n', 'src/safe.mjs\t', '\tsrc/safe.mjs']) {
+    const goal = createGoalRecord({ goalId: '#exact', allowedFiles: [path] });
+    assert.deepEqual(goal.allowedFiles, []);
+    const status = createDirectorStatusPacket({ goals: [{ goalId: '#exact', allowedFiles: [path] }] });
+    assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_HELD');
+    assert.equal(status.nextSourceSlice, null);
+    assert.equal(validateDirectorStatusPacket(status).valid, true);
+  }
+  const mixed = createDirectorStatusPacket({ goals: [
+    { goalId: '#mixed', allowedFiles: ['src/safe.mjs',' src/forged.mjs'] },
+  ] });
+  assert.equal(mixed.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_HELD');
+  assert.equal(validateDirectorStatusPacket(mixed).valid, true);
+});
+test('direct source slice rejects silently normalized and invalid override paths', () => {
+  const goal = { goalId: '#direct', state: 'PLANNED', allowedFiles: ['src/safe.mjs'] };
+  for (const allowedFiles of [[' src/safe.mjs'], ['src/safe.mjs '], ['src/safe.mjs', '\nsrc/safe.mjs'], ['src/safe.mjs', null], ['src/safe.mjs', 42]]) {
+    const packet = createSourceSlicePacket({ goal, allowedFiles });
+    assert.equal(packet.finalVerdict, 'SOURCE_SLICE_PACKET_HELD');
+    assert.deepEqual(packet.allowedFiles, []);
+  }
+  const invalidGoal = createSourceSlicePacket({ goal: {
+    goalId: '#bad', allowedFiles: ['src/safe.mjs', 'src/safe.mjs '],
+  }, allowedFiles: ['src/safe.mjs'] });
+  assert.equal(invalidGoal.finalVerdict, 'SOURCE_SLICE_PACKET_HELD');
+  assert.equal(createSourceSlicePacket({ goal, allowedFiles:['src/safe.mjs'] }).finalVerdict, 'SOURCE_SLICE_PACKET_READY');
+});
+test('director slice hint refuses path normalization but allows internal spaces', () => {
+  const goal = { goalId: '#scoped', allowedFiles: ['src/safe.mjs', 'src/with space.mjs'] };
+  for (const allowedFiles of [['src/safe.mjs '], ['src/safe.mjs', '\tsrc/with space.mjs'], ['src/safe.mjs', null]]) {
+    const status = createDirectorStatusPacket({ goals: [goal], slice: { allowedFiles } });
+    assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_HELD');
+    assert.equal(status.nextSourceSlice, null);
+    assert.equal(validateDirectorStatusPacket(status).valid, true);
+  }
+  const allowed = createDirectorStatusPacket({ goals: [goal], slice: { allowedFiles: ['src/with space.mjs'] } });
+  assert.equal(allowed.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_ACTIVE');
+  assert.equal(validateDirectorStatusPacket(allowed).valid, true);
+});

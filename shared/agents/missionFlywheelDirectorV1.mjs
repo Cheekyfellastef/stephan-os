@@ -40,6 +40,14 @@ function list(value) {
   return Array.isArray(value) ? value.map((item) => text(item)).filter(Boolean) : [];
 }
 
+// Source scopes are exact repository path identities, not human-readable labels.
+// Refuse normalization and partial filtering that could silently widen custody.
+function exactSourcePaths(value) {
+  if (!Array.isArray(value) || value.some((path) => typeof path !== 'string'
+      || !path || path !== path.trim())) return [];
+  return [...value];
+}
+
 function normalizeGoalState(state) {
   if (state === undefined) return GOAL_STATE.PLANNED;
   const out = typeof state === 'string' ? state.trim().toUpperCase() : '';
@@ -130,7 +138,7 @@ export function createGoalRecord(input = {}) {
     proofCommand: text(input.proofCommand),
     blocker: text(input.blocker),
     nextAction: text(input.nextAction),
-    allowedFiles: list(input.allowedFiles),
+    allowedFiles: exactSourcePaths(input.allowedFiles),
     forbiddenFiles: list(input.forbiddenFiles),
   };
 }
@@ -183,7 +191,7 @@ export function createSourceSlicePacket(input = {}) {
   const proofCommand = text(input.proofCommand, goal.proofCommand || 'npm test');
   // An explicitly supplied empty scope is a denial, never fallback to all files.
   const requestedFiles = Object.prototype.hasOwnProperty.call(input, 'allowedFiles')
-    ? list(input.allowedFiles) : goal.allowedFiles;
+    ? exactSourcePaths(input.allowedFiles) : goal.allowedFiles;
   const forbiddenFiles = [...new Set([...MANDATORY_FORBIDDEN_FILES, ...goal.forbiddenFiles, ...list(input.forbiddenFiles)])];
   const allowedFiles = goal.state === GOAL_STATE.PLANNED && !goal.prNumber && !goal.activeBranch
     && requestedFiles.length
@@ -223,7 +231,7 @@ export function createDirectorStatusPacket(input = {}) {
     ? selectedGoal : null;
   // Explicit empty or disjoint source restrictions are denials, never full-allow fallback.
   const hasScope = input.slice != null && Object.prototype.hasOwnProperty.call(input.slice, 'allowedFiles');
-  const requested = list(input.slice?.allowedFiles);
+  const requested = exactSourcePaths(input.slice?.allowedFiles);
   const scoped = hasScope
     ? requested.filter((path) => candidate?.allowedFiles.includes(path))
     : candidate?.allowedFiles || [];
