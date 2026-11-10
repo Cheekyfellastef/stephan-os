@@ -1,0 +1,97 @@
+{
+  "schemaVersion": "github-operator-assistant.v1",
+  "status": "BLOCKED",
+  "generatedAtUtc": "2026-07-08T00:00:00.000Z",
+  "focusIssues": [
+    1284,
+    1286,
+    1287
+  ],
+  "readyForReview": [
+    {
+      "kind": "pr-ready-for-review",
+      "number": 1448,
+      "title": "Publish PR verifier",
+      "url": "https://github.com/Cheekyfellastef/stephan-os/pull/1448",
+      "reason": "Publication proof and checks indicate review-ready.",
+      "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "claimedHeadSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "branch": "openclaw/pr-publication-verifier",
+      "issueNumbers": [
+        1286
+      ],
+      "evidenceRefs": []
+    }
+  ],
+  "blocked": [
+    {
+      "kind": "pr-runtime-blocked",
+      "number": 1444,
+      "title": "Harden runtime shell",
+      "url": "https://github.com/Cheekyfellastef/stephan-os/pull/1444",
+      "reason": "Runtime-blocked until hardened runtime proof exists.",
+      "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "claimedHeadSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "branch": "openclaw/runtime-hardening",
+      "issueNumbers": [
+        1284
+      ],
+      "evidenceRefs": []
+    },
+    {
+      "kind": "pr-head-mismatch",
+      "number": 1450,
+      "title": "Battle Bridge claimed head drift",
+      "url": "https://github.com/Cheekyfellastef/stephan-os/pull/1450",
+      "reason": "Claimed HEAD does not match GitHub/Battle Bridge proof.",
+      "headSha": "cccccccccccccccccccccccccccccccccccccccc",
+      "claimedHeadSha": "dddddddddddddddddddddddddddddddddddddddd",
+      "branch": "openclaw/head-drift",
+      "issueNumbers": [
+        1287
+      ],
+      "evidenceRefs": []
+    }
+  ],
+  "waitingForProof": [
+    {
+      "kind": "issue-waiting-for-proof",
+      "number": 1284,
+      "title": "Runtime hardening",
+      "url": "https://github.com/Cheekyfellastef/stephan-os/issues/1284",
+      "reason": "Needs hardened runtime proof.",
+      "priority": "focus"
+    }
+  ],
+  "waitingForOperator": [
+    {
+      "kind": "issue-waiting-for-operator",
+      "number": 1287,
+      "title": "Battle Bridge proof reconciliation",
+      "url": "https://github.com/Cheekyfellastef/stephan-os/issues/1287",
+      "reason": "Operator must approve proof reconciliation policy.",
+      "priority": "focus"
+    }
+  ],
+  "waitingForImplementation": [
+    {
+      "kind": "issue-waiting-for-implementation",
+      "number": 1286,
+      "title": "GitHub Operator Assistant V1",
+      "url": "https://github.com/Cheekyfellastef/stephan-os/issues/1286",
+      "reason": "waiting-for-implementation",
+      "priority": "focus"
+    }
+  ],
+  "recommendedNextAction": "Runtime-blocked until hardened runtime proof exists.",
+  "evidence": [
+    {
+      "kind": "pr-publication-verifier",
+      "prNumber": 1448,
+      "issueNumber": null,
+      "marker": "PR_PUBLICATION_VERIFIER_PASS",
+      "summary": "PR #1448 publication verified.",
+      "ref": "proof/pr-1448-publication.json"
+    }
+  ]
+}
