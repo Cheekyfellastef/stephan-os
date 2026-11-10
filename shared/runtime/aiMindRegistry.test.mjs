@@ -75,7 +75,7 @@ test('rediscovering an approved local model retains its configured qualification
   const modelId = 'qwen3.5:27b';
   const mindId = `ollama:${modelId}`;
   const result = buildAIMindRegistry({
-    providerHealth: { ollama: { ok: true, models: [{ name: modelId }] } },
+    providerHealth: { ollama: { ok: true, models: [modelId] } },
     registry: [{
       mindId, modelId, providerId: 'ollama', displayName: 'Operator-qualified local reasoning',
       location: 'local', privacyClass: 'local-private', costClass: 'zero',
@@ -116,5 +116,27 @@ test('fresh Ollama discovery alone never fabricates approval or tools', () => {
   assert.equal(result.minds[0].approvalState, 'discovered');
   assert.equal(result.minds[0].routeEligibility, false);
   assert.equal(result.minds[0].toolAccessLevel, 'none');
+  assert.deepEqual(result.routeEligibleMindIds, []);
+});
+test('real Ollama health string inventory discovers local minds without promoting them', () => {
+  const result = buildAIMindRegistry({
+    providerHealth: { ollama: { ok: true, models: ['qwen3.5:27b', 'llama3.2:3b'] } },
+  });
+  assert.deepEqual(result.minds.map((mind) => mind.mindId),
+    ['ollama:qwen3.5:27b', 'ollama:llama3.2:3b']);
+  assert.equal(result.minds.every((mind) => mind.approvalState === 'discovered'), true);
+  assert.deepEqual(result.routeEligibleMindIds, []);
+});
+
+test('unapproved local registration cannot opt itself into model routing', () => {
+  const result = buildAIMindRegistry({
+    providerHealth: { ollama: { ok: true, models: ['qwen:14b'] } },
+    registry: [{
+      mindId: 'ollama:qwen:14b', providerId: 'ollama', modelId: 'qwen:14b',
+      approvalState: 'sandboxed', routeEligibility: true, toolAccessLevel: 'none',
+    }],
+  });
+  assert.equal(result.minds[0].approvalState, 'sandboxed');
+  assert.equal(result.minds[0].routeEligibility, false);
   assert.deepEqual(result.routeEligibleMindIds, []);
 });
