@@ -152,7 +152,14 @@ export function createDirectorStatusPacket(input = {}) {
     && selectedGoal.dependsOn.every((id) => completedIds.has(id))
     ? selectedGoal
     : null;
-  const packet = nextGoal ? createSourceSlicePacket({ goal: nextGoal, ...input.slice }) : null;
+  // A slice may narrow the canonical goal estate, never replace the goal or widen it.
+  const requestedFiles = list(input.slice?.allowedFiles);
+  const scopedFiles = requestedFiles.length
+    ? requestedFiles.filter((path) => nextGoal?.allowedFiles.includes(path))
+    : nextGoal?.allowedFiles || [];
+  const packet = nextGoal
+    ? createSourceSlicePacket({ ...input.slice, goal: nextGoal, allowedFiles: scopedFiles })
+    : null;
   const unfinished = goals.some((goal) => goal.state !== GOAL_STATE.DONE);
   const directorState = nextGoal
     ? GOAL_STATE.BUILDING

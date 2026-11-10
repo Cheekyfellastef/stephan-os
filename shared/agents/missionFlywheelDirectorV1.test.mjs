@@ -185,3 +185,37 @@ test('explicit eligible nextGoal is resolved from the canonical dependency graph
   assert.deepEqual(status.nextSourceSlice.allowedFiles, ['shared/agents/missionFlywheelDirectorV1.mjs']);
   assert.equal(validateDirectorStatusPacket(status).valid, true);
 });
+
+test('caller-supplied slice.goal cannot replace the selected canonical goal', () => {
+  const status = createDirectorStatusPacket({
+    goals: [{ goalId: '#safe', title: 'Canonical', allowedFiles: ['safe.mjs', 'safe.test.mjs'] }],
+    nextGoal: { goalId: '#safe' },
+    slice: { goal: { goalId: '#forged', allowedFiles: ['.env'] } },
+  });
+
+  assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_ACTIVE');
+  assert.equal(status.nextGoal.goalId, '#safe');
+  assert.equal(status.nextSourceSlice.goalId, '#safe');
+  assert.deepEqual(status.nextSourceSlice.allowedFiles, ['safe.mjs', 'safe.test.mjs']);
+  assert.equal(validateDirectorStatusPacket(status).valid, true);
+});
+
+test('slice allowedFiles can narrow but cannot widen the canonical goal estate', () => {
+  const goals = [{ goalId: '#safe', allowedFiles: ['safe.mjs', 'safe.test.mjs'] }];
+  const cases = [
+    { requested: ['.env'], expected: ['safe.mjs', 'safe.test.mjs'] },
+    { requested: ['safe.test.mjs'], expected: ['safe.test.mjs'] },
+    { requested: ['safe.test.mjs', '.env'], expected: ['safe.test.mjs'] },
+  ];
+
+  for (const { requested, expected } of cases) {
+    const status = createDirectorStatusPacket({
+      goals,
+      nextGoal: { goalId: '#safe' },
+      slice: { allowedFiles: requested, goal: { goalId: '#forged', allowedFiles: ['.env'] } },
+    });
+    assert.equal(status.nextSourceSlice.goalId, '#safe');
+    assert.deepEqual(status.nextSourceSlice.allowedFiles, expected);
+    assert.equal(validateDirectorStatusPacket(status).valid, true);
+  }
+});
