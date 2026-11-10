@@ -565,7 +565,7 @@ function executionLedgerRecordPath(statePath, requestId) {
   return join(dirname(statePath), 'execution-ledger-v1', digest.slice(0, 2), digest + '.json');
 }
 
-function sameLegacyTerminalIdentity(pendingReceipt, canonicalReceipt) {
+function sameLegacyTerminalIdentity(pendingReceipt, canonicalReceipt, { sealedRequestId = '' } = {}) {
   if (!isPlainObject(pendingReceipt) || !isPlainObject(canonicalReceipt)
     || !Object.hasOwn(pendingReceipt, 'requestId')
     || pendingReceipt.requestId !== '') return false;
@@ -573,6 +573,41 @@ function sameLegacyTerminalIdentity(pendingReceipt, canonicalReceipt) {
   const canonicalTerminal = { ...canonicalReceipt };
   delete pendingTerminal.requestId;
   delete canonicalTerminal.requestId;
+  // The original 5 Nov producer persisted the raw receipt to disk, then
+  // appended receiptRef for the deferred publication. On a large terminal,
+  // both are compacted: the ref disappears but the compact record retains
+  // originalBytes for the two different original JSON lengths.
+  const singleSession = sealedRequestId === 'vr2707-20261105T1953Z-cf7-archive-single-session-v1';
+  const expectedRef = singleSession
+    ? `receipts/github-command-mailbox/${createWindowsSafeMailboxReceiptFilename(sealedRequestId)}`
+    : '';
+  if (Object.hasOwn(pendingTerminal, 'receiptRef')) {
+    if (!singleSession || Object.hasOwn(canonicalTerminal, 'receiptRef')
+      || pendingTerminal.receiptRef !== expectedRef) return false;
+    delete pendingTerminal.receiptRef;
+  } else if (singleSession) {
+    const pendingCompact = pendingTerminal.result?.result;
+    const canonicalCompact = canonicalTerminal.result?.result;
+    // Old serializeBoundedReceiptJson used this exact 256 KiB disk limit.
+    // The producer appended one LAST pretty-printed root property; permit
+    // only its precise byte delta when BOTH sealed receipts were compacted.
+    const transportBytes = Buffer.byteLength(
+      `,\n  "receiptRef": ${JSON.stringify(expectedRef)}`, 'utf8');
+    if (isPlainObject(pendingCompact) && isPlainObject(canonicalCompact)
+      && pendingTerminal.githubProjectionTruncated === true
+      && canonicalTerminal.githubProjectionTruncated === true
+      && pendingCompact.githubProjectionTruncated === true
+      && canonicalCompact.githubProjectionTruncated === true
+      && Number.isSafeInteger(canonicalCompact.originalBytes)
+      && canonicalCompact.originalBytes > 256 * 1024
+      && Number.isSafeInteger(pendingCompact.originalBytes)
+      && pendingCompact.originalBytes === canonicalCompact.originalBytes + transportBytes) {
+      pendingTerminal.result = {
+        ...pendingTerminal.result,
+        result: { ...pendingCompact, originalBytes: canonicalCompact.originalBytes },
+      };
+    }
+  }
   return stableJson(pendingTerminal) === stableJson(canonicalTerminal);
 }
 
@@ -606,7 +641,8 @@ function proveSingleLegacyPendingDebt(statePath, receiptRoot, state, entry, metr
   if (!isPlainObject(canonicalReceipt)
     || (canonicalReceipt.requestId !== requestId && !sealedSingleSession)
     || canonicalReceipt.state !== 'DONE'
-    || !sameLegacyTerminalIdentity(entry.receipt, canonicalReceipt)
+    || !sameLegacyTerminalIdentity(entry.receipt, canonicalReceipt,
+      { sealedRequestId: sealedSingleSession ? requestId : '' })
     || entry.publicationId !== [
       requestId,
       canonicalReceipt.state,
