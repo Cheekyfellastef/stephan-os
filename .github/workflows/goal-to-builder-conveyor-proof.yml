@@ -5,6 +5,8 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'shared/agents/programmeAuthorityV1.mjs'
+      - 'shared/agents/goalBuildingAgentV1.records.mjs'
+      - 'shared/agents/goalBuildingAgentV1.runtime-records.test.mjs'
       - 'shared/agents/programmeAuthorityV1.test.mjs'
       - 'shared/agents/durableFlywheelControllerVNext.mjs'
       - 'shared/agents/durableFlywheelControllerVNext.test.mjs'
@@ -71,6 +73,7 @@ jobs:
       - name: Parse conveyor sources
         run: |
           node --check shared/agents/programmeAuthorityV1.mjs
+          node --check shared/agents/goalBuildingAgentV1.records.mjs
           node --check shared/agents/durableFlywheelControllerVNext.mjs
           node --check shared/runtime/missionScheduler.mjs
           node --check shared/agents/missionControllerCapacityRouterV1.mjs
@@ -87,6 +90,9 @@ jobs:
           node --check shared/agents/sovereignCommanderCapabilityParityV1.mjs
           node --check scripts/sovereign-commander-capability-parity-reconcile.mjs
           node --check scripts/battle-bridge-goal-discovery-heartbeat.mjs
+
+      - name: Prove Goal Building Agent runtime Q&A and status use the same physical proof
+        run: node --test shared/agents/goalBuildingAgentV1.runtime-records.test.mjs
 
       - name: Prove every goal-to-builder handoff
         run: node --test tests/goal-to-builder-conveyor-proof.test.mjs

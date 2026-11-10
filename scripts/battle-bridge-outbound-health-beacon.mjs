@@ -118,9 +118,26 @@ function safeWatchdogRestartVerdict(value) {
   return WATCHDOG_RESTART_VERDICTS.has(verdict) ? verdict : '';
 }
 
+// Original #1291: never mirror private watchdog probe errors to GitHub.
+// This diagnosis is advisory-only and cannot permit a restart or release custody.
+function projectWatchdogInspectFailureCode(record, classification) {
+  if (classification !== 'WORKER_WATCHDOG_PROBE_FAILED') return '';
+  const raw = record.probeError;
+  if (typeof raw !== 'string' || !raw.length || raw.length > 2048) {
+    return 'WATCHDOG_INSPECT_CAUSE_UNPROVEN';
+  }
+  const matches = [
+    [/\bETIMEDOUT\b/i, 'WATCHDOG_INSPECT_TIMEOUT'],
+    [/\bENOENT\b/i, 'WATCHDOG_INSPECT_EXECUTABLE_MISSING'],
+    [/^Worker watchdog probe returned invalid JSON\.$/, 'WATCHDOG_INSPECT_INVALID_JSON'],
+  ].filter(([pattern]) => pattern.test(raw));
+  return matches.length === 1 ? matches[0][1] : 'WATCHDOG_INSPECT_CAUSE_UNPROVEN';
+}
+
 export function projectWorkerWatchdogBeaconFacts(record = {}, expectedHead = '') {
   const classification = safeWatchdogClassification(record.classification || record.status);
   const restartBlocker = projectBoundedMissionWorkerRestartBlocker(record.restartBlocker);
+  const probeFailureCode = projectWatchdogInspectFailureCode(record, classification);
   const expected = validHead(expectedHead);
   const initial = record.initialAssessment && typeof record.initialAssessment === 'object' && !Array.isArray(record.initialAssessment)
     ? record.initialAssessment
@@ -133,6 +150,9 @@ export function projectWorkerWatchdogBeaconFacts(record = {}, expectedHead = '')
   const exactHeadMatch = Boolean(expected && sourceHead && expected === sourceHead);
   let exactNextAction = 'READ_WATCHDOG_FAILURE_BOUNDARY';
   if (restartBlocker) exactNextAction = 'REPAIR_TYPED_MISSION_WORKER_RESTART_BLOCKER';
+  else if (probeFailureCode === 'WATCHDOG_INSPECT_TIMEOUT') exactNextAction = 'QUALIFY_WATCHDOG_INSPECT_LATENCY';
+  else if (probeFailureCode === 'WATCHDOG_INSPECT_EXECUTABLE_MISSING') exactNextAction = 'VERIFY_CANONICAL_POWERSHELL_PROBE_PATH';
+  else if (probeFailureCode === 'WATCHDOG_INSPECT_INVALID_JSON') exactNextAction = 'REPAIR_WATCHDOG_PROBE_JSON_BOUNDARY';
   else if (WORKER_WATCHDOG_SUCCESS_CLASSIFICATIONS.has(classification) && exactHeadMatch) {
     exactNextAction = 'VERIFY_MISSION_WORKER_HEARTBEAT_AND_BUILD_EXECUTION';
   } else if (classification === 'WORKER_WATCHDOG_RECOVERY_COOLDOWN') {
@@ -143,6 +163,7 @@ export function projectWorkerWatchdogBeaconFacts(record = {}, expectedHead = '')
   return Object.freeze({
     classification,
     restartBlocker,
+    probeFailureCode,
     restartVerdict: safeWatchdogRestartVerdict(record.restartVerdict),
     sourceHead,
     expectedHead: expected,
@@ -173,6 +194,9 @@ export function projectBeaconStatus(record, spec, nowMs = Date.now(), expectedHe
   const base = core.projectBeaconStatus(record, spec, nowMs, expectedHead);
   const workerWatchdogFacts = projectWorkerWatchdogBeaconFacts(record, expectedHead);
   const watchdogBlocker = workerWatchdogFacts.restartBlocker
+    || (workerWatchdogFacts.classification === 'WORKER_WATCHDOG_PROBE_FAILED'
+      && workerWatchdogFacts.probeFailureCode !== 'WATCHDOG_INSPECT_CAUSE_UNPROVEN'
+      ? workerWatchdogFacts.probeFailureCode : '')
     || (!WORKER_WATCHDOG_SUCCESS_CLASSIFICATIONS.has(workerWatchdogFacts.classification)
       && workerWatchdogFacts.classification !== 'UNKNOWN'
       ? workerWatchdogFacts.classification
