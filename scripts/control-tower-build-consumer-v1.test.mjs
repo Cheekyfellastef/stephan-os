@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
-import { consumeControlTowerBuildRequestV1, createControlTowerBuildConsumerV1 } from './control-tower-build-consumer-v1.mjs';
+import { consumeControlTowerBuildRequestV1, createControlTowerBuildConsumerV1,
+  CONTROL_TOWER_PROTOCOL_RETRY_ATTEMPTS } from './control-tower-build-consumer-v1.mjs';
 import { createMailboxExecutionLedger } from './canonical-mailbox-execution-ledger-v1.mjs';
 import { readControlTowerBuildRequestV1 } from '../shared/agents/controlTowerBuildReaderV1.mjs';
 import { fixture, HEAD, NOW } from '../shared/agents/fixtures/controlTowerBuildV1.mjs';
@@ -25,6 +26,7 @@ function setup(t, overrides = {}) {
     now: () => new Date(NOW), testOnly: true, dependencies: {
       resolveAuth: async () => ({ token: 'fixture-only' }),
       readRequest: args => readControlTowerBuildRequestV1({ ...args, fetchImpl: f.fetchImpl }),
+      sleep: async () => {},
       execute: async args => { calls.push(args);
         // Use the SAME predicate as the real native Windows guardian. The old
         // heartbeat target is rejected here, so the lifecycle test detects
@@ -87,22 +89,28 @@ test('an unavailable owner response may follow pickup and must retain an unknown
   await s.consume(); assert.equal(calls, 1);
 });
 
-test('real protocol rejection before token or POST is a blocked wake, not an unresolved invocation', async t => {
-  let credentialReads = 0, requests = 0, ownerCalls = 0;
-  const s = setup(t, { execute: async request => {
-    ownerCalls++;
-    return callSovereignMaintenanceOwnerV1(request, {
-      readFileFn: async () => { credentialReads++; assert.fail('protocol rejection read credentials'); },
-      fetchFn: async (url, options) => {
-        requests++;
-        assert.equal(url, 'http://127.0.0.1:18791/health?view=protocol');
-        assert.equal(options.method, 'GET');
-        return Response.json({ ok: true, service: 'stephanos-sovereign-commander' });
-      },
-    });
-  } });
+test('persistent real protocol rejection retries only the proven pre-dispatch window then terminalizes once', async t => {
+  let credentialReads = 0, requests = 0, ownerCalls = 0, sleeps = 0;
+  const s = setup(t, {
+    sleep: async () => { sleeps++; },
+    execute: async request => {
+      ownerCalls++;
+      return callSovereignMaintenanceOwnerV1(request, {
+        readFileFn: async () => { credentialReads++; assert.fail('protocol rejection read credentials'); },
+        fetchFn: async (url, options) => {
+          requests++;
+          assert.equal(url, 'http://127.0.0.1:18791/health?view=protocol');
+          assert.equal(options.method, 'GET');
+          return Response.json({ ok: true, service: 'stephanos-sovereign-commander' });
+        },
+      });
+    },
+  });
   const actual = await s.consume();
-  assert.equal(credentialReads, 0); assert.equal(requests, 1); assert.equal(ownerCalls, 1);
+  assert.equal(credentialReads, 0);
+  assert.equal(requests, CONTROL_TOWER_PROTOCOL_RETRY_ATTEMPTS + 1);
+  assert.equal(ownerCalls, CONTROL_TOWER_PROTOCOL_RETRY_ATTEMPTS + 1);
+  assert.equal(sleeps, CONTROL_TOWER_PROTOCOL_RETRY_ATTEMPTS);
   assert.equal(actual.state, 'WAKE_BLOCKED');
   assert.equal(actual.blocker, 'SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED');
   const record = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox')).read(actual.requestId);
@@ -110,7 +118,43 @@ test('real protocol rejection before token or POST is a blocked wake, not an unr
   assert.equal(Object.hasOwn(record, 'terminalProofHash'), false, 'a blocked preflight has no completion proof');
   for (const flag of ['buildStartedProven', 'nativePickupProven', 'goalCompletionProven', 'sourceMutationAllowed', 'mergeAuthority', 'leaseSeizureAllowed'])
     assert.equal(actual[flag], false);
-  await s.consume(); assert.equal(ownerCalls, 1, 'same request must never be replayed after a blocked wake');
+  await s.consume();
+  assert.equal(ownerCalls, CONTROL_TOWER_PROTOCOL_RETRY_ATTEMPTS + 1, 'terminal request is never replayed');
+});
+
+test('protocol refresh during the proven pre-dispatch window reuses the same reservation and completes once', async t => {
+  let ownerCalls = 0, sleeps = 0, credentialReads = 0;
+  const s = setup(t, {
+    sleep: async () => { sleeps++; },
+    execute: async request => {
+      ownerCalls++;
+      if (ownerCalls < 3) {
+        return callSovereignMaintenanceOwnerV1(request, {
+          readFileFn: async () => { credentialReads++; assert.fail('pre-dispatch refusal read credentials'); },
+          fetchFn: async (_url, options) => {
+            assert.equal(options.method, 'GET');
+            return Response.json({ ok: true, service: 'stephanos-sovereign-commander' });
+          },
+        });
+      }
+      return {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+        command: { plan: { processId: FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId } },
+        proofHash: 'd'.repeat(64),
+      };
+    },
+  });
+  const actual = await s.consume();
+  assert.equal(credentialReads, 0);
+  assert.equal(ownerCalls, 3);
+  assert.equal(sleeps, 2);
+  assert.equal(actual.state, 'WAKE_COMPLETED');
+  assert.equal(actual.blocker, '');
+  const record = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox')).read(actual.requestId);
+  assert.equal(record.phase, 'TERMINAL');
+  assert.equal(record.terminalState, 'DONE');
+  assert.equal(record.terminalProofHash, 'd'.repeat(64));
 });
 
 test('plain flags, copied refusals and another invocation cannot prove pre-dispatch exclusion', async t => {
@@ -153,12 +197,14 @@ test('a crash publishing pre-dispatch refusal retains the same reservation acros
     }),
   });
   const first = await s.consume();
-  assert.equal(first.state, 'UNKNOWN'); assert.equal(healthReads, 1);
+  assert.equal(first.state, 'UNKNOWN');
+  assert.equal(healthReads, CONTROL_TOWER_PROTOCOL_RETRY_ATTEMPTS + 1);
   const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
   assert.equal(ledger.read(first.requestId).phase, 'RESERVED');
   const second = await s.consume({ latestBuildRequestId: first.requestId });
   assert.equal(second.state, 'HELD'); assert.equal(second.blocker, 'CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED');
-  assert.equal(healthReads, 1, 'lost terminal publication must not permit another attempt');
+  assert.equal(healthReads, CONTROL_TOWER_PROTOCOL_RETRY_ATTEMPTS + 1,
+    'lost terminal publication must not permit another attempt');
   assert.equal(ledger.read(first.requestId).phase, 'RESERVED');
 });
 
@@ -174,10 +220,12 @@ test('a terminal local preflight refusal preserves dedupe without blocking a dis
     }),
   });
   const first = await s.consume(); assert.equal(first.state, 'WAKE_BLOCKED');
-  await s.consume(); assert.equal(healthReads, 1, 'recorded request must not repeat');
+  await s.consume();
+  assert.equal(healthReads, CONTROL_TOWER_PROTOCOL_RETRY_ATTEMPTS + 1, 'recorded request must not repeat');
   transport = requestTransport(702);
   const second = await s.consume({ latestBuildRequestId: first.requestId });
-  assert.equal(second.state, 'WAKE_BLOCKED'); assert.equal(healthReads, 2);
+  assert.equal(second.state, 'WAKE_BLOCKED');
+  assert.equal(healthReads, 2 * (CONTROL_TOWER_PROTOCOL_RETRY_ATTEMPTS + 1));
   assert.notEqual(first.requestId, second.requestId);
   const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
   for (const value of [first, second]) {
