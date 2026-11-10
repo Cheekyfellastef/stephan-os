@@ -66,9 +66,9 @@ test('launcher exposes both real native interactive and user-consented view-only
 
 
 function delayedWindowCaptureHarness(){
-  let releasePlay,enteredPlay,acquisitions=0;
+  let releasePlay,rejectPlay,enteredPlay,acquisitions=0;
   const entered=new Promise(resolve=>{enteredPlay=resolve;});
-  const pendingPlay=new Promise(resolve=>{releasePlay=resolve;});
+  const pendingPlay=new Promise((resolve,reject)=>{releasePlay=resolve;rejectPlay=reject;});
   const tracks=[],videos=[];
   const client=createHolodeckWindowClient({
     locationRef:{hostname:'localhost',port:'4173'},sessionStore:null,
@@ -87,7 +87,7 @@ function delayedWindowCaptureHarness(){
     }},
     setTimer:()=>1,clearTimer:()=>{},fetchRef:async()=>{throw Error('No native request is allowed.');},
   });
-  return {client,entered,releasePlay:()=>releasePlay(),tracks,videos,count:()=>acquisitions};
+  return {client,entered,releasePlay:()=>releasePlay(),rejectPlay:()=>rejectPlay(new Error('Playback failed after revocation')),tracks,videos,count:()=>acquisitions};
 }
 test('pending browser video playback is revoked immediately by stop, pagehide and dispose',async()=>{
   for(const method of ['stop','pagehide','dispose']){
@@ -136,6 +136,36 @@ test('accepted window share rejects another picker until explicit Stop',async()=
   assert.equal(h.tracks[0].readyState,'ended');
   assert.equal(await h.client.shareScreen(),true,'a new explicit click after Stop can request a fresh stream');
   assert.equal(h.count(),2);
+  await h.client.stop();
+  assert.equal(h.tracks[1].readyState,'ended');
+});
+
+test('late video playback rejection preserves Stop, pagehide and disposal state',async()=>{
+  for(const method of ['stop','pagehide','dispose']){
+    const h=delayedWindowCaptureHarness(),pending=h.client.shareScreen();
+    await h.entered;
+    await h.client[method]();
+    assert.equal(h.tracks[0].readyState,'ended');
+    assert.equal(h.client.getState().status,'idle');
+    h.rejectPlay();
+    assert.equal(await pending,false,'revoked pending capture must remain rejected');
+    assert.equal(h.client.getState().status,'idle',method+' must not be overwritten by stale playback error');
+    assert.match(h.client.getState().message,/Window disconnected/);
+    assert.equal(h.tracks[0].stopCount,1,'stream may be revoked only once');
+  }
+});
+test('old playback rejection cannot overwrite a newly consented live capture',async()=>{
+  const h=delayedWindowCaptureHarness(),old=h.client.shareScreen();
+  await h.entered;
+  await h.client.stop();
+  assert.equal(await h.client.shareScreen(),true,'explicit new user consent can start a new view');
+  assert.equal(h.client.getState().status,'view-only');
+  h.rejectPlay();
+  assert.equal(await old,false);
+  assert.equal(h.client.getState().status,'view-only','stale failure must not replace new live view');
+  assert.equal(h.client.getFrame()?.drawable,h.videos[1]);
+  assert.equal(h.tracks[0].readyState,'ended');
+  assert.equal(h.tracks[1].readyState,'live');
   await h.client.stop();
   assert.equal(h.tracks[1].readyState,'ended');
 });
