@@ -232,14 +232,15 @@ export function createDirectorStatusPacket(input = {}) {
   // Explicit empty or disjoint source restrictions are denials, never full-allow fallback.
   const hasScope = input.slice != null && Object.prototype.hasOwnProperty.call(input.slice, 'allowedFiles');
   const requested = exactSourcePaths(input.slice?.allowedFiles);
-  const scoped = hasScope
-    ? requested.filter((path) => candidate?.allowedFiles.includes(path))
-    : candidate?.allowedFiles || [];
+  // Never silently discard ungranted paths from caller-supplied custody scope.
+  // An invalid member denies the entire requested packet rather than narrowing intent.
+  const scoped = hasScope ? requested : candidate?.allowedFiles || [];
   const forbidden = candidate
     ? [...new Set([...MANDATORY_FORBIDDEN_FILES, ...candidate.forbiddenFiles, ...list(input.slice?.forbiddenFiles)])]
     : [];
   const nextGoal = candidate && scoped.length
-    && scoped.every((path) => !forbiddenSourcePath(path, forbidden))
+    && scoped.every((path) => candidate.allowedFiles.includes(path)
+      && !forbiddenSourcePath(path, forbidden))
     ? candidate : null;
   // Do not spread untrusted caller executor, command, branch, title, or identity into source custody.
   const packet = nextGoal

@@ -205,7 +205,7 @@ test('slice allowedFiles can narrow but cannot widen the canonical goal estate',
   const cases = [
     { requested: ['.env'], expected: null },
     { requested: ['safe.test.mjs'], expected: ['safe.test.mjs'] },
-    { requested: ['safe.test.mjs', '.env'], expected: ['safe.test.mjs'] },
+    { requested: ['safe.test.mjs', '.env'], expected: null },
   ];
 
   for (const { requested, expected } of cases) {
@@ -535,5 +535,25 @@ test('director slice hint refuses path normalization but allows internal spaces'
   }
   const allowed = createDirectorStatusPacket({ goals: [goal], slice: { allowedFiles: ['src/with space.mjs'] } });
   assert.equal(allowed.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_ACTIVE');
+  assert.equal(validateDirectorStatusPacket(allowed).valid, true);
+});
+
+
+test('director refuses mixed out-of-scope hints instead of silently narrowing source-build custody', () => {
+  const goal = { goalId: '#custody', allowedFiles: ['src/safe.mjs', 'src/test.mjs'] };
+  for (const allowedFiles of [
+    ['src/safe.mjs', 'src/ungranted.mjs'],
+    ['src/ungranted.mjs', 'src/safe.mjs'],
+    ['src/safe.mjs', 'src/test.mjs', 'src/ungranted.mjs'],
+  ]) {
+    const status = createDirectorStatusPacket({ goals: [goal], slice: { allowedFiles } });
+    assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_HELD');
+    assert.equal(status.nextGoal, null);
+    assert.equal(status.nextSourceSlice, null);
+    assert.equal(validateDirectorStatusPacket(status).valid, true);
+  }
+  const allowed = createDirectorStatusPacket({ goals: [goal], slice: { allowedFiles: ['src/test.mjs'] } });
+  assert.equal(allowed.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_ACTIVE');
+  assert.deepEqual(allowed.nextSourceSlice.allowedFiles, ['src/test.mjs']);
   assert.equal(validateDirectorStatusPacket(allowed).valid, true);
 });
