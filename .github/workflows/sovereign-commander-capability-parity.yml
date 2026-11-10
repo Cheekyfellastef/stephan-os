@@ -69,6 +69,11 @@ on:
       - 'scripts/windows/read-battle-bridge-cpu-pressure.ps1'
       - 'scripts/windows/read-starfield-vr-performance-diagnosis.ps1'
       - 'scripts/starfield-vr-flight-recorder.test.mjs'
+      - 'scripts/windows/launch-starfield-vr-with-splash.ps1'
+      - 'scripts/windows/Test-StarfieldMonitorSplash.ps1'
+      - 'scripts/windows/starfield-native-monitor/**'
+      - 'scripts/starfield-vr-monitor-splash.test.mjs'
+      - 'scripts/starfield-native-monitor-source.test.mjs'
       - 'scripts/windows/run-sovereign-commander-hidden.ps1'
       - 'shared/agents/sovereignCommanderWindows.test.mjs'
       - 'scripts/sovereign-commander-ignition-autoheal.mjs'
@@ -144,6 +149,11 @@ on:
       - 'scripts/windows/read-battle-bridge-cpu-pressure.ps1'
       - 'scripts/windows/read-starfield-vr-performance-diagnosis.ps1'
       - 'scripts/starfield-vr-flight-recorder.test.mjs'
+      - 'scripts/windows/launch-starfield-vr-with-splash.ps1'
+      - 'scripts/windows/Test-StarfieldMonitorSplash.ps1'
+      - 'scripts/windows/starfield-native-monitor/**'
+      - 'scripts/starfield-vr-monitor-splash.test.mjs'
+      - 'scripts/starfield-native-monitor-source.test.mjs'
       - 'scripts/windows/run-sovereign-commander-hidden.ps1'
       - 'shared/agents/sovereignCommanderWindows.test.mjs'
       - 'scripts/sovereign-commander-ignition-autoheal.mjs'
@@ -250,6 +260,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -265,3 +277,10 @@ jobs:
         run: node --test shared/agents/sovereignDirectoryCreateV1.test.mjs shared/agents/sovereignCommanderV1.test.mjs
       - name: Windows VR diagnosis empty and single-value array regression
         run: node --test scripts/starfield-vr-flight-recorder.test.mjs
+      - name: Existing Starfield splash monitor protocol under Windows PowerShell
+        shell: powershell
+        run: ./scripts/windows/Test-StarfieldMonitorSplash.ps1
+      - name: Starfield monitor bootstrap and checkout byte identity
+        run: node --test scripts/starfield-vr-monitor-splash.test.mjs scripts/starfield-native-monitor-source.test.mjs
+      - name: Starfield monitor controller and evidence regressions
+        run: python -I -S -B -m unittest discover -s scripts/windows/starfield-native-monitor -p "test_*.py" -v

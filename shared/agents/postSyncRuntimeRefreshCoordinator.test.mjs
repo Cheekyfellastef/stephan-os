@@ -670,6 +670,43 @@ test('continuous repair script is a natural-reload source and never becomes an u
   assert.equal(plan.automaticExecutionAllowed, true);
 });
 
+test('the existing Starfield splash monitor closure adopts source without starting a game', () => {
+  const directory = 'scripts/windows/starfield-native-monitor/';
+  const runtime = [
+    'splash_monitor_bridge.py',
+    'run_native_eye_output_monitor.py',
+    'start_native_eye_output_session.py',
+    'analyze_native_eye_output_session.py',
+  ].map(name => directory + name);
+  const fixtures = [
+    'test_splash_monitor_bridge.py',
+    'test_run_native_eye_output_monitor.py',
+    'test_start_native_eye_output_session.py',
+    'test_analyze_native_eye_output_session.py',
+  ].map(name => directory + name);
+  fixtures.push('scripts/windows/Test-StarfieldMonitorSplash.ps1');
+  const plan = classifyPostSyncRefresh([
+    'scripts/windows/launch-starfield-vr-with-splash.ps1',
+    ...runtime,
+    ...fixtures,
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.noRuntimePathCount, fixtures.length);
+  assert.equal(plan.automaticExecutionAllowed, true);
+
+  for (const unexpected of ['splash_monitor_bridge_v2.py', 'launch_game.py', 'test_unreviewed.py']) {
+    const refused = classifyPostSyncRefresh([directory + unexpected]);
+    assert.equal(refused.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+    assert.deepEqual(refused.internal.unknownPaths, [directory + unexpected]);
+    assert.equal(refused.automaticExecutionAllowed, false);
+  }
+  const neighboringFixture = classifyPostSyncRefresh(['scripts/windows/Test-StarfieldMonitorSplashV2.ps1']);
+  assert.equal(neighboringFixture.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+  assert.equal(neighboringFixture.automaticExecutionAllowed, false);
+});
+
 test('exact six-path mailbox starvation delivery is installable through natural reload', () => {
   const plan = classifyPostSyncRefresh([
     '.github/workflows/battle-bridge-mailbox-outbox-starvation-v1.yml',
