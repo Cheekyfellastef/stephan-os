@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os';
 import { runInNewContext } from 'node:vm';
 import { dirname, join } from 'node:path';
 import { CANONICAL_MAILBOX_ISSUE } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
+import { mailboxRotationDigest } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 import {
   buildBattleBridgeGitHubCommandReceipt,
   selectBattleBridgeGitHubCommandBatch,
@@ -385,6 +386,26 @@ function runGuard(f, options = {}) {
 const SEALED_NOV5_SINGLE_SESSION_ID = 'vr2707-20261105T1953Z-cf7-archive-single-session-v1';
 const SEALED_NOV5_SINGLE_SESSION_DIGEST = 'f7dcdce00eac8e109bdd41d56740a248694056d5b6bb587db72c0c8105902fe6';
 const SEALED_NOV5_HEAD = 'cf7cd85b7afa96a696fd092b1ceb2e734f198a77';
+
+test('sealed one-record digest equals the exact canonical command from owner issue comment 6667748867', () => {
+  const originalCommand = {
+    schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+    requestId: SEALED_NOV5_SINGLE_SESSION_ID,
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 3258,
+    branch: 'main',
+    operatorApproval: 'operator-approved',
+    expectedHead: SEALED_NOV5_HEAD,
+    expiresAt: '2026-11-05T20:20:00.000Z',
+    remoteAction: 'starfield-vr-telemetry-archive',
+    telemetryOffset: 0,
+    telemetryLimit: 1,
+  };
+  assert.equal(mailboxRotationDigest(originalCommand), SEALED_NOV5_SINGLE_SESSION_DIGEST);
+  assert.notEqual(mailboxRotationDigest({ ...originalCommand, telemetryLimit: 2 }),
+    SEALED_NOV5_SINGLE_SESSION_DIGEST);
+});
 
 // Original owner comment #6667748867; old serializer blanked "-session" IDs.
 // Test the exact old persistent format, never invent a DONE from a public ACCEPTED.
