@@ -590,8 +590,21 @@ function proveSingleLegacyPendingDebt(statePath, receiptRoot, state, entry, metr
     join(receiptRoot, createWindowsSafeMailboxReceiptFilename(requestId)),
     { maxBytes: MAILBOX_CANONICAL_RECEIPT_MAX_BYTES, metrics },
   );
+  // Historical #3258 owner comment 6667748867 (5 Nov 2026) used a valid
+  // "single-session" request ID. Its pre-hardening receipt serializer redacted
+  // that literal word to an empty requestId in persisted and public receipts.
+  // Never treat an arbitrary blank receipt as an authenticated original command:
+  // the single historical exception also requires its source-bound command
+  // digest from the immutable owner-authored command, plus local terminal
+  // receipt, execution-ledger and consumed-index agreement.
+  const sealedSingleSession = requestId === 'vr2707-20261105T1953Z-cf7-archive-single-session-v1'
+    && canonicalReceipt?.requestId === ''
+    && entry.receipt?.requestId === ''
+    && canonicalReceipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
+    && canonicalReceipt?.expectedHead === 'cf7cd85b7afa96a696fd092b1ceb2e734f198a77'
+    && canonicalReceipt?.processSourceHead === 'cf7cd85b7afa96a696fd092b1ceb2e734f198a77';
   if (!isPlainObject(canonicalReceipt)
-    || canonicalReceipt.requestId !== requestId
+    || (canonicalReceipt.requestId !== requestId && !sealedSingleSession)
     || canonicalReceipt.state !== 'DONE'
     || !sameLegacyTerminalIdentity(entry.receipt, canonicalReceipt)
     || entry.publicationId !== [
@@ -613,6 +626,8 @@ function proveSingleLegacyPendingDebt(statePath, receiptRoot, state, entry, metr
     || ledgerRecord.phase !== 'TERMINAL'
     || ledgerRecord.terminalState !== 'DONE'
     || !/^[a-f0-9]{64}$/.test(String(ledgerRecord.commandDigest || ''))
+    || (sealedSingleSession
+      && ledgerRecord.commandDigest !== 'f7dcdce00eac8e109bdd41d56740a248694056d5b6bb587db72c0c8105902fe6')
     || (Object.hasOwn(ledgerRecord, 'terminalProofHash')
       && ledgerRecord.terminalProofHash !== canonicalReceipt.proofHash)) {
     throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_LEDGER_UNPROVEN');
