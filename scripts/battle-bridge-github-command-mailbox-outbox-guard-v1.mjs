@@ -592,7 +592,7 @@ function sameLegacyTerminalIdentity(pendingReceipt, canonicalReceipt, { sealedRe
     // The producer appended one LAST pretty-printed root property; permit
     // only its precise byte delta when BOTH sealed receipts were compacted.
     const transportBytes = Buffer.byteLength(
-      `,\\n  "receiptRef": ${JSON.stringify(expectedRef)}`, 'utf8');
+      `,\n  "receiptRef": ${JSON.stringify(expectedRef)}`, 'utf8');
     if (isPlainObject(pendingCompact) && isPlainObject(canonicalCompact)
       && pendingTerminal.githubProjectionTruncated === true
       && canonicalTerminal.githubProjectionTruncated === true
