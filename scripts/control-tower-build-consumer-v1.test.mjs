@@ -335,7 +335,7 @@ test('Control Tower self-heals a proven abandoned legacy reservation as BLOCKED 
 });
 
 test('Control Tower reconciles an expired superseded observed reservation as delivery-unproven then admits the fresh build', async t => {
-  const oldHead = 'a'.repeat(40);
+  const oldHead = 'b'.repeat(40);
   const stale = { ...legacyRequest(98), sourceHead: oldHead };
   const fresh = currentRequest(100);
   const s = setup(t, {
@@ -374,7 +374,7 @@ test('Control Tower reconciles an expired superseded observed reservation as del
 test('same-head or non-quiescent observed reservations remain unresolved and cannot be replayed', async t => {
   for (const { sourceHead, custodyState } of [
     { sourceHead: HEAD, custodyState: 'NOT_HELD_REPORTED' },
-    { sourceHead: 'a'.repeat(40), custodyState: 'HELD' },
+    { sourceHead: 'b'.repeat(40), custodyState: 'HELD' },
   ]) {
     const stale = { ...legacyRequest(97), sourceHead };
     const s = setup(t, {
