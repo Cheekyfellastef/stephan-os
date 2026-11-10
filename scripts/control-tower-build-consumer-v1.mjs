@@ -147,19 +147,30 @@ export async function consumeControlTowerBuildRequestV1({
       latestObserve = discovery.latestControlSystemObservation || latestObserve;
     }
     const auth = await deps.resolveAuth();
-    if (latestBuild?.ledgerPhase === 'RESERVED' && latestBuild.detailState === 'LEGACY_DETAIL_UNAVAILABLE'
-      && latestBuild.state === 'RESERVED' && typeof ledger.retireLegacyControlTowerReservation === 'function') {
+    if (latestBuild?.ledgerPhase === 'RESERVED' && latestBuild.state === 'RESERVED') {
       const historical = await deps.readHistoricalRequest({
         token: auth?.token, runId: latestBuild.runId, now: () => now().toISOString(),
       });
       const historicalRequest = historical?.ok === true ? historical.request : null;
-      const graceMs = FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.executionTimeoutMs + 60_000;
-      const expiredBeyondExecution = historicalRequest
+      const historicalDigest = historicalRequest
+        ? mailboxRotationDigest({ ...historicalRequest, issueNumber: 2315 }) : '';
+      const historicalBindingProven = historicalRequest
         && historicalRequest.requestId === latestBuild.requestId
         && historicalRequest.operation === CONTROL_TOWER_BUILD_OPERATION
+        && historicalDigest === latestBuild.commandDigest;
+      const graceMs = FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.executionTimeoutMs + 60_000;
+      const expiredBeyondExecution = historicalBindingProven
         && Number.isFinite(Date.parse(historicalRequest.expiresAtUtc))
         && Date.parse(historicalRequest.expiresAtUtc) + graceMs <= now().getTime();
-      if (expiredBeyondExecution) {
+      // A metadata-bearing reservation is eligible for recovery only after its
+      // source epoch has been superseded. Same-head ambiguous execution remains
+      // held, preserving the original exactly-once boundary.
+      const supersededObservedReservation = latestBuild.detailState === 'OBSERVED'
+        && latestBuild.operation === CONTROL_TOWER_BUILD_OPERATION
+        && SHA.test(latestBuild.sourceHead || '') && latestBuild.sourceHead !== sourceHead;
+      const legacyReservation = latestBuild.detailState === 'LEGACY_DETAIL_UNAVAILABLE'
+        && typeof ledger.retireLegacyControlTowerReservation === 'function';
+      if (expiredBeyondExecution && (legacyReservation || supersededObservedReservation)) {
         const report = await deps.inspect({
           expectedMain: sourceHead, controlTowerRequestId: latestBuild.requestId,
         });
@@ -175,9 +186,28 @@ export async function consumeControlTowerBuildRequestV1({
           && status.requestLedger?.requested === true && status.requestLedger.recordObserved === true
           && status.requestLedger.phase === 'RESERVED';
         if (quiescent) {
-          ledger.retireLegacyControlTowerReservation({
-            request: historicalRequest, nowMs: now().getTime(),
-          });
+          if (legacyReservation) {
+            ledger.retireLegacyControlTowerReservation({
+              request: historicalRequest, nowMs: now().getTime(),
+            });
+          } else {
+            // Preserve uncertainty as an explicit terminal carrier failure.
+            // This does not claim that the old build ran or did not run. The
+            // fresh request still re-enters the original goal/lease/custody
+            // gates and cannot inherit execution authority from this repair.
+            const terminal = createControlTowerRequestObservationV1(historicalRequest, {
+              commandDigest: latestBuild.commandDigest,
+              acceptedAtUtc: latestBuild.acceptedAtUtc,
+              observedAtUtc: now().toISOString(),
+              nowMs: now().getTime(),
+              state: 'WAKE_BLOCKED',
+              blocker: 'CONTROL_TOWER_BUILD_DELIVERY_UNPROVEN',
+            });
+            if (terminal) ledger.complete({
+              requestId: historicalRequest.requestId, issueNumber: 2315, state: 'BLOCKED',
+              controlTowerObservation: terminal,
+            });
+          }
           discovery = typeof ledger.discoverControlTower === 'function'
             ? await ledger.discoverControlTower({ nowMs: now().getTime() }) : null;
           if (discovery?.ok) {
