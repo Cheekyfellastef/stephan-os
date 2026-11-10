@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
+  lstatSync,
+  unlinkSync,
   mkdtempSync,
   mkdirSync,
   openSync,
@@ -16,6 +18,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { runInNewContext } from 'node:vm';
 import { dirname, join } from 'node:path';
 import { CANONICAL_MAILBOX_ISSUE } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import {
@@ -1558,6 +1561,48 @@ test('manifest-controlled legacy path components fail closed before traversal or
   } finally {
     f.cleanup();
   }
+});
+
+test('dangling receipt alias is not treated as a missing regular file by atomic writes', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const target = join(f.root, 'uncreated-receipt-target.json');
+  const alias = join(f.root, 'dangling-receipt-alias.json');
+  symlinkSync(target, alias, 'file');
+  assert.equal(existsSync(alias), false, 'following a dangling link reports missing');
+  assert.equal(lstatSync(alias).isSymbolicLink(), true);
+  assert.throws(() => atomicWriteJson(alias, { terminal: true }), /MAILBOX_OUTBOX_FILE_IDENTITY_INVALID/);
+  assert.equal(lstatSync(alias).isSymbolicLink(), true, 'the unsafe alias must remain untouched');
+  assert.equal(existsSync(target), false);
+
+  const legitimate = join(f.root, 'new-regular-receipt.json');
+  atomicWriteJson(legitimate, { status: 'DONE' });
+  assert.deepEqual(readJson(legitimate), { status: 'DONE' });
+});
+
+test('cleanup helper checks dangling aliases before unlink and preserves ordinary absence', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const source = readFileSync(new URL('./battle-bridge-github-command-mailbox-outbox-guard-v1.mjs', import.meta.url), 'utf8');
+  const checkedFunction = (start, end) => {
+    const i = source.indexOf(start), j = source.indexOf(end, i + start.length);
+    assert.ok(i >= 0 && j > i, 'test must execute the checked-in helper source');
+    return source.slice(i, j);
+  };
+  const sourceBodies = checkedFunction('function assertRegularUnlinkedFile(', 'function assertUnlinkedDirectory(')
+    + '\n' + checkedFunction('function removeRegularFile(', 'function canonicalPendingFromState(');
+  const { removeRegularFile } = runInNewContext(sourceBodies + '\n({ removeRegularFile })', {
+    lstatSync, unlinkSync, dirname, syncDirectoryBestEffort: () => {},
+  });
+  const alias = join(f.root, 'dangling-cleanup-alias.json');
+  symlinkSync(join(f.root, 'missing-cleanup-target.json'), alias, 'file');
+  assert.equal(existsSync(alias), false);
+  assert.throws(() => removeRegularFile(alias), /MAILBOX_OUTBOX_FILE_IDENTITY_INVALID/);
+  assert.equal(lstatSync(alias).isSymbolicLink(), true);
+  const missing = join(f.root, 'legitimately-absent.json');
+  assert.equal(removeRegularFile(missing), undefined);
+  const regular = join(f.root, 'regular-cleanup.json');
+  writeFileSync(regular, '{}');
+  removeRegularFile(regular);
+  assert.equal(existsSync(regular), false);
 });
 
 test('fixed receipt-store paths and ledger directories reject path redirection', () => {
