@@ -9,6 +9,7 @@ import { readControlTowerBuildRequestV1 } from '../shared/agents/controlTowerBui
 import { fixture, HEAD, NOW } from '../shared/agents/fixtures/controlTowerBuildV1.mjs';
 import { runSovereignRelayCycleWithHeartbeat, buildSovereignRelayStatus } from './battle-bridge-sovereign-relay-daemon.mjs';
 import { FIXED_MAINTENANCE_RUNTIME_ROUTE_V1, fixedRuntimeMaintenanceActionQualifiedV1 } from './sovereign-fixed-runtime-parent-v1.mjs';
+import { createControlTowerRequestObservationV1 } from '../shared/agents/controlTowerRequestObservationV1.mjs';
 import { callSovereignMaintenanceOwnerV1,
   consumeSovereignMaintenancePreDispatchRefusalV1 } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 
@@ -331,6 +332,73 @@ test('Control Tower self-heals a proven abandoned legacy reservation as BLOCKED 
   assert.equal(ledger.read(fresh.requestId).phase, 'TERMINAL');
   assert.equal(ledger.read(fresh.requestId).terminalState, 'DONE');
   assert.equal(s.calls.length, 1);
+});
+
+test('Control Tower reconciles an expired superseded observed reservation as delivery-unproven then admits the fresh build', async t => {
+  const oldHead = 'a'.repeat(40);
+  const stale = { ...legacyRequest(98), sourceHead: oldHead };
+  const fresh = currentRequest(100);
+  const s = setup(t, {
+    isAuthenticated: () => true,
+    readHistoricalRequest: async ({ runId }) => ({ ok: runId === 98, blocker: '', request: stale }),
+    readRequest: async args => {
+      assert.equal(args.observationOnly, false);
+      return { ok: true, blocker: '', request: fresh };
+    },
+    inspect: async args => {
+      assert.deepEqual(args, { expectedMain: HEAD, controlTowerRequestId: stale.requestId });
+      return quiescentLegacyStatus();
+    },
+  });
+  const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+  const command = { ...stale, issueNumber: 2315 };
+  const acceptedAtUtc = '2026-10-28T11:41:00.000Z';
+  const initial = createControlTowerRequestObservationV1(stale, {
+    commandDigest: (await import('../shared/agents/canonicalMailboxRotationV1.mjs')).mailboxRotationDigest(command),
+    acceptedAtUtc, observedAtUtc: acceptedAtUtc, nowMs: Date.parse(acceptedAtUtc),
+  });
+  ledger.reserve(command, { controlTowerObservation: initial });
+
+  const result = await s.consume({ now: () => new Date('2026-10-28T12:20:00.000Z') });
+  const retired = ledger.read(stale.requestId);
+  assert.equal(result.state, 'WAKE_COMPLETED');
+  assert.equal(retired.phase, 'TERMINAL');
+  assert.equal(retired.terminalState, 'BLOCKED');
+  assert.equal(retired.controlTowerObservation.state, 'WAKE_BLOCKED');
+  assert.equal(retired.controlTowerObservation.blocker, 'CONTROL_TOWER_BUILD_DELIVERY_UNPROVEN');
+  assert.equal(ledger.read(fresh.requestId).phase, 'TERMINAL');
+  assert.equal(ledger.read(fresh.requestId).terminalState, 'DONE');
+  assert.equal(s.calls.length, 1);
+});
+
+test('same-head or non-quiescent observed reservations remain unresolved and cannot be replayed', async t => {
+  for (const { sourceHead, custodyState } of [
+    { sourceHead: HEAD, custodyState: 'NOT_HELD_REPORTED' },
+    { sourceHead: 'a'.repeat(40), custodyState: 'HELD' },
+  ]) {
+    const stale = { ...legacyRequest(97), sourceHead };
+    const s = setup(t, {
+      readHistoricalRequest: async () => ({ ok: true, blocker: '', request: stale }),
+      readRequest: async args => {
+        assert.equal(args.observationOnly, true);
+        return { ok: false, blocker: 'NO_CONTROL_TOWER_BUILD_REQUEST', request: null };
+      },
+      inspect: async () => quiescentLegacyStatus(custodyState),
+    });
+    const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+    const command = { ...stale, issueNumber: 2315 };
+    const acceptedAtUtc = '2026-10-28T11:41:00.000Z';
+    const initial = createControlTowerRequestObservationV1(stale, {
+      commandDigest: (await import('../shared/agents/canonicalMailboxRotationV1.mjs')).mailboxRotationDigest(command),
+      acceptedAtUtc, observedAtUtc: acceptedAtUtc, nowMs: Date.parse(acceptedAtUtc),
+    });
+    ledger.reserve(command, { controlTowerObservation: initial });
+    const result = await s.consume({ now: () => new Date('2026-10-28T12:20:00.000Z') });
+    assert.equal(result.state, 'HELD');
+    assert.equal(result.blocker, 'CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED');
+    assert.equal(ledger.read(stale.requestId).phase, 'RESERVED');
+    assert.equal(s.calls.length, 0);
+  }
 });
 
 test('Control Tower never retires a legacy reservation while Commander custody remains held', async t => {
