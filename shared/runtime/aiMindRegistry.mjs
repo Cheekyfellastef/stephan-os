@@ -65,7 +65,6 @@ export function normalizeExternalMindSource(input = {}) {
 export function normalizeMindRecord(input = {}) {
   const mind = input && typeof input === 'object' ? input : {};
   const approvalState = normalizeEnum(mind.approvalState, ['discovered','profiled','tested','sandboxed','recommended','approved','blocked'], 'discovered');
-  const blocked = approvalState === 'blocked';
   // A proposed, discovered or sandboxed model cannot make itself route-eligible.
   const routeEligibility = mind.routeEligibility === true && approvalState === 'approved';
   return {
