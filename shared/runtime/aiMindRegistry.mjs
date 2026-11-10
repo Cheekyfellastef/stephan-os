@@ -116,7 +116,10 @@ export function discoverLocalOllamaMinds({ providerHealth = {} } = {}) {
 
 export function buildAIMindRegistry({ providerHealth = {}, runtimeContext = {}, registry = [] } = {}) {
   const discovered = discoverLocalOllamaMinds({ providerHealth });
-  const merged = [...registry.map(normalizeMindRecord), ...discovered].reduce((acc, mind) => {
+  // Discovery supplies unapproved defaults; canonical registered qualifications must not
+  // be silently erased when the same local Ollama model is rediscovered.
+  // This retains existing approval data; it never manufactures a new approval.
+  const merged = [...discovered, ...registry.map(normalizeMindRecord)].reduce((acc, mind) => {
     acc.set(mind.mindId, mind);
     return acc;
   }, new Map());
