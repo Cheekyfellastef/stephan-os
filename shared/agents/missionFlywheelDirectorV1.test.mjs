@@ -480,7 +480,8 @@ test('direct source packet creation rejects empty, disjoint, wider and stage-own
 test('Windows path aliases, devices and invalid components deny director source authority', () => {
   for (const path of [
     'runtime./config.json','runtime /config.json','src/runtime./file.mjs',
-    'src/COM1.txt','src/NUL','src/prn.json','src/lpt9.out',
+    'src/COM1.txt','src/NUL',
+    'src/CONIN$','src/CONOUT$','src/conin$.txt','src/conout$.json','src/ConIn$.MJS','src/prn.json','src/lpt9.out',
     'src/COM¹.log','src/aux.MJS','src/RUNTIM~1/config.json',
     'src/safe.mjs.','src/foo<bar>.mjs','src/foo|bar.mjs',
   ]) {
@@ -489,7 +490,7 @@ test('Windows path aliases, devices and invalid components deny director source 
     assert.equal(status.nextSourceSlice,null);
     assert.equal(validateDirectorStatusPacket(status).valid,true);
   }
-  for (const path of ['src/safe.mjs','shared/agents/test.mjs','src/feature-v1.2.mjs','src/foo .mjs']) {
+  for (const path of ['src/safe.mjs','shared/agents/test.mjs','src/feature-v1.2.mjs','src/foo .mjs','src/conin$-log.mjs']) {
     const status=createDirectorStatusPacket({goals:[{goalId:'#normal',allowedFiles:[path]}]});
     assert.equal(status.finalVerdict,'MISSION_FLYWHEEL_DIRECTOR_ACTIVE');
     assert.equal(validateDirectorStatusPacket(status).valid,true);

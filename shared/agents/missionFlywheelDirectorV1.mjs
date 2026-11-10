@@ -66,7 +66,7 @@ function forbiddenSourcePath(path, patterns) {
   // directories despite spelling a different lexical repository path.
   if (parts.some((part) => !part || part === '.' || part === '..'
       || /[. ]$/.test(part) || /[<>|"]/.test(part)
-      || /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu.test(part)
+      || /^(?:conin\$|conout\$|con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu.test(part)
       || /~[1-9][0-9]*(?:\.|$)/u.test(part))) return true;
 
   const segmentMatches = (name, glob) => {
