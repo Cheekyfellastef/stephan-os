@@ -202,14 +202,15 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
 
   const stagedStatus = text(staged.status);
   const blockers = [];
-  // New producer records carry blockers; reject contradictions when that field is supplied.
-  // Older acceptance fixtures omit it, and still use the established verdict/updateAllowed
-  // contract. Making the field mandatory needs a separately reviewed consumer migration.
-  if (Object.prototype.hasOwnProperty.call(staged, 'blockers')) {
+  // Read-only preflight can inspect older fixtures; post-update promotion must
+  // retain both explicit, dense, empty blocker arrays from the trusted producers.
+  if (Object.prototype.hasOwnProperty.call(staged, 'blockers')
+    || stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED) {
     const stagedBlockers = denseArray(staged.blockers, MAX_PROOF_REFS);
     if (!stagedBlockers || stagedBlockers.length !== 0) blockers.push('STAGED_UPDATE_BLOCKERS_NOT_EMPTY');
   }
-  if (Object.prototype.hasOwnProperty.call(ledger, 'blockers')) {
+  if (Object.prototype.hasOwnProperty.call(ledger, 'blockers')
+    || stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED) {
     const ledgerBlockers = denseArray(ledger.blockers, MAX_PROOF_REFS);
     if (!ledgerBlockers || ledgerBlockers.length !== 0) blockers.push('CAPABILITY_LEDGER_BLOCKERS_NOT_EMPTY');
   }
@@ -256,11 +257,8 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   // producer's bounded adapter/no-shell safety envelope. Legacy preflight can
   // still inspect a partial fixture, but must never promote provider routing.
   if (safety && stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
-    // Complete producer envelopes must not silently lose even one safety flag.
-    // The separate final-acceptance legacy fixture has no optional producer
-    // flags at all; migrating that fixture is a separately scoped source change.
-    && Object.keys(OPTIONAL_STAGED_SAFETY).some((key) =>
-      Object.prototype.hasOwnProperty.call(safety, key))
+    // Post-update claims must carry the full producer safety envelope, even
+    // when all optional legacy-fixture keys are absent together.
     && (Object.keys(OPTIONAL_STAGED_SAFETY).some((key) =>
       !Object.prototype.hasOwnProperty.call(safety, key))
       || !Object.prototype.hasOwnProperty.call(safety, 'operatorApprovalRequired'))) {

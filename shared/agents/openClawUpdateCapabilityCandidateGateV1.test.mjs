@@ -1340,3 +1340,61 @@ test('post-update promotion retains preflight manifest and packet identity pins'
   assert.equal(legacy.updatePromotionAllowed, false);
   assert.equal(legacy.providerRoutingResumeAllowed, false);
 });
+
+
+test('verified promotion rejects missing producer blocker lists and entirely missing staged source flags', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const validLedger = ledger();
+  const proofs = [replay(OPENCLAW_TASK_CLASS.OC1)];
+  const evaluate = (stagedUpdate, capabilityLedger) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate, capabilityLedger, qualificationReplay: proofs,
+  });
+  assert.equal(evaluate(verified, validLedger).updatePromotionAllowed, true);
+
+  const omissions = [
+    [{ ...verified, blockers: undefined }, validLedger],
+    [Object.fromEntries(Object.entries(verified).filter(([key]) => key !== 'blockers')), validLedger],
+    [verified, { ...validLedger, blockers: undefined }],
+    [verified, Object.fromEntries(Object.entries(validLedger).filter(([key]) => key !== 'blockers'))],
+    [
+      Object.fromEntries(Object.entries(verified).filter(([key]) => key !== 'blockers')),
+      Object.fromEntries(Object.entries(validLedger).filter(([key]) => key !== 'blockers')),
+    ],
+    [verified, {
+      ...validLedger, blockers: [,'not-dense'],
+    }],
+  ];
+  for (const [stagedUpdate, capabilityLedger] of omissions) {
+    const result = evaluate(stagedUpdate, capabilityLedger);
+    assert.equal(result.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+    assert.equal(result.updatePromotionAllowed, false);
+    assert.equal(result.providerRoutingResumeAllowed, false);
+  }
+  const producerFields = [
+    'sourceHarnessOnly', 'arbitraryShellAllowed', 'arbitraryPathAllowed',
+    'battleBridgeAdapterRequired', 'operatorApprovalRequired',
+    'secretsIncluded', 'absolutePathsPublished',
+  ];
+  const withoutAllSeven = {
+    ...verified, safety: Object.fromEntries(Object.entries(verified.safety)
+      .filter(([key]) => !producerFields.includes(key))),
+  };
+  const missingSafety = evaluate(withoutAllSeven, validLedger);
+  assert.equal(missingSafety.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.ok(missingSafety.blockers.includes('STAGED_UPDATE_SAFETY_PRODUCER_ENVELOPE_MISSING'));
+  assert.equal(missingSafety.providerRoutingResumeAllowed, false);
+
+  // Legacy preflight is read-only, never promoted, despite older missing fields.
+  const legacyPreflight = staged(OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY);
+  delete legacyPreflight.blockers;
+  for (const key of producerFields) delete legacyPreflight.safety[key];
+  const legacyLedger = ledger(); delete legacyLedger.blockers;
+  const preflight = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: legacyPreflight,
+    capabilityLedger: legacyLedger,
+    qualificationReplay: [],
+  });
+  assert.equal(preflight.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.PRE_UPDATE_CAPABILITY_GATE_READY);
+  assert.equal(preflight.updatePromotionAllowed, false);
+  assert.equal(preflight.providerRoutingResumeAllowed, false);
+});

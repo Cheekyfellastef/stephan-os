@@ -56,6 +56,7 @@ function staged(status) {
   return {
     schema: OPENCLAW_STAGED_UPDATE_SCHEMA,
     status,
+    blockers: [],
     exactIdentity: {
       repository: 'Cheekyfellastef/stephan-os',
       sourceHead: HEAD,
@@ -66,10 +67,20 @@ function staged(status) {
       targetVersion: '1.3.0',
     },
     safety: {
+      sourceHarnessOnly: true,
       mutationAllowed: false,
+      arbitraryShellAllowed: false,
+      arbitraryPathAllowed: false,
       sourceMutationAllowed: false,
       mergeAuthority: false,
       deploymentAuthority: false,
+      battleBridgeAdapterRequired: true,
+      operatorApprovalRequired: ![
+        OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED,
+        OPENCLAW_STAGED_UPDATE_STATUS.ROLLED_BACK_AND_VERIFIED,
+      ].includes(status),
+      secretsIncluded: false,
+      absolutePathsPublished: false,
     },
   };
 }
