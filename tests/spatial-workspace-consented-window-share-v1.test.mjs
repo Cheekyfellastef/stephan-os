@@ -169,3 +169,59 @@ test('old playback rejection cannot overwrite a newly consented live capture',as
   await h.client.stop();
   assert.equal(h.tracks[1].readyState,'ended');
 });
+
+function pendingWindowPickerHarness(){
+  const pending=[],tracks=[];
+  const client=createHolodeckWindowClient({
+    locationRef:{hostname:'localhost',port:'4173'},sessionStore:null,
+    navigatorRef:{mediaDevices:{getDisplayMedia(spec){
+      assert.deepEqual(spec,{video:true,audio:false});
+      return new Promise((resolve,reject)=>pending.push({resolve,reject}));
+    }}},
+    documentRef:{createElement(){return {
+      videoWidth:640,videoHeight:480,srcObject:null,pause(){},play(){return Promise.resolve();}
+    };}},
+    setTimer:()=>1,clearTimer:()=>{},
+    fetchRef:async()=>{throw Error('Native helper must not be contacted by browser capture');},
+  });
+  return {client,pending,tracks,
+    reject(i){pending[i].reject(new Error('Obsolete picker cancelled'));},
+    grant(i){
+      const track={readyState:'live',stopCount:0,
+        stop(){this.stopCount++;this.readyState='ended';},addEventListener(){}};
+      tracks.push(track);
+      pending[i].resolve({getTracks:()=>[track],getVideoTracks:()=>[track]});
+      return track;
+    },
+  };
+}
+for(const method of ['stop','pagehide','dispose']){
+  test('late browser picker rejection after '+method+' cannot overwrite revoked Spatial state',async()=>{
+    const h=pendingWindowPickerHarness(),old=h.client.shareScreen();
+    assert.equal(h.pending.length,1);
+    await h.client[method]();
+    assert.equal(h.client.getState().status,'idle');
+    h.reject(0);
+    assert.equal(await old,false);
+    assert.equal(h.client.getState().status,'idle');
+    assert.equal(h.client.getState().inputStatus,'');
+    assert.match(h.client.getState().message,/Window disconnected/);
+  });
+}
+test('late rejected picker cannot overwrite fresh explicitly consented Spatial view',async()=>{
+  const h=pendingWindowPickerHarness(),old=h.client.shareScreen();
+  await h.client.stop();
+  const next=h.client.shareScreen();
+  assert.equal(h.pending.length,2);
+  const track=h.grant(1);
+  assert.equal(await next,true);
+  assert.equal(h.client.getState().status,'view-only');
+  assert.equal(h.client.getState().inputStatus,'');
+  h.reject(0);
+  assert.equal(await old,false);
+  assert.equal(h.client.getState().status,'view-only');
+  assert.equal(h.client.getState().inputStatus,'');
+  assert.equal(track.readyState,'live');
+  await h.client.stop();
+  assert.equal(track.stopCount,1);
+});

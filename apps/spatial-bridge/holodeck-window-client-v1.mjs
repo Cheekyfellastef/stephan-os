@@ -60,7 +60,12 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     try {
       // The picker remains directly inside the real user-initiated click.
       try {stream=await media.getDisplayMedia({video:true,audio:false});}
-      catch {publish({inputStatus:'Window sharing was cancelled or blocked. No screen was connected.'});return false;}
+      catch {
+        // A stale browser picker must not alter a revoked or newer session.
+        if(!disposed && startingEpoch===epoch && shareAttempt===attempt)
+          publish({inputStatus:'Window sharing was cancelled or blocked. No screen was connected.'});
+        return false;
+      }
       if(disposed||startingEpoch!==epoch)return false;
       const track=stream?.getVideoTracks?.()[0];
       if(!track||track.readyState==='ended'){
