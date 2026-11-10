@@ -79,7 +79,11 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
         video.srcObject=stream;pendingVideo=video;
         await video.play();
       }catch{
-        publish({status:'unavailable',message:'The browser could not display the selected window.'});return false;
+        // A late playback failure cannot overrule a newer Stop, departure,
+        // or independently consented replacement capture.
+        if(!disposed&&current===epoch)
+          publish({status:'unavailable',message:'The browser could not display the selected window.'});
+        return false;
       }
       if(disposed||current!==epoch||track.readyState==='ended')return false;
       // The uncommitted stream can be revoked immediately on Stop even
