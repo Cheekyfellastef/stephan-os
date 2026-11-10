@@ -118,6 +118,11 @@ function denseArray(value, maxItems) {
   }
 }
 
+function exactProducerKeys(record, requiredKeys) {
+  const supplied = Object.keys(record);
+  return supplied.length === requiredKeys.length && supplied.every((key) => requiredKeys.includes(key));
+}
+
 function safeId(value) {
   const normalized = text(value);
   return SAFE_ID.test(normalized) ? normalized : '';
@@ -230,6 +235,12 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
       !Object.prototype.hasOwnProperty.call(ledgerAuthority, key) || ledgerAuthority[key] !== false)) {
       blockers.push('CAPABILITY_LEDGER_AUTHORITY_WIDENED');
     }
+    // A post-update proof must match the producer's closed authority schema.
+    // Unknown fields are not inert evidence merely because their values are false.
+    if (stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
+      && ledgerAuthority && !exactProducerKeys(ledgerAuthority, [
+        ...LEDGER_FORBIDDEN_AUTHORITY_FLAGS, 'qualificationInvalidationRequired',
+      ])) blockers.push('CAPABILITY_LEDGER_AUTHORITY_SCHEMA_DRIFT');
     if (!ledgerAuthority || typeof ledgerAuthority.qualificationInvalidationRequired !== 'boolean') {
       blockers.push('CAPABILITY_LEDGER_QUALIFICATION_INVALIDATION_INVALID');
     }
@@ -253,6 +264,13 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   )) {
     blockers.push('STAGED_UPDATE_SAFETY_CONTRADICTION');
   }
+  if (safety && stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
+    && !exactProducerKeys(safety, [
+      ...Object.keys(OPTIONAL_STAGED_SAFETY),
+      'mutationAllowed', 'sourceMutationAllowed', 'mergeAuthority',
+      'deploymentAuthority', 'operatorApprovalRequired',
+    ])) blockers.push('STAGED_UPDATE_SAFETY_SCHEMA_DRIFT');
+
   // A positive post-update source projection must retain the full source
   // producer's bounded adapter/no-shell safety envelope. Legacy preflight can
   // still inspect a partial fixture, but must never promote provider routing.

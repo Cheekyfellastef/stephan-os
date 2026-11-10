@@ -1398,3 +1398,35 @@ test('verified promotion rejects missing producer blocker lists and entirely mis
   assert.equal(preflight.updatePromotionAllowed, false);
   assert.equal(preflight.providerRoutingResumeAllowed, false);
 });
+
+
+test('verified post-update producer safety and authority reject undeclared fields', () => {
+  const makeInput = (status = OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED) => ({
+    stagedUpdate: staged(status),
+    capabilityLedger: ledger(),
+    qualificationReplay: [replay(OPENCLAW_TASK_CLASS.OC1)],
+  });
+  const positive = evaluateOpenClawUpdateCapabilityCandidateV1(makeInput());
+  assert.equal(positive.updatePromotionAllowed, true);
+  assert.equal(positive.providerRoutingResumeAllowed, true);
+  for (const [field, holder, blocker] of [
+    ['safety', 'stagedUpdate', 'STAGED_UPDATE_SAFETY_SCHEMA_DRIFT'],
+    ['authority', 'capabilityLedger', 'CAPABILITY_LEDGER_AUTHORITY_SCHEMA_DRIFT'],
+  ]) {
+    for (const key of ['executeShellAllowed', 'ownerGrantOverride', 'legacyUnknownEvidence', '__proto__']) {
+      for (const value of [false, true]) {
+        const input = makeInput();
+        Object.defineProperty(input[holder][field], key, { value, enumerable: true, configurable: true });
+        const actual = evaluateOpenClawUpdateCapabilityCandidateV1(input);
+        const label = field + ':' + key + ':' + value;
+        assert.equal(actual.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE, label);
+        assert.equal(actual.updatePromotionAllowed, false, label);
+        assert.equal(actual.providerRoutingResumeAllowed, false, label);
+        assert.ok(actual.blockers.includes(blocker), label);
+      }
+    }
+  }
+  const legacy = makeInput(OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY);
+  Object.defineProperty(legacy.stagedUpdate.safety, 'legacyUnknownEvidence', { value: false, enumerable: true });
+  assert.equal(evaluateOpenClawUpdateCapabilityCandidateV1(legacy).updatePromotionAllowed, false);
+});
