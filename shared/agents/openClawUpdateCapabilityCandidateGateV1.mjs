@@ -357,6 +357,26 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
           }
         }
         if (capability.protected) {
+          // The source producer rejects stale or future protected qualification versions.
+          // Older acceptance fixtures omit this field; explicit contradictions must fail.
+          if (Object.prototype.hasOwnProperty.call(capability, 'lastQualifiedVersion')
+            && safeVersion(capability.lastQualifiedVersion) !== currentVersion) {
+            blockers.push('CAPABILITY_LEDGER_PROTECTED_QUALIFICATION_VERSION_MISMATCH');
+          }
+          // Cross-version PRESERVE needs proof for its retained hooks. Legacy
+          // records may omit these fields, but explicit empty or malformed
+          // producer references cannot yield promotion authority.
+          if (text(capability.updateDisposition) === OPENCLAW_UPDATE_DISPOSITION.PRESERVE
+            && currentVersion !== targetVersion) {
+            for (const field of ['qualificationRefs', 'tests', 'evidenceRefs']) {
+              if (Object.prototype.hasOwnProperty.call(capability, field)) {
+                const refs = proofRefs(capability[field]);
+                if (!refs || refs.length === 0) {
+                  blockers.push('CAPABILITY_LEDGER_PRESERVE_EVIDENCE_UNPROVEN');
+                }
+              }
+            }
+          }
           protectedCapabilityCount += 1;
           observedDispositionCounts[text(capability.updateDisposition)] += 1;
         }
