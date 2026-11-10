@@ -565,7 +565,7 @@ function executionLedgerRecordPath(statePath, requestId) {
   return join(dirname(statePath), 'execution-ledger-v1', digest.slice(0, 2), digest + '.json');
 }
 
-function sameLegacyTerminalIdentity(pendingReceipt, canonicalReceipt) {
+function sameLegacyTerminalIdentity(pendingReceipt, canonicalReceipt, { sealedRequestId = '' } = {}) {
   if (!isPlainObject(pendingReceipt) || !isPlainObject(canonicalReceipt)
     || !Object.hasOwn(pendingReceipt, 'requestId')
     || pendingReceipt.requestId !== '') return false;
@@ -573,6 +573,17 @@ function sameLegacyTerminalIdentity(pendingReceipt, canonicalReceipt) {
   const canonicalTerminal = { ...canonicalReceipt };
   delete pendingTerminal.requestId;
   delete canonicalTerminal.requestId;
+  // The exact 5 Nov producer wrote the raw receipt to disk, but enqueued
+  // { ...receipt, receiptRef } for publication. Only this sealed original
+  // identity may drop that SINGLE transport-only field after proving the
+  // immutable canonical filename. All other fields still require equality.
+  if (Object.hasOwn(pendingTerminal, 'receiptRef')) {
+    if (sealedRequestId !== 'vr2707-20261105T1953Z-cf7-archive-single-session-v1'
+      || Object.hasOwn(canonicalTerminal, 'receiptRef')
+      || pendingTerminal.receiptRef !==
+        `receipts/github-command-mailbox/${createWindowsSafeMailboxReceiptFilename(sealedRequestId)}`) return false;
+    delete pendingTerminal.receiptRef;
+  }
   return stableJson(pendingTerminal) === stableJson(canonicalTerminal);
 }
 
@@ -606,7 +617,8 @@ function proveSingleLegacyPendingDebt(statePath, receiptRoot, state, entry, metr
   if (!isPlainObject(canonicalReceipt)
     || (canonicalReceipt.requestId !== requestId && !sealedSingleSession)
     || canonicalReceipt.state !== 'DONE'
-    || !sameLegacyTerminalIdentity(entry.receipt, canonicalReceipt)
+    || !sameLegacyTerminalIdentity(entry.receipt, canonicalReceipt,
+      { sealedRequestId: sealedSingleSession ? requestId : '' })
     || entry.publicationId !== [
       requestId,
       canonicalReceipt.state,
