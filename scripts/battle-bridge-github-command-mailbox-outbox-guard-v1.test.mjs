@@ -290,7 +290,7 @@ function executionLedgerPathForRequest(statePath, requestId) {
 }
 
 function installLegacyReconciliationProof(f, {
-  requestId = 'fixture-single-session-historical-v1',
+  requestId = 'vr2707-20261105T1953Z-cf7-archive-single-session-v1',
   completedAt = '2026-11-05T19:52:52.846Z',
   publicationId = null,
   receipt = {},
@@ -304,11 +304,11 @@ function installLegacyReconciliationProof(f, {
     repository: 'Cheekyfellastef/stephan-os',
     issueNumber: CANONICAL_MAILBOX_ISSUE,
     branch: 'main',
-    expectedHead: '1'.repeat(40),
+    expectedHead: 'cf7cd85b7afa96a696fd092b1ceb2e734f198a77',
     state: 'DONE',
     acceptedAt: '2026-11-05T19:51:00.000Z',
     completedAt,
-    processSourceHead: '1'.repeat(40),
+    processSourceHead: 'cf7cd85b7afa96a696fd092b1ceb2e734f198a77',
     ...receipt,
   };
   const invalidReceipt = { ...canonicalReceipt, requestId: '' };
@@ -316,14 +316,16 @@ function installLegacyReconciliationProof(f, {
     publicationId: publicationId || requestId + ':DONE:' + completedAt,
     receipt: invalidReceipt,
   };
-  writeJson(join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(requestId)), canonicalReceipt);
+  // Reproduce the actual legacy producer: canonical disk receipt ALSO lost its ID.
+  writeJson(join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(requestId)),
+    { ...canonicalReceipt, requestId: '' });
   writeJson(executionLedgerPathForRequest(f.statePath, requestId), {
     schemaVersion: 'stephanos.mailbox-execution-ledger-entry.v1',
     requestId,
     issueNumber: canonicalReceipt.issueNumber,
     phase: 'TERMINAL',
     terminalState: 'DONE',
-    commandDigest: 'a'.repeat(64),
+    commandDigest: 'f7dcdce00eac8e109bdd41d56740a248694056d5b6bb587db72c0c8105902fe6',
     ...ledger,
   });
   const mailboxState = {
