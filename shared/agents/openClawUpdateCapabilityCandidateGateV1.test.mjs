@@ -64,6 +64,16 @@ function ledger(required = [OPENCLAW_TASK_CLASS.OC1]) {
       evidenceRefs: ['evidence:oc8'],
     }],
     updateAllowed: true,
+    authority: {
+      sourceMutationAllowed: false,
+      runtimeMutationAllowed: false,
+      updateExecutionAllowed: false,
+      approvalAllowed: false,
+      mergeAllowed: false,
+      deploymentAllowed: false,
+      providerQualificationAllowed: false,
+      qualificationInvalidationRequired: required.length > 0,
+    },
   };
 }
 
@@ -118,6 +128,39 @@ test('READY ledger cannot smuggle mutation, approval or qualification authority'
     assert.ok(evaluate(partial).blockers.includes('CAPABILITY_LEDGER_AUTHORITY_WIDENED'), key);
   }
   assert.ok(evaluate(null).blockers.includes('CAPABILITY_LEDGER_AUTHORITY_WIDENED'));
+});
+
+test('post-update promotion refuses absent or malformed capability ledger no-authority envelope', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const baseline = ledger();
+  const proof = [replay(OPENCLAW_TASK_CLASS.OC1)];
+  const evaluate = (candidate, status = verified) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: status,
+    capabilityLedger: candidate,
+    qualificationReplay: status.status === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED ? proof : [],
+  });
+  assert.equal(evaluate(baseline).updatePromotionAllowed, true);
+  const missing = { ...baseline };
+  delete missing.authority;
+  const refused = evaluate(missing);
+  assert.equal(refused.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.equal(refused.updatePromotionAllowed, false);
+  assert.equal(refused.providerRoutingResumeAllowed, false);
+  assert.ok(refused.blockers.includes('CAPABILITY_LEDGER_AUTHORITY_WIDENED'));
+
+  for (const malformed of [null, {}, { ...baseline.authority, qualificationInvalidationRequired: null },
+    { ...baseline.authority, qualificationInvalidationRequired: 'true' },
+    { ...baseline.authority, qualificationInvalidationRequired: undefined }]) {
+    const result = evaluate({ ...baseline, authority: malformed });
+    assert.equal(result.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+    assert.equal(result.providerRoutingResumeAllowed, false);
+    assert.ok(result.blockers.includes('CAPABILITY_LEDGER_QUALIFICATION_INVALIDATION_INVALID'));
+  }
+  // Preserve read-only legacy preflight compatibility, without post-update promotion.
+  const preflight = evaluate(missing, staged(OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY));
+  assert.equal(preflight.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.PRE_UPDATE_CAPABILITY_GATE_READY);
+  assert.equal(preflight.updatePromotionAllowed, false);
+  assert.equal(preflight.providerRoutingResumeAllowed, false);
 });
 
 test('explicitly contradictory producer safety flags cannot promote a candidate', () => {

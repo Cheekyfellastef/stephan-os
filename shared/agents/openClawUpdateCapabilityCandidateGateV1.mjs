@@ -219,13 +219,18 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   if (ledger.updateAllowed !== true || text(ledger.verdict) !== 'CAPABILITY_LEDGER_READY_FOR_CANDIDATE_PROOF') {
     blockers.push('CAPABILITY_LEDGER_NOT_READY');
   }
-  // Older acceptance fixtures omit this envelope. Once supplied it must be a
-  // complete fail-closed no-authority record, matching the actual producer.
-  if (Object.prototype.hasOwnProperty.call(ledger, 'authority')) {
+  // A legacy preflight may inspect an old ledger envelope, but a verified
+  // update may never promote capability routing without the producer's complete
+  // explicit no-authority record. Absence must fail as closed as partial authority.
+  if (Object.prototype.hasOwnProperty.call(ledger, 'authority')
+    || stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED) {
     const ledgerAuthority = plainDataRecord(ledger.authority);
     if (!ledgerAuthority || LEDGER_FORBIDDEN_AUTHORITY_FLAGS.some((key) =>
       !Object.prototype.hasOwnProperty.call(ledgerAuthority, key) || ledgerAuthority[key] !== false)) {
       blockers.push('CAPABILITY_LEDGER_AUTHORITY_WIDENED');
+    }
+    if (!ledgerAuthority || typeof ledgerAuthority.qualificationInvalidationRequired !== 'boolean') {
+      blockers.push('CAPABILITY_LEDGER_QUALIFICATION_INVALIDATION_INVALID');
     }
   }
 
