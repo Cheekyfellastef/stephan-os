@@ -5,6 +5,7 @@ import {
 import {
   OPENCLAW_TASK_CLASS,
   OPENCLAW_UPDATE_CAPABILITY_LEDGER_SCHEMA,
+  OPENCLAW_UPDATE_CAPABILITY_LEDGER_VERSION,
   OPENCLAW_UPDATE_CAPABILITY_LEDGER_MAX_CAPABILITIES,
   OPENCLAW_UPDATE_CAPABILITY_ORIGIN,
   OPENCLAW_UPDATE_DISPOSITION,
@@ -32,6 +33,31 @@ const CHANGED_DISPOSITIONS = new Set([
   OPENCLAW_UPDATE_DISPOSITION.IMPROVE,
   OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM,
 ]);
+// Exact authenticated OC9 producer schema: post-update promotion is not a legacy fixture parser.
+const PRODUCER_LEDGER_KEYS = Object.freeze([
+  'schemaVersion', 'version', 'currentVersion', 'targetVersion', 'verdict',
+  'blockers', 'capabilities', 'protectedCapabilityCount', 'dispositionCounts',
+  'requiredQualificationReplay', 'updateAllowed', 'authority',
+]);
+const PRODUCER_CAPABILITY_KEYS = Object.freeze([
+  'capabilityId',
+  'purpose',
+  'currentImplementation',
+  'candidateImplementation',
+  'origin',
+  'candidateOrigin',
+  'protected',
+  'qualificationRefs',
+  'tests',
+  'dependencies',
+  'migrationPolicy',
+  'replacementCriteria',
+  'lastQualifiedVersion',
+  'updateDisposition',
+  'evidenceRefs',
+  'affectedTaskClasses',
+]);
+
 // Candidate-readiness is narrower than the staged-update state universe.
 // Approval/staging/post-update-health gaps must not be reported as PRE_UPDATE_CAPABILITY_GATE_READY.
 const CANDIDATE_STAGED_STATUSES = new Set([
@@ -331,6 +357,11 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   // Only post-update promotion requires this expanded ledger evidence; earlier
   // preflight/rollback classifications grant no capability-promotion authority.
   if (stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED) {
+    // A forged/partial READY envelope may never resume provider routing.
+    if (!exactProducerKeys(ledger, PRODUCER_LEDGER_KEYS)
+      || text(ledger.version) !== OPENCLAW_UPDATE_CAPABILITY_LEDGER_VERSION) {
+      blockers.push('CAPABILITY_LEDGER_PRODUCER_SCHEMA_DRIFT');
+    }
     const capabilities = denseArray(ledger.capabilities, OPENCLAW_UPDATE_CAPABILITY_LEDGER_MAX_CAPABILITIES);
     if (!capabilities || capabilities.length === 0) blockers.push('CAPABILITY_LEDGER_CAPABILITIES_UNPROVEN');
     else {
@@ -344,6 +375,21 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
           || !VALID_DISPOSITIONS.has(text(capability.updateDisposition))) {
           blockers.push('CAPABILITY_LEDGER_CAPABILITY_INVALID');
           continue;
+        }
+        // Apply the producer's closed capability contract before positive routing promotion.
+        if (!exactProducerKeys(capability, PRODUCER_CAPABILITY_KEYS)) {
+          blockers.push('CAPABILITY_LEDGER_CAPABILITY_SCHEMA_DRIFT');
+        }
+        if (['purpose', 'migrationPolicy', 'replacementCriteria'].some((field) =>
+          !text(capability[field]) || text(capability[field]).length > 1024)
+          || !safeId(capability.currentImplementation)
+          || !safeId(capability.candidateImplementation)
+          || !safeVersion(capability.lastQualifiedVersion)
+          || !Object.values(OPENCLAW_UPDATE_CAPABILITY_ORIGIN).includes(text(capability.origin))
+          || !Object.values(OPENCLAW_UPDATE_CAPABILITY_ORIGIN).includes(text(capability.candidateOrigin))
+          || ['qualificationRefs', 'tests', 'evidenceRefs', 'dependencies', 'affectedTaskClasses'].some((field) =>
+            !proofRefs(capability[field]))) {
+          blockers.push('CAPABILITY_LEDGER_CAPABILITY_PRODUCER_FIELDS_INVALID');
         }
         // A READY producer ledger cannot contain two capabilities with one identity,
         // nor mix identity-bearing entries with anonymous ones. Older bounded

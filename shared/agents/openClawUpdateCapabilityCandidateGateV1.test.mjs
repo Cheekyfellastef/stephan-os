@@ -8,6 +8,7 @@ import {
 import {
   OPENCLAW_TASK_CLASS,
   OPENCLAW_UPDATE_CAPABILITY_LEDGER_SCHEMA,
+  OPENCLAW_UPDATE_CAPABILITY_LEDGER_VERSION,
   OPENCLAW_UPDATE_DISPOSITION,
 } from './openClawUpdateCapabilityLedgerV1.mjs';
 import {
@@ -54,6 +55,9 @@ function staged(status = OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY) {
 function ledger(required = [OPENCLAW_TASK_CLASS.OC1]) {
   return {
     schemaVersion: OPENCLAW_UPDATE_CAPABILITY_LEDGER_SCHEMA,
+    version: OPENCLAW_UPDATE_CAPABILITY_LEDGER_VERSION,
+    protectedCapabilityCount: 1,
+    dispositionCounts: { PRESERVE: 1, MIGRATE: 0, IMPROVE: 0, REPLACE_WITH_UPSTREAM: 0, BLOCK_UPDATE: 0 },
     verdict: 'CAPABILITY_LEDGER_READY_FOR_CANDIDATE_PROOF',
     blockers: [],
     currentVersion: '1.2.3',
@@ -61,6 +65,10 @@ function ledger(required = [OPENCLAW_TASK_CLASS.OC1]) {
     requiredQualificationReplay: required,
     capabilities: [{
       capabilityId: 'oc8:protected',
+      purpose: 'retain OC8 protected capability',
+      migrationPolicy: 'preserve exact implementation',
+      replacementCriteria: 'only qualified independent replacement',
+      dependencies: [],
       protected: true,
       updateDisposition: OPENCLAW_UPDATE_DISPOSITION.PRESERVE,
       affectedTaskClasses: required.slice(0, 1),
@@ -646,6 +654,7 @@ test('same-version protected implementation changes cannot bypass producer task-
   const omitted = {
     ...ledger([]),
     targetVersion: '1.2.3',
+    dispositionCounts: { ...ledger([]).dispositionCounts, PRESERVE: 0, IMPROVE: 1 },
     capabilities: [changingCapability],
   };
   const negative = evaluateOpenClawUpdateCapabilityCandidateV1({
@@ -695,6 +704,7 @@ test('same-version protected implementation changes cannot bypass producer task-
     stagedUpdate: verified,
     capabilityLedger: {
       ...omitted,
+      dispositionCounts: { ...omitted.dispositionCounts, IMPROVE: 0, PRESERVE: 1 },
       capabilities: [{ ...changingCapability,
         updateDisposition: OPENCLAW_UPDATE_DISPOSITION.PRESERVE,
         candidateImplementation: changingCapability.currentImplementation,
@@ -932,7 +942,9 @@ test('same-version PRESERVE cannot launder malformed affected-task classes', () 
   }
   const legacy = { ...baseline.capabilities[0] };
   delete legacy.affectedTaskClasses;
-  assert.equal(evaluate({ ...baseline, capabilities: [legacy] }).updatePromotionAllowed, true);
+  const legacyResult = evaluate({ ...baseline, capabilities: [legacy] });
+  assert.equal(legacyResult.updatePromotionAllowed, false);
+  assert.ok(legacyResult.blockers.includes('CAPABILITY_LEDGER_CAPABILITY_SCHEMA_DRIFT'));
 });
 
 test('same-version protected PRESERVE cannot smuggle a different implementation or origin', () => {
@@ -1010,7 +1022,9 @@ test('READY protected changed dispositions cannot launder contradictory implemen
   };
   const evaluate = (capability) => evaluateOpenClawUpdateCapabilityCandidateV1({
     stagedUpdate: verified,
-    capabilityLedger: { ...base, capabilities: [capability] },
+    capabilityLedger: { ...base, capabilities: [capability],
+      dispositionCounts: Object.fromEntries(Object.keys(base.dispositionCounts).map((key) =>
+        [key, key === capability.updateDisposition ? 1 : 0])) },
     qualificationReplay: proof,
   });
   const original = base.capabilities[0];
@@ -1112,7 +1126,9 @@ test('absent protected post-update evidence fails as closed as explicit empty ev
   const proof = [replay(OPENCLAW_TASK_CLASS.OC1)];
   const evaluate = (capability) => evaluateOpenClawUpdateCapabilityCandidateV1({
     stagedUpdate: verified,
-    capabilityLedger: { ...full, capabilities: [capability] },
+    capabilityLedger: { ...full, capabilities: [capability],
+      dispositionCounts: Object.fromEntries(Object.keys(full.dispositionCounts).map((key) =>
+        [key, key === capability.updateDisposition ? 1 : 0])) },
     qualificationReplay: proof,
   });
   const good = evaluate(full.capabilities[0]);
@@ -1178,7 +1194,9 @@ test('changed protected capabilities cannot promote without producer-required te
   ];
   const evaluate = (capability) => evaluateOpenClawUpdateCapabilityCandidateV1({
     stagedUpdate: verified,
-    capabilityLedger: { ...full, capabilities: [capability] },
+    capabilityLedger: { ...full, capabilities: [capability],
+      dispositionCounts: Object.fromEntries(Object.keys(full.dispositionCounts).map((key) =>
+        [key, key === capability.updateDisposition ? 1 : 0])) },
     qualificationReplay,
   });
   for (const updateDisposition of dispositions) {
@@ -1257,6 +1275,12 @@ test('post-update changed unprotected capabilities require the producer implemen
   const proof = [replay(OPENCLAW_TASK_CLASS.OC1)];
   const changed = {
     capabilityId: 'oc4:unprotected',
+    purpose: 'OC4 draft provider',
+    migrationPolicy: 'explicit bounded migration',
+    replacementCriteria: 'verified target origin',
+    dependencies: [],
+    qualificationRefs: ['qualification:oc4'],
+    lastQualifiedVersion: '1.2.3',
     protected: false,
     updateDisposition: OPENCLAW_UPDATE_DISPOSITION.MIGRATE,
     affectedTaskClasses: [OPENCLAW_TASK_CLASS.OC1],
@@ -1429,4 +1453,54 @@ test('verified post-update producer safety and authority reject undeclared field
   const legacy = makeInput(OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY);
   Object.defineProperty(legacy.stagedUpdate.safety, 'legacyUnknownEvidence', { value: false, enumerable: true });
   assert.equal(evaluateOpenClawUpdateCapabilityCandidateV1(legacy).updatePromotionAllowed, false);
+});
+
+
+test('post-update producer ledger and capability schemas reject all eight source-drift mutations', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const candidate = ledger();
+  const qualificationReplay = [replay(OPENCLAW_TASK_CLASS.OC1)];
+  const evaluate = (capabilityLedger) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: verified, capabilityLedger, qualificationReplay,
+  });
+  assert.equal(evaluate(candidate).updatePromotionAllowed, true);
+  const foreignCapability = (mutate) => {
+    const changed = { ...candidate.capabilities[0] };
+    mutate(changed);
+    return { ...candidate, capabilities: [changed] };
+  };
+  const mutations = [
+    ['capability source mutation authority', foreignCapability((c) => { c.sourceMutationAllowed = true; }),
+      'CAPABILITY_LEDGER_CAPABILITY_SCHEMA_DRIFT'],
+    ['capability qualification authority', foreignCapability((c) => { c.providerQualificationAllowed = true; }),
+      'CAPABILITY_LEDGER_CAPABILITY_SCHEMA_DRIFT'],
+    ['capability own prototype identity key', foreignCapability((c) => {
+      Object.defineProperty(c, '__proto__', { value: false, enumerable: true, configurable: true });
+    }), 'CAPABILITY_LEDGER_CAPABILITY_SCHEMA_DRIFT'],
+    ['omitted purpose', foreignCapability((c) => { delete c.purpose; }),
+      'CAPABILITY_LEDGER_CAPABILITY_SCHEMA_DRIFT'],
+    ['omitted migration policy', foreignCapability((c) => { delete c.migrationPolicy; }),
+      'CAPABILITY_LEDGER_CAPABILITY_SCHEMA_DRIFT'],
+    ['nondense dependencies', foreignCapability((c) => { c.dependencies = 'not-array'; }),
+      'CAPABILITY_LEDGER_CAPABILITY_PRODUCER_FIELDS_INVALID'],
+    ['wrong producer version', { ...candidate, version: 'untrusted' },
+      'CAPABILITY_LEDGER_PRODUCER_SCHEMA_DRIFT'],
+    ['extra top-level authority', { ...candidate, runtimeMutationAllowed: true },
+      'CAPABILITY_LEDGER_PRODUCER_SCHEMA_DRIFT'],
+  ];
+  for (const [label, capabilityLedger, expectedBlocker] of mutations) {
+    const result = evaluate(capabilityLedger);
+    assert.equal(result.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE, label);
+    assert.equal(result.updatePromotionAllowed, false, label);
+    assert.equal(result.providerRoutingResumeAllowed, false, label);
+    assert.ok(result.blockers.includes(expectedBlocker), label);
+  }
+  // Historic source-only preflight fixtures may be inspected, but cannot promote routing.
+  const historic = { ...candidate }; delete historic.version;
+  const preflight = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: staged(OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY),
+    capabilityLedger: historic, qualificationReplay: [],
+  });
+  assert.equal(preflight.updatePromotionAllowed, false);
+  assert.equal(preflight.providerRoutingResumeAllowed, false);
 });
