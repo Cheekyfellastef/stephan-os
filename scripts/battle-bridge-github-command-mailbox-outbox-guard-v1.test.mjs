@@ -380,6 +380,108 @@ function runGuard(f, options = {}) {
   });
 }
 
+const SEALED_NOV5_SINGLE_SESSION_ID = 'vr2707-20261105T1953Z-cf7-archive-single-session-v1';
+const SEALED_NOV5_SINGLE_SESSION_DIGEST = 'f7dcdce00eac8e109bdd41d56740a248694056d5b6bb587db72c0c8105902fe6';
+const SEALED_NOV5_HEAD = 'cf7cd85b7afa96a696fd092b1ceb2e734f198a77';
+
+// Original owner comment #6667748867; old serializer blanked "-session" IDs.
+// Test the exact old persistent format, never invent a DONE from a public ACCEPTED.
+function installSealedNov5BlankReceipt(f, {
+  requestId = SEALED_NOV5_SINGLE_SESSION_ID,
+  digest = SEALED_NOV5_SINGLE_SESSION_DIGEST,
+} = {}) {
+  const proof = installLegacyReconciliationProof(f, {
+    requestId,
+    completedAt: '2026-11-05T19:53:27.000Z',
+    receipt: { expectedHead: SEALED_NOV5_HEAD, processSourceHead: SEALED_NOV5_HEAD,
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION' },
+    ledger: { commandDigest: digest },
+  });
+  writeJson(join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(requestId)),
+    { ...proof.canonicalReceipt, requestId: '' });
+  return proof;
+}
+
+test('sealed original 5 November blank request ID is reconciled only with its exact command digest and terminal ledger', (t) => {
+  const f = fixture(); t.after(f.cleanup);
+  const proof = installSealedNov5BlankReceipt(f);
+  let childCalled = 0;
+  const result = runGuard(f, { spawnSyncFn: () => {
+    childCalled += 1;
+    assert.deepEqual(readJson(f.statePath).pendingReceiptPublications, []);
+    return { status: 0, stdout: '{}', stderr: '' };
+  } });
+  assert.equal(result.ok, true);
+  assert.equal(result.quarantinedInvalidPublicationCount, 1);
+  assert.equal(childCalled, 1);
+  const quarantine = readJson(join(dirname(f.statePath), 'receipt-publication-invalid-quarantine-v1.json'));
+  assert.equal(quarantine.records.length, 1);
+  assert.deepEqual(quarantine.records[0].entry, proof.invalid);
+  assert.deepEqual(readJson(f.statePath).consumedRequestIds, [proof.requestId]);
+  assert.equal(readJson(f.statePath).acceptedRequestIds.includes(proof.requestId), false);
+});
+
+test('sealed legacy blank receipt does not release other requests or mismatched historical evidence', (t) => {
+  const cases = [
+    ['different digest', (f, proof) => {
+      const file = executionLedgerPathForRequest(f.statePath, proof.requestId);
+      const ledger = readJson(file);
+      ledger.commandDigest = 'a'.repeat(64);
+      writeJson(file, ledger);
+    }],
+    ['missing terminal ledger', (f, proof) => {
+      const file = executionLedgerPathForRequest(f.statePath, proof.requestId);
+      const ledger = readJson(file);
+      ledger.phase = 'RESERVED';
+      writeJson(file, ledger);
+    }],
+    ['wrong canonical source', (f, proof) => {
+      const file = join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(proof.requestId));
+      const receipt = readJson(file);
+      receipt.processSourceHead = '2'.repeat(40);
+      writeJson(file, receipt);
+    }],
+    ['unconsumed command', (f) => {
+      const state = readJson(f.statePath);
+      state.consumedRequestIds = [];
+      writeJson(f.statePath, state);
+    }],
+    ['unknown publication binding', (f) => {
+      const state = readJson(f.statePath);
+      state.pendingReceiptPublications[0].publicationId = 'unrelated:DONE:2026-11-05T19:53:27.000Z';
+      writeJson(f.statePath, state);
+    }],
+    ['not terminal DONE', (f, proof) => {
+      const file = join(f.paths.receiptRoot, createWindowsSafeMailboxReceiptFilename(proof.requestId));
+      const receipt = readJson(file);
+      receipt.state = 'ACCEPTED';
+      writeJson(file, receipt);
+    }],
+  ];
+  for (const [name, corrupt] of cases) {
+    const f = fixture(); t.after(f.cleanup);
+    const proof = installSealedNov5BlankReceipt(f);
+    corrupt(f, proof);
+    const originalBytes = readFileSync(f.statePath);
+    let invoked = 0;
+    const result = runGuard(f, { spawnSyncFn: () => {
+      invoked += 1;
+      return { status: 0 };
+    } });
+    assert.equal(result.ok, false, name);
+    assert.equal(invoked, 0, name);
+    assert.equal(result.guardDiagnostic.childInvocationAttempted, false, name);
+    assert.deepEqual(readFileSync(f.statePath), originalBytes, name);
+  }
+
+  const outsider = fixture(); t.after(outsider.cleanup);
+  installSealedNov5BlankReceipt(outsider, { requestId: 'other-sanitized-single-session-command-v1' });
+  let invoked = 0;
+  const result = runGuard(outsider, { spawnSyncFn: () => { invoked++; return { status: 0 }; } });
+  assert.equal(result.ok, false);
+  assert.equal(invoked, 0);
+});
+
 test('guard quarantines malformed legacy inline debt before child but keeps post-child corruption fail closed', (t) => {
   const f = fixture(); t.after(f.cleanup);
   const now = () => new Date('2026-11-07T15:20:00.000Z');
