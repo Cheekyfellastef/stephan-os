@@ -140,3 +140,38 @@ test('unapproved local registration cannot opt itself into model routing', () =>
   assert.equal(result.minds[0].routeEligibility, false);
   assert.deepEqual(result.routeEligibleMindIds, []);
 });
+test('saved approval is retained while local Ollama is offline, but cannot be routed', () => {
+  const approved = {
+    mindId: 'ollama:qwen3.5:27b', providerId: 'ollama', modelId: 'qwen3.5:27b',
+    location: 'local', privacyClass: 'local-private', approvalState: 'approved',
+    routeEligibility: true, evaluationScore: 0.95,
+  };
+  const offline = buildAIMindRegistry({
+    registry: [approved],
+    providerHealth: { ollama: { ok: false, models: ['qwen3.5:27b'] } },
+  });
+  assert.equal(offline.minds[0].approvalState, 'approved');
+  assert.equal(offline.minds[0].routeEligibility, true, 'saved approval must survive transient outages');
+  assert.deepEqual(offline.routeEligibleMindIds, []);
+  assert.deepEqual(offline.currentMissionRecommendedMinds, []);
+
+  const online = buildAIMindRegistry({
+    registry: [approved],
+    providerHealth: { ollama: { ok: true, models: ['qwen3.5:27b'] } },
+  });
+  assert.deepEqual(online.routeEligibleMindIds, [approved.mindId],
+    'model must become runnable without needing a new approval after health recovers');
+});
+
+test('an approved Ollama model missing from the actual catalog stays unroutable', () => {
+  const result = buildAIMindRegistry({
+    providerHealth: { ollama: { ok: true, models: ['llama3.2:3b'] } },
+    registry: [{
+      mindId: 'ollama:qwen3.5:27b', providerId: 'ollama', modelId: 'qwen3.5:27b',
+      approvalState: 'approved', routeEligibility: true,
+    }],
+  });
+  assert.equal(result.minds.find((m) => m.mindId === 'ollama:qwen3.5:27b').approvalState, 'approved');
+  assert.deepEqual(result.routeEligibleMindIds, []);
+  assert.deepEqual(result.currentMissionRecommendedMinds, []);
+});
