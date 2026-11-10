@@ -130,6 +130,32 @@ test('READY ledger cannot smuggle mutation, approval or qualification authority'
   assert.ok(evaluate(null).blockers.includes('CAPABILITY_LEDGER_AUTHORITY_WIDENED'));
 });
 
+test('post-update promotion refuses contradictory ledger replay-invalidation authority', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const consistent = ledger();
+  const evidence = [replay(OPENCLAW_TASK_CLASS.OC1)];
+  const evaluate = (candidate, status = verified) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: status,
+    capabilityLedger: candidate,
+    qualificationReplay: status.status === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED ? evidence : [],
+  });
+  assert.equal(evaluate(consistent).updatePromotionAllowed, true);
+  const contradicted = {
+    ...consistent,
+    authority: { ...consistent.authority, qualificationInvalidationRequired: false },
+  };
+  const refused = evaluate(contradicted);
+  assert.equal(refused.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.equal(refused.updatePromotionAllowed, false);
+  assert.equal(refused.providerRoutingResumeAllowed, false);
+  assert.ok(refused.blockers.includes('CAPABILITY_LEDGER_QUALIFICATION_INVALIDATION_MISMATCH'));
+  // Read-only legacy preflight still has no routing authority.
+  const preflight = evaluate(contradicted, staged(OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY));
+  assert.equal(preflight.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.PRE_UPDATE_CAPABILITY_GATE_READY);
+  assert.equal(preflight.updatePromotionAllowed, false);
+  assert.equal(preflight.providerRoutingResumeAllowed, false);
+});
+
 test('post-update promotion refuses absent or malformed capability ledger no-authority envelope', () => {
   const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
   const baseline = ledger();
