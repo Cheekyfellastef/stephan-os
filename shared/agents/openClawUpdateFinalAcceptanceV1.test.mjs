@@ -4,6 +4,11 @@ import assert from 'node:assert/strict';
 import {
   OPENCLAW_STAGED_UPDATE_SCHEMA,
   OPENCLAW_STAGED_UPDATE_STATUS,
+  OPENCLAW_STAGED_UPDATE_ACTION,
+  OPENCLAW_APPROVED_GATEWAY_ENDPOINT,
+  OPENCLAW_UPDATE_POST_PROOF_SCHEMA,
+  OPENCLAW_UPDATE_PRESERVATION_COMPARISON_SCHEMA,
+  OPENCLAW_UPDATE_APPLY_RECEIPT_SCHEMA,
 } from './openClawStagedUpdateV1.mjs';
 import {
   buildOpenClawUpdateCapabilityLedgerV1,
@@ -52,8 +57,8 @@ function ledger() {
   });
 }
 
-function staged(status) {
-  return {
+function staged(status = OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY) {
+  const result = {
     schema: OPENCLAW_STAGED_UPDATE_SCHEMA,
     status,
     blockers: [],
@@ -82,6 +87,43 @@ function staged(status) {
       secretsIncluded: false,
       absolutePathsPublished: false,
     },
+  };
+  if (status === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED) {
+    result.evidence = postUpdateEvidenceFixture(result.exactIdentity);
+    result.applyPlan = [
+      OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_PREFLIGHT,OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_APPROVAL,
+      OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_STAGE,OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_BACKUP,
+      OPENCLAW_STAGED_UPDATE_ACTION.APPLY_UPDATE,OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_HEALTH,
+      OPENCLAW_STAGED_UPDATE_ACTION.COMPARE_PRESERVATION,
+    ].map((actionId,i)=>({step:i+1,actionId,mutating:i===4,executed:false}));
+    result.rollbackPlan = [
+      OPENCLAW_STAGED_UPDATE_ACTION.ROLLBACK_PACKAGE,OPENCLAW_STAGED_UPDATE_ACTION.RESTORE_BACKUP,
+      OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_ROLLBACK,
+    ].map((actionId,i)=>({step:i+1,actionId,mutating:i<2,executed:false}));
+  }
+  return result;
+}
+function postUpdateEvidenceFixture(id) {
+  const fp='d'.repeat(64),bytes='e'.repeat(64);
+  return {
+    preflight:{...id,gatewayEndpoint:OPENCLAW_APPROVED_GATEWAY_ENDPOINT,
+      protectedEntries:[{pathFingerprintSha256:fp,sourceDigestSha256:bytes}]},
+    approval:{approvalId:'approval-1',singleUse:true},
+    stage:{stageId:'stage-1',packetId:id.packetId,packetSha256:id.packetSha256},
+    backupSet:{backupSetId:'backup-1',manifestSha256:id.manifestSha256},
+    applyReceipt:{schema:OPENCLAW_UPDATE_APPLY_RECEIPT_SCHEMA,receiptId:'apply-1',mutationAttempted:true,
+      approvalId:'approval-1',stageId:'stage-1',backupSetId:'backup-1',repository:id.repository,
+      sourceHead:id.sourceHead,manifestSha256:id.manifestSha256,packetId:id.packetId,
+      packetSha256:id.packetSha256,targetVersion:id.targetVersion},
+    postUpdateProof:{schema:OPENCLAW_UPDATE_POST_PROOF_SCHEMA,proofId:'health-1',repository:id.repository,
+      sourceHead:id.sourceHead,manifestSha256:id.manifestSha256,observedVersion:id.targetVersion,
+      gatewayEndpoint:OPENCLAW_APPROVED_GATEWAY_ENDPOINT,
+      health:{openClawGateway:true,stephanosBackend:true,stephanosUi:true,
+        missionWorker:true,sharedWorkspaceWrite:true}},
+    preservationComparison:{schema:OPENCLAW_UPDATE_PRESERVATION_COMPARISON_SCHEMA,
+      comparisonId:'compare-1',manifestSha256:id.manifestSha256,
+      entries:[{pathFingerprintSha256:fp,beforeDigestSha256:bytes,afterDigestSha256:bytes}]},
+    rollbackReceipt:null,rollbackProof:null,rollbackComparison:null,
   };
 }
 
