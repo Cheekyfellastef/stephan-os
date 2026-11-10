@@ -72,7 +72,16 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
   // SELECT and CLAIM predecessors have their own distinct current proof.
   // A gate-19 diagnostic is still not a worker-scoped STARTED receipt.
   const pickupPrerequisites = [4, 5, 7, 6, 18, 19];
-  const signedPickup = ledgerLive && !currentVeto
+  // A shared proofRef does not independently prove multiple prerequisite gates.
+  // This diagnostic is never a worker-scoped authenticated STARTED receipt.
+  const pickupProofRefs = pickupPrerequisites.map(id => {
+    const matching = gates.filter(gate => gate?.id === id);
+    return matching.length === 1 && typeof matching[0].proofRef === 'string'
+      ? matching[0].proofRef.trim() : '';
+  });
+  const distinctPickupProofRefs = pickupProofRefs.every(Boolean)
+    && new Set(pickupProofRefs).size === pickupPrerequisites.length;
+  const signedPickup = ledgerLive && !currentVeto && distinctPickupProofRefs
     && pickupPrerequisites.every(id => {
       const matching = gates.filter(gate => gate?.id === id);
       return matching.length === 1 && matching[0].status === 'PASS'

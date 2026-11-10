@@ -110,6 +110,28 @@ test('Goal #2002: WAITING, STALE and proofless SELECT cannot certify pickup', ()
   assert.notEqual(physicalStage(failed).trafficLight, 'GREEN');
 });
 
+test('Goal #2002: prerequisite proofRef aliasing cannot certify physical pickup', () => {
+  const ids = [4, 5, 7, 6, 18, 19];
+  const valid = ids.map(id => signedGate(id));
+  assert.equal(physicalStage(valid).trafficLight, 'GREEN', 'distinct gate records remain accepted');
+  const corruptions = [
+    ['all prerequisites share one reference', valid.map(gate => ({ ...gate, proofRef: valid[0].proofRef }))],
+    ['SELECT reuses CLAIM reference', valid.map(gate => gate.id === 6
+      ? { ...gate, proofRef: valid[4].proofRef } : gate)],
+    ['CLAIM reuses PICKUP reference', valid.map(gate => gate.id === 18
+      ? { ...gate, proofRef: valid[5].proofRef } : gate)],
+    ['whitespace disguise cannot make alias distinct', valid.map(gate => gate.id === 19
+      ? { ...gate, proofRef: ' ' + valid[4].proofRef + ' ' } : gate)],
+    ['object-shaped proof reference must fail closed', valid.map(gate => gate.id === 19
+      ? { ...gate, proofRef: { value: 'workspace:proof/gate-19' } } : gate)],
+  ];
+  for (const [label, gates] of corruptions) {
+    const stage = physicalStage(gates);
+    assert.notEqual(stage.state, 'PROVEN', label);
+    assert.notEqual(stage.trafficLight, 'GREEN', label);
+  }
+});
+
 test('Goal #2002: duplicate signed gate identities cannot independently certify pickup', () => {
   const valid = [4, 5, 7, 6, 18, 19].map(id => signedGate(id));
   const duplicatedSelect = [...valid, signedGate(6)];
