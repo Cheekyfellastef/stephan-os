@@ -1208,8 +1208,10 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   const sourceTruth = sourceTruthFn();
   const canonicalSourceTruth = evaluateCanonicalIgnitionSourceTruth(sourceTruth);
   if (!canonicalSourceTruth.ok) {
-    status = projectBattleBridgeSupervisorStatus({ status, phase: 'source truth', phaseState: 'blocked', blocker: canonicalSourceTruth.blocker }); await persist();
+    // Persist a complete denial in one write. A prior red/unknown interim write
+    // can outlive the process and hide the exact fixed-Git failure after restart.
     status.sourceTruthVerdict = { state: 'blocked', verdict: sourceTruth?.publicationState || canonicalSourceTruth.blocker.id, blocker: canonicalSourceTruth.blocker };
+    status = projectBattleBridgeSupervisorStatus({ status, phase: 'source truth', phaseState: 'blocked', blocker: canonicalSourceTruth.blocker });
     await persist();
     stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     return { ok: false, status, writes };
