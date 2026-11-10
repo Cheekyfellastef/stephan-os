@@ -625,9 +625,10 @@ function proveSingleLegacyPendingDebt(statePath, receiptRoot, state, entry, metr
     || ledgerRecord.issueNumber !== canonicalReceipt.issueNumber
     || ledgerRecord.phase !== 'TERMINAL'
     || ledgerRecord.terminalState !== 'DONE'
-    || !/^[a-f0-9]{64}$/.test(String(ledgerRecord.commandDigest || ''))
-    || (sealedSingleSession
-      && ledgerRecord.commandDigest !== 'f7dcdce00eac8e109bdd41d56740a248694056d5b6bb587db72c0c8105902fe6')
+    // This recovery never accepts a plausible digest for an unknown command.
+    // No other legacy blank ID has a reviewed original-command binding.
+    || !sealedSingleSession
+    || ledgerRecord.commandDigest !== 'f7dcdce00eac8e109bdd41d56740a248694056d5b6bb587db72c0c8105902fe6'
     || (Object.hasOwn(ledgerRecord, 'terminalProofHash')
       && ledgerRecord.terminalProofHash !== canonicalReceipt.proofHash)) {
     throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_LEDGER_UNPROVEN');
