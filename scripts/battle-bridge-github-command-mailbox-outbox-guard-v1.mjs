@@ -573,16 +573,40 @@ function sameLegacyTerminalIdentity(pendingReceipt, canonicalReceipt, { sealedRe
   const canonicalTerminal = { ...canonicalReceipt };
   delete pendingTerminal.requestId;
   delete canonicalTerminal.requestId;
-  // The exact 5 Nov producer wrote the raw receipt to disk, but enqueued
-  // { ...receipt, receiptRef } for publication. Only this sealed original
-  // identity may drop that SINGLE transport-only field after proving the
-  // immutable canonical filename. All other fields still require equality.
+  // The original 5 Nov producer persisted the raw receipt to disk, then
+  // appended receiptRef for the deferred publication. On a large terminal,
+  // both are compacted: the ref disappears but the compact record retains
+  // originalBytes for the two different original JSON lengths.
+  const singleSession = sealedRequestId === 'vr2707-20261105T1953Z-cf7-archive-single-session-v1';
+  const expectedRef = singleSession
+    ? `receipts/github-command-mailbox/${createWindowsSafeMailboxReceiptFilename(sealedRequestId)}`
+    : '';
   if (Object.hasOwn(pendingTerminal, 'receiptRef')) {
-    if (sealedRequestId !== 'vr2707-20261105T1953Z-cf7-archive-single-session-v1'
-      || Object.hasOwn(canonicalTerminal, 'receiptRef')
-      || pendingTerminal.receiptRef !==
-        `receipts/github-command-mailbox/${createWindowsSafeMailboxReceiptFilename(sealedRequestId)}`) return false;
+    if (!singleSession || Object.hasOwn(canonicalTerminal, 'receiptRef')
+      || pendingTerminal.receiptRef !== expectedRef) return false;
     delete pendingTerminal.receiptRef;
+  } else if (singleSession) {
+    const pendingCompact = pendingTerminal.result?.result;
+    const canonicalCompact = canonicalTerminal.result?.result;
+    // Old serializeBoundedReceiptJson used this exact 256 KiB disk limit.
+    // The producer appended one LAST pretty-printed root property; permit
+    // only its precise byte delta when BOTH sealed receipts were compacted.
+    const transportBytes = Buffer.byteLength(
+      `,\\n  "receiptRef": ${JSON.stringify(expectedRef)}`, 'utf8');
+    if (isPlainObject(pendingCompact) && isPlainObject(canonicalCompact)
+      && pendingTerminal.githubProjectionTruncated === true
+      && canonicalTerminal.githubProjectionTruncated === true
+      && pendingCompact.githubProjectionTruncated === true
+      && canonicalCompact.githubProjectionTruncated === true
+      && Number.isSafeInteger(canonicalCompact.originalBytes)
+      && canonicalCompact.originalBytes > 256 * 1024
+      && Number.isSafeInteger(pendingCompact.originalBytes)
+      && pendingCompact.originalBytes === canonicalCompact.originalBytes + transportBytes) {
+      pendingTerminal.result = {
+        ...pendingTerminal.result,
+        result: { ...pendingCompact, originalBytes: canonicalCompact.originalBytes },
+      };
+    }
   }
   return stableJson(pendingTerminal) === stableJson(canonicalTerminal);
 }
