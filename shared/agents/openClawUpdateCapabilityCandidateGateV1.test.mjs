@@ -33,10 +33,20 @@ function staged(status = OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY) {
       targetVersion: '1.3.0',
     },
     safety: {
+      sourceHarnessOnly: true,
       mutationAllowed: false,
+      arbitraryShellAllowed: false,
+      arbitraryPathAllowed: false,
       sourceMutationAllowed: false,
       mergeAuthority: false,
       deploymentAuthority: false,
+      battleBridgeAdapterRequired: true,
+      operatorApprovalRequired: ![
+        OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED,
+        OPENCLAW_STAGED_UPDATE_STATUS.ROLLED_BACK_AND_VERIFIED,
+      ].includes(status),
+      secretsIncluded: false,
+      absolutePathsPublished: false,
     },
   };
 }
@@ -1202,4 +1212,41 @@ test('changed protected capabilities cannot promote without producer-required te
   });
   assert.equal(preflight.updatePromotionAllowed, false);
   assert.equal(preflight.providerRoutingResumeAllowed, false);
+});
+
+test('post-update promotion requires the complete producer adapter and source-only safety envelope', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const candidate = ledger();
+  const qualificationReplay = [replay(OPENCLAW_TASK_CLASS.OC1)];
+  const evaluate = (stage) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: stage,
+    capabilityLedger: candidate,
+    qualificationReplay: stage.status === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
+      ? qualificationReplay : [],
+  });
+  assert.equal(evaluate(verified).updatePromotionAllowed, true);
+  for (const key of [
+    'sourceHarnessOnly', 'arbitraryShellAllowed', 'arbitraryPathAllowed',
+    'battleBridgeAdapterRequired', 'operatorApprovalRequired',
+    'secretsIncluded', 'absolutePathsPublished',
+  ]) {
+    const safety = { ...verified.safety };
+    delete safety[key];
+    const result = evaluate({ ...verified, safety });
+    assert.equal(result.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE, key);
+    assert.equal(result.updatePromotionAllowed, false, key);
+    assert.equal(result.providerRoutingResumeAllowed, false, key);
+    assert.ok(result.blockers.includes('STAGED_UPDATE_SAFETY_PRODUCER_ENVELOPE_MISSING'), key);
+  }
+  // Read-only legacy fixtures need not pretend they can commission a loaded guard.
+  const preflight = staged(OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY);
+  for (const key of [
+    'sourceHarnessOnly', 'arbitraryShellAllowed', 'arbitraryPathAllowed',
+    'battleBridgeAdapterRequired', 'operatorApprovalRequired',
+    'secretsIncluded', 'absolutePathsPublished',
+  ]) delete preflight.safety[key];
+  const legacy = evaluate(preflight);
+  assert.equal(legacy.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.PRE_UPDATE_CAPABILITY_GATE_READY);
+  assert.equal(legacy.updatePromotionAllowed, false);
+  assert.equal(legacy.providerRoutingResumeAllowed, false);
 });

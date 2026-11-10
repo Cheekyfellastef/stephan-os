@@ -252,6 +252,15 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   )) {
     blockers.push('STAGED_UPDATE_SAFETY_CONTRADICTION');
   }
+  // A positive post-update source projection must retain the full source
+  // producer's bounded adapter/no-shell safety envelope. Legacy preflight can
+  // still inspect a partial fixture, but must never promote provider routing.
+  if (safety && stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
+    && (Object.keys(OPTIONAL_STAGED_SAFETY).some((key) =>
+      !Object.prototype.hasOwnProperty.call(safety, key))
+      || !Object.prototype.hasOwnProperty.call(safety, 'operatorApprovalRequired'))) {
+    blockers.push('STAGED_UPDATE_SAFETY_PRODUCER_ENVELOPE_MISSING');
+  }
 
   const identity = plainDataRecord(staged.exactIdentity);
   if (!identity) blockers.push('STAGED_UPDATE_IDENTITY_MISSING');
