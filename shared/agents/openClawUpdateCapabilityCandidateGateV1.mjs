@@ -337,7 +337,7 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
         // compatible until the reviewed producer/consumer migration.
         if (CHANGED_DISPOSITIONS.has(text(capability.updateDisposition))) {
           const identityKeys = ['currentImplementation', 'candidateImplementation', 'origin', 'candidateOrigin'];
-          if (identityKeys.some((key) => Object.prototype.hasOwnProperty.call(capability, key))) {
+          if (capability.protected || identityKeys.some((key) => Object.prototype.hasOwnProperty.call(capability, key))) {
             const currentImplementation = safeId(capability.currentImplementation);
             const candidateImplementation = safeId(capability.candidateImplementation);
             const origin = text(capability.origin);
@@ -357,23 +357,32 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
           }
         }
         if (capability.protected) {
+          // A post-update promotion is not a legacy fixture parser: the original
+          // producer requires every protected capability to carry a complete identity.
+          // Missing evidence must never grant more authority than an empty field.
+          if (!safeId(capability.capabilityId)
+            || !safeId(capability.currentImplementation)
+            || !safeId(capability.candidateImplementation)
+            || !Object.values(OPENCLAW_UPDATE_CAPABILITY_ORIGIN).includes(text(capability.origin))
+            || !Object.values(OPENCLAW_UPDATE_CAPABILITY_ORIGIN).includes(text(capability.candidateOrigin))
+            || safeVersion(capability.lastQualifiedVersion) !== currentVersion) {
+            blockers.push('CAPABILITY_LEDGER_PROTECTED_IDENTITY_UNPROVEN');
+          }
           // The source producer rejects stale or future protected qualification versions.
           // Older acceptance fixtures omit this field; explicit contradictions must fail.
           if (Object.prototype.hasOwnProperty.call(capability, 'lastQualifiedVersion')
             && safeVersion(capability.lastQualifiedVersion) !== currentVersion) {
             blockers.push('CAPABILITY_LEDGER_PROTECTED_QUALIFICATION_VERSION_MISMATCH');
           }
-          // Cross-version PRESERVE needs proof for its retained hooks. Legacy
-          // records may omit these fields, but explicit empty or malformed
-          // producer references cannot yield promotion authority.
+          // Post-update cross-version PRESERVE requires actual retained-hook
+          // qualifications, tests and evidence. Missing, empty and malformed
+          // arrays are equally unproven; a preflight legacy fixture cannot promote.
           if (text(capability.updateDisposition) === OPENCLAW_UPDATE_DISPOSITION.PRESERVE
             && currentVersion !== targetVersion) {
             for (const field of ['qualificationRefs', 'tests', 'evidenceRefs']) {
-              if (Object.prototype.hasOwnProperty.call(capability, field)) {
-                const refs = proofRefs(capability[field]);
-                if (!refs || refs.length === 0) {
-                  blockers.push('CAPABILITY_LEDGER_PRESERVE_EVIDENCE_UNPROVEN');
-                }
+              const refs = proofRefs(capability[field]);
+              if (!refs || refs.length === 0) {
+                blockers.push('CAPABILITY_LEDGER_PRESERVE_EVIDENCE_UNPROVEN');
               }
             }
           }
