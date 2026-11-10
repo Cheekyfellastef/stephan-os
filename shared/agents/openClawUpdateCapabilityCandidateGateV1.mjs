@@ -301,6 +301,16 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
             seenCapabilityIds.add(capabilityId);
           }
         }
+        // The producer validates every supplied affected-task array, even for
+        // same-version PRESERVE. A self-reported READY record must not smuggle
+        // malformed or duplicate classes simply because replay is not required.
+        if (Object.prototype.hasOwnProperty.call(capability, 'affectedTaskClasses')) {
+          const affectedClasses = denseArray(capability.affectedTaskClasses, MAX_PROOF_REFS);
+          if (!affectedClasses || affectedClasses.some((taskClass) => !TASK_CLASSES.has(text(taskClass)))
+            || new Set(affectedClasses.map(text)).size !== affectedClasses.length) {
+            blockers.push('CAPABILITY_LEDGER_AFFECTED_TASK_CLASSES_INVALID');
+          }
+        }
         if (capability.protected) {
           protectedCapabilityCount += 1;
           observedDispositionCounts[text(capability.updateDisposition)] += 1;

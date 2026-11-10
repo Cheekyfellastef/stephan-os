@@ -811,3 +811,32 @@ test('READY protected capability identities must be unique and complete when sup
     assert.ok(bad.blockers.includes('CAPABILITY_LEDGER_CAPABILITY_ID_INVALID_OR_DUPLICATE'));
   }
 });
+
+
+test('same-version PRESERVE cannot launder malformed affected-task classes', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  verified.exactIdentity.targetVersion = '1.2.3';
+  const baseline = { ...ledger([]), targetVersion: '1.2.3' };
+  const evaluate = (candidate) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: verified,
+    capabilityLedger: candidate,
+    qualificationReplay: [],
+  });
+  const good = evaluate(baseline);
+  assert.equal(good.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(good.updatePromotionAllowed, true);
+  for (const malformed of [null, undefined, 'OC1', ['NOT_A_CLASS'],
+    [OPENCLAW_TASK_CLASS.OC1, OPENCLAW_TASK_CLASS.OC1]]) {
+    const hostile = evaluate({
+      ...baseline,
+      capabilities: [{ ...baseline.capabilities[0], affectedTaskClasses: malformed }],
+    });
+    assert.equal(hostile.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE, String(malformed));
+    assert.equal(hostile.updatePromotionAllowed, false);
+    assert.equal(hostile.providerRoutingResumeAllowed, false);
+    assert.ok(hostile.blockers.includes('CAPABILITY_LEDGER_AFFECTED_TASK_CLASSES_INVALID'));
+  }
+  const legacy = { ...baseline.capabilities[0] };
+  delete legacy.affectedTaskClasses;
+  assert.equal(evaluate({ ...baseline, capabilities: [legacy] }).updatePromotionAllowed, true);
+});
