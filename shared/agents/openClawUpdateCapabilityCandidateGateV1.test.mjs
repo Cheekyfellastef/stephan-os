@@ -672,7 +672,9 @@ test('same-version protected implementation changes cannot bypass producer task-
   // class declared and an exact-version replay is still eligible in source.
   const qualified = evaluateOpenClawUpdateCapabilityCandidateV1({
     stagedUpdate: verified,
-    capabilityLedger: { ...omitted, requiredQualificationReplay: [OPENCLAW_TASK_CLASS.OC1] },
+    capabilityLedger: { ...omitted, requiredQualificationReplay: [OPENCLAW_TASK_CLASS.OC1],
+      // The producer invalidates qualifications whenever its replay set is nonempty.
+      authority: { ...omitted.authority, qualificationInvalidationRequired: true } },
     qualificationReplay: [replay(OPENCLAW_TASK_CLASS.OC1, { providerVersion: '1.2.3' })],
   });
   assert.equal(qualified.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
