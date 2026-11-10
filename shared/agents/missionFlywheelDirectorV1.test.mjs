@@ -447,3 +447,51 @@ test('source packet producer and status validator fail closed on forbidden paths
   assert.equal(proof.valid, false);
   assert.ok(proof.errors.includes('source-slice-forbidden-path-collision'));
 });
+
+test('invalid explicit lifecycle cannot become DONE through three completion flags or a second classification', () => {
+  for (const state of ['CLAIMED', 'UNKNOWN', null, 14, 'WAITING_FOR_REVIEW']) {
+    const goal = {goalId:'#bad',state,sourceMerged:true,focusedProofRecorded:true,missionStateUpdated:true,allowedFiles:['src/safe.mjs']};
+    const first = classifyGoal(goal);
+    assert.equal(first.state, GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION);
+    assert.equal(first.finalVerdict, 'GOAL_STATE_UNRECOGNIZED');
+    assert.deepEqual(classifyGoal(first), first);
+    const status = createDirectorStatusPacket({goals:[goal]});
+    assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_HELD');
+    assert.equal(status.nextSourceSlice,null);
+    assert.equal(validateDirectorStatusPacket(status).valid,true);
+  }
+});
+
+test('direct source packet creation rejects empty, disjoint, wider and stage-owned scopes', () => {
+  const goal={goalId:'#s',state:'PLANNED',allowedFiles:['src/safe.mjs','src/test.mjs']};
+  for (const allowedFiles of [[],['src/outside.mjs'],['src/safe.mjs','src/outside.mjs']]) {
+    const p=createSourceSlicePacket({goal,allowedFiles});
+    assert.equal(p.finalVerdict,'SOURCE_SLICE_PACKET_HELD');
+    assert.deepEqual(p.allowedFiles,[]);
+  }
+  const valid=createSourceSlicePacket({goal,allowedFiles:['src/safe.mjs']});
+  assert.equal(valid.finalVerdict,'SOURCE_SLICE_PACKET_READY');
+  assert.deepEqual(valid.allowedFiles,['src/safe.mjs']);
+  for (const owned of [{...goal,state:'DONE'},{...goal,activeBranch:'feature/owned'},{...goal,prNumber:'42'}]) {
+    assert.equal(createSourceSlicePacket({goal:owned}).finalVerdict,'SOURCE_SLICE_PACKET_HELD');
+  }
+});
+
+test('Windows path aliases, devices and invalid components deny director source authority', () => {
+  for (const path of [
+    'runtime./config.json','runtime /config.json','src/runtime./file.mjs',
+    'src/COM1.txt','src/NUL','src/prn.json','src/lpt9.out',
+    'src/COM¹.log','src/aux.MJS','src/RUNTIM~1/config.json',
+    'src/safe.mjs.','src/foo<bar>.mjs','src/foo|bar.mjs',
+  ]) {
+    const status=createDirectorStatusPacket({goals:[{goalId:'#win',allowedFiles:[path]}]});
+    assert.equal(status.finalVerdict,'MISSION_FLYWHEEL_DIRECTOR_HELD');
+    assert.equal(status.nextSourceSlice,null);
+    assert.equal(validateDirectorStatusPacket(status).valid,true);
+  }
+  for (const path of ['src/safe.mjs','shared/agents/test.mjs','src/feature-v1.2.mjs','src/foo .mjs']) {
+    const status=createDirectorStatusPacket({goals:[{goalId:'#normal',allowedFiles:[path]}]});
+    assert.equal(status.finalVerdict,'MISSION_FLYWHEEL_DIRECTOR_ACTIVE');
+    assert.equal(validateDirectorStatusPacket(status).valid,true);
+  }
+});

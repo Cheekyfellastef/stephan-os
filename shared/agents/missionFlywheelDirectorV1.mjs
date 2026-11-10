@@ -53,7 +53,13 @@ function forbiddenSourcePath(path, patterns) {
       || path.includes('\\') || path.includes(':')
       || /[\x00-\x1f*?[\]{}]/.test(path)) return true;
   const parts = path.split('/');
-  if (parts.some((part) => !part || part === '.' || part === '..')) return true;
+  // Windows strips trailing dots/spaces and recognizes DOS device basenames
+  // even with extensions. A short-name alias can also resolve under protected
+  // directories despite spelling a different lexical repository path.
+  if (parts.some((part) => !part || part === '.' || part === '..'
+      || /[. ]$/.test(part) || /[<>|"]/.test(part)
+      || /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu.test(part)
+      || /~[1-9][0-9]*(?:\.|$)/u.test(part))) return true;
 
   const segmentMatches = (name, glob) => {
     const value = name.toLowerCase();
@@ -104,10 +110,16 @@ export function buildMissionFlywheelDirectorContract() {
 }
 
 export function createGoalRecord(input = {}) {
+  // Preserve an explicit invalid state as custody evidence across subsequent
+  // normalization and validation, including when completion flags are present.
+  const explicitlyInvalidState = input.state !== undefined
+    && (typeof input.state !== 'string'
+      || !Object.values(GOAL_STATE).includes(input.state.trim().toUpperCase()));
   return {
     goalId: text(input.goalId, '#unknown'),
     title: text(input.title, 'Untitled goal'),
     state: normalizeGoalState(input.state),
+    invalidGoalState: input.invalidGoalState === true || explicitlyInvalidState,
     priority: numberOrDefault(input.priority, 0),
     dependsOn: list(input.dependsOn),
     sourceMerged: input.sourceMerged === true,
@@ -125,6 +137,10 @@ export function createGoalRecord(input = {}) {
 
 export function classifyGoal(record = {}) {
   const goal = createGoalRecord(record);
+  if (goal.invalidGoalState) {
+    return { ...goal, state: GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION,
+      finalVerdict: 'GOAL_STATE_UNRECOGNIZED' };
+  }
   if (goal.sourceMerged && goal.focusedProofRecorded && goal.missionStateUpdated) {
     return { ...goal, state: GOAL_STATE.DONE, finalVerdict: 'GOAL_DONE' };
   }
@@ -165,10 +181,13 @@ export function createSourceSlicePacket(input = {}) {
   const goal = classifyGoal(input.goal || {});
   const branch = text(input.branch, `feature/${goal.goalId.replace(/[^0-9a-z]+/gi, '-').replace(/^-|-$/g, '').toLowerCase()}-slice-v1`);
   const proofCommand = text(input.proofCommand, goal.proofCommand || 'npm test');
-  const requestedFiles = list(input.allowedFiles).length ? list(input.allowedFiles) : goal.allowedFiles;
+  // An explicitly supplied empty scope is a denial, never fallback to all files.
+  const requestedFiles = Object.prototype.hasOwnProperty.call(input, 'allowedFiles')
+    ? list(input.allowedFiles) : goal.allowedFiles;
   const forbiddenFiles = [...new Set([...MANDATORY_FORBIDDEN_FILES, ...goal.forbiddenFiles, ...list(input.forbiddenFiles)])];
-  const allowedFiles = requestedFiles.length
-    && requestedFiles.every((path) => !forbiddenSourcePath(path, forbiddenFiles))
+  const allowedFiles = goal.state === GOAL_STATE.PLANNED && !goal.prNumber && !goal.activeBranch
+    && requestedFiles.length
+    && requestedFiles.every((path) => goal.allowedFiles.includes(path) && !forbiddenSourcePath(path, forbiddenFiles))
     ? requestedFiles : [];
   return {
     schemaVersion: MISSION_FLYWHEEL_DIRECTOR_SCHEMA_VERSION,
