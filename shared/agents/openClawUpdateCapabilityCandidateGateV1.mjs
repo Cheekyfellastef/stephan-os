@@ -279,6 +279,8 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
     if (!capabilities || capabilities.length === 0) blockers.push('CAPABILITY_LEDGER_CAPABILITIES_UNPROVEN');
     else {
       let protectedCapabilityCount = 0;
+      const seenCapabilityIds = new Set();
+      let capabilityIdsSupplied = 0;
       const observedDispositionCounts = Object.fromEntries([...VALID_DISPOSITIONS].map((disposition) => [disposition, 0]));
       for (const raw of capabilities) {
         const capability = plainDataRecord(raw);
@@ -286,6 +288,18 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
           || !VALID_DISPOSITIONS.has(text(capability.updateDisposition))) {
           blockers.push('CAPABILITY_LEDGER_CAPABILITY_INVALID');
           continue;
+        }
+        // A READY producer ledger cannot contain two capabilities with one identity,
+        // nor mix identity-bearing entries with anonymous ones. Older bounded
+        // acceptance fixtures omit all IDs; preserve that legacy source contract.
+        if (Object.prototype.hasOwnProperty.call(capability, 'capabilityId')) {
+          capabilityIdsSupplied += 1;
+          const capabilityId = safeId(capability.capabilityId);
+          if (!capabilityId || seenCapabilityIds.has(capabilityId)) {
+            blockers.push('CAPABILITY_LEDGER_CAPABILITY_ID_INVALID_OR_DUPLICATE');
+          } else {
+            seenCapabilityIds.add(capabilityId);
+          }
         }
         if (capability.protected) {
           protectedCapabilityCount += 1;
@@ -308,6 +322,9 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
             blockers.push('PROTECTED_CAPABILITY_REPLAY_CONTRACT_INVALID');
           }
         }
+      }
+      if (capabilityIdsSupplied > 0 && capabilityIdsSupplied !== capabilities.length) {
+        blockers.push('CAPABILITY_LEDGER_CAPABILITY_ID_INCOMPLETE');
       }
       // The source ledger rejects readiness with no protected capability.
       // Recheck it here so an asserted ready verdict cannot promote an empty protection estate.
