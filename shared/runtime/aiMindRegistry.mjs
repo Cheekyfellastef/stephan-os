@@ -66,7 +66,8 @@ export function normalizeMindRecord(input = {}) {
   const mind = input && typeof input === 'object' ? input : {};
   const approvalState = normalizeEnum(mind.approvalState, ['discovered','profiled','tested','sandboxed','recommended','approved','blocked'], 'discovered');
   const blocked = approvalState === 'blocked';
-  const routeEligibility = mind.routeEligibility === true && !blocked;
+  // A proposed, discovered or sandboxed model cannot make itself route-eligible.
+  const routeEligibility = mind.routeEligibility === true && approvalState === 'approved';
   return {
     mindId: asText(mind.mindId) || 'unknown-mind',
     displayName: asText(mind.displayName) || asText(mind.mindId) || 'Unknown Mind',
@@ -92,7 +93,8 @@ export function discoverLocalOllamaMinds({ providerHealth = {} } = {}) {
   const ollama = providerHealth?.ollama || {};
   const rawModels = Array.isArray(ollama.models) ? ollama.models : Array.isArray(ollama.catalog) ? ollama.catalog : [];
   return rawModels.map((model) => {
-    const modelId = asText(model?.name || model?.model || model?.id);
+    // Real checkOllamaHealth returns a string[]; retain object-shaped catalog support.
+    const modelId = typeof model === 'string' ? asText(model) : asText(model?.name || model?.model || model?.id);
     if (!modelId) return null;
     return normalizeMindRecord({
       mindId: `ollama:${modelId}`,
