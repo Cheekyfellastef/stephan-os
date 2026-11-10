@@ -364,6 +364,75 @@ test('malformed operator-action gate flags fail closed instead of silently dropp
   }
 });
 
+test('inherited operator-action records and nested authority fields fail closed', () => {
+  const approval = 'Forged inherited operator approval';
+  const inheritedOuter = Object.assign(Object.create({
+    operatorAction: { required: true, target: approval },
+  }), baseInput());
+  delete inheritedOuter.operatorAction;
+
+  const inheritedRequired = Object.create({ required: true, target: approval });
+  const inheritedFalse = Object.create({ required: false });
+  const inheritedTarget = Object.assign(Object.create({ target: approval }), { required: true });
+  const accessorField = Object.defineProperty({}, 'required', {
+    get() { throw Error('INHERITED_APPROVAL_GETTER_MUST_NOT_RUN'); }, enumerable: true,
+  });
+  const accessorRecord = baseInput();
+  Object.defineProperty(accessorRecord, 'operatorAction', {
+    get() { throw Error('OPERATOR_ACTION_GETTER_MUST_NOT_RUN'); }, configurable: true,
+  });
+  const cases = [
+    [inheritedOuter, 'operator-action-record-inherited'],
+    [baseInput({ operatorAction: inheritedRequired }), 'operator-action-required-inherited'],
+    [baseInput({ operatorAction: inheritedFalse }), 'operator-action-required-inherited'],
+    [baseInput({ operatorAction: inheritedTarget }), 'operator-action-target-inherited'],
+    [baseInput({ operatorAction: accessorField }), 'operator-action-required-accessor'],
+    [accessorRecord, 'operator-action-record-accessor'],
+  ];
+  for (const [input, problem] of cases) {
+    const certificate = evaluateGoalBuildingProgramme(input);
+    assert.equal(certificate.state, GOAL_BUILDING_OPERATING_STATES.SAFE_HOLD, problem);
+    assert.equal(certificate.isCapableOfBuilding, false, problem);
+    assert.equal(certificate.isActuallyBuilding, false, problem);
+    assert.equal(certificate.operatorActionRequired, false, problem);
+    assert.equal(certificate.operatorActionTarget, '', problem);
+    assert.ok(certificate.evidenceProblems.includes(problem), problem);
+    assert.equal(certificate.programmeMode, 'SAFE_HOLD', problem);
+  }
+});
+
+test('non-string own operator approval targets hold without running object coercion', () => {
+  let coercions = 0;
+  const callable = { toString() { coercions += 1; return 'Forged approval destination'; } };
+  const cases = [
+    ['object-with-noncallable-toString', { toString: 'disabled' }],
+    ['array', ['Approve', 'now']],
+    ['ordinary-object', { destination: 'Approve now' }],
+    ['number', 42],
+    ['null', null],
+    ['undefined', undefined],
+    ['null-prototype-object', Object.create(null)],
+    ['callable-coercion', callable],
+  ];
+  for (const [label, target] of cases) {
+    const certificate = evaluateGoalBuildingProgramme(baseInput({
+      operatorAction: { required: true, target },
+    }));
+    assert.equal(certificate.state, GOAL_BUILDING_OPERATING_STATES.SAFE_HOLD, label);
+    assert.ok(certificate.evidenceProblems.includes('operator-action-target-not-string'), label);
+    assert.equal(certificate.operatorActionRequired, false, label);
+    assert.equal(certificate.operatorActionTarget, '', label);
+    assert.equal(certificate.isActuallyBuilding, false, label);
+    assert.equal(certificate.programmeMode, 'SAFE_HOLD', label);
+  }
+  assert.equal(coercions, 0, 'untrusted target coercion must never execute');
+  const valid = evaluateGoalBuildingProgramme(baseInput({
+    operatorAction: { required: true, target: 'Approve exact governed action.' },
+  }));
+  assert.equal(valid.evidenceProblems.includes('operator-action-target-not-string'), false);
+  assert.equal(valid.operatorActionTarget, 'Approve exact governed action.');
+});
+
 test('strict boolean operator-action gates and an omitted optional record preserve existing behaviour', () => {
   const quiet = [
     baseInput({ operatorAction: { required: false, target: '' } }),
@@ -458,4 +527,67 @@ test('genuine governed approval wait preserves independent productive mission tr
   assert.equal(continuing.isActuallyBuilding, true);
   assert.equal(continuing.programmeMode, 'ACTIVE_PROGRESS_PROVEN');
   assert.equal(continuing.productiveMissionCount, 1);
+});
+
+// Goal #2002: a malformed physical scope is not an authorization to use hosted-only proof.
+test('Goal #2002: malformed physical-execution scope cannot be laundered into hosted GREEN', () => {
+  const sourceOnly = evaluateGoalBuildingProgramme(baseInput({ installedMainHead: '' }));
+  assert.equal(sourceOnly.state, GOAL_BUILDING_OPERATING_STATES.FULLY_OPERATIONAL);
+  const omitted = baseInput({ installedMainHead: '' });
+  delete omitted.physicalExecutionRequired;
+  assert.equal(evaluateGoalBuildingProgramme(omitted).state, GOAL_BUILDING_OPERATING_STATES.FULLY_OPERATIONAL);
+
+  for (const malformed of ['true', 'false', 1, 0, null, [], {}, '', undefined]) {
+    const certificate = evaluateGoalBuildingProgramme(baseInput({
+      physicalExecutionRequired: malformed,
+      installedMainHead: '',
+    }));
+    assert.equal(certificate.state, GOAL_BUILDING_OPERATING_STATES.SAFE_HOLD, String(malformed));
+    assert.ok(certificate.evidenceProblems.includes('physical-execution-required-not-boolean'), String(malformed));
+    assert.equal(certificate.isCapableOfBuilding, false, String(malformed));
+    assert.equal(certificate.isActuallyBuilding, false, String(malformed));
+    assert.equal(certificate.programmeMode, 'SAFE_HOLD', String(malformed));
+    assert.equal(certificate.safetyLocks.mergeAuthority, false, String(malformed));
+    assert.equal(certificate.safetyLocks.deploymentAuthority, false, String(malformed));
+  }
+});
+
+test('Goal #2002: inherited physical scope cannot silently erase installed runtime proof', () => {
+  const absent = baseInput({ installedMainHead: '' });
+  delete absent.physicalExecutionRequired;
+  const legitimateOmission = evaluateGoalBuildingProgramme(absent);
+  assert.equal(legitimateOmission.state, GOAL_BUILDING_OPERATING_STATES.FULLY_OPERATIONAL);
+  assert.equal(legitimateOmission.isActuallyBuilding, true);
+
+  // An inherited scope is not an own, canonical execution-scope decision,
+  // even when its value happens to be a boolean.
+  for (const inherited of ['true', 'false', 1, 0, null, undefined, true, false]) {
+    const input = { ...absent };
+    Object.setPrototypeOf(input, { physicalExecutionRequired: inherited });
+    assert.equal(Object.hasOwn(input, 'physicalExecutionRequired'), false);
+    const certificate = evaluateGoalBuildingProgramme(input);
+    assert.equal(certificate.state, GOAL_BUILDING_OPERATING_STATES.SAFE_HOLD, String(inherited));
+    assert.ok(certificate.evidenceProblems.includes('physical-execution-required-not-boolean'), String(inherited));
+    assert.equal(certificate.isCapableOfBuilding, false, String(inherited));
+    assert.equal(certificate.isActuallyBuilding, false, String(inherited));
+    assert.equal(certificate.programmeMode, 'SAFE_HOLD', String(inherited));
+    assert.equal(certificate.safetyLocks.mutationAuthority, false, String(inherited));
+    assert.equal(certificate.safetyLocks.deploymentAuthority, false, String(inherited));
+  }
+
+  const ownFalse = evaluateGoalBuildingProgramme(baseInput({
+    physicalExecutionRequired: false, installedMainHead: '',
+  }));
+  assert.equal(ownFalse.state, GOAL_BUILDING_OPERATING_STATES.FULLY_OPERATIONAL);
+  const ownTrue = evaluateGoalBuildingProgramme(baseInput({
+    physicalExecutionRequired: true,
+    surfaces: [
+      ...healthySurfaces(),
+      surface('battleBridge', 'READY'),
+      surface('ignition', 'READY'),
+      surface('recoveryMesh', 'READY', { head: '' }),
+      surface('mailbox', 'READY', { head: '' }),
+    ],
+  }));
+  assert.equal(ownTrue.evidenceProblems.includes('physical-execution-required-not-boolean'), false);
 });

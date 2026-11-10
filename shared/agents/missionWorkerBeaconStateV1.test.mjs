@@ -98,3 +98,126 @@ test('unsafe receipt identity is rejected rather than echoed into telemetry', ()
   assert.equal(state.buildingProven, false);
   assert.equal(state.blocker, 'MISSION_WORKER_ACTIVE_RECEIPT_UNPROVEN');
 });
+
+test('future-dated RUNNING heartbeat cannot promote unobserved physical pickup', () => {
+  const state = projectMissionWorkerBeaconState(heartbeat({
+    timestampUtc: '2026-08-26T18:46:00.000Z',
+    lastTickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+    activeTaskId: 'task-physical-1', activeReceiptId: 'receipt-physical-1',
+    executionPhase: 'source-build',
+  }), { nowMs: NOW, expectedHead: HEAD });
+  assert.equal(state.futureDated, true);
+  assert.equal(state.state, 'BLOCKED');
+  assert.equal(state.blocker, 'MISSION_WORKER_HEARTBEAT_FUTURE_DATED');
+  assert.equal(state.buildingProven, false);
+  assert.equal(state.falseBuildingRejected, true);
+});
+
+test('bounded five-second clock skew retains legitimate running exact-head proof', () => {
+  const state = projectMissionWorkerBeaconState(heartbeat({
+    timestampUtc: '2026-08-26T18:45:03.000Z',
+    lastTickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+    activeTaskId: 'task-physical-2', activeReceiptId: 'receipt-physical-2',
+    executionPhase: 'source-build',
+  }), { nowMs: NOW, expectedHead: HEAD });
+  assert.equal(state.futureDated, false);
+  assert.equal(state.state, 'RUNNING');
+  assert.equal(state.buildingProven, true);
+});
+
+test('extra SHA suffix is not an exact head despite matching 40-hex prefix', () => {
+  for (const invalid of [HEAD + 'b', HEAD + '-suffix']) {
+    const state = projectMissionWorkerBeaconState(heartbeat({
+      headSha: invalid,
+      lastTickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+      activeTaskId: 'task-physical-3', activeReceiptId: 'receipt-physical-3',
+      executionPhase: 'source-build',
+    }), { nowMs: NOW, expectedHead: HEAD });
+    assert.equal(state.head, '', invalid);
+    assert.equal(state.exactHeadMatch, false, invalid);
+    assert.equal(state.blocker, 'MISSION_WORKER_HEAD_MISMATCH', invalid);
+    assert.equal(state.buildingProven, false, invalid);
+  }
+});
+
+test('overlong task or receipt identity cannot be truncated into false BUILDING proof', () => {
+  for (const [field, invalid] of [
+    ['activeTaskId', 't'.repeat(128) + '!'],
+    ['activeReceiptId', 'r'.repeat(128) + '!'],
+    ['executionPhase', 'p'.repeat(160) + '!'],
+  ]) {
+    const state = projectMissionWorkerBeaconState(heartbeat({
+      lastTickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+      activeTaskId: 'task-exact',
+      activeReceiptId: 'receipt-exact',
+      executionPhase: 'source-build',
+      [field]: invalid,
+    }), { nowMs: NOW, expectedHead: HEAD });
+    assert.equal(state.state, 'RUNNING', field);
+    assert.equal(state[field], '', field);
+    assert.equal(state.activeExecutionIdentityComplete, false, field);
+    assert.equal(state.buildingProven, false, field);
+    assert.equal(state.falseBuildingRejected, true, field);
+    assert.equal(state.blocker, 'MISSION_WORKER_ACTIVE_RECEIPT_UNPROVEN', field);
+  }
+});
+
+test('maximum valid full-length worker identities retain legitimate running proof', () => {
+  const state = projectMissionWorkerBeaconState(heartbeat({
+    lastTickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+    activeTaskId: 't'.repeat(128),
+    activeReceiptId: 'r'.repeat(128),
+    executionPhase: 'p'.repeat(160),
+  }), { nowMs: NOW, expectedHead: HEAD });
+  assert.equal(state.activeExecutionIdentityComplete, true);
+  assert.equal(state.buildingProven, true);
+  assert.equal(state.blocker, '');
+});
+
+test('Goal #2961: non-string worker identities cannot be coerced into false BUILDING', () => {
+  const ordinary = heartbeat({
+    lastTickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+    activeTaskId: 'task-1', activeReceiptId: 'receipt-1',
+    executionPhase: 'source-build',
+  });
+  const baseline = projectMissionWorkerBeaconState(ordinary, { nowMs: NOW, expectedHead: HEAD });
+  assert.equal(baseline.buildingProven, true);
+  const adversarial = [
+    ['activeTaskId-array', { activeTaskId: ['task-1'] }],
+    ['activeReceiptId-array', { activeReceiptId: ['receipt-1'] }],
+    ['executionPhase-array', { executionPhase: ['source-build'] }],
+    ['headSha-array', { headSha: [HEAD] }],
+    ['timestampUtc-array', { timestampUtc: ['2026-08-26T18:44:55.000Z'] }],
+    ['activeTaskId-number', { activeTaskId: 123 }],
+    ['activeReceiptId-boolean', { activeReceiptId: true }],
+    ['lastTickVerdict-array', { lastTickVerdict: ['MISSION_WORKER_TICK_RUNNING'] }],
+    ['executionPhase-object', { executionPhase: { value: 'source-build' } }],
+  ];
+  for (const [label, change] of adversarial) {
+    const result = projectMissionWorkerBeaconState({ ...ordinary, ...change },
+      { nowMs: NOW, expectedHead: HEAD });
+    assert.equal(result.buildingProven, false, label);
+    assert.equal(result.falseBuildingRejected, true, label);
+    assert.notEqual(result.blocker, '', label);
+  }
+  const wrongExpected = projectMissionWorkerBeaconState(ordinary,
+    { nowMs: NOW, expectedHead: [HEAD] });
+  assert.equal(wrongExpected.buildingProven, false);
+  assert.equal(wrongExpected.exactHeadMatch, false);
+});
+
+test('Goal #2961: hostile object coercion is never called for trusted worker fields', () => {
+  const hostile = { toString() { throw new Error('Untrusted coercion executed'); } };
+  const valid = heartbeat({
+    lastTickVerdict: 'MISSION_WORKER_TICK_RUNNING',
+    activeTaskId: 'task-1', activeReceiptId: 'receipt-1',
+    executionPhase: 'source-build',
+  });
+  for (const key of ['headSha', 'activeTaskId', 'activeReceiptId',
+    'executionPhase', 'timestampUtc', 'lastTickVerdict']) {
+    const result = projectMissionWorkerBeaconState({ ...valid, [key]: hostile },
+      { nowMs: NOW, expectedHead: HEAD });
+    assert.equal(result.buildingProven, false, key);
+    assert.equal(result.falseBuildingRejected, true, key);
+  }
+});
