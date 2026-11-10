@@ -221,3 +221,34 @@ test('fully independent signed and proof-backed prerequisite chain retains all 2
   assert.equal(r.diagnosticOnly, true);
   assert.equal(r.mergeAuthority, false);
 });
+
+test('signed PASS checkpoints sharing one immutable proof cannot both turn green', () => {
+  const first = observation(1, 'PASS');
+  const second = observation(2, 'PASS');
+  second.gate.proofRef = first.gate.proofRef;
+  second.gate.proofRecordSha256 = first.gate.proofRecordSha256;
+  const r = projectGoalBuildGateObservatoryV1(buildPacket([first, second]));
+  assert.equal(r.gates[0].status, 'UNVERIFIED');
+  assert.equal(r.gates[1].status, 'UNVERIFIED');
+  assert.equal(r.counts.PASS, 0);
+});
+
+test('shared immutable proof retains a signed FAIL veto but refuses the other PASS', () => {
+  const first = observation(1, 'FAIL', 'PROOF_CONFLICT');
+  const second = observation(2, 'PASS');
+  second.gate.proofRef = first.gate.proofRef;
+  second.gate.proofRecordSha256 = first.gate.proofRecordSha256;
+  const r = projectGoalBuildGateObservatoryV1(buildPacket([first, second]));
+  assert.equal(r.gates[0].status, 'FAIL');
+  assert.equal(r.gates[0].typedBlocker, 'PROOF_CONFLICT');
+  assert.equal(r.gates[1].status, 'WAITING_FOR_PREREQUISITE');
+  assert.deepEqual(r.simultaneousVetoes, [1]);
+});
+
+test('two distinct signed and immutable gate proofs preserve legitimate PASS', () => {
+  const r = projectGoalBuildGateObservatoryV1(buildPacket([
+    observation(1, 'PASS'), observation(2, 'PASS'),
+  ]));
+  assert.equal(r.gates[0].status, 'PASS');
+  assert.equal(r.gates[1].status, 'PASS');
+});

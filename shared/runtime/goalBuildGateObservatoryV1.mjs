@@ -126,9 +126,15 @@ export function projectGoalBuildGateObservatoryV1({
       || byId.has(raw.id)) continue;
     const state = String(raw.status || '').toUpperCase();
     const proofRef = String(raw.proofRef || '');
+    // Sharing one immutable proof across distinct signed checkpoints does
+    // not establish independent operational PASS evidence. Keep FAIL vetoes.
+    const sharedPositiveProof = state === 'PASS'
+      && evidence.gates.some(other => other?.id !== raw.id
+        && String(other?.proofRef || '') === proofRef);
     const blocker = String(raw.typedBlocker || '');
     const sampledAtMs = time(raw.observedAtUtc);
     if (!VALID.has(state)
+      || sharedPositiveProof
       || raw.sourceHead !== sourceHead
       || !SAFE_REF.test(proofRef)
       || !Number.isFinite(sampledAtMs)
