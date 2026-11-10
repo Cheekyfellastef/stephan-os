@@ -774,3 +774,40 @@ test('READY protected disposition summary must match producer inventory exactly'
     assert.ok(rejected.blockers.includes('CAPABILITY_LEDGER_DISPOSITION_COUNTS_MISMATCH'));
   }
 });
+
+test('READY protected capability identities must be unique and complete when supplied', () => {
+  const updated = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const proof = [replay(OPENCLAW_TASK_CLASS.OC1)];
+  const first = { ...ledger().capabilities[0], capabilityId: 'openclaw:capability-1' };
+  const one = { ...ledger(), capabilities: [first], protectedCapabilityCount: 1 };
+  const evaluate = (candidate) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: updated, capabilityLedger: candidate, qualificationReplay: proof,
+  });
+
+  // Genuine single-ID records and the earlier entirely anonymous source fixture stay eligible.
+  assert.equal(evaluate(one).updatePromotionAllowed, true);
+  assert.equal(evaluate(ledger()).updatePromotionAllowed, true);
+
+  const duplicate = {
+    ...one, capabilities: [first, { ...first }],
+    protectedCapabilityCount: 2,
+  };
+  const rejected = evaluate(duplicate);
+  assert.equal(rejected.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.equal(rejected.updatePromotionAllowed, false);
+  assert.equal(rejected.providerRoutingResumeAllowed, false);
+  assert.ok(rejected.blockers.includes('CAPABILITY_LEDGER_CAPABILITY_ID_INVALID_OR_DUPLICATE'));
+
+  // Contradictory producer records cannot silently discard identity or inject malformed IDs.
+  const partial = evaluate({ ...duplicate, capabilities: [first, { ...first, capabilityId: undefined }] });
+  assert.ok(partial.blockers.includes('CAPABILITY_LEDGER_CAPABILITY_ID_INVALID_OR_DUPLICATE'));
+  const anonymous = { ...first };
+  delete anonymous.capabilityId;
+  const incomplete = evaluate({ ...duplicate, capabilities: [first, anonymous] });
+  assert.ok(incomplete.blockers.includes('CAPABILITY_LEDGER_CAPABILITY_ID_INCOMPLETE'));
+  for (const badId of ['', null, 42, 'invalid capability id']) {
+    const bad = evaluate({ ...one, capabilities: [{ ...first, capabilityId: badId }] });
+    assert.equal(bad.updatePromotionAllowed, false, String(badId));
+    assert.ok(bad.blockers.includes('CAPABILITY_LEDGER_CAPABILITY_ID_INVALID_OR_DUPLICATE'));
+  }
+});
