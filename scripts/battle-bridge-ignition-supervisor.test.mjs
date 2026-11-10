@@ -324,6 +324,39 @@ test('non-main stale branch reports blocker to splash/status model', async () =>
   assert.equal(result.status.phases['source truth'].state, 'blocked');
 });
 
+test('failed source proof persists its exact blocker without an interim red/unknown receipt', async () => {
+  const workspace = fs.mkdtempSync(path.join(testWorkspace, 'source-failure-'));
+  const blocker = Object.freeze({
+    id: 'source-truth-unproven',
+    code: 'FIXED_AUTHORITY_GIT_FAILED',
+    sourceStep: 'source-config-before-fetch',
+    detail: 'The fixed Git source proof could not finish.',
+    nextOperatorAction: 'Use the bounded source recovery route.',
+  });
+  const downstream = [];
+  const result = await runBattleBridgeIgnitionSupervisor({
+    sharedWorkspace: workspace,
+    sourceTruthFn: () => ({ publicationState: 'source-truth-unproven', blocker }),
+    housekeepFn: () => { downstream.push('housekeeping'); },
+    publisherFn: async () => { downstream.push('publisher'); },
+    backendStartFn: async () => { downstream.push('backend'); },
+    repairFn: async () => { downstream.push('ui'); },
+    stdout: { write() {} },
+  });
+  const recorded = JSON.parse(fs.readFileSync(
+    path.join(workspace, 'status', 'battle-bridge-ignition-supervisor-current.json'), 'utf8',
+  ));
+  assert.equal(result.ok, false);
+  assert.equal(result.writes.length, 2, 'only running and complete blocked snapshots may be persisted');
+  assert.equal(recorded.trafficLight, 'red');
+  assert.equal(recorded.blockerId, blocker.id);
+  assert.equal(recorded.phases['source truth'].state, 'blocked');
+  assert.equal(recorded.sourceTruthVerdict.state, 'blocked');
+  assert.equal(recorded.sourceTruthVerdict.blocker.code, 'FIXED_AUTHORITY_GIT_FAILED');
+  assert.equal(recorded.sourceTruthVerdict.blocker.sourceStep, 'source-config-before-fetch');
+  assert.deepEqual(downstream, [], 'failed source proof must not start or repair services');
+});
+
 test('canonical source truth gate accepts only clean synchronized main tracking origin/main', () => {
   const ready = evaluateCanonicalIgnitionSourceTruth(canonicalSourceTruth());
   assert.equal(ready.ok, true);
