@@ -41,8 +41,46 @@ function list(value) {
 }
 
 function normalizeGoalState(state) {
-  const out = text(state, GOAL_STATE.PLANNED).toUpperCase();
-  return Object.values(GOAL_STATE).includes(out) ? out : GOAL_STATE.PLANNED;
+  if (state === undefined) return GOAL_STATE.PLANNED;
+  const out = typeof state === 'string' ? state.trim().toUpperCase() : '';
+  return Object.values(GOAL_STATE).includes(out) ? out : GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION;
+}
+
+// Source slices contain exact repository paths. A glob in an allowed path
+// could select forbidden content later, so ambiguous or unsafe paths fail closed.
+function forbiddenSourcePath(path, patterns) {
+  if (typeof path !== 'string' || !path || path.startsWith('/')
+      || path.includes('\\') || path.includes(':')
+      || /[\x00-\x1f*?[\]{}]/.test(path)) return true;
+  const parts = path.split('/');
+  if (parts.some((part) => !part || part === '.' || part === '..')) return true;
+
+  const segmentMatches = (name, glob) => {
+    const value = name.toLowerCase();
+    const pattern = glob.toLowerCase();
+    const pieces = pattern.split('*');
+    if (!value.startsWith(pieces[0])) return false;
+    let at = pieces[0].length;
+    for (let i = 1; i < pieces.length; i += 1) {
+      const found = value.indexOf(pieces[i], at);
+      if (found < 0) return false;
+      at = found + pieces[i].length;
+    }
+    return pattern.endsWith('*') || value.endsWith(pieces[pieces.length - 1]);
+  };
+  return patterns.some((pattern) => {
+    if (typeof pattern !== 'string' || !pattern || pattern.includes('\\')
+        || pattern.split('').some((ch) => ch.charCodeAt(0) < 32)) return true;
+    const rule = pattern.split('/');
+    const matches = (i, j) => {
+      if (i === rule.length) return j === parts.length;
+      if (rule[i] === '**') return matches(i + 1, j)
+        || (j < parts.length && matches(i, j + 1));
+      return j < parts.length && segmentMatches(parts[j], rule[i]) && matches(i + 1, j + 1);
+    };
+    // A protected directory or basename remains protected when nested.
+    return parts.some((_, start) => matches(0, start));
+  });
 }
 
 function normalizeWorkerKind(worker) {
@@ -127,8 +165,11 @@ export function createSourceSlicePacket(input = {}) {
   const goal = classifyGoal(input.goal || {});
   const branch = text(input.branch, `feature/${goal.goalId.replace(/[^0-9a-z]+/gi, '-').replace(/^-|-$/g, '').toLowerCase()}-slice-v1`);
   const proofCommand = text(input.proofCommand, goal.proofCommand || 'npm test');
-  const allowedFiles = list(input.allowedFiles).length ? list(input.allowedFiles) : goal.allowedFiles;
+  const requestedFiles = list(input.allowedFiles).length ? list(input.allowedFiles) : goal.allowedFiles;
   const forbiddenFiles = [...new Set([...MANDATORY_FORBIDDEN_FILES, ...goal.forbiddenFiles, ...list(input.forbiddenFiles)])];
+  const allowedFiles = requestedFiles.length
+    && requestedFiles.every((path) => !forbiddenSourcePath(path, forbiddenFiles))
+    ? requestedFiles : [];
   return {
     schemaVersion: MISSION_FLYWHEEL_DIRECTOR_SCHEMA_VERSION,
     kind: 'stephanos.mission_flywheel_director.source_slice_packet',
@@ -144,7 +185,7 @@ export function createSourceSlicePacket(input = {}) {
     exactHeadMergeRequired: true,
     approvalGated: true,
     nextAction: text(input.nextAction, `Dispatch ${goal.goalId} source slice through the repository-native publish lane.`),
-    finalVerdict: 'SOURCE_SLICE_PACKET_READY',
+    finalVerdict: allowedFiles.length ? 'SOURCE_SLICE_PACKET_READY' : 'SOURCE_SLICE_PACKET_HELD',
   };
 }
 
@@ -167,10 +208,12 @@ export function createDirectorStatusPacket(input = {}) {
   const scoped = hasScope
     ? requested.filter((path) => candidate?.allowedFiles.includes(path))
     : candidate?.allowedFiles || [];
-  const nextGoal = candidate && scoped.length ? candidate : null;
-  const forbidden = nextGoal
-    ? [...new Set([...MANDATORY_FORBIDDEN_FILES, ...nextGoal.forbiddenFiles, ...list(input.slice?.forbiddenFiles)])]
+  const forbidden = candidate
+    ? [...new Set([...MANDATORY_FORBIDDEN_FILES, ...candidate.forbiddenFiles, ...list(input.slice?.forbiddenFiles)])]
     : [];
+  const nextGoal = candidate && scoped.length
+    && scoped.every((path) => !forbiddenSourcePath(path, forbidden))
+    ? candidate : null;
   // Do not spread untrusted caller executor, command, branch, title, or identity into source custody.
   const packet = nextGoal
     ? createSourceSlicePacket({ goal: nextGoal, allowedFiles: scoped, forbiddenFiles: forbidden })
@@ -199,6 +242,7 @@ export function validateDirectorStatusPacket(packet = {}) {
   if (slice) {
     if (slice.exactHeadMergeRequired !== true) errors.push('exact-head-merge-required');
     if (slice.approvalGated !== true) errors.push('approval-gated-required');
+    if (slice.finalVerdict !== 'SOURCE_SLICE_PACKET_READY') errors.push('source-slice-not-ready');
     if (!slice.proofCommand) errors.push('missing-proof-command');
     const goal = packet.nextGoal;
     const canonical = goals.find((g) => g.goalId === goal?.goalId);
@@ -217,6 +261,10 @@ export function validateDirectorStatusPacket(packet = {}) {
       errors.push('source-slice-allowed-files-outside-canonical-scope');
     }
     const forbidden = Array.isArray(slice.forbiddenFiles) ? slice.forbiddenFiles : [];
+    if (scoped.some((path) => forbiddenSourcePath(path,
+      [...MANDATORY_FORBIDDEN_FILES, ...(goal?.forbiddenFiles || []), ...forbidden]))) {
+      errors.push('source-slice-forbidden-path-collision');
+    }
     if ([...MANDATORY_FORBIDDEN_FILES, ...(goal?.forbiddenFiles || [])].some((path) => !forbidden.includes(path))) {
       errors.push('source-slice-mandatory-forbidden-missing');
     }

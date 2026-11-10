@@ -386,3 +386,64 @@ test('validator checks prerequisites remain complete for a published source slic
   assert.equal(result.valid, false);
   assert.ok(result.errors.includes('source-slice-dependency-unproven'));
 });
+
+
+test('explicitly invalid lifecycle states never become fresh source authority', () => {
+  for (const state of ['CLAIMED', 'WAITING_FOR_REVIEW', 'SOURCE_MUTATION_LEASED', 'UNKNOWN', 14, '', null, true]) {
+    const status = createDirectorStatusPacket({ goals: [
+      { goalId: '#invalid', state, allowedFiles: ['src/safe.mjs'] },
+    ] });
+    assert.equal(status.nextSourceSlice, null);
+    assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_HELD');
+    assert.equal(validateDirectorStatusPacket(status).valid, true);
+  }
+  for (const state of [undefined, ' PLANNED ', 'planned']) {
+    const status = createDirectorStatusPacket({ goals: [
+      { goalId: '#fresh', state, allowedFiles: ['src/safe.mjs'] },
+    ] });
+    assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_ACTIVE');
+    assert.equal(validateDirectorStatusPacket(status).valid, true);
+  }
+});
+
+test('mandatory and canonical forbidden scopes deny any overlapping source path', () => {
+  for (const allowed of [
+    ['runtime/private.mjs'], ['.env.production'], ['node_modules/inject.js'],
+    ['shared/mysecret.mjs'], ['src/.env.dev'], ['src/runtime/data.txt'],
+    ['Runtime/Foo.cs'], ['src/**'], ['src/../safe.mjs'],
+    ['src/safe.mjs', 'runtime/private.mjs'],
+  ]) {
+    const status = createDirectorStatusPacket({ goals: [{ goalId: '#guard', allowedFiles: allowed }] });
+    assert.equal(status.nextSourceSlice, null);
+    assert.equal(validateDirectorStatusPacket(status).valid, true);
+  }
+  for (const allowed of [['src/safe.mjs'], ['shared/agents/test.mjs']]) {
+    const status = createDirectorStatusPacket({ goals: [{ goalId: '#safe', allowedFiles: allowed }] });
+    assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_ACTIVE');
+    assert.equal(validateDirectorStatusPacket(status).valid, true);
+  }
+  const custom = createDirectorStatusPacket({ goals: [{
+    goalId: '#custom', allowedFiles: ['src/private/file.mjs'],
+    forbiddenFiles: ['src/private/**'],
+  }] });
+  assert.equal(custom.nextSourceSlice, null);
+  assert.equal(validateDirectorStatusPacket(custom).valid, true);
+});
+
+test('source packet producer and status validator fail closed on forbidden paths', () => {
+  const direct = createSourceSlicePacket({ goal: {
+    goalId: '#unsafe', allowedFiles: ['runtime/private.mjs'],
+  } });
+  assert.deepEqual(direct.allowedFiles, []);
+  assert.equal(direct.finalVerdict, 'SOURCE_SLICE_PACKET_HELD');
+  const status = createDirectorStatusPacket({ goals: [
+    { goalId: '#safe', allowedFiles: ['src/safe.mjs', 'runtime/private.mjs'] },
+  ], slice: { allowedFiles: ['src/safe.mjs'] } });
+  assert.equal(validateDirectorStatusPacket(status).valid, true);
+  const forged = { ...status, nextSourceSlice: {
+    ...status.nextSourceSlice, allowedFiles: ['runtime/private.mjs'],
+  } };
+  const proof = validateDirectorStatusPacket(forged);
+  assert.equal(proof.valid, false);
+  assert.ok(proof.errors.includes('source-slice-forbidden-path-collision'));
+});
