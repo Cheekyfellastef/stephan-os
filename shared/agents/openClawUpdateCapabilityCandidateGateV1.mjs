@@ -6,6 +6,7 @@ import {
   OPENCLAW_TASK_CLASS,
   OPENCLAW_UPDATE_CAPABILITY_LEDGER_SCHEMA,
   OPENCLAW_UPDATE_CAPABILITY_LEDGER_MAX_CAPABILITIES,
+  OPENCLAW_UPDATE_CAPABILITY_ORIGIN,
   OPENCLAW_UPDATE_DISPOSITION,
 } from './openClawUpdateCapabilityLedgerV1.mjs';
 
@@ -309,6 +310,24 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
           if (!affectedClasses || affectedClasses.some((taskClass) => !TASK_CLASSES.has(text(taskClass)))
             || new Set(affectedClasses.map(text)).size !== affectedClasses.length) {
             blockers.push('CAPABILITY_LEDGER_AFFECTED_TASK_CLASSES_INVALID');
+          }
+        }
+        // PRESERVE must retain implementation and origin, even for same-version
+        // updates. Legacy fixtures may omit all four producer identity fields,
+        // but partially supplied or contradictory fields are not trustworthy.
+        if (text(capability.updateDisposition) === OPENCLAW_UPDATE_DISPOSITION.PRESERVE) {
+          const identityKeys = ['currentImplementation', 'candidateImplementation', 'origin', 'candidateOrigin'];
+          if (identityKeys.some((key) => Object.prototype.hasOwnProperty.call(capability, key))) {
+            const currentImplementation = safeId(capability.currentImplementation);
+            const candidateImplementation = safeId(capability.candidateImplementation);
+            const origin = text(capability.origin);
+            const candidateOrigin = text(capability.candidateOrigin);
+            if (!currentImplementation || !candidateImplementation
+              || currentImplementation !== candidateImplementation
+              || !Object.values(OPENCLAW_UPDATE_CAPABILITY_ORIGIN).includes(origin)
+              || origin !== candidateOrigin) {
+              blockers.push('CAPABILITY_LEDGER_PRESERVE_IDENTITY_CONTRADICTION');
+            }
           }
         }
         if (capability.protected) {

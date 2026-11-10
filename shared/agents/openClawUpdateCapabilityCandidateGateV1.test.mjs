@@ -840,3 +840,57 @@ test('same-version PRESERVE cannot launder malformed affected-task classes', () 
   delete legacy.affectedTaskClasses;
   assert.equal(evaluate({ ...baseline, capabilities: [legacy] }).updatePromotionAllowed, true);
 });
+
+test('same-version protected PRESERVE cannot smuggle a different implementation or origin', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  verified.exactIdentity.targetVersion = '1.2.3';
+  const preserved = {
+    ...ledger([]),
+    targetVersion: '1.2.3',
+    capabilities: [{
+      protected: true,
+      updateDisposition: OPENCLAW_UPDATE_DISPOSITION.PRESERVE,
+      affectedTaskClasses: [],
+      currentImplementation: 'oc8:trusted',
+      candidateImplementation: 'oc8:trusted',
+      origin: 'stephanos-extension',
+      candidateOrigin: 'stephanos-extension',
+    }],
+  };
+  const evaluate = (capabilities) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: verified,
+    capabilityLedger: { ...preserved, capabilities },
+    qualificationReplay: [],
+  });
+  const positive = evaluate(preserved.capabilities);
+  assert.equal(positive.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(positive.updatePromotionAllowed, true);
+
+  // Retain source-only legacy fixture compatibility only when all four are absent.
+  const legacy = evaluate([{
+    protected: true,
+    updateDisposition: OPENCLAW_UPDATE_DISPOSITION.PRESERVE,
+    affectedTaskClasses: [],
+  }]);
+  assert.equal(legacy.updatePromotionAllowed, true);
+
+  for (const changed of [
+    { candidateImplementation: 'oc8:unqualified' },
+    { candidateOrigin: 'upstream' },
+    { candidateImplementation: null },
+    { origin: 'unknown-origin' },
+    { currentImplementation: undefined },
+  ]) {
+    const unsafe = evaluate([{ ...preserved.capabilities[0], ...changed }]);
+    assert.equal(unsafe.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE, JSON.stringify(changed));
+    assert.equal(unsafe.updatePromotionAllowed, false);
+    assert.equal(unsafe.providerRoutingResumeAllowed, false);
+    assert.ok(unsafe.blockers.includes('CAPABILITY_LEDGER_PRESERVE_IDENTITY_CONTRADICTION'));
+  }
+
+  const incomplete = { ...preserved.capabilities[0] };
+  delete incomplete.candidateOrigin;
+  const partial = evaluate([incomplete]);
+  assert.equal(partial.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.ok(partial.blockers.includes('CAPABILITY_LEDGER_PRESERVE_IDENTITY_CONTRADICTION'));
+});
