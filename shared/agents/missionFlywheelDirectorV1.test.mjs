@@ -330,3 +330,59 @@ test('existing PR and fully-proven completion retain their dedicated stages', ()
   assert.equal(finished.nextSourceSlice, null);
   assert.equal(validateDirectorStatusPacket(finished).valid, true);
 });
+
+test('validator refuses caller-forged director state or final verdict on genuine active status', () => {
+  const packet = createDirectorStatusPacket({ goals: [
+    { goalId: '#501', state: GOAL_STATE.PLANNED, allowedFiles: ['shared/a.mjs'] },
+  ] });
+  assert.equal(validateDirectorStatusPacket(packet).valid, true);
+  for (const [field, value, code] of [
+    ['directorState', GOAL_STATE.DONE, 'director-state-not-derived'],
+    ['directorState', GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION, 'director-state-not-derived'],
+    ['finalVerdict', 'MISSION_FLYWHEEL_DIRECTOR_IDLE', 'final-verdict-not-derived'],
+    ['finalVerdict', 'MISSION_FLYWHEEL_DIRECTOR_HELD', 'final-verdict-not-derived'],
+  ]) {
+    const tampered = { ...packet, [field]: value };
+    const result = validateDirectorStatusPacket(tampered);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.includes(code));
+  }
+});
+
+test('validator refuses forged active verdict on genuine held and idle packets', () => {
+  const held = createDirectorStatusPacket({ goals: [
+    { goalId: '#held', blocker: 'Original owner required.', allowedFiles: ['shared/a.mjs'] },
+  ] });
+  const idle = createDirectorStatusPacket({ goals: [
+    { goalId: '#done', state: GOAL_STATE.DONE, sourceMerged: true,
+      focusedProofRecorded: true, missionStateUpdated: true },
+  ] });
+  assert.equal(validateDirectorStatusPacket(held).valid, true);
+  assert.equal(validateDirectorStatusPacket(idle).valid, true);
+  for (const packet of [held, idle]) {
+    for (const [field, value, code] of [
+      ['directorState', GOAL_STATE.BUILDING, 'director-state-not-derived'],
+      ['finalVerdict', 'MISSION_FLYWHEEL_DIRECTOR_ACTIVE', 'final-verdict-not-derived'],
+    ]) {
+      const result = validateDirectorStatusPacket({ ...packet, [field]: value });
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.includes(code));
+    }
+  }
+});
+
+test('validator checks prerequisites remain complete for a published source slice', () => {
+  const goal = { goalId: '#child', state: GOAL_STATE.PLANNED, dependsOn: ['#parent'],
+    allowedFiles: ['shared/a.mjs'] };
+  const completed = { goalId: '#parent', state: GOAL_STATE.DONE,
+    sourceMerged: true, focusedProofRecorded: true, missionStateUpdated: true };
+  const status = createDirectorStatusPacket({ goals: [completed, goal] });
+  assert.equal(validateDirectorStatusPacket(status).valid, true);
+  const regressed = { ...status, goals: status.goals.map((g) => g.goalId === '#parent'
+    ? { ...g, state: GOAL_STATE.PLANNED, sourceMerged: false,
+      focusedProofRecorded: false, missionStateUpdated: false }
+    : g) };
+  const result = validateDirectorStatusPacket(regressed);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.includes('source-slice-dependency-unproven'));
+});

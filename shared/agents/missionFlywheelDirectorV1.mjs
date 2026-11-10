@@ -208,6 +208,10 @@ export function validateDirectorStatusPacket(packet = {}) {
     if (goal?.state !== GOAL_STATE.PLANNED || goal?.activeBranch || goal?.prNumber) {
       errors.push('source-slice-stage-not-planned');
     }
+    const completedIds = new Set(goals.filter((g) => g.state === GOAL_STATE.DONE).map((g) => g.goalId));
+    if (!canonical || !canonical.dependsOn.every((id) => completedIds.has(id))) {
+      errors.push('source-slice-dependency-unproven');
+    }
     const scoped = Array.isArray(slice.allowedFiles) ? slice.allowedFiles : [];
     if (!scoped.length || scoped.some((path) => !(goal?.allowedFiles || []).includes(path))) {
       errors.push('source-slice-allowed-files-outside-canonical-scope');
@@ -223,6 +227,15 @@ export function validateDirectorStatusPacket(packet = {}) {
       }
     }
   } else if (packet.nextGoal) errors.push('source-slice-missing-for-selected-goal');
+  // Status and terminal verdict are derived facts, never caller-assigned evidence.
+  const unfinished = goals.some((goal) => goal.state !== GOAL_STATE.DONE);
+  const held = unfinished || hasAmbiguousGoalIds(goals);
+  const expectedDirectorState = slice ? GOAL_STATE.BUILDING
+    : held ? GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION : GOAL_STATE.DONE;
+  const expectedFinalVerdict = slice ? 'MISSION_FLYWHEEL_DIRECTOR_ACTIVE'
+    : held ? 'MISSION_FLYWHEEL_DIRECTOR_HELD' : 'MISSION_FLYWHEEL_DIRECTOR_IDLE';
+  if (packet.directorState !== expectedDirectorState) errors.push('director-state-not-derived');
+  if (packet.finalVerdict !== expectedFinalVerdict) errors.push('final-verdict-not-derived');
   return {
     valid: errors.length === 0,
     errors,
