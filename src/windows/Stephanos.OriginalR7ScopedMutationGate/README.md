@@ -109,9 +109,31 @@ attempted, it verifies the unchanged policy without writing it. Recovery
 permanently prevents forward re-arming. It is never automatic fault handling or
 permission to make an old writer writable after release. The prepared record
 alone cannot distinguish never-applied, applied and subsequently restored state
-after a crash. Outcome remains UNKNOWN: restart inspection, outcome records and
-explicit admitted recovery still need implementation and physical qualification.
+after a crash. Outcome remains UNKNOWN. The fixed witness now includes a bounded
+read-only prepared-record decoder that binds exact format, lengths, native
+identity bytes, adopted context/attempt, digest, descriptors and intended SET
+flags. It rejects torn, malformed and mismatched records. Its expected context is
+an input, not independent authentication. It never opens a recovery path,
+restores policy, infers final outcome, signs or releases a lease. Protected-store
+adoption, native restart inspection, durable outcome records and explicit
+admitted recovery still need implementation and physical qualification.
 There is no automatic crash replay or continuation authority here.
+
+The recovery decoder's Windows tests exhaust torn prefixes and single-byte
+corruption, rehash malformed descriptor/identity/flag cases, exercise valid RM
+control, object ACEs, padding and maximum lengths, and decode a real owned-file
+OWNER+DACL readback. Wire records are test fixtures assembled in user mode; they
+do not execute `R7BuildRecoveryRecord` in the kernel. That cross-boundary native
+writer/reader qualification remains required on the disposable driver target.
+
+ACE bodies have an explicit support boundary independent of .NET's opaque
+`CustomAce` handling. Basic allow/deny/audit/alarm, non-callback object ACEs and
+native mandatory labels have bounded SID/GUID/body validation. Labels require
+the mandatory authority and documented policy bits. Compound, callback, claim,
+other newer and unknown ACE layouts refuse with `ACE_TYPE_UNSUPPORTED` until
+their complete layouts are implemented and independently qualified. A valid
+Windows descriptor using an unsupported layout remains HOLD, never a reason
+to skip body validation or infer recovery authority.
 
 These are real kernel operations in source, not an installed commissioning
 entry point. The source-SID set, custodian, commissioner capability and target
