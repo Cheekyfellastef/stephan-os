@@ -894,3 +894,66 @@ test('same-version protected PRESERVE cannot smuggle a different implementation 
   assert.equal(partial.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
   assert.ok(partial.blockers.includes('CAPABILITY_LEDGER_PRESERVE_IDENTITY_CONTRADICTION'));
 });
+
+
+test('READY protected changed dispositions cannot launder contradictory implementation identity', () => {
+  const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const proof = [replay(OPENCLAW_TASK_CLASS.OC1)];
+  const base = {
+    ...ledger(),
+    capabilities: [{
+      protected: true,
+      updateDisposition: OPENCLAW_UPDATE_DISPOSITION.MIGRATE,
+      affectedTaskClasses: [OPENCLAW_TASK_CLASS.OC1],
+      currentImplementation: 'oc8:existing',
+      candidateImplementation: 'oc8:new',
+      origin: 'stephanos-extension',
+      candidateOrigin: 'stephanos-extension',
+    }],
+  };
+  const evaluate = (capability) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: verified,
+    capabilityLedger: { ...base, capabilities: [capability] },
+    qualificationReplay: proof,
+  });
+  const original = base.capabilities[0];
+  assert.equal(evaluate(original).status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(evaluate(original).updatePromotionAllowed, true);
+
+  const replacement = {
+    ...original,
+    updateDisposition: OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM,
+    candidateOrigin: 'upstream',
+  };
+  assert.equal(evaluate(replacement).updatePromotionAllowed, true);
+
+  const malformed = [
+    { ...original, candidateImplementation: original.currentImplementation },
+    { ...original, updateDisposition: OPENCLAW_UPDATE_DISPOSITION.IMPROVE,
+      candidateImplementation: original.currentImplementation },
+    { ...replacement, origin: 'upstream' },
+    { ...replacement, candidateOrigin: 'local-config' },
+    { ...original, candidateImplementation: null },
+    { ...original, origin: 'unregistered' },
+    { ...original, candidateOrigin: undefined },
+  ];
+  const incomplete = { ...original };
+  delete incomplete.candidateImplementation;
+  malformed.push(incomplete);
+  for (const capability of malformed) {
+    const rejected = evaluate(capability);
+    assert.equal(rejected.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE,
+      JSON.stringify(capability));
+    assert.equal(rejected.updatePromotionAllowed, false);
+    assert.equal(rejected.providerRoutingResumeAllowed, false);
+    assert.ok(rejected.blockers.includes('CAPABILITY_LEDGER_CHANGED_DISPOSITION_IDENTITY_CONTRADICTION'),
+      JSON.stringify(capability));
+  }
+
+  // Keep the pre-migration entirely anonymous source fixture compatible.
+  const legacy = { ...original };
+  for (const key of ['currentImplementation', 'candidateImplementation', 'origin', 'candidateOrigin']) {
+    delete legacy[key];
+  }
+  assert.equal(evaluate(legacy).updatePromotionAllowed, true);
+});
