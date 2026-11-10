@@ -94,6 +94,17 @@ function postUpdateEvidenceFixture(id) {
   };
 }
 
+function retargetProducerFixture(value, version) {
+  value.exactIdentity.targetVersion = version;
+  // The staged producer would bind these three post-update receipts to the
+  // same target identity. Test setup must not simulate contradictory evidence.
+  if (value.evidence) {
+    value.evidence.preflight.targetVersion = version;
+    value.evidence.applyReceipt.targetVersion = version;
+    value.evidence.postUpdateProof.observedVersion = version;
+  }
+}
+
 function ledger(required = [OPENCLAW_TASK_CLASS.OC1]) {
   return {
     schemaVersion: OPENCLAW_UPDATE_CAPABILITY_LEDGER_SCHEMA,
@@ -594,7 +605,7 @@ test('cross-version promotion requires a non-empty qualification replay contract
 
   // A legitimate same-version PRESERVE with no changed capabilities may need no replay.
   const sameVersionStaged = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
-  sameVersionStaged.exactIdentity.targetVersion = '1.2.3';
+  retargetProducerFixture(sameVersionStaged, '1.2.3');
   const sameVersionLedger = { ...ledger([]), targetVersion: '1.2.3' };
   const preserved = evaluateOpenClawUpdateCapabilityCandidateV1({
     stagedUpdate: sameVersionStaged,
@@ -686,7 +697,7 @@ test('contradictory staged or ledger producer blockers cannot masquerade as read
 
 test('same-version protected implementation changes cannot bypass producer task-class replay', () => {
   const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
-  verified.exactIdentity.targetVersion = '1.2.3';
+  retargetProducerFixture(verified, '1.2.3');
   const changingCapability = {
     ...ledger().capabilities[0],
     updateDisposition: OPENCLAW_UPDATE_DISPOSITION.IMPROVE,
@@ -799,7 +810,7 @@ test('cross-version protected PRESERVE requires its own replay, not an unrelated
   assert.equal(qualified.updatePromotionAllowed, true);
 
   const sameVersion = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
-  sameVersion.exactIdentity.targetVersion = '1.2.3';
+  retargetProducerFixture(sameVersion, '1.2.3');
   const sameVersionLedger = { ...ledger([]), targetVersion: '1.2.3' };
   const preserved = evaluateOpenClawUpdateCapabilityCandidateV1({
     stagedUpdate: sameVersion,
@@ -961,7 +972,7 @@ test('READY protected capability identities must be unique and complete when sup
 
 test('same-version PRESERVE cannot launder malformed affected-task classes', () => {
   const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
-  verified.exactIdentity.targetVersion = '1.2.3';
+  retargetProducerFixture(verified, '1.2.3');
   const baseline = { ...ledger([]), targetVersion: '1.2.3' };
   const evaluate = (candidate) => evaluateOpenClawUpdateCapabilityCandidateV1({
     stagedUpdate: verified,
@@ -991,7 +1002,7 @@ test('same-version PRESERVE cannot launder malformed affected-task classes', () 
 
 test('same-version protected PRESERVE cannot smuggle a different implementation or origin', () => {
   const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
-  verified.exactIdentity.targetVersion = '1.2.3';
+  retargetProducerFixture(verified, '1.2.3');
   const preserved = {
     ...ledger([]),
     targetVersion: '1.2.3',
@@ -1147,7 +1158,7 @@ test('protected qualification version and cross-version PRESERVE references matc
     }
   }
   const sameVersion = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
-  sameVersion.exactIdentity.targetVersion = '1.2.3';
+  retargetProducerFixture(sameVersion, '1.2.3');
   const compatible = evaluateOpenClawUpdateCapabilityCandidateV1({
     stagedUpdate: sameVersion,
     capabilityLedger: {
