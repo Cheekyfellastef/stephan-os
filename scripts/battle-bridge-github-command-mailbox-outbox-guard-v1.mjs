@@ -81,6 +81,10 @@ const MAILBOX_GUARD_REASON_CODES_V1 = new Set([
   'MAILBOX_OUTBOX_INVALID_QUARANTINE_LIMIT_EXCEEDED',
   'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_MULTIPLE_INVALID',
   'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN',
+  'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_IDENTITY_UNPROVEN',
+  'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_INDEX_UNPROVEN',
+  'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_UNPROVEN',
+  'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_LEDGER_UNPROVEN',
   'MAILBOX_OUTBOX_JSON_OBJECT_REQUIRED',
   'MAILBOX_OUTBOX_JSON_TOO_LARGE',
   'MAILBOX_OUTBOX_LEDGER_FUTURE_SEGMENT_CONFLICT',
@@ -327,21 +331,32 @@ function bumpWrite(metrics, kind) {
 }
 
 function assertRegularUnlinkedFile(path, { allowMissing = false } = {}) {
-  if (!existsSync(path)) {
-    if (allowMissing) return null;
-    throw new Error('MAILBOX_OUTBOX_FILE_MISSING');
+  // lstatSync sees dangling links, while existsSync follows them and reports false.
+  let info;
+  try {
+    info = lstatSync(path);
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      if (allowMissing) return null;
+      throw new Error('MAILBOX_OUTBOX_FILE_MISSING');
+    }
+    throw error;
   }
-  const info = lstatSync(path);
   if (!info.isFile() || info.isSymbolicLink()) throw new Error('MAILBOX_OUTBOX_FILE_IDENTITY_INVALID');
   return info;
 }
 
 function assertUnlinkedDirectory(path, { allowMissing = false } = {}) {
-  if (!existsSync(path)) {
-    if (allowMissing) return null;
-    throw new Error('MAILBOX_OUTBOX_DIRECTORY_MISSING');
+  let info;
+  try {
+    info = lstatSync(path);
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      if (allowMissing) return null;
+      throw new Error('MAILBOX_OUTBOX_DIRECTORY_MISSING');
+    }
+    throw error;
   }
-  const info = lstatSync(path);
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('MAILBOX_OUTBOX_DIRECTORY_IDENTITY_INVALID');
   return info;
 }
@@ -488,8 +503,8 @@ export function atomicWriteJson(path, value, {
 }
 
 function removeRegularFile(path) {
-  if (!existsSync(path)) return;
-  assertRegularUnlinkedFile(path);
+  // Cleanup is never allowed to silently accept a dangling or inaccessible link.
+  if (!assertRegularUnlinkedFile(path, { allowMissing: true })) return;
   unlinkSync(path);
   syncDirectoryBestEffort(dirname(path));
 }
@@ -563,11 +578,11 @@ function sameLegacyTerminalIdentity(pendingReceipt, canonicalReceipt) {
 
 function proveSingleLegacyPendingDebt(statePath, receiptRoot, state, entry, metrics) {
   const requestId = legacyPublicationRequestId(entry);
-  if (!requestId) throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN');
+  if (!requestId) throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_IDENTITY_UNPROVEN');
   const consumed = Array.isArray(state?.consumedRequestIds) ? state.consumedRequestIds : [];
   const accepted = Array.isArray(state?.acceptedRequestIds) ? state.acceptedRequestIds : [];
   if (consumed.filter((value) => value === requestId).length !== 1 || accepted.includes(requestId)) {
-    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN');
+    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_INDEX_UNPROVEN');
   }
 
   assertUnlinkedDirectory(receiptRoot);
@@ -575,8 +590,21 @@ function proveSingleLegacyPendingDebt(statePath, receiptRoot, state, entry, metr
     join(receiptRoot, createWindowsSafeMailboxReceiptFilename(requestId)),
     { maxBytes: MAILBOX_CANONICAL_RECEIPT_MAX_BYTES, metrics },
   );
+  // Historical #3258 owner comment 6667748867 (5 Nov 2026) used a valid
+  // "single-session" request ID. Its pre-hardening receipt serializer redacted
+  // that literal word to an empty requestId in persisted and public receipts.
+  // Never treat an arbitrary blank receipt as an authenticated original command:
+  // the single historical exception also requires its source-bound command
+  // digest from the immutable owner-authored command, plus local terminal
+  // receipt, execution-ledger and consumed-index agreement.
+  const sealedSingleSession = requestId === 'vr2707-20261105T1953Z-cf7-archive-single-session-v1'
+    && canonicalReceipt?.requestId === ''
+    && entry.receipt?.requestId === ''
+    && canonicalReceipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
+    && canonicalReceipt?.expectedHead === 'cf7cd85b7afa96a696fd092b1ceb2e734f198a77'
+    && canonicalReceipt?.processSourceHead === 'cf7cd85b7afa96a696fd092b1ceb2e734f198a77';
   if (!isPlainObject(canonicalReceipt)
-    || canonicalReceipt.requestId !== requestId
+    || (canonicalReceipt.requestId !== requestId && !sealedSingleSession)
     || canonicalReceipt.state !== 'DONE'
     || !sameLegacyTerminalIdentity(entry.receipt, canonicalReceipt)
     || entry.publicationId !== [
@@ -584,7 +612,7 @@ function proveSingleLegacyPendingDebt(statePath, receiptRoot, state, entry, metr
       canonicalReceipt.state,
       canonicalReceipt.completedAt || canonicalReceipt.acceptedAt || 'unknown',
     ].join(':')) {
-    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN');
+    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_UNPROVEN');
   }
 
   const ledgerRecord = readJsonObject(executionLedgerRecordPath(statePath, requestId), {
@@ -597,10 +625,18 @@ function proveSingleLegacyPendingDebt(statePath, receiptRoot, state, entry, metr
     || ledgerRecord.issueNumber !== canonicalReceipt.issueNumber
     || ledgerRecord.phase !== 'TERMINAL'
     || ledgerRecord.terminalState !== 'DONE'
-    || !/^[a-f0-9]{64}$/.test(String(ledgerRecord.commandDigest || ''))
+    // This recovery never accepts a plausible digest for an unknown command.
+    // No other legacy blank ID has a reviewed original-command binding.
+    || !sealedSingleSession
+    || ledgerRecord.commandDigest !== 'f7dcdce00eac8e109bdd41d56740a248694056d5b6bb587db72c0c8105902fe6'
+    // Historical complete(receipt) wrote terminalProofHash only when the
+    // original receipt supplied a hash. Refuse a missing/mismatched pair,
+    // but do not fabricate a proof hash for this older valid schema.
+    || Object.hasOwn(ledgerRecord, 'terminalProofHash') !== Object.hasOwn(canonicalReceipt, 'proofHash')
     || (Object.hasOwn(ledgerRecord, 'terminalProofHash')
-      && ledgerRecord.terminalProofHash !== canonicalReceipt.proofHash)) {
-    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_UNPROVEN');
+      && (!/^[a-f0-9]{64}$/.test(String(ledgerRecord.terminalProofHash || ''))
+        || ledgerRecord.terminalProofHash !== canonicalReceipt.proofHash))) {
+    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_LEDGER_UNPROVEN');
   }
   return Object.freeze({ requestId, canonicalReceipt, ledgerRecord });
 }
