@@ -331,21 +331,32 @@ function bumpWrite(metrics, kind) {
 }
 
 function assertRegularUnlinkedFile(path, { allowMissing = false } = {}) {
-  if (!existsSync(path)) {
-    if (allowMissing) return null;
-    throw new Error('MAILBOX_OUTBOX_FILE_MISSING');
+  // lstatSync sees dangling links, while existsSync follows them and reports false.
+  let info;
+  try {
+    info = lstatSync(path);
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      if (allowMissing) return null;
+      throw new Error('MAILBOX_OUTBOX_FILE_MISSING');
+    }
+    throw error;
   }
-  const info = lstatSync(path);
   if (!info.isFile() || info.isSymbolicLink()) throw new Error('MAILBOX_OUTBOX_FILE_IDENTITY_INVALID');
   return info;
 }
 
 function assertUnlinkedDirectory(path, { allowMissing = false } = {}) {
-  if (!existsSync(path)) {
-    if (allowMissing) return null;
-    throw new Error('MAILBOX_OUTBOX_DIRECTORY_MISSING');
+  let info;
+  try {
+    info = lstatSync(path);
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      if (allowMissing) return null;
+      throw new Error('MAILBOX_OUTBOX_DIRECTORY_MISSING');
+    }
+    throw error;
   }
-  const info = lstatSync(path);
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('MAILBOX_OUTBOX_DIRECTORY_IDENTITY_INVALID');
   return info;
 }
@@ -492,8 +503,8 @@ export function atomicWriteJson(path, value, {
 }
 
 function removeRegularFile(path) {
-  if (!existsSync(path)) return;
-  assertRegularUnlinkedFile(path);
+  // Cleanup is never allowed to silently accept a dangling or inaccessible link.
+  if (!assertRegularUnlinkedFile(path, { allowMissing: true })) return;
   unlinkSync(path);
   syncDirectoryBestEffort(dirname(path));
 }
