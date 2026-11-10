@@ -629,8 +629,13 @@ function proveSingleLegacyPendingDebt(statePath, receiptRoot, state, entry, metr
     // No other legacy blank ID has a reviewed original-command binding.
     || !sealedSingleSession
     || ledgerRecord.commandDigest !== 'f7dcdce00eac8e109bdd41d56740a248694056d5b6bb587db72c0c8105902fe6'
+    // Historical complete(receipt) wrote terminalProofHash only when the
+    // original receipt supplied a hash. Refuse a missing/mismatched pair,
+    // but do not fabricate a proof hash for this older valid schema.
+    || Object.hasOwn(ledgerRecord, 'terminalProofHash') !== Object.hasOwn(canonicalReceipt, 'proofHash')
     || (Object.hasOwn(ledgerRecord, 'terminalProofHash')
-      && ledgerRecord.terminalProofHash !== canonicalReceipt.proofHash)) {
+      && (!/^[a-f0-9]{64}$/.test(String(ledgerRecord.terminalProofHash || ''))
+        || ledgerRecord.terminalProofHash !== canonicalReceipt.proofHash))) {
     throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_LEDGER_UNPROVEN');
   }
   return Object.freeze({ requestId, canonicalReceipt, ledgerRecord });
