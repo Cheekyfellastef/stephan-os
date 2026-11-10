@@ -957,3 +957,51 @@ test('READY protected changed dispositions cannot launder contradictory implemen
   }
   assert.equal(evaluate(legacy).updatePromotionAllowed, true);
 });
+
+test('protected qualification version and cross-version PRESERVE references match the producer', () => {
+  const candidate = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const original = {
+    ...ledger().capabilities[0],
+    capabilityId: 'oc8:gateway',
+    lastQualifiedVersion: '1.2.3',
+    qualificationRefs: ['qualification:oc8'],
+    tests: ['test:oc8'],
+    evidenceRefs: ['evidence:oc8'],
+  };
+  const evaluate = (capability) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: candidate,
+    capabilityLedger: { ...ledger(), capabilities: [capability] },
+    qualificationReplay: [replay(OPENCLAW_TASK_CLASS.OC1)],
+  });
+  const positive = evaluate(original);
+  assert.equal(positive.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(positive.updatePromotionAllowed, true);
+
+  for (const lastQualifiedVersion of ['1.2.2', '1.3.0', null, '']) {
+    const negative = evaluate({ ...original, lastQualifiedVersion });
+    assert.equal(negative.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE, String(lastQualifiedVersion));
+    assert.equal(negative.providerRoutingResumeAllowed, false);
+    assert.ok(negative.blockers.includes('CAPABILITY_LEDGER_PROTECTED_QUALIFICATION_VERSION_MISMATCH'));
+  }
+  for (const field of ['qualificationRefs', 'tests', 'evidenceRefs']) {
+    for (const invalid of [[], [null], ['invalid proof reference']]) {
+      const negative = evaluate({ ...original, [field]: invalid });
+      assert.equal(negative.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE, field);
+      assert.equal(negative.updatePromotionAllowed, false);
+      assert.ok(negative.blockers.includes('CAPABILITY_LEDGER_PRESERVE_EVIDENCE_UNPROVEN'), field);
+    }
+  }
+  const sameVersion = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  sameVersion.exactIdentity.targetVersion = '1.2.3';
+  const compatible = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: sameVersion,
+    capabilityLedger: {
+      ...ledger([]),
+      targetVersion: '1.2.3',
+      capabilities: [{ ...original, qualificationRefs: [], tests: [], evidenceRefs: [], affectedTaskClasses: [] }],
+    },
+    qualificationReplay: [],
+  });
+  assert.equal(compatible.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(compatible.updatePromotionAllowed, true);
+});
