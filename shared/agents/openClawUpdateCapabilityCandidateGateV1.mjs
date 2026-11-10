@@ -1,6 +1,11 @@
 import {
   OPENCLAW_STAGED_UPDATE_SCHEMA,
   OPENCLAW_STAGED_UPDATE_STATUS,
+  OPENCLAW_STAGED_UPDATE_ACTION,
+  OPENCLAW_APPROVED_GATEWAY_ENDPOINT,
+  OPENCLAW_UPDATE_POST_PROOF_SCHEMA,
+  OPENCLAW_UPDATE_PRESERVATION_COMPARISON_SCHEMA,
+  OPENCLAW_UPDATE_APPLY_RECEIPT_SCHEMA,
 } from './openClawStagedUpdateV1.mjs';
 import {
   OPENCLAW_TASK_CLASS,
@@ -223,6 +228,91 @@ function blocked(blockers, stagedStatus = null) {
   });
 }
 
+
+const UPDATED_HEALTH_CHECKS = Object.freeze([
+  'openClawGateway','stephanosBackend','stephanosUi','missionWorker','sharedWorkspaceWrite',
+]);
+const APPLY_STEPS_PRODUCER = Object.freeze([
+  OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_PREFLIGHT,
+  OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_APPROVAL,
+  OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_STAGE,
+  OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_BACKUP,
+  OPENCLAW_STAGED_UPDATE_ACTION.APPLY_UPDATE,
+  OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_HEALTH,
+  OPENCLAW_STAGED_UPDATE_ACTION.COMPARE_PRESERVATION,
+]);
+const ROLLBACK_STEPS_PRODUCER = Object.freeze([
+  OPENCLAW_STAGED_UPDATE_ACTION.ROLLBACK_PACKAGE,
+  OPENCLAW_STAGED_UPDATE_ACTION.RESTORE_BACKUP,
+  OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_ROLLBACK,
+]);
+// Source-consistency check only. It cannot certify a private native Gateway.
+function hasPostUpdateProducerEvidence(staged, id) {
+  const e = plainDataRecord(staged.evidence, [
+    'preflight','approval','stage','backupSet','applyReceipt',
+    'postUpdateProof','preservationComparison','rollbackReceipt','rollbackProof','rollbackComparison',
+  ]);
+  if (!e || e.rollbackReceipt !== null || e.rollbackProof !== null || e.rollbackComparison !== null) return false;
+  const pre=plainDataRecord(e.preflight), approval=plainDataRecord(e.approval);
+  const stage=plainDataRecord(e.stage), backup=plainDataRecord(e.backupSet);
+  const apply=plainDataRecord(e.applyReceipt), post=plainDataRecord(e.postUpdateProof);
+  const compare=plainDataRecord(e.preservationComparison);
+  if (![pre,approval,stage,backup,apply,post,compare].every(Boolean)) return false;
+  for (const key of ['repository','sourceHead','manifestSha256','packetId','packetSha256','currentVersion','targetVersion']) {
+    if (pre[key] !== id[key]) return false;
+  }
+  if (pre.gatewayEndpoint !== OPENCLAW_APPROVED_GATEWAY_ENDPOINT
+    || !safeId(approval.approvalId) || approval.singleUse !== true
+    || !safeId(stage.stageId) || stage.packetId !== id.packetId || stage.packetSha256 !== id.packetSha256
+    || !safeId(backup.backupSetId) || backup.manifestSha256 !== id.manifestSha256
+    || apply.schema !== OPENCLAW_UPDATE_APPLY_RECEIPT_SCHEMA
+    || !safeId(apply.receiptId) || apply.mutationAttempted !== true
+    || apply.approvalId !== approval.approvalId || apply.stageId !== stage.stageId
+    || apply.backupSetId !== backup.backupSetId) return false;
+  for (const key of ['repository','sourceHead','manifestSha256','packetId','packetSha256','targetVersion']) {
+    if (apply[key] !== id[key]) return false;
+  }
+  const health=plainDataRecord(post.health,UPDATED_HEALTH_CHECKS);
+  if (!health || UPDATED_HEALTH_CHECKS.some((key)=>health[key] !== true)
+    || post.schema !== OPENCLAW_UPDATE_POST_PROOF_SCHEMA || !safeId(post.proofId)
+    || post.repository !== id.repository || post.sourceHead !== id.sourceHead
+    || post.manifestSha256 !== id.manifestSha256 || post.observedVersion !== id.targetVersion
+    || post.gatewayEndpoint !== OPENCLAW_APPROVED_GATEWAY_ENDPOINT) return false;
+  if (compare.schema !== OPENCLAW_UPDATE_PRESERVATION_COMPARISON_SCHEMA
+    || !safeId(compare.comparisonId) || compare.manifestSha256 !== id.manifestSha256) return false;
+  const protectedEntries=denseArray(pre.protectedEntries,512),comparisonEntries=denseArray(compare.entries,512);
+  if (!protectedEntries || !comparisonEntries || protectedEntries.length === 0
+    || protectedEntries.length !== comparisonEntries.length) return false;
+  const digest=/^[a-f0-9]{64}$/i,expected=new Map();
+  for (const raw of protectedEntries) {
+    const item=plainDataRecord(raw);
+    if (!item || !digest.test(text(item.pathFingerprintSha256))
+      || !digest.test(text(item.sourceDigestSha256))
+      || expected.has(item.pathFingerprintSha256)) return false;
+    expected.set(item.pathFingerprintSha256,item.sourceDigestSha256);
+  }
+  const seen=new Set();
+  for (const raw of comparisonEntries) {
+    const item=plainDataRecord(raw);
+    if (!item || seen.has(item.pathFingerprintSha256)
+      || !expected.has(item.pathFingerprintSha256)
+      || item.beforeDigestSha256 !== expected.get(item.pathFingerprintSha256)
+      || item.afterDigestSha256 !== expected.get(item.pathFingerprintSha256)) return false;
+    seen.add(item.pathFingerprintSha256);
+  }
+  for (const [key,actions] of [['applyPlan',APPLY_STEPS_PRODUCER],['rollbackPlan',ROLLBACK_STEPS_PRODUCER]]) {
+    const plan=denseArray(staged[key],actions.length);
+    if (!plan || plan.length !== actions.length) return false;
+    for (let i=0;i<plan.length;i++) {
+      const item=plainDataRecord(plan[i],['step','actionId','mutating','executed']);
+      if (!item || item.step !== i+1 || item.actionId !== actions[i]
+        || item.mutating !== (key==='applyPlan' ? i===4 : i<2)
+        || item.executed !== false) return false;
+    }
+  }
+  return true;
+}
+
 export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   const snapshot = plainDataRecord(input, INPUT_KEYS);
   if (!snapshot) return blocked(['CANDIDATE_GATE_SCHEMA_INVALID']);
@@ -320,6 +410,10 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
       || !safeId(identity?.packetId)
       || !/^[a-f0-9]{64}$/i.test(text(identity?.packetSha256)))) {
     blockers.push('STAGED_UPDATE_EXACT_IDENTITY_INCOMPLETE');
+  }
+  if (stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
+    && !hasPostUpdateProducerEvidence(staged,identity)) {
+    blockers.push('STAGED_UPDATE_POST_PRODUCER_EVIDENCE_UNPROVEN');
   }
   const sourceHead = exactSha(identity?.sourceHead);
   const currentVersion = safeVersion(identity?.currentVersion);
