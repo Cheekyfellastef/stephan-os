@@ -265,7 +265,10 @@ test('Starfield VR telemetry is richer and Sovereign Commander can diagnose the 
   assert.match(starfieldPerformance, /airLinkRuntimeActive/);
   assert.match(starfieldPerformance, /ollamaRestoreDeferred/);
   assert.match(starfieldPerformance, /A Starfield exit does not necessarily mean VR has ended/);
-  assert.match(starfieldPerformance, /\$ollamaRestoreDeferred = \[bool\]\$gamingResourceReconcile\.active/);
+  assert.match(starfieldPerformance, /\$governorConfirmedInactive = \[bool\]\$gamingResourceReconcile\.reconciled/);
+  assert.match(starfieldPerformance, /\[string\]::IsNullOrWhiteSpace\(\[string\]\$gamingResourceReconcile\.error\)/);
+  assert.match(starfieldPerformance, /\$gamingResourceReconcile\.phase -ceq 'NORMAL'/);
+  assert.match(starfieldPerformance, /\$ollamaRestoreDeferred = -not \$governorConfirmedInactive/);
   assert.match(starfieldPerformance, /avgGpuUtilPct/);
   assert.match(starfieldPerformance, /avgStarfieldCpuPct/);
   assert.match(starfieldPerformance, /airLinkRuntimeSamplePct/);
