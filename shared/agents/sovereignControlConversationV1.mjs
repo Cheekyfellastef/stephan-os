@@ -1,11 +1,11 @@
 import { projectSovereignControlSystemStatusV1, sovereignControlSystemDiagnosticCodeV1 } from './sovereignControlSystemStatusV1.mjs';
 import { controlTowerObservationBlockerV1, controlTowerBuildObservationUnresolvedV1 } from './controlTowerRequestObservationV1.mjs';
+import { parseControlTowerRequestIdV1, controlTowerRequestIdentityValidV1 } from './controlTowerBuildRequestV1.mjs';
 
 export const SOVEREIGN_CONTROL_CONVERSATION_SCHEMA = 'stephanos.sovereign-control-conversation.v1';
 export const CONTROL_TOWER_WORKFLOW_URL = 'https://github.com/Cheekyfellastef/stephan-os/actions/workflows/stephanos-control-tower-build.yml';
 const TARGETS = new Set(['sovereign-commander', 'control-tower']);
 const SHA = /^[a-f0-9]{40}$/;
-const REQUEST = /^control-tower-build-([1-9][0-9]{0,15})-1$/;
 const CODE = /^[A-Z][A-Z0-9_:-]{0,159}$/;
 const STATES = new Set(['WAITING', 'HELD', 'REPLAY_HELD', 'UNKNOWN', 'RESERVED', 'WAKE_BLOCKED', 'WAKE_COMPLETED', 'OBSERVATION_COMPLETED', 'OBSERVATION_BLOCKED', 'UNPROVEN']);
 const GUARDIAN_STATES = new Set(['WORKING', 'WAITING', 'HELD', 'DISABLED', 'NO_NEXT_CYCLE', 'UNKNOWN']);
@@ -99,8 +99,10 @@ function compactCommander(value, nowMs) {
 
 function compactRequest(value, outcomeUnresolved = null) {
   const requestId = text(value?.requestId, 80);
-  const matched = REQUEST.exec(requestId);
-  if (!matched || !Number.isSafeInteger(value?.runId) || value.runId !== Number(matched[1])
+  const matched = parseControlTowerRequestIdV1(requestId);
+  const missingRun = matched?.ownerCommentId && value?.runId === null
+    && ['MISSING', 'INVALID', 'LEGACY_DETAIL_UNAVAILABLE'].includes(value.detailState);
+  if (!matched || (!controlTowerRequestIdentityValidV1(value) && !missingRun)
     || !STATES.has(value?.state)) return null;
   return {
     requestId, runId: value.runId, state: value.state, blocker: value.blocker === '' ? '' : controlTowerObservationBlockerV1(value.blocker),

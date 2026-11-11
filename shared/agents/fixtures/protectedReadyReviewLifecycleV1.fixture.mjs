@@ -128,6 +128,7 @@ export function readyLifecycleFixture({ bootstrap = false, alreadyReady = false,
   const inputs = { pr_number: String(identity.prNumber), source_head: identity.sourceHead, base_sha: identity.baseSha,
     ready_run_id: '100', ready_artifact_id: '501', ready_receipt_sha256: handoffPayload.payloadSha256 };
   const state = { pull: { number: identity.prNumber, node_id: 'PR_fixture', state: 'open', merged: false, draft: false,
+    changed_files: input.changedFiles.length,
     head: { sha: identity.sourceHead, ref: identity.branch, repo: { full_name: repository } },
     base: { sha: identity.baseSha, ref: 'main', repo: { full_name: repository } } },
     main: { object: { sha: identity.baseSha } }, commit: { sha: identity.sourceHead, tree: { sha: identity.sourceTree } } };
@@ -149,6 +150,10 @@ export function fixtureTransport(fixture) {
     calls.push(path);
     let m;
     if (path === '/pulls/2094') return fixture.state.pull;
+    if ((m = path.match(/^\/pulls\/2094\/files\?per_page=100&page=([1-9][0-9]*)$/))) {
+      const start = (Number(m[1]) - 1) * 100;
+      return fixture.input.changedFiles.slice(start, start + 100).map(filename => ({ filename }));
+    }
     if (path === '/git/ref/heads/main') return fixture.state.main;
     if (path === `/git/commits/${fixture.identity.sourceHead}`) return fixture.state.commit;
     if (path === '/actions/workflows/protected-workflow-dispatch-mailbox.yml') return p.handoff.definition;
@@ -181,7 +186,9 @@ export function fixtureTransport(fixture) {
     if (threadPages.length) return threadPages.shift();
     return fixtureThreadPage(fixture);
   };
-  return { api, download: async id => artifacts.get(id)?.zip, readThreadsPage, threadPages, inventory, calls, runs, artifacts };
+  const readPatch = async prNumber => { calls.push(`diff:${prNumber}`); return fixture.input.patch; };
+  return { api, download: async id => artifacts.get(id)?.zip, readThreadsPage, readPatch,
+    threadPages, inventory, calls, runs, artifacts };
 }
 
 export function fixtureThreadPage(fixture, { nodes = [], totalCount = nodes.length, hasNextPage = false, endCursor = null } = {}) {
