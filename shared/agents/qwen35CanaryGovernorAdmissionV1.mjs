@@ -14,15 +14,20 @@ function decision(blocked, blocker = '') {
   });
 }
 
-export function classifyQwen35CanaryGovernorV1(record) {
+export function classifyQwen35CanaryGovernorV1(record, nowMs = Date.now()) {
   // The canary is a NEW 27B load, not an already-running model. If the
-  // governor's source, shape or decisions are unknown, DO NOT infer idle.
+  // governor's source, shape, timestamp or decisions are unknown, DO NOT
+  // infer idle. The real Windows writer includes updatedAtUtc in every state.
+  const observedAtMs = typeof record?.updatedAtUtc === 'string'
+    ? Date.parse(record.updatedAtUtc) : NaN;
   if (!record || typeof record !== 'object' || Array.isArray(record)
     || ![Object.prototype, null].includes(Object.getPrototypeOf(record))
     || record.schemaVersion !== 'stephanos.vr-resource-governor.v1'
     || typeof record.active !== 'boolean'
     || typeof record.localModelAllowed !== 'boolean'
-    || typeof record.heavyModelAllowed !== 'boolean') {
+    || typeof record.heavyModelAllowed !== 'boolean'
+    || !Number.isFinite(nowMs) || !Number.isFinite(observedAtMs)
+    || observedAtMs - nowMs > 5_000 || nowMs - observedAtMs > 180_000) {
     return decision(true, 'QWEN35_CANARY_GOVERNOR_UNPROVEN');
   }
   // A 27B model requires both explicit workload and heavy-residency consent.
