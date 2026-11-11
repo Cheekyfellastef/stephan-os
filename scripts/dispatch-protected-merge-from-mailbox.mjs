@@ -223,15 +223,20 @@ async function main() {
     // owner-pinned selection enables the new immutable review handoff, whose
     // clean review and complete zero-thread admission are checked before any
     // ready mutation; the exact PR identity is reread immediately afterwards.
+    const before = await readExactState(command, { allowDraft: true });
+    if (before.pull.draft === true) {
+      await assertMailboxRotationWorkflowAdmission({ mode: 'protected', prNumber: command.prNumber, head: command.expectedHead });
+    }
+    // Complete the read-only identity and rotation checks before the final
+    // review/owner/thread preflight. No other awaited read may follow that
+    // preflight before the existing fixed READY mutation.
     const transport = hasReadyReviewSelection(command) ? readyReviewTransports() : null;
     const prepared = transport ? await prepareReadyReviewProducer({
       command, comment: event.comment, ...transport,
     }) : null;
-    const before = await readExactState(command, { allowDraft: true });
     if (prepared && before.pull.draft !== prepared.beforeDraft) fail('PROTECTED_READY_REVIEW_DRAFT_STATE_CHANGED');
     let lifecycleResult = 'ALREADY_READY';
     if (before.pull.draft === true) {
-      await assertMailboxRotationWorkflowAdmission({ mode: 'protected', prNumber: command.prNumber, head: command.expectedHead });
       const mutation = await graphqlReady(before.pull.node_id);
       if (!mutation
         || Number(mutation.number) !== command.prNumber

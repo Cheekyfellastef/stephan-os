@@ -473,7 +473,7 @@ export async function loadReadyReviewForCheckSnapshot(context, {
   expected,
   identity = context.dispatch.identity,
   cleanIndependentReviewProved = false,
-  selectedReview = context.dispatch.identity,
+  selectedReview,
   loadLifecycle = loadProtectedReadyReviewLifecycle,
   api = (path) => apiJson(`/repos/${context.owner}/${context.repo}${path}`),
   download = (id) => apiArtifactArchive(
@@ -556,7 +556,8 @@ export async function preflightBeforeProtectedApproval(context, {
       fail('Pre-approval independent review is not clean.');
     }
   };
-  validateReview(await readReview(context));
+  let selectedReview = await readReview(context);
+  validateReview(selectedReview);
   const inspectFreshChecks = async (binding) => {
     const snapshot = await readChecks(context);
     if (!snapshot || ['checkRuns', 'workflowRuns', 'commitStatuses'].some((key) => !Array.isArray(snapshot[key]))) {
@@ -568,7 +569,7 @@ export async function preflightBeforeProtectedApproval(context, {
       expected: exactBinding,
       identity,
       cleanIndependentReviewProved: true,
-      selectedReview: context.dispatch.identity,
+      selectedReview,
     });
     const checks = validatePersonalRepositoryCheckRuns(
       snapshot.checkRuns, snapshot.workflowRuns, snapshot.commitStatuses, exactBinding,
@@ -600,7 +601,8 @@ export async function preflightBeforeProtectedApproval(context, {
   // Artifact/run metadata and the dispatch estate can move during hydration.
   // Reauthenticate both before returning; closing definitions must also match
   // the complete required workflow set observed in the refreshed check read.
-  validateReview(await readReview(context));
+  selectedReview = await readReview(context);
+  validateReview(selectedReview);
   const finalExecution = await readExecution(context);
   const finalWorkflows = validatePersonalRepositoryWorkflowRuns(
     finalExecution?.definitions, refreshed.workflowRuns, finalExpected,
@@ -1060,7 +1062,7 @@ async function collectEvidence(context, expected = {}) {
     expected: { ...checkExpectation.expected, mergeStateStatus: review.mergeStateStatus },
     identity,
     cleanIndependentReviewProved: independentReview.reviewMode === 'clean-independent',
-    selectedReview: context.dispatch.identity,
+    selectedReview: independentReview,
   });
   const checks = await validatePersonalRepositoryCheckRunsWithBoundedReread({
     readSnapshot: async (attempt) => {
@@ -1110,7 +1112,7 @@ async function collectEvidence(context, expected = {}) {
     },
     identity,
     cleanIndependentReviewProved: refreshedAuthority.independentReview.reviewMode === 'clean-independent',
-    selectedReview: context.dispatch.identity,
+    selectedReview: refreshedAuthority.independentReview,
   });
   const finalChecks = validatePersonalRepositoryCheckRuns(
     checks.selectedSnapshot.checkRuns,

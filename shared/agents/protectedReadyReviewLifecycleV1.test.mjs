@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import {
   assertReadyReviewSourceContext, assertReadyReviewHandoff, assertReadyReviewIndependent, assertReadyReviewLaunchRun,
   parseReadyReviewInputs, sealReadyReviewPayload, selectReadyReviewRun,
-  validateProtectedReadyReviewLifecycleEvidence,
+  validateProtectedReadyReviewLifecycleEvidence, validateProtectedReadyReviewRecoveryEvidence,
+  buildReadyReviewRecoveryContinuity, READY_REVIEW_RECOVERY_SOURCE_PATHS,
 } from './protectedReadyReviewLifecycleV1.mjs';
-import { clock, readyLifecycleFixture, fixtureEnv } from './fixtures/protectedReadyReviewLifecycleV1.fixture.mjs';
+import { clock, readyLifecycleFixture, readyRecoveryFixture, fixtureEnv } from './fixtures/protectedReadyReviewLifecycleV1.fixture.mjs';
 
 const validate = f => validateProtectedReadyReviewLifecycleEvidence(f.proof, f.identity, 50);
 test('consumes a distinct completed main-headed review without changing its actual event or PR association', () => {
@@ -163,4 +164,166 @@ test('dispatch inputs are closed-world identities and source context cannot choo
   }
   assert.throws(() => assertReadyReviewSourceContext(env, f.identity.sourceHead, f.identity.baseSha,
     'exact-head-review'), /TRUSTED_SOURCE_CONTEXT/);
+});
+
+test('preserved failed attempt plus distinct qualified recovery is accepted without rewriting failure history', () => {
+  const f = readyRecoveryFixture(), original = JSON.stringify(f.proof.failedReview);
+  const result = validateProtectedReadyReviewRecoveryEvidence(f.proof, f.identity, 50);
+  assert.equal(result.valid, true, result.blocker);
+  assert.equal(result.failedReviewRunId, 200);
+  assert.equal(result.workflowRunId, 300);
+  assert.equal(result.recoverySourceSha, f.currentMainSha);
+  assert.equal(JSON.stringify(f.proof.failedReview), original);
+  assert.equal(f.proof.failedReview.run.conclusion, 'failure');
+  assert.equal(f.proof.failedReview.job.steps.filter(step => step.conclusion === 'failure').length, 1);
+});
+
+test('recovery rejects failed-run, diagnostic, continuity, qualification and replay substitutions', async t => {
+  const reseal = (f, changes) => {
+    const { payloadSha256, ...body } = f.proof.recovery.artifact.payload;
+    f.proof.recovery.artifact.payload = sealReadyReviewPayload({ ...body, ...changes });
+  };
+  const attacks = {
+    'different failed run': f => { f.proof.failedReview.run.id++; },
+    'failed run attempt replay': f => { f.proof.failedReview.run.run_attempt = 2; },
+    'failed run made successful': f => { f.proof.failedReview.run.conclusion = 'success'; },
+    'different failing step': f => { f.proof.failedReview.job.steps[0].conclusion = 'failure'; },
+    'missing diagnostic': f => { f.proof.failedReview.diagnosticArtifacts = []; },
+    'second diagnostic': f => { f.proof.failedReview.diagnosticArtifacts.push({ ...f.proof.failedReview.diagnosticArtifacts[0], id: 999 }); },
+    'manufactured lifecycle receipt': f => { f.proof.failedReview.lifecycleArtifacts.push({ id: 999 }); },
+    'diagnostic patch changed': f => { f.proof.failedReview.diagnostic.patch += 'forged'; },
+    'diagnostic input base changed': f => { f.proof.failedReview.diagnostic.input = { ...f.proof.failedReview.diagnostic.input, baseSha: 'e'.repeat(40) }; },
+    'recovery run rerun': f => { f.proof.recovery.run.run_attempt = 2; },
+    'recovery wrong event': f => { f.proof.recovery.run.event = 'workflow_dispatch'; },
+    'recovery title replay': f => { f.proof.recovery.run.display_title = f.proof.recovery.run.display_title.replace('comment-901', 'comment-902'); },
+    'receipt points at other failure': f => { reseal(f, { failedReviewRunId: 201 }); },
+    'continuity overlaps candidate': f => { const p = f.proof.recovery.artifact.payload; reseal(f, { continuity: { ...p.continuity,
+      changedFiles: [...f.proof.failedReview.diagnostic.input.changedFiles],
+      changedFilesSha256: 'f'.repeat(64) } }); },
+    'correction tip includes unrelated source': f => { const p = f.proof.recovery.artifact.payload; reseal(f, { continuity: { ...p.continuity,
+      correctionFiles: ['README.md'], correctionFilesSha256: 'f'.repeat(64) } }); },
+    'current main changed': f => { f.identity = { ...f.identity, baseSha: 'e'.repeat(40) }; },
+    'qualification detached': f => { const p = f.proof.recovery.artifact.payload; reseal(f, { qualification: { ...p.qualification, ownerCommentId: 902 } }); },
+    'edited escalation': f => { f.proof.escalationComment.updated_at = clock(6); },
+  };
+  for (const [name, mutate] of Object.entries(attacks)) await t.test(name, () => {
+    const f = readyRecoveryFixture(); mutate(f);
+    assert.equal(validateProtectedReadyReviewRecoveryEvidence(f.proof, f.identity, 50).valid, false, name);
+  });
+});
+
+test('recovery keeps its exact failed-run receipt and requires it to follow every observed draft skip', () => {
+  const f = readyRecoveryFixture();
+  assert.equal(validateProtectedReadyReviewRecoveryEvidence(f.proof, f.identity, 50).valid, true);
+  assert.equal(validateProtectedReadyReviewRecoveryEvidence(f.proof, f.identity, 200).valid, false);
+  assert.equal(validateProtectedReadyReviewRecoveryEvidence(f.proof, f.identity, 201).valid, false);
+});
+
+test('continuity admits complete protected history only when disjoint and the correction is the exact tip', () => {
+  const f = readyRecoveryFixture(), intermediate = 'e'.repeat(40);
+  const compare = { status: 'ahead', ahead_by: 2, behind_by: 0, total_commits: 2,
+    base_commit: { sha: f.originalIdentity.baseSha }, merge_base_commit: { sha: f.originalIdentity.baseSha },
+    commits: [{ sha: intermediate }, { sha: f.currentMainSha }],
+    files: [{ filename: 'README.md' }, { filename: 'scripts/protected-ready-review-lifecycle-v1.mjs' }] };
+  const correction = { sha: f.currentMainSha, parents: [{ sha: intermediate }],
+    files: [{ filename: 'scripts/protected-ready-review-lifecycle-v1.mjs' }] };
+  const result = buildReadyReviewRecoveryContinuity(compare, correction, f.originalIdentity,
+    f.currentMainSha, f.input.changedFiles);
+  assert.equal(Object.hasOwn(compare, 'head_commit'), false);
+  assert.deepEqual(result.commitShas, [intermediate, f.currentMainSha]);
+  assert.deepEqual(result.correctionFiles, ['scripts/protected-ready-review-lifecycle-v1.mjs']);
+  assert.throws(() => buildReadyReviewRecoveryContinuity({ ...compare,
+    files: [...compare.files, { filename: f.input.changedFiles[0] }] }, correction,
+  f.originalIdentity, f.currentMainSha, f.input.changedFiles), /OVERLAP/);
+  assert.throws(() => buildReadyReviewRecoveryContinuity(compare, { ...correction,
+    files: [{ filename: 'README.md' }] }, f.originalIdentity, f.currentMainSha, f.input.changedFiles), /CORRECTION_TIP/);
+});
+
+test('recovery source allowlist covers the complete canonical merge-consumer correction', () => {
+  assert.ok(READY_REVIEW_RECOVERY_SOURCE_PATHS.includes('shared/agents/operatorPersonalRepositoryMergeV1.mjs'));
+  assert.ok(READY_REVIEW_RECOVERY_SOURCE_PATHS
+    .includes('shared/agents/operatorPersonalRepositoryMergeDraftSkipV1.test.mjs'));
+  assert.ok(READY_REVIEW_RECOVERY_SOURCE_PATHS.includes('scripts/dispatch-protected-merge-from-mailbox.mjs'));
+});
+
+test('continuity admits the original recovery estate plus its existing READY caller and rejects an unrelated addition', () => {
+  // Original PR #3412 estate plus the necessary final-mutation ordering fix,
+  // declared independently of the implementation's closed correction inventory.
+  const correctionPaths = [
+    '.github/workflows/stephanos-exact-head-review.yml',
+    'docs/architecture/stephanos-protected-ready-review-failure-recovery-v1.md',
+    'scripts/dispatch-protected-merge-from-mailbox.mjs',
+    'scripts/exact-head-qualified-escalation-v1.mjs',
+    'scripts/exact-head-qualified-escalation-v1.test.mjs',
+    'scripts/operator-protected-personal-repository-merge.mjs',
+    'scripts/protected-ready-review-lifecycle-v1.mjs',
+    'scripts/protected-ready-review-lifecycle-v1.test.mjs',
+    'shared/agents/fixtures/protectedReadyReviewLifecycleV1.fixture.mjs',
+    'shared/agents/operatorPersonalRepositoryMergeDraftSkipV1.test.mjs',
+    'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+    'shared/agents/protectedReadyReviewLifecycleV1.mjs',
+    'shared/agents/protectedReadyReviewLifecycleV1.test.mjs',
+  ];
+  const f = readyRecoveryFixture();
+  const files = correctionPaths.map(filename => ({ filename }));
+  const compare = { status: 'ahead', ahead_by: 1, behind_by: 0, total_commits: 1,
+    base_commit: { sha: f.originalIdentity.baseSha }, merge_base_commit: { sha: f.originalIdentity.baseSha },
+    commits: [{ sha: f.currentMainSha }], files };
+  const correction = { sha: f.currentMainSha, parents: [{ sha: f.originalIdentity.baseSha }], files };
+  const result = buildReadyReviewRecoveryContinuity(compare, correction, f.originalIdentity,
+    f.currentMainSha, f.input.changedFiles);
+  assert.deepEqual(result.correctionFiles, correctionPaths);
+  assert.equal(correctionPaths.length, 13);
+  const originalFiles = files.filter(file => file.filename !== 'scripts/dispatch-protected-merge-from-mailbox.mjs');
+  assert.equal(buildReadyReviewRecoveryContinuity({ ...compare, files: originalFiles },
+    { ...correction, files: originalFiles }, f.originalIdentity, f.currentMainSha, f.input.changedFiles).correctionFiles.length, 12);
+  const expanded = [...files, { filename: 'scripts/uninspected-review-recovery-collector.mjs' }];
+  assert.throws(() => buildReadyReviewRecoveryContinuity({ ...compare, files: expanded },
+    { ...correction, files: expanded }, f.originalIdentity, f.currentMainSha, f.input.changedFiles),
+  /RECOVERY_CORRECTION_TIP/);
+});
+
+test('continuity requires a complete comparison below the 300-file API cap', () => {
+  const f = readyRecoveryFixture(), intermediate = 'e'.repeat(40);
+  const correctionFile = { filename: 'scripts/protected-ready-review-lifecycle-v1.mjs', status: 'modified' };
+  const correction = { sha: f.currentMainSha, parents: [{ sha: intermediate }],
+    files: [correctionFile] };
+  const compare = count => ({ status: 'ahead', ahead_by: 2, behind_by: 0, total_commits: 2,
+    base_commit: { sha: f.originalIdentity.baseSha }, merge_base_commit: { sha: f.originalIdentity.baseSha },
+    commits: [{ sha: intermediate }, { sha: f.currentMainSha }], files: [correctionFile,
+      ...Array.from({ length: count - 1 }, (_, index) => ({ filename: `docs/disjoint-${index}.md`, status: 'added' }))] });
+  const complete = buildReadyReviewRecoveryContinuity(compare(299), correction, f.originalIdentity,
+    f.currentMainSha, f.input.changedFiles);
+  assert.equal(complete.changedFiles.length, 299);
+  for (const count of [300, 301]) {
+    assert.throws(() => buildReadyReviewRecoveryContinuity(compare(count), correction, f.originalIdentity,
+      f.currentMainSha, f.input.changedFiles), /RECOVERY_CONTINUITY_COMPARE/, `comparison inventory of ${count}`);
+  }
+});
+
+test('continuity refuses every rename or previous-filename row before projecting either inventory', async t => {
+  const f = readyRecoveryFixture();
+  const file = { filename: 'scripts/protected-ready-review-lifecycle-v1.mjs', status: 'modified' };
+  const compare = { status: 'ahead', ahead_by: 1, behind_by: 0, total_commits: 1,
+    base_commit: { sha: f.originalIdentity.baseSha }, merge_base_commit: { sha: f.originalIdentity.baseSha },
+    commits: [{ sha: f.currentMainSha }], files: [file] };
+  const correction = { sha: f.currentMainSha, parents: [{ sha: f.originalIdentity.baseSha }], files: [file] };
+  const rows = {
+    'rename from outside correction scope': { status: 'renamed', previous_filename: 'scripts/uninspected-recovery.mjs' },
+    'rename from overlapping candidate': { status: 'renamed', previous_filename: f.input.changedFiles[0] },
+    'rename without old-path metadata': { status: 'renamed' },
+    'old-path metadata without rename status': { previous_filename: 'scripts/uninspected-recovery.mjs' },
+    'empty old-path metadata': { previous_filename: '' },
+    'null old-path metadata': { previous_filename: null },
+  };
+  for (const inventory of ['compare', 'correction']) {
+    for (const [name, metadata] of Object.entries(rows)) await t.test(`${inventory}: ${name}`, () => {
+      const changed = { ...file, ...metadata };
+      assert.throws(() => buildReadyReviewRecoveryContinuity(
+        inventory === 'compare' ? { ...compare, files: [changed] } : compare,
+        inventory === 'correction' ? { ...correction, files: [changed] } : correction,
+        f.originalIdentity, f.currentMainSha, f.input.changedFiles),
+      inventory === 'compare' ? /RECOVERY_CONTINUITY_SCOPE_OR_OVERLAP/ : /RECOVERY_CORRECTION_TIP/);
+    });
+  }
 });
