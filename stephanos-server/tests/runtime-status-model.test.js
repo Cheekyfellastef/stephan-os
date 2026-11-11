@@ -777,3 +777,63 @@ test('Stephanos AI repairs the real upstream health dependency before checking w
     assert.equal(diagnostic.mergeAuthority, false, item.name);
   }
 });
+
+
+test('reachable Commander with absent or malformed guardian terminal evidence stays upstream UNVERIFIED', () => {
+  const malformedGuardians = [
+    undefined, null, {}, [], 'yes', { lastOk: null }, { lastOk: 'true' },
+    { lastOk: 1 }, { lastOk: 0 },
+  ];
+  for (const [index, guardian] of malformedGuardians.entries()) {
+    const diagnostic = projectStephanosSystemDiagnosticV1({
+      aiRouteConfigured: true,
+      commanderObservation: {
+        schemaVersion: 'stephanos.ai-sovereign-commander-health.v1',
+        readOnly: true, localLoopbackOnly: true,
+        available: true, healthy: true, state: 'SERVICE_REACHABLE',
+        guardian,
+      },
+    });
+    assert.equal(diagnostic.commanderReachable, true, String(index));
+    assert.equal(diagnostic.readiness, 'UNVERIFIED', String(index));
+    assert.equal(diagnostic.blocker, 'SOVEREIGN_GUARDIAN_TERMINAL_PROOF_UNVERIFIED', String(index));
+    assert.equal(diagnostic.nextProofOwnerGoal, '#2573', String(index));
+    assert.equal(diagnostic.nextSafeStep, 'VERIFY_SOVEREIGN_GUARDIAN_TERMINAL_PROOF', String(index));
+    assert.equal(diagnostic.guardianLastRepairSucceeded, false, String(index));
+    assert.equal(diagnostic.guardianLastRepairFailed, false, String(index));
+    assert.equal(diagnostic.physicalWorkerPickupProven, false, String(index));
+    assert.equal(diagnostic.aiModelExecutionProven, false, String(index));
+    assert.equal(diagnostic.sourceMutationAllowed, false, String(index));
+    assert.equal(diagnostic.mergeAuthority, false, String(index));
+  }
+});
+
+test('reachable Commander with failed upstream maintenance never recommends downstream worker pickup', () => {
+  const failedBlockers = [
+    'SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED',
+    'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_UNPROVEN',
+    'CORE_RECOVERY_INVENTORY_EXPIRED',
+    'SOVEREIGN_LAST_REPAIR_FAILED',
+    '',
+  ];
+  for (const lastBlocker of failedBlockers) {
+    const diagnostic = projectStephanosSystemDiagnosticV1({
+      aiRouteConfigured: true,
+      commanderObservation: {
+        schemaVersion: 'stephanos.ai-sovereign-commander-health.v1',
+        readOnly: true, localLoopbackOnly: true,
+        available: true, healthy: true, state: 'SERVICE_REACHABLE',
+        guardian: { lastOk: false, lastBlocker },
+      },
+    });
+    assert.equal(diagnostic.readiness, 'BLOCKED', lastBlocker);
+    assert.equal(diagnostic.blocker, lastBlocker || 'SOVEREIGN_LAST_REPAIR_FAILED', lastBlocker);
+    assert.equal(diagnostic.nextProofOwnerGoal, '#2573', lastBlocker);
+    assert.equal(diagnostic.nextSafeStep, 'VERIFY_SOVEREIGN_MAINTENANCE_BLOCKER', lastBlocker);
+    assert.equal(diagnostic.guardianLastRepairFailed, true, lastBlocker);
+    assert.equal(diagnostic.physicalWorkerPickupProven, false, lastBlocker);
+    assert.equal(diagnostic.aiModelExecutionProven, false, lastBlocker);
+    assert.equal(diagnostic.sourceMutationAllowed, false, lastBlocker);
+    assert.equal(diagnostic.mergeAuthority, false, lastBlocker);
+  }
+});

@@ -32,6 +32,10 @@ export function projectStephanosSystemDiagnosticV1({
     && observation.state === 'SERVICE_REACHABLE';
   const guardian = observation?.guardian && typeof observation.guardian === 'object'
     && !Array.isArray(observation.guardian) ? observation.guardian : null;
+  // A reachable service without an explicit guardian terminal outcome is not
+  // proof that its upstream maintenance gate passed.
+  const guardianTerminalUnverified = commanderReachable
+    && guardian?.lastOk !== true && guardian?.lastOk !== false;
   const recordedRepairFailed = commanderReachable && guardian?.lastOk === false;
   const recordedBlocker = recordedRepairFailed
     && typeof guardian?.lastBlocker === 'string'
@@ -40,12 +44,23 @@ export function projectStephanosSystemDiagnosticV1({
   const healthBlocker = !commanderReachable && typeof observation?.blocker === 'string'
     && /^[A-Z0-9][A-Z0-9._:-]{0,159}$/.test(observation.blocker)
     ? observation.blocker : '';
-  const readiness = !commanderReachable ? 'UNVERIFIED'
+  const readiness = !commanderReachable || guardianTerminalUnverified ? 'UNVERIFIED'
     : recordedRepairFailed ? 'BLOCKED' : 'PARTIAL';
   const blocker = !commanderReachable
     ? healthBlocker || 'COMMANDER_HEALTH_UNVERIFIED'
-    : recordedRepairFailed ? recordedBlocker || 'SOVEREIGN_LAST_REPAIR_FAILED'
-      : 'PHYSICAL_WORKER_PICKUP_UNPROVEN';
+    : guardianTerminalUnverified ? 'SOVEREIGN_GUARDIAN_TERMINAL_PROOF_UNVERIFIED'
+      : recordedRepairFailed ? recordedBlocker || 'SOVEREIGN_LAST_REPAIR_FAILED'
+        : 'PHYSICAL_WORKER_PICKUP_UNPROVEN';
+  const nextSafeStep = !commanderReachable ? 'VERIFY_COMMANDER_HEALTH_PROVENANCE'
+    : guardianTerminalUnverified ? 'VERIFY_SOVEREIGN_GUARDIAN_TERMINAL_PROOF'
+      : recordedRepairFailed
+        ? recordedBlocker === 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING'
+          ? 'VERIFY_EXACT_MAIN_FIXED_RUNTIME_INSTALLATION'
+          : 'VERIFY_SOVEREIGN_MAINTENANCE_BLOCKER'
+        : 'VERIFY_CANONICAL_NATIVE_WORKER_PICKUP';
+  const nextProofOwnerGoal = nextSafeStep === 'VERIFY_CANONICAL_NATIVE_WORKER_PICKUP'
+    || nextSafeStep === 'VERIFY_EXACT_MAIN_FIXED_RUNTIME_INSTALLATION'
+    ? '#2961' : '#2573';
   return Object.freeze({
     schemaVersion: STEPHANOS_SYSTEM_DIAGNOSTIC_SCHEMA_V1,
     readiness,
@@ -64,14 +79,10 @@ export function projectStephanosSystemDiagnosticV1({
     readOnly: true,
     sourceMutationAllowed: false,
     mergeAuthority: false,
-    // Verify the private owner before asking its downstream worker for
-    // evidence. A missing/untrusted Commander observation is not a worker gap.
-    nextProofOwnerGoal: commanderReachable ? '#2961' : '#2573',
-    nextSafeStep: !commanderReachable
-      ? 'VERIFY_COMMANDER_HEALTH_PROVENANCE'
-      : recordedRepairFailed && recordedBlocker === 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING'
-        ? 'VERIFY_EXACT_MAIN_FIXED_RUNTIME_INSTALLATION'
-        : 'VERIFY_CANONICAL_NATIVE_WORKER_PICKUP',
+    // Never recommend a downstream pickup until upstream guardian outcome is
+    // explicit; preserve the exact-runtime exception for the conveyor owner.
+    nextProofOwnerGoal,
+    nextSafeStep,
   });
 }
 
