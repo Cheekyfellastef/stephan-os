@@ -98,9 +98,29 @@ function Set-MutarConfigValue([string]$Content, [string]$Name, [string]$Value) {
     }
     return $Content.TrimEnd() + [Environment]::NewLine + $line + [Environment]::NewLine
 }
-function Repair-ComfortableAerConfig([string]$ConfigPath) {
+function Repair-ComfortableAerConfig([string]$ConfigPath, [switch]$ValidationOnly) {
     Require-File $ConfigPath 'MutaR config'
     $before = Get-Content -LiteralPath $ConfigPath -Raw
+
+    # ValidateOnly is a pure read of vr_config.txt, not a repair request.
+    # Refuse missing, duplicate and unsafe settings before any write-capable path.
+    if ($ValidationOnly) {
+        foreach ($entry in @(@('VR_AsyncAER', 'false'), @('DLSS_AER_Enabled', 'true'))) {
+            $name = [string]$entry[0]
+            $expected = [string]$entry[1]
+            $pattern = '(?im)^[ \t]*' + [regex]::Escape($name) + '[ \t]*=[ \t]*([^\r\n]*?)[ \t]*\r?$'
+            $values = [regex]::Matches($before, $pattern)
+            if ($values.Count -ne 1 -or $values[0].Groups[1].Value.Trim() -cne $expected) {
+                throw 'AER_VALIDATION_CONFIG_REPAIR_REQUIRED_NO_MUTATION'
+            }
+        }
+        $motionRows = [regex]::Matches($before, '(?im)^[ \t]*CreationEngine_MotionVectorFix[ \t]*=[ \t]*([^\r\n]*?)[ \t]*\r?$')
+        if ($motionRows.Count -gt 1 -or
+            ($motionRows.Count -eq 1 -and $motionRows[0].Groups[1].Value.Trim() -ine 'false')) {
+            throw 'AER_VALIDATION_CONFIG_REPAIR_REQUIRED_NO_MUTATION'
+        }
+        return $before
+    }
     $after = Set-MutarConfigValue $before 'VR_AsyncAER' 'false'
     $after = Set-MutarConfigValue $after 'DLSS_AER_Enabled' 'true'
     if ($after -match '(?m)^CreationEngine_MotionVectorFix=true\s*$') {
@@ -134,10 +154,15 @@ function Validate-LocalState {
     if ($loaderHash -ne $expectedLoaderHash) { throw "OpenXR loader hash mismatch: $loaderHash" }
 
     $configPath = Join-Path $gameRoot 'vr_config.txt'
-    $config = Repair-ComfortableAerConfig $configPath
-    if ($config -notmatch '(?m)^VR_AsyncAER=false\s*$') { throw 'Expected comfortable baseline VR_AsyncAER=false is not active.' }
-    if ($config -notmatch '(?m)^DLSS_AER_Enabled=true\s*$') { throw 'Expected comfortable baseline DLSS_AER_Enabled=true is not active.' }
-    if ($config -match '(?m)^CreationEngine_MotionVectorFix=true\s*$') { throw 'Rejected CreationEngine_MotionVectorFix=true is active.' }
+    $config = Repair-ComfortableAerConfig -ConfigPath $configPath -ValidationOnly:$ValidateOnly
+    # -ValidateOnly already validates single-occurrence whitespace-safe assignments,
+    # and rejects unsafe motion vectors without editing the configuration file.
+    # Retain strict legacy postconditions for the write-capable launcher route only.
+    if (-not $ValidateOnly) {
+        if ($config -notmatch '(?m)^VR_AsyncAER=false\s*$') { throw 'Expected comfortable baseline VR_AsyncAER=false is not active.' }
+        if ($config -notmatch '(?m)^DLSS_AER_Enabled=true\s*$') { throw 'Expected comfortable baseline DLSS_AER_Enabled=true is not active.' }
+        if ($config -match '(?m)^CreationEngine_MotionVectorFix=true\s*$') { throw 'Rejected CreationEngine_MotionVectorFix=true is active.' }
+    }
 
     $protectFlagPresent = Test-Path -LiteralPath $protectFlag -PathType Leaf
 
