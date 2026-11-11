@@ -3,8 +3,7 @@ import { appendFile, lstat, readFile, readdir, stat, writeFile } from 'node:fs/p
 import { isAbsolute, relative, resolve, win32 } from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
 import process from 'node:process';
-import { sovereignExactCommitLoaderV1 } from './sovereignExactCommitLoaderV1.mjs';
-import { resolveBattleBridgeGitExecution, createBattleBridgeMinimalChildEnvironment } from './battleBridgeExecutionBoundaryV1.mjs';
+import { createBattleBridgeMinimalChildEnvironment } from './battleBridgeExecutionBoundaryV1.mjs';
 import {
   STEPHANOS_EXECUTION_COMMAND_FABRIC_SCHEMA,
   STEPHANOS_EXECUTION_SURFACE,
@@ -267,8 +266,8 @@ function fixedRegistry(repoRoot) {
       timeoutMs: 10_000,
     }),
     'sovereign-windows-reviewer-calibration': frozen({
-      executable: node,
-      args: frozen([nodeFile('sovereign-windows-review-calibration-v1.mjs'), '--commander-once']),
+      executable: 'C:\\Program Files\\Stephanos\\SovereignReviewerV1\\host.exe',
+      args: frozen(['--windows-calibration-remote']),
       timeoutMs: 180_000,
     }),
     'qwen35-canary': frozen({
@@ -829,22 +828,17 @@ function prepareFixedProcessLaunch(plan, options = {}) {
     return frozen({ ok: false, status: null, stdout: '', stderr: '',
       errorCode: 'SOVEREIGN_WINDOWS_REVIEW_IDENTITY_OR_TRANSPORT_UNPROVEN' });
   }
-  // This loader is supplied by the independently installed Commander parent,
-  // not by the candidate script. No candidate module evaluates before its
-  // complete import closure has been authenticated and captured in memory.
-  const args = reviewer ? ['--experimental-loader', sovereignExactCommitLoaderV1({
-    root: normalizedAbsolutePath(options.repoRoot), head: plan.reviewIdentity.sourceHead,
-    files: WINDOWS_CALIBRATION_SOURCE_PATHS,
-    git: resolveBattleBridgeGitExecution({ environment: candidateEnvironment }),
-  }), ...plan.args] : [...plan.args];
-  return frozen({ ok: true, args: frozen(args), environment: candidateEnvironment });
+  // The review head is data, never an executable producer selector. The fixed
+  // native reviewer host owns a separately installed protected source closure.
+  // No dynamic import is added to the existing maintenance runtime inventory.
+  return frozen({ ok: true, executable:plan.executable, args:frozen([...plan.args]), environment:candidateEnvironment });
 }
 
 function runFixedProcess(plan, options = {}) {
   const launch = prepareFixedProcessLaunch(plan, options);
   if (!launch.ok) return launch;
   const runner = options.spawnSyncFn || spawnSync;
-  const result = runner(plan.executable, launch.args, {
+  const result = runner(launch.executable, launch.args, {
     cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
     encoding: 'utf8',
     shell: false,
@@ -921,7 +915,7 @@ function runOwnedFixedProcess(plan, options = {}) {
       }
     };
     try {
-      child = (options.spawnFn || spawn)(plan.executable, launch.args, {
+      child = (options.spawnFn || spawn)(launch.executable, launch.args, {
         cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
         shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
         ...(launch.environment ? { env: launch.environment } : {}),

@@ -699,6 +699,7 @@ test('exact app-authored specialist approval seals only Windows escalation findi
   const paths = ['scripts/windows/start-stephanos-backend.ps1'];
   const result = adjudicateQualifiedSpecialistReview({
     analysis: specialistAnalysis(paths),
+    codexRequired: true,
     reviews: [specialistReview(specialistReceipt(paths))],
     repository,
     prNumber: 1638,
@@ -723,6 +724,7 @@ test('specialist approval fails closed on stale head, wrong app, missing path co
   ]) {
     const result = adjudicateQualifiedSpecialistReview({
       analysis: specialistAnalysis(paths),
+      codexRequired: true,
       reviews: [review],
       repository,
       prNumber: 1638,
@@ -739,6 +741,7 @@ test('specialist approval fails closed on stale head, wrong app, missing path co
   mixed.counts.P1 = 1;
   const result = adjudicateQualifiedSpecialistReview({
     analysis: mixed,
+    codexRequired: true,
     reviews: [specialistReview(receipt)],
     repository,
     prNumber: 1638,

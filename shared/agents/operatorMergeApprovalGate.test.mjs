@@ -702,6 +702,7 @@ test('genuine native Windows findings reach the existing qualified consumer and 
   assert.deepEqual(qualifiedSpecialistEscalationPaths(analysis), [path]);
   const specialist = adjudicateQualifiedSpecialistReview({
     repository, prNumber, branch, sourceHead, baseSha, analysis, reviews: [], comments: [],
+    codexRequired: true,
   });
   assert.equal(specialist.required, true);
   assert.equal(specialist.valid, false);
