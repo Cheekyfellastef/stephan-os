@@ -285,7 +285,8 @@ $cases=@(
 )
 $count=0
 foreach($row in $cases){
- $bytes=if($null -ne $row.bytes){[byte[]]$row.bytes}else{[Text.UTF8Encoding]::new($false,$true).GetBytes([string]$row.wire)}
+ if($null -ne $row.bytes){$bytes=[byte[]]$row.bytes}
+ else{$bytes=[Text.UTF8Encoding]::new($false,$true).GetBytes([string]$row.wire)}
  $parameters=[object[]]::new(3)
  $parameters.SetValue([object]$bytes,0)
  $parameters.SetValue([object]'refs/heads/main',1)
