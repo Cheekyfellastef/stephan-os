@@ -163,6 +163,7 @@ jobs:
             }
           }
           NODE
+          node apps/spatial-bridge/tools/verify-hosted-icons.mjs --site-root _site/apps/spatial-bridge
 
       - name: Enable bounded remote Goal Dashboard projection
         run: |
