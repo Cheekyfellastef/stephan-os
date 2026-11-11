@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { classifyQwen35CanaryGovernorV1 } from './qwen35CanaryGovernorAdmissionV1.mjs';
 
 import { SOVEREIGN_COMMANDER_REMOTE_ACTIONS } from './sovereignCommanderRemoteMailboxV1.mjs';
 import { coreGamingProtectionFromGovernor } from './stephanosCoreDaemonV1.mjs';
@@ -166,13 +169,51 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
 });
 
 
-test('Qwen 3.5 canary cannot strand a heavyweight model during VR', () => {
+test('Qwen 3.5 canary refuses unknown governor and does not unload a model it never started', () => {
   assert.match(ollamaLoadGovernor, /qwen3\.5:27b/);
   assert.match(qwen35Canary, /vr-resource-governor-current\.json/);
-  assert.match(qwen35Canary, /QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR/);
-  assert.match(qwen35Canary, /localModelAllowed === false/);
+  assert.match(qwen35Canary, /classifyQwen35CanaryGovernorV1/);
+  assert.match(qwen35Canary, /return classifyQwen35CanaryGovernorV1\(null\)/);
+  assert.match(qwen35Canary, /const beforeInference = readVrResourceGovernorBlock\(\)/);
+  assert.match(qwen35Canary, /if \(inferenceAttempted\) await unloadCanaryModel\(\)/);
   assert.match(qwen35Canary, /keep_alive: 0/);
-  assert.match(qwen35Canary, /unloadCanaryModel/);
+  const check = spawnSync(process.execPath, ['--check',
+    fileURLToPath(new URL('../../scripts/qwen35-canary.mjs', import.meta.url))],
+    { encoding: 'utf8', timeout: 10_000 });
+  assert.equal(check.status, 0, check.stderr || 'node --check should accept the actual canary script');
+});
+
+test('Qwen 27B canary admission is fail closed on every missing, corrupt or denied VR record', () => {
+  const allowed = { schemaVersion: 'stephanos.vr-resource-governor.v1',
+    active: false, localModelAllowed: true, heavyModelAllowed: true };
+  const denied = [
+    [null, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{}, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [[], 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, schemaVersion: 'other' }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, active: 'false' }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, heavyModelAllowed: undefined }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, localModelAllowed: undefined }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, active: true, heavyModelAllowed: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
+    [{ ...allowed, active: true, localModelAllowed: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
+    [{ ...allowed, heavyModelAllowed: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
+    [{ ...allowed, localModelAllowed: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
+  ];
+  for (const [raw, blocker] of denied) {
+    const status = classifyQwen35CanaryGovernorV1(raw);
+    assert.equal(status.blocked, true);
+    assert.equal(status.blocker, blocker);
+    assert.equal(status.modelStarted, false);
+    assert.equal(status.pcRestartAllowed, false);
+    assert.equal(status.sourceMutationAllowed, false);
+    assert.deepEqual(Object.keys(status).sort(),
+      ['blocker','blocked','modelStarted','pcRestartAllowed','schemaVersion','sourceMutationAllowed'].sort());
+  }
+  for (const value of [allowed, { ...allowed, active: true }]) {
+    const status = classifyQwen35CanaryGovernorV1(value);
+    assert.equal(status.blocked, false);
+    assert.equal(status.modelStarted, false, 'approval only permits later canary execution');
+  }
 });
 
 test('Stephanos router honours the gaming governor heavy-model policy', () => {
