@@ -268,7 +268,11 @@ test('owner-comment pre-dispatch refusal terminalizes its original identity and 
   assert.equal(second.latestBuildRequestObservation.requestId, first.requestId);
   assert.equal(second.latestBuildRequestObservation.runId, 100);
   assert.equal(second.latestBuildRequestObservation.state, 'WAKE_BLOCKED');
-  assert.equal(ownerCalls, 1); assert.equal(healthReads, 1);
+  // This must retry only the proven pre-dispatch protocol refusal, reusing the
+  // same original comment ID and ledger record. A later redelivery gets zero
+  // additional owner invocations, and no credential read or MCP POST occurs.
+  assert.equal(ownerCalls, CONTROL_TOWER_PROTOCOL_RETRY_ATTEMPTS + 1);
+  assert.equal(healthReads, CONTROL_TOWER_PROTOCOL_RETRY_ATTEMPTS + 1);
   assert.equal(credentialReads, 0); assert.equal(posts, 0);
 });
 
