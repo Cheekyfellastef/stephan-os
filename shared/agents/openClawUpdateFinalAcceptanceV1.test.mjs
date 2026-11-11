@@ -119,7 +119,8 @@ function postUpdateEvidenceFixture(id) {
   const fp='d'.repeat(64),bytes='e'.repeat(64);
   const fixture = {
     preflight:{...id,gatewayEndpoint:OPENCLAW_APPROVED_GATEWAY_ENDPOINT,
-      protectedEntries:[{pathFingerprintSha256:fp,sourceDigestSha256:bytes}]},
+      protectedEntries:[{pathFingerprintSha256:fp,sourceDigestSha256:bytes,
+        classification:'PRESERVE_CONFIG'}]},
     approval:{schema:'stephanos.openclaw-update-approval.v1',approvalId:'approval-1',approvedBy:'Cheekyfellastef',
       repository:id.repository,sourceHead:id.sourceHead,manifestSha256:id.manifestSha256,
       packetId:id.packetId,packetSha256:id.packetSha256,targetVersion:id.targetVersion,

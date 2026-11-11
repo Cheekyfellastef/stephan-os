@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { OPENCLAW_PRESERVATION_CLASS } from './openClawUpdatePreflightV1.mjs';
 import {
   OPENCLAW_STAGED_UPDATE_SCHEMA,
   OPENCLAW_STAGED_UPDATE_STATUS,
@@ -237,6 +238,11 @@ function blocked(blockers, stagedStatus = null) {
 }
 
 
+const PROTECTED_ENTRY_CLASSES = new Set([
+  OPENCLAW_PRESERVATION_CLASS.PRESERVE_SOURCE,
+  OPENCLAW_PRESERVATION_CLASS.PRESERVE_CONFIG,
+  OPENCLAW_PRESERVATION_CLASS.PRESERVE_RUNTIME,
+]);
 const UPDATED_HEALTH_CHECKS = Object.freeze([
   'openClawGateway','stephanosBackend','stephanosUi','missionWorker','sharedWorkspaceWrite',
 ]);
@@ -314,8 +320,9 @@ function sourceBoundApprovalStageBackup(e,id,protectedEntries){
   if(!entries||entries.length!==protectedEntries.length||!entries.length)return false;
   const expected=new Map(),seen=new Set();
   for(const raw of protectedEntries){
-     const rec=plainDataRecord(raw,['pathFingerprintSha256','sourceDigestSha256']);
-     if(!rec||expected.has(rec.pathFingerprintSha256))return false;
+     const rec=plainDataRecord(raw,['pathFingerprintSha256','sourceDigestSha256','classification']);
+     if(!rec||!PROTECTED_ENTRY_CLASSES.has(rec.classification)
+       ||expected.has(rec.pathFingerprintSha256))return false;
      expected.set(rec.pathFingerprintSha256,rec.sourceDigestSha256);
   }
   for(const raw of entries){
@@ -393,8 +400,9 @@ function hasPostUpdateProducerEvidence(staged, id) {
     || !sourceBoundApprovalStageBackup(e,id,protectedEntries)) return false;
   const digest=/^[a-f0-9]{64}$/i,expected=new Map();
   for (const raw of protectedEntries) {
-    const item=plainDataRecord(raw);
-    if (!item || !digest.test(text(item.pathFingerprintSha256))
+    const item=plainDataRecord(raw,['pathFingerprintSha256','sourceDigestSha256','classification']);
+    if (!item || !PROTECTED_ENTRY_CLASSES.has(item.classification)
+      || !digest.test(text(item.pathFingerprintSha256))
       || !digest.test(text(item.sourceDigestSha256))
       || expected.has(item.pathFingerprintSha256)) return false;
     expected.set(item.pathFingerprintSha256,item.sourceDigestSha256);
@@ -475,8 +483,9 @@ function hasRollbackProducerEvidence(staged, id) {
     || comparisonEntries.length !== protectedEntries.length) return false;
   const expected=new Map(),backed=new Set(),compared=new Set(),digest=/^[a-f0-9]{64}$/i;
   for (const raw of protectedEntries) {
-    const entry=plainDataRecord(raw);
-    if (!entry || !digest.test(text(entry.pathFingerprintSha256))
+    const entry=plainDataRecord(raw,['pathFingerprintSha256','sourceDigestSha256','classification']);
+    if (!entry || !PROTECTED_ENTRY_CLASSES.has(entry.classification)
+      || !digest.test(text(entry.pathFingerprintSha256))
       || !digest.test(text(entry.sourceDigestSha256))
       || expected.has(entry.pathFingerprintSha256)) return false;
     expected.set(entry.pathFingerprintSha256,entry.sourceDigestSha256);

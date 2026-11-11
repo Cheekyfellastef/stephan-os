@@ -86,7 +86,8 @@ function postUpdateEvidenceFixture(id) {
   const fp='d'.repeat(64),bytes='e'.repeat(64);
   const fixture = {
     preflight:{...id,gatewayEndpoint:OPENCLAW_APPROVED_GATEWAY_ENDPOINT,
-      protectedEntries:[{pathFingerprintSha256:fp,sourceDigestSha256:bytes}]},
+      protectedEntries:[{pathFingerprintSha256:fp,sourceDigestSha256:bytes,
+        classification:'PRESERVE_CONFIG'}]},
     approval:{schema:'stephanos.openclaw-update-approval.v1',approvalId:'approval-1',approvedBy:'Cheekyfellastef',
       repository:id.repository,sourceHead:id.sourceHead,manifestSha256:id.manifestSha256,
       packetId:id.packetId,packetSha256:id.packetSha256,targetVersion:id.targetVersion,
@@ -1773,5 +1774,38 @@ test('verified post-update routing requires producer-accurate adapter receipt, s
     assert.equal(result.status,OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE,name);
     assert.equal(result.providerRoutingResumeAllowed,false,name);
     assert.ok(result.blockers.includes('STAGED_UPDATE_POST_PRODUCER_EVIDENCE_UNPROVEN'),name);
+  }
+});
+
+
+test('producer preflight classification is mandatory for post-update and rollback projections', () => {
+  const cases = [
+    ['omitted class', entry => { delete entry.classification; }],
+    ['update target', entry => { entry.classification='UPDATE_TARGET'; }],
+    ['unknown class', entry => { entry.classification='UNTRUSTED'; }],
+    ['extra authority', entry => { entry.sourceMutationAllowed=true; }],
+  ];
+  for (const [stageFactory, expectedStatus, blocker, withReplay] of [
+    [() => staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED),
+      OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED,
+      'STAGED_UPDATE_POST_PRODUCER_EVIDENCE_UNPROVEN', true],
+    [() => rollbackProducerFixture(),
+      OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.ROLLED_BACK_AND_CAPABILITIES_PRESERVED,
+      'STAGED_UPDATE_ROLLBACK_PRODUCER_EVIDENCE_UNPROVEN', false],
+  ]) {
+    const run = value => evaluateOpenClawUpdateCapabilityCandidateV1({
+      stagedUpdate:value,capabilityLedger:ledger(),
+      qualificationReplay:withReplay ? [replay(OPENCLAW_TASK_CLASS.OC1)] : [],
+    });
+    assert.equal(run(stageFactory()).status,expectedStatus);
+    for (const [name,mutate] of cases) {
+      const input=stageFactory();
+      mutate(input.evidence.preflight.protectedEntries[0]);
+      const result=run(input);
+      assert.equal(result.status,OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE,name);
+      assert.equal(result.updatePromotionAllowed,false,name);
+      assert.equal(result.providerRoutingResumeAllowed,false,name);
+      assert.ok(result.blockers.includes(blocker),name);
+    }
   }
 });
