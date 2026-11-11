@@ -286,9 +286,14 @@ $cases=@(
 $count=0
 foreach($row in $cases){
  $bytes=if($null -ne $row.bytes){[byte[]]$row.bytes}else{[Text.UTF8Encoding]::new($false,$true).GetBytes([string]$row.wire)}
- $args=[object[]]::new(3);$args[0]=$bytes;$args[1]='refs/heads/main';$args[2]=$a
+ $parameters=[object[]]::new(3)
+ $parameters.SetValue([object]$bytes,0)
+ $parameters.SetValue([object]'refs/heads/main',1)
+ $parameters.SetValue([object]$a,2)
+ if($parameters.Length -ne 3 -or $parameters[0] -isnot [byte[]] -or
+  $parameters[1] -isnot [string] -or $parameters[2] -isnot [string]){throw 'NATIVE_PACKED_ARGUMENT_SHAPE_INVALID'}
  $accepted=$false
- try{[void]$method.Invoke($null,$args);$accepted=$true}
+ try{[void]$method.Invoke($null,[object[]]$parameters);$accepted=$true}
  catch{
   $errorValue=$_.Exception
   for($depth=0;$depth -lt 4 -and $null -ne $errorValue -and
