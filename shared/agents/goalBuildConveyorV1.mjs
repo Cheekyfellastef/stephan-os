@@ -72,9 +72,20 @@ function exactTrackForGoal(goal, autonomyBuildTrack) {
   return goalIssue && trackIssue && goalIssue === trackIssue ? autonomyBuildTrack : null;
 }
 
+// Logical trace gates are diagnostic observations, not independent custody proof.
+// A repeated identity is ambiguous even when the later state looks successful.
 function gateMap(track) {
-  return new Map((Array.isArray(track?.gates) ? track.gates : [])
-    .map((gate) => [text(gate?.id).toUpperCase(), gate]));
+  const gates = new Map();
+  for (const gate of Array.isArray(track?.gates) ? track.gates : []) {
+    const id = text(gate?.id).toUpperCase();
+    if (!id) continue;
+    if (gates.has(id)) {
+      gates.set(id, Object.freeze({
+        id, state: 'BLOCKED', reason: 'DUPLICATE_AUTONOMY_GATE_ID',
+      }));
+    } else gates.set(id, gate);
+  }
+  return gates;
 }
 
 function recordFromGate(definition, gate, track) {
@@ -98,7 +109,11 @@ function replaceStage(stages, id, replacement) {
 
 function greenStage(stages, id, proof, source) {
   const definition = GOAL_BUILD_CONVEYOR_STAGES.find((stage) => stage.id === id);
-  if (!definition) return;
+  // A logical label never overrules a contradictory BLOCKED or WAITING
+  // canonical autonomy gate. Material downstream evidence is handled separately.
+  const observed = stages.find((stage) => stage.id === id);
+  if (!definition || observed?.blocked || (observed?.waiting
+    && observed.source.startsWith('autonomy-build-track:'))) return;
   replaceStage(stages, id, stageRecord(id, definition.label, 'GREEN', proof, '', source));
 }
 
@@ -123,6 +138,9 @@ function firstUnprovenStage(stages) {
 export function projectGoalBuildJourneyV1(goal = {}, autonomyBuildTrack = null) {
   const exactTrack = exactTrackForGoal(goal, autonomyBuildTrack);
   const gates = gateMap(exactTrack);
+  const hasConflictingGateEvidence = [...gates.values()].some(
+    (gate) => gate?.reason === 'DUPLICATE_AUTONOMY_GATE_ID',
+  );
   const stages = GOAL_BUILD_CONVEYOR_STAGES.map((definition) => {
     if (definition.id === 'GOAL') {
       const truth = text(goal?.statusTruth || goal?.sourceTruth, 'UNKNOWN').toUpperCase();
@@ -152,10 +170,44 @@ export function projectGoalBuildJourneyV1(goal = {}, autonomyBuildTrack = null) 
 
   const buildState = text(goal?.buildState, 'UNKNOWN').toUpperCase();
   const builder = text(goal?.builder || exactTrack?.providerAdapter, 'UNKNOWN');
+  // Physical stages need an uninterrupted same-goal and CURRENT dependency
+  // chain. Even a WORKER PASS cannot erase an earlier ELIGIBLE/SELECT/MISSION
+  // BLOCKED or WAITING. A downstream logical PASS is not a native witness.
+  const requiredPhysicalGates = ['ELIGIBLE_GOAL', 'SELECT', 'MISSION', 'CLAIM', 'WORKER'];
+  const logicalWorkerHandoffReported = Boolean(exactTrack
+    && stages[0].trafficLight === 'GREEN'
+    && currentBuildTruth
+    && requiredPhysicalGates.every((id) => text(gates.get(id)?.state).toUpperCase() === 'PASS')
+    && !hasConflictingGateEvidence);
+  // These gates are a diagnostic trace, not an authenticated native STARTED
+  // receipt. Neither a logical PASS nor an arbitrary buildProofRefs array can
+  // establish physical pickup. Do not create a caller-selectable trust flag.
+  // A future positive path must consume independent exact-goal/head native
+  // receipt verification, not this caller-owned autonomy trace.
+  const exactWorkerPickupProven = false;
+  const pickup = stages.find((stage) => stage.id === 'PICKED_UP');
+  const dispatch = stages.find((stage) => stage.id === 'DISPATCHED');
+  if (pickup?.trafficLight === 'GREEN' && !exactWorkerPickupProven) {
+    const upstreamBlocked = ['READY', 'SELECTED', 'MISSION', 'DISPATCHED']
+      .some((id) => stages.find((item) => item.id === id)?.trafficLight === 'RED');
+    replaceStage(stages, 'PICKED_UP', stageRecord(
+      'PICKED_UP', 'Picked up', upstreamBlocked ? 'RED' : 'AMBER', '',
+      upstreamBlocked
+        ? 'UPSTREAM_GOAL_HANDOFF_BLOCKED'
+        : 'CURRENT_EXACT_GOAL_FULL_HANDOFF_CUSTODY_UNPROVEN',
+      'autonomy-build-track',
+    ));
+  }
   if (currentBuildTruth && buildState === 'BUILDING' && builder !== 'UNKNOWN') {
-    greenStage(stages, 'DISPATCHED', `Current build truth binds the goal to ${builder}.`, 'stephanos-build-truth');
-    greenStage(stages, 'PICKED_UP', `${builder} is the current execution owner for this goal.`, 'stephanos-build-truth');
-    greenStage(stages, 'BUILDING', `Fresh build truth reports BUILDING on ${builder}.`, 'stephanos-build-truth');
+    if (exactWorkerPickupProven) {
+      greenStage(stages, 'BUILDING',
+        `Current build truth follows exact-goal CLAIM and WORKER pickup for ${builder}.`,
+        'autonomy-build-track+stephanos-build-truth');
+    } else {
+      amberStage(stages, 'PICKED_UP',
+        'Logical BUILDING is current, but physical CLAIM/WORKER pickup is not proven.',
+        'stephanos-build-truth');
+    }
   } else if (stages.find((stage) => stage.id === 'PICKED_UP')?.trafficLight === 'GREEN') {
     amberStage(stages, 'BUILDING', 'Builder pickup is proven; waiting for current material-build evidence.', 'autonomy-build-track');
   }
@@ -170,6 +222,25 @@ export function projectGoalBuildJourneyV1(goal = {}, autonomyBuildTrack = null) 
     greenStage(stages, 'BUILDING', 'Terminal execution proof confirms the builder ran.', 'autonomy-build-track');
     greenStage(stages, 'BUILT', 'Terminal execution proof confirms build completion.', 'autonomy-build-track');
     greenStage(stages, 'TESTED', 'Terminal execution proof follows the canonical tested stage.', 'autonomy-build-track');
+  }
+
+  // Later SOURCE_CHANGED, TESTED and TERMINAL_RECEIPT logical gates cannot
+  // retroactively prove a blocked, missing or contradictory worker pickup.
+  // Keep their observations visible as AMBER, never aggregate false BUILDING.
+  const physicalPickupCurrent = exactWorkerPickupProven
+    && stages.find((stage) => stage.id === 'DISPATCHED')?.trafficLight === 'GREEN'
+    && stages.find((stage) => stage.id === 'PICKED_UP')?.trafficLight === 'GREEN';
+  if (!physicalPickupCurrent) {
+    for (const id of ['BUILDING', 'BUILT', 'TESTED', 'COMPLETED']) {
+      const stage = stages.find((item) => item.id === id);
+      if (stage?.trafficLight === 'GREEN') {
+        replaceStage(stages, id, stageRecord(
+          id, stage.label, 'AMBER', '',
+          'DOWNSTREAM_PROOF_NEEDS_CURRENT_EXACT_GOAL_WORKER_CUSTODY',
+          'autonomy-build-track',
+        ));
+      }
+    }
   }
 
   const exactBlocked = stages.find((stage) => stage.trafficLight === 'RED');
@@ -203,9 +274,11 @@ export function projectGoalBuildJourneyV1(goal = {}, autonomyBuildTrack = null) 
     totalStageCount: stages.length,
     progressPercent: Math.round((provenStageCount / stages.length) * 100),
     exactAutonomyTrackBound: Boolean(exactTrack),
+    logicalWorkerHandoffReported,
+    physicalPickupProven: exactWorkerPickupProven,
     proofRefs,
     stages: Object.freeze(stages),
-    truthBoundary: 'Green means this exact goal has evidence for that handoff. Amber means waiting/held, red means an evidenced blocker, and grey means no proof is available. Proof is never borrowed from another goal.',
+    truthBoundary: 'Logical autonomy PASS gates are diagnostic. Physical pickup and downstream material progress stay non-green until a separately authenticated exact-goal/current-head native STARTED receipt is integrated. Caller-supplied proof references cannot establish custody.',
   });
 }
 
@@ -217,15 +290,24 @@ export function projectGoalBuildConveyorV1(goals = []) {
   journeys.forEach((journey) => {
     currentStageCounts[journey.currentStage] = (currentStageCounts[journey.currentStage] || 0) + 1;
   });
+  // A downstream logical label can never count as a material lane without
+  // matching current-goal dispatch and physical worker custody proof.
+  const hasCurrentPickup = (journey) => journey.exactAutonomyTrackBound === true
+    && ['GOAL', 'READY', 'SELECTED', 'MISSION', 'DISPATCHED', 'PICKED_UP'].every(
+      (id) => journey.stages.find((stage) => stage.id === id)?.proven === true,
+    );
   return Object.freeze({
     schemaVersion: GOAL_BUILD_CONVEYOR_SCHEMA,
     visibleGoalCount: journeys.length,
-    provenToBuilderCount: journeys.filter((journey) => journey.stages.find((stage) => stage.id === 'PICKED_UP')?.proven === true).length,
-    buildingCount: journeys.filter((journey) => journey.stages.find((stage) => stage.id === 'BUILDING')?.proven === true && journey.stages.find((stage) => stage.id === 'COMPLETED')?.proven !== true).length,
-    completedCount: journeys.filter((journey) => journey.stages.find((stage) => stage.id === 'COMPLETED')?.proven === true).length,
+    provenToBuilderCount: journeys.filter(hasCurrentPickup).length,
+    buildingCount: journeys.filter((journey) => hasCurrentPickup(journey)
+      && journey.stages.find((stage) => stage.id === 'BUILDING')?.proven === true
+      && journey.stages.find((stage) => stage.id === 'COMPLETED')?.proven !== true).length,
+    completedCount: journeys.filter((journey) => hasCurrentPickup(journey)
+      && journey.stages.find((stage) => stage.id === 'COMPLETED')?.proven === true).length,
     blockedCount: journeys.filter((journey) => journey.stages.some((stage) => stage.blocked)).length,
     exactTrackBoundCount: journeys.filter((journey) => journey.exactAutonomyTrackBound).length,
     currentStageCounts: Object.freeze(currentStageCounts),
-    truthBoundary: 'This is a read-only projection over canonical goal, build-truth, and autonomy-track evidence. It creates no new scheduler, controller, worker, queue, or execution authority.',
+    truthBoundary: 'This read-only projection of logical autonomy gates never converts PASS into physical STARTED, BUILDING or completed proof. A separate verified exact-goal native receipt is required; no scheduler, controller, worker, queue or authority is created.',
   });
 }

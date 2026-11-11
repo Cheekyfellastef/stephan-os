@@ -19,41 +19,49 @@ function text(value, limit = 180) {
 }
 
 function safeSha(value) {
-  const normalized = text(value, 40).toLowerCase();
+  // Validate the complete supplied identity before bounding presentation.
+  // Truncating to 40 first silently accepts a spoofed SHA prefix.
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim().toLowerCase();
   return SHA.test(normalized) ? normalized : '';
 }
 
 function safeId(value) {
-  const normalized = text(value, 128);
+  // Validate the complete normalized execution identity before any presentation limit.
+  // Prefix truncation can turn an unsafe receipt/task into false BUILDING proof.
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim();
   return SAFE_ID.test(normalized) ? normalized : '';
 }
 
 function safePhase(value) {
-  const normalized = text(value, 160);
+  // The bounded SAFE_PHASE expression already enforces the full length contract.
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim();
   return SAFE_PHASE.test(normalized) ? normalized : '';
 }
 
 function observedAt(record = {}) {
-  const value = text(
-    record.timestampUtc
+  const supplied = record.timestampUtc
     || record.observedAtUtc
     || record.heartbeatAt
-    || record.updatedAtUtc,
-  );
-  const parsed = Date.parse(value);
+    || record.updatedAtUtc;
+  // Only an actual source-supplied string may qualify a worker timestamp.
+  // Date.parse(String(arrayOrObject)) could manufacture a fresh heartbeat.
+  if (typeof supplied !== 'string') return '';
+  const parsed = Date.parse(supplied.trim());
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : '';
 }
 
 function rawWorkerState(record = {}) {
-  return text(
-    record.workerState
+  const supplied = record.workerState
     || record.lastTickVerdict
     || record.status
     || record.state
     || record.phase
-    || 'UNKNOWN',
-    120,
-  ).toUpperCase();
+    || 'UNKNOWN';
+  if (typeof supplied !== 'string') return 'UNKNOWN';
+  return text(supplied, 120).toUpperCase();
 }
 
 export function projectMissionWorkerBeaconState(record = {}, {
@@ -66,6 +74,9 @@ export function projectMissionWorkerBeaconState(record = {}, {
   const timestampUtc = observedAt(record);
   const timestampMs = Date.parse(timestampUtc);
   const ageMs = Number.isFinite(timestampMs) ? Math.max(0, nowMs - timestampMs) : null;
+  // A future heartbeat must never become current merely because age was
+  // clamped to zero. Permit only bounded five-second cross-clock skew.
+  const futureDated = Number.isFinite(timestampMs) && timestampMs > nowMs + 5_000;
   const stale = ageMs === null || ageMs > staleAfterMs;
   const head = safeSha(record.headSha || record.sourceHead || record.expectedHead);
   const normalizedExpectedHead = safeSha(expectedHead);
@@ -75,15 +86,18 @@ export function projectMissionWorkerBeaconState(record = {}, {
   const executionPhase = safePhase(record.executionPhase || record.activeExecutionPhase);
   const activeExecutionIdentityComplete = Boolean(activeTaskId && activeReceiptId && executionPhase);
 
-  const state = stale
-    ? 'STALE'
+  const state = futureDated
+    ? 'BLOCKED'
+    : stale
+      ? 'STALE'
     : !exactHeadMatch
       ? 'BLOCKED'
       : mappedState;
   const buildingProven = state === 'RUNNING' && activeExecutionIdentityComplete;
 
   let blocker = '';
-  if (stale) blocker = 'MISSION_WORKER_HEARTBEAT_STALE';
+  if (futureDated) blocker = 'MISSION_WORKER_HEARTBEAT_FUTURE_DATED';
+  else if (stale) blocker = 'MISSION_WORKER_HEARTBEAT_STALE';
   else if (!exactHeadMatch) blocker = 'MISSION_WORKER_HEAD_MISMATCH';
   else if (state === 'UNKNOWN') blocker = 'MISSION_WORKER_STATE_UNKNOWN';
   else if (state === 'BLOCKED') blocker = text(record.blocker || rawState, 180);
@@ -95,6 +109,7 @@ export function projectMissionWorkerBeaconState(record = {}, {
     rawState,
     observedAtUtc: timestampUtc,
     ageMs,
+    futureDated,
     head,
     expectedHead: normalizedExpectedHead,
     exactHeadMatch,
