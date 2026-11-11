@@ -30,7 +30,7 @@ test('skill transfer never grants authority even after exact proof bundle', () =
 });
 
 
-test('a claimed ACTIVE record does not count as installed without recipient exact-revision live proof', () => {
+test('an ACTIVE installation claim does not prove an actual recipient skill invocation', () => {
   const record = { timestampUtc: '2026-10-12T10:00:00Z', skillForge: {
     schemaVersion: 'stephanos.skill-provenance.v1', skillId: 'diagnostics',
     name: 'Diagnostics', status: 'ACTIVE', allowedTargets: ['openclaw-standalone'],
@@ -45,10 +45,44 @@ test('a claimed ACTIVE record does not count as installed without recipient exac
     operatorApprovalRef: 'approval:1', proofRefs: ['runtime:target-1'],
   }];
   const proven = deriveSkillGrowthObservatoryV1({ payload });
-  assert.equal(proven.summary.provenActiveTargets, 1);
-  assert.equal(proven.observedActors.find(a => a.id === 'openclaw-standalone').skillCount, 1);
+  const actor = proven.observedActors.find(a => a.id === 'openclaw-standalone');
+  assert.equal(proven.summary.installedClaimTargets, 1);
+  assert.equal(actor.installedClaimCount, 1);
+  assert.equal(actor.invocationProofVerdict, 'RECIPIENT_SKILL_INVOCATION_INDEPENDENT_PROOF_REQUIRED');
+  assert.equal(proven.summary.provenActiveTargets, 0);
+  assert.equal(actor.skillCount, 0);
+  assert.equal(proven.stages.find(stage => stage.id === 'ACTIVE').count, 0);
 });
 
+
+test('stale and unavailable feeds retain skill history but never prove an active OpenClaw skill', () => {
+  const record = { timestampUtc: '2026-11-03T14:00:00Z', skillForge: {
+    schemaVersion: 'stephanos.skill-provenance.v1',
+    skillId: 'openclaw-verified-example',
+    name: 'Verified example', status: 'ACTIVE',
+    allowedTargets: ['openclaw-local'], proofRefs: ['source:verified'],
+    targetRuntimeProofs: [{
+      actorId: 'openclaw-local', passed: true,
+      installedRevision: 'sha256:verified-revision',
+      operatorApprovalRef: 'approval:qualified',
+      proofRefs: ['runtime:verified'],
+    }],
+  } };
+  for (const state of ['ready', 'stale', 'unavailable', 'error', 'STALE']) {
+    const view = deriveSkillGrowthObservatoryV1({
+      payload: { state, records: { capabilityRecords: [record] } },
+    });
+    assert.equal(view.summary.publishedSkillRecords, 1, state);
+    assert.equal(view.publishedSkills[0].id, 'openclaw-verified-example', state);
+    const expectedInstalled = state === 'ready' ? 1 : 0;
+    assert.equal(view.observedActors.find(a => a.id === 'openclaw-local').installedClaimCount, expectedInstalled, state);
+    assert.equal(view.summary.installedClaimTargets, expectedInstalled, state);
+    assert.equal(view.observedActors.find(a => a.id === 'openclaw-local').skillCount, 0, state);
+    assert.equal(view.summary.provenActiveTargets, 0, state);
+    assert.equal(view.stages.find(s => s.id === 'ACTIVE').count, 0, state);
+    if (state !== 'ready') assert.notEqual(view.sourceTruth, 'REPORTED', state);
+  }
+});
 
 test('canonical external intake is an uninstalled review draft, never an ACTIVE agent skill', () => {
   const externalSkillIntake = {
@@ -81,6 +115,51 @@ test('canonical external intake is an uninstalled review draft, never an ACTIVE 
     ] },
   } });
   assert.equal(untrusted.summary.proposals, 0);
+});
+
+
+test('unsigned local tool traces, zero calls and forged invocation fields cannot activate a skill', () => {
+  const base = {
+    schemaVersion: 'stephanos.skill-provenance.v1',
+    skillId: 'stephanos-conveyor-custody-forensics',
+    name: 'Conveyor custody forensics',
+    status: 'ACTIVE',
+    allowedTargets: ['openclaw-standalone'],
+    proofRefs: ['source:verified'],
+    targetRuntimeProofs: [{
+      actorId: 'openclaw-standalone', passed: true,
+      installedRevision: 'sha256:installed-revision',
+      operatorApprovalRef: 'approval:bounded',
+      proofRefs: ['runtime:installed'],
+    }],
+  };
+  const variants = [
+    {},
+    { toolSummary: { calls: 0 }, runId: 'claimed-read' },
+    { toolSummary: { calls: 4 }, toolNames: ['read','read','read','write'] },
+    { invoked: true, verified: true, toolTraceVerified: true },
+    { toolInvocationProofs: [{
+      schemaVersion: 'stephanos.openclaw-forensic-tool-trace.v1',
+      reason: 'LOCAL_TRACE_READ_ONLY_OBSERVED', observedReadOnly: true,
+      evidenceClass: 'UNSIGNED_LOCAL_TRACE_NOT_OS_AUTHORITY',
+      agent: 'openclaw-standalone', toolCount: 1, observedTargets: ['conveyor'],
+    }] },
+  ];
+  for (const [index, forged] of variants.entries()) {
+    const record = { timestampUtc: '2026-11-03T21:00:00Z',
+      skillForge: { ...base, ...forged } };
+    const view = deriveSkillGrowthObservatoryV1({
+      payload: { state: 'ready', records: { capabilityRecords: [record] } },
+    });
+    const actor = view.observedActors.find(a => a.id === 'openclaw-standalone');
+    assert.equal(view.summary.publishedSkillRecords, 1, index);
+    assert.equal(actor.installedClaimCount, 1, index);
+    assert.equal(actor.skillCount, 0, index);
+    assert.equal(actor.invocationProofVerdict,
+      'RECIPIENT_SKILL_INVOCATION_INDEPENDENT_PROOF_REQUIRED', index);
+    assert.equal(view.summary.provenActiveTargets, 0, index);
+    assert.equal(view.stages.find(s => s.id === 'ACTIVE').count, 0, index);
+  }
 });
 
 test('Skill Forge consumes the backend verified gate ledger inside the projection envelope', () => {

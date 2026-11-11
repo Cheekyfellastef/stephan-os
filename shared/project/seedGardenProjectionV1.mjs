@@ -7,6 +7,7 @@ import { buildWorkspaceIntegritySeedV1 } from '../runtime/workspaceIntegritySeed
 import { buildSovereignMeterIndependenceSeedV1 } from '../runtime/sovereignMeterIndependenceSeedV1.mjs';
 import { buildFullSovereigntySeedV1 } from '../runtime/fullSovereigntySeedV1.mjs';
 import { buildGoalConveyorFleetCareSeedV1 } from '../runtime/goalConveyorFleetCareSeedV1.mjs';
+import { buildOpenClawExcellenceSeedV1 } from '../runtime/openClawExcellenceSeedV1.mjs';
 
 export const SEED_GARDEN_PROJECTION_SCHEMA_V1 = 'stephanos.seed-garden-projection.v1';
 
@@ -32,6 +33,7 @@ function buildHighLevelFlywheelSeedsV1() {
   const sovereignMeterIndependence = buildSovereignMeterIndependenceSeedV1();
   const fullSovereignty = buildFullSovereigntySeedV1();
   const fleetCare = buildGoalConveyorFleetCareSeedV1();
+  const openClawExcellence = buildOpenClawExcellenceSeedV1();
   return Object.freeze([
     Object.freeze({
       seedId: starfield.missionId,
@@ -125,6 +127,19 @@ function buildHighLevelFlywheelSeedsV1() {
       growthRungs: fleetCare.growthRungs,
       canonicalOwnerGoals: fleetCare.canonicalOwnerGoals,
       source: 'shared/runtime/goalConveyorFleetCareSeedV1.mjs',
+    }),
+    Object.freeze({
+      seedId: openClawExcellence.missionId,
+      title: openClawExcellence.title,
+      seedKind: openClawExcellence.seedKind,
+      issue: openClawExcellence.issueRef,
+      northStar: openClawExcellence.northStar,
+      operatingLoop: openClawExcellence.operatingLoop,
+      growthRungs: openClawExcellence.growthRungs,
+      agentIdentities: openClawExcellence.agentIdentities,
+      taskClasses: openClawExcellence.taskClasses,
+      existingOwnerIssueRefs: openClawExcellence.existingOwnerIssueRefs,
+      source: 'shared/runtime/openClawExcellenceSeedV1.mjs',
     }),
   ]);
 }
