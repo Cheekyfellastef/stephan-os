@@ -583,3 +583,26 @@ test('latest Flywheel action reader chooses the newest valid action journal and 
   assert.equal(result.receiptId, 'durable-flywheel-new');
   assert.deepEqual(result.journal.learning.createdCanonicalGoalIssueNumbers, [2999]);
 });
+
+test('explicit submit goal #1556 publishes only the matching original scheduler ingress', async () => {
+  const harness=deps();
+  const result=await buildStephanosExecutiveChatBridge({
+    prompt:'Submit goal #1556',knowledgeTwin:defaultAlignmentTwin(),
+    requestId:'submit-1556',nowUtc:NOW,repoRoot:'/repo',
+  },harness.options);
+  assert.equal(result.state,STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.DELEGATION_PUBLISHED);
+  assert.equal(result.canonicalIngress.executiveIngressAcceptance.acceptedGoalIssue,1556);
+  assert.equal(harness.wakeCalls.length,1);
+});
+test('submitGoal refuses an alternate goal before handoff write or canonical call',async()=>{
+  const harness=deps();
+  const result=await buildStephanosExecutiveChatBridge({
+    prompt:'Please build goal #2999 through the existing canonical goal conveyor.',
+    requestedGoalIssue:2999,knowledgeTwin:defaultAlignmentTwin(),
+    requestId:'submit-2999',nowUtc:NOW,repoRoot:'/repo',
+  },harness.options);
+  assert.equal(result.state,STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.SAFE_HOLD);
+  assert.equal(result.blocker,'REQUESTED_GOAL_NOT_AT_DEPENDENCY_FRONTIER');
+  assert.equal(harness.writes.length,0);
+  assert.equal(harness.wakeCalls.length,0);
+});

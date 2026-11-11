@@ -33,7 +33,10 @@ export const STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE = Object.freeze({
 const PROJECT_RELEVANT =
   /\b(stephanos|goal|flywheel|agent|agents|octopus|build|building|fix|repair|continue|controller|worker|mission|project|openclaw|battle bridge|mailbox|verify|verification|proof|system|systems|provider|shared workspace|sovereign commander|skill forge|over the line|#[1-9]\d*)\b/i;
 
+const SUBMIT_GOAL_REQUEST_V1 = /^\s*(?:please\s+)?submit\s+goal\s+#?([1-9][0-9]{0,8})\s*$/i;
+
 const EXPLICIT_ACTION_PATTERNS = Object.freeze([
+  SUBMIT_GOAL_REQUEST_V1,
   /^\s*(?:please\s+|let(?:'|’)s\s+)?(?:keep\s+)?(?:taking|take|upgrade|elevate|advance|grow|improve)\s+(?:the\s+)?(?:sovereign commander|stephanos(?: ai)?|openclaw(?: local| standalone)?)\b/i,
   /^\s*(?:can|could|would|will)\s+(?:we|you)\s+(?:please\s+)?(?:take|upgrade|elevate|advance|grow|improve)\s+(?:the\s+)?(?:sovereign commander|stephanos(?: ai)?|openclaw(?: local| standalone)?)\b/i,
   /^\s*(?:can|could|would|will)\s+we\s+(?:please\s+)?(?:build|fix|repair|restore|continue|resume|run|start|restart|delegate|dispatch|use|finish|complete|push)\b/i,
@@ -520,6 +523,19 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
       programmeProjection,
       alignment,
     });
+  }
+
+  // Exact-goal submissions are not permission to dispatch a different goal.
+  // Check the original scheduler's dependency frontier BEFORE publishing a
+  // handoff or calling the canonical goal builder, not after side effects.
+  const namedGoal = SUBMIT_GOAL_REQUEST_V1.exec(prompt)?.[1];
+  const requestedGoal = input.requestedGoalIssue !== undefined ? input.requestedGoalIssue : namedGoal;
+  if (requestedGoal !== undefined && requestedGoal !== null) {
+    const goal = canonicalGoalIssue(requestedGoal);
+    if (!goal || canonicalGoalIssue(plan.delegation?.selectedGoal) !== goal)
+      return safeHold(classification, 'REQUESTED_GOAL_NOT_AT_DEPENDENCY_FRONTIER', {
+        plan, programmeProjection, alignment,
+      });
   }
 
   const requestId = safeId(input.requestId, 'request');
