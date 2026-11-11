@@ -184,7 +184,9 @@ test('Qwen 3.5 canary refuses unknown governor and does not unload a model it ne
 });
 
 test('Qwen 27B canary admission is fail closed on every missing, corrupt or denied VR record', () => {
+  const nowMs = Date.parse('2026-11-11T05:20:00.000Z');
   const allowed = { schemaVersion: 'stephanos.vr-resource-governor.v1',
+    updatedAtUtc: new Date(nowMs).toISOString(),
     active: false, localModelAllowed: true, heavyModelAllowed: true };
   const denied = [
     [null, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
@@ -194,13 +196,16 @@ test('Qwen 27B canary admission is fail closed on every missing, corrupt or deni
     [{ ...allowed, active: 'false' }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
     [{ ...allowed, heavyModelAllowed: undefined }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
     [{ ...allowed, localModelAllowed: undefined }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, updatedAtUtc: 'bad-date' }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, updatedAtUtc: new Date(nowMs - 180_001).toISOString() }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, updatedAtUtc: new Date(nowMs + 5_001).toISOString() }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
     [{ ...allowed, active: true, heavyModelAllowed: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
     [{ ...allowed, active: true, localModelAllowed: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
     [{ ...allowed, heavyModelAllowed: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
     [{ ...allowed, localModelAllowed: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
   ];
   for (const [raw, blocker] of denied) {
-    const status = classifyQwen35CanaryGovernorV1(raw);
+    const status = classifyQwen35CanaryGovernorV1(raw, nowMs);
     assert.equal(status.blocked, true);
     assert.equal(status.blocker, blocker);
     assert.equal(status.modelStarted, false);
@@ -210,10 +215,18 @@ test('Qwen 27B canary admission is fail closed on every missing, corrupt or deni
       ['blocker','blocked','modelStarted','pcRestartAllowed','schemaVersion','sourceMutationAllowed'].sort());
   }
   for (const value of [allowed, { ...allowed, active: true }]) {
-    const status = classifyQwen35CanaryGovernorV1(value);
+    const status = classifyQwen35CanaryGovernorV1(value, nowMs);
     assert.equal(status.blocked, false);
     assert.equal(status.modelStarted, false, 'approval only permits later canary execution');
   }
+  const justFresh = classifyQwen35CanaryGovernorV1({
+    ...allowed, updatedAtUtc: new Date(nowMs - 180_000).toISOString(),
+  }, nowMs);
+  assert.equal(justFresh.blocked, false);
+  const justFuture = classifyQwen35CanaryGovernorV1({
+    ...allowed, updatedAtUtc: new Date(nowMs + 5_000).toISOString(),
+  }, nowMs);
+  assert.equal(justFuture.blocked, false);
 });
 
 test('Stephanos router honours the gaming governor heavy-model policy', () => {
