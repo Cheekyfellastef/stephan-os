@@ -100,6 +100,7 @@ for(const entry of cases) {
     path.endsWith('HEAD')?Buffer.from('ref: refs/heads/main\n'):Buffer.from(head+'\n'),
     opendirSync:()=>({readSync:()=>null,closeSync(){}})};
   const spawnSync=(executable,args)=>{
+    if(args.at(-4)==='show-ref')return {status:0,stdout:Buffer.from(head+'\n')};
     if(args.at(-3)==='cat-file')return {status:0,stdout:args.at(-2)==='commit'?evidence.commit.bytes:evidence.trees.get(args.at(-1))};
     if(args[0]!=='--inspect-v1') return {status:0,stdout:'FIXED_RUNTIME_PROTECTED_V1'};
     inspections++;

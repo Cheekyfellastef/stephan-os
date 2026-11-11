@@ -56,6 +56,12 @@ for(const mode of modes) {
     },
   };
   const spawnSync=(executable,args,options)=>{
+    if(args.at(-4)==='show-ref') {
+      const ref=args.at(-1);
+      const drift=(mode==='head-drift' && ref==='refs/heads/main')
+        || (mode==='origin-drift' && ref==='refs/remotes/origin/main');
+      return {status:0,stdout:Buffer.from((drift?installed.head:current.head)+'\n')};
+    }
     if(args.at(-3)==='cat-file') {
       gitCalls++;let bytes=args.at(-2)==='commit'?current.commit.bytes:current.trees.get(args.at(-1));
       if(mode==='proof-corrupt')bytes=Buffer.concat([bytes,Buffer.from('corrupt')]);

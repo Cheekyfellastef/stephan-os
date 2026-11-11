@@ -21,7 +21,8 @@ for(const mode of ['success','compatibility','cancel','refuse','reject','late','
    path.endsWith('HEAD')?Buffer.from('ref: refs/heads/main\n'):Buffer.from(head+'\n'),
   opendirSync:()=>{throw new Error('UNEXPECTED_VERSION_DISCOVERY');}};
  let nativeClose=false,callbackSettled=false,resourceOk=true;
- const spawnSync=(_exe,args)=>args.at(-3)==='cat-file'?{status:0,stdout:args.at(-2)==='commit'?evidence.commit.bytes:evidence.trees.get(args.at(-1))}:
+ const spawnSync=(_exe,args)=>args.at(-4)==='show-ref'?{status:0,stdout:Buffer.from(head+'\n')}:
+  args.at(-3)==='cat-file'?{status:0,stdout:args.at(-2)==='commit'?evidence.commit.bytes:evidence.trees.get(args.at(-1))}:
   args[0]==='--inspect-v1'?{status:0,stdout:'SOVEREIGN_RUNTIME_INVENTORY_V1='+JSON.stringify({
   SchemaVersion:'stephanos.fixed-runtime-inventory.v1',Ok:true,SourceHead:head,HelperSha256:hash(pe),ManifestSha256:manifest,
   InstallationSourceHead:head,SourceProofSha256:evidence.sourceProofSha256,GitClosureSha256:evidence.gitClosureSha256,
