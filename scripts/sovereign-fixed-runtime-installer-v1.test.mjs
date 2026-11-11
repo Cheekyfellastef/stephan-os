@@ -1,4 +1,6 @@
-import {readFileSync} from 'node:fs';
+import {readFileSync,mkdtempSync,writeFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {FIXED_RUNTIME_SOURCE_PATHS_V1,FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1,buildFixedRuntimeInstallerCandidateV1,fixedRuntimeGitClosureSha256V1} from './sovereign-fixed-runtime-installer-candidate-v1.mjs';
 import test from 'node:test';
@@ -76,4 +78,77 @@ test('fixed manifest covers current static and literal dynamic imports plus cust
 test('custody design source remains strict UTF8 for the independent reviewer',()=>{
  const bytes=readFileSync(new URL('../docs/architecture/sovereign-fixed-runtime-job-custody-v1.md',import.meta.url));
  assert.doesNotThrow(()=>new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+});
+
+test('actual protected installer rejects unsafe packed or loose main refs in isolated Windows fixture',
+  {skip:process.platform!=='win32',timeout:30000},()=>{
+  const source=readFileSync(path,'utf8');
+  const physicalStart=source.indexOf('function Assert-Physical(');
+  const physicalEnd=source.indexOf('function Assert-Protected(',physicalStart);
+  const fixedStart=source.indexOf('function Test-FixedRefPresent(');
+  const fixedEnd=source.indexOf('function Get-Digest(',fixedStart);
+  assert.ok(physicalStart>0 && physicalEnd>physicalStart && fixedStart>0 && fixedEnd>fixedStart);
+  const physical=source.slice(physicalStart,physicalEnd),refs=source.slice(fixedStart,fixedEnd);
+  assert.ok(refs.includes('function Assert-FixedGitRef('));
+  const root=mkdtempSync(join(tmpdir(),'stph-fixed-ref-'));
+  const driver=join(root,'ref-probe.ps1');
+  const script=String.raw`$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+$sourceRoot=[IO.Path]::Combine(__ROOT__,'repository')
+[void][IO.Directory]::CreateDirectory($sourceRoot)
+[void][IO.Directory]::CreateDirectory([IO.Path]::Combine($sourceRoot,'.git'))
+$handles=[Collections.Generic.List[IO.FileStream]]::new()
+__PHYSICAL__
+__REFS__
+function Close-Pins {foreach($handle in $handles){$handle.Dispose()};$handles.Clear()}
+$count=0
+function Invoke-FixedCase([bool]$allowed,[scriptblock]$action){
+ $accepted=$false
+ try{& $action;$accepted=$true}catch{if($allowed){throw}}finally{Close-Pins}
+ if($accepted -ne $allowed){throw 'FIXED_INSTALL_PACKED_CASE_UNEXPECTED'}
+ $script:count++
+}
+$a='a'*40;$b='b'*40;$nl=[char]10;$utf8=[Text.UTF8Encoding]::new($false,$true)
+$packed=[IO.Path]::Combine($sourceRoot,'.git','packed-refs')
+$good=$a+' refs/heads/main'+$nl+$a+' refs/remotes/origin/main'+$nl
+[IO.File]::WriteAllText($packed,$good,$utf8)
+Invoke-FixedCase $true {Assert-FixedGitRef 'refs/heads/main' $a}
+Invoke-FixedCase $true {Assert-FixedGitRef 'refs/remotes/origin/main' $a}
+[IO.File]::WriteAllText($packed,('# pack-refs with: peeled'+$nl+$b+' refs/tags/demo'+$nl+'^'+$b+$nl+$good),$utf8)
+Invoke-FixedCase $true {Assert-FixedGitRef 'refs/heads/main' $a}
+Invoke-FixedCase $false {Assert-FixedGitRef 'refs/heads/main' $b}
+[IO.File]::WriteAllText($packed,($good+$a+' refs/heads/main'+$nl),$utf8)
+Invoke-FixedCase $false {Assert-FixedGitRef 'refs/heads/main' $a}
+[IO.File]::WriteAllText($packed,($a+' refs/heads/main'+$nl),$utf8)
+Invoke-FixedCase $false {Assert-FixedGitRef 'refs/remotes/origin/main' $a}
+[IO.File]::WriteAllText($packed,($good+'bad-record'+$nl),$utf8)
+Invoke-FixedCase $false {Assert-FixedGitRef 'refs/heads/main' $a}
+[IO.File]::WriteAllText($packed,($good+$a+' refs/heads/../main'+$nl),$utf8)
+Invoke-FixedCase $false {Assert-FixedGitRef 'refs/heads/main' $a}
+[IO.File]::WriteAllBytes($packed,[byte[]]::new(1048577))
+Invoke-FixedCase $false {Assert-FixedGitRef 'refs/heads/main' $a}
+$loose=[IO.Path]::Combine($sourceRoot,'.git','refs','heads','main')
+[void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($loose))
+[IO.File]::WriteAllText($loose,($a+$nl),$utf8)
+[IO.File]::WriteAllText($packed,($b+' refs/heads/main'+$nl),$utf8)
+Invoke-FixedCase $true {Assert-FixedGitRef 'refs/heads/main' $a}
+[IO.File]::WriteAllText($loose,($b+$nl),$utf8)
+Invoke-FixedCase $false {Assert-FixedGitRef 'refs/heads/main' $a}
+if($count -ne 11){throw 'FIXED_INSTALL_PACKED_TEST_COUNT'}
+[Console]::WriteLine('FIXED_INSTALL_PACKED_CASES_PASS_'+$count)
+`;
+  const escaped="'"+root.replaceAll("'","''")+"'";
+  const driverBody=script.replace('__ROOT__',()=>escaped)
+    .replace('__PHYSICAL__',()=>physical)
+    .replace('__REFS__',()=>refs);
+  writeFileSync(driver,driverBody,{encoding:'utf8',flag:'wx'});
+  const bootstrap="$ErrorActionPreference='Stop';$s=[IO.File]::ReadAllText('"
+    +driver.replaceAll("'","''")+"');& ([scriptblock]::Create($s))";
+  let output;
+  try{
+    output=execFileSync(PS,['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',
+      Buffer.from(bootstrap,'utf16le').toString('base64')],
+      {encoding:'utf8',windowsHide:true,timeout:25000,maxBuffer:8192});
+  }finally{rmSync(root,{recursive:true,force:true});}
+  assert.equal(output.trim(),'FIXED_INSTALL_PACKED_CASES_PASS_11');
 });

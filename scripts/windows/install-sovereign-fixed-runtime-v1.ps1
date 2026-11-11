@@ -53,7 +53,8 @@ function Assert-FixedGitRef([string]$reference,[string]$expected){
  try{$rows=($reader.ReadToEnd()).Split([char]10)}finally{$reader.Dispose()}
  $found=$false;$tag=$false
  for($i=0;$i -lt $rows.Length;$i++){
-  $line=$rows[$i].TrimEnd([char]13)
+  $line=$rows[$i]
+  if($line.EndsWith([char]13)){$line=$line.Substring(0,$line.Length-1)}
   if($i -eq $rows.Length-1 -and $line.Length -eq 0){continue}
   if($line.Length -eq 0 -or $line.Length -gt 260){throw 'FIXED_INSTALL_REF_CHANGED'}
   if($line[0] -eq '#'){$tag=$false;continue}
@@ -61,12 +62,13 @@ function Assert-FixedGitRef([string]$reference,[string]$expected){
    if(-not $tag -or $line.Substring(1) -cnotmatch '^[a-f0-9]{40}$'){throw 'FIXED_INSTALL_REF_CHANGED'}
    $tag=$false;continue
   }
-  if($line -cnotmatch '^([a-f0-9]{40}) (refs/[A-Za-z0-9._/-]{1,210})$'){throw 'FIXED_INSTALL_REF_CHANGED'}
-  $ref=$Matches[2]
+  if($line -cmatch '^([a-f0-9]{40}) (refs/[A-Za-z0-9._/-]{1,210})$'){
+   $ref=$Matches[2];$refHash=$Matches[1]
+  }else{throw 'FIXED_INSTALL_REF_CHANGED'}
   if($ref.Contains('..') -or $ref.Contains('//') -or $ref.EndsWith('/') -or $ref.EndsWith('.lock')){throw 'FIXED_INSTALL_REF_CHANGED'}
   $tag=$ref.StartsWith('refs/tags/',[StringComparison]::Ordinal)
   if($ref -ceq $reference){
-   if($found -or $Matches[1] -cne $expected){throw 'FIXED_INSTALL_REF_CHANGED'}
+   if($found -or $refHash -cne $expected){throw 'FIXED_INSTALL_REF_CHANGED'}
    $found=$true
   }
  }
