@@ -713,3 +713,67 @@ test('static AI Core subsystem registry is never accepted as runtime health proo
   assert.equal(aiCore.health.evidenceScope, 'registry-declaration-only');
   assert.equal(aiCore.health.liveRuntimeProven, false);
 });
+
+test('Stephanos AI repairs the real upstream health dependency before checking worker pickup', () => {
+  const expected = [
+    {
+      name: 'Commander unavailable',
+      value: { schemaVersion: 'stephanos.ai-sovereign-commander-health.v1',
+        readOnly: true, localLoopbackOnly: true, available: false, healthy: false,
+        state: 'UNKNOWN', blocker: 'COMMANDER_HEALTH_UNREACHABLE' },
+      owner: '#2573', step: 'VERIFY_COMMANDER_HEALTH_PROVENANCE',
+      readiness: 'UNVERIFIED',
+    },
+    {
+      name: 'untrusted observer',
+      value: { schemaVersion: 'stephanos.ai-sovereign-commander-health.v1',
+        readOnly: false, localLoopbackOnly: true, available: true, healthy: true,
+        state: 'SERVICE_REACHABLE' },
+      owner: '#2573', step: 'VERIFY_COMMANDER_HEALTH_PROVENANCE',
+      readiness: 'UNVERIFIED',
+    },
+    {
+      name: 'missing observation',
+      value: null,
+      owner: '#2573', step: 'VERIFY_COMMANDER_HEALTH_PROVENANCE',
+      readiness: 'UNVERIFIED',
+    },
+    {
+      name: 'degraded health',
+      value: { schemaVersion: 'stephanos.ai-sovereign-commander-health.v1',
+        readOnly: true, localLoopbackOnly: true, available: true, healthy: false,
+        state: 'SERVICE_DEGRADED', blocker: 'COMMANDER_HEALTH_NOT_READY' },
+      owner: '#2573', step: 'VERIFY_COMMANDER_HEALTH_PROVENANCE',
+      readiness: 'UNVERIFIED',
+    },
+    {
+      name: 'reachable but fixed runtime absent',
+      value: { schemaVersion: 'stephanos.ai-sovereign-commander-health.v1',
+        readOnly: true, localLoopbackOnly: true, available: true, healthy: true,
+        state: 'SERVICE_REACHABLE',
+        guardian: { lastOk: false, lastBlocker: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING' } },
+      owner: '#2961', step: 'VERIFY_EXACT_MAIN_FIXED_RUNTIME_INSTALLATION',
+      readiness: 'BLOCKED',
+    },
+    {
+      name: 'reachable guardian success is only partial',
+      value: { schemaVersion: 'stephanos.ai-sovereign-commander-health.v1',
+        readOnly: true, localLoopbackOnly: true, available: true, healthy: true,
+        state: 'SERVICE_REACHABLE', guardian: { lastOk: true } },
+      owner: '#2961', step: 'VERIFY_CANONICAL_NATIVE_WORKER_PICKUP',
+      readiness: 'PARTIAL',
+    },
+  ];
+  for (const item of expected) {
+    const diagnostic = projectStephanosSystemDiagnosticV1({
+      aiRouteConfigured: true, commanderObservation: item.value,
+    });
+    assert.equal(diagnostic.readiness, item.readiness, item.name);
+    assert.equal(diagnostic.nextProofOwnerGoal, item.owner, item.name);
+    assert.equal(diagnostic.nextSafeStep, item.step, item.name);
+    assert.equal(diagnostic.physicalWorkerPickupProven, false, item.name);
+    assert.equal(diagnostic.aiModelExecutionProven, false, item.name);
+    assert.equal(diagnostic.sourceMutationAllowed, false, item.name);
+    assert.equal(diagnostic.mergeAuthority, false, item.name);
+  }
+});

@@ -64,10 +64,14 @@ export function projectStephanosSystemDiagnosticV1({
     readOnly: true,
     sourceMutationAllowed: false,
     mergeAuthority: false,
-    nextProofOwnerGoal: '#2961',
-    nextSafeStep: recordedRepairFailed && recordedBlocker === 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING'
-      ? 'VERIFY_EXACT_MAIN_FIXED_RUNTIME_INSTALLATION'
-      : 'VERIFY_CANONICAL_NATIVE_WORKER_PICKUP',
+    // Verify the private owner before asking its downstream worker for
+    // evidence. A missing/untrusted Commander observation is not a worker gap.
+    nextProofOwnerGoal: commanderReachable ? '#2961' : '#2573',
+    nextSafeStep: !commanderReachable
+      ? 'VERIFY_COMMANDER_HEALTH_PROVENANCE'
+      : recordedRepairFailed && recordedBlocker === 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING'
+        ? 'VERIFY_EXACT_MAIN_FIXED_RUNTIME_INSTALLATION'
+        : 'VERIFY_CANONICAL_NATIVE_WORKER_PICKUP',
   });
 }
 
@@ -106,7 +110,9 @@ const tools = [
       return {
         output_text: 'Stephanos readiness: ' + diagnostic.readiness + '. '
           + commanderText + '. Evidence blocker: ' + diagnostic.blocker
-          + '. Protected runtime installation, local model execution and real goal pickup are not proven by this status.',
+          + '. Next verification: ' + diagnostic.nextSafeStep
+          + ' (owner ' + diagnostic.nextProofOwnerGoal + ').'
+          + ' Protected runtime installation, local model execution and real goal pickup are not proven by this status.',
         data: {
           ai_available: context.aiAvailable === true,
           ai_available_proven: false,
