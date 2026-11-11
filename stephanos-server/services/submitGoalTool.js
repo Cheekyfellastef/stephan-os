@@ -30,10 +30,15 @@ function hold(number,blocker,uncertain=false) {
 // It reuses exactly the existing Stephanos executive handoff and canonical
 // goal-admission service; missing alignment, original custody or wrong goal holds.
 export async function submitGoalThroughStephanosV1(args={},context={},options={}) {
-  const number=issue(args?.goalIssue);
-  if(!number || !args || typeof args!=='object' || Array.isArray(args)
+  // Use a data-property descriptor; arbitrary accessor values never run.
+  if(!args || typeof args!=='object' || Array.isArray(args)
     || Reflect.ownKeys(args).length!==1 || !Object.hasOwn(args,'goalIssue'))
     return hold(null,'GOAL_ISSUE_NUMBER_INVALID');
+  const descriptor=Object.getOwnPropertyDescriptor(args,'goalIssue');
+  if(!descriptor || !Object.hasOwn(descriptor,'value'))
+    return hold(null,'GOAL_ISSUE_NUMBER_INVALID');
+  const number=issue(descriptor.value);
+  if(!number)return hold(null,'GOAL_ISSUE_NUMBER_INVALID');
   if(options?.bridge && options.testOnly!==true)
     throw new TypeError('submitGoal test dependency cannot be used in production');
   if(!context?.knowledgeTwin) return hold(number,'OPERATOR_ALIGNMENT_EVIDENCE_REQUIRED');
