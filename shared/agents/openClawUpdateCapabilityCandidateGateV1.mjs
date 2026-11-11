@@ -6,6 +6,10 @@ import {
   OPENCLAW_UPDATE_POST_PROOF_SCHEMA,
   OPENCLAW_UPDATE_PRESERVATION_COMPARISON_SCHEMA,
   OPENCLAW_UPDATE_APPLY_RECEIPT_SCHEMA,
+  OPENCLAW_UPDATE_APPROVAL_SCHEMA,
+  OPENCLAW_UPDATE_STAGE_SCHEMA,
+  OPENCLAW_UPDATE_BACKUP_SCHEMA,
+  OPENCLAW_EXPECTED_OPERATOR,
 } from './openClawStagedUpdateV1.mjs';
 import {
   OPENCLAW_TASK_CLASS,
@@ -247,6 +251,58 @@ const ROLLBACK_STEPS_PRODUCER = Object.freeze([
   OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_ROLLBACK,
 ]);
 // Source-consistency check only. It cannot certify a private native Gateway.
+
+function sourceBoundApprovalStageBackup(e,id,protectedEntries){
+  const approval=plainDataRecord(e.approval),stage=plainDataRecord(e.stage),backup=plainDataRecord(e.backupSet);
+  if(!approval||!stage||!backup)return false;
+  const aKeys=['schema','approvalId','approvedBy','repository','sourceHead','manifestSha256','packetId','packetSha256','targetVersion','mutationScope','singleUse','approvedAtUtc','expiresAtUtc'];
+  const sKeys=['schema','stageId','packetId','packetSha256','targetVersion','isolationClass','insideRepository','insideOpenClawInstall','packageEntryCount','executableEntryCount','observedAtUtc'];
+  const bKeys=['schema','backupSetId','manifestSha256','storageClass','insideRepository','insideOpenClawInstall','createdAtUtc','entries','backupSetSha256'];
+  if(!exactProducerKeys(approval,aKeys)||!exactProducerKeys(stage,sKeys)||!exactProducerKeys(backup,bKeys))return false;
+  const now=Date.now();
+  function timestamp(v){if(typeof v!=='string'||!v.endsWith('Z'))return null;
+    const t=Date.parse(v);return Number.isFinite(t)&&new Date(t).toISOString()===v?t:null;}
+  const approved=timestamp(approval.approvedAtUtc),expires=timestamp(approval.expiresAtUtc),
+    stagedAt=timestamp(stage.observedAtUtc),backedAt=timestamp(backup.createdAtUtc);
+  if(approval.schema!==OPENCLAW_UPDATE_APPROVAL_SCHEMA||!safeId(approval.approvalId)
+     ||approval.approvedBy!==OPENCLAW_EXPECTED_OPERATOR
+     ||approval.repository!==id.repository||approval.sourceHead!==id.sourceHead
+     ||approval.manifestSha256!==id.manifestSha256||approval.packetId!==id.packetId
+     ||approval.packetSha256!==id.packetSha256||approval.targetVersion!==id.targetVersion
+     ||approval.mutationScope!==OPENCLAW_STAGED_UPDATE_ACTION.APPLY_UPDATE
+     ||approval.singleUse!==true||approved===null||expires===null
+     ||approved>now+60000||expires<=now||expires<=approved)return false;
+  if(stage.schema!==OPENCLAW_UPDATE_STAGE_SCHEMA||!safeId(stage.stageId)
+     ||stage.packetId!==id.packetId||stage.packetSha256!==id.packetSha256
+     ||stage.targetVersion!==id.targetVersion||stage.isolationClass!=='ISOLATED_EXTERNAL_STAGING'
+     ||stage.insideRepository!==false||stage.insideOpenClawInstall!==false
+     ||!Number.isSafeInteger(stage.packageEntryCount)||stage.packageEntryCount<=0
+     ||stage.executableEntryCount!==1||stagedAt===null||stagedAt>now+60000)return false;
+  if(backup.schema!==OPENCLAW_UPDATE_BACKUP_SCHEMA||!safeId(backup.backupSetId)
+     ||backup.manifestSha256!==id.manifestSha256
+     ||backup.storageClass!=='ISOLATED_EXTERNAL_BACKUP'
+     ||backup.insideRepository!==false||backup.insideOpenClawInstall!==false
+     ||backedAt===null||backedAt>now+60000
+     ||!/^[a-f0-9]{64}$/i.test(text(backup.backupSetSha256)))return false;
+  const entries=denseArray(backup.entries,512);
+  if(!entries||entries.length!==protectedEntries.length||!entries.length)return false;
+  const expected=new Map(),seen=new Set();
+  for(const raw of protectedEntries){
+     const rec=plainDataRecord(raw,['pathFingerprintSha256','sourceDigestSha256']);
+     if(!rec||expected.has(rec.pathFingerprintSha256))return false;
+     expected.set(rec.pathFingerprintSha256,rec.sourceDigestSha256);
+  }
+  for(const raw of entries){
+     const rec=plainDataRecord(raw,['pathFingerprintSha256','sourceDigestSha256','backupDigestSha256','backupObjectId']);
+     if(!rec||seen.has(rec.pathFingerprintSha256)
+       ||rec.sourceDigestSha256!==expected.get(rec.pathFingerprintSha256)
+       ||!/^[a-f0-9]{64}$/i.test(text(rec.backupDigestSha256))
+       ||!safeId(rec.backupObjectId))return false;
+     seen.add(rec.pathFingerprintSha256);
+  }
+  return true;
+}
+
 function hasPostUpdateProducerEvidence(staged, id) {
   const e = plainDataRecord(staged.evidence, [
     'preflight','approval','stage','backupSet','applyReceipt',
@@ -282,7 +338,8 @@ function hasPostUpdateProducerEvidence(staged, id) {
     || !safeId(compare.comparisonId) || compare.manifestSha256 !== id.manifestSha256) return false;
   const protectedEntries=denseArray(pre.protectedEntries,512),comparisonEntries=denseArray(compare.entries,512);
   if (!protectedEntries || !comparisonEntries || protectedEntries.length === 0
-    || protectedEntries.length !== comparisonEntries.length) return false;
+    || protectedEntries.length !== comparisonEntries.length
+    || !sourceBoundApprovalStageBackup(e,id,protectedEntries)) return false;
   const digest=/^[a-f0-9]{64}$/i,expected=new Map();
   for (const raw of protectedEntries) {
     const item=plainDataRecord(raw);

@@ -75,9 +75,22 @@ function postUpdateEvidenceFixture(id) {
   return {
     preflight:{...id,gatewayEndpoint:OPENCLAW_APPROVED_GATEWAY_ENDPOINT,
       protectedEntries:[{pathFingerprintSha256:fp,sourceDigestSha256:bytes}]},
-    approval:{approvalId:'approval-1',singleUse:true},
-    stage:{stageId:'stage-1',packetId:id.packetId,packetSha256:id.packetSha256},
-    backupSet:{backupSetId:'backup-1',manifestSha256:id.manifestSha256},
+    approval:{schema:'stephanos.openclaw-update-approval.v1',approvalId:'approval-1',approvedBy:'Cheekyfellastef',
+      repository:id.repository,sourceHead:id.sourceHead,manifestSha256:id.manifestSha256,
+      packetId:id.packetId,packetSha256:id.packetSha256,targetVersion:id.targetVersion,
+      mutationScope:OPENCLAW_STAGED_UPDATE_ACTION.APPLY_UPDATE,singleUse:true,
+      approvedAtUtc:new Date(Date.now()-60000).toISOString(),
+      expiresAtUtc:new Date(Date.now()+86400000).toISOString()},
+    stage:{schema:'stephanos.openclaw-update-stage.v1',stageId:'stage-1',
+      packetId:id.packetId,packetSha256:id.packetSha256,targetVersion:id.targetVersion,
+      isolationClass:'ISOLATED_EXTERNAL_STAGING',insideRepository:false,insideOpenClawInstall:false,
+      packageEntryCount:1,executableEntryCount:1,observedAtUtc:new Date().toISOString()},
+    backupSet:{schema:'stephanos.openclaw-update-backup-set.v1',backupSetId:'backup-1',
+      manifestSha256:id.manifestSha256,storageClass:'ISOLATED_EXTERNAL_BACKUP',
+      insideRepository:false,insideOpenClawInstall:false,createdAtUtc:new Date().toISOString(),
+      backupSetSha256:'f'.repeat(64),
+      entries:[{pathFingerprintSha256:fp,sourceDigestSha256:bytes,
+        backupDigestSha256:bytes,backupObjectId:'backup:oc8'}]},
     applyReceipt:{schema:OPENCLAW_UPDATE_APPLY_RECEIPT_SCHEMA,receiptId:'apply-1',mutationAttempted:true,
       approvalId:'approval-1',stageId:'stage-1',backupSetId:'backup-1',repository:id.repository,
       sourceHead:id.sourceHead,manifestSha256:id.manifestSha256,packetId:id.packetId,
@@ -100,6 +113,8 @@ function retargetProducerFixture(value, version) {
   // same target identity. Test setup must not simulate contradictory evidence.
   if (value.evidence) {
     value.evidence.preflight.targetVersion = version;
+    value.evidence.approval.targetVersion = version;
+    value.evidence.stage.targetVersion = version;
     value.evidence.applyReceipt.targetVersion = version;
     value.evidence.postUpdateProof.observedVersion = version;
   }
@@ -1587,5 +1602,34 @@ test('post-update producer health, preservation and fixed plan projections fail 
     assert.equal(out.updatePromotionAllowed,false,String(i));
     assert.equal(out.providerRoutingResumeAllowed,false,String(i));
     assert.ok(out.blockers.includes('STAGED_UPDATE_POST_PRODUCER_EVIDENCE_UNPROVEN'),String(i));
+  }
+});
+
+test('post-update producer custody fields fail closed rather than promoting routing',()=>{
+  const make=()=>({stagedUpdate:staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED),
+    capabilityLedger:ledger(),qualificationReplay:[replay(OPENCLAW_TASK_CLASS.OC1)]});
+  const good=evaluateOpenClawUpdateCapabilityCandidateV1(make());
+  assert.equal(good.updatePromotionAllowed,true,good.blockers.join(','));
+  const cases=[
+    p=>p.stagedUpdate.evidence.approval.approvedBy='not-operator',
+    p=>p.stagedUpdate.evidence.approval.mutationScope='ARBITRARY_SHELL',
+    p=>p.stagedUpdate.evidence.approval.sourceHead='f'.repeat(40),
+    p=>p.stagedUpdate.evidence.approval.repository='foreign/repo',
+    p=>p.stagedUpdate.evidence.approval.expiresAtUtc='2001-01-01T00:00:00.000Z',
+    p=>p.stagedUpdate.evidence.approval.approvedAtUtc='3026-01-01T00:00:00.000Z',
+    p=>p.stagedUpdate.evidence.stage.isolationClass='STAGED_INSIDE_REPO',
+    p=>p.stagedUpdate.evidence.stage.insideRepository=true,
+    p=>p.stagedUpdate.evidence.stage.executableEntryCount=2,
+    p=>p.stagedUpdate.evidence.stage.targetVersion='0.0.0',
+    p=>p.stagedUpdate.evidence.backupSet.storageClass='UNPROTECTED',
+    p=>p.stagedUpdate.evidence.backupSet.insideOpenClawInstall=true,
+    p=>p.stagedUpdate.evidence.backupSet.entries=[],
+  ];
+  for(let i=0;i<cases.length;i++){
+    const input=make();cases[i](input);
+    const actual=evaluateOpenClawUpdateCapabilityCandidateV1(input);
+    assert.equal(actual.updatePromotionAllowed,false,'mutation '+i);
+    assert.equal(actual.providerRoutingResumeAllowed,false,'mutation '+i);
+    assert.ok(actual.blockers.includes('STAGED_UPDATE_POST_PRODUCER_EVIDENCE_UNPROVEN'),'mutation '+i);
   }
 });
