@@ -676,7 +676,11 @@ test('healthy Commander service and even a successful guardian do not prove a mo
       schemaVersion: 'stephanos.ai-sovereign-commander-health.v1',
       readOnly: true, localLoopbackOnly: true,
       available: true, healthy: true, state: 'SERVICE_REACHABLE',
-      guardian: { lastOk: true, lastSourceHead: 'a'.repeat(40) },
+      observedAtUtc: '2026-11-11T13:00:00.000Z',
+      guardian: { lastOk: true, lastSourceHead: 'a'.repeat(40),
+        running: false, maintenanceInFlight: false, timeoutCustodyHeld: false, custodyHeld: false,
+        operationalState: 'WAITING', lastCompletedAgeMs: 1_000,
+        lastCompletedAtUtc: '2026-11-11T12:59:59.000Z' },
     },
   });
   assert.equal(status.readiness, 'PARTIAL');
@@ -759,7 +763,10 @@ test('Stephanos AI repairs the real upstream health dependency before checking w
       name: 'reachable guardian success is only partial',
       value: { schemaVersion: 'stephanos.ai-sovereign-commander-health.v1',
         readOnly: true, localLoopbackOnly: true, available: true, healthy: true,
-        state: 'SERVICE_REACHABLE', guardian: { lastOk: true } },
+        state: 'SERVICE_REACHABLE', observedAtUtc: '2026-11-11T13:00:00.000Z',
+        guardian: { lastOk: true, running: false, maintenanceInFlight: false,
+          timeoutCustodyHeld: false, custodyHeld: false, operationalState: 'WAITING',
+          lastCompletedAgeMs: 1_000, lastCompletedAtUtc: '2026-11-11T12:59:59.000Z' } },
       owner: '#2961', step: 'VERIFY_CANONICAL_NATIVE_WORKER_PICKUP',
       readiness: 'PARTIAL',
     },
@@ -836,4 +843,65 @@ test('reachable Commander with failed upstream maintenance never recommends down
     assert.equal(diagnostic.sourceMutationAllowed, false, lastBlocker);
     assert.equal(diagnostic.mergeAuthority, false, lastBlocker);
   }
+});
+
+test('Stephanos AI gives current guardian custody priority over historical success', () => {
+  const live = {
+    schemaVersion: 'stephanos.ai-sovereign-commander-health.v1',
+    readOnly: true, localLoopbackOnly: true, available: true, healthy: true,
+    state: 'SERVICE_REACHABLE', observedAtUtc: '2026-11-11T13:00:00.000Z',
+  };
+  const success = {
+    lastOk: true, running: false, maintenanceInFlight: false, timeoutCustodyHeld: false,
+    custodyHeld: false, operationalState: 'WAITING',
+    lastCompletedAtUtc: '2026-11-11T12:59:59.000Z', lastCompletedAgeMs: 1_000,
+    lastSourceHead: 'a'.repeat(40),
+  };
+  const samples = [
+    ['verified recent terminal', success, 'PARTIAL', 'VERIFY_CANONICAL_NATIVE_WORKER_PICKUP', true],
+    ['new operation running', { ...success, running: true, maintenanceInFlight: true,
+      operationalState: 'WORKING' }, 'BLOCKED', 'WAIT_FOR_SOVEREIGN_MAINTENANCE_TERMINAL_PROOF', false],
+    ['held timeout custody', { ...success, timeoutCustodyHeld: true, operationalState: 'HELD' },
+      'BLOCKED', 'VERIFY_SOVEREIGN_GUARDIAN_HELD_CUSTODY', false],
+    ['held original custody', { ...success, custodyHeld: true, operationalState: 'HELD' },
+      'BLOCKED', 'VERIFY_SOVEREIGN_GUARDIAN_HELD_CUSTODY', false],
+    ['unknown guardian', { ...success, operationalState: 'UNKNOWN' },
+      'UNVERIFIED', 'VERIFY_SOVEREIGN_GUARDIAN_TERMINAL_PROOF', false],
+    ['disabled guardian', { ...success, operationalState: 'DISABLED' },
+      'UNVERIFIED', 'VERIFY_SOVEREIGN_GUARDIAN_TERMINAL_PROOF', false],
+    ['no completion age', { ...success, lastCompletedAgeMs: null },
+      'UNVERIFIED', 'VERIFY_SOVEREIGN_GUARDIAN_TERMINAL_PROOF', false],
+    ['no completion timestamp', { ...success, lastCompletedAtUtc: '' },
+      'UNVERIFIED', 'VERIFY_SOVEREIGN_GUARDIAN_TERMINAL_PROOF', false],
+    ['stale successful completion', { ...success, lastCompletedAgeMs: 45 * 24 * 60 * 60_000,
+      lastCompletedAtUtc: '2026-09-27T13:00:00.000Z' },
+      'UNVERIFIED', 'VERIFY_SOVEREIGN_GUARDIAN_TERMINAL_PROOF', false],
+    ['completed after observation', { ...success, lastCompletedAtUtc: '2026-11-11T13:00:05.000Z' },
+      'UNVERIFIED', 'VERIFY_SOVEREIGN_GUARDIAN_TERMINAL_PROOF', false],
+    ['malformed completion age', { ...success, lastCompletedAgeMs: '1000' },
+      'UNVERIFIED', 'VERIFY_SOVEREIGN_GUARDIAN_TERMINAL_PROOF', false],
+  ];
+  for (const [name, guardian, readiness, nextSafeStep, verifiedSuccess] of samples) {
+    const status = projectStephanosSystemDiagnosticV1({
+      aiRouteConfigured: true, commanderObservation: { ...live, guardian },
+    });
+    assert.equal(status.readiness, readiness, name);
+    assert.equal(status.nextSafeStep, nextSafeStep, name);
+    assert.equal(status.guardianLastRepairSucceeded, verifiedSuccess, name);
+    assert.equal(status.guardianLastRepairRecordedSucceeded, true, name);
+    assert.equal(status.guardianLastSourceHeadIsInstalledProof, false, name);
+    assert.equal(status.installedFixedRuntimeProven, false, name);
+    assert.equal(status.physicalWorkerPickupProven, false, name);
+    assert.equal(status.aiModelExecutionProven, false, name);
+    assert.equal(status.sourceMutationAllowed, false, name);
+    assert.equal(status.mergeAuthority, false, name);
+  }
+  const unreachable = projectStephanosSystemDiagnosticV1({
+    commanderObservation: { ...live, available: false, healthy: false,
+      state: 'UNKNOWN', blocker: 'COMMANDER_HEALTH_UNREACHABLE', guardian: success },
+  });
+  assert.equal(unreachable.readiness, 'UNVERIFIED');
+  assert.equal(unreachable.guardianLastRepairSucceeded, false);
+  assert.equal(unreachable.guardianLastRepairRecordedSucceeded, false);
+  assert.equal(unreachable.nextSafeStep, 'VERIFY_COMMANDER_HEALTH_PROVENANCE');
 });

@@ -32,10 +32,25 @@ export function projectStephanosSystemDiagnosticV1({
     && observation.state === 'SERVICE_REACHABLE';
   const guardian = observation?.guardian && typeof observation.guardian === 'object'
     && !Array.isArray(observation.guardian) ? observation.guardian : null;
-  // A reachable service without an explicit guardian terminal outcome is not
-  // proof that its upstream maintenance gate passed.
-  const guardianTerminalUnverified = commanderReachable
-    && guardian?.lastOk !== true && guardian?.lastOk !== false;
+  // The guardian's lastOk is historical. A previous success must not
+  // authorize downstream worker advice while a newer maintenance cycle is
+  // running/held, or when the last terminal result is old/unbound.
+  const guardianHeld = commanderReachable && (guardian?.timeoutCustodyHeld === true
+    || guardian?.custodyHeld === true || guardian?.operationalState === 'HELD');
+  const guardianWorking = commanderReachable && !guardianHeld
+    && (guardian?.running === true || guardian?.maintenanceInFlight === true
+      || guardian?.operationalState === 'WORKING');
+  const terminalAtMs = Date.parse(guardian?.lastCompletedAtUtc || '');
+  const observedAtMs = Date.parse(observation?.observedAtUtc || '');
+  const currentSuccess = commanderReachable && guardian?.lastOk === true
+    && !guardianWorking && !guardianHeld
+    && guardian?.running === false && guardian?.maintenanceInFlight === false
+    && guardian?.timeoutCustodyHeld === false && guardian?.custodyHeld === false
+    && ['WAITING', 'NO_NEXT_CYCLE'].includes(guardian?.operationalState)
+    && Number.isSafeInteger(guardian?.lastCompletedAgeMs)
+    && guardian.lastCompletedAgeMs >= 0 && guardian.lastCompletedAgeMs <= 60_000
+    && Number.isFinite(terminalAtMs) && Number.isFinite(observedAtMs)
+    && terminalAtMs <= observedAtMs && observedAtMs - terminalAtMs <= 60_000;
   const recordedRepairFailed = commanderReachable && guardian?.lastOk === false;
   const recordedBlocker = recordedRepairFailed
     && typeof guardian?.lastBlocker === 'string'
@@ -44,20 +59,25 @@ export function projectStephanosSystemDiagnosticV1({
   const healthBlocker = !commanderReachable && typeof observation?.blocker === 'string'
     && /^[A-Z0-9][A-Z0-9._:-]{0,159}$/.test(observation.blocker)
     ? observation.blocker : '';
-  const readiness = !commanderReachable || guardianTerminalUnverified ? 'UNVERIFIED'
-    : recordedRepairFailed ? 'BLOCKED' : 'PARTIAL';
+  const readiness = !commanderReachable ? 'UNVERIFIED'
+    : guardianHeld || guardianWorking || recordedRepairFailed ? 'BLOCKED'
+      : currentSuccess ? 'PARTIAL' : 'UNVERIFIED';
   const blocker = !commanderReachable
     ? healthBlocker || 'COMMANDER_HEALTH_UNVERIFIED'
-    : guardianTerminalUnverified ? 'SOVEREIGN_GUARDIAN_TERMINAL_PROOF_UNVERIFIED'
-      : recordedRepairFailed ? recordedBlocker || 'SOVEREIGN_LAST_REPAIR_FAILED'
-        : 'PHYSICAL_WORKER_PICKUP_UNPROVEN';
+    : guardianHeld ? 'SOVEREIGN_GUARDIAN_CUSTODY_HELD'
+      : guardianWorking ? 'SOVEREIGN_GUARDIAN_MAINTENANCE_IN_FLIGHT'
+        : recordedRepairFailed ? recordedBlocker || 'SOVEREIGN_LAST_REPAIR_FAILED'
+          : currentSuccess ? 'PHYSICAL_WORKER_PICKUP_UNPROVEN'
+            : 'SOVEREIGN_GUARDIAN_TERMINAL_PROOF_UNVERIFIED';
   const nextSafeStep = !commanderReachable ? 'VERIFY_COMMANDER_HEALTH_PROVENANCE'
-    : guardianTerminalUnverified ? 'VERIFY_SOVEREIGN_GUARDIAN_TERMINAL_PROOF'
-      : recordedRepairFailed
-        ? recordedBlocker === 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING'
-          ? 'VERIFY_EXACT_MAIN_FIXED_RUNTIME_INSTALLATION'
-          : 'VERIFY_SOVEREIGN_MAINTENANCE_BLOCKER'
-        : 'VERIFY_CANONICAL_NATIVE_WORKER_PICKUP';
+    : guardianHeld ? 'VERIFY_SOVEREIGN_GUARDIAN_HELD_CUSTODY'
+      : guardianWorking ? 'WAIT_FOR_SOVEREIGN_MAINTENANCE_TERMINAL_PROOF'
+        : recordedRepairFailed
+          ? recordedBlocker === 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING'
+            ? 'VERIFY_EXACT_MAIN_FIXED_RUNTIME_INSTALLATION'
+            : 'VERIFY_SOVEREIGN_MAINTENANCE_BLOCKER'
+          : currentSuccess ? 'VERIFY_CANONICAL_NATIVE_WORKER_PICKUP'
+            : 'VERIFY_SOVEREIGN_GUARDIAN_TERMINAL_PROOF';
   const nextProofOwnerGoal = nextSafeStep === 'VERIFY_CANONICAL_NATIVE_WORKER_PICKUP'
     || nextSafeStep === 'VERIFY_EXACT_MAIN_FIXED_RUNTIME_INSTALLATION'
     ? '#2961' : '#2573';
@@ -66,7 +86,11 @@ export function projectStephanosSystemDiagnosticV1({
     readiness,
     blocker,
     commanderReachable,
-    guardianLastRepairSucceeded: guardian?.lastOk === true,
+    guardianLastRepairSucceeded: currentSuccess,
+    guardianLastRepairRecordedSucceeded: commanderReachable && guardian?.lastOk === true,
+    guardianCurrentMaintenanceHeld: guardianHeld,
+    guardianCurrentMaintenanceWorking: guardianWorking,
+    guardianLastSourceHeadIsInstalledProof: false,
     guardianLastRepairFailed: recordedRepairFailed,
     guardianLastBlocker: recordedBlocker,
     guardianLastSourceHead: /^[a-f0-9]{40}$/.test(guardian?.lastSourceHead || '')
