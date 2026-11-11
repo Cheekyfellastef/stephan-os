@@ -20,19 +20,26 @@ export function classifyQwen35CanaryGovernorV1(record, nowMs = Date.now()) {
   // infer idle. The real Windows writer includes updatedAtUtc in every state.
   const observedAtMs = typeof record?.updatedAtUtc === 'string'
     ? Date.parse(record.updatedAtUtc) : NaN;
+  // Match the already-protected Core's strict gaming observer. A permissive
+  // Qwen-specific freshness window must never outlive Core protection.
+  const gamingFlags = ['active', 'flatGameActive', 'airLinkActive',
+    'realAirLinkActive', 'virtualAirLinkTestActive', 'prepareLeaseActive'];
   if (!record || typeof record !== 'object' || Array.isArray(record)
     || ![Object.prototype, null].includes(Object.getPrototypeOf(record))
     || record.schemaVersion !== 'stephanos.vr-resource-governor.v1'
-    || typeof record.active !== 'boolean'
+    || record.governorVersion !== 3
+    || typeof record.phase !== 'string'
+    || gamingFlags.some(key => typeof record[key] !== 'boolean')
     || typeof record.localModelAllowed !== 'boolean'
     || typeof record.heavyModelAllowed !== 'boolean'
     || !Number.isFinite(nowMs) || !Number.isFinite(observedAtMs)
-    || observedAtMs - nowMs > 5_000 || nowMs - observedAtMs > 180_000) {
+    || observedAtMs > nowMs || nowMs - observedAtMs > 15_000) {
     return decision(true, 'QWEN35_CANARY_GOVERNOR_UNPROVEN');
   }
-  // A 27B model requires both explicit workload and heavy-residency consent.
-  // Even a stale inactive flag cannot overrule a retained denial.
-  if (record.localModelAllowed !== true || record.heavyModelAllowed !== true) {
+  // This 27B model is a new heavy load: every game/session flag must be
+  // explicitly false, the phase NORMAL and both consent flags explicitly true.
+  if (record.phase !== 'NORMAL' || gamingFlags.some(key => record[key] !== false)
+    || record.localModelAllowed !== true || record.heavyModelAllowed !== true) {
     return decision(true, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR');
   }
   return decision(false);
