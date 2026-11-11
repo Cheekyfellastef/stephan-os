@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   OPENCLAW_STAGED_UPDATE_SCHEMA,
   OPENCLAW_STAGED_UPDATE_STATUS,
@@ -255,6 +256,28 @@ const ROLLBACK_STEPS_PRODUCER = Object.freeze([
 ]);
 // Source-consistency check only. It cannot certify a private native Gateway.
 
+// Compare the actual producer-defined backup-set digest, not merely SHA-256 syntax.
+// Source consistency only: this cannot certify a private native backup witness.
+function canonicalBackupSetJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalBackupSetJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) =>
+      `${JSON.stringify(key)}:${canonicalBackupSetJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function producerBackupSetDigestMatches(backup, rawEntries) {
+  const keys=['pathFingerprintSha256','sourceDigestSha256','backupDigestSha256','backupObjectId'];
+  const entries=rawEntries.map((raw)=>plainDataRecord(raw,keys));
+  if (entries.some((item)=>!item)) return false;
+  const body={schema:backup.schema,backupSetId:backup.backupSetId,
+    manifestSha256:backup.manifestSha256,storageClass:backup.storageClass,
+    createdAtUtc:backup.createdAtUtc,
+    entries:entries.sort((a,b)=>a.pathFingerprintSha256.localeCompare(b.pathFingerprintSha256))};
+  return createHash('sha256').update(canonicalBackupSetJson(body)).digest('hex') === backup.backupSetSha256;
+}
+
 function sourceBoundApprovalStageBackup(e,id,protectedEntries){
   const approval=plainDataRecord(e.approval),stage=plainDataRecord(e.stage),backup=plainDataRecord(e.backupSet);
   if(!approval||!stage||!backup)return false;
@@ -303,7 +326,7 @@ function sourceBoundApprovalStageBackup(e,id,protectedEntries){
        ||!safeId(rec.backupObjectId))return false;
      seen.add(rec.pathFingerprintSha256);
   }
-  return true;
+  return producerBackupSetDigestMatches(backup,entries);
 }
 
 function hasPostUpdateProducerEvidence(staged, id) {
@@ -508,7 +531,7 @@ function hasRollbackProducerEvidence(staged, id) {
         || item.executed!==false) return false;
     }
   }
-  return true;
+  return producerBackupSetDigestMatches(backup,backupEntries);
 }
 
 export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {

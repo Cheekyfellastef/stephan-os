@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -103,9 +104,20 @@ function staged(status = OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY) {
   }
   return result;
 }
+function producerBackupHashForFixture(backup) {
+  const canon=(v)=>Array.isArray(v)?`[${v.map(canon).join(',')}]`:
+    v && typeof v==='object'? `{${Object.keys(v).sort().map(k=>`${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}`:
+    JSON.stringify(v);
+  const entries=[...backup.entries].sort((a,b)=>a.pathFingerprintSha256.localeCompare(b.pathFingerprintSha256));
+  const body={schema:backup.schema,backupSetId:backup.backupSetId,
+    manifestSha256:backup.manifestSha256,storageClass:backup.storageClass,
+    createdAtUtc:backup.createdAtUtc,entries};
+  return createHash('sha256').update(canon(body)).digest('hex');
+}
+
 function postUpdateEvidenceFixture(id) {
   const fp='d'.repeat(64),bytes='e'.repeat(64);
-  return {
+  const fixture = {
     preflight:{...id,gatewayEndpoint:OPENCLAW_APPROVED_GATEWAY_ENDPOINT,
       protectedEntries:[{pathFingerprintSha256:fp,sourceDigestSha256:bytes}]},
     approval:{schema:'stephanos.openclaw-update-approval.v1',approvalId:'approval-1',approvedBy:'Cheekyfellastef',
@@ -146,6 +158,8 @@ function postUpdateEvidenceFixture(id) {
       entries:[{pathFingerprintSha256:fp,beforeDigestSha256:bytes,afterDigestSha256:bytes}]},
     rollbackReceipt:null,rollbackProof:null,rollbackComparison:null,
   };
+  fixture.backupSet.backupSetSha256 = producerBackupHashForFixture(fixture.backupSet);
+  return fixture;
 }
 
 function comparisons(candidateVerdict = 'PASS') {
