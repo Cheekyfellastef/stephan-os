@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import process from 'node:process';
+import { classifyQwen35CanaryGovernorV1 } from '../shared/agents/qwen35CanaryGovernorAdmissionV1.mjs';
 
 const BASE_URL = 'http://127.0.0.1:11434';
 const MODEL = 'qwen3.5:27b';
@@ -12,18 +13,12 @@ const VR_GOVERNOR_STATE_PATH = resolve(homedir(), 'Documents', 'Stephanos-opencl
 
 function readVrResourceGovernorBlock() {
   try {
-    const state = JSON.parse(readFileSync(VR_GOVERNOR_STATE_PATH, 'utf8'));
-    const blocked = state?.schemaVersion === 'stephanos.vr-resource-governor.v1'
-      && state?.active === true
-      && state?.localModelAllowed === false;
-    return {
-      blocked,
-      phase: String(state?.phase || ''),
-      reason: String(state?.reason || ''),
-      loadedModelsAfter: Array.isArray(state?.loadedModelsAfter) ? state.loadedModelsAfter : [],
-    };
+    return classifyQwen35CanaryGovernorV1(
+      JSON.parse(readFileSync(VR_GOVERNOR_STATE_PATH, 'utf8')),
+    );
   } catch {
-    return { blocked: false, phase: '', reason: '', loadedModelsAfter: [] };
+    // Missing, unreadable and malformed governor data are UNKNOWN, never idle.
+    return classifyQwen35CanaryGovernorV1(null);
   }
 }
 
@@ -55,13 +50,14 @@ function fail(blocker, details = {}) {
   process.exitCode = 2;
 }
 
+let inferenceAttempted = false;
 const controller = new AbortController();
 const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
 try {
   const vrBlock = readVrResourceGovernorBlock();
   if (vrBlock.blocked) {
-    fail('QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR', vrBlock);
+    fail(vrBlock.blocker);
   } else {
   const tagsResponse = await fetch(`${BASE_URL}/api/tags`, { signal: controller.signal });
   if (!tagsResponse.ok) {
@@ -72,6 +68,13 @@ try {
     if (!models.includes(MODEL)) {
       fail('QWEN35_MODEL_NOT_INSTALLED', { availableModels: models });
     } else {
+      // A gaming transition can occur while the Ollama catalog is read.
+      // Re-check the same fixed local governor before starting the 27B load.
+      const beforeInference = readVrResourceGovernorBlock();
+      if (beforeInference.blocked) {
+        fail(beforeInference.blocker);
+      } else {
+      inferenceAttempted = true;
       const startedAt = Date.now();
       const response = await fetch(`${BASE_URL}/api/chat`, {
         method: 'POST',
@@ -103,6 +106,7 @@ try {
         })}\n`);
         if (!passed) process.exitCode = 3;
       }
+      }
     }
   }
   }
@@ -112,5 +116,5 @@ try {
   });
 } finally {
   clearTimeout(timer);
-  await unloadCanaryModel();
+  if (inferenceAttempted) await unloadCanaryModel();
 }
