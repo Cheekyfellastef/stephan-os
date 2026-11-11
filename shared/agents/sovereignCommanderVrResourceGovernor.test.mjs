@@ -188,7 +188,7 @@ test('Qwen canary never emits a global unload without authenticated model owners
   const body = qwen35Canary.replace(/^#![^\n]*\n/, '').replace(/^import [^\n]*\n/gm, '');
   const execute = new AsyncFunction('readFileSync', 'homedir', 'resolve', 'process',
     'classifyQwen35CanaryGovernorV1', 'fetch', 'AbortController',
-    'setTimeout', 'clearTimeout', body);
+    'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', body);
   const AbortStub = class { constructor() { this.signal = {}; } abort() {} };
   const governor = () => ({
     schemaVersion: 'stephanos.vr-resource-governor.v1',
@@ -220,12 +220,84 @@ test('Qwen canary never emits a global unload without authenticated model owners
     };
     await execute(() => JSON.stringify(state), () => '/virtual',
       () => '/virtual/governor', proc, classifyQwen35CanaryGovernorV1, fakeFetch,
-      AbortStub, () => 1, () => {});
+      AbortStub, () => 1, () => {}, () => ({ unref() {} }), () => {});
     assert.deepEqual(calls, mode === 'stale' ? []
       : ['tags', ...(['tags503', 'modelMissing'].includes(mode) ? [] : ['chat'])], mode);
     assert.equal(outputs.length, 1, mode);
     assert.equal(outputs[0].ok, mode === 'success', mode);
     assert.equal(proc.exitCode, mode === 'success' ? undefined : 2, mode);
+  }
+});
+
+
+test('Qwen 27B canary cancels on in-flight VR transition or stale governor and never returns false GREEN', async () => {
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const body = qwen35Canary.replace(/^#![^\n]*\n/, '').replace(/^import [^\n]*\n/gm, '');
+  const run = new AsyncFunction('readFileSync', 'homedir', 'resolve', 'process',
+    'classifyQwen35CanaryGovernorV1', 'fetch', 'AbortController',
+    'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', body);
+  const safe = () => ({
+    schemaVersion: 'stephanos.vr-resource-governor.v1',
+    governorVersion: 3, phase: 'NORMAL', updatedAtUtc: new Date().toISOString(),
+    active: false, flatGameActive: false, airLinkActive: false,
+    realAirLinkActive: false, virtualAirLinkTestActive: false,
+    prepareLeaseActive: false, localModelAllowed: true, heavyModelAllowed: true,
+  });
+  for (const mode of ['steady', 'during-flight', 'response-parse', 'stale-flight', 'transport-rejection']) {
+    let state = safe(), checkPoll, pollCleared = 0, aborted = false;
+    const requests = [], outputs = [];
+    const proc = { stdout: { write(text) { outputs.push(JSON.parse(text)); } },
+      exitCode: undefined };
+    const AbortStub = class {
+      constructor() { this.signal = { aborted: false }; }
+      abort() { this.signal.aborted = true; aborted = true; }
+    };
+    const gaming = () => {
+      state = { ...safe(), active: true, phase: 'GAMING' };
+    };
+    const http = async (url, options) => {
+      assert.match(url, /^http:\/\/127\.0\.0\.1:11434\/api\/(tags|chat)$/);
+      const endpoint = url.endsWith('/tags') ? 'tags' : 'chat';
+      requests.push(endpoint);
+      if (endpoint === 'tags') return { ok: true, json: async () =>
+        ({ models: [{ name: 'qwen3.5:27b' }] }) };
+      assert.equal(options.method, 'POST');
+      assert.equal(Object.hasOwn(JSON.parse(options.body), 'keep_alive'), false);
+      if (mode === 'during-flight' || mode === 'transport-rejection') {
+        gaming();
+        checkPoll();
+        if (mode === 'transport-rejection') throw new Error('cancelled HTTP request');
+      }
+      if (mode === 'stale-flight') {
+        state = { ...safe(), updatedAtUtc: new Date(Date.now() - 16000).toISOString() };
+        checkPoll();
+      }
+      return { ok: true, json: async () => {
+        if (mode === 'response-parse') gaming();
+        return { model: 'qwen3.5:27b', message: { content: 'QWEN35_CANARY_OK' } };
+      } };
+    };
+    await run(() => JSON.stringify(state), () => '/virtual',
+      () => '/virtual/governor', proc, classifyQwen35CanaryGovernorV1,
+      http, AbortStub, () => 1, () => {},
+      (callback) => { checkPoll = callback; return { unref() {} }; },
+      () => { pollCleared += 1; });
+    assert.deepEqual(requests, ['tags', 'chat'], mode);
+    assert.equal(pollCleared, 1, mode);
+    assert.equal(outputs.length, 1, mode);
+    if (mode === 'steady') {
+      assert.equal(outputs[0].ok, true, mode);
+      assert.equal(proc.exitCode, undefined, mode);
+      assert.equal(aborted, false, mode);
+    } else {
+      assert.equal(outputs[0].ok, false, mode);
+      assert.equal(proc.exitCode, 2, mode);
+      assert.equal(outputs[0].blocker, mode === 'stale-flight'
+        ? 'QWEN35_CANARY_GOVERNOR_UNPROVEN'
+        : 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR', mode);
+      assert.equal(aborted, true, mode);
+    }
+    assert.equal(requests.includes('generate'), false, mode);
   }
 });
 
