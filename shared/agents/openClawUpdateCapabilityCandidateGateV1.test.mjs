@@ -583,6 +583,7 @@ function rollbackProducerFixture() {
   const value=staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
   const id=value.exactIdentity,e=value.evidence;
   value.status=OPENCLAW_STAGED_UPDATE_STATUS.ROLLED_BACK_AND_VERIFIED;
+  value.nextAction='Publish the rollback receipt and keep the update blocked until a new preflight and approval are produced.';
   e.rollbackReceipt={
     schema:'stephanos.openclaw-update-rollback-receipt.v1',
     receiptId:'rollback-1',adapterId:'openclaw-bounded-update-adapter-v1',
@@ -607,6 +608,33 @@ function rollbackProducerFixture() {
   e.preservationComparison=null;
   return value;
 }
+
+
+test('rollback preserved verdict requires exact producer envelope and no hidden authority', () => {
+  const evaluate = stagedUpdate => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate, capabilityLedger:ledger(), qualificationReplay:[],
+  });
+  assert.equal(evaluate(rollbackProducerFixture()).status,
+    OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.ROLLED_BACK_AND_CAPABILITIES_PRESERVED);
+  const cases = [
+    ['root foreign authority',v=>{v.sourceMutationAllowed=true;},'STAGED_UPDATE_PRODUCER_ENVELOPE_INVALID'],
+    ['missing producer version',v=>{delete v.version;},'STAGED_UPDATE_PRODUCER_ENVELOPE_INVALID'],
+    ['residual blocker',v=>{v.blocker='UNRESOLVED';},'STAGED_UPDATE_PRODUCER_ENVELOPE_INVALID'],
+    ['forged rollback action',v=>{v.nextAction='EXECUTE_ARBITRARY_PRIVILEGED_SHELL';},'STAGED_UPDATE_PRODUCER_ENVELOPE_INVALID'],
+    ['wrong status action',v=>{v.nextAction='Publish UPDATED_AND_VERIFIED with the exact receipt and proof identities.';},'STAGED_UPDATE_PRODUCER_ENVELOPE_INVALID'],
+    ['extra safety authority',v=>{v.safety.providerMutationAllowed=true;},'STAGED_UPDATE_SAFETY_SCHEMA_DRIFT'],
+    ['extra identity authority',v=>{v.exactIdentity.providerQualificationAllowed=true;},'STAGED_UPDATE_EXACT_IDENTITY_SCHEMA_DRIFT'],
+    ['missing safety',v=>{delete v.safety.arbitraryShellAllowed;},'STAGED_UPDATE_SAFETY_SCHEMA_DRIFT'],
+  ];
+  for(const [label,mutate,blocker] of cases){
+    const candidate=rollbackProducerFixture();mutate(candidate);
+    const result=evaluate(candidate);
+    assert.equal(result.status,OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE,label);
+    assert.equal(result.updatePromotionAllowed,false,label);
+    assert.equal(result.providerRoutingResumeAllowed,false,label);
+    assert.ok(result.blockers.includes(blocker),label+':'+result.blockers.join(','));
+  }
+});
 
 test('rolled-back status requires actual producer rollback receipt and protected restoration proof', () => {
   const missing=evaluateOpenClawUpdateCapabilityCandidateV1({

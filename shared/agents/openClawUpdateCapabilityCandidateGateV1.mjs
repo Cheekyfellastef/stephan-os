@@ -579,7 +579,12 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
 
   const stagedStatus = text(staged.status);
   const blockers = [];
-  if (stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED) {
+  const producerVerifiedStatus = [
+    OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED,
+    OPENCLAW_STAGED_UPDATE_STATUS.ROLLED_BACK_AND_VERIFIED,
+  ].includes(stagedStatus);
+  // A rollback preservation attestation requires the same closed producer envelope.
+  if (producerVerifiedStatus) {
     const observedAt = text(staged.observedAtUtc);
     const observedMs = Date.parse(observedAt);
     if (!exactProducerKeys(staged, PRODUCER_STAGED_KEYS)
@@ -588,19 +593,21 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
       || new Date(observedMs).toISOString() !== observedAt
       || observedMs > Date.now() + 60_000
       || staged.blocker !== null
-      || staged.nextAction !== 'Publish UPDATED_AND_VERIFIED with the exact receipt and proof identities.') {
+      || staged.nextAction !== (stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
+        ? 'Publish UPDATED_AND_VERIFIED with the exact receipt and proof identities.'
+        : 'Publish the rollback receipt and keep the update blocked until a new preflight and approval are produced.')) {
       blockers.push('STAGED_UPDATE_PRODUCER_ENVELOPE_INVALID');
     }
   }
   // Read-only preflight can inspect older fixtures; post-update promotion must
   // retain both explicit, dense, empty blocker arrays from the trusted producers.
   if (Object.prototype.hasOwnProperty.call(staged, 'blockers')
-    || stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED) {
+    || producerVerifiedStatus) {
     const stagedBlockers = denseArray(staged.blockers, MAX_PROOF_REFS);
     if (!stagedBlockers || stagedBlockers.length !== 0) blockers.push('STAGED_UPDATE_BLOCKERS_NOT_EMPTY');
   }
   if (Object.prototype.hasOwnProperty.call(ledger, 'blockers')
-    || stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED) {
+    || producerVerifiedStatus) {
     const ledgerBlockers = denseArray(ledger.blockers, MAX_PROOF_REFS);
     if (!ledgerBlockers || ledgerBlockers.length !== 0) blockers.push('CAPABILITY_LEDGER_BLOCKERS_NOT_EMPTY');
   }
@@ -649,7 +656,7 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   )) {
     blockers.push('STAGED_UPDATE_SAFETY_CONTRADICTION');
   }
-  if (safety && stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
+  if (safety && producerVerifiedStatus
     && !exactProducerKeys(safety, [
       ...Object.keys(OPTIONAL_STAGED_SAFETY),
       'mutationAllowed', 'sourceMutationAllowed', 'mergeAuthority',
@@ -659,8 +666,8 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   // A positive post-update source projection must retain the full source
   // producer's bounded adapter/no-shell safety envelope. Legacy preflight can
   // still inspect a partial fixture, but must never promote provider routing.
-  if (safety && stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
-    // Post-update claims must carry the full producer safety envelope, even
+  if (safety && producerVerifiedStatus
+    // Verified producer claims must carry the full safety envelope, even
     // when all optional legacy-fixture keys are absent together.
     && (Object.keys(OPTIONAL_STAGED_SAFETY).some((key) =>
       !Object.prototype.hasOwnProperty.call(safety, key))
@@ -670,7 +677,7 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
 
   const identity = plainDataRecord(staged.exactIdentity);
   if (!identity) blockers.push('STAGED_UPDATE_IDENTITY_MISSING');
-  if (stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
+  if (producerVerifiedStatus
     && identity && !exactProducerKeys(identity, PRODUCER_EXACT_IDENTITY_KEYS)) {
     blockers.push('STAGED_UPDATE_EXACT_IDENTITY_SCHEMA_DRIFT');
   }
