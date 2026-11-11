@@ -51,6 +51,43 @@ test('director selects highest priority unblocked goal after dependencies are do
   assert.equal(selected.goalId, '#1316');
 });
 
+test('director returns no candidate when every unfinished goal is blocked or dependency-held', () => {
+  const selected = selectNextGoal({
+    goals: [
+      { goalId: '#blocked', priority: 100, blocker: 'Existing owner repair required.' },
+      { goalId: '#waiting', priority: 90, dependsOn: ['#missing'] },
+    ],
+  });
+
+  assert.equal(selected, null);
+});
+
+test('status packet reports held unfinished work instead of false done or false build', () => {
+  const status = createDirectorStatusPacket({
+    goals: [
+      { goalId: '#blocked', priority: 100, blocker: 'Existing owner repair required.' },
+      { goalId: '#waiting', priority: 90, dependsOn: ['#missing'] },
+    ],
+  });
+
+  assert.equal(status.directorState, GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION);
+  assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_HELD');
+  assert.equal(status.nextGoal, null);
+  assert.equal(status.nextSourceSlice, null);
+});
+
+test('status packet is idle only after every goal is complete', () => {
+  const status = createDirectorStatusPacket({
+    goals: [
+      { goalId: '#done', sourceMerged: true, focusedProofRecorded: true, missionStateUpdated: true },
+    ],
+  });
+
+  assert.equal(status.directorState, GOAL_STATE.DONE);
+  assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_IDLE');
+  assert.equal(status.nextGoal, null);
+});
+
 test('source slice packet preserves approval and exact-head merge rules', () => {
   const packet = createSourceSlicePacket({
     goal: createGoalRecord({ goalId: '#1316', title: 'Mission Flywheel Director', allowedFiles: ['shared/agents/missionFlywheelDirectorV1.mjs'] }),

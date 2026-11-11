@@ -6,8 +6,16 @@ import { tmpdir } from 'node:os';
 // Exercise the original #2002 continuation predicate in the existing
 // GitHub-hosted Goal-to-Builder Conveyor proof, without a new workflow.
 import '../shared/agents/goalBuildingAgentV1.continuation.test.mjs';
+import {
+  GOAL_BUILDING_CONTINUATION_STATES,
+  projectStephanosGoalContinuation,
+} from '../shared/agents/goalBuildingAgentV1.continuation.mjs';
 // Original Goal #1558 PR Estate proof runs inside the existing conveyor CI, no extra workflow.
 import '../shared/agents/prEstateReconciler.test.mjs';
+// Original #1558 CLI mode-boundary regression executes in the existing hosted Node conveyor proof.
+import '../scripts/pr-estate-reconcile.test.mjs'; // #1558: hosted gate also proves both empty --input/--from-gh orders with zero GH calls.
+// Original Goal #1451/#2670 Captain Bridge PR-open-state truth, using the existing conveyor CI.
+import '../shared/agents/captains-bridge-orchestrator.test.mjs';
 
 import {
   buildSchedulerGoalsFromProgrammeSources,
@@ -522,4 +530,64 @@ test('operator monitor does not bind a non-issue identity to an unrelated number
   assert.equal(journey.goal, 'release-7001-blue');
   assert.equal(journey.exactAutonomyTrackBound, false);
   assert.notEqual(journey.stages.find((stage) => stage.id === 'PICKED_UP')?.trafficLight, 'GREEN');
+});
+
+test('Goal #2002 conveyor: exact scheduler identity is required even with an otherwise valid lease', () => {
+  const protectedMainHead = '1'.repeat(40);
+  const sourceHead = '2'.repeat(40);
+  const checkpoint = {
+    checkpointId: 'resume-2002-principal-proof', missionId: 'mission-goal-building-continuity',
+    goalId: '2002', canonicalOwnerId: 'goal-building-agent',
+    repository: 'Cheekyfellastef/stephan-os', prNumber: 2003, branch: 'agent/goal-building-agent-v1',
+    protectedMainHead, sourceHead, sourceTree: '3'.repeat(40), phase: 'IMPLEMENT',
+    allowedPaths: ['shared/agents/goalBuildingAgentV1.continuation.mjs'],
+    leases: [{ leaseId: 'lease-principal-proof', resourceId: 'pr:2003',
+      ownerId: 'goal-building-agent', disposition: 'ACTIVE' }],
+    lastMaterialReceiptId: 'receipt-principal-proof', lastMaterialReceiptHead: sourceHead,
+    blockers: [], operatorGate: false, nextLegalAction: 'Continue original work.',
+    createdAtUtc: '2026-09-04T09:10:00.000Z',
+  };
+  const current = {
+    protectedMainHead, sourceHead, canonicalOwnerId: 'goal-building-agent',
+    leaseReadback: {
+      protectedMainHead, sourceHead, canonicalOwnerId: 'goal-building-agent',
+      observedAtUtc: new Date().toISOString(),
+      leases: checkpoint.leases.map((lease) => ({
+        ...lease, expiresAtUtc: new Date(Date.now() + 120_000).toISOString(),
+      })),
+    },
+  };
+  const schedulerCandidate = {
+    goalId: '2002', missionId: 'mission-goal-building-continuity',
+    canonicalOwnerId: 'goal-building-agent', schedulerEligible: true,
+    qualifiedProviderAvailable: true, operatorGate: false, resourceIds: ['pr:2003'],
+  };
+  const qualified = projectStephanosGoalContinuation({ checkpoint, current, schedulerCandidate });
+  assert.equal(qualified.state, GOAL_BUILDING_CONTINUATION_STATES.AUTO_CONTINUE_ELIGIBLE);
+  const missingOwner = projectStephanosGoalContinuation({
+    checkpoint, current, schedulerCandidate: { ...schedulerCandidate, canonicalOwnerId: '' },
+  });
+  assert.equal(missingOwner.state, GOAL_BUILDING_CONTINUATION_STATES.SAFE_HOLD);
+  assert.ok(missingOwner.reasons.includes('scheduler-owner-unproven'));
+  assert.equal(missingOwner.mayRequestExistingControllerContinuation, false);
+  assert.equal(missingOwner.mayRequestCapacityRefill, false);
+  assert.equal(missingOwner.protectedMergeAuthority, false);
+  assert.equal(missingOwner.runtimeMutationAuthority, false);
+  const partial = projectStephanosGoalContinuation({
+    checkpoint, current, schedulerCandidate: { ...schedulerCandidate, resourceIds: ['pr:2003', 'pr:2004'] },
+  });
+  assert.equal(partial.state, GOAL_BUILDING_CONTINUATION_STATES.BLOCKED_ROUTE_OWNER_REQUIRED);
+  assert.equal(partial.mayRequestExistingControllerContinuation, false);
+  assert.ok(partial.reasons.includes('continuation-active-owned-resource-lease-unproven'));
+
+  // Previous normalization could collapse two different resource keys into the
+  // same 180-character prefix. This remains SAFE_HOLD without a new lease.
+  const alias = 'r'.repeat(180);
+  const oversize = projectStephanosGoalContinuation({
+    checkpoint: { ...checkpoint, leases: [{ ...checkpoint.leases[0], resourceId: alias + 'extra' }] },
+    current, schedulerCandidate: { ...schedulerCandidate, resourceIds: [alias] },
+  });
+  assert.equal(oversize.state, GOAL_BUILDING_CONTINUATION_STATES.SAFE_HOLD);
+  assert.ok(oversize.reasons.includes('checkpoint-lease-resource-identity-invalid'));
+  assert.equal(oversize.mayRequestExistingControllerContinuation, false);
 });

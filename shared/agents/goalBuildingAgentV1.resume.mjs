@@ -38,6 +38,45 @@ function normalizedLease(value = {}) {
   });
 }
 
+const CANONICAL_CHECKPOINT_AUTHORITY = Object.freeze({
+  sourceBuildWithinExistingOwner: true,
+  protectedMerge: false,
+  readyTransition: false,
+  runtimeMutation: false,
+  windowsMutation: false,
+  openClawMutation: false,
+  credentialsOrSpending: false,
+  destructiveGit: false,
+  authorityWidening: false,
+});
+
+function suppliedAuthorityProblems(input) {
+  if (!Object.hasOwn(input, 'authority')) return [];
+  const supplied = input.authority;
+  if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) {
+    return ['checkpoint-supplied-authority-invalid'];
+  }
+  const problems = [];
+  for (const [field, expected] of Object.entries(CANONICAL_CHECKPOINT_AUTHORITY)) {
+    if (!Object.hasOwn(supplied, field) || supplied[field] !== expected) {
+      problems.push(`checkpoint-supplied-authority-mismatch:${field}`);
+    }
+  }
+  for (const field of Reflect.ownKeys(supplied)) {
+    if (typeof field !== 'string' || !Object.hasOwn(CANONICAL_CHECKPOINT_AUTHORITY, field)) {
+      problems.push('checkpoint-supplied-authority-unknown-field');
+    }
+  }
+  return problems;
+}
+
+function suppliedOperatorGateProblems(input) {
+  // An absent optional gate is false. An explicitly malformed gate is UNKNOWN,
+  // never a silent authorization to continue.
+  if (!Object.hasOwn(input, 'operatorGate')) return [];
+  return typeof input.operatorGate === 'boolean' ? [] : ['checkpoint-supplied-operator-gate-invalid'];
+}
+
 export function createGoalBuildResumeCheckpoint(input = {}) {
   const allowedPaths = unique(list(input.allowedPaths).map(boundedPath).filter(Boolean));
   const leases = list(input.leases).map(normalizedLease);
@@ -63,24 +102,22 @@ export function createGoalBuildResumeCheckpoint(input = {}) {
     lastMaterialReceiptHead: sha(input.lastMaterialReceiptHead),
     blockers: Object.freeze(blockers),
     operatorGate,
+    operatorGateInputProblems: Object.freeze(suppliedOperatorGateProblems(input)),
+    // Preserve an explicit forged/malformed supplied authority signal even
+    // though the projection itself always emits safe canonical authority.
+    authorityInputProblems: Object.freeze(suppliedAuthorityProblems(input)),
     nextLegalAction: boundedText(input.nextLegalAction, '', 320),
     createdAtUtc: text(input.createdAtUtc),
-    authority: Object.freeze({
-      sourceBuildWithinExistingOwner: true,
-      protectedMerge: false,
-      readyTransition: false,
-      runtimeMutation: false,
-      windowsMutation: false,
-      openClawMutation: false,
-      credentialsOrSpending: false,
-      destructiveGit: false,
-      authorityWidening: false,
-    }),
+    authority: CANONICAL_CHECKPOINT_AUTHORITY,
   });
 }
 
 export function evaluateGoalBuildResumeCheckpoint(checkpoint, current = {}) {
-  const reasons = [];
+  const reasons = [
+    ...list(checkpoint?.authorityInputProblems),
+    ...list(checkpoint?.operatorGateInputProblems),
+  ];
+  if (typeof checkpoint?.operatorGate !== 'boolean') reasons.push('operator-gate-invalid');
   if (!checkpoint || checkpoint.schemaVersion !== GOAL_BUILDING_RESUME_SCHEMA_VERSION) reasons.push('resume-schema-invalid');
   if (!checkpoint?.checkpointId) reasons.push('checkpoint-id-invalid');
   if (!checkpoint?.missionId) reasons.push('mission-id-invalid');
@@ -98,6 +135,13 @@ export function evaluateGoalBuildResumeCheckpoint(checkpoint, current = {}) {
   const currentOwnerId = safeId(current.canonicalOwnerId);
   const competingOwnerId = safeId(current.competingOwnerId);
 
+  // A checkpoint's historical identity is not evidence of the live branch,
+  // protected main, or current canonical writer. Missing or malformed live
+  // observations must not promote a stale continuation to RESUMABLE.
+  if (!currentProtectedMain) reasons.push('current-protected-main-head-unproven');
+  if (!currentSourceHead) reasons.push('current-source-head-unproven');
+  if (!currentOwnerId) reasons.push('current-canonical-owner-unproven');
+
   if (currentProtectedMain && currentProtectedMain !== checkpoint?.protectedMainHead) reasons.push('protected-main-moved-reprove-required');
   if (currentSourceHead && currentSourceHead !== checkpoint?.sourceHead) reasons.push('source-head-moved-reprove-required');
   if (currentOwnerId && currentOwnerId !== checkpoint?.canonicalOwnerId) reasons.push('canonical-owner-changed');
@@ -110,6 +154,9 @@ export function evaluateGoalBuildResumeCheckpoint(checkpoint, current = {}) {
   }
 
   const authority = checkpoint?.authority || {};
+  // Direct evaluation of persisted checkpoints must not trust the constructor
+  // to have normalized away missing or forged positive source authority.
+  if (authority.sourceBuildWithinExistingOwner !== true) reasons.push('authority-source-scope-unproven');
   for (const forbidden of [
     'protectedMerge',
     'readyTransition',

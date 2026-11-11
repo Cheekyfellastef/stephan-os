@@ -124,3 +124,98 @@ for the existing AI route integration, read-only inspection, ledger-backed
 historical results and source/live commissioning boundary. The operation
 choice does not authorize mailbox rollover, runtime installation or owner
 replacement. All earlier build admission and protected-main gates remain.
+
+## Authenticated owner-comment ingress on the same workflow
+
+The connected GitHub surface can submit either existing operation by creating
+one immutable owner comment on the source-defined active canonical mailbox.
+The ingress is `issue_comment.created` on this same Control Tower workflow,
+not a dispatch through the protected merge workflow, a new queue, or an
+execution endpoint on the ordinary AI backend. The exact formatter is
+`formatControlTowerOwnerCommandV1`; its machine packet contains only
+`schemaVersion`, `operation`, and `expectedMain`, in that order:
+
+````text
+<!-- stephanos-control-tower-owner-command-v1 -->
+```json
+{
+  "schemaVersion": "stephanos.control-tower-owner-command.v1",
+  "operation": "OBSERVE_CONTROL_SYSTEM",
+  "expectedMain": "<current protected main: 40 lowercase hexadecimal characters>"
+}
+```
+````
+
+The example head must be replaced by an independently read exact current main.
+The formatter's output has no leading/trailing prose or trailing newline.
+`BUILD_NEXT_ELIGIBLE_GOAL` is the only other admitted operation. The packet
+cannot contain a command, path, goal grant, token, identity, expiry, or
+`authenticated` assertion.
+
+The producer authenticates the repository ID, owner login and numeric owner
+ID, sender, comment author, actor, triggering actor, first run attempt, main
+ref, checkout SHA and workflow SHA. It reads the exact comment and active issue
+again through fixed authenticated GitHub GETs. The live comment must match the
+trusted event body, ID and creation time, and both observations must have
+`updated_at === created_at`. The active issue must be open, unlocked, not a PR,
+and have an explicitly observed integer comment count below the existing
+rotation threshold. Retired or saturated mailboxes do not admit requests.
+Main is checked before and after these reads.
+
+The resulting single artifact keeps the existing job/artifact estate and all
+denial flags. Comment requests use
+`stephanos.control-tower-owner-comment-request.v1`, an identity of
+`control-tower-comment-<commentId>-1`, and the original comment ID, issue and
+body SHA-256. `runId` remains the real independent GitHub run ID. Creation and
+expiry come from the immutable server comment timestamp, with the existing
+ten-minute maximum window; a later run cannot renew it.
+
+The native reader still verifies the exact workflow, owner actor and triggering
+actor, current main, first successful run, exactly two jobs, exactly one bounded
+artifact, ZIP integrity and digest. Before minting its private in-process brand,
+it independently rereads the exact comment and active issue, checks operation,
+body hash and original timestamps, and rechecks main and expiry. Successful-run
+inventory is filtered by the GitHub API before the unchanged ten-run bound, so
+unrelated all-skipped comment runs cannot consume that bound. An overflow of
+potentially eligible successful runs still holds admission.
+
+The original execution ledger's create-once `wx` reservation is the only replay
+authority. The same comment delivered through two different authentic runs
+has one request ID and can reserve only once, including competing consumers.
+A recorded duplicate is skipped while the original outcome retains its actual
+run, source, time and proof; it is never rewritten to the retry's run. Missing,
+corrupt or metadata-less comment records remain unresolved, including a claimed
+terminal row with no bound observation. Existing dispatch/push IDs and legitimate
+legacy terminal history retain their prior behavior. Fixed observation may
+complete while an older build remains reserved, and it never calls maintenance
+or releases that reservation.
+
+The existing build consumer continues to call only its compiled
+`repair-goal-builder-flow` route. Native installation, qualification, normal
+operator context, goal eligibility, resource protection and maintenance custody
+remain independently binding. An accepted artifact or completed guarded wake
+does not prove that a material goal was built.
+
+### Adoption and review boundary
+
+The Actions producer loads from its exact checked-out workflow head and needs
+no Battle Bridge service restart. Its exact source path is classified accordingly.
+The native reader is different: it is statically imported by the existing
+consumer into the long-lived Sovereign relay. A heartbeat does not reload those
+modules. The existing Commander watchdog in
+`scripts/windows/run-sovereign-commander-hidden.ps1` owns relay recycle and the
+exact-source singleton/heartbeat proof. This rollout changes the consumer and
+native inspector paths already mapped to that owner; its complete path inventory
+must pass the shared post-sync classifier without dropping unrelated debt.
+The already-installed periodic/startup/logon Commander watchdog is also an
+independent adoption route; it still owes its own fresh source and singleton
+receipt. No new scheduled task or forced watchdog cycle is introduced here.
+
+No protected fixed-runtime closure member or native binary changes in this
+slice. That does not resolve an existing installation/qualification hold, an
+unresolved earlier request, or accumulated post-sync debt. Live acceptance
+requires protected integration, actual relay adoption at the integrated head,
+one fresh authenticated observation request and its original durable receipt.
+Only then can an eligible build request be assessed by the unchanged native
+owner. This authentication/admission change requires the existing high-risk
+specialist review and protected operator gates.

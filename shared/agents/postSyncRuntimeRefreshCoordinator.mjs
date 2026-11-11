@@ -224,6 +224,10 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
 ]);
 
 const NO_RUNTIME_EXACT = new Set([
+  // Existing GitHub Actions job loads this fixed artifact producer from its
+  // exact checkout. It is never a resident Battle Bridge process or a local
+  // submission adapter; activating the native reader belongs to the relay.
+  'scripts/control-tower-build-request-v1.mjs',
   // Offline/attended native package sources. Source adoption cannot compile,
   // install, sign, commission, or qualify their separately installed binaries.
   'scripts/windows/install-vr-openxr-telemetry-layer.ps1',
@@ -268,6 +272,8 @@ const NO_RUNTIME_EXACT = new Set([
   'scripts/launch-missing-independent-review-v1.mjs',
   'scripts/recover-successful-independent-review-v1.mjs',
   'scripts/battle-bridge-mobile-recovery-attestation-v1.mjs',
+  // One-shot PR-estate CLI: explicit invocation never adopts a resident service.
+  'scripts/pr-estate-reconcile.mjs',
   'shared/agents/battleBridgeMainAdvanceSignalV1.mjs',
   'shared/agents/mailboxReceiptIndexGitHubMirror.mjs',
   'shared/agents/codexBankedResetTelemetryMirror.mjs',
@@ -414,6 +420,9 @@ function isOpenClawPath(path) {
 function isUiPath(path) {
   return LAUNCHER_CRITICAL_SOURCE_PATHS.has(path)
     || UI_BUILD_AND_PROOF_TOOLCHAIN_PATHS.has(path)
+    // This exact stylesheet is imported by stephanos-ui/src/main.jsx.
+    // Classify it as a UI reload, not no-runtime or a generic styles allowance.
+    || path === 'shared/styles/stephanos-card-layout.css'
     || path.startsWith('stephanos-ui/')
     || path.startsWith('system/apps/')
     || (path.startsWith('apps/') && !path.startsWith('apps/stephanos/dist/'))
