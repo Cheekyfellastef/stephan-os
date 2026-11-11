@@ -296,7 +296,11 @@ foreach($row in $cases){
    $errorValue=$errorValue.InnerException
   }
   if(($errorValue -isnot [InvalidOperationException] -or $errorValue.Message -cne 'RUNTIME_SOURCE_REF_CHANGED') -and
-   $errorValue -isnot [Text.DecoderFallbackException]){throw ('NATIVE_PACKED_UNEXPECTED_ERROR:'+$row.name)}
+   $errorValue -isnot [Text.DecoderFallbackException]){
+   $types=[Collections.Generic.List[string]]::new();$e=$_.Exception
+   for($j=0;$j -lt 5 -and $null -ne $e;$j++){$types.Add($e.GetType().Name);$e=$e.InnerException}
+   throw ('NATIVE_PACKED_UNEXPECTED_ERROR:'+$row.name+':'+($types -join '_'))
+  }
  }
  if($accepted -ne $row.ok){throw ('NATIVE_PACKED_CASE_FAILED:'+$row.name)}
  $count++
