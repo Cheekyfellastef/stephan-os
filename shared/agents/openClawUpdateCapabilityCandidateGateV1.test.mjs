@@ -1896,3 +1896,38 @@ test('producer preflight classification is mandatory for post-update and rollbac
     }
   }
 });
+
+
+test('verified update and rollback refuse health proof newer than the producer 60s clock-skew bound', () => {
+  for (const [label, producer, healthField, expectedPositive, expectedBlocker] of [
+    ['update', () => staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED),
+      'postUpdateProof', OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED,
+      'STAGED_UPDATE_POST_PRODUCER_EVIDENCE_UNPROVEN'],
+    ['rollback', () => rollbackProducerFixture(),
+      'rollbackProof', OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.ROLLED_BACK_AND_CAPABILITIES_PRESERVED,
+      'STAGED_UPDATE_ROLLBACK_PRODUCER_EVIDENCE_UNPROVEN'],
+  ]) {
+    const evaluate = (stagedUpdate) => evaluateOpenClawUpdateCapabilityCandidateV1({
+      stagedUpdate,
+      capabilityLedger: ledger(),
+      qualificationReplay: label === 'update' ? [replay(OPENCLAW_TASK_CLASS.OC1)] : [],
+    });
+    const genuine = producer();
+    assert.equal(evaluate(genuine).status, expectedPositive, label);
+
+    // A producer-created snapshot may tolerate 60s future skew, never two minutes.
+    const withinSkew = producer();
+    const proofTime = Date.parse(withinSkew.evidence[healthField].observedAtUtc);
+    withinSkew.observedAtUtc = new Date(proofTime - 59_000).toISOString();
+    assert.equal(evaluate(withinSkew).status, expectedPositive, label + ':within-skew');
+
+    const staleSnapshot = producer();
+    const newerProof = Date.parse(staleSnapshot.evidence[healthField].observedAtUtc);
+    staleSnapshot.observedAtUtc = new Date(newerProof - 120_000).toISOString();
+    const rejected = evaluate(staleSnapshot);
+    assert.equal(rejected.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE, label);
+    assert.equal(rejected.updatePromotionAllowed, false, label);
+    assert.equal(rejected.providerRoutingResumeAllowed, false, label);
+    assert.ok(rejected.blockers.includes(expectedBlocker), label);
+  }
+});

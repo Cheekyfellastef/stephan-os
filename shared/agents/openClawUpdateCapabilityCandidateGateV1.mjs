@@ -400,12 +400,16 @@ function hasPostUpdateProducerEvidence(staged, id) {
   const backedAt=observedTime(backup.createdAtUtc);
   // An approval issued after the bounded adapter executed cannot authorize
   // that historical mutation. Clock-skew tolerance is not retroactive consent.
-  const approvedAt=observedTime(approval.approvedAtUtc);
+  const producerObservedAt=observedTime(staged.observedAtUtc);
+   const approvedAt=observedTime(approval.approvedAtUtc);
   const expiresAt=observedTime(approval.expiresAtUtc);
-  if ([appliedAt,provedAt,stagedAt,backedAt,approvedAt,expiresAt].some((value)=>value===null)
+  if ([appliedAt,provedAt,stagedAt,backedAt,approvedAt,expiresAt,producerObservedAt].some((value)=>value===null)
     || appliedAt>Date.now()+60000 || provedAt>Date.now()+60000
     || approvedAt>appliedAt || appliedAt>=expiresAt
-    || appliedAt<stagedAt || appliedAt<backedAt || provedAt<appliedAt) return false;
+    || appliedAt<stagedAt || appliedAt<backedAt || provedAt<appliedAt
+     // The original staged producer allows at most 60s future-skew proof relative
+     // to the timestamp it actually published; old snapshots cannot certify later health.
+     || provedAt>producerObservedAt+60000) return false;
   const health=plainDataRecord(post.health,UPDATED_HEALTH_CHECKS);
   if (!health || UPDATED_HEALTH_CHECKS.some((key)=>health[key] !== true)
     || post.schema !== OPENCLAW_UPDATE_POST_PROOF_SCHEMA || !safeId(post.proofId)
@@ -483,9 +487,10 @@ function hasRollbackProducerEvidence(staged, id) {
     return Number.isFinite(ms) && new Date(ms).toISOString() === value ? ms : null;
   };
   const backedAt=timestamp(backup.createdAtUtc), rolledAt=timestamp(receipt.observedAtUtc),
-    provedAt=timestamp(proof.observedAtUtc);
-  if ([backedAt,rolledAt,provedAt].some((value)=>value===null || value>now+60000)
-    || rolledAt<backedAt || provedAt<rolledAt) return false;
+    provedAt=timestamp(proof.observedAtUtc), producerObservedAt=timestamp(staged.observedAtUtc);
+  if ([backedAt,rolledAt,provedAt,producerObservedAt].some((value)=>value===null || value>now+60000)
+    || rolledAt<backedAt || provedAt<rolledAt
+    || provedAt>producerObservedAt+60000) return false;
   for (const field of ['repository','sourceHead','manifestSha256','packetId',
     'packetSha256','currentVersion','targetVersion']) {
     if (pre[field] !== id[field]) return false;
