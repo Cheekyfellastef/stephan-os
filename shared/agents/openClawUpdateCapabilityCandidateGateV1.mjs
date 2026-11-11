@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { OPENCLAW_PRESERVATION_CLASS } from './openClawUpdatePreflightV1.mjs';
 import {
   OPENCLAW_STAGED_UPDATE_SCHEMA,
+  OPENCLAW_STAGED_UPDATE_VERSION,
   OPENCLAW_STAGED_UPDATE_STATUS,
   OPENCLAW_STAGED_UPDATE_ACTION,
   OPENCLAW_APPROVED_GATEWAY_ENDPOINT,
@@ -46,6 +47,18 @@ const CHANGED_DISPOSITIONS = new Set([
   OPENCLAW_UPDATE_DISPOSITION.MIGRATE,
   OPENCLAW_UPDATE_DISPOSITION.IMPROVE,
   OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM,
+]);
+// Positive routing must not accept undeclared source-producer or authority fields.
+const PRODUCER_STAGED_KEYS = Object.freeze([
+  'schema','version','observedAtUtc','status','blocker','blockers',
+  'exactIdentity','evidence','applyPlan','rollbackPlan','safety','nextAction',
+]);
+const PRODUCER_EXACT_IDENTITY_KEYS = Object.freeze([
+  'repository','sourceHead','manifestSha256','packetId','packetSha256',
+  'currentVersion','targetVersion',
+]);
+const PRODUCER_PREFLIGHT_EVIDENCE_KEYS = Object.freeze([
+  ...PRODUCER_EXACT_IDENTITY_KEYS,'gatewayEndpoint','protectedEntries',
 ]);
 // Exact authenticated OC9 producer schema: post-update promotion is not a legacy fixture parser.
 const PRODUCER_LEDGER_KEYS = Object.freeze([
@@ -346,7 +359,8 @@ function hasPostUpdateProducerEvidence(staged, id) {
   const stage=plainDataRecord(e.stage), backup=plainDataRecord(e.backupSet);
   const apply=plainDataRecord(e.applyReceipt), post=plainDataRecord(e.postUpdateProof);
   const compare=plainDataRecord(e.preservationComparison);
-  if (![pre,approval,stage,backup,apply,post,compare].every(Boolean)) return false;
+  if (![pre,approval,stage,backup,apply,post,compare].every(Boolean)
+    || !exactProducerKeys(pre,PRODUCER_PREFLIGHT_EVIDENCE_KEYS)) return false;
   for (const key of ['repository','sourceHead','manifestSha256','packetId','packetSha256','currentVersion','targetVersion']) {
     if (pre[key] !== id[key]) return false;
   }
@@ -558,6 +572,18 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
 
   const stagedStatus = text(staged.status);
   const blockers = [];
+  if (stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED) {
+    const observedAt = text(staged.observedAtUtc);
+    const observedMs = Date.parse(observedAt);
+    if (!exactProducerKeys(staged, PRODUCER_STAGED_KEYS)
+      || text(staged.version) !== OPENCLAW_STAGED_UPDATE_VERSION
+      || !observedAt.endsWith('Z') || !Number.isFinite(observedMs)
+      || new Date(observedMs).toISOString() !== observedAt
+      || observedMs > Date.now() + 60_000
+      || staged.blocker !== null || !text(staged.nextAction)) {
+      blockers.push('STAGED_UPDATE_PRODUCER_ENVELOPE_INVALID');
+    }
+  }
   // Read-only preflight can inspect older fixtures; post-update promotion must
   // retain both explicit, dense, empty blocker arrays from the trusted producers.
   if (Object.prototype.hasOwnProperty.call(staged, 'blockers')
@@ -636,6 +662,10 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
 
   const identity = plainDataRecord(staged.exactIdentity);
   if (!identity) blockers.push('STAGED_UPDATE_IDENTITY_MISSING');
+  if (stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
+    && identity && !exactProducerKeys(identity, PRODUCER_EXACT_IDENTITY_KEYS)) {
+    blockers.push('STAGED_UPDATE_EXACT_IDENTITY_SCHEMA_DRIFT');
+  }
   // The staged producer binds repository, manifest and packet identities. A
   // verified update must retain these pins before routing may resume; preflight
   // legacy fixtures remain read-only until their contract is migrated.

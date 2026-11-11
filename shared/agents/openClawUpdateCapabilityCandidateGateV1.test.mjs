@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
   OPENCLAW_STAGED_UPDATE_SCHEMA,
+  OPENCLAW_STAGED_UPDATE_VERSION,
   OPENCLAW_STAGED_UPDATE_STATUS,
   OPENCLAW_STAGED_UPDATE_ACTION,
   OPENCLAW_APPROVED_GATEWAY_ENDPOINT,
@@ -28,7 +29,13 @@ const HEAD = 'a'.repeat(40);
 function staged(status = OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY) {
   const result = {
     schema: OPENCLAW_STAGED_UPDATE_SCHEMA,
+    version: OPENCLAW_STAGED_UPDATE_VERSION,
+    observedAtUtc: new Date().toISOString(),
     status,
+    blocker: null,
+    nextAction: status === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
+      ? 'Publish UPDATED_AND_VERIFIED with the exact receipt and proof identities.'
+      : 'Source-harness preflight only; no runtime execution authority.',
     blockers: [],
     exactIdentity: {
       repository: 'Cheekyfellastef/stephan-os',
@@ -198,6 +205,34 @@ function replay(taskClass, overrides = {}) {
     ...overrides,
   };
 }
+
+test('post-update refuses undeclared staged producer fields and provenance', () => {
+  const base = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const evaluate = (stagedUpdate) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate, capabilityLedger: ledger(), qualificationReplay: [replay(OPENCLAW_TASK_CLASS.OC1)],
+  });
+  assert.equal(evaluate(base).providerRoutingResumeAllowed, true);
+  const cases = [
+    ['root privilege', (v) => { v.sourceMutationAllowed = true; }],
+    ['identity authority', (v) => { v.exactIdentity.runtimeMutationAllowed = true; }],
+    ['identity scope', (v) => { v.exactIdentity.privilegedScope = 'FULL'; }],
+    ['preflight authority', (v) => { v.evidence.preflight.providerQualificationAllowed = true; }],
+    ['preflight override', (v) => { v.evidence.preflight.authorizationOverride = 'ALLOW'; }],
+    ['missing producer version', (v) => { delete v.version; }],
+    ['wrong producer version', (v) => { v.version = '9.0.0'; }],
+    ['missing producer timestamp', (v) => { delete v.observedAtUtc; }],
+    ['future producer timestamp', (v) => { v.observedAtUtc = '3026-01-01T00:00:00.000Z'; }],
+    ['residual blocker', (v) => { v.blocker = 'UNRESOLVED'; }],
+    ['missing next action', (v) => { delete v.nextAction; }],
+  ];
+  for (const [name, mutate] of cases) {
+    const candidate = JSON.parse(JSON.stringify(base));
+    mutate(candidate);
+    const result = evaluate(candidate);
+    assert.equal(result.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE, name);
+    assert.equal(result.providerRoutingResumeAllowed, false, name);
+  }
+});
 
 test('post-update rejects an approval issued after bounded adapter execution', () => {
   const evaluate = (record) => evaluateOpenClawUpdateCapabilityCandidateV1({

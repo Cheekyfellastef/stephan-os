@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 
 import {
   OPENCLAW_STAGED_UPDATE_SCHEMA,
+  OPENCLAW_STAGED_UPDATE_VERSION,
   OPENCLAW_STAGED_UPDATE_STATUS,
   OPENCLAW_STAGED_UPDATE_ACTION,
   OPENCLAW_APPROVED_GATEWAY_ENDPOINT,
@@ -61,7 +62,13 @@ function ledger() {
 function staged(status = OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY) {
   const result = {
     schema: OPENCLAW_STAGED_UPDATE_SCHEMA,
+    version: OPENCLAW_STAGED_UPDATE_VERSION,
+    observedAtUtc: new Date().toISOString(),
     status,
+    blocker: null,
+    nextAction: status === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
+      ? 'Publish UPDATED_AND_VERIFIED with the exact receipt and proof identities.'
+      : 'Source-harness preflight only; no runtime execution authority.',
     blockers: [],
     exactIdentity: {
       repository: 'Cheekyfellastef/stephan-os',
