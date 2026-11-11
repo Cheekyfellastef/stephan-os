@@ -216,7 +216,7 @@ function formatTileContextForPrompt(tileContext = {}) {
   return contextLines.join('\n');
 }
 
-const helpText = 'Commands: /help /status /subsystems /tools /agents /memory /memory list /memory save <text> /memory find <query> /memory propose <id|recent> /proposals /proposals list /proposals stats /proposals show <id> /proposals accept <id> /proposals reject <id> /activity /activity list /activity recent /activity show <id> /roadmap /roadmap list /roadmap add <text> /roadmap done <id> /roadmap show <id> /kg help /simulate help /simulate history list /simulate history show <runId> /simulate history clear /simulate compare <runIdA> <runIdB> /clear';
+const helpText = 'Commands: /help /submitgoal <#issue> /status /subsystems /tools /agents /memory /memory list /memory save <text> /memory find <query> /memory propose <id|recent> /proposals /proposals list /proposals stats /proposals show <id> /proposals accept <id> /proposals reject <id> /activity /activity list /activity recent /activity show <id> /roadmap /roadmap list /roadmap add <text> /roadmap done <id> /roadmap show <id> /kg help /simulate help /simulate history list /simulate history show <runId> /simulate history clear /simulate compare <runIdA> <runIdB> /clear';
 
 function safeString(value, fallback = '') {
   const normalized = typeof value === 'string' ? value.trim() : '';
@@ -479,7 +479,7 @@ router.post('/chat', async (req, res) => {
   const decision = controlIntent.applies
     ? { route: 'system', action: 'control_conversation', reason: 'CANONICAL_CONTROL_SERVICE_REPLY' }
     : resolveRoute(parsedCommand, prompt);
-  const controlObservationRoute = controlIntent.applies || decision.tool === 'getSovereignCommanderStatus';
+  const controlObservationRoute = controlIntent.applies || decision.tool === 'getSovereignCommanderStatus' || decision.tool === 'submitGoal';
   // Control observations never load provider credentials, resolve a model,
   // probe model health or invoke a provider. Chat targets grant no authority.
   const effectiveProviderConfig = Object.keys(providerConfig || {}).length > 0 ? providerConfig : providerConfigs?.[provider] || {};
@@ -530,7 +530,27 @@ router.post('/chat', async (req, res) => {
 
     if (decision.tool) {
       const toolStart = Date.now();
-      const { tool, result } = await executeTool(decision.tool, decision.args, { aiAvailable: true });
+      // A submitGoal slash command must pass through the SAME evidence and
+      // alignment preparation as natural Stephanos executive conversation.
+      // Request headers, model output and UI labels confer no owner authority.
+      let submitContext = { aiAvailable: true };
+      if (decision.tool === 'submitGoal') {
+        const submittedAtUtc = new Date().toISOString();
+        const prepared = await prepareSharedIntelligenceForAiTurnV1({
+          requestIdentity: requestId || 'submit-goal-' + startedAt,
+          operatorText: prompt, timestampUtc: submittedAtUtc, env: process.env,
+        });
+        const historical = prepareAuthorisedHistoricalChatContextV1(req.body?.authorised_chat_history || null);
+        submitContext = {
+          aiAvailable: true,
+          knowledgeTwin: historical?.ok ? historical.knowledgeTwin : prepared?.ok ? prepared.knowledgeTwin : null,
+          sharedThreadId: prepared?.threadId || null,
+          operatorTurnId: prepared?.operatorTurnId || null,
+          requestId: requestId || 'submit-goal-' + startedAt,
+          nowUtc: submittedAtUtc, env: process.env,
+        };
+      }
+      const { tool, result } = await executeTool(decision.tool, decision.args, submitContext);
       return res.json(buildSuccessResponse({
         type: decision.route === 'memory' ? 'memory_result' : decision.route === 'simulation' ? 'simulation_result' : 'tool_result',
         route: decision.route,
