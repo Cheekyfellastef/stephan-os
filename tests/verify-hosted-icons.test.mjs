@@ -91,3 +91,30 @@ test('no arbitrary chunks allowed before IEND', () => fixture(root => {
     file.subarray(file.length-12)]));
   assert.throws(() => verifyHostedSpatialPwaIcons(root), /CHUNK_UNEXPECTED:192/);
 }));
+
+// The PNG's outer IDAT CRC is valid in all three cases; the zlib stream itself
+// must consume every compressed byte, including when the data spans IDAT chunks.
+function changeIdat(file, map) {
+  const start = 33;
+  const length = file.readUInt32BE(start);
+  const original = file.subarray(start + 8, start + 8 + length);
+  return Buffer.concat([file.subarray(0, start), map(original), file.subarray(start + length + 12)]);
+}
+test('unused trailing bytes inside CRC-correct IDAT are rejected', () => fixture(root => {
+  mutate(root, file => changeIdat(file, encoded => chunk('IDAT',
+    Buffer.concat([encoded, Buffer.from([0xde, 0xad, 0xbe, 0xef])]))));
+  assert.throws(() => verifyHostedSpatialPwaIcons(root), /DATA_INVALID:192/);
+}));
+test('a second complete zlib member inside CRC-correct IDAT is rejected', () => fixture(root => {
+  mutate(root, file => changeIdat(file, encoded => chunk('IDAT',
+    Buffer.concat([encoded, deflateSync(Buffer.from('unexpected extra stream'))]))));
+  assert.throws(() => verifyHostedSpatialPwaIcons(root), /DATA_INVALID:192/);
+}));
+test('one valid compressed stream split across adjacent IDAT chunks remains accepted', () => fixture(root => {
+  mutate(root, file => changeIdat(file, encoded => {
+    const split = Math.floor(encoded.length / 2);
+    return Buffer.concat([chunk('IDAT', encoded.subarray(0, split)),
+      chunk('IDAT', encoded.subarray(split))]);
+  }));
+  assert.deepEqual(verifyHostedSpatialPwaIcons(root).map(x => x.size), [192, 512]);
+}));

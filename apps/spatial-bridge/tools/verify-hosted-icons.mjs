@@ -71,14 +71,19 @@ export function verifyHostedSpatialPwaIcons(siteRoot) {
       offset = end;
     }
     requireIcon(ihdrSeen && iendSeen && compressed.length > 0, 'PNG_INCOMPLETE', size);
+    const encoded = Buffer.concat(compressed);
     let raw;
+    let consumed;
     const rowBytes = size * 4 + 1;
     try {
-      raw = inflateSync(Buffer.concat(compressed), { maxOutputLength: rowBytes * size });
+      const inflated = inflateSync(encoded, { maxOutputLength: rowBytes * size, info: true });
+      raw = inflated.buffer;
+      consumed = inflated.engine.bytesWritten;
     } catch {
       requireIcon(false, 'DATA_INVALID', size);
     }
-    requireIcon(raw.length === rowBytes * size, 'DATA_INVALID', size);
+    requireIcon(consumed === encoded.length && raw.length === rowBytes * size,
+      'DATA_INVALID', size);
     for (let row = 0; row < size; row += 1) {
       requireIcon(raw[row * rowBytes] === 0, 'SCANLINE_INVALID', size);
     }
