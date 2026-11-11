@@ -250,3 +250,68 @@ foreach($row in $rows){
   }
   assert.equal(lines.at(-1),'NATIVE_SOURCE_MEMBERSHIP_FIXTURE_PASS_'+vectors.length);
 });
+
+
+test('native fixed-runtime packed ref parser accepts only one exact bounded pinned head',
+  {skip:process.platform!=='win32',timeout:60000},()=>{
+  const directory=mkdtempSync(join(tmpdir(),'stph-packed-refs-native-'));
+  const driver=join(directory,'packed-ref-driver.ps1');
+  const quote=value=>"'"+value.replaceAll("'","''")+"'";
+  const native=['SovereignCoreJobCustodyV1.cs','SovereignFixedRuntimeJobV1.cs','SovereignFixedRuntimeIdentityV1.cs',
+    'SovereignFixedRuntimeAuthorityV1.cs','SovereignFixedRuntimeHostV1.cs','SovereignFixedRuntimeSourceV1.cs'];
+  const script=String.raw`$ErrorActionPreference='Stop'
+$source=(@(__NATIVE__)|ForEach-Object{[IO.File]::ReadAllText($_)}) -join [Environment]::NewLine
+Add-Type -TypeDefinition $source -ReferencedAssemblies 'System.Web.Extensions','System.Core','System.Management' -ErrorAction Stop
+$method=[Stephanos.Sovereign.CoreJobCustodyV1].GetMethod('RuntimeVerifyPackedRefV1',[Reflection.BindingFlags]'NonPublic,Static')
+if($null -eq $method){throw 'NATIVE_PACKED_METHOD_MISSING'}
+$a='a'*40;$b='b'*40;$nl=[char]10
+$good=$a+' refs/heads/main'+$nl
+$cases=@(
+ @{name='packed-main';wire=$good;ok=$true},
+ @{name='comments-and-peeled-tag';wire=('# pack-refs with: peeled'+$nl+$b+' refs/tags/example'+$nl+'^'+$b+$nl+$good);ok=$true},
+ @{name='extra-valid-remote';wire=($b+' refs/remotes/origin/other'+$nl+$good);ok=$true},
+ @{name='without-terminal-newline';wire=$a+' refs/heads/main';ok=$true},
+ @{name='stale-head';wire=($b+' refs/heads/main'+$nl);ok=$false},
+ @{name='missing-ref';wire=($a+' refs/remotes/origin/main'+$nl);ok=$false},
+ @{name='duplicate-ref';wire=($good+$good);ok=$false},
+ @{name='malformed-other-record';wire=($good+'unsafe'+$nl);ok=$false},
+ @{name='path-alias';wire=($good+$a+' refs/heads/../main'+$nl);ok=$false},
+ @{name='wrong-case';wire=($a+' refs/HEADS/main'+$nl);ok=$false},
+ @{name='bad-peel';wire=($good+'^'+$a+$nl);ok=$false},
+ @{name='empty';wire='';ok=$false},
+ @{name='nul-byte';wire=($a+' refs/heads/main'+[char]0+$nl);ok=$false},
+ @{name='invalid-utf8';wire=$null;bytes=[byte[]]@(255,254,253);ok=$false},
+ @{name='oversized';wire=$null;bytes=[byte[]]::new(1048577);ok=$false}
+)
+$count=0
+foreach($row in $cases){
+ $bytes=if($null -ne $row.bytes){[byte[]]$row.bytes}else{[Text.UTF8Encoding]::new($false,$true).GetBytes([string]$row.wire)}
+ $args=[object[]]::new(3);$args[0]=$bytes;$args[1]='refs/heads/main';$args[2]=$a
+ $accepted=$false
+ try{[void]$method.Invoke($null,$args);$accepted=$true}
+ catch{
+  $errorValue=$_.Exception
+  for($depth=0;$depth -lt 4 -and $null -ne $errorValue -and
+   $errorValue.GetType().FullName -cin @('System.Reflection.TargetInvocationException','System.Management.Automation.MethodInvocationException');$depth++){
+   $errorValue=$errorValue.InnerException
+  }
+  if(($errorValue -isnot [InvalidOperationException] -or $errorValue.Message -cne 'RUNTIME_SOURCE_REF_CHANGED') -and
+   $errorValue -isnot [Text.DecoderFallbackException]){throw ('NATIVE_PACKED_UNEXPECTED_ERROR:'+$row.name)}
+ }
+ if($accepted -ne $row.ok){throw ('NATIVE_PACKED_CASE_FAILED:'+$row.name)}
+ $count++
+}
+if($count -ne 15){throw 'NATIVE_PACKED_CASE_COUNT_CHANGED'}
+[Console]::WriteLine('NATIVE_PACKED_REF_CASES_PASS_'+$count)
+`.replace('__NATIVE__',()=>native.map(name=>quote(fileURLToPath(new URL('./windows/'+name,import.meta.url)))).join(','));
+  writeFileSync(driver,script,{encoding:'utf8',flag:'wx'});
+  const bootstrap="$ErrorActionPreference='Stop';$s=[IO.File]::ReadAllText("+quote(driver)+");"
+    +"[void](& ([scriptblock]::Create($s)))";
+  let output;
+  try {
+    output=execFileSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+      ['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(bootstrap,'utf16le').toString('base64')],
+      {encoding:'utf8',windowsHide:true,timeout:55000,maxBuffer:8192});
+  }finally{unlinkSync(driver);rmdirSync(directory);}
+  assert.equal(output.trim(),'NATIVE_PACKED_REF_CASES_PASS_15');
+});
