@@ -168,3 +168,21 @@ completed observation or successful guarded wake never proves a finished goal.
 Reusable invariant: transport polls, retained request outcomes, runtime
 admission and material construction are separate facts. Keep their original
 identities and evidence even when they are presented in one conversation.
+
+## Connected GitHub submission and ordinary browser chat
+
+The bounded owner-comment ingress described in
+[Control Tower build start](control-tower-build-start-v1.md) lets an already
+authenticated GitHub connector submit the two existing closed operations to
+the same workflow, artifact reader and execution ledger. GitHub supplies the
+owner identity and immutable comment provenance. Chat text and runtime context
+do not supply those facts.
+
+The ordinary AI route still has no authenticated operator session. Its replies
+remain read-only, and a prepared browser handoff remains `NOT_SUBMITTED`.
+It does not read a Commander bearer, synthesize a GitHub principal, or post an
+owner comment on the browser caller's behalf. Receipt projections can now retain
+`control-tower-comment-<id>-1` alongside existing run-based request IDs. The
+actual workflow run remains separate metadata; missing comment history has no
+invented run ID. Desktop/phone receipt presentation is evidence only and cannot
+create submission, execution, native pickup or goal-completion authority.
