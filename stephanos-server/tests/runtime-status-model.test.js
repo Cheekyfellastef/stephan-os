@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import { FALLBACK_PROVIDER_KEYS } from '../../shared/ai/providerDefaults.mjs';
 import { createRuntimeStatusModel, getReadyCloudProviders } from '../../shared/runtime/runtimeStatusModel.mjs';
+import { getTool, projectStephanosSystemDiagnosticV1 } from '../services/toolRegistry.js';
+import { getSubsystemRegistry } from '../services/subsystemRegistry.js';
 
 test('default fallback order prefers cloud providers before mock', () => {
   assert.deepEqual(FALLBACK_PROVIDER_KEYS, ['groq', 'gemini', 'mock', 'ollama']);
@@ -621,4 +623,93 @@ test('fresh local-desktop health probe outranks home-node/manual in local sessio
   assert.equal(model.routeEvaluations['local-desktop'].backendReachable, true);
   assert.equal(model.finalRouteTruth.backendReachable, true);
   assert.equal(model.finalRouteTruth.networkReachabilityState, 'reachable');
+});
+
+test('Stephanos AI /status does not claim nominal health from a configured AI route alone', () => {
+  const status = projectStephanosSystemDiagnosticV1({
+    aiRouteConfigured: true,
+    commanderObservation: {
+      schemaVersion: 'stephanos.ai-sovereign-commander-health.v1',
+      readOnly: true, localLoopbackOnly: true, available: false, healthy: false,
+      state: 'UNKNOWN', blocker: 'COMMANDER_HEALTH_UNREACHABLE',
+    },
+  });
+  assert.equal(status.readiness, 'UNVERIFIED');
+  assert.equal(status.aiRouteConfigured, true);
+  assert.equal(status.aiModelExecutionProven, false);
+  assert.equal(status.physicalWorkerPickupProven, false);
+  assert.equal(status.installedFixedRuntimeProven, false);
+  assert.equal(status.catalogIsExecutionEvidence, false);
+  assert.equal(status.blocker, 'COMMANDER_HEALTH_UNREACHABLE');
+  assert.equal(status.readOnly, true);
+  assert.equal(status.sourceMutationAllowed, false);
+  assert.equal(status.mergeAuthority, false);
+  assert.equal(getTool('getSystemStatus').state, 'live');
+});
+
+test('Stephanos AI reports a reachable sovereign with failed last guarded repair as blocked', () => {
+  const status = projectStephanosSystemDiagnosticV1({
+    aiRouteConfigured: true,
+    commanderObservation: {
+      schemaVersion: 'stephanos.ai-sovereign-commander-health.v1',
+      readOnly: true, localLoopbackOnly: true,
+      available: true, healthy: true, state: 'SERVICE_REACHABLE',
+      guardian: {
+        lastOk: false, lastBlocker: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING',
+        lastSourceHead: '',
+      },
+    },
+  });
+  assert.equal(status.readiness, 'BLOCKED');
+  assert.equal(status.commanderReachable, true);
+  assert.equal(status.guardianLastRepairFailed, true);
+  assert.equal(status.blocker, 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING');
+  assert.equal(status.nextSafeStep, 'VERIFY_EXACT_MAIN_FIXED_RUNTIME_INSTALLATION');
+  assert.equal(status.guardianLastSourceHead, '');
+  assert.equal(status.physicalWorkerPickupProven, false);
+});
+
+test('healthy Commander service and even a successful guardian do not prove a model or worker build', () => {
+  const status = projectStephanosSystemDiagnosticV1({
+    aiRouteConfigured: true,
+    commanderObservation: {
+      schemaVersion: 'stephanos.ai-sovereign-commander-health.v1',
+      readOnly: true, localLoopbackOnly: true,
+      available: true, healthy: true, state: 'SERVICE_REACHABLE',
+      guardian: { lastOk: true, lastSourceHead: 'a'.repeat(40) },
+    },
+  });
+  assert.equal(status.readiness, 'PARTIAL');
+  assert.equal(status.guardianLastRepairSucceeded, true);
+  assert.equal(status.guardianLastRepairFailed, false);
+  assert.equal(status.blocker, 'PHYSICAL_WORKER_PICKUP_UNPROVEN');
+  assert.equal(status.aiModelExecutionProven, false);
+  assert.equal(status.physicalWorkerPickupProven, false);
+  assert.equal(status.installedFixedRuntimeProven, false);
+});
+
+test('forged Commander health without original loopback provenance is rejected for status', () => {
+  for (const fake of [
+    { available: true, healthy: true, state: 'SERVICE_REACHABLE' },
+    { schemaVersion: 'stephanos.ai-sovereign-commander-health.v1',
+      available: true, healthy: true, state: 'SERVICE_REACHABLE',
+      readOnly: false, localLoopbackOnly: true },
+    { schemaVersion: 'stephanos.ai-sovereign-commander-health.v1',
+      available: true, healthy: true, state: 'SERVICE_REACHABLE',
+      readOnly: true, localLoopbackOnly: false },
+  ]) {
+    const status = projectStephanosSystemDiagnosticV1({ aiRouteConfigured: true, commanderObservation: fake });
+    assert.equal(status.commanderReachable, false);
+    assert.equal(status.readiness, 'UNVERIFIED');
+    assert.equal(status.physicalWorkerPickupProven, false);
+  }
+});
+
+test('static AI Core subsystem registry is never accepted as runtime health proof', () => {
+  const aiCore = getSubsystemRegistry().find((s) => s.id === 'ai_core');
+  assert.ok(aiCore);
+  assert.equal(aiCore.state, 'live', 'tool registration must remain discoverable');
+  assert.equal(aiCore.health.status, 'unverified');
+  assert.equal(aiCore.health.evidenceScope, 'registry-declaration-only');
+  assert.equal(aiCore.health.liveRuntimeProven, false);
 });
