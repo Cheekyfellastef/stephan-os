@@ -1,5 +1,7 @@
-import {execFileSync} from 'node:child_process';
-import {readFileSync} from 'node:fs';
+import {execFileSync, spawnSync} from 'node:child_process';
+import {readFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -147,4 +149,69 @@ Write-Output 'RUNTIME_FRAME_ESCAPED_KEY_REGRESSION_PASS_6_OF_6'`;
     ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command',script],
     {cwd:fileURLToPath(new URL('../',import.meta.url)),encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:65536});
   assert.match(output,/RUNTIME_FRAME_ESCAPED_KEY_REGRESSION_PASS_6_OF_6/);
+});
+
+test('fixed-runtime source validates packed canonical local and origin refs through its fixed Git probe', (t) => {
+  const source=readFileSync(new URL('./sovereign-fixed-runtime-parent-v1.mjs',import.meta.url),'utf8');
+  const from=source.indexOf('function fixedRuntimeExactRefShaV1(');
+  const until=source.indexOf('\nfunction protectedInstallationAt(',from);
+  assert.ok(from>=0 && until>from, 'production ref functions found');
+  const root=mkdtempSync(join(tmpdir(),'fixed-runtime-packed-'));
+  t.after(()=>rmSync(root,{recursive:true,force:true}));
+  const repo=join(root,'checkout'), privateGit=join(root,'private');
+  mkdirSync(repo);mkdirSync(privateGit);
+  const git=(...args)=>execFileSync('git',['-C',repo,...args],{encoding:'utf8',timeout:4000}).trim();
+  git('init','-b','main');
+  const newCommit=()=>git('-c','user.name=Fixture','-c','user.email=fixture@example.test',
+    'commit','--allow-empty','-m','fixed-ref-fixture');
+  newCommit();
+  const first=git('rev-parse','HEAD');
+  git('update-ref','refs/remotes/origin/main',first);
+  copyFileSync(join(repo,'.git','HEAD'),join(privateGit,'HEAD'));
+  copyFileSync(join(repo,'.git','index'),join(privateGit,'index'));
+  writeFileSync(join(privateGit,'commondir'),join(repo,'.git')+'\n');
+  writeFileSync(join(privateGit,'config.worktree'),'');
+  let asserted=0,closed=0;
+  const context={
+    assert:()=>{asserted++;assert.equal(existsSync(join(repo,'.git','HEAD')),true);},
+    repositoryArgs:()=>['--git-dir='+privateGit,'--work-tree='+repo],
+    close:()=>{closed++;return true;},
+  };
+  const factory=new Function('SOURCE','join','boundedFile','createBattleBridgeGitProbeContextV1',
+    'isBattleBridgeGitProbeContextV1','resolveBattleBridgeGitExecution','spawnSync',
+    'Buffer','performance','sourceDenied','process',
+    source.slice(from,until)+'\nreturn {fixedRuntimeExactRefShaV1,exactHead};');
+  const {fixedRuntimeExactRefShaV1,exactHead}=factory(repo,join,
+    (path,max)=>{const bytes=readFileSync(path);assert.ok(bytes.length<=max);return bytes;},
+    ()=>context,()=>true,()=>({executable:'git',fixedConfigArgs:[],environment:process.env}),
+    spawnSync,Buffer,performance,code=>{throw Error('FIXED_RUNTIME_SOURCE_PROOF_'+code);},process);
+  const ref=name=>fixedRuntimeExactRefShaV1(name,context,
+    {executable:'git',fixedConfigArgs:[],environment:process.env},performance.now());
+  assert.equal(exactHead(),first);
+  assert.equal(ref('refs/remotes/origin/main'),first);
+  git('pack-refs','--all','--prune');
+  assert.equal(existsSync(join(repo,'.git','refs','heads','main')),false);
+  assert.equal(existsSync(join(repo,'.git','refs','remotes','origin','main')),false);
+  assert.equal(exactHead(),first);
+  assert.equal(ref('refs/remotes/origin/main'),first);
+  assert.throws(()=>ref('refs/heads/feature'),/REF_NOT_ALLOWED/);
+  git('update-ref','-d','refs/remotes/origin/main');
+  assert.throws(()=>ref('refs/remotes/origin/main'),/REF_UNPROVEN/);
+  git('update-ref','refs/remotes/origin/main',first);
+  newCommit();
+  const second=git('rev-parse','HEAD');
+  assert.notEqual(first,second);
+  assert.equal(exactHead(),second);
+  assert.equal(ref('refs/remotes/origin/main'),first);
+  git('update-ref','refs/remotes/origin/main',second);
+  assert.equal(ref('refs/remotes/origin/main'),second);
+  git('switch','-c','other');
+  assert.throws(()=>exactHead(),/CANONICAL_BRANCH_REQUIRED/);
+  git('switch','main');
+  git('checkout','--detach',second);
+  assert.throws(()=>exactHead(),/CANONICAL_BRANCH_REQUIRED/);
+  git('switch','main');
+  assert.equal(exactHead(),second);
+  assert.ok(asserted>=14,'every Git result has pre/post context assertions');
+  assert.ok(closed>=4,'canonical head probes close their context');
 });

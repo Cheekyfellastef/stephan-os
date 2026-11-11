@@ -200,7 +200,8 @@ function captureFixedRuntimeSourceProofV1(head) {
     const raw=[SOURCE_PROOF_PREFIX,head,commit.toString('base64'),
       ...[...trees].sort(([a],[b])=>a<b?-1:a>b?1:0).map(([id,row])=>id+':'+row.bytes.toString('base64'))].join(' ');
     const observed=verifyFixedRuntimeSourceProofV1(raw);
-    if(exactHead()!==head || boundedFile(join(SOURCE,'.git','refs','remotes','origin','main'),256).toString('utf8').trim()!==head)
+    if(exactHead()!==head
+      || fixedRuntimeExactRefShaV1('refs/remotes/origin/main',context,execution,started)!==head)
       sourceDenied('HEAD_CHANGED');
     context.assert();
     return Object.freeze({...observed,raw});
@@ -222,12 +223,32 @@ function boundedFile(path, maximum) {
     throw new Error('FIXED_RUNTIME_FILE_UNPROVEN');
   return readFileSync(path);
 }
+// Keep canonical HEAD and source/tree closure proof. Git may pack both fixed
+// ref values: query only the two exact names through the existing trusted
+// Git context, not by parsing packed-refs or using a caller-selected path.
+function fixedRuntimeExactRefShaV1(ref, context, execution, startedAtMs) {
+  if(!['refs/heads/main','refs/remotes/origin/main'].includes(ref)) sourceDenied('REF_NOT_ALLOWED');
+  context.assert();
+  if(performance.now()-startedAtMs>10000) sourceDenied('DEADLINE');
+  const row=spawnSync(execution.executable,
+    [...execution.fixedConfigArgs,...context.repositoryArgs(),'show-ref','--verify','--hash',ref],
+    {cwd:SOURCE,env:execution.environment,shell:false,windowsHide:true,timeout:5000,maxBuffer:128});
+  context.assert();
+  if(performance.now()-startedAtMs>10000) sourceDenied('DEADLINE');
+  const observed=Buffer.isBuffer(row.stdout) ? row.stdout.toString('utf8') : '';
+  if(row.error || row.signal || row.status!==0 || !/^[a-f0-9]{40}\r?\n$/.test(observed))
+    sourceDenied('REF_UNPROVEN');
+  return observed.trim();
+}
 function exactHead() {
   if(boundedFile(join(SOURCE,'.git','HEAD'),256).toString('utf8').trim()!=='ref: refs/heads/main')
     throw new Error('FIXED_RUNTIME_CANONICAL_BRANCH_REQUIRED');
-  const head=boundedFile(join(SOURCE,'.git','refs','heads','main'),256).toString('utf8').trim();
-  if(!/^[a-f0-9]{40}$/.test(head)) throw new Error('FIXED_RUNTIME_SOURCE_HEAD_UNPROVEN');
-  return head;
+  const context=createBattleBridgeGitProbeContextV1(SOURCE);
+  if(!isBattleBridgeGitProbeContextV1(context,SOURCE)) sourceDenied('CONTEXT');
+  try {
+    const execution=resolveBattleBridgeGitExecution({platform:process.platform,environment:process.env});
+    return fixedRuntimeExactRefShaV1('refs/heads/main',context,execution,performance.now());
+  } finally {context.close();}
 }
 function protectedInstallationAt(head,executionHead=head,gitClosureSha256='') {
   if(!/^[a-f0-9]{40}$/.test(head) || !/^[a-f0-9]{40}$/.test(executionHead))
