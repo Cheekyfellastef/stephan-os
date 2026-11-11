@@ -10,6 +10,9 @@ import {
   OPENCLAW_UPDATE_STAGE_SCHEMA,
   OPENCLAW_UPDATE_BACKUP_SCHEMA,
   OPENCLAW_EXPECTED_OPERATOR,
+  OPENCLAW_UPDATE_ROLLBACK_RECEIPT_SCHEMA,
+  OPENCLAW_UPDATE_ROLLBACK_PROOF_SCHEMA,
+  OPENCLAW_BOUNDED_UPDATE_ADAPTER_ID,
 } from './openClawStagedUpdateV1.mjs';
 import {
   OPENCLAW_TASK_CLASS,
@@ -370,6 +373,119 @@ function hasPostUpdateProducerEvidence(staged, id) {
   return true;
 }
 
+
+/**
+ * A rollback status cannot certify restoration without the actual staged
+ * producer's rollback receipt, prior-version health and protected-file proof.
+ * This is source-consistency validation only; no private adapter is invoked.
+ */
+function hasRollbackProducerEvidence(staged, id) {
+  const evidenceKeys = ['preflight','approval','stage','backupSet','applyReceipt',
+    'postUpdateProof','preservationComparison','rollbackReceipt','rollbackProof','rollbackComparison'];
+  const e = plainDataRecord(staged.evidence, evidenceKeys);
+  if (!e) return false;
+  const pre = plainDataRecord(e.preflight, [
+    'repository','sourceHead','manifestSha256','packetId','packetSha256',
+    'targetVersion','currentVersion','gatewayEndpoint','protectedEntries']);
+  const backup = plainDataRecord(e.backupSet, [
+    'schema','backupSetId','manifestSha256','storageClass','insideRepository',
+    'insideOpenClawInstall','createdAtUtc','entries','backupSetSha256']);
+  const receipt = plainDataRecord(e.rollbackReceipt, [
+    'schema','receiptId','adapterId','repository','sourceHead','manifestSha256',
+    'backupSetId','restoredVersion','mutationAttempted','observedAtUtc','steps']);
+  const proof = plainDataRecord(e.rollbackProof, [
+    'schema','proofId','repository','sourceHead','manifestSha256',
+    'observedVersion','gatewayEndpoint','observedAtUtc','health']);
+  const comparison = plainDataRecord(e.rollbackComparison, [
+    'schema','comparisonId','manifestSha256','entries']);
+  if (![pre,backup,receipt,proof,comparison].every(Boolean)) return false;
+  const now = Date.now();
+  const timestamp = (value) => {
+    if (typeof value !== 'string' || !value.endsWith('Z')) return null;
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) && new Date(ms).toISOString() === value ? ms : null;
+  };
+  const backedAt=timestamp(backup.createdAtUtc), rolledAt=timestamp(receipt.observedAtUtc),
+    provedAt=timestamp(proof.observedAtUtc);
+  if ([backedAt,rolledAt,provedAt].some((value)=>value===null || value>now+60000)
+    || rolledAt<backedAt || provedAt<rolledAt) return false;
+  for (const field of ['repository','sourceHead','manifestSha256','packetId',
+    'packetSha256','currentVersion','targetVersion']) {
+    if (pre[field] !== id[field]) return false;
+  }
+  if (pre.gatewayEndpoint !== OPENCLAW_APPROVED_GATEWAY_ENDPOINT
+    || backup.schema !== OPENCLAW_UPDATE_BACKUP_SCHEMA
+    || !safeId(backup.backupSetId) || backup.manifestSha256 !== id.manifestSha256
+    || backup.storageClass !== 'ISOLATED_EXTERNAL_BACKUP'
+    || backup.insideRepository !== false || backup.insideOpenClawInstall !== false
+    || !/^[a-f0-9]{64}$/i.test(text(backup.backupSetSha256))) return false;
+  const protectedEntries=denseArray(pre.protectedEntries,512),
+    backupEntries=denseArray(backup.entries,512),
+    comparisonEntries=denseArray(comparison.entries,512);
+  if (!protectedEntries || !backupEntries || !comparisonEntries
+    || !protectedEntries.length || backupEntries.length !== protectedEntries.length
+    || comparisonEntries.length !== protectedEntries.length) return false;
+  const expected=new Map(),backed=new Set(),compared=new Set(),digest=/^[a-f0-9]{64}$/i;
+  for (const raw of protectedEntries) {
+    const entry=plainDataRecord(raw);
+    if (!entry || !digest.test(text(entry.pathFingerprintSha256))
+      || !digest.test(text(entry.sourceDigestSha256))
+      || expected.has(entry.pathFingerprintSha256)) return false;
+    expected.set(entry.pathFingerprintSha256,entry.sourceDigestSha256);
+  }
+  for (const raw of backupEntries) {
+    const entry=plainDataRecord(raw,['pathFingerprintSha256','sourceDigestSha256',
+      'backupDigestSha256','backupObjectId']);
+    if (!entry || backed.has(entry.pathFingerprintSha256)
+      || expected.get(entry.pathFingerprintSha256)!==entry.sourceDigestSha256
+      || !digest.test(text(entry.backupDigestSha256)) || !safeId(entry.backupObjectId)) return false;
+    backed.add(entry.pathFingerprintSha256);
+  }
+  if (receipt.schema !== OPENCLAW_UPDATE_ROLLBACK_RECEIPT_SCHEMA
+    || !safeId(receipt.receiptId)
+    || receipt.adapterId !== OPENCLAW_BOUNDED_UPDATE_ADAPTER_ID
+    || receipt.repository !== id.repository || receipt.sourceHead !== id.sourceHead
+    || receipt.manifestSha256 !== id.manifestSha256
+    || receipt.backupSetId !== backup.backupSetId
+    || receipt.restoredVersion !== id.currentVersion
+    || receipt.mutationAttempted !== true) return false;
+  const receiptSteps=denseArray(receipt.steps,ROLLBACK_STEPS_PRODUCER.length);
+  if (!receiptSteps || receiptSteps.length !== ROLLBACK_STEPS_PRODUCER.length
+    || receiptSteps.some((step,index)=>step!==ROLLBACK_STEPS_PRODUCER[index])) return false;
+  const health=plainDataRecord(proof.health,UPDATED_HEALTH_CHECKS);
+  if (!health || UPDATED_HEALTH_CHECKS.some((key)=>health[key]!==true)
+    || proof.schema !== OPENCLAW_UPDATE_ROLLBACK_PROOF_SCHEMA
+    || !safeId(proof.proofId)
+    || proof.repository !== id.repository || proof.sourceHead !== id.sourceHead
+    || proof.manifestSha256 !== id.manifestSha256
+    || proof.observedVersion !== id.currentVersion
+    || proof.gatewayEndpoint !== OPENCLAW_APPROVED_GATEWAY_ENDPOINT) return false;
+  if (comparison.schema !== OPENCLAW_UPDATE_PRESERVATION_COMPARISON_SCHEMA
+    || !safeId(comparison.comparisonId)
+    || comparison.manifestSha256 !== id.manifestSha256) return false;
+  for (const raw of comparisonEntries) {
+    const entry=plainDataRecord(raw,['pathFingerprintSha256','beforeDigestSha256','afterDigestSha256']);
+    if (!entry || compared.has(entry.pathFingerprintSha256)
+      || entry.beforeDigestSha256 !== expected.get(entry.pathFingerprintSha256)
+      || entry.afterDigestSha256 !== expected.get(entry.pathFingerprintSha256)) return false;
+    compared.add(entry.pathFingerprintSha256);
+  }
+  // Both plans are producer templates, not evidence of execution. The rollback
+  // receipt above is the required separate claim of real adapter execution.
+  for (const [key,actions] of [['applyPlan',APPLY_STEPS_PRODUCER],
+    ['rollbackPlan',ROLLBACK_STEPS_PRODUCER]]) {
+    const plan=denseArray(staged[key],actions.length);
+    if (!plan || plan.length!==actions.length) return false;
+    for(let i=0;i<plan.length;i++){
+      const item=plainDataRecord(plan[i],['step','actionId','mutating','executed']);
+      if(!item || item.step!==i+1 || item.actionId!==actions[i]
+        || item.mutating!==(key==='applyPlan'?i===4:i<2)
+        || item.executed!==false) return false;
+    }
+  }
+  return true;
+}
+
 export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   const snapshot = plainDataRecord(input, INPUT_KEYS);
   if (!snapshot) return blocked(['CANDIDATE_GATE_SCHEMA_INVALID']);
@@ -471,6 +587,10 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   if (stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
     && !hasPostUpdateProducerEvidence(staged,identity)) {
     blockers.push('STAGED_UPDATE_POST_PRODUCER_EVIDENCE_UNPROVEN');
+  }
+  if (stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.ROLLED_BACK_AND_VERIFIED
+    && !hasRollbackProducerEvidence(staged,identity)) {
+    blockers.push('STAGED_UPDATE_ROLLBACK_PRODUCER_EVIDENCE_UNPROVEN');
   }
   const sourceHead = exactSha(identity?.sourceHead);
   const currentVersion = safeVersion(identity?.currentVersion);

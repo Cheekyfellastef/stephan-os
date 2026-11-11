@@ -450,16 +450,81 @@ test('unrequested or duplicate replay records fail closed', () => {
   assert.equal(duplicate.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
 });
 
-test('rolled-back state never resumes provider routing through the candidate gate', () => {
-  const result = evaluateOpenClawUpdateCapabilityCandidateV1({
-    stagedUpdate: staged(OPENCLAW_STAGED_UPDATE_STATUS.ROLLED_BACK_AND_VERIFIED),
-    capabilityLedger: ledger(),
-    qualificationReplay: [],
+
+function rollbackProducerFixture() {
+  const value=staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const id=value.exactIdentity,e=value.evidence;
+  value.status=OPENCLAW_STAGED_UPDATE_STATUS.ROLLED_BACK_AND_VERIFIED;
+  e.rollbackReceipt={
+    schema:'stephanos.openclaw-update-rollback-receipt.v1',
+    receiptId:'rollback-1',adapterId:'openclaw-bounded-update-adapter-v1',
+    repository:id.repository,sourceHead:id.sourceHead,manifestSha256:id.manifestSha256,
+    backupSetId:e.backupSet.backupSetId,restoredVersion:id.currentVersion,
+    mutationAttempted:true,observedAtUtc:new Date().toISOString(),
+    steps:[OPENCLAW_STAGED_UPDATE_ACTION.ROLLBACK_PACKAGE,
+      OPENCLAW_STAGED_UPDATE_ACTION.RESTORE_BACKUP,
+      OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_ROLLBACK],
+  };
+  e.rollbackProof={
+    schema:'stephanos.openclaw-update-rollback-proof.v1',proofId:'restored-health-1',
+    repository:id.repository,sourceHead:id.sourceHead,manifestSha256:id.manifestSha256,
+    observedVersion:id.currentVersion,gatewayEndpoint:OPENCLAW_APPROVED_GATEWAY_ENDPOINT,
+    observedAtUtc:new Date().toISOString(),
+    health:{openClawGateway:true,stephanosBackend:true,stephanosUi:true,
+      missionWorker:true,sharedWorkspaceWrite:true},
+  };
+  e.rollbackComparison=e.preservationComparison;
+  e.applyReceipt=null;
+  e.postUpdateProof=null;
+  e.preservationComparison=null;
+  return value;
+}
+
+test('rolled-back status requires actual producer rollback receipt and protected restoration proof', () => {
+  const missing=evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate:staged(OPENCLAW_STAGED_UPDATE_STATUS.ROLLED_BACK_AND_VERIFIED),
+    capabilityLedger:ledger(),qualificationReplay:[],
   });
-  assert.equal(result.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.ROLLED_BACK_AND_CAPABILITIES_PRESERVED);
-  assert.equal(result.updatePromotionAllowed, false);
-  assert.equal(result.providerRoutingResumeAllowed, false);
+  assert.equal(missing.status,OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.ok(missing.blockers.includes('STAGED_UPDATE_ROLLBACK_PRODUCER_EVIDENCE_UNPROVEN'));
+  assert.equal(missing.providerRoutingResumeAllowed,false);
+
+  const good=evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate:rollbackProducerFixture(),capabilityLedger:ledger(),qualificationReplay:[],
+  });
+  assert.equal(good.status,OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.ROLLED_BACK_AND_CAPABILITIES_PRESERVED);
+  assert.equal(good.updatePromotionAllowed,false);
+  assert.equal(good.providerRoutingResumeAllowed,false);
+
+  const mutations=[
+    ['missing rollback receipt',v=>{v.evidence.rollbackReceipt=null;}],
+    ['wrong adapter',v=>{v.evidence.rollbackReceipt.adapterId='arbitrary-shell';}],
+    ['missing execution attestation',v=>{v.evidence.rollbackReceipt.mutationAttempted=false;}],
+    ['wrong restored version',v=>{v.evidence.rollbackReceipt.restoredVersion=v.exactIdentity.targetVersion;}],
+    ['wrong backup identity',v=>{v.evidence.rollbackReceipt.backupSetId='other-backup';}],
+    ['out-of-order steps',v=>{v.evidence.rollbackReceipt.steps.reverse();}],
+    ['absent health proof',v=>{v.evidence.rollbackProof=null;}],
+    ['failed health',v=>{v.evidence.rollbackProof.health.openClawGateway=false;}],
+    ['wrong health version',v=>{v.evidence.rollbackProof.observedVersion=v.exactIdentity.targetVersion;}],
+    ['missing preservation comparison',v=>{v.evidence.rollbackComparison=null;}],
+    ['tampered protected restoration',v=>{v.evidence.rollbackComparison.entries[0].afterDigestSha256='0'.repeat(64);}],
+    ['wrong source head',v=>{v.evidence.rollbackReceipt.sourceHead='f'.repeat(40);}],
+    ['missing backup',v=>{v.evidence.backupSet=null;}],
+    ['future rollback receipt',v=>{v.evidence.rollbackReceipt.observedAtUtc=new Date(Date.now()+86400000).toISOString();}],
+    ['wrong rollback plan',v=>{v.rollbackPlan[0].actionId='ARBITRARY_EXECUTION';}],
+  ];
+  for(const [label,mutate] of mutations){
+    const candidate=rollbackProducerFixture();
+    mutate(candidate);
+    const result=evaluateOpenClawUpdateCapabilityCandidateV1({
+      stagedUpdate:candidate,capabilityLedger:ledger(),qualificationReplay:[],
+    });
+    assert.equal(result.status,OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE,label);
+    assert.ok(result.blockers.includes('STAGED_UPDATE_ROLLBACK_PRODUCER_EVIDENCE_UNPROVEN'),label);
+    assert.equal(result.providerRoutingResumeAllowed,false,label);
+  }
 });
+
 
 test('accessor, sparse, custom-prototype and revoked replay inputs fail without hidden execution', () => {
   let getterCalled = false;
