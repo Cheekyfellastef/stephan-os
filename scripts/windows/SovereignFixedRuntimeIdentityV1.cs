@@ -164,6 +164,63 @@ namespace Stephanos.Sovereign {
       }
       return bytes;
     }
+    static void RuntimeRefDeniedV1(){throw new InvalidOperationException("RUNTIME_SOURCE_REF_CHANGED");}
+    static bool RuntimeLooseRefPresentV1(string path) {
+      try {
+        var flags=File.GetAttributes(path);
+        if((flags&(FileAttributes.ReparsePoint|FileAttributes.Directory))!=0)
+          RuntimeRefDeniedV1();
+        return true;
+      } catch(FileNotFoundException){return false;}
+      catch(DirectoryNotFoundException){return false;}
+    }
+    static void RuntimeVerifyPackedRefV1(byte[] bytes,string name,string expected) {
+      if(bytes==null || bytes.Length==0 || bytes.Length>1048576 || !RuntimeHexV1(expected,40))
+        RuntimeRefDeniedV1();
+      string[] rows=new UTF8Encoding(false,true).GetString(bytes).Split('\n');
+      bool matched=false,tag=false;
+      for(int i=0;i<rows.Length;i++) {
+        string row=rows[i].EndsWith("\r",StringComparison.Ordinal)
+          ? rows[i].Substring(0,rows[i].Length-1):rows[i];
+        if(i==rows.Length-1 && row.Length==0)continue;
+        if(row.Length==0 || row.Length>260)RuntimeRefDeniedV1();
+        if(row[0]=='#'){tag=false;continue;}
+        if(row[0]=='^') {
+          if(!tag || !RuntimeHexV1(row.Substring(1),40))RuntimeRefDeniedV1();
+          tag=false;continue;
+        }
+        if(row.Length<47 || row[40]!=' ' || !RuntimeHexV1(row.Substring(0,40),40))
+          RuntimeRefDeniedV1();
+        string key=row.Substring(41);
+        if(!System.Text.RegularExpressions.Regex.IsMatch(key,@"^refs/[A-Za-z0-9._/-]{1,210}$")
+          || key.Contains("..") || key.Contains("//") || key.EndsWith("/",StringComparison.Ordinal)
+          || key.EndsWith(".lock",StringComparison.Ordinal))
+          RuntimeRefDeniedV1();
+        tag=key.StartsWith("refs/tags/",StringComparison.Ordinal);
+        if(key==name) {
+          if(matched || row.Substring(0,40)!=expected)RuntimeRefDeniedV1();
+          matched=true;
+        }
+      }
+      if(!matched)RuntimeRefDeniedV1();
+    }
+    static void RuntimePinFixedRefV1(string name,string expected,FixedRuntimeIdentityPinsV1 pins) {
+      if((name!="refs/heads/main" && name!="refs/remotes/origin/main") || !RuntimeHexV1(expected,40))
+        RuntimeRefDeniedV1();
+      string loose=Path.Combine(RuntimeSourceRootV1,".git",name.Replace('/',Path.DirectorySeparatorChar));
+      if(RuntimeLooseRefPresentV1(loose)) {
+        RuntimePinParentsV1(loose,pins);
+        byte[] data=RuntimeReadPinnedV1(loose,128,pins);
+        string text=new UTF8Encoding(false,true).GetString(data);
+        if(text!=expected && text!=expected+"\n" && text!=expected+"\r\n")
+          RuntimeRefDeniedV1();
+        return;
+      }
+      string packed=Path.Combine(RuntimeSourceRootV1,".git","packed-refs");
+      RuntimePinParentsV1(packed,pins);
+      RuntimeVerifyPackedRefV1(RuntimeReadPinnedV1(packed,1048576,pins),name,expected);
+      if(RuntimeLooseRefPresentV1(loose))RuntimeRefDeniedV1();
+    }
     // Distinct fixed vendor/OS executable case. Source, helper and receipt
     // pins still forbid every hard link. A protected pending receipt binds
     // exact bytes AND observed link count for these three fixed paths only.
@@ -414,15 +471,14 @@ namespace Stephanos.Sovereign {
         if(source!=null && (!RuntimeHexV1(pending.GitClosureSha256,64) || pending.GitClosureSha256!=source.Closure))
           throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_PROTECTED_CLOSURE_CHANGED");
         string executionHead=source==null?manifest.SourceHead:source.Head;
-        foreach(string relative in new string[]{".git/HEAD",".git/refs/heads/main",".git/refs/remotes/origin/main",".git/index",".git/config"}) {
+        foreach(string relative in new string[]{".git/HEAD",".git/index",".git/config"}) {
           string path=Path.Combine(RuntimeSourceRootV1,relative.Replace('/',Path.DirectorySeparatorChar));
           RuntimePinParentsV1(path,pins); byte[] bytes=RuntimeReadPinnedV1(path,33554432,pins);
-          if(relative==".git/HEAD" || relative==".git/refs/heads/main" || relative==".git/refs/remotes/origin/main") {
-            string expected=relative==".git/HEAD"?"ref: refs/heads/main":executionHead;
-            if(new UTF8Encoding(false,true).GetString(bytes).Trim()!=expected)
-              throw new InvalidOperationException("RUNTIME_SOURCE_REF_CHANGED");
-          }
+          if(relative==".git/HEAD" && new UTF8Encoding(false,true).GetString(bytes).Trim()!="ref: refs/heads/main")
+            RuntimeRefDeniedV1();
         }
+        RuntimePinFixedRefV1("refs/heads/main",executionHead,pins);
+        RuntimePinFixedRefV1("refs/remotes/origin/main",executionHead,pins);
         string optionalConfig=Path.Combine(RuntimeSourceRootV1,@".git\config.worktree");
         if(File.Exists(optionalConfig)) RuntimeReadPinnedV1(optionalConfig,2097152,pins);
         pins.SourceHead=manifest.SourceHead; pins.SourceTree=manifest.SourceTree;
