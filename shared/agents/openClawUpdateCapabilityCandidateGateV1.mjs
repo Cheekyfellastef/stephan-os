@@ -358,7 +358,8 @@ function hasPostUpdateProducerEvidence(staged, id) {
   const pre=plainDataRecord(e.preflight), approval=plainDataRecord(e.approval);
   const stage=plainDataRecord(e.stage), backup=plainDataRecord(e.backupSet);
   const apply=plainDataRecord(e.applyReceipt), post=plainDataRecord(e.postUpdateProof);
-  const compare=plainDataRecord(e.preservationComparison);
+  const compare=plainDataRecord(e.preservationComparison, [
+    'schema','comparisonId','manifestSha256','entries']);
   if (![pre,approval,stage,backup,apply,post,compare].every(Boolean)
     || !exactProducerKeys(pre,PRODUCER_PREFLIGHT_EVIDENCE_KEYS)) return false;
   for (const key of ['repository','sourceHead','manifestSha256','packetId','packetSha256','currentVersion','targetVersion']) {
@@ -428,7 +429,8 @@ function hasPostUpdateProducerEvidence(staged, id) {
   }
   const seen=new Set();
   for (const raw of comparisonEntries) {
-    const item=plainDataRecord(raw);
+    const item=plainDataRecord(raw, [
+      'pathFingerprintSha256','beforeDigestSha256','afterDigestSha256']);
     if (!item || seen.has(item.pathFingerprintSha256)
       || !expected.has(item.pathFingerprintSha256)
       || item.beforeDigestSha256 !== expected.get(item.pathFingerprintSha256)

@@ -1774,6 +1774,32 @@ test('post-update producer health, preservation and fixed plan projections fail 
   }
 });
 
+
+test('post-update preservation evidence admits only the original closed producer schema', () => {
+  const make=()=>({
+    stagedUpdate:staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED),
+    capabilityLedger:ledger(),
+    qualificationReplay:[replay(OPENCLAW_TASK_CLASS.OC1)],
+  });
+  const baseline=evaluateOpenClawUpdateCapabilityCandidateV1(make());
+  assert.equal(baseline.updatePromotionAllowed,true,baseline.blockers.join(','));
+  const cases=[
+    ['foreign comparison authority', v => { v.evidence.preservationComparison.sourceMutationAllowed=true; }],
+    ['foreign comparison no-authority field', v => { v.evidence.preservationComparison.reviewed=false; }],
+    ['foreign entry authority', v => { v.evidence.preservationComparison.entries[0].providerRoutingAllowed=true; }],
+    ['foreign entry no-authority field', v => { v.evidence.preservationComparison.entries[0].verified=false; }],
+  ];
+  for (const [label, mutate] of cases) {
+    const input=make();
+    mutate(input.stagedUpdate);
+    const result=evaluateOpenClawUpdateCapabilityCandidateV1(input);
+    assert.equal(result.status,OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE,label);
+    assert.equal(result.updatePromotionAllowed,false,label);
+    assert.equal(result.providerRoutingResumeAllowed,false,label);
+    assert.ok(result.blockers.includes('STAGED_UPDATE_POST_PRODUCER_EVIDENCE_UNPROVEN'),label);
+  }
+});
+
 test('post-update producer custody fields fail closed rather than promoting routing',()=>{
   const make=()=>({stagedUpdate:staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED),
     capabilityLedger:ledger(),qualificationReplay:[replay(OPENCLAW_TASK_CLASS.OC1)]});
