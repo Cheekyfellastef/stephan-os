@@ -101,7 +101,7 @@ $handles=[Collections.Generic.List[IO.FileStream]]::new()
 __PHYSICAL__
 __REFS__
 function Close-Pins {foreach($handle in $handles){$handle.Dispose()};$handles.Clear()}
-$count=0
+$script:count=0
 function Invoke-FixedCase([bool]$allowed,[scriptblock]$action){
  $accepted=$false
  try{& $action;$accepted=$true}catch{if($allowed){throw}}finally{Close-Pins}
@@ -134,8 +134,8 @@ $loose=[IO.Path]::Combine($sourceRoot,'.git','refs','heads','main')
 Invoke-FixedCase $true {Assert-FixedGitRef 'refs/heads/main' $a}
 [IO.File]::WriteAllText($loose,($b+$nl),$utf8)
 Invoke-FixedCase $false {Assert-FixedGitRef 'refs/heads/main' $a}
-if($count -ne 11){throw 'FIXED_INSTALL_PACKED_TEST_COUNT'}
-[Console]::WriteLine('FIXED_INSTALL_PACKED_CASES_PASS_'+$count)
+if($script:count -ne 11){throw 'FIXED_INSTALL_PACKED_TEST_COUNT'}
+[Console]::WriteLine('FIXED_INSTALL_PACKED_CASES_PASS_'+$script:count)
 `;
   const escaped="'"+root.replaceAll("'","''")+"'";
   const driverBody=script.replace('__ROOT__',()=>escaped)
