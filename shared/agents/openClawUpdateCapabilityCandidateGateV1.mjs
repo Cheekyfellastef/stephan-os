@@ -331,6 +331,31 @@ function hasPostUpdateProducerEvidence(staged, id) {
   for (const key of ['repository','sourceHead','manifestSha256','packetId','packetSha256','targetVersion']) {
     if (apply[key] !== id[key]) return false;
   }
+  // Apply receipts contain the producer's five executed adapter actions.
+  // The seven-step applyPlan is only a source-only, unexecuted template.
+  const applyKeys=['schema','receiptId','adapterId','repository','sourceHead','manifestSha256',
+    'approvalId','stageId','backupSetId','packetId','packetSha256','beforeVersion',
+    'targetVersion','mutationAttempted','observedAtUtc','steps'];
+  const postKeys=['schema','proofId','repository','sourceHead','manifestSha256',
+    'observedVersion','gatewayEndpoint','observedAtUtc','health'];
+  if (!exactProducerKeys(apply,applyKeys) || !exactProducerKeys(post,postKeys)
+    || apply.adapterId !== OPENCLAW_BOUNDED_UPDATE_ADAPTER_ID
+    || apply.beforeVersion !== id.currentVersion) return false;
+  const executedSteps=denseArray(apply.steps,5);
+  if (!executedSteps || executedSteps.length !== 5
+    || executedSteps.some((step,index)=>step!==APPLY_STEPS_PRODUCER[index])) return false;
+  const observedTime=(value)=>{
+    if(typeof value!=='string'||!value.endsWith('Z'))return null;
+    const parsed=Date.parse(value);
+    return Number.isFinite(parsed)&&new Date(parsed).toISOString()===value?parsed:null;
+  };
+  const appliedAt=observedTime(apply.observedAtUtc);
+  const provedAt=observedTime(post.observedAtUtc);
+  const stagedAt=observedTime(stage.observedAtUtc);
+  const backedAt=observedTime(backup.createdAtUtc);
+  if ([appliedAt,provedAt,stagedAt,backedAt].some((value)=>value===null)
+    || appliedAt>Date.now()+60000 || provedAt>Date.now()+60000
+    || appliedAt<stagedAt || appliedAt<backedAt || provedAt<appliedAt) return false;
   const health=plainDataRecord(post.health,UPDATED_HEALTH_CHECKS);
   if (!health || UPDATED_HEALTH_CHECKS.some((key)=>health[key] !== true)
     || post.schema !== OPENCLAW_UPDATE_POST_PROOF_SCHEMA || !safeId(post.proofId)

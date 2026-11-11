@@ -94,10 +94,18 @@ function postUpdateEvidenceFixture(id) {
     applyReceipt:{schema:OPENCLAW_UPDATE_APPLY_RECEIPT_SCHEMA,receiptId:'apply-1',mutationAttempted:true,
       approvalId:'approval-1',stageId:'stage-1',backupSetId:'backup-1',repository:id.repository,
       sourceHead:id.sourceHead,manifestSha256:id.manifestSha256,packetId:id.packetId,
-      packetSha256:id.packetSha256,targetVersion:id.targetVersion},
+      packetSha256:id.packetSha256,targetVersion:id.targetVersion,
+      adapterId:'openclaw-bounded-update-adapter-v1',beforeVersion:id.currentVersion,
+      observedAtUtc:new Date().toISOString(),
+      steps:[OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_PREFLIGHT,
+        OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_APPROVAL,
+        OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_STAGE,
+        OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_BACKUP,
+        OPENCLAW_STAGED_UPDATE_ACTION.APPLY_UPDATE]},
     postUpdateProof:{schema:OPENCLAW_UPDATE_POST_PROOF_SCHEMA,proofId:'health-1',repository:id.repository,
       sourceHead:id.sourceHead,manifestSha256:id.manifestSha256,observedVersion:id.targetVersion,
       gatewayEndpoint:OPENCLAW_APPROVED_GATEWAY_ENDPOINT,
+      observedAtUtc:new Date().toISOString(),
       health:{openClawGateway:true,stephanosBackend:true,stephanosUi:true,
         missionWorker:true,sharedWorkspaceWrite:true}},
     preservationComparison:{schema:OPENCLAW_UPDATE_PRESERVATION_COMPARISON_SCHEMA,
@@ -1696,5 +1704,40 @@ test('post-update producer custody fields fail closed rather than promoting rout
     assert.equal(actual.updatePromotionAllowed,false,'mutation '+i);
     assert.equal(actual.providerRoutingResumeAllowed,false,'mutation '+i);
     assert.ok(actual.blockers.includes('STAGED_UPDATE_POST_PRODUCER_EVIDENCE_UNPROVEN'),'mutation '+i);
+  }
+});
+
+test('verified post-update routing requires producer-accurate adapter receipt, steps and chronology', () => {
+  const make=()=>({
+    stagedUpdate:staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED),
+    capabilityLedger:ledger(),
+    qualificationReplay:[replay(OPENCLAW_TASK_CLASS.OC1)],
+  });
+  const baseline=evaluateOpenClawUpdateCapabilityCandidateV1(make());
+  assert.equal(baseline.status,OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.UPDATED_AND_CAPABILITIES_VERIFIED);
+  assert.equal(baseline.providerRoutingResumeAllowed,true);
+  const cases=[
+    ['missing adapter',v=>{delete v.evidence.applyReceipt.adapterId;}],
+    ['wrong adapter',v=>{v.evidence.applyReceipt.adapterId='arbitrary-shell';}],
+    ['wrong previous version',v=>{v.evidence.applyReceipt.beforeVersion='99.0';}],
+    ['receipt steps missing',v=>{delete v.evidence.applyReceipt.steps;}],
+    ['receipt steps reordered',v=>{v.evidence.applyReceipt.steps.reverse();}],
+    ['receipt extra step',v=>{v.evidence.applyReceipt.steps.push(OPENCLAW_STAGED_UPDATE_ACTION.VERIFY_HEALTH);}],
+    ['receipt arbitrary action',v=>{v.evidence.applyReceipt.steps[0]='ARBITRARY_SHELL';}],
+    ['missing apply timestamp',v=>{delete v.evidence.applyReceipt.observedAtUtc;}],
+    ['future apply timestamp',v=>{v.evidence.applyReceipt.observedAtUtc='2099-01-01T00:00:00.000Z';}],
+    ['missing health timestamp',v=>{delete v.evidence.postUpdateProof.observedAtUtc;}],
+    ['future health timestamp',v=>{v.evidence.postUpdateProof.observedAtUtc='2099-01-01T00:00:00.000Z';}],
+    ['health before apply',v=>{v.evidence.postUpdateProof.observedAtUtc='2025-01-01T00:00:00.000Z';}],
+    ['apply before staging',v=>{v.evidence.applyReceipt.observedAtUtc='2025-01-01T00:00:00.000Z';}],
+    ['extra apply authority',v=>{v.evidence.applyReceipt.shellAllowed=true;}],
+    ['extra health authority',v=>{v.evidence.postUpdateProof.sourceMutationAllowed=true;}],
+  ];
+  for (const [name,mutate] of cases) {
+    const candidate=make();mutate(candidate.stagedUpdate);
+    const result=evaluateOpenClawUpdateCapabilityCandidateV1(candidate);
+    assert.equal(result.status,OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE,name);
+    assert.equal(result.providerRoutingResumeAllowed,false,name);
+    assert.ok(result.blockers.includes('STAGED_UPDATE_POST_PRODUCER_EVIDENCE_UNPROVEN'),name);
   }
 });
