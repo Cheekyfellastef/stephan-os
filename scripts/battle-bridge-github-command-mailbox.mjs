@@ -3255,7 +3255,7 @@ export function terminalizeRejectedMailboxCommands(state, rejections = [], {
     consumed.add(requestId);
     const publishable = { ...receipt, receiptRef: receiptLocation.ref };
     const publication = publish(publishable);
-    checkpointMailboxReceiptPublication(state, publishable, publication, { persist });
+    checkpointMailboxReceiptPublication(state, receipt, publication, { persist });
     terminal.push(Object.freeze({ requestId, blocker: receipt.blocker, receipt, receiptLocation, publication }));
   }
   return Object.freeze(terminal);
@@ -4499,7 +4499,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
       const receiptLocation = writeReceipt(receipt);
       checkpointAcceptedMailboxReceipt(state, receipt);
       const publishable = { ...receipt, receiptRef: receiptLocation.ref };
-      checkpointMailboxReceiptPublication(state, publishable, publicationBudget.publish(publishable));
+      checkpointMailboxReceiptPublication(state, receipt, publicationBudget.publish(publishable));
       accepted.set(selected.command.requestId, Object.freeze({ acceptedAt, receiptLocation }));
     },
     executeCommand: async (selected) => {
@@ -4550,7 +4550,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
       const receiptLocation = writeReceipt(receipt);
       checkpointTerminalMailboxReceipt(state, receipt);
       const publishable = { ...receipt, receiptRef: receiptLocation.ref };
-      checkpointMailboxReceiptPublication(state, publishable, publicationBudget.publish(publishable));
+      checkpointMailboxReceiptPublication(state, receipt, publicationBudget.publish(publishable));
       return Object.freeze({ receipt, execution: terminalExecution, receiptLocation });
     },
     shouldYieldAfterTerminal: shouldRolloverMailboxGenerationAfterTerminal,
