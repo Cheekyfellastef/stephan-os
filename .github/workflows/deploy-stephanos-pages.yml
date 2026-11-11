@@ -137,6 +137,33 @@ jobs:
             --exclude '.DS_Store'
           touch _site/.nojekyll
 
+      - name: Generate and verify hosted Spatial Workspace PWA icons
+        run: |
+          node apps/spatial-bridge/tools/build-icons.mjs --output-dir _site/apps/spatial-bridge/icons
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { join } from 'node:path';
+
+          const siteRoot = '_site/apps/spatial-bridge';
+          const manifest = JSON.parse(readFileSync(join(siteRoot, 'manifest.webmanifest'), 'utf8'));
+          const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+          for (const size of [192, 512]) {
+            const src = `./icons/icon-${size}.png`;
+            const entry = manifest.icons?.find((icon) =>
+              icon.src === src && icon.type === 'image/png' && icon.sizes === `${size}x${size}`);
+            if (!entry) throw new Error(`SPATIAL_PWA_MANIFEST_ICON_MISSING:${size}`);
+            const png = readFileSync(join(siteRoot, 'icons', `icon-${size}.png`));
+            if (png.length < 33 || !png.subarray(0, 8).equals(signature)) {
+              throw new Error(`SPATIAL_PWA_ICON_PNG_INVALID:${size}`);
+            }
+            if (png.toString('ascii', 12, 16) !== 'IHDR'
+                || png.readUInt32BE(16) !== size || png.readUInt32BE(20) !== size
+                || png[24] !== 8 || png[25] !== 6) {
+              throw new Error(`SPATIAL_PWA_ICON_DIMENSIONS_INVALID:${size}`);
+            }
+          }
+          NODE
+
       - name: Enable bounded remote Goal Dashboard projection
         run: |
           node - <<'NODE'
