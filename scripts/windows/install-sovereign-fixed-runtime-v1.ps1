@@ -21,6 +21,57 @@ $protectedRoot='C:\Program Files\Stephanos\SovereignFixedRuntimeV1'
 $administrators=[Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
 $system=[Security.Principal.SecurityIdentifier]::new('S-1-5-18')
 $operator=[Security.Principal.SecurityIdentifier]::new($bootstrap.OperatorSid)
+# Verify only two exact Git refs (loose or packed) before compilation.
+function Test-FixedRefPresent([string]$path){
+ try {
+  $attributes=[IO.File]::GetAttributes($path)
+  if(($attributes -band ([IO.FileAttributes]::ReparsePoint -bor [IO.FileAttributes]::Directory)) -ne 0){throw 'FIXED_INSTALL_REF_CHANGED'}
+  return $true
+ }catch{
+  $errorType=$_.Exception
+  if($errorType -is [Management.Automation.MethodInvocationException]){$errorType=$errorType.InnerException}
+  if($errorType -is [IO.FileNotFoundException] -or $errorType -is [IO.DirectoryNotFoundException]){return $false}
+  throw
+ }
+}
+function Assert-FixedGitRef([string]$reference,[string]$expected){
+ if($reference -cnotin @('refs/heads/main','refs/remotes/origin/main') -or $expected -cnotmatch '^[a-f0-9]{40}$'){throw 'FIXED_INSTALL_REF_CHANGED'}
+ $loose=[IO.Path]::Combine($sourceRoot,'.git',$reference.Replace('/','\'))
+ if(Test-FixedRefPresent $loose){
+  Assert-Physical $loose
+  $file=[IO.FileStream]::new($loose,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read);$handles.Add($file)
+  if($file.Length -gt 128){throw 'FIXED_INSTALL_REF_CHANGED'}
+  $reader=[IO.StreamReader]::new($file,[Text.UTF8Encoding]::new($false,$true),$false,1024,$true)
+  try{$value=$reader.ReadToEnd()}finally{$reader.Dispose()}
+  if($value -cne $expected -and $value -cne ($expected+[char]10) -and $value -cne ($expected+[char]13+[char]10)){throw 'FIXED_INSTALL_REF_CHANGED'}
+  return
+ }
+ $packed=[IO.Path]::Combine($sourceRoot,'.git','packed-refs');Assert-Physical $packed
+ $file=[IO.FileStream]::new($packed,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read);$handles.Add($file)
+ if($file.Length -le 0 -or $file.Length -gt 1048576){throw 'FIXED_INSTALL_REF_CHANGED'}
+ $reader=[IO.StreamReader]::new($file,[Text.UTF8Encoding]::new($false,$true),$false,1024,$true)
+ try{$rows=($reader.ReadToEnd()).Split([char]10)}finally{$reader.Dispose()}
+ $found=$false;$tag=$false
+ for($i=0;$i -lt $rows.Length;$i++){
+  $line=$rows[$i].TrimEnd([char]13)
+  if($i -eq $rows.Length-1 -and $line.Length -eq 0){continue}
+  if($line.Length -eq 0 -or $line.Length -gt 260){throw 'FIXED_INSTALL_REF_CHANGED'}
+  if($line[0] -eq '#'){$tag=$false;continue}
+  if($line[0] -eq '^'){
+   if(-not $tag -or $line.Substring(1) -cnotmatch '^[a-f0-9]{40}$'){throw 'FIXED_INSTALL_REF_CHANGED'}
+   $tag=$false;continue
+  }
+  if($line -cnotmatch '^([a-f0-9]{40}) (refs/[A-Za-z0-9._/-]{1,210})$'){throw 'FIXED_INSTALL_REF_CHANGED'}
+  $ref=$Matches[2]
+  if($ref.Contains('..') -or $ref.Contains('//') -or $ref.EndsWith('/') -or $ref.EndsWith('.lock')){throw 'FIXED_INSTALL_REF_CHANGED'}
+  $tag=$ref.StartsWith('refs/tags/',[StringComparison]::Ordinal)
+  if($ref -ceq $reference){
+   if($found -or $Matches[1] -cne $expected){throw 'FIXED_INSTALL_REF_CHANGED'}
+   $found=$true
+  }
+ }
+ if(-not $found -or (Test-FixedRefPresent $loose)){throw 'FIXED_INSTALL_REF_CHANGED'}
+}
 function Get-Digest([byte[]]$bytes){
  $sha=[Security.Cryptography.SHA256]::Create()
  try{return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
@@ -98,13 +149,13 @@ try{
   $memory=[IO.MemoryStream]::new();try{$file.CopyTo($memory);$actual=$memory.ToArray()}finally{$memory.Dispose()}
   if((Get-Digest $actual) -cne $row.MaterializedSha256){throw 'FIXED_INSTALL_CANONICAL_BYTES_CHANGED'}
  }
- # Refuse source identity drift without invoking Git/compiler descendants outside custody.
- foreach($pair in @(@('.git/HEAD','ref: refs/heads/main'),@('.git/refs/heads/main',$ExpectedMain))){
-  $path=[IO.Path]::Combine($sourceRoot,$pair[0]);Assert-Physical $path
-  $file=[IO.FileStream]::new($path,'Open','Read','Read');$handles.Add($file)
-  $reader=[IO.StreamReader]::new($file,[Text.Encoding]::UTF8,$true,1024,$true)
-  try{if($reader.ReadToEnd().Trim() -cne $pair[1]){throw 'FIXED_INSTALL_REF_CHANGED'}}finally{$reader.Dispose()}
- }
+ # Refuse source drift before any protected compiler descendant.
+ $path=[IO.Path]::Combine($sourceRoot,'.git','HEAD');Assert-Physical $path
+ $file=[IO.FileStream]::new($path,'Open','Read','Read');$handles.Add($file)
+ $reader=[IO.StreamReader]::new($file,[Text.UTF8Encoding]::new($false,$true),$false,1024,$true)
+ try{if($reader.ReadToEnd().Trim() -cne 'ref: refs/heads/main'){throw 'FIXED_INSTALL_REF_CHANGED'}}finally{$reader.Dispose()}
+ Assert-FixedGitRef 'refs/heads/main' $ExpectedMain
+ Assert-FixedGitRef 'refs/remotes/origin/main' $ExpectedMain
  $manifestBytes=[Text.UTF8Encoding]::new($false).GetBytes(($manifest|ConvertTo-Json -Depth 8 -Compress))
  $manifestPath=[IO.Path]::Combine($staging,'Stephanos.FixedRuntime.ManifestV1')
  [IO.File]::WriteAllBytes($manifestPath,$manifestBytes)
