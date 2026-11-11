@@ -383,8 +383,13 @@ function hasPostUpdateProducerEvidence(staged, id) {
   const provedAt=observedTime(post.observedAtUtc);
   const stagedAt=observedTime(stage.observedAtUtc);
   const backedAt=observedTime(backup.createdAtUtc);
-  if ([appliedAt,provedAt,stagedAt,backedAt].some((value)=>value===null)
+  // An approval issued after the bounded adapter executed cannot authorize
+  // that historical mutation. Clock-skew tolerance is not retroactive consent.
+  const approvedAt=observedTime(approval.approvedAtUtc);
+  const expiresAt=observedTime(approval.expiresAtUtc);
+  if ([appliedAt,provedAt,stagedAt,backedAt,approvedAt,expiresAt].some((value)=>value===null)
     || appliedAt>Date.now()+60000 || provedAt>Date.now()+60000
+    || approvedAt>appliedAt || appliedAt>=expiresAt
     || appliedAt<stagedAt || appliedAt<backedAt || provedAt<appliedAt) return false;
   const health=plainDataRecord(post.health,UPDATED_HEALTH_CHECKS);
   if (!health || UPDATED_HEALTH_CHECKS.some((key)=>health[key] !== true)

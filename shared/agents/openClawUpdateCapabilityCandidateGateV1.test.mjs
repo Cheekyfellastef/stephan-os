@@ -199,6 +199,32 @@ function replay(taskClass, overrides = {}) {
   };
 }
 
+test('post-update rejects an approval issued after bounded adapter execution', () => {
+  const evaluate = (record) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: record, capabilityLedger: ledger(),
+    qualificationReplay: [replay(OPENCLAW_TASK_CLASS.OC1)],
+  });
+  const valid = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  assert.equal(evaluate(valid).providerRoutingResumeAllowed, true);
+
+  const outOfOrder = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const baseTime = Date.parse(outOfOrder.evidence.applyReceipt.observedAtUtc);
+  // Keep staging and backup genuinely before apply and all timestamps in
+  // the past, so only retroactively issued operator approval is contradictory.
+  const earlier = new Date(baseTime - 120_000).toISOString();
+  outOfOrder.evidence.stage.observedAtUtc = earlier;
+  outOfOrder.evidence.backupSet.createdAtUtc = earlier;
+  outOfOrder.evidence.backupSet.backupSetSha256 =
+    producerBackupHashForFixture(outOfOrder.evidence.backupSet);
+  outOfOrder.evidence.applyReceipt.observedAtUtc = new Date(baseTime - 90_000).toISOString();
+  outOfOrder.evidence.approval.approvedAtUtc = new Date(baseTime - 60_000).toISOString();
+
+  const result = evaluate(outOfOrder);
+  assert.equal(result.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.equal(result.providerRoutingResumeAllowed, false);
+  assert.ok(result.blockers.includes('STAGED_UPDATE_POST_PRODUCER_EVIDENCE_UNPROVEN'));
+});
+
 test('post-update rejects forged backup-set digest even with a READY status', () => {
   const evaluate=(mutate)=>{
     const record=staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
