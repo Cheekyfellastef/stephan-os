@@ -1504,6 +1504,31 @@ test('durable mission truth reconstructs recent surface failures across worker r
   assert.deepEqual(expired, []);
 });
 
+test('verification failures survive worker restart liveness reconstruction and clear on verified completion', () => {
+  const nowUtc = '2026-11-03T10:15:00.000Z';
+  const failed = {
+    missionId: 'verification-restart-failure',
+    updatedAt: '2026-11-03T10:14:00.000Z',
+    currentPhase: 'BLOCKED',
+    dispatch: { adapter: 'verification', status: 'failed' },
+    blockers: ['VERIFICATION_EVIDENCE_NOT_GROUNDED'],
+  };
+  assert.deepEqual(deriveDurableSurfaceFailureHistory([failed], nowUtc), [{
+    surfaceId: 'verification',
+    failureClass: 'VERIFICATION_EVIDENCE_NOT_GROUNDED',
+    evidenceId: 'verification-restart-failure',
+  }]);
+
+  const completed = {
+    missionId: 'verification-restart-success',
+    updatedAt: '2026-11-03T10:14:30.000Z',
+    currentPhase: 'EVIDENCE_RECORDED',
+    dispatch: { adapter: 'verification', status: 'complete' },
+    blockers: [],
+  };
+  assert.deepEqual(deriveDurableSurfaceFailureHistory([failed, completed], nowUtc), []);
+});
+
 test('fresh supervisor process feeds durable repeated failures into controller liveness evidence', async () => {
   const observedEvidence = [];
   const nowUtc = '2026-09-25T02:00:00.000Z';

@@ -322,7 +322,7 @@ test('Q&A explicitly distinguishes alive machinery from durable build progress',
   assert.equal(response.questionKind, 'ACTIVE_BUILD_TRUTH');
   assert.equal(response.isActuallyBuilding, false);
   assert.match(response.answer, /^No\./);
-  assert.match(response.answer, /not currently proven/);
+  assert.match(response.answer, /Current physical BUILDING is not proven without a fresh worker observation/);
 });
 
 test('Q&A exposes blocker ownership, next action and exact operator need from the same certificate', () => {
@@ -365,7 +365,11 @@ test('status projection is one bounded canonical participant record with closed 
   assert.equal(status.participantId, GOAL_BUILDING_AGENT_ID);
   assert.equal(status.relatedIssue, '#2002');
   assert.equal(status.status, GOAL_BUILDING_OPERATING_STATES.FULLY_OPERATIONAL);
-  assert.equal(body.isActuallyBuilding, true);
+  // Programme source/capability health can be positive while no live worker
+  // observation exists. The physical BUILD bit must remain false.
+  assert.equal(certificate.isActuallyBuilding, true);
+  assert.equal(body.isActuallyBuilding, false);
+  assert.match(status.summary, /Current physical BUILDING is not proven/);
   assert.equal(body.safetyLocks.mutationAuthority, false);
   assert.equal(body.safetyLocks.mergeAuthority, false);
   assert.equal(body.safetyLocks.deploymentAuthority, false);

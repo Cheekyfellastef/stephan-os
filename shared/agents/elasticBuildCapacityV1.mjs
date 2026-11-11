@@ -24,6 +24,10 @@ function denseArray(value) {
 function repositoryPathResource(value) {
   const match = value.match(/^repo:([^:]+\/[^:]+):path:(.+)$/);
   if (!match) return null;
+  // The owner/repository prefix must itself be a canonical repository root.
+  // Otherwise extra slash segments would escape the root/path conflict index.
+  const root = repositoryRootResource(`repo:${match[1]}`);
+  if (!root) return null;
   const segments = match[2].split('/');
   if (segments.some((segment) => (
     !segment
@@ -34,7 +38,7 @@ function repositoryPathResource(value) {
     || segment.endsWith(' ')
     || WIN32_RESERVED_PATH_STEM.test(segment)
   ))) return null;
-  return { repository:match[1], path:segments.join('/') };
+  return { repository:root.repository, path:segments.join('/') };
 }
 
 function repositoryRootResource(value) {
@@ -51,7 +55,12 @@ function repositoryRootResource(value) {
 function canonicalResourceId(value) {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
   if (!SAFE_RESOURCE_ID.test(normalized)) return null;
-  if (!normalized.startsWith('repo:') || !normalized.includes(':path:')) return normalized;
+  if (!normalized.startsWith('repo:')) return normalized;
+  // 'repo:' is a reserved hierarchical resource namespace, never an opaque ID.
+  // Reject malformed repo claims instead of treating them as disjoint from a
+  // repository-wide owner. Only canonical root and :path: scopes are admitted.
+  const root = repositoryRootResource(normalized);
+  if (root) return `repo:${root.repository}`;
   const parsed = repositoryPathResource(normalized);
   return parsed ? `repo:${parsed.repository}:path:${parsed.path}` : null;
 }
@@ -144,17 +153,23 @@ function freeze(value) {
 
 export function deriveElasticBuildWidth(input = {}) {
   const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const minimum = integer(source.minimumLanes) ?? MINIMUM_BUILD_LANES;
-  const maximum = integer(source.maximumLanes) ?? MAXIMUM_BUILD_LANES;
+  // An omitted optional policy uses the default. An explicitly supplied but
+  // malformed limit MUST NOT silently widen capacity to the default.
+  const minimum = source.minimumLanes === undefined ? MINIMUM_BUILD_LANES : integer(source.minimumLanes);
+  const maximum = source.maximumLanes === undefined ? MAXIMUM_BUILD_LANES : integer(source.maximumLanes);
   const active = integer(source.activeLaneCount);
   const ready = integer(source.readyIndependentWorkCount);
   const available = integer(source.availableExecutorSlots);
-  const invalid = minimum < MINIMUM_BUILD_LANES
+  const invalid = minimum === null
+    || maximum === null
+    || minimum < MINIMUM_BUILD_LANES
     || maximum < minimum
     || maximum > MAXIMUM_BUILD_LANES
     || active === null
     || ready === null
-    || available === null;
+    || available === null
+    // Independently safe integer counts can sum to an unsafe/rounded width.
+    || (active !== null && ready !== null && !Number.isSafeInteger(active + ready));
 
   if (invalid) return freeze({
     schemaVersion:ELASTIC_BUILD_CAPACITY_SCHEMA,
@@ -172,7 +187,12 @@ export function deriveElasticBuildWidth(input = {}) {
   });
 
   const demandedWidth = active + ready;
-  const healthyBaseline = available >= minimum;
+  // Executor slots are the total evidenced capacity, not free slots. If
+  // active lanes already exceed executor or policy limits, stop new admission
+  // without terminating active work or fabricating healthy RUNNING status.
+  const executorOvercommitted = active > available;
+  const policyOvercommitted = active > maximum;
+  const healthyBaseline = available >= minimum && !executorOvercommitted && !policyOvercommitted;
   const desiredWidth = Math.min(maximum, available, Math.max(minimum, demandedWidth));
   const remainingAdmissionSlots = Math.max(0, desiredWidth - active);
   const status = healthyBaseline ? 'RUNNING' : 'DEGRADED_CAPACITY';
@@ -184,7 +204,9 @@ export function deriveElasticBuildWidth(input = {}) {
         ? 'SCALE_IN'
         : 'HOLD';
   const reasonCodes = [
-    ...(!healthyBaseline ? ['BASELINE_CAPACITY_SHORTFALL'] : []),
+    ...(available < minimum ? ['BASELINE_CAPACITY_SHORTFALL'] : []),
+    ...(executorOvercommitted ? ['ACTIVE_EXECUTOR_CAPACITY_EXCEEDED'] : []),
+    ...(policyOvercommitted ? ['ACTIVE_POLICY_MAXIMUM_EXCEEDED'] : []),
     ...(demandedWidth > maximum ? ['POLICY_MAXIMUM_REACHED'] : []),
     ...(ready > remainingAdmissionSlots ? ['ELIGIBLE_WORK_REMAINS_QUEUED'] : []),
   ];

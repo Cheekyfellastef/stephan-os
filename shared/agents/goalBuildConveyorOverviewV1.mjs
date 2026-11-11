@@ -102,15 +102,21 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     id: goal.builder, goals: buildingGoals.filter(other => other.builder === goal.builder)
       .map(other => ({ issue: other.issue, title: other.title })),
   }])).values()];
-  const controllers = array(projection.controllerFleet?.controllers).map(controller => ({
-    id: controller.controllerId, title: controller.title || controller.controllerId,
-    state: controller.activityState || 'UNKNOWN',
-    truth: controller.freshness === 'CURRENT' && fresh(controller.timestampUtc, nowMs, maxAgeMs)
-      ? 'CURRENT' : controller.freshness === 'UNKNOWN' ? 'UNKNOWN' : 'STALE',
-    trafficLight: controller.trafficLight || 'GREY',
-    expiresAtUtc: fresh(controller.timestampUtc, nowMs, maxAgeMs)
-      ? new Date(time(controller.timestampUtc) + maxAgeMs).toISOString() : '',
-  }));
+  // A controller cannot inherit a green light or a future expiry from an old
+  // status report. Freshness and reported traffic light are separate facts.
+  const controllers = array(projection.controllerFleet?.controllers).map(controller => {
+    const current = controller.freshness === 'CURRENT'
+      && fresh(controller.timestampUtc, nowMs, maxAgeMs);
+    const reportedLight = String(controller.trafficLight || '').toUpperCase();
+    return {
+      id: controller.controllerId, title: controller.title || controller.controllerId,
+      state: controller.activityState || 'UNKNOWN',
+      truth: current ? 'CURRENT' : controller.freshness === 'UNKNOWN' ? 'UNKNOWN' : 'STALE',
+      trafficLight: current && ['GREEN', 'AMBER', 'RED', 'GREY'].includes(reportedLight)
+        ? reportedLight : 'GREY',
+      expiresAtUtc: current ? new Date(time(controller.timestampUtc) + maxAgeMs).toISOString() : '',
+    };
+  });
   // Read-only Octopus inventory, not an invented fleet of target-capacity slots.
   // A lane-specific verified receipt and fresh material timestamp are needed
   // before any *individual* lane can claim to be building.
@@ -283,12 +289,80 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
   const core = latestStatus('stephanos-core-daemon-current');
   const coreKnown = /^[a-f0-9]{40}$/.test(core?.sourceHead || '');
   const coreLive = coreKnown && fresh(core.timestampUtc, nowMs, maxAgeMs);
-  const health = ['daemonHealthy', 'missionWorkerHealthy', 'backendHealthy'].map((field, index) => ({
-    id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
-    state: coreLive && typeof core[field] === 'boolean' ? core[field] ? 'HEALTHY' : 'UNHEALTHY' : 'UNKNOWN',
-    observedAtUtc: coreKnown ? core.timestampUtc : '',
-    expiresAtUtc: coreLive ? new Date(time(core.timestampUtc) + maxAgeMs).toISOString() : '',
-  }));
+  // Each service must have an independently timestamped health observation.
+  // A stopped Core publisher cannot make a still-live worker/backend appear
+  // stopped, and an HTTP read must never renew an old observation.
+  const runtimeServices = array(projection.captainsBridge?.runtimeHealth?.services);
+  // This estate has no legacy runtime-health records on some deployed machines.
+  // Reuse the existing *independent* canonical Windows watchdog and post-sync
+  // target receipts instead of re-aging the expired Core daemon aggregate.
+  // Both sources are bounded by their original publication time and exact head.
+  const watchdog = latestStatus('battle-bridge-worker-watchdog-current');
+  const workerProof = watchdog?.finalAssessment;
+  const refresh = latestStatus('post-sync-runtime-refresh-current');
+  const backendProof = array(refresh?.resultTargets).find(target =>
+    target?.targetId === 'stephanos-backend-8787');
+  const serviceProofAgeMs = Math.min(maxAgeMs, 2 * 60_000);
+  const workerProofValid = watchdog?.status === 'WORKER_WATCHDOG_HEALTHY'
+    && watchdog?.classification === 'WORKER_WATCHDOG_HEALTHY'
+    && workerProof?.finalVerdict === 'WORKER_WATCHDOG_HEALTHY'
+    && workerProof?.healthy === true && workerProof?.processHealthy === true
+    && workerProof?.heartbeatFresh === true
+    && workerProof?.heartbeatPidMatchesProcess === true
+    && workerProof?.processLaunchIdentityValid === true
+    && workerProof?.heartbeatLaunchIdentityMatchesProcess === true
+    && workerProof?.repositoryFromCanonicalMain === true
+    && workerProof?.heartbeatMatchesCanonicalRepositoryHead === true
+    && workerProof?.remoteMainHeadProven === true
+    && /^[a-f0-9]{40}$/.test(String(workerProof?.sourceHead || ''))
+    && workerProof.sourceHead === workerProof.canonicalRepositoryHead
+    && workerProof.sourceHead === workerProof.remoteMainHead
+    && fresh(watchdog.timestampUtc, nowMs, serviceProofAgeMs);
+  const backendProofValid = refresh?.safeRefreshesCompleted === true
+    && refresh?.unknownPathCount === 0 && refresh?.unsafePathCount === 0
+    && backendProof?.ok === true && backendProof?.exactHeadProofOk === true
+    && /^[a-f0-9]{40}$/.test(String(backendProof?.sourceHead || ''))
+    && backendProof.sourceHead === refresh.afterHead
+    && fresh(refresh.timestampUtc, nowMs, serviceProofAgeMs);
+  const health = ['daemonHealthy', 'missionWorkerHealthy', 'backendHealthy'].map((field, index) => {
+    const serviceId = index === 1 ? 'mission-worker' : index === 2 ? 'backend' : '';
+    const independent = serviceId ? runtimeServices.find(entry => entry?.serviceId === serviceId) : null;
+    const independentLive = independent?.freshness === 'CURRENT'
+      && fresh(independent?.observedAtUtc, nowMs, maxAgeMs);
+    const independentLight = String(independent?.trafficLight || '').toUpperCase();
+    if (independentLive && ['GREEN', 'RED', 'AMBER'].includes(independentLight)) {
+      return {
+        id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+        state: independentLight === 'GREEN' ? 'HEALTHY'
+          : independentLight === 'RED' ? 'UNHEALTHY' : 'DEGRADED',
+        observedAtUtc: independent.observedAtUtc,
+        expiresAtUtc: new Date(time(independent.observedAtUtc) + maxAgeMs).toISOString(),
+        evidenceSource: 'INDEPENDENT_SERVICE_HEALTH',
+      };
+    }
+    // The watchdog proves a real worker process, authenticated launch
+    // identity, fresh PID-bound heartbeat and canonical source head. The
+    // post-sync receipt proves the Backend's independently verified target,
+    // even when desktop plugin-host activation remains separately blocked.
+    const fallback = index === 1 && workerProofValid
+      ? { observedAtUtc: watchdog.timestampUtc, evidenceSource: 'CANONICAL_WORKER_WATCHDOG' }
+      : index === 2 && backendProofValid
+        ? { observedAtUtc: refresh.timestampUtc, evidenceSource: 'EXACT_HEAD_BACKEND_REFRESH' }
+        : null;
+    if (fallback) return {
+      id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+      state: 'HEALTHY', observedAtUtc: fallback.observedAtUtc,
+      expiresAtUtc: new Date(time(fallback.observedAtUtc) + serviceProofAgeMs).toISOString(),
+      evidenceSource: fallback.evidenceSource,
+    };
+    return {
+      id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+      state: coreLive && typeof core[field] === 'boolean' ? core[field] ? 'HEALTHY' : 'UNHEALTHY' : 'UNKNOWN',
+      observedAtUtc: coreKnown ? core.timestampUtc : '',
+      expiresAtUtc: coreLive ? new Date(time(core.timestampUtc) + maxAgeMs).toISOString() : '',
+      evidenceSource: coreKnown ? 'CORE_DAEMON_AGGREGATE' : 'UNAVAILABLE',
+    };
+  });
   return {
     schemaVersion: CONVEYOR_OVERVIEW_SCHEMA, readOnly: true, state, buildState,
     trafficLight: state === 'BLOCKED' ? 'RED' : state === 'BUILDING' ? 'GREEN'

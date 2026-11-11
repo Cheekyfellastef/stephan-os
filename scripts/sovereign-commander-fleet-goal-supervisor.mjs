@@ -259,6 +259,9 @@ export async function runSovereignCommanderFleetGoalSupervisor({
   const nativeCapabilityWorkPending = nativeGapCandidateTotalCount > 0
     || compiledCapabilityWorkCount > remoteParityGapCount;
   const nativeGapSourceDegraded = commanderParity?.nativeGapSourceHealth === 'DEGRADED';
+  // Catalog success keeps scheduling available but cannot graduate installed parity.
+  const capabilityParityUnproven = commanderParity?.parityEvidenceScope === 'SOURCE_CATALOG_ONLY'
+    || commanderParity?.runtimeParityProven !== true;
 
   const safeWorkStranded = runnableGoalCount > 0
     && availableSlotCount > 0
@@ -304,9 +307,10 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     nativeCapabilityWorkPending,
     nativeGapSourceHealth: text(commanderParity?.nativeGapSourceHealth),
     zeroGapInvariantSatisfied: capabilityWorkRemainingCount === 0 && !nativeGapSourceDegraded,
-    capabilityParityClosureRequired: capabilityWorkRemainingCount > 0 || nativeGapSourceDegraded,
+    capabilityParityClosureRequired: capabilityWorkRemainingCount > 0 || nativeGapSourceDegraded || capabilityParityUnproven,
+    capabilityParityRuntimeProven: !capabilityParityUnproven,
     daemonMayReportGreen: capabilityWorkRemainingCount === 0
-      && !nativeGapSourceDegraded && pickupPendingCount === 0,
+      && !nativeGapSourceDegraded && !capabilityParityUnproven && pickupPendingCount === 0,
     mustContinueUntilZero: true,
     capacityObservationSource: 'canonical-programme-and-provider-receipts',
     synchronousProviderRefreshAllowed: false,
@@ -331,7 +335,9 @@ export async function runSovereignCommanderFleetGoalSupervisor({
       : dispatchCount > 0
         ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_DISPATCHED'
         : runnableGoalCount === 0
-          ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_IDLE_GREEN'
+          ? capabilityParityUnproven
+            ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_PENDING'
+            : 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_IDLE_GREEN'
           : heldGoalCount > 0
             ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_HELD_EXPLAINED'
             : 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_GREEN',

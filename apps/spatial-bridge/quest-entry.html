@@ -9,11 +9,12 @@
   <link rel="icon" href="./icons/icon-192.png" />
   <title>Stephanos Spatial Workspace</title>
   <style>
+    [hidden] { display: none !important; }
     :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; color: #e6f5ff; background: radial-gradient(circle at 50% -10%, rgba(51,107,178,.35), transparent 42%), #02040a; }
     .shell { min-height: 100vh; width: min(1040px, 100%); margin: 0 auto; padding: 18px; display: grid; align-content: start; gap: 14px; }
-    .panel { border: 1px solid rgba(120,216,255,.35); border-radius: 14px; background: rgba(5,13,27,.92); padding: 16px; }
+    .panel { min-width: 0; border: 1px solid rgba(120,216,255,.35); border-radius: 14px; background: rgba(5,13,27,.92); padding: 16px; }
     .launch-card { padding: 24px; border-color: rgba(143,235,255,.7); box-shadow: 0 0 46px rgba(70,173,232,.18); background: radial-gradient(circle at 50% 0%, rgba(50,115,171,.22), transparent 55%), rgba(5,13,27,.95); }
     .launch-card button { width: 100%; margin-top: 14px; min-height: 58px; font-size: 1.05rem; }
     .eyebrow { color: #78d8ff; text-transform: uppercase; letter-spacing: .14em; font-size: .72rem; }
@@ -24,12 +25,19 @@
     .label { color: #91afc3; font-size: .7rem; text-transform: uppercase; letter-spacing: .1em; }
     .value { color: #8ff7c1; font-weight: 650; }
     .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
-    button, .button-link { min-height: 46px; border: 1px solid rgba(120,216,255,.42); border-radius: 10px; padding: 10px 14px; color: #e6f5ff; background: rgba(19,58,91,.78); font: inherit; font-weight: 650; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; text-align: center; }
+    button, select, .button-link { min-height: 46px; border: 1px solid rgba(120,216,255,.42); border-radius: 10px; padding: 10px 14px; color: #e6f5ff; background: rgba(19,58,91,.78); font: inherit; font-weight: 650; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; text-align: center; }
     button:hover, button:focus-visible, .button-link:hover, .button-link:focus-visible { border-color: #78d8ff; outline: none; background: rgba(31,90,132,.86); }
     button:disabled { opacity: .58; cursor: default; }
     #session-reason { margin: 0; min-height: 1.4em; color: #ffd38a; }
     #holodeck-canvas { width: 100%; aspect-ratio: 16 / 8; border: 1px solid rgba(120,216,255,.25); border-radius: 12px; background: linear-gradient(#061226, #02040a); }
     .truth-boundary { color: #ffd38a; line-height: 1.5; }
+    .comfort-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; margin: 18px 0; }
+    .comfort-grid label { display: flex; justify-content: space-between; gap: 12px; font-weight: 650; }
+    .comfort-grid input { width: 100%; min-height: 44px; accent-color: #78d8ff; cursor: pointer; }
+    .comfort-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .comfort-modes [aria-pressed="true"] { border-color: #8ff7c1; background: #155248; color: #d9fff0; }
+    .console-keyboard-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+    .console-keyboard-hint { margin-bottom: 0; }
   </style>
 </head>
 <body>
@@ -41,6 +49,98 @@
       <p class="muted">Starting Simulation · Holodeck Chamber</p>
       <button type="button" id="enter-holodeck">Enter Spatial Workspace</button>
       <p id="session-reason" aria-live="polite">Inspecting WebXR capability.</p>
+      <p class="muted">Xbox or Quest controllers: left stick to walk and strafe; right stick for smooth turning. Press the right stick to return to the entrance.</p>
+      <p class="muted">Quest: point at either glass cube or reach for it, hold grip to pick it up, and release to drop or throw. Xbox: look at either cube and hold RT to carry it; release RT to drop, or press RB to throw. D-pad up/down adjusts reach, left/right rotates it, and X returns the held or aimed-at cube to the table (or your last selected cube).</p>
+      <p id="cube-status" class="muted" aria-live="polite">Glass cubes · 5.7 cm and 11.4 cm · gravity and room collisions</p>
+      <p id="cube-save-status" class="muted" aria-live="polite">Loading saved cube positions.</p>
+      <p id="controller-status" aria-live="polite">Enter VR to detect controllers. For Xbox, connect it to the device running this browser and press a button to wake it.</p>
+    </section>
+    <section class="panel" aria-label="Seated and standing comfort">
+      <span class="eyebrow">Make the room fit you</span>
+      <h2>Seated &amp; standing</h2>
+      <div class="comfort-modes" aria-label="Comfort profile">
+        <button id="comfort-seated" type="button" aria-pressed="true">Seated</button>
+        <button id="comfort-standing" type="button" aria-pressed="false">Standing</button>
+      </div>
+      <p class="muted">Each mode remembers its own height offset and keyboard angle. Positive height lifts your viewpoint.</p>
+      <div class="comfort-grid">
+        <div>
+          <label for="comfort-height">Height offset <output id="comfort-height-value" for="comfort-height">+0 cm</output></label>
+          <input id="comfort-height" type="range" min="-100" max="100" step="1" value="0" />
+          <div class="comfort-modes"><button id="comfort-lower" type="button">Lower 1 cm</button><button id="comfort-raise" type="button">Raise 1 cm</button></div>
+        </div>
+        <div>
+          <label for="comfort-tilt">Keyboard angle <output id="comfort-tilt-value" for="comfort-tilt">0.0° · flat</output></label>
+          <input id="comfort-tilt" type="range" min="0" max="90" step="0.1" value="0" />
+          <div class="comfort-modes"><button id="comfort-flat" type="button">Flat · 0°</button><button id="comfort-vertical" type="button">Vertical · 90°</button></div>
+        </div>
+      </div>
+      <div class="comfort-modes"><button id="comfort-reset" type="button">Reset Seated profile</button><button id="comfort-preview" type="button" aria-pressed="false">View keyboard</button></div>
+      <p class="muted">In VR, hold trigger or grip on either large side dial and turn your controller to tilt the keyboard. Release to keep the angle. You can also point at the height and tilt buttons on the upright display or keyboard; press Quest trigger or Xbox A, and hold to adjust.</p>
+      <p id="comfort-save-status" class="muted" role="status"></p>
+    </section>
+    <section class="panel" aria-label="Move and save furniture">
+      <h2>Movable table &amp; keyboard</h2>
+      <p class="muted">In VR, hold Quest grip over the table rim or keyboard body and move gently. They respond with plastic-mass inertia and stay exactly where released. Xbox: aim, hold LB and use the left stick. Release to save both positions across visits. Height and tilt profiles stay separate.</p>
+      <div class="controls">
+        <label for="furniture-target">Move</label>
+        <select id="furniture-target"><option value="keyboard">Keyboard assembly · 3.8 kg</option><option value="table">Table · 10 kg</option></select>
+        <button type="button" id="furniture-left">Left 10 cm</button>
+        <button type="button" id="furniture-right">Right 10 cm</button>
+        <button type="button" id="furniture-away">Away 10 cm</button>
+        <button type="button" id="furniture-near">Towards me 10 cm</button>
+        <button type="button" id="furniture-up">Raise 5 cm</button>
+        <button type="button" id="furniture-down">Lower 5 cm</button>
+        <button type="button" id="furniture-reset">Reset selected position</button>
+      </div>
+      <p id="furniture-position" role="status">Loading remembered furniture positions.</p>
+      <p id="furniture-save-status" class="muted" role="status"></p>
+    </section>
+    <section class="panel" aria-label="Spatial ChatGPT console">
+      <h2>Holographic console</h2>
+      <p>Connect your existing ChatGPT or Codex window on this Windows PC. Use Quest Link / Air Link for VR. Its conversation, images, tools and approvals stay in the original app.</p>
+      <div class="controls">
+        <button id="choose-window" type="button">Connect interactive ChatGPT window</button>
+        <button id="share-window" type="button">Show ChatGPT window (view only)</button>
+        <select id="desktop-window" aria-label="Desktop window" hidden></select>
+        <button id="connect-window" type="button" hidden>Connect selected window</button>
+        <button id="disconnect-window" type="button">Disconnect</button>
+      </div>
+      <p class="muted">On the Battle Bridge, “Show ChatGPT window” opens the browser's sharing picker. Select your actual ChatGPT window. Its picture stays local and is view-only until the original Windows helper is installed and authorised for clicks and typing. On phone and iPad, the 3D preview still works, but it cannot remotely capture your PC's ChatGPT window.</p>
+      <p id="window-status" role="status">No window connected.</p>
+      <p id="window-input-status" class="muted" role="status"></p>
+      <p class="muted">In VR, point and press Quest trigger or Xbox A to click the screen or type on the console keyboard. The sticks still move and turn; grip / RT still picks up cubes. Audio uses the original app and your PC headset microphone and speakers.</p>
+      <details><summary>Console preview and desktop controls</summary><div id="console-preview"></div></details>
+    </section>
+    <section class="panel" aria-label="Microphone speakers and ChatGPT Voice">
+      <h2>ChatGPT Voice &amp; headset audio</h2>
+      <p class="muted">Use the actual ChatGPT/Codex desktop window for its harness and Voice button. The buttons here check your local headset devices without recording or forwarding your voice. ChatGPT itself uses the microphone and speakers selected in Windows or the original app.</p>
+      <div class="controls">
+        <button type="button" id="probe-capture">Check ChatGPT screen connection</button>
+        <button type="button" id="show-chatgpt-screen">Show connected ChatGPT screen</button>
+        <button type="button" id="audio-refresh">Find microphone &amp; speakers</button>
+        <select id="audio-microphone" aria-label="Microphone for local test"><option value="">System microphone</option></select>
+        <select id="audio-speakers" aria-label="Speakers for local test"><option value="">System speakers</option></select>
+        <button type="button" id="audio-test-microphone">Test microphone</button>
+        <button type="button" id="audio-stop-microphone">Stop mic test</button>
+        <button type="button" id="audio-test-speakers">Play speaker test</button>
+        <button type="button" id="audio-voice-help">Voice setup guide</button>
+      </div>
+      <p id="audio-connection-status" role="status">Checking whether the local ChatGPT screen adapter is available.</p>
+      <p id="audio-status" role="status">Audio test devices not yet selected.</p>
+      <p id="audio-meter" class="muted" role="status">Microphone test inactive.</p>
+    </section>
+    <section class="panel">
+      <canvas id="holodeck-canvas" aria-label="Stephanos Spatial Workspace Holodeck chamber preview surface"></canvas>
+      <p id="preview-status" class="muted">Room preview · illuminated workstation and full chamber grid</p>
+      <label for="preview-cube">Preview cube</label>
+      <select id="preview-cube"><option value="small">Small glass cube · 5.7 cm</option><option value="large">Large glass cube · 11.4 cm</option></select>
+      <div class="controls" aria-label="Cube preview controls">
+        <button type="button" id="cube-drop">Drop cube</button>
+        <button type="button" id="cube-throw">Throw at wall</button>
+        <button type="button" id="cube-reset">Reset cube</button>
+        <button type="button" id="cube-inspect">Inspect glass cubes</button>
+      </div>
     </section>
     <section class="panel status-grid" aria-label="VR Link diagnostics">
       <div class="status-card"><span class="label">Surface</span><span class="value">Spatial Workspace</span></div>
@@ -57,13 +157,18 @@
       <button type="button" id="ping-stephanos">Inspect Local Projection</button>
       <a class="button-link" href="../vr-research-lab/" id="open-vr-lab">Open VR Research Lab</a>
     </section>
-    <section class="panel">
-      <canvas id="holodeck-canvas" aria-label="Stephanos Spatial Workspace Holodeck chamber preview surface"></canvas>
-    </section>
-    <section class="panel truth-boundary">Authority: read only. No agent dispatch, approvals, Battle Bridge commands, provider changes, game injection, runtime mutation or physical-headset success claim is available from this surface.</section>
+    <section class="panel truth-boundary">Stephanos diagnostics remain read only. The spatial console sends your pointer and keyboard actions to the desktop window you explicitly connect. The original app retains its tools and approval rules. Physical headset acceptance remains pending.</section>
   </main>
   <script type="module">
     import { enterHolodeckBaseline, inspectHolodeckBaselineCapabilities } from './holodeck-baseline-v0.mjs';
+    import { createHolodeckRoomRenderer } from './holodeck-room-v1.mjs';
+    import { createHolodeckCubeScene } from './holodeck-cube-scene-v1.mjs';
+    import { createHolodeckCubeStore } from './holodeck-cube-store-v1.mjs';
+    import { createHolodeckWindowClient } from './holodeck-window-client-v1.mjs';
+    import { createHolodeckScreen, SCREEN_BUTTONS, screenButtonLabel } from './holodeck-screen-v1.mjs';
+    import { createHolodeckComfort } from './holodeck-comfort-v1.mjs';
+    import { createHolodeckFurniture } from './holodeck-furniture-v1.mjs';
+    import { createHolodeckAudioControls } from './holodeck-audio-v1.mjs';
     import { createSpatialWorkspaceTelemetryRecorderV1 } from './spatial-telemetry-client.mjs';
     const webxrStatus = document.getElementById('webxr-status');
     const sessionStatus = document.getElementById('session-status');
@@ -73,11 +178,262 @@
     const telemetryStatus = document.getElementById('telemetry-status');
     const commandDeckStatus = document.getElementById('command-deck-status');
     const sessionReason = document.getElementById('session-reason');
+    const controllerStatus = document.getElementById('controller-status');
     const enterButton = document.getElementById('enter-holodeck');
     const pingButton = document.getElementById('ping-stephanos');
     const canvas = document.getElementById('holodeck-canvas');
     let lastCapability = null;
     let activeTelemetry = null;
+    let previewRenderer = null;
+    let immersiveActive = false;
+    let immersiveSession = null;
+    let inspectKeyboard = false;
+    function refreshComfortUI(state) {
+      for(const mode of ['seated','standing'])document.getElementById('comfort-'+mode).setAttribute('aria-pressed',String(state.mode===mode));
+      const height=Math.round(state.heightOffset*100),tilt=state.keyboardTilt;
+      document.getElementById('comfort-height').value=height;
+      document.getElementById('comfort-height-value').textContent=(height>=0?'+':'')+height+' cm';
+      document.getElementById('comfort-tilt').value=tilt;
+      document.getElementById('comfort-tilt-value').textContent=tilt.toFixed(1)+'°'+(tilt===0?' · flat':tilt===90?' · vertical':'');
+      document.getElementById('comfort-reset').textContent='Reset '+(state.mode==='seated'?'Seated':'Standing')+' profile';
+    }
+    const comfort=createHolodeckComfort({
+      onChange:state=>{refreshComfortUI(state);if(!immersiveActive)drawPreview();},
+      onStatus:status=>{document.getElementById('comfort-save-status').textContent=status.message;},
+    });
+    refreshComfortUI(comfort.getState());
+    const furniture=createHolodeckFurniture({
+      onChange:()=>{refreshFurnitureUI();if(!immersiveActive)drawPreview();},
+      onStatus:message=>{document.getElementById('furniture-save-status').textContent=message;},
+    });
+    function refreshFurnitureUI(){
+      const state=furniture.getState(),selected=document.getElementById('furniture-target').value;
+      const offset=state[selected];if(!offset)return;
+      document.getElementById('furniture-position').textContent=selected+' position: '+
+        offset.map(v=>(v>=0?'+':'')+Math.round(v*100)+' cm').join(' / ')+'. Held in place after release.';
+    }
+    document.getElementById('furniture-target').addEventListener('change',refreshFurnitureUI);
+    for(const [id,axis,delta] of [
+      ['furniture-left',0,-0.1],['furniture-right',0,0.1],
+      ['furniture-away',2,-0.1],['furniture-near',2,0.1],
+      ['furniture-up',1,0.05],['furniture-down',1,-0.05],
+    ])document.getElementById(id).addEventListener('click',()=>{
+      furniture.nudge(document.getElementById('furniture-target').value,axis,delta);
+      refreshFurnitureUI();
+    });
+    document.getElementById('furniture-reset').addEventListener('click',()=>{
+      furniture.reset(document.getElementById('furniture-target').value);
+      refreshFurnitureUI();
+    });
+    refreshFurnitureUI();
+    const windowSelector=document.getElementById('desktop-window');
+    const connectWindowButton=document.getElementById('connect-window');
+    const previewKeyButtons=[];
+    let windowListSignature='',keyboardShift=null,screen;
+    function refreshInputStatus(state){
+      const element=document.getElementById('window-input-status'),message=state.inputStatus??'';
+      if(element.textContent!==message)element.textContent=message;
+    }
+    function refreshKeyboardLabels(state){
+      if(keyboardShift===state.shift)return;keyboardShift=state.shift;
+      for(const [control,button] of previewKeyButtons){
+        const label=screenButtonLabel(control,state.shift);button.textContent=label;
+        button.setAttribute('aria-label',control.id.startsWith('key:')?`Type ${label}`:label);
+        if(control.id==='shift')button.setAttribute('aria-pressed',String(state.shift));
+      }
+    }
+    const client=createHolodeckWindowClient({onChange:state=>{
+      document.getElementById('window-status').textContent=state.message;
+      document.getElementById('audio-connection-status').textContent=state.status==='live'
+        ?'Interactive desktop window connected: '+state.title+'. Its original Voice button is shown in that window.'
+        :state.status==='view-only'
+          ?'Live PC window visible on the hologram (view-only). Native helper required for pointer and keyboard actions.'
+          :'ChatGPT harness not connected: '+state.message;
+      windowSelector.hidden=state.status!=='selecting';
+      connectWindowButton.hidden=state.status!=='selecting';
+      windowSelector.disabled=!state.windows.length;
+      if(state.status==='selecting'){
+        const signature=JSON.stringify(state.windows.map(({id,pid,title})=>[id,pid,title]));
+        if(signature!==windowListSignature){
+          const selected=windowSelector.value,selectedPid=windowSelector.selectedOptions[0]?.dataset.pid;windowListSignature=signature;
+          windowSelector.replaceChildren(...state.windows.map(window=>{
+            const option=document.createElement('option');option.value=window.id;option.dataset.pid=String(window.pid);option.textContent=window.title;return option;
+          }));
+          if(selected)windowSelector.value=state.windows.some(window=>String(window.id)===selected&&String(window.pid)===selectedPid)?selected:'';
+        }
+      }
+      connectWindowButton.disabled=!state.windows.some(window=>String(window.id)===windowSelector.value);
+      if(!immersiveActive)drawPreview();
+      refreshInputStatus(screen?.getState()??state);
+    }});
+    screen=createHolodeckScreen({client,comfort,onStatus:state=>{
+      refreshKeyboardLabels(state);if(!immersiveActive)drawPreview();refreshInputStatus(screen?.getState()??state);
+    },onReload:async()=>{
+      comfort.flush();cubeScene.stop();await client.stop();try{await immersiveSession?.end();}catch{}location.reload();
+    }});
+    const surfaces=screen.render();
+    const consoleDetails=document.querySelector('details');
+    for(const [kind,element] of [['screen',surfaces.screen]]){
+      element.style.width='100%';element.style.display='block';element.setAttribute('aria-label',`Spatial console ${kind} preview`);
+      element.addEventListener('click',event=>{
+        if(immersiveActive)return;
+        const r=element.getBoundingClientRect(),u=(event.clientX-r.left)/r.width,v=(event.clientY-r.top)/r.height;
+        if(kind==='screen'){screen.point(u,v,true);comfort.flush();}
+        else{const button=SCREEN_BUTTONS.find(b=>u>=b.x&&u<=b.x+b.w&&v>=b.y&&v<=b.y+b.h);if(button)screen.action(button.id);}
+      });document.getElementById('console-preview').append(element);
+    }
+    const previewKeyboardScroll=document.createElement('div');previewKeyboardScroll.className='console-keyboard-scroll';
+    previewKeyboardScroll.setAttribute('role','region');previewKeyboardScroll.setAttribute('aria-label','Console keyboard scroll area');previewKeyboardScroll.tabIndex=0;
+    const previewKeyboard=document.createElement('div');previewKeyboard.style.cssText='position:relative;aspect-ratio:4/1;min-width:1120px;background:#071c29';
+    previewKeyboard.setAttribute('aria-label','Spatial console keyboard preview');
+    for(const control of SCREEN_BUTTONS){
+      const button=document.createElement('button');button.type='button';previewKeyButtons.push([control,button]);
+      button.style.cssText=`position:absolute;left:${control.x*100}%;top:${control.y*100}%;width:${control.w*100}%;height:${control.h*100}%;min-height:0;padding:2px;border-radius:0;font-size:12px;white-space:nowrap;`;
+      button.addEventListener('click',()=>{if(!immersiveActive){screen.action(control.id);comfort.flush();}});previewKeyboard.append(button);
+    }
+    refreshKeyboardLabels(screen.getState());
+    previewKeyboardScroll.append(previewKeyboard);document.getElementById('console-preview').append(previewKeyboardScroll);
+    const previewKeyboardHint=document.createElement('p');previewKeyboardHint.className='muted console-keyboard-hint';
+    previewKeyboardHint.textContent='Scroll or swipe sideways through the keyboard to reach every key.';
+    document.getElementById('console-preview').append(previewKeyboardHint);
+    async function probeCapture(){
+      const status=await client.probeHelper();
+      document.getElementById('audio-connection-status').textContent=status.reason;
+      if(!status.ok)document.getElementById('window-status').textContent=status.reason;
+    }
+    document.getElementById('probe-capture').addEventListener('click',()=>probeCapture());
+    document.getElementById('show-chatgpt-screen').addEventListener('click',()=>{
+      consoleDetails.open=true;
+      consoleDetails.scrollIntoView({block:'center',behavior:'auto'});
+      const state=client.getState();
+      document.getElementById('audio-connection-status').textContent=state.status==='live'
+        ?'Real interactive ChatGPT/Codex screen visible. Use its own Voice button.'
+        :state.status==='view-only'?'Real selected window visible, but interaction requires the native Windows helper.'
+          :'Connect the original ChatGPT/Codex window first.';
+    });
+    document.getElementById('choose-window').addEventListener('click',()=>client.discover());
+    document.getElementById('share-window').addEventListener('click',()=>{void client.shareScreen();});
+    windowSelector.addEventListener('change',()=>{connectWindowButton.disabled=!windowSelector.value;});
+    connectWindowButton.addEventListener('click',()=>client.connect(Number(windowSelector.value)));
+    document.getElementById('disconnect-window').addEventListener('click',()=>client.stop());
+    const audio=createHolodeckAudioControls({
+      onStatus:message=>{document.getElementById('audio-status').textContent=message;},
+    });
+    let micMeterTimer=null;
+    const stopMicTest=()=>{
+      if(micMeterTimer!==null)clearInterval(micMeterTimer);
+      micMeterTimer=null;audio.stopMicrophone();
+      document.getElementById('audio-meter').textContent='Microphone test inactive.';
+    };
+    document.getElementById('audio-refresh').addEventListener('click',async()=>{
+      const devices=await audio.listDevices();
+      if(!devices.ok)return;
+      for(const [id,list,defaultLabel] of [
+        ['audio-microphone',devices.inputs,'System microphone'],
+        ['audio-speakers',devices.outputs,'System speakers'],
+      ]){
+        const select=document.getElementById(id);
+        select.replaceChildren();
+        const option=document.createElement('option');option.value='';option.textContent=defaultLabel;select.append(option);
+        for(const device of list){const entry=document.createElement('option');
+          entry.value=device.id;entry.textContent=device.label;select.append(entry);}
+      }
+    });
+    document.getElementById('audio-test-microphone').addEventListener('click',async()=>{
+      const device=document.getElementById('audio-microphone').value;
+      const result=await audio.testMicrophone(device);
+      if(micMeterTimer!==null)clearInterval(micMeterTimer);
+      micMeterTimer=null;
+      if(result.ok)micMeterTimer=setInterval(()=>{
+        const level=audio.microphoneLevel();
+        document.getElementById('audio-meter').textContent=level===null
+          ?'Microphone opened, level analyser unavailable.'
+          :'Live microphone level: '+Math.min(100,Math.round(level*360))+'% (not recorded)';
+      },180);
+    });
+    document.getElementById('audio-stop-microphone').addEventListener('click',stopMicTest);
+    document.getElementById('audio-test-speakers').addEventListener('click',()=>audio.testSpeakers(document.getElementById('audio-speakers').value));
+    document.getElementById('audio-voice-help').addEventListener('click',()=>{
+      screen.action('voice');consoleDetails.open=true;
+      consoleDetails.scrollIntoView({block:'center',behavior:'auto'});
+    });
+    void probeCapture();
+    const cubeStore = createHolodeckCubeStore({onStatus:message => {
+      document.getElementById('cube-save-status').textContent = message;
+    }});
+    const cubeScene = createHolodeckCubeScene({store:cubeStore,furniture});
+    for(const mode of ['seated','standing'])document.getElementById('comfort-'+mode).addEventListener('click',()=>comfort.setMode(mode));
+    for(const [id,set] of [['comfort-height',value=>comfort.setHeightOffset(value/100)],['comfort-tilt',value=>comfort.setKeyboardTilt(value)]]) {
+      const input=document.getElementById(id);
+      input.addEventListener('input',()=>set(Number(input.value)));
+      input.addEventListener('change',()=>comfort.flush());
+    }
+    for(const [id,action] of [['comfort-lower','height-down'],['comfort-raise','height-up'],['comfort-flat','tilt-flat'],['comfort-vertical','tilt-vertical'],['comfort-reset','comfort-reset']])
+      document.getElementById(id).addEventListener('click',()=>{screen.action(action);comfort.flush();});
+    document.getElementById('comfort-preview').addEventListener('click',()=>{
+      inspectKeyboard=!inspectKeyboard;
+      document.getElementById('comfort-preview').setAttribute('aria-pressed',String(inspectKeyboard));
+      document.getElementById('comfort-preview').textContent=inspectKeyboard?'View whole room':'View keyboard';
+      drawPreview();canvas.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
+    });
+    const selectedCube = () => cubeScene.getBody(document.getElementById('preview-cube').value);
+    let inspectCube = false;
+    let previewFrame = null;
+    let previewTime = null;
+    function drawPreview() {
+      if (immersiveActive || document.hidden) return;
+      try {
+        const gl = canvas.getContext('webgl', { xrCompatible: true, alpha: false, antialias: true });
+        if (!gl) throw new Error('graphics unavailable');
+        previewRenderer ??= createHolodeckRoomRenderer({ gl,screen,comfort,furniture });
+        const scale = Math.min(window.devicePixelRatio || 1, 2);
+        const width = Math.max(1, Math.round(canvas.clientWidth * scale));
+        const height = Math.max(1, Math.round(canvas.clientHeight * scale));
+        if (canvas.width !== width) canvas.width = width;
+        if (canvas.height !== height) canvas.height = height;
+        const cubes = cubeScene.getStates();
+        const target = cubes[0].position.map((v,i)=>(v+cubes[1].position[i])/2);
+        const distance = Math.max(0.55, Math.hypot(...cubes[0].position.map((v,i)=>v-cubes[1].position[i])) * 1.4);
+        const camera = inspectKeyboard ? {eye:[2.4,1.6+comfort.getState().heightOffset,-2.4],target:[0,1.3,-5.05]}
+          : inspectCube ? { target, eye:target.map((v,i)=>v+distance*[0.5,0.4,1.1][i]) } : {eye:[3.7,2.2,1.7],target:[0,1.5,-4.0]};
+        previewRenderer.drawPreview({ cube:{cubes}, ...camera });
+      } catch {
+        document.getElementById('preview-status').textContent = 'Room preview unavailable on this browser.';
+      }
+    }
+    window.addEventListener('resize', drawPreview);
+    function animatePreview(time) {
+      previewFrame = null;
+      if (immersiveActive || document.hidden) { previewTime = null; return; }
+      const cubes = cubeScene.advance(previewTime === null ? 0 : (time - previewTime) / 1000);
+      const cube = selectedCube().getState();
+      cubeScene.checkpoint(time,cubes.every(c=>c.sleeping));
+      previewTime = time;
+      drawPreview();
+      document.getElementById('preview-status').textContent = cube.sleeping
+        ? `Preview · ${cube.id} cube resting on ${cube.position[1] > 0.5 ? 'table' : 'floor'}`
+        : `Preview · ${cube.id} cube falling under gravity`;
+      if (cubes.some(c=>!c.sleeping)) previewFrame = requestAnimationFrame(animatePreview);
+    }
+    function playPreview() {
+      if (previewFrame !== null) cancelAnimationFrame(previewFrame);
+      previewTime = null;
+      previewFrame = requestAnimationFrame(animatePreview);
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { comfort.flush();furniture.flush();stopMicTest();cubeScene.stop(); previewTime = null; }
+      else if (!immersiveActive) playPreview();
+    });
+    window.addEventListener('pagehide', event => {comfort.flush();furniture.flush();stopMicTest();cubeScene.stop();void client.pagehide(event);});
+    window.addEventListener('pageshow', event => {if(event.persisted&&!immersiveActive)playPreview();});
+    document.getElementById('preview-cube').addEventListener('change', playPreview);
+    for (const [id,action] of Object.entries({
+      'cube-drop': () => { const cube=selectedCube(); cube.reset(); cube.grab('preview'); const p=cube.getState().position; cube.moveHeld([p[0],1.6,p[2]]); cube.release(); },
+      'cube-throw': () => { const cube=selectedCube(); cube.reset(); cube.grab('preview'); const p=cube.getState().position; cube.moveHeld([p[0],1.5,p[2]]); cube.release([0,2.5,-6],[3,4,1]); },
+      'cube-reset': () => selectedCube().reset(),
+      'cube-inspect': () => { inspectCube = !inspectCube; document.getElementById('cube-inspect').textContent = inspectCube ? 'View whole room' : 'Inspect glass cubes'; },
+    })) document.getElementById(id).addEventListener('click', () => { if (!immersiveActive) { action(); cubeScene.checkpoint(0,true); playPreview(); } });
+    playPreview();
     function refreshExternalRouteTruth() {
       const routeTruth = navigator.onLine ? 'network required · not offline-cached' : 'unavailable offline';
       vrLabStatus.textContent = routeTruth;
@@ -101,11 +457,30 @@
         },
       });
       await activeTelemetry.start();
+      immersiveActive = true;
+      if (previewFrame !== null) cancelAnimationFrame(previewFrame);
+      previewFrame = null;
+      for (const id of ['cube-drop','cube-throw','cube-reset','cube-inspect','preview-cube']) document.getElementById(id).disabled = true;
+      previewRenderer?.dispose();
+      previewRenderer = null;
       const result = await enterHolodeckBaseline({
-        canvas,
+        canvas, cubeScene,screen,comfort,furniture,
         onFrame: (frameTruth) => activeTelemetry?.recordFrame(frameTruth),
+        onCubeStatus: ({ state }) => {
+          document.getElementById('cube-status').textContent = `Glass cubes · ${state === 'held' ? 'held — release to drop or throw' : state}`;
+        },
+        onLocomotionStatus: ({ controller, state }) => {
+          const detail = state === 'ready' ? 'movement ready'
+            : state === 'release-sticks' ? 'release both sticks to enable movement'
+            : state === 'ended' ? 'enter VR to use controllers'
+            : 'movement paused; check tracking and controller connection';
+          controllerStatus.textContent = `${controller} · ${detail}`;
+        },
       });
       if (!result.ok) {
+        immersiveActive = false;
+        for (const id of ['cube-drop','cube-throw','cube-reset','cube-inspect','preview-cube']) document.getElementById(id).disabled = false;
+        playPreview();
         await activeTelemetry.fail(new Error(result.reason));
         sessionStatus.textContent = 'fallback';
         sessionReason.textContent = result.reason;
@@ -113,9 +488,14 @@
         return;
       }
       activeTelemetry.attachSession(result.session, { referenceSpaceType: result.referenceSpaceType });
+      immersiveSession=result.session;
       sessionStatus.textContent = 'immersive-vr';
       sessionReason.textContent = result.reason;
       result.session.addEventListener('end', async () => {
+        immersiveSession=null;
+        immersiveActive = false;
+        for (const id of ['cube-drop','cube-throw','cube-reset','cube-inspect','preview-cube']) document.getElementById(id).disabled = false;
+        playPreview();
         sessionStatus.textContent = 'fallback';
         sessionReason.textContent = 'Immersive session ended. Physical acceptance remains unproven.';
         await refreshCapabilities();

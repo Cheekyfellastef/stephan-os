@@ -11,14 +11,16 @@ import { inspectFixedRuntimeQualificationV1 } from './sovereign-fixed-runtime-pa
 import { createMailboxExecutionLedger } from './canonical-mailbox-execution-ledger-v1.mjs';
 import { createBattleBridgeMinimalChildEnvironment } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { projectMaintenanceCustodyVisibilityV1 } from '../shared/agents/maintenanceCustodyVisibilityV1.mjs';
+import { SOVEREIGN_MAINTENANCE_OWNER_VERSION } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 import { SOVEREIGN_CONTROL_SYSTEM_INSPECTION_SCHEMA_V1,
+  SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_PREDICATES_V1,
   sovereignControlSystemDiagnosticCodeV1 } from '../shared/agents/sovereignControlSystemStatusV1.mjs';
 
 const REPOSITORY = 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os';
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const SHA = /^[a-f0-9]{40}$/, DIGEST = /^[a-f0-9]{64}$/;
-const REQUEST_ID = /^control-tower-build-[1-9][0-9]{0,19}-1$/;
+const REQUEST_ID = /^control-tower-(?:build|comment)-[1-9][0-9]{0,15}-1$/;
 const PROFILES = new Set(['MAINTENANCE_GOAL_BUILDER_V1', 'SOURCE_TASK_V1']);
 const UNKNOWN = 'SOVEREIGN_CONTROL_SYSTEM_OBSERVATION_UNPROVEN';
 const fail = code => { throw new Error(code); };
@@ -64,6 +66,7 @@ function emptyReport() {
       loadedSourceBytesProven: false, remoteMainProven: false, reason: UNKNOWN },
     caller: { available: false, observationAppliesTo: 'DIAGNOSTIC_CALLER_ONLY', reason: UNKNOWN },
     owner: { available: false, stable: false, reason: UNKNOWN },
+    protocol: { available: false, matches: false, reason: 'SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_UNPROVEN' },
     guardian: { available: false, blocker: UNKNOWN },
     nativeRuntime: { available: false, qualificationObserved: false, reason: UNKNOWN },
     requestLedger: { requested: false, recordObserved: false, relayWorkspaceIdentityProven: false, reason: '' } };
@@ -155,6 +158,57 @@ async function readHealth(fetchFn) {
   return health;
 }
 
+async function readProtocolHealth(fetchFn) {
+  const controller = new AbortController(); let timer, reader, expired = false;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => { expired = true; controller.abort();
+      reject(new Error('SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_TIMEOUT')); }, 3000);
+  });
+  try {
+    return await Promise.race([deadline, (async () => {
+      const response = await fetchFn('http://127.0.0.1:18791/health?view=protocol', {
+        method: 'GET', redirect: 'error', credentials: 'omit',
+        signal: controller.signal, headers: { accept: 'application/json' },
+      });
+      if (controller.signal.aborted || !response.body?.getReader)
+        fail('SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_UNPROVEN');
+      reader = response.body.getReader(); const chunks = []; let size = 0;
+      for (;;) {
+        const row = await reader.read();
+        if (controller.signal.aborted) fail('SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_TIMEOUT');
+        if (row.done) break;
+        if (!(row.value instanceof Uint8Array)) fail('SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_UNPROVEN');
+        size += row.value.byteLength;
+        if (size > 65536) fail('SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_BOUND_EXCEEDED');
+        chunks.push(Buffer.from(row.value));
+      }
+      const health = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
+      return { httpOk: response.ok === true, health };
+    })()]);
+  } catch (error) {
+    if (expired) fail('SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_TIMEOUT');
+    throw error;
+  } finally {
+    clearTimeout(timer); controller.abort();
+    // Cleanup must not extend the observation deadline when a reader stalls.
+    try { Promise.resolve(reader?.cancel()).catch(() => {}); } catch {}
+    try { reader?.releaseLock(); } catch {}
+  }
+}
+
+function protocolObservation({ httpOk, health }, observedAtUtc) {
+  const version = health?.maintenanceOwnerAdmissionVersion;
+  const predicates = [httpOk, health?.ok === true, health?.service === 'stephanos-sovereign-commander',
+    health?.observationScope === 'TRANSPORT_PROTOCOL_ONLY', health?.maintenanceAdmissionProven === false,
+    version === SOVEREIGN_MAINTENANCE_OWNER_VERSION];
+  const failedPredicates = SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_PREDICATES_V1.filter((_, index) => !predicates[index]);
+  return { available: true, matches: failedPredicates.length === 0, failedPredicates,
+    expectedVersion: SOVEREIGN_MAINTENANCE_OWNER_VERSION,
+    observedVersion: version === SOVEREIGN_MAINTENANCE_OWNER_VERSION ? version : version === undefined ? 'MISSING'
+      : typeof version === 'string' && version.length <= 128 ? 'OTHER' : 'INVALID',
+    observedAtUtc, reason: failedPredicates.length ? 'SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED' : '' };
+}
+
 function validOwner(value, nowMs) {
   const row = dataRecord(value), observedAtUtc = utc(row.observedAtUtc), createdAtUtc = utc(row.createdAtUtc);
   if (Object.keys(row).sort().join(',') !== 'commandSha256,createdAtUtc,imageSha256,observedAtUtc,pid,schemaVersion'
@@ -241,8 +295,13 @@ export async function inspectSovereignControlSystemV1(options = {}) {
     };
     const before = await observeOwner();
     let health, healthTime, healthReason = '';
-    try { health = await readHealth(deps.fetchFn); healthTime = instant(deps.now); }
-    catch (error) { healthReason = diagnosticCode(error, 'SOVEREIGN_CONTROL_SYSTEM_HEALTH_UNPROVEN'); }
+    const [healthRead, protocolRead] = await Promise.allSettled([
+      (async () => ({ health: await readHealth(deps.fetchFn), observedAtUtc: instant(deps.now) }))(),
+      (async () => ({ exchange: await readProtocolHealth(deps.fetchFn), observedAtUtc: instant(deps.now) }))(),
+    ]);
+    if (healthRead.status === 'fulfilled') {
+      health = healthRead.value.health; healthTime = healthRead.value.observedAtUtc;
+    } else healthReason = diagnosticCode(healthRead.reason, 'SOVEREIGN_CONTROL_SYSTEM_HEALTH_UNPROVEN');
     const after = await observeOwner();
     const same = before.ok && after.ok && ['pid', 'createdAtUtc', 'commandSha256', 'imageSha256']
       .every(key => before.value[key] === after.value[key]);
@@ -251,6 +310,10 @@ export async function inspectSovereignControlSystemV1(options = {}) {
         : before.reason || after.reason || 'SOVEREIGN_CONTROL_SYSTEM_OWNER_UNPROVEN',
       ...(after.ok ? { observedAtUtc: after.value.observedAtUtc } : {}),
       before, after };
+    if (same && protocolRead.status === 'fulfilled') {
+      report.protocol = protocolObservation(protocolRead.value.exchange, protocolRead.value.observedAtUtc);
+    } else report.protocol.reason = !same ? report.owner.reason
+      : diagnosticCode(protocolRead.reason, 'SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_UNPROVEN');
     if (same && health) {
       try { report.guardian = guardianObservation(health, healthTime); }
       catch (error) { report.guardian.blocker = diagnosticCode(error, 'SOVEREIGN_CONTROL_SYSTEM_HEALTH_UNPROVEN'); }
@@ -296,6 +359,7 @@ export async function inspectSovereignControlSystemV1(options = {}) {
     catch { report.source.stable = false; }
     if (!report.source.stable) {
       report.source.reason = 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED';
+      report.protocol = { available: false, matches: false, reason: report.source.reason };
       report.nativeRuntime.qualificationObserved = false;
       report.nativeRuntime.reason = 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED';
       delete report.nativeRuntime.profiles;

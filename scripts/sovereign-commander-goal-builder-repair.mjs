@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { inspectStephanosNativeCapacityGamingAdmissionV1 } from '../shared/agents/stephanosNativeCapacityGamingAdmissionV1.mjs';
 import { spawnSync } from 'node:child_process';
+import { performance } from 'node:perf_hooks';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +14,9 @@ export const SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_SCHEMA =
   'stephanos.sovereign-commander-goal-builder-repair.v1';
 export const SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_MARKER =
   'SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=';
+// Canonical Ignition source proof performs bounded isolated Git topology/config/fetch
+// checks on Windows. Give that proof enough room to finish without weakening it.
+export const SOVEREIGN_COMMANDER_IGNITION_DIAGNOSIS_TIMEOUT_MS = 45_000;
 const CONTROLLER_LANE_STATUS_MARKER =
   'SOVEREIGN_COMMANDER_CONTROLLER_LANE_STATUS_RESULT=';
 const FLEET_GOAL_SUPERVISOR_MARKER =
@@ -31,13 +35,13 @@ const STEPS = Object.freeze({
     id: 'diagnose-ignition',
     executable: node,
     args: Object.freeze([resolve(repoRoot, 'scripts', 'sovereign-commander-ignition-diagnosis.mjs')]),
-    timeoutMs: 20_000,
+    timeoutMs: SOVEREIGN_COMMANDER_IGNITION_DIAGNOSIS_TIMEOUT_MS,
   }),
   supervisor: Object.freeze({
     id: 'fleet-goal-supervisor',
     executable: node,
     args: Object.freeze([resolve(repoRoot, 'scripts', 'sovereign-commander-fleet-goal-supervisor.mjs')]),
-    timeoutMs: 25_000,
+    timeoutMs: 35_000,
   }),
   controllerLaneStatus: Object.freeze({
     id: 'controller-lane-status',
@@ -51,7 +55,7 @@ const STEPS = Object.freeze({
     id: 'goal-discovery-heartbeat',
     executable: node,
     args: Object.freeze([resolve(repoRoot, 'scripts', 'battle-bridge-goal-discovery-heartbeat.mjs')]),
-    timeoutMs: 25_000,
+    timeoutMs: 35_000,
   }),
 });
 
@@ -320,7 +324,7 @@ export function runFixedGoalBuilderRepairStep(step) {
   // Node can remain blocked waiting for pipe EOF even after the bounded direct
   // child has timed out. Keep proof-producing observation steps captured, but
   // make that mutating repair step pipe-free so timeout always terminalizes.
-  const pipeFreeChild = step === STEPS.goalHeartbeat;
+  const pipeFreeChild = step.id === STEPS.goalHeartbeat.id;
   const captureOutput = !pipeFreeChild;
   const result = spawnSync(step.executable, [...step.args], {
     ...(captureOutput ? { encoding: 'utf8' } : {}),
@@ -344,17 +348,33 @@ export function runFixedGoalBuilderRepairStep(step) {
   });
 }
 
+// Leave ten seconds inside the existing 145-second native deadline for
+// final output and cancellation/drain. Child budgets share one monotonic clock.
+export const GOAL_BUILDER_REPAIR_WORK_BUDGET_MS = 135_000;
+export function createGoalBuilderDeadlineRunner(execute, clock = () => performance.now()) {
+  const started = clock();
+  return step => {
+    const remaining = Math.floor(GOAL_BUILDER_REPAIR_WORK_BUDGET_MS - (clock() - started));
+    if (!Number.isFinite(remaining) || remaining <= 0) return Object.freeze({
+      ok: false, status: null, stdout: '', errorCode: 'GOAL_BUILDER_REPAIR_DEADLINE_EXHAUSTED',
+    });
+    return execute(Object.freeze({ ...step, timeoutMs: Math.min(step.timeoutMs, remaining) }));
+  };
+}
+
 export function runSovereignCommanderGoalBuilderRepair({
-  runStep = runFixedGoalBuilderRepairStep,
+  runStep: executeStep = runFixedGoalBuilderRepairStep,
+  monotonicClock,
   readResourceAdmission,
   readWorkerHeartbeatAgeMs = readGoalBuilderWorkerHeartbeatAgeMs,
   readIgnitionDiagnosis = null,
 } = {}) {
+  const runStep = createGoalBuilderDeadlineRunner(executeStep, monotonicClock);
   const steps = [];
   const resourceAllowed = () => {
     try {
       if (readResourceAdmission) return readResourceAdmission()?.ok === true;
-      if (runStep !== runFixedGoalBuilderRepairStep) return true; // isolated step fixtures only
+      if (executeStep !== runFixedGoalBuilderRepairStep) return true; // isolated step fixtures only
       return inspectStephanosNativeCapacityGamingAdmissionV1({
         workspaceRoot: 'C:\\Users\\Stephan Callear\\Documents\\Stephanos-openclaw-workspace', repoRoot,
       }).ok === true;
@@ -379,7 +399,7 @@ export function runSovereignCommanderGoalBuilderRepair({
   // goal state. Existing injected step fixtures retain their historical scope
   // unless they explicitly opt into the new diagnosis seam.
   if (!resourceAllowed()) return resourceHold();
-  const ignitionObservationRequired = runStep === runFixedGoalBuilderRepairStep
+  const ignitionObservationRequired = executeStep === runFixedGoalBuilderRepairStep
     || typeof readIgnitionDiagnosis === 'function';
   if (ignitionObservationRequired) {
     const ignitionResult = typeof readIgnitionDiagnosis === 'function'

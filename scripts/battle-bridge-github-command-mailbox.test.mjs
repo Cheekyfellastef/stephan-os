@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -89,7 +90,7 @@ function forgeM2Receipt(overrides = {}) {
     requestId: 'forge-m2-install-ready-001',
     operation: 'INSTALL_FORGE_SHADOW_M2',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     expectedHead: FORGE_HEAD,
     forgejoVersion: '15.0.6',
@@ -517,7 +518,7 @@ test('canonical mailbox wires the shared publication budget across every receipt
   assert.match(source, /flushMailboxReceiptPublicationOutbox\(state, \{\s*publish: publicationBudget\.publish,/);
   assert.match(source, /terminalizeRejectedMailboxCommands\(state, batch\.terminalRejections, \{\s*now,\s*publish: publicationBudget\.publish,/);
   assert.equal(
-    [...source.matchAll(/checkpointMailboxReceiptPublication\(state, publishable, publicationBudget\.publish\(publishable\)\)/g)].length,
+    [...source.matchAll(/checkpointMailboxReceiptPublication\(state, receipt, publicationBudget\.publish\(publishable\)\)/g)].length,
     2,
   );
 });
@@ -566,6 +567,46 @@ test('terminal publication discards an obsolete failed acceptance for the same r
   assert.deepEqual(state.pendingReceiptPublications, []);
 });
 
+
+test('deferred mailbox terminal/acceptance receipts reuse the pre-receiptRef canonical projection', async () => {
+  const source = await readFile(mailboxSourcePath, 'utf8');
+  // All three producers write their canonical receipt before appending
+  // receiptRef for first-attempt GitHub publication. A failed publication
+  // must enqueue the same original receipt for stable terminal equality.
+  assert.equal(
+    [...source.matchAll(/checkpointMailboxReceiptPublication\(state, receipt, publication, \{ persist \}\);/g)].length, 1);
+  assert.equal(
+    [...source.matchAll(/checkpointMailboxReceiptPublication\(state, receipt, publicationBudget\.publish\(publishable\)\);/g)].length, 2);
+  assert.doesNotMatch(source, /checkpointMailboxReceiptPublication\(state, publishable,/);
+  const raw = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'mailbox-deferred-canonical-identity-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 3258,
+    branch: 'main',
+    state: 'DONE',
+    acceptedAt: '2026-11-08T00:00:00.000Z',
+    heartbeatAt: '2026-11-08T00:01:00.000Z',
+    completedAt: '2026-11-08T00:01:00.000Z',
+    proofRefs: ['receipts/github-command-mailbox/proof-safe.json'],
+    result: { ok: true, verdict: 'COMMAND_EXECUTION_DONE',
+      result: { ok: true, finalVerdict: 'VISIBILITY_SNAPSHOT_READY' } },
+  };
+  const rawBefore = JSON.stringify(raw);
+  const enriched = { ...raw, receiptRef: 'receipts/github-command-mailbox/canonical.json' };
+  const canonical = JSON.parse(serializeBoundedReceiptJson(raw, 256 * 1024));
+  const state = { pendingReceiptPublications: [] };
+  checkpointMailboxReceiptPublication(state, raw, { ok: false }, { persist: () => {} });
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  assert.deepEqual(state.pendingReceiptPublications[0].receipt, canonical);
+  assert.equal(JSON.stringify(raw), rawBefore, 'canonical receipt unchanged');
+  assert.equal(Object.hasOwn(state.pendingReceiptPublications[0].receipt, 'receiptRef'), false);
+  const enrichedCompact = JSON.parse(serializeBoundedReceiptJson(enriched, 256 * 1024));
+  assert.notEqual(enrichedCompact.result.result.originalBytes, canonical.result.result.originalBytes,
+    'fixture must expose historical pre-fix originalBytes drift');
+});
+
 test('main-targeting control preflight blocks a stale head and ignores observations', () => {
   const stale = preflightMailboxControlExpectedHead({
     partition: 'CONTROL',
@@ -593,7 +634,7 @@ test('Sovereign Commander remote receipts preserve bounded mobile proof metadata
     requestId: 'sovereign-mobile-proof-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     expectedHead: head,
     state: 'DONE',
@@ -695,7 +736,7 @@ test('Sovereign status mailbox carries only bounded guardian cycle proof, never 
     schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
     requestId: 'sovereign-guardian-status-proof-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
-    repository: 'Cheekyfellastef/stephan-os', issueNumber: 3149,
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: activeMailboxIssueForTest,
     branch: 'main', expectedHead: head, state: 'DONE',
     result: {
       ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
@@ -746,7 +787,7 @@ test('Sovereign Commander blocked receipts preserve only bounded failure diagnos
     requestId: 'sovereign-mobile-failure-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     expectedHead: head,
     state: 'BLOCKED',
@@ -796,7 +837,7 @@ test('native Windows calibration denial preserves the exact bounded exit status 
     requestId:'sovereign-reviewer-denial-3199',
     operation:'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository:'Cheekyfellastef/stephan-os',
-    issueNumber:3149,branch:'main',expectedHead:head,state:'BLOCKED',
+    issueNumber: activeMailboxIssueForTest,branch:'main',expectedHead:head,state:'BLOCKED',
     blocker:'SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID',
     result:{
       ok:false,verdict:'BLOCKED',operation:'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
@@ -827,7 +868,7 @@ test('mailbox receipt preserves bounded project search paths and strips private 
     requestId: 'project-scan-readback-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     expectedHead: head,
     state: 'DONE',
@@ -882,7 +923,7 @@ test('mailbox receipt preserves only bounded parity summary', () => {
     requestId: 'parity-readback-proof-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     expectedHead: head,
     state: 'DONE',
@@ -924,11 +965,15 @@ test('mailbox receipt preserves only bounded parity summary', () => {
     parityPresentCount: 12,
     buildableGapCount: 0,
     boundaryHoldCount: 2,
-    zeroGapInvariantSatisfied: true,
-    closureRequired: false,
-    daemonMayReportGreen: true,
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    installedParityState: 'UNKNOWN',
+    zeroGapInvariantSatisfied: false,
+    sourceGapClosureRequired: true,
+    closureRequired: true,
+    daemonMayReportGreen: false,
     mustContinueUntilZero: true,
-    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
+    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_BOUNDARY_HOLD',
   });
   const encoded = JSON.stringify(projected);
   assert.doesNotMatch(encoded, /secret\\parity|privatePath/);
@@ -1828,7 +1873,7 @@ test('oversized public receipt falls back to bounded core evidence instead of cr
     requestId: 'oversized-public-receipt-core-fallback-0001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     state: 'DONE',
     completedAt: '2026-10-02T18:01:00.000Z',
@@ -2079,7 +2124,7 @@ test('public mailbox receipt preserves only bounded Battle Bridge observation fa
     requestId: 'battle-bridge-observe-proof-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     state: 'DONE',
     acceptedAt: '2026-10-02T10:54:00.000Z',
@@ -2135,7 +2180,7 @@ test('core status projection strips private fields while preserving bounded heal
     requestId: 'core-health-projection-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     state: 'DONE',
     acceptedAt: '2026-10-02T11:00:00.000Z',
@@ -2261,7 +2306,7 @@ test('mailbox receipt preserves bounded meter glass and strips private meter dat
     requestId: 'meter-glass-readback-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     expectedHead: head,
     state: 'DONE',
@@ -2376,7 +2421,7 @@ test('mailbox receipt preserves controller lane glass and strips private control
     requestId: 'controller-lane-glass-readback-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     expectedHead: head,
     state: 'DONE',
@@ -2421,7 +2466,7 @@ test('mailbox receipt preserves bounded VR acceptance verdict without raw output
     requestId: 'vr-acceptance-public-proof-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     expectedHead: head,
     processSourceHead: head,
@@ -2496,7 +2541,7 @@ test('mailbox receipt preserves bounded Starfield VR preflight proof without raw
     requestId: 'starfield-vr-preflight-public-proof-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     expectedHead: head,
     processSourceHead: head,
@@ -2631,7 +2676,7 @@ test('fast mailbox receipt preserves bounded Starfield VR telemetry headline wit
     requestId: 'starfield-vr-telemetry-readback-test-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     expectedHead: head,
     processSourceHead: head,
@@ -2917,7 +2962,7 @@ test('mailbox receipt preserves Sovereign visibility headline and strips private
     requestId: 'visibility-snapshot-public-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     state: 'DONE',
     acceptedAt: '2026-10-04T12:00:00.000Z',
@@ -3038,7 +3083,7 @@ test('oversized Programme Authority receipt retains precise HOLD diagnosis while
     requestId: 'programme-overlarge-diagnostic-001',
     operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main', state: 'DONE', expectedHead: head,
     result: {
       ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
@@ -3108,7 +3153,7 @@ test('double-serialized 32KB Programme Authority HOLD retains original blockers 
     schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
     requestId: 'elastic-authority-double-publication-proof-001',
     operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
-    repository: 'Cheekyfellastef/stephan-os', issueNumber: 3149,
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: activeMailboxIssueForTest,
     branch: 'main', state: 'DONE', expectedHead: sha, processSourceHead: sha,
     result: {
       ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
@@ -3351,7 +3396,7 @@ test('native signed capacity survives double serialization and the bounded 9 KiB
     requestId: 'native-capacity-overflow-proof-20261011',
     operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149, branch: 'main', state: 'DONE',
+    issueNumber: activeMailboxIssueForTest, branch: 'main', state: 'DONE',
     expectedHead: head, processSourceHead: head,
     result: { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
       operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
@@ -3401,7 +3446,7 @@ test('native capacity public projection rejects unverifiable head and untrusted 
     requestId: 'native-capacity-negative-proof-20261011',
     operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149, branch: 'main', state: 'DONE',
+    issueNumber: activeMailboxIssueForTest, branch: 'main', state: 'DONE',
     expectedHead: head, processSourceHead: head,
     result: { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
       operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
@@ -3476,7 +3521,7 @@ test('Island physical readback survives normal and core public mailbox projectio
     schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
     requestId: 'island-readback-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
-    repository: 'Cheekyfellastef/stephan-os', issueNumber: 3149,
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: activeMailboxIssueForTest,
     branch: 'main', state: 'DONE', expectedHead: sha,
     acceptedAt: '2026-10-16T20:20:00.000Z',
     heartbeatAt: '2026-10-16T20:20:02.000Z',
@@ -3597,7 +3642,7 @@ test('mobile custody census survives normal and core public receipt projections 
     requestId: 'mobile-custody-census-receipt-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149, branch: 'main', state: 'DONE', expectedHead: head,
+    issueNumber: activeMailboxIssueForTest, branch: 'main', state: 'DONE', expectedHead: head,
     acceptedAt: '2026-10-15T15:30:00.000Z',
     heartbeatAt: '2026-10-15T15:30:02.000Z',
     completedAt: '2026-10-15T15:30:02.000Z', proofRefs: [],

@@ -1,3 +1,5 @@
+// Goal #2961: real hosted Node runner validates exact-head and temporal worker beacons.
+import '../shared/agents/missionWorkerBeaconStateV1.test.mjs';
 // Fleet acceptance: every executable builder exit must retain proof-backed pickup and terminal truth.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -259,7 +261,7 @@ for (const builder of [
   });
 }
 
-test('Desktop Commander source handoff is absorbed by the green Sovereign source-construction lane', () => {
+test('Desktop Commander source handoff maps to Sovereign without claiming installed parity', () => {
   const observation = {
     adapter: 'desktop-commander',
     path: 'C:/queue/desktop-source-build.json',
@@ -279,6 +281,11 @@ test('Desktop Commander source handoff is absorbed by the green Sovereign source
   assert.equal(ledger.buildableGapCount, 0);
   assert.equal(ledger.parityPresentCount, 1);
   assert.equal(ledger.zeroGapInvariantSatisfied, true);
-  assert.equal(ledger.daemonMayReportGreen, true);
-  assert.equal(ledger.finalVerdict, 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN');
+  assert.equal(ledger.parityEvidenceScope, 'SOURCE_CATALOG_ONLY');
+  assert.equal(ledger.runtimeParityProven, false);
+  assert.equal(ledger.installedParityState, 'UNKNOWN');
+  assert.equal(ledger.sourceGapClosureRequired, false);
+  assert.equal(ledger.closureRequired, true);
+  assert.equal(ledger.daemonMayReportGreen, false);
+  assert.equal(ledger.finalVerdict, 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RUNTIME_UNPROVEN');
 });

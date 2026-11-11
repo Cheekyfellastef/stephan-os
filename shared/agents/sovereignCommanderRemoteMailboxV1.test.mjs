@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -34,7 +35,7 @@ function command(overrides = {}) {
     requestId: 'sovereign-mobile-1001',
     operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -231,9 +232,13 @@ test('actual guardian denials survive fleet mailbox projection without requiring
     custodyStore: { status: () => ({ held: true }), close() {} },
     spawnImpl: () => assert.fail('denied guardian must never launch a process'),
   });
-  const stopped = startSovereignCommanderContinuousRepairGuardian({ enabled: false });
+  const stopped = startSovereignCommanderContinuousRepairGuardian({ enabled: false,
+    spawnImpl: () => assert.fail('mailbox receipt fixture must not launch native processes'),
+  });
   stopped.stop();
-  const busy = startSovereignCommanderContinuousRepairGuardian({ enabled: false });
+  const busy = startSovereignCommanderContinuousRepairGuardian({ enabled: false,
+    spawnImpl: () => assert.fail('mailbox receipt fixture must not launch native processes'),
+  });
   const ownerCommand = fleetOwnerCommand();
   let finish;
   const inFlight = busy.withMaintenanceOwner(ownerCommand, () => new Promise(resolve => { finish = resolve; }));
@@ -298,7 +303,9 @@ test('fleet timeout and abort remain unknown-custody failures through direct and
 
 test('guardian post-execution custody hold cannot be mistaken for fleet completion', async () => {
   for (const errorCode of ['', 'ETIMEDOUT', 'ABORT_ERR']) {
-    const guardian = startSovereignCommanderContinuousRepairGuardian({ enabled: false });
+    const guardian = startSovereignCommanderContinuousRepairGuardian({ enabled: false,
+    spawnImpl: () => assert.fail('mailbox receipt fixture must not launch native processes'),
+  });
     try {
       const execution = fleetMaintenanceEnvelope({ stdout: 'PRIVATE MALFORMED CHILD RECEIPT' });
       if (errorCode) {
@@ -376,7 +383,7 @@ test('actual fleet owner denial survives terminal checkpoints and repeated bound
       const receipt = {
         schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
         requestId: 'fleet-owner-denial-roundtrip-001', operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
-        repository: 'Cheekyfellastef/stephan-os', issueNumber: 3149, branch: 'main',
+        repository: 'Cheekyfellastef/stephan-os', issueNumber: activeMailboxIssueForTest, branch: 'main',
         expectedHead: HEAD, processSourceHead: HEAD, state: 'BLOCKED', blocker: result.blocker,
         result: { ok: false, verdict: 'BLOCKED', result: { ...result,
           stdout: 'PRIVATE RAW OUTPUT C:\\Users\\Operator\\secret', stderr: 'PRIVATE STDERR' } },
@@ -1526,11 +1533,15 @@ test('parity reconciliation returns bounded zero-gap truth without raw ledger ou
     parityPresentCount: 12,
     buildableGapCount: 0,
     boundaryHoldCount: 2,
-    zeroGapInvariantSatisfied: true,
-    closureRequired: false,
-    daemonMayReportGreen: true,
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    installedParityState: 'UNKNOWN',
+    zeroGapInvariantSatisfied: false,
+    sourceGapClosureRequired: true,
+    closureRequired: true,
+    daemonMayReportGreen: false,
     mustContinueUntilZero: true,
-    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
+    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_BOUNDARY_HOLD',
   });
   const serialized = JSON.stringify(result);
   assert.equal(serialized.includes('PRIVATE RAW PARITY'), false);
