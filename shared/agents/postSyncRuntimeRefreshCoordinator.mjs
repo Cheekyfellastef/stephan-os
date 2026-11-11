@@ -265,6 +265,10 @@ const NO_RUNTIME_EXACT = new Set([
   'LICENSE',
   'README.md',
   'scripts/publish-battle-bridge-main-advance-signal.mjs',
+  // Exact GitHub Actions-only review-probe helper; never a resident Windows
+  // runtime, so it cannot obstruct independent Backend/Mission Worker reload.
+  // The two Spatial resident paths retain their independent adoption hold.
+  'scripts/exact-head-qualified-escalation-v1.mjs',
   'scripts/exact-head-review-dispatch.mjs',
   'scripts/exact-head-review-current-main-admission-v1.mjs',
   'scripts/bind-independent-review-handoff-provenance-v1.mjs',

@@ -589,6 +589,7 @@ test('both exact 9 November unknowns clear while Spatial host and unsafe-path ho
 
 test('classifies the exact GitHub-hosted review toolchain as no-runtime', () => {
   const hostedReviewPaths = [
+    'scripts/exact-head-qualified-escalation-v1.mjs',
     'scripts/exact-head-review-dispatch.mjs',
     'scripts/exact-head-review-current-main-admission-v1.mjs',
     'scripts/bind-independent-review-handoff-provenance-v1.mjs',
@@ -1858,4 +1859,21 @@ test('audited pending 853343 allowances preserve unrelated OpenClaw approval and
   assert.deepEqual(unsafe.plan.internal.unsafePaths, ['../outside.ps1']);
   assert.deepEqual(unsafe.results, []);
   assert.deepEqual(unsafeCalls, []);
+});
+
+test('hosted exact-head escalation stops blocking disjoint backend refresh but cannot discharge Spatial adoption',async()=>{
+  const hosted='scripts/exact-head-qualified-escalation-v1.mjs';
+  const backend='stephanos-server/services/submitGoalTool.js';
+  const spatial=['scripts/spatial-window-host.mjs','shared/vr/spatialDesktopSurfaceContractV1.mjs'];
+  const plan=classifyPostSyncRefresh([hosted,backend,...spatial]);
+  assert.equal(plan.unknownPathCount,0);
+  assert.equal(plan.noRuntimePathCount,1);
+  assert.equal(plan.spatialAdoptionRequired,true);
+  assert.equal(plan.classification,'BLOCKED_SPATIAL_ADOPTION_REQUIRED');
+  assert.ok(plan.targetIds.includes('stephanos-backend-8787'));
+  assert.deepEqual(plan.internal.spatialAdoptionPaths,spatial);
+  const unrelated=classifyPostSyncRefresh(['scripts/exact-head-qualified-escalation-v2.mjs',backend]);
+  assert.equal(unrelated.classification,'BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
+  assert.equal(unrelated.unknownPathCount,1);
+  assert.equal(unrelated.automaticExecutionAllowed,false);
 });
