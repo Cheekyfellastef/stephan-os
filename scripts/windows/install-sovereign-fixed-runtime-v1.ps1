@@ -128,15 +128,6 @@ foreach($row in $bootstrap.Records){
 $native=@('SovereignCoreJobCustodyV1.cs','SovereignFixedRuntimeJobV1.cs','SovereignFixedRuntimeIdentityV1.cs','SovereignFixedRuntimeAuthorityV1.cs','SovereignFixedRuntimeHostV1.cs','SovereignFixedRuntimeSourceV1.cs')
 foreach($name in $native){if(-not $records.ContainsKey('scripts/windows/'+$name) -or $records['scripts/windows/'+$name].Bytes.Length -gt 32768){throw 'FIXED_INSTALL_NATIVE_UNIT_UNPROVEN'}}
 if(-not $records.ContainsKey('scripts/windows/install-sovereign-fixed-runtime-v1.ps1')){throw 'FIXED_INSTALL_SELF_SOURCE_UNPROVEN'}
-# Every compiler input/scratch/output is beneath an OS-admin protected namespace.
-# Never normalize a pre-existing unsafe directory, config, or helper version.
-New-ProtectedDirectory 'C:\Program Files\Stephanos'
-New-ProtectedDirectory $protectedRoot
-$version=[IO.Path]::Combine($protectedRoot,$ExpectedMain)
-if([IO.Directory]::Exists($version) -or [IO.File]::Exists($version)){throw 'FIXED_INSTALL_VERSION_ALREADY_EXISTS_INSPECT_ONLY'}
-New-ProtectedDirectory $version
-$staging=[IO.Path]::Combine($protectedRoot,'pending-compile-'+$ExpectedMain+'-'+[Guid]::NewGuid().ToString('N'))
-New-ProtectedDirectory $staging
 $handles=[Collections.Generic.List[IO.FileStream]]::new()
 $nativePins=$null;$provider=$null
 try{
@@ -158,6 +149,15 @@ try{
  try{if($reader.ReadToEnd().Trim() -cne 'ref: refs/heads/main'){throw 'FIXED_INSTALL_REF_CHANGED'}}finally{$reader.Dispose()}
  Assert-FixedGitRef 'refs/heads/main' $ExpectedMain
  Assert-FixedGitRef 'refs/remotes/origin/main' $ExpectedMain
+ # Every compiler input/scratch/output is beneath an OS-admin protected namespace.
+ # Never normalize a pre-existing unsafe directory, config, or helper version.
+ New-ProtectedDirectory 'C:\Program Files\Stephanos'
+ New-ProtectedDirectory $protectedRoot
+ $version=[IO.Path]::Combine($protectedRoot,$ExpectedMain)
+ if([IO.Directory]::Exists($version) -or [IO.File]::Exists($version)){throw 'FIXED_INSTALL_VERSION_ALREADY_EXISTS_INSPECT_ONLY'}
+ New-ProtectedDirectory $version
+ $staging=[IO.Path]::Combine($protectedRoot,'pending-compile-'+$ExpectedMain+'-'+[Guid]::NewGuid().ToString('N'))
+ New-ProtectedDirectory $staging
  $manifestBytes=[Text.UTF8Encoding]::new($false).GetBytes(($manifest|ConvertTo-Json -Depth 8 -Compress))
  $manifestPath=[IO.Path]::Combine($staging,'Stephanos.FixedRuntime.ManifestV1')
  [IO.File]::WriteAllBytes($manifestPath,$manifestBytes)

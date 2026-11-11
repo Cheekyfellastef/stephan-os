@@ -152,3 +152,25 @@ if($script:count -ne 11){throw 'FIXED_INSTALL_PACKED_TEST_COUNT'}
   }finally{rmSync(root,{recursive:true,force:true});}
   assert.equal(output.trim(),'FIXED_INSTALL_PACKED_CASES_PASS_11');
 });
+
+test('all physical source and canonical-ref checks precede protected version creation',()=>{
+ const body=readFileSync(path,'utf8');
+ const stages=[
+  '$nativePins=$null;$provider=$null\ntry{',
+  'foreach($key in $orderedPaths)',
+  'if((Get-Digest $actual) -cne $row.MaterializedSha256)',
+  "if($reader.ReadToEnd().Trim() -cne 'ref: refs/heads/main')",
+  "Assert-FixedGitRef 'refs/heads/main' $ExpectedMain",
+  "Assert-FixedGitRef 'refs/remotes/origin/main' $ExpectedMain",
+  "New-ProtectedDirectory 'C:\\Program Files\\Stephanos'",
+  "New-ProtectedDirectory $version",
+  "New-ProtectedDirectory $staging",
+  '$provider=[Microsoft.CSharp.CSharpCodeProvider]::new()',
+  '}finally{\n if($null -ne $nativePins)',
+ ];
+ const locations=stages.map(text=>body.indexOf(text));
+ assert.ok(locations.every(x=>x>=0),'all original exact proof/mutation gates exist');
+ assert.ok(locations.every((x,i)=>i===0||locations[i-1]<x),'no protected mutation before physical source/ref proof or outside cleanup');
+ assert.equal((body.match(/New-ProtectedDirectory \$version/g)||[]).length,1);
+ assert.equal((body.match(/Assert-FixedGitRef 'refs\/remotes\/origin\/main' \$ExpectedMain/g)||[]).length,1);
+});
