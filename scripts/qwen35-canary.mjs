@@ -22,22 +22,6 @@ function readVrResourceGovernorBlock() {
   }
 }
 
-async function unloadCanaryModel() {
-  const unloadController = new AbortController();
-  const unloadTimer = setTimeout(() => unloadController.abort(), 10_000);
-  try {
-    await fetch(`${BASE_URL}/api/generate`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      signal: unloadController.signal,
-      body: JSON.stringify({ model: MODEL, keep_alive: 0 }),
-    });
-  } catch {
-    // Best-effort cleanup. The VR governor remains the fail-closed backstop.
-  } finally {
-    clearTimeout(unloadTimer);
-  }
-}
 
 function fail(blocker, details = {}) {
   process.stdout.write(`${JSON.stringify({
@@ -50,7 +34,6 @@ function fail(blocker, details = {}) {
   process.exitCode = 2;
 }
 
-let inferenceAttempted = false;
 const controller = new AbortController();
 const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
@@ -74,7 +57,6 @@ try {
       if (beforeInference.blocked) {
         fail(beforeInference.blocker);
       } else {
-      inferenceAttempted = true;
       const startedAt = Date.now();
       const response = await fetch(`${BASE_URL}/api/chat`, {
         method: 'POST',
@@ -85,7 +67,6 @@ try {
           stream: false,
           messages: [{ role: 'user', content: `Reply with exactly: ${EXPECTED}` }],
           options: { temperature: 0 },
-          keep_alive: 0,
         }),
       });
       const elapsedMs = Date.now() - startedAt;
@@ -116,5 +97,5 @@ try {
   });
 } finally {
   clearTimeout(timer);
-  if (inferenceAttempted) await unloadCanaryModel();
+  // A canary cannot evict an unowned shared model; the VR governor owns cleanup.
 }

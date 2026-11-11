@@ -175,12 +175,58 @@ test('Qwen 3.5 canary refuses unknown governor and does not unload a model it ne
   assert.match(qwen35Canary, /classifyQwen35CanaryGovernorV1/);
   assert.match(qwen35Canary, /return classifyQwen35CanaryGovernorV1\(null\)/);
   assert.match(qwen35Canary, /const beforeInference = readVrResourceGovernorBlock\(\)/);
-  assert.match(qwen35Canary, /if \(inferenceAttempted\) await unloadCanaryModel\(\)/);
-  assert.match(qwen35Canary, /keep_alive: 0/);
+  assert.doesNotMatch(qwen35Canary, /unloadCanaryModel|inferenceAttempted|\/api\/generate|keep_alive:\s*0/);
   const check = spawnSync(process.execPath, ['--check',
     fileURLToPath(new URL('../../scripts/qwen35-canary.mjs', import.meta.url))],
     { encoding: 'utf8', timeout: 10_000 });
   assert.equal(check.status, 0, check.stderr || 'node --check should accept the actual canary script');
+});
+
+
+test('Qwen canary never emits a global unload without authenticated model ownership', async () => {
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const body = qwen35Canary.replace(/^#![^\n]*\n/, '').replace(/^import [^\n]*\n/gm, '');
+  const execute = new AsyncFunction('readFileSync', 'homedir', 'resolve', 'process',
+    'classifyQwen35CanaryGovernorV1', 'fetch', 'AbortController',
+    'setTimeout', 'clearTimeout', body);
+  const AbortStub = class { constructor() { this.signal = {}; } abort() {} };
+  const governor = () => ({
+    schemaVersion: 'stephanos.vr-resource-governor.v1',
+    governorVersion: 3, phase: 'NORMAL', updatedAtUtc: new Date().toISOString(),
+    active: false, flatGameActive: false, airLinkActive: false,
+    realAirLinkActive: false, virtualAirLinkTestActive: false,
+    prepareLeaseActive: false, localModelAllowed: true, heavyModelAllowed: true,
+  });
+  for (const mode of ['stale', 'tags503', 'modelMissing', 'transportError', 'chat503', 'success']) {
+    const calls = [], outputs = [];
+    const state = mode === 'stale'
+      ? { ...governor(), updatedAtUtc: new Date(Date.now() - 16000).toISOString() } : governor();
+    const proc = { stdout: { write(text) { outputs.push(JSON.parse(text)); } }, exitCode: undefined };
+    const fakeFetch = async (url, options) => {
+      assert.match(url, /^http:\/\/127\.0\.0\.1:11434\/api\/(tags|chat)$/);
+      const endpoint = url.endsWith('/tags') ? 'tags' : 'chat';
+      calls.push(endpoint);
+      if (endpoint === 'tags') return mode === 'tags503' ? { ok: false, status: 503 }
+        : { ok: true, json: async () => ({ models: mode === 'modelMissing'
+          ? [] : [{ name: 'qwen3.5:27b' }] }) };
+      assert.equal(options.method, 'POST');
+      assert.equal(JSON.parse(options.body).model, 'qwen3.5:27b');
+      assert.equal(Object.hasOwn(JSON.parse(options.body), 'keep_alive'), false);
+      if (mode === 'transportError') throw new Error('synthetic transport error');
+      if (mode === 'chat503') return { ok: false, status: 503 };
+      return { ok: true, json: async () => ({
+        model: 'qwen3.5:27b', message: { content: 'QWEN35_CANARY_OK' },
+      }) };
+    };
+    await execute(() => JSON.stringify(state), () => '/virtual',
+      () => '/virtual/governor', proc, classifyQwen35CanaryGovernorV1, fakeFetch,
+      AbortStub, () => 1, () => {});
+    assert.deepEqual(calls, mode === 'stale' ? []
+      : ['tags', ...(['tags503', 'modelMissing'].includes(mode) ? [] : ['chat'])], mode);
+    assert.equal(outputs.length, 1, mode);
+    assert.equal(outputs[0].ok, mode === 'success', mode);
+    assert.equal(proc.exitCode, mode === 'success' ? undefined : 2, mode);
+  }
 });
 
 test('Qwen 27B canary admission is fail closed on every missing, corrupt or denied VR record', () => {
