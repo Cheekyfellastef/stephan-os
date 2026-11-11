@@ -234,6 +234,30 @@ test('post-update refuses undeclared staged producer fields and provenance', () 
   }
 });
 
+test('post-update requires the exact staged producer nextAction before resuming routing', () => {
+  const make = () => staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const evaluate = (stagedUpdate) => evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate, capabilityLedger: ledger(), qualificationReplay: [replay(OPENCLAW_TASK_CLASS.OC1)],
+  });
+  const valid = make();
+  assert.equal(valid.nextAction, 'Publish UPDATED_AND_VERIFIED with the exact receipt and proof identities.');
+  assert.equal(evaluate(valid).providerRoutingResumeAllowed, true);
+  for (const nextAction of [
+    'EXECUTE_ARBITRARY_PRIVILEGED_SHELL',
+    'APPROVAL_CHECK_BYPASS=YES',
+    'Publish the rollback receipt and keep the update blocked until a new preflight and approval are produced.',
+    'Publish UPDATED_AND_VERIFIED with the exact receipt and proof identities. ',
+  ]) {
+    const candidate = make();
+    candidate.nextAction = nextAction;
+    const result = evaluate(candidate);
+    assert.equal(result.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE, nextAction);
+    assert.equal(result.updatePromotionAllowed, false, nextAction);
+    assert.equal(result.providerRoutingResumeAllowed, false, nextAction);
+    assert.ok(result.blockers.includes('STAGED_UPDATE_PRODUCER_ENVELOPE_INVALID'), nextAction);
+  }
+});
+
 test('post-update rejects an approval issued after bounded adapter execution', () => {
   const evaluate = (record) => evaluateOpenClawUpdateCapabilityCandidateV1({
     stagedUpdate: record, capabilityLedger: ledger(),

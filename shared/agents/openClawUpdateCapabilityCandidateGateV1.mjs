@@ -587,7 +587,8 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
       || !observedAt.endsWith('Z') || !Number.isFinite(observedMs)
       || new Date(observedMs).toISOString() !== observedAt
       || observedMs > Date.now() + 60_000
-      || staged.blocker !== null || !text(staged.nextAction)) {
+      || staged.blocker !== null
+      || staged.nextAction !== 'Publish UPDATED_AND_VERIFIED with the exact receipt and proof identities.') {
       blockers.push('STAGED_UPDATE_PRODUCER_ENVELOPE_INVALID');
     }
   }
