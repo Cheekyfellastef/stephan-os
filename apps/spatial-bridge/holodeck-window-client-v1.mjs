@@ -212,6 +212,8 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       if(current!==epoch||disposed)return false;
       const result=await request('/bind',{id});if(current!==epoch)return false;if(result.status!=='connected')throw new Error('bind');
       active=true;sequence=0;queue=[];publish({status:'waiting',windows:[],title:selected.title,message:'Waiting for the selected app to draw.'});
+      // A waiting-state subscriber can synchronously Stop, depart or dispose.
+      if(!active||disposed||current!==epoch)return false;
       timer=setTimer(()=>poll(current),0);return true;
     }catch{if(current===epoch)publish({status:'unavailable',message:'Could not connect that window. Restore it on your desktop and choose it again.'});return false;}
     finally{if(current===epoch)busy=false;}

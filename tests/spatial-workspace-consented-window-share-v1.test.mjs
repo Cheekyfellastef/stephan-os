@@ -358,3 +358,41 @@ test('native interactive poll continues scheduling while the original connection
   await h.client.stop();
   assert.equal(h.timers.size,0,'explicit Stop must clear the live poll timer');
 });
+
+test('native bind waiting publication cannot resurrect a timer after synchronous lifecycle revocation',async()=>{
+  for(const method of ['stop','pagehide','dispose','normal']){
+    const timers=new Map();let timerSequence=0,client,revocations=0;
+    const token='a'.repeat(64);
+    client=createHolodeckWindowClient({
+      locationRef:{hostname:'localhost',port:'4173'},
+      sessionStore:{getItem:()=>null,setItem(){},removeItem(){}},
+      documentRef:{createElement:()=>({src:'',decode:async()=>{}})},
+      setTimer(fn,ms){const id=++timerSequence;timers.set(id,{fn,ms});return id;},
+      clearTimer(id){timers.delete(id);},
+      onChange(state){if(method!=='normal'&&state.status==='waiting'&&!revocations){
+        revocations++;void client[method]();
+      }},
+      fetchRef:async url=>{
+        const path=String(url);let data;
+        if(path.endsWith('/session'))data={token};
+        else if(path.endsWith('/windows'))data={windows:[{id:17,pid:19,title:'User-selected window'}]};
+        else if(path.endsWith('/bind'))data={status:'connected'};
+        else if(path.endsWith('/stop'))data={status:'stopped'};
+        else throw Error('Unexpected native request in waiting-state test');
+        return {ok:true,status:200,json:async()=>data};
+      }
+    });
+    await client.discover();assert.equal(client.getState().status,'selecting');
+    const connected=await client.connect(17);
+    if(method==='normal'){
+      assert.equal(connected,true);assert.equal(client.getState().status,'waiting');
+      assert.equal(timers.size,1,'healthy native connect schedules exactly one poll');
+    }else{
+      assert.equal(revocations,1,method+' revokes the waiting-state publication');
+      assert.equal(connected,false,method+' cannot return success after revocation');
+      assert.equal(client.getState().status,'idle');
+      assert.equal(timers.size,0,method+' cannot leave a post-stop poll');
+    }
+    await client.stop();assert.equal(timers.size,0);
+  }
+});
