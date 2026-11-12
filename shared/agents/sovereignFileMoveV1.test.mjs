@@ -7,6 +7,7 @@ import { mkdtemp, mkdir, writeFile, readFile, lstat, link, symlink, rm } from 'n
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   runSovereignFileMoveV1 as move, validateSovereignFileMoveArgumentsV1 as validate,
@@ -255,6 +256,34 @@ test('run and output budgets terminate only the owned child and never certify an
 });
 
 const WINDOWS = { skip: process.platform !== 'win32', timeout: 90_000 };
+
+test('fixed Windows move wrapper bounds stdin before JSON parsing and native compilation', () => {
+  const ps = readFileSync(new URL('../../scripts/windows/sovereign-move-file.ps1', import.meta.url), 'utf8');
+  assert.doesNotMatch(ps, /\[Console\]::In\.ReadToEnd\(\)/);
+  assert.match(ps, /\$inputLimit = 131072/);
+  assert.match(ps, /\$reader\.Read\(\$buffer, 0, \[Math\]::Min\(\$buffer\.Length, \$remaining\)\)/);
+  assert.match(ps, /if \(\$builder\.Length -gt \$inputLimit\) \{ throw 'SOVEREIGN_MOVE_REQUEST_INVALID' \}/);
+  assert.ok(ps.indexOf('$reader.Read(') < ps.indexOf('| ConvertFrom-Json'));
+});
+
+test('real Windows oversized move stdin is refused pre-mutation without native compilation', WINDOWS, () => {
+  const script = fileURLToPath(new URL('../../scripts/windows/sovereign-move-file.ps1', import.meta.url));
+  // No valid request or native helper is supplied, so oversized data must
+  // be rejected before JSON parsing or Add-Type is ever reached.
+  const run = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-File', script], {
+    input: ' '.repeat(131073), encoding: 'utf8', windowsHide: true,
+    timeout: 20_000, maxBuffer: 65536,
+  });
+  assert.equal(run.error, undefined);
+  assert.equal(run.status, 2, run.stderr);
+  const response = JSON.parse(run.stdout.trim());
+  assert.equal(response.ok, false);
+  assert.equal(response.blocker, 'SOVEREIGN_MOVE_REQUEST_INVALID');
+  assert.equal(response.mutationState, 'NOT_STARTED');
+  assert.equal(response.mutationAttempted, false);
+  assert.equal(response.retryAllowed, false);
+});
+
 async function withDirectory(run) {
   const root = await mkdtemp(join(homedir(), 'sovereign-file-move-'));
   try { return await run(root); } finally { await rm(root, { recursive: true, force: true }); }

@@ -9,8 +9,21 @@ Set-StrictMode -Version Latest
 $scope = $null
 $request = $null
 try {
-    $raw = [Console]::In.ReadToEnd()
-    if ($raw.Length -gt 131072) { throw 'SOVEREIGN_MOVE_REQUEST_INVALID' }
+    # Bound the input during reading, not after ReadToEnd has allocated it.
+    # Read at most one character beyond the source-defined 128 Ki-character
+    # request cap, then refuse before parsing or compiling any native code.
+    $inputLimit = 131072
+    $reader = [Console]::In
+    $buffer = [char[]]::new(4096)
+    $builder = New-Object System.Text.StringBuilder
+    while ($true) {
+        $remaining = ($inputLimit + 1) - $builder.Length
+        $readCount = $reader.Read($buffer, 0, [Math]::Min($buffer.Length, $remaining))
+        if ($readCount -eq 0) { break }
+        [void]$builder.Append($buffer, 0, $readCount)
+        if ($builder.Length -gt $inputLimit) { throw 'SOVEREIGN_MOVE_REQUEST_INVALID' }
+    }
+    $raw = $builder.ToString()
     $request = $raw | ConvertFrom-Json
     $keys = @($request.PSObject.Properties.Name)
     if ($keys.Count -ne 4 -or 'source' -cnotin $keys -or 'destination' -cnotin $keys -or

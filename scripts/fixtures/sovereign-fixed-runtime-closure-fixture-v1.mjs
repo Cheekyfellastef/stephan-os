@@ -40,7 +40,7 @@ const capturedReadAdapters = {
   'shared/agents/sovereignDirectoryCreateV1.mjs': 'b3a9f5f60d7d0990b31fa9f491c349832f9fad2cba802484e2b1c2c67106e43a',
   'shared/agents/sovereignSearchSessionsV1.mjs': '028dfe0243714cd047671e27365e18e59a16791edc92895a76a4332b77d5de34',
   'shared/agents/sovereignFileCopyV1.mjs': 'f0903634deda4888e65b5a806f53292578c42930481ec77f0e3ebf34685619ff',
-  'shared/agents/sovereignFileMoveV1.mjs': '79ea603d77c6aa0d53366a966aef849ecc20e80019f2162e28886b6a28747190',
+  'shared/agents/sovereignFileMoveV1.mjs': 'edb13d36cbe7c74d27834069d803601f13493919f0d6409fbb2ba1c82fc6a910',
   'shared/agents/sovereignPdfWriteV1.mjs': '90c5e0ecb3d1fdc354af1dbedcd04c24a2910e3fedb3277aa838168214164330',
 };
 const capturedProcessAdapterSha256 = 'c0e7d5e221ec5dc3c5579c6dd88a45cde393bc2484984ea4bfdd0c11e1e3549f';

@@ -12,7 +12,7 @@ export const SOVEREIGN_FILE_MOVE_LIMITS_V1 = Object.freeze({
 });
 const SCRIPT = fileURLToPath(new URL('../../scripts/windows/sovereign-move-file.ps1', import.meta.url));
 const NATIVE = fileURLToPath(new URL('../../scripts/windows/SovereignFileMoveV1.cs', import.meta.url));
-const SCRIPT_SHA256 = 'c7244239f67d708f979c6d76c85962ba4ba34519dd8ef2577709466b78502e51';
+const SCRIPT_SHA256 = '07c7c68a37c7861d896a32426603e2fa6c89defa01148b754c6d75e40d753a63';
 const NATIVE_SHA256 = 'c0980126d050631d9788ceeee2631ecb78f0c4780c52baee6f9bb90f6c287bbf';
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const IDENTITY = /^[a-f0-9]{8}:[a-f0-9]{16}$/;
