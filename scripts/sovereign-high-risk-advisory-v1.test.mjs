@@ -1,5 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
+import { resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import {
   captureHighRiskAdvisorySnapshotV1 as capture,
   localHighRiskModelV1 as localHighRiskModelActual,
@@ -417,4 +422,91 @@ test('high-risk runner preserves fixed protocol refusals and suppresses arbitrar
     assert.equal(result.specialistAuthority,false);
     assert.equal(JSON.stringify(result).includes('private provider error payload'),false);
   }
+});
+
+
+test('Windows canonical high-risk snapshot uses authenticated private worktree isolation', {
+  skip: process.platform !== 'win32', timeout: 60000,
+}, t => {
+  const parent = mkdtempSync(join(tmpdir(), 'stephanos-highrisk-win-git-'));
+  const root = join(parent, 'main');
+  mkdirSync(root);
+  t.after(() => rmSync(parent, { recursive: true, force: true }));
+  const gitExecution = resolveBattleBridgeGitExecution({ platform: 'win32' });
+  const git = args => {
+    const result = spawnSync(gitExecution.executable, [
+      ...gitExecution.fixedConfigArgs, '-C', root, ...args,
+    ], { cwd: root, env: gitExecution.environment, shell: false,
+      windowsHide: true, encoding: 'utf8', timeout: 15000, maxBuffer: 1024 * 1024 });
+    assert.equal(result.status, 0, String(result.stderr || result.error?.message));
+    return result.stdout.trim();
+  };
+  git(['init', '-b', 'main']);
+  git(['remote', 'add', 'origin', 'https://github.com/Cheekyfellastef/stephan-os.git']);
+  for (const name of HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS) {
+    const target = join(root, name);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, 'fixed fixture ' + name + '\n');
+  }
+  git(['add', '.']);
+  git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    'commit', '-m', 'baseline']);
+  const base = git(['rev-parse', 'HEAD']);
+  writeFileSync(join(root, 'README.md'), 'current fixture head\n');
+  git(['add', 'README.md']);
+  git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    'commit', '-m', 'review']);
+  const head = git(['rev-parse', 'HEAD']);
+  git(['config', 'extensions.worktreeConfig', 'true']);
+  git(['worktree', 'add', '-b', 'fixture-linked', join(parent, 'linked')]);
+  const existingWorktreeMetadata = readFileSync(join(root, '.git', 'worktrees', 'linked', 'gitdir'));
+  const originalConfig = readFileSync(join(root, '.git', 'config'));
+  const originalIndex = readFileSync(join(root, '.git', 'index'));
+  // The original main worktree carries hostile per-worktree options. The
+  // qualified private context must not consult them for any Git operation.
+  const localWorktreeConfig = join(root, '.git', 'config.worktree');
+  const foreign = '[core]\n\tfsmonitor = /bad/helper\n[remote "origin"]\n\turl = https://attacker.invalid/alternate\n';
+  writeFileSync(localWorktreeConfig, foreign);
+  const caseEnv = {
+    STEPHANOS_REVIEW_EXACT_HEAD: head,
+    STEPHANOS_REVIEW_EXACT_BASE: base,
+    STEPHANOS_REVIEW_EXACT_BRANCH: 'main',
+    STEPHANOS_REVIEW_REPOSITORY: 'Cheekyfellastef/stephan-os',
+    STEPHANOS_REVIEW_PR: '3499', STEPHANOS_REVIEW_ISSUE: '1574',
+    STEPHANOS_REVIEW_SESSION: 'local-windows-review',
+    STEPHANOS_REVIEW_IMPLEMENTER_SESSION: 'source-implementer',
+    STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER: 'canonical-programme-builder',
+  };
+  let verifiedSourceDiff = false;
+  const result = capture(caseEnv, {
+    platform: 'win32', root, spawn: spawnSync,
+    resolveGit: () => gitExecution,
+    captureDiff: ({ git: reviewedGit }) => {
+      assert.equal(reviewedGit.executable, gitExecution.executable);
+      assert.equal(reviewedGit.fixedConfigArgs.some(arg =>
+        arg.startsWith('--git-dir=') && !arg.endsWith('/main/.git')), true);
+      assert.equal(reviewedGit.fixedConfigArgs.some(arg => arg === '--work-tree=' + root), true);
+      verifiedSourceDiff = true;
+      return { changedFiles: ['README.md'], diff: 'fixture-reviewed-diff',
+        reviewedObjectClosureSha256: 'c'.repeat(64) };
+    },
+  });
+  assert.equal(verifiedSourceDiff, true);
+  assert.equal(result.sourceHead, head);
+  assert.equal(result.baseSha, base);
+  assert.equal(result.branch, 'main');
+  assert.deepEqual(result.changedFiles, ['README.md']);
+  assert.deepEqual(readFileSync(join(root, '.git', 'config')), originalConfig);
+  assert.deepEqual(readFileSync(join(root, '.git', 'index')), originalIndex);
+  assert.deepEqual(readFileSync(join(root, '.git', 'worktrees', 'linked', 'gitdir')), existingWorktreeMetadata);
+  assert.equal(readFileSync(localWorktreeConfig, 'utf8'), foreign);
+  // A source file changed outside the HEAD cannot be promoted to reviewed.
+  writeFileSync(join(root, 'scripts', 'sovereign-high-risk-advisory-v1.mjs'),
+    'changed source outside reviewed HEAD\n');
+  assert.throws(() => capture(caseEnv, { platform: 'win32', root, spawn: spawnSync,
+    resolveGit: () => gitExecution, captureDiff: () => {
+      throw Error('DIFF_MUST_NOT_RUN_AFTER_DIRT');
+    },
+  }), /DIRTY_REVIEW_CHECKOUT|CANONICAL_GIT_PROBE_/);
+  assert.deepEqual(readFileSync(join(root, '.git', 'config')), originalConfig);
 });
