@@ -614,6 +614,7 @@ function validHead(value) {
 function resultPass(result, expectedHead) {
   return result?.ok === true
     && result?.exactHeadProofOk === true
+    && (result?.blocker === undefined || result?.blocker === '')
     && String(result?.sourceHead || '').toLowerCase() === String(expectedHead).toLowerCase();
 }
 

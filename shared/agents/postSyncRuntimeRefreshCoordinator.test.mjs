@@ -6,6 +6,7 @@ import {
   buildPostSyncRefreshProjection,
   classifyPostSyncRefresh,
   executePostSyncRefreshPlan,
+  postSyncRefreshTargetResultPass,
   parseGitChangedPathStatus,
   projectPostSyncSovereignRelayProof,
   projectPostSyncTargetFailureHistory,
@@ -1876,4 +1877,55 @@ test('hosted exact-head escalation stops blocking disjoint backend refresh but c
   assert.equal(unrelated.classification,'BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
   assert.equal(unrelated.unknownPathCount,1);
   assert.equal(unrelated.automaticExecutionAllowed,false);
+});
+
+test('post-sync target proof denies contradictory nonempty blocker across normal target families', () => {
+  const paths = ['stephanos-server/services/submitGoalTool.js'];
+  const plan = classifyPostSyncRefresh(paths);
+  const targetId = POST_SYNC_REFRESH_TARGETS.BACKEND_8787;
+  for (const blocker of ['BACKEND_NOT_HEALTHY', 'REFRESH_TARGET_PROOF_FAILED', ' ']) {
+    assert.equal(postSyncRefreshTargetResultPass({ ...pass(), blocker }, { targetId, plan, expectedHead: B }), false);
+  }
+  assert.equal(postSyncRefreshTargetResultPass({ ...pass(), blocker: '' }, { targetId, plan, expectedHead: B }), true);
+  assert.equal(postSyncRefreshTargetResultPass(pass(), { targetId, plan, expectedHead: B }), true);
+});
+
+test('post-sync executor rejects fresh contradictory backend proof even when success flags match head', async () => {
+  const seen = [];
+  const path = 'stephanos-server/services/submitGoalTool.js';
+  const denied = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: [path],
+    adapters: { restartBackend: async () => ({ ...pass(), blocker: 'BACKEND_NOT_HEALTHY' }) },
+    onTargetComplete: async (_results, observation) => { seen.push(observation); },
+  });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED);
+  assert.equal(denied.blocker, 'BACKEND_NOT_HEALTHY');
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].failureKind, 'RESULT_UNPROVEN');
+});
+
+test('post-sync persisted contradictory success cannot resume; qualified new proof must execute', async () => {
+  const path = 'stephanos-server/services/submitGoalTool.js';
+  let invoked = 0;
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: [path],
+    completedResults: [{ targetId: POST_SYNC_REFRESH_TARGETS.BACKEND_8787, ...pass(), blocker: 'BACKEND_NOT_HEALTHY' }],
+    adapters: { restartBackend: async () => { invoked++; return { ...pass(), blocker: '' }; } },
+  });
+  assert.equal(invoked, 1);
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_COMPLETE);
+  assert.equal(result.results[0].resumed, undefined);
+});
+
+test('post-sync persisted contradictory proof plus absent handler remains blocked', async () => {
+  const path = 'stephanos-server/services/submitGoalTool.js';
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: [path],
+    completedResults: [{ targetId: POST_SYNC_REFRESH_TARGETS.BACKEND_8787, ...pass(), blocker: 'BACKEND_NOT_HEALTHY' }],
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED);
+  assert.equal(result.blocker, `REFRESH_HANDLER_MISSING:${POST_SYNC_REFRESH_TARGETS.BACKEND_8787}`);
 });
