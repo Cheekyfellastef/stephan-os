@@ -412,3 +412,84 @@ preexistingWriterDenied=$preexistingWriterDenied;complete=$receipt.complete}|Con
       for (const key of ['renameDenied', 'writeDenied', 'afterReleaseWritable', 'preexistingWriterDenied', 'complete']) assert.equal(proof[key], true, key);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
+
+
+test('nested search receipts never execute arbitrary in-process accessors or serializers', async () => {
+  const cases = [
+    ['nested result Proxy', value => {
+      let traps = 0;
+      value.results[0] = new Proxy(value.results[0], {
+        get() { traps++; throw Error('PRIVATE_NESTED_GET'); },
+        ownKeys() { traps++; throw Error('PRIVATE_NESTED_KEYS'); },
+      });
+      return () => assert.equal(traps, 0);
+    }],
+    ['nested toJSON getter', value => {
+      let calls = 0;
+      Object.defineProperty(value.results[0], 'toJSON', { get() {
+        calls++; throw Error('PRIVATE_TOJSON_GETTER');
+      } });
+      return () => assert.equal(calls, 0);
+    }],
+    ['nested toJSON callable', value => {
+      let calls = 0;
+      value.results[0].toJSON = () => { calls++; throw Error('PRIVATE_TOJSON_CALLED'); };
+      return () => assert.equal(calls, 0);
+    }],
+    ['result cyclic property', value => { value.results[0].extra = value.results[0]; }],
+    ['result BigInt property', value => { value.results[0].extra = 1n; }],
+    ['reasons accessor index', value => {
+      let calls = 0;
+      value.reasons = ['SOVEREIGN_SEARCH_INVALID_REASON'];
+      value.complete = false;
+      Object.defineProperty(value.reasons, '0', { get() {
+        calls++; throw Error('PRIVATE_REASONS_GETTER');
+      } });
+      return () => assert.equal(calls, 0);
+    }],
+    ['results accessor index', value => {
+      let calls = 0;
+      Object.defineProperty(value.results, '0', { get() {
+        calls++; throw Error('PRIVATE_RESULTS_GETTER');
+      } });
+      return () => assert.equal(calls, 0);
+    }],
+    ['results array hole', value => { delete value.results[0]; }],
+    ['reasons additional toJSON', value => {
+      let calls = 0;
+      value.reasons.toJSON = () => { calls++; throw Error('PRIVATE_ARRAY_SERIALIZER'); };
+      return () => assert.equal(calls, 0);
+    }],
+    ['results custom symbol', value => { value.results[Symbol('private')] = 'PRIVATE'; }],
+    ['result nested preview', value => { value.results[0].preview = { nested: true }; }],
+    ['result malformed line', value => { value.results[0].line = '1'; }],
+  ];
+  for (const [name, change] of cases) {
+    const native = receipt();
+    const verifyNoAccess = change(native);
+    const service = createSovereignSearchSessionsV1({ scanFn: () => native });
+    try {
+      const first = await started(service);
+      const result = await service.execute('GET_MORE_SEARCH_RESULTS', { searchId: first.searchId });
+      assert.equal(result.status, 'FAILED', name);
+      assert.equal(result.blocker, 'SOVEREIGN_SEARCH_RECEIPT_INVALID', name);
+      assert.deepEqual(result.results, [], name);
+      verifyNoAccess?.();
+    } finally {
+      service.dispose();
+    }
+  }
+});
+
+test('ordinary valid search receipt still completes and retains canonical search metadata', async () => {
+  const service = createSovereignSearchSessionsV1({ scanFn: () => receipt(REQUEST, ['a.txt']) });
+  try {
+    const first = await started(service);
+    const result = await service.execute('GET_MORE_SEARCH_RESULTS', { searchId: first.searchId });
+    assert.equal(result.status, 'COMPLETED');
+    assert.equal(result.results.length, 1);
+    assert.equal(result.results[0].relativePath, 'a.txt');
+  } finally {
+    service.dispose();
+  }
+});

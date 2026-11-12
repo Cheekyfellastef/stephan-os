@@ -55,6 +55,20 @@ function plain(object, allowed) {
     && Reflect.ownKeys(object).every(key => typeof key === 'string' && allowed.includes(key)
       && Object.hasOwn(Object.getOwnPropertyDescriptor(object, key), 'value'));
 }
+function densePlainArray(value, maximum) {
+  // Never read an untrusted array index until the entire index estate is
+  // proven to contain own data properties. In-process adapters may supply
+  // accessors, sparse arrays and Proxies that JSON.parse never produces.
+  if (utilTypes.isProxy(value) || !Array.isArray(value)
+    || Object.getPrototypeOf(value) !== Array.prototype
+    || !Number.isSafeInteger(value.length) || value.length > maximum) return false;
+  if (Reflect.ownKeys(value).length !== value.length + 1) return false;
+  for (let index = 0; index < value.length; index++) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !Object.hasOwn(descriptor, 'value')) return false;
+  }
+  return true;
+}
 function validPart(part) {
   return part.length > 0 && part.length <= 255 && part !== '.' && part !== '..'
     && !/[ .]$/.test(part) && !/[\x00-\x1f<>:"/\\|?*~]/.test(part)
@@ -107,6 +121,8 @@ function validateSnapshot(raw, request) {
   // Proxy arrays before Array.isArray/length/some/iteration can invoke traps.
   // A revoked Proxy must also be rejected without calling into the target.
   if (!plain(raw, keys) || utilTypes.isProxy(raw.reasons) || utilTypes.isProxy(raw.results)) return null;
+  if (!densePlainArray(raw.reasons, REASONS.size)
+    || !densePlainArray(raw.results, SOVEREIGN_SEARCH_LIMITS.results)) return null;
   if (!plain(raw, keys) || keys.some(key => !Object.hasOwn(raw, key)) || raw.schemaVersion !== SNAPSHOT_SCHEMA || raw.ok !== true
     || raw.path !== request.path || raw.query !== request.query || raw.mode !== request.mode
     || raw.caseSensitive !== request.caseSensitive || raw.confinement !== CONFINEMENT
@@ -120,10 +136,12 @@ function validateSnapshot(raw, request) {
     bytesRead: SOVEREIGN_SEARCH_LIMITS.totalBytes, resultBytes: SOVEREIGN_SEARCH_LIMITS.resultBytes,
     resultsCount: SOVEREIGN_SEARCH_LIMITS.results, durationMs: SOVEREIGN_SEARCH_LIMITS.processMs };
   if (!plain(stats, Object.keys(statCaps)) || Object.entries(statCaps).some(([key, max]) => !Object.hasOwn(stats, key) || !integer(stats[key], 0, max))
-    || stats.resultsCount !== raw.results.length || bytes(raw.results) > SOVEREIGN_SEARCH_LIMITS.resultBytes) return null;
+    || stats.resultsCount !== raw.results.length) return null;
   const results = [];
-  for (const result of raw.results) {
-    const resultKeys = ['path', 'relativePath', 'type', 'line', 'column', 'preview'];
+  const resultKeys = ['path', 'relativePath', 'type', 'line', 'column', 'preview'];
+  let resultBytes = 2; // literal JSON array brackets
+  for (let index = 0; index < raw.results.length; index++) {
+    const result = raw.results[index];
     if (!plain(result, resultKeys) || resultKeys.some(key => !Object.hasOwn(result, key))
       || result.type !== 'file' || typeof result.relativePath !== 'string'
       || result.relativePath.split('\\').some(part => !validPart(part))
@@ -140,6 +158,17 @@ function validateSnapshot(raw, request) {
       if (result.line != null || result.column != null || result.preview != null) return null;
       results.push(Object.freeze({ path: result.path, relativePath: result.relativePath, type: 'file' }));
     }
+    // Measure only a validated, primitive-only, null-prototype record.
+    // JSON.stringify(raw.results) would invoke nested toJSON/getters before
+    // their rejection, and an inherited Array.prototype.toJSON could run.
+    const safeByteRow = Object.create(null);
+    for (const key of resultKeys) safeByteRow[key] = result[key];
+    try {
+      resultBytes += (index ? 1 : 0) + bytes(safeByteRow);
+    } catch {
+      return null;
+    }
+    if (resultBytes > SOVEREIGN_SEARCH_LIMITS.resultBytes) return null;
   }
   return Object.freeze({ complete: raw.complete, reasons: Object.freeze([...raw.reasons]),
     stats: Object.freeze({ ...stats }), scopeIdentity: raw.scopeIdentity, results: Object.freeze(results) });
