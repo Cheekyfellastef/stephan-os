@@ -398,10 +398,20 @@ test('observation remains outside the immutable native execution closure', () =>
   // This does not change either enforcing implementation or the closure.
   const nativeSource = readFileSync(new URL('./windows/SovereignFixedRuntimeIdentityV1.cs', import.meta.url), 'utf8');
   const installerSource = readFileSync(new URL('./sovereign-fixed-runtime-installer-candidate-v1.mjs', import.meta.url), 'utf8');
-  const nativeBounds = [...nativeSource.matchAll(/manifest\.Files\.Length\s*>\s*(\d+)\b/g)];
-  const installerBounds = [...installerSource.matchAll(/FIXED_RUNTIME_SOURCE_PATHS_V1\.length\s*>\s*(\d+)\b/g)];
-  assert.equal(nativeBounds.length, 1, 'native verifier must retain one explicit package bound');
-  assert.equal(installerBounds.length, 1, 'installer must retain one explicit package bound');
+  // The production verifier and installer now enforce named constants, not inline
+  // literal numbers. Bind both declaration identities to their real guard usages.
+  const nativeBounds = [...nativeSource.matchAll(/const\s+int\s+RuntimeSourceMemberLimitV1\s*=\s*(\d+)\s*;/g)];
+  const installerBounds = [...installerSource.matchAll(/export\s+const\s+FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1\s*=\s*(\d+)\s*;/g)];
+  assert.equal(nativeBounds.length, 1, 'native verifier must declare one explicit package bound');
+  assert.equal(installerBounds.length, 1, 'installer must declare one explicit package bound');
+  assert.equal([...nativeSource.matchAll(/manifest\.Files\.Length\s*>\s*RuntimeSourceMemberLimitV1\b/g)].length,
+    1, 'native manifest validation must enforce the declared bound');
+  assert.equal([...installerSource.matchAll(/FIXED_RUNTIME_SOURCE_PATHS_V1\.length\s*>\s*FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1\b/g)].length,
+    1, 'installer must enforce the declared bound');
+  assert.equal([...nativeSource.matchAll(/members\.Length\s*>\s*RuntimeSourceMemberLimitV1\b/g)].length,
+    1, 'native closure validation must enforce the declared bound');
+  assert.equal([...installerSource.matchAll(/members\.length\s*>\s*FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1\b/g)].length,
+    1, 'installer closure validation must enforce the declared bound');
   const maximumMembers = Number(nativeBounds[0][1]);
   assert.equal(Number(installerBounds[0][1]), maximumMembers, 'installer/native package bounds must agree');
   assert.ok(Number.isSafeInteger(maximumMembers) && maximumMembers >= 40);
