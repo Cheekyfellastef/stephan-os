@@ -305,3 +305,56 @@ test('synchronous view-only publication revocation never re-arms an orphaned fra
     assert.equal(client.getState().status,'idle');
   }
 });
+
+// Native interactive mode must not resurrect a timer when its synchronous
+// status subscriber revokes the connection while a frame is published.
+async function nativePollReentrantHarness(method){
+  const timers=new Map();let nextTimerId=0,client,revoked=false,frameCalls=0;
+  const token='a'.repeat(64);
+  client=createHolodeckWindowClient({
+    locationRef:{hostname:'localhost',port:'4173'},sessionStore:{getItem:()=>null,setItem(){},removeItem(){}},
+    documentRef:{createElement(kind){assert.equal(kind,'img');return {src:'',decode:async()=>{}};}},
+    setTimer(fn,ms){const id=++nextTimerId;timers.set(id,{fn,ms});return id;},
+    clearTimer(id){timers.delete(id);},
+    onChange(state){if(method!=='normal'&&state.status==='live'&&!revoked){
+      revoked=true;void client[method]();
+    }},
+    fetchRef:async url=>{
+      const path=String(url);
+      let data;
+      if(path.endsWith('/session'))data={token};
+      else if(path.endsWith('/windows'))data={windows:[{id:17,pid:19,title:'User-selected window'}]};
+      else if(path.endsWith('/bind'))data={status:'connected'};
+      else if(path.endsWith('/frame')){frameCalls++;data={status:'frame',serial:1,generation:1,jpeg:'ZmFrZQ=='};}
+      else if(path.endsWith('/stop'))data={status:'stopped'};
+      else throw Error('Unexpected native operation');
+      return {ok:true,status:200,json:async()=>data};
+    }
+  });
+  await client.discover();
+  assert.equal(client.getState().status,'selecting');
+  assert.equal(await client.connect(17),true);
+  assert.equal(timers.size,1,'one initial native poll must be pending');
+  const [timerId,initial]=timers.entries().next().value;
+  timers.delete(timerId);
+  await initial.fn();
+  return {client,timers,revoked,frameCalls};
+}
+test('native interactive poll never resurrects a timer after synchronous Stop, pagehide or dispose',async()=>{
+  for(const method of ['stop','pagehide','dispose']){
+    const h=await nativePollReentrantHarness(method);
+    assert.equal(h.revoked,true,method+' must revoke on live publication');
+    assert.equal(h.frameCalls,1,method+' must fetch exactly one frame');
+    assert.equal(h.client.getState().status,'idle');
+    assert.equal(h.timers.size,0,method+' must not schedule after epoch invalidation');
+  }
+});
+test('native interactive poll continues scheduling while the original connection remains live',async()=>{
+  const h=await nativePollReentrantHarness('normal');
+  assert.equal(h.revoked,false);
+  assert.equal(h.frameCalls,1);
+  assert.equal(h.client.getState().status,'live');
+  assert.equal(h.timers.size,1,'healthy live polling must be re-armed');
+  await h.client.stop();
+  assert.equal(h.timers.size,0,'explicit Stop must clear the live poll timer');
+});

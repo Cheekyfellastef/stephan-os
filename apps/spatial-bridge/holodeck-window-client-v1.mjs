@@ -236,7 +236,7 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
           image=next;generation=frame.generation;serial=frame.serial;publish({status:'live',...(state.status!=='live'?{inputStatus:''}:{}),message:'Connected to your original app. Point at its controls to interact.'});
         }
       }else{generation=0;queue=[];publish({status:'waiting',inputStatus:'Input paused. Wait for a live picture of your app.',message:'Waiting for your app. Restore a minimized window or reconnect if it closed.'});}
-      timer=setTimer(()=>poll(current),queue.length?0:67);
+      if(active&&!disposed&&current===epoch)timer=setTimer(()=>poll(current),queue.length?0:67);
     }catch{if(current===epoch){active=false;generation=0;queue=[];image=null;publish({status:'unavailable',inputStatus:'Input paused. Reconnect the selected app.',message:'Window connection lost. Your conversation remains in the original app.'});}}
   }
   function input(value){
