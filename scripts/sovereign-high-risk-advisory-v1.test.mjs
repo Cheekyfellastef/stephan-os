@@ -112,6 +112,7 @@ test('exact-head Git snapshot pins actual executable and high-risk policy bytes'
       spawn:(executable,args,options)=>{
         assert.equal(executable,'/usr/bin/git');
         assert.equal(options.shell,false);
+        assert.equal(options.cwd, '/verified/repo', 'relative Git file reads must stay in canonical root');
         assert.equal(options.env.GIT_EXEC_PATH,undefined);
         assert.ok(args.includes('--git-dir=/verified/repo/.git'));
         assert.ok(args.includes('--work-tree=/verified/repo'));

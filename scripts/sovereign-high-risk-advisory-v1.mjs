@@ -62,7 +62,7 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
       ...(probe ? probe.repositoryArgs() : ['--git-dir=' + join(root, '.git'), '--work-tree=' + root]),
       ...args,
     ], {
-      encoding: 'utf8', shell: false, windowsHide: true, timeout: 12_000,
+      cwd: root, encoding: 'utf8', shell: false, windowsHide: true, timeout: 12_000,
       maxBuffer, env: execution.environment,
     });
     probe?.assert();
