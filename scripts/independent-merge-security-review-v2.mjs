@@ -24,6 +24,11 @@ import {
   adjudicateQualifiedSpecialistReview,
   qualifiedSpecialistCommentHeadRef,
 } from '../shared/agents/qualifiedSpecialistReviewV1.mjs';
+import {
+  SOVEREIGN_SPECIALIST_COMMENT_MARKER_V1,
+} from '../shared/agents/sovereignQualifiedSpecialistReviewV1.mjs';
+import { captureSovereignSpecialistGitHubSourceV1,
+  createSovereignSpecialistGitHubSourceTransportV1 } from '../shared/agents/sovereignQualifiedSpecialistSourceV1.mjs';
 import { TextDecoder } from 'node:util';
 
 const API_VERSION = '2022-11-28';
@@ -280,6 +285,7 @@ async function main() {
   const deterministicBootstrapRequired = isApprovalBoundaryBootstrapAnalysis(deterministicAnalysis);
   const specialistProbe = adjudicateQualifiedSpecialistReview({
     analysis: deterministicAnalysis,
+    codexRequired: false,
     reviews: [],
     comments: [],
     repository,
@@ -295,8 +301,32 @@ async function main() {
       githubPages(`/repos/${owner}/${repo}/issues/${prNumber}/comments`),
     ]);
     const comments = await resolveQualifiedSpecialistCommentHeads(owner, repo, rawComments);
+    let sovereignSourceBinding;
+    if (comments.some(comment => typeof comment?.body === 'string'
+      && comment.body.startsWith(SOVEREIGN_SPECIALIST_COMMENT_MARKER_V1))) {
+      try {
+        const source = await captureSovereignSpecialistGitHubSourceV1(
+          { repository, prNumber, branch, sourceHead, baseSha },
+          { files, diff, readJson: createSovereignSpecialistGitHubSourceTransportV1({
+            token: text(process.env.GH_TOKEN || process.env.GITHUB_TOKEN),
+          }) },
+        );
+        sovereignSourceBinding = source.binding;
+        console.log(`SOVEREIGN_SPECIALIST_SOURCE_TRANSPORT=${source.sourceTransport}`);
+        console.log(`SOVEREIGN_SPECIALIST_GITHUB_RAW_DIFF_SHA256=${source.githubRawDiffSha256}`);
+        console.log(`SOVEREIGN_SPECIALIST_CANONICAL_DIFF_SHA256=${source.canonicalDiffSha256}`);
+      } catch (error) {
+        // A failed or attacker-authored native artifact cannot suppress the
+        // original findings artifact or the established deterministic routes.
+        // It simply has no proved full-source context and cannot remove P0s.
+        const blocker = error instanceof Error && /^SOVEREIGN_SPECIALIST_[A-Z_]+$/.test(error.message)
+          ? error.message : 'SOVEREIGN_SPECIALIST_SOURCE_READ_UNAVAILABLE';
+        console.log(`SOVEREIGN_SPECIALIST_SOURCE_HOLD=${blocker}`);
+      }
+    }
     specialist = adjudicateQualifiedSpecialistReview({
       analysis: deterministicAnalysis,
+      codexRequired: false,
       reviews,
       comments,
       repository,
@@ -304,6 +334,7 @@ async function main() {
       branch,
       sourceHead,
       baseSha,
+      sovereignSourceBinding,
     });
   }
   const analysis = !deterministicBootstrapRequired && specialist.required && specialist.valid
