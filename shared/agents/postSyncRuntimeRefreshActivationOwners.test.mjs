@@ -97,3 +97,57 @@ test('the shared owner cannot turn stale natural-reload evidence into current ad
  const result=await executePostSyncRefreshPlan({beforeHead:'a'.repeat(40),afterHead:'b'.repeat(40),changedPaths:['scripts/battle-bridge-sync-housekeeper-runner.mjs'],adapters:{confirmNaturalReload:async()=>({ok:true,exactHeadProofOk:true,sourceHead:'c'.repeat(40)})}});
  assert.equal(result.ok,false);
 });
+
+test('Control Tower Actions producer is exact source-only while its existing resident consumer requires relay adoption', async () => {
+  const producer = 'scripts/control-tower-build-request-v1.mjs';
+  const isolated = classifyPostSyncRefresh([producer]);
+  assert.equal(isolated.classification, 'NO_RUNTIME_REFRESH_REQUIRED');
+  assert.deepEqual(isolated.targetIds, []);
+  const result = await executePostSyncRefreshPlan({ beforeHead: 'a'.repeat(40), afterHead: 'b'.repeat(40), changedPaths: [producer],
+    adapters: new Proxy({}, { get() { return async () => { throw Error('Actions producer must not invoke a local activation adapter'); }; } }) });
+  assert.equal(result.ok, true);
+  const consumer = classifyPostSyncRefresh([producer, 'scripts/control-tower-build-consumer-v1.mjs']);
+  assert.equal(consumer.classification, 'REFRESH_READY');
+  assert.equal(consumer.sovereignRelayRefreshRequired, true);
+  assert(consumer.targetIds.includes('sovereign-commander'));
+  for (const neighbour of ['scripts/control-tower-build-request-v2.mjs', 'scripts/control-tower-free-form-request.mjs'])
+    assert.equal(classifyPostSyncRefresh([neighbour]).classification, 'BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
+});
+
+// Complete source increment against main 440f940f101666de3cf8f0230aeaa2915c201266.
+const controlTowerOwnerCommentRollout = [
+  '.github/workflows/stephanos-control-tower-build.yml',
+  'apps/stephanos-ai/controlSurface.mjs',
+  'docs/architecture/control-tower-build-start-v1.md',
+  'docs/architecture/ignition-source-activation-routing.md',
+  'docs/architecture/sovereign-conversational-control-v1.md',
+  'scripts/canonical-mailbox-execution-ledger-v1.mjs',
+  'scripts/control-tower-build-consumer-v1.mjs',
+  'scripts/control-tower-build-consumer-v1.test.mjs',
+  'scripts/control-tower-build-request-v1.mjs',
+  'scripts/sovereign-commander-native-inspect.mjs',
+  'scripts/sovereign-commander-native-inspect.test.mjs',
+  'shared/agents/controlTowerBuildBeaconFactsV1.mjs',
+  'shared/agents/controlTowerBuildReaderV1.mjs',
+  'shared/agents/controlTowerBuildReaderV1.test.mjs',
+  'shared/agents/controlTowerBuildRequestV1.mjs',
+  'shared/agents/controlTowerBuildRequestV1.test.mjs',
+  'shared/agents/controlTowerRequestObservationV1.mjs',
+  'shared/agents/fixtures/controlTowerBuildV1.mjs',
+  'shared/agents/mailboxFreeGitHubEvidenceReaderV1.mjs',
+  'shared/agents/postSyncRuntimeRefreshActivationOwners.test.mjs',
+  'shared/agents/postSyncRuntimeRefreshCoordinator.mjs',
+  'shared/agents/sovereignControlConversationV1.mjs',
+  'shared/agents/sovereignControlConversationV1.test.mjs',
+  'tests/stephanos-ai-control-surface.test.mjs',
+  'tests/stephanos-ai-sovereign-control.browser.test.mjs',
+];
+test('complete owner-comment rollout retains existing relay adoption and refuses mixed unknown debt', () => {
+  assert.equal(controlTowerOwnerCommentRollout.length, 25);
+  const plan = classifyPostSyncRefresh(controlTowerOwnerCommentRollout);
+  assert.equal(plan.classification, 'REFRESH_READY'); assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.sovereignRelayRefreshRequired, true);
+  assert(plan.targetIds.includes('sovereign-commander'));
+  assert.equal(classifyPostSyncRefresh([...controlTowerOwnerCommentRollout, 'scripts/unclassified-current-debt.mjs']).classification,
+    'BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
+});

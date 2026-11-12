@@ -144,6 +144,12 @@ export function resolveRoute(parsed, input) {
     if (familyResult?.action) return { route: parsed.command === 'kg' ? 'kg' : 'simulation', action: familyResult.action, reason: 'Family action routing' };
     if (familyResult?.tool) return { route: parsed.command === 'kg' ? 'kg' : 'simulation', tool: familyResult.tool, args: familyResult.args, reason: `Family command mapped to ${familyResult.tool}` };
   }
+  if (parsed.command === 'submitgoal') {
+    if (parsed.args.length !== 1 || !/^#?[1-9][0-9]{0,8}$/.test(parsed.args[0]))
+      return { route: 'goal', needsAI: false, action: 'invalid_command', reason: 'submitGoal requires one existing goal issue number' };
+    return { route: 'goal', needsAI: false, tool: 'submitGoal',
+      args: { goalIssue: parsed.args[0] }, reason: 'Existing canonical goal intake via Stephanos executive handoff' };
+  }
   if (parsed.command === 'sovereign' && parsed.args.length > 0) return { route: 'system', needsAI: false, action: 'invalid_command', reason: 'Sovereign status accepts no arguments' };
   if (slashMap[parsed.command]) return { ...slashMap[parsed.command], needsAI: false, reason: `Slash command /${parsed.command}` };
   return { route: 'assistant', needsAI: false, action: 'invalid_command', reason: `Unknown slash command /${parsed.command}` };

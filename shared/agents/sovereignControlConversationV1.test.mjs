@@ -30,6 +30,21 @@ const reply = (input = {}) => buildSovereignControlConversationV1({
   observedAtUtc: AT, commander: health(), controlTower: tower(), handoffId: UUID, ...input,
 });
 
+test('comment receipt identity preserves the actual run and missing history never fabricates one', () => {
+  const recorded = request({ requestId: 'control-tower-comment-700-1', ownerCommentId: 700, runId: 401 });
+  const result = reply({ controlTower: tower({ latestRequestObservation: recorded, latestBuildRequestObservation: recorded }) });
+  assert.equal(result.controlTower.latestBuildRequestObservation.requestId, recorded.requestId);
+  assert.equal(result.controlTower.latestBuildRequestObservation.runId, 401);
+  assert.match(result.outputText, /control-tower-comment-700-1/);
+  assert.equal(result.nativeActionSubmitted, false);
+  const missing = { ...recorded, runId: null, detailState: 'MISSING', ledgerPhase: 'UNPROVEN', terminalState: '',
+    state: 'UNKNOWN', sourceHead: '', observedAtUtc: '', acceptedAtUtc: '', exactHeadMatch: false };
+  const unavailable = reply({ controlTower: tower({ latestRequestObservation: missing, latestBuildRequestObservation: missing }) });
+  assert.equal(unavailable.controlTower.latestBuildRequestObservation.requestId, missing.requestId);
+  assert.equal(unavailable.controlTower.latestBuildRequestObservation.runId, null);
+  assert.equal(unavailable.controlTower.latestBuildRequestObservation.outcomeUnresolved, true);
+});
+
 test('explicit control targets and operational Everyone mentions select deterministic intents only', () => {
   const cases = [
     ['hello', 'sovereign-commander', 'CAPABILITIES'],

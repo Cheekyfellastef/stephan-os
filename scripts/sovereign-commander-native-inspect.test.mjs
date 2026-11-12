@@ -192,6 +192,19 @@ test('completed source-bound observation preserves refusal without granting repa
   assert.equal(JSON.stringify(published).includes(SID), false);
 });
 
+test('fixed native inspection reads a comment request locator without inventing a workflow run identity', async () => {
+  const id = 'control-tower-comment-700-1';
+  const { options } = fixture({ readLedger: requested => {
+    assert.equal(requested, id); return { record: null, workspaceSelection: 'DEFAULT' };
+  } });
+  options.controlTowerRequestId = id;
+  const report = await inspectSovereignControlSystemV1(options);
+  assert.equal(report.observationCompleted, true);
+  assert.equal(report.requestLedger.requestId, id);
+  assert.equal(report.requestLedger.recordObserved, false);
+  assert.equal(report.nativeRuntime.qualificationObserved, false);
+});
+
 test('native success is an observation for this caller, never a serialized execution qualification', async () => {
   const { options } = fixture({ inspectRuntime: () => ({ ok: true, sourceHead: HEAD,
     observedAtUtc: NOW, bootStartedAtUtc: '2026-10-31T08:00:00.000Z',

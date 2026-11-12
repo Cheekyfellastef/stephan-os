@@ -280,6 +280,10 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
 ]);
 
 const NO_RUNTIME_EXACT = new Set([
+  // Existing GitHub Actions job loads this fixed artifact producer from its
+  // exact checkout. It is never a resident Battle Bridge process or a local
+  // submission adapter; activating the native reader belongs to the relay.
+  'scripts/control-tower-build-request-v1.mjs',
   // Offline/attended native package sources. Source adoption cannot compile,
   // install, sign, commission, or qualify their separately installed binaries.
   'scripts/windows/install-vr-openxr-telemetry-layer.ps1',
