@@ -178,6 +178,8 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     if(disposed)return;
     const stopping=stop(),current=epoch;await stopping;
     if(disposed||current!==epoch)return;publish({status:'connecting',message:'Looking for open desktop windows.'});
+    // A synchronous UI callback can revoke this session during publication.
+    if(disposed||current!==epoch)return;
     try {
       const session=await request('/session');
       if(disposed||current!==epoch){

@@ -460,3 +460,37 @@ test('native refreshed window list cannot schedule a timer after synchronous Sto
     await h.client.stop();assert.equal(h.timers.size,0);
   }
 });
+
+test('native discovery connecting-state revocation never allocates a new session',async()=>{
+  for(const method of ['stop','pagehide','dispose','normal']){
+    let client,triggered=false;
+    const paths=[];
+    const fetchRef=async url=>{
+      const path=String(url).slice(String(url).lastIndexOf('/'));
+      paths.push(path);
+      return {ok:true,status:200,json:async()=>path==='/session'
+        ?{token:'a'.repeat(64)}:path==='/windows'
+        ?{windows:[{id:'window-1',pid:77,title:'ChatGPT'}]}:{}};
+    };
+    client=createHolodeckWindowClient({
+      locationRef:{hostname:'localhost',port:'4173'},sessionStore:null,
+      fetchRef,setTimer:()=>1,clearTimer:()=>{},
+      onChange(state){
+        if(state.status==='connecting'&&!triggered){
+          triggered=true;
+          if(method==='dispose')client.dispose();
+          else if(method!=='normal')void client[method]();
+        }
+      }
+    });
+    await client.discover();
+    assert.equal(triggered,true);
+    if(method==='normal'){
+      assert.deepEqual(paths,['/session','/windows']);
+      assert.equal(client.getState().status,'selecting');
+    }else{
+      assert.deepEqual(paths,[]);
+      assert.equal(client.getState().status,'idle');
+    }
+  }
+});
