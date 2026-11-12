@@ -4614,3 +4614,90 @@ test('remote Ignition diagnosis returns bounded live repair truth without privat
   assert.equal(serialized.includes('PRIVATE STDERR'), false);
   assert.equal(serialized.includes('PRIVATE CONTENT MUST NOT ESCAPE'), false);
 });
+
+
+test('native maintenance status must be a real integer, never Number-coerced (original #2573)', async () => {
+  const invalidStatuses = [null, '', '0', '2', false, true, [], [0], {}, undefined];
+  for (const status of invalidStatuses) {
+    const maintenance = {
+      ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: 'a'.repeat(64),
+      command: { plan: { processId: 'battle-bridge-status' } },
+      structuredContent: {
+        ok: true, status,
+        stdout: 'PRIVATE_INVALID_NATIVE_OUTPUT_MUST_NOT_ESCAPE',
+        stderr: '', errorCode: '',
+      },
+    };
+    for (const candidate of [maintenance, { structuredContent: maintenance }]) {
+      const { fetchFn } = mcpFetch({ maintenance: candidate });
+      const result = await executeSovereignCommanderRemoteOnBattleBridge(
+        command({ remoteAction: 'battle-bridge-status' }),
+        { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn },
+      );
+      assert.equal(result.ok, false, 'invalid native status must not pass');
+      assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID');
+      assert.equal(result.publicReceiptSafe, true);
+      assert.equal(result.secretMaterialReturned, false);
+      assert.doesNotMatch(JSON.stringify(result), /PRIVATE_INVALID_NATIVE_OUTPUT/);
+    }
+  }
+  const valid = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'battle-bridge-status' } },
+    structuredContent: { ok: true, status: 0, stdout: '', stderr: '', errorCode: '' },
+  };
+  const { fetchFn } = mcpFetch({ maintenance: valid });
+  const success = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'battle-bridge-status' }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn },
+  );
+  assert.equal(success.ok, true);
+  assert.equal(success.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE');
+  assert.equal(success.status, 0);
+});
+
+test('preservation receipt refuses non-integer native status even with correct protected proof (original #2573)', async () => {
+  const targetHead = '1'.repeat(40), newHead = '2'.repeat(40);
+  const targetBranch = 'feature/self-repair-loop', targetPrNumber = 2698;
+  const core = {
+    schemaVersion: 'stephanos.sovereign-preservation-convergence.v1',
+    timestampUtc: '2026-10-03T20:00:00.000Z',
+    canonicalOwnerGoal: '#2573', relatedPr: targetPrNumber,
+    branch: targetBranch, oldHead: targetHead, protectedMainHead: HEAD,
+    newHead, changed: true, pushed: true, diffCheckPassed: true,
+    oldHeadAncestorPreserved: true, mainAncestorPreserved: true,
+    exactHeadWriterGuard: true, nonForcePushOnly: true,
+    mergeAuthority: false, directMainWriteAllowed: false,
+    forcePushAllowed: false, rebaseAllowed: false,
+    resetAllowed: false, leaseSeizureAllowed: false,
+    finalVerdict: 'SOVEREIGN_PRESERVATION_CONVERGENCE_COMPLETE',
+  };
+  const sealed = { ok: true, ...core,
+    proofHash: createHash('sha256').update(JSON.stringify(core)).digest('hex') };
+  for (const status of [null, '', '0', false, [], [0], {}, undefined]) {
+    const maintenance = {
+      ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: '8'.repeat(64),
+      command: { plan: { processId: 'preservation-converge-pr-branch' } },
+      structuredContent: {
+        ok: true, status,
+        stdout: 'SOVEREIGN_PRESERVATION_CONVERGENCE_RESULT=' + JSON.stringify(sealed) + '\n',
+        stderr: '', errorCode: '',
+      },
+    };
+    for (const candidate of [maintenance, { structuredContent: maintenance }]) {
+      const { fetchFn } = mcpFetch({ maintenance: candidate });
+      const result = await executeSovereignCommanderRemoteOnBattleBridge(
+        command({ remoteAction: 'preservation-converge-pr-branch',
+          targetPrNumber, targetBranch, targetHead }),
+        { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn },
+      );
+      assert.equal(result.ok, false, 'malformed native status must not assert a protected source update');
+      assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PRESERVATION_CONVERGENCE_RECEIPT_INVALID');
+      assert.notEqual(result.mergeAuthority, true);
+      assert.doesNotMatch(JSON.stringify(result), /PRIVATE_INVALID_NATIVE_OUTPUT/);
+    }
+  }
+});

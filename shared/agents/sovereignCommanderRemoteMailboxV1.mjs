@@ -1819,7 +1819,7 @@ function safePreservationConvergenceProjection(value = {}, command = {}) {
   const executionEnvelope = findMaintenanceExecutionEnvelope(value);
   const source = Object.keys(executionEnvelope).length > 0 ? executionEnvelope : value;
   const processId = text(source?.command?.plan?.processId);
-  const status = Number(source?.structuredContent?.status);
+  const status = source?.structuredContent?.status;
   const stdout = String(source?.structuredContent?.stdout || '');
   const marker = 'SOVEREIGN_PRESERVATION_CONVERGENCE_RESULT=';
   const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
@@ -1964,7 +1964,7 @@ function safeMaintenanceProjection(value = {}) {
   const source = Object.keys(executionEnvelope).length > 0 ? executionEnvelope : value;
   const proofHash = text(source?.proofHash).toLowerCase();
   const processId = text(source?.command?.plan?.processId);
-  const status = Number(source?.structuredContent?.status);
+  const status = source?.structuredContent?.status;
   const errorCode = text(source?.structuredContent?.errorCode);
   return Object.freeze({
     ok: source?.ok === true,
@@ -2058,7 +2058,7 @@ function findMaintenanceExecutionEnvelope(value = {}) {
   for (let depth = 0; depth < 5; depth += 1) {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return {};
     const processId = text(candidate?.command?.plan?.processId);
-    const status = Number(candidate?.structuredContent?.status);
+    const status = candidate?.structuredContent?.status;
     if (processId && Number.isInteger(status)) return candidate;
     candidate = candidate.structuredContent;
   }
