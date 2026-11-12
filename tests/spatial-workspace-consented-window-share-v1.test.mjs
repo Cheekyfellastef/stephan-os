@@ -396,3 +396,67 @@ test('native bind waiting publication cannot resurrect a timer after synchronous
     await client.stop();assert.equal(timers.size,0);
   }
 });
+
+
+function nativeDiscoveryReentrantHarness(stage,method){
+  const timers=new Map();let timerId=0,client,revoked=false,windowResponses=0;
+  client=createHolodeckWindowClient({
+    locationRef:{hostname:'localhost',port:'4173'},
+    sessionStore:{getItem:()=>null,setItem(){},removeItem(){}},
+    setTimer(fn,ms){const id=++timerId;timers.set(id,{fn,ms});return id;},
+    clearTimer(id){timers.delete(id);},
+    onChange(state){
+      if(method!=='normal'&&!revoked&&state.status==='selecting'&&
+        (stage==='discover'||windowResponses>=2)){
+        revoked=true;void client[method]();
+      }
+    },
+    fetchRef:async url=>{
+      const path=String(url);let data;
+      if(path.endsWith('/session'))data={token:'a'.repeat(64)};
+      else if(path.endsWith('/windows')){windowResponses++;data={windows:[{id:17,pid:19,title:'Original app'}]};}
+      else if(path.endsWith('/stop'))data={status:'stopped'};
+      else throw Error('Unexpected native request in selection lifecycle test');
+      return {ok:true,status:200,json:async()=>data};
+    }
+  });
+  return {client,timers,revoked:()=>revoked,
+    async run(){
+      await client.discover();
+      if(stage==='refresh'){
+        const [id,task]=timers.entries().next().value??[];
+        assert.ok(task,'healthy initial selection must schedule one refresh');
+        timers.delete(id);await task.fn();
+      }
+    }};
+}
+test('native initial window list cannot schedule a timer after synchronous Stop/pagehide/dispose',async()=>{
+  for(const method of ['stop','pagehide','dispose','normal']){
+    const h=nativeDiscoveryReentrantHarness('discover',method);
+    await h.run();
+    if(method==='normal'){
+      assert.equal(h.client.getState().status,'selecting');
+      assert.equal(h.timers.size,1,'normal list should refresh');
+    }else{
+      assert.equal(h.revoked(),true,method+' must revoke the initial selection');
+      assert.equal(h.client.getState().status,'idle');
+      assert.equal(h.timers.size,0,method+' cannot rearm a revoked discovery timer');
+    }
+    await h.client.stop();assert.equal(h.timers.size,0);
+  }
+});
+test('native refreshed window list cannot schedule a timer after synchronous Stop/pagehide/dispose',async()=>{
+  for(const method of ['stop','pagehide','dispose','normal']){
+    const h=nativeDiscoveryReentrantHarness('refresh',method);
+    await h.run();
+    if(method==='normal'){
+      assert.equal(h.client.getState().status,'selecting');
+      assert.equal(h.timers.size,1,'normal refreshed list should schedule the next refresh');
+    }else{
+      assert.equal(h.revoked(),true,method+' must revoke the refreshed selection');
+      assert.equal(h.client.getState().status,'idle');
+      assert.equal(h.timers.size,0,method+' cannot rearm a revoked refresh timer');
+    }
+    await h.client.stop();assert.equal(h.timers.size,0);
+  }
+});

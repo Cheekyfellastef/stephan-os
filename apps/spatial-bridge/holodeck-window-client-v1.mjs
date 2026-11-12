@@ -146,7 +146,10 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       ?'Select the ChatGPT or Codex window you want to use in VR.'
       :'No open windows found. Open ChatGPT on this PC; this list refreshes automatically.')});
   }
-  function scheduleDiscovery(current){timer=setTimer(()=>refreshWindows(current),3000);}
+  function scheduleDiscovery(current){
+    // A selection subscriber may synchronously revoke the selection during publication.
+    if(!disposed&&current===epoch&&state.status==='selecting')timer=setTimer(()=>refreshWindows(current),3000);
+  }
   async function refreshWindows(current){
     if(state.status!=='selecting'||current!==epoch)return;
     try{
