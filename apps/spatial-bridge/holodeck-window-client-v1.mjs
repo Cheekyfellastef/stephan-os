@@ -118,7 +118,9 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
         }
         const ready=Number.isFinite(video.videoWidth)&&video.videoWidth>0&&Number.isFinite(video.videoHeight)&&video.videoHeight>0;
         publish({status:ready?'view-only':'waiting',message:ready?label:'Waiting for the selected window to draw.',inputStatus:''});
-        sharedTimer=setTimer(frameTick,100);
+        // A synchronous onChange can Stop/dispose this capture during publish.
+        // Never re-arm its timer after that revocation.
+        if (sharedStream===stream && !disposed && current===epoch) sharedTimer=setTimer(frameTick,100);
       };
       try{frameTick();}catch{
         stopShared();

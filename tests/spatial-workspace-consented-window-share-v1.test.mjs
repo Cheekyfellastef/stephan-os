@@ -283,3 +283,25 @@ test('early end listener retains explicit consent and single live stream rule',a
   assert.equal(await h.client.shareScreen(),true);
   assert.equal(h.pickers(),2);await h.client.stop();
 });
+
+test('synchronous view-only publication revocation never re-arms an orphaned frame timer',async()=>{
+  for (const method of ['stop','pagehide','dispose']){
+    let client,stops=0,nextTimer=0;
+    const timers=new Map();
+    const track={readyState:'live',stop(){stops++;this.readyState='ended';},addEventListener(){}};
+    const stream={getVideoTracks:()=>[track],getTracks:()=>[track]};
+    client=createHolodeckWindowClient({
+      locationRef:{hostname:'localhost',port:'4173'},sessionStore:null,
+      navigatorRef:{mediaDevices:{getDisplayMedia:async()=>stream}},
+      documentRef:{createElement:()=>({videoWidth:640,videoHeight:480,srcObject:null,pause(){},play:()=>Promise.resolve()})},
+      setTimer(fn){const n=++nextTimer;timers.set(n,fn);return n;},clearTimer:n=>timers.delete(n),
+      fetchRef:async()=>{throw Error('Browser sharing must not contact the native helper');},
+      onChange:state=>{if(state.status==='view-only')void client[method]();}
+    });
+    assert.equal(await client.shareScreen(),false,method+' must revoke during first frame');
+    assert.equal(stops,1,method+' must revoke the sole track once');
+    assert.equal(timers.size,0,method+' must not leave a post-revocation timer');
+    assert.equal(client.getFrame(),null);
+    assert.equal(client.getState().status,'idle');
+  }
+});
