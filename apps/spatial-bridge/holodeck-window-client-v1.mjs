@@ -25,6 +25,8 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
   let state={status:'idle',message:'Connect your ChatGPT or Codex window.',inputStatus:'',windows:[],title:'',revision:0};
   function publish(changes){state={...state,...changes,revision:state.revision+1};try{onChange({...state});}catch{}}
   function stopShared(){
+    const cancelPlayback=shareAttempt?.cancelPlayback;
+    if(cancelPlayback){shareAttempt.cancelPlayback=null;cancelPlayback();}
     if(sharedTimer!==null)clearTimer(sharedTimer);
     sharedTimer=null;
     const streams=[sharedStream,pendingStream],videos=[sharedVideo,pendingVideo];
@@ -78,11 +80,23 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       pendingStream=stream;
       await oldStop;
       if(disposed||current!==epoch)return false;
+      // Register track loss before playback can remain pending indefinitely.
+      const ended=()=>{
+        if(!disposed&&current===epoch&&(shareAttempt===attempt||sharedStream===stream)){
+          stopShared();publish({status:'idle',message:'Browser window sharing ended.',inputStatus:''});
+        }
+      };
+      try{track.addEventListener?.('ended',ended,{once:true});}catch{return false;}
+      if(track.readyState==='ended'){ended();return false;}
       try {
         video=documentRef.createElement('video');
         video.muted=true;video.autoplay=true;video.playsInline=true;
         video.srcObject=stream;pendingVideo=video;
-        await video.play();
+        const playback=video.play();
+        const cancelled=new Promise(resolve=>{attempt.cancelPlayback=()=>resolve(false);});
+        const played=await Promise.race([Promise.resolve(playback).then(()=>true),cancelled]);
+        attempt.cancelPlayback=null;
+        if(!played)return false;
       }catch{
         // A late playback failure cannot overrule a newer Stop, departure,
         // or independently consented replacement capture.
@@ -96,7 +110,6 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       pendingStream=null;pendingVideo=null;
       sharedStream=stream;sharedVideo=video;
       sharedFrame={drawable:video,get naturalWidth(){return video.videoWidth;},get naturalHeight(){return video.videoHeight;}};
-      accepted=true;
       const label='Shared PC window visible on the hologram (view-only). Native helper required for typing and clicking.';
       const frameTick=()=>{
         if(sharedStream!==stream||disposed||current!==epoch)return;
@@ -107,12 +120,16 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
         publish({status:ready?'view-only':'waiting',message:ready?label:'Waiting for the selected window to draw.',inputStatus:''});
         sharedTimer=setTimer(frameTick,100);
       };
-      track.addEventListener?.('ended',()=>{
-        if(sharedStream===stream){stopShared();publish({status:'idle',message:'Browser window sharing ended.',inputStatus:''});}
-      },{once:true});
-      frameTick();
+      try{frameTick();}catch{
+        stopShared();
+        if(!disposed&&current===epoch)publish({status:'unavailable',message:'The browser could not display the selected window.'});
+        return false;
+      }
+      if(sharedStream!==stream||track.readyState==='ended')return false;
+      accepted=true;
       return true;
     } finally {
+      attempt.cancelPlayback=null;
       if(shareAttempt===attempt)shareAttempt=null;
       if(!accepted){
         if(pendingStream===stream){pendingStream=null;pendingVideo=null;}

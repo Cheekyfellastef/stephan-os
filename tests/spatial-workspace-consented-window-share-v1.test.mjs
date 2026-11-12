@@ -225,3 +225,61 @@ test('late rejected picker cannot overwrite fresh explicitly consented Spatial v
   await h.client.stop();
   assert.equal(track.stopCount,1);
 });
+
+function boundedPendingShareHarness({pending=false,listenerFailure=false,timerFailure=false}={}){
+  let ended,resolvePlayback,pickerCount=0;
+  const tracks=[];
+  const client=createHolodeckWindowClient({
+    locationRef:{hostname:'localhost',port:'4173'},sessionStore:null,
+    navigatorRef:{mediaDevices:{getDisplayMedia:async()=>{
+      pickerCount++;
+      const t={readyState:'live',stops:0,
+        stop(){this.stops++;this.readyState='ended';},
+        addEventListener(event,fn){if(listenerFailure)throw Error('listener failure');if(event==='ended')ended=fn;}};
+      tracks.push(t);return {getVideoTracks:()=>[t],getTracks:()=>[t]};
+    }}},
+    documentRef:{createElement:()=>({
+      videoWidth:640,videoHeight:480,pause(){},srcObject:null,
+      play(){return pending?new Promise(resolve=>{resolvePlayback=resolve;}):Promise.resolve();}
+    })},
+    setTimer(){if(timerFailure)throw Error('timer failure');return 1;},clearTimer(){},
+    fetchRef:async()=>{throw Error('Browser share must not contact native helper');}
+  });
+  return {client,tracks,hasListener:()=>!!ended,hasPlayback:()=>!!resolvePlayback,end:()=>ended?.(),release:()=>resolvePlayback?.(),pickers:()=>pickerCount};
+}
+async function awaitPendingCapture(h){
+  for(let i=0;i<50&&!(h.hasListener()&&h.hasPlayback());i++)await Promise.resolve();
+  assert.equal(h.hasListener()&&h.hasPlayback(),true,'early track listener must be installed during pending playback');
+}
+test('ended track during unresolved video.play settles capture and revokes it exactly once',async()=>{
+  const h=boundedPendingShareHarness({pending:true}),p=h.client.shareScreen();
+  await awaitPendingCapture(h);h.end();
+  assert.equal(await p,false);assert.equal(h.tracks[0].stops,1);
+  assert.equal(h.client.getFrame(),null);
+});
+for(const method of ['stop','pagehide']){
+  test(method+' resolves permanently pending share without waiting for video.play',async()=>{
+    const h=boundedPendingShareHarness({pending:true}),p=h.client.shareScreen();
+    await awaitPendingCapture(h);await h.client[method]();
+    assert.equal(await p,false);assert.equal(h.tracks[0].stops,1);
+    if(method==='pagehide')assert.equal(await h.client.shareScreen(),false);
+  });
+}
+for(const fault of ['listenerFailure','timerFailure']){
+  test(fault+' revokes the stream before capture adoption',async()=>{
+    const h=boundedPendingShareHarness({[fault]:true});
+    assert.equal(await h.client.shareScreen(),false);
+    assert.equal(h.tracks[0].stops,1);
+    assert.equal(h.tracks[0].readyState,'ended');
+    assert.equal(h.client.getFrame(),null);
+  });
+}
+test('early end listener retains explicit consent and single live stream rule',async()=>{
+  const h=boundedPendingShareHarness();
+  assert.equal(await h.client.shareScreen(),true);
+  assert.equal(await h.client.shareScreen(),false);
+  assert.equal(h.pickers(),1);h.end();
+  assert.equal(h.tracks[0].stops,1);
+  assert.equal(await h.client.shareScreen(),true);
+  assert.equal(h.pickers(),2);await h.client.stop();
+});
