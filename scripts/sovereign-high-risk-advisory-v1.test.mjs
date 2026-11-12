@@ -443,6 +443,9 @@ test('Windows canonical high-risk snapshot uses authenticated private worktree i
   };
   git(['init', '-b', 'main']);
   git(['remote', 'add', 'origin', 'https://github.com/Cheekyfellastef/stephan-os.git']);
+  // Exact source-byte fixtures must not depend on Windows runner autocrlf.
+  git(['config', 'core.autocrlf', 'false']);
+  writeFileSync(join(root, '.gitattributes'), '*.mjs -text\n');
   for (const name of HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS) {
     const target = join(root, name);
     mkdirSync(dirname(target), { recursive: true });
@@ -457,6 +460,11 @@ test('Windows canonical high-risk snapshot uses authenticated private worktree i
   git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
     'commit', '-m', 'review']);
   const head = git(['rev-parse', 'HEAD']);
+  for (const name of HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS) {
+    assert.equal(git(['hash-object', '--no-filters', '--', name]),
+      git(['rev-parse', 'HEAD:' + name]),
+      'test source bytes must equal tracked Git objects before private probing');
+  }
   git(['config', 'extensions.worktreeConfig', 'true']);
   git(['worktree', 'add', '-b', 'fixture-linked', join(parent, 'linked')]);
   const existingWorktreeMetadata = readFileSync(join(root, '.git', 'worktrees', 'linked', 'gitdir'));
