@@ -493,3 +493,72 @@ test('ordinary valid search receipt still completes and retains canonical search
     service.dispose();
   }
 });
+
+
+test('search receipt identity never invokes toString and remains a typed terminal failure', async () => {
+  const identities = [
+    ['object coercion', () => {
+      let called = 0;
+      return { value: { toString() { called++; return '01234567:0123456789abcdef'; } },
+        check() { assert.equal(called, 0); } };
+    }],
+    ['throwing toString', () => {
+      let called = 0;
+      return { value: { toString() { called++; throw Error('PRIVATE_IDENTITY_CALLBACK'); } },
+        check() { assert.equal(called, 0); } };
+    }],
+    ['Symbol', () => ({ value: Symbol('PRIVATE_IDENTITY') })],
+    ['number', () => ({ value: 1024 })],
+    ['null', () => ({ value: null })],
+    ['BigInt', () => ({ value: 3n })],
+    ['function', () => ({ value: () => '01234567:0123456789abcdef' })],
+    ['Proxy object', () => {
+      let called = 0;
+      return { value: new Proxy({}, { get() { called++; throw Error('PRIVATE_IDENTITY_GET'); } }),
+        check() { assert.equal(called, 0); } };
+    }],
+  ];
+  for (const [label, fixture] of identities) {
+    const { value, check } = fixture();
+    const native = receipt();
+    native.scopeIdentity = value;
+    const service = createSovereignSearchSessionsV1({ scanFn: () => native });
+    try {
+      const first = await started(service);
+      const result = await service.execute('GET_MORE_SEARCH_RESULTS', { searchId: first.searchId });
+      assert.equal(result.status, 'FAILED', label);
+      assert.equal(result.blocker, 'SOVEREIGN_SEARCH_RECEIPT_INVALID', label);
+      assert.deepEqual(result.results, []);
+      check?.();
+    } finally { service.dispose(); }
+  }
+});
+
+test('throwing top-level scan receipt accessors remain typed terminal failure', async () => {
+  let called = 0;
+  const native = new Proxy({}, { get() {
+    called++;
+    throw Error('PRIVATE_TOP_LEVEL_ACCESSOR');
+  } });
+  const service = createSovereignSearchSessionsV1({ scanFn: () => native });
+  try {
+    const first = await started(service);
+    const result = await service.execute('GET_MORE_SEARCH_RESULTS', { searchId: first.searchId });
+    assert.equal(result.status, 'FAILED');
+    assert.equal(result.blocker, 'SOVEREIGN_SEARCH_RECEIPT_INVALID');
+    assert.deepEqual(result.results, []);
+    assert.ok(called <= 1);
+  } finally { service.dispose(); }
+});
+
+test('valid search identity remains accepted after the primitive-only guard', async () => {
+  const native = receipt(REQUEST, ['a.txt']);
+  const service = createSovereignSearchSessionsV1({ scanFn: () => native });
+  try {
+    const first = await started(service);
+    const result = await service.execute('GET_MORE_SEARCH_RESULTS', { searchId: first.searchId });
+    assert.equal(result.status, 'COMPLETED');
+    assert.equal(result.results.length, 1);
+    assert.equal(result.results[0].relativePath, 'a.txt');
+  } finally { service.dispose(); }
+});

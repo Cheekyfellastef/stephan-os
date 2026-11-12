@@ -126,7 +126,7 @@ function validateSnapshot(raw, request) {
   if (!plain(raw, keys) || keys.some(key => !Object.hasOwn(raw, key)) || raw.schemaVersion !== SNAPSHOT_SCHEMA || raw.ok !== true
     || raw.path !== request.path || raw.query !== request.query || raw.mode !== request.mode
     || raw.caseSensitive !== request.caseSensitive || raw.confinement !== CONFINEMENT
-    || raw.snapshotConsistency !== CONSISTENCY || !IDENTITY.test(raw.scopeIdentity || '')
+    || raw.snapshotConsistency !== CONSISTENCY || typeof raw.scopeIdentity !== 'string' || !IDENTITY.test(raw.scopeIdentity)
     || typeof raw.complete !== 'boolean' || !Array.isArray(raw.reasons) || raw.reasons.length > REASONS.size
     || raw.reasons.some(reason => !REASONS.has(reason)) || new Set(raw.reasons).size !== raw.reasons.length
     || raw.complete !== (raw.reasons.length === 0) || !Array.isArray(raw.results)
@@ -306,16 +306,24 @@ export function createSovereignSearchSessionsV1(options = {}) {
     if (disposed || sessions.get(session.id) !== session) return;
     session.processPending = false;
     if (session.expired) { sessions.delete(session.id); return; }
-    if (receipt?.ok !== true) {
-      session.status = session.cancelRequested && receipt?.cancellationConfirmed === true ? 'CANCELLED' : 'FAILED';
-      session.blocker = validBlocker(receipt?.blocker)
-        ? receipt.blocker : 'SOVEREIGN_SEARCH_NATIVE_FAILED';
-      return;
+    // In-process scan adapters may return thrown accessors or malformed
+    // value types. Fail as a typed terminal error instead of leaving an
+    // unhandled asynchronous completion and a stuck search session.
+    try {
+      if (receipt?.ok !== true) {
+        session.status = session.cancelRequested && receipt?.cancellationConfirmed === true ? 'CANCELLED' : 'FAILED';
+        session.blocker = validBlocker(receipt?.blocker)
+          ? receipt.blocker : 'SOVEREIGN_SEARCH_NATIVE_FAILED';
+        return;
+      }
+      const snapshot = validateSnapshot(receipt, session.request);
+      if (!snapshot) { session.status = 'FAILED'; session.blocker = 'SOVEREIGN_SEARCH_RECEIPT_INVALID'; return; }
+      session.snapshot = snapshot;
+      session.status = snapshot.complete ? 'COMPLETED' : 'INCOMPLETE';
+    } catch {
+      session.status = 'FAILED';
+      session.blocker = 'SOVEREIGN_SEARCH_RECEIPT_INVALID';
     }
-    const snapshot = validateSnapshot(receipt, session.request);
-    if (!snapshot) { session.status = 'FAILED'; session.blocker = 'SOVEREIGN_SEARCH_RECEIPT_INVALID'; return; }
-    session.snapshot = snapshot;
-    session.status = snapshot.complete ? 'COMPLETED' : 'INCOMPLETE';
   };
   return Object.freeze({
     async execute(operation, raw = {}) {
