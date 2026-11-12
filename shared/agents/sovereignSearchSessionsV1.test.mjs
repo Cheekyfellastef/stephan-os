@@ -536,7 +536,10 @@ test('search receipt identity never invokes toString and remains a typed termina
 
 test('throwing top-level scan receipt accessors remain typed terminal failure', async () => {
   let called = 0;
-  const native = new Proxy({}, { get() {
+  const native = new Proxy({}, { get(_target, key) {
+    // Promise adoption inspects `then` before the receipt reaches complete().
+    // Allow that one ECMAScript probe so this fixture reaches the receipt gate.
+    if (key === 'then') return undefined;
     called++;
     throw Error('PRIVATE_TOP_LEVEL_ACCESSOR');
   } });
