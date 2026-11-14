@@ -175,13 +175,24 @@ const NATURAL_EXACT = new Set([
   'scripts/windows/vr-visual-fault-marker.ps1',
   'shared/vr/vrTelemetrySensorContractV1.mjs',
   // Commander invokes these bounded Node children afresh. Source adoption
-  // confirms the checkout only; it never invokes observation or reconciliation.
+  // confirms the checkout only; it never invokes observation, reconciliation,
+  // or Spatial preparation. Fixed native qualification remains independent.
   'scripts/sovereign-commander-browser-observe.mjs',
   'scripts/sovereign-commander-capability-parity-reconcile.mjs',
-  // The directory action captures and hash-checks both helpers on each call,
-  // then compiles the captured C# in its fresh PowerShell child.
+  'scripts/sovereign-commander-spatial-workspace.mjs',
+  // These private operations capture and hash-check their exact helper pairs
+  // on each call, then compile captured C# in a fresh PowerShell child. This
+  // source check never performs an operation or grants native custody.
   'scripts/windows/SovereignDirectoryCreateV1.cs',
   'scripts/windows/sovereign-create-directory.ps1',
+  'scripts/windows/SovereignFileCopyV1.cs',
+  'scripts/windows/sovereign-copy-file-content.ps1',
+  'scripts/windows/SovereignFileMoveV1.cs',
+  'scripts/windows/sovereign-move-file.ps1',
+  'scripts/windows/SovereignPdfWriteV1.cs',
+  'scripts/windows/sovereign-write-pdf.ps1',
+  'scripts/windows/SovereignSearchV1.cs',
+  'scripts/windows/sovereign-search.ps1',
   // Attended lock recovery loads this policy and native helper in a fresh
   // child. Its installation, qualification and operator gates remain separate.
   'scripts/windows/StephanosCoreLockRecoveryV1.cs',
@@ -308,9 +319,15 @@ const NO_RUNTIME_EXACT = new Set([
   // Protected host C# source is compiled only by the attended installer. A
   // source change never activates or qualifies the installed native binary.
   'scripts/windows/SovereignFixedRuntimeHostV1.cs',
+  'scripts/windows/SovereignFixedRuntimeJobV1.cs',
+  'scripts/windows/SovereignFixedRuntimeSourceV1.cs',
   'scripts/windows/install-sovereign-fixed-runtime-v1.ps1',
+  // Exact test-only consumers; no scripts/fixtures or native-source wildcard.
+  'scripts/fixtures/sovereign-fixed-runtime-adoption-parent-fixture-v1.mjs',
   'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',
   'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs',
+  'scripts/fixtures/sovereign-fixed-runtime-parent-protocol-fixture-v1.mjs',
+  'scripts/fixtures/sovereign-fixed-runtime-source-proof-fixture-v1.mjs',
   'scripts/canonical-mailbox-rollover-github-adapter.mjs',
   'scripts/canonical-mailbox-workflow-admission-v1.mjs',
   'scripts/canonical-mailbox-workflow-event-gate.mjs',
@@ -321,6 +338,10 @@ const NO_RUNTIME_EXACT = new Set([
   'LICENSE',
   'README.md',
   'scripts/publish-battle-bridge-main-advance-signal.mjs',
+  // Exact GitHub Actions-only review-probe helper; never a resident Windows
+  // runtime, so it cannot obstruct independent Backend/Mission Worker reload.
+  // The two Spatial resident paths retain their independent adoption hold.
+  'scripts/exact-head-qualified-escalation-v1.mjs',
   'scripts/exact-head-review-dispatch.mjs',
   'scripts/exact-head-review-current-main-admission-v1.mjs',
   'scripts/bind-independent-review-handoff-provenance-v1.mjs',
@@ -380,12 +401,15 @@ const NO_RUNTIME_EXACT = new Set([
   'src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests/Program.cs',
   'src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests/Stephanos.ProspectiveProcessingClaimContext.Tests.csproj',
   // These Spatial wrappers load on explicit invocation; native C++ is consumed
-  // only by the attended build. No installer, launcher or restart is dispatched.
+  // only by an explicit build. Source adoption dispatches no preparation,
+  // installer, launcher or restart, and never qualifies an installed binary.
   // The resident host and its static JS contract retain separate adoption debt.
   'scripts/windows/build-spatial-window.ps1',
   'scripts/windows/install-spatial-window.ps1',
   'scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1',
   'scripts/windows/launch-stephanos-spatial-workspace.ps1',
+  'scripts/windows/prepare-spatial-workspace.ps1',
+  'scripts/windows/spatial-window-install-lock.ps1',
   'scripts/windows/start-spatial-window-host.ps1',
   'src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp',
 ]);
@@ -666,11 +690,13 @@ function validHead(value) {
 function resultPass(result, expectedHead) {
   return result?.ok === true
     && result?.exactHeadProofOk === true
+    && (result?.blocker === undefined || result?.blocker === '')
     && String(result?.sourceHead || '').toLowerCase() === String(expectedHead).toLowerCase();
 }
 
 export function postSyncRefreshTargetResultPass(result, { targetId, plan, expectedHead } = {}) {
   if (!resultPass(result, expectedHead)) return false;
+  if (result?.targetId !== undefined && result.targetId !== targetId) return false;
   if (targetId !== POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER || plan?.sovereignRelayRefreshRequired !== true) return true;
   return (result.blocker === undefined || result.blocker === '')
     && projectPostSyncSovereignRelayProof(result.sovereignRelayProof, expectedHead) !== null;
@@ -682,6 +708,7 @@ const TARGET_FAILURE_KINDS = new Set(['RESULT_UNPROVEN', 'INVOCATION_FAILED', 'H
 // strings become a fixed code rather than entering durable/public history.
 const TARGET_FAILURE_CODES = new Set([
   'REFRESH_TARGET_PROOF_FAILED', 'REFRESH_TARGET_INVOCATION_FAILED', 'REFRESH_TARGET_HANDLER_MISSING',
+  'REFRESH_TARGET_IDENTITY_UNPROVEN',
   'SOVEREIGN_COMMANDER_OPERATOR_CONTEXT_UNPROVEN', 'SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED',
   'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN', 'SOVEREIGN_MAINTENANCE_OWNER_BUSY',
   'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN', 'SOVEREIGN_COMMANDER_SERVER_SCRIPT_MISSING',
@@ -788,7 +815,25 @@ export async function executePostSyncRefreshPlan({
     });
   }
 
-  const resumable = new Map((Array.isArray(completedResults) ? completedResults : [])
+  // Check raw multiplicity before filtering out stale or unsuccessful rows.
+  // A favorable duplicate must never hide a contradictory stored observation.
+  const checkpointEntries = Array.isArray(completedResults) ? completedResults : [];
+  const seenCheckpointTargets = new Set();
+  for (const entry of checkpointEntries) {
+    if (!plan.targetIds.includes(entry?.targetId)) continue;
+    if (seenCheckpointTargets.has(entry.targetId)) {
+      return Object.freeze({
+        ok: false,
+        classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
+        blocker: `REFRESH_COMPLETED_RESULT_AMBIGUOUS:${entry.targetId}`,
+        plan,
+        exactHeadProofOk: false,
+        results: Object.freeze([]),
+      });
+    }
+    seenCheckpointTargets.add(entry.targetId);
+  }
+  const resumable = new Map(checkpointEntries
     .filter((entry) => plan.targetIds.includes(entry?.targetId)
       && postSyncRefreshTargetResultPass(entry, { targetId: entry.targetId, plan, expectedHead: afterHead }))
     .map((entry) => [entry.targetId, Object.freeze({ ...entry, resumed: true })]));
@@ -851,6 +896,13 @@ export async function executePostSyncRefreshPlan({
         results: Object.freeze(results),
       });
     }
+    // The plan owns identity. Refuse a contradictory adapter response before
+    // assigning that identity to the durable row; merely overwriting the ID
+    // would manufacture a success that a later execution could resume.
+    if (result?.targetId !== undefined && result.targetId !== targetId) {
+      result = { ...result, ok: false, exactHeadProofOk: false, freshProcessLoaded: false,
+        blocker: result?.blocker || 'REFRESH_TARGET_IDENTITY_UNPROVEN' };
+    }
     // Normalize a generic HTTP-only success before publishing its checkpoint or
     // reducing failure history. Such a result cannot clear relay refresh debt.
     if (targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER && plan.sovereignRelayRefreshRequired
@@ -859,10 +911,10 @@ export async function executePostSyncRefreshPlan({
       result = { ...result, ok: false, exactHeadProofOk: false, freshProcessLoaded: false,
         sovereignRelayProof: null, blocker: 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN' };
     }
-    const completed = Object.freeze({ targetId, ...result });
+    const completed = Object.freeze({ ...result, targetId });
     results.push(completed);
-    const passed = postSyncRefreshTargetResultPass(result, { targetId, plan, expectedHead: afterHead });
-    const publicationFailure = await checkpoint({ targetId, result, failureKind: passed ? '' : 'RESULT_UNPROVEN' });
+    const passed = postSyncRefreshTargetResultPass(completed, { targetId, plan, expectedHead: afterHead });
+    const publicationFailure = await checkpoint({ targetId, result: completed, failureKind: passed ? '' : 'RESULT_UNPROVEN' });
     if (publicationFailure) return publicationFailure;
     if (!passed) {
       return Object.freeze({ ok: false, classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
@@ -982,13 +1034,16 @@ export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', a
       const relayProof = projectPostSyncSovereignRelayProof(entry.sovereignRelayProof, afterHead);
       const relayObservation = projectPostSyncSovereignRelayObservation(entry.sovereignRelayObservation, afterHead);
       const required = entry.targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER && plan.sovereignRelayRefreshRequired === true;
-      const qualified = !required || postSyncRefreshTargetResultPass(entry, { targetId: entry.targetId, plan, expectedHead: afterHead });
+      const planned = Array.isArray(plan.targetIds) && plan.targetIds.includes(entry.targetId);
+      const qualified = planned && postSyncRefreshTargetResultPass(entry, { targetId: entry.targetId, plan, expectedHead: afterHead });
+      const missingRelayProof = required && resultPass(entry, afterHead) && !relayProof;
       return {
         targetId: entry.targetId,
         ok: entry.ok === true && qualified,
         exactHeadProofOk: entry.exactHeadProofOk === true && qualified,
         sourceHead: validHead(entry.sourceHead) ? String(entry.sourceHead).toLowerCase() : '',
-        blocker: !qualified && entry.ok === true ? 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN' : String(entry.blocker || ''),
+        blocker: String(entry.blocker || (qualified ? '' : missingRelayProof
+          ? 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN' : 'REFRESH_TARGET_PROOF_FAILED')),
         ...(relayProof ? { sovereignRelayProof: relayProof } : {}),
         ...(relayObservation ? { sovereignRelayObservation: relayObservation } : {}),
       };
