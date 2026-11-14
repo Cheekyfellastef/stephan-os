@@ -211,3 +211,17 @@ test('flat preview remains available without WebXR; native ChatGPT desktop captu
   assert.match(capture,/127\.0\.0\.1/);
   assert.doesNotMatch(readJson(manifestPath).entry,/^https?:/);
 });
+
+test('hosted Pages packaging generates and verifies Spatial PWA icons before artifact upload', () => {
+  const deploy = readFileSync(new URL('../.github/workflows/deploy-stephanos-pages.yml', import.meta.url), 'utf8');
+  const prepare = deploy.indexOf('      - name: Prepare Pages artifact structure');
+  const generate = deploy.indexOf('      - name: Generate and verify hosted Spatial Workspace PWA icons');
+  const upload = deploy.indexOf('      - name: Upload Pages artifact');
+  assert.ok(prepare >= 0 && generate > prepare && upload > generate,
+    'icon generation and validation must follow _site creation and precede Pages upload');
+  assert.ok(deploy.includes('node apps/spatial-bridge/tools/build-icons.mjs --output-dir _site/apps/spatial-bridge/icons'));
+  assert.ok(deploy.includes('manifest.icons?.find'));
+  assert.ok(deploy.includes('SPATIAL_PWA_MANIFEST_ICON_MISSING'));
+  assert.ok(deploy.includes('SPATIAL_PWA_ICON_PNG_INVALID'));
+  assert.ok(deploy.includes('SPATIAL_PWA_ICON_DIMENSIONS_INVALID'));
+});

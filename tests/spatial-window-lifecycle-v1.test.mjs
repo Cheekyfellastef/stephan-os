@@ -120,3 +120,60 @@ test('audio help and reload confirmation do not click through to the concealed a
   assert.equal(screen.point(.5,.5,true),true);screen.action('voice');assert.equal(screen.point(.5,.5,true),false);
   screen.action('voice');screen.action('reload');assert.equal(screen.point(.5,.5,true),false);assert.equal(calls.length,1);
 });
+
+function nativeWriteHarness(firstFailure='none'){
+  const children=[];
+  const adapter=createNativeSurfaceAdapter('fixture',{spawnRef:()=>{
+    const index=children.length,child=new EventEmitter();
+    child.stdout=new EventEmitter();child.stdout.setEncoding=()=>{};child.callbacks=[];child.killCount=0;
+    child.kill=()=>{child.killCount++;return true;};
+    child.stdin={write(data,callback){
+      child.callbacks.push(callback);
+      if(index===0&&firstFailure==='throw')throw new Error('Synchronous broken stdin');
+      return true;
+    }};
+    children.push(child);return child;
+  }});
+  return {adapter,children};
+}
+test('synchronous and callback stdin failures share shutdown and cannot poison an explicit replacement request',async()=>{
+  for(const failure of ['throw','callback']){
+    const h=nativeWriteHarness(failure);
+    try{
+      const failed=h.adapter.request({op:'list'});
+      const rejected=assert.rejects(failed,/Native surface stopped/);
+      if(failure==='callback')h.children[0].callbacks[0](new Error('Asynchronous broken stdin'));
+      await rejected;assert.equal(h.children[0].killCount,1);
+      const next=h.adapter.request({op:'list'});
+      assert.equal(h.children.length,2,'failed write must clear pending state immediately');
+      const [old,current]=h.children;
+      old.callbacks[0](new Error('Late write callback'));
+      old.emit('error',new Error('Late old child error'));
+      old.emit('exit',1);
+      old.stdout.emit('data','{"status":"connected"}\n');
+      assert.equal(current.killCount,0,'retired-child events cannot revoke a new child');
+      current.stdout.emit('data','{"status":"windows","windows":[]}\n');
+      assert.deepEqual(await next,{status:'windows',windows:[]});
+      assert.equal(old.killCount,1);
+    }finally{h.adapter.stop();}
+  }
+});
+test('native request timeouts retain their bounded list and consent budgets after write failure handling',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  for(const [op,budget] of [['list',15000],['bind',120000]]){
+    const h=nativeWriteHarness();
+    try{
+      let settled=false;
+      const pending=h.adapter.request({op});
+      pending.then(()=>{settled=true;},()=>{settled=true;});
+      const rejected=assert.rejects(pending,/Native surface stopped/);
+      t.mock.timers.tick(budget-1);await Promise.resolve();
+      assert.equal(settled,false);assert.equal(h.children[0].killCount,0);
+      t.mock.timers.tick(1);await rejected;
+      assert.equal(h.children[0].killCount,1);
+      const next=h.adapter.request({op:'list'});
+      h.children[1].stdout.emit('data','{"status":"windows","windows":[]}\n');
+      assert.equal((await next).status,'windows');
+    }finally{h.adapter.stop();}
+  }
+});

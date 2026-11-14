@@ -33,7 +33,10 @@ export function createNativeSurfaceAdapter(executable,{spawnRef=spawn}={}) {
     start();return new Promise((resolve,reject)=>{
       pending={resolve,reject,timer:setTimeout(()=>stop(),command.op==='bind'?120000:15000)};
       const child=process;
-      child.stdin.write(JSON.stringify(command)+'\n',error=>{if(error&&process===child)stop();});
+      // A synchronous write failure owns the same shutdown as its callback:
+      // reject the pending request, clear its timer and release this child.
+      try{child.stdin.write(JSON.stringify(command)+'\n',error=>{if(error&&process===child)stop();});}
+      catch{if(process===child)stop();}
     });
   }};
 }

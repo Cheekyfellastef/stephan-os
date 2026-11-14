@@ -30,6 +30,15 @@ on:
       - 'shared/vr/spatialDesktopSurfaceContractV1.mjs'
       - 'src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp'
       - 'tests/spatial-window-lifecycle-v1.test.mjs'
+      - 'apps/spatial-bridge/**'
+      - 'tests/spatial-workspace-consented-window-share-v1.test.mjs'
+      - 'tests/spatial-workspace-entry-order-v1.test.mjs'
+      - 'tests/spatial-workspace-telemetry-v1.test.mjs'
+      - 'tests/spatial-workspace-comfort-input-v1.test.mjs'
+      - 'tests/spatial-workspace-keycap-v1.test.mjs'
+      - 'tests/spatial-bridge-holodeck-baseline-v0.test.mjs'
+      - 'tests/spatial-bridge-v0.test.mjs'
+      - 'tests/verify-hosted-icons.test.mjs'
       - 'tests/spatial-workspace-prepare-windows-v1.test.mjs'
       - 'tests/spatial-install-pins-windows-v1.test.mjs'
       - 'shared/agents/sovereignDirectoryCreateV1*'
@@ -155,6 +164,15 @@ on:
       - 'shared/vr/spatialDesktopSurfaceContractV1.mjs'
       - 'src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp'
       - 'tests/spatial-window-lifecycle-v1.test.mjs'
+      - 'apps/spatial-bridge/**'
+      - 'tests/spatial-workspace-consented-window-share-v1.test.mjs'
+      - 'tests/spatial-workspace-entry-order-v1.test.mjs'
+      - 'tests/spatial-workspace-telemetry-v1.test.mjs'
+      - 'tests/spatial-workspace-comfort-input-v1.test.mjs'
+      - 'tests/spatial-workspace-keycap-v1.test.mjs'
+      - 'tests/spatial-bridge-holodeck-baseline-v0.test.mjs'
+      - 'tests/spatial-bridge-v0.test.mjs'
+      - 'tests/verify-hosted-icons.test.mjs'
       - 'tests/spatial-workspace-prepare-windows-v1.test.mjs'
       - 'tests/spatial-install-pins-windows-v1.test.mjs'
       - 'shared/agents/sovereignDirectoryCreateV1*'
@@ -305,6 +323,7 @@ jobs:
           node --test shared/agents/sovereignCommanderV1.test.mjs shared/agents/sovereignDirectoryCreateV1.test.mjs
           node --test shared/agents/sovereignCommanderMcp.test.mjs
           node --test shared/agents/sovereignSpatialWorkspaceV1.test.mjs tests/spatial-window-lifecycle-v1.test.mjs tests/spatial-workspace-prepare-windows-v1.test.mjs tests/spatial-install-pins-windows-v1.test.mjs
+          node --test tests/spatial-workspace-consented-window-share-v1.test.mjs tests/spatial-workspace-entry-order-v1.test.mjs tests/spatial-workspace-telemetry-v1.test.mjs tests/spatial-workspace-comfort-input-v1.test.mjs tests/spatial-workspace-keycap-v1.test.mjs tests/spatial-bridge-holodeck-baseline-v0.test.mjs tests/spatial-bridge-v0.test.mjs tests/verify-hosted-icons.test.mjs
           node --test shared/agents/sovereignSearchSessionsV1.test.mjs shared/agents/sovereignMcpSessionHistoryV1.test.mjs shared/agents/sovereignCommanderPrivateSessionsV1.test.mjs shared/agents/sovereignCommanderSessionLifecycleV1.test.mjs shared/agents/sovereignMcpSessionConfigV1.test.mjs shared/agents/sovereignCommanderSessionConfigV1.test.mjs shared/agents/sovereignFileCopyV1.test.mjs shared/agents/sovereignFileCopyNativeV1.test.mjs shared/agents/sovereignCommanderFileCopyV1.test.mjs shared/agents/sovereignFileMoveV1.test.mjs shared/agents/sovereignCommanderFileMoveV1.test.mjs shared/agents/sovereignProcessSessionsV1.test.mjs shared/agents/sovereignCommanderProcessSessionsV1.test.mjs shared/agents/sovereignFeedbackIntakeV1.test.mjs shared/agents/sovereignPdfWriteV1.test.mjs shared/agents/sovereignCommanderFeedbackPdfV1.test.mjs
           node --test shared/agents/sovereignCommanderHttp.test.mjs
           node --test shared/agents/sovereignWindowsQualificationWorkflow.test.mjs shared/agents/sovereignMaintenanceAdmissionV1.test.mjs scripts/sovereign-goal-builder-worker-evidence.test.mjs scripts/sovereign-commander-goal-builder-repair.test.mjs shared/agents/goalDiscoveryWorkspaceV1.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs

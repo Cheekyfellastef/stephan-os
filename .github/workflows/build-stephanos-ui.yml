@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - 'stephanos-ui/**'
+      - 'apps/spatial-bridge/**'
+      - '.github/workflows/deploy-stephanos-pages.yml'
       - 'shared/ai/**'
       - 'shared/runtime/**'
       - 'shared/agents/**'
