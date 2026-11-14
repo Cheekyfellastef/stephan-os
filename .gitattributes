@@ -89,6 +89,10 @@ scripts/windows/SovereignFixedRuntimeHostV1.cs text eol=lf
 
 scripts/windows/SovereignFixedRuntimeSourceV1.cs text eol=lf
 
+# The protected mobile installer compiles exact captured native/bootstrap bytes.
+scripts/windows/SovereignMobileInstall*.cs text eol=lf
+scripts/windows/install-battle-bridge-mobile-installer-v1.ps1 text eol=lf
+
 scripts/sovereign-fixed-runtime-parent-v1.mjs text eol=lf
 
 scripts/sovereign-fixed-runtime-source-task-v1.mjs text eol=lf
@@ -340,3 +344,10 @@ scripts/windows/status-battle-bridge-worker-watchdog.ps1 text eol=lf
 # Fixed create-only PDF helpers are hashed byte-for-byte.
 scripts/windows/SovereignPdfWriteV1.cs text eol=lf
 scripts/windows/sovereign-write-pdf.ps1 text eol=lf
+
+# Caravan control and fixed native observation are captured byte-for-byte.
+scripts/battle-bridge-caravan-http-v1.mjs text eol=lf
+scripts/battle-bridge-caravan-page-v1.mjs text eol=lf
+scripts/windows/battle-bridge-mobile-install-native-v1.mjs text eol=lf
+scripts/windows/observe-battle-bridge-mobile-install-v1.ps1 text eol=lf
+shared/agents/battleBridgeMobileInstallationV1.mjs text eol=lf

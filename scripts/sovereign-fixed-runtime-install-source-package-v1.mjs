@@ -115,7 +115,7 @@ function treeEntries(bytes, budget) {
   }
   return entries;
 }
-function validateEvidence(input) {
+function validateEvidence(input, sourcePaths = FIXED_RUNTIME_SOURCE_PATHS_V1) {
   record(input, ['schemaVersion', 'repository', 'commit', 'trees', 'records']);
   if (input.schemaVersion !== FIXED_RUNTIME_SOURCE_INPUT_SCHEMA_V1) fail('SCHEMA_INVALID');
   if (input.repository !== REPOSITORY) fail('REPOSITORY_INVALID');
@@ -136,9 +136,9 @@ function validateEvidence(input) {
     trees.set(row.sha, treeEntries(bytes, budget));
   }
   if (!trees.has(sourceTree)) fail('COMMIT_TREE_UNPROVEN');
-  if (!Array.isArray(input.records) || FIXED_RUNTIME_SOURCE_PATHS_V1.length > FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1
-    || input.records.length !== FIXED_RUNTIME_SOURCE_PATHS_V1.length) fail('SOURCE_RECORD_INVALID');
-  const paths = new Set(FIXED_RUNTIME_SOURCE_PATHS_V1), seen = new Set(), usedTrees = new Set();
+  if (!Array.isArray(input.records) || sourcePaths.length > FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1
+    || input.records.length !== sourcePaths.length) fail('SOURCE_RECORD_INVALID');
+  const paths = new Set(sourcePaths), seen = new Set(), usedTrees = new Set();
   const manifest = [], records = [];
   let sourceBytes = 0;
   for (const row of input.records) {
@@ -201,6 +201,22 @@ function prepare(input) {
 /** Bounded JSON from a separately authenticated source collector; no source is evaluated. */
 export function prepareFixedRuntimeSourcePackageV1(serializedInput) {
   return prepare(json(serializedInput));
+}
+
+// The same bounded Git-object/membership verifier for another source-defined
+// member set. This is pure inspection, never remote provenance or installation
+// authority. The ordinary runtime package keeps its exact fixed closure above.
+export function inspectFixedRuntimeGitMemberEvidenceV1(serializedInput, expectedPaths) {
+  if (!Array.isArray(expectedPaths) || expectedPaths.length < 1
+      || expectedPaths.length > FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1
+      || expectedPaths.some(path => typeof path !== 'string' || path.length > 240
+        || !/^[A-Za-z0-9._/-]+$/.test(path) || path.startsWith('/') || path.endsWith('/')
+        || path.includes('..') || path.includes('//'))
+      || new Set(expectedPaths.map(path => path.toLowerCase())).size !== expectedPaths.length)
+    fail('SOURCE_RECORD_INVALID');
+  const checked = validateEvidence(json(serializedInput), expectedPaths);
+  return freeze({ sourceHead: checked.evidence.commit.sha, sourceTree: checked.sourceTree,
+    manifest: checked.manifest, evidence: checked.evidence });
 }
 
 /** Private artifact construction only. A supplied SID/head is not observed or approved authority. */

@@ -16,6 +16,7 @@ import { buildStephanosExecutionCommandEnvelopeV1, buildStephanosExecutionSurfac
 import { publishSovereignCommanderRepairReport, SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE } from '../shared/agents/sovereignCommanderRepairReportV1.mjs';
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, sovereignMaintenanceCustodyUnprovenV1, readSovereignMaintenanceTerminalReceiptV1 } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 import { SPATIAL_PREPARE_ACTION, parseSpatialPreparationOutputV1 } from '../shared/agents/sovereignSpatialWorkspaceV1.mjs';
+import { createBattleBridgeCaravanHttpHandlerV1, CARAVAN_PATH } from './battle-bridge-caravan-http-v1.mjs';
 
 export const SOVEREIGN_COMMANDER_HTTP_HOST = '127.0.0.1';
 export const SOVEREIGN_COMMANDER_HTTP_PORT = 18791;
@@ -736,6 +737,7 @@ small{display:block;margin-top:28px;opacity:.5}
 <p>Private Battle Bridge control over your Tailscale network.</p>
 <button id="ignite" type="button">Ignite Stephanos</button>
 <div id="status" role="status" aria-live="polite"></div>
+<p><a href="/caravan" style="color:#72e8d6">Open caravan controls</a></p>
 <small>Fixed action only. No arbitrary shell or PC restart authority.</small>
 </main>
 <script>
@@ -875,9 +877,17 @@ export async function createSovereignCommanderHttpServer(options = {}) {
       custodyStore: options.custodyStore,
     });
 
+  const caravanHandler = createBattleBridgeCaravanHttpHandlerV1({
+    provider: options.mobileInstallationProvider,
+    expectedMain: options.mobileInstallationExpectedMain,
+    publicOrigin: options.mobileInstallationPublicOrigin,
+    nowMs,
+  });
+
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url || '/', 'http://localhost');
+      if (await caravanHandler(req, res, url)) return;
       if (req.method === 'GET' && url.pathname === '/health') {
         // Delegation needs protocol identity, not a native journal read. The
         // latter can exceed the transport's preflight deadline and block the
@@ -901,6 +911,7 @@ export async function createSovereignCommanderHttpServer(options = {}) {
           transport: 'authenticated-http-jsonrpc',
           observedAtUtc: now(),
           remoteIgnitionPath: SOVEREIGN_COMMANDER_REMOTE_IGNITION_PATH,
+          caravanPath: CARAVAN_PATH,
           remoteIgnitionAction: 'ignite-stephanos',
           remoteIgnitionTailnetOnlyExpected: true,
           remoteIgnitionCsrfProtected: true,
@@ -1134,6 +1145,7 @@ export async function runSovereignCommanderHttpServer(options = {}) {
     ...options,
     token,
     custodyStore,
+    mobileInstallationExpectedMain: installedSourceHead,
     recoverySourceAdmission: expectedMain => {
       if (!installedSourceHead || expectedMain !== installedSourceHead) return false;
       try { return readRecoverySource() === installedSourceHead; } catch { return false; }

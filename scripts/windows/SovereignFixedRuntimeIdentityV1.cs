@@ -45,7 +45,7 @@ namespace Stephanos.Sovereign {
   }
   public static partial class CoreJobCustodyV1 {
     // A capacity bound, never a replacement for exact installed membership.
-    const int RuntimeSourceMemberLimitV1 = 295;
+    const int RuntimeSourceMemberLimitV1 = 300;
     const string RuntimeSourceRootV1 = @"C:\Users\Stephan Callear\Documents\GitHub\stephan-os";
     const string RuntimeProtectedRootV1 = @"C:\Program Files\Stephanos\SovereignFixedRuntimeV1";
     static bool RuntimeHexV1(string value,int length) {
