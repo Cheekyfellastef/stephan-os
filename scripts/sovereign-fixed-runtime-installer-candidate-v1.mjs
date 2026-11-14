@@ -5,9 +5,10 @@ import {readFileSync} from 'node:fs';
 import {createBattleBridgeMinimalChildEnvironment} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 const closure=JSON.parse(readFileSync(new URL('../shared/agents/sovereignFixedRuntimeSourceClosureV1.json',import.meta.url)));
 export const FIXED_RUNTIME_SOURCE_PATHS_V1=Object.freeze([...closure.paths]);
-// Capacity for the reviewed private capabilities and bounded Spatial preparation. This is only a bound:
+// Capacity for private capabilities, bounded Spatial preparation and the five
+// caravan approval/readiness members. This is only a bound:
 // installation still requires every exact member of the checked-in closure.
-export const FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1=295;
+export const FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1=300;
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 // Content identity only. Protected installation, current canonical main and
 // native custody remain independent requirements at the existing parent.

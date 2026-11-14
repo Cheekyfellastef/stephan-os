@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "stephanos.mobile-installer-native-closure.v1",
+  "maximumUnitBytes": 32768,
+  "paths": [
+    "scripts/windows/SovereignCoreJobCustodyV1.cs",
+    "scripts/windows/SovereignFixedRuntimeJobV1.cs",
+    "scripts/windows/SovereignFixedRuntimeIdentityV1.cs",
+    "scripts/windows/SovereignFixedRuntimeAuthorityV1.cs",
+    "scripts/windows/SovereignFixedRuntimeHostV1.cs",
+    "scripts/windows/SovereignFixedRuntimeSourceV1.cs",
+    "scripts/windows/SovereignMobileInstallAssertionV1.cs",
+    "scripts/windows/SovereignMobileInstallReleaseV1.cs",
+    "scripts/windows/SovereignMobileInstallJournalV1.cs",
+    "scripts/windows/SovereignMobileInstallRequestsV1.cs",
+    "scripts/windows/SovereignMobileInstallAnchorV1.cs",
+    "scripts/windows/SovereignMobileInstallReceiptV1.cs",
+    "scripts/windows/SovereignMobileInstallEnrollmentV1.cs",
+    "scripts/windows/SovereignMobileInstallProvisioningV1.cs",
+    "scripts/windows/SovereignMobileInstallExecutorV1.cs",
+    "scripts/windows/SovereignMobileInstallEntryV1.cs"
+  ]
+}

@@ -13,7 +13,7 @@ namespace Stephanos.Sovereign {
   using System.Threading.Tasks;
 
   public sealed class FixedRuntimeStageV1 {
-    public string Stage = "", Reason = "NATIVE_STAGE_UNPROVEN", RootCreatedAtUtc = "";
+    public string Stage = "", Reason = "NATIVE_STAGE_UNPROVEN", RootCreatedAtUtc = "", ResumeConfirmedAtUtc = "";
     public string RootLifecycle = "NOT_CREATED";
     public int RootPid, ObservedLiveDescendantPid;
     public string ObservedLiveDescendantCreatedAtUtc = "";
@@ -65,6 +65,11 @@ namespace Stephanos.Sovereign {
     static string RuntimeHashV1(byte[] bytes) {
       using(var sha=SHA256.Create())
         return BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-","").ToLowerInvariant();
+    }
+    static uint RuntimeConsoleCreationFlagV1(string executable) {
+      // Windows PowerShell needs a hidden console rather than a detached
+      // console to execute its fixed script with redirected standard handles.
+      return String.Equals(executable,@"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",StringComparison.OrdinalIgnoreCase)?0x08000000u:0x8u;
     }
     static string RuntimeEnvironmentV1() {
       var rows=new SortedDictionary<string,string>(StringComparer.OrdinalIgnoreCase);
@@ -149,6 +154,14 @@ namespace Stephanos.Sovereign {
       IntPtr owner,IntPtr launcher,Func<bool> cancelled,Func<bool> queryFault,
       Func<FixedRuntimeStageV1,bool> bindBeforeResume,
       Action<FixedRuntimeStageV1> terminalDrainFixtureHook=null) {
+      return RunRuntimeStageObservedV1(job,stage,executable,arguments,cwd,input,clock,deadlineMs,owner,launcher,cancelled,queryFault,
+        bindBeforeResume,terminalDrainFixtureHook,null);
+    }
+    static FixedRuntimeStageV1 RunRuntimeStageObservedV1(IntPtr job,string stage,string executable,
+      string arguments,string cwd,byte[] input,Stopwatch clock,int deadlineMs,
+      IntPtr owner,IntPtr launcher,Func<bool> cancelled,Func<bool> queryFault,
+      Func<FixedRuntimeStageV1,bool> bindBeforeResume,
+      Action<FixedRuntimeStageV1> terminalDrainFixtureHook,Action<FixedRuntimeStageV1> resumedObserver) {
       var r=new FixedRuntimeStageV1 { Stage=stage };
       var accounting=new CoreJobReceiptV1();
       Func<bool> empty=delegate {
@@ -194,10 +207,10 @@ namespace Stephanos.Sovereign {
         var startup=new STARTUPINFOEX(); startup.start.cb=Marshal.SizeOf(typeof(STARTUPINFOEX));
         startup.attributes=attributes; startup.start.flags=0x100;
         startup.start.input=inputRead; startup.start.output=outputWrite; startup.start.error=outputWrite;
-        // Suspended atomic JOB_LIST assignment, normal priority, detached console;
+        // Suspended atomic JOB_LIST assignment, normal priority, fixed console adapter;
         // no CREATE_BREAKAWAY_FROM_JOB and no inherited Job handle.
         Require(CreateProcessW(executable,new StringBuilder(Quote(executable)+" "+arguments),
-          IntPtr.Zero,IntPtr.Zero,true,0x80000|0x4|0x400|0x8|0x20,environment,cwd,ref startup,out pi));
+          IntPtr.Zero,IntPtr.Zero,true,0x80000|0x4|0x400|RuntimeConsoleCreationFlagV1(executable)|0x20,environment,cwd,ref startup,out pi));
         r.Launched=true; r.RootPid=(int)pi.pid; r.RootLifecycle="CREATED_SUSPENDED";
         long born,exited,kernel,user;
         Require(RuntimeProcessTimesV1(pi.process,out born,out exited,out kernel,out user));
@@ -244,7 +257,10 @@ namespace Stephanos.Sovereign {
           finally { CloseHandle(writer); }
         },CancellationToken.None,TaskCreationOptions.LongRunning,TaskScheduler.Default);
         r.RootLifecycle="RESUME_UNPROVEN";
-        Require(ResumeThread(pi.thread)==1); r.ResumeConfirmed=true; r.RootLifecycle="RESUME_CONFIRMED";
+        Require(ResumeThread(pi.thread)==1); r.ResumeConfirmed=true;
+        r.ResumeConfirmedAtUtc=DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'",System.Globalization.CultureInfo.InvariantCulture);
+        r.RootLifecycle="RESUME_CONFIRMED";
+        if(resumedObserver!=null)resumedObserver(r);
         while(true) {
           if(!RuntimeParentsAliveV1(owner,launcher)) { r.Reason="OWNER_ENDED"; interrupted=true; break; }
           if(Cancelled(cancelled)) { r.Reason="CANCELLED"; interrupted=true; break; }
@@ -260,14 +276,18 @@ namespace Stephanos.Sovereign {
             r.NormalRootExit=true; Require(GetExitCodeProcess(pi.process,out r.ExitCode));
             var accountingDrain=Stopwatch.StartNew();
             while(!empty()) {
-              if(RuntimeHasLiveOtherProcessV1(job,r.RootPid,r)) {
-                r.Reason="LIVE_DESCENDANT_REMAINS"; interrupted=true; break;
-              }
+              bool liveDescendant=RuntimeHasLiveOtherProcessV1(job,r.RootPid,r);
               if(clock.ElapsedMilliseconds>=deadlineMs || accountingDrain.ElapsedMilliseconds>=5000) {
-                r.Reason="DESCENDANT_OR_ACCOUNTING_REMAINS"; interrupted=true; break;
+                r.Reason=liveDescendant?"LIVE_DESCENDANT_REMAINS":"DESCENDANT_OR_ACCOUNTING_REMAINS"; interrupted=true; break;
               }
               if(!RuntimeParentsAliveV1(owner,launcher) || Cancelled(cancelled)) {
                 r.Reason="CANCELLED"; interrupted=true; break;
+              }
+              if(output.Failed || Interlocked.CompareExchange(ref inputFailed,0,0)!=0) {
+                r.Reason="PIPE_UNPROVEN"; interrupted=true; break;
+              }
+              if(Interlocked.CompareExchange(ref output.Overflow,0,0)!=0) {
+                r.Reason="OUTPUT_OVERFLOW"; interrupted=true; break;
               }
               Thread.Sleep(10);
             }

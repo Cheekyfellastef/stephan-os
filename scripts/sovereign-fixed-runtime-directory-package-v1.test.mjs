@@ -76,7 +76,7 @@ function closure(root, omitted) {
 }
 
 test('directory package captures exactly three dependencies and rejects incomplete or extra records', () => {
-  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 295);
+  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 300);
   for (const path of directoryPaths) assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(path), path);
   const records = candidateRecords();
   assert.throws(() => candidate(records.filter(row => !directoryPaths.includes(row.path))), /EXACT_SOURCE_REQUIRED/);
@@ -98,7 +98,7 @@ test('isolated captured package proves imports and both source-owned runtime-rea
   const root = packagedCandidate();
   try {
     const complete = closure(root);
-    assert.equal(complete.memberCount, 295);
+    assert.equal(complete.memberCount, 300);
     assert.deepEqual(complete.missing, []);
     assert.deepEqual(complete.bare, []);
     assert.equal(complete.repositoryModulesEvaluated, false);
@@ -177,7 +177,7 @@ test('fresh pinned preparation retains the installer, builder and dot-sourced ha
     const omitted=closure(root,lock);
     for(const item of expected.filter(row=>row.target===lock))
       assert.ok(omitted.missing.some(row=>JSON.stringify(row)===JSON.stringify(item)),JSON.stringify(item));
-    assert.equal(complete.memberCount,295);
+    assert.equal(complete.memberCount,300);
   } finally {dispose(root);}
 });
 
@@ -282,5 +282,42 @@ test('optional HTTP fallback is excluded only for the reviewed Windows profile g
     const changed = closure(root);
     assert.ok(changed.missing.some(row => row.fixedProfileApplicabilityUnproven));
     assert.equal(changed.coverage[0].state, 'SCOPE_UNPROVEN');
+  } finally { dispose(root); }
+});
+
+test('caravan package captures exactly five members including its fixed read-only Windows probe', () => {
+  const members = [
+    'scripts/battle-bridge-caravan-http-v1.mjs',
+    'scripts/battle-bridge-caravan-page-v1.mjs',
+    'scripts/windows/battle-bridge-mobile-install-native-v1.mjs',
+    'scripts/windows/observe-battle-bridge-mobile-install-v1.ps1',
+    'shared/agents/battleBridgeMobileInstallationV1.mjs',
+  ];
+  const records = candidateRecords();
+  assert.equal(records.length, 300);
+  for (const file of members) {
+    assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(file));
+    assert.throws(() => candidate(records.filter(row => row.path !== file)), /EXACT_SOURCE_REQUIRED/);
+  }
+  const root = packagedCandidate();
+  try {
+    const expected = { file: members[2], target: members[3], role: 'runtime-exec' };
+    const complete = closure(root);
+    assert.deepEqual(complete.missing, []);
+    assert.ok(complete.edges.some(row => JSON.stringify(row) === JSON.stringify(expected)));
+    for (const file of members)
+      assert.ok(closure(root, file).missing.some(row => row.target === file), file);
+    const probe = join(root, members[3]);
+    const original = readFileSync(probe);
+    writeFileSync(probe, Buffer.concat([original, Buffer.from('\n# changed probe\n')]));
+    assert.ok(closure(root).missing.some(row => row.target === members[3] && row.runtimeReadPinMismatch));
+    writeFileSync(probe, original);
+    const adapter = join(root, members[2]);
+    const originalAdapter = readFileSync(adapter, 'utf8');
+    writeFileSync(adapter, originalAdapter.replace("new URL('./observe-battle-bridge-mobile-install-v1.ps1', import.meta.url)",
+      "new URL('../../../outside.ps1', import.meta.url)"));
+    const changed = closure(root);
+    assert.ok(changed.missing.some(row => row.file === members[2] && row.runtimeReadSourceUnproven));
+    assert.ok(changed.missing.some(row => row.file === members[2] && row.outsideRepository));
   } finally { dispose(root); }
 });
