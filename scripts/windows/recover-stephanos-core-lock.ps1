@@ -30,6 +30,66 @@ function Get-CoreRecoveryDigest([string]$Path) {
     finally { $sha.Dispose() }
 }
 
+
+# A full canonical remote source proof has already completed before entering
+# either freshness-critical window. Check local continuity without fetching.
+function Assert-CoreRecoveryLocalSource {
+    Assert-CoreRecoveryEnvironment
+    if ($env:NODE_OPTIONS -or $env:NODE_PATH) { throw 'CORE_RECOVERY_NODE_LOADER_OVERRIDE_REFUSED' }
+    foreach ($file in $sourceFiles) {
+        if ((Get-CoreRecoveryDigest $file) -cne $sourceDigests[$file]) { throw 'CORE_RECOVERY_SOURCE_BYTES_CHANGED' }
+    }
+    foreach ($file in $gitMetadataPaths) {
+        if ((Get-CoreRecoveryDigest $file) -cne $gitMetadataDigests[$file]) { throw 'CORE_RECOVERY_LOCAL_GIT_METADATA_CHANGED' }
+    }
+    # Inherited Git overrides would void the earlier canonical proof.
+    if (@(Get-ChildItem Env: | Where-Object { $_.Name -match '^GIT_' }).Count -ne 0) {
+        throw 'CORE_RECOVERY_LOCAL_GIT_ENVIRONMENT_UNPROVEN'
+    }
+    $git = 'C:\Program Files\Git\cmd\git.exe'
+    $gitDir = Join-Path $repoRoot '.git'
+    if (-not [IO.Directory]::Exists($gitDir)) { throw 'CORE_RECOVERY_LOCAL_GIT_TOPOLOGY_UNPROVEN' }
+    if ([IO.File]::Exists((Join-Path $gitDir 'config.worktree'))) { throw 'CORE_RECOVERY_LOCAL_GIT_TOPOLOGY_UNPROVEN' }
+    $gitArgs = @('--no-optional-locks',
+        '-c', 'core.autocrlf=true', '-c', 'core.fsmonitor=false',
+        '-c', 'core.hooksPath=NUL', '-c', 'core.trustctime=true',
+        '-c', 'core.checkStat=default', '-c', 'core.ignoreStat=false',
+        '-c', 'core.untrackedCache=false', '-c', 'core.attributesFile=',
+        '-c', 'core.excludesFile=', '-c', 'credential.helper=',
+        '-c', 'protocol.allow=never', '-c', 'submodule.recurse=false',
+        ('--git-dir=' + $gitDir), ('--work-tree=' + $repoRoot))
+    # Isolate system/global config and object substitution just as the canonical
+    # preflight does. Restore the process environment even if Git throws.
+    $safeGitEnvironment = @{ GIT_CONFIG_GLOBAL='NUL'; GIT_CONFIG_NOSYSTEM='1';
+        GIT_NO_REPLACE_OBJECTS='1'; GIT_NO_LAZY_FETCH='1'; GIT_OPTIONAL_LOCKS='0' }
+    try {
+        foreach ($key in $safeGitEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable($key, $safeGitEnvironment[$key], 'Process')
+        }
+        $heads = @(& $git @gitArgs rev-parse HEAD refs/remotes/origin/main)
+        if ($LASTEXITCODE -ne 0 -or $heads.Count -ne 2 -or
+            $heads[0] -cne $ExpectedHead -or $heads[1] -cne $ExpectedHead) {
+            throw 'CORE_RECOVERY_LOCAL_HEAD_CHANGED'
+        }
+        $branch = @(& $git @gitArgs symbolic-ref --quiet --short HEAD)
+        if ($LASTEXITCODE -ne 0 -or $branch.Count -ne 1 -or $branch[0] -cne 'main') {
+            throw 'CORE_RECOVERY_LOCAL_BRANCH_CHANGED'
+        }
+        $upstream = @(& $git @gitArgs rev-parse --abbrev-ref --symbolic-full-name '@{upstream}')
+        if ($LASTEXITCODE -ne 0 -or $upstream.Count -ne 1 -or $upstream[0] -cne 'origin/main') {
+            throw 'CORE_RECOVERY_LOCAL_UPSTREAM_CHANGED'
+        }
+    } finally {
+        foreach ($key in $safeGitEnvironment.Keys) { [Environment]::SetEnvironmentVariable($key, $null, 'Process') }
+    }
+    foreach ($file in $gitMetadataPaths) {
+        if ((Get-CoreRecoveryDigest $file) -cne $gitMetadataDigests[$file]) { throw 'CORE_RECOVERY_LOCAL_GIT_METADATA_CHANGED' }
+    }
+    foreach ($file in $sourceFiles) {
+        if ((Get-CoreRecoveryDigest $file) -cne $sourceDigests[$file]) { throw 'CORE_RECOVERY_SOURCE_BYTES_CHANGED' }
+    }
+}
+
 function Assert-CoreRecoveryEnvironment {
     # Match every path input used by stephanos-core-daemon.mjs. A redirected
     # daemon must never be launched after retiring this fixed canonical lock.
@@ -88,6 +148,11 @@ try {
         }
     }
     Assert-CoreRecoverySource
+    # Full canonical proof may stabilise Git's index. Pin its resulting
+    # configuration and index bytes separately in each recovery process.
+    $gitMetadataPaths = @((Join-Path $repoRoot '.git\config'), (Join-Path $repoRoot '.git\index'))
+    $gitMetadataDigests = @{}
+    foreach ($file in $gitMetadataPaths) { $gitMetadataDigests[$file] = Get-CoreRecoveryDigest $file }
     . $policyPath
     if ($RetireOnlyChild) {
         # This elevated child can retire only the fixed lock. It never starts
@@ -104,11 +169,11 @@ try {
                 $captureClock = [Diagnostics.Stopwatch]::StartNew()
                 $absence.AssertAbsent()
                 $before = Get-StephanosCoreProcessIdentityObservation -CoreScript $coreScript
-                Assert-CoreRecoverySource
+                Assert-CoreRecoveryLocalSource
                 $after = Get-StephanosCoreProcessIdentityObservation -CoreScript $coreScript
                 $absence.AssertAbsent()
                 Assert-StephanosCoreAbsentInventoryPair -Before $before -After $after -ElapsedSeconds $captureClock.Elapsed.TotalSeconds
-                Assert-CoreRecoverySource
+                Assert-CoreRecoveryLocalSource
                 Assert-StephanosCoreAbsentInventoryPair -Before $before -After $after -ElapsedSeconds $captureClock.Elapsed.TotalSeconds
             } finally { $absence.Dispose() }
             Write-CoreRecoveryResult $true 'CORE_ABSENT_INVENTORY_OBSERVED'
@@ -152,7 +217,8 @@ try {
     }
     if ($child.ExitCode -ne 0) { throw 'CORE_RECOVERY_CHILD_BLOCKED_OR_UNCERTAIN' }
     if (-not $AbsentLock) { $lockRetired = $true }
-    Assert-CoreRecoverySource
+    if ($AbsentLock) { Assert-CoreRecoveryLocalSource }
+    else { Assert-CoreRecoverySource }
     if ($AbsentLock) {
         Assert-StephanosCoreLockAbsent -LockPath $lockPath
         # Last operation before fixed start: age the native terminal timestamp,
