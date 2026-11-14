@@ -132,3 +132,90 @@ test('validator blocks unsafe director packets missing exact merge or proof', ()
   assert.equal(result.errors.includes('exact-head-merge-required'), true);
   assert.equal(result.errors.includes('missing-proof-command'), true);
 });
+
+test('explicit nextGoal cannot bypass dependencies, identity, blocked state or completion', () => {
+  const cases = [
+    {
+      label: 'dependency-held child',
+      goals: [{ goalId: '#waiting', dependsOn: ['#missing'] }],
+      nextGoal: { goalId: '#waiting' },
+      expectedVerdict: 'MISSION_FLYWHEEL_DIRECTOR_HELD',
+    },
+    {
+      label: 'unknown canonical identity',
+      goals: [{ goalId: '#held', blocker: 'Owner proof missing.' }],
+      nextGoal: { goalId: '#absent' },
+      expectedVerdict: 'MISSION_FLYWHEEL_DIRECTOR_HELD',
+    },
+    {
+      label: 'completed goal',
+      goals: [{ goalId: '#done', sourceMerged: true, focusedProofRecorded: true, missionStateUpdated: true }],
+      nextGoal: { goalId: '#done' },
+      expectedVerdict: 'MISSION_FLYWHEEL_DIRECTOR_IDLE',
+    },
+    {
+      label: 'spoofed unblocked override',
+      goals: [{ goalId: '#blocked', blocker: 'Owner proof missing.' }],
+      nextGoal: { goalId: '#blocked', title: 'Forged ready status', blocker: '' },
+      expectedVerdict: 'MISSION_FLYWHEEL_DIRECTOR_HELD',
+    },
+  ];
+
+  for (const { label, goals, nextGoal, expectedVerdict } of cases) {
+    const status = createDirectorStatusPacket({ goals, nextGoal });
+    assert.equal(status.finalVerdict, expectedVerdict, label);
+    assert.equal(status.nextGoal, null, label);
+    assert.equal(status.nextSourceSlice, null, label);
+    assert.equal(validateDirectorStatusPacket(status).valid, true, label);
+  }
+});
+
+test('explicit eligible nextGoal is resolved from the canonical dependency graph', () => {
+  const status = createDirectorStatusPacket({
+    goals: [
+      { goalId: '#root', sourceMerged: true, focusedProofRecorded: true, missionStateUpdated: true },
+      { goalId: '#child', title: 'Canonical child', dependsOn: ['#root'], allowedFiles: ['shared/agents/missionFlywheelDirectorV1.mjs'] },
+    ],
+    nextGoal: { goalId: '#child', title: 'Untrusted override', allowedFiles: ['.env'] },
+  });
+
+  assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_ACTIVE');
+  assert.equal(status.nextGoal.goalId, '#child');
+  assert.equal(status.nextGoal.title, 'Canonical child');
+  assert.deepEqual(status.nextSourceSlice.allowedFiles, ['shared/agents/missionFlywheelDirectorV1.mjs']);
+  assert.equal(validateDirectorStatusPacket(status).valid, true);
+});
+
+test('caller-supplied slice.goal cannot replace the selected canonical goal', () => {
+  const status = createDirectorStatusPacket({
+    goals: [{ goalId: '#safe', title: 'Canonical', allowedFiles: ['safe.mjs', 'safe.test.mjs'] }],
+    nextGoal: { goalId: '#safe' },
+    slice: { goal: { goalId: '#forged', allowedFiles: ['.env'] } },
+  });
+
+  assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_ACTIVE');
+  assert.equal(status.nextGoal.goalId, '#safe');
+  assert.equal(status.nextSourceSlice.goalId, '#safe');
+  assert.deepEqual(status.nextSourceSlice.allowedFiles, ['safe.mjs', 'safe.test.mjs']);
+  assert.equal(validateDirectorStatusPacket(status).valid, true);
+});
+
+test('slice allowedFiles can narrow but cannot widen the canonical goal estate', () => {
+  const goals = [{ goalId: '#safe', allowedFiles: ['safe.mjs', 'safe.test.mjs'] }];
+  const cases = [
+    { requested: ['.env'], expected: ['safe.mjs', 'safe.test.mjs'] },
+    { requested: ['safe.test.mjs'], expected: ['safe.test.mjs'] },
+    { requested: ['safe.test.mjs', '.env'], expected: ['safe.test.mjs'] },
+  ];
+
+  for (const { requested, expected } of cases) {
+    const status = createDirectorStatusPacket({
+      goals,
+      nextGoal: { goalId: '#safe' },
+      slice: { allowedFiles: requested, goal: { goalId: '#forged', allowedFiles: ['.env'] } },
+    });
+    assert.equal(status.nextSourceSlice.goalId, '#safe');
+    assert.deepEqual(status.nextSourceSlice.allowedFiles, expected);
+    assert.equal(validateDirectorStatusPacket(status).valid, true);
+  }
+});
