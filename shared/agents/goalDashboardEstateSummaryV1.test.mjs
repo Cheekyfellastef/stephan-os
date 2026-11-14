@@ -105,10 +105,10 @@ function input() {
         owner: 'Existing owner', status: 'PASS', observedAtUtc: at(-1000), proofRef: 'workspace:proof/gate-'+id })),
       exactNextAction: 'Continue through the existing owner.' },
     stephanosBuildTruth: { schemaVersion: 'stephanos.sovereign-build-truth.v1', truth: 'CURRENT',
-      observedAtUtc: at(-1000), state: 'BUILDING', activeMaterialLaneCount: 2, targetMaterialLaneCount: 15,
+      sourceHead: 'a'.repeat(40), observedAtUtc: at(-1000), state: 'BUILDING', activeMaterialLaneCount: 2, targetMaterialLaneCount: 15,
       lastMaterialProgressAtUtc: at(-3000), blockers: [], nextAction: 'Continue bounded build.',
       goals: [1, 2].map(n => ({ issue: '#'+n, title: 'Goal '+n, state: 'BUILDING', builder: 'worker-one',
-        lastMaterialProgressAtUtc: at(-3000), proofRefs: ['proof/material-'+n] })) },
+        lastMaterialProgressAtUtc: at(-3000), proofRefs: ['workspace:proof/gate-19', 'proof/material-'+n] })) },
     goalEstate: { schemaVersion: 'stephanos.goal-dashboard-estate-summary.v1', totalOpenGoals: 9,
       stateCounts: { eligible: 3, active: 2, parked: 2, waitingDependency: 1, operatorReady: 1 },
       goals: [{ statusTruth: 'CURRENT', observedAtUtc: at(-1000) }, { statusTruth: 'STALE', observedAtUtc: at(-900000) }] },
@@ -116,11 +116,11 @@ function input() {
       activityState: 'BUILDING', timestampUtc: at(-1000), lastMaterialActionAtUtc: at(-3000), proofRefs: ['proof/material'] }] },
   };
 }
-test('reuses signed gates, keeps commit unknown, distinguishes workers, goals and slots', () => {
+test('keeps unsigned goal-to-worker attribution separate from generic signed stage gates', () => {
   const original = input(), snapshot = structuredClone(original), result = project(original, options);
-  assert.equal(result.state, 'BUILDING');
-  assert.equal(result.workers.length, 1);
-  assert.equal(result.buildingGoalCount, 2);
+  assert.equal(result.state, 'UNKNOWN');
+  assert.equal(result.workers.length, 0);
+  assert.equal(result.buildingGoalCount, 0);
   assert.equal(result.materialLanes, 2);
   assert.equal(result.targetMaterialLanes, 15);
   assert.equal(result.stages.find(s => s.id === 'commit').state, 'UNKNOWN');
@@ -173,6 +173,90 @@ test('selection, running controllers and forged summary counts never prove a mat
   const result = project(data, options);
   assert.equal(result.workers.length, 0);assert.equal(result.buildingGoalCount, 0);
 });
+test('Goal #2002: source-only BUILDING cannot green without signed, bound pickup evidence', () => {
+  const valid = input();
+  const unsigned = structuredClone(valid); delete unsigned.goalBuildGateObservatory;
+  const arbitrary = project(unsigned, options);
+  assert.equal(arbitrary.state, 'UNKNOWN');
+  assert.equal(arbitrary.buildingGoalCount, 0);
+  assert.equal(arbitrary.workers.length, 0);
+  assert.notEqual(arbitrary.trafficLight, 'GREEN');
+  assert.ok(arbitrary.octopusFleet.builders.every(builder => builder.light !== 'GREEN'));
+  const mismatched = structuredClone(valid);
+  mismatched.stephanosBuildTruth.goals.forEach(goal => goal.proofRefs = ['arbitrary-self-report']);
+  assert.equal(project(mismatched, options).buildingGoalCount, 0);
+  const wrongHead = structuredClone(valid);
+  wrongHead.stephanosBuildTruth.sourceHead = 'b'.repeat(40);
+  assert.equal(project(wrongHead, options).buildingGoalCount, 0);
+  const positive = project(valid, options);
+  assert.equal(positive.state, 'UNKNOWN');
+  assert.equal(positive.buildingGoalCount, 0);
+  assert.equal(positive.octopusFleet.builders[0].state, 'REPORTED_UNVERIFIED');
+});
+test('Goal #2002: one diagnostic pickup cannot be replayed across goals, workers or controllers', () => {
+  const data = input();
+  const ref = 'workspace:proof/gate-19';
+  const original = structuredClone(data);
+  // The original fixture already provides two goals that share one gate ref.
+  // Even a current gate 18 and gate 19 pair has no authenticated goal or
+  // worker execution identity in the verified *public* 23-gate schema.
+  data.stephanosBuildTruth.goals[0].sourceHead = 'a'.repeat(40);
+  data.stephanosBuildTruth.goals[1].builder = 'different-worker';
+  data.stephanosBuildTruth.goals[1].sourceHead = 'a'.repeat(40);
+  data.controllerFleet.controllers[0].trafficLight = 'GREEN';
+  data.controllerFleet.controllers[0].proofRefs = [ref];
+  data.controllerFleet.controllers[0].materialActionsSucceeded = 9;
+  const duplicated = project(data, options);
+  assert.equal(duplicated.stages.find(stage => stage.id === 'pickup').state, 'PROVEN',
+    'the separately signed diagnostic stage stays visible');
+  assert.equal(duplicated.state, 'UNKNOWN');
+  assert.equal(duplicated.buildingGoalCount, 0);
+  assert.equal(duplicated.workers.length, 0);
+  assert.equal(duplicated.controllers[0].trafficLight, 'AMBER');
+  assert.equal(duplicated.octopusFleet.controllers[0].materialActions, null);
+  assert.equal(duplicated.octopusFleet.provenMaterialLaneCount, 0);
+  assert.ok(duplicated.octopusFleet.builders.every(builder => builder.light !== 'GREEN'));
+  // A lone matching worker is still unsigned as an *identity*: a string match
+  // is not a proof of which goal/claim/execution produced gate 19.
+  data.stephanosBuildTruth.goals = [data.stephanosBuildTruth.goals[0]];
+  assert.equal(project(data, options).buildingGoalCount, 0);
+  data.stephanosBuildTruth.goals[0].sourceHead = '';
+  assert.equal(project(data, options).buildingGoalCount, 0);
+  assert.equal(original.goalBuildGateObservatory.gates.length, 9, 'fixture was not altered');
+});
+test('Goal #2002: pickup stage requires a current, successful claim without any gate veto', () => {
+  const valid = input();
+  assert.equal(project(valid, options).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
+  const noClaim = structuredClone(valid);
+  noClaim.goalBuildGateObservatory.gates = noClaim.goalBuildGateObservatory.gates.filter(gate => gate.id !== 18);
+  assert.notEqual(project(noClaim, options).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
+  const failedClaim = structuredClone(valid);
+  failedClaim.goalBuildGateObservatory.gates.find(gate => gate.id === 18).status = 'FAIL';
+  assert.equal(project(failedClaim, options).state, 'BLOCKED');
+  assert.equal(project(failedClaim, options).buildingGoalCount, 0);
+  assert.notEqual(project(failedClaim, options).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
+  const staleClaim = structuredClone(valid);
+  staleClaim.goalBuildGateObservatory.gates.find(gate => gate.id === 18).observedAtUtc = at(-600001);
+  assert.notEqual(project(staleClaim, options).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
+  const separateVeto = structuredClone(valid);
+  separateVeto.goalBuildGateObservatory.gates.push({
+    id: 8, status: 'FAIL', observedAtUtc: at(-1000), proofRef: 'workspace:proof/veto',
+    title: 'Original source custody', owner: 'Existing original owner', typedBlocker: 'CUSTODY_UNPROVEN',
+  });
+  assert.equal(project(separateVeto, options).state, 'BLOCKED');
+  assert.notEqual(project(separateVeto, options).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
+});
+test('Goal #2002: global BLOCKED worker vetoes reported BUILDING and Octopus green', () => {
+  const data = input();
+  data.stephanosBuildTruth.state = 'BLOCKED';
+  data.stephanosBuildTruth.blockers = ['CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED'];
+  const result = project(data, options);
+  assert.equal(result.state, 'BLOCKED');
+  assert.equal(result.trafficLight, 'RED');
+  assert.equal(result.buildingGoalCount, 0);
+  assert.equal(result.workers.length, 0);
+  assert.ok(result.octopusFleet.builders.every(builder => builder.light !== 'GREEN'));
+});
 test('first real veto retains owner and proof even outside the nine display stages; stale veto clears', () => {
   const data = input();
   data.goalBuildGateObservatory.gates.unshift({ id: 8, title: 'Source custody', status: 'FAIL',
@@ -215,6 +299,37 @@ test('canonical mission trace remains visible without being promoted to physical
     assert.equal(project(data, options).stages.find(s => s.id === 'select').traceState, '');
   }
 });
+test('Goal #2961: unsigned logical PASS remains amber even when the original report is fresh', () => {
+  const stamp = at(-1000);
+  const track = { schemaVersion: 'stephanos.autonomy-build-track.v1',
+    sourceHead: '', missionId: '', issueNumber: null, timestampUtc: stamp,
+    gates: [{ id: 'SELECT', state: 'PASS' }, { id: 'CLAIM', state: 'PASS' },
+      { id: 'WORKER', state: 'PASS' }] };
+  const data = input(); delete data.goalBuildGateObservatory;
+  const report = { statusId: 'autonomy-build-track-current', timestampUtc: stamp, autonomyTrack: track };
+  const original = structuredClone(data);
+  const result = project(data, { ...options, statusRecords: [report] });
+  assert.deepEqual(data, original);
+  assert.equal(result.trace.truth, 'CURRENT');
+  assert.equal(result.trace.sourceBinding, 'SOURCE_HEAD_MISSING');
+  for (const stageId of ['select', 'claim', 'pickup']) {
+    const stage = result.stages.find(s => s.id === stageId);
+    assert.equal(stage.state, 'UNKNOWN', 'no signed stage evidence');
+    assert.equal(stage.operational.truth, 'CURRENT', 'keep fresh report visible');
+    assert.equal(stage.operational.trafficLight, 'AMBER', 'reported PASS cannot be signed-green');
+  }
+});
+test('Goal #2961: signed checkpoint stays independently green while a logical PASS stays amber', () => {
+  const data = input();
+  data.autonomyBuildTrack = { schemaVersion: 'stephanos.autonomy-build-track.v1',
+    sourceHead: 'a'.repeat(40), missionId: 'mission-42', issueNumber: 42,
+    timestampUtc: at(-1000), gates: [{ id: 'SELECT', state: 'PASS' }] };
+  const stage = project(data, options).stages.find(s => s.id === 'select');
+  assert.equal(stage.state, 'PROVEN');
+  assert.equal(stage.trafficLight, 'GREEN', 'separate signed gate proof retains green');
+  assert.equal(stage.operational.trafficLight, 'AMBER', 'the logical report does not self-approve');
+});
+
 test('a trace with a different source head cannot annotate the signed ledger', () => {
   const data = input();data.autonomyBuildTrack = { schemaVersion: 'stephanos.autonomy-build-track.v1',
     sourceHead: 'b'.repeat(40), issueNumber: 42, missionId: 'mission-42', timestampUtc: at(-1),
@@ -366,7 +481,7 @@ test('live canonical watchdog and exact-head Backend refresh stay green with an 
 }
 
 
-test('Octopus named lanes are all visible in the projection but only lane-exact proof may turn one green', () => {
+test('Octopus named lanes remain visible but unbound self-reported proof cannot turn green', () => {
   const nowMs=Date.parse('2026-10-26T15:00:00Z'), at=ms=>new Date(nowMs+ms).toISOString();
   const projection={
     controllerFleet:{controllers:Array.from({length:5},(_,i)=>({
@@ -392,8 +507,10 @@ test('Octopus named lanes are all visible in the projection but only lane-exact 
   assert.deepEqual(value.octopusFleet.lanes.map(lane=>lane.laneId),['lane-1','lane-2','lane-3']);
   assert.equal(value.octopusFleet.observedLaneCount,3);
   assert.equal(value.octopusFleet.targetMaterialLanes,15);
-  assert.equal(value.octopusFleet.provenMaterialLaneCount,1);
-  assert.equal(value.octopusFleet.lanes[0].state,'PROVEN_BUILD');
+  assert.equal(value.octopusFleet.provenMaterialLaneCount,0);
+  assert.equal(value.octopusFleet.lanes[0].state,'REPORTED_UNVERIFIED');
+  assert.equal(value.octopusFleet.controllers[0].materialActions,null);
+  assert.notEqual(value.octopusFleet.builders[0].light,'GREEN');
   assert.equal(value.octopusFleet.lanes[1].state,'ACTIVE_CLAIM');
   assert.equal(value.octopusFleet.lanes[1].light,'AMBER');
   assert.equal(value.octopusFleet.lanes[2].state,'PARKED_CLAIM');
