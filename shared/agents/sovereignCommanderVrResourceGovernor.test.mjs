@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { classifyQwen35CanaryGovernorV1 } from './qwen35CanaryGovernorAdmissionV1.mjs';
 
 import { SOVEREIGN_COMMANDER_REMOTE_ACTIONS } from './sovereignCommanderRemoteMailboxV1.mjs';
 import { coreGamingProtectionFromGovernor } from './stephanosCoreDaemonV1.mjs';
@@ -166,13 +169,235 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
 });
 
 
-test('Qwen 3.5 canary cannot strand a heavyweight model during VR', () => {
+test('Qwen 3.5 canary refuses unknown governor and does not unload a model it never started', () => {
   assert.match(ollamaLoadGovernor, /qwen3\.5:27b/);
   assert.match(qwen35Canary, /vr-resource-governor-current\.json/);
-  assert.match(qwen35Canary, /QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR/);
-  assert.match(qwen35Canary, /localModelAllowed === false/);
-  assert.match(qwen35Canary, /keep_alive: 0/);
-  assert.match(qwen35Canary, /unloadCanaryModel/);
+  assert.match(qwen35Canary, /classifyQwen35CanaryGovernorV1/);
+  assert.match(qwen35Canary, /return classifyQwen35CanaryGovernorV1\(null\)/);
+  assert.match(qwen35Canary, /const beforeInference = readVrResourceGovernorBlock\(\)/);
+  assert.doesNotMatch(qwen35Canary, /unloadCanaryModel|inferenceAttempted|\/api\/generate|keep_alive:\s*0/);
+  const check = spawnSync(process.execPath, ['--check',
+    fileURLToPath(new URL('../../scripts/qwen35-canary.mjs', import.meta.url))],
+    { encoding: 'utf8', timeout: 10_000 });
+  assert.equal(check.status, 0, check.stderr || 'node --check should accept the actual canary script');
+});
+
+
+test('Qwen canary never emits a global unload without authenticated model ownership', async () => {
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const body = qwen35Canary.replace(/^#![^\n]*\n/, '').replace(/^import [^\n]*\n/gm, '');
+  const execute = new AsyncFunction('readFileSync', 'homedir', 'resolve', 'process',
+    'classifyQwen35CanaryGovernorV1', 'fetch', 'AbortController',
+    'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', body);
+  const AbortStub = class { constructor() { this.signal = {}; } abort() {} };
+  const governor = () => ({
+    schemaVersion: 'stephanos.vr-resource-governor.v1',
+    governorVersion: 3, phase: 'NORMAL', updatedAtUtc: new Date().toISOString(),
+    active: false, flatGameActive: false, airLinkActive: false,
+    realAirLinkActive: false, virtualAirLinkTestActive: false,
+    prepareLeaseActive: false, localModelAllowed: true, heavyModelAllowed: true,
+  });
+  for (const mode of ['stale', 'tags503', 'modelMissing', 'transportError', 'chat503', 'success']) {
+    const calls = [], outputs = [];
+    const state = mode === 'stale'
+      ? { ...governor(), updatedAtUtc: new Date(Date.now() - 16000).toISOString() } : governor();
+    const proc = { stdout: { write(text) { outputs.push(JSON.parse(text)); } }, exitCode: undefined };
+    const fakeFetch = async (url, options) => {
+      assert.match(url, /^http:\/\/127\.0\.0\.1:11434\/api\/(tags|chat)$/);
+      const endpoint = url.endsWith('/tags') ? 'tags' : 'chat';
+      calls.push(endpoint);
+      if (endpoint === 'tags') return mode === 'tags503' ? { ok: false, status: 503 }
+        : { ok: true, json: async () => ({ models: mode === 'modelMissing'
+          ? [] : [{ name: 'qwen3.5:27b' }] }) };
+      assert.equal(options.method, 'POST');
+      assert.equal(JSON.parse(options.body).model, 'qwen3.5:27b');
+      assert.equal(Object.hasOwn(JSON.parse(options.body), 'keep_alive'), false);
+      if (mode === 'transportError') throw new Error('synthetic transport error');
+      if (mode === 'chat503') return { ok: false, status: 503 };
+      return { ok: true, json: async () => ({
+        model: 'qwen3.5:27b', message: { content: 'QWEN35_CANARY_OK' },
+      }) };
+    };
+    await execute(() => JSON.stringify(state), () => '/virtual',
+      () => '/virtual/governor', proc, classifyQwen35CanaryGovernorV1, fakeFetch,
+      AbortStub, () => 1, () => {}, () => ({ unref() {} }), () => {});
+    assert.deepEqual(calls, mode === 'stale' ? []
+      : ['tags', ...(['tags503', 'modelMissing'].includes(mode) ? [] : ['chat'])], mode);
+    assert.equal(outputs.length, 1, mode);
+    assert.equal(outputs[0].ok, mode === 'success', mode);
+    assert.equal(proc.exitCode, mode === 'success' ? undefined : 2, mode);
+  }
+});
+
+
+test('Qwen 27B canary cancels on in-flight VR transition or stale governor and never returns false GREEN', async () => {
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const body = qwen35Canary.replace(/^#![^\n]*\n/, '').replace(/^import [^\n]*\n/gm, '');
+  const run = new AsyncFunction('readFileSync', 'homedir', 'resolve', 'process',
+    'classifyQwen35CanaryGovernorV1', 'fetch', 'AbortController',
+    'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', body);
+  const safe = () => ({
+    schemaVersion: 'stephanos.vr-resource-governor.v1',
+    governorVersion: 3, phase: 'NORMAL', updatedAtUtc: new Date().toISOString(),
+    active: false, flatGameActive: false, airLinkActive: false,
+    realAirLinkActive: false, virtualAirLinkTestActive: false,
+    prepareLeaseActive: false, localModelAllowed: true, heavyModelAllowed: true,
+  });
+  for (const mode of ['steady', 'during-flight', 'response-parse', 'stale-flight', 'transport-rejection']) {
+    let state = safe(), checkPoll, pollCleared = 0, aborted = false;
+    const requests = [], outputs = [];
+    const proc = { stdout: { write(text) { outputs.push(JSON.parse(text)); } },
+      exitCode: undefined };
+    const AbortStub = class {
+      constructor() { this.signal = { aborted: false }; }
+      abort() { this.signal.aborted = true; aborted = true; }
+    };
+    const gaming = () => {
+      state = { ...safe(), active: true, phase: 'GAMING' };
+    };
+    const http = async (url, options) => {
+      assert.match(url, /^http:\/\/127\.0\.0\.1:11434\/api\/(tags|chat)$/);
+      const endpoint = url.endsWith('/tags') ? 'tags' : 'chat';
+      requests.push(endpoint);
+      if (endpoint === 'tags') return { ok: true, json: async () =>
+        ({ models: [{ name: 'qwen3.5:27b' }] }) };
+      assert.equal(options.method, 'POST');
+      assert.equal(Object.hasOwn(JSON.parse(options.body), 'keep_alive'), false);
+      if (mode === 'during-flight' || mode === 'transport-rejection') {
+        gaming();
+        checkPoll();
+        if (mode === 'transport-rejection') throw new Error('cancelled HTTP request');
+      }
+      if (mode === 'stale-flight') {
+        state = { ...safe(), updatedAtUtc: new Date(Date.now() - 16000).toISOString() };
+        checkPoll();
+      }
+      return { ok: true, json: async () => {
+        if (mode === 'response-parse') gaming();
+        return { model: 'qwen3.5:27b', message: { content: 'QWEN35_CANARY_OK' } };
+      } };
+    };
+    await run(() => JSON.stringify(state), () => '/virtual',
+      () => '/virtual/governor', proc, classifyQwen35CanaryGovernorV1,
+      http, AbortStub, () => 1, () => {},
+      (callback) => { checkPoll = callback; return { unref() {} }; },
+      () => { pollCleared += 1; });
+    assert.deepEqual(requests, ['tags', 'chat'], mode);
+    assert.equal(pollCleared, 1, mode);
+    assert.equal(outputs.length, 1, mode);
+    if (mode === 'steady') {
+      assert.equal(outputs[0].ok, true, mode);
+      assert.equal(proc.exitCode, undefined, mode);
+      assert.equal(aborted, false, mode);
+    } else {
+      assert.equal(outputs[0].ok, false, mode);
+      assert.equal(proc.exitCode, 2, mode);
+      assert.equal(outputs[0].blocker, mode === 'stale-flight'
+        ? 'QWEN35_CANARY_GOVERNOR_UNPROVEN'
+        : 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR', mode);
+      assert.equal(aborted, true, mode);
+    }
+    assert.equal(requests.includes('generate'), false, mode);
+  }
+});
+
+test('Qwen 27B canary admission is fail closed on every missing, corrupt or denied VR record', () => {
+  const nowMs = Date.parse('2026-11-11T05:20:00.000Z');
+  const allowed = { schemaVersion: 'stephanos.vr-resource-governor.v1',
+    governorVersion: 3, phase: 'NORMAL',
+    updatedAtUtc: new Date(nowMs).toISOString(),
+    active: false, flatGameActive: false, airLinkActive: false,
+    realAirLinkActive: false, virtualAirLinkTestActive: false,
+    prepareLeaseActive: false, localModelAllowed: true, heavyModelAllowed: true };
+  const denied = [
+    [null, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{}, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [[], 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, schemaVersion: 'other' }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, active: 'false' }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, heavyModelAllowed: undefined }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, localModelAllowed: undefined }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, updatedAtUtc: 'bad-date' }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, updatedAtUtc: new Date(nowMs - 15_001).toISOString() }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, updatedAtUtc: new Date(nowMs + 1).toISOString() }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, governorVersion: undefined }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, governorVersion: '3' }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, phase: undefined }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, flatGameActive: undefined }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, phase: 'PREPARING' }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
+    [{ ...allowed, flatGameActive: true }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
+    [{ ...allowed, airLinkActive: true }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
+    [{ ...allowed, realAirLinkActive: true }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
+    [{ ...allowed, virtualAirLinkTestActive: true }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
+    [{ ...allowed, prepareLeaseActive: true }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
+    [{ ...allowed, active: true, heavyModelAllowed: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
+    [{ ...allowed, active: true, localModelAllowed: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
+    [{ ...allowed, heavyModelAllowed: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
+    [{ ...allowed, localModelAllowed: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
+  ];
+  for (const [raw, blocker] of denied) {
+    const status = classifyQwen35CanaryGovernorV1(raw, nowMs);
+    assert.equal(status.blocked, true);
+    assert.equal(status.blocker, blocker);
+    assert.equal(status.modelStarted, false);
+    assert.equal(status.pcRestartAllowed, false);
+    assert.equal(status.sourceMutationAllowed, false);
+    assert.deepEqual(Object.keys(status).sort(),
+      ['blocker','blocked','modelStarted','pcRestartAllowed','schemaVersion','sourceMutationAllowed'].sort());
+  }
+  for (const value of [allowed, { ...allowed, updatedAtUtc: new Date(nowMs - 15_000).toISOString() }]) {
+    const status = classifyQwen35CanaryGovernorV1(value, nowMs);
+    assert.equal(status.blocked, false);
+    assert.equal(status.modelStarted, false, 'approval only permits later canary execution');
+  }
+  const expired = classifyQwen35CanaryGovernorV1({
+    ...allowed, updatedAtUtc: new Date(nowMs - 15_001).toISOString(),
+  }, nowMs);
+  assert.equal(expired.blocked, true);
+  const future = classifyQwen35CanaryGovernorV1({
+    ...allowed, updatedAtUtc: new Date(nowMs + 1).toISOString(),
+  }, nowMs);
+  assert.equal(future.blocked, true);
+});
+
+
+
+test('Qwen 27B canary never opens a gaming interval the protected Core blocks', () => {
+  const nowMs = Date.parse('2026-11-11T05:20:00.000Z');
+  const normal = {
+    schemaVersion: 'stephanos.vr-resource-governor.v1', governorVersion: 3,
+    phase: 'NORMAL', updatedAtUtc: new Date(nowMs).toISOString(),
+    active: false, flatGameActive: false, airLinkActive: false,
+    realAirLinkActive: false, virtualAirLinkTestActive: false,
+    prepareLeaseActive: false, localModelAllowed: true, heavyModelAllowed: true,
+  };
+  const cases = [
+    ['fresh and clear', normal],
+    ['15-second boundary', { ...normal, updatedAtUtc: new Date(nowMs - 15_000).toISOString() }],
+    ['stale 16 seconds', { ...normal, updatedAtUtc: new Date(nowMs - 16_000).toISOString() }],
+    ['stale 60 seconds', { ...normal, updatedAtUtc: new Date(nowMs - 60_000).toISOString() }],
+    ['stale 180 seconds', { ...normal, updatedAtUtc: new Date(nowMs - 180_000).toISOString() }],
+    ['future 1 ms', { ...normal, updatedAtUtc: new Date(nowMs + 1).toISOString() }],
+    ['missing version', { ...normal, governorVersion: undefined }],
+    ['wrong version', { ...normal, governorVersion: 2 }],
+    ['phase preparing', { ...normal, phase: 'PREPARING' }],
+    ['flat game active', { ...normal, flatGameActive: true }],
+    ['air link active', { ...normal, airLinkActive: true }],
+    ['real air link active', { ...normal, realAirLinkActive: true }],
+    ['virtual air link active', { ...normal, virtualAirLinkTestActive: true }],
+    ['prepare lease active', { ...normal, prepareLeaseActive: true }],
+    ['local model denied', { ...normal, localModelAllowed: false }],
+    ['heavy model denied', { ...normal, heavyModelAllowed: false }],
+  ];
+  for (const [name, record] of cases) {
+    const coreBlocks = coreGamingProtectionFromGovernor(record, nowMs);
+    const decision = classifyQwen35CanaryGovernorV1(record, nowMs);
+    assert.equal(decision.blocked, coreBlocks
+      || record.localModelAllowed !== true || record.heavyModelAllowed !== true, name);
+    assert.equal(decision.modelStarted, false, name);
+    assert.equal(decision.sourceMutationAllowed, false, name);
+    assert.equal(decision.pcRestartAllowed, false, name);
+  }
 });
 
 test('Stephanos router honours the gaming governor heavy-model policy', () => {
