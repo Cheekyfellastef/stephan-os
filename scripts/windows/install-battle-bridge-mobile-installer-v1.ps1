@@ -9,7 +9,7 @@ $bootstrap=$script:MobileInstallerEnrollmentPinnedBootstrapV1
 if(-not $OperatorApproved -or $ExpectedMain -cnotmatch '^[a-f0-9]{40}$' -or $null -eq $bootstrap -or
    $bootstrap.SourceHead -cne $ExpectedMain -or $bootstrap.SourceTree -cnotmatch '^[a-f0-9]{40}$' -or
    $bootstrap.OperatorSid -cnotmatch '^S-1-5-21-[0-9-]+$' -or $bootstrap.MachineHash -cnotmatch '^[a-f0-9]{64}$' -or
-   $bootstrap.Records.Count -ne 18 -or $bootstrap.ReleaseFiles.Count -ne 4 -or
+   $bootstrap.Records.Count -ne 19 -or $bootstrap.ReleaseFiles.Count -ne 4 -or
    $bootstrap.SetupDescriptorSha256 -cnotmatch '^[a-f0-9]{64}$') {throw 'MOBILE_ENROLLMENT_IMMUTABLE_APPROVAL_REQUIRED'}
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 try {
@@ -137,10 +137,10 @@ foreach($row in $bootstrap.Records) {
 [void][Reflection.Assembly]::Load('System.Web.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')
 $json=[Web.Script.Serialization.JavaScriptSerializer]::new();$json.MaxJsonLength=1048576;$json.RecursionLimit=12
 $closure=$json.DeserializeObject([Text.UTF8Encoding]::new($false,$true).GetString($records['shared/agents/sovereignMobileInstallerNativeClosureV1.json'].Bytes))
-if($closure.schemaVersion -cne 'stephanos.mobile-installer-native-closure.v1' -or $closure.maximumUnitBytes -ne 32768 -or $closure.paths.Count -ne 16){throw 'MOBILE_ENROLLMENT_NATIVE_CLOSURE_REFUSED'}
+if($closure.schemaVersion -cne 'stephanos.mobile-installer-native-closure.v1' -or $closure.maximumUnitBytes -ne 32768 -or $closure.paths.Count -ne 17){throw 'MOBILE_ENROLLMENT_NATIVE_CLOSURE_REFUSED'}
 [string[]]$ordered=@($closure.paths);[Array]::Sort($ordered,[StringComparer]::Ordinal)
 $pathWire='stephanos.mobile-installer-native-path-set.v1'+[char]0+($ordered -join [char]10)+[char]10
-if((Get-MobileDigest ([Text.Encoding]::UTF8.GetBytes($pathWire))) -cne '49e2c2d5914cec1987704f2b04c332837078835348114a0a2c262aaab8f27452') {throw 'MOBILE_ENROLLMENT_NATIVE_MEMBERSHIP_REFUSED'}
+if((Get-MobileDigest ([Text.Encoding]::UTF8.GetBytes($pathWire))) -cne '46d8a59b69ee6f93f8080ffcb735230e88057499b7654639011b8824cc6863e9') {throw 'MOBILE_ENROLLMENT_NATIVE_MEMBERSHIP_REFUSED'}
 foreach($path in $closure.paths){if(-not $records.ContainsKey($path)){throw 'MOBILE_ENROLLMENT_NATIVE_SOURCE_MISSING'}}
 if(-not $records.ContainsKey('scripts/windows/install-battle-bridge-mobile-installer-v1.ps1')){throw 'MOBILE_ENROLLMENT_ENTRY_SOURCE_MISSING'}
 if((Get-MobileDigest ([Text.Encoding]::UTF8.GetBytes($bootstrap.SetupDescriptor))) -cne $bootstrap.SetupDescriptorSha256){throw 'MOBILE_ENROLLMENT_DEVICE_DESCRIPTOR_CHANGED'}

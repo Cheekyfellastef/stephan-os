@@ -14,6 +14,7 @@
     "scripts/windows/SovereignMobileInstallRequestsV1.cs",
     "scripts/windows/SovereignMobileInstallAnchorV1.cs",
     "scripts/windows/SovereignMobileInstallReceiptV1.cs",
+    "scripts/windows/SovereignMobileInstallReconciliationV1.cs",
     "scripts/windows/SovereignMobileInstallEnrollmentV1.cs",
     "scripts/windows/SovereignMobileInstallProvisioningV1.cs",
     "scripts/windows/SovereignMobileInstallExecutorV1.cs",

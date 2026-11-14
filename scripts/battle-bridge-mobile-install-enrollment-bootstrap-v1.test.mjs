@@ -65,7 +65,7 @@ test('immutable captured bootstrap uses the same source evidence and fixed entry
   const result = bootstrap({ schemaVersion: MOBILE_BOOTSTRAP_INPUT_V1, setupInput, deviceAssertionJson: JSON.stringify(assertion) });
   assert.equal(result.installability, 'NOT_INSTALLABLE'); assert.deepEqual(Object.values(result.authority), Array(10).fill(false));
   const bytes = Buffer.from(result.privateCandidate.payloadBase64, 'base64'), payload = JSON.parse(bytes);
-  assert.equal(hash(bytes), result.privateCandidate.payloadSha256); assert.equal(payload.Records.length, 18);
+  assert.equal(hash(bytes), result.privateCandidate.payloadSha256); assert.equal(payload.Records.length, 19);
   assert.equal(payload.SetupDescriptor, prepared.descriptor); assert.equal(payload.SourceHead, runtime.fixture.head);
   assert.ok(payload.SourceProofWire.startsWith('STEPHANOS_FIXED_RUNTIME_SOURCE_V1 ' + runtime.fixture.head + ' '));
   assert.deepEqual(payload.ReleaseFiles.map(row => row.name), ['release.pin', 'runtime-package.json', 'runtime-bootstrap.ps1', 'release-evidence.json']);

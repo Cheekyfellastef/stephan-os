@@ -19,6 +19,8 @@ namespace Stephanos.Sovereign {
     readonly uint? rootPid;
     readonly string started,helper,installationBoot;
     readonly string integritySnapshot;
+    readonly SovereignMobileInstallJournalV1 terminalJournal;
+    readonly SovereignMobileInstallExecutorV1.TerminalReadbackEvidenceV1 terminalReadback;
     static void Deny(string reason) {throw new InvalidOperationException(reason);}
     static bool Is(string value,string pattern) {return value!=null && Regex.IsMatch(value,pattern,RegexOptions.CultureInvariant);}
     static bool Digest(string value) {return Is(value,"\\A[a-f0-9]{64}\\z");}
@@ -64,6 +66,15 @@ namespace Stephanos.Sovereign {
       ObservedAtUtc=observedAtUtc;rootPid=retainedProcessId;started=executionStartedAtUtc;helper=installedHelperSha256;installationBoot=installationBootId;
       CanonicalPayload=Canonical();integritySnapshot=Snapshot();
       if(Utf8.GetByteCount(CanonicalPayload)>4096) Deny("MOBILE_RECEIPT_BOUND");
+    }
+    private MobileInstallReceiptV1(SovereignMobileInstallJournalV1 journal,
+      SovereignMobileInstallAssertionV1.MobileInstallCandidateBindingV1 boundCandidate,
+      SovereignMobileInstallExecutorV1.TerminalReadbackEvidenceV1 evidence,MobileInstallJournalReceiptSnapshotV1 snapshot,
+      uint? retainedProcessId,string executionStartedAtUtc)
+      :this(boundCandidate,snapshot.CredentialBindingSha256,evidence.State,Reason(evidence.ReasonCode),snapshot.Sequence,
+        snapshot.HeadSha256,evidence.ObservedAtUtc,retainedProcessId,executionStartedAtUtc,
+        snapshot.InstalledHelperSha256,snapshot.InstallationBootId) {
+      terminalJournal=journal;terminalReadback=evidence;
     }
     static string Reason(string reason) {return Is(reason,"\\A[A-Z][A-Z0-9_]{0,79}\\z")?reason:"MOBILE_INSTALL_RECEIPT_STATE_UNPROVEN";}
     // Production state is read from the retained journal itself. An arbitrary
@@ -132,6 +143,62 @@ namespace Stephanos.Sovereign {
       }
       return new MobileInstallReceiptV1(boundCandidate,snapshot.CredentialBindingSha256,state,reason,snapshot.Sequence,snapshot.HeadSha256,now,pid,start,installed,boot);
     }
+    // Restart reconciliation is a distinct native proof. Authenticated R2
+    // history proves the earlier resume/drain; retained protected readback
+    // proves current installed bytes. Neither fabricates a current root or Job.
+    internal static MobileInstallReceiptV1 FromTerminalReadback(SovereignMobileInstallJournalV1 journal,
+      SovereignMobileInstallAssertionV1.MobileInstallCandidateBindingV1 boundCandidate,
+      SovereignMobileInstallExecutorV1.TerminalReadbackEvidenceV1 evidence) {
+      var ordinary=FromNative(journal,boundCandidate);
+      if(evidence==null)return ordinary;
+      var snapshot=journal.ReceiptSnapshot(boundCandidate.RequestId,boundCandidate.CandidateSha256);
+      if(snapshot==null || !snapshot.IsIntact())return ordinary;
+      try {
+        DateTime now=DateTime.UtcNow;var retained=evidence.Snapshot;
+        if(!evidence.IsIntact() || evidence.ExecutionAuthorityGranted || evidence.RebootAllowed ||
+           !evidence.IsCurrent(journal,boundCandidate) || snapshot==null || !snapshot.IsIntact() ||
+           retained==null || !retained.IsIntact() || evidence.State!=snapshot.State ||
+           (evidence.State!="INSTALLED_PENDING_BOOT" && evidence.State!="FAILED") || !evidence.HistoricalZeroActiveCommitted ||
+           evidence.MachineHash!=boundCandidate.MachineHash || evidence.OperatorSid!=boundCandidate.OperatorSid ||
+           evidence.SourceHead!=boundCandidate.SourceHead || evidence.SourceTree!=boundCandidate.SourceTree ||
+           evidence.PackageSha256!=boundCandidate.PackageSha256 || evidence.ClosureSha256!=boundCandidate.ClosureSha256 ||
+           evidence.ReleaseProofSha256!=boundCandidate.ReleaseProofSha256 ||
+           retained.RequestId!=boundCandidate.RequestId || retained.CandidateSha256!=boundCandidate.CandidateSha256 ||
+           retained.EnrollmentGeneration!=boundCandidate.EnrollmentGeneration || retained.RequestId!=snapshot.RequestId ||
+           retained.CandidateSha256!=snapshot.CandidateSha256 || retained.EnrollmentGeneration!=snapshot.EnrollmentGeneration ||
+           retained.CredentialBindingSha256!=snapshot.CredentialBindingSha256 || retained.Sequence!=snapshot.Sequence ||
+           retained.HeadSha256!=snapshot.HeadSha256 || retained.RootPid!=snapshot.RootPid ||
+           retained.RootCreatedAtUtc!=snapshot.RootCreatedAtUtc || retained.ExecutionStartedAtUtc!=snapshot.ExecutionStartedAtUtc ||
+           retained.InstalledHelperSha256!=snapshot.InstalledHelperSha256 || retained.InstallationBootId!=snapshot.InstallationBootId ||
+           retained.ReasonCode!=snapshot.ReasonCode || !Digest(snapshot.CredentialBindingSha256) ||
+           evidence.ObservedAtUtc.Kind!=DateTimeKind.Utc || evidence.ObservedAtUtc<boundCandidate.RequestedAtUtc ||
+           evidence.ObservedAtUtc>now || (now-evidence.ObservedAtUtc).TotalMilliseconds>120000)
+          Deny("MOBILE_RECEIPT_TERMINAL_BINDING_UNPROVEN");
+        uint? pid=null;string start=null;DateTime birth=DateTime.MinValue;
+        if(snapshot.RootPid>0) {
+          birth=NativeTime(snapshot.RootCreatedAtUtc);
+          if(birth<boundCandidate.RequestedAtUtc || birth>evidence.ObservedAtUtc)Deny("MOBILE_RECEIPT_TERMINAL_ROOT_UNPROVEN");
+          if(evidence.HistoricalRootBindingCommitted)pid=snapshot.RootPid;
+        } else if(snapshot.RootCreatedAtUtc!=null || snapshot.ExecutionStartedAtUtc!=null)
+          Deny("MOBILE_RECEIPT_TERMINAL_ROOT_UNPROVEN");
+        if(evidence.HistoricalRootBindingCommitted && !pid.HasValue)Deny("MOBILE_RECEIPT_TERMINAL_ROOT_UNPROVEN");
+        if(evidence.HistoricalResumeCommitted) {
+          DateTime resumed=NativeTime(snapshot.ExecutionStartedAtUtc);
+          if(!pid.HasValue || resumed<birth || resumed>evidence.ObservedAtUtc)Deny("MOBILE_RECEIPT_TERMINAL_RESUME_UNPROVEN");
+          start=Instant(resumed);
+        } else if(snapshot.ExecutionStartedAtUtc!=null)Deny("MOBILE_RECEIPT_TERMINAL_RESUME_UNPROVEN");
+        if(evidence.State=="INSTALLED_PENDING_BOOT") {
+          if(!pid.HasValue || start==null || !evidence.CurrentInstalledReadbackVerified ||
+             !Digest(snapshot.InstalledHelperSha256) || !Digest(snapshot.InstallationBootId))
+            Deny("MOBILE_RECEIPT_TERMINAL_INSTALLATION_UNPROVEN");
+        } else if(evidence.CurrentInstalledReadbackVerified || snapshot.InstalledHelperSha256!=null || snapshot.InstallationBootId!=null)
+          Deny("MOBILE_RECEIPT_TERMINAL_FAILURE_UNPROVEN");
+        return new MobileInstallReceiptV1(journal,boundCandidate,evidence,snapshot,pid,start);
+      }catch {
+        return new MobileInstallReceiptV1(boundCandidate,snapshot.CredentialBindingSha256,"UNKNOWN",
+          "MOBILE_INSTALL_TERMINAL_READBACK_UNPROVEN",snapshot.Sequence,snapshot.HeadSha256,DateTime.UtcNow,null,null,null,null);
+      }
+    }
     // Every value is a native-validated ASCII grammar. Explicit field order is
     // the shared canonicalMobileInstallationReceiptV1 order, not dictionary order.
     string Canonical() {
@@ -157,7 +224,8 @@ namespace Stephanos.Sovereign {
     }
     internal bool MatchesProtectedAnchor(string machineHash,string operatorSid,long generation,string credentialBinding,long sequence,string walHash,DateTime nowUtc) {
       try {
-        return candidate.IsIntact() && String.Equals(integritySnapshot,Snapshot(),StringComparison.Ordinal) &&
+        return (terminalReadback==null || terminalReadback.IsCurrent(terminalJournal,candidate)) &&
+          candidate.IsIntact() && String.Equals(integritySnapshot,Snapshot(),StringComparison.Ordinal) &&
           String.Equals(CanonicalPayload,Canonical(),StringComparison.Ordinal) && machineHash==candidate.MachineHash && operatorSid==candidate.OperatorSid &&
           generation==candidate.EnrollmentGeneration && credentialBinding==CredentialBindingSha256 && sequence==Sequence && walHash==JournalHeadSha256 &&
           nowUtc.Kind==DateTimeKind.Utc && ObservedAtUtc<=nowUtc && (nowUtc-ObservedAtUtc).TotalMilliseconds<=120000;

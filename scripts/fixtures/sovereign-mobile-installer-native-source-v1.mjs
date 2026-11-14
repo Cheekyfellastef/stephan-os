@@ -6,7 +6,7 @@ const root = new URL('../../', import.meta.url);
 const declaration = JSON.parse(readFileSync(new URL('shared/agents/sovereignMobileInstallerNativeClosureV1.json', root)));
 if (Object.keys(declaration).sort().join(',') !== 'maximumUnitBytes,paths,schemaVersion'
     || declaration.schemaVersion !== 'stephanos.mobile-installer-native-closure.v1'
-    || declaration.maximumUnitBytes !== 32768 || declaration.paths.length !== 16
+    || declaration.maximumUnitBytes !== 32768 || declaration.paths.length !== 17
     || new Set(declaration.paths.map(path => path.toLowerCase())).size !== declaration.paths.length
     || declaration.paths.some(path => typeof path !== 'string'
       || !/^scripts\/windows\/Sovereign[A-Za-z0-9]+V1\.cs$/.test(path)))

@@ -14,7 +14,7 @@ namespace Stephanos.Sovereign {
   using System.Text.RegularExpressions;
   using System.Web.Script.Serialization;
 
-  internal static class SovereignMobileInstallExecutorV1 {
+  internal static partial class SovereignMobileInstallExecutorV1 {
     static readonly object ownerLock=new object();
     static HeldExecution retained;
     static ActiveExecution active;
@@ -184,7 +184,7 @@ namespace Stephanos.Sovereign {
   }
 
   public static partial class CoreJobCustodyV1 {
-    internal sealed class MobileInstallerReadBackV1 : IDisposable {
+    internal sealed partial class MobileInstallerReadBackV1 : IDisposable {
       internal readonly string HelperSha256,BootId;
       readonly FixedRuntimeIdentityPinsV1 pins;
       private MobileInstallerReadBackV1(string helper,string boot,FixedRuntimeIdentityPinsV1 retained){HelperSha256=helper;BootId=boot;pins=retained;}
@@ -262,7 +262,6 @@ namespace Stephanos.Sovereign {
           return new MobileInstallerReadBackV1(digest,bootId,pins);
         }catch{pins.Dispose();throw new InvalidOperationException("MOBILE_READBACK_INSTALLATION_UNPROVEN");}
       }
-      public void Dispose(){pins.Dispose();}
     }
     internal sealed class MobileInstallerNativeRunV1 : IDisposable {
       internal readonly FixedRuntimeStageV1 Stage;

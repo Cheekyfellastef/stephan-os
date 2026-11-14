@@ -17,10 +17,10 @@ const paths = [...NATIVE_PATHS, ENTRY, DECLARATION];
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = () => { throw Error('MOBILE_ENROLLMENT_BOOTSTRAP_REVIEW_REFUSED'); };
 if (declaration.schemaVersion !== 'stephanos.mobile-installer-native-closure.v1'
-    || declaration.maximumUnitBytes !== 32768 || !Array.isArray(NATIVE_PATHS) || NATIVE_PATHS.length !== 16
-    || new Set(paths.map(path => path.toLowerCase())).size !== 18
+    || declaration.maximumUnitBytes !== 32768 || !Array.isArray(NATIVE_PATHS) || NATIVE_PATHS.length !== 17
+    || new Set(paths.map(path => path.toLowerCase())).size !== 19
     || hash('stephanos.mobile-installer-native-path-set.v1\0' + [...NATIVE_PATHS].sort().join('\n') + '\n')
-      !== '49e2c2d5914cec1987704f2b04c332837078835348114a0a2c262aaab8f27452') fail();
+      !== '46d8a59b69ee6f93f8080ffcb735230e88057499b7654639011b8824cc6863e9') fail();
 function input(text, keys) {
   if (typeof text !== 'string' || Buffer.byteLength(text) > 16 * 1024 * 1024) fail();
   let row; try { row = JSON.parse(text); } catch { fail(); }

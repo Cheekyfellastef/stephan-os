@@ -28,7 +28,17 @@ test('fixed entry and same-WAL requests expose no installation argv or replaceme
   assert.match(entry, /GetSecurityInfo\(handle,6,5/);
   assert.match(entry, /production\?"S-1-5-32-544"/);
   assert.match(entry, /WriteResponseAndDisconnect\(pipe,response\)/);
-  assert.match(entry, /ObserveOriginalDrain\(\);if\(!PendingOperation/);
+  assert.match(entry, /ObserveOriginalDrain\(\);/);
+  assert.match(entry, /pipe.WaitForConnectionAsync\(cancellation.Token\)/);
+  assert.doesNotMatch(entry, /BeginWaitForConnection|EndWaitForConnection/);
+  assert.doesNotMatch(entry, /\.AsyncWaitHandle/);
+  assert.match(entry, /Task.Factory.FromAsync\(pending,delegate\(IAsyncResult result\)/);
+  assert.match(entry, /if\(!WaitForClient\(pipe\)\)return 0/);
+  assert.match(entry, /catch \{pipe=RecoverPipe\(pipe,PipeName,qualified.OperatorSid\);\}/);
+  assert.match(entry, /snapshot.State!="INSTALLED_PENDING_BOOT" && snapshot.State!="FAILED"/);
+  assert.match(entry, /using\(var terminal=SovereignMobileInstallExecutorV1.ReconcileProtected\(journal,candidate,qualified\)\)/);
+  assert.match(entry, /terminal==null\?MobileInstallReceiptV1.FromNative\(journal,candidate,null\)/);
+  assert.match(entry, /MobileInstallReceiptV1.FromTerminalReadback\(journal,candidate,terminal\)/);
   assert.match(entry, /GetNamedPipeServerProcessId/);
   assert.match(entry, /GetNamedPipeClientProcessId/);
   assert.match(entry, /QueryFullProcessImageNameW/);
@@ -246,6 +256,153 @@ namespace Stephanos.Sovereign {
       }
       return new{rows,productionListenerStarted=false,executionDispatched=false};
     }
+    static object OriginalIdleOwner() {
+      string name="Stephanos.MobileInstallFixture."+System.Guid.NewGuid().ToString("N"),sid;
+      using(var identity=System.Security.Principal.WindowsIdentity.GetCurrent())sid=identity.User.Value;
+      var create=typeof(SovereignMobileInstallEntryV1).GetMethod("CreateServer",Hidden);
+      var wait=typeof(SovereignMobileInstallEntryV1).GetMethod("WaitForClient",Hidden);
+      var read=typeof(SovereignMobileInstallEntryV1).GetMethod("ReadFrame",Hidden);
+      var write=typeof(SovereignMobileInstallEntryV1).GetMethod("WriteFrame",Hidden);
+      var respond=typeof(SovereignMobileInstallEntryV1).GetMethod("WriteResponseAndDisconnect",Hidden);
+      var receive=typeof(SovereignMobileInstallEntryV1).GetMethod("ReadResponseAndAcknowledge",Hidden);
+      var operation=typeof(SovereignMobileInstallEntryV1).GetField("originalOperation",Hidden);
+      var blocked=new System.Threading.Tasks.TaskCompletionSource<SovereignMobileInstallExecutorV1.NativeExecutionEvidenceV1>();
+      operation.SetValue(null,blocked.Task);
+      try {
+        using(var server=(System.IO.Pipes.NamedPipeServerStream)create.Invoke(null,new object[]{name,sid})) {
+          var originalHandle=server.SafePipeHandle.DangerousGetHandle();var clock=System.Diagnostics.Stopwatch.StartNew();
+          var worker=System.Threading.Tasks.Task.Factory.StartNew(delegate {
+            if(!(bool)wait.Invoke(null,new object[]{server}))throw new System.Exception("ACTIVE_OWNER_EXITED_BEFORE_MOBILE_POLL");
+            if(server.SafePipeHandle.DangerousGetHandle()!=originalHandle)throw new System.Exception("PENDING_CONNECT_WAS_REPLACED");
+            var command=MobileInstallPipeRequestV1.Parse((string)read.Invoke(null,new object[]{server}));
+            if(command.Operation!="RECONCILE")throw new System.Exception("IDLE_FIXTURE_COMMAND_CHANGED");
+            respond.Invoke(null,new object[]{server,"SYNTHETIC_UNKNOWN_TRANSPORT_ONLY"});
+          });
+          // Real mobile polling interval, beyond the helper's five-second idle
+          // exit. The one admitted task remains active throughout the wait.
+          System.Threading.Thread.Sleep(15000);
+          if(worker.IsCompleted)throw new System.Exception("ORIGINAL_HELPER_LOST_PENDING_LISTENER");
+          using(var client=new System.IO.Pipes.NamedPipeClientStream(".",name,(System.IO.Pipes.PipeAccessRights)SovereignMobileInstallEntryV1.ClientRights,
+            System.IO.Pipes.PipeOptions.Asynchronous,System.Security.Principal.TokenImpersonationLevel.Identification,System.IO.HandleInheritability.None)) {
+            client.Connect(5000);write.Invoke(null,new object[]{client,"STEPHANOS_MOBILE_INSTALL_PIPE_V1|RECONCILE|mobile-install-idle-fixture-12345678"});
+            try {
+              if((string)receive.Invoke(null,new object[]{client})!="SYNTHETIC_UNKNOWN_TRANSPORT_ONLY")throw new System.Exception("IDLE_FRAME_CHANGED");
+            }catch{if(worker.IsFaulted)throw worker.Exception;throw;}
+          }
+          if(!worker.Wait(5000) || clock.ElapsedMilliseconds<15000)throw new System.Exception("MOBILE_INTERVAL_NOT_PROVEN");
+          if(!System.Object.ReferenceEquals(operation.GetValue(null),blocked.Task) || blocked.Task.IsCompleted)
+            throw new System.Exception("TRANSPORT_ACK_REPLACED_OR_COMPLETED_ORIGINAL_TASK");
+          // A failed-before-consumption task has no terminal evidence or native
+          // custody. It must not turn an on-demand helper into a permanent one.
+          blocked.SetResult(null);var idle=System.Diagnostics.Stopwatch.StartNew();
+          if((bool)wait.Invoke(null,new object[]{server}) || idle.ElapsedMilliseconds<5000 || idle.ElapsedMilliseconds>7000)
+            throw new System.Exception("EMPTY_COMPLETED_TASK_PREVENTS_BOUNDED_IDLE_EXIT");
+          return new{actualFifteenSecondPoll=true,samePendingConnect=true,transportAckIsNotCompletion=true,
+            originalTaskPreserved=true,earlyNoConsumptionFailureCanExit=true,executionDispatched=false,productionListenerStarted=false};
+        }
+      }finally{if(!blocked.Task.IsCompleted)blocked.SetResult(null);operation.SetValue(null,null);}
+    }
+    static object RecoverOriginalPipe() {
+      string name="Stephanos.MobileInstallFixture."+System.Guid.NewGuid().ToString("N"),sid;
+      using(var identity=System.Security.Principal.WindowsIdentity.GetCurrent())sid=identity.User.Value;
+      var create=typeof(SovereignMobileInstallEntryV1).GetMethod("CreateServer",Hidden);
+      var wait=typeof(SovereignMobileInstallEntryV1).GetMethod("WaitForClient",Hidden);
+      var recover=typeof(SovereignMobileInstallEntryV1).GetMethod("RecoverPipe",Hidden);
+      var read=typeof(SovereignMobileInstallEntryV1).GetMethod("ReadFrame",Hidden);
+      var respond=typeof(SovereignMobileInstallEntryV1).GetMethod("WriteResponseAndDisconnect",Hidden);
+      var receive=typeof(SovereignMobileInstallEntryV1).GetMethod("ReadResponseAndAcknowledge",Hidden);
+      var operation=typeof(SovereignMobileInstallEntryV1).GetField("originalOperation",Hidden);
+      var blocked=new System.Threading.Tasks.TaskCompletionSource<SovereignMobileInstallExecutorV1.NativeExecutionEvidenceV1>();
+      operation.SetValue(null,blocked.Task);var recovered=new System.Threading.ManualResetEvent(false);
+      var server=(System.IO.Pipes.NamedPipeServerStream)create.Invoke(null,new object[]{name,sid});
+      try {
+        var worker=System.Threading.Tasks.Task.Factory.StartNew(delegate {
+          if(!(bool)wait.Invoke(null,new object[]{server}))throw new System.Exception("ORIGINAL_LISTENER_MISSING");
+          try{respond.Invoke(null,new object[]{server,"SYNTHETIC_UNKNOWN_TRANSPORT_ONLY"});throw new System.Exception("BAD_ACK_ACCEPTED");}
+          catch(System.Reflection.TargetInvocationException error){if(error.InnerException.Message!="MOBILE_PIPE_TRANSPORT_ACK_INVALID")throw;}
+          server=(System.IO.Pipes.NamedPipeServerStream)recover.Invoke(null,new object[]{server,name,sid});recovered.Set();
+          if(!System.Object.ReferenceEquals(operation.GetValue(null),blocked.Task) || blocked.Task.IsCompleted)
+            throw new System.Exception("RECOVERY_REPLACED_OR_COMPLETED_TASK");
+          if(!(bool)wait.Invoke(null,new object[]{server}))throw new System.Exception("RECOVERED_ORIGINAL_UNCONTACTABLE");
+          respond.Invoke(null,new object[]{server,"SYNTHETIC_SAME_OWNER_RECOVERED"});
+        });
+        using(var client=new System.IO.Pipes.NamedPipeClientStream(".",name,(System.IO.Pipes.PipeAccessRights)SovereignMobileInstallEntryV1.ClientRights,
+          System.IO.Pipes.PipeOptions.Asynchronous,System.Security.Principal.TokenImpersonationLevel.Identification,System.IO.HandleInheritability.None)) {
+          client.Connect(5000);read.Invoke(null,new object[]{client});client.WriteByte(7);
+          if(!recovered.WaitOne(5000))throw new System.Exception("FAILED_PEER_LEFT_ORIGINAL_UNCONTACTABLE");
+        }
+        using(var client=new System.IO.Pipes.NamedPipeClientStream(".",name,(System.IO.Pipes.PipeAccessRights)SovereignMobileInstallEntryV1.ClientRights,
+          System.IO.Pipes.PipeOptions.Asynchronous,System.Security.Principal.TokenImpersonationLevel.Identification,System.IO.HandleInheritability.None)) {
+          client.Connect(5000);
+          if((string)receive.Invoke(null,new object[]{client})!="SYNTHETIC_SAME_OWNER_RECOVERED")throw new System.Exception("RECOVERED_FRAME_CHANGED");
+        }
+        if(!worker.Wait(5000))throw new System.Exception("RECOVERY_FIXTURE_UNBOUNDED");
+        if(typeof(SovereignMobileInstallExecutorV1).GetField("active",Hidden).GetValue(null)!=null)
+          throw new System.Exception("TRANSPORT_RECOVERY_DISPATCHED_EXECUTOR");
+        return new{sameNameRecoveredAfterBadAck=true,originalTaskPreserved=true,noExecutorReservation=true,
+          productionListenerStarted=false,executionDispatched=false};
+      }finally{server.Dispose();recovered.Dispose();blocked.SetResult(null);operation.SetValue(null,null);}
+    }
+    static object CompletionLifetime() {
+      string sid;using(var identity=System.Security.Principal.WindowsIdentity.GetCurrent())sid=identity.User.Value;
+      var create=typeof(SovereignMobileInstallEntryV1).GetMethod("CreateServer",Hidden);
+      var complete=typeof(SovereignMobileInstallEntryV1).GetMethod("Complete",Hidden);
+      var read=typeof(SovereignMobileInstallEntryV1).GetMethod("ReadFrame",Hidden);
+      int endedReads=0,endedWrites=0,disconnected=0,partialDeadlines=0;
+      for(int iteration=0;iteration<16;iteration++) {
+        string name="Stephanos.MobileInstallFixture."+System.Guid.NewGuid().ToString("N");
+        using(var server=(System.IO.Pipes.NamedPipeServerStream)create.Invoke(null,new object[]{name,sid}))
+        using(var client=new System.IO.Pipes.NamedPipeClientStream(".",name,(System.IO.Pipes.PipeAccessRights)SovereignMobileInstallEntryV1.ClientRights,
+          System.IO.Pipes.PipeOptions.Asynchronous,System.Security.Principal.TokenImpersonationLevel.Identification,System.IO.HandleInheritability.None))
+        using(var ended=new System.Threading.ManualResetEvent(false)) {
+          client.Connect(5000);server.WaitForConnection();bool writing=iteration%2==1;int calls=0;
+          byte[] bytes=new byte[writing?1048576:1];
+          System.IAsyncResult pending=writing?server.BeginWrite(bytes,0,bytes.Length,null,null):server.BeginRead(bytes,0,1,null,null);
+          if(pending.IsCompleted)throw new System.Exception("IO_LIFETIME_FIXTURE_NOT_PENDING");
+          System.Action<System.IAsyncResult> finish=delegate(System.IAsyncResult result) {
+            try {if(writing)server.EndWrite(result);else server.EndRead(result);}
+            finally {System.Threading.Interlocked.Increment(ref calls);ended.Set();}
+          };
+          var clock=System.Diagnostics.Stopwatch.StartNew();
+          try {complete.Invoke(null,new object[]{pending,50,finish,server});throw new System.Exception("IO_DEADLINE_NOT_ENFORCED");}
+          catch(System.Reflection.TargetInvocationException error) {
+            if(error.InnerException.Message!="MOBILE_PIPE_IO_DEADLINE")throw;
+          }
+          if(clock.ElapsedMilliseconds>2000)throw new System.Exception("IO_TIMEOUT_RETURN_UNBOUNDED");
+          if(!ended.WaitOne(5000) || calls!=1)throw new System.Exception("TIMED_OUT_IO_END_NOT_EXACTLY_ONCE");
+          System.Threading.Thread.Sleep(10);if(calls!=1)throw new System.Exception("TIMED_OUT_IO_ENDED_TWICE");
+          if(writing)endedWrites++;else endedReads++;
+        }
+      }
+      foreach(bool prefixOnly in new[]{true,false}) {
+        string name="Stephanos.MobileInstallFixture."+System.Guid.NewGuid().ToString("N");
+        using(var server=(System.IO.Pipes.NamedPipeServerStream)create.Invoke(null,new object[]{name,sid}))
+        using(var client=new System.IO.Pipes.NamedPipeClientStream(".",name,(System.IO.Pipes.PipeAccessRights)SovereignMobileInstallEntryV1.ClientRights,
+          System.IO.Pipes.PipeOptions.Asynchronous,System.Security.Principal.TokenImpersonationLevel.Identification,System.IO.HandleInheritability.None)) {
+          client.Connect(5000);server.WaitForConnection();byte[] partial=prefixOnly?new byte[]{20,0}:new byte[]{20,0,0,0,65};
+          client.Write(partial,0,partial.Length);var clock=System.Diagnostics.Stopwatch.StartNew();
+          try {read.Invoke(null,new object[]{server});throw new System.Exception("PARTIAL_FRAME_ACCEPTED");}
+          catch(System.Reflection.TargetInvocationException error){if(error.InnerException.Message!="MOBILE_PIPE_IO_DEADLINE")throw;}
+          if(clock.ElapsedMilliseconds<9500 || clock.ElapsedMilliseconds>12000)throw new System.Exception("PARTIAL_FRAME_DEADLINE_CHANGED");
+          partialDeadlines++;
+        }
+      }
+      for(int iteration=0;iteration<16;iteration++) {
+        string name="Stephanos.MobileInstallFixture."+System.Guid.NewGuid().ToString("N");
+        using(var server=(System.IO.Pipes.NamedPipeServerStream)create.Invoke(null,new object[]{name,sid})) {
+          using(var client=new System.IO.Pipes.NamedPipeClientStream(".",name,(System.IO.Pipes.PipeAccessRights)SovereignMobileInstallEntryV1.ClientRights,
+            System.IO.Pipes.PipeOptions.Asynchronous,System.Security.Principal.TokenImpersonationLevel.Identification,System.IO.HandleInheritability.None)) {
+            client.Connect(5000);server.WaitForConnection();client.WriteByte(20);
+          }
+          try {read.Invoke(null,new object[]{server});throw new System.Exception("DISCONNECTED_PARTIAL_FRAME_ACCEPTED");}
+          catch(System.Reflection.TargetInvocationException error){if(error.InnerException.Message!="MOBILE_PIPE_DISCONNECTED")throw;}
+          disconnected++;
+        }
+      }
+      System.GC.Collect();System.GC.WaitForPendingFinalizers();System.Threading.Thread.Sleep(100);
+      return new{endedReads,endedWrites,partialDeadlines,disconnected,allEndsExactlyOnce=true,
+        productionListenerStarted=false,executionDispatched=false};
+    }
     public static int Main(string[] args) {
       try {
         object result;
@@ -254,6 +411,9 @@ namespace Stephanos.Sovereign {
         else if(args[0]=="concurrency")result=Concurrency(System.IO.File.ReadAllText(args[1]));
         else if(args[0]=="pipe")result=PipeFixture();
         else if(args[0]=="ack-failures")result=FailedAcknowledgements();
+        else if(args[0]=="idle-owner")result=OriginalIdleOwner();
+        else if(args[0]=="recover-owner")result=RecoverOriginalPipe();
+        else if(args[0]=="io-lifetime")result=CompletionLifetime();
         else throw new System.Exception("FIXTURE_MODE_INVALID");
         System.Console.Write(Json.Serialize(result));return 0;
       }catch(System.Exception error){while(error.InnerException!=null)error=error.InnerException;System.Console.Error.Write(error.GetType().Name+":"+error.Message);return 1;}
@@ -280,7 +440,7 @@ function fixture(mode, data) {
       { encoding: 'utf8', windowsHide: true, timeout: 20000, maxBuffer: 65536 });
     assert.equal(compiled.error, undefined); assert.equal(compiled.status, 0, compiled.stderr); assert.equal(compiled.stdout, 'COMPILED');
     const result = spawnSync(exe, mode === 'prepared' ? [mode, directory, input] : [mode, input],
-      { encoding: 'utf8', windowsHide: true, timeout: 20000, maxBuffer: 1048576 });
+      { encoding: 'utf8', windowsHide: true, timeout: ['idle-owner', 'io-lifetime'].includes(mode) ? 35000 : 20000, maxBuffer: 1048576 });
     assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr);
     return JSON.parse(result.stdout);
   } finally {
@@ -336,4 +496,23 @@ test('Windows native owner atomically retains one request, pre-journal cancellat
   { skip: process.platform !== 'win32', timeout: 40000 }, () => {
   assert.deepEqual(fixture('concurrency', enrollment), { singleExecutorReservation: 1, duplicateEntryDispatches: 0,
     prejournalCancellationRetained: true, originalTaskIdentityPreserved: true, productionFactoryInvoked: false });
+});
+
+test('Windows original helper retains one pending pipe through the real fifteen-second poll and releases an empty completed task',
+  { skip: process.platform !== 'win32', timeout: 60000 }, () => {
+  assert.deepEqual(fixture('idle-owner', {}), { actualFifteenSecondPoll: true, samePendingConnect: true,
+    transportAckIsNotCompletion: true, originalTaskPreserved: true, earlyNoConsumptionFailureCanExit: true,
+    executionDispatched: false, productionListenerStarted: false });
+});
+
+test('Windows transport failure recreates the same pipe under the retained owner without reserving or replaying execution',
+  { skip: process.platform !== 'win32', timeout: 40000 }, () => {
+  assert.deepEqual(fixture('recover-owner', {}), { sameNameRecoveredAfterBadAck: true, originalTaskPreserved: true,
+    noExecutorReservation: true, productionListenerStarted: false, executionDispatched: false });
+});
+
+test('Windows timed-out read/write completion runs End once and preserves bounded partial-frame/disconnect cleanup',
+  { skip: process.platform !== 'win32', timeout: 60000 }, () => {
+  assert.deepEqual(fixture('io-lifetime', {}), {endedReads: 8, endedWrites: 8, partialDeadlines: 2, disconnected: 16,
+    allEndsExactlyOnce: true, productionListenerStarted: false, executionDispatched: false});
 });

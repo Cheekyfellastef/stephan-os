@@ -91,6 +91,26 @@ namespace Stephanos.Sovereign {
         System.Threading.Thread.Sleep(250);
       }
     }
+    static bool WaitForClient(NamedPipeServerStream pipe) {
+      using(var cancellation=new System.Threading.CancellationTokenSource()) {
+        var waiting=pipe.WaitForConnectionAsync(cancellation.Token);var idle=Stopwatch.StartNew();
+        while(!waiting.IsCompleted) {
+          // One pending connect survives every idle interval while the original
+          // execution Task or uncertain native Job still owns this helper. The
+          // framework owns cancellation/completion and its native wait handle.
+          System.Threading.Thread.Sleep(250);ObserveOriginalDrain();
+          if(!PendingOperation() && idle.ElapsedMilliseconds>=5000)cancellation.Cancel();
+        }
+        try {waiting.GetAwaiter().GetResult();return true;}
+        catch(OperationCanceledException) {if(cancellation.IsCancellationRequested)return false;throw;}
+      }
+    }
+    static NamedPipeServerStream RecoverPipe(NamedPipeServerStream pipe,string name,string sid) {
+      // A failed peer must not leave the native owner alive but uncontactable.
+      // Dispose its old instance before recreating the SAME authenticated pipe;
+      // this never releases/replaces the original Task, Job or request.
+      pipe.Dispose();return CreateServer(name,sid);
+    }
     [StructLayout(LayoutKind.Sequential)] struct SecurityAttributes {internal int Length;internal IntPtr Descriptor;internal int Inherit;}
     [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]
     static extern SafePipeHandle CreateNamedPipeW(string name,uint openMode,uint pipeMode,uint instances,uint outSize,uint inSize,uint timeout,ref SecurityAttributes security);
@@ -172,10 +192,17 @@ namespace Stephanos.Sovereign {
       }finally{if(token!=IntPtr.Zero)CloseHandle(token);if(process!=IntPtr.Zero)CloseHandle(process);}
     }
     static void Complete(IAsyncResult pending,int milliseconds,Action<IAsyncResult> end,IDisposable owner) {
-      using(var wait=pending.AsyncWaitHandle) {
-        if(!wait.WaitOne(milliseconds)){owner.Dispose();throw new InvalidOperationException("MOBILE_PIPE_IO_DEADLINE");}
-        end(pending);
-      }
+      Exception failure=null;
+      // The framework alone owns End* and its native wait/overlapped/buffer
+      // lifetime, including cancellation after our bounded transport deadline.
+      // Never dispose a pending operation's wait handle or call End* twice.
+      var completion=Task.Factory.FromAsync(pending,delegate(IAsyncResult result) {
+        try {end(result);}catch(Exception error){failure=error;}
+      });
+      if(!completion.Wait(milliseconds)){owner.Dispose();throw new InvalidOperationException("MOBILE_PIPE_IO_DEADLINE");}
+      // Completion synchronizes the captured error. A later timeout completion
+      // is already observed inside the wrapper and cannot fault an orphan Task.
+      if(failure!=null)throw failure;
     }
     static byte[] ReadExactly(PipeStream pipe,int count,Stopwatch clock,int deadline) {
       byte[] bytes=new byte[count];int offset=0;
@@ -215,11 +242,24 @@ namespace Stephanos.Sovereign {
       return response;
     }
     static string Envelope(SovereignMobileInstallJournalV1 journal,
-      SovereignMobileInstallAssertionV1.MobileInstallCandidateBindingV1 candidate,string enrollment,
-      SovereignMobileInstallExecutorV1.NativeExecutionEvidenceV1 execution=null) {
-      var receipt=MobileInstallReceiptV1.FromNative(journal,candidate,execution);
-      using(var anchor=SovereignMobileInstallAnchorV1.OpenProtected())
-        return Response(candidate,enrollment,anchor.SignReceipt(receipt));
+      SovereignMobileInstallAssertionV1.MobileInstallCandidateBindingV1 candidate,MobileInstallQualifiedEnrollmentV1 qualified) {
+      var execution=CompletedEvidence(candidate.RequestId);
+      var snapshot=journal.ReceiptSnapshot(candidate.RequestId,candidate.CandidateSha256);
+      if(snapshot.State!="INSTALLED_PENDING_BOOT" && snapshot.State!="FAILED") {
+        var receipt=MobileInstallReceiptV1.FromNative(journal,candidate,execution);
+        using(var anchor=SovereignMobileInstallAnchorV1.OpenProtected())
+          return Response(candidate,qualified.EnrollmentJson,anchor.SignReceipt(receipt));
+      }
+      // Both this helper and a later one use the same fresh terminal readback.
+      // Never launder failed current readback through old Task evidence. Keep
+      // independently measured pins, this exclusive WAL and qualified
+      // enrollment alive through signing.
+      using(var terminal=SovereignMobileInstallExecutorV1.ReconcileProtected(journal,candidate,qualified)) {
+        var receipt=terminal==null?MobileInstallReceiptV1.FromNative(journal,candidate,null):
+          MobileInstallReceiptV1.FromTerminalReadback(journal,candidate,terminal);
+        using(var anchor=SovereignMobileInstallAnchorV1.OpenProtected())
+          return Response(candidate,qualified.EnrollmentJson,anchor.SignReceipt(receipt));
+      }
     }
     static string Response(SovereignMobileInstallAssertionV1.MobileInstallCandidateBindingV1 candidate,string enrollment,string signed) {
       return "{\"schemaVersion\":\"stephanos.mobile-install-pipe-response.v1\",\"candidate\":"+candidate.CanonicalJson+
@@ -241,8 +281,8 @@ namespace Stephanos.Sovereign {
         candidate=command.Operation=="PREPARE"?journal.PrepareNative(qualified):journal.LoadPreparedCandidate(command.RequestId);
         if(command.Operation=="CANCEL")journal.CancelPrepared(candidate.RequestId);
         if(command.Operation=="APPROVE" && (journal.ReceiptSnapshot(candidate.RequestId,candidate.CandidateSha256).State!="PREPARED" ||
-            candidate.ExpiresAtUtc<=DateTime.UtcNow))return Envelope(journal,candidate,qualified.EnrollmentJson,CompletedEvidence(candidate.RequestId));
-        if(command.Operation!="APPROVE")return Envelope(journal,candidate,qualified.EnrollmentJson,CompletedEvidence(candidate.RequestId));
+            candidate.ExpiresAtUtc<=DateTime.UtcNow))return Envelope(journal,candidate,qualified);
+        if(command.Operation!="APPROVE")return Envelope(journal,candidate,qualified);
       }
       // Reserve the same original before scheduling its single task. The pipe
       // remains available for real native progress/cancellation, without opening
@@ -256,39 +296,36 @@ namespace Stephanos.Sovereign {
       }
       if(PendingOperation())throw new InvalidOperationException("MOBILE_INSTALLER_ORIGINAL_OUTCOME_UNCONFIRMED");
       using(var journal=SovereignMobileInstallJournalV1.OpenProtected())
-        return Envelope(journal,journal.LoadPreparedCandidate(candidate.RequestId),qualified.EnrollmentJson,CompletedEvidence(candidate.RequestId));
+        return Envelope(journal,journal.LoadPreparedCandidate(candidate.RequestId),qualified);
     }
     // Fixed task executable target. No request, source, path or command argv.
     public static int Main(string[] args) {
       if(args==null || args.Length!=0)return 64;
       try {
-        using(var qualified=MobileInstallQualifiedEnrollmentV1.OpenProtected())
-        using(var pipe=CreateServer(PipeName,qualified.OperatorSid)) {
-          var age=Stopwatch.StartNew();int completed=0;
-          while(true) {
-            IAsyncResult waiting=pipe.BeginWaitForConnection(null,null);var idle=Stopwatch.StartNew();
-            using(var wait=waiting.AsyncWaitHandle)while(!wait.WaitOne(250)) {
-              // Keep the SAME pending connect and native owner alive while its
-              // admitted task or uncertain Job still owns execution custody.
-              ObserveOriginalDrain();if(!PendingOperation() && idle.ElapsedMilliseconds>=5000)return 0;
+        using(var qualified=MobileInstallQualifiedEnrollmentV1.OpenProtected()) {
+          NamedPipeServerStream pipe=CreateServer(PipeName,qualified.OperatorSid);
+          try {
+            var age=Stopwatch.StartNew();int completed=0;
+            while(true) {
+              if(!WaitForClient(pipe))return 0;
+              string response;
+              try {
+                VerifyClient(pipe,qualified.OperatorSid);
+                var request=MobileInstallPipeRequestV1.Parse(ReadFrame(pipe));response=Handle(request,qualified);
+              }catch {
+                // Unsigned failures are never an actionable native state. Clients
+                // retain the original request and reconcile; they cannot retry a
+                // possibly delivered approval under a fresh identity.
+                response="{\"schemaVersion\":\"stephanos.mobile-install-pipe-error.v1\",\"reasonCode\":\"MOBILE_INSTALL_NATIVE_STATE_UNPROVEN\"}";
+              }
+              // One response attempt only. Failed/absent ACK leaves the original
+              // operation uncertain and retains its native owner without replay.
+              try {WriteResponseAndDisconnect(pipe,response);}
+              catch {pipe=RecoverPipe(pipe,PipeName,qualified.OperatorSid);}
+              completed++;
+              if((completed>=16 || age.ElapsedMilliseconds>600000) && !PendingOperation())return 0;
             }
-            pipe.EndWaitForConnection(waiting);
-            string response;
-            try {
-              VerifyClient(pipe,qualified.OperatorSid);
-              var request=MobileInstallPipeRequestV1.Parse(ReadFrame(pipe));response=Handle(request,qualified);
-            }catch {
-              // Unsigned failures are never an actionable native state. Clients
-              // retain the original request and reconcile; they cannot retry a
-              // possibly delivered approval under a fresh identity.
-              response="{\"schemaVersion\":\"stephanos.mobile-install-pipe-error.v1\",\"reasonCode\":\"MOBILE_INSTALL_NATIVE_STATE_UNPROVEN\"}";
-            }
-            // One response attempt only. Failed/absent ACK leaves the original
-            // operation uncertain and retains its native owner without replay.
-            try {WriteResponseAndDisconnect(pipe,response);}catch {RetainOriginalUntilDrained();return 75;}
-            completed++;
-            if((completed>=16 || age.ElapsedMilliseconds>600000) && !PendingOperation())return 0;
-          }
+          }finally{pipe.Dispose();}
         }
       }catch {RetainOriginalUntilDrained();return 75;}
     }

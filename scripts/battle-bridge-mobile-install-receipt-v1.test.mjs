@@ -14,6 +14,8 @@ namespace Stephanos.Sovereign {
   public static class MobileInstallReceiptFixtureRunnerV1 {
     const System.Reflection.BindingFlags Hidden=System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.Instance;
     sealed class Pins:System.IDisposable {public void Dispose(){}}
+    [System.Runtime.InteropServices.DllImport("kernel32.dll",CharSet=System.Runtime.InteropServices.CharSet.Unicode,SetLastError=true)]
+    static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFileW(string path,uint access,uint sharing,System.IntPtr security,uint creation,uint flags,System.IntPtr template);
     static string Hash(string text) {using(var sha=System.Security.Cryptography.SHA256.Create())return System.BitConverter.ToString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(text))).Replace("-","").ToLowerInvariant();}
     sealed class JournalFixture:System.IDisposable {
       internal readonly SovereignMobileInstallAssertionV1.MobileInstallCandidateBindingV1 Candidate;
@@ -22,6 +24,7 @@ namespace Stephanos.Sovereign {
       internal SovereignMobileInstallJournalV1 Journal;
       internal readonly string Birth,Started;
       readonly string path;
+      readonly System.Collections.Generic.List<string> readbackFiles=new System.Collections.Generic.List<string>();
       internal JournalFixture(System.Collections.Generic.Dictionary<string,object> input,System.Web.Script.Serialization.JavaScriptSerializer parser) {
         var first=(System.Collections.Generic.Dictionary<string,object>)((object[])input["rows"])[0];
         Candidate=SovereignMobileInstallAssertionV1.ReadCandidateBindingV1((string)first["candidateJson"]);
@@ -45,6 +48,8 @@ namespace Stephanos.Sovereign {
         events.Add(new MobileInstallAnchorEventV1(2,genesis));
         path=System.IO.Path.Combine((string)input["fixtureRoot"],"receipt-journal-"+System.Guid.NewGuid().ToString("N")+".wal");
         System.IO.File.WriteAllText(path,header+"|"+head+"\n",new System.Text.UTF8Encoding(false));Reopen();
+        var prepared=(MobileInstallJournalObservationV1)typeof(SovereignMobileInstallJournalV1).GetMethod("AppendPreparedV1",Hidden)
+          .Invoke(Journal,new object[]{"PREPARE",Candidate});Check(prepared.JournalTransitionRecorded,"PREPARE_NOT_RECORDED");
         var approval=SovereignMobileInstallAssertionV1.Verify(Candidate.CanonicalJson,parser.Serialize(Enrollment),(string)input["assertionJson"],System.DateTime.UtcNow);
         Check(approval.ApprovalVerified,"REAL_ASSERTION_NOT_VERIFIED");Check(Journal.ConsumeVerifiedApproval(approval).JournalTransitionRecorded,"CONSUME_NOT_RECORDED");
         var birth=System.DateTime.UtcNow;Birth=birth.ToString("O",System.Globalization.CultureInfo.InvariantCulture);
@@ -62,9 +67,44 @@ namespace Stephanos.Sovereign {
         return (SovereignMobileInstallExecutorV1.NativeExecutionEvidenceV1)typeof(SovereignMobileInstallExecutorV1.NativeExecutionEvidenceV1)
           .GetConstructors(Hidden)[0].Invoke(new object[]{state,"MOBILE_INSTALL_EXECUTOR_FIXTURE",Candidate.RequestId,Candidate.CandidateSha256,
           machine??Candidate.MachineHash,Candidate.SourceHead,Candidate.PackageSha256,Candidate.EnrollmentGeneration,sequence??snapshot.Sequence,
-          snapshot.HeadSha256,pid,Birth,resumed?Started:null,true,resumed,zero,released,helper,boot});
+          snapshot.HeadSha256,pid,pid==0?null:Birth,resumed?Started:null,true,resumed,zero,released,helper,boot});
       }
-      public void Dispose(){try{if(Journal!=null)Journal.Dispose();}finally{Anchor.Dispose();System.IO.File.Delete(path);}}
+      internal MobileInstallQualifiedEnrollmentV1 Qualified(System.Web.Script.Serialization.JavaScriptSerializer parser,string sourceTree=null) {
+        // Private data fixture only. No production qualifier or protected root is opened.
+        var binding=SovereignMobileInstallAssertionV1.ReadEnrollmentBindingV1(parser.Serialize(Enrollment));
+        var fields=new System.Collections.Generic.Dictionary<string,string> {
+          {"machineHash",Candidate.MachineHash},{"operatorSid",Candidate.OperatorSid},{"enrollmentGeneration","1"},
+          {"sourceHead",Candidate.SourceHead},{"sourceTree",sourceTree??Candidate.SourceTree},{"packageSha256",Candidate.PackageSha256},
+          {"closureSha256",Candidate.ClosureSha256},{"releaseProofSha256",Candidate.ReleaseProofSha256},{"bootstrapSha256",new string('6',64)}};
+        var permit=new MobileInstallReleaseInspectionV1(true,"SYNTHETIC_RECEIPT_DATA_NOT_QUALIFICATION",fields);
+        var files=new MobileInstallEnrollmentFilesV1 {EnrollmentJson=parser.Serialize(Enrollment),Binding=binding};
+        return (MobileInstallQualifiedEnrollmentV1)typeof(MobileInstallQualifiedEnrollmentV1).GetConstructors(Hidden)[0]
+          .Invoke(new object[]{files,permit,null});
+      }
+      internal SovereignMobileInstallExecutorV1.TerminalReadbackEvidenceV1 Terminal(
+        System.Web.Script.Serialization.JavaScriptSerializer parser,string helper=null,string boot=null,string sourceTree=null) {
+        var terminal=SovereignMobileInstallJournalV1.TerminalWitnessV1.Capture(Journal,Candidate);
+        CoreJobCustodyV1.MobileInstallerReadBackV1 readback=null;
+        if(terminal!=null && terminal.Snapshot.State=="INSTALLED_PENDING_BOOT") {
+          // Actual private workspace handles support the data-only readback seam;
+          // these synthetic bytes are never claimed to be a protected install.
+          string file=System.IO.Path.Combine(System.IO.Path.GetDirectoryName(path),"receipt-readback-"+System.Guid.NewGuid().ToString("N")+".bin");
+          System.IO.File.WriteAllText(file,"SYNTHETIC_READBACK_DATA_ONLY");readbackFiles.Add(file);
+          var pins=new FixedRuntimeIdentityPinsV1();
+          try {
+            pins.Files.Add(new System.IO.FileStream(file,System.IO.FileMode.Open,System.IO.FileAccess.Read,System.IO.FileShare.Read));
+            var directory=CreateFileW(System.IO.Path.GetDirectoryName(path),0x80,7,System.IntPtr.Zero,3,0x02000000,System.IntPtr.Zero);
+            if(directory.IsInvalid){int error=System.Runtime.InteropServices.Marshal.GetLastWin32Error();directory.Dispose();throw new System.Exception("FIXTURE_DIRECTORY_PIN:"+error);}
+            pins.Directories.Add(directory);
+            readback=(CoreJobCustodyV1.MobileInstallerReadBackV1)typeof(CoreJobCustodyV1.MobileInstallerReadBackV1).GetConstructors(Hidden)[0]
+              .Invoke(new object[]{helper??terminal.Snapshot.InstalledHelperSha256,boot??terminal.Snapshot.InstallationBootId,pins});
+          }catch{pins.Dispose();throw;}
+        }
+        var result=(SovereignMobileInstallExecutorV1.TerminalReadbackEvidenceV1)typeof(SovereignMobileInstallExecutorV1.TerminalReadbackEvidenceV1)
+          .GetMethod("Bind",Hidden).Invoke(null,new object[]{Journal,Candidate,Qualified(parser,sourceTree),terminal,readback});
+        if(result==null && readback!=null)readback.Dispose();return result;
+      }
+      public void Dispose(){try{if(Journal!=null)Journal.Dispose();}finally{Anchor.Dispose();System.IO.File.Delete(path);foreach(string file in readbackFiles)System.IO.File.Delete(file);}}
     }
     static void Check(bool value,string reason){if(!value)throw new System.Exception(reason);}
     static object[] FactoryCases(System.Collections.Generic.Dictionary<string,object> input,System.Web.Script.Serialization.JavaScriptSerializer parser) {
@@ -97,6 +137,45 @@ namespace Stephanos.Sovereign {
         capture("installed receipt requires current helper digest","UNKNOWN",f.Evidence("INSTALLED_PENDING_BOOT",true,true,true,null,new string('9',64)));
         capture("installed receipt requires installation boot identity","UNKNOWN",f.Evidence("INSTALLED_PENDING_BOOT",true,true,true,new string('8',64),null));
         f.Reopen();capture("reloaded terminal requires fresh native evidence","UNKNOWN",null);
+        System.Action<string,string,SovereignMobileInstallExecutorV1.TerminalReadbackEvidenceV1> recovered=(name,expected,evidence)=>{
+          var receipt=MobileInstallReceiptV1.FromTerminalReadback(f.Journal,f.Candidate,evidence);Check(receipt.State==expected,"READBACK_STATE:"+name+":"+receipt.State);
+          rows.Add(new{name,expectedState=expected,envelope=f.Anchor.SignReceipt(receipt),enrollment=f.Enrollment,candidateJson=f.Candidate.CanonicalJson});};
+        using(var proof=f.Terminal(parser)) {
+          Check(proof!=null,"REPLAYED_TERMINAL_BINDER_REFUSED");
+          recovered("replayed R2 plus retained synthetic readback signs pending","INSTALLED_PENDING_BOOT",proof);
+          var receipt=MobileInstallReceiptV1.FromTerminalReadback(f.Journal,f.Candidate,proof);proof.Dispose();
+          recovered("disposed readback cannot refresh terminal truth","UNKNOWN",proof);
+          bool denied=false;try{f.Anchor.SignReceipt(receipt);}catch(System.InvalidOperationException){denied=true;}
+          Check(denied,"DISPOSED_PROOF_SIGNED_AFTER_PROJECTION");
+        }
+        recovered("different current helper cannot recover terminal","UNKNOWN",f.Terminal(parser,new string('f',64)));
+        recovered("different installation boot cannot recover terminal","UNKNOWN",f.Terminal(parser,null,new string('f',64)));
+        recovered("different qualified release cannot recover terminal","UNKNOWN",f.Terminal(parser,null,null,new string('f',40)));
+        foreach(int seconds in new[]{-121,5})using(var proof=f.Terminal(parser)) {
+          var type=typeof(SovereignMobileInstallExecutorV1.TerminalReadbackEvidenceV1);
+          type.GetField("ObservedAtUtc",Hidden).SetValue(proof,System.DateTime.UtcNow.AddSeconds(seconds));
+          // Exercise receipt freshness independently of the private proof stamp.
+          type.GetField("original",Hidden).SetValue(proof,type.GetMethod("Stamp",Hidden).Invoke(proof,null));
+          recovered(seconds<0?"old readback does not renew itself":"future readback cannot be projected","UNKNOWN",proof);
+        }
+        using(var proof=f.Terminal(parser)) {
+          var receipt=MobileInstallReceiptV1.FromTerminalReadback(f.Journal,f.Candidate,proof);f.Reopen();
+          recovered("reopened journal cannot borrow prior owner's readback","UNKNOWN",proof);
+          bool denied=false;try{f.Anchor.SignReceipt(receipt);}catch(System.InvalidOperationException){denied=true;}
+          Check(denied,"PRIOR_OWNER_PROOF_SIGNED_AFTER_REOPEN");
+        }
+      }
+      foreach(bool boundRoot in new[]{false,true})using(var f=new JournalFixture(input,parser)) {
+        Check(f.Journal.RecordClaim(f.Candidate.RequestId,f.Candidate.CandidateSha256).JournalTransitionRecorded,"FAILED_CLAIM_NOT_RECORDED");
+        if(boundRoot)Check(f.Journal.RecordSuspendedRoot(f.Evidence("ROOT_SUSPENDED")).JournalTransitionRecorded,"FAILED_ROOT_NOT_RECORDED");
+        Check(f.Journal.RecordFailed(f.Evidence("FAILED",false,true,true)).JournalTransitionRecorded,"FAILED_TERMINAL_NOT_RECORDED");f.Reopen();
+        using(var proof=f.Terminal(parser)) {
+          Check(proof!=null,"FAILED_REPLAY_BINDER_REFUSED");var receipt=MobileInstallReceiptV1.FromTerminalReadback(f.Journal,f.Candidate,proof);
+          Check(receipt.State=="FAILED","FAILED_REPLAY_LOST");
+          Check(receipt.CanonicalPayload.Contains(boundRoot?"\"retainedProcessId\":123":"\"retainedProcessId\":null"),"UNCOMMITTED_ROOT_PROJECTED_AS_KNOWN");
+          rows.Add(new{name=boundRoot?"replayed failure retains only committed root":"replayed failure does not invent root binding",expectedState="FAILED",
+            envelope=f.Anchor.SignReceipt(receipt),enrollment=f.Enrollment,candidateJson=f.Candidate.CanonicalJson});
+        }
       }
       return rows.ToArray();
     }
@@ -135,7 +214,10 @@ namespace Stephanos.Sovereign {
               var now=System.DateTime.ParseExact((string)row["observedAtUtc"],"yyyy-MM-dd'T'HH:mm:ss.fff'Z'",System.Globalization.CultureInfo.InvariantCulture,
                 System.Globalization.DateTimeStyles.AssumeUniversal|System.Globalization.DateTimeStyles.AdjustToUniversal);
               uint? pid=row["pid"]==null?(uint?)null:System.Convert.ToUInt32(row["pid"]);
-              var receipt=(MobileInstallReceiptV1)typeof(MobileInstallReceiptV1).GetConstructors(Hidden)[0].Invoke(new object[]{candidate,binding.CredentialBindingSha256,
+              System.Reflection.ConstructorInfo receiptConstructor=null;
+              foreach(var ctor in typeof(MobileInstallReceiptV1).GetConstructors(Hidden))if(ctor.GetParameters().Length==11)receiptConstructor=ctor;
+              Check(receiptConstructor!=null,"RECEIPT_FIXTURE_CONSTRUCTOR_UNPROVEN");
+              var receipt=(MobileInstallReceiptV1)receiptConstructor.Invoke(new object[]{candidate,binding.CredentialBindingSha256,
                 row["state"],row["reason"],System.Convert.ToInt64(row["sequence"]),row["head"],now,pid,row["started"],row["helper"],row["boot"]});
               if((string)row["tamper"]=="payload")typeof(MobileInstallReceiptV1).GetField("CanonicalPayload",Hidden).SetValue(receipt,receipt.CanonicalPayload.Replace("APPROVAL_RECORDED","AWAITING_APPROVAL"));
               if((string)row["tamper"]=="candidate")typeof(SovereignMobileInstallAssertionV1.MobileInstallCandidateBindingV1).GetField("CandidateSha256",Hidden).SetValue(candidate,new string('f',64));

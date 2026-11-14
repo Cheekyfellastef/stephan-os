@@ -63,7 +63,7 @@ namespace Stephanos.Sovereign {
     long generation,sequence,knownLength;
     uint watermark;
     bool poisoned,disposed;
-    sealed class RequestState { internal string Candidate,State,Birth,Started,Helper,Boot,Reason;internal uint Counter,Pid;internal DateTime Expires; }
+    sealed class RequestState { internal string Candidate,State,Birth,Started,Helper,Boot,Reason;internal uint Counter,Pid;internal DateTime Expires;internal bool RootCommitted,ResumeCommitted,TerminalCommitted; }
     internal long EnrollmentGeneration {get{return generation;}}
     internal string CredentialBindingSha256 {get{return credential;}}
     sealed class Refusal : Exception { internal Refusal(string code) : base(code) { } }
@@ -216,7 +216,8 @@ namespace Stephanos.Sovereign {
       if((row[3]=="FAILED" || row[3]=="UNKNOWN") && (state.State=="CLAIM_RECORDED" || state.State=="STARTING" || state.State=="INSTALLING" || state.State=="OUTCOME_UNKNOWN") &&
          (state.Pid==0 || (pid==state.Pid && birth==state.Birth)) && helper==null && boot==null)next=row[3]=="FAILED"?"FAILED":"OUTCOME_UNKNOWN";
       if(next==null)Deny("MOBILE_JOURNAL_EXECUTION_TRANSITION_INVALID");
-      if(change){state.State=next;state.Pid=pid;state.Birth=birth;state.Started=started;state.Helper=helper;state.Boot=boot;state.Reason=row[15];sequence++;head=row[16];}
+      if(change){state.RootCommitted|=row[3]=="ROOT";state.ResumeCommitted|=row[3]=="STARTED";state.TerminalCommitted=row[3]=="PENDING" || row[3]=="FAILED";
+        state.State=next;state.Pid=pid;state.Birth=birth;state.Started=started;state.Helper=helper;state.Boot=boot;state.Reason=row[15];sequence++;head=row[16];}
     }
     void Healthy() {
       if(disposed || poisoned) Deny("MOBILE_JOURNAL_HELD");
