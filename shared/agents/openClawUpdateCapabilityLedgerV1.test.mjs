@@ -38,13 +38,14 @@ function ledger(capabilities) {
   });
 }
 
-test('preserved protected capability is accepted without qualification replay', () => {
+test('preserved protected capability across version requires qualification replay', () => {
   const result = ledger([baseCapability()]);
   assert.equal(result.verdict, 'CAPABILITY_LEDGER_READY_FOR_CANDIDATE_PROOF');
   assert.equal(result.updateAllowed, true);
   assert.deepEqual(result.blockers, []);
   assert.equal(result.protectedCapabilityCount, 1);
-  assert.deepEqual(result.requiredQualificationReplay, []);
+  assert.deepEqual(result.requiredQualificationReplay, [OPENCLAW_TASK_CLASS.OC1]);
+  assert.equal(result.authority.qualificationInvalidationRequired, true);
   assert.equal(result.authority.updateExecutionAllowed, false);
   assert.equal(result.authority.runtimeMutationAllowed, false);
 });
@@ -233,4 +234,78 @@ test('top-level accessor and hostile capability array fail closed without execut
   });
   assert.equal(arrayResult.updateAllowed, false);
   assert.ok(arrayResult.blockers.includes('CAPABILITIES_INVALID'));
+});
+
+
+test('cross-version PRESERVE with all empty refs fails closed', () => {
+  const result = ledger([baseCapability({ qualificationRefs: [], tests: [], evidenceRefs: [] })]);
+  assert.equal(result.updateAllowed, false);
+  for (const field of ['QUALIFICATION_REFS', 'TESTS', 'EVIDENCE_REFS']) assert.ok(result.blockers.includes(`PRESERVE_${field}_REQUIRED:openclaw.gateway-provider`));
+});
+test('cross-version PRESERVE without task classes fails closed', () => {
+  const result = ledger([baseCapability({ affectedTaskClasses: [] })]);
+  assert.equal(result.updateAllowed, false);
+  assert.ok(result.blockers.includes('PRESERVE_TASK_CLASSES_REQUIRED:openclaw.gateway-provider'));
+});
+test('same-version PRESERVE with valid refs retains no replay', () => {
+  const result = buildOpenClawUpdateCapabilityLedgerV1({ currentVersion: '1.2.3', targetVersion: '1.2.3', capabilities: [baseCapability()] });
+  assert.equal(result.updateAllowed, true);
+  assert.deepEqual(result.requiredQualificationReplay, []);
+});
+
+test('protected capability blocks stale or future qualification versions', () => {
+  for (const lastQualifiedVersion of ['1.2.2', '1.3.0']) {
+    const result = ledger([baseCapability({ lastQualifiedVersion })]);
+    assert.equal(result.updateAllowed, false, lastQualifiedVersion);
+    assert.deepEqual(result.blockers, ['PROTECTED_CAPABILITY_QUALIFICATION_VERSION_MISMATCH:openclaw.gateway-provider']);
+  }
+});
+
+test('same-version PRESERVE blocks stale qualification', () => {
+  const result = buildOpenClawUpdateCapabilityLedgerV1({
+    currentVersion: '1.2.3',
+    targetVersion: '1.2.3',
+    capabilities: [baseCapability({ lastQualifiedVersion: '1.2.2' })],
+  });
+  assert.equal(result.updateAllowed, false);
+  assert.deepEqual(result.blockers, ['PROTECTED_CAPABILITY_QUALIFICATION_VERSION_MISMATCH:openclaw.gateway-provider']);
+});
+
+for (const updateDisposition of [
+  OPENCLAW_UPDATE_DISPOSITION.MIGRATE,
+  OPENCLAW_UPDATE_DISPOSITION.IMPROVE,
+  OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM,
+]) {
+  test(`protected ${updateDisposition} requires at least one affected task class`, () => {
+    const candidate = {
+      updateDisposition,
+      candidateImplementation: 'openclaw.gateway-provider.v2',
+      candidateOrigin: updateDisposition === OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM
+        ? OPENCLAW_UPDATE_CAPABILITY_ORIGIN.UPSTREAM
+        : OPENCLAW_UPDATE_CAPABILITY_ORIGIN.STEPHANOS_EXTENSION,
+    };
+    const blocked = ledger([baseCapability({ ...candidate, affectedTaskClasses: [] })]);
+    assert.equal(blocked.updateAllowed, false);
+    assert.deepEqual(blocked.blockers, ['CANDIDATE_TASK_CLASSES_REQUIRED:openclaw.gateway-provider']);
+
+    const allowed = ledger([baseCapability(candidate)]);
+    assert.equal(allowed.updateAllowed, true);
+    assert.deepEqual(allowed.requiredQualificationReplay, [OPENCLAW_TASK_CLASS.OC1]);
+  });
+}
+
+test('unprotected capability metadata retains compatibility', () => {
+  const result = ledger([
+    baseCapability(),
+    baseCapability({
+      capabilityId: 'openclaw.optional-provider',
+      protected: false,
+      lastQualifiedVersion: '1.2.2',
+      updateDisposition: OPENCLAW_UPDATE_DISPOSITION.MIGRATE,
+      candidateImplementation: 'openclaw.optional-provider.v2',
+      affectedTaskClasses: [],
+    }),
+  ]);
+  assert.equal(result.updateAllowed, true);
+  assert.deepEqual(result.requiredQualificationReplay, [OPENCLAW_TASK_CLASS.OC1]);
 });

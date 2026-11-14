@@ -201,6 +201,9 @@ function normalizeCapability(rawInput, blockers) {
     if (!candidateImplementation) blockers.push(`CANDIDATE_IMPLEMENTATION_REQUIRED:${capabilityId || 'unknown'}`);
     if (tests.length === 0) blockers.push(`CANDIDATE_TEST_PROOF_REQUIRED:${capabilityId || 'unknown'}`);
     if (evidenceRefs.length === 0) blockers.push(`CANDIDATE_EVIDENCE_REQUIRED:${capabilityId || 'unknown'}`);
+    if (protectedCapability && affectedTaskClasses.length === 0) {
+      blockers.push(`CANDIDATE_TASK_CLASSES_REQUIRED:${capabilityId || 'unknown'}`);
+    }
   }
 
   if (updateDisposition === OPENCLAW_UPDATE_DISPOSITION.PRESERVE) {
@@ -298,7 +301,23 @@ export function buildOpenClawUpdateCapabilityLedgerV1(input = {}) {
 
   const replay = new Set();
   for (const capability of protectedCapabilities) {
-    if (requiresCandidateProof(capability.updateDisposition)) {
+    if (currentVersion && capability.lastQualifiedVersion && capability.lastQualifiedVersion !== currentVersion) {
+      blockers.push(`PROTECTED_CAPABILITY_QUALIFICATION_VERSION_MISMATCH:${capability.capabilityId}`);
+    }
+    // A matching source identity does not prove the target package loaded the old hook.
+    const preservedAcrossVersion = capability.updateDisposition === OPENCLAW_UPDATE_DISPOSITION.PRESERVE
+      && currentVersion !== targetVersion;
+    if (preservedAcrossVersion) {
+      for (const [field, refs] of [
+        ['QUALIFICATION_REFS', capability.qualificationRefs],
+        ['TESTS', capability.tests],
+        ['EVIDENCE_REFS', capability.evidenceRefs],
+        ['TASK_CLASSES', capability.affectedTaskClasses],
+      ]) {
+        if (refs.length === 0) blockers.push(`PRESERVE_${field}_REQUIRED:${capability.capabilityId}`);
+      }
+    }
+    if (requiresCandidateProof(capability.updateDisposition) || preservedAcrossVersion) {
       capability.affectedTaskClasses.forEach((taskClass) => replay.add(taskClass));
     }
   }
