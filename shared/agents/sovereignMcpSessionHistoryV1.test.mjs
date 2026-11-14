@@ -480,3 +480,27 @@ test('authentication key and header aliases cannot hide credentials in private r
   });
   assert.equal(stored(history, 'ordinary-auth-status').resultAvailable, true);
 });
+
+test('session-key and whitespace-separated credential aliases are never retained', () => {
+  const { history } = fixture();
+  const fields = [
+    'sessionKey', 'session_key', 'session-key', 'api key', 'access key',
+    'private key', 'authentication key', 'vendorSessionKey',
+    'service.session keys', ' session\tkey ', 'api\u00a0key',
+  ];
+  for (const [index, field] of fields.entries()) {
+    const callId = 'alias-refusal-' + index;
+    complete(history, callId, { ok: true, nested: [{ [field]: 'inert-private-fixture' }] });
+    const response = stored(history, callId);
+    assert.equal(response.resultAvailable, false, field);
+    assert.equal(response.call.retentionReason, 'RESULT_SENSITIVE_KEY', field);
+    assert.equal(JSON.stringify(response).includes(field), false, field);
+    assert.equal(JSON.stringify(response).includes('inert-private-fixture'), false, field);
+  }
+  complete(history, 'ordinary-session-status', {
+    ok: true, nested: { sessionId: 'session-1', sessionStatus: 'READY',
+      authStatus: 'READY', authenticationState: 'VERIFIED', apiVersion: 'v1' },
+  });
+  assert.equal(stored(history, 'ordinary-session-status').resultAvailable, true);
+  assert.equal(usage(history).retainedResults, 1);
+});

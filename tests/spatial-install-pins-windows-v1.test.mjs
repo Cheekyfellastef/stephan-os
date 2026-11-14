@@ -108,11 +108,12 @@ foreach ($mode in @('move','replace')) {
         foreach ($name in @('SpatialWindow.exe','build.json')) {
             $target=Join-Path $destination $name
             $replacement=Join-Path $scenario ($name+'.replacement')
+            $replacementBackup=Join-Path $scenario ($name+'.replacement-backup')
             [IO.File]::WriteAllText($replacement,'replacement-bytes')
             Assert-FixtureDenied -Name ($mode+' overwrite '+$name) -Action { [IO.File]::WriteAllText($target,'overwrite') }
             Assert-FixtureDenied -Name ($mode+' delete '+$name) -Action { [IO.File]::Delete($target) }
             Assert-FixtureDenied -Name ($mode+' rename '+$name) -Action { [IO.File]::Move($target,$target+'.moved') }
-            Assert-FixtureDenied -Name ($mode+' replace '+$name) -Action { [IO.File]::Replace($replacement,$target,$null,$true) }
+            Assert-FixtureDenied -Name ($mode+' replace '+$name) -Action { [IO.File]::Replace($replacement,$target,$replacementBackup,$true) }
         }
         Assert-FixtureDenied -Name ($mode+' installation directory rename') -Action {
             [IO.Directory]::Move($destination,$destination+'.moved')
@@ -129,7 +130,9 @@ foreach ($mode in @('move','replace')) {
         [IO.Directory]::Move($parent+'.released',$parent)
         foreach ($name in @('SpatialWindow.exe','build.json')) {
             $target=Join-Path $destination $name
-            [IO.File]::Replace((Join-Path $scenario ($name+'.replacement')),$target,$null,$true)
+            # Use the same valid replacement operation after releasing the pins:
+            # a concrete backup avoids PowerShell's null-to-empty string binding.
+            [IO.File]::Replace((Join-Path $scenario ($name+'.replacement')),$target,(Join-Path $scenario ($name+'.replacement-backup')),$true)
             [IO.File]::Delete($target)
         }
         $promotionCases++

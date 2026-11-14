@@ -22,7 +22,9 @@ $sourceRecords = @($sourcePaths | ForEach-Object { [ordered]@{path=$_;sha256=(Ge
 $source = Join-Path $repositoryRoot $sourcePaths[0]
 $binary = Join-Path $OutputDirectory 'SpatialWindow.exe'
 $compiler = Join-Path $compilerRoot 'bin\Hostx64\x64\cl.exe'
-$compileArgs = @('/nologo','/std:c++17','/EHsc','/W4','/O2','/DUNICODE','/D_UNICODE',"/I$compilerRoot\include")
+# C++20 selects standard coroutine headers in C++/WinRT; current MSVC rejects
+# the legacy experimental headers selected by plain C++17.
+$compileArgs = @('/nologo','/std:c++20','/EHsc','/W4','/O2','/DUNICODE','/D_UNICODE',"/I$compilerRoot\include")
 foreach ($include in @('ucrt','shared','um','winrt','cppwinrt')) { $compileArgs += "/I$sdkRoot\Include\$sdkVersion\$include" }
 # Restrict static DLL imports to System32, including before main executes.
 $compileArgs += @($source,"/Fo$OutputDirectory\SpatialWindow.obj","/Fe$binary",'/link','/DEPENDENTLOADFLAG:0x800','/SUBSYSTEM:WINDOWS','/ENTRY:mainCRTStartup',"/LIBPATH:$compilerRoot\lib\x64","/LIBPATH:$sdkRoot\Lib\$sdkVersion\um\x64","/LIBPATH:$sdkRoot\Lib\$sdkVersion\ucrt\x64",'windowsapp.lib','d3d11.lib','dxgi.lib','dwmapi.lib','windowscodecs.lib','crypt32.lib','ole32.lib','user32.lib','runtimeobject.lib')

@@ -26,7 +26,7 @@ const TRANSPORTS = new Set(['local-stdio-mcp', 'authenticated-http-jsonrpc']);
 const CALL_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,159}$/;
 const SECRET_KEYS = new Set([
   'authorization', 'auth', 'authtoken', 'token', 'accesstoken', 'refreshtoken',
-  'apikey', 'cookie', 'setcookie', 'password', 'passwd', 'pwd', 'secret',
+  'apikey', 'sessionkey', 'sessionkeys', 'cookie', 'setcookie', 'password', 'passwd', 'pwd', 'secret',
   'clientsecret', 'credentials', 'privatekey', 'environment', 'env',
   'stderr', 'stack', 'exception', 'error', 'errors', '__proto__', 'prototype', 'constructor',
 ]);
@@ -42,13 +42,12 @@ const SENSITIVE_RESULT_KEY_WORDS = new Set([
 ]);
 function sensitiveResultKey(key) {
   const lower = key.toLowerCase();
-  const compact = lower.replace(/[._-]/g, '');
+  const compact = lower.replace(/[.\s_-]/gu, '');
   if (SECRET_KEYS.has(lower) || SECRET_KEYS.has(compact) || SECRET_TEXT.test(key)) return true;
-  const words = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().split(/[._-]+/);
+  const words = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().split(/[.\s_-]+/u);
   return words.some((word, index) => SENSITIVE_RESULT_KEY_WORDS.has(word)
-    || (word === 'api' && ['key', 'keys'].includes(words[index + 1]))
-    || (word === 'access' && word !== words[index + 1] && words[index + 1] === 'key')
-    || (word === 'private' && words[index + 1] === 'key')
+    || (['api', 'access', 'private', 'session'].includes(word)
+      && ['key', 'keys'].includes(words[index + 1]))
     // Authentication key/header aliases carry credentials even if the value
     // lacks a recognizable token prefix. Do not reject safe authStatus fields.
     || (['auth', 'authentication'].includes(word)

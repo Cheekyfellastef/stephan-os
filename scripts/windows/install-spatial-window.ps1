@@ -85,7 +85,10 @@ try {
                 $target = Join-Path $destination $name
                 $backup = Join-Path $staging ($name + '.previous')
                 if ($previous[$name]) {
-                    if (Test-Path -LiteralPath $target) { [IO.File]::Replace($backup, $target, $null, $true) }
+                    # PowerShell binds a null string argument as an empty path.
+                    # Retain displaced candidate bytes only in our own staging.
+                    $rejected = Join-Path $staging ($name + '.rejected')
+                    if (Test-Path -LiteralPath $target) { [IO.File]::Replace($backup, $target, $rejected, $true) }
                     else { [IO.File]::Move($backup, $target) }
                 } elseif (Test-Path -LiteralPath $target) { [IO.File]::Delete($target) }
             } catch { $keepRecoveryFiles = $true }

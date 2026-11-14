@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
 import {
   SPATIAL_PREPARE_ACTION, SPATIAL_PREPARE_SCHEMA, SPATIAL_PREPARE_MARKER,
   SPATIAL_PREPARE_FLAGS, parseSpatialPreparationArgumentsV1,
@@ -43,7 +44,7 @@ test('Spatial preparation admits only its fixed action and exact source binding'
   assert.equal(result.dispatchAllowed, true);
   assert.equal(result.plan.expectedMain, HEAD);
   assert.deepEqual(result.plan.args.slice(-2), ['--expected-main', HEAD]);
-  assert.match(result.plan.args[0], /scripts\/sovereign-commander-spatial-workspace.mjs$/);
+  assert.equal(result.plan.args[0], resolve(ROOT, 'scripts', 'sovereign-commander-spatial-workspace.mjs'));
   assert.equal(result.plan.timeoutMs, 240000);
   assert.equal(isSovereignMaintenanceObservationV1(SPATIAL_PREPARE_ACTION), false);
   for (const payload of [

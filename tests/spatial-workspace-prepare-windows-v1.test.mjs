@@ -215,6 +215,7 @@ function installerHarness(directory, { lateListener = false, missingReceipt = fa
   writeFileSync(join(installation, 'build.json'), 'prior-receipt');
   writeFileSync(join(fixtureScripts, 'build-spatial-window.ps1'), [
     'param([string]$OutputDirectory,[switch]$PassThru)',
+    '$global:spatialFixtureBuilds++',
     'New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null',
     '[IO.File]::WriteAllText((Join-Path $OutputDirectory "SpatialWindow.exe"),"new-native")',
     missingReceipt ? '' : '[IO.File]::WriteAllText((Join-Path $OutputDirectory "build.json"),"new-receipt")',
@@ -222,14 +223,13 @@ function installerHarness(directory, { lateListener = false, missingReceipt = fa
   return {
     installation,
     script: [
-      '$script:fixturePowerShell = ' + quote(ps()),
-      '$global:spatialFixturePortChecks = 0; $global:spatialFixtureStops = 0',
-      'function Get-Command { [CmdletBinding()] param($Name) if ($Name -ne "node.exe") { throw "unexpected command" }; return [pscustomobject]@{Source=$script:fixturePowerShell} }',
+      '$global:spatialFixturePortChecks = 0; $global:spatialFixtureStops = 0; $global:spatialFixtureBuilds = 0',
+      'function Get-Command { [CmdletBinding()] param($Name) if ($Name -ne "node.exe") { throw "unexpected command" }; return [pscustomobject]@{Source=' + quote(ps()) + '} }',
       'function Get-NetTCPConnection { [CmdletBinding()] param($State) $global:spatialFixturePortChecks++; ' + (lateListener ? 'if ($global:spatialFixturePortChecks -gt 1) { return [pscustomobject]@{LocalPort=4180;LocalAddress="127.0.0.1";OwningProcess=9999} }' : 'return @()') + ' }',
       'function Stop-Process { [CmdletBinding()] param($Id) $global:spatialFixtureStops++; throw "unexpected stop" }',
-      '$failure = ""',
-      'try { & ' + quote(join(fixtureScripts, 'install-spatial-window.ps1')) + ' -RequirePortUnused *> $null } catch { $failure = $_.Exception.Message }',
-      '[ordered]@{failure=$failure;stops=$global:spatialFixtureStops;staging=@(Get-ChildItem -LiteralPath ' + quote(dirname(installation)) + ' -Directory | Where-Object Name -like "spatial-window-build-*").Count} | ConvertTo-Json -Compress',
+      '$failure = ""; $failureType = ""',
+      'try { & ' + quote(join(fixtureScripts, 'install-spatial-window.ps1')) + ' -RequirePortUnused *> $null } catch { $failure = $_.Exception.Message; $failureType=$_.Exception.GetBaseException().GetType().FullName }',
+      '[ordered]@{failure=$failure;failureType=$failureType;builds=$global:spatialFixtureBuilds;stops=$global:spatialFixtureStops;staging=@(Get-ChildItem -LiteralPath ' + quote(dirname(installation)) + ' -Directory | Where-Object Name -like "spatial-window-build-*").Count} | ConvertTo-Json -Compress',
     ].join('\n'),
   };
 }
@@ -238,6 +238,7 @@ test('Windows installer refuses a listener appearing during compilation and keep
   const prepared = installerHarness(directory, { lateListener: true });
   const output = run(prepared.script, directory);
   assert.equal(output.failure, 'SPATIAL_PREPARE_PORT_OCCUPIED');
+  assert.equal(output.builds, 1);
   assert.equal(output.stops, 0);
   assert.equal(output.staging, 0);
   assert.equal(readFileSync(join(prepared.installation, 'SpatialWindow.exe'), 'utf8'), 'prior-native');
@@ -248,6 +249,8 @@ test('Windows installer restores both prior files when the second promotion fail
   const prepared = installerHarness(directory, { missingReceipt: true });
   const output = run(prepared.script, directory);
   assert.notEqual(output.failure, '');
+  assert.equal(output.builds, 1);
+  assert.equal(output.failureType, 'System.IO.FileNotFoundException');
   assert.equal(output.stops, 0);
   assert.equal(output.staging, 0);
   assert.equal(readFileSync(join(prepared.installation, 'SpatialWindow.exe'), 'utf8'), 'prior-native');
