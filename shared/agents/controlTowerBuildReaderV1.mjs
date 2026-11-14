@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { decodeBoundedSingleJsonArchiveV1 } from './mailboxFreeGoalNominationV1.mjs';
 import { readMailboxFreeGitHubJsonV1, readMailboxFreeGitHubArchiveV1 } from './mailboxFreeGitHubEvidenceReaderV1.mjs';
 import { CONTROL_TOWER_BUILD_KEYS, CONTROL_TOWER_BUILD_FILE, CONTROL_TOWER_BUILD_WORKFLOW,
-  CONTROL_TOWER_OBSERVE_OPERATION, validateControlTowerBuildRequestV1,
+  CONTROL_TOWER_OBSERVE_OPERATION, CONTROL_TOWER_OWNER_COMMENT_KEYS,
+  validateControlTowerOwnerCommentV1, validateControlTowerBuildRequestV1,
   validateHistoricalControlTowerBuildRequestV1 } from './controlTowerBuildRequestV1.mjs';
 
 const authenticated = new WeakSet();
@@ -50,7 +51,8 @@ export async function readHistoricalControlTowerBuildRequestV1({
     const digest = createHash('sha256').update(archive).digest('hex');
     if (archive.length !== artifact.size_in_bytes || artifact.digest !== 'sha256:' + digest)
       return held('CONTROL_TOWER_BUILD_ARTIFACT_DIGEST_INVALID');
-    const request = decodeBoundedSingleJsonArchiveV1(archive, CONTROL_TOWER_BUILD_FILE, CONTROL_TOWER_BUILD_KEYS);
+    const request = decodeBoundedSingleJsonArchiveV1(archive, CONTROL_TOWER_BUILD_FILE,
+      run.event === 'issue_comment' ? CONTROL_TOWER_OWNER_COMMENT_KEYS : CONTROL_TOWER_BUILD_KEYS);
     const validation = validateHistoricalControlTowerBuildRequestV1(request, run, run.head_sha, now());
     if (!validation.ok) return held(validation.blocker);
     return Object.freeze({ ok: true, blocker: '', request: Object.freeze({
@@ -62,7 +64,7 @@ export async function readHistoricalControlTowerBuildRequestV1({
 
 export async function readControlTowerBuildRequestV1({
   token, now = () => new Date().toISOString(), fetchImpl = globalThis.fetch, isRecorded = () => false,
-  observationOnly = false,
+  observationOnly = false, isRequestRecorded = () => false,
 } = {}) {
   if (typeof token !== 'string' || !token || token.length > 4096) return held('CONTROL_TOWER_READ_CREDENTIAL_UNAVAILABLE');
   if (typeof observationOnly !== 'boolean') return held('CONTROL_TOWER_REQUEST_OPERATION_FILTER_INVALID');
@@ -74,14 +76,14 @@ export async function readControlTowerBuildRequestV1({
     const definition = await get(workflow);
     if (!positive(definition?.id) || definition.path !== CONTROL_TOWER_BUILD_WORKFLOW || definition.state !== 'active')
       return held('CONTROL_TOWER_BUILD_WORKFLOW_UNAVAILABLE');
-    // One bounded current-head inventory covers BOTH authenticated manual
-    // requests and owner-protected-main pushes. Other event classes cannot
-    // qualify as an owner build wake; pagination overflow fails closed.
-    const list = await get(workflow + '/runs?per_page=10&head_sha=' + first);
+    // Issue-comment triggers create skipped runs for unrelated comments. The
+    // authenticated API filters successful runs BEFORE the unchanged ten-run
+    // bound, so unrelated discussion cannot crowd out an admitted request.
+    const list = await get(workflow + '/runs?status=success&per_page=10&head_sha=' + first);
     if (!Array.isArray(list.workflow_runs) || list.workflow_runs.length > 10
       || !Number.isSafeInteger(list.total_count) || list.total_count < list.workflow_runs.length)
       return held('CONTROL_TOWER_RUN_INVENTORY_INVALID');
-    if (typeof isRecorded !== 'function') return held('CONTROL_TOWER_REQUEST_HISTORY_INVALID');
+    if (typeof isRecorded !== 'function' || typeof isRequestRecorded !== 'function') return held('CONTROL_TOWER_REQUEST_HISTORY_INVALID');
     const cutoff = Date.parse(now()) - 600000;
     if (!Number.isFinite(cutoff)) return held('CONTROL_TOWER_BUILD_CLOCK_INVALID');
     if (list.total_count > 10 && list.workflow_runs.length === 10
@@ -89,7 +91,7 @@ export async function readControlTowerBuildRequestV1({
       return held('CONTROL_TOWER_BUILD_ACTIVE_WINDOW_OVERFLOW');
     const candidates = [...list.workflow_runs].reverse().filter(r =>
       positive(r.id) && r.head_sha === first && Date.parse(r.created_at) >= cutoff && !isRecorded(r.id)
-      && ['workflow_dispatch', 'push'].includes(r.event)
+      && ['workflow_dispatch', 'push', 'issue_comment'].includes(r.event)
       && r.status === 'completed' && r.conclusion === 'success');
     if (!candidates.length) return held('NO_CONTROL_TOWER_BUILD_REQUEST');
     // When the ORIGINAL ledger retains an unresolved build, a new build must
@@ -121,11 +123,27 @@ export async function readControlTowerBuildRequestV1({
       const digest = createHash('sha256').update(archive).digest('hex');
       if (archive.length !== artifact.size_in_bytes || artifact.digest !== 'sha256:' + digest)
         return held('CONTROL_TOWER_BUILD_ARTIFACT_DIGEST_INVALID');
-      const request = decodeBoundedSingleJsonArchiveV1(archive, CONTROL_TOWER_BUILD_FILE, CONTROL_TOWER_BUILD_KEYS);
+      const request = decodeBoundedSingleJsonArchiveV1(archive, CONTROL_TOWER_BUILD_FILE,
+        run.event === 'issue_comment' ? CONTROL_TOWER_OWNER_COMMENT_KEYS : CONTROL_TOWER_BUILD_KEYS);
+      const validation = validateControlTowerBuildRequestV1(request, run, first, now());
+      if (!validation.ok) return held(validation.blocker);
+      if (run.event === 'issue_comment') {
+        // The immutable event/artifact alone is not a current comment readback.
+        // Fetch exact API identities, never a URL or identity supplied by chat.
+        const comment = await get('/issues/comments/' + request.ownerCommentId);
+        const issue = await get('/issues/' + request.ownerCommentIssueNumber);
+        const commentProof = validateControlTowerOwnerCommentV1(comment, issue, first, now());
+        if (!commentProof.ok || comment.id !== request.ownerCommentId
+          || commentProof.operation !== request.operation || commentProof.createdAtUtc !== request.createdAtUtc
+          || commentProof.expiresAtUtc !== request.expiresAtUtc
+          || createHash('sha256').update(comment.body).digest('hex') !== request.ownerCommentSha256)
+          return held('CONTROL_TOWER_OWNER_COMMENT_READBACK_INVALID');
+      }
       const last = main(await get('/git/ref/heads/main'));
       if (last !== first) return held('CONTROL_TOWER_MAIN_MOVED');
-      const validation = validateControlTowerBuildRequestV1(request, run, last, now());
-      if (!validation.ok) return held(validation.blocker);
+      const closingValidation = validateControlTowerBuildRequestV1(request, run, last, now());
+      if (!closingValidation.ok) return held(closingValidation.blocker);
+      if (isRequestRecorded(request.requestId)) continue;
       if (observationOnly && request.operation !== CONTROL_TOWER_OBSERVE_OPERATION) continue;
       const bound = Object.freeze({ ...request, artifactId: artifact.id, artifactSha256: digest,
         proofRef: 'https://github.com/Cheekyfellastef/stephan-os/actions/runs/' + run.id });

@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { FIXED_RUNTIME_SOURCE_PATHS_V1, buildFixedRuntimeInstallerCandidateV1 }
+import { FIXED_RUNTIME_SOURCE_PATHS_V1, FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1, buildFixedRuntimeInstallerCandidateV1 }
   from './sovereign-fixed-runtime-installer-candidate-v1.mjs';
 
 export const FIXED_RUNTIME_SOURCE_INPUT_SCHEMA_V1 = 'stephanos.fixed-runtime-source-package-input.v1';
@@ -136,7 +136,7 @@ function validateEvidence(input) {
     trees.set(row.sha, treeEntries(bytes, budget));
   }
   if (!trees.has(sourceTree)) fail('COMMIT_TREE_UNPROVEN');
-  if (!Array.isArray(input.records) || FIXED_RUNTIME_SOURCE_PATHS_V1.length > 266
+  if (!Array.isArray(input.records) || FIXED_RUNTIME_SOURCE_PATHS_V1.length > FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1
     || input.records.length !== FIXED_RUNTIME_SOURCE_PATHS_V1.length) fail('SOURCE_RECORD_INVALID');
   const paths = new Set(FIXED_RUNTIME_SOURCE_PATHS_V1), seen = new Set(), usedTrees = new Set();
   const manifest = [], records = [];

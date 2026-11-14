@@ -50,6 +50,28 @@ test('one closed public projection removes identity, logs and execution capabili
   assert.equal(Object.isFrozen(projected.nativeRuntime.profiles), true);
 });
 
+test('Spatial and mailbox compiled inventory fits the bounded projection without granting their execution', () => {
+  const profiles=['MAINTENANCE_GOAL_BUILDER_V1','SPATIAL_WORKSPACE_PREPARE_V1',
+    'SOURCE_TASK_V1','CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1'];
+  const input=inspection();input.nativeRuntime.profiles=profiles;
+  const result=projectSovereignControlSystemStatusV1(input);
+  assert.equal(result.nativeRuntime.qualificationObserved,true);
+  assert.deepEqual(result.nativeRuntime.profiles,profiles);
+  assert.equal(result.observationOnly,true);
+  assert.equal(Object.isFrozen(result.nativeRuntime.profiles),true);
+  assert.ok(Buffer.byteLength(JSON.stringify(result))<=SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1);
+  assert.equal(Object.hasOwn(result.nativeRuntime,'dispatchAllowed'),false);
+  assert.deepEqual(projectSovereignControlSystemStatusV1(JSON.parse(JSON.stringify(result))),result);
+  for(const invalid of [[...profiles,profiles[0]],[...profiles.slice(0,3),profiles[0]],
+    [...profiles.slice(0,3),'ARBITRARY_SHELL'],['SPATIAL_WORKSPACE_PREPARE_V1',{}]]) {
+    const changed=inspection();changed.nativeRuntime.profiles=invalid;
+    const refused=projectSovereignControlSystemStatusV1(changed);
+    assert.equal(refused.nativeRuntime.qualificationObserved,false);
+    assert.equal(refused.nativeRuntime.available,false);
+    assert.equal(Object.hasOwn(refused.nativeRuntime,'profiles'),false);
+  }
+});
+
 test('persisted public observation revalidates identically through ledger, beacon and conversation', () => {
   const first = projectSovereignControlSystemStatusV1(inspection());
   assert.deepEqual(projectSovereignControlSystemStatusV1(JSON.parse(JSON.stringify(first))), first);

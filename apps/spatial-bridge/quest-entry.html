@@ -160,7 +160,7 @@
     <section class="panel truth-boundary">Stephanos diagnostics remain read only. The spatial console sends your pointer and keyboard actions to the desktop window you explicitly connect. The original app retains its tools and approval rules. Physical headset acceptance remains pending.</section>
   </main>
   <script type="module">
-    import { enterHolodeckBaseline, inspectHolodeckBaselineCapabilities } from './holodeck-baseline-v0.mjs';
+    import { createHolodeckEntryLifecycle, enterHolodeckBaseline, inspectHolodeckBaselineCapabilities } from './holodeck-baseline-v0.mjs';
     import { createHolodeckRoomRenderer } from './holodeck-room-v1.mjs';
     import { createHolodeckCubeScene } from './holodeck-cube-scene-v1.mjs';
     import { createHolodeckCubeStore } from './holodeck-cube-store-v1.mjs';
@@ -183,10 +183,8 @@
     const pingButton = document.getElementById('ping-stephanos');
     const canvas = document.getElementById('holodeck-canvas');
     let lastCapability = null;
-    let activeTelemetry = null;
     let previewRenderer = null;
     let immersiveActive = false;
-    let immersiveSession = null;
     let inspectKeyboard = false;
     function refreshComfortUI(state) {
       for(const mode of ['seated','standing'])document.getElementById('comfort-'+mode).setAttribute('aria-pressed',String(state.mode===mode));
@@ -269,7 +267,7 @@
     screen=createHolodeckScreen({client,comfort,onStatus:state=>{
       refreshKeyboardLabels(state);if(!immersiveActive)drawPreview();refreshInputStatus(screen?.getState()??state);
     },onReload:async()=>{
-      comfort.flush();cubeScene.stop();await client.stop();try{await immersiveSession?.end();}catch{}location.reload();
+      workspaceEntry.stop();comfort.flush();cubeScene.stop();await client.stop();location.reload();
     }});
     const surfaces=screen.render();
     const consoleDetails=document.querySelector('details');
@@ -424,8 +422,8 @@
       if (document.hidden) { comfort.flush();furniture.flush();stopMicTest();cubeScene.stop(); previewTime = null; }
       else if (!immersiveActive) playPreview();
     });
-    window.addEventListener('pagehide', event => {comfort.flush();furniture.flush();stopMicTest();cubeScene.stop();void client.pagehide(event);});
-    window.addEventListener('pageshow', event => {if(event.persisted&&!immersiveActive)playPreview();});
+    window.addEventListener('pagehide', event => {workspaceEntry.stop();comfort.flush();furniture.flush();stopMicTest();cubeScene.stop();void client.pagehide(event);});
+    window.addEventListener('pageshow', event => {if(event.persisted&&!immersiveActive){playPreview();void refreshCapabilities();}});
     document.getElementById('preview-cube').addEventListener('change', playPreview);
     for (const [id,action] of Object.entries({
       'cube-drop': () => { const cube=selectedCube(); cube.reset(); cube.grab('preview'); const p=cube.getState().position; cube.moveHeld([p[0],1.6,p[2]]); cube.release(); },
@@ -439,33 +437,52 @@
       vrLabStatus.textContent = routeTruth;
       commandDeckStatus.textContent = routeTruth;
     }
-    async function refreshCapabilities() {
+    async function refreshCapabilities({ preserveReason = false } = {}) {
       const capability = await inspectHolodeckBaselineCapabilities();
       lastCapability = capability;
       webxrStatus.textContent = capability.immersiveSupported ? 'yes · immersive-vr' : capability.webxrAvailable ? 'yes · immersive unavailable' : 'no';
       deviceStatus.textContent = capability.device;
-      sessionReason.textContent = capability.reason;
-      enterButton.disabled = !capability.immersiveSupported;
+      if (!preserveReason && !workspaceEntry.isBusy()) sessionReason.textContent = capability.reason;
+      enterButton.disabled = workspaceEntry.isBusy() || !capability.immersiveSupported;
     }
-    enterButton.addEventListener('click', async () => {
-      enterButton.disabled = true;
-      sessionReason.textContent = 'Requesting bounded immersive-vr session.';
-      activeTelemetry = await createSpatialWorkspaceTelemetryRecorderV1({
-        device: lastCapability?.device || 'browser',
-        onStatus: ({ state, detail }) => {
-          telemetryStatus.textContent = `${state} · ${detail || 'Shared Workspace'}`;
-        },
-      });
-      await activeTelemetry.start();
-      immersiveActive = true;
-      if (previewFrame !== null) cancelAnimationFrame(previewFrame);
-      previewFrame = null;
-      for (const id of ['cube-drop','cube-throw','cube-reset','cube-inspect','preview-cube']) document.getElementById(id).disabled = true;
-      previewRenderer?.dispose();
-      previewRenderer = null;
-      const result = await enterHolodeckBaseline({
+    const workspaceEntry = createHolodeckEntryLifecycle({
+      enterRoom: enterHolodeckBaseline,
+      createTelemetry: createSpatialWorkspaceTelemetryRecorderV1,
+      onTelemetryStatus: ({ state, detail }) => {
+        telemetryStatus.textContent = `${state} · ${detail || 'Shared Workspace'}`;
+      },
+      onState: ({ state, result }) => {
+        if (state === 'requesting') {
+          enterButton.disabled = true;
+          sessionReason.textContent = 'Requesting bounded immersive-vr session.';
+          immersiveActive = true;
+          if (previewFrame !== null) cancelAnimationFrame(previewFrame);
+          previewFrame = null;
+          for (const id of ['cube-drop','cube-throw','cube-reset','cube-inspect','preview-cube']) document.getElementById(id).disabled = true;
+          previewRenderer?.dispose();
+          previewRenderer = null;
+          return;
+        }
+        if (state === 'active') {
+          sessionStatus.textContent = 'immersive-vr';
+          sessionReason.textContent = result.reason;
+          return;
+        }
+        immersiveActive = false;
+        for (const id of ['cube-drop','cube-throw','cube-reset','cube-inspect','preview-cube']) document.getElementById(id).disabled = false;
+        playPreview();
+        sessionStatus.textContent = state === 'stopping' ? 'stopping' : 'fallback';
+        sessionReason.textContent = state === 'failed' ? result.reason
+          : state === 'stopping' ? `${result?.ok === false ? result.reason + ' ' : ''}Waiting for the previous VR session to close before another entry.`
+            : 'Immersive session ended. Physical acceptance remains unproven.';
+        void refreshCapabilities({ preserveReason: true });
+      },
+    });
+    enterButton.addEventListener('click', () => {
+      // The adapter calls requestSession now, within this click. Remote telemetry
+      // and its timeouts never precede or delay the browser's user-activation gate.
+      void workspaceEntry.enter({
         canvas, cubeScene,screen,comfort,furniture,
-        onFrame: (frameTruth) => activeTelemetry?.recordFrame(frameTruth),
         onCubeStatus: ({ state }) => {
           document.getElementById('cube-status').textContent = `Glass cubes · ${state === 'held' ? 'held — release to drop or throw' : state}`;
         },
@@ -476,30 +493,7 @@
             : 'movement paused; check tracking and controller connection';
           controllerStatus.textContent = `${controller} · ${detail}`;
         },
-      });
-      if (!result.ok) {
-        immersiveActive = false;
-        for (const id of ['cube-drop','cube-throw','cube-reset','cube-inspect','preview-cube']) document.getElementById(id).disabled = false;
-        playPreview();
-        await activeTelemetry.fail(new Error(result.reason));
-        sessionStatus.textContent = 'fallback';
-        sessionReason.textContent = result.reason;
-        await refreshCapabilities();
-        return;
-      }
-      activeTelemetry.attachSession(result.session, { referenceSpaceType: result.referenceSpaceType });
-      immersiveSession=result.session;
-      sessionStatus.textContent = 'immersive-vr';
-      sessionReason.textContent = result.reason;
-      result.session.addEventListener('end', async () => {
-        immersiveSession=null;
-        immersiveActive = false;
-        for (const id of ['cube-drop','cube-throw','cube-reset','cube-inspect','preview-cube']) document.getElementById(id).disabled = false;
-        playPreview();
-        sessionStatus.textContent = 'fallback';
-        sessionReason.textContent = 'Immersive session ended. Physical acceptance remains unproven.';
-        await refreshCapabilities();
-      }, { once: true });
+      }, { device: lastCapability?.device || 'browser' });
     });
     pingButton.addEventListener('click', async () => {
       pingButton.disabled = true;

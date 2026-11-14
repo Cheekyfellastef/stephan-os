@@ -17,6 +17,133 @@ function jsonResponse(body, status = 200) {
   };
 }
 
+const CONTROL_TOWER_ORIGIN = 'https://stephanos-control-tower.timelesspearl.chatgpt.site';
+const BACKEND_HEAD = '293bb02a54a723c782ab6a5167e960a9719f7ddc';
+function backendHealth(origins = [CONTROL_TOWER_ORIGIN]) {
+  return {
+    ok: true,
+    schemaVersion: 'stephanos.backend-health.v1',
+    service: 'stephanos-server',
+    backendIdentity: {
+      schemaVersion: 'stephanos.backend-runtime-identity.v1',
+      runtimeId: 'stephanos-battle-bridge-backend',
+      sourceHead: BACKEND_HEAD,
+    },
+    cors: { allowed_origin_count: origins.length, allowed_origins: origins },
+  };
+}
+
+async function observeBackend(body, options = {}) {
+  const calls = [];
+  const observation = await collectBattleBridgeObservation({
+    fetchFn: async (url, requestOptions) => {
+      calls.push({ url, options: requestOptions });
+      return String(url) === 'http://127.0.0.1:8787/api/health'
+        ? options.response || new Response(JSON.stringify(body), {
+          status: options.status || 200, headers: { 'content-type': 'application/json' },
+        }) : jsonResponse({ models: [] });
+    },
+    spawnSyncFn: () => ({ status: 1, stdout: '', stderr: '' }),
+    now: () => new Date('2026-11-07T15:00:00.000Z'),
+    memory: () => ({ totalBytes: 64 * 1024 ** 3, freeBytes: 32 * 1024 ** 3 }),
+    uptimeFn: () => 3600,
+    env: {},
+  });
+  return { observation, calls };
+}
+
+test('existing backend probe returns exact identity and only the pinned Site origin decision', async () => {
+  const body = backendHealth(['https://private-origin.invalid', CONTROL_TOWER_ORIGIN]);
+  body.provider_secret_status = { privateToken: 'SECRET_MUST_NOT_ESCAPE' };
+  body.backendIdentity.privatePath = 'PRIVATE_PATH_MUST_NOT_ESCAPE';
+  const { observation, calls } = await observeBackend(body);
+  assert.deepEqual(observation.services.backend.connection, {
+    schemaVersion: 'stephanos.battle-bridge-backend-connection.v1',
+    observed: true,
+    healthSchemaVersion: 'stephanos.backend-health.v1',
+    service: 'stephanos-server',
+    backendIdentity: {
+      schemaVersion: 'stephanos.backend-runtime-identity.v1',
+      runtimeId: 'stephanos-battle-bridge-backend',
+      sourceHead: BACKEND_HEAD,
+    },
+    controlTowerOrigin: CONTROL_TOWER_ORIGIN,
+    controlTowerOriginConfigured: true,
+    browserAccessProven: false,
+    loadedSourceBytesProven: false,
+    executionAuthority: false,
+  });
+  assert.equal(calls.filter(call => call.url === 'http://127.0.0.1:8787/api/health').length, 1);
+  const backendRequest = calls.find(call => call.url === 'http://127.0.0.1:8787/api/health').options;
+  assert.equal(backendRequest.method, 'GET');
+  assert.equal(backendRequest.redirect, 'error');
+  assert.equal(backendRequest.credentials, 'omit');
+  assert.equal(backendRequest.headers.authorization, undefined);
+  assert.doesNotMatch(JSON.stringify(observation), /SECRET_MUST_NOT_ESCAPE|PRIVATE_PATH_MUST_NOT_ESCAPE|private-origin|allowed_origins|provider_secret_status/);
+});
+
+test('origin exclusion is false, while missing, malformed or oversized origin evidence is unknown', async () => {
+  const excluded = await observeBackend(backendHealth(['https://unrelated.invalid']));
+  assert.equal(excluded.observation.services.backend.connection.controlTowerOriginConfigured, false);
+  const bodies = [
+    { ...backendHealth(), cors: undefined },
+    { ...backendHealth(), cors: { allowed_origin_count: 1, allowed_origins: CONTROL_TOWER_ORIGIN } },
+    { ...backendHealth(), cors: { allowed_origin_count: 1, allowed_origins: [true] } },
+    { ...backendHealth(), cors: { allowed_origin_count: 2, allowed_origins: [CONTROL_TOWER_ORIGIN] } },
+    backendHealth(Array(129).fill(CONTROL_TOWER_ORIGIN)),
+  ];
+  for (const body of bodies) {
+    const { observation } = await observeBackend(body);
+    assert.equal(observation.services.backend.connection.observed, true);
+    assert.equal(observation.services.backend.connection.controlTowerOriginConfigured, null);
+  }
+});
+
+test('an HTTP response cannot assert a backend identity through a foreign or incomplete contract', async () => {
+  const valid = backendHealth();
+  const bodies = [
+    null, [], {}, { ...valid, ok: false }, { ...valid, schemaVersion: 'foreign' },
+    { ...valid, service: 'other-service' },
+    { ...valid, backendIdentity: { ...valid.backendIdentity, schemaVersion: 'foreign' } },
+    { ...valid, backendIdentity: { ...valid.backendIdentity, runtimeId: 'other-runtime' } },
+    { ...valid, backendIdentity: { ...valid.backendIdentity, sourceHead: '' } },
+    { ...valid, backendIdentity: { ...valid.backendIdentity, sourceHead: 'SECRET_MUST_NOT_ESCAPE' } },
+  ];
+  for (const body of bodies) {
+    const { observation } = await observeBackend(body);
+    const backend = observation.services.backend;
+    assert.equal(backend.ready, true); // Reachability remains separate from identity.
+    assert.equal(backend.connection.observed, false);
+    assert.equal(backend.connection.backendIdentity, null);
+    assert.equal(backend.connection.controlTowerOriginConfigured, null);
+    assert.equal(backend.connection.executionAuthority, false);
+    assert.doesNotMatch(JSON.stringify(backend), /SECRET_MUST_NOT_ESCAPE|other-service|other-runtime/);
+  }
+  const failed = await observeBackend(valid, { status: 503 });
+  assert.equal(failed.observation.services.backend.ready, false);
+  assert.equal(failed.observation.services.backend.connection.observed, false);
+});
+
+test('backend health parsing stops at its stream bound and rejects unreadable content', async () => {
+  let cancelled = false;
+  const oversized = new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new Uint8Array(64 * 1024 + 1)); },
+    cancel() { cancelled = true; },
+  }), { headers: { 'content-type': 'application/json' } });
+  const large = await observeBackend(null, { response: oversized });
+  assert.equal(large.observation.services.backend.connection.observed, false);
+  assert.equal(cancelled, true);
+  for (const response of [
+    new Response('{broken', { headers: { 'content-type': 'application/json' } }),
+    new Response(JSON.stringify(backendHealth()), { headers: { 'content-type': 'text/html' } }),
+    new Response(JSON.stringify(backendHealth()), { status: 302, headers: { location: 'https://unrelated.invalid' } }),
+  ]) {
+    const { observation } = await observeBackend(null, { response });
+    assert.equal(observation.services.backend.connection.observed, false);
+    assert.equal(observation.services.backend.connection.controlTowerOriginConfigured, null);
+  }
+});
+
 test('Battle Bridge observer returns bounded machine and Ollama facts', async () => {
   const fetchFn = async (url) => {
     const target = String(url);
@@ -128,6 +255,7 @@ test('Battle Bridge observer stays below the Sovereign fixed-process stdout ceil
   }));
   const fetchFn = async (url) => {
     const target = String(url);
+    if (target === 'http://127.0.0.1:8787/api/health') return new Response(JSON.stringify(backendHealth()), { headers: { 'content-type': 'application/json' } });
     if (target.endsWith('/api/tags')) return jsonResponse({ models: installed });
     if (target.endsWith('/api/ps')) return jsonResponse({ models: loaded });
     return jsonResponse({ ok: true });

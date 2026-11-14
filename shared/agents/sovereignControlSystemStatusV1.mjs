@@ -9,7 +9,9 @@ export const SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_PREDICATES_V1 = Object.freeze([
 ]);
 
 const SHA = /^[a-f0-9]{40}$/;
-const PROFILES = new Set(['MAINTENANCE_GOAL_BUILDER_V1', 'SOURCE_TASK_V1']);
+// Closed compiled inventory only; observing a name grants no action admission.
+const PROFILES = new Set(['MAINTENANCE_GOAL_BUILDER_V1', 'SOURCE_TASK_V1',
+  'SPATIAL_WORKSPACE_PREPARE_V1', 'CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1']);
 const UNKNOWN = 'SOVEREIGN_CONTROL_SYSTEM_OBSERVATION_UNPROVEN';
 // Deliberately closed: an uppercase exception message is not public telemetry.
 const CODES = new Set([
@@ -200,7 +202,7 @@ export function projectSovereignControlSystemStatusV1(value) {
       blocker: sovereignControlSystemDiagnosticCodeV1(g.row.blocker ?? g.result.reason),
       ...(typeof g.row.sourceHead === 'string' && SHA.test(g.row.sourceHead) ? { sourceHead: g.row.sourceHead } : {}),
       ...(g.result.observedAtUtc ? { observedAtUtc: g.result.observedAtUtc } : {}) };
-    const profilesValid = Array.isArray(n.row.profiles) && n.row.profiles.length <= 2
+    const profilesValid = Array.isArray(n.row.profiles) && n.row.profiles.length <= PROFILES.size
       && n.row.profiles.every(profile => typeof profile === 'string' && PROFILES.has(profile))
       && new Set(n.row.profiles).size === n.row.profiles.length;
     const nativeHead = typeof n.row.sourceHead === 'string' && SHA.test(n.row.sourceHead) ? n.row.sourceHead : '';

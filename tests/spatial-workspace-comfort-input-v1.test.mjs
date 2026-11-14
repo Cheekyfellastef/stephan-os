@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHolodeckComfort, HOLODECK_KEYBOARD_DIALS } from '../apps/spatial-bridge/holodeck-comfort-v1.mjs';
 import { createHolodeckScreenInput, consoleHit, keyboardDialHit } from '../apps/spatial-bridge/holodeck-screen-input-v1.mjs';
-import { SCREEN_BUTTONS, DISPLAY_COMFORT_BUTTONS } from '../apps/spatial-bridge/holodeck-screen-v1.mjs';
+import { SCREEN_BUTTONS, SCREEN_KEYS, DISPLAY_COMFORT_BUTTONS } from '../apps/spatial-bridge/holodeck-screen-v1.mjs';
+import { KEYCAP_RISE_METRES } from '../apps/spatial-bridge/holodeck-keycaps-v1.mjs';
 import { HOLODECK_CONSOLE, HOLODECK_DISPLAY } from '../apps/spatial-bridge/holodeck-layout-v1.mjs';
 import { trackedPose, createHolodeckCubeInteraction } from '../apps/spatial-bridge/holodeck-cube-interaction-v1.mjs';
 import { createHolodeckLocomotion, applyHolodeckLocomotionToView, sampleHolodeckControls } from '../apps/spatial-bridge/holodeck-locomotion-v1.mjs';
@@ -30,8 +31,10 @@ function keyTarget(button, degrees) {
   const x = -c.halfWidth + 0.10 + (button.x + button.w / 2) * (2 * c.halfWidth - 0.20);
   const z = c.center[2] - c.halfDepth + 0.06 + (button.y + button.h / 2) * (2 * c.halfDepth - 0.12);
   const front = c.center[2] + c.halfDepth;
-  return { point: [x, c.top + 0.002 * Math.cos(a) - (z - front) * Math.sin(a),
-    front + 0.002 * Math.sin(a) + (z - front) * Math.cos(a)], normal: [0, Math.cos(a), Math.sin(a)] };
+  // Keys have raised caps; console actions stay on the lower touch plane.
+  const rise = SCREEN_KEYS.some(key => key.id === button.id) ? KEYCAP_RISE_METRES : 0.002;
+  return { point: [x, c.top + rise * Math.cos(a) - (z - front) * Math.sin(a),
+    front + rise * Math.sin(a) + (z - front) * Math.cos(a)], normal: [0, Math.cos(a), Math.sin(a)] };
 }
 
 function harness(count = 1) {

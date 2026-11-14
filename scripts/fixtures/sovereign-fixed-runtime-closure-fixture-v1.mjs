@@ -33,9 +33,18 @@ const fixedRoots = ['scripts/sovereign-commander-mcp.mjs', 'scripts/sovereign-co
   'scripts/sovereign-fixed-runtime-source-task-v1.mjs', 'scripts/mission-orchestrator-worker-supervised.mjs',
   'scripts/mission-orchestrator-worker.mjs', 'scripts/completion-guardian.mjs',
   'scripts/sovereign-commander-goal-builder-repair.mjs', 'scripts/sovereign-commander-fleet-goal-supervisor.mjs',
+  'scripts/sovereign-commander-spatial-workspace.mjs',
   'scripts/sovereign-controller-lane-status.mjs', 'scripts/battle-bridge-goal-discovery-heartbeat.mjs'];
 const requiredRoots = maintenance ? ['scripts/sovereign-maintenance-custody-store-v1.mjs',
   'scripts/sovereign-maintenance-journal-source-proof-v2.mjs'] : fixedRoots;
+const capturedReadAdapters = {
+  'shared/agents/sovereignDirectoryCreateV1.mjs': 'b3a9f5f60d7d0990b31fa9f491c349832f9fad2cba802484e2b1c2c67106e43a',
+  'shared/agents/sovereignSearchSessionsV1.mjs': '028dfe0243714cd047671e27365e18e59a16791edc92895a76a4332b77d5de34',
+  'shared/agents/sovereignFileCopyV1.mjs': 'f0903634deda4888e65b5a806f53292578c42930481ec77f0e3ebf34685619ff',
+  'shared/agents/sovereignFileMoveV1.mjs': 'edb13d36cbe7c74d27834069d803601f13493919f0d6409fbb2ba1c82fc6a910',
+  'shared/agents/sovereignPdfWriteV1.mjs': '90c5e0ecb3d1fdc354af1dbedcd04c24a2910e3fedb3277aa838168214164330',
+};
+const capturedProcessAdapterSha256 = 'c0e7d5e221ec5dc3c5579c6dd88a45cde393bc2484984ea4bfdd0c11e1e3549f';
 for (const target of requiredRoots) if (!members.has(target)) missing.push({ role: 'profile-root', target });
 // Checking all admitted JS members also covers a newly reachable import in a
 // packaged library outside the previous selected-root traversal. This cannot
@@ -80,12 +89,12 @@ while (queue.length) {
     if (!literal) missing.push({ file, role: 'import', unknownDynamicImport: true });
     else edge(file, literal[2], 'import');
   }
-  if (file === 'shared/agents/sovereignDirectoryCreateV1.mjs') {
+  if (Object.hasOwn(capturedReadAdapters, file)) {
     // The finite read-edge interpretation applies to this exact reviewed adapter,
     // not to arbitrary matching declarations hidden in comments or unused code.
     // A changed adapter must have its dependency model independently reviewed.
     const normalized = source.replace(/\r\n/g, '\n');
-    if (digest(normalized) !== 'b3a9f5f60d7d0990b31fa9f491c349832f9fad2cba802484e2b1c2c67106e43a')
+    if (digest(normalized) !== capturedReadAdapters[file])
       missing.push({ file, runtimeReadSourceUnproven: true });
     for (const binding of ['SCRIPT', 'NATIVE']) {
       const declaration = source.match(new RegExp('^const ' + binding + ' = fileURLToPath\\(new URL\\(([\x22\x27])([^\x22\x27\\r\\n]+)\\1, import\\.meta\\.url\\)\\);', 'm'));
@@ -98,6 +107,22 @@ while (queue.length) {
         missing.push({ file, target, runtimeReadPinMismatch: true });
     }
   }
+  if (file === 'shared/agents/sovereignProcessSessionsV1.mjs') {
+    // Exact reviewed two-profile dependency model. The hash binds this finite
+    // interpretation to the adapter; it does not authorize computed discovery.
+    if (digest(source.replace(/\r\n/g, '\n')) !== capturedProcessAdapterSha256)
+      missing.push({ file, runtimeReadSourceUnproven: true });
+    for (const [spec, pin] of [
+      ['../../scripts/windows/status-battle-bridge-recovery-mesh.ps1', 'd48756676ed2fe75214c298d26c3010d08c219c2ed12ab6475998d5272645e03'],
+      ['../../scripts/windows/status-battle-bridge-worker-watchdog.ps1', '948d3b7ae81589301741d2975d2f5b0878f9592e085d29e768873231d7cb0230'],
+    ]) {
+      edge(file, spec, 'runtime-read');
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), spec));
+      if (members.has(target) && fs.existsSync(new URL(target, root))
+        && digest(fs.readFileSync(new URL(target, root))) !== pin)
+        missing.push({ file, target, runtimeReadPinMismatch: true });
+    }
+  }
 }
 // Existing custody inputs are retained. They do not grant additional filesystem
 // discovery or make this guard an installation/activation authority.
@@ -105,16 +130,37 @@ for (const target of maintenance ? [] : ['scripts/windows/read-sovereign-mainten
   'scripts/windows/read-sovereign-maintenance-owner-v2.ps1', 'scripts/windows/sovereign-maintenance-audit-anchor.ps1',
   'scripts/windows/sovereign-maintenance-journal-policy-v2.ps1', 'scripts/windows/install-sovereign-fixed-runtime-v1.ps1'])
   if (!members.has(target) || !fs.existsSync(new URL(target, root))) missing.push({ runtimeRead: target });
+// The preparation profile uses these fixed existing build/probe inputs. The
+// persistent launcher is deliberately outside this finite execution closure.
+for (const target of maintenance ? [] : ['shared/agents/sovereignSpatialWorkspaceV1.mjs',
+  'scripts/windows/prepare-spatial-workspace.ps1', 'scripts/windows/install-spatial-window.ps1',
+  'scripts/windows/build-spatial-window.ps1', 'scripts/windows/start-spatial-window-host.ps1',
+  'scripts/windows/spatial-window-install-lock.ps1',
+  'src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp', 'scripts/spatial-window-host.mjs',
+  'shared/vr/spatialDesktopSurfaceContractV1.mjs'])
+  if (!members.has(target) || !fs.existsSync(new URL(target, root))) missing.push({ spatialPreparationInput: target });
+// Fixed PowerShell execution/dot-source edges for the fresh PassThruPinned
+// build path. The persistent launcher is only a shortcut target, never invoked.
+if (!maintenance) for (const [file, spec] of [
+  ['scripts/windows/prepare-spatial-workspace.ps1', './install-spatial-window.ps1'],
+  ['scripts/windows/prepare-spatial-workspace.ps1', './spatial-window-install-lock.ps1'],
+  ['scripts/windows/prepare-spatial-workspace.ps1', './install-stephanos-spatial-workspace-shortcut.ps1'],
+  ['scripts/windows/install-spatial-window.ps1', './build-spatial-window.ps1'],
+  ['scripts/windows/install-spatial-window.ps1', './spatial-window-install-lock.ps1'],
+  ['scripts/windows/build-spatial-window.ps1', './spatial-window-install-lock.ps1'],
+  ['scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1', './spatial-window-install-lock.ps1'],
+  ['scripts/windows/start-spatial-window-host.ps1', './spatial-window-install-lock.ps1'],
+]) edge(file, spec, 'runtime-exec');
 const coverage = [];
 if (!maintenance) {
   // Exact reviewed applicability evidence for the legacy HTTP exec edge. This
   // exception is limited to the production Windows fixed profile. Changed gates
   // must be reassessed; an optional-looking pathname is never a generic bypass.
   const applicabilityPins = {
-  "scripts/sovereign-commander-http.mjs": "e5b7be68fde792b07053e89e6d06d3826ec08df04c781d5c6a6717dfa574ffb0",
-  "scripts/sovereign-fixed-runtime-parent-v1.mjs": "1854a7c57c471baf3f26a0a3df1be446e91e3de243b43281497766a7d006ee64",
-  "shared/agents/sovereignMaintenanceAdmissionV1.mjs": "d468e7bf73355e5daa6899d19ffe8e7b034af914837b5e66523d43ade79a8703",
-  "scripts/windows/SovereignFixedRuntimeHostV1.cs": "bbe85a5dc91d9fcdcdb55be085589f57b57f71f1f9208016e4fa4e6e230996bf"
+  "scripts/sovereign-commander-http.mjs": "470e8d568c13f10f010d847de0a784457e11401b599450d3b5a688f73b45ba19",
+  "scripts/sovereign-fixed-runtime-parent-v1.mjs": "e999aa177ace3f77b5ace753d340e87df5b3c748176d2cceb8efde48ab1ad87a",
+  "shared/agents/sovereignMaintenanceAdmissionV1.mjs": "e16f81e0bdd86a5878e380901f5302c65ac9c19028fd675cef2c6b1e506de228",
+  "scripts/windows/SovereignFixedRuntimeHostV1.cs": "24f03a18fc7b81e807fc9c2ef0bfbafa205c2de871d55aad15c127b1b433812c"
 };
   let scopeProven = true;
   for (const [file, pin] of Object.entries(applicabilityPins)) {

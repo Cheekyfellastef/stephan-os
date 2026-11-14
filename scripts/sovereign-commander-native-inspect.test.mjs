@@ -192,6 +192,19 @@ test('completed source-bound observation preserves refusal without granting repa
   assert.equal(JSON.stringify(published).includes(SID), false);
 });
 
+test('fixed native inspection reads a comment request locator without inventing a workflow run identity', async () => {
+  const id = 'control-tower-comment-700-1';
+  const { options } = fixture({ readLedger: requested => {
+    assert.equal(requested, id); return { record: null, workspaceSelection: 'DEFAULT' };
+  } });
+  options.controlTowerRequestId = id;
+  const report = await inspectSovereignControlSystemV1(options);
+  assert.equal(report.observationCompleted, true);
+  assert.equal(report.requestLedger.requestId, id);
+  assert.equal(report.requestLedger.recordObserved, false);
+  assert.equal(report.nativeRuntime.qualificationObserved, false);
+});
+
 test('native success is an observation for this caller, never a serialized execution qualification', async () => {
   const { options } = fixture({ inspectRuntime: () => ({ ok: true, sourceHead: HEAD,
     observedAtUtc: NOW, bootStartedAtUtc: '2026-10-31T08:00:00.000Z',
@@ -204,6 +217,29 @@ test('native success is an observation for this caller, never a serialized execu
   assert.equal(publicStatus.nativeRuntime.qualificationObserved, true);
   for (const forbidden of ['dispatchAllowed', 'custodyRecord', 'nativeRecordId', '17281'])
     assert.equal(JSON.stringify(publicStatus).includes(forbidden), false);
+});
+
+test('four declared compiled profiles remain observation-only and reject duplicate or unknown inventory', async () => {
+  const profiles=['MAINTENANCE_GOAL_BUILDER_V1','SPATIAL_WORKSPACE_PREPARE_V1',
+    'SOURCE_TASK_V1','CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1'];
+  const observe=async candidate=>inspectSovereignControlSystemV1(fixture({inspectRuntime:()=>({
+    ok:true,sourceHead:HEAD,observedAtUtc:NOW,profiles:candidate,dispatchAllowed:true,
+  })}).options);
+  const report=await observe(profiles);
+  assert.equal(report.nativeRuntime.qualificationObserved,true);
+  assert.deepEqual(report.nativeRuntime.profiles,profiles);
+  const published=projectSovereignControlSystemStatusV1(report);
+  assert.equal(published.nativeRuntime.qualificationObserved,true);
+  assert.deepEqual(published.nativeRuntime.profiles,profiles);
+  assert.equal(published.observationOnly,true);
+  assert.equal(JSON.stringify(published).includes('dispatchAllowed'),false);
+  for(const invalid of [[...profiles,profiles[0]],[...profiles.slice(0,3),profiles[0]],
+    [...profiles.slice(0,3),'ARBITRARY_SHELL'],['SPATIAL_WORKSPACE_PREPARE_V1',null]]) {
+    const refused=await observe(invalid);
+    assert.equal(refused.nativeRuntime.qualificationObserved,false);
+    assert.equal(refused.nativeRuntime.reason,'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
+    assert.equal(Object.hasOwn(refused.nativeRuntime,'profiles'),false);
+  }
 });
 
 test('canonical source changes invalidate completion and any observed native qualification', async () => {
@@ -398,10 +434,20 @@ test('observation remains outside the immutable native execution closure', () =>
   // This does not change either enforcing implementation or the closure.
   const nativeSource = readFileSync(new URL('./windows/SovereignFixedRuntimeIdentityV1.cs', import.meta.url), 'utf8');
   const installerSource = readFileSync(new URL('./sovereign-fixed-runtime-installer-candidate-v1.mjs', import.meta.url), 'utf8');
-  const nativeBounds = [...nativeSource.matchAll(/manifest\.Files\.Length\s*>\s*(\d+)\b/g)];
-  const installerBounds = [...installerSource.matchAll(/FIXED_RUNTIME_SOURCE_PATHS_V1\.length\s*>\s*(\d+)\b/g)];
-  assert.equal(nativeBounds.length, 1, 'native verifier must retain one explicit package bound');
-  assert.equal(installerBounds.length, 1, 'installer must retain one explicit package bound');
+  // The production verifier and installer now enforce named constants, not inline
+  // literal numbers. Bind both declaration identities to their real guard usages.
+  const nativeBounds = [...nativeSource.matchAll(/const\s+int\s+RuntimeSourceMemberLimitV1\s*=\s*(\d+)\s*;/g)];
+  const installerBounds = [...installerSource.matchAll(/export\s+const\s+FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1\s*=\s*(\d+)\s*;/g)];
+  assert.equal(nativeBounds.length, 1, 'native verifier must declare one explicit package bound');
+  assert.equal(installerBounds.length, 1, 'installer must declare one explicit package bound');
+  assert.equal([...nativeSource.matchAll(/manifest\.Files\.Length\s*>\s*RuntimeSourceMemberLimitV1\b/g)].length,
+    1, 'native manifest validation must enforce the declared bound');
+  assert.equal([...installerSource.matchAll(/FIXED_RUNTIME_SOURCE_PATHS_V1\.length\s*>\s*FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1\b/g)].length,
+    1, 'installer must enforce the declared bound');
+  assert.equal([...nativeSource.matchAll(/members\.Length\s*>\s*RuntimeSourceMemberLimitV1\b/g)].length,
+    1, 'native closure validation must enforce the declared bound');
+  assert.equal([...installerSource.matchAll(/members\.length\s*>\s*FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1\b/g)].length,
+    1, 'installer closure validation must enforce the declared bound');
   const maximumMembers = Number(nativeBounds[0][1]);
   assert.equal(Number(installerBounds[0][1]), maximumMembers, 'installer/native package bounds must agree');
   assert.ok(Number.isSafeInteger(maximumMembers) && maximumMembers >= 40);

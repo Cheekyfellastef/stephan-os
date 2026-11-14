@@ -12,6 +12,30 @@ import {createHolodeckWindowClient} from '../apps/spatial-bridge/holodeck-window
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 const response=(body,status=200)=>({ok:status===200,status,json:async()=>body});
 const token='a'.repeat(64);
+test('temporary readiness host rejects every session/capture/input route without touching native state',async()=>{
+  let nativeCalls=0;
+  const native={stop(){nativeCalls++;},request(){nativeCalls++;throw new Error('native must remain untouched');}};
+  const buildId='f'.repeat(64);
+  const server=createSpatialWindowHost({native,buildId,readinessOnly:true});
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  const send=(path,method='POST',headers={})=>new Promise((resolve,reject)=>{
+    const req=request({hostname:'127.0.0.1',port:server.address().port,path,method,
+      headers:{Host:'127.0.0.1:4180',Origin:'http://127.0.0.1:4173','Content-Type':'application/json',...headers}},res=>{
+      let data='';res.on('data',c=>data+=c);res.on('end',()=>resolve({code:res.statusCode,body:JSON.parse(data)}));
+    });req.on('error',reject);req.end(method==='POST'?'{}':undefined);
+  });
+  try{
+    assert.deepEqual(await send('/health','GET'),{code:200,body:{schema:'stephanos.spatial-window-health.v1',buildId,readinessOnly:true}});
+    for(const path of ['/session','/windows','/bind','/frame','/input','/stop','/unknown']) {
+      assert.deepEqual(await send(path),{code:409,body:{status:'readiness-probe-only'}});
+    }
+    assert.equal((await send('/session','OPTIONS')).code,409);
+    assert.equal((await send('/health','GET',{Origin:'https://foreign.invalid'})).code,403);
+    assert.equal((await send('/health','GET',{Host:'localhost:4180'})).code,403);
+    assert.equal(nativeCalls,0);
+  }finally{await new Promise(r=>server.close(r));}
+  assert.equal(nativeCalls,0,'closing a probe cannot revoke an existing native session');
+});
 function clientHarness(fetchRef){
   const timers=new Map(),saved=new Map();let id=0;
   const client=createHolodeckWindowClient({fetchRef,locationRef:{port:'4174'},sessionStore:{getItem:k=>saved.get(k),setItem:(k,v)=>saved.set(k,v),removeItem:k=>saved.delete(k)},
@@ -95,4 +119,61 @@ test('audio help and reload confirmation do not click through to the concealed a
   const calls=[],screen=createHolodeckScreen({documentRef:{createElement:()=>({getContext:()=>({})})},client:{getFrame:()=>({naturalWidth:1920,naturalHeight:1080}),getState:()=>({}),input:x=>calls.push(x)}});
   assert.equal(screen.point(.5,.5,true),true);screen.action('voice');assert.equal(screen.point(.5,.5,true),false);
   screen.action('voice');screen.action('reload');assert.equal(screen.point(.5,.5,true),false);assert.equal(calls.length,1);
+});
+
+function nativeWriteHarness(firstFailure='none'){
+  const children=[];
+  const adapter=createNativeSurfaceAdapter('fixture',{spawnRef:()=>{
+    const index=children.length,child=new EventEmitter();
+    child.stdout=new EventEmitter();child.stdout.setEncoding=()=>{};child.callbacks=[];child.killCount=0;
+    child.kill=()=>{child.killCount++;return true;};
+    child.stdin={write(data,callback){
+      child.callbacks.push(callback);
+      if(index===0&&firstFailure==='throw')throw new Error('Synchronous broken stdin');
+      return true;
+    }};
+    children.push(child);return child;
+  }});
+  return {adapter,children};
+}
+test('synchronous and callback stdin failures share shutdown and cannot poison an explicit replacement request',async()=>{
+  for(const failure of ['throw','callback']){
+    const h=nativeWriteHarness(failure);
+    try{
+      const failed=h.adapter.request({op:'list'});
+      const rejected=assert.rejects(failed,/Native surface stopped/);
+      if(failure==='callback')h.children[0].callbacks[0](new Error('Asynchronous broken stdin'));
+      await rejected;assert.equal(h.children[0].killCount,1);
+      const next=h.adapter.request({op:'list'});
+      assert.equal(h.children.length,2,'failed write must clear pending state immediately');
+      const [old,current]=h.children;
+      old.callbacks[0](new Error('Late write callback'));
+      old.emit('error',new Error('Late old child error'));
+      old.emit('exit',1);
+      old.stdout.emit('data','{"status":"connected"}\n');
+      assert.equal(current.killCount,0,'retired-child events cannot revoke a new child');
+      current.stdout.emit('data','{"status":"windows","windows":[]}\n');
+      assert.deepEqual(await next,{status:'windows',windows:[]});
+      assert.equal(old.killCount,1);
+    }finally{h.adapter.stop();}
+  }
+});
+test('native request timeouts retain their bounded list and consent budgets after write failure handling',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  for(const [op,budget] of [['list',15000],['bind',120000]]){
+    const h=nativeWriteHarness();
+    try{
+      let settled=false;
+      const pending=h.adapter.request({op});
+      pending.then(()=>{settled=true;},()=>{settled=true;});
+      const rejected=assert.rejects(pending,/Native surface stopped/);
+      t.mock.timers.tick(budget-1);await Promise.resolve();
+      assert.equal(settled,false);assert.equal(h.children[0].killCount,0);
+      t.mock.timers.tick(1);await rejected;
+      assert.equal(h.children[0].killCount,1);
+      const next=h.adapter.request({op:'list'});
+      h.children[1].stdout.emit('data','{"status":"windows","windows":[]}\n');
+      assert.equal((await next).status,'windows');
+    }finally{h.adapter.stop();}
+  }
 });

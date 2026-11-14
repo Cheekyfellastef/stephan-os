@@ -5,12 +5,31 @@ import {readFileSync} from 'node:fs';
 import {createBattleBridgeMinimalChildEnvironment} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 const closure=JSON.parse(readFileSync(new URL('../shared/agents/sovereignFixedRuntimeSourceClosureV1.json',import.meta.url)));
 export const FIXED_RUNTIME_SOURCE_PATHS_V1=Object.freeze([...closure.paths]);
+// Capacity for the reviewed private capabilities and bounded Spatial preparation. This is only a bound:
+// installation still requires every exact member of the checked-in closure.
+export const FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1=295;
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
+// Content identity only. Protected installation, current canonical main and
+// native custody remain independent requirements at the existing parent.
+export function fixedRuntimeGitClosureSha256V1(members) {
+ if(!Array.isArray(members) || members.length<1 || members.length>FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1)
+   throw new Error('FIXED_RUNTIME_GIT_CLOSURE_UNPROVEN');
+ const seen=new Set(), rows=[];
+ for(const row of members) {
+  if(!row || typeof row.Path!=='string' || !/^[A-Za-z0-9._/-]{1,240}$/.test(row.Path) ||
+    row.Path.includes('..') || row.Path.includes('//') || row.Path.startsWith('/') || row.Path.endsWith('/') ||
+    seen.has(row.Path.toLowerCase()) || row.GitMode!=='100644' || !/^[a-f0-9]{40}$/.test(row.GitBlobSha??''))
+    throw new Error('FIXED_RUNTIME_GIT_CLOSURE_UNPROVEN');
+  seen.add(row.Path.toLowerCase());rows.push(row);
+ }
+ rows.sort((a,b)=>a.Path<b.Path?-1:a.Path>b.Path?1:0);
+ return sha('stephanos.fixed-runtime-git-closure.v1\0'+rows.map(row=>row.Path+'\0'+row.GitMode+'\0'+row.GitBlobSha+'\n').join(''));
+}
 export function buildFixedRuntimeInstallerCandidateV1({expectedMain,sourceTree,operatorSid,records}={}) {
  if(!/^[a-f0-9]{40}$/.test(expectedMain??'') || !/^[a-f0-9]{40}$/.test(sourceTree??'') ||
    !/^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$/.test(operatorSid??'') ||
    closure.schemaVersion!=='stephanos.fixed-runtime-source-closure.v1' ||
-   FIXED_RUNTIME_SOURCE_PATHS_V1.length>266 || !Array.isArray(records) || records.length!==FIXED_RUNTIME_SOURCE_PATHS_V1.length)
+   FIXED_RUNTIME_SOURCE_PATHS_V1.length>FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1 || !Array.isArray(records) || records.length!==FIXED_RUNTIME_SOURCE_PATHS_V1.length)
    throw new Error('FIXED_INSTALL_EXACT_SOURCE_REQUIRED');
  const seen=new Set(),captured=[];let total=0;
  for(const row of records) {
@@ -32,7 +51,7 @@ export function buildFixedRuntimeInstallerCandidateV1({expectedMain,sourceTree,o
   if(!/^[a-f0-9]{64}$/.test(materializedSha256??''))
     throw new Error('FIXED_INSTALL_SOURCE_RECORD_INVALID');
   new TextDecoder('utf-8',{fatal:true}).decode(bytes);
-  seen.add(row.path);captured.push({Path:row.path,Sha256:blobSha256,
+  seen.add(row.path);captured.push({Path:row.path,GitBlobSha:row.blobSha,GitMode:'100644',Sha256:blobSha256,
     MaterializedSha256:materializedSha256,ContentBase64:row.contentBase64});
  }
  captured.sort((a,b)=>a.Path.localeCompare(b.Path));
@@ -45,15 +64,28 @@ export function buildFixedRuntimeInstallerCandidateV1({expectedMain,sourceTree,o
  const script=String.raw`$ErrorActionPreference='Stop'
 $PSModuleAutoLoadingPreference='None'
 Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1' -ErrorAction Stop
+function Read-FixedBootstrapBoundedBytesV1([IO.Stream]$stream){
+ try{
+  if($null -eq $stream -or -not $stream.CanRead -or -not $stream.CanSeek -or $stream.Position -ne 0){throw 'FIXED_BOOTSTRAP_INPUT_BOUND'}
+  $length=$stream.Length
+  if($length -lt 0 -or $length -gt 16777216){throw 'FIXED_BOOTSTRAP_INPUT_BOUND'}
+  $bytes=[byte[]]::new([int]$length);$offset=0
+  while($offset -lt $bytes.Length){
+   $count=$stream.Read($bytes,$offset,$bytes.Length-$offset)
+   if($count -le 0 -or $count -gt ($bytes.Length-$offset)){throw 'FIXED_BOOTSTRAP_INPUT_BOUND'}
+   $offset+=$count
+  }
+  if($stream.ReadByte() -ne -1 -or $stream.Length -ne $length -or $stream.Position -ne $length){throw 'FIXED_BOOTSTRAP_INPUT_BOUND'}
+  return ,$bytes
+ }catch{throw 'FIXED_BOOTSTRAP_INPUT_BOUND'}
+}
 $path='__PAYLOAD_PATH__'
 $handle=$null
 try{
  $info=[IO.FileInfo]::new($path)
  if(($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $info.Length -gt 16777216){throw 'FIXED_BOOTSTRAP_INPUT_UNSAFE'}
  $handle=[IO.FileStream]::new($path,'Open','Read','Read')
- $memory=[IO.MemoryStream]::new()
- try{$handle.CopyTo($memory);$bytes=$memory.ToArray()}finally{$memory.Dispose()}
- if($bytes.Length -gt 16777216){throw 'FIXED_BOOTSTRAP_INPUT_BOUND'}
+ $bytes=Read-FixedBootstrapBoundedBytesV1 $handle
  $sha=[Security.Cryptography.SHA256]::Create()
  try{$actual=([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
  if($actual -cne '__PAYLOAD_SHA__'){throw 'FIXED_BOOTSTRAP_INPUT_CHANGED'}

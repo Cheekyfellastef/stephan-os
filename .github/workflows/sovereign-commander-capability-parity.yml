@@ -17,7 +17,66 @@ on:
       - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
       - 'shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs'
       - 'shared/agents/sovereignCommanderV1.mjs'
+      - 'shared/agents/sovereignSpatialWorkspaceV1*'
+      - 'scripts/sovereign-commander-spatial-workspace.mjs'
+      - 'scripts/windows/prepare-spatial-workspace.ps1'
+      - 'scripts/windows/spatial-window-install-lock.ps1'
+      - 'scripts/windows/build-spatial-window.ps1'
+      - 'scripts/windows/install-spatial-window.ps1'
+      - 'scripts/windows/start-spatial-window-host.ps1'
+      - 'scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1'
+      - 'scripts/windows/launch-stephanos-spatial-workspace.ps1'
+      - 'scripts/spatial-window-host.mjs'
+      - 'shared/vr/spatialDesktopSurfaceContractV1.mjs'
+      - 'src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp'
+      - 'tests/spatial-window-lifecycle-v1.test.mjs'
+      - 'apps/spatial-bridge/**'
+      - 'tests/spatial-workspace-consented-window-share-v1.test.mjs'
+      - 'tests/spatial-workspace-entry-order-v1.test.mjs'
+      - 'tests/spatial-workspace-telemetry-v1.test.mjs'
+      - 'tests/spatial-workspace-comfort-input-v1.test.mjs'
+      - 'tests/spatial-workspace-keycap-v1.test.mjs'
+      - 'tests/spatial-bridge-holodeck-baseline-v0.test.mjs'
+      - 'tests/spatial-bridge-v0.test.mjs'
+      - 'tests/verify-hosted-icons.test.mjs'
+      - 'tests/spatial-workspace-prepare-windows-v1.test.mjs'
+      - 'tests/spatial-install-pins-windows-v1.test.mjs'
       - 'shared/agents/sovereignDirectoryCreateV1*'
+      - 'shared/agents/sovereignSearchSessionsV1*'
+      - 'shared/agents/sovereignMcpSessionHistoryV1*'
+      - 'shared/agents/sovereignMcpSessionConfigV1*'
+      - 'shared/agents/sovereignFileCopyV1*'
+      - 'shared/agents/sovereignFileCopyNativeV1.test.mjs'
+      - 'shared/agents/sovereignCommanderFileCopyV1.test.mjs'
+      - 'shared/agents/sovereignFileMoveV1*'
+      - 'shared/agents/sovereignCommanderSessionConfigV1.test.mjs'
+      - 'shared/agents/sovereignCommanderFileMoveV1.test.mjs'
+      - 'shared/agents/sovereignProcessSessionsV1*'
+      - 'shared/agents/sovereignFeedbackIntakeV1*'
+      - 'shared/agents/sovereignPdfWriteV1*'
+      - 'shared/agents/sovereignCommanderFeedbackPdfV1.test.mjs'
+      - 'shared/agents/sovereignCommanderProcessSessionsV1.test.mjs'
+      - 'scripts/windows/status-battle-bridge-recovery-mesh.ps1'
+      - 'scripts/windows/status-battle-bridge-worker-watchdog.ps1'
+      - 'shared/agents/sovereignFixedRuntimeSourceClosureV1.json'
+      - 'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs'
+      - 'scripts/sovereign-fixed-runtime-directory-package-v1.test.mjs'
+      - 'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs'
+      - 'scripts/sovereign-fixed-runtime-install-source-package-v1.test.mjs'
+      - 'scripts/sovereign-fixed-runtime-installer-candidate-v1.mjs'
+      - 'scripts/sovereign-fixed-runtime-installer-v1.test.mjs'
+      - 'scripts/windows/SovereignFixedRuntimeIdentityV1.cs'
+      - 'scripts/windows/install-sovereign-fixed-runtime-v1.ps1'
+      - 'scripts/windows/SovereignFileCopyV1.cs'
+      - 'scripts/windows/sovereign-copy-file-content.ps1'
+      - 'scripts/windows/SovereignFileMoveV1.cs'
+      - 'scripts/windows/SovereignPdfWriteV1.cs'
+      - 'scripts/windows/sovereign-write-pdf.ps1'
+      - 'scripts/windows/sovereign-move-file.ps1'
+      - 'shared/agents/sovereignCommanderPrivateSessionsV1.test.mjs'
+      - 'shared/agents/sovereignCommanderSessionLifecycleV1.test.mjs'
+      - 'scripts/windows/SovereignSearchV1.cs'
+      - 'scripts/windows/sovereign-search.ps1'
       - 'scripts/windows/sovereign-create-directory.ps1'
       - 'scripts/windows/SovereignDirectoryCreateV1.cs'
       - 'shared/agents/sovereignMaintenanceAdmissionV1*'
@@ -92,7 +151,66 @@ on:
       - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
       - 'shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs'
       - 'shared/agents/sovereignCommanderV1.mjs'
+      - 'shared/agents/sovereignSpatialWorkspaceV1*'
+      - 'scripts/sovereign-commander-spatial-workspace.mjs'
+      - 'scripts/windows/prepare-spatial-workspace.ps1'
+      - 'scripts/windows/spatial-window-install-lock.ps1'
+      - 'scripts/windows/build-spatial-window.ps1'
+      - 'scripts/windows/install-spatial-window.ps1'
+      - 'scripts/windows/start-spatial-window-host.ps1'
+      - 'scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1'
+      - 'scripts/windows/launch-stephanos-spatial-workspace.ps1'
+      - 'scripts/spatial-window-host.mjs'
+      - 'shared/vr/spatialDesktopSurfaceContractV1.mjs'
+      - 'src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp'
+      - 'tests/spatial-window-lifecycle-v1.test.mjs'
+      - 'apps/spatial-bridge/**'
+      - 'tests/spatial-workspace-consented-window-share-v1.test.mjs'
+      - 'tests/spatial-workspace-entry-order-v1.test.mjs'
+      - 'tests/spatial-workspace-telemetry-v1.test.mjs'
+      - 'tests/spatial-workspace-comfort-input-v1.test.mjs'
+      - 'tests/spatial-workspace-keycap-v1.test.mjs'
+      - 'tests/spatial-bridge-holodeck-baseline-v0.test.mjs'
+      - 'tests/spatial-bridge-v0.test.mjs'
+      - 'tests/verify-hosted-icons.test.mjs'
+      - 'tests/spatial-workspace-prepare-windows-v1.test.mjs'
+      - 'tests/spatial-install-pins-windows-v1.test.mjs'
       - 'shared/agents/sovereignDirectoryCreateV1*'
+      - 'shared/agents/sovereignSearchSessionsV1*'
+      - 'shared/agents/sovereignMcpSessionHistoryV1*'
+      - 'shared/agents/sovereignMcpSessionConfigV1*'
+      - 'shared/agents/sovereignFileCopyV1*'
+      - 'shared/agents/sovereignFileCopyNativeV1.test.mjs'
+      - 'shared/agents/sovereignCommanderFileCopyV1.test.mjs'
+      - 'shared/agents/sovereignFileMoveV1*'
+      - 'shared/agents/sovereignCommanderSessionConfigV1.test.mjs'
+      - 'shared/agents/sovereignCommanderFileMoveV1.test.mjs'
+      - 'shared/agents/sovereignProcessSessionsV1*'
+      - 'shared/agents/sovereignFeedbackIntakeV1*'
+      - 'shared/agents/sovereignPdfWriteV1*'
+      - 'shared/agents/sovereignCommanderFeedbackPdfV1.test.mjs'
+      - 'shared/agents/sovereignCommanderProcessSessionsV1.test.mjs'
+      - 'scripts/windows/status-battle-bridge-recovery-mesh.ps1'
+      - 'scripts/windows/status-battle-bridge-worker-watchdog.ps1'
+      - 'shared/agents/sovereignFixedRuntimeSourceClosureV1.json'
+      - 'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs'
+      - 'scripts/sovereign-fixed-runtime-directory-package-v1.test.mjs'
+      - 'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs'
+      - 'scripts/sovereign-fixed-runtime-install-source-package-v1.test.mjs'
+      - 'scripts/sovereign-fixed-runtime-installer-candidate-v1.mjs'
+      - 'scripts/sovereign-fixed-runtime-installer-v1.test.mjs'
+      - 'scripts/windows/SovereignFixedRuntimeIdentityV1.cs'
+      - 'scripts/windows/install-sovereign-fixed-runtime-v1.ps1'
+      - 'scripts/windows/SovereignFileCopyV1.cs'
+      - 'scripts/windows/sovereign-copy-file-content.ps1'
+      - 'scripts/windows/SovereignFileMoveV1.cs'
+      - 'scripts/windows/SovereignPdfWriteV1.cs'
+      - 'scripts/windows/sovereign-write-pdf.ps1'
+      - 'scripts/windows/sovereign-move-file.ps1'
+      - 'shared/agents/sovereignCommanderPrivateSessionsV1.test.mjs'
+      - 'shared/agents/sovereignCommanderSessionLifecycleV1.test.mjs'
+      - 'scripts/windows/SovereignSearchV1.cs'
+      - 'scripts/windows/sovereign-search.ps1'
       - 'scripts/windows/sovereign-create-directory.ps1'
       - 'scripts/windows/SovereignDirectoryCreateV1.cs'
       - 'shared/agents/sovereignMaintenanceAdmissionV1*'
@@ -170,6 +288,9 @@ jobs:
           node --check scripts/sovereign-commander-capability-parity-reconcile.mjs
           node --check scripts/sovereign-commander-preservation-converge.mjs
           node --check scripts/sovereign-commander-mcp.mjs
+          node --check scripts/sovereign-commander-spatial-workspace.mjs
+          node --check shared/agents/sovereignSpatialWorkspaceV1.mjs
+          node --check scripts/spatial-window-host.mjs
           node --check scripts/sovereign-commander-browser-observe.mjs
           node --check apps/sovereign-browser-bridge/service-worker.js
           node --check apps/sovereign-browser-bridge/popup.js
@@ -201,6 +322,9 @@ jobs:
           node --test shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs
           node --test shared/agents/sovereignCommanderV1.test.mjs shared/agents/sovereignDirectoryCreateV1.test.mjs
           node --test shared/agents/sovereignCommanderMcp.test.mjs
+          node --test shared/agents/sovereignSpatialWorkspaceV1.test.mjs tests/spatial-window-lifecycle-v1.test.mjs tests/spatial-workspace-prepare-windows-v1.test.mjs tests/spatial-install-pins-windows-v1.test.mjs
+          node --test tests/spatial-workspace-consented-window-share-v1.test.mjs tests/spatial-workspace-entry-order-v1.test.mjs tests/spatial-workspace-telemetry-v1.test.mjs tests/spatial-workspace-comfort-input-v1.test.mjs tests/spatial-workspace-keycap-v1.test.mjs tests/spatial-bridge-holodeck-baseline-v0.test.mjs tests/spatial-bridge-v0.test.mjs tests/verify-hosted-icons.test.mjs
+          node --test shared/agents/sovereignSearchSessionsV1.test.mjs shared/agents/sovereignMcpSessionHistoryV1.test.mjs shared/agents/sovereignCommanderPrivateSessionsV1.test.mjs shared/agents/sovereignCommanderSessionLifecycleV1.test.mjs shared/agents/sovereignMcpSessionConfigV1.test.mjs shared/agents/sovereignCommanderSessionConfigV1.test.mjs shared/agents/sovereignFileCopyV1.test.mjs shared/agents/sovereignFileCopyNativeV1.test.mjs shared/agents/sovereignCommanderFileCopyV1.test.mjs shared/agents/sovereignFileMoveV1.test.mjs shared/agents/sovereignCommanderFileMoveV1.test.mjs shared/agents/sovereignProcessSessionsV1.test.mjs shared/agents/sovereignCommanderProcessSessionsV1.test.mjs shared/agents/sovereignFeedbackIntakeV1.test.mjs shared/agents/sovereignPdfWriteV1.test.mjs shared/agents/sovereignCommanderFeedbackPdfV1.test.mjs
           node --test shared/agents/sovereignCommanderHttp.test.mjs
           node --test shared/agents/sovereignWindowsQualificationWorkflow.test.mjs shared/agents/sovereignMaintenanceAdmissionV1.test.mjs scripts/sovereign-goal-builder-worker-evidence.test.mjs scripts/sovereign-commander-goal-builder-repair.test.mjs shared/agents/goalDiscoveryWorkspaceV1.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs
           node --test tests/battle-bridge-observation.test.mjs
@@ -213,6 +337,7 @@ jobs:
           node --test shared/agents/sovereignCommanderCpuPressure.test.mjs
           node --test scripts/sovereign-commander-ignition-autoheal.test.mjs
           node --test shared/agents/sovereignCommanderWindows.test.mjs
+          node --test scripts/sovereign-fixed-runtime-directory-package-v1.test.mjs scripts/sovereign-fixed-runtime-install-source-package-v1.test.mjs scripts/sovereign-fixed-runtime-installer-v1.test.mjs
 
   native-browser-host-windows:
     runs-on: windows-latest
@@ -263,5 +388,29 @@ jobs:
         run: node --experimental-vm-modules --test --test-concurrency=1 stephanos-server/services/supervisedR7RecoveryPreparationV1.test.mjs stephanos-server/services/supervisedR7RecoveryPreparationV1.integration.test.mjs stephanos-server/services/supervisedR7RecoveryRuntime.test.js
       - name: Real Windows private directory creation, exact Unicode and ancestor race regressions
         run: node --test shared/agents/sovereignDirectoryCreateV1.test.mjs shared/agents/sovereignCommanderV1.test.mjs
+      - name: Native private file confinement and MCP session lifecycle
+        run: node --test --test-concurrency=1 shared/agents/sovereignSearchSessionsV1.test.mjs shared/agents/sovereignMcpSessionHistoryV1.test.mjs shared/agents/sovereignCommanderPrivateSessionsV1.test.mjs shared/agents/sovereignCommanderSessionLifecycleV1.test.mjs shared/agents/sovereignMcpSessionConfigV1.test.mjs shared/agents/sovereignCommanderSessionConfigV1.test.mjs shared/agents/sovereignFileCopyV1.test.mjs shared/agents/sovereignFileCopyNativeV1.test.mjs shared/agents/sovereignCommanderFileCopyV1.test.mjs shared/agents/sovereignFileMoveV1.test.mjs shared/agents/sovereignCommanderFileMoveV1.test.mjs shared/agents/sovereignProcessSessionsV1.test.mjs shared/agents/sovereignCommanderProcessSessionsV1.test.mjs shared/agents/sovereignFeedbackIntakeV1.test.mjs shared/agents/sovereignPdfWriteV1.test.mjs shared/agents/sovereignCommanderFeedbackPdfV1.test.mjs
+      - name: Captured private-tool package closure and installer contracts
+        run: node --test scripts/sovereign-fixed-runtime-directory-package-v1.test.mjs scripts/sovereign-fixed-runtime-install-source-package-v1.test.mjs scripts/sovereign-fixed-runtime-installer-v1.test.mjs
       - name: Windows VR diagnosis empty and single-value array regression
         run: node --test scripts/starfield-vr-flight-recorder.test.mjs
+      - name: Parse Spatial preparation and installation scripts
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($file in @('scripts/windows/prepare-spatial-workspace.ps1', 'scripts/windows/spatial-window-install-lock.ps1', 'scripts/windows/build-spatial-window.ps1', 'scripts/windows/install-spatial-window.ps1', 'scripts/windows/start-spatial-window-host.ps1', 'scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1')) {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -gt 0) {
+              foreach ($parseError in $parseErrors) { Write-Host ('{0}:{1}: {2}' -f $file, $parseError.Extent.StartLineNumber, $parseError.Message) }
+              throw "PowerShell parse errors: $file"
+            }
+          }
+      - name: Compile Spatial helper in a disposable output directory
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./scripts/windows/build-spatial-window.ps1 -OutputDirectory (Join-Path $env:RUNNER_TEMP 'spatial-helper-build')
+      - name: Spatial preparation contracts and Windows process cleanup fixtures
+        run: node --test shared/agents/sovereignSpatialWorkspaceV1.test.mjs tests/spatial-window-lifecycle-v1.test.mjs tests/spatial-workspace-prepare-windows-v1.test.mjs tests/spatial-install-pins-windows-v1.test.mjs

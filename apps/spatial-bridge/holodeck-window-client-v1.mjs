@@ -18,26 +18,84 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
   }
   let image=null,epoch=0,refreshPromise=null;
   let token=null,active=false,disposed=false,generation=0,serial=0,sequence=0,timer=null,queue=[],busy=false;
-  let sharedStream=null,sharedVideo=null,sharedFrame=null,sharedTimer=null;
-  let pendingStream=null,pendingVideo=null,shareAttempt=null;
+  // One owner spans picker, native revocation, playback and the accepted view.
+  // Late promises retain this record only; they can never close a newer owner.
+  let capture=null;
+  const captureCancelled=Symbol('capture-cancelled');
   const storageKey='stephanos.spatial-window.session.v1';
   try{const saved=sessionStore?.getItem(storageKey);if(/^[a-f0-9]{64}$/.test(saved??''))token=saved;}catch{}
   let state={status:'idle',message:'Connect your ChatGPT or Codex window.',inputStatus:'',windows:[],title:'',revision:0};
   function publish(changes){state={...state,...changes,revision:state.revision+1};try{onChange({...state});}catch{}}
-  function stopShared(){
-    const cancelPlayback=shareAttempt?.cancelPlayback;
-    if(cancelPlayback){shareAttempt.cancelPlayback=null;cancelPlayback();}
-    if(sharedTimer!==null)clearTimer(sharedTimer);
-    sharedTimer=null;
-    const streams=[sharedStream,pendingStream],videos=[sharedVideo,pendingVideo];
-    sharedStream=null;sharedVideo=null;sharedFrame=null;pendingStream=null;pendingVideo=null;
-    for(const stream of streams)for(const track of stream?.getTracks?.()??[])
-      if(track.readyState!=='ended')try{track.stop();}catch{}
-    for(const video of videos)if(video)try{video.pause?.();video.srcObject=null;}catch{}
+  const currentEpoch=current=>!disposed&&current===epoch;
+  const ownsCapture=owner=>currentEpoch(owner.epoch)&&capture===owner&&owner.phase!=='closed';
+  function publishCurrent(current,changes){
+    if(!currentEpoch(current))return false;
+    publish(changes);
+    return currentEpoch(current);
   }
-  // Local browser capture is an explicit view-only alternative when the
-  // independently installed native 4180 adapter is not ready. No window input
-  // or remote streaming is granted by a display capture permission.
+  function stopTracks(stream){
+    for(const track of stream?.getTracks?.()??[])try{if(track.readyState!=='ended')track.stop();}catch{}
+  }
+  function closeCapture(owner){
+    if(!owner)return;
+    if(capture===owner)capture=null;
+    if(owner.phase==='closed')return;
+    owner.phase='closed';
+    const {stream,video,track,ended,timer,cancel}=owner;
+    owner.stream=null;owner.video=null;owner.frame=null;owner.track=null;owner.ended=null;owner.timer=null;owner.cancel=null;
+    cancel?.(captureCancelled);
+    if(timer!==null)clearTimer(timer);
+    try{track?.removeEventListener?.('ended',ended);}catch{}
+    stopTracks(stream);
+    if(video){try{video.pause?.();}catch{}try{video.srcObject=null;}catch{}}
+  }
+  function finishCapture(owner,changes){
+    const owned=ownsCapture(owner),current=owner.epoch;
+    closeCapture(owner);
+    if(owned&&currentEpoch(current)&&capture===null)publish(changes);
+    return false;
+  }
+  function captureFrameTick(owner){
+    if(!ownsCapture(owner)||owner.phase!=='live')return false;
+    owner.timer=null;
+    if(owner.track.readyState==='ended')return finishCapture(owner,{status:'idle',message:'Browser window sharing ended.',inputStatus:''});
+    try{
+      const video=owner.video;
+      const ready=Number.isFinite(video.videoWidth)&&video.videoWidth>0&&Number.isFinite(video.videoHeight)&&video.videoHeight>0;
+      publish({status:ready?'view-only':'waiting',message:ready
+        ?'Shared PC window visible on the hologram (view-only). Native helper required for typing and clicking.'
+        :'Waiting for the selected window to draw.',inputStatus:''});
+      if(!ownsCapture(owner))return false;
+      owner.timer=setTimer(()=>captureFrameTick(owner),100);
+      return ownsCapture(owner);
+    }catch{
+      return finishCapture(owner,{status:'unavailable',message:'The browser could not display the selected window.'});
+    }
+  }
+  async function revokeNativeToken(old){
+    if(old)try{
+      const response=await fetchRef(endpoint+'/stop',{method:'POST',headers:{'Content-Type':'application/json','X-Spatial-Session':old},body:'{}',keepalive:true,signal:AbortSignal.timeout(10000)});
+      if(response.ok||response.status===403)try{if(sessionStore?.getItem(storageKey)===old)sessionStore.removeItem(storageKey);}catch{}
+    }catch{}
+  }
+  function beginDisconnect(keepCapture=null){
+    // Bind the transition before cleanup or publication can reenter this client.
+    // Only capture adoption may retain its exact owner across native revocation.
+    const current=++epoch,previousCapture=capture;
+    capture=keepCapture;
+    if(keepCapture)keepCapture.epoch=current;
+    let old=token;
+    if(!old)try{old=sessionStore?.getItem(storageKey);}catch{}
+    token=null;active=false;image=null;refreshPromise=null;queue=[];generation=0;serial=0;busy=false;
+    const oldTimer=timer;timer=null;
+    if(previousCapture!==keepCapture)closeCapture(previousCapture);
+    clearTimer(oldTimer);
+    if(current===epoch&&capture===keepCapture)
+      publish({status:'idle',windows:[],title:'',inputStatus:'',message:'Window disconnected.'});
+    return Object.freeze({epoch:current,stopped:revokeNativeToken(old)});
+  }
+  // Local browser capture remains an explicit view-only alternative. A display
+  // grant never enables native input, audio capture or a remote stream.
   async function shareScreen(){
     const hostname=String(locationRef?.hostname||'').toLowerCase();
     if(disposed||!['127.0.0.1','localhost'].includes(hostname)){
@@ -47,114 +105,76 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     if(typeof media?.getDisplayMedia!=='function'){
       publish({inputStatus:'This browser cannot share a window. Use the reviewed Windows Spatial shortcut for the native console.'});return false;
     }
-    // A second click must not create an unowned capture during the first
-    // picker, native stop, or video.play() promise.
-    // Do not open a second browser picker while an accepted stream is live.
-    // Replacing a view requires a deliberate Stop and a new user grant.
-    if(sharedStream || shareAttempt?.epoch===epoch){
+    if(capture){
       publish({inputStatus:'Stop the current shared window or pending request before sharing another.'});return false;
     }
-    const startingEpoch=epoch,attempt={epoch};
-    shareAttempt=attempt;
-    let stream=null,video=null,accepted=false;
-    const revoke=()=>{for(const track of stream?.getTracks?.()??[])
-      if(track.readyState!=='ended')try{track.stop();}catch{}};
-    try {
-      // The picker remains directly inside the real user-initiated click.
-      try {stream=await media.getDisplayMedia({video:true,audio:false});}
-      catch {
-        // A stale browser picker must not alter a revoked or newer session.
-        if(!disposed && startingEpoch===epoch && shareAttempt===attempt)
-          publish({inputStatus:'Window sharing was cancelled or blocked. No screen was connected.'});
-        return false;
-      }
-      if(disposed||startingEpoch!==epoch)return false;
-      const track=stream?.getVideoTracks?.()[0];
-      if(!track||track.readyState==='ended'){
-        publish({inputStatus:'Window capture provided no live picture.'});return false;
-      }
-      // Snapshot this attempt's own stop epoch before awaiting its native
-      // request, never after a later user Stop or page departure.
-      const oldStop=stop(),current=epoch;
-      attempt.epoch=current;
-      pendingStream=stream;
-      await oldStop;
-      if(disposed||current!==epoch)return false;
-      // Register track loss before playback can remain pending indefinitely.
-      const ended=()=>{
-        if(!disposed&&current===epoch&&(shareAttempt===attempt||sharedStream===stream)){
-          stopShared();publish({status:'idle',message:'Browser window sharing ended.',inputStatus:''});
-        }
-      };
-      try{track.addEventListener?.('ended',ended,{once:true});}catch{return false;}
-      if(track.readyState==='ended'){ended();return false;}
-      try {
-        video=documentRef.createElement('video');
-        video.muted=true;video.autoplay=true;video.playsInline=true;
-        video.srcObject=stream;pendingVideo=video;
-        const playback=video.play();
-        const cancelled=new Promise(resolve=>{attempt.cancelPlayback=()=>resolve(false);});
-        const played=await Promise.race([Promise.resolve(playback).then(()=>true),cancelled]);
-        attempt.cancelPlayback=null;
-        if(!played)return false;
+    let cancel;
+    const owner={epoch,phase:'picker',stream:null,track:null,ended:null,video:null,frame:null,timer:null,
+      cancelled:new Promise(resolve=>{cancel=resolve;}),cancel:value=>cancel(value)};
+    capture=owner;
+    let accepted=false;
+    try{
+      // Invoke directly in the actual click stack, before the first await.
+      // Cancellation cannot dismiss a browser picker, but a late grant is
+      // immediately stopped and cannot become another attempt's resource.
+      let stream;
+      try{
+        const picker=media.getDisplayMedia({video:true,audio:false});
+        stream=await Promise.race([Promise.resolve(picker).then(granted=>{
+          if(ownsCapture(owner))owner.stream=granted;else stopTracks(granted);
+          return granted;
+        }),owner.cancelled]);
       }catch{
-        // A late playback failure cannot overrule a newer Stop, departure,
-        // or independently consented replacement capture.
-        if(!disposed&&current===epoch)
-          publish({status:'unavailable',message:'The browser could not display the selected window.'});
-        return false;
+        return finishCapture(owner,{inputStatus:'Window sharing was cancelled or blocked. No screen was connected.'});
       }
-      if(disposed||current!==epoch||track.readyState==='ended')return false;
-      // The uncommitted stream can be revoked immediately on Stop even
-      // while play() never settles; only this exact epoch may adopt it.
-      pendingStream=null;pendingVideo=null;
-      sharedStream=stream;sharedVideo=video;
-      sharedFrame={drawable:video,get naturalWidth(){return video.videoWidth;},get naturalHeight(){return video.videoHeight;}};
-      const label='Shared PC window visible on the hologram (view-only). Native helper required for typing and clicking.';
-      const frameTick=()=>{
-        if(sharedStream!==stream||disposed||current!==epoch)return;
-        if(track.readyState==='ended'){
-          stopShared();publish({status:'idle',message:'Browser window sharing ended.',inputStatus:''});return;
-        }
-        const ready=Number.isFinite(video.videoWidth)&&video.videoWidth>0&&Number.isFinite(video.videoHeight)&&video.videoHeight>0;
-        publish({status:ready?'view-only':'waiting',message:ready?label:'Waiting for the selected window to draw.',inputStatus:''});
-        // A synchronous onChange can Stop/dispose this capture during publish.
-        // Never re-arm its timer after that revocation.
-        if (sharedStream===stream && !disposed && current===epoch) sharedTimer=setTimer(frameTick,100);
+      if(stream===captureCancelled||!ownsCapture(owner))return false;
+      const track=stream?.getVideoTracks?.()[0];
+      if(!track||track.readyState==='ended')return finishCapture(owner,{inputStatus:'Window capture provided no live picture.'});
+      owner.track=track;
+      owner.ended=()=>{
+        if(ownsCapture(owner))finishCapture(owner,{status:'idle',message:'Browser window sharing ended.',inputStatus:''});
       };
-      try{frameTick();}catch{
-        stopShared();
-        if(!disposed&&current===epoch)publish({status:'unavailable',message:'The browser could not display the selected window.'});
-        return false;
+      try{track.addEventListener?.('ended',owner.ended,{once:true});}catch{return false;}
+      if(track.readyState==='ended'){owner.ended();return false;}
+      owner.phase='native-stop';
+      const transition=beginDisconnect(owner);
+      if(!ownsCapture(owner))return false;
+      const stopped=await Promise.race([transition.stopped,owner.cancelled]);
+      if(stopped===captureCancelled||!ownsCapture(owner))return false;
+      owner.phase='playback';
+      try{
+        const video=documentRef.createElement('video');owner.video=video;
+        video.muted=true;video.autoplay=true;video.playsInline=true;video.srcObject=stream;
+        const played=await Promise.race([Promise.resolve(video.play()),owner.cancelled]);
+        if(played===captureCancelled||!ownsCapture(owner))return false;
+      }catch{
+        return finishCapture(owner,{status:'unavailable',message:'The browser could not display the selected window.'});
       }
-      if(sharedStream!==stream||track.readyState==='ended')return false;
-      accepted=true;
-      return true;
-    } finally {
-      attempt.cancelPlayback=null;
-      if(shareAttempt===attempt)shareAttempt=null;
-      if(!accepted){
-        if(pendingStream===stream){pendingStream=null;pendingVideo=null;}
-        revoke();
-        if(video)try{video.pause?.();video.srcObject=null;}catch{}
-      }
+      if(track.readyState==='ended'){owner.ended();return false;}
+      const video=owner.video;
+      owner.frame={drawable:video,get naturalWidth(){return video.videoWidth;},get naturalHeight(){return video.videoHeight;}};
+      owner.phase='live';
+      accepted=captureFrameTick(owner);
+      return accepted;
+    }finally{
+      if(!accepted)closeCapture(owner);
     }
   }
-  function showWindows(windows,message){
+  function showWindows(current,windows,message){
     windows=Array.isArray(windows)?windows:[];
-    publish({status:'selecting',windows,message:message??(windows.length
+    return publishCurrent(current,{status:'selecting',windows,message:message??(windows.length
       ?'Select the ChatGPT or Codex window you want to use in VR.'
       :'No open windows found. Open ChatGPT on this PC; this list refreshes automatically.')});
   }
   function scheduleDiscovery(current){
     // A selection subscriber may synchronously revoke the selection during publication.
-    if(!disposed&&current===epoch&&state.status==='selecting')timer=setTimer(()=>refreshWindows(current),3000);
+    if(currentEpoch(current)&&state.status==='selecting')timer=setTimer(()=>refreshWindows(current),3000);
   }
   async function refreshWindows(current){
-    if(state.status!=='selecting'||current!==epoch)return;
+    if(state.status!=='selecting'||!currentEpoch(current))return;
     try{
       refreshPromise=request('/windows');const result=await refreshPromise;
-      if(current===epoch&&state.status==='selecting'){showWindows(result.windows);scheduleDiscovery(current);}
+      if(currentEpoch(current)&&state.status==='selecting'&&showWindows(current,result.windows))scheduleDiscovery(current);
     }catch{if(current===epoch&&state.status==='selecting')publish({status:'unavailable',inputStatus:'',message:'Connection expired. Choose window again.'});}
     finally{if(current===epoch)refreshPromise=null;}
   }
@@ -163,23 +183,11 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       body:JSON.stringify(body),cache:'no-store',signal:AbortSignal.timeout(path==='/bind'?125000:20000)});
     const data=await response.json();if(!response.ok)throw new Error(data.status);return data;
   }
-  async function stop() {
-    stopShared();
-    epoch++;active=false;clearTimer(timer);refreshPromise=null;queue=[];generation=0;serial=0;busy=false;
-    let old=token;
-    if(!old)try{old=sessionStore?.getItem(storageKey);}catch{}
-    token=null;image=null;publish({status:'idle',windows:[],title:'',inputStatus:'',message:'Window disconnected.'});
-    if(old)try{
-      const response=await fetchRef(endpoint+'/stop',{method:'POST',headers:{'Content-Type':'application/json','X-Spatial-Session':old},body:'{}',keepalive:true,signal:AbortSignal.timeout(10000)});
-      if(response.ok||response.status===403)try{if(sessionStore?.getItem(storageKey)===old)sessionStore.removeItem(storageKey);}catch{}
-    }catch{}
-  }
+  function stop(){return beginDisconnect().stopped;}
   async function discover() {
     if(disposed)return;
-    const stopping=stop(),current=epoch;await stopping;
-    if(disposed||current!==epoch)return;publish({status:'connecting',message:'Looking for open desktop windows.'});
-    // A synchronous UI callback can revoke this session during publication.
-    if(disposed||current!==epoch)return;
+    const transition=beginDisconnect(),current=transition.epoch;await transition.stopped;
+    if(!publishCurrent(current,{status:'connecting',message:'Looking for open desktop windows.'}))return;
     try {
       const session=await request('/session');
       if(disposed||current!==epoch){
@@ -192,7 +200,7 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       try{sessionStore?.setItem(storageKey,token);}catch{}
       const result=await request('/windows');
       if(current!==epoch)return;
-      showWindows(result.windows);
+      if(!showWindows(current,result.windows))return;
       // Keep the unbound selection alive while the person reads the window list.
       scheduleDiscovery(current);
     }catch(error){if(current===epoch)publish({status:'unavailable',message:error.message==='another-surface-active'
@@ -203,35 +211,35 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     let selected=state.windows.find(w=>w.id===id);if(!selected||busy||state.status!=='selecting')return false;
     clearTimer(timer);
     const current=epoch;
-    busy=true;publish({status:'connecting',message:'Confirm the selected window in the Windows connection prompt.'});
+    busy=true;
     try{
+      if(!publishCurrent(current,{status:'connecting',message:'Confirm the selected window in the Windows connection prompt.'}))return false;
       if(refreshPromise){
         const refreshed=await refreshPromise;
         if(current!==epoch||disposed)return false;
         const sameWindow=refreshed.windows?.find(window=>window.id===selected.id&&window.pid===selected.pid);
         if(!sameWindow){
-          showWindows(refreshed.windows,'The window list changed. Select the intended app again.');scheduleDiscovery(current);return false;
+          if(showWindows(current,refreshed.windows,'The window list changed. Select the intended app again.'))scheduleDiscovery(current);return false;
         }
         selected=sameWindow;
       }
       if(current!==epoch||disposed)return false;
       const result=await request('/bind',{id});if(current!==epoch)return false;if(result.status!=='connected')throw new Error('bind');
-      active=true;sequence=0;queue=[];publish({status:'waiting',windows:[],title:selected.title,message:'Waiting for the selected app to draw.'});
-      // A waiting-state subscriber can synchronously Stop, depart or dispose.
-      if(!active||disposed||current!==epoch)return false;
+      active=true;sequence=0;queue=[];
+      if(!publishCurrent(current,{status:'waiting',windows:[],title:selected.title,message:'Waiting for the selected app to draw.'})||!active)return false;
       timer=setTimer(()=>poll(current),0);return true;
     }catch{if(current===epoch)publish({status:'unavailable',message:'Could not connect that window. Restore it on your desktop and choose it again.'});return false;}
     finally{if(current===epoch)busy=false;}
   }
   async function poll(current) {
-    if(!active||disposed||current!==epoch)return;
+    if(!active||!currentEpoch(current))return;
     try{
       const input=queue.shift();
       if(input){
         // Serialize capture and input; each operator action is sent once only.
         const result=await request('/input',{...input,sequence:++sequence});
         if(current!==epoch)return;
-        publish({inputStatus:result.status==='input-posted'?'Input sent to the selected app.':'That input was not accepted. Select a text field or wait for a fresh picture.'});
+        if(!publishCurrent(current,{inputStatus:result.status==='input-posted'?'Input sent to the selected app.':'That input was not accepted. Select a text field or wait for a fresh picture.'}))return;
       }
       const frame=await request('/frame');
       if(!active||current!==epoch)return;
@@ -243,16 +251,16 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
           image=next;generation=frame.generation;serial=frame.serial;publish({status:'live',...(state.status!=='live'?{inputStatus:''}:{}),message:'Connected to your original app. Point at its controls to interact.'});
         }
       }else{generation=0;queue=[];publish({status:'waiting',inputStatus:'Input paused. Wait for a live picture of your app.',message:'Waiting for your app. Restore a minimized window or reconnect if it closed.'});}
-      if(active&&!disposed&&current===epoch)timer=setTimer(()=>poll(current),queue.length?0:67);
+      if(active&&currentEpoch(current))timer=setTimer(()=>poll(current),queue.length?0:67);
     }catch{if(current===epoch){active=false;generation=0;queue=[];image=null;publish({status:'unavailable',inputStatus:'Input paused. Reconnect the selected app.',message:'Window connection lost. Your conversation remains in the original app.'});}}
   }
   function input(value){
-    if(sharedStream){publish({inputStatus:'View-only capture: connect the native Windows helper to type or click.'});return false;}
+    if(capture?.phase==='live'){publish({inputStatus:'View-only capture: connect the native Windows helper to type or click.'});return false;}
     if(!active||!generation||state.status!=='live'||queue.length>=16){publish({inputStatus:'Input paused. Wait for a live connection.'});return false;}
     queue.push({...value,generation});publish({inputStatus:'Sending input to the selected app.'});return true;
   }
   return {discover,connect,shareScreen,stop,input,probeHelper,getState:()=>({...state}),
-    getFrame:()=>sharedStream&&sharedFrame?.naturalWidth>0&&sharedFrame?.naturalHeight>0?sharedFrame:state.status==='live'?image:null,
+    getFrame:()=>capture?.phase==='live'&&capture.frame?.naturalWidth>0&&capture.frame?.naturalHeight>0?capture.frame:state.status==='live'?image:null,
     // A cached page retains this client. Revoke access on departure, but allow
     // an explicit new connection after Back/Forward restores the page.
     pagehide({persisted=false}={}){if(!persisted)disposed=true;return stop();},

@@ -494,3 +494,175 @@ test('native discovery connecting-state revocation never allocates a new session
     }
   }
 });
+
+// Transition model: each consent owns its resources from picker to live view.
+// This harness schedules external completions independently of UI callbacks.
+function captureStep(){
+  let resolve,reject,settled=false;
+  const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});
+  return {promise,get settled(){return settled;},resolve(value){if(!settled){settled=true;resolve(value);}},
+    reject(error=new Error('late fixture failure')){if(!settled){settled=true;reject(error);}}};
+}
+async function drainCaptureTransitions(){for(let i=0;i<30;i++)await Promise.resolve();}
+async function captureSettled(promise){
+  let settled=false,value;
+  promise.then(result=>{settled=true;value=result;});
+  await drainCaptureTransitions();
+  assert.equal(settled,true,'local cancellation must settle without waiting for external completion');
+  return value;
+}
+function captureTransitionHarness({initialNative=false,delayStops=false}={}){
+  const saved=new Map(),pickers=[],plays=[],tracks=[],videos=[],timers=new Map(),calls=[],stops=[];
+  if(initialNative)saved.set('stephanos.spatial-window.session.v1','a'.repeat(64));
+  let nextTimer=0,sessions=0,hook=()=>{};
+  const client=createHolodeckWindowClient({
+    locationRef:{hostname:'localhost',port:'4173'},
+    sessionStore:{getItem:key=>saved.get(key),setItem:(key,value)=>saved.set(key,value),removeItem:key=>saved.delete(key)},
+    navigatorRef:{mediaDevices:{getDisplayMedia(spec){
+      assert.deepEqual(spec,{video:true,audio:false});const picker=captureStep();pickers.push(picker);return picker.promise;
+    }}},
+    documentRef:{createElement(kind){
+      if(kind==='img')return {src:'',decode:async()=>{}};
+      assert.equal(kind,'video');const playback=captureStep();plays.push(playback);
+      const video={videoWidth:640,videoHeight:480,srcObject:null,pauseCount:0,
+        play:()=>playback.promise,pause(){this.pauseCount++;}};
+      videos.push(video);return video;
+    }},
+    setTimer(fn){const id=++nextTimer;timers.set(id,fn);return id;},clearTimer:id=>timers.delete(id),
+    onChange:state=>hook(state),
+    fetchRef:async(url,options)=>{
+      const path=new URL(url).pathname;calls.push({path,token:options.headers['X-Spatial-Session']});
+      const response=data=>({ok:true,status:200,json:async()=>data});
+      if(path==='/stop'){
+        if(!delayStops)return response({status:'stopped'});
+        const stopped=captureStep();stops.push(stopped);return stopped.promise;
+      }
+      if(path==='/session')return response({token:(++sessions%2?'b':'c').repeat(64)});
+      if(path==='/windows')return response({windows:[{id:17,pid:19,title:'Selected app'}]});
+      if(path==='/bind')return response({status:'connected'});
+      if(path==='/input')return response({status:'input-posted'});
+      if(path==='/frame')return response({status:'frame',serial:calls.length,generation:1,jpeg:'fixture'});
+      throw Error('Unexpected native request');
+    },
+  });
+  const h={client,pickers,plays,tracks,videos,timers,calls,stops,setHook(fn){hook=fn;},
+    grant(index){
+      const listeners=new Set();
+      const track={readyState:'live',stopCount:0,stop(){this.stopCount++;this.readyState='ended';},
+        addEventListener(event,fn){assert.equal(event,'ended');listeners.add(fn);},
+        removeEventListener(event,fn){assert.equal(event,'ended');listeners.delete(fn);},
+        end(){this.readyState='ended';for(const fn of [...listeners])fn();},listenerCount:()=>listeners.size};
+      tracks.push(track);pickers[index].resolve({getVideoTracks:()=>[track],getTracks:()=>[track]});return track;
+    },
+    releaseStops(){for(const stopped of stops)stopped.resolve({ok:true,status:200,json:async()=>({status:'stopped'})});},
+    async tick(){const entry=timers.entries().next().value;assert.ok(entry,'one owned timer must exist');timers.delete(entry[0]);await entry[1]();},
+    assertResources(live){
+      assert.equal(tracks.filter(track=>track.readyState==='live').length,live);
+      assert.ok(tracks.every(track=>track.stopCount<=1),'each track is stopped at most once');
+      assert.ok(videos.filter(video=>video.srcObject!==null).length<=1,'only one owned video may be attached');
+      assert.ok(timers.size<=1,'only the current owner may schedule work');
+    },
+    async close(){hook=()=>{};client.dispose();h.releaseStops();for(const pending of [...pickers,...plays])pending.reject();await drainCaptureTransitions();},
+  };
+  return h;
+}
+
+test('capture adoption retains its owner during internal native revocation and rejects reentrant duplicate consent',async()=>{
+  const h=captureTransitionHarness({initialNative:true,delayStops:true});let nested,armed=true;
+  h.setHook(state=>{if(armed&&state.status==='idle'){armed=false;nested=h.client.shareScreen();}});
+  try{
+    const outer=h.client.shareScreen();h.grant(0);await drainCaptureTransitions();
+    assert.equal(await nested,false);assert.equal(h.pickers.length,1);
+    assert.equal(h.videos.length,0,'native revocation must finish before playback');
+    h.releaseStops();await drainCaptureTransitions();h.plays[0].resolve();
+    assert.equal(await outer,true);assert.equal(h.client.getFrame()?.drawable,h.videos[0]);
+    assert.equal(h.timers.size,1);h.assertResources(1);
+  }finally{await h.close();}
+});
+
+test('Stop or discover reentry during capture disconnect publication cannot share the outer transition epoch',async()=>{
+  for(const operation of ['stop','discover']){
+    const h=captureTransitionHarness({initialNative:true,delayStops:true});let nested,armed=true;
+    h.setHook(state=>{if(armed&&state.status==='idle'){armed=false;nested=h.client[operation]();}});
+    try{
+      const outer=h.client.shareScreen();const track=h.grant(0);await drainCaptureTransitions();
+      assert.equal(await captureSettled(outer),false);
+      assert.equal(track.stopCount,1);assert.equal(h.videos.length,0);
+      assert.equal(h.calls.some(call=>call.path==='/session'),false);
+      assert.ok(h.calls.every(call=>call.path==='/stop'&&call.token==='a'.repeat(64)));
+      h.releaseStops();await nested;await drainCaptureTransitions();
+      assert.equal(h.calls.filter(call=>call.path==='/session').length,operation==='discover'?1:0);
+      assert.equal(h.client.getState().status,operation==='discover'?'selecting':'idle');
+      h.assertResources(0);
+    }finally{await h.close();}
+  }
+});
+
+test('nested discovery during disconnect publication allocates only the latest native session',async()=>{
+  const h=captureTransitionHarness();let inner,armed=true;
+  h.setHook(state=>{if(armed&&state.status==='idle'){armed=false;inner=h.client.discover();}});
+  try{
+    await h.client.discover();await inner;
+    assert.deepEqual(h.calls.map(call=>call.path),['/session','/windows']);
+    assert.equal(h.client.getState().status,'selecting');assert.equal(h.timers.size,1);
+  }finally{await h.close();}
+});
+
+test('cancelled picker and playback completions cannot clean up a newer explicitly consented owner',async()=>{
+  for(const stage of ['picker','playback'])for(const outcome of ['resolve','reject'])for(const departure of ['stop','cached-pagehide']){
+    const h=captureTransitionHarness();
+    try{
+      const old=h.client.shareScreen();
+      if(stage==='playback'){h.grant(0);await drainCaptureTransitions();assert.equal(h.plays.length,1);}
+      if(departure==='stop')await h.client.stop();else await h.client.pagehide({persisted:true});
+      assert.equal(await captureSettled(old),false);
+      const replacement=h.client.shareScreen();const fresh=h.grant(1);await drainCaptureTransitions();
+      const video=h.videos.at(-1);h.plays.at(-1).resolve();assert.equal(await replacement,true);
+      if(stage==='picker'){
+        if(outcome==='resolve'){const stale=h.grant(0);await drainCaptureTransitions();assert.equal(stale.stopCount,1);}
+        else h.pickers[0].reject();
+      }else h.plays[0][outcome]();
+      await drainCaptureTransitions();
+      assert.equal(fresh.readyState,'live');assert.equal(h.client.getFrame()?.drawable,video);
+      assert.equal(h.client.getState().status,'view-only');assert.equal(h.timers.size,1);h.assertResources(1);
+    }finally{await h.close();}
+  }
+});
+
+test('track loss revokes its sole owner during native stop playback and accepted view without awaiting external promises',async()=>{
+  for(const stage of ['native-stop','playback','live']){
+    const h=captureTransitionHarness({initialNative:true,delayStops:true});
+    try{
+      const sharing=h.client.shareScreen();const track=h.grant(0);await drainCaptureTransitions();
+      assert.equal(track.listenerCount(),1,'track loss must be observed before the native stop await');
+      if(stage!=='native-stop'){h.releaseStops();await drainCaptureTransitions();}
+      if(stage==='live'){h.plays[0].resolve();assert.equal(await sharing,true);}
+      track.end();
+      if(stage!=='live')assert.equal(await captureSettled(sharing),false);
+      assert.equal(h.client.getFrame(),null);assert.equal(h.client.getState().status,'idle');
+      assert.equal(track.listenerCount(),0);assert.equal(h.timers.size,0);h.assertResources(0);
+      const stops=track.stopCount;
+      const first=h.client.stop(),second=h.client.stop();h.releaseStops();await Promise.all([first,second]);
+      h.client.dispose();h.releaseStops();await drainCaptureTransitions();
+      assert.equal(track.stopCount,stops,'repeated revocation cannot stop a retired track again');
+    }finally{await h.close();}
+  }
+});
+
+test('native input publication is a transition boundary before fetching the next frame',async()=>{
+  for(const operation of ['stop','pagehide','dispose','normal']){
+    const h=captureTransitionHarness();let revoked=false;
+    try{
+      await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
+      assert.equal(h.client.getState().status,'live');
+      h.setHook(state=>{if(!revoked&&operation!=='normal'&&state.inputStatus==='Input sent to the selected app.'){
+        revoked=true;void h.client[operation]();
+      }});
+      assert.equal(h.client.input({kind:'text',text:'fixture'}),true);await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,1);
+      assert.equal(h.calls.filter(call=>call.path==='/frame').length,operation==='normal'?2:1);
+      assert.equal(h.timers.size,operation==='normal'?1:0);
+      assert.equal(h.client.getState().status,operation==='normal'?'live':'idle');
+    }finally{await h.close();}
+  }
+});
