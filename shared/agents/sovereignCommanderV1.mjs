@@ -12,6 +12,7 @@ import {
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 import { executeCorePublicationDirectoryActionV1 } from '../../scripts/sovereign-core-directory-action-v1.mjs';
 import { isSovereignMaintenanceObservationV1 } from './sovereignMaintenanceAdmissionV1.mjs';
+import { SPATIAL_PREPARE_ACTION } from './sovereignSpatialWorkspaceV1.mjs';
 import { executeSovereignDirectoryCreateV1, validateSovereignDirectoryTargetV1 } from './sovereignDirectoryCreateV1.mjs';
 import { validateSovereignFileMoveArgumentsV1 } from './sovereignFileMoveV1.mjs';
 import { validateSovereignFileCopyArgumentsV1, captureSovereignFileCopyResultV1,
@@ -358,6 +359,11 @@ function fixedRegistry(repoRoot) {
       executable: node,
       args: frozen([nodeFile('sovereign-commander-ui-4173-repair.mjs')]),
       timeoutMs: 180_000,
+    }),
+    [SPATIAL_PREPARE_ACTION]: frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-spatial-workspace.mjs')]),
+      timeoutMs: 240_000,
     }),
     'restart-stephanos-runtime': frozen({
       executable: node,
@@ -781,7 +787,13 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     if (!fixed) blockers.push('sovereign-commander-process-not-registered');
     else {
       let args = [...fixed.args];
-      if (processId === 'starfield-vr-telemetry-archive') {
+      if (processId === SPATIAL_PREPARE_ACTION) {
+        if (operation !== SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION
+            || typeof payload.expectedMain !== 'string' || !/^[a-f0-9]{40}$/.test(payload.expectedMain)
+            || Object.keys(payload).some(key => !['actionId', 'expectedMain'].includes(key))) {
+          blockers.push('sovereign-spatial-prepare-fixed-scope-required');
+        } else args = [...args, '--expected-main', payload.expectedMain];
+      } else if (processId === 'starfield-vr-telemetry-archive') {
         const offset = payload.offset === undefined ? 0 : payload.offset;
         const limit = payload.limit === undefined ? 12 : payload.limit;
         if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000
@@ -852,6 +864,7 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
         if (blockers.length === 0) plan = frozen({ kind: 'core-publication-repair', processId, expectedMain: payload.expectedMain });
       } else if (blockers.length === 0) plan = frozen({
         kind: 'fixed-process', processId, ...fixed, args: frozen(args),
+        ...(processId === SPATIAL_PREPARE_ACTION ? { expectedMain: payload.expectedMain } : {}),
         ...(processId === 'sovereign-windows-reviewer-calibration'
           ? { reviewIdentity: validateSovereignWindowsReviewIdentityV1(payload.reviewIdentity) }
           : {}),

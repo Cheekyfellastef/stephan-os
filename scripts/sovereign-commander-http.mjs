@@ -15,6 +15,7 @@ import { isProvenSovereignWindowsReviewerPreExecutionDenialV1, buildSovereignCom
 import { buildStephanosExecutionCommandEnvelopeV1, buildStephanosExecutionSurfaceCatalogV1, STEPHANOS_EXECUTION_SURFACE } from '../shared/agents/stephanosExecutionCommandFabricV1.mjs';
 import { publishSovereignCommanderRepairReport, SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE } from '../shared/agents/sovereignCommanderRepairReportV1.mjs';
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, sovereignMaintenanceCustodyUnprovenV1, readSovereignMaintenanceTerminalReceiptV1 } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
+import { SPATIAL_PREPARE_ACTION, parseSpatialPreparationOutputV1 } from '../shared/agents/sovereignSpatialWorkspaceV1.mjs';
 
 export const SOVEREIGN_COMMANDER_HTTP_HOST = '127.0.0.1';
 export const SOVEREIGN_COMMANDER_HTTP_PORT = 18791;
@@ -208,6 +209,9 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     const qualification = nativeGoal ? inspectFixedRuntimeQualificationV1() : null;
     if (nativeGoal && (!custodyStore || qualification?.ok !== true))
       return blocked(qualification?.reason || 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
+    if (nativeGoal && command.plan.processId === SPATIAL_PREPARE_ACTION
+        && command.plan.expectedMain !== qualification.sourceHead)
+      return blocked('FIXED_RUNTIME_EXPECTED_MAIN_MISMATCH');
     const resumeDelayMs = state.nextDelayMs ?? intervalMs;
     if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
     scheduledTimer = null;
@@ -227,7 +231,8 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
       if (nativeGoal) {
         const active = custodyStore.status();
         const binding = { requestId: command.commandId, sourceHead: qualification.sourceHead,
-          custodyRecordSha256: active.digest, nativeRecordId: active.anchorRecordId };
+          custodyRecordSha256: active.digest, nativeRecordId: active.anchorRecordId,
+          actionId: command.plan.processId };
         const native = await executeFixedMaintenanceRuntimeV1(qualification, binding, {
           signal: controller.signal,
           onPrepared: root => custodyStore.recordNativeRoot(root).ok === true,
@@ -240,6 +245,8 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         state.lastOk = native.ok === true && released.ok === true;
         const childBlocker = native.ok === true
           ? ''
+          : command.plan.processId === SPATIAL_PREPARE_ACTION
+            ? parseSpatialPreparationOutputV1(native.stdout, qualification.sourceHead)?.blocker || ''
           : projectGoalBuilderChildBlockerV1(command.plan.processId, native.stdout);
         state.lastBlocker = state.timeoutCustodyHeld ? SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER
           : native.ok === true ? '' : childBlocker || native.reason;

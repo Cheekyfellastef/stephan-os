@@ -76,7 +76,7 @@ function closure(root, omitted) {
 }
 
 test('directory package captures exactly three dependencies and rejects incomplete or extra records', () => {
-  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 284);
+  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 295);
   for (const path of directoryPaths) assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(path), path);
   const records = candidateRecords();
   assert.throws(() => candidate(records.filter(row => !directoryPaths.includes(row.path))), /EXACT_SOURCE_REQUIRED/);
@@ -98,7 +98,7 @@ test('isolated captured package proves imports and both source-owned runtime-rea
   const root = packagedCandidate();
   try {
     const complete = closure(root);
-    assert.equal(complete.memberCount, 284);
+    assert.equal(complete.memberCount, 295);
     assert.deepEqual(complete.missing, []);
     assert.deepEqual(complete.bare, []);
     assert.equal(complete.repositoryModulesEvaluated, false);
@@ -138,6 +138,47 @@ test('private tool package includes all fifteen exact members and pins every nat
       writeFileSync(full, original);
     }
   } finally { dispose(root); }
+});
+
+test('Spatial shortcut installer is an exact execution dependency while its persistent launcher stays outside preparation', () => {
+  const installer='scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1';
+  const launcher='scripts/windows/launch-stephanos-spatial-workspace.ps1';
+  const records=candidateRecords();
+  assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(installer));
+  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(launcher),false);
+  assert.throws(()=>candidate(records.filter(row=>row.path!==installer)),/EXACT_SOURCE_REQUIRED/);
+  const root=packagedCandidate();
+  try {
+    const expected={file:'scripts/windows/prepare-spatial-workspace.ps1',target:installer,role:'runtime-exec'};
+    const complete=closure(root);
+    assert.deepEqual(complete.missing,[]);
+    assert.ok(complete.edges.some(row=>JSON.stringify(row)===JSON.stringify(expected)));
+    const omitted=closure(root,installer);
+    assert.ok(omitted.missing.some(row=>JSON.stringify(row)===JSON.stringify(expected)));
+    assert.equal(complete.edges.some(row=>row.target===launcher && row.role==='runtime-exec'),false);
+  } finally {dispose(root);}
+});
+
+test('fresh pinned preparation retains the installer, builder and dot-sourced handle utility execution edges', () => {
+  const root=packagedCandidate();
+  try {
+    const complete=closure(root);
+    assert.deepEqual(complete.missing,[]);
+    const lock='scripts/windows/spatial-window-install-lock.ps1';
+    const expected=[
+      {file:'scripts/windows/prepare-spatial-workspace.ps1',target:'scripts/windows/install-spatial-window.ps1',role:'runtime-exec'},
+      {file:'scripts/windows/install-spatial-window.ps1',target:'scripts/windows/build-spatial-window.ps1',role:'runtime-exec'},
+      ...['prepare-spatial-workspace','install-spatial-window','build-spatial-window',
+        'install-stephanos-spatial-workspace-shortcut','start-spatial-window-host']
+        .map(name=>({file:'scripts/windows/'+name+'.ps1',target:lock,role:'runtime-exec'})),
+    ];
+    for(const item of expected)
+      assert.ok(complete.edges.some(row=>JSON.stringify(row)===JSON.stringify(item)),JSON.stringify(item));
+    const omitted=closure(root,lock);
+    for(const item of expected.filter(row=>row.target===lock))
+      assert.ok(omitted.missing.some(row=>JSON.stringify(row)===JSON.stringify(item)),JSON.stringify(item));
+    assert.equal(complete.memberCount,295);
+  } finally {dispose(root);}
 });
 
 test('packaged directory adapter uses captured helper bytes and cannot fall back to the checkout', () => {

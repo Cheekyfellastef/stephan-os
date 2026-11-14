@@ -219,6 +219,29 @@ test('native success is an observation for this caller, never a serialized execu
     assert.equal(JSON.stringify(publicStatus).includes(forbidden), false);
 });
 
+test('four declared compiled profiles remain observation-only and reject duplicate or unknown inventory', async () => {
+  const profiles=['MAINTENANCE_GOAL_BUILDER_V1','SPATIAL_WORKSPACE_PREPARE_V1',
+    'SOURCE_TASK_V1','CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1'];
+  const observe=async candidate=>inspectSovereignControlSystemV1(fixture({inspectRuntime:()=>({
+    ok:true,sourceHead:HEAD,observedAtUtc:NOW,profiles:candidate,dispatchAllowed:true,
+  })}).options);
+  const report=await observe(profiles);
+  assert.equal(report.nativeRuntime.qualificationObserved,true);
+  assert.deepEqual(report.nativeRuntime.profiles,profiles);
+  const published=projectSovereignControlSystemStatusV1(report);
+  assert.equal(published.nativeRuntime.qualificationObserved,true);
+  assert.deepEqual(published.nativeRuntime.profiles,profiles);
+  assert.equal(published.observationOnly,true);
+  assert.equal(JSON.stringify(published).includes('dispatchAllowed'),false);
+  for(const invalid of [[...profiles,profiles[0]],[...profiles.slice(0,3),profiles[0]],
+    [...profiles.slice(0,3),'ARBITRARY_SHELL'],['SPATIAL_WORKSPACE_PREPARE_V1',null]]) {
+    const refused=await observe(invalid);
+    assert.equal(refused.nativeRuntime.qualificationObserved,false);
+    assert.equal(refused.nativeRuntime.reason,'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
+    assert.equal(Object.hasOwn(refused.nativeRuntime,'profiles'),false);
+  }
+});
+
 test('canonical source changes invalidate completion and any observed native qualification', async () => {
   let reads = 0;
   const { options } = fixture({ readSourceHead: () => ++reads === 1 ? HEAD : 'e'.repeat(40),

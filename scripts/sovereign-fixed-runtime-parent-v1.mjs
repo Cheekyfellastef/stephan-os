@@ -12,16 +12,26 @@ import {readMaintenanceRecoverySourceV1} from './sovereign-maintenance-custody-s
 import {FIXED_RUNTIME_SOURCE_PATHS_V1, FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1, fixedRuntimeGitClosureSha256V1}
   from './sovereign-fixed-runtime-installer-candidate-v1.mjs';
 
-// One canonical route for the already compiled maintenance profile. This is
-// declaration, not qualification: the actual owner must still prove its native
+// Closed routes for compiled maintenance profiles. These declarations do not
+// grant qualification: the actual owner must still prove its native
 // identity, fresh source, resource budget, reservation and physical custody.
 export const FIXED_MAINTENANCE_RUNTIME_ROUTE_V1 = Object.freeze({
   actionId: 'repair-goal-builder-flow',
   profile: 'MAINTENANCE_GOAL_BUILDER_V1',
   executionTimeoutMs: 160000,
 });
+export const FIXED_SPATIAL_PREPARE_RUNTIME_ROUTE_V1 = Object.freeze({
+  actionId: 'prepare-spatial-workspace',
+  profile: 'SPATIAL_WORKSPACE_PREPARE_V1',
+  executionTimeoutMs: 240000,
+});
+export function fixedRuntimeMaintenanceRouteV1(actionId) {
+  if (actionId === FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId) return FIXED_MAINTENANCE_RUNTIME_ROUTE_V1;
+  if (actionId === FIXED_SPATIAL_PREPARE_RUNTIME_ROUTE_V1.actionId) return FIXED_SPATIAL_PREPARE_RUNTIME_ROUTE_V1;
+  return null;
+}
 export function fixedRuntimeMaintenanceActionQualifiedV1(actionId) {
-  return actionId === FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId;
+  return fixedRuntimeMaintenanceRouteV1(actionId) !== null;
 }
 
 // Compiled-profile declaration only. The protected runtime may advertise this
@@ -422,7 +432,7 @@ export function inspectFixedRuntimeQualificationV1() {
       row.HelperSha256!==installation.helperSha256 ||
       row.ManifestSha256!==installation.manifestSha256 || row.AuthenticatedCustodyIdle!==true ||
       row.RuntimeActivationGranted!==false || row.MutationAttempted!==false ||
-      !Array.isArray(row.Profiles) || row.Profiles.some(p=>!['MAINTENANCE_GOAL_BUILDER_V1','SOURCE_TASK_V1',FIXED_MAILBOX_NATIVE_EVIDENCE_RUNTIME_PROFILE_V1.profile].includes(p)) ||
+      !Array.isArray(row.Profiles) || row.Profiles.some(p=>!['MAINTENANCE_GOAL_BUILDER_V1','SOURCE_TASK_V1',FIXED_SPATIAL_PREPARE_RUNTIME_ROUTE_V1.profile,FIXED_MAILBOX_NATIVE_EVIDENCE_RUNTIME_PROFILE_V1.profile].includes(p)) ||
       !SHA.test(row.CustodyRecordSha256??'') || !Number.isSafeInteger(row.NativeRecordId) || row.NativeRecordId<1)
       return denied('FIXED_RUNTIME_AUTHENTICATED_IDLE_UNPROVEN');
     const terminalGovernor=resourceObservation();
@@ -453,7 +463,9 @@ export function consumeFixedRuntimeTerminalProvenanceV1(result,binding) {
   return consumeFixedRuntimeCompletionV1(result,binding)!==null;
 }
 export function executeFixedMaintenanceRuntimeV1(qualification,binding,options) {
-  return executeFixedRuntimeV1(qualification,binding,FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.profile,options);
+  // Resolve only after the private runner has captured primitive binding values.
+  // Legacy callers without actionId retain the original goal-builder profile.
+  return executeFixedRuntimeV1(qualification,binding,null,options);
 }
 export function executeFixedSourceTaskRuntimeV1(qualification,binding,options) {
   return executeFixedRuntimeV1(qualification,binding,'SOURCE_TASK_V1',options);
@@ -465,6 +477,11 @@ async function executeFixedRuntimeV1(qualification,inputBinding,profile,{signal,
   const qualified=qualifications.get(qualification);
   // One use even if admission fails. No caller-qualified boolean or fake transport.
   qualifications.delete(qualification);
+  const source=profile==='SOURCE_TASK_V1';
+  const maintenanceRoute=source?null:fixedRuntimeMaintenanceRouteV1(
+    binding.actionId===undefined?FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId:binding.actionId);
+  if(!source && !maintenanceRoute) return denied('FIXED_RUNTIME_PROFILE_NOT_QUALIFIED',binding);
+  if(maintenanceRoute) profile=maintenanceRoute.profile;
   if(!qualified || performance.now()>qualified.expires) return denied('FIXED_RUNTIME_FRESH_QUALIFICATION_REQUIRED',binding);
   if(!/^[a-z0-9][a-z0-9._-]{7,79}$/.test(binding?.requestId??'') ||
     binding.sourceHead!==qualified.installation.executionHead || !SHA.test(binding.custodyRecordSha256??'') ||
@@ -473,7 +490,6 @@ async function executeFixedRuntimeV1(qualification,inputBinding,profile,{signal,
     return denied('FIXED_RUNTIME_EXACT_RESERVATION_REQUIRED',binding);
   if(!resourceAllowed())return denied('FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD',binding);
   if(!qualification.profiles.includes(profile)) return denied('FIXED_RUNTIME_PROFILE_NOT_COMPILED',binding);
-  const source=profile==='SOURCE_TASK_V1';
   if(source && (!['actionId','missionId'].every(k=>/^[a-z0-9][a-z0-9._-]{0,127}$/.test(binding[k]??'')) ||
     !SHA.test(binding.claimSha256??'') || binding.custodyRecordSha256!==qualified.custodyRecordSha256 ||
     binding.nativeRecordId!==qualified.nativeRecordId)) return denied('FIXED_RUNTIME_ORIGINAL_SOURCE_CLAIM_REQUIRED',binding);
@@ -490,7 +506,7 @@ async function executeFixedRuntimeV1(qualification,inputBinding,profile,{signal,
     try {
       child=spawn(qualified.installation.helper,[],{shell:false,windowsHide:true,
         stdio:['pipe','pipe','pipe'],env:createBattleBridgeMinimalChildEnvironment()});
-      timeout=setTimeout(()=>{cancel();try{child.kill();}catch{}},source?1815000:FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.executionTimeoutMs);
+      timeout=setTimeout(()=>{cancel();try{child.kill();}catch{}},source?1815000:maintenanceRoute.executionTimeoutMs);
       // Task-local cancellation of the existing Job, using the SAME canonical
       // governor reader; this is not another resource controller or GPU proof.
       resourceTimer=setInterval(()=>{if(!resourceAllowed())cancel();},1000);

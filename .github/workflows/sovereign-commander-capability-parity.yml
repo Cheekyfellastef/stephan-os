@@ -17,6 +17,21 @@ on:
       - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
       - 'shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs'
       - 'shared/agents/sovereignCommanderV1.mjs'
+      - 'shared/agents/sovereignSpatialWorkspaceV1*'
+      - 'scripts/sovereign-commander-spatial-workspace.mjs'
+      - 'scripts/windows/prepare-spatial-workspace.ps1'
+      - 'scripts/windows/spatial-window-install-lock.ps1'
+      - 'scripts/windows/build-spatial-window.ps1'
+      - 'scripts/windows/install-spatial-window.ps1'
+      - 'scripts/windows/start-spatial-window-host.ps1'
+      - 'scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1'
+      - 'scripts/windows/launch-stephanos-spatial-workspace.ps1'
+      - 'scripts/spatial-window-host.mjs'
+      - 'shared/vr/spatialDesktopSurfaceContractV1.mjs'
+      - 'src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp'
+      - 'tests/spatial-window-lifecycle-v1.test.mjs'
+      - 'tests/spatial-workspace-prepare-windows-v1.test.mjs'
+      - 'tests/spatial-install-pins-windows-v1.test.mjs'
       - 'shared/agents/sovereignDirectoryCreateV1*'
       - 'shared/agents/sovereignSearchSessionsV1*'
       - 'shared/agents/sovereignMcpSessionHistoryV1*'
@@ -127,6 +142,21 @@ on:
       - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
       - 'shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs'
       - 'shared/agents/sovereignCommanderV1.mjs'
+      - 'shared/agents/sovereignSpatialWorkspaceV1*'
+      - 'scripts/sovereign-commander-spatial-workspace.mjs'
+      - 'scripts/windows/prepare-spatial-workspace.ps1'
+      - 'scripts/windows/spatial-window-install-lock.ps1'
+      - 'scripts/windows/build-spatial-window.ps1'
+      - 'scripts/windows/install-spatial-window.ps1'
+      - 'scripts/windows/start-spatial-window-host.ps1'
+      - 'scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1'
+      - 'scripts/windows/launch-stephanos-spatial-workspace.ps1'
+      - 'scripts/spatial-window-host.mjs'
+      - 'shared/vr/spatialDesktopSurfaceContractV1.mjs'
+      - 'src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp'
+      - 'tests/spatial-window-lifecycle-v1.test.mjs'
+      - 'tests/spatial-workspace-prepare-windows-v1.test.mjs'
+      - 'tests/spatial-install-pins-windows-v1.test.mjs'
       - 'shared/agents/sovereignDirectoryCreateV1*'
       - 'shared/agents/sovereignSearchSessionsV1*'
       - 'shared/agents/sovereignMcpSessionHistoryV1*'
@@ -240,6 +270,9 @@ jobs:
           node --check scripts/sovereign-commander-capability-parity-reconcile.mjs
           node --check scripts/sovereign-commander-preservation-converge.mjs
           node --check scripts/sovereign-commander-mcp.mjs
+          node --check scripts/sovereign-commander-spatial-workspace.mjs
+          node --check shared/agents/sovereignSpatialWorkspaceV1.mjs
+          node --check scripts/spatial-window-host.mjs
           node --check scripts/sovereign-commander-browser-observe.mjs
           node --check apps/sovereign-browser-bridge/service-worker.js
           node --check apps/sovereign-browser-bridge/popup.js
@@ -271,6 +304,7 @@ jobs:
           node --test shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs
           node --test shared/agents/sovereignCommanderV1.test.mjs shared/agents/sovereignDirectoryCreateV1.test.mjs
           node --test shared/agents/sovereignCommanderMcp.test.mjs
+          node --test shared/agents/sovereignSpatialWorkspaceV1.test.mjs tests/spatial-window-lifecycle-v1.test.mjs tests/spatial-workspace-prepare-windows-v1.test.mjs tests/spatial-install-pins-windows-v1.test.mjs
           node --test shared/agents/sovereignSearchSessionsV1.test.mjs shared/agents/sovereignMcpSessionHistoryV1.test.mjs shared/agents/sovereignCommanderPrivateSessionsV1.test.mjs shared/agents/sovereignCommanderSessionLifecycleV1.test.mjs shared/agents/sovereignMcpSessionConfigV1.test.mjs shared/agents/sovereignCommanderSessionConfigV1.test.mjs shared/agents/sovereignFileCopyV1.test.mjs shared/agents/sovereignFileCopyNativeV1.test.mjs shared/agents/sovereignCommanderFileCopyV1.test.mjs shared/agents/sovereignFileMoveV1.test.mjs shared/agents/sovereignCommanderFileMoveV1.test.mjs shared/agents/sovereignProcessSessionsV1.test.mjs shared/agents/sovereignCommanderProcessSessionsV1.test.mjs shared/agents/sovereignFeedbackIntakeV1.test.mjs shared/agents/sovereignPdfWriteV1.test.mjs shared/agents/sovereignCommanderFeedbackPdfV1.test.mjs
           node --test shared/agents/sovereignCommanderHttp.test.mjs
           node --test shared/agents/sovereignWindowsQualificationWorkflow.test.mjs shared/agents/sovereignMaintenanceAdmissionV1.test.mjs scripts/sovereign-goal-builder-worker-evidence.test.mjs scripts/sovereign-commander-goal-builder-repair.test.mjs shared/agents/goalDiscoveryWorkspaceV1.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs
@@ -341,3 +375,23 @@ jobs:
         run: node --test scripts/sovereign-fixed-runtime-directory-package-v1.test.mjs scripts/sovereign-fixed-runtime-install-source-package-v1.test.mjs scripts/sovereign-fixed-runtime-installer-v1.test.mjs
       - name: Windows VR diagnosis empty and single-value array regression
         run: node --test scripts/starfield-vr-flight-recorder.test.mjs
+      - name: Parse Spatial preparation and installation scripts
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($file in @('scripts/windows/prepare-spatial-workspace.ps1', 'scripts/windows/spatial-window-install-lock.ps1', 'scripts/windows/build-spatial-window.ps1', 'scripts/windows/install-spatial-window.ps1', 'scripts/windows/start-spatial-window-host.ps1', 'scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1')) {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -gt 0) {
+              foreach ($parseError in $parseErrors) { Write-Host ('{0}:{1}: {2}' -f $file, $parseError.Extent.StartLineNumber, $parseError.Message) }
+              throw "PowerShell parse errors: $file"
+            }
+          }
+      - name: Compile Spatial helper in a disposable output directory
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./scripts/windows/build-spatial-window.ps1 -OutputDirectory (Join-Path $env:RUNNER_TEMP 'spatial-helper-build')
+      - name: Spatial preparation contracts and Windows process cleanup fixtures
+        run: node --test shared/agents/sovereignSpatialWorkspaceV1.test.mjs tests/spatial-window-lifecycle-v1.test.mjs tests/spatial-workspace-prepare-windows-v1.test.mjs tests/spatial-install-pins-windows-v1.test.mjs

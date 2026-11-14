@@ -408,6 +408,7 @@ const TOOLS = Object.freeze([
             'cpu-pressure-snapshot',
             'publish-controller-activity',
             'repair-ui-4173',
+            'prepare-spatial-workspace',
             'restart-stephanos-runtime',
             'status-recovery-mesh',
             'status-worker-watchdog',
@@ -544,6 +545,11 @@ function payloadForTool(name, args = {}) {
     return { actionId: 'starfield-vr-telemetry-archive', offset: args.offset, limit: args.limit };
   }
   if (name === 'maintenance_action') {
+    if (args.actionId === 'prepare-spatial-workspace') {
+      if (Object.keys(args).some(key => !['actionId', 'expectedMain'].includes(key)))
+        throw new Error('SPATIAL_PREPARE_FIXED_SCOPE_REQUIRED');
+      return { actionId: args.actionId, expectedMain: args.expectedMain };
+    }
     if (args.actionId === 'repair-core-publication-directories') {
       if (Object.keys(args).some(key => !['actionId','expectedMain'].includes(key)))
         throw new Error('CORE_DIRECTORY_FIXED_SCOPE_REQUIRED');

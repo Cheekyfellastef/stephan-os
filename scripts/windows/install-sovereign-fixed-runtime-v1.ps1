@@ -8,7 +8,7 @@ if(-not $OperatorApproved -or $ExpectedMain -cnotmatch '^[a-f0-9]{40}$' -or
  $null -eq $bootstrap -or $bootstrap.SourceHead -cne $ExpectedMain -or
  $bootstrap.SourceTree -cnotmatch '^[a-f0-9]{40}$' -or
  $bootstrap.OperatorSid -cnotmatch '^S-1-5-21-[0-9-]+$' -or
- $bootstrap.Records.Count -lt 40 -or $bootstrap.Records.Count -gt 284){throw 'FIXED_INSTALL_IMMUTABLE_APPROVAL_REQUIRED'}
+ $bootstrap.Records.Count -lt 40 -or $bootstrap.Records.Count -gt 295){throw 'FIXED_INSTALL_IMMUTABLE_APPROVAL_REQUIRED'}
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 try{
  if(-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
@@ -63,7 +63,7 @@ function New-ProtectedDirectory([string]$path){
 }
 $records=@{};$total=0
 foreach($row in $bootstrap.Records){
- if($row.Path -cnotmatch '^(?:(?:scripts|shared|stephanos-server)/[A-Za-z0-9._/-]+|package\.json|\.gitattributes|integrations/openclaw/stephanos-builder-provider/lib/oc1-(?:gateway-provider|repository-scout)\.mjs)$' -or
+ if($row.Path -cnotmatch '^(?:(?:scripts|shared|stephanos-server)/[A-Za-z0-9._/-]+|package\.json|\.gitattributes|integrations/openclaw/stephanos-builder-provider/lib/oc1-(?:gateway-provider|repository-scout)\.mjs|src/windows/Stephanos\.SpatialWindow/SpatialWindow\.cpp)$' -or
   $row.Path.Contains('..') -or $row.Path.Contains('//') -or $records.ContainsKey($row.Path) -or
   $row.Sha256 -cnotmatch '^[a-f0-9]{64}$' -or $row.MaterializedSha256 -cnotmatch '^[a-f0-9]{64}$' -or
   $row.GitBlobSha -cnotmatch '^[a-f0-9]{40}$' -or $row.GitMode -cne '100644'){throw 'FIXED_INSTALL_SOURCE_MEMBER_REFUSED'}

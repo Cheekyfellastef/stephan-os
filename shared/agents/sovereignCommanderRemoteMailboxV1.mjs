@@ -1,4 +1,5 @@
 import { projectSovereignCapabilityCatalogTruth } from './sovereignCommanderCapabilityParityV1.mjs';
+import { SPATIAL_PREPARE_ACTION, parseSpatialPreparationOutputV1 } from './sovereignSpatialWorkspaceV1.mjs';
 import { createHash } from 'node:crypto';
 import { projectMaintenanceCustodyVisibilityV1, maintenanceCustodyVisibilityLightV1 } from './maintenanceCustodyVisibilityV1.mjs';
 import { parseWindowsCalibrationRemoteV1 } from './sovereignWindowsCalibrationRemoteV1.mjs';
@@ -38,6 +39,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'cpu-pressure-snapshot',
   'publish-controller-activity',
   'repair-ui-4173',
+  SPATIAL_PREPARE_ACTION,
   'restart-stephanos-runtime',
   'status-recovery-mesh',
   'status-worker-watchdog',
@@ -117,6 +119,7 @@ const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
 export const SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS = 210_000;
 export const SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS = 240_000;
+export const SOVEREIGN_SPATIAL_PREPARE_NETWORK_TIMEOUT_MS = 300_000;
 // Keep multi-step mailbox work comfortably inside the parent outbox guard's
 // 15-minute child lifetime so a slow plan returns a terminal receipt instead
 // of being killed by the guard with its ACCEPTED command still unresolved.
@@ -342,9 +345,11 @@ function sovereignCommanderRepairEnvelopeRequired(command = {}) {
 }
 
 export function sovereignCommanderRemoteNetworkTimeoutMs(command = {}, requestedTimeoutMs) {
-  const fallbackMs = sovereignCommanderRepairEnvelopeRequired(command)
-    ? SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS
-    : SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS;
+  const fallbackMs = command.remoteAction === SPATIAL_PREPARE_ACTION
+    ? SOVEREIGN_SPATIAL_PREPARE_NETWORK_TIMEOUT_MS
+    : sovereignCommanderRepairEnvelopeRequired(command)
+      ? SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS
+      : SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS;
   return boundedRemoteNetworkTimeoutMs(requestedTimeoutMs, fallbackMs);
 }
 
@@ -2405,6 +2410,7 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
     }
     const invalidAction = remotePlan.find((actionId) => (
       actionId === 'status'
+      || actionId === SPATIAL_PREPARE_ACTION
       || actionId === 'sovereign-windows-reviewer-calibration'
       || actionId === 'search-project'
       || actionId === 'battle-bridge-observe'
@@ -4074,11 +4080,54 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           }
           : shape.command.remoteAction === 'sovereign-windows-reviewer-calibration'
             ? { actionId: shape.command.remoteAction, reviewIdentity: shape.command.reviewIdentity }
+            : shape.command.remoteAction === SPATIAL_PREPARE_ACTION
+              ? { actionId: SPATIAL_PREPARE_ACTION, expectedMain: shape.expectedHead }
             : { actionId: shape.command.remoteAction },
     },
   }, sessionId);
   if (!actionCall.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
+  }
+  if (shape.command.remoteAction === SPATIAL_PREPARE_ACTION) {
+    const raw = actionCall.body?.result?.structuredContent;
+    const envelope = findMaintenanceExecutionEnvelope(raw);
+    const execution = envelope?.structuredContent;
+    const receipt = parseSpatialPreparationOutputV1(execution?.stdout, shape.expectedHead);
+    const proofHash = envelope?.proofHash;
+    const qualified = receipt && envelope?.command?.plan?.processId === SPATIAL_PREPARE_ACTION
+      && typeof envelope.ok === 'boolean' && envelope.ok === receipt.ok
+      && typeof proofHash === 'string' && PROOF_HASH_PATTERN.test(proofHash)
+      && Number.isInteger(execution?.status) && execution.status === (receipt.ok ? 0 : 2)
+      && !execution.signal && !execution.errorCode
+      && (receipt.ok ? envelope.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+        : ['SOVEREIGN_COMMANDER_EXECUTION_BLOCKED', 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'].includes(envelope.finalVerdict));
+    if (!qualified) {
+      const admittedFailures = new Set(['FIXED_RUNTIME_PROFILE_NOT_QUALIFIED',
+        'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING', 'FIXED_RUNTIME_PROFILE_NOT_COMPILED',
+        'FIXED_RUNTIME_QUALIFICATION_UNPROVEN', 'FIXED_RUNTIME_EXPECTED_MAIN_MISMATCH',
+        'SOVEREIGN_MAINTENANCE_OWNER_BUSY', 'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE',
+        SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER]);
+      let current = raw, observedBlocker = '';
+      for (let depth = 0; depth < 5 && current && typeof current === 'object'; depth += 1) {
+        if (admittedFailures.has(current.blocker)) { observedBlocker = current.blocker; break; }
+        current = current.structuredContent;
+      }
+      return fail('SOVEREIGN_COMMANDER_REMOTE_SPATIAL_PREPARATION_UNPROVEN', {
+        remoteAction: SPATIAL_PREPARE_ACTION,
+        executionBlocker: observedBlocker || 'SPATIAL_PREPARE_RECEIPT_INVALID',
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({ ok: receipt.ok,
+      finalVerdict: receipt.ok ? 'SPATIAL_WORKSPACE_READY_FOR_OPERATOR_LAUNCH' : 'SPATIAL_WORKSPACE_PREPARATION_BLOCKED',
+      remoteAction: SPATIAL_PREPARE_ACTION, sourceHead: shape.expectedHead,
+      processId: SPATIAL_PREPARE_ACTION, status: execution.status, proofHash,
+      blocker: receipt.blocker, executionBlocker: receipt.blocker, spatialPreparation: receipt,
+      vendorMeterRequired: false, arbitraryShellAllowed: false, mergeAuthority: false,
+      pcRestartAuthority: false, publicReceiptSafe: true, secretMaterialReturned: false });
+    return Object.freeze({ ...result,
+      verdict: receipt.ok ? 'COMMAND_EXECUTION_COMPLETE' : 'COMMAND_EXECUTION_BLOCKED',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION, requestId: text(shape.command.requestId), result });
   }
   const fleetMaintenanceFailure = safeFleetMaintenanceFailureProjection(
     actionCall.body?.result?.structuredContent, shape.command.remoteAction);

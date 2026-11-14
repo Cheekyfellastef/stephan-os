@@ -132,6 +132,49 @@ After protected review and installation approval, run `scripts/windows/install-s
 
 The installer compiles before stopping an older helper. It stops only the process owning port 4180 whose executable, exact command line and process creation time match this checkout's helper. A foreign owner fails closed. Starting the shortcut launches or reuses that verified helper, then opens the room. An already served room does not trigger full runtime ignition; starting a missing room retains the existing canonical ignition checks. Room availability does not imply that the separate command runtime is healthy.
 
+### Bounded Sovereign preparation
+
+The existing Sovereign maintenance route accepts `prepare-spatial-workspace`
+with one `expectedMain` source SHA. The authenticated canonical mailbox supplies
+that SHA from its existing request; callers cannot supply a path, command,
+URL or launch mode. The compiled `SPATIAL_WORKSPACE_PREPARE_V1` profile must
+be present in a qualified fixed-runtime installation before dispatch.
+
+Preparation verifies the normal operator context, current canonical main and
+the existing gaming admission. With the helper port unused, it freshly builds
+through the existing pinned installer and saves the normal desktop shortcut.
+The fresh binary and receipt remain protected against replacement through the
+probe. An older writable build receipt is a consistency check, not authority to
+execute its binary unattended. Preparation then checks the actual room entry
+page, helper health and a separate native window-list probe. Window titles and
+other window contents are not returned in the public receipt. A per-user
+installation lock protects preparation and the existing installers/launcher
+from overlapping replacement.
+
+Any existing listener is left untouched. Preparation returns a port-occupied
+hold before installation or probing, without launching its saved binary or
+claiming to have verified the existing connection. An occupied port must become
+free through its original operator/owner before a fresh preparation can proceed.
+When preparation creates a temporary helper, that helper accepts health requests
+only: session,
+capture and input routes are disabled. Every process created for the probes
+must stop before a successful receipt is possible. Preparation never opens
+ChatGPT, chooses a window, accepts consent, records audio or leaves a new
+background helper running. The existing desktop shortcut starts the lasting
+connection when the operator enters the room.
+
+Success is `SPATIAL_WORKSPACE_READY_FOR_OPERATOR_LAUNCH`. The receipt includes
+the verified build identity and explicit installation, UI, probe and cleanup
+results. `interactiveAcceptance`, `voiceAcceptance` and `headsetAcceptance`
+remain false. In particular, preparation success does not prove that a click
+reached ChatGPT or that the Quest microphone and speakers work.
+
+Publishing or merging the source does not install this new native profile.
+The existing protected fixed-runtime installer, independent qualification,
+normal operator custody and later-boot requirement still apply. A missing
+installation or unavailable profile blocks preparation; the route cannot
+install or authorize its own executor. This change provides no reboot action.
+
 ## Scope and safeguards
 
 - The Node adapter binds only `127.0.0.1:4180` and accepts the exact local workspace Origin and Host. Preview uses only ports 4174/4184.

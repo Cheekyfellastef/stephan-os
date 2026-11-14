@@ -3,6 +3,9 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+. (Join-Path $PSScriptRoot 'spatial-window-install-lock.ps1')
+$installationLock = Enter-SpatialWindowInstallLock -RepositoryRoot $repositoryRoot
+try {
 $hostScript = Join-Path $repositoryRoot 'scripts\spatial-window-host.mjs'
 $receiptPath = Join-Path $repositoryRoot '.stephanos\local-state-checkpoints\spatial-window\build.json'
 if (-not (Test-Path -LiteralPath $receiptPath)) { throw 'The spatial console needs its reviewed Windows helper installed.' }
@@ -35,3 +38,4 @@ do {
     Start-Sleep -Milliseconds 200
 } while ((Get-Date) -lt $deadline)
 throw 'The spatial console helper did not become ready. The existing workspace has not been changed.'
+} finally { Exit-SpatialWindowInstallLock -Mutex $installationLock }

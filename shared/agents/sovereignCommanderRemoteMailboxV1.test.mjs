@@ -14,6 +14,8 @@ import { checkpointTerminalMailboxReceipt, createSanitizedMailboxReceiptProjecti
   serializeBoundedReceiptJson } from '../../scripts/battle-bridge-github-command-mailbox.mjs';
 import { projectBoundedRemoteControllerLaneStatus } from '../../scripts/sovereign-controller-lane-status.mjs';
 import { collectBattleBridgeObservation } from '../../scripts/battle-bridge-observation.mjs';
+import { SPATIAL_PREPARE_ACTION, SPATIAL_PREPARE_SCHEMA, SPATIAL_PREPARE_MARKER,
+  spatialPrepareBlockedV1 } from './sovereignSpatialWorkspaceV1.mjs';
 
 import {
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
@@ -272,6 +274,103 @@ function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null,
 }
 
 const readToken = async () => 'x'.repeat(44);
+
+function spatialReadyFixture(overrides = {}) {
+  return { schemaVersion: SPATIAL_PREPARE_SCHEMA, actionId: SPATIAL_PREPARE_ACTION,
+    sourceHead: HEAD, buildId: 'b'.repeat(64), ok: true, blocker: '',
+    installationVerified: true, uiReady: true, helperProbePassed: true, nativeProbePassed: true,
+    existingHostPreserved: false, createdProbeStopped: true, hostRunningAfter: false,
+    mutationAttempted: true, readyForOperatorLaunch: true,
+    interactiveAcceptance: false, voiceAcceptance: false, headsetAcceptance: false, ...overrides };
+}
+function spatialMaintenanceFixture(receipt = spatialReadyFixture(), changes = {}) {
+  return { ok: receipt.ok,
+    finalVerdict: receipt.ok ? 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' : 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+    proofHash: 'f'.repeat(64), command: { plan: { processId: SPATIAL_PREPARE_ACTION } },
+    contentText: 'PRIVATE_NATIVE_TEXT',
+    structuredContent: { status: receipt.ok ? 0 : 2,
+      stdout: `${SPATIAL_PREPARE_MARKER}${JSON.stringify(receipt)}\n`,
+      stderr: 'PRIVATE_COMPILER_STDERR', errorCode: '', signal: '' }, ...changes };
+}
+async function spatialRemoteFixture(maintenance) {
+  const { calls, fetchFn } = mcpFetch({ maintenance });
+  let unrelatedRuntimeRepair = 0;
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(command({ remoteAction: SPATIAL_PREPARE_ACTION }), {
+    spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+    ensureRuntimeFn: async () => { unrelatedRuntimeRepair += 1; return { ok: true }; },
+  });
+  return { result, calls, unrelatedRuntimeRepair };
+}
+
+test('Spatial preparation carries authenticated outer head and has bounded transport headroom', async () => {
+  const { result, calls, unrelatedRuntimeRepair } = await spatialRemoteFixture(spatialMaintenanceFixture());
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SPATIAL_WORKSPACE_READY_FOR_OPERATOR_LAUNCH');
+  assert.deepEqual(result.spatialPreparation, spatialReadyFixture());
+  assert.equal(unrelatedRuntimeRepair, 0);
+  const call = calls.map(row => { try { return JSON.parse(row.options?.body); } catch { return null; } })
+    .find(row => row?.params?.arguments?.actionId === SPATIAL_PREPARE_ACTION);
+  assert.deepEqual(call.params.arguments, { actionId: SPATIAL_PREPARE_ACTION, expectedMain: HEAD });
+  assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({ remoteAction: SPATIAL_PREPARE_ACTION })), 300000);
+  assert.equal(validateSovereignCommanderRemoteCommandShape(command({ remoteAction: '', remotePlan: [SPATIAL_PREPARE_ACTION] })).ok, false);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_/);
+});
+
+test('Spatial typed holds and absent native qualification remain blocked and public-safe', async () => {
+  const receipt = spatialPrepareBlockedV1(HEAD, 'SPATIAL_PREPARE_COMPILER_MISSING');
+  const { result } = await spatialRemoteFixture(spatialMaintenanceFixture(receipt));
+  assert.equal(result.ok, false); assert.equal(result.blocker, receipt.blocker);
+  assert.equal(result.spatialPreparation.readyForOperatorLaunch, false);
+  const missing = await spatialRemoteFixture({ ok: false, blocker: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING',
+    finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED', privatePath: 'PRIVATE_PATH' });
+  assert.equal(missing.result.ok, false);
+  assert.equal(missing.result.executionBlocker, 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING');
+  assert.equal(Object.hasOwn(missing.result, 'spatialPreparation'), false);
+  assert.doesNotMatch(JSON.stringify(missing.result), /PRIVATE_PATH/);
+});
+
+test('Spatial public completion refuses contradictory, malformed, foreign and interactive receipts', async () => {
+  const good = spatialMaintenanceFixture();
+  const variants = [
+    { ...good, ok: false }, { ...good, proofHash: '' },
+    { ...good, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' },
+    { ...good, command: { plan: { processId: 'battle-bridge-status' } } },
+    ...[null, false, '0', 2].map(status => ({ ...good, structuredContent: { ...good.structuredContent, status } })),
+    { ...good, structuredContent: { ...good.structuredContent, signal: 'SIGTERM' } },
+    { ...good, structuredContent: { ...good.structuredContent, errorCode: 'ETIMEDOUT' } },
+    { ...good, structuredContent: { ...good.structuredContent, stdout: good.structuredContent.stdout.repeat(2) } },
+    ...[{ sourceHead: 'd'.repeat(40) }, { interactiveAcceptance: true },
+      { createdProbeStopped: false }, { hostRunningAfter: true }, { rawWindows: ['PRIVATE_WINDOW'] }]
+      .map(change => spatialMaintenanceFixture(spatialReadyFixture(change))),
+  ];
+  for (const candidate of variants) {
+    const { result } = await spatialRemoteFixture(candidate);
+    assert.equal(result.ok, false);
+    assert.equal(Object.hasOwn(result, 'spatialPreparation'), false);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_/);
+  }
+});
+
+test('Spatial preparation evidence survives normal and compact canonical mailbox receipts', async () => {
+  for (const native of [spatialMaintenanceFixture(), spatialMaintenanceFixture(spatialPrepareBlockedV1(HEAD, 'SPATIAL_PREPARE_PORT_OCCUPIED'))]) {
+    const { result } = await spatialRemoteFixture(native);
+    const receipt = { schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+      requestId: 'spatial-preparation-roundtrip-001', operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      repository: 'Cheekyfellastef/stephan-os', issueNumber: activeMailboxIssueForTest, branch: 'main',
+      expectedHead: HEAD, processSourceHead: HEAD, state: result.ok ? 'DONE' : 'BLOCKED', blocker: result.blocker,
+      result: { ok: result.ok, verdict: result.verdict, result: { ...result,
+        stdout: 'PRIVATE_NATIVE_OUTPUT', stderr: 'PRIVATE_COMPILER',
+        codexLastMessage: 'SAFE_PADDING '.repeat(1000) } } };
+    const compact = JSON.parse(serializeBoundedReceiptJson(receipt, 6 * 1024));
+    const repeated = JSON.parse(serializeBoundedReceiptJson(compact, 6 * 1024));
+    for (const packet of [receipt, compact, repeated]) {
+      const projected = createSanitizedMailboxReceiptProjection(packet);
+      assert.deepEqual(projected.operationResult.spatialPreparation, result.spatialPreparation);
+      assert.equal(projected.operationResult.spatialPreparation.interactiveAcceptance, false);
+      assert.doesNotMatch(JSON.stringify(projected), /PRIVATE_/);
+    }
+  }
+});
 
 function fleetReceiptRaw(overrides = {}) {
   return {

@@ -510,3 +510,62 @@ all original fences remain independent. No reboot is initiated or authorized
 by this implementation. A newly bound installation package still requires its
 existing current-main, private operator, exact-artifact review and operator
 approval gates, followed by the genuine later boot and physical qualification.
+
+## Bounded Spatial preparation profile
+
+The source-defined `prepare-spatial-workspace` maintenance action maps only to
+`SPATIAL_WORKSPACE_PREPARE_V1` in the existing fixed host. It selects
+`scripts/sovereign-commander-spatial-workspace.mjs --expected-main <execution-head>`
+with the head taken from the authenticated frame. Its task body is empty: callers
+cannot supply an executable, path, script, arguments, environment or budget.
+The authenticated custody operation must be `prepare-spatial-workspace`; the
+goal-builder and Spatial profiles cannot exchange root or terminal evidence.
+
+When the fixed helper port is free, the profile always rebuilds the Spatial
+helper from the pinned source and performs temporary readiness probes inside
+the same native Job. An old writable `build.json` proves byte consistency only;
+it cannot establish compiler origin or authorize an existing executable probe.
+The preparation adapter keeps the fresh build identity in memory and retains
+read handles over the promoted binary and receipt through launch. The profile
+has a 225,000 ms native task
+deadline and a 240,000 ms parent transport ceiling, retaining the existing drain,
+cancellation, owner-liveness, resource-governor and positive-zero requirements.
+The reviewed Spatial build may invoke its existing C++ toolchain within that
+Job; the protected fixed host never recompiles or activates itself at runtime.
+Any existing listener is left untouched and causes a
+`SPATIAL_PREPARE_PORT_OCCUPIED` hold before installation or probing. The adapter
+makes no existing-host health or provenance claim; positive preserved/running
+host flags remain false because those facts are unproven. An occupied port
+cannot produce preparation success. Newly created probe children must
+stop before completion. The persistent helper and browser
+remain the responsibility of the existing operator shortcut, outside this
+preparation action; no breakaway or persistent service handoff is introduced.
+
+`SOVEREIGN_SPATIAL_WORKSPACE_RESULT=` carries
+`stephanos.spatial-workspace-readiness.v1`. Native terminal admission requires
+the exact source head and action, a real boolean result, exit 0/2 agreement and
+real boolean readiness fields. Success requires a verified installation, UI,
+helper and native probes, stopped created probes, a valid build identity and
+readiness for the operator launcher. Success requires `mutationAttempted: true`,
+`existingHostPreserved: false` and `hostRunningAfter: false`; failed preflight
+receipts can retain `mutationAttempted: false`. Interactive, voice and headset acceptance remain false
+on both success and failure. An action report never substitutes for native Job
+zero and never clears the separate Spatial resident-adoption obligation.
+
+The protected source closure now contains 295 exact members, including the
+Spatial preparer, its shared receipt contract, the existing installer/build/
+start inputs and their install lock, the executed shortcut installer, the host,
+desktop contract and the exact
+`src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp` path. The new path does
+not admit other `src/` files. Source-package and native capacity limits agree;
+the next member is refused. Changed profile or closure bytes cannot reuse an
+older installation through unchanged-closure adoption.
+The shortcut installer has an explicit runtime-execution edge from the
+preparation adapter. Its persistent launcher is only the shortcut path/readback
+target and remains outside the maintenance execution closure.
+
+This is source implementation, not native qualification. The existing protected
+installer, exact-artifact review, normal runtime principal, genuine later boot,
+authenticated idle custody and native profile inventory remain mandatory.
+Linux protocol and source-package tests do not establish Windows compilation,
+installed qualification, a live Spatial session or physical headset acceptance.

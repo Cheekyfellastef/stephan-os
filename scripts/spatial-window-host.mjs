@@ -37,16 +37,20 @@ export function createNativeSurfaceAdapter(executable,{spawnRef=spawn}={}) {
     });
   }};
 }
-export function createSpatialWindowHost({native,origin='http://127.0.0.1:4173',port=4180,now=Date.now,buildId=null}={}) {
+export function createSpatialWindowHost({native,origin='http://127.0.0.1:4173',port=4180,now=Date.now,buildId=null,readinessOnly=false}={}) {
   if(!['http://127.0.0.1:4173','http://127.0.0.1:4174'].includes(origin))throw new Error('Untrusted spatial origin');
+  if(typeof readinessOnly!=='boolean')throw new Error('Invalid readiness mode');
   let session=null;
-  const revoke=()=>{session=null;native.stop();};
+  const revoke=()=>{session=null;if(!readinessOnly)native.stop();};
   const timeout=setInterval(()=>{if(session&&now()-session.lastSeen>90000&&!session.busy)revoke();},1000);timeout.unref();
   const server=createServer(async(req,res)=>{
     const reply=(status,value)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(value));};
     if(req.headers.host!==`127.0.0.1:${port}`||req.headers.origin!==origin){reply(403,{status:'origin-rejected'});return;}
     res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');
-    if(req.method==='GET'&&req.url==='/health'){reply(200,{schema:'stephanos.spatial-window-health.v1',buildId});return;}
+    if(req.method==='GET'&&req.url==='/health'){reply(200,{schema:'stephanos.spatial-window-health.v1',buildId,...(readinessOnly?{readinessOnly:true}:{})});return;}
+    // The temporary preparation listener must never accept a browser session
+    // or start a capture child while the operator's page is already open.
+    if(readinessOnly){reply(409,{status:'readiness-probe-only'});return;}
     if(req.method==='OPTIONS'){
       res.setHeader('Access-Control-Allow-Methods','POST');res.setHeader('Access-Control-Allow-Headers','Content-Type,X-Spatial-Session');res.writeHead(204);res.end();return;
     }
@@ -106,6 +110,8 @@ export function verifySpatialWindowInstallation(root) {
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
   const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+  const readinessOnly=process.argv.includes('--readiness-probe');
+  if(readinessOnly&&process.argv.slice(2).length!==1)throw new Error('Readiness probe accepts no other arguments');
   const preview=process.argv.includes('--preview');
   const installation=preview?null:verifySpatialWindowInstallation(root);
   if(process.argv.includes('--verify-installation')){
@@ -114,7 +120,7 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).hr
   }else{
   const nativePath=preview?process.argv[process.argv.indexOf('--native')+1]:installation.executable;
   if(!nativePath)throw new Error('Native capture binary missing');
-  const server=createSpatialWindowHost({native:createNativeSurfaceAdapter(nativePath),origin:`http://127.0.0.1:${preview?4174:4173}`,port:preview?4184:4180,buildId:installation?.buildId??null});
+  const server=createSpatialWindowHost({native:readinessOnly?null:createNativeSurfaceAdapter(nativePath),origin:`http://127.0.0.1:${preview?4174:4173}`,port:preview?4184:4180,buildId:installation?.buildId??null,readinessOnly});
   server.on('error',()=>{console.error('Spatial console could not bind its local port.');process.exitCode=1;});
   server.listen(preview?4184:4180,'127.0.0.1',()=>console.log('Spatial desktop adapter ready on loopback'));
   const stop=()=>server.close(()=>process.exit(0));process.on('SIGINT',stop);process.on('SIGTERM',stop);

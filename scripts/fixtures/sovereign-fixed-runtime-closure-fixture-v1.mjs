@@ -33,6 +33,7 @@ const fixedRoots = ['scripts/sovereign-commander-mcp.mjs', 'scripts/sovereign-co
   'scripts/sovereign-fixed-runtime-source-task-v1.mjs', 'scripts/mission-orchestrator-worker-supervised.mjs',
   'scripts/mission-orchestrator-worker.mjs', 'scripts/completion-guardian.mjs',
   'scripts/sovereign-commander-goal-builder-repair.mjs', 'scripts/sovereign-commander-fleet-goal-supervisor.mjs',
+  'scripts/sovereign-commander-spatial-workspace.mjs',
   'scripts/sovereign-controller-lane-status.mjs', 'scripts/battle-bridge-goal-discovery-heartbeat.mjs'];
 const requiredRoots = maintenance ? ['scripts/sovereign-maintenance-custody-store-v1.mjs',
   'scripts/sovereign-maintenance-journal-source-proof-v2.mjs'] : fixedRoots;
@@ -129,16 +130,37 @@ for (const target of maintenance ? [] : ['scripts/windows/read-sovereign-mainten
   'scripts/windows/read-sovereign-maintenance-owner-v2.ps1', 'scripts/windows/sovereign-maintenance-audit-anchor.ps1',
   'scripts/windows/sovereign-maintenance-journal-policy-v2.ps1', 'scripts/windows/install-sovereign-fixed-runtime-v1.ps1'])
   if (!members.has(target) || !fs.existsSync(new URL(target, root))) missing.push({ runtimeRead: target });
+// The preparation profile uses these fixed existing build/probe inputs. The
+// persistent launcher is deliberately outside this finite execution closure.
+for (const target of maintenance ? [] : ['shared/agents/sovereignSpatialWorkspaceV1.mjs',
+  'scripts/windows/prepare-spatial-workspace.ps1', 'scripts/windows/install-spatial-window.ps1',
+  'scripts/windows/build-spatial-window.ps1', 'scripts/windows/start-spatial-window-host.ps1',
+  'scripts/windows/spatial-window-install-lock.ps1',
+  'src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp', 'scripts/spatial-window-host.mjs',
+  'shared/vr/spatialDesktopSurfaceContractV1.mjs'])
+  if (!members.has(target) || !fs.existsSync(new URL(target, root))) missing.push({ spatialPreparationInput: target });
+// Fixed PowerShell execution/dot-source edges for the fresh PassThruPinned
+// build path. The persistent launcher is only a shortcut target, never invoked.
+if (!maintenance) for (const [file, spec] of [
+  ['scripts/windows/prepare-spatial-workspace.ps1', './install-spatial-window.ps1'],
+  ['scripts/windows/prepare-spatial-workspace.ps1', './spatial-window-install-lock.ps1'],
+  ['scripts/windows/prepare-spatial-workspace.ps1', './install-stephanos-spatial-workspace-shortcut.ps1'],
+  ['scripts/windows/install-spatial-window.ps1', './build-spatial-window.ps1'],
+  ['scripts/windows/install-spatial-window.ps1', './spatial-window-install-lock.ps1'],
+  ['scripts/windows/build-spatial-window.ps1', './spatial-window-install-lock.ps1'],
+  ['scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1', './spatial-window-install-lock.ps1'],
+  ['scripts/windows/start-spatial-window-host.ps1', './spatial-window-install-lock.ps1'],
+]) edge(file, spec, 'runtime-exec');
 const coverage = [];
 if (!maintenance) {
   // Exact reviewed applicability evidence for the legacy HTTP exec edge. This
   // exception is limited to the production Windows fixed profile. Changed gates
   // must be reassessed; an optional-looking pathname is never a generic bypass.
   const applicabilityPins = {
-  "scripts/sovereign-commander-http.mjs": "962b48eebd6dcc54e6117329acfbc5a4820bb7091c1f97493fd864cf984962c5",
-  "scripts/sovereign-fixed-runtime-parent-v1.mjs": "436a9e9d23d85f942d6264ffe15ff4aea4f8724cacdf094ce127fc561e785dab",
-  "shared/agents/sovereignMaintenanceAdmissionV1.mjs": "d468e7bf73355e5daa6899d19ffe8e7b034af914837b5e66523d43ade79a8703",
-  "scripts/windows/SovereignFixedRuntimeHostV1.cs": "d13700a76f873e38fdac7ba25661df873f7b4c2c70bfc705f73b9887ab40a04f"
+  "scripts/sovereign-commander-http.mjs": "470e8d568c13f10f010d847de0a784457e11401b599450d3b5a688f73b45ba19",
+  "scripts/sovereign-fixed-runtime-parent-v1.mjs": "e999aa177ace3f77b5ace753d340e87df5b3c748176d2cceb8efde48ab1ad87a",
+  "shared/agents/sovereignMaintenanceAdmissionV1.mjs": "e16f81e0bdd86a5878e380901f5302c65ac9c19028fd675cef2c6b1e506de228",
+  "scripts/windows/SovereignFixedRuntimeHostV1.cs": "24f03a18fc7b81e807fc9c2ef0bfbafa205c2de871d55aad15c127b1b433812c"
 };
   let scopeProven = true;
   for (const [file, pin] of Object.entries(applicabilityPins)) {

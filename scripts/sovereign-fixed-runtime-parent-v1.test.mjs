@@ -97,7 +97,7 @@ test('mailbox native evidence fixed profile is inspectable but remains pre-job f
   });
   const host=readFileSync(fileURLToPath(new URL('./windows/SovereignFixedRuntimeHostV1.cs',import.meta.url)),'utf8');
   const parent=readFileSync(fileURLToPath(new URL('./sovereign-fixed-runtime-parent-v1.mjs',import.meta.url)),'utf8');
-  assert.equal(host.includes('Profiles=new string[]{"MAINTENANCE_GOAL_BUILDER_V1","SOURCE_TASK_V1","CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1"}'),true);
+  assert.equal(host.includes('Profiles=new string[]{"MAINTENANCE_GOAL_BUILDER_V1","SPATIAL_WORKSPACE_PREPARE_V1","SOURCE_TASK_V1","CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1"}'),true);
   assert.equal(host.includes('if(mailboxNativeEvidence) throw new InvalidOperationException("NATIVE_ROTATION_PRODUCER_UNQUALIFIED")'),true);
   assert.ok(host.indexOf('if(mailboxNativeEvidence) throw new InvalidOperationException("NATIVE_ROTATION_PRODUCER_UNQUALIFIED")') < host.indexOf('job=CreateJobObjectW'));
   assert.doesNotMatch(parent,/executeFixedMailboxNativeEvidenceRuntimeV1/);
