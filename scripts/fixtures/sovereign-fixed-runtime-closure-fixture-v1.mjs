@@ -123,6 +123,24 @@ while (queue.length) {
         missing.push({ file, target, runtimeReadPinMismatch: true });
     }
   }
+  if (file === 'scripts/windows/battle-bridge-mobile-install-native-v1.mjs') {
+    // Reviewed finite observation and protected-client adapter. The probe is
+    // captured source below. The separately enrolled fixed native helper has
+    // its own retained ACL/certificate/release gate, not a caller source path.
+    // Re-review this complete interpretation after any adapter source change.
+    if (digest(source.replace(/\r\n/g, '\n')) !== 'd0599051b1f77877983182d3dece1308b60a2789b58febaa600e919f1d0a9863')
+      missing.push({ file, runtimeReadSourceUnproven: true });
+    const declaration = source.match(/^const PROBE = fileURLToPath\(new URL\((['"])([^'"\r\n]+)\1, import\.meta\.url\)\);/m);
+    if (!declaration) missing.push({ file, runtimeReadBinding: 'PROBE' });
+    else {
+      edge(file, declaration[2], 'runtime-exec');
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), declaration[2]));
+      if (members.has(target) && fs.existsSync(new URL(target, root)) &&
+        digest(fs.readFileSync(new URL(target, root), 'utf8').replace(/\r\n/g, '\n')) !==
+          '337ccbc676dbc44aa96f3344c15c499536b1fa2070a196b2385329c53d967913')
+        missing.push({ file, target, runtimeReadPinMismatch: true });
+    }
+  }
 }
 // Existing custody inputs are retained. They do not grant additional filesystem
 // discovery or make this guard an installation/activation authority.
@@ -157,7 +175,7 @@ if (!maintenance) {
   // exception is limited to the production Windows fixed profile. Changed gates
   // must be reassessed; an optional-looking pathname is never a generic bypass.
   const applicabilityPins = {
-  "scripts/sovereign-commander-http.mjs": "470e8d568c13f10f010d847de0a784457e11401b599450d3b5a688f73b45ba19",
+  "scripts/sovereign-commander-http.mjs": "0af461df59d540ce86d0db86a9dbc0295790eec4dc17c152bf29cad80a54d27a",
   "scripts/sovereign-fixed-runtime-parent-v1.mjs": "e999aa177ace3f77b5ace753d340e87df5b3c748176d2cceb8efde48ab1ad87a",
   "shared/agents/sovereignMaintenanceAdmissionV1.mjs": "e16f81e0bdd86a5878e380901f5302c65ac9c19028fd675cef2c6b1e506de228",
   "scripts/windows/SovereignFixedRuntimeHostV1.cs": "24f03a18fc7b81e807fc9c2ef0bfbafa205c2de871d55aad15c127b1b433812c"
