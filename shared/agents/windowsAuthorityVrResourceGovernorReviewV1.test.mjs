@@ -67,8 +67,8 @@ function rejects(content) {
 }
 
 test('fixture preserves exact current reviewer governor source blob', () => {
-  assert.equal(blobSha(governor), '5d9af55d09c4cdd11b3ea264afa4d8ca67ef3913');
-  assert.equal(Buffer.byteLength(governor, 'utf8'), 51644);
+  assert.equal(blobSha(governor), '2747131cebf46d69df3cc9e13ad51603d71584a0');
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 52100);
 });
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
@@ -231,4 +231,34 @@ test('reviewer and registration changes still require the separate bootstrap bou
   assert.ok(analysis.findings.every((item) =>
     item.code === 'approval-boundary-v2-self-change-requires-qualified-review'));
   assert.equal(isApprovalBoundaryBootstrapAnalysis(analysis), true);
+});
+
+
+test('virtual Air Link reviewer fixture requires a fresh UTC timestamp, not stale or future input', () => {
+  const body = governor.split('function Test-VirtualAirLinkTestActive {')[1]
+    ?.split('function Get-AirLinkSignal {')[0] || '';
+  for (const marker of [
+    '$updatedAtUtc -cnotmatch', '[DateTimeOffset]::TryParse(',
+    '[System.Globalization.CultureInfo]::InvariantCulture',
+    '[System.Globalization.DateTimeStyles]::AssumeUniversal',
+    '$ageMinutes -lt 0', '$ageMinutes -gt 30',
+  ]) assert.ok(body.includes(marker), marker);
+  // Deterministic semantic model, not a substitute for Windows PowerShell tests.
+  const now = Date.parse('2026-11-14T15:40:00.000Z');
+  const valid = value => typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?Z$/.test(value)
+    && Number.isFinite(Date.parse(value))
+    && Date.parse(value) <= now && now - Date.parse(value) <= 1800000;
+  for (const [value, expected] of [
+    ['2026-11-14T15:39:59.000Z', true],
+    ['2026-11-14T15:10:00.000Z', true],
+    ['2026-11-14T15:09:59.000Z', false],
+    ['2026-11-14T15:40:01.000Z', false],
+    ['2026-11-15T15:40:00.000Z', false],
+    ['bad', false], ['', false], [null, false], [undefined, false],
+    ['2026-11-14T15:39:59.000+00:00', false],
+    ['2026-11-14T15:39:59', false],
+    ['2026-11-14T15:39:59.000z', false],
+    ['2026-11-14T15:39:59.1234567Z', true],
+  ]) assert.equal(valid(value), expected, String(value));
 });

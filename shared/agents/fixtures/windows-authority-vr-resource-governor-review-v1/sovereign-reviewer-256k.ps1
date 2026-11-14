@@ -179,12 +179,20 @@ function Test-VirtualAirLinkTestActive {
         ) {
             return $false
         }
-        $updated = [DateTime]::MinValue
-        if ([DateTime]::TryParse([string]$state.updatedAtUtc, [ref]$updated)) {
-            if (((Get-Date).ToUniversalTime() - $updated.ToUniversalTime()).TotalMinutes -gt 30) {
-                return $false
-            }
+        # Synthetic Air Link proof requires a fresh explicit UTC timestamp.
+        $updatedAtUtc = [string]$state.updatedAtUtc
+        if ($updatedAtUtc -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?Z$') {
+            return $false
         }
+        $updated = [DateTimeOffset]::MinValue
+        if (-not [DateTimeOffset]::TryParse(
+            $updatedAtUtc,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::AssumeUniversal,
+            [ref]$updated
+        )) { return $false }
+        $ageMinutes = ([DateTimeOffset]::UtcNow - $updated.ToUniversalTime()).TotalMinutes
+        if ($ageMinutes -lt 0 -or $ageMinutes -gt 30) { return $false }
         return $true
     }
     catch {
