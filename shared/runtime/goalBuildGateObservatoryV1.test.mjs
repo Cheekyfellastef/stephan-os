@@ -135,3 +135,38 @@ test('even a fully trusted set of 23 PASS records grants no source, lease or mer
   assert.equal(r.mergeAuthority, false);
   assert.equal(r.diagnosticOnly, true);
 });
+
+
+test('signed conflicting duplicate gate identities fail closed rather than choosing a false PASS', () => {
+  const pass = observation(19, 'PASS');
+  const fail = observation(19, 'FAIL', 'PHYSICAL_PICKUP_CONTRADICTORY');
+  fail.proof.summary += ' conflicting receipt';
+  fail.gate.proofRecordSha256 = sha256(fail.proof);
+  const packet = buildPacket([pass, fail]);
+  const r = projectGoalBuildGateObservatoryV1(packet);
+  assert.equal(r.observationStatus, 'UNVERIFIED');
+  assert.equal(r.gates[18].status, 'UNVERIFIED');
+  assert.equal(r.counts.PASS, 0);
+  assert.equal(r.counts.FAIL, 0);
+  assert.equal(r.approvalAuthority, false);
+});
+
+test('signed unknown checkpoint identity cannot be silently dropped while another gate turns green', () => {
+  const packet = buildPacket([observation(1, 'PASS'), observation(24, 'PASS')]);
+  const r = projectGoalBuildGateObservatoryV1(packet);
+  assert.equal(r.observationStatus, 'UNVERIFIED');
+  assert.equal(r.gates[0].status, 'UNVERIFIED');
+  assert.equal(r.counts.PASS, 0);
+  assert.equal(r.counts.UNVERIFIED, 23);
+});
+
+
+test('fresh signed envelope cannot resuscitate an expired immutable proof as green', () => {
+  const old = observation(1, 'PASS');
+  old.proof.timestampUtc = new Date(nowMs - 11 * 60_000).toISOString();
+  old.gate.proofRecordSha256 = sha256(old.proof);
+  const r = projectGoalBuildGateObservatoryV1(buildPacket([old]));
+  assert.equal(r.counts.PASS, 0);
+  assert.equal(r.observationStatus, 'UNVERIFIED');
+  assert.equal(r.approvalAuthority, false);
+});

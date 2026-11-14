@@ -78,6 +78,11 @@ export function projectGoalBuildGateObservatoryV1({
         && e?.signingKeyId === 'stephanos-goal-build-gates-v1'
         && e?.sourceHead === trustedHead
         && Array.isArray(e?.gates) && e.gates.length <= GOAL_BUILD_GATE_DEFINITIONS_V1.length
+        // A signed envelope must not silently retain only the first of two
+        // contradictory checkpoints or discard an unknown checkpoint identity.
+        // Check the complete signed set BEFORE projecting any PASS.
+        && e.gates.every(g => GOAL_BUILD_GATE_DEFINITIONS_V1.some(def => def.id === g?.id))
+        && new Set(e.gates.map(g => g.id)).size === e.gates.length
         && Number.isFinite(time(e.observedAtUtc))
         && time(e.observedAtUtc) <= nowMs + MAX_CLOCK_SKEW_MS
         && typeof e.signatureBase64 === 'string')
@@ -99,7 +104,13 @@ export function projectGoalBuildGateObservatoryV1({
           const matches = knownProofs.filter(p => ['proof', 'stephanos.shared_workspace.proof'].includes(p?.kind)
             && p?.proofId === id && p?.sourceHead === trustedHead
             && time(p.timestampUtc) <= time(e.observedAtUtc) + MAX_CLOCK_SKEW_MS
-            && nowMs - time(p.timestampUtc) <= maxAge
+            // Preserve an authenticated old checkpoint as STALE. A fresh
+            // signed envelope still requires a fresh immutable proof, so an
+            // old receipt can never be republished as current-green.
+            && Number.isFinite(time(p.timestampUtc))
+            && time(p.timestampUtc) <= nowMs + MAX_CLOCK_SKEW_MS
+            && (nowMs - time(p.timestampUtc) <= maxAge
+              || nowMs - time(e.observedAtUtc) > maxAge)
             && createHash('sha256').update(JSON.stringify(p)).digest('hex') === proofDigest);
           return matches.length === 1;
         });

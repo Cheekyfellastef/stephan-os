@@ -1,4 +1,8 @@
 // Acceptance proof: a terminal builder exit must release, close, refill, and reach the next real pickup.
+// Exercise the canonical signed 23-gate acceptance suite in this already
+// protected Goal-to-Builder Node CI lane. In particular, conflicting physical
+// PICKUP or two-refill checkpoint identities must never become green.
+import '../shared/runtime/goalBuildGateObservatoryV1.test.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
