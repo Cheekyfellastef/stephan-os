@@ -90,15 +90,16 @@ test('direct ChatGPT Remote Commander observations feed the same parity ratchet'
     ...remote('start-search'),
     adapter: 'desktop-commander-direct',
   });
-  assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP);
-  assert.equal(result.partialSovereignEquivalent, 'search_project');
+  assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT);
+  assert.equal(result.sovereignEquivalent, 'start_search');
+  assert.equal(result.functionalScope, 'ONE_EXPLICIT_LOCAL_WINDOWS_DIRECTORY');
   assert.equal(result.runtimeParityProven, false);
   assert.equal(result.observationIngress, 'desktop-commander-direct');
   assert.equal(result.canonicalOwnerGoal, '#2573');
 });
 
-test('Remote Commander device/reachability probes resolve to Sovereign visibility snapshot parity', () => {
-  for (const operation of ['list-devices', 'device-status', 'connection-status']) {
+test('local device/reachability probes resolve to Sovereign visibility snapshot parity', () => {
+  for (const operation of ['device-status', 'connection-status']) {
     const result = classifyRemoteCommanderCapabilityObservation({
       ...remote(operation),
       adapter: 'desktop-commander-direct',
@@ -110,22 +111,46 @@ test('Remote Commander device/reachability probes resolve to Sovereign visibilit
   }
 });
 
-test('repository search does not claim whole-PC or search-session parity', () => {
+test('scoped private capabilities map to their own tools without installed acceptance', () => {
   const project = classifyRemoteCommanderCapabilityObservation(remote('search-project'));
-  assert.equal(project.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT);
   assert.equal(project.sovereignEquivalent, 'search_project');
-  for (const operation of ['start-search', 'search-files', 'get-more-search-results', 'stop-search', 'list-searches']) {
+  for (const operation of ['start-search', 'get-more-search-results', 'stop-search', 'list-searches',
+    'get-usage-stats', 'get-recent-tool-calls', 'get-tool-result', 'list-remote-tool-calls',
+    'set-config-value']) {
     const result = classifyRemoteCommanderCapabilityObservation(remote(operation));
-    assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP, operation);
-    assert.equal(result.partialSovereignEquivalent, 'search_project', operation);
-    assert.equal(result.partialScope, 'CANONICAL_REPOSITORY_LITERAL_SEARCH_ONLY', operation);
-    assert.equal(result.parityEvidenceScope, 'SOURCE_CATALOG_ONLY', operation);
-    assert.equal(result.runtimeParityProven, false, operation);
-    assert.notEqual(result.sovereignEquivalent, 'search_project', operation);
-    assert.match(result.parityGapReason, /NOT_IMPLEMENTED$/, operation);
-    assert.equal(result.operatorFallbackAllowed, false, operation);
-    assert.equal(result.meterDependencyAccepted, false, operation);
+    assert.equal(result.state, 'PARITY_PRESENT', operation);
+    assert.equal(result.sovereignEquivalent, operation.replaceAll('-', '_'), operation);
+    assert.notEqual(result.sovereignEquivalent, 'search_project');
+    assert.equal(result.privateTransportRequired, true);
+    assert.equal(result.parityEvidenceScope, 'SOURCE_CATALOG_ONLY');
+    assert.equal(result.runtimeParityProven, false);
+    assert.equal(result.runtimeMutationAuthority, false);
   }
+  const alias = classifyRemoteCommanderCapabilityObservation(remote('search-files'));
+  assert.equal(alias.state, 'BUILDABLE_GAP');
+  assert.equal(alias.partialSovereignEquivalent, 'search_project');
+  assert.equal(alias.runtimeParityProven, false);
+  const directory = classifyRemoteCommanderCapabilityObservation(remote('create-directory'));
+  assert.equal(directory.sovereignEquivalent, 'create_directory');
+  assert.equal(directory.runtimeParityProven, false);
+});
+
+test('same-parent rename remains a move gap and corrects retained false parity without losing provenance', () => {
+  const current = classifyRemoteCommanderCapabilityObservation(remote('move-file'));
+  assert.equal(current.state, 'BUILDABLE_GAP');
+  assert.equal(current.partialSovereignEquivalent, 'move_file');
+  assert.equal(current.partialScope, 'SAME_PARENT_REGULAR_FILE_RENAME_NO_REPLACE');
+  assert.equal(current.atomicContentCasProven, false);
+  const retained = buildSovereignCommanderCapabilityParityLedger([], { priorLedger: { capabilities: [{
+    capabilityId: 'move-file', state: 'PARITY_PRESENT', sovereignEquivalent: 'move_file',
+    newlyProvenParity: true, observationCount: 3, missionIds: ['original-move-mission'],
+  }] } });
+  assert.equal(retained.capabilities[0].state, 'BUILDABLE_GAP');
+  assert.equal(retained.capabilities[0].observationCount, 3);
+  assert.deepEqual(retained.capabilities[0].missionIds, ['original-move-mission']);
+  assert.equal(retained.capabilities[0].parityGapReason, 'CROSS_DIRECTORY_FILE_MOVE_UNQUALIFIED');
+  assert.equal(retained.newlyProvenParityCount, 0);
+  assert.equal(retained.daemonMayReportGreen, false);
 });
 
 test('retained broad-search false parity is corrected without a new call or lost provenance', () => {
@@ -144,20 +169,21 @@ test('retained broad-search false parity is corrected without a new call or lost
     priorLedger: { capabilities: previousCapabilities },
     nowUtc: '2026-10-25T15:00:00.000Z',
   });
-  assert.equal(ledger.buildableGapCount, 3);
-  assert.equal(ledger.parityPresentCount, 0);
+  assert.equal(ledger.buildableGapCount, 1);
+  assert.equal(ledger.parityPresentCount, 2);
   assert.equal(ledger.newlyProvenParityCount, 0);
   assert.equal(ledger.daemonMayReportGreen, false);
   assert.equal(ledger.zeroGapInvariantSatisfied, false);
   assert.equal(ledger.closureRequired, true);
   for (const capability of ledger.capabilities) {
     const previous = previousCapabilities.find((item) => item.capabilityId === capability.capabilityId);
-    assert.equal(capability.state, 'BUILDABLE_GAP');
-    assert.equal(capability.stateTransition, 'PARITY_PRESENT->BUILDABLE_GAP');
+    assert.equal(capability.state, capability.capabilityId === 'search-files' ? 'BUILDABLE_GAP' : 'PARITY_PRESENT');
+    assert.equal(capability.stateTransition, capability.capabilityId === 'search-files' ? 'PARITY_PRESENT->BUILDABLE_GAP' : 'RETAINED');
     assert.equal(capability.currentObserved, false);
     assert.equal(capability.newlyProvenParity, false);
     assert.equal(capability.runtimeParityProven, false);
-    assert.equal(capability.partialSovereignEquivalent, 'search_project');
+    if (capability.capabilityId === 'search-files') assert.equal(capability.partialSovereignEquivalent, 'search_project');
+    else assert.equal(capability.sovereignEquivalent, capability.capabilityId.replaceAll('-', '_'));
     for (const key of ['firstSeenAtUtc', 'lastSeenAtUtc', 'observationCount', 'missionIds', 'actionIds', 'queuePaths'])
       assert.deepEqual(capability[key], previous[key], key);
   }
@@ -165,7 +191,7 @@ test('retained broad-search false parity is corrected without a new call or lost
     priorLedger: ledger,
     nowUtc: '2026-10-25T15:01:00.000Z',
   });
-  assert.equal(next.buildableGapCount, 3);
+  assert.equal(next.buildableGapCount, 1);
   assert.equal(next.newlyProvenParityCount, 0);
   assert.equal(next.capabilities[0].stateTransition, 'RETAINED');
   assert.equal(next.capabilities[0].observationCount, 17);
@@ -225,6 +251,112 @@ test('forbidden authority is held at the boundary instead of cloned for parity',
   assert.match(result.sovereignEquivalent, /arbitrary-shell/);
   assert.equal(result.arbitraryShellAllowed, false);
   assert.equal(result.pcRestartAuthority, false);
+});
+
+test('own advisory feedback maps to Sovereign intake without vendor delivery or verified failure claims', () => {
+  const current = classifyRemoteCommanderCapabilityObservation(remote('give-feedback-to-desktop-commander'));
+  assert.equal(current.state, 'PARITY_PRESENT');
+  assert.equal(current.sovereignEquivalent, 'submit_feedback');
+  assert.equal(current.functionalScope, 'THIS_SOVEREIGN_WORKSPACE_UNVERIFIED_ADVISORY_FEEDBACK');
+  assert.equal(current.externalVendorDelivery, false);
+  assert.equal(current.automaticLearning, false);
+  assert.equal(current.verifiedFailureEvidence, false);
+  assert.equal(current.runtimeParityProven, false);
+  const retained = buildSovereignCommanderCapabilityParityLedger([], { priorLedger: { capabilities: [{
+    capabilityId: 'give-feedback-to-desktop-commander', state: 'BUILDABLE_GAP', observationCount: 3,
+  }] } });
+  assert.equal(retained.capabilities[0].sovereignEquivalent, 'submit_feedback');
+  assert.equal(retained.capabilities[0].newlyProvenParity, false);
+  assert.equal(retained.capabilities[0].externalVendorDelivery, false);
+  assert.equal(retained.daemonMayReportGreen, false);
+});
+
+test('bounded create-only text PDFs never close general PDF outcomes in fresh or retained ledgers', () => {
+  const fresh = classifyRemoteCommanderCapabilityObservation(remote('write-pdf'));
+  assert.equal(fresh.state, 'BUILDABLE_GAP');
+  assert.equal(fresh.partialSovereignEquivalent, 'write_pdf');
+  assert.equal(fresh.partialScope, 'CREATE_ONLY_BOUNDED_ASCII_TEXT_PDF');
+  const retained = buildSovereignCommanderCapabilityParityLedger([], { priorLedger: { capabilities: [{
+    capabilityId: 'write-pdf', state: 'PARITY_PRESENT', sovereignEquivalent: 'write_pdf',
+    newlyProvenParity: true, observationCount: 5,
+  }] } });
+  assert.equal(retained.parityPresentCount, 0); assert.equal(retained.buildableGapCount, 1);
+  for (const item of [fresh, retained.capabilities[0]]) {
+    assert.equal(item.runtimeParityProven, false);
+    assert.equal(item.wholeDocumentAtomicityProven, false);
+    assert.equal(item.existingPdfEditingSupported, false);
+    assert.equal(item.unicodeTextSupported, false);
+    assert.equal(item.parityGapReason, 'GENERAL_PDF_EDITING_AND_RENDERING_UNIMPLEMENTED');
+  }
+});
+
+test('fixed diagnostic sessions cannot close general process outcomes in fresh or retained ledgers', () => {
+  const ids = ['start-process', 'read-process-output', 'list-sessions'];
+  for (const id of ids) {
+    const fresh = classifyRemoteCommanderCapabilityObservation(remote(id));
+    assert.equal(fresh.state, 'BUILDABLE_GAP');
+    assert.equal(fresh.partialSovereignEquivalent, id.replaceAll('-', '_'));
+    assert.equal(fresh.partialScope, 'THIS_PRIVATE_HANDLER_TWO_FIXED_READ_ONLY_DIAGNOSTIC_PROFILES');
+    assert.equal(fresh.descendantsExcluded, false);
+    assert.equal(fresh.nativeCustodyQualified, false);
+  }
+  const retained = buildSovereignCommanderCapabilityParityLedger([], { priorLedger: {
+    capabilities: ids.map(id => ({ capabilityId: id, state: 'PARITY_PRESENT',
+      sovereignEquivalent: id.replaceAll('-', '_'), newlyProvenParity: true, observationCount: 4 })),
+  } });
+  assert.equal(retained.buildableGapCount, 3);
+  assert.equal(retained.parityPresentCount, 0);
+  assert.equal(retained.daemonMayReportGreen, false);
+  for (const capability of retained.capabilities) {
+    assert.equal(capability.observationCount, 4);
+    assert.equal(capability.parityGapReason, 'GENERAL_INTERACTIVE_PROCESS_SESSION_CONTRACT_UNQUALIFIED');
+    assert.equal(capability.runtimeParityProven, false);
+  }
+});
+
+test('owned diagnostic cancellation does not close general termination or accept arbitrary PID authority', () => {
+  const fresh = classifyRemoteCommanderCapabilityObservation(remote('force-terminate'));
+  const retained = buildSovereignCommanderCapabilityParityLedger([], { priorLedger: { capabilities: [{
+    capabilityId: 'force-terminate', state: 'PARITY_PRESENT', sovereignEquivalent: 'cancel_process_session',
+    newlyProvenParity: true, observationCount: 9,
+  }] } });
+  assert.equal(retained.parityPresentCount, 0);
+  assert.equal(retained.buildableGapCount, 1);
+  assert.equal(retained.daemonMayReportGreen, false);
+  assert.equal(retained.capabilities[0].observationCount, 9);
+  for (const item of [fresh, retained.capabilities[0]]) {
+    assert.equal(item.state, 'BUILDABLE_GAP');
+    assert.equal(item.partialSovereignEquivalent, 'cancel_process_session');
+    assert.equal(item.partialScope, 'THIS_PRIVATE_HANDLER_TWO_FIXED_DIAGNOSTIC_CHILDREN_CANCELLATION');
+    assert.equal(item.parityGapReason, 'GENERAL_PROCESS_TERMINATION_CUSTODY_UNQUALIFIED');
+    assert.equal(item.nativeCustodyQualified, false);
+    assert.equal(item.descendantsExcluded, false);
+    assert.equal(item.runtimeParityProven, false);
+  }
+  const own = classifyRemoteCommanderCapabilityObservation(remote('cancel-process-session'));
+  assert.equal(own.sovereignEquivalent, 'cancel_process_session');
+  assert.equal(own.functionalScope, 'THIS_PRIVATE_HANDLER_TWO_FIXED_DIAGNOSTIC_CHILDREN_CANCELLATION');
+  assert.equal(own.runtimeParityProven, false);
+  const arbitrary = classifyRemoteCommanderCapabilityObservation(remote('kill-process'));
+  assert.equal(arbitrary.state, 'BUILDABLE_GAP');
+  assert.notEqual(arbitrary.sovereignEquivalent, 'cancel_process_session');
+  assert.notEqual(arbitrary.partialSovereignEquivalent, 'cancel_process_session');
+});
+
+test('one-host visibility cannot close authenticated account device inventory', () => {
+  const fresh = classifyRemoteCommanderCapabilityObservation(remote('list-devices'));
+  assert.equal(fresh.state, 'BUILDABLE_GAP');
+  assert.equal(fresh.partialSovereignEquivalent, 'visibility-snapshot');
+  assert.equal(fresh.partialScope, 'LOCAL_BATTLE_BRIDGE_HOST_VISIBILITY_ONLY');
+  const ledger = buildSovereignCommanderCapabilityParityLedger([], { priorLedger: { capabilities: [{
+    capabilityId: 'list-devices', state: 'PARITY_PRESENT', sovereignEquivalent: 'visibility-snapshot',
+    newlyProvenParity: true, observationCount: 7,
+  }] } });
+  assert.equal(ledger.parityPresentCount, 0);
+  assert.equal(ledger.buildableGapCount, 1);
+  assert.equal(ledger.capabilities[0].observationCount, 7);
+  assert.equal(ledger.capabilities[0].parityGapReason, 'AUTHENTICATED_ACCOUNT_DEVICE_INVENTORY_UNIMPLEMENTED');
+  assert.equal(ledger.capabilities[0].runtimeParityProven, false);
 });
 
 test('repeated observations deduplicate into one durable capability entry', () => {

@@ -8,9 +8,18 @@ import { fileURLToPath } from 'node:url';
 
 import {
   SOVEREIGN_COMMANDER_OPERATION,
+  captureSovereignPrivateSessionArgumentsV1,
   executeSovereignCommanderCommandV1,
 } from '../shared/agents/sovereignCommanderV1.mjs';
 import { validateSovereignDirectoryTargetV1 } from '../shared/agents/sovereignDirectoryCreateV1.mjs';
+import { createSovereignSearchSessionsV1 } from '../shared/agents/sovereignSearchSessionsV1.mjs';
+import { createSovereignMcpSessionHistoryV1 } from '../shared/agents/sovereignMcpSessionHistoryV1.mjs';
+import { createSovereignMcpSessionConfigV1 } from '../shared/agents/sovereignMcpSessionConfigV1.mjs';
+import { runSovereignFileMoveV1 } from '../shared/agents/sovereignFileMoveV1.mjs';
+import { runSovereignFileCopyV1, runSovereignFileHashV1 } from '../shared/agents/sovereignFileCopyV1.mjs';
+import { createSovereignProcessSessionsV1 } from '../shared/agents/sovereignProcessSessionsV1.mjs';
+import { createSovereignFeedbackIntakeV1, SOVEREIGN_FEEDBACK_OPERATION_IDS_V1 } from '../shared/agents/sovereignFeedbackIntakeV1.mjs';
+import { runSovereignPdfWriteV1 } from '../shared/agents/sovereignPdfWriteV1.mjs';
 import {
   STEPHANOS_EXECUTION_SURFACE,
   buildStephanosExecutionCommandEnvelopeV1,
@@ -18,7 +27,7 @@ import {
 } from '../shared/agents/stephanosExecutionCommandFabricV1.mjs';
 
 export const SOVEREIGN_COMMANDER_MCP_NAME = 'stephanos-sovereign-commander';
-export const SOVEREIGN_COMMANDER_MCP_VERSION = '0.1.0';
+export const SOVEREIGN_COMMANDER_MCP_VERSION = '0.2.0';
 export const SOVEREIGN_COMMANDER_MCP_PROTOCOL_VERSION = '2025-11-25';
 export const SOVEREIGN_COMMANDER_MCP_PROTOCOLS = Object.freeze(new Set([SOVEREIGN_COMMANDER_MCP_PROTOCOL_VERSION, '2025-06-18', '2024-11-05']));
 
@@ -30,6 +39,16 @@ export const SOVEREIGN_COMMANDER_INSPECTION_ACTIONS = Object.freeze([
   'status-recovery-mesh', 'status-worker-watchdog', 'status-stephanos-core-daemon',
   'starfield-vr-performance-diagnosis',
 ]);
+
+const SEARCH_SESSION_TOOLS = Object.freeze(['start_search', 'get_more_search_results', 'stop_search', 'list_searches']);
+const HISTORY_TOOLS = Object.freeze(['get_usage_stats', 'get_recent_tool_calls', 'get_tool_result', 'list_remote_tool_calls']);
+const PROCESS_SESSION_TOOLS = Object.freeze(['start_process', 'cancel_process_session', 'read_process_output', 'list_sessions']);
+const PRIVATE_SESSION_TOOLS = Object.freeze([...SEARCH_SESSION_TOOLS, ...HISTORY_TOOLS, ...PROCESS_SESSION_TOOLS,
+  'set_config_value', 'move_file', 'copy_file_content', 'get_file_hash', 'submit_feedback', 'write_pdf']);
+const PRIVATE_READ_ANNOTATIONS = Object.freeze({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+const HISTORY_PAGE_SCHEMA = Object.freeze({ type: 'object', additionalProperties: false,
+  properties: { offset: { type: 'integer', minimum: 0, maximum: 256, default: 0 },
+    limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 } } });
 
 const TOOLS = Object.freeze([
   {
@@ -45,9 +64,49 @@ const TOOLS = Object.freeze([
   {
     name: 'get_config',
     title: 'Get Sovereign Commander configuration',
-    description: 'Return the local sovereign execution posture and authority boundaries.',
+    description: 'Return the local sovereign execution posture, authority boundaries and this private session’s effective typed file limits. Session settings are not persistent.',
     inputSchema: { type: 'object', additionalProperties: false, properties: {} },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'set_config_value',
+    title: 'Set this session’s file limits',
+    description: 'Set fileReadLineLimit (1–1000 returned LF/CRLF-delimited lines per file) or fileWriteLineLimit (1–10000 logical lines per submitted write/append/edit replacement, or null to restore the byte-only default). Requires the current revision from get_config. Affects only this private session and never changes filesystem, shell, authentication or execution authority.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['key', 'value', 'expectedRevision'],
+      properties: {
+        key: { type: 'string', enum: ['fileReadLineLimit', 'fileWriteLineLimit'] },
+        value: { type: ['integer', 'null'], minimum: 1, maximum: 10000 },
+        expectedRevision: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'submit_feedback',
+    title: 'Submit Sovereign Commander feedback',
+    description: 'Save bounded problem reports or improvement suggestions in the existing local Sovereign Shared Workspace. Caller text is unverified advisory feedback, never failure evidence, a build request or approval. Credential/path-shaped text is redacted where recognized; do not include secrets. Private local stdio or authenticated HTTP MCP only.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['category', 'operation', 'message'],
+      properties: {
+        category: { type: 'string', enum: ['problem', 'improvement', 'other'] },
+        operation: { type: 'string', enum: SOVEREIGN_FEEDBACK_OPERATION_IDS_V1 },
+        message: { type: 'string', minLength: 1, maxLength: 1024, description: 'At most 1024 UTF-8 bytes; no control characters other than LF.' },
+      } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'write_pdf',
+    title: 'Create a bounded text PDF',
+    description: 'Create one new PDF at an explicit permitted local Windows path. Up to eight US Letter pages, Courier 10 pt, sixty lines per page, eighty printable ASCII characters per line and 16384 total characters. Existing files are refused. No PDF editing, Unicode, images, HTML, fonts, scripts or caller PDF bytes. A failed or interrupted creation may leave a partial new file; never retry an UNKNOWN result automatically. Private local stdio or authenticated HTTP MCP only.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['path', 'pages'],
+      properties: {
+        path: { type: 'string', minLength: 1, maxLength: 240 },
+        pages: { type: 'array', minItems: 1, maxItems: 8,
+          items: { type: 'object', additionalProperties: false, required: ['lines'],
+            properties: { lines: { type: 'array', maxItems: 60,
+              items: { type: 'string', maxLength: 80, pattern: '^[ -~]*$' } } } } },
+      } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
     name: 'read_file',
@@ -142,6 +201,42 @@ const TOOLS = Object.freeze([
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: 'get_file_hash',
+    title: 'Inspect a file content hash',
+    description: 'Observe SHA-256 and byte length of one regular file’s unnamed data stream on a fixed local NTFS volume, up to 8 MiB. Two bounded matching reads use the same retained file and parent handles. The hash can be supplied to copy_file_content or move_file; those actions independently recheck it. No file content is returned. The source is read only; this is a bounded observation without atomic content CAS or writable-mapping exclusion.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['path'],
+      properties: { path: { type: 'string', minLength: 1, maxLength: 1024 } } },
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'copy_file_content',
+    title: 'Copy file content into a new file',
+    description: 'Copy up to 8 MiB of one regular file’s unnamed data stream into a new destination on the same fixed local NTFS volume, including another folder. Requires explicit source, destination and expectedSha256. The source is read only; an existing destination is never replaced. File metadata, permissions, timestamps and alternate streams are not copied. Hash checks are bounded observations, not atomic content CAS or writable-mapping exclusion. An uncertain result can leave a partial destination and does not authorize retry or cleanup.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['source', 'destination', 'expectedSha256'],
+      properties: {
+        source: { type: 'string', minLength: 1, maxLength: 1024 },
+        destination: { type: 'string', minLength: 1, maxLength: 1024 },
+        expectedSha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+      },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'move_file',
+    title: 'Rename one file within its current folder',
+    description: 'Rename one regular local NTFS file within the same physical parent without replacing any destination. Requires exact source, destination and expectedSha256. The hash is a bounded pre/post observation, not atomic content CAS; writable-mapping exclusion is unproven. Cross-directory moves are refused. An uncertain result does not authorize a retry.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['source', 'destination', 'expectedSha256'],
+      properties: {
+        source: { type: 'string', minLength: 1, maxLength: 1024 },
+        destination: { type: 'string', minLength: 1, maxLength: 1024 },
+        expectedSha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+      },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+  },
+  {
     name: 'create_directory',
     title: 'Create directory',
     description: 'Create one new folder on a fixed local Windows volume at an explicit absolute path. No recursive creation, links, overwrite or shell. Private local stdio or authenticated HTTP MCP.',
@@ -168,6 +263,107 @@ const TOOLS = Object.freeze([
       },
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'start_search',
+    title: 'Start scoped private search',
+    description: 'Start a bounded literal filename or text search in one explicit local directory. Keeps a private session for paging and cancellation; excludes links and sensitive file forms. Limits or errors remain incomplete, never a full-disk completeness claim.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['path', 'query'],
+      properties: { path: { type: 'string', minLength: 1, maxLength: 1024 },
+        query: { type: 'string', minLength: 1, maxLength: 200 },
+        mode: { type: 'string', enum: ['file', 'content'], default: 'content' },
+        caseSensitive: { type: 'boolean', default: false },
+        limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 } } },
+    annotations: { ...PRIVATE_READ_ANNOTATIONS, idempotentHint: false },
+  },
+  {
+    name: 'get_more_search_results',
+    title: 'Read a private search page',
+    description: 'Return a bounded page and actual state for a search created in this MCP session. Does not accept a new path or another session’s search.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['searchId'],
+      properties: { searchId: { type: 'string', minLength: 1, maxLength: 128 },
+        offset: { type: 'integer', minimum: 0, maximum: 1000, default: 0 },
+        limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 } } },
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'stop_search',
+    title: 'Cancel a private search',
+    description: 'Cancel only the named search owned by this MCP session. Does not terminate arbitrary processes or alter files.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['searchId'],
+      properties: { searchId: { type: 'string', minLength: 1, maxLength: 128 } } },
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'list_searches',
+    title: 'List this session’s searches',
+    description: 'List bounded search metadata belonging only to the current private MCP session.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'get_usage_stats',
+    title: 'Get this session’s Sovereign usage',
+    description: 'Return bounded, local counters for recorded Commander executions in this MCP session. These are Sovereign counters, not a remote vendor account, billing or machine-wide usage report.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'get_recent_tool_calls',
+    title: 'List this session’s recent commands',
+    description: 'Return privacy-safe metadata for retained Commander calls in this MCP session. Arguments, paths and file contents are omitted; eviction and pending outcomes are explicit.',
+    inputSchema: HISTORY_PAGE_SCHEMA,
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'get_tool_result',
+    title: 'Retrieve an original private command result',
+    description: 'Retrieve an immutable, bounded result retained for an original call in this MCP session. This reads the receipt without replaying the command; unavailable or oversized results stay unavailable.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['callId'],
+      properties: { callId: { type: 'string', minLength: 1, maxLength: 160 } } },
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'list_remote_tool_calls',
+    title: 'List this private HTTP session’s commands',
+    description: 'Return metadata for this session’s retained authenticated HTTP Commander calls. Local stdio calls and other sessions are excluded; this is not a vendor-wide account registry.',
+    inputSchema: HISTORY_PAGE_SCHEMA,
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'start_process',
+    title: 'Start a fixed read-only diagnostic session',
+    description: 'Start only status-recovery-mesh or status-worker-watchdog as a bounded private process session. Returns observed direct-child launch state; output can be read separately before exit. No commands, arguments, environment, input, arbitrary PIDs or repair actions are accepted. This does not prove descendant or maintenance custody release.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['profile'],
+      properties: { profile: { type: 'string', enum: ['status-recovery-mesh', 'status-worker-watchdog'] } } },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'read_process_output',
+    title: 'Read this session’s diagnostic output',
+    description: 'Read bounded, sequenced stdout/stderr chunks from a process session created by this private MCP handler. Offset is a stable chunk sequence; truncation and direct-child lifecycle remain explicit. Reading never repeats the diagnostic.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['sessionId'],
+      properties: { sessionId: { type: 'string', minLength: 1, maxLength: 128 },
+        offset: { type: 'integer', minimum: 0, maximum: 256, default: 0 },
+        limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 } } },
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
+    name: 'cancel_process_session',
+    title: 'Cancel an owned diagnostic session',
+    description: 'Request cancellation of a diagnostic process session created by this private handler. Accepts only its opaque sessionId, never a PID. A recorded request or kill return does not prove process exit. Read the original session to observe root exit and stdio closure; no descendant exclusion or maintenance-custody release is established.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['sessionId'],
+      properties: { sessionId: { type: 'string', pattern: '^process-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$' } },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'list_sessions',
+    title: 'List this handler’s diagnostic sessions',
+    description: 'List only process sessions created by this private MCP handler, with observed direct-child state. This is not a host-wide terminal inventory or evidence that native execution custody is released.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    annotations: PRIVATE_READ_ANNOTATIONS,
   },
   {
     name: 'list_processes',
@@ -212,6 +408,7 @@ const TOOLS = Object.freeze([
             'cpu-pressure-snapshot',
             'publish-controller-activity',
             'repair-ui-4173',
+            'prepare-spatial-workspace',
             'restart-stephanos-runtime',
             'status-recovery-mesh',
             'status-worker-watchdog',
@@ -307,6 +504,8 @@ function defaultRepoRoot(env = process.env) {
 }
 
 function operationForTool(name) {
+  if (name === 'start_process') return SOVEREIGN_COMMANDER_OPERATION.START_PROCESS_SESSION;
+  if (PRIVATE_SESSION_TOOLS.includes(name)) return name.toUpperCase();
   return Object.freeze({
     get_config: SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG,
     read_file: SOVEREIGN_COMMANDER_OPERATION.READ_FILE,
@@ -325,6 +524,9 @@ function operationForTool(name) {
 }
 
 function targetPathsForTool(name, args = {}) {
+  if (name === 'write_pdf' || name === 'get_file_hash') return [args.path];
+  if (name === 'move_file' || name === 'copy_file_content') return [args.source, args.destination];
+  if (name === 'start_search') return [args.path];
   if (name === 'create_directory') return [args.path];
   if (name === 'read_multiple_files') return Array.isArray(args.paths) ? args.paths : [];
   if (['read_file', 'get_file_info', 'write_file', 'edit_file', 'list_directory', 'create_directory'].includes(name)) return [text(args.path)].filter(Boolean);
@@ -332,6 +534,7 @@ function targetPathsForTool(name, args = {}) {
 }
 
 function payloadForTool(name, args = {}) {
+  if (PRIVATE_SESSION_TOOLS.includes(name)) return args;
   if (name === 'inspect_battle_bridge') return { actionId: args.actionId };
   if (name === 'read_file' || name === 'read_multiple_files') return { offset: args.offset, length: args.length };
   if (name === 'write_file') return { content: args.content, mode: args.mode };
@@ -342,6 +545,11 @@ function payloadForTool(name, args = {}) {
     return { actionId: 'starfield-vr-telemetry-archive', offset: args.offset, limit: args.limit };
   }
   if (name === 'maintenance_action') {
+    if (args.actionId === 'prepare-spatial-workspace') {
+      if (Object.keys(args).some(key => !['actionId', 'expectedMain'].includes(key)))
+        throw new Error('SPATIAL_PREPARE_FIXED_SCOPE_REQUIRED');
+      return { actionId: args.actionId, expectedMain: args.expectedMain };
+    }
     if (args.actionId === 'repair-core-publication-directories') {
       if (Object.keys(args).some(key => !['actionId','expectedMain'].includes(key)))
         throw new Error('CORE_DIRECTORY_FIXED_SCOPE_REQUIRED');
@@ -393,14 +601,73 @@ export function createSovereignCommanderMcpHandler({
   executor = executeSovereignCommanderCommandV1,
   withMaintenanceOwner,
   now = () => new Date().toISOString(),
+  searchSessionsFactory = createSovereignSearchSessionsV1,
+  sessionHistoryFactory = createSovereignMcpSessionHistoryV1,
+  sessionConfigFactory = createSovereignMcpSessionConfigV1,
+  processSessionsFactory = createSovereignProcessSessionsV1,
+  feedbackIntakeFactory = createSovereignFeedbackIntakeV1,
+  pdfWriteExecutor = runSovereignPdfWriteV1,
+  fileMoveExecutor = runSovereignFileMoveV1,
+  fileCopyExecutor = runSovereignFileCopyV1,
+  fileHashExecutor = runSovereignFileHashV1,
 } = {}) {
   let session = null;
   let toolsListed = false;
+  let closed = false;
+  const searchSessions = searchSessionsFactory();
+  const sessionHistory = sessionHistoryFactory();
+  const sessionConfig = sessionConfigFactory();
+  const processSessions = processSessionsFactory();
+  const feedbackIntake = feedbackIntakeFactory({ repoRoot, now });
+  const pdfWrites = Object.freeze({ execute: (operation, args) => {
+    if (operation !== 'WRITE_PDF') return { ok: false, mutationState: 'NOT_STARTED',
+      blocker: 'SOVEREIGN_PDF_OPERATION_INVALID', retryAllowed: false };
+    return pdfWriteExecutor(args);
+  } });
+  // Only this fixed private operation reaches the native adapter. Closing an
+  // MCP session does not cancel a possible mutation or release native admission.
+  const fileMoves = Object.freeze({ execute: (operation, args) => {
+    if (operation !== 'MOVE_FILE') return { ok: false, mutationState: 'NOT_STARTED',
+      blocker: 'SOVEREIGN_MOVE_OPERATION_INVALID', retryAllowed: false };
+    return fileMoveExecutor(args);
+  } });
+  const fileCopies = Object.freeze({ execute: (operation, args) => {
+    if (operation === 'GET_FILE_HASH') return fileHashExecutor(args);
+    if (operation !== 'COPY_FILE_CONTENT') return { ok: false, mutationState: 'NOT_STARTED',
+      blocker: 'SOVEREIGN_COPY_OPERATION_INVALID', retryAllowed: false };
+    return fileCopyExecutor(args);
+  } });
   // Ephemeral cancellation for this session's existing requests; no durable
   // queue, lease, retry or second executor is introduced.
   const coreRequests = new Map();
 
-  return async function handle(method, params = {}, message = {}) {
+  async function invokeExecutor(envelope, options, tool, message) {
+    const privateRequest = message.isRequest === true && message.isNotification !== true
+      && (message.transportKind === 'local-stdio-mcp'
+        || (message.transportKind === 'authenticated-http-jsonrpc' && message.transportAuthenticated === true));
+    let recorded = null;
+    // Advisory history must never hide the original execution receipt or turn a
+    // successful custody release into a failed action because a cache failed.
+    try {
+      if (privateRequest && !HISTORY_TOOLS.includes(tool)) recorded = sessionHistory.begin({
+        callId: envelope.commandId, tool, transportKind: message.transportKind, privateResultAllowed: true });
+    } catch {}
+    const recordResponse = (value, flags) => {
+      try { if (recorded?.recorded) sessionHistory.finish(envelope.commandId, value, flags); } catch {}
+    };
+    try {
+      const result = await executor(envelope, { ...options, searchSessions, sessionHistory, sessionConfig,
+        fileMoves, fileCopies, processSessions, feedbackIntake, pdfWrites });
+      recordResponse(result);
+      return result;
+    } catch (error) {
+      recordResponse(null, { threw: true });
+      throw error;
+    }
+  }
+
+  async function handle(method, params = {}, message = {}) {
+    if (closed) throw new Error('MCP_SESSION_CLOSED');
     const request = message.isRequest === true && message.isNotification !== true;
     const notification = message.isNotification === true && message.isRequest !== true;
 
@@ -455,6 +722,15 @@ export function createSovereignCommanderMcpHandler({
       let args = params.arguments && typeof params.arguments === 'object' && !Array.isArray(params.arguments)
         ? params.arguments
         : {};
+      if (PRIVATE_SESSION_TOOLS.includes(name)) {
+        const privateRequest = request && (message.transportKind === 'local-stdio-mcp'
+          || (message.transportKind === 'authenticated-http-jsonrpc' && message.transportAuthenticated === true));
+        if (!privateRequest) return asTextResult({ ok: false, blocker: 'SOVEREIGN_PRIVATE_SESSION_REQUIRED' }, true);
+        const captured = captureSovereignPrivateSessionArgumentsV1(operation,
+          params.arguments === undefined ? {} : params.arguments);
+        if (!captured) return asTextResult({ ok: false, blocker: 'SOVEREIGN_PRIVATE_SESSION_ARGUMENTS_INVALID' }, true);
+        args = captured;
+      }
       if (name === 'create_directory') {
         const raw = params.arguments;
         if (!raw || typeof raw !== 'object' || Array.isArray(raw)
@@ -486,7 +762,7 @@ export function createSovereignCommanderMcpHandler({
         surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
         actionId: `mcp-${session.sessionId}-${randomUUID()}`,
         missionId: `mcp-session-${session.sessionId}`,
-        relatedIssue: '#2519',
+        relatedIssue: PRIVATE_SESSION_TOOLS.includes(name) ? '#2573' : '#2519',
         operation,
         targetPaths,
         payload: payloadForTool(name, args),
@@ -499,7 +775,7 @@ export function createSovereignCommanderMcpHandler({
       });
       const isCoreRepair = name === 'maintenance_action' && args.actionId === 'repair-core-publication-directories';
       if (!isCoreRepair) {
-        const result = await executor(envelope, { repoRoot, routeProof, withMaintenanceOwner });
+        const result = await invokeExecutor(envelope, { repoRoot, routeProof, withMaintenanceOwner }, name, message);
         return asTextResult(result, result?.ok !== true);
       }
       if (!request || !(typeof message.id === 'string' || Number.isSafeInteger(message.id))
@@ -514,7 +790,7 @@ export function createSovereignCommanderMcpHandler({
       message.signal?.addEventListener('abort', cancel, { once: true });
       if (message.signal?.aborted) cancel();
       try {
-        const result = await executor(envelope, { repoRoot, routeProof, withMaintenanceOwner, signal: controller.signal });
+        const result = await invokeExecutor(envelope, { repoRoot, routeProof, withMaintenanceOwner, signal: controller.signal }, name, message);
         retainCustody = !explicitCoreCustodyReleased(result);
         return asTextResult(result, result?.ok !== true);
       } finally {
@@ -527,7 +803,23 @@ export function createSovereignCommanderMcpHandler({
     }
 
     throw new Error(`Unsupported MCP method: ${method}`);
+  }
+  // Transport lifecycle only. Closing a session cancels its read-only searches
+  // and forgets private history. Process disposal does not invent child exit,
+  // release uncertain process admission or canonical maintenance custody.
+  handle.close = async () => {
+    if (closed) return;
+    closed = true;
+    try { sessionConfig.dispose(); }
+    finally {
+      try { await feedbackIntake.dispose(); }
+      finally {
+        try { sessionHistory.dispose(); }
+        finally { try { await searchSessions.dispose(); } finally { await processSessions.dispose(); } }
+      }
+    }
   };
+  return handle;
 }
 
 function jsonRpcError(id, error) {
@@ -540,7 +832,7 @@ export async function runSovereignCommanderStdioMcpServer({
   handler = createSovereignCommanderMcpHandler(),
 } = {}) {
   const lines = readline.createInterface({ input, crlfDelay: Infinity });
-  for await (const line of lines) {
+  try { for await (const line of lines) {
     if (!line.trim()) continue;
     let request;
     try { request = JSON.parse(line); }
@@ -575,7 +867,7 @@ export async function runSovereignCommanderStdioMcpServer({
     } catch (error) {
       if (!isNotification) output.write(`${JSON.stringify(jsonRpcError(request.id, error))}\n`);
     }
-  }
+  } } finally { await handler.close?.(); }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

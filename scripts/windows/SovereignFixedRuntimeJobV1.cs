@@ -28,6 +28,7 @@ namespace Stephanos.Sovereign {
   public sealed class FixedRuntimeReceiptV1 {
     public string SchemaVersion = "stephanos.fixed-runtime-job.v1";
     public string RequestId = "", RuntimeSourceHead = "", Profile = "", FrameSha256 = "";
+    public string InstallationSourceHead = "", SourceProofSha256 = "";
     public string Reason = "NATIVE_RUNTIME_UNPROVEN", CustodyRecordSha256 = "";
     public long NativeRecordId;
     public string ActionId="", MissionId="", ClaimSha256="";
