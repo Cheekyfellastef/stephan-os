@@ -1,3 +1,4 @@
+import { types as nodeTypes } from 'node:util';
 import {
   POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
   POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
@@ -10,6 +11,61 @@ export {
   projectPostSyncSovereignRelayObservation,
   projectPostSyncSovereignRelayProof,
 };
+
+// Source-side validation only: an adapter is not a commissioned native host.
+// Proof flags must be inert own data, never inherited or accessor-mediated.
+function sovereignPluginHostProofPass(proof, expectedHead) {
+  if (!proof || typeof proof !== 'object' || nodeTypes.isProxy(proof)) return false;
+  let fields;
+  try {
+    const prototype = Object.getPrototypeOf(proof);
+    if (prototype !== Object.prototype && prototype !== null) return false;
+    fields = Object.getOwnPropertyDescriptors(proof);
+  } catch {
+    return false;
+  }
+  for (const key of ['ok', 'exactHeadProofOk', 'desktopPluginHostHandshakeVerified', 'loadedManifestVerified']) {
+    const field = fields[key];
+    if (!field || !Object.hasOwn(field, 'value') || field.value !== true) return false;
+  }
+  const ownData = key => {
+    const descriptor = fields[key];
+    return descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined;
+  };
+  if (typeof ownData('sourceHead') !== 'string' || !SHA_PATTERN.test(ownData('sourceHead'))
+    || ownData('sourceHead').toLowerCase() !== String(expectedHead).toLowerCase()) return false;
+
+  // A boolean success claim is not evidence of a loaded native host. The
+  // original private verifier must additionally establish process/session
+  // identity, a loaded manifest and a fresh observation. These checks alone
+  // do NOT create authenticated transport, reviewer authority or provenance.
+  if (ownData('schemaVersion') !== 'stephanos.sovereign-plugin-host-activation.v1'
+    || ownData('hostPrincipalVerified') !== true
+    || ownData('hostProcessBirthVerified') !== true
+    || ownData('sessionRevoked') !== false
+    || ownData('sessionExpired') !== false) return false;
+  const processId = ownData('hostProcessId');
+  const sessionId = ownData('sessionId');
+  if (!Number.isSafeInteger(processId) || processId <= 0 || processId > 0xffffffff
+    || typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(sessionId)) return false;
+  const loadedDigest = ownData('loadedManifestSha256');
+  const expectedDigest = ownData('expectedManifestSha256');
+  if (typeof loadedDigest !== 'string' || !/^[a-f0-9]{64}$/.test(loadedDigest)
+    || typeof expectedDigest !== 'string' || loadedDigest !== expectedDigest
+    || ownData('manifestDigestVerified') !== true) return false;
+  const birth = ownData('hostProcessStartedAtUtc');
+  const observed = ownData('observedAtUtc');
+  const expiry = ownData('expiresAtUtc');
+  const iso = value => typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+    && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+  if (![birth, observed, expiry].every(iso)) return false;
+  const now = Date.now();
+  const birthMs = Date.parse(birth), observedMs = Date.parse(observed), expiryMs = Date.parse(expiry);
+  return birthMs <= observedMs && observedMs <= now + 2_000
+    && observedMs >= now - 15_000
+    && expiryMs > now && expiryMs > observedMs && expiryMs <= observedMs + 30_000;
+}
 
 export const POST_SYNC_REFRESH_SCHEMA = 'stephanos.post-sync-runtime-refresh.v1';
 
@@ -834,17 +890,30 @@ export async function executePostSyncRefreshPlan({
     // the exact loaded source, manifest and fresh host session.
     let hostProof = null;
     if (typeof adapters.verifySovereignPluginHost === 'function') {
+      // The private adapter is not commissioned yet. A future host transport
+      // must not strand the original post-sync lock on an unanswered request.
+      // This finite read-only deadline adds no retry or native mutation right.
+      const abortController = new AbortController();
+      let deadlineTimer;
       try {
-        hostProof = await adapters.verifySovereignPluginHost({ beforeHead, afterHead, plan });
+        hostProof = await Promise.race([
+          Promise.resolve().then(() => adapters.verifySovereignPluginHost({
+            beforeHead, afterHead, plan, signal: abortController.signal,
+          })),
+          new Promise(resolve => {
+            deadlineTimer = setTimeout(() => {
+              abortController.abort();
+              resolve(null);
+            }, 3_000);
+          }),
+        ]);
       } catch {
         hostProof = null;
+      } finally {
+        clearTimeout(deadlineTimer);
       }
     }
-    const hostVerified = hostProof?.ok === true
-      && hostProof?.exactHeadProofOk === true
-      && hostProof?.desktopPluginHostHandshakeVerified === true
-      && hostProof?.loadedManifestVerified === true
-      && String(hostProof?.sourceHead || '').toLowerCase() === String(afterHead).toLowerCase();
+    const hostVerified = sovereignPluginHostProofPass(hostProof, afterHead);
     if (!hostVerified) {
       return Object.freeze({
         ok: false,

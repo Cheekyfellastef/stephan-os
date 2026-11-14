@@ -12,6 +12,30 @@ import {createHolodeckWindowClient} from '../apps/spatial-bridge/holodeck-window
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 const response=(body,status=200)=>({ok:status===200,status,json:async()=>body});
 const token='a'.repeat(64);
+test('temporary readiness host rejects every session/capture/input route without touching native state',async()=>{
+  let nativeCalls=0;
+  const native={stop(){nativeCalls++;},request(){nativeCalls++;throw new Error('native must remain untouched');}};
+  const buildId='f'.repeat(64);
+  const server=createSpatialWindowHost({native,buildId,readinessOnly:true});
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  const send=(path,method='POST',headers={})=>new Promise((resolve,reject)=>{
+    const req=request({hostname:'127.0.0.1',port:server.address().port,path,method,
+      headers:{Host:'127.0.0.1:4180',Origin:'http://127.0.0.1:4173','Content-Type':'application/json',...headers}},res=>{
+      let data='';res.on('data',c=>data+=c);res.on('end',()=>resolve({code:res.statusCode,body:JSON.parse(data)}));
+    });req.on('error',reject);req.end(method==='POST'?'{}':undefined);
+  });
+  try{
+    assert.deepEqual(await send('/health','GET'),{code:200,body:{schema:'stephanos.spatial-window-health.v1',buildId,readinessOnly:true}});
+    for(const path of ['/session','/windows','/bind','/frame','/input','/stop','/unknown']) {
+      assert.deepEqual(await send(path),{code:409,body:{status:'readiness-probe-only'}});
+    }
+    assert.equal((await send('/session','OPTIONS')).code,409);
+    assert.equal((await send('/health','GET',{Origin:'https://foreign.invalid'})).code,403);
+    assert.equal((await send('/health','GET',{Host:'localhost:4180'})).code,403);
+    assert.equal(nativeCalls,0);
+  }finally{await new Promise(r=>server.close(r));}
+  assert.equal(nativeCalls,0,'closing a probe cannot revoke an existing native session');
+});
 function clientHarness(fetchRef){
   const timers=new Map(),saved=new Map();let id=0;
   const client=createHolodeckWindowClient({fetchRef,locationRef:{port:'4174'},sessionStore:{getItem:k=>saved.get(k),setItem:(k,v)=>saved.set(k,v),removeItem:k=>saved.delete(k)},

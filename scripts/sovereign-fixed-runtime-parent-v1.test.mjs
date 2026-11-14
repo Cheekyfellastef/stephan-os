@@ -43,7 +43,7 @@ test('isolated actual parent protocol preserves zero across refusal cancellation
 test('actual inspector preserves only closed native denials and never qualifies failure', () => {
   const output=execFileSync(process.execPath,['--experimental-vm-modules',fileURLToPath(new URL('./fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs',import.meta.url))],{encoding:'utf8',timeout:10000,windowsHide:true});
   const result=JSON.parse(output);
-  assert.equal(result.cases,46);assert.equal(result.nativeExecuted,false);assert.equal(result.productionQualification,false);
+  assert.equal(result.cases,53);assert.equal(result.nativeExecuted,false);assert.equal(result.productionQualification,false);
 });
 
 
@@ -97,7 +97,7 @@ test('mailbox native evidence fixed profile is inspectable but remains pre-job f
   });
   const host=readFileSync(fileURLToPath(new URL('./windows/SovereignFixedRuntimeHostV1.cs',import.meta.url)),'utf8');
   const parent=readFileSync(fileURLToPath(new URL('./sovereign-fixed-runtime-parent-v1.mjs',import.meta.url)),'utf8');
-  assert.equal(host.includes('Profiles=new string[]{"MAINTENANCE_GOAL_BUILDER_V1","SOURCE_TASK_V1","CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1"}'),true);
+  assert.equal(host.includes('Profiles=new string[]{"MAINTENANCE_GOAL_BUILDER_V1","SPATIAL_WORKSPACE_PREPARE_V1","SOURCE_TASK_V1","CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1"}'),true);
   assert.equal(host.includes('if(mailboxNativeEvidence) throw new InvalidOperationException("NATIVE_ROTATION_PRODUCER_UNQUALIFIED")'),true);
   assert.ok(host.indexOf('if(mailboxNativeEvidence) throw new InvalidOperationException("NATIVE_ROTATION_PRODUCER_UNQUALIFIED")') < host.indexOf('job=CreateJobObjectW'));
   assert.doesNotMatch(parent,/executeFixedMailboxNativeEvidenceRuntimeV1/);
@@ -129,7 +129,7 @@ public static class StephanosFrameAliasRegressionV1 {
 Add-Type -TypeDefinition $h
 $parser=[Stephanos.Sovereign.CoreJobCustodyV1].GetMethod('ParseFixedRuntimeRequestV1',[Reflection.BindingFlags]'NonPublic,Static')
 $sha=([BitConverter]::ToString(([Security.Cryptography.SHA256]::Create()).ComputeHash([byte[]]@()))).Replace('-','').ToLowerInvariant()
-$f=[ordered]@{SchemaVersion='stephanos.fixed-runtime-request.v1';RequestId='mailboxnative-2315-review';Profile='CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1';RuntimeSourceHead='a'*40;OwnerPid=$PID;TaskFrameBase64='';TaskBindingSha256=$sha}
+$f=[ordered]@{SchemaVersion='stephanos.fixed-runtime-request.v1';RequestId='mailboxnative-2315-review';Profile='CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1';RuntimeSourceHead='a'*40;InstallationSourceHead='a'*40;SourceProofSha256='b'*64;OwnerPid=$PID;TaskFrameBase64='';TaskBindingSha256=$sha}
 $json=ConvertTo-Json -InputObject $f -Compress -Depth 5
 $canonical='"Profile":"CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1"'
 if(-not $json.Contains($canonical)){throw 'CANONICAL_FRAME_MISSING'}

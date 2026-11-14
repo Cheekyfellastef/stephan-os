@@ -435,3 +435,141 @@ reviewed HTTP, parent, admission and native-host source identities. Any change
 to those predicates holds the exclusion for reassessment. Non-Windows/injected
 legacy execution remains optional-profile debt and is not qualified by this
 package. Constructing a URL is not evidence that its target was read or executed.
+
+## 7 November 2026: retain a qualified installation across unrelated main updates
+
+The installation commit and the current execution commit have separate roles.
+The embedded manifest, protected version directory, PENDING receipt, compiler
+completion, machine, genuine later boot, helper image and tool identities remain
+bound to the installation commit. Neither source synchronization nor an equal
+file digest can rewrite those identities or discharge historical custody.
+
+The existing parent now obtains the current execution head through the real
+canonical source observer used by maintenance recovery. That observer fetches
+the fixed canonical repository, validates configuration and checkout topology,
+and requires a stable clean main equal to the freshly fetched origin/main.
+There is no caller-supplied current-main assertion. Original maintenance
+reservation, source grant, active-claim heartbeat, gaming and native custody
+requirements continue to apply to this execution head.
+
+A newly prepared installer retains each canonical Git blob identity alongside
+its original-source and Windows-materialized SHA256 digests. Its complete
+reviewed 284-member set admits regular mode 100644 only. The protected pending
+receipt commits to the ordered path/mode/blob set; the native helper independently
+recomputes that commitment from its embedded manifest. The commitment is a
+selection aid, never runtime qualification or deployment authority. Legacy
+pending records without these pins cannot adopt another head.
+
+The bounded package and source-proof capacity is 284 members, matching the
+checked-in private-capability closure. The candidate builder and source package
+require that exact declared set and preserve the shared verifier bounds; capacity
+alone does not enroll additional paths. The expanded installation must carry its
+own complete reviewed manifest and immutable blob pins. An old 266-member
+installation cannot borrow that expanded identity.
+The Node and real Windows verifier fixtures cover exact 266 and 284 members,
+refuse 285 members, and reject changed, missing, mode-substituted or unknown
+last members against the installed closure. The combined private-capability
+source still requires its own exact-head Windows checks, independent specialist
+review, protected integration and installed acceptance.
+
+If the exact current version directory exists, it remains the only candidate,
+including when incomplete or unsafe. Otherwise the parent considers at most
+64 entries beneath the existing protected version root and requires exactly
+one matching protected installation. Missing, ambiguous, redirected, malformed
+or unsafe versions remain held. There is no writable active-version pointer,
+new download route, implicit installation, service owner or fallback command.
+
+The parent captures raw commit/tree objects through the existing fixed Git
+boundary and private probe context. A separate bounded ASCII input record keeps
+the task request at its existing 32 KiB bound. The proof allows at most 64 KiB of
+commit bytes, 128 trees, 2 MiB aggregate tree bytes, 32,768 entries and 3 MiB of
+wire data. Both parsers reject missing or unused objects, duplicate or aliased
+names, malformed UTF8/base64, noncanonical ordering, unsupported modes and
+incomplete membership. The protected native helper independently verifies Git
+object hashes and every member against its embedded blob pins, holds the
+existing physical source and metadata pins, and requires main and origin/main
+to equal the proved execution head. Changed executable closure still refuses
+reuse and requires the existing reviewed installation path.
+
+Request, prepared and terminal evidence bind the immutable installation head,
+current execution head and exact source-proof digest separately. The worker
+heartbeat, launch identity and original grant continue to match the execution
+head. Neither the historical reservation nor the PENDING record is relabelled.
+Qualification stays a short-lived, one-use in-process object; copied JSON and
+source-membership results cannot dispatch or release custody.
+Its 25-second qualification budget starts before the canonical source observer;
+an expired return cannot start source capture or native inspection. Inspection
+receives only the remaining budget, and the one-use ceiling is 30 seconds from
+that same start. Slow source observation cannot mint a new freshness window.
+
+These are integrated source changes and synthetic regression fixtures. They
+do not establish an installed helper, actual Windows qualification, calibration,
+Spatial resident adoption or playtest acceptance. The two Spatial resident
+obligations, unresolved Control Tower BUILD, mailbox signer commissioning and
+all original fences remain independent. No reboot is initiated or authorized
+by this implementation. A newly bound installation package still requires its
+existing current-main, private operator, exact-artifact review and operator
+approval gates, followed by the genuine later boot and physical qualification.
+
+## Bounded Spatial preparation profile
+
+The source-defined `prepare-spatial-workspace` maintenance action maps only to
+`SPATIAL_WORKSPACE_PREPARE_V1` in the existing fixed host. It selects
+`scripts/sovereign-commander-spatial-workspace.mjs --expected-main <execution-head>`
+with the head taken from the authenticated frame. Its task body is empty: callers
+cannot supply an executable, path, script, arguments, environment or budget.
+The authenticated custody operation must be `prepare-spatial-workspace`; the
+goal-builder and Spatial profiles cannot exchange root or terminal evidence.
+
+When the fixed helper port is free, the profile always rebuilds the Spatial
+helper from the pinned source and performs temporary readiness probes inside
+the same native Job. An old writable `build.json` proves byte consistency only;
+it cannot establish compiler origin or authorize an existing executable probe.
+The preparation adapter keeps the fresh build identity in memory. Windows file
+replacement requires the staging read handles to close before promotion. The
+installer then opens final handles denying writes and deletion, and compares
+both held files to the original in-memory digests before any native execution.
+A changed artifact during that transfer fails validation and enters rollback.
+The adapter retains the verified final handles through launch. The profile
+has a 225,000 ms native task
+deadline and a 240,000 ms parent transport ceiling, retaining the existing drain,
+cancellation, owner-liveness, resource-governor and positive-zero requirements.
+The reviewed Spatial build may invoke its existing C++ toolchain within that
+Job; the protected fixed host never recompiles or activates itself at runtime.
+Any existing listener is left untouched and causes a
+`SPATIAL_PREPARE_PORT_OCCUPIED` hold before installation or probing. The adapter
+makes no existing-host health or provenance claim; positive preserved/running
+host flags remain false because those facts are unproven. An occupied port
+cannot produce preparation success. Newly created probe children must
+stop before completion. The persistent helper and browser
+remain the responsibility of the existing operator shortcut, outside this
+preparation action; no breakaway or persistent service handoff is introduced.
+
+`SOVEREIGN_SPATIAL_WORKSPACE_RESULT=` carries
+`stephanos.spatial-workspace-readiness.v1`. Native terminal admission requires
+the exact source head and action, a real boolean result, exit 0/2 agreement and
+real boolean readiness fields. Success requires a verified installation, UI,
+helper and native probes, stopped created probes, a valid build identity and
+readiness for the operator launcher. Success requires `mutationAttempted: true`,
+`existingHostPreserved: false` and `hostRunningAfter: false`; failed preflight
+receipts can retain `mutationAttempted: false`. Interactive, voice and headset acceptance remain false
+on both success and failure. An action report never substitutes for native Job
+zero and never clears the separate Spatial resident-adoption obligation.
+
+The protected source closure now contains 295 exact members, including the
+Spatial preparer, its shared receipt contract, the existing installer/build/
+start inputs and their install lock, the executed shortcut installer, the host,
+desktop contract and the exact
+`src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp` path. The new path does
+not admit other `src/` files. Source-package and native capacity limits agree;
+the next member is refused. Changed profile or closure bytes cannot reuse an
+older installation through unchanged-closure adoption.
+The shortcut installer has an explicit runtime-execution edge from the
+preparation adapter. Its persistent launcher is only the shortcut path/readback
+target and remains outside the maintenance execution closure.
+
+This is source implementation, not native qualification. The existing protected
+installer, exact-artifact review, normal runtime principal, genuine later boot,
+authenticated idle custody and native profile inventory remain mandatory.
+Linux protocol and source-package tests do not establish Windows compilation,
+installed qualification, a live Spatial session or physical headset acceptance.

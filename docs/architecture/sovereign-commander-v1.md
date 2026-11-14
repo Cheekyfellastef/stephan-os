@@ -41,9 +41,47 @@ agent / controller intent
 
 The executor exposes no general shell tool. File mutation is explicit-path write/append or exact unique-string replacement. Caller-selected test files are not execution authority. Process starts are selected from a source-controlled registry.
 
-Project discovery is a first-class read-only capability. `search_project` performs one bounded literal search rooted only at the trusted canonical repository, skips known dependency/build directories and common secret-bearing file forms, caps file size and result count, and uses no shell. It provides partial project-search coverage only. Remote Commander’s `start_search`, `get_more_search_results`, `stop_search`, and `list_searches` still require scoped whole-PC search, tracked search sessions, pagination and cancellation under #2573; this source mapping is not evidence of full functional parity or installed runtime capability.
+Project discovery is a first-class read-only capability. `search_project` performs one bounded literal search rooted only at the trusted canonical repository, skips known dependency/build directories and common secret-bearing file forms, caps file size and result count, and uses no shell. It remains a repository search rather than a search-session alias. The separate `start_search`, `get_more_search_results`, `stop_search`, and `list_searches` tools provide private, bounded Windows search sessions rooted in one explicit local directory. The four private usage/history tools retain only the current MCP session's advisory metadata and eligible original receipts. See [private search and history](sovereign-private-search-history-v1.md) for scope, native confinement, limits and acceptance gates. Source availability does not prove installed Battle Bridge capability.
 
 ## Transport layers
+
+Private handlers also expose revision-checked `set_config_value` for bounded
+read/write payload limits, and `move_file` for a no-overwrite rename within one
+physical Windows directory. The rename uses bounded pre/post hash observations;
+it does not establish atomic content CAS or cross-directory move parity. Their
+contracts and remaining gaps are documented in [private capabilities](sovereign-private-search-history-v1.md).
+
+`get_file_hash` supplies a bounded private SHA-256 observation for a regular file,
+including binary assets, without returning its content. `copy_file_content` uses
+that expected hash to copy up to 8 MiB into a new file on the same fixed local
+NTFS volume, including another folder. It keeps the source read only and never
+replaces an existing destination. Only the unnamed data stream is copied;
+permissions, timestamps, alternate streams and other metadata are outside this
+contract. A failed or uncertain create attempt may leave a partial destination,
+and does not authorize automatic retry or deletion. Both operations share one
+pinned helper and the existing private command/history route.
+
+Private `start_process`, `read_process_output`, `list_sessions` and
+`cancel_process_session` add bounded
+asynchronous output for only the existing `status-recovery-mesh` and
+`status-worker-watchdog` read-only profiles. The canonical operation
+`START_PROCESS_SESSION` preserves legacy `START_PROCESS` ownership semantics.
+These tools observe direct-child launch/output/closure without accepting input,
+arbitrary commands or PIDs, and never establish descendant custody. General
+process/session parity remains an explicit gap. Cancellation uses the captured
+child already owned by this handler. Its receipt distinguishes a recorded
+request from observed root exit and stdio closure; repeated calls do not resend
+the signal or release unresolved process admission.
+
+`submit_feedback` persists bounded, unverified suggestions in the existing Shared
+Workspace event store. Its records cannot assert failure proof, learning or
+execution approval; receipts and history omit the caller's message. This is
+Sovereign feedback intake, with no third-party vendor submission.
+
+`write_pdf` creates one new bounded ASCII text PDF on a permitted local Windows
+path using a retained-parent, no-overwrite helper. It supports fixed Letter pages
+and Courier text only. Existing-PDF editing and richer rendering remain gaps;
+uncertain creation can leave a partial file and must never trigger automatic retry.
 
 ### Local stdio MCP
 

@@ -15,6 +15,7 @@ namespace Stephanos.Sovereign {
 
   public sealed class FixedRuntimeRequestV1 {
     public string SchemaVersion="", RequestId="", Profile="", RuntimeSourceHead="";
+    public string InstallationSourceHead="", SourceProofSha256="";
     public int OwnerPid;
     public string TaskFrameBase64="", TaskBindingSha256="";
   }
@@ -85,7 +86,7 @@ namespace Stephanos.Sovereign {
       var parser=new JavaScriptSerializer { MaxJsonLength=32768,RecursionLimit=4 };
       var objectValue=RuntimeObjectV1(parser.DeserializeObject(raw));
       string[] keys={"SchemaVersion","RequestId","Profile","RuntimeSourceHead","OwnerPid",
-        "TaskFrameBase64","TaskBindingSha256"};
+        "TaskFrameBase64","TaskBindingSha256","InstallationSourceHead","SourceProofSha256"};
       var seen=new HashSet<string>(StringComparer.Ordinal);
       foreach(Match match in Regex.Matches(raw,@"""([A-Za-z0-9]+)""\s*:")) {
         if(!seen.Add(match.Groups[1].Value)) throw new InvalidOperationException("RUNTIME_FRAME_DUPLICATE_FIELD");
@@ -99,20 +100,23 @@ namespace Stephanos.Sovereign {
         SchemaVersion=RuntimeStringV1(objectValue,"SchemaVersion"),
         RequestId=RuntimeStringV1(objectValue,"RequestId"),Profile=RuntimeStringV1(objectValue,"Profile"),
         RuntimeSourceHead=RuntimeStringV1(objectValue,"RuntimeSourceHead"),
+        InstallationSourceHead=RuntimeStringV1(objectValue,"InstallationSourceHead"),
+        SourceProofSha256=RuntimeStringV1(objectValue,"SourceProofSha256"),
         OwnerPid=owner>0 && owner<=Int32.MaxValue?(int)owner:0,
         TaskFrameBase64=RuntimeStringV1(objectValue,"TaskFrameBase64"),
         TaskBindingSha256=RuntimeStringV1(objectValue,"TaskBindingSha256") };
       if(frame.SchemaVersion!="stephanos.fixed-runtime-request.v1" ||
         !Regex.IsMatch(frame.RequestId,@"^[a-z0-9][a-z0-9._-]{7,79}$") ||
-        !RuntimeHexV1(frame.RuntimeSourceHead,40) || frame.OwnerPid<=0 ||
-        (frame.Profile!="MAINTENANCE_GOAL_BUILDER_V1" && frame.Profile!="SOURCE_TASK_V1" &&
+        !RuntimeHexV1(frame.RuntimeSourceHead,40) || !RuntimeHexV1(frame.InstallationSourceHead,40) ||
+        !RuntimeHexV1(frame.SourceProofSha256,64) || frame.OwnerPid<=0 ||
+        (frame.Profile!="MAINTENANCE_GOAL_BUILDER_V1" && frame.Profile!="SPATIAL_WORKSPACE_PREPARE_V1" && frame.Profile!="SOURCE_TASK_V1" &&
           frame.Profile!="CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1") ||
         frame.TaskFrameBase64.Length>24000 || !RuntimeHexV1(frame.TaskBindingSha256,64))
         throw new InvalidOperationException("RUNTIME_FRAME_IDENTITY_UNPROVEN");
       byte[] body=Convert.FromBase64String(frame.TaskFrameBase64);
       if(body.Length>16384 || Convert.ToBase64String(body)!=frame.TaskFrameBase64 ||
         RuntimeHashV1(body)!=frame.TaskBindingSha256 ||
-        ((frame.Profile=="MAINTENANCE_GOAL_BUILDER_V1" || frame.Profile=="CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1") && body.Length!=0))
+        (frame.Profile!="SOURCE_TASK_V1" && body.Length!=0))
         throw new InvalidOperationException("RUNTIME_TASK_BINDING_UNPROVEN");
       return frame;
     }
@@ -124,6 +128,44 @@ namespace Stephanos.Sovereign {
         {"TEMP",@"C:\Users\Stephan Callear\AppData\Local\Temp"},{"TMP",@"C:\Users\Stephan Callear\AppData\Local\Temp"} };
       foreach(var row in fixedValues) Environment.SetEnvironmentVariable(row.Key,row.Value);
     }
+    static string RuntimeMaintenanceOperationV1(string profile) {
+      if(profile=="MAINTENANCE_GOAL_BUILDER_V1") return "repair-goal-builder-flow";
+      if(profile=="SPATIAL_WORKSPACE_PREPARE_V1") return "prepare-spatial-workspace";
+      throw new InvalidOperationException("RUNTIME_MAINTENANCE_PROFILE_UNPROVEN");
+    }
+    static string RuntimeTaskArgumentsV1(FixedRuntimeRequestV1 frame) {
+      if(frame.Profile=="SOURCE_TASK_V1")
+        return Quote(Path.Combine(RuntimeSourceRootV1,"scripts","sovereign-fixed-runtime-source-task-v1.mjs"));
+      RuntimeMaintenanceOperationV1(frame.Profile);
+      if(frame.Profile=="SPATIAL_WORKSPACE_PREPARE_V1") {
+        if(!RuntimeHexV1(frame.RuntimeSourceHead,40))
+          throw new InvalidOperationException("RUNTIME_SOURCE_HEAD_UNPROVEN");
+        // No caller-selected path, executable, arguments, or persistent launcher.
+        return Quote(Path.Combine(RuntimeSourceRootV1,"scripts","sovereign-commander-spatial-workspace.mjs"))
+          +" --expected-main "+frame.RuntimeSourceHead;
+      }
+      return Quote(Path.Combine(RuntimeSourceRootV1,"scripts","sovereign-commander-goal-builder-repair.mjs"));
+    }
+    static bool RuntimeSpatialPreparationReportV1(Dictionary<string,object> report,string sourceHead,bool ok) {
+      if(RuntimeStringV1(report,"actionId")!="prepare-spatial-workspace" ||
+        RuntimeStringV1(report,"sourceHead")!=sourceHead) return false;
+      string buildId=RuntimeStringV1(report,"buildId"),blocker=RuntimeStringV1(report,"blocker");
+      if(buildId!="" && !RuntimeHexV1(buildId,64)) return false;
+      foreach(string key in new string[]{"installationVerified","uiReady","helperProbePassed","nativeProbePassed",
+        "existingHostPreserved","createdProbeStopped","hostRunningAfter","mutationAttempted","readyForOperatorLaunch",
+        "interactiveAcceptance","voiceAcceptance","headsetAcceptance"}) {
+        object value;if(!report.TryGetValue(key,out value) || !(value is bool)) return false;
+      }
+      if((bool)report["interactiveAcceptance"] || (bool)report["voiceAcceptance"] || (bool)report["headsetAcceptance"])
+        return false;
+      if(blocker=="SPATIAL_PREPARE_PROBE_STOP_UNPROVEN" && (bool)report["createdProbeStopped"])
+        return false;
+      if(!ok) return Regex.IsMatch(blocker,@"^[A-Z][A-Z0-9_]{0,95}$") && !(bool)report["readyForOperatorLaunch"];
+      return RuntimeHexV1(buildId,64) && blocker=="" && (bool)report["installationVerified"] &&
+        (bool)report["uiReady"] && (bool)report["helperProbePassed"] && (bool)report["nativeProbePassed"] &&
+        (bool)report["createdProbeStopped"] && (bool)report["readyForOperatorLaunch"] &&
+        (bool)report["mutationAttempted"] && !(bool)report["existingHostPreserved"] && !(bool)report["hostRunningAfter"];
+    }
     static void ProjectRuntimeTaskEvidenceV1(FixedRuntimeReceiptV1 receipt,FixedRuntimeStageV1 stage) {
       receipt.TaskStage=stage; receipt.TaskRootCreated=stage.Launched;
       receipt.TaskResumed=stage.ResumeConfirmed; receipt.TaskLifecycle=stage.RootLifecycle;
@@ -132,7 +174,8 @@ namespace Stephanos.Sovereign {
       if(!stage.ResumeConfirmed ||
         !stage.ParentBindingAccepted || !stage.NormalRootExit || !stage.OutputComplete) return;
       bool source=receipt.Profile=="SOURCE_TASK_V1";
-      string marker=source?"SOVEREIGN_RUNTIME_SOURCE_PROPOSAL_V1=":"SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=";
+      bool spatial=receipt.Profile=="SPATIAL_WORKSPACE_PREPARE_V1";
+      string marker=source?"SOVEREIGN_RUNTIME_SOURCE_PROPOSAL_V1=":spatial?"SOVEREIGN_SPATIAL_WORKSPACE_RESULT=":"SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=";
       string[] lines=stage.Output.Trim().Split('\n'); int markers=0;
       foreach(string line in lines) if(line.Trim().StartsWith(marker,StringComparison.Ordinal)) markers++;
       string terminal=lines.Length==0?"":lines[lines.Length-1].Trim();
@@ -143,7 +186,7 @@ namespace Stephanos.Sovereign {
         var report=RuntimeObjectV1(new JavaScriptSerializer { MaxJsonLength=32768,RecursionLimit=32 }
           .DeserializeObject(terminal.Substring(marker.Length)));
         object result;
-        if(RuntimeStringV1(report,"schemaVersion")!=(source?"stephanos.fixed-source-task-proposal-reference.v1":"stephanos.sovereign-commander-goal-builder-repair.v1") ||
+        if(RuntimeStringV1(report,"schemaVersion")!=(source?"stephanos.fixed-source-task-proposal-reference.v1":spatial?"stephanos.spatial-workspace-readiness.v1":"stephanos.sovereign-commander-goal-builder-repair.v1") ||
           !report.TryGetValue(source?"success":"ok",out result) || !(result is bool) ||
           stage.ExitCode!=((bool)result?0u:2u)) {
           receipt.Reason="ACTION_TERMINAL_PROTOCOL_UNPROVEN"; return;
@@ -151,6 +194,9 @@ namespace Stephanos.Sovereign {
         if(source && (RuntimeStringV1(report,"requestId")!=receipt.RequestId ||
           RuntimeStringV1(report,"claimSha256")!=receipt.ClaimSha256)) {
           receipt.Reason="ACTION_TERMINAL_SOURCE_BINDING_UNPROVEN";return;
+        }
+        if(spatial && !RuntimeSpatialPreparationReportV1(report,receipt.RuntimeSourceHead,(bool)result)) {
+          receipt.Reason="ACTION_TERMINAL_SPATIAL_BINDING_UNPROVEN";return;
         }
         receipt.TaskExecuted=true; receipt.TaskLifecycle="ENTRY_REPORTED";
         receipt.OperationOk=stage.OperationOk && (bool)result;
@@ -160,16 +206,19 @@ namespace Stephanos.Sovereign {
       // A read-only inventory, not an execution or enrolment endpoint.
       // The original parent still owns admission and reservation adjudication.
       try {
-        using(var pins=OpenFixedRuntimeIdentityV1()) {
+        string sourceProof=RuntimeReadLineV1(3145728,10000);
+        using(var pins=OpenFixedRuntimeIdentityForSourceV1(sourceProof)) {
           var custody=ReadRuntimeCustodyV1(pins);
           bool sameMachine=custody.MachineHash==pins.MachineHash;
           bool bootOrdered=RuntimeInstantV1(custody.BootStartedAtUtc)<=RuntimeInstantV1(pins.BootStartedAtUtc);
           bool idle=sameMachine && bootOrdered && custody.Phase=="IDLE" && !RuntimeCurrentBootFenceExistsV1(pins);
           Console.WriteLine("SOVEREIGN_RUNTIME_INVENTORY_V1="+new JavaScriptSerializer().Serialize(new {
-            SchemaVersion="stephanos.fixed-runtime-inventory.v1",Ok=true,SourceHead=pins.SourceHead,
-            SourceTree=pins.SourceTree,HelperSha256=pins.HelperSha256,ManifestSha256=pins.ManifestSha256,
+            SchemaVersion="stephanos.fixed-runtime-inventory.v1",Ok=true,SourceHead=pins.ExecutionHead,
+            SourceTree=pins.ExecutionTree,InstallationSourceHead=pins.SourceHead,InstallationSourceTree=pins.SourceTree,
+            SourceProofSha256=pins.SourceProofSha256,GitClosureSha256=pins.GitClosureSha256,
+            HelperSha256=pins.HelperSha256,ManifestSha256=pins.ManifestSha256,
             BootStartedAtUtc=pins.BootStartedAtUtc,AuthenticatedCustodyPhase=custody.Phase,
-            AuthenticatedCustodyIdle=idle,CustodyRecordSha256=custody.RecordSha256,NativeRecordId=custody.NativeRecordId,Profiles=new string[]{"MAINTENANCE_GOAL_BUILDER_V1","SOURCE_TASK_V1","CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1"},
+            AuthenticatedCustodyIdle=idle,CustodyRecordSha256=custody.RecordSha256,NativeRecordId=custody.NativeRecordId,Profiles=new string[]{"MAINTENANCE_GOAL_BUILDER_V1","SPATIAL_WORKSPACE_PREPARE_V1","SOURCE_TASK_V1","CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1"},
             RuntimeActivationGranted=false,MutationAttempted=false }));
           return 0;
         }
@@ -191,6 +240,7 @@ namespace Stephanos.Sovereign {
         var frame=ParseFixedRuntimeRequestV1(raw);
         receipt.RequestId=frame.RequestId; receipt.Profile=frame.Profile;
         receipt.RuntimeSourceHead=frame.RuntimeSourceHead;
+        receipt.InstallationSourceHead=frame.InstallationSourceHead;receipt.SourceProofSha256=frame.SourceProofSha256;
         receipt.FrameSha256=RuntimeHashV1(Encoding.UTF8.GetBytes(raw));
         receipt.OwnerPid=frame.OwnerPid; receipt.LauncherPid=frame.OwnerPid;
         if(RuntimeActualParentV1()!=frame.OwnerPid)
@@ -209,13 +259,18 @@ namespace Stephanos.Sovereign {
         Require(RuntimeOwnerImageV1(owner,0,image,ref imageLength));
         if(!String.Equals(image.ToString(),@"C:\Program Files\nodejs\node.exe",StringComparison.OrdinalIgnoreCase))
           throw new InvalidOperationException("RUNTIME_CANONICAL_PARENT_IMAGE_UNPROVEN");
-        pins=OpenFixedRuntimeIdentityV1();
-        if(frame.RuntimeSourceHead!=pins.SourceHead)
+        string sourceProof=RuntimeReadLineV1(3145728,10000);
+        if(sourceProof==null || RuntimeHashV1(Encoding.UTF8.GetBytes(sourceProof))!=frame.SourceProofSha256)
+          throw new InvalidOperationException("RUNTIME_SOURCE_PROOF_BINDING_UNPROVEN");
+        pins=OpenFixedRuntimeIdentityForSourceV1(sourceProof);
+        if(frame.RuntimeSourceHead!=pins.ExecutionHead || frame.InstallationSourceHead!=pins.SourceHead ||
+          frame.SourceProofSha256!=pins.SourceProofSha256)
           throw new InvalidOperationException("RUNTIME_INSTALLED_SOURCE_HEAD_CHANGED");
         receipt.SourceHeadMatched=true;
         var custody=ReadRuntimeCustodyV1(pins);
         receipt.CustodyRecordSha256=custody.RecordSha256; receipt.NativeRecordId=custody.NativeRecordId;
         bool source=frame.Profile=="SOURCE_TASK_V1";
+        bool spatial=frame.Profile=="SPATIAL_WORKSPACE_PREPARE_V1";
         bool mailboxNativeEvidence=frame.Profile=="CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1";
         if(custody.MachineHash!=pins.MachineHash ||
           (source?RuntimeInstantV1(custody.BootStartedAtUtc)>RuntimeInstantV1(pins.BootStartedAtUtc):
@@ -232,27 +287,28 @@ namespace Stephanos.Sovereign {
         // This fence is deliberately before Job creation and before any child launch.
         if(mailboxNativeEvidence) throw new InvalidOperationException("NATIVE_ROTATION_PRODUCER_UNQUALIFIED");
         if(!source && (custody.Phase!="ACTIVE" || custody.OwnerPid!=frame.OwnerPid ||
-          custody.ReservationId!=frame.RequestId || custody.Operation!="repair-goal-builder-flow"))
+          custody.ReservationId!=frame.RequestId || custody.Operation!=RuntimeMaintenanceOperationV1(frame.Profile)))
           throw new InvalidOperationException("RUNTIME_EXACT_MAINTENANCE_OWNER_UNPROVEN");
         RuntimeFixedEnvironmentV1();
         job=CreateJobObjectW(IntPtr.Zero,IntPtr.Zero); Require(job!=IntPtr.Zero);
         var limits=new EXTENDED_LIMIT(); limits.basic.flags=0x2000|0x400|0x8; limits.basic.activeLimit=16;
         Require(SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(EXTENDED_LIMIT))));
         Task<string> cancellation=null;
-        int deadline=source?RuntimeSourceDeadlineMsV1:145000;
+        int deadline=source?RuntimeSourceDeadlineMsV1:spatial?225000:145000;
         byte[] taskInput=source?Encoding.UTF8.GetBytes(new JavaScriptSerializer().Serialize(new {
           schemaVersion="stephanos.fixed-source-task-input.v1",requestId=frame.RequestId,
           actionId=sourceBinding.ActionId,missionId=sourceBinding.MissionId,claimSha256=sourceBinding.ClaimSha256,
-          frameSha256=receipt.FrameSha256,sourceHead=pins.SourceHead,
+          frameSha256=receipt.FrameSha256,sourceHead=pins.ExecutionHead,
           remainingMs=(int)Math.Max(0,deadline-clock.ElapsedMilliseconds-30000) })):new byte[0];
         receipt.TaskStage=RunRuntimeStageV1(job,frame.Profile,
           @"C:\Program Files\nodejs\node.exe",
-          Quote(Path.Combine(RuntimeSourceRootV1,"scripts",source?"sovereign-fixed-runtime-source-task-v1.mjs":"sovereign-commander-goal-builder-repair.mjs")),
+          RuntimeTaskArgumentsV1(frame),
           RuntimeSourceRootV1,taskInput,clock,deadline,owner,launcher,
           delegate { return cancellation!=null && cancellation.IsCompleted; },null,
           delegate(FixedRuntimeStageV1 root) {
             var prepared=new { SchemaVersion="stephanos.fixed-runtime-prepared.v1",RequestId=frame.RequestId,
               FrameSha256=receipt.FrameSha256,Profile=frame.Profile,RuntimeSourceHead=frame.RuntimeSourceHead,
+              InstallationSourceHead=pins.SourceHead,SourceProofSha256=pins.SourceProofSha256,
               OwnerPid=frame.OwnerPid,OwnerCreatedAtUtc=receipt.OwnerCreatedAtUtc,
               RootPid=root.RootPid,RootCreatedAtUtc=root.RootCreatedAtUtc,
               HelperSha256=pins.HelperSha256,ManifestSha256=pins.ManifestSha256,
