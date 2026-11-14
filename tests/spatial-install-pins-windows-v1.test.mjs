@@ -11,7 +11,7 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 const quote=value=>"'"+value.replaceAll("'","''")+"'";
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 
-test('Windows staging promotion retains fresh bytes and final pins exclude replacement until disposal',
+test('Windows staging promotion verifies fresh digests and final pins exclude replacement until disposal',
   {skip:process.platform!=='win32' && 'Requires actual Windows file sharing; not native acceptance.',timeout:30000},()=>{
   const directory=mkdtempSync(join(tmpdir(),'spatial-install-pins-'));
   const native=Buffer.from('NONEXECUTABLE spatial native fixture\n');
@@ -91,19 +91,23 @@ foreach ($mode in @('move','replace')) {
             Assert-FixtureDenied -Name ($mode+' staging write '+$name) -Action {
                 [IO.File]::WriteAllText($source,'unexpected-write')
             }
+        }
+        # File.Replace requires access excluded by the staging read handles.
+        # Keep the fresh in-memory digests across this transfer, then admit the
+        # final pair only after opening new pins and verifying both hashes.
+        Close-SpatialWindowBuildHandles -Value $fresh
+        if ($fresh.NativeHandle.CanRead -or $fresh.ReceiptHandle.CanRead) { throw 'STAGING_HANDLES_NOT_CLOSED' }
+        foreach ($name in @('SpatialWindow.exe','build.json')) {
+            $source=Join-Path $staging $name
             $target=Join-Path $destination $name
             if ($mode -eq 'move') { [IO.File]::Move($source,$target) }
             else { [IO.File]::Replace($source,$target,(Join-Path $staging ($name+'.previous')),$true) }
         }
-        # The original held streams still name the newly promoted bytes.
-        if ((Get-SpatialWindowStreamSha256 -Stream $fresh.NativeHandle) -cne $script:nativeSha -or
-            (Get-SpatialWindowStreamSha256 -Stream $fresh.ReceiptHandle) -cne $script:receiptSha) { throw 'PROMOTION_LOST_FRESH_IDENTITY' }
         $pins=Open-SpatialWindowPinnedInstallation -Directory $destination -FreshBuild $fresh
         if ($pins.Binary -cne (Join-Path $destination 'SpatialWindow.exe') -or $pins.BuildId -cne $script:buildId) {
             throw 'FINAL_PIN_IDENTITY_CHANGED'
         }
-        # Prove final handles alone, after the staging handles are disposed.
-        Close-SpatialWindowBuildHandles -Value $fresh
+        # Only the final pair's reverified handles authorize subsequent use.
         Assert-SpatialWindowPinnedInstallation -Value $pins
         foreach ($name in @('SpatialWindow.exe','build.json')) {
             $target=Join-Path $destination $name
@@ -142,7 +146,7 @@ foreach ($mode in @('move','replace')) {
     }
 }
 $failureCases=0
-foreach ($mode in @('native-digest','receipt-digest','build-id','missing-receipt','sidecar-file','sidecar-directory')) {
+foreach ($mode in @('native-digest','receipt-digest','build-id','missing-receipt','sidecar-file','sidecar-directory','native-transfer','receipt-transfer')) {
     $path=Join-Path $script:fixtureRoot $mode
     New-FixturePair -Path $path
     $fresh=New-FixtureBuild
@@ -152,6 +156,26 @@ foreach ($mode in @('native-digest','receipt-digest','build-id','missing-receipt
     if ($mode -eq 'missing-receipt') { [IO.File]::Delete((Join-Path $path 'build.json')) }
     if ($mode -eq 'sidecar-file') { [IO.File]::WriteAllText((Join-Path $path 'winhttp.dll'),'untrusted-sidecar') }
     if ($mode -eq 'sidecar-directory') { [void][IO.Directory]::CreateDirectory((Join-Path $path 'sidecar')) }
+    if ($mode -in @('native-transfer','receipt-transfer')) {
+        $staging=Join-Path $script:fixtureRoot ($mode+'.staging')
+        New-FixturePair -Path $staging
+        $fresh|Add-Member -NotePropertyName NativeHandle -NotePropertyValue $null
+        $fresh|Add-Member -NotePropertyName ReceiptHandle -NotePropertyValue $null
+        try {
+            $sharing=[IO.FileShare]::Read -bor [IO.FileShare]::Delete
+            $fresh.NativeHandle=[IO.File]::Open((Join-Path $staging 'SpatialWindow.exe'),[IO.FileMode]::Open,[IO.FileAccess]::Read,$sharing)
+            $fresh.ReceiptHandle=[IO.File]::Open((Join-Path $staging 'build.json'),[IO.FileMode]::Open,[IO.FileAccess]::Read,$sharing)
+            if ((Get-SpatialWindowStreamSha256 -Stream $fresh.NativeHandle) -cne $fresh.NativeSha256 -or
+                (Get-SpatialWindowStreamSha256 -Stream $fresh.ReceiptHandle) -cne $fresh.ReceiptSha256) { throw 'TRANSFER_FIXTURE_NOT_FRESH' }
+        } finally { Close-SpatialWindowBuildHandles -Value $fresh }
+        foreach ($name in @('SpatialWindow.exe','build.json')) {
+            [IO.File]::Replace((Join-Path $staging $name),(Join-Path $path $name),(Join-Path $staging ($name+'.previous')),$true)
+        }
+        $changed=if ($mode -eq 'native-transfer') { 'SpatialWindow.exe' } else { 'build.json' }
+        # Mutate real bytes during the unpinned transfer interval. The expected
+        # compiler digests stay unchanged, so final pinning must refuse them.
+        [IO.File]::WriteAllText((Join-Path $path $changed),'mutated-after-promotion')
+    }
     $pins=$null;$refused=$false
     try { $pins=Open-SpatialWindowPinnedInstallation -Directory $path -FreshBuild $fresh }
     catch {
@@ -216,7 +240,7 @@ Close-SpatialWindowBuildHandles -Value $null
       {cwd:root,encoding:'utf8',windowsHide:true,timeout:25000,maxBuffer:65536});
     assert.equal(result.error,undefined,'Windows filesystem fixture must finish within its bound');
     assert.equal(result.status,0,result.stderr||result.stdout);
-    assert.deepEqual(JSON.parse(result.stdout.trim()),{promotionCases:2,failureCases:6,
+    assert.deepEqual(JSON.parse(result.stdout.trim()),{promotionCases:2,failureCases:8,
       postOpenRecheck:true,nativeExecuted:false,productionInstallationChanged:false});
   } finally {rmSync(directory,{recursive:true,force:true});}
 });

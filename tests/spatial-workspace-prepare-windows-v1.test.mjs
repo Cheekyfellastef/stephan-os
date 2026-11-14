@@ -78,7 +78,7 @@ function coordinatorHarness(directory, overrides = '') {
     '$script:fixtureNative = ' + quote(nativeFixture),
     '$script:fixtureHost = ' + quote(hostFixture),
     '$script:realProcessInfo = (Get-Command New-SpatialPreparationProcessInfo).ScriptBlock',
-    '$script:witnessReads = 0; $script:freshBuilds = 0; $script:selectedNative = ""',
+    '$script:witnessReads = 0; $script:freshBuilds = 0; $script:processRequests = 0; $script:selectedNative = ""',
     'function Get-SpatialPreparationContext { return [pscustomobject]@{Root=$script:fixtureRoot;Node=$script:fixturePowerShell;Git=$script:fixturePowerShell;Sid="fixture";Session=1;HostScript="fixture";Installation=$script:fixtureInstallation} }',
     'function Open-SpatialPreparationSourceHandles { param($Context) return @() }',
     'function Assert-SpatialPreparationSource { param($Context,$Head) }',
@@ -90,10 +90,10 @@ function coordinatorHarness(directory, overrides = '') {
     'function Test-SpatialPreparationShortcut { param($Context) return $true }',
     'function Test-SpatialPreparationUi { param($Context,$Head) return $true }',
     'function Assert-SpatialPreparationBuildTools { param($Context) }',
-    'function New-SpatialPreparationProcessInfo { param($Executable,$Arguments,$RepositoryRoot,[switch]$StandardInput) $target=$script:fixtureHost; if ($StandardInput) { $script:selectedNative=$Executable; $target=$script:fixtureNative }; return (& $script:realProcessInfo -Executable $script:fixturePowerShell -Arguments @("-NoProfile","-NonInteractive","-File",$target) -RepositoryRoot $RepositoryRoot -StandardInput:$StandardInput) }',
+    'function New-SpatialPreparationProcessInfo { param($Executable,$Arguments,$RepositoryRoot,[switch]$StandardInput) $script:processRequests++; $target=$script:fixtureHost; if ($StandardInput) { $script:selectedNative=$Executable; $target=$script:fixtureNative }; return (& $script:realProcessInfo -Executable $script:fixturePowerShell -Arguments @("-NoProfile","-NonInteractive","-File",$target) -RepositoryRoot $RepositoryRoot -StandardInput:$StandardInput) }',
     overrides,
     '$receipt = Invoke-SpatialWorkspacePreparation -Head "' + expectedHead + '"',
-    '[ordered]@{receipt=$receipt;witnessReads=$script:witnessReads;freshBuilds=$script:freshBuilds;selectedNative=$script:selectedNative} | ConvertTo-Json -Compress -Depth 6',
+    '[ordered]@{receipt=$receipt;witnessReads=$script:witnessReads;freshBuilds=$script:freshBuilds;processRequests=$script:processRequests;selectedNative=$script:selectedNative} | ConvertTo-Json -Compress -Depth 6',
   ].join('\n');
 }
 
@@ -118,12 +118,29 @@ test('Windows coordinator replaces untrusted prior metadata with fresh pinned id
   assert.equal(receipt.existingHostPreserved, false);
   assert.equal(receipt.mutationAttempted, true);
   assert.equal(output.freshBuilds, 1);
+  assert.equal(output.processRequests, 2);
   assert.equal(output.selectedNative, join(installationPath(directory), 'SpatialWindow.exe'));
   assert.equal(readFileSync(output.selectedNative, 'utf8'), 'fresh-native');
   assert.ok(output.witnessReads >= 1);
   assert.equal(receipt.interactiveAcceptance, false);
   assert.equal(receipt.voiceAcceptance, false);
   assert.equal(receipt.headsetAcceptance, false);
+}));
+
+test('Windows coordinator rejects promotion bytes differing from fresh digests before any probe process', windowsOnly, () => fixture(directory => {
+  const nativeSha = createHash('sha256').update('fresh-native').digest('hex');
+  const receiptSha = createHash('sha256').update('fresh-receipt').digest('hex');
+  const override = 'function Invoke-SpatialPreparationFreshInstallation { param($Context) $script:freshBuilds++; [IO.File]::WriteAllText((Join-Path $Context.Installation "SpatialWindow.exe"),"replaced-after-build"); [IO.File]::WriteAllText((Join-Path $Context.Installation "build.json"),"fresh-receipt"); $fresh=[pscustomobject]@{BuildId="' + buildId + '";NativeSha256="' + nativeSha + '";ReceiptSha256="' + receiptSha + '"}; return (Open-SpatialWindowPinnedInstallation -Directory $Context.Installation -FreshBuild $fresh) }';
+  const output = run(coordinatorHarness(directory, override), directory);
+  const receipt = projectSpatialPreparationReceiptV1(output.receipt, expectedHead);
+  assert.ok(receipt);
+  assert.equal(receipt.blocker, 'SPATIAL_PREPARE_INSTALLATION_INVALID');
+  assert.equal(receipt.installationVerified, false);
+  assert.equal(receipt.mutationAttempted, true);
+  assert.equal(receipt.createdProbeStopped, true);
+  assert.equal(output.freshBuilds, 1);
+  assert.equal(output.processRequests, 0);
+  assert.equal(output.selectedNative, '');
 }));
 
 test('Windows source validation refuses an adapter absent from the committed source set', windowsOnly, () => fixture(directory => {

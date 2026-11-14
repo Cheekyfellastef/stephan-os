@@ -44,6 +44,10 @@ try {
         $previous[$name] = Test-Path -LiteralPath $target -PathType Leaf
     }
     try {
+        # ReplaceFile opens its replacement without sharing, so staging handles
+        # must close here. Fresh in-memory digests remain authoritative; final
+        # no-write/no-delete handles are rehashed before any executable use.
+        Close-SpatialWindowBuildHandles -Value $freshBuild
         foreach ($name in $names) {
             if ($RequirePortUnused) { Assert-SpatialWindowPortUnused }
             $source = Join-Path $staging $name

@@ -39,8 +39,9 @@ foreach ($record in $sourceRecords) { if ((Get-FileHash -LiteralPath (Join-Path 
 $nativeHandle = $null; $receiptHandle = $null; $handedOff = $false
 try {
 Assert-SpatialWindowPlainPath -Path $binary
-# Staging handles deny modification but permit the installer's atomic rename.
-# Its final-path handles deny deletion too, and are rehashed against this result.
+# Staging handles deny modification while this invocation records its identity.
+# The installer releases them for ReplaceFile, then pins and rehashes the final
+# files against these in-memory digests before any executable use.
 $stagingShare = [IO.FileShare]::Read -bor [IO.FileShare]::Delete
 $nativeHandle = [IO.File]::Open($binary,[IO.FileMode]::Open,[IO.FileAccess]::Read,$stagingShare)
 $nativeSha = Get-SpatialWindowStreamSha256 -Stream $nativeHandle

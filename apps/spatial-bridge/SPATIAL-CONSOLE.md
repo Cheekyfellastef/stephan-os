@@ -143,8 +143,9 @@ be present in a qualified fixed-runtime installation before dispatch.
 Preparation verifies the normal operator context, current canonical main and
 the existing gaming admission. With the helper port unused, it freshly builds
 through the existing pinned installer and saves the normal desktop shortcut.
-The fresh binary and receipt remain protected against replacement through the
-probe. An older writable build receipt is a consistency check, not authority to
+After promotion, the final binary and receipt are checked against the fresh
+in-memory build digests and protected against replacement through the probe.
+An older writable build receipt is a consistency check, not authority to
 execute its binary unattended. Preparation then checks the actual room entry
 page, helper health and a separate native window-list probe. Window titles and
 other window contents are not returned in the public receipt. A per-user

@@ -525,8 +525,12 @@ When the fixed helper port is free, the profile always rebuilds the Spatial
 helper from the pinned source and performs temporary readiness probes inside
 the same native Job. An old writable `build.json` proves byte consistency only;
 it cannot establish compiler origin or authorize an existing executable probe.
-The preparation adapter keeps the fresh build identity in memory and retains
-read handles over the promoted binary and receipt through launch. The profile
+The preparation adapter keeps the fresh build identity in memory. Windows file
+replacement requires the staging read handles to close before promotion. The
+installer then opens final handles denying writes and deletion, and compares
+both held files to the original in-memory digests before any native execution.
+A changed artifact during that transfer fails validation and enters rollback.
+The adapter retains the verified final handles through launch. The profile
 has a 225,000 ms native task
 deadline and a 240,000 ms parent transport ceiling, retaining the existing drain,
 cancellation, owner-liveness, resource-governor and positive-zero requirements.
