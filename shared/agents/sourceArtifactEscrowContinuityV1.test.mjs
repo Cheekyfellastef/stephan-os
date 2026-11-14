@@ -82,6 +82,7 @@ test('existing publication router accepts an existing fix branch and connected-a
     workspace,
     artifact: { exactBase: escrow.exactParentHead, exactTree: escrow.exactResultTree, exactCommit: '', branch: escrow.canonicalBranch },
     nowUtc: NOW,
+    existingBranch: true,
     capabilities: { [SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP]: githubApp() },
   });
   assert.equal(result.selectedRoute, SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP);
@@ -169,4 +170,57 @@ test('corrupt or expired escrow is unrecoverable rather than silently rebuilt', 
     assert.equal(result.finalVerdict, SOURCE_ARTIFACT_RECOVERY_STATE.UNRECOVERABLE);
     assert.equal(result.rebuildRequired, false);
   }
+});
+
+test('escrow publication requires byte-exact canonical branch across escrow, remote and publication receipts', () => {
+  const verified = {
+    proven: true, repository: escrow.repository, canonicalPr: escrow.canonicalPr,
+    canonicalBranch: escrow.canonicalBranch, previousHead: escrow.exactParentHead,
+    newHead: '2'.repeat(40), newTree: escrow.exactResultTree,
+    fastForward: true, route: SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP,
+  };
+  const base = {
+    nowUtc: NOW, escrow, canonicalRemote: remote, workspace,
+    publicationEvidence: verified, capabilities: {},
+  };
+  assert.equal(buildSourceArtifactPublicationRecoveryV1(base).finalVerdict, SOURCE_ARTIFACT_RECOVERY_STATE.FAILOVER_PROVEN);
+
+  for (const altered of [
+    ' ' + escrow.canonicalBranch,
+    escrow.canonicalBranch + ' ',
+    '\t' + escrow.canonicalBranch,
+    escrow.canonicalBranch + '\n',
+    '\u00a0' + escrow.canonicalBranch,
+  ]) {
+    const invalid = buildSourceArtifactPublicationRecoveryV1({
+      ...base, escrow: { ...escrow, canonicalBranch: altered },
+    });
+    assert.equal(invalid.finalVerdict, SOURCE_ARTIFACT_RECOVERY_STATE.UNRECOVERABLE, JSON.stringify(altered));
+    assert.notEqual(invalid.retireEscrowAllowed, true);
+  }
+
+  for (const altered of [
+    ' ' + escrow.canonicalBranch,
+    escrow.canonicalBranch + ' ',
+    escrow.canonicalBranch + '\t',
+    '\u00a0' + escrow.canonicalBranch,
+  ]) {
+    const drifted = buildSourceArtifactPublicationRecoveryV1({
+      ...base, canonicalRemote: { ...remote, canonicalBranch: altered },
+    });
+    assert.equal(drifted.finalVerdict, SOURCE_ARTIFACT_RECOVERY_STATE.BRANCH_DRIFTED, JSON.stringify(altered));
+    assert.notEqual(drifted.retireEscrowAllowed, true);
+  }
+
+  for (const altered of [' ' + escrow.canonicalBranch, escrow.canonicalBranch + ' ']) {
+    const unproved = buildSourceArtifactPublicationRecoveryV1({
+      ...base, publicationEvidence: { ...verified, canonicalBranch: altered },
+    });
+    assert.notEqual(unproved.finalVerdict, SOURCE_ARTIFACT_RECOVERY_STATE.FAILOVER_PROVEN, JSON.stringify(altered));
+    assert.notEqual(unproved.retireEscrowAllowed, true);
+  }
+  const nonString = buildSourceArtifactPublicationRecoveryV1({
+    ...base, escrow: { ...escrow, canonicalBranch: 123 },
+  });
+  assert.equal(nonString.finalVerdict, SOURCE_ARTIFACT_RECOVERY_STATE.UNRECOVERABLE);
 });

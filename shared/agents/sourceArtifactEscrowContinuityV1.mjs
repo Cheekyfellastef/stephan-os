@@ -50,7 +50,7 @@ function isoMilliseconds(value) {
 }
 function safeBranch(value) {
   const branch = text(value);
-  return SAFE_BRANCH.test(branch)
+  return typeof value === 'string' && value === branch && SAFE_BRANCH.test(branch)
     && !['main', 'master'].includes(branch)
     && !branch.startsWith('refs/')
     && !branch.startsWith('/')
@@ -140,7 +140,7 @@ function publicationEvidenceMatches(escrow, evidence = {}) {
   return evidence.proven === true
     && evidence.repository === REPOSITORY
     && canonicalOwnerMatches(evidence, escrow)
-    && text(evidence.canonicalBranch) === text(escrow.canonicalBranch)
+    && typeof evidence.canonicalBranch === 'string' && evidence.canonicalBranch === escrow.canonicalBranch
     && text(evidence.previousHead).toLowerCase() === text(escrow.exactParentHead).toLowerCase()
     && SHA.test(text(evidence.newHead))
     && text(evidence.newTree).toLowerCase() === text(escrow.exactResultTree).toLowerCase()
@@ -162,7 +162,7 @@ export function buildSourceArtifactPublicationRecoveryV1(input = {}) {
   const remote = input.canonicalRemote || {};
   if (remote.repository !== REPOSITORY
       || !canonicalOwnerMatches(remote, escrow)
-      || text(remote.canonicalBranch) !== text(escrow.canonicalBranch)
+      || typeof remote.canonicalBranch !== 'string' || remote.canonicalBranch !== escrow.canonicalBranch
       || text(remote.head).toLowerCase() !== text(escrow.exactParentHead).toLowerCase()) {
     return Object.freeze({ ...base, escrowValid: true, blocker: SOURCE_ARTIFACT_RECOVERY_STATE.BRANCH_DRIFTED, exactNextAction: 'Stop publication. Re-read the canonical branch and require a separately governed recovery plan; do not rebase, reset, force-update or rebuild the verified source artifact.', finalVerdict: SOURCE_ARTIFACT_RECOVERY_STATE.BRANCH_DRIFTED });
   }
