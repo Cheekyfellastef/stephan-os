@@ -64,15 +64,28 @@ export function buildFixedRuntimeInstallerCandidateV1({expectedMain,sourceTree,o
  const script=String.raw`$ErrorActionPreference='Stop'
 $PSModuleAutoLoadingPreference='None'
 Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1' -ErrorAction Stop
+function Read-FixedBootstrapBoundedBytesV1([IO.Stream]$stream){
+ try{
+  if($null -eq $stream -or -not $stream.CanRead -or -not $stream.CanSeek -or $stream.Position -ne 0){throw 'FIXED_BOOTSTRAP_INPUT_BOUND'}
+  $length=$stream.Length
+  if($length -lt 0 -or $length -gt 16777216){throw 'FIXED_BOOTSTRAP_INPUT_BOUND'}
+  $bytes=[byte[]]::new([int]$length);$offset=0
+  while($offset -lt $bytes.Length){
+   $count=$stream.Read($bytes,$offset,$bytes.Length-$offset)
+   if($count -le 0 -or $count -gt ($bytes.Length-$offset)){throw 'FIXED_BOOTSTRAP_INPUT_BOUND'}
+   $offset+=$count
+  }
+  if($stream.ReadByte() -ne -1 -or $stream.Length -ne $length -or $stream.Position -ne $length){throw 'FIXED_BOOTSTRAP_INPUT_BOUND'}
+  return ,$bytes
+ }catch{throw 'FIXED_BOOTSTRAP_INPUT_BOUND'}
+}
 $path='__PAYLOAD_PATH__'
 $handle=$null
 try{
  $info=[IO.FileInfo]::new($path)
  if(($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $info.Length -gt 16777216){throw 'FIXED_BOOTSTRAP_INPUT_UNSAFE'}
  $handle=[IO.FileStream]::new($path,'Open','Read','Read')
- $memory=[IO.MemoryStream]::new()
- try{$handle.CopyTo($memory);$bytes=$memory.ToArray()}finally{$memory.Dispose()}
- if($bytes.Length -gt 16777216){throw 'FIXED_BOOTSTRAP_INPUT_BOUND'}
+ $bytes=Read-FixedBootstrapBoundedBytesV1 $handle
  $sha=[Security.Cryptography.SHA256]::Create()
  try{$actual=([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
  if($actual -cne '__PAYLOAD_SHA__'){throw 'FIXED_BOOTSTRAP_INPUT_CHANGED'}

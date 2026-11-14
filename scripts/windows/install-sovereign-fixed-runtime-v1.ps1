@@ -21,6 +21,22 @@ $protectedRoot='C:\Program Files\Stephanos\SovereignFixedRuntimeV1'
 $administrators=[Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
 $system=[Security.Principal.SecurityIdentifier]::new('S-1-5-18')
 $operator=[Security.Principal.SecurityIdentifier]::new($bootstrap.OperatorSid)
+function Read-FixedInstallerBoundedBytesV1([IO.Stream]$stream,[int]$maximum,[string]$failureCode){
+ try{
+  if($null -eq $stream -or $maximum -lt 0 -or -not $stream.CanRead -or -not $stream.CanSeek -or $stream.Position -ne 0){throw $failureCode}
+  $length=$stream.Length
+  if($length -lt 0 -or $length -gt $maximum){throw $failureCode}
+  # Allocate only after checking the opened stream, never a prior path stat.
+  $bytes=[byte[]]::new([int]$length);$offset=0
+  while($offset -lt $bytes.Length){
+   $count=$stream.Read($bytes,$offset,$bytes.Length-$offset)
+   if($count -le 0 -or $count -gt ($bytes.Length-$offset)){throw $failureCode}
+   $offset+=$count
+  }
+  if($stream.ReadByte() -ne -1 -or $stream.Length -ne $length -or $stream.Position -ne $length){throw $failureCode}
+  return ,$bytes
+ }catch{throw $failureCode}
+}
 function Get-Digest([byte[]]$bytes){
  $sha=[Security.Cryptography.SHA256]::Create()
  try{return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
@@ -90,20 +106,27 @@ try{
  $manifest=[ordered]@{SchemaVersion='stephanos.fixed-runtime-manifest.v1';SourceHead=$ExpectedMain;SourceTree=$bootstrap.SourceTree;Files=@()}
  [string[]]$orderedPaths=@($records.Keys);[Array]::Sort($orderedPaths,[StringComparer]::Ordinal)
  $closureText='stephanos.fixed-runtime-git-closure.v1'+[char]0
+ # This is the existing native identity budget for physical/materialized bytes,
+ # separate from the approved Git/blob byte total (including LF/CRLF changes).
+ [long]$materializedTotal=0
  foreach($key in $orderedPaths){
   $row=$records[$key];$manifest.Files+=@{Path=$row.Path;GitBlobSha=$row.GitBlobSha;GitMode=$row.GitMode;Sha256=$row.Sha256;MaterializedSha256=$row.MaterializedSha256}
   $closureText+=$row.Path+[char]0+$row.GitMode+[char]0+$row.GitBlobSha+[char]10
   $path=[IO.Path]::Combine($sourceRoot,$key.Replace('/','\'));Assert-Physical $path
   $file=[IO.FileStream]::new($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read);$handles.Add($file)
-  $memory=[IO.MemoryStream]::new();try{$file.CopyTo($memory);$actual=$memory.ToArray()}finally{$memory.Dispose()}
+  $maximum=[Math]::Min(2097152,8388608-$materializedTotal)
+  $actual=Read-FixedInstallerBoundedBytesV1 $file $maximum 'FIXED_INSTALL_CANONICAL_BYTES_CHANGED'
+  $materializedTotal+=$actual.Length
   if((Get-Digest $actual) -cne $row.MaterializedSha256){throw 'FIXED_INSTALL_CANONICAL_BYTES_CHANGED'}
  }
  # Refuse source identity drift without invoking Git/compiler descendants outside custody.
  foreach($pair in @(@('.git/HEAD','ref: refs/heads/main'),@('.git/refs/heads/main',$ExpectedMain))){
   $path=[IO.Path]::Combine($sourceRoot,$pair[0]);Assert-Physical $path
   $file=[IO.FileStream]::new($path,'Open','Read','Read');$handles.Add($file)
-  $reader=[IO.StreamReader]::new($file,[Text.Encoding]::UTF8,$true,1024,$true)
-  try{if($reader.ReadToEnd().Trim() -cne $pair[1]){throw 'FIXED_INSTALL_REF_CHANGED'}}finally{$reader.Dispose()}
+  $refBytes=Read-FixedInstallerBoundedBytesV1 $file 4096 'FIXED_INSTALL_REF_CHANGED'
+  $memory=[IO.MemoryStream]::new($refBytes,$false)
+  $reader=[IO.StreamReader]::new($memory,[Text.Encoding]::UTF8,$true,1024,$true)
+  try{if($reader.ReadToEnd().Trim() -cne $pair[1]){throw 'FIXED_INSTALL_REF_CHANGED'}}finally{$reader.Dispose();$memory.Dispose()}
  }
  $manifestBytes=[Text.UTF8Encoding]::new($false).GetBytes(($manifest|ConvertTo-Json -Depth 8 -Compress))
  $manifestPath=[IO.Path]::Combine($staging,'Stephanos.FixedRuntime.ManifestV1')
