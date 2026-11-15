@@ -888,7 +888,14 @@ try {
     assert.equal(fixtureReport.mediaRequests, 0);
     assert.deepEqual(fixtureReport.unexpectedRequests, []);
     if (result.checks.filter(check => check.name.startsWith('synthetic ')).every(check => check.status === 'PASS')) {
-      assert.equal(fixtureReport.inputs.length, 8, 'Only the eight explicit positive/rejected gestures may reach the fixture.');
+      const expectedGestures = [
+        'click', 'text:a', 'scroll:-120', 'scroll:120', // New centre input and wall scrolling after explicit selection.
+        'click', 'click', 'click', 'text:!', 'text:?', 'text:a', 'click', 'click', // Existing crop, keys, rejection and overlays.
+      ];
+      assert.equal(fixtureReport.inputs.length, expectedGestures.length, 'Only the twelve explicit positive/rejected gestures may reach the fixture.');
+      assert.deepEqual(fixtureReport.inputs.map(input => input.kind === 'text' ? 'text:' + input.text
+        : input.kind === 'scroll' ? 'scroll:' + input.delta : input.kind), expectedGestures,
+      'The complete fixture gesture order must match the independently checked actions.');
     }
     desktopFixture = null;
   }
