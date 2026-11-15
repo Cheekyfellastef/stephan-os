@@ -49,10 +49,10 @@ test('table and keyboard each preserve their precise released position after rel
   vec(createHolodeckFurniture({storage}).getOffset('keyboard'),[0,0,0]);
 });
 
-test('out-of-room and invalid positions fail closed, and corrupted storage never moves furniture', () => {
+test('out-of-room positions clamp to the room, invalid positions do not move furniture', () => {
   const storage=store(),furniture=createHolodeckFurniture({storage});
-  furniture.setOffset('table',[100,100,-100]);
-  vec(furniture.getOffset('table'),[1.1,0.18,-0.2]);
+  furniture.setOffset('table',[100,100,100]);
+  vec(furniture.getOffset('table'),[3.75,2.312,4.48]);
   furniture.setOffset('keyboard',[NaN,2,0]);
   vec(furniture.getOffset('keyboard'),[0,0,0]);
   furniture.flush();
@@ -60,7 +60,7 @@ test('out-of-room and invalid positions fail closed, and corrupted storage never
     version:1,offsets:{table:[999,0,0],keyboard:[0,0,0]},
   }));
   const restored=createHolodeckFurniture({storage});
-  vec(restored.getOffset('table'),[0,0,0]);
+  vec(restored.getOffset('table'),[3.75,0,0]);
   vec(restored.getOffset('keyboard'),[0,0,0]);
 });
 
@@ -161,5 +161,5 @@ test('launcher exposes persistent furniture and real device testing without inve
     'audio-test-microphone','audio-test-speakers','audio-voice-help','probe-capture'])assert.ok(page.includes(marker),marker);
   assert.match(worker,/holodeck-furniture-v1\.mjs/);
   assert.match(worker,/holodeck-audio-v1\.mjs/);
-  assert.match(worker,/stephanos-spatial-workspace-v1-three-pages-v8/);
+  assert.match(worker,/stephanos-spatial-workspace-v1-furniture-physics-v9/);
 });
