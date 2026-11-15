@@ -2,6 +2,22 @@
 
 The far wall is a holographic display with an attached keyboard console. It is an interactive surface for the operator's existing ChatGPT/Codex desktop window: conversations, account access, tools and approvals remain in that app. This adapter does not create an OpenAI API session or a second agent command channel.
 
+## Three pages on the holographic wall
+
+The wall contains three pages at the same time:
+
+- **Left — Workspace settings:** seated/standing profile, height, keyboard angle, and table/keyboard placement. These operate the same comfort and furniture controllers as this launcher, so changes immediately affect the room and retain the existing save behaviour.
+- **Centre — ChatGPT:** the actual selected desktop window, with a visible connection mode and the existing fit, zoom and view controls.
+- **Right — Audio & connection:** choose the audio or connection page. Audio device selection and microphone/speaker tests use the same controller as the launcher. Connection controls inspect the existing helper, list actual windows, select one and request its original Windows consent. They do not install or start a missing helper.
+
+Point and press Quest trigger or Xbox A to select a page. Its focus outline and the keyboard status show where input would go. Local settings remain usable with no ChatGPT connection or a view-only capture. The keyboard sends text only while the ChatGPT page is selected and its native connection is interactive; click the original app's text field before typing. Selecting a side page never sends its settings actions or subsequent typing to ChatGPT.
+
+The settings and audio pages are projections of the existing room controllers. They do not open a second copy of `quest-entry.html` or a second VR session. This release provides one external ChatGPT window alongside two real local pages; it does not claim three independently controlled Windows applications. The native helper retains its one-window, one-consent session contract.
+
+The flat **Console preview and desktop controls** shows the same three-page canvas that both headset eyes see. **Show holographic pages** expands that preview. The preview remains available when the browser cannot draw the separate WebGL room preview. Its visibility does not itself prove a live native connection or headset input acceptance.
+
+Microphone permission and speaker playback require explicit test actions. Stop cancels even a pending microphone request; a late permission result is closed without beginning a test. The tests do not route ChatGPT Voice, record audio or send microphone data to a service.
+
 ## Using it
 
 1. Open ChatGPT/Codex on the Windows PC, then use the normal **Stephanos Spatial Workspace** desktop shortcut.
@@ -64,8 +80,8 @@ check of the already installed private `127.0.0.1:4180` desktop capture
 helper. It cannot install, start or bypass that helper. When absent, launch
 the normal reviewed Spatial Workspace Windows shortcut, then use **Choose
 window**, select the real ChatGPT/Codex desktop window and accept the
-original Windows consent prompt. The **Show connected ChatGPT screen** button
-expands the actual native window preview; it does not invent a harness frame.
+original Windows consent prompt. The **Show holographic pages** button
+expands the three-page preview, including the actual connected window picture.
 Only after the helper supplies a current frame can keyboard actions and the
 original app's Voice button work.
 

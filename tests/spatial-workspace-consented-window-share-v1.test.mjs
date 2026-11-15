@@ -43,7 +43,7 @@ test('browser capture ending and page departure revoke tracks and clear frames',
   await h.client.pagehide();assert.equal(h.stopCount(),1);
   assert.equal(await h.client.shareScreen(),false,'disposed page cannot recapture');
 });
-test('hologram paints actual consented video while rejecting pointer and keyboard input',async()=>{
+test('hologram can focus actual consented video without forwarding pointer or keyboard input',async()=>{
   const h=harness();await h.client.shareScreen();
   const contexts=[];
   const documentRef={createElement:()=>{
@@ -52,7 +52,8 @@ test('hologram paints actual consented video while rejecting pointer and keyboar
   }};
   const screen=createHolodeckScreen({client:h.client,documentRef});screen.render();
   assert.equal(contexts[0].pictures.at(-1)[0],h.video);
-  assert.equal(screen.point(.5,.5,true),false);screen.action('key:a');screen.action('enter');
+  assert.equal(screen.point(.5,.5,true),true);assert.equal(screen.getState().focusedPanel,'chatgpt');
+  assert.equal(screen.getState().keyboardEnabled,false);screen.action('key:a');screen.action('enter');
   assert.match(screen.getState().inputStatus,/view-only/i);
   assert.equal(h.networkCount(),0);await h.client.stop();
 });
@@ -60,8 +61,9 @@ test('launcher exposes both real native interactive and user-consented view-only
   const {readFileSync}=await import('node:fs');
   const html=readFileSync(new URL('../apps/spatial-bridge/quest-entry.html',import.meta.url),'utf8');
   assert.match(html,/id="choose-window"/);assert.match(html,/id="share-window"/);
-  assert.match(html,/client.shareScreen\(\)/);assert.match(html,/client.connect\(Number\(windowSelector.value\)\)/);
-  assert.match(html,/native Windows helper/i);
+  assert.match(html,/client.shareScreen\(\)/);assert.match(html,/screen.action\('connect-window'\)/);
+  assert.match(html,/screen.selectWindow\(/);
+  assert.match(html,/Windows helper/i);assert.match(html,/view-only/i);
 });
 
 

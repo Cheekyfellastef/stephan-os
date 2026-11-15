@@ -34,6 +34,7 @@ namespace Stephanos.Sovereign {
     static readonly string Zero=new string('0',64);
     static readonly UTF8Encoding Utf8=new UTF8Encoding(false,true);
     readonly string machine,sid,credential;
+    string authorizationHash=Zero;
     readonly long generation;
     internal readonly uint MinimumSignCount;
     readonly CngKey key;
@@ -139,8 +140,12 @@ namespace Stephanos.Sovereign {
         receiptKey=OpenReceiptKeyForEnrollmentV1();
         anchor=new SovereignMobileInstallAnchorV1(context.MachineHash,context.OperatorSid,context.Generation,context.MinimumSignCount,
           context.CredentialBindingSha256,context.ReceiptPublicKeySpki,receiptKey,context,ReadNativeEvents,AppendNativeEvent);
+        anchor.authorizationHash=context.Authorization.Digest;
         if(ReadNativeEvents().Count!=0)Deny("MOBILE_ANCHOR_ENROLLMENT_ALREADY_ANCHORED_OR_CONFLICTED");
-        string entry=anchor.SignEntry(0,head,Zero);AppendNativeEvent(entry);Head observed=anchor.ReadSnapshot();
+        SovereignMobileInstallProvisioningV1.AssertManualBoundaryV2();context.Authorization.EnsureFresh();
+        string entry=anchor.SignEntry(0,head,context.Authorization.Digest);
+        context.Authorization.EnsureFresh();AppendNativeEvent(entry);Head observed=anchor.ReadSnapshot();
+        context.Authorization.EnsureFresh();
         if(observed.Sequence!=0 || observed.WalHash!=head || observed.EntryHash!=Hash(entry))Deny("MOBILE_ANCHOR_GENESIS_READBACK_UNPROVEN");
         return anchor.HeadText(observed);
       } catch(Exception error) {
@@ -172,6 +177,7 @@ namespace Stephanos.Sovereign {
         AssertProtectedKey(receipt);
         result=new SovereignMobileInstallAnchorV1(context.MachineHash,context.OperatorSid,context.Generation,context.MinimumSignCount,context.CredentialBindingSha256,
           context.ReceiptPublicKeySpki,receipt,context,ReadNativeEvents,AppendNativeEvent);
+        result.authorizationHash=context.Authorization.Digest;
         // Prior qualified enrollment must already have anchored the exact header.
         // Absence is never treated as a fresh journal or an invitation to create.
         result.ReadHead();return result;
@@ -181,6 +187,9 @@ namespace Stephanos.Sovereign {
           throw new InvalidOperationException(error.Message);
         throw new InvalidOperationException("MOBILE_ANCHOR_QUALIFIED_ENROLLMENT_REQUIRED");
       }
+    }
+    internal static void AssertMobileGenesisAbsentV2() {
+      if(ReadNativeEvents().Count!=0)Deny("MOBILE_ANCHOR_ENROLLMENT_ALREADY_ANCHORED_OR_CONFLICTED");
     }
     static List<MobileInstallAnchorEventV1> ReadNativeEvents() {
       CoreJobCustodyV1.CheckMobileAnchorLogPolicyV1();
@@ -243,7 +252,7 @@ namespace Stephanos.Sovereign {
         if(fields.Length!=9 || fields[0]!=Prefix || fields[1]!=machine || fields[2]!=sid || fields[3]!=credential ||
            Number(fields[4],SafeInteger)!=generation || !Digest(fields[6]) || !Digest(fields[7])) Deny("MOBILE_ANCHOR_BINDING_UNPROVEN");
         long sequence=Number(fields[5],2048);
-        if((previous==null && (sequence!=0 || fields[7]!=Zero)) ||
+        if((previous==null && (sequence!=0 || fields[7]!=authorizationHash)) ||
            (previous!=null && (sequence!=previous.Sequence+1 || fields[7]!=previous.EntryHash))) Deny("MOBILE_ANCHOR_CHAIN_UNPROVEN");
         string body=String.Join("|",fields,0,8);byte[] digest;
         using(var sha=SHA256.Create())digest=sha.ComputeHash(Utf8.GetBytes(Domain+body));
@@ -298,6 +307,7 @@ namespace Stephanos.Sovereign {
     internal string MachineHash,OperatorSid,CredentialBindingSha256,ReceiptPublicKeySpki;
     internal long Generation;
     internal uint MinimumSignCount;
+    internal MobileInstallEnrollmentAuthorizationV2 Authorization;
     internal IDisposable Pins;
     public void Dispose() {if(Pins!=null) {Pins.Dispose();Pins=null;}}
   }
@@ -322,9 +332,11 @@ namespace Stephanos.Sovereign {
           if(binding.MachineHash!=machine || binding.OperatorSid!=identity.User.Value)
             throw new InvalidOperationException("MOBILE_ANCHOR_OPERATOR_MACHINE_UNPROVEN");
           CheckMobileAnchorLogPolicyV1();
+          MobileInstallEnrollmentAuthorizationV2 authorization;using(var permit=SovereignMobileInstallReleaseV1.OpenProtected())
+            authorization=ReadMobileAuthorizationV2(binding,permit,pins);
           return new MobileInstallAnchorProtectedContextV1 {MachineHash=machine,OperatorSid=identity.User.Value,
             Generation=binding.Generation,CredentialBindingSha256=binding.CredentialBindingSha256,
-            ReceiptPublicKeySpki=binding.ReceiptPublicKeySpki,MinimumSignCount=binding.LastSignCount,Pins=pins};
+            ReceiptPublicKeySpki=binding.ReceiptPublicKeySpki,MinimumSignCount=binding.LastSignCount,Authorization=authorization,Pins=pins};
         }
       } catch {pins.Dispose();throw;}
     }

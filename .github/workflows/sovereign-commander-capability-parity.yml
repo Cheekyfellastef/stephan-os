@@ -32,6 +32,10 @@ on:
       - 'tests/spatial-window-lifecycle-v1.test.mjs'
       - 'apps/spatial-bridge/**'
       - 'tests/spatial-workspace-consented-window-share-v1.test.mjs'
+      - 'tests/spatial-workspace-panels-v1.test.mjs'
+      - 'tests/spatial-workspace-comfort.browser.mjs'
+      - 'tests/spatial-workspace-audio-state-v1.test.mjs'
+      - 'tests/spatial-workspace-helper-readiness-v1.test.mjs'
       - 'tests/spatial-workspace-entry-order-v1.test.mjs'
       - 'tests/spatial-workspace-telemetry-v1.test.mjs'
       - 'tests/spatial-workspace-comfort-input-v1.test.mjs'
@@ -166,6 +170,10 @@ on:
       - 'tests/spatial-window-lifecycle-v1.test.mjs'
       - 'apps/spatial-bridge/**'
       - 'tests/spatial-workspace-consented-window-share-v1.test.mjs'
+      - 'tests/spatial-workspace-panels-v1.test.mjs'
+      - 'tests/spatial-workspace-comfort.browser.mjs'
+      - 'tests/spatial-workspace-audio-state-v1.test.mjs'
+      - 'tests/spatial-workspace-helper-readiness-v1.test.mjs'
       - 'tests/spatial-workspace-entry-order-v1.test.mjs'
       - 'tests/spatial-workspace-telemetry-v1.test.mjs'
       - 'tests/spatial-workspace-comfort-input-v1.test.mjs'
@@ -324,6 +332,7 @@ jobs:
           node --test shared/agents/sovereignCommanderMcp.test.mjs
           node --test shared/agents/sovereignSpatialWorkspaceV1.test.mjs tests/spatial-window-lifecycle-v1.test.mjs tests/spatial-workspace-prepare-windows-v1.test.mjs tests/spatial-install-pins-windows-v1.test.mjs
           node --test tests/spatial-workspace-consented-window-share-v1.test.mjs tests/spatial-workspace-entry-order-v1.test.mjs tests/spatial-workspace-telemetry-v1.test.mjs tests/spatial-workspace-comfort-input-v1.test.mjs tests/spatial-workspace-keycap-v1.test.mjs tests/spatial-bridge-holodeck-baseline-v0.test.mjs tests/spatial-bridge-v0.test.mjs tests/verify-hosted-icons.test.mjs
+          node --test tests/spatial-workspace-panels-v1.test.mjs tests/spatial-workspace-audio-state-v1.test.mjs tests/spatial-workspace-helper-readiness-v1.test.mjs tests/spatial-workspace-furniture-audio-v1.test.mjs tests/spatial-workspace-console-v1.test.mjs tests/spatial-workspace-console-ux-v1.test.mjs
           node --test shared/agents/sovereignSearchSessionsV1.test.mjs shared/agents/sovereignMcpSessionHistoryV1.test.mjs shared/agents/sovereignCommanderPrivateSessionsV1.test.mjs shared/agents/sovereignCommanderSessionLifecycleV1.test.mjs shared/agents/sovereignMcpSessionConfigV1.test.mjs shared/agents/sovereignCommanderSessionConfigV1.test.mjs shared/agents/sovereignFileCopyV1.test.mjs shared/agents/sovereignFileCopyNativeV1.test.mjs shared/agents/sovereignCommanderFileCopyV1.test.mjs shared/agents/sovereignFileMoveV1.test.mjs shared/agents/sovereignCommanderFileMoveV1.test.mjs shared/agents/sovereignProcessSessionsV1.test.mjs shared/agents/sovereignCommanderProcessSessionsV1.test.mjs shared/agents/sovereignFeedbackIntakeV1.test.mjs shared/agents/sovereignPdfWriteV1.test.mjs shared/agents/sovereignCommanderFeedbackPdfV1.test.mjs
           node --test shared/agents/sovereignCommanderHttp.test.mjs
           node --test shared/agents/sovereignWindowsQualificationWorkflow.test.mjs shared/agents/sovereignMaintenanceAdmissionV1.test.mjs scripts/sovereign-goal-builder-worker-evidence.test.mjs scripts/sovereign-commander-goal-builder-repair.test.mjs shared/agents/goalDiscoveryWorkspaceV1.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs
@@ -414,3 +423,17 @@ jobs:
           ./scripts/windows/build-spatial-window.ps1 -OutputDirectory (Join-Path $env:RUNNER_TEMP 'spatial-helper-build')
       - name: Spatial preparation contracts and Windows process cleanup fixtures
         run: node --test shared/agents/sovereignSpatialWorkspaceV1.test.mjs tests/spatial-window-lifecycle-v1.test.mjs tests/spatial-workspace-prepare-windows-v1.test.mjs tests/spatial-install-pins-windows-v1.test.mjs
+      - name: Install declared Spatial browser-test dependency
+        run: npm install --ignore-scripts --no-save --no-package-lock --no-audit --no-fund @playwright/test@1.54.0
+      - name: Prove holographic panels in installed Windows Edge
+        env:
+          BROWSER_CHANNEL: msedge
+        run: node tests/spatial-workspace-comfort.browser.mjs --output-dir "${{ runner.temp }}/spatial-workspace-browser-proof"
+      - name: Retain Spatial browser proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spatial-workspace-browser-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/spatial-workspace-browser-proof
+          if-no-files-found: ignore
+          retention-days: 30

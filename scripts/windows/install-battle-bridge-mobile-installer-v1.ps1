@@ -118,9 +118,9 @@ function New-MobileDirectory([string]$path) {
  [void][IO.Directory]::CreateDirectory($path,$acl);Assert-MobileProtected $path
 }
 function Write-MobileNew([string]$name,[byte[]]$bytes) {
- if($name -cnotin @('release.pin','runtime-package.json','runtime-bootstrap.ps1','release-evidence.json','enrollment.json','state\approval-journal.wal')){throw 'MOBILE_ENROLLMENT_FILE_NOT_ADMITTED'}
+ if($name -cnotin @('release.pin','runtime-package.json','runtime-bootstrap.ps1','release-evidence.json','enrollment.json','enrollment-authorization.v2','state\approval-journal.wal')){throw 'MOBILE_ENROLLMENT_FILE_NOT_ADMITTED'}
  $path=[IO.Path]::Combine($root,$name)
- $file=[IO.FileStream]::new($path,'CreateNew','Write','None',4096,[IO.FileOptions]::WriteThrough)
+ $file=[IO.FileStream]::new($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None,4096,[IO.FileOptions]::WriteThrough)
  try{$file.Write($bytes,0,$bytes.Length);$file.Flush($true)}finally{$file.Dispose()}
  Assert-MobileProtected $path
 }
@@ -193,6 +193,12 @@ try {
  if($preflight.Errors.HasErrors){throw 'MOBILE_ENROLLMENT_PREFLIGHT_COMPILATION_FAILED'}
  [void](Confirm-MobileEnrollmentDevice $preflight.CompiledAssembly 120)
 }finally{$preflightProvider.Dispose()}
+$assembly=$preflight.CompiledAssembly
+$flags=[Reflection.BindingFlags]'NonPublic,Static'
+$provision=$assembly.GetType('Stephanos.Sovereign.SovereignMobileInstallProvisioningV1',$true)
+$manualBoundary=$provision.GetMethod('OpenManualBoundaryV2',$flags).Invoke($null,@())
+try {
+[void]$provision.GetMethod('AssertFreshEnrollmentBoundaryV2',$flags).Invoke($null,@())
 # From this boundary all effects target only the reviewed fixed new root. A
 # failed/partial setup is HELD for inspection: never delete, reset or overwrite.
 Assert-MobileProtected 'C:\Program Files'
@@ -210,7 +216,8 @@ try {
  if($compiled.Errors.HasErrors){throw 'MOBILE_ENROLLMENT_COMPILATION_FAILED'}
 }finally{$provider.Dispose()}
 Assert-MobileProtected $parameters.OutputAssembly
-$assembly=[Reflection.Assembly]::LoadFrom($parameters.OutputAssembly)
+# All privileged calls use the authenticated in-memory assembly already compiled above.
+# The newly compiled disk helper is only hashed/read back until normal native qualification.
 # Repeat the original live validation after on-disk compilation. The earlier
 # two-minute admission budget does not extend or replace assertion expiry.
 $proof=Confirm-MobileEnrollmentDevice $assembly
@@ -223,7 +230,13 @@ $receiptSpki=$provision.GetMethod('CreateReceiptKeyForEnrollmentV1',$flags).Invo
 $proposed['receiptPublicKeySpki']=$receiptSpki
 $proposed['lastSignCount']=[long]$proof.GetType().GetField('SignCount',$instance).GetValue($proof)
 $enrollment=$json.Serialize($proposed)
+$authorizationType=$assembly.GetType('Stephanos.Sovereign.MobileInstallEnrollmentAuthorizationV2',$true)
+$authorization=$authorizationType.GetMethod('CreateForEnrollment',$flags).Invoke($null,@($bootstrap.SetupDescriptor,
+ $bootstrap.ProposedEnrollmentJson,$bootstrap.DeviceAssertionJson,$enrollment,$ExpectedMain,$bootstrap.SourceTree,
+ (Get-MobileDigest $releaseBytes['runtime-package.json']),(Get-MobileDigest $releaseBytes['release-evidence.json'])))
+$authorizationWire=$authorizationType.GetField('Raw',$instance).GetValue($authorization)
 Write-MobileNew 'enrollment.json' ([Text.UTF8Encoding]::new($false).GetBytes($enrollment))
+Write-MobileNew 'enrollment-authorization.v2' ([Text.UTF8Encoding]::new($false).GetBytes($authorizationWire))
 foreach($name in @('release.pin','runtime-package.json','runtime-bootstrap.ps1','release-evidence.json')) {
  Write-MobileNew $name $releaseBytes[$name]
 }
@@ -233,19 +246,23 @@ $header=$journal.GetMethod('CreateEnrollmentHeaderV1',$flags).Invoke($null,@($bi
 Write-MobileNew 'state\approval-journal.wal' ([Text.Encoding]::ASCII.GetBytes($header))
 $anchor=$assembly.GetType('Stephanos.Sovereign.SovereignMobileInstallAnchorV1',$true)
 [void]$anchor.GetMethod('AppendEnrollmentGenesisV1',$flags).Invoke($null,@($header))
-$certificateSha=$provision.GetMethod('SealEnrollmentCertificateV1',$flags).Invoke($null,@())
+[void]$authorizationType.GetMethod('EnsureFresh',[Reflection.BindingFlags]'NonPublic,Instance').Invoke($authorization,@())
 $scheduler=[Activator]::CreateInstance([Type]::GetTypeFromProgID('Schedule.Service',$true));$folder=$null;$task=$null
 try {
  $scheduler.Connect();$folder=$scheduler.GetFolder('\')
- try{$existing=$folder.GetTask('Stephanos Mobile Runtime Installer V1');if($null -ne $existing){throw 'MOBILE_ENROLLMENT_TASK_ALREADY_EXISTS_INSPECT_ONLY'}}
- catch{if($_.Exception.Message -ceq 'MOBILE_ENROLLMENT_TASK_ALREADY_EXISTS_INSPECT_ONLY'){throw};if($_.Exception.HResult -ne -2147024894){throw}}
+ [void]$assembly.GetType('Stephanos.Sovereign.CoreJobCustodyV1',$true).GetMethod('ReadAbsentMobileTaskV2',$flags).Invoke($null,@($folder))
  $definition=$scheduler.NewTask(0)
  $definition.Principal.UserId=$bootstrap.OperatorSid;$definition.Principal.LogonType=3;$definition.Principal.RunLevel=1
  $definition.Settings.Enabled=$true;$definition.Settings.MultipleInstances=2;$definition.Settings.ExecutionTimeLimit='PT0S'
  $definition.Settings.DisallowStartIfOnBatteries=$false;$definition.Settings.StopIfGoingOnBatteries=$false
  $action=$definition.Actions.Create(0);$action.Path=$parameters.OutputAssembly;$action.Arguments='';$action.WorkingDirectory=$root
  $sddl='O:BAG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;'+$bootstrap.OperatorSid+')'
- $task=$folder.RegisterTaskDefinition('Stephanos Mobile Runtime Installer V1',$definition,2,$bootstrap.OperatorSid,$null,3,$sddl)
- $task.SetSecurityDescriptor($sddl,0)
+ # CREATE only; prevent Task Scheduler from adding a principal-control ACE.
+ # The exact supplied operator read/execute grant must survive native readback.
+ $task=$folder.RegisterTaskDefinition('Stephanos Mobile Runtime Installer V1',$definition,0x12,$bootstrap.OperatorSid,$null,3,$sddl)
+ $task.SetSecurityDescriptor($sddl,0x10)
 }finally{foreach($item in @($task,$folder,$scheduler)){if($null -ne $item -and [Runtime.InteropServices.Marshal]::IsComObject($item)){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($item)}}}
+$certificateSha=$provision.GetMethod('SealEnrollmentCertificateV1',$flags).Invoke($null,@())
+[void]$assembly.GetType('Stephanos.Sovereign.CoreJobCustodyV1',$true).GetMethod('VerifyManualEnrollmentReadbackV2',$flags).Invoke($null,@())
 [Console]::WriteLine('MOBILE_INSTALLER_ENROLLMENT_STAGED_V1={"certificateSha256":"'+$certificateSha+'","enrollmentStaged":true,"runtimeInstalled":false,"restartPerformed":false,"physicalAcceptanceProven":false}')
+}finally{$manualBoundary.Dispose()}

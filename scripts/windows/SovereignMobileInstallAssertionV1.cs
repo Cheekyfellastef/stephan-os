@@ -99,6 +99,15 @@ namespace Stephanos.Sovereign {
         if(value==null)throw new InvalidOperationException();return value;
       }catch{throw new InvalidOperationException("MOBILE_BOUNDED_OBJECT_UNPROVEN");}
     }
+    // One bounded typed authorization context embeds the already independently
+    // bounded descriptor, assertion and enrollment strings. Ordinary readers
+    // retain their original 16 KiB ceiling; this grants no generic input growth.
+    internal static Dictionary<string,object> ReadEnrollmentAuthorizationObjectV2(string raw) {
+      try {
+        var value=new Json(raw,65536).Read() as Dictionary<string,object>;
+        if(value==null)throw new InvalidOperationException();return value;
+      }catch{throw new InvalidOperationException("MOBILE_AUTHORIZATION_OBJECT_UNPROVEN");}
+    }
     static byte[] DerSignature(string encoded) {
       byte[] der=Bytes(encoded,8,72);
       if(der[0]!=0x30 || der[1]!=der.Length-2) Deny("SIGNATURE_ENCODING_INVALID");

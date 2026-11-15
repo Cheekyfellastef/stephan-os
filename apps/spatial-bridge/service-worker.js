@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stephanos-spatial-workspace-v1-consented-window-v7';
+const CACHE_NAME = 'stephanos-spatial-workspace-v1-three-pages-v8';
 const CACHE_PREFIX = 'stephanos-spatial-workspace-v1-';
 const CORE_ASSETS = [
   './',
@@ -6,6 +6,7 @@ const CORE_ASSETS = [
   './holodeck-baseline-v0.mjs',
   './holodeck-room-v1.mjs',
   './holodeck-screen-v1.mjs',
+  './holodeck-panels-v1.mjs',
   './holodeck-keycaps-v1.mjs',
   './holodeck-window-client-v1.mjs',
   './holodeck-screen-input-v1.mjs',

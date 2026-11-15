@@ -91,108 +91,108 @@ remains present. Real Windows COM regression evidence must accompany this
 mapping, alongside adversarial error-class/HRESULT tests.
 
 
-### Structural review: explicit retirement and fresh enrollment
+### Interrupted enrollment: exact-key retirement and fresh authorization
 
-This is a design proposal, not an admitted retirement or recovery capability.
-The current key and partial root remain untouched. Original goal, owner, branch,
-review/source/operator gates and no-reboot constraint remain canonical.
+The original source owner, goal, branch, Commander and Lifeboat remain canonical.
+There is no runtime provisioning/reset/recovery verb or additional controller,
+queue, worker, public listener, installation authority or reboot authority.
 
-The actual Windows failure reached strict fixed receipt-key finalization, then
-stopped before `enrollment.json` on ambiguous six-argument FileStream binding.
-Read-only administrator observation verifies the present key policy/public
-fingerprint and present helper bytes, plus absent task/mobile genesis. It does
-not authenticate their historical origin. No predecessor key-creation or output
-compilation receipt was emitted before failure. Structural findings 4579816234
-and 4579816238 therefore prohibit adopting either object as authenticated prior
-enrollment artifacts. A current hash, source records or a new operator fingerprint
-must never be relabelled as missing historical provenance.
+Actual Windows enrollment exposed a late positive-path failure: after receipt-key
+finalization, string enum arguments made the six-argument `FileStream` constructor
+ambiguous. Current key policy/ACL and a binary hash cannot authenticate absent
+historical key-creation/compilation receipts. The structural review on PR #3505
+therefore rejected adoption of that old key/helper; its original findings remain
+in the review record. Never convert such partial state into qualified enrollment.
 
-The rejected key-preserving resume proposal is replaced by an explicit current-
-object retirement operation followed by opaque quarantine and wholly fresh
-enrollment. This requires new source review/approval and a later, separate exact
-live decision. General completion requests do not authorize key destruction.
+The supported phase model is deliberately closed:
 
-#### Fixed retirement boundary
+| Observed phase | Admitted action |
+| --- | --- |
+| New root absent, fixed key/task/mobile genesis genuinely absent | Separately approved fresh enrollment with current device proof |
+| Protected fixed root containing only opaque helper and empty state, strict fixed key present, task/mobile genesis absent | Read-only exact current-object/key observation; separately approved exact-key retirement |
+| Fixed key absent, no task/mobile genesis, protected root still present | Existing separately approved opaque whole-object quarantine |
+| Enrollment/release/authorization/WAL/certificate files, task, or mobile genesis present in a partial setup | Inspection only; no partial-state adoption, overwrite or automatic retry |
+| Complete enrollment | Independent native qualification/readback; installation still needs its own admission |
+| Denied, unknown, changed identity, redirected or uncertain state | Hold; reconcile the original operation before any further mutation |
 
-- Observe only the fixed Microsoft Software KSP machine key name, using the
-  existing native strict P-256/signing/nonexportable/admin ACL verifier. Bind its
-  actual public fingerprint, current source and actual machine/operator to a
-  distinct RETIRE_UNQUALIFIED_MOBILE_RECEIPT_KEY_V1 decision. There is no key-name,
-  provider, path, command or export selector. Public fingerprint is identity of
-  the object to destroy, not proof that it came from the failed request.
-- Require actual same-operator interactive WindowsPowerShell administrator,
-  current authenticated merged source, protected fixed root/parent/state pins,
-  no enrollment/release/certificate/authorization/WAL files, exact root/helper-
-  plus-empty-state shape, absent fixed task and readable empty mobile anchor
-  subset under the existing retained channel policy. Denied/unknown/later-stage
-  state is inspect-only. No signed or qualified enrollment may be retired here.
-- Reuse the existing native first-instance protected PipeName exclusion through
-  its current strict ACL factory. Manual mutation holds that same canonical
-  singleton object without accepting peers or exposing a runtime command. Fresh
-  manual enrollment must use the same exclusion. This is transient exclusion
-  inside the existing owner boundary, not a controller, worker, queue or lease.
-- At execution reopen exactly the fixed key, revalidate and compare the approved
-  public identity through the retained key object, then delete only that object
-  through its handle. Do not reopen by a caller name, export private material,
-  widen policy/ACL, overwrite or recreate a key. Microsoft documents NCryptDeleteKey
-  as consuming the opened key handle; CngKey.Delete removes its associated object.
-  Reconcile authentic key absence and unchanged filesystem/native records. Failure
-  or uncertain readback is UNKNOWN/inspect-only, never an automatic retry.
-- Key retirement does not move/delete a file or install anything. After proven
-  retirement, the existing separately approved exact-directory-object opaque
-  quarantine adapter can preserve the failed root with all then-linked children
-  and named streams. The old helper is never loaded, executed or adopted. Fresh
-  enrollment compiles a new helper from authenticated current source.
+`RETIRE_UNQUALIFIED_MOBILE_RECEIPT_KEY_V1` is a distinct manual approval surface.
+Its inert review factory authenticates all 20 fixed Git members, source head/tree,
+actual target, mode, exact current key-public-SPKI digest and object fingerprint.
+The immutable external caller still authenticates merged source, specialist review
+and the exact operator decision. Flags, hashes, source membership and synthetic
+fixtures grant none of those authorities by themselves.
 
-Primary contracts: [NCryptDeleteKey](https://learn.microsoft.com/en-us/windows/win32/api/ncrypt/nf-ncrypt-ncryptdeletekey)
-and [CngKey.Delete](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.cngkey.delete).
+The native adapter reuses the existing protected first-instance installer pipe as
+exclusion; it accepts no peers or new commands. It retains the fixed parent/root,
+state and helper handles, checks current ACLs/identity and closed file inventory,
+and reuses canonical bounded native task/genesis absence predicates. The helper is
+read-only opaque data, never loaded or accepted as authenticated compiled output.
+The strict fixed machine/P-256/nonexportable/signing/admin-only CNG opener checks
+the actual key. Retirement compares its public identity and deletes that same
+retained `CngKey` object, without resolving another name or exporting private data.
+Successful retirement requires independent key-absence and unchanged-file readback.
+An exception after delete dispatch is `UNKNOWN_INSPECT_ONLY_NO_RETRY`; there is no
+reset, recreation, second-key workaround or implicit retry. File quarantine remains
+the existing separate whole-object opaque operation after proven key absence.
 
-#### Fresh enrollment as a bounded saga
+Fresh enrollment uses explicit .NET file enums and create-new writes. The existing
+native pipe excludes concurrent enrollment/runtime activity before staging; exact
+key/task/mobile-genesis absence is proven before protected effects. All privileged
+calls use the independently source-authenticated in-memory compilation; old staged
+helpers are not loaded. The freshly compiled disk helper is hashed and read back.
+The task is registered create-only with `TASK_DONT_ADD_PRINCIPAL_ACE`, preserving
+the exact operator read/execute grant. Task principal names are resolved through
+Windows to a SID and compared with the protected operator SID; short-name string
+matching never substitutes for identity proof.
 
-Use explicit .NET enum types for file mode/access/share/options. Exercise the
-actual production write function under WindowsPowerShell temporary fixtures,
-including all closed file names, exact readback and create-new collision refusal.
-No production key/root is used by these fixtures.
+The protected `enrollment-authorization.v2` contains the canonical source/release,
+original proposed enrollment, setup descriptor, device assertion, actual receipt
+key/counter binding and native acceptance time. Its dedicated strict 64 KiB reader
+does not widen the ordinary 16 KiB protocol reader. The exact context digest is
+bound into the existing signed mobile genesis's first predecessor slot and the
+V2 enrollment certificate. Later anchor entries retain their existing hash chain.
+Ordinary production opening requires these matching bindings; legacy V1 structural
+certificate fixtures do not qualify production enrollment. Native actual-target
+and current-UTC freshness checks repeat immediately around genesis signing/append
+and certificate signing/write. Historical qualification also verifies that the
+certificate signing time was inside the original device authorization window.
+A newly dated signature cannot renew expired device proof.
 
-Extend the canonical native enrollment qualification/anchor context, not an
-independent journal or controller. The new version must carry the exact fresh
-setup descriptor, device proof, source/package/release and operator/machine
-binding into every irreversible enrollment boundary. Native code revalidates
-the real current clock immediately before each authorization signature, genesis
-append and certificate seal. A newly stamped signature alone is not fresh proof.
-Signed durable evidence binds the same authorization-context digest, its validity
-window and native acceptance time to the WAL header/genesis and certificate.
-Runtime qualification independently verifies the same context and signatures;
-absence, mismatch, expired-at-signing proof or an unsupported old partial state
-must fail closed. Old unqualified binaries are never retained as new helpers.
+Task registration precedes the certificate authority commit. The bootstrap then
+independently checks protected files, task, certificate, signed anchor and WAL.
+Partial/uncertain effects remain visible and never become automatic cleanup or
+success. Native installation/release/custody gates remain separately binding.
 
-The proposed versioned model must explicitly define this transition matrix:
+### Positive Windows proof and convergence invariant
 
-| Durable boundary | Required positive proof | Injected interruption/uncertainty |
-| --- | --- | --- |
-| authenticated preflight/exclusion | source/device/target/time verified, no protected effects | refuse before mutation |
-| root and helper compilation | actual compiled helper/current source and pinned protected estate | hold; no adoption/retry |
-| strict new receipt key | fixed policy/ACL/public identity, create-new only | key-only hold; only separately approved retirement can apply |
-| enrollment/authorization/release files | exact closed create-new files and native authorization context | any partial file state holds; retirement refuses |
-| authorization-bound WAL header | same binding/context and exact disk readback | partial WAL holds; never reset/recreate |
-| fresh signed genesis | native current-time check, same context digest, retained append/readback | uncertainty holds; never retry append |
-| certificate seal | native current-time check, same context/helper/source and signature readback | uncertainty holds; never reseal/overwrite |
-| fixed task registration | exact executable/arguments/principal/ACL and on-demand-only settings | any existing/partial task holds |
-| independent qualified readback | source, actual key/helper, authorization, WAL/genesis/certificate/task agree | no READY or install authority without proof |
+Before another real device ceremony, the complete Windows path must pass in
+isolated production-path fixtures. The reusable preparation script is
+`scripts/fixtures/prepare-mobile-enrollment-windows-phase-v2.mjs`; its manually
+invoked administrator harness is `scripts/windows/test-mobile-enrollment-windows-phase-v2.ps1`.
+It is a test harness, not an installed or registered capability. Preparation does
+not elevate. Its captured source/manifest and exact harness must be reviewed before
+administrator execution; test data and caller-supplied hashes are not source or
+operator authority. It uses synthetic Git/device proof, fixed random-GUID test
+folders, keys, tasks, pipes and separate retained test logs. It cannot establish
+production enrollment or installation acceptance. Preserve the OS-created test
+registry read permissions and let the unchanged native policy reject unsafe writers.
 
-Actual positive Windows production-path fixtures must traverse this complete
-matrix before another phone pairing is requested. Inject a stop/error/unknown
-after every durable boundary and prove that every unsupported resulting phase
-is refused on subsequent admission. Include model/property tests for illegal
-edges, replay, collision, source/key/context substitution and temporal suspension.
-Synthetic/temporary fixtures never qualify the production key, source or device.
-Fixtures may use the existing private native callback/pipe seams and isolated
-test keys/paths; they may not introduce a shipping arbitrary-key/path or fixture
-authority bypass. Final live acceptance remains independently observed.
+Fourteen actual Windows cases cover complete setup and native helper qualification,
+stops after preflight/root/helper/key/enrollment/authorization/release/WAL/genesis/
+task/certificate/readback, plus an injected unknown after actual test-key deletion.
+The exact-key case exercises observation, wrong-fingerprint refusal, same-object
+retirement, unchanged files, absence readback and replay refusal. Unsupported phases
+remain inspection-only; complete certificate/readback states independently qualify.
+All test objects require bounded target validation and explicit cleanup readback.
+Additional native data tests cover source/key/counter/window/signature substitution,
+duplicate keys and exact envelope bounds; real Windows task tests cover missing,
+denied, unknown, null, existing and canonical short/full-name/SID principal forms.
 
-The current recovery scope is exact unqualified-key retirement and fresh setup,
-not general later-phase repair. Unsupported post-file/WAL/genesis/certificate/task
-partials remain typed inspection holds; this bounded debt is explicit. There is
-no key adoption, implicit migration, reset, cleanup, automatic retry, new runtime
-provisioning verb, installation or reboot. Installation approval/receipts and
-later-boot physical qualification remain separate from enrollment success.
+Shared lesson: a multi-step privileged enrollment is a durable saga, not rollbackable
+staging. Negative tests and successful compilation do not prove the late positive
+Windows path. Exercise actual managed bindings and independent final native
+qualification before asking the operator to repeat a time-limited device ceremony.
+Current-state hashes cannot replace missing provenance, and transport uncertainty
+cannot mint retry, deletion, adoption or installation authority. Unsupported later
+partial-state recovery is explicit bounded debt; this change admits only KEY_ONLY
+retirement followed by the existing quarantine and wholly fresh enrollment gates.
