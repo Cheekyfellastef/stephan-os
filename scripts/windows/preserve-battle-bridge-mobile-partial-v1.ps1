@@ -38,34 +38,105 @@ namespace Stephanos.Sovereign {
   const string Admin="S-1-5-32-544",SystemSid="S-1-5-18";
   const string TrustedInstaller="S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
   static readonly UTF8Encoding Utf8=new UTF8Encoding(false,true);
+
+  const string RootName="SovereignMobileInstallerV1",DestinationPrefix="SovereignMobileInstallerV1.failed-";
+  const string Operation="QUARANTINE_EXACT_DIRECTORY_OBJECT_ALL_CONTENTS_OPAQUE";
+  const int NameMissing=unchecked((int)0xc0000034);
   [StructLayout(LayoutKind.Sequential)] struct Info {
-   internal uint Attributes; internal System.Runtime.InteropServices.ComTypes.FILETIME Creation,Access,Write;
+   internal uint Attributes;internal System.Runtime.InteropServices.ComTypes.FILETIME Creation,Access,Write;
    internal uint Volume,SizeHigh,SizeLow,Links,IndexHigh,IndexLow;
   }
-  [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] struct StreamInfo {
-   internal long Size;[MarshalAs(UnmanagedType.ByValTStr,SizeConst=296)]internal string Name;
+  [StructLayout(LayoutKind.Sequential)] struct UnicodeString {internal ushort Length,MaximumLength;internal IntPtr Buffer;}
+  [StructLayout(LayoutKind.Sequential)] struct ObjectAttributes {
+   internal int Length;internal IntPtr RootDirectory,ObjectName;internal uint Attributes;internal IntPtr SecurityDescriptor,SecurityQualityOfService;
   }
-  [StructLayout(LayoutKind.Sequential)] struct SecurityAttributes {internal int Length;internal IntPtr Descriptor;internal int Inherit;}
+  [StructLayout(LayoutKind.Sequential)] struct IoStatusBlock {internal IntPtr Status;internal UIntPtr Information;}
   [DllImport("kernel32.dll",SetLastError=true,CharSet=CharSet.Unicode)] static extern SafeFileHandle CreateFileW(string path,uint access,uint share,IntPtr security,uint creation,uint flags,IntPtr template);
   [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetFileInformationByHandle(SafeFileHandle handle,out Info info);
-  [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetFileInformationByHandle(SafeFileHandle handle,int kind,IntPtr information,uint bytes);
-  [DllImport("kernel32.dll",SetLastError=true,CharSet=CharSet.Unicode)] static extern bool CreateDirectoryW(string path,ref SecurityAttributes security);
+  [DllImport("kernel32.dll",SetLastError=true)] static extern uint GetFileType(SafeFileHandle handle);
   [DllImport("kernel32.dll",SetLastError=true,CharSet=CharSet.Unicode)] static extern uint GetFinalPathNameByHandleW(SafeFileHandle handle,StringBuilder path,uint length,uint flags);
-  [DllImport("kernel32.dll",SetLastError=true,CharSet=CharSet.Unicode)] static extern IntPtr FindFirstStreamW(string path,int level,out StreamInfo info,int flags);
-  [DllImport("kernel32.dll",SetLastError=true,CharSet=CharSet.Unicode)] static extern bool FindNextStreamW(IntPtr handle,out StreamInfo info);
-  [DllImport("kernel32.dll",SetLastError=true)] static extern bool FindClose(IntPtr handle);
+  [DllImport("kernel32.dll",SetLastError=true,CharSet=CharSet.Unicode)] static extern bool GetVolumeInformationByHandleW(SafeFileHandle handle,StringBuilder label,uint size,out uint serial,out uint maximum,out uint flags,StringBuilder filesystem,uint filesystemSize);
+  [DllImport("ntdll.dll")] static extern int NtCreateFile(out IntPtr handle,uint access,ref ObjectAttributes attributes,out IoStatusBlock status,IntPtr size,uint fileAttributes,uint sharing,uint disposition,uint options,IntPtr ea,uint eaLength);
+  [DllImport("ntdll.dll")] static extern int NtSetInformationFile(SafeFileHandle handle,out IoStatusBlock status,IntPtr information,uint length,int informationClass);
+  [DllImport("ntdll.dll")] static extern uint RtlNtStatusToDosError(int status);
   [DllImport("ncrypt.dll",CharSet=CharSet.Unicode)] static extern int NCryptOpenStorageProvider(out IntPtr provider,string name,uint flags);
   [DllImport("ncrypt.dll",CharSet=CharSet.Unicode)] static extern int NCryptOpenKey(IntPtr provider,out IntPtr key,string name,uint legacy,uint flags);
   [DllImport("ncrypt.dll")] static extern int NCryptFreeObject(IntPtr value);
   static void Deny(string code){throw new InvalidOperationException(code);}
   static string Hash(byte[] bytes){using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-","").ToLowerInvariant();}
   static string Identity(Info i){return i.Volume.ToString("x8")+":"+i.IndexHigh.ToString("x8")+i.IndexLow.ToString("x8");}
-  static SafeFileHandle Pin(string path,bool ancestor,bool renameRoot=false) {
-   // Ancestors cannot be renamed/deleted while the fixed operation is running.
-   var handle=CreateFileW(path,renameRoot?0x10080u:0x80u,ancestor?3u:1u,IntPtr.Zero,3,0x02200000,IntPtr.Zero);
-   if(handle.IsInvalid){handle.Dispose();Deny("MOBILE_PARTIAL_PATH_PIN_UNPROVEN");}
-   Info info;if(!GetFileInformationByHandle(handle,out info) || (info.Attributes&0x400)!=0){handle.Dispose();Deny("MOBILE_PARTIAL_REDIRECTION_REFUSED");}
-   return handle;
+
+  static bool Hex(string value,int count){return value!=null && value.Length==count && System.Text.RegularExpressions.Regex.IsMatch(value,@"\A[a-f0-9]+\z");}
+  static bool Part(string name){return name!=null && System.Text.RegularExpressions.Regex.IsMatch(name,@"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z") && !name.EndsWith(".",StringComparison.Ordinal);}
+  static Info DirectoryInfo(SafeFileHandle handle) {
+   Info info;if(handle==null || handle.IsInvalid || !GetFileInformationByHandle(handle,out info) || GetFileType(handle)!=1 ||
+     (info.Attributes&0x10)==0 || (info.Attributes&(0x400u|0x40u))!=0)throw new InvalidOperationException("MOBILE_PARTIAL_DIRECTORY_IDENTITY_UNPROVEN");
+   return info;
+  }
+  static string FinalPath(SafeFileHandle handle) {
+   var path=new StringBuilder(2048);uint size=GetFinalPathNameByHandleW(handle,path,(uint)path.Capacity,1);
+   if(size==0 || size>=path.Capacity)throw new InvalidOperationException("MOBILE_PARTIAL_FINAL_PATH_UNPROVEN");return path.ToString();
+  }
+  static SafeFileHandle PinDirectory(string path) {
+   var handle=CreateFileW(path,0x00120089,1,IntPtr.Zero,3,0x02200000,IntPtr.Zero);
+   try{DirectoryInfo(handle);return handle;}catch{handle.Dispose();throw;}
+  }
+  static SafeFileHandle RelativeOpen(SafeFileHandle parent,string name,uint access,uint sharing,bool missing) {
+   if(!Part(name))throw new InvalidOperationException("MOBILE_PARTIAL_SINGLE_NAME_REQUIRED");
+   IntPtr chars=Marshal.StringToHGlobalUni(name),unicode=IntPtr.Zero;bool retained=false;
+   try {
+    var value=new UnicodeString {Length=checked((ushort)(name.Length*2)),MaximumLength=checked((ushort)((name.Length+1)*2)),Buffer=chars};
+    unicode=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(UnicodeString)));Marshal.StructureToPtr(value,unicode,false);
+    parent.DangerousAddRef(ref retained);
+    var attributes=new ObjectAttributes {Length=Marshal.SizeOf(typeof(ObjectAttributes)),RootDirectory=parent.DangerousGetHandle(),ObjectName=unicode,Attributes=0x40};
+    IntPtr raw;IoStatusBlock ios;int status=NtCreateFile(out raw,access,ref attributes,out ios,IntPtr.Zero,0,sharing,1,0x00200020,IntPtr.Zero,0);
+    if(missing && status==NameMissing)return null;
+    if(status!=0)throw new Win32Exception((int)RtlNtStatusToDosError(status));
+    var handle=new SafeFileHandle(raw,true);if(handle.IsInvalid){handle.Dispose();throw new InvalidOperationException("MOBILE_PARTIAL_RELATIVE_OPEN_UNPROVEN");}return handle;
+   }finally{if(retained)parent.DangerousRelease();if(unicode!=IntPtr.Zero)Marshal.FreeHGlobal(unicode);Marshal.FreeHGlobal(chars);}
+  }
+  // Reuses SovereignFileMoveV1's canonical SAME-PARENT primitive. Non-null
+  // RootDirectory can reopen by pathname; never admit it or an absolute target.
+  static void KernelRename(SafeFileHandle source,string name) {
+   if(!name.StartsWith(DestinationPrefix,StringComparison.Ordinal) || !Hex(name.Substring(DestinationPrefix.Length),64))Deny("MOBILE_PARTIAL_QUARANTINE_NAME_REFUSED");
+   byte[] bytes=new UnicodeEncoding(false,false,true).GetBytes(name);
+   int handleOffset=IntPtr.Size==8?8:4,lengthOffset=handleOffset+IntPtr.Size,nameOffset=lengthOffset+4;
+   byte[] rename=new byte[nameOffset+bytes.Length+2]; // no replace, NULL root, NUL terminator
+   Buffer.BlockCopy(BitConverter.GetBytes((uint)bytes.Length),0,rename,lengthOffset,4);Buffer.BlockCopy(bytes,0,rename,nameOffset,bytes.Length);
+   var pin=GCHandle.Alloc(rename,GCHandleType.Pinned);
+   try{IoStatusBlock ios;int status=NtSetInformationFile(source,out ios,pin.AddrOfPinnedObject(),(uint)rename.Length,10);if(status!=0)throw new Win32Exception((int)RtlNtStatusToDosError(status));}
+   finally{pin.Free();}
+  }
+  // Private handle fixture seam. Shipping Run supplies only the fixed parent
+  // and fixed root basename. It never selects or traverses child contents.
+  sealed class RootObject : IDisposable {
+   internal readonly SafeFileHandle ParentHandle,Handle;
+   internal readonly string OriginalName,RootIdentity,ParentIdentity,ParentPath;
+   bool used;
+   internal RootObject(SafeFileHandle parent,string name) {
+    ParentHandle=parent;OriginalName=name;ParentIdentity=Identity(DirectoryInfo(parent));ParentPath=FinalPath(parent);
+    Handle=RelativeOpen(parent,name,0x00130089,1,false);
+    try {
+     var info=DirectoryInfo(Handle);RootIdentity=Identity(info);
+     var fs=new StringBuilder(32);uint serial,maximum,flags;
+     if(!GetVolumeInformationByHandleW(parent,null,0,out serial,out maximum,out flags,fs,(uint)fs.Capacity) || fs.ToString()!="NTFS" || serial!=info.Volume || DirectoryInfo(parent).Volume!=info.Volume)Deny("MOBILE_PARTIAL_LOCAL_NTFS_REQUIRED");
+     Verify(name);
+    }catch{Handle.Dispose();throw;}
+   }
+   internal void Verify(string name) {
+    if(Identity(DirectoryInfo(ParentHandle))!=ParentIdentity || FinalPath(ParentHandle)!=ParentPath || Identity(DirectoryInfo(Handle))!=RootIdentity ||
+      !String.Equals(FinalPath(Handle),ParentPath+"\\"+name,StringComparison.OrdinalIgnoreCase))Deny("MOBILE_PARTIAL_PINNED_OBJECT_CHANGED");
+   }
+   internal string Quarantine(string fingerprint) {
+    if(used || !Hex(fingerprint,64))Deny("MOBILE_PARTIAL_REQUEST_ALREADY_USED_OR_INVALID");used=true;
+    string name=DestinationPrefix+fingerprint;Verify(OriginalName);
+    using(var target=RelativeOpen(ParentHandle,name,0x00100080,7,true))if(target!=null)Deny("MOBILE_PARTIAL_DESTINATION_EXISTS_INSPECT_ONLY");
+    KernelRename(Handle,name);Verify(name);
+    // Only authentic NAME_NOT_FOUND proves absence. Denied/unknown never does.
+    using(var original=RelativeOpen(ParentHandle,OriginalName,0x00100080,7,true))if(original!=null)Deny("MOBILE_PARTIAL_ORIGINAL_NAME_STILL_PRESENT");
+    return name;
+   }
+   public void Dispose(){Handle.Dispose();}
   }
   static string Acl(string path,bool ancestor) {
    bool directory=(File.GetAttributes(path)&FileAttributes.Directory)!=0;
@@ -80,106 +151,6 @@ namespace Stephanos.Sovereign {
     if(rule.AccessControlType==AccessControlType.Allow && ((int)rule.FileSystemRights&mask)!=0 &&
       (!ancestor || (rule.PropagationFlags&PropagationFlags.InheritOnly)==0) && !trusted.Contains(rule.IdentityReference.Value))Deny("MOBILE_PARTIAL_WRITER_UNPROVEN");
    return Hash(Utf8.GetBytes(acl.GetSecurityDescriptorSddlForm(AccessControlSections.Owner|AccessControlSections.Group|AccessControlSections.Access)));
-  }
-  static void NoStreams(string path) {
-   StreamInfo info;IntPtr handle=FindFirstStreamW(path,0,out info,0);
-   if(handle==new IntPtr(-1)){if(Marshal.GetLastWin32Error()!=38)Deny("MOBILE_PARTIAL_STREAM_SCAN_UNPROVEN");return;}
-   try {
-    do {if(info.Name!="::$DATA")Deny("MOBILE_PARTIAL_EXTRA_STREAM_REFUSED");}while(FindNextStreamW(handle,out info));
-    if(Marshal.GetLastWin32Error()!=38)Deny("MOBILE_PARTIAL_STREAM_SCAN_UNPROVEN");
-   }finally{if(!FindClose(handle))Deny("MOBILE_PARTIAL_STREAM_HANDLE_UNPROVEN");}
-  }
-  // The same root/children stay open without write/delete sharing from the
-  // approved snapshot through native rename and readback. No pathname reopen
-  // can select a different source object at the mutation boundary.
-  sealed class PartialSnapshot : IDisposable {
-   internal SafeFileHandle RootHandle,StateHandle;
-   internal FileStream Helper;
-   internal PartialSnapshot(string path) {
-    try {
-     RootHandle=Pin(path,false,true);StateHandle=Pin(Path.Combine(path,"state"),false,true);
-     if((File.GetAttributes(path)&FileAttributes.Directory)==0 || (File.GetAttributes(Path.Combine(path,"state"))&FileAttributes.Directory)==0 ||
-       (File.GetAttributes(Path.Combine(path,"installer.exe"))&FileAttributes.Directory)!=0)Deny("MOBILE_PARTIAL_SHAPE_REFUSED");
-     var helper=CreateFileW(Path.Combine(path,"installer.exe"),0x80010000,1,IntPtr.Zero,3,0x00200000,IntPtr.Zero);
-     if(helper.IsInvalid){helper.Dispose();Deny("MOBILE_PARTIAL_HELPER_PIN_UNPROVEN");}
-     try{Helper=new FileStream(helper,FileAccess.Read);}catch{helper.Dispose();throw;}
-     Info info;if(!GetFileInformationByHandle(Helper.SafeFileHandle,out info) || (info.Attributes&0x400)!=0)Deny("MOBILE_PARTIAL_REDIRECTION_REFUSED");
-    }catch{Dispose();throw;}
-   }
-   public void Dispose(){if(Helper!=null)Helper.Dispose();if(StateHandle!=null)StateHandle.Dispose();if(RootHandle!=null)RootHandle.Dispose();}
-   internal string HelperWitness() {
-    Helper.Position=0;Info info;
-    if(!GetFileInformationByHandle(Helper.SafeFileHandle,out info) || info.Links!=1 || Helper.Length<1 || Helper.Length>2097152)Deny("MOBILE_PARTIAL_HELPER_IDENTITY_UNPROVEN");
-    byte[] bytes=new byte[(int)Helper.Length];int at=0;while(at<bytes.Length){int n=Helper.Read(bytes,at,bytes.Length-at);if(n<=0)Deny("MOBILE_PARTIAL_HELPER_READ_UNPROVEN");at+=n;}
-    if(Helper.ReadByte()!=-1 || Helper.Length!=bytes.Length)Deny("MOBILE_PARTIAL_HELPER_CHANGED");
-    return Identity(info)+"\n"+bytes.Length.ToString(CultureInfo.InvariantCulture)+"\n"+Hash(bytes)+"\n";
-   }
-   internal string Shape(string path) {
-    if((File.GetAttributes(path)&FileAttributes.Directory)==0 || (File.GetAttributes(Path.Combine(path,"state"))&FileAttributes.Directory)==0 ||
-      (File.GetAttributes(Path.Combine(path,"installer.exe"))&FileAttributes.Directory)!=0)Deny("MOBILE_PARTIAL_SHAPE_REFUSED");
-    string[] entries=Directory.GetFileSystemEntries(path);Array.Sort(entries,StringComparer.Ordinal);
-    if(entries.Length!=2 || entries[0]!=Path.Combine(path,"installer.exe") || entries[1]!=Path.Combine(path,"state") || Directory.GetFileSystemEntries(Path.Combine(path,"state")).Length!=0)
-      Deny("MOBILE_PARTIAL_NOT_PRE_ENROLLMENT");
-    foreach(string p in new[]{path,Path.Combine(path,"state"),Path.Combine(path,"installer.exe")})NoStreams(p);
-    var file=Helper;file.Position=0;
-     Info info;if(!GetFileInformationByHandle(file.SafeFileHandle,out info) || info.Links!=1 || file.Length<1 || file.Length>2097152)Deny("MOBILE_PARTIAL_HELPER_IDENTITY_UNPROVEN");
-     byte[] bytes=new byte[(int)file.Length];int at=0;while(at<bytes.Length){int n=file.Read(bytes,at,bytes.Length-at);if(n<=0)Deny("MOBILE_PARTIAL_HELPER_READ_UNPROVEN");at+=n;}
-     if(file.ReadByte()!=-1 || file.Length!=bytes.Length)Deny("MOBILE_PARTIAL_HELPER_CHANGED");
-     var result=new StringBuilder("stephanos.mobile-partial-shape.v1\n");
-     foreach(var h in new[]{RootHandle,StateHandle,Helper.SafeFileHandle}) {
-      Info id;if(!GetFileInformationByHandle(h,out id))Deny("MOBILE_PARTIAL_PATH_IDENTITY_UNPROVEN");result.Append(Identity(id)).Append('\n');
-     }
-     return result.Append(bytes.Length.ToString(CultureInfo.InvariantCulture)).Append('\n').Append(Hash(bytes)).Append('\n').ToString();
-   }
-  }
-  // Private data-fixture entry; public operations never accept a path.
-  static string Shape(string path){using(var held=new PartialSnapshot(path))return held.Shape(path);}
-  static void RenamePinned(SafeFileHandle handle,string destination) {
-   byte[] name=Encoding.Unicode.GetBytes(destination);
-   int rootOffset=IntPtr.Size==8?8:4,lengthOffset=rootOffset+IntPtr.Size,nameOffset=lengthOffset+4;
-   IntPtr buffer=Marshal.AllocHGlobal(nameOffset+name.Length+2);
-   try {
-    for(int i=0;i<nameOffset;i++)Marshal.WriteByte(buffer,i,0);
-    // ReplaceIfExists=false, RootDirectory=NULL, exact absolute destination.
-    Marshal.WriteInt32(buffer,lengthOffset,name.Length);Marshal.Copy(name,0,IntPtr.Add(buffer,nameOffset),name.Length);
-    Marshal.WriteInt16(buffer,nameOffset+name.Length,0);
-    if(!SetFileInformationByHandle(handle,3,buffer,(uint)(nameOffset+name.Length+2)))Deny("MOBILE_PARTIAL_HANDLE_RENAME_UNPROVEN_"+Marshal.GetLastWin32Error().ToString(CultureInfo.InvariantCulture));
-   }finally{Marshal.FreeHGlobal(buffer);}
-  }
-  static void DeleteEmptyPinned(SafeFileHandle handle) {
-   IntPtr buffer=Marshal.AllocHGlobal(1);
-   try {
-    Marshal.WriteByte(buffer,1);
-    // Windows atomically refuses nonempty directories. No recursive deletion
-    // or delete of a file is possible through this private directory-only call.
-    Info info;if(!GetFileInformationByHandle(handle,out info) || (info.Attributes&0x10)==0)Deny("MOBILE_PARTIAL_EMPTY_DIRECTORY_REQUIRED");
-    if(!SetFileInformationByHandle(handle,4,buffer,1))Deny("MOBILE_PARTIAL_NONEMPTY_OR_DELETE_UNPROVEN");
-   }finally{Marshal.FreeHGlobal(buffer);}
-  }
-  static void NewPreservationDirectory(string destination,byte[] descriptor) {
-   IntPtr bytes=Marshal.AllocHGlobal(descriptor.Length);
-   try {
-    Marshal.Copy(descriptor,0,bytes,descriptor.Length);
-    var security=new SecurityAttributes {Length=Marshal.SizeOf(typeof(SecurityAttributes)),Descriptor=bytes,Inherit=0};
-    if(!CreateDirectoryW(destination,ref security))Deny("MOBILE_PARTIAL_DESTINATION_CREATE_NEW_REQUIRED");
-   }finally{Marshal.FreeHGlobal(bytes);}
-  }
-  // Only Run supplies these paths in production. Private native fixtures prove
-  // identity pinning and kernel empty-directory refusal without touching Root.
-  static void PreservePinned(PartialSnapshot held,string source,string destination,byte[] descriptor) {
-   NewPreservationDirectory(destination,descriptor);
-   using(var destinationPin=Pin(destination,true)) {
-    string target=Path.Combine(destination,"installer.exe");
-    RenamePinned(held.Helper.SafeFileHandle,target);
-    var finalPath=new StringBuilder(1024);uint count=GetFinalPathNameByHandleW(held.Helper.SafeFileHandle,finalPath,(uint)finalPath.Capacity,0);
-    if(count==0 || count>=finalPath.Capacity || !String.Equals(finalPath.ToString(),@"\\?\"+target,StringComparison.OrdinalIgnoreCase))Deny("MOBILE_PARTIAL_HELPER_RENAME_READBACK_UNPROVEN");
-    // Never rename a directory whose live contents could have grown after the
-    // approved snapshot. Each empty-only disposition is enforced by NTFS, even
-    // if another administrator adds an entry between observation and this call.
-    DeleteEmptyPinned(held.StateHandle);held.StateHandle.Dispose();
-    DeleteEmptyPinned(held.RootHandle);held.RootHandle.Dispose();
-    if(Directory.Exists(source) || File.Exists(source))Deny("MOBILE_PARTIAL_EMPTY_ROOT_REMOVAL_UNPROVEN");
-   }
   }
   static void AbsentEnrollment() {
    IntPtr provider=IntPtr.Zero,key=IntPtr.Zero;
@@ -209,43 +180,33 @@ namespace Stephanos.Sovereign {
    }
    return "stephanos.mobile-partial-preservation.v1\n"+sid+"\n"+machine+"\n"+head+"\n"+tree+"\n";
   }
-  static string Snapshot(PartialSnapshot held,string path,string context) {
-   var wire=new StringBuilder(context).Append(held.Shape(path));
-   foreach(string p in new[]{@"C:\",@"C:\Program Files",Parent,path,Path.Combine(path,"state"),Path.Combine(path,"installer.exe")})wire.Append(Acl(p,p==@"C:\" || p==@"C:\Program Files")).Append('\n');
-   return Hash(Utf8.GetBytes(wire.ToString()));
-  }
+
   public static string Run(string mode,string sid,string machine,string head,string tree,string expected) {
-   if(mode!="Observe" && mode!="Preserve")Deny("MOBILE_PARTIAL_MODE_REFUSED");
-   string context=Context(sid,machine,head,tree);var parents=new List<IDisposable>();
+   if((mode!="Observe" && mode!="Preserve") || !Hex(head,40) || !Hex(tree,40))Deny("MOBILE_PARTIAL_CONTEXT_REFUSED");
+   string context=Context(sid,machine,head,tree);var parents=new List<SafeFileHandle>();var identities=new List<string>();
    try {
-    foreach(string p in new[]{@"C:\",@"C:\Program Files",Parent})parents.Add(Pin(p,true));
-    AbsentEnrollment();using(var held=new PartialSnapshot(Root)) {
-    // Keep the validated security descriptor itself, not a later path read,
-    // as the only ACL permitted on the newly created preservation directory.
-    var approvedSecurity=Directory.GetAccessControl(Root);
-    string rootAcl=CheckedAcl(approvedSecurity,false),helperAcl=Acl(Path.Combine(Root,"installer.exe"),false);
-    string helperWitness=held.HelperWitness();
-    string fingerprint=Snapshot(held,Root,context);
-    if(mode=="Observe")return "{\"status\":\"PRE_ENROLLMENT_PARTIAL_OBSERVED\",\"fingerprint\":\""+fingerprint+"\",\"preserved\":false,\"runtimeInstalled\":false,\"restartPerformed\":false}";
-    if(!String.Equals(fingerprint,expected,StringComparison.Ordinal))Deny("MOBILE_PARTIAL_EXACT_APPROVAL_MISMATCH");
-    string destination=Parent+@"\SovereignMobileInstallerV1.failed-"+fingerprint;
-    if(Directory.Exists(destination) || File.Exists(destination))Deny("MOBILE_PARTIAL_DESTINATION_EXISTS_INSPECT_ONLY");
-    AbsentEnrollment();if(Snapshot(held,Root,context)!=fingerprint)Deny("MOBILE_PARTIAL_CHANGED_BEFORE_PRESERVATION");
-    if(Acl(Root,false)!=rootAcl || Acl(Path.Combine(Root,"installer.exe"),false)!=helperAcl || held.HelperWitness()!=helperWitness)Deny("MOBILE_PARTIAL_APPROVED_OBJECT_CHANGED");
-    byte[] security=approvedSecurity.GetSecurityDescriptorBinaryForm();
-    // Preserve only the pinned helper, then remove only the two pinned empty
-    // directory objects. No file deletion, recursive cleanup, overwrite, reset,
-    // existing ACL/key/log/task mutation, executable load or automatic retry.
-    PreservePinned(held,Root,destination,security);
-    if(held.HelperWitness()!=helperWitness)Deny("MOBILE_PARTIAL_HELPER_BYTES_READBACK_UNPROVEN");
-    if(Acl(destination,false)!=rootAcl || Acl(Path.Combine(destination,"installer.exe"),false)!=helperAcl)Deny("MOBILE_PARTIAL_PRESERVATION_ACL_READBACK_UNPROVEN");
-    AbsentEnrollment();
-    return "{\"status\":\"PARTIAL_PRESERVED_NEW_ENROLLMENT_STILL_GATED\",\"fingerprint\":\""+fingerprint+"\",\"preserved\":true,\"runtimeInstalled\":false,\"restartPerformed\":false}";
+    var wire=new StringBuilder(context).Append(Operation).Append('\n').Append(DestinationPrefix).Append('\n');
+    foreach(string path in new[]{@"C:\",@"C:\Program Files",Parent}) {
+     var parent=PinDirectory(path);parents.Add(parent);string id=Identity(DirectoryInfo(parent));identities.Add(id);
+     wire.Append(id).Append('\n').Append(Acl(path,path!=Parent)).Append('\n');
+    }
+    AbsentEnrollment();using(var root=new RootObject(parents[2],RootName)) {
+     string acl=Acl(Root,false);
+     string fingerprint=Hash(Utf8.GetBytes(wire.ToString()+root.RootIdentity+"\n"+root.ParentIdentity+"\n"+RootName+"\n"+acl+"\n"));
+     if(mode=="Observe")return "{\"status\":\"OPAQUE_DIRECTORY_QUARANTINE_REVIEW_REQUIRED\",\"operation\":\""+Operation+"\",\"fingerprint\":\""+fingerprint+"\",\"rootIdentity\":\""+root.RootIdentity+"\",\"allContentsAndStreamsOpaque\":true,\"preserved\":false,\"runtimeInstalled\":false,\"restartPerformed\":false}";
+     if(!String.Equals(fingerprint,expected,StringComparison.Ordinal))Deny("MOBILE_PARTIAL_EXACT_OBJECT_APPROVAL_MISMATCH");
+     AbsentEnrollment();if(Acl(Root,false)!=acl)Deny("MOBILE_PARTIAL_ROOT_ACL_CHANGED");
+     for(int i=0;i<parents.Count;i++)if(Identity(DirectoryInfo(parents[i]))!=identities[i])Deny("MOBILE_PARTIAL_PARENT_CHANGED");
+     string name=root.Quarantine(fingerprint);
+     if(Acl(Path.Combine(Parent,name),false)!=acl)Deny("MOBILE_PARTIAL_QUARANTINE_ACL_READBACK_UNPROVEN");
+     AbsentEnrollment();
+     return "{\"status\":\"EXACT_DIRECTORY_OPAQUELY_QUARANTINED_INSPECTION_ONLY\",\"operation\":\""+Operation+"\",\"fingerprint\":\""+fingerprint+"\",\"rootIdentity\":\""+root.RootIdentity+"\",\"allContentsAndStreamsOpaque\":true,\"preserved\":true,\"enrollmentQualified\":false,\"runtimeInstalled\":false,\"restartPerformed\":false}";
     }
    }finally{for(int i=parents.Count-1;i>=0;i--)parents[i].Dispose();}
   }
  }
 }
+
 '@
 # Only this fixed reviewed implementation is compiled; the staged helper is
 # opaque data and is never loaded or executed by the preservation adapter.

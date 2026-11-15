@@ -64,8 +64,8 @@ try {
   return Object.freeze({ schemaVersion: 'stephanos.mobile-partial-preservation-review.v1', installability: 'NOT_INSTALLABLE',
     containsPrivateOperatorIdentity: true, source: Object.freeze({ head: checked.sourceHead, tree: checked.sourceTree }),
     mode: row.mode, fingerprint: row.fingerprint, privateCandidate: candidate,
-    operation: 'PRESERVE_PINNED_HELPER_THEN_REMOVE_TWO_EMPTY_DIRECTORIES',
+    operation: 'QUARANTINE_EXACT_DIRECTORY_OBJECT_ALL_CONTENTS_OPAQUE',
     requiredGates: Object.freeze(['AUTHENTICATED_CURRENT_MERGED_SOURCE', 'INDEPENDENT_WINDOWS_SECURITY_SPECIALIST_REVIEW',
-      'ACTUAL_SAME_OPERATOR_ADMINISTRATOR', ...(row.mode === 'Preserve' ? ['EXACT_FINGERPRINT_PRESERVATION_APPROVAL'] : [])]),
+      'ACTUAL_SAME_OPERATOR_ADMINISTRATOR', ...(row.mode === 'Preserve' ? ['EXACT_DIRECTORY_OBJECT_ALL_CONTENTS_QUARANTINE_APPROVAL'] : [])]),
     authority: Object.freeze({ administrator: false, preservation: false, enrollment: false, installation: false, reboot: false }) });
 }

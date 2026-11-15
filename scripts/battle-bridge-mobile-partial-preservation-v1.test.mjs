@@ -21,124 +21,103 @@ test('manual partial preservation refuses an unbound caller before observation o
   assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout, 'UNBOUND_REFUSED');
 });
 
-test('native read-only partial inventory rejects enrolled material, hardlinks, streams and redirection in temporary fixtures',
+
+test('opaque NTFS object quarantine preserves concurrent children, streams and links without trusting or traversing them',
   { skip: process.platform !== 'win32', timeout: 40000 }, t => {
-    const source = readFileSync(entry, 'utf8').split("$native=@'\n")[1]?.split("\n'@\n")[0];
+    const source=readFileSync(entry,'utf8').split("$native=@'\n")[1]?.split("\n'@\n")[0];
     assert.ok(source);
-    const root = mkdtempSync(join(tmpdir(), 'stephanos-partial-data-'));
-    const native = join(root, 'adapter.cs'); writeFileSync(native, source);
+    const base=realpathSync.native(mkdtempSync(join(tmpdir(),'stephanos-opaque-data-'))), native=join(base,'adapter.cs');
+    writeFileSync(native,source);
     try {
-      const script = String.raw`$ErrorActionPreference='Stop'
+      const script=String.raw`$ErrorActionPreference='Stop'
 Add-Type -TypeDefinition ([IO.File]::ReadAllText(__NATIVE__)) -ReferencedAssemblies 'System','System.Core','Microsoft.CSharp' -ErrorAction Stop
-$type=[Stephanos.Sovereign.MobilePartialPreservationV1]
-$shape=$type.GetMethod('Shape',[Reflection.BindingFlags]'NonPublic,Static')
-$base=__ROOT__;$fixture=[IO.Path]::Combine($base,'fixture');[void][IO.Directory]::CreateDirectory($fixture)
-$state=[IO.Path]::Combine($fixture,'state');[void][IO.Directory]::CreateDirectory($state)
-$helper=[IO.Path]::Combine($fixture,'installer.exe');[IO.File]::WriteAllText($helper,'opaque fixture bytes, never executable')
-$rows=[Collections.Generic.List[object]]::new()
-function Check([string]$name,[bool]$expected) {
- $ok=$false;try{[void]$shape.Invoke($null,@($fixture));$ok=$true}catch{if($_.Exception.InnerException -isnot [InvalidOperationException]){throw}}
- if($ok -ne $expected){throw ('WRONG_SHAPE_OUTCOME:'+ $name)};$rows.Add(@{name=$name;accepted=$ok})
-}
-Check 'exact pre-enrollment shape' $true
-$initial=$shape.Invoke($null,@($fixture));[IO.File]::AppendAllText($helper,'changed');if($initial -ceq $shape.Invoke($null,@($fixture))){throw 'HELPER_CHANGE_UNSEEN'}
-foreach($name in @('enrollment.json','enrollment-certificate.v1','runtime-package.json','unexpected')) {
- $path=[IO.Path]::Combine($fixture,$name);[IO.File]::WriteAllText($path,'synthetic');Check ('extra '+$name) $false;[IO.File]::Delete($path)
-}
-$wal=[IO.Path]::Combine($state,'approval-journal.wal');[IO.File]::WriteAllText($wal,'synthetic');Check 'journal exists' $false;[IO.File]::Delete($wal)
-Set-Content -LiteralPath $helper -Stream hidden -Value 'synthetic';Check 'alternate stream' $false;Remove-Item -LiteralPath $helper -Stream hidden
-Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class PartialFixtureLinksV1{[DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]public static extern bool CreateHardLinkW(string name,string target,IntPtr security);}'
-$link=[IO.Path]::Combine($base,'second-link');if(-not [PartialFixtureLinksV1]::CreateHardLinkW($link,$helper,[IntPtr]::Zero)){throw 'FIXTURE_LINK_FAILED'}
-Check 'hardlinked helper' $false;[IO.File]::Delete($link)
-[IO.File]::Delete($helper);[void][IO.Directory]::CreateDirectory($helper);Check 'helper directory' $false;[IO.Directory]::Delete($helper)
-[IO.File]::WriteAllText($helper,'opaque')
-$target=[IO.Path]::Combine($base,'target');[void][IO.Directory]::CreateDirectory($target);[IO.Directory]::Delete($state)
-# Windows junctions require no symlink privilege. Only temporary fixture paths.
-New-Item -ItemType Junction -Path $state -Target $target -ErrorAction Stop|Out-Null
-Check 'redirected state' $false
-[IO.Directory]::Delete($state)
-[Console]::Write(($rows|ConvertTo-Json -Compress))
-`.replace('__NATIVE__', literal(native)).replace('__ROOT__', literal(root));
-      const result = run(script);
-      assert.equal(result.status, 0, result.stderr);
-      const rows = JSON.parse(result.stdout); assert.equal(rows.length, 10); assert.equal(rows.filter(row => row.accepted).length, 1);
-      t.diagnostic('10 native inventory vectors; opaque helper hash changes detected; no production root/key/task/log mutation invoked');
-    } finally { rmSync(root, { recursive: true, force: true }); }
-  });
-
-test('shipping manual adapter has a single fixed preservation effect and no enrollment or reset authority', () => {
-  const text = readFileSync(entry, 'utf8');
-  assert.equal((text.match(/SetFileInformationByHandle\(handle,3,/g) ?? []).length, 1);
-  assert.doesNotMatch(text, /Directory\.Move\(/);
-  assert.match(text, /if\(!String\.Equals\(fingerprint,expected,StringComparison\.Ordinal\)\)/);
-  assert.match(text, /held\.HelperWitness\(\)!=helperWitness/);
-  assert.match(text, /DeleteEmptyPinned\(held\.StateHandle\)/);
-  assert.match(text, /DeleteEmptyPinned\(held\.RootHandle\)/);
-  assert.match(text, /MOBILE_PARTIAL_RECEIPT_KEY_EXISTS/);
-  assert.match(text, /MOBILE_PARTIAL_INSTALLER_TASK_EXISTS/);
-  assert.match(text, /MOBILE_PARTIAL_RETAINED_GENESIS_EXISTS/);
-  assert.doesNotMatch(text, /(?:File|Directory)\.Delete\(|Assembly\]::LoadFrom|NCryptCreatePersistedKey|RegisterTaskDefinition|ReportEventW|SetAccessControl/);
-  assert.doesNotMatch(text.split('$native=')[0], /\[string\]\$(?:Root|Path|Destination|Command)/i);
-});
-
-test('pinned helper preservation and kernel empty-only cleanup refuse concurrent additions without moving or deleting them',
-  { skip: process.platform !== 'win32', timeout: 40000 }, t => {
-    const source = readFileSync(entry, 'utf8').split("$native=@'\n")[1]?.split("\n'@\n")[0];
-    const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'stephanos-partial-race-'))), native = join(root, 'adapter.cs');
-    writeFileSync(native, source);
-    try {
-      const script = String.raw`$ErrorActionPreference='Stop'
-Add-Type -TypeDefinition ([IO.File]::ReadAllText(__NATIVE__)) -ReferencedAssemblies 'System','System.Core','Microsoft.CSharp' -ErrorAction Stop
-$type=[Stephanos.Sovereign.MobilePartialPreservationV1];$flags=[Reflection.BindingFlags]'NonPublic,Instance'
-$leaseType=$type.GetNestedType('PartialSnapshot',[Reflection.BindingFlags]'NonPublic')
-$ctor=$leaseType.GetConstructor($flags,$null,[type[]]@([string]),$null)
-$base=__ROOT__;$preserve=$type.GetMethod('PreservePinned',[Reflection.BindingFlags]'NonPublic,Static')
-$shape=$leaseType.GetMethod('Shape',$flags);$witness=$leaseType.GetMethod('HelperWitness',$flags)
-$rows=[Collections.Generic.List[string]]::new()
+Add-Type -TypeDefinition 'using System;using System.IO;using System.Runtime.InteropServices;using Microsoft.Win32.SafeHandles;public static class OpaqueStreamFixtureV1{[DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]static extern SafeFileHandle CreateFileW(string n,uint a,uint s,IntPtr d,uint c,uint f,IntPtr t);public static void Write(string p){using(var h=CreateFileW(p,0x40000000,7,IntPtr.Zero,2,0,IntPtr.Zero)){if(h.IsInvalid)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());using(var w=new FileStream(h,FileAccess.Write)){var b=System.Text.Encoding.UTF8.GetBytes("opaque concurrent stream");w.Write(b,0,b.Length);}}}public static string Read(string p){using(var h=CreateFileW(p,0x80000000,7,IntPtr.Zero,3,0,IntPtr.Zero)){if(h.IsInvalid)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());using(var r=new StreamReader(new FileStream(h,FileAccess.Read)))return r.ReadToEnd();}}}'
+$type=[Stephanos.Sovereign.MobilePartialPreservationV1];$static=[Reflection.BindingFlags]'NonPublic,Static';$instance=[Reflection.BindingFlags]'NonPublic,Instance'
+$pin=$type.GetMethod('PinDirectory',$static);$open=$type.GetMethod('RelativeOpen',$static);$kernel=$type.GetMethod('KernelRename',$static)
+$rootType=$type.GetNestedType('RootObject',[Reflection.BindingFlags]'NonPublic')
+$ctor=$rootType.GetConstructor($instance,$null,[type[]]@([Microsoft.Win32.SafeHandles.SafeFileHandle],[string]),$null)
+$quarantine=$rootType.GetMethod('Quarantine',$instance);$identity=$rootType.GetField('RootIdentity',$instance);$handle=$rootType.GetField('Handle',$instance)
+$base=__BASE__;$rows=[Collections.Generic.List[string]]::new()
 for($trial=0;$trial -lt 3;$trial++) {
-foreach($scenario in @('clean','root-added','state-added','destination-collision')) {
- $fixture=[IO.Path]::Combine($base,$trial.ToString()+'-'+$scenario);[void][IO.Directory]::CreateDirectory($fixture)
- $state=[IO.Path]::Combine($fixture,'state');[void][IO.Directory]::CreateDirectory($state)
- $helper=[IO.Path]::Combine($fixture,'installer.exe');[IO.File]::WriteAllText($helper,'opaque approved bytes')
- $security=[IO.Directory]::GetAccessControl($fixture).GetSecurityDescriptorBinaryForm()
- $held=$ctor.Invoke(@($fixture));$destination=$fixture+'-preserved'
+ $parentPath=[IO.Path]::Combine($base,'parent-'+$trial);[void][IO.Directory]::CreateDirectory($parentPath)
+ $sourcePath=[IO.Path]::Combine($parentPath,'root');[void][IO.Directory]::CreateDirectory($sourcePath)
+ [void][IO.Directory]::CreateDirectory([IO.Path]::Combine($sourcePath,'state'))
+ [IO.File]::WriteAllText([IO.Path]::Combine($sourcePath,'installer.exe'),'opaque helper never executed')
+ $outside=[IO.Path]::Combine($base,'outside-'+$trial);[void][IO.Directory]::CreateDirectory($outside);[IO.File]::WriteAllText([IO.Path]::Combine($outside,'sentinel'),'outside unchanged')
+ $parent=$pin.Invoke($null,@($parentPath));$held=$ctor.Invoke(@($parent,'root'))
  try {
- [void]$shape.Invoke($held,@($fixture));$approved=$witness.Invoke($held,@())
- foreach($operation in @('overwrite','delete-helper','replace-state','replace-root')) {
-  $denied=$false;try {
-   switch($operation) {
-    'overwrite'{[IO.File]::WriteAllText($helper,'unapproved')}
-    'delete-helper'{[IO.File]::Delete($helper)}
-    'replace-state'{[IO.Directory]::Move($state,$state+'-unapproved')}
-    'replace-root'{[IO.Directory]::Move($fixture,$fixture+'-unapproved')}
-   }
-  }catch{if($_.Exception.InnerException -is [IO.IOException] -or $_.Exception.InnerException -is [UnauthorizedAccessException]){$denied=$true}else{throw}}
-  if(-not $denied){throw ('PIN_DID_NOT_EXCLUDE:'+ $operation)};$rows.Add($operation)
- }
- $extra=$null
- if($scenario -ceq 'root-added'){$extra=[IO.Path]::Combine($fixture,'unapproved')}
- if($scenario -ceq 'state-added'){$extra=[IO.Path]::Combine($state,'unapproved')}
- if($null -ne $extra){[IO.File]::WriteAllText($extra,'never move or delete this unapproved file')}
- if($scenario -ceq 'destination-collision'){[void][IO.Directory]::CreateDirectory($destination);[IO.File]::WriteAllText([IO.Path]::Combine($destination,'sentinel'),'unchanged')}
- $succeeded=$false;$code='';try{[void]$preserve.Invoke($null,@($held,$fixture,$destination,$security));$succeeded=$true}catch{$failure=$_.Exception;while($null -ne $failure.InnerException){$failure=$failure.InnerException};$code=$failure.Message}
- if($witness.Invoke($held,@()) -cne $approved){throw 'APPROVED_HELPER_IDENTITY_OR_BYTES_CHANGED'}
- if($scenario -ceq 'clean') {
-  if(-not $succeeded -or [IO.Directory]::Exists($fixture) -or -not [IO.File]::Exists([IO.Path]::Combine($destination,'installer.exe'))){throw ('CLEAN_PRESERVATION_FAILED:'+ $code)}
- }elseif($scenario -ceq 'destination-collision') {
-  if($succeeded -or $code -cne 'MOBILE_PARTIAL_DESTINATION_CREATE_NEW_REQUIRED' -or -not [IO.File]::Exists($helper) -or [IO.File]::ReadAllText([IO.Path]::Combine($destination,'sentinel')) -cne 'unchanged'){throw 'DESTINATION_COLLISION_WAS_NOT_ATOMIC'}
- }else {
-  if($succeeded -or $code -cne 'MOBILE_PARTIAL_NONEMPTY_OR_DELETE_UNPROVEN' -or -not [IO.File]::Exists($extra) -or [IO.File]::ReadAllText($extra) -cne 'never move or delete this unapproved file' -or -not [IO.File]::Exists([IO.Path]::Combine($destination,'installer.exe'))){throw ('UNAPPROVED_ENTRY_WAS_AFFECTED:'+ $scenario+':'+$code+':'+$destination)}
- }
- $rows.Add($scenario)
- }finally{$held.Dispose()}
+  $original=$identity.GetValue($held)
+  foreach($operation in @('replace-source','replace-parent')) {
+   $denied=$false;try{if($operation -ceq 'replace-source'){[IO.Directory]::Move($sourcePath,$sourcePath+'-replaced')}else{[IO.Directory]::Move($parentPath,$parentPath+'-replaced')}}catch{if($_.Exception.InnerException -is [IO.IOException] -or $_.Exception.InnerException -is [UnauthorizedAccessException]){$denied=$true}else{throw}}
+   if(-not $denied){throw ('IDENTITY_PIN_FAILED:'+ $operation)};$rows.Add($operation)
+  }
+  # This is permitted by Windows and explicitly INCLUDED in whole-object
+  # quarantine authority. It is never represented as immutable content CAS.
+  [IO.File]::WriteAllText([IO.Path]::Combine($sourcePath,'new-child'),'new child preserved')
+  foreach($stream in @(($sourcePath+':new-stream'),([IO.Path]::Combine($sourcePath,'state')+':new-stream'),([IO.Path]::Combine($sourcePath,'installer.exe')+':new-stream'))){[OpaqueStreamFixtureV1]::Write($stream)}
+  New-Item -ItemType Junction -Path ([IO.Path]::Combine($sourcePath,'opaque-link')) -Target $outside -ErrorAction Stop|Out-Null
+  $fingerprint=('a'*63)+$trial.ToString();$name='SovereignMobileInstallerV1.failed-'+$fingerprint
+  $result=$quarantine.Invoke($held,@($fingerprint));$destination=[IO.Path]::Combine($parentPath,$name)
+  if($result -cne $name -or [IO.Directory]::Exists($sourcePath) -or $identity.GetValue($held) -cne $original){throw 'OBJECT_QUARANTINE_IDENTITY_UNPROVEN'}
+  if([IO.File]::ReadAllText([IO.Path]::Combine($destination,'installer.exe')) -cne 'opaque helper never executed' -or [IO.File]::ReadAllText([IO.Path]::Combine($destination,'new-child')) -cne 'new child preserved'){throw 'OPAQUE_CHILD_NOT_PRESERVED'}
+  foreach($stream in @(($destination+':new-stream'),([IO.Path]::Combine($destination,'state')+':new-stream'),([IO.Path]::Combine($destination,'installer.exe')+':new-stream'))){if([OpaqueStreamFixtureV1]::Read($stream) -cne 'opaque concurrent stream'){throw 'OPAQUE_STREAM_NOT_PRESERVED'}}
+  if([IO.File]::ReadAllText([IO.Path]::Combine($outside,'sentinel')) -cne 'outside unchanged'){throw 'OUTSIDE_LINK_TARGET_AFFECTED'}
+  $missing=$open.Invoke($null,@($parent,'root',[uint32]0x00100080,[uint32]7,$true));if($null -ne $missing){$missing.Dispose();throw 'SOURCE_ABSENCE_UNPROVEN'}
+  $refused=$false;try{[void]$quarantine.Invoke($held,@($fingerprint))}catch{if($_.Exception.InnerException.Message -ceq 'MOBILE_PARTIAL_REQUEST_ALREADY_USED_OR_INVALID'){$refused=$true}else{throw}}
+  if(-not $refused){throw 'DUPLICATE_EFFECT_ACCEPTED'}
+  $rows.Add('all-opaque-contents-preserved');$rows.Add('duplicate-refused')
+ }finally{$held.Dispose();$parent.Dispose()}
 }
+# Collision after a target-missing observation is refused by the actual native
+# no-replace primitive; a junction is never opened as a destination directory.
+foreach($collision in @('file','junction')) {
+ $parentPath=[IO.Path]::Combine($base,'collision-'+$collision);[void][IO.Directory]::CreateDirectory($parentPath)
+ $sourcePath=[IO.Path]::Combine($parentPath,'root');[void][IO.Directory]::CreateDirectory($sourcePath);[IO.File]::WriteAllText([IO.Path]::Combine($sourcePath,'evidence'),'untouched')
+ $parent=$pin.Invoke($null,@($parentPath));$held=$ctor.Invoke(@($parent,'root'));$name='SovereignMobileInstallerV1.failed-'+('b'*64);$destination=[IO.Path]::Combine($parentPath,$name)
+ try {
+  if($null -ne $open.Invoke($null,@($parent,$name,[uint32]0x00100080,[uint32]7,$true))){throw 'FIXTURE_TARGET_NOT_MISSING'}
+  if($collision -ceq 'file'){[IO.File]::WriteAllText($destination,'existing target')}else{New-Item -ItemType Junction -Path $destination -Target $base -ErrorAction Stop|Out-Null}
+  $denied=$false;try{[void]$kernel.Invoke($null,@($handle.GetValue($held),$name))}catch{if($_.Exception.InnerException -is [ComponentModel.Win32Exception]){$denied=$true}else{throw}}
+  if(-not $denied -or [IO.File]::ReadAllText([IO.Path]::Combine($sourcePath,'evidence')) -cne 'untouched'){throw 'NATIVE_NO_REPLACE_FAILED'}
+  if($collision -ceq 'file' -and [IO.File]::ReadAllText($destination) -cne 'existing target'){throw 'EXISTING_TARGET_CHANGED'}
+  $rows.Add('concurrent-'+$collision+'-collision-refused')
+ }finally{$held.Dispose();$parent.Dispose()}
+ if($collision -ceq 'junction'){[IO.Directory]::Delete($destination)}
 }
-[Console]::Write(($rows|ConvertTo-Json -Compress))`.replace('__NATIVE__', literal(native)).replace('__ROOT__', literal(root));
-      const result = run(script); assert.equal(result.status, 0, result.stderr);
-      const rows = JSON.parse(result.stdout); assert.equal(rows.length, 60);
-      t.diagnostic('48 competing writes/replacements refused across 12 native scenarios; clean preservation succeeds; unexpected root/state entries stay in place and block cleanup; destination collision changes no source bytes');
-    } finally { rmSync(root, { recursive: true, force: true }); }
+# Unknown and denied native opens must not be translated into NAME_NOT_FOUND.
+$parentPath=[IO.Path]::Combine($base,'absence');[void][IO.Directory]::CreateDirectory($parentPath);$deniedPath=[IO.Path]::Combine($parentPath,'denied');[IO.File]::WriteAllText($deniedPath,'exists')
+$saved=[IO.File]::GetAccessControl($deniedPath);$acl=[IO.File]::GetAccessControl($deniedPath);$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
+$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,'ReadData','Deny'));[IO.File]::SetAccessControl($deniedPath,$acl)
+$parent=$pin.Invoke($null,@($parentPath));try{
+ $refused=$false;try{$unexpected=$open.Invoke($null,@($parent,'denied',[uint32]0x00120089,[uint32]7,$true));if($null -ne $unexpected){$unexpected.Dispose()}}catch{if($_.Exception.InnerException -is [ComponentModel.Win32Exception]){$refused=$true}else{throw}}
+ if(-not $refused){throw 'DENIED_WAS_TREATED_AS_ABSENT'};$rows.Add('denied-is-not-absent')
+}finally{[IO.File]::SetAccessControl($deniedPath,$saved);$parent.Dispose()}
+# A redirected source root/parent is refused before any rename.
+$redirectParent=[IO.Path]::Combine($base,'redirect-parent');[void][IO.Directory]::CreateDirectory($redirectParent)
+$redirectSource=[IO.Path]::Combine($redirectParent,'root');New-Item -ItemType Junction -Path $redirectSource -Target $base -ErrorAction Stop|Out-Null
+$parent=$pin.Invoke($null,@($redirectParent));try{
+ $refused=$false;try{$unexpected=$ctor.Invoke(@($parent,'root'));$unexpected.Dispose()}catch{if($_.Exception.InnerException.Message -ceq 'MOBILE_PARTIAL_DIRECTORY_IDENTITY_UNPROVEN'){$refused=$true}else{throw}}
+ if(-not $refused){throw 'REDIRECTED_SOURCE_ACCEPTED'};$rows.Add('redirected-source-refused')
+}finally{$parent.Dispose();[IO.Directory]::Delete($redirectSource)}
+$redirectAlias=[IO.Path]::Combine($base,'redirect-alias');New-Item -ItemType Junction -Path $redirectAlias -Target $redirectParent -ErrorAction Stop|Out-Null
+try{$refused=$false;try{$unexpected=$pin.Invoke($null,@($redirectAlias));$unexpected.Dispose()}catch{if($_.Exception.InnerException.Message -ceq 'MOBILE_PARTIAL_DIRECTORY_IDENTITY_UNPROVEN'){$refused=$true}else{throw}};if(-not $refused){throw 'REDIRECTED_PARENT_ACCEPTED'};$rows.Add('redirected-parent-refused')}finally{[IO.Directory]::Delete($redirectAlias)}
+[Console]::Write(($rows|ConvertTo-Json -Compress))`.replace('__NATIVE__',literal(native)).replace('__BASE__',literal(base));
+      const result=run(script);assert.equal(result.status,0,result.stderr);
+      const rows=JSON.parse(result.stdout);assert.equal(rows.length,17);
+      t.diagnostic('17 native object-scope vectors: children/three stream namespaces preserved opaquely, no link-target mutation, concurrent collision refusal, denied-versus-absent distinction and source/parent redirection refusal');
+    } finally {rmSync(base,{recursive:true,force:true});}
   });
+
+test('manual quarantine has no deletion, destination creation/traversal or all-stream immutability grant',()=>{
+  const text=readFileSync(entry,'utf8');
+  assert.match(text,/QUARANTINE_EXACT_DIRECTORY_OBJECT_ALL_CONTENTS_OPAQUE/);
+  assert.match(text,/NtSetInformationFile\(source,out ios,pin\.AddrOfPinnedObject\(\),\(uint\)rename\.Length,10\)/);
+  assert.match(text,/if\(missing && status==NameMissing\)return null/);
+  assert.match(text,/MOBILE_PARTIAL_EXACT_OBJECT_APPROVAL_MISMATCH/);
+  assert.ok(text.includes("allContentsAndStreamsOpaque"));
+  assert.doesNotMatch(text,/(?:File|Directory)\.Delete\(|Directory\.Move\(|CreateDirectoryW|SetFileInformationByHandle|DeleteEmptyPinned|Assembly\]::LoadFrom|NCryptCreatePersistedKey|RegisterTaskDefinition|ReportEventW|SetAccessControl/);
+  assert.doesNotMatch(text.split('$native=')[0],/\[string\]\$(?:Root|Path|Destination|Command)/i);
+});
 
 test('manual preservation preparation pins Git membership, actual-target data and exact operation without granting authority', () => {
   const path = 'scripts/windows/preserve-battle-bridge-mobile-partial-v1.ps1';
@@ -151,6 +130,7 @@ test('manual preservation preparation pins Git membership, actual-target data an
     sourceTree: fixture.tree, operatorSid: 'S-1-5-21-1-2-3-1001', machineHash: 'a'.repeat(64), mode: 'Observe', fingerprint: null };
   const prepare = value => prepareMobilePartialPreservationReviewV1(JSON.stringify(value));
   const observed = prepare(input), preserved = prepare({ ...input, mode: 'Preserve', fingerprint: 'b'.repeat(64) });
+  assert.equal(preserved.operation, 'QUARANTINE_EXACT_DIRECTORY_OBJECT_ALL_CONTENTS_OPAQUE');
   for (const row of [observed, preserved]) {
     assert.equal(row.installability, 'NOT_INSTALLABLE'); assert.deepEqual(Object.values(row.authority), Array(5).fill(false));
     const payload = Buffer.from(row.privateCandidate.payloadBase64, 'base64');
@@ -161,7 +141,7 @@ test('manual preservation preparation pins Git membership, actual-target data an
   }
   assert.doesNotMatch(observed.privateCandidate.script, / -OperatorApproved /);
   assert.match(preserved.privateCandidate.script, / -OperatorApproved /);
-  assert.ok(preserved.requiredGates.includes('EXACT_FINGERPRINT_PRESERVATION_APPROVAL'));
+  assert.ok(preserved.requiredGates.includes('EXACT_DIRECTORY_OBJECT_ALL_CONTENTS_QUARANTINE_APPROVAL'));
   for (const delta of [{ expectedMain: 'f'.repeat(40) }, { sourceTree: 'f'.repeat(40) }, { mode: 'Delete' },
     { fingerprint: 'b'.repeat(64) }, { operatorSid: 'other' }, { machineHash: 'wrong' }, { root: 'C:\\other' }, { approved: true }])
     assert.throws(() => prepare({ ...input, ...delta }));
