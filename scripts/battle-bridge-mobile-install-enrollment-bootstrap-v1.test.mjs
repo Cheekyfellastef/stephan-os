@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { prepareMobileInstallSetupReviewV1, prepareMobileInstallBootstrapReviewV1,
-  MOBILE_SETUP_INPUT_V1, MOBILE_BOOTSTRAP_INPUT_V1 } from './battle-bridge-mobile-install-enrollment-bootstrap-v1.mjs';
-import { MOBILE_ENROLLMENT_REVIEW_INPUT_V1 } from './battle-bridge-mobile-install-enrollment-review-v1.mjs';
+  prepareMobileInstallFirstPairingReviewV1, prepareMobileInstallCapturedBootstrapReviewV1,
+  MOBILE_SETUP_INPUT_V1, MOBILE_BOOTSTRAP_INPUT_V1, MOBILE_FIRST_PAIRING_INPUT_V1,
+  MOBILE_CAPTURED_BOOTSTRAP_INPUT_V1 } from './battle-bridge-mobile-install-enrollment-bootstrap-v1.mjs';
+import { makeMobileDevicePairingFixtureV1 } from './fixtures/mobile-device-pairing-v1.mjs';
+import { mobileDevicePairingSetupDescriptorV1 } from '../shared/agents/battleBridgeMobileInstallationV1.mjs';
+import { MOBILE_ENROLLMENT_REVIEW_INPUT_V1, prepareMobileInstallEnrollmentReviewV1 } from './battle-bridge-mobile-install-enrollment-review-v1.mjs';
 import { FIXED_RUNTIME_SOURCE_PATHS_V1 } from './sovereign-fixed-runtime-installer-candidate-v1.mjs';
 import { MOBILE_INSTALL_NATIVE_SOURCE_PATHS_V1 } from './fixtures/sovereign-mobile-installer-native-source-v1.mjs';
 import { makeFixedRuntimeSourceProofFixtureV1 } from './fixtures/sovereign-fixed-runtime-source-proof-fixture-v1.mjs';
@@ -88,4 +92,70 @@ test('wrong member bytes, source binding, descriptor fields, caller paths and fa
   const missing = structuredClone(setupInput); missing.nativeSourceInput.records.pop(); assert.throws(() => setup(missing));
   assert.throws(() => bootstrap({ schemaVersion: MOBILE_BOOTSTRAP_INPUT_V1, setupInput,
     deviceAssertionJson: JSON.stringify({ type: 'public-key', id: 'different', response: {} }) }));
+});
+
+const firstPairingInput = {
+  schemaVersion: MOBILE_FIRST_PAIRING_INPUT_V1, reviewInput: setupInput.reviewInput,
+  nativeSourceInput: setupInput.nativeSourceInput, origin: enrollment.origin,
+  rpId: new URL(enrollment.origin).hostname, userHandle: Buffer.alloc(32, 8).toString('base64url'),
+  nonce: setupInput.nonce, issuedAtUtc: setupInput.issuedAtUtc, expiresAtUtc: setupInput.expiresAtUtc,
+};
+const pairingReview = value => prepareMobileInstallFirstPairingReviewV1(JSON.stringify(value), { nowMs: now });
+const capturedBootstrap = (value, nowMs = now) => prepareMobileInstallCapturedBootstrapReviewV1(JSON.stringify(value), { nowMs });
+function captureInput({ registrationCounter = 0, counter } = {}) {
+  const prepared = pairingReview(firstPairingInput);
+  const wire = makeMobileDevicePairingFixtureV1(prepared.context, { nowMs: now, registrationCounter });
+  const descriptor = mobileDevicePairingSetupDescriptorV1(prepared.context, wire.registration, { nowMs: now });
+  return { wire, prepared, input: {
+    schemaVersion: MOBILE_CAPTURED_BOOTSTRAP_INPUT_V1, pairingReviewInput: firstPairingInput,
+    capturedResult: { stage: 'COMPLETED', context: prepared.context, contextSha256: prepared.contextSha256,
+      registration: wire.registration, assertion: wire.assertion(counter === undefined ? {} : { counter }),
+      setupDescriptor: descriptor.setupDescriptor, proposedEnrollmentJson: descriptor.proposedEnrollmentJson,
+      installability: 'NOT_INSTALLABLE', executionAuthorityGranted: false },
+  } };
+}
+
+test('first-device preparation derives exact source/release context without credentials or authority', () => {
+  const result = pairingReview(firstPairingInput);
+  assert.equal(result.installability, 'NOT_INSTALLABLE'); assert.equal(result.context.sourceHead, runtime.fixture.head);
+  assert.equal(result.context.sourceTree, runtime.fixture.tree); assert.equal(result.context.operatorSid, enrollment.operatorSid);
+  assert.equal(result.context.rpId, new URL(enrollment.origin).hostname);
+  const release = prepareMobileInstallEnrollmentReviewV1(JSON.stringify(firstPairingInput.reviewInput));
+  assert.equal(result.context.packageSha256, release.privateFiles.find(file => file.name === 'runtime-package.json').sha256);
+  assert.equal(result.context.releaseProofSha256, release.privateFiles.find(file => file.name === 'release-evidence.json').sha256);
+  assert.deepEqual(Object.values(result.authority), Array(10).fill(false));
+  assert.equal(Object.hasOwn(result.context, 'credentialId'), false); assert.equal(Object.isFrozen(result.context), true);
+});
+
+test('captured registration and real ES256 setup proof independently produce only an inert immutable bootstrap', () => {
+  for (const registrationCounter of [0, 7]) {
+    const { input, wire } = captureInput({ registrationCounter });
+    const result = capturedBootstrap(input);
+    assert.equal(result.installability, 'NOT_INSTALLABLE'); assert.deepEqual(Object.values(result.authority), Array(10).fill(false));
+    const payload = JSON.parse(Buffer.from(result.privateCandidate.payloadBase64, 'base64'));
+    assert.equal(payload.SetupDescriptor, input.capturedResult.setupDescriptor);
+    assert.equal(payload.ProposedEnrollmentJson, input.capturedResult.proposedEnrollmentJson);
+    assert.equal(payload.SourceHead, runtime.fixture.head); assert.equal(payload.Records.length, 19);
+    assert.equal(JSON.parse(payload.ProposedEnrollmentJson).publicKeySpki, wire.publicKeySpki);
+    assert.equal(JSON.parse(payload.ProposedEnrollmentJson).lastSignCount, 0);
+  }
+});
+
+test('capture source/key/descriptor substitution, invented authority and registration counter rollback are refused offline', () => {
+  const { input } = captureInput();
+  const changes = [
+    row => { row.capturedResult.context.sourceHead = 'f'.repeat(40); },
+    row => { row.capturedResult.contextSha256 = 'f'.repeat(64); },
+    row => { row.capturedResult.setupDescriptor += ' '; },
+    row => { row.capturedResult.proposedEnrollmentJson += ' '; },
+    row => { row.capturedResult.registration.rawId = Buffer.alloc(24, 9).toString('base64url'); },
+    row => { row.capturedResult.assertion.response.signature = Buffer.alloc(70, 9).toString('base64url'); },
+    row => { row.capturedResult.executionAuthorityGranted = true; },
+    row => { row.capturedResult.stage = 'AWAITING_CONFIRMATION'; },
+    row => { row.operatorApproved = true; },
+  ];
+  for (const change of changes) { const changed = structuredClone(input); change(changed); assert.throws(() => capturedBootstrap(changed)); }
+  assert.throws(() => capturedBootstrap(captureInput({ registrationCounter: 7, counter: 7 }).input));
+  assert.throws(() => capturedBootstrap(captureInput({ registrationCounter: 7, counter: 6 }).input));
+  assert.throws(() => capturedBootstrap(input, now + 600001));
 });

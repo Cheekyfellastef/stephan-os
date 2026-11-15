@@ -32,6 +32,7 @@ footer{display:flex;justify-content:space-between;gap:16px;color:#809ea9;font-si
 <section class="screen" aria-labelledby="title">
 <div class="topline"><span class="target">BATTLE BRIDGE · INSTALLATION</span><span id="pill" class="pill">Checking</span></div>
 <div class="body" aria-live="polite" aria-atomic="true"><h2 id="title">Checking your connection…</h2><p id="description">Reading the current installation status.</p></div>
+<section id="pairing" hidden aria-labelledby="pairingtitle"><h3 id="pairingtitle">Pair this device</h3><p id="pairingdescription">Use this phone or iPad for future installation confirmations. Windows setup still needs separate administrator approval.</p><p id="pairingsource" class="note"></p><div class="actions"><button id="paircreate" class="primary" hidden>Pair this device</button><button id="pairconfirm" class="primary" hidden>Confirm this device</button><button id="pairsend" hidden>Send captured confirmation</button><button id="pairrefresh">Check pairing status</button><button id="pairstop">Stop pairing</button></div><p id="pairnotice" class="note" role="status"></p></section>
 <div class="actions"><button id="approve" class="primary" hidden>Approve installation</button><button id="later" hidden>Not now</button><button id="cancelrequest" hidden>Cancel request</button><button id="refresh">Refresh status</button><button id="newrequest" hidden>Check for updates</button></div>
 <p id="notice" class="note" role="status"></p>
 <details><summary>Installation details</summary><dl><dt>Request</dt><dd id="request">None</dd><dt>Version</dt><dd id="version">Not confirmed</dd><dt>Observed</dt><dd id="observed">Not yet</dd><dt>Result</dt><dd id="reason">Checking</dd></dl></details>
@@ -46,6 +47,7 @@ let nonce=__CARAVAN_NONCE_JSON__;
 const $=id=>document.getElementById(id);
 const key='stephanos.caravan.installation.request.v1';
 const submittedKey=key+'.submitted';
+let pairingMode=false;
 let requestId='', busy=false, halted=false, view=null, prepared=null, pollTimer=null, refreshEpoch=0, approvalAttempt=0, credentialAbort=null;
 try{const saved=localStorage.getItem(key)||'';if(/^mobile-install-[a-z0-9][a-z0-9-]{7,63}$/.test(saved))requestId=saved;halted=!!requestId&&localStorage.getItem(submittedKey)===requestId;}catch{}
 function remember(id){requestId=id;try{localStorage.setItem(key,id);}catch{}}
@@ -56,9 +58,9 @@ function render(next){
  view=next;$('title').textContent=next.title||'Status unavailable';$('description').textContent=next.description||'Refresh to check the same request.';
  const labels={SETUP_REQUIRED:'Setup required',SIGN_IN_REQUIRED:'Sign-in required',AWAITING_APPROVAL:'Ready for approval',APPROVAL_RECORDED:'Approved',STARTING:'Starting',INSTALLING:'Installing',INSTALLED_PENDING_BOOT:'Restart required',READY:'Ready',UNKNOWN:'Unconfirmed',FAILED:'Failed',CANCELLED:'Cancelled',BLOCKED:'Blocked'};
  $('pill').textContent=labels[next.state]||'Check status';$('pill').classList.toggle('ready',next.state==='READY');
- $('approve').hidden=next.canApprove!==true||halted;$('later').hidden=$('approve').hidden;$('approve').disabled=busy;$('later').disabled=halted;
- $('newrequest').hidden=!next.receiptVerified||!['READY','FAILED','CANCELLED'].includes(next.state);$('newrequest').disabled=busy;
- $('cancelrequest').hidden=!next.receiptVerified||!next.requestId||['READY','FAILED','CANCELLED','INSTALLED_PENDING_BOOT'].includes(next.state);$('cancelrequest').disabled=busy;
+ $('approve').hidden=next.canApprove!==true||halted||pairingMode;$('later').hidden=$('approve').hidden;$('approve').disabled=busy;$('later').disabled=halted;
+ $('newrequest').hidden=pairingMode||!next.receiptVerified||!['READY','FAILED','CANCELLED'].includes(next.state);$('newrequest').disabled=busy;
+ $('cancelrequest').hidden=pairingMode||!next.receiptVerified||!next.requestId||['READY','FAILED','CANCELLED','INSTALLED_PENDING_BOOT'].includes(next.state);$('cancelrequest').disabled=busy;
  $('request').textContent=next.requestId||requestId||'None';$('version').textContent=next.sourceHead?next.sourceHead.slice(0,12):'Not confirmed';
  $('observed').textContent=next.observedAtUtc?new Date(next.observedAtUtc).toLocaleString():'Not yet';
  $('reason').textContent=(next.blockers||[]).join(', ')||(next.receiptVerified?'Verified receipt':'Awaiting protected evidence');
@@ -88,7 +90,7 @@ async function refresh(){
  if(!document.hidden&&requestId&&!['READY','FAILED','CANCELLED','BLOCKED'].includes(view?.state))pollTimer=setTimeout(refresh,15000);
 }
 $('approve').addEventListener('click',async()=>{
- if(busy||halted||!view?.canApprove)return;
+ if(pairingMode||busy||halted||!view?.canApprove)return;
  const attempt=++approvalAttempt;
  busy=true;refreshEpoch++;$('approve').disabled=true;$('later').disabled=false;$('refresh').disabled=true;$('notice').textContent='Preparing your device confirmation…';
  let submitted=false;
@@ -117,7 +119,7 @@ $('approve').addEventListener('click',async()=>{
 });
 $('later').addEventListener('click',()=>{if(halted)return;halted=true;approvalAttempt++;credentialAbort?.abort();credentialAbort=null;busy=false;$('refresh').disabled=false;$('approve').hidden=true;$('later').hidden=true;$('notice').textContent='No approval has been sent. You can return when you are ready.';});
 $('cancelrequest').addEventListener('click',async()=>{
- if(busy||!view?.receiptVerified||!view.requestId||['READY','FAILED','CANCELLED','INSTALLED_PENDING_BOOT'].includes(view.state))return;
+ if(pairingMode||busy||!view?.receiptVerified||!view.requestId||['READY','FAILED','CANCELLED','INSTALLED_PENDING_BOOT'].includes(view.state))return;
  const original=view.requestId;halted=true;approvalAttempt++;credentialAbort?.abort();credentialAbort=null;busy=true;refreshEpoch++;clearTimeout(pollTimer);
  try{localStorage.setItem(submittedKey,original);}catch{}
  render(view);$('notice').textContent='Cancelling the current request…';
@@ -125,9 +127,107 @@ $('cancelrequest').addEventListener('click',async()=>{
  catch{$('notice').textContent='Cancellation needs confirmation. Refresh the same request; approval will not be sent again.';}
  finally{busy=false;if(view)render(view);refresh();}
 });
-$('newrequest').addEventListener('click',()=>{if(busy||!view?.receiptVerified||!['READY','FAILED','CANCELLED'].includes(view.state))return;requestId='';halted=false;view=null;try{localStorage.removeItem(key);localStorage.removeItem(submittedKey);}catch{}$('notice').textContent='Checking for the next installation.';refresh();});
+$('newrequest').addEventListener('click',()=>{if(pairingMode||busy||!view?.receiptVerified||!['READY','FAILED','CANCELLED'].includes(view.state))return;requestId='';halted=false;view=null;try{localStorage.removeItem(key);localStorage.removeItem(submittedKey);}catch{}$('notice').textContent='Checking for the next installation.';refresh();});
 $('refresh').addEventListener('click',refresh);
 document.addEventListener('visibilitychange',()=>{clearTimeout(pollTimer);if(!document.hidden)refresh();});
+// First-pairing capture is an inert proposal. It never calls install/approve,
+// writes enrollment, or persists its private capture capability in the browser.
+(()=>{
+ let cap='',state=null,pinnedContext='',pairBusy=false,pairEpoch=0,pairAbort=null,pendingCapture=null;
+ try{
+  const match=String(window.location?.hash||'').match(/^#pairing=([a-f0-9]{64})$/);
+  if(!match)return;
+  cap=match[1];
+  window.history.replaceState(null,'',window.location.pathname+window.location.search);
+ }catch{return;}
+ pairingMode=true;$('pairing').hidden=false;
+ function draw(){
+  const stage=state?.stage||'UNKNOWN';
+  $('paircreate').hidden=stage!=='ARMED'||!!pendingCapture;
+  $('pairconfirm').hidden=stage!=='AWAITING_CONFIRMATION'||!!pendingCapture;
+  $('pairsend').hidden=!pendingCapture||!['CREATE_STARTED','AWAITING_CONFIRMATION'].includes(stage);
+  for(const id of ['paircreate','pairconfirm','pairsend','pairrefresh'])$(id).disabled=pairBusy||!cap;
+  const text={ARMED:['Pair this device','Your device will ask to create a passkey. This does not approve Windows setup.'],CREATE_STARTED:['Device capture in progress','Refresh this same pairing to check its result. Another passkey will not be created automatically.'],AWAITING_CONFIRMATION:['Confirm this device','Confirm the captured device once more to bind it to this reviewed Windows setup.'],COMPLETED:['Device confirmation captured','Windows setup is waiting for separate administrator approval. The installer is not enrolled yet.'],EXPIRED:['Pairing has expired','A fresh private pairing must be prepared before trying again.'],UNKNOWN:['Pairing outcome unconfirmed','Check this same pairing. No installation has been approved.']};
+  const message=text[stage]||text.UNKNOWN;$('pairingtitle').textContent=message[0];$('pairingdescription').textContent=message[1];
+  $('pairingsource').textContent=/^[a-f0-9]{40}$/.test(state?.sourceHead||'')?'Setup source '+state.sourceHead.slice(0,12):'';
+  if(view)render(view);
+ }
+ async function pairingCall(path,body){
+  const requestEpoch=pairEpoch,requestCapability=cap;
+  const headers={'x-stephanos-pairing-capture':cap};
+  const init={cache:'no-store',headers};
+  if(body!==undefined){init.method='POST';headers['content-type']='application/json';headers['x-stephanos-caravan-nonce']=nonce;init.body=JSON.stringify(body);}
+  const response=await fetch('/caravan/setup/'+path,init);const data=await response.json();
+  if(requestEpoch!==pairEpoch||requestCapability!==cap||!cap)throw Error('Pairing stopped');
+  if(data.csrfNonce)nonce=data.csrfNonce;
+  if(response.status===410&&data.stage==='EXPIRED'&&data.installability==='NOT_INSTALLABLE'&&data.executionAuthorityGranted===false&&/^[a-f0-9]{64}$/.test(data.contextSha256||'')&&(!pinnedContext||pinnedContext===data.contextSha256)){
+   pinnedContext=data.contextSha256;state=data;pendingCapture=null;draw();
+   if(path==='status')return data;const error=Error('Pairing expired');error.rejected=true;throw error;
+  }
+  if(!response.ok||data.ok!==true){const error=Error('Pairing could not be confirmed.');error.rejected=response.status>=400&&response.status<500;throw error;}
+  if(!/^[a-f0-9]{64}$/.test(data.contextSha256||'')||!['ARMED','CREATE_STARTED','AWAITING_CONFIRMATION','COMPLETED','EXPIRED'].includes(data.stage)||data.installability!=='NOT_INSTALLABLE'||data.executionAuthorityGranted!==false)throw Error('Unverified pairing response');
+  if(pinnedContext&&pinnedContext!==data.contextSha256)throw Error('Pairing changed');
+  pinnedContext=data.contextSha256;state=data;
+  if(data.stage==='COMPLETED'||(data.stage==='AWAITING_CONFIRMATION'&&pendingCapture?.path==='register'))pendingCapture=null;
+  draw();return data;
+ }
+ async function checkPairing(){
+  if(pairBusy||!cap)return;
+  const epoch=pairEpoch;
+  pairBusy=true;draw();
+  try{await pairingCall('status');}
+  catch{if(epoch!==pairEpoch)return;state={stage:'UNKNOWN'};$('pairnotice').textContent='Pairing status is unavailable. Check this same setup before continuing.';}
+  finally{if(epoch===pairEpoch){pairBusy=false;draw();}}
+ }
+ function createOptions(data){
+  const p=data.publicKey;
+  if(!window.isSecureContext||!navigator.credentials?.create||p?.rp?.id!==window.location.hostname||p?.attestation!=='none'||p?.authenticatorSelection?.userVerification!=='required'||p.pubKeyCredParams?.length!==1||p.pubKeyCredParams[0].type!=='public-key'||p.pubKeyCredParams[0].alg!==-7)throw Error('Secure device pairing unavailable');
+  const challenge=b64bytes(p.challenge),user=b64bytes(p.user?.id||'');if(challenge.length!==32||user.length!==32)throw Error('Invalid pairing options');
+  return {rp:{id:p.rp.id,name:'Stephanos'},user:{id:user,name:'Stephanos operator',displayName:'Stephanos operator'},challenge,pubKeyCredParams:[{type:'public-key',alg:-7}],authenticatorSelection:{userVerification:'required',residentKey:'preferred'},attestation:'none',timeout:60000};
+ }
+ function getOptions(data){
+  const p=data.publicKey;
+  if(!window.isSecureContext||!navigator.credentials?.get||p?.rpId!==window.location.hostname||p?.userVerification!=='required'||p.allowCredentials?.length!==1||p.allowCredentials[0].type!=='public-key')throw Error('Secure device confirmation unavailable');
+  const challenge=b64bytes(p.challenge),id=b64bytes(p.allowCredentials[0].id);if(challenge.length!==32||id.length<16||id.length>1024)throw Error('Invalid device confirmation');
+  return {challenge,rpId:p.rpId,allowCredentials:[{type:'public-key',id}],userVerification:'required',timeout:60000};
+ }
+ async function capture(kind){
+  if(pairBusy||!cap||pendingCapture||(kind==='create'?state?.stage!=='ARMED':state?.stage!=='AWAITING_CONFIRMATION'))return;
+  const epoch=++pairEpoch;pairBusy=true;draw();
+  try{
+   const data=kind==='create'?await pairingCall('begin-create',{}):await pairingCall('status');
+   if(epoch!==pairEpoch||!cap)return;
+   const options=kind==='create'?createOptions(data):getOptions(data);pairAbort=new AbortController();
+   const credential=await navigator.credentials[kind]({publicKey:options,signal:pairAbort.signal});
+   if(epoch!==pairEpoch||!cap)return;
+   if(!credential||credential.type!=='public-key')throw Error('No device result');
+   const r=credential.response;
+   if(!r?.clientDataJSON||r.clientDataJSON.byteLength>2048)throw Error('Invalid device result');
+   let body,path;
+   if(kind==='create'){
+    if(!r.attestationObject||r.attestationObject.byteLength>8192)throw Error('Invalid registration result');
+    path='register';body={registration:{id:credential.id,rawId:b64url(credential.rawId),type:credential.type,response:{clientDataJSON:b64url(r.clientDataJSON),attestationObject:b64url(r.attestationObject)}}};
+   }else{
+    if(!r.authenticatorData||r.authenticatorData.byteLength>1024||!r.signature||r.signature.byteLength>72||r.userHandle?.byteLength>64)throw Error('Invalid confirmation result');
+    path='assert';body={assertion:{id:credential.id,rawId:b64url(credential.rawId),type:credential.type,response:{clientDataJSON:b64url(r.clientDataJSON),authenticatorData:b64url(r.authenticatorData),signature:b64url(r.signature),userHandle:r.userHandle?b64url(r.userHandle):null}}};
+   }
+   pendingCapture={path,body};await pairingCall(path,body);pendingCapture=null;
+   $('pairnotice').textContent=state.stage==='COMPLETED'?'Device confirmation captured. Windows setup has not been approved.':'Device captured. Confirm this same device to continue.';
+  }catch(error){if(epoch!==pairEpoch)return;if(error.rejected)pendingCapture=null;$('pairnotice').textContent=error.name==='NotAllowedError'?'Device confirmation was cancelled. Check the same pairing status.':'The device result needs confirmation. Refresh this same pairing; another passkey will not be created automatically.';}
+  finally{if(epoch===pairEpoch){pairBusy=false;pairAbort=null;draw();await checkPairing();}}
+ }
+ $('paircreate').addEventListener('click',()=>capture('create'));
+ $('pairconfirm').addEventListener('click',()=>capture('get'));
+ $('pairrefresh').addEventListener('click',checkPairing);
+ $('pairsend').addEventListener('click',async()=>{
+  if(pairBusy||!cap||!pendingCapture)return;const epoch=pairEpoch;pairBusy=true;draw();
+  try{const same=pendingCapture;await pairingCall(same.path,same.body);pendingCapture=null;$('pairnotice').textContent='Captured device result confirmed. Windows setup has not been approved.';}
+  catch(error){if(epoch!==pairEpoch)return;if(error.rejected)pendingCapture=null;$('pairnotice').textContent='The captured result is still unconfirmed. Check this same pairing.';}
+  finally{if(epoch===pairEpoch){pairBusy=false;draw();await checkPairing();}}
+ });
+ $('pairstop').addEventListener('click',()=>{pairEpoch++;pairAbort?.abort();pairAbort=null;cap='';pendingCapture=null;pairBusy=false;state={stage:'UNKNOWN'};$('pairnotice').textContent='Pairing stopped. Windows setup has not been approved.';draw();});
+ checkPairing();
+})();
 refresh();
 </script>
 </body></html>`;

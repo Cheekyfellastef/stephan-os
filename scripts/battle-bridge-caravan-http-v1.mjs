@@ -1,13 +1,17 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import {
   projectMobileInstallationV1, mobileInstallationRequestOptionsV1,
   verifyMobileInstallationAssertionV1,
+  normalizeMobileDevicePairingContextV1, mobileDevicePairingCreateOptionsV1,
+  mobileDevicePairingSetupDescriptorV1, verifyMobileDevicePairingRegistrationV1,
+  verifyMobileDevicePairingSetupAssertionV1,
 } from '../shared/agents/battleBridgeMobileInstallationV1.mjs';
 import { createBattleBridgeMobileInstallationProviderV1 } from './windows/battle-bridge-mobile-install-native-v1.mjs';
 import { renderBattleBridgeCaravanPageV1 } from './battle-bridge-caravan-page-v1.mjs';
 
 export const CARAVAN_PATH = '/caravan';
 export const CARAVAN_NONCE_TTL_MS = 5 * 60_000;
+export const CARAVAN_PAIRING_TTL_MS = 15 * 60_000;
 const REQUEST_ID = /^mobile-install-[a-z0-9][a-z0-9-]{7,63}$/;
 const MAX_BODY = 24 * 1024;
 const validId = value => typeof value === 'string' && REQUEST_ID.test(value);
@@ -26,14 +30,14 @@ function json(res, status, body) {
   res.end(output);
 }
 
-async function readBody(req) {
+async function readBody(req, maximum = MAX_BODY) {
   if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type'] || ''))
     throw Object.assign(new Error('JSON_REQUIRED'), { statusCode: 415 });
   const chunks = [];
   let length = 0;
   for await (const chunk of req) {
     length += chunk.length;
-    if (length > MAX_BODY) throw Object.assign(new Error('REQUEST_TOO_LARGE'), { statusCode: 413 });
+    if (length > maximum) throw Object.assign(new Error('REQUEST_TOO_LARGE'), { statusCode: 413 });
     chunks.push(chunk);
   }
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
@@ -105,6 +109,9 @@ export function createBattleBridgeCaravanHttpHandlerV1(options = {}) {
   const pending = new Set();
   const attempted = new Map(); // Retain uncertain dispatches; never a replacement for the native journal.
   const watermarks = new Map(); // Presentation replay protection; native journal remains authoritative.
+  // One optional bounded capture draft belongs to this existing handler only.
+  // It is neither enrollment nor a native request, journal, queue or authority.
+  let pairingDraft = null, pairingArmPending = false;
   function freshNonce() {
     const now = nowMs();
     for (const [nonce, expires] of nonces) if (expires <= now) nonces.delete(nonce);
@@ -135,8 +142,167 @@ export function createBattleBridgeCaravanHttpHandlerV1(options = {}) {
         && ['READY', 'FAILED', 'CANCELLED'].includes(view.state)) attempted.delete(view.requestId);
     return view;
   }
+  function pairingCurrent() {
+    if (pairingDraft && pairingDraft.stage !== 'EXPIRED' && nowMs() >= pairingDraft.expires) {
+      pairingDraft.stage = 'EXPIRED';
+      pairingDraft.registration = pairingDraft.assertion = pairingDraft.descriptor = null;
+    }
+    return pairingDraft;
+  }
+  function pairingView(draft) {
+    const body = { ok: true, stage: draft?.stage || 'UNKNOWN', installability: 'NOT_INSTALLABLE',
+      executionAuthorityGranted: false, enrollmentQualified: false };
+    if (!draft) return body;
+    Object.assign(body, { contextSha256: draft.contextSha256, sourceHead: draft.context.sourceHead,
+      expiresAtUtc: draft.context.expiresAtUtc });
+    if (draft.stage === 'AWAITING_CONFIRMATION') Object.assign(body, {
+      publicKey: draft.descriptor.publicKey, setupDescriptorSha256: draft.descriptor.setupDescriptorSha256,
+      deviceFingerprint: draft.deviceFingerprint });
+    return body;
+  }
+  function captureMatches(req, draft) {
+    const value = req.headers['x-stephanos-pairing-capture'];
+    return draft && typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+      && timingSafeEqual(Buffer.from(value, 'hex'), draft.capability);
+  }
+  function strictPairingOrigin(req) {
+    if (typeof options.publicOrigin !== 'string' || !options.publicOrigin) return false;
+    const site = req.headers['sec-fetch-site'];
+    if (site && site !== 'same-origin' && site !== 'none') return false;
+    return req.headers.origin ? req.headers.origin === options.publicOrigin
+      : req.method === 'GET' && site === 'same-origin';
+  }
+  const canonicalCapture = value => JSON.stringify(value, (_, item) => item && typeof item === 'object' && !Array.isArray(item)
+    ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+  async function handlePairing(req, res, url) {
+    const route = url.pathname.slice((CARAVAN_PATH + '/setup/').length);
+    const privateRoute = route === 'arm' || route === 'result';
+    if (privateRoute) {
+      // This callback is wired privately by Commander from its existing bearer.
+      // No browser boolean, Origin, capability or payload can grant this access.
+      if (typeof options.privateOwnerAuthorized !== 'function' || options.privateOwnerAuthorized(req) !== true
+          || req.headers.origin !== undefined
+          || (req.headers['sec-fetch-site'] && req.headers['sec-fetch-site'] !== 'none')) {
+        json(res, 403, { ok: false, message: 'Private owner authorization is required.' }); return true;
+      }
+    } else if (!strictPairingOrigin(req)) {
+      json(res, 403, { ok: false, message: 'Use the paired private origin.' }); return true;
+    }
+    if (url.search) { json(res, 400, { ok: false, message: 'Unexpected setup parameters.' }); return true; }
+    if (privateRoute && req.method !== (route === 'arm' ? 'POST' : 'GET')) {
+      json(res, 405, { ok: false, message: 'Method not allowed.' }); return true;
+    }
+    if (route === 'result') {
+      const draft = pairingCurrent(), body = pairingView(draft);
+      delete body.publicKey; delete body.deviceFingerprint; delete body.setupDescriptorSha256;
+      if (draft?.stage === 'COMPLETED') {
+        Object.assign(body, { context: draft.context, registration: draft.registration,
+          assertion: draft.assertion,
+          setupDescriptor: draft.descriptor.setupDescriptor,
+          setupDescriptorSha256: draft.descriptor.setupDescriptorSha256,
+          proposedEnrollmentJson: draft.descriptor.proposedEnrollmentJson });
+      }
+      json(res, 200, body); return true;
+    }
+    if (route === 'arm') {
+      const body = await readBody(req);
+      const normalized = exactKeys(body, ['context'])
+        ? normalizeMobileDevicePairingContextV1(body.context, { nowMs: nowMs() }) : null;
+      if (!normalized?.ok || normalized.context.sourceHead !== options.expectedMain
+          || !options.publicOrigin || normalized.context.origin !== options.publicOrigin) {
+        json(res, 400, { ok: false, message: 'A fresh source-bound setup context is required.' }); return true;
+      }
+      const current = pairingCurrent();
+      if (pairingArmPending || (current && current.stage !== 'EXPIRED' && current.contextSha256 !== normalized.contextSha256)) {
+        json(res, 409, { ok: false, message: 'The original setup capture remains active.' }); return true;
+      }
+      if (!current || current.stage === 'EXPIRED') {
+        pairingArmPending = true;
+        try {
+          if (projected(await provider.observe()).state !== 'SETUP_REQUIRED') {
+            json(res, 409, { ok: false, message: 'Protected setup is not currently missing.' }); return true;
+          }
+          const checked = normalizeMobileDevicePairingContextV1(normalized.context, { nowMs: nowMs() });
+          if (!checked.ok) { json(res, 410, { ok: false, stage: 'EXPIRED' }); return true; }
+          pairingDraft = { context: checked.context, contextSha256: checked.contextSha256,
+            expires: Math.min(Date.parse(checked.context.expiresAtUtc), nowMs() + CARAVAN_PAIRING_TTL_MS),
+            capability: randomBytes(32), stage: 'ARMED', registration: null, assertion: null, descriptor: null };
+        } finally { pairingArmPending = false; }
+      }
+      json(res, 200, { ...pairingView(pairingDraft),
+        captureUrl: pairingDraft.context.origin + '/caravan#pairing=' + pairingDraft.capability.toString('hex') });
+      return true;
+    }
+    const draft = pairingCurrent();
+    if (!captureMatches(req, draft)) {
+      json(res, 403, { ok: false, message: 'The setup capture is unavailable.' }); return true;
+    }
+    if (draft.stage === 'EXPIRED') { json(res, 410, pairingView(draft)); return true; }
+    if (route === 'status' && req.method === 'GET') {
+      json(res, 200, { ...pairingView(draft), csrfNonce: freshNonce() }); return true;
+    }
+    if (!['begin-create', 'register', 'assert'].includes(route)) {
+      json(res, 404, { ok: false, message: 'Setup route not found.' }); return true;
+    }
+    if (req.method !== 'POST') { json(res, 405, { ok: false, message: 'Method not allowed.' }); return true; }
+    const nonce = req.headers['x-stephanos-caravan-nonce'];
+    if (!nonces.has(nonce) || nonces.get(nonce) <= nowMs()) {
+      json(res, 403, { ...pairingView(draft), ok: false, message: 'Refresh setup status before continuing.' }); return true;
+    }
+    nonces.delete(nonce);
+    const body = await readBody(req, route === 'register' ? 64 * 1024 : MAX_BODY);
+    const csrfNonce = freshNonce();
+    // The body can arrive slowly. Never admit a credential after draft expiry
+    // or a private re-arm replaced this exact capture during that await.
+    if (pairingCurrent() !== draft || draft.stage === 'EXPIRED') {
+      json(res, 410, { ...pairingView(draft), csrfNonce }); return true;
+    }
+    if (route === 'begin-create') {
+      if (!exactKeys(body, [])) { json(res, 400, { ok: false, csrfNonce }); return true; }
+      if (draft.stage !== 'ARMED') { json(res, 409, { ...pairingView(draft), ok: false, csrfNonce }); return true; }
+      const create = mobileDevicePairingCreateOptionsV1(draft.context, { nowMs: nowMs() });
+      if (!create.ok) { json(res, 409, { ...pairingView(draft), ok: false, csrfNonce }); return true; }
+      draft.stage = 'CREATE_STARTED';
+      json(res, 200, { ...pairingView(draft), csrfNonce, publicKey: create.publicKey }); return true;
+    }
+    if (route === 'register') {
+      if (!exactKeys(body, ['registration'])) { json(res, 400, { ok: false, csrfNonce }); return true; }
+      const encoded = canonicalCapture(body.registration);
+      if (draft.registration) {
+        json(res, encoded === draft.registrationCanonical ? 200 : 409,
+          { ...pairingView(draft), ok: encoded === draft.registrationCanonical, csrfNonce }); return true;
+      }
+      if (draft.stage !== 'CREATE_STARTED') { json(res, 409, { ...pairingView(draft), ok: false, csrfNonce }); return true; }
+      const verified = verifyMobileDevicePairingRegistrationV1(draft.context, body.registration, { nowMs: nowMs() });
+      const descriptor = verified.ok && mobileDevicePairingSetupDescriptorV1(draft.context, body.registration, { nowMs: nowMs() });
+      if (!verified.ok || !descriptor.ok) { json(res, 400, { ...pairingView(draft), ok: false, csrfNonce }); return true; }
+      draft.registration = JSON.parse(encoded); draft.registrationCanonical = encoded; draft.descriptor = descriptor;
+      draft.deviceFingerprint = createHash('sha256').update(Buffer.from(verified.publicKeySpki, 'base64url')).digest('hex');
+      draft.stage = 'AWAITING_CONFIRMATION';
+      json(res, 200, { ...pairingView(draft), csrfNonce }); return true;
+    }
+    if (!exactKeys(body, ['assertion'])) { json(res, 400, { ok: false, csrfNonce }); return true; }
+    const encoded = canonicalCapture(body.assertion);
+    if (draft.stage === 'COMPLETED') {
+      json(res, encoded === draft.assertionCanonical ? 200 : 409,
+        { ...pairingView(draft), ok: encoded === draft.assertionCanonical, csrfNonce }); return true;
+    }
+    if (draft.stage !== 'AWAITING_CONFIRMATION') { json(res, 409, { ...pairingView(draft), ok: false, csrfNonce }); return true; }
+    const verified = verifyMobileDevicePairingSetupAssertionV1(draft.context, draft.registration, body.assertion, { nowMs: nowMs() });
+    if (!verified.ok || verified.devicePossessionVerified !== true) { json(res, 403, { ...pairingView(draft), ok: false, csrfNonce }); return true; }
+    draft.assertion = JSON.parse(encoded); draft.assertionCanonical = encoded; draft.stage = 'COMPLETED';
+    json(res, 200, { ...pairingView(draft), csrfNonce }); return true;
+  }
   return async function handleCaravan(req, res, url) {
     if (url.pathname !== CARAVAN_PATH && !url.pathname.startsWith(CARAVAN_PATH + '/')) return false;
+    if (url.pathname.startsWith(CARAVAN_PATH + '/setup/')) {
+      try { return await handlePairing(req, res, url); }
+      catch (error) {
+        json(res, [400, 413, 415].includes(error?.statusCode) ? error.statusCode : 503,
+          { ok: false, stage: 'UNKNOWN', installability: 'NOT_INSTALLABLE', executionAuthorityGranted: false,
+            message: 'The setup capture could not be confirmed.' }); return true;
+      }
+    }
     if (!allowedOrigin(req)) {
       json(res, 403, { ok: false, message: 'Open this page from your private Commander address.' }); return true;
     }

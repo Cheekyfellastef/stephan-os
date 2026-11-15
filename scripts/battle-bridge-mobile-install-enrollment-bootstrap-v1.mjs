@@ -4,10 +4,15 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { prepareMobileInstallEnrollmentReviewV1 } from './battle-bridge-mobile-install-enrollment-review-v1.mjs';
 import { inspectFixedRuntimeGitMemberEvidenceV1 } from './sovereign-fixed-runtime-install-source-package-v1.mjs';
-import { inspectMobileInstallationEnrollmentDataV1 } from '../shared/agents/battleBridgeMobileInstallationV1.mjs';
+import { inspectMobileInstallationEnrollmentDataV1, normalizeMobileDevicePairingContextV1,
+  mobileDevicePairingSetupDescriptorV1, verifyMobileDevicePairingSetupAssertionV1,
+} from '../shared/agents/battleBridgeMobileInstallationV1.mjs';
+import { fixedRuntimeGitClosureSha256V1 } from './sovereign-fixed-runtime-installer-candidate-v1.mjs';
 
 export const MOBILE_SETUP_INPUT_V1 = 'stephanos.mobile-installer-setup-review-input.v1';
 export const MOBILE_BOOTSTRAP_INPUT_V1 = 'stephanos.mobile-installer-bootstrap-review-input.v1';
+export const MOBILE_FIRST_PAIRING_INPUT_V1 = 'stephanos.mobile-installer-first-pairing-review-input.v1';
+export const MOBILE_CAPTURED_BOOTSTRAP_INPUT_V1 = 'stephanos.mobile-installer-captured-bootstrap-review-input.v1';
 const ENTRY = 'scripts/windows/install-battle-bridge-mobile-installer-v1.ps1';
 const DECLARATION = 'shared/agents/sovereignMobileInstallerNativeClosureV1.json';
 const declarationBytes = readFileSync(new URL('../' + DECLARATION, import.meta.url));
@@ -140,4 +145,63 @@ try {
       script, scriptSha256: hash(script), encodedCommand,
       powershellExecutable: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe' },
     requiredGates: prepared.review.requiredGates, authority: prepared.review.authority });
+}
+
+/** Private preparation only: bind an inert first-device capture to exact source.
+ * No public credential, administrator token, receipt key or authority is created.
+ */
+export function prepareMobileInstallFirstPairingReviewV1(serializedInput, { nowMs = Date.now() } = {}) {
+  const row = input(serializedInput, ['schemaVersion', 'reviewInput', 'nativeSourceInput',
+    'origin', 'rpId', 'userHandle', 'nonce', 'issuedAtUtc', 'expiresAtUtc']);
+  if (row.schemaVersion !== MOBILE_FIRST_PAIRING_INPUT_V1) fail();
+  const review = prepareMobileInstallEnrollmentReviewV1(JSON.stringify(row.reviewInput));
+  const native = inspectFixedRuntimeGitMemberEvidenceV1(JSON.stringify(row.nativeSourceInput), paths);
+  if (native.sourceHead !== review.source.head || native.sourceTree !== review.source.tree) fail();
+  const runtime = review.privateFiles.find(file => file.name === 'runtime-package.json');
+  const release = review.privateFiles.find(file => file.name === 'release-evidence.json');
+  const captured = JSON.parse(Buffer.from(runtime.contentBase64, 'base64').toString('utf8'));
+  const checked = normalizeMobileDevicePairingContextV1({
+    schemaVersion: 'stephanos.mobile-installer-first-device-context.v1',
+    repository: review.source.repository, issueNumber: 1814, action: 'CAPTURE_MOBILE_INSTALLER_FIRST_DEVICE_V1',
+    sourceHead: review.source.head, sourceTree: review.source.tree,
+    machineHash: row.reviewInput.machineHash, operatorSid: row.reviewInput.operatorSid,
+    enrollmentGeneration: row.reviewInput.enrollmentGeneration, packageSha256: runtime.sha256,
+    closureSha256: fixedRuntimeGitClosureSha256V1(captured.Records), releaseProofSha256: release.sha256,
+    origin: row.origin, rpId: row.rpId, userHandle: row.userHandle, nonce: row.nonce,
+    issuedAtUtc: row.issuedAtUtc, expiresAtUtc: row.expiresAtUtc,
+  }, { nowMs });
+  if (!checked.ok) fail();
+  return freeze({ schemaVersion: 'stephanos.mobile-installer-first-pairing-review.v1',
+    installability: 'NOT_INSTALLABLE', containsPrivateOperatorIdentity: true,
+    context: checked.context, contextSha256: checked.contextSha256, source: review.source,
+    requiredGates: review.requiredGates, authority: review.authority });
+}
+
+/** Revalidate captured registration and setup possession outside the HTTP owner.
+ * Raw capture remains a proposal. The existing native/manual gates still apply.
+ */
+export function prepareMobileInstallCapturedBootstrapReviewV1(serializedInput, { nowMs = Date.now() } = {}) {
+  const row = input(serializedInput, ['schemaVersion', 'pairingReviewInput', 'capturedResult']);
+  if (row.schemaVersion !== MOBILE_CAPTURED_BOOTSTRAP_INPUT_V1) fail();
+  const prepared = prepareMobileInstallFirstPairingReviewV1(JSON.stringify(row.pairingReviewInput), { nowMs });
+  const result = row.capturedResult;
+  if (!result || result.stage !== 'COMPLETED' || result.installability !== 'NOT_INSTALLABLE'
+      || result.executionAuthorityGranted !== false) fail();
+  const observed = normalizeMobileDevicePairingContextV1(result.context, { nowMs });
+  if (!observed.ok || observed.contextSha256 !== prepared.contextSha256
+      || result.contextSha256 !== prepared.contextSha256) fail();
+  const device = verifyMobileDevicePairingSetupAssertionV1(prepared.context, result.registration, result.assertion, { nowMs });
+  const setup = mobileDevicePairingSetupDescriptorV1(prepared.context, result.registration, { nowMs });
+  if (!device.ok || !device.devicePossessionVerified || !setup.ok
+      || result.setupDescriptor !== setup.setupDescriptor
+      || result.proposedEnrollmentJson !== setup.proposedEnrollmentJson) fail();
+  const original = row.pairingReviewInput;
+  const setupInput = { schemaVersion: MOBILE_SETUP_INPUT_V1, reviewInput: original.reviewInput,
+    nativeSourceInput: original.nativeSourceInput, proposedEnrollmentJson: setup.proposedEnrollmentJson,
+    nonce: prepared.context.nonce, issuedAtUtc: prepared.context.issuedAtUtc, expiresAtUtc: prepared.context.expiresAtUtc };
+  const independentlyPrepared = prepareMobileInstallSetupReviewV1(JSON.stringify(setupInput));
+  if (independentlyPrepared.descriptor !== setup.setupDescriptor
+      || independentlyPrepared.descriptorSha256 !== setup.setupDescriptorSha256) fail();
+  return prepareMobileInstallBootstrapReviewV1(JSON.stringify({ schemaVersion: MOBILE_BOOTSTRAP_INPUT_V1,
+    setupInput, deviceAssertionJson: JSON.stringify(result.assertion) }));
 }
