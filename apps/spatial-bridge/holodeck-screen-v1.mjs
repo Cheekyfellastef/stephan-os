@@ -58,7 +58,7 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
   let revision=0,drawn='',zoom=1,panX=0,panY=0,viewPending=false,inputFeedback=null,shift=false,hover=null,voiceHelp=false,reloadConfirm=false,lastPoint={x:0.5,y:0.5};
   let lastKeyPress=null;
   let focusedPanel='chatgpt',toolsPage='audio',furnitureTarget='keyboard',selectedWindow=null;
-  let connectionPending=null,connectionMessage='Check the Windows helper before connecting.',connectionEpoch=0,inputRevoked=false;
+  let connectionPending=null,connectionMessage='',connectionEpoch=0,inputRevoked=false;
   const pressKeycap=id=>{if(SCREEN_KEYS.some(key=>key.id===id))lastKeyPress={id,at:now()};};
   const getKeycapMotion=()=>lastKeyPress?{id:lastKeyPress.id,ageMs:now()-lastKeyPress.at}:null;
   const changed=()=>{revision++;try{onStatus(getState());}catch{}};
@@ -139,20 +139,22 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
     return Promise.resolve(promise).then(result=>{
       if(owner!==connectionEpoch)return false;
       completed(result);
-      connectionMessage=result?.reason??client.getState().message??'The connection check completed.';return result;
+      // Only an independent diagnostic or action error belongs here. The
+      // client's current phase is projected live and must never be snapshotted.
+      connectionMessage=typeof result?.reason==='string'?result.reason:'';return result;
     }).catch(()=>{if(owner===connectionEpoch)connectionMessage='Connection action failed. Check the current helper and window status.';return false;})
       .finally(()=>{if(owner===connectionEpoch){connectionPending=null;changed();}});
   }
   function runConnection(label,operation,completed){
     if(connectionPending)return false;
-    const owner=++connectionEpoch;connectionPending=label;connectionMessage=label;changed();
+    const owner=++connectionEpoch;connectionPending=label;connectionMessage='';changed();
     return settleConnection(owner,Promise.resolve().then(()=>owner===connectionEpoch?operation():false),completed);
   }
   function stopConnection(){
     // Revocation is synchronous, before a subscriber or another hand can send
     // input in this frame. Completion only reconciles that original stop.
     const owner=++connectionEpoch;inputRevoked=true;selectedWindow=null;
-    connectionPending='Disconnecting the selected ChatGPT window…';connectionMessage=connectionPending;
+    connectionPending='Disconnecting the selected ChatGPT window…';connectionMessage='';
     let stopped;
     try{stopped=client.stop();}catch(error){stopped=Promise.reject(error);}
     if(owner===connectionEpoch)changed();
@@ -318,7 +320,7 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
       const selected=currentSelection();
       text(ctx,selected?.title??'Choose a window, then select it here.',2354,394,27,'#d5f8ff',650);
       text(ctx,state.status==='selecting'?(state.windows?.length??0)+' windows available':'No window selection in progress',2354,427,24,'#aad0db',650);
-      paragraph([connectionMessage,state.message],2354,650,650,26,36,4);
+      paragraph([...new Set([state.message,connectionPending??connectionMessage].filter(Boolean))],2354,650,650,26,36,4);
       text(ctx,'Windows asks for this window’s consent.',2354,818,23,'#aad0db',650);
     }
   }

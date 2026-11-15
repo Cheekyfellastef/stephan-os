@@ -19,7 +19,7 @@ const valid={schema:'stephanos.spatial-window-health.v1',buildId:'a'.repeat(64)}
 test('an operational helper is a selection prerequisite, never an input grant',async()=>{
   const {client,requests}=helper(valid);
   const result=await client.probeHelper();
-  assert.equal(result.ok,true);assert.match(result.reason,/Choose a window/);
+  assert.equal(result.ok,true);assert.equal(result.reason,'Local Spatial helper responds.');
   assert.equal(client.getState().status,'idle');assert.equal(client.getFrame(),null);
   assert.equal(client.input({kind:'text',text:'not granted'}),false);
   assert.deepEqual(requests.map(({url,method,cache})=>({url,method,cache})),[

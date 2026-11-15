@@ -191,6 +191,7 @@
     const canvas = document.getElementById('holodeck-canvas');
     let lastCapability = null;
     let previewRenderer = null;
+    let previewReady = false;
     let immersiveActive = false;
     let inspectKeyboard = false;
     function refreshComfortUI(state) {
@@ -413,7 +414,7 @@
     let previewFrame = null;
     let previewTime = null;
     function drawPreview() {
-      if (immersiveActive || document.hidden) return;
+      if (!previewReady || immersiveActive || document.hidden) return false;
       try {
         // The flat holographic pages remain useful even without a WebGL room.
         screen?.render();
@@ -468,6 +469,9 @@
       'cube-reset': () => selectedCube().reset(),
       'cube-inspect': () => { inspectCube = !inspectCube; document.getElementById('cube-inspect').textContent = inspectCube ? 'View whole room' : 'Inspect glass cubes'; },
     })) document.getElementById(id).addEventListener('click', () => { if (!immersiveActive) { action(); cubeScene.checkpoint(0,true); playPreview(); } });
+    // Shared-control callbacks can run during setup. Construct the room only
+    // after its screen, furniture and cube scene are all available.
+    previewReady = true;
     playPreview();
     function refreshExternalRouteTruth() {
       const routeTruth = navigator.onLine ? 'network required · not offline-cached' : 'unavailable offline';

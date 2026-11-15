@@ -140,7 +140,8 @@ test('pending connection effects are single-flight and disconnect invalidates la
   const first=h.screen.action('connection-probe');await Promise.resolve();
   assert.equal(h.screen.action('choose-window'),false);assert.equal(probes,1);
   await h.screen.action('disconnect-window');pending.resolve({ok:true,reason:'Stale health result'});await first;
-  assert.equal(h.screen.getState().connectionMessage,'Window disconnected.');assert.equal(h.screen.getState().connectionPending,null);
+  assert.equal(h.screen.getState().connectionMessage,'');assert.equal(h.screen.getState().message,'Window disconnected.');
+  assert.equal(h.screen.getState().connectionPending,null);
   assert.deepEqual(h.calls,[['stop']]);
 });
 
@@ -212,4 +213,27 @@ test('a fresh explicitly selected native connection can release the Stop fence, 
   h.screen.action('focus-chatgpt');h.screen.action('key:a');assert.deepEqual(h.inputs,[]);
   h.publish({status:'live'});h.screen.render();h.screen.action('key:a');
   assert.deepEqual(h.inputs,[{kind:'text',text:'a'}]);
+});
+
+test('connection panel follows waiting-to-live frame state without caching or duplicating the earlier client message',async()=>{
+  const h=fixture({status:'idle'});
+  await h.screen.action('choose-window');h.screen.selectWindow(44);await h.screen.action('connect-window');
+  assert.equal(h.screen.getState().status,'waiting');assert.equal(h.screen.getState().connectionMessage,'');
+  const paneTexts=()=>h.contexts[0].texts.filter(text=>text.x>=2332&&text.y>=650&&text.y<810);
+  h.screen.render();assert.equal(paneTexts().filter(text=>text.text==='Awaiting consented frame.').length,1);
+  const waitingRevision=h.screen.render().revision;
+  h.publish({status:'live',message:'Connected to the current app.'});
+  assert.notEqual(h.screen.render().revision,waitingRevision);
+  assert.equal(paneTexts()[0].text,'Connected to the current app.');
+  assert.equal(paneTexts().filter(text=>text.text==='Connected to the current app.').length,1);
+  assert.ok(!h.contexts[0].texts.some(text=>text.text.includes('Awaiting consented frame')));
+  assert.equal(h.screen.getState().connectionMessage,'','live client truth is not copied into independent diagnostics');
+  h.client.probeHelper=async()=>({ok:true,reason:'Local Spatial helper responds.'});
+  await h.screen.action('connection-probe');h.screen.render();
+  assert.equal(paneTexts()[0].text,'Connected to the current app.');
+  assert.equal(paneTexts().filter(text=>text.text==='Local Spatial helper responds.').length,1);
+  h.publish({status:'waiting',message:'Current app has no fresh frame.'});h.screen.render();
+  assert.equal(paneTexts()[0].text,'Current app has no fresh frame.');
+  assert.ok(!paneTexts().some(text=>text.text.includes('Connected to the current app')));
+  assert.equal(h.screen.getState().connectionMessage,'Local Spatial helper responds.');
 });

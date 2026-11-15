@@ -225,6 +225,36 @@ try {
   });
   const page = await context.newPage();
   page.setDefaultTimeout(5000); page.setDefaultNavigationTimeout(20_000);
+  await page.addInitScript(()=>{
+    const prototype=globalThis.WebGLRenderingContext?.prototype,original=prototype?.texImage2D;
+    const proof={supported:typeof original==='function',wall:null,keyboard:null};
+    window.__spatialInitialTextureProof=proof;
+    if(!proof.supported)return;
+    prototype.texImage2D=function(...args){
+      // Preserve the real GL operation and its arguments. Observe only the
+      // first upload of each existing canvas texture in this document.
+      const result=original.apply(this,args);
+      const source=args.length===6?args[5]:null;
+      if(!(source instanceof HTMLCanvasElement))return result;
+      const kind=source.width===3072&&source.height===954?'wall':
+        source.width===2048&&source.height===512?'keyboard':null;
+      if(!kind||proof[kind])return result;
+      const observed={sourceWidth:source.width,sourceHeight:source.height,targetCanvasId:this.canvas?.id??'',
+        sampledPixels:0,nontransparentPixels:0,distinctColours:0};
+      proof[kind]=observed;
+      try{
+        const pixels=source.getContext('2d').getImageData(0,0,source.width,source.height).data,colors=new Set();
+        const stepX=Math.max(1,Math.floor(source.width/128)),stepY=Math.max(1,Math.floor(source.height/64));
+        for(let y=4;y<source.height;y+=stepY)for(let x=4;x<source.width;x+=stepX){
+          const offset=(y*source.width+x)*4;observed.sampledPixels++;
+          if(pixels[offset+3]>0)observed.nontransparentPixels++;
+          if(colors.size<32)colors.add([pixels[offset],pixels[offset+1],pixels[offset+2],pixels[offset+3]].join(','));
+        }
+        observed.distinctColours=colors.size;
+      }catch(error){observed.readError=String(error?.name??'Canvas inspection failed');}
+      return result;
+    };
+  });
   page.on('pageerror', error => result.pageErrors.push(String(error.stack || error)));
   page.on('console', message => { if (message.type() === 'error') result.consoleErrors.push(message.text()); });
   page.on('requestfailed', request => result.failedRequests.push({ url: request.url(), error: request.failure()?.errorText }));
@@ -285,7 +315,18 @@ try {
     });
     assert.equal(contextState.webgl, true); assert.equal(contextState.lost, false); assert.equal(contextState.glError, 0);
     assert.ok(contextState.width > 600 && contextState.height > 200);
-    return { ...contextState, image: await shot('spatial-room-initial') };
+    const firstTextures=await page.evaluate(()=>window.__spatialInitialTextureProof);
+    assert.equal(firstTextures?.supported,true,'The initial real WebGL calls must be observable.');
+    for(const kind of ['wall','keyboard']){
+      const uploaded=firstTextures[kind];
+      assert.ok(uploaded,kind+' canvas must upload during the first room initialization, without rebuilding the renderer.');
+      assert.equal(uploaded.targetCanvasId,'holodeck-canvas');
+      assert.equal(uploaded.readError,undefined);
+      assert.ok(uploaded.sampledPixels>1000);
+      assert.ok(uploaded.nontransparentPixels>uploaded.sampledPixels*.9,kind+' first texture must contain painted pixels.');
+      assert.ok(uploaded.distinctColours>=3,kind+' first texture must contain controls/content, not a uniform blank fill.');
+    }
+    return { ...contextState, firstTextures, image: await shot('spatial-room-initial') };
   });
   await check('seated and standing profiles restore independently across switches and reload', async () => {
     await page.locator('#comfort-seated').click(); await range('comfort-height', 35); await range('comfort-tilt', 37);
@@ -559,6 +600,15 @@ try {
       'Desktop and VR must project the same input notice.');
     return notice;
   }
+  async function currentConnectionPane(){
+    const pane=await page.evaluate(()=>window.__spatialSyntheticDrawCapture.screen.texts
+      .filter(text=>text.x>=2332&&text.y>=650&&text.y<810).map(text=>text.text).join(' '));
+    assert.match(pane,/^Connected to your original app\./,'Current client state must appear before diagnostics.');
+    assert.equal((pane.match(/Connected to your original app\./g)||[]).length,1,'Current client truth is rendered once in the connection panel.');
+    assert.doesNotMatch(pane,/Waiting for the selected app to draw|Confirm this window|Looking for open windows/,
+      'Completed connection phases must not survive as sticky diagnostics beside a live frame.');
+    return pane;
+  }
   async function blockedInputs(painted, reason) {
     const before = fixtureReport.inputs.length;
     await clickFixturePoint(fixtureReport.frame.composer, painted);
@@ -628,6 +678,7 @@ try {
       await page.locator('#furniture-target').selectOption('table');
       assert.match(await page.locator('#furniture-position').innerText(),/^table position:/);
       await panelAction('furniture-left');await page.locator('#furniture-target').selectOption('keyboard');
+      await freshPaints();const initialConnectionPane=await currentConnectionPane();
       const settingsImage=await capturedCanvas('synthetic-three-panels-settings');
 
       await panelAction('tools-audio');assert.equal(await page.locator('#focus-tools').getAttribute('aria-pressed'),'true');
@@ -652,6 +703,8 @@ try {
       ]);
       await freshPaints();assert.ok(result.syntheticHelperHealth.requests>healthBefore);
       assert.equal(fixtureReport.binds.length,bindsBefore,'A health check cannot acquire a new window.');
+      const checkedConnectionPane=await currentConnectionPane();
+      assert.equal((checkedConnectionPane.match(/Local Spatial helper responds\./g)||[]).length,1);
       const connectionImage=await capturedCanvas('synthetic-three-panels-connection');
       await focusPanel('chatgpt');assert.equal(await key('Type a').isDisabled(),false);
       assert.equal(await key('Send / Enter').isDisabled(),false);
@@ -659,7 +712,7 @@ try {
       assert.equal(await page.evaluate(()=>window.__spatialSyntheticDrawCapture.mediaRequests),0);
       return {synthetic:true,panels:HOLODECK_PANELS.map(panel=>panel.id),settingsSharedWithLauncher:true,
         furnitureSaved:true,audioSelectionSharedBothWays:true,nativeInputs:0,mediaPermissionRequests:0,
-        settingsImage,audioImage,connectionImage};
+        initialConnectionPane,checkedConnectionPane,settingsImage,audioImage,connectionImage};
     });
     await check('synthetic zoom and View controls reach the bottom composer and Voice with correct coordinates; Fit restores the whole frame', async () => {
       await key('Zoom +').click(); await key('Zoom +').click();
