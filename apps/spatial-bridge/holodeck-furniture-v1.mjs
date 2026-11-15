@@ -1,69 +1,158 @@
-import { HOLODECK_TABLE, HOLODECK_CONSOLE, HOLODECK_ROOM } from './holodeck-layout-v1.mjs';
+import { HOLODECK_TABLE, HOLODECK_TABLE_SURFACE, HOLODECK_TABLE_BASE,
+  HOLODECK_CONSOLE, HOLODECK_CONSOLE_TRAY, HOLODECK_CONSOLE_SUPPORTS,
+  HOLODECK_KEYCAP_RISE_METRES, HOLODECK_ROOM } from './holodeck-layout-v1.mjs';
+import { HOLODECK_KEYBOARD_HINGE, HOLODECK_KEYBOARD_DIALS, createHolodeckComfortSolids } from './holodeck-comfort-v1.mjs';
 import { trackedPose, cubeTargeted } from './holodeck-cube-interaction-v1.mjs';
-import { rotate3, subtract3, add3, scale3 } from './holodeck-cube-physics-v1.mjs';
+import { rotate3, subtract3, add3, scale3, createTableSolids, createConsoleSolids, solidMotionLimit, boxSolid } from './holodeck-cube-physics-v1.mjs';
 
 // Scene furniture is persistent *simulation* state. Mass is a damped visual and
 // controller response, not a claim that virtual furniture can support a person.
 export const SPATIAL_FURNITURE_STORAGE_KEY = 'stephanos.spatial.furniture.v1';
 export const FURNITURE_MATERIALS = Object.freeze({
-  table: Object.freeze({ material: 'moulded-plastic', massKg: 10, settleSeconds: 0.31,
-    bounds: Object.freeze([[-1.1,1.1],[-0.14,0.18],[-0.20,0.55]]) }),
-  keyboard: Object.freeze({ material: 'moulded-plastic', massKg: 3.8, settleSeconds: 0.17,
-    bounds: Object.freeze([[-1.15,1.15],[-0.20,0.32],[0,1.30]]) }),
+  table: Object.freeze({ material: 'moulded-plastic', massKg: 10, settleSeconds: 0.31 }),
+  keyboard: Object.freeze({ material: 'moulded-plastic', massKg: 3.8, settleSeconds: 0.17 }),
 });
 const targets = Object.freeze(['table', 'keyboard']);
+const frozenBounds = axes => Object.freeze(axes.map(axis => Object.freeze(axis)));
+const c=HOLODECK_CONSOLE, t=HOLODECK_TABLE;
+const supportExtents=axis=>HOLODECK_CONSOLE_SUPPORTS.flatMap(part=>[
+  part.center[axis]-part.size[axis]/2,part.center[axis]+part.size[axis]/2,
+]);
+// Reserve the actual full hinge sweep, not a preferred operator pose. The tray
+// reaches its highest point slightly before 90 degrees; the dials stay centred
+// on the hinge. These room extents also contain the raised keycaps.
+const trayReach=HOLODECK_KEYBOARD_HINGE[2]-(c.center[2]-HOLODECK_CONSOLE_TRAY.halfDepth);
+const trayHigh=HOLODECK_KEYBOARD_HINGE[1]+Math.hypot(trayReach,
+  HOLODECK_CONSOLE_TRAY.top-HOLODECK_KEYBOARD_HINGE[1]);
+const keyboardExtents=frozenBounds([
+  [Math.min(...supportExtents(0),...HOLODECK_KEYBOARD_DIALS.map(d=>d.center[0]-d.halfDepth)),
+    Math.max(...supportExtents(0),...HOLODECK_KEYBOARD_DIALS.map(d=>d.center[0]+d.halfDepth))],
+  [Math.min(c.bottom,...supportExtents(1),...HOLODECK_KEYBOARD_DIALS.map(d=>d.center[1]-d.radius)),
+    Math.max(trayHigh,...supportExtents(1),...HOLODECK_KEYBOARD_DIALS.map(d=>d.center[1]+d.radius))],
+  [Math.min(...supportExtents(2),c.center[2]-c.halfDepth,
+    HOLODECK_KEYBOARD_HINGE[2]-Math.hypot(trayReach,c.top-HOLODECK_CONSOLE_TRAY.bottom)),
+    Math.max(...supportExtents(2),...HOLODECK_KEYBOARD_DIALS.map(d=>d.center[2]+d.radius))],
+]);
+export const FURNITURE_PHYSICAL_EXTENTS=Object.freeze({
+  table:frozenBounds([[t.center[0]-t.halfWidth,t.center[0]+t.halfWidth],
+    [HOLODECK_TABLE_BASE.bottom,HOLODECK_TABLE_SURFACE.top],
+    [t.center[2]-t.halfDepth,t.center[2]+t.halfDepth]]),
+  keyboard:keyboardExtents,
+});
+const roomExtents=[[-HOLODECK_ROOM.halfWidth,HOLODECK_ROOM.halfWidth],
+  [0,HOLODECK_ROOM.height],[HOLODECK_ROOM.frontZ,HOLODECK_ROOM.backZ]];
+export const FURNITURE_MOVEMENT_BOUNDS=Object.freeze(Object.fromEntries(targets.map(id=>[
+  id,frozenBounds(FURNITURE_PHYSICAL_EXTENTS[id].map(([min,max],axis)=>[
+    roomExtents[axis][0]-min,roomExtents[axis][1]-max,
+  ])),
+])));
 const initial = () => ({ table: [0,0,0], keyboard: [0,0,0] });
 const finite = array => Array.isArray(array) && array.length === 3 && array.every(Number.isFinite);
 const clamp = (value, [min,max]) => Math.max(min,Math.min(max,value));
-const bounded = (id, coords) => coords.map((value,axis) => clamp(value,FURNITURE_MATERIALS[id].bounds[axis]));
+const bounded = (id, coords) => coords.map((value,axis) => clamp(value,FURNITURE_MOVEMENT_BOUNDS[id][axis]));
 const sum = (a,b) => a.map((v,i)=>v+b[i]);
 const place = (original,offset) => ({...original,center:sum(original.center,offset),
   ...(Number.isFinite(original.top)?{top:original.top+offset[1]}:{}),
   ...(Number.isFinite(original.bottom)?{bottom:original.bottom+offset[1]}:{})});
-const sourceState = state => targets.every(id=>finite(state?.[id])
-  && state[id].every((value,axis)=>value===clamp(value,FURNITURE_MATERIALS[id].bounds[axis])));
-const boxAt = (shape,margin=0) => ({
-  minX:shape.center[0]-shape.halfWidth-margin,maxX:shape.center[0]+shape.halfWidth+margin,
-  minZ:shape.center[2]-shape.halfDepth-margin,maxZ:shape.center[2]+shape.halfDepth+margin,
-});
 const originShape = id=>id==='table'?HOLODECK_TABLE:HOLODECK_CONSOLE;
 
 export function furnitureObstacles(state) {
   return targets.map(id=>{
-    const shape=place(originShape(id),state[id]);
-    const bounds=boxAt(shape,id==='keyboard'?0.20:0);
-    return {id:'furniture:'+id,...bounds};
+    const extents=FURNITURE_PHYSICAL_EXTENTS[id],offset=state[id];
+    return {id:'furniture:'+id,...Object.fromEntries(['X','Y','Z'].flatMap((axis,i)=>[
+      ['min'+axis,extents[i][0]+offset[i]],['max'+axis,extents[i][1]+offset[i]],
+    ]))};
   });
 }
 
-export function createHolodeckFurniture({storage=globalThis.localStorage,onChange=()=>{},onStatus=()=>{}}={}) {
+export function createHolodeckFurniture({storage=globalThis.localStorage,comfort=null,onChange=()=>{},onStatus=()=>{}}={}) {
   let offsets=initial(),dirty=false;
+  let restoreMotions=[];
+  const motionObservers=new Set();
   try {
     const value=storage?.getItem(SPATIAL_FURNITURE_STORAGE_KEY);
     if(value) {
       const decoded=JSON.parse(value);
-      if(decoded?.version===1 && sourceState(decoded?.offsets)) offsets={
-        table:[...decoded.offsets.table],keyboard:[...decoded.offsets.keyboard],
-      };
+      if(decoded?.version===1 && decoded.offsets && typeof decoded.offsets==='object') {
+        // Old releases admitted below-floor offsets. Migrate each finite pose
+        // independently; one bad item must not erase the other saved position.
+        for(const id of targets) if(finite(decoded.offsets[id])) {
+          offsets[id]=bounded(id,decoded.offsets[id]);
+          if(offsets[id].some((value,axis)=>value!==decoded.offsets[id][axis])) {
+            dirty=true;restoreMotions.push({id,from:[...decoded.offsets[id]],to:[...offsets[id]]});
+          }
+        }
+      }
     }
   }catch{onStatus('Furniture positions are session-only on this browser.');}
   const getState=()=>({table:[...offsets.table],keyboard:[...offsets.keyboard]});
   const getOffset=id=>targets.includes(id)?[...offsets[id]]:[0,0,0];
+  const getRestoreMotions=()=>restoreMotions.map(({id,from,to})=>({id,from:[...from],to:[...to]}));
+  const comfortSolids=(offset=offsets.keyboard)=>createHolodeckComfortSolids({
+    keyboardTilt:comfort?.getState().keyboardTilt??0,furnitureOffset:offset,
+  });
+  const solids=(id,offset=offsets[id])=>id==='table'?createTableSolids(place(HOLODECK_TABLE,offset)):
+    id==='keyboard'?[...createConsoleSolids(place(HOLODECK_CONSOLE,offset)),
+      ...comfortSolids(offset).filter(solid=>solid.owner==='keyboard')]:[];
+  const motionSolids=(id,offset=offsets[id])=>id!=='keyboard'?solids(id,offset):[
+    ...createConsoleSolids(place(HOLODECK_CONSOLE,offset)),
+    // Reserve the analytic full tray/keycap hinge envelope in both directions.
+    // Actual cube contact/support still uses the rendered current tray angle.
+    boxSolid(add3([-HOLODECK_CONSOLE_TRAY.halfWidth,HOLODECK_CONSOLE_TRAY.bottom,
+      HOLODECK_KEYBOARD_HINGE[2]-Math.hypot(trayReach,c.top-HOLODECK_CONSOLE_TRAY.bottom)],offset),
+    add3([HOLODECK_CONSOLE_TRAY.halfWidth,trayHigh,
+      HOLODECK_KEYBOARD_HINGE[2]+Math.max(HOLODECK_CONSOLE_TRAY.top-c.top,HOLODECK_KEYCAP_RISE_METRES)],offset),{owner:'keyboard'}),
+    ...HOLODECK_KEYBOARD_DIALS.map(dial=>{
+      const side=Math.sign(dial.center[0]),inner=side*(HOLODECK_CONSOLE_TRAY.halfWidth-HOLODECK_CONSOLE_TRAY.mountOverlap);
+      const outer=dial.center[0]+side*dial.halfDepth;
+      // The visible short mount lies inside its dial's radial hinge envelope.
+      return boxSolid(add3([Math.min(inner,outer),dial.center[1]-dial.radius,dial.center[2]-dial.radius],offset),
+        add3([Math.max(inner,outer),dial.center[1]+dial.radius,dial.center[2]+dial.radius],offset),{owner:'keyboard'});
+    }),
+  ];
   function setOffset(id,value,{save=false}={}) {
     if(!targets.includes(id)||!finite(value))return getState();
-    const next=bounded(id,value);
+    const from=getOffset(id);
+    let next=bounded(id,value);
+    let boundary=next.some((v,i)=>Math.abs(v-value[i])>1e-9)?'Movement limited by a room wall, floor or ceiling.':'';
+    const delta=subtract3(next,from),fraction=solidMotionLimit(motionSolids(id,from),[
+      ...motionSolids(id==='table'?'keyboard':'table'),...comfortSolids().filter(solid=>solid.owner==='display'),
+    ],delta);
+    if(fraction<1) {
+      next=add3(from,scale3(delta,fraction));
+      boundary='Movement stopped at another solid object.';
+    }
+    // Physics can shorten a proposed translation before either the furniture or
+    // its supported bodies move. It never becomes a second furniture store.
+    for(const observer of motionObservers) {
+      if(!next.some((v,i)=>v!==from[i]))break;
+      const limited=observer.constrain?.({id,from:[...from],to:[...next]});
+      if(finite(limited)) {
+        if(limited.some((v,i)=>Math.abs(v-next[i])>1e-9))boundary='Movement stopped: the furniture or a supported cube reached a solid surface.';
+        next=bounded(id,limited);
+      }
+    }
     if(next.some((v,i)=>v!==offsets[id][i])) {
       offsets={...offsets,[id]:next};dirty=true;
+      for(const observer of motionObservers) observer.moved?.({id,from:[...from],to:[...next]});
       onChange(getState());
     }
-    if(save)flush();
+    if(save) {
+      const saved=flush();
+      // Only an explicit nudge/release-save reports a boundary; held-frame
+      // updates must not flood live announcements or overwrite other feedback.
+      if(boundary)onStatus(boundary+(saved?'':' Position is session-only until storage is available.'));
+    }
     return getState();
   }
   function flush() {
     if(!dirty)return true;
     try {
       storage.setItem(SPATIAL_FURNITURE_STORAGE_KEY,JSON.stringify({version:1,offsets}));
-      dirty=false;onStatus('Furniture positions saved.');return true;
+      dirty=false;
+      for(const observer of motionObservers)observer.flushed?.();
+      restoreMotions=[];
+      onStatus('Furniture positions saved.');return true;
     }catch{onStatus('Furniture moved; position is session-only until storage is available.');return false;}
   }
   const reset=id=>setOffset(id,[0,0,0],{save:true});
@@ -75,7 +164,8 @@ export function createHolodeckFurniture({storage=globalThis.localStorage,onChang
   const shape=id=>targets.includes(id)?place(originShape(id),offsets[id]):null;
   const obstacles=()=>furnitureObstacles(offsets);
   const physicsShapes=()=>({table:shape('table'),keyboard:shape('keyboard')});
-  return {getState,getOffset,setOffset,flush,reset,nudge,shape,obstacles,physicsShapes};
+  const observeMotion=observer=>{motionObservers.add(observer);return()=>motionObservers.delete(observer);};
+  return {getState,getOffset,getRestoreMotions,setOffset,flush,reset,nudge,shape,solids,motionSolids,comfortSolids,obstacles,physicsShapes,observeMotion};
 }
 
 const pressed = button => button?.pressed===true||Number(button?.value)>0.55;

@@ -5,6 +5,7 @@
 // This script is an explicit browser gate, not an automatically discovered Node test.
 import { chromium } from '@playwright/test';
 import { DISPLAY_COMFORT_BUTTONS, SCREEN_BUTTONS, HOLODECK_PANELS, PANEL_BUTTONS } from '../apps/spatial-bridge/holodeck-screen-v1.mjs';
+import { HOLODECK_CUBES } from '../apps/spatial-bridge/holodeck-layout-v1.mjs';
 import { generateSpatialBridgeIcon } from '../apps/spatial-bridge/tools/build-icons.mjs';
 import { mkdir, writeFile, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -328,6 +329,49 @@ try {
     }
     return { ...contextState, firstTextures, image: await shot('spatial-room-initial') };
   });
+  await check('real furniture controls cross the old movement limits while resting cubes follow and reload with the table',async()=>{
+    const close=(a,b)=>assert.ok(Math.abs(a-b)<1e-6,`${a} != ${b}`);
+    const readSaved=()=>page.evaluate(()=>({
+      furniture:JSON.parse(localStorage.getItem('stephanos.spatial.furniture.v1')),
+      cubes:JSON.parse(localStorage.getItem('stephanos.spatial-workspace.cubes.v1')),
+    }));
+    const clickMany=async(id,count)=>{for(let i=0;i<count;i++)await page.locator('#'+id).click();};
+    const expectCubes=(saved,offset)=>{
+      assert.equal(saved.cubes?.cubes.length,2,'The real release/nudge boundary persists supported cubes.');
+      for(const definition of HOLODECK_CUBES){
+        const cube=saved.cubes.cubes.find(value=>value.id===definition.id);assert.ok(cube);
+        cube.position.forEach((value,axis)=>close(value,definition.center[axis]+offset[axis]));
+        assert.equal(cube.sleeping,true);assert.deepEqual(cube.velocity,[0,0,0]);
+      }
+    };
+    await page.locator('#furniture-target').selectOption('table');
+    await clickMany('furniture-right',16);await clickMany('furniture-near',8);await clickMany('furniture-up',6);
+    const moved=await readSaved(),table=[1.6,.3,.8];
+    moved.furniture.offsets.table.forEach((value,axis)=>close(value,table[axis]));
+    expectCubes(moved,table);
+    assert.match(await page.locator('#furniture-position').innerText(),/\+160 cm \/ \+30 cm \/ \+80 cm/);
+    const tableImage=await shot('spatial-furniture-room-range');
+    await page.locator('#furniture-target').selectOption('keyboard');
+    await clickMany('furniture-right',16);await clickMany('furniture-near',18);await clickMany('furniture-up',10);
+    const bothMoved=await readSaved(),keyboard=[1.6,.5,1.8];
+    bothMoved.furniture.offsets.keyboard.forEach((value,axis)=>close(value,keyboard[axis]));
+    expectCubes(bothMoved,table);
+    const keyboardImage=await shot('spatial-furniture-keyboard-room-range');
+    await page.reload({waitUntil:'networkidle'});
+    await page.waitForFunction(()=>/Saved cube positions restored/.test(document.querySelector('#cube-save-status')?.textContent??''));
+    const reloaded=await readSaved();assert.deepEqual(reloaded,bothMoved);
+    assert.match(await page.locator('#furniture-position').innerText(),/\+160 cm \/ \+50 cm \/ \+180 cm/);
+    const restoredImage=await shot('spatial-furniture-room-range-restored');
+    // Restore through the same public controls so later keyboard/native fixture
+    // checks keep their original geometry and input expectations.
+    await page.locator('#furniture-reset').click();
+    await page.locator('#furniture-target').selectOption('table');await page.locator('#furniture-reset').click();
+    expectCubes(await readSaved(),[0,0,0]);
+    await page.locator('#furniture-target').selectOption('keyboard');
+    return {browserOnly:true,nativeWindowConnected:false,physicalHeadsetVerified:false,
+      tableOffset:table,keyboardOffset:keyboard,restingCubesFollow:true,savedAndRestored:true,
+      tableImage,keyboardImage,restoredImage};
+  });
   await check('seated and standing profiles restore independently across switches and reload', async () => {
     await page.locator('#comfort-seated').click(); await range('comfort-height', 35); await range('comfort-tilt', 37);
     await expectProfile('seated', 35, 37);
@@ -389,6 +433,7 @@ try {
     return { image: await shot('spatial-console-desktop', page.locator('#console-preview')) };
   });
   await check('upright display controls adjust comfort without clicking through to a native app', async () => {
+    await panelAction('left-settings');
     const canvas = page.locator('canvas[aria-label="Spatial console screen preview"]');
     await canvas.scrollIntoViewIfNeeded();
     async function displayControl(id) {
@@ -602,7 +647,7 @@ try {
   }
   async function currentConnectionPane(){
     const pane=await page.evaluate(()=>window.__spatialSyntheticDrawCapture.screen.texts
-      .filter(text=>text.x>=2332&&text.y>=650&&text.y<810).map(text=>text.text).join(' '));
+      .filter(text=>text.x<740&&text.y>=720&&text.y<810).map(text=>text.text).join(' '));
     assert.match(pane,/^Connected to your original app\./,'Current client state must appear before diagnostics.');
     assert.equal((pane.match(/Connected to your original app\./g)||[]).length,1,'Current client truth is rendered once in the connection panel.');
     assert.doesNotMatch(pane,/Waiting for the selected app to draw|Confirm this window|Looking for open windows/,
@@ -625,36 +670,58 @@ try {
       forwardedInputs: fixtureReport.inputs.length - before, notice: await paintedNotice(reason) };
   }
   try {
-    await check('synthetic window picker refreshes, preserves selection, rejects removal and binds the chosen fixture', async () => {
-      await page.locator('#choose-window').click();
+    await check('synthetic left-canvas window picker discovers, selects a visible title, rejects stale selection and connects without desktop selection controls', async () => {
+      await panelAction('left-console');await panelAction('choose-window');
       await page.waitForFunction(() => document.querySelector('#window-status').textContent.includes('No open windows'));
       assert.equal(await page.locator('#desktop-window').isDisabled(), true);
       assert.equal(await page.locator('#connect-window').isDisabled(), true);
-      const emptyImage = await shot('synthetic-window-picker-empty', page.locator('[aria-label="Spatial ChatGPT console"]'));
+      const emptyImage = await capturedCanvas('synthetic-window-picker-empty');
       setWindows([{ id: 44, pid: 55, title: 'SYNTHETIC ChatGPT fixture' }, { id: 88, pid: 99, title: 'SYNTHETIC other window' }]);
       await page.waitForFunction(() => document.querySelector('#desktop-window').options.length === 2, undefined, { timeout: 10000 });
-      await page.locator('#desktop-window').selectOption('44');
+      await panelAction('window-row-0');
       setWindows([{ id: 88, pid: 99, title: 'SYNTHETIC other window' }, { id: 44, pid: 55, title: 'SYNTHETIC ChatGPT after heartbeat' }]);
       await page.waitForFunction(() => [...document.querySelector('#desktop-window').options].some(option =>
         option.textContent === 'SYNTHETIC ChatGPT after heartbeat'), undefined, { timeout: 10000 });
       assert.equal(await page.locator('#desktop-window').inputValue(), '44');
       assert.equal(await page.locator('#connect-window').isDisabled(), false);
-      const selectedImage = await shot('synthetic-window-picker-selected', page.locator('[aria-label="Spatial ChatGPT console"]'));
+      const selectedImage = await capturedCanvas('synthetic-window-picker-selected');
       setWindows([{ id: 88, pid: 99, title: 'SYNTHETIC other window' }]);
       await page.waitForFunction(() => document.querySelector('#desktop-window').options.length === 1, undefined, { timeout: 10000 });
       assert.equal(await page.locator('#desktop-window').inputValue(), '');
       assert.equal(await page.locator('#connect-window').isDisabled(), true);
       assert.deepEqual(fixtureReport.binds, []);
-      setWindows([{ id: 88, pid: 99, title: 'SYNTHETIC other window' }, { id: 44, pid: 55, title: 'SYNTHETIC ChatGPT reselected' }]);
-      await page.waitForFunction(() => document.querySelector('#desktop-window').options.length === 2, undefined, { timeout: 10000 });
-      await page.locator('#desktop-window').selectOption('44');
-      await panelAction('tools-connection');await panelAction('connect-window');
+      await panelAction('connect-window');assert.deepEqual(fixtureReport.binds,[],'A removed selection cannot connect from the old button.');
+      setWindows([{ id: 88, pid: 99, title: 'SYNTHETIC other window' },
+        {id:89,pid:100,title:'SYNTHETIC third window'},{id:90,pid:101,title:'SYNTHETIC fourth window'},
+        { id: 44, pid: 55, title: 'SYNTHETIC ChatGPT reselected' }]);
+      await page.waitForFunction(() => document.querySelector('#desktop-window').options.length === 4, undefined, { timeout: 10000 });
+      const beforePaging=fixtureReport.inputs.length;
+      await panelAction('window-next');
+      assert.equal(await page.locator('#desktop-window').inputValue(),'','Browsing the window list never chooses an app.');
+      assert.equal(await page.locator('#connect-window').isDisabled(),true);
+      await panelAction('window-row-0');
+      assert.equal(await page.locator('#desktop-window').inputValue(),'44');
+      assert.equal(fixtureReport.inputs.length,beforePaging,'Left-list browsing and selection cannot scroll or type into an app.');
+      const pagedImage=await capturedCanvas('synthetic-window-picker-paged');
+      await panelAction('connect-window');
       await drawing([0, 0, 1920, 1080]);
       assert.deepEqual(fixtureReport.binds, [{ id: 44 }]);
       assert.equal(fixtureReport.requestsByPath['/session'], 1, 'Heartbeat discovery must not require another session.');
       assert.ok(fixtureReport.requestsByPath['/windows'] >= 5);
-      return { synthetic: true, selectedId: 44, selectedPid: 55, binds: fixtureReport.binds,
-        windowResponses: fixtureReport.requestsByPath['/windows'], emptyImage, selectedImage };
+      await focusPanel('chatgpt');
+      const appClick=await provePoint(fixtureReport.frame.composer,await drawing([0,0,1920,1080]));
+      const typed=await postedInput(()=>key('Type a').click());assert.equal(typed.payload.kind,'text');assert.equal(typed.payload.text,'a');
+      const scrolledDown=await postedInput(()=>panelAction('scroll-down'));
+      assert.equal(scrolledDown.payload.kind,'scroll');assert.equal(scrolledDown.payload.delta,-120);
+      const scrolledUp=await postedInput(()=>panelAction('scroll-up'));
+      assert.equal(scrolledUp.payload.kind,'scroll');assert.equal(scrolledUp.payload.delta,120);
+      for(const scroll of [scrolledDown,scrolledUp]){
+        assert.equal(scroll.payload.x,appClick.posted.x);assert.equal(scroll.payload.y,appClick.posted.y);
+      }
+      return { synthetic: true, nativeWindowConnected:false,physicalHeadsetVerified:false,
+        selectionPath:'left holographic canvas only; no desktop select control',selectedId: 44, selectedPid: 55, binds: fixtureReport.binds,
+        windowResponses: fixtureReport.requestsByPath['/windows'], emptyImage, selectedImage,pagedImage,appClick,typed,
+        wallScroll:{down:scrolledDown.payload,up:scrolledUp.payload},listPagingNativeInputs:fixtureReport.inputs.length-beforePaging-4 };
     });
     await check('synthetic three-panel wall shares real settings, audio selection and focus without app click-through',async()=>{
       const before=fixtureReport.inputs.length,bindsBefore=fixtureReport.binds.length;
@@ -665,6 +732,7 @@ try {
       assert.ok(painted.destination[1]>=centre.y*painted.canvasHeight);
       assert.ok(painted.destination[1]+painted.destination[3]<=(centre.y+centre.h)*painted.canvasHeight);
       const height=Number(await page.locator('#comfort-height').inputValue());
+      await panelAction('left-settings');
       await panelAction('height-up');
       assert.equal(Number(await page.locator('#comfort-height').inputValue()),height+1);
       assert.equal(await page.locator('#focus-settings').getAttribute('aria-pressed'),'true');
@@ -678,8 +746,9 @@ try {
       await page.locator('#furniture-target').selectOption('table');
       assert.match(await page.locator('#furniture-position').innerText(),/^table position:/);
       await panelAction('furniture-left');await page.locator('#furniture-target').selectOption('keyboard');
-      await freshPaints();const initialConnectionPane=await currentConnectionPane();
+      await freshPaints();
       const settingsImage=await capturedCanvas('synthetic-three-panels-settings');
+      await panelAction('left-console');await freshPaints();const initialConnectionPane=await currentConnectionPane();
 
       await panelAction('tools-audio');assert.equal(await page.locator('#focus-tools').getAttribute('aria-pressed'),'true');
       await panelAction('audio-refresh');
@@ -696,7 +765,7 @@ try {
       assert.equal(await key('Send / Enter').isDisabled(),true);
       const audioImage=await capturedCanvas('synthetic-three-panels-audio');
 
-      await panelAction('tools-connection');const healthBefore=result.syntheticHelperHealth.requests;
+      await panelAction('left-console');const healthBefore=result.syntheticHelperHealth.requests;
       await Promise.all([
         page.waitForResponse(response=>response.url()===syntheticNativeOrigin+'/health'&&response.request().method()==='GET'),
         panelAction('connection-probe'),
