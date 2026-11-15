@@ -98,25 +98,25 @@
     </section>
     <section class="panel" aria-label="Spatial ChatGPT console">
       <h2>Holographic console</h2>
-      <p>Three pages share the holographic wall: workspace settings on the left, your ChatGPT window in the centre, and audio or connection controls on the right. Point at a page to select it. Room settings work even when the ChatGPT picture is view-only.</p>
+      <p>The holographic console and window picker are on the left, your selected window appears in the centre, and audio controls are on the right. In the left Console tab, choose an interactive window, select its title, then Connect. The Settings tab keeps your room and furniture controls together.</p>
       <div class="controls" aria-label="Holographic page focus">
-        <button id="focus-settings" type="button" aria-pressed="false">Workspace settings</button>
-        <button id="focus-chatgpt" type="button" aria-pressed="true">ChatGPT page</button>
-        <button id="focus-tools" type="button" aria-pressed="false">Audio &amp; connection page</button>
+        <button id="focus-settings" type="button" aria-pressed="false">Console / Settings</button>
+        <button id="focus-chatgpt" type="button" aria-pressed="true">Selected window</button>
+        <button id="focus-tools" type="button" aria-pressed="false">Audio</button>
       </div>
-      <p id="panel-focus-status" role="status">ChatGPT page selected. Connect an interactive window to use the keyboard.</p>
-      <p>Connect your existing ChatGPT or Codex window on this Windows PC. Use Quest Link / Air Link for VR. Its conversation, images, tools and approvals stay in the original app.</p>
+      <p id="panel-focus-status" role="status">Centre window selected. Connect an interactive window to use the keyboard.</p>
+      <p>Choose an open window on this Windows PC, including ChatGPT or Codex. Use Quest Link / Air Link for VR. Its conversation, images, tools and approvals stay in the original app.</p>
       <div class="controls">
-        <button id="choose-window" type="button">Connect interactive ChatGPT window</button>
-        <button id="share-window" type="button">Show ChatGPT window (view only)</button>
+        <button id="choose-window" type="button">Choose interactive window</button>
+        <button id="share-window" type="button">Show window (view only)</button>
         <select id="desktop-window" aria-label="Desktop window" hidden></select>
         <button id="connect-window" type="button" hidden>Connect selected window</button>
         <button id="disconnect-window" type="button">Disconnect</button>
       </div>
-      <p class="muted">On the Battle Bridge, “Show ChatGPT window” opens the browser's sharing picker. Select your actual ChatGPT window. Its picture stays local and is view-only until the original Windows helper is installed and authorised for clicks and typing. On phone and iPad, the 3D preview still works, but it cannot remotely capture your PC's ChatGPT window.</p>
+      <p class="muted">On the Battle Bridge, “Show window (view only)” opens the browser's sharing picker from this launcher. Use it before entering VR; the in-room Console uses the interactive Windows helper instead. Its explicit Windows consent prompt still needs your approval. On phone and iPad, the 3D preview works, but it cannot remotely capture your PC's window.</p>
       <p id="window-status" role="status">No window connected.</p>
       <p id="window-input-status" class="muted" role="status"></p>
-      <p class="muted">In VR, Quest trigger or Xbox A selects a page and operates its controls. Typing and clicking inside ChatGPT require the interactive Windows connection and the ChatGPT page selected. The sticks still move and turn; grip / RT still picks up cubes.</p>
+      <p class="muted">In VR, Quest trigger or Xbox A selects a panel, a window title, or a console button. After connecting, select the centre window and click its text field to type. The sticks still move and turn; grip / RT still picks up cubes.</p>
       <details><summary>Console preview and desktop controls</summary><div id="console-preview"></div></details>
     </section>
     <section class="panel" aria-label="Microphone speakers and ChatGPT Voice">
@@ -209,6 +209,7 @@
     });
     refreshComfortUI(comfort.getState());
     const furniture=createHolodeckFurniture({
+      comfort,
       onChange:()=>{refreshFurnitureUI();if(!immersiveActive)drawPreview();},
       onStatus:message=>{document.getElementById('furniture-save-status').textContent=message;},
     });
@@ -277,10 +278,10 @@
     const stopMicTest=()=>audio.stopMicrophone();
     function refreshConnectionStatus(state){
       const connection=state.status==='live'
-        ?'Interactive ChatGPT window connected: '+state.title+'. Select its page, then click the app field before typing.'
+        ?'Interactive window connected: '+state.title+'. Select the centre panel, then click the app field before typing.'
         :state.status==='view-only'
-          ?'ChatGPT picture is live, view-only. Connect the interactive window to enable its pointer and keyboard.'
-          :'ChatGPT window: '+state.message;
+          ?'Window picture is live, view-only. Use Console on the left to connect an interactive window.'
+          :'Selected window: '+state.message;
       document.getElementById('audio-connection-status').textContent=connection+(helperProbeResult?' '+helperProbeResult.reason:'');
     }
     function refreshInputStatus(state){
@@ -288,10 +289,10 @@
       if(element.textContent!==message)element.textContent=message;
       const focused=state.focusedPanel??'chatgpt';
       for(const id of ['settings','chatgpt','tools'])document.getElementById('focus-'+id).setAttribute('aria-pressed',String(focused===id));
-      const label={settings:'Workspace settings',chatgpt:'ChatGPT',tools:'Audio & connection'}[focused];
+      const label={settings:state.leftPage==='settings'?'Settings':'Console',chatgpt:'Centre window',tools:'Audio'}[focused];
       document.getElementById('panel-focus-status').textContent=label+' page selected. '+(state.keyboardEnabled
-        ?'Keyboard targets ChatGPT. Click its text field first.'
-        :focused==='chatgpt'?'Keyboard needs an interactive ChatGPT connection.':'Select the ChatGPT page to direct typing to its connected window.');
+        ?'Keyboard targets the selected window. Click its text field first.'
+        :focused==='chatgpt'?'Keyboard needs an interactive window connection.':'Select the centre window to direct typing to its connected app.');
       if(state.selectedWindowId!==undefined){
         windowSelector.value=state.selectedWindowId===null?'':String(state.selectedWindowId);
         connectWindowButton.disabled=!windowSelector.value;
@@ -305,7 +306,7 @@
         if(control.id==='shift')button.setAttribute('aria-pressed',String(state.shift));
         const appInput=control.id.startsWith('key:')||['enter','backspace','scroll-up','scroll-down'].includes(control.id);
         button.disabled=appInput&&!state.keyboardEnabled;
-        button.title=button.disabled?'Select an interactive ChatGPT page to send input.':'';
+        button.title=button.disabled?'Select the connected centre window to send input.':'';
       }
     }
     const client=createHolodeckWindowClient({onChange:state=>{
@@ -464,11 +465,18 @@
     window.addEventListener('pageshow', event => {if(event.persisted&&!immersiveActive){playPreview();void refreshCapabilities();}});
     document.getElementById('preview-cube').addEventListener('change', playPreview);
     for (const [id,action] of Object.entries({
-      'cube-drop': () => { const cube=selectedCube(); cube.reset(); cube.grab('preview'); const p=cube.getState().position; cube.moveHeld([p[0],1.6,p[2]]); cube.release(); },
-      'cube-throw': () => { const cube=selectedCube(); cube.reset(); cube.grab('preview'); const p=cube.getState().position; cube.moveHeld([p[0],1.5,p[2]]); cube.release([0,2.5,-6],[3,4,1]); },
+      'cube-drop': () => { const cube=selectedCube(),reset=cube.reset(); if(reset.resetPlaced===false)return reset; cube.grab('preview'); const p=cube.getState().position; cube.moveHeld([p[0],1.6,p[2]]); cube.release(); },
+      'cube-throw': () => { const cube=selectedCube(),reset=cube.reset(); if(reset.resetPlaced===false)return reset; cube.grab('preview'); const p=cube.getState().position; cube.moveHeld([p[0],1.5,p[2]]); cube.release([0,2.5,-6],[3,4,1]); },
       'cube-reset': () => selectedCube().reset(),
       'cube-inspect': () => { inspectCube = !inspectCube; document.getElementById('cube-inspect').textContent = inspectCube ? 'View whole room' : 'Inspect glass cubes'; },
-    })) document.getElementById(id).addEventListener('click', () => { if (!immersiveActive) { action(); cubeScene.checkpoint(0,true); playPreview(); } });
+    })) document.getElementById(id).addEventListener('click', () => { if (!immersiveActive) {
+      const result=action();
+      if(result?.resetPlaced===false) {
+        document.getElementById('preview-status').textContent='No clear return position is available. The cube remains in its current pose.';
+        return;
+      }
+      cubeScene.checkpoint(0,true);playPreview();
+    } });
     // Shared-control callbacks can run during setup. Construct the room only
     // after its screen, furniture and cube scene are all available.
     previewReady = true;

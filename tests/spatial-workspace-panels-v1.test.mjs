@@ -27,7 +27,7 @@ function fixture({status='live',audio,client:overrides={},onStatus=()=>{}}={}){
     fillText(text,x,y){this.texts.push({text,x,y});},drawImage(...args){this.images.push(args);}};
     contexts.push(context);return {getContext:()=>context};}};
   const screen=createHolodeckScreen({client,comfort,furniture,audio,documentRef,onStatus});
-  return {screen,client,comfort,furniture,frame,contexts,inputs,calls,storage,publish,press:id=>screen.point(...center(id),true)};
+  return {screen,client,comfort,furniture,frame,contexts,inputs,calls,storage,publish,press:id=>{screen.render();return screen.point(...center(id),true);}};
 }
 
 test('the three panels paint one actual app frame within its centre viewport, with no recursive entry-page capture',()=>{
@@ -45,6 +45,7 @@ test('the three panels paint one actual app frame within its centre viewport, wi
 
 test('in-room settings mutate the same saved comfort and furniture while ChatGPT is view only',()=>{
   const h=fixture({status:'view-only'});h.screen.render();
+  h.press('left-settings');
   h.press('height-up');h.press('tilt-up');
   assert.equal(h.comfort.getState().heightOffset,.01);assert.equal(h.comfort.getState().keyboardTilt,1);
   h.press('furniture-table');h.press('furniture-right');
@@ -63,7 +64,7 @@ test('local page focus fences keyboard, scroll and Enter; deliberately selecting
     h.screen.action('focus-'+panel);
     for(const action of ['key:b','enter','backspace','scroll-down'])h.screen.action(action);
     assert.equal(h.inputs.length,1);assert.equal(h.screen.getState().keyboardEnabled,false);
-    assert.match(h.screen.getState().inputStatus,/centre ChatGPT/);
+    assert.match(h.screen.getState().inputStatus,/centre window/);
   }
   h.screen.action('focus-chatgpt');assert.equal(h.screen.getState().keyboardEnabled,true);
   h.screen.action('key:c');assert.deepEqual(h.inputs.at(-1),{kind:'text',text:'c'});
@@ -74,7 +75,7 @@ test('the view-only plane remains focusable and gives connection guidance withou
   assert.deepEqual(h.screen.hitTest(.5,.5),{panel:'chatgpt',id:null});
   assert.equal(h.screen.point(.5,.5,true),true);assert.equal(h.screen.getState().focusedPanel,'chatgpt');
   h.screen.action('key:a');h.screen.action('enter');h.screen.action('scroll-up');
-  assert.equal(h.screen.getState().keyboardEnabled,false);assert.match(h.screen.getState().inputStatus,/Connection on the right/);
+  assert.equal(h.screen.getState().keyboardEnabled,false);assert.match(h.screen.getState().inputStatus,/Console on the left/);
   assert.deepEqual(h.inputs,[]);assert.deepEqual(h.calls,[]);
   h.screen.render();assert.ok(h.contexts[0].texts.some(entry=>entry.text.includes('VIEW ONLY')));
 });
@@ -118,7 +119,8 @@ test('connection page effects are explicit and read-only health never discovers 
   const h=fixture({status:'view-only'});h.screen.render();h.screen.action('tools-connection');h.screen.render();
   assert.deepEqual(h.calls,[]);await h.screen.action('connection-probe');
   assert.deepEqual(h.calls,[['probe']]);assert.match(h.screen.getState().connectionMessage,/not installed/);
-  assert.equal(h.screen.getState().status,'view-only');assert.equal(h.screen.getState().focusedPanel,'tools');
+  assert.equal(h.screen.getState().status,'view-only');assert.equal(h.screen.getState().focusedPanel,'settings');
+  assert.equal(h.screen.getState().leftPage,'console');
   assert.equal(h.screen.getState().keyboardEnabled,false);
 });
 
@@ -129,7 +131,7 @@ test('DOM and in-room selection share one current HWND/PID, with no implicit bin
   assert.equal(h.screen.selectWindow(44),true);assert.equal(h.screen.getState().selectedWindowId,44);
   h.publish({windows:[{id:44,pid:99,title:'Reused HWND fixture'}]});
   assert.equal(h.screen.getState().selectedWindowId,null);assert.equal(await h.screen.action('connect-window'),false);
-  h.screen.action('window-next');assert.equal(h.screen.getState().selectedWindowId,44);
+  h.press('window-row-0');assert.equal(h.screen.getState().selectedWindowId,44);
   await h.screen.action('connect-window');assert.deepEqual(h.calls.filter(call=>call[0]==='connect'),[['connect',44]]);
   assert.equal(h.screen.getState().status,'waiting');assert.equal(h.screen.getState().keyboardEnabled,false);
 });
@@ -219,7 +221,7 @@ test('connection panel follows waiting-to-live frame state without caching or du
   const h=fixture({status:'idle'});
   await h.screen.action('choose-window');h.screen.selectWindow(44);await h.screen.action('connect-window');
   assert.equal(h.screen.getState().status,'waiting');assert.equal(h.screen.getState().connectionMessage,'');
-  const paneTexts=()=>h.contexts[0].texts.filter(text=>text.x>=2332&&text.y>=650&&text.y<810);
+  const paneTexts=()=>h.contexts[0].texts.filter(text=>text.x<740&&text.y>=720&&text.y<810);
   h.screen.render();assert.equal(paneTexts().filter(text=>text.text==='Awaiting consented frame.').length,1);
   const waitingRevision=h.screen.render().revision;
   h.publish({status:'live',message:'Connected to the current app.'});

@@ -1,4 +1,4 @@
-import {HOLODECK_PANELS,PANEL_BUTTONS,PANEL_CANVAS,CHATGPT_CONTENT,panelAt,panelButtons,panelButtonAt} from './holodeck-panels-v1.mjs';
+import {HOLODECK_PANELS,PANEL_BUTTONS,PANEL_CANVAS,CHATGPT_CONTENT,WINDOW_ROWS_PER_PAGE,panelAt,panelButtons,panelButtonAt} from './holodeck-panels-v1.mjs';
 export {HOLODECK_PANELS,PANEL_BUTTONS} from './holodeck-panels-v1.mjs';
 
 export const SCREEN_ACTIONS=Object.freeze([
@@ -57,7 +57,8 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
   const ctx=screen.getContext('2d'),keys=consoleCanvas.getContext('2d');
   let revision=0,drawn='',zoom=1,panX=0,panY=0,viewPending=false,inputFeedback=null,shift=false,hover=null,voiceHelp=false,reloadConfirm=false,lastPoint={x:0.5,y:0.5};
   let lastKeyPress=null;
-  let focusedPanel='chatgpt',toolsPage='audio',furnitureTarget='keyboard',selectedWindow=null;
+  let focusedPanel='chatgpt',leftPage='console',toolsPage='audio',furnitureTarget='keyboard',selectedWindow=null,windowPage=0;
+  let paintedLeftPage=null,paintedWindowPage=0,paintedWindowRows=[],paintedSelectedWindow=null;
   let connectionPending=null,connectionMessage='',connectionEpoch=0,inputRevoked=false;
   const pressKeycap=id=>{if(SCREEN_KEYS.some(key=>key.id===id))lastKeyPress={id,at:now()};};
   const getKeycapMotion=()=>lastKeyPress?{id:lastKeyPress.id,ageMs:now()-lastKeyPress.at}:null;
@@ -72,21 +73,33 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
     if(!selected)selectedWindow=null;
     return selected??null;
   }
-  function selectWindow(id){
-    const state=client.getState(),selected=state.status==='selecting'&&state.windows?.find(window=>window.id===id);
-    selectedWindow=selected?{id:selected.id,pid:selected.pid}:null;changed();return Boolean(selected);
+  function selectWindow(id,expectedPid){
+    const state=client.getState(),index=state.status==='selecting'?state.windows?.findIndex(window=>window.id===id&&(expectedPid===undefined||window.pid===expectedPid))??-1:-1;
+    const selected=index>=0?state.windows[index]:null;
+    selectedWindow=selected?{id:selected.id,pid:selected.pid}:null;
+    if(selected){windowPage=Math.floor(index/WINDOW_ROWS_PER_PAGE);connectionMessage='';}
+    changed();return Boolean(selected);
+  }
+  function windowChoices(state){
+    const windows=state.status==='selecting'?state.windows??[]:[];
+    const windowPages=Math.ceil(windows.length/WINDOW_ROWS_PER_PAGE);
+    const selectedIndex=windows.findIndex(window=>window.id===selectedWindow?.id&&window.pid===selectedWindow?.pid);
+    if(selectedIndex>=0)windowPage=Math.floor(selectedIndex/WINDOW_ROWS_PER_PAGE);
+    windowPage=Math.min(windowPage,Math.max(0,windowPages-1));
+    return {windowPage,windowPages,windowRows:windows.slice(windowPage*WINDOW_ROWS_PER_PAGE,(windowPage+1)*WINDOW_ROWS_PER_PAGE)
+      .map(window=>({id:window.id,pid:window.pid,title:window.title,page:windowPage}))};
   }
   function keyboardNotice(state){
-    if(focusedPanel!=='chatgpt')return 'Keyboard paused — select the centre ChatGPT panel to type.';
-    if(state.status==='view-only')return 'VIEW ONLY — use Connection on the right to enable clicks and typing.';
-    if(state.status!=='live')return 'Keyboard waiting for an interactive ChatGPT connection.';
-    return 'Keyboard targets ChatGPT only. Select a text field in the connected app.';
+    if(focusedPanel!=='chatgpt')return 'Keyboard paused — select the centre window to type.';
+    if(state.status==='view-only')return 'VIEW ONLY — use Console on the left to connect an interactive window.';
+    if(state.status!=='live')return 'Keyboard waiting for an interactive window connection.';
+    return 'Keyboard targets the selected window only. Select a text field in the connected app.';
   }
   function appInputBlocker(state,viewPainted=false){
     const reason=focusedPanel!=='chatgpt'?'local-panel':state.status==='view-only'?'view-only':inputRevoked?'stopped':state.status!=='live'||!client.getFrame()?'connection':voiceHelp?'audio-help':reloadConfirm?'reload':viewPending&&!viewPainted?'view-pending':null;
     if(!reason)return null;
     const message=reason==='local-panel'?keyboardNotice(state):
-      reason==='view-only'?'ChatGPT is view-only. Open Connection on the right and connect the Windows helper to click or type.':
+      reason==='view-only'?'This window is view-only. Open Console on the left and connect the Windows helper to click or type.':
       reason==='stopped'?'Input stopped. Connect a window again before clicking or typing.':
       reason==='audio-help'?'Input paused. Close Audio help to use the connected app.':
       reason==='reload'?'Input paused. Press Fit to cancel Reload before using the app.':
@@ -103,8 +116,8 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
     }
     return {...state,...(inputFeedback?{inputStatus:inputFeedback.message}:{}),zoom,panX,panY,voiceHelp,shift,
       comfort:comfort?.getState(),furniture:furniture?.getState(),audio:audio?.getState?.(),
-      focusedPanel,keyboardEnabled:!blocker,keyboardNotice:blocker?.message??keyboardNotice(state),toolsPage,furnitureTarget,
-      selectedWindowId:currentSelection()?.id??null,connectionPending,connectionMessage};
+      focusedPanel,keyboardEnabled:!blocker,keyboardNotice:blocker?.message??keyboardNotice(state),leftPage,toolsPage,furnitureTarget,
+      selectedWindowId:currentSelection()?.id??null,connectionPending,connectionMessage,...windowChoices(state)};
   }
   function getState(){return projectState();}
   function canForwardAppInput(report=false){
@@ -118,14 +131,23 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
   }
   function hitTest(u,v){
     const panel=panelAt(u,v);if(!panel)return null;
-    const button=panelButtonAt(u,v,toolsPage);
+    if(panel.id==='settings'&&paintedLeftPage!==leftPage)return {panel:panel.id,id:null};
+    const button=panelButtonAt(u,v,toolsPage,leftPage);
+    if(button?.id.startsWith('window-row-')){
+      const row=paintedWindowRows[Number(button.id.slice(11))];
+      return {panel:panel.id,id:row&&paintedWindowPage===windowPage?button.id:null,...(row?{window:{...row}}:{})};
+    }
+    if(button?.id==='connect-window'){
+      const selected=currentSelection(),same=selected&&paintedSelectedWindow?.id===selected.id&&paintedSelectedWindow.pid===selected.pid;
+      return {panel:panel.id,id:same?button.id:null,...(same?{window:{...paintedSelectedWindow}}:{})};
+    }
     return {panel:panel.id,id:button?.id??null};
   }
   function point(u,v,activate=false) {
     const hit=hitTest(u,v);if(!hit)return false;
     if(activate&&hit.id==='disconnect-window'){action(hit.id);return true;}
     if(activate)focus(hit.panel);
-    if(hit.id){if(activate)action(hit.id);return true;}
+    if(hit.id){if(activate)action(hit.id,hit.window);return true;}
     if(hit.panel!=='chatgpt')return true;
     const x=u*PANEL_CANVAS.width,y=v*PANEL_CANVAS.height;
     if(x<SCREEN_CONTENT.x||x>SCREEN_CONTENT.x+SCREEN_CONTENT.w||y<SCREEN_CONTENT.y||y>SCREEN_CONTENT.y+SCREEN_CONTENT.h)return true;
@@ -154,7 +176,7 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
     // Revocation is synchronous, before a subscriber or another hand can send
     // input in this frame. Completion only reconciles that original stop.
     const owner=++connectionEpoch;inputRevoked=true;selectedWindow=null;
-    connectionPending='Disconnecting the selected ChatGPT window…';connectionMessage='';
+    connectionPending='Disconnecting the selected window…';connectionMessage='';
     let stopped;
     try{stopped=client.stop();}catch(error){stopped=Promise.reject(error);}
     if(owner===connectionEpoch)changed();
@@ -167,18 +189,21 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
     const selected=ids[(index+direction+ids.length)%ids.length];
     if(kind==='input')audio.setInput(selected);else audio.setOutput(selected);changed();
   }
-  function action(id) {
+  function action(id,paintedWindow) {
     if(id.startsWith('focus-'))return focus(id.slice(6));
-    if(id==='tools-audio'||id==='tools-connection'){
-      toolsPage=id.slice(6);focus('tools');changed();return true;
+    if(id==='left-console'||id==='left-settings'||id==='tools-connection'){
+      leftPage=id==='left-settings'?'settings':'console';focus('settings');changed();return true;
+    }
+    if(id==='tools-audio'){
+      toolsPage='audio';focus('tools');changed();return true;
     }
     if(id==='furniture-keyboard'||id==='furniture-table'){
-      furnitureTarget=id.slice(10);focus('settings');changed();return true;
+      furnitureTarget=id.slice(10);leftPage='settings';focus('settings');changed();return true;
     }
     if(id.startsWith('furniture-')){
       const axes={'furniture-left':[0,-.1],'furniture-right':[0,.1],'furniture-away':[2,-.1],
         'furniture-near':[2,.1],'furniture-up':[1,.05],'furniture-down':[1,-.05]};
-      focus('settings');
+      leftPage='settings';focus('settings');
       if(id==='furniture-reset')furniture?.reset(furnitureTarget);
       else if(axes[id])furniture?.nudge(furnitureTarget,...axes[id]);
       changed();return Boolean(furniture);
@@ -194,20 +219,37 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
       if(id==='audio-test-speakers')return Promise.resolve(audio.testSpeakers()).finally(changed);
       return false;
     }
+    if(id.startsWith('window-row-')){
+      const row=paintedWindow??paintedWindowRows[Number(id.slice(11))],state=client.getState();
+      windowChoices(state);
+      if(connectionPending||leftPage!=='console'||paintedLeftPage!=='console'||state.status!=='selecting'
+        ||!row||row.page!==windowPage||paintedWindowPage!==windowPage)return false;
+      if(!state.windows.some(window=>window.id===row.id&&window.pid===row.pid)){
+        selectedWindow=null;connectionMessage='That window changed. Select its current title again.';changed();return false;
+      }
+      return selectWindow(row.id,row.pid);
+    }
     if(['connection-probe','choose-window','window-prev','window-next','connect-window','disconnect-window'].includes(id)){
       if(id==='disconnect-window'){
-        focusedPanel='tools';toolsPage='connection';return stopConnection();
+        focusedPanel='settings';leftPage='console';return stopConnection();
       }
-      focus('tools');toolsPage='connection';
+      leftPage='console';focus('settings');
       if(id==='connection-probe')return runConnection('Checking the Windows helper…',()=>client.probeHelper());
-      if(id==='choose-window')return runConnection('Looking for open windows…',()=>client.discover());
-      const state=client.getState(),windows=state.status==='selecting'?state.windows??[]:[],selected=currentSelection();
+      if(id==='choose-window'){
+        if(connectionPending)return false;
+        windowPage=0;selectedWindow=null;return runConnection('Looking for open windows…',()=>client.discover());
+      }
+      const state=client.getState(),selected=currentSelection();
       if(id==='window-prev'||id==='window-next'){
-        if(!windows.length)return false;
-        const index=windows.findIndex(window=>window.id===selected?.id&&window.pid===selected?.pid);
-        return selectWindow(windows[index<0?(id==='window-next'?0:windows.length-1):(index+(id==='window-next'?1:-1)+windows.length)%windows.length].id);
+        const {windowPages}=windowChoices(state);
+        if(connectionPending||windowPages<2)return false;
+        selectedWindow=null;
+        windowPage=(windowPage+(id==='window-next'?1:-1)+windowPages)%windowPages;changed();return true;
       }
       if(!selected){connectionMessage='Choose an actual window before connecting.';changed();return false;}
+      if(paintedWindow&&(paintedWindow.id!==selected.id||paintedWindow.pid!==selected.pid)){
+        connectionMessage='Window selection changed. Select the intended window again.';changed();return false;
+      }
       return runConnection('Confirm this window in the Windows prompt…',()=>{
         const current=currentSelection();
         if(current?.id!==selected.id||current?.pid!==selected.pid)
@@ -276,7 +318,7 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
     }
   }
   function enabled(button,state){
-    if(button.panel==='settings')return button.id.startsWith('furniture-')?Boolean(furniture):Boolean(comfort);
+    if(button.page==='settings')return button.id.startsWith('furniture-')?Boolean(furniture):Boolean(comfort);
     if(button.id.startsWith('audio-')){
       if(!audio)return false;
       if(button.id==='audio-test-microphone')return !state.audio?.microphonePending&&!state.audio?.microphoneActive;
@@ -284,31 +326,43 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
       return true;
     }
     if(button.id==='connect-window')return !connectionPending&&state.status==='selecting'&&state.selectedWindowId!==null;
-    if(button.id==='window-prev'||button.id==='window-next')return !connectionPending&&state.status==='selecting'&&Boolean(state.windows?.length);
+    if(button.id.startsWith('window-row-'))return !connectionPending&&state.status==='selecting'&&Boolean(state.windowRows[Number(button.id.slice(11))]);
+    if(button.id==='window-prev'||button.id==='window-next')return !connectionPending&&state.status==='selecting'&&state.windowPages>1;
     if(button.id==='choose-window'||button.id==='connection-probe')return !connectionPending;
+    if(button.id==='scroll-up'||button.id==='scroll-down')return state.keyboardEnabled;
     return true;
   }
   function drawButton(button,state){
     const {x,y,w,h,id}=button,active=enabled(button,state);
-    const selected=id==='mode-'+state.comfort?.mode||id==='furniture-'+furnitureTarget||id==='tools-'+toolsPage;
+    const row=id.startsWith('window-row-')?state.windowRows[Number(id.slice(11))]:null;
+    const selected=id==='mode-'+state.comfort?.mode||id==='furniture-'+furnitureTarget||id==='tools-'+toolsPage||id==='left-'+leftPage
+      ||Boolean(row&&row.id===selectedWindow?.id&&row.pid===selectedWindow?.pid);
     ctx.fillStyle=!active?'#10232d':hover===id||selected?'#246678':'#153646';
-    ctx.fillRect(x*3072,y*954,w*3072,h*954);ctx.strokeStyle=active?'#62e7ff':'#365463';ctx.lineWidth=2;
+    ctx.fillRect(x*3072,y*954,w*3072,h*954);ctx.strokeStyle=selected?'#8ff7c1':active?'#62e7ff':'#365463';ctx.lineWidth=2;
     ctx.strokeRect(x*3072,y*954,w*3072,h*954);
-    text(ctx,button.label,x*3072+12,(y+h*.68)*954,25,active?'#d5f8ff':'#78919d',w*3072-24);
+    const label=id.startsWith('window-row-')?(row?(selected?'✓ ':'')+row.title:'—'):button.label;
+    text(ctx,label,x*3072+12,(y+h*.68)*954,25,active?'#d5f8ff':'#78919d',w*3072-24);
   }
   function drawSettings(state){
+    if(leftPage==='console'){
+      const count=state.status==='selecting'?state.windows?.length??0:0;
+      text(ctx,count?'Select a title · page '+(state.windowPage+1)+' of '+state.windowPages+' · '+count+' windows'
+        :'Choose an interactive window to list its title.',62,378,24,'#aad0db',650);
+      paragraph([...new Set([state.message,connectionPending??connectionMessage].filter(Boolean))],62,720,650,25,30,3);
+      text(ctx,'View-only sharing uses the browser launcher.',62,818,23,'#aad0db',650);
+      return;
+    }
     const settings=state.comfort,offset=state.furniture?.[furnitureTarget];
     if(settings){
       const height=Math.round(settings.heightOffset*100);
-      text(ctx,'Height '+(height>=0?'+':'')+height+' cm',62,251,28);
-      text(ctx,'Keyboard '+settings.keyboardTilt.toFixed(1)+'°',62,338,28);
-    }else text(ctx,'Comfort controls unavailable',62,251,26,'#ffd38a',650);
-    text(ctx,'MOVE & SAVE FURNITURE',62,541,28);
+      text(ctx,'Height '+(height>=0?'+':'')+height+' cm',62,318,26);
+      text(ctx,'Keyboard '+settings.keyboardTilt.toFixed(1)+'°',62,402,26);
+    }else text(ctx,'Comfort controls unavailable',62,318,26,'#ffd38a',650);
+    text(ctx,'MOVE & SAVE FURNITURE',62,588,26);
     if(offset)text(ctx,offset.map(value=>(value>=0?'+':'')+Math.round(value*100)+' cm').join(' / '),62,832,23,'#aad0db',650);
     else text(ctx,'Furniture controls unavailable',62,832,23,'#ffd38a',650);
   }
   function drawTools(state){
-    if(toolsPage==='audio'){
       const data=state.audio;
       const mic=data?.inputs?.find(device=>device.id===data.inputId)?.label??'System microphone';
       const output=data?.outputs?.find(device=>device.id===data.outputId)?.label??'System speakers';
@@ -316,24 +370,17 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
       text(ctx,'SPEAKERS FOR LOCAL TEST',2354,458,25,'#73dfe9');text(ctx,output,2354,490,27,'#d5f8ff',650);
       text(ctx,data?.microphonePending?'Microphone permission pending':data?.microphoneActive?'Microphone test active — not recorded':'Microphone test inactive',2354,651,25,'#aad0db',650);
       paragraph([data?.status??'Audio controls unavailable.', 'ChatGPT uses its own Voice controls and Windows audio routing.'],2354,754,650,25,31,3);
-    }else{
-      const selected=currentSelection();
-      text(ctx,selected?.title??'Choose a window, then select it here.',2354,394,27,'#d5f8ff',650);
-      text(ctx,state.status==='selecting'?(state.windows?.length??0)+' windows available':'No window selection in progress',2354,427,24,'#aad0db',650);
-      paragraph([...new Set([state.message,connectionPending??connectionMessage].filter(Boolean))],2354,650,650,26,36,4);
-      text(ctx,'Windows asks for this window’s consent.',2354,818,23,'#aad0db',650);
-    }
   }
   function render() {
     // Input remains fenced until the new canvas has been completely drawn.
     const state=projectState(true),settings=state.comfort;
     const version=JSON.stringify([revision,state.revision,settings,state.furniture,state.audio,
-      state.selectedWindowId,state.status,state.windows,state.message]);
+      state.selectedWindowId,state.status,state.windows,state.message,state.leftPage,state.windowPage]);
     if(drawn===version)return {screen,console:consoleCanvas,revision:drawn};drawn=version;
     ctx.clearRect(0,0,screen.width,screen.height);ctx.fillStyle='#03131ff5';ctx.fillRect(0,0,screen.width,screen.height);
     ctx.fillStyle='#5de6ff';ctx.fillRect(0,0,8,954);ctx.fillRect(3064,0,8,954);
     text(ctx,'STEPHANOS / SPATIAL WORKSPACE',64,65,37);
-    text(ctx,'FOCUS: '+focusedPanel.toUpperCase(),2370,64,27,'#8ff7c1',650);
+    text(ctx,'FOCUS: '+({settings:leftPage==='console'?'CONSOLE':'SETTINGS',chatgpt:'SELECTED WINDOW',tools:'AUDIO'}[focusedPanel]),2370,64,27,'#8ff7c1',650);
     ctx.fillStyle='#152d3a';ctx.fillRect(40,92,2992,2);
     for(const panel of HOLODECK_PANELS){
       const x=panel.x*3072,y=panel.y*954,w=panel.w*3072,h=panel.h*954;
@@ -342,15 +389,16 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
       ctx.strokeRect(x,y,w,h);text(ctx,panel.title,x+22,y+42,30,'#e0faff',w-44);
     }
     const mode=state.status==='view-only'?'VIEW ONLY':inputRevoked?'INPUT STOPPED':state.status==='live'?'INTERACTIVE':'NOT CONNECTED';
+    text(ctx,state.title||(state.status==='view-only'?'Shared browser window':''),1120,154,25,'#aad0db',600);
     text(ctx,mode+' / '+zoom.toFixed(1)+'x',1750,154,27,state.status==='live'&&!inputRevoked?'#8ff7c1':'#ffd38a',530);
     drawSettings(state);drawTools(state);
-    for(const panel of HOLODECK_PANELS)for(const button of panelButtons(panel.id,toolsPage))drawButton(button,state);
+    for(const panel of HOLODECK_PANELS)for(const button of panelButtons(panel.id,toolsPage,leftPage))drawButton(button,state);
     const image=client.getFrame();
     if(image&&!voiceHelp&&!reloadConfirm) {
       const r=screenImageRect(image.naturalWidth,image.naturalHeight,zoom,panX,panY),crop=r.crop;
       ctx.drawImage(image.drawable??image,crop.x,crop.y,crop.w,crop.h,r.x,r.y,r.w,r.h);
     } else {
-      text(ctx,reloadConfirm?'SAVE & RELOAD ROOM':voiceHelp?'AUDIO HELP / HEADSET SETUP':'YOUR CHATGPT WINDOW',810,316,43,'#eefcff',1460);
+      text(ctx,reloadConfirm?'SAVE & RELOAD ROOM':voiceHelp?'AUDIO HELP / HEADSET SETUP':'YOUR SELECTED WINDOW',810,316,43,'#eefcff',1460);
       const lines=reloadConfirm?[
         'Press Reload again to save the cubes and leave this VR session.',
         'The page will load the installed room update. Your chat stays in its original app.',
@@ -364,9 +412,10 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
         'Voice starts a spoken conversation; microphone dictation enters text.',
         'Zoom and View arrows keep the composer, Voice and attachment controls within reach.',
       ]:[
-        'Open Connection on the right to choose your real ChatGPT or Codex window.',
-        'For clicks and typing, connect the installed Windows helper and confirm its prompt.',
-        'Browser window sharing remains view only. Workspace settings still work.',
+        'Choose an interactive window using Console on the left.',
+        'Select its title, then Connect selected window. Confirm the Windows prompt.',
+        'Its picture appears here. Select this centre panel to click and type in the app.',
+        'Browser window sharing remains view only. Settings and audio still work.',
         'Your original app keeps the chat, tools, images and approvals.',
       ];
       paragraph(lines,810,382,1450,28,43,10);
@@ -382,6 +431,11 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
       keys.strokeStyle=!active?'#365463':id==='enter'?'#f5c77b':'#62e7ff';keys.lineWidth=2;keys.strokeRect(x*2048,y*512,w*2048,h*512);
       text(keys,screenButtonLabel(button,shift),x*2048+12,y*512+h*512*.64,id==='comfort-reset'||SCREEN_ACTIONS.some(action=>action.id===id)?22:26,active?'#c9f6ff':'#78919d');
     }
+    // Canvas rows retain the exact identity that was actually painted. A
+    // heartbeat, page switch or reentrant focus callback cannot retarget them.
+    paintedLeftPage=leftPage;paintedWindowPage=state.windowPage;
+    paintedWindowRows=leftPage==='console'?state.windowRows.map(window=>({...window})):[];
+    paintedSelectedWindow=selectedWindow?{...selectedWindow}:null;
     viewPending=false;
     return {screen,console:consoleCanvas,revision:drawn};
   }
