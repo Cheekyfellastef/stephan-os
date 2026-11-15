@@ -168,9 +168,9 @@ function validateRemoteControllerActivity(value) {
     const candidate = normalized[key];
     const legacyCountCandidate = typeof candidate === 'number'
       ? candidate
-      : (typeof candidate === 'string' && /^\\d+$/.test(candidate.trim()) ? Number(candidate) : null);
+      : (typeof candidate === 'string' && /^[0-9]+$/.test(candidate.trim()) ? Number(candidate) : null);
     if (Number.isSafeInteger(legacyCountCandidate) && legacyCountCandidate >= 0 && legacyCountCandidate <= 15) {
-      if (normalized[countKey] !== undefined && Number(normalized[countKey]) !== legacyCountCandidate) {
+      if (normalized[countKey] !== undefined && normalized[countKey] !== legacyCountCandidate) {
         return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID', { requested: true });
       }
       normalized[countKey] = legacyCountCandidate;
@@ -188,10 +188,15 @@ function validateRemoteControllerActivity(value) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_ARRAY_INVALID', { requested: true });
   }
   const laneCounts = [normalized.activeLaneCount, normalized.parkedLaneCount].filter((item) => item !== undefined);
-  if (laneCounts.some((item) => !Number.isSafeInteger(Number(item)) || Number(item) < 0 || Number(item) > 15)) {
+  if (laneCounts.some((item) => !Number.isSafeInteger(item) || item < 0 || item > 15)) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID', { requested: true });
   }
-  const materialActionsSucceeded = Number(normalized.materialActionsSucceeded ?? 0);
+  const materialActionsSucceeded = normalized.materialActionsSucceeded === undefined
+    ? 0 : normalized.materialActionsSucceeded;
+  if (!Number.isSafeInteger(materialActionsSucceeded)
+    || materialActionsSucceeded < 0 || materialActionsSucceeded > 100_000) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID', { requested: true });
+  }
   const materialLaneCount = Array.isArray(normalized.materialLanes) ? normalized.materialLanes.length : 0;
   const proofRefCount = Array.isArray(normalized.proofRefs) ? normalized.proofRefs.length : 0;
   if ((materialActionsSucceeded > 0 || materialLaneCount > 0) && proofRefCount === 0) {
@@ -201,7 +206,7 @@ function validateRemoteControllerActivity(value) {
     value.materialActionsSucceeded, value.goalsAdvanced, value.sourceChanges,
     value.reviewsAdvanced, value.mergesCompleted, value.safeEligibleWorkRemaining,
   ].filter((item) => item !== undefined);
-  if (counts.some((item) => !Number.isSafeInteger(Number(item)) || Number(item) < 0 || Number(item) > 100_000)) {
+  if (counts.some((item) => !Number.isSafeInteger(item) || item < 0 || item > 100_000)) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID', { requested: true });
   }
   return Object.freeze({
@@ -1928,8 +1933,8 @@ function safeControllerActivityPublicationProjection(value = {}, processId = '')
   const statusId = text(parsed?.statusId);
   const proofId = text(parsed?.proofId);
   const executionState = text(parsed?.executionState).toUpperCase();
-  const materialLaneCount = Number(parsed?.materialLaneCount);
-  const materialActionsSucceeded = Number(parsed?.materialActionsSucceeded);
+  const materialLaneCount = parsed?.materialLaneCount;
+  const materialActionsSucceeded = parsed?.materialActionsSucceeded;
   if (!parsed
     || parsed.schemaVersion !== 'stephanos.sovereign-controller-activity-publish.v1'
     || parsed.ok !== true
@@ -3985,7 +3990,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         && (actionId !== FLEET_SUPERVISOR_ACTION || fleetSupervisor?.ok === true)
         && runtimeProofComplete
         && browserObservationComplete
-        && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
+        && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true)
+        && (actionId !== 'reconcile-remote-commander-parity'
+          || projection.capabilityParity?.canonicalOwnerGoal === '#2573');
       if (!proofComplete) {
         return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID', {
           stepIndex: index,
@@ -3996,6 +4003,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           processIdMatch: projection.processId === actionId,
           successfulStatus: projection.status === 0,
           runtimeProof: projection.runtimeProof,
+          capabilityParityPresent: projection.capabilityParity?.canonicalOwnerGoal === '#2573',
           browserObservation: projection.browserObservation,
           completedSteps: Object.freeze(completedSteps),
           publicReceiptSafe: true,
@@ -4221,7 +4229,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     const publication = projection.controllerActivityPublication;
     const requested = shape.command.controllerActivity;
     const requestedMaterialLaneCount = Array.isArray(requested?.materialLanes) ? requested.materialLanes.length : 0;
-    const requestedMaterialActionsSucceeded = Number(requested?.materialActionsSucceeded ?? 0);
+    const requestedMaterialActionsSucceeded = requested?.materialActionsSucceeded ?? 0;
     const publicationProofComplete = projection.ok === true
       && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
       && PROOF_HASH_PATTERN.test(projection.proofHash)
@@ -5025,7 +5033,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     && runtimeProofComplete
     && observationComplete
     && (!browserObservationRequired || browserObservationCompleteForAction(projection.browserObservation))
-    && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
+    && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true)
+    && (shape.command.remoteAction !== 'reconcile-remote-commander-parity'
+      || projection.capabilityParity?.canonicalOwnerGoal === '#2573');
   if (!proofComplete) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID', {
       remoteAction: shape.command.remoteAction,
@@ -5034,6 +5044,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       successfulStatus: projection.status === 0,
       runtimeProof: projection.runtimeProof,
       observation: projection.observation,
+      capabilityParityPresent: projection.capabilityParity?.canonicalOwnerGoal === '#2573',
       browserObservation: projection.browserObservation,
       publicReceiptSafe: true,
       secretMaterialReturned: false,
