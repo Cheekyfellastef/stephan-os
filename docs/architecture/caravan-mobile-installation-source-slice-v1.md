@@ -1,6 +1,6 @@
 # Caravan protected Windows installation source
 
-Canonical goal: **#1814 — Build out-of-band mobile Battle Bridge recovery lifeboat**.
+Canonical goal: **#1814 â€” Build out-of-band mobile Battle Bridge recovery lifeboat**.
 
 This continues the preserved original owner's source and existing Sovereign Commander/Lifeboat system. It is source for review, not an enrolled installation. No reboot is authorised. A successful installation may establish `INSTALLED_PENDING_BOOT`; it cannot manufacture `READY` or later-boot qualification.
 
@@ -29,7 +29,7 @@ The existing manually approved immutable Windows PowerShell route must authentic
 
 Initial setup requires the actual signed-in operator's administrator token and real paired-device proof. It creates only the fixed new protected root, receipt-only CNG key, exact release files, signed WAL genesis/certificate and fixed highest on-demand task. No stored Windows password or generic signer is exposed. Pre-existing/partial roots, keys or tasks are inspect only; there is no automatic overwrite, reset or delete. Routine commands cannot enroll or change policy. This initial enrollment seals one reviewed immutable release; future release replacement needs its own reviewed protected update contract.
 
-The initial protected component was reviewed and merged as [PR #3501 — Add protected Caravan Windows installer source (#1814)](https://github.com/Cheekyfellastef/stephan-os/pull/3501). Its approved source head `5d8d2bfc4bfc28aa1dd852905ea9392a0e897b42` became protected squash commit `2d34e47236f2a4153252c3309e6f25bc32b072fa`, with the same tested tree `416cbbd1996f4570793723915ee4fe65cd6b26c1`. The existing protected ready, review-after-ready, native environment-approval and merge gates all completed; this did not enroll or install the component.
+The initial protected component was reviewed and merged as [PR #3501 â€” Add protected Caravan Windows installer source (#1814)](https://github.com/Cheekyfellastef/stephan-os/pull/3501). Its approved source head `5d8d2bfc4bfc28aa1dd852905ea9392a0e897b42` became protected squash commit `2d34e47236f2a4153252c3309e6f25bc32b072fa`, with the same tested tree `416cbbd1996f4570793723915ee4fe65cd6b26c1`. The existing protected ready, review-after-ready, native environment-approval and merge gates all completed; this did not enroll or install the component.
 
 Remaining gates include independent exact-head review and operator merge approval for subsequent source changes, approved administrator/device enrollment, real protected setup and installation readback, actual device acceptance and independent Lifeboat recovery acceptance. Later full-boot qualification remains separate; no reboot is authorised. A task's Ready state or Lifeboat heartbeat does not establish remote recovery ingress.
 
@@ -82,3 +82,10 @@ This contract preserves every child and stream as part of the approved object. I
 After preservation, fresh device proof and fresh exact enrollment approval are still required. Runtime installation remains a separate gate. No reboot is granted. This manual adapter is not a runtime command, pipe operation, controller or addition to either native/runtime closure.
 
 Reusable lesson: validate expiring cryptographic prerequisites before protected staging and retain live-time validation at the effect boundary. Bind recovery authority to the actual semantic object being preserved. Directory and stream sharing do not make a whole-content snapshot atomic, and readback cannot prevent an unauthorized destination traversal. Reuse Sovereign's `BOUNDED_PRE_POST_OBSERVATION_NOT_ATOMIC_CONTENT_CAS` distinction and same-parent native rename; require explicit new whole-object quarantine authority instead of silently promoting inventory into a grant. A failed attempt never converts enrollment approval into recovery or retry authority.
+
+The fixed Task Scheduler absence boundary qualifies only HRESULT `0x80070002`
+returned as `COMException` or `FileNotFoundException`. Windows may marshal the
+same native missing-task result as either managed exception. Denied, unknown,
+other exception classes and other HRESULTs remain failures; a returned task
+remains present. Real Windows COM regression evidence must accompany this
+mapping, alongside adversarial error-class/HRESULT tests.
