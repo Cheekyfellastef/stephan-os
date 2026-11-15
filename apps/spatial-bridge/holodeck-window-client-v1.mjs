@@ -12,7 +12,11 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       const data=await response.json();
       if(data?.schema!=='stephanos.spatial-window-health.v1')
         return {ok:false,reason:'Unexpected local capture helper identity.'};
-      return {ok:true,reason:'Local Spatial window capture helper reachable.'};
+      if(data.readinessOnly===true)
+        return {ok:false,reason:'The helper is running an installation check only. Launch the normal Spatial Workspace shortcut to connect a window.'};
+      if(locationRef?.port!=='4174'&&(typeof data.buildId!=='string'||!/^[a-f0-9]{64}$/.test(data.buildId)))
+        return {ok:false,reason:'The local helper has no valid installed build identity. Use the reviewed Spatial Workspace shortcut.'};
+      return {ok:true,reason:'Local Spatial helper responds. Choose a window and confirm Windows permission to enable typing and clicking.'};
     }catch{return {ok:false,reason:'Local window helper unavailable on port '+(locationRef?.port==='4174'?'4184':'4180')+
       '. Open Spatial Workspace using its Windows desktop shortcut.'};}
   }

@@ -68,29 +68,31 @@ add('case aliased manifest member refuses',original.raw,{members:[...original.me
 add('empty closure refuses',original.raw,{members:[]});
 // Exercise legacy and current bounded Spatial source composition in the same
 // Node and independently compiled Windows verifier, including the last member.
-const capacityFiles=Array.from({length:296},(_,i)=>({
+const capacityFiles=Array.from({length:301},(_,i)=>({
   path:'scripts/capacity/member-'+String(i+1).padStart(3,'0')+'.mjs',
   content:'export const member = '+(i+1)+';\n',
 }));
-for(const count of [266,284,295,296]) {
+for(const count of [266,284,295,296,300,301]) {
   const proof=fixture({files:capacityFiles.slice(0,count)});
-  add(count+' exact members '+(count<=295?'preserve bounded proof':'exceed capacity'),
-    proof.raw,{members:proof.members,valid:count<=295});
+  add(count+' exact members '+(count<=300?'preserve bounded proof':'exceed capacity'),
+    proof.raw,{members:proof.members,valid:count<=300});
 }
-const expanded=fixture({files:capacityFiles.slice(0,295)});
-add('unrelated main update preserves all 295 members',
-  fixture({files:capacityFiles.slice(0,295),extras:[{path:'README.md',content:'updated\n'}]}).raw,
+for(const count of [295,300]) {
+ const expanded=fixture({files:capacityFiles.slice(0,count)});
+ add('unrelated main update preserves all '+count+' members',
+  fixture({files:capacityFiles.slice(0,count),extras:[{path:'README.md',content:'updated\n'}]}).raw,
   {members:expanded.members,valid:true});
-add('changed 295th blob cannot borrow installed closure',
-  fixture({files:capacityFiles.slice(0,295).map((row,i)=>i===294?{...row,content:'changed last member\n'}:row)}).raw,
+ add('changed last blob cannot borrow '+count+' member closure',
+  fixture({files:capacityFiles.slice(0,count).map((row,i)=>i===count-1?{...row,content:'changed last member\n'}:row)}).raw,
   {members:expanded.members});
-add('missing 295th member refuses',fixture({files:capacityFiles.slice(0,294)}).raw,
+ add('missing final member refuses '+count+' member closure',fixture({files:capacityFiles.slice(0,count-1)}).raw,
   {members:expanded.members});
-add('295th member mode substitution refuses',
-  fixture({files:capacityFiles.slice(0,295).map((row,i)=>i===294?{...row,mode:'100755'}:row)}).raw,
+ add('last member mode substitution refuses '+count+' member closure',
+  fixture({files:capacityFiles.slice(0,count).map((row,i)=>i===count-1?{...row,mode:'100755'}:row)}).raw,
   {members:expanded.members});
-add('unknown replacement for 295th member refuses',expanded.raw,
-  {members:expanded.members.map((row,i)=>i===294?{...row,Path:'scripts/capacity/unknown.mjs'}:row)});
+ add('unknown replacement refuses '+count+' member closure',expanded.raw,
+  {members:expanded.members.map((row,i)=>i===count-1?{...row,Path:'scripts/capacity/unknown.mjs'}:row)});
+}
 add('tree object size is bounded',wire(original.commit,new Map([['a'.repeat(40),Buffer.alloc(2097153,65)]])));
 function manyRows(count,prefix,padding=0) {
   return Buffer.concat(Array.from({length:count},(_,i)=>rowBytes('100644',prefix+i.toString().padStart(5,'0')+'x'.repeat(padding),'a'.repeat(40))));
