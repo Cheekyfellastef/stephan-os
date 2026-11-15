@@ -200,6 +200,14 @@ $row=@{log=$log;source=$source};$manifest=@{operatorSid=$sid}
      $outerFolder.DeleteTask($row.task,0);$record.ok=$true
     }finally{foreach($com in @($outerTask,$outerFolder,$outerService)){if($null -ne $com -and [Runtime.InteropServices.Marshal]::IsComObject($com)){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($com)}}}
    }
+   # A successful delete call or an absent ownership receipt is not absence.
+   # Unknown/unowned remaining tasks are preserved and keep cleanup unproven.
+   $readbackService=[Activator]::CreateInstance([Type]::GetTypeFromProgID('Schedule.Service',$true));$readbackFolder=$null;$remainingTask=$null
+   try {
+    $readbackService.Connect();$readbackFolder=$readbackService.GetFolder('\')
+    try{$remainingTask=$readbackFolder.GetTask($row.task)}catch{if($_.Exception.HResult -ne -2147024894){throw}}
+    if($null -ne $remainingTask){throw 'FIXTURE_REMAINING_TASK_PRESERVED_CLEANUP_UNPROVEN'}
+   }finally{foreach($com in @($remainingTask,$readbackFolder,$readbackService)){if($null -ne $com -and [Runtime.InteropServices.Marshal]::IsComObject($com)){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($com)}}}
    $record.cleanupComplete=$true
   }catch{$record.cleanupError=$_.Exception.ToString();$record.ok=$false}
   $results.Add($record)
