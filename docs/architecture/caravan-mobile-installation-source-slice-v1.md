@@ -89,3 +89,71 @@ same native missing-task result as either managed exception. Denied, unknown,
 other exception classes and other HRESULTs remain failures; a returned task
 remains present. Real Windows COM regression evidence must accompany this
 mapping, alongside adversarial error-class/HRESULT tests.
+
+
+### Structural review: interrupted first enrollment after key finalization
+
+This is a design proposal, not an admitted resume capability. The current
+installer and runtime expose no credential recovery/reset/reuse operation.
+The original Caravan goal, source owner, branch and protected gates remain.
+
+The real Windows enrollment reached protected receipt-key finalization, then
+stopped at `Write-MobileNew enrollment.json`: Windows PowerShell could not
+resolve the six-argument `FileStream` overload when file mode, access and share
+were strings. The fixed protected key exists with verified strict policy/ACL;
+the root contains the compiled helper and empty state directory, with no
+enrollment file, task or mobile genesis. No deletion/reset/retry was performed.
+Passing source/negative tests did not prove this late positive Windows binding.
+
+Invariant: key finalization is a durable boundary in a multi-step enrollment
+saga. It must never be treated as rollbackable staging, implicitly retried,
+deleted, replaced, or silently adopted after an exception. Managed bindings on
+the actual positive Windows path must be exercised before privileged admission.
+
+Proposed bounded correction and recovery contract for independent design review:
+
+1. Use explicit .NET enum types for closed FileStream mode/access/share/options.
+   Exercise the actual extracted production write function on temporary Windows
+   fixtures, including create-new, exact readback and existing-file refusal.
+   Do not mirror its implementation in a test or touch the production key/root.
+2. Add read-only classification of exactly the interrupted KEY_ONLY phase to the
+   existing manual enrollment boundary. Authenticate source/actual target; prove
+   retained fixed root/parent/state identities, protected ACLs, exact compiled
+   helper bytes and the existing fixed key's public fingerprint plus its current
+   strict machine/P-256/signing/nonexportable/admin-only policy. Prove readable
+   absence of enrollment/release/certificate/WAL files, fixed task and mobile
+   genesis. Unknown, denied, redirected or later-stage state remains inspect-only.
+3. A future manual resume candidate must be a distinct explicit operation and
+   fingerprint, not permission inherited from first enrollment or opaque folder
+   quarantine. Bind exact current source, actual machine/operator, predecessor
+   failed request/approved payload, helper origin/equality, root/parent/state
+   identities, preserved key public fingerprint and this narrow phase. Require
+   independent exact-head Windows/security review and separate operator source
+   approval, then a new exact resume-enrollment decision and fresh device proof.
+4. Prefer retaining this exact previously provisioned key and helper. Do not
+   delete/export/reset/recreate a key, widen its ACL/policy, overwrite a file,
+   adopt another key/helper, or create another owner/controller/queue/runtime
+   provisioning verb. Reuse the existing strict native key opener, source/device
+   verifier, signed genesis/certificate, fixed on-demand task and runtime gates.
+   Keep ordinary fresh enrollment fail-closed on a pre-existing root or key.
+5. Any resume implementation must retain physical root/parent/state/helper pins
+   across revalidation and writes, using existing canonical identity primitives.
+   All remaining files must use create-new semantics; collision/uncertainty holds
+   without cleanup or automatic retry. Existing named streams/other contents are
+   not an immutable archive or content CAS and must never become executable or
+   trusted merely because a phase/fingerprint was observed. Unrelated linked
+   children must never be traversed or executed. Independently prove the exact
+   old helper's origin from the interrupted approved source; an arbitrary binary
+   hash supplied by a caller is not source authentication.
+6. Validate current device proof and adequate remaining time before any resumed
+   write and again at native enrollment boundaries. No old expired assertion or
+   approval may authorize new source, key reuse or a new device binding. A failure
+   after any resumed write is UNKNOWN/inspect-only; do not turn this into general
+   repair, reset, migration, idempotent re-enrollment or arbitrary phase adoption.
+
+The design review must resolve the exact phase model, source/helper provenance,
+pin lifetime, existing-key authority, temporal device binding, all-stream truth
+limits and independently testable admission predicates before authority-bearing
+resume code is added. It must reject a proposal that merely adds narrow guards
+without a complete supported partial-state model. No installation or reboot is
+authorized by this proposal; physical acceptance remains independently gated.
