@@ -116,6 +116,129 @@ test('Starfield VR flight recorder captures bounded runtime, stereo, transport a
   assert.doesNotMatch(recorder, /applicationFrameTimeMs = \$payload\.applicationFrameTimeMs/);
 });
 
+test('Starfield VR playtest CPU attribution tracks desktop ChatGPT and browsers alongside game/frame telemetry', () => {
+  assert.match(recorder, /function Get-StarfieldVrCpuConsumerSample/);
+  assert.match(recorder, /chatGpt = 'ChatGPT'/);
+  assert.match(recorder, /edge = 'msedge'/);
+  assert.match(recorder, /brave = 'brave'/);
+  assert.match(recorder, /webView2 = 'msedgewebview2'/);
+  assert.match(recorder, /node = 'node'/);
+  assert.match(recorder, /metaVr = 'OVRServer_x64'/);
+  assert.match(recorder, /\$Previous\[\$pidValue\]/);
+  assert.match(recorder, /\$startTicks/);
+  assert.match(recorder, /\$duration -gt 0/);
+  assert.match(recorder, /\$g\.matched -eq \$g\.count/);
+  assert.match(recorder, /return \[pscustomobject\]\$out/);
+  assert.match(performance, /\$cpuConsumerHistory = @\{\}/);
+  assert.match(performance, /Get-StarfieldVrCpuConsumerSample -Previous \$cpuConsumerHistory/);
+  assert.match(performance, /chatGptCpuPct = \$cpuConsumers\.chatGptCpuPct/);
+  assert.match(performance, /edgeCpuPct = \$cpuConsumers\.edgeCpuPct/);
+  assert.match(performance, /webView2CpuPct = \$cpuConsumers\.webView2CpuPct/);
+  assert.match(performance, /cpuConsumersAvailable = \[bool\]\$cpuConsumers\.available/);
+  assert.match(performance, /avgChatGptCpuPct = if \(\$chatGptCpuSamples.Count\)/);
+  assert.match(performance, /maxChatGptCpuPct = if \(\$chatGptCpuSamples.Count\)/);
+  assert.match(performance, /browserTabsInspected = \$false/);
+  assert.match(performance, /chatGptConversationContentsInspected = \$false/);
+  assert.doesNotMatch(recorder, /\b(?:Stop-Process|taskkill|Invoke-Expression|Get-Content.*(?:Cookies|History)|Get-CimInstance Win32_Process|CommandLine)\b/i);
+  assert.doesNotMatch(recorder, /chrome:\/\/|edge:\/\/|brave:\/\//);
+  assert.match(diagnosis, /desktop-chatgpt-cpu-contention-observed/);
+  assert.match(diagnosis, /edge-process-cpu-contention-observed/);
+  assert.match(reporter, /avgChatGptCpuPct: safeMetric/);
+});
+
+
+test('Starfield diagnosis carries actual sampled CPU attribution counts into planning', () => {
+  // Real collector summary already writes these counts, but the diagnostic
+  // payload that the CPU/AER planner consumes must report them independently.
+  assert.match(performance, /starfieldThreadCpuMeasuredSampleCount = \$busiestThreadSamples\.Count/);
+  assert.match(performance, /cpuConsumersAvailableSampleCount = \$cpuConsumerAvailableSamples\.Count/);
+  assert.match(diagnosis, /\$cpuConsumersAvailableRows = @\(\$rows \| Where-Object/);
+  assert.match(diagnosis, /-Name 'cpuConsumersAvailable' -Default 'False'\) -ceq 'True'/);
+  assert.match(diagnosis, /starfieldThreadCpuMeasuredSampleCount = @\(\$starfieldThreadCpu\)\.Count/);
+  assert.match(diagnosis, /cpuConsumersAvailableSampleCount = \$cpuConsumersAvailableRows\.Count/);
+  assert.match(reporter, /starfieldThreadCpuMeasuredSampleCount: metrics\?\.starfieldThreadCpuMeasuredSampleCount/);
+  assert.match(reporter, /cpuConsumersAvailableSampleCount: metrics\?\.cpuConsumersAvailableSampleCount/);
+});
+
+
+test('Starfield fixed-family CPU lookup is single-pass and fails closed on unexpected inventory errors', () => {
+  const sampler = recorder.split('function Get-StarfieldVrCpuConsumerSample {')[1]
+    ?.split('function Get-StarfieldVrGameThreadCpuSample')[0];
+  assert.ok(sampler, 'bounded CPU family sampler must be present');
+  assert.equal((sampler.match(/Get-Process -Name @\(\$families\.Values\)/g) || []).length, 1,
+    'missing optional apps must not double the process inventory cost');
+  assert.match(sampler, /-ErrorAction SilentlyContinue -ErrorVariable \+processLookupErrors/);
+  assert.match(sampler, /NoProcessFoundForGivenName/);
+  assert.match(sampler, /\$lookupError\.FullyQualifiedErrorId -notlike/);
+  assert.match(sampler, /\$inventoryAvailable = \$false/);
+  assert.match(sampler, /\$out\["\$\{key\}CpuPct"\] = if \(-not \$inventoryAvailable\) \{ \$null \}/,
+    'an ambiguous inventory cannot be turned into measured zero');
+});
+
+test('Starfield fixed-family CPU lookup native Windows regression: missing app versus denied inventory',
+  { skip: process.platform !== 'win32' }, () => {
+  const file = fileURLToPath(new URL('./windows/starfield-vr-flight-recorder.ps1', import.meta.url)).replaceAll("'", "''");
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    ". '" + file + "'",
+    "$script:attempts = 0",
+    "$script:mode = 'missing'",
+    "function Get-Process {",
+    " [CmdletBinding()] param([string[]]$Name)",
+    " $script:attempts++",
+    " if ($script:mode -eq 'missing') { Write-Error -Message 'not running' -ErrorId 'NoProcessFoundForGivenName' -Category ObjectNotFound }",
+    " else { Write-Error -Message 'access denied' -ErrorId 'AccessDenied' -Category PermissionDenied }",
+    "}",
+    "$missing = Get-StarfieldVrCpuConsumerSample -Previous @{}",
+    "if ($script:attempts -ne 1 -or -not $missing.available -or $missing.chatGptCpuPct -ne 0) { throw 'ordinary missing app must be one measured inventory' }",
+    "$script:attempts = 0",
+    "$script:mode = 'denied'",
+    "$denied = Get-StarfieldVrCpuConsumerSample -Previous @{}",
+    "if ($script:attempts -ne 1 -or $denied.available -or $null -ne $denied.chatGptCpuPct) { throw 'denied inventory must be unmeasured, never zero' }",
+  ].join('\n');
+  const result = spawnSync('powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    { encoding: 'utf8', timeout: 20000, windowsHide: true });
+  assert.equal(result.status, 0, [result.error?.message, result.stdout, result.stderr].filter(Boolean).join('\n'));
+});
+
+test('Starfield whole-game CPU sample rejects PID reuse, counter rollback and stale baseline', () => {
+  const cpuBlock = performance.match(/\$starfieldCpuPct = \$null[\s\S]*?# Same-session fixed-name CPU attribution/)?.[0];
+  assert.ok(cpuBlock, 'locate the same-session game CPU delta block');
+  assert.match(cpuBlock, /\$gameStartTicks = \[long\]\$game\.StartTime\.ToUniversalTime\(\)\.Ticks/);
+  assert.match(cpuBlock, /\$previousCpu\.processStartTicks -eq \$gameStartTicks/);
+  assert.match(cpuBlock, /\$elapsedSeconds -gt 0 -and \$elapsedSeconds -le 120/);
+  assert.match(cpuBlock, /\$cpuDeltaSeconds -ge 0/);
+  assert.match(cpuBlock, /\$null -ne \$gameStartTicks/);
+  assert.match(cpuBlock, /\$previousCpuByPid\.Remove\(\$currentGameProcessId\)/);
+  assert.doesNotMatch(cpuBlock, /\[Math\]::Max\(0, \$cpuSeconds -/);
+});
+
+test('Starfield busiest-thread CPU uses bounded, lifetime-bound, low-overhead measurements', () => {
+  assert.match(recorder, /function Get-StarfieldVrGameThreadCpuSample/);
+  assert.match(recorder, /MaximumThreadCount = 512/);
+  assert.match(recorder, /THREAD_SAMPLE_THROTTLED/);
+  assert.match(recorder, /\$since -ge 0 -and \$since -lt 5/);
+  assert.match(recorder, /STARFIELD_PROCESS_THREAD_CPU_DELTAS/);
+  assert.match(recorder, /\$process\.StartTime\.ToUniversalTime\(\)\.Ticks/);
+  assert.match(recorder, /\$thread\.StartTime\.ToUniversalTime\(\)\.Ticks/);
+  assert.match(recorder, /\$thread\.TotalProcessorTime\.TotalSeconds/);
+  assert.match(recorder, /old\.startTicks -eq \$threadStartTicks/);
+  assert.match(recorder, /\$Previous\.processId -eq \$GameProcessId/);
+  assert.match(recorder, /\$out\.busiestThreadCpuPct/);
+  assert.match(recorder, /THREAD_SNAPSHOT_UNAVAILABLE/);
+  assert.doesNotMatch(recorder, /thread\.PriorityLevel\s*=|thread\.ProcessorAffinity\s*=/i);
+  assert.match(performance, /\$starfieldThreadCpuHistory = @\{\}/);
+  assert.match(performance, /Get-StarfieldVrGameThreadCpuSample -GameProcessId \$currentGameProcessId/);
+  assert.match(performance, /starfieldBusiestThreadCpuPct = \$gameThreads\.busiestThreadCpuPct/);
+  assert.match(performance, /starfieldThreadCpuReason = \[string\]\$gameThreads\.reason/);
+  assert.match(performance, /maxStarfieldBusiestThreadCpuPct = if \(\$busiestThreadSamples.Count\)/);
+  assert.match(performance, /starfieldThreadRoleKnown = \$false/);
+  assert.match(diagnosis, /starfield-single-thread-saturation-observed/);
+  assert.match(diagnosis, /maxStarfieldBusiestThreadCpuPct = Get-Maximum/);
+  assert.match(reporter, /maxStarfieldBusiestThreadCpuPct: safeMetric/);
+});
+
 test('Meta Air Link runtime metrics producer feeds measured render and transport telemetry', () => {
   assert.match(runtimeProducer, /META_OCULUS_PERFLOG_XRS_STATS/);
   assert.match(runtimeProducer, /oculus_pc_xrs_stats_event/);
@@ -255,5 +378,111 @@ test('physical verdict authority fields reject coercible non-string values', () 
       false,
       `expected array-valued ${field} to fail closed`,
     );
+  }
+});
+
+test('Starfield thread inspection limits attempts even on failure', () => {
+  const functionBody = recorder.split('function Get-StarfieldVrGameThreadCpuSample {')[1]
+    ?.split('function Get-StarfieldVrCrashFingerprint')[0];
+  assert.ok(functionBody, 'target sampler must exist');
+  assert.match(functionBody, /THREAD_INVENTORY_LIMIT[\s\S]*?\$Previous\.Clear\(\)[\s\S]*?return \[pscustomobject\]\$out/);
+  assert.match(functionBody, /\} catch \{[\s\S]*?\$out\.reason = 'THREAD_SNAPSHOT_UNAVAILABLE'\s*\} finally \{/);
+  assert.match(functionBody, /\$Previous\.processId = \$GameProcessId\s*\$Previous\.collectedAtUtc = \$sampledAt/);
+  assert.match(functionBody, /\$Previous\.collectedAtUtc -is \[DateTime\]/, 'malformed cooldown history must not crash the sampler');
+  assert.doesNotMatch(functionBody, /Stop-Process|taskkill|ProcessorAffinity\s*=|PriorityLevel\s*=/i);
+});
+
+test('Starfield thread inspection native Windows regression: failure, cap and recovery', { skip: process.platform !== 'win32' }, () => {
+  const file = fileURLToPath(new URL('./windows/starfield-vr-flight-recorder.ps1', import.meta.url)).replaceAll("'", "''");
+  const script = ["$ErrorActionPreference = 'Stop'","RECORDER_FILE_PATH","$base = [DateTime]::Parse('2026-10-23T12:00:00Z')","$script:now = $base","$script:mode = 'deny'","$script:cpuSeconds = 0","$script:attempts = 0","function Get-Date { return $script:now }","function Get-Process {"," [CmdletBinding()]"," param([int]$Id)"," $script:attempts++"," if ($script:mode -eq 'deny') { throw 'simulated access denied' }"," if ($script:mode -eq 'oversized') { return [pscustomobject]@{StartTime=$base;Threads=@(1..513)} }"," return [pscustomobject]@{StartTime=$base;Threads=@([pscustomobject]@{Id=12;StartTime=$base;TotalProcessorTime=[TimeSpan]::FromSeconds($script:cpuSeconds)})}","}","foreach ($mode in @('deny','oversized')) {"," $script:mode = $mode"," $script:attempts = 0"," $history = @{}"," foreach ($n in 0..11) {","  $script:now = $base.AddSeconds($n)","  $sample = Get-StarfieldVrGameThreadCpuSample -GameProcessId 42 -Previous $history","  if ($null -ne $sample.busiestThreadCpuPct) { throw 'unmeasured CPU reported as measured' }"," }"," if ($script:attempts -ne 3) { throw \"failure-mode $mode attempted $script:attempts inspections instead of 3\" }","}","$script:mode = 'healthy'","$script:attempts = 0","$history = @{}","$script:now = $base","$script:cpuSeconds = 0","$warm = Get-StarfieldVrGameThreadCpuSample -GameProcessId 42 -Previous $history","$script:now = $base.AddSeconds(1)","$skip = Get-StarfieldVrGameThreadCpuSample -GameProcessId 42 -Previous $history","$script:now = $base.AddSeconds(5)","$script:cpuSeconds = 2","$measure = Get-StarfieldVrGameThreadCpuSample -GameProcessId 42 -Previous $history","if ($warm.reason -ne 'THREAD_WARMUP' -or $skip.reason -ne 'THREAD_SAMPLE_THROTTLED' -or $measure.reason -ne 'THREAD_CPU_MEASURED') {throw ('recovery reason incorrect warm=' + $warm.reason + ' skip=' + $skip.reason + ' measure=' + $measure.reason + ' attempts=' + $script:attempts)}","if ($measure.busiestThreadCpuPct -lt 39 -or $measure.busiestThreadCpuPct -gt 41 -or $script:attempts -ne 2) {throw 'measurement/recovery incorrect'}","$history = @{processId=42;collectedAtUtc='not-a-DateTime';threadCpu=@{}}","$script:now = $base.AddSeconds(20)","$attemptsBefore = $script:attempts","$invalidHistory = Get-StarfieldVrGameThreadCpuSample -GameProcessId 42 -Previous $history","if ($invalidHistory.reason -ne 'THREAD_WARMUP' -or $null -ne $invalidHistory.busiestThreadCpuPct) {throw 'invalid history must warm up without measured CPU'}","if ($script:attempts -ne ($attemptsBefore+1)) {throw 'invalid history prevented bounded source sampling'}","if ($history.collectedAtUtc -isnot [DateTime]) {throw 'invalid history was not replaced with valid timestamp'}"].join('\n').replace('RECORDER_FILE_PATH', ". '" + file + "'");
+  const result = spawnSync('powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    { encoding: 'utf8', timeout: 20000, windowsHide: true });
+  assert.equal(result.status, 0, [result.error?.message, result.stdout, result.stderr].filter(Boolean).join('\n'));
+});
+
+
+test('native Windows VR teardown never restarts Ollama unless governor reconcile proves NORMAL inactive', { skip: process.platform !== 'win32' }, () => {
+  const restoredFunction = performance.match(/function Restore-Session \{[\s\S]*?(?=\r?\nfunction Get-GameDriveSample \{)/)?.[0];
+  assert.ok(restoredFunction, 'extract actual source Restore-Session function without running the game script');
+  const safeExistingFile = fileURLToPath(new URL('./windows/starfield-vr-performance-mode.ps1', import.meta.url)).replaceAll("'", "''");
+  const script = [
+    'Set-StrictMode -Version Latest',
+    "$ErrorActionPreference = 'Stop'",
+    restoredFunction,
+    'function Restore-AudioState { param($Session) return [pscustomobject]@{ restored=$true; attempts=0; stableConfirmations=0; finalEndpointId=""; finalEndpoints=$null; error="" } }',
+    'function Invoke-GamingResourceReconcile { return $script:governor }',
+    'function Get-Process { [CmdletBinding()] param([string[]]$Name) return $null }',
+    'function Start-Process { [CmdletBinding()] param([string]$FilePath) $script:launchCount++ }',
+    "$session = [pscustomobject]@{prefsPath=''; mutarConfig=$null; originalSettings=[pscustomobject]@{}; ollama=[pscustomobject]@{appWasRunning=$true; appPath='" + safeExistingFile + "'; serveWasRunning=$false; servePath=''}}",
+    '$cases = @(',
+    "  @{label='failure';reconciled=$false;phase='';active=$false;error='GOVERNOR_UNAVAILABLE';defer=$true}",
+    "  @{label='missing-phase';reconciled=$true;phase='';active=$false;error='';defer=$true}",
+    "  @{label='reported-error';reconciled=$true;phase='NORMAL';active=$false;error='PARSE_FAILURE';defer=$true}",
+    "  @{label='gaming';reconciled=$true;phase='GAMING';active=$true;error='';defer=$true}",
+    "  @{label='cooldown';reconciled=$true;phase='COOLDOWN';active=$true;error='';defer=$true}",
+    "  @{label='normal-inactive';reconciled=$true;phase='NORMAL';active=$false;error='';defer=$false}",
+    ')',
+    'foreach ($case in $cases) {',
+    ' $script:governor = [pscustomobject]@{ reconciled=$case.reconciled; phase=$case.phase; active=$case.active; error=$case.error }',
+    ' $script:launchCount = 0',
+    ' $receipt = Restore-Session -Session $session',
+    ' if ([bool]$receipt.ollamaRestoreDeferred -ne [bool]$case.defer) { throw "incorrect defer $($case.label)" }',
+    ' $expectedLaunches = if ($case.defer) { 0 } else { 1 }',
+    ' if ($script:launchCount -ne $expectedLaunches) { throw "unapproved process start $($case.label): $script:launchCount" }',
+    '}',
+  ].join('\n');
+  const result = spawnSync('powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    { encoding: 'utf8', timeout: 20_000, windowsHide: true, shell: false });
+  assert.equal(result.status, 0, [result.error?.message, result.stdout, result.stderr].filter(Boolean).join('\n'));
+});
+
+
+test('native Windows governor JSON field types fail closed before Ollama restore eligibility', { skip: process.platform !== 'win32' }, async () => {
+  const actualFunction = performance.match(/function Invoke-GamingResourceReconcile \{[\s\S]*?(?=\r?\nfunction Restore-Session \{)/)?.[0];
+  assert.ok(actualFunction, 'invoke the actual production governor reconciliation parser');
+  const disposable = await mkdtemp(join(tmpdir(), 'stephanos-vr-governor-json-'));
+  try {
+    const childScript = join(disposable, 'mock-governor.ps1');
+    await writeFile(childScript, [
+      '[CmdletBinding()]',
+      'param([string]$Action)',
+      "if ($Action -ne 'Reconcile') { exit 7 }",
+      'Write-Output $env:STEPHANOS_VR_TEST_GOVERNOR_JSON',
+    ].join('\n'));
+    const childQuoted = "'" + childScript.replaceAll("'", "''") + "'";
+    const commands = [
+      'Set-StrictMode -Version Latest',
+      "$ErrorActionPreference = 'Stop'",
+      actualFunction,
+      '$gamingResourceGovernorScript = ' + childQuoted,
+      "$powershellExecutable = Join-Path $PSHOME 'powershell.exe'",
+      '$cases = @(',
+      " @{name='valid-normal-inactive'; json='{\"Phase\":\"NORMAL\",\"Active\":false}'; valid=$true; active=$false}",
+      " @{name='valid-gaming-active'; json='{\"Phase\":\"GAMING\",\"Active\":true}'; valid=$true; active=$true}",
+      " @{name='missing-active'; json='{\"Phase\":\"NORMAL\"}'; valid=$false; active=$false}",
+      " @{name='null-active'; json='{\"Phase\":\"NORMAL\",\"Active\":null}'; valid=$false; active=$false}",
+      " @{name='text-false'; json='{\"Phase\":\"NORMAL\",\"Active\":\"false\"}'; valid=$false; active=$false}",
+      " @{name='numeric-zero'; json='{\"Phase\":\"NORMAL\",\"Active\":0}'; valid=$false; active=$false}",
+      " @{name='missing-phase'; json='{\"Active\":false}'; valid=$false; active=$false}",
+      " @{name='null-phase'; json='{\"Phase\":null,\"Active\":false}'; valid=$false; active=$false}",
+      ')',
+      'foreach ($case in $cases) {',
+      ' $env:STEPHANOS_VR_TEST_GOVERNOR_JSON = $case.json',
+      ' $observed = Invoke-GamingResourceReconcile',
+      ' if ([bool]$observed.reconciled -ne [bool]$case.valid) { throw "unexpected reconciled flag: $($case.name)" }',
+      ' if ([bool]$observed.active -ne [bool]$case.active) { throw "unexpected active flag: $($case.name)" }',
+      ' if (-not $case.valid -and [string]$observed.error -notlike "*GOVERNOR_RECONCILE_SCHEMA_INVALID*") { throw "missing fail-closed error: $($case.name)" }',
+      ' if ($case.valid -and -not [string]::IsNullOrWhiteSpace([string]$observed.error)) { throw "valid child refused: $($case.name)" }',
+      '}',
+      'Remove-Item Env:STEPHANOS_VR_TEST_GOVERNOR_JSON -ErrorAction SilentlyContinue',
+    ];
+    const result = spawnSync('powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(commands.join('\n'), 'utf16le').toString('base64')],
+      { encoding: 'utf8', timeout: 90_000, windowsHide: true, shell: false });
+    assert.equal(result.status, 0, [result.error?.message, result.stdout, result.stderr].filter(Boolean).join('\n'));
+  } finally {
+    await rm(disposable, { recursive: true, force: true });
   }
 });
