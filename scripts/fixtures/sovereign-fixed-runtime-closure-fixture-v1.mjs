@@ -175,7 +175,7 @@ if (!maintenance) {
   // exception is limited to the production Windows fixed profile. Changed gates
   // must be reassessed; an optional-looking pathname is never a generic bypass.
   const applicabilityPins = {
-  "scripts/sovereign-commander-http.mjs": "0af461df59d540ce86d0db86a9dbc0295790eec4dc17c152bf29cad80a54d27a",
+  "scripts/sovereign-commander-http.mjs": "16a84f0faf52bbaffd74c73088161937e69cb8ca1f5e8da1ff144addf91b2981",
   "scripts/sovereign-fixed-runtime-parent-v1.mjs": "e999aa177ace3f77b5ace753d340e87df5b3c748176d2cceb8efde48ab1ad87a",
   "shared/agents/sovereignMaintenanceAdmissionV1.mjs": "e16f81e0bdd86a5878e380901f5302c65ac9c19028fd675cef2c6b1e506de228",
   "scripts/windows/SovereignFixedRuntimeHostV1.cs": "24f03a18fc7b81e807fc9c2ef0bfbafa205c2de871d55aad15c127b1b433812c"

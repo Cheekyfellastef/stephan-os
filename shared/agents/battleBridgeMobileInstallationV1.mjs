@@ -183,12 +183,9 @@ function clientData(raw) {
   return out;
 }
 
-export function verifyMobileInstallationAssertionV1({ candidate, enrollment: protectedEnrollment, assertion }, { nowMs = Date.now() } = {}) {
-  const normalized = normalizeMobileInstallationCandidateV1(candidate, { nowMs });
-  if (!normalized.ok) return normalized;
-  try {
-    const e = enrollment(protectedEnrollment), c = normalized.candidate;
-    if (!bound(c, e)) return fail('ENROLLMENT_BINDING_MISMATCH');
+// Closed callers below select the installation or setup challenge. No public
+// arbitrary-challenge verifier or caller-selected verification policy exists.
+function verifyAssertionCore(e, assertion, expectedChallenge, previousCount = e.lastSignCount) {
     const a = record(assertion, ['type', 'id', 'rawId', 'response']);
     const r = record(a.response, ['clientDataJSON', 'authenticatorData', 'signature', 'userHandle']);
     if (a.type !== 'public-key' || a.id !== e.credentialId || a.rawId !== e.credentialId
@@ -196,17 +193,210 @@ export function verifyMobileInstallationAssertionV1({ candidate, enrollment: pro
     const rawClient = bytes(r.clientDataJSON, 32, 4096), data = clientData(rawClient);
     if (data.type !== 'webauthn.get' || data.origin !== e.origin
         || (Object.hasOwn(data, 'crossOrigin') && data.crossOrigin !== false)
-        || data.challenge !== mobileInstallationChallengeV1(c)) return fail('CLIENT_BINDING_MISMATCH');
+        || data.challenge !== expectedChallenge) return fail('CLIENT_BINDING_MISMATCH');
     const auth = bytes(r.authenticatorData, 37, 37), flags = auth[32];
     if (!equal(auth.subarray(0, 32), hash(e.rpId)) || (flags & 5) !== 5
         || (flags & 0xe2) !== 0 || ((flags & 0x10) !== 0 && (flags & 8) === 0)) return fail('AUTHENTICATOR_POLICY_REFUSED');
     const signCount = auth.readUInt32BE(33);
-    if ((e.lastSignCount !== 0 || signCount !== 0) && signCount <= e.lastSignCount) return fail('SIGN_COUNTER_ROLLBACK');
+    if ((previousCount !== 0 || signCount !== 0) && signCount <= previousCount) return fail('SIGN_COUNTER_ROLLBACK');
     if (!verify('sha256', Buffer.concat([auth, hash(rawClient)]), p256Key(e.publicKeySpki), signature(r.signature))) return fail('SIGNATURE_INVALID');
-    return Object.freeze({ ok: true, ...authority, approvalVerified: true,
-      requestId: c.requestId, candidateSha256: mobileInstallationCandidateDigestV1(c), signCount,
-      blockers: Object.freeze([]) });
+    return Object.freeze({ ok: true, ...authority, signCount, authenticatorFlags: flags, blockers: Object.freeze([]) });
+}
+
+export function verifyMobileInstallationAssertionV1({ candidate, enrollment: protectedEnrollment, assertion }, { nowMs = Date.now() } = {}) {
+  const normalized = normalizeMobileInstallationCandidateV1(candidate, { nowMs });
+  if (!normalized.ok) return normalized;
+  try {
+    const e = enrollment(protectedEnrollment), c = normalized.candidate;
+    if (!bound(c, e)) return fail('ENROLLMENT_BINDING_MISMATCH');
+    const result = verifyAssertionCore(e, assertion, mobileInstallationChallengeV1(c));
+    if (!result.ok) return result;
+    return Object.freeze({ ok: true, ...authority, approvalVerified: true, signCount: result.signCount,
+      requestId: c.requestId, candidateSha256: mobileInstallationCandidateDigestV1(c), blockers: result.blockers });
   } catch { return fail('ASSERTION_INVALID'); }
+}
+
+const PAIRING_CONTEXT_SCHEMA = 'stephanos.mobile-installer-first-device-context.v1';
+const PAIRING_CONTEXT_KEYS = ['schemaVersion', 'repository', 'issueNumber', 'action', 'sourceHead', 'sourceTree',
+  'machineHash', 'operatorSid', 'enrollmentGeneration', 'packageSha256', 'closureSha256', 'releaseProofSha256',
+  'origin', 'rpId', 'userHandle', 'nonce', 'issuedAtUtc', 'expiresAtUtc'];
+const PAIRING_AUTHORITY = Object.freeze({ sourceAdmissionProven: false, releaseEligibilityProven: false,
+  evidenceAuthenticationProven: false, enrollmentQualified: false, operatorApprovalProven: false,
+  approvalVerified: false, installationApprovalGranted: false, executionAuthorityGranted: false,
+  dispatchAllowed: false, elevationPerformed: false, installed: false, rebootAllowed: false });
+const pairingResult = value => deepFreezePairing({ ...value, ...PAIRING_AUTHORITY,
+  installability: 'NOT_INSTALLABLE', requiresNativeReverification: true, authority: PAIRING_AUTHORITY });
+const pairingFail = code => pairingResult({ ok: false, blockers: [code] });
+function deepFreezePairing(value) {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) deepFreezePairing(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+// The context is immutable review DATA supplied by the existing private owner.
+// Validating it never authenticates its source/review or authorizes enrollment.
+export function normalizeMobileDevicePairingContextV1(input, { nowMs = Date.now() } = {}) {
+  try {
+    const c = record(input, PAIRING_CONTEXT_KEYS);
+    if (!Number.isFinite(nowMs) || nowMs < 0 || c.schemaVersion !== PAIRING_CONTEXT_SCHEMA
+        || c.repository !== 'Cheekyfellastef/stephan-os' || c.issueNumber !== 1814
+        || c.action !== 'CAPTURE_MOBILE_INSTALLER_FIRST_DEVICE_V1'
+        || !matches(c.sourceHead, HEAD) || !matches(c.sourceTree, HEAD) || !matches(c.operatorSid, SID)
+        || !positive(c.enrollmentGeneration)
+        || !['machineHash', 'packageSha256', 'closureSha256', 'releaseProofSha256', 'nonce'].every(key => matches(c[key], HEX64))
+        || !iso(c.issuedAtUtc) || !iso(c.expiresAtUtc)) return pairingFail('PAIRING_CONTEXT_INVALID');
+    const issued = Date.parse(c.issuedAtUtc), expiry = Date.parse(c.expiresAtUtc);
+    if (expiry <= issued || expiry - issued > 15 * 60_000 || issued > nowMs || expiry <= nowMs)
+      return pairingFail('PAIRING_CONTEXT_NOT_FRESH');
+    bytes(c.userHandle, 32, 32);
+    if (typeof c.rpId !== 'string' || c.rpId.length > 253
+        || !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(c.rpId)
+        || typeof c.origin !== 'string' || c.origin.length > 1024) return pairingFail('PAIRING_ORIGIN_INVALID');
+    const origin = new URL(c.origin);
+    if (origin.protocol !== 'https:' || origin.origin !== c.origin || origin.username || origin.password
+        || origin.port === '0' || origin.hostname !== c.rpId)
+      return pairingFail('PAIRING_ORIGIN_INVALID');
+    return pairingResult({ ok: true, context: c, contextSha256: hash(JSON.stringify(c)).toString('hex'), blockers: [] });
+  } catch { return pairingFail('PAIRING_CONTEXT_INVALID'); }
+}
+
+export function mobileDevicePairingCreateOptionsV1(context, options = {}) {
+  const nowMs = options.nowMs ?? Date.now();
+  const normalized = normalizeMobileDevicePairingContextV1(context, { nowMs });
+  if (!normalized.ok) return normalized;
+  const c = normalized.context;
+  return pairingResult({ ...normalized, publicKey: {
+    challenge: hash('stephanos.mobile-installer-first-device-create.v1\0' + JSON.stringify(c)).toString('base64url'),
+    rp: { id: c.rpId, name: 'Stephanos Battle Bridge' },
+    user: { id: c.userHandle, name: 'Battle Bridge operator', displayName: 'Battle Bridge operator' },
+    pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+    authenticatorSelection: { userVerification: 'required', residentKey: 'discouraged' },
+    attestation: 'none', timeout: Math.min(60_000, Date.parse(c.expiresAtUtc) - nowMs),
+  } });
+}
+
+// Deliberately restricted CBOR: definite minimal integers/lengths, byte/text
+// strings and small maps only. No tags, arrays, floats, indefinite forms or
+// duplicate keys; declared sizes never cause an allocation or unbounded loop.
+function pairingCbor(raw, start = 0) {
+  let offset = start, items = 0;
+  const read = depth => {
+    if (++items > 64 || depth > 4 || offset >= raw.length) throw Error('cbor-bound');
+    const head = raw[offset++], major = head >>> 5, extra = head & 31;
+    let size;
+    if (extra < 24) size = extra;
+    else {
+      const width = extra === 24 ? 1 : extra === 25 ? 2 : extra === 26 ? 4 : 0;
+      if (!width || offset + width > raw.length) throw Error('cbor-size');
+      size = width === 1 ? raw[offset] : width === 2 ? raw.readUInt16BE(offset) : raw.readUInt32BE(offset);
+      offset += width;
+      if (size < (width === 1 ? 24 : width === 2 ? 256 : 65536)) throw Error('cbor-minimal');
+    }
+    if (major === 0) return size;
+    if (major === 1) return -1 - size;
+    if (major === 2 || major === 3) {
+      if (size > 8192 || size > raw.length - offset) throw Error('cbor-string');
+      const value = raw.subarray(offset, offset + size); offset += size;
+      if (major === 2) return value;
+      return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(value);
+    }
+    if (major !== 5 || size > 8) throw Error('cbor-type');
+    const result = new Map();
+    for (let index = 0; index < size; index++) {
+      const key = read(depth + 1);
+      if (!(typeof key === 'string' || Number.isInteger(key)) || result.has(key)) throw Error('cbor-key');
+      result.set(key, read(depth + 1));
+    }
+    return result;
+  };
+  const value = read(0);
+  return { value, offset };
+}
+
+export function verifyMobileDevicePairingRegistrationV1(context, registration, options = {}) {
+  const normalized = mobileDevicePairingCreateOptionsV1(context, options);
+  if (!normalized.ok) return normalized;
+  try {
+    const c = normalized.context, a = record(registration, ['type', 'id', 'rawId', 'response']);
+    const r = record(a.response, ['clientDataJSON', 'attestationObject']);
+    const credential = bytes(a.rawId, 16, 1023);
+    if (a.type !== 'public-key' || a.id !== a.rawId) return pairingFail('PAIRING_CREDENTIAL_MISMATCH');
+    const data = clientData(bytes(r.clientDataJSON, 32, 4096));
+    if (data.type !== 'webauthn.create' || data.challenge !== normalized.publicKey.challenge || data.origin !== c.origin
+        || (Object.hasOwn(data, 'crossOrigin') && data.crossOrigin !== false)) return pairingFail('PAIRING_CLIENT_BINDING_MISMATCH');
+    const raw = bytes(r.attestationObject, 1, 8192), parsed = pairingCbor(raw), attestation = parsed.value;
+    if (parsed.offset !== raw.length || !(attestation instanceof Map) || attestation.size !== 3
+        || !['fmt', 'authData', 'attStmt'].every(key => attestation.has(key)) || attestation.get('fmt') !== 'none'
+        || !(attestation.get('attStmt') instanceof Map) || attestation.get('attStmt').size !== 0)
+      return pairingFail('PAIRING_ATTESTATION_POLICY_REFUSED');
+    const auth = attestation.get('authData');
+    if (!Buffer.isBuffer(auth) || auth.length < 55 || !equal(auth.subarray(0, 32), hash(c.rpId)))
+      return pairingFail('PAIRING_AUTHENTICATOR_POLICY_REFUSED');
+    const flags = auth[32], length = auth.readUInt16BE(53);
+    if ((flags & 0x45) !== 0x45 || (flags & 0xa2) !== 0 || ((flags & 0x10) !== 0 && (flags & 8) === 0)
+        || length !== credential.length || 55 + length >= auth.length || !equal(auth.subarray(55, 55 + length), credential))
+      return pairingFail('PAIRING_AUTHENTICATOR_POLICY_REFUSED');
+    const key = pairingCbor(auth, 55 + length), cose = key.value;
+    if (key.offset !== auth.length || !(cose instanceof Map) || cose.size !== 5
+        || ![1, 3, -1, -2, -3].every(label => cose.has(label)) || cose.get(1) !== 2 || cose.get(3) !== -7 || cose.get(-1) !== 1
+        || !Buffer.isBuffer(cose.get(-2)) || cose.get(-2).length !== 32 || !Buffer.isBuffer(cose.get(-3)) || cose.get(-3).length !== 32)
+      return pairingFail('PAIRING_KEY_POLICY_REFUSED');
+    const publicKeySpki = Buffer.concat([Buffer.from('3059301306072a8648ce3d020106082a8648ce3d03010703420004', 'hex'), cose.get(-2), cose.get(-3)]).toString('base64url');
+    p256Key(publicKeySpki);
+    const captured = { type: a.type, id: a.id, rawId: a.rawId, response: { clientDataJSON: r.clientDataJSON, attestationObject: r.attestationObject } };
+    return pairingResult({ ok: true, context: c, contextSha256: normalized.contextSha256, registration: captured,
+      registrationSha256: hash(JSON.stringify(captured)).toString('hex'), credentialId: a.id, publicKeySpki,
+      userHandle: c.userHandle, registrationSignCount: auth.readUInt32BE(33), registrationVerified: true,
+      attestationType: 'none', authenticatorProvenanceVerified: false, devicePossessionVerified: false,
+      backupEligible: (flags & 8) !== 0, backedUp: (flags & 0x10) !== 0, blockers: [] });
+  } catch { return pairingFail('PAIRING_REGISTRATION_INVALID'); }
+}
+
+export function buildMobileDevicePairingProposedEnrollmentV1(context, registration, options = {}) {
+  const checked = verifyMobileDevicePairingRegistrationV1(context, registration, options);
+  if (!checked.ok) return checked;
+  const c = checked.context;
+  // The existing initial-bootstrap schema requires both SPKIs. This provisional
+  // value is data only: approved native setup creates and replaces the receipt
+  // key before sealing protected trust. Registration never supplies that trust.
+  const proposed = enrollment({ schemaVersion: MOBILE_INSTALLATION_ENROLLMENT_SCHEMA, machineHash: c.machineHash,
+    operatorSid: c.operatorSid, generation: c.enrollmentGeneration, rpId: c.rpId, origin: c.origin,
+    credentialId: checked.credentialId, publicKeySpki: checked.publicKeySpki, userHandle: c.userHandle,
+    lastSignCount: 0, revoked: false, receiptPublicKeySpki: checked.publicKeySpki });
+  return pairingResult({ ...checked, proposedEnrollment: proposed, proposedEnrollmentJson: JSON.stringify(proposed),
+    receiptKeyStatus: 'PROVISIONAL_NOT_TRUSTED' });
+}
+
+export function mobileDevicePairingSetupDescriptorV1(context, registration, options = {}) {
+  const nowMs = options.nowMs ?? Date.now();
+  const checked = buildMobileDevicePairingProposedEnrollmentV1(context, registration, { nowMs });
+  if (!checked.ok) return checked;
+  const c = checked.context;
+  // Exact existing offline/native descriptor field order and setup domain.
+  const descriptor = JSON.stringify({ schemaVersion: 'stephanos.mobile-installer-setup-descriptor.v1',
+    repository: c.repository, sourceHead: c.sourceHead, sourceTree: c.sourceTree, machineHash: c.machineHash,
+    operatorSid: c.operatorSid, enrollmentGeneration: c.enrollmentGeneration, packageSha256: c.packageSha256,
+    releaseProofSha256: c.releaseProofSha256, proposedEnrollmentSha256: hash(checked.proposedEnrollmentJson).toString('hex'),
+    nonce: c.nonce, issuedAtUtc: c.issuedAtUtc, expiresAtUtc: c.expiresAtUtc });
+  return pairingResult({ ...checked, setupDescriptor: descriptor, setupDescriptorSha256: hash(descriptor).toString('hex'), publicKey: {
+    challenge: hash('stephanos.mobile-install-enrollment-proof.v1\0' + descriptor).toString('base64url'), rpId: c.rpId,
+    allowCredentials: [{ type: 'public-key', id: checked.credentialId }], userVerification: 'required',
+    timeout: Math.min(60_000, Date.parse(c.expiresAtUtc) - nowMs),
+  } });
+}
+
+export function verifyMobileDevicePairingSetupAssertionV1(context, registration, assertion, options = {}) {
+  const checked = mobileDevicePairingSetupDescriptorV1(context, registration, options);
+  if (!checked.ok) return checked;
+  try {
+    const proof = verifyAssertionCore(checked.proposedEnrollment, assertion, checked.publicKey.challenge, checked.registrationSignCount);
+    if (!proof.ok) return pairingFail(proof.blockers[0]);
+    if (((proof.authenticatorFlags & 8) !== 0) !== checked.backupEligible)
+      return pairingFail('PAIRING_BACKUP_ELIGIBILITY_MISMATCH');
+    return pairingResult({ ...checked, devicePossessionVerified: true, signCount: proof.signCount, blockers: [] });
+  } catch { return pairingFail('PAIRING_SETUP_ASSERTION_INVALID'); }
 }
 
 const STATE_TEXT = Object.freeze({

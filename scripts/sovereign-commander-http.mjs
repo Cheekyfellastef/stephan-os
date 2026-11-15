@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { readFile, open, lstat, realpath } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
-import { resolve } from 'node:path';
+import { resolve, dirname, isAbsolute } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
@@ -654,6 +654,83 @@ function tokenFile(env = process.env) {
   return resolve(profile, 'Documents', 'OpenClaw-Standalone', 'mission-runner', 'keys', 'sovereign-commander-token.txt');
 }
 
+/** Origin configuration is an observation of the existing private route only. */
+export function normalizeSovereignCommanderCaravanOriginV1(value) {
+  if (typeof value !== 'string' || value.length > 512) return '';
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password
+      && !url.search && !url.hash && url.pathname === '/' && value === url.origin ? value : '';
+  } catch { return ''; }
+}
+
+function privateTailnetOrigin(value) {
+  const normalized = normalizeSovereignCommanderCaravanOriginV1(value);
+  if (!normalized) return '';
+  const url = new URL(normalized);
+  const labels = url.hostname.split('.');
+  return url.port === '18791' && labels.length >= 4 && labels.slice(-2).join('.') === 'ts.net'
+    && labels.every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) ? normalized : '';
+}
+
+const sameLocalPath = (a, b) => process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+const sameOriginFile = (a, b) => a.dev === b.dev && a.ino === b.ino && a.size === b.size
+  && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
+async function unredirectedOriginParents(path) {
+  const parents = [];
+  for (let parent = dirname(path);;) {
+    parents.unshift(parent);
+    const next = dirname(parent); if (next === parent) break; parent = next;
+  }
+  for (const parent of parents) {
+    const observed = await lstat(parent);
+    if (!observed.isDirectory() || observed.isSymbolicLink()
+        || !sameLocalPath(await realpath(parent), parent)) throw Error('ORIGIN_PARENT_REDIRECTED');
+  }
+}
+
+// No caller path or URL environment variable is admitted. The scheduled runner
+// and approved Tailscale configurator share this existing normal-user estate.
+export async function loadSovereignCommanderTailnetOriginV1(env = process.env) {
+  const profile = text(env.USERPROFILE || env.HOME) || homedir();
+  if (!isAbsolute(profile)) return '';
+  const path = resolve(profile, 'Documents', 'OpenClaw-Standalone', 'mission-runner',
+    'sovereign-commander-tailnet-origin.v1.json');
+  let handle;
+  try {
+    await unredirectedOriginParents(path);
+    const before = await lstat(path);
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size < 2 || before.size > 2048
+        || !sameLocalPath(await realpath(path), path)) return '';
+    handle = await open(path, 'r');
+    if (!sameOriginFile(before, await handle.stat())) return '';
+    const bytes = Buffer.alloc(2049); let length = 0;
+    while (length < bytes.length) {
+      const read = await handle.read(bytes, length, bytes.length - length, length);
+      if (!read.bytesRead) break; length += read.bytesRead;
+    }
+    const after = await lstat(path);
+    if (length !== before.size || length > 2048 || !after.isFile() || after.isSymbolicLink()
+        || !sameOriginFile(before, after) || !sameOriginFile(before, await handle.stat())
+        || !sameLocalPath(await realpath(path), path)) return '';
+    await unredirectedOriginParents(path);
+    const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, length)));
+    const keys = ['schemaVersion', 'origin', 'localTarget', 'tailnetOnly', 'observedAtUtc', 'source',
+      'executionAuthorityGranted', 'enrollmentQualified'];
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+        || Object.keys(value).sort().join(',') !== keys.sort().join(',')
+        || value.schemaVersion !== 'stephanos.sovereign-commander-tailnet-origin.v1'
+        || value.localTarget !== 'http://127.0.0.1:18791' || value.tailnetOnly !== true
+        || value.source !== 'TAILSCALE_SERVE_STATUS' || value.executionAuthorityGranted !== false
+        || value.enrollmentQualified !== false || typeof value.observedAtUtc !== 'string'
+        || !Number.isFinite(Date.parse(value.observedAtUtc))
+        || new Date(value.observedAtUtc).toISOString() !== value.observedAtUtc
+        || Date.parse(value.observedAtUtc) > Date.now() + 300_000) return '';
+    return privateTailnetOrigin(value.origin);
+  } catch { return ''; }
+  finally { await handle?.close().catch(() => {}); }
+}
+
 export async function loadSovereignCommanderToken(options = {}) {
   if (text(options.token)) return text(options.token);
   const path = options.tokenFile || tokenFile(options.env || process.env);
@@ -817,6 +894,9 @@ function validRpcMessage(message) {
 
 export async function createSovereignCommanderHttpServer(options = {}) {
   const env = options.env || process.env;
+  const mobileInstallationPublicOrigin = options.mobileInstallationPublicOrigin === undefined
+    ? await loadSovereignCommanderTailnetOriginV1(env)
+    : normalizeSovereignCommanderCaravanOriginV1(options.mobileInstallationPublicOrigin);
   const host = text(options.host || env.STEPHANOS_SOVEREIGN_COMMANDER_HOST) || SOVEREIGN_COMMANDER_HTTP_HOST;
   const port = Number.isSafeInteger(Number(options.port ?? env.STEPHANOS_SOVEREIGN_COMMANDER_PORT))
     ? Number(options.port ?? env.STEPHANOS_SOVEREIGN_COMMANDER_PORT)
@@ -880,7 +960,8 @@ export async function createSovereignCommanderHttpServer(options = {}) {
   const caravanHandler = createBattleBridgeCaravanHttpHandlerV1({
     provider: options.mobileInstallationProvider,
     expectedMain: options.mobileInstallationExpectedMain,
-    publicOrigin: options.mobileInstallationPublicOrigin,
+    publicOrigin: mobileInstallationPublicOrigin,
+    privateOwnerAuthorized: req => safeTokenEqual(bearerToken(req), token),
     nowMs,
   });
 
