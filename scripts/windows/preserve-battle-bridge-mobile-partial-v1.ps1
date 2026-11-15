@@ -152,6 +152,15 @@ namespace Stephanos.Sovereign {
       (!ancestor || (rule.PropagationFlags&PropagationFlags.InheritOnly)==0) && !trusted.Contains(rule.IdentityReference.Value))Deny("MOBILE_PARTIAL_WRITER_UNPROVEN");
    return Hash(Utf8.GetBytes(acl.GetSecurityDescriptorSddlForm(AccessControlSections.Owner|AccessControlSections.Group|AccessControlSections.Access)));
   }
+  // Task Scheduler marshals ERROR_FILE_NOT_FOUND as either managed IO or COM.
+  // Only this exact HRESULT and these two interop shapes prove absence.
+  static object ReadInstallerTask(dynamic folder) {
+   try{return folder.GetTask(Task);}
+   catch(Exception e) {
+    if((e is COMException || e is FileNotFoundException) && e.HResult==unchecked((int)0x80070002))return null;
+    throw;
+   }
+  }
   static void AbsentEnrollment() {
    IntPtr provider=IntPtr.Zero,key=IntPtr.Zero;
    try {
@@ -163,7 +172,7 @@ namespace Stephanos.Sovereign {
    object scheduler=null,folder=null,task=null;
    try {
     dynamic service=Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service",true));scheduler=service;service.Connect();folder=service.GetFolder(@"\");
-    try{task=((dynamic)folder).GetTask(Task);}catch(COMException e){if(e.ErrorCode!=unchecked((int)0x80070002))throw;}
+    task=ReadInstallerTask((dynamic)folder);
     if(task!=null)Deny("MOBILE_PARTIAL_INSTALLER_TASK_EXISTS");
    }finally{foreach(object value in new[]{task,folder,scheduler})if(value!=null && Marshal.IsComObject(value))Marshal.FinalReleaseComObject(value);}
    var query=new EventLogQuery(Log,PathType.LogName,"*[System[(EventID=62519) and Provider[@Name='StephanosMaintenanceCustody']]]");

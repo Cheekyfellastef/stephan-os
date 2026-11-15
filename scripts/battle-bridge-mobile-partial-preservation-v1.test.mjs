@@ -16,6 +16,61 @@ const literal = value => "'" + value.replaceAll("'", "''") + "'";
 const run = script => spawnSync(PS, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
   { shell: false, windowsHide: true, encoding: 'utf8', timeout: 30000, maxBuffer: 20000 });
 
+test('fixed task absence accepts actual Windows COM missing-task marshaling and rejects denied, unknown and unrelated errors',
+  { skip: process.platform !== 'win32', timeout: 40000 }, t => {
+    const source = readFileSync(entry, 'utf8').split("$native=@'\n")[1]?.split("\n'@\n")[0];
+    assert.ok(source);
+    const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stephanos-task-absence-'))), native = join(base, 'adapter.cs');
+    writeFileSync(native, source);
+    try {
+      const script = String.raw`$ErrorActionPreference='Stop'
+Add-Type -TypeDefinition ([IO.File]::ReadAllText(__NATIVE__)) -ReferencedAssemblies 'System','System.Core','Microsoft.CSharp' -ErrorAction Stop
+Add-Type -TypeDefinition @'
+using System;using System.IO;using System.Runtime.InteropServices;
+public sealed class AlteredMissingTaskErrorV1:FileNotFoundException {public AlteredMissingTaskErrorV1(){HResult=unchecked((int)0x80070005);}}
+public sealed class FixedTaskAbsenceProbeV1 {
+ public string Mode;public string ObservedError;public object Folder;public string MissingName;
+ public object GetTask(string name) {
+  if(name!="Stephanos Mobile Runtime Installer V1")throw new InvalidOperationException("FOREIGN_TASK_NAME");
+  switch(Mode) {
+   case "actual":try{return ((dynamic)Folder).GetTask(MissingName);}catch(Exception e){ObservedError=e.GetType().FullName+":"+e.HResult.ToString("x8");throw;}
+   case "io-missing":throw new FileNotFoundException();
+   case "com-missing":throw new COMException("missing",unchecked((int)0x80070002));
+   case "com-denied":throw new COMException("denied",unchecked((int)0x80070005));
+   case "io-wrong-code":throw new AlteredMissingTaskErrorV1();
+   case "directory-missing":throw new DirectoryNotFoundException();
+   case "unknown-com":throw new COMException("unknown",unchecked((int)0x80004005));
+   case "unrelated-same-code":throw new ArgumentException("unrelated",new COMException("nested",unchecked((int)0x80070002)));
+   case "existing":return this;
+   default:throw new InvalidOperationException("UNEXPECTED_MODE");
+  }
+ }
+}
+'@ -ReferencedAssemblies 'System','System.Core','Microsoft.CSharp' -ErrorAction Stop
+$method=[Stephanos.Sovereign.MobilePartialPreservationV1].GetMethod('ReadInstallerTask',[Reflection.BindingFlags]'NonPublic,Static')
+$service=New-Object -ComObject Schedule.Service;$service.Connect();$folder=$service.GetFolder('\')
+$probe=[FixedTaskAbsenceProbeV1]::new();$probe.Mode='actual';$probe.Folder=$folder;$probe.MissingName='Stephanos read-only absent task fixture '+[Guid]::NewGuid().ToString('N')
+try {
+ if($null -ne $method.Invoke($null,@($probe))){throw 'REAL_MISSING_TASK_NOT_ABSENT'}
+ if($probe.ObservedError -cnotmatch '^(System.IO.FileNotFoundException|System.Runtime.InteropServices.COMException):80070002$'){throw ('REAL_NATIVE_ABSENCE_UNPROVEN:'+ $probe.ObservedError)}
+ $actual=$probe.ObservedError;$count=1
+ foreach($mode in @('io-missing','com-missing')){$probe.Mode=$mode;if($null -ne $method.Invoke($null,@($probe))){throw ('EXPECTED_MISSING_REJECTED:'+ $mode)};$count++}
+ foreach($mode in @('com-denied','io-wrong-code','directory-missing','unknown-com','unrelated-same-code')){
+  $probe.Mode=$mode;$refused=$false
+  try{[void]$method.Invoke($null,@($probe))}catch{$refused=$true}
+  if(-not $refused){throw ('NON_ABSENCE_ACCEPTED:'+ $mode)};$count++
+ }
+ $probe.Mode='existing';if(-not [object]::ReferenceEquals($probe,$method.Invoke($null,@($probe)))){throw 'EXISTING_TASK_HIDDEN'};$count++
+ [Console]::Write((@{vectors=$count;actualMissingTaskError=$actual;taskMutationPerformed=$false}|ConvertTo-Json -Compress))
+}finally{[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($folder);[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($service)}
+`.replace('__NATIVE__', literal(native));
+      const result = run(script); assert.equal(result.status, 0, result.stderr);
+      const row = JSON.parse(result.stdout); assert.equal(row.vectors, 9); assert.equal(row.taskMutationPerformed, false);
+      assert.match(row.actualMissingTaskError, /^(System.IO.FileNotFoundException|System.Runtime.InteropServices.COMException):80070002$/);
+      t.diagnostic('Actual Windows Task Scheduler result: ' + row.actualMissingTaskError + '; nine absence/presence/refusal vectors, no task registration or mutation');
+    } finally { rmSync(base, { recursive: true, force: true }); }
+  });
+
 test('manual partial preservation refuses an unbound caller before observation or privileged mutation', { skip: process.platform !== 'win32' }, () => {
   const result = run(`$ErrorActionPreference='Stop';$t=$null;$e=$null;[void][Management.Automation.Language.Parser]::ParseFile(${literal(entry)},[ref]$t,[ref]$e);if($e.Count){throw 'PARSE_FAILED'};try{& ([scriptblock]::Create([IO.File]::ReadAllText(${literal(entry)}))) -Mode Preserve -OperatorApproved -ExpectedMain ('a'*40) -ExpectedFingerprint ('b'*64);throw 'UNBOUND_ACCEPTED'}catch{if($_.Exception.Message -cne 'MOBILE_PARTIAL_IMMUTABLE_GATE_REQUIRED'){throw}};[Console]::Write('UNBOUND_REFUSED')`);
   assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout, 'UNBOUND_REFUSED');
