@@ -98,6 +98,13 @@
     </section>
     <section class="panel" aria-label="Spatial ChatGPT console">
       <h2>Holographic console</h2>
+      <p>Three pages share the holographic wall: workspace settings on the left, your ChatGPT window in the centre, and audio or connection controls on the right. Point at a page to select it. Room settings work even when the ChatGPT picture is view-only.</p>
+      <div class="controls" aria-label="Holographic page focus">
+        <button id="focus-settings" type="button" aria-pressed="false">Workspace settings</button>
+        <button id="focus-chatgpt" type="button" aria-pressed="true">ChatGPT page</button>
+        <button id="focus-tools" type="button" aria-pressed="false">Audio &amp; connection page</button>
+      </div>
+      <p id="panel-focus-status" role="status">ChatGPT page selected. Connect an interactive window to use the keyboard.</p>
       <p>Connect your existing ChatGPT or Codex window on this Windows PC. Use Quest Link / Air Link for VR. Its conversation, images, tools and approvals stay in the original app.</p>
       <div class="controls">
         <button id="choose-window" type="button">Connect interactive ChatGPT window</button>
@@ -109,7 +116,7 @@
       <p class="muted">On the Battle Bridge, “Show ChatGPT window” opens the browser's sharing picker. Select your actual ChatGPT window. Its picture stays local and is view-only until the original Windows helper is installed and authorised for clicks and typing. On phone and iPad, the 3D preview still works, but it cannot remotely capture your PC's ChatGPT window.</p>
       <p id="window-status" role="status">No window connected.</p>
       <p id="window-input-status" class="muted" role="status"></p>
-      <p class="muted">In VR, point and press Quest trigger or Xbox A to click the screen or type on the console keyboard. The sticks still move and turn; grip / RT still picks up cubes. Audio uses the original app and your PC headset microphone and speakers.</p>
+      <p class="muted">In VR, Quest trigger or Xbox A selects a page and operates its controls. Typing and clicking inside ChatGPT require the interactive Windows connection and the ChatGPT page selected. The sticks still move and turn; grip / RT still picks up cubes.</p>
       <details><summary>Console preview and desktop controls</summary><div id="console-preview"></div></details>
     </section>
     <section class="panel" aria-label="Microphone speakers and ChatGPT Voice">
@@ -117,7 +124,7 @@
       <p class="muted">Use the actual ChatGPT/Codex desktop window for its harness and Voice button. The buttons here check your local headset devices without recording or forwarding your voice. ChatGPT itself uses the microphone and speakers selected in Windows or the original app.</p>
       <div class="controls">
         <button type="button" id="probe-capture">Check ChatGPT screen connection</button>
-        <button type="button" id="show-chatgpt-screen">Show connected ChatGPT screen</button>
+        <button type="button" id="show-chatgpt-screen">Show holographic pages</button>
         <button type="button" id="audio-refresh">Find microphone &amp; speakers</button>
         <select id="audio-microphone" aria-label="Microphone for local test"><option value="">System microphone</option></select>
         <select id="audio-speakers" aria-label="Speakers for local test"><option value="">System speakers</option></select>
@@ -126,7 +133,7 @@
         <button type="button" id="audio-test-speakers">Play speaker test</button>
         <button type="button" id="audio-voice-help">Voice setup guide</button>
       </div>
-      <p id="audio-connection-status" role="status">Checking whether the local ChatGPT screen adapter is available.</p>
+      <p id="audio-connection-status" role="status">Checking the local interactive helper. Browser window sharing remains a separate view-only connection.</p>
       <p id="audio-status" role="status">Audio test devices not yet selected.</p>
       <p id="audio-meter" class="muted" role="status">Microphone test inactive.</p>
     </section>
@@ -184,6 +191,7 @@
     const canvas = document.getElementById('holodeck-canvas');
     let lastCapability = null;
     let previewRenderer = null;
+    let previewReady = false;
     let immersiveActive = false;
     let inspectKeyboard = false;
     function refreshComfortUI(state) {
@@ -228,25 +236,81 @@
     const connectWindowButton=document.getElementById('connect-window');
     const previewKeyButtons=[];
     let windowListSignature='',keyboardShift=null,screen;
+    let audioDeviceSignature='',micMeterTimer=null,helperProbeResult=null,helperProbeSerial=0;
+    function refreshAudioUI(state){
+      document.getElementById('audio-status').textContent=state.status;
+      const signature=JSON.stringify([state.inputs,state.outputs]);
+      if(signature!==audioDeviceSignature){
+        audioDeviceSignature=signature;
+        for(const [id,list,defaultLabel] of [
+          ['audio-microphone',state.inputs,'System microphone'],
+          ['audio-speakers',state.outputs,'System speakers'],
+        ]){
+          const select=document.getElementById(id),option=document.createElement('option');
+          option.value='';option.textContent=defaultLabel;select.replaceChildren(option);
+          for(const device of list){const entry=document.createElement('option');
+            entry.value=device.id;entry.textContent=device.label;select.append(entry);}
+        }
+      }
+      document.getElementById('audio-microphone').value=state.inputId;
+      document.getElementById('audio-speakers').value=state.outputId;
+      document.getElementById('audio-test-microphone').disabled=state.microphoneActive||state.microphonePending;
+      document.getElementById('audio-stop-microphone').disabled=!state.microphoneActive&&!state.microphonePending;
+      if(state.microphoneActive){
+        if(micMeterTimer===null)micMeterTimer=setInterval(()=>{
+          const level=audio.microphoneLevel();
+          document.getElementById('audio-meter').textContent=level===null
+            ?'Microphone opened, level analyser unavailable.'
+            :'Live microphone level: '+Math.min(100,Math.round(level*360))+'% (not recorded)';
+        },180);
+      }else{
+        if(micMeterTimer!==null)clearInterval(micMeterTimer);
+        micMeterTimer=null;
+        document.getElementById('audio-meter').textContent=state.microphonePending
+          ?'Waiting for microphone permission. Stop cancels this test.'
+          :'Microphone test inactive.';
+      }
+      if(!immersiveActive)drawPreview();
+    }
+    const audio=createHolodeckAudioControls({onChange:refreshAudioUI});
+    refreshAudioUI(audio.getState());
+    const stopMicTest=()=>audio.stopMicrophone();
+    function refreshConnectionStatus(state){
+      const connection=state.status==='live'
+        ?'Interactive ChatGPT window connected: '+state.title+'. Select its page, then click the app field before typing.'
+        :state.status==='view-only'
+          ?'ChatGPT picture is live, view-only. Connect the interactive window to enable its pointer and keyboard.'
+          :'ChatGPT window: '+state.message;
+      document.getElementById('audio-connection-status').textContent=connection+(helperProbeResult?' '+helperProbeResult.reason:'');
+    }
     function refreshInputStatus(state){
       const element=document.getElementById('window-input-status'),message=state.inputStatus??'';
       if(element.textContent!==message)element.textContent=message;
+      const focused=state.focusedPanel??'chatgpt';
+      for(const id of ['settings','chatgpt','tools'])document.getElementById('focus-'+id).setAttribute('aria-pressed',String(focused===id));
+      const label={settings:'Workspace settings',chatgpt:'ChatGPT',tools:'Audio & connection'}[focused];
+      document.getElementById('panel-focus-status').textContent=label+' page selected. '+(state.keyboardEnabled
+        ?'Keyboard targets ChatGPT. Click its text field first.'
+        :focused==='chatgpt'?'Keyboard needs an interactive ChatGPT connection.':'Select the ChatGPT page to direct typing to its connected window.');
+      if(state.selectedWindowId!==undefined){
+        windowSelector.value=state.selectedWindowId===null?'':String(state.selectedWindowId);
+        connectWindowButton.disabled=!windowSelector.value;
+      }
     }
     function refreshKeyboardLabels(state){
-      if(keyboardShift===state.shift)return;keyboardShift=state.shift;
+      const labelsChanged=keyboardShift!==state.shift;keyboardShift=state.shift;
       for(const [control,button] of previewKeyButtons){
-        const label=screenButtonLabel(control,state.shift);button.textContent=label;
-        button.setAttribute('aria-label',control.id.startsWith('key:')?`Type ${label}`:label);
+        if(labelsChanged){const label=screenButtonLabel(control,state.shift);button.textContent=label;
+          button.setAttribute('aria-label',control.id.startsWith('key:')?'Type '+label:label);}
         if(control.id==='shift')button.setAttribute('aria-pressed',String(state.shift));
+        const appInput=control.id.startsWith('key:')||['enter','backspace','scroll-up','scroll-down'].includes(control.id);
+        button.disabled=appInput&&!state.keyboardEnabled;
+        button.title=button.disabled?'Select an interactive ChatGPT page to send input.':'';
       }
     }
     const client=createHolodeckWindowClient({onChange:state=>{
       document.getElementById('window-status').textContent=state.message;
-      document.getElementById('audio-connection-status').textContent=state.status==='live'
-        ?'Interactive desktop window connected: '+state.title+'. Its original Voice button is shown in that window.'
-        :state.status==='view-only'
-          ?'Live PC window visible on the hologram (view-only). Native helper required for pointer and keyboard actions.'
-          :'ChatGPT harness not connected: '+state.message;
+      refreshConnectionStatus(state);
       windowSelector.hidden=state.status!=='selecting';
       connectWindowButton.hidden=state.status!=='selecting';
       windowSelector.disabled=!state.windows.length;
@@ -262,13 +326,16 @@
       }
       connectWindowButton.disabled=!state.windows.some(window=>String(window.id)===windowSelector.value);
       if(!immersiveActive)drawPreview();
-      refreshInputStatus(screen?.getState()??state);
+      const projected=screen?.getState()??state;
+      refreshInputStatus(projected);refreshKeyboardLabels(projected);
     }});
-    screen=createHolodeckScreen({client,comfort,onStatus:state=>{
+    screen=createHolodeckScreen({client,comfort,furniture,audio,onStatus:state=>{
       refreshKeyboardLabels(state);if(!immersiveActive)drawPreview();refreshInputStatus(screen?.getState()??state);
     },onReload:async()=>{
       workspaceEntry.stop();comfort.flush();cubeScene.stop();await client.stop();location.reload();
     }});
+    for(const id of ['settings','chatgpt','tools'])document.getElementById('focus-'+id).addEventListener('click',()=>screen.action('focus-'+id));
+    refreshInputStatus(screen.getState());
     const surfaces=screen.render();
     const consoleDetails=document.querySelector('details');
     for(const [kind,element] of [['screen',surfaces.screen]]){
@@ -295,62 +362,30 @@
     previewKeyboardHint.textContent='Scroll or swipe sideways through the keyboard to reach every key.';
     document.getElementById('console-preview').append(previewKeyboardHint);
     async function probeCapture(){
+      const request=++helperProbeSerial;
       const status=await client.probeHelper();
-      document.getElementById('audio-connection-status').textContent=status.reason;
-      if(!status.ok)document.getElementById('window-status').textContent=status.reason;
+      if(request!==helperProbeSerial)return;
+      helperProbeResult=status;
+      refreshConnectionStatus(client.getState());
     }
     document.getElementById('probe-capture').addEventListener('click',()=>probeCapture());
     document.getElementById('show-chatgpt-screen').addEventListener('click',()=>{
       consoleDetails.open=true;
       consoleDetails.scrollIntoView({block:'center',behavior:'auto'});
       const state=client.getState();
-      document.getElementById('audio-connection-status').textContent=state.status==='live'
-        ?'Real interactive ChatGPT/Codex screen visible. Use its own Voice button.'
-        :state.status==='view-only'?'Real selected window visible, but interaction requires the native Windows helper.'
-          :'Connect the original ChatGPT/Codex window first.';
+      refreshConnectionStatus(state);
     });
     document.getElementById('choose-window').addEventListener('click',()=>client.discover());
     document.getElementById('share-window').addEventListener('click',()=>{void client.shareScreen();});
-    windowSelector.addEventListener('change',()=>{connectWindowButton.disabled=!windowSelector.value;});
-    connectWindowButton.addEventListener('click',()=>client.connect(Number(windowSelector.value)));
+    windowSelector.addEventListener('change',()=>{screen.selectWindow(windowSelector.value?Number(windowSelector.value):null);});
+    connectWindowButton.addEventListener('click',()=>screen.action('connect-window'));
     document.getElementById('disconnect-window').addEventListener('click',()=>client.stop());
-    const audio=createHolodeckAudioControls({
-      onStatus:message=>{document.getElementById('audio-status').textContent=message;},
-    });
-    let micMeterTimer=null;
-    const stopMicTest=()=>{
-      if(micMeterTimer!==null)clearInterval(micMeterTimer);
-      micMeterTimer=null;audio.stopMicrophone();
-      document.getElementById('audio-meter').textContent='Microphone test inactive.';
-    };
-    document.getElementById('audio-refresh').addEventListener('click',async()=>{
-      const devices=await audio.listDevices();
-      if(!devices.ok)return;
-      for(const [id,list,defaultLabel] of [
-        ['audio-microphone',devices.inputs,'System microphone'],
-        ['audio-speakers',devices.outputs,'System speakers'],
-      ]){
-        const select=document.getElementById(id);
-        select.replaceChildren();
-        const option=document.createElement('option');option.value='';option.textContent=defaultLabel;select.append(option);
-        for(const device of list){const entry=document.createElement('option');
-          entry.value=device.id;entry.textContent=device.label;select.append(entry);}
-      }
-    });
-    document.getElementById('audio-test-microphone').addEventListener('click',async()=>{
-      const device=document.getElementById('audio-microphone').value;
-      const result=await audio.testMicrophone(device);
-      if(micMeterTimer!==null)clearInterval(micMeterTimer);
-      micMeterTimer=null;
-      if(result.ok)micMeterTimer=setInterval(()=>{
-        const level=audio.microphoneLevel();
-        document.getElementById('audio-meter').textContent=level===null
-          ?'Microphone opened, level analyser unavailable.'
-          :'Live microphone level: '+Math.min(100,Math.round(level*360))+'% (not recorded)';
-      },180);
-    });
+    document.getElementById('audio-refresh').addEventListener('click',()=>audio.listDevices());
+    document.getElementById('audio-microphone').addEventListener('change',event=>audio.setInput(event.target.value));
+    document.getElementById('audio-speakers').addEventListener('change',event=>audio.setOutput(event.target.value));
+    document.getElementById('audio-test-microphone').addEventListener('click',()=>audio.testMicrophone());
     document.getElementById('audio-stop-microphone').addEventListener('click',stopMicTest);
-    document.getElementById('audio-test-speakers').addEventListener('click',()=>audio.testSpeakers(document.getElementById('audio-speakers').value));
+    document.getElementById('audio-test-speakers').addEventListener('click',()=>audio.testSpeakers());
     document.getElementById('audio-voice-help').addEventListener('click',()=>{
       screen.action('voice');consoleDetails.open=true;
       consoleDetails.scrollIntoView({block:'center',behavior:'auto'});
@@ -379,8 +414,10 @@
     let previewFrame = null;
     let previewTime = null;
     function drawPreview() {
-      if (immersiveActive || document.hidden) return;
+      if (!previewReady || immersiveActive || document.hidden) return false;
       try {
+        // The flat holographic pages remain useful even without a WebGL room.
+        screen?.render();
         const gl = canvas.getContext('webgl', { xrCompatible: true, alpha: false, antialias: true });
         if (!gl) throw new Error('graphics unavailable');
         previewRenderer ??= createHolodeckRoomRenderer({ gl,screen,comfort,furniture });
@@ -395,8 +432,10 @@
         const camera = inspectKeyboard ? {eye:[2.4,1.6+comfort.getState().heightOffset,-2.4],target:[0,1.3,-5.05]}
           : inspectCube ? { target, eye:target.map((v,i)=>v+distance*[0.5,0.4,1.1][i]) } : {eye:[3.7,2.2,1.7],target:[0,1.5,-4.0]};
         previewRenderer.drawPreview({ cube:{cubes}, ...camera });
+        return true;
       } catch {
         document.getElementById('preview-status').textContent = 'Room preview unavailable on this browser.';
+        return false;
       }
     }
     window.addEventListener('resize', drawPreview);
@@ -407,8 +446,7 @@
       const cube = selectedCube().getState();
       cubeScene.checkpoint(time,cubes.every(c=>c.sleeping));
       previewTime = time;
-      drawPreview();
-      document.getElementById('preview-status').textContent = cube.sleeping
+      if(drawPreview())document.getElementById('preview-status').textContent = cube.sleeping
         ? `Preview · ${cube.id} cube resting on ${cube.position[1] > 0.5 ? 'table' : 'floor'}`
         : `Preview · ${cube.id} cube falling under gravity`;
       if (cubes.some(c=>!c.sleeping)) previewFrame = requestAnimationFrame(animatePreview);
@@ -431,6 +469,9 @@
       'cube-reset': () => selectedCube().reset(),
       'cube-inspect': () => { inspectCube = !inspectCube; document.getElementById('cube-inspect').textContent = inspectCube ? 'View whole room' : 'Inspect glass cubes'; },
     })) document.getElementById(id).addEventListener('click', () => { if (!immersiveActive) { action(); cubeScene.checkpoint(0,true); playPreview(); } });
+    // Shared-control callbacks can run during setup. Construct the room only
+    // after its screen, furniture and cube scene are all available.
+    previewReady = true;
     playPreview();
     function refreshExternalRouteTruth() {
       const routeTruth = navigator.onLine ? 'network required · not offline-cached' : 'unavailable offline';
