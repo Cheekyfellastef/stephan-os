@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,15 +68,77 @@ Check 'redirected state' $false
 
 test('shipping manual adapter has a single fixed preservation effect and no enrollment or reset authority', () => {
   const text = readFileSync(entry, 'utf8');
-  assert.equal((text.match(/Directory\.Move\(/g) ?? []).length, 1);
+  assert.equal((text.match(/SetFileInformationByHandle\(handle,3,/g) ?? []).length, 1);
+  assert.doesNotMatch(text, /Directory\.Move\(/);
   assert.match(text, /if\(!String\.Equals\(fingerprint,expected,StringComparison\.Ordinal\)\)/);
-  assert.match(text, /Snapshot\(destination,context\)!=fingerprint/);
+  assert.match(text, /held\.HelperWitness\(\)!=helperWitness/);
+  assert.match(text, /DeleteEmptyPinned\(held\.StateHandle\)/);
+  assert.match(text, /DeleteEmptyPinned\(held\.RootHandle\)/);
   assert.match(text, /MOBILE_PARTIAL_RECEIPT_KEY_EXISTS/);
   assert.match(text, /MOBILE_PARTIAL_INSTALLER_TASK_EXISTS/);
   assert.match(text, /MOBILE_PARTIAL_RETAINED_GENESIS_EXISTS/);
   assert.doesNotMatch(text, /(?:File|Directory)\.Delete\(|Assembly\]::LoadFrom|NCryptCreatePersistedKey|RegisterTaskDefinition|ReportEventW|SetAccessControl/);
   assert.doesNotMatch(text.split('$native=')[0], /\[string\]\$(?:Root|Path|Destination|Command)/i);
 });
+
+test('pinned helper preservation and kernel empty-only cleanup refuse concurrent additions without moving or deleting them',
+  { skip: process.platform !== 'win32', timeout: 40000 }, t => {
+    const source = readFileSync(entry, 'utf8').split("$native=@'\n")[1]?.split("\n'@\n")[0];
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'stephanos-partial-race-'))), native = join(root, 'adapter.cs');
+    writeFileSync(native, source);
+    try {
+      const script = String.raw`$ErrorActionPreference='Stop'
+Add-Type -TypeDefinition ([IO.File]::ReadAllText(__NATIVE__)) -ReferencedAssemblies 'System','System.Core','Microsoft.CSharp' -ErrorAction Stop
+$type=[Stephanos.Sovereign.MobilePartialPreservationV1];$flags=[Reflection.BindingFlags]'NonPublic,Instance'
+$leaseType=$type.GetNestedType('PartialSnapshot',[Reflection.BindingFlags]'NonPublic')
+$ctor=$leaseType.GetConstructor($flags,$null,[type[]]@([string]),$null)
+$base=__ROOT__;$preserve=$type.GetMethod('PreservePinned',[Reflection.BindingFlags]'NonPublic,Static')
+$shape=$leaseType.GetMethod('Shape',$flags);$witness=$leaseType.GetMethod('HelperWitness',$flags)
+$rows=[Collections.Generic.List[string]]::new()
+for($trial=0;$trial -lt 3;$trial++) {
+foreach($scenario in @('clean','root-added','state-added','destination-collision')) {
+ $fixture=[IO.Path]::Combine($base,$trial.ToString()+'-'+$scenario);[void][IO.Directory]::CreateDirectory($fixture)
+ $state=[IO.Path]::Combine($fixture,'state');[void][IO.Directory]::CreateDirectory($state)
+ $helper=[IO.Path]::Combine($fixture,'installer.exe');[IO.File]::WriteAllText($helper,'opaque approved bytes')
+ $security=[IO.Directory]::GetAccessControl($fixture).GetSecurityDescriptorBinaryForm()
+ $held=$ctor.Invoke(@($fixture));$destination=$fixture+'-preserved'
+ try {
+ [void]$shape.Invoke($held,@($fixture));$approved=$witness.Invoke($held,@())
+ foreach($operation in @('overwrite','delete-helper','replace-state','replace-root')) {
+  $denied=$false;try {
+   switch($operation) {
+    'overwrite'{[IO.File]::WriteAllText($helper,'unapproved')}
+    'delete-helper'{[IO.File]::Delete($helper)}
+    'replace-state'{[IO.Directory]::Move($state,$state+'-unapproved')}
+    'replace-root'{[IO.Directory]::Move($fixture,$fixture+'-unapproved')}
+   }
+  }catch{if($_.Exception.InnerException -is [IO.IOException] -or $_.Exception.InnerException -is [UnauthorizedAccessException]){$denied=$true}else{throw}}
+  if(-not $denied){throw ('PIN_DID_NOT_EXCLUDE:'+ $operation)};$rows.Add($operation)
+ }
+ $extra=$null
+ if($scenario -ceq 'root-added'){$extra=[IO.Path]::Combine($fixture,'unapproved')}
+ if($scenario -ceq 'state-added'){$extra=[IO.Path]::Combine($state,'unapproved')}
+ if($null -ne $extra){[IO.File]::WriteAllText($extra,'never move or delete this unapproved file')}
+ if($scenario -ceq 'destination-collision'){[void][IO.Directory]::CreateDirectory($destination);[IO.File]::WriteAllText([IO.Path]::Combine($destination,'sentinel'),'unchanged')}
+ $succeeded=$false;$code='';try{[void]$preserve.Invoke($null,@($held,$fixture,$destination,$security));$succeeded=$true}catch{$failure=$_.Exception;while($null -ne $failure.InnerException){$failure=$failure.InnerException};$code=$failure.Message}
+ if($witness.Invoke($held,@()) -cne $approved){throw 'APPROVED_HELPER_IDENTITY_OR_BYTES_CHANGED'}
+ if($scenario -ceq 'clean') {
+  if(-not $succeeded -or [IO.Directory]::Exists($fixture) -or -not [IO.File]::Exists([IO.Path]::Combine($destination,'installer.exe'))){throw ('CLEAN_PRESERVATION_FAILED:'+ $code)}
+ }elseif($scenario -ceq 'destination-collision') {
+  if($succeeded -or $code -cne 'MOBILE_PARTIAL_DESTINATION_CREATE_NEW_REQUIRED' -or -not [IO.File]::Exists($helper) -or [IO.File]::ReadAllText([IO.Path]::Combine($destination,'sentinel')) -cne 'unchanged'){throw 'DESTINATION_COLLISION_WAS_NOT_ATOMIC'}
+ }else {
+  if($succeeded -or $code -cne 'MOBILE_PARTIAL_NONEMPTY_OR_DELETE_UNPROVEN' -or -not [IO.File]::Exists($extra) -or [IO.File]::ReadAllText($extra) -cne 'never move or delete this unapproved file' -or -not [IO.File]::Exists([IO.Path]::Combine($destination,'installer.exe'))){throw ('UNAPPROVED_ENTRY_WAS_AFFECTED:'+ $scenario+':'+$code+':'+$destination)}
+ }
+ $rows.Add($scenario)
+ }finally{$held.Dispose()}
+}
+}
+[Console]::Write(($rows|ConvertTo-Json -Compress))`.replace('__NATIVE__', literal(native)).replace('__ROOT__', literal(root));
+      const result = run(script); assert.equal(result.status, 0, result.stderr);
+      const rows = JSON.parse(result.stdout); assert.equal(rows.length, 60);
+      t.diagnostic('48 competing writes/replacements refused across 12 native scenarios; clean preservation succeeds; unexpected root/state entries stay in place and block cleanup; destination collision changes no source bytes');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
 
 test('manual preservation preparation pins Git membership, actual-target data and exact operation without granting authority', () => {
   const path = 'scripts/windows/preserve-battle-bridge-mobile-partial-v1.ps1';
