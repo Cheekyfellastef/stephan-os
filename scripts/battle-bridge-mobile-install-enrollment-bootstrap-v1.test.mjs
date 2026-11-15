@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { prepareMobileInstallSetupReviewV1, prepareMobileInstallBootstrapReviewV1,
   prepareMobileInstallFirstPairingReviewV1, prepareMobileInstallCapturedBootstrapReviewV1,
@@ -45,6 +49,72 @@ const setupInput = { schemaVersion: MOBILE_SETUP_INPUT_V1, nativeSourceInput: na
     releaseEvidenceBase64: Buffer.from('{"synthetic":true,"qualified":true}').toString('base64') } };
 const setup = value => prepareMobileInstallSetupReviewV1(JSON.stringify(value));
 const bootstrap = value => prepareMobileInstallBootstrapReviewV1(JSON.stringify(value));
+
+test('real native preflight rejects expired/short-budget/wrong-target/invalid-proof captures before protected effects',
+  { skip: process.platform !== 'win32', timeout: 45000 }, t => {
+    const ps = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+    const literal = value => "'" + value.replaceAll("'", "''") + "'";
+    const run = script => spawnSync(ps, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+      { shell: false, windowsHide: true, encoding: 'utf8', timeout: 40000, maxBuffer: 32768 });
+    const identity = run(String.raw`$ErrorActionPreference='Stop';$id=[Security.Principal.WindowsIdentity]::GetCurrent();try{$sid=$id.User.Value}finally{$id.Dispose()};$r=[Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine','Registry64');try{$k=$r.OpenSubKey('SOFTWARE\Microsoft\Cryptography',$false);try{$g=$k.GetValue('MachineGuid')}finally{$k.Dispose()}}finally{$r.Dispose()};$h=[Security.Cryptography.SHA256]::Create();try{$m=([BitConverter]::ToString($h.ComputeHash([Text.Encoding]::UTF8.GetBytes($g.ToLowerInvariant())))).Replace('-','').ToLowerInvariant()}finally{$h.Dispose()};[Console]::Write(($sid+' '+$m))`);
+    assert.equal(identity.status, 0, identity.stderr);
+    const [sid, machine] = identity.stdout.split(' ');
+    assert.match(sid, /^S-1-5-21-/); assert.match(machine, /^[a-f0-9]{64}$/);
+    const current = Date.now();
+    const make = ({ issued = current - 1000, expires = current + 600000, wrongTarget = false, badSignature = false } = {}) => {
+      const proposed = { ...enrollment, operatorSid: sid, machineHash: wrongTarget ? 'f'.repeat(64) : machine };
+      const row = { ...structuredClone(setupInput), proposedEnrollmentJson: JSON.stringify(proposed),
+        issuedAtUtc: new Date(issued).toISOString(), expiresAtUtc: new Date(expires).toISOString() };
+      Object.assign(row.reviewInput, { operatorSid: sid, machineHash: proposed.machineHash });
+      const prepared = setup(row);
+      const client = Buffer.from(JSON.stringify({ type: 'webauthn.get', challenge: prepared.publicKey.challenge, origin: proposed.origin }));
+      const auth = Buffer.concat([createHash('sha256').update(proposed.rpId).digest(), Buffer.from([5, 0, 0, 0, 1])]);
+      const signature = sign('sha256', Buffer.concat([auth, createHash('sha256').update(client).digest()]), key.privateKey);
+      if (badSignature) signature[signature.length - 1] ^= 1;
+      const assertion = { type: 'public-key', id: proposed.credentialId, rawId: proposed.credentialId,
+        response: { clientDataJSON: client.toString('base64url'), authenticatorData: auth.toString('base64url'), signature: signature.toString('base64url'), userHandle: null } };
+      return JSON.parse(Buffer.from(bootstrap({ schemaVersion: MOBILE_BOOTSTRAP_INPUT_V1, setupInput: row,
+        deviceAssertionJson: JSON.stringify(assertion) }).privateCandidate.payloadBase64, 'base64'));
+    };
+    const cases = [{ name: 'valid actual-target capture', payload: make(), accepted: true },
+      { name: 'expired capture', payload: make({ issued: current - 700000, expires: current - 1000 }), accepted: false },
+      { name: 'insufficient remaining budget', payload: make({ expires: current + 30000 }), accepted: false },
+      { name: 'different machine', payload: make({ wrongTarget: true }), accepted: false },
+      { name: 'tampered device signature', payload: make({ badSignature: true }), accepted: false }];
+    const root = mkdtempSync(join(tmpdir(), 'stephanos-preflight-data-'));
+    try {
+      const input = join(root, 'vectors.json'); writeFileSync(input, JSON.stringify(cases));
+      const entry = fileURLToPath(new URL('./windows/install-battle-bridge-mobile-installer-v1.ps1', import.meta.url));
+      const result = run(String.raw`$ErrorActionPreference='Stop'
+$tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile(__ENTRY__,[ref]$tokens,[ref]$errors);if($errors.Count){throw 'PARSE_FAILED'}
+foreach($name in @('Get-MobileDigest','Confirm-MobileEnrollmentDevice')) {
+ $node=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true)
+ . ([scriptblock]::Create($node.Extent.Text))
+}
+$vectors=([IO.File]::ReadAllText(__INPUT__))|ConvertFrom-Json
+$first=$vectors[0].payload
+$source=(@($first.Records|Where-Object{$_.Path.EndsWith('.cs')}|ForEach-Object{[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($_.ContentBase64))})) -join [Environment]::NewLine
+$parameters=[CodeDom.Compiler.CompilerParameters]::new();$parameters.GenerateExecutable=$true;$parameters.GenerateInMemory=$true;$parameters.TreatWarningsAsErrors=$true
+$parameters.CompilerOptions='/target:exe /main:Stephanos.Sovereign.SovereignMobileInstallEntryV1 /optimize+'
+foreach($reference in @('System.dll','System.Core.dll','System.Management.dll','System.Web.Extensions.dll')){[void]$parameters.ReferencedAssemblies.Add($reference)}
+$provider=[Microsoft.CSharp.CSharpCodeProvider]::new();try{$compiled=$provider.CompileAssemblyFromSource($parameters,@($source));if($compiled.Errors.HasErrors){throw ($compiled.Errors|Out-String)};$assembly=$compiled.CompiledAssembly}finally{$provider.Dispose()}
+[void][Reflection.Assembly]::Load('System.Web.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35');$json=[Web.Script.Serialization.JavaScriptSerializer]::new()
+$results=@()
+foreach($vector in $vectors) {
+ $bootstrap=$vector.payload;$ExpectedMain=$bootstrap.SourceHead;$records=@{};$releaseBytes=@{}
+ foreach($record in $bootstrap.Records){$records[$record.Path]=$record}
+ foreach($file in $bootstrap.ReleaseFiles){$releaseBytes[$file.name]=[Convert]::FromBase64String($file.contentBase64)}
+ $accepted=$false;$code='';try{[void](Confirm-MobileEnrollmentDevice $assembly 120);$accepted=$true}catch{$capturedFailure=$_.Exception;while($null -ne $capturedFailure.InnerException){$capturedFailure=$capturedFailure.InnerException};$code=$capturedFailure.Message}
+ $results+=@{name=$vector.name;accepted=$accepted;code=$code}
+}
+[Console]::Write(($results|ConvertTo-Json -Compress))`.replace('__ENTRY__', literal(entry)).replace('__INPUT__', literal(input)));
+      assert.equal(result.status, 0, result.stderr);
+      const rows = JSON.parse(result.stdout);
+      for (const [index, row] of rows.entries()) assert.equal(row.accepted, cases[index].accepted, JSON.stringify(row));
+      for (const index of [1, 2]) assert.equal(rows[index].code, 'MOBILE_ENROLLMENT_DESCRIPTOR_NOT_FRESH');
+      t.diagnostic('5 native in-memory preflight vectors; no administrator gate, protected path creation, receipt key, task or journal mutation invoked');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
 
 test('separate-domain setup challenge binds exact native/runtime source, device and descriptor without authority', () => {
   const result = setup(setupInput), descriptor = JSON.parse(result.descriptor);

@@ -154,6 +154,45 @@ foreach($name in $releaseLimits.Keys) {
  $releaseBytes[$name]=$bytes
 }
 Assert-MobileSourceMembership
+# Prove the exact captured source, device assertion, actual target and remaining
+# lifetime BEFORE creating the protected root. Compilation here is in memory;
+# compiler scratch is temporary, never an installed helper or enrollment.
+function Confirm-MobileEnrollmentDevice([Reflection.Assembly]$assembly,[int]$MinimumRemainingSeconds=0) {
+$flags=[Reflection.BindingFlags]'NonPublic,Static'
+$core=$assembly.GetType('Stephanos.Sovereign.CoreJobCustodyV1',$true)
+$memberType=$assembly.GetType('Stephanos.Sovereign.FixedRuntimeManifestFileV1',$true)
+$members=[Array]::CreateInstance($memberType,$records.Count);$index=0
+foreach($row in $records.Values){$member=[Activator]::CreateInstance($memberType);$member.Path=$row.Path;$member.GitBlobSha=$row.GitBlobSha;$member.GitMode=$row.GitMode;$members.SetValue($member,$index);$index++}
+[void]$core.GetMethod('VerifyMobileEnrollmentSourceV1',$flags).Invoke($null,@($bootstrap.SourceProofWire,$ExpectedMain,$bootstrap.SourceTree,$members))
+$assertion=$assembly.GetType('Stephanos.Sovereign.SovereignMobileInstallAssertionV1',$true)
+$qualification=$assembly.GetType('Stephanos.Sovereign.MobileInstallQualifiedEnrollmentV1',$true)
+[void]$qualification.GetMethod('ValidateSetupDescriptorForEnrollmentV1',$flags).Invoke($null,@($bootstrap.SetupDescriptor,
+ $bootstrap.ProposedEnrollmentJson,$ExpectedMain,$bootstrap.SourceTree,(Get-MobileDigest $releaseBytes['runtime-package.json']),
+ (Get-MobileDigest $releaseBytes['release-evidence.json']),[DateTime]::UtcNow))
+if($MinimumRemainingSeconds -gt 0) {
+ [void]$qualification.GetMethod('ValidateSetupDescriptorForEnrollmentV1',$flags).Invoke($null,@($bootstrap.SetupDescriptor,
+  $bootstrap.ProposedEnrollmentJson,$ExpectedMain,$bootstrap.SourceTree,(Get-MobileDigest $releaseBytes['runtime-package.json']),
+  (Get-MobileDigest $releaseBytes['release-evidence.json']),[DateTime]::UtcNow.AddSeconds($MinimumRemainingSeconds)))
+}
+$proof=$assertion.GetMethod('VerifyEnrollmentProofV1',$flags).Invoke($null,@($bootstrap.ProposedEnrollmentJson,$bootstrap.DeviceAssertionJson,$bootstrap.SetupDescriptor,[DateTime]::UtcNow))
+$instance=[Reflection.BindingFlags]'NonPublic,Instance'
+if(-not $proof.GetType().GetField('DevicePossessionVerified',$instance).GetValue($proof)){throw 'MOBILE_ENROLLMENT_DEVICE_PROOF_REFUSED'}
+$proposed=$json.DeserializeObject($bootstrap.ProposedEnrollmentJson)
+if($proposed['machineHash'] -cne $bootstrap.MachineHash -or $proposed['operatorSid'] -cne $bootstrap.OperatorSid -or $proposed['revoked'] -ne $false){throw 'MOBILE_ENROLLMENT_DEVICE_TARGET_CHANGED'}
+return $proof
+}
+$preflightParameters=[CodeDom.Compiler.CompilerParameters]::new()
+$preflightParameters.GenerateExecutable=$true;$preflightParameters.GenerateInMemory=$true
+$preflightParameters.IncludeDebugInformation=$false;$preflightParameters.TreatWarningsAsErrors=$true
+$preflightParameters.CompilerOptions='/target:exe /main:Stephanos.Sovereign.SovereignMobileInstallEntryV1 /optimize+'
+foreach($reference in @('System.dll','System.Core.dll','System.Management.dll','System.Web.Extensions.dll')){[void]$preflightParameters.ReferencedAssemblies.Add($reference)}
+$source=($closure.paths|ForEach-Object{[Text.UTF8Encoding]::new($false,$true).GetString($records[$_].Bytes)}) -join [Environment]::NewLine
+$preflightProvider=[Microsoft.CSharp.CSharpCodeProvider]::new()
+try {
+ $preflight=$preflightProvider.CompileAssemblyFromSource($preflightParameters,@($source))
+ if($preflight.Errors.HasErrors){throw 'MOBILE_ENROLLMENT_PREFLIGHT_COMPILATION_FAILED'}
+ [void](Confirm-MobileEnrollmentDevice $preflight.CompiledAssembly 120)
+}finally{$preflightProvider.Dispose()}
 # From this boundary all effects target only the reviewed fixed new root. A
 # failed/partial setup is HELD for inspection: never delete, reset or overwrite.
 Assert-MobileProtected 'C:\Program Files'
@@ -172,22 +211,13 @@ try {
 }finally{$provider.Dispose()}
 Assert-MobileProtected $parameters.OutputAssembly
 $assembly=[Reflection.Assembly]::LoadFrom($parameters.OutputAssembly)
+# Repeat the original live validation after on-disk compilation. The earlier
+# two-minute admission budget does not extend or replace assertion expiry.
+$proof=Confirm-MobileEnrollmentDevice $assembly
 $flags=[Reflection.BindingFlags]'NonPublic,Static'
-$core=$assembly.GetType('Stephanos.Sovereign.CoreJobCustodyV1',$true)
-$memberType=$assembly.GetType('Stephanos.Sovereign.FixedRuntimeManifestFileV1',$true)
-$members=[Array]::CreateInstance($memberType,$records.Count);$index=0
-foreach($row in $records.Values){$member=[Activator]::CreateInstance($memberType);$member.Path=$row.Path;$member.GitBlobSha=$row.GitBlobSha;$member.GitMode=$row.GitMode;$members.SetValue($member,$index);$index++}
-[void]$core.GetMethod('VerifyMobileEnrollmentSourceV1',$flags).Invoke($null,@($bootstrap.SourceProofWire,$ExpectedMain,$bootstrap.SourceTree,$members))
-$assertion=$assembly.GetType('Stephanos.Sovereign.SovereignMobileInstallAssertionV1',$true)
-$qualification=$assembly.GetType('Stephanos.Sovereign.MobileInstallQualifiedEnrollmentV1',$true)
-[void]$qualification.GetMethod('ValidateSetupDescriptorForEnrollmentV1',$flags).Invoke($null,@($bootstrap.SetupDescriptor,
- $bootstrap.ProposedEnrollmentJson,$ExpectedMain,$bootstrap.SourceTree,(Get-MobileDigest $releaseBytes['runtime-package.json']),
- (Get-MobileDigest $releaseBytes['release-evidence.json']),[DateTime]::UtcNow))
-$proof=$assertion.GetMethod('VerifyEnrollmentProofV1',$flags).Invoke($null,@($bootstrap.ProposedEnrollmentJson,$bootstrap.DeviceAssertionJson,$bootstrap.SetupDescriptor,[DateTime]::UtcNow))
 $instance=[Reflection.BindingFlags]'NonPublic,Instance'
-if(-not $proof.GetType().GetField('DevicePossessionVerified',$instance).GetValue($proof)){throw 'MOBILE_ENROLLMENT_DEVICE_PROOF_REFUSED'}
+$assertion=$assembly.GetType('Stephanos.Sovereign.SovereignMobileInstallAssertionV1',$true)
 $proposed=$json.DeserializeObject($bootstrap.ProposedEnrollmentJson)
-if($proposed['machineHash'] -cne $bootstrap.MachineHash -or $proposed['operatorSid'] -cne $bootstrap.OperatorSid -or $proposed['revoked'] -ne $false){throw 'MOBILE_ENROLLMENT_DEVICE_TARGET_CHANGED'}
 $provision=$assembly.GetType('Stephanos.Sovereign.SovereignMobileInstallProvisioningV1',$true)
 $receiptSpki=$provision.GetMethod('CreateReceiptKeyForEnrollmentV1',$flags).Invoke($null,@())
 $proposed['receiptPublicKeySpki']=$receiptSpki
