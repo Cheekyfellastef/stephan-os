@@ -14,6 +14,13 @@ on:
       - 'scripts/windows/test-sovereign-fixed-runtime*'
       - 'scripts/sovereign-core-directory-action*'
       - 'scripts/sovereign-commander-mcp.mjs'
+      - 'scripts/sovereign-commander-spatial-workspace.mjs'
+      - 'shared/agents/sovereignSpatialWorkspaceV1*'
+      - 'scripts/windows/*spatial*'
+      - 'scripts/spatial-window-host.mjs'
+      - 'tests/spatial-window-lifecycle-v1.test.mjs'
+      - 'tests/spatial-workspace-prepare-windows-v1.test.mjs'
+      - 'tests/spatial-install-pins-windows-v1.test.mjs'
       - 'scripts/sovereign-commander-http.mjs'
       - 'scripts/sovereign-maintenance-custody*'
       - 'scripts/sovereign-maintenance-os-anchor*'
@@ -97,4 +104,6 @@ jobs:
           shared/agents/sovereignMaintenanceRecoveryMailboxV1.test.mjs
           scripts/battle-bridge-frontend-visibility-mailbox.test.mjs
       - name: Core-only admission, held R7, gaming and Windows descendant denial
-        run: node --test scripts/sovereign-maintenance-custody-store-v1.test.mjs scripts/sovereign-maintenance-custody-recovery.test.mjs scripts/sovereign-commander-stephanos-repair.test.mjs scripts/sovereign-commander-goal-builder-repair.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs scripts/sovereign-core-job-custody-preflight-v1.test.mjs scripts/sovereign-core-job-custody-native.test.mjs scripts/sovereign-fixed-runtime-job-v1.test.mjs scripts/sovereign-fixed-runtime-identity-v1.test.mjs scripts/sovereign-fixed-runtime-parent-v1.test.mjs scripts/sovereign-fixed-runtime-source-task-v1.test.mjs scripts/sovereign-fixed-runtime-installer-v1.test.mjs scripts/sovereign-fixed-runtime-directory-package-v1.test.mjs scripts/sovereign-fixed-runtime-install-source-package-v1.test.mjs scripts/sovereign-fixed-runtime-worker-v1.test.mjs scripts/sovereign-core-directory-action-v1.test.mjs shared/agents/stephanosCoreDaemonV1.test.mjs shared/agents/sovereignCommanderV1.test.mjs shared/agents/sovereignCommanderMcp.test.mjs shared/agents/sovereignCommanderHttp.test.mjs shared/agents/sovereignMaintenanceAdmissionV1.test.mjs
+        run: node --test scripts/sovereign-maintenance-custody-store-v1.test.mjs scripts/sovereign-maintenance-custody-recovery.test.mjs scripts/sovereign-commander-stephanos-repair.test.mjs scripts/sovereign-commander-goal-builder-repair.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs scripts/sovereign-core-job-custody-preflight-v1.test.mjs scripts/sovereign-core-job-custody-native.test.mjs scripts/sovereign-fixed-runtime-job-v1.test.mjs scripts/sovereign-fixed-runtime-identity-v1.test.mjs scripts/sovereign-fixed-runtime-adoption-v1.test.mjs scripts/sovereign-fixed-runtime-parent-v1.test.mjs scripts/sovereign-fixed-runtime-source-task-v1.test.mjs scripts/sovereign-fixed-runtime-spatial-v1.test.mjs scripts/sovereign-fixed-runtime-installer-v1.test.mjs scripts/sovereign-fixed-runtime-directory-package-v1.test.mjs scripts/sovereign-fixed-runtime-install-source-package-v1.test.mjs scripts/sovereign-fixed-runtime-worker-v1.test.mjs scripts/sovereign-core-directory-action-v1.test.mjs shared/agents/stephanosCoreDaemonV1.test.mjs shared/agents/sovereignCommanderV1.test.mjs shared/agents/sovereignCommanderMcp.test.mjs shared/agents/sovereignCommanderHttp.test.mjs shared/agents/sovereignMaintenanceAdmissionV1.test.mjs
+      - name: Spatial preparation contract and isolated helper lifecycle
+        run: node --test shared/agents/sovereignSpatialWorkspaceV1.test.mjs tests/spatial-window-lifecycle-v1.test.mjs tests/spatial-workspace-prepare-windows-v1.test.mjs tests/spatial-install-pins-windows-v1.test.mjs

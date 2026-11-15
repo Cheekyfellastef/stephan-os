@@ -1,6 +1,8 @@
 name: Stephanos Control Tower - Sovereign Control
 
 on:
+  issue_comment:
+    types: [created]
   workflow_dispatch:
     inputs:
       operation:
@@ -24,6 +26,8 @@ on:
       - 'shared/agents/sovereignControlSystemStatusV1*'
       - 'shared/agents/sovereignControlConversationV1*'
       - 'shared/agents/controlTowerRequestObservationV1*'
+      - 'shared/agents/postSyncRuntimeRefreshActivationOwners.test.mjs'
+      - 'shared/agents/postSyncRuntimeRefreshCoordinator.mjs'
       - 'shared/agents/stephanosConversationRouterV1*'
       - 'stephanos-server/services/sovereignControlConversationService*'
       - 'stephanos-server/routes/ai.js'
@@ -43,6 +47,7 @@ on:
       - 'scripts/battle-bridge-sovereign-relay-daemon.mjs'
       - 'docs/architecture/control-tower-build-start-v1.md'
       - 'docs/architecture/sovereign-conversational-control-v1.md'
+      - 'docs/architecture/ignition-source-activation-routing.md'
 
 permissions: {}
 
@@ -75,6 +80,8 @@ jobs:
           shared/agents/sovereignControlConversationV1.test.mjs
           shared/agents/controlTowerRequestObservationV1.test.mjs
           scripts/canonical-mailbox-control-tower-observation.test.mjs
+          scripts/canonical-mailbox-control-tower-ledger-scale.test.mjs
+          shared/agents/postSyncRuntimeRefreshActivationOwners.test.mjs
           stephanos-server/services/sovereignControlConversationService.test.js
           stephanos-server/services/sovereignCommanderStatusTool.test.js
           tests/stephanos-conversation-router-v1.test.mjs
@@ -106,11 +113,19 @@ jobs:
           retention-days: 30
 
   request-build:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.actor == 'Cheekyfellastef')
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.actor == 'Cheekyfellastef') ||
+      (github.event_name == 'issue_comment' && github.event.action == 'created' &&
+      github.actor == 'Cheekyfellastef' && github.actor_id == '267490109' &&
+      github.event.comment.user.login == 'Cheekyfellastef' && github.event.comment.user.id == 267490109 &&
+      !github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '<!-- stephanos-control-tower-owner-command-v1 -->'))
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
       contents: read
+      issues: read
     steps:
       - uses: actions/checkout@v4
         with:

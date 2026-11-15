@@ -13,6 +13,9 @@ import { STEPHANOS_EXECUTION_SURFACE, buildStephanosExecutionCommandEnvelopeV1,
 import { checkpointTerminalMailboxReceipt, createSanitizedMailboxReceiptProjection,
   serializeBoundedReceiptJson } from '../../scripts/battle-bridge-github-command-mailbox.mjs';
 import { projectBoundedRemoteControllerLaneStatus } from '../../scripts/sovereign-controller-lane-status.mjs';
+import { collectBattleBridgeObservation } from '../../scripts/battle-bridge-observation.mjs';
+import { SPATIAL_PREPARE_ACTION, SPATIAL_PREPARE_SCHEMA, SPATIAL_PREPARE_MARKER,
+  spatialPrepareBlockedV1 } from './sovereignSpatialWorkspaceV1.mjs';
 
 import {
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
@@ -28,6 +31,113 @@ import {
 } from './sovereignCommanderRemoteMailboxV1.mjs';
 
 const HEAD = 'e42d31670da802cc15d4c323dd8dcff10a03033f';
+
+function backendConnection(overrides = {}) {
+  return {
+    schemaVersion: 'stephanos.battle-bridge-backend-connection.v1',
+    observed: true,
+    healthSchemaVersion: 'stephanos.backend-health.v1',
+    service: 'stephanos-server',
+    backendIdentity: {
+      schemaVersion: 'stephanos.backend-runtime-identity.v1',
+      runtimeId: 'stephanos-battle-bridge-backend',
+      sourceHead: HEAD,
+    },
+    controlTowerOrigin: 'https://stephanos-control-tower.timelesspearl.chatgpt.site',
+    controlTowerOriginConfigured: true,
+    browserAccessProven: false,
+    loadedSourceBytesProven: false,
+    executionAuthority: false,
+    ...overrides,
+  };
+}
+
+async function remoteBackendObservation(connection, serviceOverrides = {}, collected = null) {
+  const observation = collected || {
+    schemaVersion: 'stephanos.battle-bridge-observation.v1', ok: true,
+    capturedAtUtc: '2026-11-07T15:00:00.000Z', hostRole: 'battle-bridge',
+    services: { backend: { reachable: true, ready: true, httpStatus: 200, connection, ...serviceOverrides } },
+    readOnly: true, arbitraryShellAllowed: false, secretMaterialIncluded: false,
+    finalVerdict: 'BATTLE_BRIDGE_OBSERVATION_READY',
+  };
+  const maintenance = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED', proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'battle-bridge-observe' } },
+    structuredContent: { ok: true, status: 0, stdout: JSON.stringify(observation), stderr: '', errorCode: '' },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  return executeSovereignCommanderRemoteOnBattleBridge(command({ remoteAction: 'battle-bridge-observe' }), {
+    spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn, env: { USERPROFILE: 'C:\\Users\\Operator' },
+  });
+}
+
+test('backend identity and pinned origin decision survive the existing observer and public receipt path', async () => {
+  const health = {
+    ok: true, schemaVersion: 'stephanos.backend-health.v1', service: 'stephanos-server',
+    backendIdentity: { ...backendConnection().backendIdentity, privatePath: 'SECRET_LOCAL_PATH' },
+    cors: { allowed_origin_count: 1, allowed_origins: [backendConnection().controlTowerOrigin] },
+    provider_secret_status: { secret: 'PRIVATE_PROVIDER_VALUE' },
+  };
+  const collected = await collectBattleBridgeObservation({
+    fetchFn: async url => new Response(JSON.stringify(String(url).includes(':8787/') ? health : { models: [] }), {
+      headers: { 'content-type': 'application/json' },
+    }),
+    spawnSyncFn: () => ({ status: 1, stdout: '', stderr: '' }),
+    now: () => new Date('2026-11-07T15:00:00.000Z'),
+    memory: () => ({ totalBytes: 16, freeBytes: 8 }), uptimeFn: () => 123, env: {},
+  });
+  const result = await remoteBackendObservation(null, {}, collected);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.observation.services.backend.connection, backendConnection());
+  assert.doesNotMatch(JSON.stringify(result), /SECRET_LOCAL_PATH|PRIVATE_PROVIDER_VALUE|allowed_origins|provider_secret_status/);
+});
+
+test('public backend diagnostics retain false and unknown without publishing raw origins or configuration', async () => {
+  for (const configured of [true, false, null, 'true']) {
+    const connection = backendConnection({
+      controlTowerOriginConfigured: configured,
+      privateOrigins: ['https://PRIVATE_ORIGIN.invalid'], secret: 'PRIVATE_CONNECTION_SECRET',
+    });
+    connection.backendIdentity.privatePath = 'PRIVATE_IDENTITY_PATH';
+    const result = await remoteBackendObservation(connection);
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.observation.services.backend.connection, backendConnection({
+      controlTowerOriginConfigured: typeof configured === 'boolean' ? configured : null,
+    }));
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_ORIGIN|PRIVATE_CONNECTION_SECRET|PRIVATE_IDENTITY_PATH/);
+  }
+});
+
+test('public backend diagnostic projection refuses foreign identity, target and authority claims', async () => {
+  const identity = backendConnection().backendIdentity;
+  const variants = [
+    undefined, null, {}, backendConnection({ observed: 'true' }),
+    backendConnection({ schemaVersion: 'foreign' }), backendConnection({ healthSchemaVersion: 'foreign' }),
+    backendConnection({ service: 'foreign' }),
+    backendConnection({ backendIdentity: { ...identity, schemaVersion: 'foreign' } }),
+    backendConnection({ backendIdentity: { ...identity, runtimeId: 'foreign' } }),
+    backendConnection({ backendIdentity: { ...identity, sourceHead: 'PRIVATE_IDENTITY_SECRET' } }),
+    backendConnection({ controlTowerOrigin: 'https://foreign.invalid' }),
+    backendConnection({ browserAccessProven: true }), backendConnection({ loadedSourceBytesProven: true }),
+    backendConnection({ executionAuthority: true }),
+  ];
+  for (const connection of variants) {
+    const result = await remoteBackendObservation(connection);
+    assert.equal(result.ok, true); // The original observation action still ran.
+    const projected = result.observation.services.backend.connection;
+    assert.equal(projected.observed, false);
+    assert.equal(projected.backendIdentity, null);
+    assert.equal(projected.controlTowerOriginConfigured, null);
+    assert.equal(projected.executionAuthority, false);
+    assert.equal(projected.browserAccessProven, false);
+    assert.equal(projected.loadedSourceBytesProven, false);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_IDENTITY_SECRET|foreign.invalid/);
+  }
+  for (const service of [{ ready: false }, { reachable: false }, { httpStatus: 503 }, { httpStatus: '200' }]) {
+    const result = await remoteBackendObservation(backendConnection(), service);
+    assert.equal(result.observation.services.backend.connection.observed, false);
+  }
+});
 
 function command(overrides = {}) {
   return {
@@ -164,6 +274,103 @@ function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null,
 }
 
 const readToken = async () => 'x'.repeat(44);
+
+function spatialReadyFixture(overrides = {}) {
+  return { schemaVersion: SPATIAL_PREPARE_SCHEMA, actionId: SPATIAL_PREPARE_ACTION,
+    sourceHead: HEAD, buildId: 'b'.repeat(64), ok: true, blocker: '',
+    installationVerified: true, uiReady: true, helperProbePassed: true, nativeProbePassed: true,
+    existingHostPreserved: false, createdProbeStopped: true, hostRunningAfter: false,
+    mutationAttempted: true, readyForOperatorLaunch: true,
+    interactiveAcceptance: false, voiceAcceptance: false, headsetAcceptance: false, ...overrides };
+}
+function spatialMaintenanceFixture(receipt = spatialReadyFixture(), changes = {}) {
+  return { ok: receipt.ok,
+    finalVerdict: receipt.ok ? 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' : 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+    proofHash: 'f'.repeat(64), command: { plan: { processId: SPATIAL_PREPARE_ACTION } },
+    contentText: 'PRIVATE_NATIVE_TEXT',
+    structuredContent: { status: receipt.ok ? 0 : 2,
+      stdout: `${SPATIAL_PREPARE_MARKER}${JSON.stringify(receipt)}\n`,
+      stderr: 'PRIVATE_COMPILER_STDERR', errorCode: '', signal: '' }, ...changes };
+}
+async function spatialRemoteFixture(maintenance) {
+  const { calls, fetchFn } = mcpFetch({ maintenance });
+  let unrelatedRuntimeRepair = 0;
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(command({ remoteAction: SPATIAL_PREPARE_ACTION }), {
+    spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+    ensureRuntimeFn: async () => { unrelatedRuntimeRepair += 1; return { ok: true }; },
+  });
+  return { result, calls, unrelatedRuntimeRepair };
+}
+
+test('Spatial preparation carries authenticated outer head and has bounded transport headroom', async () => {
+  const { result, calls, unrelatedRuntimeRepair } = await spatialRemoteFixture(spatialMaintenanceFixture());
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SPATIAL_WORKSPACE_READY_FOR_OPERATOR_LAUNCH');
+  assert.deepEqual(result.spatialPreparation, spatialReadyFixture());
+  assert.equal(unrelatedRuntimeRepair, 0);
+  const call = calls.map(row => { try { return JSON.parse(row.options?.body); } catch { return null; } })
+    .find(row => row?.params?.arguments?.actionId === SPATIAL_PREPARE_ACTION);
+  assert.deepEqual(call.params.arguments, { actionId: SPATIAL_PREPARE_ACTION, expectedMain: HEAD });
+  assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({ remoteAction: SPATIAL_PREPARE_ACTION })), 300000);
+  assert.equal(validateSovereignCommanderRemoteCommandShape(command({ remoteAction: '', remotePlan: [SPATIAL_PREPARE_ACTION] })).ok, false);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_/);
+});
+
+test('Spatial typed holds and absent native qualification remain blocked and public-safe', async () => {
+  const receipt = spatialPrepareBlockedV1(HEAD, 'SPATIAL_PREPARE_COMPILER_MISSING');
+  const { result } = await spatialRemoteFixture(spatialMaintenanceFixture(receipt));
+  assert.equal(result.ok, false); assert.equal(result.blocker, receipt.blocker);
+  assert.equal(result.spatialPreparation.readyForOperatorLaunch, false);
+  const missing = await spatialRemoteFixture({ ok: false, blocker: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING',
+    finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED', privatePath: 'PRIVATE_PATH' });
+  assert.equal(missing.result.ok, false);
+  assert.equal(missing.result.executionBlocker, 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING');
+  assert.equal(Object.hasOwn(missing.result, 'spatialPreparation'), false);
+  assert.doesNotMatch(JSON.stringify(missing.result), /PRIVATE_PATH/);
+});
+
+test('Spatial public completion refuses contradictory, malformed, foreign and interactive receipts', async () => {
+  const good = spatialMaintenanceFixture();
+  const variants = [
+    { ...good, ok: false }, { ...good, proofHash: '' },
+    { ...good, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' },
+    { ...good, command: { plan: { processId: 'battle-bridge-status' } } },
+    ...[null, false, '0', 2].map(status => ({ ...good, structuredContent: { ...good.structuredContent, status } })),
+    { ...good, structuredContent: { ...good.structuredContent, signal: 'SIGTERM' } },
+    { ...good, structuredContent: { ...good.structuredContent, errorCode: 'ETIMEDOUT' } },
+    { ...good, structuredContent: { ...good.structuredContent, stdout: good.structuredContent.stdout.repeat(2) } },
+    ...[{ sourceHead: 'd'.repeat(40) }, { interactiveAcceptance: true },
+      { createdProbeStopped: false }, { hostRunningAfter: true }, { rawWindows: ['PRIVATE_WINDOW'] }]
+      .map(change => spatialMaintenanceFixture(spatialReadyFixture(change))),
+  ];
+  for (const candidate of variants) {
+    const { result } = await spatialRemoteFixture(candidate);
+    assert.equal(result.ok, false);
+    assert.equal(Object.hasOwn(result, 'spatialPreparation'), false);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_/);
+  }
+});
+
+test('Spatial preparation evidence survives normal and compact canonical mailbox receipts', async () => {
+  for (const native of [spatialMaintenanceFixture(), spatialMaintenanceFixture(spatialPrepareBlockedV1(HEAD, 'SPATIAL_PREPARE_PORT_OCCUPIED'))]) {
+    const { result } = await spatialRemoteFixture(native);
+    const receipt = { schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+      requestId: 'spatial-preparation-roundtrip-001', operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      repository: 'Cheekyfellastef/stephan-os', issueNumber: activeMailboxIssueForTest, branch: 'main',
+      expectedHead: HEAD, processSourceHead: HEAD, state: result.ok ? 'DONE' : 'BLOCKED', blocker: result.blocker,
+      result: { ok: result.ok, verdict: result.verdict, result: { ...result,
+        stdout: 'PRIVATE_NATIVE_OUTPUT', stderr: 'PRIVATE_COMPILER',
+        codexLastMessage: 'SAFE_PADDING '.repeat(1000) } } };
+    const compact = JSON.parse(serializeBoundedReceiptJson(receipt, 6 * 1024));
+    const repeated = JSON.parse(serializeBoundedReceiptJson(compact, 6 * 1024));
+    for (const packet of [receipt, compact, repeated]) {
+      const projected = createSanitizedMailboxReceiptProjection(packet);
+      assert.deepEqual(projected.operationResult.spatialPreparation, result.spatialPreparation);
+      assert.equal(projected.operationResult.spatialPreparation.interactiveAcceptance, false);
+      assert.doesNotMatch(JSON.stringify(projected), /PRIVATE_/);
+    }
+  }
+});
 
 function fleetReceiptRaw(overrides = {}) {
   return {
@@ -3283,7 +3490,7 @@ test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge pack
     ollama: { reachable: true, installedModelCount: 1, loadedModelCount: 0, installedModels: [{ name: 'qwen3.5:27b', sizeBytes: 1 }], loadedModels: [] },
     services: {
       ui: { reachable: true, ready: true, httpStatus: 200 },
-      backend: { reachable: true, ready: true, httpStatus: 200 },
+      backend: { reachable: true, ready: true, httpStatus: 200, connection: backendConnection({ controlTowerOriginConfigured: false }) },
       openclaw: { reachable: true, ready: true, httpStatus: 200 },
       'sovereign-commander': { reachable: true, ready: true, httpStatus: 200 },
       ollama: { reachable: true, ready: true, httpStatus: 200 },
@@ -3449,6 +3656,7 @@ test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge pack
   );
 
   assert.equal(result.ok, true);
+  assert.deepEqual(result.visibilitySnapshot.observation.services.backend.connection, backendConnection({ controlTowerOriginConfigured: false }));
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_VISIBILITY_SNAPSHOT_COMPLETE');
   assert.equal(result.visibilitySnapshot.repository.head, HEAD);
   assert.equal(result.visibilitySnapshot.repository.remoteMainHead, HEAD);
@@ -4504,4 +4712,91 @@ test('remote Ignition diagnosis returns bounded live repair truth without privat
   assert.equal(serialized.includes('PRIVATE STDOUT'), false);
   assert.equal(serialized.includes('PRIVATE STDERR'), false);
   assert.equal(serialized.includes('PRIVATE CONTENT MUST NOT ESCAPE'), false);
+});
+
+
+test('native maintenance status must be a real integer, never Number-coerced (original #2573)', async () => {
+  const invalidStatuses = [null, '', '0', '2', false, true, [], [0], {}, undefined];
+  for (const status of invalidStatuses) {
+    const maintenance = {
+      ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: 'a'.repeat(64),
+      command: { plan: { processId: 'battle-bridge-status' } },
+      structuredContent: {
+        ok: true, status,
+        stdout: 'PRIVATE_INVALID_NATIVE_OUTPUT_MUST_NOT_ESCAPE',
+        stderr: '', errorCode: '',
+      },
+    };
+    for (const candidate of [maintenance, { structuredContent: maintenance }]) {
+      const { fetchFn } = mcpFetch({ maintenance: candidate });
+      const result = await executeSovereignCommanderRemoteOnBattleBridge(
+        command({ remoteAction: 'battle-bridge-status' }),
+        { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn },
+      );
+      assert.equal(result.ok, false, 'invalid native status must not pass');
+      assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID');
+      assert.equal(result.publicReceiptSafe, true);
+      assert.equal(result.secretMaterialReturned, false);
+      assert.doesNotMatch(JSON.stringify(result), /PRIVATE_INVALID_NATIVE_OUTPUT/);
+    }
+  }
+  const valid = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'battle-bridge-status' } },
+    structuredContent: { ok: true, status: 0, stdout: '', stderr: '', errorCode: '' },
+  };
+  const { fetchFn } = mcpFetch({ maintenance: valid });
+  const success = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'battle-bridge-status' }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn },
+  );
+  assert.equal(success.ok, true);
+  assert.equal(success.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE');
+  assert.equal(success.status, 0);
+});
+
+test('preservation receipt refuses non-integer native status even with correct protected proof (original #2573)', async () => {
+  const targetHead = '1'.repeat(40), newHead = '2'.repeat(40);
+  const targetBranch = 'feature/self-repair-loop', targetPrNumber = 2698;
+  const core = {
+    schemaVersion: 'stephanos.sovereign-preservation-convergence.v1',
+    timestampUtc: '2026-10-03T20:00:00.000Z',
+    canonicalOwnerGoal: '#2573', relatedPr: targetPrNumber,
+    branch: targetBranch, oldHead: targetHead, protectedMainHead: HEAD,
+    newHead, changed: true, pushed: true, diffCheckPassed: true,
+    oldHeadAncestorPreserved: true, mainAncestorPreserved: true,
+    exactHeadWriterGuard: true, nonForcePushOnly: true,
+    mergeAuthority: false, directMainWriteAllowed: false,
+    forcePushAllowed: false, rebaseAllowed: false,
+    resetAllowed: false, leaseSeizureAllowed: false,
+    finalVerdict: 'SOVEREIGN_PRESERVATION_CONVERGENCE_COMPLETE',
+  };
+  const sealed = { ok: true, ...core,
+    proofHash: createHash('sha256').update(JSON.stringify(core)).digest('hex') };
+  for (const status of [null, '', '0', false, [], [0], {}, undefined]) {
+    const maintenance = {
+      ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: '8'.repeat(64),
+      command: { plan: { processId: 'preservation-converge-pr-branch' } },
+      structuredContent: {
+        ok: true, status,
+        stdout: 'SOVEREIGN_PRESERVATION_CONVERGENCE_RESULT=' + JSON.stringify(sealed) + '\n',
+        stderr: '', errorCode: '',
+      },
+    };
+    for (const candidate of [maintenance, { structuredContent: maintenance }]) {
+      const { fetchFn } = mcpFetch({ maintenance: candidate });
+      const result = await executeSovereignCommanderRemoteOnBattleBridge(
+        command({ remoteAction: 'preservation-converge-pr-branch',
+          targetPrNumber, targetBranch, targetHead }),
+        { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn },
+      );
+      assert.equal(result.ok, false, 'malformed native status must not assert a protected source update');
+      assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PRESERVATION_CONVERGENCE_RECEIPT_INVALID');
+      assert.notEqual(result.mergeAuthority, true);
+      assert.doesNotMatch(JSON.stringify(result), /PRIVATE_INVALID_NATIVE_OUTPUT/);
+    }
+  }
 });
