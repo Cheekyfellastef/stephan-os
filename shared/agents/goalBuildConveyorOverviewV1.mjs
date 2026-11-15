@@ -102,15 +102,21 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     id: goal.builder, goals: buildingGoals.filter(other => other.builder === goal.builder)
       .map(other => ({ issue: other.issue, title: other.title })),
   }])).values()];
-  const controllers = array(projection.controllerFleet?.controllers).map(controller => ({
-    id: controller.controllerId, title: controller.title || controller.controllerId,
-    state: controller.activityState || 'UNKNOWN',
-    truth: controller.freshness === 'CURRENT' && fresh(controller.timestampUtc, nowMs, maxAgeMs)
-      ? 'CURRENT' : controller.freshness === 'UNKNOWN' ? 'UNKNOWN' : 'STALE',
-    trafficLight: controller.trafficLight || 'GREY',
-    expiresAtUtc: fresh(controller.timestampUtc, nowMs, maxAgeMs)
-      ? new Date(time(controller.timestampUtc) + maxAgeMs).toISOString() : '',
-  }));
+  // A controller cannot inherit a green light or a future expiry from an old
+  // status report. Freshness and reported traffic light are separate facts.
+  const controllers = array(projection.controllerFleet?.controllers).map(controller => {
+    const current = controller.freshness === 'CURRENT'
+      && fresh(controller.timestampUtc, nowMs, maxAgeMs);
+    const reportedLight = String(controller.trafficLight || '').toUpperCase();
+    return {
+      id: controller.controllerId, title: controller.title || controller.controllerId,
+      state: controller.activityState || 'UNKNOWN',
+      truth: current ? 'CURRENT' : controller.freshness === 'UNKNOWN' ? 'UNKNOWN' : 'STALE',
+      trafficLight: current && ['GREEN', 'AMBER', 'RED', 'GREY'].includes(reportedLight)
+        ? reportedLight : 'GREY',
+      expiresAtUtc: current ? new Date(time(controller.timestampUtc) + maxAgeMs).toISOString() : '',
+    };
+  });
   // Read-only Octopus inventory, not an invented fleet of target-capacity slots.
   // A lane-specific verified receipt and fresh material timestamp are needed
   // before any *individual* lane can claim to be building.

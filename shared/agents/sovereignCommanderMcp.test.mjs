@@ -145,6 +145,38 @@ test('private Core maintenance keeps exact-head binding and rejects scope/author
   assert.equal(seen.length, 1);
 });
 
+test('Spatial preparation is discoverable and carries only its authenticated fixed scope to maintenance', async () => {
+  const seen = [];
+  const handler = createSovereignCommanderMcpHandler({ repoRoot: 'C:\\repo',
+    executor: async (envelope, options) => {
+      seen.push({ envelope, options });
+      const command = buildSovereignCommanderCommandV1(envelope, { repoRoot: 'C:\\repo' });
+      assert.equal(command.dispatchAllowed, true);
+      assert.equal(command.plan.processId, 'prepare-spatial-workspace');
+      assert.equal(command.plan.expectedMain, 'a'.repeat(40));
+      return { ok: false, executionCustodyReleased: true, blocker: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING' };
+    } });
+  const request = { id: 6, isRequest: true, transportAuthenticated: true };
+  await handler('initialize', {}, request);
+  await handler('notifications/initialized', {}, { isNotification: true });
+  const listed = await handler('tools/list', {}, request);
+  const maintenance = listed.tools.find(tool => tool.name === 'maintenance_action');
+  assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('prepare-spatial-workspace'));
+  assert.equal(SOVEREIGN_COMMANDER_INSPECTION_ACTIONS.includes('prepare-spatial-workspace'), false);
+  const args = { actionId: 'prepare-spatial-workspace', expectedMain: 'a'.repeat(40) };
+  const result = await handler('tools/call', { name: 'maintenance_action', arguments: args }, request);
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.blocker, 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING');
+  assert.deepEqual(seen[0].envelope.payload, args);
+  assert.equal(seen[0].options.routeProof.authenticatedMcp, true);
+  for (const extra of [{ path: 'C:\\arbitrary' }, { url: 'https://example.invalid' },
+    { command: 'start' }, { operatorApproved: true }, { mode: 'launch' }]) {
+    await assert.rejects(handler('tools/call', { name: 'maintenance_action',
+      arguments: { ...args, ...extra } }, request), /SPATIAL_PREPARE_FIXED_SCOPE_REQUIRED/);
+  }
+  assert.equal(seen.length, 1, 'extra scope never reaches maintenance');
+});
+
 test('Core cancellation stays on the original session/request and never dispatches a retry', async () => {
   let signal, dispatched = 0, started;
   const ready = new Promise(resolve => { started = resolve; });

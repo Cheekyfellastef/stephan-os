@@ -20,8 +20,10 @@ const REPOSITORY = 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os';
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const SHA = /^[a-f0-9]{40}$/, DIGEST = /^[a-f0-9]{64}$/;
-const REQUEST_ID = /^control-tower-build-[1-9][0-9]{0,19}-1$/;
-const PROFILES = new Set(['MAINTENANCE_GOAL_BUILDER_V1', 'SOURCE_TASK_V1']);
+const REQUEST_ID = /^control-tower-(?:build|comment)-[1-9][0-9]{0,15}-1$/;
+// Closed compiled inventory only; observing a name grants no action admission.
+const PROFILES = new Set(['MAINTENANCE_GOAL_BUILDER_V1', 'SOURCE_TASK_V1',
+  'SPATIAL_WORKSPACE_PREPARE_V1', 'CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1']);
 const UNKNOWN = 'SOVEREIGN_CONTROL_SYSTEM_OBSERVATION_UNPROVEN';
 const fail = code => { throw new Error(code); };
 const diagnosticCode = (error, fallback = UNKNOWN) =>
@@ -328,7 +330,7 @@ export async function inspectSovereignControlSystemV1(options = {}) {
       else if (native.ok === true && native.sourceHead === sourceHead && utc(native.observedAtUtc)
         && Date.parse(native.observedAtUtc) <= Date.parse(observedAtUtc)
         && Date.parse(observedAtUtc) - Date.parse(native.observedAtUtc) <= 15000
-        && Array.isArray(native.profiles) && native.profiles.length <= 2
+        && Array.isArray(native.profiles) && native.profiles.length <= PROFILES.size
         && native.profiles.every(profile => PROFILES.has(profile))
         && new Set(native.profiles).size === native.profiles.length) {
         report.nativeRuntime = { available: true, qualificationObserved: true, reason: '',

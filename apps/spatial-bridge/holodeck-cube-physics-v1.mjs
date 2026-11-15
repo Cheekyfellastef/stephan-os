@@ -1,9 +1,11 @@
-import { HOLODECK_ROOM, HOLODECK_TABLE, HOLODECK_CUBE, HOLODECK_CONSOLE } from './holodeck-layout-v1.mjs';
+import { HOLODECK_ROOM, HOLODECK_TABLE, HOLODECK_TABLE_SURFACE, HOLODECK_TABLE_BASE,
+  HOLODECK_CUBE, HOLODECK_CONSOLE, HOLODECK_CONSOLE_SUPPORTS } from './holodeck-layout-v1.mjs';
 
 export const CUBE_GRAVITY = 9.81;
 const STEP = 1 / 120;
 const SKIN = 0.0001;
 const dot = (a,b) => a.reduce((sum,v,i) => sum + v*b[i],0);
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
 export const add3 = (a,b) => a.map((v,i) => v+b[i]);
 export const scale3 = (a,s) => a.map(v => v*s);
 export const subtract3 = (a,b) => a.map((v,i) => v-b[i]);
@@ -36,18 +38,101 @@ function prism(w,d,bottom,top,bevel=0,cx=0,cz=HOLODECK_TABLE.center[2]) {
     planes.push([[x/Math.SQRT2,0,z/Math.SQRT2],(w+d-bevel+x*cx+z*cz)/Math.SQRT2]);
   return planes;
 }
-export function createCubeSolids(table=HOLODECK_TABLE) {
-  const console=HOLODECK_CONSOLE;
-  return [prism(table.halfWidth,table.halfDepth,table.bottom,table.top+0.008,table.bevel,0,table.center[2]),
-    prism(console.halfWidth,console.halfDepth,console.bottom,console.top,console.bevel,0,console.center[2]),
-    ...[-1,1].map(side=>prism(0.09,0.38,0.05,console.bottom,0,side*1.3,console.center[2])),
-    ...[-1,1].map(side=>prism(0.09,0.28,0.84,1.10,0,side*1.3,-5.72)),
-    prism(0.68,0.44,0.035,0.13,0.20),prism(0.20,0.20,0.18,0.58,0.08),
+export function markSolid(planes,{owner,attachment}={}) {
+  Object.defineProperties(planes,{owner:{value:owner},attachment:{value:attachment}});
+  return planes;
+}
+export function boxSolid(min,max,metadata={}) {
+  return markSolid([0,1,2].flatMap(axis=>{
+    const normal=[0,0,0];normal[axis]=1;
+    return [[normal,max[axis]],[scale3(normal,-1),-min[axis]]];
+  }),metadata);
+}
+const translateSolid=(planes,offset)=>planes.map(([normal,d])=>[normal,d+dot(normal,offset)]);
+export function createTableSolids(table=HOLODECK_TABLE) {
+  const tableOffset=subtract3(table.center,HOLODECK_TABLE.center);
+  const base=HOLODECK_TABLE_BASE;
+  const supports=[prism(base.halfWidth,base.halfDepth,base.bottom,base.top,base.bevel),
+    prism(0.20,0.20,0.18,0.58,0.08),
     ...[-1,1].map(side=>{
       const slope=side*0.38/0.55,centre=side*0.24-slope*0.13,n=Math.hypot(1,slope);
       return [[[1/n,-slope/n,0],(centre+0.13)/n],[[-1/n,slope/n,0],(-centre+0.13)/n],
-        [[0,1,0],0.68],[[0,-1,0],-0.13],[[0,0,1],table.center[2]+0.32],[[0,0,-1],-table.center[2]+0.32]];
+        [[0,1,0],0.68],[[0,-1,0],-0.13],[[0,0,1],HOLODECK_TABLE.center[2]+0.32],[[0,0,-1],-HOLODECK_TABLE.center[2]+0.32]];
     })];
+  return [prism(table.halfWidth,table.halfDepth,table.bottom,
+    table.top+HOLODECK_TABLE_SURFACE.top-HOLODECK_TABLE.top,table.bevel,table.center[0],table.center[2]),
+    ...supports.map(planes=>translateSolid(planes,tableOffset))].map(planes=>markSolid(planes,{owner:'table'}));
+}
+export function createConsoleSolids(console=HOLODECK_CONSOLE) {
+  const offset=subtract3(console.center,HOLODECK_CONSOLE.center);
+  return [markSolid(prism(console.halfWidth,console.halfDepth,console.bottom,console.top,
+    console.bevel,console.center[0],console.center[2]),{owner:'keyboard'}),
+    ...HOLODECK_CONSOLE_SUPPORTS.map(({center,size,attachment})=>markSolid(translateSolid(prism(size[0]/2,size[2]/2,
+      center[1]-size[1]/2,center[1]+size[1]/2,0,center[0],center[2]),offset),{owner:'keyboard',attachment}))];
+}
+export function createCubeSolids(table=HOLODECK_TABLE, console=HOLODECK_CONSOLE) {
+  const tableSolids=createTableSolids(table),consoleSolids=createConsoleSolids(console);
+  return [tableSolids[0],consoleSolids[0],...consoleSolids.slice(1),...tableSolids.slice(1)];
+}
+export function cubeSolid(state) {
+  return markSolid([[1,0,0],[0,1,0],[0,0,1]].flatMap(axis=>[-1,1].map(sign=>{
+    const n=rotate3(scale3(axis,sign),state.orientation);
+    return [n,dot(n,state.position)+state.size/2];
+  })),{owner:'cube:'+state.id});
+}
+
+// Conservative per-piece bounds come from the existing convex planes. A sweep
+// keeps thin supports from tunnelling during a large nudge without introducing
+// another furniture shape model or an arbitrary travel radius.
+const boundsCache=new WeakMap();
+export function solidBounds(planes) {
+  if(boundsCache.has(planes))return boundsCache.get(planes);
+  const vertices=[];
+  for(let a=0;a<planes.length;a++)for(let b=a+1;b<planes.length;b++)for(let c=b+1;c<planes.length;c++) {
+    const [n,d]=planes[a],[m,e]=planes[b],[p,f]=planes[c],mp=cross(m,p),det=dot(n,mp);
+    if(Math.abs(det)<1e-9)continue;
+    const point=scale3(add3(add3(scale3(mp,d),scale3(cross(p,n),e)),scale3(cross(n,m),f)),1/det);
+    if(planes.every(([normal,distance])=>dot(normal,point)<=distance+1e-7))vertices.push(point);
+  }
+  const bounds=vertices.length?{min:[0,1,2].map(axis=>Math.min(...vertices.map(v=>v[axis]))),
+    max:[0,1,2].map(axis=>Math.max(...vertices.map(v=>v[axis])))}:null;
+  boundsCache.set(planes,bounds);return bounds;
+}
+export function solidMotionLimit(moving,stationary,delta) {
+  let fraction=1;
+  for(const part of moving)for(const obstacle of stationary) {
+    // Only the declared display mounts overlap their wall attachment at the
+    // canonical pose. They remain solid against cubes and all other furniture.
+    if((part.attachment&&part.attachment===obstacle.owner)
+      ||(obstacle.attachment&&obstacle.attachment===part.owner))continue;
+    const a=solidBounds(part),b=solidBounds(obstacle);
+    if(!a||!b)return 0;
+    const overlapping=[0,1,2].every(axis=>a.max[axis]>b.min[axis]+1e-7&&a.min[axis]<b.max[axis]-1e-7);
+    if(overlapping) {
+      // A legacy penetration may escape along its nearest separating direction;
+      // it never grants permission to move farther through an unrelated solid.
+      const exits=[0,1,2].flatMap(axis=>[
+        {depth:a.max[axis]-b.min[axis],speed:-delta[axis]},
+        {depth:b.max[axis]-a.min[axis],speed:delta[axis]},
+      ]),nearest=Math.min(...exits.map(exit=>exit.depth));
+      if(!exits.some(exit=>exit.depth<=nearest+1e-7&&exit.speed>1e-10))return 0;
+      continue;
+    }
+    let enter=-Infinity,leave=Infinity,hitAxis=-1,separate=false;
+    for(let axis=0;axis<3;axis++) {
+      const speed=delta[axis];
+      if(Math.abs(speed)<1e-10) {
+        if(a.max[axis]<=b.min[axis]+1e-8||a.min[axis]>=b.max[axis]-1e-8){separate=true;break;}
+        continue;
+      }
+      const t0=(b.min[axis]-a.max[axis])/speed,t1=(b.max[axis]-a.min[axis])/speed;
+      if(Math.min(t0,t1)>enter){enter=Math.min(t0,t1);hitAxis=axis;}
+      leave=Math.min(leave,Math.max(t0,t1));
+    }
+    if(!separate&&hitAxis>=0&&enter>=-1e-8&&enter<=1&&leave>Math.max(0,enter))
+      fraction=Math.min(fraction,Math.max(0,enter-SKIN/Math.abs(delta[hitAxis])));
+  }
+  return fraction;
 }
 
 // Sweep the cube centre through the support-expanded convex furniture volume.
@@ -64,17 +149,65 @@ function sweepSolid(position,delta,planes,orientation,size) {
   return normal && enter>=-1e-8 && enter<=1 && leave>Math.max(enter,0)
     ? {time:Math.max(0,enter),normal}:null;
 }
-export function createHolodeckCubePhysics({room=HOLODECK_ROOM,table=HOLODECK_TABLE,cube=HOLODECK_CUBE,extraSolids=()=>[]}={}) {
+export function cubeSupportedBySolid(state,solid) {
+  const hit=sweepSolid(state.position,[0,-SKIN*4,0],solid,state.orientation,state.size);
+  return Boolean(hit&&hit.normal[1]>0.5);
+}
+export function createHolodeckCubePhysics({room=HOLODECK_ROOM,table=HOLODECK_TABLE,cube=HOLODECK_CUBE,extraSolids=()=>[],furnitureSource=null}={}) {
   const solids=createCubeSolids(table);
-  const contacts=()=>[...solids,...extraSolids()];
+  const contacts=({omitFurniture=null}={})=>{
+    const furniture=typeof furnitureSource==='function'?furnitureSource():null;
+    const current=furniture?.table&&furniture?.keyboard?createCubeSolids(furniture.table,furniture.keyboard):solids;
+    return [...current,...extraSolids()].filter(solid=>!omitFurniture||solid.owner!==omitFurniture);
+  };
   const walls=[[[1,0,0],-room.halfWidth],[[-1,0,0],-room.halfWidth],[[0,1,0],0],
     [[0,-1,0],-room.height],[[0,0,1],room.frontZ],[[0,0,-1],-room.backZ]];
   let position,orientation,velocity,angularVelocity,heldBy,sleeping,accumulator=0,restTime=0;
+  function clearPlacement(point,q,physical) {
+    return point.every(Number.isFinite)
+      &&walls.every(([n,d])=>dot(n,point)>=d+cubeSupport(n,q,cube.size)-1e-8)
+      &&physical.every(planes=>planes.some(([n,d])=>dot(n,point)>=d+cubeSupport(n,q,cube.size)-1e-8));
+  }
+  function correctedPlacement(point,q,physical) {
+    let candidate=[...point];
+    for(let pass=0;pass<6;pass++) {
+      if(clearPlacement(candidate,q,physical))return candidate;
+      for(const [n,d] of walls) {
+        const depth=d+cubeSupport(n,q,cube.size)-dot(n,candidate);
+        if(depth>0)candidate=add3(candidate,scale3(n,depth+SKIN));
+      }
+      for(const planes of physical) {
+        const distances=planes.map(([n,d])=>({n,distance:dot(n,candidate)-d-cubeSupport(n,q,cube.size)}));
+        if(distances.every(face=>face.distance<0)) {
+          const nearest=distances.reduce((a,b)=>a.distance>b.distance?a:b);
+          candidate=add3(candidate,scale3(nearest.n,-nearest.distance+SKIN));
+        }
+      }
+    }
+    return clearPlacement(candidate,q,physical)?candidate:null;
+  }
   function reset() {
-    position=[...cube.center];
+    const currentTable=(typeof furnitureSource==='function'?furnitureSource()?.table:null)??table;
+    const desired=add3(cube.center,subtract3(currentTable.center,table.center)),q=[0,0,0,1],physical=contacts();
+    const radius=cube.size/2,floor=radius+SKIN;
+    const top=currentTable.top+HOLODECK_TABLE_SURFACE.top-HOLODECK_TABLE.top+radius+SKIN;
+    const xs=[currentTable.center[0],currentTable.center[0]-currentTable.halfWidth/2,currentTable.center[0]+currentTable.halfWidth/2];
+    const zs=[currentTable.center[2],currentTable.center[2]-currentTable.halfDepth/2,currentTable.center[2]+currentTable.halfDepth/2];
+    const roomXs=[-room.halfWidth+floor,0,room.halfWidth-floor];
+    const roomZs=[room.frontZ+floor,(room.frontZ+room.backZ)/2,room.backZ-floor];
+    const candidates=[desired,...xs.flatMap(x=>zs.map(z=>[x,top,z])),
+      [desired[0],floor,desired[2]],...xs.flatMap(x=>zs.map(z=>[x,floor,z])),
+      ...roomXs.flatMap(x=>roomZs.map(z=>[x,floor,z]))];
+    const accepted=candidates.find(candidate=>clearPlacement(candidate,q,physical));
+    if(!accepted) {
+      // Rejected placement is an atomic no-op, including ownership/velocity.
+      // Callers must retain an existing carry rather than report a false recall.
+      if(position)return {...getState(),resetPlaced:false};
+      throw new Error('No clear initial cube placement is available in this room.');
+    }
+    position=[...accepted];
     orientation=[0,0,0,1];velocity=[0,0,0];angularVelocity=[0,0,0];heldBy=null;sleeping=true;accumulator=0;restTime=0;
-    depenetrate();
-    return getState();
+    return {...getState(),resetPlaced:true};
   }
   function getState() {return {position:[...position],orientation:[...orientation],velocity:[...velocity],
     angularVelocity:[...angularVelocity],heldBy,sleeping,size:cube.size,id:cube.id};}
@@ -91,7 +224,7 @@ export function createHolodeckCubePhysics({room=HOLODECK_ROOM,table=HOLODECK_TAB
       }
     }
   }
-  function travel(delta,bounce=false) {
+  function travel(delta,bounce=false,options={}) {
     let remaining=[...delta],grounded=false;
     for(let pass=0;pass<6 && length3(remaining)>1e-9;pass++) {
       let hit=null;
@@ -102,7 +235,7 @@ export function createHolodeckCubePhysics({room=HOLODECK_ROOM,table=HOLODECK_TAB
           if(time>=-1e-8 && time<=1 && (!hit||time<hit.time)) hit={time:Math.max(0,time),normal:n};
         }
       }
-      for(const solid of contacts()) {
+      for(const solid of contacts(options)) {
         const candidate=sweepSolid(position,remaining,solid,orientation,cube.size);
         if(candidate&&(!hit||candidate.time<hit.time)) hit=candidate;
       }
@@ -124,6 +257,26 @@ export function createHolodeckCubePhysics({room=HOLODECK_ROOM,table=HOLODECK_TAB
       }
     }
     return grounded;
+  }
+  // Read-only sweep for a shared table/cargo translation. Its own table and
+  // fellow supported cubes move together; all other solid surfaces still stop it.
+  function supportMotionLimit(delta,owner='table') {
+    if(heldBy||!delta?.every(Number.isFinite))return 0;
+    let fraction=1;
+    const accept=hit=>{
+      if(hit)fraction=Math.min(fraction,Math.max(0,hit.time-SKIN/Math.max(SKIN,Math.abs(dot(delta,hit.normal)))));
+    };
+    for(const [n,d] of walls) {
+      const speed=dot(n,delta),distance=dot(n,position)-d-cubeSupport(n,orientation,cube.size);
+      if(speed<-1e-10&&distance+speed<SKIN)accept({time:Math.max(0,distance/-speed),normal:n});
+    }
+    for(const solid of contacts({omitFurniture:owner}))accept(sweepSolid(position,delta,solid,orientation,cube.size));
+    return fraction;
+  }
+  function moveSupported(delta,owner='table') {
+    if(heldBy||!delta?.every(Number.isFinite))return getState();
+    travel(delta,false,{omitFurniture:owner});
+    return getState();
   }
   function grab(id) {heldBy=id;velocity=[0,0,0];angularVelocity=[0,0,0];sleeping=false;restTime=0;}
   function moveHeld(target,q=orientation) {
@@ -175,11 +328,13 @@ export function createHolodeckCubePhysics({room=HOLODECK_ROOM,table=HOLODECK_TAB
   function restore(state) {
     if(!state || ![state.position,state.velocity,state.angularVelocity].every(v=>Array.isArray(v)&&v.length===3&&v.every(Number.isFinite))
       || !Array.isArray(state.orientation)||state.orientation.length!==4||!state.orientation.every(Number.isFinite)) return false;
-    position=[...state.position];orientation=normalizeQuaternion(state.orientation);
+    const q=normalizeQuaternion(state.orientation),accepted=correctedPlacement(state.position,q,contacts());
+    if(!accepted)return false;
+    position=accepted;orientation=q;
     velocity=bounded(state.velocity,8);angularVelocity=bounded(state.angularVelocity,16);
     heldBy=null;sleeping=state.sleeping===true;accumulator=0;restTime=0;
-    depenetrate();return true;
+    return true;
   }
   reset();
-  return {getState,reset,grab,moveHeld,release,advance,restore};
+  return {getState,reset,grab,moveHeld,release,advance,restore,supportMotionLimit,moveSupported};
 }

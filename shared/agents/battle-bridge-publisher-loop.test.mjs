@@ -99,6 +99,38 @@ test('loop tick publishes UNKNOWN records and hidden Shared Workspace event', as
   assert.match(event, /publisher loop tick published/);
 });
 
+test('backend event-only observation never replaces canonical direct READY', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-backend-diagnostic-'));
+  const status = join(root, 'status', 'battle-bridge-current.json');
+  await mkdir(join(root, 'status'), { recursive: true });
+  const before = JSON.stringify({ schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.status', statusId: 'battle-bridge-current',
+    timestampUtc, status: 'READY', observedServiceFacts: { backend: { ready: true } } }) + '\n';
+  await import('node:fs/promises').then(fs => fs.writeFile(status, before));
+  const result = await publishBattleBridgeLoopTick({ root, repoRoot, timestampUtc,
+    nowMs: Date.parse(timestampUtc), secondaryDiagnosticOnly: true,
+    buildSlice: () => ({ status: 'UNKNOWN', services: [] }) });
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_BACKEND_DIAGNOSTIC_OBSERVED');
+  const after = await readFile(status, 'utf8');
+  assert.equal(after, before);
+  assert.equal(JSON.parse(after).status, 'READY');
+  assert.equal(JSON.parse(after).observedServiceFacts.backend.ready, true);
+  assert.match(await readFile(join(root, 'events', 'battle-bridge-publisher-loop.ndjson'), 'utf8'),
+    /Backend diagnostic observed UNKNOWN; no canonical status write/);
+  await assert.rejects(readFile(join(root, 'proof', 'battle-bridge-current.json')), /ENOENT/);
+});
+test('backend source failure remains non-green and avoids private error disclosure', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-backend-source-fail-'));
+  const result = await publishBattleBridgeLoopTick({ root, repoRoot, timestampUtc,
+    nowMs: Date.parse(timestampUtc), secondaryDiagnosticOnly: true,
+    buildSlice() { throw new Error('PRIVATE_SOURCE_FAILURE'); } });
+  assert.equal(result.ok, false);
+  assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_BACKEND_DIAGNOSTIC_SOURCE_FAILED');
+  const event = await readFile(join(root, 'events', 'battle-bridge-publisher-loop.ndjson'), 'utf8');
+  assert.match(event, /Backend periodic direct observation failed/);
+  assert.doesNotMatch(event, /PRIVATE_SOURCE_FAILURE/);
+});
 test('publisher source failure publishes STALE with exact next action', async () => {
   const root = await mkdtemp(join(tmpdir(), 'stephanos-battle-bridge-loop-failure-'));
   const result = await publishBattleBridgeLoopTick({ root, repoRoot, timestampUtc, nowMs: Date.parse(timestampUtc), buildSlice() { throw new Error('boom'); } });
