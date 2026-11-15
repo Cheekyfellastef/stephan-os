@@ -65,6 +65,8 @@ function fixture() {
 async function withServer(action, provider, settings = {}) {
   const app = await createSovereignCommanderHttpServer({
     token: 't'.repeat(48), port: 0, nowMs: () => NOW, continuousRepairEnabled: false,
+    // This loopback fixture must not inherit an enrolled host's private origin.
+    mobileInstallationPublicOrigin: '',
     mobileInstallationProvider: provider, ...settings,
   });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
