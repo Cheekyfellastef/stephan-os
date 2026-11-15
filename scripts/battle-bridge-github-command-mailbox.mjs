@@ -7,6 +7,7 @@ import { validateWindowsCalibrationRemoteProjectionV1 } from '../shared/agents/s
 import { FLEET_SUPERVISOR_ACTION, projectFleetSupervisorReceiptV1,
   compactFleetSupervisorReceiptV1 } from '../shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 import { SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
+import { SPATIAL_PREPARE_ACTION, projectSpatialPreparationReceiptV1 } from '../shared/agents/sovereignSpatialWorkspaceV1.mjs';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
@@ -1899,6 +1900,9 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
 
   return Object.freeze({
     remoteAction,
+    ...(remoteAction === SPATIAL_PREPARE_ACTION
+      && projectSpatialPreparationReceiptV1(operationResult.spatialPreparation, operationResult.sourceHead)
+      ? { spatialPreparation: projectSpatialPreparationReceiptV1(operationResult.spatialPreparation, operationResult.sourceHead) } : {}),
     ...(remoteAction === 'sovereign-windows-reviewer-calibration'
       && validateWindowsCalibrationRemoteProjectionV1(operationResult.calibration)
       ? { calibration: operationResult.calibration } : {}),
@@ -2880,6 +2884,9 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         branch: inner?.branch || compactReceipt.branch,
         expectedHeadMatch: inner?.expectedHeadMatch ?? null,
         remoteAction: inner?.remoteAction || '',
+        ...(inner?.remoteAction === SPATIAL_PREPARE_ACTION
+          && projectSpatialPreparationReceiptV1(inner.spatialPreparation, inner.sourceHead)
+          ? { spatialPreparation: projectSpatialPreparationReceiptV1(inner.spatialPreparation, inner.sourceHead) } : {}),
         remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 3) : [],
         ...projectCanonicalGitWorktreeConfigEvidence(inner),
         ...(fleetOwnerFailure ? {
@@ -3255,7 +3262,7 @@ export function terminalizeRejectedMailboxCommands(state, rejections = [], {
     consumed.add(requestId);
     const publishable = { ...receipt, receiptRef: receiptLocation.ref };
     const publication = publish(publishable);
-    checkpointMailboxReceiptPublication(state, publishable, publication, { persist });
+    checkpointMailboxReceiptPublication(state, receipt, publication, { persist });
     terminal.push(Object.freeze({ requestId, blocker: receipt.blocker, receipt, receiptLocation, publication }));
   }
   return Object.freeze(terminal);
@@ -4499,7 +4506,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
       const receiptLocation = writeReceipt(receipt);
       checkpointAcceptedMailboxReceipt(state, receipt);
       const publishable = { ...receipt, receiptRef: receiptLocation.ref };
-      checkpointMailboxReceiptPublication(state, publishable, publicationBudget.publish(publishable));
+      checkpointMailboxReceiptPublication(state, receipt, publicationBudget.publish(publishable));
       accepted.set(selected.command.requestId, Object.freeze({ acceptedAt, receiptLocation }));
     },
     executeCommand: async (selected) => {
@@ -4550,7 +4557,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
       const receiptLocation = writeReceipt(receipt);
       checkpointTerminalMailboxReceipt(state, receipt);
       const publishable = { ...receipt, receiptRef: receiptLocation.ref };
-      checkpointMailboxReceiptPublication(state, publishable, publicationBudget.publish(publishable));
+      checkpointMailboxReceiptPublication(state, receipt, publicationBudget.publish(publishable));
       return Object.freeze({ receipt, execution: terminalExecution, receiptLocation });
     },
     shouldYieldAfterTerminal: shouldRolloverMailboxGenerationAfterTerminal,

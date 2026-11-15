@@ -9,7 +9,7 @@ const STATE_LABELS = Object.freeze({
 const validTime = value => typeof value === 'string' && value.length <= 40 && Number.isFinite(Date.parse(value));
 
 function requestForDisplay(value) {
-  const requestId = /^control-tower-build-[1-9][0-9]{0,15}-1$/.test(value?.requestId || '') ? value.requestId : '';
+  const requestId = /^control-tower-(?:build|comment)-[1-9][0-9]{0,15}-1$/.test(value?.requestId || '') ? value.requestId : '';
   const legacyTerminal = value?.detailState === 'LEGACY_DETAIL_UNAVAILABLE'
     && value.ledgerPhase === 'TERMINAL' && ['DONE', 'BLOCKED'].includes(value.terminalState);
   return requestId && Object.hasOwn(STATE_LABELS, value.state) ? {

@@ -518,7 +518,7 @@ test('canonical mailbox wires the shared publication budget across every receipt
   assert.match(source, /flushMailboxReceiptPublicationOutbox\(state, \{\s*publish: publicationBudget\.publish,/);
   assert.match(source, /terminalizeRejectedMailboxCommands\(state, batch\.terminalRejections, \{\s*now,\s*publish: publicationBudget\.publish,/);
   assert.equal(
-    [...source.matchAll(/checkpointMailboxReceiptPublication\(state, publishable, publicationBudget\.publish\(publishable\)\)/g)].length,
+    [...source.matchAll(/checkpointMailboxReceiptPublication\(state, receipt, publicationBudget\.publish\(publishable\)\)/g)].length,
     2,
   );
 });
@@ -565,6 +565,46 @@ test('terminal publication discards an obsolete failed acceptance for the same r
     completedAt: '2026-08-11T11:31:00.000Z',
   }, { ok: true }, { persist: () => {} });
   assert.deepEqual(state.pendingReceiptPublications, []);
+});
+
+
+test('deferred mailbox terminal/acceptance receipts reuse the pre-receiptRef canonical projection', async () => {
+  const source = await readFile(mailboxSourcePath, 'utf8');
+  // All three producers write their canonical receipt before appending
+  // receiptRef for first-attempt GitHub publication. A failed publication
+  // must enqueue the same original receipt for stable terminal equality.
+  assert.equal(
+    [...source.matchAll(/checkpointMailboxReceiptPublication\(state, receipt, publication, \{ persist \}\);/g)].length, 1);
+  assert.equal(
+    [...source.matchAll(/checkpointMailboxReceiptPublication\(state, receipt, publicationBudget\.publish\(publishable\)\);/g)].length, 2);
+  assert.doesNotMatch(source, /checkpointMailboxReceiptPublication\(state, publishable,/);
+  const raw = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'mailbox-deferred-canonical-identity-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 3258,
+    branch: 'main',
+    state: 'DONE',
+    acceptedAt: '2026-11-08T00:00:00.000Z',
+    heartbeatAt: '2026-11-08T00:01:00.000Z',
+    completedAt: '2026-11-08T00:01:00.000Z',
+    proofRefs: ['receipts/github-command-mailbox/proof-safe.json'],
+    result: { ok: true, verdict: 'COMMAND_EXECUTION_DONE',
+      result: { ok: true, finalVerdict: 'VISIBILITY_SNAPSHOT_READY' } },
+  };
+  const rawBefore = JSON.stringify(raw);
+  const enriched = { ...raw, receiptRef: 'receipts/github-command-mailbox/canonical.json' };
+  const canonical = JSON.parse(serializeBoundedReceiptJson(raw, 256 * 1024));
+  const state = { pendingReceiptPublications: [] };
+  checkpointMailboxReceiptPublication(state, raw, { ok: false }, { persist: () => {} });
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  assert.deepEqual(state.pendingReceiptPublications[0].receipt, canonical);
+  assert.equal(JSON.stringify(raw), rawBefore, 'canonical receipt unchanged');
+  assert.equal(Object.hasOwn(state.pendingReceiptPublications[0].receipt, 'receiptRef'), false);
+  const enrichedCompact = JSON.parse(serializeBoundedReceiptJson(enriched, 256 * 1024));
+  assert.notEqual(enrichedCompact.result.result.originalBytes, canonical.result.result.originalBytes,
+    'fixture must expose historical pre-fix originalBytes drift');
 });
 
 test('main-targeting control preflight blocks a stale head and ignores observations', () => {

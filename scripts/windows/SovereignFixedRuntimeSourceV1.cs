@@ -48,7 +48,7 @@ namespace Stephanos.Sovereign {
       }
       RuntimeEqualV1(heartbeat,"schemaVersion","stephanos.mission-orchestrator-worker-heartbeat.v1");
       RuntimeEqualV1(heartbeat,"repositoryRoot",RuntimeSourceRootV1);
-      RuntimeEqualV1(heartbeat,"headSha",pins.SourceHead); RuntimeEqualV1(heartbeat,"branch","main");
+      RuntimeEqualV1(heartbeat,"headSha",pins.ExecutionHead); RuntimeEqualV1(heartbeat,"branch","main");
       RuntimeEqualV1(heartbeat,"taskName","Stephanos Mission Orchestrator Worker");
       RuntimeEqualV1(heartbeat,"activeTaskId",binding.ActionId);
       if(RuntimeIntegerV1(heartbeat,"pid")!=frame.OwnerPid ||
@@ -64,7 +64,7 @@ namespace Stephanos.Sovereign {
       RuntimeEqualV1(launch,"schemaVersion","stephanos.mission-worker-launch-identity.v1");
       RuntimeEqualV1(launch,"launchIdentityId",launchId);
       RuntimeEqualV1(launch,"repositoryRoot",RuntimeSourceRootV1);
-      RuntimeEqualV1(launch,"branch","main"); RuntimeEqualV1(launch,"headSha",pins.SourceHead);
+      RuntimeEqualV1(launch,"branch","main"); RuntimeEqualV1(launch,"headSha",pins.ExecutionHead);
       RuntimeEqualV1(launch,"taskName","Stephanos Mission Orchestrator Worker");
       RuntimeEqualV1(launch,"canonicalNode",@"C:\Program Files\nodejs\node.exe");
       RuntimeEqualV1(launch,"canonicalWorkerScript",Path.Combine(RuntimeSourceRootV1,@"scripts\mission-orchestrator-worker-supervised.mjs"));

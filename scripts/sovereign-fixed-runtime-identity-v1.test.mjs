@@ -132,7 +132,7 @@ $empty=[Security.Cryptography.SHA256]::Create()
 try { $emptyHash=([BitConverter]::ToString($empty.ComputeHash([byte[]]::new(0)))).Replace('-','').ToLowerInvariant() }
 finally { $empty.Dispose() }
 $frame=[ordered]@{SchemaVersion='stephanos.fixed-runtime-request.v1';RequestId='fixture-request-1234'
-  Profile='MAINTENANCE_GOAL_BUILDER_V1';RuntimeSourceHead=('a'*40);OwnerPid=1234
+  Profile='MAINTENANCE_GOAL_BUILDER_V1';RuntimeSourceHead=('a'*40);InstallationSourceHead=('a'*40);SourceProofSha256=('b'*64);OwnerPid=1234
   TaskFrameBase64='';TaskBindingSha256=$emptyHash}
 $raw=[string]($frame|ConvertTo-Json -Compress)
 $parsed=$parse.Invoke($null,@($raw))

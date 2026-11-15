@@ -335,3 +335,189 @@ test('captured identity completion preserves the original unsuccessful no-op beh
   });
   assert.equal(finalized, execution);
 });
+
+test('escrow denies generated-state roots and duplicate changed-file identities', async () => {
+  const options = await roots();
+  const original = input();
+  for (const forbiddenPath of [
+    'apps/stephanos/dist/index.js',
+    'apps/stephanos/dist/assets/module.css',
+    'apps/stephanos/./dist/index.js',
+    'apps/stephanos/dist./index.js',
+    'apps/stephanos/dist /index.js',
+    'stephanos-server/data./state.json',
+    'shared/runtime./state.json',
+    'apps/./stephanos/dist/index.js',
+    'stephanos-server/./data/state.json',
+    'shared/agents/./example.mjs',
+    'shared/runtime/./stephanosMemory.mjs',
+    'data/runtime-state.json',
+    'tmp/model-output.json',
+    'root-data/state.json',
+    'root data/cache.txt',
+  ]) {
+    const changed = { ...original.changedFiles[0], path: forbiddenPath };
+    const artifact = { ...original.artifactFiles[0], path: forbiddenPath };
+    const result = await persistSourceArtifactEscrowV1(input({
+      changedFiles: [changed], artifactFiles: [artifact],
+    }), options);
+    assert.equal(result, null, `generated/state path ${forbiddenPath} must not enter escrow`);
+  }
+  const sourcePath = 'shared/runtime/stephanosMemory.mjs';
+  const valid = await persistSourceArtifactEscrowV1(input({
+    changedFiles: [{ ...original.changedFiles[0], path: sourcePath }],
+    artifactFiles: [{ ...original.artifactFiles[0], path: sourcePath }],
+  }), options);
+  assert.ok(valid, 'preserve the already integrated shared/runtime tracked-source exception');
+
+  const changedA = original.changedFiles[0];
+  const artifactA = original.artifactFiles[0];
+  const changedB = { ...changedA, path: 'shared/agents/second.mjs' };
+  const artifactB = { ...artifactA, path: 'shared/agents/second.mjs' };
+  for (const duplicate of [changedA, { ...changedA, path: './shared/agents/example.mjs' }]) {
+    const invalid = await persistSourceArtifactEscrowV1(input({
+      changedFiles: [changedA, duplicate],
+      artifactFiles: [artifactA, artifactB],
+    }), options);
+    assert.equal(invalid, null, 'duplicate canonical changed paths must not crowd out B');
+  }
+  const distinct = await persistSourceArtifactEscrowV1(input({
+    changedFiles: [changedA, changedB],
+    artifactFiles: [artifactA, artifactB],
+  }), options);
+  assert.ok(distinct, 'legitimate distinct complete-file bundle remains supported');
+  assert.deepEqual(distinct.changedFiles.map((file) => file.path),
+    ['shared/agents/example.mjs', 'shared/agents/second.mjs']);
+});
+
+test('escrow refuses outer whitespace aliases and case-insensitive Windows collisions', async () => {
+  const options = await roots();
+  const original = input();
+  const changedA = original.changedFiles[0];
+  const artifactA = original.artifactFiles[0];
+  for (const rawPath of [
+    ' shared/agents/example.mjs',
+    'shared/agents/example.mjs ',
+    '\tshared/agents/example.mjs',
+    'shared/agents/example.mjs\n',
+  ]) {
+    for (const changedOnly of [false, true]) {
+      const bad = await persistSourceArtifactEscrowV1(input({
+        changedFiles: [{ ...changedA, path: rawPath }],
+        artifactFiles: [{ ...artifactA, path: changedOnly ? changedA.path : rawPath }],
+      }), options);
+      assert.equal(bad, null, `outer whitespace path must fail closed: ${JSON.stringify(rawPath)}`);
+    }
+  }
+  const caseChanged = { ...changedA, path: 'shared/agents/Example.mjs' };
+  const caseArtifact = { ...artifactA, path: caseChanged.path };
+  const secondChanged = { ...changedA, path: 'shared/agents/second.mjs' };
+  for (const [changedFiles, artifactFiles] of [
+    [[changedA, caseChanged], [artifactA, caseArtifact]],
+    [[changedA, secondChanged], [artifactA, caseArtifact]],
+    [[changedA, caseChanged], [artifactA, { ...artifactA, path: changedA.path }]],
+  ]) {
+    assert.equal(await persistSourceArtifactEscrowV1(input({ changedFiles, artifactFiles }), options),
+      null, 'Win32 casefold collision must not enter escrow');
+  }
+  const goodChanged = { ...changedA, path: 'shared/runtime/stephanosMemory.mjs' };
+  const goodArtifact = { ...artifactA, path: goodChanged.path };
+  assert.ok(await persistSourceArtifactEscrowV1(input({
+    changedFiles: [changedA, goodChanged],
+    artifactFiles: [artifactA, goodArtifact],
+  }), options), 'distinct tracked shared/runtime source remains valid');
+  const internalSpacePath = 'shared/agents/valid name.mjs';
+  assert.ok(await persistSourceArtifactEscrowV1(input({
+    changedFiles: [{ ...changedA, path: internalSpacePath }],
+    artifactFiles: [{ ...artifactA, path: internalSpacePath }],
+  }), options), 'legitimate internal spaces remain valid');
+});
+
+test('Forge escrow rejects raw Git aliases, Win32 device basenames and env suffixes', async () => {
+  const options = await roots();
+  const original = input();
+  const deniedPaths = [
+    "shared/runtime/CON",
+    "shared/runtime/CON.txt",
+    "shared/runtime/COM1.js",
+    "shared/runtime/LPT9.test.mjs",
+    "shared/agents/prn.js",
+    "shared/agents/AUX",
+    "shared/agents/NUL.log",
+    "shared/agents/inner/com9.js",
+    "shared/runtime\\stephanosMemory.mjs",
+    "./shared/runtime/stephanosMemory.mjs",
+    ".//shared/runtime/stephanosMemory.mjs",
+    "shared\\agents/example.mjs",
+    "shared/agents/token.env",
+    "shared/agents/secrets.env",
+    "shared/agents/config.env.local",
+    "shared/agents/CONFIG.ENV.STAGING",
+    "shared/runtime/.env.production",
+    "shared/agents/./example.mjs",
+    "runtime/file.mjs",
+    "apps/stephanos/dist/index.js",
+    "shared/runtime/nested/runtime/payload.mjs"
+];
+  for (const path of deniedPaths) {
+    const changed = { ...original.changedFiles[0], path };
+    const artifact = { ...original.artifactFiles[0], path };
+    assert.equal(await persistSourceArtifactEscrowV1(input({
+      changedFiles: [changed], artifactFiles: [artifact],
+    }), options), null, `unsafe or noncanonical tracked path: ${path}`);
+  }
+});
+
+test('Forge escrow keeps legitimate canonical tracked runtime modules and benign names', async () => {
+  const options = await roots();
+  const original = input();
+  const allowedPaths = [
+    "shared/runtime/stephanosMemory.mjs",
+    "shared/agents/valid name.mjs",
+    "shared/agents/CONSOLE.mjs",
+    "shared/agents/COM10.js",
+    "shared/agents/env-example.mjs",
+    "shared/agents/example.mjs"
+];
+  for (const path of allowedPaths) {
+    const changed = { ...original.changedFiles[0], path };
+    const artifact = { ...original.artifactFiles[0], path };
+    assert.ok(await persistSourceArtifactEscrowV1(input({
+      changedFiles: [changed], artifactFiles: [artifact],
+    }), options), `canonical tracked source stays admissible: ${path}`);
+  }
+});
+
+test('Forge escrow denies shared/runtime symlink modes while preserving regular tracked source', async () => {
+  const options = await roots();
+  const original = input();
+  const runtimePath = 'shared/runtime/stephanosMemory.mjs';
+  const changeFor = (path, bytes) => {
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    const afterBlobSha = createHash('sha1')
+      .update(Buffer.from(`blob ${bytes.length}\0`, 'utf8'))
+      .update(bytes).digest('hex');
+    return { ...original.changedFiles[0], path, afterBlobSha, sha256: digest };
+  };
+  for (const target of ['../../.env', '../../runtime-data/private.json', 'otherSource.mjs']) {
+    const bytes = Buffer.from(target, 'utf8');
+    const changed = changeFor(runtimePath, bytes);
+    const artifact = { ...changed, mode: '120000', deleted: false, contentBase64: bytes.toString('base64') };
+    assert.equal(await persistSourceArtifactEscrowV1(input({
+      changedFiles: [changed], artifactFiles: [artifact],
+    }), options), null, `shared/runtime symlink must not reach escrow: ${target}`);
+  }
+  for (const mode of ['100644', '100755']) {
+    const changed = { ...original.changedFiles[0], path: runtimePath };
+    const artifact = { ...original.artifactFiles[0], path: runtimePath, mode };
+    assert.ok(await persistSourceArtifactEscrowV1(input({
+      changedFiles: [changed], artifactFiles: [artifact],
+    }), options), `regular shared/runtime source stays admissible: ${mode}`);
+  }
+  const target = Buffer.from('other.mjs', 'utf8');
+  const changed = changeFor('shared/agents/source-link.mjs', target);
+  const artifact = { ...changed, mode: '120000', deleted: false, contentBase64: target.toString('base64') };
+  assert.ok(await persistSourceArtifactEscrowV1(input({
+    changedFiles: [changed], artifactFiles: [artifact],
+  }), options), 'unrelated tracked symlink policy remains unchanged');
+});

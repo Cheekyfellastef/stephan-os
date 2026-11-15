@@ -16,6 +16,10 @@ const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const instant = value => typeof value === 'string' && /Z$/.test(value) ? Date.parse(value) : NaN;
 const held = blocker => ({ ok: false, blocker, custodyReleased: false });
 const json = value => JSON.stringify(value) + '\n';
+const NATIVE_MAINTENANCE_PROFILES_V1 = Object.freeze({
+  'repair-goal-builder-flow': 'MAINTENANCE_GOAL_BUILDER_V1',
+  'prepare-spatial-workspace': 'SPATIAL_WORKSPACE_PREPARE_V1',
+});
 
 export function readMaintenanceRecoverySourceV1() {
   const source = collectCanonicalIgnitionSourceTruth({
@@ -189,9 +193,12 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
   };
   // Existing guardian calls these only after its private transport adjudication.
   // They add bounded signed evidence, never a public execution/recovery lane.
+  const nativeProfileMatchesOwnedOperation = evidence => owned
+    && Object.hasOwn(NATIVE_MAINTENANCE_PROFILES_V1, owned.record.operation)
+    && evidence?.Profile === NATIVE_MAINTENANCE_PROFILES_V1[owned.record.operation];
   const recordNativeRoot = evidence => {
     if (evidence?.SchemaVersion !== 'stephanos.fixed-runtime-prepared.v1'
-        || evidence.Profile !== 'MAINTENANCE_GOAL_BUILDER_V1'
+        || !nativeProfileMatchesOwnedOperation(evidence)
         || !Number.isSafeInteger(evidence.RootPid) || evidence.RootPid <= 0
         || !Number.isFinite(instant(evidence.RootCreatedAtUtc)))
       return held('MAINTENANCE_NATIVE_ROOT_UNPROVEN');
@@ -199,7 +206,7 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
   };
   const releaseNativeTerminal = evidence => {
     if (evidence?.SchemaVersion !== 'stephanos.fixed-runtime-job.v1'
-        || evidence.Profile !== 'MAINTENANCE_GOAL_BUILDER_V1'
+        || !nativeProfileMatchesOwnedOperation(evidence)
         || evidence.ExecutionCustodyReleased !== true
         || evidence.TaskStage?.ExecutionCustodyReleased !== true
         || evidence.TaskStage?.ZeroActiveProcessesObserved !== true

@@ -303,3 +303,29 @@ test('renders a bounded human recovery report', () => {
   assert.match(report, /#60 \| AMBIGUOUS_REVIEW_REQUIRED/);
   assert.match(report, /read-only classifier/);
 });
+
+test('original #1558 family aliases must agree exactly rather than silently discarding contradictory member custody', () => {
+  const open = [{ number: 41, state: 'open', title: 'Canonical' }, { number: 42, state: 'open', title: 'Sibling' }];
+  for (const families of [
+    [{ id: 'owner-family', members: [41], prs: [42], canonicalPr: 41 }],
+    [{ id: 'owner-family', members: [41], prs: 'incorrect', canonicalPr: 41 }],
+    [{ id: 'owner-family', members: [41], prs: [41, 42], canonicalPr: 41 }],
+    [{ id: 'owner-family', members: [41, 42], prs: [41, 43], canonicalPr: 41 }],
+  ]) {
+    assert.throws(
+      () => build(open, families),
+      /conflicting family member aliases|members array is required/,
+      'conflicting or malformed alternate custody cannot be ignored',
+    );
+  }
+
+  for (const family of [
+    { id: 'owner-family', members: [41, 42], canonicalPr: 41 },
+    { id: 'owner-family', prs: [41, 42], canonicalPr: 41 },
+    { id: 'owner-family', members: [42, 41], prs: [41, 42], canonicalPr: 41 },
+  ]) {
+    const ledger = build(open, [family]);
+    assert.equal(ledger.entries.length, 2);
+    assert.ok(ledger.entries.every((entry) => entry.familyId === 'owner-family'));
+  }
+});
