@@ -672,6 +672,89 @@ test('continuous repair script is a natural-reload source and never becomes an u
   assert.equal(plan.automaticExecutionAllowed, true);
 });
 
+test('the existing Starfield splash monitor closure adopts source without starting a game', () => {
+  const directory = 'scripts/windows/starfield-native-monitor/';
+  const runtime = [
+    'splash_monitor_bridge.py',
+    'run_native_eye_output_monitor.py',
+    'start_native_eye_output_session.py',
+    'analyze_native_eye_output_session.py',
+  ].map(name => directory + name);
+  const fixtures = [
+    'test_splash_monitor_bridge.py',
+    'test_run_native_eye_output_monitor.py',
+    'test_start_native_eye_output_session.py',
+    'test_analyze_native_eye_output_session.py',
+  ].map(name => directory + name);
+  fixtures.push('scripts/windows/Test-StarfieldMonitorSplash.ps1');
+  const plan = classifyPostSyncRefresh([
+    'scripts/windows/launch-starfield-vr-with-splash.ps1',
+    ...runtime,
+    ...fixtures,
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.noRuntimePathCount, fixtures.length);
+  assert.equal(plan.automaticExecutionAllowed, true);
+
+  for (const unexpected of ['splash_monitor_bridge_v2.py', 'launch_game.py', 'test_unreviewed.py']) {
+    const refused = classifyPostSyncRefresh([directory + unexpected]);
+    assert.equal(refused.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+    assert.deepEqual(refused.internal.unknownPaths, [directory + unexpected]);
+    assert.equal(refused.automaticExecutionAllowed, false);
+  }
+  const neighboringFixture = classifyPostSyncRefresh(['scripts/windows/Test-StarfieldMonitorSplashV2.ps1']);
+  assert.equal(neighboringFixture.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+  assert.equal(neighboringFixture.automaticExecutionAllowed, false);
+});
+
+test('the complete Starfield monitor delivery change set has no unclassified probe', () => {
+  const changedPaths = [
+    '.gitattributes',
+    '.github/workflows/sovereign-commander-capability-parity.yml',
+    'scripts/starfield-native-monitor-source.test.mjs',
+    'scripts/starfield-vr-delivery-truth-probe.mjs',
+    'scripts/starfield-vr-delivery-truth-probe.test.mjs',
+    'scripts/starfield-vr-launcher-source.test.mjs',
+    'scripts/starfield-vr-monitor-splash.test.mjs',
+    'scripts/starfield-vr-provider-cockpit.test.mjs',
+    'scripts/windows/Test-StarfieldMonitorSplash.ps1',
+    'scripts/windows/launch-starfield-vr-with-splash.ps1',
+    'scripts/windows/starfield-native-monitor/README.md',
+    'scripts/windows/starfield-native-monitor/analyze_native_eye_output_session.py',
+    'scripts/windows/starfield-native-monitor/run_native_eye_output_monitor.py',
+    'scripts/windows/starfield-native-monitor/splash_monitor_bridge.py',
+    'scripts/windows/starfield-native-monitor/start_native_eye_output_session.py',
+    'scripts/windows/starfield-native-monitor/test_analyze_native_eye_output_session.py',
+    'scripts/windows/starfield-native-monitor/test_run_native_eye_output_monitor.py',
+    'scripts/windows/starfield-native-monitor/test_splash_monitor_bridge.py',
+    'scripts/windows/starfield-native-monitor/test_start_native_eye_output_session.py',
+    'shared/agents/postSyncRuntimeRefreshCoordinator.mjs',
+    'shared/agents/postSyncRuntimeRefreshCoordinator.test.mjs',
+    'shared/agents/starfieldVrBattleBridgeMailboxV1.mjs',
+    'shared/agents/starfieldVrBattleBridgeMailboxV1.test.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER, POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.automaticExecutionAllowed, true);
+
+  const probe = classifyPostSyncRefresh(['scripts/starfield-vr-delivery-truth-probe.mjs']);
+  assert.deepEqual(probe.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(probe.automaticExecutionAllowed, true);
+  for (const unknown of ['scripts/starfield-vr-delivery-truth-probe-v2.mjs',
+    'scripts/Starfield-vr-delivery-truth-probe.mjs', 'scripts/windows/starfield-vr-delivery-truth-probe.mjs']) {
+    const refused = classifyPostSyncRefresh([...changedPaths, unknown]);
+    assert.equal(refused.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+    assert.deepEqual(refused.internal.unknownPaths, [unknown]);
+    assert.equal(refused.automaticExecutionAllowed, false);
+  }
+});
+
 test('exact six-path mailbox starvation delivery is installable through natural reload', () => {
   const plan = classifyPostSyncRefresh([
     '.github/workflows/battle-bridge-mailbox-outbox-starvation-v1.yml',
