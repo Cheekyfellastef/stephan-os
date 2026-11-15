@@ -15,7 +15,7 @@ $resultName='result-'+$attempt+'.json'
 $results=[Collections.Generic.List[object]]::new()
 foreach($row in $manifest.rows) {
  $record=@{phase=$row.phase;id=$row.id;ok=$false;productionMutation=$false;cleanupComplete=$false}
- $createdRoot=$false;$createdLog=$false
+ $createdRoot=$false;$createdLog=$false;$createdTask=$false;$createdTaskReceipt=$null;$outerRetainedTask=$false;$outerRetainedXml=$null
  try {
   $id=[string]$row.id
   if($id -cnotmatch '^[a-f0-9]{32}$' -or $row.root -cne ('C:\Program Files\Stephanos\MobileInstallFixture-'+$id) -or
@@ -24,6 +24,26 @@ foreach($row in $manifest.rows) {
   if([IO.Directory]::Exists($row.root) -or [IO.File]::Exists($row.root) -or
    [Security.Cryptography.CngKey]::Exists($row.key,[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey) -or
    [Diagnostics.EventLog]::SourceExists($row.source) -or [Diagnostics.EventLog]::Exists($row.log)){throw 'FIXTURE_EXISTING_OBJECT_COLLISION'}
+  # This outer regression owns a retained task; the attempted harness run
+  # must reject it before effects and preserve it. Outer cleanup is separate.
+  if($row.phase -ceq 'TASK_COLLISION') {
+   $outerService=[Activator]::CreateInstance([Type]::GetTypeFromProgID('Schedule.Service',$true));$outerFolder=$null;$outerTask=$null
+   try {
+    $outerService.Connect();$outerFolder=$outerService.GetFolder('\');$definition=$outerService.NewTask(0)
+    $definition.RegistrationInfo.URI='urn:stephanos:retained-fixture:'+$id
+    $definition.Principal.UserId=$manifest.operatorSid;$definition.Principal.LogonType=3;$definition.Principal.RunLevel=0;$definition.Settings.Enabled=$false
+    $action=$definition.Actions.Create(0);$action.Path='C:\Windows\System32\cmd.exe';$action.Arguments='/c exit 0'
+    $outerTask=$outerFolder.RegisterTaskDefinition($row.task,$definition,0x12,$manifest.operatorSid,$null,3,'O:BAG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)')
+    $outerRetainedXml=[string]$outerTask.Xml;$outerRetainedTask=$true
+   }finally{foreach($com in @($outerTask,$outerFolder,$outerService)){if($null -ne $com -and [Runtime.InteropServices.Marshal]::IsComObject($com)){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($com)}}}
+  }
+  # Admission is per-object. Log creation never grants task cleanup ownership.
+  $collisionService=[Activator]::CreateInstance([Type]::GetTypeFromProgID('Schedule.Service',$true));$collisionFolder=$null;$collisionTask=$null
+  try {
+   $collisionService.Connect();$collisionFolder=$collisionService.GetFolder('\')
+   try{$collisionTask=$collisionFolder.GetTask($row.task)}catch{if($_.Exception.HResult -ne -2147024894){throw}}
+   if($null -ne $collisionTask){throw 'FIXTURE_EXISTING_TASK_COLLISION'}
+  }finally{foreach($com in @($collisionTask,$collisionFolder,$collisionService)){if($null -ne $com -and [Runtime.InteropServices.Marshal]::IsComObject($com)){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($com)}}}
   $payloadBytes=[IO.File]::ReadAllBytes([IO.Path]::Combine($Directory,$id+'.json'))
   if((Digest $payloadBytes) -cne $row.payloadSha256){throw 'FIXTURE_PAYLOAD_CHANGED'}
   $data=$utf8.GetString($payloadBytes)|ConvertFrom-Json
@@ -68,10 +88,11 @@ $row=@{log=$log;source=$source};$manifest=@{operatorSid=$sid}
   if($entry.Count -ne 1){throw 'FIXTURE_ENTRY_NOT_UNIQUE'}
   $source=$utf8.GetString([Convert]::FromBase64String($entry[0].ContentBase64))
   if((Digest ([Convert]::FromBase64String($entry[0].ContentBase64))) -cne $entry[0].Sha256){throw 'FIXTURE_ENTRY_CHANGED'}
+  $script:MobileEnrollmentFixtureTaskCreatedV2=$null
   $outcome='';$stopped='';$priorConsole=[Console]::Out;$setupOutput=[IO.StringWriter]::new()
   try {[Console]::SetOut($setupOutput);$outcome=(& ([scriptblock]::Create($source)) -OperatorApproved -ExpectedMain $row.head)|Out-String;$outcome+=$setupOutput.ToString()}
   catch {$e=$_.Exception;while($null -ne $e.InnerException){$e=$e.InnerException};$stopped=$e.GetType().FullName+':'+$e.Message}
-  finally{[Console]::SetOut($priorConsole);$setupOutput.Dispose();$script:MobileInstallerEnrollmentPinnedBootstrapV1=$null;$createdRoot=[IO.Directory]::Exists($row.root)}
+  finally{[Console]::SetOut($priorConsole);$setupOutput.Dispose();$script:MobileInstallerEnrollmentPinnedBootstrapV1=$null;$createdRoot=[IO.Directory]::Exists($row.root);$createdTaskReceipt=$script:MobileEnrollmentFixtureTaskCreatedV2;$createdTask=$null -ne $createdTaskReceipt;$script:MobileEnrollmentFixtureTaskCreatedV2=$null}
   $record.stopped=$stopped;$record.staged=$outcome.Contains('MOBILE_INSTALLER_ENROLLMENT_STAGED_V1=')
   $inspectService=$null;$inspectFolder=$null;$inspectTask=$null
   try {
@@ -135,7 +156,10 @@ $row=@{log=$log;source=$source};$manifest=@{operatorSid=$sid}
    if(-not $replayRefused){throw 'ISOLATED_RETIREMENT_REPLAY_ACCEPTED'};$record.retirementReplayRefused=$true;$record.retirementFilesPreserved=[IO.File]::Exists([IO.Path]::Combine($row.root,'installer.exe'))
   }elseif(-not $retirementRefused){throw 'ISOLATED_UNSUPPORTED_PHASE_RETIREMENT_ACCEPTED'}
   $record.ok=$true
- }catch{$record.error=$_.Exception.ToString();$record.errorPosition=$_.InvocationInfo.PositionMessage;$record.errorStack=$_.ScriptStackTrace}
+ }catch{
+  if($row.phase -ceq 'TASK_COLLISION' -and $_.Exception.Message -ceq 'FIXTURE_EXISTING_TASK_COLLISION'){$record.expectedCollisionHeld=$true}
+  else{$record.error=$_.Exception.ToString();$record.errorPosition=$_.InvocationInfo.PositionMessage;$record.errorStack=$_.ScriptStackTrace}
+ }
  finally {
   # Only this freshly collision-checked closed GUID fixture is eligible for cleanup.
   # No production path, key, task, log or existing quarantine is admitted here.
@@ -145,13 +169,36 @@ $row=@{log=$log;source=$source};$manifest=@{operatorSid=$sid}
     $row.log -cne ('CF'+$row.id)){throw 'FIXTURE_CLEANUP_TARGET_REFUSED'}
    if($createdLog) {
     $service=[Activator]::CreateInstance([Type]::GetTypeFromProgID('Schedule.Service',$true));$folder=$null
-    try{$service.Connect();$folder=$service.GetFolder('\');try{$task=$folder.GetTask($row.task);[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($task);$folder.DeleteTask($row.task,0)}catch{if($_.Exception.HResult -ne -2147024894){throw}}}
+    try{
+     $service.Connect();$folder=$service.GetFolder('\')
+     if($createdTask) {
+      $task=$folder.GetTask($row.task)
+      try {
+       if($createdTaskReceipt.Path -cne ('\'+$row.task) -or [string]$task.Xml -cne $createdTaskReceipt.Xml -or
+        [string]$task.Definition.RegistrationInfo.URI -cne $createdTaskReceipt.Marker -or $createdTaskReceipt.Marker -cne ('urn:stephanos:mobile-fixture:'+$row.id)){throw 'FIXTURE_TASK_CREATION_OWNERSHIP_CHANGED'}
+      }finally{[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($task)}
+      $folder.DeleteTask($row.task,0)
+     }
+    }
     finally{foreach($com in @($folder,$service)){if($null -ne $com){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($com)}}}
     if([Security.Cryptography.CngKey]::Exists($row.key,[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey)) {
      $key=[Security.Cryptography.CngKey]::Open($row.key,[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey);try{$key.Delete()}finally{$key.Dispose()}
     }
     if($createdRoot){if(([IO.Path]::GetFullPath($row.root)) -cne ('C:\Program Files\Stephanos\MobileInstallFixture-'+$row.id)){throw 'FIXTURE_RESOLVED_ROOT_REFUSED'};[IO.Directory]::Delete($row.root,$true)}
     [Diagnostics.EventLog]::Delete($row.log)
+   }
+   if($outerRetainedTask) {
+    $outerService=[Activator]::CreateInstance([Type]::GetTypeFromProgID('Schedule.Service',$true));$outerFolder=$null;$outerTask=$null
+    try {
+     $outerService.Connect();$outerFolder=$outerService.GetFolder('\');$outerTask=$outerFolder.GetTask($row.task)
+     if(-not $record.expectedCollisionHeld -or $createdLog -or $createdRoot -or $createdTask -or
+      [string]$outerTask.Xml -cne $outerRetainedXml -or [string]$outerTask.Definition.RegistrationInfo.URI -cne ('urn:stephanos:retained-fixture:'+$row.id) -or
+      [IO.Directory]::Exists($row.root) -or [IO.File]::Exists($row.root) -or [Diagnostics.EventLog]::Exists($row.log) -or
+      [Security.Cryptography.CngKey]::Exists($row.key,[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey)){throw 'RETAINED_TASK_COLLISION_NOT_PRESERVED_WITHOUT_EFFECTS'}
+     $record.retainedTaskPreservedBeforeOuterCleanup=$true
+     [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($outerTask);$outerTask=$null
+     $outerFolder.DeleteTask($row.task,0);$record.ok=$true
+    }finally{foreach($com in @($outerTask,$outerFolder,$outerService)){if($null -ne $com -and [Runtime.InteropServices.Marshal]::IsComObject($com)){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($com)}}}
    }
    $record.cleanupComplete=$true
   }catch{$record.cleanupError=$_.Exception.ToString();$record.ok=$false}

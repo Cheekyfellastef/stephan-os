@@ -22,7 +22,7 @@ if(observation.status!==0)throw Error('WINDOWS_FIXTURE_TARGET_OBSERVATION_FAILED
 const target=JSON.parse(observation.stdout),sid=target.sid,machine=target.machine;
 if(!/^S-1-5-21-[0-9-]+$/.test(sid)||!/^[a-f0-9]{64}$/.test(machine)||typeof target.temporaryRoot!=='string')throw Error('WINDOWS_FIXTURE_TARGET_UNPROVEN');
 const suite=randomBytes(16).toString('hex'),out=join(target.temporaryRoot,'StephanosMobileEnrollmentFixture-'+suite);mkdirSync(out);
-const phases=['COMPLETE','PREFLIGHT','ROOT','HELPER','KEY','KEY_RETIRE_UNKNOWN','ENROLLMENT','AUTHORIZATION','RELEASE','WAL','GENESIS','TASK','CERTIFICATE','READBACK'];
+const phases=['TASK_COLLISION','COMPLETE','PREFLIGHT','ROOT','HELPER','KEY','KEY_RETIRE_UNKNOWN','ENROLLMENT','AUTHORIZATION','RELEASE','WAL','GENESIS','TASK','CERTIFICATE','READBACK'];
 const sha=x=>createHash('sha256').update(x).digest('hex');
 const rows=[];
 for(const phase of phases) {
@@ -56,6 +56,13 @@ namespace Stephanos.Sovereign {public static class IsolatedEnrollmentProof {
  if(!main.test(cs))throw Error('EXACT_MAIN_SEAM_MISSING');
  cs=cs.replace(main,'$1\n      if(System.Environment.GetEnvironmentVariable("STEPHANOS_ISOLATED_PROOF")=="'+id+'")return IsolatedEnrollmentProof.Run();');entryCs.content=Buffer.from(cs);
  let script=files.find(x=>x.path===entry).content.toString();
+ // Test-only creation receipt. A pre-existing or merely observed task is never
+ // cleanup ownership; this marker is captured only after CREATE returns.
+ script=script.replace(" $definition.Principal.UserId=", " $definition.RegistrationInfo.URI='urn:stephanos:mobile-fixture:"+id+"'\n $definition.Principal.UserId=");
+ const taskCreateLine=script.split('\n').find(line=>line.startsWith(" $task=$folder.RegisterTaskDefinition("));
+ if(!taskCreateLine)throw Error('EXACT_TASK_CREATE_SEAM_MISSING');
+ script=script.replace(taskCreateLine,taskCreateLine+"\n $script:MobileEnrollmentFixtureTaskCreatedV2=@{Path=[string]$task.Path;Xml=[string]$task.Xml;Marker='urn:stephanos:mobile-fixture:"+id+"'}");
+
  const stops={
  PREFLIGHT:'# From this boundary all effects target',ROOT:'$parameters=[CodeDom.Compiler.CompilerParameters]::new()',
  HELPER:'$proof=Confirm-MobileEnrollmentDevice $assembly',KEY:"$proposed['receiptPublicKeySpki']=$receiptSpki",
@@ -63,7 +70,7 @@ namespace Stephanos.Sovereign {public static class IsolatedEnrollmentProof {
  RELEASE:'$binding=$assertion.GetMethod',WAL:'$anchor=$assembly.GetType',GENESIS:'[void]$authorizationType.GetMethod',
  TASK:"$certificateSha=$provision.GetMethod",CERTIFICATE:"[void]$assembly.GetType('Stephanos.Sovereign.CoreJobCustodyV1',$true).GetMethod('VerifyManualEnrollmentReadbackV2'",READBACK:"[Console]::WriteLine('MOBILE_INSTALLER_ENROLLMENT_STAGED_V1="};
  if(phase!=='COMPLETE') {
-  const needle=stops[phase==='KEY_RETIRE_UNKNOWN'?'KEY':phase];if(!needle || script.split(needle).length!==2)throw Error('STOP_SEAM_'+phase);
+  const needle=stops[phase==='KEY_RETIRE_UNKNOWN'?'KEY':phase==='TASK_COLLISION'?'PREFLIGHT':phase];if(!needle || script.split(needle).length!==2)throw Error('STOP_SEAM_'+phase);
   script=script.replace(needle,"throw 'ISOLATED_STOP_"+phase+"'\n"+needle);
  }
  files.find(x=>x.path===entry).content=Buffer.from(script);

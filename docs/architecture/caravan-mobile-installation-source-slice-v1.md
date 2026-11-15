@@ -177,12 +177,17 @@ folders, keys, tasks, pipes and separate retained test logs. It cannot establish
 production enrollment or installation acceptance. Preserve the OS-created test
 registry read permissions and let the unchanged native policy reject unsafe writers.
 
-Fourteen actual Windows cases cover complete setup and native helper qualification,
+Fifteen actual Windows cases cover complete setup and native helper qualification,
 stops after preflight/root/helper/key/enrollment/authorization/release/WAL/genesis/
 task/certificate/readback, plus an injected unknown after actual test-key deletion.
 The exact-key case exercises observation, wrong-fingerprint refusal, same-object
 retirement, unchanged files, absence readback and replay refusal. Unsupported phases
 remain inspection-only; complete certificate/readback states independently qualify.
+A retained-task collision is rejected before creating any fixture object. The
+outer regression independently verifies the retained task and all absent states
+before separately removing its own regression task. Ordinary task cleanup requires
+a receipt captured after successful CREATE, matching fixed path, XML and unique
+registration marker; observation or log creation never grants deletion ownership.
 All test objects require bounded target validation and explicit cleanup readback.
 Additional native data tests cover source/key/counter/window/signature substitution,
 duplicate keys and exact envelope bounds; real Windows task tests cover missing,
@@ -196,3 +201,12 @@ Current-state hashes cannot replace missing provenance, and transport uncertaint
 cannot mint retry, deletion, adoption or installation authority. Unsupported later
 partial-state recovery is explicit bounded debt; this change admits only KEY_ONLY
 retirement followed by the existing quarantine and wholly fresh enrollment gates.
+
+The pre-existing native Job fixtures distinguish physical worker readiness from
+parent launch. Cooperative-ack cases join the exact owned PID with an atomic
+test-only worker-ready witness; a separately delayed worker proves the no-ack
+forced-drain path. Terminal-channel faults are injected only after a physical
+process-exit join, using the existing maximum probe budget. These fixture-only
+signals change neither production native code, its acknowledgement/drain budgets,
+gaming protection nor admission. Busy-host timing failure is never silently
+converted into healthy or skipped proof.

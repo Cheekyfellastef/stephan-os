@@ -164,7 +164,15 @@ const NATURAL_EXACT = new Set([
   // On-demand VR owners load these on their next explicit invocation. This
   // confirms source adoption only; never launch/restart games or recorders.
   'scripts/report-starfield-vr-telemetry.mjs',
+  // The fixed mailbox starts this delivery observation in a fresh Node child.
+  'scripts/starfield-vr-delivery-truth-probe.mjs',
   'scripts/windows/launch-starfield-vr-with-splash.ps1',
+  // The existing third splash card owns this attended monitor continuation.
+  // Sync adopts source only; it never starts a monitor session or a game.
+  'scripts/windows/starfield-native-monitor/splash_monitor_bridge.py',
+  'scripts/windows/starfield-native-monitor/run_native_eye_output_monitor.py',
+  'scripts/windows/starfield-native-monitor/start_native_eye_output_session.py',
+  'scripts/windows/starfield-native-monitor/analyze_native_eye_output_session.py',
   'scripts/windows/launch-starfield-vr.ps1',
   'scripts/windows/new-vr-telemetry-session.ps1',
   'scripts/windows/read-starfield-vr-performance-diagnosis.ps1',
@@ -291,6 +299,11 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
 ]);
 
 const NO_RUNTIME_EXACT = new Set([
+  'scripts/windows/Test-StarfieldMonitorSplash.ps1',
+  'scripts/windows/starfield-native-monitor/test_splash_monitor_bridge.py',
+  'scripts/windows/starfield-native-monitor/test_run_native_eye_output_monitor.py',
+  'scripts/windows/starfield-native-monitor/test_start_native_eye_output_session.py',
+  'scripts/windows/starfield-native-monitor/test_analyze_native_eye_output_session.py',
   // Existing GitHub Actions job loads this fixed artifact producer from its
   // exact checkout. It is never a resident Battle Bridge process or a local
   // submission adapter; activating the native reader belongs to the relay.
