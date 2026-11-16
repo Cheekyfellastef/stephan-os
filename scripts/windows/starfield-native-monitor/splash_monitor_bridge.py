@@ -28,7 +28,7 @@ import types
 SCHEMA = "stephanos.native-eye-output.splash.v1"
 CUSTODY_SCHEMA = "stephanos.native-eye-output.provider-custody.v1"
 CORE_NAME = "run_native_eye_output_monitor.py"
-CORE_SHA256 = "f40df00ff7378b8d3c62714bfb32702226746735f73d804a2c5f3e3727f7ba6c"
+CORE_SHA256 = "26cc78b3eb8b8eac551f305a028de3ec5c6f8f80d9e9809544f742ff47ec4c2c"
 MAX_COMMAND_BYTES = 8192
 MAX_EVENT_BYTES = 32768
 MODES = {"ready", "waiting", "existing", "done", "cleanup", "blocked"}
@@ -36,7 +36,7 @@ COMMANDS = {"prepare", "confirm", "finish", "cancel", "close"}
 HEX32 = re.compile(r"[0-9a-f]{32}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 DECIMAL = re.compile(r"[1-9][0-9]{0,19}\Z")
-REVIEWED_RUNNER_HASHES = {CORE_SHA256, "6e296ff22f3de9fc1ec0ef4a6751cc7cc85b315a2641a8d20c0e1d9bb6c1d4b3"}
+REVIEWED_RUNNER_HASHES = {CORE_SHA256, "f40df00ff7378b8d3c62714bfb32702226746735f73d804a2c5f3e3727f7ba6c", "6e296ff22f3de9fc1ec0ef4a6751cc7cc85b315a2641a8d20c0e1d9bb6c1d4b3"}
 
 
 class ProtocolError(RuntimeError):

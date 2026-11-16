@@ -417,10 +417,29 @@ $rows=@(); foreach($p in @(Get-Process -ErrorAction Stop | Where-Object {$_.Proc
         # Only validated integer/decimal values enter this fixed command; path is fixed.
         code = r"""
 $p=Get-Process -Id PID_VALUE -ErrorAction Stop;
-if($p.Path -ine 'C:\Program Files (x86)\Steam\steamapps\common\Starfield\Starfield.exe' -or
-  $p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture) -cne 'TIME_VALUE') {throw 'Close target identity changed'}
-$requested=$p.CloseMainWindow();$exited=$p.WaitForExit(60000);$exitCode=$null;
-if($exited){$exitCode=$p.ExitCode};[ordered]@{requested=$requested;exited=$exited;exitCode=$exitCode} | ConvertTo-Json -Compress
+try {
+  # Get-Process attaches by PID. Retain its handle before closing: the .NET
+  # Framework ExitCode getter requires it even after WaitForExit succeeds.
+  # Direct getter calls expose exceptions that PowerShell property access hides.
+  $retainedHandle=$p.get_Handle();
+  if($retainedHandle -eq [IntPtr]::Zero){throw 'Close target handle unavailable'}
+  if($p.Path -ine 'C:\Program Files (x86)\Steam\steamapps\common\Starfield\Starfield.exe' -or
+    $p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture) -cne 'TIME_VALUE') {throw 'Close target identity changed'}
+  $requested=$p.CloseMainWindow();$exited=$p.WaitForExit(60000);$exitCode=$null;$exitCodeError=$null;
+  if($exited){
+    try {
+      $observedExitCode=$p.get_ExitCode();
+      if($observedExitCode -isnot [int]){throw 'Exit code was not an integer'}
+      $exitCode=$observedExitCode;
+    } catch {
+      # Keep unknown exit evidence unknown while allowing verified safe restore.
+      $exitCodeError='EXIT_CODE_READ_FAILED';
+    }
+  }
+  [ordered]@{requested=$requested;exited=$exited;exitCode=$exitCode;exitCodeError=$exitCodeError} | ConvertTo-Json -Compress
+} finally {
+  $p.Dispose();
+}
 """.replace("PID_VALUE", str(process["pid"])).replace("TIME_VALUE", process["createdFileTime"])
         return self.ps(code, timeout=70)
 
@@ -436,7 +455,7 @@ def summary(state, store):
     keys = ("sessionId", "stage", "createdUtc", "updatedUtc", "launchRequested",
             "handoffSha256", "reviewedDllSha256", "sourceArchiveSha256", "verification",
             "injected", "captureAttempted", "saveLoadedConfirmed", "headsetNeeded",
-            "gameExitObserved", "normalExitProven", "proxyRestored", "error", "cleanupError", "nextAction")
+            "gameExitObserved", "normalExitProven", "proxyRestored", "closeResult", "error", "cleanupError", "nextAction")
     result = {key: state[key] for key in keys if key in state}
     result["statePath"] = str(store.path)
     result["process"] = state.get("process")
