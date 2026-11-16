@@ -82,6 +82,8 @@ import {
 import { projectBattleBridgeGitConfigurationDiagnosticV1 }
   from '../shared/agents/battleBridgeGitConfigurationDiagnosticV1.mjs';
 
+import { STARFIELD_VR_NATIVE_BUILD_OPERATION, projectStarfieldVrNativeBuildReceipt } from '../shared/agents/starfieldVrNativeBuildV1.mjs';
+
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
 export const BATTLE_BRIDGE_MAILBOX_MAX_RECEIPT_PUBLICATION_ATTEMPTS_PER_CYCLE = 1;
@@ -107,6 +109,7 @@ const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/i;
 const OCI_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/i;
 const FORGE_BACKUP_VOLUME_PATTERN = /^stephanos-forge-shadow-backup-[0-9a-f]{16}$/i;
 const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
+  STARFIELD_VR_NATIVE_BUILD_OPERATION,
   MAILBOX_ROTATION_OPERATION,
   'UPDATE_STEPHANOS_FROM_CHAT',
   'INSTALL_UNATTENDED_GITHUB_SYNC',
@@ -2488,6 +2491,8 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     proofCompleted: operationResult?.proofCompleted === true,
     nativeProof: projectNativeBrowserProof(operationResult),
     rescueIslandBuild: projectRescueIslandBuild(operationResult),
+    nativeBuild: receipt?.operation === STARFIELD_VR_NATIVE_BUILD_OPERATION
+      ? projectStarfieldVrNativeBuildReceipt(operationResult?.nativeBuild, receipt?.expectedHead, receipt?.requestId) : null,
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     execution: Object.freeze({
@@ -2543,6 +2548,8 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       proofCompleted: operationResult?.proofCompleted === true,
       nativeProof: projectNativeBrowserProof(operationResult),
     rescueIslandBuild: projectRescueIslandBuild(operationResult),
+    nativeBuild: receipt?.operation === STARFIELD_VR_NATIVE_BUILD_OPERATION
+      ? projectStarfieldVrNativeBuildReceipt(operationResult?.nativeBuild, receipt?.expectedHead, receipt?.requestId) : null,
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),
       branch: safeTelemetryBranch(operationResult?.branch),
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
@@ -2912,6 +2919,8 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         maintenanceStatus: inner?.maintenanceStatus ?? null,
         meterStatus: compactMeterStatusForCoreReceipt(inner?.meterStatus, meterLimit),
         visibilityHeadline: compactVisibilityHeadlineForCoreReceipt(inner?.visibilitySnapshot),
+        nativeBuild: compactReceipt?.operation === STARFIELD_VR_NATIVE_BUILD_OPERATION
+          ? projectStarfieldVrNativeBuildReceipt(inner?.nativeBuild, compactReceipt?.expectedHead, compactReceipt?.requestId) : null,
         starfieldVrTelemetry: inner?.starfieldVrTelemetry ?? null,
         cpuPressure: inner?.cpuPressure ?? null,
         starfieldVrTelemetryArchive: inner?.starfieldVrTelemetryArchive ?? null,
@@ -2985,6 +2994,8 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     proofCompleted: operationResult?.proofCompleted === true,
     nativeProof: projectNativeBrowserProof(operationResult),
     rescueIslandBuild: projectRescueIslandBuild(operationResult),
+    nativeBuild: receipt?.operation === STARFIELD_VR_NATIVE_BUILD_OPERATION
+      ? projectStarfieldVrNativeBuildReceipt(operationResult?.nativeBuild, receipt?.expectedHead, receipt?.requestId) : null,
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     result: {
@@ -3037,6 +3048,8 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         proofCompleted: operationResult?.proofCompleted === true,
         nativeProof: projectNativeBrowserProof(operationResult),
     rescueIslandBuild: projectRescueIslandBuild(operationResult),
+    nativeBuild: receipt?.operation === STARFIELD_VR_NATIVE_BUILD_OPERATION
+      ? projectStarfieldVrNativeBuildReceipt(operationResult?.nativeBuild, receipt?.expectedHead, receipt?.requestId) : null,
         sourceHead: safeTelemetrySha(operationResult?.sourceHead),
         branch: safeTelemetryBranch(operationResult?.branch),
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),

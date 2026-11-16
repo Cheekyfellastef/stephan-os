@@ -1,0 +1,88 @@
+name: Starfield Native Build Boundary Proof
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'VR-Research-Lab/native/starfield-paired-observer-v1/**'
+      - 'scripts/windows/starfield-native-build/**'
+      - 'shared/agents/starfieldVrNativeBuildV1*'
+      - 'shared/agents/starfieldVrBattleBridgeMailboxV1*'
+      - 'scripts/battle-bridge-github-command-mailbox.mjs'
+      - 'scripts/battle-bridge-starfield-native-build-projection.test.mjs'
+      - '.github/workflows/starfield-native-build-proof.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: starfield-native-build-proof-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  portable-build-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.13'
+      - name: Validate source, command and public proof boundaries
+        run: |
+          node --test shared/agents/starfieldVrNativeBuildV1.test.mjs shared/agents/starfieldVrBattleBridgeMailboxV1.test.mjs shared/agents/battleBridgeGitHubCommandMailboxStarfieldVr.test.mjs scripts/battle-bridge-starfield-native-build-projection.test.mjs
+          python -I -S -B -m unittest discover -s scripts/windows/starfield-native-build -p 'test_*.py' -v
+          python -I -S -B VR-Research-Lab/native/starfield-paired-observer-v1/test-paired-source-observer-source.py -v
+      - name: Compile and run the portable eye models
+        working-directory: VR-Research-Lab/native/starfield-paired-observer-v1
+        run: |
+          set -euo pipefail
+          for fixture in test-scoped-eye-ledger test-paired-scoped-eye-ledger test-paired-source-observation; do
+            g++ -std=c++20 -O2 -pthread -Wall -Wextra -Werror -Wno-misleading-indentation "$fixture.cpp" -o "$RUNNER_TEMP/$fixture"
+            "$RUNNER_TEMP/$fixture"
+          done
+
+  windows-owned-process-proof:
+    runs-on: windows-2022
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.13'
+          architecture: 'x64'
+      - name: Run real Windows process, descendant, parent-death and file-pin fixtures
+        shell: pwsh
+        run: |
+          python -I -S -B -m unittest discover -s scripts/windows/starfield-native-build -p 'test_*.py' -v
+          if ($LASTEXITCODE -ne 0) { throw 'STARFIELD_NATIVE_BUILD_WINDOWS_TEST_FAILED' }
+      - name: Parse the fixed Windows PowerShell bootstrap
+        shell: powershell
+        run: |
+          $tokens = $null; $errors = $null
+          $source = Join-Path $PWD 'scripts/windows/starfield-native-build/start_native_build.ps1'
+          [void][Management.Automation.Language.Parser]::ParseFile($source, [ref]$tokens, [ref]$errors)
+          if ($errors.Count) { throw 'STARFIELD_NATIVE_BUILD_POWERSHELL_PARSE_FAILED' }
+          $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes([IO.File]::ReadAllText($source)))
+          if ($encoded.Length -gt 32000) { throw 'STARFIELD_NATIVE_BUILD_COMMAND_LINE_BOUND' }
+      - name: Compile and execute portable models with the Windows compiler
+        shell: cmd
+        working-directory: VR-Research-Lab/native/starfield-paired-observer-v1
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" >nul || exit /b 1
+          cl /nologo /std:c++20 /EHsc /MD /W4 /WX /O2 test-scoped-eye-ledger.cpp /Fe"%RUNNER_TEMP%\test-scoped-eye-ledger.exe" || exit /b 1
+          "%RUNNER_TEMP%\test-scoped-eye-ledger.exe" || exit /b 1
+          cl /nologo /std:c++20 /EHsc /MD /W4 /WX /O2 test-paired-scoped-eye-ledger.cpp /Fe"%RUNNER_TEMP%\test-paired-scoped-eye-ledger.exe" || exit /b 1
+          "%RUNNER_TEMP%\test-paired-scoped-eye-ledger.exe" || exit /b 1
+          cl /nologo /std:c++20 /EHsc /MD /W4 /WX /O2 test-paired-source-observation.cpp /Fe"%RUNNER_TEMP%\test-paired-source-observation.exe" || exit /b 1
+          "%RUNNER_TEMP%\test-paired-source-observation.exe" || exit /b 1
