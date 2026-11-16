@@ -3478,6 +3478,69 @@ test('remote Core health refuses missing or false custody proofs despite fresh s
   }
 });
 
+test('Core native status does not convert null or malformed ages into fresh heartbeat proof', async () => {
+  for (const [ageInput, expectedAge] of [
+    ...[null, '', '0', false, -1, {}, []].map(age => [{ heartbeatAgeSeconds: age, flywheelCycleAgeSeconds: age }, null]),
+    [{ heartbeatAgeSeconds: 3, heartbeatFresh: false, flywheelCycleAgeSeconds: null }, 3],
+    [{ heartbeatAgeSeconds: 3, heartbeatFresh: 'true', flywheelCycleAgeSeconds: null }, 3],
+  ]) {
+    const status = {
+      schemaVersion: 'stephanos.core-daemon-status.v1', ok: true,
+      processInventoryComplete: true, processCount: 1, daemonHealthy: true,
+      singleWriterProven: true, writerProcessObserved: true, lockOwnerMatchesWriter: true,
+      rescueGenerationPresent: true, rescueAttemptCount: 0,
+      readiness: 'READY', sourceHead: HEAD,
+      ...ageInput,
+    };
+    const maintenance = {
+      ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED', proofHash: 'b'.repeat(64),
+      command: { plan: { processId: 'status-stephanos-core-daemon' } },
+      structuredContent: { ok: true, status: 0, stdout: JSON.stringify(status) },
+    };
+    const { fetchFn } = mcpFetch({ maintenance });
+    const result = await executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'status-stephanos-core-daemon' }),
+      { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn, env: { USERPROFILE: 'C:\\Users\\Operator' } },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CORE_DAEMON_NOT_READY');
+    assert.equal(result.coreDaemonStatus.heartbeatAgeSeconds, expectedAge);
+    assert.equal(result.coreDaemonStatus.flywheelCycleAgeSeconds, null);
+    assert.notEqual(result.coreDaemonStatus.heartbeatFresh, true);
+  }
+});
+
+test('shared Core leaf keeps historical missing flags absent and accepts only closed typed evidence', async () => {
+  const { projectSovereignCoreDaemonStatusV1: project } = await import('./sovereignCommanderRemoteMailboxV1.mjs');
+  assert.equal(typeof project, 'function');
+  for (const heartbeatAgeSeconds of [null, 0]) {
+    const projected = project({ available: true, sourceHead: HEAD, heartbeatAgeSeconds, processCount: null });
+    assert.equal(projected.heartbeatAgeSeconds, heartbeatAgeSeconds);
+    assert.equal(projected.processCount, null);
+    for (const key of ['heartbeatFresh', 'processInventoryComplete', 'singleWriterProven',
+      'writerProcessObserved', 'lockOwnerMatchesWriter', 'rescueGenerationPresent', 'rescueAttemptCount',
+      'busyGraceActive', 'flywheelCycleAgeSeconds']) assert.equal(Object.hasOwn(projected, key), false, key);
+    assert.deepEqual(project(projected), projected);
+  }
+  for (const input of [null, [], 'status', Object.create({ available: true, singleWriterProven: true })]) {
+    assert.equal(project(input), null);
+  }
+  let getterCalled = false;
+  const input = { available: true, processInventoryComplete: true, processCount: 1,
+    heartbeatAgeSeconds: 0, heartbeatFresh: true, singleWriterProven: true,
+    sourceMutationAllowed: true, schedulerAuthority: true, mergeAuthority: true,
+    privatePath: 'PRIVATE_CORE_PATH' };
+  Object.defineProperty(input, 'writerProcessObserved', { enumerable: true, get() { getterCalled = true; return true; } });
+  const projected = project(input);
+  assert.equal(getterCalled, false);
+  assert.notEqual(projected.writerProcessObserved, true);
+  assert.equal(projected.singleWriterProven, true);
+  assert.equal(projected.processCount, 1);
+  assert.equal(projected.heartbeatFresh, true);
+  for (const key of ['sourceMutationAllowed', 'schedulerAuthority', 'mergeAuthority']) assert.equal(projected[key], false);
+  assert.doesNotMatch(JSON.stringify(projected), /PRIVATE_CORE/);
+});
+
 test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge packet', async () => {
   const observation = {
     schemaVersion: 'stephanos.battle-bridge-observation.v1',
