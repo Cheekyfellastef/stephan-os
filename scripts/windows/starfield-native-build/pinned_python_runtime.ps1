@@ -29,6 +29,7 @@ function Runtime-Native {
   $specs = @(
     @('CreateFileW','kernel32.dll',[IntPtr],@([string],[uint32],[uint32],[IntPtr],[uint32],[uint32],[IntPtr])),
     @('CreateDirectoryW','kernel32.dll',[bool],@([string],[IntPtr])),
+    @('NtCreateFile','ntdll.dll',[int],@([IntPtr],[uint32],[IntPtr],[IntPtr],[IntPtr],[uint32],[uint32],[uint32],[uint32],[IntPtr],[uint32])),
     @('GetFileInformationByHandle','kernel32.dll',[bool],@([IntPtr],[IntPtr])),
     @('GetFinalPathNameByHandleW','kernel32.dll',[uint32],@([IntPtr],[Text.StringBuilder],[uint32],[uint32])),
     @('CloseHandle','kernel32.dll',[bool],@([IntPtr])),
@@ -43,6 +44,53 @@ function Runtime-Native {
   }
   $script:RuntimeNative = $type.CreateType()
   return $script:RuntimeNative
+}
+function Runtime-Security([string]$mode) {
+  $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+  $rights = switch ($mode) { 'provision' { '0x1200ab' }; 'sealed' { 'FRFX' }; 'cleanup' { 'FA' }; default { Runtime-Deny } }
+  $security = [Security.AccessControl.DirectorySecurity]::new()
+  $security.SetSecurityDescriptorSddlForm(('D:P(A;;FA;;;SY)(A;;' + $rights + ';;;' + $sid + ')(A;;RC;;;OW)'))
+  return ,$security.GetSecurityDescriptorBinaryForm()
+}
+function Runtime-CreateDirectory([string]$path) {
+  $native = Runtime-Native
+  $buffers = [Collections.Generic.List[IntPtr]]::new()
+  $handle = [IntPtr]::Zero
+  try {
+    $name = '\??\' + $path
+    $text = [Runtime.InteropServices.Marshal]::StringToHGlobalUni($name); $buffers.Add($text)
+    $unicode = [Runtime.InteropServices.Marshal]::AllocHGlobal(16); $buffers.Add($unicode)
+    $attributes = [Runtime.InteropServices.Marshal]::AllocHGlobal(48); $buffers.Add($attributes)
+    $statusBlock = [Runtime.InteropServices.Marshal]::AllocHGlobal(16); $buffers.Add($statusBlock)
+    $output = [Runtime.InteropServices.Marshal]::AllocHGlobal(8); $buffers.Add($output)
+    foreach ($pair in @(@($unicode,16),@($attributes,48),@($statusBlock,16),@($output,8))) {
+      [Runtime.InteropServices.Marshal]::Copy([byte[]]::new($pair[1]), 0, $pair[0], $pair[1])
+    }
+    $security = Runtime-Security 'provision'
+    $descriptor = [Runtime.InteropServices.Marshal]::AllocHGlobal($security.Length); $buffers.Add($descriptor)
+    [Runtime.InteropServices.Marshal]::Copy($security, 0, $descriptor, $security.Length)
+    if ($name.Length -gt 16000) { Runtime-Deny }
+    [Runtime.InteropServices.Marshal]::WriteInt16($unicode, 0, [int16]($name.Length*2))
+    [Runtime.InteropServices.Marshal]::WriteInt16($unicode, 2, [int16](($name.Length+1)*2))
+    [Runtime.InteropServices.Marshal]::WriteIntPtr($unicode, 8, $text)
+    [Runtime.InteropServices.Marshal]::WriteInt32($attributes, 0, 48)
+    [Runtime.InteropServices.Marshal]::WriteIntPtr($attributes, 16, $unicode)
+    [Runtime.InteropServices.Marshal]::WriteInt32($attributes, 24, 0x40)
+    [Runtime.InteropServices.Marshal]::WriteIntPtr($attributes, 32, $descriptor)
+    # FILE_CREATE + FILE_DIRECTORY_FILE atomically supplies the creation DACL
+    # and returns the creator's private rights. Later WRITE_DAC/WRITE_OWNER
+    # opens are denied from birth; FILE_ADD_FILE handle opens conflict with
+    # the retained creator's share mode. No writable-to-sealed permission gap.
+    $status = $native::NtCreateFile($output, 0x1700ab, $attributes, $statusBlock,
+      [IntPtr]::Zero, 0x10, 1, 2, 0x21, [IntPtr]::Zero, 0)
+    $handle = [Runtime.InteropServices.Marshal]::ReadIntPtr($output)
+    if ($status -ne 0 -or $handle -eq [IntPtr]::Zero -or $handle -eq [IntPtr](-1) -or
+      [Runtime.InteropServices.Marshal]::ReadIntPtr($statusBlock,8).ToInt64() -ne 2) { Runtime-Deny }
+    $result=$handle; $handle=[IntPtr]::Zero; return $result
+  } finally {
+    if ($handle -ne [IntPtr]::Zero -and $handle -ne [IntPtr](-1)) { [void]$native::CloseHandle($handle) }
+    foreach ($memory in $buffers) { [Runtime.InteropServices.Marshal]::FreeHGlobal($memory) }
+  }
 }
 function Runtime-Info([IntPtr]$handle, [bool]$directory) {
   $native = Runtime-Native
@@ -62,40 +110,47 @@ function Runtime-Path([IntPtr]$handle, [string]$expected) {
   $count = $native::GetFinalPathNameByHandleW($handle, $text, 32768, 0)
   if ($count -le 0 -or $count -ge 32768 -or $text.ToString().TrimEnd('\') -ine ('\\?\' + $expected.TrimEnd('\'))) { Runtime-Deny }
 }
-function Runtime-DirectoryPin($state, [string]$path, [bool]$writer) {
+function Runtime-DirectoryPin($state, [string]$path) {
   $path = [IO.Path]::GetFullPath($path)
   $key = $path.TrimEnd('\').ToLowerInvariant()
   if ($state.DirectoryKeys.Contains($key)) { return }
   $native = Runtime-Native
-  # An exclusive writer on the fresh leaf excludes existing directory write
-  # handles. Ancestors remain shared for normal use but cannot be renamed.
-  $access = if ($writer) { [uint32]3221684224 } else { [uint32]128 }
-  $share = if ($writer) { [uint32]1 } else { [uint32]3 }
-  $handle = $native::CreateFileW($path, $access, $share, [IntPtr]::Zero, 3, 0x02200000, [IntPtr]::Zero)
+  # FILE_LIST_DIRECTORY participates in sharing; metadata-only access does
+  # not. Normal readers/writers are shared, while ancestor rename is refused.
+  $handle = $native::CreateFileW($path, 0x81, 3, [IntPtr]::Zero, 3, 0x02200000, [IntPtr]::Zero)
   if ($handle -eq [IntPtr]::Zero -or $handle -eq [IntPtr](-1)) { Runtime-Deny }
   try {
     $identity = Runtime-Info $handle $true
     Runtime-Path $handle $path
-    $saved = if ($writer) { [IO.Directory]::GetAccessControl($path).GetSecurityDescriptorBinaryForm() } else { $null }
-    $state.Directories.Add([pscustomobject]@{ Handle=$handle; Path=$path; Identity=$identity; OriginalAcl=$saved; Sealed=$false })
+    $state.Directories.Add([pscustomobject]@{ Handle=$handle; Path=$path; Identity=$identity; OriginalAcl=$null; Sealed=$false })
     [void]$state.DirectoryKeys.Add($key)
     $handle = [IntPtr]::Zero
   } finally { if ($handle -ne [IntPtr]::Zero) { [void]$native::CloseHandle($handle) } }
 }
 function New-RuntimeCustody([string]$path, [bool]$fresh, [bool]$writer=$true) {
+  if (($fresh -and -not $writer) -or (-not $fresh -and $writer)) { Runtime-Deny }
   if ($path -cnotmatch '^[A-Za-z]:\\' -or $path.Substring(2).Contains(':')) { Runtime-Deny }
   $path = [IO.Path]::GetFullPath($path)
   $state = [pscustomobject]@{ Path=$path; Directories=[Collections.Generic.List[object]]::new();
     DirectoryKeys=[Collections.Generic.HashSet[string]]::new(); Files=[Collections.Generic.List[object]]::new();
-    Python=$null; PythonHash=$null; Sealed=$false; Closed=$false; LeafWritable=$writer; ArchiveSha256=$script:RuntimeSha256 }
+    Python=$null; PythonHash=$null; Sealed=$false; Closed=$false; Expanded=$false; LeafWritable=$writer; ArchiveSha256=$script:RuntimeSha256 }
   try {
     $parents = [Collections.Generic.List[string]]::new()
     $parent = [IO.DirectoryInfo]::new($path).Parent
     while ($null -ne $parent) { $parents.Add($parent.FullName); $parent = $parent.Parent }
-    for ($i=$parents.Count-1; $i -ge 0; $i--) { Runtime-DirectoryPin $state $parents[$i] $false }
+    for ($i=$parents.Count-1; $i -ge 0; $i--) { Runtime-DirectoryPin $state $parents[$i] }
     $native = Runtime-Native
-    if ($fresh -and -not $native::CreateDirectoryW($path, [IntPtr]::Zero)) { Runtime-Deny }
-    Runtime-DirectoryPin $state $path $writer
+    if ($fresh) {
+      $handle = Runtime-CreateDirectory $path
+      try {
+        $identity = Runtime-Info $handle $true
+        Runtime-Path $handle $path
+        $state.Directories.Add([pscustomobject]@{ Handle=$handle; Path=$path; Identity=$identity;
+          OriginalAcl=(Runtime-Security 'cleanup'); Sealed=$true })
+        [void]$state.DirectoryKeys.Add($path.TrimEnd('\').ToLowerInvariant())
+        $handle=[IntPtr]::Zero
+      } finally { if ($handle -ne [IntPtr]::Zero) { [void]$native::CloseHandle($handle) } }
+    } else { Runtime-DirectoryPin $state $path }
     return $state
   } catch { Close-RuntimeCustody $state $true; throw }
 }
@@ -118,7 +173,6 @@ function Close-RuntimeCustody($state, [bool]$restore) {
   # Restoration is used only after no interpreter was started, or after its
   # retained handle positively signaled. Unknown child lifetime stays sealed.
   foreach ($file in $state.Files) {
-    if ($restore -and $file.Sealed) { try { Runtime-SetAcl $file.Handle $file.OriginalAcl } catch { } }
     $file.Stream.Dispose()
   }
   for ($i=$state.Directories.Count-1; $i -ge 0; $i--) {
@@ -173,6 +227,7 @@ function Get-RuntimeArchive($manifest, $continue) {
   } finally { if ($null -ne $stream) { $stream.Dispose() }; if ($null -ne $response) { $response.Dispose() }; $buffered.Dispose() }
 }
 function Expand-RuntimeArchive([byte[]]$archiveBytes, $manifest, $state, $continue) {
+  if ($state.Closed -or $state.Expanded -or -not $state.LeafWritable) { Runtime-Deny }
   Assert-RuntimeManifest $manifest
   $memory = [IO.MemoryStream]::new($archiveBytes, $false)
   $zip = $null
@@ -196,10 +251,34 @@ function Expand-RuntimeArchive([byte[]]$archiveBytes, $manifest, $state, $contin
           $data.Write($buffer, 0, $count)
         }
         if ($data.Length -ne $entry.Length -or (Runtime-Hash $data) -cne $expected[$entry.FullName].sha256) { Runtime-Deny }
-        $file = [IO.File]::Open([IO.Path]::Combine($state.Path, $entry.FullName), 'CreateNew', 'Write', 'None')
-        try { $data.Position = 0; $data.CopyTo($file); $file.Flush($true) } finally { $file.Dispose() }
+        # Restricted creation security also prevents a pre-pin metadata-only
+        # WRITE_DAC handle on a member. The creator alone receives this write
+        # handle; after it closes, admission opens only read access.
+        $native = Runtime-Native
+        $security = Runtime-Security 'sealed'
+        $descriptor = [Runtime.InteropServices.Marshal]::AllocHGlobal($security.Length)
+        $attributes = [Runtime.InteropServices.Marshal]::AllocHGlobal(24)
+        $handle=[IntPtr]::Zero; $safe=$file=$null
+        try {
+          [Runtime.InteropServices.Marshal]::Copy($security, 0, $descriptor, $security.Length)
+          [Runtime.InteropServices.Marshal]::Copy([byte[]]::new(24), 0, $attributes, 24)
+          [Runtime.InteropServices.Marshal]::WriteInt32($attributes,0,24)
+          [Runtime.InteropServices.Marshal]::WriteIntPtr($attributes,8,$descriptor)
+          $handle=$native::CreateFileW([IO.Path]::Combine($state.Path,$entry.FullName),[uint32]3221225472,1,$attributes,1,0x00200000,[IntPtr]::Zero)
+          if ($handle -eq [IntPtr]::Zero -or $handle -eq [IntPtr](-1)) { Runtime-Deny }
+          [void](Runtime-Info $handle $false)
+          $safe=[Microsoft.Win32.SafeHandles.SafeFileHandle]::new($handle,$true)
+          $file=[IO.FileStream]::new($safe,[IO.FileAccess]::Write)
+          $data.Position=0; $data.CopyTo($file); $file.Flush($true)
+        } finally {
+          if ($null -ne $file) { $file.Dispose() } elseif ($null -ne $safe) { $safe.Dispose() }
+          elseif ($handle -ne [IntPtr]::Zero -and $handle -ne [IntPtr](-1)) { [void]$native::CloseHandle($handle) }
+          [Runtime.InteropServices.Marshal]::FreeHGlobal($attributes)
+          [Runtime.InteropServices.Marshal]::FreeHGlobal($descriptor)
+        }
       } finally { $source.Dispose(); $data.Dispose() }
     }
+    $state.Expanded=$true
   } finally { if ($null -ne $zip) { $zip.Dispose() }; $memory.Dispose() }
 }
 function Assert-RuntimeNamespace($state, $manifest) {
@@ -211,25 +290,24 @@ function Assert-RuntimeNamespace($state, $manifest) {
   }
 }
 function Pin-VerifiedRuntime($state, $manifest, $continue) {
-  if ($state.Closed -or $state.Sealed -or -not $state.LeafWritable -or $state.Files.Count -ne 0) { Runtime-Deny }
+  if ($state.Closed -or $state.Sealed -or -not $state.Expanded -or -not $state.LeafWritable -or $state.Files.Count -ne 0) { Runtime-Deny }
   Assert-RuntimeManifest $manifest
   Assert-RuntimeNamespace $state $manifest
   $native = Runtime-Native
   foreach ($expected in $manifest.files) {
     Runtime-Alive $continue
     $path = [IO.Path]::Combine($state.Path, $expected.name)
-    $handle = $native::CreateFileW($path, [uint32]2147876864, 1, [IntPtr]::Zero, 3, 0x00200000, [IntPtr]::Zero)
+    $handle = $native::CreateFileW($path, [uint32]2147483648, 1, [IntPtr]::Zero, 3, 0x00200000, [IntPtr]::Zero)
     if ($handle -eq [IntPtr]::Zero -or $handle -eq [IntPtr](-1)) { Runtime-Deny }
     $stream = $null; $safe = $null
     try {
       $identity = Runtime-Info $handle $false
       Runtime-Path $handle $path
-      $saved = [IO.File]::GetAccessControl($path).GetSecurityDescriptorBinaryForm()
       $safe = [Microsoft.Win32.SafeHandles.SafeFileHandle]::new($handle, $true)
       $stream = [IO.FileStream]::new($safe, [IO.FileAccess]::Read)
       if ($stream.Length -ne $expected.bytes -or (Runtime-Hash $stream) -cne $expected.sha256) { Runtime-Deny }
       $state.Files.Add([pscustomobject]@{ Name=$expected.name; Handle=$handle; Stream=$stream;
-        OriginalAcl=$saved; Sealed=$false; Identity=$identity; Hash=$expected.sha256 })
+        Identity=$identity; Hash=$expected.sha256 })
       if ($expected.name -ceq 'python.exe') { $state.Python=$path; $state.PythonHash=$expected.sha256 }
       $handle = [IntPtr]::Zero; $stream=$safe=$null
     } finally {
@@ -241,11 +319,7 @@ function Pin-VerifiedRuntime($state, $manifest, $continue) {
   # OWNER RIGHTS suppresses an owner's implicit WRITE_DAC permission. No
   # unprivileged identity receives write/delete/create or permission-changing
   # rights; SYSTEM remains the trusted operating-system boundary.
-  $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-  $security = [Security.AccessControl.DirectorySecurity]::new()
-  $security.SetSecurityDescriptorSddlForm(('D:P(A;;FA;;;SY)(A;;FRFX;;;' + $sid + ')(A;;RC;;;OW)'))
-  $bytes = $security.GetSecurityDescriptorBinaryForm()
-  foreach ($file in $state.Files) { Runtime-SetAcl $file.Handle $bytes; $file.Sealed=$true }
+  $bytes = Runtime-Security 'sealed'
   $leaf = $state.Directories[$state.Directories.Count-1]
   Runtime-SetAcl $leaf.Handle $bytes; $leaf.Sealed=$true; $state.Sealed=$true
   Assert-RuntimeNamespace $state $manifest

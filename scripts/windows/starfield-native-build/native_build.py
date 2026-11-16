@@ -213,7 +213,9 @@ class NativePins:
             if key in self.directories:
                 continue
             require_plain(parent, directory=True)
-            handle = self.kernel.CreateFileW(str(parent), 0x80, 3, None, 3, 0x02200000, None)
+            # FILE_LIST_DIRECTORY participates in sharing checks; attributes-only
+            # access would not enforce the omitted FILE_SHARE_DELETE permission.
+            handle = self.kernel.CreateFileW(str(parent), 0x81, 3, None, 3, 0x02200000, None)
             if handle in (None, ctypes.c_void_p(-1).value):
                 raise BuildBlocked("ANCESTOR_PIN_FAILED")
             info = _FileInformation()

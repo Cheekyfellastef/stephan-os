@@ -529,6 +529,43 @@ class WindowsNativeCustodyTests(unittest.TestCase):
         finally:pins.close()
         source.write_bytes(b"after release");source.unlink();self.assertFalse(source.exists())
 
+    def test_directory_only_pins_prevent_ancestor_rename_and_path_replacement(self):
+        owner = self.root / "owner";inputs = owner / "inputs"
+        inputs.mkdir(parents=True)
+        source = inputs / "source.h";source.write_bytes(b"original source")
+        moved_owner = self.root / "moved-owner"
+        replacement = self.root / "replacement";replacement_inputs = replacement / "inputs"
+        replacement_inputs.mkdir(parents=True)
+        (replacement_inputs / "source.h").write_bytes(b"replacement source")
+        original_identity = source.stat()
+
+        def replace_owner_path():
+            owner.rename(moved_owner)
+            replacement.rename(owner)
+
+        pins = build.NativePins()
+        try:
+            # No leaf handle may mask an ineffective metadata-only directory pin.
+            pins.pin_parents(source)
+            self.assertEqual(pins.streams, [])
+            with self.assertRaises(OSError):inputs.rename(owner / "moved-inputs")
+            self.assertFalse((owner / "moved-inputs").exists())
+            with self.assertRaises(OSError):replace_owner_path()
+            self.assertFalse(moved_owner.exists());self.assertTrue(replacement.exists())
+            self.assertEqual(source.read_bytes(), b"original source")
+            self.assertEqual((source.stat().st_dev, source.stat().st_ino),
+                             (original_identity.st_dev, original_identity.st_ino))
+        finally:pins.close()
+
+        # The identical rename-and-replace operation must work after releasing
+        # the directory handles, ruling out incidental filesystem constraints.
+        replace_owner_path()
+        self.assertEqual(source.read_bytes(), b"replacement source")
+        retained_source = moved_owner / "inputs" / "source.h"
+        self.assertEqual(retained_source.read_bytes(), b"original source")
+        self.assertEqual((retained_source.stat().st_dev, retained_source.stat().st_ino),
+                         (original_identity.st_dev, original_identity.st_ino))
+
     def test_active_lock_deletes_only_owned_handle_after_proven_release(self):
         active = build.ActiveBuild(self.root, packet_fixture())
         try:

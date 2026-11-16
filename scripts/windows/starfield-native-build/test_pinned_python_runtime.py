@@ -26,6 +26,8 @@ def literal(value):
 
 
 def powershell(body, timeout=75):
+    body = ("[Console]::InputEncoding=[Text.UTF8Encoding]::new($false,$true);"
+            "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false,$true);" + body)
     environment = {key: value for key, value in os.environ.items() if key.upper() != "PSMODULEPATH"}
     environment["PSModulePath"] = r"C:\Windows\System32\WindowsPowerShell\v1.0\Modules"
     encoded = base64.b64encode(body.encode("utf-16le")).decode("ascii")
@@ -76,7 +78,7 @@ class WindowsPinnedRuntimeTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.package_temp.cleanup()
 
-    def run_case(self, action):
+    def run_case(self, action, before_expand=""):
         with tempfile.TemporaryDirectory(prefix="starfield-runtime-fixture-") as temporary:
             parent = Path(temporary) / "parent"
             parent.mkdir()
@@ -85,6 +87,7 @@ class WindowsPinnedRuntimeTests(unittest.TestCase):
             body += "$m=Get-Content -LiteralPath " + literal(MANIFEST) + " -Raw|ConvertFrom-Json;"
             body += "$a=[IO.File]::ReadAllBytes(" + literal(self.archive) + ");$s=$null;"
             body += "try{$s=New-RuntimeCustody " + literal(runtime) + " $true;"
+            body += before_expand
             body += "Expand-RuntimeArchive $a $m $s {$true};"
             body += action
             body += "}finally{Close-RuntimeCustody $s $true}"
@@ -113,8 +116,12 @@ class WindowsPinnedRuntimeTests(unittest.TestCase):
     def test_changed_runtime_members_are_refused_before_start(self):
         for name in ("python314.dll", "python314.zip", "_ctypes.pyd", "python314._pth"):
             with self.subTest(member=name):
-                action = "$path=[IO.Path]::Combine($s.Path," + literal(name) + ");"
-                action += "$bytes=[IO.File]::ReadAllBytes($path);$bytes[0]=$bytes[0] -bxor 1;[IO.File]::WriteAllBytes($path,$bytes);"
+                # The fixture uses its private creator handle to construct a
+                # bad input. Ordinary later opens cannot modify these files.
+                action = "$leaf=$s.Directories[$s.Directories.Count-1];Runtime-SetAcl $leaf.Handle (Runtime-Security 'cleanup');"
+                action += "$path=[IO.Path]::Combine($s.Path," + literal(name) + ");"
+                action += "$bytes=[IO.File]::ReadAllBytes($path);$bytes[0]=$bytes[0] -bxor 1;[IO.File]::Delete($path);[IO.File]::WriteAllBytes($path,$bytes);"
+                action += "Runtime-SetAcl $leaf.Handle (Runtime-Security 'provision');"
                 action += "$accepted=$false;try{$s=Pin-VerifiedRuntime $s $m {$true};$accepted=$true}catch{};"
                 action += "if($accepted){throw 'TAMPERED_RUNTIME_ADMITTED'};'REFUSED_BEFORE_START'"
                 self.assertIn(b"REFUSED_BEFORE_START", self.run_case(action))
@@ -123,7 +130,9 @@ class WindowsPinnedRuntimeTests(unittest.TestCase):
         for mutation in ("[IO.File]::WriteAllText([IO.Path]::Combine($s.Path,'sitecustomize.py'),'raise Exception()');",
                          "[IO.File]::Delete([IO.Path]::Combine($s.Path,'_ctypes.pyd'));" ):
             with self.subTest(mutation=mutation):
-                action = mutation + "$accepted=$false;try{$s=Pin-VerifiedRuntime $s $m {$true};$accepted=$true}catch{};"
+                action = "$leaf=$s.Directories[$s.Directories.Count-1];Runtime-SetAcl $leaf.Handle (Runtime-Security 'cleanup');"
+                action += mutation + "Runtime-SetAcl $leaf.Handle (Runtime-Security 'provision');"
+                action += "$accepted=$false;try{$s=Pin-VerifiedRuntime $s $m {$true};$accepted=$true}catch{};"
                 action += "if($accepted){throw 'WRONG_NAMESPACE_ADMITTED'};'REFUSED_BEFORE_START'"
                 self.assertIn(b"REFUSED_BEFORE_START", self.run_case(action))
 
@@ -158,6 +167,16 @@ class WindowsPinnedRuntimeTests(unittest.TestCase):
         action = "$accepted=$false;try{$s=Pin-VerifiedRuntime $s $m {$false};$accepted=$true}catch{};"
         action += "if($accepted){throw 'CANCELLED_RUNTIME_ADMITTED'};'CANCELLED_BEFORE_START'"
         self.assertIn(b"CANCELLED_BEFORE_START", self.run_case(action))
+
+    def test_permission_handles_are_refused_from_creation(self):
+        before = "$n=Runtime-Native;foreach($access in @(0x40000,0x80000,2)){"
+        before += "$h=$n::CreateFileW($s.Path,$access,7,[IntPtr]::Zero,3,0x02200000,[IntPtr]::Zero);"
+        before += "if($h -ne [IntPtr](-1) -and $h -ne [IntPtr]::Zero){[void]$n::CloseHandle($h);throw 'PRESEAL_PERMISSION_HANDLE_ALLOWED'}};"
+        action = "$n=Runtime-Native;foreach($row in $m.files){"
+        action += "$h=$n::CreateFileW([IO.Path]::Combine($s.Path,$row.name),0x40000,7,[IntPtr]::Zero,3,0x00200000,[IntPtr]::Zero);"
+        action += "if($h -ne [IntPtr](-1) -and $h -ne [IntPtr]::Zero){[void]$n::CloseHandle($h);throw 'MEMBER_PERMISSION_HANDLE_ALLOWED'}};"
+        action += "$s=Pin-VerifiedRuntime $s $m {$true};'CREATION_PERMISSION_BOUNDARY_PASSED'"
+        self.assertIn(b"CREATION_PERMISSION_BOUNDARY_PASSED", self.run_case(action, before))
 
 
 if __name__ == "__main__":
