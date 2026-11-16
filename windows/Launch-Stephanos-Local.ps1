@@ -61,6 +61,7 @@ $ignitionSupportSnapshotPath = Join-Path $ignitionProofRoot 'support-snapshot.js
 $ignitionBrowserSurfaceRoot = Join-Path $ignitionProofRoot 'browser-surfaces'
 $ignitionBrowserSurfaceReceiptPath = Join-Path $ignitionProofRoot 'status/ignition-browser-surfaces-current.json'
 $script:browserSurfaceReceipts = @()
+$script:ignitionAdmittedSourceHead = ''
 
 if ($ReadinessReportOnly.IsPresent) {
   Push-Location -LiteralPath $repoRoot
@@ -266,10 +267,21 @@ function Convert-SupervisorRecordToIgnitionStatus([object]$SupervisorRecord, [st
   }
 }
 
-function Test-IgnitionBrowserReceiptSet([object[]]$Surfaces, [object[]]$Receipts, [datetime]$RunStartedAtUtc) {
+function Test-IgnitionBrowserReceiptSet([object[]]$Surfaces, [object[]]$Receipts, [datetime]$RunStartedAtUtc, [object]$CurrentObservation) {
   $selected = @($Surfaces)
   $records = @($Receipts | Where-Object { $_.id -ne 'splash' })
   if ($selected.Count -eq 0 -or $records.Count -ne $selected.Count -or @($selected.Id | Select-Object -Unique).Count -ne $selected.Count) { return $false }
+  $current = @($CurrentObservation.surfaces)
+  $captureStarted = [DateTimeOffset]::MinValue
+  $captureCompleted = [DateTimeOffset]::MinValue
+  if (-not $CurrentObservation -or $CurrentObservation.schemaVersion -cne 'stephanos.ignition-browser-final-observation.v1' -or $current.Count -ne $selected.Count -or
+      -not [DateTimeOffset]::TryParse([string]$CurrentObservation.startedAtUtc, [ref]$captureStarted) -or
+      -not [DateTimeOffset]::TryParse([string]$CurrentObservation.completedAtUtc, [ref]$captureCompleted) -or
+      $captureStarted.UtcDateTime -lt $RunStartedAtUtc -or $captureCompleted -lt $captureStarted -or $captureCompleted.UtcDateTime -gt [datetime]::UtcNow -or
+      ($captureCompleted - $captureStarted).TotalMilliseconds -gt 15000 -or
+      ($CurrentObservation.elapsedMilliseconds -isnot [long] -and $CurrentObservation.elapsedMilliseconds -isnot [int]) -or
+      $CurrentObservation.elapsedMilliseconds -lt 0 -or $CurrentObservation.elapsedMilliseconds -gt 15000 -or
+      [string]::IsNullOrWhiteSpace([string]$CurrentObservation.edgeExecutable)) { return $false }
   foreach ($surface in $selected) {
     $matching = @($records | Where-Object { $_.id -ceq $surface.Id })
     if ($matching.Count -ne 1) { return $false }
@@ -281,12 +293,23 @@ function Test-IgnitionBrowserReceiptSet([object[]]$Surfaces, [object[]]$Receipts
       if (-not [DateTimeOffset]::TryParse([string]$record.verifiedAt, [ref]$verified) -or -not [DateTimeOffset]::TryParse([string]$record.processStartTimeUtc, [ref]$birth) -or $verified.UtcDateTime -lt $RunStartedAtUtc -or $verified.UtcDateTime -gt [datetime]::UtcNow -or $birth -gt $verified) { return $false }
       $titleMatches = [string]$record.windowTitle -ceq [string]$surface.ExpectedTitle -or ($surface.UseBrowserWindow -and [string]$record.windowTitle -match ('^' + [regex]::Escape($surface.ExpectedTitle) + ' - (?:[^\r\n]+ - )?Microsoft\p{Cf}* Edge$'))
       if (-not $titleMatches) { return $false }
+      $observed = @($current | Where-Object { $_.id -ceq $surface.Id })
+      if ($observed.Count -ne 1) { return $false }
+      $live = $observed[0]
+      $observedAt = [DateTimeOffset]::MinValue
+      $currentBirth = [DateTimeOffset]::MinValue
+      if ($live.url -cne $surface.Url -or $live.profilePath -cne $surface.ProfilePath -or $live.expectedTitle -cne $surface.ExpectedTitle -or
+          -not [string]::Equals([string]$live.executablePath, [string]$CurrentObservation.edgeExecutable, [StringComparison]::OrdinalIgnoreCase) -or
+          [int]$live.pid -ne [int]$record.pid -or [int]$live.ownerProcessId -ne [int]$record.pid -or
+          [int64]$live.windowHandle -ne [int64]$record.windowHandle -or $live.windowTitle -cne $record.windowTitle -or
+          -not [DateTimeOffset]::TryParse([string]$live.processStartTimeUtc, [ref]$currentBirth) -or $currentBirth -ne $birth -or
+          -not [DateTimeOffset]::TryParse([string]$live.observedAtUtc, [ref]$observedAt) -or $observedAt -lt $captureStarted -or $observedAt -gt $captureCompleted) { return $false }
     } catch { return $false }
   }
   return $true
 }
 
-function Resolve-IgnitionStatusProjection([string]$LaunchMode, [string]$Phase, [string]$Message, [hashtable]$Extra, [object]$SupervisorRecord, [string]$ExpectedHead, [object]$LatestOpenClawStartup, [object[]]$RequestedBrowserSurfaces, [object[]]$BrowserReceipts, [bool]$AutoOpenEnabled, [datetime]$RunStartedAtUtc) {
+function Resolve-IgnitionStatusProjection([string]$LaunchMode, [string]$Phase, [string]$Message, [hashtable]$Extra, [object]$SupervisorRecord, [string]$ExpectedHead, [object]$LatestOpenClawStartup, [object[]]$RequestedBrowserSurfaces, [object[]]$BrowserReceipts, [bool]$AutoOpenEnabled, [datetime]$RunStartedAtUtc, [object]$CurrentBrowserObservation) {
   $supervisorStatus = if ($LaunchMode -eq 'launcher-root') { Convert-SupervisorRecordToIgnitionStatus -SupervisorRecord $SupervisorRecord -FallbackPhase $Phase -FallbackMessage $Message } else { $null }
   $details = @{}
   foreach ($key in $Extra.Keys) { $details[$key] = $Extra[$key] }
@@ -305,7 +328,7 @@ function Resolve-IgnitionStatusProjection([string]$LaunchMode, [string]$Phase, [
     $details.blocker = 'desktop-ignition-service-proof-unproven'
     $details.nextOperatorAction = 'Restore the canonical current-head supervisor service proof, then retry Ignition.'
   }
-  elseif ($LaunchMode -eq 'launcher-root' -and $Phase -eq 'ready' -and (-not $AutoOpenEnabled -or -not (Test-IgnitionBrowserReceiptSet -Surfaces $RequestedBrowserSurfaces -Receipts $BrowserReceipts -RunStartedAtUtc $RunStartedAtUtc))) {
+  elseif ($LaunchMode -eq 'launcher-root' -and $Phase -eq 'ready' -and (-not $AutoOpenEnabled -or -not (Test-IgnitionBrowserReceiptSet -Surfaces $RequestedBrowserSurfaces -Receipts $BrowserReceipts -RunStartedAtUtc $RunStartedAtUtc -CurrentObservation $CurrentBrowserObservation))) {
     $Phase = 'blocked'
     $Message = 'Desktop Ignition has not verified every requested browser window.'
     $details.currentStage = 'blocked'
@@ -334,6 +357,7 @@ function Resolve-IgnitionStatusProjection([string]$LaunchMode, [string]$Phase, [
     supportSnapshotPath = $ignitionSupportSnapshotPath
     browserSurfaceReceiptPath = $ignitionBrowserSurfaceReceiptPath
     browserSurfaceReceipts = @($BrowserReceipts)
+    currentBrowserObservation = $CurrentBrowserObservation
     browserTargets = @($RequestedBrowserSurfaces | ForEach-Object { $_.Url })
     browserAutoOpenEnabled = $AutoOpenEnabled
     browserProofScope = if ($LaunchMode -eq 'launcher-root' -and $Phase -eq 'ready') { 'verified-selected-windows' } elseif ($LaunchMode -eq 'launcher-root') { 'selected-windows-unproven' } elseif ($AutoOpenEnabled) { 'vite-browser-request-unverified' } else { 'vite-manual-open' }
@@ -351,15 +375,47 @@ function Resolve-IgnitionStatusProjection([string]$LaunchMode, [string]$Phase, [
     destinations = [ordered]@{ statusPath = $ignitionStatusPath; splashPath = $ignitionSplashPath; logRoot = (Join-Path $ignitionProofRoot 'logs'); transcriptPath = $ignitionTranscriptPath; supportSnapshotPath = $ignitionSupportSnapshotPath }
   }
   foreach ($key in $Extra.Keys) {
-    if ($key -notin @('phase','message','trafficLight','progressPercentage','enterStephanosEnabled','currentStage','blocker','nextOperatorAction','proofSummary','battleBridgeSupervisor','battleBridgeSupervisorCurrentPath','browserTargets','browserSurfaceReceipts','browserAutoOpenEnabled','browserProofScope')) { $payload[$key] = $Extra[$key] }
+    if ($key -notin @('phase','message','trafficLight','progressPercentage','enterStephanosEnabled','currentStage','blocker','nextOperatorAction','proofSummary','battleBridgeSupervisor','battleBridgeSupervisorCurrentPath','browserTargets','browserSurfaceReceipts','browserAutoOpenEnabled','browserProofScope','currentBrowserObservation')) { $payload[$key] = $Extra[$key] }
   }
   return $payload
 }
 
 function Get-IgnitionStatusProjection([string]$Phase, [string]$Message, [hashtable]$Extra = @{}) {
-  $supervisorRecord = if ($Mode -eq 'launcher-root') { Get-BattleBridgeSupervisorCurrentRecord } else { $null }
-  $expectedHead = if ($Mode -eq 'launcher-root' -and $Phase -eq 'ready') { Get-RepositoryHeadForSupervisorProof } else { '' }
-  return Resolve-IgnitionStatusProjection -LaunchMode $Mode -Phase $Phase -Message $Message -Extra $Extra -SupervisorRecord $supervisorRecord -ExpectedHead $expectedHead -LatestOpenClawStartup (Get-LatestOpenClawStartupStatus) -RequestedBrowserSurfaces @($browserSurfaces) -BrowserReceipts @($script:browserSurfaceReceipts) -AutoOpenEnabled ([bool]$autoOpenEnabled) -RunStartedAtUtc $script:ignitionRunStartedAtUtc
+  $capture = $null
+  $captureClock = $null
+  $currentObservation = $null
+  try {
+    $finalDesktop = $Mode -eq 'launcher-root' -and $Phase -eq 'ready'
+    if ($finalDesktop) { $captureClock = New-IgnitionBrowserObservationClock; $captureStartedAt = [datetime]::UtcNow }
+    $supervisorRecord = if ($Mode -eq 'launcher-root') { Get-BattleBridgeSupervisorCurrentRecord } else { $null }
+    $expectedHead = if ($finalDesktop) { Get-RepositoryHeadForSupervisorProof } else { '' }
+    $latestOpenClawStartup = Get-LatestOpenClawStartupStatus
+    if ($Mode -eq 'launcher-root' -and $Phase -eq 'ready') {
+      $beforeSupervisorRecord = $supervisorRecord
+      $capture = Get-IgnitionBrowserObservationSet -Surfaces @($browserSurfaces) -ObservationClock $captureClock -StartedAtUtc $captureStartedAt
+      # A file reread preserves the original supervisor proof identity; it is not a new health probe.
+      $afterHead = Get-RepositoryHeadForSupervisorProof
+      $supervisorRecord = Get-BattleBridgeSupervisorCurrentRecord
+      $admittedHead = $script:ignitionAdmittedSourceHead
+      if ($expectedHead -cne $afterHead -or $expectedHead -cne $admittedHead -or
+          -not (Test-BattleBridgeSupervisorFinalContract -SupervisorRecord $beforeSupervisorRecord -ExpectedHead $admittedHead)) { $expectedHead = '' }
+      $currentObservation = $capture.observation
+      $currentObservation.admittedSourceHead = $admittedHead
+      $currentObservation.supervisorGeneratedAtBefore = [string]$beforeSupervisorRecord.generatedAt
+      $currentObservation.supervisorGeneratedAtAfter = [string]$supervisorRecord.generatedAt
+      foreach ($capability in $capture.capabilities) {
+        if ($capability.HasExited) { $currentObservation.surfaces = @(); break }
+      }
+      $currentObservation.completedAtUtc = [datetime]::UtcNow.ToString('o')
+      $currentObservation.elapsedMilliseconds = $captureClock.ElapsedMilliseconds
+      if ($currentObservation.elapsedMilliseconds -gt 15000) { $currentObservation.surfaces = @() }
+    }
+    return Resolve-IgnitionStatusProjection -LaunchMode $Mode -Phase $Phase -Message $Message -Extra $Extra -SupervisorRecord $supervisorRecord -ExpectedHead $expectedHead -LatestOpenClawStartup $latestOpenClawStartup -RequestedBrowserSurfaces @($browserSurfaces) -BrowserReceipts @($script:browserSurfaceReceipts) -AutoOpenEnabled ([bool]$autoOpenEnabled) -RunStartedAtUtc $script:ignitionRunStartedAtUtc -CurrentBrowserObservation $currentObservation
+  }
+  finally {
+    if ($capture) { foreach ($capability in $capture.capabilities) { $capability.Dispose() } }
+    if ($captureClock) { $captureClock.Stop() }
+  }
 }
 
 function Publish-IgnitionStatusProjection([System.Collections.IDictionary]$Outcome) {
@@ -488,6 +544,7 @@ public static class StephanosIgnitionWindowProbe
     {
         public long Handle { get; set; }
         public string Title { get; set; }
+        public int ProcessId { get; set; }
     }
 
     private delegate bool EnumWindowsCallback(IntPtr windowHandle, IntPtr state);
@@ -507,6 +564,28 @@ public static class StephanosIgnitionWindowProbe
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetWindowTextLength(IntPtr windowHandle);
 
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CommandLineToArgvW(string commandLine, out int argumentCount);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr LocalFree(IntPtr memory);
+
+    public static string[] GetCommandLineArguments(string commandLine)
+    {
+        if (String.IsNullOrEmpty(commandLine) || commandLine.Length > 32768) return new string[0];
+        int count;
+        IntPtr arguments = CommandLineToArgvW(commandLine, out count);
+        if (arguments == IntPtr.Zero) return new string[0];
+        try
+        {
+            if (count < 1 || count > 256) return new string[0];
+            var result = new string[count];
+            for (int index = 0; index < count; index++) result[index] = Marshal.PtrToStringUni(Marshal.ReadIntPtr(arguments, index * IntPtr.Size));
+            return result;
+        }
+        finally { LocalFree(arguments); }
+    }
+
     public static WindowRecord[] GetVisibleTopLevelWindows(int expectedProcessId)
     {
         var windows = new List<WindowRecord>();
@@ -520,7 +599,9 @@ public static class StephanosIgnitionWindowProbe
             if (titleLength <= 0) return true;
             var title = new StringBuilder(titleLength + 1);
             GetWindowText(windowHandle, title, title.Capacity);
-            windows.Add(new WindowRecord { Handle = windowHandle.ToInt64(), Title = title.ToString() });
+            uint finalProcessId;
+            if (GetWindowThreadProcessId(windowHandle, out finalProcessId) == 0 || finalProcessId != (uint)expectedProcessId || !IsWindowVisible(windowHandle)) return true;
+            windows.Add(new WindowRecord { Handle = windowHandle.ToInt64(), Title = title.ToString(), ProcessId = (int)finalProcessId });
             return true;
         }, IntPtr.Zero);
         return windows.ToArray();
@@ -529,41 +610,121 @@ public static class StephanosIgnitionWindowProbe
 '@
 }
 
-function Get-VerifiedEdgeAppSurface([System.Collections.IDictionary]$Surface, [string]$EdgeExecutable) {
-  $profileArgument = "--user-data-dir=`"$($Surface.ProfilePath)`""
-  $appArgument = if ($Surface.UseBrowserWindow) { "--new-window $($Surface.Url)" } else { "--app=$($Surface.Url)" }
-  $processes = @(Get-CimInstance Win32_Process -Filter "Name = 'msedge.exe'" -ErrorAction SilentlyContinue | Where-Object {
-    $commandLine = [string]$_.CommandLine
-    $_.ParentProcessId -ne 0 `
-      -and $commandLine.IndexOf('--type=', [System.StringComparison]::OrdinalIgnoreCase) -lt 0 `
-      -and $commandLine.IndexOf($profileArgument, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 `
-      -and $commandLine.IndexOf($appArgument, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
-  })
+function Get-VerifiedEdgeAppSurface([System.Collections.IDictionary]$Surface, [string]$EdgeExecutable, [object]$RetainedProcess = $null, [switch]$RetainProcess, [object]$ObservationClock = $null) {
+  $remainingMs = if ($ObservationClock) { 15000 - [long]$ObservationClock.ElapsedMilliseconds } else { 2000 }
+  if ($remainingMs -lt 1000) { return $null }
+  $querySeconds = [int][Math]::Min(2, [Math]::Floor($remainingMs / 1000))
+  try { $processes = @(Get-CimInstance Win32_Process -Filter "Name = 'msedge.exe'" -OperationTimeoutSec $querySeconds -ErrorAction Stop) }
+  catch { return $null }
 
   Initialize-StephanosWindowProbe
   foreach ($candidate in $processes) {
+    if ($ObservationClock -and $ObservationClock.ElapsedMilliseconds -gt 15000) { return $null }
+    if ($RetainedProcess -and [int]$candidate.ProcessId -ne [int]$RetainedProcess.Id) { continue }
+    # Cheap discovery filters limit unrelated Edge work; only the later fresh retained-process row is authority.
+    $discoveryCommand = [string]$candidate.CommandLine
+    if ($discoveryCommand.IndexOf('--type=', [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $discoveryCommand.IndexOf([string]$Surface.ProfilePath, [StringComparison]::OrdinalIgnoreCase) -lt 0 -or
+        $discoveryCommand.IndexOf([string]$Surface.Url, [StringComparison]::Ordinal) -lt 0) { continue }
+    $process = $null
+    $transferred = $false
     try {
-      $process = Get-Process -Id ([int]$candidate.ProcessId) -ErrorAction Stop
+      $process = if ($RetainedProcess) { $RetainedProcess } else { Get-Process -Id ([int]$candidate.ProcessId) -ErrorAction Stop }
+      $retainedHandle = $process.Handle
+      if ($retainedHandle -eq [IntPtr]::Zero -or $process.HasExited) { continue }
       $path = [System.IO.Path]::GetFullPath([string]$process.Path)
       if (-not [string]::Equals($path, $EdgeExecutable, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
-      $surfaceWindow = @([StephanosIgnitionWindowProbe]::GetVisibleTopLevelWindows([int]$candidate.ProcessId)) | Where-Object {
-        [int64]$_.Handle -ne 0 -and (
+      # Discovery rows are never identity proof. Read command/birth only after retaining this process.
+      $remainingMs = if ($ObservationClock) { 15000 - [long]$ObservationClock.ElapsedMilliseconds } else { 2000 }
+      if ($remainingMs -lt 1000) { return $null }
+      $querySeconds = [int][Math]::Min(2, [Math]::Floor($remainingMs / 1000))
+      $fresh = @(Get-CimInstance Win32_Process -Filter "ProcessId = $([int]$process.Id)" -OperationTimeoutSec $querySeconds -ErrorAction Stop)
+      if ($ObservationClock -and $ObservationClock.ElapsedMilliseconds -gt 15000) { return $null }
+      if ($fresh.Count -ne 1 -or $process.HasExited) { continue }
+      $fresh = $fresh[0]
+      $commandLine = [string]$fresh.CommandLine
+      if ([int]$fresh.ProcessId -ne [int]$process.Id -or $fresh.Name -ine 'msedge.exe' -or [int]$fresh.ParentProcessId -eq 0 -or
+          $fresh.CreationDate -isnot [datetime]) { continue }
+      $arguments = @([StephanosIgnitionWindowProbe]::GetCommandLineArguments($commandLine))
+      $profiles = @($arguments | Where-Object { $_.StartsWith('--user-data-dir=', [StringComparison]::OrdinalIgnoreCase) })
+      $apps = @($arguments | Where-Object { $_.StartsWith('--app=', [StringComparison]::OrdinalIgnoreCase) })
+      $windowIndex = [Array]::IndexOf($arguments, '--new-window')
+      if (@($arguments | Where-Object { $_.StartsWith('--type=', [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0 -or
+          $profiles.Count -ne 1 -or -not [string]::Equals($profiles[0], "--user-data-dir=$($Surface.ProfilePath)", [StringComparison]::OrdinalIgnoreCase)) { continue }
+      if ($Surface.UseBrowserWindow) {
+        if ($apps.Count -ne 0 -or @($arguments | Where-Object { $_ -ceq '--new-window' }).Count -ne 1 -or
+            $windowIndex -lt 0 -or $windowIndex + 1 -ge $arguments.Count -or $arguments[$windowIndex + 1] -cne $Surface.Url) { continue }
+      } elseif ($windowIndex -ge 0 -or $apps.Count -ne 1 -or $apps[0] -cne "--app=$($Surface.Url)") { continue }
+      $birth = $process.StartTime.ToUniversalTime()
+      $cimBirth = $fresh.CreationDate.ToUniversalTime()
+      # CIM has microseconds, Process FILETIME has 100ns ticks. Exact integer normalization only.
+      if (($birth.Ticks - ($birth.Ticks % 10)) -ne ($cimBirth.Ticks - ($cimBirth.Ticks % 10))) { continue }
+      if ($ObservationClock -and $ObservationClock.ElapsedMilliseconds -gt 15000) { return $null }
+      $surfaceWindow = @([StephanosIgnitionWindowProbe]::GetVisibleTopLevelWindows([int]$process.Id)) | Where-Object {
+        [int]$_.ProcessId -eq [int]$process.Id -and [int64]$_.Handle -ne 0 -and (
           [string]::Equals([string]$_.Title, [string]$Surface.ExpectedTitle, [System.StringComparison]::Ordinal) -or
           ($Surface.UseBrowserWindow -and [string]$_.Title -match ('^' + [regex]::Escape($Surface.ExpectedTitle) + ' - (?:[^\r\n]+ - )?Microsoft\p{Cf}* Edge$'))
         )
       } | Select-Object -First 1
-      if ($surfaceWindow) {
-        return [ordered]@{
-          pid = [int]$candidate.ProcessId
-          processStartTimeUtc = $process.StartTime.ToUniversalTime().ToString('o')
+      if ($ObservationClock -and $ObservationClock.ElapsedMilliseconds -gt 15000) { return $null }
+      if ($surfaceWindow -and -not $process.HasExited) {
+        $proof = [ordered]@{
+          pid = [int]$process.Id
+          processStartTimeUtc = $birth.ToString('o')
           windowHandle = [int64]$surfaceWindow.Handle
           windowTitle = [string]$surfaceWindow.Title
+          ownerProcessId = [int]$surfaceWindow.ProcessId
+          executablePath = $path
+          profilePath = $Surface.ProfilePath
+          url = $Surface.Url
         }
+        if ($RetainProcess) { $proof.processCapability = $process; $transferred = $true }
+        return $proof
       }
     }
     catch {}
+    finally { if ($process -and -not $RetainedProcess -and -not $transferred) { $process.Dispose() } }
   }
   return $null
+}
+
+function New-IgnitionBrowserObservationClock() {
+  return [Diagnostics.Stopwatch]::StartNew()
+}
+
+function Get-IgnitionBrowserObservationSet([object[]]$Surfaces, [object]$ObservationClock = $null, [datetime]$StartedAtUtc = [datetime]::MinValue) {
+  $clock = if ($ObservationClock) { $ObservationClock } else { New-IgnitionBrowserObservationClock }
+  $capabilities = [Collections.Generic.List[object]]::new()
+  $started = if ($StartedAtUtc -eq [datetime]::MinValue) { [datetime]::UtcNow } else { $StartedAtUtc }
+  $observation = [ordered]@{ schemaVersion = 'stephanos.ignition-browser-final-observation.v1'; startedAtUtc = $started.ToString('o'); completedAtUtc = ''; elapsedMilliseconds = 0; edgeExecutable = ''; surfaces = @() }
+  try {
+    $edge = Resolve-StephanosEdgeExecutable
+    $observation.edgeExecutable = $edge
+    $selected = @($Surfaces)
+    if ($edge -and $selected.Count -gt 0) {
+      $complete = $true
+      foreach ($surface in $selected) {
+        if ($clock.ElapsedMilliseconds -gt 15000) { $complete = $false; break }
+        $proof = Get-VerifiedEdgeAppSurface -Surface $surface -EdgeExecutable $edge -RetainProcess -ObservationClock $clock
+        if (-not $proof) { $complete = $false; break }
+        # Own a returned capability before any later validation can fail.
+        $capabilities.Add($proof.processCapability)
+      }
+      if ($complete) {
+        $records = @()
+        for ($index = 0; $index -lt $selected.Count; $index++) {
+          if ($clock.ElapsedMilliseconds -gt 15000) { $complete = $false; break }
+          $surface = $selected[$index]
+          $proof = Get-VerifiedEdgeAppSurface -Surface $surface -EdgeExecutable $edge -RetainedProcess $capabilities[$index] -ObservationClock $clock
+          if (-not $proof -or $clock.ElapsedMilliseconds -gt 15000) { $complete = $false; break }
+          $records += [ordered]@{ id = $surface.Id; expectedTitle = $surface.ExpectedTitle; url = $proof.url; profilePath = $proof.profilePath; executablePath = $proof.executablePath; pid = $proof.pid; processStartTimeUtc = $proof.processStartTimeUtc; windowHandle = $proof.windowHandle; windowTitle = $proof.windowTitle; ownerProcessId = $proof.ownerProcessId; observedAtUtc = [datetime]::UtcNow.ToString('o') }
+        }
+        if ($complete) { $observation.surfaces = $records }
+      }
+    }
+    return [ordered]@{ observation = $observation; capabilities = $capabilities; clock = $clock }
+  }
+  catch { foreach ($capability in $capabilities) { if ($capability) { $capability.Dispose() } }; if (-not $ObservationClock) { $clock.Stop() }; throw }
 }
 
 function Write-StephanosBrowserSurfaceReceipt([System.Collections.IDictionary]$Surface, [System.Collections.IDictionary]$WindowProof, [string]$Action) {
@@ -1101,7 +1262,7 @@ function Write-IgnitionSupportSnapshot([string]$Verdict, [hashtable]$Extra = @{}
     logRoot = (Join-Path $ignitionProofRoot 'logs')
   }
   foreach ($key in $Extra.Keys) {
-    if ($key -notin @('schema','verdict','writtenAt','repositoryRoot','runtimePort','phase','blocker','ignitionOutcome','exactHeadApprovalRequired','exactHeadApprovalStatus','safeAutoFixPolicy','browserTargets','browserSurfaceReceipts','browserAutoOpenEnabled','browserProofScope','battleBridgeSupervisor','sourceHead','proofSummary')) { $snapshot[$key] = $Extra[$key] }
+    if ($key -notin @('schema','verdict','writtenAt','repositoryRoot','runtimePort','phase','blocker','ignitionOutcome','exactHeadApprovalRequired','exactHeadApprovalStatus','safeAutoFixPolicy','browserTargets','browserSurfaceReceipts','browserAutoOpenEnabled','browserProofScope','battleBridgeSupervisor','sourceHead','proofSummary','currentBrowserObservation')) { $snapshot[$key] = $Extra[$key] }
   }
   if ($Outcome) {
     $snapshot.verdict = if ($Outcome.phase -eq 'ready') { 'ready-for-local-proof' } else { 'blocked' }
@@ -1112,6 +1273,7 @@ function Write-IgnitionSupportSnapshot([string]$Verdict, [hashtable]$Extra = @{}
     $snapshot.browserSurfaceReceipts = $Outcome.browserSurfaceReceipts
     $snapshot.browserAutoOpenEnabled = $Outcome.browserAutoOpenEnabled
     $snapshot.browserProofScope = $Outcome.browserProofScope
+    $snapshot.currentBrowserObservation = $Outcome.currentBrowserObservation
     $snapshot.openClawStartupState = $Outcome.openClawStartupState
     $snapshot.openClawStartupDetail = $Outcome.openClawStartupDetail
   }
@@ -1528,6 +1690,7 @@ try {
     Write-LiveLog "starting Battle Bridge supervisor through launcher-root approval helper (command=$launcherRootCommand)"
     $script:ignitionHelperProcess = Start-DevWindow -Title 'Stephanos Battle Bridge Ignition Supervisor' -Command $launcherRootCommand -ReturnProcess
     $battleBridgeSupervisor = Wait-ForBattleBridgeSupervisorReady
+    $script:ignitionAdmittedSourceHead = [string]$battleBridgeSupervisor.sourceTruthVerdict.expectedHead
 
     Write-LiveLog "waiting for launcher-root shell at $launcherShellUrl after readiness proof"
     Wait-ForUrl -StepLabel 'launcher-root shell' -Url $launcherShellUrl
