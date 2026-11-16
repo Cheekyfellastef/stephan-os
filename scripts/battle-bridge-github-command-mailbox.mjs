@@ -78,6 +78,7 @@ import { SOVEREIGN_COMMANDER_INSTALL_OPERATION } from '../shared/agents/sovereig
 import {
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
   safeCpuPressureSnapshotProjection,
+  projectSovereignCoreDaemonStatusV1,
 } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 import { projectBattleBridgeGitConfigurationDiagnosticV1 }
   from '../shared/agents/battleBridgeGitConfigurationDiagnosticV1.mjs';
@@ -1105,47 +1106,9 @@ function safeCapabilityParityReceiptProjection(value = {}) {
 }
 
 function safeCoreDaemonStatusProjection(value = {}) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const heartbeatAgeSeconds = Number(value?.heartbeatAgeSeconds);
-  const readiness = safeTelemetryText(value?.readiness, 40);
-  const wakeState = safeTelemetryText(value?.wakeState, 40);
-  const optionalWakeTruth = Object.freeze({
-    ...(typeof value?.ok === 'boolean' ? { ok: safeBoolean(value.ok) } : {}),
-    ...(value?.processCount !== undefined ? { processCount: safeOptionalNonNegativeInteger(value.processCount) } : {}),
-    ...(value?.wakeState !== undefined
-      ? { wakeState: /^[A-Z_]{1,40}$/.test(wakeState) ? wakeState : 'UNKNOWN' }
-      : {}),
-    ...(typeof value?.awake === 'boolean' ? { awake: safeBoolean(value.awake) } : {}),
-    ...(typeof value?.repairRequired === 'boolean' ? { repairRequired: safeBoolean(value.repairRequired) } : {}),
-    ...(value?.repairReason !== undefined
-      ? { repairReason: safeTelemetryText(value.repairReason, 160).toUpperCase() }
-      : {}),
-    ...(value?.controlPlaneFinalVerdict !== undefined
-      ? { controlPlaneFinalVerdict: safeTelemetryText(value.controlPlaneFinalVerdict, 160).toUpperCase() }
-      : {}),
-  });
-  return Object.freeze({
-    available: safeBoolean(value?.available),
-    daemonHealthy: safeBoolean(value?.daemonHealthy),
-    readiness: /^[A-Z_]{1,40}$/.test(readiness) ? readiness : 'UNKNOWN',
-    ...optionalWakeTruth,
-    sourceHead: safeTelemetrySha(value?.sourceHead),
-    heartbeatAgeSeconds: Number.isFinite(heartbeatAgeSeconds)
-      && heartbeatAgeSeconds >= 0
-      && heartbeatAgeSeconds <= 31_536_000
-      ? heartbeatAgeSeconds
-      : null,
-    sovereignCommanderHealthy: safeBoolean(value?.sovereignCommanderHealthy),
-    backendHealthy: safeBoolean(value?.backendHealthy),
-    missionWorkerHealthy: safeBoolean(value?.missionWorkerHealthy),
-    gamingActive: safeBoolean(value?.gamingActive),
-    uiRequired: safeBoolean(value?.uiRequired),
-    sourceMutationAllowed: safeBoolean(value?.sourceMutationAllowed),
-    schedulerAuthority: safeBoolean(value?.schedulerAuthority),
-    mergeAuthority: safeBoolean(value?.mergeAuthority),
-    vendorMeterRequired: safeBoolean(value?.vendorMeterRequired),
-    remoteCommanderRequired: safeBoolean(value?.remoteCommanderRequired),
-  });
+  // Existing summary surfaces remain bounded. Rich custody facts are included
+  // only by coreDaemonStatusReceiptProjection after original identity binding.
+  return projectSovereignCoreDaemonStatusV1(value, { includeCustodyEvidence: false });
 }
 
 function safeVrAcceptanceReceiptProjection(operationResult = {}) {
@@ -2444,12 +2407,14 @@ function sovereignCommanderWatchdogProjection(operationResult = {}, execution = 
 function mailboxReceiptResultParts(receipt = {}) {
   // READ_MAILBOX_RECEIPT returns this allowlisted shape. Reprojection must retain
   // the selected original's identity, not borrow the later READ command's head.
-  const projectedControlPlane = receipt?.operation === 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE'
+  const projectedOriginal = (receipt?.operation === 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE'
+    || (receipt?.operation === SOVEREIGN_COMMANDER_REMOTE_OPERATION
+      && receipt?.operationResult?.remoteAction === 'status-stephanos-core-daemon'))
     && !Object.prototype.hasOwnProperty.call(receipt, 'result')
     && receipt?.execution?.operation === receipt.operation
     && receipt?.execution?.requestId === receipt.requestId;
-  const execution = (projectedControlPlane ? receipt.execution : receipt?.result) || {};
-  const nestedOperationResult = projectedControlPlane ? receipt.operationResult : execution?.result;
+  const execution = (projectedOriginal ? receipt.execution : receipt?.result) || {};
+  const nestedOperationResult = projectedOriginal ? receipt.operationResult : execution?.result;
   const operationResult = nestedOperationResult && typeof nestedOperationResult === 'object' && !Array.isArray(nestedOperationResult)
     ? nestedOperationResult
     : (
@@ -2461,6 +2426,64 @@ function mailboxReceiptResultParts(receipt = {}) {
         : {}
     );
   return { execution, operationResult };
+}
+
+function coreStatusReceiptObserverBound(receipt, operationResult) {
+  const { execution } = mailboxReceiptResultParts(receipt);
+  const canonicalTime = (value) => typeof value === 'string' && value.length === 24 && safeTimestamp(value) === value;
+  return receipt?.schemaVersion === 'stephanos.battle-bridge-github-command-receipt.v1'
+    && Boolean(projectMailboxReceiptRequestId(receipt.requestId))
+    && execution?.operation === receipt.operation && execution?.requestId === receipt.requestId
+    && ['DONE', 'BLOCKED'].includes(receipt.state)
+    && typeof receipt.expectedHead === 'string' && /^[a-f0-9]{40}$/.test(receipt.expectedHead)
+    && receipt.processSourceHead === receipt.expectedHead && receipt.branch === 'main'
+    && operationResult.sourceHead === receipt.expectedHead
+    && (!Object.hasOwn(operationResult, 'expectedHead') || operationResult.expectedHead === receipt.expectedHead)
+    && (!Object.hasOwn(operationResult, 'branch') || operationResult.branch === '' || operationResult.branch === 'main')
+    && operationResult.expectedHeadMatch === true
+    && canonicalTime(receipt.acceptedAt) && canonicalTime(receipt.completedAt)
+    && receipt.acceptedAt <= receipt.completedAt;
+}
+
+function coreDaemonStatusReceiptProjection(receipt = {}, operationResult = {}) {
+  if (receipt?.operation !== SOVEREIGN_COMMANDER_REMOTE_OPERATION
+    || operationResult.remoteAction !== 'status-stephanos-core-daemon'
+    || !coreStatusReceiptObserverBound(receipt, operationResult)) return {};
+  // The inner source belongs to the observed Core, which may be stale. Only
+  // the outer observer source is required to match this original command.
+  const status = projectSovereignCoreDaemonStatusV1(operationResult.coreDaemonStatus);
+  return status ? { coreDaemonStatus: status } : {};
+}
+
+function coreDaemonStatusReadbackProjection(receipt = {}, operationResult = {}) {
+  const selected = operationResult.receipt;
+  if (selected?.operation !== SOVEREIGN_COMMANDER_REMOTE_OPERATION
+    || ![selected?.operationResult?.remoteAction, selected?.result?.result?.remoteAction]
+      .includes('status-stephanos-core-daemon')) return {};
+  const selectedResult = mailboxReceiptResultParts(selected).operationResult;
+  if (receipt.operation !== 'READ_MAILBOX_RECEIPT'
+    || !coreStatusReceiptObserverBound(receipt, operationResult)
+    || !projectMailboxReceiptRequestId(operationResult.targetRequestId)
+    || operationResult.targetRequestId !== selected.requestId
+    || !coreDaemonStatusReceiptProjection(selected, selectedResult).coreDaemonStatus) return { receipt: null };
+  const original = createSanitizedMailboxReceiptProjection(selected);
+  const inner = original.operationResult;
+  return {
+    targetRequestId: original.requestId,
+    receipt: {
+      schemaVersion: original.schemaVersion, requestId: original.requestId,
+      operation: original.operation, branch: original.branch, state: original.state,
+      acceptedAt: original.acceptedAt, heartbeatAt: original.heartbeatAt, completedAt: original.completedAt,
+      expectedHead: original.expectedHead, processSourceHead: original.processSourceHead,
+      blocker: original.blocker, execution: original.execution,
+      operationResult: {
+        ok: inner.ok, blocker: inner.blocker, finalVerdict: inner.finalVerdict,
+        remoteAction: inner.remoteAction, expectedHead: inner.expectedHead,
+        sourceHead: inner.sourceHead, expectedHeadMatch: inner.expectedHeadMatch,
+        ...coreDaemonStatusReceiptProjection(original, inner),
+      },
+    },
+  };
 }
 
 function controlPlaneCaretakerReceiptProjection(receipt = {}, operationResult = {}) {
@@ -2545,6 +2568,9 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     schemaVersion: safeTelemetryText(receipt?.schemaVersion, 120),
     requestId: projectMailboxReceiptRequestId(receipt?.requestId),
     operation: safeTelemetryText(receipt?.operation, 120),
+    ...(receipt?.operation === SOVEREIGN_COMMANDER_REMOTE_OPERATION
+      && operationResult.remoteAction === 'status-stephanos-core-daemon'
+      ? { branch: safeTelemetryBranch(receipt?.branch) } : {}),
     state: safeTelemetryText(receipt?.state, 80).toUpperCase(),
     acceptedAt: safeTelemetryText(receipt?.acceptedAt, 80),
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
@@ -2634,6 +2660,8 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       ...controlPlaneCaretakerReceiptProjection(receipt, operationResult),
       ...controlPlaneCaretakerReadbackProjection(receipt, operationResult),
       ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
+      ...coreDaemonStatusReceiptProjection(receipt, operationResult),
+      ...coreDaemonStatusReadbackProjection(receipt, operationResult),
       ...projectMaintenanceRecoveryReceiptV1(operationResult, receipt?.operation),
       ...projectMailboxRotationReceipt(operationResult, receipt?.operation),
       ...projectFrontendVisibilityReceiptV1(operationResult, receipt?.operation, { expectedHead: receipt?.expectedHead }),
@@ -2972,6 +3000,8 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         expectedHeadMatch: inner?.expectedHeadMatch ?? null,
         ...controlPlaneCaretakerReceiptProjection(compactReceipt, inner),
         ...controlPlaneCaretakerReadbackProjection(compactReceipt, inner),
+        ...coreDaemonStatusReceiptProjection(compactReceipt, inner),
+        ...coreDaemonStatusReadbackProjection(compactReceipt, inner),
         remoteAction: inner?.remoteAction || '',
         ...(inner?.remoteAction === SPATIAL_PREPARE_ACTION
           && projectSpatialPreparationReceiptV1(inner.spatialPreparation, inner.sourceHead)
@@ -3121,6 +3151,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
         ...controlPlaneCaretakerReceiptProjection(receipt, operationResult),
         ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
+        ...coreDaemonStatusReceiptProjection(receipt, operationResult),
       ...projectMaintenanceRecoveryReceiptV1(operationResult, receipt?.operation),
       ...projectFrontendVisibilityReceiptV1(operationResult, receipt?.operation, { expectedHead: receipt?.expectedHead }),
       ...projectMailboxRotationReceipt(operationResult, receipt?.operation),
@@ -3141,6 +3172,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         targetRequestId: safeTelemetryId(operationResult?.targetRequestId),
         receipt: operationResult?.receipt ? createSanitizedMailboxReceiptProjection(operationResult.receipt) : null,
         ...controlPlaneCaretakerReadbackProjection(receipt, operationResult),
+        ...coreDaemonStatusReadbackProjection(receipt, operationResult),
         initialPid: Number(operationResult?.initialPid || 0),
         recoveredPid: Number(operationResult?.recoveredPid || 0),
         workerKilledObserved: operationResult?.workerKilledObserved === true,
