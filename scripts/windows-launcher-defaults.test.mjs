@@ -88,7 +88,7 @@ test('launcher-root cockpit mode still resolves launcher and runtime browser sur
   );
   assert.match(
     script,
-    /'cockpit' \{ return @\(\$surfaceMap\.launcher, \$surfaceMap\.runtime\) \}/m,
+    /'cockpit' \{ return @\(\$surfaceMap\.launcher, \$surfaceMap\.runtime, \$surfaceMap\.openclaw\) \}/m,
     'cockpit mode must still open both launcher and runtime surfaces',
   );
 });
@@ -189,9 +189,9 @@ test('ignition records bounded status and log destinations in proof workspace', 
 
 test('ignition failure status preserves exact blocker and next operator action', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
-  assert.match(script, /\$childBlocker = Get-LauncherChildBlocker[\s\S]*\$surfacedBlocker = if \(\$childBlocker -and \$childBlocker\.message\)/m, 'failure status must prefer child ignition blocker when available');
-  assert.match(script, /Write-IgnitionStatus -Phase 'blocked' -Message \$surfacedBlocker[\s\S]*parentFailure = \$Step[\s\S]*childIgnitionBlocker = \$childBlocker/m, 'failure status must preserve parent failure and child blocker payload');
-  assert.match(script, /Write-IgnitionSupportSnapshot -Verdict 'blocked'[\s\S]*childIgnitionBlocker = \$childBlocker/m, 'support snapshot must receive child blocker payload');
+  assert.match(script, /function Fail-Step[\s\S]*if \(-not \$Outcome\)[\s\S]*Get-IgnitionStatusProjection -Phase 'blocked' -Message \$Step[\s\S]*childIgnitionBlocker = \$childBlocker/m, 'current failure must remain primary and retain child evidence');
+  assert.match(script, /Publish-IgnitionTerminalOutcome -Outcome \$Outcome[\s\S]*\$surfacedBlocker = \$Outcome\.blocker/m, 'failure publication and presentation must consume the same adjudicated outcome');
+  assert.match(script, /function Publish-IgnitionTerminalOutcome[\s\S]*Write-IgnitionSupportSnapshot -Verdict \$verdict -Outcome \$Outcome/m, 'support snapshot must consume the same outcome and nested child evidence');
 });
 
 
@@ -215,8 +215,8 @@ test('ignition status preserves destination paths, blocker actions, and non-prim
   assert.match(script, /destinations = \[ordered\]@\{ statusPath = \$ignitionStatusPath; splashPath = \$ignitionSplashPath; logRoot = \(Join-Path \$ignitionProofRoot 'logs'\); transcriptPath = \$ignitionTranscriptPath; supportSnapshotPath = \$ignitionSupportSnapshotPath \}/m, 'status payload must record status, splash, and log destinations');
   assert.match(script, /aria-label="Blocker and operator action"/m, 'splash must reserve browser-visible blocker/operator-action space');
   assert.match(script, /currentStage = 'blocked'/m, 'blocked status must preserve blocked currentStage');
-  assert.match(script, /nextOperatorAction = \$nextOperatorAction/m, 'blocked status must project computed next operator action');
-  assert.match(script, /blocker = \$surfacedBlocker/m, 'blocked status must project surfaced blocker');
+  assert.match(script, /nextOperatorAction = if \(\$Extra\.ContainsKey\('nextOperatorAction'\)\)/m, 'blocked status must preserve adjudicated operator action');
+  assert.match(script, /blocker = if \(\$Extra\.ContainsKey\('blocker'\)\)/m, 'blocked status must preserve adjudicated blocker');
   assert.match(script, /primaryUi = 'splash-status-browser'/m, 'splash/status browser must remain primary UI');
   assert.match(script, /\$visiblePowerShellRequired = \$false/m, 'VISIBLE_POWERSHELL_REQUIRED=False must remain encoded');
 });
@@ -253,7 +253,7 @@ test('ready ignition status marks all launcher stages complete', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(script, /\$ready = \$CurrentStageId -eq 'ready'/m, 'ready status must be explicitly detected');
   assert.match(script, /if \(\$ready\) \{\s*'complete'\s*\}/m, 'ready status must mark all stages complete');
-  assert.match(script, /Write-IgnitionStatus -Phase 'ready'[\s\S]*currentStage = 'ready'/m, 'final ready status must request ready stage projection');
+  assert.match(script, /function Complete-IgnitionLaunch[\s\S]*Get-IgnitionStatusProjection -Phase 'ready'[\s\S]*Complete-IgnitionLaunch -Extra @\{ currentStage = 'ready'/m, 'final completion must publish the adjudicated ready stage');
 });
 
 test('status page shows OpenClaw startup state from ignition child logs', async () => {
@@ -294,7 +294,7 @@ test('Windows launcher splash/status handoff reads Battle Bridge supervisor curr
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(script, /\$battleBridgeSupervisorCurrentPath = Join-Path \$canonicalSharedWorkspaceRoot 'status\/battle-bridge-ignition-supervisor-current\.json'[\s\S]*Get-BattleBridgeSupervisorCurrentRecord/m, 'launcher must read supervisor current record from canonical workspace');
   assert.match(script, /Convert-SupervisorRecordToIgnitionStatus[\s\S]*battleBridgeSupervisor = \$SupervisorRecord/m, 'splash payload must project supervisor truth instead of a second independent splash truth');
-  assert.match(script, /if \(\$supervisorStatus -and \(\$supervisorStatus\.trafficLight -eq 'green' -or \$supervisorStatus\.phase -eq 'blocked'\)\)/m, 'green or blocked supervisor truth must override pending splash cards');
+  assert.match(script, /function Resolve-IgnitionStatusProjection[\s\S]*Test-BattleBridgeSupervisorFinalContract[\s\S]*desktop-ignition-service-proof-unproven/m, 'desktop completion must consume the shared current-head service contract');
 });
 
 test('desktop ignition gives eligible control-plane failure one Sovereign Commander repair and one retry', async () => {
