@@ -13,6 +13,21 @@ const SHA = /^[a-f0-9]{40}$/;
 const PROFILES = new Set(['MAINTENANCE_GOAL_BUILDER_V1', 'SOURCE_TASK_V1',
   'SPATIAL_WORKSPACE_PREPARE_V1', 'CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1']);
 const UNKNOWN = 'SOVEREIGN_CONTROL_SYSTEM_OBSERVATION_UNPROVEN';
+// This optional denial detail never joins the general blocker vocabulary or
+// supplies native qualification, execution custody or governor permission.
+const GOVERNOR_HOLD_CODES = new Set([
+  'FIXED_RUNTIME_GOVERNOR_WORKSPACE_UNPROVEN', 'FIXED_RUNTIME_GOVERNOR_WORKSPACE_MISMATCH',
+  'FIXED_RUNTIME_GOVERNOR_PREPARE_PENDING', 'FIXED_RUNTIME_GOVERNOR_OVERRIDE_UNPROVEN',
+  'FIXED_RUNTIME_GOVERNOR_STATE_INVALID', 'FIXED_RUNTIME_GOVERNOR_CLOCK_UNPROVEN',
+  'FIXED_RUNTIME_GOVERNOR_OBSERVATION_FUTURE', 'FIXED_RUNTIME_GOVERNOR_OBSERVATION_STALE',
+  'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED', 'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE',
+]);
+
+export function sovereignControlSystemGovernorHoldCodeV1(value) {
+  return typeof value === 'string' && GOVERNOR_HOLD_CODES.has(value)
+    ? value : 'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE';
+}
+
 // Deliberately closed: an uppercase exception message is not public telemetry.
 const CODES = new Set([
   UNKNOWN,
@@ -211,7 +226,13 @@ export function projectSovereignControlSystemStatusV1(value) {
       && source.available && profilesValid && n.result.reason === '';
     const nativeDenial = n.result.available && n.row.qualificationObserved === false
       && typeof n.row.reason === 'string' && CODES.has(n.row.reason) && Boolean(n.result.observedAtUtc);
+    // Keep historical receipts byte-identical when this optional leaf was absent.
+    const governorHoldCode = nativeDenial && n.row.reason === 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD'
+      && source.available && source.stable && source.reason === '' && (!expectedMain || expectedMain === sourceHead)
+      && Object.hasOwn(n.row, 'governorHoldCode')
+      ? sovereignControlSystemGovernorHoldCodeV1(n.row.governorHoldCode) : '';
     const nativeRuntime = { ...n.result, available: qualificationObserved || nativeDenial, qualificationObserved,
+      ...(governorHoldCode ? { governorHoldCode } : {}),
       ...(nativeHead ? { sourceHead: nativeHead } : {}),
       ...(qualificationObserved ? { profiles: Object.freeze([...n.row.profiles]) } : {}),
       ...(utc(n.row.bootStartedAtUtc) && n.result.observedAtUtc
