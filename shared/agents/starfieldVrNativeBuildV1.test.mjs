@@ -72,6 +72,7 @@ function host(f = fixture(), changes = {}) {
     if (exe === 'C:\\Program Files\\Git\\cmd\\git.exe') {
       assert.equal(args[0], '--no-replace-objects');
       assert.equal(options.env.GIT_NO_REPLACE_OBJECTS, '1');
+      assert.equal(options.env.GIT_NO_LAZY_FETCH, '1');
       assert.equal(options.env.GIT_CONFIG_GLOBAL, 'NUL');
       assert.equal(options.env.GIT_DIR, undefined);
       assert.equal(options.env.GIT_CONFIG_COUNT, undefined);
@@ -85,6 +86,7 @@ function host(f = fixture(), changes = {}) {
       }
       const at = args.indexOf('cat-file');
       if (at >= 0) {
+        assert(args.includes('protocol.allow=never'), 'reading a local object cannot invoke a configured promisor transport');
         const item = f.objects.get(args[at + 2]);
         if (!item || item.type !== args[at + 1]) return { status: 1, stdout: Buffer.alloc(0) };
         return { status: 0, stdout: changes.corruptType === item.type ? Buffer.from('replaced') : item.raw };

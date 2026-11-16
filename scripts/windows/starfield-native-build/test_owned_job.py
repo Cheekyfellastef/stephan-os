@@ -190,6 +190,35 @@ class WindowsOwnedJobTests(unittest.TestCase):
         self.assertIn("ROOT_EXIT_NONZERO", result["failures"])
         self.assert_excluded(result)
 
+    def test_signaled_root_waits_for_transient_job_accounting(self):
+        real = owned_job._Win32
+        observed = {"lagged": 0}
+
+        def with_accounting_lag():
+            api = real()
+            query = api.k.QueryInformationJobObject
+
+            def lag_after_actual_exit(*args):
+                ok = query(*args)
+                accounting = ctypes.cast(args[2], ctypes.POINTER(owned_job._ACCOUNTING)).contents
+                if (ok and accounting.active_processes == 0 and self.root_handle
+                        and self.observer.kernel.WaitForSingleObject(self.root_handle, 0) == 0
+                        and observed["lagged"] < 3):
+                    accounting.active_processes = 1
+                    observed["lagged"] += 1
+                return ok
+
+            api.k.QueryInformationJobObject = lag_after_actual_exit
+            return api
+
+        with patch.object(owned_job, "_Win32", side_effect=with_accounting_lag):
+            result = self.run_stage()
+        self.assertEqual(observed["lagged"], 3)
+        self.assertTrue(result["operation_ok"], result)
+        self.assertFalse(result["termination_requested"], result)
+        self.assertEqual(result["root_exit_code"], 0)
+        self.assert_excluded(result)
+
     def test_deadline_terminates_only_owned_fixture_and_proves_zero(self):
         result = self.run_stage("sleep", deadline_monotonic=time.monotonic() + 1.5)
         self.assertFalse(result["operation_ok"])

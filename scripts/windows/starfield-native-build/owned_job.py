@@ -28,6 +28,7 @@ SCHEMA = "stephanos.starfield-native-build.owned-stage.v1"
 MAX_STAGE_SECONDS = 600.0
 MAX_OUTPUT_BYTES = 1024 * 1024
 DRAIN_SECONDS = 5.0
+ROOT_EXIT_ACCOUNTING_SECONDS = 1.0
 PROCESS_LIMIT = 16
 POLL_SECONDS = 0.01
 
@@ -536,6 +537,7 @@ def run_owned_stage(*, executable: str, args: Sequence[str], cwd: str,
             raise _NativeFailure("ROOT_RESUME_UNPROVEN", ctypes.get_last_error())
         result["resume_confirmed"] = True
 
+        root_exit_observation_deadline = None
         while True:
             pump_output()
             if interrupted() or pipe_failed or result["output_overflow"]:
@@ -545,9 +547,18 @@ def run_owned_stage(*, executable: str, args: Sequence[str], cwd: str,
             if ended is None or active is None:
                 break
             if ended:
-                if active != 0:
+                if active == 0:
+                    break
+                # The process handle can signal before Job accounting removes
+                # that process. Observe a bounded settling interval while still
+                # pumping output and enforcing cancellation/owner/deadline.
+                # Only a subsequent native zero count may complete the stage.
+                if root_exit_observation_deadline is None:
+                    root_exit_observation_deadline = min(
+                        deadline_monotonic, time.monotonic() + ROOT_EXIT_ACCOUNTING_SECONDS)
+                if time.monotonic() >= root_exit_observation_deadline:
                     fail("ROOT_EXITED_WITH_LIVE_DESCENDANTS")
-                break
+                    break
             time.sleep(POLL_SECONDS)
     except _NativeFailure as error:
         # A failed API before any root exists is an operation refusal.  Once a

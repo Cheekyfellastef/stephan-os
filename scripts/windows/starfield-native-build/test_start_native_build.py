@@ -67,7 +67,10 @@ class LauncherSourceTests(unittest.TestCase):
 class WindowsLauncherTests(unittest.TestCase):
     def powershell(self, body):
         encoded = base64.b64encode(body.encode("utf-16le")).decode("ascii")
+        environment = {key: value for key, value in os.environ.items() if key.upper() != "PSMODULEPATH"}
+        environment["PSModulePath"] = r"C:\Windows\System32\WindowsPowerShell\v1.0\Modules"
         return subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                              cwd=r"C:\Windows\System32", env=environment,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=45)
 
     @staticmethod

@@ -67,6 +67,7 @@ jobs:
           python -I -S -B -m unittest discover -s scripts/windows/starfield-native-build -p 'test_*.py' -v
           if ($LASTEXITCODE -ne 0) { throw 'STARFIELD_NATIVE_BUILD_WINDOWS_TEST_FAILED' }
       - name: Parse the fixed Windows PowerShell bootstrap
+        if: ${{ !cancelled() }}
         shell: powershell
         run: |
           $tokens = $null; $errors = $null
@@ -76,6 +77,7 @@ jobs:
           $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes([IO.File]::ReadAllText($source)))
           if ($encoded.Length -gt 32000) { throw 'STARFIELD_NATIVE_BUILD_COMMAND_LINE_BOUND' }
       - name: Compile and execute portable models with the Windows compiler
+        if: ${{ !cancelled() }}
         shell: cmd
         working-directory: VR-Research-Lab/native/starfield-paired-observer-v1
         run: |

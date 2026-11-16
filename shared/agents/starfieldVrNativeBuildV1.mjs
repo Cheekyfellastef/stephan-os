@@ -45,13 +45,13 @@ function gitOptions(repoRoot, env) {
   }
   Object.assign(sanitized, { PATH: 'C:\\Windows\\System32;C:\\Windows',
     GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_SYSTEM: 'NUL', GIT_CONFIG_GLOBAL: 'NUL',
-    GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0' });
+    GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0' });
   return { ...options(repoRoot), env: sanitized };
 }
 function gitArgs(repoRoot, args) {
   return ['--no-replace-objects', `--git-dir=${win32.resolve(repoRoot, '.git')}`,
     `--work-tree=${repoRoot}`, '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=',
-    '-c', 'credential.helper=', ...args];
+    '-c', 'credential.helper=', '-c', 'protocol.allow=never', ...args];
 }
 function json(value) {
   try { const result = JSON.parse(String(value)); return result && typeof result === 'object' && !Array.isArray(result) ? result : null; }
