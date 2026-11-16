@@ -2359,6 +2359,41 @@ function safeCoreDaemonStatusProjection(value = {}) {
   });
 }
 
+function coreDaemonStatusExecutionEnvelope({ shape, observedBranch, observedHead, result, maintenance }) {
+  // Both Core outcomes cross the same producer boundary before the first
+  // receipt projection. These identities come from the validated command and
+  // the existing Git admission, never the observed Core's possibly stale head.
+  const identity = {
+    operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+    requestId: text(shape.command.requestId),
+    expectedHead: shape.expectedHead,
+    sourceHead: observedHead,
+    branch: observedBranch,
+    expectedHeadMatch: observedHead === shape.expectedHead,
+  };
+  if (shape.command.remoteAction !== 'status-stephanos-core-daemon'
+    || observedBranch !== 'main' || !SHA_PATTERN.test(observedHead) || !identity.expectedHeadMatch
+    || result.remoteAction !== shape.command.remoteAction
+    || Object.hasOwn(result, 'result')
+    || Object.entries(identity).some(([key, value]) => Object.hasOwn(result, key) && result[key] !== value)) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID', {
+      remoteAction: shape.command.remoteAction, publicReceiptSafe: true, secretMaterialReturned: false,
+    });
+  }
+  const operationResult = Object.freeze({
+    ...result,
+    expectedHead: identity.expectedHead, sourceHead: identity.sourceHead,
+    branch: identity.branch, expectedHeadMatch: identity.expectedHeadMatch,
+  });
+  return Object.freeze({
+    ...operationResult,
+    verdict: result.ok === true ? 'COMMAND_EXECUTION_COMPLETE' : 'BLOCKED',
+    operation: identity.operation, requestId: identity.requestId,
+    ...(maintenance ? { maintenance } : {}),
+    result: operationResult,
+  });
+}
+
 function safeProjectSearchProjection(value = {}, query = '') {
   const results = Array.isArray(value?.results) ? value.results : [];
   const safeResults = results.slice(0, 30).flatMap((entry) => {
@@ -4310,12 +4345,15 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       && coreDaemonStatus.sourceHead === shape.expectedHead
       && coreDaemonStatus.readiness !== 'RELOAD_REQUIRED';
     if (!coreHealthy) {
-      return fail('SOVEREIGN_COMMANDER_REMOTE_CORE_DAEMON_NOT_READY', {
-        remoteAction: shape.command.remoteAction,
-        sourceHead: shape.expectedHead,
-        coreDaemonStatus,
-        publicReceiptSafe: true,
-        secretMaterialReturned: false,
+      return coreDaemonStatusExecutionEnvelope({
+        shape, observedBranch, observedHead,
+        result: fail('SOVEREIGN_COMMANDER_REMOTE_CORE_DAEMON_NOT_READY', {
+          remoteAction: shape.command.remoteAction,
+          sourceHead: shape.expectedHead,
+          coreDaemonStatus,
+          publicReceiptSafe: true,
+          secretMaterialReturned: false,
+        }),
       });
     }
   }
@@ -5089,6 +5127,13 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     publicReceiptSafe: true,
     secretMaterialReturned: false,
   });
+  if (coreDaemonStatus) {
+    // Keep the existing proofComplete decision above. Matching source identity
+    // binds this observation; it does not supply native proof or loaded bytes.
+    return coreDaemonStatusExecutionEnvelope({
+      shape, observedBranch, observedHead, result: maintenanceResult, maintenance: projection,
+    });
+  }
   return Object.freeze({
     ...maintenanceResult,
     verdict: 'COMMAND_EXECUTION_COMPLETE',
