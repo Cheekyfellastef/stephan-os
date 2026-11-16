@@ -185,6 +185,77 @@ class WindowsPinnedRuntimeTests(unittest.TestCase):
         action += "'CREATION_PERMISSION_BOUNDARY_PASSED'"
         self.assertIn(b"CREATION_PERMISSION_BOUNDARY_PASSED", self.run_case(action, before))
 
+    def test_structural_probe_permanently_sealed_relative_creation(self):
+        # Test the proposed replacement primitive before changing production:
+        # a namespace sealed from birth, populated only through its creator.
+        # No interpreter or other child process runs from these probe files.
+        with tempfile.TemporaryDirectory(prefix="starfield-sealed-probe-", ignore_cleanup_errors=True) as temporary:
+            runtime = Path(temporary) / "sealed"
+            body = "$ErrorActionPreference='Stop';Set-StrictMode -Version Latest;. " + literal(MODULE) + ";"
+            body += r"""
+function Probe-Create([IntPtr]$root,[string]$name,[uint32]$access,[bool]$directory) {
+  $n=Runtime-Native;$buffers=[Collections.Generic.List[IntPtr]]::new()
+  try {
+    if($root -eq [IntPtr]::Zero){$name='\??\'+$name}
+    $text=[Runtime.InteropServices.Marshal]::StringToHGlobalUni($name);$buffers.Add($text)
+    $u=[Runtime.InteropServices.Marshal]::AllocHGlobal(16);$buffers.Add($u)
+    $oa=[Runtime.InteropServices.Marshal]::AllocHGlobal(48);$buffers.Add($oa)
+    $iosb=[Runtime.InteropServices.Marshal]::AllocHGlobal(16);$buffers.Add($iosb)
+    $out=[Runtime.InteropServices.Marshal]::AllocHGlobal(8);$buffers.Add($out)
+    foreach($p in @(@($u,16),@($oa,48),@($iosb,16),@($out,8))){[Runtime.InteropServices.Marshal]::Copy([byte[]]::new($p[1]),0,$p[0],$p[1])}
+    $sd=Runtime-Security 'sealed';$sdp=[Runtime.InteropServices.Marshal]::AllocHGlobal($sd.Length);$buffers.Add($sdp)
+    [Runtime.InteropServices.Marshal]::Copy($sd,0,$sdp,$sd.Length)
+    [Runtime.InteropServices.Marshal]::WriteInt16($u,0,[int16]($name.Length*2))
+    [Runtime.InteropServices.Marshal]::WriteInt16($u,2,[int16](($name.Length+1)*2))
+    [Runtime.InteropServices.Marshal]::WriteIntPtr($u,8,$text)
+    [Runtime.InteropServices.Marshal]::WriteInt32($oa,0,48)
+    [Runtime.InteropServices.Marshal]::WriteIntPtr($oa,8,$root)
+    [Runtime.InteropServices.Marshal]::WriteIntPtr($oa,16,$u)
+    [Runtime.InteropServices.Marshal]::WriteInt32($oa,24,0x40)
+    [Runtime.InteropServices.Marshal]::WriteIntPtr($oa,32,$sdp)
+    $attributes=if($directory){0x10}else{0x80};$options=if($directory){0x21}else{0x60}
+    $status=$n::NtCreateFile($out,$access,$oa,$iosb,[IntPtr]::Zero,$attributes,1,2,$options,[IntPtr]::Zero,0)
+    $h=[Runtime.InteropServices.Marshal]::ReadIntPtr($out)
+    $granted=$null;if($status -eq 0){$granted=Runtime-GrantedAccess $h}
+    return [pscustomobject]@{Status=$status;Handle=$h;Granted=$granted;Created=[Runtime.InteropServices.Marshal]::ReadIntPtr($iosb,8).ToInt64()}
+  }finally{foreach($p in $buffers){[Runtime.InteropServices.Marshal]::FreeHGlobal($p)}}
+}
+$n=Runtime-Native;$directory=$child=$null;$file=$safe=$null
+$proof=[ordered]@{directoryStatus=$null;directoryGranted=$null;directoryCreated=$false;pathCreateDenied=$false;childStatus=$null;childGranted=$null;childCreated=$false;childWritten=$false}
+try{
+"""
+            body += "$directory=Probe-Create ([IntPtr]::Zero) " + literal(runtime) + " 0x1300ab $true;"
+            body += r"""
+  $proof.directoryStatus=$directory.Status;$proof.directoryGranted=$directory.Granted;$proof.directoryCreated=($directory.Created -eq 2)
+  if($directory.Status -eq 0){
+"""
+            body += "try{[IO.File]::WriteAllText(" + literal(runtime / "path.txt") + ",'forbidden')}catch{$proof.pathCreateDenied=$true};"
+            body += r"""
+    $child=Probe-Create $directory.Handle 'relative.txt' ([uint32]3221291008) $false
+    $proof.childStatus=$child.Status;$proof.childGranted=$child.Granted;$proof.childCreated=($child.Created -eq 2)
+    if($child.Status -eq 0){
+      $safe=[Microsoft.Win32.SafeHandles.SafeFileHandle]::new($child.Handle,$true);$child.Handle=[IntPtr]::Zero
+      $file=[IO.FileStream]::new($safe,[IO.FileAccess]::Write)
+      $data=[Text.Encoding]::UTF8.GetBytes('sealed-relative-fixture');$file.Write($data,0,$data.Length);$file.Flush($true)
+      $proof.childWritten=$true
+    }
+  }
+}finally{
+  if($null -ne $file){$file.Dispose()}elseif($null -ne $safe){$safe.Dispose()}
+  foreach($record in @($child,$directory)){if($null -ne $record -and $record.Handle -ne [IntPtr]::Zero -and $record.Handle -ne [IntPtr](-1)){[void]$n::CloseHandle($record.Handle)}}
+}
+$proof|ConvertTo-Json -Compress
+"""
+            result = powershell(body)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+            proof = json.loads(result.stdout.decode("utf-8-sig"))
+            self.assertEqual(proof["directoryStatus"], 0, proof)
+            self.assertTrue(proof["directoryCreated"], proof)
+            self.assertEqual(proof["directoryGranted"] & 2, 2, proof)
+            self.assertTrue(proof["pathCreateDenied"], proof)
+            self.assertEqual(proof["childStatus"], 0, proof)
+            self.assertTrue(proof["childCreated"] and proof["childWritten"], proof)
+
 
 if __name__ == "__main__":
     unittest.main()
