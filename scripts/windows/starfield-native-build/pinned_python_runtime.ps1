@@ -164,10 +164,15 @@ function Runtime-SetAcl([IntPtr]$handle, [byte[]]$bytes) {
   try {
     [Runtime.InteropServices.Marshal]::Copy($acl, 0, $memory, $acl.Length)
     $flags = if (($descriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0) { [uint32]2147483652 } else { [uint32]536870916 }
-    if ($native::SetSecurityInfo($handle, 1, $flags, [IntPtr]::Zero, [IntPtr]::Zero, $memory, [IntPtr]::Zero) -ne 0) { Runtime-Deny }
+    $status = $native::SetSecurityInfo($handle, 1, $flags, [IntPtr]::Zero, [IntPtr]::Zero, $memory, [IntPtr]::Zero)
+    if ($status -ne 0) {
+      $failure = [InvalidOperationException]::new('FIXED_RUNTIME_UNPROVEN')
+      $failure.Data['RuntimePhase'] = 'SET_ACL'; $failure.Data['RuntimeNativeCode'] = $status
+      throw $failure
+    }
   } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($memory) }
 }
-function Close-RuntimeCustody($state, [bool]$restore) {
+function Close-RuntimeCustody($state, [bool]$restore, [bool]$reportFailure=$false) {
   if ($null -eq $state -or $state.Closed) { return }
   $native = Runtime-Native
   # Restoration is used only after no interpreter was started, or after its
@@ -175,12 +180,14 @@ function Close-RuntimeCustody($state, [bool]$restore) {
   foreach ($file in $state.Files) {
     $file.Stream.Dispose()
   }
+  $failure = $null
   for ($i=$state.Directories.Count-1; $i -ge 0; $i--) {
     $directory = $state.Directories[$i]
-    if ($restore -and $directory.Sealed) { try { Runtime-SetAcl $directory.Handle $directory.OriginalAcl } catch { } }
+    if ($restore -and $directory.Sealed) { try { Runtime-SetAcl $directory.Handle $directory.OriginalAcl } catch { if ($null -eq $failure) { $failure = $_ } } }
     [void]$native::CloseHandle($directory.Handle)
   }
   $state.Closed = $true
+  if ($reportFailure -and $null -ne $failure) { throw $failure }
 }
 function Assert-RuntimeManifest($manifest) {
   if ($manifest.schemaVersion -cne 'stephanos.starfield-python-runtime.v1' -or $manifest.version -cne '3.14.10' -or

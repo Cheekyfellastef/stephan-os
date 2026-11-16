@@ -79,18 +79,21 @@ class WindowsPinnedRuntimeTests(unittest.TestCase):
         cls.package_temp.cleanup()
 
     def run_case(self, action, before_expand=""):
-        with tempfile.TemporaryDirectory(prefix="starfield-runtime-fixture-") as temporary:
+        # A failed native ACL restoration can also make disposable test cleanup
+        # fail. Keep the original PowerShell stage/error visible in that case.
+        with tempfile.TemporaryDirectory(prefix="starfield-runtime-fixture-", ignore_cleanup_errors=True) as temporary:
             parent = Path(temporary) / "parent"
             parent.mkdir()
             runtime = parent / "runtime"
             body = "$ErrorActionPreference='Stop';Set-StrictMode -Version Latest;. " + literal(MODULE) + ";"
             body += "$m=Get-Content -LiteralPath " + literal(MANIFEST) + " -Raw|ConvertFrom-Json;"
-            body += "$a=[IO.File]::ReadAllBytes(" + literal(self.archive) + ");$s=$null;"
-            body += "try{$s=New-RuntimeCustody " + literal(runtime) + " $true;"
+            body += "$a=[IO.File]::ReadAllBytes(" + literal(self.archive) + ");$s=$null;$phase='create';$failure=$null;"
+            body += "function Fixture-Report($e,$where){[Console]::Error.WriteLine(('RUNTIME_FIXTURE_FAILURE phase='+$where+' nativePhase='+$e.Exception.Data['RuntimePhase']+' nativeCode='+$e.Exception.Data['RuntimeNativeCode']+' message='+$e.Exception.Message+' stack='+$e.ScriptStackTrace))};"
+            body += "try{$s=New-RuntimeCustody " + literal(runtime) + " $true;$phase='before-expand';"
             body += before_expand
-            body += "Expand-RuntimeArchive $a $m $s {$true};"
+            body += "$phase='expand';Expand-RuntimeArchive $a $m $s {$true};$phase='action';"
             body += action
-            body += "}finally{Close-RuntimeCustody $s $true}"
+            body += "}catch{$failure=$_;Fixture-Report $_ $phase}finally{try{Close-RuntimeCustody $s $true $true}catch{Fixture-Report $_ 'cleanup';if($null -eq $failure){$failure=$_}}};if($null -ne $failure){exit 1}"
             result = powershell(body)
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
             return result.stdout
