@@ -30,10 +30,11 @@ function Runtime-Native {
     @('CreateFileW','kernel32.dll',[IntPtr],@([string],[uint32],[uint32],[IntPtr],[uint32],[uint32],[IntPtr])),
     @('CreateDirectoryW','kernel32.dll',[bool],@([string],[IntPtr])),
     @('NtCreateFile','ntdll.dll',[int],@([IntPtr],[uint32],[IntPtr],[IntPtr],[IntPtr],[uint32],[uint32],[uint32],[uint32],[IntPtr],[uint32])),
+    @('NtQueryObject','ntdll.dll',[int],@([IntPtr],[int],[IntPtr],[uint32],[IntPtr])),
+    @('NtSetSecurityObject','ntdll.dll',[int],@([IntPtr],[uint32],[IntPtr])),
     @('GetFileInformationByHandle','kernel32.dll',[bool],@([IntPtr],[IntPtr])),
     @('GetFinalPathNameByHandleW','kernel32.dll',[uint32],@([IntPtr],[Text.StringBuilder],[uint32],[uint32])),
-    @('CloseHandle','kernel32.dll',[bool],@([IntPtr])),
-    @('SetSecurityInfo','advapi32.dll',[uint32],@([IntPtr],[int],[uint32],[IntPtr],[IntPtr],[IntPtr],[IntPtr]))
+    @('CloseHandle','kernel32.dll',[bool],@([IntPtr]))
   )
   foreach ($spec in $specs) {
     $method = $type.DefinePInvokeMethod($spec[0], ('C:\Windows\System32\' + $spec[1]), $spec[0],
@@ -51,6 +52,15 @@ function Runtime-Security([string]$mode) {
   $security = [Security.AccessControl.DirectorySecurity]::new()
   $security.SetSecurityDescriptorSddlForm(('D:P(A;;FA;;;SY)(A;;' + $rights + ';;;' + $sid + ')(A;;RC;;;OW)'))
   return ,$security.GetSecurityDescriptorBinaryForm()
+}
+function Runtime-GrantedAccess([IntPtr]$handle) {
+  $native = Runtime-Native
+  $memory = [Runtime.InteropServices.Marshal]::AllocHGlobal(56)
+  try {
+    # PUBLIC_OBJECT_BASIC_INFORMATION contains GrantedAccess at byte four.
+    if ($native::NtQueryObject($handle, 0, $memory, 56, [IntPtr]::Zero) -ne 0) { Runtime-Deny }
+    return [uint32][Runtime.InteropServices.Marshal]::ReadInt32($memory, 4)
+  } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($memory) }
 }
 function Runtime-CreateDirectory([string]$path) {
   $native = Runtime-Native
@@ -86,6 +96,7 @@ function Runtime-CreateDirectory([string]$path) {
     $handle = [Runtime.InteropServices.Marshal]::ReadIntPtr($output)
     if ($status -ne 0 -or $handle -eq [IntPtr]::Zero -or $handle -eq [IntPtr](-1) -or
       [Runtime.InteropServices.Marshal]::ReadIntPtr($statusBlock,8).ToInt64() -ne 2) { Runtime-Deny }
+    if (((Runtime-GrantedAccess $handle) -band 0x1700ab) -ne 0x1700ab) { Runtime-Deny }
     $result=$handle; $handle=[IntPtr]::Zero; return $result
   } finally {
     if ($handle -ne [IntPtr]::Zero -and $handle -ne [IntPtr](-1)) { [void]$native::CloseHandle($handle) }
@@ -157,17 +168,19 @@ function New-RuntimeCustody([string]$path, [bool]$fresh, [bool]$writer=$true) {
 function Runtime-SetAcl([IntPtr]$handle, [byte[]]$bytes) {
   $native = Runtime-Native
   $descriptor = [Security.AccessControl.RawSecurityDescriptor]::new($bytes, 0)
-  if ($null -eq $descriptor.DiscretionaryAcl) { Runtime-Deny }
-  $acl = [byte[]]::new($descriptor.DiscretionaryAcl.BinaryLength)
-  $descriptor.DiscretionaryAcl.GetBinaryForm($acl, 0)
-  $memory = [Runtime.InteropServices.Marshal]::AllocHGlobal($acl.Length)
+  if ($null -eq $descriptor.DiscretionaryAcl -or
+    ($descriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -eq 0 -or
+    ((Runtime-GrantedAccess $handle) -band 0x40000) -ne 0x40000) { Runtime-Deny }
+  $memory = [Runtime.InteropServices.Marshal]::AllocHGlobal($bytes.Length)
   try {
-    [Runtime.InteropServices.Marshal]::Copy($acl, 0, $memory, $acl.Length)
-    $flags = if (($descriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0) { [uint32]2147483652 } else { [uint32]536870916 }
-    $status = $native::SetSecurityInfo($handle, 1, $flags, [IntPtr]::Zero, [IntPtr]::Zero, $memory, [IntPtr]::Zero)
+    [Runtime.InteropServices.Marshal]::Copy($bytes, 0, $memory, $bytes.Length)
+    # Set exactly this retained object using its granted WRITE_DAC. The
+    # complete protected self-relative descriptor needs no path reopening or
+    # Win32 inheritance propagation into the independently protected members.
+    $status = $native::NtSetSecurityObject($handle, 4, $memory)
     if ($status -ne 0) {
       $failure = [InvalidOperationException]::new('FIXED_RUNTIME_UNPROVEN')
-      $failure.Data['RuntimePhase'] = 'SET_ACL'; $failure.Data['RuntimeNativeCode'] = $status
+      $failure.Data['RuntimePhase'] = 'SET_OBJECT_DACL'; $failure.Data['RuntimeNativeCode'] = $status
       throw $failure
     }
   } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($memory) }

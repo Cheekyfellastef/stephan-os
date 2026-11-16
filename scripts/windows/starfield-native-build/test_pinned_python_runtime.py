@@ -172,13 +172,17 @@ class WindowsPinnedRuntimeTests(unittest.TestCase):
         self.assertIn(b"CANCELLED_BEFORE_START", self.run_case(action))
 
     def test_permission_handles_are_refused_from_creation(self):
-        before = "$n=Runtime-Native;foreach($access in @(0x40000,0x80000,2)){"
+        before = "$leaf=$s.Directories[$s.Directories.Count-1];if(((Runtime-GrantedAccess $leaf.Handle) -band 0x1700ab) -ne 0x1700ab){throw 'CREATOR_ACCESS_UNPROVEN'};"
+        before += "$n=Runtime-Native;foreach($access in @(0x40000,0x80000,2)){"
         before += "$h=$n::CreateFileW($s.Path,$access,7,[IntPtr]::Zero,3,0x02200000,[IntPtr]::Zero);"
         before += "if($h -ne [IntPtr](-1) -and $h -ne [IntPtr]::Zero){[void]$n::CloseHandle($h);throw 'PRESEAL_PERMISSION_HANDLE_ALLOWED'}};"
         action = "$n=Runtime-Native;foreach($row in $m.files){"
         action += "$h=$n::CreateFileW([IO.Path]::Combine($s.Path,$row.name),0x40000,7,[IntPtr]::Zero,3,0x00200000,[IntPtr]::Zero);"
         action += "if($h -ne [IntPtr](-1) -and $h -ne [IntPtr]::Zero){[void]$n::CloseHandle($h);throw 'MEMBER_PERMISSION_HANDLE_ALLOWED'}};"
-        action += "$s=Pin-VerifiedRuntime $s $m {$true};'CREATION_PERMISSION_BOUNDARY_PASSED'"
+        action += "$s=Pin-VerifiedRuntime $s $m {$true};"
+        action += "$acl=[IO.Directory]::GetAccessControl($s.Path);if(-not $acl.AreAccessRulesProtected){throw 'DIRECTORY_DACL_NOT_PROTECTED'};"
+        action += "foreach($row in $m.files){$acl=[IO.File]::GetAccessControl([IO.Path]::Combine($s.Path,$row.name));if(-not $acl.AreAccessRulesProtected){throw 'MEMBER_DACL_NOT_PROTECTED'}};"
+        action += "'CREATION_PERMISSION_BOUNDARY_PASSED'"
         self.assertIn(b"CREATION_PERMISSION_BOUNDARY_PASSED", self.run_case(action, before))
 
 
