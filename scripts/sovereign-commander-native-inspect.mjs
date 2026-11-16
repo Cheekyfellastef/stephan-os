@@ -14,6 +14,7 @@ import { projectMaintenanceCustodyVisibilityV1 } from '../shared/agents/maintena
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 import { SOVEREIGN_CONTROL_SYSTEM_INSPECTION_SCHEMA_V1,
   SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_PREDICATES_V1,
+  sovereignControlSystemGovernorHoldCodeV1,
   sovereignControlSystemDiagnosticCodeV1 } from '../shared/agents/sovereignControlSystemStatusV1.mjs';
 
 const REPOSITORY = 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os';
@@ -326,7 +327,9 @@ export async function inspectSovereignControlSystemV1(options = {}) {
     try {
       const native = dataRecord(await deps.inspectRuntime()), observedAtUtc = instant(deps.now);
       if (native.ok === false) report.nativeRuntime = { available: true, qualificationObserved: false,
-        reason: sovereignControlSystemDiagnosticCodeV1(native.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN'), observedAtUtc };
+        reason: sovereignControlSystemDiagnosticCodeV1(native.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN'), observedAtUtc,
+        ...(native.reason === 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD'
+          ? { governorHoldCode: sovereignControlSystemGovernorHoldCodeV1(native.governorHoldCode) } : {}) };
       else if (native.ok === true && native.sourceHead === sourceHead && utc(native.observedAtUtc)
         && Date.parse(native.observedAtUtc) <= Date.parse(observedAtUtc)
         && Date.parse(observedAtUtc) - Date.parse(native.observedAtUtc) <= 15000
@@ -365,6 +368,7 @@ export async function inspectSovereignControlSystemV1(options = {}) {
       report.nativeRuntime.qualificationObserved = false;
       report.nativeRuntime.reason = 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED';
       delete report.nativeRuntime.profiles;
+      delete report.nativeRuntime.governorHoldCode;
     }
     report.observationCompleted = report.source.stable && (report.nativeRuntime.available || report.guardian.available);
     report.blocker = report.source.reason || report.owner.reason || report.guardian.blocker

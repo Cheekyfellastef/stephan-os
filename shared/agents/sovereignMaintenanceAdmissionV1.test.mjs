@@ -9,6 +9,8 @@ import { SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, SOVEREIGN_MAINTENANCE_OWNER_VERS
 import { callSovereignMaintenanceOwnerV1 } from './sovereignCommanderRemoteMailboxV1.mjs';
 import { executeSovereignCommanderCommandV1 } from './sovereignCommanderV1.mjs';
 import { buildStephanosExecutionCommandEnvelopeV1, buildStephanosExecutionSurfaceCatalogV1, STEPHANOS_EXECUTION_SURFACE } from './stephanosExecutionCommandFabricV1.mjs';
+import { projectStephanosCoreDaemonState, coreWorkerDependentWorkAllowed } from './stephanosCoreDaemonV1.mjs';
+import { DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS, DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS } from './stephanosCorePersistentFlywheelV1.mjs';
 import { classifySovereignMaintenanceExecutionRouteV1, createSovereignCommanderHttpServer, startSovereignCommanderContinuousRepairGuardian } from '../../scripts/sovereign-commander-http.mjs';
 
 const root = 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os';
@@ -16,24 +18,30 @@ const idle = { enabled: true, running: false, timeoutCustodyHeld: false };
 
 function coreMaintenanceFunction(name, nextName, overrides = {}) {
   const source = readFileSync(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+  const preambleStart = source.indexOf('const HEARTBEAT_MS =');
+  const preambleEnd = source.indexOf('function currentHead(', preambleStart);
   const start = source.indexOf(`async function ${name}(`);
   const end = source.indexOf(`\nasync function ${nextName}(`, start);
+  assert.ok(preambleStart >= 0 && preambleEnd > preambleStart);
   assert.ok(start >= 0 && end > start);
   const context = vm.createContext({
-    projectStephanosCoreDaemonState: value => value,
+    process: { env: {} },
+    DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS, DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS,
+    projectStephanosCoreDaemonState,
     readCanonicalMissionWorkerHeartbeatAgeMs: () => 0,
-    coreWorkerDependentWorkAllowed: () => true,
+    coreWorkerDependentWorkAllowed,
     unqualifiedCoreWindowsRepairV1,
     repoRoot: root, workspaceRoot: 'C:\\fixture\\workspace',
     lastOctopusSelfHealAttemptCount: 1, lastDependencySelfHealAttemptCount: 1,
-    OCTOPUS_SELF_HEAL_RELATED_ISSUE: '#2961', RELATED_ISSUE: '#2961', PROOF_REF: 'fixture-proof',
     STEPHANOS_EXECUTION_SURFACE: { SOVEREIGN_COMMANDER: 'sovereign-commander' },
     SOVEREIGN_COMMANDER_OPERATION: { MAINTENANCE_ACTION: 'MAINTENANCE_ACTION' },
     buildStephanosExecutionSurfaceCatalogV1: () => ({}),
     buildStephanosExecutionCommandEnvelopeV1: value => value,
     ...overrides,
   });
-  vm.runInContext(source.slice(start, end), context);
+  // Keep production owner/action constants in scope. Injecting an owner here
+  // previously hid an undefined identifier on the qualified repair path.
+  vm.runInContext(source.slice(preambleStart, preambleEnd) + source.slice(start, end), context);
   return context[name];
 }
 
@@ -417,7 +425,7 @@ test('terminal protocol is bound to the requested wrapper, exact format and fina
 });
 
 
-test('Core reopens only its fixed goal repair after current actual qualification and owner routing', async () => {
+test('Core production preamble binds qualified goal repair to its canonical owner and preserves admission', async () => {
   const calls=[];
   const run=coreMaintenanceFunction('runBoundedOctopusMaintenance','runBoundedOctopusSelfHeal',{
     inspectFixedRuntimeQualificationV1:()=>({ok:true,sourceHead:'a'.repeat(40),profiles:['MAINTENANCE_GOAL_BUILDER_V1']}),
@@ -425,6 +433,9 @@ test('Core reopens only its fixed goal repair after current actual qualification
   });
   assert.equal((await run('repair-goal-builder-flow','a'.repeat(40),'goal-builder')).blocker,'OWNER_INDEPENDENT_ADMISSION_REQUIRED');
   assert.equal(calls.length,1);assert.equal(calls[0].payload.actionId,'repair-goal-builder-flow');
+  assert.equal(calls[0].relatedIssue, '#2961');
+  assert.equal(calls[0].missionId, 'stephanos-core-octopus-self-heal');
+  assert.deepEqual(Array.from(calls[0].proofRefs), ['proof/stephanos-core-daemon-current.json', 'source:' + 'a'.repeat(40)]);
   assert.equal(Object.hasOwn(calls[0].payload,'qualified'),false);
   await run('repair-control-plane','a'.repeat(40),'control-plane');
   await run('repair-goal-builder-flow','b'.repeat(40),'goal-builder');

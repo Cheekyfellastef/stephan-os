@@ -87,6 +87,7 @@ const TARGET_MATERIAL_LANES = 15;
 const OCTOPUS_SELF_HEAL_COOLDOWN_MS = DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS;
 const DEPENDENCY_SELF_HEAL_COOLDOWN_MS = 2 * 60_000;
 const OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow';
+const OCTOPUS_SELF_HEAL_RELATED_ISSUE = '#2961';
 const CONTROL_PLANE_SELF_HEAL_ACTION_ID = 'repair-control-plane';
 const BATTLE_BRIDGE_SELF_HEAL_ACTION_ID = 'repair-battle-bridge';
 const RELATED_ISSUE = '#2593';
@@ -605,8 +606,28 @@ async function maybeSelfHealOctopus(sourceHead) {
   }
 }
 
+async function restoreOnionContinuation() {
+  try {
+    const persistedCoreStatus = await readJsonIfPresent(coreStatusPath);
+    lastOnionContinuation = projectStephanosCoreOnionContinuationV1({
+      persisted: persistedCoreStatus?.onionContinuation,
+    });
+  } catch {
+    // This advisory record must not crash the already locked Core. An invalid
+    // projection is not restored intent, terminal proof or execution clearance.
+    lastOnionContinuation = projectStephanosCoreOnionContinuationV1({
+      current: { blocker: 'CORE_PERSISTED_CONTINUATION_INVALID', safeRepairAvailable: false },
+    });
+  }
+}
+
 async function reconcileOnionContinuation(flywheelResult = {}) {
   const persistedCoreStatus = await readJsonIfPresent(coreStatusPath);
+  const savedContinuation = projectStephanosCoreOnionContinuationV1({
+    persisted: persistedCoreStatus?.onionContinuation,
+  });
+  const retainedContinuation = savedContinuation.originalOutcomeId || savedContinuation.terminalRequested
+    ? savedContinuation : lastOnionContinuation;
   const projected = flywheelResult?.onionContinuation
     || flywheelResult?.authoritativeProjection?.onionContinuation
     || {};
@@ -618,7 +639,12 @@ async function reconcileOnionContinuation(flywheelResult = {}) {
     || projected?.safeRepairAvailable === false
   );
   const refillCanaryRequired = lastRefillSummary.refillSafeEligibleWorkRemaining > 0
-    && lastRefillSummary.refillMaterialActionsSucceeded === 0;
+    && lastRefillSummary.refillMaterialActionsSucceeded === 0
+    // Refresh only this canary's own nonterminal observation, or supply a
+    // missing parent. No generic observation clears even an unproven boundary.
+    && retainedContinuation.terminalRequested !== true
+    && (!retainedContinuation.originalOutcomeId
+      || retainedContinuation.originalOutcomeId === 'automatic-building-refill');
   const refillCanary = refillCanaryRequired
     ? {
         originalOutcomeId: 'automatic-building-refill',
@@ -633,7 +659,7 @@ async function reconcileOnionContinuation(flywheelResult = {}) {
 
   lastOnionContinuation = projectStephanosCoreOnionContinuationV1({
     current: hasProjectedContinuation ? projected : refillCanary,
-    persisted: persistedCoreStatus?.onionContinuation || lastOnionContinuation,
+    persisted: retainedContinuation,
   });
   return lastOnionContinuation;
 }
@@ -1177,6 +1203,11 @@ if (!ownedLock) {
   }));
   process.exit(0);
 }
+
+// Restore retained parent intent before the first heartbeat can replace the
+// status record while background refill is still awaiting its own outcome.
+// This projection grants no execution, scheduler or merge authority.
+await restoreOnionContinuation();
 
 // This bridge reuses the ALREADY locked Core Daemon task and continues even
 // if Recovery Mesh wake/elastic admission is broken. No new controller.

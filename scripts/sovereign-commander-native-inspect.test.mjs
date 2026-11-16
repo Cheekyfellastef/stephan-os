@@ -341,6 +341,72 @@ test('typed native denials survive; malformed success and arbitrary errors never
   }
 });
 
+test('actual fixed-runtime governor vocabulary survives observation and public projection without authority', async () => {
+  const source = readFileSync(new URL('./sovereign-fixed-runtime-parent-v1.mjs', import.meta.url), 'utf8');
+  const codes = [...source.matchAll(/'native-capacity-gaming-[^']+':'(FIXED_RUNTIME_GOVERNOR_[^']+)'/g)]
+    .map(match => match[1]);
+  assert.equal(codes.length, 10); assert.equal(new Set(codes).size, 10);
+  for (const governorHoldCode of codes) {
+    let nativeCalls = 0;
+    const f = fixture({ inspectRuntime: () => {
+      nativeCalls++;
+      return { ok: false, reason: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD',
+        governorHoldCode, dispatchAllowed: true, executionCustodyReleased: true, privateReason: 'PRIVATE_TOKEN' };
+    } });
+    const report = await inspectSovereignControlSystemV1(f.options);
+    assert.equal(report.nativeRuntime.governorHoldCode, governorHoldCode);
+    assert.equal(report.nativeRuntime.qualificationObserved, false);
+    assert.equal(report.nativeRuntime.reason, 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+    assert.equal(report.observationCompleted, true);
+    const published = projectSovereignControlSystemStatusV1(report);
+    assert.equal(published.nativeRuntime.governorHoldCode, governorHoldCode);
+    assert.equal(published.nativeRuntime.qualificationObserved, false);
+    assert.equal(Object.hasOwn(published.nativeRuntime, 'dispatchAllowed'), false);
+    assert.equal(Object.hasOwn(published.nativeRuntime, 'executionCustodyReleased'), false);
+    assert.equal(JSON.stringify(published).includes('PRIVATE_'), false);
+    assert.deepEqual(projectSovereignControlSystemStatusV1(JSON.parse(JSON.stringify(published))), published);
+    assert.ok(Buffer.byteLength(JSON.stringify(published)) <= SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1);
+    assert.equal(nativeCalls, 1);
+  }
+});
+
+test('missing or private governor subcodes become a closed unavailable diagnostic without coercion', async () => {
+  let coerced = 0;
+  for (const governorHoldCode of [undefined, null, 1, true, [],
+    { toString() { coerced++; return 'PRIVATE_TOKEN'; } }, 'PRIVATE_TOKEN', 'FIXED_RUNTIME_GOVERNOR_PRIVATE_TOKEN']) {
+    const native = { ok: false, reason: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD' };
+    if (governorHoldCode !== undefined) native.governorHoldCode = governorHoldCode;
+    const report = await inspectSovereignControlSystemV1(fixture({ inspectRuntime: () => native }).options);
+    assert.equal(report.nativeRuntime.governorHoldCode, 'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE');
+    assert.equal(report.nativeRuntime.qualificationObserved, false);
+    assert.equal(JSON.stringify(report).includes('PRIVATE_'), false);
+  }
+  assert.equal(coerced, 0);
+});
+
+test('governor diagnostics cannot attach to success, another refusal, accessor input or changed source', async () => {
+  const governorHoldCode = 'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED';
+  let invoked = 0;
+  const accessor = { ok: false, reason: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD' };
+  Object.defineProperty(accessor, 'governorHoldCode', { get() { invoked++; return governorHoldCode; } });
+  for (const native of [accessor, { ok: false, reason: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING', governorHoldCode },
+    { ok: true, sourceHead: HEAD, observedAtUtc: NOW, profiles: [], governorHoldCode }]) {
+    const report = await inspectSovereignControlSystemV1(fixture({ inspectRuntime: () => native }).options);
+    assert.equal(Object.hasOwn(report.nativeRuntime, 'governorHoldCode'), false);
+    assert.equal(Object.hasOwn(projectSovereignControlSystemStatusV1(report).nativeRuntime, 'governorHoldCode'), false);
+  }
+  assert.equal(invoked, 0);
+  let reads = 0;
+  const report = await inspectSovereignControlSystemV1(fixture({
+    readSourceHead: () => ++reads === 1 ? HEAD : 'e'.repeat(40),
+    inspectRuntime: () => ({ ok: false, reason: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD', governorHoldCode }),
+  }).options);
+  assert.equal(report.nativeRuntime.reason, 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED');
+  assert.equal(report.observationCompleted, false);
+  assert.equal(Object.hasOwn(report.nativeRuntime, 'governorHoldCode'), false);
+  assert.equal(Object.hasOwn(projectSovereignControlSystemStatusV1(report).nativeRuntime, 'governorHoldCode'), false);
+});
+
 test('no usable helper or owner-bound health cannot claim a completed observation', async () => {
   const report = await inspectSovereignControlSystemV1(fixture({
     fetchFn: async () => { throw Error('offline'); },

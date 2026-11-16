@@ -33,11 +33,17 @@ export function projectStephanosCoreOnionContinuationV1({
 } = {}) {
   const prior = object(persisted);
   const priorValid = prior.schemaVersion === ONION_CONTINUATION_SCHEMA;
-  const restored = priorValid ? prior : {};
+  const saved = priorValid ? prior : {};
   const live = object(current);
   const hasLive = hasMaterialInput(live);
+  const liveOutcomeId = text(live.originalOutcomeId);
+  // A live explicit parent starts a fresh scope. Even identical boundary IDs
+  // cannot carry another parent's proof, owner, blocker or depth with them.
+  // Absent/same-parent input remains a patch to the retained original outcome.
+  const restored = liveOutcomeId && liveOutcomeId !== text(saved.originalOutcomeId)
+    ? {} : saved;
 
-  const originalOutcomeId = text(live.originalOutcomeId) || text(restored.originalOutcomeId);
+  const originalOutcomeId = liveOutcomeId || text(restored.originalOutcomeId);
   const blocker = text(live.blocker) || text(restored.blocker);
   const priorDepth = nonNegativeInteger(restored.blockerDepth, 0);
   const explicitDepth = Number.isSafeInteger(Number(live.blockerDepth))

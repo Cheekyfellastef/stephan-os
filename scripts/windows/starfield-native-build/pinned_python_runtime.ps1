@@ -96,7 +96,12 @@ function Runtime-CreateDirectory([string]$path) {
     $handle = [Runtime.InteropServices.Marshal]::ReadIntPtr($output)
     if ($status -ne 0 -or $handle -eq [IntPtr]::Zero -or $handle -eq [IntPtr](-1) -or
       [Runtime.InteropServices.Marshal]::ReadIntPtr($statusBlock,8).ToInt64() -ne 2) { Runtime-Deny }
-    if (((Runtime-GrantedAccess $handle) -band 0x1700ab) -ne 0x1700ab) { Runtime-Deny }
+    $granted = Runtime-GrantedAccess $handle
+    if (($granted -band 0x1700ab) -ne 0x1700ab) {
+      $failure = [InvalidOperationException]::new('FIXED_RUNTIME_UNPROVEN')
+      $failure.Data['RuntimePhase'] = 'CREATOR_GRANTED_ACCESS'; $failure.Data['RuntimeNativeCode'] = $granted
+      throw $failure
+    }
     $result=$handle; $handle=[IntPtr]::Zero; return $result
   } finally {
     if ($handle -ne [IntPtr]::Zero -and $handle -ne [IntPtr](-1)) { [void]$native::CloseHandle($handle) }
