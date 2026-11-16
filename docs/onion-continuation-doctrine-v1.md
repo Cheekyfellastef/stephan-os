@@ -49,6 +49,26 @@ It cannot rename a specific Seed outcome or replace that parent's evidence,
 and it cannot clear any requested terminal state, including an incomplete or
 unproven boundary packet.
 
+### Producer identity before durable projection
+
+The real execution producer must bind the validated original command to its
+observed source before any receipt is serialized. A later public formatter can
+display a request ID or source match while the first strict projection has
+already discarded unbound evidence. Core status therefore uses one execution
+envelope for both blocked and successful outcomes, retaining the same typed
+leaf and original verdict through storage and readback. Its existing native
+proof and health gates still decide success; checkout identity does not prove
+loaded bytes, ownership or runtime health.
+
+Regression proof must drive the actual dispatcher and producer with only
+external observation boundaries doubled, then pass the untouched execution
+through the real receipt builder, canonical serialization/checkpoint, disk,
+public/core projections and actual READ dispatcher. An enriched public-shaped
+fixture cannot prove first-write retention. Repeated projection must preserve
+the original result and reject contradictory identity; historical facts lost
+before storage remain absent. This contract is exercised in
+`shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs` and continues #2961.
+
 ### Remaining repair-outcome reconciliation debt under #2961
 
 An unexpected rejection from the background repair can escape the Core's
