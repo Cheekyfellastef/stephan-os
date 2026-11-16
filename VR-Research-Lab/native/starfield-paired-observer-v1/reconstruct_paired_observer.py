@@ -33,6 +33,11 @@ MARKER = "STEPHANOS_PAIRED_OBSERVER_BUILD_PASSED"
 def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
+def relative_member(path, root) -> str:
+    # Manifest and original-byte keys are portable POSIX member names, including
+    # when the filesystem paths are native WindowsPath instances.
+    return path.relative_to(root).as_posix()
+
 def one(text: str, old: str, new: str) -> str:
     if text.count(old) != 1:
         raise ValueError("non-unique transformation anchor")
@@ -191,15 +196,15 @@ def reconstruct(original_root: Path, destination: Path, overlay_bytes: dict[str,
     closure = [original_root / name for name in ORIGINAL_FILES]
     if any(p.is_symlink() or any(parent.is_symlink() for parent in p.parents if parent != original_root.parent) for p in closure):
         raise ValueError("symlink in original compile closure")
-    before = {str(p.relative_to(original_root)): sha(p.read_bytes()) for p in closure}
+    before = {relative_member(p, original_root): sha(p.read_bytes()) for p in closure}
     destination.mkdir(parents=True, exist_ok=False)
     for p in closure:
-        target = destination / p.relative_to(original_root);target.parent.mkdir(parents=True, exist_ok=True);target.write_bytes(original_bytes[str(p.relative_to(original_root))])
+        target = destination / p.relative_to(original_root);target.parent.mkdir(parents=True, exist_ok=True);target.write_bytes(original_bytes[relative_member(p, original_root)])
     for name, data in {**overlay_bytes, **generated}.items():
         (destination / name).write_bytes(data)
     if any(sha((original_root / name).read_bytes()) != digest for name, digest in before.items()):
         raise ValueError("original changed during reconstruction")
-    members = {str(p.relative_to(destination)): {"sha256": sha(p.read_bytes()), "bytes": p.stat().st_size} for p in sorted(destination.rglob("*")) if p.is_file()}
+    members = {relative_member(p, destination): {"sha256": sha(p.read_bytes()), "bytes": p.stat().st_size} for p in sorted(destination.rglob("*")) if p.is_file()}
     return {"schema": 1, "buildCommand": "build-paired-source-observe.cmd", "successMarker": MARKER,
             "artifacts": list(ARTIFACTS), "files": members,
             "originalCompileClosureMembers": len(before), "originalUnchanged": True,

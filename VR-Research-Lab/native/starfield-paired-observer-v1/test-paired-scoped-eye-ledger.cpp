@@ -9,7 +9,7 @@ using Model=eye_capture::ScopedLedger<16>;
 using Source=Model::SourceBinding;
 constexpr Source primary{5001,{101,102,103,104,105}};
 constexpr Source extra{5002,{201,202,203,204,205}};
-constexpr std::array<Source,2> sources{primary,extra};
+constexpr std::array<Source,2> fixtureSources{primary,extra};
 std::atomic<unsigned> checks{0};
 unsigned cases=0;
 const char* currentCase="setup";
@@ -19,15 +19,15 @@ void Check(bool result,const char* expression,int line) {
 }
 #define CHECK(value) Check(bool(value),#value,__LINE__)
 template<class F> void Case(const char* name,F test){currentCase=name;test();++cases;}
-struct Paired:Model {Paired(){CHECK(BindPairedSources(sources));}};
+struct Paired:Model {Paired(){CHECK(BindPairedSources(fixtureSources));}};
 void Prepare(Paired& m,uintptr_t list,unsigned eye,bool transition=true) {
     m.Reset(list,true);
-    if(transition)m.BarrierForSource(list,eye,sources[eye],1024,4,true);
-    m.TargetsForSource(list,eye,sources[eye]);
+    if(transition)m.BarrierForSource(list,eye,fixtureSources[eye],1024,4,true);
+    m.TargetsForSource(list,eye,fixtureSources[eye]);
 }
 Model::Ticket Begin(Paired& m,uintptr_t list,unsigned eye,uint64_t serial=1,uint32_t counter=9,uint32_t thread=1) {
     if(!m.BeginOperation(list,serial,thread))return {};
-    auto ticket=m.BeginDraw(list,counter,eye,thread,serial,sources[eye].binding);
+    auto ticket=m.BeginDraw(list,counter,eye,thread,serial,fixtureSources[eye].binding);
     if(!ticket.list)m.EndOperation(list,serial,thread);
     return ticket;
 }
@@ -64,7 +64,7 @@ uintptr_t Field(const Source& source,unsigned field) {
 }
 int main() {
     Case("paired sources and recording retirement",[]{
-        Paired m;CHECK(m.BindPairedSources(sources));
+        Paired m;CHECK(m.BindPairedSources(fixtureSources));
         const auto first=Record(m,8,0,1);CHECK(first.sourceCanonical==primary.canonical);
         CHECK(first.sourceCanonical!=first.binding.resource);Submit(m,8,2);
         const uintptr_t unrelated[]={30,31};
@@ -116,9 +116,9 @@ int main() {
     });
     Case("ambiguous or missing registration fields",[]{
         for(unsigned field=0;field<6;++field) {
-            Model alias;auto pair=sources;pair[1]=Change(extra,field,Field(primary,field));
+            Model alias;auto pair=fixtureSources;pair[1]=Change(extra,field,Field(primary,field));
             CHECK(!alias.BindPairedSources(pair) && alias.Get().invalid);
-            Model missing;pair=sources;pair[0]=Change(primary,field,0);
+            Model missing;pair=fixtureSources;pair[0]=Change(primary,field,0);
             CHECK(!missing.BindPairedSources(pair) && missing.Get().invalid);
         }
     });
@@ -126,8 +126,8 @@ int main() {
         Paired target;Prepare(target,8,0);target.TargetsForSource(8,0,extra);CHECK(target.Get().invalid);
         Paired barrier;Prepare(barrier,8,0);barrier.BarrierForSource(8,0,extra,4,128,true);CHECK(barrier.Get().invalid);
         Paired swapped;CHECK(!swapped.BindPairedSources({extra,primary}));
-        CHECK(swapped.Get().invalid && !swapped.BindPairedSources(sources));
-        Paired changed;auto pair=sources;pair[1].binding.handle=9999;
+        CHECK(swapped.Get().invalid && !swapped.BindPairedSources(fixtureSources));
+        Paired changed;auto pair=fixtureSources;pair[1].binding.handle=9999;
         CHECK(!changed.BindPairedSources(pair) && changed.Get().invalid);
     });
     Case("legacy paired API mixing fails closed",[]{
@@ -137,7 +137,7 @@ int main() {
         CHECK(target.Get().invalid && !Begin(target,8,0).list);
         Paired clear;Prepare(clear,8,0);clear.Targets(8,{});CHECK(clear.Get().invalid);
         Paired paired;CHECK(!paired.BindSource(primary.canonical));
-        Model shared;CHECK(shared.BindSource(primary.canonical));CHECK(!shared.BindPairedSources(sources));
+        Model shared;CHECK(shared.BindSource(primary.canonical));CHECK(!shared.BindPairedSources(fixtureSources));
         Model tagged;CHECK(tagged.BindSource(primary.canonical));tagged.Reset(8,true);
         tagged.BarrierForSource(8,0,primary,1024,4,true);CHECK(tagged.Get().invalid);
     });
@@ -250,7 +250,7 @@ int main() {
         Paired m;Prepare(m,8,0);CHECK(m.BeginOperation(8,1,1));
         std::thread contender([&]{CHECK(!m.BeginOperation(8,2,2));});contender.join();
         CHECK(!m.BeginDraw(8,9,0,1,1,primary.binding).list);m.EndOperation(8,1,1);
-        CHECK(m.Get().invalid && !m.BindPairedSources(sources) && !m.BeginOperation(8,3,1));
+        CHECK(m.Get().invalid && !m.BindPairedSources(fixtureSources) && !m.BeginOperation(8,3,1));
     });
     Case("overlap after reservation revokes copy permission",[]{
         Paired m;Prepare(m,8,0);auto ticket=Begin(m,8,0);CHECK(ticket.list);

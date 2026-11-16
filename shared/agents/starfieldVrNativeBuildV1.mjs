@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { win32 } from 'node:path';
 import { inspectStephanosNativeCapacityGamingAdmissionV1 } from './stephanosNativeCapacityGamingAdmissionV1.mjs';
 
@@ -10,6 +10,8 @@ export const STARFIELD_VR_NATIVE_BUILD_RECIPE = 'VR-Research-Lab/native/starfiel
 const RUNNER = 'scripts/windows/starfield-native-build/native_build.py';
 const OWNED_JOB = 'scripts/windows/starfield-native-build/owned_job.py';
 const LAUNCHER = 'scripts/windows/starfield-native-build/start_native_build.ps1';
+const RUNTIME_MODULE = 'scripts/windows/starfield-native-build/pinned_python_runtime.ps1';
+const RUNTIME_MANIFEST = 'scripts/windows/starfield-native-build/python_runtime_v1.json';
 const SHA = /^[a-f0-9]{40}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const REQUEST = /^[a-z0-9][a-z0-9-]{7,95}$/;
@@ -25,8 +27,8 @@ const FALSE_CLAIMS = Object.freeze({
   pixelsCaptured: false, gpuCommandsIssued: false, openXrSubmitted: false, headsetPlaytestReady: false,
 });
 
-// A fixed Windows PowerShell bootstrap selects and pins the installed signed
-// Python image. Both scripts execute the verified in-memory Git source closure;
+// A fixed Windows PowerShell bootstrap authenticates the complete, fixed
+// 37-member PSF Python runtime. Scripts execute the verified in-memory Git source closure;
 // neither resolves an interpreter through the repository or inherited PATH.
 
 function fail(blocker, details = {}) {
@@ -35,6 +37,32 @@ function fail(blocker, details = {}) {
 }
 function options(cwd, timeout = 30_000) {
   return { cwd, shell: false, windowsHide: true, timeout, encoding: 'utf8', maxBuffer: MAX_MEMBER + 8192 };
+}
+function runLauncher(executable, args, { input, ...launchOptions }) {
+  // Only the fixed, source-verified PowerShell launch below reaches this local
+  // helper. Async process I/O leaves the canonical mailbox heartbeat runnable.
+  return new Promise(resolve => {
+    let child; let inputFailed = false; let inputFinished = false;
+    const failInput = () => {
+      inputFailed = true;
+      try { child?.kill(); } catch { /* An unproven terminal never releases custody. */ }
+    };
+    try {
+      child = execFile(executable, args, launchOptions, (error, stdout, stderr) => {
+        // execFile reports an ordinary nonzero exit through error.code. A
+        // timeout, output overflow, signal or stream fault is not an exit code.
+        const status = !error ? 0 : Number.isInteger(error.code) && !error.killed && !error.signal ? error.code : null;
+        resolve({ status, stdout, stderr,
+          ...(status === null || inputFailed || !inputFinished ? { error: true } : {}) });
+      });
+      if (!child.stdin) { failInput(); return; }
+      child.stdin.once('error', failInput);
+      child.stdin.once('finish', () => { inputFinished = true; });
+      child.stdin.end(input, 'utf8');
+    } catch {
+      failInput(); resolve({ status: null, error: true });
+    }
+  });
 }
 function gitOptions(repoRoot, env) {
   const sanitized = {};
@@ -162,7 +190,7 @@ export function projectStarfieldVrNativeBuildReceipt(value, expectedHead, reques
 }
 
 export async function executeStarfieldVrNativeBuild(command, paths, {
-  spawnSyncFn = spawnSync, env = process.env, parentPid = process.pid,
+  spawnSyncFn = spawnSync, runLauncherFn = runLauncher, env = process.env, parentPid = process.pid,
   admissionFn = inspectStephanosNativeCapacityGamingAdmissionV1,
 } = {}) {
   const head = command?.expectedHead;
@@ -182,7 +210,7 @@ export async function executeStarfieldVrNativeBuild(command, paths, {
     recipe = json(recipeBlob.bytes.toString('utf8'));
     if (!validateStarfieldVrNativeBuildRecipe(recipe)) return fail('STARFIELD_VR_NATIVE_BUILD_RECIPE_INVALID');
     records = { [STARFIELD_VR_NATIVE_BUILD_RECIPE]: recipeBlob.record };
-    for (const path of [RUNNER, OWNED_JOB, LAUNCHER, ...recipe.publicMembers.map(row => row.path)]) {
+    for (const path of [RUNNER, OWNED_JOB, LAUNCHER, RUNTIME_MODULE, RUNTIME_MANIFEST, ...recipe.publicMembers.map(row => row.path)]) {
       const blob = readBlob(path);
       const expected = recipe.publicMembers.find(row => row.path === path);
       if (expected && expected.sha256 !== blob.record.sha256) return fail('STARFIELD_VR_NATIVE_BUILD_RECIPE_SOURCE_MISMATCH');
@@ -204,14 +232,24 @@ export async function executeStarfieldVrNativeBuild(command, paths, {
   if (encoded.length > 32000) return fail('STARFIELD_VR_NATIVE_BUILD_LAUNCHER_BOUND');
   const launcherEnv = { ...gitOptions(paths.repoRoot, env).env,
     PSModulePath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules' };
-  const result = spawnSyncFn(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], {
-    ...options('C:\\Windows\\System32', 690_000), env: launcherEnv,
-    input: JSON.stringify(packet), maxBuffer: 64 * 1024,
-  });
+  let result;
+  try {
+    result = await runLauncherFn(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], {
+      ...options('C:\\Windows\\System32', 690_000), env: launcherEnv,
+      input: JSON.stringify(packet), maxBuffer: 64 * 1024,
+    });
+  } catch { result = { status: null, error: true }; }
   if (result?.error || ![0, 2, 3].includes(result?.status)) return fail('STARFIELD_VR_NATIVE_BUILD_TERMINAL_UNPROVEN', {
     executionCustodyReleased: false, sourceHead: head, expectedHead: head,
   });
-  const proof = projectStarfieldVrNativeBuildReceipt(json(result.stdout), head, requestId);
+  const terminal = json(result.stdout);
+  if ([2, 3].includes(result.status) && terminal?.schemaVersion === 'stephanos.starfield-native-build-launcher.v1'
+    && terminal.finalVerdict === 'STARFIELD_VR_NATIVE_BUILD_BLOCKED' && terminal.executionCustodyReleased === false
+    && typeof terminal.reason === 'string'
+    && /^FIXED_PYTHON_(?:INPUT|OWNER|RUNTIME|SELECTION|START|IMAGE|EXECUTION|TERMINAL)_UNPROVEN$/.test(terminal.reason)) {
+    return fail(terminal.reason, { executionCustodyReleased: false, sourceHead: head, expectedHead: head });
+  }
+  const proof = projectStarfieldVrNativeBuildReceipt(terminal, head, requestId);
   if (!proof || proof.sourceClosureSha256 !== closureSha256 || proof.recipeSha256 !== records[STARFIELD_VR_NATIVE_BUILD_RECIPE].sha256
     || (proof.finalVerdict === 'STARFIELD_VR_NATIVE_BUILD_PASSED') !== (result.status === 0)) return fail('STARFIELD_VR_NATIVE_BUILD_RECEIPT_INVALID', { executionCustodyReleased: false });
   return Object.freeze({ ok: proof.finalVerdict === 'STARFIELD_VR_NATIVE_BUILD_PASSED',

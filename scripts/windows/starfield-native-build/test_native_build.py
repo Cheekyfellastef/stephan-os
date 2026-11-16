@@ -41,6 +41,7 @@ def closure(packet):
 def packet_fixture():
     payload = {build.ENTRY: b"# entry fixture\n", build.JOB: b"# job fixture\n",
                build.LAUNCHER: b"# launcher fixture\n", build.BUILDER: b"# builder fixture\n",
+               build.RUNTIME_MODULE: b"# fixed runtime fixture only\n", build.RUNTIME_MANIFEST: b"{}\n",
                build.PACKAGE + "model.h": b"#pragma once\n",
                build.PACKAGE + "test_model.cpp": b"int main(){return 0;}\n"}
     recipe = {"schemaVersion": "stephanos.starfield-native-build-recipe.v1", "stage": build.STAGE,
@@ -71,7 +72,7 @@ class PacketTests(unittest.TestCase):
     def test_exact_packet_and_git_blob_binding(self):
         packet = packet_fixture();verified, recipe = build.validate_packet(packet)
         self.assertEqual(set(verified), set(packet["files"]))
-        self.assertEqual(len(verified), 7)
+        self.assertEqual(len(verified), 9)
         self.assertEqual(recipe["originalPackageSha256"], build.ORIGINAL_PACKAGE)
 
     def test_duplicate_json_fields_and_nonfinite_values(self):
@@ -117,6 +118,25 @@ class PacketTests(unittest.TestCase):
             else:recipe["publicMembers"][0]["sha256"] = "b" * 64
             packet["files"][build.RECIPE] = record(json.dumps(recipe).encode());closure(packet)
             with self.subTest(mode=mode), self.assertRaises(build.BuildBlocked):build.validate_packet(packet)
+
+    def test_runtime_members_missing_or_tampered_are_refused(self):
+        for member in (build.RUNTIME_MODULE, build.RUNTIME_MANIFEST):
+            packet = packet_fixture()
+            recipe = json.loads(base64.b64decode(packet["files"][build.RECIPE]["base64"]))
+            extra = build.PACKAGE + "additional_fixture.h"
+            packet["files"][extra] = record(b"// synthetic fixture\n")
+            recipe["publicMembers"].append({"path": extra, "sha256": packet["files"][extra]["sha256"]})
+            packet["files"][build.RECIPE] = record(json.dumps(recipe).encode())
+            del packet["files"][member];closure(packet)
+            # The packet still meets the nine-member lower bound: refusal must
+            # come from the missing fixed runtime member, not its total count.
+            self.assertEqual(len(packet["files"]), 9)
+            with self.subTest(member=member, fault="missing"), self.assertRaisesRegex(build.BuildBlocked, "SOURCE_CLOSURE_BOUND"):
+                build.validate_packet(packet)
+            packet = packet_fixture()
+            packet["files"][member]["base64"] = base64.b64encode(b"tampered runtime bytes\n").decode()
+            with self.subTest(member=member, fault="changed_bytes"), self.assertRaisesRegex(build.BuildBlocked, "SOURCE_BYTES_CHANGED"):
+                build.validate_packet(packet)
 
 
 class FilesAndGamingTests(unittest.TestCase):
@@ -237,7 +257,7 @@ class PortableCustodyTests(unittest.TestCase):
                 active.bind({"root_pid": 200, "root_created_filetime": "133000000000000003", "assigned_before_execution": True})
                 saved = json.loads(active.path.read_text());self.assertEqual(saved["state"], "ROOT_SUSPENDED_IN_OWNED_JOB")
                 active.finish({"finalVerdict": "STARFIELD_VR_NATIVE_BUILD_CUSTODY_HELD", "executionCustodyReleased": False,
-                               "allJobsEmpty": False, "originalSourceUnchanged": True})
+                               "allJobsEmpty": False, "originalSourceUnchanged": True, "terminalFinalized": False})
                 self.assertEqual(active.path.stat().st_ino, identity.st_ino)
                 self.assertIs(json.loads(active.path.read_text())["executionCustodyReleased"], False)
                 with self.assertRaises(build.BuildBlocked):build.ActiveBuild(directory, packet)
@@ -283,7 +303,10 @@ class PortableOrchestrationModelTests(unittest.TestCase):
             for index in range(5):
                 name = f"source{index}.h";raw = f"original {index}".encode();(original / name).write_bytes(raw)
                 records[name] = {"sha256": build.digest(raw), "bytes": len(raw)}
-            observed = {"nativeCalls": 0, "mockStageCalls": 0, "pendingReceipts": []}
+            proposal_path = builds / packet["requestId"] / "build-terminal-proposal.json"
+            observed = {"nativeCalls": 0, "mockStageCalls": 0, "events": [], "released": False,
+                        "proposalFlushed": False, "proposalSynced": False, "proposalClosed": False,
+                        "postReleaseWrites": 0, "faults": 0}
 
             class Proxy:
                 def __init__(self, target, **values):self.target = target;self.values = values
@@ -297,19 +320,63 @@ class PortableOrchestrationModelTests(unittest.TestCase):
                     return raw
                 def close(self):pass
 
+            class ProposalStreamModel:
+                """Real temporary file with explicit persistent I/O fault seams."""
+                def __init__(self, stream):self.stream = stream
+                def __getattr__(self, name):return getattr(self.stream, name)
+                def __enter__(self):return self
+                def __exit__(self, *_):self.close()
+                def write(self, raw):
+                    if observed["released"]:observed["postReleaseWrites"] += 1
+                    observed["events"].append("proposal_write")
+                    observed["proposalFlushed"] = observed["proposalSynced"] = False
+                    if mode == "proposal_write_failure":
+                        self.stream.write(raw[:max(1, len(raw) // 2)]);observed["faults"] += 1
+                        raise OSError("Explicit persistent proposal-write fault")
+                    return self.stream.write(raw)
+                def truncate(self, *args):
+                    if observed["released"]:observed["postReleaseWrites"] += 1
+                    observed["proposalFlushed"] = observed["proposalSynced"] = False
+                    return self.stream.truncate(*args)
+                def flush(self):
+                    if observed["released"]:observed["postReleaseWrites"] += 1
+                    self.stream.flush()
+                    if mode == "proposal_flush_failure":
+                        observed["faults"] += 1
+                        raise OSError("Explicit persistent proposal-flush fault")
+                    observed["proposalFlushed"] = True;observed["events"].append("proposal_flush")
+                def close(self):
+                    self.stream.close()
+                    if mode == "proposal_close_failure":
+                        observed["faults"] += 1
+                        raise OSError("Explicit persistent proposal-close fault")
+                    observed["proposalClosed"] = True;observed["events"].append("proposal_close")
+
             class CustodyModel:
                 def __init__(self, directory, admitted):
                     self.path = directory / "active.json";self.record = {"state": "RESERVED", "executionCustodyReleased": False}
-                    with self.path.open("xb") as stream:stream.write(json.dumps(self.record).encode())
-                def write(self):self.path.write_text(json.dumps(self.record))
+                    try:
+                        with self.path.open("xb") as stream:stream.write(json.dumps(self.record).encode())
+                    except FileExistsError as error:raise build.BuildBlocked("MODEL_PRIOR_OWNER_HELD") from error
+                def write(self):
+                    if observed["released"]:observed["postReleaseWrites"] += 1
+                    self.path.write_text(json.dumps(self.record))
                 def bind(self, identity):self.record.update(state="ROOT_SUSPENDED_IN_OWNED_JOB", root=dict(identity));self.write();return True
                 def finish(self, receipt):
-                    terminal = builds / packet["requestId"] / "build-receipt.json"
-                    if terminal.exists():observed["pendingReceipts"].append(json.loads(terminal.read_text()))
-                    if mode == "finalize_failure":raise build.BuildBlocked("MODEL_CUSTODY_FINALIZATION_FAILED")
-                    self.record.update(state=receipt["finalVerdict"], executionCustodyReleased=receipt["executionCustodyReleased"])
+                    observed["events"].append("owner_finish")
+                    release = (receipt["executionCustodyReleased"] is True and receipt["allJobsEmpty"] is True
+                               and receipt["originalSourceUnchanged"] is True and receipt.get("terminalFinalized") is True)
+                    if release:
+                        self.assert_durable_proposal()
+                    self.record.update(state="RELEASE_PENDING" if release else receipt["finalVerdict"], executionCustodyReleased=False)
                     self.write()
-                    if receipt["executionCustodyReleased"] and receipt["allJobsEmpty"] and receipt["originalSourceUnchanged"]:self.path.unlink()
+                    if mode == "finalize_failure":raise build.BuildBlocked("MODEL_CUSTODY_FINALIZATION_FAILED")
+                    if release:
+                        self.path.unlink();observed["released"] = True;observed["events"].append("owner_release")
+                    return release
+                def assert_durable_proposal(self):
+                    if not all(observed[key] for key in ("proposalFlushed", "proposalSynced", "proposalClosed")):
+                        raise AssertionError("Owner release preceded durable proposal close")
                 def close(self):pass
 
             def reconstruct(_original, destination, _overlay):
@@ -342,16 +409,25 @@ class PortableOrchestrationModelTests(unittest.TestCase):
 
             job = types.SimpleNamespace(observe_parent_identity=lambda *_: {"ok": True, "alive": True}, run_owned_stage=mock_stage)
             builder = types.SimpleNamespace(ORIGINAL_FILES=records, reconstruct=reconstruct)
-            real_os, real_sys = build.os, build.sys
+            real_os, real_sys, real_path_open = build.os, build.sys, Path.open
+
+            def open_model(path, *args, **kwargs):
+                stream = real_path_open(path, *args, **kwargs)
+                access = args[0] if args else kwargs.get("mode", "r")
+                if path == proposal_path and any(flag in access for flag in "wax+"):
+                    return ProposalStreamModel(stream)
+                return stream
 
             def fsync_model(fd):
-                terminal = builds / packet["requestId"] / "build-receipt.json"
-                if mode == "terminal_final_fsync_failure" and terminal.exists():
-                    opened, current = real_os.fstat(fd), terminal.stat()
+                if observed["released"]:observed["postReleaseWrites"] += 1
+                if proposal_path.exists():
+                    opened, current = real_os.fstat(fd), proposal_path.stat()
                     if (opened.st_ino, opened.st_dev) == (current.st_ino, current.st_dev):
-                        persisted = json.loads(terminal.read_text())
-                        if persisted.get("terminalFinalized") is True:
-                            raise OSError("Explicit portable terminal-fsync fault")
+                        if mode == "proposal_fsync_failure":
+                            observed["faults"] += 1
+                            raise OSError("Explicit persistent proposal-fsync fault")
+                        real_os.fsync(fd);observed["proposalSynced"] = True
+                        observed["events"].append("proposal_fsync");return
                 return real_os.fsync(fd)
 
             with ExitStack() as stack:
@@ -362,59 +438,76 @@ class PortableOrchestrationModelTests(unittest.TestCase):
                 stack.enter_context(patch.object(build, "ActiveBuild", CustodyModel))
                 stack.enter_context(patch.object(build, "toolchain", return_value=(root / "fixture-cl.exe", {"fixture": "not-native"})))
                 stack.enter_context(patch.object(build, "load_verified", side_effect=lambda _name, path, _raw: job if path == build.JOB else builder))
+                stack.enter_context(patch.object(Path, "open", open_model))
                 receipt = build.run_build(packet, verified)
-            terminal = builds / packet["requestId"] / "build-receipt.json"
-            saved = json.loads(terminal.read_text()) if terminal.exists() else None
+            try:saved = json.loads(proposal_path.read_text()) if proposal_path.exists() else None
+            except (ValueError, UnicodeError):saved = None
             owner_path = builds / "active.json";owner = json.loads(owner_path.read_text()) if owner_path.exists() else None
+            if owner is not None:
+                with self.assertRaises(build.BuildBlocked):CustodyModel(builds, packet)
             self.assertEqual(observed["nativeCalls"], 0)
             self.assertEqual(observed["mockStageCalls"], 1)
+            self.assertEqual(observed["postReleaseWrites"], 0)
+            self.assertFalse((builds / packet["requestId"] / "build-receipt.json").exists())
             for field in build.FALSE_CLAIMS:self.assertIs(receipt[field], False)
-            for pending in observed["pendingReceipts"]:
-                self.assertIs(pending["terminalFinalized"], False)
-                self.assertIs(pending["executionCustodyReleased"], False)
-                self.assertEqual(pending["finalVerdict"], "STARFIELD_VR_NATIVE_BUILD_CUSTODY_HELD")
-            return receipt, saved, owner
+            if saved is not None:
+                self.assertEqual(saved["schemaVersion"], "stephanos.starfield-native-build-terminal-proposal.v1")
+                self.assertEqual(saved["sourceHead"], packet["sourceHead"]);self.assertEqual(saved["requestId"], packet["requestId"])
+                self.assertNotIn("finalVerdict", saved)
+                self.assertEqual(saved["candidate"]["schemaVersion"], build.SCHEMA)
+            return receipt, saved, owner, observed
 
     def test_portable_mock_models_successful_control_flow_only(self):
-        receipt, saved, owner = self.exercise("success")
+        receipt, saved, owner, observed = self.exercise("success")
         self.assertEqual(receipt["finalVerdict"], "STARFIELD_VR_NATIVE_BUILD_PASSED")
-        self.assertIs(receipt["terminalFinalized"], True);self.assertEqual(saved, receipt);self.assertIsNone(owner)
+        self.assertIs(receipt["terminalFinalized"], True);self.assertIsNone(owner)
+        self.assertEqual(saved["candidate"]["sourceHead"], receipt["sourceHead"])
+        events = observed["events"]
+        self.assertLess(events.index("proposal_write"), events.index("proposal_flush"))
+        self.assertLess(events.index("proposal_flush"), events.index("proposal_fsync"))
+        self.assertLess(events.index("proposal_fsync"), events.index("proposal_close"))
+        self.assertLess(events.index("proposal_close"), events.index("owner_release"))
         self.assertEqual([r["name"] for r in receipt["artifacts"]], list(build.EXPECTED_ARTIFACTS))
 
     def test_missing_marker_exit_and_artifact_never_pass(self):
         for mode in ("missing_marker", "unknown_exit", "boolean_exit", "float_exit", "missing_artifact"):
             with self.subTest(mode=mode):
-                receipt, saved, _ = self.exercise(mode)
+                receipt, saved, _, _ = self.exercise(mode)
                 self.assertNotEqual(receipt["finalVerdict"], "STARFIELD_VR_NATIVE_BUILD_PASSED")
-                self.assertEqual(saved, receipt)
+                self.assertEqual(saved["candidate"]["finalVerdict"], receipt["finalVerdict"])
 
     def test_truthy_proof_flags_never_pass(self):
         for field in ("operation_ok", "root_exited", "zero_active_processes_observed", "custody_released", "output_complete"):
             with self.subTest(field=field):
-                receipt, saved, _ = self.exercise("truthy_" + field)
+                receipt, saved, _, _ = self.exercise("truthy_" + field)
                 self.assertNotEqual(receipt["finalVerdict"], "STARFIELD_VR_NATIVE_BUILD_PASSED")
-                self.assertEqual(saved, receipt)
+                self.assertEqual(saved["candidate"]["finalVerdict"], receipt["finalVerdict"])
 
-    def test_terminal_fsync_failure_never_leaves_authoritative_pass(self):
-        receipt, saved, _ = self.exercise("terminal_final_fsync_failure")
-        self.assertEqual(receipt["finalVerdict"], "STARFIELD_VR_NATIVE_BUILD_CUSTODY_HELD")
-        self.assertIs(receipt["executionCustodyReleased"], False)
-        self.assertFalse(saved.get("terminalFinalized") is True
-                         and saved.get("finalVerdict") == "STARFIELD_VR_NATIVE_BUILD_PASSED")
+    def test_persistent_proposal_io_failures_keep_original_owner_and_refuse_readmission(self):
+        for mode in ("proposal_write_failure", "proposal_flush_failure", "proposal_fsync_failure", "proposal_close_failure"):
+            with self.subTest(mode=mode):
+                receipt, saved, owner, observed = self.exercise(mode)
+                self.assertEqual(receipt["finalVerdict"], "STARFIELD_VR_NATIVE_BUILD_CUSTODY_HELD")
+                self.assertIs(receipt["executionCustodyReleased"], False)
+                self.assertIs(receipt["terminalFinalized"], False)
+                self.assertIsNotNone(owner);self.assertIs(owner["executionCustodyReleased"], False)
+                self.assertGreater(observed["faults"], 0);self.assertFalse(observed["released"])
+                if saved is not None:self.assertNotEqual(saved["schemaVersion"], build.SCHEMA)
 
     def test_source_recheck_failure_keeps_owner(self):
-        receipt, saved, owner = self.exercise("source_changed")
+        receipt, saved, owner, _ = self.exercise("source_changed")
         self.assertIs(receipt["originalSourceUnchanged"], False)
         self.assertNotEqual(receipt["finalVerdict"], "STARFIELD_VR_NATIVE_BUILD_PASSED")
-        self.assertEqual(saved, receipt);self.assertIsNotNone(owner)
+        self.assertIs(saved["candidate"]["originalSourceUnchanged"], False);self.assertIsNotNone(owner)
 
     def test_custody_and_finalization_failures_persist_held_truth(self):
         for mode in ("custody_held", "finalize_failure"):
             with self.subTest(mode=mode):
-                receipt, saved, owner = self.exercise(mode)
+                receipt, saved, owner, observed = self.exercise(mode)
                 self.assertEqual(receipt["finalVerdict"], "STARFIELD_VR_NATIVE_BUILD_CUSTODY_HELD")
                 self.assertIs(receipt["executionCustodyReleased"], False)
-                self.assertEqual(saved, receipt);self.assertIs(owner["executionCustodyReleased"], False)
+                self.assertIs(owner["executionCustodyReleased"], False);self.assertFalse(observed["released"])
+                self.assertNotEqual(saved["schemaVersion"], build.SCHEMA)
 
 
 @unittest.skipUnless(os.name == "nt" and ctypes.sizeof(ctypes.c_void_p) == 8, "Actual Windows file-sharing/deletion semantics required")
@@ -442,7 +535,7 @@ class WindowsNativeCustodyTests(unittest.TestCase):
             with self.assertRaises(OSError):active.path.rename(self.root / "moved.json")
             with self.assertRaises(build.BuildBlocked):build.ActiveBuild(self.root, packet_fixture())
             active.finish({"finalVerdict": "STARFIELD_VR_NATIVE_BUILD_PASSED", "executionCustodyReleased": True,
-                           "allJobsEmpty": True, "originalSourceUnchanged": True})
+                           "allJobsEmpty": True, "originalSourceUnchanged": True, "terminalFinalized": True})
             self.assertFalse(active.path.exists())
         finally:active.close()
 
@@ -451,7 +544,7 @@ class WindowsNativeCustodyTests(unittest.TestCase):
         try:
             with patch.object(active.kernel, "SetFileInformationByHandle", return_value=False):
                 with self.assertRaises(build.BuildBlocked):active.finish({"finalVerdict": "STARFIELD_VR_NATIVE_BUILD_PASSED",
-                    "executionCustodyReleased": True, "allJobsEmpty": True, "originalSourceUnchanged": True})
+                    "executionCustodyReleased": True, "allJobsEmpty": True, "originalSourceUnchanged": True, "terminalFinalized": True})
             self.assertTrue(active.path.exists());self.assertEqual(active.path.stat().st_ino, identity.st_ino)
             # The enclosing run_build recovery records held status. Here the
             # direct method test proves physical same-owner exclusion on failure.
@@ -462,10 +555,44 @@ class WindowsNativeCustodyTests(unittest.TestCase):
         active = build.ActiveBuild(self.root, packet_fixture());identity = active.identity
         try:
             active.finish({"finalVerdict": "STARFIELD_VR_NATIVE_BUILD_CUSTODY_HELD", "executionCustodyReleased": False,
-                           "allJobsEmpty": False, "originalSourceUnchanged": True})
+                           "allJobsEmpty": False, "originalSourceUnchanged": True, "terminalFinalized": True})
             self.assertEqual(active.path.stat().st_ino, identity.st_ino)
             with self.assertRaises(build.BuildBlocked):build.ActiveBuild(self.root, packet_fixture())
         finally:active.close()
+
+    def test_missing_terminal_finalization_keeps_native_lock(self):
+        active = build.ActiveBuild(self.root, packet_fixture());identity = active.identity
+        try:
+            active.finish({"finalVerdict": "STARFIELD_VR_NATIVE_BUILD_PASSED", "executionCustodyReleased": True,
+                           "allJobsEmpty": True, "originalSourceUnchanged": True, "terminalFinalized": False})
+            self.assertEqual(active.path.stat().st_ino, identity.st_ino)
+            with self.assertRaises(build.BuildBlocked):build.ActiveBuild(self.root, packet_fixture())
+        finally:active.close()
+
+    def test_data_stream_close_failure_keeps_native_keeper_exclusion(self):
+        active = build.ActiveBuild(self.root, packet_fixture());identity = active.identity
+        original_stream = active.stream
+
+        class CloseFailure:
+            def __getattr__(self, name):return getattr(original_stream, name)
+            def close(self):
+                original_stream.close()
+                raise OSError("Native fixture: data stream closed before close error")
+
+        active.stream = CloseFailure()
+        try:
+            with self.assertRaises((build.BuildBlocked, OSError)):
+                active.finish({"finalVerdict": "STARFIELD_VR_NATIVE_BUILD_PASSED", "executionCustodyReleased": True,
+                               "allJobsEmpty": True, "originalSourceUnchanged": True, "terminalFinalized": True})
+            self.assertTrue(original_stream.closed)
+            self.assertTrue(active.path.exists());self.assertEqual(active.path.stat().st_ino, identity.st_ino)
+            with self.assertRaises(OSError):active.path.rename(self.root / "stolen-owner.json")
+            with self.assertRaises(OSError):active.path.unlink()
+            with self.assertRaises(build.BuildBlocked):build.ActiveBuild(self.root, packet_fixture())
+        finally:
+            active.stream = original_stream
+            active.close()
+        self.assertTrue(active.path.exists())
 
 
 if __name__ == "__main__":unittest.main()

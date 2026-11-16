@@ -66,6 +66,12 @@ jobs:
         run: |
           python -I -S -B -m unittest discover -s scripts/windows/starfield-native-build -p 'test_*.py' -v
           if ($LASTEXITCODE -ne 0) { throw 'STARFIELD_NATIVE_BUILD_WINDOWS_TEST_FAILED' }
+      - name: Verify nested reconstruction under actual Windows path semantics
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          python -I -S -B VR-Research-Lab/native/starfield-paired-observer-v1/test-paired-source-observer-source.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'STARFIELD_OBSERVER_WINDOWS_SOURCE_TEST_FAILED' }
       - name: Parse the fixed Windows PowerShell bootstrap
         if: ${{ !cancelled() }}
         shell: powershell

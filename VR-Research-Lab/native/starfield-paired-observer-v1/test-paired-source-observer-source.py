@@ -1,13 +1,19 @@
 import importlib.util
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 import tempfile
 import hashlib
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("analyzer", ROOT / "analyze-paired-source-observation.py")
 analyzer = importlib.util.module_from_spec(spec);spec.loader.exec_module(analyzer)
+
+def load_builder():
+    spec = importlib.util.spec_from_file_location("builder", ROOT / "reconstruct_paired_observer.py")
+    builder = importlib.util.module_from_spec(spec);spec.loader.exec_module(builder)
+    return builder
 
 class SourceTests(unittest.TestCase):
     def test_no_native_copy_authority(self):
@@ -72,11 +78,52 @@ class SourceTests(unittest.TestCase):
         self.assertFalse(result["errors"]);self.assertEqual(result["diagnosticLocalWitnessCounts"], [0, 0]);self.assertFalse(result["pixelAuthority"])
 
     def test_build_overlay_member_contract(self):
-        spec = importlib.util.spec_from_file_location("builder", ROOT / "reconstruct_paired_observer.py")
-        builder = importlib.util.module_from_spec(spec);spec.loader.exec_module(builder)
+        builder = load_builder()
         self.assertEqual(len(builder.ORIGINAL_FILES), 95)
         self.assertEqual(len(builder.ARTIFACTS), 5)
         self.assertEqual(hashlib.sha256((ROOT / "scoped-eye-ledger.h").read_bytes()).hexdigest(), builder.PAIRED_LEDGER)
         self.assertEqual(set(builder.MEMBERS), {p.name for p in ROOT.iterdir() if p.name in builder.MEMBERS})
+
+    def test_windows_nested_member_keys_use_manifest_identity(self):
+        builder = load_builder()
+        root = PureWindowsPath(r"C:\owned-fixture\original")
+        name = "vendor/minhook/src/hde/fixture.c"
+        path = root / name
+        contents = {name: b"synthetic nested source; no private payload\n"}
+        # PureWindowsPath reproduces the original failure even on Linux:
+        # str(relative_to(...)) has backslashes and is not the manifest key.
+        self.assertNotIn(str(path.relative_to(root)), contents)
+        self.assertEqual(contents[builder.relative_member(path, root)], contents[name])
+        self.assertEqual(builder.relative_member(path, root), name)
+
+    def test_synthetic_nested_reconstruction_preserves_bytes_and_posix_receipt(self):
+        # Run the real filesystem copying/receipt code on every host, including
+        # Windows CI. Only the proprietary source transformations are replaced.
+        # This is a reconstruction fixture, not native compilation proof.
+        builder = load_builder()
+        originals = {
+            "test-scoped-eye-ledger.cpp": (ROOT / "test-scoped-eye-ledger.cpp").read_bytes(),
+            "vendor/minhook/include/fixture.h": b"// public synthetic fixture header\n",
+            "vendor/minhook/src/hde/fixture.c": b"// public synthetic nested fixture source\n",
+        }
+        records = {name: {"sha256": builder.sha(raw), "bytes": len(raw)} for name, raw in originals.items()}
+        overlay = {name: (ROOT / name).read_bytes() for name in builder.MEMBERS}
+        generated = {"native-boundary-trace.cpp": b"// synthetic transform result; no engine data\n"}
+        with tempfile.TemporaryDirectory(prefix="paired-observer-nested-fixture-") as temporary:
+            original = Path(temporary) / "original";original.mkdir()
+            for name, raw in originals.items():
+                path = original / name;path.parent.mkdir(parents=True, exist_ok=True);path.write_bytes(raw)
+            destination = Path(temporary) / "staged"
+            with patch.object(builder, "ORIGINAL_FILES", records), patch.object(builder, "transformed", return_value=generated):
+                result = builder.reconstruct(original, destination, overlay)
+            self.assertEqual(set(result["files"]), set(originals) | set(overlay) | set(generated))
+            self.assertTrue(all("\\" not in name for name in result["files"]))
+            for name, raw in originals.items():
+                self.assertEqual((original / name).read_bytes(), raw)
+                self.assertEqual((destination / name).read_bytes(), raw)
+                self.assertEqual(result["files"][name], records[name])
+            self.assertEqual(result["originalCompileClosureMembers"], len(originals))
+            self.assertTrue(result["originalUnchanged"])
+            self.assertFalse(result["nativeBuildPerformed"])
 
 if __name__ == "__main__":unittest.main()

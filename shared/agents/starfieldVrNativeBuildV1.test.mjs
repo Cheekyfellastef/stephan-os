@@ -10,6 +10,8 @@ const PREFIX = 'VR-Research-Lab/native/starfield-paired-observer-v1/';
 const RUNNER = 'scripts/windows/starfield-native-build/native_build.py';
 const JOB = 'scripts/windows/starfield-native-build/owned_job.py';
 const LAUNCHER = 'scripts/windows/starfield-native-build/start_native_build.ps1';
+const RUNTIME_MODULE = 'scripts/windows/starfield-native-build/pinned_python_runtime.ps1';
+const RUNTIME_MANIFEST = 'scripts/windows/starfield-native-build/python_runtime_v1.json';
 const USER = 'C:\\Users\\Stephan Callear';
 const PATHS = { userProfile: USER, repoRoot: `${USER}\\Documents\\GitHub\\stephan-os`,
   powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe' };
@@ -30,7 +32,9 @@ function fixture() {
     publicMembers: Object.entries(publicFiles).map(([path, raw]) => ({ path, sha256: digest(raw) })) };
   const files = { ...publicFiles, [RECIPE]: Buffer.from(JSON.stringify(recipe)),
     [RUNNER]: Buffer.from('# bounded runner\n'), [JOB]: Buffer.from('# owned Job\n'),
-    [LAUNCHER]: Buffer.from('# fixed interpreter launcher\n') };
+    [LAUNCHER]: Buffer.from('# fixed interpreter launcher\n'),
+    [RUNTIME_MODULE]: Buffer.from('# fixed runtime closure\n'),
+    [RUNTIME_MANIFEST]: Buffer.from('{"fixture":"runtime manifest"}\n') };
   const objects = new Map(); const root = {};
   const put = (type, raw) => { const id = objectId(type, raw); objects.set(id, { type, raw }); return id; };
   for (const [path, raw] of Object.entries(files)) {
@@ -93,19 +97,28 @@ function host(f = fixture(), changes = {}) {
       }
       assert.fail('Unexpected Git operation');
     }
+    assert.fail('The long launcher must never use the synchronous Git seam');
+  };
+  const launch = async (exe, args, options) => {
+    calls.push({ exe, args, options, asynchronousLauncher: true });
     assert.equal(exe, PATHS.powershellExe, 'no interpreter or launcher is resolved through PATH');
     assert.equal(options.cwd, 'C:\\Windows\\System32');
+    assert.equal(options.shell, false); assert.equal(options.windowsHide, true);
+    assert.equal(options.timeout, 690_000); assert.equal(options.maxBuffer, 64 * 1024);
+    assert.deepEqual(args.slice(0, -1), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand']);
     assert.equal(options.env.NODE_OPTIONS, undefined);
     assert.equal(options.env.PSModulePath, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules');
     assert.deepEqual(Buffer.from(args.at(-1), 'base64').toString('utf16le'), f.files[LAUNCHER].toString('utf8'));
     packet = JSON.parse(options.input);
     assert.deepEqual(Object.keys(packet).sort(), ['files', 'parentPid', 'requestId', 'schemaVersion', 'sourceClosureSha256', 'sourceHead', 'stage']);
+    if (changes.launcherWait) await changes.launcherWait;
+    if (changes.executionReject) throw new Error('PRIVATE rejected launcher details');
     if (changes.executionError) return { status: null, error: new Error('private raw source must not escape') };
-    return { status: changes.exitStatus ?? 0, stdout: JSON.stringify(proof(packet, changes.receipt)) };
+    return { status: changes.exitStatus ?? 0, stdout: JSON.stringify(changes.rawTerminal ?? proof(packet, changes.receipt)) };
   };
-  return { f, calls, invoke, get packet() { return packet; }, execute: (extra = {}) => executeStarfieldVrNativeBuild({
+  return { f, calls, invoke, launch, get packet() { return packet; }, execute: (extra = {}) => executeStarfieldVrNativeBuild({
     operation: OP, expectedHead: f.head, requestId: REQUEST,
-  }, PATHS, { spawnSyncFn: invoke, parentPid: 123, admissionFn: () => ({ ok: true }),
+  }, PATHS, { spawnSyncFn: invoke, runLauncherFn: launch, parentPid: 123, admissionFn: () => ({ ok: true }),
     env: { USERPROFILE: USER, SystemRoot: 'C:\\Windows', GIT_DIR: 'C:\\wrong', GIT_CONFIG_COUNT: '9',
       NODE_OPTIONS: '--require=C:\\untrusted.js', PATH: 'C:\\untrusted' }, ...extra }) };
 }
@@ -154,6 +167,65 @@ test('missing terminal proof retains custody without exposing raw errors', async
   assert(!JSON.stringify(result).includes('private raw'));
 });
 
+test('the mailbox heartbeat can run while the fixed launcher is awaited', async () => {
+  let release; let heartbeats = 0;
+  const launcherWait = new Promise(resolve => { release = resolve; });
+  const h = host(fixture(), { launcherWait });
+  const heartbeat = setInterval(() => { heartbeats++; }, 1);
+  try {
+    const pending = h.execute();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert(h.packet, 'source collection reached the async launcher');
+    assert(heartbeats > 0, 'timers remain runnable before launcher completion');
+    release(); assert.equal((await pending).ok, true);
+    assert.equal(h.calls.filter(call => call.asynchronousLauncher).length, 1);
+  } finally { release(); clearInterval(heartbeat); }
+});
+
+test('async rejection, timeout and overflow cannot release execution custody', async () => {
+  for (const error of [Object.assign(new Error('PRIVATE timeout'), { code: 'ETIMEDOUT' }),
+    Object.assign(new Error('PRIVATE output'), { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' })]) {
+    const h = host();
+    const result = await h.execute({ runLauncherFn: async () => ({ status: null, error, stdout: 'PRIVATE partial output' }) });
+    assert.equal(result.blocker, 'STARFIELD_VR_NATIVE_BUILD_TERMINAL_UNPROVEN');
+    assert.equal(result.executionCustodyReleased, false); assert(!JSON.stringify(result).includes('PRIVATE'));
+  }
+  const rejected = await host(fixture(), { executionReject: true }).execute();
+  assert.equal(rejected.blocker, 'STARFIELD_VR_NATIVE_BUILD_TERMINAL_UNPROVEN');
+  assert.equal(rejected.executionCustodyReleased, false); assert(!JSON.stringify(rejected).includes('PRIVATE'));
+});
+
+test('actual nonzero launcher exit codes retain typed failed or held receipts', async () => {
+  for (const [exitStatus, verdict, released] of [[2, 'STARFIELD_VR_NATIVE_BUILD_FAILED', true],
+    [3, 'STARFIELD_VR_NATIVE_BUILD_CUSTODY_HELD', false]]) {
+    const h = host(fixture(), { exitStatus, receipt: { finalVerdict: verdict,
+      reason: 'COMPILER_OR_SELF_TEST_FAILED', buildPassed: false, testsPassed: false,
+      allJobsEmpty: released, executionCustodyReleased: released, artifacts: [] } });
+    const result = await h.execute();
+    assert.equal(result.ok, false); assert.equal(result.finalVerdict, verdict);
+    assert.equal(result.nativeBuild.executionCustodyReleased, released);
+  }
+});
+
+test('fixed launcher phases give bounded diagnostics without echoing raw fields', async () => {
+  for (const phase of ['INPUT', 'OWNER', 'RUNTIME', 'SELECTION', 'START', 'IMAGE', 'EXECUTION', 'TERMINAL']) {
+    const reason = `FIXED_PYTHON_${phase}_UNPROVEN`;
+    const h = host(fixture(), { exitStatus: 3, rawTerminal: {
+      schemaVersion: 'stephanos.starfield-native-build-launcher.v1',
+      finalVerdict: 'STARFIELD_VR_NATIVE_BUILD_BLOCKED', reason, executionCustodyReleased: false,
+      rawOutput: 'PRIVATE PATH OR CREDENTIAL', arbitraryCommand: 'PRIVATE COMMAND',
+    } });
+    const result = await h.execute();
+    assert.equal(result.blocker, reason); assert.equal(result.executionCustodyReleased, false);
+    assert.equal(result.headsetPlaytestReady, false); assert(!JSON.stringify(result).includes('PRIVATE'));
+  }
+  const invalid = await host(fixture(), { exitStatus: 3, rawTerminal: {
+    schemaVersion: 'stephanos.starfield-native-build-launcher.v1',
+    finalVerdict: 'STARFIELD_VR_NATIVE_BUILD_BLOCKED', reason: 'FIXED_PYTHON_PRIVATE_PATH_UNPROVEN', executionCustodyReleased: false,
+  } }).execute();
+  assert.equal(invalid.blocker, 'STARFIELD_VR_NATIVE_BUILD_RECEIPT_INVALID');
+});
+
 test('zero exit alone cannot fabricate build, tests, original preservation or native zero', async () => {
   for (const receipt of [{ allJobsEmpty: false }, { testsPassed: false }, { outputComplete: false },
     { sourceClosureVerified: false }, { originalSourceUnchanged: false }, { pixelsCaptured: true },
@@ -181,6 +253,10 @@ test('public build proof is a closed projection without source paths or compiler
 test('typed proof projection requires exact false claims and exact artifact identities', async () => {
   const h = host(); await h.execute(); const accepted = proof(h.packet);
   assert(projectStarfieldVrNativeBuildReceipt(accepted, h.f.head, REQUEST));
+  assert.equal(projectStarfieldVrNativeBuildReceipt({
+    schemaVersion: 'stephanos.starfield-native-build-terminal-proposal.v1',
+    sourceHead: h.f.head, requestId: REQUEST, candidate: accepted,
+  }, h.f.head, REQUEST), null, 'a private proposal containing a candidate PASS is not a public receipt');
   for (const change of [{ stage: 'different' }, { arbitraryPathAllowed: 0 }, { openXrSubmitted: 'false' },
     { artifacts: [{ name: 'unknown.exe', bytes: 1, sha256: 'a'.repeat(64) }] }]) {
     assert.equal(projectStarfieldVrNativeBuildReceipt({ ...accepted, ...change }, h.f.head, REQUEST), null);

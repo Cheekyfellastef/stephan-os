@@ -29,6 +29,9 @@ RECIPE = PACKAGE + "build-recipe.json"
 ENTRY = "scripts/windows/starfield-native-build/native_build.py"
 JOB = "scripts/windows/starfield-native-build/owned_job.py"
 LAUNCHER = "scripts/windows/starfield-native-build/start_native_build.ps1"
+RUNTIME_MODULE = "scripts/windows/starfield-native-build/pinned_python_runtime.ps1"
+RUNTIME_MANIFEST = "scripts/windows/starfield-native-build/python_runtime_v1.json"
+FIXED_MEMBERS = (ENTRY, JOB, RECIPE, LAUNCHER, RUNTIME_MODULE, RUNTIME_MANIFEST)
 BUILDER = PACKAGE + "reconstruct_paired_observer.py"
 ORIGINAL_PACKAGE = "1ea602071f2452f0afc70de1b9a63e6e99ef765f9edccb160b1c8a8f9ffca951"
 EXPECTED_ARTIFACTS = (
@@ -94,12 +97,12 @@ def validate_packet(packet):
             or int(packet["launcherBirthFileTime"]) > 0xFFFFFFFFFFFFFFFF):
         raise BuildBlocked("INPUT_IDENTITY_INVALID")
     records = packet["files"]
-    if not isinstance(records, dict) or not 7 <= len(records) <= 28:
+    if not isinstance(records, dict) or not 9 <= len(records) <= 30:
         raise BuildBlocked("SOURCE_CLOSURE_INVALID")
     verified = {}
     total = 0
     for path, row in records.items():
-        if (path not in (ENTRY, JOB, RECIPE, LAUNCHER)
+        if (path not in FIXED_MEMBERS
                 and not re.fullmatch(re.escape(PACKAGE) + r"[A-Za-z0-9_-]+\.(?:py|h|cpp|cmd|json)", path)):
             raise BuildBlocked("SOURCE_MEMBER_REFUSED")
         if not isinstance(row, dict) or set(row) != {"bytes", "sha256", "gitBlob", "base64"}:
@@ -118,7 +121,7 @@ def validate_packet(packet):
             raise BuildBlocked("SOURCE_BYTES_CHANGED")
         verified[path] = raw
         total += len(raw)
-    if total > 1536 * 1024 or any(path not in verified for path in (ENTRY, JOB, RECIPE, BUILDER, LAUNCHER)):
+    if total > 1536 * 1024 or any(path not in verified for path in (*FIXED_MEMBERS, BUILDER)):
         raise BuildBlocked("SOURCE_CLOSURE_BOUND")
     calculated = digest("".join(path + "\0" + digest(verified[path]) + "\n" for path in sorted(verified)).encode())
     if calculated != packet["sourceClosureSha256"]:
@@ -130,7 +133,7 @@ def validate_packet(packet):
             or recipe["stage"] != STAGE or recipe["originalPackageSha256"] != ORIGINAL_PACKAGE
             or not isinstance(recipe["publicMembers"], list) or not 3 <= len(recipe["publicMembers"]) <= 24):
         raise BuildBlocked("RECIPE_INVALID")
-    expected = {ENTRY, JOB, RECIPE, LAUNCHER}
+    expected = set(FIXED_MEMBERS)
     seen = set()
     for row in recipe["publicMembers"]:
         if (not isinstance(row, dict) or set(row) != {"path", "sha256"}
@@ -259,6 +262,9 @@ class ActiveBuild:
         require_plain(directory, directory=True)
         self.path = directory / "active.json"
         self.kernel = None
+        self.keeper = None
+        self.delete_pending = False
+        self.release_committed = False
         try:
             if os.name == "nt":
                 import msvcrt
@@ -270,15 +276,26 @@ class ActiveBuild:
                 self.kernel.CloseHandle.restype = wintypes.BOOL
                 self.kernel.SetFileInformationByHandle.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
                 self.kernel.SetFileInformationByHandle.restype = wintypes.BOOL
+                self.kernel.GetCurrentProcess.argtypes = []
+                self.kernel.GetCurrentProcess.restype = wintypes.HANDLE
+                self.kernel.DuplicateHandle.argtypes = [wintypes.HANDLE, wintypes.HANDLE, wintypes.HANDLE,
+                    ctypes.POINTER(wintypes.HANDLE), wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+                self.kernel.DuplicateHandle.restype = wintypes.BOOL
                 # DELETE access belongs to this exact new handle; other opens
                 # may read, but cannot replace or write the current owner file.
                 handle = self.kernel.CreateFileW(str(self.path), 0xC0010000, 1, None, 1, 0x00200000, None)
                 if handle in (None, ctypes.c_void_p(-1).value):
                     raise BuildBlocked("PRIOR_BUILD_CUSTODY_UNRESOLVED")
                 try:
+                    duplicate = wintypes.HANDLE()
+                    process = self.kernel.GetCurrentProcess()
+                    if not self.kernel.DuplicateHandle(process, handle, process, ctypes.byref(duplicate), 0, False, 2):
+                        raise BuildBlocked("CUSTODY_KEEPER_UNPROVEN")
+                    self.keeper = duplicate.value
                     fd = msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY)
                 except Exception:
                     self.kernel.CloseHandle(handle)
+                    self.close_keeper()
                     raise
                 self.stream = os.fdopen(fd, "w+b")
             else:
@@ -317,23 +334,56 @@ class ActiveBuild:
         return True
 
     def finish(self, receipt):
-        self.record["state"] = receipt["finalVerdict"]
-        self.record["executionCustodyReleased"] = receipt["executionCustodyReleased"]
+        release = (receipt["executionCustodyReleased"] is True and receipt["allJobsEmpty"] is True
+                   and receipt["originalSourceUnchanged"] is True and receipt.get("terminalFinalized") is True)
+        # This on-disk owner remains an exclusion record until its exact native
+        # handle is released. It never advertises release while still present.
+        self.record["state"] = ("TERMINAL_DURABLE_RELEASE_PENDING" if release
+                                else "STARFIELD_VR_NATIVE_BUILD_CUSTODY_HELD")
+        self.record["executionCustodyReleased"] = False
         self.record["allJobsEmpty"] = receipt["allJobsEmpty"]
         self.write()
-        release = receipt["executionCustodyReleased"] and receipt["allJobsEmpty"] and receipt["originalSourceUnchanged"]
-        if release:
-            if self.kernel is None:
-                raise BuildBlocked("CUSTODY_RELEASE_REQUIRES_WINDOWS")
-            import msvcrt
-            disposition = ctypes.c_ubyte(1)
-            handle = msvcrt.get_osfhandle(self.stream.fileno())
-            if not self.kernel.SetFileInformationByHandle(handle, 4, ctypes.byref(disposition), ctypes.sizeof(disposition)):
-                raise BuildBlocked("CUSTODY_HANDLE_RELEASE_FAILED")
+        # A separate retained native handle keeps exclusion through Python's
+        # buffered-stream close, including a close exception.
         self.stream.close()
+        if release:
+            if self.kernel is None or self.keeper is None:
+                raise BuildBlocked("CUSTODY_RELEASE_REQUIRES_WINDOWS")
+            disposition = ctypes.c_ubyte(1)
+            if not self.kernel.SetFileInformationByHandle(self.keeper, 4, ctypes.byref(disposition), ctypes.sizeof(disposition)):
+                raise BuildBlocked("CUSTODY_HANDLE_RELEASE_FAILED")
+            self.delete_pending = True
+            if not self.kernel.CloseHandle(self.keeper):
+                # A failed close must not leave a delete-on-close request on
+                # a retained keeper that will later disappear at worker exit.
+                clear = ctypes.c_ubyte(0)
+                if self.kernel.SetFileInformationByHandle(self.keeper, 4, ctypes.byref(clear), ctypes.sizeof(clear)):
+                    self.delete_pending = False
+                raise BuildBlocked("CUSTODY_KEEPER_CLOSE_FAILED")
+            self.keeper = None
+            self.delete_pending = False
+            self.release_committed = True
+            return True
+        self.close_keeper()
+        return False
+
+    def close_keeper(self):
+        if self.keeper is not None:
+            if self.delete_pending:
+                clear = ctypes.c_ubyte(0)
+                if not self.kernel.SetFileInformationByHandle(self.keeper, 4, ctypes.byref(clear), ctypes.sizeof(clear)):
+                    raise BuildBlocked("CUSTODY_DELETE_RESET_UNPROVEN")
+                self.delete_pending = False
+            if not self.kernel.CloseHandle(self.keeper):
+                raise BuildBlocked("CUSTODY_KEEPER_CLOSE_FAILED")
+            self.keeper = None
 
     def close(self):
-        self.stream.close()
+        try:
+            if hasattr(self, "stream"):
+                self.stream.close()
+        finally:
+            self.close_keeper()
 
 
 def base_receipt(packet):
@@ -548,7 +598,7 @@ def run_build(packet, verified):
         selected_directory = builds / packet["requestId"]
         selected_directory.mkdir()
         require_plain(selected_directory, directory=True)
-        pins.pin_parents(selected_directory / "build-receipt.json")
+        pins.pin_parents(selected_directory / "build-terminal-proposal.json")
         # Only a newly created and pinned directory may receive a terminal.
         terminal_directory = selected_directory
         pins.pin_parents(original / "native-boundary-trace.cpp")
@@ -646,24 +696,41 @@ def run_build(packet, verified):
         if receipt["finalVerdict"] == "STARFIELD_VR_NATIVE_BUILD_PASSED" and not receipt["originalSourceUnchanged"]:
             receipt["finalVerdict"] = "STARFIELD_VR_NATIVE_BUILD_BLOCKED"
             receipt["reason"] = "ORIGINAL_SOURCE_RECHECK_FAILED"
-        # Persist terminal evidence before relinquishing the operation's lock.
-        # A failed receipt write leaves the existing owner record in place.
+        # A private proposal is deliberately a different schema from an
+        # authenticated public result. Its complete durable write and close
+        # precede owner release; it can never be consumed as a final receipt.
         if terminal_directory is not None:
             try:
-                terminal_stream = (terminal_directory / "build-receipt.json").open("xb+")
-                pending = {**receipt, "finalVerdict": "STARFIELD_VR_NATIVE_BUILD_CUSTODY_HELD",
-                           "executionCustodyReleased": False, "terminalFinalized": False,
-                           "reason": "TERMINALIZATION_PENDING"}
-                terminal_stream.write(json.dumps(pending, sort_keys=True, indent=2).encode())
+                terminal_stream = (terminal_directory / "build-terminal-proposal.json").open("xb+")
+                proposal = {"schemaVersion": "stephanos.starfield-native-build-terminal-proposal.v1",
+                            "requestId": packet["requestId"], "sourceHead": packet["sourceHead"],
+                            "candidate": {**receipt, "terminalFinalized": True}}
+                terminal_stream.write(json.dumps(proposal, sort_keys=True, indent=2).encode())
                 terminal_stream.flush()
                 os.fsync(terminal_stream.fileno())
+                terminal_stream.close()
+                terminal_stream = None
+                receipt["terminalFinalized"] = True
             except Exception:
                 receipt["executionCustodyReleased"] = False
+                receipt["terminalFinalized"] = False
                 receipt["finalVerdict"] = "STARFIELD_VR_NATIVE_BUILD_CUSTODY_HELD"
                 receipt["reason"] = "TERMINAL_RECEIPT_WRITE_FAILED"
+            finally:
+                if terminal_stream is not None:
+                    try:
+                        terminal_stream.close()
+                    except Exception:
+                        pass  # The owner remains held; a proposal is not authority.
         if active is not None:
+            if not receipt["terminalFinalized"] or not receipt["originalSourceUnchanged"]:
+                receipt["executionCustodyReleased"] = False
+                receipt["finalVerdict"] = "STARFIELD_VR_NATIVE_BUILD_CUSTODY_HELD"
             try:
-                active.finish(receipt)
+                released = active.finish(receipt)
+                if not released:
+                    receipt["executionCustodyReleased"] = False
+                    receipt["finalVerdict"] = "STARFIELD_VR_NATIVE_BUILD_CUSTODY_HELD"
             except Exception:
                 receipt["executionCustodyReleased"] = False
                 receipt["finalVerdict"] = "STARFIELD_VR_NATIVE_BUILD_CUSTODY_HELD"
@@ -673,43 +740,17 @@ def run_build(packet, verified):
                     active.write()
                 except Exception:
                     pass  # The preserved owner file still refuses a new build.
-                active.close()
-        if terminal_stream is not None:
-            try:
-                finalized = {**receipt, "terminalFinalized": True}
-                terminal_stream.seek(0)
-                terminal_stream.write(json.dumps(finalized, sort_keys=True, indent=2).encode())
-                terminal_stream.truncate()
-                terminal_stream.flush()
-                os.fsync(terminal_stream.fileno())
-                receipt["terminalFinalized"] = True
-            except Exception:
-                receipt["executionCustodyReleased"] = False
-                receipt["terminalFinalized"] = False
-                receipt["finalVerdict"] = "STARFIELD_VR_NATIVE_BUILD_CUSTODY_HELD"
-                receipt["reason"] = "TERMINAL_RECEIPT_WRITE_FAILED"
-                # A flush may have exposed the proposed success before fsync
-                # failed. Invalidate that proposal through the same retained
-                # stream, then save the held result. Only the authenticated
-                # completed worker response can authorize consuming artifacts;
-                # an interrupted/private disk receipt is never sufficient.
                 try:
-                    terminal_stream.seek(0)
-                    terminal_stream.truncate(0)
-                    terminal_stream.write(json.dumps(receipt, sort_keys=True, indent=2).encode())
-                    terminal_stream.flush()
-                    os.fsync(terminal_stream.fileno())
+                    active.close()
                 except Exception:
-                    try:
-                        terminal_stream.seek(0)
-                        terminal_stream.truncate(0)
-                        terminal_stream.flush()
-                    except Exception:
-                        pass  # No completed PASS is returned on any failure.
-            finally:
-                terminal_stream.close()
+                    pass  # No completed PASS is returned after release failure.
+        # There are no terminal writes or custody mutations after successful
+        # release. Read-only input-handle disposal is advisory at this point.
         if pins is not None:
-            pins.close()
+            try:
+                pins.close()
+            except Exception:
+                pass
     return receipt
 
 

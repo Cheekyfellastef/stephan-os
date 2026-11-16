@@ -27,61 +27,15 @@ function Stream-Hash($stream) {
   try { return ([BitConverter]::ToString($h.ComputeHash($stream))).Replace('-', '').ToLowerInvariant() }
   finally { $h.Dispose(); $stream.Position = 0 }
 }
-function Candidate-Paths {
-  $list = [Collections.Generic.List[string]]::new()
-  foreach ($hive in @([Microsoft.Win32.RegistryHive]::CurrentUser, [Microsoft.Win32.RegistryHive]::LocalMachine)) {
-    $base = $key = $null
-    try {
-      $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey($hive, [Microsoft.Win32.RegistryView]::Registry64)
-      $key = $base.OpenSubKey('Software\Python\PythonCore', $false)
-      if ($null -eq $key) { continue }
-      foreach ($tag in @($key.GetSubKeyNames() | Sort-Object -Descending)) {
-        if ($tag -cnotmatch '^3\.(?:1[0-9]|[2-9][0-9])(?:-(?:32|64))?$') { continue }
-        $install = $null
-        try {
-          $install = $key.OpenSubKey($tag + '\InstallPath', $false)
-          if ($null -eq $install) { continue }
-          $directory = $install.GetValue('', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-          if ($directory -is [string] -and $directory.Length -lt 2048) {
-            $list.Add([IO.Path]::Combine($directory, 'python.exe'))
-          }
-        } finally { if ($null -ne $install) { $install.Dispose() } }
-      }
-    } finally { if ($null -ne $key) { $key.Dispose() }; if ($null -ne $base) { $base.Dispose() } }
-  }
-  foreach ($minor in 15..10) {
-    foreach ($root in @('C:\Program Files', ($profile + '\AppData\Local\Programs\Python'), 'C:\')) {
-      $list.Add([IO.Path]::Combine($root, ('Python3' + $minor), 'python.exe'))
-    }
-  }
-  return @($list | Select-Object -Unique)
-}
-function Pin-Python([string]$candidate) {
-  $file = $null
-  try {
-    $path = Plain-Path $candidate
-    if ([IO.Path]::GetFileName($path) -ine 'python.exe') { Deny }
-    $file = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-    if ($file.Length -lt 256 -or $file.Length -gt 16777216) { Deny }
-    $reader = [IO.BinaryReader]::new($file, [Text.Encoding]::ASCII, $true)
-    try {
-      if ($reader.ReadUInt16() -ne 0x5a4d) { Deny }
-      $file.Position = 60; $offset = $reader.ReadInt32()
-      if ($offset -lt 64 -or $offset -gt ($file.Length - 26)) { Deny }
-      $file.Position = $offset
-      if ($reader.ReadUInt32() -ne 0x4550 -or $reader.ReadUInt16() -ne 0x8664) { Deny }
-      $file.Position = $offset + 24
-      if ($reader.ReadUInt16() -ne 0x20b) { Deny }
-    } finally { $reader.Dispose() }
-    $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($path)
-    if ($version.FileMajorPart -ne 3 -or $version.FileMinorPart -lt 10) { Deny }
-    $signature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $path
-    if ([string]$signature.Status -cne 'Valid' -or $null -eq $signature.SignerCertificate -or
-      $signature.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -cne 'Python Software Foundation') { Deny }
-    $result = [pscustomobject]@{ Path=$path; Stream=$file; Hash=(Stream-Hash $file) }
-    $file = $null
-    return $result
-  } finally { if ($null -ne $file) { $file.Dispose() } }
+function Verified-Source([string]$name) {
+  $entry = $packet.files.PSObject.Properties[$name]
+  if ($null -eq $entry) { Deny }
+  $record = $entry.Value
+  $raw = [Convert]::FromBase64String($record.base64)
+  if ($raw.Length -gt 262144 -or $raw.Length -ne $record.bytes) { Deny }
+  $memory = [IO.MemoryStream]::new($raw, $false)
+  try { if ((Stream-Hash $memory) -cne $record.sha256) { Deny } } finally { $memory.Dispose() }
+  return [Text.UTF8Encoding]::new($false,$true).GetString($raw)
 }
 
 try {
@@ -112,12 +66,12 @@ try {
   $packet | Add-Member -NotePropertyName parentBirthFileTime -NotePropertyValue ($born.ToUniversalTime().ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture))
   $packet | Add-Member -NotePropertyName launcherPid -NotePropertyValue $PID
   $packet | Add-Member -NotePropertyName launcherBirthFileTime -NotePropertyValue ($self.get_StartTime().ToUniversalTime().ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture))
-  $phase = 'SELECTION'
-  foreach ($candidate in @(Candidate-Paths)) {
-    if ($clock.ElapsedMilliseconds -gt 30000 -or $owner.get_HasExited()) { Deny }
-    try { $pin = Pin-Python $candidate; break } catch { $pin = $null }
-  }
-  if ($null -eq $pin) { Deny }
+  $phase = 'RUNTIME'
+  $module = Verified-Source 'scripts/windows/starfield-native-build/pinned_python_runtime.ps1'
+  . ([scriptblock]::Create($module))
+  $manifest = (Verified-Source 'scripts/windows/starfield-native-build/python_runtime_v1.json') | ConvertFrom-Json
+  $continue = { -not $owner.get_HasExited() -and $clock.ElapsedMilliseconds -lt 60000 }
+  $pin = New-FixedPythonRuntime $packet.requestId $manifest $continue
   $bootstrap = @'
 import base64,hashlib,json,struct,sys,types
 if sys.version_info<(3,10) or struct.calcsize('P')!=8 or not sys.flags.isolated or not sys.flags.no_site or not sys.dont_write_bytecode: raise SystemExit(2)
@@ -132,7 +86,7 @@ raise SystemExit(m.main_packet(p))
 '@
   $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($bootstrap))
   $info = [Diagnostics.ProcessStartInfo]::new()
-  $info.FileName = $pin.Path
+  $info.FileName = $pin.Python
   $info.Arguments = '-I -S -B -c "import base64;exec(base64.b64decode(''' + $encoded + '''))"'
   $info.WorkingDirectory = 'C:\Windows\System32'
   $info.UseShellExecute = $false; $info.CreateNoWindow = $true; $info.ErrorDialog = $false
@@ -145,7 +99,7 @@ raise SystemExit(m.main_packet(p))
     if ($null -ne $value -and $value.Length -lt 4096 -and $value -notmatch '[\x00\r\n]') { $info.EnvironmentVariables[$name] = $value }
   }
   $info.EnvironmentVariables['PATH'] = 'C:\Windows\System32;C:\Windows'
-  if ($owner.get_HasExited() -or (Stream-Hash $pin.Stream) -cne $pin.Hash) { Deny }
+  if ($owner.get_HasExited() -or -not $pin.Sealed -or $pin.Files.Count -ne 37) { Deny }
   $phase = 'START'
   $child = [Diagnostics.Process]::new(); $child.StartInfo = $info
   if (-not $child.Start()) { Deny }
@@ -158,9 +112,9 @@ raise SystemExit(m.main_packet(p))
     try { $actualImage = $child.get_MainModule().FileName; if ($actualImage) { break } } catch { }
     Start-Sleep -Milliseconds 10
   }
-  if (-not $actualImage -or (Plain-Path $actualImage) -ine $pin.Path) { Deny }
+  if (-not $actualImage -or (Plain-Path $actualImage) -ine $pin.Python) { Deny }
   $actual = [IO.File]::Open($actualImage, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-  try { if ((Stream-Hash $actual) -cne $pin.Hash) { Deny } } finally { $actual.Dispose() }
+  try { if ((Stream-Hash $actual) -cne $pin.PythonHash) { Deny } } finally { $actual.Dispose() }
   $payload = $packet | ConvertTo-Json -Depth 12 -Compress
   if ([Text.Encoding]::UTF8.GetByteCount($payload) -gt 3145728) { Deny }
   $phase = 'EXECUTION'
@@ -196,11 +150,13 @@ raise SystemExit(m.main_packet(p))
   [Console]::Out.WriteLine(('{"schemaVersion":"stephanos.starfield-native-build-launcher.v1","finalVerdict":"STARFIELD_VR_NATIVE_BUILD_BLOCKED","reason":"FIXED_PYTHON_' + $phase + '_UNPROVEN","executionCustodyReleased":false}'))
   $exitCode = 3
 } finally {
+  $childGone = -not $started
   if ($null -ne $child) {
     try { if ($started -and -not $child.get_HasExited()) { $child.Kill(); [void]$child.WaitForExit(5000) } } catch { }
+    try { $childGone = $child.get_HasExited() } catch { $childGone = $false }
     $child.Dispose()
   }
-  if ($null -ne $pin) { $pin.Stream.Dispose() }
+  if ($null -ne $pin) { Close-RuntimeCustody $pin $childGone }
   if ($null -ne $owner) { $owner.Dispose() }
   if ($null -ne $self) { $self.Dispose() }
 }
