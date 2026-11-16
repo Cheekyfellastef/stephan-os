@@ -231,7 +231,9 @@ try{
 """
             body += "try{[IO.File]::WriteAllText(" + literal(runtime / "path.txt") + ",'forbidden')}catch{$proof.pathCreateDenied=$true};"
             body += r"""
-    $child=Probe-Create $directory.Handle 'relative.txt' ([uint32]3221291008) $false
+    # NtCreateFile requires SYNCHRONIZE explicitly for synchronous I/O;
+    # use mapped FILE_GENERIC_READ|FILE_GENERIC_WRITE|DELETE, not generic bits.
+    $child=Probe-Create $directory.Handle 'relative.txt' 0x13019f $false
     $proof.childStatus=$child.Status;$proof.childGranted=$child.Granted;$proof.childCreated=($child.Created -eq 2)
     if($child.Status -eq 0){
       $safe=[Microsoft.Win32.SafeHandles.SafeFileHandle]::new($child.Handle,$true);$child.Handle=[IntPtr]::Zero
