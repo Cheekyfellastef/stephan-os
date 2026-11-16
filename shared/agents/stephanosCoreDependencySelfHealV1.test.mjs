@@ -68,7 +68,7 @@ test('each actual Octopus maintenance edge re-samples worker evidence before aut
     buildStephanosExecutionCommandEnvelopeV1: input => input,
     STEPHANOS_EXECUTION_SURFACE: { SOVEREIGN_COMMANDER: 'SOVEREIGN_COMMANDER' },
     SOVEREIGN_COMMANDER_OPERATION: { MAINTENANCE_ACTION: 'MAINTENANCE_ACTION' },
-    OCTOPUS_SELF_HEAL_RELATED_ISSUE: '#2961', PROOF_REF: 'proof-fixture', lastOctopusSelfHealAttemptCount: 1,
+    PROOF_REF: 'proof-fixture', lastOctopusSelfHealAttemptCount: 1,
     executeSovereignCommanderCommandV1: async () => { dispatches++; return { ok: true }; },
   });
   vm.runInContext(source.slice(maintenanceStart, maintenanceEnd), context);
