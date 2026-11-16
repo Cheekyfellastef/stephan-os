@@ -33,7 +33,7 @@ import { resolveCriticalBacklogRuntimePaths } from '../stephanos-server/services
 import { readAuthoritativeProgrammeProjection } from '../stephanos-server/services/programmeAuthorityService.js';
 import { readVerifiedStephanosNativeRoutingCandidate } from '../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
 import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
-import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
+import { projectSovereignCaretakerExecutionEvidence, reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import { runBattleBridgeMonitorMultiplexerCanary } from './battle-bridge-monitor-multiplexer-canary.mjs';
 import {
   BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
@@ -2441,9 +2441,15 @@ function sovereignCommanderWatchdogProjection(operationResult = {}, execution = 
   };
 }
 
-export function createSanitizedMailboxReceiptProjection(receipt = {}) {
-  const execution = receipt?.result || {};
-  const nestedOperationResult = execution?.result;
+function mailboxReceiptResultParts(receipt = {}) {
+  // READ_MAILBOX_RECEIPT returns this allowlisted shape. Reprojection must retain
+  // the selected original's identity, not borrow the later READ command's head.
+  const projectedControlPlane = receipt?.operation === 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE'
+    && !Object.prototype.hasOwnProperty.call(receipt, 'result')
+    && receipt?.execution?.operation === receipt.operation
+    && receipt?.execution?.requestId === receipt.requestId;
+  const execution = (projectedControlPlane ? receipt.execution : receipt?.result) || {};
+  const nestedOperationResult = projectedControlPlane ? receipt.operationResult : execution?.result;
   const operationResult = nestedOperationResult && typeof nestedOperationResult === 'object' && !Array.isArray(nestedOperationResult)
     ? nestedOperationResult
     : (
@@ -2454,6 +2460,85 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
         ? execution
         : {}
     );
+  return { execution, operationResult };
+}
+
+function controlPlaneCaretakerReceiptProjection(receipt = {}, operationResult = {}) {
+  const { execution } = mailboxReceiptResultParts(receipt);
+  const canonicalTime = (value) => typeof value === 'string' && value.length === 24
+    && safeTimestamp(value) === value;
+  if (receipt?.operation !== 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE'
+    || receipt.schemaVersion !== 'stephanos.battle-bridge-github-command-receipt.v1'
+    || !projectMailboxReceiptRequestId(receipt.requestId)
+    || execution?.operation !== receipt.operation || execution?.requestId !== receipt.requestId
+    || !['DONE', 'BLOCKED'].includes(receipt.state)
+    || typeof receipt.expectedHead !== 'string' || !/^[a-f0-9]{40}$/.test(receipt.expectedHead)
+    || receipt.processSourceHead !== receipt.expectedHead
+    || (Object.prototype.hasOwnProperty.call(receipt, 'branch') && receipt.branch !== 'main')
+    || operationResult.sourceHead !== receipt.expectedHead
+    || (Object.prototype.hasOwnProperty.call(operationResult, 'expectedHead') && operationResult.expectedHead !== receipt.expectedHead)
+    || (operationResult.repair && Object.prototype.hasOwnProperty.call(operationResult.repair, 'sourceHead')
+      && operationResult.repair.sourceHead !== receipt.expectedHead)
+    || operationResult.branch !== 'main' || operationResult.expectedHeadMatch !== true
+    || !canonicalTime(receipt.acceptedAt) || !canonicalTime(receipt.completedAt)
+    || receipt.acceptedAt > receipt.completedAt) return {};
+
+  const candidates = [];
+  if (operationResult.repair && Object.prototype.hasOwnProperty.call(operationResult.repair, 'sovereignCaretakerExecution')) {
+    candidates.push(operationResult.repair.sovereignCaretakerExecution);
+  }
+  if (Object.prototype.hasOwnProperty.call(operationResult, 'sovereignCaretakerExecution')) {
+    candidates.push(operationResult.sovereignCaretakerExecution);
+  }
+  if (!candidates.length) return {};
+  const evidence = candidates.map(value => value && typeof value === 'object' && !Array.isArray(value)
+    ? projectSovereignCaretakerExecutionEvidence(value, receipt.expectedHead) : null);
+  if (evidence.some(value => !value
+    || value.observedAtUtc < receipt.acceptedAt || value.observedAtUtc > receipt.completedAt)
+    || evidence.some(value => JSON.stringify(value) !== JSON.stringify(evidence[0]))) return {};
+  return { sovereignCaretakerExecution: evidence[0] };
+}
+
+function controlPlaneCaretakerReadbackProjection(receipt = {}, operationResult = {}) {
+  const selected = operationResult.receipt;
+  if (selected?.operation !== 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE') return {};
+  if (receipt?.operation !== 'READ_MAILBOX_RECEIPT'
+    || !projectMailboxReceiptRequestId(operationResult.targetRequestId)
+    || operationResult.targetRequestId !== selected.requestId) return { receipt: null };
+  const original = createSanitizedMailboxReceiptProjection(selected);
+  const inner = original.operationResult;
+  // One original receipt only; no recursive readback, raw repair/task payload,
+  // authority grant, or inference from a later observation is retained.
+  return {
+    targetRequestId: original.requestId,
+    receipt: {
+      schemaVersion: original.schemaVersion,
+      requestId: original.requestId,
+      operation: original.operation,
+      state: original.state,
+      acceptedAt: original.acceptedAt,
+      heartbeatAt: original.heartbeatAt,
+      completedAt: original.completedAt,
+      expectedHead: original.expectedHead,
+      processSourceHead: original.processSourceHead,
+      blocker: original.blocker,
+      execution: original.execution,
+      operationResult: {
+        ok: inner.ok,
+        blocker: inner.blocker,
+        finalVerdict: inner.finalVerdict,
+        expectedHead: inner.expectedHead,
+        sourceHead: inner.sourceHead,
+        branch: inner.branch,
+        expectedHeadMatch: inner.expectedHeadMatch,
+        ...controlPlaneCaretakerReceiptProjection(original, inner),
+      },
+    },
+  };
+}
+
+export function createSanitizedMailboxReceiptProjection(receipt = {}) {
+  const { execution, operationResult } = mailboxReceiptResultParts(receipt);
   const workerTelemetry = projectWorkerTelemetry(operationResult?.workerTelemetry);
   const { requested: requestedPullRequestHead, observed: observedPullRequestHead } = projectedPullRequestHeads(receipt, operationResult);
   return Object.freeze({
@@ -2546,6 +2631,8 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),
       branch: safeTelemetryBranch(operationResult?.branch),
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
+      ...controlPlaneCaretakerReceiptProjection(receipt, operationResult),
+      ...controlPlaneCaretakerReadbackProjection(receipt, operationResult),
       ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
       ...projectMaintenanceRecoveryReceiptV1(operationResult, receipt?.operation),
       ...projectMailboxRotationReceipt(operationResult, receipt?.operation),
@@ -2883,6 +2970,8 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         sourceHead: inner?.sourceHead || '',
         branch: inner?.branch || compactReceipt.branch,
         expectedHeadMatch: inner?.expectedHeadMatch ?? null,
+        ...controlPlaneCaretakerReceiptProjection(compactReceipt, inner),
+        ...controlPlaneCaretakerReadbackProjection(compactReceipt, inner),
         remoteAction: inner?.remoteAction || '',
         ...(inner?.remoteAction === SPATIAL_PREPARE_ACTION
           && projectSpatialPreparationReceiptV1(inner.spatialPreparation, inner.sourceHead)
@@ -2938,18 +3027,7 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
 export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEIPT_JSON_BYTES) {
   const fullJson = JSON.stringify(receipt, null, 2);
   const fullBytes = Buffer.byteLength(fullJson, 'utf8');
-  const execution = receipt?.result || {};
-  const nestedOperationResult = execution?.result;
-  const operationResult = nestedOperationResult && typeof nestedOperationResult === 'object' && !Array.isArray(nestedOperationResult)
-    ? nestedOperationResult
-    : (
-      (receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
-        || MAINTENANCE_RECOVERY_OPERATIONS.includes(receipt?.operation)
-        || FRONTEND_VISIBILITY_OPERATIONS.includes(receipt?.operation))
-      && execution && typeof execution === 'object' && !Array.isArray(execution)
-        ? execution
-        : {}
-    );
+  const { execution, operationResult } = mailboxReceiptResultParts(receipt);
   const { requested: requestedPullRequestHead, observed: observedPullRequestHead } = projectedPullRequestHeads(receipt, operationResult);
   const compactReceipt = {
     schemaVersion: safeTelemetryText(receipt?.schemaVersion, 120),
@@ -2957,7 +3035,8 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     operation: safeTelemetryText(receipt?.operation, 120),
     repository: safeTelemetryText(receipt?.repository, 180),
     issueNumber: Number(receipt?.issueNumber || 0),
-    branch: safeTelemetryBranch(receipt?.branch),
+    branch: safeTelemetryBranch(receipt?.operation === 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE'
+      && !Object.prototype.hasOwnProperty.call(receipt, 'branch') ? operationResult.branch : receipt?.branch),
     state: safeTelemetryText(receipt?.state, 80).toUpperCase(),
     acceptedAt: safeTelemetryText(receipt?.acceptedAt, 80),
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
@@ -3040,6 +3119,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         sourceHead: safeTelemetrySha(operationResult?.sourceHead),
         branch: safeTelemetryBranch(operationResult?.branch),
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
+        ...controlPlaneCaretakerReceiptProjection(receipt, operationResult),
         ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
       ...projectMaintenanceRecoveryReceiptV1(operationResult, receipt?.operation),
       ...projectFrontendVisibilityReceiptV1(operationResult, receipt?.operation, { expectedHead: receipt?.expectedHead }),
@@ -3060,6 +3140,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         ...sovereignCommanderWatchdogProjection(operationResult, execution),
         targetRequestId: safeTelemetryId(operationResult?.targetRequestId),
         receipt: operationResult?.receipt ? createSanitizedMailboxReceiptProjection(operationResult.receipt) : null,
+        ...controlPlaneCaretakerReadbackProjection(receipt, operationResult),
         initialPid: Number(operationResult?.initialPid || 0),
         recoveredPid: Number(operationResult?.recoveredPid || 0),
         workerKilledObserved: operationResult?.workerKilledObserved === true,
