@@ -1,7 +1,8 @@
-"""Exercise prelaunch runtime admission using the exact public PSF package.
+"""Qualify the fixed trusted installation and ordinary read-only admission.
 
-Windows fixtures use the actual PowerShell functions. Substituted files are
-never executed. The only launched runtime is the fully admitted official one.
+The Windows CI administrator provisions only the fixed public PSF package in
+its disposable VM. A genuinely filtered token performs the user-side attacks.
+This fixture is not evidence that UAC ran on the operator's machine.
 """
 
 import base64
@@ -9,15 +10,18 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
 
-
 ROOT = Path(__file__).resolve().parent
 MODULE = ROOT / "pinned_python_runtime.ps1"
 MANIFEST = ROOT / "python_runtime_v1.json"
+INSTALLER = ROOT / "install_pinned_python_runtime.ps1"
+FILTERED = ROOT / "runtime_restricted_token_fixture.ps1"
 POWERSHELL = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+FIXED_ROOT = r"C:\Program Files\Stephanos\BuildRuntimes\Python-3.14.10-amd64-v1"
 ARCHIVE_SHA = "90905e64a840557d8c1bc4f5b74db3d7ee85e3ffb217611cac1c7813acea4159"
 
 
@@ -25,15 +29,21 @@ def literal(value):
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def powershell(body, timeout=75):
+def powershell(body, timeout=90):
     body = ("[Console]::InputEncoding=[Text.UTF8Encoding]::new($false,$true);"
-            "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false,$true);" + body)
+            "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false,$true);"
+            "$ProgressPreference='SilentlyContinue';" + body)
     environment = {key: value for key, value in os.environ.items() if key.upper() != "PSMODULEPATH"}
     environment["PSModulePath"] = r"C:\Windows\System32\WindowsPowerShell\v1.0\Modules"
     encoded = base64.b64encode(body.encode("utf-16le")).decode("ascii")
     return subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
                           cwd=r"C:\Windows\System32", env=environment,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+
+
+def prelude():
+    return ("$ErrorActionPreference='Stop';Set-StrictMode -Version Latest;. " + literal(MODULE) + ";"
+            "$m=Get-Content -LiteralPath " + literal(MANIFEST) + " -Raw|ConvertFrom-Json;")
 
 
 class RuntimeManifestTests(unittest.TestCase):
@@ -51,23 +61,45 @@ class RuntimeManifestTests(unittest.TestCase):
                     "_ctypes.pyd", "vcruntime140.dll", "vcruntime140_1.dll", "libffi-8.dll"}
         self.assertLessEqual(required, {row["name"] for row in files})
         for row in files:
-            self.assertNotIn("/", row["name"])
-            self.assertNotIn("\\", row["name"])
+            self.assertRegex(row["name"], r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$")
             self.assertRegex(row["sha256"], r"^[a-f0-9]{64}$")
 
+    def test_fixed_installer_encoded_delivery_fits_windows(self):
+        body = INSTALLER.read_text(encoding="ascii")
+        encoded = base64.b64encode(body.encode("utf-16le")).decode("ascii")
+        self.assertLess(len(encoded) + len(POWERSHELL) + 80, 32000)
+        self.assertNotIn("Start-Process", body)
+        self.assertNotIn("-Verb", body)
+        self.assertNotIn("$PSScriptRoot", body)
+        self.assertIn("$args.Count -ne 0", body)
+        self.assertIn("$actual -cne $expected", body)
+        self.assertIn("raw.githubusercontent.com/Cheekyfellastef/stephan-os/", body)
+        # Dependency commit and module hash are filled after their immutable
+        # candidate publication. A placeholder refuses before network access.
+        source = re.search(r"\$sourceCommit='([^']+)'", body).group(1)
+        module = re.search(r"\$moduleSha256='([^']+)'", body).group(1)
+        self.assertTrue(source == "PLACEHOLDER_COMMIT" or re.fullmatch(r"[a-f0-9]{40}", source))
+        if module != "PLACEHOLDER_MODULE_SHA256":
+            self.assertEqual(module, hashlib.sha256(MODULE.read_bytes()).hexdigest())
+        self.assertIn(hashlib.sha256(MANIFEST.read_bytes()).hexdigest(), body)
 
-@unittest.skipUnless(os.name == "nt", "actual Windows PowerShell/runtime/file ACL semantics required")
+
+@unittest.skipUnless(os.name == "nt", "actual Windows installer, token and ACL semantics required")
 class WindowsPinnedRuntimeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.package_temp = tempfile.TemporaryDirectory(prefix="starfield-psf-package-")
         cls.archive = Path(cls.package_temp.name) / "official.zip"
-        body = "$ErrorActionPreference='Stop';Set-StrictMode -Version Latest;. " + literal(MODULE) + ";"
-        body += "$m=Get-Content -LiteralPath " + literal(MANIFEST) + " -Raw|ConvertFrom-Json;"
+        # CI must really have the administrator boundary. This is not skipped
+        # or replaced by a mock if the runner cannot supply it.
+        body = prelude()
+        body += "$receipt=Install-FixedPythonRuntime $m;"
+        body += "if($receipt.status -cnotin @('INSTALLED','ALREADY_VERIFIED') -or $receipt.verifiedFiles -ne 37){throw 'INSTALLATION_NOT_PROVEN'};"
         body += "$raw=Get-RuntimeArchive $m {$true};[IO.File]::WriteAllBytes(" + literal(cls.archive) + ",$raw);"
-        body += "'PSF_ARCHIVE_AUTHENTICATED'"
-        result = powershell(body, timeout=90)
-        if result.returncode != 0 or b"PSF_ARCHIVE_AUTHENTICATED" not in result.stdout:
+        body += "'TRUSTED_RUNTIME_INSTALLED'"
+        body = "try{" + body + "}catch{[Console]::Error.WriteLine(('RUNTIME_SETUP_FAILURE message='+$_.Exception.Message+' stack='+$_.ScriptStackTrace));exit 1}"
+        result = powershell(body, timeout=170)
+        if result.returncode != 0 or b"TRUSTED_RUNTIME_INSTALLED" not in result.stdout:
             cls.package_temp.cleanup()
             raise AssertionError(result.stderr.decode(errors="replace"))
         if hashlib.sha256(cls.archive.read_bytes()).hexdigest() != ARCHIVE_SHA:
@@ -78,185 +110,106 @@ class WindowsPinnedRuntimeTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.package_temp.cleanup()
 
-    def run_case(self, action, before_expand=""):
-        # A failed native ACL restoration can also make disposable test cleanup
-        # fail. Keep the original PowerShell stage/error visible in that case.
-        with tempfile.TemporaryDirectory(prefix="starfield-runtime-fixture-", ignore_cleanup_errors=True) as temporary:
-            parent = Path(temporary) / "parent"
-            parent.mkdir()
-            runtime = parent / "runtime"
-            body = "$ErrorActionPreference='Stop';Set-StrictMode -Version Latest;. " + literal(MODULE) + ";"
-            body += "$m=Get-Content -LiteralPath " + literal(MANIFEST) + " -Raw|ConvertFrom-Json;"
-            body += "$a=[IO.File]::ReadAllBytes(" + literal(self.archive) + ");$s=$null;$phase='create';$failure=$null;"
-            body += "function Fixture-Report($e,$where){[Console]::Error.WriteLine(('RUNTIME_FIXTURE_FAILURE phase='+$where+' nativePhase='+$e.Exception.Data['RuntimePhase']+' nativeCode='+$e.Exception.Data['RuntimeNativeCode']+' message='+$e.Exception.Message+' stack='+$e.ScriptStackTrace))};"
-            body += "try{$s=New-RuntimeCustody " + literal(runtime) + " $true;$phase='before-expand';"
-            body += before_expand
-            body += "$phase='expand';Expand-RuntimeArchive $a $m $s {$true};$phase='action';"
-            body += action
-            body += "}catch{$failure=$_;Fixture-Report $_ $phase}finally{try{Close-RuntimeCustody $s $true $true}catch{Fixture-Report $_ 'cleanup';if($null -eq $failure){$failure=$_}}};if($null -ne $failure){exit 1}"
-            result = powershell(body)
-            self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
-            return result.stdout
+    def checked(self, body, timeout=90):
+        body = ("try{" + body + "}catch{[Console]::Error.WriteLine(('RUNTIME_FIXTURE_FAILURE message='+$_.Exception.Message+' stack='+$_.ScriptStackTrace));exit 1}")
+        result = powershell(body, timeout=timeout)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+        return result.stdout
+
+    def run_case(self, action):
+        # Only fixtures create siblings under the protected VM installation.
+        # The production installer and reader both use their fixed root only.
+        body = prelude()
+        body += "$path=" + literal(r"C:\Program Files\Stephanos\BuildRuntimes\fixture-") + "+[Guid]::NewGuid().ToString('N');$s=$null;"
+        body += "try{New-ProtectedRuntimeDirectory $path;$s=New-RuntimeCustody $path;"
+        body += "$raw=[IO.File]::ReadAllBytes(" + literal(self.archive) + ");Expand-RuntimeArchive $raw $m $s {$true};"
+        body += action
+        body += "}finally{Close-RuntimeCustody $s;if([IO.Directory]::Exists($path)){[IO.Directory]::Delete($path,$true)}}"
+        return self.checked(body)
 
     def test_genuine_complete_runtime_executes_fixed_bootstrap(self):
-        # Same isolated bootstrap imports used by the actual launcher/worker.
         program = "import base64,hashlib,json,struct,sys,types,ctypes,pathlib,subprocess;assert sys.version_info[:3]==(3,14,10);assert struct.calcsize('P')==8;assert sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode;print('PINNED_RUNTIME_EXECUTED')"
         encoded = base64.b64encode(program.encode()).decode("ascii")
         command = '-I -S -B -c "import base64;exec(base64.b64decode(\'' + encoded + '\'))"'
-        action = "$s=Pin-VerifiedRuntime $s $m {$true};$p=[Diagnostics.Process]::new();"
-        action += "$p.StartInfo=[Diagnostics.ProcessStartInfo]::new();$p.StartInfo.FileName=$s.Python;"
-        action += "$p.StartInfo.Arguments=" + literal(command) + ";$p.StartInfo.UseShellExecute=$false;"
-        action += r"$p.StartInfo.CreateNoWindow=$true;$p.StartInfo.WorkingDirectory='C:\Windows\System32';"
-        action += "$p.StartInfo.RedirectStandardOutput=$true;$p.StartInfo.RedirectStandardError=$true;"
-        action += r"$p.StartInfo.EnvironmentVariables.Clear();$p.StartInfo.EnvironmentVariables['SystemRoot']='C:\Windows';"
-        action += r"$p.StartInfo.EnvironmentVariables['PATH']='C:\Windows\System32';"
-        action += "try{if(-not $p.Start()){throw 'START_FAILED'};[void]$p.get_Handle();"
-        action += "$text=$p.StandardOutput.ReadToEnd();$err=$p.StandardError.ReadToEnd();"
-        action += "if(-not $p.WaitForExit(10000) -or $p.get_ExitCode() -ne 0 -or $err){throw 'RUNTIME_FAILED'};$text"
-        action += "}finally{if(-not $p.get_HasExited()){$p.Kill();[void]$p.WaitForExit(5000)};$p.Dispose()}"
-        self.assertIn(b"PINNED_RUNTIME_EXECUTED", self.run_case(action))
+        body = prelude() + "$s=$null;$p=$null;try{$s=New-FixedPythonRuntime 'fixture-real-runtime-v1' $m {$true};"
+        body += "$p=[Diagnostics.Process]::new();$p.StartInfo=[Diagnostics.ProcessStartInfo]::new();$p.StartInfo.FileName=$s.Python;"
+        body += "$p.StartInfo.Arguments=" + literal(command) + ";$p.StartInfo.UseShellExecute=$false;"
+        body += r"$p.StartInfo.CreateNoWindow=$true;$p.StartInfo.WorkingDirectory='C:\Windows\System32';"
+        body += "$p.StartInfo.RedirectStandardOutput=$true;$p.StartInfo.RedirectStandardError=$true;"
+        body += r"$p.StartInfo.EnvironmentVariables.Clear();$p.StartInfo.EnvironmentVariables['SystemRoot']='C:\Windows';"
+        body += r"$p.StartInfo.EnvironmentVariables['PATH']='C:\Windows\System32';"
+        body += "if(-not $p.Start()){throw 'START_FAILED'};[void]$p.get_Handle();"
+        body += "$text=$p.StandardOutput.ReadToEnd();$err=$p.StandardError.ReadToEnd();"
+        body += "if(-not $p.WaitForExit(10000) -or $p.get_ExitCode() -ne 0 -or $err){throw 'RUNTIME_FAILED'};$text"
+        body += "}finally{if($null -ne $p){if(-not $p.get_HasExited()){$p.Kill();[void]$p.WaitForExit(5000)};$p.Dispose()};Close-RuntimeCustody $s}"
+        self.assertIn(b"PINNED_RUNTIME_EXECUTED", self.checked(body))
 
-    def test_changed_runtime_members_are_refused_before_start(self):
+    def test_changed_runtime_members_are_refused_without_repair(self):
         for name in ("python314.dll", "python314.zip", "_ctypes.pyd", "python314._pth"):
             with self.subTest(member=name):
-                # The fixture uses its private creator handle to construct a
-                # bad input. Ordinary later opens cannot modify these files.
-                action = "$leaf=$s.Directories[$s.Directories.Count-1];Runtime-SetAcl $leaf.Handle (Runtime-Security 'cleanup');"
-                action += "$path=[IO.Path]::Combine($s.Path," + literal(name) + ");"
-                action += "$bytes=[IO.File]::ReadAllBytes($path);$bytes[0]=$bytes[0] -bxor 1;[IO.File]::Delete($path);[IO.File]::WriteAllBytes($path,$bytes);"
-                action += "Runtime-SetAcl $leaf.Handle (Runtime-Security 'provision');"
+                action = "$target=[IO.Path]::Combine($s.Path," + literal(name) + ");"
+                action += "$bytes=[IO.File]::ReadAllBytes($target);$bytes[0]=$bytes[0] -bxor 1;[IO.File]::WriteAllBytes($target,$bytes);"
                 action += "$accepted=$false;try{$s=Pin-VerifiedRuntime $s $m {$true};$accepted=$true}catch{};"
-                action += "if($accepted){throw 'TAMPERED_RUNTIME_ADMITTED'};'REFUSED_BEFORE_START'"
-                self.assertIn(b"REFUSED_BEFORE_START", self.run_case(action))
+                action += "if($accepted -or [IO.File]::ReadAllBytes($target)[0] -ne $bytes[0]){throw 'TAMPERED_RUNTIME_ADMITTED_OR_REPAIRED'};'REFUSED_WITHOUT_REPAIR'"
+                self.assertIn(b"REFUSED_WITHOUT_REPAIR", self.run_case(action))
 
-    def test_additional_or_missing_member_is_refused_before_start(self):
-        for mutation in ("[IO.File]::WriteAllText([IO.Path]::Combine($s.Path,'sitecustomize.py'),'raise Exception()');",
-                         "[IO.File]::Delete([IO.Path]::Combine($s.Path,'_ctypes.pyd'));" ):
+    def test_extra_missing_untrusted_owner_and_writer_are_refused(self):
+        mutations = (
+            "[IO.File]::WriteAllText([IO.Path]::Combine($s.Path,'sitecustomize.py'),'raise Exception()');",
+            "[IO.File]::Delete([IO.Path]::Combine($s.Path,'_ctypes.pyd'));",
+            "$p=[IO.Path]::Combine($s.Path,'python314.dll');$acl=[IO.File]::GetAccessControl($p);$acl.SetOwner([Security.Principal.WindowsIdentity]::GetCurrent().User);[IO.File]::SetAccessControl($p,$acl);",
+            "$acl=[IO.Directory]::GetAccessControl($s.Path);$rule=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-11'),'Write','Allow');$acl.AddAccessRule($rule);[IO.Directory]::SetAccessControl($s.Path,$acl);",
+        )
+        for mutation in mutations:
             with self.subTest(mutation=mutation):
-                action = "$leaf=$s.Directories[$s.Directories.Count-1];Runtime-SetAcl $leaf.Handle (Runtime-Security 'cleanup');"
-                action += mutation + "Runtime-SetAcl $leaf.Handle (Runtime-Security 'provision');"
-                action += "$accepted=$false;try{$s=Pin-VerifiedRuntime $s $m {$true};$accepted=$true}catch{};"
-                action += "if($accepted){throw 'WRONG_NAMESPACE_ADMITTED'};'REFUSED_BEFORE_START'"
-                self.assertIn(b"REFUSED_BEFORE_START", self.run_case(action))
+                action = mutation + "$accepted=$false;try{Close-RuntimeCustody $s;$s=New-RuntimeCustody $path;$s=Pin-VerifiedRuntime $s $m {$true};$accepted=$true}catch{};"
+                action += "if($accepted){throw 'UNTRUSTED_INSTALLATION_ADMITTED'};'UNTRUSTED_INSTALLATION_REFUSED'"
+                self.assertIn(b"UNTRUSTED_INSTALLATION_REFUSED", self.run_case(action))
 
-    def test_sealed_namespace_and_retained_ancestors_refuse_changes(self):
-        program = "import sys;print('PINNED_RUNTIME_READY',flush=True);assert sys.stdin.readline().strip()=='finish'"
-        encoded = base64.b64encode(program.encode()).decode("ascii")
-        command = '-I -S -B -c "import base64;exec(base64.b64decode(\'' + encoded + '\'))"'
-        action = "$s=Pin-VerifiedRuntime $s $m {$true};$p=[Diagnostics.Process]::new();"
-        action += "$p.StartInfo=[Diagnostics.ProcessStartInfo]::new();$p.StartInfo.FileName=$s.Python;"
-        action += "$p.StartInfo.Arguments=" + literal(command) + ";$p.StartInfo.UseShellExecute=$false;"
-        action += r"$p.StartInfo.CreateNoWindow=$true;$p.StartInfo.WorkingDirectory='C:\Windows\System32';"
-        action += "$p.StartInfo.RedirectStandardInput=$true;$p.StartInfo.RedirectStandardOutput=$true;"
-        action += r"$p.StartInfo.EnvironmentVariables.Clear();$p.StartInfo.EnvironmentVariables['SystemRoot']='C:\Windows';"
-        action += "try{if(-not $p.Start()){throw 'START_FAILED'};[void]$p.get_Handle();"
-        action += "$ready=$p.StandardOutput.ReadLineAsync();if(-not $ready.Wait(10000) -or $ready.Result -cne 'PINNED_RUNTIME_READY'){throw 'RUNTIME_NOT_READY'};"
+    def test_filtered_user_admits_but_cannot_mutate_or_install(self):
+        body = prelude() + ". " + literal(FILTERED) + ";"
+        body += "Invoke-FilteredRuntimeFixture {"
+        body += "$s=$null;try{$s=New-FixedPythonRuntime 'fixture-filtered-reader-v1' $m {$true};if(-not $s.Sealed -or $s.Files.Count -ne 37){throw 'FILTERED_ADMISSION_FAILED'}}finally{Close-RuntimeCustody $s};"
+        # All ordinary reader pins are closed here: ACLs, rather than those
+        # pins, must enforce the permission boundary for the filtered token.
         actions = (
-            "[IO.File]::WriteAllText([IO.Path]::Combine($s.Path,'injected.py'),'injected')",
-            "$f=[IO.File]::Open([IO.Path]::Combine($s.Path,'python314.dll'),'Open','Write','ReadWrite');$f.Dispose()",
-            "[IO.File]::Delete([IO.Path]::Combine($s.Path,'python314.zip'))",
-            "$parent=[IO.Directory]::GetParent($s.Path).FullName;[IO.Directory]::Move($parent,$parent+'-replaced')",
-            "$acl=[IO.Directory]::GetAccessControl($s.Path);$acl.SetAccessRuleProtection($false,$true);[IO.Directory]::SetAccessControl($s.Path,$acl)",
+            "[IO.File]::WriteAllText(" + literal(FIXED_ROOT + r"\injected.py") + ",'injected')",
+            "$f=[IO.File]::Open(" + literal(FIXED_ROOT + r"\python314.dll") + ",'Open','Write','ReadWrite');$f.Dispose()",
+            "[IO.File]::Delete(" + literal(FIXED_ROOT + r"\python314.zip") + ")",
+            "$acl=[IO.Directory]::GetAccessControl(" + literal(FIXED_ROOT) + ");$acl.SetAccessRuleProtection($false,$true);[IO.Directory]::SetAccessControl(" + literal(FIXED_ROOT) + ",$acl)",
+            "[IO.Directory]::Move(" + literal(FIXED_ROOT) + "," + literal(FIXED_ROOT + "-moved") + ")",
+            "Install-FixedPythonRuntime $m",
         )
         for index, attempt in enumerate(actions):
-            action += "$refused=$false;try{" + attempt + "}catch{$refused=$true};"
-            action += "if(-not $refused){throw 'NAMESPACE_CHANGE_" + str(index) + "_ALLOWED'};"
-        action += "if($p.get_HasExited()){throw 'RUNTIME_ENDED_DURING_DENIAL_CHECKS'};$p.StandardInput.WriteLine('finish');$p.StandardInput.Close();"
-        action += "if(-not $p.WaitForExit(10000) -or $p.get_ExitCode() -ne 0){throw 'RUNTIME_EXIT_UNPROVEN'};'RUNTIME_NAMESPACE_RETAINED'"
-        action += "}finally{if(-not $p.get_HasExited()){$p.Kill();[void]$p.WaitForExit(5000)};$p.Dispose()}"
-        self.assertIn(b"RUNTIME_NAMESPACE_RETAINED", self.run_case(action))
+            body += "$refused=$false;try{" + attempt + "}catch{$refused=$true};"
+            body += "if(-not $refused){throw 'FILTERED_MUTATION_" + str(index) + "_ALLOWED'};"
+        body += "'FILTERED_TRUST_BOUNDARY_PASSED'}"
+        self.assertIn(b"FILTERED_TRUST_BOUNDARY_PASSED", self.checked(body))
+
+    def test_retained_files_and_directory_refuse_admin_replacement(self):
+        body = prelude() + "$s=$null;try{$s=New-FixedPythonRuntime 'fixture-retained-runtime-v1' $m {$true};"
+        actions = (
+            "$f=[IO.File]::Open(" + literal(FIXED_ROOT + r"\python314.dll") + ",'Open','Write','ReadWrite');$f.Dispose()",
+            "[IO.File]::Delete(" + literal(FIXED_ROOT + r"\python314.zip") + ")",
+            "[IO.Directory]::Move(" + literal(r"C:\Program Files\Stephanos\BuildRuntimes") + "," + literal(r"C:\Program Files\Stephanos\BuildRuntimes-moved") + ")",
+        )
+        for index, attempt in enumerate(actions):
+            body += "$refused=$false;try{" + attempt + "}catch{$refused=$true};if(-not $refused){throw 'PIN_REPLACEMENT_" + str(index) + "_ALLOWED'};"
+        body += "'RETAINED_INSTALLATION_PASSED'}finally{Close-RuntimeCustody $s}"
+        self.assertIn(b"RETAINED_INSTALLATION_PASSED", self.checked(body))
 
     def test_cancellation_never_admits_or_launches_runtime(self):
-        action = "$accepted=$false;try{$s=Pin-VerifiedRuntime $s $m {$false};$accepted=$true}catch{};"
-        action += "if($accepted){throw 'CANCELLED_RUNTIME_ADMITTED'};'CANCELLED_BEFORE_START'"
-        self.assertIn(b"CANCELLED_BEFORE_START", self.run_case(action))
+        body = prelude() + "$accepted=$false;try{$s=New-FixedPythonRuntime 'fixture-cancelled-runtime-v1' $m {$false};$accepted=$true;Close-RuntimeCustody $s}catch{};"
+        body += "if($accepted){throw 'CANCELLED_RUNTIME_ADMITTED'};'CANCELLED_BEFORE_START'"
+        self.assertIn(b"CANCELLED_BEFORE_START", self.checked(body))
 
-    def test_permission_handles_are_refused_from_creation(self):
-        before = "$leaf=$s.Directories[$s.Directories.Count-1];if(((Runtime-GrantedAccess $leaf.Handle) -band 0x1700ab) -ne 0x1700ab){throw 'CREATOR_ACCESS_UNPROVEN'};"
-        before += "$n=Runtime-Native;foreach($access in @(0x40000,0x80000,2)){"
-        before += "$h=$n::CreateFileW($s.Path,$access,7,[IntPtr]::Zero,3,0x02200000,[IntPtr]::Zero);"
-        before += "if($h -ne [IntPtr](-1) -and $h -ne [IntPtr]::Zero){[void]$n::CloseHandle($h);throw 'PRESEAL_PERMISSION_HANDLE_ALLOWED'}};"
-        action = "$n=Runtime-Native;foreach($row in $m.files){"
-        action += "$h=$n::CreateFileW([IO.Path]::Combine($s.Path,$row.name),0x40000,7,[IntPtr]::Zero,3,0x00200000,[IntPtr]::Zero);"
-        action += "if($h -ne [IntPtr](-1) -and $h -ne [IntPtr]::Zero){[void]$n::CloseHandle($h);throw 'MEMBER_PERMISSION_HANDLE_ALLOWED'}};"
-        action += "$s=Pin-VerifiedRuntime $s $m {$true};"
-        action += "$acl=[IO.Directory]::GetAccessControl($s.Path);if(-not $acl.AreAccessRulesProtected){throw 'DIRECTORY_DACL_NOT_PROTECTED'};"
-        action += "foreach($row in $m.files){$acl=[IO.File]::GetAccessControl([IO.Path]::Combine($s.Path,$row.name));if(-not $acl.AreAccessRulesProtected){throw 'MEMBER_DACL_NOT_PROTECTED'}};"
-        action += "'CREATION_PERMISSION_BOUNDARY_PASSED'"
-        self.assertIn(b"CREATION_PERMISSION_BOUNDARY_PASSED", self.run_case(action, before))
-
-    def test_structural_probe_permanently_sealed_relative_creation(self):
-        # Test the proposed replacement primitive before changing production:
-        # a namespace sealed from birth, populated only through its creator.
-        # No interpreter or other child process runs from these probe files.
-        with tempfile.TemporaryDirectory(prefix="starfield-sealed-probe-", ignore_cleanup_errors=True) as temporary:
-            runtime = Path(temporary) / "sealed"
-            body = "$ErrorActionPreference='Stop';Set-StrictMode -Version Latest;. " + literal(MODULE) + ";"
-            body += r"""
-function Probe-Create([IntPtr]$root,[string]$name,[uint32]$access,[bool]$directory) {
-  $n=Runtime-Native;$buffers=[Collections.Generic.List[IntPtr]]::new()
-  try {
-    if($root -eq [IntPtr]::Zero){$name='\??\'+$name}
-    $text=[Runtime.InteropServices.Marshal]::StringToHGlobalUni($name);$buffers.Add($text)
-    $u=[Runtime.InteropServices.Marshal]::AllocHGlobal(16);$buffers.Add($u)
-    $oa=[Runtime.InteropServices.Marshal]::AllocHGlobal(48);$buffers.Add($oa)
-    $iosb=[Runtime.InteropServices.Marshal]::AllocHGlobal(16);$buffers.Add($iosb)
-    $out=[Runtime.InteropServices.Marshal]::AllocHGlobal(8);$buffers.Add($out)
-    foreach($p in @(@($u,16),@($oa,48),@($iosb,16),@($out,8))){[Runtime.InteropServices.Marshal]::Copy([byte[]]::new($p[1]),0,$p[0],$p[1])}
-    $sd=Runtime-Security 'sealed';$sdp=[Runtime.InteropServices.Marshal]::AllocHGlobal($sd.Length);$buffers.Add($sdp)
-    [Runtime.InteropServices.Marshal]::Copy($sd,0,$sdp,$sd.Length)
-    [Runtime.InteropServices.Marshal]::WriteInt16($u,0,[int16]($name.Length*2))
-    [Runtime.InteropServices.Marshal]::WriteInt16($u,2,[int16](($name.Length+1)*2))
-    [Runtime.InteropServices.Marshal]::WriteIntPtr($u,8,$text)
-    [Runtime.InteropServices.Marshal]::WriteInt32($oa,0,48)
-    [Runtime.InteropServices.Marshal]::WriteIntPtr($oa,8,$root)
-    [Runtime.InteropServices.Marshal]::WriteIntPtr($oa,16,$u)
-    [Runtime.InteropServices.Marshal]::WriteInt32($oa,24,0x40)
-    [Runtime.InteropServices.Marshal]::WriteIntPtr($oa,32,$sdp)
-    $attributes=if($directory){0x10}else{0x80};$options=if($directory){0x21}else{0x60}
-    $status=$n::NtCreateFile($out,$access,$oa,$iosb,[IntPtr]::Zero,$attributes,1,2,$options,[IntPtr]::Zero,0)
-    $h=[Runtime.InteropServices.Marshal]::ReadIntPtr($out)
-    $granted=$null;if($status -eq 0){$granted=Runtime-GrantedAccess $h}
-    return [pscustomobject]@{Status=$status;Handle=$h;Granted=$granted;Created=[Runtime.InteropServices.Marshal]::ReadIntPtr($iosb,8).ToInt64()}
-  }finally{foreach($p in $buffers){[Runtime.InteropServices.Marshal]::FreeHGlobal($p)}}
-}
-$n=Runtime-Native;$directory=$child=$null;$file=$safe=$null
-$proof=[ordered]@{directoryStatus=$null;directoryGranted=$null;directoryCreated=$false;pathCreateDenied=$false;childStatus=$null;childGranted=$null;childCreated=$false;childWritten=$false}
-try{
-"""
-            body += "$directory=Probe-Create ([IntPtr]::Zero) " + literal(runtime) + " 0x1300ab $true;"
-            body += r"""
-  $proof.directoryStatus=$directory.Status;$proof.directoryGranted=$directory.Granted;$proof.directoryCreated=($directory.Created -eq 2)
-  if($directory.Status -eq 0){
-"""
-            body += "try{[IO.File]::WriteAllText(" + literal(runtime / "path.txt") + ",'forbidden')}catch{$proof.pathCreateDenied=$true};"
-            body += r"""
-    # NtCreateFile requires SYNCHRONIZE explicitly for synchronous I/O;
-    # use mapped FILE_GENERIC_READ|FILE_GENERIC_WRITE|DELETE, not generic bits.
-    $child=Probe-Create $directory.Handle 'relative.txt' 0x13019f $false
-    $proof.childStatus=$child.Status;$proof.childGranted=$child.Granted;$proof.childCreated=($child.Created -eq 2)
-    if($child.Status -eq 0){
-      $safe=[Microsoft.Win32.SafeHandles.SafeFileHandle]::new($child.Handle,$true);$child.Handle=[IntPtr]::Zero
-      $file=[IO.FileStream]::new($safe,[IO.FileAccess]::Write)
-      $data=[Text.Encoding]::UTF8.GetBytes('sealed-relative-fixture');$file.Write($data,0,$data.Length);$file.Flush($true)
-      $proof.childWritten=$true
-    }
-  }
-}finally{
-  if($null -ne $file){$file.Dispose()}elseif($null -ne $safe){$safe.Dispose()}
-  foreach($record in @($child,$directory)){if($null -ne $record -and $record.Handle -ne [IntPtr]::Zero -and $record.Handle -ne [IntPtr](-1)){[void]$n::CloseHandle($record.Handle)}}
-}
-$proof|ConvertTo-Json -Compress
-"""
-            result = powershell(body)
-            self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
-            proof = json.loads(result.stdout.decode("utf-8-sig"))
-            self.assertEqual(proof["directoryStatus"], 0, proof)
-            self.assertTrue(proof["directoryCreated"], proof)
-            self.assertEqual(proof["directoryGranted"] & 2, 2, proof)
-            self.assertTrue(proof["pathCreateDenied"], proof)
-            self.assertEqual(proof["childStatus"], 0, proof)
-            self.assertTrue(proof["childCreated"] and proof["childWritten"], proof)
+    def test_existing_corrupt_install_is_never_overwritten(self):
+        body = prelude() + "$path=" + literal(FIXED_ROOT + r"\python314._pth") + ";$before=[IO.File]::ReadAllBytes($path);"
+        body += "try{$bad=[byte[]]$before.Clone();$bad[0]=$bad[0] -bxor 1;[IO.File]::WriteAllBytes($path,$bad);"
+        body += "$accepted=$false;try{Install-FixedPythonRuntime $m;$accepted=$true}catch{};"
+        body += "if($accepted -or [IO.File]::ReadAllBytes($path)[0] -ne $bad[0]){throw 'CORRUPT_INSTALL_OVERWRITTEN'};'CORRUPT_INSTALL_REFUSED'"
+        body += "}finally{[IO.File]::WriteAllBytes($path,$before)}"
+        self.assertIn(b"CORRUPT_INSTALL_REFUSED", self.checked(body))
 
 
 if __name__ == "__main__":
