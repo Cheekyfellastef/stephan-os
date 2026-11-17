@@ -119,6 +119,9 @@ export async function validateOpenClawOc2QualificationContext(context = {}, { re
 
   if (grant?.schemaVersion !== 'stephanos.mission-worker-action-grant.v1'
     || grant?.boundedActionCount !== 1
+    || !text(grant?.grantId)
+    || !missionId
+    || grant?.actionKind !== 'agent-handoff'
     || grant?.mergeAuthority !== false
     || grant?.leaseSeizureAllowed !== false
     || grant?.issueNumber !== OPENCLAW_OC2_ISSUE
@@ -137,6 +140,7 @@ export async function validateOpenClawOc2QualificationContext(context = {}, { re
     return blocker('OPENCLAW_OC2_BINDING_INVALID');
   }
   if (claim?.adapter !== 'openclaw-readonly'
+    || claim?.item?.adapter !== 'openclaw-readonly'
     || claim?.item?.schemaVersion !== 'stephanos.mission-worker-queue-item.v1'
     || text(claim?.item?.missionId).toLowerCase() !== missionId
     || text(claim?.item?.actionId).toLowerCase() !== taskId

@@ -53,6 +53,9 @@ function requestBlocker(request) {
   const grant = request.actionGrant;
   if (grant?.schemaVersion !== 'stephanos.mission-worker-action-grant.v1'
     || grant?.boundedActionCount !== 1
+    || !text(grant?.grantId)
+    || !text(grant?.missionId)
+    || grant?.actionKind !== 'agent-handoff'
     || grant?.mergeAuthority !== false
     || grant?.leaseSeizureAllowed !== false
     || grant?.issueNumber !== OPENCLAW_OC2_ISSUE
@@ -101,6 +104,13 @@ export async function executeOpenClawOc2GatewayRequest(request, options = {}) {
     || text(item?.adapter).toLowerCase() !== 'openclaw-readonly'
     || text(item?.missionId).toLowerCase() !== missionId
     || text(item?.actionId).toLowerCase() !== taskId
+    || item?.payload?.schemaVersion !== 'stephanos.mission-worker-action.v1'
+    || item?.payload?.actionKind !== 'agent-handoff'
+    || text(item?.payload?.adapter).toLowerCase() !== 'openclaw-readonly'
+    || item?.payload?.executable !== true
+    || text(item?.payload?.missionId).toLowerCase() !== missionId
+    || text(item?.payload?.actionId).toLowerCase() !== taskId
+    || text(item?.payload?.repository) !== REPOSITORY
     || text(item?.payload?.operation).toLowerCase() !== OPENCLAW_OC2_OPERATION) {
     return blocked('OPENCLAW_OC2_GATEWAY_CLAIM_INVALID', { missionId, taskId, requestedSourceHead });
   }

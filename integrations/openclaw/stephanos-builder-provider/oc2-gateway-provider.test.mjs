@@ -90,6 +90,47 @@ test('OC2 gateway rejects caller-selected operation or extra request fields', as
   assert.equal(extra.error, 'OPENCLAW_OC2_GATEWAY_REQUEST_SHAPE_INVALID');
 });
 
+
+test('OC2 Gateway refuses incomplete grant and mismatched persisted action before tests', async (t) => {
+  const context = { executingInsideOpenClawGateway: true, pluginId: 'stephanos-builder-provider', method: OPENCLAW_OC2_GATEWAY_METHOD, providerInstance: 'openclaw-gateway:4242' };
+  for (const [name, corrupt] of [
+    ['missing grant id', (g) => { delete g.grantId; }],
+    ['missing mission id', (g) => { delete g.missionId; }],
+    ['wrong grant action kind', (g) => { g.actionKind = 'other'; }],
+  ]) {
+    await t.test(name, async () => {
+      const g = grant();
+      corrupt(g);
+      let reads = 0;
+      const response = await executeOpenClawOc2GatewayRequest({ schemaVersion: OPENCLAW_OC2_GATEWAY_REQUEST_SCHEMA, actionGrant: g }, {
+        gatewayRuntimeContext: context, readFileFn: async () => { reads++; return '{}'; },
+      });
+      assert.equal(response.error, 'OPENCLAW_OC2_GATEWAY_GRANT_INVALID');
+      assert.equal(reads, 0);
+    });
+  }
+  for (const [name, corrupt] of [
+    ['missing queue adapter', (value) => { delete value.adapter; }],
+    ['wrong action kind', (value) => { value.payload.actionKind = 'other'; }],
+    ['wrong mission', (value) => { value.payload.missionId = 'other-mission'; }],
+    ['wrong task', (value) => { value.payload.actionId = 'other-task'; }],
+    ['wrong repository', (value) => { value.payload.repository = 'other/repo'; }],
+    ['not executable', (value) => { value.payload.executable = false; }],
+  ]) {
+    await t.test(name, async () => {
+      const persisted = item();
+      corrupt(persisted);
+      const response = await executeOpenClawOc2GatewayRequest({ schemaVersion: OPENCLAW_OC2_GATEWAY_REQUEST_SCHEMA, actionGrant: grant() }, {
+        gatewayRuntimeContext: context,
+        env: { USERPROFILE: '/tmp/oc2-gateway-guard', STEPHANOS_MISSION_WORKER_QUEUE_DIR: '/tmp/oc2-gateway-guard/queue' },
+        readFileFn: async () => JSON.stringify(persisted),
+        spawnSyncFn: () => { throw new Error('must not execute invalid queue item'); },
+      });
+      assert.equal(response.error, 'OPENCLAW_OC2_GATEWAY_CLAIM_INVALID');
+    });
+  }
+});
+
 test('OC2 gateway binds the persisted claimed item and executes the fixed plan', async () => {
   const userProfile = '/tmp/oc2-gateway-user';
   const repoRoot = path.resolve(userProfile, 'Documents', 'GitHub', 'stephan-os');

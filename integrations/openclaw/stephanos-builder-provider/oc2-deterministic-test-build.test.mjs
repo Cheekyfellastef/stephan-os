@@ -90,6 +90,26 @@ test('OC2 admits only the exact canonical claimed action and fixed operation', a
   assert.equal(rejected.error, 'OPENCLAW_OC2_GRANT_INVALID');
 });
 
+
+test('OC2 claimed source validator refuses incomplete grant and wrong queue adapter', async (t) => {
+  for (const [name, corrupt, expected] of [
+    ['missing grant id', (value) => { delete value.grant.grantId; }, 'OPENCLAW_OC2_GRANT_INVALID'],
+    ['missing mission id', (value) => { delete value.grant.missionId; }, 'OPENCLAW_OC2_GRANT_INVALID'],
+    ['wrong grant action kind', (value) => { value.grant.actionKind = 'other'; }, 'OPENCLAW_OC2_GRANT_INVALID'],
+    ['wrong claimed queue adapter', (value) => { value.item.adapter = 'other'; }, 'OPENCLAW_OC2_CLAIM_INVALID'],
+  ]) {
+    await t.test(name, async () => {
+      const value = fixture();
+      corrupt(value);
+      const result = await validateOpenClawOc2QualificationContext(qualificationInput(value), {
+        readFileFn: async () => JSON.stringify(value.item),
+      });
+      assert.equal(result.success, false);
+      assert.equal(result.error, expected);
+    });
+  }
+});
+
 test('OC2 executes only fixed node test IDs and proves source state unchanged', async () => {
   const parts = fixture();
   const userProfile = '/tmp/stephanos-oc2-user';
