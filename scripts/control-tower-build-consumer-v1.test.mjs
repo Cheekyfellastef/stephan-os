@@ -940,3 +940,157 @@ test('a retained unresolved BUILD avoids an expensive full scan without granting
   assert.equal(s.calls.length, 0, 'the previous BUILD cannot dispatch a worker');
   assert.deepEqual(ledger.read(command.requestId), original, 'original reserved custody unchanged');
 });
+
+function retainTerminalBuild(ledger, { sourceHead = HEAD } = {}) {
+  const command = { ...fixture().request, sourceHead, issueNumber: 2315,
+    artifactId: 1100, artifactSha256: 'c'.repeat(64) };
+  const commandDigest = mailboxRotationDigest(command);
+  const initial = createControlTowerRequestObservationV1(command, {
+    commandDigest, acceptedAtUtc: NOW, nowMs: Date.parse(NOW),
+  });
+  ledger.reserve(command, { controlTowerObservation: initial });
+  const terminal = createControlTowerRequestObservationV1(command, {
+    commandDigest, acceptedAtUtc: NOW, observedAtUtc: new Date(Date.parse(NOW) + 1000).toISOString(),
+    nowMs: Date.parse(NOW) + 1000, state: 'WAKE_BLOCKED', blocker: 'MAINTENANCE_CUSTODY_STATE_MISSING',
+  });
+  ledger.complete({ requestId: command.requestId, issueNumber: 2315, state: 'BLOCKED', controlTowerObservation: terminal });
+  return command;
+}
+
+test('retained terminal history permits bounded OBSERVE without a lifetime scan or rebuilt source/time evidence', async t => {
+  let discoveries = 0, admissions = 0, inspections = 0;
+  const s = setup(t, {
+    createLedger: root => {
+      const original = createMailboxExecutionLedger(root);
+      return { ...original,
+        discoverControlTower: async () => {
+          discoveries++;
+          return { ok: false, blocker: 'CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED' };
+        },
+        discoverAndReserveControlTower: async () => { admissions++; throw Error('OBSERVE cannot admit BUILD'); },
+      };
+    },
+    readRequest: requestTransport(101, 'OBSERVE_CONTROL_SYSTEM'),
+    inspect: async args => {
+      inspections++;
+      assert.deepEqual(args, { expectedMain: HEAD, controlTowerRequestId: 'control-tower-build-100-1' });
+      return inspectedStatus();
+    },
+  });
+  const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+  const prior = retainTerminalBuild(ledger, { sourceHead: 'd'.repeat(40) });
+  const original = ledger.read(prior.requestId);
+  for (let index = 0; index < 4108; index++)
+    ledger.importHistorical('unrelated-terminal-history-' + index, 3258, 'TERMINAL');
+  const observed = await s.consume({ latestBuildRequestId: prior.requestId,
+    now: () => new Date(Date.parse(NOW) + 30000) });
+  assert.equal(observed.state, 'OBSERVATION_COMPLETED');
+  assert.equal(discoveries, 0, 'read-only request must not wait for the global history scan');
+  assert.equal(admissions, 0); assert.equal(inspections, 1); assert.equal(s.calls.length, 0);
+  assert.deepEqual(ledger.read(prior.requestId), original);
+  assert.equal(observed.latestBuildRequestObservation.sourceHead, original.controlTowerObservation.sourceHead);
+  assert.equal(observed.latestBuildRequestObservation.acceptedAtUtc, original.controlTowerObservation.acceptedAtUtc);
+  assert.equal(observed.latestBuildRequestObservation.observedAtUtc, original.controlTowerObservation.observedAtUtc);
+  assert.equal(observed.latestBuildRequestObservation.state, 'WAKE_BLOCKED');
+  const observationRecord = ledger.read(observed.requestId);
+  assert.equal(observationRecord.phase, 'TERMINAL');
+  assert.equal(observationRecord.terminalProofHash, undefined);
+  for (const flag of ['buildStartedProven', 'nativePickupProven', 'goalCompletionProven',
+    'sourceMutationAllowed', 'mergeAuthority', 'leaseSeizureAllowed']) assert.equal(observed[flag], false);
+
+  const replay = await s.consume({ latestBuildRequestId: prior.requestId, latestObserveRequestId: observed.requestId });
+  assert.equal(replay.state, 'HELD', 'the recorded observation is not a fresh request or a BUILD-readiness proof');
+  assert.equal(inspections, 1); assert.equal(admissions, 0); assert.equal(s.calls.length, 0);
+  assert.deepEqual(ledger.read(observed.requestId), observationRecord, 'original terminal identity is immutable');
+});
+
+test('an OBSERVE with a retained terminal locator leaves a hidden reserved sibling for the mandatory BUILD scan', async t => {
+  let discoveries = 0, admissions = 0;
+  const s = setup(t, {
+    createLedger: root => {
+      const original = createMailboxExecutionLedger(root);
+      return { ...original,
+        discoverControlTower: options => { discoveries++; return original.discoverControlTower(options); },
+        discoverAndReserveControlTower: (...args) => { admissions++; return original.discoverAndReserveControlTower(...args); },
+      };
+    },
+    readHistoricalRequest: async () => ({ ok: false, blocker: 'CONTROL_TOWER_BUILD_REQUEST_NOT_PROVEN' }),
+    readRequest: requestTransport(101, 'OBSERVE_CONTROL_SYSTEM'),
+    inspect: async () => inspectedStatus(),
+  });
+  const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+  const prior = retainTerminalBuild(ledger);
+  const hidden = { ...fixture().request, requestId: 'control-tower-build-102-1', runId: 102,
+    artifactId: 1102, artifactSha256: 'c'.repeat(64), issueNumber: 2315 };
+  ledger.reserve(hidden, { controlTowerObservation: createControlTowerRequestObservationV1(hidden, {
+    commandDigest: mailboxRotationDigest(hidden), acceptedAtUtc: NOW, nowMs: Date.parse(NOW),
+  }) });
+  const heldRecord = ledger.read(hidden.requestId);
+  const observed = await s.consume({ latestBuildRequestId: prior.requestId });
+  assert.equal(observed.state, 'OBSERVATION_COMPLETED'); assert.equal(discoveries, 0);
+  assert.deepEqual(ledger.read(hidden.requestId), heldRecord);
+  assert.equal(observed.nativePickupProven, false);
+
+  s.options.dependencies.readRequest = requestTransport(103);
+  const blocked = await s.consume({ latestBuildRequestId: prior.requestId, latestObserveRequestId: observed.requestId });
+  assert.equal(blocked.state, 'HELD');
+  assert.equal(blocked.blocker, 'CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED');
+  assert.equal(discoveries, 1, 'a retained terminal locator cannot skip discovery for a new BUILD');
+  assert.equal(admissions, 0); assert.equal(s.calls.length, 0);
+  assert.equal(blocked.latestBuildRequestObservation.requestId, hidden.requestId);
+  assert.equal(blocked.latestBuildRequestObservation.state, 'RESERVED');
+  assert.equal(ledger.read('control-tower-build-103-1'), null);
+  assert.deepEqual(ledger.read(hidden.requestId), heldRecord);
+});
+
+test('a retained terminal locator cannot admit a new BUILD after failed full discovery', async t => {
+  let discoveries = 0, admissions = 0;
+  const modes = [];
+  const s = setup(t, {
+    createLedger: root => ({ ...createMailboxExecutionLedger(root),
+      discoverControlTower: async () => {
+        discoveries++;
+        return { ok: false, blocker: 'CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED' };
+      },
+      discoverAndReserveControlTower: async () => { admissions++; throw Error('unproven discovery cannot admit'); },
+    }),
+    readRequest: args => { modes.push(args.observationOnly); return requestTransport(101)(args); },
+  });
+  const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+  const prior = retainTerminalBuild(ledger), original = ledger.read(prior.requestId);
+  const blocked = await s.consume({ latestBuildRequestId: prior.requestId });
+  assert.equal(blocked.state, 'HELD');
+  assert.equal(blocked.blocker, 'CONTROL_TOWER_LEDGER_DISCOVERY_BOUND_EXCEEDED');
+  assert.equal(discoveries, 1); assert.equal(admissions, 0); assert.equal(s.calls.length, 0);
+  assert.deepEqual(modes, [false, true], 'a newly discovered HOLD restricts acquisition to read-only work');
+  assert.equal(ledger.read('control-tower-build-101-1'), null);
+  assert.deepEqual(ledger.read(prior.requestId), original);
+});
+
+test('read-only observation preserves an expired superseded reservation without entering historical retirement', async t => {
+  const stale = { ...legacyRequest(99), sourceHead: 'd'.repeat(40), issueNumber: 2315 };
+  let historicalReads = 0, inspections = 0;
+  const s = setup(t, {
+    readHistoricalRequest: async () => { historicalReads++; return { ok: true, request: stale }; },
+    readRequest: requestTransport(101, 'OBSERVE_CONTROL_SYSTEM'),
+    inspect: async args => {
+      inspections++;
+      assert.deepEqual(args, { expectedMain: HEAD, controlTowerRequestId: stale.requestId });
+      return { ...quiescentLegacyStatus(), observedAtUtc: NOW };
+    },
+  });
+  const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
+  const acceptedAtUtc = '2026-10-28T11:41:00.000Z';
+  ledger.reserve(stale, { controlTowerObservation: createControlTowerRequestObservationV1(stale, {
+    commandDigest: mailboxRotationDigest(stale), acceptedAtUtc, nowMs: Date.parse(acceptedAtUtc),
+  }) });
+  const original = ledger.read(stale.requestId);
+  const observed = await s.consume({ latestBuildRequestId: stale.requestId });
+  assert.equal(observed.state, 'OBSERVATION_COMPLETED');
+  assert.equal(historicalReads, 0, 'explicit observation cannot invoke the retirement recovery path');
+  assert.equal(inspections, 1, 'only the requested read-only diagnostic runs');
+  assert.equal(s.calls.length, 0);
+  assert.equal(observed.latestBuildRequestObservation.state, 'RESERVED');
+  assert.equal(observed.latestBuildRequestObservation.sourceHead, stale.sourceHead);
+  assert.deepEqual(ledger.read(stale.requestId), original, 'expiry/source drift do not discharge unknown execution');
+});
