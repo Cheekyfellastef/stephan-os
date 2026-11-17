@@ -2009,3 +2009,36 @@ test('missing verified producer identity fails closed without throwing or restor
     }
   }
 });
+
+test('legacy cross-version PRESERVE replay omission is inspectable at preflight, never promotable', () => {
+  // Old source-only ledgers sometimes omitted replay for unchanged protected
+  // implementations. Preflight must remain a read-only diagnosis; the verified
+  // consumer must still refuse promotion until the canonical producer supplies
+  // the replay contract (see original ledger #3457).
+  const canonical = ledger();
+  const legacy = {
+    ...canonical,
+    requiredQualificationReplay: [],
+    authority: { ...canonical.authority, qualificationInvalidationRequired: false },
+  };
+  const preflight = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: staged(OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY),
+    capabilityLedger: legacy,
+    qualificationReplay: [],
+  });
+  assert.equal(preflight.status,
+    OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.PRE_UPDATE_CAPABILITY_GATE_READY);
+  assert.equal(preflight.updatePromotionAllowed, false);
+  assert.equal(preflight.providerRoutingResumeAllowed, false);
+  assert.equal(preflight.authority.updateExecutionAllowed, false);
+
+  const verified = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED),
+    capabilityLedger: legacy,
+    qualificationReplay: [],
+  });
+  assert.equal(verified.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.ok(verified.blockers.includes('CROSS_VERSION_QUALIFICATION_REPLAY_REQUIRED'));
+  assert.equal(verified.updatePromotionAllowed, false);
+  assert.equal(verified.providerRoutingResumeAllowed, false);
+});
