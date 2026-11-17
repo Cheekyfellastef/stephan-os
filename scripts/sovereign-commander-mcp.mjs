@@ -21,6 +21,14 @@ import { createSovereignProcessSessionsV1 } from '../shared/agents/sovereignProc
 import { createSovereignFeedbackIntakeV1, SOVEREIGN_FEEDBACK_OPERATION_IDS_V1 } from '../shared/agents/sovereignFeedbackIntakeV1.mjs';
 import { runSovereignPdfWriteV1 } from '../shared/agents/sovereignPdfWriteV1.mjs';
 import {
+  CORE_REPAIR_CONTINUATION_INPUT_SCHEMA_V1,
+  captureCoreRepairContinuationV1,
+  captureCoreRepairContinuationStatusV1,
+  captureCoreRepairStatusRequestV1,
+  captureCoreRepairPrepareRequestV1,
+  sameCoreRepairContinuationV1,
+} from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
+import {
   STEPHANOS_EXECUTION_SURFACE,
   buildStephanosExecutionCommandEnvelopeV1,
   buildStephanosExecutionSurfaceCatalogV1,
@@ -387,6 +395,22 @@ const TOOLS = Object.freeze([
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: 'maintenance_request_prepare',
+    title: 'Prepare one retained Core maintenance identity',
+    description: 'Atomically retain one exact Core repair identity in the existing authenticated maintenance owner before any executable delivery. Fixed metadata preparation only; does not launch, release custody, retry execution or grant runtime authority.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['continuation'],
+      properties: { continuation: CORE_REPAIR_CONTINUATION_INPUT_SCHEMA_V1 } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'maintenance_request_status',
+    title: 'Observe an original Core maintenance request',
+    description: 'Read the authenticated owner history for one exact retained Core repair identity, or its current fixed Core slot. Historical execution, custody release and current admission are separate facts. No caller paths, processes, receipts or mutation authority.',
+    inputSchema: { type: 'object', additionalProperties: false,
+      properties: { continuation: CORE_REPAIR_CONTINUATION_INPUT_SCHEMA_V1 } },
+    annotations: PRIVATE_READ_ANNOTATIONS,
+  },
+  {
     name: 'maintenance_action',
     title: 'Run fixed Stephanos maintenance action',
     description: 'Run one source-controlled maintenance action from the Sovereign Commander fixed registry.',
@@ -395,6 +419,7 @@ const TOOLS = Object.freeze([
       additionalProperties: false,
       required: ['actionId'],
       properties: {
+        coreContinuation: CORE_REPAIR_CONTINUATION_INPUT_SCHEMA_V1,
         actionId: {
           type: 'string',
           enum: [
@@ -600,6 +625,8 @@ export function createSovereignCommanderMcpHandler({
   repoRoot = defaultRepoRoot(),
   executor = executeSovereignCommanderCommandV1,
   withMaintenanceOwner,
+  readMaintenanceRequestStatus,
+  prepareMaintenanceRequest,
   now = () => new Date().toISOString(),
   searchSessionsFactory = createSovereignSearchSessionsV1,
   sessionHistoryFactory = createSovereignMcpSessionHistoryV1,
@@ -717,11 +744,48 @@ export function createSovereignCommanderMcpHandler({
     if (method === 'tools/call') {
       if (!toolsListed) return asTextResult({ ok: false, blocker: 'MCP_TOOLS_LIST_REQUIRED' }, true);
       const name = text(params.name);
+      if (name === 'maintenance_request_status' || name === 'maintenance_request_prepare') {
+        const prepare = name === 'maintenance_request_prepare';
+        const ownerOperation = prepare ? prepareMaintenanceRequest : readMaintenanceRequestStatus;
+        if (!request || message.transportKind !== 'authenticated-http-jsonrpc'
+          || message.transportAuthenticated !== true || typeof ownerOperation !== 'function')
+          return asTextResult({ ok: false, blocker: 'SOVEREIGN_MAINTENANCE_REQUEST_STATUS_PRIVATE_OWNER_REQUIRED' }, true);
+        const query = (prepare ? captureCoreRepairPrepareRequestV1 : captureCoreRepairStatusRequestV1)(
+          params.arguments === undefined ? {} : params.arguments);
+        if (!query)
+          return asTextResult({ ok: false, blocker: 'SOVEREIGN_MAINTENANCE_REQUEST_STATUS_ARGUMENTS_INVALID' }, true);
+        try {
+          const status = captureCoreRepairContinuationStatusV1(await ownerOperation(query));
+          if (!status || (query.continuation
+            && !sameCoreRepairContinuationV1(query.continuation, status.continuation)))
+            return asTextResult({ ok: false, blocker: 'SOVEREIGN_MAINTENANCE_REQUEST_STATUS_RECEIPT_INVALID' }, true);
+          return asTextResult(status, status.ok !== true);
+        } catch {
+          return asTextResult({ ok: false, blocker: 'SOVEREIGN_MAINTENANCE_REQUEST_STATUS_UNAVAILABLE' }, true);
+        }
+      }
       const operation = operationForTool(name);
       if (!operation) return asTextResult({ ok: false, blocker: 'UNKNOWN_TOOL', tool: name }, true);
       let args = params.arguments && typeof params.arguments === 'object' && !Array.isArray(params.arguments)
         ? params.arguments
         : {};
+      let coreContinuation = null;
+      if ('coreContinuation' in args) {
+        // The new protocol is a closed sibling of executable payload. Capture
+        // data properties before any await; never let a rejected tuple fall
+        // back to a newly generated legacy session request.
+        const descriptor = Object.getOwnPropertyDescriptor(args, 'coreContinuation');
+        const action = Object.getOwnPropertyDescriptor(args, 'actionId');
+        coreContinuation = descriptor && Object.hasOwn(descriptor, 'value')
+          ? captureCoreRepairContinuationV1(descriptor.value) : null;
+        const privateRequest = request && (message.transportKind === 'local-stdio-mcp'
+          || (message.transportKind === 'authenticated-http-jsonrpc' && message.transportAuthenticated === true));
+        if (name !== 'maintenance_action' || !privateRequest || !coreContinuation
+          || Object.getPrototypeOf(args) !== Object.prototype || Reflect.ownKeys(args).length !== 2
+          || !action || !Object.hasOwn(action, 'value') || action.value !== coreContinuation.actionId)
+          return asTextResult({ ok: false, blocker: 'SOVEREIGN_CORE_REPAIR_CORRELATION_INVALID' }, true);
+        args = Object.freeze({ actionId: action.value });
+      }
       if (PRIVATE_SESSION_TOOLS.includes(name)) {
         const privateRequest = request && (message.transportKind === 'local-stdio-mcp'
           || (message.transportKind === 'authenticated-http-jsonrpc' && message.transportAuthenticated === true));
@@ -760,9 +824,9 @@ export function createSovereignCommanderMcpHandler({
       const envelope = buildStephanosExecutionCommandEnvelopeV1({
         catalog,
         surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
-        actionId: `mcp-${session.sessionId}-${randomUUID()}`,
-        missionId: `mcp-session-${session.sessionId}`,
-        relatedIssue: PRIVATE_SESSION_TOOLS.includes(name) ? '#2573' : '#2519',
+        actionId: coreContinuation?.requestId || `mcp-${session.sessionId}-${randomUUID()}`,
+        missionId: coreContinuation?.missionId || `mcp-session-${session.sessionId}`,
+        relatedIssue: coreContinuation?.relatedIssue || (PRIVATE_SESSION_TOOLS.includes(name) ? '#2573' : '#2519'),
         operation,
         targetPaths,
         payload: payloadForTool(name, args),
@@ -775,7 +839,8 @@ export function createSovereignCommanderMcpHandler({
       });
       const isCoreRepair = name === 'maintenance_action' && args.actionId === 'repair-core-publication-directories';
       if (!isCoreRepair) {
-        const result = await invokeExecutor(envelope, { repoRoot, routeProof, withMaintenanceOwner }, name, message);
+        const result = await invokeExecutor(envelope, { repoRoot, routeProof, withMaintenanceOwner,
+          ...(coreContinuation ? { coreContinuation } : {}) }, name, message);
         return asTextResult(result, result?.ok !== true);
       }
       if (!request || !(typeof message.id === 'string' || Number.isSafeInteger(message.id))

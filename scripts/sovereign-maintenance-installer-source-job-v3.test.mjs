@@ -30,15 +30,18 @@ test('maintenance probe keeps the complete original 40-file boundary through the
   assert.equal(complete.repositoryModulesEvaluated, false);
   assert.equal(complete.memberCount, MAINTENANCE_SOURCE_CLOSURE_V3.length);
   assert.equal(complete.memberCount, 40);
-  for (const excluded of ['shared/agents/battleBridgePublisher.mjs', 'shared/agents/verificationHarness.mjs']) {
+  for (const excluded of ['shared/agents/battleBridgePublisher.mjs', 'shared/agents/verificationHarness.mjs',
+    'shared/agents/sovereignMaintenanceAdmissionV1.mjs', 'shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs',
+    'shared/agents/sovereignSpatialWorkspaceV1.mjs']) {
     assert.equal(MAINTENANCE_SOURCE_CLOSURE_V3.includes(excluded), false);
-    assert.equal(complete.parsedPaths.includes(excluded), false, 'maintenance must not load publisher implementation: ' + excluded);
+    assert.equal(complete.parsedPaths.includes(excluded), false, 'maintenance must not load code outside its source closure: ' + excluded);
   }
   const installer = readFileSync(resolve(root, 'scripts/windows/install-sovereign-maintenance-journal-v2.ps1'), 'utf8');
   assert.ok(installer.includes('ClosureCount -ne ' + MAINTENANCE_SOURCE_CLOSURE_V3.length + ' -or'));
   assert.ok(installer.includes('Handles.Count -lt ' + MAINTENANCE_SOURCE_CLOSURE_V3.length + ' -or'));
-  for (const omitted of ['shared/agents/sharedWorkspaceOperationalFactsV1.mjs', 'shared/agents/sharedAgentWorkspaceStore.mjs']) {
-    assert.ok(complete.parsedPaths.includes(omitted), 'must prove the real canonical projection dependency: ' + omitted);
+  for (const omitted of ['shared/agents/sharedWorkspaceOperationalFactsV1.mjs', 'shared/agents/sharedAgentWorkspaceStore.mjs',
+    'shared/agents/sovereignMaintenanceSourceDiagnosticV1.mjs']) {
+    assert.ok(complete.parsedPaths.includes(omitted), 'must prove the real maintenance dependency: ' + omitted);
     const negative = observe(omitted);
     assert.ok(negative.missing.some(row => row.target === omitted), 'must reject omitted transitive dependency: ' + omitted);
     assert.equal(negative.repositoryModulesEvaluated, false);

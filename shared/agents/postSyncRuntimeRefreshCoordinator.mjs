@@ -139,6 +139,12 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
   'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
   'scripts/battle-bridge-observation.mjs',
   'scripts/sovereign-commander-http.mjs',
+  // The existing Commander HTTP process statically imports the Caravan
+  // handler, page and native bridge. Keep them with that resident owner;
+  // source classification grants no mobile enrollment or installation.
+  'scripts/battle-bridge-caravan-http-v1.mjs',
+  'scripts/battle-bridge-caravan-page-v1.mjs',
+  'scripts/windows/battle-bridge-mobile-install-native-v1.mjs',
   'scripts/sovereign-maintenance-custody-store-v1.mjs',
   'scripts/sovereign-maintenance-owner-observation-v2.mjs',
   'scripts/sovereign-fixed-runtime-parent-v1.mjs',
@@ -161,6 +167,10 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
 ]);
 
 const NATURAL_EXACT = new Set([
+  // The fixed Caravan bridge rereads and hash-checks this read-only probe in
+  // a fresh bounded child. Adoption checks source only; it invokes no probe,
+  // native PREPARE, enrollment or installer and never qualifies the helper.
+  'scripts/windows/observe-battle-bridge-mobile-install-v1.ps1',
   // On-demand VR owners load these on their next explicit invocation. This
   // confirms source adoption only; never launch/restart games or recorders.
   'scripts/report-starfield-vr-telemetry.mjs',
@@ -335,7 +345,29 @@ const NO_RUNTIME_EXACT = new Set([
   'scripts/windows/SovereignFixedRuntimeJobV1.cs',
   'scripts/windows/SovereignFixedRuntimeSourceV1.cs',
   'scripts/windows/install-sovereign-fixed-runtime-v1.ps1',
+  // Exact #1814 offline review/bootstrap and native compilation inputs. Their
+  // immutable manual enrollment/preservation routes retain separate authority;
+  // sync never compiles, installs, preserves a partial root or qualifies them.
+  'scripts/battle-bridge-mobile-install-enrollment-bootstrap-v1.mjs',
+  'scripts/battle-bridge-mobile-install-enrollment-review-v1.mjs',
+  'scripts/battle-bridge-mobile-partial-preservation-review-v1.mjs',
+  'scripts/windows/SovereignMobileInstallAnchorV1.cs',
+  'scripts/windows/SovereignMobileInstallAssertionV1.cs',
+  'scripts/windows/SovereignMobileInstallEnrollmentV1.cs',
+  'scripts/windows/SovereignMobileInstallEntryV1.cs',
+  'scripts/windows/SovereignMobileInstallExecutorV1.cs',
+  'scripts/windows/SovereignMobileInstallJournalV1.cs',
+  'scripts/windows/SovereignMobileInstallProvisioningV1.cs',
+  'scripts/windows/SovereignMobileInstallReceiptV1.cs',
+  'scripts/windows/SovereignMobileInstallReconciliationV1.cs',
+  'scripts/windows/SovereignMobileInstallReleaseV1.cs',
+  'scripts/windows/SovereignMobileInstallRequestsV1.cs',
+  'scripts/windows/install-battle-bridge-mobile-installer-v1.ps1',
+  'scripts/windows/preserve-battle-bridge-mobile-partial-v1.ps1',
   // Exact test-only consumers; no scripts/fixtures or native-source wildcard.
+  'scripts/fixtures/mobile-device-pairing-v1.mjs',
+  'scripts/fixtures/sovereign-mobile-installer-native-source-v1.mjs',
+  'scripts/windows/test-sovereign-fixed-runtime-job-v1.ps1',
   'scripts/fixtures/sovereign-fixed-runtime-adoption-parent-fixture-v1.mjs',
   'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',
   'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs',
