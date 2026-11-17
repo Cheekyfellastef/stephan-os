@@ -246,7 +246,8 @@ export function analyzeWindowsAuthorityVrResourceGovernorReviewV1(input = {}) {
     findings.push(finding('windows-authority-vr-resource-governor-source-evidence-invalid'));
   } else {
     reviewGovernor(source.content, findings);
-    proofRefs.push(
+    // A rejected P0 source is never positive custody proof, even with a self-consistent envelope.
+    if (findings.length === 0) proofRefs.push(
       'proofs/windows-authority-vr-resource-governor/'
       + PATH + '@' + sourceHead + '#' + source.blobSha + ':' + source.size,
     );

@@ -193,6 +193,20 @@ for (const [name, mutate] of [
   });
 }
 
+test('rejected source variant must not emit positive proof references', () => {
+  // This source has a self-consistent SHA, size and head envelope but unregistered executable bytes.
+  const changed = replaceOnce(governor, observationMarker,
+    '# non-registered adversarial source variant\n' + observationMarker);
+  const rejected = analyzeWindowsAuthorityVrResourceGovernorReviewV1(input(changed));
+  assert.equal(rejected.eligible, true);
+  assert.equal(rejected.clean, false);
+  assert.equal(rejected.findings.some((item) => item.code === 'vr-governor-source-contract-unregistered'), true);
+  assert.deepEqual(rejected.proofRefs, [], 'P0 findings cannot emit a positive reviewed-source proof');
+  const registered = analyzeWindowsAuthorityVrResourceGovernorReviewV1(input());
+  assert.equal(registered.clean, true);
+  assert.equal(registered.proofRefs.length, 1);
+});
+
 test('source identity and single-source custody checks remain fail closed', () => {
   const wrongBlob = input();
   wrongBlob.sources[0].blobSha = '0'.repeat(40);
