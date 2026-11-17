@@ -51,9 +51,13 @@ async function fixture(t,{realFlatSignal=false,sourceTask=false,sourceBaseline=f
   const governorFile=join(sharedWorkspaceRoot,'vr/vr-resource-governor-current.json').replaceAll("'","''");
   const canonical=await readFile(join(repo,'scripts/windows/run-vr-resource-governor.ps1'),'utf8');
   const actionStart=canonical.indexOf("if ($Action -eq 'ObserveAdmission') {"),
-    actionEnd=canonical.indexOf("if ($Action -eq 'SetAuto') {",actionStart);
+    actionEnd=canonical.indexOf('function Invoke-GovernorOneShot {',actionStart);
   assert.ok(actionStart>0&&actionEnd>actionStart);
   const admissionAction=canonical.slice(actionStart,actionEnd);
+  // Keep the actual read-only branch separate from the serialized mutation
+  // entry. The latter owns SetAuto/Status and must never enter this fixture.
+  assert.match(admissionAction,/readOnly = \$true/);
+  assert.doesNotMatch(admissionAction,/Enter-GovernorMutationOwner|Invoke-GovernorOneShot/);
   let detector='';
   if(realFlatSignal) {
     const start=canonical.indexOf('function Get-FlatGameSignal {'),end=canonical.indexOf('function Get-GamingSignal {',start);

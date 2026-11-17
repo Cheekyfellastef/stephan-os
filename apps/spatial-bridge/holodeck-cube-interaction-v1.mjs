@@ -105,7 +105,9 @@ export function createHolodeckCubeInteraction({physics,scene}={}) {
       let cube=states().find(c=>c.heldBy===hand.id);
       if(hand.reset&&!previous.reset) {
         const target=cube??choose(hand)??states().find(c=>c.id===lastSelected&&!c.heldBy);
-        if(target) {scene.getBody(target.id).reset();carries.delete(hand.id);lastSelected=target.id;released=true;cube=null;}
+        if(target&&scene.getBody(target.id).reset().resetPlaced!==false) {
+          carries.delete(hand.id);lastSelected=target.id;released=true;cube=null;
+        }
       }
       if(!cube&&hand.grab&&!previous.grab&&previous.armed) {
         const target=choose(hand);

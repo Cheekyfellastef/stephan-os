@@ -8,6 +8,16 @@ on:
       - 'shared/agents/goalBuildingAgentV1.records.mjs'
       - 'shared/agents/goalBuildingAgentV1.runtime-records.test.mjs'
       - 'shared/agents/programmeAuthorityV1.test.mjs'
+      - 'shared/agents/externalMergeObservationV1.mjs'
+      - 'shared/agents/externalMergeObservationV1.test.mjs'
+      - 'shared/agents/completionGuardianV1.mjs'
+      - 'shared/agents/completionGuardianV1.test.mjs'
+      - 'scripts/completion-guardian.mjs'
+      - 'scripts/completion-guardian.test.mjs'
+      - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
+      - 'shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs'
+      - 'shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs'
+      - 'shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.test.mjs'
       - 'shared/agents/durableFlywheelControllerVNext.mjs'
       - 'shared/agents/durableFlywheelControllerVNext.test.mjs'
       - 'shared/agents/durableFlywheelControllerVNext.terminal-reconciliation.test.mjs'
@@ -107,6 +117,10 @@ jobs:
         run: >-
           node --test
           shared/agents/programmeAuthorityV1.test.mjs
+          shared/agents/completionGuardianV1.test.mjs
+          scripts/completion-guardian.test.mjs
+          shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs
+          shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.test.mjs
           shared/agents/durableFlywheelControllerVNext.terminal-reconciliation.test.mjs
           stephanos-server/services/programmeAuthorityService.test.js
           shared/runtime/missionScheduler.test.mjs

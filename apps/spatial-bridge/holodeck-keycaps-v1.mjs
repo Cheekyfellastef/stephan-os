@@ -1,10 +1,10 @@
 // The same keyboard atlas drives the visible key labels and their raised 3D faces.
 // Geometry stays in console-local coordinates until the existing keyboard hinge moves it.
-import { HOLODECK_CONSOLE } from './holodeck-layout-v1.mjs';
+import { HOLODECK_CONSOLE, HOLODECK_KEYCAP_RISE_METRES } from './holodeck-layout-v1.mjs';
 import { consolePointToWorld } from './holodeck-comfort-v1.mjs';
 import { SCREEN_KEYS } from './holodeck-screen-v1.mjs';
 
-export const KEYCAP_RISE_METRES = 0.034;
+export const KEYCAP_RISE_METRES = HOLODECK_KEYCAP_RISE_METRES;
 export const KEYCAP_BODY_METRES = 0.022;
 export const KEYCAP_TRAVEL_METRES = 0.011;
 export const KEYCAP_PRESS_DURATION_MS = 210;

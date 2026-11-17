@@ -11,14 +11,14 @@ import {
 } from './sovereignCommanderCapabilityCompilerV1.mjs';
 import { buildSovereignCommanderCapabilityParityLedger } from './sovereignCommanderCapabilityParityV1.mjs';
 
-test('search session gaps reach existing compiler as bounded observation work with explicit scope', () => {
+test('implemented private session tools avoid duplicate builds while unimplemented aliases retain explicit scope', () => {
   const operations = ['start-search', 'search-files', 'get-more-search-results', 'stop-search', 'list-searches'];
   const ledger = buildSovereignCommanderCapabilityParityLedger(operations.map((operation) => ({
     adapter: 'desktop-commander-direct',
     item: { actionGrant: { operation }, missionId: 'critical-2573-parity' },
   })), { nowUtc: '2026-10-25T15:00:00.000Z' });
   const result = compileSovereignCommanderCapabilityPlanV1(ledger);
-  assert.equal(result.buildableCapabilityCount, 5);
+  assert.equal(result.buildableCapabilityCount, 1);
   assert.equal(result.primitiveGapCount, 0);
   assert.equal(result.learningCandidates.length, 0);
   assert.equal(result.automaticCapabilityConstructionAllowed, false);
@@ -54,6 +54,21 @@ test('obsolete search equivalence cannot promote a durable Flywheel lesson', () 
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_CAPABILITY_COMPILER_WORK_AVAILABLE');
 });
 
+test('partial rename cannot close the move gap or become an authenticated learning receipt', () => {
+  const result = compileSovereignCommanderCapabilityPlanV1({ capabilities: [{
+    capabilityId: 'move-file', state: 'PARITY_PRESENT', sovereignEquivalent: 'move_file', newlyProvenParity: true,
+  }] });
+  assert.equal(result.buildableCapabilityCount, 1);
+  assert.equal(result.learningCandidates.length, 0);
+  assert.equal(result.newlyProvenParityCount, 0);
+  assert.equal(result.plans[0].primitive, SOVEREIGN_COMMANDER_PRIMITIVE.MUTATE_BOUNDED);
+  assert.equal(result.plans[0].partialScope, 'SAME_PARENT_REGULAR_FILE_RENAME_NO_REPLACE');
+  assert.equal(result.plans[0].runtimeParityProven, false);
+  assert.equal(result.skillForgeCandidates[0].partialScope, result.plans[0].partialScope);
+  assert.equal(result.skillForgeCandidates[0].parityGapReason, 'CROSS_DIRECTORY_FILE_MOVE_UNQUALIFIED');
+  assert.equal(result.skillForgeCandidates[0].atomicContentCasProven, false);
+});
+
 test('compiler decomposes process parity into a guarded primitive recipe without arbitrary shell', () => {
   const result = compileSovereignCommanderCapabilityPlanV1({
     timestampUtc: '2026-10-02T14:30:00.000Z',
@@ -72,6 +87,79 @@ test('compiler decomposes process parity into a guarded primitive recipe without
   assert.equal(result.plans[0].arbitraryShellAllowed, false);
   assert.equal(result.flywheelExam.length, 10);
   assert.equal(result.flywheelImprovementTargetCount, 1);
+});
+
+test('partial diagnostic streaming retains broader work in plans and cannot become a learning receipt', () => {
+  const ids = ['start-process', 'read-process-output', 'list-sessions'];
+  const result = compileSovereignCommanderCapabilityPlanV1({ capabilities: ids.map(capabilityId => ({
+    capabilityId, state: 'PARITY_PRESENT', sovereignEquivalent: capabilityId.replaceAll('-', '_'),
+    newlyProvenParity: true,
+  })) });
+  assert.equal(result.buildableCapabilityCount, 3);
+  assert.equal(result.learningCandidates.length, 0);
+  assert.equal(result.newlyProvenParityCount, 0);
+  for (const item of [...result.plans, ...result.skillForgeCandidates]) {
+    assert.equal(item.partialScope, 'THIS_PRIVATE_HANDLER_TWO_FIXED_READ_ONLY_DIAGNOSTIC_PROFILES');
+    assert.equal(item.parityGapReason, 'GENERAL_INTERACTIVE_PROCESS_SESSION_CONTRACT_UNQUALIFIED');
+    assert.equal(item.nativeCustodyQualified, false);
+    assert.equal(item.descendantsExcluded, false);
+    assert.equal(item.runtimeParityProven, false);
+  }
+});
+
+test('owned diagnostic cancellation leaves general termination work open and produces no learning receipt', () => {
+  const result = compileSovereignCommanderCapabilityPlanV1({ capabilities: [{
+    capabilityId: 'force-terminate', state: 'PARITY_PRESENT', sovereignEquivalent: 'cancel_process_session',
+    newlyProvenParity: true,
+  }] });
+  assert.equal(result.buildableCapabilityCount, 1);
+  assert.equal(result.learningCandidates.length, 0);
+  assert.equal(result.newlyProvenParityCount, 0);
+  for (const item of [...result.plans, ...result.skillForgeCandidates]) {
+    assert.equal(item.partialSovereignEquivalent, 'cancel_process_session');
+    assert.equal(item.partialScope, 'THIS_PRIVATE_HANDLER_TWO_FIXED_DIAGNOSTIC_CHILDREN_CANCELLATION');
+    assert.equal(item.parityGapReason, 'GENERAL_PROCESS_TERMINATION_CUSTODY_UNQUALIFIED');
+    assert.equal(item.nativeCustodyQualified, false);
+    assert.equal(item.descendantsExcluded, false);
+    assert.equal(item.runtimeParityProven, false);
+  }
+});
+
+test('compiler keeps authenticated device inventory open when only local host visibility exists', () => {
+  const result = compileSovereignCommanderCapabilityPlanV1({ capabilities: [{
+    capabilityId: 'list-devices', state: 'PARITY_PRESENT', sovereignEquivalent: 'visibility-snapshot',
+    newlyProvenParity: true,
+  }] });
+  assert.equal(result.buildableCapabilityCount, 1);
+  assert.equal(result.learningCandidates.length, 0);
+  for (const item of [...result.plans, ...result.skillForgeCandidates]) {
+    assert.equal(item.partialScope, 'LOCAL_BATTLE_BRIDGE_HOST_VISIBILITY_ONLY');
+    assert.equal(item.parityGapReason, 'AUTHENTICATED_ACCOUNT_DEVICE_INVENTORY_UNIMPLEMENTED');
+    assert.equal(item.runtimeParityProven, false);
+  }
+});
+
+test('feedback source mapping cannot create a failure lesson and partial PDF scope survives compiler publication', () => {
+  const ledger = buildSovereignCommanderCapabilityParityLedger([
+    'give-feedback-to-desktop-commander', 'write-pdf',
+  ].map(operation => ({ adapter: 'desktop-commander', item: { actionGrant: { operation } } })));
+  const result = compileSovereignCommanderCapabilityPlanV1(ledger);
+  assert.equal(result.buildableCapabilityCount, 1);
+  assert.equal(result.learningCandidates.length, 0);
+  assert.equal(result.newlyProvenParityCount, 0);
+  for (const item of [...result.plans, ...result.skillForgeCandidates]) {
+    assert.equal(item.capabilityId, 'write-pdf');
+    assert.equal(item.partialScope, 'CREATE_ONLY_BOUNDED_ASCII_TEXT_PDF');
+    assert.equal(item.parityGapReason, 'GENERAL_PDF_EDITING_AND_RENDERING_UNIMPLEMENTED');
+    assert.equal(item.wholeDocumentAtomicityProven, false);
+    assert.equal(item.existingPdfEditingSupported, false);
+    assert.equal(item.unicodeTextSupported, false);
+    assert.equal(item.runtimeParityProven, false);
+  }
+  const stale = compileSovereignCommanderCapabilityPlanV1({ capabilities: [{
+    capabilityId: 'write-pdf', state: 'PARITY_PRESENT', sovereignEquivalent: 'write_pdf', newlyProvenParity: true,
+  }] });
+  assert.equal(stale.buildableCapabilityCount, 1); assert.equal(stale.learningCandidates.length, 0);
 });
 
 test('unknown capability proves a minimum primitive need instead of inventing a broad shell', () => {
