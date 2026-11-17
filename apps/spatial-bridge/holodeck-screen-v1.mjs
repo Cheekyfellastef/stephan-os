@@ -388,7 +388,7 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
       ctx.strokeStyle=focusedPanel===panel.id?'#8ff7c1':'#396070';ctx.lineWidth=focusedPanel===panel.id?5:2;
       ctx.strokeRect(x,y,w,h);text(ctx,panel.title,x+22,y+42,30,'#e0faff',w-44);
     }
-    const mode=state.status==='view-only'?'VIEW ONLY':inputRevoked?'INPUT STOPPED':state.status==='live'?'INTERACTIVE':'NOT CONNECTED';
+    const mode=state.status==='view-only'?'VIEW ONLY':inputRevoked?'INPUT STOPPED':state.status==='live'?'WINDOW LIVE':'NOT CONNECTED';
     text(ctx,state.title||(state.status==='view-only'?'Shared browser window':''),1120,154,25,'#aad0db',600);
     text(ctx,mode+' / '+zoom.toFixed(1)+'x',1750,154,27,state.status==='live'&&!inputRevoked?'#8ff7c1':'#ffd38a',530);
     drawSettings(state);drawTools(state);
