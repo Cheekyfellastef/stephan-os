@@ -217,6 +217,9 @@ export function createHolodeckScreen({client,comfort,furniture,audio,storage,doc
     // pending browser grant. This never mutes or ends ChatGPT Voice in the app.
     const localMicrophone=audio?.getState?.();
     if(localMicrophone?.microphoneActive||localMicrophone?.microphonePending)audio.stopMicrophone();
+    // Local speaker tests may still be selecting an output or playing a tone.
+    // Stop those independently; this cannot stop Voice in the selected app.
+    audio?.stopSpeakers?.();
     if(owner===connectionEpoch)changed();
     return settleConnection(owner,stopped);
   }
