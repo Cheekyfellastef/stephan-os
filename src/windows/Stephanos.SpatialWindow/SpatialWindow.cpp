@@ -6,6 +6,7 @@
 #include <wincodec.h>
 #include <wincrypt.h>
 #include <UIAutomation.h>
+#include <oleacc.h>
 #include <windows.graphics.capture.interop.h>
 #include <windows.graphics.directx.direct3d11.interop.h>
 #include <winrt/Windows.Foundation.h>
@@ -169,22 +170,54 @@ struct Surface : std::enable_shared_from_this<Surface> {
     com_ptr<IUIAutomationValuePattern>& direct,
     com_ptr<IUIAutomationLegacyIAccessiblePattern>& legacy){
     if(!element)return false;
+    CONTROLTYPEID type{};
+    BOOL focusable=FALSE;
+    if(FAILED(element->get_CurrentControlType(&type))||
+       (type!=UIA_EditControlTypeId&&type!=UIA_DocumentControlTypeId)||
+       FAILED(element->get_CurrentIsKeyboardFocusable(&focusable))||!focusable)return false;
     com_ptr<IUnknown> raw;
     if(SUCCEEDED(element->GetCurrentPattern(UIA_ValuePatternId,raw.put()))&&raw){
       auto pattern=raw.try_as<IUIAutomationValuePattern>();
-      BOOL readOnly=TRUE;BSTR text=nullptr;
-      if(pattern&&SUCCEEDED(pattern->get_CurrentIsReadOnly(&readOnly))&&!readOnly
-        &&SUCCEEDED(pattern->get_CurrentValue(&text))){
+      BOOL readOnly=TRUE;
+      // A positive read-only UIA result is authoritative. A readable Legacy
+      // value cannot undo it (Chromium root documents expose get_accValue).
+      if(!pattern||FAILED(pattern->get_CurrentIsReadOnly(&readOnly))||readOnly)
+        return false;
+      BSTR text=nullptr;
+      if(SUCCEEDED(pattern->get_CurrentValue(&text))){
         value.assign(text?text:L"",text?SysStringLen(text):0);SysFreeString(text);
         direct=std::move(pattern);return true;
       }
       SysFreeString(text);
     }
+    // Documents need affirmative editable TextPattern evidence. Browser root
+    // documents and mixed/read-only ranges cannot become a compose target.
+    if(type==UIA_DocumentControlTypeId){
+      raw=nullptr;
+      if(FAILED(element->GetCurrentPattern(UIA_TextPatternId,raw.put()))||!raw)
+        return false;
+      auto pattern=raw.try_as<IUIAutomationTextPattern>();
+      com_ptr<IUIAutomationTextRange> range;
+      if(!pattern||FAILED(pattern->get_DocumentRange(range.put()))||!range)
+        return false;
+      VARIANT attribute;VariantInit(&attribute);
+      const HRESULT check=range->GetAttributeValue(UIA_IsReadOnlyAttributeId,&attribute);
+      const bool editable=SUCCEEDED(check)&&attribute.vt==VT_BOOL
+        &&attribute.boolVal==VARIANT_FALSE;
+      VariantClear(&attribute);
+      if(!editable)return false;
+    }
     raw=nullptr;
     if(SUCCEEDED(element->GetCurrentPattern(UIA_LegacyIAccessiblePatternId,raw.put()))&&raw){
       auto pattern=raw.try_as<IUIAutomationLegacyIAccessiblePattern>();
+      DWORD flags=0;
+      // A readable value alone never makes a document writable. Require the
+      // MSAA provider to affirm a known non-readonly/non-protected state.
+      if(!pattern||FAILED(pattern->get_CurrentState(&flags))||
+         (flags&(STATE_SYSTEM_READONLY|STATE_SYSTEM_PROTECTED|STATE_SYSTEM_UNAVAILABLE)))
+        return false;
       BSTR text=nullptr;
-      if(pattern&&SUCCEEDED(pattern->get_CurrentValue(&text))){
+      if(SUCCEEDED(pattern->get_CurrentValue(&text))){
         value.assign(text?text:L"",text?SysStringLen(text):0);SysFreeString(text);
         legacy=std::move(pattern);return true;
       }
@@ -312,7 +345,12 @@ struct Surface : std::enable_shared_from_this<Surface> {
           com_ptr<IUnknown> raw;
           if(SUCCEEDED(button->GetCurrentPattern(UIA_InvokePatternId,raw.put()))&&raw){
             auto invoke=raw.try_as<IUIAutomationInvokePattern>();
-            if(invoke&&SUCCEEDED(invoke->Invoke()))return Reply(L"app-control-invoked");
+            if(invoke){
+              // Once a provider call was attempted its side effect is unknown
+              // on timeout; never replay this same operator click via WM_*.
+              const HRESULT result=invoke->Invoke();
+              return Reply(SUCCEEDED(result)?L"app-control-invoked":L"app-control-outcome-unverified");
+            }
           }
         }
         Post(child,WM_MOUSEMOVE,0,MAKELPARAM(local.x,local.y));
@@ -333,6 +371,9 @@ struct Surface : std::enable_shared_from_this<Surface> {
         return EditSelected(L"text",text.c_str());
       }else if(kind==L"key"){
         if(command.GetNamedString(L"key",L"")==L"Backspace")return EditSelected(L"Backspace",L"");
+        // Selecting a UIA editor does not establish Windows keyboard focus.
+        // Do not send Enter/Tab/navigation to another focused composer.
+        if(selectedEditor)return Reply(L"editor-key-focus-unverified");
         auto name=command.GetNamedString(L"key",L"");UINT key=name==L"Enter"?VK_RETURN:name==L"Backspace"?VK_BACK:name==L"Tab"?VK_TAB:name==L"Escape"?VK_ESCAPE:name==L"Left"?VK_LEFT:name==L"Right"?VK_RIGHT:0;
         if(!key)throw std::runtime_error("Key not supported");
         auto scan=MapVirtualKeyW(key,MAPVK_VK_TO_VSC);Post(child,WM_KEYDOWN,key,1|(scan<<16));
