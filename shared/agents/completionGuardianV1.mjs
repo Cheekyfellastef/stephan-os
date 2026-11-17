@@ -113,7 +113,8 @@ export function buildCompletionGuardianProjection(input = {}) {
       classification: row.classification,
       repairOwner: row.repairOwner || 'goal-building-agent',
       priority: priorityByMission.get(row.missionId) || 999,
-      nextAction: row.acceptancePending ? 'RECONCILE_GOAL_ACCEPTANCE'
+      nextAction: row.classification === COMPLETION_GUARDIAN_STATE.PROOF_PENDING && row.acceptancePending
+        ? 'RECONCILE_GOAL_ACCEPTANCE'
         : row.classification === COMPLETION_GUARDIAN_STATE.BUILDABLE_REPAIR
         ? 'PROVE_REPAIR_THEN_REENTER_EXISTING_MISSION'
         : 'RECONCILE_EXISTING_MISSION_IDENTITY',

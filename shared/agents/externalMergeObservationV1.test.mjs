@@ -117,6 +117,11 @@ test('real observed-merge transition retains acceptance without consuming constr
   const guardian = buildCompletionGuardianProjection({ missions: [n], backlog });
   assert.equal(guardian.repairQueue[0].nextAction, 'RECONCILE_GOAL_ACCEPTANCE');
   assert.equal(guardian.missionRows[0].classification, 'PROOF_PENDING');
+  const regressed = buildCompletionGuardianProjection({ missions: [n], backlog, regressedMissionIds: [n.missionId] });
+  assert.equal(regressed.missionRows[0].classification, 'REGRESSION_REPAIR_REQUIRED');
+  assert.equal(regressed.repairQueue[0].nextAction, 'RECONCILE_EXISTING_MISSION_IDENTITY');
+  assert.equal(regressed.runtimeMutationAuthority, false);
+  assert.equal(regressed.mergeAuthority, false);
   assert.equal(buildMissionWorkerAction(n).executable, false);
   assert.deepEqual(n, unchanged);
 });
