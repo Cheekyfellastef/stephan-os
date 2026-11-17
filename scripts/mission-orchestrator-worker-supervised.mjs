@@ -9,6 +9,7 @@ import { ensureBattleBridgeGitHubCommandMailbox } from '../shared/agents/battleB
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
 import { projectElasticMissionExecutionObligation } from '../shared/agents/criticalBacklogConveyor.mjs';
+import { projectExternalMergeExecutionObligationV1 } from '../shared/agents/externalMergeObservationV1.mjs';
 import { readMissionControllerCapacityRoutingInput } from '../stephanos-server/services/programmeAuthorityService.js';
 import { appendMissionEvent, listMissionRecords, readMissionRecord } from '../stephanos-server/services/missionOrchestratorStore.js';
 import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
@@ -383,13 +384,16 @@ export function controllerRequiresMaterialProgress(controller) {
   const action = ownData(controller, 'actionResult');
   const admission = ownData(action, 'elasticAdmission');
   const critical = ownData(action, 'projection');
+  const acceptancePending = projectExternalMergeExecutionObligationV1(
+    ownData(critical, 'activeMission'),
+  ).acceptanceOnly;
   const occupied = ownData(critical, 'decision') === 'WAIT_EXTERNAL_ACTIVE_MISSION'
     && Boolean(ownData(critical, 'activeMission'))
     && projectElasticMissionExecutionObligation(admission, ownData(critical, 'activeMission')).state === 'OCCUPIED';
   return ownData(controller, 'allowWorkerTick') === true
     || ownData(ownData(projection, 'lane'), 'active') === true
     || (!occupied && (Boolean(ownData(admission, 'selectedMission'))
-      || Boolean(ownData(critical, 'activeMission'))));
+      || (Boolean(ownData(critical, 'activeMission')) && !acceptancePending)));
 }
 function invalidRepositoryIdentity(blocker, overrides = {}) { return Object.freeze({ valid: false, canonical: false, branch: '', headSha: '', sourceClean: false, worktreeClean: false, runtimeDirtCount: 0, blocker, ...overrides }); }
 
