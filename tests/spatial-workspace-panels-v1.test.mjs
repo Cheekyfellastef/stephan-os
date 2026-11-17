@@ -39,6 +39,8 @@ test('the three panels paint one actual app frame within its centre viewport, wi
   assert.ok(x>=SCREEN_CONTENT.x&&x+w<=SCREEN_CONTENT.x+SCREEN_CONTENT.w);
   assert.ok(y>=SCREEN_CONTENT.y&&y+height<=SCREEN_CONTENT.y+SCREEN_CONTENT.h);
   assert.deepEqual(HOLODECK_PANELS.map(panel=>panel.id),['settings','chatgpt','tools']);
+  assert.ok(h.contexts[0].texts.some(entry=>entry.text.includes('WINDOW LIVE')));
+  assert.equal(h.contexts[0].texts.some(entry=>entry.text.includes('INTERACTIVE')),false,'capture alone is not accepted text input');
   for(const button of PANEL_BUTTONS)assert.equal(panelAt(...center(button.id))?.id,button.panel);
   assert.deepEqual(h.calls,[]);assert.deepEqual(h.inputs,[]);
 });
