@@ -200,11 +200,49 @@ test('input feedback retains rejection while live and is superseded by waiting, 
     return {status:'stopped'};
   });
   await h.client.discover();await h.client.connect(windowOne.id);await h.tick();
-  h.client.input({kind:'text',text:'fixture'});await h.tick();assert.match(h.client.getState().inputStatus,/Input sent/);
+  h.client.input({kind:'text',text:'fixture'});await h.tick();assert.match(h.client.getState().inputStatus,/Windows queued.*not confirmed/);
   rejectInput=true;h.client.input({kind:'text',text:'fixture'});await h.tick();assert.match(h.client.getState().inputStatus,/not accepted/);
   await h.tick();assert.match(h.client.getState().inputStatus,/not accepted/);
   frameStatus='waiting';await h.tick();assert.match(h.client.getState().inputStatus,/Input paused/);
   frameStatus='frame';await h.tick();assert.equal(h.client.getState().inputStatus,'');
   failFrame=true;await h.tick();assert.match(h.client.getState().inputStatus,/Reconnect/);
   await h.client.stop();assert.equal(h.client.getState().inputStatus,'');
+});
+
+
+test('consented native editor replies are shown as editor readback, not ChatGPT message acceptance',async()=>{
+  let reply='editor-accessibility-selected',serial=0;
+  const h=clientFixture(({path})=>{
+    if(path==='/session')return {token};
+    if(path==='/windows')return {windows:[windowOne]};
+    if(path==='/bind')return {status:'connected'};
+    if(path==='/input')return {status:reply};
+    if(path==='/frame')return {status:'frame',serial:++serial,generation:1,jpeg:'synthetic fixture'};
+    return {status:'stopped'};
+  });
+  await h.client.discover();
+  await h.client.connect(windowOne.id);
+  await h.tick();
+  const cases=[
+    [{kind:'click',x:.5,y:.5},'editor-accessibility-selected',/Editable field located/],
+    [{kind:'text',text:'x'},'editor-value-readback',/read back.*Confirm the actual app/],
+    [{kind:'key',key:'Backspace'},'editor-value-unchanged',/already empty/],
+    [{kind:'text',text:'x'},'editor-not-selected',/Click the app composer/],
+    [{kind:'text',text:'x'},'editor-reselect-required',/editor changed/],
+    [{kind:'text',text:'x'},'editor-unsupported',/does not expose a writable editor/],
+    [{kind:'text',text:'x'},'editor-update-refused',/refused the change/],
+    [{kind:'text',text:'x'},'editor-update-unverified',/did not confirm.*do not retry/],
+    [{kind:'click',x:.5,y:.5},'app-control-invoked',/selected app control was invoked/],
+    [{kind:'click',x:.5,y:.5},'input-posted',/Windows queued.*not confirmed/],
+  ];
+  for(const [input,status,re] of cases){
+    reply=status;assert.equal(h.client.input(input),true);
+    await h.tick();assert.match(h.client.getState().inputStatus,re);
+    assert.equal(h.client.getState().status,'live');
+  }
+  assert.equal(h.calls.filter(call=>call.path==='/input').length,cases.length);
+  const calls=h.calls.filter(call=>call.path==='/input');
+  assert.deepEqual(calls.map(call=>call.body.sequence),Array.from({length:cases.length},(_,i)=>i+1));
+  await h.client.stop();
+  assert.equal(h.client.getState().inputStatus,'','disconnect must not leave a stale editor-success label');
 });
