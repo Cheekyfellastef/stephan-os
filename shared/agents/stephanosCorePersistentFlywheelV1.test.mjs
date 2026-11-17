@@ -347,7 +347,7 @@ test('Core daemon publishes existing controller-lane truth after canonical Flywh
   assert.match(source, /async function publishControllerLaneTruth\(\)/);
   assert.match(source, /CONTROLLER_LANE_TRUTH_PUBLISHED/);
   assert.match(source, /CONTROLLER_LANE_TRUTH_PUBLICATION_FAILED/);
-  const reconcileIndex = source.indexOf('const result = await runDurableFlywheelStartupCycle');
+  const reconcileIndex = source.indexOf('const affected = await coreRepairAttempts.runAffectedWork');
   const laneSummaryIndex = source.indexOf('lastLogicalLaneSummary = summarizeLogicalGoalControllerFabric');
   const lanePublishIndex = source.indexOf('await publishControllerLaneTruth()');
   assert.ok(reconcileIndex >= 0);
@@ -359,8 +359,8 @@ test('Core daemon publishes existing controller-lane truth after canonical Flywh
 
 test('Core daemon runs Octopus material refill before Flywheel reconciliation and isolates failures', async () => {
   const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
-  const refillIndex = source.indexOf('const refill = await runBattleBridgeGoalDiscoveryHeartbeat');
-  const flywheelIndex = source.indexOf('const result = await runDurableFlywheelStartupCycle');
+  const refillIndex = source.indexOf('const refill = await runCoreAffectedWork(');
+  const flywheelIndex = source.indexOf('const affected = await coreRepairAttempts.runAffectedWork');
   assert.ok(refillIndex >= 0);
   assert.ok(flywheelIndex >= 0);
   assert.ok(refillIndex < flywheelIndex, 'Octopus refill must run before Flywheel reconciliation');
@@ -383,7 +383,7 @@ test('Core daemon consumes Octopus repair truth through bounded Sovereign recove
   assert.match(source, /executeSovereignCommanderCommandV1/);
   assert.match(source, /await maybeSelfHealOctopus\(sourceHead\)/);
   assert.match(source, /A thrown refill and a truthfully stalled refill are both repair/);
-  assert.match(source, /const verificationRefill = await runBattleBridgeGoalDiscoveryHeartbeat/);
+  assert.match(source, /const verificationRefill = await runCoreAffectedWork\(\(\) => runBattleBridgeGoalDiscoveryHeartbeat/);
   assert.match(source, /OCTOPUS_SELF_HEAL_VERIFIED_RECOVERED/);
   assert.match(source, /OCTOPUS_SELF_HEAL_COOLDOWN_MS/);
   assert.doesNotMatch(source, /DESKTOP_COMMANDER.*octopus/i);
@@ -399,9 +399,11 @@ test('persistent refill stays behind genuine gaming protection without latching 
 });
 
 
-test('Core daemon breaks the Commander repair circular dependency and publishes wake truth', async () => {
+test('Core daemon retains untracked owner bootstrap as a custody hold and publishes wake truth', async () => {
   const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
-  assert.match(source, /ensureSovereignCommanderRuntime/);
+  assert.doesNotMatch(source, /ensureSovereignCommanderRuntime/);
+  assert.match(source, /CORE_REPAIR_OWNER_BOOTSTRAP_HISTORY_UNPROVEN/);
+  assert.match(source, /startOptionalDependencyRepair/);
   assert.match(source, /probeSovereignCommanderRuntimeCompatibility/);
   assert.match(source, /maybeRepairCoreDependencies/);
   assert.match(source, /BATTLE_BRIDGE_SELF_HEAL_ACTION_ID = 'repair-battle-bridge'/);

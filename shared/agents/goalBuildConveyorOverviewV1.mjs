@@ -7,6 +7,17 @@ const count = value => Number.isInteger(value) && value >= 0 ? value : null;
 const fresh = (value, now, age) => Number.isFinite(time(value)) && time(value) <= now
   && now - time(value) <= age;
 
+const SIGNED_STAGE_PREREQUISITES = Object.freeze({
+  admission: [4, 5, 7],
+  select: [4, 5, 7, 6],
+  claim: [4, 5, 7, 6, 18],
+  pickup: [4, 5, 7, 6, 18, 19],
+  edit: [4, 5, 7, 6, 18, 19, 20],
+  test: [4, 5, 7, 6, 18, 19, 20],
+  proof: [4, 5, 7, 6, 18, 19, 20, 21],
+  merge: [4, 5, 7, 6, 18, 19, 20, 21, 22],
+});
+
 // Gate 20 is intentionally shared: the publisher proves diff + tests together.
 // No existing distinct commit receipt exists in this projection. A PR, source SHA,
 // terminal execution or merge must never be substituted for a builder commit.
@@ -112,9 +123,22 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
   const stages = FLOW.map(([id, label, gateIds]) => {
     const observations = gateIds.map(number => gates.find(gate => gateId(gate) === number));
     const failure = observations.find(gate => gateLive(gate) && ownGateValue(gate, 'status') === 'FAIL');
+    // A signed later-stage event is observable, but cannot certify causal
+    // progression past an absent, failed or stale upstream gate. Keep its
+    // proofRef diagnostic without promoting an incomplete chain to GREEN.
+    const prerequisiteIds = SIGNED_STAGE_PREREQUISITES[id] || [];
+    const prerequisiteGates = prerequisiteIds.map(number =>
+      gates.filter(gate => gateId(gate) === number));
+    const causalProofRefs = prerequisiteGates.map(group =>
+      group.length === 1 ? proofRef(group[0]) : '');
+    const causalClosure = prerequisiteIds.length > 0 && !currentVeto
+      && prerequisiteGates.every(group => group.length === 1
+        && gateLive(group[0]) && ownGateValue(group[0], 'status') === 'PASS')
+      && causalProofRefs.every(Boolean)
+      && new Set(causalProofRefs).size === prerequisiteIds.length;
     const passed = observations.length > 0
       && observations.every(gate => gateLive(gate) && ownGateValue(gate, 'status') === 'PASS')
-      && (id !== 'pickup' || Boolean(signedPickup));
+      && causalClosure && (id !== 'pickup' || Boolean(signedPickup));
     const stale = observations.some(gate => gate && (gate.status === 'STALE' || !gateLive(gate)) && proofRef(gate));
     const waiting = ledgerLive && observations.some(gate => gate?.status === 'WAITING_FOR_PREREQUISITE');
     const state = failure ? 'BLOCKED' : passed ? 'PROVEN' : stale ? 'STALE' : waiting ? 'WAITING' : 'UNKNOWN';

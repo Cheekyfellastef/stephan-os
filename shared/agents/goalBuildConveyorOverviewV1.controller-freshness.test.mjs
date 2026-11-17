@@ -191,3 +191,32 @@ test('Goal #2961: conflicting signed gate identities or malformed veto cannot gr
       'inconsistent identities/unproven veto must not produce green');
   }
 });
+
+test('Goal #2961: review and merge display require a causally complete signed chain', () => {
+  const ids = [4, 5, 7, 6, 18, 19, 20, 21, 22];
+  const valid = ids.map(id => signedGate(id));
+  for (const name of ['admission', 'select', 'claim', 'pickup', 'edit', 'test', 'proof', 'merge']) {
+    assert.equal(signedDisplayStages(valid).find(stage => stage.id === name).trafficLight, 'GREEN',
+      'complete distinct chain remains green: ' + name);
+  }
+  const wrong = [
+    ['review without tested source', valid.filter(gate => gate.id !== 20), 'proof'],
+    ['review after failed source', valid.map(g => g.id === 20 ? signedGate(20, 'FAIL') : g), 'proof'],
+    ['merge without review', valid.filter(gate => gate.id !== 21), 'merge'],
+    ['merge after failed review', valid.map(g => g.id === 21 ? signedGate(21, 'FAIL') : g), 'merge'],
+    ['merge without admission', valid.filter(gate => gate.id !== 4), 'merge'],
+    ['review with unproven SELECT', valid.map(g => g.id === 6
+      ? signedGate(6, 'WAITING_FOR_PREREQUISITE') : g), 'proof'],
+    ['merge with reused review receipt', valid.map(g => g.id === 22
+      ? signedGate(22, 'PASS', { proofRef: 'workspace:proof/gate-21' }) : g), 'merge'],
+  ];
+  for (const [name, gates, stageName] of wrong) {
+    const stage = signedDisplayStages(gates).find(row => row.id === stageName);
+    assert.notEqual(stage.trafficLight, 'GREEN', name);
+    assert.notEqual(stage.state, 'PROVEN', name);
+  }
+  const review = signedDisplayStages(valid.filter(g => g.id !== 20))
+    .find(row => row.id === 'proof');
+  assert.deepEqual(review.proofRefs, ['workspace:proof/gate-21'],
+    'signed event remains visible without being credited as end-to-end progress');
+});
