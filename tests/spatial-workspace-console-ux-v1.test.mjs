@@ -233,6 +233,8 @@ test('consented native editor replies are shown as editor readback, not ChatGPT 
     [{kind:'text',text:'x'},'editor-update-refused',/refused the change/],
     [{kind:'text',text:'x'},'editor-update-unverified',/did not confirm.*do not retry/],
     [{kind:'click',x:.5,y:.5},'app-control-invoked',/selected app control was invoked/],
+    [{kind:'click',x:.5,y:.5},'app-control-outcome-unverified',/no second click was sent/],
+    [{kind:'key',key:'Enter'},'editor-key-focus-unverified',/explicit button rather than Enter/],
     [{kind:'click',x:.5,y:.5},'input-posted',/Windows queued.*not confirmed/],
   ];
   for(const [input,status,re] of cases){
