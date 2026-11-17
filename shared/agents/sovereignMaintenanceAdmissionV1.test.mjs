@@ -37,11 +37,27 @@ function coreMaintenanceFunction(name, nextName, overrides = {}) {
     SOVEREIGN_COMMANDER_OPERATION: { MAINTENANCE_ACTION: 'MAINTENANCE_ACTION' },
     buildStephanosExecutionSurfaceCatalogV1: () => ({}),
     buildStephanosExecutionCommandEnvelopeV1: value => value,
+    assertCoreRepairOwner: async () => true, gamingActive: async () => false,
+    canonicalMissionWorkerEvidenceAllowsWork: () => true,
+    shuttingDown: false, ownedLock: { identity: {} }, readExactCurrentLock: async () => true,
+    currentHead: () => 'a'.repeat(40), sourceHead: 'a'.repeat(40),
+    // The actual persistence/prepare/status controller has its own crash and
+    // concurrency suite. This inert seam keeps the original Core policy test
+    // focused on its closed qualification and identity-preserving delegation.
+    coreRepairAttempts: { execute: async input => {
+      assert.equal(await input.admit(), true);
+      return input.dispatch({ schemaVersion: 'stephanos.core-repair-continuation.v1',
+        requestId: 'core-fixture-original-1', missionId: input.missionId, relatedIssue: '#2961',
+        actionId: input.actionId, sourceHead: 'a'.repeat(40), enrollmentId: 'd'.repeat(64), sequence: 1, previousRequestId: '' });
+    } },
     ...overrides,
   });
   // Keep production owner/action constants in scope. Injecting an owner here
   // previously hid an undefined identifier on the qualified repair path.
-  vm.runInContext(source.slice(preambleStart, preambleEnd) + source.slice(start, end), context);
+  const dispatcherStart = source.indexOf('async function dispatchCoreMaintenance(');
+  const dispatcherEnd = source.indexOf('\nasync function maybeRepairCoreDependencies(', dispatcherStart);
+  vm.runInContext(source.slice(preambleStart, preambleEnd) + source.slice(start, end)
+    + source.slice(dispatcherStart, dispatcherEnd), context);
   return context[name];
 }
 
@@ -435,6 +451,7 @@ test('Core production preamble binds qualified goal repair to its canonical owne
   assert.equal(calls.length,1);assert.equal(calls[0].payload.actionId,'repair-goal-builder-flow');
   assert.equal(calls[0].relatedIssue, '#2961');
   assert.equal(calls[0].missionId, 'stephanos-core-octopus-self-heal');
+  assert.equal(calls[0].actionId, 'core-fixture-original-1');
   assert.deepEqual(Array.from(calls[0].proofRefs), ['proof/stephanos-core-daemon-current.json', 'source:' + 'a'.repeat(40)]);
   assert.equal(Object.hasOwn(calls[0].payload,'qualified'),false);
   await run('repair-control-plane','a'.repeat(40),'control-plane');

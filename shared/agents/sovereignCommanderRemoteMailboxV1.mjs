@@ -16,6 +16,10 @@ import { projectOriginalR7WitnessCommissioningAuditV1 } from './originalR7Witnes
 import { parseRescueIslandBoundaryStdoutV1, parseRescueIslandBoundaryHeldStdoutV1 } from './rescueIslandBoundaryReceiptV1.mjs';
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, readSovereignMaintenanceTerminalReceiptV1,
   sovereignMaintenanceCustodyUnprovenV1 } from './sovereignMaintenanceAdmissionV1.mjs';
+import {
+  captureCoreRepairContinuationV1, captureCoreRepairContinuationStatusV1,
+  captureCoreRepairStatusRequestV1, captureCoreRepairPrepareRequestV1, sameCoreRepairContinuationV1,
+} from './sovereignMaintenanceAdmissionV1.mjs';
 import { FLEET_SUPERVISOR_ACTION, projectFleetSupervisorReceiptV1 } from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 import { battleBridgeCanonicalRepositoryArgs, inspectBattleBridgeGitTopology, resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from './battleBridgeExecutionBoundaryV1.mjs';
 
@@ -484,7 +488,35 @@ export function consumeSovereignMaintenancePreDispatchRefusalV1(blocked, request
 // Private local callers reuse the existing bounded authenticated MCP transport.
 // No health snapshot grants admission, no local child fallback, and no attempt
 // to start/recycle an unavailable owner is permitted on this delegation path.
+function captureCorrelatedMaintenanceRequest(request) {
+  try {
+    if (!request || typeof request !== 'object' || Array.isArray(request)
+      || Object.getPrototypeOf(request) !== Object.prototype) return null;
+    const keys = Reflect.ownKeys(request);
+    if (keys.some(key => !['actionId', 'arguments', 'timeoutMs', 'coreContinuation'].includes(key))
+      || !['actionId', 'arguments', 'coreContinuation'].every(key => Object.hasOwn(request, key))
+      || keys.some(key => !Object.hasOwn(Object.getOwnPropertyDescriptor(request, key), 'value'))) return null;
+    const coreContinuation = captureCoreRepairContinuationV1(request.coreContinuation);
+    const args = request.arguments;
+    if (!coreContinuation || request.actionId !== coreContinuation.actionId
+      || !args || typeof args !== 'object' || Object.getPrototypeOf(args) !== Object.prototype
+      || Reflect.ownKeys(args).length !== 1
+      || Object.getOwnPropertyDescriptor(args, 'actionId')?.value !== coreContinuation.actionId
+      || (Object.hasOwn(request, 'timeoutMs') && (!Number.isSafeInteger(request.timeoutMs)
+        || request.timeoutMs < 1 || request.timeoutMs > 270_000))) return null;
+    return Object.freeze({ actionId: coreContinuation.actionId,
+      arguments: Object.freeze({ actionId: coreContinuation.actionId }), coreContinuation,
+      ...(Object.hasOwn(request, 'timeoutMs') ? { timeoutMs: request.timeoutMs } : {}) });
+  } catch { return null; }
+}
+
 export async function callSovereignMaintenanceOwnerV1(request, options = {}) {
+  const correlated = request && typeof request === 'object' && 'coreContinuation' in request;
+  const captured = correlated ? captureCorrelatedMaintenanceRequest(request) : null;
+  if (correlated && !captured) return fail('SOVEREIGN_CORE_REPAIR_CORRELATION_INVALID');
+  // Snapshot the closed original identity before transport awaits. Legacy
+  // callers retain their existing request object and protocol refusal witness.
+  const executionRequest = captured || request;
   const fetchFn = options.fetchFn || globalThis.fetch;
   const readFileFn = options.readFileFn || readFile;
   let token = '', sessionId = '';
@@ -507,11 +539,38 @@ export async function callSovereignMaintenanceOwnerV1(request, options = {}) {
     if (!initialized.ok || !listed.ok || !listed.body?.result?.tools?.some(tool => tool.name === 'maintenance_action')) {
       return fail('SOVEREIGN_MAINTENANCE_OWNER_TOOL_UNAVAILABLE');
     }
-    const timeoutMs = Number.isSafeInteger(request.timeoutMs) ? Math.min(285_000, request.timeoutMs + 15_000) : 285_000;
-    const called = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 3, method: 'tools/call',
-      params: { name: 'maintenance_action', arguments: { ...request.arguments, actionId: request.actionId } } }, init.sessionId, timeoutMs);
+    if (captured) {
+      // A legacy MCP accepts unknown maintenance fields and generates a new
+      // session identity. Never send a correlated executable POST until this
+      // same authenticated session proves the new protocol and the original
+      // durable PREPARED tuple. The owner still revalidates its native CAS.
+      const tools = listed.body.result.tools;
+      if (!['maintenance_request_status', 'maintenance_request_prepare']
+        .every(name => tools.some(tool => tool.name === name)))
+        return fail('SOVEREIGN_CORE_REPAIR_OWNER_PROTOCOL_REQUIRED');
+      const observed = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 3, method: 'tools/call',
+        params: { name: 'maintenance_request_status', arguments: { continuation: captured.coreContinuation } } },
+      sessionId, 15_000);
+      const status = observed.ok && !observed.body?.error
+        ? captureCoreRepairContinuationStatusV1(observed.body?.result?.structuredContent) : null;
+      if (!status || !sameCoreRepairContinuationV1(status.continuation, captured.coreContinuation))
+        return fail('SOVEREIGN_CORE_REPAIR_OWNER_PROTOCOL_REQUIRED');
+      if (status.state !== 'PREPARED' || status.sameRequestDeliveryAllowed !== true
+        || status.historyAuthenticated !== true || status.observerSourceHead !== captured.coreContinuation.sourceHead)
+        return fail('SOVEREIGN_CORE_REPAIR_ORIGINAL_REQUEST_NOT_PREPARED', { coreRequestStatus: status });
+    }
+    const timeoutMs = Number.isSafeInteger(executionRequest.timeoutMs) ? Math.min(285_000, executionRequest.timeoutMs + 15_000) : 285_000;
+    const called = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: captured ? 4 : 3, method: 'tools/call',
+      params: { name: 'maintenance_action', arguments: { ...executionRequest.arguments, actionId: executionRequest.actionId,
+        ...(captured ? { coreContinuation: captured.coreContinuation } : {}) } } }, init.sessionId, timeoutMs);
     const result = called.body?.result?.structuredContent;
-    if (!called.ok || !result || result.command?.plan?.processId !== request.actionId) {
+    const coreRequestStatus = captured ? captureCoreRepairContinuationStatusV1(result?.coreRequestStatus) : null;
+    if (!called.ok || !result || result.command?.plan?.processId !== executionRequest.actionId
+      || (captured && (result.command.commandId !== captured.coreContinuation.requestId
+        || result.command.missionId !== captured.coreContinuation.missionId
+        || !sameCoreRepairContinuationV1(result.coreContinuation, captured.coreContinuation)
+        || !coreRequestStatus
+        || !sameCoreRepairContinuationV1(coreRequestStatus.continuation, captured.coreContinuation)))) {
       return fail('SOVEREIGN_MAINTENANCE_OWNER_RECEIPT_INVALID');
     }
     if (result.ok === true) {
@@ -522,7 +581,7 @@ export async function callSovereignMaintenanceOwnerV1(request, options = {}) {
         return fail('SOVEREIGN_MAINTENANCE_OWNER_RECEIPT_INVALID');
       }
     }
-    return result;
+    return captured ? Object.freeze({ ...result, coreContinuation: captured.coreContinuation, coreRequestStatus }) : result;
   } catch { return fail('SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE'); }
   finally {
     if (sessionId && token) {
@@ -531,6 +590,64 @@ export async function callSovereignMaintenanceOwnerV1(request, options = {}) {
       } }, 3_000); } catch {}
     }
   }
+}
+
+// A separate fixed observation reuses the same authenticated owner transport.
+// It never invokes maintenance_action, restarts the owner, reserves custody,
+// retries a delivery or treats a latest IDLE health projection as history.
+async function exchangeCoreMaintenanceRequest(request, options, toolName) {
+  const query = (toolName === 'maintenance_request_prepare'
+    ? captureCoreRepairPrepareRequestV1 : captureCoreRepairStatusRequestV1)(request);
+  if (!query)
+    return fail('SOVEREIGN_MAINTENANCE_REQUEST_STATUS_ARGUMENTS_INVALID');
+  const fetchFn = options.fetchFn || globalThis.fetch;
+  const readFileFn = options.readFileFn || readFile;
+  let token = '', sessionId = '';
+  try {
+    const exchange = await fetchTextWithDeadline(fetchFn, HEALTH_URL + '?view=protocol', { method: 'GET' }, 3_000);
+    const health = JSON.parse(exchange.bodyText || 'null');
+    if (!exchange.response.ok || health?.ok !== true || health.service !== 'stephanos-sovereign-commander'
+      || health.observationScope !== 'TRANSPORT_PROTOCOL_ONLY' || health.maintenanceAdmissionProven !== false
+      || health.maintenanceOwnerAdmissionVersion !== SOVEREIGN_MAINTENANCE_OWNER_VERSION)
+      return fail('SOVEREIGN_MAINTENANCE_REQUEST_STATUS_PROTOCOL_REQUIRED');
+    token = text(await readFileFn(fixedTokenPath(options.env || process.env), 'utf8'));
+    if (token.length < 32) return fail('SOVEREIGN_MAINTENANCE_REQUEST_STATUS_TOKEN_UNAVAILABLE');
+    const init = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: { protocolVersion: '2025-06-18', capabilities: {},
+        clientInfo: { name: 'sovereign-original-core-request-observer', version: '1' } } }, '', 3_000);
+    if (!init.ok || !init.sessionId || init.body?.error)
+      return fail('SOVEREIGN_MAINTENANCE_REQUEST_STATUS_INITIALIZE_FAILED');
+    sessionId = init.sessionId;
+    const initialized = await postMcp(fetchFn, token, { jsonrpc: '2.0', method: 'notifications/initialized' }, sessionId, 3_000);
+    const listed = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, sessionId, 3_000);
+    if (!initialized.ok || !listed.ok
+      || !listed.body?.result?.tools?.some(tool => tool.name === toolName))
+      return fail('SOVEREIGN_MAINTENANCE_REQUEST_STATUS_TOOL_UNAVAILABLE');
+    const called = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 3, method: 'tools/call',
+      params: { name: toolName, arguments: query } }, sessionId, 15_000);
+    const status = called.ok && !called.body?.error
+      ? captureCoreRepairContinuationStatusV1(called.body?.result?.structuredContent) : null;
+    if (!status || (query.continuation && !sameCoreRepairContinuationV1(query.continuation, status.continuation)))
+      return fail('SOVEREIGN_MAINTENANCE_REQUEST_STATUS_RECEIPT_INVALID');
+    return status;
+  } catch { return fail('SOVEREIGN_MAINTENANCE_REQUEST_STATUS_UNAVAILABLE'); }
+  finally {
+    if (sessionId && token) {
+      try { await fetchTextWithDeadline(fetchFn, MCP_URL, { method: 'DELETE', headers: {
+        authorization: `Bearer ${token}`, 'mcp-session-id': sessionId,
+      } }, 3_000); } catch {}
+    }
+  }
+}
+
+export async function querySovereignMaintenanceRequestStatusV1(request = {}, options = {}) {
+  return exchangeCoreMaintenanceRequest(request, options, 'maintenance_request_status');
+}
+
+// Preparation is the existing owner's fixed metadata CAS, separate from its
+// executable endpoint. The caller cannot choose a tool, payload or native path.
+export async function prepareSovereignMaintenanceRequestV1(request, options = {}) {
+  return exchangeCoreMaintenanceRequest(request, options, 'maintenance_request_prepare');
 }
 
 function safeAiCommanderAcceptanceProjection(value = {}, processId = '') {
