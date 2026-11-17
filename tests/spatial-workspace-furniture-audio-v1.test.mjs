@@ -212,6 +212,46 @@ test('explicitly selected device hints survive room reopen only after exact live
     'explicitly returning to default clears the remembered microphone');
   reopened.dispose();
 });
+test('vanished remembered Quest audio devices cannot silently fall back on local Test',async()=>{
+  const storage=store();
+  let found=[
+    {kind:'audioinput',deviceId:'quest-mic',label:'Quest microphone'},
+    {kind:'audiooutput',deviceId:'quest-out',label:'Quest speakers'},
+  ];
+  let mediaRequests=0,speakerContexts=0;
+  const navigatorRef={mediaDevices:{
+    enumerateDevices:async()=>found,
+    getUserMedia(){mediaRequests++;throw Error('Unintended microphone request');},
+  }};
+  class SpeakerContext{constructor(){speakerContexts++;}}
+  const make=()=>createHolodeckAudioControls({storageRef:storage,navigatorRef,AudioContextCtor:SpeakerContext});
+  const before=make();
+  await before.listDevices();
+  assert.equal(before.setInput('quest-mic'),true);
+  assert.equal(before.setOutput('quest-out'),true);
+  before.dispose();
+  found=[
+    {kind:'audioinput',deviceId:'other-mic',label:'Other microphone'},
+    {kind:'audiooutput',deviceId:'other-out',label:'Other speakers'},
+  ];
+  const reopened=make();
+  await reopened.listDevices();
+  assert.deepEqual([reopened.getState().inputId,reopened.getState().outputId],['','']);
+  assert.equal((await reopened.testMicrophone()).ok,false,'missing remembered input may not trigger default capture');
+  assert.equal((await reopened.testMicrophone('other-mic')).ok,false,'explicit device argument is not a user selection');
+  assert.equal((await reopened.testSpeakers()).ok,false,'missing remembered output may not play on default speakers');
+  assert.equal((await reopened.testSpeakers('other-out')).ok,false);
+  assert.equal(mediaRequests,0);assert.equal(speakerContexts,0);
+  assert.equal(reopened.setInput('unlisted-mic'),false);
+  assert.equal(reopened.setOutput('unlisted-out'),false);
+  assert.deepEqual(readSpatialAudioPreferences(storage),{inputId:'quest-mic',outputId:'quest-out'});
+  assert.equal(reopened.setInput(''),true,'explicit system-default choice clears a stale hint even with empty current selection');
+  assert.equal(reopened.setOutput(''),true);
+  assert.deepEqual(readSpatialAudioPreferences(storage),{inputId:'',outputId:''});
+  assert.equal(mediaRequests,0,'choosing a default never opens the microphone');
+  reopened.dispose();
+});
+
 test('malformed or blocked audio preference storage is inert and cannot persist microphone state',async()=>{
   const storageValues=[
     '{', 'x'.repeat(1025), JSON.stringify({version:2,inputId:'old'}),
