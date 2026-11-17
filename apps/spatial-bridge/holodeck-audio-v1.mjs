@@ -195,6 +195,14 @@ export function createHolodeckAudioControls({
     let total=0;for(const sample of values){const delta=(sample-128)/128;total+=delta*delta;}
     return Math.sqrt(total/values.length);
   }
+  function stopSpeakers(){
+    // An app-window disconnect also revokes an in-flight or active local tone.
+    // This only controls this room's test, never ChatGPT Voice in the app.
+    if(!speaker)return false;
+    statusIntent++;releaseSpeaker();
+    if(!disposed)status('Local speaker test stopped. ChatGPT Voice remains controlled in the original app.');
+    return true;
+  }
   async function testSpeakers(deviceId=state.outputId){
     if(disposed)return stoppedResult('Speaker');
     deviceId=selection(deviceId);
@@ -241,5 +249,5 @@ export function createHolodeckAudioControls({
     disposed=true;listVersion++;statusIntent++;releaseMicrophone();releaseSpeaker();
     publish({microphoneActive:false,microphonePending:false,status:'Audio controls closed. Local tests stopped.'});
   }
-  return {getState,setInput,setOutput,listDevices,testMicrophone,stopMicrophone,microphoneLevel,testSpeakers,dispose};
+  return {getState,setInput,setOutput,listDevices,testMicrophone,stopMicrophone,microphoneLevel,testSpeakers,stopSpeakers,dispose};
 }
