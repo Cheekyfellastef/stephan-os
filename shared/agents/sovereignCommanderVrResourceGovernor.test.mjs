@@ -85,6 +85,29 @@ test('idle custody and unknown observations deny canonical local execution indep
   assert.equal(projectVrGovernorExecutionPermissionsV1(gaming, now).heavyModelAllowed, false);
 });
 
+test('effective model grants remain distinct from observed-activity CPU exclusion', () => {
+  const now = Date.now();
+  const forcedOff = { schemaVersion: 'stephanos.vr-resource-governor.v1', governorVersion: 3,
+    updatedAtUtc: new Date(now).toISOString(), phase: 'NORMAL', active: false,
+    overrideMode: 'FORCE_OFF', flatGameActive: true, airLinkActive: false,
+    realAirLinkActive: false, virtualAirLinkTestActive: false, prepareLeaseActive: false,
+    nativeProbeCustodyHeld: false, dependencyObservationKnown: true,
+    localModelAllowed: true, heavyModelAllowed: true, evictionHealthy: true };
+  for (const state of [forcedOff, { ...forcedOff, phase: 'GAMING', active: true, overrideMode: 'AUTO' }]) {
+    const permission = projectVrGovernorExecutionPermissionsV1(state, now);
+    assert.equal(permission.localModelAllowed, true);
+    assert.equal(permission.heavyModelAllowed, true, 'effective profile/override model grant remains canonical');
+    assert.equal(permission.localCpuAllowed, false, 'observed gameplay still excludes background CPU builds');
+    assert.equal(coreGamingProtectionFromGovernor(state, now), true);
+    for (const denial of [{ nativeProbeCustodyHeld: true }, { dependencyObservationKnown: false },
+      { evictionHealthy: false }, { localModelAllowed: false }, { heavyModelAllowed: false }]) {
+      const denied = projectVrGovernorExecutionPermissionsV1({ ...state, ...denial }, now);
+      assert.equal(denied.heavyModelAllowed, false);
+      assert.equal(denied.localCpuAllowed, false);
+    }
+  }
+});
+
 test('idle VR governor refreshes its verified state before consumer freshness budgets expire', () => {
   assert.match(governor, /\$idleHeartbeatDue = \$false/);
   assert.match(governor, /if \(-not \$effective\.active\)/);

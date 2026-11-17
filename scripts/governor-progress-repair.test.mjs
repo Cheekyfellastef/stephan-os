@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, writeFile, mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { projectVrGovernorExecutionPermissionsV1 } from '../shared/ai/ollamaLoadGovernor.mjs';
 
 const governor = await readFile(new URL('./windows/run-vr-resource-governor.ps1', import.meta.url), 'utf8');
 const caretaker = await readFile(new URL('./windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
@@ -427,6 +428,70 @@ test('actual restrictive hold persists even with no prior state and UNKNOWN neve
     [pscustomobject]@{hold=$held.nativeProbeCustodyHeld;holdActive=$held.active;holdPhase=$held.phase;heavy=$state.heavyModelAllowed;local=$state.localModelAllowed;healthy=$state.evictionHealthy;zero=$state.zeroLocalModelInvariant;mode=$state.ollamaLoadMode}|ConvertTo-Json -Compress`);
   assert.deepEqual(r, { hold: true, holdActive: true, holdPhase: 'UNKNOWN', heavy: false,
     local: false, healthy: false, zero: false, mode: 'unknown' });
+});
+
+test('actual FORCE_OFF producer state preserves heavy provider selection while excluding background CPU', { skip: !windows }, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'governor-force-off-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const state = run(String.raw`
+    $stateRoot='${root.replaceAll("'", "''")}';$statePath=Join-Path $stateRoot 'state.json';$telemetryPath=Join-Path $stateRoot 'events.jsonl'
+    $lightweightModel='llama3.2:3b'
+    function Read-OverrideMode {return 'FORCE_OFF'}
+    function Read-PrepareLease {return [pscustomobject]@{active=$false;processName='';profileName='';expiresAtUtc=''}}
+    function Resolve-GamingProfile {param($Signal,$RequestedProcessName,$RequestedProfileName) return [pscustomobject]@{name='flat-game';processName='Starfield';parkAllModels=$false;lightweightOnly=$true;minFreeVramMiB=4096;cooldownSeconds=90}}
+    function Get-GpuSnapshot {return [pscustomobject]@{available=$true;memoryFreeMiB=16384;memoryUsedMiB=0;memoryTotalMiB=16384;utilizationGpu=0}}
+    function Resolve-OllamaExecutable {return 'C:\fixture\ollama.exe'}
+    function Get-LoadedOllamaModels {param($OllamaExecutable) return @()}
+    function Append-TelemetryEvent {param($Payload)}
+    $signal=[pscustomobject]@{active=$true;flatGameActive=$true;airLinkActive=$false;realAirLinkActive=$false;virtualAirLinkTestActive=$false;gameProcessId=4242;gameProcessName='Starfield';gameExecutablePath='C:\fixture\Starfield.exe';parentProcessId=0;parentProcessName='';parentExecutablePath='';reason='flat-game-process-active'}
+    $effective=Resolve-EffectiveState -Signal $signal -PriorState $null
+    Invoke-Reconcile -Signal $signal -Effective $effective -PriorState $null|ConvertTo-Json -Compress -Depth 8
+  `);
+  assert.equal(state.phase, 'NORMAL');
+  assert.equal(state.active, false);
+  assert.equal(state.flatGameActive, true);
+  assert.equal(state.overrideMode, 'FORCE_OFF');
+  assert.equal(state.localModelAllowed, true);
+  assert.equal(state.heavyModelAllowed, true);
+  assert.equal(state.evictionHealthy, true);
+  const permission = projectVrGovernorExecutionPermissionsV1(state);
+  assert.equal(permission.localModelAllowed, true);
+  assert.equal(permission.heavyModelAllowed, true);
+  assert.equal(permission.localCpuAllowed, false);
+
+  const fs = (await import('node:fs')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const { runOllamaProvider } = await import('../stephanos-server/services/llm/providers/ollamaProvider.js');
+  const originalRead = fs.readFileSync, originalFetch = globalThis.fetch;
+  let observedState = state;
+  t.mock.method(fs, 'readFileSync', (path, ...args) => String(path).endsWith('vr-resource-governor-current.json')
+    ? JSON.stringify(observedState) : originalRead(path, ...args));
+  syncBuiltinESMExports();
+  const posted = [];
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith('/api/tags')) return { ok: true, status: 200,
+      json: async () => ({ models: [{ name: 'qwen3.5:27b' }, { name: 'llama3.2:3b' }] }) };
+    assert.equal(options.method, 'POST');
+    const body = JSON.parse(options.body);posted.push(body.model);
+    return { ok: true, status: 200, json: async () => ({ model: body.model, message: { content: 'operator model preserved' } }) };
+  };
+  try {
+    const request = { model: 'qwen3.5:27b', messages: [{ role: 'user', content: 'Investigate architecture and root cause.' }] };
+    const config = { baseURL: 'http://127.0.0.1:11434', ollamaLoadMode: 'performance', forceHeavyModel: true };
+    const result = await runOllamaProvider(request, config);
+    assert.equal(result.ok, true);
+    assert.equal(result.model, 'qwen3.5:27b');
+    assert.deepEqual(posted, ['qwen3.5:27b']);
+    for (const denial of [{ nativeProbeCustodyHeld: true }, { dependencyObservationKnown: false }]) {
+      observedState = { ...state, ...denial };
+      assert.equal((await runOllamaProvider(request, config)).ok, false);
+      assert.deepEqual(posted, ['qwen3.5:27b'], 'FORCE_OFF cannot override unresolved resource evidence');
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
 });
 
 test('inherited custody hold survives missing GPU and real VR without a probe or publication', { skip: !windows }, () => {

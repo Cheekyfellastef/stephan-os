@@ -20,7 +20,9 @@ export function projectVrGovernorExecutionPermissionsV1(state, nowMs = Date.now(
   const dependenciesKnown = state.dependencyObservationKnown && state.evictionHealthy;
   const localModelAllowed = !custodyHeld && dependenciesKnown && state.localModelAllowed;
   const activity = state.phase !== 'NORMAL' || flags.some(key => state[key]);
-  const heavyModelAllowed = localModelAllowed && state.heavyModelAllowed && !activity;
+  // Model grants already include the governor's effective override/profile.
+  // Observed activity independently excludes background CPU construction.
+  const heavyModelAllowed = localModelAllowed && state.heavyModelAllowed;
   const reason = custodyHeld ? 'GOVERNOR_NATIVE_PROBE_CUSTODY_HELD'
     : !dependenciesKnown ? 'GOVERNOR_DEPENDENCY_OBSERVATION_UNKNOWN'
       : !localModelAllowed ? 'GOVERNOR_LOCAL_MODEL_DENIED'
