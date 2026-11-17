@@ -20,6 +20,7 @@ $entry = Join-Path $repoRoot 'scripts\windows\recover-stephanos-core-lock.ps1'
 $nativePath = Join-Path $repoRoot 'scripts\windows\StephanosCoreLockRecoveryV1.cs'
 $policyPath = Join-Path $repoRoot 'scripts\windows\stephanos-core-lock-recovery-policy.ps1'
 $inventoryPath = Join-Path $repoRoot 'scripts\windows\stephanos-core-process-observation.ps1'
+$ownerNativePath = Join-Path $repoRoot 'scripts\windows\read-sovereign-maintenance-owner-v2.ps1'
 $startedAt = [DateTime]::UtcNow
 $coreStartRequested = $false
 $lockRetired = $false
@@ -74,7 +75,7 @@ try {
     $elevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if ($RetireOnlyChild -and -not $elevated) { throw 'CORE_RECOVERY_NATIVE_OBSERVER_REQUIRES_ADMINISTRATOR' }
     if (-not $RetireOnlyChild -and $elevated) { throw 'CORE_RECOVERY_LIMITED_PARENT_REQUIRED' }
-    $sourceFiles = @($entry, $nativePath, $policyPath, $inventoryPath, $coreScript)
+    $sourceFiles = @($entry, $nativePath, $policyPath, $inventoryPath, $ownerNativePath, $coreScript)
     $sourceDigests = @{}
     foreach ($file in $sourceFiles) { $sourceDigests[$file] = Get-CoreRecoveryDigest $file }
     function Assert-CoreRecoverySource {

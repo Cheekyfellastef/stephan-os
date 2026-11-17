@@ -23,7 +23,10 @@ test('both Core observers share the same incomplete-inventory boundary', () => {
 
 test('missing-image fallback is fixed, birth-bound, bounded and never widens opaque command classification', async () => {
   const source = await readFile(helperPath, 'utf8');
-  assert.match(source, /\. \(Join-Path \$PSScriptRoot 'read-sovereign-maintenance-owner-v2\.ps1'\)/);
+  assert.doesNotMatch(source, /^\.\s*\(Join-Path \$PSScriptRoot 'read-sovereign-maintenance-owner-v2\.ps1'\)$/m);
+  assert.match(source, /ReadAllBytes\(\$ownerNativePath\)/);
+  assert.match(source, /\[ScriptBlock\]::Create\(\$canonicalSource\)/);
+  assert.match(source, /a00610021f2ed29c3c18189e1ed65f261dc66a3de9e889aa394f46a78a40c261/);
   assert.match(source, /Get-StephanosCanonicalNodeIdentityV1 -ProcessRow \$row/);
   assert.match(source, /\$attempted -lt 64/);
   assert.match(source, /\$native\.ok -eq \$true -and \$native\.diagnosticCode -ceq ''/);

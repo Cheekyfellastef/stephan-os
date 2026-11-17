@@ -28,8 +28,14 @@ test('attended capture preserves the exact qualified watchdog helper and origina
   // code separately, and retain the existing recovery-script load-order gates.
   const helper = await readFile(new URL('./windows/stephanos-core-process-observation.ps1', import.meta.url));
   const candidateBlob = createHash('sha1').update('blob ' + helper.length + '\0').update(helper).digest('hex');
-  assert.equal(candidateBlob, '45f658bfa8af1e5c3bde12e07b45978473e846b8');
-  assert.match(helper.toString('utf8'), /^\.\s*\(Join-Path \$PSScriptRoot 'read-sovereign-maintenance-owner-v2\.ps1'\)$/m);
+  assert.notEqual(candidateBlob, reviewedBlob);
+  assert.doesNotMatch(helper.toString('utf8'), /^\.\s*\(Join-Path \$PSScriptRoot 'read-sovereign-maintenance-owner-v2\.ps1'\)$/m);
+  assert.match(helper.toString('utf8'), /ReadAllBytes\(\$ownerNativePath\)/);
+  assert.match(helper.toString('utf8'), /\[ScriptBlock\]::Create\(\$canonicalSource\)/);
+  const ownerNativeText = await readFile(new URL('./windows/read-sovereign-maintenance-owner-v2.ps1', import.meta.url), 'utf8');
+  const ownerNativeDigest = createHash('sha256').update(ownerNativeText.replace(/\r\n/g, '\n')).digest('hex');
+  assert.equal(ownerNativeDigest, 'a00610021f2ed29c3c18189e1ed65f261dc66a3de9e889aa394f46a78a40c261');
+  assert.match(helper.toString('utf8'), /a00610021f2ed29c3c18189e1ed65f261dc66a3de9e889aa394f46a78a40c261/);
   const functions = [...helper.toString('utf8').matchAll(/^function ([\w-]+)/gm)].map(m => m[1]);
   assert.deepEqual(functions, ['ConvertTo-StephanosCoreProcessObservation', 'Get-StephanosCoreProcessObservation']);
   const policy = await readFile(new URL('./windows/stephanos-core-lock-recovery-policy.ps1', import.meta.url), 'utf8');
@@ -37,7 +43,7 @@ test('attended capture preserves the exact qualified watchdog helper and origina
   const source = await readFile(entry, 'utf8');
   assert.ok(source.indexOf('. $policyPath') < source.indexOf('if ($RetireOnlyChild) {'));
   assert.ok(source.indexOf('. $inventoryPath') < source.indexOf('$before = Get-StephanosCoreProcessIdentityObservation'));
-  assert.match(source, /\$sourceFiles = @\(\$entry, \$nativePath, \$policyPath, \$inventoryPath, \$coreScript\)/);
+  assert.match(source, /\$sourceFiles = @\(\$entry, \$nativePath, \$policyPath, \$inventoryPath, \$ownerNativePath, \$coreScript\)/);
 });
 test('fixed recovery keeps elevation limited to retirement and preserves canonical startup lock', async () => {
   const source = await readFile(entry, 'utf8');

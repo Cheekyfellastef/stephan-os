@@ -1,7 +1,5 @@
 # Shared read-only Core inventory. Hidden command lines are not proof of an
 # absent worker. No process start, termination, lock or lease mutation here.
-. (Join-Path $PSScriptRoot 'read-sovereign-maintenance-owner-v2.ps1')
-
 function ConvertTo-StephanosCoreProcessObservation {
     param(
         [object[]]$ProcessRows = @(),
@@ -61,6 +59,7 @@ function Get-StephanosCoreProcessObservation {
         $resolved = 0
         $attempted = 0
         $nativeFailure = ''
+        $nativeReaderLoaded = $false
         $pattern = [regex]::Escape($CoreScript.Replace('/', '\'))
         $expectedCoreCommand = '"C:\Program Files\nodejs\node.exe" "' + $CoreScript.Replace('/', '\') + '"'
         $observedRows = @(foreach ($row in $rows) {
@@ -80,6 +79,30 @@ function Get-StephanosCoreProcessObservation {
                 }
                 if ($attempted -lt 64) {
                     $attempted++
+                    if (-not $nativeReaderLoaded) {
+                        # This helper may be needed by the elevated recovery child.
+                        # Never execute a mutable filesystem path by dot-sourcing.
+                        # Bind the exact canonical UTF-8 source bytes, then execute
+                        # only that verified in-memory ScriptBlock.
+                        $ownerNativePath = Join-Path $PSScriptRoot 'read-sovereign-maintenance-owner-v2.ps1'
+                        $ownerNativeBytes = [IO.File]::ReadAllBytes($ownerNativePath)
+                        if ($ownerNativeBytes.Length -lt 1 -or $ownerNativeBytes.Length -gt 16384) {
+                            throw 'CORE_PROCESS_NATIVE_HELPER_BYTES_UNPROVEN'
+                        }
+                        $utf8 = [Text.UTF8Encoding]::new($false, $true)
+                        $canonicalSource = $utf8.GetString($ownerNativeBytes).Replace(([string][char]13 + [string][char]10), [string][char]10)
+                        if ($canonicalSource.Contains([char]13)) { throw 'CORE_PROCESS_NATIVE_HELPER_BYTES_UNPROVEN' }
+                        $canonicalBytes = [Text.Encoding]::UTF8.GetBytes($canonicalSource)
+                        $digest = [Security.Cryptography.SHA256]::Create()
+                        try {
+                            $sourceDigest = ([BitConverter]::ToString($digest.ComputeHash($canonicalBytes))).Replace('-', '').ToLowerInvariant()
+                        } finally { $digest.Dispose() }
+                        if ($sourceDigest -cne 'a00610021f2ed29c3c18189e1ed65f261dc66a3de9e889aa394f46a78a40c261') {
+                            throw 'CORE_PROCESS_NATIVE_HELPER_SOURCE_UNPROVEN'
+                        }
+                        . ([ScriptBlock]::Create($canonicalSource))
+                        $nativeReaderLoaded = $true
+                    }
                     $native = Get-StephanosCanonicalNodeIdentityV1 -ProcessRow $row
                     if ($native.ok -eq $true -and $native.diagnosticCode -ceq '') {
                         $resolved++
