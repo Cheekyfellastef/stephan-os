@@ -8,9 +8,28 @@ import { createHash } from 'node:crypto';
 const entry = new URL('./windows/recover-stephanos-core-lock.ps1', import.meta.url);
 const nativeTest = new URL('./windows/stephanos-core-lock-recovery.native.test.ps1', import.meta.url);
 test('attended capture preserves the exact qualified watchdog helper and original load boundary', async () => {
+  // The previously qualified watchdog inventory is retained as immutable,
+  // test-only data. A proposed native observer must not silently requalify it.
+  const frozen = JSON.parse(await readFile(
+    new URL('../shared/agents/fixtures/stephanosCoreReviewedProcessObservationV1.json', import.meta.url), 'utf8'));
+  assert.equal(frozen.schemaVersion, 'stephanos.test-only-reviewed-core-inventory-fixture.v1');
+  assert.equal(frozen.sourcePath, 'scripts/windows/stephanos-core-process-observation.ps1');
+  assert.equal(frozen.sourceHead, '62d659f63ada09586967882cb790b8363a0bf1a0');
+  assert.equal(frozen.testOnly, true);
+  assert.equal(frozen.runtimeAuthority, false);
+  const reviewed = Buffer.from(frozen.source, 'utf8');
+  const reviewedBlob = createHash('sha1').update('blob ' + reviewed.length + '\0').update(reviewed).digest('hex');
+  assert.equal(reviewedBlob, '9e00ce659859b0274fce36e13cb20045b1b337b1');
+  assert.equal(frozen.blobSha, reviewedBlob);
+  const reviewedFunctions = [...frozen.source.matchAll(/^function ([\w-]+)/gm)].map(m => m[1]);
+  assert.deepEqual(reviewedFunctions, ['ConvertTo-StephanosCoreProcessObservation', 'Get-StephanosCoreProcessObservation']);
+
+  // The new observer remains an unqualified source candidate. Pin its exact
+  // code separately, and retain the existing recovery-script load-order gates.
   const helper = await readFile(new URL('./windows/stephanos-core-process-observation.ps1', import.meta.url));
-  const blob = createHash('sha1').update(`blob ${helper.length}\0`).update(helper).digest('hex');
-  assert.equal(blob, '9e00ce659859b0274fce36e13cb20045b1b337b1');
+  const candidateBlob = createHash('sha1').update('blob ' + helper.length + '\0').update(helper).digest('hex');
+  assert.equal(candidateBlob, '45f658bfa8af1e5c3bde12e07b45978473e846b8');
+  assert.match(helper.toString('utf8'), /^\.\s*\(Join-Path \$PSScriptRoot 'read-sovereign-maintenance-owner-v2\.ps1'\)$/m);
   const functions = [...helper.toString('utf8').matchAll(/^function ([\w-]+)/gm)].map(m => m[1]);
   assert.deepEqual(functions, ['ConvertTo-StephanosCoreProcessObservation', 'Get-StephanosCoreProcessObservation']);
   const policy = await readFile(new URL('./windows/stephanos-core-lock-recovery-policy.ps1', import.meta.url), 'utf8');
