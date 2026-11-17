@@ -1,11 +1,36 @@
 // Browser-local microphone and speaker checks for the Spatial Workspace.
 // ChatGPT Voice runs in the user's original ChatGPT/Codex app, never here.
+// These are origin-local device preference hints, NOT media grants or app Voice state.
+export const SPATIAL_AUDIO_PREFERENCE_KEY='stephanos.spatial.audio-preferences.v1';
+const emptyAudioPreferences=()=>({inputId:'',outputId:''});
+const boundedAudioId=value=>typeof value==='string'&&value.length<=256&&!/[\\u0000-\\u001f\\u007f]/.test(value)?value:'';
+export function readSpatialAudioPreferences(storage){
+  const fallback=emptyAudioPreferences();
+  try {
+    const raw=storage?.getItem?.(SPATIAL_AUDIO_PREFERENCE_KEY);
+    if(typeof raw!=='string'||raw.length>1024)return fallback;
+    const value=JSON.parse(raw);
+    if(!value||Array.isArray(value)||typeof value!=='object'||value.version!==1)return fallback;
+    return {inputId:boundedAudioId(value.inputId),outputId:boundedAudioId(value.outputId)};
+  }catch{return fallback;}
+}
 export function createHolodeckAudioControls({
   navigatorRef=globalThis.navigator,
   AudioContextCtor=globalThis.AudioContext||globalThis.webkitAudioContext,
   onStatus=()=>{},
   onChange=()=>{},
+  storageRef,
 }={}) {
+  let prefStore;
+  try{prefStore=storageRef===undefined?globalThis.localStorage:storageRef;}catch{}
+  let preferences=readSpatialAudioPreferences(prefStore);
+  // Only explicit, currently discovered choices are saved. Never save permission,
+  // microphone-active, app session, device label, transcript or capture state.
+  const saveChoice=(kind,id,devices)=>{
+    preferences={...preferences,[kind]:devices.some(device=>device.id===id)?boundedAudioId(id):''};
+    try{prefStore?.setItem?.(SPATIAL_AUDIO_PREFERENCE_KEY,
+      JSON.stringify({version:1,inputId:preferences.inputId,outputId:preferences.outputId}));}catch{}
+  };
   let microphone=null,speaker=null,disposed=false,listVersion=0,statusIntent=0;
   let state={inputs:[],outputs:[],inputId:'',outputId:'',status:'Audio test devices not yet selected.',
     microphoneActive:false,microphonePending:false,revision:0};
@@ -50,6 +75,7 @@ export function createHolodeckAudioControls({
     id=selection(id);if(disposed||id===null)return false;
     if(id===state.inputId)return true;
     statusIntent++;releaseMicrophone();
+    saveChoice('inputId',id,state.inputs);
     publish({inputId:id,microphoneActive:false,microphonePending:false,
       status:'Microphone selected. Start a test when ready.'});return true;
   }
@@ -57,6 +83,7 @@ export function createHolodeckAudioControls({
     id=selection(id);if(disposed||id===null)return false;
     if(id===state.outputId)return true;
     statusIntent++;releaseSpeaker();
+    saveChoice('outputId',id,state.outputs);
     publish({outputId:id,status:'Speaker output selected. Start a test when ready.'});return true;
   }
   async function listDevices(){
@@ -69,11 +96,19 @@ export function createHolodeckAudioControls({
       if(disposed||current!==listVersion)return {ok:false,inputs:[],outputs:[],cancelled:true,reason:'Audio device discovery was superseded.'};
       const inputs=devices.filter(d=>d.kind==='audioinput').map(d=>({id:d.deviceId,label:d.label||'Microphone'}));
       const outputs=devices.filter(d=>d.kind==='audiooutput').map(d=>({id:d.deviceId,label:d.label||'Speakers'}));
-      const inputId=inputs.some(d=>d.id===state.inputId)?state.inputId:'';
-      const outputId=outputs.some(d=>d.id===state.outputId)?state.outputId:'';
+      // A saved hint is not trusted until fresh device enumeration finds an
+      // exact match. Never substitute a different microphone or speaker.
+      const wantedInput=state.inputId||preferences.inputId;
+      const wantedOutput=state.outputId||preferences.outputId;
+      const inputId=inputs.some(d=>d.id===wantedInput)?wantedInput:'';
+      const outputId=outputs.some(d=>d.id===wantedOutput)?wantedOutput:'';
       if(inputId!==state.inputId)releaseMicrophone();
       if(outputId!==state.outputId)releaseSpeaker();
-      const reason='Devices listed. A test needs your explicit permission.';
+      const missingInput=Boolean(wantedInput&&!inputId),missingOutput=Boolean(wantedOutput&&!outputId);
+      const reason=missingInput||missingOutput
+        ?'Previous '+(missingInput&&missingOutput?'microphone and speaker':missingInput?'microphone':'speaker')+
+          ' unavailable. Re-select the intended device; no test or ChatGPT Voice session started.'
+        :'Devices listed. A test needs your explicit permission.';
       publish({inputs,outputs,inputId,outputId,
         microphoneActive:Boolean(microphone)&&state.microphoneActive,
         microphonePending:Boolean(microphone)&&state.microphonePending,
