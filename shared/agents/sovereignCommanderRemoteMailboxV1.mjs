@@ -1,4 +1,5 @@
 import { projectSovereignCapabilityCatalogTruth } from './sovereignCommanderCapabilityParityV1.mjs';
+import { SPATIAL_PREPARE_ACTION, parseSpatialPreparationOutputV1 } from './sovereignSpatialWorkspaceV1.mjs';
 import { createHash } from 'node:crypto';
 import { projectMaintenanceCustodyVisibilityV1, maintenanceCustodyVisibilityLightV1 } from './maintenanceCustodyVisibilityV1.mjs';
 import { parseWindowsCalibrationRemoteV1 } from './sovereignWindowsCalibrationRemoteV1.mjs';
@@ -15,6 +16,10 @@ import { projectOriginalR7WitnessCommissioningAuditV1 } from './originalR7Witnes
 import { parseRescueIslandBoundaryStdoutV1, parseRescueIslandBoundaryHeldStdoutV1 } from './rescueIslandBoundaryReceiptV1.mjs';
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, readSovereignMaintenanceTerminalReceiptV1,
   sovereignMaintenanceCustodyUnprovenV1 } from './sovereignMaintenanceAdmissionV1.mjs';
+import {
+  captureCoreRepairContinuationV1, captureCoreRepairContinuationStatusV1,
+  captureCoreRepairStatusRequestV1, captureCoreRepairPrepareRequestV1, sameCoreRepairContinuationV1,
+} from './sovereignMaintenanceAdmissionV1.mjs';
 import { FLEET_SUPERVISOR_ACTION, projectFleetSupervisorReceiptV1 } from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 import { battleBridgeCanonicalRepositoryArgs, inspectBattleBridgeGitTopology, resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from './battleBridgeExecutionBoundaryV1.mjs';
 
@@ -38,6 +43,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'cpu-pressure-snapshot',
   'publish-controller-activity',
   'repair-ui-4173',
+  SPATIAL_PREPARE_ACTION,
   'restart-stephanos-runtime',
   'status-recovery-mesh',
   'status-worker-watchdog',
@@ -117,6 +123,7 @@ const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
 export const SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS = 210_000;
 export const SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS = 240_000;
+export const SOVEREIGN_SPATIAL_PREPARE_NETWORK_TIMEOUT_MS = 300_000;
 // Keep multi-step mailbox work comfortably inside the parent outbox guard's
 // 15-minute child lifetime so a slow plan returns a terminal receipt instead
 // of being killed by the guard with its ACCEPTED command still unresolved.
@@ -342,9 +349,11 @@ function sovereignCommanderRepairEnvelopeRequired(command = {}) {
 }
 
 export function sovereignCommanderRemoteNetworkTimeoutMs(command = {}, requestedTimeoutMs) {
-  const fallbackMs = sovereignCommanderRepairEnvelopeRequired(command)
-    ? SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS
-    : SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS;
+  const fallbackMs = command.remoteAction === SPATIAL_PREPARE_ACTION
+    ? SOVEREIGN_SPATIAL_PREPARE_NETWORK_TIMEOUT_MS
+    : sovereignCommanderRepairEnvelopeRequired(command)
+      ? SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS
+      : SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS;
   return boundedRemoteNetworkTimeoutMs(requestedTimeoutMs, fallbackMs);
 }
 
@@ -479,7 +488,35 @@ export function consumeSovereignMaintenancePreDispatchRefusalV1(blocked, request
 // Private local callers reuse the existing bounded authenticated MCP transport.
 // No health snapshot grants admission, no local child fallback, and no attempt
 // to start/recycle an unavailable owner is permitted on this delegation path.
+function captureCorrelatedMaintenanceRequest(request) {
+  try {
+    if (!request || typeof request !== 'object' || Array.isArray(request)
+      || Object.getPrototypeOf(request) !== Object.prototype) return null;
+    const keys = Reflect.ownKeys(request);
+    if (keys.some(key => !['actionId', 'arguments', 'timeoutMs', 'coreContinuation'].includes(key))
+      || !['actionId', 'arguments', 'coreContinuation'].every(key => Object.hasOwn(request, key))
+      || keys.some(key => !Object.hasOwn(Object.getOwnPropertyDescriptor(request, key), 'value'))) return null;
+    const coreContinuation = captureCoreRepairContinuationV1(request.coreContinuation);
+    const args = request.arguments;
+    if (!coreContinuation || request.actionId !== coreContinuation.actionId
+      || !args || typeof args !== 'object' || Object.getPrototypeOf(args) !== Object.prototype
+      || Reflect.ownKeys(args).length !== 1
+      || Object.getOwnPropertyDescriptor(args, 'actionId')?.value !== coreContinuation.actionId
+      || (Object.hasOwn(request, 'timeoutMs') && (!Number.isSafeInteger(request.timeoutMs)
+        || request.timeoutMs < 1 || request.timeoutMs > 270_000))) return null;
+    return Object.freeze({ actionId: coreContinuation.actionId,
+      arguments: Object.freeze({ actionId: coreContinuation.actionId }), coreContinuation,
+      ...(Object.hasOwn(request, 'timeoutMs') ? { timeoutMs: request.timeoutMs } : {}) });
+  } catch { return null; }
+}
+
 export async function callSovereignMaintenanceOwnerV1(request, options = {}) {
+  const correlated = request && typeof request === 'object' && 'coreContinuation' in request;
+  const captured = correlated ? captureCorrelatedMaintenanceRequest(request) : null;
+  if (correlated && !captured) return fail('SOVEREIGN_CORE_REPAIR_CORRELATION_INVALID');
+  // Snapshot the closed original identity before transport awaits. Legacy
+  // callers retain their existing request object and protocol refusal witness.
+  const executionRequest = captured || request;
   const fetchFn = options.fetchFn || globalThis.fetch;
   const readFileFn = options.readFileFn || readFile;
   let token = '', sessionId = '';
@@ -502,11 +539,38 @@ export async function callSovereignMaintenanceOwnerV1(request, options = {}) {
     if (!initialized.ok || !listed.ok || !listed.body?.result?.tools?.some(tool => tool.name === 'maintenance_action')) {
       return fail('SOVEREIGN_MAINTENANCE_OWNER_TOOL_UNAVAILABLE');
     }
-    const timeoutMs = Number.isSafeInteger(request.timeoutMs) ? Math.min(285_000, request.timeoutMs + 15_000) : 285_000;
-    const called = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 3, method: 'tools/call',
-      params: { name: 'maintenance_action', arguments: { ...request.arguments, actionId: request.actionId } } }, init.sessionId, timeoutMs);
+    if (captured) {
+      // A legacy MCP accepts unknown maintenance fields and generates a new
+      // session identity. Never send a correlated executable POST until this
+      // same authenticated session proves the new protocol and the original
+      // durable PREPARED tuple. The owner still revalidates its native CAS.
+      const tools = listed.body.result.tools;
+      if (!['maintenance_request_status', 'maintenance_request_prepare']
+        .every(name => tools.some(tool => tool.name === name)))
+        return fail('SOVEREIGN_CORE_REPAIR_OWNER_PROTOCOL_REQUIRED');
+      const observed = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 3, method: 'tools/call',
+        params: { name: 'maintenance_request_status', arguments: { continuation: captured.coreContinuation } } },
+      sessionId, 15_000);
+      const status = observed.ok && !observed.body?.error
+        ? captureCoreRepairContinuationStatusV1(observed.body?.result?.structuredContent) : null;
+      if (!status || !sameCoreRepairContinuationV1(status.continuation, captured.coreContinuation))
+        return fail('SOVEREIGN_CORE_REPAIR_OWNER_PROTOCOL_REQUIRED');
+      if (status.state !== 'PREPARED' || status.sameRequestDeliveryAllowed !== true
+        || status.historyAuthenticated !== true || status.observerSourceHead !== captured.coreContinuation.sourceHead)
+        return fail('SOVEREIGN_CORE_REPAIR_ORIGINAL_REQUEST_NOT_PREPARED', { coreRequestStatus: status });
+    }
+    const timeoutMs = Number.isSafeInteger(executionRequest.timeoutMs) ? Math.min(285_000, executionRequest.timeoutMs + 15_000) : 285_000;
+    const called = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: captured ? 4 : 3, method: 'tools/call',
+      params: { name: 'maintenance_action', arguments: { ...executionRequest.arguments, actionId: executionRequest.actionId,
+        ...(captured ? { coreContinuation: captured.coreContinuation } : {}) } } }, init.sessionId, timeoutMs);
     const result = called.body?.result?.structuredContent;
-    if (!called.ok || !result || result.command?.plan?.processId !== request.actionId) {
+    const coreRequestStatus = captured ? captureCoreRepairContinuationStatusV1(result?.coreRequestStatus) : null;
+    if (!called.ok || !result || result.command?.plan?.processId !== executionRequest.actionId
+      || (captured && (result.command.commandId !== captured.coreContinuation.requestId
+        || result.command.missionId !== captured.coreContinuation.missionId
+        || !sameCoreRepairContinuationV1(result.coreContinuation, captured.coreContinuation)
+        || !coreRequestStatus
+        || !sameCoreRepairContinuationV1(coreRequestStatus.continuation, captured.coreContinuation)))) {
       return fail('SOVEREIGN_MAINTENANCE_OWNER_RECEIPT_INVALID');
     }
     if (result.ok === true) {
@@ -517,7 +581,7 @@ export async function callSovereignMaintenanceOwnerV1(request, options = {}) {
         return fail('SOVEREIGN_MAINTENANCE_OWNER_RECEIPT_INVALID');
       }
     }
-    return result;
+    return captured ? Object.freeze({ ...result, coreContinuation: captured.coreContinuation, coreRequestStatus }) : result;
   } catch { return fail('SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE'); }
   finally {
     if (sessionId && token) {
@@ -526,6 +590,64 @@ export async function callSovereignMaintenanceOwnerV1(request, options = {}) {
       } }, 3_000); } catch {}
     }
   }
+}
+
+// A separate fixed observation reuses the same authenticated owner transport.
+// It never invokes maintenance_action, restarts the owner, reserves custody,
+// retries a delivery or treats a latest IDLE health projection as history.
+async function exchangeCoreMaintenanceRequest(request, options, toolName) {
+  const query = (toolName === 'maintenance_request_prepare'
+    ? captureCoreRepairPrepareRequestV1 : captureCoreRepairStatusRequestV1)(request);
+  if (!query)
+    return fail('SOVEREIGN_MAINTENANCE_REQUEST_STATUS_ARGUMENTS_INVALID');
+  const fetchFn = options.fetchFn || globalThis.fetch;
+  const readFileFn = options.readFileFn || readFile;
+  let token = '', sessionId = '';
+  try {
+    const exchange = await fetchTextWithDeadline(fetchFn, HEALTH_URL + '?view=protocol', { method: 'GET' }, 3_000);
+    const health = JSON.parse(exchange.bodyText || 'null');
+    if (!exchange.response.ok || health?.ok !== true || health.service !== 'stephanos-sovereign-commander'
+      || health.observationScope !== 'TRANSPORT_PROTOCOL_ONLY' || health.maintenanceAdmissionProven !== false
+      || health.maintenanceOwnerAdmissionVersion !== SOVEREIGN_MAINTENANCE_OWNER_VERSION)
+      return fail('SOVEREIGN_MAINTENANCE_REQUEST_STATUS_PROTOCOL_REQUIRED');
+    token = text(await readFileFn(fixedTokenPath(options.env || process.env), 'utf8'));
+    if (token.length < 32) return fail('SOVEREIGN_MAINTENANCE_REQUEST_STATUS_TOKEN_UNAVAILABLE');
+    const init = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: { protocolVersion: '2025-06-18', capabilities: {},
+        clientInfo: { name: 'sovereign-original-core-request-observer', version: '1' } } }, '', 3_000);
+    if (!init.ok || !init.sessionId || init.body?.error)
+      return fail('SOVEREIGN_MAINTENANCE_REQUEST_STATUS_INITIALIZE_FAILED');
+    sessionId = init.sessionId;
+    const initialized = await postMcp(fetchFn, token, { jsonrpc: '2.0', method: 'notifications/initialized' }, sessionId, 3_000);
+    const listed = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, sessionId, 3_000);
+    if (!initialized.ok || !listed.ok
+      || !listed.body?.result?.tools?.some(tool => tool.name === toolName))
+      return fail('SOVEREIGN_MAINTENANCE_REQUEST_STATUS_TOOL_UNAVAILABLE');
+    const called = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 3, method: 'tools/call',
+      params: { name: toolName, arguments: query } }, sessionId, 15_000);
+    const status = called.ok && !called.body?.error
+      ? captureCoreRepairContinuationStatusV1(called.body?.result?.structuredContent) : null;
+    if (!status || (query.continuation && !sameCoreRepairContinuationV1(query.continuation, status.continuation)))
+      return fail('SOVEREIGN_MAINTENANCE_REQUEST_STATUS_RECEIPT_INVALID');
+    return status;
+  } catch { return fail('SOVEREIGN_MAINTENANCE_REQUEST_STATUS_UNAVAILABLE'); }
+  finally {
+    if (sessionId && token) {
+      try { await fetchTextWithDeadline(fetchFn, MCP_URL, { method: 'DELETE', headers: {
+        authorization: `Bearer ${token}`, 'mcp-session-id': sessionId,
+      } }, 3_000); } catch {}
+    }
+  }
+}
+
+export async function querySovereignMaintenanceRequestStatusV1(request = {}, options = {}) {
+  return exchangeCoreMaintenanceRequest(request, options, 'maintenance_request_status');
+}
+
+// Preparation is the existing owner's fixed metadata CAS, separate from its
+// executable endpoint. The caller cannot choose a tool, payload or native path.
+export async function prepareSovereignMaintenanceRequestV1(request, options = {}) {
+  return exchangeCoreMaintenanceRequest(request, options, 'maintenance_request_prepare');
 }
 
 function safeAiCommanderAcceptanceProjection(value = {}, processId = '') {
@@ -790,14 +912,54 @@ function safeBattleBridgeObservationProjection(value = {}, processId = '') {
       })];
     }),
   );
-  const safeService = (service = {}) => Object.freeze({
-    reachable: service?.reachable === true,
-    ready: service?.ready === true,
-    httpStatus: safeIntegerOrNull(service?.httpStatus, 599) ?? 0,
-  });
+  const safeBackendConnection = (value, probe) => {
+    const identity = value?.backendIdentity;
+    const origin = 'https://stephanos-control-tower.timelesspearl.chatgpt.site';
+    const observed = probe.reachable && probe.ready && probe.httpStatus >= 200 && probe.httpStatus < 300
+      && value?.schemaVersion === 'stephanos.battle-bridge-backend-connection.v1'
+      && value?.observed === true
+      && value?.healthSchemaVersion === 'stephanos.backend-health.v1'
+      && value?.service === 'stephanos-server'
+      && identity?.schemaVersion === 'stephanos.backend-runtime-identity.v1'
+      && identity?.runtimeId === 'stephanos-battle-bridge-backend'
+      && typeof identity?.sourceHead === 'string' && /^[a-f0-9]{40}$/.test(identity.sourceHead)
+      && value?.controlTowerOrigin === origin
+      && value?.browserAccessProven === false
+      && value?.loadedSourceBytesProven === false
+      && value?.executionAuthority === false;
+    return Object.freeze({
+      schemaVersion: 'stephanos.battle-bridge-backend-connection.v1',
+      observed,
+      healthSchemaVersion: observed ? 'stephanos.backend-health.v1' : '',
+      service: observed ? 'stephanos-server' : '',
+      backendIdentity: observed ? Object.freeze({
+        schemaVersion: 'stephanos.backend-runtime-identity.v1',
+        runtimeId: 'stephanos-battle-bridge-backend',
+        sourceHead: identity.sourceHead,
+      }) : null,
+      controlTowerOrigin: origin,
+      controlTowerOriginConfigured: observed && typeof value.controlTowerOriginConfigured === 'boolean'
+        ? value.controlTowerOriginConfigured : null,
+      browserAccessProven: false,
+      loadedSourceBytesProven: false,
+      executionAuthority: false,
+    });
+  };
+  const safeService = (service = {}, id) => {
+    const probe = {
+      reachable: service?.reachable === true,
+      ready: service?.ready === true,
+      httpStatus: safeIntegerOrNull(service?.httpStatus, 599) ?? 0,
+    };
+    return Object.freeze({ ...probe,
+      ...(id === 'backend' ? { connection: safeBackendConnection(
+        Number.isInteger(service?.httpStatus) ? service?.connection : null, probe,
+      ) } : {}),
+    });
+  };
   const services = Object.freeze(Object.fromEntries(
     ['ui', 'backend', 'openclaw', 'sovereign-commander', 'ollama']
-      .map((id) => [id, safeService(parsed?.services?.[id])]),
+      .map((id) => [id, safeService(parsed?.services?.[id], id)]),
   ));
   const gpuName = safeShortText(parsed?.gpu?.name, /^[A-Za-z0-9][A-Za-z0-9 ._()+/\-]{0,119}$/, 120);
   const installedModels = safeModels(parsed?.ollama?.installedModels, false);
@@ -1779,7 +1941,7 @@ function safePreservationConvergenceProjection(value = {}, command = {}) {
   const executionEnvelope = findMaintenanceExecutionEnvelope(value);
   const source = Object.keys(executionEnvelope).length > 0 ? executionEnvelope : value;
   const processId = text(source?.command?.plan?.processId);
-  const status = Number(source?.structuredContent?.status);
+  const status = source?.structuredContent?.status;
   const stdout = String(source?.structuredContent?.stdout || '');
   const marker = 'SOVEREIGN_PRESERVATION_CONVERGENCE_RESULT=';
   const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
@@ -1924,7 +2086,7 @@ function safeMaintenanceProjection(value = {}) {
   const source = Object.keys(executionEnvelope).length > 0 ? executionEnvelope : value;
   const proofHash = text(source?.proofHash).toLowerCase();
   const processId = text(source?.command?.plan?.processId);
-  const status = Number(source?.structuredContent?.status);
+  const status = source?.structuredContent?.status;
   const errorCode = text(source?.structuredContent?.errorCode);
   return Object.freeze({
     ok: source?.ok === true,
@@ -2018,7 +2180,7 @@ function findMaintenanceExecutionEnvelope(value = {}) {
   for (let depth = 0; depth < 5; depth += 1) {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return {};
     const processId = text(candidate?.command?.plan?.processId);
-    const status = Number(candidate?.structuredContent?.status);
+    const status = candidate?.structuredContent?.status;
     if (processId && Number.isInteger(status)) return candidate;
     candidate = candidate.structuredContent;
   }
@@ -2234,61 +2396,118 @@ function safeVrVirtualAirLinkAcceptanceProjection(value = {}) {
   });
 }
 
-function safeCoreDaemonStatusProjection(value = {}) {
-  const raw = text(value?.structuredContent?.stdout);
-  let parsed = null;
-  try { parsed = raw ? JSON.parse(raw) : null; } catch {}
-  if (!parsed || parsed?.schemaVersion !== 'stephanos.core-daemon-status.v1') {
-    return Object.freeze({ available: false });
-  }
-  const sourceHead = text(parsed.sourceHead).toLowerCase();
-  const heartbeatAgeSeconds = Number(parsed.heartbeatAgeSeconds);
+export function projectSovereignCoreDaemonStatusV1(value, { includeCustodyEvidence = true } = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return null;
+  // One closed leaf serves native parsing, persistence and historical readback.
+  // Read only own data properties; getters and inherited claims are not proof.
+  const field = (key) => Object.getOwnPropertyDescriptor(value, key)?.value;
+  const has = (key) => Object.hasOwn(Object.getOwnPropertyDescriptor(value, key) || {}, 'value');
+  const token = (key, pattern, fallback = '') => typeof field(key) === 'string'
+    && pattern.test(field(key)) ? field(key) : fallback;
+  const boundedNumber = (key, maximum) => typeof field(key) === 'number'
+    && Number.isFinite(field(key)) && field(key) >= 0 && field(key) <= maximum ? field(key) : null;
+  const optionalBoolean = (key) => typeof field(key) === 'boolean' ? { [key]: field(key) } : {};
+  const sourceHead = typeof field('sourceHead') === 'string' ? field('sourceHead').trim().toLowerCase() : '';
+  const processCount = field('processInventoryComplete') === true
+    && Number.isSafeInteger(field('processCount')) && field('processCount') >= 0 && field('processCount') <= 100
+    ? field('processCount') : null;
+  const custody = includeCustodyEvidence ? {
+    ...Object.assign({}, ...[
+      'processInventoryComplete', 'reportedDaemonHealthy', 'singleWriterProven',
+      'writerProcessObserved', 'lockOwnerMatchesWriter', 'rescueGenerationPresent',
+      'heartbeatFresh', 'busyGraceActive',
+    ].map(optionalBoolean)),
+    ...(has('processObservationBlocker')
+      ? { processObservationBlocker: token('processObservationBlocker', /^[A-Z0-9_:-]{0,120}$/) } : {}),
+    ...(has('rescueAttemptCount') ? {
+      rescueAttemptCount: Number.isSafeInteger(field('rescueAttemptCount'))
+        && field('rescueAttemptCount') >= 0 && field('rescueAttemptCount') <= 1_000_000
+        ? field('rescueAttemptCount') : null,
+    } : {}),
+    ...(has('flywheelCycleAgeSeconds') ? { flywheelCycleAgeSeconds: boundedNumber('flywheelCycleAgeSeconds', 31_536_000) } : {}),
+  } : {};
   return Object.freeze({
-    available: true,
-    ok: parsed.ok === true && parsed.processInventoryComplete === true && parsed.processCount === 1,
-    processCount: parsed.processInventoryComplete === true
-      && Number.isSafeInteger(parsed.processCount) && parsed.processCount >= 0 && parsed.processCount <= 100
-      ? parsed.processCount
-      : null,
-    processInventoryComplete: parsed.processInventoryComplete === true,
-    processObservationBlocker: /^[A-Z0-9_:-]{0,120}$/.test(text(parsed.processObservationBlocker))
-      ? text(parsed.processObservationBlocker) : '',
-    daemonHealthy: parsed.daemonHealthy === true,
-    reportedDaemonHealthy: parsed.reportedDaemonHealthy === true,
-    // Public projection contains only bounded custody verdicts, never PIDs,
-    // paths or raw command lines. Absent fields remain unproven.
-    singleWriterProven: parsed.singleWriterProven === true,
-    writerProcessObserved: parsed.writerProcessObserved === true,
-    lockOwnerMatchesWriter: parsed.lockOwnerMatchesWriter === true,
-    rescueGenerationPresent: parsed.rescueGenerationPresent === true,
-    rescueAttemptCount: Number.isSafeInteger(parsed.rescueAttemptCount)
-      && parsed.rescueAttemptCount >= 0 && parsed.rescueAttemptCount <= 1_000_000
-      ? parsed.rescueAttemptCount : null,
-    readiness: /^[A-Z_]{1,40}$/.test(text(parsed.readiness)) ? text(parsed.readiness) : 'UNKNOWN',
-    wakeState: /^[A-Z_]{1,40}$/.test(text(parsed.wakeState)) ? text(parsed.wakeState) : 'UNKNOWN',
-    awake: parsed.awake === true,
-    repairRequired: parsed.repairRequired === true,
-    repairReason: /^[A-Z0-9_:-]{0,160}$/.test(text(parsed.repairReason)) ? text(parsed.repairReason) : '',
-    controlPlaneFinalVerdict: /^[A-Z0-9_:-]{0,160}$/.test(text(parsed.controlPlaneFinalVerdict))
-      ? text(parsed.controlPlaneFinalVerdict)
-      : '',
+    available: field('available') === true,
+    daemonHealthy: field('daemonHealthy') === true,
+    readiness: token('readiness', /^[A-Z_]{1,40}$/, 'UNKNOWN'),
+    ...(typeof field('ok') === 'boolean' ? { ok: field('ok') === true && processCount === 1 } : {}),
+    ...(has('processCount') ? { processCount } : {}),
+    ...(has('wakeState') ? { wakeState: token('wakeState', /^[A-Z_]{1,40}$/, 'UNKNOWN') } : {}),
+    ...optionalBoolean('awake'),
+    ...optionalBoolean('repairRequired'),
+    ...(has('repairReason') ? { repairReason: token('repairReason', /^[A-Z0-9_:-]{0,160}$/) } : {}),
+    ...(has('controlPlaneFinalVerdict')
+      ? { controlPlaneFinalVerdict: token('controlPlaneFinalVerdict', /^[A-Z0-9_:-]{0,160}$/) } : {}),
     sourceHead: SHA_PATTERN.test(sourceHead) ? sourceHead : '',
-    heartbeatAgeSeconds: Number.isFinite(heartbeatAgeSeconds) && heartbeatAgeSeconds >= 0 ? heartbeatAgeSeconds : null,
-    heartbeatFresh: parsed.heartbeatFresh === true || (Number.isFinite(heartbeatAgeSeconds) && heartbeatAgeSeconds >= 0 && heartbeatAgeSeconds <= 60),
-    busyGraceActive: parsed.busyGraceActive === true,
-    flywheelCycleAgeSeconds: Number.isFinite(Number(parsed.flywheelCycleAgeSeconds)) && Number(parsed.flywheelCycleAgeSeconds) >= 0
-      ? Number(parsed.flywheelCycleAgeSeconds)
-      : null,
-    sovereignCommanderHealthy: parsed.sovereignCommanderHealthy === true,
-    backendHealthy: parsed.backendHealthy === true,
-    missionWorkerHealthy: parsed.missionWorkerHealthy === true,
-    gamingActive: parsed.gamingActive === true,
+    heartbeatAgeSeconds: boundedNumber('heartbeatAgeSeconds', 31_536_000),
+    ...custody,
+    sovereignCommanderHealthy: field('sovereignCommanderHealthy') === true,
+    backendHealthy: field('backendHealthy') === true,
+    missionWorkerHealthy: field('missionWorkerHealthy') === true,
+    gamingActive: field('gamingActive') === true,
     uiRequired: false,
     sourceMutationAllowed: false,
     schedulerAuthority: false,
     mergeAuthority: false,
     vendorMeterRequired: false,
     remoteCommanderRequired: false,
+  });
+}
+
+function safeCoreDaemonStatusProjection(value = {}) {
+  const raw = text(value?.structuredContent?.stdout);
+  let parsed = null;
+  try { parsed = raw ? JSON.parse(raw) : null; } catch {}
+  if (!parsed || Array.isArray(parsed) || parsed.schemaVersion !== 'stephanos.core-daemon-status.v1') {
+    return Object.freeze({ available: false });
+  }
+  // Only a freshly parsed native response may supply the legacy age fallback.
+  // Historical zero may itself be an old null coercion, so the shared leaf
+  // never derives a missing heartbeatFresh flag during receipt reprojection.
+  return projectSovereignCoreDaemonStatusV1({
+    ...parsed, available: true, processCount: parsed.processCount ?? null,
+    processInventoryComplete: parsed.processInventoryComplete === true,
+    ...(!Object.hasOwn(parsed, 'heartbeatFresh') ? {
+      heartbeatFresh: typeof parsed.heartbeatAgeSeconds === 'number'
+        && Number.isFinite(parsed.heartbeatAgeSeconds)
+        && parsed.heartbeatAgeSeconds >= 0 && parsed.heartbeatAgeSeconds <= 60,
+    } : {}),
+  });
+}
+
+function coreDaemonStatusExecutionEnvelope({ shape, observedBranch, observedHead, result, maintenance }) {
+  // Both Core outcomes cross the same producer boundary before the first
+  // receipt projection. These identities come from the validated command and
+  // the existing Git admission, never the observed Core's possibly stale head.
+  const identity = {
+    operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+    requestId: text(shape.command.requestId),
+    expectedHead: shape.expectedHead,
+    sourceHead: observedHead,
+    branch: observedBranch,
+    expectedHeadMatch: observedHead === shape.expectedHead,
+  };
+  if (shape.command.remoteAction !== 'status-stephanos-core-daemon'
+    || observedBranch !== 'main' || !SHA_PATTERN.test(observedHead) || !identity.expectedHeadMatch
+    || result.remoteAction !== shape.command.remoteAction
+    || Object.hasOwn(result, 'result')
+    || Object.entries(identity).some(([key, value]) => Object.hasOwn(result, key) && result[key] !== value)) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID', {
+      remoteAction: shape.command.remoteAction, publicReceiptSafe: true, secretMaterialReturned: false,
+    });
+  }
+  const operationResult = Object.freeze({
+    ...result,
+    expectedHead: identity.expectedHead, sourceHead: identity.sourceHead,
+    branch: identity.branch, expectedHeadMatch: identity.expectedHeadMatch,
+  });
+  return Object.freeze({
+    ...operationResult,
+    verdict: result.ok === true ? 'COMMAND_EXECUTION_COMPLETE' : 'BLOCKED',
+    operation: identity.operation, requestId: identity.requestId,
+    ...(maintenance ? { maintenance } : {}),
+    result: operationResult,
   });
 }
 
@@ -2365,6 +2584,7 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
     }
     const invalidAction = remotePlan.find((actionId) => (
       actionId === 'status'
+      || actionId === SPATIAL_PREPARE_ACTION
       || actionId === 'sovereign-windows-reviewer-calibration'
       || actionId === 'search-project'
       || actionId === 'battle-bridge-observe'
@@ -4034,11 +4254,54 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           }
           : shape.command.remoteAction === 'sovereign-windows-reviewer-calibration'
             ? { actionId: shape.command.remoteAction, reviewIdentity: shape.command.reviewIdentity }
+            : shape.command.remoteAction === SPATIAL_PREPARE_ACTION
+              ? { actionId: SPATIAL_PREPARE_ACTION, expectedMain: shape.expectedHead }
             : { actionId: shape.command.remoteAction },
     },
   }, sessionId);
   if (!actionCall.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
+  }
+  if (shape.command.remoteAction === SPATIAL_PREPARE_ACTION) {
+    const raw = actionCall.body?.result?.structuredContent;
+    const envelope = findMaintenanceExecutionEnvelope(raw);
+    const execution = envelope?.structuredContent;
+    const receipt = parseSpatialPreparationOutputV1(execution?.stdout, shape.expectedHead);
+    const proofHash = envelope?.proofHash;
+    const qualified = receipt && envelope?.command?.plan?.processId === SPATIAL_PREPARE_ACTION
+      && typeof envelope.ok === 'boolean' && envelope.ok === receipt.ok
+      && typeof proofHash === 'string' && PROOF_HASH_PATTERN.test(proofHash)
+      && Number.isInteger(execution?.status) && execution.status === (receipt.ok ? 0 : 2)
+      && !execution.signal && !execution.errorCode
+      && (receipt.ok ? envelope.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+        : ['SOVEREIGN_COMMANDER_EXECUTION_BLOCKED', 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'].includes(envelope.finalVerdict));
+    if (!qualified) {
+      const admittedFailures = new Set(['FIXED_RUNTIME_PROFILE_NOT_QUALIFIED',
+        'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING', 'FIXED_RUNTIME_PROFILE_NOT_COMPILED',
+        'FIXED_RUNTIME_QUALIFICATION_UNPROVEN', 'FIXED_RUNTIME_EXPECTED_MAIN_MISMATCH',
+        'SOVEREIGN_MAINTENANCE_OWNER_BUSY', 'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE',
+        SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER]);
+      let current = raw, observedBlocker = '';
+      for (let depth = 0; depth < 5 && current && typeof current === 'object'; depth += 1) {
+        if (admittedFailures.has(current.blocker)) { observedBlocker = current.blocker; break; }
+        current = current.structuredContent;
+      }
+      return fail('SOVEREIGN_COMMANDER_REMOTE_SPATIAL_PREPARATION_UNPROVEN', {
+        remoteAction: SPATIAL_PREPARE_ACTION,
+        executionBlocker: observedBlocker || 'SPATIAL_PREPARE_RECEIPT_INVALID',
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({ ok: receipt.ok,
+      finalVerdict: receipt.ok ? 'SPATIAL_WORKSPACE_READY_FOR_OPERATOR_LAUNCH' : 'SPATIAL_WORKSPACE_PREPARATION_BLOCKED',
+      remoteAction: SPATIAL_PREPARE_ACTION, sourceHead: shape.expectedHead,
+      processId: SPATIAL_PREPARE_ACTION, status: execution.status, proofHash,
+      blocker: receipt.blocker, executionBlocker: receipt.blocker, spatialPreparation: receipt,
+      vendorMeterRequired: false, arbitraryShellAllowed: false, mergeAuthority: false,
+      pcRestartAuthority: false, publicReceiptSafe: true, secretMaterialReturned: false });
+    return Object.freeze({ ...result,
+      verdict: receipt.ok ? 'COMMAND_EXECUTION_COMPLETE' : 'COMMAND_EXECUTION_BLOCKED',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION, requestId: text(shape.command.requestId), result });
   }
   const fleetMaintenanceFailure = safeFleetMaintenanceFailureProjection(
     actionCall.body?.result?.structuredContent, shape.command.remoteAction);
@@ -4199,12 +4462,15 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       && coreDaemonStatus.sourceHead === shape.expectedHead
       && coreDaemonStatus.readiness !== 'RELOAD_REQUIRED';
     if (!coreHealthy) {
-      return fail('SOVEREIGN_COMMANDER_REMOTE_CORE_DAEMON_NOT_READY', {
-        remoteAction: shape.command.remoteAction,
-        sourceHead: shape.expectedHead,
-        coreDaemonStatus,
-        publicReceiptSafe: true,
-        secretMaterialReturned: false,
+      return coreDaemonStatusExecutionEnvelope({
+        shape, observedBranch, observedHead,
+        result: fail('SOVEREIGN_COMMANDER_REMOTE_CORE_DAEMON_NOT_READY', {
+          remoteAction: shape.command.remoteAction,
+          sourceHead: shape.expectedHead,
+          coreDaemonStatus,
+          publicReceiptSafe: true,
+          secretMaterialReturned: false,
+        }),
       });
     }
   }
@@ -4978,6 +5244,13 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     publicReceiptSafe: true,
     secretMaterialReturned: false,
   });
+  if (coreDaemonStatus) {
+    // Keep the existing proofComplete decision above. Matching source identity
+    // binds this observation; it does not supply native proof or loaded bytes.
+    return coreDaemonStatusExecutionEnvelope({
+      shape, observedBranch, observedHead, result: maintenanceResult, maintenance: projection,
+    });
+  }
   return Object.freeze({
     ...maintenanceResult,
     verdict: 'COMMAND_EXECUTION_COMPLETE',

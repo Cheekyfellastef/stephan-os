@@ -16,8 +16,8 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
   assert.match(source, /VorpX Baseline/);
   assert.match(source, /Mutar \/ OpenXR/);
   assert.match(source, /Hybrid \/ Stephanos VR/);
-  assert.match(source, /SIM AIR LINK: OFF \\| TURN ON \\(TEST\\)/);
-  assert.match(source, /SIM AIR LINK: ON \\| TURN OFF \\(TEST\\)/);
+  assert.match(source, /SIM AIR LINK: OFF \| TURN ON \(TEST\)/);
+  assert.match(source, /SIM AIR LINK: ON \| TURN OFF \(TEST\)/);
   assert.doesNotMatch(source, /Â|·/);
   assert.match(source, /function Set-SimulatedAirLinkState/);
   assert.match(source, /function Disable-SimulatedAirLinkForRealLaunch/);
@@ -25,18 +25,18 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
   assert.match(source, /Readiness simulation only\. Choosing a real Starfield VR route will turn this off automatically\./);
   assert.match(source, /if \(-not \(Disable-SimulatedAirLinkForRealLaunch\)\)/);
   assert.match(source, /\$simulationLight\.BackColor/);
-  assert.match(source, /Status = 'LOCKED'/);
+  assert.match(source, /Status = 'MONITOR TEST'/);
   assert.match(source, /function New-ProviderCard/);
   assert.match(source, /\$titleLabel\.Font = New-Object System\.Drawing\.Font\(\$fontFamily, 12/);
   assert.match(source, /\$statusLabel\.Font = New-Object System\.Drawing\.Font\(\$fontFamily, 8\.5/);
   assert.match(source, /\$button\.Font = New-Object System\.Drawing\.Font\(\$fontFamily, 9/);
   assert.match(source, /ActionText = 'Launch VorpX'/);
   assert.match(source, /\$mutarAction = 'Needs profile'/);
-  assert.match(source, /ActionText = 'Locked'/);
+  assert.match(source, /ActionText = 'Start monitor test'/);
   assert.match(source, /\$button\.Enabled = \$Enabled/);
-  assert.match(source, /Mutar \/ OpenXR is not ready yet/);
-  assert.match(source, /Hybrid \/ Stephanos VR is locked/);
-  assert.match(source, /VorpX and Mutar both want the same Starfield injection slot/);
+  assert.match(source, /Stabilized MutaR is not ready yet/);
+  assert.match(source, /HEADSET PLAYTEST NOT READY/);
+  assert.match(source, /function Start-MonitorFromHybridCard/);
   assert.match(source, /\$form\.AllowTransparency = \$false/);
   assert.match(source, /\$form\.Opacity = 1\.0/);
   assert.match(source, /\$form\.BackColor = \[System\.Drawing\.Color\]::FromArgb\(2, 6, 12\)/);
@@ -57,7 +57,10 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
   assert.match(source, /Test-ProviderProfileConfigured -Path \$ProfilePath -Provider 'vorpx'/);
   assert.match(source, /Test-ProviderProfileConfigured -Path \$MutarProfilePath -Provider 'mutar-openxr'/);
   assert.match(source, /\$mutarStatus = 'STAGED \/ NOT CONFIGURED'/);
-  assert.match(source, /Title = 'Hybrid \/ Stephanos VR'[\s\S]*?Enabled = \$false/);
+  const hybridCard = source.match(/\$hybridArgs = @\{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(hybridCard);
+  assert.match(hybridCard, /Title = 'Hybrid \/ Stephanos VR'/);
+  assert.match(hybridCard, /Enabled = \$true/);
 
   assert.match(source, /Start-ProviderRoute -Provider 'vorpx' -SelectedProfilePath \$ProfilePath/);
   assert.match(source, /Start-ProviderRoute -Provider 'mutar-openxr' -SelectedProfilePath \$MutarProfilePath/);

@@ -67,7 +67,7 @@ export function projectGoalBuildGateObservatoryV1({
     }
   } catch { key = null; }
   const knownProofs = Array.isArray(proofRecords) ? proofRecords : [];
-  const evidence = key
+  const authenticatedEvidence = key
     ? (Array.isArray(statusRecords) ? statusRecords : [])
       .filter(record => ['status', 'stephanos.shared_workspace.status'].includes(record?.kind)
         && record?.statusId === 'goal-build-gates-current'
@@ -115,8 +115,17 @@ export function projectGoalBuildGateObservatoryV1({
           return matches.length === 1;
         });
       })
-      .sort((a, b) => time(b.observedAtUtc) - time(a.observedAtUtc))[0] || null
-    : null;
+      .sort((a, b) => time(b.observedAtUtc) - time(a.observedAtUtc))
+    : [];
+  const latest = authenticatedEvidence[0] || null;
+  // Two independently authenticated envelopes at the same instant cannot
+  // select opposite gate truth by input ordering. Fail closed on ambiguity.
+  // Identical repeated evidence stays valid; signature and proof gates above
+  // have already verified each candidate independently.
+  const sameClockConflict = latest && authenticatedEvidence.some(candidate =>
+    time(candidate.observedAtUtc) === time(latest.observedAtUtc)
+    && JSON.stringify(candidate.gates) !== JSON.stringify(latest.gates));
+  const evidence = sameClockConflict ? null : latest;
   const observedAtUtc = evidence?.observedAtUtc || '';
   const sourceHead = evidence?.sourceHead || '';
   const expired = evidence ? nowMs - time(observedAtUtc) > maxAge : false;

@@ -1,16 +1,28 @@
 #!/usr/bin/env node
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 const LOCAL_SCHEMA = 'stephanos.starfield-vr-local-delivery-observation.v1';
-const INSTALL_SCHEMA = 'stephanos.starfield-vr-shortcut-install.v1';
+const INSTALL_SCHEMA = 'stephanos.starfield-vr-shortcut-install.v2';
 const SHA = /^[0-9a-f]{40}$/i;
+const SHA256 = /^[0-9a-f]{64}$/i;
+const SHORTCUT_SOURCE_PATHS = Object.freeze([
+  'scripts/windows/install-starfield-vr-desktop-shortcut.ps1',
+  'scripts/windows/launch-starfield-vr-with-splash.ps1',
+  'scripts/windows/launch-starfield-vr.ps1',
+]);
 const MAX_JSON_BYTES = 64 * 1024;
 const home = resolve(process.env.USERPROFILE || homedir());
 const repositoryRoot = resolve(home, 'Documents', 'GitHub', 'stephan-os');
 const workspaceRoot = resolve(home, 'Documents', 'Stephanos-openclaw-workspace');
 const expectedSplash = resolve(repositoryRoot, 'scripts', 'windows', 'launch-starfield-vr-with-splash.ps1');
+const expectedLauncher = resolve(repositoryRoot, 'scripts', 'windows', 'launch-starfield-vr.ps1');
+const expectedProfile = resolve(workspaceRoot, 'vr', 'starfield-vr-launch-profile.json');
+const systemRoot = String(process.env.SystemRoot || process.env.SYSTEMROOT || '').trim();
+const expectedPowerShell = systemRoot ? resolve(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') : '';
+const expectedArguments = `-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${expectedSplash}" -ProfilePath "${expectedProfile}"`;
 const installerReceiptPath = resolve(workspaceRoot, 'vr', 'starfield-vr-shortcut-install-current.json');
 const outputPath = resolve(workspaceRoot, 'vr', 'starfield-vr-delivery-current.json');
 
@@ -48,6 +60,19 @@ function normalizeWindowsPath(path) {
   return resolve(String(path || '')).toLowerCase();
 }
 
+function receiptPathMatches(value, expected) {
+  return typeof value === 'string' && isAbsolute(value) && Boolean(expected)
+    && normalizeWindowsPath(value) === normalizeWindowsPath(expected);
+}
+
+function readSplashSha256() {
+  try {
+    return createHash('sha256').update(readFileSync(expectedSplash)).digest('hex');
+  } catch {
+    return '';
+  }
+}
+
 function readGitHead() {
   const gitRoot = resolve(repositoryRoot, '.git');
   if (!existsSync(gitRoot) || !lstatSync(gitRoot).isDirectory()) return '';
@@ -77,21 +102,35 @@ function readGitHead() {
 
 const installer = readBoundedJson(installerReceiptPath);
 const receipt = installer.record;
+const installedSourceHead = readGitHead();
+const splashWrapperPresent = existsSync(expectedSplash) && lstatSync(expectedSplash).isFile();
+const splashSha256 = splashWrapperPresent ? readSplashSha256() : '';
 const receiptValid = Boolean(receipt
   && receipt.schemaVersion === INSTALL_SCHEMA
   && receipt.shortcutName === 'Starfield VR'
   && receipt.finalVerdict === 'STARFIELD_VR_SHORTCUT_INSTALLED'
   && receipt.created === true
+  && SHA.test(installedSourceHead)
+  && receipt.sourceHead === installedSourceHead
+  && receipt.sourceClean === true
+  && Array.isArray(receipt.sourcePaths)
+  && receipt.sourcePaths.length === SHORTCUT_SOURCE_PATHS.length
+  && receipt.sourcePaths.every((path, index) => path === SHORTCUT_SOURCE_PATHS[index])
+  && typeof receipt.splashLauncherSha256 === 'string'
+  && SHA256.test(receipt.splashLauncherSha256)
+  && receipt.splashLauncherSha256.toLowerCase() === splashSha256
+  && receiptPathMatches(receipt.splashLauncherScript, expectedSplash)
+  && receiptPathMatches(receipt.launcherScript, expectedLauncher)
+  && receiptPathMatches(receipt.profilePath, expectedProfile)
+  && receiptPathMatches(receipt.workingDirectory, repositoryRoot)
+  && receiptPathMatches(receipt.targetPath, expectedPowerShell)
+  && receipt.arguments === expectedArguments
   && typeof receipt.shortcutPath === 'string'
   && pathWithinHome(receipt.shortcutPath)
-  && basename(receipt.shortcutPath).toLowerCase() === 'starfield vr.lnk'
-  && typeof receipt.splashLauncherScript === 'string'
-  && normalizeWindowsPath(receipt.splashLauncherScript) === normalizeWindowsPath(expectedSplash));
+  && basename(receipt.shortcutPath).toLowerCase() === 'starfield vr.lnk');
 
 const shortcutPath = receiptValid ? resolve(receipt.shortcutPath) : '';
 const desktopIconPresent = Boolean(shortcutPath && existsSync(shortcutPath) && lstatSync(shortcutPath).isFile());
-const splashWrapperPresent = existsSync(expectedSplash) && lstatSync(expectedSplash).isFile();
-const installedSourceHead = readGitHead();
 
 const observation = {
   schemaVersion: LOCAL_SCHEMA,

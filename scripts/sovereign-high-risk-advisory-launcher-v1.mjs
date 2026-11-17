@@ -22,6 +22,7 @@ export const HIGH_RISK_ADVISORY_EXECUTION_FILES = Object.freeze([
   'shared/agents/battleBridgeWindowsHosts.mjs',
   'shared/agents/sovereignHighRiskReviewCandidateV1.mjs',
   'shared/agents/sovereignReviewCoverageV1.mjs',
+  'shared/agents/battleBridgeGitProbeContextV1.mjs',
   'shared/agents/sovereignAuthenticatedReviewDiffV1.mjs',
   'shared/agents/sharedAgentWorkspaceStore.mjs',
   'shared/agents/closedLoopLearningV1.mjs',

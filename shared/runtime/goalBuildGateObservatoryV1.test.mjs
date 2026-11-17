@@ -46,6 +46,38 @@ function buildPacket(entries = [], envelopeOverrides = {}, recordOverrides = {})
     expectedSourceHead: head, trustedPublicKeyPem: pem,
     trustedPublicKeySha256: fingerprint, nowMs };
 }
+test('conflicting same-clock signed gate envelopes fail closed in either input order', () => {
+  const accepted = buildPacket([observation(1, 'PASS')]);
+  const denied = observation(1, 'FAIL', 'ROOT_HELD');
+  denied.proof.proofId = 'goal-gate-1-denied';
+  denied.gate.proofRef = 'workspace:proof/' + denied.proof.proofId;
+  denied.gate.proofRecordSha256 = sha256(denied.proof);
+  const refused = buildPacket([denied]);
+  for (const statusRecords of [
+    [accepted.statusRecords[0], refused.statusRecords[0]],
+    [refused.statusRecords[0], accepted.statusRecords[0]],
+  ]) {
+    const result = projectGoalBuildGateObservatoryV1({
+      ...accepted, statusRecords, proofRecords: [accepted.proofRecords[0], denied.proof],
+    });
+    assert.equal(result.observationStatus, 'UNVERIFIED');
+    assert.equal(result.gates[0].status, 'UNVERIFIED');
+    assert.equal(result.counts.PASS, 0);
+    assert.equal(result.counts.UNVERIFIED, 23);
+    assert.equal(result.mergeAuthority, false);
+  }
+});
+
+test('identical repeated signed envelope at the same instant retains one valid PASS', () => {
+  const packet = buildPacket([observation(1, 'PASS')]);
+  const result = projectGoalBuildGateObservatoryV1({
+    ...packet, statusRecords: [packet.statusRecords[0], packet.statusRecords[0]],
+  });
+  assert.equal(result.observationStatus, 'EVIDENCE_AVAILABLE');
+  assert.equal(result.gates[0].status, 'PASS');
+  assert.equal(result.counts.PASS, 1);
+});
+
 test('23 causal checkpoints default to unverified, never green merely because no blockers were supplied', () => {
   const r = projectGoalBuildGateObservatoryV1({ nowMs });
   assert.equal(GOAL_BUILD_GATE_DEFINITIONS_V1.length, 23);

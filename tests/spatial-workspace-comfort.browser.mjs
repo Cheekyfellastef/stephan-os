@@ -1,9 +1,11 @@
 // Run with node tests/spatial-workspace-comfort.browser.mjs [--output-dir <path>].
 // Uses an already installed browser; it never installs packages or transmits to a native host.
-// BROWSER_CHANNEL=msedge selects installed Microsoft Edge on Windows.
+// BROWSER_CHANNEL=msedge selects installed Microsoft Edge on Windows;
+// chromium selects the already installed system Chromium on Linux.
 // This script is an explicit browser gate, not an automatically discovered Node test.
 import { chromium } from '@playwright/test';
-import { DISPLAY_COMFORT_BUTTONS, SCREEN_BUTTONS } from '../apps/spatial-bridge/holodeck-screen-v1.mjs';
+import { DISPLAY_COMFORT_BUTTONS, SCREEN_BUTTONS, HOLODECK_PANELS, PANEL_BUTTONS } from '../apps/spatial-bridge/holodeck-screen-v1.mjs';
+import { HOLODECK_CUBES } from '../apps/spatial-bridge/holodeck-layout-v1.mjs';
 import { generateSpatialBridgeIcon } from '../apps/spatial-bridge/tools/build-icons.mjs';
 import { mkdir, writeFile, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -37,6 +39,7 @@ const result = { startedAt: new Date().toISOString(), checks: [], pageErrors: []
   failedRequests: [], badResponses: [], blockedRequests: [], servedFiles: [], screenshots: [],
   serviceWorkerTested: false, nativeWindowConnected: false, physicalHeadsetVerified: false,
   syntheticDesktopFixture: null,
+  syntheticHelperHealth: {synthetic:true,requests:0,nativeNetworkForwarding:false},
   screenshotVisualReview: 'pending',
   sourceBefore: await sourceSnapshot() };
 // Packaging intentionally generates these PNGs rather than committing binaries.
@@ -135,8 +138,10 @@ try {
   const origin = await startStaticServer();
   url = origin + '/apps/spatial-bridge/quest-entry.html'; result.url = url;
   const channel = process.env.BROWSER_CHANNEL || '';
-  if (channel && channel !== 'msedge') throw new Error('BROWSER_CHANNEL must be unset or msedge.');
-  browser = await chromium.launch({ headless: true, ...(channel ? { channel } : {}), timeout: 30_000,
+  if (channel && !['msedge','chromium'].includes(channel)) throw new Error('BROWSER_CHANNEL must be unset, msedge or chromium.');
+  const browserSelection=channel==='chromium'&&process.platform==='linux'
+    ?{executablePath:'/usr/bin/chromium'}:(channel?{channel}:{});
+  browser = await chromium.launch({ headless: true, ...browserSelection, timeout: 30_000,
     args: ['--disable-background-networking', '--disable-component-update', '--disable-sync', '--no-first-run', '--enable-unsafe-swiftshader'] });
   result.browser = { version: browser.version(), channel: channel || 'chromium' };
   deadline = setTimeout(() => { result.deadlineExceeded = true; void browser.close().catch(() => {}); }, 180_000);
@@ -148,6 +153,19 @@ try {
   let desktopFixture = null;
   await context.route('**/*', async route => {
     const requested = new URL(route.request().url());
+    // The launcher probes health on load. This fixed, explicitly synthetic
+    // response is intercepted even before the later window/input fixture.
+    // It never contacts the native listener or establishes a real installation.
+    if(requested.origin===syntheticNativeOrigin&&requested.pathname==='/health'&&
+      !requested.search&&!requested.hash&&['GET','OPTIONS'].includes(route.request().method())){
+      result.syntheticHelperHealth.requests++;
+      const headers={'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Methods':'GET, OPTIONS',
+        'Access-Control-Allow-Private-Network':'true','Cache-Control':'no-store','Vary':'Origin'};
+      if(route.request().method()==='OPTIONS')return route.fulfill({status:204,headers,body:''});
+      return route.fulfill({status:200,headers,contentType:'application/json',body:JSON.stringify({
+        schema:'stephanos.spatial-window-health.v1',readinessOnly:false,buildId:'f'.repeat(64),
+      })});
+    }
     // Never continue or fetch a native request. During the labelled fixture only,
     // the exact closed HTTP protocol is fulfilled here, before any host connection.
     if (desktopFixture && requested.origin === syntheticNativeOrigin &&
@@ -208,6 +226,36 @@ try {
   });
   const page = await context.newPage();
   page.setDefaultTimeout(5000); page.setDefaultNavigationTimeout(20_000);
+  await page.addInitScript(()=>{
+    const prototype=globalThis.WebGLRenderingContext?.prototype,original=prototype?.texImage2D;
+    const proof={supported:typeof original==='function',wall:null,keyboard:null};
+    window.__spatialInitialTextureProof=proof;
+    if(!proof.supported)return;
+    prototype.texImage2D=function(...args){
+      // Preserve the real GL operation and its arguments. Observe only the
+      // first upload of each existing canvas texture in this document.
+      const result=original.apply(this,args);
+      const source=args.length===6?args[5]:null;
+      if(!(source instanceof HTMLCanvasElement))return result;
+      const kind=source.width===3072&&source.height===954?'wall':
+        source.width===2048&&source.height===512?'keyboard':null;
+      if(!kind||proof[kind])return result;
+      const observed={sourceWidth:source.width,sourceHeight:source.height,targetCanvasId:this.canvas?.id??'',
+        sampledPixels:0,nontransparentPixels:0,distinctColours:0};
+      proof[kind]=observed;
+      try{
+        const pixels=source.getContext('2d').getImageData(0,0,source.width,source.height).data,colors=new Set();
+        const stepX=Math.max(1,Math.floor(source.width/128)),stepY=Math.max(1,Math.floor(source.height/64));
+        for(let y=4;y<source.height;y+=stepY)for(let x=4;x<source.width;x+=stepX){
+          const offset=(y*source.width+x)*4;observed.sampledPixels++;
+          if(pixels[offset+3]>0)observed.nontransparentPixels++;
+          if(colors.size<32)colors.add([pixels[offset],pixels[offset+1],pixels[offset+2],pixels[offset+3]].join(','));
+        }
+        observed.distinctColours=colors.size;
+      }catch(error){observed.readError=String(error?.name??'Canvas inspection failed');}
+      return result;
+    };
+  });
   page.on('pageerror', error => result.pageErrors.push(String(error.stack || error)));
   page.on('console', message => { if (message.type() === 'error') result.consoleErrors.push(message.text()); });
   page.on('requestfailed', request => result.failedRequests.push({ url: request.url(), error: request.failure()?.errorText }));
@@ -228,6 +276,21 @@ try {
       element.dispatchEvent(new Event('input', { bubbles: true }));
       element.dispatchEvent(new Event('change', { bubbles: true }));
     }, value);
+  }
+  async function canvasPoint(u,v){
+    const canvas=page.locator('canvas[aria-label="Spatial console screen preview"]');
+    await canvas.scrollIntoViewIfNeeded();
+    const bounds=await canvas.boundingBox();assert.ok(bounds);
+    await page.mouse.click(bounds.x+bounds.width*u,bounds.y+bounds.height*v);
+  }
+  async function panelAction(id){
+    const button=PANEL_BUTTONS.find(button=>button.id===id);assert.ok(button,id);
+    await canvasPoint(button.x+button.w/2,button.y+button.h/2);
+  }
+  async function focusPanel(id){
+    const panel=HOLODECK_PANELS.find(panel=>panel.id===id);assert.ok(panel,id);
+    await canvasPoint(panel.x+panel.w/2,panel.y+.025);
+    assert.equal(await page.locator('#focus-'+id).getAttribute('aria-pressed'),'true');
   }
   async function expectProfile(mode, height, tilt) {
     assert.equal(await page.locator(`#comfort-${mode}`).getAttribute('aria-pressed'), 'true');
@@ -253,7 +316,61 @@ try {
     });
     assert.equal(contextState.webgl, true); assert.equal(contextState.lost, false); assert.equal(contextState.glError, 0);
     assert.ok(contextState.width > 600 && contextState.height > 200);
-    return { ...contextState, image: await shot('spatial-room-initial') };
+    const firstTextures=await page.evaluate(()=>window.__spatialInitialTextureProof);
+    assert.equal(firstTextures?.supported,true,'The initial real WebGL calls must be observable.');
+    for(const kind of ['wall','keyboard']){
+      const uploaded=firstTextures[kind];
+      assert.ok(uploaded,kind+' canvas must upload during the first room initialization, without rebuilding the renderer.');
+      assert.equal(uploaded.targetCanvasId,'holodeck-canvas');
+      assert.equal(uploaded.readError,undefined);
+      assert.ok(uploaded.sampledPixels>1000);
+      assert.ok(uploaded.nontransparentPixels>uploaded.sampledPixels*.9,kind+' first texture must contain painted pixels.');
+      assert.ok(uploaded.distinctColours>=3,kind+' first texture must contain controls/content, not a uniform blank fill.');
+    }
+    return { ...contextState, firstTextures, image: await shot('spatial-room-initial') };
+  });
+  await check('real furniture controls cross the old movement limits while resting cubes follow and reload with the table',async()=>{
+    const close=(a,b)=>assert.ok(Math.abs(a-b)<1e-6,`${a} != ${b}`);
+    const readSaved=()=>page.evaluate(()=>({
+      furniture:JSON.parse(localStorage.getItem('stephanos.spatial.furniture.v1')),
+      cubes:JSON.parse(localStorage.getItem('stephanos.spatial-workspace.cubes.v1')),
+    }));
+    const clickMany=async(id,count)=>{for(let i=0;i<count;i++)await page.locator('#'+id).click();};
+    const expectCubes=(saved,offset)=>{
+      assert.equal(saved.cubes?.cubes.length,2,'The real release/nudge boundary persists supported cubes.');
+      for(const definition of HOLODECK_CUBES){
+        const cube=saved.cubes.cubes.find(value=>value.id===definition.id);assert.ok(cube);
+        cube.position.forEach((value,axis)=>close(value,definition.center[axis]+offset[axis]));
+        assert.equal(cube.sleeping,true);assert.deepEqual(cube.velocity,[0,0,0]);
+      }
+    };
+    await page.locator('#furniture-target').selectOption('table');
+    await clickMany('furniture-right',16);await clickMany('furniture-near',8);await clickMany('furniture-up',6);
+    const moved=await readSaved(),table=[1.6,.3,.8];
+    moved.furniture.offsets.table.forEach((value,axis)=>close(value,table[axis]));
+    expectCubes(moved,table);
+    assert.match(await page.locator('#furniture-position').innerText(),/\+160 cm \/ \+30 cm \/ \+80 cm/);
+    const tableImage=await shot('spatial-furniture-room-range');
+    await page.locator('#furniture-target').selectOption('keyboard');
+    await clickMany('furniture-right',16);await clickMany('furniture-near',18);await clickMany('furniture-up',10);
+    const bothMoved=await readSaved(),keyboard=[1.6,.5,1.8];
+    bothMoved.furniture.offsets.keyboard.forEach((value,axis)=>close(value,keyboard[axis]));
+    expectCubes(bothMoved,table);
+    const keyboardImage=await shot('spatial-furniture-keyboard-room-range');
+    await page.reload({waitUntil:'networkidle'});
+    await page.waitForFunction(()=>/Saved cube positions restored/.test(document.querySelector('#cube-save-status')?.textContent??''));
+    const reloaded=await readSaved();assert.deepEqual(reloaded,bothMoved);
+    assert.match(await page.locator('#furniture-position').innerText(),/\+160 cm \/ \+50 cm \/ \+180 cm/);
+    const restoredImage=await shot('spatial-furniture-room-range-restored');
+    // Restore through the same public controls so later keyboard/native fixture
+    // checks keep their original geometry and input expectations.
+    await page.locator('#furniture-reset').click();
+    await page.locator('#furniture-target').selectOption('table');await page.locator('#furniture-reset').click();
+    expectCubes(await readSaved(),[0,0,0]);
+    await page.locator('#furniture-target').selectOption('keyboard');
+    return {browserOnly:true,nativeWindowConnected:false,physicalHeadsetVerified:false,
+      tableOffset:table,keyboardOffset:keyboard,restingCubesFollow:true,savedAndRestored:true,
+      tableImage,keyboardImage,restoredImage};
   });
   await check('seated and standing profiles restore independently across switches and reload', async () => {
     await page.locator('#comfort-seated').click(); await range('comfort-height', 35); await range('comfort-tilt', 37);
@@ -316,6 +433,7 @@ try {
     return { image: await shot('spatial-console-desktop', page.locator('#console-preview')) };
   });
   await check('upright display controls adjust comfort without clicking through to a native app', async () => {
+    await panelAction('left-settings');
     const canvas = page.locator('canvas[aria-label="Spatial console screen preview"]');
     await canvas.scrollIntoViewIfNeeded();
     async function displayControl(id) {
@@ -360,17 +478,21 @@ try {
     assert.ok(scroll.contentWidth > scroll.width, 'Only the keyboard should scroll horizontally on a phone.');
     for (const name of ['Reset profile', 'Send / Enter']) {
       const button = keyboard.getByRole('button', { name, exact: true });
-      await button.focus();
+      if(name==='Send / Enter'){
+        assert.equal(await button.isDisabled(),true,'No native connection must leave Send disabled.');
+        await button.scrollIntoViewIfNeeded();
+      }else await button.focus();
       const bounds = await button.boundingBox(), visible = await viewport.boundingBox();
       assert.ok(bounds.x >= visible.x - 1 && bounds.x + bounds.width <= visible.x + visible.width + 1,
-        `${name} must scroll fully into view when focused.`);
+        `${name} must remain fully reachable by keyboard focus or scrolling.`);
     }
     const pageWidth = await page.evaluate(() => ({ viewport: innerWidth, html: document.documentElement.scrollWidth, body: document.body.scrollWidth }));
     assert.ok(pageWidth.html <= pageWidth.viewport && pageWidth.body <= pageWidth.viewport, JSON.stringify(pageWidth));
     return { ...layout, scroll, pageWidth, image: await shot('spatial-console-phone-end', page.locator('#console-preview')) };
   });
-  // The original comfort checks above make no native requests. The following six
-  // UI cases use a closed, in-process synthetic transport; they do not establish
+  // The comfort checks above use only the intercepted health fixture, with no
+  // window discovery, capture or input. The following UI cases use a closed,
+  // in-process synthetic transport; they do not establish
   // Windows capture, a ChatGPT session, microphone setup or headset acceptance.
   await page.setViewportSize({ width: 1440, height: 1100 });
   assert.notEqual(new URL(origin).port, '4174', 'The fixture must use the normal client endpoint.');
@@ -412,14 +534,19 @@ try {
       }
       return original.drawImage.call(this, image, ...args);
     };
-    const media = navigator.mediaDevices, originalMedia = media?.getUserMedia;
+    const media = navigator.mediaDevices, originalMedia = media?.getUserMedia,originalEnumerate=media?.enumerateDevices;
     if (originalMedia) media.getUserMedia = function () {
       capture.mediaRequests++;
       return Promise.reject(new Error('Media access is disabled in synthetic browser acceptance.'));
     };
+    if(originalEnumerate)media.enumerateDevices=async()=>[
+      {kind:'audioinput',deviceId:'synthetic-quest-mic',label:'SYNTHETIC Quest microphone'},
+      {kind:'audiooutput',deviceId:'synthetic-quest-output',label:'SYNTHETIC Quest speakers'},
+    ];
     capture.restore = () => {
       Object.assign(prototype, original);
       if (originalMedia) media.getUserMedia = originalMedia;
+      if(originalEnumerate)media.enumerateDevices=originalEnumerate;
     };
     window.__spatialSyntheticDrawCapture = capture;
   });
@@ -518,46 +645,143 @@ try {
       'Desktop and VR must project the same input notice.');
     return notice;
   }
+  async function currentConnectionPane(){
+    const pane=await page.evaluate(()=>window.__spatialSyntheticDrawCapture.screen.texts
+      .filter(text=>text.x<740&&text.y>=720&&text.y<810).map(text=>text.text).join(' '));
+    assert.match(pane,/^Connected to your original app\./,'Current client state must appear before diagnostics.');
+    assert.equal((pane.match(/Connected to your original app\./g)||[]).length,1,'Current client truth is rendered once in the connection panel.');
+    assert.doesNotMatch(pane,/Waiting for the selected app to draw|Confirm this window|Looking for open windows/,
+      'Completed connection phases must not survive as sticky diagnostics beside a live frame.');
+    return pane;
+  }
   async function blockedInputs(painted, reason) {
     const before = fixtureReport.inputs.length;
     await clickFixturePoint(fixtureReport.frame.composer, painted);
-    for (const name of ['Type a', 'Send / Enter', 'Backspace', 'Scroll ↓']) await key(name).click();
+    for (const name of ['Type a', 'Send / Enter', 'Backspace', 'Scroll ↓']) {
+      const button=key(name);assert.equal(await button.isDisabled(),true,name+' must be visibly disabled under an app overlay.');
+      await button.scrollIntoViewIfNeeded();const bounds=await button.boundingBox();assert.ok(bounds);
+      // A real pointer gesture on a disabled DOM control must have no effect.
+      // Do not force-enable it or dispatch its click handler artificially.
+      await page.mouse.click(bounds.x+bounds.width/2,bounds.y+bounds.height/2);
+    }
     await freshPaints();
     assert.equal(fixtureReport.inputs.length, before, 'An open overlay must block pointer, text, keys and scroll.');
     return { attemptedKinds: ['click', 'text', 'Enter', 'Backspace', 'scroll'],
       forwardedInputs: fixtureReport.inputs.length - before, notice: await paintedNotice(reason) };
   }
   try {
-    await check('synthetic window picker refreshes, preserves selection, rejects removal and binds the chosen fixture', async () => {
-      await page.locator('#choose-window').click();
+    await check('synthetic left-canvas window picker discovers, selects a visible title, rejects stale selection and connects without desktop selection controls', async () => {
+      await panelAction('left-console');await panelAction('choose-window');
       await page.waitForFunction(() => document.querySelector('#window-status').textContent.includes('No open windows'));
       assert.equal(await page.locator('#desktop-window').isDisabled(), true);
       assert.equal(await page.locator('#connect-window').isDisabled(), true);
-      const emptyImage = await shot('synthetic-window-picker-empty', page.locator('[aria-label="Spatial ChatGPT console"]'));
+      const emptyImage = await capturedCanvas('synthetic-window-picker-empty');
       setWindows([{ id: 44, pid: 55, title: 'SYNTHETIC ChatGPT fixture' }, { id: 88, pid: 99, title: 'SYNTHETIC other window' }]);
       await page.waitForFunction(() => document.querySelector('#desktop-window').options.length === 2, undefined, { timeout: 10000 });
-      await page.locator('#desktop-window').selectOption('44');
+      await panelAction('window-row-0');
       setWindows([{ id: 88, pid: 99, title: 'SYNTHETIC other window' }, { id: 44, pid: 55, title: 'SYNTHETIC ChatGPT after heartbeat' }]);
       await page.waitForFunction(() => [...document.querySelector('#desktop-window').options].some(option =>
         option.textContent === 'SYNTHETIC ChatGPT after heartbeat'), undefined, { timeout: 10000 });
       assert.equal(await page.locator('#desktop-window').inputValue(), '44');
       assert.equal(await page.locator('#connect-window').isDisabled(), false);
-      const selectedImage = await shot('synthetic-window-picker-selected', page.locator('[aria-label="Spatial ChatGPT console"]'));
+      const selectedImage = await capturedCanvas('synthetic-window-picker-selected');
       setWindows([{ id: 88, pid: 99, title: 'SYNTHETIC other window' }]);
       await page.waitForFunction(() => document.querySelector('#desktop-window').options.length === 1, undefined, { timeout: 10000 });
       assert.equal(await page.locator('#desktop-window').inputValue(), '');
       assert.equal(await page.locator('#connect-window').isDisabled(), true);
       assert.deepEqual(fixtureReport.binds, []);
-      setWindows([{ id: 88, pid: 99, title: 'SYNTHETIC other window' }, { id: 44, pid: 55, title: 'SYNTHETIC ChatGPT reselected' }]);
-      await page.waitForFunction(() => document.querySelector('#desktop-window').options.length === 2, undefined, { timeout: 10000 });
-      await page.locator('#desktop-window').selectOption('44');
-      await page.locator('#connect-window').click();
+      await panelAction('connect-window');assert.deepEqual(fixtureReport.binds,[],'A removed selection cannot connect from the old button.');
+      setWindows([{ id: 88, pid: 99, title: 'SYNTHETIC other window' },
+        {id:89,pid:100,title:'SYNTHETIC third window'},{id:90,pid:101,title:'SYNTHETIC fourth window'},
+        { id: 44, pid: 55, title: 'SYNTHETIC ChatGPT reselected' }]);
+      await page.waitForFunction(() => document.querySelector('#desktop-window').options.length === 4, undefined, { timeout: 10000 });
+      const beforePaging=fixtureReport.inputs.length;
+      await panelAction('window-next');
+      assert.equal(await page.locator('#desktop-window').inputValue(),'','Browsing the window list never chooses an app.');
+      assert.equal(await page.locator('#connect-window').isDisabled(),true);
+      await panelAction('window-row-0');
+      assert.equal(await page.locator('#desktop-window').inputValue(),'44');
+      assert.equal(fixtureReport.inputs.length,beforePaging,'Left-list browsing and selection cannot scroll or type into an app.');
+      const pagedImage=await capturedCanvas('synthetic-window-picker-paged');
+      await panelAction('connect-window');
       await drawing([0, 0, 1920, 1080]);
       assert.deepEqual(fixtureReport.binds, [{ id: 44 }]);
       assert.equal(fixtureReport.requestsByPath['/session'], 1, 'Heartbeat discovery must not require another session.');
       assert.ok(fixtureReport.requestsByPath['/windows'] >= 5);
-      return { synthetic: true, selectedId: 44, selectedPid: 55, binds: fixtureReport.binds,
-        windowResponses: fixtureReport.requestsByPath['/windows'], emptyImage, selectedImage };
+      await focusPanel('chatgpt');
+      const appClick=await provePoint(fixtureReport.frame.composer,await drawing([0,0,1920,1080]));
+      const typed=await postedInput(()=>key('Type a').click());assert.equal(typed.payload.kind,'text');assert.equal(typed.payload.text,'a');
+      const scrolledDown=await postedInput(()=>panelAction('scroll-down'));
+      assert.equal(scrolledDown.payload.kind,'scroll');assert.equal(scrolledDown.payload.delta,-120);
+      const scrolledUp=await postedInput(()=>panelAction('scroll-up'));
+      assert.equal(scrolledUp.payload.kind,'scroll');assert.equal(scrolledUp.payload.delta,120);
+      for(const scroll of [scrolledDown,scrolledUp]){
+        assert.equal(scroll.payload.x,appClick.posted.x);assert.equal(scroll.payload.y,appClick.posted.y);
+      }
+      return { synthetic: true, nativeWindowConnected:false,physicalHeadsetVerified:false,
+        selectionPath:'left holographic canvas only; no desktop select control',selectedId: 44, selectedPid: 55, binds: fixtureReport.binds,
+        windowResponses: fixtureReport.requestsByPath['/windows'], emptyImage, selectedImage,pagedImage,appClick,typed,
+        wallScroll:{down:scrolledDown.payload,up:scrolledUp.payload},listPagingNativeInputs:fixtureReport.inputs.length-beforePaging-4 };
+    });
+    await check('synthetic three-panel wall shares real settings, audio selection and focus without app click-through',async()=>{
+      const before=fixtureReport.inputs.length,bindsBefore=fixtureReport.binds.length;
+      const painted=await drawing([0,0,1920,1080]);
+      const centre=HOLODECK_PANELS.find(panel=>panel.id==='chatgpt');
+      assert.ok(painted.destination[0]>=centre.x*painted.canvasWidth);
+      assert.ok(painted.destination[0]+painted.destination[2]<=(centre.x+centre.w)*painted.canvasWidth);
+      assert.ok(painted.destination[1]>=centre.y*painted.canvasHeight);
+      assert.ok(painted.destination[1]+painted.destination[3]<=(centre.y+centre.h)*painted.canvasHeight);
+      const height=Number(await page.locator('#comfort-height').inputValue());
+      await panelAction('left-settings');
+      await panelAction('height-up');
+      assert.equal(Number(await page.locator('#comfort-height').inputValue()),height+1);
+      assert.equal(await page.locator('#focus-settings').getAttribute('aria-pressed'),'true');
+      assert.equal(await key('Type a').isDisabled(),true);assert.equal(await key('Send / Enter').isDisabled(),true);
+      await panelAction('height-down');
+      const beforeTable=await page.evaluate(()=>JSON.parse(localStorage.getItem('stephanos.spatial.furniture.v1'))?.offsets?.table??[0,0,0]);
+      await panelAction('furniture-table');await panelAction('furniture-right');
+      const movedTable=await page.evaluate(()=>JSON.parse(localStorage.getItem('stephanos.spatial.furniture.v1')).offsets.table);
+      assert.ok(Math.abs(movedTable[0]-beforeTable[0]-.1)<1e-10);
+      assert.deepEqual(movedTable.slice(1),beforeTable.slice(1));
+      await page.locator('#furniture-target').selectOption('table');
+      assert.match(await page.locator('#furniture-position').innerText(),/^table position:/);
+      await panelAction('furniture-left');await page.locator('#furniture-target').selectOption('keyboard');
+      await freshPaints();
+      const settingsImage=await capturedCanvas('synthetic-three-panels-settings');
+      await panelAction('left-console');await freshPaints();const initialConnectionPane=await currentConnectionPane();
+
+      await panelAction('tools-audio');assert.equal(await page.locator('#focus-tools').getAttribute('aria-pressed'),'true');
+      await panelAction('audio-refresh');
+      await page.waitForFunction(()=>[...document.querySelector('#audio-microphone').options]
+        .some(option=>option.value==='synthetic-quest-mic'));
+      await panelAction('audio-input-next');await panelAction('audio-output-next');
+      assert.equal(await page.locator('#audio-microphone').inputValue(),'synthetic-quest-mic');
+      assert.equal(await page.locator('#audio-speakers').inputValue(),'synthetic-quest-output');
+      await freshPaints();
+      const audioTexts=await page.evaluate(()=>window.__spatialSyntheticDrawCapture.screen.texts.map(text=>text.text));
+      assert.ok(audioTexts.includes('SYNTHETIC Quest microphone'));assert.ok(audioTexts.includes('SYNTHETIC Quest speakers'));
+      await page.locator('#audio-microphone').selectOption('');await freshPaints();
+      assert.ok(await page.evaluate(()=>window.__spatialSyntheticDrawCapture.screen.texts.some(text=>text.text==='System microphone')));
+      assert.equal(await key('Send / Enter').isDisabled(),true);
+      const audioImage=await capturedCanvas('synthetic-three-panels-audio');
+
+      await panelAction('left-console');const healthBefore=result.syntheticHelperHealth.requests;
+      await Promise.all([
+        page.waitForResponse(response=>response.url()===syntheticNativeOrigin+'/health'&&response.request().method()==='GET'),
+        panelAction('connection-probe'),
+      ]);
+      await freshPaints();assert.ok(result.syntheticHelperHealth.requests>healthBefore);
+      assert.equal(fixtureReport.binds.length,bindsBefore,'A health check cannot acquire a new window.');
+      const checkedConnectionPane=await currentConnectionPane();
+      assert.equal((checkedConnectionPane.match(/Local Spatial helper responds\./g)||[]).length,1);
+      const connectionImage=await capturedCanvas('synthetic-three-panels-connection');
+      await focusPanel('chatgpt');assert.equal(await key('Type a').isDisabled(),false);
+      assert.equal(await key('Send / Enter').isDisabled(),false);
+      assert.equal(fixtureReport.inputs.length,before,'Local pages and focus headers must never forward an app gesture.');
+      assert.equal(await page.evaluate(()=>window.__spatialSyntheticDrawCapture.mediaRequests),0);
+      return {synthetic:true,panels:HOLODECK_PANELS.map(panel=>panel.id),settingsSharedWithLauncher:true,
+        furnitureSaved:true,audioSelectionSharedBothWays:true,nativeInputs:0,mediaPermissionRequests:0,
+        initialConnectionPane,checkedConnectionPane,settingsImage,audioImage,connectionImage};
     });
     await check('synthetic zoom and View controls reach the bottom composer and Voice with correct coordinates; Fit restores the whole frame', async () => {
       await key('Zoom +').click(); await key('Zoom +').click();
@@ -619,7 +843,7 @@ try {
       assert.ok(help.texts.some(text => text.text === 'AUDIO HELP / HEADSET SETUP'));
       assert.ok(help.texts.some(text => /does not enable or test your microphone or speakers/.test(text.text)));
       assert.ok(help.texts.some(text => /Windows Settings.*Sound.*Input/.test(text.text)));
-      assert.ok(help.texts.some(text => /Voice.*dictation.*Availability depends/.test(text.text)));
+      assert.match(help.texts.map(text=>text.text).join(' '),/Voice starts a spoken conversation; microphone dictation enters text/);
       for (const text of help.texts) assert.ok(text.x >= 0 && text.x + text.width <= 3072 &&
         text.top >= 0 && text.bottom <= 954, 'Audio-help text must fit: ' + text.text);
       const blocked = await blockedInputs(fitted, /Input paused\. Close Audio help/);
@@ -664,7 +888,14 @@ try {
     assert.equal(fixtureReport.mediaRequests, 0);
     assert.deepEqual(fixtureReport.unexpectedRequests, []);
     if (result.checks.filter(check => check.name.startsWith('synthetic ')).every(check => check.status === 'PASS')) {
-      assert.equal(fixtureReport.inputs.length, 8, 'Only the eight explicit positive/rejected gestures may reach the fixture.');
+      const expectedGestures = [
+        'click', 'text:a', 'scroll:-120', 'scroll:120', // New centre input and wall scrolling after explicit selection.
+        'click', 'click', 'click', 'text:!', 'text:?', 'text:a', 'click', 'click', // Existing crop, keys, rejection and overlays.
+      ];
+      assert.equal(fixtureReport.inputs.length, expectedGestures.length, 'Only the twelve explicit positive/rejected gestures may reach the fixture.');
+      assert.deepEqual(fixtureReport.inputs.map(input => input.kind === 'text' ? 'text:' + input.text
+        : input.kind === 'scroll' ? 'scroll:' + input.delta : input.kind), expectedGestures,
+      'The complete fixture gesture order must match the independently checked actions.');
     }
     desktopFixture = null;
   }

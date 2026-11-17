@@ -44,3 +44,20 @@ The existing NO_RUNTIME_REFRESH_REQUIRED classification for on-demand Ignition m
 The regression now binds the complete actual nine-file rollout, asserts its UI/backend/mailbox/natural owner set, verifies the runner alone uses only natural reload and is not excluded as no-runtime, rejects uninspected sibling names and mixed unknown changes before any adapter, and rejects stale natural-adoption evidence. Future repairs must check both incident paths and every changed production entry against shared owners. This strengthens rollout closure rather than widening runtime authority.
 
 This source model cannot prove installed runtime, browser behavior, protected native installation, service restart, Core custody recovery, signing, VR launch or worker pickup. Those owners and gates remain separate. A successful mocked adapter test proves orchestration behavior only.
+
+## Control Tower owner-comment rollout
+
+`scripts/control-tower-build-request-v1.mjs` is loaded by the existing GitHub
+Actions request job at its exact checkout. Its exact path joins the existing
+no-runtime-refresh set; neighboring filenames remain unclassified. This is not
+a local submitter and its classification cannot run a request or activate a
+native service.
+
+The paired native reader is a static import of
+`scripts/control-tower-build-consumer-v1.mjs` inside the long-lived Sovereign
+relay. The changed consumer and native-inspector paths already require the
+existing Commander watchdog to prove relay source adoption. A new heartbeat,
+an Actions artifact, a source-only classification or a healthy Commander HTTP
+daemon alone cannot establish that the relay loaded the new reader. The full
+rollout path inventory is checked as a unit; accumulated unknown refresh debt
+must remain visible and must not be omitted to claim this package is live.
