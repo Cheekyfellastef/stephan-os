@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createHolodeckScreen,SCREEN_CONTENT,screenImageRect,screenCrop} from '../apps/spatial-bridge/holodeck-screen-v1.mjs';
+import {createHolodeckScreen,SCREEN_CONTENT,screenImageRect,screenCrop,SPATIAL_CONVERSATION_PRESENTATION_KEY,readSpatialConversationPresentation} from '../apps/spatial-bridge/holodeck-screen-v1.mjs';
 import {HOLODECK_PANELS,PANEL_BUTTONS,panelAt} from '../apps/spatial-bridge/holodeck-panels-v1.mjs';
 import {createHolodeckComfort} from '../apps/spatial-bridge/holodeck-comfort-v1.mjs';
 import {createHolodeckFurniture} from '../apps/spatial-bridge/holodeck-furniture-v1.mjs';
@@ -10,8 +10,8 @@ import {HOLODECK_DISPLAY} from '../apps/spatial-bridge/holodeck-layout-v1.mjs';
 
 const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};};
 const center=id=>{const b=PANEL_BUTTONS.find(button=>button.id===id);assert.ok(b,id);return [b.x+b.w/2,b.y+b.h/2];};
-function fixture({status='live',audio,client:overrides={},onStatus=()=>{}}={}){
-  const contexts=[],inputs=[],calls=[],storage=new Map();
+function fixture({status='live',audio,client:overrides={},onStatus=()=>{},stored=new Map()}={}){
+  const contexts=[],inputs=[],calls=[],storage=stored;
   const store={getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)};
   const comfort=createHolodeckComfort({storage:store}),furniture=createHolodeckFurniture({storage:store});
   let state={status,revision:0,message:'Synthetic source for tests only.',windows:[],inputStatus:''};
@@ -26,7 +26,7 @@ function fixture({status='live',audio,client:overrides={},onStatus=()=>{}}={}){
   const documentRef={createElement:()=>{const context={texts:[],images:[],clearRect(){this.texts=[];this.images=[];},fillRect(){},strokeRect(){},
     fillText(text,x,y){this.texts.push({text,x,y});},drawImage(...args){this.images.push(args);}};
     contexts.push(context);return {getContext:()=>context};}};
-  const screen=createHolodeckScreen({client,comfort,furniture,audio,documentRef,onStatus});
+  const screen=createHolodeckScreen({client,comfort,furniture,audio,documentRef,onStatus,storage:store});
   return {screen,client,comfort,furniture,frame,contexts,inputs,calls,storage,publish,press:id=>{screen.render();return screen.point(...center(id),true);}};
 }
 
@@ -262,4 +262,43 @@ test('dedicated Scroll arrows use visible conversation centre, not composer hove
   const count=h.inputs.length;
   h.screen.action('focus-tools');h.screen.action('scroll-down');
   assert.equal(h.inputs.length,count,'local-panel focus still blocks native Scroll');
+});
+
+test('screen view and panel choices restore independently of Windows consent, drafts and Voice',()=>{
+  const shared=new Map(),first=fixture({stored:shared});
+  first.screen.render();
+  first.screen.action('zoom-in');first.screen.action('pan-right');first.screen.action('pan-up');
+  first.screen.action('left-settings');first.screen.action('furniture-table');
+  const saved=JSON.parse(shared.get(SPATIAL_CONVERSATION_PRESENTATION_KEY));
+  assert.deepEqual(Object.keys(saved).sort(),['furnitureTarget','focusedPanel','leftPage','panX','panY','version','zoom'].sort());
+  assert.deepEqual([saved.zoom,saved.panX,saved.panY,saved.focusedPanel,saved.leftPage,saved.furnitureTarget],
+    [1.5,.5,-.5,'settings','settings','table']);
+  const second=fixture({stored:shared}),state=second.screen.getState();
+  assert.deepEqual([state.zoom,state.panX,state.panY,state.focusedPanel,state.leftPage,state.furnitureTarget],
+    [1.5,.5,-.5,'settings','settings','table']);
+  second.screen.action('enter');assert.deepEqual(second.inputs,[],'restored non-app panel cannot type');
+  second.screen.action('focus-chatgpt');second.screen.action('key:z');
+  assert.deepEqual(second.inputs,[],'unpainted restored crop cannot type');
+  second.screen.render();second.screen.action('key:z');
+  assert.deepEqual(second.inputs,[{kind:'text',text:'z'}]);
+  assert.equal(shared.get(SPATIAL_CONVERSATION_PRESENTATION_KEY).includes('selectedWindow'),false);
+  assert.equal(shared.get(SPATIAL_CONVERSATION_PRESENTATION_KEY).includes('microphone'),false);
+});
+
+test('invalid, corrupt, oversized, untrusted and forbidden screen preferences fail closed',()=>{
+  const defaults={zoom:1,panX:0,panY:0,focusedPanel:'chatgpt',leftPage:'console',furnitureTarget:'keyboard'};
+  const load=value=>readSpatialConversationPresentation({getItem:()=>value});
+  for(const value of ['{','x'.repeat(2050),JSON.stringify({version:2,zoom:4}),
+    JSON.stringify({version:1,zoom:'3',panX:'0.5',panY:Infinity,focusedPanel:'unknown',leftPage:'unknown',furnitureTarget:'bad'})])
+    assert.deepEqual(load(value),defaults);
+  assert.deepEqual(load(JSON.stringify({version:1,zoom:8,panX:1,panY:-1})),defaults);
+  assert.deepEqual(load(JSON.stringify({version:1,zoom:2,panX:0.25,panY:-.5})),
+    {...defaults,zoom:2,panX:.25,panY:-.5});
+  assert.deepEqual(readSpatialConversationPresentation({getItem(){throw Error('blocked')}}),defaults);
+  const h=fixture();h.screen.render();
+  const settings={getItem(){throw Error('private storage')},setItem(){throw Error('quota')}};
+  const second=createHolodeckScreen({client:h.client,storage:settings,documentRef:{
+    createElement(){return {getContext(){return {fillRect(){},strokeRect(){},clearRect(){},fillText(){},drawImage(){}};}};}
+  }});
+  second.action('zoom-in');assert.equal(second.getState().zoom,1.5);
 });
