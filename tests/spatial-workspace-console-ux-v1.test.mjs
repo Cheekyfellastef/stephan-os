@@ -205,8 +205,8 @@ test('input feedback retains rejection while live and is superseded by waiting, 
   });
   await h.client.discover();await h.client.connect(windowOne.id);await h.tick();
   h.client.input({kind:'text',text:'fixture'});await h.tick();assert.match(h.client.getState().inputStatus,/Windows queued.*not confirmed/);
-  rejectInput=true;h.client.input({kind:'text',text:'fixture'});await h.tick();assert.match(h.client.getState().inputStatus,/not accepted/);
-  await h.tick();assert.match(h.client.getState().inputStatus,/not accepted/);
+  rejectInput=true;h.client.input({kind:'text',text:'fixture'});await h.tick();assert.match(h.client.getState().inputStatus,/did not confirm that input/);
+  await h.tick();assert.match(h.client.getState().inputStatus,/did not confirm that input/);
   frameStatus='waiting';await h.tick();assert.match(h.client.getState().inputStatus,/Input paused/);
   frameStatus='frame';await h.tick();assert.equal(h.client.getState().inputStatus,'');
   failFrame=true;await h.tick();assert.match(h.client.getState().inputStatus,/Reconnect/);
