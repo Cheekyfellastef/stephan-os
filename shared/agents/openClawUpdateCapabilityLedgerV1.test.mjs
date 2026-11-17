@@ -257,6 +257,25 @@ test('cross-version PRESERVE without task classes fails closed', () => {
   assert.equal(result.updateAllowed, false);
   assert.ok(result.blockers.includes('PRESERVE_TASK_CLASSES_REQUIRED:openclaw.gateway-provider'));
 });
+test('same-version protected PRESERVE fails closed without existing qualification proof', () => {
+  for (const [field, code] of [
+    ['qualificationRefs', 'QUALIFICATION_REFS'],
+    ['tests', 'TESTS'],
+    ['evidenceRefs', 'EVIDENCE_REFS'],
+  ]) {
+    const result = buildOpenClawUpdateCapabilityLedgerV1({
+      currentVersion: '1.2.3',
+      targetVersion: '1.2.3',
+      capabilities: [baseCapability({ [field]: [] })],
+    });
+    assert.equal(result.updateAllowed, false, field);
+    assert.equal(result.verdict, 'BLOCK_UPDATE', field);
+    assert.ok(result.blockers.includes(`PRESERVE_${code}_REQUIRED:openclaw.gateway-provider`), field);
+    assert.deepEqual(result.requiredQualificationReplay, [], field);
+    assert.equal(result.authority.updateExecutionAllowed, false, field);
+  }
+});
+
 test('same-version PRESERVE with valid refs retains no replay', () => {
   const result = buildOpenClawUpdateCapabilityLedgerV1({ currentVersion: '1.2.3', targetVersion: '1.2.3', capabilities: [baseCapability()] });
   assert.equal(result.updateAllowed, true);
