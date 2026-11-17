@@ -307,14 +307,19 @@ export function buildOpenClawUpdateCapabilityLedgerV1(input = {}) {
     // A matching source identity does not prove the target package loaded the old hook.
     const preservedAcrossVersion = capability.updateDisposition === OPENCLAW_UPDATE_DISPOSITION.PRESERVE
       && currentVersion !== targetVersion;
-    if (preservedAcrossVersion) {
+    // A same-version no-op is not qualification evidence. Every protected
+    // PRESERVE must retain its existing qualification, test and proof refs.
+    // Cross-version PRESERVE additionally needs task classes to replay.
+    if (capability.updateDisposition === OPENCLAW_UPDATE_DISPOSITION.PRESERVE) {
       for (const [field, refs] of [
         ['QUALIFICATION_REFS', capability.qualificationRefs],
         ['TESTS', capability.tests],
         ['EVIDENCE_REFS', capability.evidenceRefs],
-        ['TASK_CLASSES', capability.affectedTaskClasses],
       ]) {
         if (refs.length === 0) blockers.push(`PRESERVE_${field}_REQUIRED:${capability.capabilityId}`);
+      }
+      if (preservedAcrossVersion && capability.affectedTaskClasses.length === 0) {
+        blockers.push(`PRESERVE_TASK_CLASSES_REQUIRED:${capability.capabilityId}`);
       }
     }
     if (requiresCandidateProof(capability.updateDisposition) || preservedAcrossVersion) {
