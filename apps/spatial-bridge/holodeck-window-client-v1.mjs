@@ -243,7 +243,19 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
         // Serialize capture and input; each operator action is sent once only.
         const result=await request('/input',{...input,sequence:++sequence});
         if(current!==epoch)return;
-        if(!publishCurrent(current,{inputStatus:result.status==='input-posted'?'Input sent to the selected app.':'That input was not accepted. Select a text field or wait for a fresh picture.'}))return;
+        if(!publishCurrent(current,{inputStatus:({
+          'editor-accessibility-selected':'Editable field located in the selected window. Type a virtual key to test it.',
+          'editor-value-readback':'Windows accessibility read back the updated editor text. Confirm the actual app reflects it before Send.',
+          'editor-not-selected':'No editable field selected. Click the app composer on the holographic image first.',
+          'editor-reselect-required':'The selected editor changed. Click its current location again.',
+          'editor-unsupported':'The selected application does not expose a writable editor here.',
+          'editor-update-refused':'The selected editor refused the change. Nothing was sent.',
+          'editor-update-unverified':'The editor did not confirm the requested value. Check its draft; do not retry Send automatically.',
+          'editor-length-refused':'This editor exceeds the allowed text length. No input was applied.',
+          'editor-value-unchanged':'Editor was already empty; no character was removed.',
+          'app-control-invoked':'The selected app control was invoked. Check its actual result.',
+          'input-posted':'Windows queued the pointer/key event, but the app has not confirmed it.'
+        }[result.status]??'The selected app did not confirm that input. Click a valid target or wait for a fresh picture.')}))return;
       }
       const frame=await request('/frame');
       if(!active||current!==epoch)return;
