@@ -831,7 +831,7 @@ try {
       const rejected = await postedInput(() => key('Type a').click());
       assert.equal(rejected.response.status, 'input-rejected');
       await freshPaints();
-      const notice = await paintedNotice(/That input was not accepted/);
+      const notice = await paintedNotice(/The selected app did not confirm that input/);
       return { synthetic: true, rejected: rejected.payload, notice,
         image: await capturedCanvas('synthetic-input-rejected-screen') };
     });
