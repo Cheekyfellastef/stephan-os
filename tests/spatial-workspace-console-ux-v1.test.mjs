@@ -111,6 +111,9 @@ test('all app input is blocked by Audio help, Reload and unpainted views, with l
     assert.match(h.screen.getState().inputStatus,/Input paused/);
     h.screen.render();assert.ok(h.contexts[0].texts.some(entry=>entry.text.includes('Input paused')));
     const shift=h.screen.getState().shift;h.screen.action('shift');assert.equal(h.screen.getState().shift,!shift);
+    // Restore the original modifier before testing ordinary Enter. Shift+Enter
+    // intentionally fails closed because the native helper cannot express it.
+    h.screen.action('shift');assert.equal(h.screen.getState().shift,shift);
     h.screen.action(overlay==='voice'?'voice':'fit');
     h.screen.action('enter');assert.equal(h.inputs.length,count,'returning to the app must paint before it can receive input');
     h.screen.render();h.screen.action('enter');assert.equal(h.inputs.length,count+1);
