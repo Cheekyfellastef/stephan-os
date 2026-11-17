@@ -254,7 +254,8 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
           'editor-length-refused':'This editor exceeds the allowed text length. No input was applied.',
           'editor-value-unchanged':'Editor was already empty; no character was removed.',
           'app-control-invoked':'The selected app control was invoked. Check its actual result.',
-          'input-posted':'Windows queued the pointer/key event, but the app has not confirmed it.'
+          'input-posted':'Windows queued the pointer/key event, but the app has not confirmed it.',
+          'input-rejected':'That input was not accepted. The selected app did not confirm that input.'
         }[result.status]??'The selected app did not confirm that input. Click a valid target or wait for a fresh picture.')}))return;
       }
       const frame=await request('/frame');
