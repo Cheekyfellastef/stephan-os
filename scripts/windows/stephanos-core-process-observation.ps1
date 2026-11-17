@@ -1,5 +1,7 @@
 # Shared read-only Core inventory. Hidden command lines are not proof of an
 # absent worker. No process start, termination, lock or lease mutation here.
+. (Join-Path $PSScriptRoot 'read-sovereign-maintenance-owner-v2.ps1')
+
 function ConvertTo-StephanosCoreProcessObservation {
     param(
         [object[]]$ProcessRows = @(),
@@ -10,11 +12,13 @@ function ConvertTo-StephanosCoreProcessObservation {
     $coreMatches = @()
     $uninspectable = 0
     $complete = $ObservationSucceeded
+    $diagnosticCode = if ($ObservationSucceeded) { '' } else { 'CORE_PROCESS_QUERY_FAILED' }
     $pattern = [regex]::Escape($CoreScript.Replace('/', '\'))
     foreach ($row in @($ProcessRows)) {
         if ($null -eq $row -or -not $row.PSObject.Properties['Name'] -or
             [string]::IsNullOrWhiteSpace([string]$row.Name)) {
             $complete = $false
+            if (-not $diagnosticCode) { $diagnosticCode = 'CORE_PROCESS_ROW_UNPROVEN' }
             continue
         }
         if ([string]$row.Name -ine 'node.exe') { continue }
@@ -22,6 +26,7 @@ function ConvertTo-StephanosCoreProcessObservation {
         if ([string]::IsNullOrWhiteSpace($command)) {
             $uninspectable++
             $complete = $false
+            if (-not $diagnosticCode) { $diagnosticCode = 'CORE_PROCESS_COMMAND_LINE_UNAVAILABLE' }
             continue
         }
         if ($command.Replace('/', '\') -match $pattern) {
@@ -29,6 +34,9 @@ function ConvertTo-StephanosCoreProcessObservation {
             if (-not [string]::Equals($executable.Replace('/', '\'), $canonicalNode, [StringComparison]::OrdinalIgnoreCase)) {
                 $uninspectable++
                 $complete = $false
+                if (-not $diagnosticCode) {
+                    $diagnosticCode = if ([string]::IsNullOrWhiteSpace($executable)) { 'CORE_PROCESS_IMAGE_UNAVAILABLE' } else { 'CORE_PROCESS_IMAGE_MISMATCH' }
+                }
                 continue
             }
             $coreMatches += $row
@@ -41,6 +49,8 @@ function ConvertTo-StephanosCoreProcessObservation {
         observedMatchingProcessCount = [int]$coreMatches.Count
         uninspectableNodeCount = [int]$uninspectable
         blocker = if ($complete) { '' } else { 'CORE_PROCESS_INVENTORY_UNPROVEN' }
+        diagnosticCode = $diagnosticCode
+        nativeImageFallbackCount = 0
     }
 }
 
@@ -48,7 +58,53 @@ function Get-StephanosCoreProcessObservation {
     param([Parameter(Mandatory = $true)][string]$CoreScript)
     try {
         $rows = @(Get-CimInstance Win32_Process -ErrorAction Stop)
-        ConvertTo-StephanosCoreProcessObservation -ProcessRows $rows -ObservationSucceeded $true -CoreScript $CoreScript
+        $resolved = 0
+        $attempted = 0
+        $nativeFailure = ''
+        $pattern = [regex]::Escape($CoreScript.Replace('/', '\'))
+        $expectedCoreCommand = '"C:\Program Files\nodejs\node.exe" "' + $CoreScript.Replace('/', '\') + '"'
+        $observedRows = @(foreach ($row in $rows) {
+            # A native image observation fills only the missing image of an
+            # already visible Core command, bound to its original CIM birth.
+            # Opaque commands and noncanonical reported images stay unknown.
+            if ($null -ne $row -and $row.PSObject.Properties['Name'] -and [string]$row.Name -ieq 'node.exe' -and
+                $row.PSObject.Properties['CommandLine'] -and -not [string]::IsNullOrWhiteSpace([string]$row.CommandLine) -and
+                ([string]$row.CommandLine).Replace('/', '\') -match $pattern -and
+                (-not $row.PSObject.Properties['ExecutablePath'] -or [string]::IsNullOrWhiteSpace([string]$row.ExecutablePath))) {
+                # Native fallback accepts only the fixed launcher's full
+                # command, never a script suffix, eval text or extra argument.
+                if (-not [string]::Equals(([string]$row.CommandLine).Trim().Replace('/', '\'), $expectedCoreCommand, [StringComparison]::OrdinalIgnoreCase)) {
+                    if (-not $nativeFailure) { $nativeFailure = 'CORE_PROCESS_COMMAND_LINE_MISMATCH' }
+                    $row
+                    continue
+                }
+                if ($attempted -lt 64) {
+                    $attempted++
+                    $native = Get-StephanosCanonicalNodeIdentityV1 -ProcessRow $row
+                    if ($native.ok -eq $true -and $native.diagnosticCode -ceq '') {
+                        $resolved++
+                        [pscustomobject]@{ Name = [string]$row.Name; ProcessId = $row.ProcessId;
+                            CommandLine = [string]$row.CommandLine; CreationDate = $row.CreationDate;
+                            ExecutablePath = 'C:\Program Files\nodejs\node.exe' }
+                        continue
+                    }
+                    if (-not $nativeFailure) {
+                        $nativeFailure = switch -Exact ([string]$native.diagnosticCode) {
+                            'OWNER_PROCESS_BIRTH_UNAVAILABLE' { 'CORE_PROCESS_BIRTH_UNAVAILABLE' }
+                            'OWNER_PROCESS_UNPROVEN' { 'CORE_PROCESS_IDENTITY_UNPROVEN' }
+                            default { ([string]$native.diagnosticCode).Replace('OWNER_', 'CORE_PROCESS_') }
+                        }
+                    }
+                } elseif (-not $nativeFailure) { $nativeFailure = 'CORE_PROCESS_NATIVE_OBSERVATION_BOUND_EXCEEDED' }
+            }
+            $row
+        })
+        $observation = ConvertTo-StephanosCoreProcessObservation -ProcessRows $observedRows -ObservationSucceeded $true -CoreScript $CoreScript
+        $observation.nativeImageFallbackCount = [int]$resolved
+        if ($observation.diagnosticCode -ceq 'CORE_PROCESS_IMAGE_UNAVAILABLE' -and $nativeFailure) {
+            $observation.diagnosticCode = $nativeFailure
+        }
+        $observation
     } catch {
         ConvertTo-StephanosCoreProcessObservation -ObservationSucceeded $false -CoreScript $CoreScript
     }

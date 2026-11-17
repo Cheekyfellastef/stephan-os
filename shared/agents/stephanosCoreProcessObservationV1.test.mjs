@@ -21,6 +21,83 @@ test('both Core observers share the same incomplete-inventory boundary', () => {
   assert.doesNotMatch(status, /processCount = \[int\]/);
 });
 
+test('missing-image fallback is fixed, birth-bound, bounded and never widens opaque command classification', async () => {
+  const source = await readFile(helperPath, 'utf8');
+  assert.match(source, /\. \(Join-Path \$PSScriptRoot 'read-sovereign-maintenance-owner-v2\.ps1'\)/);
+  assert.match(source, /Get-StephanosCanonicalNodeIdentityV1 -ProcessRow \$row/);
+  assert.match(source, /\$attempted -lt 64/);
+  assert.match(source, /\$native\.ok -eq \$true -and \$native\.diagnosticCode -ceq ''/);
+  assert.match(source, /\$expectedCoreCommand/);
+  assert.match(source, /CORE_PROCESS_COMMAND_LINE_MISMATCH/);
+  assert.doesNotMatch(source, /\b(?:Start-Process|Stop-Process|Start-ScheduledTask|Restart-Computer)\b/);
+});
+
+test('Windows Core actual observer reconciles only visible exact command and matching native identity',
+  { skip: process.platform !== 'win32' }, () => {
+    const script = `
+$ErrorActionPreference='Stop'
+Set-StrictMode -Version Latest
+Add-Type -TypeDefinition @'
+namespace Stephanos { public static class ReadOnlyCanonicalNodeIdentityV1 {
+ public static string Code=""; public static int Calls;
+ public static string Observe(uint pid,long ticks) { Calls++; if(pid==0 || ticks<=0) throw new System.Exception(); return Code; }
+} }
+'@
+. '${helperPath.replace(/'/g, "''")}'
+$core='C:\\repo\\scripts\\stephanos-core-daemon.mjs'
+$command='"C:\\Program Files\\nodejs\\node.exe" "'+$core+'"'
+$born=[datetime]::UtcNow.AddMinutes(-1)
+$missing=[pscustomobject]@{Name='node.exe';ProcessId=7;CommandLine=$command;CreationDate=$born;ExecutablePath=$null}
+$hidden=[pscustomobject]@{Name='node.exe';ProcessId=8;CommandLine=$null;CreationDate=$born;ExecutablePath=$null}
+$foreign=[pscustomobject]@{Name='node.exe';ProcessId=7;CommandLine=$command;CreationDate=$born;ExecutablePath='C:\\other\\node.exe'}
+$unborn=[pscustomobject]@{Name='node.exe';ProcessId=7;CommandLine=$command;CreationDate=$null;ExecutablePath=$null}
+$changedPid=[pscustomobject]@{Name='node.exe';ProcessId=0;CommandLine=$command;CreationDate=$born;ExecutablePath=$null}
+$good=[pscustomobject]@{Name='node.exe';ProcessId=7;CommandLine=$command;CreationDate=$born;ExecutablePath='C:\\Program Files\\nodejs\\node.exe'}
+$script:fixtureRows=@()
+$script:throwQuery=$false
+function Get-CimInstance { if($script:throwQuery){throw 'PRIVATE_CIM_FAILURE'}; return $script:fixtureRows }
+$cases=@(
+ @{rows=@($missing);native='';complete=$true;count=1;calls=1;resolved=1;diagnostic=''},
+ @{rows=@($missing,$hidden);native='';complete=$false;count=$null;calls=1;resolved=1;diagnostic='CORE_PROCESS_COMMAND_LINE_UNAVAILABLE'},
+ @{rows=@($hidden);native='';complete=$false;count=$null;calls=0;resolved=0;diagnostic='CORE_PROCESS_COMMAND_LINE_UNAVAILABLE'},
+ @{rows=@($foreign);native='';complete=$false;count=$null;calls=0;resolved=0;diagnostic='CORE_PROCESS_IMAGE_MISMATCH'},
+ @{rows=@($unborn);native='';complete=$false;count=$null;calls=0;resolved=0;diagnostic='CORE_PROCESS_BIRTH_UNAVAILABLE'},
+ @{rows=@($changedPid);native='';complete=$false;count=$null;calls=0;resolved=0;diagnostic='CORE_PROCESS_IDENTITY_UNPROVEN'},
+ @{rows=@($missing);native='OWNER_NATIVE_BIRTH_MISMATCH';complete=$false;count=$null;calls=1;resolved=0;diagnostic='CORE_PROCESS_NATIVE_BIRTH_MISMATCH'},
+ @{rows=@($missing);native='OWNER_NATIVE_ACCESS_DENIED';complete=$false;count=$null;calls=1;resolved=0;diagnostic='CORE_PROCESS_NATIVE_ACCESS_DENIED'},
+ @{rows=@($missing);native='OWNER_NATIVE_IMAGE_MISMATCH';complete=$false;count=$null;calls=1;resolved=0;diagnostic='CORE_PROCESS_NATIVE_IMAGE_MISMATCH'},
+ @{rows=@($missing);native='OWNER_NATIVE_PROCESS_EXITED';complete=$false;count=$null;calls=1;resolved=0;diagnostic='CORE_PROCESS_NATIVE_PROCESS_EXITED'},
+ @{rows=@($good,$good);native='';complete=$true;count=2;calls=0;resolved=0;diagnostic=''},
+ @{rows=@($missing)*65;native='';complete=$false;count=$null;calls=64;resolved=64;diagnostic='CORE_PROCESS_NATIVE_OBSERVATION_BOUND_EXCEEDED'}
+)
+foreach($case in $cases) {
+ $script:fixtureRows=$case.rows
+ [Stephanos.ReadOnlyCanonicalNodeIdentityV1]::Code=$case.native
+ [Stephanos.ReadOnlyCanonicalNodeIdentityV1]::Calls=0
+ $actual=Get-StephanosCoreProcessObservation -CoreScript $core
+ if($actual.complete -ne $case.complete -or $actual.processCount -ne $case.count -or $actual.nativeImageFallbackCount -ne $case.resolved -or
+    $actual.diagnosticCode -cne $case.diagnostic -or [Stephanos.ReadOnlyCanonicalNodeIdentityV1]::Calls -ne $case.calls){throw ('CORE_NATIVE_CASE_FAILED:'+($actual|ConvertTo-Json -Compress))}
+ if(-not $case.complete -and $actual.blocker -cne 'CORE_PROCESS_INVENTORY_UNPROVEN'){throw 'UNKNOWN_NOT_HELD'}
+ if($case.complete -and $case.count -eq 1 -and $actual.processes[0].CreationDate -ne $born){throw 'ORIGINAL_BIRTH_REWRITTEN'}
+}
+foreach($invalidCommand in @(($command+'.old'), ($command+' --extra'), ('"C:\\Program Files\\nodejs\\node.exe" -e "'+$core+'"'), ('"C:\\Program Files\\nodejs\\node.exe" "'+$core+'.old"'))) {
+ $script:fixtureRows=@([pscustomobject]@{Name='node.exe';ProcessId=7;CommandLine=$invalidCommand;CreationDate=$born;ExecutablePath=$null})
+ [Stephanos.ReadOnlyCanonicalNodeIdentityV1]::Calls=0
+ $actual=Get-StephanosCoreProcessObservation -CoreScript $core
+ if($actual.complete -or $null -ne $actual.processCount -or [Stephanos.ReadOnlyCanonicalNodeIdentityV1]::Calls -ne 0 -or $actual.diagnosticCode -cne 'CORE_PROCESS_COMMAND_LINE_MISMATCH'){throw 'FOREIGN_COMMAND_FALLBACK'}
+}
+$script:throwQuery=$true
+$failed=Get-StephanosCoreProcessObservation -CoreScript $core
+if($failed.complete -or $null -ne $failed.processCount -or $failed.diagnosticCode -cne 'CORE_PROCESS_QUERY_FAILED'){throw 'QUERY_FAILURE_FALSE_ABSENCE'}
+Write-Output 'CORE_NATIVE_IMAGE_FALLBACK_PASS'
+`;
+    const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+      { encoding: 'utf8', windowsHide: true, shell: false, timeout: 20_000, maxBuffer: 32_768 });
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
+    assert.match(result.stdout, /CORE_NATIVE_IMAGE_FALLBACK_PASS/);
+  });
+
 test('Windows Core inventory and actual lifecycle hold unknown ownership without starting a process',
   { skip: process.platform !== 'win32' }, () => {
     const script = `
