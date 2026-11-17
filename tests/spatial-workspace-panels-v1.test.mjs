@@ -302,3 +302,28 @@ test('invalid, corrupt, oversized, untrusted and forbidden screen preferences fa
   }});
   second.action('zoom-in');assert.equal(second.getState().zoom,1.5);
 });
+
+test('Disconnect releases room-local microphone testing without claiming to mute ChatGPT Voice',async()=>{
+  for(const [actionId,phase] of [['stop','microphonePending'],['disconnect-window','microphoneActive']]){
+    let local={microphonePending:phase==='microphonePending',microphoneActive:phase==='microphoneActive'};
+    let localStops=0;
+    const audio={
+      getState:()=>({...local,inputs:[],outputs:[],status:'Local browser audio test only.'}),
+      stopMicrophone:()=>{localStops++;local={microphonePending:false,microphoneActive:false};}
+    };
+    const h=fixture({audio});h.screen.render();
+    const stopped=h.screen.action(actionId);
+    assert.equal(localStops,1,'pending or live room-local capture must end synchronously on Disconnect');
+    assert.equal(h.calls.filter(call=>call[0]==='stop').length,1,'native window stop must still execute');
+    assert.equal(h.screen.getState().keyboardEnabled,false,'window input must be revoked immediately');
+    await stopped;
+    assert.equal(h.screen.getState().audio.microphonePending,false);
+    assert.equal(h.screen.getState().audio.microphoneActive,false);
+    assert.deepEqual(h.inputs,[],'Disconnect never sends an app key or ChatGPT message');
+    h.screen.render();
+    assert.ok(h.contexts[0].texts.some(entry=>entry.text.includes('Disconnect does not mute or end Voice')),
+      'local microphone release is never represented as ending original ChatGPT Voice');
+    await h.screen.action('stop');
+    assert.equal(localStops,1,'an already stopped local microphone must not be reactivated or stopped again');
+  }
+});
