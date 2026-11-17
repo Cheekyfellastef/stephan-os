@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {request} from 'node:http';
+import {readFileSync} from 'node:fs';
 import {createSpatialWindowHost} from '../scripts/spatial-window-host.mjs';
 import {validateSpatialSurfaceInput as valid} from '../shared/vr/spatialDesktopSurfaceContractV1.mjs';
 import {screenPointToSource,SCREEN_CONTENT,SCREEN_BUTTONS} from '../apps/spatial-bridge/holodeck-screen-v1.mjs';
@@ -84,4 +85,21 @@ test('local desktop host rejects other origins, forged windows, replay and expir
     time+=90001;assert.equal((await send('/frame',{},token)).code,403);
     await send('/session');assert.ok(stops>=2);
   }finally{await new Promise(resolve=>server.close(resolve));}
+});
+
+
+test('native editable-target source refuses readonly documents, uncertain replay and unfocused Enter',()=>{
+  const source=readFileSync(new URL('../src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp',import.meta.url),'utf8');
+  assert.match(source,/get_CurrentIsKeyboardFocusable/);
+  assert.match(source,/get_CurrentIsReadOnly\(&readOnly\)/);
+  assert.match(source,/if\(!pattern\|\|FAILED\(pattern->get_CurrentIsReadOnly\(&readOnly\)\)\|\|readOnly\)/);
+  assert.match(source,/STATE_SYSTEM_READONLY\|STATE_SYSTEM_PROTECTED\|STATE_SYSTEM_UNAVAILABLE/);
+  assert.match(source,/GetAttributeValue\(UIA_IsReadOnlyAttributeId,&attribute\)/);
+  assert.match(source,/if\(!editable\)return false/);
+  assert.match(source,/put_AutoSetFocus\(FALSE\)/);
+  assert.match(source,/FAILED\(accessibility->put_ConnectionTimeout\(1500\)\)/);
+  assert.match(source,/FAILED\(accessibility->put_TransactionTimeout\(1500\)\)/);
+  assert.match(source,/return Reply\(SUCCEEDED\(result\)\?L"app-control-invoked":L"app-control-outcome-unverified"\)/);
+  assert.match(source,/if\(selectedEditor\)return Reply\(L"editor-key-focus-unverified"\)/);
+  assert.doesNotMatch(source,/\bSendInput\s*\(/,'no global synthetic input on the VR browser desktop');
 });
