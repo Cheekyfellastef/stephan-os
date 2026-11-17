@@ -237,10 +237,14 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
   }
   async function poll(current) {
     if(!active||!currentEpoch(current))return;
+    // A failed response cannot prove whether the selected app applied its input.
+    // Keep this uncertainty visible rather than inviting a duplicate Send/key.
+    let inputAttempted=false;
     try{
       const input=queue.shift();
       if(input){
         // Serialize capture and input; each operator action is sent once only.
+        inputAttempted=true;
         const result=await request('/input',{...input,sequence:++sequence});
         if(current!==epoch)return;
         if(!publishCurrent(current,{inputStatus:({
@@ -272,7 +276,11 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
         }
       }else{generation=0;queue=[];publish({status:'waiting',inputStatus:'Input paused. Wait for a live picture of your app.',message:'Waiting for your app. Restore a minimized window or reconnect if it closed.'});}
       if(active&&currentEpoch(current))timer=setTimer(()=>poll(current),queue.length?0:67);
-    }catch{if(current===epoch){active=false;generation=0;queue=[];image=null;publish({status:'unavailable',inputStatus:'Input paused. Reconnect the selected app.',message:'Window connection lost. Your conversation remains in the original app.'});}}
+    }catch{if(current===epoch){active=false;generation=0;queue=[];image=null;publish({status:'unavailable',
+      inputStatus:inputAttempted
+        ?'The last input may already have changed the selected app. Inspect its draft before reconnecting; do not resend automatically.'
+        :'Input paused. Reconnect the selected app.',
+      message:'Window connection lost. Your conversation remains in the original app.'});}}
   }
   function input(value){
     if(capture?.phase==='live'){publish({inputStatus:'View-only capture: connect the native Windows helper to type or click.'});return false;}
