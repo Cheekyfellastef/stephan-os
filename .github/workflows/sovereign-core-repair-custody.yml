@@ -4,6 +4,11 @@ on:
     paths:
       - 'scripts/sovereign-commander-stephanos-repair*'
       - 'scripts/stephanos-core-daemon.mjs'
+      - 'scripts/stephanos-core-daemon-repair-continuation.test.mjs'
+      - 'scripts/sovereign-core-repair-*'
+      - 'shared/agents/stephanosCoreRepairAttemptV1*'
+      - 'shared/agents/durableFlywheelControllerVNext.mjs'
+      - 'shared/agents/durableFlywheelMaintenanceContinuation.test.mjs'
       - 'shared/agents/sovereignMaintenanceAdmissionV1*'
       - 'scripts/sovereign-commander-control-plane-repair*'
       - 'scripts/sovereign-core-job-custody*'
@@ -47,6 +52,7 @@ on:
       - 'scripts/windows/read-sovereign-maintenance-boot-witness.ps1'
       - 'scripts/windows/sovereign-maintenance-audit-anchor.ps1'
       - 'shared/agents/sovereignCommanderV1*'
+      - 'shared/agents/sovereignCommanderRemoteMailboxV1*'
       - 'shared/agents/sovereignCommanderMcp*'
       - 'shared/agents/sovereignCommanderHttp*'
       - 'scripts/windows/SovereignCoreJobCustodyV1.cs'
@@ -93,6 +99,15 @@ jobs:
       - name: Retained migration and held-owner adversarial regressions
         run: node --test scripts/sovereign-maintenance-owner-observation-v2.test.mjs scripts/sovereign-maintenance-retained-migration-v2.test.mjs
 
+      - name: Original Core request continuation across restart and lost replies
+        run: >-
+          node --test
+          scripts/sovereign-core-repair-owner-transport-v1.test.mjs
+          scripts/sovereign-core-repair-custody-continuation-v1.test.mjs
+          scripts/sovereign-core-repair-continuation-integration.test.mjs
+          shared/agents/stephanosCoreRepairAttemptV1.test.mjs
+          scripts/stephanos-core-daemon-repair-continuation.test.mjs
+          shared/agents/durableFlywheelMaintenanceContinuation.test.mjs
       - name: Observation remains reachable without remote source proof
         run: node --test scripts/sovereign-observation-offline-regression.test.mjs
       - name: Disjoint constrained frontend start-only and existing server regression

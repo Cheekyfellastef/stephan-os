@@ -36,6 +36,10 @@ import {
   projectOctopusFailedRepairLearningEventV1,
 } from '../shared/agents/stephanosCorePersistentFlywheelV1.mjs';
 import { projectStephanosCoreOnionContinuationV1 } from '../shared/agents/stephanosCoreOnionContinuationV1.mjs';
+import { createCoreRepairAttemptControllerV1 } from '../shared/agents/stephanosCoreRepairAttemptV1.mjs';
+import {
+  querySovereignMaintenanceRequestStatusV1, prepareSovereignMaintenanceRequestV1,
+} from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
 import {
   buildStephanosExecutionCommandEnvelopeV1,
@@ -64,7 +68,6 @@ import {
   publishSharedWorkspaceStephanosBuildTruth,
 } from './sovereign-controller-lane-status.mjs';
 import {
-  ensureSovereignCommanderRuntime,
   probeSovereignCommanderRuntimeCompatibility,
 } from './sovereign-commander-ignition-autoheal.mjs';
 
@@ -214,6 +217,8 @@ async function persistentFlywheelEventFingerprint() {
 }
 
 let flywheelCycleRunning = false;
+let dependencyRepairRunning = false;
+let coreRepairAttempts = null;
 let flywheelCurrentStage = 'IDLE';
 let flywheelStageStartedAtUtc = '';
 
@@ -331,6 +336,29 @@ async function publishControllerLaneTruth() {
 }
 
 async function runBoundedDependencyMaintenance(actionId, sourceHead, missionId) {
+  return coreRepairAttempts.execute({ actionId, missionId, phase: 'backend',
+    admit: async () => await assertCoreRepairOwner() && !(await gamingActive()),
+    dispatch: continuation => dispatchCoreMaintenance(continuation),
+  });
+}
+
+async function assertCoreRepairOwner() {
+  if (shuttingDown || !(await readExactCurrentLock(ownedLock.identity))) return false;
+  try { return currentHead() === sourceHead; } catch { return false; }
+}
+
+async function coreAffectedWorkAdmitted() {
+  return await assertCoreRepairOwner() && !(await gamingActive())
+    && canonicalMissionWorkerEvidenceAllowsWork(readCanonicalMissionWorkerHeartbeatAgeMs({ workspaceRoot, expectedSourceHead: sourceHead }));
+}
+
+async function runCoreAffectedWork(run) {
+  const result = await coreRepairAttempts.runAffectedWork({ admit: coreAffectedWorkAdmitted, run });
+  if (result.ok !== true) throw new Error(result.blocker || 'CORE_REPAIR_CURRENT_ADMISSION_HELD');
+  return result.result;
+}
+
+async function dispatchCoreMaintenance(continuation) {
   const catalog = buildStephanosExecutionSurfaceCatalogV1({
     repositoryRoot: repoRoot,
     sharedWorkspaceRoot: workspaceRoot,
@@ -338,20 +366,67 @@ async function runBoundedDependencyMaintenance(actionId, sourceHead, missionId) 
   const envelope = buildStephanosExecutionCommandEnvelopeV1({
     catalog,
     surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
-    actionId: `stephanos-core-dependency-self-heal-${lastDependencySelfHealAttemptCount}-${actionId}`,
-    missionId,
-    relatedIssue: RELATED_ISSUE,
+    actionId: continuation.requestId,
+    missionId: continuation.missionId,
+    relatedIssue: '#2961',
     operation: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
-    payload: { actionId },
-    proofRefs: [PROOF_REF, `source:${sourceHead}`],
+    payload: { actionId: continuation.actionId },
+    proofRefs: [PROOF_REF, `source:${continuation.sourceHead}`],
   });
-  return executeSovereignCommanderCommandV1(envelope, { repoRoot });
+  return executeSovereignCommanderCommandV1(envelope, { repoRoot, coreContinuation: continuation });
+}
+
+async function resumeOriginalCoreMaintenance(sourceHead) {
+  const pending = coreRepairAttempts.pendingAttempt();
+  if (!pending) return null;
+  const { continuation, phase } = pending;
+  // Reconcile may retire a never-reserved stale preparation through owner
+  // metadata. A still-pending old-source identity must never reach execution.
+  if (continuation.sourceHead !== sourceHead) return Object.freeze({ ok: false, attempted: false,
+    blocker: 'CORE_REPAIR_SOURCE_ADVANCED_ORIGINAL_RETAINED', originalOutcomeProven: false });
+  if (continuation.missionId === 'stephanos-core-backend-self-heal'
+      && continuation.actionId === BATTLE_BRIDGE_SELF_HEAL_ACTION_ID)
+    return runBoundedDependencyMaintenance(continuation.actionId, sourceHead, continuation.missionId);
+  if (continuation.missionId === 'stephanos-core-octopus-self-heal'
+      && [OCTOPUS_SELF_HEAL_ACTION_ID, CONTROL_PLANE_SELF_HEAL_ACTION_ID].includes(continuation.actionId))
+    return runBoundedOctopusMaintenance(continuation.actionId, sourceHead, phase);
+  return Object.freeze({ ok: false, attempted: false, blocker: 'CORE_REPAIR_ORIGINAL_INTENT_UNSUPPORTED',
+    originalOutcomeProven: false });
 }
 
 async function maybeRepairCoreDependencies(state, sourceHead) {
   const repairRequired = state.sovereignCommanderHealthy !== true
     || state.backendHealthy !== true
     || state.missionWorkerHealthy !== true;
+  // A no-work health observation must not acquire the repair controller ahead
+  // of every material Flywheel wake. Retained intent still takes the original
+  // reconciliation path; Flywheel authenticates its own affected admission.
+  if (!repairRequired && !coreRepairAttempts.pendingAttempt()) {
+    lastDependencySelfHealVerdict = 'CORE_DEPENDENCIES_HEALTHY';
+    lastDependencySelfHealBlocker = '';
+    return Object.freeze({ attempted: false, recovered: true });
+  }
+  // Only retained work needs an up-front owner reconciliation. No-action
+  // dependency observations must not hold this controller while Flywheel is
+  // awaiting its own fresh admission. New execute() calls observe independently.
+  if (coreRepairAttempts.pendingAttempt()) await coreRepairAttempts.reconcile();
+  // A fresh healthy sample does not cancel an original prepared repair. The
+  // existing owner alone proves no launch or terminal release; resume only the
+  // retained action through its ordinary current guards before choosing work.
+  const resumed = await resumeOriginalCoreMaintenance(sourceHead);
+  if (resumed) {
+    if (resumed.attempted === true) {
+      lastDependencySelfHealAtMs = Date.now();
+      lastDependencySelfHealAtUtc = new Date(lastDependencySelfHealAtMs).toISOString();
+      lastDependencySelfHealAttemptCount += 1;
+    }
+    lastDependencySelfHealVerdict = resumed.attempted === true
+      ? 'CORE_REPAIR_ORIGINAL_ATTEMPT_OBSERVED' : 'CORE_REPAIR_ORIGINAL_ATTEMPT_HELD';
+    lastDependencySelfHealBlocker = String(resumed.blocker || '').slice(0, 160);
+    lastDependencySelfHealProofHashes = Object.freeze(resumed.proofHash ? [String(resumed.proofHash)] : []);
+    return Object.freeze({ attempted: resumed.attempted === true, recovered: false,
+      originalContinuationRetained: true, blocker: lastDependencySelfHealBlocker });
+  }
   if (!repairRequired) {
     lastDependencySelfHealVerdict = 'CORE_DEPENDENCIES_HEALTHY';
     lastDependencySelfHealBlocker = '';
@@ -379,15 +454,13 @@ async function maybeRepairCoreDependencies(state, sourceHead) {
   const proofHashes = [];
 
   if (state.sovereignCommanderHealthy !== true) {
-    const commander = await ensureSovereignCommanderRuntime({ repoRoot });
-    if (!commander?.ok) {
-      lastDependencySelfHealVerdict = 'SOVEREIGN_COMMANDER_BOOTSTRAP_BLOCKED';
-      lastDependencySelfHealBlocker = String(
-        commander?.blocker || 'SOVEREIGN_COMMANDER_BOOTSTRAP_BLOCKED',
-      ).slice(0, 160);
-      lastDependencySelfHealProofHashes = Object.freeze(proofHashes);
-      return Object.freeze({ attempted: true, recovered: false });
-    }
+    // The Core cannot durably deduplicate a bootstrap of the very owner that
+    // authenticates maintenance history. Leave recovery with the established
+    // independent supervisor; do not launch an untracked fallback process.
+    lastDependencySelfHealVerdict = 'SOVEREIGN_COMMANDER_BOOTSTRAP_CONTINUITY_HELD';
+    lastDependencySelfHealBlocker = 'CORE_REPAIR_OWNER_BOOTSTRAP_HISTORY_UNPROVEN';
+    lastDependencySelfHealProofHashes = Object.freeze(proofHashes);
+    return Object.freeze({ attempted: false, recovered: false });
   }
 
   const commanderHealthy = await probe(
@@ -450,6 +523,17 @@ async function maybeRepairCoreDependencies(state, sourceHead) {
   return Object.freeze({ attempted: true, recovered });
 }
 
+function startOptionalDependencyRepair(state, sourceHead) {
+  if (dependencyRepairRunning) return;
+  dependencyRepairRunning = true;
+  // Keep optional owner IO/maintenance off the heartbeat path. The durable
+  // attempt controller serializes this with detached goal-builder repair.
+  void maybeRepairCoreDependencies(state, sourceHead).catch(() => {
+    lastDependencySelfHealVerdict = 'CORE_DEPENDENCY_SELF_HEAL_CONTINUATION_HELD';
+    lastDependencySelfHealBlocker = coreRepairAttempts?.snapshot().blocker || 'CORE_REPAIR_OPTIONAL_ACTION_FAILED';
+  }).finally(() => { dependencyRepairRunning = false; });
+}
+
 async function runBoundedOctopusMaintenance(actionId, sourceHead, phase) {
   // The asynchronous refill/escalation may outlive cycle-entry evidence.
   // Every initial, control-plane and retry edge shares this admission point.
@@ -469,17 +553,16 @@ async function runBoundedOctopusMaintenance(actionId, sourceHead, phase) {
   if (native?.ok !== true || native.sourceHead !== sourceHead
       || !native.profiles?.includes('MAINTENANCE_GOAL_BUILDER_V1'))
     return unqualifiedCoreWindowsRepairV1();
-  const catalog = buildStephanosExecutionSurfaceCatalogV1({
-    repositoryRoot: repoRoot, sharedWorkspaceRoot: workspaceRoot,
+  return coreRepairAttempts.execute({ actionId, missionId: 'stephanos-core-octopus-self-heal', phase,
+    admit: async () => {
+      if (!(await assertCoreRepairOwner()) || await gamingActive()
+        || !canonicalMissionWorkerEvidenceAllowsWork(readCanonicalMissionWorkerHeartbeatAgeMs({ workspaceRoot, expectedSourceHead: sourceHead }))) return false;
+      const current = inspectFixedRuntimeQualificationV1();
+      return current?.ok === true && current.sourceHead === sourceHead
+        && current.profiles?.includes('MAINTENANCE_GOAL_BUILDER_V1');
+    },
+    dispatch: continuation => dispatchCoreMaintenance(continuation),
   });
-  const envelope = buildStephanosExecutionCommandEnvelopeV1({
-    catalog, surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
-    actionId: `stephanos-core-native-goal-repair-${lastOctopusSelfHealAttemptCount}-${phase}`,
-    missionId: 'stephanos-core-octopus-self-heal', relatedIssue: OCTOPUS_SELF_HEAL_RELATED_ISSUE,
-    operation: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
-    payload: { actionId }, proofRefs: [PROOF_REF, `source:${sourceHead}`],
-  });
-  return executeSovereignCommanderCommandV1(envelope, { repoRoot });
 }
 
 async function runBoundedOctopusSelfHeal(sourceHead) {
@@ -581,9 +664,10 @@ async function maybeSelfHealOctopus(sourceHead) {
   if (!selfHeal.ok) return;
 
   try {
-    const verificationRefill = await runBattleBridgeGoalDiscoveryHeartbeat({
+    if (coreRepairAttempts.snapshot().held || !(await assertCoreRepairOwner()) || await gamingActive()) return;
+    const verificationRefill = await runCoreAffectedWork(() => runBattleBridgeGoalDiscoveryHeartbeat({
       maxWorkConservingAttempts: TARGET_MATERIAL_LANES,
-    });
+    }));
     lastRefillSummary = summarizePersistentRefillSweep(verificationRefill);
     if (lastRefillSummary.refillMaterialActionsSucceeded > 0) {
       lastOctopusMaterialBuildAtUtc = new Date().toISOString();
@@ -714,6 +798,10 @@ function persistentFlywheelStatus() {
     dependencySelfHealLastVerdict: lastDependencySelfHealVerdict,
     dependencySelfHealLastBlocker: lastDependencySelfHealBlocker,
     dependencySelfHealProofHashes: lastDependencySelfHealProofHashes,
+    dependencyRepairRunning,
+    repairContinuation: coreRepairAttempts?.snapshot() || {
+      held: true, blocker: 'CORE_REPAIR_CONTINUATION_NOT_RESTORED', originalOutcomeProven: false,
+    },
     canonicalSchedulerDelegation: true,
     duplicateSchedulerAllowed: false,
     onionContinuation: lastOnionContinuation,
@@ -758,13 +846,16 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false,
 
   void (async () => {
     try {
+      await coreRepairAttempts.reconcile();
       // Keep Octopus construction work ahead of analytical reconciliation. A
       // slow or failed Flywheel pass must not starve the canonical 15-lane
       // refill path that actually produces material source changes.
       try {
-        const refill = await runBattleBridgeGoalDiscoveryHeartbeat({
+        if (coreRepairAttempts.snapshot().held) throw new Error(coreRepairAttempts.snapshot().blocker);
+        if (!(await assertCoreRepairOwner()) || await gamingActive()) throw new Error('CORE_REPAIR_CURRENT_ADMISSION_UNPROVEN');
+        const refill = await runCoreAffectedWork(() => runBattleBridgeGoalDiscoveryHeartbeat({
           maxWorkConservingAttempts: TARGET_MATERIAL_LANES,
-        });
+        }));
         lastRefillSummary = summarizePersistentRefillSweep(refill);
         if (lastRefillSummary.refillMaterialActionsSucceeded > 0) {
           lastOctopusMaterialBuildAtUtc = new Date().toISOString();
@@ -790,7 +881,13 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false,
       // signals. Consume the signal through the existing bounded Sovereign
       // goal-builder recovery path, then verify with another canonical refill.
       markFlywheelStage('SELF_HEAL');
-      await maybeSelfHealOctopus(sourceHead);
+      try { await maybeSelfHealOctopus(sourceHead); }
+      catch {
+        // The original durable attempt stays retained by its controller.
+        // An optional maintenance error cannot reject this detached cycle.
+        lastOctopusSelfHealVerdict = 'OCTOPUS_SELF_HEAL_CONTINUATION_HELD';
+        lastOctopusSelfHealBlocker = coreRepairAttempts.snapshot().blocker || 'CORE_REPAIR_OPTIONAL_ACTION_FAILED';
+      }
 
       // Reconcile after the material build/refill attempt so Flywheel
       // degradation cannot suppress Octopus construction progress.
@@ -799,14 +896,19 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false,
         if (!canonicalMissionWorkerEvidenceAllowsWork(readCanonicalMissionWorkerHeartbeatAgeMs({ workspaceRoot, expectedSourceHead: sourceHead }))) {
           throw new Error('MISSION_WORKER_CUSTODY_UNPROVEN');
         }
-        const result = await runDurableFlywheelStartupCycle({}, {
+        const cycleOptions = {
           sourceRevision: sourceHead,
           repoRoot,
           root: workspaceRoot,
           workspaceRoot,
           env: process.env,
           calibrationTrigger: 'CORE_DAEMON',
-        });
+        };
+        const affected = await coreRepairAttempts.runAffectedWork({ admit: coreAffectedWorkAdmitted,
+          run: () => runDurableFlywheelStartupCycle({}, cycleOptions) });
+        const result = affected.ok === true ? affected.result
+          : await runDurableFlywheelStartupCycle({}, { ...cycleOptions,
+            maintenanceContinuationHold: { blocker: affected.blocker || 'CORE_REPAIR_ORIGINAL_RESULT_UNPROVEN' } });
         lastFlywheelSummary = summarizePersistentFlywheelResult(result);
         lastGapClosureSummary = summarizePersistentGapClosure(result?.learningGoalReconciliation);
         lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
@@ -836,6 +938,10 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false,
         markFlywheelStage('RECONCILE_ONION');
         await reconcileOnionContinuation({});
       }
+    } catch {
+      // Final containment includes optional reconciliation/publication errors;
+      // lock and source checks remain in the main owner loop and every action.
+      lastFlywheelError = 'CORE_OPTIONAL_FLYWHEEL_CYCLE_FAILED';
     } finally {
       lastFlywheelCycleAtMs = Date.now();
       lastFlywheelCycleFinishedAtUtc = new Date().toISOString();
@@ -843,7 +949,7 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false,
       flywheelCurrentStage = 'IDLE';
       flywheelStageStartedAtUtc = '';
     }
-  })();
+  })().catch(() => { lastFlywheelError = 'CORE_OPTIONAL_FLYWHEEL_CYCLE_FAILED'; });
 
   return trigger;
 }
@@ -1204,6 +1310,15 @@ if (!ownedLock) {
   process.exit(0);
 }
 
+let shuttingDown = false;
+coreRepairAttempts = createCoreRepairAttemptControllerV1({
+  workspaceRoot, repoRoot, observerSourceHead: sourceHead,
+  assertCoreOwner: assertCoreRepairOwner,
+  readOwnerStatus: request => querySovereignMaintenanceRequestStatusV1(request),
+  prepareOwner: request => prepareSovereignMaintenanceRequestV1(request),
+});
+await coreRepairAttempts.restore();
+
 // Restore retained parent intent before the first heartbeat can replace the
 // status record while background refill is still awaiting its own outcome.
 // This projection grants no execution, scheduler or merge authority.
@@ -1215,7 +1330,6 @@ const sovereignOuterBridge = createSovereignOuterBridgeSupervisorV1({
   root: repoRoot, workspaceRoot,
 });
 
-let shuttingDown = false;
 async function cleanup() {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -1264,8 +1378,8 @@ try {
       gamingActive: observedState.gamingActive,
       shutdown: shuttingDown,
     });
-    const dependencyRepair = await maybeRepairCoreDependencies(observedState, sourceHead);
-    const state = dependencyRepair.attempted ? await sample(sourceHead) : observedState;
+    startOptionalDependencyRepair(observedState, sourceHead);
+    const state = observedState;
     await maybeStartPersistentFlywheel(sourceHead, state.gamingActive, state);
     await publish(state, new Date().toISOString(), persistentFlywheelStatus(), {
       worker: await readJsonIfPresent(workerHeartbeatPath),
