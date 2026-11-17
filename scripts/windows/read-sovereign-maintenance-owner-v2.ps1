@@ -75,6 +75,10 @@ function Get-StephanosCanonicalNodeIdentityV1 {
         if ($created -le [datetime]::MinValue -or $created -gt [datetime]::UtcNow) {
             return [pscustomobject]@{ ok = $false; diagnosticCode = 'OWNER_PROCESS_BIRTH_UNAVAILABLE' }
         }
+        $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+        if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            return [pscustomobject]@{ ok = $false; diagnosticCode = 'OWNER_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN' }
+        }
         Initialize-StephanosCanonicalNodeIdentityV1
         $code = [Stephanos.ReadOnlyCanonicalNodeIdentityV1]::Observe([uint32]$ProcessRow.ProcessId, [long]$created.Ticks)
         return [pscustomobject]@{ ok = ($code -ceq ''); diagnosticCode = $code }

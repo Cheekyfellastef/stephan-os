@@ -80,7 +80,14 @@ function Get-StephanosCoreProcessObservation {
                 if ($attempted -lt 64) {
                     $attempted++
                     if (-not $nativeReaderLoaded) {
-                        # This helper may be needed by the elevated recovery child.
+                        # This fallback is a normal-token observation only. An
+                        # elevated caller must never load checkout helper bytes.
+                        $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+                        if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+                            $nativeFailure = 'CORE_PROCESS_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN'
+                            $row
+                            continue
+                        }
                         # Never execute a mutable filesystem path by dot-sourcing.
                         # Bind the exact canonical UTF-8 source bytes, then execute
                         # only that verified in-memory ScriptBlock.
@@ -97,7 +104,7 @@ function Get-StephanosCoreProcessObservation {
                         try {
                             $sourceDigest = ([BitConverter]::ToString($digest.ComputeHash($canonicalBytes))).Replace('-', '').ToLowerInvariant()
                         } finally { $digest.Dispose() }
-                        if ($sourceDigest -cne 'a00610021f2ed29c3c18189e1ed65f261dc66a3de9e889aa394f46a78a40c261') {
+                        if ($sourceDigest -cne 'd3c82d73d6d1354864e006179a4e3840294fc738b84c731305d3154a027bf956') {
                             throw 'CORE_PROCESS_NATIVE_HELPER_SOURCE_UNPROVEN'
                         }
                         . ([ScriptBlock]::Create($canonicalSource))

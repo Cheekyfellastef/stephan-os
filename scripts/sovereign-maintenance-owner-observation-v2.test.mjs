@@ -1,12 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readMaintenanceOwnerObservationV2, readMaintenanceNativeOwnerV2,
   MAINTENANCE_OWNER_DIAGNOSTIC_CODES_V1, maintenanceNativeOwnerDiagnosticCodeV2 } from './sovereign-maintenance-owner-observation-v2.mjs';
 const ownerScript = fileURLToPath(new URL('./windows/read-sovereign-maintenance-owner-v2.ps1', import.meta.url));
+const principalConstruction = '[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())';
+function ownerTokenFixture(t, principalType) {
+  const source = readFileSync(ownerScript, 'utf8');
+  assert.equal(source.split(principalConstruction).length, 2, 'one actual token boundary must be exercised');
+  const root = mkdtempSync(join(tmpdir(), 'owner-token-fixture-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const path = join(root, 'owner.ps1');
+  writeFileSync(path, source.replace(principalConstruction, `[${principalType}]::new()`));
+  return path.replace(/'/g, "''");
+}
 const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const native = () => ({ schemaVersion: 'stephanos.maintenance-owner-native-observation.v2',
   pid: 10, createdAtUtc: new Date(Date.now() - 60_000).toISOString(),
@@ -136,11 +148,13 @@ test('shared native identity adapter requests only limited read rights and retai
   assert.match(source, /finally \{ CloseHandle\(process\); \}/);
   assert.match(source, /if \(\$MyInvocation\.InvocationName -ne '\.'\)/);
   assert.match(source, /LocalPort = 18791 AND State = 2/);
+  const guard = source.indexOf('OWNER_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN');
+  assert.ok(guard > 0 && guard < source.lastIndexOf('Initialize-StephanosCanonicalNodeIdentityV1'));
   assert.doesNotMatch(source, /\b(?:AdjustTokenPrivileges|ReadProcessMemory|WriteProcessMemory|TerminateProcess|CreateProcess|SetTokenInformation)\b|0x1[Ff]0[Ff][Ff][Ff]/);
 });
 
 function runPowerShell(script) {
-  return spawnSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
+  return spawnSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand',
     Buffer.from(script, 'utf16le').toString('base64')],
   { encoding: 'utf8', windowsHide: true, shell: false, timeout: 20_000, maxBuffer: 32_768 });
 }
@@ -165,7 +179,7 @@ exit 0
   });
 
 test('Windows owner actual fixed body preserves listener, visible command and native birth exclusions',
-  { skip: process.platform !== 'win32' }, () => {
+  { skip: process.platform !== 'win32' }, t => {
     const script = `
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
@@ -173,7 +187,8 @@ $PSModuleAutoLoadingPreference='All'
 $beforePreference=$PSModuleAutoLoadingPreference
 $script:reads=0
 function Get-CimInstance { $script:reads++; throw 'UNEXPECTED_OBSERVATION' }
-$loaded=@(. '${ownerScript.replace(/'/g, "''")}')
+class OwnerFixtureLimitedPrincipal { [bool] IsInRole([object]$role) { return $false } }
+$loaded=@(. '${ownerTokenFixture(t, 'OwnerFixtureLimitedPrincipal')}')
 if($loaded.Count -ne 0 -or $script:reads -ne 0 -or $PSModuleAutoLoadingPreference -ne $beforePreference){throw 'DOT_SOURCE_NOT_INERT'}
 Add-Type -TypeDefinition @'
 namespace Stephanos { public static class ReadOnlyCanonicalNodeIdentityV1 {
@@ -226,6 +241,23 @@ Write-Output 'OWNER_FALLBACK_BOUNDARY_PASS'
     const result = runPowerShell(script);
     assert.equal(result.status, 0, result.stderr || result.error?.message);
     assert.match(result.stdout, /OWNER_FALLBACK_BOUNDARY_PASS/);
+  });
+
+test('Windows owner native fallback rejects an administrator-enabled token before initialization',
+  { skip: process.platform !== 'win32' }, t => {
+    const result = runPowerShell(`
+$ErrorActionPreference='Stop'
+class OwnerFixtureElevatedPrincipal { [bool] IsInRole([object]$role) { return $true } }
+. '${ownerTokenFixture(t, 'OwnerFixtureElevatedPrincipal')}'
+$script:initialized=0
+function Initialize-StephanosCanonicalNodeIdentityV1 { $script:initialized++; throw 'NATIVE_INITIALIZATION_FORBIDDEN' }
+$row=[pscustomobject]@{Name='node.exe';ProcessId=7;CommandLine='visible';CreationDate=[datetime]::UtcNow.AddMinutes(-1)}
+$held=Get-StephanosCanonicalNodeIdentityV1 -ProcessRow $row
+if($held.ok -or $held.diagnosticCode -cne 'OWNER_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN' -or $script:initialized -ne 0){throw 'ELEVATED_FALLBACK_ADMITTED'}
+Write-Output 'OWNER_ELEVATED_FALLBACK_REFUSED'
+`);
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
+    assert.match(result.stdout, /OWNER_ELEVATED_FALLBACK_REFUSED/);
   });
 
 test('Windows native limited-query adapter rejects a real foreign image and a changed birth',
