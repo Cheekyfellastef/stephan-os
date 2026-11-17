@@ -1,5 +1,6 @@
 // Exercise the original #2002 runtime proof gate in existing GitHub-hosted dashboard CI.
 import './goalBuildingAgentV1.observation.test.mjs';
+import './goalBuildConveyorOverviewV1.controller-freshness.test.mjs';
 import { projectGoalBuildConveyorOverviewV1 as project } from './goalBuildConveyorOverviewV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
