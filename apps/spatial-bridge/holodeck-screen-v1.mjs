@@ -213,6 +213,10 @@ export function createHolodeckScreen({client,comfort,furniture,audio,storage,doc
     connectionPending='Disconnecting the selected window…';connectionMessage='';
     let stopped;
     try{stopped=client.stop();}catch(error){stopped=Promise.reject(error);}
+    // Disconnect must also release a room-local microphone test, including a
+    // pending browser grant. This never mutes or ends ChatGPT Voice in the app.
+    const localMicrophone=audio?.getState?.();
+    if(localMicrophone?.microphoneActive||localMicrophone?.microphonePending)audio.stopMicrophone();
     if(owner===connectionEpoch)changed();
     return settleConnection(owner,stopped);
   }
