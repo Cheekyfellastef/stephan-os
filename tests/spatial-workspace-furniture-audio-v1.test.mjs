@@ -215,7 +215,7 @@ test('explicitly selected device hints survive room reopen only after exact live
 test('malformed or blocked audio preference storage is inert and cannot persist microphone state',async()=>{
   const storageValues=[
     '{', 'x'.repeat(1025), JSON.stringify({version:2,inputId:'old'}),
-    JSON.stringify({version:1,inputId:'bad\\u0000mic',outputId:123}),
+    JSON.stringify({version:1,inputId:'bad\u0000mic',outputId:123}),
     JSON.stringify({version:1,inputId:'x'.repeat(257),outputId:'speaker'}),
   ];
   for(const raw of storageValues){
