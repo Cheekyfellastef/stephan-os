@@ -4969,3 +4969,18 @@ test('positive typed parity proof remains admitted within the original bounded r
   assert.equal(result.completedSteps[0].status, 0);
   assert.notEqual(result.mergeAuthority, true);
 });
+
+test('native child success predicate must reject coerced exit statuses on three fixed probes (#2573)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('./sovereignCommanderRemoteMailboxV1.mjs', import.meta.url), 'utf8');
+  const guarded = source.match(/ok: !result\\?\\.error && result\\?\\.status === 0,/g) || [];
+  assert.equal(guarded.length, 3, 'fixed native child-result consumers require exact numeric zero');
+  assert.doesNotMatch(source, /ok: !result\\?\\.error && Number\\(result\\?\\.status\\) === 0,/);
+  const admitted = (result) => !result?.error && result?.status === 0;
+  assert.equal(admitted({ status: 0 }), true);
+  assert.equal(admitted({ status: 0, error: new Error('failed child') }), false);
+  assert.equal(admitted({ status: 2 }), false);
+  for (const status of [null, undefined, false, true, '', '0', '2']) {
+    assert.equal(admitted({ status }), false, `invalid child status ${String(status)}`);
+  }
+});

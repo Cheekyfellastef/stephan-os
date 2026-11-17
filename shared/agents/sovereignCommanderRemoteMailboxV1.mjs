@@ -318,7 +318,7 @@ function run(spawnSyncFn, executable, args, options = {}) {
     ...options,
   });
   return Object.freeze({
-    ok: !result?.error && Number(result?.status) === 0,
+    ok: !result?.error && result?.status === 0,
     status: Number.isInteger(result?.status) ? result.status : null,
     stdout: String(result?.stdout || ''),
     stderr: String(result?.stderr || ''),
@@ -2803,7 +2803,7 @@ export function inspectCanonicalGitWorktreeConfigV1({
       maxBuffer: 64 * 1024,
     });
     return Object.freeze({
-      ok: !result?.error && Number(result?.status) === 0,
+      ok: !result?.error && result?.status === 0,
       status: Number.isInteger(result?.status) ? result.status : null,
       stdout: String(result?.stdout || ''),
       deadlineExceeded: false,
@@ -2999,7 +2999,7 @@ export function repairCanonicalGitWorktreeConfigV1({
       maxBuffer: 64 * 1024,
     });
     return Object.freeze({
-      ok: !result?.error && Number(result?.status) === 0,
+      ok: !result?.error && result?.status === 0,
       status: Number.isInteger(result?.status) ? result.status : null,
       stdout: String(result?.stdout || ''),
     });
