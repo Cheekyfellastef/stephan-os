@@ -443,6 +443,8 @@ test('live canonical watchdog and exact-head Backend refresh stay green with an 
     safeRefreshesCompleted: true, unknownPathCount: 0, unsafePathCount: 0,
     afterHead: head,
     resultTargets: [{ targetId: 'stephanos-backend-8787', ok: true,
+      canonicalActionVerified: true, unrelatedTasksChanged: false,
+      proofKind: 'canonical-target-readback', blocker: '',
       exactHeadProofOk: true, sourceHead: head }],
   };
   const statusRecords = [staleCore, watchdog, refresh];
@@ -477,6 +479,42 @@ test('live canonical watchdog and exact-head Backend refresh stay green with an 
     { ...watchdog, timestampUtc: at(2000) },
     { ...refresh, timestampUtc: at(1000) }] });
   assert.deepEqual(v.health.map(item => item.state), ['UNKNOWN', 'UNKNOWN', 'UNKNOWN']);
+});
+
+test('exact-head Backend fallback requires unique verified canonical target provenance', () => {
+  const head = 'a'.repeat(40);
+  const canonical = {
+    targetId: 'stephanos-backend-8787', ok: true, exactHeadProofOk: true,
+    sourceHead: head, canonicalActionVerified: true,
+    unrelatedTasksChanged: false, proofKind: 'canonical-target-readback', blocker: '',
+  };
+  const refresh = {
+    statusId: 'post-sync-runtime-refresh-current', timestampUtc: at(-15000),
+    safeRefreshesCompleted: true, unknownPathCount: 0, unsafePathCount: 0,
+    afterHead: head, resultTargets: [canonical],
+  };
+  const backend = targets => project(input(), { ...options,
+    statusRecords: [{ ...refresh, resultTargets: targets }] })
+    .health.find(item => item.id === 'backendHealthy');
+  const omitted = key => { const value = { ...canonical }; delete value[key]; return value; };
+  assert.equal(backend([canonical]).evidenceSource, 'EXACT_HEAD_BACKEND_REFRESH');
+  for (const [reason, target] of [
+    ['canonical false', { ...canonical, canonicalActionVerified: false }],
+    ['canonical omitted', omitted('canonicalActionVerified')],
+    ['unrelated changed', { ...canonical, unrelatedTasksChanged: true }],
+    ['unrelated omitted', omitted('unrelatedTasksChanged')],
+    ['blank proofKind', { ...canonical, proofKind: '' }],
+    ['proofKind omitted', omitted('proofKind')],
+    ['nonempty blocker', { ...canonical, blocker: 'TARGET_EXECUTION_BLOCKED' }],
+    ['blocker omitted', omitted('blocker')],
+  ]) {
+    assert.notEqual(backend([target]).evidenceSource, 'EXACT_HEAD_BACKEND_REFRESH', reason);
+    assert.notEqual(backend([target]).state, 'HEALTHY', reason);
+  }
+  for (const targets of [[canonical, { ...canonical, ok: false }], [canonical, canonical]]) {
+    assert.notEqual(backend(targets).evidenceSource, 'EXACT_HEAD_BACKEND_REFRESH');
+    assert.notEqual(backend(targets).state, 'HEALTHY');
+  }
 });
 
 }

@@ -386,8 +386,10 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
   const watchdog = latestStatus('battle-bridge-worker-watchdog-current');
   const workerProof = watchdog?.finalAssessment;
   const refresh = latestStatus('post-sync-runtime-refresh-current');
-  const backendProof = array(refresh?.resultTargets).find(target =>
+  // Contradictory canonical target identities are not a successful readback.
+  const backendTargets = array(refresh?.resultTargets).filter(target =>
     target?.targetId === 'stephanos-backend-8787');
+  const backendProof = backendTargets.length === 1 ? backendTargets[0] : null;
   const serviceProofAgeMs = Math.min(maxAgeMs, 2 * 60_000);
   const workerProofValid = watchdog?.status === 'WORKER_WATCHDOG_HEALTHY'
     && watchdog?.classification === 'WORKER_WATCHDOG_HEALTHY'
@@ -404,9 +406,14 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     && workerProof.sourceHead === workerProof.canonicalRepositoryHead
     && workerProof.sourceHead === workerProof.remoteMainHead
     && fresh(watchdog.timestampUtc, nowMs, serviceProofAgeMs);
-  const backendProofValid = refresh?.safeRefreshesCompleted === true
+  const backendProofValid = backendTargets.length === 1
+    && refresh?.safeRefreshesCompleted === true
     && refresh?.unknownPathCount === 0 && refresh?.unsafePathCount === 0
     && backendProof?.ok === true && backendProof?.exactHeadProofOk === true
+    && backendProof?.canonicalActionVerified === true
+    && backendProof?.unrelatedTasksChanged === false
+    && typeof backendProof?.proofKind === 'string' && backendProof.proofKind.trim().length > 0
+    && (backendProof?.blocker === '' || backendProof?.blocker === null)
     && /^[a-f0-9]{40}$/.test(String(backendProof?.sourceHead || ''))
     && backendProof.sourceHead === refresh.afterHead
     && fresh(refresh.timestampUtc, nowMs, serviceProofAgeMs);
