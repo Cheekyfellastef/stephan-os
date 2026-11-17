@@ -1,5 +1,8 @@
 import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { win32 } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -19,6 +22,46 @@ const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.e
 const SPLASH = 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os\\scripts\\windows\\launch-starfield-vr-with-splash.ps1';
 const PROFILE = 'C:\\Users\\Stephan\\Documents\\Stephanos-openclaw-workspace\\vr\\starfield-vr-launch-profile.json';
 const EXPECTED_ARGUMENTS = `-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${SPLASH}" -ProfilePath "${PROFILE}"`;
+const REPOSITORY = win32.resolve(ENV.USERPROFILE, 'Documents', 'GitHub', 'stephan-os');
+const SOURCE_PATHS = [
+  'scripts/windows/install-starfield-vr-desktop-shortcut.ps1',
+  'scripts/windows/launch-starfield-vr-with-splash.ps1',
+  'scripts/windows/launch-starfield-vr.ps1',
+];
+const INSTALLER_SOURCE = readFileSync(new URL('../../scripts/windows/install-starfield-vr-desktop-shortcut.ps1', import.meta.url), 'utf8');
+const PRODUCER_SCHEMA = /schemaVersion = '(stephanos\.starfield-vr-shortcut-install\.v[0-9]+)'/.exec(INSTALLER_SOURCE)?.[1];
+const SPLASH_BYTES = Buffer.from('# reviewed splash fixture\r\n');
+const SPLASH_SHA256 = createHash('sha256').update(SPLASH_BYTES).digest('hex');
+
+function readSplash(path) {
+  assert.equal(path, SPLASH, 'the handler may read only the canonical splash for receipt binding');
+  return SPLASH_BYTES;
+}
+
+function installReceipt(overrides = {}) {
+  return {
+    schemaVersion: PRODUCER_SCHEMA,
+    writtenAtUtc: '2026-09-16T00:30:00.000Z',
+    goal: 1591,
+    workerGoal: 1595,
+    shortcutName: 'Starfield VR',
+    shortcutPath: win32.resolve(ENV.USERPROFILE, 'Desktop', 'Starfield VR.lnk'),
+    targetPath: POWERSHELL,
+    arguments: EXPECTED_ARGUMENTS,
+    workingDirectory: REPOSITORY,
+    splashLauncherScript: SPLASH,
+    splashLauncherSha256: SPLASH_SHA256,
+    sourceHead: HEAD,
+    sourceClean: true,
+    sourcePaths: [...SOURCE_PATHS],
+    launcherScript: win32.resolve(REPOSITORY, 'scripts/windows/launch-starfield-vr.ps1'),
+    profilePath: PROFILE,
+    iconPath: POWERSHELL,
+    created: true,
+    finalVerdict: 'STARFIELD_VR_SHORTCUT_INSTALLED',
+    ...overrides,
+  };
+}
 
 function command(operation = STARFIELD_VR_DELIVERY_STATUS_OPERATION, overrides = {}) {
   return {
@@ -85,15 +128,15 @@ function gitResult(args, overrides = {}) {
   throw new Error(`unexpected git args ${JSON.stringify(args)}`);
 }
 
-function spawnHarness({ installed = false, shortcut = shortcutInspection(), gitOverrides = {} } = {}) {
+function spawnHarness({ installed = false, shortcut = shortcutInspection(), gitOverrides = {}, receipt = installReceipt(), observationOverrides = {} } = {}) {
   const calls = [];
-  const probeObservation = observation(installed ? {
+  const probeObservation = observation({ ...(installed ? {
     desktopIconPresent: true,
     splashWrapperPresent: true,
     shortcutRoutesThroughSplash: true,
     installerReceiptPresent: true,
     installerReceiptVerdict: 'STARFIELD_VR_SHORTCUT_INSTALLED',
-  } : {});
+  } : {}), ...observationOverrides });
   return {
     calls,
     spawnSyncFn(executable, args, options) {
@@ -101,12 +144,7 @@ function spawnHarness({ installed = false, shortcut = shortcutInspection(), gitO
       if (executable === 'git') return gitResult(args, gitOverrides);
       if (executable === NODE) return success(probeObservation);
       if (/powershell\.exe$/i.test(executable) && args.includes('-File')) {
-        return success({
-          schemaVersion: 'stephanos.starfield-vr-shortcut-install.v1',
-          shortcutName: 'Starfield VR',
-          created: true,
-          finalVerdict: 'STARFIELD_VR_SHORTCUT_INSTALLED',
-        });
+        return success(receipt);
       }
       if (/powershell\.exe$/i.test(executable) && args.includes('-Command')) return success(shortcut);
       throw new Error(`unexpected executable ${executable}`);
@@ -140,7 +178,7 @@ test('projection preserves only the ordinary canonical command envelope', () => 
 test('read operation verifies canonical committed probe identity and inspects actual shortcut without mutation', async () => {
   const harness = spawnHarness();
   const result = await executeStarfieldVrBattleBridgeCommand(command(), {
-    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: harness.spawnSyncFn,
+    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, readFileSyncFn: readSplash, spawnSyncFn: harness.spawnSyncFn,
   });
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'STARFIELD_VR_DELIVERY_STATUS_NOT_INSTALLED');
@@ -167,7 +205,7 @@ test('read operation verifies canonical committed probe identity and inspects ac
 test('read receipt verdict carries installed truth without publishing local filesystem paths', async () => {
   const harness = spawnHarness({ installed: true });
   const result = await executeStarfieldVrBattleBridgeCommand(command(), {
-    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: harness.spawnSyncFn,
+    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, readFileSyncFn: readSplash, spawnSyncFn: harness.spawnSyncFn,
   });
   assert.equal(result.ok, true);
   assert.equal(result.installed, true);
@@ -177,7 +215,7 @@ test('read receipt verdict carries installed truth without publishing local file
 test('install operation verifies current protected main and both scripts before mutation and requires actual shortcut route proof', async () => {
   const harness = spawnHarness({ installed: true });
   const result = await executeStarfieldVrBattleBridgeCommand(command(STARFIELD_VR_SHORTCUT_INSTALL_OPERATION), {
-    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: harness.spawnSyncFn,
+    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, readFileSyncFn: readSplash, spawnSyncFn: harness.spawnSyncFn,
   });
   assert.equal(result.ok, true);
   assert.equal(result.installed, true);
@@ -210,7 +248,7 @@ test('exact-head mismatch blocks before script identity checks or Windows mutati
   const otherHead = 'b'.repeat(40);
   const calls = [];
   const result = await executeStarfieldVrBattleBridgeCommand(command(STARFIELD_VR_SHORTCUT_INSTALL_OPERATION), {
-    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true,
+    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, readFileSyncFn: readSplash,
     spawnSyncFn: (executable, args, options) => {
       calls.push({ executable, args, options });
       return success(`${otherHead}\n`);
@@ -225,7 +263,7 @@ test('exact-head mismatch blocks before script identity checks or Windows mutati
 test('install blocks if protected main has advanced beyond the approved head', async () => {
   const harness = spawnHarness({ gitOverrides: { githubMainHead: 'b'.repeat(40) }, installed: true });
   const result = await executeStarfieldVrBattleBridgeCommand(command(STARFIELD_VR_SHORTCUT_INSTALL_OPERATION), {
-    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: harness.spawnSyncFn,
+    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, readFileSyncFn: readSplash, spawnSyncFn: harness.spawnSyncFn,
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'STARFIELD_VR_GITHUB_MAIN_HEAD_MISMATCH');
@@ -238,7 +276,7 @@ test('install blocks if protected main has advanced beyond the approved head', a
 test('dirty installer blocks before any PowerShell, probe or delivery proof execution', async () => {
   const harness = spawnHarness({ gitOverrides: { installerWorkingBlob: '3'.repeat(40) }, installed: true });
   const result = await executeStarfieldVrBattleBridgeCommand(command(STARFIELD_VR_SHORTCUT_INSTALL_OPERATION), {
-    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: harness.spawnSyncFn,
+    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, readFileSyncFn: readSplash, spawnSyncFn: harness.spawnSyncFn,
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'STARFIELD_VR_EXECUTED_SCRIPT_DIRTY');
@@ -250,7 +288,7 @@ test('dirty installer blocks before any PowerShell, probe or delivery proof exec
 test('dirty probe blocks install before mutation so modified proof bytes cannot fabricate success', async () => {
   const harness = spawnHarness({ gitOverrides: { probeWorkingBlob: '4'.repeat(40) }, installed: true });
   const result = await executeStarfieldVrBattleBridgeCommand(command(STARFIELD_VR_SHORTCUT_INSTALL_OPERATION), {
-    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: harness.spawnSyncFn,
+    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, readFileSyncFn: readSplash, spawnSyncFn: harness.spawnSyncFn,
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'STARFIELD_VR_EXECUTED_SCRIPT_DIRTY');
@@ -265,7 +303,7 @@ test('stale receipt and replaced shortcut cannot prove the splash route', async 
     shortcut: shortcutInspection({ targetPath: 'C:\\Windows\\System32\\notepad.exe', arguments: '' }),
   });
   const result = await executeStarfieldVrBattleBridgeCommand(command(STARFIELD_VR_SHORTCUT_INSTALL_OPERATION), {
-    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: harness.spawnSyncFn,
+    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, readFileSyncFn: readSplash, spawnSyncFn: harness.spawnSyncFn,
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'STARFIELD_VR_SHORTCUT_INSTALL_NOT_PROVEN');
@@ -276,7 +314,7 @@ test('stale receipt and replaced shortcut cannot prove the splash route', async 
 test('installer receipt alone cannot claim delivery when filesystem probe is not ready', async () => {
   const harness = spawnHarness({ installed: false });
   const result = await executeStarfieldVrBattleBridgeCommand(command(STARFIELD_VR_SHORTCUT_INSTALL_OPERATION), {
-    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true,
+    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, readFileSyncFn: readSplash,
     spawnSyncFn(executable, args, options) {
       if (executable === NODE) return success(observation({
         installerReceiptPresent: true,
@@ -287,4 +325,81 @@ test('installer receipt alone cannot claim delivery when filesystem probe is not
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'STARFIELD_VR_SHORTCUT_INSTALL_NOT_PROVEN');
+});
+
+test('install fixture uses the current PowerShell producer schema', () => {
+  assert.equal(PRODUCER_SCHEMA, 'stephanos.starfield-vr-shortcut-install.v2');
+});
+
+const invalidReceipts = [
+  ['legacy schema', { schemaVersion: 'stephanos.starfield-vr-shortcut-install.v1' }],
+  ['unknown schema', { schemaVersion: 'stephanos.starfield-vr-shortcut-install.v3' }],
+  ['wrong source head', { sourceHead: 'b'.repeat(40) }],
+  ['missing source head', { sourceHead: undefined }],
+  ['dirty source', { sourceClean: false }],
+  ['truthy source claim', { sourceClean: 'true' }],
+  ['missing source paths', { sourcePaths: undefined }],
+  ['extra source path', { sourcePaths: [...SOURCE_PATHS, 'other.ps1'] }],
+  ['different source path', { sourcePaths: [SOURCE_PATHS[0], 'other.ps1', SOURCE_PATHS[2]] }],
+  ['wrong splash path', { splashLauncherScript: win32.resolve(REPOSITORY, 'other.ps1') }],
+  ['wrong splash hash', { splashLauncherSha256: '0'.repeat(64) }],
+  ['missing splash hash', { splashLauncherSha256: undefined }],
+  ['wrong launcher path', { launcherScript: SPLASH }],
+  ['wrong profile path', { profilePath: win32.resolve(REPOSITORY, 'other.json') }],
+  ['wrong working directory', { workingDirectory: ENV.USERPROFILE }],
+  ['wrong target', { targetPath: 'C:\\Windows\\System32\\notepad.exe' }],
+  ['wrong arguments', { arguments: EXPECTED_ARGUMENTS + ' -NoExit' }],
+  ['relative shortcut path', { shortcutPath: 'Desktop\\Starfield VR.lnk' }],
+  ['outside-home shortcut path', { shortcutPath: 'C:\\Other\\Starfield VR.lnk' }],
+  ['wrong shortcut name', { shortcutPath: win32.resolve(ENV.USERPROFILE, 'Desktop', 'Other.lnk') }],
+  ['preview receipt', { created: false, finalVerdict: 'STARFIELD_VR_SHORTCUT_PREVIEWED' }],
+];
+
+for (const [label, overrides] of invalidReceipts) {
+  test(`install refuses ${label} before trusting probe or shortcut evidence`, async () => {
+    const harness = spawnHarness({ installed: true, receipt: installReceipt(overrides) });
+    const result = await executeStarfieldVrBattleBridgeCommand(command(STARFIELD_VR_SHORTCUT_INSTALL_OPERATION), {
+      platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true,
+      readFileSyncFn: readSplash, spawnSyncFn: harness.spawnSyncFn,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'STARFIELD_VR_SHORTCUT_INSTALL_RECEIPT_INVALID');
+    assert.equal(harness.calls.filter((call) => call.args.includes('-File')).length, 1);
+    assert.equal(harness.calls.some((call) => call.executable === NODE || call.args.includes('-Command')), false);
+    assert.doesNotMatch(JSON.stringify(result), /Users|Desktop|notepad|other\.ps1/i);
+  });
+}
+
+test('install receipt must name the actual inspected Desktop shortcut', async () => {
+  const harness = spawnHarness({ installed: true, receipt: installReceipt({
+    shortcutPath: win32.resolve(ENV.USERPROFILE, 'OtherDesktop', 'Starfield VR.lnk'),
+  }) });
+  const result = await executeStarfieldVrBattleBridgeCommand(command(STARFIELD_VR_SHORTCUT_INSTALL_OPERATION), {
+    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true,
+    readFileSyncFn: readSplash, spawnSyncFn: harness.spawnSyncFn,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'STARFIELD_VR_SHORTCUT_INSTALL_RECEIPT_INVALID');
+});
+
+test('unreadable current splash cannot be replaced by the receipt hash claim', async () => {
+  const harness = spawnHarness({ installed: true });
+  const result = await executeStarfieldVrBattleBridgeCommand(command(STARFIELD_VR_SHORTCUT_INSTALL_OPERATION), {
+    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true,
+    readFileSyncFn: () => { throw new Error('fixture read failure'); }, spawnSyncFn: harness.spawnSyncFn,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'STARFIELD_VR_SHORTCUT_INSTALL_RECEIPT_INVALID');
+  assert.equal(harness.calls.some((call) => call.executable === NODE), false);
+});
+
+test('actual shortcut inspection cannot override a production probe route veto', async () => {
+  const harness = spawnHarness({ installed: true, observationOverrides: { shortcutRoutesThroughSplash: false } });
+  const result = await executeStarfieldVrBattleBridgeCommand(command(STARFIELD_VR_SHORTCUT_INSTALL_OPERATION), {
+    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true,
+    readFileSyncFn: readSplash, spawnSyncFn: harness.spawnSyncFn,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'STARFIELD_VR_SHORTCUT_INSTALL_NOT_PROVEN');
+  assert.equal(result.observation.shortcutRoutesThroughSplash, false);
 });

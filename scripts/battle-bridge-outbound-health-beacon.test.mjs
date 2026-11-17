@@ -1,3 +1,4 @@
+import './battle-bridge-outbound-health-beacon-watchdog.test.mjs'; // Original #1291 bounded watchdog regressions in the existing hosted resilience suite.
 import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
