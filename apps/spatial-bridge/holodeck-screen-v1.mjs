@@ -1,6 +1,26 @@
 import {HOLODECK_PANELS,PANEL_BUTTONS,PANEL_CANVAS,CHATGPT_CONTENT,WINDOW_ROWS_PER_PAGE,panelAt,panelButtons,panelButtonAt} from './holodeck-panels-v1.mjs';
 export {HOLODECK_PANELS,PANEL_BUTTONS} from './holodeck-panels-v1.mjs';
 
+// Versioned, presentation-only preferences. Never persist window selection,
+ // consent, microphone state, application thread, text drafts or native input.
+export const SPATIAL_CONVERSATION_PRESENTATION_KEY='stephanos.spatial.conversation-presentation.v1';
+const presentationDefaults=()=>({zoom:1,panX:0,panY:0,focusedPanel:'chatgpt',leftPage:'console',furnitureTarget:'keyboard'});
+export function readSpatialConversationPresentation(storage){
+  const fallback=presentationDefaults();
+  try{
+    const raw=storage?.getItem?.(SPATIAL_CONVERSATION_PRESENTATION_KEY);
+    if(typeof raw!=='string'||raw.length>2048)return fallback;
+    const value=JSON.parse(raw);
+    if(!value||Array.isArray(value)||typeof value!=='object'||value.version!==1)return fallback;
+    const zoom=Number.isFinite(value.zoom)&&value.zoom>=1&&value.zoom<=4?value.zoom:1;
+    const pan=axis=>zoom>1&&Number.isFinite(value[axis])&&value[axis]>=-1&&value[axis]<=1?value[axis]:0;
+    return {zoom,panX:pan('panX'),panY:pan('panY'),
+      focusedPanel:['chatgpt','settings','tools'].includes(value.focusedPanel)?value.focusedPanel:fallback.focusedPanel,
+      leftPage:['console','settings'].includes(value.leftPage)?value.leftPage:fallback.leftPage,
+      furnitureTarget:['keyboard','table'].includes(value.furnitureTarget)?value.furnitureTarget:fallback.furnitureTarget};
+  }catch{return fallback;}
+}
+
 export const SCREEN_ACTIONS=Object.freeze([
   ['fit','Fit'],['zoom-in','Zoom +'],['zoom-out','Zoom −'],
   ['pan-left','View ←'],['pan-right','View →'],['pan-up','View ↑'],['pan-down','View ↓'],
@@ -51,18 +71,32 @@ export function screenPointToSource(u,v,width,height,zoom=1,panX=0,panY=0) {
   const along=value=>Math.max(0,Math.min(1,value));
   return {x:(r.crop.x+along((x-r.x)/r.w)*r.crop.w)/width,y:(r.crop.y+along((y-r.y)/r.h)*r.crop.h)/height};
 }
-export function createHolodeckScreen({client,comfort,furniture,audio,documentRef=globalThis.document,onReload=()=>{},onStatus=()=>{},now=()=>globalThis.performance?.now?.()??Date.now()}={}) {
+export function createHolodeckScreen({client,comfort,furniture,audio,storage,documentRef=globalThis.document,onReload=()=>{},onStatus=()=>{},now=()=>globalThis.performance?.now?.()??Date.now()}={}) {
   const screen=documentRef.createElement('canvas'),consoleCanvas=documentRef.createElement('canvas');
   screen.width=3072;screen.height=954;consoleCanvas.width=2048;consoleCanvas.height=512;
   const ctx=screen.getContext('2d'),keys=consoleCanvas.getContext('2d');
-  let revision=0,drawn='',zoom=1,panX=0,panY=0,viewPending=false,inputFeedback=null,shift=false,hover=null,voiceHelp=false,reloadConfirm=false;
+  // localStorage access itself may throw for a blocked origin; storage is optional.
+  let presentationStore;
+  try{presentationStore=storage===undefined?globalThis.localStorage:storage;}catch{}
+  const restored=readSpatialConversationPresentation(presentationStore);
+  let revision=0,drawn='',zoom=restored.zoom,panX=restored.panX,panY=restored.panY,
+    viewPending=restored.zoom!==1||restored.panX!==0||restored.panY!==0,
+    inputFeedback=null,shift=false,hover=null,voiceHelp=false,reloadConfirm=false;
   let lastKeyPress=null;
-  let focusedPanel='chatgpt',leftPage='console',toolsPage='audio',furnitureTarget='keyboard',selectedWindow=null,windowPage=0;
+  let focusedPanel=restored.focusedPanel,leftPage=restored.leftPage,toolsPage='audio',furnitureTarget=restored.furnitureTarget,selectedWindow=null,windowPage=0;
   let paintedLeftPage=null,paintedWindowPage=0,paintedWindowRows=[],paintedSelectedWindow=null;
   let connectionPending=null,connectionMessage='',connectionEpoch=0,inputRevoked=false;
   const pressKeycap=id=>{if(SCREEN_KEYS.some(key=>key.id===id))lastKeyPress={id,at:now()};};
   const getKeycapMotion=()=>lastKeyPress?{id:lastKeyPress.id,ageMs:now()-lastKeyPress.at}:null;
-  const changed=()=>{revision++;try{onStatus(getState());}catch{}};
+  const presentationSnapshot=()=>JSON.stringify({version:1,zoom,panX,panY,focusedPanel,leftPage,furnitureTarget});
+  let lastPresentation=presentationSnapshot();
+  const savePresentation=()=>{
+    const current=presentationSnapshot();
+    if(current===lastPresentation)return;
+    lastPresentation=current;
+    try{presentationStore?.setItem?.(SPATIAL_CONVERSATION_PRESENTATION_KEY,current);}catch{}
+  };
+  const changed=()=>{savePresentation();revision++;try{onStatus(getState());}catch{}};
   function focus(id){
     if(!HOLODECK_PANELS.some(panel=>panel.id===id))return false;
     if(focusedPanel!==id){focusedPanel=id;inputFeedback=null;changed();}return true;
