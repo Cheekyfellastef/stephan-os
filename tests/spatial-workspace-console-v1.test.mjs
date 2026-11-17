@@ -100,6 +100,9 @@ test('native editable-target source refuses readonly documents, uncertain replay
   assert.match(source,/FAILED\(accessibility->put_ConnectionTimeout\(1500\)\)/);
   assert.match(source,/FAILED\(accessibility->put_TransactionTimeout\(1500\)\)/);
   assert.match(source,/return Reply\(SUCCEEDED\(result\)\?L"app-control-invoked":L"app-control-outcome-unverified"\)/);
-  assert.match(source,/if\(selectedEditor\)return Reply\(L"editor-key-focus-unverified"\)/);
+  assert.match(source,/if\(editorKeyboardFocusUnverified\)return Reply\(L"editor-key-focus-unverified"\)/);
+  assert.match(source,/editorKeyboardFocusUnverified=true/);
+  assert.match(source,/if\(!attempted\)return Reply\(L"editor-update-not-started"\)/);
+  assert.doesNotMatch(source,/if\(FAILED\(changed\)\)return Reply\(L"editor-update-refused"\)/);
   assert.doesNotMatch(source,/\bSendInput\s*\(/,'no global synthetic input on the VR browser desktop');
 });
