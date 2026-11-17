@@ -412,7 +412,17 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     && fresh(refresh.timestampUtc, nowMs, serviceProofAgeMs);
   const health = ['daemonHealthy', 'missionWorkerHealthy', 'backendHealthy'].map((field, index) => {
     const serviceId = index === 1 ? 'mission-worker' : index === 2 ? 'backend' : '';
-    const independent = serviceId ? runtimeServices.find(entry => entry?.serviceId === serviceId) : null;
+    // A first-match GREEN can conceal a later contradictory observation for the
+    // same service. Do not choose a winner or fall back to an aggregate when
+    // independent service identity is ambiguous.
+    const serviceMatches = serviceId
+      ? runtimeServices.filter(entry => entry?.serviceId === serviceId) : [];
+    if (serviceMatches.length > 1) return {
+      id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+      state: 'UNKNOWN', observedAtUtc: '', expiresAtUtc: '',
+      evidenceSource: 'AMBIGUOUS_INDEPENDENT_SERVICE_IDENTITY',
+    };
+    const independent = serviceMatches[0] || null;
     const independentLive = independent?.freshness === 'CURRENT'
       && fresh(independent?.observedAtUtc, nowMs, maxAgeMs);
     const independentLight = String(independent?.trafficLight || '').toUpperCase();
