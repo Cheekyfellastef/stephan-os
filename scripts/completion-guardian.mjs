@@ -162,6 +162,9 @@ export async function runCompletionGuardian(options = {}) {
       existingMissionId: primary.missionId,
       duplicateMissionAllowed: false,
       duplicateBranchOrPrAllowed: false,
+      sourceMutationAllowed: false,
+      runtimeMutationAuthority: false,
+      goalComplete: false,
       mergeAuthority: false,
     };
     handoffWrite = await writeRecord(paths.workspaceRoot, ['handoffs', 'completion-guardian-repair-current.json'], handoff, {
