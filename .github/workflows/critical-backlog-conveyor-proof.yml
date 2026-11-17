@@ -5,6 +5,8 @@ on:
     paths:
       - 'shared/agents/criticalBacklogConveyor.mjs'
       - 'shared/agents/criticalBacklogConveyor.test.mjs'
+      - 'shared/agents/externalMergeObservationV1.mjs'
+      - 'shared/agents/externalMergeObservationV1.test.mjs'
       - 'stephanos-server/services/criticalBacklogConveyorService.js'
       - 'stephanos-server/services/criticalBacklogConveyorService.test.js'
       - 'scripts/battle-bridge-worker-watchdog-runner.mjs'
@@ -39,6 +41,7 @@ jobs:
         run: >-
           node --test
           shared/agents/criticalBacklogConveyor.test.mjs
+          shared/agents/externalMergeObservationV1.test.mjs
           stephanos-server/services/criticalBacklogConveyorService.test.js
           scripts/battle-bridge-worker-watchdog-runner.test.mjs
           scripts/battle-bridge-worker-watchdog-conveyor-fairness.test.mjs

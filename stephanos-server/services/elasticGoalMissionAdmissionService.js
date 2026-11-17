@@ -1,4 +1,5 @@
 import os from 'node:os';
+import { projectExternalMergeExecutionObligationV1 } from '../../shared/agents/externalMergeObservationV1.mjs';
 import { validateSeedGrowthWorkV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
 import { projectGoalAdmissionRequiredTestsV1, projectOwnerGoalRequiredTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 import { resolve } from 'node:path';
@@ -162,11 +163,13 @@ function missionTerminal(state = {}) {
 }
 
 function missionCapacityOccupying(state = {}) {
+  if (projectExternalMergeExecutionObligationV1(state).acceptanceOnly) return false;
   const phase = text(state.currentPhase).toUpperCase();
   return Boolean(phase) && !TERMINAL_PHASES.has(phase) && !NON_RUNNABLE_PHASES.has(phase);
 }
 
 function missionAdmissionExclusionReason(state = {}) {
+  if (projectExternalMergeExecutionObligationV1(state).acceptanceOnly) return 'EXISTING_GOAL_MISSION_ACCEPTANCE_PENDING';
   const phase = text(state.currentPhase).toUpperCase();
   if (TERMINAL_PHASES.has(phase)) return 'EXISTING_GOAL_MISSION_TERMINAL_AWAITING_GOAL_RECONCILIATION';
   if (phase === 'BLOCKED') return 'EXISTING_GOAL_MISSION_BLOCKED_SIDELINED';
@@ -175,6 +178,7 @@ function missionAdmissionExclusionReason(state = {}) {
 }
 
 function missionRunnable(state = {}) {
+  if (projectExternalMergeExecutionObligationV1(state).acceptanceOnly) return false;
   const phase = text(state.currentPhase).toUpperCase();
   if (!phase || TERMINAL_PHASES.has(phase) || NON_RUNNABLE_PHASES.has(phase)) return false;
   if (state.dispatch?.status === 'running' && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED', 'LIVE_RUNTIME_INVESTIGATION'].includes(phase)) return false;
