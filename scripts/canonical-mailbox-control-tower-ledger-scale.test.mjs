@@ -361,3 +361,22 @@ test('combined admission rejects wrong operation and malformed request binding w
     assert.equal(ledger.read(command.requestId), null);
   }
 });
+
+test('extended read-only deadline cannot extend original BUILD admission or return partial success', async t => {
+  const { ledger } = setup(t, 0);
+  const longerRead = await ledger.discoverControlTower({ nowMs, maxDurationMs: 30_000 });
+  assert.equal(longerRead.ok, true, longerRead.blocker);
+  assert.equal(longerRead.latestBuildRequestObservation, null);
+  const overBound = await ledger.discoverControlTower({ nowMs, maxDurationMs: 30_001 });
+  assert.equal(overBound.ok, false);
+  assert.equal(overBound.blocker, 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN');
+  assert.equal(overBound.latestBuildRequestObservation, null);
+  const command = admissionRequest(1234);
+  const denied = await ledger.discoverAndReserveControlTower(command,
+    { ...admissionOptions(command), maxDurationMs: 10_001 });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.blocker, 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN');
+  assert.equal(denied.reservationAttempted, false);
+  assert.equal(denied.reservation, null);
+  assert.equal(ledger.read(command.requestId), null);
+});

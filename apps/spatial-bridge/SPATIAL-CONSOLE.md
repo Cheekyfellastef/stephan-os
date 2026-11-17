@@ -2,6 +2,24 @@
 
 The far wall is a holographic display with an attached keyboard console. It is an interactive surface for the operator's existing ChatGPT/Codex desktop window: conversations, account access, tools and approvals remain in that app. This adapter does not create an OpenAI API session or a second agent command channel.
 
+## Three pages on the holographic wall
+
+The wall contains three pages at the same time:
+
+- **Left — Holographic console:** the launcher's interactive connection buttons and actual window picker. A settings tab retains the seated/standing profile, height, keyboard angle, and table/keyboard placement. These operate the same controllers as this launcher, so changes immediately affect the room and retain the existing save behaviour.
+- **Centre — ChatGPT:** the actual selected desktop window, with a visible connection mode and the existing fit, zoom and view controls.
+- **Right — Audio:** audio device selection and microphone/speaker tests use the same controller as the launcher. The connection controls on the left inspect the existing helper, list actual windows, select one and request its original Windows consent. They do not install or start a missing helper.
+
+Point and press Quest trigger or Xbox A to select a page. Its focus outline and the keyboard status show where input would go. Local settings remain usable with no ChatGPT connection or a view-only capture. The keyboard sends text only while the ChatGPT page is selected and its native connection is interactive; click the original app's text field before typing. Selecting a side page never sends its settings actions or subsequent typing to ChatGPT.
+
+Use the left panel's interactive connection control to list the actual open windows. Point at a window's title to select it, use the page buttons for more windows, then press **Connect selected window**. The selected window appears in the middle panel. Each title is a real target on the hologram; the desktop dropdown is not needed to make the selection. Selecting a title does not connect it. A changed or disappeared window must be selected again, and the original Windows consent prompt still decides whether capture and input may start. An ordinary click on an already interactive ChatGPT picture continues to target that app.
+
+The settings and audio pages are projections of the existing room controllers. They do not open a second copy of `quest-entry.html` or a second VR session. This release provides one external ChatGPT window alongside two real local pages; it does not claim three independently controlled Windows applications. The native helper retains its one-window, one-consent session contract.
+
+The flat **Console preview and desktop controls** shows the same three-page canvas that both headset eyes see. **Show holographic pages** expands that preview. The preview remains available when the browser cannot draw the separate WebGL room preview. Its visibility does not itself prove a live native connection or headset input acceptance.
+
+Microphone permission and speaker playback require explicit test actions. Stop cancels even a pending microphone request; a late permission result is closed without beginning a test. The tests do not route ChatGPT Voice, record audio or send microphone data to a service.
+
 ## Using it
 
 1. Open ChatGPT/Codex on the Windows PC, then use the normal **Stephanos Spatial Workspace** desktop shortcut.
@@ -10,6 +28,13 @@ The far wall is a holographic display with an attached keyboard console. It is a
 4. Point at a field or control on the hologram and press Quest trigger, or look at it and press Xbox A. Use the console keyboard for text. Send/Enter sends the original app's Enter key; the original app decides its meaning.
 5. Zoom enlarges the app; the four **View** arrows move the enlarged view to reach the composer, Voice or attachment controls at its edges. **Fit** restores the full image and centres the view. **Scroll** arrows scroll the original app at the last point indicated on it, or the view centre after a view adjustment. Sticks still walk and turn smoothly. Grip/RT still manipulates cubes.
 6. Shift changes the displayed letters and punctuation to match what the keyboard sends. The input status appears below the hologram as well as on the launcher. “Input sent” means the adapter posted it to the selected app; it does not prove the app accepted a message or produced a reply. A rejection, paused picture or lost connection has its own visible status.
+
+**Scroll up / Scroll down** are visible on the middle window's toolbar as well
+as the console keyboard. They send the existing scroll commands to the chosen
+app; the left picker's page buttons only navigate its local window list. The
+native adapter supports single clicks and scroll commands, not continuous
+pointer dragging, so dragging an app's scrollbar thumb is not implemented.
+No local scrollbar thumb claims to know the external app's scroll position.
 
 The original app's image attachment and microphone controls remain on the hologram. Audio help explains headset microphone/speaker selection; it does not start a recording or claim an independent voice connection. Windows and the original app route sound through the selected headset. Audio and physical headset acceptance require an operator test.
 
@@ -34,7 +59,13 @@ translate the controller. The plastic material mass response is deliberately
 damped: the table has an approximate 10 kg feel and the keyboard about 3.8 kg.
 No virtual object is a weight-bearing real-world support. Xbox can aim, hold
 the left bumper and use the left stick for slower positioning; the launcher
-also exposes bounded 10 cm translation and 5 cm height nudges.
+also exposes 10 cm translation and 5 cm height nudges. Movement limits come
+from the room walls, floor and ceiling and the complete assembly geometry,
+including the table pedestal, keyboard supports, dials and full keyboard tilt.
+The furniture can travel across the usable room instead of being confined to
+small offsets around its starting position. The existing solid pieces also
+stop each assembly at other furniture and cubes, including when moved with a
+large translation; they do not pass through one another.
 
 **Release freezes the new location and saves both independent offsets** in
 `stephanos.spatial.furniture.v1`. Reopening the same local browser workspace
@@ -43,19 +74,36 @@ reset merely because the controller releases, VR exits, the page reloads, or
 Seated/Standing changes. An explicit per-assembly Reset is the only way to
 return a saved assembly to its starting place. An unavailable or full storage
 store makes the movement session-only and reports that limitation visibly.
+Older saved positions are adjusted to the physical room limits per item; an
+invalid saved table position does not discard a valid keyboard position.
+When an older furniture position needs adjustment, its settled supported
+cubes receive the same displacement before collision restoration and are
+saved at their corrected positions.
+
+Settled cubes resting on the table, including supported stacks, move with
+normal table adjustments. A shared movement limit stops the table and its
+load together at a ceiling or obstacle. Held, airborne and off-table cubes
+remain independent. Cargo positions are checkpointed with furniture changes,
+and recalling cubes targets the table's current position. Recall validates
+the cube's whole volume against the room and current solid objects; if the
+table has no clear space, it looks for a clear nearby placement rather than
+embedding the cube in a support or pushing it below the floor. Gravity
+continues to handle unsupported cubes through the existing cube simulation.
 
 The scene renderer, holographic keycaps, keyboard ray targets, grip/side-dial
 targets, walking obstacles, and movable cube collision contacts track the
 same furniture offsets. The original keyboard tilt and independent
-Seated/Standing height settings remain separate and unaffected. World bounds
-limit dragging; navigation remains active while carrying a cube, dragging furniture or turning a dial. A single controller cannot simultaneously grip both a cube and furniture. This is a physics-inspired heavy-mass visual
-feel with fixed stops, **not** haptic hardware resistance.
+Seated/Standing height settings remain separate and unaffected. Room geometry
+and contact limits apply while dragging; navigation remains active while
+carrying a cube, dragging furniture or turning a dial. A single controller
+cannot simultaneously grip both a cube and furniture. Mass and contact are
+simulated; haptic hardware resistance is not provided.
 
 ## Consent-gated PC browser window sharing when the native helper is not installed
 
-The launcher offers **Show ChatGPT window (view only)** on the Battle Bridge's local `127.0.0.1`/localhost address. This invokes the browser's standard `getDisplayMedia` window chooser **only on the operator's button click**. Select the actual open ChatGPT/Codex window. The displayed live video frames are composited into the same stereo hologram and flat preview but are not recorded, relayed, cached, uploaded, or granted to an agent. The browser sharing indicator and Stop/Disconnect revoke the live track; leaving the page or a track ending also releases it. This is a genuine live window picture, not a simulated harness, but it is deliberately **view-only**: clicking the hologram or typing on the virtual keyboard cannot control the captured window, and requests are visibly refused. ChatGPT audio continues in the original Windows app; this browser capture requests no audio. Phone/iPad remote sessions have the flat 3D preview, not remote access to PC screen capture or the private Windows helper.
+The launcher offers **Show window (view only)** on the Battle Bridge's local `127.0.0.1`/localhost address. This invokes the browser's standard `getDisplayMedia` window chooser **only on the operator's button click**, before entering VR. Select the actual open ChatGPT/Codex window. The displayed live video frames are composited into the same stereo hologram and flat preview but are not recorded, relayed, cached, uploaded, or granted to an agent. The browser sharing indicator and Stop/Disconnect revoke the live track; leaving the page or a track ending also releases it. This is a genuine live window picture, not a simulated harness, but it is deliberately **view-only**: clicking the hologram or typing on the virtual keyboard cannot control the captured window, and requests are visibly refused. ChatGPT audio continues in the original Windows app; this browser capture requests no audio. Phone/iPad remote sessions have the flat 3D preview, not remote access to PC screen capture or the private Windows helper.
 
-For fully **interactive** ChatGPT, the existing trusted Windows Spatial helper on `127.0.0.1:4180` must be installed, verified and started, then the operator must select and explicitly consent to their original ChatGPT window. The existing launcher **Connect interactive ChatGPT window** uses that native path, preserving keyboard, clicking and original Voice controls. Opening the web landing tile by itself cannot install or launch a Windows program. Original #1717/#2961 native commissioning must close that attended installation gap through its existing authority, not mint a new public capture server or pretend that a source merge proves a live adapter.
+For fully **interactive** ChatGPT, the existing trusted Windows Spatial helper on `127.0.0.1:4180` must be installed, verified and started, then the operator must select and explicitly consent to their original ChatGPT window. **Choose interactive window** in the launcher or the left holographic Console uses that native path, preserving keyboard, clicking and original Voice controls. Opening the web landing tile by itself cannot install or launch a Windows program. Original #1717/#2961 native commissioning must close that attended installation gap through its existing authority, not mint a new public capture server or pretend that a source merge proves a live adapter.
 
 ## ChatGPT harness and real headset audio controls
 
@@ -64,8 +112,8 @@ check of the already installed private `127.0.0.1:4180` desktop capture
 helper. It cannot install, start or bypass that helper. When absent, launch
 the normal reviewed Spatial Workspace Windows shortcut, then use **Choose
 window**, select the real ChatGPT/Codex desktop window and accept the
-original Windows consent prompt. The **Show connected ChatGPT screen** button
-expands the actual native window preview; it does not invent a harness frame.
+original Windows consent prompt. The **Show holographic pages** button
+expands the three-page preview, including the actual connected window picture.
 Only after the helper supplies a current frame can keyboard actions and the
 original app's Voice button work.
 
@@ -131,6 +179,50 @@ adjustment, tracking loss and reopening the room with saved profiles.
 After protected review and installation approval, run `scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1` from the reviewed canonical checkout. It builds the helper with Visual Studio Build Tools (Desktop development with C++) and a Windows SDK containing C++/WinRT, verifies its source/binary hashes, and installs the normal shortcut. Generated binaries and receipts live under ignored `.stephanos/local-state-checkpoints/spatial-window`, never in source control.
 
 The installer compiles before stopping an older helper. It stops only the process owning port 4180 whose executable, exact command line and process creation time match this checkout's helper. A foreign owner fails closed. Starting the shortcut launches or reuses that verified helper, then opens the room. An already served room does not trigger full runtime ignition; starting a missing room retains the existing canonical ignition checks. Room availability does not imply that the separate command runtime is healthy.
+
+### Bounded Sovereign preparation
+
+The existing Sovereign maintenance route accepts `prepare-spatial-workspace`
+with one `expectedMain` source SHA. The authenticated canonical mailbox supplies
+that SHA from its existing request; callers cannot supply a path, command,
+URL or launch mode. The compiled `SPATIAL_WORKSPACE_PREPARE_V1` profile must
+be present in a qualified fixed-runtime installation before dispatch.
+
+Preparation verifies the normal operator context, current canonical main and
+the existing gaming admission. With the helper port unused, it freshly builds
+through the existing pinned installer and saves the normal desktop shortcut.
+After promotion, the final binary and receipt are checked against the fresh
+in-memory build digests and protected against replacement through the probe.
+An older writable build receipt is a consistency check, not authority to
+execute its binary unattended. Preparation then checks the actual room entry
+page, helper health and a separate native window-list probe. Window titles and
+other window contents are not returned in the public receipt. A per-user
+installation lock protects preparation and the existing installers/launcher
+from overlapping replacement.
+
+Any existing listener is left untouched. Preparation returns a port-occupied
+hold before installation or probing, without launching its saved binary or
+claiming to have verified the existing connection. An occupied port must become
+free through its original operator/owner before a fresh preparation can proceed.
+When preparation creates a temporary helper, that helper accepts health requests
+only: session,
+capture and input routes are disabled. Every process created for the probes
+must stop before a successful receipt is possible. Preparation never opens
+ChatGPT, chooses a window, accepts consent, records audio or leaves a new
+background helper running. The existing desktop shortcut starts the lasting
+connection when the operator enters the room.
+
+Success is `SPATIAL_WORKSPACE_READY_FOR_OPERATOR_LAUNCH`. The receipt includes
+the verified build identity and explicit installation, UI, probe and cleanup
+results. `interactiveAcceptance`, `voiceAcceptance` and `headsetAcceptance`
+remain false. In particular, preparation success does not prove that a click
+reached ChatGPT or that the Quest microphone and speakers work.
+
+Publishing or merging the source does not install this new native profile.
+The existing protected fixed-runtime installer, independent qualification,
+normal operator custody and later-boot requirement still apply. A missing
+installation or unavailable profile blocks preparation; the route cannot
+install or authorize its own executor. This change provides no reboot action.
 
 ## Scope and safeguards
 

@@ -13,6 +13,7 @@ import { admitSovereignLocalOllamaBindingV1, matchesSovereignLocalOllamaCompleti
 
 import { resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from
   '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { createBattleBridgeGitProbeContextV1, validateBattleBridgeGitProbeConfigurationV1 } from '../shared/agents/battleBridgeGitProbeContextV1.mjs';
 import { evaluateSovereignHighRiskCandidateV1 } from
   '../shared/agents/sovereignHighRiskReviewCandidateV1.mjs';
 import {
@@ -49,15 +50,22 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
   if (!SHA.test(head) || !SHA.test(base) || head === base) {
     throw Error('EXACT_HEAD_AND_BASE_REQUIRED');
   }
+  // Isolate per-worktree configuration for native Windows candidate review.
+  // Shared Git settings, existing worktrees, refs and index remain untouched.
+  const probe = platform === 'win32' ? createBattleBridgeGitProbeContextV1(root) : null;
+  try {
   const git = (args, maxBuffer = 512 * 1024) => {
+    probe?.assert();
     const execution = resolveGit({ platform, environment: env });
     const result = spawn(execution.executable, [
       ...execution.fixedConfigArgs,
-      '--git-dir=' + join(root, '.git'), '--work-tree=' + root, ...args,
+      ...(probe ? probe.repositoryArgs() : ['--git-dir=' + join(root, '.git'), '--work-tree=' + root]),
+      ...args,
     ], {
-      encoding: 'utf8', shell: false, windowsHide: true, timeout: 12_000,
+      cwd: root, encoding: 'utf8', shell: false, windowsHide: true, timeout: 12_000,
       maxBuffer, env: execution.environment,
     });
+    probe?.assert();
     if (result?.error || result?.status !== 0 || typeof result.stdout !== 'string') {
       throw Error('EXACT_LOCAL_GIT_READ_UNVERIFIED');
     }
@@ -66,7 +74,12 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
   // Status can invoke attribute-driven helpers. Admit the canonical raw local
   // configuration before source scans, without following configuration includes.
   const localConfig = git(['config','--local','--null','--list','--no-includes'], 16 * 1024);
-  if (!validateBattleBridgeLocalGitConfiguration(localConfig).ok) {
+  const configAdmission = probe
+    ? validateBattleBridgeGitProbeConfigurationV1(localConfig, {
+      gitProbeContext: probe, repoRoot: root,
+    })
+    : validateBattleBridgeLocalGitConfiguration(localConfig);
+  if (!configAdmission.ok) {
     throw Error('HIGH_RISK_REVIEWER_GIT_CONFIGURATION_UNSAFE');
   }
   if (git(['rev-parse','HEAD']).trim().toLowerCase() !== head) throw Error('LOCAL_REVIEW_HEAD_MISMATCH');
@@ -90,8 +103,23 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
       throw Error('HIGH_RISK_REVIEWER_EXECUTABLE_BYTES_NOT_HEAD');
     }
   }
+  const gitExecution = resolveGit({platform, environment:env});
+  const reviewedGit = probe ? Object.freeze({
+    ...gitExecution,
+    fixedConfigArgs: Object.freeze([...gitExecution.fixedConfigArgs, ...probe.repositoryArgs()]),
+  }) : gitExecution;
   const {changedFiles,diff,reviewedObjectClosureSha256}=captureDiff({root,head,base,
-    git:resolveGit({platform,environment:env}),run:spawn});
+    git:reviewedGit,run:spawn});
+  probe?.assert();
+  if (probe) {
+    // The common Git configuration may not drift across the trust bracket.
+    // Keep its full original bytes and all other risky-key exclusions in scope.
+    const configAfter = git(['config','--local','--null','--list','--no-includes'], 16 * 1024);
+    if (configAfter !== localConfig
+      || !validateBattleBridgeGitProbeConfigurationV1(configAfter, {
+        gitProbeContext: probe, repoRoot: root,
+      }).ok) throw Error('HIGH_RISK_REVIEWER_GIT_CONFIGURATION_CHANGED');
+  }
   return Object.freeze({
     repository: text(env.STEPHANOS_REVIEW_REPOSITORY),
     issueNumber: Number(env.STEPHANOS_REVIEW_ISSUE),
@@ -103,6 +131,10 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
     implementerProvider: text(env.STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER),
     modelClass: text(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL_CLASS || 'qwen-14b'),
   });
+  } finally {
+    // No unverified private metadata is deleted on a failed cleanup.
+    probe?.close();
+  }
 }
 
 // The same independently written VR/flat governor protects ordinary local

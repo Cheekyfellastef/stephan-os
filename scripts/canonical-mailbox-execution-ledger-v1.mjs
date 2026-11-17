@@ -12,6 +12,9 @@ const INVENTORY_MAX_ENTRIES = 8192;
 const ENTRY_MAX_BYTES = 4096;
 const DISCOVERY_BATCH_SIZE = 128;
 const DISCOVERY_MAX_DURATION_MS = 10_000;
+// Read-only historical inventory may require two full verified directory passes.
+// Never extend the exclusive BUILD reservation deadline beyond the original cap.
+const DISCOVERY_READ_ONLY_MAX_DURATION_MS = 30_000;
 const CONTROL_TOWER_IDENTITY = ['requestId', 'runId', 'runAttempt', 'operation', 'sourceHead',
   'artifactId', 'artifactSha256', 'commandDigest', 'createdAtUtc', 'expiresAtUtc', 'acceptedAtUtc',
   'ownerCommentId', 'ownerCommentIssueNumber', 'ownerCommentSha256'];
@@ -191,7 +194,9 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
   }
 
   async function scanControlTower({ nowMs = Date.now(), batchSize = DISCOVERY_BATCH_SIZE,
-      maxDurationMs = DISCOVERY_MAX_DURATION_MS, maxEntries } = {}, admission = null) {
+      maxDurationMs, maxEntries } = {}, admission = null) {
+      const durationLimitMs = admission ? DISCOVERY_MAX_DURATION_MS : DISCOVERY_READ_ONLY_MAX_DURATION_MS;
+      maxDurationMs ??= durationLimitMs;
       let latestBuildRequestObservation = null, latestControlSystemObservation = null, unresolved = null;
       let count = 0, batchWork = 0, reservationAttempted = false, admittedAt, clockSampledAt;
       const command = admission ? JSON.parse(JSON.stringify(admission.command)) : null;
@@ -319,7 +324,7 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
       };
       try {
         if (!Number.isFinite(nowMs) || !Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 4096
-          || !Number.isSafeInteger(maxDurationMs) || maxDurationMs < 1 || maxDurationMs > DISCOVERY_MAX_DURATION_MS
+          || !Number.isSafeInteger(maxDurationMs) || maxDurationMs < 1 || maxDurationMs > durationLimitMs
           || (maxEntries !== undefined && (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 4096)))
           unproven();
         if (admission && (command?.operation !== CONTROL_TOWER_BUILD_OPERATION || command.issueNumber !== 2315
