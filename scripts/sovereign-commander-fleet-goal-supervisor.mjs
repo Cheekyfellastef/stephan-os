@@ -182,7 +182,7 @@ export async function runSovereignCommanderFleetGoalSupervisor({
   // Distinguish genuinely missing admission from a *proven* all-held mission
   // estate. The latter needs exact mission-owner repair, not another scheduler.
   // Never mark this blocked state green or fabricate runnable goals.
-  if (text(conveyorResult.classification) === 'PARKED_BLOCKERS_ONLY'
+  if (['PARKED_BLOCKERS_ONLY', 'PARKED_ACCEPTANCE_ONLY'].includes(text(conveyorResult.classification))
       && admission.ok === true
       && text(admission.classification) === 'ELASTIC_GOAL_MISSIONS_HELD'
       && activeMissionCount === 0
@@ -206,7 +206,7 @@ export async function runSovereignCommanderFleetGoalSupervisor({
       && text(conveyorResult.elasticReviewLeaseRecovery.blocker)) {
     return blockedResult(text(conveyorResult.elasticReviewLeaseRecovery.blocker), details);
   }
-  if (text(conveyorResult.classification) === 'PARKED_BLOCKERS_ONLY'
+  if (['PARKED_BLOCKERS_ONLY', 'PARKED_ACCEPTANCE_ONLY'].includes(text(conveyorResult.classification))
       && (!conveyorResult.elasticAdmission || !conveyorResult.elasticIgnition)) {
     // Distinguish failure inside eligible admission from a genuinely missing
     // admission preflight. Otherwise every unattended repair retries the same
