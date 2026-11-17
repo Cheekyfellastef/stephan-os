@@ -73,7 +73,10 @@ export function createHolodeckAudioControls({
   const stoppedResult=kind=>({ok:false,cancelled:true,reason:kind+' test was stopped.'});
   function setInput(id){
     id=selection(id);if(disposed||id===null)return false;
-    if(id===state.inputId)return true;
+    if(id&& !state.inputs.some(device=>device.id===id))return false;
+    // A missing remembered microphone is already shown as no current choice.
+    // Explicitly selecting system default must still clear that stale hint.
+    if(id===state.inputId&&(id!==''||!preferences.inputId))return true;
     statusIntent++;releaseMicrophone();
     saveChoice('inputId',id,state.inputs);
     publish({inputId:id,microphoneActive:false,microphonePending:false,
@@ -81,7 +84,8 @@ export function createHolodeckAudioControls({
   }
   function setOutput(id){
     id=selection(id);if(disposed||id===null)return false;
-    if(id===state.outputId)return true;
+    if(id&& !state.outputs.some(device=>device.id===id))return false;
+    if(id===state.outputId&&(id!==''||!preferences.outputId))return true;
     statusIntent++;releaseSpeaker();
     saveChoice('outputId',id,state.outputs);
     publish({outputId:id,status:'Speaker output selected. Start a test when ready.'});return true;
@@ -129,6 +133,10 @@ export function createHolodeckAudioControls({
     if(disposed)return stoppedResult('Microphone');
     deviceId=selection(deviceId);
     if(deviceId===null)return {ok:false,reason:status('Select a valid microphone device.')};
+    // A remembered headset that vanished must not quietly become the system
+    // default when Test is pressed. Only a fresh explicit choice clears it.
+    if(!state.inputId&&preferences.inputId)return {ok:false,reason:status('Previous microphone unavailable. Re-select the intended device or explicitly choose system default before testing.')};
+    if(deviceId&&!state.inputs.some(device=>device.id===deviceId))return {ok:false,reason:status('Microphone is not in the current device list. Refresh and re-select it before testing.')};
     if(microphone)return {ok:false,reason:status(state.microphonePending
       ?'A microphone test is already waiting for permission. Stop it before starting another.'
       :'A microphone test is already active. Stop it before starting another.')};
@@ -191,6 +199,8 @@ export function createHolodeckAudioControls({
     if(disposed)return stoppedResult('Speaker');
     deviceId=selection(deviceId);
     if(deviceId===null)return {ok:false,reason:status('Select a valid speaker device.')};
+    if(!state.outputId&&preferences.outputId)return {ok:false,reason:status('Previous speaker unavailable. Re-select the intended output or explicitly choose system default before testing.')};
+    if(deviceId&&!state.outputs.some(device=>device.id===deviceId))return {ok:false,reason:status('Speaker is not in the current device list. Refresh and re-select it before testing.')};
     if(speaker)return {ok:false,reason:status('A speaker test is already active.')};
     if(typeof AudioContextCtor!=='function')
       return {ok:false,reason:status('Browser speaker test is unavailable.')};
