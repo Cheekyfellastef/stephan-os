@@ -4404,6 +4404,14 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     const requested = shape.command.controllerActivity;
     const requestedMaterialLaneCount = Array.isArray(requested?.materialLanes) ? requested.materialLanes.length : 0;
     const requestedMaterialActionsSucceeded = requested?.materialActionsSucceeded ?? 0;
+    // A material completion needs evidence that THIS run's proof was written.
+    // A canonical status ID cannot substitute for missing or foreign proof.
+    const materialProofRequired = requestedMaterialActionsSucceeded > 0 || requestedMaterialLaneCount > 0;
+    const proofRunFragment = (requested?.runId || '').replace(/^-+|-+$/g, '') || 'unknown';
+    const requestedProofId = 'controller-' + requested?.controllerId?.slice(0, 12) + '-run-' + proofRunFragment;
+    const publicationProofBound = materialProofRequired
+      ? publication?.proofWritten === true && publication?.proofId === requestedProofId
+      : publication?.proofWritten === false && publication?.proofId === '';
     const publicationProofComplete = projection.ok === true
       && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
       && PROOF_HASH_PATTERN.test(projection.proofHash)
@@ -4412,6 +4420,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       && publication?.ok === true
       && publication?.statusWritten === true
       && publication?.statusId === `controller-${requested?.controllerId}-activity`
+      && publicationProofBound
       && publication?.controllerId === requested?.controllerId
       && publication?.runId === requested?.runId
       && publication?.executionState === requested?.executionState

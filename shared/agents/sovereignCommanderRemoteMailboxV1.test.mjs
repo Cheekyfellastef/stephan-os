@@ -2812,6 +2812,58 @@ test('controller activity publication is single-action, canonical and returns on
 
 
 
+test('material controller publication binds proofWritten and proofId to the requested run (#2573)', async () => {
+  const controllerId = '6ac3999164b88191a1c866c70ab51bd7';
+  const runId = 'material-proof-identity-v1';
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId, runId, observedEnabled: true, executionState: 'ACTIVE',
+    materialActionsSucceeded: 1, safeEligibleWorkRemaining: 0,
+    proofRefs: ['proof/material-run-verified'],
+  };
+  const publication = {
+    schemaVersion: activity.schemaVersion, ok: true, controllerId, runId,
+    statusWritten: true, statusId: 'controller-' + controllerId + '-activity',
+    proofWritten: true, proofId: 'controller-' + controllerId.slice(0, 12) + '-run-' + runId,
+    executionState: 'ACTIVE', materialLaneCount: 0, materialActionsSucceeded: 1,
+    finalVerdict: 'SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISHED',
+    arbitraryShellAllowed: false, sourceMutationAllowed: false,
+    mergeAuthority: false, secretMaterialIncluded: false,
+  };
+  const execute = async (requested, published) => {
+    const maintenance = {
+      ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: 'a'.repeat(64),
+      command: { plan: { processId: 'publish-controller-activity' } },
+      structuredContent: { ok: true, status: 0,
+        stdout: 'SOVEREIGN_COMMANDER_CONTROLLER_ACTIVITY_PUBLISH_RESULT=' + JSON.stringify(published),
+        stderr: '', errorCode: '' },
+    };
+    const { fetchFn } = mcpFetch({ maintenance });
+    return executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'publish-controller-activity', controllerActivity: requested }),
+      { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn },
+    );
+  };
+  assert.equal((await execute(activity, publication)).ok, true);
+  for (const spoof of [
+    { proofWritten: false, proofId: '' },
+    { proofWritten: false },
+    { proofWritten: true, proofId: '' },
+    { proofWritten: true, proofId: 'controller-other-run-foreign' },
+    { proofWritten: true, proofId: 'controller-' + controllerId.slice(0, 12) + '-run-foreign' },
+  ]) {
+    const result = await execute(activity, { ...publication, ...spoof });
+    assert.equal(result.ok, false, 'material completion admitted missing or foreign proof');
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RECEIPT_INVALID');
+  }
+  const noMaterial = { ...activity, materialActionsSucceeded: 0, proofRefs: [] };
+  const noMaterialPublished = { ...publication, materialActionsSucceeded: 0, proofWritten: false, proofId: '' };
+  assert.equal((await execute(noMaterial, noMaterialPublished)).ok, true);
+  const unexpected = await execute(noMaterial, { ...noMaterialPublished, proofWritten: true, proofId: publication.proofId });
+  assert.equal(unexpected.ok, false, 'status-only publication inherited foreign proof');
+});
+
 test('controller publication binds statusId to the exact requested canonical controller (#2573)', async () => {
   const activity = {
     schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
