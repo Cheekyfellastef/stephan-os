@@ -401,6 +401,10 @@ test('composite specialist suppresses every positive source proof if either chil
     assert.equal(clean.eligible, true);
     assert.equal(clean.clean, true, JSON.stringify(clean.findings));
     assert.ok(clean.proofRefs.length >= 1, 'baseline must contain a real positive proof');
+    assert.equal(clean.schemaVersion, 'stephanos.windows-authority-specialist-review.v1');
+    for (const property of ['sourceMutationAllowed', 'mergeAuthority', 'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+      assert.equal(clean[property], false, property + ' must remain denied on clean composite evidence');
+    }
     for (const damagedIndex of [0, 1]) {
       // Self-consistent metadata is not enough: one child has absent source bytes.
       // The other child remains valid and previously leaked a positive proofRef.
@@ -411,7 +415,10 @@ test('composite specialist suppresses every positive source proof if either chil
       assert.equal(rejected.clean, false, 'one failed child must fail the composite');
       assert.ok(rejected.findings.length > 0);
       assert.deepEqual(rejected.proofRefs, [], 'no partial positive proof on any P0 finding');
-      assert.equal(rejected.mergeAuthority, undefined, 'source review cannot add merge authority');
+      assert.equal(rejected.schemaVersion, 'stephanos.windows-authority-specialist-review.v1');
+      for (const property of ['sourceMutationAllowed', 'mergeAuthority', 'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+        assert.equal(rejected[property], false, property + ' must be an explicit denial on child rejection');
+      }
     }
   }
 });
@@ -460,7 +467,10 @@ test('composite review refuses contradictory typed counts and verdict before del
       assert.equal(result.clean, false, reason);
       assert.deepEqual(result.proofRefs, [], reason);
       assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID', reason);
-      assert.notEqual(result.mergeAuthority, true, reason);
+      assert.equal(result.schemaVersion, 'stephanos.windows-authority-specialist-review.v1', reason);
+      for (const property of ['sourceMutationAllowed', 'mergeAuthority', 'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+        assert.equal(result[property], false, reason + ': ' + property);
+      }
     }
   }
 });

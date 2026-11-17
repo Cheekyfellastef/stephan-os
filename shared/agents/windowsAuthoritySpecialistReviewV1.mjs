@@ -103,7 +103,6 @@ void LEGACY_RECOVERY_MESH_ROUTE;
 void WORKER_WATCHDOG_ROUTE;
 void LEGACY_CORE_ROUTE;
 void MAILBOX_ROLLOVER_BLOB_SHA_BY_PATH;
-void REVIEW_AUTHORITY_BOUNDARY;
 
 const legacyRouterModule = provePinnedModule(LEGACY_ROUTER_PATH, LEGACY_ROUTER_BLOB_SHA);
 const wsl2Module = provePinnedModule(WSL2_PATH, WSL2_BLOB_SHA);
@@ -181,6 +180,7 @@ function exactTwoP0CompositeEnvelope(analysis) {
 
 function rejectedCompositeEnvelope(paths) {
   return Object.freeze({
+    schemaVersion: 'stephanos.windows-authority-specialist-review.v1',
     eligible: true,
     clean: false,
     reviewedPaths: Object.freeze([...paths]),
@@ -190,6 +190,7 @@ function rejectedCompositeEnvelope(paths) {
       path: paths[0],
     })]),
     proofRefs: Object.freeze([]),
+    ...REVIEW_AUTHORITY_BOUNDARY,
     finalVerdict: 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID',
   });
 }
@@ -218,11 +219,13 @@ function analyzeStarfieldVrCompositeReview(input = {}) {
   const proofRefs = Object.freeze(clean
     ? [...new Set([...(splash.proofRefs || []), ...(launcher.proofRefs || [])])] : []);
   return Object.freeze({
+    schemaVersion: 'stephanos.windows-authority-specialist-review.v1',
     eligible: true,
     clean,
     findings: combinedFindings,
     reviewedPaths,
     proofRefs,
+    ...REVIEW_AUTHORITY_BOUNDARY,
     finalVerdict: clean
       ? 'WINDOWS_AUTHORITY_STARFIELD_VR_COMPOSITE_SPECIALIST_CLEAN'
       : 'WINDOWS_AUTHORITY_STARFIELD_VR_COMPOSITE_SPECIALIST_FINDINGS',
@@ -264,11 +267,13 @@ function analyzeStarfieldVrAerCompositeReview(input = {}) {
   const proofRefs = Object.freeze(clean
     ? [...new Set([...(splash.proofRefs || []), ...(aer.proofRefs || [])])] : []);
   return Object.freeze({
+    schemaVersion: 'stephanos.windows-authority-specialist-review.v1',
     eligible: true,
     clean,
     findings: combinedFindings,
     reviewedPaths,
     proofRefs,
+    ...REVIEW_AUTHORITY_BOUNDARY,
     finalVerdict: clean
       ? 'WINDOWS_AUTHORITY_STARFIELD_VR_AER_COMPOSITE_SPECIALIST_CLEAN'
       : 'WINDOWS_AUTHORITY_STARFIELD_VR_AER_COMPOSITE_SPECIALIST_FINDINGS',
