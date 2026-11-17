@@ -364,10 +364,20 @@ function validateOpenClawOc2GatewayPayload(payload, grant) {
     && text(result?.resultId).toLowerCase() === taskId
     && Array.isArray(result?.changedFiles)
     && result.changedFiles.length === 0
+    && text(result?.providerInstance) === providerInstance
+    && /^[a-f0-9]{64}$/.test(text(result?.exactInputIdentity))
+    && /^[a-f0-9]{64}$/.test(text(result?.exactOutputIdentity))
     && result?.receipt?.verified === true
+    && result?.receipt?.source === 'openclaw-standalone-oc2'
+    && result?.receipt?.evidenceType === 'provider-neutral-task-result'
+    && result?.receipt?.commandOutputHash === result?.exactOutputIdentity
     && Array.isArray(result?.evidenceReceipts)
-    && result.evidenceReceipts.length > 0
-    && result.evidenceReceipts.every((receipt) => receipt?.verified === true);
+    && result.evidenceReceipts.length === 1
+    && result.evidenceReceipts.every((receipt) => receipt?.verified === true
+      && receipt?.sha256 === result?.exactOutputIdentity
+      && receipt?.source === 'openclaw-standalone-oc2'
+      && receipt?.evidenceType === 'shared-workspace-proof'
+      && /^proofs\/openclaw-oc2\/oc2-[a-f0-9]{32}\.json$/.test(text(receipt?.receiptPath)));
 }
 
 async function groundedOpenClawEvidence(action, finalOutput, options, timestamp) {
