@@ -55,7 +55,7 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
   const screen=documentRef.createElement('canvas'),consoleCanvas=documentRef.createElement('canvas');
   screen.width=3072;screen.height=954;consoleCanvas.width=2048;consoleCanvas.height=512;
   const ctx=screen.getContext('2d'),keys=consoleCanvas.getContext('2d');
-  let revision=0,drawn='',zoom=1,panX=0,panY=0,viewPending=false,inputFeedback=null,shift=false,hover=null,voiceHelp=false,reloadConfirm=false,lastPoint={x:0.5,y:0.5};
+  let revision=0,drawn='',zoom=1,panX=0,panY=0,viewPending=false,inputFeedback=null,shift=false,hover=null,voiceHelp=false,reloadConfirm=false;
   let lastKeyPress=null;
   let focusedPanel='chatgpt',leftPage='console',toolsPage='audio',furnitureTarget='keyboard',selectedWindow=null,windowPage=0;
   let paintedLeftPage=null,paintedWindowPage=0,paintedWindowRows=[],paintedSelectedWindow=null;
@@ -154,7 +154,7 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
     if(!canForwardAppInput(activate))return client.getState().status==='view-only';
     const image=client.getFrame();
     const source=screenPointToSource(u,v,image.naturalWidth,image.naturalHeight,zoom,panX,panY);
-    if(!source)return false;lastPoint=source;
+    if(!source)return false;
     if(activate)forwardAppInput({kind:'click',...source});return true;
   }
   function settleConnection(owner,promise,completed=()=>{}){
@@ -188,6 +188,13 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
     const ids=['',...(devices??[]).map(device=>device.id)],index=Math.max(0,ids.indexOf(id));
     const selected=ids[(index+direction+ids.length)%ids.length];
     if(kind==='input')audio.setInput(selected);else audio.setOutput(selected);changed();
+  }
+  function scrollTarget() {
+    // Dedicated Scroll arrows target the visible selected-app viewport centre,
+    // never the last pointer hover (which may be over a composer or toolbar).
+    // Normalized crop coordinates respect the current zoom and pan.
+    const crop=screenCrop(1,1,zoom,panX,panY);
+    return {x:crop.x+crop.w/2,y:crop.y+crop.h/2};
   }
   function action(id,paintedWindow) {
     if(id.startsWith('focus-'))return focus(id.slice(6));
@@ -273,7 +280,7 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
       if(reloadConfirm)onReload();else{reloadConfirm=true;voiceHelp=false;viewPending=true;inputFeedback=null;changed();}return;
     }
     if(id==='shift'){pressKeycap(id);shift=!shift;changed();return;}
-    const input=id==='scroll-up'||id==='scroll-down'?{kind:'scroll',...lastPoint,delta:id==='scroll-up'?120:-120}:
+    const input=id==='scroll-up'||id==='scroll-down'?{kind:'scroll',...scrollTarget(),delta:id==='scroll-up'?120:-120}:
       id==='enter'||id==='backspace'?{kind:'key',key:id==='enter'?'Enter':'Backspace'}:
       id.startsWith('key:')?{kind:'text',text:screenKeyText(id.slice(4),shift)}:null;
     if(input){pressKeycap(id);forwardAppInput(input);changed();return;}
@@ -288,7 +295,6 @@ export function createHolodeckScreen({client,comfort,furniture,audio,documentRef
     if(previousView!==`${zoom}:${panX}:${panY}:${reloadConfirm}`){
       // A second controller must not click using the old picture in this frame.
       viewPending=true;
-      const crop=screenCrop(1,1,zoom,panX,panY);lastPoint={x:crop.x+crop.w/2,y:crop.y+crop.h/2};
     }
     changed();
   }

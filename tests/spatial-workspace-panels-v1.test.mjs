@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createHolodeckScreen,SCREEN_CONTENT,screenImageRect} from '../apps/spatial-bridge/holodeck-screen-v1.mjs';
+import {createHolodeckScreen,SCREEN_CONTENT,screenImageRect,screenCrop} from '../apps/spatial-bridge/holodeck-screen-v1.mjs';
 import {HOLODECK_PANELS,PANEL_BUTTONS,panelAt} from '../apps/spatial-bridge/holodeck-panels-v1.mjs';
 import {createHolodeckComfort} from '../apps/spatial-bridge/holodeck-comfort-v1.mjs';
 import {createHolodeckFurniture} from '../apps/spatial-bridge/holodeck-furniture-v1.mjs';
@@ -240,4 +240,26 @@ test('connection panel follows waiting-to-live frame state without caching or du
   assert.equal(paneTexts()[0].text,'Current app has no fresh frame.');
   assert.ok(!paneTexts().some(text=>text.text.includes('Connected to the current app')));
   assert.equal(h.screen.getState().connectionMessage,'Local Spatial helper responds.');
+});
+ 
+test('dedicated Scroll arrows use visible conversation centre, not composer hover',()=>{
+  const h=fixture();h.screen.render();
+  const rect=screenImageRect(1920,1080);
+  const hover=[(rect.x+rect.w*.85)/SCREEN_CONTENT.width,(rect.y+rect.h*.85)/SCREEN_CONTENT.height];
+  assert.equal(h.screen.point(...hover,false),true);
+  h.screen.action('scroll-down');
+  assert.deepEqual(h.inputs.at(-1),{kind:'scroll',x:.5,y:.5,delta:-120},
+    'hover near composer cannot retarget the separate Scroll action');
+  h.screen.action('zoom-in');
+  const beforePaint=h.inputs.length;h.screen.action('scroll-up');
+  assert.equal(h.inputs.length,beforePaint,'unpainted view blocks input');
+  h.screen.render();
+  h.screen.action('pan-right');h.screen.action('pan-down');h.screen.render();
+  h.screen.point(...hover,false);
+  const {zoom,panX,panY}=h.screen.getState(),crop=screenCrop(1,1,zoom,panX,panY);
+  h.screen.action('scroll-up');
+  assert.deepEqual(h.inputs.at(-1),{kind:'scroll',x:crop.x+crop.w/2,y:crop.y+crop.h/2,delta:120});
+  const count=h.inputs.length;
+  h.screen.action('focus-tools');h.screen.action('scroll-down');
+  assert.equal(h.inputs.length,count,'local-panel focus still blocks native Scroll');
 });
