@@ -2279,61 +2279,118 @@ function safeVrVirtualAirLinkAcceptanceProjection(value = {}) {
   });
 }
 
-function safeCoreDaemonStatusProjection(value = {}) {
-  const raw = text(value?.structuredContent?.stdout);
-  let parsed = null;
-  try { parsed = raw ? JSON.parse(raw) : null; } catch {}
-  if (!parsed || parsed?.schemaVersion !== 'stephanos.core-daemon-status.v1') {
-    return Object.freeze({ available: false });
-  }
-  const sourceHead = text(parsed.sourceHead).toLowerCase();
-  const heartbeatAgeSeconds = Number(parsed.heartbeatAgeSeconds);
+export function projectSovereignCoreDaemonStatusV1(value, { includeCustodyEvidence = true } = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return null;
+  // One closed leaf serves native parsing, persistence and historical readback.
+  // Read only own data properties; getters and inherited claims are not proof.
+  const field = (key) => Object.getOwnPropertyDescriptor(value, key)?.value;
+  const has = (key) => Object.hasOwn(Object.getOwnPropertyDescriptor(value, key) || {}, 'value');
+  const token = (key, pattern, fallback = '') => typeof field(key) === 'string'
+    && pattern.test(field(key)) ? field(key) : fallback;
+  const boundedNumber = (key, maximum) => typeof field(key) === 'number'
+    && Number.isFinite(field(key)) && field(key) >= 0 && field(key) <= maximum ? field(key) : null;
+  const optionalBoolean = (key) => typeof field(key) === 'boolean' ? { [key]: field(key) } : {};
+  const sourceHead = typeof field('sourceHead') === 'string' ? field('sourceHead').trim().toLowerCase() : '';
+  const processCount = field('processInventoryComplete') === true
+    && Number.isSafeInteger(field('processCount')) && field('processCount') >= 0 && field('processCount') <= 100
+    ? field('processCount') : null;
+  const custody = includeCustodyEvidence ? {
+    ...Object.assign({}, ...[
+      'processInventoryComplete', 'reportedDaemonHealthy', 'singleWriterProven',
+      'writerProcessObserved', 'lockOwnerMatchesWriter', 'rescueGenerationPresent',
+      'heartbeatFresh', 'busyGraceActive',
+    ].map(optionalBoolean)),
+    ...(has('processObservationBlocker')
+      ? { processObservationBlocker: token('processObservationBlocker', /^[A-Z0-9_:-]{0,120}$/) } : {}),
+    ...(has('rescueAttemptCount') ? {
+      rescueAttemptCount: Number.isSafeInteger(field('rescueAttemptCount'))
+        && field('rescueAttemptCount') >= 0 && field('rescueAttemptCount') <= 1_000_000
+        ? field('rescueAttemptCount') : null,
+    } : {}),
+    ...(has('flywheelCycleAgeSeconds') ? { flywheelCycleAgeSeconds: boundedNumber('flywheelCycleAgeSeconds', 31_536_000) } : {}),
+  } : {};
   return Object.freeze({
-    available: true,
-    ok: parsed.ok === true && parsed.processInventoryComplete === true && parsed.processCount === 1,
-    processCount: parsed.processInventoryComplete === true
-      && Number.isSafeInteger(parsed.processCount) && parsed.processCount >= 0 && parsed.processCount <= 100
-      ? parsed.processCount
-      : null,
-    processInventoryComplete: parsed.processInventoryComplete === true,
-    processObservationBlocker: /^[A-Z0-9_:-]{0,120}$/.test(text(parsed.processObservationBlocker))
-      ? text(parsed.processObservationBlocker) : '',
-    daemonHealthy: parsed.daemonHealthy === true,
-    reportedDaemonHealthy: parsed.reportedDaemonHealthy === true,
-    // Public projection contains only bounded custody verdicts, never PIDs,
-    // paths or raw command lines. Absent fields remain unproven.
-    singleWriterProven: parsed.singleWriterProven === true,
-    writerProcessObserved: parsed.writerProcessObserved === true,
-    lockOwnerMatchesWriter: parsed.lockOwnerMatchesWriter === true,
-    rescueGenerationPresent: parsed.rescueGenerationPresent === true,
-    rescueAttemptCount: Number.isSafeInteger(parsed.rescueAttemptCount)
-      && parsed.rescueAttemptCount >= 0 && parsed.rescueAttemptCount <= 1_000_000
-      ? parsed.rescueAttemptCount : null,
-    readiness: /^[A-Z_]{1,40}$/.test(text(parsed.readiness)) ? text(parsed.readiness) : 'UNKNOWN',
-    wakeState: /^[A-Z_]{1,40}$/.test(text(parsed.wakeState)) ? text(parsed.wakeState) : 'UNKNOWN',
-    awake: parsed.awake === true,
-    repairRequired: parsed.repairRequired === true,
-    repairReason: /^[A-Z0-9_:-]{0,160}$/.test(text(parsed.repairReason)) ? text(parsed.repairReason) : '',
-    controlPlaneFinalVerdict: /^[A-Z0-9_:-]{0,160}$/.test(text(parsed.controlPlaneFinalVerdict))
-      ? text(parsed.controlPlaneFinalVerdict)
-      : '',
+    available: field('available') === true,
+    daemonHealthy: field('daemonHealthy') === true,
+    readiness: token('readiness', /^[A-Z_]{1,40}$/, 'UNKNOWN'),
+    ...(typeof field('ok') === 'boolean' ? { ok: field('ok') === true && processCount === 1 } : {}),
+    ...(has('processCount') ? { processCount } : {}),
+    ...(has('wakeState') ? { wakeState: token('wakeState', /^[A-Z_]{1,40}$/, 'UNKNOWN') } : {}),
+    ...optionalBoolean('awake'),
+    ...optionalBoolean('repairRequired'),
+    ...(has('repairReason') ? { repairReason: token('repairReason', /^[A-Z0-9_:-]{0,160}$/) } : {}),
+    ...(has('controlPlaneFinalVerdict')
+      ? { controlPlaneFinalVerdict: token('controlPlaneFinalVerdict', /^[A-Z0-9_:-]{0,160}$/) } : {}),
     sourceHead: SHA_PATTERN.test(sourceHead) ? sourceHead : '',
-    heartbeatAgeSeconds: Number.isFinite(heartbeatAgeSeconds) && heartbeatAgeSeconds >= 0 ? heartbeatAgeSeconds : null,
-    heartbeatFresh: parsed.heartbeatFresh === true || (Number.isFinite(heartbeatAgeSeconds) && heartbeatAgeSeconds >= 0 && heartbeatAgeSeconds <= 60),
-    busyGraceActive: parsed.busyGraceActive === true,
-    flywheelCycleAgeSeconds: Number.isFinite(Number(parsed.flywheelCycleAgeSeconds)) && Number(parsed.flywheelCycleAgeSeconds) >= 0
-      ? Number(parsed.flywheelCycleAgeSeconds)
-      : null,
-    sovereignCommanderHealthy: parsed.sovereignCommanderHealthy === true,
-    backendHealthy: parsed.backendHealthy === true,
-    missionWorkerHealthy: parsed.missionWorkerHealthy === true,
-    gamingActive: parsed.gamingActive === true,
+    heartbeatAgeSeconds: boundedNumber('heartbeatAgeSeconds', 31_536_000),
+    ...custody,
+    sovereignCommanderHealthy: field('sovereignCommanderHealthy') === true,
+    backendHealthy: field('backendHealthy') === true,
+    missionWorkerHealthy: field('missionWorkerHealthy') === true,
+    gamingActive: field('gamingActive') === true,
     uiRequired: false,
     sourceMutationAllowed: false,
     schedulerAuthority: false,
     mergeAuthority: false,
     vendorMeterRequired: false,
     remoteCommanderRequired: false,
+  });
+}
+
+function safeCoreDaemonStatusProjection(value = {}) {
+  const raw = text(value?.structuredContent?.stdout);
+  let parsed = null;
+  try { parsed = raw ? JSON.parse(raw) : null; } catch {}
+  if (!parsed || Array.isArray(parsed) || parsed.schemaVersion !== 'stephanos.core-daemon-status.v1') {
+    return Object.freeze({ available: false });
+  }
+  // Only a freshly parsed native response may supply the legacy age fallback.
+  // Historical zero may itself be an old null coercion, so the shared leaf
+  // never derives a missing heartbeatFresh flag during receipt reprojection.
+  return projectSovereignCoreDaemonStatusV1({
+    ...parsed, available: true, processCount: parsed.processCount ?? null,
+    processInventoryComplete: parsed.processInventoryComplete === true,
+    ...(!Object.hasOwn(parsed, 'heartbeatFresh') ? {
+      heartbeatFresh: typeof parsed.heartbeatAgeSeconds === 'number'
+        && Number.isFinite(parsed.heartbeatAgeSeconds)
+        && parsed.heartbeatAgeSeconds >= 0 && parsed.heartbeatAgeSeconds <= 60,
+    } : {}),
+  });
+}
+
+function coreDaemonStatusExecutionEnvelope({ shape, observedBranch, observedHead, result, maintenance }) {
+  // Both Core outcomes cross the same producer boundary before the first
+  // receipt projection. These identities come from the validated command and
+  // the existing Git admission, never the observed Core's possibly stale head.
+  const identity = {
+    operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+    requestId: text(shape.command.requestId),
+    expectedHead: shape.expectedHead,
+    sourceHead: observedHead,
+    branch: observedBranch,
+    expectedHeadMatch: observedHead === shape.expectedHead,
+  };
+  if (shape.command.remoteAction !== 'status-stephanos-core-daemon'
+    || observedBranch !== 'main' || !SHA_PATTERN.test(observedHead) || !identity.expectedHeadMatch
+    || result.remoteAction !== shape.command.remoteAction
+    || Object.hasOwn(result, 'result')
+    || Object.entries(identity).some(([key, value]) => Object.hasOwn(result, key) && result[key] !== value)) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID', {
+      remoteAction: shape.command.remoteAction, publicReceiptSafe: true, secretMaterialReturned: false,
+    });
+  }
+  const operationResult = Object.freeze({
+    ...result,
+    expectedHead: identity.expectedHead, sourceHead: identity.sourceHead,
+    branch: identity.branch, expectedHeadMatch: identity.expectedHeadMatch,
+  });
+  return Object.freeze({
+    ...operationResult,
+    verdict: result.ok === true ? 'COMMAND_EXECUTION_COMPLETE' : 'BLOCKED',
+    operation: identity.operation, requestId: identity.requestId,
+    ...(maintenance ? { maintenance } : {}),
+    result: operationResult,
   });
 }
 
@@ -4288,12 +4345,15 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       && coreDaemonStatus.sourceHead === shape.expectedHead
       && coreDaemonStatus.readiness !== 'RELOAD_REQUIRED';
     if (!coreHealthy) {
-      return fail('SOVEREIGN_COMMANDER_REMOTE_CORE_DAEMON_NOT_READY', {
-        remoteAction: shape.command.remoteAction,
-        sourceHead: shape.expectedHead,
-        coreDaemonStatus,
-        publicReceiptSafe: true,
-        secretMaterialReturned: false,
+      return coreDaemonStatusExecutionEnvelope({
+        shape, observedBranch, observedHead,
+        result: fail('SOVEREIGN_COMMANDER_REMOTE_CORE_DAEMON_NOT_READY', {
+          remoteAction: shape.command.remoteAction,
+          sourceHead: shape.expectedHead,
+          coreDaemonStatus,
+          publicReceiptSafe: true,
+          secretMaterialReturned: false,
+        }),
       });
     }
   }
@@ -5067,6 +5127,13 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     publicReceiptSafe: true,
     secretMaterialReturned: false,
   });
+  if (coreDaemonStatus) {
+    // Keep the existing proofComplete decision above. Matching source identity
+    // binds this observation; it does not supply native proof or loaded bytes.
+    return coreDaemonStatusExecutionEnvelope({
+      shape, observedBranch, observedHead, result: maintenanceResult, maintenance: projection,
+    });
+  }
   return Object.freeze({
     ...maintenanceResult,
     verdict: 'COMMAND_EXECUTION_COMPLETE',

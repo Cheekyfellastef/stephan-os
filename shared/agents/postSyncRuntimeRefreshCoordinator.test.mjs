@@ -2441,3 +2441,171 @@ test('projection rechecks every planned target and does not display contradictor
   assert.equal(unexpected.resultTargets[0].exactHeadProofOk, false);
   assert.equal(unexpected.resultTargets[0].blocker, 'REFRESH_TARGET_PROOF_FAILED');
 });
+
+// Exact 23 unknown members of the authenticated d729d17c -> ac5ee351 range.
+// The resident import chain is Commander HTTP -> Caravan HTTP -> page/native
+// bridge. The bridge captures its fixed probe contract, then rereads and checks
+// the PowerShell bytes on each bounded call. Offline enrollment and native
+// compilation retain the separate #1814 authority and installation boundary.
+const CARAVAN_RESIDENT_PATHS = [
+  'scripts/battle-bridge-caravan-http-v1.mjs',
+  'scripts/battle-bridge-caravan-page-v1.mjs',
+  'scripts/windows/battle-bridge-mobile-install-native-v1.mjs',
+];
+const CARAVAN_PROBE_PATH = 'scripts/windows/observe-battle-bridge-mobile-install-v1.ps1';
+const CARAVAN_OFFLINE_PATHS = [
+  'scripts/battle-bridge-mobile-install-enrollment-bootstrap-v1.mjs',
+  'scripts/battle-bridge-mobile-install-enrollment-review-v1.mjs',
+  'scripts/battle-bridge-mobile-partial-preservation-review-v1.mjs',
+  'scripts/fixtures/mobile-device-pairing-v1.mjs',
+  'scripts/fixtures/sovereign-mobile-installer-native-source-v1.mjs',
+  'scripts/windows/SovereignMobileInstallAnchorV1.cs',
+  'scripts/windows/SovereignMobileInstallAssertionV1.cs',
+  'scripts/windows/SovereignMobileInstallEnrollmentV1.cs',
+  'scripts/windows/SovereignMobileInstallEntryV1.cs',
+  'scripts/windows/SovereignMobileInstallExecutorV1.cs',
+  'scripts/windows/SovereignMobileInstallJournalV1.cs',
+  'scripts/windows/SovereignMobileInstallProvisioningV1.cs',
+  'scripts/windows/SovereignMobileInstallReceiptV1.cs',
+  'scripts/windows/SovereignMobileInstallReconciliationV1.cs',
+  'scripts/windows/SovereignMobileInstallReleaseV1.cs',
+  'scripts/windows/SovereignMobileInstallRequestsV1.cs',
+  'scripts/windows/install-battle-bridge-mobile-installer-v1.ps1',
+  'scripts/windows/preserve-battle-bridge-mobile-partial-v1.ps1',
+  'scripts/windows/test-sovereign-fixed-runtime-job-v1.ps1',
+];
+const CARAVAN_AUDITED_PATHS = [...CARAVAN_RESIDENT_PATHS, CARAVAN_PROBE_PATH, ...CARAVAN_OFFLINE_PATHS];
+
+test('Caravan unknown partition uses the existing resident, per-call and offline owners', () => {
+  assert.equal(new Set(CARAVAN_AUDITED_PATHS).size, 23);
+  for (const [paths, targets] of [
+    [CARAVAN_RESIDENT_PATHS, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]],
+    [[CARAVAN_PROBE_PATH], [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]],
+    [CARAVAN_OFFLINE_PATHS, []],
+  ]) {
+    for (const path of paths) {
+      const plan = classifyPostSyncRefresh([path]);
+      assert.deepEqual(plan.targetIds, targets, path);
+      assert.equal(plan.unknownPathCount, 0, path);
+      assert.equal(plan.noRuntimePathCount, targets.length ? 0 : 1, path);
+      assert.equal(plan.automaticExecutionAllowed, true, path);
+    }
+  }
+  const plan = classifyPostSyncRefresh(CARAVAN_AUDITED_PATHS);
+  assert.equal(plan.noRuntimePathCount, 19);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER, POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+});
+
+test('Caravan offline adoption invokes nothing and probe adoption checks only the current checkout', async () => {
+  const calls = [];
+  const offline = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B,
+    changedPaths: CARAVAN_OFFLINE_PATHS, adapters: pending853343Adapters(calls) });
+  assert.equal(offline.ok, true);
+  assert.equal(offline.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.deepEqual(offline.results, []);
+  assert.deepEqual(calls, []);
+  for (const sourceHead of [A, B]) {
+    const probeCalls = [];
+    const probe = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B,
+      changedPaths: [CARAVAN_PROBE_PATH, ...CARAVAN_OFFLINE_PATHS],
+      adapters: pending853343Adapters(probeCalls, sourceHead) });
+    assert.deepEqual(probeCalls, ['confirmNaturalReload']);
+    assert.equal(probe.ok, sourceHead === B);
+    assert.equal(probe.exactHeadProofOk, sourceHead === B);
+  }
+});
+
+test('Caravan resident admission preserves native refusals and stops before later targets', async () => {
+  for (const refusal of [
+    { ...pass(), ok: false, blocker: 'SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED' },
+    { ...pass(), ok: false, blocker: 'SOVEREIGN_MAINTENANCE_OWNER_BUSY' },
+    { ...pass(), ok: false, blocker: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD' },
+    pass(A), { ...pass(), exactHeadProofOk: false },
+  ]) {
+    const calls = [];
+    const checkpoints = [];
+    const adapters = pending853343Adapters(calls);
+    adapters.refreshSovereignCommander = async () => { calls.push('refreshSovereignCommander'); return refusal; };
+    const result = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B,
+      changedPaths: CARAVAN_AUDITED_PATHS, adapters,
+      onTargetComplete: rows => checkpoints.push(rows) });
+    assert.equal(result.ok, false);
+    assert.equal(result.exactHeadProofOk, false);
+    assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED);
+    assert.equal(result.blocker, refusal.blocker || 'REFRESH_PROOF_FAILED:sovereign-commander');
+    assert.deepEqual(calls, ['refreshSovereignCommander']);
+    assert.equal(checkpoints.length, 1);
+    assert.equal(ownedRefreshRecord(result).resultTargets[0].ok, false);
+  }
+});
+
+test('Caravan mixed refresh retains relay, plugin-host and durable Spatial obligations', async () => {
+  const targetCalls = ['refreshUi', 'restartBackend', 'restartMissionWorker', 'restartGitHubMailbox', 'refreshSovereignCommander'];
+  for (const [qualifiedRelay, pluginChanged, blocker] of [
+    [false, true, 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN'],
+    [true, true, 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN'],
+    [true, false, 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN'],
+  ]) {
+    const calls = [];
+    const adapters = pending853343Adapters(calls);
+    adapters.refreshSovereignCommander = async () => {
+      calls.push('refreshSovereignCommander');
+      return { ...pass(), ...(qualifiedRelay ? { sovereignRelayProof: relayProof() } : {}) };
+    };
+    const changedPaths = [...CARAVAN_AUDITED_PATHS, ...PENDING_853343_UNRESOLVED_PATHS,
+      ...PENDING_853343_EXISTING_OWNER_PATHS.filter(path => pluginChanged || !path.endsWith('/plugin.json'))];
+    const result = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B, changedPaths, adapters });
+    assert.equal(result.plan.unknownPathCount, 0);
+    assert.equal(result.plan.automaticExecutionAllowed, true);
+    assert.equal(result.plan.targetIds.length, 6);
+    assert.equal(result.plan.sovereignRelayRefreshRequired, true);
+    assert.equal(result.plan.pluginHostActivationRequired, pluginChanged);
+    assert.deepEqual(result.plan.internal.spatialAdoptionPaths, PENDING_853343_UNRESOLVED_PATHS);
+    assert.equal(result.ok, false);
+    assert.equal(result.exactHeadProofOk, false);
+    assert.equal(result.blocker, blocker);
+    assert.deepEqual(calls, [...targetCalls, ...(qualifiedRelay ? ['confirmNaturalReload'] : []),
+      ...(qualifiedRelay && pluginChanged ? ['verifySovereignPluginHost'] : [])]);
+    const debt = collectPostSyncRefreshDebt({ refreshRecord: JSON.parse(JSON.stringify(ownedRefreshRecord(result))) });
+    assert.equal(debt.ok, true);
+    assert.equal(debt.completion, null);
+    assert.equal(debt.spatialAdoptionRequired, true);
+    assert.deepEqual(debt.spans, [{ beforeHead: A, afterHead: B }]);
+  }
+});
+
+test('Caravan exact allowances refuse every unregistered neighbor and unsafe path before invocation', async () => {
+  const unknown = [
+    ...CARAVAN_AUDITED_PATHS.map(path => path.replace(/(\.[^/.]+)$/, '-unregistered$1')),
+    'scripts/battle-bridge-caravan-http-v2.mjs',
+    'scripts/windows/SovereignMobileInstallEntryV2.cs',
+    'scripts/windows/OBSERVE-BATTLE-BRIDGE-MOBILE-INSTALL-V1.ps1',
+    'scripts/fixtures/mobile-device-pairing-v2.mjs',
+    'scripts/windows/test-sovereign-fixed-runtime-job-v2.ps1',
+  ];
+  for (const path of [...unknown, '../outside.ps1']) {
+    const calls = [];
+    const result = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B,
+      changedPaths: [...CARAVAN_AUDITED_PATHS, path], adapters: pending853343Adapters(calls) });
+    const unsafe = path === '../outside.ps1';
+    assert.equal(result.classification, unsafe ? POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNSAFE_CHANGED_PATH
+      : POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH, path);
+    assert.equal(result.plan.automaticExecutionAllowed, false, path);
+    assert.deepEqual(unsafe ? result.plan.internal.unsafePaths : result.plan.internal.unknownPaths, [path], path);
+    assert.deepEqual(result.results, [], path);
+    assert.deepEqual(calls, [], path);
+  }
+});
+
+test('Caravan source classifications retain the separate OpenClaw approval gate', async () => {
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B,
+    changedPaths: [...CARAVAN_AUDITED_PATHS, 'integrations/openclaw/stephanos-ignite-command/index.mjs'],
+    adapters: pending853343Adapters(calls) });
+  assert.deepEqual(calls, ['refreshSovereignCommander', 'confirmNaturalReload']);
+  assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.APPROVAL_REQUIRED_OPENCLAW);
+  assert.equal(result.blocker, 'OPENCLAW_REFRESH_APPROVAL_REQUIRED');
+  assert.equal(result.ok, false);
+  assert.equal(result.exactHeadProofOk, false);
+  assert.equal(result.plan.openClawPathCount, 1);
+});
