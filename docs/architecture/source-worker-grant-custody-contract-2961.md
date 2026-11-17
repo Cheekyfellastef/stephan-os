@@ -107,3 +107,26 @@ pickup. These source tests do not establish Battle Bridge execution or retiremen
 Reusable lesson: shared authority-bearing producers need composition tests,
 and queue acquisition, execution, physical exclusion, retirement and outcome are
 distinct lifecycle facts. A held processing result is never evidence of a build.
+
+## Acceptance after an externally observed merge
+
+An authenticated external merge can leave the original mission in `VERIFYING`
+with `RECONCILE_GOAL_ACCEPTANCE`. That action does not authorize another source
+build. When the exact merge evidence, completed dispatch, absent writer and
+unchanged mission identity establish this acceptance-only state, the legacy
+construction slot is free while acceptance remains unfinished and visible.
+
+The backlog, service capacity checks, worker progress requirement and Completion
+Guardian consume the same classification. Acceptance debt remains bound to the
+original mission and goal; it must not admit that goal again, manufacture a
+worker grant or count as a completed goal. Missing or contradictory evidence
+retains the construction obligation.
+
+This accounting grants no lease or processing-claim release. Programme Authority,
+mission uniqueness, signed capacity, physical custody and resource admission
+still decide whether any successor may execute. A projection regression proves
+this distinction; it does not prove installation or a productive live refill.
+
+Reusable lesson: distinguish construction occupancy from unfinished acceptance
+before requiring material progress. A deliberately non-executable acceptance
+action is not a missing build grant.
