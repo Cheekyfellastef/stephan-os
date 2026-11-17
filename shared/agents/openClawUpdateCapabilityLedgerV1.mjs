@@ -198,6 +198,11 @@ function normalizeCapability(rawInput, blockers) {
   }
 
   if (requiresCandidateProof(updateDisposition)) {
+    // Protected implementation changes must retain the prior qualification
+    // identity until independently verified replay qualifies the candidate.
+    if (protectedCapability && qualificationRefs.length === 0) {
+      blockers.push(`PROTECTED_CANDIDATE_QUALIFICATION_REFS_REQUIRED:${capabilityId || 'unknown'}`);
+    }
     if (!candidateImplementation) blockers.push(`CANDIDATE_IMPLEMENTATION_REQUIRED:${capabilityId || 'unknown'}`);
     if (tests.length === 0) blockers.push(`CANDIDATE_TEST_PROOF_REQUIRED:${capabilityId || 'unknown'}`);
     if (evidenceRefs.length === 0) blockers.push(`CANDIDATE_EVIDENCE_REQUIRED:${capabilityId || 'unknown'}`);
