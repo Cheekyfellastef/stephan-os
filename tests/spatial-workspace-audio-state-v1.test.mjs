@@ -15,7 +15,10 @@ function mediaStream(){
 function microphoneHarness(options={}){
   const requests=[],changes=[],statuses=[];
   const audio=createHolodeckAudioControls({AudioContextCtor:null,
-    navigatorRef:{mediaDevices:{getUserMedia(spec){const request=deferred();requests.push({...request,spec});return request.promise;}}},
+    navigatorRef:{mediaDevices:{
+      async enumerateDevices(){return ['headset','old-microphone','new-microphone'].map(id=>({kind:'audioinput',deviceId:id,label:id}));},
+      getUserMedia(spec){const request=deferred();requests.push({...request,spec});return request.promise;},
+    }},
     onChange:state=>changes.push(state),onStatus:message=>statuses.push(message),...options});
   return {audio,requests,changes,statuses};
 }
@@ -48,7 +51,8 @@ test('one audio state projects device selections to both presentations without r
 });
 
 test('microphone test uses the shared selection and owns exactly one pending or live grant',async()=>{
-  const h=microphoneHarness();h.audio.setInput('headset');
+  const h=microphoneHarness();await h.audio.listDevices();
+  assert.equal(h.audio.setInput('headset'),true,'explicit selection follows live device discovery');
   const opening=h.audio.testMicrophone();
   assert.equal(h.requests.length,1,'permission is requested directly from the explicit test call');
   assert.deepEqual(h.requests[0].spec,{audio:{deviceId:{exact:'headset'}},video:false});
@@ -77,8 +81,10 @@ test('Stop and dispose settle pending microphone tests and close a later permiss
 });
 
 test('an old permission rejection cannot overwrite a fresh explicitly started microphone test',async()=>{
-  const h=microphoneHarness();const old=h.audio.testMicrophone();h.audio.stopMicrophone();
-  const fresh=h.audio.testMicrophone('new-microphone'),stream=mediaStream();h.requests[1].resolve(stream);
+  const h=microphoneHarness();await h.audio.listDevices();
+  const old=h.audio.testMicrophone();h.audio.stopMicrophone();
+  assert.equal(h.audio.setInput('new-microphone'),true,'new test needs a fresh discovered selection');
+  const fresh=h.audio.testMicrophone(),stream=mediaStream();h.requests[1].resolve(stream);
   assert.equal((await fresh).ok,true);const accepted=h.audio.getState();
   h.requests[0].reject(Object.assign(new Error('old denied grant'),{name:'NotAllowedError'}));
   assert.equal((await old).cancelled,true);await drain();
@@ -88,9 +94,12 @@ test('an old permission rejection cannot overwrite a fresh explicitly started mi
 
 test('changing the selected microphone revokes the old test without opening the new device',async()=>{
   for(const phase of ['pending','active']){
-    const h=microphoneHarness(),opening=h.audio.testMicrophone('old-microphone'),stream=mediaStream();
+    const h=microphoneHarness();await h.audio.listDevices();
+    assert.equal(h.audio.setInput('old-microphone'),true);
+    const opening=h.audio.testMicrophone(),stream=mediaStream();
     if(phase==='active'){h.requests[0].resolve(stream);assert.equal((await opening).ok,true);}
-    h.audio.setInput('new-microphone');const selected=h.audio.getState();
+    assert.equal(h.audio.setInput('new-microphone'),true);
+    const selected=h.audio.getState();
     assert.equal(selected.inputId,'new-microphone');assert.equal(selected.microphoneActive,false);assert.equal(selected.microphonePending,false);
     assert.equal(h.requests.length,1,'selection cannot itself request microphone permission');
     if(phase==='pending'){assert.equal((await opening).cancelled,true);h.requests[0].resolve(stream);await drain();}
@@ -156,13 +165,19 @@ test('microphone setup failure and Stop during suspended audio release the grant
 
 test('speaker tests use the shared output selection and never begin after disposal',async()=>{
   const sink=deferred(),context=audioContextHarness({sink});
-  const audio=createHolodeckAudioControls({...context,navigatorRef:{}});audio.setOutput('headset-output');
+  const navigatorRef={mediaDevices:{enumerateDevices:async()=>[
+    {kind:'audiooutput',deviceId:'headset-output',label:'Headset'},
+    {kind:'audiooutput',deviceId:'selected-output',label:'Selected'},
+  ]}};
+  const audio=createHolodeckAudioControls({...context,navigatorRef});
+  await audio.listDevices();assert.equal(audio.setOutput('headset-output'),true);
   const playing=audio.testSpeakers();assert.equal(context.contexts[0].sink,'headset-output');
   audio.dispose();assert.equal((await playing).cancelled,true);const closed=audio.getState();
   sink.resolve();await drain();assert.equal(context.contexts[0].starts,0);assert.equal(context.contexts[0].closes,1);
   assert.deepEqual(audio.getState(),closed);
-  const normal=audioContextHarness(),live=createHolodeckAudioControls({...normal,navigatorRef:{}});
-  live.setOutput('selected-output');assert.equal((await live.testSpeakers()).ok,true);
+  const normal=audioContextHarness(),live=createHolodeckAudioControls({...normal,navigatorRef});
+  await live.listDevices();assert.equal(live.setOutput('selected-output'),true);
+  assert.equal((await live.testSpeakers()).ok,true);
   assert.equal(normal.contexts[0].sink,'selected-output');assert.equal(normal.contexts[0].starts,1);
   normal.contexts[0].oscillator.onended();assert.equal(normal.contexts[0].closes,1);live.dispose();
 });
