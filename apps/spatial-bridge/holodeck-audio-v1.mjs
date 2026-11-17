@@ -31,7 +31,7 @@ export function createHolodeckAudioControls({
     try{prefStore?.setItem?.(SPATIAL_AUDIO_PREFERENCE_KEY,
       JSON.stringify({version:1,inputId:preferences.inputId,outputId:preferences.outputId}));}catch{}
   };
-  let microphone=null,speaker=null,disposed=false,listVersion=0,statusIntent=0,devicesVerified=false;
+  let microphone=null,speaker=null,disposed=false,listVersion=0,statusIntent=0,deviceRefreshFailed=false;
   let state={inputs:[],outputs:[],inputId:'',outputId:'',status:'Audio test devices not yet selected.',
     microphoneActive:false,microphonePending:false,revision:0};
   const cancelled=Symbol('audio-test-cancelled');
@@ -74,7 +74,7 @@ export function createHolodeckAudioControls({
   // A failed refresh must not leave an old device list usable for a new
   // microphone permission request or speaker test. Keep saved hints inert.
   function invalidateDevices(reason){
-    devicesVerified=false;statusIntent++;
+    deviceRefreshFailed=true;statusIntent++;
     releaseMicrophone();releaseSpeaker();
     const message=reason+' Refresh devices before starting another local audio test.';
     publish({inputs:[],outputs:[],inputId:'',outputId:'',microphoneActive:false,
@@ -112,7 +112,7 @@ export function createHolodeckAudioControls({
       const outputs=devices.filter(d=>d.kind==='audiooutput').map(d=>({id:d.deviceId,label:d.label||'Speakers'}));
       // A saved hint is not trusted until fresh device enumeration finds an
       // exact match. Never substitute a different microphone or speaker.
-      devicesVerified=true;
+      deviceRefreshFailed=false;
       const wantedInput=state.inputId||preferences.inputId;
       const wantedOutput=state.outputId||preferences.outputId;
       const inputId=inputs.some(d=>d.id===wantedInput)?wantedInput:'';
@@ -142,7 +142,7 @@ export function createHolodeckAudioControls({
   }
   async function testMicrophone(deviceId=state.inputId){
     if(disposed)return stoppedResult('Microphone');
-    if(!devicesVerified)return {ok:false,reason:status('Refresh audio devices before testing the microphone.')};
+    if(deviceRefreshFailed)return {ok:false,reason:status('Refresh audio devices before testing the microphone.')};
     deviceId=selection(deviceId);
     if(deviceId===null)return {ok:false,reason:status('Select a valid microphone device.')};
     // A remembered headset that vanished must not quietly become the system
@@ -217,7 +217,7 @@ export function createHolodeckAudioControls({
   }
   async function testSpeakers(deviceId=state.outputId){
     if(disposed)return stoppedResult('Speaker');
-    if(!devicesVerified)return {ok:false,reason:status('Refresh audio devices before testing the speakers.')};
+    if(deviceRefreshFailed)return {ok:false,reason:status('Refresh audio devices before testing the speakers.')};
     deviceId=selection(deviceId);
     if(deviceId===null)return {ok:false,reason:status('Select a valid speaker device.')};
     if(!state.outputId&&preferences.outputId)return {ok:false,reason:status('Previous speaker unavailable. Re-select the intended output or explicitly choose system default before testing.')};
