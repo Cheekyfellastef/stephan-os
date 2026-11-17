@@ -250,3 +250,31 @@ test('consented native editor replies are shown as editor readback, not ChatGPT 
   await h.client.stop();
   assert.equal(h.client.getState().inputStatus,'','disconnect must not leave a stale editor-success label');
 });
+
+test('virtual Shift+Enter never forwards a bare Enter or impersonates explicit Send',()=>{
+  const h=screenFixture();h.screen.render();
+  const enter=SCREEN_BUTTONS.find(button=>button.id==='enter');
+  assert.equal(screenButtonLabel(enter,false),'Enter (app)');
+  assert.match(h.screen.getState().keyboardNotice,/Enter follows app behaviour and may send/);
+  h.screen.action('shift');
+  assert.equal(h.screen.action('enter'),false,'unsupported newline must be refused locally');
+  assert.equal(h.inputs.length,0,'no native Enter was forwarded for Shift+Enter');
+  assert.match(h.screen.getState().inputStatus,/Shift\+Enter is not supported.*No key was sent/);
+  h.screen.action('shift');
+  h.screen.action('enter');
+  assert.deepEqual(h.inputs,[{kind:'key',key:'Enter'}],'ordinary Enter remains app-defined, never an explicit Send guarantee');
+});
+
+test('Spatial Voice and Disconnect guidance keeps ChatGPT audio control in the original app',()=>{
+  const h=screenFixture();h.screen.render();
+  const texts=h.contexts[0].texts.map(entry=>entry.text);
+  assert.ok(texts.some(text=>text.includes('ChatGPT Voice runs in the original app')),
+    'right-side audio tools must not pretend to control ChatGPT Voice');
+  assert.ok(texts.some(text=>text.includes('Disconnect does not mute or end Voice')),
+    'window disconnect does not stop or mute ChatGPT Voice');
+  h.screen.action('voice');h.screen.render();
+  const guide=h.contexts[0].texts.map(entry=>entry.text);
+  assert.ok(guide.some(text=>text.includes('Mute or end Voice in the original ChatGPT app')));
+  assert.ok(guide.some(text=>text.includes('Disconnect stops the window picture and input')));
+  assert.equal(h.inputs.length,0,'opening guidance never sends an app action');
+});
