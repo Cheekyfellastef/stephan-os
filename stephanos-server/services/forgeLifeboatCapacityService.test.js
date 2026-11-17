@@ -85,6 +85,131 @@ function baseOptions(overrides = {}) {
   };
 }
 
+function observeProbeTimeout(t) {
+  const timeouts = [];
+  t.mock.method(globalThis, 'setTimeout', (_callback, timeoutMs) => {
+    timeouts.push(timeoutMs);
+    return 123;
+  });
+  t.mock.method(globalThis, 'clearTimeout', () => {});
+  return timeouts;
+}
+
+test('actual default Git and HTTP probe reduce their timeouts after slow source observation and never publish late capacity', async t => {
+  let clock = 0, http = 0, queues = 0;
+  const timeouts = observeProbeTimeout(t);
+  const { options, publications, proofs } = baseOptions({
+    remainingMs: () => 5000 - clock,
+    probeTimeoutMs: 4000,
+    readSourceHead: undefined,
+    spawnSyncFn: (_command, _args, options) => {
+      assert.equal(options.timeout, 5000);
+      clock = 3990;
+      return { status: 0, stdout: HEAD };
+    },
+    probeLocalBuilder: undefined,
+    fetchImpl: async (_url, request) => {
+      http++;
+      assert.equal(request.method, 'POST');
+      assert.equal(request.signal.aborted, false);
+      clock += 2000;
+      return { ok: true, text: async () => JSON.stringify({ done: true, response: 'LANE6_READY' }) };
+    },
+    readQueue: async () => { queues++; return []; },
+  });
+  const result = await refreshForgeLifeboatCapacity(options);
+  assert.deepEqual(timeouts, [1010], 'the actual POST receives the remaining time after Git');
+  assert.equal(http, 1);
+  assert.equal(result.reason, 'FORGE_LIFEBOAT_CAPACITY_BUDGET_EXHAUSTED');
+  assert.equal(result.available, false);
+  assert.equal(queues, 0);
+  assert.equal(proofs.length, 0);
+  assert.equal(publications.length, 0);
+});
+
+test('source or actual POST-boundary deadline exhaustion prevents generation, proof and READY publication', async t => {
+  const timeouts = observeProbeTimeout(t);
+  for (const expireAt of ['source', 'post']) {
+    let clock = 0, budgetReads = 0, http = 0;
+    const { options, proofs, publications } = baseOptions({
+      remainingMs: () => {
+        budgetReads++;
+        if (expireAt === 'post' && budgetReads >= 4) clock = 5000;
+        return 5000 - clock;
+      },
+      readSourceHead: async () => { await Promise.resolve(); if (expireAt === 'source') clock = 5000; return HEAD; },
+      probeLocalBuilder: undefined,
+      fetchImpl: async () => { http++; assert.fail('expired producer started a POST'); },
+    });
+    const result = await refreshForgeLifeboatCapacity(options);
+    assert.equal(result.reason, 'FORGE_LIFEBOAT_CAPACITY_BUDGET_EXHAUSTED', expireAt);
+    assert.equal(http, 0);
+    assert.equal(proofs.length, 0);
+    assert.equal(publications.length, 0);
+  }
+  assert.deepEqual(timeouts, [], 'no timer or HTTP starts with zero remaining time');
+});
+
+test('expired asynchronous queue or proof completion cannot start capacity publication and retains written proof', async () => {
+  for (const expireAt of ['queue', 'proof']) {
+    let clock = 0;
+    const actualProofWrite = { ok: true, reason: 'actual-fixture-proof-written' };
+    const { options, proofs, publications } = baseOptions({
+      remainingMs: () => 5000 - clock,
+      readQueue: async () => { await Promise.resolve(); if (expireAt === 'queue') clock = 5000; return []; },
+      writeProof: async record => { proofs.push(record); await Promise.resolve(); clock = 5000; return actualProofWrite; },
+    });
+    const result = await refreshForgeLifeboatCapacity(options);
+    assert.equal(result.reason, 'FORGE_LIFEBOAT_CAPACITY_BUDGET_EXHAUSTED', expireAt);
+    assert.equal(proofs.length, expireAt === 'proof' ? 1 : 0);
+    assert.equal(publications.length, 0);
+    if (expireAt === 'proof') {
+      assert.equal(result.proofWrite, actualProofWrite);
+      assert.equal(result.capacityPublished, false);
+    }
+  }
+});
+
+test('authentic complete or partial publication finishing after budget is retained without claiming current available capacity', async () => {
+  for (const complete of [false, true]) {
+    let clock = 0;
+    const actualPublication = { finalVerdict: complete ? 'GITHUB_CONTINUITY_CAPACITY_PUBLISHED' : 'GITHUB_CONTINUITY_CAPACITY_PUBLICATION_SAFE_HOLD',
+      publication: { ok: true }, workerScopedPublication: { ok: complete } };
+    const { options, publications, proofs } = baseOptions({
+      remainingMs: () => 5000 - clock,
+      publishCapacity: async record => { publications.push(record); await Promise.resolve(); clock = 5000; return actualPublication; },
+    });
+    const result = await refreshForgeLifeboatCapacity(options);
+    assert.equal(result.reason, 'FORGE_LIFEBOAT_CAPACITY_BUDGET_EXHAUSTED');
+    assert.equal(result.available, false);
+    assert.equal(result.capacityPublished, complete, 'deadline failure cannot erase completed publication results');
+    assert.equal(result.publicationCompletedAfterBudget, true);
+    assert.equal(result.publication, actualPublication);
+    assert.equal(result.publication.publication.ok, true, 'a partial primary write is still actual state');
+    assert.equal(publications.length, 1);
+    assert.equal(proofs.length, 1);
+  }
+});
+
+test('malformed, exhausted or increasing caller deadlines fail closed before new work', async () => {
+  for (const remainingMs of [undefined, null, () => NaN, () => Infinity, () => -1, () => 0, () => '5000', () => { throw new Error('clock-unavailable'); }]) {
+    const { options, publications, proofs } = baseOptions({ remainingMs,
+      readSourceHead: () => assert.fail('invalid deadline reached source observation') });
+    const result = await refreshForgeLifeboatCapacity(options);
+    assert.equal(result.reason, 'FORGE_LIFEBOAT_CAPACITY_BUDGET_EXHAUSTED');
+    assert.equal(publications.length, 0);
+    assert.equal(proofs.length, 0);
+  }
+  let budget = 1000;
+  const { options, proofs, publications } = baseOptions({ remainingMs: () => budget,
+    readSourceHead: async () => { budget = 1001; return HEAD; },
+    probeLocalBuilder: () => assert.fail('a reversed deadline reached generation') });
+  const result = await refreshForgeLifeboatCapacity(options);
+  assert.equal(result.reason, 'FORGE_LIFEBOAT_CAPACITY_BUDGET_EXHAUSTED');
+  assert.equal(publications.length, 0);
+  assert.equal(proofs.length, 0);
+});
+
 test('publishes one short-lived Lane 6 receipt from a real local-model probe and pending queue depth', async () => {
   const { options, publications, proofs } = baseOptions();
   const result = await refreshForgeLifeboatCapacity(options);

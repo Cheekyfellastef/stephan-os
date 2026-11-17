@@ -80,10 +80,17 @@ export async function runBattleBridgeCapacityObservationHeartbeat({
   const began = nowMs();
   if (!Number.isFinite(began) || !Number.isFinite(budgetMs) || budgetMs <= 0) return held('CAPACITY_OBSERVATION_BUDGET_EXHAUSTED');
   const deadline = began + Math.min(CAPACITY_OBSERVATION_MAX_MS, budgetMs);
+  let previousClockMs = began, invalidClock = false;
   const remaining = () => {
     const current = nowMs();
-    return Number.isFinite(current) && current >= began ? Math.floor(deadline - current) : 0;
+    if (!Number.isFinite(current) || current < previousClockMs) invalidClock = true;
+    previousClockMs = current;
+    return invalidClock ? 0 : Math.floor(deadline - current);
   };
+  // Keep final identity observation and wrapper debt/cleanup time separate from
+  // generation. Filesystem completion remains cooperative, never detached.
+  const observationRemaining = () => Math.max(0, remaining() - 1_000);
+  const producerRemaining = () => Math.max(0, remaining() - 2_000);
   const identity = evidence => evidence?.capacityObservationAllowed === true
     && evidence.observationOnly === true && evidence.workAuthorized === false
     && evidence.sourceHead === expectedSourceHead && Number.isInteger(evidence.pid) && evidence.pid > 0
@@ -91,28 +98,29 @@ export async function runBattleBridgeCapacityObservationHeartbeat({
     && typeof evidence.workerStartedAtUtc === 'string' && Number.isFinite(Date.parse(evidence.workerStartedAtUtc))
     ? JSON.stringify([evidence.sourceHead, evidence.pid, evidence.launchIdentityId, evidence.workerStartedAtUtc]) : '';
   try {
-    if (remaining() <= 1_000) return held('CAPACITY_OBSERVATION_BUDGET_EXHAUSTED');
-    const observationOptions = { env, workspaceRoot: paths.workspaceRoot, expectedSourceHead, remainingMs: remaining };
+    if (producerRemaining() <= 0) return held('CAPACITY_OBSERVATION_BUDGET_EXHAUSTED');
+    const observationOptions = { env, workspaceRoot: paths.workspaceRoot, expectedSourceHead, remainingMs: observationRemaining };
     const before = await readWorkerObservation(observationOptions);
     const binding = identity(before);
     if (!binding) return held('CAPACITY_OBSERVATION_WORKER_UNPROVEN');
-    const probeTimeoutMs = Math.min(10_000, remaining() - 1_000);
+    const probeTimeoutMs = Math.min(10_000, producerRemaining());
     if (probeTimeoutMs <= 0) return held('CAPACITY_OBSERVATION_BUDGET_EXHAUSTED');
     // The existing producer independently checks current source/model and the
     // fresh governor before probing and publishing. No execution is requested.
     lifeboatCapacity = await refreshLifeboatCapacity({ ...lifeboatOptions, env, paths, probeTimeoutMs,
+      remainingMs: producerRemaining,
       // Reuse the canonical fixed-Git source observer and reduce each finite
       // child timeout to this stage's remaining budget. This supplies no
       // resource/execution permission.
       readSourceHead: () => {
-        const source = readCanonicalMissionWorkerSourceIdentity({ env, remainingMs: remaining });
+        const source = readCanonicalMissionWorkerSourceIdentity({ env, remainingMs: producerRemaining });
         return source.ok && source.sourceHead === expectedSourceHead ? source.sourceHead : '';
       },
     });
-    if (remaining() <= 0) return held('CAPACITY_OBSERVATION_BUDGET_EXHAUSTED');
+    if (observationRemaining() <= 0) return held('CAPACITY_OBSERVATION_BUDGET_EXHAUSTED');
     const after = await readWorkerObservation(observationOptions);
     if (identity(after) !== binding) return held('CAPACITY_OBSERVATION_WORKER_CHANGED');
-    if (remaining() <= 0) return held('CAPACITY_OBSERVATION_BUDGET_EXHAUSTED');
+    if (observationRemaining() <= 0) return held('CAPACITY_OBSERVATION_BUDGET_EXHAUSTED');
     // A producer receipt is model/resource evidence. An identity change can
     // hold this stage but cannot retroactively rewrite that independent receipt.
     return Object.freeze({ ...base, ok: lifeboatCapacity?.ok === true,
