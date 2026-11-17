@@ -259,7 +259,7 @@ test('game onset, cancellation and deadline terminate only the owned Job and dra
     assert.ok(receipt, stderr);
     assert.equal(receipt.Reason, reason);
     assert.equal(receipt.CancellationRequested, true);
-    assert.equal(receipt.CancellationAcknowledged, true);
+    assert.equal(receipt.CancellationAcknowledged, true, JSON.stringify({ scenario: reason, receipt }));
     closed(receipt);
   }
 });

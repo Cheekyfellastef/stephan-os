@@ -13,6 +13,7 @@ import { roadmapService } from './roadmapService.js';
 import { simulationHistoryService } from './simulationHistoryService.js';
 import { assistantContextService } from './assistantContextService.js';
 import { readSovereignCommanderStatus } from './sovereignCommanderStatusTool.js';
+import { submitGoalThroughStephanosV1 } from './submitGoalTool.js';
 
 export const STEPHANOS_SYSTEM_DIAGNOSTIC_SCHEMA_V1 = 'stephanos.ai-system-diagnostic.v1';
 
@@ -111,6 +112,12 @@ export function projectStephanosSystemDiagnosticV1({
 }
 
 const tools = [
+  {
+    name: 'submitGoal',
+    description: 'Request exactly one existing goal through Stephanos executive alignment and canonical conveyor intake; a handoff is not a worker build.',
+    category: 'goal', subsystem: 'goal-building-agent', state: 'live',
+    async execute(args, context = {}) { return submitGoalThroughStephanosV1(args, context); },
+  },
   {
     name: 'getSovereignCommanderStatus',
     description: 'Read the existing local Sovereign Commander service and bounded repair-guardian status. Read-only, never execution proof.',
