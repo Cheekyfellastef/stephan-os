@@ -103,13 +103,15 @@ foreach ($fault in @('none','source-drift','node-birth-race','lock-arrival')) {
         $script:rows = @($goodRow.PSObject.Copy())
         $script:sourceFault = $fault
         $script:sourceChecks = 0
+        $script:localChecks = 0
         $coreScript = $core
         $lockPath = Join-Path $PSScriptRoot ('core-native-test-' + [Guid]::NewGuid().ToString('N'))
-        function Assert-CoreRecoverySource {
-            $script:sourceChecks++
+        function Assert-CoreRecoverySource { throw 'SLOW_REMOTE_SOURCE_IN_NATIVE_WINDOW' }
+        function Assert-CoreRecoveryLocalSource {
+            $script:localChecks++
             if ($script:sourceFault -eq 'source-drift') { throw 'SOURCE_DRIFT_FIXTURE' }
             if ($script:sourceFault -eq 'node-birth-race') { $script:rows[0].CreationDate = $goodRow.CreationDate.AddSeconds(1) }
-            if ($script:sourceFault -eq 'lock-arrival' -and $script:sourceChecks -eq 1) { [IO.File]::WriteAllText($lockPath, 'another-owner') }
+            if ($script:sourceFault -eq 'lock-arrival' -and $script:localChecks -eq 1) { [IO.File]::WriteAllText($lockPath, 'another-owner') }
         }
         try {
             if ($fault -eq 'none') { . $nativeBody }
@@ -139,7 +141,8 @@ foreach ($fault in @('none','child-nonzero','child-not-terminal','child-timeout'
         $repoRoot = 'fixed-root'
         $lockPath = Join-Path $PSScriptRoot ('core-race-test-' + [Guid]::NewGuid().ToString('N'))
         $coreStartRequested = $false
-        function Assert-CoreRecoverySource {
+        function Assert-CoreRecoverySource { throw 'SLOW_REMOTE_SOURCE_AFTER_CHILD_EXIT' }
+        function Assert-CoreRecoveryLocalSource {
             $script:sourceChecks++
             if ($script:testFault -eq 'source-change') { throw 'SOURCE_CHANGED_FIXTURE' }
             if ($script:testFault -eq 'delayed-continuation') { Start-Sleep -Milliseconds 5100 }
@@ -215,4 +218,96 @@ Case 'actual native process terminal time is consumed and ages out' {
         Denied { Assert-StephanosCoreAttendedChildContinuation -Child $native -ElapsedSeconds ($late - $request).TotalSeconds -AttemptUtc $request -NowUtc $late -ExpectedPid $nativePid -ExpectedStartedUtc $nativeStarted }
     } finally { $native.Dispose() }
 }
+
+# Exercise production local Git continuity on real disposable Windows metadata.
+# No protected checkout, network, elevation or Core process is touched.
+Case 'actual fixed local Git continuity and adversarial drift' {
+    $git = 'C:\Program Files\Git\cmd\git.exe'
+    $scratch = Join-Path ([IO.Path]::GetTempPath()) ('core local git ' + [Guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($scratch)
+    $savedGitEnv = @(Get-ChildItem Env: | Where-Object { $_.Name -match '^GIT_' } | ForEach-Object {
+        [pscustomobject]@{ Name=$_.Name; Value=$_.Value }
+    })
+    try {
+        foreach ($row in $savedGitEnv) { [Environment]::SetEnvironmentVariable($row.Name, $null, 'Process') }
+        & $git init --initial-branch=main $scratch | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_INIT_FAILED' }
+        $pin = Join-Path $scratch 'pinned-source.txt'
+        [IO.File]::WriteAllText($pin, 'canonical')
+        & $git -C $scratch add pinned-source.txt
+        if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_ADD_FAILED' }
+        & $git -C $scratch -c 'user.name=Fixture' -c 'user.email=fixture@example.invalid' commit -m initial | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_COMMIT_FAILED' }
+        # A configured local-only remote is required for Git to recognise
+        # refs/remotes/origin/main as a tracking branch. Never fetch from it.
+        & $git -C $scratch remote add origin $scratch
+        if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_ORIGIN_FAILED' }
+        & $git -C $scratch update-ref refs/remotes/origin/main HEAD
+        if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_REMOTE_FAILED' }
+        & $git -C $scratch branch --set-upstream-to=origin/main main | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_UPSTREAM_FAILED' }
+        $ExpectedHead = (& $git -C $scratch rev-parse HEAD).Trim()
+        $repoRoot = $scratch
+        $sourceFiles = @($pin)
+        $sourceDigests = @{}
+        $gitMetadataPaths = @((Join-Path $scratch '.git\config'), (Join-Path $scratch '.git\index'))
+        $gitMetadataDigests = @{}
+        $digestStart = $entrySource.IndexOf('function Get-CoreRecoveryDigest')
+        $localStart = $entrySource.IndexOf('function Assert-CoreRecoveryLocalSource', $digestStart)
+        $envStart = $entrySource.IndexOf('function Assert-CoreRecoveryEnvironment', $localStart)
+        if ($digestStart -lt 0 -or $localStart -le $digestStart -or $envStart -le $localStart) { throw 'LOCAL_GIT_ACTUAL_SOURCE_BOUNDARY_MISSING' }
+        . ([scriptblock]::Create($entrySource.Substring($digestStart, $localStart - $digestStart)))
+        . ([scriptblock]::Create($entrySource.Substring($localStart, $envStart - $localStart)))
+        function Assert-CoreRecoveryEnvironment { }
+        $sourceDigests[$pin] = Get-CoreRecoveryDigest $pin
+        foreach ($file in $gitMetadataPaths) { $gitMetadataDigests[$file] = Get-CoreRecoveryDigest $file }
+        $fastLocalClock = [Diagnostics.Stopwatch]::StartNew()
+        Assert-CoreRecoveryLocalSource
+        $fastLocalClock.Stop()
+        if ($fastLocalClock.Elapsed.TotalSeconds -gt 4.9) { throw 'CORE_RECOVERY_LOCAL_PROOF_EXCEEDS_PARENT_FRESHNESS_BUDGET' }
+        Write-Output ('CORE_RECOVERY_LOCAL_GIT_PROOF_SECONDS=' + [Math]::Round($fastLocalClock.Elapsed.TotalSeconds, 3))
+
+        [IO.File]::WriteAllText($pin, 'changed')
+        Denied { Assert-CoreRecoveryLocalSource }
+        [IO.File]::WriteAllText($pin, 'canonical')
+        Assert-CoreRecoveryLocalSource
+
+        $config = $gitMetadataPaths[0]
+        $originalConfig = [IO.File]::ReadAllBytes($config)
+        [IO.File]::AppendAllText($config, [Environment]::NewLine + '# injected')
+        Denied { Assert-CoreRecoveryLocalSource }
+        [IO.File]::WriteAllBytes($config, $originalConfig)
+        Assert-CoreRecoveryLocalSource
+
+        $index = $gitMetadataPaths[1]
+        $originalIndex = [IO.File]::ReadAllBytes($index)
+        [IO.File]::AppendAllText($index, '!')
+        Denied { Assert-CoreRecoveryLocalSource }
+        [IO.File]::WriteAllBytes($index, $originalIndex)
+        Assert-CoreRecoveryLocalSource
+
+        $env:GIT_DIR = $scratch
+        Denied { Assert-CoreRecoveryLocalSource }
+        [Environment]::SetEnvironmentVariable('GIT_DIR', $null, 'Process')
+        Assert-CoreRecoveryLocalSource
+
+        & $git -C $scratch symbolic-ref HEAD refs/heads/other
+        if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_REPOINT_FAILED' }
+        Denied { Assert-CoreRecoveryLocalSource }
+        & $git -C $scratch symbolic-ref HEAD refs/heads/main
+        if ($LASTEXITCODE -ne 0) { throw 'LOCAL_GIT_FIXTURE_RESTORE_FAILED' }
+        Assert-CoreRecoveryLocalSource
+    } finally {
+        foreach ($row in $savedGitEnv) { [Environment]::SetEnvironmentVariable($row.Name, $row.Value, 'Process') }
+        if ([IO.Directory]::Exists($scratch)) {
+            # Git object files are read-only on Windows; clear only this
+            # uniquely generated temporary fixture's file attributes.
+            foreach ($file in [IO.Directory]::EnumerateFiles($scratch, '*', [IO.SearchOption]::AllDirectories)) {
+                [IO.File]::SetAttributes($file, [IO.FileAttributes]::Normal)
+            }
+            [IO.Directory]::Delete($scratch, $true)
+        }
+    }
+}
+
 Write-Output ('CORE_ABSENT_BOOTSTRAP_POLICY_TESTS_PASS=' + $script:passed)
