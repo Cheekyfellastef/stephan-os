@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHolodeckAudioControls } from '../apps/spatial-bridge/holodeck-audio-v1.mjs';
+import { createHolodeckAudioControls,readSpatialAudioPreferences } from '../apps/spatial-bridge/holodeck-audio-v1.mjs';
 
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
 const drain=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
@@ -191,4 +191,53 @@ test('superseded device discovery cannot replace a newer list or publish after d
   assert.deepEqual(audio.getState(),current);
   const pending=audio.listDevices();audio.dispose();const closed=audio.getState();
   lists[2].resolve([]);assert.equal((await pending).cancelled,true);assert.deepEqual(audio.getState(),closed);
+});
+
+test('failed audio discovery revokes stale microphone and speaker selections without clearing inert preferences',async()=>{
+  let denied=false,micRequests=0,speakerContexts=0;
+  const saved=new Map(),storage={getItem:k=>saved.get(k)??null,setItem:(k,v)=>saved.set(k,v)};
+  const navigatorRef={mediaDevices:{
+    async enumerateDevices(){
+      if(denied)throw Object.assign(Error('permission denied'),{name:'NotAllowedError'});
+      return [{kind:'audioinput',deviceId:'quest-mic',label:'Quest Mic'},
+        {kind:'audiooutput',deviceId:'quest-speaker',label:'Quest Speaker'}];
+    },
+    getUserMedia(){micRequests++;throw Error('stale mic opened');},
+  }};
+  class SpeakerContext{constructor(){speakerContexts++;}}
+  const audio=createHolodeckAudioControls({navigatorRef,AudioContextCtor:SpeakerContext,storageRef:storage});
+  assert.equal((await audio.listDevices()).ok,true);
+  assert.equal(audio.setInput('quest-mic'),true);assert.equal(audio.setOutput('quest-speaker'),true);
+  denied=true;
+  const failed=await audio.listDevices();assert.equal(failed.ok,false);
+  assert.match(failed.reason,/Refresh devices/);
+  assert.deepEqual([audio.getState().inputId,audio.getState().outputId],['','']);
+  assert.deepEqual([audio.getState().inputs,audio.getState().outputs],[[],[]]);
+  assert.equal((await audio.testMicrophone('quest-mic')).ok,false);
+  assert.equal((await audio.testSpeakers('quest-speaker')).ok,false);
+  assert.equal(micRequests,0);assert.equal(speakerContexts,0);
+  assert.deepEqual(readSpatialAudioPreferences(storage),{inputId:'quest-mic',outputId:'quest-speaker'});
+  denied=false;assert.equal((await audio.listDevices()).ok,true);
+  assert.deepEqual([audio.getState().inputId,audio.getState().outputId],['quest-mic','quest-speaker']);
+  audio.dispose();
+});
+
+test('failed audio discovery cancels pending microphone permission and stops a late grant',async()=>{
+  let denied=false,resolveGrant,stops=0;
+  const audio=createHolodeckAudioControls({AudioContextCtor:null,navigatorRef:{mediaDevices:{
+    async enumerateDevices(){
+      if(denied)throw Object.assign(Error('denied'),{name:'NotAllowedError'});
+      return [{kind:'audioinput',deviceId:'mic',label:'Mic'}];
+    },
+    getUserMedia(){return new Promise(resolve=>{resolveGrant=resolve;});},
+  }}});
+  await audio.listDevices();assert.equal(audio.setInput('mic'),true);
+  const pending=audio.testMicrophone();assert.equal(audio.getState().microphonePending,true);
+  denied=true;assert.equal((await audio.listDevices()).ok,false);
+  assert.equal((await pending).cancelled,true);
+  assert.equal(audio.getState().microphonePending,false);
+  resolveGrant({getTracks:()=>[{readyState:'live',stop(){stops++;}}]});
+  await drain();assert.equal(stops,1);
+  assert.equal((await audio.testMicrophone()).ok,false);
+  audio.dispose();
 });
