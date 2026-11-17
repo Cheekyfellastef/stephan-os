@@ -148,7 +148,7 @@ test('registry source pins the current bounded mailbox recovery blobs and grants
   assert.match(source, /2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba/);
   assert.match(source, /b86ac43ed02f9742bc3213b1e847707f79a6153f/);
   assert.match(source, /f66cc26ef865bb840522b16cbb53f830f9499838/);
-  assert.match(source, /a2a02299ed717aae9f86ec27ce5b30e64d822816/);
+  assert.match(source, /d52d0f8b69f22c0e0f57aca70b5d2e0ace28eca5/);
   assert.match(source, /1b103fda85c371a218f38f20fe5163ca3f5042bf/);
   assert.match(source, /sourceMutationAllowed:\s*false/);
   assert.match(source, /mergeAuthority:\s*false/);
