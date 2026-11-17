@@ -4411,6 +4411,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       && projection.status === 0
       && publication?.ok === true
       && publication?.statusWritten === true
+      && publication?.statusId === `controller-${requested?.controllerId}-activity`
       && publication?.controllerId === requested?.controllerId
       && publication?.runId === requested?.runId
       && publication?.executionState === requested?.executionState

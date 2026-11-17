@@ -2811,6 +2811,56 @@ test('controller activity publication is single-action, canonical and returns on
 });
 
 
+
+test('controller publication binds statusId to the exact requested canonical controller (#2573)', async () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
+    runId: 'controller-status-identity-bound',
+    observedEnabled: true, executionState: 'IDLE',
+    materialActionsSucceeded: 0, safeEligibleWorkRemaining: 0,
+  };
+  const published = {
+    schemaVersion: activity.schemaVersion, ok: true,
+    controllerId: activity.controllerId, runId: activity.runId,
+    statusWritten: true, proofWritten: false,
+    statusId: `controller-${activity.controllerId}-activity`, proofId: '',
+    executionState: 'IDLE', materialLaneCount: 0,
+    materialActionsSucceeded: 0,
+    finalVerdict: 'SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISHED',
+    arbitraryShellAllowed: false, sourceMutationAllowed: false,
+    mergeAuthority: false, secretMaterialIncluded: false,
+  };
+  const execute = async (statusId) => {
+    const maintenance = {
+      ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: 'a'.repeat(64),
+      command: { plan: { processId: 'publish-controller-activity' } },
+      structuredContent: {
+        ok: true, status: 0,
+        stdout: 'SOVEREIGN_COMMANDER_CONTROLLER_ACTIVITY_PUBLISH_RESULT='
+          + JSON.stringify({ ...published, statusId }),
+        stderr: '', errorCode: '',
+      },
+    };
+    const { fetchFn } = mcpFetch({ maintenance });
+    return executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'publish-controller-activity', controllerActivity: activity }),
+      { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn },
+    );
+  };
+  assert.equal((await execute(published.statusId)).ok, true);
+  for (const foreignStatusId of [
+    'controller-other-controller-activity',
+    'controller-6ac3999164b88191a1c866c70ab51bd7-other',
+    'controller-6ae722da2e188191b4dc8093fcb76941-activity',
+  ]) {
+    const result = await execute(foreignStatusId);
+    assert.equal(result.ok, false, `foreign status identity admitted: ${foreignStatusId}`);
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RECEIPT_INVALID');
+  }
+});
+
 test('controller activity explicit counters reject coercion while legacy lane-count aliases remain numeric (original #2573)', () => {
   const activity = {
     schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
