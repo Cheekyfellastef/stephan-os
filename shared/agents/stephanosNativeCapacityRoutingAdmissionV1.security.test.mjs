@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync } from 'node:crypto';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
@@ -148,4 +148,28 @@ test('rejects a substituted authority ID that is not derived from the signed rec
   });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'STEPHANOS_NATIVE_SOURCE_AUTHORITY_INVALID:authority-id-binding-mismatch');
+});
+
+test('missing, malformed or untrusted publisher status cannot admit native capacity', async () => {
+  for (const scenario of ['missing-status', 'invalid-json', 'missing-key']) {
+    const options = await fixture();
+    const statusPath = join(options.root, 'status', 'stephanos-native-capacity-current.json');
+    if (scenario === 'missing-status') await unlink(statusPath);
+    if (scenario === 'invalid-json') await writeFile(statusPath, '{ invalid json', 'utf8');
+    if (scenario === 'missing-key') {
+      await unlink(join(options.env.STEPHANOS_MISSION_RUNNER_ROOT, 'keys',
+        'stephanos-native-capacity-public.pem'));
+    }
+    const result = await readVerifiedStephanosNativeRoutingCandidate({
+      ...options, repository: REPOSITORY, sourceHead: SOURCE_HEAD,
+      taskClass: 'FOCUSED_REPAIR', nowUtc: NOW,
+    });
+    assert.equal(result.ok, false, scenario);
+    assert.equal(result.reason, scenario === 'invalid-json'
+      ? 'STEPHANOS_NATIVE_ROUTING_TRUTH_READ_FAILED'
+      : 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING', scenario);
+    assert.equal(result.candidate, null, scenario);
+    assert.equal(result.mergeAuthority, false, scenario);
+    assert.equal(result.leaseSeizureAllowed, false, scenario);
+  }
 });
