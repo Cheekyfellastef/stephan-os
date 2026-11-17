@@ -3,7 +3,7 @@
 // These are origin-local device preference hints, NOT media grants or app Voice state.
 export const SPATIAL_AUDIO_PREFERENCE_KEY='stephanos.spatial.audio-preferences.v1';
 const emptyAudioPreferences=()=>({inputId:'',outputId:''});
-const boundedAudioId=value=>typeof value==='string'&&value.length<=256&&!/[\\u0000-\\u001f\\u007f]/.test(value)?value:'';
+const boundedAudioId=value=>typeof value==='string'&&value.length<=256&&!/[\u0000-\u001f\u007f]/.test(value)?value:'';
 export function readSpatialAudioPreferences(storage){
   const fallback=emptyAudioPreferences();
   try {
