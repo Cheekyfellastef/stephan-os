@@ -2,8 +2,53 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { runBattleBridgeGoalDiscoveryHeartbeat as runActualHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
+import { runBattleBridgeCapacityObservationHeartbeat, runBattleBridgeGoalDiscoveryHeartbeat as runActualHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
 const runBattleBridgeGoalDiscoveryHeartbeat = options => runActualHeartbeat({ readWorkerHeartbeatAgeMs: () => 0, ...options });
+
+const CAPACITY_HEAD = 'a'.repeat(40);
+const capacityEvidence = () => ({ capacityObservationAllowed: true, observationOnly: true,
+  workAuthorized: false, sourceHead: CAPACITY_HEAD, pid: 123,
+  launchIdentityId: 'b'.repeat(64), workerStartedAtUtc: '2026-11-17T17:00:00Z' });
+
+test('closed capacity phase invokes only the existing Forge producer and retains a governor hold', async () => {
+  const calls = [];
+  const forbidden = () => assert.fail('capacity phase reached an execution capability');
+  const result = await runBattleBridgeCapacityObservationHeartbeat({ expectedSourceHead: CAPACITY_HEAD,
+    readWorkerObservation: async options => { assert.equal(options.expectedSourceHead, CAPACITY_HEAD); calls.push('observe'); return capacityEvidence(); },
+    refreshLifeboatCapacity: async options => {
+      calls.push('forge'); assert.ok(options.probeTimeoutMs > 0 && options.probeTimeoutMs <= 10000);
+      return { ok: false, available: false, reason: 'FORGE_LIFEBOAT_RESOURCE_GOVERNOR_HOLD' };
+    },
+    refreshGithubLifeboat: forbidden, refreshGithubLifeboatClaimAck: forbidden,
+    refreshCommanderCapacity: forbidden, refreshSovereignCapacity: forbidden,
+    refreshOpenClawCapacity: forbidden, conveyor: forbidden, buildClaimedGoal: forbidden,
+  });
+  assert.deepEqual(calls, ['observe', 'forge', 'observe']);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'FORGE_LIFEBOAT_RESOURCE_GOVERNOR_HOLD');
+  assert.equal(result.admissionAttempted, false);
+  assert.equal(result.sourceBuildAttempted, false);
+  assert.equal(result.idleProven, false);
+  assert.equal(result.physicalExclusionGranted, false);
+  assert.equal(result.workAuthorized, false);
+});
+
+test('capacity stage checks its whole remaining budget before probe and after awaited production', async () => {
+  for (const expireAt of ['identity', 'producer']) {
+    let clock = 0, probes = 0;
+    const result = await runBattleBridgeCapacityObservationHeartbeat({ expectedSourceHead: CAPACITY_HEAD,
+      budgetMs: 5000, nowMs: () => clock,
+      readWorkerObservation: async () => { if (expireAt === 'identity') clock = 5000; return capacityEvidence(); },
+      refreshLifeboatCapacity: async () => { probes++; clock = 5000; return { ok: true, available: true }; },
+    });
+    assert.equal(result.blocker, 'CAPACITY_OBSERVATION_BUDGET_EXHAUSTED');
+    assert.equal(probes, expireAt === 'identity' ? 0 : 1);
+    assert.equal(result.admissionAttempted, false);
+    assert.equal(result.capacityObservationProven, false);
+    if (expireAt === 'producer') assert.equal(result.lifeboatCapacity.available, true,
+      'an expired caller cannot erase the producer result');
+  }
+});
 
 const lifeboatReady = async () => ({
   ok: true,

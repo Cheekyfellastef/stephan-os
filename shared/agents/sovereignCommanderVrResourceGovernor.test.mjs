@@ -40,6 +40,7 @@ test('existing hosted governor entry exercises actual inference and capacity con
     '../../stephanos-server/tests/ollama-provider.test.js',
     '../../stephanos-server/services/forgeLifeboatCapacityService.test.js',
     '../../stephanos-server/services/sovereignBuilder8CapacityService.test.js',
+    '../../scripts/battle-bridge-github-sync-and-refresh.test.mjs',
   ].map(path => fileURLToPath(new URL(path, import.meta.url)));
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
@@ -49,6 +50,7 @@ test('existing hosted governor entry exercises actual inference and capacity con
   assert.equal(result.status, 0, result.stderr || result.stdout || result.error?.message);
   assert.ok(Number(result.stdout.match(/^# tests (\d+)$/m)?.[1]) >= 40, 'consumer tests must actually execute');
   assert.match(result.stdout, /^# skipped 0$/m);
+  assert.match(result.stdout, /# Subtest: unchanged exact source observes Forge once before unrelated runtime debt while retaining every hold/);
 });
 
 test('idle custody and unknown observations deny canonical local execution independently of game activity', () => {

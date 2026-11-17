@@ -3,8 +3,9 @@ import process from 'node:process';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { performance } from 'node:perf_hooks';
 import { resolveGoalDiscoveryWorkspaceV1 } from '../shared/agents/goalDiscoveryWorkspaceV1.mjs';
-import { readCanonicalMissionWorkerHeartbeatAgeMs, canonicalMissionWorkerEvidenceAllowsWork } from '../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
+import { readCanonicalMissionWorkerHeartbeatAgeMs, readCanonicalMissionWorkerSourceIdentity, readCanonicalMissionWorkerCapacityObservationEvidenceV1, canonicalMissionWorkerEvidenceAllowsWork } from '../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
 
 import {
   AUTONOMY_BUILD_TRACK_STATUS_ID,
@@ -38,6 +39,7 @@ export async function deferSourceBuildToCanonicalWorkerV1() {
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA = 'stephanos.battle-bridge-goal-discovery-heartbeat.v1';
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT_MARKER = 'BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT=';
 export const DEFAULT_WORK_CONSERVING_SWEEP_LIMIT = 8;
+export const CAPACITY_OBSERVATION_MAX_MS = 30_000;
 export const BATTLE_BRIDGE_CANONICAL_GITHUB_CLI = process.platform === 'win32'
   ? 'C:\\Program Files\\GitHub CLI\\gh.exe'
   : 'gh';
@@ -54,6 +56,74 @@ function heldElasticDispatch(result = {}) {
       reason: String(item?.reason || 'ELASTIC_SOURCE_BUILD_HELD'),
     }))),
   });
+}
+
+// One existing model/resource capacity observation, never a substitute for the
+// operational worker predicate used by every admission/dispatch path below.
+export async function runBattleBridgeCapacityObservationHeartbeat({
+  env = process.env,
+  expectedSourceHead = '', budgetMs = CAPACITY_OBSERVATION_MAX_MS,
+  paths = resolveCriticalBacklogRuntimePaths(),
+  readWorkerObservation = readCanonicalMissionWorkerCapacityObservationEvidenceV1,
+  refreshLifeboatCapacity = refreshForgeLifeboatCapacity, lifeboatOptions = {},
+  nowMs = () => performance.now(),
+} = {}) {
+  const base = { capacityObservationOnly: true, admissionAttempted: false,
+    sourceBuildAttempted: false, idleProven: false, physicalExclusionGranted: false,
+    workAuthorized: false, ...authorityBoundary() };
+  let lifeboatCapacity;
+  const held = blocker => Object.freeze({ ...base, ok: false, blocker,
+    workerObservationProven: false, capacityObservationProven: false,
+    ...(lifeboatCapacity === undefined ? {} : { lifeboatCapacity }),
+    finalVerdict: 'CAPACITY_OBSERVATION_HELD' });
+  if (!/^[a-f0-9]{40}$/.test(expectedSourceHead)) return held('CAPACITY_OBSERVATION_SOURCE_UNPROVEN');
+  const began = nowMs();
+  if (!Number.isFinite(began) || !Number.isFinite(budgetMs) || budgetMs <= 0) return held('CAPACITY_OBSERVATION_BUDGET_EXHAUSTED');
+  const deadline = began + Math.min(CAPACITY_OBSERVATION_MAX_MS, budgetMs);
+  const remaining = () => {
+    const current = nowMs();
+    return Number.isFinite(current) && current >= began ? Math.floor(deadline - current) : 0;
+  };
+  const identity = evidence => evidence?.capacityObservationAllowed === true
+    && evidence.observationOnly === true && evidence.workAuthorized === false
+    && evidence.sourceHead === expectedSourceHead && Number.isInteger(evidence.pid) && evidence.pid > 0
+    && /^[a-f0-9]{64}$/.test(evidence.launchIdentityId || '')
+    && typeof evidence.workerStartedAtUtc === 'string' && Number.isFinite(Date.parse(evidence.workerStartedAtUtc))
+    ? JSON.stringify([evidence.sourceHead, evidence.pid, evidence.launchIdentityId, evidence.workerStartedAtUtc]) : '';
+  try {
+    if (remaining() <= 1_000) return held('CAPACITY_OBSERVATION_BUDGET_EXHAUSTED');
+    const observationOptions = { env, workspaceRoot: paths.workspaceRoot, expectedSourceHead, remainingMs: remaining };
+    const before = await readWorkerObservation(observationOptions);
+    const binding = identity(before);
+    if (!binding) return held('CAPACITY_OBSERVATION_WORKER_UNPROVEN');
+    const probeTimeoutMs = Math.min(10_000, remaining() - 1_000);
+    if (probeTimeoutMs <= 0) return held('CAPACITY_OBSERVATION_BUDGET_EXHAUSTED');
+    // The existing producer independently checks current source/model and the
+    // fresh governor before probing and publishing. No execution is requested.
+    lifeboatCapacity = await refreshLifeboatCapacity({ ...lifeboatOptions, env, paths, probeTimeoutMs,
+      // Reuse the canonical fixed-Git source observer and reduce each finite
+      // child timeout to this stage's remaining budget. This supplies no
+      // resource/execution permission.
+      readSourceHead: () => {
+        const source = readCanonicalMissionWorkerSourceIdentity({ env, remainingMs: remaining });
+        return source.ok && source.sourceHead === expectedSourceHead ? source.sourceHead : '';
+      },
+    });
+    if (remaining() <= 0) return held('CAPACITY_OBSERVATION_BUDGET_EXHAUSTED');
+    const after = await readWorkerObservation(observationOptions);
+    if (identity(after) !== binding) return held('CAPACITY_OBSERVATION_WORKER_CHANGED');
+    if (remaining() <= 0) return held('CAPACITY_OBSERVATION_BUDGET_EXHAUSTED');
+    // A producer receipt is model/resource evidence. An identity change can
+    // hold this stage but cannot retroactively rewrite that independent receipt.
+    return Object.freeze({ ...base, ok: lifeboatCapacity?.ok === true,
+      sourceHead: expectedSourceHead, workerObservationProven: true,
+      capacityObservationProven: lifeboatCapacity?.ok === true,
+      reportedWorkerVerdict: String(after.reportedTickVerdict || ''),
+      executionMetadataState: after.executionMetadataState === 'REPORTED' ? 'REPORTED' : 'UNREPORTED',
+      blocker: lifeboatCapacity?.ok === true ? '' : String(lifeboatCapacity?.reason || 'FORGE_CAPACITY_OBSERVATION_UNAVAILABLE'),
+      lifeboatCapacity: lifeboatCapacity || null,
+      finalVerdict: lifeboatCapacity?.ok === true ? 'CAPACITY_OBSERVATION_COMPLETE' : 'CAPACITY_OBSERVATION_HELD' });
+  } catch { return held('CAPACITY_OBSERVATION_EXCEPTION'); }
 }
 
 function authorityBoundary() {
