@@ -154,6 +154,32 @@ test('audio devices are real browser-local tests and do not acquire mic without 
   assert.ok(events.some(t=>t.includes('ChatGPT')));
 });
 
+test('local speaker Stop cancels a pending Quest sink selection without later playback or touching ChatGPT Voice',async()=>{
+  let finishSink;const sink=new Promise(resolve=>{finishSink=resolve;});
+  const events=[];let oscillatorStarts=0,contextCloses=0;
+  class TestAudioContext{
+    constructor(){this.state='running';this.currentTime=0;this.destination={};}
+    setSinkId(){return sink;}
+    createOscillator(){oscillatorStarts++;return {frequency:{value:0},connect(){},start(){},stop(){},disconnect(){}};}
+    createGain(){return {gain:{value:0},connect(){},disconnect(){}};}
+    close(){contextCloses++;return Promise.resolve();}
+  }
+  const audio=createHolodeckAudioControls({AudioContextCtor:TestAudioContext,onStatus:text=>events.push(text),
+    navigatorRef:{mediaDevices:{enumerateDevices:async()=>[
+      {kind:'audiooutput',deviceId:'quest-speakers',label:'Quest speakers'},
+    ]}}});
+  await audio.listDevices();assert.equal(audio.setOutput('quest-speakers'),true);
+  const pending=audio.testSpeakers();
+  assert.equal(audio.stopSpeakers(),true,'an in-flight sink selection must be cancellable');
+  assert.equal(audio.stopSpeakers(),false,'repeated Stop must be inert');
+  finishSink();
+  assert.deepEqual(await pending,{ok:false,cancelled:true,reason:'Speaker test was stopped.'});
+  assert.equal(oscillatorStarts,0,'late sink selection must never start the oscillator');
+  assert.equal(contextCloses,1,'stopped test must close its owned audio context');
+  assert.ok(events.at(-1).includes('ChatGPT Voice remains controlled in the original app'));
+  audio.dispose();
+});
+
 test('launcher exposes persistent furniture and real device testing without inventing direct Voice control', () => {
   const page=readFileSync(new URL('../apps/spatial-bridge/quest-entry.html',import.meta.url),'utf8');
   const worker=readFileSync(new URL('../apps/spatial-bridge/service-worker.js',import.meta.url),'utf8');
