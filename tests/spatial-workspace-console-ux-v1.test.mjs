@@ -46,7 +46,7 @@ test('pan bounds keep every crop in the source and edge hit mapping matches port
   assert.deepEqual(screenCrop(1920,1080,NaN,NaN,NaN),{x:0,y:0,w:1920,h:1080});
 });
 
-test('zoomed bottom-right composer is reachable; draw, pointer and scroll agree and Fit resets the view',()=>{
+test('zoomed composer stays clickable; Scroll arrows use visible viewport centre and Fit resets view',()=>{
   const h=screenFixture();h.screen.render();
   h.screen.action('zoom-in');h.screen.action('zoom-in');
   for(let i=0;i<5;i++){h.screen.action('pan-right');h.screen.action('pan-down');}
@@ -57,7 +57,8 @@ test('zoomed bottom-right composer is reachable; draw, pointer and scroll agree 
   const point=viewPoint(.94,.94,1920,1080,2,1,1);
   assert.equal(h.screen.point(point.u,point.v,true),true);
   const click=h.inputs.at(-1);assert.equal(click.kind,'click');close(click.x,.94);close(click.y,.94);
-  h.screen.action('scroll-down');assert.deepEqual(h.inputs.at(-1),{kind:'scroll',x:click.x,y:click.y,delta:-120});
+  h.screen.action('scroll-down');assert.deepEqual(h.inputs.at(-1),{kind:'scroll',x:.75,y:.75,delta:-120},
+    'Scroll arrow must not target the recently clicked composer');
   h.screen.action('pan-left');h.screen.render();h.screen.action('scroll-up');
   assert.deepEqual(h.inputs.at(-1),{kind:'scroll',x:.625,y:.75,delta:120});
   h.screen.action('fit');h.screen.render();
