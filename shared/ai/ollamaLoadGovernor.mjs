@@ -1,6 +1,34 @@
 export const OLLAMA_HEAVY_MODELS = Object.freeze(['gpt-oss:20b', 'qwen:14b', 'qwen3.5:27b', 'qwen:32b']);
 export const OLLAMA_LIGHTWEIGHT_MODEL = 'llama3.2:3b';
 
+// Resource permission is independent of whether a game is currently active.
+// A fresh idle record can still retain an unresolved child or unknown probe.
+export function projectVrGovernorExecutionPermissionsV1(state, nowMs = Date.now()) {
+  const flags = ['active', 'flatGameActive', 'airLinkActive', 'realAirLinkActive',
+    'virtualAirLinkTestActive', 'prepareLeaseActive'];
+  const permissions = ['nativeProbeCustodyHeld', 'dependencyObservationKnown',
+    'localModelAllowed', 'heavyModelAllowed', 'evictionHealthy'];
+  const when = typeof state?.updatedAtUtc === 'string' ? Date.parse(state.updatedAtUtc) : NaN;
+  const known = state !== null && typeof state === 'object' && !Array.isArray(state)
+    && state.schemaVersion === 'stephanos.vr-resource-governor.v1' && state.governorVersion === 3
+    && ['NORMAL', 'PREPARING', 'GAMING', 'COOLDOWN'].includes(state.phase)
+    && Number.isFinite(nowMs) && Number.isFinite(when) && when <= nowMs && nowMs - when <= 15000
+    && [...flags, ...permissions].every(key => typeof state[key] === 'boolean');
+  if (!known) return Object.freeze({ observed: false, localModelAllowed: false,
+    heavyModelAllowed: false, localCpuAllowed: false, reason: 'GOVERNOR_STATE_UNPROVEN' });
+  const custodyHeld = state.nativeProbeCustodyHeld;
+  const dependenciesKnown = state.dependencyObservationKnown && state.evictionHealthy;
+  const localModelAllowed = !custodyHeld && dependenciesKnown && state.localModelAllowed;
+  const activity = state.phase !== 'NORMAL' || flags.some(key => state[key]);
+  const heavyModelAllowed = localModelAllowed && state.heavyModelAllowed && !activity;
+  const reason = custodyHeld ? 'GOVERNOR_NATIVE_PROBE_CUSTODY_HELD'
+    : !dependenciesKnown ? 'GOVERNOR_DEPENDENCY_OBSERVATION_UNKNOWN'
+      : !localModelAllowed ? 'GOVERNOR_LOCAL_MODEL_DENIED'
+        : !heavyModelAllowed ? 'GOVERNOR_HEAVY_MODEL_DENIED' : '';
+  return Object.freeze({ observed: true, localModelAllowed, heavyModelAllowed,
+    localCpuAllowed: heavyModelAllowed && !activity, reason });
+}
+
 function normalizeModel(value = '') {
   return String(value || '').trim().toLowerCase();
 }

@@ -362,6 +362,58 @@ function Get-DesktopCommanderRemoteProcesses {
     )
 }
 
+function New-GovernorMutationMutex {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    try { $userSid = $identity.User } finally { $identity.Dispose() }
+    if ($userSid.Value -cnotmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$') { throw 'GOVERNOR_MUTEX_IDENTITY_UNPROVEN' }
+    $security = [Security.AccessControl.MutexSecurity]::new()
+    $security.SetAccessRuleProtection($true, $false)
+    $security.SetOwner($userSid)
+    foreach ($sid in @($userSid,[Security.Principal.SecurityIdentifier]::new('S-1-5-18'))) {
+        $security.AddAccessRule([Security.AccessControl.MutexAccessRule]::new($sid,
+            [Security.AccessControl.MutexRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow))
+    }
+    $created = $false
+    $mutex = [Threading.Mutex]::new($false, ('Global\Stephanos.VrResourceGovernor.V1.' + $userSid.Value), [ref]$created, $security)
+    try {
+        $actual = $mutex.GetAccessControl()
+        $rules = @($actual.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
+        if (-not $actual.AreAccessRulesProtected -or -not $actual.AreAccessRulesCanonical -or
+            $actual.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $userSid.Value -or $rules.Count -ne 2) { throw 'GOVERNOR_MUTEX_SECURITY_UNPROVEN' }
+        foreach ($rule in $rules) {
+            if ($rule.IsInherited -or $rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+                $rule.MutexRights -ne [Security.AccessControl.MutexRights]::FullControl -or
+                $rule.IdentityReference.Value -notin @($userSid.Value,'S-1-5-18')) { throw 'GOVERNOR_MUTEX_SECURITY_UNPROVEN' }
+        }
+        return $mutex
+    } catch { $mutex.Dispose(); throw }
+}
+
+function Enter-GovernorMutationOwner {
+    $mutex = New-GovernorMutationMutex
+    $acquired = $false; $abandoned = $false
+    try {
+        try { $acquired = $mutex.WaitOne(0) }
+        catch [Threading.AbandonedMutexException] { $acquired = $true; $abandoned = $true }
+        if (-not $acquired) { $mutex.Dispose(); return [pscustomobject]@{ acquired = $false; abandoned = $false; mutex = $null } }
+        return [pscustomobject]@{ acquired = $true; abandoned = $abandoned; mutex = $mutex }
+    } catch { $mutex.Dispose(); throw }
+}
+
+function Exit-GovernorMutationOwner {
+    param($Owner)
+    if ($Owner -and $Owner.acquired) {
+        try { $Owner.mutex.ReleaseMutex(); $Owner.acquired = $false }
+        finally { $Owner.mutex.Dispose() }
+    }
+}
+
+function Assert-GovernorMutationOwner {
+    param([switch]$AllowAbandoned)
+    if (-not $script:governorMutationOwner -or -not $script:governorMutationOwner.acquired -or
+        ($script:governorMutationOwner.abandoned -and -not $AllowAbandoned)) { throw 'GOVERNOR_MUTATION_OWNER_UNPROVEN' }
+}
+
 function Get-VrResourceGovernorProcesses {
     $script:vrGovernorInventoryComplete = $false
     try {
@@ -447,6 +499,7 @@ function Wait-VrResourceGovernorProgress {
 
 function Stop-VerifiedVrResourceGovernor {
     param($Process)
+    Assert-GovernorMutationOwner
     $rows = @(Get-VrResourceGovernorProcesses)
     if (-not $script:vrGovernorInventoryComplete -or $rows.Count -ne 1 -or
         [int]$rows[0].ProcessId -ne [int]$Process.ProcessId -or
@@ -482,6 +535,7 @@ function Stop-VerifiedVrResourceGovernor {
 
 function Set-VrResourceGovernorCustodyHold {
     param([bool]$Held)
+    Assert-GovernorMutationOwner -AllowAbandoned:$Held
     $file = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\vr\vr-resource-governor-current.json'
     $state = $null
     try { $state = [IO.File]::ReadAllText($file) | ConvertFrom-Json -ErrorAction Stop } catch {}
@@ -505,6 +559,70 @@ function Test-VrResourceGovernorProcessCurrent {
     }
     catch {
         return $false
+    }
+}
+
+function Invoke-VrResourceGovernorLifecycle {
+    param($ExpectedProcess, [bool]$ExpectedAbsent, [bool]$ProgressProven, [string]$ExpectedProgress = '')
+    $owner = Enter-GovernorMutationOwner
+    $result = [pscustomobject]@{ blocker = ''; restartRequested = $false; startRequested = $false; stopped = 0; startedPid = 0; baseline = '' }
+    if (-not $owner.acquired) { $result.blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BUSY'; return $result }
+    $script:governorMutationOwner = $owner
+    try {
+        if ($owner.abandoned) {
+            Set-VrResourceGovernorCustodyHold -Held $true
+            $result.blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_CHILD_CUSTODY_UNPROVEN'
+            return $result
+        }
+        # Re-census after acquiring the common owner; an earlier observation
+        # cannot authorize killing a replacement or starting beside a new owner.
+        $rows = @(Get-VrResourceGovernorProcesses)
+        if (-not $script:vrGovernorInventoryComplete -or $rows.Count -gt 1) {
+            $result.blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN'; return $result
+        }
+        if (($ExpectedProcess -and ($rows.Count -ne 1 -or
+            [int]$rows[0].ProcessId -ne [int]$ExpectedProcess.ProcessId -or
+            ([DateTime]$rows[0].CreationDate) -ne ([DateTime]$ExpectedProcess.CreationDate))) -or
+            ($ExpectedAbsent -and $rows.Count -ne 0) -or (-not $ExpectedProcess -and -not $ExpectedAbsent)) {
+            $result.blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN'; return $result
+        }
+        $prior = Get-VrResourceGovernorProgress -Process $(if ($rows.Count -eq 1) { $rows[0] } else { $null })
+        $result.baseline = $prior.updatedAtUtc
+        if ($prior.custodyHeld) {
+            $result.blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_CHILD_CUSTODY_UNPROVEN'; return $result
+        }
+        $baseline = if ($ExpectedProgress) { [DateTimeOffset]::Parse($ExpectedProgress).UtcDateTime } else { [DateTime]::MinValue }
+        $ProgressProven = $prior.fresh -and ($ProgressProven -or
+            [DateTimeOffset]::Parse($prior.updatedAtUtc).UtcDateTime -gt $baseline)
+        $sourceStale = $rows.Count -eq 1 -and -not (Test-VrResourceGovernorProcessCurrent -Process $rows[0])
+        if ($rows.Count -eq 1 -and -not $sourceStale -and -not $ProgressProven -and
+            ([DateTime]::UtcNow - ([DateTime]$rows[0].CreationDate).ToUniversalTime()).TotalSeconds -lt 15) {
+            $result.blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_STARTING'; return $result
+        }
+        if ($rows.Count -eq 1 -and ($sourceStale -or -not $ProgressProven)) {
+            $result.restartRequested = $true
+            Stop-VerifiedVrResourceGovernor -Process $rows[0]
+            $result.stopped = 1
+            $rows = @()
+        }
+        if ($rows.Count -eq 0) {
+            $result.startRequested = $true
+            $quotedScript = '"' + $vrGovernorScript.Replace('"', '\"') + '"'
+            $started = Start-Process -FilePath $powershellExecutable -ArgumentList @(
+                '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                '-File', $quotedScript, '-Action', 'Watch'
+            ) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
+            try { $result.startedPid = [int]$started.Id } finally { $started.Dispose() }
+        }
+        return $result
+    } catch {
+        $result.blocker = if ($owner.abandoned) { 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_CHILD_CUSTODY_UNPROVEN' }
+            elseif ($result.restartRequested) { 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_STALE_RECYCLE_FAILED' }
+            else { 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_START_FAILED' }
+        return $result
+    } finally {
+        Exit-GovernorMutationOwner -Owner $owner
+        $script:governorMutationOwner = $null
     }
 }
 
@@ -772,59 +890,26 @@ if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
     $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_POWERSHELL_MISSING'
 } else {
     $vrGovernorBefore = @(Get-VrResourceGovernorProcesses)
-    if (-not $script:vrGovernorInventoryComplete -or $vrGovernorBefore.Count -gt 1) {
-        $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN'
-    }
+    $vrGovernorExpectedAbsent = $script:vrGovernorInventoryComplete -and $vrGovernorBefore.Count -eq 0
     $vrGovernorPriorProgress = Get-VrResourceGovernorProgress -Process $(if ($vrGovernorBefore.Count -eq 1) { $vrGovernorBefore[0] } else { $null })
-    if ($vrGovernorPriorProgress.custodyHeld) { $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_CHILD_CUSTODY_UNPROVEN' }
-    $vrGovernorSourceStale = [bool](
-        $vrGovernorBefore.Count -gt 0 -and
-        $null -ne ($vrGovernorBefore | Where-Object { -not (Test-VrResourceGovernorProcessCurrent -Process $_) } | Select-Object -First 1)
-    )
-
-    # PowerShell loads the governor script into memory. A process can therefore
-    # remain alive for days while running stale protection logic after a merge.
-    # Recycle it whenever the canonical governor source is newer than the watcher.
+    # Observation may wait for an active reconciliation to publish, but never
+    # retains the mutex while asking Watch to advance. Busy is not abandonment.
     $vrGovernorProgressProven = $false
-    if (-not $vrGovernorBlocker -and -not $vrGovernorSourceStale -and $vrGovernorBefore.Count -eq 1) {
+    if ($script:vrGovernorInventoryComplete -and $vrGovernorBefore.Count -eq 1 -and
+        (Test-VrResourceGovernorProcessCurrent -Process $vrGovernorBefore[0])) {
         $vrGovernorProgressProven = Wait-VrResourceGovernorProgress -Process $vrGovernorBefore[0] -After $vrGovernorPriorProgress.updatedAtUtc
     }
-    if (-not $vrGovernorBlocker -and $vrGovernorBefore.Count -eq 1 -and ($vrGovernorSourceStale -or -not $vrGovernorProgressProven)) {
-        $vrGovernorRestartRequested = $true
-        try {
-            foreach ($process in $vrGovernorBefore) {
-                Stop-VerifiedVrResourceGovernor -Process $process
-                $vrGovernorStoppedPidCount += 1
-            }
-            Start-Sleep -Milliseconds 250
-            $vrGovernorBefore = @()
-        }
-        catch {
-            $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_STALE_RECYCLE_FAILED'
-        }
-    }
-
-    if (-not $vrGovernorBlocker -and $vrGovernorBefore.Count -eq 0) {
-        $vrGovernorStartRequested = $true
-        try {
-            $quotedVrGovernorScript = '"' + $vrGovernorScript.Replace('"', '\"') + '"'
-            $vrGovernorStarted = Start-Process -FilePath $powershellExecutable -ArgumentList @(
-                '-NoProfile',
-                '-NonInteractive',
-                '-ExecutionPolicy', 'Bypass',
-                '-File', $quotedVrGovernorScript,
-                '-Action', 'Watch'
-            ) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
-            $vrGovernorStartedPid = [int]$vrGovernorStarted.Id
-            Start-Sleep -Milliseconds 500
-        } catch {
-            $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_START_FAILED'
-        }
-    }
+    $vrGovernorLifecycle = Invoke-VrResourceGovernorLifecycle -ExpectedProcess $(if ($vrGovernorBefore.Count -eq 1) { $vrGovernorBefore[0] } else { $null }) `
+        -ExpectedAbsent $vrGovernorExpectedAbsent -ProgressProven $vrGovernorProgressProven -ExpectedProgress $vrGovernorPriorProgress.updatedAtUtc
+    $vrGovernorBlocker = $vrGovernorLifecycle.blocker
+    $vrGovernorRestartRequested = $vrGovernorLifecycle.restartRequested
+    $vrGovernorStartRequested = $vrGovernorLifecycle.startRequested
+    $vrGovernorStoppedPidCount = $vrGovernorLifecycle.stopped
+    $vrGovernorStartedPid = $vrGovernorLifecycle.startedPid
     $vrGovernorAfter = @(Get-VrResourceGovernorProcesses)
     $vrGovernorProcessCount = $vrGovernorAfter.Count
     $vrGovernorOk = [bool]($script:vrGovernorInventoryComplete -and $vrGovernorProcessCount -eq 1 -and
-        -not $vrGovernorBlocker -and (Wait-VrResourceGovernorProgress -Process $vrGovernorAfter[0] -After $(if ($vrGovernorPriorProgress) { $vrGovernorPriorProgress.updatedAtUtc } else { '' })))
+        -not $vrGovernorBlocker -and (Wait-VrResourceGovernorProgress -Process $vrGovernorAfter[0] -After $vrGovernorLifecycle.baseline))
     if (-not $vrGovernorOk -and -not $vrGovernorBlocker) {
         $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_NOT_RUNNING'
     }

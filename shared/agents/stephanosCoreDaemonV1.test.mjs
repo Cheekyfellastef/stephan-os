@@ -94,6 +94,8 @@ test('Core gaming posture uses canonical VR governor state and never admits unkn
     governorVersion: 3, updatedAtUtc: new Date(now).toISOString(),
     active: false, phase: 'NORMAL', flatGameActive: false, airLinkActive: false,
     realAirLinkActive: false, virtualAirLinkTestActive: false, prepareLeaseActive: false,
+    nativeProbeCustodyHeld: false, dependencyObservationKnown: true,
+    localModelAllowed: true, heavyModelAllowed: true, evictionHealthy: true,
   };
   assert.equal(coreGamingProtectionFromGovernor(normal, now), false);
   for (const state of [
@@ -105,6 +107,9 @@ test('Core gaming posture uses canonical VR governor state and never admits unkn
     { ...normal, updatedAtUtc: new Date(now - 15001).toISOString() },
     { ...normal, updatedAtUtc: new Date(now + 1).toISOString() },
     { ...normal, updatedAtUtc: undefined }, { ...normal, governorVersion: 2 },
+    ...['nativeProbeCustodyHeld', 'dependencyObservationKnown', 'localModelAllowed', 'heavyModelAllowed', 'evictionHealthy']
+      .flatMap(key => [{ ...normal, [key]: key === 'nativeProbeCustodyHeld' },
+        { ...normal, [key]: undefined }, { ...normal, [key]: 'false' }]),
     ...['flatGameActive','airLinkActive','realAirLinkActive','virtualAirLinkTestActive','prepareLeaseActive']
       .flatMap(key => [{ ...normal, [key]: true }, { ...normal, [key]: undefined }]),
   ]) assert.equal(coreGamingProtectionFromGovernor(state, now), true);

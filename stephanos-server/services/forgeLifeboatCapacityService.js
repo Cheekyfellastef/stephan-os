@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import {
   MISSION_CONTROLLER_ROUTE,
@@ -9,6 +11,7 @@ import {
   forgeLifeboatProofRef,
 } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
 import { publishGitHubContinuityCapacityPublicationV1 } from '../../shared/agents/githubContinuityCapacityPublicationV1.mjs';
+import { projectVrGovernorExecutionPermissionsV1 } from '../../shared/ai/ollamaLoadGovernor.mjs';
 import {
   createSharedWorkspaceProofRecord,
   writeAtomicJson,
@@ -123,6 +126,18 @@ function unavailable(reason, extra = {}) {
   });
 }
 
+function readLocalBuilderPermission(paths) {
+  try {
+    return projectVrGovernorExecutionPermissionsV1(JSON.parse(readFileSync(
+      resolve(paths.workspaceRoot, 'vr', 'vr-resource-governor-current.json'), 'utf8',
+    )));
+  } catch {
+    // This is a Stephanos build lane on every platform. Missing workspace
+    // authority is not an exemption from the existing governor permission.
+    return projectVrGovernorExecutionPermissionsV1(null);
+  }
+}
+
 export async function refreshForgeLifeboatCapacity(options = {}) {
   const env = options.env || process.env;
   const paths = options.paths || resolveCriticalBacklogRuntimePaths({ env });
@@ -138,6 +153,10 @@ export async function refreshForgeLifeboatCapacity(options = {}) {
   if (!SHA40.test(sourceHead)) return unavailable('FORGE_LIFEBOAT_SOURCE_HEAD_UNPROVEN');
 
   const probe = options.probeLocalBuilder || defaultProbeLocalBuilder;
+  const initialPermission = readLocalBuilderPermission(paths);
+  if (!initialPermission.localCpuAllowed) {
+    return unavailable('FORGE_LIFEBOAT_RESOURCE_GOVERNOR_HOLD', { sourceHead, governorReason: initialPermission.reason });
+  }
   const probeResult = await probe({ endpoint, model, fetchImpl: options.fetchImpl, timeoutMs: options.probeTimeoutMs });
   if (probeResult?.ok !== true) return unavailable(text(probeResult?.reason, 'FORGE_LIFEBOAT_MODEL_PROBE_FAILED'), { sourceHead });
 
@@ -221,6 +240,10 @@ export async function refreshForgeLifeboatCapacity(options = {}) {
     input,
     { repoRoot: paths.repoRoot, nowUtc: observedAtUtc },
   ));
+  const publicationPermission = readLocalBuilderPermission(paths);
+  if (!publicationPermission.localCpuAllowed) {
+    return unavailable('FORGE_LIFEBOAT_RESOURCE_GOVERNOR_HOLD', { sourceHead, governorReason: publicationPermission.reason });
+  }
   const publication = await publishCapacity(observation);
   const published = publication?.finalVerdict === 'GITHUB_CONTINUITY_CAPACITY_PUBLISHED'
     || (publication?.publication?.ok === true && publication?.workerScopedPublication?.ok === true);

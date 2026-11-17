@@ -26,11 +26,67 @@ $lightweightModel = 'llama3.2:3b'
 $script:governorDependencyHealthy = $true
 $script:governorNativeClock = $null
 $script:governorNativeProbeOwnedHold = $false
+$script:governorMutationOwner = $null
+
+# One cross-process owner for the existing governor, including caretaker
+# replacement. The name and protected DACL derive only from the actual user.
+function New-GovernorMutationMutex {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    try { $userSid = $identity.User } finally { $identity.Dispose() }
+    if ($userSid.Value -cnotmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$') { throw 'GOVERNOR_MUTEX_IDENTITY_UNPROVEN' }
+    $security = [Security.AccessControl.MutexSecurity]::new()
+    $security.SetAccessRuleProtection($true, $false)
+    $security.SetOwner($userSid)
+    foreach ($sid in @($userSid,[Security.Principal.SecurityIdentifier]::new('S-1-5-18'))) {
+        $security.AddAccessRule([Security.AccessControl.MutexAccessRule]::new($sid,
+            [Security.AccessControl.MutexRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow))
+    }
+    $created = $false
+    $mutex = [Threading.Mutex]::new($false, ('Global\Stephanos.VrResourceGovernor.V1.' + $userSid.Value), [ref]$created, $security)
+    try {
+        $actual = $mutex.GetAccessControl()
+        $rules = @($actual.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
+        if (-not $actual.AreAccessRulesProtected -or -not $actual.AreAccessRulesCanonical -or
+            $actual.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $userSid.Value -or $rules.Count -ne 2) { throw 'GOVERNOR_MUTEX_SECURITY_UNPROVEN' }
+        foreach ($rule in $rules) {
+            if ($rule.IsInherited -or $rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+                $rule.MutexRights -ne [Security.AccessControl.MutexRights]::FullControl -or
+                $rule.IdentityReference.Value -notin @($userSid.Value,'S-1-5-18')) { throw 'GOVERNOR_MUTEX_SECURITY_UNPROVEN' }
+        }
+        return $mutex
+    } catch { $mutex.Dispose(); throw }
+}
+
+function Enter-GovernorMutationOwner {
+    $mutex = New-GovernorMutationMutex
+    $acquired = $false; $abandoned = $false
+    try {
+        try { $acquired = $mutex.WaitOne(0) }
+        catch [Threading.AbandonedMutexException] { $acquired = $true; $abandoned = $true }
+        if (-not $acquired) { $mutex.Dispose(); return [pscustomobject]@{ acquired = $false; abandoned = $false; mutex = $null } }
+        return [pscustomobject]@{ acquired = $true; abandoned = $abandoned; mutex = $mutex }
+    } catch { $mutex.Dispose(); throw }
+}
+
+function Exit-GovernorMutationOwner {
+    param($Owner)
+    if ($Owner -and $Owner.acquired) {
+        try { $Owner.mutex.ReleaseMutex(); $Owner.acquired = $false }
+        finally { $Owner.mutex.Dispose() }
+    }
+}
+
+function Assert-GovernorMutationOwner {
+    param([switch]$AllowAbandoned)
+    if (-not $script:governorMutationOwner -or -not $script:governorMutationOwner.acquired -or
+        ($script:governorMutationOwner.abandoned -and -not $AllowAbandoned)) { throw 'GOVERNOR_MUTATION_OWNER_UNPROVEN' }
+}
 
 # Closed native probes only. Keep both pipes bounded and drained while the
 # retained direct child runs; neither a timeout nor a failed inventory is empty.
 function Invoke-GovernorNativeProbe {
     param([ValidateSet('GpuSnapshot','OllamaInventory','OllamaStop')][string]$Operation, [string]$Model = '')
+    Assert-GovernorMutationOwner
     $executable = ''
     $arguments = ''
     if ($Operation -eq 'GpuSnapshot') {
@@ -118,6 +174,7 @@ function Invoke-GovernorNativeProbe {
 
 function Set-GovernorNativeCustodyHold {
     param([bool]$Held = $true)
+    Assert-GovernorMutationOwner -AllowAbandoned:$Held
     $heldState = Read-GovernorState
     if ($Held -and -not $script:governorNativeProbeOwnedHold -and $heldState -and
         $heldState.PSObject.Properties['nativeProbeCustodyHeld'] -and
@@ -551,6 +608,7 @@ function Read-OverrideMode {
 
 function Write-OverrideMode {
     param([ValidateSet('AUTO','FORCE_ON','FORCE_OFF')][string]$Mode)
+    Assert-GovernorMutationOwner
     Ensure-StateRoot
     $payload = [ordered]@{
         schemaVersion = 'stephanos.gaming-resource-override.v1'
@@ -567,6 +625,7 @@ function Write-OverrideMode {
 
 function Write-PrepareLease {
     param([string]$RequestedProcessName, [string]$RequestedProfileName)
+    Assert-GovernorMutationOwner
     Ensure-StateRoot
     $now = (Get-Date).ToUniversalTime()
     $payload = [ordered]@{
@@ -586,6 +645,7 @@ function Write-PrepareLease {
 }
 
 function Clear-PrepareLease {
+    Assert-GovernorMutationOwner
     if (Test-Path -LiteralPath $preparePath -PathType Leaf) {
         Remove-Item -LiteralPath $preparePath -Force -ErrorAction SilentlyContinue
     }
@@ -790,7 +850,7 @@ function Get-OllamaVrRuntimeProcesses {
 
 function Stop-OllamaRuntimeForRealVr {
     param([bool]$Enabled)
-
+    Assert-GovernorMutationOwner
     $result = [ordered]@{
         enabled = $Enabled
         processCountBefore = 0
@@ -940,6 +1000,7 @@ function Write-GovernorState {
         [bool]$ShouldParkHeavy,
         [bool]$ParkAllModels
     )
+    Assert-GovernorMutationOwner
     Assert-GovernorNativeCustodyUnheld
     Ensure-StateRoot
     $publisher = [Diagnostics.Process]::GetCurrentProcess()
@@ -1134,6 +1195,7 @@ function Resolve-EffectiveState {
 function Invoke-Reconcile {
     param($Signal, $Effective, $PriorState)
 
+    Assert-GovernorMutationOwner
     Assert-GovernorNativeCustodyUnheld
     $script:governorDependencyHealthy = $true
     $script:governorNativeClock = [Diagnostics.Stopwatch]::StartNew()
@@ -1278,6 +1340,7 @@ function Invoke-Reconcile {
 }
 
 function Invoke-CurrentReconcile {
+    Assert-GovernorMutationOwner
     $signal = Get-GamingSignal
     $prior = Read-GovernorState
     $effective = Resolve-EffectiveState -Signal $signal -PriorState $prior
@@ -1300,67 +1363,56 @@ if ($Action -eq 'ObserveAdmission') {
     exit 0
 }
 
-if ($Action -eq 'SetAuto') {
-    Write-OverrideMode -Mode 'AUTO' | Out-Null
-    Invoke-CurrentReconcile | ConvertTo-Json -Depth 8
-    exit 0
-}
-if ($Action -eq 'ForceOn') {
-    Write-OverrideMode -Mode 'FORCE_ON' | Out-Null
-    Invoke-CurrentReconcile | ConvertTo-Json -Depth 8
-    exit 0
-}
-if ($Action -eq 'ForceOff') {
-    Write-OverrideMode -Mode 'FORCE_OFF' | Out-Null
-    Clear-PrepareLease
-    Invoke-CurrentReconcile | ConvertTo-Json -Depth 8
-    exit 0
-}
-if ($Action -eq 'PrepareGaming') {
-    if ((Read-OverrideMode) -eq 'FORCE_OFF') {
-        throw 'GAMING_RESOURCE_PREPARE_BLOCKED_BY_FORCE_OFF'
+function Invoke-GovernorOneShot {
+    $script:governorMutationOwner = Enter-GovernorMutationOwner
+    if (-not $script:governorMutationOwner.acquired) {
+        return [pscustomobject]@{ exitCode = 4; state = [pscustomobject]@{ ok = $false; blocker = 'GOVERNOR_MUTATION_BUSY' } }
     }
-    Write-PrepareLease -RequestedProcessName $ProcessName -RequestedProfileName $ProfileName | Out-Null
-    $prepared = Invoke-CurrentReconcile
-    $prepared | ConvertTo-Json -Depth 8
-    if (-not $prepared.evictionHealthy -or $prepared.heavyModelAllowed -ne $false) { exit 2 }
-    if (
-        $prepared.profile.parkAllModels -eq $true -and
-        (
-            $prepared.localModelAllowed -ne $false -or
-            @($prepared.loadedModelsAfter).Count -gt 0 -or
-            $prepared.zeroLocalModelInvariant -ne $true
-        )
-    ) { exit 3 }
-    exit 0
-}
-if ($Action -eq 'CancelPrepare') {
-    Clear-PrepareLease
-    Invoke-CurrentReconcile | ConvertTo-Json -Depth 8
-    exit 0
-}
-if ($Action -eq 'Status') {
-    $state = Read-GovernorState
-    if (-not $state) { $state = Invoke-CurrentReconcile }
-    $state | ConvertTo-Json -Depth 8
-    exit 0
-}
-if ($Action -eq 'Reconcile') {
-    $state = Invoke-CurrentReconcile
-    $state | ConvertTo-Json -Depth 8
-    if (-not $state.evictionHealthy) { exit 2 }
-    exit 0
+    try {
+        if ($script:governorMutationOwner.abandoned) {
+            Set-GovernorNativeCustodyHold -Held $true
+            throw 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN'
+        }
+        Assert-GovernorNativeCustodyUnheld
+        if ($Action -eq 'SetAuto') { Write-OverrideMode -Mode 'AUTO' | Out-Null }
+        elseif ($Action -eq 'ForceOn') { Write-OverrideMode -Mode 'FORCE_ON' | Out-Null }
+        elseif ($Action -eq 'ForceOff') {
+            Write-OverrideMode -Mode 'FORCE_OFF' | Out-Null
+            Clear-PrepareLease
+        }
+        elseif ($Action -eq 'PrepareGaming') {
+            if ((Read-OverrideMode) -eq 'FORCE_OFF') { throw 'GAMING_RESOURCE_PREPARE_BLOCKED_BY_FORCE_OFF' }
+            Write-PrepareLease -RequestedProcessName $ProcessName -RequestedProfileName $ProfileName | Out-Null
+        }
+        elseif ($Action -eq 'CancelPrepare') { Clear-PrepareLease }
+        elseif ($Action -notin @('Status','Reconcile')) { throw 'GOVERNOR_ACTION_UNPROVEN' }
+
+        $state = if ($Action -eq 'Status') { Read-GovernorState } else { $null }
+        if (-not $state) { $state = Invoke-CurrentReconcile }
+        $exitCode = 0
+        if ($Action -eq 'Reconcile' -and -not $state.evictionHealthy) { $exitCode = 2 }
+        if ($Action -eq 'PrepareGaming') {
+            if (-not $state.evictionHealthy -or $state.heavyModelAllowed -ne $false) { $exitCode = 2 }
+            elseif ($state.profile.parkAllModels -eq $true -and
+                ($state.localModelAllowed -ne $false -or @($state.loadedModelsAfter).Count -gt 0 -or
+                 $state.zeroLocalModelInvariant -ne $true)) { $exitCode = 3 }
+        }
+        return [pscustomobject]@{ exitCode = $exitCode; state = $state }
+    } finally {
+        Exit-GovernorMutationOwner -Owner $script:governorMutationOwner
+        $script:governorMutationOwner = $null
+    }
 }
 
-$poll = [Math]::Max(250, $PollMilliseconds)
-$lastGuardAt = [DateTime]::MinValue
-# Retain fast real-headset detection and immediate AI-model eviction on every
-# watcher tick. Expensive all-process flat-game discovery is capped at 1/3s.
-$script:flatGameScanIntervalSeconds = 3
-$script:lastFlatGameScanAt = [DateTime]::MinValue
-$script:cachedFlatGameSignal = $null
-
-while ($true) {
+function Invoke-GovernorWatchTick {
+    $script:governorMutationOwner = Enter-GovernorMutationOwner
+    if (-not $script:governorMutationOwner.acquired) { return 'GOVERNOR_MUTATION_BUSY' }
+    try {
+    if ($script:governorMutationOwner.abandoned) {
+        Set-GovernorNativeCustodyHold -Held $true
+        throw 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN'
+    }
+    Assert-GovernorNativeCustodyUnheld
     # First bite: headset presence wins over every other workload. If any Ollama
     # runner has appeared, evict it immediately before the slower inventory pass.
     [void](Invoke-ImmediateVrModelEviction)
@@ -1374,7 +1426,7 @@ while ($true) {
     $overrideChanged = -not $prior -or [string]$prior.overrideMode -ne [string]$effective.overrideMode
     $processChanged = -not $prior -or [string]$prior.gameProcessName -ne [string]$signal.gameProcessName
     $guardIntervalSeconds = if ($effective.active -and $effective.profile.parkAllModels) { 0.5 } else { 5 }
-    $guardDue = $effective.active -and ($now - $lastGuardAt).TotalSeconds -ge $guardIntervalSeconds
+    $guardDue = $effective.active -and ($now - $script:lastGuardAt).TotalSeconds -ge $guardIntervalSeconds
     # Keep an independently observed idle-state heartbeat fresh for bounded
     # GPU/CPU model admission. Without this, Watch refreshes its JSON only on
     # transitions. Core expires evidence at 15s (the reviewer at 30s), so
@@ -1397,8 +1449,28 @@ while ($true) {
 
     if ($phaseChanged -or $reasonChanged -or $overrideChanged -or $processChanged -or $guardDue -or $idleHeartbeatDue) {
         $state = Invoke-Reconcile -Signal $signal -Effective $effective -PriorState $prior
-        if ($state.active) { $lastGuardAt = $now }
+        if ($state.active) { $script:lastGuardAt = $now }
     }
+    return 'GOVERNOR_WATCH_TICK_COMPLETE'
+    } finally {
+        Exit-GovernorMutationOwner -Owner $script:governorMutationOwner
+        $script:governorMutationOwner = $null
+    }
+}
 
+if ($Action -ne 'Watch') {
+    $result = Invoke-GovernorOneShot
+    $result.state | ConvertTo-Json -Depth 8
+    exit $result.exitCode
+}
+
+$poll = [Math]::Max(250, $PollMilliseconds)
+$script:lastGuardAt = [DateTime]::MinValue
+# Retain fast real-headset detection. Expensive flat-game discovery is capped.
+$script:flatGameScanIntervalSeconds = 3
+$script:lastFlatGameScanAt = [DateTime]::MinValue
+$script:cachedFlatGameSignal = $null
+while ($true) {
+    [void](Invoke-GovernorWatchTick)
     Start-Sleep -Milliseconds $poll
 }
