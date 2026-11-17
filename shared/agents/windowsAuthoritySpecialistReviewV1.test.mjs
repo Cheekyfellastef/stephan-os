@@ -366,3 +366,49 @@ test('routes exact #3302 seven Windows source-only P0s before the frozen legacy 
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.epochAdoptionAuthorized, false);
 });
+
+
+test('composite specialist suppresses every positive source proof if either child fails exact evidence', async () => {
+  const splashPath = WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1.find(path =>
+    path.endsWith('launch-starfield-vr-with-splash.ps1'));
+  for (const [partnerPath, file] of [
+    [WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0], 'launch-starfield-vr.ps1'],
+    [WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1[0], 'run-starfield-aer-stabilizer-observe.ps1'],
+  ]) {
+    const [splash, partner] = await Promise.all([
+      readFile(new URL('../../scripts/windows/launch-starfield-vr-with-splash.ps1', import.meta.url), 'utf8'),
+      readFile(new URL('../../scripts/windows/' + file, import.meta.url), 'utf8'),
+    ]);
+    const paths = [splashPath, partnerPath];
+    const sources = [splash, partner].map((content, index) => ({
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      path: paths[index], ref: HEAD, exists: true,
+      size: Buffer.byteLength(content, 'utf8'), blobSha: gitBlobSha(content), content,
+    }));
+    const request = (evidence) => analyzeWindowsAuthoritySpecialistReview({
+      repository: 'Cheekyfellastef/stephan-os', sourceHead: HEAD,
+      analysis: {
+        findings: paths.map(path => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })),
+        counts: { P0: 2, P1: 0, P2: 0 },
+      },
+      sources: evidence,
+    });
+    const clean = request(sources);
+    assert.equal(clean.eligible, true);
+    assert.equal(clean.clean, true, JSON.stringify(clean.findings));
+    assert.ok(clean.proofRefs.length >= 1, 'baseline must contain a real positive proof');
+    for (const damagedIndex of [0, 1]) {
+      // Self-consistent metadata is not enough: one child has absent source bytes.
+      // The other child remains valid and previously leaked a positive proofRef.
+      const invalidSources = sources.map((entry, index) => index === damagedIndex
+        ? { ...entry, content: '', size: 0, blobSha: gitBlobSha('') } : entry);
+      const rejected = request(invalidSources);
+      assert.equal(rejected.eligible, true);
+      assert.equal(rejected.clean, false, 'one failed child must fail the composite');
+      assert.ok(rejected.findings.length > 0);
+      assert.deepEqual(rejected.proofRefs, [], 'no partial positive proof on any P0 finding');
+      assert.equal(rejected.mergeAuthority, undefined, 'source review cannot add merge authority');
+    }
+  }
+});

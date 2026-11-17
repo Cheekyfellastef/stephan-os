@@ -178,9 +178,11 @@ function analyzeStarfieldVrCompositeReview(input = {}) {
   });
   if (!splash.eligible || !launcher.eligible) return null;
   const combinedFindings = Object.freeze([...(splash.findings || []), ...(launcher.findings || [])]);
-  const proofRefs = Object.freeze([...new Set([...(splash.proofRefs || []), ...(launcher.proofRefs || [])])]);
   const reviewedPaths = Object.freeze([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_LAUNCHER_SCRIPT_PATH]);
   const clean = splash.clean === true && launcher.clean === true && combinedFindings.length === 0;
+  // A partially rejected composite cannot advertise a positive source proof.
+  const proofRefs = Object.freeze(clean
+    ? [...new Set([...(splash.proofRefs || []), ...(launcher.proofRefs || [])])] : []);
   return Object.freeze({
     eligible: true,
     clean,
@@ -219,9 +221,11 @@ function analyzeStarfieldVrAerCompositeReview(input = {}) {
   });
   if (!splash.eligible || !aer.eligible) return null;
   const combinedFindings = Object.freeze([...(splash.findings || []), ...(aer.findings || [])]);
-  const proofRefs = Object.freeze([...new Set([...(splash.proofRefs || []), ...(aer.proofRefs || [])])]);
   const reviewedPaths = Object.freeze([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH]);
   const clean = splash.clean === true && aer.clean === true && combinedFindings.length === 0;
+  // Never return a partial positive proof when the combined P0 review fails.
+  const proofRefs = Object.freeze(clean
+    ? [...new Set([...(splash.proofRefs || []), ...(aer.proofRefs || [])])] : []);
   return Object.freeze({
     eligible: true,
     clean,
