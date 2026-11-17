@@ -726,7 +726,8 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   // A protected cross-version capability change cannot be approved with zero task-class replay.
   // The ledger producer requires replay for every protected cross-version disposition;
   // enforce that invariant again at the promotion consumer boundary.
-  if (currentVersion && targetVersion && currentVersion !== targetVersion && required.length === 0) {
+  if (stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
+    && currentVersion && targetVersion && currentVersion !== targetVersion && required.length === 0) {
     blockers.push('CROSS_VERSION_QUALIFICATION_REPLAY_REQUIRED');
   }
   // Producer/consumer parity: a same-version protected implementation change also
