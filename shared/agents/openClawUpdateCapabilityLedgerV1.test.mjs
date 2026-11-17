@@ -397,3 +397,33 @@ test('canonical ledger producer binds PRESERVE replay obligations to the read-on
   assert.equal(refused.updatePromotionAllowed, false);
   assert.equal(refused.providerRoutingResumeAllowed, false);
 });
+
+test('protected implementation changes cannot discard existing qualification refs', () => {
+  for (const disposition of [
+    OPENCLAW_UPDATE_DISPOSITION.MIGRATE,
+    OPENCLAW_UPDATE_DISPOSITION.IMPROVE,
+    OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM,
+  ]) {
+    const change = {
+      candidateImplementation: 'openclaw.gateway-provider.v2',
+      candidateOrigin: disposition === OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM
+        ? OPENCLAW_UPDATE_CAPABILITY_ORIGIN.UPSTREAM
+        : OPENCLAW_UPDATE_CAPABILITY_ORIGIN.STEPHANOS_EXTENSION,
+      updateDisposition: disposition,
+    };
+    const valid = ledger([baseCapability(change)]);
+    assert.equal(valid.updateAllowed, true, disposition);
+    const missing = ledger([baseCapability({ ...change, qualificationRefs: [] })]);
+    assert.equal(missing.verdict, 'BLOCK_UPDATE', disposition);
+    assert.equal(missing.updateAllowed, false, disposition);
+    assert.ok(missing.blockers.includes(
+      'PROTECTED_CANDIDATE_QUALIFICATION_REFS_REQUIRED:openclaw.gateway-provider',
+    ), disposition);
+    assert.equal(missing.authority.updateExecutionAllowed, false, disposition);
+    const optional = ledger([
+      baseCapability(),
+      baseCapability({ ...change, protected: false, capabilityId: 'openclaw.optional-provider', qualificationRefs: [] }),
+    ]);
+    assert.equal(optional.updateAllowed, true, disposition);
+  }
+});
