@@ -435,3 +435,57 @@ test('cold-start native capacity may become signed-current after the old 8s wind
   assert.equal(sleeps, 12);
   assert.equal(result.finalVerdict, 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_CAPACITY_LIVE_PROVEN');
 });
+
+test('publisher command rejects caller-shaped task, resource, gaming, source-lease and merge overrides', () => {
+  for (const [field, value] of [
+    ['taskName', 'Another Task'],
+    ['resourceScope', 'STARFIELD'],
+    ['gamingOverride', true],
+    ['leaseReleaseAllowed', true],
+    ['sourceMutationAllowed', true],
+    ['mergeAuthority', true],
+    ['executable', 'powershell.exe'],
+  ]) {
+    const checked = validateBattleBridgeGitHubCommand(command({ [field]: value }), {
+      authorLogin: 'Cheekyfellastef', now: NOW, authoredAt: NOW,
+    });
+    assert.equal(checked.ok, false, field);
+    assert.equal(checked.blocker, 'STEPHANOS_NATIVE_PUBLISHER_FIELD_NOT_ALLOWED', field);
+  }
+});
+
+test('absent publisher status invokes one fixed installer but no stale-task restart or native grant', async () => {
+  let installations = 0, reconciliations = 0, polls = 0, sleeps = 0;
+  const result = await executeStephanosNativeCapacityPublisherInstallOnBattleBridge(command(), {
+    env: { USERPROFILE: 'C:\\Users\\operator' },
+    spawnSyncFn: (_executable, args) => {
+      if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
+      if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n' };
+      if (args.includes('status')) return { status: 0, stdout: '' };
+      if (args.some(value => String(value).endsWith('reconcile-stephanos-native-capacity-publisher-stale.ps1'))) {
+        reconciliations++;
+        throw new Error('missing publisher is not an authenticated stale-task claim');
+      }
+      installations++;
+      assert.ok(args.some(value => String(value).endsWith('install-stephanos-native-capacity-publisher.ps1')));
+      assert.ok(args.includes('-StartNow'));
+      return { status: 0, stdout: installerReceipt() };
+    },
+    verifyCandidateFn: async () => {
+      polls++;
+      return { ok: false, reason: 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING' };
+    },
+    sleepFn: async ms => { assert.equal(ms, 10000); sleeps++; },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_NOT_PROVEN');
+  assert.equal(result.signedReadbackReason, 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING');
+  assert.equal(result.signedCapacityProven, false);
+  assert.equal(result.boundedRestartAttempted, false);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.leaseSeizureAllowed, false);
+  assert.equal(installations, 1);
+  assert.equal(reconciliations, 0);
+  assert.equal(polls, 16);
+  assert.equal(sleeps, 15);
+});
