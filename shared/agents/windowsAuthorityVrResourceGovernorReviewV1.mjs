@@ -42,7 +42,15 @@ function blobSha(source) {
 
 function exactEscalation(analysis = {}) {
   const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
+  const counts = analysis?.counts;
   return findings.length === 1
+    && counts !== null
+    && typeof counts === 'object'
+    && !Array.isArray(counts)
+    && counts.P0 === 1
+    && counts.P1 === 0
+    && counts.P2 === 0
+    && analysis?.verdict === 'findings'
     && text(findings[0]?.severity).toUpperCase() === 'P0'
     && text(findings[0]?.code) === 'unsupported-high-risk-surface'
     && text(findings[0]?.path) === PATH;

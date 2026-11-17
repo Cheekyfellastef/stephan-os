@@ -204,6 +204,34 @@ test('source identity and single-source custody checks remain fail closed', () =
   assert.ok(result.findings.some((item) => item.code === 'windows-authority-vr-resource-governor-source-estate-widened'));
 });
 
+
+test('one exact P0 escalation rejects inconsistent typed counts and false-clean verdicts', () => {
+  const baseline = input();
+  assert.equal(analyzeWindowsAuthorityVrResourceGovernorReviewV1(baseline).clean, true);
+  for (const [reason, override] of [
+    ['widened P0', { counts: { P0: 13, P1: 0, P2: 0 } }],
+    ['zero P0', { counts: { P0: 0, P1: 0, P2: 0 } }],
+    ['missing P0', { counts: { P1: 0, P2: 0 } }],
+    ['extra P1', { counts: { P0: 1, P1: 2, P2: 0 } }],
+    ['extra P2', { counts: { P0: 1, P1: 0, P2: 1 } }],
+    ['coerced P0', { counts: { P0: '1', P1: 0, P2: 0 } }],
+    ['missing counts', { counts: undefined }],
+    ['null counts', { counts: null }],
+    ['array counts', { counts: [1, 0, 0] }],
+    ['false clean', { verdict: 'clean' }],
+    ['false pass', { verdict: 'pass' }],
+    ['missing verdict', { verdict: undefined }],
+  ]) {
+    const candidate = input(governor, { analysis: { ...baseline.analysis, ...override } });
+    const result = analyzeWindowsAuthorityVrResourceGovernorReviewV1(candidate);
+    assert.equal(result.eligible, false, reason);
+    assert.equal(result.clean, false, reason);
+    assert.deepEqual(result.proofRefs, [], reason);
+    assert.equal(result.mergeAuthority, false, reason);
+    assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_SPECIALIST_NOT_APPLICABLE', reason);
+  }
+});
+
 test('specialist ignores unrelated high-risk surfaces', () => {
   const result = analyzeWindowsAuthorityVrResourceGovernorReviewV1(input(governor, {
     analysis: {

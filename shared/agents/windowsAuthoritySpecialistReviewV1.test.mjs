@@ -82,6 +82,16 @@ function input(overrides = {}) {
   };
 }
 
+
+test('router preserves exact governor specialist source pin after metadata fail-closed correction', async () => {
+  const reviewerSource = await readFile(new URL('./windowsAuthorityVrResourceGovernorReviewV1.mjs', import.meta.url), 'utf8');
+  const routerSource = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
+  assert.equal(gitBlobSha(reviewerSource), 'd52d0f8b69f22c0e0f57aca70b5d2e0ace28eca5');
+  assert.ok(routerSource.includes("const VR_RESOURCE_GOVERNOR_BLOB_SHA = 'd52d0f8b69f22c0e0f57aca70b5d2e0ace28eca5';"));
+  assert.ok(reviewerSource.includes('counts.P0 === 1'));
+  assert.ok(reviewerSource.includes("analysis?.verdict === 'findings'"));
+});
+
 test('routes exact #2164 two-path Windows escalation through the bounded mailbox rollover profile', () => {
   const result = analyzeWindowsAuthoritySpecialistReview(input());
   assert.equal(result.eligible, true);
