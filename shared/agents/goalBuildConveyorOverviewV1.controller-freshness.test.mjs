@@ -220,3 +220,42 @@ test('Goal #2961: review and merge display require a causally complete signed ch
   assert.deepEqual(review.proofRefs, ['workspace:proof/gate-21'],
     'signed event remains visible without being credited as end-to-end progress');
 });
+
+
+test('Goal #2961: duplicate independent runtime service identity cannot promote conflicting health', () => {
+  const service = (serviceId, trafficLight) => ({
+    serviceId, freshness: 'CURRENT', observedAtUtc: at(-1000), trafficLight,
+  });
+  const input = {
+    captainsBridge: { runtimeHealth: { services: [
+      service('mission-worker', 'GREEN'),
+      service('mission-worker', 'RED'),
+      service('backend', 'GREEN'),
+      service('backend', 'RED'),
+    ] } },
+  };
+  const statusRecords = [{
+    statusId: 'stephanos-core-daemon-current',
+    timestampUtc: at(-1000), sourceHead: 'a'.repeat(40),
+    missionWorkerHealthy: true, backendHealthy: true,
+  }];
+  const original = structuredClone(input);
+  const result = overview(input, { nowMs: NOW, statusRecords });
+  assert.deepEqual(input, original, 'read-only adapter cannot rewrite conflicting input');
+  for (const id of ['missionWorkerHealthy', 'backendHealthy']) {
+    const entry = result.health.find(item => item.id === id);
+    assert.equal(entry.state, 'UNKNOWN', id + ' must not choose a convenient first GREEN');
+    assert.equal(entry.evidenceSource, 'AMBIGUOUS_INDEPENDENT_SERVICE_IDENTITY');
+    assert.equal(entry.expiresAtUtc, '', 'an ambiguous source has no qualified expiry');
+  }
+  const onePerService = {
+    captainsBridge: { runtimeHealth: { services: [
+      service('mission-worker', 'GREEN'), service('backend', 'GREEN'),
+    ] } },
+  };
+  const valid = overview(onePerService, { nowMs: NOW, statusRecords });
+  for (const id of ['missionWorkerHealthy', 'backendHealthy']) {
+    assert.equal(valid.health.find(item => item.id === id).state, 'HEALTHY',
+      'unique fresh service observation remains available');
+  }
+});
