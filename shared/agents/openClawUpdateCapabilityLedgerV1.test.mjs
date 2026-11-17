@@ -8,6 +8,16 @@ import {
   buildOpenClawUpdateCapabilityLedgerV1,
 } from './openClawUpdateCapabilityLedgerV1.mjs';
 
+import {
+  OPENCLAW_STAGED_UPDATE_SCHEMA,
+  OPENCLAW_STAGED_UPDATE_STATUS,
+} from './openClawStagedUpdateV1.mjs';
+import {
+  OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS,
+  evaluateOpenClawUpdateCapabilityCandidateV1,
+} from './openClawUpdateCapabilityCandidateGateV1.mjs';
+
+
 function baseCapability(overrides = {}) {
   return {
     capabilityId: 'openclaw.gateway-provider',
@@ -308,4 +318,63 @@ test('unprotected capability metadata retains compatibility', () => {
   ]);
   assert.equal(result.updateAllowed, true);
   assert.deepEqual(result.requiredQualificationReplay, [OPENCLAW_TASK_CLASS.OC1]);
+});
+
+
+test('canonical ledger producer binds PRESERVE replay obligations to the read-only candidate gate', () => {
+  // The actual ledger producer, not a handwritten consumer fixture, determines
+  // replay. A preflight can inspect that requirement but grants no update.
+  const stagedPreflight = (targetVersion) => ({
+    schema: OPENCLAW_STAGED_UPDATE_SCHEMA,
+    status: OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY,
+    exactIdentity: {
+      sourceHead: 'a'.repeat(40),
+      currentVersion: '1.2.3',
+      targetVersion,
+    },
+    safety: {
+      mutationAllowed: false,
+      sourceMutationAllowed: false,
+      mergeAuthority: false,
+      deploymentAuthority: false,
+    },
+  });
+  for (const [targetVersion, expectedReplay] of [
+    ['1.3.0', [OPENCLAW_TASK_CLASS.OC1]],
+    ['1.2.3', []],
+  ]) {
+    const produced = buildOpenClawUpdateCapabilityLedgerV1({
+      currentVersion: '1.2.3',
+      targetVersion,
+      capabilities: [baseCapability()],
+    });
+    assert.equal(produced.updateAllowed, true, targetVersion);
+    const candidate = evaluateOpenClawUpdateCapabilityCandidateV1({
+      stagedUpdate: stagedPreflight(targetVersion),
+      capabilityLedger: produced,
+      qualificationReplay: [],
+    });
+    assert.equal(candidate.status,
+      OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.PRE_UPDATE_CAPABILITY_GATE_READY,
+      targetVersion);
+    assert.deepEqual(candidate.requiredQualificationReplay, expectedReplay, targetVersion);
+    assert.equal(candidate.updatePromotionAllowed, false, targetVersion);
+    assert.equal(candidate.providerRoutingResumeAllowed, false, targetVersion);
+  }
+
+  const invalidLedger = buildOpenClawUpdateCapabilityLedgerV1({
+    currentVersion: '1.2.3',
+    targetVersion: '1.3.0',
+    capabilities: [baseCapability({ affectedTaskClasses: [] })],
+  });
+  assert.equal(invalidLedger.updateAllowed, false);
+  assert.ok(invalidLedger.blockers.includes('PRESERVE_TASK_CLASSES_REQUIRED:openclaw.gateway-provider'));
+  const refused = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: stagedPreflight('1.3.0'),
+    capabilityLedger: invalidLedger,
+    qualificationReplay: [],
+  });
+  assert.equal(refused.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.equal(refused.updatePromotionAllowed, false);
+  assert.equal(refused.providerRoutingResumeAllowed, false);
 });
