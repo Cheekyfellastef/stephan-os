@@ -157,9 +157,12 @@ struct Surface : std::enable_shared_from_this<Surface> {
       IID_PPV_ARGS(accessibility.put()))))return false;
     // Provider calls must not hang the frame producer indefinitely or force
     // focus away from the WebXR browser. Each provider has a bounded timeout.
-    accessibility->put_AutoSetFocus(FALSE);
-    accessibility->put_ConnectionTimeout(1500);
-    accessibility->put_TransactionTimeout(1500);
+    if(FAILED(accessibility->put_AutoSetFocus(FALSE))||
+      FAILED(accessibility->put_ConnectionTimeout(1500))||
+      FAILED(accessibility->put_TransactionTimeout(1500))){
+      // Timeout and no-autofocus are safety requirements, not cosmetic hints.
+      accessibility=nullptr;return false;
+    }
     return true;
   }
   static bool ReadEditorValue(IUIAutomationElement* element,std::wstring& value,
