@@ -163,9 +163,43 @@ function singleFindingAnalysis(analysis, finding) {
   return Object.freeze({ ...analysis, findings: Object.freeze([finding]), counts: Object.freeze({ P0: 1, P1: 0, P2: 0 }) });
 }
 
+/**
+ * Composite specialist routing must preserve the original analysis identity.
+ * In particular, recomputing two single-P0 subreviews cannot cleanse an
+ * upstream contradictory counts/verdict envelope.
+ */
+function exactTwoP0CompositeEnvelope(analysis) {
+  const counts = analysis?.counts;
+  return counts !== null
+    && typeof counts === 'object'
+    && !Array.isArray(counts)
+    && counts.P0 === 2
+    && counts.P1 === 0
+    && counts.P2 === 0
+    && analysis?.verdict === 'findings';
+}
+
+function rejectedCompositeEnvelope(paths) {
+  return Object.freeze({
+    eligible: true,
+    clean: false,
+    reviewedPaths: Object.freeze([...paths]),
+    findings: Object.freeze([Object.freeze({
+      severity: 'P0',
+      code: 'windows-authority-composite-escalation-envelope-invalid',
+      path: paths[0],
+    })]),
+    proofRefs: Object.freeze([]),
+    finalVerdict: 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID',
+  });
+}
+
 function analyzeStarfieldVrCompositeReview(input = {}) {
   const findings = starfieldVrCompositeFindings(input.analysis);
   if (!findings) return null;
+  if (!exactTwoP0CompositeEnvelope(input.analysis)) {
+    return rejectedCompositeEnvelope([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_LAUNCHER_SCRIPT_PATH]);
+  }
   const splashFinding = findings.find((item) => item.path === STARFIELD_VR_SPLASH_LAUNCH_PATH);
   const launcherFinding = findings.find((item) => item.path === STARFIELD_VR_LAUNCHER_SCRIPT_PATH);
   const splash = starfieldVrSplash.analyzeWindowsAuthorityStarfieldVrSplashReviewV1({
@@ -209,6 +243,9 @@ function starfieldVrAerCompositeFindings(analysis = {}) {
 function analyzeStarfieldVrAerCompositeReview(input = {}) {
   const findings = starfieldVrAerCompositeFindings(input.analysis);
   if (!findings) return null;
+  if (!exactTwoP0CompositeEnvelope(input.analysis)) {
+    return rejectedCompositeEnvelope([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH]);
+  }
   const splashFinding = findings.find((item) => item.path === STARFIELD_VR_SPLASH_LAUNCH_PATH);
   const aerFinding = findings.find((item) => item.path === STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH);
   const splash = starfieldVrSplash.analyzeWindowsAuthorityStarfieldVrSplashReviewV1({

@@ -229,6 +229,7 @@ test('composes exact Starfield VR splash and launcher escalations without wideni
     analysis: {
       findings: [splashPath, launcherPath].map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })),
       counts: { P0: 2, P1: 0, P2: 0 },
+      verdict: 'findings',
     },
     sources,
   });
@@ -288,6 +289,7 @@ test('composes exact Starfield VR splash and AER Observe escalations without wid
     analysis: {
       findings: [splashPath, aerPath].map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })),
       counts: { P0: 2, P1: 0, P2: 0 },
+      verdict: 'findings',
     },
     sources,
   });
@@ -391,6 +393,7 @@ test('composite specialist suppresses every positive source proof if either chil
       analysis: {
         findings: paths.map(path => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })),
         counts: { P0: 2, P1: 0, P2: 0 },
+        verdict: 'findings',
       },
       sources: evidence,
     });
@@ -409,6 +412,55 @@ test('composite specialist suppresses every positive source proof if either chil
       assert.ok(rejected.findings.length > 0);
       assert.deepEqual(rejected.proofRefs, [], 'no partial positive proof on any P0 finding');
       assert.equal(rejected.mergeAuthority, undefined, 'source review cannot add merge authority');
+    }
+  }
+});
+
+test('composite review refuses contradictory typed counts and verdict before delegating to child specialists', async () => {
+  const splashPath = WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1.find(path =>
+    path.endsWith('launch-starfield-vr-with-splash.ps1'));
+  for (const [partnerPath, filename] of [
+    [WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0], 'launch-starfield-vr.ps1'],
+    [WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1[0], 'run-starfield-aer-stabilizer-observe.ps1'],
+  ]) {
+    const paths = [splashPath, partnerPath];
+    const [splash, partner] = await Promise.all([
+      readFile(new URL('../../scripts/windows/launch-starfield-vr-with-splash.ps1', import.meta.url), 'utf8'),
+      readFile(new URL('../../scripts/windows/' + filename, import.meta.url), 'utf8'),
+    ]);
+    const sources = [splash, partner].map((content, index) => ({
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      path: paths[index], ref: HEAD, exists: true,
+      size: Buffer.byteLength(content, 'utf8'), blobSha: gitBlobSha(content), content,
+    }));
+    const analysis = {
+      findings: paths.map(path => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })),
+      counts: { P0: 2, P1: 0, P2: 0 },
+      verdict: 'findings',
+    };
+    const review = (overrides = {}) => analyzeWindowsAuthoritySpecialistReview({
+      repository: 'Cheekyfellastef/stephan-os', sourceHead: HEAD,
+      analysis: { ...analysis, ...overrides }, sources,
+    });
+    assert.equal(review().clean, true, 'baseline confirms registered positive proof paths');
+    for (const [reason, override] of [
+      ['zero P0', { counts: { P0: 0, P1: 0, P2: 0 } }],
+      ['extra P0', { counts: { P0: 3, P1: 0, P2: 0 } }],
+      ['coerced P0', { counts: { P0: '2', P1: 0, P2: 0 } }],
+      ['extra P1', { counts: { P0: 2, P1: 1, P2: 0 } }],
+      ['extra P2', { counts: { P0: 2, P1: 0, P2: 1 } }],
+      ['missing counts', { counts: undefined }],
+      ['array counts', { counts: [2, 0, 0] }],
+      ['false clean', { verdict: 'clean' }],
+      ['missing verdict', { verdict: undefined }],
+    ]) {
+      const result = review(override);
+      assert.equal(result.eligible, true, reason);
+      assert.equal(result.clean, false, reason);
+      assert.deepEqual(result.proofRefs, [], reason);
+      assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID', reason);
+      assert.notEqual(result.mergeAuthority, true, reason);
     }
   }
 });
