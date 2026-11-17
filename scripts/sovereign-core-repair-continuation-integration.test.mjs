@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readdirSync, rmSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import process from 'node:process';
 import { registerHooks } from 'node:module';
 import { createMaintenanceCustodyStoreV1 } from './sovereign-maintenance-custody-store-v1.mjs';
 import { createSovereignCommanderHttpServer } from './sovereign-commander-http.mjs';
@@ -46,12 +47,11 @@ async function loadHttpWithNativeFixture(boundary) {
     export const consumeFixedRuntimePrelaunchExclusionV1 = fixture.consumeFixedRuntimePrelaunchExclusionV1;
   `);
   const processUrl = 'data:text/javascript,' + encodeURIComponent(`
-    import actual from 'node:process';
-    export default new Proxy(actual, { get(target, key) {
-      return key === 'platform' ? 'win32' : Reflect.get(target, key);
-    }});
+    export default globalThis[Symbol.for(${JSON.stringify(slot)})].process;
   `);
-  globalThis[Symbol.for(slot)] = boundary;
+  globalThis[Symbol.for(slot)] = { ...boundary, process: new Proxy(process, { get(target, key) {
+    return key === 'platform' ? 'win32' : Reflect.get(target, key);
+  } }) };
   const hooks = registerHooks({ resolve(specifier, context, nextResolve) {
     if (context.parentURL === moduleUrl && specifier === './sovereign-fixed-runtime-parent-v1.mjs')
       return { url: fixtureUrl, shortCircuit: true };

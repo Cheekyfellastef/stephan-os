@@ -9,11 +9,10 @@ import { resolveGoalDiscoveryWorkspaceV1 } from '../shared/agents/goalDiscoveryW
 import { collectCanonicalIgnitionSourceTruth, evaluateCanonicalIgnitionSourceTruth } from './battle-bridge-ignition-supervisor.mjs';
 import { createMaintenanceOsAnchorV1, readMaintenanceLegacyAuditObservationV1 } from './sovereign-maintenance-os-anchor-v1.mjs';
 import { readMaintenanceOwnerObservationV2 } from './sovereign-maintenance-owner-observation-v2.mjs';
-import { projectMaintenanceSourceDiagnosticV1 } from '../shared/agents/sovereignMaintenanceSourceDiagnosticV1.mjs';
-import { projectGoalBuilderChildBlockerV1 } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
-import { captureCoreRepairContinuationV1, captureCoreRepairStatusRequestV1, captureCoreRepairPrepareRequestV1,
+import { projectMaintenanceSourceDiagnosticV1, projectGoalBuilderChildBlockerV1,
+  captureCoreRepairContinuationV1, captureCoreRepairStatusRequestV1, captureCoreRepairPrepareRequestV1,
   captureCoreRepairContinuationStatusV1, sameCoreRepairContinuationV1, unknownCoreRepairRequestStatusV1,
-  CORE_REPAIR_REQUEST_STATUS_SCHEMA_V1, CORE_REPAIR_OWNER_PROTOCOL_V1 } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
+  CORE_REPAIR_REQUEST_STATUS_SCHEMA_V1, CORE_REPAIR_OWNER_PROTOCOL_V1 } from '../shared/agents/sovereignMaintenanceSourceDiagnosticV1.mjs';
 
 export const MAINTENANCE_CUSTODY_SCHEMA = 'stephanos.sovereign-maintenance-custody.v1';
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');

@@ -185,11 +185,16 @@ preparation, enrollment mismatch, uncertain custody, signed terminal before
 failed release, action-specific resumption, and concurrent optional work.
 
 The protocol and closed blocker parser live in the existing shared maintenance
-admission module. The fixed runtime package retains its existing complete
-300-member manifest and size bounds. Closure tests capture the complete
-dependency graph without evaluating repository modules. Existing exact
-applicability pins continue to reject changed profile gates unless their new
-bytes are independently reassessed.
+source diagnostic module, with the admission module re-exporting the same API.
+The custody store uses the already-packaged diagnostic module directly. This
+preserves both the 40-member maintenance installer closure and the 300-member
+fixed-runtime closure, without expanding either package or its size bounds.
+Closure tests capture the complete dependency graph without evaluating
+repository modules. Existing exact applicability pins continue to reject
+changed profile gates unless their new bytes are independently reassessed.
+The existing read-only Node 24 Linux/Windows custody workflow also runs the six
+focused continuation suites; its permissions and native fixture policy remain
+unchanged.
 
 Passing source fixtures is not native Windows qualification, installation,
 current process exclusion, or a successful material build. Activation still

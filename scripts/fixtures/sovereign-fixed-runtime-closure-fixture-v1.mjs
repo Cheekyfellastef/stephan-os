@@ -177,7 +177,7 @@ if (!maintenance) {
   const applicabilityPins = {
   "scripts/sovereign-commander-http.mjs": "e989d14bb01a83ce31ed6771d36025a67c103edf3f133dd277bb615680a5eea2",
   "scripts/sovereign-fixed-runtime-parent-v1.mjs": "e999aa177ace3f77b5ace753d340e87df5b3c748176d2cceb8efde48ab1ad87a",
-  "shared/agents/sovereignMaintenanceAdmissionV1.mjs": "eacf71792e7a0df0258ee9d7e7352ca48a7f99394f85a7a1ee9d87bd7cdf2ac4",
+  "shared/agents/sovereignMaintenanceAdmissionV1.mjs": "43e8549cdfe07ccc944afbe5dc52d87e41146db021e6ff9997bf4b559b590888",
   "scripts/windows/SovereignFixedRuntimeHostV1.cs": "24f03a18fc7b81e807fc9c2ef0bfbafa205c2de871d55aad15c127b1b433812c"
 };
   let scopeProven = true;
