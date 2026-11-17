@@ -363,6 +363,23 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
         // file check. This remains an observation, not global serialization
         // against arbitrary actors bypassing the original ledger write API.
         for (const shard of shards) verifyShard(shard);
+        // Directory timestamps are not an adequate membership witness on every
+        // filesystem. Re-enumerate the root without yielding, so a previously
+        // unseen shard cannot be silently omitted from a positive read-only
+        // snapshot even if its parent metadata appears unchanged.
+        const finalShards = [], finalHandle = opendirSync(root, { bufferSize: 256 });
+        try {
+          let entry;
+          while ((entry = finalHandle.readSync())) {
+            budget();
+            if (finalShards.length >= 256 || !/^[a-f0-9]{2}$/.test(entry.name)
+              || !entry.isDirectory() || entry.isSymbolicLink()) unproven();
+            finalShards.push(entry.name);
+          }
+        } finally { finalHandle.closeSync(); }
+        finalShards.sort();
+        if (finalShards.length !== shards.length
+          || finalShards.some((name, index) => name !== shards[index])) unproven();
         directory(root);
         for (const path of directories.keys()) { budget(); inspectDirectory(path); }
         budget();
