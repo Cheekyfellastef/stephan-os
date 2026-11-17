@@ -657,7 +657,7 @@ test('native input publication is a transition boundary before fetching the next
     try{
       await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
       assert.equal(h.client.getState().status,'live');
-      h.setHook(state=>{if(!revoked&&operation!=='normal'&&state.inputStatus==='Input sent to the selected app.'){
+      h.setHook(state=>{if(!revoked&&operation!=='normal'&&state.inputStatus==='Windows queued the pointer/key event, but the app has not confirmed it.'){
         revoked=true;void h.client[operation]();
       }});
       assert.equal(h.client.input({kind:'text',text:'fixture'}),true);await h.tick();
