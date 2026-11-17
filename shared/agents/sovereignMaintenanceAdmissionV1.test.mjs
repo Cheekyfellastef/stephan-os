@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import vm from 'node:vm';
 import { SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, SOVEREIGN_MAINTENANCE_OWNER_VERSION,
-  unqualifiedCoreWindowsRepairV1 } from './sovereignMaintenanceAdmissionV1.mjs';
+  unqualifiedCoreWindowsRepairV1, isSovereignMaintenanceObservationV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 import { callSovereignMaintenanceOwnerV1 } from './sovereignCommanderRemoteMailboxV1.mjs';
 import { executeSovereignCommanderCommandV1 } from './sovereignCommanderV1.mjs';
 import { buildStephanosExecutionCommandEnvelopeV1, buildStephanosExecutionSurfaceCatalogV1, STEPHANOS_EXECUTION_SURFACE } from './stephanosExecutionCommandFabricV1.mjs';
@@ -151,17 +151,56 @@ test('cross-process mutation aliases always delegate; idle health cannot authori
 
 test('actual gaming Status reconciles absent state and therefore cannot receive an observation-only bypass', { skip: process.platform !== 'win32' }, () => {
   const source = readFileSync(new URL('../../scripts/windows/run-vr-resource-governor.ps1', import.meta.url), 'utf8');
-  const start = source.indexOf("if ($Action -eq 'Status')"), end = source.indexOf("if ($Action -eq 'Reconcile')", start);
-  assert.ok(start >= 0 && end > start);
-  const script = `$ErrorActionPreference='Stop';$Action='Status';
-    function Read-GovernorState { return $null }
-    function Invoke-CurrentReconcile { @{reconciled=$true} }
-    ${source.slice(start, end)}`;
+  assert.equal(isSovereignMaintenanceObservationV1('gaming-resource-status'), false);
+  assert.equal(classifySovereignMaintenanceExecutionRouteV1('gaming-resource-status', { nativeWindows: true }), 'BLOCKED_UNQUALIFIED');
+  const script = String.raw`$ErrorActionPreference='Stop'
+    Set-StrictMode -Version Latest
+    $source=[Console]::In.ReadToEnd()
+    $tokens=$null;$errors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$errors)
+    if($errors.Count){throw 'fixture source parse failed'}
+    $functions=@($ast.FindAll({param($node)
+      $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Invoke-GovernorOneShot'
+    },$false))
+    if($functions.Count -ne 1){throw 'fixture requires the actual serialized action entry'}
+    . ([ScriptBlock]::Create($functions[0].Extent.Text))
+    $Action='Status';$script:held=$false;$script:busy=$false
+    $script:events=[Collections.Generic.List[string]]::new()
+    function Enter-GovernorMutationOwner {
+      [void]$script:events.Add('enter')
+      $script:held=-not $script:busy
+      $script:fixtureOwner=[pscustomobject]@{acquired=$script:held;abandoned=$false}
+      return $script:fixtureOwner
+    }
+    function Assert-GovernorNativeCustodyUnheld {
+      if(-not $script:held){throw 'unowned custody read'}
+      [void]$script:events.Add('custody')
+    }
+    function Read-GovernorState {
+      if(-not $script:held){throw 'unowned status read'}
+      [void]$script:events.Add('read');return $null
+    }
+    function Invoke-CurrentReconcile {
+      if(-not $script:held){throw 'unowned status mutation'}
+      [void]$script:events.Add('reconcile');return [pscustomobject]@{reconciled=$true}
+    }
+    function Exit-GovernorMutationOwner {
+      param($Owner)
+      if(-not $script:held -or -not [Object]::ReferenceEquals($Owner,$script:fixtureOwner)){throw 'wrong owner release'}
+      [void]$script:events.Add('exit');$script:held=$false
+    }
+    $owned=Invoke-GovernorOneShot
+    $ownedEvents=@($script:events.ToArray());$released=-not $script:held
+    $script:events.Clear();$script:busy=$true
+    $busy=Invoke-GovernorOneShot
+    [pscustomobject]@{reconciled=$owned.state.reconciled;exitCode=$owned.exitCode;events=$ownedEvents;released=$released;busy=$busy.state.blocker;busyExit=$busy.exitCode;busyEvents=@($script:events.ToArray())}|ConvertTo-Json -Compress`;
   const r = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
     ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
-    { encoding: 'utf8', shell: false, windowsHide: true, timeout: 30_000 });
+    { input: source, encoding: 'utf8', shell: false, windowsHide: true, timeout: 30_000 });
   assert.equal(r.status, 0, r.stderr || r.error?.message);
-  assert.equal(JSON.parse(r.stdout).reconciled, true);
+  assert.deepEqual(JSON.parse(r.stdout), { reconciled: true, exitCode: 0,
+    events: ['enter', 'custody', 'read', 'reconcile', 'exit'], released: true,
+    busy: 'GOVERNOR_MUTATION_BUSY', busyExit: 4, busyEvents: ['enter'] });
 });
 
 test('delegation requires the fixed owner protocol before reading credentials or invoking a tool', async () => {
