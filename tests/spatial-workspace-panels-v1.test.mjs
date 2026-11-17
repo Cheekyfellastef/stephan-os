@@ -30,6 +30,19 @@ function fixture({status='live',audio,client:overrides={},onStatus=()=>{},stored
   return {screen,client,comfort,furniture,frame,contexts,inputs,calls,storage,publish,press:id=>{screen.render();return screen.point(...center(id),true);}};
 }
 
+test('both room Disconnect controls stop local speaker tests without claiming Voice mute',async()=>{
+  const stops=[];
+  const audio={getState:()=>({microphoneActive:false,microphonePending:false}),
+    stopSpeakers:()=>{stops.push('speaker');return true;},
+    stopMicrophone:()=>stops.push('microphone')};
+  const h=fixture({audio});
+  await h.screen.action('stop');
+  await h.screen.action('disconnect-window');
+  assert.deepEqual(stops,['speaker','speaker']);
+  assert.deepEqual(h.calls,[['stop'],['stop']]);
+  assert.deepEqual(h.inputs,[],'neither disconnect may send native application input');
+});
+
 test('the three panels paint one actual app frame within its centre viewport, with no recursive entry-page capture',()=>{
   const h=fixture();const frame=h.screen.render();
   assert.equal(frame.screen.width,3072);assert.equal(frame.screen.height,954);
