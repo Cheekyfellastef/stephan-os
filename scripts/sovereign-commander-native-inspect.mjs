@@ -2,6 +2,7 @@
 // Fixed observation of the existing owner and native inspector. No execution,
 // installation, recovery, reservation, release or restart API is imported.
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { closeSync, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve, win32 } from 'node:path';
@@ -9,17 +10,24 @@ import { fileURLToPath } from 'node:url';
 import { readMaintenanceNativeOwnerV2 } from './sovereign-maintenance-owner-observation-v2.mjs';
 import { inspectFixedRuntimeQualificationV1 } from './sovereign-fixed-runtime-parent-v1.mjs';
 import { createMailboxExecutionLedger } from './canonical-mailbox-execution-ledger-v1.mjs';
-import { createBattleBridgeMinimalChildEnvironment } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { createBattleBridgeMinimalChildEnvironment, resolveBattleBridgeGitExecution }
+  from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { projectMaintenanceCustodyVisibilityV1 } from '../shared/agents/maintenanceCustodyVisibilityV1.mjs';
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 import { SOVEREIGN_CONTROL_SYSTEM_INSPECTION_SCHEMA_V1,
   SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_PREDICATES_V1,
   sovereignControlSystemGovernorHoldCodeV1,
+  sovereignControlSystemGovernorObservationCodeV1,
   sovereignControlSystemDiagnosticCodeV1 } from '../shared/agents/sovereignControlSystemStatusV1.mjs';
 
 const REPOSITORY = 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os';
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
+const GOVERNOR_PATH = 'scripts/windows/run-vr-resource-governor.ps1';
+const GOVERNOR_SOURCE_LIMIT = 65536;
+const GOVERNOR_INVALID = 'SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_OBSERVATION_INVALID';
+const GOVERNOR_SOURCE_UNPROVEN = 'SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_SOURCE_UNPROVEN';
+const GOVERNOR_TIMEOUT = 'SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_OBSERVATION_TIMEOUT';
 const SHA = /^[a-f0-9]{40}$/, DIGEST = /^[a-f0-9]{64}$/;
 const REQUEST_ID = /^control-tower-(?:build|comment)-[1-9][0-9]{0,15}-1$/;
 // Closed compiled inventory only; observing a name grants no action admission.
@@ -115,7 +123,7 @@ function readCanonicalSourceHead() {
 }
 
 function readCallerIdentity() {
-  // Fixed read-only code lives in source; the operator pastes only the filename.
+  // Fixed read-only code lives in source; no caller-selected command is accepted.
   const script = String.raw`$ErrorActionPreference='Stop'
 $PSModuleAutoLoadingPreference='None'
 Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1' -ErrorAction Stop
@@ -128,6 +136,148 @@ $principal=[Security.Principal.WindowsPrincipal]::new($identity)
     env: createBattleBridgeMinimalChildEnvironment(process.env, { platform: 'win32' }) });
   if (result.error || result.signal || result.status !== 0) fail('SOVEREIGN_CONTROL_SYSTEM_CALLER_UNPROVEN');
   try { return JSON.parse(result.stdout); } catch { fail('SOVEREIGN_CONTROL_SYSTEM_CALLER_UNPROVEN'); }
+}
+
+// The governor also owns mutating actions. Capture its one fixed source member
+// through an authenticated commit/tree/blob chain, then invoke only the existing
+// ObserveAdmission branch from immutable stdin bytes. Never execute a checkout
+// filename after validating a separate read, or put the full script in argv.
+function captureGovernorSource(expectedMain, run, monotonicNow, environment) {
+  const git = resolveBattleBridgeGitExecution({ platform: 'win32', environment });
+  const started = monotonicNow();
+  let capturedBytes = 0;
+  const object = (type, id, maximum) => {
+    if (!SHA.test(id ?? '')) fail(GOVERNOR_SOURCE_UNPROVEN);
+    const remaining = 10000 - (monotonicNow() - started);
+    if (!Number.isFinite(remaining) || remaining <= 0 || remaining > 10000) fail(GOVERNOR_TIMEOUT);
+    const result = run(git.executable, [...git.fixedConfigArgs,
+      `--git-dir=${win32.join(REPOSITORY, '.git')}`, `--work-tree=${REPOSITORY}`, 'cat-file', type, id],
+    { cwd: REPOSITORY, env: git.environment, shell: false, windowsHide: true,
+      timeout: Math.min(5000, Math.ceil(remaining)), maxBuffer: maximum });
+    const elapsed = monotonicNow() - started;
+    if (result?.error?.code === 'ETIMEDOUT' || elapsed > 10000) fail(GOVERNOR_TIMEOUT);
+    if (!Number.isFinite(elapsed) || elapsed < 0 || result?.error || result?.status !== 0 || result?.signal
+      || !Buffer.isBuffer(result.stdout) || result.stdout.length > maximum
+      || (Buffer.isBuffer(result.stderr) ? result.stderr.length : result.stderr !== undefined && result.stderr !== ''))
+      fail(GOVERNOR_SOURCE_UNPROVEN);
+    const bytes = Buffer.from(result.stdout);
+    capturedBytes += bytes.length;
+    if (capturedBytes > 6 * 1024 * 1024
+      || createHash('sha1').update(`${type} ${bytes.length}\0`).update(bytes).digest('hex') !== id)
+      fail(GOVERNOR_SOURCE_UNPROVEN);
+    return bytes;
+  };
+  let id = /^tree ([a-f0-9]{40})\n/.exec(object('commit', expectedMain, 65536).toString('utf8'))?.[1];
+  const parts = GOVERNOR_PATH.split('/');
+  for (let depth = 0; depth < parts.length; depth++) {
+    const bytes = object('tree', id, 2 * 1024 * 1024), names = new Set();
+    let selected;
+    for (let offset = 0; offset < bytes.length;) {
+      const space = bytes.indexOf(32, offset), nul = bytes.indexOf(0, space + 1);
+      if (space <= offset || nul <= space + 1 || nul + 21 > bytes.length) fail(GOVERNOR_SOURCE_UNPROVEN);
+      const mode = bytes.toString('ascii', offset, space);
+      const name = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(space + 1, nul));
+      if (!['40000', '100644', '100755', '120000', '160000'].includes(mode)
+        || name === '.' || name === '..' || /[/\\]/.test(name) || names.has(name) || names.size >= 20000)
+        fail(GOVERNOR_SOURCE_UNPROVEN);
+      names.add(name);
+      if (name === parts[depth]) selected = { mode, id: bytes.subarray(nul + 1, nul + 21).toString('hex') };
+      offset = nul + 21;
+    }
+    if (!selected || selected.mode !== (depth === parts.length - 1 ? '100644' : '40000'))
+      fail(GOVERNOR_SOURCE_UNPROVEN);
+    id = selected.id;
+  }
+  const bytes = object('blob', id, GOVERNOR_SOURCE_LIMIT);
+  if (!bytes.length || bytes.includes(0)) fail(GOVERNOR_SOURCE_UNPROVEN);
+  new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  return bytes;
+}
+
+const GOVERNOR_WRAPPER = String.raw`$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+$PSModuleAutoLoadingPreference='None'
+try {
+ foreach($module in @('Microsoft.PowerShell.Management','Microsoft.PowerShell.Utility','CimCmdlets')) {
+  Import-Module ('C:\Windows\System32\WindowsPowerShell\v1.0\Modules\'+$module+'\'+$module+'.psd1') -ErrorAction Stop
+ }
+ $chars=[char[]]::new(87387)
+ $count=0
+ while($count -lt $chars.Length){
+  $read=[Console]::In.Read($chars,$count,$chars.Length-$count)
+  if($read -eq 0){break}
+  $count+=$read
+ }
+ if($count -gt 87386){throw 'INPUT'}
+ $wire=[string]::new($chars,0,$count)
+ if($wire -notmatch '\A[A-Za-z0-9+/]+={0,2}\n\z'){throw 'INPUT'}
+ $bytes=[Convert]::FromBase64String($wire.TrimEnd([char]10))
+ if($bytes.Length -lt 1 -or $bytes.Length -gt 65536){throw 'INPUT'}
+ $source=[Text.UTF8Encoding]::new($false,$true).GetString($bytes)
+ & ([scriptblock]::Create($source)) -Action ObserveAdmission
+} catch { exit 2 }`;
+
+// Exported for the existing source tests, not registered as a remote capability.
+// Production selects no source bytes, action, path, executable, or environment.
+export function readSovereignGovernorDiagnosticV1(expectedMain, options = {}) {
+  if (typeof expectedMain !== 'string' || !SHA.test(expectedMain)) fail(GOVERNOR_SOURCE_UNPROVEN);
+  const input = dataRecord(options);
+  if (Object.keys(input).some(key => !['testOnly', 'dependencies'].includes(key))) fail(GOVERNOR_INVALID);
+  if (Object.keys(input).length && (input.testOnly !== true || !process.env.NODE_TEST_CONTEXT))
+    fail('SOVEREIGN_CONTROL_SYSTEM_TEST_DEPENDENCIES_FORBIDDEN');
+  const overrides = input.dependencies === undefined ? {} : dataRecord(input.dependencies);
+  if (Object.keys(overrides).some(key => !['platform', 'spawnSync', 'readSourceHead', 'monotonicNow', 'environment'].includes(key)
+    || (key === 'platform' ? !['win32', 'linux', 'darwin'].includes(overrides[key])
+      : key === 'environment' ? !overrides[key] || typeof overrides[key] !== 'object' : typeof overrides[key] !== 'function')))
+    fail(GOVERNOR_INVALID);
+  const deps = { platform: process.platform, spawnSync, readSourceHead: readCanonicalSourceHead,
+    monotonicNow: () => performance.now(), environment: process.env, ...overrides };
+  if (deps.platform !== 'win32' || deps.readSourceHead() !== expectedMain) fail(GOVERNOR_SOURCE_UNPROVEN);
+  const bytes = captureGovernorSource(expectedMain, deps.spawnSync, deps.monotonicNow, deps.environment);
+  if (deps.readSourceHead() !== expectedMain) fail(GOVERNOR_SOURCE_UNPROVEN);
+  const environment = { ...createBattleBridgeMinimalChildEnvironment(deps.environment, { platform: 'win32' }) };
+  // These two existing settings add game detection only. Never inherit command,
+  // PowerShell module, runtime-loader, provider or credential configuration.
+  for (const name of ['STEPHANOS_GAME_PROCESS_NAMES', 'STEPHANOS_GAME_LIBRARY_ROOTS']) {
+    const keys = Object.keys(deps.environment).filter(key => key.toUpperCase() === name);
+    if (keys.length > 1) fail(GOVERNOR_INVALID);
+    if (keys.length) {
+      const value = deps.environment[keys[0]];
+      if (typeof value !== 'string' || value.length > 4096 || /[\0\r\n]/.test(value)) fail(GOVERNOR_INVALID);
+      environment[name] = value;
+    }
+  }
+  const result = deps.spawnSync(POWERSHELL, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
+    Buffer.from(GOVERNOR_WRAPPER, 'utf16le').toString('base64')], { cwd: REPOSITORY,
+    env: Object.freeze(environment), shell: false, windowsHide: true,
+    input: bytes.toString('base64') + '\n', timeout: 8000, maxBuffer: 4096 });
+  if (result?.error?.code === 'ETIMEDOUT') fail(GOVERNOR_TIMEOUT);
+  if (result?.error || result?.status !== 0 || result?.signal || !Buffer.isBuffer(result.stdout)
+    || result.stdout.length > 4096 || (Buffer.isBuffer(result.stderr) ? result.stderr.length : result.stderr !== undefined && result.stderr !== ''))
+    fail(GOVERNOR_INVALID);
+  if (deps.readSourceHead() !== expectedMain) fail(GOVERNOR_SOURCE_UNPROVEN);
+  try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.stdout)); }
+  catch { fail(GOVERNOR_INVALID); }
+}
+
+function governorUnavailable(reason) {
+  return { available: false, reason: sovereignControlSystemGovernorObservationCodeV1(reason),
+    readOnly: true, diagnosticOnly: true, executionAuthority: false };
+}
+
+function governorObservation(value, startedAtUtc, finishedAtUtc, inspectionStartedAtUtc) {
+  const row = dataRecord(value), observedAtUtc = utc(row.observedAtUtc);
+  if (Object.keys(row).sort().join(',') !== 'observedAtUtc,overrideMode,preparePending,readOnly,schemaVersion,signalActive'
+    || row.schemaVersion !== 'stephanos.gaming-resource-admission-observation.v1'
+    || row.readOnly !== true || typeof row.signalActive !== 'boolean' || typeof row.preparePending !== 'boolean'
+    || !['AUTO', 'FORCE_ON', 'FORCE_OFF'].includes(row.overrideMode) || !observedAtUtc
+    || Date.parse(observedAtUtc) < Date.parse(startedAtUtc) || Date.parse(observedAtUtc) > Date.parse(finishedAtUtc)
+    || Date.parse(observedAtUtc) < Date.parse(inspectionStartedAtUtc)
+    || Date.parse(observedAtUtc) - Date.parse(inspectionStartedAtUtc) > 30000)
+    fail(GOVERNOR_INVALID);
+  return { available: true, observedAtUtc, signalActive: row.signalActive,
+    overrideMode: row.overrideMode, preparePending: row.preparePending,
+    readOnly: true, diagnosticOnly: true, executionAuthority: false };
 }
 
 function readSelectedRequestLedger(requestId) {
@@ -259,12 +409,13 @@ export async function inspectSovereignControlSystemV1(options = {}) {
       && (input.testOnly !== true || !process.env.NODE_TEST_CONTEXT))
       fail('SOVEREIGN_CONTROL_SYSTEM_TEST_DEPENDENCIES_FORBIDDEN');
     const overrides = input.dependencies === undefined ? {} : dataRecord(input.dependencies);
-    const keys = ['platform', 'now', 'readSourceHead', 'readCaller', 'readOwner', 'fetchFn', 'inspectRuntime', 'readLedger'];
+    const keys = ['platform', 'now', 'readSourceHead', 'readCaller', 'readOwner', 'readGovernor', 'fetchFn', 'inspectRuntime', 'readLedger'];
     if (Object.keys(overrides).some(key => !keys.includes(key)
       || (key === 'platform' ? !['win32', 'linux', 'darwin'].includes(overrides[key]) : typeof overrides[key] !== 'function')))
       fail('SOVEREIGN_CONTROL_SYSTEM_ARGUMENTS_INVALID');
     const deps = { platform: process.platform, now: () => new Date(), readSourceHead: readCanonicalSourceHead,
       readCaller: readCallerIdentity, readOwner: readMaintenanceNativeOwnerV2, fetchFn: fetch,
+      readGovernor: readSovereignGovernorDiagnosticV1,
       inspectRuntime: inspectFixedRuntimeQualificationV1, readLedger: readSelectedRequestLedger, ...overrides };
     report.observedAtUtc = instant(deps.now);
     report.requestLedger.requested = input.controlTowerRequestId !== undefined;
@@ -277,6 +428,16 @@ export async function inspectSovereignControlSystemV1(options = {}) {
     report.source = { ...report.source, available: true, sourceHead, reason: '',
       ...(input.expectedMain ? { expectedMainMatches: input.expectedMain === sourceHead } : {}) };
     if (input.expectedMain && input.expectedMain !== sourceHead) fail('SOVEREIGN_CONTROL_SYSTEM_EXPECTED_MAIN_MISMATCH');
+
+    // Sample first so a failed owner bracket cannot hide fresh gaming facts.
+    // The persisted governor hold below remains the independent admission gate.
+    try {
+      const startedAtUtc = instant(deps.now), observation = await deps.readGovernor(sourceHead);
+      report.governorObservation = governorObservation(observation, startedAtUtc, instant(deps.now), report.observedAtUtc);
+    } catch (error) {
+      report.governorObservation = governorUnavailable(error?.message === 'SOVEREIGN_CONTROL_SYSTEM_ARGUMENTS_INVALID'
+        ? GOVERNOR_INVALID : error?.message);
+    }
 
     try {
       const caller = dataRecord(await deps.readCaller()), observedAtUtc = utc(caller.observedAtUtc);
@@ -369,6 +530,7 @@ export async function inspectSovereignControlSystemV1(options = {}) {
       report.nativeRuntime.reason = 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED';
       delete report.nativeRuntime.profiles;
       delete report.nativeRuntime.governorHoldCode;
+      if (report.governorObservation) report.governorObservation = governorUnavailable(report.source.reason);
     }
     report.observationCompleted = report.source.stable && (report.nativeRuntime.available || report.guardian.available);
     report.blocker = report.source.reason || report.owner.reason || report.guardian.blocker

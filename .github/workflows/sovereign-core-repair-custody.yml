@@ -36,6 +36,12 @@ on:
       - 'scripts/windows/*sovereign-maintenance*'
       - 'scripts/windows/MaintenanceJournalAclFixtureV2.cs'
       - 'scripts/sovereign-observation-offline-regression.test.mjs'
+      - 'scripts/sovereign-commander-native-inspect.mjs'
+      - 'scripts/sovereign-commander-native-inspect.test.mjs'
+      - 'shared/agents/sovereignControlSystemStatusV1.mjs'
+      - 'shared/agents/sovereignControlSystemStatusV1.test.mjs'
+      - 'scripts/windows/run-vr-resource-governor.ps1'
+      - 'shared/agents/sovereignCommanderVrResourceGovernor.test.mjs'
       - 'scripts/sovereign-frontend-start-only*'
       - 'scripts/battle-bridge-frontend-visibility-mailbox.test.mjs'
       - 'scripts/battle-bridge-github-command-mailbox.mjs'
@@ -110,6 +116,12 @@ jobs:
           shared/agents/durableFlywheelMaintenanceContinuation.test.mjs
       - name: Observation remains reachable without remote source proof
         run: node --test scripts/sovereign-observation-offline-regression.test.mjs
+      - name: Fresh governor diagnostics preserve native admission and original receipts
+        run: >-
+          node --test
+          scripts/sovereign-commander-native-inspect.test.mjs
+          shared/agents/sovereignControlSystemStatusV1.test.mjs
+          shared/agents/sovereignCommanderVrResourceGovernor.test.mjs
       - name: Disjoint constrained frontend start-only and existing server regression
         run: node --test scripts/sovereign-frontend-start-only.test.mjs scripts/serve-stephanos-dist.test.mjs
       - name: Fixed frontend mailbox authority and existing recovery regression
