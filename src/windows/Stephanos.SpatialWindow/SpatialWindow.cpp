@@ -260,7 +260,12 @@ struct Surface : std::enable_shared_from_this<Surface> {
         &&next[next.size()-2]>=0xD800&&next[next.size()-2]<=0xDBFF;
       next.resize(next.size()-(pair?2:1));
     }else return Reply(L"editor-unsupported");
-    HRESULT changed=direct?direct->SetValue(next.c_str()):legacy->SetValue(next.c_str());
+    HRESULT changed=E_FAIL;
+    if(direct){
+      // UIA ValuePattern uses an owning BSTR; LegacyIAccessible takes LPCWSTR.
+      BSTR input=SysAllocStringLen(next.data(),static_cast<UINT>(next.size()));
+      if(input){changed=direct->SetValue(input);SysFreeString(input);}
+    }else if(legacy)changed=legacy->SetValue(next.c_str());
     if(FAILED(changed))return Reply(L"editor-update-refused");
     std::wstring observed;com_ptr<IUIAutomationValuePattern> readDirect;
     com_ptr<IUIAutomationLegacyIAccessiblePattern> readLegacy;
