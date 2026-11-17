@@ -692,11 +692,11 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
     blockers.push('STAGED_UPDATE_EXACT_IDENTITY_INCOMPLETE');
   }
   if (stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED
-    && !hasPostUpdateProducerEvidence(staged,identity)) {
+    && (!identity || !hasPostUpdateProducerEvidence(staged,identity))) {
     blockers.push('STAGED_UPDATE_POST_PRODUCER_EVIDENCE_UNPROVEN');
   }
   if (stagedStatus === OPENCLAW_STAGED_UPDATE_STATUS.ROLLED_BACK_AND_VERIFIED
-    && !hasRollbackProducerEvidence(staged,identity)) {
+    && (!identity || !hasRollbackProducerEvidence(staged,identity))) {
     blockers.push('STAGED_UPDATE_ROLLBACK_PRODUCER_EVIDENCE_UNPROVEN');
   }
   const sourceHead = exactSha(identity?.sourceHead);

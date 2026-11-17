@@ -1983,3 +1983,29 @@ test('verified update and rollback refuse health proof newer than the producer 6
     assert.ok(rejected.blockers.includes(expectedBlocker), label);
   }
 });
+
+
+test('missing verified producer identity fails closed without throwing or restoring routing', () => {
+  for (const [label, producer, blocker] of [
+    ['updated', () => staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED),
+      'STAGED_UPDATE_POST_PRODUCER_EVIDENCE_UNPROVEN'],
+    ['rolled back', () => rollbackProducerFixture(),
+      'STAGED_UPDATE_ROLLBACK_PRODUCER_EVIDENCE_UNPROVEN'],
+  ]) {
+    for (const identity of [undefined, null]) {
+      const snapshot = producer();
+      if (identity === undefined) delete snapshot.exactIdentity;
+      else snapshot.exactIdentity = identity;
+      const result = evaluateOpenClawUpdateCapabilityCandidateV1({
+        stagedUpdate: snapshot,
+        capabilityLedger: ledger(),
+        qualificationReplay: label === 'updated' ? [replay(OPENCLAW_TASK_CLASS.OC1)] : [],
+      });
+      assert.equal(result.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE, label);
+      assert.equal(result.updatePromotionAllowed, false, label);
+      assert.equal(result.providerRoutingResumeAllowed, false, label);
+      assert.ok(result.blockers.includes('STAGED_UPDATE_IDENTITY_MISSING'), label);
+      assert.ok(result.blockers.includes(blocker), label);
+    }
+  }
+});
