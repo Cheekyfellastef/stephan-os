@@ -61,12 +61,22 @@ function gatewayResult() {
       changedFiles: [],
       completedAt: '2026-08-21T00:00:00.000Z',
       qualificationEligible: true,
+      providerInstance: 'openclaw-gateway:4242',
+      exactInputIdentity: 'a'.repeat(64),
+      exactOutputIdentity: 'b'.repeat(64),
       receipt: {
         receiptId: 'openclaw-oc2-result-1234567890',
+        source: 'openclaw-standalone-oc2',
+        evidenceType: 'provider-neutral-task-result',
+        commandOutputHash: 'b'.repeat(64),
         verified: true,
       },
       evidenceReceipts: [{
         receiptId: 'openclaw-oc2-proof-1234567890',
+        source: 'openclaw-standalone-oc2',
+        evidenceType: 'shared-workspace-proof',
+        sha256: 'b'.repeat(64),
+        receiptPath: `proofs/openclaw-oc2/oc2-${'a'.repeat(32)}.json`,
         verified: true,
       }],
     },
@@ -120,6 +130,51 @@ test('exact #1725 OC2 grant selects only the fixed OC2 Gateway method', async ()
   assert.equal(request.schemaVersion, OPENCLAW_OC2_GATEWAY_REQUEST_SCHEMA);
   assert.equal(request.actionGrant.operation, OPENCLAW_OC2_OPERATION);
   assert.equal(calls[0].options.env, process.env);
+});
+
+
+test('OC2 result-consumer rejects contradictory producer and receipt lineage', async (t) => {
+  const corruptions = [
+    ['inner provider mismatch', (value) => { value.result.providerInstance = 'openclaw-gateway:2'; }],
+    ['inner provider absent', (value) => { delete value.result.providerInstance; }],
+    ['input identity absent', (value) => { delete value.result.exactInputIdentity; }],
+    ['input identity malformed', (value) => { value.result.exactInputIdentity = 'invalid'; }],
+    ['output identity absent', (value) => { delete value.result.exactOutputIdentity; }],
+    ['output identity malformed', (value) => { value.result.exactOutputIdentity = 'invalid'; }],
+    ['result source mismatch', (value) => { value.result.receipt.source = 'other-provider'; }],
+    ['result evidence type mismatch', (value) => { value.result.receipt.evidenceType = 'other-type'; }],
+    ['result digest mismatch', (value) => { value.result.receipt.commandOutputHash = 'd'.repeat(64); }],
+    ['proof source mismatch', (value) => { value.result.evidenceReceipts[0].source = 'other-provider'; }],
+    ['proof type mismatch', (value) => { value.result.evidenceReceipts[0].evidenceType = 'other-type'; }],
+    ['proof digest mismatch', (value) => { value.result.evidenceReceipts[0].sha256 = 'e'.repeat(64); }],
+    ['proof path outside canonical scope', (value) => { value.result.evidenceReceipts[0].receiptPath = '../other.json'; }],
+    ['multiple proof receipts', (value) => { value.result.evidenceReceipts.push({ ...value.result.evidenceReceipts[0] }); }],
+  ];
+  for (const [name, mutate] of corruptions) {
+    await t.test(name, async () => {
+      const forged = gatewayResult();
+      mutate(forged);
+      let calls = 0;
+      const response = await executeOpenClawReadonlyAction({
+        actionKind: 'agent-handoff',
+        adapter: 'openclaw-readonly',
+        operation: OPENCLAW_OC2_OPERATION,
+        actionId: TASK,
+        missionId: MISSION,
+        repository: 'Cheekyfellastef/stephan-os',
+        repositoryRoot: 'C:/Users/test/Documents/GitHub/stephan-os',
+      }, { processingPath: 'C:/queue/processing/claim.json' }, {
+        actionGrant: grant(),
+        runCommand() {
+          calls += 1;
+          return { status: 0, stdout: JSON.stringify(forged), stderr: '' };
+        },
+      });
+      assert.equal(calls, 1);
+      assert.equal(response.success, false);
+      assert.equal(response.error, 'OPENCLAW_OC2_GATEWAY_RESULT_LINEAGE_INVALID');
+    });
+  }
 });
 
 test('non-allowlisted #1725 operations cannot fall through to OC1 or OC2', async () => {
