@@ -156,10 +156,12 @@ prepared or executable. A changed epoch, predecessor, winner, source, owner, or
 unavailable readback keeps the hold; no losing tuple is delivered.
 
 Optional dependency repair runs off the heartbeat path with single-flight
-containment and cleanup. A healthy dependency sample with no retained intent
-returns without acquiring the repair controller; otherwise a slow routine read
-could win the mutex before every material Flywheel wake. Flywheel authenticates
-its own actual work admission. Optional self-heal exceptions cannot abandon the
+containment and cleanup. With no retained intent, dependency eligibility checks
+stay outside the repair controller, including health, cooldown, gaming and
+unavailable-owner or worker-only holds. Otherwise a slow routine read could win
+the mutex before every material Flywheel wake. Retained originals reconcile
+first; actual maintenance and Flywheel work authenticate their own admission.
+Optional self-heal exceptions cannot abandon the
 detached Flywheel cycle or leave its running flag permanently set. Errors in
 learning, proof publication, or onion observation are contained and exposed as
 degraded status rather than unhandled promise rejections.

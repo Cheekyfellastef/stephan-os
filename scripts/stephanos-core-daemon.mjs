@@ -406,7 +406,10 @@ async function maybeRepairCoreDependencies(state, sourceHead) {
     lastDependencySelfHealBlocker = '';
     return Object.freeze({ attempted: false, recovered: true });
   }
-  await coreRepairAttempts.reconcile();
+  // Only retained work needs an up-front owner reconciliation. No-action
+  // dependency observations must not hold this controller while Flywheel is
+  // awaiting its own fresh admission. New execute() calls observe independently.
+  if (coreRepairAttempts.pendingAttempt()) await coreRepairAttempts.reconcile();
   // A fresh healthy sample does not cancel an original prepared repair. The
   // existing owner alone proves no launch or terminal release; resume only the
   // retained action through its ordinary current guards before choosing work.

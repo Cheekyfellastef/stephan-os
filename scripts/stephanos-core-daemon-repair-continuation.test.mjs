@@ -184,29 +184,50 @@ async function daemonFixture(t, options = {}) {
   };
 }
 
-test('healthy dependency observations do not consume material Flywheel wakes while its own owner read is delayed', async t => {
-  let paused = false, gate = deferred();
-  const f = await daemonFixture(t, { pending: false, realDependency: true, selfHeal: async () => {},
-    owner: { beforeStatusRead: () => paused ? gate.promise : undefined } });
-  const healthy = { ...worker, sovereignCommanderHealthy: true, backendHealthy: true, gamingActive: false };
-  for (let cycle = 0; cycle < 3; cycle++) {
-    gate = deferred(); paused = true;
-    const before = f.owner.statusReads();
-    f.context.startOptionalDependencyRepair(healthy, HEAD);
-    await settled(() => f.state().dependencyRepairRunning === false);
-    assert.equal(f.owner.statusReads(), before, 'no-work dependency observation never takes the repair mutex');
-    assert.equal(f.owner.manager.snapshot().held, false);
-    assert.equal((await f.start()).shouldRun, true);
-    await settled(() => f.owner.statusReads() === before + 1);
-    assert.equal(f.state().flywheelCycleRunning, true, 'material wake waits for its own fresh original-owner read');
-    assert.equal(f.calls.filter(value => value === 'refill').length, cycle);
-    paused = false; gate.resolve(); await f.finish();
-    assert.equal(f.calls.filter(value => value === 'refill').length, cycle + 1);
-    assert.equal(f.owner.manager.snapshot().held, false);
-  }
-  assert.deepEqual(f.owner.counts(), { deliveries: 0, preparations: 0 });
-  assert.equal(f.owner.newIdentities(), 0); assert.deepEqual(f.unhandled, []);
-});
+for (const scenario of [
+  { name: 'healthy', state: {}, verdict: 'CORE_DEPENDENCIES_HEALTHY' },
+  { name: 'cooldown', state: { backendHealthy: false }, cooldown: true,
+    verdict: 'CORE_DEPENDENCY_SELF_HEAL_COOLDOWN_ACTIVE' },
+  { name: 'gaming', state: { backendHealthy: false, gamingActive: true },
+    verdict: 'CORE_DEPENDENCY_SELF_HEAL_GAMING_PROTECTED' },
+  { name: 'owner bootstrap unavailable', state: { sovereignCommanderHealthy: false },
+    verdict: 'SOVEREIGN_COMMANDER_BOOTSTRAP_CONTINUITY_HELD' },
+  { name: 'worker-only custody hold', state: { missionWorkerHealthy: false },
+    verdict: 'MISSION_WORKER_SELF_HEAL_CUSTODY_HELD' },
+]) {
+  test('no-action dependency observation leaves material admission independent: ' + scenario.name, async t => {
+    let paused = false, gate = deferred();
+    const f = await daemonFixture(t, { pending: false, realDependency: true, selfHeal: async () => {},
+      owner: { beforeStatusRead: () => paused ? gate.promise : undefined } });
+    const sample = { ...worker, sovereignCommanderHealthy: true, backendHealthy: true,
+      gamingActive: false, ...scenario.state };
+    // A health-only probe does not acquire owner history or native admission.
+    f.context.probe = async () => true;
+    if (scenario.cooldown) vm.runInContext('lastDependencySelfHealAtMs = Date.now();', f.context);
+    try {
+      for (let cycle = 0; cycle < 3; cycle++) {
+        gate = deferred(); paused = true;
+        const before = f.owner.statusReads();
+        f.context.startOptionalDependencyRepair(sample, HEAD);
+        await settled(() => f.state().dependencyRepairRunning === false);
+        if (cycle === 0) assert.equal(f.state().lastDependencySelfHealVerdict, scenario.verdict);
+        assert.equal(f.owner.statusReads(), before, 'no-action eligibility never takes the repair mutex');
+        assert.equal(f.owner.manager.snapshot().held, false);
+        // This material wake has its own fresh healthy worker and resource
+        // evidence. A prior no-action sample cannot replace that admission.
+        assert.equal((await f.start()).shouldRun, true);
+        await settled(() => f.owner.statusReads() === before + 1);
+        assert.equal(f.state().flywheelCycleRunning, true, 'material wake waits for its own fresh original-owner read');
+        assert.equal(f.calls.filter(value => value === 'refill').length, cycle);
+        paused = false; gate.resolve(); await f.finish();
+        assert.equal(f.calls.filter(value => value === 'refill').length, cycle + 1);
+        assert.equal(f.owner.manager.snapshot().held, false);
+      }
+    } finally { paused = false; gate.resolve(); }
+    assert.deepEqual(f.owner.counts(), { deliveries: 0, preparations: 0 });
+    assert.equal(f.owner.newIdentities(), 0); assert.deepEqual(f.unhandled, []);
+  });
+}
 
 test('healthy backend samples resume their original PREPARED backend action without replacing its identity or phase', async t => {
   const f = await daemonFixture(t, { realDependency: true, owner: { prepared: true, phase: 'backend', original: {
