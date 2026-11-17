@@ -34,6 +34,8 @@ await import('./windowsAuthorityForgePodmanPrerequisiteReviewV1.test.mjs');
 await import('./windowsAuthorityIgnitionConvergenceReviewV1.test.mjs');
 await import('./windowsAuthorityStarfieldVrLauncherReviewV1.test.mjs');
 await import('./windowsAuthorityStarfieldVrAerObserveReviewV1.test.mjs');
+// Exercise the exact fail-closed governor reviewer semantics in the hosted router suite.
+await import('./windowsAuthorityVrResourceGovernorReviewV1.test.mjs');
 await import('./windowsAuthoritySovereignFixedRuntimeReviewV1.test.mjs');
 await import('./windowsAuthorityCanonicalMailboxNativeEvidenceReviewV1.test.mjs');
 
