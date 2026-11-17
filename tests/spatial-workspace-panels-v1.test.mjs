@@ -241,7 +241,7 @@ test('connection panel follows waiting-to-live frame state without caching or du
   assert.ok(!paneTexts().some(text=>text.text.includes('Connected to the current app')));
   assert.equal(h.screen.getState().connectionMessage,'Local Spatial helper responds.');
 });
- 
+
 test('dedicated Scroll arrows use visible conversation centre, not composer hover',()=>{
   const h=fixture();h.screen.render();
   const rect=screenImageRect(1920,1080);
