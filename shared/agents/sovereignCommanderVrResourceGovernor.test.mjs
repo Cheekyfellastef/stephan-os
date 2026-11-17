@@ -8,6 +8,8 @@ import { join } from 'node:path';
 
 import { SOVEREIGN_COMMANDER_REMOTE_ACTIONS } from './sovereignCommanderRemoteMailboxV1.mjs';
 import { coreGamingProtectionFromGovernor } from './stephanosCoreDaemonV1.mjs';
+// Keep the behavioral Windows fixtures in the existing hosted governor entry.
+import '../../scripts/governor-progress-repair.test.mjs';
 
 const governor = await readFile(new URL('../../scripts/windows/run-vr-resource-governor.ps1', import.meta.url), 'utf8');
 const qwen35Canary = await readFile(new URL('../../scripts/qwen35-canary.mjs', import.meta.url), 'utf8');
@@ -76,7 +78,8 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /virtual-air-link-test-active/);
   assert.match(governor, /virtualAirLinkTestActive/);
   assert.match(governor, /ollama\.exe/);
-  assert.match(governor, /& \$OllamaExecutable stop \$Model/);
+  assert.match(governor, /Invoke-GovernorNativeProbe -Operation OllamaStop -Model \$Model/);
+  assert.doesNotMatch(governor, /& \$OllamaExecutable (?:ps|stop)/);
   assert.match(governor, /\$parked = @\(\)/);
   assert.doesNotMatch(governor, /\$parked = New-Object System\.Collections\.Generic\.List\[string\]/);
   assert.match(governor, /\$lightweightModel = 'llama3\.2:3b'/);
