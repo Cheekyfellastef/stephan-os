@@ -5,6 +5,12 @@ import vm from 'node:vm';
 // Hosted / local gate parity must run the same signer and steward regressions.
 import '../shared/runtime/goalConveyorGateStewardV1.test.mjs';
 import '../shared/runtime/goalConveyorGateReadOnlyExecutionV1.test.mjs';
+// Exercise the exact-head PR-check batch contract in this hosted dashboard suite.
+import './github-telemetry-pr-check-batch.test.mjs';
+// Exercise workflow status/conclusion contradictions in the existing hosted dashboard gate.
+import './github-telemetry.test.mjs';
+// Exercise portfolio freshness invariants in the actual hosted ignition CI suite.
+import '../shared/agents/liveGoalDashboardPortfolioOverlay.test.mjs';
 
 const source = readFileSync(new URL('../apps/goal-dashboard/remote-live.js', import.meta.url), 'utf8');
 const deployWorkflow = readFileSync(new URL('../.github/workflows/deploy-stephanos-pages.yml', import.meta.url), 'utf8');

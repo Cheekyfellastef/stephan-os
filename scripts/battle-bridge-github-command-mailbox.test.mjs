@@ -32,6 +32,7 @@ import {
 } from './battle-bridge-github-command-mailbox.mjs';
 import { planForgeShadowM3RunnerAdmission } from '../shared/agents/forgeShadowM3RunnerAdmissionV1.mjs';
 import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConveyor.mjs';
+import { buildBattleBridgeGitHubCommandReceipt } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 
 const installerPath = new URL('./windows/install-battle-bridge-github-command-mailbox.ps1', import.meta.url);
 const hiddenLauncherPath = new URL('./windows/run-battle-bridge-github-command-mailbox-hidden.ps1', import.meta.url);
@@ -518,7 +519,7 @@ test('canonical mailbox wires the shared publication budget across every receipt
   assert.match(source, /flushMailboxReceiptPublicationOutbox\(state, \{\s*publish: publicationBudget\.publish,/);
   assert.match(source, /terminalizeRejectedMailboxCommands\(state, batch\.terminalRejections, \{\s*now,\s*publish: publicationBudget\.publish,/);
   assert.equal(
-    [...source.matchAll(/checkpointMailboxReceiptPublication\(state, publishable, publicationBudget\.publish\(publishable\)\)/g)].length,
+    [...source.matchAll(/checkpointMailboxReceiptPublication\(state, receipt, publicationBudget\.publish\(publishable\)\)/g)].length,
     2,
   );
 });
@@ -565,6 +566,46 @@ test('terminal publication discards an obsolete failed acceptance for the same r
     completedAt: '2026-08-11T11:31:00.000Z',
   }, { ok: true }, { persist: () => {} });
   assert.deepEqual(state.pendingReceiptPublications, []);
+});
+
+
+test('deferred mailbox terminal/acceptance receipts reuse the pre-receiptRef canonical projection', async () => {
+  const source = await readFile(mailboxSourcePath, 'utf8');
+  // All three producers write their canonical receipt before appending
+  // receiptRef for first-attempt GitHub publication. A failed publication
+  // must enqueue the same original receipt for stable terminal equality.
+  assert.equal(
+    [...source.matchAll(/checkpointMailboxReceiptPublication\(state, receipt, publication, \{ persist \}\);/g)].length, 1);
+  assert.equal(
+    [...source.matchAll(/checkpointMailboxReceiptPublication\(state, receipt, publicationBudget\.publish\(publishable\)\);/g)].length, 2);
+  assert.doesNotMatch(source, /checkpointMailboxReceiptPublication\(state, publishable,/);
+  const raw = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'mailbox-deferred-canonical-identity-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 3258,
+    branch: 'main',
+    state: 'DONE',
+    acceptedAt: '2026-11-08T00:00:00.000Z',
+    heartbeatAt: '2026-11-08T00:01:00.000Z',
+    completedAt: '2026-11-08T00:01:00.000Z',
+    proofRefs: ['receipts/github-command-mailbox/proof-safe.json'],
+    result: { ok: true, verdict: 'COMMAND_EXECUTION_DONE',
+      result: { ok: true, finalVerdict: 'VISIBILITY_SNAPSHOT_READY' } },
+  };
+  const rawBefore = JSON.stringify(raw);
+  const enriched = { ...raw, receiptRef: 'receipts/github-command-mailbox/canonical.json' };
+  const canonical = JSON.parse(serializeBoundedReceiptJson(raw, 256 * 1024));
+  const state = { pendingReceiptPublications: [] };
+  checkpointMailboxReceiptPublication(state, raw, { ok: false }, { persist: () => {} });
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  assert.deepEqual(state.pendingReceiptPublications[0].receipt, canonical);
+  assert.equal(JSON.stringify(raw), rawBefore, 'canonical receipt unchanged');
+  assert.equal(Object.hasOwn(state.pendingReceiptPublications[0].receipt, 'receiptRef'), false);
+  const enrichedCompact = JSON.parse(serializeBoundedReceiptJson(enriched, 256 * 1024));
+  assert.notEqual(enrichedCompact.result.result.originalBytes, canonical.result.result.originalBytes,
+    'fixture must expose historical pre-fix originalBytes drift');
 });
 
 test('main-targeting control preflight blocks a stale head and ignores observations', () => {
@@ -925,11 +966,15 @@ test('mailbox receipt preserves only bounded parity summary', () => {
     parityPresentCount: 12,
     buildableGapCount: 0,
     boundaryHoldCount: 2,
-    zeroGapInvariantSatisfied: true,
-    closureRequired: false,
-    daemonMayReportGreen: true,
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    installedParityState: 'UNKNOWN',
+    zeroGapInvariantSatisfied: false,
+    sourceGapClosureRequired: true,
+    closureRequired: true,
+    daemonMayReportGreen: false,
     mustContinueUntilZero: true,
-    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
+    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_BOUNDARY_HOLD',
   });
   const encoded = JSON.stringify(projected);
   assert.doesNotMatch(encoded, /secret\\parity|privatePath/);
@@ -1887,6 +1932,314 @@ test('oversized public receipt falls back to bounded core evidence instead of cr
   assert.doesNotMatch(serialized, /codexLastMessage|SAFE_STATUS|SAFE_ACTION/);
 });
 
+const CARETAKER_RECEIPT_HEAD = 'ac5ee351e75883725ac8c7fde2166e471e39b730';
+const CARETAKER_RECEIPT_BLOCKER = 'SOVEREIGN_COMMANDER_WATCHDOG_EXECUTION_FAILED';
+
+function caretakerMailboxReceipt() {
+  // Synthetic future child evidence, deliberately distinct from the historical
+  // terminal whose original child evidence was discarded before persistence.
+  const command = {
+    requestId: 'caretaker-future-preservation-fixture-001',
+    operation: 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
+    expectedHead: CARETAKER_RECEIPT_HEAD,
+  };
+  return structuredClone(buildBattleBridgeGitHubCommandReceipt({
+    command,
+    state: 'BLOCKED',
+    acceptedAt: '2026-11-16T22:10:00.000Z',
+    heartbeatAt: '2026-11-16T22:10:10.000Z',
+    completedAt: '2026-11-16T22:10:10.000Z',
+    processSourceHead: CARETAKER_RECEIPT_HEAD,
+    blocker: CARETAKER_RECEIPT_BLOCKER,
+    result: {
+      ok: false,
+      verdict: 'COMMAND_EXECUTION_BLOCKED',
+      operation: command.operation,
+      requestId: command.requestId,
+      result: {
+        ok: false,
+        blocker: CARETAKER_RECEIPT_BLOCKER,
+        finalVerdict: 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_BLOCKED',
+        sourceHead: CARETAKER_RECEIPT_HEAD,
+        expectedHead: CARETAKER_RECEIPT_HEAD,
+        branch: 'main',
+        expectedHeadMatch: true,
+        repair: {
+          sourceHead: CARETAKER_RECEIPT_HEAD,
+          sovereignCaretakerExecution: {
+            schemaVersion: 'stephanos.sovereign-caretaker-execution.v1',
+            expectedSourceHead: CARETAKER_RECEIPT_HEAD,
+            observedAtUtc: '2026-11-16T22:10:09.000Z',
+            exitStatus: null,
+            spawnErrorCode: 'ETIMEDOUT',
+            terminationSignal: 'SIGTERM',
+            failureReceiptRecognized: false,
+            reportedBlocker: '',
+            reportedVerdict: '',
+            diagnosticOnly: true,
+            stderr: 'PRIVATE_CHILD_OUTPUT',
+            rawPath: 'C:\\Users\\Operator\\PRIVATE_CHILD_PATH',
+            runtimeActivationGranted: true,
+            mergeAuthority: true,
+          },
+          tasks: [{ privateCommand: 'PRIVATE_CHILD_COMMAND' }],
+        },
+      },
+    },
+  }));
+}
+
+function expectedCaretakerEvidence() {
+  return {
+    schemaVersion: 'stephanos.sovereign-caretaker-execution.v1',
+    expectedSourceHead: CARETAKER_RECEIPT_HEAD,
+    observedAtUtc: '2026-11-16T22:10:09.000Z',
+    exitStatus: null,
+    spawnErrorCode: 'ETIMEDOUT',
+    terminationSignal: 'SIGTERM',
+    failureReceiptRecognized: false,
+    reportedBlocker: '',
+    reportedVerdict: '',
+    diagnosticOnly: true,
+  };
+}
+
+test('control-plane caretaker preserves only the closed original diagnostic through persistence and repeated projection', () => {
+  const receipt = caretakerMailboxReceipt();
+  const expected = expectedCaretakerEvidence();
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.deepEqual(projected.operationResult.sovereignCaretakerExecution, expected);
+  const reprojected = createSanitizedMailboxReceiptProjection(projected);
+  assert.deepEqual(reprojected.operationResult.sovereignCaretakerExecution, expected);
+  assert.equal(reprojected.execution.ok, false);
+  assert.equal(reprojected.operationResult.ok, false);
+  assert.equal(reprojected.state, 'BLOCKED');
+  assert.equal(reprojected.blocker, CARETAKER_RECEIPT_BLOCKER);
+
+  const state = { acceptedRequestIds: [receipt.requestId], consumedRequestIds: [] };
+  checkpointTerminalMailboxReceipt(state, receipt, { persist() {} });
+  assert.deepEqual(state.lastReceipt.result.result.sovereignCaretakerExecution, expected);
+  for (const input of [receipt, projected, reprojected, state.lastReceipt]) {
+    for (const budget of [256 * 1024, 9 * 1024, 4 * 1024]) {
+      const json = serializeBoundedReceiptJson(input, budget);
+      const stored = JSON.parse(json);
+      assert.ok(Buffer.byteLength(json, 'utf8') <= budget);
+      assert.deepEqual(stored.result.result.sovereignCaretakerExecution, expected);
+      assert.deepEqual(createSanitizedMailboxReceiptProjection(stored).operationResult.sovereignCaretakerExecution, expected);
+      assert.equal(stored.state, 'BLOCKED');
+      assert.equal(stored.result.ok, false);
+      assert.equal(stored.result.result.ok, false);
+      assert.equal(stored.blocker, CARETAKER_RECEIPT_BLOCKER);
+      assert.doesNotMatch(json, /PRIVATE_CHILD|runtimeActivationGranted|"mergeAuthority":true/);
+    }
+  }
+  const oversized = caretakerMailboxReceipt();
+  oversized.result.result.codexLastMessage = 'PUBLIC_PADDING'.repeat(400);
+  const core = JSON.parse(serializeBoundedReceiptJson(oversized, 4 * 1024));
+  assert.equal(core.githubProjectionTruncated, true);
+  assert.equal(Object.hasOwn(core.result.result, 'codexLastMessage'), false);
+  assert.deepEqual(core.result.result.sovereignCaretakerExecution, expected);
+  const normalizedCore = JSON.parse(serializeBoundedReceiptJson(createSanitizedMailboxReceiptProjection(oversized), 4 * 1024));
+  assert.equal(normalizedCore.githubProjectionTruncated, true);
+  assert.deepEqual(normalizedCore.result.result.sovereignCaretakerExecution, expected);
+  assert.deepEqual(createSanitizedMailboxReceiptProjection(normalizedCore).operationResult.sovereignCaretakerExecution, expected);
+  const optionalIdentityAbsent = caretakerMailboxReceipt();
+  delete optionalIdentityAbsent.branch;
+  delete optionalIdentityAbsent.result.result.expectedHead;
+  delete optionalIdentityAbsent.result.result.repair.sourceHead;
+  assert.deepEqual(createSanitizedMailboxReceiptProjection(optionalIdentityAbsent).operationResult.sovereignCaretakerExecution, expected);
+});
+
+test('control-plane caretaker rejects foreign identities, invalid windows and conflicting diagnostic copies', () => {
+  for (const malformed of [null, false, [], 'not-a-receipt']) {
+    assert.equal(Object.hasOwn(createSanitizedMailboxReceiptProjection(malformed).operationResult, 'sovereignCaretakerExecution'), false);
+    assert.equal(Object.hasOwn(JSON.parse(serializeBoundedReceiptJson(malformed)).result.result, 'sovereignCaretakerExecution'), false);
+  }
+  const mutations = [
+    ['receipt schema', r => { r.schemaVersion = 'foreign.v1'; }],
+    ['operation', r => { r.operation = 'INSTALL_AND_PROVE_SOVEREIGN_COMMANDER'; }],
+    ['request id', r => { r.requestId = '../foreign'; }],
+    ['execution request', r => { r.result.requestId = 'foreign-request'; }],
+    ['execution operation', r => { r.result.operation = 'READ_MAILBOX_RECEIPT'; }],
+    ['nonterminal', r => { r.state = 'ACCEPTED'; }],
+    ['missing head', r => { delete r.expectedHead; }],
+    ['malformed head', r => { r.expectedHead = CARETAKER_RECEIPT_HEAD.toUpperCase(); }],
+    ['process head', r => { r.processSourceHead = 'b'.repeat(40); }],
+    ['outer branch', r => { r.branch = 'foreign'; }],
+    ['present empty outer branch', r => { r.branch = ''; }],
+    ['result head', r => { r.result.result.sourceHead = 'b'.repeat(40); }],
+    ['result expected head', r => { r.result.result.expectedHead = 'b'.repeat(40); }],
+    ['raw repair source head', r => { r.result.result.repair.sourceHead = 'b'.repeat(40); }],
+    ['branch', r => { r.result.result.branch = 'other'; }],
+    ['source mismatch', r => { r.result.result.expectedHeadMatch = false; }],
+    ['missing accepted time', r => { delete r.acceptedAt; }],
+    ['noncanonical accepted time', r => { r.acceptedAt = '2026-11-16T22:10:00Z'; }],
+    ['missing completed time', r => { delete r.completedAt; }],
+    ['invalid completed time', r => { r.completedAt = 'invalid'; }],
+    ['reversed window', r => { r.acceptedAt = '2026-11-16T22:10:11.000Z'; }],
+    ['early evidence', r => { r.result.result.repair.sovereignCaretakerExecution.observedAtUtc = '2026-11-16T22:09:59.999Z'; }],
+    ['late evidence', r => { r.result.result.repair.sovereignCaretakerExecution.observedAtUtc = '2026-11-16T22:10:10.001Z'; }],
+    ['invalid observed time', r => { r.result.result.repair.sovereignCaretakerExecution.observedAtUtc = '2026-11-16T22:10:09Z'; }],
+    ['child schema', r => { r.result.result.repair.sovereignCaretakerExecution.schemaVersion = 'foreign.v1'; }],
+    ['child source', r => { r.result.result.repair.sovereignCaretakerExecution.expectedSourceHead = 'b'.repeat(40); }],
+    ['child array', r => { r.result.result.repair.sovereignCaretakerExecution = []; }],
+    ['child null', r => { r.result.result.repair.sovereignCaretakerExecution = null; }],
+    ['conflicting copies', r => {
+      r.result.result.sovereignCaretakerExecution = { ...expectedCaretakerEvidence(), exitStatus: 1 };
+    }],
+    ['invalid raw plus valid projected copy', r => {
+      r.result.result.repair.sovereignCaretakerExecution = null;
+      r.result.result.sovereignCaretakerExecution = expectedCaretakerEvidence();
+    }],
+  ];
+  for (const [label, mutate] of mutations) {
+    const receipt = caretakerMailboxReceipt();
+    mutate(receipt);
+    const projected = createSanitizedMailboxReceiptProjection(receipt);
+    assert.equal(Object.hasOwn(projected.operationResult, 'sovereignCaretakerExecution'), false, label);
+    for (const budget of [256 * 1024, 4 * 1024]) {
+      const stored = JSON.parse(serializeBoundedReceiptJson(receipt, budget));
+      assert.equal(Object.hasOwn(stored.result.result, 'sovereignCaretakerExecution'), false, label);
+      assert.equal(Object.hasOwn(createSanitizedMailboxReceiptProjection(stored).operationResult, 'sovereignCaretakerExecution'), false, label);
+      assert.equal(Object.hasOwn(JSON.parse(serializeBoundedReceiptJson(stored, budget)).result.result, 'sovereignCaretakerExecution'), false, label);
+      assert.equal(stored.state, receipt.state, label);
+      assert.equal(stored.blocker, CARETAKER_RECEIPT_BLOCKER, label);
+    }
+  }
+});
+
+test('control-plane caretaker keeps closed failure vocabulary and unknown exits diagnostic only', () => {
+  const receipt = caretakerMailboxReceipt();
+  const child = receipt.result.result.repair.sovereignCaretakerExecution;
+  Object.assign(child, {
+    exitStatus: '0', spawnErrorCode: 'PRIVATE_CHILD_ERROR', terminationSignal: 'PRIVATE_CHILD_SIGNAL',
+    failureReceiptRecognized: true, reportedBlocker: 'PRIVATE_CHILD_BLOCKER', reportedVerdict: 'PRIVATE_CHILD_VERDICT',
+    diagnosticOnly: false, executionAllowed: true, resourceGrant: { granted: true },
+  });
+  const projected = createSanitizedMailboxReceiptProjection(receipt).operationResult.sovereignCaretakerExecution;
+  assert.deepEqual(projected, {
+    ...expectedCaretakerEvidence(), spawnErrorCode: 'CHILD_PROCESS_ERROR', terminationSignal: 'UNKNOWN',
+  });
+  assert.doesNotMatch(serializeBoundedReceiptJson(receipt), /PRIVATE_CHILD|executionAllowed|resourceGrant/);
+  Object.assign(child, {
+    exitStatus: 1, spawnErrorCode: '', terminationSignal: '',
+    reportedBlocker: 'SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED',
+    reportedVerdict: 'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED',
+  });
+  const known = JSON.parse(serializeBoundedReceiptJson(receipt)).result.result.sovereignCaretakerExecution;
+  assert.equal(known.failureReceiptRecognized, true);
+  assert.equal(known.reportedBlocker, child.reportedBlocker);
+  assert.equal(known.reportedVerdict, child.reportedVerdict);
+  assert.equal(known.diagnosticOnly, true);
+});
+
+test('control-plane caretaker survives actual local receipt readback on a later head and core budget compaction', async () => {
+  const receiptRoot = await mkdtemp(join(tmpdir(), 'caretaker-readback-'));
+  const original = caretakerMailboxReceipt();
+  const storedJson = serializeBoundedReceiptJson(original, 256 * 1024);
+  const receiptPath = join(receiptRoot, createWindowsSafeMailboxReceiptFilename(original.requestId));
+  const laterHead = 'b'.repeat(40);
+  const command = {
+    requestId: 'caretaker-readback-fixture-001', operation: 'READ_MAILBOX_RECEIPT',
+    targetRequestId: original.requestId, expectedHead: laterHead,
+  };
+  try {
+    await writeFile(receiptPath, storedJson, 'utf8');
+    const result = await readMailboxReceipt(command, {
+      receiptRoot,
+      readSourceIdentity: async (input) => {
+        assert.deepEqual(input, command);
+        return { ok: true, sourceHead: laterHead, expectedHead: laterHead, expectedHeadMatch: true, branch: 'main' };
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.receipt.operationResult.sovereignCaretakerExecution, expectedCaretakerEvidence());
+    const readback = buildBattleBridgeGitHubCommandReceipt({
+      command, state: 'DONE', processSourceHead: laterHead,
+      acceptedAt: '2026-11-16T22:11:00.000Z', heartbeatAt: '2026-11-16T22:11:01.000Z', completedAt: '2026-11-16T22:11:01.000Z',
+      result: { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE', operation: command.operation, requestId: command.requestId,
+        result: { ...result, codexLastMessage: 'PUBLIC_PADDING'.repeat(400), warnings: Array(30).fill('PUBLIC_PADDING'.repeat(20)) } },
+    });
+    for (const budget of [256 * 1024, 9 * 1024, 4 * 1024]) {
+      const json = serializeBoundedReceiptJson(readback, budget);
+      const outer = JSON.parse(json);
+      const selected = outer.result.result.receipt;
+      assert.ok(Buffer.byteLength(json, 'utf8') <= budget);
+      assert.equal(outer.state, 'DONE');
+      assert.equal(outer.expectedHead, laterHead);
+      assert.equal(outer.result.result.targetRequestId, original.requestId);
+      assert.equal(selected.requestId, original.requestId);
+      assert.equal(selected.expectedHead, original.expectedHead);
+      assert.equal(selected.processSourceHead, original.processSourceHead);
+      assert.equal(selected.acceptedAt, original.acceptedAt);
+      assert.equal(selected.completedAt, original.completedAt);
+      assert.equal(selected.state, 'BLOCKED');
+      assert.equal(selected.execution.ok, false);
+      assert.equal(selected.operationResult.ok, false);
+      assert.equal(selected.blocker, CARETAKER_RECEIPT_BLOCKER);
+      assert.deepEqual(selected.operationResult.sovereignCaretakerExecution, expectedCaretakerEvidence());
+      assert.doesNotMatch(json, /PRIVATE_CHILD|runtimeActivationGranted/);
+      if (budget < 256 * 1024) assert.equal(outer.githubProjectionTruncated, true);
+    }
+    for (const change of [
+      { targetRequestId: 'different-original' },
+      { targetRequestId: '../invalid' },
+    ]) {
+      const foreign = { ...readback, result: { ...readback.result, result: { ...readback.result.result, ...change } } };
+      const projected = JSON.parse(serializeBoundedReceiptJson(foreign));
+      assert.equal(projected.result.result.receipt ?? null, null);
+      assert.doesNotMatch(JSON.stringify(projected), /sovereignCaretakerExecution/);
+    }
+    const wrongOperation = { ...readback, operation: 'READ_DEPLOYMENT_STATUS' };
+    const projectedWrongOperation = JSON.parse(serializeBoundedReceiptJson(wrongOperation));
+    assert.equal(projectedWrongOperation.result.result.receipt ?? null, null);
+    assert.doesNotMatch(JSON.stringify(projectedWrongOperation), /sovereignCaretakerExecution/);
+    assert.equal(await readFile(receiptPath, 'utf8'), storedJson);
+  } finally {
+    await rm(receiptRoot, { recursive: true, force: true });
+  }
+});
+
+test('control-plane caretaker historical terminal retains authentic absence through readback', async () => {
+  // Exact public receipt from issue 3258 comment 6930532122. Its old serializer
+  // discarded the child evidence even though originalBytes was below budget.
+  const historicJson = await readFile(new URL('../shared/agents/fixtures/battleBridgeCaretakerTerminal6930532122.json', import.meta.url), 'utf8');
+  const original = JSON.parse(historicJson);
+  const receiptRoot = await mkdtemp(join(tmpdir(), 'caretaker-historical-readback-'));
+  const receiptPath = join(receiptRoot, createWindowsSafeMailboxReceiptFilename(original.requestId));
+  const laterHead = 'b'.repeat(40);
+  try {
+    assert.equal(original.result.result.originalBytes, 4210);
+    assert.equal(original.githubProjectionTruncated, false);
+    assert.equal(Object.hasOwn(original.result.result, 'sovereignCaretakerExecution'), false);
+    await writeFile(receiptPath, historicJson, 'utf8');
+    const result = await readMailboxReceipt({ targetRequestId: original.requestId, expectedHead: laterHead }, {
+      receiptRoot, readSourceIdentity: async () => ({ ok: true, sourceHead: laterHead, branch: 'main', expectedHeadMatch: true }),
+    });
+    const command = { operation: 'READ_MAILBOX_RECEIPT', requestId: 'caretaker-historical-readback-001', expectedHead: laterHead };
+    const readback = buildBattleBridgeGitHubCommandReceipt({
+      command, state: 'DONE', processSourceHead: laterHead,
+      acceptedAt: '2026-11-16T22:11:00.000Z', heartbeatAt: '2026-11-16T22:11:01.000Z', completedAt: '2026-11-16T22:11:01.000Z',
+      result: { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE', operation: command.operation, requestId: command.requestId, result },
+    });
+    for (const budget of [256 * 1024, 9 * 1024, 4 * 1024]) {
+      const outer = JSON.parse(serializeBoundedReceiptJson(readback, budget));
+      const selected = outer.result.result.receipt;
+      assert.equal(selected.requestId, original.requestId);
+      assert.equal(selected.expectedHead, CARETAKER_RECEIPT_HEAD);
+      assert.equal(selected.acceptedAt, '2026-11-16T21:53:44.714Z');
+      assert.equal(selected.completedAt, '2026-11-16T21:54:09.182Z');
+      assert.equal(selected.state, 'BLOCKED');
+      assert.equal(selected.blocker, CARETAKER_RECEIPT_BLOCKER);
+      assert.equal(selected.execution.ok, false);
+      assert.equal(Object.hasOwn(selected.operationResult, 'sovereignCaretakerExecution'), false);
+    }
+    assert.equal(await readFile(receiptPath, 'utf8'), historicJson);
+  } finally {
+    await rm(receiptRoot, { recursive: true, force: true });
+  }
+});
+
 test('Sovereign Commander watchdog diagnosis is projected without stderr or path-shaped data', () => {
   const receipt = {
     schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
@@ -2190,6 +2543,241 @@ test('core status projection strips private fields while preserving bounded heal
   assert.equal(status.remoteCommanderRequired, false);
   assert.equal(Object.hasOwn(status, 'rawStdout'), false);
   assert.equal(Object.hasOwn(status, 'localPath'), false);
+});
+
+const CORE_STATUS_OBSERVER_HEAD = 'd324342db548c285ca798c104bfe55115472ad38';
+const CORE_STATUS_STALE_HEAD = '8113cc30b86f08afe3f5f8780ee01b9dc135c6e5';
+const CORE_STATUS_CUSTODY_KEYS = [
+  'processInventoryComplete', 'processObservationBlocker', 'reportedDaemonHealthy',
+  'singleWriterProven', 'writerProcessObserved', 'lockOwnerMatchesWriter',
+  'rescueGenerationPresent', 'rescueAttemptCount', 'heartbeatFresh',
+  'busyGraceActive', 'flywheelCycleAgeSeconds',
+];
+
+function coreCustodyMailboxReceipt({ historical = false } = {}) {
+  // Historical fields are transcribed from issue 3258 comment 6931494065.
+  // The additional custody fields below are synthetic future evidence, never
+  // a reconstruction of facts discarded by that historical serializer.
+  const command = {
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    requestId: historical ? 'selfrepair-2961-core-status-d324342d-20261116-v1' : 'core-custody-future-fixture-001',
+    expectedHead: CORE_STATUS_OBSERVER_HEAD,
+  };
+  return structuredClone(buildBattleBridgeGitHubCommandReceipt({
+    command, state: 'BLOCKED', processSourceHead: CORE_STATUS_OBSERVER_HEAD,
+    acceptedAt: '2026-11-16T22:37:26.724Z',
+    heartbeatAt: '2026-11-16T22:37:29.257Z',
+    completedAt: '2026-11-16T22:37:29.257Z',
+    blocker: 'SOVEREIGN_COMMANDER_REMOTE_CORE_DAEMON_NOT_READY',
+    result: {
+      ok: false, verdict: 'COMMAND_EXECUTION_BLOCKED',
+      operation: command.operation, requestId: command.requestId,
+      result: {
+        ok: false, blocker: 'SOVEREIGN_COMMANDER_REMOTE_CORE_DAEMON_NOT_READY',
+        remoteAction: 'status-stephanos-core-daemon',
+        sourceHead: CORE_STATUS_OBSERVER_HEAD, expectedHead: CORE_STATUS_OBSERVER_HEAD,
+        expectedHeadMatch: true, publicReceiptSafe: true, secretMaterialReturned: false,
+        coreDaemonStatus: {
+          available: true, daemonHealthy: false, readiness: 'RELOAD_REQUIRED',
+          ok: false, processCount: null, wakeState: 'DEGRADED', awake: false,
+          repairRequired: true, repairReason: 'SOVEREIGN_COMMANDER_UNHEALTHY',
+          controlPlaneFinalVerdict: 'STEPHANOS_CONTROL_PLANE_REPAIR_REQUIRED',
+          sourceHead: CORE_STATUS_STALE_HEAD, heartbeatAgeSeconds: 987538,
+          sovereignCommanderHealthy: false, backendHealthy: false,
+          missionWorkerHealthy: false, gamingActive: false,
+          uiRequired: false, sourceMutationAllowed: false, schedulerAuthority: false,
+          mergeAuthority: false, vendorMeterRequired: false, remoteCommanderRequired: false,
+          ...(!historical ? {
+            processInventoryComplete: false,
+            processObservationBlocker: 'CORE_PROCESS_INVENTORY_UNPROVEN',
+            reportedDaemonHealthy: false, singleWriterProven: false,
+            writerProcessObserved: false, lockOwnerMatchesWriter: false,
+            rescueGenerationPresent: true, rescueAttemptCount: 2,
+            heartbeatFresh: false, busyGraceActive: false, flywheelCycleAgeSeconds: null,
+            processId: 12345, lockOwnerPid: 12345, commandLine: 'PRIVATE_CORE_COMMAND',
+            lockPath: 'C:\\Users\\Operator\\PRIVATE_CORE_LOCK', rawStdout: 'PRIVATE_CORE_STDOUT',
+          } : {}),
+        },
+      },
+    },
+  }));
+}
+
+test('Core custody status survives canonical checkpoint, public and core compaction with original source truth', () => {
+  const receipt = coreCustodyMailboxReceipt();
+  const expected = { ...receipt.result.result.coreDaemonStatus };
+  for (const key of ['processId', 'lockOwnerPid', 'commandLine', 'lockPath', 'rawStdout']) delete expected[key];
+  const state = { acceptedRequestIds: [receipt.requestId], consumedRequestIds: [] };
+  checkpointTerminalMailboxReceipt(state, receipt, { persist() {} });
+  assert.deepEqual(state.lastReceipt.result.result.coreDaemonStatus, expected);
+  const normalized = createSanitizedMailboxReceiptProjection(receipt);
+  assert.deepEqual(normalized.operationResult.coreDaemonStatus, expected);
+  assert.deepEqual(createSanitizedMailboxReceiptProjection(normalized).operationResult.coreDaemonStatus, expected);
+  for (const input of [receipt, normalized, state.lastReceipt]) {
+    for (const budget of [256 * 1024, 9 * 1024, 5 * 1024]) {
+      const json = serializeBoundedReceiptJson(input, budget);
+      const stored = JSON.parse(json);
+      assert.ok(Buffer.byteLength(json) <= budget);
+      assert.deepEqual(stored.result.result.coreDaemonStatus, expected);
+      assert.deepEqual(createSanitizedMailboxReceiptProjection(stored).operationResult.coreDaemonStatus, expected);
+      assert.equal(stored.expectedHead, CORE_STATUS_OBSERVER_HEAD);
+      assert.equal(stored.processSourceHead, CORE_STATUS_OBSERVER_HEAD);
+      assert.equal(stored.result.result.sourceHead, CORE_STATUS_OBSERVER_HEAD);
+      assert.equal(stored.state, 'BLOCKED');
+      assert.equal(stored.result.ok, false);
+      assert.doesNotMatch(json, /PRIVATE_CORE|lockOwnerPid|commandLine/);
+    }
+  }
+  receipt.result.result.codexLastMessage = 'PUBLIC_PADDING'.repeat(400);
+  const core = JSON.parse(serializeBoundedReceiptJson(receipt, 5 * 1024));
+  assert.equal(Object.hasOwn(core.result.result, 'codexLastMessage'), false);
+  assert.deepEqual(core.result.result.coreDaemonStatus, expected);
+});
+
+test('Core custody projection keeps null and malformed facts unproven and never publishes authority', () => {
+  for (const value of [null, '', '0', false, -1, Infinity, NaN, {}, []]) {
+    const receipt = coreCustodyMailboxReceipt();
+    Object.assign(receipt.result.result.coreDaemonStatus, {
+      processInventoryComplete: 'true', processCount: value,
+      singleWriterProven: 'true', writerProcessObserved: 1, lockOwnerMatchesWriter: {},
+      rescueGenerationPresent: 'true', rescueAttemptCount: value,
+      heartbeatAgeSeconds: value, heartbeatFresh: 'true',
+      flywheelCycleAgeSeconds: value, busyGraceActive: 1,
+      sourceMutationAllowed: true, schedulerAuthority: true, mergeAuthority: true,
+      uiRequired: true, vendorMeterRequired: true, remoteCommanderRequired: true,
+    });
+    const normalized = createSanitizedMailboxReceiptProjection(receipt);
+    const status = normalized.operationResult.coreDaemonStatus;
+    assert.equal(status.processCount, null);
+    assert.equal(status.heartbeatAgeSeconds, null);
+    assert.equal(status.flywheelCycleAgeSeconds, null);
+    assert.equal(status.rescueAttemptCount, null);
+    for (const key of ['processInventoryComplete', 'singleWriterProven', 'writerProcessObserved',
+      'lockOwnerMatchesWriter', 'rescueGenerationPresent', 'heartbeatFresh', 'busyGraceActive']) {
+      assert.notEqual(status[key], true, key);
+    }
+    for (const key of ['sourceMutationAllowed', 'schedulerAuthority', 'mergeAuthority', 'uiRequired',
+      'vendorMeterRequired', 'remoteCommanderRequired']) assert.equal(status[key], false, key);
+  }
+});
+
+test('Core custody evidence requires original operation, request and observer head on every projection', () => {
+  for (const [label, mutate] of [
+    ['operation', r => { r.operation = 'READ_DEPLOYMENT_STATUS'; }],
+    ['action', r => { r.result.result.remoteAction = 'battle-bridge-status'; }],
+    ['execution operation', r => { r.result.operation = 'READ_DEPLOYMENT_STATUS'; }],
+    ['execution request', r => { r.result.requestId = 'foreign-core-request'; }],
+    ['outer branch', r => { r.branch = 'foreign'; }],
+    ['observer head', r => { r.processSourceHead = 'b'.repeat(40); }],
+    ['result head', r => { r.result.result.sourceHead = 'b'.repeat(40); }],
+    ['result branch', r => { r.result.result.branch = 'foreign'; }],
+    ['result expected head', r => { r.result.result.expectedHead = 'b'.repeat(40); }],
+    ['head match', r => { r.result.result.expectedHeadMatch = false; }],
+    ['missing head match', r => { delete r.result.result.expectedHeadMatch; }],
+    ['schema', r => { r.schemaVersion = 'foreign.v1'; }],
+    ['nonterminal', r => { r.state = 'ACCEPTED'; }],
+    ['missing accepted time', r => { delete r.acceptedAt; }],
+    ['time order', r => { r.completedAt = '2026-11-16T22:37:00.000Z'; }],
+  ]) {
+    const receipt = coreCustodyMailboxReceipt();
+    mutate(receipt);
+    for (const input of [receipt, createSanitizedMailboxReceiptProjection(receipt)]) {
+      for (const budget of [256 * 1024, 5 * 1024]) {
+        const stored = JSON.parse(serializeBoundedReceiptJson(input, budget));
+        const status = stored.result.result.coreDaemonStatus || {};
+        for (const key of CORE_STATUS_CUSTODY_KEYS) assert.equal(Object.hasOwn(status, key), false, `${label}: ${key}`);
+        const again = createSanitizedMailboxReceiptProjection(stored).operationResult.coreDaemonStatus || {};
+        for (const key of CORE_STATUS_CUSTODY_KEYS) assert.equal(Object.hasOwn(again, key), false, `${label} reprojected: ${key}`);
+      }
+    }
+  }
+});
+
+test('Core complete inventory retains observed count and explicit writer facts without making stale Core ready', () => {
+  const receipt = coreCustodyMailboxReceipt();
+  Object.assign(receipt.result.result.coreDaemonStatus, {
+    processInventoryComplete: true, processCount: 1, processObservationBlocker: '',
+    reportedDaemonHealthy: true, singleWriterProven: true, writerProcessObserved: true,
+    lockOwnerMatchesWriter: true, heartbeatFresh: true, heartbeatAgeSeconds: 0,
+  });
+  const checkpoint = JSON.parse(serializeBoundedReceiptJson(receipt, 256 * 1024));
+  const normalized = createSanitizedMailboxReceiptProjection(checkpoint);
+  const core = JSON.parse(serializeBoundedReceiptJson(normalized, 5 * 1024));
+  const status = core.result.result.coreDaemonStatus;
+  assert.equal(status.processCount, 1);
+  for (const key of ['processInventoryComplete', 'reportedDaemonHealthy', 'singleWriterProven',
+    'writerProcessObserved', 'lockOwnerMatchesWriter', 'heartbeatFresh']) assert.equal(status[key], true, key);
+  assert.equal(status.heartbeatAgeSeconds, 0);
+  assert.equal(status.ok, false);
+  assert.equal(status.readiness, 'RELOAD_REQUIRED');
+  assert.equal(status.sourceHead, CORE_STATUS_STALE_HEAD);
+  assert.equal(core.state, 'BLOCKED');
+  assert.equal(core.result.ok, false);
+});
+
+test('Core custody actual disk READ preserves original identity and historical missing facts without resurrection', async () => {
+  const receiptRoot = await mkdtemp(join(tmpdir(), 'core-custody-readback-'));
+  const laterHead = 'b'.repeat(40);
+  try {
+    for (const historical of [false, true]) {
+      const original = coreCustodyMailboxReceipt({ historical });
+      const storedJson = historical ? JSON.stringify(original) : serializeBoundedReceiptJson(original, 256 * 1024);
+      const receiptPath = join(receiptRoot, createWindowsSafeMailboxReceiptFilename(original.requestId));
+      await writeFile(receiptPath, storedJson);
+      const command = { operation: 'READ_MAILBOX_RECEIPT', requestId: `core-readback-fixture-${historical}`,
+        targetRequestId: original.requestId, expectedHead: laterHead };
+      const result = await readMailboxReceipt(command, {
+        receiptRoot,
+        readSourceIdentity: async () => ({ ok: true, sourceHead: laterHead, expectedHead: laterHead,
+          expectedHeadMatch: true, branch: 'main' }),
+      });
+      assert.equal(result.ok, true);
+      const readback = structuredClone(buildBattleBridgeGitHubCommandReceipt({
+        command, state: 'DONE', processSourceHead: laterHead,
+        acceptedAt: '2026-11-16T22:40:00.000Z', heartbeatAt: '2026-11-16T22:40:01.000Z',
+        completedAt: '2026-11-16T22:40:01.000Z',
+        result: { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE', operation: command.operation,
+          requestId: command.requestId, result: { ...result, codexLastMessage: 'PUBLIC_PADDING'.repeat(400) } },
+      }));
+      for (const budget of [256 * 1024, 9 * 1024, 5 * 1024]) {
+        const json = serializeBoundedReceiptJson(readback, budget);
+        const outer = JSON.parse(json);
+        const selected = outer.result.result.receipt;
+        assert.ok(Buffer.byteLength(json) <= budget);
+        assert.equal(outer.expectedHead, laterHead);
+        assert.equal(selected.requestId, original.requestId);
+        assert.equal(selected.expectedHead, CORE_STATUS_OBSERVER_HEAD);
+        assert.equal(selected.processSourceHead, CORE_STATUS_OBSERVER_HEAD);
+        assert.equal(selected.acceptedAt, original.acceptedAt);
+        assert.equal(selected.completedAt, original.completedAt);
+        assert.equal(selected.state, 'BLOCKED');
+        assert.equal(selected.execution.ok, false);
+        assert.equal(selected.operationResult.sourceHead, CORE_STATUS_OBSERVER_HEAD);
+        const status = selected.operationResult.coreDaemonStatus;
+        assert.equal(status.sourceHead, CORE_STATUS_STALE_HEAD);
+        assert.equal(status.heartbeatAgeSeconds, 987538);
+        assert.equal(status.processCount, null);
+        for (const key of CORE_STATUS_CUSTODY_KEYS) {
+          assert.equal(Object.hasOwn(status, key), !historical, key);
+          if (!historical) assert.deepEqual(status[key], original.result.result.coreDaemonStatus[key], key);
+        }
+        if (budget === 5 * 1024) assert.equal(Object.hasOwn(outer.result.result, 'codexLastMessage'), false);
+        assert.doesNotMatch(json, /PRIVATE_CORE/);
+      }
+      for (const mutate of [
+        r => { r.result.result.targetRequestId = 'foreign-original'; },
+        r => { r.operation = 'READ_DEPLOYMENT_STATUS'; },
+        r => { r.result.result.receipt.execution.requestId = 'foreign-execution'; },
+      ]) {
+        const foreign = structuredClone(readback); mutate(foreign);
+        const out = JSON.parse(serializeBoundedReceiptJson(foreign));
+        assert.equal(out.result.result.receipt ?? null, null);
+      }
+      assert.equal(await readFile(receiptPath, 'utf8'), storedJson);
+    }
+  } finally {
+    await rm(receiptRoot, { recursive: true, force: true });
+  }
 });
 
 test('mailbox receipt preserves bounded meter glass and strips private meter data', () => {

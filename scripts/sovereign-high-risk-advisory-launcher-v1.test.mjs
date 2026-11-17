@@ -29,6 +29,7 @@ test('real pre-launch entry/verifier/transitive substitutions never evaluate bef
   };
   try {
     invoke(['init','-b','main']);invoke(['config','user.name','Fixture']);
+    invoke(['remote','add','origin','https://github.com/Cheekyfellastef/stephan-os.git']);
     invoke(['config','user.email','fixture@example.invalid']);invoke(['config','core.autocrlf','false']);
     const files=[...HIGH_RISK_ADVISORY_EXECUTION_FILES,'scripts/sovereign-high-risk-advisory-launcher-v1.mjs',
       'scripts/sovereign-windows-review-calibration-v1.mjs','scripts/sovereign-review-coverage-v1.mjs',

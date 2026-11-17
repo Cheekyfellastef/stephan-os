@@ -1,8 +1,55 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-
 import { validateStarfieldVrPhysicalVerdict } from './report-starfield-vr-telemetry.mjs';
+
+test('Windows VR diagnosis handles zero, one and conflicting providers without inventing missing metrics', { skip: process.platform !== 'win32' }, async () => {
+  const scriptPath = fileURLToPath(new URL('./windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url));
+  for (const [sessionProvider, summaryProvider, expectedIdentity, expectedProvider, samples] of [
+    ['', '', 'UNKNOWN_PROVIDER', 'UNKNOWN', []],
+    ['mutar-openxr', '', 'VERIFIED_PROVIDER', 'mutar-openxr', [20]],
+    ['vorpx', 'vorpx', 'VERIFIED_PROVIDER', 'vorpx', [20, 40]],
+    ['mutar-openxr', 'vorpx', 'PROVIDER_IDENTITY_CONFLICT', 'UNKNOWN', [20, 40]],
+    ['vorpx', '', 'VERIFIED_PROVIDER', 'vorpx', [null]],
+  ]) {
+    const workspace = await mkdtemp(join(tmpdir(), 'sovereign-vr-diagnosis-'));
+    try {
+      if (samples.length) {
+        const sessions = join(workspace, 'vr', 'starfield-vr-performance-sessions');
+        await mkdir(sessions, { recursive: true });
+        const base = join(sessions, 'starfield-vr-performance-fixture');
+        await writeFile(base + '.csv', 'timestampUtc,gpuUtilPct\n'
+          + samples.map((value, index) => `2026-10-12T00:00:0${index}Z,${value ?? ''}\n`).join(''));
+        await writeFile(base + '.json', JSON.stringify({ routeIdentity: { provider: sessionProvider } }));
+        await writeFile(base + '.summary.json', JSON.stringify({ routeIdentity: { provider: summaryProvider } }));
+      }
+      const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, '-WorkspaceRoot', workspace,
+      ], { encoding: 'utf8', shell: false, windowsHide: true, timeout: 20_000 });
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr);
+      const receipt = JSON.parse(result.stdout);
+      assert.equal(receipt.context.providerIdentityStatus, expectedIdentity);
+      assert.equal(receipt.context.provider, expectedProvider);
+      const measured = samples.filter(value => typeof value === 'number');
+      assert.equal(receipt.metrics.sampleCount, samples.length);
+      assert.equal(receipt.metrics.avgGpuUtilPct, measured.length
+        ? measured.reduce((sum, value) => sum + value, 0) / measured.length : null);
+      assert.equal(receipt.metrics.maxGpuUtilPct, measured.length ? Math.max(...measured) : null);
+      assert.equal(receipt.metrics.avgApplicationFrameTimeMs, null);
+      assert.equal(receipt.metrics.frameTimeTelemetryAvailable, false);
+      assert.equal(receipt.metrics.storageTelemetryAvailable, false);
+      assert.equal(receipt.boundaries.readOnly, true);
+      assert.equal(receipt.boundaries.mutationAuthority, false);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }
+});
 
 const performance = await readFile(new URL('./windows/starfield-vr-performance-mode.ps1', import.meta.url), 'utf8');
 const recorder = await readFile(new URL('./windows/starfield-vr-flight-recorder.ps1', import.meta.url), 'utf8');

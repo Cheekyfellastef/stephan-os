@@ -1,3 +1,4 @@
+import { types as nodeTypes } from 'node:util';
 import {
   POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
   POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
@@ -11,6 +12,61 @@ export {
   projectPostSyncSovereignRelayProof,
 };
 
+// Source-side validation only: an adapter is not a commissioned native host.
+// Proof flags must be inert own data, never inherited or accessor-mediated.
+function sovereignPluginHostProofPass(proof, expectedHead) {
+  if (!proof || typeof proof !== 'object' || nodeTypes.isProxy(proof)) return false;
+  let fields;
+  try {
+    const prototype = Object.getPrototypeOf(proof);
+    if (prototype !== Object.prototype && prototype !== null) return false;
+    fields = Object.getOwnPropertyDescriptors(proof);
+  } catch {
+    return false;
+  }
+  for (const key of ['ok', 'exactHeadProofOk', 'desktopPluginHostHandshakeVerified', 'loadedManifestVerified']) {
+    const field = fields[key];
+    if (!field || !Object.hasOwn(field, 'value') || field.value !== true) return false;
+  }
+  const ownData = key => {
+    const descriptor = fields[key];
+    return descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined;
+  };
+  if (typeof ownData('sourceHead') !== 'string' || !SHA_PATTERN.test(ownData('sourceHead'))
+    || ownData('sourceHead').toLowerCase() !== String(expectedHead).toLowerCase()) return false;
+
+  // A boolean success claim is not evidence of a loaded native host. The
+  // original private verifier must additionally establish process/session
+  // identity, a loaded manifest and a fresh observation. These checks alone
+  // do NOT create authenticated transport, reviewer authority or provenance.
+  if (ownData('schemaVersion') !== 'stephanos.sovereign-plugin-host-activation.v1'
+    || ownData('hostPrincipalVerified') !== true
+    || ownData('hostProcessBirthVerified') !== true
+    || ownData('sessionRevoked') !== false
+    || ownData('sessionExpired') !== false) return false;
+  const processId = ownData('hostProcessId');
+  const sessionId = ownData('sessionId');
+  if (!Number.isSafeInteger(processId) || processId <= 0 || processId > 0xffffffff
+    || typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(sessionId)) return false;
+  const loadedDigest = ownData('loadedManifestSha256');
+  const expectedDigest = ownData('expectedManifestSha256');
+  if (typeof loadedDigest !== 'string' || !/^[a-f0-9]{64}$/.test(loadedDigest)
+    || typeof expectedDigest !== 'string' || loadedDigest !== expectedDigest
+    || ownData('manifestDigestVerified') !== true) return false;
+  const birth = ownData('hostProcessStartedAtUtc');
+  const observed = ownData('observedAtUtc');
+  const expiry = ownData('expiresAtUtc');
+  const iso = value => typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+    && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+  if (![birth, observed, expiry].every(iso)) return false;
+  const now = Date.now();
+  const birthMs = Date.parse(birth), observedMs = Date.parse(observed), expiryMs = Date.parse(expiry);
+  return birthMs <= observedMs && observedMs <= now + 2_000
+    && observedMs >= now - 15_000
+    && expiryMs > now && expiryMs > observedMs && expiryMs <= observedMs + 30_000;
+}
+
 export const POST_SYNC_REFRESH_SCHEMA = 'stephanos.post-sync-runtime-refresh.v1';
 
 export const POST_SYNC_REFRESH_CLASSIFICATIONS = Object.freeze({
@@ -20,6 +76,7 @@ export const POST_SYNC_REFRESH_CLASSIFICATIONS = Object.freeze({
   APPROVAL_REQUIRED_OPENCLAW: 'APPROVAL_REQUIRED_OPENCLAW',
   BLOCKED_UNSAFE_CHANGED_PATH: 'BLOCKED_UNSAFE_CHANGED_PATH',
   BLOCKED_UNCLASSIFIED_RUNTIME_PATH: 'BLOCKED_UNCLASSIFIED_RUNTIME_PATH',
+  BLOCKED_SPATIAL_ADOPTION_REQUIRED: 'BLOCKED_SPATIAL_ADOPTION_REQUIRED',
   BLOCKED_REFRESH_FAILED: 'BLOCKED_REFRESH_FAILED',
 });
 
@@ -55,6 +112,15 @@ const SOVEREIGN_COMMANDER_PLUGIN_MANIFESTS = new Set([
   'plugins/sovereign-commander/.codex-plugin/plugin.json',
 ]);
 
+// These two resident components belong only to the explicit Spatial launcher.
+// None of the existing refresh targets imports or launches them. Keep their
+// adoption debt separate: source sync and unrelated target success cannot prove
+// a loaded Spatial host, nor grant permission to start, stop or replace one.
+const SPATIAL_RESIDENT_ADOPTION_PATHS = new Set([
+  'scripts/spatial-window-host.mjs',
+  'shared/vr/spatialDesktopSurfaceContractV1.mjs',
+]);
+
 // The Commander watchdog owns this long-running relay and its static imports.
 // A healthy HTTP daemon alone cannot prove that this separate process reloaded.
 const SOVEREIGN_RELAY_RUNTIME_EXACT = new Set([
@@ -73,6 +139,12 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
   'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
   'scripts/battle-bridge-observation.mjs',
   'scripts/sovereign-commander-http.mjs',
+  // The existing Commander HTTP process statically imports the Caravan
+  // handler, page and native bridge. Keep them with that resident owner;
+  // source classification grants no mobile enrollment or installation.
+  'scripts/battle-bridge-caravan-http-v1.mjs',
+  'scripts/battle-bridge-caravan-page-v1.mjs',
+  'scripts/windows/battle-bridge-mobile-install-native-v1.mjs',
   'scripts/sovereign-maintenance-custody-store-v1.mjs',
   'scripts/sovereign-maintenance-owner-observation-v2.mjs',
   'scripts/sovereign-fixed-runtime-parent-v1.mjs',
@@ -95,6 +167,55 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
 ]);
 
 const NATURAL_EXACT = new Set([
+  // The fixed Caravan bridge rereads and hash-checks this read-only probe in
+  // a fresh bounded child. Adoption checks source only; it invokes no probe,
+  // native PREPARE, enrollment or installer and never qualifies the helper.
+  'scripts/windows/observe-battle-bridge-mobile-install-v1.ps1',
+  // On-demand VR owners load these on their next explicit invocation. This
+  // confirms source adoption only; never launch/restart games or recorders.
+  'scripts/report-starfield-vr-telemetry.mjs',
+  // The fixed mailbox starts this delivery observation in a fresh Node child.
+  'scripts/starfield-vr-delivery-truth-probe.mjs',
+  'scripts/windows/launch-starfield-vr-with-splash.ps1',
+  // The existing third splash card owns this attended monitor continuation.
+  // Sync adopts source only; it never starts a monitor session or a game.
+  'scripts/windows/starfield-native-monitor/splash_monitor_bridge.py',
+  'scripts/windows/starfield-native-monitor/run_native_eye_output_monitor.py',
+  'scripts/windows/starfield-native-monitor/start_native_eye_output_session.py',
+  'scripts/windows/starfield-native-monitor/analyze_native_eye_output_session.py',
+  'scripts/windows/launch-starfield-vr.ps1',
+  'scripts/windows/new-vr-telemetry-session.ps1',
+  'scripts/windows/read-starfield-vr-performance-diagnosis.ps1',
+  'scripts/windows/run-starfield-aer-stabilizer-observe.ps1',
+  'scripts/windows/starfield-vr-flight-recorder.ps1',
+  'scripts/windows/starfield-vr-performance-mode.ps1',
+  'scripts/windows/starfield-vr-runtime-metrics-producer.ps1',
+  'scripts/windows/vr-visual-fault-marker.ps1',
+  'shared/vr/vrTelemetrySensorContractV1.mjs',
+  // Commander invokes these bounded Node children afresh. Source adoption
+  // confirms the checkout only; it never invokes observation, reconciliation,
+  // or Spatial preparation. Fixed native qualification remains independent.
+  'scripts/sovereign-commander-browser-observe.mjs',
+  'scripts/sovereign-commander-capability-parity-reconcile.mjs',
+  'scripts/sovereign-commander-spatial-workspace.mjs',
+  // These private operations capture and hash-check their exact helper pairs
+  // on each call, then compile captured C# in a fresh PowerShell child. This
+  // source check never performs an operation or grants native custody.
+  'scripts/windows/SovereignDirectoryCreateV1.cs',
+  'scripts/windows/sovereign-create-directory.ps1',
+  'scripts/windows/SovereignFileCopyV1.cs',
+  'scripts/windows/sovereign-copy-file-content.ps1',
+  'scripts/windows/SovereignFileMoveV1.cs',
+  'scripts/windows/sovereign-move-file.ps1',
+  'scripts/windows/SovereignPdfWriteV1.cs',
+  'scripts/windows/sovereign-write-pdf.ps1',
+  'scripts/windows/SovereignSearchV1.cs',
+  'scripts/windows/sovereign-search.ps1',
+  // Attended lock recovery loads this policy and native helper in a fresh
+  // child. Its installation, qualification and operator gates remain separate.
+  'scripts/windows/StephanosCoreLockRecoveryV1.cs',
+  'scripts/windows/recover-stephanos-core-lock.ps1',
+  'scripts/windows/stephanos-core-lock-recovery-policy.ps1',
   'scripts/canonical-mailbox-execution-ledger-v1.mjs',
   'scripts/canonical-mailbox-rotation-transaction-v2.mjs',
   'scripts/canonical-mailbox-rotation-host-v1.mjs',
@@ -123,6 +244,9 @@ const NATURAL_EXACT = new Set([
   REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH,
   'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
   'scripts/battle-bridge-github-sync-executor.mjs',
+  // The fixed sync executor spawns this bounded one-shot child afresh each cycle.
+  // Natural reload confirms source adoption; never run housekeeping as refresh.
+  'scripts/battle-bridge-sync-housekeeper-runner.mjs',
   'scripts/battle-bridge-github-sync-and-refresh.mjs',
   'scripts/stephanos-codex-dispatch-mcp.mjs',
   'scripts/battle-bridge-post-sync-refresh.mjs',
@@ -185,6 +309,24 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
 ]);
 
 const NO_RUNTIME_EXACT = new Set([
+  'scripts/windows/Test-StarfieldMonitorSplash.ps1',
+  'scripts/windows/starfield-native-monitor/test_splash_monitor_bridge.py',
+  'scripts/windows/starfield-native-monitor/test_run_native_eye_output_monitor.py',
+  'scripts/windows/starfield-native-monitor/test_start_native_eye_output_session.py',
+  'scripts/windows/starfield-native-monitor/test_analyze_native_eye_output_session.py',
+  // Existing GitHub Actions job loads this fixed artifact producer from its
+  // exact checkout. It is never a resident Battle Bridge process or a local
+  // submission adapter; activating the native reader belongs to the relay.
+  'scripts/control-tower-build-request-v1.mjs',
+  // Offline/attended native package sources. Source adoption cannot compile,
+  // install, sign, commission, or qualify their separately installed binaries.
+  'scripts/windows/install-vr-openxr-telemetry-layer.ps1',
+  'src/vr/Stephanos.OpenXrTelemetryLayer/layer.json',
+  'src/vr/Stephanos.OpenXrTelemetryLayer/stephanos-openxr-telemetry-layer.cpp',
+  'src/vr/Stephanos.OpenXrTelemetryLayer/stephanos-openxr-telemetry-layer.test.cpp',
+  'src/windows/Stephanos.OriginalR7CustodyWitness.Tests/LegacySigningInterop.mjs',
+  'src/windows/Stephanos.OriginalR7CustodyWitness.Tests/OriginalR7SigningProviderTests.cs',
+  'src/windows/Stephanos.OriginalR7CustodyWitness/OriginalR7SigningPrimitives.cs',
   // Manual offline source-package construction; no runtime root imports it.
   'scripts/sovereign-fixed-runtime-install-source-package-v1.mjs',
   'scripts/sovereign-fixed-runtime-install-current-v1.mjs',
@@ -200,9 +342,37 @@ const NO_RUNTIME_EXACT = new Set([
   // Protected host C# source is compiled only by the attended installer. A
   // source change never activates or qualifies the installed native binary.
   'scripts/windows/SovereignFixedRuntimeHostV1.cs',
+  'scripts/windows/SovereignFixedRuntimeJobV1.cs',
+  'scripts/windows/SovereignFixedRuntimeSourceV1.cs',
   'scripts/windows/install-sovereign-fixed-runtime-v1.ps1',
+  // Exact #1814 offline review/bootstrap and native compilation inputs. Their
+  // immutable manual enrollment/preservation routes retain separate authority;
+  // sync never compiles, installs, preserves a partial root or qualifies them.
+  'scripts/battle-bridge-mobile-install-enrollment-bootstrap-v1.mjs',
+  'scripts/battle-bridge-mobile-install-enrollment-review-v1.mjs',
+  'scripts/battle-bridge-mobile-partial-preservation-review-v1.mjs',
+  'scripts/windows/SovereignMobileInstallAnchorV1.cs',
+  'scripts/windows/SovereignMobileInstallAssertionV1.cs',
+  'scripts/windows/SovereignMobileInstallEnrollmentV1.cs',
+  'scripts/windows/SovereignMobileInstallEntryV1.cs',
+  'scripts/windows/SovereignMobileInstallExecutorV1.cs',
+  'scripts/windows/SovereignMobileInstallJournalV1.cs',
+  'scripts/windows/SovereignMobileInstallProvisioningV1.cs',
+  'scripts/windows/SovereignMobileInstallReceiptV1.cs',
+  'scripts/windows/SovereignMobileInstallReconciliationV1.cs',
+  'scripts/windows/SovereignMobileInstallReleaseV1.cs',
+  'scripts/windows/SovereignMobileInstallRequestsV1.cs',
+  'scripts/windows/install-battle-bridge-mobile-installer-v1.ps1',
+  'scripts/windows/preserve-battle-bridge-mobile-partial-v1.ps1',
+  // Exact test-only consumers; no scripts/fixtures or native-source wildcard.
+  'scripts/fixtures/mobile-device-pairing-v1.mjs',
+  'scripts/fixtures/sovereign-mobile-installer-native-source-v1.mjs',
+  'scripts/windows/test-sovereign-fixed-runtime-job-v1.ps1',
+  'scripts/fixtures/sovereign-fixed-runtime-adoption-parent-fixture-v1.mjs',
   'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',
   'scripts/fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs',
+  'scripts/fixtures/sovereign-fixed-runtime-parent-protocol-fixture-v1.mjs',
+  'scripts/fixtures/sovereign-fixed-runtime-source-proof-fixture-v1.mjs',
   'scripts/canonical-mailbox-rollover-github-adapter.mjs',
   'scripts/canonical-mailbox-workflow-admission-v1.mjs',
   'scripts/canonical-mailbox-workflow-event-gate.mjs',
@@ -213,6 +383,10 @@ const NO_RUNTIME_EXACT = new Set([
   'LICENSE',
   'README.md',
   'scripts/publish-battle-bridge-main-advance-signal.mjs',
+  // Exact GitHub Actions-only review-probe helper; never a resident Windows
+  // runtime, so it cannot obstruct independent Backend/Mission Worker reload.
+  // The two Spatial resident paths retain their independent adoption hold.
+  'scripts/exact-head-qualified-escalation-v1.mjs',
   'scripts/exact-head-review-dispatch.mjs',
   'scripts/exact-head-review-current-main-admission-v1.mjs',
   'scripts/bind-independent-review-handoff-provenance-v1.mjs',
@@ -220,6 +394,8 @@ const NO_RUNTIME_EXACT = new Set([
   'scripts/launch-missing-independent-review-v1.mjs',
   'scripts/recover-successful-independent-review-v1.mjs',
   'scripts/battle-bridge-mobile-recovery-attestation-v1.mjs',
+  // One-shot PR-estate CLI: explicit invocation never adopts a resident service.
+  'scripts/pr-estate-reconcile.mjs',
   'shared/agents/battleBridgeMainAdvanceSignalV1.mjs',
   'shared/agents/mailboxReceiptIndexGitHubMirror.mjs',
   'shared/agents/codexBankedResetTelemetryMirror.mjs',
@@ -235,11 +411,57 @@ const NO_RUNTIME_EXACT = new Set([
   // source adoption must not restart a long-running runtime. Keep exact-only.
   'scripts/starfield-vr-project-performance-loop.mjs',
   'scripts/sovereign-windows-review-calibration-v1-engine.mjs',
+  // One-shot protected review entries. Adoption never installs/trusts the
+  // launcher or invokes inference; their existing installation gates remain.
+  'scripts/sovereign-high-risk-advisory-launcher-v1.mjs',
+  'scripts/sovereign-high-risk-advisory-v1.mjs',
   'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
+  // Exact test fixtures have no production caller. Do not generalize this
+  // allowance to neighboring native sources or PowerShell scripts.
+  'scripts/fixtures/sovereign-directory-package-fixture-v1.mjs',
+  'scripts/windows/stephanos-core-absent-bootstrap.test.ps1',
+  'scripts/windows/test-starfield-vr-telemetry-invocation.ps1',
+  // Hosted protected-review and bounded reviewer entrypoints load afresh;
+  // adoption neither runs inference nor grants review or merge authority.
+  'scripts/protected-ready-review-lifecycle-v1.mjs',
+  'scripts/sovereign-reviewer-ollama-calibration-v1.mjs',
+  'scripts/sovereign-reviewer-v1.mjs',
+  'scripts/sovereign-reviewer-wsl-bridge-v1.mjs',
+  // Browser registration compiles this native source only during an explicit
+  // install. Checkout adoption does not update or attest the registered binary.
+  'scripts/windows/SovereignBrowserWitnessHost.cs',
+  'scripts/windows/install-sovereign-browser-witness.ps1',
+  'scripts/windows/uninstall-sovereign-browser-witness.ps1',
+  // Offline R7 build/test inputs and the hosted-only capacity probe have no
+  // resident consumer. Signing, loading and native qualification stay gated.
+  'scripts/windows/build-original-r7-native-qualification.ps1',
+  'scripts/windows/inspect-r7-hosted-linux-lab-capacity.py',
+  'src/windows/Stephanos.OriginalR7CustodyWitness/ProspectiveNativeScopeCapture.cs',
+  'src/windows/Stephanos.OriginalR7CustodyWitness/ProspectiveProcessingClaimContext.cs',
+  'src/windows/Stephanos.OriginalR7NativeQualification/.gitignore',
+  'src/windows/Stephanos.OriginalR7NativeQualification/Client.c',
+  'src/windows/Stephanos.OriginalR7NativeQualification/NativeQualification.c',
+  'src/windows/Stephanos.OriginalR7NativeQualification/Protocol.h',
+  'src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests/.gitignore',
+  'src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests/Program.cs',
+  'src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests/Stephanos.ProspectiveProcessingClaimContext.Tests.csproj',
+  // These Spatial wrappers load on explicit invocation; native C++ is consumed
+  // only by an explicit build. Source adoption dispatches no preparation,
+  // installer, launcher or restart, and never qualifies an installed binary.
+  // The resident host and its static JS contract retain separate adoption debt.
+  'scripts/windows/build-spatial-window.ps1',
+  'scripts/windows/install-spatial-window.ps1',
+  'scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1',
+  'scripts/windows/launch-stephanos-spatial-workspace.ps1',
+  'scripts/windows/prepare-spatial-workspace.ps1',
+  'scripts/windows/spatial-window-install-lock.ps1',
+  'scripts/windows/start-spatial-window-host.ps1',
+  'src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp',
 ]);
 
 const LAUNCHER_CRITICAL_SOURCE_PATHS = new Set([
   'main.js',
+  'style.css',
   'modules/command-deck/command-deck.js',
   'system/module_loader.js',
   'system/workspace.js',
@@ -323,6 +545,9 @@ function isOpenClawPath(path) {
 function isUiPath(path) {
   return LAUNCHER_CRITICAL_SOURCE_PATHS.has(path)
     || UI_BUILD_AND_PROOF_TOOLCHAIN_PATHS.has(path)
+    // This exact stylesheet is imported by stephanos-ui/src/main.jsx.
+    // Classify it as a UI reload, not no-runtime or a generic styles allowance.
+    || path === 'shared/styles/stephanos-card-layout.css'
     || path.startsWith('stephanos-ui/')
     || path.startsWith('system/apps/')
     || (path.startsWith('apps/') && !path.startsWith('apps/stephanos/dist/'))
@@ -361,6 +586,9 @@ function isBackendPath(path) {
 
 function isMissionWorkerPath(path) {
   if (path === MISSION_WORKER_POST_SYNC_COORDINATOR_PATH || path === GOAL_DISCOVERY_HEARTBEAT_RUNTIME_PATH) return true;
+  // The supervised worker statically imports this guardian and calls it on
+  // recurring ticks; its CLI entrypoint does not make it invocation-only.
+  if (path === 'scripts/completion-guardian.mjs') return true;
   if (NATURAL_EXACT.has(path)) return false;
   return (path.startsWith('shared/agents/') && !NATURAL_EXACT.has(path))
     || path.startsWith('scripts/mission-orchestrator-worker')
@@ -394,7 +622,9 @@ function isNaturalReloadPath(path) {
     || NATURAL_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
-export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefreshRequired = false } = {}) {
+export function classifyPostSyncRefresh(changedPaths = [], {
+  sovereignRelayRefreshRequired = false, spatialAdoptionRequired = false,
+} = {}) {
   const safePaths = [];
   const unsafePaths = [];
   for (const rawPath of Array.isArray(changedPaths) ? changedPaths : []) {
@@ -407,10 +637,15 @@ export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefre
   const noRuntimePaths = [];
   const unknownPaths = [];
   const openClawPaths = [];
+  const spatialAdoptionPaths = [];
 
   for (const path of [...new Set(safePaths)]) {
     if (isTestOrDocumentation(path)) {
       noRuntimePaths.push(path);
+      continue;
+    }
+    if (SPATIAL_RESIDENT_ADOPTION_PATHS.has(path)) {
+      spatialAdoptionPaths.push(path);
       continue;
     }
     let classified = false;
@@ -451,6 +686,7 @@ export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefre
 
   const relayRequired = sovereignRelayRefreshRequired === true
     || safePaths.some((path) => SOVEREIGN_RELAY_RUNTIME_EXACT.has(path));
+  const spatialRequired = spatialAdoptionRequired === true || spatialAdoptionPaths.length > 0;
   // A later revert can remove a path from the net diff without proving that an
   // earlier partially refreshed relay stopped using it. Preserve its debt.
   if (relayRequired) targets.add(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER);
@@ -459,6 +695,7 @@ export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefre
   if (unsafePaths.length) classification = POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNSAFE_CHANGED_PATH;
   else if (unknownPaths.length) classification = POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH;
   else if (openClawPaths.length) classification = POST_SYNC_REFRESH_CLASSIFICATIONS.APPROVAL_REQUIRED_OPENCLAW;
+  else if (spatialRequired) classification = POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_SPATIAL_ADOPTION_REQUIRED;
   else if (targetIds.length) classification = POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY;
 
   return Object.freeze({
@@ -469,6 +706,8 @@ export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefre
     safePathCount: safePaths.length,
     noRuntimePathCount: noRuntimePaths.length,
     openClawPathCount: openClawPaths.length,
+    spatialAdoptionPathCount: spatialAdoptionPaths.length,
+    spatialAdoptionRequired: spatialRequired,
     unknownPathCount: unknownPaths.length,
     unsafePathCount: unsafePaths.length,
     openClawApprovalRequired: openClawPaths.length > 0,
@@ -482,6 +721,7 @@ export function classifyPostSyncRefresh(changedPaths = [], { sovereignRelayRefre
       safePaths: Object.freeze([...new Set(safePaths)]),
       noRuntimePaths: Object.freeze(noRuntimePaths),
       openClawPaths: Object.freeze(openClawPaths),
+      spatialAdoptionPaths: Object.freeze(spatialAdoptionPaths),
       unknownPaths: Object.freeze(unknownPaths),
       unsafePaths: Object.freeze(unsafePaths),
     }),
@@ -495,11 +735,13 @@ function validHead(value) {
 function resultPass(result, expectedHead) {
   return result?.ok === true
     && result?.exactHeadProofOk === true
+    && (result?.blocker === undefined || result?.blocker === '')
     && String(result?.sourceHead || '').toLowerCase() === String(expectedHead).toLowerCase();
 }
 
 export function postSyncRefreshTargetResultPass(result, { targetId, plan, expectedHead } = {}) {
   if (!resultPass(result, expectedHead)) return false;
+  if (result?.targetId !== undefined && result.targetId !== targetId) return false;
   if (targetId !== POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER || plan?.sovereignRelayRefreshRequired !== true) return true;
   return (result.blocker === undefined || result.blocker === '')
     && projectPostSyncSovereignRelayProof(result.sovereignRelayProof, expectedHead) !== null;
@@ -511,6 +753,7 @@ const TARGET_FAILURE_KINDS = new Set(['RESULT_UNPROVEN', 'INVOCATION_FAILED', 'H
 // strings become a fixed code rather than entering durable/public history.
 const TARGET_FAILURE_CODES = new Set([
   'REFRESH_TARGET_PROOF_FAILED', 'REFRESH_TARGET_INVOCATION_FAILED', 'REFRESH_TARGET_HANDLER_MISSING',
+  'REFRESH_TARGET_IDENTITY_UNPROVEN',
   'SOVEREIGN_COMMANDER_OPERATOR_CONTEXT_UNPROVEN', 'SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED',
   'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN', 'SOVEREIGN_MAINTENANCE_OWNER_BUSY',
   'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN', 'SOVEREIGN_COMMANDER_SERVER_SCRIPT_MISSING',
@@ -592,6 +835,7 @@ export async function executePostSyncRefreshPlan({
   adapters = {},
   completedResults = [],
   sovereignRelayRefreshRequired = false,
+  spatialAdoptionRequired = false,
   onTargetComplete,
 } = {}) {
   if (!validHead(beforeHead) || !validHead(afterHead) || beforeHead === afterHead) {
@@ -604,7 +848,7 @@ export async function executePostSyncRefreshPlan({
     });
   }
 
-  const plan = classifyPostSyncRefresh(changedPaths, { sovereignRelayRefreshRequired });
+  const plan = classifyPostSyncRefresh(changedPaths, { sovereignRelayRefreshRequired, spatialAdoptionRequired });
   if (!plan.automaticExecutionAllowed) {
     return Object.freeze({
       ok: false,
@@ -616,7 +860,25 @@ export async function executePostSyncRefreshPlan({
     });
   }
 
-  const resumable = new Map((Array.isArray(completedResults) ? completedResults : [])
+  // Check raw multiplicity before filtering out stale or unsuccessful rows.
+  // A favorable duplicate must never hide a contradictory stored observation.
+  const checkpointEntries = Array.isArray(completedResults) ? completedResults : [];
+  const seenCheckpointTargets = new Set();
+  for (const entry of checkpointEntries) {
+    if (!plan.targetIds.includes(entry?.targetId)) continue;
+    if (seenCheckpointTargets.has(entry.targetId)) {
+      return Object.freeze({
+        ok: false,
+        classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
+        blocker: `REFRESH_COMPLETED_RESULT_AMBIGUOUS:${entry.targetId}`,
+        plan,
+        exactHeadProofOk: false,
+        results: Object.freeze([]),
+      });
+    }
+    seenCheckpointTargets.add(entry.targetId);
+  }
+  const resumable = new Map(checkpointEntries
     .filter((entry) => plan.targetIds.includes(entry?.targetId)
       && postSyncRefreshTargetResultPass(entry, { targetId: entry.targetId, plan, expectedHead: afterHead }))
     .map((entry) => [entry.targetId, Object.freeze({ ...entry, resumed: true })]));
@@ -679,6 +941,13 @@ export async function executePostSyncRefreshPlan({
         results: Object.freeze(results),
       });
     }
+    // The plan owns identity. Refuse a contradictory adapter response before
+    // assigning that identity to the durable row; merely overwriting the ID
+    // would manufacture a success that a later execution could resume.
+    if (result?.targetId !== undefined && result.targetId !== targetId) {
+      result = { ...result, ok: false, exactHeadProofOk: false, freshProcessLoaded: false,
+        blocker: result?.blocker || 'REFRESH_TARGET_IDENTITY_UNPROVEN' };
+    }
     // Normalize a generic HTTP-only success before publishing its checkpoint or
     // reducing failure history. Such a result cannot clear relay refresh debt.
     if (targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER && plan.sovereignRelayRefreshRequired
@@ -687,10 +956,10 @@ export async function executePostSyncRefreshPlan({
       result = { ...result, ok: false, exactHeadProofOk: false, freshProcessLoaded: false,
         sovereignRelayProof: null, blocker: 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN' };
     }
-    const completed = Object.freeze({ targetId, ...result });
+    const completed = Object.freeze({ ...result, targetId });
     results.push(completed);
-    const passed = postSyncRefreshTargetResultPass(result, { targetId, plan, expectedHead: afterHead });
-    const publicationFailure = await checkpoint({ targetId, result, failureKind: passed ? '' : 'RESULT_UNPROVEN' });
+    const passed = postSyncRefreshTargetResultPass(completed, { targetId, plan, expectedHead: afterHead });
+    const publicationFailure = await checkpoint({ targetId, result: completed, failureKind: passed ? '' : 'RESULT_UNPROVEN' });
     if (publicationFailure) return publicationFailure;
     if (!passed) {
       return Object.freeze({ ok: false, classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
@@ -718,17 +987,30 @@ export async function executePostSyncRefreshPlan({
     // the exact loaded source, manifest and fresh host session.
     let hostProof = null;
     if (typeof adapters.verifySovereignPluginHost === 'function') {
+      // The private adapter is not commissioned yet. A future host transport
+      // must not strand the original post-sync lock on an unanswered request.
+      // This finite read-only deadline adds no retry or native mutation right.
+      const abortController = new AbortController();
+      let deadlineTimer;
       try {
-        hostProof = await adapters.verifySovereignPluginHost({ beforeHead, afterHead, plan });
+        hostProof = await Promise.race([
+          Promise.resolve().then(() => adapters.verifySovereignPluginHost({
+            beforeHead, afterHead, plan, signal: abortController.signal,
+          })),
+          new Promise(resolve => {
+            deadlineTimer = setTimeout(() => {
+              abortController.abort();
+              resolve(null);
+            }, 3_000);
+          }),
+        ]);
       } catch {
         hostProof = null;
+      } finally {
+        clearTimeout(deadlineTimer);
       }
     }
-    const hostVerified = hostProof?.ok === true
-      && hostProof?.exactHeadProofOk === true
-      && hostProof?.desktopPluginHostHandshakeVerified === true
-      && hostProof?.loadedManifestVerified === true
-      && String(hostProof?.sourceHead || '').toLowerCase() === String(afterHead).toLowerCase();
+    const hostVerified = sovereignPluginHostProofPass(hostProof, afterHead);
     if (!hostVerified) {
       return Object.freeze({
         ok: false,
@@ -741,6 +1023,22 @@ export async function executePostSyncRefreshPlan({
         results: Object.freeze(results),
       });
     }
+  }
+
+  // All established target gates remain independent and run in their existing
+  // order. There is deliberately no Spatial adapter or success predicate here.
+  // A future qualified Spatial owner must implement actual adoption before this
+  // durable hold can be discharged; a revert or cached target receipt cannot.
+  if (plan.spatialAdoptionRequired) {
+    return Object.freeze({
+      ok: false,
+      classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_SPATIAL_ADOPTION_REQUIRED,
+      blocker: 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN',
+      plan,
+      exactHeadProofOk: false,
+      safeRefreshesCompleted: true,
+      results: Object.freeze(results),
+    });
   }
 
   return Object.freeze({
@@ -769,6 +1067,8 @@ export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', a
     changedPathCount: Number(plan.changedPathCount || 0),
     noRuntimePathCount: Number(plan.noRuntimePathCount || 0),
     openClawPathCount: Number(plan.openClawPathCount || 0),
+    spatialAdoptionPathCount: Number(plan.spatialAdoptionPathCount || 0),
+    spatialAdoptionRequired: plan.spatialAdoptionRequired === true,
     pluginHostActivationRequired: plan.pluginHostActivationRequired === true,
     sovereignRelayRefreshRequired: plan.sovereignRelayRefreshRequired === true,
     unknownPathCount: Number(plan.unknownPathCount || 0),
@@ -779,13 +1079,16 @@ export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', a
       const relayProof = projectPostSyncSovereignRelayProof(entry.sovereignRelayProof, afterHead);
       const relayObservation = projectPostSyncSovereignRelayObservation(entry.sovereignRelayObservation, afterHead);
       const required = entry.targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER && plan.sovereignRelayRefreshRequired === true;
-      const qualified = !required || postSyncRefreshTargetResultPass(entry, { targetId: entry.targetId, plan, expectedHead: afterHead });
+      const planned = Array.isArray(plan.targetIds) && plan.targetIds.includes(entry.targetId);
+      const qualified = planned && postSyncRefreshTargetResultPass(entry, { targetId: entry.targetId, plan, expectedHead: afterHead });
+      const missingRelayProof = required && resultPass(entry, afterHead) && !relayProof;
       return {
         targetId: entry.targetId,
         ok: entry.ok === true && qualified,
         exactHeadProofOk: entry.exactHeadProofOk === true && qualified,
         sourceHead: validHead(entry.sourceHead) ? String(entry.sourceHead).toLowerCase() : '',
-        blocker: !qualified && entry.ok === true ? 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN' : String(entry.blocker || ''),
+        blocker: String(entry.blocker || (qualified ? '' : missingRelayProof
+          ? 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN' : 'REFRESH_TARGET_PROOF_FAILED')),
         ...(relayProof ? { sovereignRelayProof: relayProof } : {}),
         ...(relayObservation ? { sovereignRelayObservation: relayObservation } : {}),
       };

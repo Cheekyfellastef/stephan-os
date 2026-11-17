@@ -1,6 +1,7 @@
 import { projectControlTowerLatestRequestObservationV1,
   controlTowerObservationBlockerV1 } from './controlTowerRequestObservationV1.mjs';
-import { CONTROL_TOWER_BUILD_OPERATION, CONTROL_TOWER_OBSERVE_OPERATION } from './controlTowerBuildRequestV1.mjs';
+import { CONTROL_TOWER_BUILD_OPERATION, CONTROL_TOWER_OBSERVE_OPERATION,
+  parseControlTowerRequestIdV1, controlTowerRequestIdentityValidV1 } from './controlTowerBuildRequestV1.mjs';
 
 // Read-only projections of the EXISTING relay and original execution ledger.
 // Current polls and retained request outcomes have distinct identities/times.
@@ -9,7 +10,6 @@ const RELAY_SCHEMA = 'stephanos.sovereign-relay-daemon.v1';
 const CONSUMER_SCHEMA = 'stephanos.control-tower-build-consumer.v1';
 const SHA = /^[a-f0-9]{40}$/;
 const HASH = /^[a-f0-9]{64}$/;
-const REQUEST = /^control-tower-build-([1-9][0-9]{0,15})-1$/;
 const STATES = new Set(['WAITING', 'HELD', 'REPLAY_HELD', 'UNKNOWN', 'WAKE_BLOCKED', 'WAKE_COMPLETED',
   'OBSERVATION_COMPLETED', 'OBSERVATION_BLOCKED']);
 const REQUIRE_REQUEST = new Set(['REPLAY_HELD', 'UNKNOWN', 'WAKE_BLOCKED', 'WAKE_COMPLETED',
@@ -68,11 +68,11 @@ export function projectControlTowerBuildBeaconFactsV1(relay, {
     return finish(unproven('CONTROL_TOWER_BUILD_REQUEST_BINDING_INVALID'));
   if (stale(evidence.observedAtUtc, nowMs, maxAgeMs)) return finish(unproven('CONTROL_TOWER_BUILD_RECEIPT_STALE'));
   const requestId = evidence.requestId ?? '';
-  const matched = typeof requestId === 'string' ? REQUEST.exec(requestId) : null;
+  const matched = parseControlTowerRequestIdV1(requestId);
   if ((REQUIRE_REQUEST.has(evidence.state) && !matched) || typeof requestId !== 'string' || (requestId && !matched))
     return finish(unproven('CONTROL_TOWER_BUILD_REQUEST_ID_INVALID'));
-  const runId = matched ? Number(matched[1]) : null;
-  if (matched && (!Number.isSafeInteger(runId) || runId !== evidence.runId || evidence.sourceHead !== expectedHead))
+  const runId = matched ? evidence.runId : null;
+  if (matched && (!controlTowerRequestIdentityValidV1(evidence) || evidence.sourceHead !== expectedHead))
     return finish(unproven('CONTROL_TOWER_BUILD_REQUEST_BINDING_INVALID'));
   const blocker = evidence.blocker ?? '';
   if (typeof blocker !== 'string' || (blocker && controlTowerObservationBlockerV1(blocker) !== blocker))
@@ -91,6 +91,7 @@ export function projectControlTowerBuildBeaconFactsV1(relay, {
   return finish(Object.freeze({
     schemaVersion: CONTROL_TOWER_BUILD_BEACON_FACTS_SCHEMA,
     observed: true, state: evidence.state, blocker, runId, requestId,
+    ...(matched?.ownerCommentId ? { ownerCommentId: matched.ownerCommentId } : {}),
     ...(evidence.operation ? { operation: evidence.operation } : {}),
     observedAtUtc: evidence.observedAtUtc, exactHeadMatch: true,
     wakeObserved: evidence.state === 'WAKE_COMPLETED', observationCompleted: evidence.state === 'OBSERVATION_COMPLETED',

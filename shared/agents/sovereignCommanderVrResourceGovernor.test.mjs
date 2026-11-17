@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, mkdir, lstat, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { SOVEREIGN_COMMANDER_REMOTE_ACTIONS } from './sovereignCommanderRemoteMailboxV1.mjs';
 import { coreGamingProtectionFromGovernor } from './stephanosCoreDaemonV1.mjs';
@@ -396,3 +400,164 @@ test('VR Watch throttles heavyweight desktop scans without slowing VR headset pr
   assert.match(governor, /\[void\]\(Invoke-ImmediateVrModelEviction\)[\s\S]{0,500}\$signal = Get-GamingSignal -ThrottleFlatGameScan/);
   assert.match(governor, /\$flatGame = Get-FlatGameSignal[\s\S]{0,170}\$flatGame\.active/);
 });
+
+// Execute the unchanged full script, including its real parameter block and
+// ObserveAdmission dispatch. Constant aliases precede functions in PowerShell
+// command resolution, so production helper definitions cannot replace these
+// inert mutation guards. No host process/model/registry action is reachable.
+const GOVERNOR_OBSERVATION_FIXTURE_WRAPPER = String.raw`$ErrorActionPreference='Stop'
+$PSModuleAutoLoadingPreference='None'
+$ProgressPreference='SilentlyContinue'
+[Console]::InputEncoding=[Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1' -ErrorAction Stop
+Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.Management\Microsoft.PowerShell.Management.psd1' -ErrorAction Stop
+function Deny-GovernorFixtureMutation {
+    [Console]::Error.WriteLine('GOVERNOR_FIXTURE_MUTATION_FORBIDDEN')
+    exit 97
+}
+function Get-Process {
+    [CmdletBinding()]param([string[]]$Name,[int[]]$Id)
+    [Console]::Error.WriteLine('GOVERNOR_FIXTURE_PROCESS_READ')
+    if($PSBoundParameters.ContainsKey('Id')) { Deny-GovernorFixtureMutation }
+    $mode=$env:STEPHANOS_OBSERVE_FIXTURE_SIGNAL
+    if($mode -ceq 'NONE') { return }
+    $processName=if($mode -ceq 'VR'){'vrcompositor'}elseif($mode -ceq 'FLAT'){'Starfield'}else{Deny-GovernorFixtureMutation}
+    if($PSBoundParameters.ContainsKey('Name') -and $Name -notcontains $processName) { return }
+    [pscustomobject]@{ProcessName=$processName;Id=424242;Path='C:\fixture\Starfield.exe';MainWindowHandle=1}
+}
+function Get-CimInstance {
+    [CmdletBinding()]param([string]$ClassName,[string]$Filter)
+    if($ClassName -cne 'Win32_Process' -or $Filter -cne 'ProcessId=424242') { Deny-GovernorFixtureMutation }
+    [Console]::Error.WriteLine('GOVERNOR_FIXTURE_PARENT_READ')
+    [pscustomobject]@{ParentProcessId=0}
+}
+foreach($name in @(
+    'Ensure-StateRoot','Write-OverrideMode','Write-PrepareLease','Clear-PrepareLease','Read-PrepareLease',
+    'Resolve-EffectiveState','Read-GovernorState','Resolve-OllamaExecutable','Get-GpuSnapshot',
+    'Get-LoadedOllamaModels','Get-OllamaVrRuntimeProcesses','Stop-OllamaModel',
+    'Stop-OllamaRuntimeForRealVr','Invoke-ImmediateVrModelEviction','Append-TelemetryEvent',
+    'Write-GovernorState','Invoke-Reconcile','Invoke-CurrentReconcile',
+    'Stop-Process','Start-Process','Remove-Item','New-Item','Set-Content','Add-Content','Out-File',
+    'Set-Item','Copy-Item','Move-Item','Clear-Content','Get-Command','Get-ChildItem',
+    'Set-ItemProperty','New-ItemProperty','Remove-ItemProperty','Invoke-Expression','Add-Type',
+    'Invoke-RestMethod','Invoke-WebRequest','Start-Sleep','Register-ScheduledTask','Start-ScheduledTask',
+    'ollama','ollama.exe','nvidia-smi','nvidia-smi.exe','taskkill','taskkill.exe',
+    'powershell','powershell.exe','pwsh','pwsh.exe','cmd','cmd.exe','reg','reg.exe','schtasks','schtasks.exe'
+)) {
+    Set-Alias -Name $name -Value Deny-GovernorFixtureMutation -Option Constant -Scope Global
+    $guard=Get-Alias -Name $name
+    if($guard.Definition -cne 'Deny-GovernorFixtureMutation' -or
+       (($guard.Options -band [System.Management.Automation.ScopedItemOptions]::Constant) -eq 0)) {
+        Deny-GovernorFixtureMutation
+    }
+}
+$source=[Console]::In.ReadToEnd()
+$hash=[Security.Cryptography.SHA256]::Create()
+try{$digest=([BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($source)))).Replace('-','').ToLowerInvariant()}
+finally{$hash.Dispose()}
+[Console]::Error.WriteLine('GOVERNOR_FIXTURE_SOURCE_SHA256='+$digest)
+& ([ScriptBlock]::Create($source)) -Action ObserveAdmission`;
+
+async function governorFixtureTree(root) {
+  const rows = [];
+  async function visit(path, relative) {
+    let stat;
+    try { stat = await lstat(path); }
+    catch (error) { if (error.code === 'ENOENT') return; throw error; }
+    assert.equal(stat.isSymbolicLink(), false);
+    if (stat.isDirectory()) {
+      rows.push({ path: relative, kind: 'directory', mtimeMs: stat.mtimeMs });
+      for (const child of (await readdir(path)).sort()) await visit(join(path, child), relative ? relative + '/' + child : child);
+    } else {
+      assert.equal(stat.isFile(), true);
+      rows.push({ path: relative, kind: 'file', mtimeMs: stat.mtimeMs,
+        bytes: (await readFile(path)).toString('base64') });
+    }
+  }
+  await visit(root, '');
+  return rows;
+}
+
+for (const scenario of [
+  { name: 'fresh flat game with absent state and retained expired preparation', signal: 'FLAT',
+    mode: 'FORCE_OFF', prepare: true, state: false, workspace: true },
+  { name: 'fresh idle signals despite stale recorded activity', signal: 'NONE',
+    mode: 'FORCE_ON', prepare: false, state: true, workspace: true },
+  { name: 'fresh VR signals with unchanged preparation and persisted state', signal: 'VR',
+    mode: 'AUTO', prepare: true, state: true, workspace: true },
+  { name: 'absent workspace stays absent during idle observation', signal: 'NONE',
+    mode: null, prepare: false, state: false, workspace: false },
+]) {
+  test('Windows actual ObserveAdmission: ' + scenario.name, {
+    skip: process.platform !== 'win32', timeout: 20000,
+  }, async t => {
+    const profile = await mkdtemp(join(tmpdir(), 'stephanos-governor-observation-'));
+    t.after(() => rm(profile, { recursive: true, force: true }));
+    const workspace = join(profile, 'Documents', 'Stephanos-openclaw-workspace');
+    const stateRoot = join(workspace, 'vr');
+    const localAppData = join(profile, 'AppData', 'Local');
+    const appData = join(profile, 'AppData', 'Roaming');
+    const temp = join(profile, 'Temp');
+    await Promise.all([mkdir(localAppData, { recursive: true }), mkdir(appData, { recursive: true }),
+      mkdir(temp, { recursive: true })]);
+    if (scenario.workspace) {
+      await mkdir(stateRoot, { recursive: true });
+      await writeFile(join(stateRoot, 'gaming-resource-governor-events.jsonl'), '{"fixture":"retained-event"}\n');
+      await writeFile(join(stateRoot, 'gaming-resource-profiles.json'), '{"fixture":"retained-profile"}\n');
+      await writeFile(join(stateRoot, 'gaming-resource-override.json'), JSON.stringify({
+        schemaVersion: 'stephanos.gaming-resource-override.v1', mode: scenario.mode,
+        updatedAtUtc: '2000-01-01T00:00:00.000Z',
+      }) + '\n');
+    }
+    if (scenario.prepare) await writeFile(join(stateRoot, 'gaming-resource-prepare.json'), JSON.stringify({
+      schemaVersion: 'stephanos.gaming-resource-prepare.v1', active: true, processName: 'FixtureGame',
+      profileName: 'generic-safe', expiresAtUtc: '2000-01-01T00:00:00.000Z',
+      fixtureEvidence: 'expired-owner-evidence-must-remain-exact',
+    }) + '\n');
+    if (scenario.state) await writeFile(join(stateRoot, 'vr-resource-governor-current.json'), JSON.stringify({
+      schemaVersion: 'stephanos.vr-resource-governor.v1', governorVersion: 3,
+      active: scenario.signal === 'NONE', updatedAtUtc: '2000-01-01T00:00:00.000Z',
+      fixtureEvidence: 'historical-state-must-never-be-refreshed-by-observation',
+    }) + '\n');
+    const before = await governorFixtureTree(workspace);
+    const encoded = Buffer.from(GOVERNOR_OBSERVATION_FIXTURE_WRAPPER, 'utf16le').toString('base64');
+    assert.ok(encoded.length < 28000, 'Only the small fixture wrapper belongs on the Windows command line');
+    const startedAt = Date.now();
+    const observed = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], {
+        input: governor, encoding: 'utf8', shell: false, windowsHide: true, cwd: profile,
+        timeout: 12000, maxBuffer: 16384,
+        env: {
+          SystemRoot: process.env.SystemRoot || 'C:\\Windows', WINDIR: process.env.WINDIR || 'C:\\Windows',
+          USERPROFILE: profile, LOCALAPPDATA: localAppData, APPDATA: appData, TEMP: temp, TMP: temp,
+          PATH: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\Windows\\System32',
+          STEPHANOS_OBSERVE_FIXTURE_SIGNAL: scenario.signal,
+          STEPHANOS_GAME_PROCESS_NAMES: '', STEPHANOS_GAME_LIBRARY_ROOTS: '',
+        },
+      });
+    const completedAt = Date.now();
+    assert.ifError(observed.error);
+    assert.equal(observed.signal, null);
+    assert.equal(observed.status, 0, observed.stderr);
+    const stderr = observed.stderr.trim().split(/\r?\n/).filter(Boolean);
+    assert.ok(stderr.includes('GOVERNOR_FIXTURE_PROCESS_READ'), 'The real signal detector must read the inert process inventory');
+    assert.ok(stderr.every(line => /^GOVERNOR_FIXTURE_(?:PROCESS_READ|PARENT_READ|SOURCE_SHA256=[a-f0-9]{64})$/.test(line)),
+      'Only fixed fixture observations may reach stderr: ' + observed.stderr);
+    assert.equal(stderr.filter(line => line.startsWith('GOVERNOR_FIXTURE_SOURCE_SHA256=')).length, 1);
+    assert.ok(stderr.includes('GOVERNOR_FIXTURE_SOURCE_SHA256=' + createHash('sha256').update(governor).digest('hex')),
+      'PowerShell must execute the captured original bytes, including their actual parameter block');
+    assert.equal(stderr.includes('GOVERNOR_FIXTURE_PARENT_READ'), scenario.signal === 'FLAT');
+    const result = JSON.parse(observed.stdout);
+    assert.deepEqual(Object.keys(result).sort(),
+      ['observedAtUtc', 'overrideMode', 'preparePending', 'readOnly', 'schemaVersion', 'signalActive']);
+    assert.equal(result.schemaVersion, 'stephanos.gaming-resource-admission-observation.v1');
+    assert.equal(result.signalActive, scenario.signal !== 'NONE');
+    assert.equal(result.overrideMode, scenario.mode || 'AUTO');
+    assert.equal(result.preparePending, scenario.prepare);
+    assert.equal(result.readOnly, true);
+    assert.ok(Date.parse(result.observedAtUtc) >= startedAt && Date.parse(result.observedAtUtc) <= completedAt);
+    assert.deepEqual(await governorFixtureTree(workspace), before,
+      'Observation must not create state, refresh timestamps, clear preparation, or write telemetry');
+  });
+}

@@ -1,6 +1,27 @@
 name: Stephanos Exact-Head Review
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('protected-ready-review-pr-{0}-head-{1}-ready-{2}-binding-{3}', inputs.pr_number, inputs.source_head, inputs.ready_run_id, inputs.ready_receipt_sha256) || github.workflow }}
 
 on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      source_head:
+        required: true
+        type: string
+      base_sha:
+        required: true
+        type: string
+      ready_run_id:
+        required: true
+        type: string
+      ready_artifact_id:
+        required: true
+        type: string
+      ready_receipt_sha256:
+        required: true
+        type: string
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
   issue_comment:
@@ -13,13 +34,14 @@ permissions:
   actions: read
 
 concurrency:
-  group: ${{ github.event_name == 'pull_request_target' && format('stephanos-exact-head-review-pr-{0}', github.event.pull_request.number) || format('stephanos-exact-head-review-comment-{0}', github.event.comment.id) }}
+  group: ${{ github.event_name == 'workflow_dispatch' && format('stephanos-exact-head-review-ready-{0}-{1}', inputs.ready_run_id, inputs.ready_receipt_sha256) || (github.event_name == 'pull_request_target' && format('stephanos-exact-head-review-pr-{0}', github.event.pull_request.number) || format('stephanos-exact-head-review-comment-{0}', github.event.comment.id)) }}
   cancel-in-progress: true
 
 jobs:
   exact-head-review:
     if: >-
       ${{
+        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.sha == inputs.base_sha) ||
         (github.event_name == 'pull_request_target' && !github.event.pull_request.draft) ||
         (github.event_name == 'issue_comment' &&
          github.event.issue.pull_request &&
@@ -70,11 +92,24 @@ jobs:
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           ISSUE_PR_NUMBER: ${{ github.event.issue.number }}
           COMMENT_BODY: ${{ github.event.comment.body }}
+          DISPATCH_PR_NUMBER: ${{ inputs.pr_number }}
+          DISPATCH_HEAD_SHA: ${{ inputs.source_head }}
+          DISPATCH_BASE_SHA: ${{ inputs.base_sha }}
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ "${EVENT_NAME}" == "pull_request_target" ]]; then
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            # A caller cannot choose reviewer code. Both the workflow and its
+            # checkout must come from the event's exact trusted main source.
+            test "${GITHUB_REF}" = 'refs/heads/main'
+            test "${GITHUB_SHA}" = "${DISPATCH_BASE_SHA}"
+            test "${GITHUB_WORKFLOW_SHA}" = "${GITHUB_SHA}"
+            test "${GITHUB_WORKFLOW_REF}" = "${REPOSITORY}/.github/workflows/stephanos-exact-head-review.yml@refs/heads/main"
+            [[ "${DISPATCH_PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]
+            pr_number="${DISPATCH_PR_NUMBER}"
+            expected_head="${DISPATCH_HEAD_SHA}"
+          elif [[ "${EVENT_NAME}" == "pull_request_target" ]]; then
             pr_number="${EVENT_PR_NUMBER}"
             expected_head="${EVENT_HEAD_SHA}"
           else
@@ -121,6 +156,9 @@ jobs:
           test "${base_ref}" = "main"
           [[ "${current_main_sha}" =~ ^[0-9a-fA-F]{40}$ ]]
           [[ "${head_sha}" =~ ^[0-9a-fA-F]{40}$ ]]
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            test "${current_main_sha}" = "${DISPATCH_BASE_SHA}"
+          fi
 
           echo "pr_number=${pr_number}" >> "${GITHUB_OUTPUT}"
           echo "base_sha=${current_main_sha}" >> "${GITHUB_OUTPUT}"
@@ -137,6 +175,12 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${{ steps.identity.outputs.base_sha }}"
+
+      - name: Authenticate immutable READY handoff before review reads
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/protected-ready-review-lifecycle-v1.mjs prepare
 
       - name: Admit exact current-main review target
         id: admission
@@ -160,7 +204,7 @@ jobs:
           test "${ADMITTED_TARGETS}" = "[{\"prNumber\":${PR_NUMBER}}]"
 
       - name: Run trusted engine regressions
-        run: node --test scripts/exact-head-review.test.mjs scripts/exact-head-qualified-escalation-v1.test.mjs
+        run: node --test scripts/exact-head-review.test.mjs scripts/exact-head-qualified-escalation-v1.test.mjs shared/agents/protectedReadyReviewLifecycleV1.test.mjs scripts/protected-ready-review-lifecycle-v1.test.mjs
 
       - name: Build immutable exact-head review input
         env:
@@ -202,9 +246,25 @@ jobs:
       # P2 findings never become approval without independently pinned records.
       # This is an atomic fail-closed qualification check, not a waiver.
       - name: Review exact head and require independently qualified escalation
+        if: github.event_name != 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/exact-head-qualified-escalation-v1.mjs review-proof/input.json review-proof/receipt.json
+
+      - name: Review ready head with the unchanged engine and qualified escalation
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/protected-ready-review-lifecycle-v1.mjs review
+
+      - name: Upload separate immutable lifecycle review proof
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: protected-ready-review-receipt-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: protected-ready-review-receipt.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload SHA-bound review receipt
         if: ${{ always() && steps.github_budget.outcome == 'success' }}

@@ -41,7 +41,8 @@ function Get-NumericValues {
         $parsed = 0.0
         if ([double]::TryParse([string]$raw, [ref]$parsed)) { $values.Add($parsed) }
     }
-    return @($values)
+    # Preserve an empty or single-value array across the PowerShell pipeline.
+    return ,@($values)
 }
 
 function Get-Average {

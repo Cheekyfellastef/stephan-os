@@ -1,4 +1,7 @@
+import { evaluateServedBuildIdentity } from '../shared/runtime/buildParity.mjs';
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import net from 'node:net';
@@ -8,6 +11,7 @@ import {
   repoRoot,
   stephanosDistIndexPath,
   readDistMetadataJson,
+  extractEmbeddedHtmlMetadata,
   stephanosDistMetadataPath,
 } from './stephanos-build-utils.mjs';
 import { createStephanosLocalUrls } from '../shared/runtime/stephanosLocalUrls.mjs';
@@ -149,9 +153,9 @@ function readRuntimeStatus() {
   }
 }
 
-function buildRuntimeStatusPayload() {
+function buildRuntimeStatusPayload(snapshot) {
   const launcherStatus = readRuntimeStatus();
-  const buildMetadata = existsSync(stephanosDistMetadataPath) ? readDistMetadataJson() : null;
+  const buildMetadata = snapshot ? snapshot.metadata || null : (existsSync(stephanosDistMetadataPath) ? readDistMetadataJson() : null);
   const toggleRegistry = getSystemPanelToggleDefinitions();
 
   return {
@@ -169,10 +173,10 @@ function buildRuntimeStatusPayload() {
   };
 }
 
-function buildHealthPayload() {
+function buildHealthPayload(snapshot) {
   const distEntryExists = existsSync(stephanosDistIndexPath);
   const distMetadataExists = existsSync(stephanosDistMetadataPath);
-  const buildMetadata = distMetadataExists ? readDistMetadataJson() : null;
+  const buildMetadata = snapshot ? snapshot.metadata || null : (distMetadataExists ? readDistMetadataJson() : null);
 
   return {
     ok: distEntryExists,
@@ -636,12 +640,58 @@ export async function shutdownServerForRestart(server, {
   return { closed: true, exited: true };
 }
 
+// No authority cache: overlapping requests share only an in-flight capture.
+// A wedged Git reader cannot block the event loop, restart route or health
+// response indefinitely. The fixed Git boundary cannot launch repo helpers.
+export function readServedRuntimeHead({ execFileImpl = execFile } = {}) {
+  return new Promise(resolveHead => {
+    let child, settled = false;
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      resolveHead(value);
+    };
+    const deadline = setTimeout(() => {
+      finish('');
+      try { child?.kill(); child?.unref(); } catch { /* identity stays unknown */ }
+    }, 1000);
+    try {
+      const git = resolveBattleBridgeGitExecution();
+      child = execFileImpl(git.executable, [...git.fixedConfigArgs, 'rev-parse', 'HEAD'], {
+        cwd: repoRoot, env: git.environment, shell: false, windowsHide: true,
+        encoding: 'utf8', timeout: 1000, maxBuffer: 4096,
+      }, (error, stdout) => {
+        const value = String(stdout || '').trim();
+        finish(!error && /^[a-f0-9]{40}$/.test(value) ? value : '');
+      });
+    } catch { finish(''); }
+  });
+}
+
+export async function readServedRuntimeBuildSnapshot({
+  readHead = readServedRuntimeHead,
+  readMetadata = readDistMetadataJson,
+  readIndex = () => readFileSync(stephanosDistIndexPath),
+} = {}) {
+  try {
+    const expectedHead=await readHead();
+    if (!/^[a-f0-9]{40}$/.test(expectedHead || '')) return {};
+    const metadata=readMetadata();
+    const indexBytes=readIndex();
+    const embeddedMetadata=extractEmbeddedHtmlMetadata(indexBytes.toString('utf8'));
+    return {expectedHead, observedHead:await readHead(), metadata, embeddedMetadata, indexBytes};
+  } catch { return {}; }
+}
+
 export function createStephanosDistServer({
   shutdownForRestart = shutdownServerForRestart,
   visibilitySnapshot = null,
+  readRuntimeSnapshot = readServedRuntimeBuildSnapshot,
 } = {}) {
   let server;
-  server = createServer((request, response) => {
+  let captureInFlight = null;
+  server = createServer(async (request, response) => {
     if (visibilitySnapshot) {
       return serveVisibilitySnapshot(request, response, visibilitySnapshot);
     }
@@ -651,12 +701,22 @@ export function createStephanosDistServer({
       return;
     }
 
+    const runtimeSnapshot = () => {
+      if (!captureInFlight) {
+        captureInFlight = Promise.resolve().then(readRuntimeSnapshot)
+          .then(snapshot => ({ ...snapshot, freshness: evaluateServedBuildIdentity(snapshot) }))
+          .catch(() => ({ freshness: { current: false, state: 'UNKNOWN', blocker: 'SERVED_BUILD_IDENTITY_UNPROVEN' } }))
+          .finally(() => { captureInFlight = null; });
+      }
+      return captureInFlight;
+    };
     if ((request.url || '').startsWith('/__stephanos/health')) {
-      response.writeHead(200, {
+      const snapshot=await runtimeSnapshot();
+      response.writeHead(snapshot.freshness.current ? 200 : 503, {
         ...baseHeaders,
         'Content-Type': 'application/json; charset=utf-8',
       });
-      response.end(`${JSON.stringify(buildHealthPayload(), null, 2)}\n`);
+      response.end(`${JSON.stringify({...buildHealthPayload(snapshot), ok:snapshot.freshness.current, runtimeBuildCurrent:snapshot.freshness.current, buildFreshness:snapshot.freshness.state, blocker:snapshot.freshness.blocker}, null, 2)}\n`);
       return;
     }
     if ((request.url || '').startsWith('/__stephanos/restart')) {
@@ -708,17 +768,20 @@ export function createStephanosDistServer({
       return;
     }
     if ((request.url || '').startsWith('/__stephanos/source-truth')) {
+      const sourceSnapshot=await runtimeSnapshot();
       response.writeHead(200, {
         ...baseHeaders,
         'Content-Type': 'application/json; charset=utf-8',
       });
-      const healthPayload = buildHealthPayload();
+      const healthPayload = buildHealthPayload(sourceSnapshot);
       const launcherCriticalSourceTruth = getLauncherCriticalSourceTruth();
       response.end(`${JSON.stringify({
         runtimeMarker: healthPayload.runtimeMarker || null,
         buildTimestamp: healthPayload.buildTimestamp || null,
-        sourceTruthAvailable: launcherCriticalSourceTruth.every((entry) => entry.exists === true),
-        sourceDistParityOk: null,
+        sourceTruthAvailable: sourceSnapshot.freshness.current && launcherCriticalSourceTruth.every((entry) => entry.exists === true),
+        sourceDistParityOk: sourceSnapshot.freshness.current ? null : false,
+        buildFreshness:sourceSnapshot.freshness.state,
+        blocker:sourceSnapshot.freshness.blocker,
         launcherCriticalSourceTruth,
         checkedAt: new Date().toISOString(),
       }, null, 2)}\n`);
@@ -770,16 +833,33 @@ export function createStephanosDistServer({
     const requestUrl = new URL(request.url || '/', `http://${host}:${port}`);
 
     if (requestUrl.pathname === '/apps/stephanos/runtime-status.json') {
-      response.writeHead(200, {
+      const snapshot=await runtimeSnapshot();
+      response.writeHead(snapshot.freshness.current ? 200 : 503, {
         ...baseHeaders,
         'Content-Type': 'application/json; charset=utf-8',
       });
-      response.end(`${JSON.stringify(buildRuntimeStatusPayload(), null, 2)}
+      const runtimeStatus = buildRuntimeStatusPayload(snapshot);
+      response.end(`${JSON.stringify({...runtimeStatus, state:snapshot.freshness.current ? (runtimeStatus.state || 'ready') : 'stale', runtimeMarker:snapshot.metadata?.runtimeMarker || null, gitCommit:snapshot.metadata?.gitCommit || null, runtimeBuildCurrent:snapshot.freshness.current, blocker:snapshot.freshness.blocker}, null, 2)}
 `);
       return;
     }
 
     const { redirectTo, filePath } = resolveRequestFile(requestUrl.pathname);
+    if (filePath && (filePath.toLowerCase() === stephanosDistIndexPath.toLowerCase() || filePath.toLowerCase().startsWith(resolve(repoRoot, 'apps', 'stephanos', 'dist').toLowerCase() + normalize('/')))) {
+      const snapshot=await runtimeSnapshot();
+      if(!snapshot.freshness.current) {
+        response.writeHead(503,{...baseHeaders,'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'});
+        response.end('Stephanos UI rebuild required: '+snapshot.freshness.blocker+'. Use the existing guarded Ignition repair.');
+        return;
+      }
+      if(filePath.toLowerCase()===stephanosDistIndexPath.toLowerCase() && snapshot.indexBytes) {
+        response.writeHead(200,{...baseHeaders,'Content-Type':'text/html; charset=utf-8','Content-Length':snapshot.indexBytes.length});
+        response.end(snapshot.indexBytes);
+        return;
+      }
+    }
+
+
 
     if (redirectTo) {
       sendRedirect(response, redirectTo);

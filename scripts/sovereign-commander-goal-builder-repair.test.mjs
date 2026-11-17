@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import {
   SOVEREIGN_COMMANDER_IGNITION_DIAGNOSIS_TIMEOUT_MS,
+  createGoalBuilderDeadlineRunner,
+  GOAL_BUILDER_REPAIR_WORK_BUDGET_MS,
   runFixedGoalBuilderRepairStep,
   runSovereignCommanderGoalBuilderRepair as runActualGoalBuilderRepair,
 } from './sovereign-commander-goal-builder-repair.mjs';
@@ -949,4 +951,54 @@ test('failed persistent repair dispatch remains blocked and does not continue in
   assert.equal(result.repairApplied, false);
   assert.equal(result.blocker, 'PERSISTENT_RUNTIME_TASK_ARGUMENTS_CHANGED');
   assert.deepEqual(calls, ['restart-stephanos-runtime']);
+});
+
+
+test('repair gives cold discovery its 30-second observation window within one native budget', () => {
+  let elapsed = 0;
+  const budgets = [];
+  const result = runSovereignCommanderGoalBuilderRepair({
+    monotonicClock: () => elapsed,
+    runStep(step) {
+      budgets.push({ id: step.id, timeout: step.timeoutMs });
+      if (step.id === 'fleet-goal-supervisor') {
+        assert.ok(step.timeoutMs > 30_000);
+        elapsed += 30_500;
+        return supervisorStatus();
+      }
+      if (step.id === 'goal-discovery-heartbeat') {
+        assert.ok(step.timeoutMs > 30_000);
+        elapsed += 30_500;
+        return { ok: true, status: 0 };
+      }
+      return laneStatus({ refillHealth: 'RED' });
+    },
+  });
+  assert.equal(result.ok, false); // no physical pickup evidence was manufactured
+  assert.ok(budgets.some(step => step.id === 'goal-discovery-heartbeat'));
+  assert.ok(elapsed < GOAL_BUILDER_REPAIR_WORK_BUDGET_MS);
+});
+
+test('shared monotonic deadline clamps later children and refuses launch after exhaustion', () => {
+  let elapsed = 0;
+  const calls = [];
+  const run = createGoalBuilderDeadlineRunner(step => {
+    calls.push(step);
+    elapsed += step.timeoutMs;
+    return { ok: false, status: null, stdout: '', errorCode: 'ETIMEDOUT' };
+  }, () => elapsed);
+  for (let index = 0; index < 5; index++) run({ id: 'bounded-child', timeoutMs: 35_000 });
+  assert.deepEqual(calls.map(step => step.timeoutMs), [35_000, 35_000, 35_000, 30_000]);
+  assert.equal(run({ id: 'never-launched', timeoutMs: 35_000 }).errorCode,
+    'GOAL_BUILDER_REPAIR_DEADLINE_EXHAUSTED');
+  assert.equal(calls.length, 4);
+});
+
+
+test('deadline-cloned discovery child remains pipe-free', () => {
+  const run = createGoalBuilderDeadlineRunner(runFixedGoalBuilderRepairStep);
+  const result = run({ id: 'goal-discovery-heartbeat', executable: process.execPath,
+    args: ['-e', "process.stdout.write('private-child-output')"], timeoutMs: 5_000 });
+  assert.equal(result.ok, true);
+  assert.equal(result.stdout, '');
 });

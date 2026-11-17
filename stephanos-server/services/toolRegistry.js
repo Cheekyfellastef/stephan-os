@@ -13,8 +13,111 @@ import { roadmapService } from './roadmapService.js';
 import { simulationHistoryService } from './simulationHistoryService.js';
 import { assistantContextService } from './assistantContextService.js';
 import { readSovereignCommanderStatus } from './sovereignCommanderStatusTool.js';
+import { submitGoalThroughStephanosV1 } from './submitGoalTool.js';
+
+export const STEPHANOS_SYSTEM_DIAGNOSTIC_SCHEMA_V1 = 'stephanos.ai-system-diagnostic.v1';
+
+// An AI-model routing flag, the static subsystem catalog and a reachable
+// Commander service are three different facts. No combination is proof of an
+// installed protected runtime, a live model answer or Mission Worker pickup.
+export function projectStephanosSystemDiagnosticV1({
+  aiRouteConfigured = false,
+  commanderObservation = null,
+} = {}) {
+  const observation = commanderObservation?.schemaVersion === 'stephanos.ai-sovereign-commander-health.v1'
+    && commanderObservation.readOnly === true
+    && commanderObservation.localLoopbackOnly === true
+    ? commanderObservation : null;
+  const commanderReachable = observation?.available === true
+    && observation.healthy === true
+    && observation.state === 'SERVICE_REACHABLE';
+  const guardian = observation?.guardian && typeof observation.guardian === 'object'
+    && !Array.isArray(observation.guardian) ? observation.guardian : null;
+  // The guardian's lastOk is historical. A previous success must not
+  // authorize downstream worker advice while a newer maintenance cycle is
+  // running/held, or when the last terminal result is old/unbound.
+  const guardianHeld = commanderReachable && (guardian?.timeoutCustodyHeld === true
+    || guardian?.custodyHeld === true || guardian?.operationalState === 'HELD');
+  const guardianWorking = commanderReachable && !guardianHeld
+    && (guardian?.running === true || guardian?.maintenanceInFlight === true
+      || guardian?.operationalState === 'WORKING');
+  const terminalAtMs = Date.parse(guardian?.lastCompletedAtUtc || '');
+  const observedAtMs = Date.parse(observation?.observedAtUtc || '');
+  const currentSuccess = commanderReachable && guardian?.lastOk === true
+    && !guardianWorking && !guardianHeld
+    && guardian?.running === false && guardian?.maintenanceInFlight === false
+    && guardian?.timeoutCustodyHeld === false && guardian?.custodyHeld === false
+    && ['WAITING', 'NO_NEXT_CYCLE'].includes(guardian?.operationalState)
+    && Number.isSafeInteger(guardian?.lastCompletedAgeMs)
+    && guardian.lastCompletedAgeMs >= 0 && guardian.lastCompletedAgeMs <= 60_000
+    && Number.isFinite(terminalAtMs) && Number.isFinite(observedAtMs)
+    && terminalAtMs <= observedAtMs && observedAtMs - terminalAtMs <= 60_000;
+  const recordedRepairFailed = commanderReachable && guardian?.lastOk === false;
+  const recordedBlocker = recordedRepairFailed
+    && typeof guardian?.lastBlocker === 'string'
+    && /^[A-Z0-9][A-Z0-9._:-]{0,159}$/.test(guardian.lastBlocker)
+    ? guardian.lastBlocker : '';
+  const healthBlocker = !commanderReachable && typeof observation?.blocker === 'string'
+    && /^[A-Z0-9][A-Z0-9._:-]{0,159}$/.test(observation.blocker)
+    ? observation.blocker : '';
+  const readiness = !commanderReachable ? 'UNVERIFIED'
+    : guardianHeld || guardianWorking || recordedRepairFailed ? 'BLOCKED'
+      : currentSuccess ? 'PARTIAL' : 'UNVERIFIED';
+  const blocker = !commanderReachable
+    ? healthBlocker || 'COMMANDER_HEALTH_UNVERIFIED'
+    : guardianHeld ? 'SOVEREIGN_GUARDIAN_CUSTODY_HELD'
+      : guardianWorking ? 'SOVEREIGN_GUARDIAN_MAINTENANCE_IN_FLIGHT'
+        : recordedRepairFailed ? recordedBlocker || 'SOVEREIGN_LAST_REPAIR_FAILED'
+          : currentSuccess ? 'PHYSICAL_WORKER_PICKUP_UNPROVEN'
+            : 'SOVEREIGN_GUARDIAN_TERMINAL_PROOF_UNVERIFIED';
+  const nextSafeStep = !commanderReachable ? 'VERIFY_COMMANDER_HEALTH_PROVENANCE'
+    : guardianHeld ? 'VERIFY_SOVEREIGN_GUARDIAN_HELD_CUSTODY'
+      : guardianWorking ? 'WAIT_FOR_SOVEREIGN_MAINTENANCE_TERMINAL_PROOF'
+        : recordedRepairFailed
+          ? recordedBlocker === 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING'
+            ? 'VERIFY_EXACT_MAIN_FIXED_RUNTIME_INSTALLATION'
+            : 'VERIFY_SOVEREIGN_MAINTENANCE_BLOCKER'
+          : currentSuccess ? 'VERIFY_CANONICAL_NATIVE_WORKER_PICKUP'
+            : 'VERIFY_SOVEREIGN_GUARDIAN_TERMINAL_PROOF';
+  const nextProofOwnerGoal = nextSafeStep === 'VERIFY_CANONICAL_NATIVE_WORKER_PICKUP'
+    || nextSafeStep === 'VERIFY_EXACT_MAIN_FIXED_RUNTIME_INSTALLATION'
+    ? '#2961' : '#2573';
+  return Object.freeze({
+    schemaVersion: STEPHANOS_SYSTEM_DIAGNOSTIC_SCHEMA_V1,
+    readiness,
+    blocker,
+    commanderReachable,
+    guardianLastRepairSucceeded: currentSuccess,
+    guardianLastRepairRecordedSucceeded: commanderReachable && guardian?.lastOk === true,
+    guardianCurrentMaintenanceHeld: guardianHeld,
+    guardianCurrentMaintenanceWorking: guardianWorking,
+    guardianLastSourceHeadIsInstalledProof: false,
+    guardianLastRepairFailed: recordedRepairFailed,
+    guardianLastBlocker: recordedBlocker,
+    guardianLastSourceHead: /^[a-f0-9]{40}$/.test(guardian?.lastSourceHead || '')
+      ? guardian.lastSourceHead : '',
+    aiRouteConfigured: aiRouteConfigured === true,
+    aiModelExecutionProven: false,
+    installedFixedRuntimeProven: false,
+    physicalWorkerPickupProven: false,
+    catalogIsExecutionEvidence: false,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    // Never recommend a downstream pickup until upstream guardian outcome is
+    // explicit; preserve the exact-runtime exception for the conveyor owner.
+    nextProofOwnerGoal,
+    nextSafeStep,
+  });
+}
 
 const tools = [
+  {
+    name: 'submitGoal',
+    description: 'Request exactly one existing goal through Stephanos executive alignment and canonical conveyor intake; a handoff is not a worker build.',
+    category: 'goal', subsystem: 'goal-building-agent', state: 'live',
+    async execute(args, context = {}) { return submitGoalThroughStephanosV1(args, context); },
+  },
   {
     name: 'getSovereignCommanderStatus',
     description: 'Read the existing local Sovereign Commander service and bounded repair-guardian status. Read-only, never execution proof.',
@@ -23,13 +126,47 @@ const tools = [
     state: 'live',
     async execute() {
       const observation = await readSovereignCommanderStatus();
+      const failedRepair = observation.healthy === true && observation.guardian?.lastOk === false;
       const output_text = observation.healthy
-        ? 'Sovereign Commander local service is reachable. This does not prove Core wake, repairs or autonomous worker pickup.'
+        ? 'Sovereign Commander local service is reachable.'
+          + (failedRepair
+            ? ' Last recorded repair failed: ' + (observation.guardian.lastBlocker || 'SOVEREIGN_LAST_REPAIR_FAILED') + '.'
+            : '')
+          + ' This does not prove Core wake, installed runtime, model execution or autonomous worker pickup.'
         : 'Sovereign Commander local health is unverified: ' + observation.blocker + '. No repair or restart was attempted.';
       return { output_text, data: { observation } };
     },
   },
-  { name: 'getSystemStatus', description: 'Returns operational status for core Stephanos services.', category: 'system', subsystem: 'ai_core', state: 'live', async execute(_args, context) { return { output_text: 'Stephanos systems nominal.', data: { ai_available: context.aiAvailable, subsystems: getSubsystemRegistry(), app_version: process.env.APP_VERSION ?? '0.1.0' } }; } },
+  {
+    name: 'getSystemStatus',
+    description: 'Read-only Stephanos status with distinct local Commander service, last repair and unproven worker/model execution truth.',
+    category: 'system', subsystem: 'ai_core', state: 'live',
+    async execute(_args, context = {}) {
+      const commanderObservation = await readSovereignCommanderStatus();
+      const diagnostic = projectStephanosSystemDiagnosticV1({
+        aiRouteConfigured: context.aiAvailable === true,
+        commanderObservation,
+      });
+      const commanderText = diagnostic.commanderReachable
+        ? 'Sovereign Commander is reachable' : 'Sovereign Commander health is unverified';
+      return {
+        output_text: 'Stephanos readiness: ' + diagnostic.readiness + '. '
+          + commanderText + '. Evidence blocker: ' + diagnostic.blocker
+          + '. Next verification: ' + diagnostic.nextSafeStep
+          + ' (owner ' + diagnostic.nextProofOwnerGoal + ').'
+          + ' Protected runtime installation, local model execution and real goal pickup are not proven by this status.',
+        data: {
+          ai_available: context.aiAvailable === true,
+          ai_available_proven: false,
+          subsystems: getSubsystemRegistry(),
+          subsystem_registry_is_execution_proof: false,
+          sovereign_commander_observation: commanderObservation,
+          system_diagnostic: diagnostic,
+          app_version: process.env.APP_VERSION ?? '0.1.0',
+        },
+      };
+    },
+  },
   { name: 'listSubsystems', description: 'Lists unified subsystem registry entries.', category: 'system', subsystem: 'ai_core', state: 'live', async execute() { return { output_text: 'Subsystem registry loaded.', data: { subsystems: getSubsystemRegistry() } }; } },
   { name: 'listAvailableTools', description: 'Lists all registered tools and their callability/state.', category: 'system', subsystem: 'tool_registry', state: 'live', async execute() { const grouped = tools.reduce((acc, tool) => { const key = `${tool.subsystem}:${tool.category}`; acc[key] = acc[key] ?? { subsystem: tool.subsystem, category: tool.category, tools: [] }; acc[key].tools.push({ name: tool.name, description: tool.description, state: tool.state, callable_now: tool.state === 'live' || tool.state === 'mock' }); return acc; }, {}); return { output_text: `Registered tools: ${tools.length}`, data: { tools: tools.map((t) => ({ name: t.name, description: t.description, category: t.category, subsystem: t.subsystem, state: t.state })), grouped_tools: Object.values(grouped) } }; } },
   { name: 'listAvailableAgents', description: 'Lists all registered agents and lifecycle state.', category: 'agents', subsystem: 'agent_registry', state: 'live', async execute() { const agents = listRegisteredAgents(); return { output_text: `Registered agents: ${agents.length}`, data: { agents } }; } },

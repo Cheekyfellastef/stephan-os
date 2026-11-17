@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+// Keep AI registry regressions in the existing runtime CI job without changing protected workflows.
+import './aiMindRegistry.test.mjs';
 import { createRuntimeStatusModel, normalizeRuntimeContext } from './runtimeStatusModel.mjs';
 
 test('createRuntimeStatusModel treats LAN sessions with loopback backend leakage as hosted-web and prefers home-node targets', () => {
