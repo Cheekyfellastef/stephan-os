@@ -5384,3 +5384,30 @@ test('native child success predicate must reject coerced exit statuses on three 
     assert.equal(admitted({ status }), false, `invalid child status ${String(status)}`);
   }
 });
+
+
+test('material outcome counters cannot bypass same-run controller proof with zero actions and lanes (#2573)', () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
+    runId: 'material-outcome-proof-v1', observedEnabled: true,
+    executionState: 'ACTIVE', materialActionsSucceeded: 0,
+    safeEligibleWorkRemaining: 0,
+  };
+  const check = (candidate) => validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity', controllerActivity: candidate,
+  }));
+  assert.equal(check(activity).ok, true, 'status-only observation remains allowed');
+  assert.equal(check({ ...activity, safeEligibleWorkRemaining: 3 }).ok, true,
+    'remaining work is not a completed-material claim');
+  for (const field of ['goalsAdvanced', 'sourceChanges', 'reviewsAdvanced', 'mergesCompleted']) {
+    for (const proofRefs of [undefined, ['proof/from-another-run']]) {
+      const result = check({ ...activity, [field]: 1, ...(proofRefs ? { proofRefs } : {}) });
+      assert.equal(result.ok, false, `${field} escaped same-run proof requirement`);
+      assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_MATERIAL_PROOF_REQUIRED');
+    }
+    const allowed = check({ ...activity, [field]: 1, materialActionsSucceeded: 1,
+      proofRefs: ['proof/same-run'] });
+    assert.equal(allowed.ok, true, `${field} blocked with declared material action and proof ref`);
+  }
+});

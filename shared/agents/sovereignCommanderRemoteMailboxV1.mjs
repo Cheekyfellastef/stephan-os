@@ -213,6 +213,13 @@ function validateRemoteControllerActivity(value) {
   if (counts.some((item) => !Number.isSafeInteger(item) || item < 0 || item > 100_000)) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID', { requested: true });
   }
+  // Outcome counters are completed-material claims, not status-only telemetry.
+  // They must not bypass proof by reporting zero material actions and lanes.
+  const materialOutcomeClaimed = ['goalsAdvanced', 'sourceChanges', 'reviewsAdvanced', 'mergesCompleted']
+    .some((key) => (normalized[key] ?? 0) > 0);
+  if (materialOutcomeClaimed && materialActionsSucceeded === 0 && materialLaneCount === 0) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_MATERIAL_PROOF_REQUIRED', { requested: true });
+  }
   return Object.freeze({
     ok: true,
     controllerActivity: Object.freeze({ ...normalized, controllerId, runId, executionState }),
