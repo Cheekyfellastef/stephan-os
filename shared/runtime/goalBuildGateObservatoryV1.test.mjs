@@ -284,3 +284,72 @@ test('two distinct signed and immutable gate proofs preserve legitimate PASS', (
   assert.equal(r.gates[0].status, 'PASS');
   assert.equal(r.gates[1].status, 'PASS');
 });
+
+function signedDuplicateGatePacket(observedAtUtc = at) {
+  const denied = observation(1, 'FAIL', 'ROOT_HELD');
+  denied.proof.proofId = 'goal-gate-1-conflicting-denied';
+  denied.gate.proofRef = 'workspace:proof/' + denied.proof.proofId;
+  denied.gate.proofRecordSha256 = sha256(denied.proof);
+  const granted = observation(1, 'PASS');
+  granted.proof.proofId = 'goal-gate-1-conflicting-granted';
+  granted.gate.proofRef = 'workspace:proof/' + granted.proof.proofId;
+  granted.gate.proofRecordSha256 = sha256(granted.proof);
+  return buildPacket([denied, granted], { observedAtUtc });
+}
+
+test('independently signed malformed same-clock evidence cannot resurrect a valid PASS in either order', () => {
+  const valid = buildPacket([observation(1, 'PASS')]);
+  const malformed = signedDuplicateGatePacket();
+  const proofRecords = [...valid.proofRecords, ...malformed.proofRecords];
+  for (const statusRecords of [
+    [...valid.statusRecords, ...malformed.statusRecords],
+    [...malformed.statusRecords, ...valid.statusRecords],
+  ]) {
+    const projected = projectGoalBuildGateObservatoryV1({ ...valid, statusRecords, proofRecords });
+    assert.equal(projected.observationStatus, 'UNVERIFIED');
+    assert.equal(projected.counts.PASS, 0);
+    assert.equal(projected.counts.UNVERIFIED, 23);
+    assert.equal(projected.gates[0].reportedSignedStatus, null);
+    assert.equal(projected.diagnosticOnly, true);
+    assert.equal(projected.mergeAuthority, false);
+  }
+});
+
+test('newer signed malformed gate identity cannot expose an older authenticated PASS', () => {
+  const valid = buildPacket([observation(1, 'PASS')]);
+  const newer = signedDuplicateGatePacket(new Date(nowMs + 1000).toISOString());
+  const projected = projectGoalBuildGateObservatoryV1({
+    ...valid, statusRecords: [...valid.statusRecords, ...newer.statusRecords],
+    proofRecords: [...valid.proofRecords, ...newer.proofRecords],
+  });
+  assert.equal(projected.observationStatus, 'UNVERIFIED');
+  assert.equal(projected.counts.PASS, 0);
+  assert.equal(projected.gates[0].status, 'UNVERIFIED');
+  assert.equal(projected.approvalAuthority, false);
+});
+
+test('older malformed or unauthenticated peer does not veto a newer valid signed PASS', () => {
+  const valid = buildPacket([observation(1, 'PASS')],
+    { observedAtUtc: new Date(nowMs + 1000).toISOString() });
+  const older = signedDuplicateGatePacket();
+  const proofRecords = [...valid.proofRecords, ...older.proofRecords];
+  const fresh = projectGoalBuildGateObservatoryV1({
+    ...valid, statusRecords: [...older.statusRecords, ...valid.statusRecords], proofRecords,
+  });
+  assert.equal(fresh.gates[0].status, 'PASS');
+  assert.equal(fresh.counts.PASS, 1);
+  const forgedRecord = {
+    ...older.statusRecords[0], goalBuildGateEvidence: {
+      ...older.statusRecords[0].goalBuildGateEvidence,
+      signatureBase64: Buffer.alloc(64).toString('base64'),
+    },
+  };
+  const sameClockValid = buildPacket([observation(1, 'PASS')]);
+  const invalid = projectGoalBuildGateObservatoryV1({
+    ...sameClockValid,
+    statusRecords: [forgedRecord, ...sameClockValid.statusRecords],
+    proofRecords: [...sameClockValid.proofRecords, ...older.proofRecords],
+  });
+  assert.equal(invalid.gates[0].status, 'PASS');
+  assert.equal(invalid.counts.PASS, 1);
+});

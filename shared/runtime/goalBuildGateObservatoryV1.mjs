@@ -78,11 +78,9 @@ export function projectGoalBuildGateObservatoryV1({
         && e?.signingKeyId === 'stephanos-goal-build-gates-v1'
         && e?.sourceHead === trustedHead
         && Array.isArray(e?.gates) && e.gates.length <= GOAL_BUILD_GATE_DEFINITIONS_V1.length
-        // A signed envelope must not silently retain only the first of two
-        // contradictory checkpoints or discard an unknown checkpoint identity.
-        // Check the complete signed set BEFORE projecting any PASS.
-        && e.gates.every(g => GOAL_BUILD_GATE_DEFINITIONS_V1.some(def => def.id === g?.id))
-        && new Set(e.gates.map(g => g.id)).size === e.gates.length
+        // Preserve signed, proof-backed malformed identities as evidence of
+        // ambiguity until competing envelopes have been reconciled. Invalid
+        // gate sets are rejected below, never projected as operational PASS.
         && Number.isFinite(time(e.observedAtUtc))
         && time(e.observedAtUtc) <= nowMs + MAX_CLOCK_SKEW_MS
         && typeof e.signatureBase64 === 'string')
@@ -125,7 +123,14 @@ export function projectGoalBuildGateObservatoryV1({
   const sameClockConflict = latest && authenticatedEvidence.some(candidate =>
     time(candidate.observedAtUtc) === time(latest.observedAtUtc)
     && JSON.stringify(candidate.gates) !== JSON.stringify(latest.gates));
-  const evidence = sameClockConflict ? null : latest;
+  // Check identity AFTER cryptographic and immutable-proof authentication.
+  // Discarding a signed malformed envelope earlier could let an equal-clock
+  // (or older) PASS from another envelope resurface as green.
+  const canonicalIds = new Set(GOAL_BUILD_GATE_DEFINITIONS_V1.map(def => def.id));
+  const latestGateIdentityValid = latest
+    && latest.gates.every(g => canonicalIds.has(g?.id))
+    && new Set(latest.gates.map(g => g.id)).size === latest.gates.length;
+  const evidence = sameClockConflict || !latestGateIdentityValid ? null : latest;
   const observedAtUtc = evidence?.observedAtUtc || '';
   const sourceHead = evidence?.sourceHead || '';
   const expired = evidence ? nowMs - time(observedAtUtc) > maxAge : false;
