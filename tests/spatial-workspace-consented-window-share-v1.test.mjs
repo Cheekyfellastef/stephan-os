@@ -513,7 +513,7 @@ async function captureSettled(promise){
   assert.equal(settled,true,'local cancellation must settle without waiting for external completion');
   return value;
 }
-function captureTransitionHarness({initialNative=false,delayStops=false}={}){
+function captureTransitionHarness({initialNative=false,delayStops=false,inputFailure=null}={}){
   const saved=new Map(),pickers=[],plays=[],tracks=[],videos=[],timers=new Map(),calls=[],stops=[];
   if(initialNative)saved.set('stephanos.spatial-window.session.v1','a'.repeat(64));
   let nextTimer=0,sessions=0,hook=()=>{};
@@ -542,7 +542,12 @@ function captureTransitionHarness({initialNative=false,delayStops=false}={}){
       if(path==='/session')return response({token:(++sessions%2?'b':'c').repeat(64)});
       if(path==='/windows')return response({windows:[{id:17,pid:19,title:'Selected app'}]});
       if(path==='/bind')return response({status:'connected'});
-      if(path==='/input')return response({status:'input-posted'});
+      if(path==='/input'){
+        // The application might apply input even when its HTTP reply is lost.
+        if(inputFailure==='network')throw new Error('Response lost after possible native input');
+        if(inputFailure==='http')return {ok:false,status:503,json:async()=>({status:'unavailable'})};
+        return response({status:'input-posted'});
+      }
       if(path==='/frame')return response({status:'frame',serial:calls.length,generation:1,jpeg:'fixture'});
       throw Error('Unexpected native request');
     },
@@ -647,6 +652,29 @@ test('track loss revokes its sole owner during native stop playback and accepted
       const first=h.client.stop(),second=h.client.stop();h.releaseStops();await Promise.all([first,second]);
       h.client.dispose();h.releaseStops();await drainCaptureTransitions();
       assert.equal(track.stopCount,stops,'repeated revocation cannot stop a retired track again');
+    }finally{await h.close();}
+  }
+});
+
+test('lost native input acknowledgement remains unverified and never replays a key',async()=>{
+  for(const inputFailure of ['network','http']){
+    const h=captureTransitionHarness({inputFailure});
+    try{
+      await h.client.discover();
+      assert.equal(await h.client.connect(17),true);
+      await h.tick();
+      assert.equal(h.client.getState().status,'live');
+      assert.equal(h.client.input({kind:'text',text:'unsent fixture'}),true);
+      await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,1,
+        'an ambiguous transport failure must not replay its native input');
+      assert.equal(h.client.getState().status,'unavailable');
+      assert.match(h.client.getState().inputStatus,/may already have changed/);
+      assert.match(h.client.getState().inputStatus,/do not resend automatically/);
+      assert.match(h.client.getState().message,/original app/);
+      assert.equal(h.timers.size,0,'no background replay or poll after failed input');
+      assert.equal(h.client.input({kind:'text',text:'unsafe retry'}),false);
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,1);
     }finally{await h.close();}
   }
 });
