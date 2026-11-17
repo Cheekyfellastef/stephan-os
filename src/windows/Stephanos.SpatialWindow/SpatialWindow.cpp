@@ -55,6 +55,9 @@ struct Surface : std::enable_shared_from_this<Surface> {
   com_ptr<IUIAutomation2> accessibility;
   com_ptr<IUIAutomationElement> selectedEditor;
   POINT selectedEditorPoint{};
+  // Selecting an accessible editor does not transfer Windows keyboard focus.
+  // Keep this fence even if that editor disappears, until a new native bind.
+  bool editorKeyboardFocusUnverified=false;
   GraphicsCaptureItem item{nullptr};Direct3D11CaptureFramePool pool{nullptr};GraphicsCaptureSession session{nullptr};
   com_ptr<ID3D11Device> device;com_ptr<ID3D11DeviceContext> context;IDirect3DDevice direct{nullptr};
   com_ptr<IWICImagingFactory> wic;std::mutex mutex;std::string jpeg;int width{},height{};
@@ -70,7 +73,7 @@ struct Surface : std::enable_shared_from_this<Surface> {
     {std::lock_guard lock(mutex);closed=true;captureEpoch++;generation++;jpeg.clear();oldSession=std::exchange(session,nullptr);oldPool=std::exchange(pool,nullptr);item=nullptr;}
     if(oldSession)oldSession.Close();if(oldPool)oldPool.Close();
   }
-  void Stop(){CloseCapture();std::lock_guard lock(mutex);root=nullptr;target=nullptr;inputChild=nullptr;selectedEditor=nullptr;}
+  void Stop(){CloseCapture();std::lock_guard lock(mutex);root=nullptr;target=nullptr;inputChild=nullptr;selectedEditor=nullptr;editorKeyboardFocusUnverified=false;}
   bool Identity(){DWORD current=0;GetWindowThreadProcessId(root,&current);return RootWindow(root)&&current==pid&&birth&&birth==ProcessBirth(pid);}
   bool TargetValid(){DWORD cloaked=0;DwmGetWindowAttribute(target,DWMWA_CLOAKED,&cloaked,sizeof(cloaked));return !cloaked&&Identity()&&(target==root||GetAncestor(target,GA_ROOTOWNER)==root)&&RootWindow(target);}
   void Bind(HWND w,DWORD expected){
@@ -86,7 +89,7 @@ struct Surface : std::enable_shared_from_this<Surface> {
   void StartTarget(HWND w){
     if(!device)InitGraphics();
     CloseCapture();
-    std::lock_guard lock(mutex);target=w;inputChild=nullptr;selectedEditor=nullptr;jpeg.clear();closed=false;generation++;
+    std::lock_guard lock(mutex);target=w;inputChild=nullptr;selectedEditor=nullptr;editorKeyboardFocusUnverified=false;jpeg.clear();closed=false;generation++;
     auto factory=get_activation_factory<GraphicsCaptureItem,IGraphicsCaptureItemInterop>();
     check_hresult(factory->CreateForWindow(w,guid_of<GraphicsCaptureItem>(),put_abi(item)));
     const auto size=item.Size();if(!CaptureSizeValid(size.Width,size.Height))throw std::runtime_error("Invalid window size");
@@ -296,13 +299,16 @@ struct Surface : std::enable_shared_from_this<Surface> {
         &&next[next.size()-2]>=0xD800&&next[next.size()-2]<=0xDBFF;
       next.resize(next.size()-(pair?2:1));
     }else return Reply(L"editor-unsupported");
+    bool attempted=false;
     HRESULT changed=E_FAIL;
     if(direct){
       // UIA ValuePattern uses an owning BSTR; LegacyIAccessible takes LPCWSTR.
       BSTR input=SysAllocStringLen(next.data(),static_cast<UINT>(next.size()));
-      if(input){changed=direct->SetValue(input);SysFreeString(input);}
-    }else if(legacy)changed=legacy->SetValue(next.c_str());
-    if(FAILED(changed))return Reply(L"editor-update-refused");
+      if(input){attempted=true;changed=direct->SetValue(input);SysFreeString(input);}
+    }else if(legacy){attempted=true;changed=legacy->SetValue(next.c_str());}
+    if(!attempted)return Reply(L"editor-update-not-started");
+    // A timed-out SetValue may already have applied its change. Read back
+    // before reporting, but an unmatched value is UNKNOWN, not a refusal.
     std::wstring observed;com_ptr<IUIAutomationValuePattern> readDirect;
     com_ptr<IUIAutomationLegacyIAccessiblePattern> readLegacy;
     if(!ReadEditorValue(selectedEditor.get(),observed,readDirect,readLegacy)||observed!=next)
@@ -338,6 +344,7 @@ struct Surface : std::enable_shared_from_this<Surface> {
         auto editor=AccessibleAt(screen,true);
         if(editor){
           selectedEditor=std::move(editor);selectedEditorPoint=screen;
+          editorKeyboardFocusUnverified=true;
           return Reply(L"editor-accessibility-selected");
         }
         auto button=AccessibleAt(screen,false);
@@ -373,7 +380,7 @@ struct Surface : std::enable_shared_from_this<Surface> {
         if(command.GetNamedString(L"key",L"")==L"Backspace")return EditSelected(L"Backspace",L"");
         // Selecting a UIA editor does not establish Windows keyboard focus.
         // Do not send Enter/Tab/navigation to another focused composer.
-        if(selectedEditor)return Reply(L"editor-key-focus-unverified");
+        if(editorKeyboardFocusUnverified)return Reply(L"editor-key-focus-unverified");
         auto name=command.GetNamedString(L"key",L"");UINT key=name==L"Enter"?VK_RETURN:name==L"Backspace"?VK_BACK:name==L"Tab"?VK_TAB:name==L"Escape"?VK_ESCAPE:name==L"Left"?VK_LEFT:name==L"Right"?VK_RIGHT:0;
         if(!key)throw std::runtime_error("Key not supported");
         auto scan=MapVirtualKeyW(key,MAPVK_VK_TO_VSC);Post(child,WM_KEYDOWN,key,1|(scan<<16));
