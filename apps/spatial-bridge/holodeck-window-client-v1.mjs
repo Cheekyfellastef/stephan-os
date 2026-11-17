@@ -254,6 +254,8 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
           'editor-length-refused':'This editor exceeds the allowed text length. No input was applied.',
           'editor-value-unchanged':'Editor was already empty; no character was removed.',
           'app-control-invoked':'The selected app control was invoked. Check its actual result.',
+          'app-control-outcome-unverified':'The app control may have acted already. Inspect it before any retry; no second click was sent.',
+          'editor-key-focus-unverified':'The selected editor has not established keyboard focus. Use the app’s explicit button rather than Enter.',
           'input-posted':'Windows queued the pointer/key event, but the app has not confirmed it.',
           'input-rejected':'That input was not accepted. The selected app did not confirm that input.'
         }[result.status]??'The selected app did not confirm that input. Click a valid target or wait for a fresh picture.')}))return;
