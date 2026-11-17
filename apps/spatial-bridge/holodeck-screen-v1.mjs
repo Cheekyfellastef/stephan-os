@@ -43,7 +43,7 @@ export const SCREEN_KEYS=Object.freeze([
   {id:'shift',label:'Shift',x:0.055,y:0.855,w:0.12,h:0.12},
   {id:'key: ',label:'Space',x:0.19,y:0.855,w:0.38,h:0.12},
   {id:'backspace',label:'Backspace',x:0.59,y:0.855,w:0.17,h:0.12},
-  {id:'enter',label:'Send / Enter',x:0.78,y:0.855,w:0.18,h:0.12},
+  {id:'enter',label:'Enter (app)',x:0.78,y:0.855,w:0.18,h:0.12},
 ].map(Object.freeze));
 export const SCREEN_BUTTONS=Object.freeze([...SCREEN_ACTIONS.map(b=>Object.freeze({...b,y:0.035,h:0.12})),...SCREEN_COMFORT_ACTIONS,...SCREEN_KEYS]);
 export const SCREEN_CONTENT=CHATGPT_CONTENT;
@@ -127,7 +127,7 @@ export function createHolodeckScreen({client,comfort,furniture,audio,storage,doc
     if(focusedPanel!=='chatgpt')return 'Keyboard paused — select the centre window to type.';
     if(state.status==='view-only')return 'VIEW ONLY — use Console on the left to connect an interactive window.';
     if(state.status!=='live')return 'Keyboard waiting for an interactive window connection.';
-    return 'Keyboard targets the selected window only. Select a text field in the connected app.';
+    return 'Select a field in the connected app. Enter follows app behaviour and may send; use the app Send button for explicit Send.';
   }
   function appInputBlocker(state,viewPainted=false){
     const reason=focusedPanel!=='chatgpt'?'local-panel':state.status==='view-only'?'view-only':inputRevoked?'stopped':state.status!=='live'||!client.getFrame()?'connection':voiceHelp?'audio-help':reloadConfirm?'reload':viewPending&&!viewPainted?'view-pending':null;
@@ -314,6 +314,13 @@ export function createHolodeckScreen({client,comfort,furniture,audio,storage,doc
       if(reloadConfirm)onReload();else{reloadConfirm=true;voiceHelp=false;viewPending=true;inputFeedback=null;changed();}return;
     }
     if(id==='shift'){pressKeycap(id);shift=!shift;changed();return;}
+    if(id==='enter'&&shift){
+      // Virtual Shift changes character labels only. The native helper does
+      // not implement Shift+Enter/newline; a bare Enter could send a draft.
+      inputFeedback={reason:undefined,status:undefined,
+        message:'Shift+Enter is not supported. No key was sent; use the original app editor for newlines.'};
+      changed();return false;
+    }
     const input=id==='scroll-up'||id==='scroll-down'?{kind:'scroll',...scrollTarget(),delta:id==='scroll-up'?120:-120}:
       id==='enter'||id==='backspace'?{kind:'key',key:id==='enter'?'Enter':'Backspace'}:
       id.startsWith('key:')?{kind:'text',text:screenKeyText(id.slice(4),shift)}:null;
@@ -409,7 +416,9 @@ export function createHolodeckScreen({client,comfort,furniture,audio,storage,doc
       text(ctx,'MICROPHONE FOR LOCAL TEST',2354,326,25,'#73dfe9');text(ctx,mic,2354,358,27,'#d5f8ff',650);
       text(ctx,'SPEAKERS FOR LOCAL TEST',2354,458,25,'#73dfe9');text(ctx,output,2354,490,27,'#d5f8ff',650);
       text(ctx,data?.microphonePending?'Microphone permission pending':data?.microphoneActive?'Microphone test active — not recorded':'Microphone test inactive',2354,651,25,'#aad0db',650);
-      paragraph([data?.status??'Audio controls unavailable.', 'ChatGPT uses its own Voice controls and Windows audio routing.'],2354,754,650,25,31,3);
+      paragraph([data?.status??'Audio controls unavailable.',
+         'ChatGPT Voice runs in the original app, not this room.',
+         'Disconnect does not mute or end Voice. Use the app controls.'],2354,697,650,21,24,6);
   }
   function render() {
     // Input remains fenced until the new canvas has been completely drawn.
@@ -449,6 +458,8 @@ export function createHolodeckScreen({client,comfort,furniture,audio,storage,doc
         'Windows Settings > System > Sound > Input: select and test your headset microphone.',
         'Sound > Volume mixer: unmute ChatGPT or its browser and choose headset output.',
         'Press Audio help again to return. Use ChatGPT’s Voice button and allow microphone access.',
+        'Mute or end Voice in the original ChatGPT app. This room cannot verify Voice status.',
+        'Disconnect stops the window picture and input, not ChatGPT Voice.',
         'Voice starts a spoken conversation; microphone dictation enters text.',
         'Zoom and View arrows keep the composer, Voice and attachment controls within reach.',
       ]:[
