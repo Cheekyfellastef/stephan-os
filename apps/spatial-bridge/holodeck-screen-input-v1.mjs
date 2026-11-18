@@ -104,15 +104,18 @@ export function createHolodeckScreenInput({screen,comfort=screen?.comfort,furnit
       const keyboard=consoleHit(sample.ray.position,direction,comfort?.getState().keyboardTilt??0,offset);
       const dial=comfort?keyboardDialHit(sample.ray.position,direction,offset):null;
       const display=displayHit(sample.ray.position,direction);
-      const displayControl=display&&comfort&&screenComfortHit(display.u,display.v);
+      const displayTarget=display&&(screen?.hitTest?screen.hitTest(display.u,display.v):null);
+      const displayControl=display&&!screen?.hitTest&&comfort&&screenComfortHit(display.u,display.v);
       let nearDial=null;
       if(comfort&&sample.grip) {
         const nearest=HOLODECK_KEYBOARD_DIALS.find(d=>Math.hypot(...d.center.map((v,i)=>v+offset[i]-sample.grip.position[i]))<=d.radius+0.06);
         if(nearest)nearDial={id:'dial:'+nearest.id,dial:nearest,distance:Math.hypot(...nearest.center.map((v,i)=>v+offset[i]-sample.ray.position[i]))};
       }
-      const hit=[keyboard,dial,displayControl?{...display,id:displayControl.id}:display]
+      const displaySurface=displayTarget?{...display,id:displayTarget.id,displaySurface:true}:
+        displayControl?{...display,id:displayControl.id}:display;
+      const hit=[keyboard,dial,displaySurface]
         .filter(Boolean).sort((a,b)=>a.distance-b.distance)
-        .find(target=>target.id||screen?.point(target.u,target.v));
+        .find(target=>target.id||target.displaySurface||(!screen?.hitTest&&screen?.point(target.u,target.v)));
       // First sample after tracking loss or connection never activates held input.
       const last=previous.get(sample.id)??{pressed:sample.pressed,gripping:sample.gripping};
       const pressedNow=sample.pressed&&!last.pressed,grippedNow=sample.gripping&&!last.gripping;
@@ -146,10 +149,12 @@ export function createHolodeckScreenInput({screen,comfort=screen?.comfort,furnit
         hover=hit.id??null;
         pointers.push({origin:sample.ray.position,direction,distance:hit.distance,targeted:true,kind:sample.kind});
         if(pressedNow) {
-          if(hit.id)screen?.action(hit.id);else screen?.point(hit.u,hit.v,true);
+          if(hit.displaySurface)screen?.point(hit.u,hit.v,true);
+          else if(hit.id)screen?.action(hit.id);else screen?.point(hit.u,hit.v,true);
           repeat=repeatable.has(hit.id)&&Number.isFinite(time)?{id:hit.id,next:time+400}:null;
         } else if(sample.pressed&&repeat&&repeat.id===hit.id&&Number.isFinite(time)&&time>=repeat.next) {
-          screen?.action(hit.id);repeat.next=time+80;
+          if(hit.displaySurface)screen?.point(hit.u,hit.v,true);else screen?.action(hit.id);
+          repeat.next=time+80;
         }
       }
       if(!sample.pressed||repeat?.id!==hit?.id||consumed||grab)repeat=null;

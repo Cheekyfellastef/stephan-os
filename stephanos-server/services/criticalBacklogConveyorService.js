@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { projectExternalMergeExecutionObligationV1 } from '../../shared/agents/externalMergeObservationV1.mjs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
@@ -207,6 +208,7 @@ function isElasticGoalMission(record = {}) {
 
 function isLegacyCapacityActive(record = {}) {
   if (isElasticGoalMission(record)) return false;
+  if (projectExternalMergeExecutionObligationV1(record).acceptanceOnly) return false;
   if (continuityStatus(record) !== ACTIVE_CONTINUITY) return false;
   return !LEGACY_CAPACITY_PARKED_PHASES.has(text(record?.currentPhase).toUpperCase());
 }
@@ -1019,6 +1021,9 @@ function parkedProjection(projection = {}) {
     parkedMissionIds: Object.freeze(Array.isArray(projection.parkedMissionIds) ? [...projection.parkedMissionIds] : []),
     parkedApprovalMissionIds: Object.freeze(Array.isArray(projection.parkedApprovalMissionIds) ? [...projection.parkedApprovalMissionIds] : []),
     parkedBlockedMissionIds: Object.freeze(Array.isArray(projection.parkedBlockedMissionIds) ? [...projection.parkedBlockedMissionIds] : []),
+    parkedAcceptanceMissionIds: Object.freeze(Array.isArray(projection.parkedAcceptanceMissionIds) ? [...projection.parkedAcceptanceMissionIds] : []),
+    parkedAcceptanceCount: Array.isArray(projection.parkedAcceptanceMissionIds)
+      ? projection.parkedAcceptanceMissionIds.length : 0,
     parkedApprovalCount: Number.isSafeInteger(projection.parkedApprovalCount)
       ? projection.parkedApprovalCount
       : Array.isArray(projection.parkedApprovalMissionIds)

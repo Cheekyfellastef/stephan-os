@@ -23,6 +23,182 @@ $profilesPath = Join-Path $stateRoot 'gaming-resource-profiles.json'
 $telemetryPath = Join-Path $stateRoot 'gaming-resource-governor-events.jsonl'
 $simAirLinkStatePath = Join-Path $stateRoot 'starfield-vr-sim-air-link.json'
 $lightweightModel = 'llama3.2:3b'
+$script:governorDependencyHealthy = $true
+$script:governorNativeClock = $null
+$script:governorNativeProbeOwnedHold = $false
+$script:governorMutationOwner = $null
+
+# One cross-process owner for the existing governor, including caretaker
+# replacement. The name and protected DACL derive only from the actual user.
+function New-GovernorMutationMutex {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    try { $userSid = $identity.User } finally { $identity.Dispose() }
+    if ($userSid.Value -cnotmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$') { throw 'GOVERNOR_MUTEX_IDENTITY_UNPROVEN' }
+    $security = [Security.AccessControl.MutexSecurity]::new()
+    $security.SetAccessRuleProtection($true, $false)
+    $security.SetOwner($userSid)
+    foreach ($sid in @($userSid,[Security.Principal.SecurityIdentifier]::new('S-1-5-18'))) {
+        $security.AddAccessRule([Security.AccessControl.MutexAccessRule]::new($sid,
+            [Security.AccessControl.MutexRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow))
+    }
+    $created = $false
+    $mutex = [Threading.Mutex]::new($false, ('Global\Stephanos.VrResourceGovernor.V1.' + $userSid.Value), [ref]$created, $security)
+    try {
+        $actual = $mutex.GetAccessControl()
+        $rules = @($actual.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
+        if (-not $actual.AreAccessRulesProtected -or -not $actual.AreAccessRulesCanonical -or
+            $actual.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $userSid.Value -or $rules.Count -ne 2) { throw 'GOVERNOR_MUTEX_SECURITY_UNPROVEN' }
+        foreach ($rule in $rules) {
+            if ($rule.IsInherited -or $rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+                $rule.MutexRights -ne [Security.AccessControl.MutexRights]::FullControl -or
+                $rule.IdentityReference.Value -notin @($userSid.Value,'S-1-5-18')) { throw 'GOVERNOR_MUTEX_SECURITY_UNPROVEN' }
+        }
+        return $mutex
+    } catch { $mutex.Dispose(); throw }
+}
+
+function Enter-GovernorMutationOwner {
+    $mutex = New-GovernorMutationMutex
+    $acquired = $false; $abandoned = $false
+    try {
+        try { $acquired = $mutex.WaitOne(0) }
+        catch [Threading.AbandonedMutexException] { $acquired = $true; $abandoned = $true }
+        if (-not $acquired) { $mutex.Dispose(); return [pscustomobject]@{ acquired = $false; abandoned = $false; mutex = $null } }
+        return [pscustomobject]@{ acquired = $true; abandoned = $abandoned; mutex = $mutex }
+    } catch { $mutex.Dispose(); throw }
+}
+
+function Exit-GovernorMutationOwner {
+    param($Owner)
+    if ($Owner -and $Owner.acquired) {
+        try { $Owner.mutex.ReleaseMutex(); $Owner.acquired = $false }
+        finally { $Owner.mutex.Dispose() }
+    }
+}
+
+function Assert-GovernorMutationOwner {
+    param([switch]$AllowAbandoned)
+    if (-not $script:governorMutationOwner -or -not $script:governorMutationOwner.acquired -or
+        ($script:governorMutationOwner.abandoned -and -not $AllowAbandoned)) { throw 'GOVERNOR_MUTATION_OWNER_UNPROVEN' }
+}
+
+# Closed native probes only. Keep both pipes bounded and drained while the
+# retained direct child runs; neither a timeout nor a failed inventory is empty.
+function Invoke-GovernorNativeProbe {
+    param([ValidateSet('GpuSnapshot','OllamaInventory','OllamaStop')][string]$Operation, [string]$Model = '')
+    Assert-GovernorMutationOwner
+    $executable = ''
+    $arguments = ''
+    if ($Operation -eq 'GpuSnapshot') {
+        $command = Get-Command nvidia-smi.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($command) { $executable = [string]$command.Source }
+        $arguments = '--query-gpu=memory.free,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits'
+    } else {
+        $executable = Resolve-OllamaExecutable
+        if ($Operation -eq 'OllamaInventory') { $arguments = 'ps' }
+        else {
+            if ($Model -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$') {
+                return [pscustomobject]@{ ok = $false; output = ''; reason = 'MODEL_IDENTITY_INVALID' }
+            }
+            $arguments = 'stop ' + $Model
+        }
+    }
+    if (-not $executable) { return [pscustomobject]@{ ok = $false; output = ''; reason = 'EXECUTABLE_UNAVAILABLE' } }
+    $remaining = if ($script:governorNativeClock) { [int][math]::Min(1000, 5000 - $script:governorNativeClock.Elapsed.TotalMilliseconds) } else { 0 }
+    if ($remaining -le 0) { return [pscustomobject]@{ ok = $false; output = ''; reason = 'CYCLE_DEADLINE' } }
+    # Persist exclusion before launch. A crash or cleanup API failure cannot
+    # leave an uncertain child behind an apparently healthy permission record.
+    Set-GovernorNativeCustodyHold -Held $true
+    $child = New-Object System.Diagnostics.Process
+    $started = $false
+    $startAttempted = $false
+    $reason = 'PROBE_FAILED'
+    try {
+        $child.StartInfo.FileName = $executable
+        $child.StartInfo.Arguments = $arguments
+        $child.StartInfo.UseShellExecute = $false
+        $child.StartInfo.CreateNoWindow = $true
+        $child.StartInfo.RedirectStandardOutput = $true
+        $child.StartInfo.RedirectStandardError = $true
+        $startAttempted = $true
+        $started = $child.Start()
+        if (-not $started) { throw 'PROBE_START_FAILED' }
+        $outBuffer = New-Object char[] 4097
+        $errBuffer = New-Object char[] 4097
+        $outTask = $child.StandardOutput.ReadAsync($outBuffer, 0, $outBuffer.Length)
+        $errTask = $child.StandardError.ReadAsync($errBuffer, 0, $errBuffer.Length)
+        $outText = New-Object Text.StringBuilder
+        $outDone = $false; $errDone = $false; $total = 0
+        $probeClock = [Diagnostics.Stopwatch]::StartNew()
+        while ($probeClock.Elapsed.TotalMilliseconds -lt $remaining) {
+            if (-not $outDone -and $outTask.IsCompleted) {
+                $count = $outTask.GetAwaiter().GetResult(); $total += $count
+                if ($total -gt 32768) { $reason = 'OUTPUT_LIMIT'; break }
+                if ($count -eq 0) { $outDone = $true }
+                else { [void]$outText.Append($outBuffer, 0, $count); $outTask = $child.StandardOutput.ReadAsync($outBuffer, 0, $outBuffer.Length) }
+            }
+            if (-not $errDone -and $errTask.IsCompleted) {
+                $count = $errTask.GetAwaiter().GetResult(); $total += $count
+                if ($total -gt 32768) { $reason = 'OUTPUT_LIMIT'; break }
+                if ($count -eq 0) { $errDone = $true }
+                else { $errTask = $child.StandardError.ReadAsync($errBuffer, 0, $errBuffer.Length) }
+            }
+            if ($child.HasExited -and $outDone -and $errDone) {
+                if ($child.ExitCode -ne 0) { $reason = 'NONZERO_EXIT'; break }
+                return [pscustomobject]@{ ok = $true; output = $outText.ToString(); reason = '' }
+            }
+            [void]$child.WaitForExit(10)
+        }
+        if ($reason -eq 'PROBE_FAILED') { $reason = 'PROBE_TIMEOUT' }
+    } catch { $reason = 'PROBE_FAILED' }
+    finally {
+        $exitProven = -not $startAttempted
+        if ($startAttempted) {
+            try { $exitProven = $child.HasExited } catch {}
+            if (-not $exitProven) {
+                try { $child.Kill() } catch {}
+                try { $exitProven = $child.WaitForExit(500) } catch {}
+            }
+        }
+        if (-not $exitProven) {
+            try { Set-GovernorNativeCustodyHold -Held $true } catch {}
+            try { $child.Dispose() } catch {}
+            throw 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN'
+        }
+        $child.Dispose()
+        try { Set-GovernorNativeCustodyHold -Held $false }
+        catch { throw 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN' }
+    }
+    return [pscustomobject]@{ ok = $false; output = ''; reason = $reason }
+}
+
+function Set-GovernorNativeCustodyHold {
+    param([bool]$Held = $true)
+    Assert-GovernorMutationOwner -AllowAbandoned:$Held
+    $heldState = Read-GovernorState
+    if ($Held -and -not $script:governorNativeProbeOwnedHold -and $heldState -and
+        $heldState.PSObject.Properties['nativeProbeCustodyHeld'] -and
+        ($heldState.nativeProbeCustodyHeld -isnot [bool] -or $heldState.nativeProbeCustodyHeld -ne $false)) {
+        throw 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN'
+    }
+    if (-not $heldState -or $heldState -isnot [pscustomobject]) {
+        $heldState = [pscustomobject]@{ schemaVersion = 'stephanos.vr-resource-governor.v1'; governorVersion = 3; phase = 'UNKNOWN'; active = $true }
+    }
+    foreach ($pair in @(@('nativeProbeCustodyHeld',$Held),@('heavyModelAllowed',$false),@('localModelAllowed',$false),@('evictionHealthy',$false),@('zeroLocalModelInvariant',$false),@('dependencyObservationKnown',$false),@('ollamaLoadMode','unknown'))) {
+        $heldState | Add-Member -NotePropertyName $pair[0] -NotePropertyValue $pair[1] -Force
+    }
+    Ensure-StateRoot
+    [IO.File]::WriteAllText($statePath, ($heldState | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+    $script:governorNativeProbeOwnedHold = $Held
+}
+
+function Assert-GovernorNativeCustodyUnheld {
+    $state = Read-GovernorState
+    if ($state -and $state.PSObject.Properties['nativeProbeCustodyHeld'] -and
+        ($state.nativeProbeCustodyHeld -isnot [bool] -or $state.nativeProbeCustodyHeld -ne $false)) {
+        throw 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN'
+    }
+}
 
 function Ensure-StateRoot {
     if (-not (Test-Path -LiteralPath $stateRoot -PathType Container)) {
@@ -88,6 +264,7 @@ function Resolve-OllamaExecutable {
 function Get-GpuSnapshot {
     $command = Get-Command nvidia-smi.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $command) {
+        $script:governorDependencyHealthy = $false
         return [pscustomobject]@{
             available = $false
             memoryFreeMiB = $null
@@ -97,9 +274,9 @@ function Get-GpuSnapshot {
         }
     }
     try {
-        $line = @(
-            & $command.Source '--query-gpu=memory.free,memory.used,memory.total,utilization.gpu' '--format=csv,noheader,nounits' 2>$null
-        ) | Select-Object -First 1
+        $probe = Invoke-GovernorNativeProbe -Operation GpuSnapshot
+        if (-not $probe.ok) { throw 'GPU_OBSERVATION_UNKNOWN' }
+        $line = @($probe.output -split '\r?\n' | Where-Object { $_ }) | Select-Object -First 1
         if (-not $line) { throw 'nvidia-smi returned no rows' }
         $parts = @(([string]$line).Split(',') | ForEach-Object { $_.Trim() })
         if ($parts.Count -lt 4) { throw 'nvidia-smi returned an incomplete row' }
@@ -112,6 +289,8 @@ function Get-GpuSnapshot {
         }
     }
     catch {
+        if ($_.Exception.Message -eq 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN') { throw }
+        $script:governorDependencyHealthy = $false
         return [pscustomobject]@{
             available = $false
             memoryFreeMiB = $null
@@ -429,6 +608,7 @@ function Read-OverrideMode {
 
 function Write-OverrideMode {
     param([ValidateSet('AUTO','FORCE_ON','FORCE_OFF')][string]$Mode)
+    Assert-GovernorMutationOwner
     Ensure-StateRoot
     $payload = [ordered]@{
         schemaVersion = 'stephanos.gaming-resource-override.v1'
@@ -445,6 +625,7 @@ function Write-OverrideMode {
 
 function Write-PrepareLease {
     param([string]$RequestedProcessName, [string]$RequestedProfileName)
+    Assert-GovernorMutationOwner
     Ensure-StateRoot
     $now = (Get-Date).ToUniversalTime()
     $payload = [ordered]@{
@@ -464,6 +645,7 @@ function Write-PrepareLease {
 }
 
 function Clear-PrepareLease {
+    Assert-GovernorMutationOwner
     if (Test-Path -LiteralPath $preparePath -PathType Leaf) {
         Remove-Item -LiteralPath $preparePath -Force -ErrorAction SilentlyContinue
     }
@@ -587,10 +769,13 @@ function Resolve-GamingProfile {
 
 function Get-LoadedOllamaModels {
     param([string]$OllamaExecutable)
-    if (-not $OllamaExecutable) { return @() }
     try {
-        $lines = @(& $OllamaExecutable ps 2>$null)
-        if ($LASTEXITCODE -ne 0 -or $lines.Count -lt 2) { return @() }
+        if (-not $OllamaExecutable) { throw 'OLLAMA_OBSERVATION_UNKNOWN' }
+        $probe = Invoke-GovernorNativeProbe -Operation OllamaInventory
+        if (-not $probe.ok) { throw 'OLLAMA_OBSERVATION_UNKNOWN' }
+        $lines = @($probe.output -split '\r?\n' | Where-Object { $_.Trim() })
+        if ($lines.Count -lt 1 -or [string]$lines[0] -cnotmatch '^NAME\s+ID\s+SIZE\s+PROCESSOR\s+') { throw 'OLLAMA_INVENTORY_INVALID' }
+        if ($lines.Count -gt 65) { throw 'OLLAMA_INVENTORY_INVALID' }
         return @(
             $lines |
                 Select-Object -Skip 1 |
@@ -598,13 +783,16 @@ function Get-LoadedOllamaModels {
                     $line = [string]$_
                     if (-not $line.Trim()) { return }
                     $parts = @($line.Trim() -split '\s+')
-                    if ($parts.Count -gt 0 -and $parts[0]) { [string]$parts[0] }
+                    if ($parts.Count -lt 5 -or $parts[0] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$') { throw 'OLLAMA_INVENTORY_INVALID' }
+                    [string]$parts[0]
                 } |
                 Where-Object { $_ } |
                 Select-Object -Unique
         )
     }
     catch {
+        if ($_.Exception.Message -eq 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN') { throw }
+        $script:governorDependencyHealthy = $false
         return @()
     }
 }
@@ -627,18 +815,21 @@ function Stop-OllamaModel {
     param([string]$OllamaExecutable, [string]$Model)
     if (-not $OllamaExecutable -or -not $Model) { return $false }
     try {
-        & $OllamaExecutable stop $Model *> $null
-        return $LASTEXITCODE -eq 0
+        $probe = Invoke-GovernorNativeProbe -Operation OllamaStop -Model $Model
+        if (-not $probe.ok) { $script:governorDependencyHealthy = $false }
+        return $probe.ok
     }
     catch {
+        if ($_.Exception.Message -eq 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN') { throw }
+        $script:governorDependencyHealthy = $false
         return $false
     }
 }
 
 function Get-OllamaVrRuntimeProcesses {
     $ollamaRoot = Join-Path $env:LOCALAPPDATA 'Programs\Ollama'
-    return @(
-        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    try { return @(
+        Get-CimInstance Win32_Process -ErrorAction Stop |
             Where-Object {
                 $name = [string]$_.Name
                 $path = [string]$_.ExecutablePath
@@ -654,12 +845,12 @@ function Get-OllamaVrRuntimeProcesses {
                 )
                 $underOllamaRoot -and $isRuntime
             }
-    )
+    ) } catch { $script:governorDependencyHealthy = $false; return @() }
 }
 
 function Stop-OllamaRuntimeForRealVr {
     param([bool]$Enabled)
-
+    Assert-GovernorMutationOwner
     $result = [ordered]@{
         enabled = $Enabled
         processCountBefore = 0
@@ -716,12 +907,18 @@ function Invoke-ImmediateVrModelEviction {
 }
 
 function Read-GovernorState {
-    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { return $null }
     try {
-        $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+        if (-not (Test-Path -LiteralPath $statePath -ErrorAction Stop)) { return $null }
+        $info = Get-Item -LiteralPath $statePath -ErrorAction Stop
+        if ($info.PSIsContainer -or $info.Length -lt 2 -or $info.Length -gt 32768 -or
+            ($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'STATE_UNPROVEN' }
+        $state = [IO.File]::ReadAllText($statePath) | ConvertFrom-Json -ErrorAction Stop
+        if ($null -eq $state -or $state.GetType().FullName -cne 'System.Management.Automation.PSCustomObject') { throw 'STATE_UNPROVEN' }
         return Normalize-GovernorState -State $state
     } catch {
-        return $null
+        # An existing unreadable record can conceal an unresolved native child.
+        # Only a genuinely absent record permits first-start initialization.
+        throw 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN'
     }
 }
 
@@ -803,7 +1000,12 @@ function Write-GovernorState {
         [bool]$ShouldParkHeavy,
         [bool]$ParkAllModels
     )
+    Assert-GovernorMutationOwner
+    Assert-GovernorNativeCustodyUnheld
     Ensure-StateRoot
+    $publisher = [Diagnostics.Process]::GetCurrentProcess()
+    try { $publisherStartedAtUtc = $publisher.StartTime.ToUniversalTime().ToString('o') }
+    finally { $publisher.Dispose() }
     $payload = [ordered]@{
         schemaVersion = 'stephanos.vr-resource-governor.v1'
         governorVersion = 3
@@ -820,15 +1022,17 @@ function Write-GovernorState {
         parentProcessName = $ParentProcessName
         parentExecutablePath = $ParentExecutablePath
         preferredModel = $lightweightModel
-        ollamaLoadMode = if ($ParkAllModels) { 'off' } elseif ($ShouldParkHeavy) { 'cool' } else { 'balanced' }
-        heavyModelAllowed = -not $ShouldParkHeavy
-        localModelAllowed = -not ($Active -and $ParkAllModels)
+        ollamaLoadMode = if (-not $script:governorDependencyHealthy) { 'unknown' } elseif ($ParkAllModels) { 'off' } elseif ($ShouldParkHeavy) { 'cool' } else { 'balanced' }
+        heavyModelAllowed = [bool]($script:governorDependencyHealthy -and -not $ShouldParkHeavy)
+        localModelAllowed = [bool]($script:governorDependencyHealthy -and -not ($Active -and $ParkAllModels))
+        dependencyObservationKnown = [bool]$script:governorDependencyHealthy
+        nativeProbeCustodyHeld = $false
         parkedModels = @($ParkedModels)
         loadedModelsBefore = @($LoadedModelsBefore)
         heavyModelsBefore = @($HeavyModelsBefore)
         heavyModelsAfter = @($HeavyModelsAfter)
         loadedModelsAfter = @($LoadedModelsAfter)
-        zeroLocalModelInvariant = [bool]$ZeroLocalModelInvariant
+        zeroLocalModelInvariant = [bool]($script:governorDependencyHealthy -and $ZeroLocalModelInvariant)
         reappearanceDetected = [bool]$ReappearanceDetected
         reappearanceCount = [int]$ReappearanceCount
         ollamaRuntimeHardBlocked = [bool]$OllamaRuntimeHardBlocked
@@ -836,6 +1040,7 @@ function Write-GovernorState {
         ollamaRuntimeProcessCountAfter = [int]$OllamaRuntimeProcessCountAfter
         ollamaRuntimeStoppedCount = [int]$OllamaRuntimeStoppedCount
         evictionHealthy = [bool](
+            $script:governorDependencyHealthy -and
             (-not $ShouldParkHeavy -or $HeavyModelsAfter.Count -eq 0) -and
             $ZeroLocalModelInvariant
         )
@@ -854,6 +1059,8 @@ function Write-GovernorState {
         transition = $Transition
         telemetryPath = $telemetryPath
         updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+        publisherProcessId = [int]$PID
+        publisherStartedAtUtc = $publisherStartedAtUtc
     }
     [System.IO.File]::WriteAllText(
         $statePath,
@@ -988,6 +1195,10 @@ function Resolve-EffectiveState {
 function Invoke-Reconcile {
     param($Signal, $Effective, $PriorState)
 
+    Assert-GovernorMutationOwner
+    Assert-GovernorNativeCustodyUnheld
+    $script:governorDependencyHealthy = $true
+    $script:governorNativeClock = [Diagnostics.Stopwatch]::StartNew()
     $gpuBefore = Get-GpuSnapshot
     $parkAllModels = [bool]($Effective.active -and $Effective.profile.parkAllModels)
     $hardBlockRealVr = [bool]($parkAllModels -and $Signal.realAirLinkActive)
@@ -1037,8 +1248,9 @@ function Invoke-Reconcile {
     }
     $heavyAfter = @(Get-HeavyModels -Models $loadedAfter)
     $zeroLocalModelInvariant = [bool](
-        -not ($Effective.active -and $parkAllModels) -or
-        ($loadedAfter.Count -eq 0 -and (-not $hardBlockRealVr -or $runtimeProcessesAfter.Count -eq 0))
+        $script:governorDependencyHealthy -and
+        (-not ($Effective.active -and $parkAllModels) -or
+        ($loadedAfter.Count -eq 0 -and (-not $hardBlockRealVr -or $runtimeProcessesAfter.Count -eq 0)))
     )
     $priorReappearanceCount = 0
     if ($PriorState -and $null -ne $PriorState.PSObject.Properties['reappearanceCount']) {
@@ -1128,6 +1340,7 @@ function Invoke-Reconcile {
 }
 
 function Invoke-CurrentReconcile {
+    Assert-GovernorMutationOwner
     $signal = Get-GamingSignal
     $prior = Read-GovernorState
     $effective = Resolve-EffectiveState -Signal $signal -PriorState $prior
@@ -1150,67 +1363,56 @@ if ($Action -eq 'ObserveAdmission') {
     exit 0
 }
 
-if ($Action -eq 'SetAuto') {
-    Write-OverrideMode -Mode 'AUTO' | Out-Null
-    Invoke-CurrentReconcile | ConvertTo-Json -Depth 8
-    exit 0
-}
-if ($Action -eq 'ForceOn') {
-    Write-OverrideMode -Mode 'FORCE_ON' | Out-Null
-    Invoke-CurrentReconcile | ConvertTo-Json -Depth 8
-    exit 0
-}
-if ($Action -eq 'ForceOff') {
-    Write-OverrideMode -Mode 'FORCE_OFF' | Out-Null
-    Clear-PrepareLease
-    Invoke-CurrentReconcile | ConvertTo-Json -Depth 8
-    exit 0
-}
-if ($Action -eq 'PrepareGaming') {
-    if ((Read-OverrideMode) -eq 'FORCE_OFF') {
-        throw 'GAMING_RESOURCE_PREPARE_BLOCKED_BY_FORCE_OFF'
+function Invoke-GovernorOneShot {
+    $script:governorMutationOwner = Enter-GovernorMutationOwner
+    if (-not $script:governorMutationOwner.acquired) {
+        return [pscustomobject]@{ exitCode = 4; state = [pscustomobject]@{ ok = $false; blocker = 'GOVERNOR_MUTATION_BUSY' } }
     }
-    Write-PrepareLease -RequestedProcessName $ProcessName -RequestedProfileName $ProfileName | Out-Null
-    $prepared = Invoke-CurrentReconcile
-    $prepared | ConvertTo-Json -Depth 8
-    if (-not $prepared.evictionHealthy -or $prepared.heavyModelAllowed -ne $false) { exit 2 }
-    if (
-        $prepared.profile.parkAllModels -eq $true -and
-        (
-            $prepared.localModelAllowed -ne $false -or
-            @($prepared.loadedModelsAfter).Count -gt 0 -or
-            $prepared.zeroLocalModelInvariant -ne $true
-        )
-    ) { exit 3 }
-    exit 0
-}
-if ($Action -eq 'CancelPrepare') {
-    Clear-PrepareLease
-    Invoke-CurrentReconcile | ConvertTo-Json -Depth 8
-    exit 0
-}
-if ($Action -eq 'Status') {
-    $state = Read-GovernorState
-    if (-not $state) { $state = Invoke-CurrentReconcile }
-    $state | ConvertTo-Json -Depth 8
-    exit 0
-}
-if ($Action -eq 'Reconcile') {
-    $state = Invoke-CurrentReconcile
-    $state | ConvertTo-Json -Depth 8
-    if (-not $state.evictionHealthy) { exit 2 }
-    exit 0
+    try {
+        if ($script:governorMutationOwner.abandoned) {
+            Set-GovernorNativeCustodyHold -Held $true
+            throw 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN'
+        }
+        Assert-GovernorNativeCustodyUnheld
+        if ($Action -eq 'SetAuto') { Write-OverrideMode -Mode 'AUTO' | Out-Null }
+        elseif ($Action -eq 'ForceOn') { Write-OverrideMode -Mode 'FORCE_ON' | Out-Null }
+        elseif ($Action -eq 'ForceOff') {
+            Write-OverrideMode -Mode 'FORCE_OFF' | Out-Null
+            Clear-PrepareLease
+        }
+        elseif ($Action -eq 'PrepareGaming') {
+            if ((Read-OverrideMode) -eq 'FORCE_OFF') { throw 'GAMING_RESOURCE_PREPARE_BLOCKED_BY_FORCE_OFF' }
+            Write-PrepareLease -RequestedProcessName $ProcessName -RequestedProfileName $ProfileName | Out-Null
+        }
+        elseif ($Action -eq 'CancelPrepare') { Clear-PrepareLease }
+        elseif ($Action -notin @('Status','Reconcile')) { throw 'GOVERNOR_ACTION_UNPROVEN' }
+
+        $state = if ($Action -eq 'Status') { Read-GovernorState } else { $null }
+        if (-not $state) { $state = Invoke-CurrentReconcile }
+        $exitCode = 0
+        if ($Action -eq 'Reconcile' -and -not $state.evictionHealthy) { $exitCode = 2 }
+        if ($Action -eq 'PrepareGaming') {
+            if (-not $state.evictionHealthy -or $state.heavyModelAllowed -ne $false) { $exitCode = 2 }
+            elseif ($state.profile.parkAllModels -eq $true -and
+                ($state.localModelAllowed -ne $false -or @($state.loadedModelsAfter).Count -gt 0 -or
+                 $state.zeroLocalModelInvariant -ne $true)) { $exitCode = 3 }
+        }
+        return [pscustomobject]@{ exitCode = $exitCode; state = $state }
+    } finally {
+        Exit-GovernorMutationOwner -Owner $script:governorMutationOwner
+        $script:governorMutationOwner = $null
+    }
 }
 
-$poll = [Math]::Max(250, $PollMilliseconds)
-$lastGuardAt = [DateTime]::MinValue
-# Retain fast real-headset detection and immediate AI-model eviction on every
-# watcher tick. Expensive all-process flat-game discovery is capped at 1/3s.
-$script:flatGameScanIntervalSeconds = 3
-$script:lastFlatGameScanAt = [DateTime]::MinValue
-$script:cachedFlatGameSignal = $null
-
-while ($true) {
+function Invoke-GovernorWatchTick {
+    $script:governorMutationOwner = Enter-GovernorMutationOwner
+    if (-not $script:governorMutationOwner.acquired) { return 'GOVERNOR_MUTATION_BUSY' }
+    try {
+    if ($script:governorMutationOwner.abandoned) {
+        Set-GovernorNativeCustodyHold -Held $true
+        throw 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN'
+    }
+    Assert-GovernorNativeCustodyUnheld
     # First bite: headset presence wins over every other workload. If any Ollama
     # runner has appeared, evict it immediately before the slower inventory pass.
     [void](Invoke-ImmediateVrModelEviction)
@@ -1224,7 +1426,7 @@ while ($true) {
     $overrideChanged = -not $prior -or [string]$prior.overrideMode -ne [string]$effective.overrideMode
     $processChanged = -not $prior -or [string]$prior.gameProcessName -ne [string]$signal.gameProcessName
     $guardIntervalSeconds = if ($effective.active -and $effective.profile.parkAllModels) { 0.5 } else { 5 }
-    $guardDue = $effective.active -and ($now - $lastGuardAt).TotalSeconds -ge $guardIntervalSeconds
+    $guardDue = $effective.active -and ($now - $script:lastGuardAt).TotalSeconds -ge $guardIntervalSeconds
     # Keep an independently observed idle-state heartbeat fresh for bounded
     # GPU/CPU model admission. Without this, Watch refreshes its JSON only on
     # transitions. Core expires evidence at 15s (the reviewer at 30s), so
@@ -1247,8 +1449,28 @@ while ($true) {
 
     if ($phaseChanged -or $reasonChanged -or $overrideChanged -or $processChanged -or $guardDue -or $idleHeartbeatDue) {
         $state = Invoke-Reconcile -Signal $signal -Effective $effective -PriorState $prior
-        if ($state.active) { $lastGuardAt = $now }
+        if ($state.active) { $script:lastGuardAt = $now }
     }
+    return 'GOVERNOR_WATCH_TICK_COMPLETE'
+    } finally {
+        Exit-GovernorMutationOwner -Owner $script:governorMutationOwner
+        $script:governorMutationOwner = $null
+    }
+}
 
+if ($Action -ne 'Watch') {
+    $result = Invoke-GovernorOneShot
+    $result.state | ConvertTo-Json -Depth 8
+    exit $result.exitCode
+}
+
+$poll = [Math]::Max(250, $PollMilliseconds)
+$script:lastGuardAt = [DateTime]::MinValue
+# Retain fast real-headset detection. Expensive flat-game discovery is capped.
+$script:flatGameScanIntervalSeconds = 3
+$script:lastFlatGameScanAt = [DateTime]::MinValue
+$script:cachedFlatGameSignal = $null
+while ($true) {
+    [void](Invoke-GovernorWatchTick)
     Start-Sleep -Milliseconds $poll
 }

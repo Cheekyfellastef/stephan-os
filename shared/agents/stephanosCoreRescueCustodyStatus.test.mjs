@@ -1,15 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { projectSovereignCoreDaemonStatusV1 } from './sovereignCommanderRemoteMailboxV1.mjs';
 
 const status = await readFile(
   new URL('../../scripts/windows/status-stephanos-core-daemon.ps1', import.meta.url), 'utf8',
 );
 const watchdog = await readFile(
   new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8',
-);
-const remote = await readFile(
-  new URL('./sovereignCommanderRemoteMailboxV1.mjs', import.meta.url), 'utf8',
 );
 
 test('Core status fails closed on ambiguous process and lock writer custody', () => {
@@ -59,16 +57,21 @@ test('Custody observations remain read-only and do not directly seize lease or k
 });
 
 test('remote Core status exposes bounded proof booleans but not raw process identity', () => {
-  const start = remote.indexOf('function safeCoreDaemonStatusProjection(value = {})');
-  const end = remote.indexOf('function safeProjectSearchProjection(', start);
-  assert.ok(start >= 0 && end > start);
-  const projection = remote.slice(start, end);
+  const input = {
+    available: true, singleWriterProven: true, writerProcessObserved: true,
+    lockOwnerMatchesWriter: true, rescueGenerationPresent: true,
+    rescueAttemptCount: 2, reportedDaemonHealthy: false,
+    processId: 12345, lockOwnerPid: 12345, commandLine: 'PRIVATE_CORE_COMMAND', lockPath: 'PRIVATE_CORE_LOCK',
+  };
+  const projection = projectSovereignCoreDaemonStatusV1(input);
   for (const field of [
     'singleWriterProven', 'writerProcessObserved', 'lockOwnerMatchesWriter',
     'rescueGenerationPresent', 'rescueAttemptCount', 'reportedDaemonHealthy',
   ]) {
-    assert.match(projection, new RegExp(field + ':'));
+    assert.equal(projection[field], input[field]);
   }
-  assert.doesNotMatch(projection, /processId:|lockOwnerPid:|commandLine:|lockPath:/);
-  assert.match(projection, /Number\.isSafeInteger\(parsed\.rescueAttemptCount\)/);
+  assert.doesNotMatch(JSON.stringify(projection), /processId|lockOwnerPid|commandLine|lockPath|PRIVATE_CORE/);
+  for (const rescueAttemptCount of [null, '2', -1, 0.5, 1_000_001]) {
+    assert.equal(projectSovereignCoreDaemonStatusV1({ ...input, rescueAttemptCount }).rescueAttemptCount, null);
+  }
 });
