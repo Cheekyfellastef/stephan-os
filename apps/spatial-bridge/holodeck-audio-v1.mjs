@@ -221,12 +221,27 @@ export function createHolodeckAudioControls({
     }finally{if(!accepted)closeOwner(owner);}
   }
   function microphoneLevel(){
-    const analyser=microphone?.analyser;
+    const owner=microphone,analyser=owner?.analyser;
     if(!state.microphoneActive||!analyser)return null;
-    const values=new Uint8Array(analyser.fftSize);
-    analyser.getByteTimeDomainData(values);
-    let total=0;for(const sample of values){const delta=(sample-128)/128;total+=delta*delta;}
-    return Math.sqrt(total/values.length);
+    try{
+      const fftSize=analyser.fftSize;
+      if(!Number.isInteger(fftSize)||fftSize<1||fftSize>32768)throw new Error('Invalid microphone analyser size');
+      const values=new Uint8Array(fftSize);
+      analyser.getByteTimeDomainData(values);
+      let total=0;for(const sample of values){const delta=(sample-128)/128;total+=delta*delta;}
+      const level=Math.sqrt(total/values.length);
+      if(!Number.isFinite(level))throw new Error('Invalid microphone analyser reading');
+      return level;
+    }catch{
+      // An interrupted Quest/OS analyser must not keep a live local mic grant
+      // or crash the recurring headset level display. Never retry capture.
+      if(ownsMic(owner)){
+        releaseMicrophone();
+        publish({microphoneActive:false,microphonePending:false,
+          status:'Microphone level analyser failed. Local test stopped and the microphone released. ChatGPT Voice is separate.'});
+      }
+      return null;
+    }
   }
   function stopSpeakers(){
     // An app-window disconnect also revokes an in-flight or active local tone.
