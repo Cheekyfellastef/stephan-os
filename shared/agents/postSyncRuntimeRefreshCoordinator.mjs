@@ -198,6 +198,14 @@ const NATURAL_EXACT = new Set([
   'scripts/sovereign-commander-browser-observe.mjs',
   'scripts/sovereign-commander-capability-parity-reconcile.mjs',
   'scripts/sovereign-commander-spatial-workspace.mjs',
+  // These exact entry points/helpers are captured anew by their existing
+  // bounded or attended callers. Source adoption invokes none of them and
+  // grants no canary, process, administrator or native execution authority.
+  'scripts/qwen35-canary.mjs',
+  'scripts/windows/read-sovereign-maintenance-owner-v2.ps1',
+  'scripts/windows/stephanos-core-process-observation.ps1',
+  'scripts/sovereign-fixed-runtime-empty-version-quarantine-v1.mjs',
+  'scripts/windows/quarantine-sovereign-fixed-runtime-empty-version-v1.ps1',
   // These private operations capture and hash-check their exact helper pairs
   // on each call, then compile captured C# in a fresh PowerShell child. This
   // source check never performs an operation or grants native custody.
