@@ -23,6 +23,7 @@ const C = 'c'.repeat(40);
 const paths = { repoRoot: '/canonical/repo', workspaceRoot: '/canonical/workspace' };
 const linearAncestry = (before, after) => ({ ok: true, ancestor: before <= after });
 const runBattleBridgeSyncAndRefresh = options => runSyncAndRefreshWithRealAncestry({
+  capacityObservationHeartbeat: async () => ({ ok: true, capacityObservationOnly: true }),
   ...options, adapter: { isAncestor: linearAncestry, ...options.adapter },
 });
 
@@ -109,6 +110,7 @@ async function productionDebtFixture(t) {
   assert.equal(child('sync').result.sourceUpdated, true);
   const calls = [];
   const invoke = (failUi, legacyCaller = false) => runSyncAndRefreshWithRealAncestry({
+    capacityObservationHeartbeat: async () => ({ ok: true, capacityObservationOnly: true }),
     paths: fixturePaths, expectedPaths: fixturePaths, platform: 'linux', ...safeGoalDiscoveryArgs(),
     ...(legacyCaller ? { pendingReader: async () => null } : {}),
     adapter: {
@@ -206,6 +208,82 @@ function nonWindowsRepairArgs() {
     ...safeGoalDiscoveryArgs(),
   };
 }
+
+test('unchanged exact source observes Forge once before unrelated runtime debt while retaining every hold', async () => {
+  for (const blocker of ['BLOCKED_UNCLASSIFIED_RUNTIME_PATH',
+    'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN', 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN']) {
+    const calls = [];
+    const debt = pendingPostSyncRefreshDebt([{ beforeHead: A, afterHead: B }], [], '',
+      { spatialAdoptionRequired: true });
+    const debtBytes = JSON.stringify(debt);
+    const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths, platform: 'win32',
+      pendingReader: async () => ({ ok: true, ...debt }),
+      adapter: {
+        runSync: () => { calls.push('sync'); return { ok: true, result: {
+          ...noChange(B), facts: { ...noChange(B).facts, pendingRefresh: debt } } }; },
+        runRefresh: () => { calls.push('refresh'); return { ok: true, result: {
+          ok: false, blocker, exactHeadProofOk: false, spatialAdoptionRequired: true,
+          pluginHostActivationRequired: true, safeRefreshesCompleted: false } }; },
+        runMailboxPulse: () => assert.fail('runtime hold reached mailbox pulse'),
+      },
+      capacityObservationHeartbeat: async options => {
+        calls.push('capacity'); assert.equal(options.expectedSourceHead, B);
+        assert.ok(options.budgetMs > 0 && options.budgetMs <= 30000);
+        return { ok: true, sourceHead: B, workerObservationProven: true,
+          capacityObservationOnly: true, admissionAttempted: false, sourceBuildAttempted: false,
+          lifeboatCapacity: { ok: true, available: true } };
+      },
+      goalDiscoveryHeartbeat: () => assert.fail('runtime hold reached full admission heartbeat'),
+      controlPlaneReconciler: () => assert.fail('runtime hold reached auxiliary repair'),
+    });
+    assert.deepEqual(calls, ['sync', 'capacity', 'refresh']);
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, blocker);
+    assert.equal(result.capacityObservationObserved, true);
+    assert.equal(result.refreshes[0].result.exactHeadProofOk, false);
+    assert.equal(result.refreshes[0].result.pluginHostActivationRequired, true);
+    assert.equal(JSON.stringify(debt), debtBytes, 'capacity observation cannot pay or alter debt');
+    const status = projectSyncAndRefreshStatus(result);
+    assert.equal(status.ok, false);
+    assert.equal(status.capacityObservation.capacityAvailable, true);
+    assert.equal(status.capacityObservation.admissionAttempted, false);
+    assert.equal(status.capacityObservation.idleProven, false);
+    assert.equal(status.capacityObservation.physicalExclusionGranted, false);
+    assert.equal(status.capacityObservation.workAuthorized, false);
+  }
+});
+
+test('capacity observation does not run for dirty or unproven source and a failed observation cannot erase refresh failure', async () => {
+  for (const syncResult of [blocked('BLOCKED_DIRTY_SOURCE'), noChange('invalid')]) {
+    let observations = 0;
+    const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths,
+      ...nonWindowsRepairArgs(), pendingReader: async () => null,
+      adapter: { runSync: () => ({ ok: true, result: syncResult }) },
+      capacityObservationHeartbeat: async () => { observations++; return { ok: true }; } });
+    assert.equal(result.ok, false);
+    assert.equal(observations, 0);
+  }
+  const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths,
+    ...nonWindowsRepairArgs(), pendingReader: async () => ({ ok: true, beforeHead: A, afterHead: B }),
+    adapter: { runSync: () => ({ ok: true, result: noChange(B) }),
+      runRefresh: () => ({ ok: true, result: { ok: false, blocker: 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN' } }) },
+    capacityObservationHeartbeat: async () => ({ ok: false, blocker: 'CAPACITY_OBSERVATION_WORKER_UNPROVEN' }),
+  });
+  assert.equal(result.blocker, 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN');
+  assert.equal(result.capacityObservation.blocker, 'CAPACITY_OBSERVATION_WORKER_UNPROVEN');
+});
+
+test('capacity side stage is not repeated while the same wrapper reconverges after refresh', async () => {
+  let observations = 0;
+  const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths,
+    ...nonWindowsRepairArgs(), pendingReader: async () => ({ ok: true, beforeHead: A, afterHead: B }),
+    adapter: { runSync: () => ({ ok: true, result: noChange(B) }),
+      runRefresh: () => ({ ok: true, result: completedRefresh(A, B) }) },
+    capacityObservationHeartbeat: async () => { observations++; return { ok: true }; },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(observations, 1);
+});
 
 test('actual wrapper reads legacy Commander completion as pending and accepts only covering relay proof from its child', async t => {
   for (const relayProven of [false, true]) {
