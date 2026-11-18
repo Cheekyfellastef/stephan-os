@@ -63,7 +63,9 @@ test('cached-page departure revokes access and allows explicit reconnection afte
     path==='/frame'?{status:'frame',serial:1,generation:1,jpeg:'fixture'}:
     {status:path==='/bind'?'connected':'stopped'});});
   await h.client.discover();await h.client.connect(1);await h.tick();
-  assert.equal(h.client.input({kind:'text',text:'stale'}),true);
+  assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);
+  assert.equal(h.client.input({kind:'text',text:'stale'}),true,
+    'draft queued behind consented click must be discarded when the page departs');
   await h.client.pagehide({persisted:true});await h.tick();
   assert.equal(h.client.getState().status,'idle');assert.equal(h.client.getFrame(),null);
   assert.equal(h.client.input({kind:'text',text:'hidden'}),false);
