@@ -284,3 +284,41 @@ test('audio hot-plug revokes pending microphone grant and stale discovery withou
   audio.dispose();
   assert.equal(removed,1);assert.equal(listeners.size,0,'disposed room unregisters the device observer');
 });
+
+test('hot-plug cannot silently reuse the same physical route just because device IDs returned',async()=>{
+  const listeners=new Set(),saved=new Map();
+  const storage={getItem:key=>saved.get(key)??null,setItem:(key,value)=>saved.set(key,value)};
+  let micRequests=0,speakerContexts=0;
+  const mediaDevices={
+    addEventListener(event,fn){assert.equal(event,'devicechange');listeners.add(fn);},
+    removeEventListener(event,fn){assert.equal(event,'devicechange');listeners.delete(fn);},
+    async enumerateDevices(){return [
+      {kind:'audioinput',deviceId:'quest-mic',label:'Quest microphone'},
+      {kind:'audiooutput',deviceId:'quest-speaker',label:'Quest speakers'},
+    ];},
+    getUserMedia(){micRequests++;throw Error('no automatic microphone request allowed');},
+  };
+  class SpeakerContext{constructor(){speakerContexts++;}}
+  const audio=createHolodeckAudioControls({navigatorRef:{mediaDevices},storageRef:storage,AudioContextCtor:SpeakerContext});
+  assert.equal((await audio.listDevices()).ok,true);
+  assert.equal(audio.setInput('quest-mic'),true);
+  assert.equal(audio.setOutput('quest-speaker'),true);
+  const savedHints=readSpatialAudioPreferences(storage);
+  assert.deepEqual(savedHints,{inputId:'quest-mic',outputId:'quest-speaker'});
+  for(const listener of listeners)listener();
+  const listed=await audio.listDevices();
+  assert.equal(listed.ok,true);
+  assert.match(listed.reason,/Re-select the intended microphone and speaker/);
+  assert.deepEqual([audio.getState().inputId,audio.getState().outputId],['',''],
+    'device enumeration may not reauthorize saved IDs after hot-plug');
+  assert.deepEqual(readSpatialAudioPreferences(storage),savedHints,'inert saved hints remain available for later sessions');
+  assert.equal((await audio.testMicrophone('quest-mic')).ok,false);
+  assert.equal((await audio.testMicrophone('')).ok,false,'default microphone is not silently substituted');
+  assert.equal((await audio.testSpeakers('quest-speaker')).ok,false);
+  assert.deepEqual([micRequests,speakerContexts],[0,0]);
+  assert.equal(audio.setInput('quest-mic'),true,'fresh explicit selection restores local microphone choice');
+  assert.equal(audio.setOutput('quest-speaker'),true,'fresh explicit selection restores local speaker choice');
+  assert.deepEqual([audio.getState().inputId,audio.getState().outputId],['quest-mic','quest-speaker']);
+  assert.deepEqual([micRequests,speakerContexts],[0,0],'selection alone is not a media grant');
+  audio.dispose();assert.equal(listeners.size,0);
+});
