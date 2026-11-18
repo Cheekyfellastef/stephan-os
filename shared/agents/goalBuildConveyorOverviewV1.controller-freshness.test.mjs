@@ -575,3 +575,44 @@ test('Goal #2961: current Core head vetoes old-head canonical-native GREEN', () 
     assert.deepEqual(ordered, snapshot, label + ' input immutable');
   }
 });
+
+test('Goal #2961: worker watchdog positive requires owned raw proof fields', () => {
+  const head = 'a'.repeat(40);
+  const assessment = {
+    finalVerdict: 'WORKER_WATCHDOG_HEALTHY', healthy: true, processHealthy: true,
+    heartbeatFresh: true, heartbeatPidMatchesProcess: true, processLaunchIdentityValid: true,
+    heartbeatLaunchIdentityMatchesProcess: true, repositoryFromCanonicalMain: true,
+    heartbeatMatchesCanonicalRepositoryHead: true, remoteMainHeadProven: true,
+    sourceHead: head, canonicalRepositoryHead: head, remoteMainHead: head,
+  };
+  const valid = {
+    statusId: 'battle-bridge-worker-watchdog-current', timestampUtc: at(-1000),
+    status: 'WORKER_WATCHDOG_HEALTHY', classification: 'WORKER_WATCHDOG_HEALTHY',
+    finalAssessment: assessment,
+  };
+  const inheritedAssessment = { ...valid, finalAssessment: Object.create(assessment) };
+  const inheritedIdentity = { ...valid, finalAssessment: Object.assign(
+    Object.create({ sourceHead: head }),
+    Object.fromEntries(Object.entries(assessment).filter(([field]) => field !== 'sourceHead'))) };
+  const inheritedStatus = Object.assign(Object.create({
+    status: 'WORKER_WATCHDOG_HEALTHY', classification: 'WORKER_WATCHDOG_HEALTHY',
+  }), { statusId: valid.statusId, timestampUtc: valid.timestampUtc,
+    finalAssessment: { ...assessment } });
+  for (const [label, record, expected] of [
+    ['valid owned producer', valid, 'HEALTHY'],
+    ['inherited entire assessment', inheritedAssessment, 'UNKNOWN'],
+    ['inherited source head', inheritedIdentity, 'UNKNOWN'],
+    ['inherited status flags', inheritedStatus, 'UNKNOWN'],
+  ]) {
+    const result = overview({}, { nowMs: NOW, statusRecords: [record] });
+    const health = result.health.find(item => item.id === 'missionWorkerHealthy');
+    assert.equal(health.state, expected, label);
+    if (expected === 'UNKNOWN') {
+      assert.equal(health.observedAtUtc, '', label + ' no credited observation');
+      assert.equal(health.expiresAtUtc, '', label + ' no positive expiry');
+    } else {
+      assert.equal(health.evidenceSource, 'CANONICAL_WORKER_WATCHDOG');
+    }
+    assert.equal(result.buildingGoalCount, null, 'service health is never BUILD proof');
+  }
+});

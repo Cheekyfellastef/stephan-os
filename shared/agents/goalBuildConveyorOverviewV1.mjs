@@ -421,7 +421,18 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     target?.targetId === 'stephanos-backend-8787');
   const backendProof = backendTargets.length === 1 ? backendTargets[0] : null;
   const serviceProofAgeMs = Math.min(maxAgeMs, 2 * 60_000);
-  const workerProofValid = watchdog?.status === 'WORKER_WATCHDOG_HEALTHY'
+  // Positive native evidence requires producer-owned fields, not prototype decoration.
+  const ownProofField = (value, field) => value !== null && typeof value === 'object'
+    && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, field);
+  const watchdogOwnFields = ['statusId', 'timestampUtc', 'status', 'classification', 'finalAssessment'];
+  const workerOwnFields = ['finalVerdict', 'healthy', 'processHealthy', 'heartbeatFresh',
+    'heartbeatPidMatchesProcess', 'processLaunchIdentityValid',
+    'heartbeatLaunchIdentityMatchesProcess', 'repositoryFromCanonicalMain',
+    'heartbeatMatchesCanonicalRepositoryHead', 'remoteMainHeadProven',
+    'sourceHead', 'canonicalRepositoryHead', 'remoteMainHead'];
+  const workerProofValid = watchdogOwnFields.every(field => ownProofField(watchdog, field))
+    && workerOwnFields.every(field => ownProofField(workerProof, field))
+    && watchdog?.status === 'WORKER_WATCHDOG_HEALTHY'
     && watchdog?.classification === 'WORKER_WATCHDOG_HEALTHY'
     && workerProof?.finalVerdict === 'WORKER_WATCHDOG_HEALTHY'
     && workerProof?.healthy === true && workerProof?.processHealthy === true
@@ -438,8 +449,6 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     && fresh(watchdog.timestampUtc, nowMs, serviceProofAgeMs);
   // A positive target readback must carry its own raw producer fields. Inherited
   // prototype values can decorate an observation but cannot supply proof.
-  const ownProofField = (value, field) => value !== null && typeof value === 'object'
-    && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, field);
   const backendRefreshFields = ['statusId', 'timestampUtc', 'safeRefreshesCompleted',
     'unknownPathCount', 'unsafePathCount', 'afterHead', 'resultTargets'];
   const backendTargetFields = ['targetId', 'ok', 'exactHeadProofOk',
