@@ -25,6 +25,41 @@ function blobSha(content) {
 // separate bootstrap regression at the end of this file must keep holding.
 const governor = await readFile(new URL('./fixtures/windows-authority-vr-resource-governor-review-v1/sovereign-reviewer-256k.ps1', import.meta.url), 'utf8');
 
+// Preserve the exact pre-repair c451 source independently of production edits.
+// The historical transformations below reconstruct the two registered source
+// blobs from ca89e8b0 and c90b7caa. No fixture qualifies the current governor.
+const historicalFixture = JSON.parse(await readFile(
+  new URL('./fixtures/vrResourceGovernorHistoricalC451V1.json', import.meta.url), 'utf8'));
+const source = historicalFixture.source;
+const productionGovernor = await readFile(new URL('../../scripts/windows/run-vr-resource-governor.ps1', import.meta.url), 'utf8');
+const idleStart = source.indexOf('    # Keep an independently observed idle-state heartbeat fresh');
+const idleEnd = idleStart < 0 ? -1 : source.indexOf('    if ($phaseChanged', idleStart);
+const mainGovernor = idleStart < 0 ? source
+  : (source.slice(0, idleStart) + '\n' + source.slice(idleEnd))
+    .replace(' -or $idleHeartbeatDue', '');
+const idleAddition = [
+  '    # Keep an independently observed idle-state heartbeat fresh for bounded',
+  '    # GPU/CPU model admission. Without this, Watch refreshes its JSON only on',
+  "    # transitions and a safe idle state ages past the reviewer's 30s window.",
+  '    # The watcher still scans game/headset signals on every tick BEFORE this.',
+  '    $idleHeartbeatDue = $false',
+  '    if (-not $effective.active) {',
+  '        try {',
+  '            $observedUtc = [DateTime]::Parse(',
+  '                [string]$prior.updatedAtUtc,',
+  '                [System.Globalization.CultureInfo]::InvariantCulture,',
+  '                [System.Globalization.DateTimeStyles]::RoundtripKind',
+  '            ).ToUniversalTime()',
+  '            $idleHeartbeatDue = ($now.ToUniversalTime() - $observedUtc).TotalSeconds -ge 15',
+  '        } catch {',
+  '            $idleHeartbeatDue = $true',
+  '        }',
+  '    }',
+].join('\n') + '\n';
+const guardStatement = '    $guardDue = $effective.active -and ($now - $lastGuardAt).TotalSeconds -ge $guardIntervalSeconds\n';
+const historicalIdleGovernor = mainGovernor.replace(guardStatement, guardStatement + idleAddition)
+  .replace('$processChanged -or $guardDue)', '$processChanged -or $guardDue -or $idleHeartbeatDue)');
+
 function input(content = governor, overrides = {}) {
   return {
     repository: REPOSITORY,
@@ -73,6 +108,45 @@ test('fixture preserves exact current reviewer governor source blob', () => {
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
   test(name + ' retains the registered current protection contracts without granting authority', () => {
+    const result = analyzeWindowsAuthorityVrResourceGovernorReviewV1(input(content));
+    assert.equal(result.eligible, true);
+    assert.equal(result.clean, true);
+    assert.deepEqual(result.findings, []);
+    assert.deepEqual(result.reviewedPaths, [PATH]);
+    for (const key of ['sourceMutationAllowed', 'mergeAuthority', 'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+      assert.equal(result[key], false);
+    }
+  });
+}
+
+test('historical fixture preserves exact pre-repair main bytes without qualification authority', () => {
+  assert.equal(historicalFixture.schemaVersion, 'stephanos.test-only-historical-vr-governor-fixture.v1');
+  assert.equal(historicalFixture.repository, REPOSITORY);
+  assert.equal(historicalFixture.sourcePath, PATH);
+  assert.equal(historicalFixture.sourceHead, 'c4515529b7aa0be44a2e959446744bfd24633e80');
+  assert.equal(historicalFixture.blobSha, '5118b0727e47a5f29e33b6b7c58c49ba754ece1a');
+  assert.equal(blobSha(source), historicalFixture.blobSha);
+  assert.equal(Buffer.byteLength(source, 'utf8'), historicalFixture.size);
+  assert.equal(historicalFixture.size, 49829);
+  assert.equal(historicalFixture.sourceSha256, 'd70b83cf4a6620a02ebcc17a0f0c55dccd6bb204f39e5dde85babacd7b13c4a4');
+  assert.equal(createHash('sha256').update(source, 'utf8').digest('hex'), historicalFixture.sourceSha256);
+  assert.equal(historicalFixture.testOnly, true);
+  for (const key of ['qualificationAuthority', 'runtimeMutationAllowed', 'mergeAuthority']) {
+    assert.equal(historicalFixture[key], false);
+  }
+});
+
+test('historical transformations preserve the exact registered main and idle-repair source blobs', () => {
+  assert.equal(blobSha(mainGovernor), 'ae71e1e79ead63efeb5a4d73f4bce6a01ee0f1d9');
+  assert.equal(blobSha(historicalIdleGovernor), '9513dfe995a35087e1d715ef0c4dff4ca3578295');
+});
+
+test('current production governor is not qualified by historical source registrations', () => {
+  rejects(productionGovernor);
+});
+
+for (const [name, content] of [['historical main', mainGovernor], ['original idle repair', historicalIdleGovernor]]) {
+  test(name + ' retains the registered historical protection contracts without granting authority', () => {
     const result = analyzeWindowsAuthorityVrResourceGovernorReviewV1(input(content));
     assert.equal(result.eligible, true);
     assert.equal(result.clean, true);
