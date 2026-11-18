@@ -163,6 +163,24 @@ test('microphone setup failure and Stop during suspended audio release the grant
   }
 });
 
+test('failed live Quest microphone analyser revokes the one local grant and stops stale meter polling',async()=>{
+  const context=audioContextHarness(),h=microphoneHarness(context),stream=mediaStream();
+  const opening=h.audio.testMicrophone();h.requests[0].resolve(stream);
+  assert.equal((await opening).ok,true);
+  assert.equal(h.audio.microphoneLevel(),0.5);
+  const analyser=context.contexts[0].connections[0];
+  analyser.getByteTimeDomainData=()=>{throw Error('Quest audio analyser detached');};
+  assert.equal(h.audio.microphoneLevel(),null,'a detached headset cannot throw into the meter timer');
+  assert.equal(stream.track.stops,1,'the owned microphone is immediately released');
+  assert.equal(context.contexts[0].closes,1,'its analyser context is closed');
+  assert.equal(h.audio.getState().microphoneActive,false);
+  assert.equal(h.audio.getState().microphonePending,false);
+  assert.match(h.audio.getState().status,/Microphone level analyser failed/);
+  assert.equal(h.audio.microphoneLevel(),null,'a later tick cannot restart capture');
+  assert.equal(stream.track.stops,1,'no double stop and no automatic reopen');
+  h.audio.dispose();
+});
+
 test('speaker tests use the shared output selection and never begin after disposal',async()=>{
   const sink=deferred(),context=audioContextHarness({sink});
   const navigatorRef={mediaDevices:{enumerateDevices:async()=>[
