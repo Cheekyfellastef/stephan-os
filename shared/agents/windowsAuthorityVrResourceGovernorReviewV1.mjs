@@ -24,7 +24,7 @@ const PATH = WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1[0];
 const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: 'ae71e1e79ead63efeb5a4d73f4bce6a01ee0f1d9', size: 48838 }),
   Object.freeze({ blobSha: '9513dfe995a35087e1d715ef0c4dff4ca3578295', size: 49674 }),
-  Object.freeze({ blobSha: '2747131cebf46d69df3cc9e13ad51603d71584a0', size: 52100 }),
+  Object.freeze({ blobSha: '2747131cebf46d69df3cc9e13ad51603d71584a0', size: 52100, reviewerReservation: true }),
 ]);
 
 const text = (value) => String(value ?? '').trim();
@@ -96,8 +96,9 @@ function parameterPrefix(source) {
 
 function reviewGovernor(source, findings) {
   const observed = { blobSha: blobSha(source), size: Buffer.byteLength(source, 'utf8') };
-  if (!CURRENT_GOVERNOR_SOURCE_CONTRACTS.some((entry) =>
-    entry.blobSha === observed.blobSha && entry.size === observed.size)) {
+  const sourceContract = CURRENT_GOVERNOR_SOURCE_CONTRACTS.find((entry) =>
+    entry.blobSha === observed.blobSha && entry.size === observed.size);
+  if (!sourceContract) {
     findings.push(finding('vr-governor-source-contract-unregistered',
       'Governor bytes do not match a registered complete source contract; unknown variants require independent qualification.'));
     return;
@@ -141,7 +142,12 @@ function reviewGovernor(source, findings) {
     ["reason = 'reviewer-resource-reservation'", 'vr-governor-reviewer-reason-missing', 'Reviewer reservation must publish its fixed bounded reason.'],
     ["$ProfileName -eq 'review-large-context'", 'vr-governor-reviewer-prepare-gate-missing', 'PrepareGaming must separately verify the fixed reviewer reservation.'],
     ["$ProcessName -ne 'SovereignReviewer' -or", 'vr-governor-reviewer-prepare-process-failclose-missing', 'Reviewer preparation must fail closed for any other process identity.'],
-  ]) requireLiteral(findings, source, literal, code, summary);
+  ]) {
+    // The original registered governors predate reviewer reservations. Apply
+    // these extra gates only to the exact registered reviewer-capable variant.
+    if (code.startsWith('vr-governor-reviewer-') && !sourceContract.reviewerReservation) continue;
+    requireLiteral(findings, source, literal, code, summary);
+  }
 
   requirePattern(
     findings,
@@ -150,6 +156,7 @@ function reviewGovernor(source, findings) {
     'vr-governor-requested-vr-profile-not-park-all',
     'An explicitly requested VR maximum profile must force park-all behavior.',
   );
+  if (sourceContract.reviewerReservation) {
   requirePattern(
     findings,
     source,
@@ -171,6 +178,7 @@ function reviewGovernor(source, findings) {
     'vr-governor-reviewer-effective-state-widened',
     'REVIEWING must remain an inactive fixed-profile reservation rather than gaming authority.',
   );
+  }
   requirePattern(
     findings,
     source,
