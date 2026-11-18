@@ -46,6 +46,64 @@ const nativeContext = windows ? run(String.raw`
 `) : {normal:false};
 const normalNativeSkip = !windows ? 'Windows required' : nativeContext.normal ? false : 'GOVERNOR_NATIVE_CONTEXT_UNPROVEN: genuine normal-token fixture is not applicable';
 
+test('caretaker owner identity accepts only terminal ASCII launch separators', {skip:!windows},()=>{
+  const result=run(String.raw`
+    $powershellExecutable='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    $vrGovernorScript='C:\fixture\run-vr-resource-governor.ps1'
+    $tail='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$vrGovernorScript+'" -Action Watch'
+    $quoted='"'+$powershellExecutable+'" '+$tail
+    $bare=$powershellExecutable+' '+$tail
+    $results=@()
+    foreach($prefix in @($quoted,$bare)){
+      foreach($suffix in @('', ' ', '   ', ([string][char]9), (' '+[char]9+'  '))){
+        $process=[pscustomobject]@{ProcessId=42;ExecutablePath=$powershellExecutable;CommandLine=$prefix+$suffix;CreationDate=[DateTime]::UtcNow.AddSeconds(-1)}
+        $results+=,[pscustomobject]@{kind='valid';accepted=(Test-VrResourceGovernorProcessIdentity $process)}
+      }
+    }
+    $invalid=@(($quoted+' extra'),($quoted+' ""'),($quoted+'" "'),($quoted+[char]13),($quoted+[char]10),($quoted+[char]0),($quoted+[char]0xA0),
+      (' '+$quoted),$quoted.Replace('-Action Watch','-Action Reconcile'),$quoted.Replace($vrGovernorScript,'C:\other\run-vr-resource-governor.ps1'),
+      $quoted.Replace('-File','-Command'),$quoted.Replace('Watch','Watch.exe'))
+    foreach($command in $invalid){
+      $process=[pscustomobject]@{ProcessId=42;ExecutablePath=$powershellExecutable;CommandLine=$command;CreationDate=[DateTime]::UtcNow.AddSeconds(-1)}
+      $results+=,[pscustomobject]@{kind='invalid';accepted=(Test-VrResourceGovernorProcessIdentity $process)}
+    }
+    foreach($field in @('pid','executable','birth')){
+      $process=[pscustomobject]@{ProcessId=42;ExecutablePath=$powershellExecutable;CommandLine=$quoted+' ';CreationDate=[DateTime]::UtcNow.AddSeconds(-1)}
+      if($field -ceq 'pid'){$process.ProcessId=0}
+      if($field -ceq 'executable'){$process.ExecutablePath='C:\other\powershell.exe'}
+      if($field -ceq 'birth'){$process.CreationDate=[DateTime]::UtcNow.AddMinutes(1)}
+      $results+=,[pscustomobject]@{kind='invalid';accepted=(Test-VrResourceGovernorProcessIdentity $process)}
+    }
+    ConvertTo-Json -InputObject $results -Compress`,[caretaker]);
+  assert.equal(result.length,25);
+  for(const row of result)assert.equal(row.accepted,row.kind==='valid',JSON.stringify(row));
+});
+
+test('caretaker recognizes the actual Windows Start-Process Watch command', {skip:!windows},async t=>{
+  const root=await mkdtemp(join(tmpdir(),'governor-owner-command-'));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const fixture=join(root,'run-vr-resource-governor.ps1');
+  await writeFile(fixture,"param([string]$Action)\nif($Action -cne 'Watch'){exit 7}\nStart-Sleep -Seconds 3\n");
+  const result=run(String.raw`
+    $powershellExecutable='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    $vrGovernorScript='${fixture.replaceAll("'","''")}'
+    $child=Start-Process -FilePath $powershellExecutable -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$vrGovernorScript+'"'),'-Action','Watch') -WindowStyle Hidden -PassThru
+    try{
+      $observed=Get-CimInstance Win32_Process -Filter ('ProcessId='+$child.Id) -ErrorAction Stop
+      $accepted=Test-VrResourceGovernorProcessIdentity -Process $observed
+      $terminalSeparator=[int][char]$observed.CommandLine[$observed.CommandLine.Length-1]
+      if(-not $child.WaitForExit(8000)){throw 'FIXTURE_CHILD_TIMEOUT'}
+      [pscustomobject]@{accepted=$accepted;terminalSeparator=$terminalSeparator;childExit=$child.ExitCode;pidBound=($observed.ProcessId -eq $child.Id)}|ConvertTo-Json -Compress
+    }finally{
+      if(-not $child.HasExited){$child.Kill();$child.WaitForExit()}
+      $child.Dispose()
+    }`,[caretaker]);
+  assert.equal(result.pidBound,true);
+  assert.equal(result.childExit,0);
+  assert.ok([9,32].includes(result.terminalSeparator),'actual Start-Process serialization supplies the regression');
+  assert.equal(result.accepted,true);
+});
+
 function launch(body, sources) {
   const child = spawn(ps, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
     Buffer.from(loader, 'utf16le').toString('base64')], { shell: false, windowsHide: true });
