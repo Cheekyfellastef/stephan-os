@@ -200,6 +200,64 @@ test('OC2 executes only fixed node test IDs and proves source state unchanged', 
   assert.ok(nodeCalls.every((call) => call.options.shell === false));
 });
 
+test('OC2 workspace I/O exceptions fail closed without a qualifying result', async (t) => {
+  for (const [scenario, expectedError, expectedWrites] of [
+    ['workspace layout throws', 'OPENCLAW_OC2_SHARED_WORKSPACE_UNAVAILABLE', 0],
+    ['proof write throws', 'OPENCLAW_OC2_PROOF_WRITE_FAILED', 1],
+    ['execution receipt write throws', 'OPENCLAW_OC2_EXECUTION_RECEIPT_WRITE_FAILED', 2],
+  ]) {
+    await t.test(scenario, async () => {
+      const parts = fixture();
+      const userProfile = '/tmp/stephanos-oc2-workspace-failure';
+      const repoRoot = path.resolve(userProfile, 'Documents', 'GitHub', 'stephan-os');
+      let writes = 0;
+      const spawnSyncFn = (executable, args) => {
+        if (String(executable).toLowerCase().endsWith('git.exe')) {
+          const key = args.join(' ');
+          if (key === 'rev-parse --show-toplevel') return { status: 0, stdout: `${repoRoot}\n`, stderr: '' };
+          if (key === 'remote get-url origin') return { status: 0, stdout: 'https://github.com/Cheekyfellastef/stephan-os.git\n', stderr: '' };
+          if (key === 'rev-parse --abbrev-ref HEAD') return { status: 0, stdout: 'main\n', stderr: '' };
+          if (key === 'rev-parse HEAD') return { status: 0, stdout: `${HEAD}\n`, stderr: '' };
+          if (key === 'status --porcelain=v1 --untracked-files=all') return { status: 0, stdout: '', stderr: '' };
+          return { status: 1, stdout: '', stderr: 'unexpected git command' };
+        }
+        return { status: 0, stdout: 'ok\n', stderr: '' };
+      };
+      const result = await executeClaimedOpenClawOc2DeterministicTestBuild(parts.action, parts.claim, {
+        actionGrant: parts.grant,
+        taskClass: OPENCLAW_OC2_TASK_CLASS,
+        goalId: '#1725',
+        providerVersion: '1.0.0',
+        requestedSourceHead: HEAD,
+        providerInstance: 'openclaw-gateway:4242',
+        platform: 'win32',
+        env: { USERPROFILE: userProfile },
+        existsSyncFn: () => true,
+        spawnSyncFn,
+        readFileFn: async () => JSON.stringify(parts.item),
+        ensureSharedWorkspaceLayoutFn: async () => {
+          if (scenario === 'workspace layout throws') throw new Error('simulated missing workspace');
+          return { ok: true };
+        },
+        writeAtomicJsonFn: async () => {
+          writes += 1;
+          if (scenario === 'proof write throws' && writes === 1) throw new Error('simulated proof I/O failure');
+          if (scenario === 'execution receipt write throws' && writes === 2) throw new Error('simulated receipt I/O failure');
+          return { ok: true };
+        },
+        now: new Date('2026-08-21T00:00:00.000Z'),
+      });
+      assert.equal(result.success, false);
+      assert.equal(result.qualificationEligible, false);
+      assert.equal(result.error, expectedError);
+      assert.deepEqual(result.changedFiles, []);
+      assert.deepEqual(result.evidenceReceipts, []);
+      assert.equal(result.receipt, undefined);
+      assert.equal(writes, expectedWrites);
+    });
+  }
+});
+
 test('OC2 fails closed if a fixed test changes repository source state', async () => {
   const parts = fixture();
   const userProfile = '/tmp/stephanos-oc2-dirty';
