@@ -190,6 +190,28 @@ legacy terminal history retain their prior behavior. Fixed observation may
 complete while an older build remains reserved, and it never calls maintenance
 or releases that reservation.
 
+### Retained observations and lifetime ledger cost
+
+The original BUILD locator is restored from the relay status and reread from
+the canonical execution ledger. When an authenticated observation request is
+available and that retained locator exists, the consumer inspects the exact
+original request without first scanning every unrelated historical mailbox
+record. The fixed observation still obtains its own create-once ledger
+reservation, rechecks source and expiry, and records an authentic terminal
+observation. It does not retire an older reservation as a side effect.
+
+This is an observation path, not evidence that the full ledger is clear. An
+unobserved reservation elsewhere in history remains unproven. Cold starts
+without a retained BUILD locator still require the existing complete history
+recovery. Every new BUILD continues to require complete discovery and the
+ledger-owned discovery-and-reservation check immediately before admission.
+The existing scan limits, corruption refusals, unknown-outcome holds and
+exclusive create-once reservation remain unchanged.
+
+This separation prevents lifetime mailbox history from blocking a bounded
+diagnostic of a known request. It does not claim native repair, worker pickup,
+source execution or completion of the parent goal.
+
 The existing build consumer continues to call only its compiled
 `repair-goal-builder-flow` route. Native installation, qualification, normal
 operator context, goal eligibility, resource protection and maintenance custody

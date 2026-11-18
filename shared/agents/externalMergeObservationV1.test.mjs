@@ -7,7 +7,15 @@ import { createHash } from 'node:crypto';
 import { createMissionOrchestratorState, applyMissionOrchestratorEvent } from './missionOrchestrator.mjs';
 import { buildMissionWorkerAction } from './missionOrchestratorWorker.mjs';
 import { classifyCompletionMission } from './completionGuardianV1.mjs';
-import { externalMergeCandidateV1, validateExternalMergeObservationV1, hasExternalMergeObservationV1 } from './externalMergeObservationV1.mjs';
+import { buildCompletionGuardianProjection } from './completionGuardianV1.mjs';
+import { externalMergeCandidateV1, validateExternalMergeObservationV1, hasExternalMergeObservationV1,
+  projectExternalMergeExecutionObligationV1 } from './externalMergeObservationV1.mjs';
+import { buildCriticalBacklogProjection, DEFAULT_CRITICAL_BACKLOG } from './criticalBacklogConveyor.mjs';
+import { controllerRequiresMaterialProgress } from '../../scripts/mission-orchestrator-worker-supervised.mjs';
+import { ensureCriticalBacklogMission, publishCriticalBacklogProjection,
+  resolveCriticalBacklogRuntimePaths, readmitReentryReadyCriticalMission } from '../../stephanos-server/services/criticalBacklogConveyorService.js';
+import { ensureElasticGoalMissions } from '../../stephanos-server/services/elasticGoalMissionAdmissionService.js';
+import { projectFleetConveyorObservationV1 } from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 import { fetchExternalMergeObservation } from '../../stephanos-server/services/githubPrEvidenceService.js';
 import { reconcileExternalMergeObservation } from '../../stephanos-server/services/completionGuardianMergeObservationService.js';
 import { appendMissionEvent } from '../../stephanos-server/services/missionOrchestratorStore.js';
@@ -79,6 +87,169 @@ test('exact external integration leaves historical authority intact and becomes 
   assert.deepEqual(m, before);
   assert.equal(n.externalMergeObservation.goalAcceptanceProven, false);
   assert.equal(n.externalMergeObservation.runtimeMutationAuthority, false);
+});
+
+test('real observed-merge transition retains acceptance without consuming construction or demanding a grant', async () => {
+  const before = mission(), n = applyMissionOrchestratorEvent(before, await validEvent(before));
+  const unchanged = structuredClone(n);
+  const backlog = DEFAULT_CRITICAL_BACKLOG.filter(entry => entry.mission.missionId === n.missionId);
+  assert.equal(backlog.length, 1);
+  const obligation = projectExternalMergeExecutionObligationV1(n);
+  assert.equal(obligation.state, 'ACCEPTANCE_PENDING');
+  assert.equal(obligation.materialProgressRequired, false);
+  for (const key of ['goalComplete', 'sourceMutationAllowed', 'leaseReleaseAllowed',
+    'claimReleaseAllowed', 'mergeAuthority', 'runtimeMutationAuthority']) assert.equal(obligation[key], false, key);
+  const projection = buildCriticalBacklogProjection({ backlog, missionRecords: [n] });
+  assert.equal(projection.decision, 'PARKED_ACCEPTANCE_ONLY');
+  assert.deepEqual(projection.parkedAcceptanceMissionIds, [n.missionId]);
+  assert.equal(projection.parkedAcceptanceCount, 1);
+  assert.deepEqual(projection.parkedApprovalMissionIds, []);
+  assert.deepEqual(projection.completedItemIds, []);
+  assert.equal(projection.activeMission, null);
+  const staleController = { authoritativeProjection: { status: 'READY' },
+    actionResult: { projection: { decision: 'WAIT_ACTIVE_MISSION', activeMission: n } } };
+  assert.equal(controllerRequiresMaterialProgress(staleController), false);
+  assert.equal(controllerRequiresMaterialProgress({ ...staleController, allowWorkerTick: true }), true);
+  assert.equal(controllerRequiresMaterialProgress({ ...staleController,
+    authoritativeProjection: { status: 'ACTIVE', lane: { active: true } } }), true);
+  assert.equal(controllerRequiresMaterialProgress({ ...staleController,
+    actionResult: { ...staleController.actionResult, elasticAdmission: { selectedMission: { missionId: 'material-work' } } } }), true);
+  const guardian = buildCompletionGuardianProjection({ missions: [n], backlog });
+  assert.equal(guardian.repairQueue[0].nextAction, 'RECONCILE_GOAL_ACCEPTANCE');
+  assert.equal(guardian.missionRows[0].classification, 'PROOF_PENDING');
+  const regressed = buildCompletionGuardianProjection({ missions: [n], backlog, regressedMissionIds: [n.missionId] });
+  assert.equal(regressed.missionRows[0].classification, 'REGRESSION_REPAIR_REQUIRED');
+  assert.equal(regressed.repairQueue[0].nextAction, 'RECONCILE_EXISTING_MISSION_IDENTITY');
+  assert.equal(regressed.runtimeMutationAuthority, false);
+  assert.equal(regressed.mergeAuthority, false);
+  assert.equal(buildMissionWorkerAction(n).executable, false);
+  assert.deepEqual(n, unchanged);
+});
+
+test('acceptance accounting fails closed for malformed observation, live writer and incomplete authority', async () => {
+  const m = mission(), accepted = applyMissionOrchestratorEvent(m, await validEvent(m));
+  const changes = [
+    x => x.currentPhase = 'AGENT_IMPLEMENTATION', x => x.missionKind = 'live-runtime-investigation',
+    x => x.cancelled = true, x => x.blockers.push('source-custody-held'),
+    x => x.dispatch.status = 'running', x => x.activeWriter = 'codex',
+    x => x.simultaneousWritersAllowed = true, x => x.continuity.parkingStatus = 'PARKED_BLOCKED',
+    x => x.storeMetadata = { originalSourceAttemptFence: {} },
+    x => x.storeMetadata = { supervisedRecoveryMaintenance: {} },
+    x => x.git.commitSha = MAIN, x => x.pullRequest.headSha = MAIN,
+    x => x.externalMergeObservation.branch = 'openclaw/foreign',
+    x => x.externalMergeObservation.evidenceSha256 = 'd'.repeat(64),
+    x => x.externalMergeObservation.expectedRevision = x.revision,
+    x => x.evidenceReceipts = {}, x => x.evidenceReceipts = [],
+    x => x.evidenceReceipts = null, x => delete x.evidenceReceipts,
+    x => x.nextAction.type = 'COLLECT_AND_JUDGE_EVIDENCE',
+    x => x.nextAction.approvalRequired = true,
+    x => x.nextAction.historicalApprovalProven = true,
+    x => x.nextAction.runtimeMutationAuthority = true,
+    x => delete x.nextAction.sourceIntegrationObserved,
+  ];
+  for (const change of changes) {
+    const candidate = structuredClone(accepted); change(candidate);
+    const result = projectExternalMergeExecutionObligationV1(candidate);
+    assert.equal(result.acceptanceOnly, false, change.toString());
+    assert.equal(result.constructionCapacityRequired, true, change.toString());
+    assert.equal(controllerRequiresMaterialProgress({ authoritativeProjection: { status: 'READY' },
+      actionResult: { projection: { activeMission: candidate } } }), true, change.toString());
+  }
+  const ordinary = structuredClone(accepted);
+  delete ordinary.externalMergeObservation;
+  ordinary.nextAction = { type: 'COLLECT_AND_JUDGE_EVIDENCE' };
+  assert.equal(projectExternalMergeExecutionObligationV1(ordinary).materialProgressRequired, true);
+  assert.equal(buildMissionWorkerAction(ordinary).actionKind, 'evidence-judgment');
+});
+
+test('acceptance parking publishes retained identity and never bypasses a canonical source-custody HOLD', async t => {
+  const f = await fixture(t), n = applyMissionOrchestratorEvent(f.m, await validEvent(f.m));
+  const backlog = DEFAULT_CRITICAL_BACKLOG.filter(entry => entry.mission.missionId === n.missionId);
+  const paths = resolveCriticalBacklogRuntimePaths({ repoRoot: path.join(f.root, 'repo'),
+    workspaceRoot: path.join(f.root, 'workspace'), orchestratorRoot: f.root,
+    snapshotRoot: f.snapshotRoot, worktreeRoot: path.join(f.root, 'worktrees') });
+  const result = await ensureCriticalBacklogMission({ backlog, paths, env: {}, allowLegacyMissionCreation: false,
+    listMissions: async () => [n],
+    readProgrammeProjection: async () => ({ status: 'HOLD', blockers: ['mutation-lease-without-lane-projection'],
+      machineryInventory: { sourceHead: MAIN }, scheduler: { failClosed: false, elasticCapacity: { status: 'RUNNING' } } }),
+    ensureElasticMissions: async () => assert.fail('source-custody HOLD must prevent elastic admission'),
+    dispatchElasticBuilds: async () => assert.fail('source-custody HOLD must prevent dispatch'),
+    appendMissionEvent: async () => assert.fail('acceptance accounting must preserve the retained revision'),
+    publishProjection: async () => ({ ok: true }),
+  });
+  assert.equal(result.classification, 'PARKED_ACCEPTANCE_ONLY');
+  assert.equal(result.programmeStatus, 'HOLD');
+  assert.equal(result.elasticAdmissionGate.admissionPreflightEligible, false);
+  assert.deepEqual(result.programmeBlockers, ['mutation-lease-without-lane-projection']);
+  assert.equal(result.elasticAdmission, null);
+  assert.equal(result.elasticIgnition, null);
+  assert.equal((await publishCriticalBacklogProjection(result.projection, { paths })).ok, true);
+  const status = JSON.parse(await readFile(path.join(paths.workspaceRoot, 'status', 'critical-backlog-conveyor-current.json')));
+  assert.deepEqual(status.parkedAcceptanceMissionIds, [n.missionId]);
+  assert.equal(status.parkedAcceptanceCount, 1);
+  assert.deepEqual(status.completedItemIds, []);
+  const writes = [];
+  await runCompletionGuardian({ testOnly: true, repoRoot: f.root, workspaceRoot: paths.workspaceRoot,
+    missionRoot: f.root, missions: [n], goals: [], backlog,
+    writeRecord: async (_root, segments, record) => { writes.push({ segments: segments.join('/'), record }); return { ok: true }; } });
+  const handoff = writes.find(row => row.segments === 'handoffs/completion-guardian-repair-current.json').record;
+  assert.equal(handoff.existingMissionId, n.missionId);
+  assert.equal(handoff.requestedAction, 'RECONCILE_GOAL_ACCEPTANCE');
+  for (const key of ['sourceMutationAllowed', 'runtimeMutationAuthority', 'goalComplete', 'mergeAuthority']) assert.equal(handoff[key], false);
+});
+
+test('legacy reentry uses the same acceptance accounting while preserving the pending mission', async () => {
+  const m = mission(), pending = applyMissionOrchestratorEvent(m, await validEvent(m));
+  const entry = DEFAULT_CRITICAL_BACKLOG.find(item => item.mission.missionId !== pending.missionId);
+  const proof = id => ({ receiptId: id, requirement: 'fixture repair evidence', source: 'fixture',
+    evidenceType: 'command-output', verified: true, exitCode: 0 });
+  let repaired = createMissionOrchestratorState(entry.mission);
+  for (const event of [
+    { eventType: 'MISSION_BLOCKED', reason: 'fixture-failure' },
+    { eventType: 'MISSION_PARKED_FOR_REPAIR', reason: 'fixture-failure', repairOwner: 'goal-building-agent', receipt: proof('fixture-park') },
+    { eventType: 'MISSION_REPAIR_PROVEN', resolvedBlockers: ['fixture-failure'], receipt: proof('fixture-repair') },
+  ]) repaired = applyMissionOrchestratorEvent(repaired, event);
+  assert.equal(repaired.continuity.parkingStatus, 'REENTRY_READY');
+  const unchanged = structuredClone(pending);
+  const result = await readmitReentryReadyCriticalMission({ backlog: [entry], paths: {}, env: {},
+    listMissions: async () => [pending, repaired],
+    appendEvent: async (id, event) => {
+      assert.equal(id, repaired.missionId);
+      assert.equal(event.expectedRevision, repaired.revision);
+      return { state: applyMissionOrchestratorEvent(repaired, event) };
+    },
+  });
+  assert.equal(result.classification, 'REENTRY_ADMITTED');
+  assert.deepEqual(pending, unchanged);
+});
+
+test('elastic admission retains acceptance ownership and selects unrelated existing work without a duplicate', async () => {
+  const m = mission(); m.missionId = 'critical-1284-elastic-goal';
+  const pending = applyMissionOrchestratorEvent(m, await validEvent(m));
+  const other = { missionId: 'critical-1287-elastic-goal', currentPhase: 'CREATE_WORKTREE',
+    revision: 1, repository: REPOSITORY, continuity: { parkingStatus: 'ACTIVE' },
+    allowedFiles: ['scripts/other.mjs'],
+    dispatch: { status: 'pending' }, git: { branch: 'openclaw/elastic-goal-1287' } };
+  const goals = [
+    { issue: 1284, title: 'Original acceptance', lifecycle: 'READY', route: 'CHATGPT_GITHUB', resourceIds: ['repo:cheekyfellastef/stephan-os:path:shared/agents'] },
+    { issue: 1287, title: 'Independent source work', lifecycle: 'READY', route: 'CHATGPT_GITHUB', resourceIds: ['repo:cheekyfellastef/stephan-os:path:scripts/other.mjs'] },
+  ];
+  const scheduler = { schemaVersion: 'stephanos.mission-scheduler.v1', readOnly: true, failClosed: false,
+    activeGoals: [], elasticCapacity: { status: 'RUNNING', desiredWidth: 1, remainingAdmissionSlots: 1 },
+    portfolio: goals, parallelCandidateDetails: goals.map(goal => ({ ...goal, candidateId: '#' + goal.issue })) };
+  const before = structuredClone(pending);
+  const admission = await ensureElasticGoalMissions({ scheduler }, { testOnly: true, dependencies: {
+    listMissionRecords: async () => [pending, other],
+    createMissionRecord: async () => assert.fail('existing acceptance and source identities must never be recreated'),
+  } });
+  assert.equal(admission.createdMissionCount, 0);
+  assert.equal(admission.selectedMission.missionId, other.missionId);
+  assert.deepEqual(admission.activeMissions.map(item => item.missionId), [other.missionId]);
+  assert.deepEqual(admission.runnableMissions.map(item => item.missionId), [other.missionId]);
+  assert.ok(admission.held.some(item => item.issueNumber === 1284 && item.reason === 'EXISTING_GOAL_MISSION_ACCEPTANCE_PENDING'));
+  assert.ok(projectFleetConveyorObservationV1({ elasticAdmission: admission }).held.reasons.some(item =>
+    item.issueNumber === 1284 && item.reasonCode === 'EXISTING_GOAL_MISSION_ACCEPTANCE_PENDING'));
+  assert.deepEqual(pending, before);
 });
 
 test('observation cannot repair cancellation, custody, fences, held missions, or mismatched retained identity', async () => {

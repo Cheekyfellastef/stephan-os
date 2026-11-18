@@ -1,10 +1,18 @@
-"""Offline workflow tests. No PowerShell, Steam, game or reviewed DLL is executed."""
+"""Offline workflows plus Windows-only harmless-process exit-receipt tests.
+
+The Windows tests execute the production close command against a disposable
+fixture window. They never execute Steam, Starfield or the reviewed DLL.
+"""
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
+import uuid
 
 
 SPEC = importlib.util.spec_from_file_location(
@@ -292,6 +300,41 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(result["normalExitProven"])
         self.assertNotIn("close", self.host.effects)
 
+    def test_null_exit_code_remains_incomplete_and_is_retained_in_summary(self):
+        self.begin()
+        close = self.host.close
+
+        def missing_code(process):
+            result = close(process)
+            result.update(exitCode=None, exitCodeError="EXIT_CODE_READ_FAILED")
+            return result
+
+        with patch.object(self.host, "close", side_effect=missing_code):
+            result = starter.finish(self.store, self.host)
+        self.assertTrue(result["gameExitObserved"])
+        self.assertTrue(result["proxyRestored"])
+        self.assertFalse(result["normalExitProven"])
+        summary = starter.summary(result, self.store)
+        self.assertEqual(summary["closeResult"], {
+            "requested": True, "exited": True, "exitCode": None,
+            "exitCodeError": "EXIT_CODE_READ_FAILED"})
+        self.assertNotIn("priorProxyReceipt", summary)
+
+    def test_nonzero_exit_code_is_retained_without_normal_exit_proof(self):
+        self.begin()
+        close = self.host.close
+
+        def nonzero_code(process):
+            result = close(process)
+            result["exitCode"] = 37
+            return result
+
+        with patch.object(self.host, "close", side_effect=nonzero_code):
+            result = starter.finish(self.store, self.host)
+        self.assertTrue(result["proxyRestored"])
+        self.assertFalse(result["normalExitProven"])
+        self.assertEqual(starter.summary(result, self.store)["closeResult"]["exitCode"], 37)
+
     def test_pid_reuse_never_closes_replacement_game(self):
         self.begin()
         self.host.current[0]["createdFileTime"] = "134384678510182997"
@@ -366,6 +409,186 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("priorProxyReceipt", summary)
         self.assertNotIn("events", summary)
         self.assertEqual(summary["process"], self.host.identity)
+
+
+@unittest.skipUnless(os.name == "nt", "Actual Windows PowerShell 5.1 process fixture")
+class WindowsExitReceiptTests(unittest.TestCase):
+    """Run WindowsHost.close's extracted command, not a second implementation."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.temporary = tempfile.TemporaryDirectory(prefix="starfield-exit-proof-")
+        cls.addClassCleanup(cls.temporary.cleanup)
+        cls.root = Path(cls.temporary.name)
+        cls.executable = cls.root / "OwnedExitReceiptFixture.exe"
+        cls.host = starter.WindowsHost()
+        version = cls.host.ps(
+            "[ordered]@{major=$PSVersionTable.PSVersion.Major;"
+            "minor=$PSVersionTable.PSVersion.Minor;edition=$PSVersionTable.PSEdition}"
+            " | ConvertTo-Json -Compress")
+        if version != {"major": 5, "minor": 1, "edition": "Desktop"}:
+            raise AssertionError("The exit regression must use Windows PowerShell 5.1: " + str(version))
+        source = r"""
+using System;
+using System.Diagnostics;
+using System.Drawing;
+using System.IO;
+using System.Windows.Forms;
+
+internal static class OwnedExitReceiptFixture {
+    [STAThread]
+    private static int Main(string[] args) {
+        int exitCode = int.Parse(args[0]);
+        bool refuseClose = args[1] == "refuse";
+        Stopwatch lifetime = Stopwatch.StartNew();
+        using (Form window = new Form())
+        using (System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer()) {
+            window.Text = "Owned exit receipt regression";
+            window.StartPosition = FormStartPosition.Manual;
+            window.Location = new Point(-2000, -2000);
+            window.Size = new Size(160, 80);
+            window.FormClosing += delegate(object sender, FormClosingEventArgs eventArgs) {
+                File.WriteAllText(args[4], "close-request-observed");
+                if (refuseClose) eventArgs.Cancel = true;
+            };
+            window.Shown += delegate {
+                File.WriteAllText(args[2], Process.GetCurrentProcess().Id.ToString());
+            };
+            timer.Interval = 25;
+            timer.Tick += delegate {
+                if (File.Exists(args[3])) Environment.Exit(exitCode);
+                if (lifetime.ElapsedMilliseconds > 20000) Environment.Exit(124);
+            };
+            timer.Start();
+            Application.Run(window);
+        }
+        return exitCode;
+    }
+}
+"""
+        path_literal = "'" + str(cls.executable).replace("'", "''") + "'"
+        cls.host.ps(
+            "$fixtureSource=@'\n" + source + "\n'@;\n"
+            "Add-Type -TypeDefinition $fixtureSource -ReferencedAssemblies "
+            "'System.dll','System.Windows.Forms.dll','System.Drawing.dll' "
+            "-OutputAssembly " + path_literal + " -OutputType WindowsApplication -ErrorAction Stop;"
+            "'{\"compiled\":true}'", timeout=40)
+
+    def fixture(self, exit_code, refuse_close=False):
+        nonce = uuid.uuid4().hex
+        ready = self.root / (nonce + ".ready")
+        stop = self.root / (nonce + ".stop")
+        close_marker = self.root / (nonce + ".close")
+        child = subprocess.Popen(
+            [str(self.executable), str(exit_code), "refuse" if refuse_close else "accept",
+             str(ready), str(stop), str(close_marker)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def settle_owned_fixture():
+            # Only this fixture's private stop file is written. Its own bounded
+            # timer exits; no process-name cleanup or game termination is used.
+            stop.write_text("stop", encoding="ascii")
+            child.wait(timeout=25)
+
+        self.addCleanup(settle_owned_fixture)
+        deadline = time.monotonic() + 10
+        while not ready.exists() and time.monotonic() < deadline:
+            self.assertIsNone(child.poll(), "The disposable fixture exited before creating its window")
+            time.sleep(0.025)
+        self.assertTrue(ready.exists(), "The disposable fixture window did not become ready")
+        self.assertEqual(int(ready.read_text()), child.pid)
+        identity = self.host.ps(
+            "$p=Get-Process -Id " + str(child.pid) + " -ErrorAction Stop;"
+            "[ordered]@{pid=$p.Id;path=$p.Path;"
+            "createdFileTime=$p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString("
+            "[Globalization.CultureInfo]::InvariantCulture);window=$p.MainWindowHandle.ToInt64()}"
+            " | ConvertTo-Json -Compress")
+        self.assertEqual(identity["pid"], child.pid)
+        self.assertEqual(identity["path"].casefold(), str(self.executable).casefold())
+        self.assertNotEqual(identity["window"], 0, "The fixture must have a normal closeable window")
+        return child, identity, close_marker
+
+    def production_command(self, identity, *, wait_ms=2000, expected_path=None):
+        captured = {}
+
+        def capture(code=None, file_args=None, timeout=20):
+            self.assertIsNone(file_args)
+            captured.update(code=code, timeout=timeout)
+            return {}
+
+        # Capture the exact command generated by the production function. Only
+        # its fixed game path and wait duration are replaced for the test fixture.
+        target = dict(identity, path=str(starter.GAME))
+        with patch.object(self.host, "ps", side_effect=capture):
+            self.host.close(target)
+        self.assertEqual(captured["timeout"], 70)
+        code = captured["code"]
+        game_literal = "'" + str(starter.GAME) + "'"
+        self.assertEqual(code.count(game_literal), 1)
+        self.assertEqual(code.count("WaitForExit(60000)"), 1)
+        fixture_literal = "'" + str(expected_path or self.executable).replace("'", "''") + "'"
+        return code.replace(game_literal, fixture_literal).replace(
+            "WaitForExit(60000)", "WaitForExit(" + str(wait_ms) + ")")
+
+    def test_owned_zero_exit_retains_the_real_exit_code(self):
+        child, identity, _ = self.fixture(0)
+        receipt = self.host.ps(self.production_command(identity), timeout=12)
+        self.assertIs(receipt["requested"], True)
+        self.assertIs(receipt["exited"], True)
+        self.assertIs(type(receipt["exitCode"]), int)
+        self.assertEqual(receipt["exitCode"], 0)
+        self.assertIsNone(receipt["exitCodeError"])
+        self.assertEqual(child.wait(timeout=5), 0)
+
+    def test_owned_nonzero_exit_retains_the_real_exit_code(self):
+        child, identity, _ = self.fixture(37)
+        receipt = self.host.ps(self.production_command(identity), timeout=12)
+        self.assertIs(receipt["requested"], True)
+        self.assertIs(receipt["exited"], True)
+        self.assertIs(type(receipt["exitCode"]), int)
+        self.assertEqual(receipt["exitCode"], 37)
+        self.assertIsNone(receipt["exitCodeError"])
+        self.assertEqual(child.wait(timeout=5), 37)
+
+    def test_timeout_keeps_unknown_code_and_leaves_the_owned_process_alive(self):
+        child, identity, _ = self.fixture(0, refuse_close=True)
+        receipt = self.host.ps(self.production_command(identity, wait_ms=100), timeout=12)
+        self.assertIs(receipt["requested"], True)
+        self.assertIs(receipt["exited"], False)
+        self.assertIsNone(receipt["exitCode"])
+        self.assertIsNone(receipt["exitCodeError"])
+        self.assertIsNone(child.poll())
+
+    def test_same_pid_with_wrong_creation_identity_is_not_closed(self):
+        child, identity, marker = self.fixture(0)
+        changed = dict(identity, createdFileTime=str(int(identity["createdFileTime"]) + 1))
+        with self.assertRaisesRegex(starter.Blocked, "Close target identity changed"):
+            self.host.ps(self.production_command(changed), timeout=12)
+        self.assertIsNone(child.poll())
+        self.assertFalse(marker.exists())
+
+    def test_wrong_executable_identity_is_not_closed(self):
+        child, identity, marker = self.fixture(0)
+        with self.assertRaisesRegex(starter.Blocked, "Close target identity changed"):
+            self.host.ps(self.production_command(
+                identity, expected_path=self.root / "DifferentFixture.exe"), timeout=12)
+        self.assertIsNone(child.poll())
+        self.assertFalse(marker.exists())
+
+    def test_failed_or_null_getter_remains_explicit_unknown_evidence(self):
+        for replacement in ("$(throw 'Fixture exit-code read failed')", "$null"):
+            with self.subTest(getter=replacement):
+                child, identity, _ = self.fixture(0)
+                code = self.production_command(identity)
+                self.assertEqual(code.count("$p.get_ExitCode()"), 1)
+                # Fault injection only at the native observation boundary.
+                code = code.replace("$p.get_ExitCode()", replacement)
+                receipt = self.host.ps(code, timeout=12)
+                self.assertIs(receipt["requested"], True)
+                self.assertIs(receipt["exited"], True)
+                self.assertIsNone(receipt["exitCode"])
+                self.assertEqual(receipt["exitCodeError"], "EXIT_CODE_READ_FAILED")
+                self.assertEqual(child.wait(timeout=5), 0)
 
 
 class IntegrityTests(unittest.TestCase):
