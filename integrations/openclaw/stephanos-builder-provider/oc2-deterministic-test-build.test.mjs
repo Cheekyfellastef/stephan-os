@@ -110,6 +110,30 @@ test('OC2 claimed source validator refuses incomplete grant and wrong queue adap
   }
 });
 
+test('OC2 claimed validator rejects another task filename in the same processing directory before reading', async (t) => {
+  for (const [name, filename] of [
+    ['different task identity', 'other-oc2-task-0001.json'],
+    ['extra filename suffix', `${TASK}.backup.json`],
+    ['noncanonical case', `${TASK.toUpperCase()}.json`],
+  ]) {
+    await t.test(name, async () => {
+      const parts = fixture();
+      parts.claim.processingPath = path.resolve(parts.claim.paths.processing, filename);
+      let fileReads = 0;
+      const result = await validateOpenClawOc2QualificationContext(qualificationInput(parts), {
+        readFileFn: async () => {
+          fileReads += 1;
+          return JSON.stringify(parts.item);
+        },
+      });
+      assert.equal(result.success, false);
+      assert.equal(result.qualificationEligible, false);
+      assert.equal(result.error, 'OPENCLAW_OC2_CLAIM_INVALID');
+      assert.equal(fileReads, 0, 'wrong claimed file must be rejected before persisted I/O');
+    });
+  }
+});
+
 test('OC2 executes only fixed node test IDs and proves source state unchanged', async () => {
   const parts = fixture();
   const userProfile = '/tmp/stephanos-oc2-user';

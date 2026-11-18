@@ -145,7 +145,8 @@ export async function validateOpenClawOc2QualificationContext(context = {}, { re
     || text(claim?.item?.missionId).toLowerCase() !== missionId
     || text(claim?.item?.actionId).toLowerCase() !== taskId
     || !text(claim?.processingPath)
-    || path.resolve(path.dirname(claim.processingPath)) !== path.resolve(text(claim?.paths?.processing))) {
+    || path.resolve(path.dirname(claim.processingPath)) !== path.resolve(text(claim?.paths?.processing))
+    || path.basename(claim.processingPath) !== `${taskId}.json`) {
     return blocker('OPENCLAW_OC2_CLAIM_INVALID');
   }
   if (action?.schemaVersion !== 'stephanos.mission-worker-action.v1'
