@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { win32 } from 'node:path';
 import test from 'node:test';
 import { executeStarfieldVrNativeBuild, projectStarfieldVrNativeBuildReceipt,
   STARFIELD_VR_NATIVE_BUILD_OPERATION as OP, STARFIELD_VR_NATIVE_BUILD_RECIPE as RECIPE,
@@ -118,7 +119,7 @@ function host(f = fixture(), changes = {}) {
   };
   return { f, calls, invoke, launch, get packet() { return packet; }, execute: (extra = {}) => executeStarfieldVrNativeBuild({
     operation: OP, expectedHead: f.head, requestId: REQUEST,
-  }, PATHS, { spawnSyncFn: invoke, runLauncherFn: launch, parentPid: 123, admissionFn: () => ({ ok: true }),
+  }, changes.paths ?? PATHS, { spawnSyncFn: invoke, runLauncherFn: launch, parentPid: 123, admissionFn: () => ({ ok: true }),
     env: { USERPROFILE: USER, SystemRoot: 'C:\\Windows', GIT_DIR: 'C:\\wrong', GIT_CONFIG_COUNT: '9',
       NODE_OPTIONS: '--require=C:\\untrusted.js', PATH: 'C:\\untrusted' }, ...extra }) };
 }
@@ -139,6 +140,29 @@ test('committed root, trees and blobs bind the bytes passed to the fixed build',
   for (const [path, raw] of Object.entries(h.f.files)) assert.deepEqual(Buffer.from(h.packet.files[path].base64, 'base64'), raw);
   assert.equal(h.packet.sourceClosureSha256, digest(Object.keys(h.packet.files).sort().map(path => `${path}\0${h.packet.files[path].sha256}\n`).join('')));
   assert.equal(result.headsetPlaytestReady, false); assert.equal(result.launchAllowed, false);
+});
+
+test('mailbox-normalized Windows root casing preserves the fixed executable', async () => {
+  for (const systemRoot of ['C:\\WINDOWS', 'c:\\windows']) {
+    const powershellExe = win32.resolve(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const h = host(fixture(), { paths: { ...PATHS, powershellExe } });
+    const result = await h.execute();
+    assert.equal(result.ok, true, `${systemRoot}: ${result.blocker}`);
+    const launch = h.calls.find(call => call.asynchronousLauncher);
+    assert.equal(launch.exe, PATHS.powershellExe, 'the admitted path never selects the executable');
+  }
+});
+
+test('launcher path substitutions remain blocked before execution', async () => {
+  for (const powershellExe of [undefined, '', 'powershell.exe',
+    win32.resolve('D:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    win32.resolve('C:\\Windows', 'SysWOW64', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    `${PATHS.powershellExe}.exe`, `${PATHS.powershellExe} `]) {
+    const h = host(fixture(), { paths: { ...PATHS, powershellExe } });
+    const result = await h.execute();
+    assert.equal(result.blocker, 'STARFIELD_VR_NATIVE_BUILD_LAUNCHER_PATH_INVALID');
+    assert.equal(h.calls.some(call => call.asynchronousLauncher), false);
+  }
 });
 
 for (const type of ['commit', 'tree', 'blob']) test(`substituted ${type} bytes cannot execute`, async () => {
