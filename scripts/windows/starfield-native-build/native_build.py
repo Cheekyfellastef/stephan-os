@@ -719,14 +719,17 @@ def run_build(packet, verified):
         # hold cancels only this build's process tree; it never kills a game.
         admission_last = [0.0, ""]
 
-        def cancelled():
+        def cancelled(*, allow_continuation=False):
             if admission_last[1]:
                 return True
             now = time.monotonic()
-            if now - admission_last[0] >= 1:
+            # Every prelaunch/pre-resume observation is fresh and ordinary.
+            # Only monitoring an actually resumed Job uses the polling cache.
+            if not allow_continuation or now - admission_last[0] >= 1:
                 admission_last[0] = now
                 try:
-                    gaming_admitted(workspace, probe_owner_observer=job.observe_parent_identity)
+                    gaming_admitted(workspace, probe_owner_observer=(job.observe_parent_identity
+                                    if allow_continuation else None))
                     launcher = job.observe_parent_identity(packet["launcherPid"], packet["launcherBirthFileTime"])
                     if launcher.get("ok") is not True or launcher.get("alive") is not True:
                         raise BuildBlocked("BUILD_LAUNCHER_ENDED")
@@ -745,7 +748,8 @@ def run_build(packet, verified):
             args=["/d", "/s", "/c", "build-paired-source-observe.cmd"],
             cwd=str(staged), env=environment, deadline_monotonic=deadline, output_limit=256 * 1024,
             parent_pid=packet["parentPid"], parent_birth_filetime=packet["parentBirthFileTime"],
-            cancel_requested=cancelled, on_suspended=active.bind)
+            cancel_requested=cancelled, running_cancel_requested=lambda: cancelled(allow_continuation=True),
+            on_suspended=active.bind)
         receipt["allJobsEmpty"] = stage_result.get("zero_active_processes_observed") is True
         receipt["executionCustodyReleased"] = stage_result.get("custody_released") is True and receipt["allJobsEmpty"]
         receipt["outputComplete"] = stage_result.get("output_complete") is True

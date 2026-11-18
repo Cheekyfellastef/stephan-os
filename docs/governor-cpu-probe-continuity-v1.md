@@ -48,6 +48,14 @@ existing Win32 exact-PID-and-birth observer. The observer opens its own process
 handle, verifies birth and liveness and closes the handle; a stored PID alone is
 insufficient, including after exit or PID reuse.
 
+The native Job adapter selects a separate running-policy callback only after
+`ResumeThread` returns the expected success value. The ordinary callback remains
+mandatory before Job creation, before process creation and before resume of the
+contained suspended root. These prelaunch checks are never throttled by the
+running monitor's one-second cache. A continuation grant appearing between final
+staging admission and native launch therefore cancels without authorizing new
+execution. Real Windows fixtures prove both no-launch and no-resume boundaries.
+
 The consumer requires the closed record schema, strict types, a maximum
 five-second interval, an observation no older than fifteen seconds in total and
 an exact binding to the prior published timestamp. The canonical probe attempt

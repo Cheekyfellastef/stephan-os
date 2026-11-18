@@ -394,7 +394,13 @@ class PortableOrchestrationModelTests(unittest.TestCase):
                 self.assertEqual(arguments["args"], ["/d", "/s", "/c", "build-paired-source-observe.cmd"])
                 state_path = workspace / "vr" / "vr-resource-governor-current.json"
                 if mode.startswith("admission_"):
-                    if mode == "admission_prepare":
+                    if mode in ("admission_prelaunch_probe", "admission_first_prelaunch_probe"):
+                        # Final staging admitted NORMAL. A legitimate grant
+                        # appears before the first owned-stage prelaunch check.
+                        if mode == "admission_prelaunch_probe":
+                            self.assertFalse(arguments["cancel_requested"]())
+                        state_path.write_text(json.dumps(CpuProbeContinuityTests.state(self)))
+                    elif mode == "admission_prepare":
                         (workspace / "vr" / "gaming-resource-prepare.json").write_text("{}")
                     elif mode == "admission_missing":
                         state_path.unlink()
@@ -432,10 +438,10 @@ class PortableOrchestrationModelTests(unittest.TestCase):
                 if mode == "missing_artifact":(Path(arguments["cwd"]) / build.EXPECTED_ARTIFACTS[-1]).unlink()
                 return result
 
-            def observe_parent(*_):
+            def observe_parent(pid, birth):
                 fault = observed.get("launcherFault", "")
                 if fault == "admission_exception":raise OSError("private observation failure must not be published")
-                return {"ok": True, "alive": fault != "admission_launcher"}
+                return {"ok": True, "alive": fault != "admission_launcher", "pid": pid, "created_filetime": birth}
 
             job = types.SimpleNamespace(observe_parent_identity=observe_parent, run_owned_stage=mock_stage)
             builder = types.SimpleNamespace(ORIGINAL_FILES=records, reconstruct=reconstruct)
@@ -503,6 +509,8 @@ class PortableOrchestrationModelTests(unittest.TestCase):
 
     def test_admission_withdrawal_preserves_first_cause_and_never_becomes_compiler_failure(self):
         for mode, reason in (("admission_governor", "GAMING_PERMISSION_HELD"),
+                             ("admission_prelaunch_probe", "GAMING_PERMISSION_HELD"),
+                             ("admission_first_prelaunch_probe", "GAMING_PERMISSION_HELD"),
                              ("admission_prepare", "GAMING_PREPARATION_ACTIVE"),
                              ("admission_missing", "BUILD_ADMISSION_OBSERVATION_UNPROVEN"),
                              ("admission_launcher", "BUILD_LAUNCHER_ENDED"),
