@@ -329,9 +329,26 @@ test('fixed governor child captures authenticated immutable source over stdin wi
   assert.equal(f.calls.filter(call => call.args.includes('-EncodedCommand')).length, 1);
 });
 
+test('the committed governor source fits the authenticated observation path', () => {
+  const source = readFileSync(new URL('./windows/run-vr-resource-governor.ps1', import.meta.url));
+  assert.ok(source.length > 65536, 'exercise the production regression above the former byte ceiling');
+  const f = governorChildFixture({ source });
+  assert.deepEqual(readSovereignGovernorDiagnosticV1(f.head, f.options), freshGovernor());
+  assert.equal(f.calls.filter(call => call.args.includes('-EncodedCommand')).length, 1);
+});
+
+test('governor source capture accepts its exact finite budget and refuses the next byte before PowerShell', () => {
+  const maximum = 128 * 1024;
+  const allowed = governorChildFixture({ source: Buffer.alloc(maximum, 65) });
+  assert.deepEqual(readSovereignGovernorDiagnosticV1(allowed.head, allowed.options), freshGovernor());
+  const refused = governorChildFixture({ source: Buffer.alloc(maximum + 1, 65) });
+  assert.throws(() => readSovereignGovernorDiagnosticV1(refused.head, refused.options), /GOVERNOR_SOURCE_UNPROVEN/);
+  assert.equal(refused.calls.some(call => call.args.includes('-EncodedCommand')), false);
+});
+
 test('governor source authentication refuses substitution, wrong mode, duplicate membership and invalid UTF-8 before PowerShell', () => {
   for (const options of [{ mode: '120000' }, { mode: '100755' }, { duplicate: true }, { missing: true },
-    { source: Buffer.from([255]) }, { source: Buffer.from([0]) }, { source: Buffer.alloc(65537, 65) }]) {
+    { source: Buffer.from([255]) }, { source: Buffer.from([0]) }, { source: Buffer.alloc(128 * 1024 + 1, 65) }]) {
     const f = governorChildFixture(options);
     assert.throws(() => readSovereignGovernorDiagnosticV1(f.head, f.options));
     assert.equal(f.calls.some(call => call.args.includes('-EncodedCommand')), false);
@@ -385,13 +402,19 @@ test('governor runner rejects caller commands and ambiguous detection settings',
   }
 });
 
+function harmlessGovernorObservationSource(size) {
+  const prefix = `[CmdletBinding()]\nparam([string]$Action='Watch')\n`;
+  const suffix = `if($Action -cne 'ObserveAdmission'){exit 3}\n` +
+    `[pscustomobject]@{schemaVersion='stephanos.gaming-resource-admission-observation.v1';` +
+    `observedAtUtc=[DateTime]::UtcNow.ToString('o');signalActive=$false;overrideMode='AUTO';preparePending=$false;readOnly=$true}|ConvertTo-Json\n`;
+  const source = Buffer.from(prefix + '#' + 'x'.repeat(size - Buffer.byteLength(prefix + suffix) - 2) + '\n' + suffix);
+  assert.equal(source.length, size);
+  return source;
+}
+
 test('actual Windows stdin wrapper preserves the param block and invokes the fixed observation action',
   { skip: process.platform !== 'win32', timeout: 15000 }, () => {
-    const source = Buffer.from(`[CmdletBinding()]\nparam([string]$Action='Watch')\n` +
-      '# immutable long script ' + 'x'.repeat(50000) + '\n' +
-      `if($Action -cne 'ObserveAdmission'){exit 3}\n` +
-      `[pscustomobject]@{schemaVersion='stephanos.gaming-resource-admission-observation.v1';` +
-      `observedAtUtc=[DateTime]::UtcNow.ToString('o');signalActive=$false;overrideMode='AUTO';preparePending=$false;readOnly=$true}|ConvertTo-Json\n`);
+    const source = harmlessGovernorObservationSource(128 * 1024);
     const f = governorChildFixture({ source }), run = f.dependencies.spawnSync;
     f.dependencies.environment = process.env;
     f.dependencies.spawnSync = (exe, args, options) => args.includes('cat-file')
@@ -400,6 +423,27 @@ test('actual Windows stdin wrapper preserves the param block and invokes the fix
     assert.equal(row.schemaVersion, freshGovernor().schemaVersion);
     assert.equal(row.readOnly, true); assert.equal(row.signalActive, false);
     assert.ok(Date.parse(row.observedAtUtc) >= before && Date.parse(row.observedAtUtc) <= Date.now());
+  });
+
+test('actual Windows wrapper rejects decoded and wire overflow at the same finite source budget',
+  { skip: process.platform !== 'win32', timeout: 20000 }, () => {
+    const maximum = 128 * 1024;
+    for (const extra of [1, 4]) {
+      const source = harmlessGovernorObservationSource(maximum);
+      const f = governorChildFixture({ source }), run = f.dependencies.spawnSync;
+      let wrapperCalls = 0;
+      f.dependencies.environment = process.env;
+      f.dependencies.spawnSync = (exe, args, options) => {
+        if (args.includes('cat-file')) return run(exe, args, options);
+        wrapperCalls++;
+        // +1 fits the same base64 length and must fail decoded-byte validation;
+        // +4 exceeds the wire budget and exercises the sentinel read.
+        const input = Buffer.concat([source, Buffer.alloc(extra, 32)]).toString('base64') + '\n';
+        return spawnSync(exe, args, { ...options, input, cwd: process.cwd() });
+      };
+      assert.throws(() => readSovereignGovernorDiagnosticV1(f.head, f.options), /GOVERNOR_OBSERVATION_INVALID/);
+      assert.equal(wrapperCalls, 1);
+    }
   });
 
 test('fixed native inspection reads a comment request locator without inventing a workflow run identity', async () => {
