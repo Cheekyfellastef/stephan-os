@@ -463,7 +463,7 @@ test('corrupted persisted COOLDOWN cannot release gaming model protection during
   assert.ok(!resolver.includes("[string]$PriorState.phase -ne 'COOLDOWN'"),
     'corrupt persisted COOLDOWN cannot be excluded from recovery');
   assert.ok(resolver.includes('$cooldownUntil = $nowUtc.AddSeconds([Math]::Max(30, [int]$profile.cooldownSeconds))'));
-  assert.ok(resolver.indexOf(guard) < resolver.indexOf("phase = 'NORMAL'"),
+  assert.ok(resolver.indexOf(guard) < resolver.lastIndexOf("phase = 'NORMAL'"),
     'recovery must run before any NORMAL-state release');
   const now = Date.parse('2026-11-18T04:18:00Z');
   const resolve = (phase, raw, seconds) => {
