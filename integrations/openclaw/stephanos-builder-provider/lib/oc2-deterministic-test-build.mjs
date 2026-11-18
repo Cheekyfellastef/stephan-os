@@ -339,10 +339,20 @@ export async function executeClaimedOpenClawOc2DeterministicTestBuild(action, cl
     summary: 'OpenClaw OC2 canonical claimed deterministic test/build task completed with a fixed test plan and unchanged source state.',
     body: JSON.stringify({ ...resultCore, exactOutputIdentity }),
   });
-  const layout = await (options.ensureSharedWorkspaceLayoutFn || ensureSharedWorkspaceLayout)({ root: workspaceRoot, repoRoot });
+  let layout;
+  try {
+    layout = await (options.ensureSharedWorkspaceLayoutFn || ensureSharedWorkspaceLayout)({ root: workspaceRoot, repoRoot });
+  } catch {
+    return blocker('OPENCLAW_OC2_SHARED_WORKSPACE_UNAVAILABLE');
+  }
   if (!layout?.ok) return blocker('OPENCLAW_OC2_SHARED_WORKSPACE_UNAVAILABLE');
   const writeJson = options.writeAtomicJsonFn || writeAtomicJson;
-  const proofWrite = await writeJson(workspaceRoot, ['proofs', 'openclaw-oc2', `${executionId}.json`], proofRecord, { repoRoot });
+  let proofWrite;
+  try {
+    proofWrite = await writeJson(workspaceRoot, ['proofs', 'openclaw-oc2', `${executionId}.json`], proofRecord, { repoRoot });
+  } catch {
+    return blocker('OPENCLAW_OC2_PROOF_WRITE_FAILED');
+  }
   if (!proofWrite?.ok) return blocker('OPENCLAW_OC2_PROOF_WRITE_FAILED');
 
   const workerId = `openclaw-${sha256(providerInstance).slice(0, 24)}`;
@@ -370,7 +380,12 @@ export async function executeClaimedOpenClawOc2DeterministicTestBuild(action, cl
   });
   const workspaceReceipt = toSharedWorkspaceExecutionReceipt(executionReceipt);
   if (!workspaceReceipt.ok) return blocker('OPENCLAW_OC2_EXECUTION_RECEIPT_INVALID');
-  const receiptWrite = await writeJson(workspaceRoot, ['receipts', `${receiptId}.json`], workspaceReceipt.record, { repoRoot });
+  let receiptWrite;
+  try {
+    receiptWrite = await writeJson(workspaceRoot, ['receipts', `${receiptId}.json`], workspaceReceipt.record, { repoRoot });
+  } catch {
+    return blocker('OPENCLAW_OC2_EXECUTION_RECEIPT_WRITE_FAILED');
+  }
   if (!receiptWrite?.ok) return blocker('OPENCLAW_OC2_EXECUTION_RECEIPT_WRITE_FAILED');
 
   return Object.freeze({
