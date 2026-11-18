@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, writeFile, mkdtemp, mkdir, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { projectVrGovernorExecutionPermissionsV1 } from '../shared/ai/ollamaLoadGovernor.mjs';
 
 const governor = await readFile(new URL('./windows/run-vr-resource-governor.ps1', import.meta.url), 'utf8');
@@ -120,6 +121,117 @@ function New-Object {
  Microsoft.PowerShell.Utility\New-Object @PSBoundParameters
 }
 `;
+
+const cpuFixture = root => fixtureStatePaths(root) + String.raw`
+    $script:governorMutationOwner=[pscustomobject]@{acquired=$true;abandoned=$false}
+    $telemetryPath=Join-Path $stateRoot 'events.jsonl';$lightweightModel='llama3.2:3b'
+    $script:governorDependencyHealthy=$true
+    function Append-TelemetryEvent {param($Payload)}
+    $signal=[pscustomobject]@{active=$false;flatGameActive=$false;airLinkActive=$false;realAirLinkActive=$false;virtualAirLinkTestActive=$false}
+    $effective=[pscustomobject]@{active=$false;phase='NORMAL';overrideMode='AUTO';lease=[pscustomobject]@{active=$false}}
+    function Publish-CpuFixture {
+      $script:governorCpuProbeCycleId=''
+      $script:governorNativeClock=[Diagnostics.Stopwatch]::StartNew()
+      $script:governorDependencyHealthy=$true
+      $null=Write-GovernorState -Phase NORMAL -OverrideMode AUTO -CooldownUntilUtc '' -ZeroLocalModelInvariant $true -HeavyModelsAfter @()
+    }
+    Publish-CpuFixture
+`;
+
+test('CPU continuation comes only from unchanged complete publication and closes every denial edge', {skip:normalNativeSkip}, async t=>{
+  const root=await realpath(await mkdtemp(join(tmpdir(),'governor-cpu-')));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const rows=run(cpuFixture(root)+String.raw`
+    $rows=@()
+    foreach($mode in @('valid','changed-bytes','duplicate-json','foreign-owner','held','unknown','gaming','prepare','override','stale','future','expired-cycle','signal-unknown','active-signal')){
+      Publish-CpuFixture
+      $state=Read-GovernorState
+      if($mode -ceq 'held'){$state.nativeProbeCustodyHeld=$true}
+      if($mode -ceq 'unknown'){$state.dependencyObservationKnown=$false}
+      if($mode -ceq 'gaming'){$state.flatGameActive=$true}
+      if($mode -ceq 'stale'){$state.updatedAtUtc=[DateTime]::UtcNow.AddSeconds(-11).ToString('o')}
+      if($mode -ceq 'future'){$state.updatedAtUtc=[DateTime]::UtcNow.AddSeconds(10).ToString('o')}
+      if($mode -in @('held','unknown','gaming','stale','future')){
+        # Adversarial producer model: permit its exact bytes past the digest
+        # boundary to exercise the independent typed policy checks as well.
+        $json=$state|ConvertTo-Json -Depth 8
+        [IO.File]::WriteAllText($statePath,$json,[Text.UTF8Encoding]::new($false))
+        $script:governorCpuPriorStateSha256=Get-GovernorBytesDigestV1 ([Text.Encoding]::UTF8.GetBytes($json))
+      }
+      if($mode -ceq 'changed-bytes'){[IO.File]::AppendAllText($statePath,' ')}
+      if($mode -ceq 'duplicate-json'){[IO.File]::WriteAllText($statePath,([IO.File]::ReadAllText($statePath).Insert(1,'"active":true,')))}
+      if($mode -ceq 'foreign-owner'){$script:governorCpuPriorStateSha256=''}
+      if($mode -ceq 'prepare'){[IO.File]::WriteAllText($preparePath,'{}')}
+      if($mode -ceq 'override'){$null=Write-OverrideMode -Mode FORCE_OFF}
+      if($mode -ceq 'expired-cycle'){$script:governorNativeClock=[pscustomobject]@{Elapsed=[pscustomobject]@{TotalMilliseconds=5001}}}
+      if($mode -ceq 'signal-unknown'){$signal.active='false'}
+      if($mode -ceq 'active-signal'){$signal.active=$true}
+      Start-GovernorCpuProbeContinuity -Signal $signal -Effective $effective
+      $after=Read-GovernorState
+      $grant=$null;if($after.PSObject.Properties['cpuProbeContinuity']){$grant=$after.cpuProbeContinuity}
+      $rows+=,[pscustomobject]@{mode=$mode;granted=($null -ne $grant -and $grant.allowed -eq $true);grant=$grant}
+      Revoke-GovernorCpuProbeContinuity
+      $signal.active=$false
+      if(Test-Path -LiteralPath $preparePath){[IO.File]::Delete($preparePath)}
+      if(Test-Path -LiteralPath $overridePath){[IO.File]::Delete($overridePath)}
+      # These adversarial fixtures launched no native child.
+      if($mode -ceq 'held'){[IO.File]::Delete($statePath)}
+    }
+    ConvertTo-Json -InputObject $rows -Depth 8 -Compress
+  `);
+  for(const row of rows)assert.equal(row.granted,row.mode==='valid',row.mode);
+  const grant=rows[0].grant;
+  assert.equal(typeof grant.ownerCreationFileTime,'string');
+  assert.ok(Date.parse(grant.expiresAtUtc)-Date.parse(grant.observedAtUtc)<=5000);
+});
+
+test('CPU grant revocation never skips retained-child cleanup even if its state write fails', {skip:!windows},()=>{
+  const result=run(String.raw`$outputText='';$errorText=''
+    ${fakeChild}
+    $fake.HasExited=$false
+    function Revoke-GovernorCpuProbeContinuity {throw 'FIXTURE_REVOCATION_IO_FAILURE'}
+    $reason='';try{$null=Invoke-GovernorNativeProbe -Operation GpuSnapshot}catch{$reason=$_.Exception.Message}
+    [pscustomobject]@{reason=$reason;killed=$fake.Killed;disposed=$fake.Disposed;exitWitness=$script:governorNativeProbeExitProven;known=$script:governorDependencyHealthy}|ConvertTo-Json -Compress
+  `);
+  assert.deepEqual(result,{reason:'GOVERNOR_CPU_PROBE_REVOCATION_UNPROVEN',killed:true,disposed:true,exitWitness:true,known:false});
+});
+
+test('reconciliation exceptions revoke the owned CPU grant before releasing mutation ownership', {skip:normalNativeSkip},async t=>{
+  const root=await realpath(await mkdtemp(join(tmpdir(),'governor-cpu-revoke-')));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const result=run(cpuFixture(root)+String.raw`
+    function Get-GpuSnapshot {throw 'FIXTURE_DEPENDENCY_FAILURE'}
+    $reason='';try{$null=Invoke-Reconcile -Signal $signal -Effective $effective}catch{$reason=$_.Exception.Message}
+    $state=Read-GovernorState
+    [pscustomobject]@{reason=$reason;allowed=$state.cpuProbeContinuity.allowed;cycle=$script:governorCpuProbeCycleId}|ConvertTo-Json -Compress
+  `);
+  assert.deepEqual(result,{reason:'FIXTURE_DEPENDENCY_FAILURE',allowed:false,cycle:''});
+});
+
+test('actual Windows producer and native consumer bind one live owner and deny it after exit', {skip:normalNativeSkip},async t=>{
+  const root=await realpath(await mkdtemp(join(tmpdir(),'governor-cpu-native-')));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const ready=join(root,'ready');const release=join(root,'release');
+  const producer=launch(cpuFixture(root)+String.raw`
+    Start-GovernorCpuProbeContinuity -Signal $signal -Effective $effective
+    # No native child is launched in this isolated state/identity fixture.
+    Set-GovernorNativeCustodyHold -Held $true -Operation GpuSnapshot -CommandSha256 ('a'*64)
+    [IO.File]::WriteAllText('${ready.replaceAll("'","''")}','ready')
+    ${fixtureBarrierWait(release)}
+    [pscustomobject]@{released=$true}|ConvertTo-Json -Compress
+  `,[governor]);
+  const nativeDirectory=fileURLToPath(new URL('./windows/starfield-native-build/',import.meta.url));
+  const observe=()=>spawnSync('python',[join(nativeDirectory,'governor_owner_fixture.py'),root],
+    {encoding:'utf8',shell:false,windowsHide:true,timeout:10000});
+  try{
+    await waitForFixture(ready);
+    const alive=observe();assert.equal(alive.status,0,alive.stderr);
+    assert.deepEqual(JSON.parse(alive.stdout),{admitted:true,ownerLive:true});
+  }finally{await writeFile(release,'release');}
+  const terminal=await producer.done;assert.equal(terminal.status,0,terminal.stderr);
+  const dead=observe();assert.equal(dead.status,0,dead.stderr);
+  assert.deepEqual(JSON.parse(dead.stdout),{admitted:false,ownerLive:false});
+});
 
 test('native metadata admits only an actual non-administrator primary token and otherwise proves its typed refusal', {skip:!windows},()=>{
   const result=run(String.raw`
