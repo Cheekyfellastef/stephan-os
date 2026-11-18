@@ -461,3 +461,57 @@ test('Goal #2961: independent GREEN cannot mask a newer canonical negative', () 
     assert.deepEqual(statusRecords, originalRecords, 'canonical receipts unchanged: ' + label);
   }
 });
+
+test('Goal #2961: independent GREEN source-head integrity refuses unbound or conflicting producers', () => {
+  const head = 'a'.repeat(40), other = 'b'.repeat(40);
+  const core = sourceHead => ({ statusId: 'stephanos-core-daemon-current', sourceHead,
+    timestampUtc: at(-90000), missionWorkerHealthy: true, backendHealthy: true });
+  const service = (id, sourceHead, trafficLight = 'GREEN', clock = -45000) => ({
+    serviceId: id, sourceHead, trafficLight, freshness: 'CURRENT', observedAtUtc: at(clock),
+  });
+  const watchdog = (sourceHead = head, clock = -1000) => ({
+    statusId: 'battle-bridge-worker-watchdog-current', timestampUtc: at(clock),
+    finalAssessment: { sourceHead, healthy: false },
+  });
+  const refresh = (sourceHead = head, clock = -1000) => ({
+    statusId: 'post-sync-runtime-refresh-current', timestampUtc: at(clock),
+    safeRefreshesCompleted: false, afterHead: sourceHead,
+    resultTargets: [{ targetId: 'stephanos-backend-8787', ok: false, sourceHead }],
+  });
+  const missing = service('mission-worker', head); delete missing.sourceHead;
+  const inherited = Object.assign(Object.create({ sourceHead: head }), {
+    serviceId: 'mission-worker', trafficLight: 'GREEN',
+    freshness: 'CURRENT', observedAtUtc: at(-45000),
+  });
+  const cases = [
+    ['valid worker', service('mission-worker', head), [core(head)], 'missionWorkerHealthy', 'HEALTHY'],
+    ['blank worker', service('mission-worker', ''), [core(head)], 'missionWorkerHealthy', 'UNKNOWN'],
+    ['missing own head', missing, [core(head)], 'missionWorkerHealthy', 'UNKNOWN'],
+    ['inherited head', inherited, [core(head)], 'missionWorkerHealthy', 'UNKNOWN'],
+    ['malformed head', service('mission-worker', 'a'.repeat(39)), [core(head)], 'missionWorkerHealthy', 'UNKNOWN'],
+    ['foreign Core head', service('mission-worker', other), [core(head)], 'missionWorkerHealthy', 'UNKNOWN'],
+    ['foreign native head', service('mission-worker', other), [watchdog()], 'missionWorkerHealthy', 'UNKNOWN'],
+    ['native lacks head', service('mission-worker', head), [watchdog('')], 'missionWorkerHealthy', 'UNKNOWN'],
+    ['canonical negative veto', service('mission-worker', head), [core(head), watchdog()], 'missionWorkerHealthy', 'UNKNOWN'],
+    ['older native negative', service('mission-worker', head, 'GREEN', -1000), [core(head), watchdog(head, -45000)], 'missionWorkerHealthy', 'HEALTHY'],
+    ['stale foreign native', service('mission-worker', head), [core(head), watchdog(other, -200000)], 'missionWorkerHealthy', 'HEALTHY'],
+    ['no competing observer', service('mission-worker', head), [], 'missionWorkerHealthy', 'HEALTHY'],
+    ['RED remains negative', service('mission-worker', '', 'RED'), [core(head)], 'missionWorkerHealthy', 'UNHEALTHY'],
+    ['AMBER remains degraded', service('mission-worker', '', 'AMBER'), [core(head)], 'missionWorkerHealthy', 'DEGRADED'],
+    ['blank backend', service('backend', ''), [core(head)], 'backendHealthy', 'UNKNOWN'],
+    ['conflicting backend native', service('backend', other), [refresh()], 'backendHealthy', 'UNKNOWN'],
+    ['backend negative veto', service('backend', head), [core(head), refresh()], 'backendHealthy', 'UNKNOWN'],
+    ['older backend native', service('backend', head, 'GREEN', -1000), [core(head), refresh(head, -45000)], 'backendHealthy', 'HEALTHY'],
+  ];
+  for (const [label, independent, statusRecords, id, expected] of cases) {
+    const input = { captainsBridge: { runtimeHealth: { services: [independent] } } };
+    const snapshot = structuredClone(statusRecords);
+    const actual = overview(input, { nowMs: NOW, statusRecords }).health.find(row => row.id === id);
+    assert.equal(actual.state, expected, label);
+    if (expected === 'UNKNOWN') {
+      assert.equal(actual.observedAtUtc, '', label + ': no fabricated time');
+      assert.equal(actual.expiresAtUtc, '', label + ': no fabricated expiry');
+    }
+    assert.deepEqual(statusRecords, snapshot, label + ': native receipts unchanged');
+  }
+});

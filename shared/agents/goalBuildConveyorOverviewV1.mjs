@@ -475,8 +475,29 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     const independentLight = String(independent?.trafficLight || '').toUpperCase();
     // A fresh independent GREEN cannot conceal a later or co-timed, source-matched
     // explicit negative from the canonical native service observer.
-    const independentHead = /^[a-f0-9]{40}$/.test(String(independent?.sourceHead || ''))
-      ? independent.sourceHead : coreLive ? core.sourceHead : '';
+    // Independent GREEN is display truth, not a native execution grant.
+    // Missing, inherited or conflicting source heads cannot fall back to Core GREEN.
+    const independentHead = ownProofField(independent, 'sourceHead')
+      && typeof independent.sourceHead === 'string'
+      && /^[a-f0-9]{40}$/.test(independent.sourceHead) ? independent.sourceHead : '';
+    const independentHeadConflict = independentLive && independentLight === 'GREEN' && (
+      !independentHead
+      || (coreLive && core.sourceHead !== independentHead)
+      || (index === 1 && watchdog?.statusId === 'battle-bridge-worker-watchdog-current'
+        && fresh(watchdog.timestampUtc, nowMs, serviceProofAgeMs)
+        && (!ownProofField(workerProof, 'sourceHead') || workerProof.sourceHead !== independentHead))
+      || (index === 2 && refresh?.statusId === 'post-sync-runtime-refresh-current'
+        && fresh(refresh.timestampUtc, nowMs, serviceProofAgeMs)
+        && (!ownProofField(refresh, 'afterHead') || refresh.afterHead !== independentHead
+          || backendTargets.length !== 1
+          || !ownProofField(backendProof, 'sourceHead')
+          || backendProof.sourceHead !== independentHead))
+    );
+    if (independentHeadConflict) return {
+      id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+      state: 'UNKNOWN', observedAtUtc: '', expiresAtUtc: '',
+      evidenceSource: 'UNBOUND_OR_CONFLICTING_INDEPENDENT_SERVICE_HEAD',
+    };
     const canonicalNegativeVeto = independentLive && independentLight === 'GREEN'
       && /^[a-f0-9]{40}$/.test(independentHead) && (
         (index === 1 && watchdog?.statusId === 'battle-bridge-worker-watchdog-current'
