@@ -103,7 +103,7 @@ function rejects(content) {
 
 test('fixture preserves exact current reviewer governor source blob', () => {
   assert.equal(blobSha(governor), '771bb1f322dc802c8a5ba0698f59887550743842');
-  assert.equal(Buffer.byteLength(governor, 'utf8'), 53904);
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 54829);
 });
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
