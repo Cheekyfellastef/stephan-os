@@ -741,9 +741,22 @@ function Read-GovernorState {
     if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { return $null }
     try {
         $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+        if ($null -eq $state -or $state -isnot [pscustomobject]) {
+            throw 'GOVERNOR_PERSISTED_STATE_INVALID_SHAPE'
+        }
         return Normalize-GovernorState -State $state
     } catch {
-        return $null
+        # A present but unreadable persisted state is not the same as a clean
+        # first boot with no state file. Fail closed so the watcher rebuilds a
+        # bounded gaming cooldown before any reviewer resource reservation.
+        return Normalize-GovernorState -State ([pscustomobject]@{
+            phase = 'UNKNOWN'
+            active = $true
+            localModelAllowed = $false
+            cooldownUntilUtc = ''
+            profile = $null
+            reason = 'unreadable-governor-state'
+        })
     }
 }
 

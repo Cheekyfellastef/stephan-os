@@ -102,8 +102,8 @@ function rejects(content) {
 }
 
 test('fixture preserves exact current reviewer governor source blob', () => {
-  assert.equal(blobSha(governor), '1e47aef0c93ea85c0ee7bb2703b685fa934c644a');
-  assert.equal(Buffer.byteLength(governor, 'utf8'), 56579);
+  assert.equal(blobSha(governor), '1cbe6687741338d29caa86c7828638137eb99f24');
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 57211);
 });
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
@@ -572,4 +572,43 @@ test('watcher and cancellation preserve contradictory or unknown persisted idle 
   // An expired, consistent COOLDOWN is genuinely completed, not re-started.
   assert.equal(afterReconcile({phase:'COOLDOWN',active:true,localModelAllowed:false,
     cooldownUntilUtc:'2026-11-18T10:39:59Z'}), 'NORMAL');
+});
+
+
+test('unreadable persisted governor record cannot look like first boot and admit reviewer', () => {
+  // Exact non-executable fixture assertions plus portable model, not a native
+  // Windows PowerShell test or installation certificate.
+  const reader = governor.split('function Read-GovernorState {')[1]
+    ?.split('function Test-InconsistentGovernorIdleState {')[0] || '';
+  assert.ok(reader.includes("throw 'GOVERNOR_PERSISTED_STATE_INVALID_SHAPE'"));
+  assert.ok(reader.includes('$state -isnot [pscustomobject]'));
+  assert.ok(reader.includes("phase = 'UNKNOWN'"));
+  assert.ok(reader.includes('active = $true'));
+  assert.ok(reader.includes('localModelAllowed = $false'));
+  assert.ok(reader.includes("reason = 'unreadable-governor-state'"));
+  const admission = governor.split('function Test-ReviewerReservationBlockedByCooldown {')[1]
+    ?.split('function Append-TelemetryEvent {')[0] || '';
+  assert.ok(admission.includes('Test-InconsistentGovernorIdleState -State $State'));
+  const resolver = governor.split('function Resolve-EffectiveState {')[1]
+    ?.split('function Invoke-Reconcile {')[0] || '';
+  assert.ok(resolver.includes('$priorInconsistent = (Test-InconsistentGovernorIdleState -State $PriorState)'));
+  assert.ok(resolver.includes('$cooldownUntil = $nowUtc.AddSeconds([Math]::Max(30, [int]$profile.cooldownSeconds))'));
+  const read = (exists, raw) => {
+    if (!exists) return null;
+    try {
+      const state = JSON.parse(raw);
+      if (!state || Array.isArray(state) || typeof state !== 'object') throw new Error('shape');
+      return state;
+    } catch {
+      return { phase: 'UNKNOWN', active: true, localModelAllowed: false, cooldownUntilUtc: '' };
+    }
+  };
+  assert.equal(read(false, '{bad'), null, 'missing file is distinct from malformed present file');
+  for (const raw of ['{', '{bad', 'null', '[]', '17', '"ok"']) {
+    const state = read(true, raw);
+    assert.equal(state.phase, 'UNKNOWN', raw);
+    assert.equal(state.active, true, raw);
+    assert.equal(state.localModelAllowed, false, raw);
+  }
+  assert.equal(read(true, '{"phase":"NORMAL","active":false,"localModelAllowed":true}').phase, 'NORMAL');
 });

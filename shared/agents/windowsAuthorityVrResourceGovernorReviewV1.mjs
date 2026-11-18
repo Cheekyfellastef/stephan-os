@@ -24,7 +24,7 @@ const PATH = WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1[0];
 const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: 'ae71e1e79ead63efeb5a4d73f4bce6a01ee0f1d9', size: 48838 }),
   Object.freeze({ blobSha: '9513dfe995a35087e1d715ef0c4dff4ca3578295', size: 49674 }),
-  Object.freeze({ blobSha: '1e47aef0c93ea85c0ee7bb2703b685fa934c644a', size: 56579, reviewerReservation: true }),
+  Object.freeze({ blobSha: '1cbe6687741338d29caa86c7828638137eb99f24', size: 57211, reviewerReservation: true }),
 ]);
 
 const text = (value) => String(value ?? '').trim();
@@ -213,6 +213,14 @@ function reviewGovernor(source, findings) {
     "if ($priorWasProtected -and ($priorInconsistent -or $cooldownUntil -eq [DateTime]::MinValue)) {",
     'vr-governor-reviewer-contradictory-expired-deadline-failclosed-missing',
     'Contradictory or unknown states must reconstruct a cooldown even when a persisted deadline parses but is expired.');
+  requireLiteral(findings, source,
+    "throw 'GOVERNOR_PERSISTED_STATE_INVALID_SHAPE'",
+    'vr-governor-unreadable-state-shape-not-rejected',
+    'A persisted unreadable or non-object state cannot be mistaken for clean first boot.');
+  requireLiteral(findings, source,
+    "reason = 'unreadable-governor-state'",
+    'vr-governor-unreadable-state-failclosed-missing',
+    'Persisted source corruption must project UNKNOWN protection and a bounded cooldown.');
   requireLiteral(findings, source,
     'REVIEWER_RESERVATION_BLOCKED_BY_GAMING_COOLDOWN',
     'vr-governor-reviewer-cooldown-preflight-missing',
