@@ -250,7 +250,12 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
         const result=await request('/input',{...input,sequence:++sequence});
         if(current!==epoch)return;
         // Do not allow a stale click or a failed native editor binding to license later non-text keys.
-        if(input.kind==='click')editorClickConfirmed=result.status==='editor-accessibility-selected';
+        if(input.kind==='click'){
+          editorClickConfirmed=result.status==='editor-accessibility-selected';
+          // A legacy pointer or failed click may have focused an unknown app
+          // control. Do not send text queued while that click was unresolved.
+          if(!editorClickConfirmed)queue=[];
+        }
         else if(['editor-not-selected','editor-reselect-required','editor-unsupported','editor-key-focus-unverified'].includes(result.status))
           editorClickConfirmed=false;
         // The app may have applied a mutation before returning an uncertain
