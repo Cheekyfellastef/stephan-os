@@ -21,7 +21,7 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       '. Open Spatial Workspace using its Windows desktop shortcut.'};}
   }
   let image=null,epoch=0,refreshPromise=null;
-  let token=null,active=false,disposed=false,generation=0,serial=0,sequence=0,timer=null,queue=[],busy=false;
+  let token=null,active=false,disposed=false,generation=0,serial=0,sequence=0,timer=null,queue=[],busy=false,inputClickPending=false;
   // Room-local acknowledgement, not native keyboard focus. Never infer an editor from a bind or frame.
   let editorClickConfirmed=false;
   // One owner spans picker, native revocation, playback and the accepted view.
@@ -92,7 +92,7 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     if(keepCapture)keepCapture.epoch=current;
     let old=token;
     if(!old)try{old=sessionStore?.getItem(storageKey);}catch{}
-    token=null;active=false;image=null;refreshPromise=null;queue=[];generation=0;serial=0;busy=false;editorClickConfirmed=false;
+    token=null;active=false;image=null;refreshPromise=null;queue=[];generation=0;serial=0;busy=false;inputClickPending=false;editorClickConfirmed=false;
     const oldTimer=timer;timer=null;
     if(previousCapture!==keepCapture)closeCapture(previousCapture);
     clearTimer(oldTimer);
@@ -247,8 +247,10 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       if(input){
         // Serialize capture and input; each operator action is sent once only.
         inputAttempted=true;
+        if(input.kind==='click')inputClickPending=true;
         const result=await request('/input',{...input,sequence:++sequence});
         if(current!==epoch)return;
+        if(input.kind==='click')inputClickPending=false;
         // Do not allow a stale click or a failed native editor binding to license later non-text keys.
         if(input.kind==='click'){
           editorClickConfirmed=result.status==='editor-accessibility-selected';
@@ -298,7 +300,7 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
         }
       }else{generation=0;queue=[];editorClickConfirmed=false;publish({status:'waiting',inputStatus:'Input paused. Wait for a live picture of your app.',message:'Waiting for your app. Restore a minimized window or reconnect if it closed.'});}
       if(active&&currentEpoch(current))timer=setTimer(()=>poll(current),queue.length?0:67);
-    }catch{if(current===epoch){active=false;generation=0;queue=[];image=null;editorClickConfirmed=false;publish({status:'unavailable',
+    }catch{if(current===epoch){active=false;generation=0;queue=[];image=null;inputClickPending=false;editorClickConfirmed=false;publish({status:'unavailable',
       inputStatus:inputAttempted
         ?'The last input may already have changed the selected app. Inspect its draft before reconnecting; do not resend automatically.'
         :'Input paused. Reconnect the selected app.',
@@ -307,6 +309,12 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
   function input(value){
     if(capture?.phase==='live'){publish({inputStatus:'View-only capture: connect the native Windows helper to type or click.'});return false;}
     if(!active||!generation||state.status!=='live'||queue.length>=16){publish({inputStatus:'Input paused. Wait for a live connection.'});return false;}
+    // A native bind and picture do not select the app composer. Text can wait
+    // behind an explicit click, but poll forwards it only after a real editor
+    // selection acknowledgement. Never send unsolicited drafts to an app.
+    if(value?.kind==='text'&&!editorClickConfirmed&&!inputClickPending&&!queue.some(item=>item.kind==='click')){
+      publish({inputStatus:'Select the intended editor on the hologram first. No draft text was sent.'});return false;
+    }
     if(value?.kind==='key'&&!editorClickConfirmed){
       publish({inputStatus:'Select the editor in the original app on the holographic image first. No key was sent.'});return false;
     }
