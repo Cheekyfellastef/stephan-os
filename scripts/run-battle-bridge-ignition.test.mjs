@@ -416,6 +416,81 @@ test('canonical source truth blocks the click path before backend, UI, or superv
   }
 });
 
+test('warm-looking services cannot bypass bad canonical source in the desktop entry', async () => {
+  const head = 'a'.repeat(40);
+  const fixtures = [
+    { name: 'dirty', workingTreeDirty: true, publicationState: 'local-uncommitted' },
+    { name: 'detached', detachedHead: true },
+    { name: 'feature-branch', branch: 'feature/fixture', upstreamBranch: 'origin/feature/fixture' },
+    { name: 'unpublished', headPublished: false, aheadCount: 1 },
+    { name: 'stale-main', behindCount: 1, publicationState: 'stale-behind', originHead: 'b'.repeat(40) },
+  ];
+  const previousArgs = process.argv;
+  for (const fixture of fixtures) {
+    const sharedWorkspace = await mkdtemp(path.join(tmpdir(), 'bb-desktop-source-fixture-'));
+    const calls = [];
+    process.argv = [previousArgs[0], previousArgs[1], '--shared-workspace', sharedWorkspace];
+    try {
+      const exitCode = await main({
+        platform: 'win32',
+        sourceTruthFn: () => ({ ...canonicalSourceTruth(head), ...fixture }),
+        ollamaPreflightFn: async () => { calls.push('ollama'); return {}; },
+        backendPreflightFn: async () => { calls.push('backend'); return { ok: true }; },
+        uiPreflightFn: async () => { calls.push('ui'); return { ready: true }; },
+        supervisorFn: async () => { calls.push('supervisor'); return { ok: true }; },
+      });
+      assert.equal(exitCode, 2, fixture.name);
+      assert.deepEqual(calls, [], fixture.name);
+      const status = JSON.parse(await readFile(path.join(sharedWorkspace, 'status', 'battle-bridge-ignition-supervisor-current.json'), 'utf8'));
+      assert.equal(status.trafficLight, 'red', fixture.name);
+      assert.equal(status.phases['source truth'].state, 'blocked', fixture.name);
+    } finally {
+      process.argv = previousArgs;
+      await rm(sharedWorkspace, { recursive: true, force: true });
+    }
+  }
+});
+
+test('warm-looking UI cannot bypass failed stale-backend qualification in the desktop entry', async () => {
+  const head = 'b'.repeat(40);
+  const previousArgs = process.argv;
+  const fixtures = [
+    { name: 'generic-ok', payload: { ok: true } },
+    { name: 'wrong-runtime', payload: { schemaVersion: 'stephanos.backend-health.v1', backendIdentity: { runtimeId: 'foreign', sourceHead: 'a'.repeat(40) } } },
+    { name: 'stale-after-restart', payload: { schemaVersion: 'stephanos.backend-health.v1', backendIdentity: { runtimeId: 'stephanos-battle-bridge-backend', sourceHead: 'a'.repeat(40) } } },
+  ];
+  for (const fixture of fixtures) {
+    const sharedWorkspace = await mkdtemp(path.join(tmpdir(), 'bb-desktop-backend-fixture-'));
+    const calls = [];
+    process.argv = [previousArgs[0], previousArgs[1], '--shared-workspace', sharedWorkspace];
+    try {
+      const exitCode = await main({
+        platform: 'win32',
+        sourceTruthFn: () => canonicalSourceTruth(head),
+        currentHeadFn: () => head,
+        ollamaPreflightFn: async () => ({}),
+        backendPreflightFn: options => ensureBackend8787ConvergedBeforeSupervisor({
+          ...options,
+          fetchFn: async () => ({ status: 200, json: async () => fixture.payload }),
+          runStepFn: label => { calls.push(label); return label === 'backend-8787-approved-stale-restart'; },
+        }),
+        uiPreflightFn: async () => { calls.push('ui'); return { ready: true }; },
+        supervisorFn: async () => { calls.push('supervisor'); return { ok: true }; },
+      });
+      assert.equal(exitCode, 1, fixture.name);
+      assert.equal(calls.includes('ui'), false, fixture.name);
+      assert.equal(calls.includes('supervisor'), false, fixture.name);
+      assert.equal(calls[0], 'backend-8787-preflight', fixture.name);
+      const status = JSON.parse(await readFile(path.join(sharedWorkspace, 'status', 'battle-bridge-ignition-supervisor-current.json'), 'utf8'));
+      assert.equal(status.blockerId, 'backend-8787-preflight-failed-before-supervisor', fixture.name);
+      assert.equal(status.trafficLight, 'red', fixture.name);
+    } finally {
+      process.argv = previousArgs;
+      await rm(sharedWorkspace, { recursive: true, force: true });
+    }
+  }
+});
+
 test('source head drift before backend blocks every service mutator', async () => {
   const sharedWorkspace = await mkdtemp(path.join(tmpdir(), 'bb-ignition-head-drift-backend-'));
   const previousArgs = process.argv;
