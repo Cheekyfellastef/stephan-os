@@ -1046,12 +1046,12 @@ function Resolve-EffectiveState {
         if ([string]$PriorState.cooldownUntilUtc) {
             [void][DateTime]::TryParse([string]$PriorState.cooldownUntilUtc, [ref]$cooldownUntil)
         }
-        if (
-            $priorWasProtected -and
-            [string]$PriorState.phase -ne 'COOLDOWN' -and
-            $cooldownUntil -eq [DateTime]::MinValue
-        ) {
-            $cooldownUntil = $nowUtc.AddSeconds([int]$profile.cooldownSeconds)
+        if ($priorWasProtected -and $cooldownUntil -eq [DateTime]::MinValue) {
+            # A prior COOLDOWN with a missing or malformed deadline is still
+            # protected. Restore one bounded cooldown from the prior game
+            # profile instead of releasing models on cancellation or watcher
+            # refresh. Valid expired deadlines remain eligible to expire.
+            $cooldownUntil = $nowUtc.AddSeconds([Math]::Max(30, [int]$profile.cooldownSeconds))
         }
     }
 

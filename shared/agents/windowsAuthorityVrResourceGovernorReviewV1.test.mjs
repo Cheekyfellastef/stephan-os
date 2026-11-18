@@ -102,8 +102,8 @@ function rejects(content) {
 }
 
 test('fixture preserves exact current reviewer governor source blob', () => {
-  assert.equal(blobSha(governor), '771bb1f322dc802c8a5ba0698f59887550743842');
-  assert.equal(Buffer.byteLength(governor, 'utf8'), 54829);
+  assert.equal(blobSha(governor), '20f73be636a139cbb02d4da580fa10a5f72c939c');
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 55056);
 });
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
@@ -452,4 +452,35 @@ test('game exit before watcher reconciliation cannot create a reviewer lease or 
   assert.match(effective, /\$protectedProfile = \$PriorState\.profile[\s\S]*\$protectedUntilUtc = \$nowUtc\.AddSeconds\(\$protectedSeconds\)/);
   assert.ok(effective.indexOf('$protectedUntilUtc = $nowUtc.AddSeconds($protectedSeconds)')
     < effective.indexOf("phase = 'REVIEWING'"));
+});
+
+test('corrupted persisted COOLDOWN cannot release gaming model protection during watcher or cancellation', () => {
+  // Exact-fixture source assertion plus portable model; not native Windows/installed proof.
+  const resolver = governor.split('function Resolve-EffectiveState {')[1]
+    ?.split('function Invoke-Reconcile {')[0] || '';
+  const guard = 'if ($priorWasProtected -and $cooldownUntil -eq [DateTime]::MinValue) {';
+  assert.ok(resolver.includes(guard), 'missing or malformed COOLDOWN must reconstruct the deadline');
+  assert.ok(!resolver.includes("[string]$PriorState.phase -ne 'COOLDOWN'"),
+    'corrupt persisted COOLDOWN cannot be excluded from recovery');
+  assert.ok(resolver.includes('$cooldownUntil = $nowUtc.AddSeconds([Math]::Max(30, [int]$profile.cooldownSeconds))'));
+  assert.ok(resolver.indexOf(guard) < resolver.indexOf("phase = 'NORMAL'"),
+    'recovery must run before any NORMAL-state release');
+  const now = Date.parse('2026-11-18T04:18:00Z');
+  const resolve = (phase, raw, seconds) => {
+    let deadline = typeof raw === 'string' && raw.trim() ? Date.parse(raw) : NaN;
+    if (['GAMING', 'PREPARING', 'COOLDOWN'].includes(phase) && !Number.isFinite(deadline)) {
+      deadline = now + Math.max(30, seconds) * 1000;
+    }
+    return deadline > now ? 'COOLDOWN' : 'NORMAL';
+  };
+  for (const [phase, raw, seconds, expected] of [
+    ['COOLDOWN', '', 90, 'COOLDOWN'],
+    ['COOLDOWN', 'corrupt-deadline', 90, 'COOLDOWN'],
+    ['COOLDOWN', null, 45, 'COOLDOWN'],
+    ['COOLDOWN', '2026-11-18T04:19:00Z', 90, 'COOLDOWN'],
+    ['COOLDOWN', '2026-11-18T04:17:59Z', 90, 'NORMAL'],
+    ['GAMING', '', 90, 'COOLDOWN'],
+    ['PREPARING', null, 45, 'COOLDOWN'],
+    ['NORMAL', '', 90, 'NORMAL'],
+  ]) assert.equal(resolve(phase, raw, seconds), expected, phase + ':' + String(raw));
 });

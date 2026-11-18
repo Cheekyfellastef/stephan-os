@@ -24,7 +24,7 @@ const PATH = WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1[0];
 const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: 'ae71e1e79ead63efeb5a4d73f4bce6a01ee0f1d9', size: 48838 }),
   Object.freeze({ blobSha: '9513dfe995a35087e1d715ef0c4dff4ca3578295', size: 49674 }),
-  Object.freeze({ blobSha: '771bb1f322dc802c8a5ba0698f59887550743842', size: 54829, reviewerReservation: true }),
+  Object.freeze({ blobSha: '20f73be636a139cbb02d4da580fa10a5f72c939c', size: 55056, reviewerReservation: true }),
 ]);
 
 const text = (value) => String(value ?? '').trim();
