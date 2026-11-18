@@ -140,6 +140,22 @@ export async function validateOpenClawOc2QualificationContext(context = {}, { re
     || requestedSourceHead !== text(grant.sourceRevision).toLowerCase()) {
     return blocker('OPENCLAW_OC2_BINDING_INVALID');
   }
+  // OC2 is a fixed-plan, read-only test lane. A carried action must not
+  // smuggle an alternate executable or privilege into the persisted claim.
+  // False authority declarations remain compatible with legacy producers.
+  const commandFields = [
+    'command', 'commands', 'args', 'argv', 'script', 'shell', 'executablePath',
+    'worktreePath', 'allowedFiles', 'requiredTests',
+  ];
+  const authorityFields = [
+    'sourceMutationAuthority', 'arbitraryShellAuthority', 'arbitraryCommandAuthority',
+    'mergeAuthority', 'deploymentAuthority', 'selfQualificationAuthority',
+    'leaseSeizureAllowed',
+  ];
+  if (commandFields.some((key) => Object.hasOwn(action, key))
+    || authorityFields.some((key) => Object.hasOwn(action, key) && action[key] !== false)) {
+    return blocker('OPENCLAW_OC2_ACTION_SCOPE_INVALID');
+  }
   if (claim?.adapter !== 'openclaw-readonly'
     || claim?.item?.adapter !== 'openclaw-readonly'
     || claim?.item?.schemaVersion !== 'stephanos.mission-worker-queue-item.v1'
