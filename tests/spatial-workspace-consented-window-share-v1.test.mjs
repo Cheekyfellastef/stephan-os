@@ -710,6 +710,37 @@ test('lost native input acknowledgement remains unverified and never replays a k
   }
 });
 
+test('uncertain editor changes discard queued Enter and require fresh editor selection',async()=>{
+  for(const outcome of ['editor-update-refused','editor-update-unverified','input-rejected']){
+    const h=captureTransitionHarness({inputOutcome:body=>
+      body.kind==='click'?'editor-accessibility-selected':
+      body.kind==='text'?outcome:'input-posted'});
+    try{
+      await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
+      assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);
+      await h.tick();
+      assert.equal(h.client.input({kind:'text',text:'unsent draft'}),true);
+      assert.equal(h.client.input({kind:'key',key:'Enter'}),true,
+        'Enter may have been queued before the editor reply');
+      await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,2);
+      assert.equal(h.client.input({kind:'key',key:'Enter'}),false,
+        'uncertain editor result must revoke the prior keyboard acknowledgement');
+      await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,2,
+        'queued Enter must not be posted after ambiguous text mutation');
+      assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);
+      await h.tick();
+      assert.equal(h.client.input({kind:'key',key:'Enter'}),true,
+        'only a new explicit editor selection can admit a later deliberate key');
+      await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,4);
+      assert.equal(h.client.input({kind:'key',key:'Enter'}),false,
+        'a non-text action must not preserve the old keyboard destination');
+    }finally{await h.close();}
+  }
+});
+
 test('native input publication is a transition boundary before fetching the next frame',async()=>{
   for(const operation of ['stop','pagehide','dispose','normal']){
     const h=captureTransitionHarness();let revoked=false;
