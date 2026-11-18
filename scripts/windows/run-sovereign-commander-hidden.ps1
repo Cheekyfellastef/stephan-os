@@ -394,7 +394,10 @@ function Test-VrResourceGovernorProcessIdentity {
         if ($null -eq $Process -or [int]$Process.ProcessId -le 0 -or
             -not [string]::Equals([string]$Process.ExecutablePath, $powershellExecutable, [StringComparison]::OrdinalIgnoreCase)) { return $false }
         $tail = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $vrGovernorScript + '" -Action Watch'
-        $command = [string]$Process.CommandLine
+        # Start-Process serializes a trailing ASCII separator after Watch.
+        # Only those terminal separators are syntax; every fixed argument,
+        # executable, script, PID and birth check still binds the same owner.
+        $command = ([string]$Process.CommandLine).TrimEnd([char[]]@([char]0x20, [char]0x09))
         if (-not [string]::Equals($command, ('"' + $powershellExecutable + '" ' + $tail), [StringComparison]::OrdinalIgnoreCase) -and
             -not [string]::Equals($command, ($powershellExecutable + ' ' + $tail), [StringComparison]::OrdinalIgnoreCase)) { return $false }
         $born = ([DateTime]$Process.CreationDate).ToUniversalTime()

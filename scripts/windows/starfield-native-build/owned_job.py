@@ -263,6 +263,7 @@ def run_owned_stage(*, executable: str, args: Sequence[str], cwd: str,
                     env: Mapping[str, str], deadline_monotonic: float, output_limit: int,
                     parent_pid: int, parent_birth_filetime: int | str,
                     cancel_requested: Callable[[], bool] | None = None,
+                    running_cancel_requested: Callable[[], bool] | None = None,
                     on_suspended: Callable[[Mapping], bool] | None = None) -> dict:
     """Execute one internally selected stage; never call with public input.
 
@@ -275,6 +276,8 @@ def run_owned_stage(*, executable: str, args: Sequence[str], cwd: str,
         executable, args, cwd, env, deadline_monotonic, output_limit, parent_pid, parent_birth_filetime)
     if cancel_requested is not None and not callable(cancel_requested):
         raise ValueError("OWNED_STAGE_CANCEL_CALLBACK_INVALID")
+    if running_cancel_requested is not None and (not callable(running_cancel_requested) or cancel_requested is None):
+        raise ValueError("OWNED_STAGE_RUNNING_CANCEL_CALLBACK_INVALID")
     if on_suspended is not None and not callable(on_suspended):
         raise ValueError("OWNED_STAGE_BIND_CALLBACK_INVALID")
     api = _Win32()
@@ -330,7 +333,11 @@ def run_owned_stage(*, executable: str, args: Sequence[str], cwd: str,
             fail("PARENT_ENDED_OR_UNPROVEN")
             return True
         try:
-            cancelled = False if cancel_requested is None else cancel_requested()
+            # Continuation cannot authorize creation or resume. Only the native
+            # ResumeThread witness activates the running-only policy callback.
+            callback = (running_cancel_requested if result["resume_confirmed"]
+                        and running_cancel_requested is not None else cancel_requested)
+            cancelled = False if callback is None else callback()
             if type(cancelled) is not bool:
                 raise ValueError("nonboolean cancellation state")
         except Exception:
