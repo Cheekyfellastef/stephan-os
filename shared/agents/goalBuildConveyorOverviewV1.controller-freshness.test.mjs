@@ -224,7 +224,8 @@ test('Goal #2961: review and merge display require a causally complete signed ch
 
 test('Goal #2961: duplicate independent runtime service identity cannot promote conflicting health', () => {
   const service = (serviceId, trafficLight) => ({
-    serviceId, freshness: 'CURRENT', observedAtUtc: at(-1000), trafficLight,
+    serviceId, sourceHead: 'a'.repeat(40),
+    freshness: 'CURRENT', observedAtUtc: at(-1000), trafficLight,
   });
   const input = {
     captainsBridge: { runtimeHealth: { services: [
@@ -431,9 +432,9 @@ test('Goal #2961: independent GREEN cannot mask a newer canonical negative', () 
     ['older backend negative', service('backend', -1000), [core, refresh(-45000)],
       'backendHealthy', 'HEALTHY'],
     ['foreign worker head', service('mission-worker'), [core, watchdog(-1000, foreign)],
-      'missionWorkerHealthy', 'HEALTHY'],
+      'missionWorkerHealthy', 'UNKNOWN'],
     ['foreign backend head', service('backend'), [core, refresh(-1000, foreign, foreign)],
-      'backendHealthy', 'HEALTHY'],
+      'backendHealthy', 'UNKNOWN'],
     ['stale native negative', service('mission-worker'), [core, watchdog(-180000)],
       'missionWorkerHealthy', 'HEALTHY'],
     ['future native negative', service('mission-worker'), [core, watchdog(1000)],
@@ -454,7 +455,11 @@ test('Goal #2961: independent GREEN cannot mask a newer canonical negative', () 
     const actual = overview(projection, { nowMs: NOW, statusRecords }).health.find(row => row.id === id);
     assert.equal(actual.state, expectedState, label);
     if (expectedState === 'UNKNOWN') {
-      assert.equal(actual.evidenceSource, 'NEWER_CANONICAL_NEGATIVE_VETO', label);
+      const identityConflict = ['foreign worker head', 'foreign backend head',
+        'source-head fallback from Core'].includes(label);
+      assert.equal(actual.evidenceSource, identityConflict
+        ? 'UNBOUND_OR_CONFLICTING_INDEPENDENT_SERVICE_HEAD'
+        : 'NEWER_CANONICAL_NEGATIVE_VETO', label);
       assert.equal(actual.expiresAtUtc, '', 'no contradictory proof expiry: ' + label);
     }
     assert.deepEqual(projection, originalProjection, 'pure projection: ' + label);

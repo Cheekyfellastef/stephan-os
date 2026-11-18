@@ -396,8 +396,10 @@ test('current independent service health survives a stopped Core status publishe
   const staleCore = { statusId: 'stephanos-core-daemon-current', sourceHead: 'a'.repeat(40),
     timestampUtc: at(-700000), daemonHealthy: true, missionWorkerHealthy: false, backendHealthy: false };
   data.captainsBridge = { runtimeHealth: { services: [
-    { serviceId: 'mission-worker', freshness: 'CURRENT', trafficLight: 'GREEN', observedAtUtc: at(-1000) },
-    { serviceId: 'backend', freshness: 'CURRENT', trafficLight: 'GREEN', observedAtUtc: at(-2000) },
+    { serviceId: 'mission-worker', sourceHead: 'a'.repeat(40),
+      freshness: 'CURRENT', trafficLight: 'GREEN', observedAtUtc: at(-1000) },
+    { serviceId: 'backend', sourceHead: 'a'.repeat(40),
+      freshness: 'CURRENT', trafficLight: 'GREEN', observedAtUtc: at(-2000) },
   ] } };
   let result = project(data, { ...options, statusRecords: [staleCore] });
   assert.deepEqual(result.health.map(h => h.state), ['UNKNOWN', 'HEALTHY', 'HEALTHY']);
