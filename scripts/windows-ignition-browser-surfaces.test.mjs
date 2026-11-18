@@ -32,7 +32,7 @@ function runPowerShell(command, timeout = 10_000) {
 
 function launcherStatusHarness(source) {
   const names = ['Convert-SupervisorRecordToIgnitionStatus', 'Test-IgnitionBrowserReceiptSet', 'Resolve-IgnitionStatusProjection', 'Get-IgnitionStatusProjection', 'Publish-IgnitionStatusProjection', 'Write-IgnitionStatus', 'Publish-IgnitionTerminalOutcome', 'Complete-IgnitionLaunch', 'Test-BattleBridgeSupervisorFinalContract', 'Write-IgnitionSupportSnapshot', 'Fail-Step'];
-  const optional = ['New-IgnitionBrowserObservationClock', 'Get-IgnitionBrowserObservationSet'];
+  const optional = ['New-IgnitionBrowserObservationClock', 'Get-IgnitionBrowserObservationSet', 'Get-IgnitionRequiredBrowserSurfaces', 'Get-IgnitionOptionalBrowserOutcome'];
   const functions = [...names, ...optional].map(name => {
     const definition = source.match(new RegExp(`^function ${name}\\([\\s\\S]*?^}\\r?$`, 'm'))?.[0];
     if (!definition && optional.includes(name)) return ''; // Allows a substantive regression replay against the published predecessor.
@@ -56,6 +56,7 @@ $script:liveWindows = @{}
 foreach ($record in $script:browserSurfaceReceipts) { $script:liveWindows[$record.id] = $record | ConvertTo-Json | ConvertFrom-Json }
 $script:disposedCapabilities = 0
 $script:exitedPids = @()
+$script:optionalBrowserSurfaceFailures = @()
 $script:probeCalls = @()
 $script:supervisorFixture = [pscustomobject]@{
   currentPhase = 'ready'; trafficLight = 'green'; blockerId = ''; nextOperatorAction = ''
@@ -76,6 +77,7 @@ function Update-IgnitionSplashScreen { param($Status) }
 function Get-LauncherChildBlocker { return $script:childFixture }
 function Write-Host { param($Object, $ForegroundColor); if ($Object -eq 'Stephanos local server ready') { $script:events += 'console:ready' } }
 function Read-Host {}
+function Write-LiveLog { param($Message) }
 function Resolve-StephanosEdgeExecutable { return 'C:\\fixture\\msedge.exe' }
 function Get-VerifiedEdgeAppSurface {
   param($Surface, $EdgeExecutable, $RetainedProcess = $null, [switch]$RetainProcess, $ObservationClock = $null)
@@ -127,7 +129,7 @@ function readTerminalEvidence(result, ready, label) {
   return { status: status.value, snapshot: snapshot.value, disposed: status.disposed };
 }
 
-test('closing an earlier window during the virtual 60-second later wait denies terminal readiness', { skip: process.platform !== 'win32' }, async () => {
+test('closing an earlier core window during the optional opening attempt denies terminal readiness', { skip: process.platform !== 'win32' }, async () => {
   const source = (await readFile(launcherPs1, 'utf8')).replace(/\r\n/g, '\n');
   const start = source.lastIndexOf('  if ($autoOpenEnabled) {');
   const end = source.indexOf('\n  Complete-IgnitionLaunch', start);
@@ -135,10 +137,9 @@ test('closing an earlier window during the virtual 60-second later wait denies t
   for (const fixture of [{ closed: 'launcher' }, { closed: 'runtime' }, { sourceMoved: true }, {}]) {
     const closed = fixture.closed;
     const command = launcherStatusHarness(source) + terminalEvidenceCapture() + `
-$script:virtualWaitSeconds = 0
-function Open-CockpitSurface { param($Url, $Label, $Id, $ExpectedTitle) }
+function Open-CockpitSurface { param($Url, $Label, $Id, $ExpectedTitle); if ($Id -eq 'openclaw') { ${closed ? `$script:liveWindows['${closed}'] = $null` : ''}; ${fixture.sourceMoved ? `$script:fixtureHead = '${'b'.repeat(40)}'; $script:supervisorFixture.sourceTruthVerdict.expectedHead = $script:fixtureHead; $script:supervisorFixture.services.stephanosUi4173.servedRuntimeProof.currentHead = $script:fixtureHead` : ''} } }
 function Start-Sleep { param($Milliseconds) }
-function Wait-ForUrl { param($StepLabel, $Url, $TimeoutSeconds); $script:virtualWaitSeconds = 60; ${closed ? `$script:liveWindows['${closed}'] = $null` : ''}; ${fixture.sourceMoved ? `$script:fixtureHead = '${'b'.repeat(40)}'; $script:supervisorFixture.sourceTruthVerdict.expectedHead = $script:fixtureHead; $script:supervisorFixture.services.stephanosUi4173.servedRuntimeProof.currentHead = $script:fixtureHead` : ''} }
+function Wait-ForUrl { throw 'optional OpenClaw may not impose a service wait' }
 try {
 ${source.slice(start, end)}
   Complete-IgnitionLaunch -Extra @{ currentStage = 'ready' }
@@ -149,30 +150,83 @@ ${source.slice(start, end)}
     if (closed) assert.equal(observed.status.blocker, 'desktop-ignition-browser-proof-unproven');
     else if (fixture.sourceMoved) assert.equal(observed.status.blocker, 'desktop-ignition-service-proof-unproven');
     else {
-      assert.equal(observed.status.currentBrowserObservation.surfaces.length, 3);
-      assert.equal(observed.disposed, 3);
+      assert.equal(observed.status.currentBrowserObservation.surfaces.length, 2);
+      assert.equal(observed.disposed, 2);
     }
+  }
+});
+
+test('optional OpenClaw cannot block current core proof or demote either required Stephanos window', { skip: process.platform !== 'win32' }, async () => {
+  const source = (await readFile(launcherPs1, 'utf8')).replace(/\r\n/g, '\n');
+  const start = source.lastIndexOf('  if ($autoOpenEnabled) {');
+  const end = source.indexOf('\n  Complete-IgnitionLaunch', start);
+  assert.ok(start >= 0 && end > start);
+  const fixtures = [
+    { name: 'optional-service-down', setup: '$script:supervisorFixture.services.openClaw18789.ready = $false', ready: true, state: 'DEGRADED' },
+    { name: 'optional-open-failed', failure: 'openclaw', ready: true, state: 'DEGRADED' },
+    { name: 'optional-window-closed', setup: "$script:liveWindows['openclaw'] = $null", ready: true, state: 'CURRENT_UNPROVEN' },
+    { name: 'optional-receipt-missing', setup: "$script:browserSurfaceReceipts = @($script:browserSurfaceReceipts | Where-Object { $_.id -ne 'openclaw' }); $script:liveWindows['openclaw'] = $null", ready: true, state: 'CURRENT_UNPROVEN' },
+    { name: 'core-window-missing-with-forged-optional-flag', setup: "$browserSurfaces[0].RequiredForIgnition = $false; $browserSurfaces[0].optional = $true; $script:liveWindows['launcher'] = $null" },
+    { name: 'core-window-missing-with-malformed-optional-flag', setup: "$browserSurfaces[1].RequiredForIgnition = 'false'; $browserSurfaces[1].optional = 'unknown'; $script:liveWindows['runtime'] = $null" },
+    { name: 'unknown-surface-cannot-be-demoted', setup: "$browserSurfaces += @{ Id = 'unknown'; Url = 'fixture-unknown'; ExpectedTitle = 'unknown'; ProfilePath = 'fixture-unknown'; optional = $true }" },
+    { name: 'core-and-optional-opening-both-fail', failure: 'runtime' },
+  ];
+  for (const fixture of fixtures) {
+    const command = launcherStatusHarness(source) + terminalEvidenceCapture() + `
+${fixture.setup || ''}
+$script:attempts = @()
+function Start-Sleep { param($Milliseconds) }
+function Wait-ForUrl { throw 'optional service cannot add a startup wait' }
+function Open-CockpitSurface {
+  param($Url, $Label, $Id, $ExpectedTitle)
+  $script:attempts += $Id
+  if (${fixture.failure ? `$Id -eq '${fixture.failure}'` : '$false'} -or (${fixture.failure === 'runtime' ? '$true' : '$false'} -and $Id -eq 'openclaw')) { throw ('fixture-' + $Id + '-open-failed') }
+}
+try {
+${source.slice(start, end)}
+  Write-Output ('ATTEMPTS=' + (ConvertTo-Json -InputObject @($script:attempts) -Compress))
+  Complete-IgnitionLaunch -Extra @{ currentStage = 'ready'; optionalBrowserSurfaces = @('forged') }
+} catch { Fail-Step -Step $_.Exception.Message -ErrorRecord $_ }
+`;
+    const result = runPowerShell(command);
+    const observed = readTerminalEvidence(result, fixture.ready === true, fixture.name);
+    assert.deepEqual(observed.snapshot.optionalBrowserSurfaces, observed.status.optionalBrowserSurfaces, fixture.name);
+    const optional = observed.status.optionalBrowserSurfaces[0];
+    assert.equal(optional.id, 'openclaw', fixture.name);
+    assert.equal(optional.requiredForIgnition, false, fixture.name);
+    assert.equal(optional.currentWindowProof, 'UNPROVEN', fixture.name);
+    if (fixture.ready) {
+      const attempted = result.stdout.split(/\r?\n/).find(line => line.startsWith('ATTEMPTS='));
+      assert.deepEqual(JSON.parse(attempted.slice(9)), ['launcher', 'runtime', 'openclaw'], fixture.name);
+      assert.equal(observed.status.browserProofScope, 'verified-required-windows', fixture.name);
+      assert.equal(optional.state, fixture.state, fixture.name);
+      assert.deepEqual(observed.status.currentBrowserObservation.surfaces.map(row => row.id), ['launcher', 'runtime'], fixture.name);
+      assert.equal(observed.disposed, 2, fixture.name);
+    } else if (fixture.failure) {
+      assert.match(observed.status.blocker, /fixture-runtime-open-failed/, fixture.name);
+      assert.doesNotMatch(observed.status.blocker, /fixture-openclaw-open-failed/, fixture.name);
+    } else assert.equal(observed.status.blocker, 'desktop-ignition-browser-proof-unproven', fixture.name);
   }
 });
 
 test('final aggregate observation rejects changed identities, later closure, source movement and expired capture', { skip: process.platform !== 'win32' }, async () => {
   const source = (await readFile(launcherPs1, 'utf8')).replace(/\r\n/g, '\n');
   const fixtures = [
-    { name: 'window-closes-during-later-probe', setup: "$script:probeHook = { param($id,$aggregate); if ($id -eq 'openclaw' -and -not $aggregate) { $script:liveWindows['launcher'] = $null } }", disposed: 3 },
-    { name: 'process-exits-during-later-probe', setup: "$script:probeHook = { param($id,$aggregate); if ($id -eq 'openclaw' -and -not $aggregate) { $script:exitedPids = @(124) } }", disposed: 3 },
-    { name: 'process-exits-after-window-pass', setup: "function Get-RepositoryHeadForSupervisorProof { $script:headReads++; if ($script:headReads -eq 2) { $script:exitedPids = @(124) }; return $script:fixtureHead }", disposed: 3 },
+    { name: 'window-closes-during-later-probe', setup: "$script:probeHook = { param($id,$aggregate); if ($id -eq 'runtime' -and -not $aggregate) { $script:liveWindows['launcher'] = $null } }", disposed: 2 },
+    { name: 'process-exits-during-later-probe', setup: "$script:probeHook = { param($id,$aggregate); if ($id -eq 'runtime' -and -not $aggregate) { $script:exitedPids = @(124) } }", disposed: 2 },
+    { name: 'process-exits-after-window-pass', setup: "function Get-RepositoryHeadForSupervisorProof { $script:headReads++; if ($script:headReads -eq 2) { $script:exitedPids = @(124) }; return $script:fixtureHead }", disposed: 2 },
     ...[
       ['pid', '$proof.pid = 999'], ['owner', '$proof.ownerProcessId = 999'],
       ['birth', "$proof.processStartTimeUtc = [datetime]::UtcNow.AddMinutes(-2).ToString('o')"],
       ['handle', '$proof.windowHandle = 999'], ['title', "$proof.windowTitle = 'substituted'"],
       ['path', "$proof.executablePath = 'C:\\foreign\\msedge.exe'"],
       ['profile', "$proof.profilePath = 'substituted-profile'"], ['url', "$proof.url = 'substituted-url'"],
-    ].map(([name, mutation]) => ({ name: `substituted-${name}`, setup: `$script:observationMutation = { param($proof); ${mutation} }`, disposed: 3 })),
-    { name: 'source-moves-across-capture', setup: `$script:headSequence = @('${'a'.repeat(40)}','${'b'.repeat(40)}')`, blocker: 'desktop-ignition-service-proof-unproven', disposed: 3 },
-    { name: 'source-becomes-unproven', setup: `$script:headSequence = @('${'a'.repeat(40)}','')`, blocker: 'desktop-ignition-service-proof-unproven', disposed: 3 },
-    { name: 'original-admitted-head-missing', setup: "$script:ignitionAdmittedSourceHead = ''", blocker: 'desktop-ignition-service-proof-unproven', disposed: 3 },
-    { name: 'service-proof-unproven-before-capture', setup: 'function Get-BattleBridgeSupervisorCurrentRecord { $script:serviceReads++; if ($script:serviceReads -eq 1) { return $null }; return $script:supervisorFixture }', blocker: 'desktop-ignition-service-proof-unproven', disposed: 3 },
-    { name: 'service-record-becomes-pending', setup: "$script:probeHook = { param($id,$aggregate); if ($id -eq 'openclaw' -and $aggregate) { $script:supervisorFixture.currentPhase = 'build'; $script:supervisorFixture.trafficLight = 'blue' } }", blocker: 'desktop-ignition-service-proof-unproven', disposed: 3 },
+    ].map(([name, mutation]) => ({ name: `substituted-${name}`, setup: `$script:observationMutation = { param($proof); ${mutation} }`, disposed: 2 })),
+    { name: 'source-moves-across-capture', setup: `$script:headSequence = @('${'a'.repeat(40)}','${'b'.repeat(40)}')`, blocker: 'desktop-ignition-service-proof-unproven', disposed: 2 },
+    { name: 'source-becomes-unproven', setup: `$script:headSequence = @('${'a'.repeat(40)}','')`, blocker: 'desktop-ignition-service-proof-unproven', disposed: 2 },
+    { name: 'original-admitted-head-missing', setup: "$script:ignitionAdmittedSourceHead = ''", blocker: 'desktop-ignition-service-proof-unproven', disposed: 2 },
+    { name: 'service-proof-unproven-before-capture', setup: 'function Get-BattleBridgeSupervisorCurrentRecord { $script:serviceReads++; if ($script:serviceReads -eq 1) { return $null }; return $script:supervisorFixture }', blocker: 'desktop-ignition-service-proof-unproven', disposed: 2 },
+    { name: 'service-record-becomes-pending', setup: "$script:probeHook = { param($id,$aggregate); if ($id -eq 'runtime' -and $aggregate) { $script:supervisorFixture.currentPhase = 'build'; $script:supervisorFixture.trafficLight = 'blue' } }", blocker: 'desktop-ignition-service-proof-unproven', disposed: 2 },
     { name: 'capture-bound-expires', setup: "function New-IgnitionBrowserObservationClock { $value = [pscustomobject]@{ ElapsedMilliseconds = [long]15001 }; $value | Add-Member ScriptMethod Stop {}; return $value }", disposed: 0 },
     { name: 'capture-budget-includes-first-authority-read', setup: "$script:budgetElapsed = [long]0; function New-IgnitionBrowserObservationClock { $value = [pscustomobject]@{}; $value | Add-Member ScriptProperty ElapsedMilliseconds { return $script:budgetElapsed }; $value | Add-Member ScriptMethod Stop {}; return $value }; function Get-RepositoryHeadForSupervisorProof { $script:budgetElapsed = [long]15001; return $script:fixtureHead }", disposed: 0 },
     { name: 'forged-extra-cannot-replace-missing-observation', setup: "$script:liveWindows['launcher'] = $null", extra: "currentBrowserObservation = @{ schemaVersion = 'forged'; surfaces = @('forged') }", disposed: 0 },

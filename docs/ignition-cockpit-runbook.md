@@ -64,3 +64,12 @@ Regression coverage: `scripts/windows-ignition-preflight-recovery.test.mjs`,
 failure identity, Windows exit-code timing, bounded contention, owner preservation
 and retained runtime debt. A future normal boot still needs its own live receipt;
 fixture success does not prove unattended reboot acceptance.
+
+Desktop cockpit startup still attempts the launcher, AI Core and OpenClaw
+windows. Only the canonical launcher and AI Core IDs participate in the final
+retained browser observation and required-window receipt check. OpenClaw is
+optional, matching the service supervisor contract; its unavailable service or
+failed browser opening is reported separately and cannot block proven core
+readiness. No caller optional flag may demote a Stephanos window. Earlier
+OpenClaw window receipts remain historical, and its current window proof remains
+explicitly unproven rather than borrowing the core windows' final proof.

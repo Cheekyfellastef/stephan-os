@@ -28,7 +28,7 @@ function runFixture(body, logs = {}) {
     writeFileSync(script, '\ufeff' + `
 $ErrorActionPreference = 'Stop'
 $ignitionProofRoot = ${quote(directory)}
-$script:ignitionHelperLogFiles = @((Join-Path $ignitionProofRoot 'current.stdout.log'), (Join-Path $ignitionProofRoot 'current.stderr.log'))
+$script:ignitionHelperLogFiles = @((Join-Path $ignitionProofRoot '.\\current.stdout.log'), (Join-Path $ignitionProofRoot '.\\current.stderr.log'))
 function Initialize-IgnitionProofWorkspace {}
 ${definition('Get-LauncherChildBlocker')}
 ${body}
@@ -61,6 +61,7 @@ test('current helper preflight packets preserve safe refusal codes and exclude s
     assert.equal(result.status, 0, `${fixture.name}: ${result.stderr || result.stdout || result.error?.message}`);
     const observation = result.stdout.trim() ? JSON.parse(result.stdout.trim()) : null;
     if (fixture.reason) {
+      assert.ok(observation, `${fixture.name}: expected a current helper refusal`);
       assert.equal(observation.reason, fixture.reason, fixture.name);
       assert.equal(observation.packetType, 'ignition-sync-preflight', fixture.name);
       assert.doesNotMatch(JSON.stringify(observation), /private|token\.txt|rawLine/);

@@ -62,6 +62,7 @@ $ignitionSupportSnapshotPath = Join-Path $ignitionProofRoot 'support-snapshot.js
 $ignitionBrowserSurfaceRoot = Join-Path $ignitionProofRoot 'browser-surfaces'
 $ignitionBrowserSurfaceReceiptPath = Join-Path $ignitionProofRoot 'status/ignition-browser-surfaces-current.json'
 $script:browserSurfaceReceipts = @()
+$script:optionalBrowserSurfaceFailures = @()
 $script:ignitionAdmittedSourceHead = ''
 
 if ($ReadinessReportOnly.IsPresent) {
@@ -268,9 +269,34 @@ function Convert-SupervisorRecordToIgnitionStatus([object]$SupervisorRecord, [st
   }
 }
 
-function Test-IgnitionBrowserReceiptSet([object[]]$Surfaces, [object[]]$Receipts, [datetime]$RunStartedAtUtc, [object]$CurrentObservation) {
+function Get-IgnitionRequiredBrowserSurfaces([object[]]$Surfaces) {
   $selected = @($Surfaces)
-  $records = @($Receipts | Where-Object { $_.id -ne 'splash' })
+  # Only the canonical OpenClaw ID is optional. Caller-supplied flags cannot
+  # demote either Stephanos window or admit an unknown browser surface.
+  if ($selected.Count -eq 0 -or @($selected | Where-Object { $_.Id -cnotin @('launcher','runtime','openclaw') }).Count -gt 0 -or
+      @($selected.Id | Select-Object -Unique).Count -ne $selected.Count) { return @() }
+  return @($selected | Where-Object { $_.Id -cin @('launcher','runtime') })
+}
+
+function Get-IgnitionOptionalBrowserOutcome([object[]]$Surfaces, [object[]]$Receipts, [object]$SupervisorRecord) {
+  if (@($Surfaces | Where-Object { $_.Id -ceq 'openclaw' }).Count -eq 0) { return @() }
+  $launchFailed = @($script:optionalBrowserSurfaceFailures | Where-Object { $_ -ceq 'openclaw-browser-open-failed' }).Count -gt 0
+  $serviceReady = $SupervisorRecord -and $SupervisorRecord.services.openClaw18789.ready -eq $true
+  return @([ordered]@{
+    id = 'openclaw'
+    requiredForIgnition = $false
+    state = if ($launchFailed -or -not $serviceReady) { 'DEGRADED' } else { 'CURRENT_UNPROVEN' }
+    launchState = if ($launchFailed) { 'FAILED' } elseif (@($Receipts | Where-Object { $_.id -ceq 'openclaw' }).Count -eq 1) { 'HISTORICALLY_OBSERVED' } else { 'UNPROVEN' }
+    currentWindowProof = 'UNPROVEN'
+    serviceReady = [bool]$serviceReady
+    blocker = if ($launchFailed) { 'openclaw-browser-open-failed' } elseif (-not $serviceReady) { 'openclaw-optional-service-unavailable' } else { 'openclaw-optional-current-window-unproven' }
+  })
+}
+
+function Test-IgnitionBrowserReceiptSet([object[]]$Surfaces, [object[]]$Receipts, [datetime]$RunStartedAtUtc, [object]$CurrentObservation) {
+  $selected = @(Get-IgnitionRequiredBrowserSurfaces -Surfaces $Surfaces)
+  if (@($Receipts | Where-Object { $_.id -cnotin @('splash','launcher','runtime','openclaw') }).Count -gt 0) { return $false }
+  $records = @($Receipts | Where-Object { $_.id -cin @('launcher','runtime') })
   if ($selected.Count -eq 0 -or $records.Count -ne $selected.Count -or @($selected.Id | Select-Object -Unique).Count -ne $selected.Count) { return $false }
   $current = @($CurrentObservation.surfaces)
   $captureStarted = [DateTimeOffset]::MinValue
@@ -314,7 +340,7 @@ function Resolve-IgnitionStatusProjection([string]$LaunchMode, [string]$Phase, [
   $supervisorStatus = if ($LaunchMode -eq 'launcher-root') { Convert-SupervisorRecordToIgnitionStatus -SupervisorRecord $SupervisorRecord -FallbackPhase $Phase -FallbackMessage $Message } else { $null }
   $details = @{}
   foreach ($key in $Extra.Keys) { $details[$key] = $Extra[$key] }
-  # Services and requested browser completion jointly determine desktop readiness.
+  # Services and required Stephanos windows jointly determine desktop readiness.
   if ($Phase -notin @('blocked','restart-required','fixed-runtime-installation') -and $supervisorStatus -and $supervisorStatus.phase -eq 'blocked') {
     $Phase = 'blocked'
     $Message = $supervisorStatus.message
@@ -331,10 +357,10 @@ function Resolve-IgnitionStatusProjection([string]$LaunchMode, [string]$Phase, [
   }
   elseif ($LaunchMode -eq 'launcher-root' -and $Phase -eq 'ready' -and (-not $AutoOpenEnabled -or -not (Test-IgnitionBrowserReceiptSet -Surfaces $RequestedBrowserSurfaces -Receipts $BrowserReceipts -RunStartedAtUtc $RunStartedAtUtc -CurrentObservation $CurrentBrowserObservation))) {
     $Phase = 'blocked'
-    $Message = 'Desktop Ignition has not verified every requested browser window.'
+    $Message = 'Desktop Ignition has not verified every required Stephanos browser window.'
     $details.currentStage = 'blocked'
     $details.blocker = 'desktop-ignition-browser-proof-unproven'
-    $details.nextOperatorAction = 'Keep the requested browser surfaces available and retry Ignition to obtain their verified window receipts.'
+    $details.nextOperatorAction = 'Keep the required Stephanos browser surfaces available and retry Ignition to obtain their verified window receipts.'
   }
   $Extra = $details
   $currentStage = if ($Extra.ContainsKey('currentStage')) { $Extra.currentStage } else { $Phase }
@@ -359,9 +385,10 @@ function Resolve-IgnitionStatusProjection([string]$LaunchMode, [string]$Phase, [
     browserSurfaceReceiptPath = $ignitionBrowserSurfaceReceiptPath
     browserSurfaceReceipts = @($BrowserReceipts)
     currentBrowserObservation = $CurrentBrowserObservation
+    optionalBrowserSurfaces = @(Get-IgnitionOptionalBrowserOutcome -Surfaces $RequestedBrowserSurfaces -Receipts $BrowserReceipts -SupervisorRecord $SupervisorRecord)
     browserTargets = @($RequestedBrowserSurfaces | ForEach-Object { $_.Url })
     browserAutoOpenEnabled = $AutoOpenEnabled
-    browserProofScope = if ($LaunchMode -eq 'launcher-root' -and $Phase -eq 'ready') { 'verified-selected-windows' } elseif ($LaunchMode -eq 'launcher-root') { 'selected-windows-unproven' } elseif ($AutoOpenEnabled) { 'vite-browser-request-unverified' } else { 'vite-manual-open' }
+    browserProofScope = if ($LaunchMode -eq 'launcher-root' -and $Phase -eq 'ready') { 'verified-required-windows' } elseif ($LaunchMode -eq 'launcher-root') { 'required-windows-unproven' } elseif ($AutoOpenEnabled) { 'vite-browser-request-unverified' } else { 'vite-manual-open' }
     exactHeadApprovalRequired = $true
     exactHeadApprovalStatus = 'required-before-merge-proof'
     safeAutoFixPolicy = 'known-generated-runtime-stoppers-only; no source deletion; no hidden blockers'
@@ -376,7 +403,7 @@ function Resolve-IgnitionStatusProjection([string]$LaunchMode, [string]$Phase, [
     destinations = [ordered]@{ statusPath = $ignitionStatusPath; splashPath = $ignitionSplashPath; logRoot = (Join-Path $ignitionProofRoot 'logs'); transcriptPath = $ignitionTranscriptPath; supportSnapshotPath = $ignitionSupportSnapshotPath }
   }
   foreach ($key in $Extra.Keys) {
-    if ($key -notin @('phase','message','trafficLight','progressPercentage','enterStephanosEnabled','currentStage','blocker','nextOperatorAction','proofSummary','battleBridgeSupervisor','battleBridgeSupervisorCurrentPath','browserTargets','browserSurfaceReceipts','browserAutoOpenEnabled','browserProofScope','currentBrowserObservation')) { $payload[$key] = $Extra[$key] }
+    if ($key -notin @('phase','message','trafficLight','progressPercentage','enterStephanosEnabled','currentStage','blocker','nextOperatorAction','proofSummary','battleBridgeSupervisor','battleBridgeSupervisorCurrentPath','browserTargets','browserSurfaceReceipts','browserAutoOpenEnabled','browserProofScope','currentBrowserObservation','optionalBrowserSurfaces')) { $payload[$key] = $Extra[$key] }
   }
   return $payload
 }
@@ -393,7 +420,8 @@ function Get-IgnitionStatusProjection([string]$Phase, [string]$Message, [hashtab
     $latestOpenClawStartup = Get-LatestOpenClawStartupStatus
     if ($Mode -eq 'launcher-root' -and $Phase -eq 'ready') {
       $beforeSupervisorRecord = $supervisorRecord
-      $capture = Get-IgnitionBrowserObservationSet -Surfaces @($browserSurfaces) -ObservationClock $captureClock -StartedAtUtc $captureStartedAt
+      $requiredSurfaces = @(Get-IgnitionRequiredBrowserSurfaces -Surfaces @($browserSurfaces))
+      $capture = Get-IgnitionBrowserObservationSet -Surfaces $requiredSurfaces -ObservationClock $captureClock -StartedAtUtc $captureStartedAt
       # A file reread preserves the original supervisor proof identity; it is not a new health probe.
       $afterHead = Get-RepositoryHeadForSupervisorProof
       $supervisorRecord = Get-BattleBridgeSupervisorCurrentRecord
@@ -824,19 +852,18 @@ function Get-LauncherChildBlocker {
   Initialize-IgnitionProofWorkspace
   # Observe only this retained helper's unique logs. A previous launch or another
   # background service cannot supply the current ignition failure.
-  $logFiles = @($script:ignitionHelperLogFiles | ForEach-Object {
-    if (Test-Path -LiteralPath $_ -PathType Leaf) { Get-Item -LiteralPath $_ }
-  })
-
-  foreach ($logFile in $logFiles) {
+  $logPaths = @($script:ignitionHelperLogFiles)
+  for ($logIndex = 0; $logIndex -lt $logPaths.Count; $logIndex++) {
+    if (-not (Test-Path -LiteralPath $logPaths[$logIndex] -PathType Leaf)) { continue }
     try {
+      $logFile = Get-Item -LiteralPath $logPaths[$logIndex] -ErrorAction Stop
       $lines = @(Get-Content -LiteralPath $logFile.FullName -Encoding UTF8 -Tail 256 -ErrorAction Stop)
 
       for ($index = $lines.Count - 1; $index -ge 0; $index--) {
         $line = [string]$lines[$index]
 
         $preflightPrefix = 'BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_RESULT='
-        if ($logFile.FullName -eq $script:ignitionHelperLogFiles[0] -and
+        if ($logIndex -eq 0 -and
             $line.StartsWith($preflightPrefix, [System.StringComparison]::Ordinal)) {
           # The latest attempt wins, including a successful retry. Malformed or
           # partial output is never permission to reuse an older failed attempt.
@@ -1301,7 +1328,7 @@ function Write-IgnitionSupportSnapshot([string]$Verdict, [hashtable]$Extra = @{}
     logRoot = (Join-Path $ignitionProofRoot 'logs')
   }
   foreach ($key in $Extra.Keys) {
-    if ($key -notin @('schema','verdict','writtenAt','repositoryRoot','runtimePort','phase','blocker','ignitionOutcome','exactHeadApprovalRequired','exactHeadApprovalStatus','safeAutoFixPolicy','browserTargets','browserSurfaceReceipts','browserAutoOpenEnabled','browserProofScope','battleBridgeSupervisor','sourceHead','proofSummary','currentBrowserObservation')) { $snapshot[$key] = $Extra[$key] }
+    if ($key -notin @('schema','verdict','writtenAt','repositoryRoot','runtimePort','phase','blocker','ignitionOutcome','exactHeadApprovalRequired','exactHeadApprovalStatus','safeAutoFixPolicy','browserTargets','browserSurfaceReceipts','browserAutoOpenEnabled','browserProofScope','battleBridgeSupervisor','sourceHead','proofSummary','currentBrowserObservation','optionalBrowserSurfaces')) { $snapshot[$key] = $Extra[$key] }
   }
   if ($Outcome) {
     $snapshot.verdict = if ($Outcome.phase -eq 'ready') { 'ready-for-local-proof' } else { 'blocked' }
@@ -1313,6 +1340,7 @@ function Write-IgnitionSupportSnapshot([string]$Verdict, [hashtable]$Extra = @{}
     $snapshot.browserAutoOpenEnabled = $Outcome.browserAutoOpenEnabled
     $snapshot.browserProofScope = $Outcome.browserProofScope
     $snapshot.currentBrowserObservation = $Outcome.currentBrowserObservation
+    $snapshot.optionalBrowserSurfaces = $Outcome.optionalBrowserSurfaces
     $snapshot.openClawStartupState = $Outcome.openClawStartupState
     $snapshot.openClawStartupDetail = $Outcome.openClawStartupDetail
   }
@@ -1766,16 +1794,19 @@ try {
 
   if ($autoOpenEnabled) {
     $surfaceFailures = @()
+    $script:optionalBrowserSurfaceFailures = @()
     for ($index = 0; $index -lt $browserSurfaces.Count; $index++) {
       $surface = $browserSurfaces[$index]
       try {
-        if ($surface.Id -eq 'openclaw') {
-          Wait-ForUrl -StepLabel 'OpenClaw Control' -Url $surface.Url -TimeoutSeconds 60
-        }
         Open-CockpitSurface -Url $surface.Url -Label $surface.Label -Id $surface.Id -ExpectedTitle $surface.ExpectedTitle
       }
       catch {
-        $surfaceFailures += "$($surface.Label): $($_.Exception.Message)"
+        if ($surface.Id -ceq 'openclaw') {
+          $script:optionalBrowserSurfaceFailures += 'openclaw-browser-open-failed'
+          Write-LiveLog 'Optional OpenClaw browser surface could not open; Stephanos core proof continues.'
+        } else {
+          $surfaceFailures += "$($surface.Label): $($_.Exception.Message)"
+        }
       }
 
       if ($index -lt ($browserSurfaces.Count - 1)) {
