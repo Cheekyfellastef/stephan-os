@@ -628,9 +628,11 @@ def run_build(packet, verified):
         deadline = time.monotonic() + 600
         # Continued gaming permission is checked during the owned job. Any
         # hold cancels only this build's process tree; it never kills a game.
-        admission_last = [0.0, False]
+        admission_last = [0.0, ""]
 
         def cancelled():
+            if admission_last[1]:
+                return True
             now = time.monotonic()
             if now - admission_last[0] >= 1:
                 admission_last[0] = now
@@ -639,9 +641,13 @@ def run_build(packet, verified):
                     launcher = job.observe_parent_identity(packet["launcherPid"], packet["launcherBirthFileTime"])
                     if launcher.get("ok") is not True or launcher.get("alive") is not True:
                         raise BuildBlocked("BUILD_LAUNCHER_ENDED")
+                except BuildBlocked as error:
+                    reason = str(error)
+                    admission_last[1] = (reason if re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", reason)
+                                         else "BUILD_ADMISSION_OBSERVATION_UNPROVEN")
                 except Exception:
-                    admission_last[1] = True
-            return admission_last[1]
+                    admission_last[1] = "BUILD_ADMISSION_OBSERVATION_UNPROVEN"
+            return bool(admission_last[1])
 
         receipt["allJobsEmpty"] = False
         receipt["executionCustodyReleased"] = False
@@ -655,7 +661,8 @@ def run_build(packet, verified):
         receipt["executionCustodyReleased"] = stage_result.get("custody_released") is True and receipt["allJobsEmpty"]
         receipt["outputComplete"] = stage_result.get("output_complete") is True
         receipt["stagesCompleted"] = int(stage_result.get("root_exited") is True and receipt["allJobsEmpty"])
-        private = {"nativeStage": stage_result, "toolchainHashes": observed_tools, "materialized": materialized}
+        private = {"nativeStage": stage_result, "toolchainHashes": observed_tools, "materialized": materialized,
+                   "admissionCancellationReason": admission_last[1]}
         private_raw = json.dumps(private, sort_keys=True, indent=2).encode()
         if len(private_raw) > 2 * 1024 * 1024:
             raise BuildBlocked("PRIVATE_PROOF_BOUND")
@@ -665,6 +672,14 @@ def run_build(packet, verified):
             os.fsync(stream.fileno())
         if not receipt["executionCustodyReleased"]:
             raise BuildBlocked("NATIVE_JOB_TERMINAL_UNPROVEN")
+        # Admission withdrawal is a hold, even if the child races cancellation
+        # and exits successfully. Never relabel it as a compiler diagnostic.
+        if admission_last[1]:
+            raise BuildBlocked(admission_last[1])
+        if stage_result.get("timed_out") is True:
+            raise BuildBlocked("NATIVE_BUILD_DEADLINE_EXCEEDED")
+        if stage_result.get("cancelled") is True:
+            raise BuildBlocked("NATIVE_BUILD_CANCELLED")
         if (stage_result.get("operation_ok") is not True
                 or type(stage_result.get("root_exit_code")) is not int or stage_result["root_exit_code"] != 0
                 or stage_result.get("root_exited") is not True or not receipt["outputComplete"]

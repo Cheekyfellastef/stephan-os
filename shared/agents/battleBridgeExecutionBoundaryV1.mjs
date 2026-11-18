@@ -12,6 +12,13 @@ export function resolveBattleBridgeGitExecutable(platform = process.platform) {
   throw new Error(`BATTLE_BRIDGE_GIT_PLATFORM_UNSUPPORTED:${platform}`);
 }
 
+// Native Windows physical resolution avoids the legacy resolver's repeated
+// ancestor traversal. It preserves physical-path equality as authority: native
+// errors/unavailability propagate to the existing fail-closed callers.
+export function resolveBattleBridgePhysicalPathV1(pathname) {
+  return process.platform === 'win32' ? realpathSync.native(pathname) : realpathSync(pathname);
+}
+
 export function battleBridgeCanonicalRepositoryArgs(repoRoot) {
   const root = path.resolve(String(repoRoot || ''));
   return Object.freeze([
@@ -318,7 +325,7 @@ export function inspectBattleBridgeGitTopology(repoRoot, { lstatFn = lstatSync, 
       return Object.freeze({ ok: false, blocker: 'CANONICAL_GIT_TOPOLOGY_UNPROVEN', pathname });
     }
     let canonical;
-    try { canonical = realpathSync(pathname); } catch {
+    try { canonical = resolveBattleBridgePhysicalPathV1(pathname); } catch {
       return Object.freeze({ ok: false, blocker: 'CANONICAL_GIT_TOPOLOGY_UNPROVEN', pathname });
     }
     const correctType = expectedType === 'directory' ? info.isDirectory() : info.isFile();

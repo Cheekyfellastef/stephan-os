@@ -2,10 +2,10 @@
 // It is not a worktree registration, source writer, signer or execution route.
 import { createHash } from 'node:crypto';
 import { constants, closeSync, fstatSync, lstatSync, mkdtempSync, openSync,
-  readSync, readdirSync, realpathSync, rmdirSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+  readSync, readdirSync, rmdirSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { parseBattleBridgeNullConfigV1, validateBattleBridgeLocalGitConfiguration } from './battleBridgeExecutionBoundaryV1.mjs';
+import { parseBattleBridgeNullConfigV1, resolveBattleBridgePhysicalPathV1, validateBattleBridgeLocalGitConfiguration } from './battleBridgeExecutionBoundaryV1.mjs';
 
 const contexts = new WeakMap();
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -15,7 +15,7 @@ const samePath = (a, b) => process.platform === 'win32'
 
 function directory(name) {
   const info = lstatSync(name, { bigint: true });
-  if (!info.isDirectory() || info.isSymbolicLink() || !samePath(realpathSync(name), name))
+  if (!info.isDirectory() || info.isSymbolicLink() || !samePath(resolveBattleBridgePhysicalPathV1(name), name))
     deny('CANONICAL_GIT_PROBE_DIRECTORY_UNPROVEN');
   return info;
 }
@@ -25,7 +25,7 @@ function file(name, limit) {
   try {
     const before = lstatSync(name, { bigint: true });
     if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n
-      || before.size < 0n || before.size > BigInt(limit) || !samePath(realpathSync(name), name))
+      || before.size < 0n || before.size > BigInt(limit) || !samePath(resolveBattleBridgePhysicalPathV1(name), name))
       deny('CANONICAL_GIT_PROBE_FILE_UNPROVEN');
     fd = openSync(name, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
     const opened = fstatSync(fd, { bigint: true });
@@ -102,7 +102,11 @@ export function createBattleBridgeGitProbeContextV1(repoRoot) {
     const conservativeSecond = index.info.mtimeNs / 1_000_000_000n - 1n;
     if (conservativeSecond <= 0n || conservativeSecond > BigInt(Number.MAX_SAFE_INTEGER))
       deny('CANONICAL_GIT_PROBE_INDEX_TIMESTAMP_UNPROVEN');
-    const privateRoot = mkdtempSync(path.join(tmpdir(), 'stephanos-git-source-probe-'));
+    // This is a fresh private allocation, not a supplied source identity. Resolve
+    // the Windows temporary base before creating it so 8.3 aliases cannot make
+    // our own output fail the unchanged physical-path equality checks.
+    const privateTemp = process.platform === 'win32' ? resolveBattleBridgePhysicalPathV1(tmpdir()) : tmpdir();
+    const privateRoot = mkdtempSync(path.join(privateTemp, 'stephanos-git-source-probe-'));
     record = { root, gitDirectory, rootIdentity, gitIdentity, head, index, privateRoot,
       privateIdentity: directory(privateRoot), privateFiles: [], active: true };
     for (const [name, bytes] of [['HEAD', head.bytes], ['index', index.bytes],
