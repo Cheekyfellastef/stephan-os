@@ -152,8 +152,8 @@ export async function validateOpenClawOc2QualificationContext(context = {}, { re
     'mergeAuthority', 'deploymentAuthority', 'selfQualificationAuthority',
     'leaseSeizureAllowed',
   ];
-  if (commandFields.some((key) => Object.hasOwn(action, key))
-    || authorityFields.some((key) => Object.hasOwn(action, key) && action[key] !== false)) {
+  if (commandFields.some((key) => Object.hasOwn(action ?? {}, key))
+    || authorityFields.some((key) => Object.hasOwn(action ?? {}, key) && action[key] !== false)) {
     return blocker('OPENCLAW_OC2_ACTION_SCOPE_INVALID');
   }
   if (claim?.adapter !== 'openclaw-readonly'
