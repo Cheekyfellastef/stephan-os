@@ -398,8 +398,9 @@ for($i=$script:emptyPins.Count-1;$i -ge 0;$i--){[void](Invoke-EmptyVersionNative
   }finally{assert.equal(realpathSync(dir),real);rmSync(dir,{recursive:true,force:true});}
 });
 
-// Real handle, inheritance and ACL fixtures; only BA is mapped to the ordinary
-// fixture owner. Production readers, reference checks and protected bits stay real.
+// Real handle, inheritance and ACL fixtures additionally admit the ordinary
+// fixture owner, retaining SY/BA for administrative runners. Production readers,
+// reference checks and protected bits stay real.
 function installedLeafFixture(root, body) {
   const config=Buffer.from(JSON.stringify({root,version:INSTALLED})).toString('base64');
   return powershell(`
@@ -408,7 +409,7 @@ Initialize-EmptyVersionNative
 $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 foreach($name in @('Assert-EmptyVersionProtectedSecurity','Assert-EmptyVersionInstalledLeafSecurity')){
  $node=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$false)
- . ([scriptblock]::Create($node.Extent.Text.Replace("'S-1-5-32-544'",("'"+$sid+"'"))))
+ . ([scriptblock]::Create($node.Extent.Text.Replace("'S-1-5-32-544'",("'S-1-5-32-544','"+$sid+"'"))))
 }
 $protectedRoot=$c.root;$installedVersion=$c.version
 function Set-FixtureDirectoryAcl([string]$Path,[bool]$Protected=$true){
@@ -456,6 +457,14 @@ $hostBytes=Read-EmptyVersionInstalledLeaf $root $parent 'host.exe'
 $acl=Get-EmptyVersionSecurity $script:emptyStreams[0].SafeFileHandle.DangerousGetHandle()
 $result=[ordered]@{pending=([Text.Encoding]::UTF8.GetString($bytes));host=([Text.Encoding]::UTF8.GetString($hostBytes));
  inherited=(-not [bool]($acl.descriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected))}
+# Canonical administrative owners remain valid on elevated Windows runners.
+# This descriptor makes replacing (rather than extending) BA fail locally too.
+$adminLeaf=[pscustomobject]@{descriptor=[Security.AccessControl.RawSecurityDescriptor]::new('O:BAG:BAD:(A;;FA;;;SY)(A;;FA;;;BA)');sha256='fixture-admin-leaf'}
+$adminDirectory=[pscustomobject]@{descriptor=[Security.AccessControl.RawSecurityDescriptor]::new('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)');sha256='fixture-admin-directory'}
+Assert-EmptyVersionInstalledLeafSecurity $adminLeaf
+Assert-EmptyVersionProtectedSecurity $adminDirectory
+$result.canonicalAdminOwners=$true
+$result.realOwnerAllowed=$acl.descriptor.Owner.Value -cin @($sid,'S-1-5-18','S-1-5-32-544')
 $result.strictDirectoryRefusesInherited=Test-FixtureRefusal {Assert-EmptyVersionProtectedSecurity $acl}
 $result.forged=Test-FixtureRefusal {Read-EmptyVersionInstalledLeaf $root ([pscustomobject]@{handle=$parent.handle;info=$parent.info}) 'pending.json'}
 $result.unpinned=Test-FixtureRefusal {Read-EmptyVersionInstalledLeaf $root $null 'pending.json'}
@@ -478,7 +487,7 @@ $result.recycled=Test-FixtureRefusal {Read-EmptyVersionInstalledLeaf $root $pare
 $result|ConvertTo-Json -Compress
 `));
   assert.equal(r.pending,'pending fixture');assert.equal(r.host,'host fixture');assert.equal(r.inherited,true);
-  for(const k of ['strictDirectoryRefusesInherited','forged','unpinned','wrongParent','wrongRoot','closed','reopened','recycled'])assert.equal(r[k],true,k);
+  for(const k of ['canonicalAdminOwners','realOwnerAllowed','strictDirectoryRefusesInherited','forged','unpinned','wrongParent','wrongRoot','closed','reopened','recycled'])assert.equal(r[k],true,k);
   assert.deepEqual(r.names,[true,true,true,true]);
 });
 
