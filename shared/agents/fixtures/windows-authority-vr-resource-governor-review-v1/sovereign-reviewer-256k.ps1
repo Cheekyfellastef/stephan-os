@@ -747,6 +747,20 @@ function Read-GovernorState {
     }
 }
 
+function Test-ReviewerReservationBlockedByCooldown {
+    param($State)
+    if (-not $State -or [string]$State.phase -ne 'COOLDOWN') { return $false }
+    $deadline = [DateTimeOffset]::MinValue
+    $parsed = [DateTimeOffset]::TryParse(
+        [string]$State.cooldownUntilUtc,
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        [System.Globalization.DateTimeStyles]::AssumeUniversal,
+        [ref]$deadline
+    )
+    # A missing or corrupt prior deadline cannot authorise a new reviewer lease.
+    return (-not $parsed -or [DateTimeOffset]::UtcNow -lt $deadline.ToUniversalTime())
+}
+
 function Append-TelemetryEvent {
     param($Payload)
     Ensure-StateRoot
@@ -940,6 +954,29 @@ function Resolve-EffectiveState {
             profile = $profile
             lease = $lease
             cooldownUntilUtc = ''
+        }
+    }
+
+    # A reviewer reservation may not replace an unexpired gaming cooldown.
+    # Keep the prior protected profile and deadline, including a malformed
+    # deadline that must fail closed until separately repaired.
+    if (
+        -not $Signal.active -and
+        $lease.active -and
+        [string]$profile.name -eq 'review-large-context' -and
+        [string]$profile.processName -eq 'SovereignReviewer' -and
+        (Test-ReviewerReservationBlockedByCooldown -State $PriorState)
+    ) {
+        $protectedProfile = $profile
+        if ($PriorState.profile) { $protectedProfile = $PriorState.profile }
+        return [pscustomobject]@{
+            phase = 'COOLDOWN'
+            active = $true
+            reason = 'gaming-session-cooldown'
+            overrideMode = $override
+            profile = $protectedProfile
+            lease = $lease
+            cooldownUntilUtc = [string]$PriorState.cooldownUntilUtc
         }
     }
 
@@ -1207,6 +1244,13 @@ if ($Action -eq 'ForceOff') {
 if ($Action -eq 'PrepareGaming') {
     if ((Read-OverrideMode) -eq 'FORCE_OFF') {
         throw 'GAMING_RESOURCE_PREPARE_BLOCKED_BY_FORCE_OFF'
+    }
+    if (
+        $ProfileName -eq 'review-large-context' -and
+        $ProcessName -eq 'SovereignReviewer' -and
+        (Test-ReviewerReservationBlockedByCooldown -State (Read-GovernorState))
+    ) {
+        throw 'REVIEWER_RESERVATION_BLOCKED_BY_GAMING_COOLDOWN'
     }
     Write-PrepareLease -RequestedProcessName $ProcessName -RequestedProfileName $ProfileName | Out-Null
     $prepared = Invoke-CurrentReconcile

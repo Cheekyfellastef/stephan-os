@@ -24,7 +24,7 @@ const PATH = WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1[0];
 const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: 'ae71e1e79ead63efeb5a4d73f4bce6a01ee0f1d9', size: 48838 }),
   Object.freeze({ blobSha: '9513dfe995a35087e1d715ef0c4dff4ca3578295', size: 49674 }),
-  Object.freeze({ blobSha: '2747131cebf46d69df3cc9e13ad51603d71584a0', size: 52100, reviewerReservation: true }),
+  Object.freeze({ blobSha: '55832a25dadd9ec8f069ead2f8a9150681293dd7', size: 53904, reviewerReservation: true }),
 ]);
 
 const text = (value) => String(value ?? '').trim();
@@ -178,6 +178,14 @@ function reviewGovernor(source, findings) {
     'vr-governor-reviewer-effective-state-widened',
     'REVIEWING must remain an inactive fixed-profile reservation rather than gaming authority.',
   );
+  requireLiteral(findings, source,
+    'Test-ReviewerReservationBlockedByCooldown -State $PriorState',
+    'vr-governor-reviewer-cooldown-protection-missing',
+    'A reviewer lease cannot displace a prior protected gaming cooldown.');
+  requireLiteral(findings, source,
+    'REVIEWER_RESERVATION_BLOCKED_BY_GAMING_COOLDOWN',
+    'vr-governor-reviewer-cooldown-preflight-missing',
+    'The reviewer admission path must reject a protected cooldown before writing a lease.');
   }
   requirePattern(
     findings,

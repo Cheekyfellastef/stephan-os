@@ -102,8 +102,8 @@ function rejects(content) {
 }
 
 test('fixture preserves exact current reviewer governor source blob', () => {
-  assert.equal(blobSha(governor), '2747131cebf46d69df3cc9e13ad51603d71584a0');
-  assert.equal(Buffer.byteLength(governor, 'utf8'), 52100);
+  assert.equal(blobSha(governor), '55832a25dadd9ec8f069ead2f8a9150681293dd7');
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 53904);
 });
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
@@ -377,4 +377,45 @@ test('virtual Air Link reviewer fixture requires a fresh UTC timestamp, not stal
     ['2026-11-14T15:39:59.000z', false],
     ['2026-11-14T15:39:59.1234567Z', true],
   ]) assert.equal(valid(value), expected, String(value));
+});
+
+test('reviewer cooldown gate protects the prior phase before any reviewer lease or REVIEWING projection', () => {
+  const helper = governor.split('function Test-ReviewerReservationBlockedByCooldown {')[1]
+    ?.split('function Append-TelemetryEvent {')[0] || '';
+  assert.match(helper, /phase -ne 'COOLDOWN'/);
+  assert.match(helper, /DateTimeOffset\]::TryParse/);
+  assert.match(helper, /-not \$parsed -or/);
+  const effective = governor.split('function Resolve-EffectiveState {')[1]
+    ?.split('function Invoke-Reconcile {')[0] || '';
+  const cooldownCheck = effective.indexOf('Test-ReviewerReservationBlockedByCooldown -State $PriorState');
+  assert.ok(cooldownCheck > -1);
+  assert.ok(cooldownCheck < effective.indexOf("phase = 'REVIEWING'"));
+  assert.match(effective.slice(cooldownCheck, effective.indexOf("phase = 'REVIEWING'")),
+    /phase = 'COOLDOWN'[\s\S]*active = \$true[\s\S]*cooldownUntilUtc = \[string\]\$PriorState\.cooldownUntilUtc/);
+  const prepare = governor.split("if ($Action -eq 'PrepareGaming') {")[1]
+    ?.split("if ($Action -eq 'CancelPrepare') {")[0] || '';
+  assert.ok(prepare.indexOf('REVIEWER_RESERVATION_BLOCKED_BY_GAMING_COOLDOWN') > -1);
+  assert.ok(prepare.indexOf('REVIEWER_RESERVATION_BLOCKED_BY_GAMING_COOLDOWN')
+    < prepare.indexOf('Write-PrepareLease -RequestedProcessName'));
+});
+
+test('reviewer-only cooldown policy blocks active or unknown deadlines, allowing only expiry', () => {
+  // Portable semantic branch model; not a native PowerShell or installed-runtime receipt.
+  const now = Date.parse('2026-11-18T02:14:00.000Z');
+  const blocked = (phase, deadline) => {
+    if (phase !== 'COOLDOWN') return false;
+    const parsed = Date.parse(deadline);
+    return !Number.isFinite(parsed) || now < parsed;
+  };
+  for (const [phase, deadline, expected] of [
+    ['COOLDOWN', '2026-11-18T02:15:00Z', true],
+    ['COOLDOWN', '2026-11-18T02:14:01Z', true],
+    ['COOLDOWN', '2026-11-18T02:14:00Z', false],
+    ['COOLDOWN', '2026-11-18T02:13:59Z', false],
+    ['COOLDOWN', 'not-a-timestamp', true],
+    ['COOLDOWN', '', true],
+    ['COOLDOWN', null, true],
+    ['NORMAL', '2026-11-18T02:15:00Z', false],
+    ['REVIEWING', '2026-11-18T02:15:00Z', false],
+  ]) assert.equal(blocked(phase, deadline), expected, phase + ': ' + String(deadline));
 });
