@@ -5,9 +5,13 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, lstat, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { SOVEREIGN_COMMANDER_REMOTE_ACTIONS } from './sovereignCommanderRemoteMailboxV1.mjs';
 import { coreGamingProtectionFromGovernor } from './stephanosCoreDaemonV1.mjs';
+import { projectVrGovernorExecutionPermissionsV1 } from '../ai/ollamaLoadGovernor.mjs';
+// Keep the behavioral Windows fixtures in the existing hosted governor entry.
+import '../../scripts/governor-progress-repair.test.mjs';
 
 const governor = await readFile(new URL('../../scripts/windows/run-vr-resource-governor.ps1', import.meta.url), 'utf8');
 const qwen35Canary = await readFile(new URL('../../scripts/qwen35-canary.mjs', import.meta.url), 'utf8');
@@ -31,6 +35,79 @@ const gamingTile = await readFile(new URL('../../stephanos-ui/src/components/Gam
 const aiClient = await readFile(new URL('../../stephanos-ui/src/ai/aiClient.js', import.meta.url), 'utf8');
 const app = await readFile(new URL('../../stephanos-ui/src/App.jsx', import.meta.url), 'utf8');
 
+test('existing hosted governor entry exercises actual inference and capacity consumers', () => {
+  const files = [
+    '../../stephanos-server/tests/ollama-provider.test.js',
+    '../../stephanos-server/services/forgeLifeboatCapacityService.test.js',
+    '../../stephanos-server/services/sovereignBuilder8CapacityService.test.js',
+    '../../scripts/battle-bridge-github-sync-and-refresh.test.mjs',
+  ].map(path => fileURLToPath(new URL(path, import.meta.url)));
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  const result = spawnSync(process.execPath, ['--test', '--test-reporter=tap', '--test-concurrency=1', ...files], {
+    encoding: 'utf8', windowsHide: true, shell: false, timeout: 45000, maxBuffer: 1024 * 1024, env,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout || result.error?.message);
+  assert.ok(Number(result.stdout.match(/^# tests (\d+)$/m)?.[1]) >= 40, 'consumer tests must actually execute');
+  assert.match(result.stdout, /^# skipped 0$/m);
+  assert.match(result.stdout, /# Subtest: unchanged exact source observes Forge once before unrelated runtime debt while retaining every hold/);
+});
+
+test('idle custody and unknown observations deny canonical local execution independently of game activity', () => {
+  const now = Date.now();
+  const normal = { schemaVersion: 'stephanos.vr-resource-governor.v1', governorVersion: 3,
+    updatedAtUtc: new Date(now).toISOString(), phase: 'NORMAL', active: false,
+    flatGameActive: false, airLinkActive: false, realAirLinkActive: false,
+    virtualAirLinkTestActive: false, prepareLeaseActive: false,
+    nativeProbeCustodyHeld: false, dependencyObservationKnown: true,
+    localModelAllowed: true, heavyModelAllowed: true, evictionHealthy: true };
+  assert.equal(projectVrGovernorExecutionPermissionsV1(normal, now).localCpuAllowed, true);
+  for (const denial of [
+    { nativeProbeCustodyHeld: true }, { dependencyObservationKnown: false },
+    { localModelAllowed: false }, { evictionHealthy: false },
+    { nativeProbeCustodyHeld: 'false' }, { dependencyObservationKnown: undefined },
+    { updatedAtUtc: new Date(now - 15001).toISOString() },
+    { updatedAtUtc: new Date(now + 1).toISOString() },
+  ]) {
+    const state = { ...normal, ...denial };
+    const actual = projectVrGovernorExecutionPermissionsV1(state, now);
+    assert.equal(actual.localModelAllowed, false, JSON.stringify(denial));
+    assert.equal(actual.heavyModelAllowed, false);
+    assert.equal(actual.localCpuAllowed, false);
+    assert.equal(coreGamingProtectionFromGovernor(state, now), true);
+  }
+  const lightweightOnly = { ...normal, heavyModelAllowed: false };
+  assert.equal(projectVrGovernorExecutionPermissionsV1(lightweightOnly, now).localModelAllowed, true);
+  assert.equal(projectVrGovernorExecutionPermissionsV1(lightweightOnly, now).heavyModelAllowed, false);
+  assert.equal(coreGamingProtectionFromGovernor(lightweightOnly, now), true);
+  const gaming = { ...normal, phase: 'GAMING', active: true, heavyModelAllowed: false };
+  assert.equal(projectVrGovernorExecutionPermissionsV1(gaming, now).localModelAllowed, true);
+  assert.equal(projectVrGovernorExecutionPermissionsV1(gaming, now).heavyModelAllowed, false);
+});
+
+test('effective model grants remain distinct from observed-activity CPU exclusion', () => {
+  const now = Date.now();
+  const forcedOff = { schemaVersion: 'stephanos.vr-resource-governor.v1', governorVersion: 3,
+    updatedAtUtc: new Date(now).toISOString(), phase: 'NORMAL', active: false,
+    overrideMode: 'FORCE_OFF', flatGameActive: true, airLinkActive: false,
+    realAirLinkActive: false, virtualAirLinkTestActive: false, prepareLeaseActive: false,
+    nativeProbeCustodyHeld: false, dependencyObservationKnown: true,
+    localModelAllowed: true, heavyModelAllowed: true, evictionHealthy: true };
+  for (const state of [forcedOff, { ...forcedOff, phase: 'GAMING', active: true, overrideMode: 'AUTO' }]) {
+    const permission = projectVrGovernorExecutionPermissionsV1(state, now);
+    assert.equal(permission.localModelAllowed, true);
+    assert.equal(permission.heavyModelAllowed, true, 'effective profile/override model grant remains canonical');
+    assert.equal(permission.localCpuAllowed, false, 'observed gameplay still excludes background CPU builds');
+    assert.equal(coreGamingProtectionFromGovernor(state, now), true);
+    for (const denial of [{ nativeProbeCustodyHeld: true }, { dependencyObservationKnown: false },
+      { evictionHealthy: false }, { localModelAllowed: false }, { heavyModelAllowed: false }]) {
+      const denied = projectVrGovernorExecutionPermissionsV1({ ...state, ...denial }, now);
+      assert.equal(denied.heavyModelAllowed, false);
+      assert.equal(denied.localCpuAllowed, false);
+    }
+  }
+});
+
 test('idle VR governor refreshes its verified state before consumer freshness budgets expire', () => {
   assert.match(governor, /\$idleHeartbeatDue = \$false/);
   assert.match(governor, /if \(-not \$effective\.active\)/);
@@ -48,7 +125,9 @@ test('idle publisher cadence leaves Core fresh through observation latency but n
   const start = Date.parse('2026-10-26T12:00:00Z');
   const normal = { schemaVersion: 'stephanos.vr-resource-governor.v1', governorVersion: 3,
     active: false, phase: 'NORMAL', flatGameActive: false, airLinkActive: false,
-    realAirLinkActive: false, virtualAirLinkTestActive: false, prepareLeaseActive: false };
+    realAirLinkActive: false, virtualAirLinkTestActive: false, prepareLeaseActive: false,
+    nativeProbeCustodyHeld: false, dependencyObservationKnown: true,
+    localModelAllowed: true, heavyModelAllowed: true, evictionHealthy: true };
   for (const observationDelayMs of [0, 2500, 5000]) {
     const period = intervalMs + observationDelayMs;
     for (let elapsed = 0; elapsed < period * 3; elapsed += 250) {
@@ -76,7 +155,8 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /virtual-air-link-test-active/);
   assert.match(governor, /virtualAirLinkTestActive/);
   assert.match(governor, /ollama\.exe/);
-  assert.match(governor, /& \$OllamaExecutable stop \$Model/);
+  assert.match(governor, /Invoke-GovernorNativeProbe -Operation OllamaStop -Model \$Model/);
+  assert.doesNotMatch(governor, /& \$OllamaExecutable (?:ps|stop)/);
   assert.match(governor, /\$parked = @\(\)/);
   assert.doesNotMatch(governor, /\$parked = New-Object System\.Collections\.Generic\.List\[string\]/);
   assert.match(governor, /\$lightweightModel = 'llama3\.2:3b'/);
@@ -157,7 +237,7 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /\$priorParkAllModels/);
   assert.match(governor, /An explicitly prepared VR session must not silently downgrade/);
   assert.match(governor, /\$profile = \$PriorState\.profile/);
-  assert.match(governor, /\$prepared\.zeroLocalModelInvariant -ne \$true/);
+  assert.match(governor, /\$state\.zeroLocalModelInvariant -ne \$true/);
   assert.match(governor, /cooldownSeconds/);
   assert.match(governor, /evictionHealthy/);
   assert.match(governor, /heavyModelsBefore/);
@@ -174,23 +254,24 @@ test('Qwen 3.5 canary cannot strand a heavyweight model during VR', () => {
   assert.match(ollamaLoadGovernor, /qwen3\.5:27b/);
   assert.match(qwen35Canary, /vr-resource-governor-current\.json/);
   assert.match(qwen35Canary, /QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR/);
-  assert.match(qwen35Canary, /localModelAllowed === false/);
+  assert.match(qwen35Canary, /permission\.heavyModelAllowed === false/);
   assert.match(qwen35Canary, /keep_alive: 0/);
   assert.match(qwen35Canary, /unloadCanaryModel/);
 });
 
 test('Stephanos router honours the gaming governor heavy-model policy', () => {
   assert.match(provider, /function readVrResourceGovernorState\(\)/);
-  assert.match(provider, /stephanos\.vr-resource-governor\.v1/);
-  assert.match(provider, /heavyModelAllowed = parsed\?\.heavyModelAllowed === true/);
+  assert.match(provider, /projectVrGovernorExecutionPermissionsV1\(parsed\)/);
+  assert.match(provider, /heavyModelAllowed = permission\.heavyModelAllowed/);
   assert.match(provider, /protectHeavy: !heavyModelAllowed/);
-  assert.match(provider, /if \(vrResourceGovernor\.active && vrResourceGovernor\.protectHeavy\)/);
+  assert.match(provider, /if \(vrResourceGovernor\.protectHeavy\)/);
   assert.match(provider, /ollamaLoadMode: 'cool'/);
   assert.match(provider, /forceHeavyModel: false/);
   assert.match(provider, /OLLAMA_MODEL_POLICY\.lightweight/);
-  assert.match(provider, /localModelAllowed = parsed\?\.localModelAllowed !== false/);
-  assert.match(provider, /vrResourceGovernor\.active && vrResourceGovernor\.localModelAllowed === false/);
-  assert.match(provider, /Local Ollama inference is paused while the VR maximum resource profile is active\./);
+  assert.match(provider, /localModelAllowed = permission\.localModelAllowed/);
+  assert.match(provider, /if \(vrResourceGovernor\.localModelAllowed === false\)/);
+  assert.doesNotMatch(provider, /vrResourceGovernor\.active && vrResourceGovernor\.(?:protectHeavy|localModelAllowed)/);
+  assert.match(provider, /Local Ollama inference is paused by the resource governor\./);
   assert.match(provider, /loadMode: 'off'/);
 });
 
@@ -204,7 +285,6 @@ test('Sovereign Commander owns and self-heals the hidden VR resource governor', 
   assert.match(runner, /function Test-VrResourceGovernorProcessCurrent/);
   assert.match(runner, /vrGovernorRestartRequested/);
   assert.match(runner, /SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_STALE_RECYCLE_FAILED/);
-  assert.match(runner, /PowerShell loads the governor script into memory/);
   assert.doesNotMatch(runner, /if \(\$ok\) \{\s*if \(-not \(Test-Path -LiteralPath \$vrGovernorScript/s);
   assert.match(runner, /if \(-not \$vrGovernorOk\) \{ exit 4 \}/);
   assert.match(installer, /vrResourceGovernorEnabled = \$true/);
