@@ -256,8 +256,12 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
         // The app may have applied a mutation before returning an uncertain
         // outcome. Never deliver a previously queued Enter/Send afterwards.
         // App controls and non-text keys can also change the current focus.
-        if(input.kind==='key'||['editor-update-refused','editor-update-unverified',
-          'app-control-invoked','app-control-outcome-unverified','input-rejected'].includes(result.status)){
+        // Retain editor-key eligibility only after an explicitly confirmed
+        // text outcome. Unknown or newly introduced helper replies must not
+        // flush a previously queued Enter against a possibly changed draft.
+        if(input.kind==='key'||(input.kind==='text'&&
+          !['editor-value-readback','editor-value-unchanged'].includes(result.status))||
+          ['app-control-invoked','app-control-outcome-unverified','input-rejected'].includes(result.status)){
           editorClickConfirmed=false;queue=[];
         }
         if(!publishCurrent(current,{inputStatus:({
