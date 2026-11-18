@@ -296,7 +296,9 @@ export async function executeClaimedOpenClawOc2DeterministicTestBuild(action, cl
 
   const providerInstance = text(options.providerInstance);
   if (!/^openclaw-gateway:[1-9][0-9]*$/.test(providerInstance)) return blocker('OPENCLAW_OC2_GATEWAY_IDENTITY_REQUIRED');
-  const taskHash = sha256(`${task.missionId}\n${task.taskId}`).slice(0, 32);
+  // Bind evidence paths to the claimed grant and source revision, not merely
+  // the reusable mission/task pair. A renewed grant must not overwrite proof.
+  const taskHash = sha256(JSON.stringify([task.missionId, task.taskId, task.grantId, task.requestedSourceHead])).slice(0, 32);
   const executionId = `oc2-${taskHash}`;
   const receiptId = `oc2-receipt-${taskHash}`;
   const proofRef = `proofs/openclaw-oc2/${executionId}.json`;
@@ -399,7 +401,7 @@ export async function executeClaimedOpenClawOc2DeterministicTestBuild(action, cl
     exactInputIdentity: task.exactInputIdentity,
     exactOutputIdentity,
     receipt: Object.freeze({
-      receiptId: `openclaw-oc2-result-${sha256(task.taskId).slice(0, 20)}`,
+      receiptId: `openclaw-oc2-result-${taskHash.slice(0, 20)}`,
       requirement: 'provider-neutral OpenClaw OC2 deterministic test/build result',
       source: 'openclaw-standalone-oc2',
       evidenceType: 'provider-neutral-task-result',
