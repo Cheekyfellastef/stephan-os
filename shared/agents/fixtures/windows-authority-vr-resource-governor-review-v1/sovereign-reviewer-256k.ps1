@@ -982,6 +982,27 @@ function Resolve-EffectiveState {
     }
     $nowUtc = (Get-Date).ToUniversalTime()
 
+    # Corrupt or contradictory persisted state is not permission to run a
+    # local model. Recover with park-all even if the prior profile was the
+    # non-parking SovereignReviewer or generic-safe profile.
+    $recoveryProfileRequired = [bool](
+        $PriorState -and (
+            (Test-InconsistentGovernorIdleState -State $PriorState) -or
+            ($PriorState.localModelAllowed -eq $false -and -not [bool]$profile.parkAllModels)
+        )
+    )
+    if ($recoveryProfileRequired) {
+        $profile = [pscustomobject]@{
+            name = 'protected-cooldown-recovery'
+            processName = ''
+            minFreeVramMiB = 12288
+            lightweightOnly = $true
+            parkAllModels = $true
+            cooldownSeconds = [Math]::Min(600, [Math]::Max(30, $CooldownSeconds))
+            customProfileApplied = $false
+        }
+    }
+
     if ($override -eq 'FORCE_OFF') {
         return [pscustomobject]@{
             phase = 'NORMAL'

@@ -102,8 +102,8 @@ function rejects(content) {
 }
 
 test('fixture preserves exact current reviewer governor source blob', () => {
-  assert.equal(blobSha(governor), 'fec5255f808f303a3c0d61de9409c7eb98ceec92');
-  assert.equal(Buffer.byteLength(governor, 'utf8'), 57827);
+  assert.equal(blobSha(governor), '849e0cc3f00dbcb5b3213a16f7552c21f9dde481');
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 58683);
 });
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
@@ -639,4 +639,44 @@ test('unreadable persisted governor record cannot look like first boot and admit
     '{"phase":"GAMING","active":true,"localModelAllowed":false}',
     '{"phase":"COOLDOWN","active":true,"localModelAllowed":false}',
   ]) assert.equal(read(true,raw).phase,JSON.parse(raw).phase,raw);
+});
+
+test('corrupt-state cooldown carries model denial and park-all eviction intent', () => {
+  // Exact source-text checks and a portable behavior model; not Windows calibration.
+  const resolve = governor.split('function Resolve-EffectiveState {')[1]
+    ?.split('function Invoke-Reconcile {')[0] || '';
+  const reconcile = governor.split('function Invoke-Reconcile {')[1]
+    ?.split('function Invoke-CurrentReconcile {')[0] || '';
+  assert.ok(resolve.includes('$recoveryProfileRequired = [bool]('));
+  assert.ok(resolve.includes('Test-InconsistentGovernorIdleState -State $PriorState'));
+  assert.ok(resolve.includes('($PriorState.localModelAllowed -eq $false -and -not [bool]$profile.parkAllModels)'));
+  const guarded = resolve.split('if ($recoveryProfileRequired) {')[1]
+    ?.split("if ($override -eq 'FORCE_OFF')")[0] || '';
+  for (const needle of ["name = 'protected-cooldown-recovery'", 'lightweightOnly = $true',
+    'parkAllModels = $true', 'customProfileApplied = $false']) {
+    assert.ok(guarded.includes(needle), 'fail-closed recovery profile must retain ' + needle);
+  }
+  assert.ok(reconcile.includes('$modelsToPark = if ($parkAllModels) { @($loadedBefore) } else { @($heavyBefore) }'));
+  assert.ok(governor.includes('heavyModelAllowed = -not $ShouldParkHeavy'));
+  assert.ok(governor.includes('localModelAllowed = -not ($Active -and $ParkAllModels)'));
+  for (const prior of [
+    { phase:'REVIEWING', active:false, localModelAllowed:false, profile:{parkAllModels:false,lightweightOnly:false} },
+    { phase:'UNKNOWN', active:true, localModelAllowed:false, profile:{parkAllModels:false,lightweightOnly:true} },
+    { phase:'NORMAL', active:true, localModelAllowed:true, profile:{parkAllModels:false,lightweightOnly:true} },
+    { phase:'COOLDOWN', active:true, localModelAllowed:false, profile:{parkAllModels:false,lightweightOnly:true} },
+  ]) {
+    const inconsistent = !['NORMAL','REVIEWING','GAMING','PREPARING','COOLDOWN'].includes(prior.phase)
+      || (['NORMAL','REVIEWING'].includes(prior.phase) && (prior.active || !prior.localModelAllowed));
+    const protect = inconsistent || (!prior.localModelAllowed && !prior.profile.parkAllModels);
+    assert.equal(protect,true, prior.phase);
+    const p = protect ? {parkAllModels:true,lightweightOnly:true} : prior.profile;
+    const parkAll = true && p.parkAllModels;
+    const parkHeavy = true && p.lightweightOnly;
+    assert.deepEqual(parkAll ? ['Qwen32B','Qwen3B'] : ['Qwen32B'], ['Qwen32B','Qwen3B']);
+    assert.equal(!parkHeavy,false,'heavy model admission must be denied');
+    assert.equal(!parkAll,false,'local model admission must be denied');
+  }
+  // Consistent cooldowns without prior model denial may expire normally.
+  const consistent = {phase:'COOLDOWN',active:true,localModelAllowed:true,profile:{parkAllModels:false}};
+  assert.equal(!consistent.localModelAllowed && !consistent.profile.parkAllModels,false);
 });

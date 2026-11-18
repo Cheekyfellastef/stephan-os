@@ -26,6 +26,7 @@ const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: '9513dfe995a35087e1d715ef0c4dff4ca3578295', size: 49674 }),
   Object.freeze({ blobSha: '1cbe6687741338d29caa86c7828638137eb99f24', size: 57211, reviewerReservation: true }),
   Object.freeze({ blobSha: 'fec5255f808f303a3c0d61de9409c7eb98ceec92', size: 57827, reviewerReservation: true }),
+  Object.freeze({ blobSha: '849e0cc3f00dbcb5b3213a16f7552c21f9dde481', size: 58683, reviewerReservation: true }),
 ]);
 
 const text = (value) => String(value ?? '').trim();
@@ -230,6 +231,18 @@ function reviewGovernor(source, findings) {
     "reason = 'unreadable-governor-state'",
     'vr-governor-unreadable-state-failclosed-missing',
     'Persisted source corruption must project UNKNOWN protection and a bounded cooldown.');
+  requireLiteral(findings, source,
+    '$recoveryProfileRequired = [bool](',
+    'vr-governor-recovery-profile-check-missing',
+    'Unknown or contradictory state must select a protective cooldown profile.');
+  requireLiteral(findings, source,
+    '($PriorState.localModelAllowed -eq $false -and -not [bool]$profile.parkAllModels)',
+    'vr-governor-persisted-model-denial-recovery-missing',
+    'Persisted model denial must not inherit a permissive profile.');
+  requirePattern(findings, source,
+    /if \(\$recoveryProfileRequired\) \{[\s\S]{0,270}lightweightOnly = \$true[\s\S]{0,95}parkAllModels = \$true/,
+    'vr-governor-recovery-park-all-contract-missing',
+    'Recovered corrupt or denied state must deny heavy and all local models.');
   requireLiteral(findings, source,
     'REVIEWER_RESERVATION_BLOCKED_BY_GAMING_COOLDOWN',
     'vr-governor-reviewer-cooldown-preflight-missing',
