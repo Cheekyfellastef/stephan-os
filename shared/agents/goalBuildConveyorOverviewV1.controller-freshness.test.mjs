@@ -303,3 +303,39 @@ test('Goal #2961: same-clock capacity conflicts cannot choose a convenient READY
       'unique newer valid receipt wins over genuinely older observations');
   }
 });
+
+test('Goal #2961: same-clock canonical watchdog identities cannot promote healthy worker telemetry', () => {
+  const head = 'a'.repeat(40);
+  const watchdog = (healthy, offset = -1000) => ({
+    statusId: 'battle-bridge-worker-watchdog-current', timestampUtc: at(offset),
+    status: healthy ? 'WORKER_WATCHDOG_HEALTHY' : 'WORKER_WATCHDOG_BLOCKED',
+    classification: healthy ? 'WORKER_WATCHDOG_HEALTHY' : 'WORKER_WATCHDOG_BLOCKED',
+    finalAssessment: {
+      finalVerdict: healthy ? 'WORKER_WATCHDOG_HEALTHY' : 'WORKER_WATCHDOG_BLOCKED',
+      healthy, processHealthy: true, heartbeatFresh: true,
+      heartbeatPidMatchesProcess: true, processLaunchIdentityValid: true,
+      heartbeatLaunchIdentityMatchesProcess: true, repositoryFromCanonicalMain: true,
+      heartbeatMatchesCanonicalRepositoryHead: true, remoteMainHeadProven: true,
+      sourceHead: head, canonicalRepositoryHead: head, remoteMainHead: head,
+    },
+  });
+  const good = watchdog(true);
+  const bad = watchdog(false);
+  const health = records => overview({}, { nowMs: NOW, statusRecords: records })
+    .health.find(item => item.id === 'missionWorkerHealthy');
+  assert.equal(health([good]).state, 'HEALTHY', 'unique authenticated positive is retained');
+  assert.equal(health([bad]).state, 'UNKNOWN', 'unique negative cannot be promoted');
+  for (const records of [[good, bad], [bad, good], [good, structuredClone(good)]]) {
+    const before = structuredClone(records);
+    const result = health(records);
+    assert.equal(result.state, 'UNKNOWN', 'same-clock identity tie must fail closed');
+    assert.equal(result.expiresAtUtc, '', 'ambiguous latest cannot have a current expiry');
+    assert.deepEqual(records, before, 'read-only projection cannot mutate canonical records');
+  }
+  assert.equal(health([watchdog(false, -2000), good]).state, 'HEALTHY',
+    'a unique genuinely newer positive supersedes older negative');
+  assert.equal(health([watchdog(true, -2000), bad]).state, 'UNKNOWN',
+    'a uniquely newer negative supersedes older positive');
+  assert.equal(health([bad, watchdog(true, 1000)]).state, 'UNKNOWN',
+    'future-dated newest identity cannot renew an older observation');
+});

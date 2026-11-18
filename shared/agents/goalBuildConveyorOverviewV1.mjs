@@ -42,8 +42,27 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
   // structural WORKER/CLAIM flags into signed physical execution proof.
   // A projected wrapper is refreshed by each HTTP read. In the backend only the
   // original publisher record may establish observation time (including absence).
-  const latestStatus = id => array(statusRecords).filter(record => record.statusId === id)
-    .sort((a, b) => time(b.timestampUtc) - time(a.timestampUtc))[0];
+  // Multiple records claiming the same canonical status ID at the same newest
+  // timestamp have ambiguous provenance. Never pick the first healthy record.
+  // This is read-only display truth; it is not a native grant or worker claim.
+  const latestStatus = id => {
+    let latest;
+    let latestTime = -Infinity;
+    let ambiguous = false;
+    for (const record of array(statusRecords)) {
+      if (record?.statusId !== id) continue;
+      const observed = time(record?.timestampUtc);
+      if (!Number.isFinite(observed)) continue;
+      if (observed > latestTime) {
+        latest = record;
+        latestTime = observed;
+        ambiguous = false;
+      } else if (observed === latestTime) {
+        ambiguous = true;
+      }
+    }
+    return ambiguous ? undefined : latest;
+  };
   const heartbeat = latestStatus('autonomy-build-track-current');
   const track = statusRecords ? heartbeat?.autonomyTrack : projection.autonomyBuildTrack;
   const originalTimes = [time(heartbeat?.timestampUtc), time(track?.timestampUtc)];
