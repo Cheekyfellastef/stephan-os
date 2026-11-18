@@ -513,7 +513,7 @@ async function captureSettled(promise){
   assert.equal(settled,true,'local cancellation must settle without waiting for external completion');
   return value;
 }
-function captureTransitionHarness({initialNative=false,delayStops=false,inputFailure=null}={}){
+function captureTransitionHarness({initialNative=false,delayStops=false,inputFailure=null,inputOutcome=()=> 'input-posted'}={}){
   const saved=new Map(),pickers=[],plays=[],tracks=[],videos=[],timers=new Map(),calls=[],stops=[];
   if(initialNative)saved.set('stephanos.spatial-window.session.v1','a'.repeat(64));
   let nextTimer=0,sessions=0,hook=()=>{};
@@ -546,7 +546,7 @@ function captureTransitionHarness({initialNative=false,delayStops=false,inputFai
         // The application might apply input even when its HTTP reply is lost.
         if(inputFailure==='network')throw new Error('Response lost after possible native input');
         if(inputFailure==='http')return {ok:false,status:503,json:async()=>({status:'unavailable'})};
-        return response({status:'input-posted'});
+        return response({status:inputOutcome(JSON.parse(options.body))});
       }
       if(path==='/frame')return response({status:'frame',serial:calls.length,generation:1,jpeg:'fixture'});
       throw Error('Unexpected native request');
@@ -654,6 +654,37 @@ test('track loss revokes its sole owner during native stop playback and accepted
       assert.equal(track.stopCount,stops,'repeated revocation cannot stop a retired track again');
     }finally{await h.close();}
   }
+});
+
+
+test('virtual non-text keys require a current editor acknowledgement before any native request',async()=>{
+  const h=captureTransitionHarness({inputOutcome:body=>body.kind==='click'
+    ?(body.x<.8?'editor-accessibility-selected':'input-posted')
+    :body.kind==='key'?'editor-key-focus-unverified':'editor-value-readback'});
+  try{
+    await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
+    assert.equal(h.client.getState().status,'live');
+    assert.equal(h.client.input({kind:'key',key:'Enter'}),false,'binding alone cannot authorise Enter');
+    assert.match(h.client.getState().inputStatus,/No key was sent/);
+    assert.equal(h.calls.filter(call=>call.path==='/input').length,0);
+    assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);
+    assert.equal(h.client.input({kind:'key',key:'Enter'}),false,'queued click is not editor proof');
+    await h.tick();
+    assert.equal(h.client.input({kind:'key',key:'Enter'}),true,'confirmed editor allows native focus check');
+    await h.tick();
+    assert.match(h.client.getState().inputStatus,/has not established keyboard focus/);
+    assert.equal(h.client.input({kind:'key',key:'Enter'}),false,'native focus uncertainty revokes editor acknowledgement');
+    assert.equal(h.calls.filter(call=>call.path==='/input').length,2);
+    assert.equal(h.client.input({kind:'click',x:.9,y:.5}),true);
+    assert.equal(h.client.input({kind:'key',key:'Tab'}),false,'new click invalidates old editor immediately');
+    await h.tick();
+    assert.equal(h.client.input({kind:'key',key:'Enter'}),false,'button click is not an editor selection');
+    assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);await h.tick();
+    assert.equal(h.client.input({kind:'key',key:'Tab'}),true);
+    await h.client.stop();
+    assert.equal(h.client.input({kind:'key',key:'Enter'}),false,'stop revokes editor proof');
+    assert.equal(h.calls.filter(call=>call.path==='/input').length,4,'no unsupported key was forwarded');
+  }finally{await h.close();}
 });
 
 test('lost native input acknowledgement remains unverified and never replays a key',async()=>{
