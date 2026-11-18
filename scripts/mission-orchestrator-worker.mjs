@@ -796,6 +796,16 @@ export async function executeOpenClawReadonlyAction(action, claim, options = {})
   const grant = options.actionGrant;
   const grantOperation = text(grant?.operation).toLowerCase();
   if (grant?.issueNumber === OPENCLAW_OC2_ISSUE && grantOperation === OPENCLAW_OC2_OPERATION) {
+    // The canonical queue action and the retained grant must describe the
+    // same fixed OC2 task before a Gateway toolCall is allowed.
+    if (text(action?.actionId).toLowerCase() !== text(grant?.actionId).toLowerCase()
+        || text(action?.missionId).toLowerCase() !== text(grant?.missionId).toLowerCase()
+        || text(action?.repository) !== text(grant?.repository)
+        || text(action?.operation).toLowerCase() !== grantOperation
+        || text(action?.actionKind) !== text(grant?.actionKind)
+        || text(action?.adapter) !== text(grant?.adapter)) {
+      return gatewayFailure('OPENCLAW_OC2_ACTION_GRANT_MISMATCH', completedAt(options));
+    }
     const request = {
       schemaVersion: OPENCLAW_OC2_GATEWAY_REQUEST_SCHEMA,
       actionGrant: grant,
