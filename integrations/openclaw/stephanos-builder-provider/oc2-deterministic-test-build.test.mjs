@@ -307,3 +307,56 @@ test('OC2 refuses an unbound, forged or incomplete persisted worker grant before
     });
   }
 });
+
+test('OC2 rejects embedded commands and privilege escalation before persisted claim I/O', async (t) => {
+  const commandFields = [
+    'command', 'commands', 'args', 'argv', 'script', 'shell', 'executablePath',
+    'worktreePath', 'allowedFiles', 'requiredTests',
+  ];
+  for (const field of commandFields) {
+    await t.test('unexpected command field ' + field, async () => {
+      const parts = fixture();
+      parts.action[field] = field === 'args' || field === 'argv' ? ['--eval', 'untrusted'] : 'untrusted';
+      let reads = 0;
+      const result = await validateOpenClawOc2QualificationContext(qualificationInput(parts), {
+        readFileFn: async () => { reads++; return JSON.stringify(parts.item); },
+      });
+      assert.equal(result.success, false);
+      assert.equal(result.qualificationEligible, false);
+      assert.equal(result.error, 'OPENCLAW_OC2_ACTION_SCOPE_INVALID');
+      assert.equal(reads, 0, 'unexpected executable field must not reach claimed file I/O');
+    });
+  }
+  const authorityFields = [
+    'sourceMutationAuthority', 'arbitraryShellAuthority', 'arbitraryCommandAuthority',
+    'mergeAuthority', 'deploymentAuthority', 'selfQualificationAuthority', 'leaseSeizureAllowed',
+  ];
+  for (const field of authorityFields) {
+    for (const value of [true, 'false', null]) {
+      await t.test('invalid authority ' + field + '=' + String(value), async () => {
+        const parts = fixture();
+        parts.action[field] = value;
+        let reads = 0;
+        const result = await validateOpenClawOc2QualificationContext(qualificationInput(parts), {
+          readFileFn: async () => { reads++; return JSON.stringify(parts.item); },
+        });
+        assert.equal(result.error, 'OPENCLAW_OC2_ACTION_SCOPE_INVALID');
+        assert.equal(result.qualificationEligible, false);
+        assert.equal(reads, 0, 'non-false authority must be rejected before persisted file I/O');
+      });
+    }
+  }
+});
+
+test('OC2 retains compatibility with explicitly false action authority declarations', async () => {
+  const parts = fixture();
+  for (const field of [
+    'sourceMutationAuthority', 'arbitraryShellAuthority', 'arbitraryCommandAuthority',
+    'mergeAuthority', 'deploymentAuthority', 'selfQualificationAuthority', 'leaseSeizureAllowed',
+  ]) parts.action[field] = false;
+  const result = await validateOpenClawOc2QualificationContext(qualificationInput(parts), {
+    readFileFn: async () => JSON.stringify(parts.item),
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.qualificationEligible, true);
+});
