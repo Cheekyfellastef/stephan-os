@@ -50,7 +50,7 @@ async function fixture(t,{realFlatSignal=false,sourceTask=false,sourceBaseline=f
   await mkdir(join(canonicalRoot,'scripts/windows'),{recursive:true});
   const governorFile=join(sharedWorkspaceRoot,'vr/vr-resource-governor-current.json').replaceAll("'","''");
   const canonical=await readFile(join(repo,'scripts/windows/run-vr-resource-governor.ps1'),'utf8');
-  const actionStart=canonical.indexOf("if ($Action -eq 'ObserveAdmission') {"),
+  const actionStart=canonical.indexOf("if ($MyInvocation.InvocationName -ne '.' -and $Action -eq 'ObserveAdmission') {"),
     actionEnd=canonical.indexOf('function Invoke-GovernorOneShot {',actionStart);
   assert.ok(actionStart>0&&actionEnd>actionStart);
   const admissionAction=canonical.slice(actionStart,actionEnd);
