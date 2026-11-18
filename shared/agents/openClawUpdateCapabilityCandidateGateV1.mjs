@@ -289,7 +289,15 @@ function canonicalBackupSetJson(value) {
 function producerBackupSetDigestMatches(backup, rawEntries) {
   const keys=['pathFingerprintSha256','sourceDigestSha256','backupDigestSha256','backupObjectId'];
   const entries=rawEntries.map((raw)=>plainDataRecord(raw,keys));
-  if (entries.some((item)=>!item)) return false;
+  // Authority-bearing backup evidence must be well typed before ordering.
+  // Sorting malformed numeric fingerprints used to throw rather than BLOCK_UPDATE.
+  const digest=/^[a-f0-9]{64}$/i;
+  if (entries.some((item)=>!item
+    || typeof item.pathFingerprintSha256!=='string'
+    || !digest.test(item.pathFingerprintSha256)
+    || !digest.test(text(item.sourceDigestSha256))
+    || !digest.test(text(item.backupDigestSha256))
+    || !safeId(item.backupObjectId))) return false;
   const body={schema:backup.schema,backupSetId:backup.backupSetId,
     manifestSha256:backup.manifestSha256,storageClass:backup.storageClass,
     createdAtUtc:backup.createdAtUtc,

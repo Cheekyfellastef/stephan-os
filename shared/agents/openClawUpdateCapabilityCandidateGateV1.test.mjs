@@ -304,6 +304,47 @@ test('post-update rejects forged backup-set digest even with a READY status', ()
   }
 });
 
+test('post-update rejects numeric backup fingerprints as typed evidence, without throwing', () => {
+  const evaluate=(record)=>evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate:record,capabilityLedger:ledger(),
+    qualificationReplay:[replay(OPENCLAW_TASK_CLASS.OC1)],
+  });
+  const valid=staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
+  const extraFingerprint='1'.repeat(64),extraSource='2'.repeat(64);
+  valid.evidence.preflight.protectedEntries.push({
+    pathFingerprintSha256:extraFingerprint,sourceDigestSha256:extraSource,
+    classification:'PRESERVE_CONFIG',
+  });
+  valid.evidence.backupSet.entries.push({
+    pathFingerprintSha256:extraFingerprint,sourceDigestSha256:extraSource,
+    backupDigestSha256:extraSource,backupObjectId:'backup:oc9',
+  });
+  valid.evidence.preservationComparison.entries.push({
+    pathFingerprintSha256:extraFingerprint,beforeDigestSha256:extraSource,
+    afterDigestSha256:extraSource,
+  });
+  valid.evidence.backupSet.backupSetSha256 =
+    producerBackupHashForFixture(valid.evidence.backupSet);
+  assert.equal(evaluate(valid).providerRoutingResumeAllowed,true);
+
+  // Two matching numeric fingerprints reach the producer digest sort in the
+  // original source. These must refuse promotion, not throw into the caller.
+  for (const invalidFingerprints of [[123,456],[0,1]]) {
+    const malformed=JSON.parse(JSON.stringify(valid));
+    for (const [index,bad] of invalidFingerprints.entries()) {
+      malformed.evidence.preflight.protectedEntries[index].pathFingerprintSha256=bad;
+      malformed.evidence.backupSet.entries[index].pathFingerprintSha256=bad;
+      malformed.evidence.preservationComparison.entries[index].pathFingerprintSha256=bad;
+    }
+    let result;
+    assert.doesNotThrow(()=>{result=evaluate(malformed);});
+    assert.equal(result.status,OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+    assert.equal(result.providerRoutingResumeAllowed,false);
+    assert.equal(result.updatePromotionAllowed,false);
+    assert.ok(result.blockers.includes('STAGED_UPDATE_POST_PRODUCER_EVIDENCE_UNPROVEN'));
+  }
+});
+
 test('READY ledger cannot smuggle mutation, approval or qualification authority', () => {
   const verified = staged(OPENCLAW_STAGED_UPDATE_STATUS.UPDATED_AND_VERIFIED);
   const proof = [replay(OPENCLAW_TASK_CLASS.OC1)];
