@@ -220,3 +220,52 @@ test('OC2 fails closed if a fixed test changes repository source state', async (
   assert.equal(result.success, false);
   assert.equal(result.error, 'OPENCLAW_OC2_SOURCE_STATE_CHANGED');
 });
+
+
+test('OC2 fixed test invocation exceptions and oversized output yield typed blockers without false proof', async (t) => {
+  for (const scenario of ['runner throws', 'runner exceeds output limit']) {
+    await t.test(scenario, async () => {
+      const parts = fixture();
+      const userProfile = '/tmp/stephanos-oc2-runner-failure';
+      const repoRoot = path.resolve(userProfile, 'Documents', 'GitHub', 'stephan-os');
+      let nodeRuns = 0;
+      let writes = 0;
+      const spawnSyncFn = (executable, args) => {
+        if (String(executable).toLowerCase().endsWith('git.exe')) {
+          const key = args.join(' ');
+          if (key === 'rev-parse --show-toplevel') return { status: 0, stdout: `${repoRoot}\n`, stderr: '' };
+          if (key === 'remote get-url origin') return { status: 0, stdout: 'https://github.com/Cheekyfellastef/stephan-os.git\n', stderr: '' };
+          if (key === 'rev-parse --abbrev-ref HEAD') return { status: 0, stdout: 'main\n', stderr: '' };
+          if (key === 'rev-parse HEAD') return { status: 0, stdout: `${HEAD}\n`, stderr: '' };
+          if (key === 'status --porcelain=v1 --untracked-files=all') return { status: 0, stdout: '', stderr: '' };
+          return { status: 1, stdout: '', stderr: 'unexpected git command' };
+        }
+        nodeRuns += 1;
+        if (scenario === 'runner throws') throw new Error('simulated node runner exception');
+        return { status: 0, stdout: 'x'.repeat(1024 * 1024 + 1), stderr: '' };
+      };
+      const result = await executeClaimedOpenClawOc2DeterministicTestBuild(parts.action, parts.claim, {
+        actionGrant: parts.grant,
+        taskClass: OPENCLAW_OC2_TASK_CLASS,
+        goalId: '#1725',
+        providerVersion: '1.0.0',
+        requestedSourceHead: HEAD,
+        providerInstance: 'openclaw-gateway:4242',
+        platform: 'win32',
+        env: { USERPROFILE: userProfile },
+        existsSyncFn: () => true,
+        spawnSyncFn,
+        readFileFn: async () => JSON.stringify(parts.item),
+        ensureSharedWorkspaceLayoutFn: async () => { writes += 1; return { ok: true }; },
+        writeAtomicJsonFn: async () => { writes += 1; return { ok: true }; },
+      });
+      assert.equal(result.success, false);
+      assert.equal(result.qualificationEligible, false);
+      assert.equal(result.error, 'OPENCLAW_OC2_FIXED_TEST_INVOCATION_FAILED');
+      assert.equal(result.failedTestId, OPENCLAW_OC2_FIXED_PLAN[0].testId);
+      assert.deepEqual(result.testResults, []);
+      assert.equal(nodeRuns, 1);
+      assert.equal(writes, 0, 'failed invocation must never write qualifying evidence');
+    });
+  }
+});
