@@ -102,8 +102,8 @@ function rejects(content) {
 }
 
 test('fixture preserves exact current reviewer governor source blob', () => {
-  assert.equal(blobSha(governor), '5103a87a9347c10dd4310c04a6bcd8394ca1fd90');
-  assert.equal(Buffer.byteLength(governor, 'utf8'), 55952);
+  assert.equal(blobSha(governor), '6a68e3914e19dafe588baae67aa4b4795ec65a63');
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 56450);
 });
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
@@ -384,6 +384,7 @@ test('reviewer cooldown gate protects the prior phase before any reviewer lease 
     ?.split('function Append-TelemetryEvent {')[0] || '';
   assert.match(helper, /phase -in @\('GAMING','PREPARING'\)/);
   assert.match(helper, /phase -ne 'COOLDOWN'/);
+  assert.ok(helper.includes('Test-InconsistentGovernorIdleState -State $State'));
   assert.match(helper, /DateTimeOffset\]::TryParse/);
   assert.match(helper, /-not \$parsed -or/);
   const effective = governor.split('function Resolve-EffectiveState {')[1]
@@ -493,9 +494,12 @@ test('unknown or contradictory persisted gaming phase cannot admit reviewer or s
     ?.split('function Append-TelemetryEvent {')[0] || '';
   const resolve = governor.split('function Resolve-EffectiveState {')[1]
     ?.split('function Invoke-Reconcile {')[0] || '';
-  assert.ok(helper.includes("if ($phase -notin @('NORMAL','REVIEWING','COOLDOWN')) { return $true }"));
-  assert.ok(helper.includes("$State.active -eq $true -or $State.localModelAllowed -eq $false"));
-  assert.ok(resolve.includes("$priorPhase -notin @('NORMAL','REVIEWING')"));
+  const shared = governor.split('function Test-InconsistentGovernorIdleState {')[1]
+    ?.split('function Test-ReviewerReservationBlockedByCooldown {')[0] || '';
+  assert.ok(shared.includes("$phase -notin @('NORMAL','REVIEWING','GAMING','PREPARING','COOLDOWN')"));
+  assert.ok(shared.includes("$State.active -eq $true -or $State.localModelAllowed -eq $false"));
+  assert.ok(helper.includes('Test-InconsistentGovernorIdleState -State $State'));
+  assert.ok(resolve.includes('Test-InconsistentGovernorIdleState -State $PriorState'));
   assert.ok(resolve.includes("if ([string]$PriorState.phase -ne 'COOLDOWN' -or -not $deadlineKnown) {"));
   const blocks = (state) => {
     if (['GAMING','PREPARING'].includes(state.phase)) return true;
@@ -516,4 +520,48 @@ test('unknown or contradictory persisted gaming phase cannot admit reviewer or s
     {phase:'REVIEWING',active:false,localModelAllowed:true},
     {phase:'COOLDOWN',active:false,localModelAllowed:true,cooldownUntilUtc:'2026-11-18T09:59:59Z'},
   ]) assert.equal(blocks(candidate),false,JSON.stringify(candidate));
+});
+
+test('watcher and cancellation preserve contradictory or unknown persisted idle state until cooldown, then admit only safe idle', () => {
+  // Model/property regression tied to the same exact helper used by both
+  // admission and no-lease reconciliation. Not native Windows proof.
+  const resolver = governor.split('function Resolve-EffectiveState {')[1]
+    ?.split('function Invoke-Reconcile {')[0] || '';
+  const helper = governor.split('function Test-InconsistentGovernorIdleState {')[1]
+    ?.split('function Test-ReviewerReservationBlockedByCooldown {')[0] || '';
+  const admission = governor.split('function Test-ReviewerReservationBlockedByCooldown {')[1]
+    ?.split('function Append-TelemetryEvent {')[0] || '';
+  assert.ok(resolver.includes('(Test-InconsistentGovernorIdleState -State $PriorState)'));
+  assert.ok(admission.includes('(Test-InconsistentGovernorIdleState -State $State)'));
+  assert.ok(helper.includes("$phase -in @('NORMAL','REVIEWING')"));
+  const now = Date.parse('2026-11-18T10:40:00Z');
+  const inconsistent = state => !['NORMAL','REVIEWING','GAMING','PREPARING','COOLDOWN'].includes(state.phase)
+    || (['NORMAL','REVIEWING'].includes(state.phase) &&
+      (state.active === true || state.localModelAllowed === false));
+  const protectWithoutLease = state => ['GAMING','PREPARING','COOLDOWN'].includes(state.phase)
+    || inconsistent(state);
+  const afterReconcile = state => {
+    const expiry = Date.parse(state.cooldownUntilUtc || '');
+    const deadline = Number.isFinite(expiry) ? expiry :
+      protectWithoutLease(state) ? now + 90_000 : NaN;
+    return Number.isFinite(deadline) && now < deadline ? 'COOLDOWN' : 'NORMAL';
+  };
+  for (const state of [
+    { phase:'UNKNOWN', active:false, localModelAllowed:true },
+    { phase:'', active:true, localModelAllowed:false },
+    { phase:'NORMAL', active:true, localModelAllowed:true },
+    { phase:'NORMAL', active:false, localModelAllowed:false },
+    { phase:'REVIEWING', active:true, localModelAllowed:true },
+    { phase:'REVIEWING', active:false, localModelAllowed:false },
+    { phase:'GAMING', active:true, localModelAllowed:false },
+    { phase:'COOLDOWN', active:true, localModelAllowed:false, cooldownUntilUtc:'invalid' },
+  ]) {
+    assert.ok(protectWithoutLease(state), JSON.stringify(state));
+    assert.equal(afterReconcile(state), 'COOLDOWN', JSON.stringify(state));
+  }
+  for (const state of [
+    { phase:'NORMAL', active:false, localModelAllowed:true },
+    { phase:'REVIEWING', active:false, localModelAllowed:true },
+    { phase:'COOLDOWN', active:false, localModelAllowed:true, cooldownUntilUtc:'2026-11-18T10:39:59Z' },
+  ]) assert.equal(afterReconcile(state), 'NORMAL', JSON.stringify(state));
 });

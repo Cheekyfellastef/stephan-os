@@ -747,6 +747,21 @@ function Read-GovernorState {
     }
 }
 
+function Test-InconsistentGovernorIdleState {
+    param($State)
+    if (-not $State) { return $false }
+    $phase = [string]$State.phase
+    # The same protection classification must apply to watcher reconciliation
+    # and reviewer admission. Unknown phases are unsafe even if flags say idle.
+    if ($phase -notin @('NORMAL','REVIEWING','GAMING','PREPARING','COOLDOWN')) { return $true }
+    # NORMAL and REVIEWING are safe only with an internally consistent idle
+    # observation. A contradictory active/model-denial flag remains protected.
+    if ($phase -in @('NORMAL','REVIEWING')) {
+        return [bool]($State.active -eq $true -or $State.localModelAllowed -eq $false)
+    }
+    return $false
+}
+
 function Test-ReviewerReservationBlockedByCooldown {
     param($State)
     if (-not $State) { return $false }
@@ -754,11 +769,10 @@ function Test-ReviewerReservationBlockedByCooldown {
     # A just-ended game or preparation has not yet published its cooldown.
     # Do not allow a reviewer lease to erase that pending protected transition.
     if ($phase -in @('GAMING','PREPARING')) { return $true }
-    # A corrupt or unknown persisted phase may still carry a gaming model
-    # exclusion. Only an internally consistent idle state can admit a reviewer.
-    if ($phase -notin @('NORMAL','REVIEWING','COOLDOWN')) { return $true }
+    # Share the idle consistency test with watcher reconciliation. Otherwise
+    # a watcher could clear a denial that reviewer admission would preserve.
     if ($phase -ne 'COOLDOWN') {
-        return [bool]($State.active -eq $true -or $State.localModelAllowed -eq $false)
+        return (Test-InconsistentGovernorIdleState -State $State)
     }
     $deadline = [DateTimeOffset]::MinValue
     $parsed = [DateTimeOffset]::TryParse(
@@ -1057,10 +1071,7 @@ function Resolve-EffectiveState {
         $priorPhase = [string]$PriorState.phase
         $priorWasProtected = [bool](
             $priorPhase -in @('PREPARING','GAMING','COOLDOWN') -or
-            (
-                $priorPhase -notin @('NORMAL','REVIEWING') -and
-                ([bool]$PriorState.active -or $PriorState.localModelAllowed -eq $false)
-            )
+            (Test-InconsistentGovernorIdleState -State $PriorState)
         )
         if ([string]$PriorState.cooldownUntilUtc) {
             [void][DateTime]::TryParse([string]$PriorState.cooldownUntilUtc, [ref]$cooldownUntil)
