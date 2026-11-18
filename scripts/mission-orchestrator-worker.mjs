@@ -362,6 +362,18 @@ function validateOpenClawOc2GatewayPayload(payload, grant) {
     && result?.success === true
     && result?.qualificationEligible === true
     && text(result?.resultId).toLowerCase() === taskId
+    // Inner producer evidence must describe this exact claimed task, not
+    // merely inherit a trusted-looking outer Gateway response envelope.
+    && text(result?.missionId).toLowerCase() === missionId
+    && text(result?.goalId) === `#${OPENCLAW_OC2_ISSUE}`
+    && text(result?.taskId).toLowerCase() === taskId
+    && text(result?.taskClass) === OPENCLAW_OC2_TASK_CLASS
+    && text(result?.repository) === text(grant?.repository)
+    && text(result?.requestedSourceHead).toLowerCase() === sourceHead
+    && text(result?.observedSourceHead).toLowerCase() === sourceHead
+    && text(result?.provider) === OPENCLAW_OC2_PROVIDER
+    && text(result?.providerVersion) === OPENCLAW_OC2_PROVIDER_VERSION
+    && text(result?.operation).toLowerCase() === OPENCLAW_OC2_OPERATION
     && Array.isArray(result?.changedFiles)
     && result.changedFiles.length === 0
     && text(result?.providerInstance) === providerInstance
