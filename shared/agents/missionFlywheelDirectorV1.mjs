@@ -149,11 +149,13 @@ export function classifyGoal(record = {}) {
     return { ...goal, state: GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION,
       finalVerdict: 'GOAL_STATE_UNRECOGNIZED' };
   }
-  if (goal.sourceMerged && goal.focusedProofRecorded && goal.missionStateUpdated) {
-    return { ...goal, state: GOAL_STATE.DONE, finalVerdict: 'GOAL_DONE' };
-  }
+  // A live explicit blocker outranks historical completion flags. Never let
+  // a stale DONE triple certify dependencies while custody is on hold.
   if (goal.blocker) {
     return { ...goal, state: GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION, finalVerdict: 'GOAL_BLOCKED' };
+  }
+  if (goal.sourceMerged && goal.focusedProofRecorded && goal.missionStateUpdated) {
+    return { ...goal, state: GOAL_STATE.DONE, finalVerdict: 'GOAL_DONE' };
   }
   if (goal.prNumber && !goal.focusedProofRecorded) {
     return { ...goal, state: GOAL_STATE.WAITING_FOR_PROOF, finalVerdict: 'GOAL_WAITING_FOR_PROOF' };
