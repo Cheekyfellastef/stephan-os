@@ -3,8 +3,8 @@
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false,$true)
-$sourceCommit='PLACEHOLDER_COMMIT'
-$moduleSha256='PLACEHOLDER_MODULE_SHA256'
+$sourceCommit='3f4fea8b205e516b9aa0f77fa4cfaac776813cc9'
+$moduleSha256='2bb909987d68cccf31ad026e9c56369199b0a2b987c9e22da0f5c66fbc7ac25b'
 $manifestSha256='cd4d94e5bbb28e644113013617363541d957bd50c403ca37ed4b56fe42ef8e92'
 function Install-Deny { throw 'FIXED_RUNTIME_INSTALL_UNPROVEN' }
 function Read-InstallSource([string]$url,[int]$maximum,[string]$expected) {

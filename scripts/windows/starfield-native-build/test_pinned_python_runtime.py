@@ -74,13 +74,13 @@ class RuntimeManifestTests(unittest.TestCase):
         self.assertIn("$args.Count -ne 0", body)
         self.assertIn("$actual -cne $expected", body)
         self.assertIn("raw.githubusercontent.com/Cheekyfellastef/stephan-os/", body)
-        # Dependency commit and module hash are filled after their immutable
-        # candidate publication. A placeholder refuses before network access.
+        # The delivery bootstrap must be immutable and executable now:
+        # placeholders are a qualification failure rather than an installer.
         source = re.search(r"\$sourceCommit='([^']+)'", body).group(1)
         module = re.search(r"\$moduleSha256='([^']+)'", body).group(1)
-        self.assertTrue(source == "PLACEHOLDER_COMMIT" or re.fullmatch(r"[a-f0-9]{40}", source))
-        if module != "PLACEHOLDER_MODULE_SHA256":
-            self.assertEqual(module, hashlib.sha256(MODULE.read_bytes()).hexdigest())
+        self.assertEqual(source, "3f4fea8b205e516b9aa0f77fa4cfaac776813cc9")
+        self.assertRegex(module, r"^[a-f0-9]{64}$")
+        self.assertEqual(module, hashlib.sha256(MODULE.read_bytes()).hexdigest())
         self.assertIn(hashlib.sha256(MANIFEST.read_bytes()).hexdigest(), body)
 
 
