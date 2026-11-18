@@ -46,6 +46,64 @@ const nativeContext = windows ? run(String.raw`
 `) : {normal:false};
 const normalNativeSkip = !windows ? 'Windows required' : nativeContext.normal ? false : 'GOVERNOR_NATIVE_CONTEXT_UNPROVEN: genuine normal-token fixture is not applicable';
 
+test('caretaker owner identity accepts only terminal ASCII launch separators', {skip:!windows},()=>{
+  const result=run(String.raw`
+    $powershellExecutable='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    $vrGovernorScript='C:\fixture\run-vr-resource-governor.ps1'
+    $tail='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$vrGovernorScript+'" -Action Watch'
+    $quoted='"'+$powershellExecutable+'" '+$tail
+    $bare=$powershellExecutable+' '+$tail
+    $results=@()
+    foreach($prefix in @($quoted,$bare)){
+      foreach($suffix in @('', ' ', '   ', ([string][char]9), (' '+[char]9+'  '))){
+        $process=[pscustomobject]@{ProcessId=42;ExecutablePath=$powershellExecutable;CommandLine=$prefix+$suffix;CreationDate=[DateTime]::UtcNow.AddSeconds(-1)}
+        $results+=,[pscustomobject]@{kind='valid';accepted=(Test-VrResourceGovernorProcessIdentity $process)}
+      }
+    }
+    $invalid=@(($quoted+' extra'),($quoted+' ""'),($quoted+'" "'),($quoted+[char]13),($quoted+[char]10),($quoted+[char]0),($quoted+[char]0xA0),
+      (' '+$quoted),$quoted.Replace('-Action Watch','-Action Reconcile'),$quoted.Replace($vrGovernorScript,'C:\other\run-vr-resource-governor.ps1'),
+      $quoted.Replace('-File','-Command'),$quoted.Replace('Watch','Watch.exe'))
+    foreach($command in $invalid){
+      $process=[pscustomobject]@{ProcessId=42;ExecutablePath=$powershellExecutable;CommandLine=$command;CreationDate=[DateTime]::UtcNow.AddSeconds(-1)}
+      $results+=,[pscustomobject]@{kind='invalid';accepted=(Test-VrResourceGovernorProcessIdentity $process)}
+    }
+    foreach($field in @('pid','executable','birth')){
+      $process=[pscustomobject]@{ProcessId=42;ExecutablePath=$powershellExecutable;CommandLine=$quoted+' ';CreationDate=[DateTime]::UtcNow.AddSeconds(-1)}
+      if($field -ceq 'pid'){$process.ProcessId=0}
+      if($field -ceq 'executable'){$process.ExecutablePath='C:\other\powershell.exe'}
+      if($field -ceq 'birth'){$process.CreationDate=[DateTime]::UtcNow.AddMinutes(1)}
+      $results+=,[pscustomobject]@{kind='invalid';accepted=(Test-VrResourceGovernorProcessIdentity $process)}
+    }
+    ConvertTo-Json -InputObject $results -Compress`,[caretaker]);
+  assert.equal(result.length,25);
+  for(const row of result)assert.equal(row.accepted,row.kind==='valid',JSON.stringify(row));
+});
+
+test('caretaker recognizes the actual Windows Start-Process Watch command', {skip:!windows},async t=>{
+  const root=await mkdtemp(join(tmpdir(),'governor-owner-command-'));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const fixture=join(root,'run-vr-resource-governor.ps1');
+  await writeFile(fixture,"param([string]$Action)\nif($Action -cne 'Watch'){exit 7}\nStart-Sleep -Seconds 3\n");
+  const result=run(String.raw`
+    $powershellExecutable='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    $vrGovernorScript='${fixture.replaceAll("'","''")}'
+    $child=Start-Process -FilePath $powershellExecutable -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$vrGovernorScript+'"'),'-Action','Watch') -WindowStyle Hidden -PassThru
+    try{
+      $observed=Get-CimInstance Win32_Process -Filter ('ProcessId='+$child.Id) -ErrorAction Stop
+      $accepted=Test-VrResourceGovernorProcessIdentity -Process $observed
+      $terminalSeparator=[int][char]$observed.CommandLine[$observed.CommandLine.Length-1]
+      if(-not $child.WaitForExit(8000)){throw 'FIXTURE_CHILD_TIMEOUT'}
+      [pscustomobject]@{accepted=$accepted;terminalSeparator=$terminalSeparator;childExit=$child.ExitCode;pidBound=($observed.ProcessId -eq $child.Id)}|ConvertTo-Json -Compress
+    }finally{
+      if(-not $child.HasExited){$child.Kill();$child.WaitForExit()}
+      $child.Dispose()
+    }`,[caretaker]);
+  assert.equal(result.pidBound,true);
+  assert.equal(result.childExit,0);
+  assert.ok([9,32].includes(result.terminalSeparator),'actual Start-Process serialization supplies the regression');
+  assert.equal(result.accepted,true);
+});
+
 function launch(body, sources) {
   const child = spawn(ps, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
     Buffer.from(loader, 'utf16le').toString('base64')], { shell: false, windowsHide: true });
@@ -137,6 +195,77 @@ const cpuFixture = root => fixtureStatePaths(root) + String.raw`
     }
     Publish-CpuFixture
 `;
+
+test('game census preserves the detection model across window, path and fallback failures', {skip:!windows},()=>{
+  const rows=run(String.raw`
+    $env:STEPHANOS_GAME_PROCESS_NAMES='CustomGame';$env:STEPHANOS_GAME_LIBRARY_ROOTS='C:\CustomGames'
+    function Get-ParentProcessInfo {param($ProcessId) [pscustomobject]@{processId=0;processName='';executablePath=''}}
+    function Test-WindowsGamePresenceActive {return $script:presence}
+    function Get-Process {param($ErrorAction) return $script:fixtureProcess}
+    $rows=@()
+    foreach($name in @('Starfield','CustomGame','Background','steam')){
+      foreach($pathMode in @('library','custom-library','outside','unreadable')){
+        foreach($windowMode in @('present','absent','unreadable')){
+          foreach($presence in @($false,$true)){
+            $script:presence=$presence;$script:pathReads=0;$script:windowReads=0
+            $script:fixturePathMode=$pathMode;$script:fixtureWindowMode=$windowMode
+            $script:fixtureProcess=[pscustomobject]@{Id=100;ProcessName=$name}
+            $script:fixtureProcess|Add-Member ScriptProperty Path {
+              $script:pathReads++
+              switch($script:fixturePathMode){
+                'library'{return 'C:\SteamLibrary\steamapps\common\Example\game.exe'}
+                'custom-library'{return 'C:\CustomGames\Example\game.exe'}
+                'outside'{return 'C:\Windows\background.exe'}
+                'unreadable'{throw 'FIXTURE_PATH_UNREADABLE'}
+              }
+            }
+            $script:fixtureProcess|Add-Member ScriptProperty MainWindowHandle {
+              $script:windowReads++
+              if($script:fixtureWindowMode -eq 'unreadable'){throw 'FIXTURE_WINDOW_UNREADABLE'}
+              if($script:fixtureWindowMode -eq 'present'){return 123};return 0
+            }
+            $signal=Get-FlatGameSignal
+            $rows+=,[pscustomobject]@{name=$name;pathMode=$pathMode;windowMode=$windowMode;presence=$presence;active=$signal.active;selected=$signal.processName;pathReads=$script:pathReads;windowReads=$script:windowReads}
+          }
+        }
+      }
+    }
+    ConvertTo-Json -InputObject $rows -Compress
+  `);
+  assert.equal(rows.length,96);
+  for(const row of rows){
+    const excluded=row.name==='steam';
+    const known=['Starfield','CustomGame'].includes(row.name);
+    const visible=row.windowMode==='present';
+    const library=['library','custom-library'].includes(row.pathMode);
+    const detected=!excluded&&(known||(visible&&library));
+    const context=JSON.stringify(row);
+    assert.equal(row.active,detected||row.presence,context);
+    assert.equal(row.selected,detected?row.name:row.presence?'GameBarPresenceWriter':'',context);
+    assert.equal(row.pathReads,!excluded&&(known||visible)?1:0,context);
+    assert.equal(row.windowReads,!excluded&&!known?1:0,context);
+  }
+});
+
+test('background census size cannot multiply expensive path observations or change first matching game', {skip:!windows},()=>{
+  const result=run(String.raw`
+    $env:STEPHANOS_GAME_PROCESS_NAMES='';$env:STEPHANOS_GAME_LIBRARY_ROOTS=''
+    $script:pathReads=0;$script:fixtureProcesses=@()
+    function Get-ParentProcessInfo {param($ProcessId) [pscustomobject]@{processId=0;processName='';executablePath=''}}
+    function Test-WindowsGamePresenceActive {return $false}
+    function Get-Process {param($ErrorAction) return $script:fixtureProcesses}
+    for($i=0;$i -lt 500;$i++){
+      $p=[pscustomobject]@{Id=($i+1);ProcessName=('background'+$i);MainWindowHandle=0}
+      $p|Add-Member ScriptProperty Path {$script:pathReads++;throw 'NON_CANDIDATE_PATH_MUST_NOT_BE_OBSERVED'}
+      $script:fixtureProcesses+=,$p
+    }
+    $script:fixtureProcesses+=,[pscustomobject]@{Id=600;ProcessName='FirstLibraryGame';MainWindowHandle=1;Path='C:\XboxGames\Example\game.exe'}
+    $script:fixtureProcesses+=,[pscustomobject]@{Id=601;ProcessName='Starfield';MainWindowHandle=0;Path='C:\games\Starfield.exe'}
+    $signal=Get-FlatGameSignal
+    [pscustomobject]@{selected=$signal.processName;active=$signal.active;unnecessaryPathReads=$script:pathReads}|ConvertTo-Json -Compress
+  `);
+  assert.deepEqual(result,{selected:'FirstLibraryGame',active:true,unnecessaryPathReads:0});
+});
 
 test('CPU continuation comes only from unchanged complete publication and closes every denial edge', {skip:normalNativeSkip}, async t=>{
   const root=await realpath(await mkdtemp(join(tmpdir(),'governor-cpu-')));
