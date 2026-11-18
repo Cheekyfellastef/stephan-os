@@ -90,20 +90,20 @@ test('local desktop host rejects other origins, forged windows, replay and expir
 
 test('native popup capture changes preserve editor keyboard-focus uncertainty',()=>{
   const source=readFileSync(new URL('../src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp',import.meta.url),'utf8');
-  const captureSwitch=source.match(/void StartTarget\\(HWND w\\)\\{([\\s\\S]*?)\\n  \\}\\n  void Capture\\(/);
+  const captureSwitch=source.match(/void StartTarget\(HWND w\)\{([\s\S]*?)\n  \}\n  void Capture\(/);
   assert.ok(captureSwitch,'capture target switch source is present');
   assert.match(captureSwitch[1],/selectedEditor=nullptr/,'popup clears stale editor pointer');
-  assert.doesNotMatch(captureSwitch[1],/editorKeyboardFocusUnverified\\s*=\\s*false/,
+  assert.doesNotMatch(captureSwitch[1],/editorKeyboardFocusUnverified\s*=\s*false/,
     'popup switching cannot erase uncertain keyboard focus');
-  assert.match(source,/if\\(next!=target\\)StartTarget\\(next\\)/,
+  assert.match(source,/if\(next!=target\)StartTarget\(next\)/,
     'both entering and leaving an owned popup use the same guarded capture switch');
-  assert.match(source,/void Stop\\(\\)\\{[^\\n]*editorKeyboardFocusUnverified=false;/,
+  assert.match(source,/void Stop\(\)\{[^\n]*editorKeyboardFocusUnverified=false;/,
     'explicit stop is the only native session reset');
-  assert.match(source,/void Bind\\(HWND w,DWORD expected\\)\\{\\s*Stop\\(\\)/,
+  assert.match(source,/void Bind\(HWND w,DWORD expected\)\{\s*Stop\(\)/,
     'a newly consented bind resets the prior session before capture');
   assert.match(source,/editorKeyboardFocusUnverified=true;/,
     'UIA editor selection establishes an uncertain-focus fence');
-  assert.match(source,/if\\(editorKeyboardFocusUnverified\\)return Reply\\(L"editor-key-focus-unverified"\\)/,
+  assert.match(source,/if\(editorKeyboardFocusUnverified\)return Reply\(L"editor-key-focus-unverified"\)/,
     'non-text keys cannot fall through to another focused composer');
 });
 
