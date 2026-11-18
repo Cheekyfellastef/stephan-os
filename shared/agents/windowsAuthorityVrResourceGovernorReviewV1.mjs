@@ -24,7 +24,7 @@ const PATH = WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1[0];
 const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: 'ae71e1e79ead63efeb5a4d73f4bce6a01ee0f1d9', size: 48838 }),
   Object.freeze({ blobSha: '9513dfe995a35087e1d715ef0c4dff4ca3578295', size: 49674 }),
-  Object.freeze({ blobSha: '6a68e3914e19dafe588baae67aa4b4795ec65a63', size: 56450, reviewerReservation: true }),
+  Object.freeze({ blobSha: '1e47aef0c93ea85c0ee7bb2703b685fa934c644a', size: 56579, reviewerReservation: true }),
 ]);
 
 const text = (value) => String(value ?? '').trim();
@@ -206,9 +206,13 @@ function reviewGovernor(source, findings) {
     'vr-governor-reviewer-admission-classifier-missing',
     'Reviewer admission must use the same protected-idle predicate as watcher reconciliation.');
   requireLiteral(findings, source,
-    "(Test-InconsistentGovernorIdleState -State $PriorState)",
+    "$priorInconsistent = (Test-InconsistentGovernorIdleState -State $PriorState)",
     'vr-governor-reviewer-unknown-phase-reconcile-missing',
-    'Watch and cancellation must recover unknown or contradictory persisted idle states before releasing models.');
+    'Watch and cancellation must classify persisted protected idle state before reconciliation.');
+  requireLiteral(findings, source,
+    "if ($priorWasProtected -and ($priorInconsistent -or $cooldownUntil -eq [DateTime]::MinValue)) {",
+    'vr-governor-reviewer-contradictory-expired-deadline-failclosed-missing',
+    'Contradictory or unknown states must reconstruct a cooldown even when a persisted deadline parses but is expired.');
   requireLiteral(findings, source,
     'REVIEWER_RESERVATION_BLOCKED_BY_GAMING_COOLDOWN',
     'vr-governor-reviewer-cooldown-preflight-missing',

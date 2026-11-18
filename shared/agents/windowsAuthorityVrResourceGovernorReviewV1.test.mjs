@@ -459,7 +459,7 @@ test('corrupted persisted COOLDOWN cannot release gaming model protection during
   // Exact-fixture source assertion plus portable model; not native Windows/installed proof.
   const resolver = governor.split('function Resolve-EffectiveState {')[1]
     ?.split('function Invoke-Reconcile {')[0] || '';
-  const guard = 'if ($priorWasProtected -and $cooldownUntil -eq [DateTime]::MinValue) {';
+  const guard = 'if ($priorWasProtected -and ($priorInconsistent -or $cooldownUntil -eq [DateTime]::MinValue)) {';
   assert.ok(resolver.includes(guard), 'missing or malformed COOLDOWN must reconstruct the deadline');
   const fallback = resolver.slice(resolver.indexOf('    $cooldownUntil = [DateTime]::MinValue'));
   assert.ok(!fallback.includes("[string]$PriorState.phase -ne 'COOLDOWN'"),
@@ -531,7 +531,8 @@ test('watcher and cancellation preserve contradictory or unknown persisted idle 
     ?.split('function Test-ReviewerReservationBlockedByCooldown {')[0] || '';
   const admission = governor.split('function Test-ReviewerReservationBlockedByCooldown {')[1]
     ?.split('function Append-TelemetryEvent {')[0] || '';
-  assert.ok(resolver.includes('(Test-InconsistentGovernorIdleState -State $PriorState)'));
+  assert.ok(resolver.includes('$priorInconsistent = (Test-InconsistentGovernorIdleState -State $PriorState)'));
+  assert.ok(resolver.includes('$priorInconsistent -or $cooldownUntil -eq [DateTime]::MinValue'));
   assert.ok(admission.includes('(Test-InconsistentGovernorIdleState -State $State)'));
   assert.ok(helper.includes("$phase -in @('NORMAL','REVIEWING')"));
   const now = Date.parse('2026-11-18T10:40:00Z');
@@ -542,8 +543,8 @@ test('watcher and cancellation preserve contradictory or unknown persisted idle 
     || inconsistent(state);
   const afterReconcile = state => {
     const expiry = Date.parse(state.cooldownUntilUtc || '');
-    const deadline = Number.isFinite(expiry) ? expiry :
-      protectWithoutLease(state) ? now + 90_000 : NaN;
+    const deadline = protectWithoutLease(state) && (inconsistent(state) || !Number.isFinite(expiry))
+      ? now + 90_000 : expiry;
     return Number.isFinite(deadline) && now < deadline ? 'COOLDOWN' : 'NORMAL';
   };
   for (const state of [
@@ -553,6 +554,10 @@ test('watcher and cancellation preserve contradictory or unknown persisted idle 
     { phase:'NORMAL', active:false, localModelAllowed:false },
     { phase:'REVIEWING', active:true, localModelAllowed:true },
     { phase:'REVIEWING', active:false, localModelAllowed:false },
+    { phase:'NORMAL', active:false, localModelAllowed:false, cooldownUntilUtc:'2026-11-18T10:39:59Z' },
+    { phase:'REVIEWING', active:true, localModelAllowed:true, cooldownUntilUtc:'2026-11-18T10:35:00Z' },
+    { phase:'UNKNOWN', active:false, localModelAllowed:true, cooldownUntilUtc:'2026-11-18T10:39:59Z' },
+    { phase:'UNKNOWN', active:false, localModelAllowed:true, cooldownUntilUtc:'2026-11-18T12:00:00Z' },
     { phase:'GAMING', active:true, localModelAllowed:false },
     { phase:'COOLDOWN', active:true, localModelAllowed:false, cooldownUntilUtc:'invalid' },
   ]) {
@@ -564,4 +569,7 @@ test('watcher and cancellation preserve contradictory or unknown persisted idle 
     { phase:'REVIEWING', active:false, localModelAllowed:true },
     { phase:'COOLDOWN', active:false, localModelAllowed:true, cooldownUntilUtc:'2026-11-18T10:39:59Z' },
   ]) assert.equal(afterReconcile(state), 'NORMAL', JSON.stringify(state));
+  // An expired, consistent COOLDOWN is genuinely completed, not re-started.
+  assert.equal(afterReconcile({phase:'COOLDOWN',active:true,localModelAllowed:false,
+    cooldownUntilUtc:'2026-11-18T10:39:59Z'}), 'NORMAL');
 });

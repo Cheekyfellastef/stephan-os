@@ -1069,18 +1069,20 @@ function Resolve-EffectiveState {
     $priorWasProtected = $false
     if ($PriorState) {
         $priorPhase = [string]$PriorState.phase
+        $priorInconsistent = (Test-InconsistentGovernorIdleState -State $PriorState)
         $priorWasProtected = [bool](
             $priorPhase -in @('PREPARING','GAMING','COOLDOWN') -or
-            (Test-InconsistentGovernorIdleState -State $PriorState)
+            $priorInconsistent
         )
         if ([string]$PriorState.cooldownUntilUtc) {
             [void][DateTime]::TryParse([string]$PriorState.cooldownUntilUtc, [ref]$cooldownUntil)
         }
-        if ($priorWasProtected -and $cooldownUntil -eq [DateTime]::MinValue) {
-            # A prior COOLDOWN with a missing or malformed deadline is still
-            # protected. Restore one bounded cooldown from the prior game
-            # profile instead of releasing models on cancellation or watcher
-            # refresh. Valid expired deadlines remain eligible to expire.
+        if ($priorWasProtected -and ($priorInconsistent -or $cooldownUntil -eq [DateTime]::MinValue)) {
+            # Unknown/contradictory persisted phases must rebuild a bounded
+            # cooldown even if they carry a parseable expired or far-future
+            # deadline; otherwise a watcher may first publish NORMAL and then
+            # admit a reviewer. A consistent COOLDOWN with a valid expired
+            # deadline may still expire as intended.
             $cooldownUntil = $nowUtc.AddSeconds([Math]::Max(30, [int]$profile.cooldownSeconds))
         }
     }
