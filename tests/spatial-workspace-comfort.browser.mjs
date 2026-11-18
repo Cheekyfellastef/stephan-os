@@ -198,6 +198,7 @@ try {
       if (requested.pathname === '/bind') {
         report.binds.push(payload);
         fixture.boundId = fixture.windows.some(window => window.id === payload.id) ? payload.id : null;
+        fixture.editorSelected = false;
         response = { status: fixture.boundId === null ? 'window-unavailable' : 'connected' };
       }
       if (['/frame', '/input'].includes(requested.pathname) && fixture.boundId === null) {
@@ -209,10 +210,21 @@ try {
       }
       if (requested.pathname === '/input') {
         report.inputs.push(payload);
-        response = { status: fixture.rejectNextInput ? 'input-rejected' : 'input-posted' };
-        fixture.rejectNextInput = false;
+        // The synthetic composer is an explicitly chosen *editable* target.
+        // A legacy "input-posted" click cannot grant editor consent or typing.
+        const composer=report.frame.composer;
+        if(payload.kind==='click')fixture.editorSelected=
+          Math.abs(payload.x-composer.x)<0.02 && Math.abs(payload.y-composer.y)<0.02;
+        const status=payload.kind==='click'
+          ?(fixture.editorSelected?'editor-accessibility-selected':'input-posted')
+          :payload.kind==='text'
+            ?(fixture.editorSelected?'editor-value-readback':'editor-not-selected')
+            :'input-posted';
+        response={status:fixture.rejectNextInput?'input-rejected':status};
+        if(fixture.rejectNextInput)fixture.editorSelected=false;
+        fixture.rejectNextInput=false;
       }
-      if (requested.pathname === '/stop') { fixture.boundId = null; response = { status: 'stopped' }; }
+      if (requested.pathname === '/stop') { fixture.boundId = null; fixture.editorSelected=false; response = { status: 'stopped' }; }
       return route.fulfill({ status: 200, headers, contentType: 'application/json', body: JSON.stringify(response) });
     }
     if (requested.origin === origin || requested.protocol === 'data:') return route.continue();
@@ -630,7 +642,9 @@ try {
     let tolerance;
     const posted = await postedInput(async () => { tolerance = await clickFixturePoint(point, painted); });
     assert.equal(posted.payload.kind, 'click');
-    assert.equal(posted.response.status, 'input-posted');
+    const composer=fixtureReport.frame.composer;
+    const expectedEditor=Math.abs(point.x-composer.x)<0.02 && Math.abs(point.y-composer.y)<0.02;
+    assert.equal(posted.response.status,expectedEditor?'editor-accessibility-selected':'input-posted');
     assert.ok(Math.abs(posted.payload.x - point.x) <= tolerance.x, JSON.stringify(posted.payload));
     assert.ok(Math.abs(posted.payload.y - point.y) <= tolerance.y, JSON.stringify(posted.payload));
     return { expected: point, posted: posted.payload, tolerance };
@@ -710,6 +724,12 @@ try {
       assert.ok(fixtureReport.requestsByPath['/windows'] >= 5);
       await focusPanel('chatgpt');
       const fittedView=await drawing([0,0,1920,1080]);
+      const beforeEditor=fixtureReport.inputs.length;
+      await key('Type a').click();
+      assert.equal(fixtureReport.inputs.length,beforeEditor,'A live frame alone cannot choose a writable ChatGPT editor.');
+      assert.match(await page.locator('#window-input-status').innerText(),/Select the intended editor/);
+      await key('Enter (app)').click();
+      assert.equal(fixtureReport.inputs.length,beforeEditor,'Enter before an acknowledged composer selection cannot reach native input.');
       const appClick=await provePoint(fixtureReport.frame.composer,fittedView);
       const typed=await postedInput(()=>key('Type a').click());assert.equal(typed.payload.kind,'text');assert.equal(typed.payload.text,'a');
       const scrolledDown=await postedInput(()=>panelAction('scroll-down'));
@@ -830,7 +850,7 @@ try {
       for (const label of ['!', '?']) {
         const input = await postedInput(() => key('Type ' + label).click());
         assert.equal(input.payload.kind, 'text'); assert.equal(input.payload.text, label);
-        assert.equal(input.response.status, 'input-posted'); sent.push(input.payload);
+        assert.equal(input.response.status, 'editor-value-readback'); sent.push(input.payload);
       }
       const image = await capturedCanvas('synthetic-shifted-vr-keyboard', 'keyboard');
       await key('Shift').click(); assert.equal(await key('Shift').getAttribute('aria-pressed'), 'false');
