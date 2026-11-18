@@ -489,3 +489,21 @@ test('absent publisher status invokes one fixed installer but no stale-task rest
   assert.equal(polls, 16);
   assert.equal(sleeps, 15);
 });
+
+test('native reconcile pins full bootstrap and complete stop/start task identity', async () => {
+  const { readFileSync } = await import('node:fs');
+  const recon = readFileSync(new URL('../../scripts/windows/reconcile-stephanos-native-capacity-publisher-stale.ps1', import.meta.url), 'utf8');
+  const install = readFileSync(new URL('../../scripts/windows/install-stephanos-native-capacity-publisher.ps1', import.meta.url), 'utf8');
+  const a = install.match(/\$bootstrap = @"([\s\S]*?)\n"@/);
+  const b = recon.match(/\$expectedBootstrap = @"([\s\S]*?)\n"@/);
+  assert.ok(a && b);
+  assert.equal(b[1], a[1], 'must match complete installer bootstrap template');
+  assert.match(recon, /\$bootstrap\.Replace\(\$crlf, \$lf\)[\s\S]*?\$expectedBootstrap\.Replace\(\$crlf, \$lf\)/);
+  assert.match(recon, /NATIVE_RECONCILE_CANONICAL_BOOTSTRAP_CHANGED/);
+  for (const field of ['MultipleInstances', 'RunLevel', 'LogonType', 'UserId', 'Execute', 'WorkingDirectory', 'Arguments']) {
+    assert.ok(recon.includes(field), 'missing fixed task check for ' + field);
+  }
+  assert.match(recon, /\$candidateSid -ne \$callerSid/);
+  assert.match(recon, /Assert-FixedPublisherTaskIdentity \(Get-ScheduledTask -TaskName \$taskName -ErrorAction Stop\)/);
+  assert.match(recon, /Assert-FixedPublisherTaskIdentity \$stillRegistered/);
+});
