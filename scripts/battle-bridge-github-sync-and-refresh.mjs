@@ -115,6 +115,19 @@ export function projectSyncAndRefreshStatus(result = {}, { observedAtUtc = new D
     ok,
     blocker,
     finalVerdict,
+    capacityObservationObserved: result?.capacityObservationObserved === true,
+    capacityObservation: result?.capacityObservation ? Object.freeze({
+      ok: result.capacityObservation.ok === true,
+      sourceHead: safeHead(result.capacityObservation.sourceHead),
+      blocker: boundedStatusCode(result.capacityObservation.blocker),
+      workerObservationProven: result.capacityObservation.workerObservationProven === true,
+      capacityObservationProven: result.capacityObservation.capacityObservationProven === true,
+      capacityAvailable: result.capacityObservation.lifeboatCapacity?.available === true,
+      reportedWorkerVerdict: boundedStatusCode(result.capacityObservation.reportedWorkerVerdict),
+      executionMetadataState: result.capacityObservation.executionMetadataState === 'REPORTED' ? 'REPORTED' : 'UNREPORTED',
+      idleProven: false, physicalExclusionGranted: false, workAuthorized: false,
+      admissionAttempted: false, sourceBuildAttempted: false,
+    }) : null,
     mailboxPulseObserved: result?.mailboxPulseObserved === true,
     mailboxPulse: mailboxPulse ? Object.freeze({
       ok: mailboxPulse?.ok === true,
@@ -271,6 +284,16 @@ async function runFreshGoalDiscoveryHeartbeat(sourceHead) {
   return heartbeatModule.runBattleBridgeGoalDiscoveryHeartbeat();
 }
 
+async function runFreshCapacityObservation(sourceHead, options) {
+  const heartbeatUrl = new URL('./battle-bridge-goal-discovery-heartbeat.mjs', import.meta.url);
+  heartbeatUrl.searchParams.set('sourceHead', sourceHead);
+  const heartbeatModule = await import(heartbeatUrl.href);
+  if (typeof heartbeatModule.runBattleBridgeCapacityObservationHeartbeat !== 'function') {
+    return Object.freeze({ ok: false, blocker: 'CAPACITY_OBSERVATION_EXPORT_MISSING', capacityObservationOnly: true });
+  }
+  return heartbeatModule.runBattleBridgeCapacityObservationHeartbeat(options);
+}
+
 function pulseConvergedMailbox({ paths, adapter, platform, timeoutMs }) {
   if (platform !== 'win32') {
     return Object.freeze({
@@ -352,6 +375,7 @@ export async function runBattleBridgeSyncAndRefresh({
   pendingReader = readPendingPostSyncRefresh,
   controlPlaneReconciler = reconcileBattleBridgeControlPlane,
   goalDiscoveryHeartbeat = null,
+  capacityObservationHeartbeat = null,
   platform = process.platform,
   maxCycles = MAX_SYNC_REFRESH_CYCLES,
   nowMs = () => performance.now(),
@@ -363,6 +387,10 @@ export async function runBattleBridgeSyncAndRefresh({
   }
 
   const refreshes = [];
+  let capacityObservation = null;
+  let capacityObservationAttempted = false;
+  const capacityResult = () => ({ capacityObservation,
+    capacityObservationObserved: capacityObservationAttempted });
   const start = nowMs();
   if (!Number.isFinite(start)) {
     return Object.freeze({ ok: false, blocker: 'SYNC_AND_REFRESH_CLOCK_INVALID', finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
@@ -374,6 +402,7 @@ export async function runBattleBridgeSyncAndRefresh({
       ? Math.max(0, Math.floor(deadline - observed)) : 0;
   };
   const budgetHeld = (phase, sourceHead = '') => Object.freeze({
+    ...capacityResult(),
     ok: false,
     blocker: 'SYNC_AND_REFRESH_PARENT_BUDGET_EXHAUSTED',
     budgetPhase: phase,
@@ -404,6 +433,23 @@ export async function runBattleBridgeSyncAndRefresh({
     const converged = syncIsConverged(sync.result);
     const currentHeads = refreshHeadsFromSyncResult(sync.result);
     const currentSourceHead = syncHead(sync.result);
+    // Model/resource observation cannot pay runtime debt or authorize work.
+    // Only an authenticated converged source child reaches this closed stage;
+    // its own exact-head/launch checks and the producer's governor still apply.
+    if (converged && currentSourceHead && !capacityObservationAttempted) {
+      if (safeRemaining() <= 0) return budgetHeld('CAPACITY_OBSERVATION', currentSourceHead);
+      capacityObservationAttempted = true;
+      const observationOptions = { expectedSourceHead: currentSourceHead,
+        budgetMs: Math.min(30_000, safeRemaining()), paths };
+      try {
+        capacityObservation = typeof capacityObservationHeartbeat === 'function'
+          ? await capacityObservationHeartbeat(observationOptions)
+          : await runFreshCapacityObservation(currentSourceHead, observationOptions);
+      } catch {
+        capacityObservation = { ok: false, blocker: 'CAPACITY_OBSERVATION_EXCEPTION', capacityObservationOnly: true };
+      }
+      if (safeRemaining() <= 0) return budgetHeld('POST_CAPACITY_OBSERVATION', currentSourceHead);
+    }
     // A different invocation may have advanced source after our initial read.
     // Include the debt actually retained by this sync child under its lock.
     const freshDebt = inspectPendingPostSyncRefreshDebt(sync.result?.facts?.pendingRefresh);
@@ -431,6 +477,7 @@ export async function runBattleBridgeSyncAndRefresh({
     if (pendingInvalid || !freshDebt.ok) {
       sourceForwardedBeforeRefresh = sync.result?.sourceUpdated === true;
       return Object.freeze({
+        ...capacityResult(),
         ok: false,
         blocker: pendingInvalid?.blocker || freshDebt.blocker,
         sourceHead: currentSourceHead,
@@ -451,6 +498,7 @@ export async function runBattleBridgeSyncAndRefresh({
       isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot),
     });
     if (!resolved.ok) return Object.freeze({
+      ...capacityResult(),
       ok: false, blocker: resolved.blocker, sourceHead: currentSourceHead,
       syncClassification: sync.result?.evaluation?.classification || '', refreshes: Object.freeze(refreshes),
       pendingRefreshObserved, sourceForwardedBeforeRefresh: sync.result?.sourceUpdated === true,
@@ -487,6 +535,7 @@ export async function runBattleBridgeSyncAndRefresh({
             }
             if (observedPending?.ok === false) {
               return Object.freeze({
+                ...capacityResult(),
                 ok: false,
                 blocker: observedPending.blocker || 'PENDING_POST_SYNC_REFRESH_INVALID',
                 sourceHead: currentSourceHead,
@@ -524,6 +573,7 @@ export async function runBattleBridgeSyncAndRefresh({
           }
         }
         return Object.freeze({
+          ...capacityResult(),
           ok: false,
           blocker: refreshBlocker,
           sourceHead: currentSourceHead,
@@ -544,6 +594,7 @@ export async function runBattleBridgeSyncAndRefresh({
         isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot),
       }) : completed;
       if (!covered.ok || covered.debt) return Object.freeze({
+        ...capacityResult(),
         ok: false, blocker: covered.blocker || 'PENDING_POST_SYNC_COMPLETION_COVERAGE_UNPROVEN',
         sourceHead: currentSourceHead, refreshes: Object.freeze(refreshes),
         finalVerdict: 'SYNC_AND_REFRESH_REFRESH_DEBT_BLOCKED',
@@ -584,6 +635,7 @@ export async function runBattleBridgeSyncAndRefresh({
       if (safeRemaining() <= 0) return budgetHeld('POST_CONTROL_PLANE', sourceHead);
       if (goalDiscovery?.ok !== true) {
         return Object.freeze({
+          ...capacityResult(),
           ok: false,
           blocker: String(goalDiscovery?.blocker || goalDiscovery?.finalVerdict || 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED'),
           sourceHead,
@@ -602,6 +654,7 @@ export async function runBattleBridgeSyncAndRefresh({
 
       if (!controlPlaneRepair.ok) {
         return Object.freeze({
+          ...capacityResult(),
           ok: false,
           blocker: controlPlaneRepair.blocker,
           sourceHead,
@@ -621,6 +674,7 @@ export async function runBattleBridgeSyncAndRefresh({
       }
 
       return Object.freeze({
+        ...capacityResult(),
         schemaVersion: BATTLE_BRIDGE_SYNC_AND_REFRESH_SCHEMA,
         ok: true,
         sourceHead,
@@ -647,6 +701,7 @@ export async function runBattleBridgeSyncAndRefresh({
   }
 
   return Object.freeze({
+    ...capacityResult(),
     ok: false,
     blocker: 'SYNC_AND_REFRESH_CYCLE_LIMIT_EXCEEDED',
     refreshes: Object.freeze(refreshes),
