@@ -20,7 +20,12 @@ export const MAX_SYNC_REFRESH_CYCLES = 3;
 export const SYNC_AND_REFRESH_CHILD_BUDGET_MS = 180_000;
 export const SYNC_AND_REFRESH_MIN_REMAINING_MS = 5_000;
 export const SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS = Object.freeze({ sync: 60_000, refresh: 150_000, mailbox: 30_000 });
+export const SYNC_CONTENTION_WAIT_MS = 30_000;
+export const SYNC_CONTENTION_POLL_MS = 1_000;
+const MAX_SYNC_CONTENTION_POLLS = SYNC_CONTENTION_WAIT_MS / SYNC_CONTENTION_POLL_MS;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
+const SAFE_SYNC_FAILURE_REASONS = new Set(['SYNC_ALREADY_RUNNING', 'LOCK_ACQUISITION_FAILED',
+  'NON_CANONICAL_REPOSITORY_PATH', 'NON_CANONICAL_WORKSPACE_PATH', 'REPOSITORY_WORKSPACE_OVERLAP']);
 
 function text(value) {
   return String(value ?? '').trim();
@@ -86,6 +91,26 @@ function boundedStatusCode(value, limit = 180) {
   return normalized && normalized.length <= limit && /^[A-Z0-9_:-]+$/.test(normalized) ? normalized : '';
 }
 
+function syncFailureReason(result) {
+  const reason = result?.evaluation?.exactNextAction;
+  return SAFE_SYNC_FAILURE_REASONS.has(reason) ? reason : '';
+}
+
+function isNonOwnerSyncContention(result) {
+  // This is the executor's refusal before source inspection or mutation. An
+  // unknown/partial execution is never retried, and the original lock owner
+  // remains authoritative. Every retry must acquire admission in the executor.
+  return result?.ok === false
+    && Object.keys(result).every(key => ['ok', 'evaluation', 'lock', 'publication'].includes(key))
+    && result.publication === null
+    && result.evaluation?.classification === 'BLOCKED_INSTALL_OR_PERMISSION_REQUIRED'
+    && result.evaluation.exactNextAction === 'SYNC_ALREADY_RUNNING'
+    && result.evaluation.performsGitMutation === false
+    && result.evaluation.performsShellExecution === false
+    && result.lock?.ok === false
+    && result.lock.reason === 'SYNC_ALREADY_RUNNING';
+}
+
 export function projectSyncAndRefreshStatus(result = {}, { observedAtUtc = new Date().toISOString() } = {}) {
   const mailboxPulse = result?.mailboxPulse && typeof result.mailboxPulse === 'object'
     ? result.mailboxPulse
@@ -112,6 +137,7 @@ export function projectSyncAndRefreshStatus(result = {}, { observedAtUtc = new D
     schema: 'stephanos.battle-bridge-sync-and-refresh-status.v1',
     observedAtUtc,
     sourceHead: safeHead(result?.sourceHead),
+    syncBlockerReason: SAFE_SYNC_FAILURE_REASONS.has(result?.syncBlockerReason) ? result.syncBlockerReason : '',
     ok,
     blocker,
     finalVerdict,
@@ -421,10 +447,36 @@ export async function runBattleBridgeSyncAndRefresh({
   let pendingRefreshObserved = pendingSpans.length > 0;
   let sourceForwardedBeforeRefresh = false;
   let refreshDebtCoalesced = false;
+  let contentionStartedAt = null;
+  let contentionPolls = 0;
 
   for (let cycle = 0; cycle < maxCycles; cycle += 1) {
     if (safeRemaining() <= 0) return budgetHeld('SYNC');
-    const sync = adapter.runSync(paths, { timeoutMs: safeRemaining() });
+    let sync = adapter.runSync(paths, { timeoutMs: safeRemaining() });
+    while (sync?.ok === true
+      && (!sync.execution || (sync.execution.status === 2 && sync.execution.errorCode === ''))
+      && isNonOwnerSyncContention(sync.result)) {
+      const observedAt = nowMs();
+      if (contentionStartedAt === null) contentionStartedAt = observedAt;
+      const contentionRemaining = Number.isFinite(observedAt) && Number.isFinite(contentionStartedAt)
+        ? SYNC_CONTENTION_WAIT_MS - Math.max(0, observedAt - contentionStartedAt) : 0;
+      const waitMs = Math.min(SYNC_CONTENTION_POLL_MS, contentionRemaining, safeRemaining());
+      if (waitMs <= 0 || contentionPolls >= MAX_SYNC_CONTENTION_POLLS) {
+        return Object.freeze({ ...capacityResult(), ok: false, blocker: 'SYNC_ALREADY_RUNNING',
+          syncBlockerReason: 'SYNC_ALREADY_RUNNING',
+          syncClassification: sync.result.evaluation.classification,
+          pendingRefreshObserved, refreshes: Object.freeze([...refreshes]),
+          finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
+      }
+      contentionPolls += 1;
+      await sleepFn(waitMs);
+      if (safeRemaining() <= 0) {
+        return Object.freeze({ ...budgetHeld('SYNC_CONTENTION'), syncBlockerReason: 'SYNC_ALREADY_RUNNING' });
+      }
+      // Do not infer admission or success from another owner's status or from
+      // a disappearing lock. Re-enter the fixed executor under its own lock.
+      sync = adapter.runSync(paths, { timeoutMs: safeRemaining() });
+    }
     if (!sync.ok) {
       return Object.freeze({ ok: false, blocker: sync.blocker, refreshes: Object.freeze(refreshes), finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
     }
@@ -467,6 +519,7 @@ export async function runBattleBridgeSyncAndRefresh({
         blocker: sync.result?.evaluation?.classification || 'SYNC_NOT_CONVERGED',
         sourceHead: currentSourceHead,
         syncClassification: sync.result?.evaluation?.classification || '',
+        syncBlockerReason: syncFailureReason(sync.result),
         refreshes: Object.freeze(refreshes),
         sourceForwardedBeforeRefresh,
         refreshDebtCoalesced,
