@@ -22,6 +22,8 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
   }
   let image=null,epoch=0,refreshPromise=null;
   let token=null,active=false,disposed=false,generation=0,serial=0,sequence=0,timer=null,queue=[],busy=false;
+  // Room-local acknowledgement, not native keyboard focus. Never infer an editor from a bind or frame.
+  let editorClickConfirmed=false;
   // One owner spans picker, native revocation, playback and the accepted view.
   // Late promises retain this record only; they can never close a newer owner.
   let capture=null;
@@ -90,7 +92,7 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     if(keepCapture)keepCapture.epoch=current;
     let old=token;
     if(!old)try{old=sessionStore?.getItem(storageKey);}catch{}
-    token=null;active=false;image=null;refreshPromise=null;queue=[];generation=0;serial=0;busy=false;
+    token=null;active=false;image=null;refreshPromise=null;queue=[];generation=0;serial=0;busy=false;editorClickConfirmed=false;
     const oldTimer=timer;timer=null;
     if(previousCapture!==keepCapture)closeCapture(previousCapture);
     clearTimer(oldTimer);
@@ -229,7 +231,7 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       }
       if(current!==epoch||disposed)return false;
       const result=await request('/bind',{id});if(current!==epoch)return false;if(result.status!=='connected')throw new Error('bind');
-      active=true;sequence=0;queue=[];
+      active=true;sequence=0;queue=[];editorClickConfirmed=false;
       if(!publishCurrent(current,{status:'waiting',windows:[],title:selected.title,message:'Waiting for the selected app to draw.'})||!active)return false;
       timer=setTimer(()=>poll(current),0);return true;
     }catch{if(current===epoch)publish({status:'unavailable',message:'Could not connect that window. Restore it on your desktop and choose it again.'});return false;}
@@ -247,6 +249,10 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
         inputAttempted=true;
         const result=await request('/input',{...input,sequence:++sequence});
         if(current!==epoch)return;
+        // Do not allow a stale click or a failed native editor binding to license later non-text keys.
+        if(input.kind==='click')editorClickConfirmed=result.status==='editor-accessibility-selected';
+        else if(['editor-not-selected','editor-reselect-required','editor-unsupported','editor-key-focus-unverified'].includes(result.status))
+          editorClickConfirmed=false;
         if(!publishCurrent(current,{inputStatus:({
           'editor-accessibility-selected':'Editable field located in the selected window. Type a virtual key to test it.',
           'editor-value-readback':'Windows accessibility read back the updated editor text. Confirm the actual app reflects it before Send.',
@@ -271,12 +277,12 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
         if(frame.serial!==serial||frame.generation!==generation||state.status!=='live'){
           const next=documentRef.createElement('img');next.src='data:image/jpeg;base64,'+frame.jpeg;await next.decode();
           if(!active||current!==epoch)return;
-          if(generation!==frame.generation)queue=[];
+          if(generation!==frame.generation){queue=[];editorClickConfirmed=false;}
           image=next;generation=frame.generation;serial=frame.serial;publish({status:'live',...(state.status!=='live'?{inputStatus:''}:{}),message:'Connected to your original app. Point at its controls to interact.'});
         }
-      }else{generation=0;queue=[];publish({status:'waiting',inputStatus:'Input paused. Wait for a live picture of your app.',message:'Waiting for your app. Restore a minimized window or reconnect if it closed.'});}
+      }else{generation=0;queue=[];editorClickConfirmed=false;publish({status:'waiting',inputStatus:'Input paused. Wait for a live picture of your app.',message:'Waiting for your app. Restore a minimized window or reconnect if it closed.'});}
       if(active&&currentEpoch(current))timer=setTimer(()=>poll(current),queue.length?0:67);
-    }catch{if(current===epoch){active=false;generation=0;queue=[];image=null;publish({status:'unavailable',
+    }catch{if(current===epoch){active=false;generation=0;queue=[];image=null;editorClickConfirmed=false;publish({status:'unavailable',
       inputStatus:inputAttempted
         ?'The last input may already have changed the selected app. Inspect its draft before reconnecting; do not resend automatically.'
         :'Input paused. Reconnect the selected app.',
@@ -285,6 +291,11 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
   function input(value){
     if(capture?.phase==='live'){publish({inputStatus:'View-only capture: connect the native Windows helper to type or click.'});return false;}
     if(!active||!generation||state.status!=='live'||queue.length>=16){publish({inputStatus:'Input paused. Wait for a live connection.'});return false;}
+    if(value?.kind==='key'&&!editorClickConfirmed){
+      publish({inputStatus:'Select the editor in the original app on the holographic image first. No key was sent.'});return false;
+    }
+    // A new pointer action invalidates the last editor acknowledgement immediately, before queuing.
+    if(value?.kind==='click')editorClickConfirmed=false;
     queue.push({...value,generation});publish({inputStatus:'Sending input to the selected app.'});return true;
   }
   return {discover,connect,shareScreen,stop,input,probeHelper,getState:()=>({...state}),
