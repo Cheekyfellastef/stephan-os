@@ -391,7 +391,25 @@ class PortableOrchestrationModelTests(unittest.TestCase):
                 observed["mockStageCalls"] += 1
                 self.assertEqual(arguments["executable"], r"C:\Windows\System32\cmd.exe")
                 self.assertEqual(arguments["args"], ["/d", "/s", "/c", "build-paired-source-observe.cmd"])
-                self.assertFalse(arguments["cancel_requested"]())
+                state_path = workspace / "vr" / "vr-resource-governor-current.json"
+                if mode.startswith("admission_"):
+                    if mode == "admission_prepare":
+                        (workspace / "vr" / "gaming-resource-prepare.json").write_text("{}")
+                    elif mode == "admission_missing":
+                        state_path.unlink()
+                    elif mode in ("admission_launcher", "admission_exception"):
+                        observed["launcherFault"] = mode
+                    else:
+                        state_path.write_text(json.dumps(governor(heavyModelAllowed=False,
+                            localModelAllowed=False, dependencyObservationKnown=False,
+                            nativeProbeCustodyHeld=True, ollamaLoadMode="unknown")))
+                    self.assertTrue(arguments["cancel_requested"]())
+                    # A later healthy sample cannot erase the first withdrawal.
+                    state_path.write_text(json.dumps(governor()))
+                    observed["launcherFault"] = ""
+                    self.assertTrue(arguments["cancel_requested"]())
+                else:
+                    self.assertFalse(arguments["cancel_requested"]())
                 self.assertTrue(arguments["on_suspended"]({"root_pid": 200, "root_created_filetime": "133000000000000003", "assigned_before_execution": True}))
                 for name in build.EXPECTED_ARTIFACTS:(Path(arguments["cwd"]) / name).write_bytes(b"MZ-PORTABLE-MOCK-NOT-A-NATIVE-BINARY")
                 if mode == "source_changed":(original / "source0.h").write_bytes(b"changed by explicit fault fixture")
@@ -404,10 +422,21 @@ class PortableOrchestrationModelTests(unittest.TestCase):
                 if mode == "float_exit":result["root_exit_code"] = 0.0
                 if mode.startswith("truthy_"):result[mode[len("truthy_"):]] = 1
                 if mode == "custody_held":result.update(operation_ok=False, custody_released=False)
+                if mode.startswith("admission_") and mode != "admission_success_race":
+                    result.update(operation_ok=False, root_exit_code=79, cancelled=True, reason="CANCELLED")
+                if mode == "admission_custody":result.update(custody_released=False, zero_active_processes_observed=False)
+                if mode == "native_cancel":result.update(operation_ok=False, root_exit_code=79, cancelled=True, reason="CANCELLED")
+                if mode == "native_timeout":result.update(operation_ok=False, root_exit_code=79, cancelled=True, timed_out=True, reason="DEADLINE_EXCEEDED")
+                if mode == "compiler_failure":result.update(operation_ok=False, root_exit_code=1)
                 if mode == "missing_artifact":(Path(arguments["cwd"]) / build.EXPECTED_ARTIFACTS[-1]).unlink()
                 return result
 
-            job = types.SimpleNamespace(observe_parent_identity=lambda *_: {"ok": True, "alive": True}, run_owned_stage=mock_stage)
+            def observe_parent(*_):
+                fault = observed.get("launcherFault", "")
+                if fault == "admission_exception":raise OSError("private observation failure must not be published")
+                return {"ok": True, "alive": fault != "admission_launcher"}
+
+            job = types.SimpleNamespace(observe_parent_identity=observe_parent, run_owned_stage=mock_stage)
             builder = types.SimpleNamespace(ORIGINAL_FILES=records, reconstruct=reconstruct)
             real_os, real_sys, real_path_open = build.os, build.sys, Path.open
 
@@ -443,6 +472,8 @@ class PortableOrchestrationModelTests(unittest.TestCase):
             try:saved = json.loads(proposal_path.read_text()) if proposal_path.exists() else None
             except (ValueError, UnicodeError):saved = None
             owner_path = builds / "active.json";owner = json.loads(owner_path.read_text()) if owner_path.exists() else None
+            private_path = builds / packet["requestId"] / "private-build-proof.json"
+            if private_path.exists():observed["privateProof"] = json.loads(private_path.read_text())
             if owner is not None:
                 with self.assertRaises(build.BuildBlocked):CustodyModel(builds, packet)
             self.assertEqual(observed["nativeCalls"], 0)
@@ -468,6 +499,42 @@ class PortableOrchestrationModelTests(unittest.TestCase):
         self.assertLess(events.index("proposal_fsync"), events.index("proposal_close"))
         self.assertLess(events.index("proposal_close"), events.index("owner_release"))
         self.assertEqual([r["name"] for r in receipt["artifacts"]], list(build.EXPECTED_ARTIFACTS))
+
+    def test_admission_withdrawal_preserves_first_cause_and_never_becomes_compiler_failure(self):
+        for mode, reason in (("admission_governor", "GAMING_PERMISSION_HELD"),
+                             ("admission_prepare", "GAMING_PREPARATION_ACTIVE"),
+                             ("admission_missing", "BUILD_ADMISSION_OBSERVATION_UNPROVEN"),
+                             ("admission_launcher", "BUILD_LAUNCHER_ENDED"),
+                             ("admission_exception", "BUILD_ADMISSION_OBSERVATION_UNPROVEN"),
+                             ("admission_success_race", "GAMING_PERMISSION_HELD")):
+            with self.subTest(mode=mode):
+                receipt, saved, owner, observed = self.exercise(mode)
+                self.assertEqual(receipt["finalVerdict"], "STARFIELD_VR_NATIVE_BUILD_BLOCKED")
+                self.assertEqual(receipt["reason"], reason)
+                self.assertEqual(saved["candidate"]["reason"], reason)
+                self.assertEqual(observed["privateProof"]["admissionCancellationReason"], reason)
+                self.assertIs(receipt["buildPassed"], False)
+                self.assertEqual(receipt["artifacts"], [])
+                self.assertIsNone(owner)
+
+    def test_unproven_custody_remains_stronger_than_known_cancellation(self):
+        receipt, saved, owner, observed = self.exercise("admission_custody")
+        self.assertEqual(receipt["finalVerdict"], "STARFIELD_VR_NATIVE_BUILD_CUSTODY_HELD")
+        self.assertEqual(receipt["reason"], "NATIVE_JOB_TERMINAL_UNPROVEN")
+        self.assertIsNotNone(owner)
+        self.assertEqual(observed["privateProof"]["admissionCancellationReason"], "GAMING_PERMISSION_HELD")
+        self.assertEqual(saved["candidate"]["finalVerdict"], receipt["finalVerdict"])
+
+    def test_native_cancellation_deadline_and_compiler_failure_remain_distinct(self):
+        for mode, reason, verdict in (
+            ("native_cancel", "NATIVE_BUILD_CANCELLED", "STARFIELD_VR_NATIVE_BUILD_BLOCKED"),
+            ("native_timeout", "NATIVE_BUILD_DEADLINE_EXCEEDED", "STARFIELD_VR_NATIVE_BUILD_BLOCKED"),
+            ("compiler_failure", "COMPILER_OR_SELF_TEST_FAILED", "STARFIELD_VR_NATIVE_BUILD_FAILED")):
+            with self.subTest(mode=mode):
+                receipt, saved, owner, observed = self.exercise(mode)
+                self.assertEqual((receipt["reason"], receipt["finalVerdict"]), (reason, verdict))
+                self.assertEqual(observed["privateProof"]["admissionCancellationReason"], "")
+                self.assertIsNone(owner)
 
     def test_missing_marker_exit_and_artifact_never_pass(self):
         for mode in ("missing_marker", "unknown_exit", "boolean_exit", "float_exit", "missing_artifact"):
