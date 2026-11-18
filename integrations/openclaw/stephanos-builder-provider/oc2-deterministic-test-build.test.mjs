@@ -215,14 +215,14 @@ test('OC2 grant renewal and source revision cannot overwrite prior proof or rece
     const spawnSyncFn = (executable, args) => {
       if (String(executable).toLowerCase().endsWith('git.exe')) {
         const command = args.join(' ');
-        if (command === 'rev-parse --show-toplevel') return { status: 0, stdout: repoRoot + '\\n' };
-        if (command === 'remote get-url origin') return { status: 0, stdout: 'https://github.com/Cheekyfellastef/stephan-os.git\\n' };
-        if (command === 'rev-parse --abbrev-ref HEAD') return { status: 0, stdout: 'main\\n' };
-        if (command === 'rev-parse HEAD') return { status: 0, stdout: sourceRevision + '\\n' };
+        if (command === 'rev-parse --show-toplevel') return { status: 0, stdout: repoRoot + '\n' };
+        if (command === 'remote get-url origin') return { status: 0, stdout: 'https://github.com/Cheekyfellastef/stephan-os.git\n' };
+        if (command === 'rev-parse --abbrev-ref HEAD') return { status: 0, stdout: 'main\n' };
+        if (command === 'rev-parse HEAD') return { status: 0, stdout: sourceRevision + '\n' };
         if (command === 'status --porcelain=v1 --untracked-files=all') return { status: 0, stdout: '' };
         return { status: 1, stderr: 'unexpected git command' };
       }
-      return { status: 0, stdout: 'ok\\n' };
+      return { status: 0, stdout: 'ok\n' };
     };
     const result = await executeClaimedOpenClawOc2DeterministicTestBuild(parts.action, parts.claim, {
       actionGrant: parts.grant,
