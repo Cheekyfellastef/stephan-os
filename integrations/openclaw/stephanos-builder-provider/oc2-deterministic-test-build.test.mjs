@@ -489,3 +489,66 @@ test('OC2 retains compatibility with explicitly false action authority declarati
   assert.equal(result.success, true);
   assert.equal(result.qualificationEligible, true);
 });
+
+
+test('OC2 refuses processing-claim replacement or loss after fixed tests and before qualification evidence', async (t) => {
+  for (const scenario of ['grant replaced', 'action replaced', 'claim disappeared']) {
+    await t.test(scenario, async () => {
+      const parts = fixture();
+      const userProfile = '/tmp/stephanos-oc2-post-test-claim';
+      const repoRoot = path.resolve(userProfile, 'Documents', 'GitHub', 'stephan-os');
+      let reads = 0;
+      let nodeRuns = 0;
+      let layoutCalls = 0;
+      let writes = 0;
+      const spawnSyncFn = (executable, args) => {
+        if (String(executable).toLowerCase().endsWith('git.exe')) {
+          const command = args.join(' ');
+          if (command === 'rev-parse --show-toplevel') return { status: 0, stdout: repoRoot + '\n' };
+          if (command === 'remote get-url origin') return { status: 0, stdout: 'https://github.com/Cheekyfellastef/stephan-os.git\n' };
+          if (command === 'rev-parse --abbrev-ref HEAD') return { status: 0, stdout: 'main\n' };
+          if (command === 'rev-parse HEAD') return { status: 0, stdout: HEAD + '\n' };
+          if (command === 'status --porcelain=v1 --untracked-files=all') return { status: 0, stdout: '' };
+          return { status: 1, stderr: 'unexpected git command' };
+        }
+        nodeRuns += 1;
+        return { status: 0, stdout: 'ok\n' };
+      };
+      const result = await executeClaimedOpenClawOc2DeterministicTestBuild(parts.action, parts.claim, {
+        actionGrant: parts.grant,
+        taskClass: OPENCLAW_OC2_TASK_CLASS,
+        goalId: '#1725',
+        providerVersion: '1.0.0',
+        requestedSourceHead: HEAD,
+        providerInstance: 'openclaw-gateway:4242',
+        platform: 'win32',
+        env: { USERPROFILE: userProfile },
+        existsSyncFn: () => true,
+        spawnSyncFn,
+        readFileFn: async () => {
+          reads += 1;
+          if (reads === 1) return JSON.stringify(parts.item);
+          if (scenario === 'claim disappeared') throw new Error('processing claim no longer exists');
+          const replaced = structuredClone(parts.item);
+          if (scenario === 'grant replaced') replaced.actionGrant.grantId = 'grant-substituted-after-test';
+          if (scenario === 'action replaced') replaced.payload.command = 'unexpected-executable';
+          return JSON.stringify(replaced);
+        },
+        ensureSharedWorkspaceLayoutFn: async () => { layoutCalls += 1; return { ok: true }; },
+        writeAtomicJsonFn: async () => { writes += 1; return { ok: true }; },
+        now: new Date('2026-11-18T06:00:00.000Z'),
+      });
+      assert.equal(result.success, false);
+      assert.equal(result.qualificationEligible, false);
+      assert.equal(result.error, scenario === 'claim disappeared'
+        ? 'OPENCLAW_OC2_POST_TEST_CLAIM_UNREADABLE'
+        : 'OPENCLAW_OC2_POST_TEST_CLAIM_CHANGED');
+      assert.equal(reads, 2, 'claim must be checked before and after the fixed plan');
+      assert.equal(nodeRuns, OPENCLAW_OC2_FIXED_PLAN.length);
+      assert.equal(layoutCalls, 0, 'lost or changed claim must never publish proof');
+      assert.equal(writes, 0);
+      assert.deepEqual(result.evidenceReceipts, []);
+      assert.equal(result.receipt, undefined);
+    });
+  }
+});

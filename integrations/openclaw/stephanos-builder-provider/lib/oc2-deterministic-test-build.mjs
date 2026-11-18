@@ -294,6 +294,18 @@ export async function executeClaimedOpenClawOc2DeterministicTestBuild(action, cl
   const dirtAfter = classifyDirt(statusAfter ? statusAfter.split(/\r?\n/).filter(Boolean) : []);
   if (dirtAfter.blocksSync) return blocker('OPENCLAW_OC2_POST_TEST_DIRT_BLOCKS_QUALIFICATION');
 
+  // Fixed tests must not replace their persisted processing claim while running.
+  // Re-prove the canonical grant, action and queue identity before proof writes.
+  let persistedAfterTests;
+  try {
+    persistedAfterTests = JSON.parse(await (options.readFileFn || readFile)(claim.processingPath, 'utf8'));
+  } catch {
+    return blocker('OPENCLAW_OC2_POST_TEST_CLAIM_UNREADABLE');
+  }
+  if (JSON.stringify(persistedAfterTests) !== JSON.stringify(claim.item)) {
+    return blocker('OPENCLAW_OC2_POST_TEST_CLAIM_CHANGED');
+  }
+
   const providerInstance = text(options.providerInstance);
   if (!/^openclaw-gateway:[1-9][0-9]*$/.test(providerInstance)) return blocker('OPENCLAW_OC2_GATEWAY_IDENTITY_REQUIRED');
   // Bind evidence paths to the claimed grant and source revision, not merely
