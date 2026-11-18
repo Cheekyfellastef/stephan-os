@@ -143,6 +143,46 @@ test('exact #1725 OC2 grant selects only the fixed OC2 Gateway method', async ()
 });
 
 
+test('OC2 refuses contradictory queue action and grant before Gateway invocation', async (t) => {
+  const base = {
+    schemaVersion: 'stephanos.mission-worker-action.v1',
+    actionKind: 'agent-handoff',
+    adapter: 'openclaw-readonly',
+    operation: OPENCLAW_OC2_OPERATION,
+    actionId: TASK,
+    missionId: MISSION,
+    repository: 'Cheekyfellastef/stephan-os',
+    repositoryRoot: 'C:/Users/test/Documents/GitHub/stephan-os',
+  };
+  const cases = [
+    ['different task', (value) => { value.actionId = 'competing-task'; }],
+    ['missing task', (value) => { delete value.actionId; }],
+    ['different mission', (value) => { value.missionId = 'competing-mission'; }],
+    ['missing mission', (value) => { delete value.missionId; }],
+    ['different repository', (value) => { value.repository = 'other/repository'; }],
+    ['different operation', (value) => { value.operation = 'caller-selected-command'; }],
+  ];
+  for (const [name, mutate] of cases) {
+    await t.test(name, async () => {
+      const action = { ...base };
+      mutate(action);
+      let calls = 0;
+      const response = await executeOpenClawReadonlyAction(action, {
+        processingPath: 'C:/queue/processing/claim.json',
+      }, {
+        actionGrant: grant(),
+        runCommand() {
+          calls += 1;
+          return { status: 0, stdout: JSON.stringify(gatewayResult()), stderr: '' };
+        },
+      });
+      assert.equal(calls, 0, 'a mismatched action must not invoke OpenClaw Gateway');
+      assert.equal(response.success, false);
+      assert.equal(response.error, 'OPENCLAW_OC2_ACTION_GRANT_MISMATCH');
+    });
+  }
+});
+
 test('OC2 result-consumer rejects contradictory producer and receipt lineage', async (t) => {
   const corruptions = [
     ['inner mission mismatch', (value) => { value.result.missionId = 'other-mission'; }],
