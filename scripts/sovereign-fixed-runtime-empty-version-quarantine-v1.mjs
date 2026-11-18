@@ -4,7 +4,8 @@ import { spawnSync } from 'node:child_process';
 import { lstatSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createBattleBridgeMinimalChildEnvironment } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { createBattleBridgeMinimalChildEnvironment, battleBridgeGitFixedConfigArgs,
+  battleBridgeCanonicalRepositoryArgs } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 export const EMPTY_RUNTIME_VERSION_V1 = 'd390300e737265984ec5ee2b1b471f8d833aae16';
 export const INSTALLED_RUNTIME_VERSION_V1 = 'f55ecf987ab20c1554ad2115b285b5eba024bd94';
@@ -108,10 +109,39 @@ function boundedFile(path, maximum) {
   return bytes;
 }
 function git(args, input) {
-  const r = spawnSync(GIT, ['-C', SOURCE, ...args], { shell: false, windowsHide: true,
-    timeout: 5000, maxBuffer: 262144, input, env: createBattleBridgeMinimalChildEnvironment() });
+  const r = spawnSync(GIT, [...battleBridgeGitFixedConfigArgs(), ...battleBridgeCanonicalRepositoryArgs(SOURCE), ...args],
+    { shell: false, windowsHide: true, timeout: 5000, maxBuffer: 262144, input,
+      env: createBattleBridgeMinimalChildEnvironment(process.env,{git:true}) });
   if (r.error || r.status !== 0 || r.signal) refusal('EMPTY_VERSION_CANONICAL_GIT_UNPROVEN');
   return Buffer.from(r.stdout);
+}
+function captureInstalledCommitment() {
+  const version=win32.join(ROOT,INSTALLED_RUNTIME_VERSION_V1);
+  const pendingBytes=boundedFile(win32.join(version,'pending.json'),32768);
+  const p=JSON.parse(pendingBytes);
+  // The trusted installer embeds its manifest in host.exe; no manifest.json
+  // exists on disk. This recovery binds the protected pending commitment and
+  // actual host bytes, never loads a PE or grants native qualification.
+  if(p.SchemaVersion!=='stephanos.fixed-runtime-pending.v1' || p.SourceHead!==INSTALLED_RUNTIME_VERSION_V1
+      || !SHA40.test(p.SourceTree || '')
+      || ['HelperSha256','ManifestSha256','GitClosureSha256'].some(k=>!SHA64.test(p[k] || ''))
+      || hash(boundedFile(win32.join(version,'host.exe'),2097152))!==p.HelperSha256)
+    refusal('EMPTY_VERSION_INSTALLED_COMMITMENT_REQUIRED');
+  return {...Object.fromEntries(['SourceHead','SourceTree','HelperSha256','ManifestSha256','GitClosureSha256'].map(k=>[k,p[k]])),
+    PendingSha256:hash(pendingBytes)};
+}
+function physicalTextMatchesGitBlob(captured,physical) {
+  // These two exact source inputs are UTF-8 text. Do not run Git path filters
+  // against mutable .gitattributes/local filter configuration during capture.
+  const decoder=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true});
+  decoder.decode(captured);decoder.decode(physical);
+  if(physical.equals(captured))return true;
+  const normalized=Buffer.alloc(physical.length);let offset=0;
+  for(let i=0;i<physical.length;i++){
+    if(physical[i]===13 && physical[i+1]===10)continue;
+    normalized[offset++]=physical[i];
+  }
+  return normalized.subarray(0,offset).equals(captured);
 }
 export function prepareEmptyRuntimeVersionQuarantineV1(expectedMain) {
   try {
@@ -131,19 +161,11 @@ export function prepareEmptyRuntimeVersionQuarantineV1(expectedMain) {
       const blobSha = git(['rev-parse', expectedMain + ':' + path]).toString().trim();
       const bytes = git(['cat-file','blob',blobSha]);
       const physical = boundedFile(resolve(SOURCE,path),196608);
-      if (git(['hash-object','--path='+path,'--stdin'],physical).toString().trim() !== blobSha)
+      if (!physicalTextMatchesGitBlob(bytes,physical))
         refusal('EMPTY_VERSION_SOURCE_MATERIALIZATION_CHANGED');
       return { path, blobSha, materializedSha256: hash(physical), contentBase64: bytes.toString('base64') };
     });
-    const version = win32.join(ROOT, INSTALLED_RUNTIME_VERSION_V1);
-    const pendingBytes = boundedFile(win32.join(version,'pending.json'),32768);
-    const p = JSON.parse(pendingBytes);
-    if (p.SchemaVersion !== 'stephanos.fixed-runtime-pending.v1' || p.SourceHead !== INSTALLED_RUNTIME_VERSION_V1
-        || hash(boundedFile(win32.join(version,'host.exe'),2097152)) !== p.HelperSha256
-        || hash(boundedFile(win32.join(version,'manifest.json'),2097152)) !== p.ManifestSha256)
-      refusal('EMPTY_VERSION_INSTALLED_COMMITMENT_REQUIRED');
-    const installed = Object.fromEntries(['SourceHead','SourceTree','HelperSha256','ManifestSha256','GitClosureSha256'].map(k=>[k,p[k]]));
-    installed.PendingSha256 = hash(pendingBytes);
+    const installed=captureInstalledCommitment();
     const sid = spawnSync(PS,['-NoLogo','-NoProfile','-NonInteractive','-Command',
       '[Console]::Write([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)'],
     { shell:false, windowsHide:true, encoding:'utf8', timeout:5000, maxBuffer:1024,

@@ -106,14 +106,18 @@ function Assert-EmptyVersionProtectedSecurity {
     $sd=$Security.descriptor
     $allowed=@('S-1-5-18','S-1-5-32-544')
     if($Ancestor){$allowed+='S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'}
+    # Same two-ancestor mutation mask as RuntimeFixedAncestorAclV1. New siblings
+    # cannot replace a pinned route component. Protected runtime roots/versions
+    # keep the full write mask, including CreateFiles/CreateDirectories.
+    $writeMask=if($Ancestor){0x500D0150}else{0x500D0156}
     if($sd.Owner.Value -cnotin $allowed -or $null -eq $sd.DiscretionaryAcl -or
         -not ($sd.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclPresent) -or
         (-not $Ancestor -and -not ($sd.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected))){throw 'EMPTY_VERSION_PROTECTION_UNPROVEN'}
     foreach($ace in $sd.DiscretionaryAcl){
         if($ace -isnot [Security.AccessControl.CommonAce] -or $ace.IsCallback){throw 'EMPTY_VERSION_ACL_UNPROVEN'}
-        if($Ancestor -and ($ace.AceFlags -band [Security.AccessControl.AceFlags]::InheritOnly)){continue}
+        if($Ancestor -and (([int]$ace.AceFlags -band [int][Security.AccessControl.AceFlags]::InheritOnly) -ne 0)){continue}
         if($ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and
-            ($ace.AccessMask -band 0x500D0156) -ne 0 -and $ace.SecurityIdentifier.Value -cnotin $allowed){throw 'EMPTY_VERSION_WRITE_AUTHORITY_UNPROVEN'}
+            ($ace.AccessMask -band $writeMask) -ne 0 -and $ace.SecurityIdentifier.Value -cnotin $allowed){throw 'EMPTY_VERSION_WRITE_AUTHORITY_UNPROVEN'}
     }
 }
 function Open-EmptyVersionDirectory {
@@ -303,10 +307,11 @@ function Invoke-EmptyVersionQuarantine {
         foreach($key in @('SourceHead','SourceTree','HelperSha256','ManifestSha256','GitClosureSha256')){
             if($p.$key -cne $Bootstrap.Installed.$key){throw 'EMPTY_VERSION_INSTALLED_CHANGED'}
         }
-        foreach($pair in @(@('host.exe','HelperSha256'),@('manifest.json','ManifestSha256'))){
-            $bytes=Read-EmptyVersionPinnedFile ([IO.Path]::Combine($protectedRoot,$installedVersion,$pair[0])) 2097152 $true
-            if((Get-EmptyVersionDigest $bytes) -cne $Bootstrap.Installed.($pair[1])){throw 'EMPTY_VERSION_INSTALLED_CHANGED'}
-        }
+        # ManifestSha256 is an exact commitment in the protected pending record;
+        # the trusted installer embeds the manifest in the PE, not a third file.
+        # Loading/qualifying that PE is expressly outside this recovery artifact.
+        $bytes=Read-EmptyVersionPinnedFile ([IO.Path]::Combine($protectedRoot,$installedVersion,'host.exe')) 2097152 $true
+        if((Get-EmptyVersionDigest $bytes) -cne $Bootstrap.Installed.HelperSha256){throw 'EMPTY_VERSION_INSTALLED_CHANGED'}
         # Do not execute Git or load repository code with the elevated token.
         foreach($pair in @(@('.git\HEAD','ref: refs/heads/main'),@('.git\refs\heads\main',$Bootstrap.SourceHead))){
             $bytes=Read-EmptyVersionPinnedFile ([IO.Path]::Combine($sourceRoot,$pair[0])) 256

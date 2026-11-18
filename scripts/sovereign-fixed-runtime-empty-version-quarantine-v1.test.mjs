@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, realpathSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, realpathSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { resolve, join } from 'node:path';
+import { resolve, join, sep } from 'node:path';
+import { battleBridgeGitFixedConfigArgs, battleBridgeCanonicalRepositoryArgs } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import {
   buildEmptyRuntimeVersionQuarantineCandidateV1, EMPTY_RUNTIME_VERSION_V1 as OLD,
   INSTALLED_RUNTIME_VERSION_V1 as INSTALLED, EMPTY_RUNTIME_QUARANTINE_ENTRY_V1 as ENTRY,
@@ -91,6 +92,86 @@ test('three new files do not change or join the fixed-runtime closure',()=>{
   assert.equal(closure.paths.length,300);
   for(const p of [FACTORY,ENTRY,FACTORY.replace('.mjs','.test.mjs')])assert.equal(closure.paths.includes(p),false,p);
 });
+test('actual preparation capture accepts only installed host.exe + pending.json; embedded manifest is a commitment',()=>{
+  const dir=mkdtempSync(join(tmpdir(),'stephanos-empty-version-test-'));
+  const real=realpathSync(dir),temp=realpathSync(tmpdir());
+  assert.ok(real.toLowerCase().startsWith((temp+sep).toLowerCase()));
+  const host=Buffer.from('fixture host bytes; never executed');
+  const pending={SchemaVersion:'stephanos.fixed-runtime-pending.v1',...installed,HelperSha256:hash(host)};
+  delete pending.PendingSha256;
+  writeFileSync(join(dir,'host.exe'),host);writeFileSync(join(dir,'pending.json'),JSON.stringify(pending));
+  assert.deepEqual(readdirSync(dir).sort(),['host.exe','pending.json']);
+  const factoryUrl=new URL('./sovereign-fixed-runtime-empty-version-quarantine-v1.mjs',import.meta.url);
+  const factory=readFileSync(factoryUrl,'utf8');
+  const prefix='C:\\Program Files\\Stephanos\\SovereignFixedRuntimeV1\\'+INSTALLED+'\\';
+  const script=`import vm from 'node:vm';import * as fs from 'node:fs';import path from 'node:path';import{createHash}from'node:crypto';
+const root=${JSON.stringify(dir)},prefix=${JSON.stringify(prefix)},reads=[];
+const map=p=>{if(typeof p!=='string'||!p.startsWith(prefix))throw Error('UNEXPECTED_PATH');return path.join(root,p.slice(prefix.length));};
+const m=new vm.SourceTextModule(Buffer.from('${Buffer.from(factory).toString('base64')}','base64').toString()+'\\nexport {captureInstalledCommitment as captureInstalledFixture,physicalTextMatchesGitBlob as matchesFixture};',
+ {initializeImportMeta:meta=>meta.url=${JSON.stringify(factoryUrl.href)}});
+await m.link(async spec=>{
+ let ns;
+ if(spec==='node:fs')ns={lstatSync:p=>fs.lstatSync(map(p)),readFileSync:p=>{reads.push(p);return fs.readFileSync(map(p));},writeFileSync:()=>{throw Error('MUTATION');},existsSync:()=>{throw Error('UNEXPECTED_EXISTS');}};
+ else if(spec==='node:child_process')ns={spawnSync:()=>{throw Error('UNEXPECTED_EXECUTION');}};
+ else if(spec.startsWith('../shared/'))ns={createBattleBridgeMinimalChildEnvironment:()=>{throw Error('UNEXPECTED_ENVIRONMENT');},battleBridgeGitFixedConfigArgs:()=>{throw Error('UNEXPECTED_GIT');},battleBridgeCanonicalRepositoryArgs:()=>{throw Error('UNEXPECTED_GIT');}};
+ else ns=await import(spec);
+ const s=new vm.SyntheticModule(Object.keys(ns),function(){for(const[k,v]of Object.entries(ns))this.setExport(k,v);});return s;
+});
+await m.evaluate();const valid=m.namespace.captureInstalledFixture();
+const p=JSON.parse(fs.readFileSync(path.join(root,'pending.json')));p.ManifestSha256='?';fs.writeFileSync(path.join(root,'pending.json'),JSON.stringify(p));
+let badManifest=false;try{m.namespace.captureInstalledFixture();}catch(e){badManifest=e.message==='EMPTY_VERSION_INSTALLED_COMMITMENT_REQUIRED';}
+p.ManifestSha256='${installed.ManifestSha256}';fs.writeFileSync(path.join(root,'pending.json'),JSON.stringify(p));fs.writeFileSync(path.join(root,'host.exe'),'changed');
+let badHost=false;try{m.namespace.captureInstalledFixture();}catch(e){badHost=e.message==='EMPTY_VERSION_INSTALLED_COMMITMENT_REQUIRED';}
+const canonical=Buffer.from('first\\nsecond\\n');
+const matches=[m.namespace.matchesFixture(canonical,canonical),m.namespace.matchesFixture(canonical,Buffer.from('first\\r\\nsecond\\r\\n')),
+ m.namespace.matchesFixture(canonical,Buffer.concat([Buffer.from([239,187,191]),canonical])),m.namespace.matchesFixture(canonical,Buffer.from('changed\\n')),
+ m.namespace.matchesFixture(canonical,Buffer.from('first\\rsecond\\n'))];
+let badUtf8=false;try{m.namespace.matchesFixture(canonical,Buffer.from([255]));}catch{badUtf8=true;}
+console.log(JSON.stringify({valid,badManifest,badHost,reads,matches,badUtf8}));`;
+  try{
+    const r=spawnSync(process.execPath,['--experimental-vm-modules','--input-type=module','-e',script],{encoding:'utf8',shell:false,windowsHide:true,timeout:10000,maxBuffer:32768});
+    assert.equal(r.error,undefined);assert.equal(r.status,0,r.stderr);
+    const out=JSON.parse(r.stdout);
+    assert.equal(out.valid.ManifestSha256,pending.ManifestSha256);assert.equal(out.valid.HelperSha256,hash(host));
+    assert.equal(out.valid.PendingSha256,hash(Buffer.from(JSON.stringify(pending))));
+    assert.equal(out.badManifest,true);assert.equal(out.badHost,true);
+    assert.deepEqual(out.matches,[true,true,false,false,false]);assert.equal(out.badUtf8,true);
+    assert.equal(factory.includes("'hash-object'"),false,'no materialization filter invocation');
+    assert.ok(out.reads.every(p=>p.endsWith('host.exe')||p.endsWith('pending.json')));
+    assert.deepEqual(readdirSync(dir).sort(),['host.exe','pending.json']);
+  }finally{assert.equal(realpathSync(dir),real);rmSync(dir,{recursive:true,force:true});}
+});
+test('actual preparation Git reader uses existing canonical argv and sanitized Git authority environment',()=>{
+  const factoryUrl=new URL('./sovereign-fixed-runtime-empty-version-quarantine-v1.mjs',import.meta.url);
+  const factory=readFileSync(factoryUrl,'utf8');
+  const boundaryUrl=new URL('../shared/agents/battleBridgeExecutionBoundaryV1.mjs',import.meta.url);
+  const script=`import vm from 'node:vm';
+const calls=[];process.env.GIT_CONFIG_GLOBAL='malicious';process.env.GIT_REPLACE_REF_BASE='malicious';process.env.GIT_EXTERNAL_DIFF='malicious';process.env.NODE_OPTIONS='malicious';
+const m=new vm.SourceTextModule(Buffer.from('${Buffer.from(factory).toString('base64')}','base64').toString()+'\\nexport {git as gitFixture};',
+ {initializeImportMeta:meta=>meta.url=${JSON.stringify(factoryUrl.href)}});
+await m.link(async spec=>{
+ const ns=spec==='node:child_process'?{spawnSync:(exe,args,options)=>{calls.push({exe,args,env:options.env,shell:options.shell,windowsHide:options.windowsHide,timeout:options.timeout,input:options.input?.toString()});return{status:0,stdout:Buffer.from('a'.repeat(40)+'\\n')};}}:
+ spec.startsWith('../shared/')?await import(${JSON.stringify(boundaryUrl.href)}):await import(spec);
+ return new vm.SyntheticModule(Object.keys(ns),function(){for(const[k,v]of Object.entries(ns))this.setExport(k,v);});
+});await m.evaluate();m.namespace.gitFixture(['rev-parse','HEAD']);m.namespace.gitFixture(['cat-file','blob','a'.repeat(40)]);
+console.log(JSON.stringify(calls));`;
+  const r=spawnSync(process.execPath,['--experimental-vm-modules','--input-type=module','-e',script],
+    {encoding:'utf8',shell:false,windowsHide:true,timeout:10000,maxBuffer:32768});
+  assert.equal(r.error,undefined);assert.equal(r.status,0,r.stderr);
+  const calls=JSON.parse(r.stdout),prefix=[...battleBridgeGitFixedConfigArgs(),
+    ...battleBridgeCanonicalRepositoryArgs('C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os')];
+  assert.equal(calls.length,2);
+  for(const c of calls){
+    assert.equal(c.exe,'C:\\Program Files\\Git\\cmd\\git.exe');assert.deepEqual(c.args.slice(0,prefix.length),prefix);
+    assert.equal(c.shell,false);assert.equal(c.windowsHide,true);assert.equal(c.timeout,5000);
+    assert.equal(c.env.GIT_CONFIG_GLOBAL,process.platform==='win32'?'NUL':'/dev/null');
+    assert.equal(c.env.GIT_CONFIG_NOSYSTEM,'1');assert.equal(c.env.GIT_NO_REPLACE_OBJECTS,'1');
+    assert.equal(c.env.GIT_NO_LAZY_FETCH,'1');assert.equal(c.env.GIT_OPTIONAL_LOCKS,'0');
+    for(const k of ['GIT_REPLACE_REF_BASE','GIT_EXTERNAL_DIFF','NODE_OPTIONS'])assert.equal(c.env[k],undefined,k);
+  }
+  assert.deepEqual(calls[0].args.slice(prefix.length),['rev-parse','HEAD']);
+  assert.deepEqual(calls[1].args.slice(prefix.length),['cat-file','blob','a'.repeat(40)]);
+});
 test('actual PS AST parses; entry has no compiler, deletion, arbitrary DLL selection or runtime/custody API',windows,()=>{
   const r=powershell(`
 $commands=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.CommandAst]},$true)|ForEach-Object{$_.GetCommandName()})
@@ -162,14 +243,36 @@ ConvertTo-Json -Compress -InputObject $results
 `);
   assert.deepEqual(r,[true,true,false,false,false,false]);
 });
+test('exact two OS ancestors match the installed native sibling-creation policy while protected versions stay strict',windows,()=>{
+  const identity=readFileSync(new URL('./windows/SovereignFixedRuntimeIdentityV1.cs',import.meta.url),'utf8');
+  const expression=identity.slice(identity.indexOf('static void RuntimeFixedAncestorAclV1'))
+    .match(/const FileSystemRights mutation=([^;]+);/)[1]
+    .replaceAll('(FileSystemRights)','[long]')
+    .replaceAll('FileSystemRights.','[long][Security.AccessControl.FileSystemRights]::').replaceAll('|',' -bor ');
+  const r=powershell(`
+$nativeMask=${expression}
+function Test-FixtureAcl([int]$Mask,[bool]$Ancestor,[string]$Flags=''){
+ $access='0x'+$Mask.ToString('x8')
+ $sddl='O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;'+$Flags+';'+$access+';;;BU)'
+ try{Assert-EmptyVersionProtectedSecurity ([pscustomobject]@{descriptor=[Security.AccessControl.RawSecurityDescriptor]::new($sddl);sha256='x'}) $Ancestor;return $true}catch{return $false}
+}
+$siblings=@();$protected=@();$mutations=@()
+foreach($m in @(2,4,6)){$siblings+=Test-FixtureAcl $m $true;$protected+=Test-FixtureAcl $m $false}
+foreach($m in @(0x10,0x40,0x100,0x10000,0x40000,0x80000,0x10000000,0x40000000)){$mutations+=Test-FixtureAcl $m $true}
+@{nativeMask=[long]$nativeMask;siblings=$siblings;protected=$protected;mutations=$mutations;inheritOnly=(Test-FixtureAcl 0x40000000 $true 'IO')}|ConvertTo-Json -Compress
+`);
+  assert.equal(r.nativeMask,0x500D0150);
+  assert.deepEqual(r.siblings,[true,true,true]);assert.deepEqual(r.protected,[false,false,false]);
+  assert.deepEqual(r.mutations,Array(8).fill(false));assert.equal(r.inheritOnly,true);
+});
 function runDriverFixture(mode='after') {
   return powershell(`
 $script:failureMode='${mode}'
 $targetVersion='${OLD}';$installedVersion='${INSTALLED}';$receiptName='empty-version-quarantine-receipt-v1.json'
 $sourceRoot='C:\\fixture-source';$protectedRoot='C:\\fixture-protected'
 $script:events=[Collections.Generic.List[string]]::new();$script:post=$false;$script:emptyCount=0
-$hostBytes=[Text.Encoding]::UTF8.GetBytes('host');$manifestBytes=[Text.Encoding]::UTF8.GetBytes('manifest')
-$installed=[pscustomobject]@{SourceHead=$installedVersion;SourceTree=('b'*40);HelperSha256=(Get-EmptyVersionDigest $hostBytes);ManifestSha256=(Get-EmptyVersionDigest $manifestBytes);GitClosureSha256=('3'*64)}
+$hostBytes=[Text.Encoding]::UTF8.GetBytes('host')
+$installed=[pscustomobject]@{SourceHead=$installedVersion;SourceTree=('b'*40);HelperSha256=(Get-EmptyVersionDigest $hostBytes);ManifestSha256=('2'*64);GitClosureSha256=('3'*64)}
 $pending=[Text.Encoding]::UTF8.GetBytes((@{SchemaVersion='stephanos.fixed-runtime-pending.v1';SourceHead=$installed.SourceHead;SourceTree=$installed.SourceTree;HelperSha256=$installed.HelperSha256;ManifestSha256=$installed.ManifestSha256;GitClosureSha256=$installed.GitClosureSha256}|ConvertTo-Json -Compress))
 $installed|Add-Member PendingSha256 (Get-EmptyVersionDigest $pending)
 $bootstrap=[pscustomobject]@{SourceHead=('a'*40);SourceTree=('b'*40);OperationId=('1'*32);OperatorSid='S-1-5-21-1-2-3-1002';Installed=$installed}
@@ -183,8 +286,9 @@ function Assert-EmptyVersionProtectedSecurity($Security,$Ancestor=$false){}
 function Read-EmptyVersionPinnedFile($Path,$Maximum,$Protected=$false){
  if($Path.EndsWith('pending.json')){return ,$pending}
  if($Path.EndsWith('host.exe')){return ,$hostBytes}
- if($Path.EndsWith('manifest.json')){return ,$manifestBytes}
- return ,([Text.Encoding]::UTF8.GetBytes($(if($Path.EndsWith('HEAD')){'ref: refs/heads/main'}else{$bootstrap.SourceHead})))
+ if($Path.EndsWith('.git\\HEAD')){return ,([Text.Encoding]::UTF8.GetBytes('ref: refs/heads/main'))}
+ if($Path.EndsWith('.git\\refs\\heads\\main')){return ,([Text.Encoding]::UTF8.GetBytes($bootstrap.SourceHead))}
+ throw 'EMPTY_VERSION_UNEXPECTED_FILE_READ'
 }
 function Invoke-EmptyVersionNative($Name,$Arguments){if($Name -eq 'GetVolumeInformationByHandleW'){[void]$Arguments[6].Append('NTFS');return $true};throw 'EMPTY_VERSION_UNEXPECTED_NATIVE'}
 function Assert-EmptyVersionDirectory($Handle){$script:emptyCount++;if($script:failureMode -eq 'pre' -or ($script:failureMode -eq 'after' -and $script:post)){throw 'EMPTY_VERSION_DIRECTORY_NOT_EMPTY'}}
