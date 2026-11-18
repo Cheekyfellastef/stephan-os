@@ -243,7 +243,16 @@ export async function executeClaimedOpenClawOc2DeterministicTestBuild(action, cl
 
   const results = [];
   for (const plan of OPENCLAW_OC2_FIXED_PLAN) {
-    const run = runFixed(spawnSyncFn, BATTLE_BRIDGE_WINDOWS_HOST.node, [...plan.args], repoRoot, env);
+    let run;
+    try {
+      run = runFixed(spawnSyncFn, BATTLE_BRIDGE_WINDOWS_HOST.node, [...plan.args], repoRoot, env);
+    } catch {
+      // A runner exception or oversized output is a blocked test, never a successful qualification.
+      return blocker('OPENCLAW_OC2_FIXED_TEST_INVOCATION_FAILED', {
+        testResults: Object.freeze(results),
+        failedTestId: plan.testId,
+      });
+    }
     results.push(Object.freeze({ testId: plan.testId, status: run.status, outputSha256: run.outputSha256 }));
     if (run.error || run.status !== 0) {
       return blocker('OPENCLAW_OC2_FIXED_TEST_FAILED', { testResults: Object.freeze(results) });
