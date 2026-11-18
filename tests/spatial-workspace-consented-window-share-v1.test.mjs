@@ -758,3 +758,28 @@ test('native input publication is a transition boundary before fetching the next
     }finally{await h.close();}
   }
 });
+
+test('unexpected native text replies revoke queued Enter and require fresh editor selection',async()=>{
+  // An unfamiliar helper response or local refusal must never make the room
+  // assume the original ChatGPT editor remains a safe keyboard destination.
+  for(const outcome of ['editor-length-refused','editor-update-not-started',
+    'editor-unsupported','input-posted','unexpected-native-status']){
+    const h=captureTransitionHarness({inputOutcome:body=>
+      body.kind==='click'?'editor-accessibility-selected':
+      body.kind==='text'?outcome:'input-posted'});
+    try{
+      await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
+      assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);await h.tick();
+      assert.equal(h.client.input({kind:'text',text:'unsent draft'}),true);
+      assert.equal(h.client.input({kind:'key',key:'Enter'}),true,'Enter queued before native reply');
+      await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,2);
+      assert.equal(h.client.input({kind:'key',key:'Enter'}),false,
+        'unconfirmed native outcome must invalidate the editor acknowledgement');
+      await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,2,
+        'previously queued Enter must never reach native input');
+      assert.match(h.client.getState().inputStatus,/No key was sent/);
+    }finally{await h.close();}
+  }
+});
