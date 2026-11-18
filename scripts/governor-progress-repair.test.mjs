@@ -180,6 +180,100 @@ function New-Object {
 }
 `;
 
+const caretakerObservationFixture = String.raw`
+    $script:observations=0;$script:lifecycleCalls=0;$script:sleeps=0;$script:expectedIds=@()
+    $script:governorMutationOwner=$null
+    function Get-VrResourceGovernorProcesses {
+      $script:observations++;$script:vrGovernorInventoryComplete=$true
+      return [pscustomobject]@{ProcessId=(100+$script:observations)}
+    }
+    function Get-VrResourceGovernorProgress {param($Process) [pscustomobject]@{updatedAtUtc='2026-11-18T00:00:00Z'}}
+    function Test-VrResourceGovernorProcessCurrent {param($Process) return $false}
+    function Wait-VrResourceGovernorProgress {throw 'STALE_SOURCE_MUST_NOT_WAIT_FOR_PROGRESS'}
+    function Start-Sleep {param($Milliseconds)
+      if($Milliseconds -ne 500 -or $null -ne $script:governorMutationOwner){throw 'RETRY_SLEEP_BOUNDARY'}
+      $script:sleeps++
+    }
+    function New-FixtureLifecycleResult {param([string]$Blocker='')
+      [pscustomobject]@{blocker=$Blocker;restartRequested=$false;startRequested=$false;stopped=0;startedPid=0;baseline=''}
+    }
+`;
+
+test('caretaker observation refreshes every expected owner after transient pre-mutation refusal', {skip:!windows},()=>{
+  const result=run(caretakerObservationFixture+String.raw`
+    function Get-VrResourceGovernorProcesses {
+      $script:observations++
+      $script:vrGovernorInventoryComplete=$script:observations -gt 1
+      if(-not $script:vrGovernorInventoryComplete){return @()}
+      return [pscustomobject]@{ProcessId=(100+$script:observations)}
+    }
+    function Invoke-VrResourceGovernorLifecycle {param($ExpectedProcess,$ExpectedAbsent,$ProgressProven,$ExpectedProgress)
+      $script:lifecycleCalls++;$script:expectedIds+=,$(if($ExpectedProcess){$ExpectedProcess.ProcessId}else{0})
+      if($ExpectedAbsent -or $ProgressProven){throw 'UNPROVEN_ABSENCE_OR_PROGRESS'}
+      if($script:lifecycleCalls -eq 1){return New-FixtureLifecycleResult 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN'}
+      if($script:lifecycleCalls -eq 2){return New-FixtureLifecycleResult 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BUSY'}
+      return New-FixtureLifecycleResult
+    }
+    $result=Invoke-VrResourceGovernorObservedLifecycle
+    [pscustomobject]@{blocker=$result.blocker;observations=$script:observations;calls=$script:lifecycleCalls;sleeps=$script:sleeps;expectedIds=$script:expectedIds}|ConvertTo-Json -Compress
+  `,[caretaker]);
+  assert.deepEqual(result,{blocker:'',observations:3,calls:3,sleeps:2,expectedIds:[0,102,103]});
+});
+
+test('caretaker observation state model never retries mutation, custody uncertainty or a terminal result', {skip:!windows},()=>{
+  const rows=run(caretakerObservationFixture+String.raw`
+    $rows=@()
+    foreach($mode in @('success','custody','starting','recycle-failed','start-failed','unknown','restart-requested','start-requested','stopped','started')){
+      $script:observations=0;$script:lifecycleCalls=0;$script:sleeps=0;$script:mode=$mode
+      function Invoke-VrResourceGovernorLifecycle {param($ExpectedProcess,$ExpectedAbsent,$ProgressProven,$ExpectedProgress)
+        $script:lifecycleCalls++
+        if($script:lifecycleCalls -eq 1){return New-FixtureLifecycleResult 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BUSY'}
+        $r=New-FixtureLifecycleResult 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN'
+        switch($script:mode){
+          'success'{$r.blocker=''}
+          'custody'{$r.blocker='SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_CHILD_CUSTODY_UNPROVEN'}
+          'starting'{$r.blocker='SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_STARTING'}
+          'recycle-failed'{$r.blocker='SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_STALE_RECYCLE_FAILED'}
+          'start-failed'{$r.blocker='SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_START_FAILED'}
+          'unknown'{$r.blocker='UNRECOGNIZED'}
+          'restart-requested'{$r.restartRequested=$true}
+          'start-requested'{$r.startRequested=$true}
+          'stopped'{$r.stopped=1}
+          'started'{$r.startedPid=42}
+        };return $r
+      }
+      $result=Invoke-VrResourceGovernorObservedLifecycle
+      $rows+=,[pscustomobject]@{mode=$mode;calls=$script:lifecycleCalls;observations=$script:observations;sleeps=$script:sleeps}
+    };ConvertTo-Json -InputObject $rows -Compress
+  `,[caretaker]);
+  assert.equal(rows.length,10);
+  for(const row of rows)assert.deepEqual(row,{mode:row.mode,calls:2,observations:2,sleeps:1});
+});
+
+test('caretaker observation has a finite attempt bound when no owner can be proven', {skip:!windows},()=>{
+  const result=run(caretakerObservationFixture+String.raw`
+    function Invoke-VrResourceGovernorLifecycle {param($ExpectedProcess,$ExpectedAbsent,$ProgressProven,$ExpectedProgress)
+      $script:lifecycleCalls++;return New-FixtureLifecycleResult 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN'
+    }
+    $result=Invoke-VrResourceGovernorObservedLifecycle
+    [pscustomobject]@{blocker=$result.blocker;calls=$script:lifecycleCalls;observations=$script:observations;sleeps=$script:sleeps}|ConvertTo-Json -Compress
+  `,[caretaker]);
+  assert.deepEqual(result,{blocker:'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN',calls:24,observations:24,sleeps:23});
+});
+
+test('caretaker observation deadline expires before lifecycle admission after a slow census', {skip:!windows},()=>{
+  const result=run(caretakerObservationFixture+String.raw`
+    function Get-VrResourceGovernorProcesses {
+      $script:observations++;[Threading.Thread]::Sleep(12020);$script:vrGovernorInventoryComplete=$true
+      return [pscustomobject]@{ProcessId=101}
+    }
+    function Invoke-VrResourceGovernorLifecycle {$script:lifecycleCalls++;throw 'EXPIRED_OBSERVATION_DISPATCHED'}
+    $result=Invoke-VrResourceGovernorObservedLifecycle
+    [pscustomobject]@{blocker=$result.blocker;calls=$script:lifecycleCalls;observations=$script:observations;sleeps=$script:sleeps}|ConvertTo-Json -Compress
+  `,[caretaker]);
+  assert.deepEqual(result,{blocker:'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN',calls:0,observations:1,sleeps:0});
+});
+
 const cpuFixture = root => fixtureStatePaths(root) + String.raw`
     $script:governorMutationOwner=[pscustomobject]@{acquired=$true;abandoned=$false}
     $telemetryPath=Join-Path $stateRoot 'events.jsonl';$lightweightModel='llama3.2:3b'
@@ -195,6 +289,77 @@ const cpuFixture = root => fixtureStatePaths(root) + String.raw`
     }
     Publish-CpuFixture
 `;
+
+test('game census preserves the detection model across window, path and fallback failures', {skip:!windows},()=>{
+  const rows=run(String.raw`
+    $env:STEPHANOS_GAME_PROCESS_NAMES='CustomGame';$env:STEPHANOS_GAME_LIBRARY_ROOTS='C:\CustomGames'
+    function Get-ParentProcessInfo {param($ProcessId) [pscustomobject]@{processId=0;processName='';executablePath=''}}
+    function Test-WindowsGamePresenceActive {return $script:presence}
+    function Get-Process {param($ErrorAction) return $script:fixtureProcess}
+    $rows=@()
+    foreach($name in @('Starfield','CustomGame','Background','steam')){
+      foreach($pathMode in @('library','custom-library','outside','unreadable')){
+        foreach($windowMode in @('present','absent','unreadable')){
+          foreach($presence in @($false,$true)){
+            $script:presence=$presence;$script:pathReads=0;$script:windowReads=0
+            $script:fixturePathMode=$pathMode;$script:fixtureWindowMode=$windowMode
+            $script:fixtureProcess=[pscustomobject]@{Id=100;ProcessName=$name}
+            $script:fixtureProcess|Add-Member ScriptProperty Path {
+              $script:pathReads++
+              switch($script:fixturePathMode){
+                'library'{return 'C:\SteamLibrary\steamapps\common\Example\game.exe'}
+                'custom-library'{return 'C:\CustomGames\Example\game.exe'}
+                'outside'{return 'C:\Windows\background.exe'}
+                'unreadable'{throw 'FIXTURE_PATH_UNREADABLE'}
+              }
+            }
+            $script:fixtureProcess|Add-Member ScriptProperty MainWindowHandle {
+              $script:windowReads++
+              if($script:fixtureWindowMode -eq 'unreadable'){throw 'FIXTURE_WINDOW_UNREADABLE'}
+              if($script:fixtureWindowMode -eq 'present'){return 123};return 0
+            }
+            $signal=Get-FlatGameSignal
+            $rows+=,[pscustomobject]@{name=$name;pathMode=$pathMode;windowMode=$windowMode;presence=$presence;active=$signal.active;selected=$signal.processName;pathReads=$script:pathReads;windowReads=$script:windowReads}
+          }
+        }
+      }
+    }
+    ConvertTo-Json -InputObject $rows -Compress
+  `);
+  assert.equal(rows.length,96);
+  for(const row of rows){
+    const excluded=row.name==='steam';
+    const known=['Starfield','CustomGame'].includes(row.name);
+    const visible=row.windowMode==='present';
+    const library=['library','custom-library'].includes(row.pathMode);
+    const detected=!excluded&&(known||(visible&&library));
+    const context=JSON.stringify(row);
+    assert.equal(row.active,detected||row.presence,context);
+    assert.equal(row.selected,detected?row.name:row.presence?'GameBarPresenceWriter':'',context);
+    assert.equal(row.pathReads,!excluded&&(known||visible)?1:0,context);
+    assert.equal(row.windowReads,!excluded&&!known?1:0,context);
+  }
+});
+
+test('background census size cannot multiply expensive path observations or change first matching game', {skip:!windows},()=>{
+  const result=run(String.raw`
+    $env:STEPHANOS_GAME_PROCESS_NAMES='';$env:STEPHANOS_GAME_LIBRARY_ROOTS=''
+    $script:pathReads=0;$script:fixtureProcesses=@()
+    function Get-ParentProcessInfo {param($ProcessId) [pscustomobject]@{processId=0;processName='';executablePath=''}}
+    function Test-WindowsGamePresenceActive {return $false}
+    function Get-Process {param($ErrorAction) return $script:fixtureProcesses}
+    for($i=0;$i -lt 500;$i++){
+      $p=[pscustomobject]@{Id=($i+1);ProcessName=('background'+$i);MainWindowHandle=0}
+      $p|Add-Member ScriptProperty Path {$script:pathReads++;throw 'NON_CANDIDATE_PATH_MUST_NOT_BE_OBSERVED'}
+      $script:fixtureProcesses+=,$p
+    }
+    $script:fixtureProcesses+=,[pscustomobject]@{Id=600;ProcessName='FirstLibraryGame';MainWindowHandle=1;Path='C:\XboxGames\Example\game.exe'}
+    $script:fixtureProcesses+=,[pscustomobject]@{Id=601;ProcessName='Starfield';MainWindowHandle=0;Path='C:\games\Starfield.exe'}
+    $signal=Get-FlatGameSignal
+    [pscustomobject]@{selected=$signal.processName;active=$signal.active;unnecessaryPathReads=$script:pathReads}|ConvertTo-Json -Compress
+  `);
+  assert.deepEqual(result,{selected:'FirstLibraryGame',active:true,unnecessaryPathReads:0});
+});
 
 test('CPU continuation comes only from unchanged complete publication and closes every denial edge', {skip:normalNativeSkip}, async t=>{
   const root=await realpath(await mkdtemp(join(tmpdir(),'governor-cpu-')));
@@ -628,8 +793,9 @@ test('governor and caretaker use the same fixed SID-bound protected kernel owner
   assert.match(governor, /SetAccessRuleProtection\(\$true, \$false\)/);
   assert.match(governor, /GetAccessControl\(\)/);
   assert.match(governor, /AbandonedMutexException/);
-  const lifecycle = caretaker.slice(caretaker.indexOf('function Invoke-VrResourceGovernorLifecycle {'),
-    caretaker.indexOf('function Get-SovereignCommanderHealth {'));
+  const lifecycleStart = caretaker.indexOf('function Invoke-VrResourceGovernorLifecycle {');
+  const lifecycle = caretaker.slice(lifecycleStart,
+    caretaker.indexOf('\nfunction ', lifecycleStart + 1));
   assert.doesNotMatch(lifecycle, /Wait-VrResourceGovernorProgress/,
     'caretaker must release ownership before asking the new watcher to advance');
 });

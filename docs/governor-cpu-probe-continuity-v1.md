@@ -87,3 +87,94 @@ solve a false interruption by ignoring a hold, extending stale evidence, forcing
 gaming mode off, restarting another owner or treating cancelled compilation as a
 compiler failure. A successful native build still does not prove image capture,
 GPU fence correctness, OpenXR submission or headset readiness.
+
+## Structural timing review: idle census and continuation
+
+The first live build after the continuation and owner-adoption fixes still
+cancelled on main `474ebece697e4a7997acf9e45b5205c069b2c566`. The completed
+observation at 21:59:44.8856152Z was 13.951 seconds old when the next read-only
+probe began at 21:59:58.8370431Z on 18 November 2026. No game, VR or preparation
+signal was present in the sampled records, but the prior observation exceeded
+the ten-second producer limit, so no continuation grant was issued. The owned
+build exited and released custody. This is correct denial, not permission to
+raise the age limit or refresh the timestamp without observation.
+
+Review the whole path: Watch acquires the existing mutex, checks real-headset
+protection, gathers game signals, resolves effective policy, then reconciles
+when the five-second idle heartbeat is due. The three-second scan cache measures
+from scan completion. Slow discovery therefore delays both the next heartbeat
+and recognition of new activity. A fresh continuation subrecord cannot repair
+that scheduling delay. Tests that seed a fresh prior observation miss it.
+
+Read-only measurements under the actual Windows PowerShell 5.1 host showed
+4.587 seconds for flat-game discovery across 496 processes; reading their
+`Process.Path` properties alone took 4.258 seconds. The same operation under
+PowerShell 7 took 313 milliseconds, so the host is part of the proof. Framework
+process-image discovery is paid for every background process even though the
+existing predicate requires either a known game name or both a library path
+and a window.
+
+Preserve that predicate and inventory order, but observe the necessary window
+before the expensive path for unknown processes. Known game names still win
+without a window or readable path; excluded launchers remain excluded; custom
+names, custom library roots, and Windows Game Presence fallback remain intact.
+Only plausible candidates incur the path lookup. This changes observation
+cost, not gaming policy, freshness, the five-second probe budget, custody,
+initial admission, or the CPU continuation schema. No new cache, controller,
+worker or independent authority is introduced.
+
+The executable property model covers every combination of known/custom/unknown/
+excluded name, built-in/custom/non-library/unreadable path, visible/absent/
+unreadable window and presence fallback. A 500-background-process fixture proves
+that irrelevant process count does not multiply path reads or change which game
+is selected first. Real-host timing and a subsequent guarded build remain
+commissioning evidence, separate from these deterministic proofs.
+
+Three alternating read-only measurements on the same live Windows PowerShell
+5.1 host observed baseline discovery at 3,363/4,602/3,864 ms and candidate
+discovery at 188/168/170 ms, with 485–494 processes and the same inactive result.
+These measurements establish the removed cost, not an absolute scheduling
+guarantee or a successful native build.
+
+Reusable lesson: bound observation work before depending on a freshness budget.
+Test the classification model and the number of expensive observations in the
+actual runtime host. An over-budget, changed, unreadable or expired observation
+must still fail closed; lower latency is never authority to reuse stale truth.
+
+## Adoption convergence under transient observation failures
+
+After the discovery repair merged and canonical sync passed 192 checks, the
+existing governor process still predated the new source. Its exact identity
+was accepted, but the scheduled caretaker repeatedly returned exit 4. A bounded
+110-second read-only census found 17 complete observations among 52 samples;
+short-lived PowerShell processes made the remaining inventories opaque. At
+22:34:34Z the scheduled task coincided with an opaque inventory; complete
+observations appeared from 22:34:38Z. The next scheduled minute again coincided
+with opaque processes. This does not prove every failure's internal branch;
+it establishes that one observation per periodic invocation misses valid
+windows even while the correct owner remains available.
+
+The existing caretaker now re-observes only its two pre-mutation refusals:
+mutation-owner busy and owner unproven. Each attempt recreates the complete
+census, expected process/absence and progress evidence, then enters the same
+unchanged lifecycle gate. Retries stop after 24 attempts or a 12-second
+monotonic window, with 500 ms between attempts. Expiry is checked again after
+observation and before entering the lifecycle. A slow OS observation can finish
+after the window, but cannot then authorize lifecycle execution.
+
+The lifecycle always releases its mutex before a retry delay. No retry is
+allowed after a start/restart request, stopped process, started PID, child-custody
+uncertainty, starting state, failed replacement, exception or successful result.
+Both retryable refusal codes arise before custody recovery or process mutation;
+the mutation flags provide additional defense. Timeout does not establish
+absence, terminate a process, clear custody or authorize another owner.
+
+This changes convergence in the existing caretaker, not its authority. It adds
+no task, timer service, queue, lease, override or execution transport. The
+executable state model covers transient refusal followed by fresh ownership,
+all non-retryable terminal/mutation classes, finite attempt exhaustion and a
+real elapsed-deadline refusal before lifecycle admission. Existing native
+mutex, re-census, exact identity and retained-child tests remain mandatory.
+
+Reusable invariant: retry transient observations before mutation, using fresh
+evidence each time; never retry uncertain mutation as if it were observation.

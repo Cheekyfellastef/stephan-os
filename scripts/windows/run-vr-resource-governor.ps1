@@ -983,6 +983,16 @@ function Get-FlatGameSignal {
         if (-not $name -or $excludedNames -contains $name) { continue }
 
         $known = $allKnownNames -contains $name
+        # A non-known process can qualify only with a game-library path AND a
+        # window. On Windows PowerShell, Process.Path enumerates process modules
+        # and can consume the heartbeat budget across hundreds of background
+        # processes. Observe the cheap required window first, then resolve only
+        # candidates' paths. Known games remain active even without either.
+        $hasGameWindow = $false
+        if (-not $known) {
+            try { $hasGameWindow = [int64]$process.MainWindowHandle -ne 0 } catch { $hasGameWindow = $false }
+            if (-not $hasGameWindow) { continue }
+        }
         $path = ''
         try { $path = [string]$process.Path } catch { $path = '' }
 
@@ -995,9 +1005,6 @@ function Get-FlatGameSignal {
                 }
             }
         }
-
-        $hasGameWindow = $false
-        try { $hasGameWindow = [int64]$process.MainWindowHandle -ne 0 } catch { $hasGameWindow = $false }
 
         if ($known -or ($inGameLibrary -and $hasGameWindow)) {
             $parent = Get-ParentProcessInfo -ProcessId ([int]$process.Id)
