@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import './battle-bridge-ignition-sync-preflight.test.mjs';
+import './windows-ignition-preflight-recovery.test.mjs';
 import './battle-bridge-ignition-sync-package-contract.test.mjs';
 import './battle-bridge-github-sync-and-refresh.test.mjs';
 

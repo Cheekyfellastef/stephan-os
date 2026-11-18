@@ -52,6 +52,7 @@ $canonicalSharedWorkspaceRoot = if ($SharedWorkspace -and $SharedWorkspace.Trim(
 $battleBridgeSupervisorCurrentPath = Join-Path $canonicalSharedWorkspaceRoot 'status/battle-bridge-ignition-supervisor-current.json'
 $script:ignitionRunStartedAtUtc = (Get-Date).ToUniversalTime()
 $script:ignitionHelperProcess = $null
+$script:ignitionHelperLogFiles = @()
 $script:supervisorRecordFreshnessSkewSeconds = 2
 $ignitionProofRoot = $canonicalSharedWorkspaceRoot
 $ignitionStatusPath = Join-Path $ignitionProofRoot 'launcher-status.json'
@@ -821,17 +822,44 @@ function Show-IgnitionSplashScreen {
 
 function Get-LauncherChildBlocker {
   Initialize-IgnitionProofWorkspace
-  $logRoot = Join-Path $ignitionProofRoot 'logs'
-  if (-not (Test-Path -LiteralPath $logRoot -PathType Container)) { return $null }
-
-  $logFiles = @(Get-ChildItem -LiteralPath $logRoot -File -Filter '*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 8)
+  # Observe only this retained helper's unique logs. A previous launch or another
+  # background service cannot supply the current ignition failure.
+  $logFiles = @($script:ignitionHelperLogFiles | ForEach-Object {
+    if (Test-Path -LiteralPath $_ -PathType Leaf) { Get-Item -LiteralPath $_ }
+  })
 
   foreach ($logFile in $logFiles) {
     try {
-      $lines = @(Get-Content -LiteralPath $logFile.FullName -Encoding UTF8 -ErrorAction Stop)
+      $lines = @(Get-Content -LiteralPath $logFile.FullName -Encoding UTF8 -Tail 256 -ErrorAction Stop)
 
       for ($index = $lines.Count - 1; $index -ge 0; $index--) {
         $line = [string]$lines[$index]
+
+        $preflightPrefix = 'BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_RESULT='
+        if ($logFile.FullName -eq $script:ignitionHelperLogFiles[0] -and
+            $line.StartsWith($preflightPrefix, [System.StringComparison]::Ordinal)) {
+          # The latest attempt wins, including a successful retry. Malformed or
+          # partial output is never permission to reuse an older failed attempt.
+          try { $preflight = $line.Substring($preflightPrefix.Length) | ConvertFrom-Json }
+          catch { return $null }
+          if ($preflight.schemaVersion -cne 'stephanos.battle-bridge-ignition-sync-preflight.v1' -or
+              $preflight.ok -isnot [bool] -or $preflight.ok -ne $false -or
+              $preflight.classification -cne 'IGNITION_SYNC_PREFLIGHT_BLOCKED' -or
+              $preflight.finalVerdict -cne 'IGNITION_SYNC_PREFLIGHT_BLOCKED' -or
+              [string]$preflight.blocker -cnotmatch '^[A-Z0-9_:-]{1,160}$') { return $null }
+          $reason = [string]$preflight.syncBlockerReason
+          if ($reason -cnotmatch '^[A-Z0-9_:-]{1,160}$') { $reason = [string]$preflight.blocker }
+          $nextAction = if ($reason -ceq 'SYNC_ALREADY_RUNNING') {
+            'Another canonical source sync is still running. Let it finish, then press Ignition again.'
+          } else { 'Resolve the reported preflight blocker, then press Ignition again.' }
+          return [ordered]@{
+            message = "Ignition source preflight blocked: $reason"
+            reason = $reason
+            nextOperatorAction = $nextAction
+            packetType = 'ignition-sync-preflight'
+            sourceLog = $logFile.FullName
+          }
+        }
 
         $packetMatch = [regex]::Match($line, '^\[IGNITION\]\s+(source-update-status|repair-packet|source-merge-repair-packet|openclaw-autostart-status|openclaw-recovery-packet|recovery-packet)=(\{.*\})\s*$')
         if ($packetMatch.Success) {
@@ -902,7 +930,7 @@ function Start-DevWindow([string]$Title, [string]$Command, [switch]$ReturnProces
   $escapedRepoRoot = $repoRoot.Replace("'", "''")
   $escapedTitle = $Title.Replace("'", "''")
   $escapedCommand = $Command.Replace("'", "''")
-  $safeLogName = ($Title -replace '[^A-Za-z0-9._-]', '-')
+  $safeLogName = ($Title -replace '[^A-Za-z0-9._-]', '-') + '-' + ([guid]::NewGuid()).ToString('N')
   $stdoutLog = Join-Path $ignitionProofRoot ("logs/{0}.stdout.log" -f $safeLogName)
   $stderrLog = Join-Path $ignitionProofRoot ("logs/{0}.stderr.log" -f $safeLogName)
   $psCommand = "`$Host.UI.RawUI.WindowTitle = '$escapedTitle'; Set-Location '$escapedRepoRoot'; & $escapedCommand"
@@ -912,7 +940,10 @@ function Start-DevWindow([string]$Title, [string]$Command, [switch]$ReturnProces
     '-ExecutionPolicy', 'Bypass',
     '-Command', $psCommand
   ) -PassThru
-  if ($ReturnProcess.IsPresent) { return $process }
+  if ($ReturnProcess.IsPresent) {
+    $script:ignitionHelperLogFiles = @($stdoutLog, $stderrLog)
+    return $process
+  }
 }
 
 function Test-UrlReachable([string]$Url) {
@@ -1005,7 +1036,9 @@ function Wait-ForBattleBridgeSupervisorReady([int]$TimeoutSeconds = 300) {
       }
     }
     $helperExitCode = $null
+    $helperHasExited = $false
     if ($script:ignitionHelperProcess -and $script:ignitionHelperProcess.HasExited) {
+      $helperHasExited = $true
       try {
         # Windows PowerShell can report HasExited before Start-Process -PassThru has
         # populated ExitCode for a redirected background child. Reap/refresh first;
@@ -1016,6 +1049,12 @@ function Wait-ForBattleBridgeSupervisorReady([int]$TimeoutSeconds = 300) {
       }
       catch {
         $helperExitCode = $null
+      }
+    }
+    if ($helperHasExited) {
+      $childBlocker = Get-LauncherChildBlocker
+      if ($childBlocker -and $childBlocker.packetType -eq 'ignition-sync-preflight') {
+        throw ([string]$childBlocker.message)
       }
     }
     if ($null -ne $helperExitCode -and [int]$helperExitCode -ne 0) {
