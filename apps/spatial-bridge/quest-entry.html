@@ -260,6 +260,9 @@
       if(state.microphoneActive){
         if(micMeterTimer===null)micMeterTimer=setInterval(()=>{
           const level=audio.microphoneLevel();
+          // A failed analyser can synchronously revoke the mic and redraw an
+          // inactive meter; this old tick must not overwrite that newer state.
+          if(!audio.getState().microphoneActive)return;
           document.getElementById('audio-meter').textContent=level===null
             ?'Microphone opened, level analyser unavailable.'
             :'Live microphone level: '+Math.min(100,Math.round(level*360))+'% (not recorded)';
