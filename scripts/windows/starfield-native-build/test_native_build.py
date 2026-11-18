@@ -63,7 +63,8 @@ def governor(**changes):
              "active": False, "flatGameActive": False, "airLinkActive": False,
              "realAirLinkActive": False, "virtualAirLinkTestActive": False, "prepareLeaseActive": False,
              "phase": "NORMAL", "overrideMode": "AUTO", "ollamaLoadMode": "balanced",
-             "cooldownUntilUtc": "", "localModelAllowed": True, "heavyModelAllowed": True}
+             "cooldownUntilUtc": "", "localModelAllowed": True, "heavyModelAllowed": True,
+             "nativeProbeCustodyHeld": False, "dependencyObservationKnown": True, "evictionHealthy": True}
     value.update(changes)
     return value
 
@@ -183,7 +184,7 @@ class FilesAndGamingTests(unittest.TestCase):
             for value in (True, 0, None, "false"):
                 self.write_state(governor(**{field: value}))
                 with self.subTest(field=field, value=value), self.assertRaises(build.BuildBlocked):build.gaming_admitted(self.root)
-        for field in ("localModelAllowed", "heavyModelAllowed"):
+        for field in ("localModelAllowed", "heavyModelAllowed", "dependencyObservationKnown", "evictionHealthy"):
             for value in (False, 1, None, "true"):
                 self.write_state(governor(**{field: value}))
                 with self.subTest(field=field, value=value), self.assertRaises(build.BuildBlocked):build.gaming_admitted(self.root)
@@ -697,6 +698,143 @@ class WindowsNativeCustodyTests(unittest.TestCase):
             active.stream = original_stream
             active.close()
         self.assertTrue(active.path.exists())
+
+
+class CpuProbeContinuityTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.vr = self.root / "vr";self.vr.mkdir()
+        self.state_path = self.vr / "vr-resource-governor-current.json"
+
+    def state(self):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        prior = (now - datetime.timedelta(seconds=2)).isoformat()
+        observed = (now - datetime.timedelta(milliseconds=100)).isoformat()
+        grant = {"schemaVersion": "stephanos.governor-cpu-probe-continuity.v1", "cycleId": "a" * 32,
+                 "phase": "IDLE_READ_ONLY_RECONCILE", "allowed": True, "observedAtUtc": observed,
+                 "expiresAtUtc": (now + datetime.timedelta(seconds=4)).isoformat(),
+                 "priorObservationAtUtc": prior, "ownerProcessId": 1234,
+                 "ownerCreationFileTime": "133000000000000001", "machineHash": "b" * 64,
+                 "bootIdentifier": "c" * 32}
+        attempt = {"schemaVersion": "stephanos.governor-probe-attempt.v1", "attemptId": "d" * 32,
+                   "operation": "GpuSnapshot", "phase": "BOUND", "commandSha256": "e" * 64,
+                   "preparedAtUtc": observed, "ownerProcessId": grant["ownerProcessId"],
+                   "ownerCreationFileTime": int(grant["ownerCreationFileTime"]),
+                   "machineHash": grant["machineHash"], "bootIdentifier": grant["bootIdentifier"]}
+        return governor(updatedAtUtc=prior, nativeProbeCustodyHeld=True, localModelAllowed=False,
+                        heavyModelAllowed=False, dependencyObservationKnown=False, evictionHealthy=False,
+                        ollamaLoadMode="unknown", cpuProbeContinuity=grant, nativeProbeAttempt=attempt)
+
+    @staticmethod
+    def owner(pid, birth):
+        # Pure consumer model only; actual Windows handles are tested separately.
+        return {"ok": True, "alive": True, "pid": pid, "created_filetime": birth}
+
+    def admitted(self, state, observer=None):
+        self.state_path.write_text(json.dumps(state), encoding="utf-8")
+        return build.gaming_admitted(self.root, probe_owner_observer=observer or self.owner)
+
+    def test_continuation_is_distinct_from_initial_admission_and_model_permission(self):
+        state = self.state()
+        self.assertTrue(self.admitted(state))
+        with self.assertRaises(build.BuildBlocked):build.gaming_admitted(self.root)
+        self.assertFalse(state["localModelAllowed"]);self.assertFalse(state["heavyModelAllowed"])
+        state["nativeProbeCustodyHeld"] = False
+        self.assertTrue(self.admitted(state))  # positive retained-exit witness, next probe pending
+        state["nativeProbeAttempt"].update(phase="PREPARING", ownerCreationFileTime=0,
+                                          machineHash="UNOBSERVED", bootIdentifier="UNOBSERVED")
+        with self.assertRaises(build.BuildBlocked):self.admitted(state)
+        state["nativeProbeCustodyHeld"] = True
+        self.assertTrue(self.admitted(state))  # no child launched before binding
+
+    def test_every_grant_field_is_required_and_unknown_fields_are_rejected(self):
+        for field in self.state()["cpuProbeContinuity"]:
+            state = self.state();del state["cpuProbeContinuity"][field]
+            with self.subTest(field=field), self.assertRaises(build.BuildBlocked):self.admitted(state)
+        state = self.state();state["cpuProbeContinuity"]["callerWaiver"] = True
+        with self.assertRaises(build.BuildBlocked):self.admitted(state)
+        for field, values in {"allowed": [False, 1, "true"], "ownerProcessId": [True, "1234", 0],
+                              "ownerCreationFileTime": [133000000000000001, "01", "18446744073709551616"],
+                              "cycleId": [None, "A" * 32], "machineHash": ["bad"],
+                              "bootIdentifier": ["0" * 32], "phase": ["IDLE"], "schemaVersion": ["other"]}.items():
+            for value in values:
+                state = self.state();state["cpuProbeContinuity"][field] = value
+                with self.subTest(field=field, value=value), self.assertRaises(build.BuildBlocked):self.admitted(state)
+
+    def test_clock_expiry_future_stale_and_duration_never_extend_permission(self):
+        for mode in ("expired", "future", "too-long", "stale-prior", "changed-prior", "no-zone", "malformed"):
+            state = self.state();grant = state["cpuProbeContinuity"]
+            now = datetime.datetime.now(datetime.timezone.utc)
+            if mode == "expired":grant["expiresAtUtc"] = (now - datetime.timedelta(seconds=1)).isoformat()
+            elif mode == "future":grant["observedAtUtc"] = (now + datetime.timedelta(seconds=1)).isoformat()
+            elif mode == "too-long":grant["expiresAtUtc"] = (now + datetime.timedelta(seconds=6)).isoformat()
+            elif mode == "stale-prior":
+                grant["priorObservationAtUtc"] = state["updatedAtUtc"] = (now - datetime.timedelta(seconds=11)).isoformat()
+            elif mode == "changed-prior":grant["priorObservationAtUtc"] = now.isoformat()
+            elif mode == "no-zone":grant["expiresAtUtc"] = now.replace(tzinfo=None).isoformat()
+            else:grant["expiresAtUtc"] = "invalid"
+            with self.subTest(mode=mode), self.assertRaises(build.BuildBlocked):self.admitted(state)
+
+    def test_attempt_custody_operation_epoch_and_types_remain_closed(self):
+        for field, values in {"operation": ["OllamaStop", "OwnerAbandoned", "GovernorRecycle", "unknown"],
+                              "phase": ["UNKNOWN", None], "ownerProcessId": [True, 1235],
+                              "ownerCreationFileTime": ["133000000000000001", 133000000000000002],
+                              "machineHash": ["f" * 64], "bootIdentifier": ["f" * 32],
+                              "commandSha256": ["bad"], "attemptId": [None],
+                              "preparedAtUtc": ["2000-01-01T00:00:00Z", "2999-01-01T00:00:00Z"]}.items():
+            for value in values:
+                state = self.state();state["nativeProbeAttempt"][field] = value
+                with self.subTest(field=field, value=value), self.assertRaises(build.BuildBlocked):self.admitted(state)
+        for field in self.state()["nativeProbeAttempt"]:
+            state = self.state();del state["nativeProbeAttempt"][field]
+            with self.subTest(missing=field), self.assertRaises(build.BuildBlocked):self.admitted(state)
+
+    def test_live_owner_failure_pid_reuse_and_state_race_deny(self):
+        for result in (None, {}, {"ok": True, "alive": False},
+                       {"ok": True, "alive": True, "pid": 1234, "created_filetime": "133000000000000002"},
+                       {"ok": True, "alive": True, "pid": "1234", "created_filetime": "133000000000000001"}):
+            with self.subTest(result=result), self.assertRaises(build.BuildBlocked):
+                self.admitted(self.state(), lambda *_: result)
+        def unavailable(*_):raise OSError("observation unavailable")
+        with self.assertRaises(build.BuildBlocked):self.admitted(self.state(), unavailable)
+        def changed(pid, birth):
+            self.state_path.write_text(json.dumps(governor(active=True)))
+            return self.owner(pid, birth)
+        with self.assertRaisesRegex(build.BuildBlocked, "GAMING_STATE_CHANGED"):
+            self.admitted(self.state(), changed)
+
+    def test_permission_expiry_during_native_owner_observation_is_rechecked(self):
+        from unittest.mock import patch
+        state = self.state()
+        initial = datetime.datetime.now(datetime.timezone.utc)
+        later = initial + datetime.timedelta(seconds=6)
+        clock = [initial];calls = []
+        class Clock(datetime.datetime):
+            @classmethod
+            def now(cls, tz=None):return clock[0]
+        def owner(pid, birth):
+            calls.append(pid);clock[0] = later
+            return self.owner(pid, birth)
+        with patch.object(datetime, "datetime", Clock):
+            with self.assertRaises(build.BuildBlocked):self.admitted(state, owner)
+        self.assertEqual(calls, [1234])
+
+    def test_gaming_override_preparation_and_failure_flags_still_win(self):
+        changes = {"active": True, "flatGameActive": True, "airLinkActive": True,
+                   "realAirLinkActive": True, "virtualAirLinkTestActive": True, "prepareLeaseActive": True,
+                   "phase": "COOLDOWN", "overrideMode": "FORCE_OFF", "cooldownUntilUtc": "future",
+                   "nativeProbeCustodyHeld": "false", "dependencyObservationKnown": True,
+                   "evictionHealthy": True, "ollamaLoadMode": "balanced", "localModelAllowed": True}
+        for field, value in changes.items():
+            state = self.state();state[field] = value
+            with self.subTest(field=field), self.assertRaises(build.BuildBlocked):self.admitted(state)
+        for filename, value in (("gaming-resource-prepare.json", {}),
+                                ("gaming-resource-override.json", {"schemaVersion": "stephanos.gaming-resource-override.v1", "mode": "FORCE_OFF"})):
+            path = self.vr / filename;path.write_text(json.dumps(value))
+            with self.subTest(filename=filename), self.assertRaises(build.BuildBlocked):self.admitted(self.state())
+            path.unlink()
 
 
 if __name__ == "__main__":unittest.main()
