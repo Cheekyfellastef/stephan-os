@@ -324,6 +324,17 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     const prior = byCapacityIdentity.get(receipt.id);
     if (!prior || time(receipt.observedAtUtc) > time(prior.observedAtUtc)) {
       byCapacityIdentity.set(receipt.id, receipt);
+    } else if (time(receipt.observedAtUtc) === time(prior.observedAtUtc)) {
+      // An equal-clock second publisher is not newer authority. Preserve exact
+      // duplicates only; distinct receipts for one worker/route are ambiguous.
+      // Once ambiguous at a timestamp, a later equal-clock record cannot clear it.
+      const sameReceipt = !prior.ambiguousAtSameTime
+        && ['state', 'receiptId', 'queueDepth', 'expiresAtUtc'].every(
+          key => prior[key] === receipt[key]);
+      if (!sameReceipt) byCapacityIdentity.set(receipt.id, {
+        ...prior, state: 'UNKNOWN', trafficLight: 'GREY', receiptId: '',
+        queueDepth: null, expiresAtUtc: '', ambiguousAtSameTime: true,
+      });
     }
   }
   const octopusCapacityBuilders = [...byCapacityIdentity.values()]

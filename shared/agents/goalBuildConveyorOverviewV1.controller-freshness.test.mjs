@@ -259,3 +259,47 @@ test('Goal #2961: duplicate independent runtime service identity cannot promote 
       'unique fresh service observation remains available');
   }
 });
+
+test('Goal #2961: same-clock capacity conflicts cannot choose a convenient READY receipt', () => {
+  const capacity = (state, receiptId, offset = -1000) => ({
+    kind: 'stephanos.shared_workspace.status',
+    statusId: 'sovereign-commander-build-capacity-current',
+    participantId: 'stephanos-sovereign-builder-08', timestampUtc: at(offset),
+    capacityReceipt: {
+      schemaVersion: 'stephanos.build-lane-capacity-receipt.v1',
+      route: 'SOVEREIGN_COMMANDER', repository: 'Cheekyfellastef/stephan-os',
+      workerId: 'stephanos-sovereign-builder-08', state, receiptId,
+      queueDepth: 0, observedAtUtc: at(offset), expiresAtUtc: at(offset + 240000),
+    },
+  });
+  const ready = capacity('READY', 'capacity-ready');
+  const blocked = capacity('BLOCKED', 'capacity-blocked');
+  const differentReady = capacity('READY', 'another-independent-receipt');
+  const scenarios = [
+    [ready, blocked], [blocked, ready], [ready, differentReady],
+    [ready, blocked, ready], [ready, differentReady, blocked],
+  ];
+  for (const records of scenarios) {
+    const originals = structuredClone(records);
+    const result = overview({}, { nowMs: NOW, statusRecords: records });
+    assert.deepEqual(records, originals, 'projection must not change source receipts');
+    assert.equal(result.octopusFleet.capacityBuilderCount, 1);
+    const [builder] = result.octopusFleet.capacityBuilders;
+    assert.equal(builder.state, 'UNKNOWN', 'equal-clock disagreement must fail closed');
+    assert.equal(builder.trafficLight, 'GREY');
+    assert.equal(builder.expiresAtUtc, '');
+    assert.equal(builder.receiptId, '');
+    assert.equal(builder.physicalBuildProven, false);
+  }
+  const identical = overview({}, { nowMs: NOW, statusRecords: [ready, structuredClone(ready)] });
+  assert.equal(identical.octopusFleet.capacityBuilders[0].state, 'READY',
+    'exact duplicate publication does not invent a conflicting receipt');
+  for (const records of [
+    [capacity('BLOCKED', 'older', -2000), ready],
+    [ready, capacity('BLOCKED', 'older', -2000)],
+  ]) {
+    assert.equal(overview({}, { nowMs: NOW, statusRecords: records })
+      .octopusFleet.capacityBuilders[0].state, 'READY',
+      'unique newer valid receipt wins over genuinely older observations');
+  }
+});
