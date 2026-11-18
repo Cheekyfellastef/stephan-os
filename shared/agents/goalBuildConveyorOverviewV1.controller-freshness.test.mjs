@@ -339,3 +339,60 @@ test('Goal #2961: same-clock canonical watchdog identities cannot promote health
   assert.equal(health([bad, watchdog(true, 1000)]).state, 'UNKNOWN',
     'future-dated newest identity cannot renew an older observation');
 });
+
+
+test('Goal #2961: newer canonical negatives veto older healthy Core aggregates without granting work', () => {
+  const head = 'a'.repeat(40);
+  const otherHead = 'b'.repeat(40);
+  const core = (ago = -90000) => ({
+    statusId: 'stephanos-core-daemon-current', timestampUtc: at(ago),
+    sourceHead: head, missionWorkerHealthy: true, backendHealthy: true, daemonHealthy: true,
+  });
+  const watchdog = (ago = -1000, sourceHead = head, healthy = false) => ({
+    statusId: 'battle-bridge-worker-watchdog-current', timestampUtc: at(ago),
+    finalAssessment: { healthy, sourceHead },
+  });
+  const refresh = (ago = -1000, sourceHead = head, afterHead = head,
+    ok = false, safeRefreshesCompleted = false) => ({
+    statusId: 'post-sync-runtime-refresh-current', timestampUtc: at(ago),
+    safeRefreshesCompleted, afterHead,
+    resultTargets: [{ targetId: 'stephanos-backend-8787', ok, sourceHead }],
+  });
+  const scenarios = [
+    ['newer worker negative', [core(), watchdog()],
+      { missionWorkerHealthy: 'UNKNOWN', backendHealthy: 'HEALTHY' }],
+    ['newer backend negative', [core(), refresh()],
+      { missionWorkerHealthy: 'HEALTHY', backendHealthy: 'UNKNOWN' }],
+    ['two newer negatives', [core(), watchdog(), refresh()],
+      { missionWorkerHealthy: 'UNKNOWN', backendHealthy: 'UNKNOWN' }],
+    ['healthy Core alone', [core()],
+      { missionWorkerHealthy: 'HEALTHY', backendHealthy: 'HEALTHY' }],
+    ['older negative watchdog', [core(-20000), watchdog(-40000)],
+      { missionWorkerHealthy: 'HEALTHY' }],
+    ['foreign-head negative watchdog', [core(), watchdog(-1000, otherHead)],
+      { missionWorkerHealthy: 'HEALTHY' }],
+    ['foreign-head negative backend', [core(), refresh(-1000, head, otherHead)],
+      { backendHealthy: 'HEALTHY' }],
+    ['stale canonical negative', [core(-190000), watchdog(-160000)],
+      { missionWorkerHealthy: 'HEALTHY' }],
+    ['newer positive but unqualified watchdog', [core(), watchdog(-1000, head, true)],
+      { missionWorkerHealthy: 'HEALTHY' }],
+    ['backend target positive with refresh negative', [core(), refresh(-1000, head, head, true)],
+      { backendHealthy: 'HEALTHY' }],
+    ['co-timed negative is not a newer veto', [core(-1000), watchdog(-1000)],
+      { missionWorkerHealthy: 'HEALTHY' }],
+  ];
+  for (const [label, records, expected] of scenarios) {
+    const untouched = structuredClone(records);
+    const health = overview({}, { nowMs: NOW, statusRecords: records }).health;
+    for (const [id, state] of Object.entries(expected)) {
+      const observation = health.find(item => item.id === id);
+      assert.equal(observation.state, state, label + ': ' + id);
+      if (state === 'UNKNOWN') {
+        assert.equal(observation.evidenceSource, 'NEWER_CANONICAL_NEGATIVE_VETO', label);
+        assert.equal(observation.expiresAtUtc, '', 'veto must not invent a proof expiry');
+      }
+    }
+    assert.deepEqual(records, untouched, 'read-only projection cannot change native receipts');
+  }
+});

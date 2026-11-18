@@ -498,6 +498,28 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
       expiresAtUtc: new Date(time(fallback.observedAtUtc) + serviceProofAgeMs).toISOString(),
       evidenceSource: fallback.evidenceSource,
     };
+    // An older healthy Core aggregate cannot override a newer, source-matched
+    // canonical explicit negative. Read-only display veto: never manufacture
+    // UNHEALTHY or native admission authority from a diagnostic observation.
+    const newerCanonicalNegative = coreLive && core[field] === true && (
+      (index === 1 && watchdog?.statusId === 'battle-bridge-worker-watchdog-current'
+        && workerProof?.healthy === false
+        && workerProof?.sourceHead === core.sourceHead
+        && fresh(watchdog.timestampUtc, nowMs, serviceProofAgeMs)
+        && time(watchdog.timestampUtc) > time(core.timestampUtc))
+      || (index === 2 && refresh?.statusId === 'post-sync-runtime-refresh-current'
+        && refresh?.safeRefreshesCompleted === false
+        && backendTargets.length === 1 && backendProof?.ok === false
+        && refresh.afterHead === core.sourceHead
+        && backendProof?.sourceHead === core.sourceHead
+        && fresh(refresh.timestampUtc, nowMs, serviceProofAgeMs)
+        && time(refresh.timestampUtc) > time(core.timestampUtc))
+    );
+    if (newerCanonicalNegative) return {
+      id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+      state: 'UNKNOWN', observedAtUtc: '', expiresAtUtc: '',
+      evidenceSource: 'NEWER_CANONICAL_NEGATIVE_VETO',
+    };
     return {
       id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
       state: coreLive && typeof core[field] === 'boolean' ? core[field] ? 'HEALTHY' : 'UNHEALTHY' : 'UNKNOWN',
