@@ -9,6 +9,8 @@ import {
   SYNC_AND_REFRESH_CHILD_BUDGET_MS,
   SYNC_AND_REFRESH_MIN_REMAINING_MS,
   SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS,
+  SYNC_CONTENTION_WAIT_MS,
+  SYNC_CONTENTION_POLL_MS,
   projectSyncAndRefreshStatus,
   writeSyncAndRefreshStatus,
   readPendingPostSyncRefresh,
@@ -16,6 +18,7 @@ import {
 } from './battle-bridge-github-sync-and-refresh.mjs';
 import { validateSharedWorkspaceRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { pendingPostSyncRefreshDebt } from './battle-bridge-github-sync-policy.mjs';
+import { runBattleBridgeGitHubSync } from './battle-bridge-github-sync-executor.mjs';
 
 const A = 'a'.repeat(40);
 const B = 'b'.repeat(40);
@@ -23,6 +26,7 @@ const C = 'c'.repeat(40);
 const paths = { repoRoot: '/canonical/repo', workspaceRoot: '/canonical/workspace' };
 const linearAncestry = (before, after) => ({ ok: true, ancestor: before <= after });
 const runBattleBridgeSyncAndRefresh = options => runSyncAndRefreshWithRealAncestry({
+  capacityObservationHeartbeat: async () => ({ ok: true, capacityObservationOnly: true }),
   ...options, adapter: { isAncestor: linearAncestry, ...options.adapter },
 });
 
@@ -109,6 +113,7 @@ async function productionDebtFixture(t) {
   assert.equal(child('sync').result.sourceUpdated, true);
   const calls = [];
   const invoke = (failUi, legacyCaller = false) => runSyncAndRefreshWithRealAncestry({
+    capacityObservationHeartbeat: async () => ({ ok: true, capacityObservationOnly: true }),
     paths: fixturePaths, expectedPaths: fixturePaths, platform: 'linux', ...safeGoalDiscoveryArgs(),
     ...(legacyCaller ? { pendingReader: async () => null } : {}),
     adapter: {
@@ -206,6 +211,213 @@ function nonWindowsRepairArgs() {
     ...safeGoalDiscoveryArgs(),
   };
 }
+
+function busySync() {
+  return { ok: false, evaluation: { classification: 'BLOCKED_INSTALL_OR_PERMISSION_REQUIRED',
+    exactNextAction: 'SYNC_ALREADY_RUNNING', performsGitMutation: false, performsShellExecution: false },
+  lock: { ok: false, reason: 'SYNC_ALREADY_RUNNING' }, publication: null };
+}
+
+test('verified sync contention waits for normal executor admission without consuming a convergence cycle', async () => {
+  let clock = 0, syncCalls = 0, refreshCalls = 0;
+  const busy = busySync();
+  const retained = JSON.stringify(busy);
+  const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths, ...nonWindowsRepairArgs(),
+    maxCycles: 1, nowMs: () => clock, sleepFn: async ms => { clock += ms; },
+    pendingReader: async () => null,
+    adapter: { runSync() { return { ok: true, result: ++syncCalls <= 2 ? busy : noChange(B) }; },
+      runRefresh() { refreshCalls += 1; assert.fail('no refresh debt'); } },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.sourceHead, B);
+  assert.equal(syncCalls, 3);
+  assert.equal(refreshCalls, 0);
+  assert.equal(clock, 2 * SYNC_CONTENTION_POLL_MS);
+  assert.equal(JSON.stringify(busy), retained);
+});
+
+test('sync contention preserves retained runtime debt and every independent Spatial hold', async () => {
+  let calls = 0, clock = 0;
+  const debt = pendingPostSyncRefreshDebt([{ beforeHead: A, afterHead: B }], [], '', { spatialAdoptionRequired: true });
+  const debtBytes = JSON.stringify(debt);
+  const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths, ...nonWindowsRepairArgs(),
+    maxCycles: 1, nowMs: () => clock, sleepFn: async ms => { clock += ms; },
+    pendingReader: async () => ({ ok: true, ...debt }),
+    adapter: { runSync() { return { ok: true, result: ++calls === 1 ? busySync() : noChange(B) }; },
+      runRefresh(input) {
+        assert.equal(input.beforeHead, A); assert.equal(input.afterHead, B);
+        return { ok: true, result: { ok: false, blocker: 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN' } };
+      } },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN');
+  assert.equal(result.pendingRefreshObserved, true);
+  assert.equal(calls, 2);
+  assert.equal(JSON.stringify(debt), debtBytes);
+});
+
+test('a real live sync lock remains untouched with no Git calls while bounded contention becomes a typed hold', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'sync-contention-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const fixturePaths = { repoRoot: join(root, 'repo'), workspaceRoot: join(root, 'workspace') };
+  await mkdir(fixturePaths.repoRoot); await mkdir(join(fixturePaths.workspaceRoot, 'locks'), { recursive: true });
+  const lockPath = join(fixturePaths.workspaceRoot, 'locks', 'battle-bridge-github-sync.lock');
+  const lockBytes = JSON.stringify({ pid: process.pid, acquiredAtUtc: new Date().toISOString() });
+  await writeFile(lockPath, lockBytes);
+  let gitCalls = 0;
+  const busy = await runBattleBridgeGitHubSync({ paths: fixturePaths, expectedPaths: fixturePaths,
+    processIsAliveFn: () => true, bootStartedAtMs: Date.now() - 60_000,
+    git: { run() { gitCalls += 1; assert.fail('a non-owner cannot inspect or mutate Git'); } } });
+  let clock = 0, syncCalls = 0;
+  const result = await runBattleBridgeSyncAndRefresh({ paths: fixturePaths, expectedPaths: fixturePaths,
+    ...nonWindowsRepairArgs(), nowMs: () => clock, sleepFn: async ms => { clock += ms; },
+    pendingReader: async () => ({ ok: true, spans: [{ beforeHead: A, afterHead: B }], requiredTargetIds: [] }),
+    adapter: { runSync() { syncCalls += 1; return { ok: true, result: busy }; },
+      runRefresh() { assert.fail('contention cannot authorize refresh'); } },
+  });
+  assert.equal(result.ok, false); assert.equal(result.blocker, 'SYNC_ALREADY_RUNNING');
+  assert.equal(result.syncBlockerReason, 'SYNC_ALREADY_RUNNING'); assert.equal(result.pendingRefreshObserved, true);
+  assert.equal(clock, SYNC_CONTENTION_WAIT_MS);
+  assert.equal(syncCalls, 1 + SYNC_CONTENTION_WAIT_MS / SYNC_CONTENTION_POLL_MS);
+  assert.equal(gitCalls, 0); assert.equal(await readFile(lockPath, 'utf8'), lockBytes);
+});
+
+test('frozen or invalid clocks and non-advancing sleeps cannot make sync contention unbounded', async () => {
+  for (const invalidAfterSleep of [false, true]) {
+    let calls = 0, invalid = false;
+    const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths, ...nonWindowsRepairArgs(),
+      nowMs: () => invalid ? NaN : 0, sleepFn: async () => { invalid = invalidAfterSleep; },
+      pendingReader: async () => null,
+      adapter: { runSync() { calls += 1; return { ok: true, result: busySync() }; } },
+    });
+    assert.equal(result.ok, false); assert.equal(result.syncBlockerReason, 'SYNC_ALREADY_RUNNING');
+    assert.ok(calls <= 1 + SYNC_CONTENTION_WAIT_MS / SYNC_CONTENTION_POLL_MS);
+    assert.equal(result.blocker, invalidAfterSleep ? 'SYNC_AND_REFRESH_PARENT_BUDGET_EXHAUSTED' : 'SYNC_ALREADY_RUNNING');
+  }
+});
+
+test('sync contention waiting respects the original parent deadline', async () => {
+  let clock = 0, calls = 0, waited = 0;
+  const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths, ...nonWindowsRepairArgs(),
+    nowMs: () => clock, sleepFn: async ms => { waited += ms; clock += ms; },
+    pendingReader: async () => null,
+    adapter: { runSync() { calls += 1; clock = SYNC_AND_REFRESH_CHILD_BUDGET_MS - SYNC_AND_REFRESH_MIN_REMAINING_MS - 250; return { ok: true, result: busySync() }; } },
+  });
+  assert.equal(result.ok, false); assert.equal(result.blocker, 'SYNC_AND_REFRESH_PARENT_BUDGET_EXHAUSTED');
+  assert.equal(result.syncBlockerReason, 'SYNC_ALREADY_RUNNING'); assert.equal(waited, 250); assert.equal(calls, 1);
+});
+
+test('real permission failures, malformed refusals and possible side effects are never retried', async () => {
+  const variants = [
+    { ...busySync(), evaluation: { ...busySync().evaluation, exactNextAction: 'LOCK_ACQUISITION_FAILED' }, lock: { ok: false, reason: 'LOCK_ACQUISITION_FAILED' } },
+    { ...busySync(), publication: undefined }, { ...busySync(), publication: { receipt: 'existing' } },
+    { ...busySync(), sourceUpdated: true }, { ...busySync(), sourceUpdated: false },
+    { ...busySync(), facts: { localHead: B } }, { ...busySync(), lock: { reason: 'SYNC_ALREADY_RUNNING' } },
+    { ...busySync(), evaluation: { ...busySync().evaluation, performsGitMutation: true } },
+    { ...busySync(), evaluation: { ...busySync().evaluation, performsShellExecution: undefined } },
+    { ...busySync(), evaluation: { ...busySync().evaluation, exactNextAction: 'C:\\private\\path' } },
+  ];
+  for (const refusal of variants) {
+    let calls = 0, waits = 0;
+    const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths, ...nonWindowsRepairArgs(),
+      pendingReader: async () => null, sleepFn: async () => { waits += 1; },
+      adapter: { runSync() { calls += 1; return { ok: true, result: refusal }; },
+        runRefresh() { assert.fail('unsafe refusal reached refresh'); } },
+    });
+    assert.equal(result.ok, false); assert.equal(result.blocker, 'BLOCKED_INSTALL_OR_PERMISSION_REQUIRED');
+    assert.equal(calls, 1); assert.equal(waits, 0);
+    assert.ok(['', 'SYNC_ALREADY_RUNNING', 'LOCK_ACQUISITION_FAILED'].includes(result.syncBlockerReason));
+    assert.doesNotMatch(JSON.stringify(projectSyncAndRefreshStatus(result)), /private|receipt|existing/);
+  }
+});
+
+test('a parsed busy-shaped reply from an uncertain child exit cannot authorize a retry', async () => {
+  for (const execution of [{ status: null, errorCode: 'EIO' }, { status: 1, errorCode: '' }, { status: 0, errorCode: '' }]) {
+    let calls = 0, waits = 0;
+    const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths, ...nonWindowsRepairArgs(),
+      pendingReader: async () => null, sleepFn: async () => { waits += 1; },
+      adapter: { runSync() { calls += 1; return { ok: true, result: busySync(), execution }; } },
+    });
+    assert.equal(result.ok, false); assert.equal(result.blocker, 'BLOCKED_INSTALL_OR_PERMISSION_REQUIRED');
+    assert.equal(calls, 1); assert.equal(waits, 0);
+  }
+});
+
+test('unchanged exact source observes Forge once before unrelated runtime debt while retaining every hold', async () => {
+  for (const blocker of ['BLOCKED_UNCLASSIFIED_RUNTIME_PATH',
+    'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN', 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN']) {
+    const calls = [];
+    const debt = pendingPostSyncRefreshDebt([{ beforeHead: A, afterHead: B }], [], '',
+      { spatialAdoptionRequired: true });
+    const debtBytes = JSON.stringify(debt);
+    const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths, platform: 'win32',
+      pendingReader: async () => ({ ok: true, ...debt }),
+      adapter: {
+        runSync: () => { calls.push('sync'); return { ok: true, result: {
+          ...noChange(B), facts: { ...noChange(B).facts, pendingRefresh: debt } } }; },
+        runRefresh: () => { calls.push('refresh'); return { ok: true, result: {
+          ok: false, blocker, exactHeadProofOk: false, spatialAdoptionRequired: true,
+          pluginHostActivationRequired: true, safeRefreshesCompleted: false } }; },
+        runMailboxPulse: () => assert.fail('runtime hold reached mailbox pulse'),
+      },
+      capacityObservationHeartbeat: async options => {
+        calls.push('capacity'); assert.equal(options.expectedSourceHead, B);
+        assert.ok(options.budgetMs > 0 && options.budgetMs <= 30000);
+        return { ok: true, sourceHead: B, workerObservationProven: true,
+          capacityObservationOnly: true, admissionAttempted: false, sourceBuildAttempted: false,
+          lifeboatCapacity: { ok: true, available: true } };
+      },
+      goalDiscoveryHeartbeat: () => assert.fail('runtime hold reached full admission heartbeat'),
+      controlPlaneReconciler: () => assert.fail('runtime hold reached auxiliary repair'),
+    });
+    assert.deepEqual(calls, ['sync', 'capacity', 'refresh']);
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, blocker);
+    assert.equal(result.capacityObservationObserved, true);
+    assert.equal(result.refreshes[0].result.exactHeadProofOk, false);
+    assert.equal(result.refreshes[0].result.pluginHostActivationRequired, true);
+    assert.equal(JSON.stringify(debt), debtBytes, 'capacity observation cannot pay or alter debt');
+    const status = projectSyncAndRefreshStatus(result);
+    assert.equal(status.ok, false);
+    assert.equal(status.capacityObservation.capacityAvailable, true);
+    assert.equal(status.capacityObservation.admissionAttempted, false);
+    assert.equal(status.capacityObservation.idleProven, false);
+    assert.equal(status.capacityObservation.physicalExclusionGranted, false);
+    assert.equal(status.capacityObservation.workAuthorized, false);
+  }
+});
+
+test('capacity observation does not run for dirty or unproven source and a failed observation cannot erase refresh failure', async () => {
+  for (const syncResult of [blocked('BLOCKED_DIRTY_SOURCE'), noChange('invalid')]) {
+    let observations = 0;
+    const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths,
+      ...nonWindowsRepairArgs(), pendingReader: async () => null,
+      adapter: { runSync: () => ({ ok: true, result: syncResult }) },
+      capacityObservationHeartbeat: async () => { observations++; return { ok: true }; } });
+    assert.equal(result.ok, false);
+    assert.equal(observations, 0);
+  }
+  const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths,
+    ...nonWindowsRepairArgs(), pendingReader: async () => ({ ok: true, beforeHead: A, afterHead: B }),
+    adapter: { runSync: () => ({ ok: true, result: noChange(B) }),
+      runRefresh: () => ({ ok: true, result: { ok: false, blocker: 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN' } }) },
+    capacityObservationHeartbeat: async () => ({ ok: false, blocker: 'CAPACITY_OBSERVATION_WORKER_UNPROVEN' }),
+  });
+  assert.equal(result.blocker, 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN');
+  assert.equal(result.capacityObservation.blocker, 'CAPACITY_OBSERVATION_WORKER_UNPROVEN');
+});
+
+test('capacity side stage is not repeated while the same wrapper reconverges after refresh', async () => {
+  let observations = 0;
+  const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths,
+    ...nonWindowsRepairArgs(), pendingReader: async () => ({ ok: true, beforeHead: A, afterHead: B }),
+    adapter: { runSync: () => ({ ok: true, result: noChange(B) }),
+      runRefresh: () => ({ ok: true, result: completedRefresh(A, B) }) },
+    capacityObservationHeartbeat: async () => { observations++; return { ok: true }; },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(observations, 1);
+});
 
 test('actual wrapper reads legacy Commander completion as pending and accepts only covering relay proof from its child', async t => {
   for (const relayProven of [false, true]) {

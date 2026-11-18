@@ -5,7 +5,58 @@ import {
   POST_SYNC_REFRESH_CLASSIFICATIONS,
   POST_SYNC_REFRESH_TARGETS,
   classifyPostSyncRefresh,
+  executePostSyncRefreshPlan,
 } from './postSyncRuntimeRefreshCoordinator.mjs';
+
+const invocationOnlyRecoveryPaths = [
+  'scripts/qwen35-canary.mjs',
+  'scripts/windows/read-sovereign-maintenance-owner-v2.ps1',
+  'scripts/windows/stephanos-core-process-observation.ps1',
+  'scripts/sovereign-fixed-runtime-empty-version-quarantine-v1.mjs',
+  'scripts/windows/quarantine-sovereign-fixed-runtime-empty-version-v1.ps1',
+];
+
+test('exact invocation-only recovery source uses only the established natural-adoption adapter', async () => {
+  const calls = [];
+  const forbidden = () => assert.fail('source adoption invoked a runtime or attended operation');
+  const afterHead = 'b'.repeat(40);
+  const result = await executePostSyncRefreshPlan({ beforeHead: 'a'.repeat(40), afterHead,
+    changedPaths: invocationOnlyRecoveryPaths,
+    adapters: {
+      confirmNaturalReload: async input => { calls.push(input.targetId); return { ok: true, exactHeadProofOk: true, sourceHead: afterHead }; },
+      refreshUi: forbidden, restartBackend: forbidden, restartMissionWorker: forbidden,
+      restartGitHubMailbox: forbidden, refreshSovereignCommander: forbidden,
+      quarantineEmptyVersion: forbidden, runCanary: forbidden,
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(result.plan.unknownPathCount, 0);
+  assert.equal(result.plan.pluginHostActivationRequired, false);
+  for (const path of invocationOnlyRecoveryPaths) {
+    const plan = classifyPostSyncRefresh([path]);
+    assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD], path);
+    const unknown = classifyPostSyncRefresh([path.replace(/\.(?:mjs|ps1)$/, '-unreviewed$&')]);
+    assert.equal(unknown.unknownPathCount, 1, 'no family-wide allow rule: ' + path);
+  }
+});
+
+test('natural helper adoption cannot discharge resident Governor, Spatial or desktop-plugin debt', async () => {
+  const forbidden = () => assert.fail('unclassified Governor path reached an adapter');
+  const governor = await executePostSyncRefreshPlan({ beforeHead: 'a'.repeat(40), afterHead: 'b'.repeat(40),
+    changedPaths: [...invocationOnlyRecoveryPaths, 'scripts/windows/run-vr-resource-governor.ps1'],
+    adapters: { confirmNaturalReload: forbidden, refreshSovereignCommander: forbidden },
+  });
+  assert.equal(governor.ok, false);
+  assert.equal(governor.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+  assert.deepEqual(governor.results, []);
+  const spatial = classifyPostSyncRefresh([...invocationOnlyRecoveryPaths, 'scripts/spatial-window-host.mjs']);
+  assert.equal(spatial.spatialAdoptionRequired, true);
+  assert.equal(spatial.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_SPATIAL_ADOPTION_REQUIRED);
+  const plugin = classifyPostSyncRefresh([...invocationOnlyRecoveryPaths, 'plugins/sovereign-commander/plugin.json']);
+  assert.equal(plugin.pluginHostActivationRequired, true);
+  assert.ok(plugin.targetIds.includes(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER));
+});
 
 test('Recovery Mesh fixed probe naturally reloads instead of blocking post-sync refresh', () => {
   const plan = classifyPostSyncRefresh([
