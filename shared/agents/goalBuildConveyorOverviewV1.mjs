@@ -406,7 +406,17 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     && workerProof.sourceHead === workerProof.canonicalRepositoryHead
     && workerProof.sourceHead === workerProof.remoteMainHead
     && fresh(watchdog.timestampUtc, nowMs, serviceProofAgeMs);
+  // A positive target readback must carry its own raw producer fields. Inherited
+  // prototype values can decorate an observation but cannot supply proof.
+  const ownProofField = (value, field) => value !== null && typeof value === 'object'
+    && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, field);
+  const backendRefreshFields = ['statusId', 'timestampUtc', 'safeRefreshesCompleted',
+    'unknownPathCount', 'unsafePathCount', 'afterHead', 'resultTargets'];
+  const backendTargetFields = ['targetId', 'ok', 'exactHeadProofOk',
+    'canonicalActionVerified', 'unrelatedTasksChanged', 'proofKind', 'blocker', 'sourceHead'];
   const backendProofValid = backendTargets.length === 1
+    && backendRefreshFields.every(field => ownProofField(refresh, field))
+    && backendTargetFields.every(field => ownProofField(backendProof, field))
     && refresh?.safeRefreshesCompleted === true
     && refresh?.unknownPathCount === 0 && refresh?.unsafePathCount === 0
     && backendProof?.ok === true && backendProof?.exactHeadProofOk === true

@@ -517,6 +517,28 @@ test('exact-head Backend fallback requires unique verified canonical target prov
     assert.notEqual(backend(targets).evidenceSource, 'EXACT_HEAD_BACKEND_REFRESH');
     assert.notEqual(backend(targets).state, 'HEALTHY');
   }
+  // A forged positive inherited from a prototype must not replace an own
+  // producer field. These prove raw field presence, not merely truthy access.
+  for (const key of Object.keys(canonical)) {
+    const ownTarget = { ...canonical };
+    delete ownTarget[key];
+    const inheritedTarget = Object.assign(Object.create({ [key]: canonical[key] }), ownTarget);
+    const result = backend([inheritedTarget]);
+    assert.notEqual(result.evidenceSource, 'EXACT_HEAD_BACKEND_REFRESH',
+      'inherited target field ' + key + ' must not become canonical proof');
+    assert.notEqual(result.state, 'HEALTHY');
+  }
+  for (const key of ['statusId', 'timestampUtc', 'safeRefreshesCompleted',
+    'unknownPathCount', 'unsafePathCount', 'afterHead', 'resultTargets']) {
+    const ownRefresh = { ...refresh };
+    delete ownRefresh[key];
+    const inheritedRefresh = Object.assign(Object.create({ [key]: refresh[key] }), ownRefresh);
+    const result = project(input(), { ...options, statusRecords: [inheritedRefresh] })
+      .health.find(item => item.id === 'backendHealthy');
+    assert.notEqual(result.evidenceSource, 'EXACT_HEAD_BACKEND_REFRESH',
+      'inherited publisher field ' + key + ' must not become canonical proof');
+    assert.notEqual(result.state, 'HEALTHY');
+  }
 });
 
 }
