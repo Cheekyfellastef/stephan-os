@@ -1,3 +1,4 @@
+import './sovereign-fixed-runtime-empty-version-quarantine-v1.test.mjs';
 import {readFileSync,mkdtempSync,writeFileSync,rmSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {FIXED_RUNTIME_SOURCE_PATHS_V1,FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1,buildFixedRuntimeInstallerCandidateV1,fixedRuntimeGitClosureSha256V1} from './sovereign-fixed-runtime-installer-candidate-v1.mjs';

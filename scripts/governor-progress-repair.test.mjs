@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFile, writeFile, mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, mkdir, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { projectVrGovernorExecutionPermissionsV1 } from '../shared/ai/ollamaLoadGovernor.mjs';
@@ -25,6 +25,8 @@ foreach($source in $inputData.sources){
 $script:governorMutationOwner=[pscustomobject]@{acquired=$true;abandoned=$false}
 . ([ScriptBlock]::Create($inputData.body))`;
 function run(body, sources = [governor]) {
+  if (sources.some(source => source.includes('function Invoke-VrResourceGovernorLifecycle {'))
+      && !sources.some(source => source.includes('function New-GovernorMutationMutex {'))) sources = [governor, ...sources];
   const result = spawnSync(ps, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
     Buffer.from(loader, 'utf16le').toString('base64')], {
     input: JSON.stringify({ sources, body }), encoding: 'utf8', shell: false,
@@ -34,6 +36,14 @@ function run(body, sources = [governor]) {
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout);
 }
+
+// Genuine native positives must run under the real normal operator. Elevated
+// hosted runners instead prove the typed refusal; fixtures never fake a token.
+const nativeContext = windows ? run(String.raw`
+  $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
+  try{[pscustomobject]@{normal=($identity.ImpersonationLevel -eq [Security.Principal.TokenImpersonationLevel]::None -and -not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -and [IntPtr]::Size -eq 8 -and [Environment]::Is64BitProcess)}|ConvertTo-Json -Compress}finally{$identity.Dispose()}
+`) : {normal:false};
+const normalNativeSkip = !windows ? 'Windows required' : nativeContext.normal ? false : 'GOVERNOR_NATIVE_CONTEXT_UNPROVEN: genuine normal-token fixture is not applicable';
 
 function launch(body, sources) {
   const child = spawn(ps, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
@@ -62,9 +72,8 @@ async function waitForFixture(path) {
 function isolatedMutexSources() {
   const productionPrefix = 'Global\\Stephanos.VrResourceGovernor.V1.';
   const fixturePrefix = 'Global\\Stephanos.GovernorFixture.' + randomUUID() + '.';
-  for (const source of [governor, caretaker]) {
-    assert.equal(source.split(productionPrefix).length, 2);
-  }
+  assert.equal(governor.split(productionPrefix).length, 2);
+  assert.equal(caretaker.split(productionPrefix).length, 1);
   // The only substitution isolates the kernel name. Both actual adapters,
   // SID/DACL validation, acquisition and action/lifecycle paths remain real.
   return [governor.replace(productionPrefix, fixturePrefix), caretaker.replace(productionPrefix, fixturePrefix)];
@@ -112,6 +121,318 @@ function New-Object {
 }
 `;
 
+test('native metadata admits only an actual non-administrator primary token and otherwise proves its typed refusal', {skip:!windows},()=>{
+  const result=run(String.raw`
+    $allowed=$false;$reason=''
+    try{$null=Get-GovernorNativeMetadataApiV1;$allowed=$true}catch{$reason=$_.Exception.Message}
+    [pscustomobject]@{allowed=$allowed;reason=$reason;initialized=($null -ne ('Stephanos.GovernorNativeMetadataV1' -as [type]))}|ConvertTo-Json -Compress
+  `);
+  assert.equal(result.allowed,nativeContext.normal);
+  assert.equal(result.initialized,nativeContext.normal);
+  assert.equal(result.reason,nativeContext.normal?'':'GOVERNOR_NATIVE_CONTEXT_UNPROVEN');
+});
+
+test('real normal-user direct metadata observes native boot and bounded process snapshot without a child or state write', { skip: normalNativeSkip }, () => {
+  const result = run(String.raw`
+    $script:governorRecoveryLastElapsed=0.0
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    $epoch=Get-GovernorNativeEpochV1
+    $api=Get-GovernorNativeMetadataApiV1
+    $command=Read-GovernorNativeCommandV1 ($api::GetCurrentProcess())
+    $rows=@(Get-GovernorProbeCandidatesV1 $clock)
+    [pscustomobject]@{bootKnown=($epoch.bootIdentifier -match '^[a-f0-9]{32}$');machineKnown=($epoch.machineHash -match '^[a-f0-9]{64}$');ownerCurrent=($epoch.ownerProcessId -eq $PID);birthKnown=($epoch.ownerCreationFileTime -gt 0);ownCommandObserved=($command -match 'powershell\.exe' -and $command -match '-EncodedCommand');closedCount=$rows.Count;elapsed=$clock.ElapsedMilliseconds;nativeChildStarted=$false;stateWritten=$false}|ConvertTo-Json -Compress
+  `);
+  assert.equal(result.bootKnown, true);
+  assert.equal(result.machineKnown, true);
+  assert.equal(result.ownerCurrent, true);
+  assert.equal(result.birthKnown, true);
+  assert.equal(result.ownCommandObserved, true);
+  assert.ok(result.closedCount >= 0 && result.closedCount <= 64);
+  assert.ok(result.elapsed <= 5000);
+  assert.equal(result.nativeChildStarted, false);
+  assert.equal(result.stateWritten, false);
+});
+
+test('definition-only import preserves an existing owner and executes neither ObserveAdmission nor Watch', { skip: !windows }, () => {
+  const result=run(String.raw`
+    $saved=$script:governorMutationOwner;$statePath='fixture-sentinel';$script:governorDependencyHealthy=$false
+    function Get-CimInstance {throw 'IMPORT_OBSERVED_NATIVE_DATA'}
+    function Start-Process {throw 'IMPORT_STARTED_PROCESS'}
+    function Get-GovernorNativeMetadataApiV1 {throw 'IMPORT_INITIALIZED_NATIVE'}
+    . ([scriptblock]::Create($inputData.sources[0])) -Action ObserveAdmission
+    [pscustomobject]@{ownerPreserved=[object]::ReferenceEquals($saved,$script:governorMutationOwner);pathPreserved=($statePath -ceq 'fixture-sentinel');dependencyPreserved=($script:governorDependencyHealthy -eq $false);nativeTypeLoaded=($null -ne ('Stephanos.GovernorNativeMetadataV1' -as [type]));returned=$true}|ConvertTo-Json -Compress
+  `);
+  assert.deepEqual(result,{ownerPreserved:true,pathPreserved:true,dependencyPreserved:true,nativeTypeLoaded:false,returned:true});
+});
+
+test('epoch/state binding exhausting the cycle prevents native Start and proves only no-launch cleanup', {skip:!windows},()=>{
+  const result=run(String.raw`$outputText='';$errorText=''
+    ${fakeChild}
+    $script:governorNativeClock=[pscustomobject]@{Elapsed=[pscustomobject]@{TotalMilliseconds=0.0}}
+    $script:started=0
+    $fake|Add-Member ScriptMethod Start {$script:started++;return $true} -Force
+    function Set-GovernorNativeCustodyHold {param([bool]$Held=$true) $script:held=$Held;if($Held){$script:governorNativeClock.Elapsed.TotalMilliseconds=5001.0}}
+    $result=Invoke-GovernorNativeProbe -Operation GpuSnapshot
+    [pscustomobject]@{reason=$result.reason;started=$script:started;held=$script:held;exitWitness=$script:governorNativeProbeExitProven}|ConvertTo-Json -Compress
+  `);
+  assert.deepEqual(result,{reason:'CYCLE_DEADLINE',started:0,held:false,exitWitness:true});
+});
+
+test('a Start returning after its allowance enters retained-child cleanup without renewing the probe budget', {skip:!windows},()=>{
+  const result=run(String.raw`$outputText='';$errorText=''
+    ${fakeChild}
+    $script:governorNativeClock=[pscustomobject]@{Elapsed=[pscustomobject]@{TotalMilliseconds=0.0}}
+    $fake.HasExited=$false
+    $fake|Add-Member ScriptMethod Start {$script:governorNativeClock.Elapsed.TotalMilliseconds=5001.0;return $true} -Force
+    $result=Invoke-GovernorNativeProbe -Operation GpuSnapshot
+    [pscustomobject]@{ok=$result.ok;reason=$result.reason;killed=$fake.Killed;disposed=$fake.Disposed;held=$script:held;exitWitness=$script:governorNativeProbeExitProven}|ConvertTo-Json -Compress
+  `);
+  assert.deepEqual(result,{ok:false,reason:'PROBE_TIMEOUT',killed:true,disposed:true,held:false,exitWitness:true});
+});
+
+test('prospective attempts bind the actual owner and epoch before launch and cannot clear without their exact retained-exit witness', {skip:normalNativeSkip},async t=>{
+  const root=await realpath(await mkdtemp(join(tmpdir(),'governor-attempt-binding-')));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const result=run(fixtureStatePaths(root)+String.raw`
+    $actualEpoch=Get-GovernorNativeEpochV1
+    $script:fixtureEpoch=$actualEpoch
+    function Get-GovernorNativeEpochV1 {if($script:fixtureEpoch -ceq 'THROW'){throw 'NATIVE_EPOCH_UNOBSERVED'};return $script:fixtureEpoch}
+    $script:governorMutationOwner=[pscustomobject]@{acquired=$true;abandoned=$false}
+    $rows=@()
+    foreach($mode in @('unobserved','typed-owner-invalid','no-exit','changed-attempt','changed-epoch','retained-exit')){
+      $script:governorNativeProbeOwnedHold=$false;$script:governorNativeAttemptDigest='';$script:governorNativeProbeExitProven=$false
+      if(Test-Path -LiteralPath $statePath){[IO.File]::Delete($statePath)}
+      $script:fixtureEpoch=$actualEpoch
+      if($mode -ceq 'unobserved'){$script:fixtureEpoch='THROW'}
+      if($mode -ceq 'typed-owner-invalid'){$script:fixtureEpoch=$actualEpoch|ConvertTo-Json|ConvertFrom-Json;$script:fixtureEpoch.ownerProcessId=[string]$PID}
+      $bound=$false;try{Set-GovernorNativeCustodyHold -Held $true -Operation OllamaInventory -CommandSha256 ('a'*64);$bound=$true}catch{}
+      $before=Read-GovernorState
+      if($mode -ceq 'changed-attempt'){$before.nativeProbeAttempt.commandSha256='b'*64;[IO.File]::WriteAllText($statePath,($before|ConvertTo-Json -Depth 8))}
+      if($mode -ceq 'changed-epoch'){$script:fixtureEpoch=$actualEpoch|ConvertTo-Json|ConvertFrom-Json;$script:fixtureEpoch.bootIdentifier='f'*32}
+      if($mode -in @('changed-attempt','changed-epoch','retained-exit')){$script:governorNativeProbeExitProven=$true}
+      $cleared=$false;try{Set-GovernorNativeCustodyHold -Held $false;$cleared=$true}catch{}
+      $after=Read-GovernorState
+      $rows+=,[pscustomobject]@{mode=$mode;bound=$bound;phase=$before.nativeProbeAttempt.phase;boot=$before.nativeProbeAttempt.bootIdentifier;ownerMatches=($before.nativeProbeAttempt.ownerProcessId -eq $PID);cleared=$cleared;held=$after.nativeProbeCustodyHeld;local=$after.localModelAllowed;heavy=$after.heavyModelAllowed;known=$after.dependencyObservationKnown}
+    }
+    ConvertTo-Json -InputObject $rows -Compress
+  `);
+  assert.equal(result.length,6);
+  for(const row of result){
+    const observed=!['unobserved','typed-owner-invalid'].includes(row.mode);
+    assert.equal(row.bound,observed,row.mode);
+    assert.equal(row.phase,observed?'BOUND':'PREPARING',row.mode);
+    if(!observed)assert.equal(row.boot,'UNOBSERVED');
+    assert.equal(row.ownerMatches,true,row.mode);
+    assert.equal(row.cleared,row.mode==='retained-exit',row.mode);
+    assert.equal(row.held,row.mode!=='retained-exit',row.mode);
+    for(const field of ['local','heavy','known'])assert.equal(row[field],false,row.mode+':'+field);
+  }
+});
+
+test('native command decoder rejects status, length, pointer and UTF16 adversaries inside the owned 64KiB buffer', {skip:!windows},()=>{
+  const result=run(String.raw`
+    class CommandMetadataFixture {
+      static [string]$Mode
+      static [int] NtQueryInformationProcess([IntPtr]$h,[int]$kind,[IntPtr]$buffer,[uint32]$size,[ref]$actual){
+        if($kind -ne 60 -or $size -ne 65536){throw 'UNEXPECTED_QUERY'}
+        $text=[Text.Encoding]::Unicode.GetBytes('C:\fixture\ollama.exe serve')
+        $actual.Value=[uint32](16+$text.Length)
+        [Runtime.InteropServices.Marshal]::WriteInt16($buffer,[int16]$text.Length)
+        [Runtime.InteropServices.Marshal]::WriteInt16($buffer,2,[int16]$text.Length)
+        [Runtime.InteropServices.Marshal]::WriteIntPtr($buffer,8,[IntPtr]::Add($buffer,16))
+        [Runtime.InteropServices.Marshal]::Copy($text,0,[IntPtr]::Add($buffer,16),$text.Length)
+        switch([CommandMetadataFixture]::Mode){
+          'status'{return -1}
+          'short'{$actual.Value=[uint32]15}
+          'overflow'{$actual.Value=[uint32]65537}
+          'odd'{[Runtime.InteropServices.Marshal]::WriteInt16($buffer,1)}
+          'max-short'{[Runtime.InteropServices.Marshal]::WriteInt16($buffer,2,2)}
+          'header-pointer'{[Runtime.InteropServices.Marshal]::WriteIntPtr($buffer,8,$buffer)}
+          'end-pointer'{[Runtime.InteropServices.Marshal]::WriteIntPtr($buffer,8,[IntPtr]::Add($buffer,[int]$actual.Value))}
+          'reserved'{[Runtime.InteropServices.Marshal]::WriteInt32($buffer,4,1)}
+          'nul'{[Runtime.InteropServices.Marshal]::WriteInt16($buffer,16,0)}
+          'surrogate'{[Runtime.InteropServices.Marshal]::WriteInt16($buffer,16,-10240)}
+        }
+        return 0
+      }
+    }
+    function Get-GovernorNativeMetadataApiV1 {return [CommandMetadataFixture]}
+    $rows=@()
+    foreach($mode in @('valid','status','short','overflow','odd','max-short','header-pointer','end-pointer','reserved','nul','surrogate')){
+      [CommandMetadataFixture]::Mode=$mode;$accepted=$false
+      try{$command=Read-GovernorNativeCommandV1 ([IntPtr]1);$accepted=$command -ceq 'C:\fixture\ollama.exe serve'}catch{}
+      $rows+=,[pscustomobject]@{mode=$mode;accepted=$accepted}
+    }
+    ConvertTo-Json -InputObject $rows -Compress
+  `);
+  assert.equal(result.length,11);
+  for(const row of result)assert.equal(row.accepted,row.mode==='valid',row.mode);
+});
+
+test('recovery clocks reject backward, nonfinite, malformed and exhausted observations', {skip:!windows},()=>{
+  const result=run(String.raw`
+    $rows=@()
+    foreach($value in @(-1.0,[double]::NaN,[double]::PositiveInfinity,5001.0,'1')){
+      $script:governorRecoveryLastElapsed=0.0;$allowed=$true
+      try{Assert-GovernorRecoveryDeadlineV1 ([pscustomobject]@{Elapsed=[pscustomobject]@{TotalMilliseconds=$value}})}catch{$allowed=$false}
+      $rows+=,$allowed
+    }
+    $script:governorRecoveryLastElapsed=2.0;$allowed=$true
+    try{Assert-GovernorRecoveryDeadlineV1 ([pscustomobject]@{Elapsed=[pscustomobject]@{TotalMilliseconds=1.0}})}catch{$allowed=$false}
+    $rows+=,$allowed
+    ConvertTo-Json -InputObject $rows -Compress
+  `);
+  assert.deepEqual(result,Array(6).fill(false));
+});
+
+test('closed native census refuses malformed layout, names, duplicate identity and candidate overflow', {skip:!windows},()=>{
+  const result=run(String.raw`
+    class CensusMetadataFixture {
+      static [string]$Mode
+      static [int]$Rows
+      static [IntPtr] CreateToolhelp32Snapshot([uint32]$flags,[uint32]$id){if($flags -ne 2 -or $id -ne 0){throw 'UNEXPECTED_SNAPSHOT'};return [IntPtr]1}
+      static [bool] CloseHandle([IntPtr]$h){return [CensusMetadataFixture]::Mode -cne 'cleanup-failed'}
+      static [void] Fill([IntPtr]$b){
+        [CensusMetadataFixture]::Rows++
+        for($i=0;$i -lt 568;$i+=8){[Runtime.InteropServices.Marshal]::WriteInt64($b,$i,0)}
+        [Runtime.InteropServices.Marshal]::WriteInt32($b,568)
+        $self=[Diagnostics.Process]::GetCurrentProcess().Id
+        $id=$self;$name='powershell.exe'
+        if([CensusMetadataFixture]::Rows -gt 1){$id=200000+[CensusMetadataFixture]::Rows;$name='ollama.exe'}
+        switch([CensusMetadataFixture]::Mode){
+          'bad-size'{[Runtime.InteropServices.Marshal]::WriteInt32($b,556)}
+          'empty-name'{$name=''}
+          'path-name'{$name='C:\ollama.exe'}
+          'wrong-self'{$name='other.exe'}
+          'duplicate'{$id=$self}
+        }
+        [Runtime.InteropServices.Marshal]::WriteInt32($b,8,$id)
+        $encoded=[Text.Encoding]::Unicode.GetBytes($name)
+        [Runtime.InteropServices.Marshal]::Copy($encoded,0,[IntPtr]::Add($b,44),$encoded.Length)
+      }
+      static [bool] Process32FirstW([IntPtr]$h,[IntPtr]$b){[CensusMetadataFixture]::Fill($b);return $true}
+      static [bool] Process32NextW([IntPtr]$h,[IntPtr]$b){
+        if([CensusMetadataFixture]::Mode -in @('duplicate','candidate-overflow')){[CensusMetadataFixture]::Fill($b);return $true}
+        throw 'FIXTURE_CENSUS_INCOMPLETE'
+      }
+    }
+    function Get-GovernorNativeMetadataApiV1 {return [CensusMetadataFixture]}
+    $rows=@()
+    foreach($mode in @('bad-size','empty-name','path-name','wrong-self','duplicate','candidate-overflow','incomplete','cleanup-failed')){
+      [CensusMetadataFixture]::Mode=$mode;[CensusMetadataFixture]::Rows=0;$script:governorRecoveryLastElapsed=0.0;$accepted=$true
+      try{$null=Get-GovernorProbeCandidatesV1 ([Diagnostics.Stopwatch]::StartNew())}catch{$accepted=$false}
+      $rows+=,[pscustomobject]@{mode=$mode;accepted=$accepted;rows=[CensusMetadataFixture]::Rows}
+    }
+    ConvertTo-Json -InputObject $rows -Compress
+  `);
+  assert.equal(result.length,8);
+  for(const row of result){assert.equal(row.accepted,false,row.mode);assert.ok(row.rows>0&&row.rows<=66,row.mode);}
+  assert.equal(result.find(row=>row.mode==='candidate-overflow').rows,66,'reject the 65th candidate, never truncate to 64');
+  assert.equal(result.find(row=>row.mode==='duplicate').rows,2);
+});
+
+test('only exact canonical serve identity can leave the native probe domain; foreign, active or changed identity stays held', {skip:!windows},()=>{
+  const result=run(String.raw`
+    class ServeMetadataFixture {
+      static [string]$Mode
+      static [string]$Path
+      static [uint32] GetProcessId([IntPtr]$h){if([ServeMetadataFixture]::Mode -ceq 'wrong-pid'){return 43};return 42}
+      static [uint32] WaitForSingleObject([IntPtr]$h,[uint32]$ms){if($ms -ne 0){throw 'UNBOUNDED_WAIT'};if([ServeMetadataFixture]::Mode -ceq 'exited'){return 0};return 258}
+      static [bool] GetProcessTimes([IntPtr]$h,[ref]$born,[ref]$exited,[ref]$kernel,[ref]$user){$born.Value=[long]100;$exited.Value=[long]0;return $true}
+      static [bool] QueryFullProcessImageNameW([IntPtr]$h,[uint32]$flags,[Text.StringBuilder]$image,[ref]$length){
+        $candidatePath=[ServeMetadataFixture]::Path
+        if([ServeMetadataFixture]::Mode -ceq 'foreign-image'){$candidatePath='C:\fixture\ollama.exe'}
+        [void]$image.Append($candidatePath);$length.Value=[uint32]$candidatePath.Length;return $true
+      }
+    }
+    [ServeMetadataFixture]::Path=Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'
+    function Get-GovernorNativeMetadataApiV1 {return [ServeMetadataFixture]}
+    function Read-GovernorNativeCommandV1 {param([IntPtr]$Handle)
+      if([ServeMetadataFixture]::Mode -ceq 'opaque'){throw 'GOVERNOR_RECOVERY_COMMAND_UNPROVEN'}
+      $command='"'+[ServeMetadataFixture]::Path+'" serve'
+      if([ServeMetadataFixture]::Mode -ceq 'ps'){$command='"'+[ServeMetadataFixture]::Path+'" ps'}
+      if([ServeMetadataFixture]::Mode -ceq 'extra-argument'){$command+=' --fixture'}
+      if([ServeMetadataFixture]::Mode -ceq 'case-change'){$command=$command.Replace(' serve',' Serve')}
+      return $command
+    }
+    $rows=@()
+    foreach($mode in @('valid','wrong-pid','exited','foreign-image','opaque','ps','extra-argument','case-change','changed-birth','changed-command')){
+      [ServeMetadataFixture]::Mode=$mode
+      $pin=[pscustomobject]@{handle=[IntPtr]1;processId=[uint32]42;birth=[long]0;image='';command=''}
+      if($mode -ceq 'changed-birth'){$pin.birth=[long]99}
+      if($mode -ceq 'changed-command'){$pin.command='different original command'}
+      $allowed=$true;try{Assert-GovernorServePinV1 $pin}catch{$allowed=$false}
+      $rows+=,[pscustomobject]@{mode=$mode;allowed=$allowed}
+    }
+    ConvertTo-Json -InputObject $rows -Compress
+  `);
+  assert.equal(result.length,10);
+  for(const row of result)assert.equal(row.allowed,row.mode==='valid',row.mode);
+});
+
+test('legacy recovery archives the original under the real mutex and retires only custody after complete exclusion', {skip:normalNativeSkip},async t=>{
+  const root=await realpath(await mkdtemp(join(tmpdir(),'governor-legacy-recovery-')));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const stateRoot=join(root,'Documents','Stephanos-openclaw-workspace','vr');
+  await mkdir(stateRoot,{recursive:true});
+  const original=JSON.stringify({schemaVersion:'stephanos.vr-resource-governor.v1',governorVersion:3,
+    phase:'NORMAL',active:false,nativeProbeCustodyHeld:true,localModelAllowed:false,heavyModelAllowed:false,dependencyObservationKnown:false});
+  await writeFile(join(stateRoot,'vr-resource-governor-current.json'),original);
+  const result=run(fixtureStatePaths(root)+String.raw`
+    $script:censuses=0
+    function Get-GovernorProbeCandidatesV1 {param($Clock) Assert-GovernorRecoveryDeadlineV1 $Clock;$script:censuses++;return @()}
+    $script:governorMutationOwner=Enter-GovernorMutationOwner
+    try{
+      $recovered=Invoke-GovernorHeldProbeRecoveryV1
+      $state=Read-GovernorState
+      $files=@(Get-ChildItem -LiteralPath (Join-Path $stateRoot 'governor-custody-recovery') -File)
+      $archive=[IO.File]::ReadAllText($files[0].FullName)|ConvertFrom-Json
+      [pscustomobject]@{recovered=$recovered;censuses=$script:censuses;held=$state.nativeProbeCustodyHeld;local=$state.localModelAllowed;heavy=$state.heavyModelAllowed;known=$state.dependencyObservationKnown;healthy=$state.evictionHealthy;archived=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($archive.originalBytesBase64));outcome=$archive.historicalOutcome;receipt=$state.nativeProbeRecoveryReceiptSha256;retirementClaim=$archive.restrictionRetired}|ConvertTo-Json -Compress
+    }finally{Exit-GovernorMutationOwner -Owner $script:governorMutationOwner}
+  `,[isolatedMutexSources()[0]]);
+  assert.equal(result.recovered,true);
+  assert.equal(result.censuses,3);
+  assert.equal(result.archived,original);
+  assert.equal(result.outcome,'UNKNOWN');
+  for(const field of ['held','local','heavy','known','healthy','retirementClaim'])assert.equal(result[field],false,field);
+  assert.match(result.receipt,/^[a-f0-9]{64}$/);
+});
+
+test('legacy current-domain uncertainty, races and malformed attempts never retire the original hold', {skip:normalNativeSkip},async t=>{
+  const root=await realpath(await mkdtemp(join(tmpdir(),'governor-recovery-refusal-')));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const stateRoot=join(root,'Documents','Stephanos-openclaw-workspace','vr');await mkdir(stateRoot,{recursive:true});
+  const result=run(fixtureStatePaths(root)+String.raw`
+    Ensure-StateRoot
+    # Only this adversarial fixture omits ancestor opens, so a sandbox account
+    # lacking parent-profile traverse permission still reaches each state race.
+    # The positive normal-operator case above retains the actual ancestor pins.
+    function Open-GovernorRecoveryParentPinsV1 {param([string]$Directory) return @()}
+    $results=@()
+    foreach($mode in @('active-probe','opaque-census','second-census-changed','final-census-changed','changed-state','bad-attempt')){
+      $state=[ordered]@{schemaVersion='stephanos.vr-resource-governor.v1';governorVersion=3;phase='NORMAL';active=$false;nativeProbeCustodyHeld=$true;localModelAllowed=$false;heavyModelAllowed=$false;dependencyObservationKnown=$false}
+      if($mode -ceq 'bad-attempt'){$state.nativeProbeAttempt=[pscustomobject]@{schemaVersion='future-or-malformed';ownerProcessId='123'}}
+      $original=$state|ConvertTo-Json -Depth 8 -Compress
+      [IO.File]::WriteAllText($statePath,$original,[Text.UTF8Encoding]::new($false));$script:censuses=0
+      function Get-GovernorProbeCandidatesV1 {param($Clock)
+        $script:censuses++
+        if($mode -ceq 'opaque-census'){throw 'GOVERNOR_RECOVERY_CENSUS_UNPROVEN'}
+        if($mode -ceq 'active-probe' -or ($mode -ceq 'second-census-changed' -and $script:censuses -eq 2) -or ($mode -ceq 'final-census-changed' -and $script:censuses -eq 3)){return @([pscustomobject]@{processId=[uint32]42;name='nvidia-smi.exe'})}
+        if($mode -ceq 'changed-state' -and $script:censuses -eq 1){$stream.Position=0;$changed=[Text.Encoding]::UTF8.GetBytes([Text.Encoding]::UTF8.GetString($original).Replace('NORMAL','GAMING'));$stream.Write($changed,0,$changed.Length);$stream.Flush($true)}
+        return @()
+      }
+      $script:governorMutationOwner=Enter-GovernorMutationOwner
+      try{$recovered=Invoke-GovernorHeldProbeRecoveryV1}finally{Exit-GovernorMutationOwner -Owner $script:governorMutationOwner}
+      $held=Read-GovernorState
+      $results+=,[pscustomobject]@{mode=$mode;recovered=$recovered;held=$held.nativeProbeCustodyHeld;local=$held.localModelAllowed;heavy=$held.heavyModelAllowed;censuses=$script:censuses}
+    }
+    ConvertTo-Json -InputObject $results -Compress
+  `,[isolatedMutexSources()[0]]);
+  assert.equal(result.length,6);
+  const expectedCensuses={'active-probe':1,'opaque-census':1,'second-census-changed':2,'final-census-changed':3,'changed-state':2,'bad-attempt':0};
+  for(const row of result){assert.equal(row.recovered,false,row.mode);assert.equal(row.held,true,row.mode);assert.equal(row.local,false,row.mode);assert.equal(row.heavy,false,row.mode);assert.equal(row.censuses,expectedCensuses[row.mode],row.mode);}
+});
+
 test('native probes are a closed finite surface with concurrent bounded stream reads', () => {
   assert.match(governor, /ValidateSet\('GpuSnapshot','OllamaInventory','OllamaStop'\)/);
   assert.match(governor, /StandardOutput\.ReadAsync/);
@@ -129,8 +450,10 @@ test('governor and caretaker use the same fixed SID-bound protected kernel owner
       const end = source.indexOf('\n}', start) + 2;
       return source.slice(start, end).replaceAll('\r\n', '\n');
     };
-    assert.equal(body(governor), body(caretaker));
+    assert.ok(body(governor));
+    assert.equal(caretaker.includes('function ' + name + ' {'), false, 'the canonical owner is imported rather than duplicated');
   }
+  assert.match(caretaker, /\. \$vrGovernorScript/);
   assert.match(governor, /Global\\Stephanos\.VrResourceGovernor\.V1\.' \+ \$userSid\.Value/);
   assert.match(governor, /SetAccessRuleProtection\(\$true, \$false\)/);
   assert.match(governor, /GetAccessControl\(\)/);
@@ -141,7 +464,7 @@ test('governor and caretaker use the same fixed SID-bound protected kernel owner
     'caretaker must release ownership before asking the new watcher to advance');
 });
 
-test('real concurrent owner makes every one-shot, Watch and caretaker busy without clearing its hold', { skip: !windows }, async t => {
+test('real concurrent owner makes every one-shot, Watch and caretaker busy without clearing its hold', { skip: normalNativeSkip }, async t => {
   const root = await mkdtemp(join(tmpdir(), 'governor-mutex-busy-'));
   const stateRoot = join(root, 'Documents', 'Stephanos-openclaw-workspace', 'vr');
   await mkdir(stateRoot, { recursive: true });
@@ -157,6 +480,9 @@ test('real concurrent owner makes every one-shot, Watch and caretaker busy witho
       Set-GovernorNativeCustodyHold -Held $true
       [IO.File]::WriteAllText('${ready.replaceAll("'", "''")}','ready')
       ${fixtureBarrierWait(release)}
+      # Fixture-only exit witness: real retained-child cleanup is exercised by
+      # the separate subprocess/cleanup tests, not this mutex contention case.
+      $script:governorNativeProbeExitProven=$true
       Set-GovernorNativeCustodyHold -Held $false
       '{"released":true}'
     } finally {Exit-GovernorMutationOwner -Owner $script:governorMutationOwner}
@@ -411,7 +737,7 @@ test('actual caretaker progress requires exact publisher birth, fresh time and r
   assert.deepEqual(r, { fresh: true, foreign: false, stale: false, future: false, custody: true, stalled: false, advancing: true });
 });
 
-test('actual restrictive hold persists even with no prior state and UNKNOWN never grants model permission', { skip: !windows }, async t => {
+test('actual restrictive hold persists even with no prior state and UNKNOWN never grants model permission', { skip: normalNativeSkip }, async t => {
   const root = await mkdtemp(join(tmpdir(), 'governor-hold-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const r = run(String.raw`
@@ -421,6 +747,7 @@ test('actual restrictive hold persists even with no prior state and UNKNOWN neve
     $held=[IO.File]::ReadAllText($statePath)|ConvertFrom-Json
     # This fixture supplies explicit prior direct-child exclusion before testing
     # the separate UNKNOWN-permission writer; ordinary reconcile cannot do this.
+    $script:governorNativeProbeExitProven=$true
     Set-GovernorNativeCustodyHold -Held $false
     $script:governorDependencyHealthy=$false;$lightweightModel='llama3.2:3b'
     function Append-TelemetryEvent {param($Payload)}
@@ -539,12 +866,13 @@ test('existing malformed state cannot become absent-state permission in either o
   }
 });
 
-test('caretaker preserves a restrictive hold when a child appears between census and parent exit', { skip: !windows }, async t => {
+test('caretaker preserves a restrictive hold when a child appears between census and parent exit', { skip: normalNativeSkip }, async t => {
   const root = await mkdtemp(join(tmpdir(), 'governor-child-race-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'Documents', 'Stephanos-openclaw-workspace', 'vr'), { recursive: true });
-  const r = run(String.raw`
-    $env:USERPROFILE='${root.replaceAll("'", "''")}';$powershellExecutable='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+  const r = run(fixtureStatePaths(root) + String.raw`
+    $powershellExecutable='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    $script:governorMutationOwner=[pscustomobject]@{acquired=$true;abandoned=$false}
     $born=[DateTime]::UtcNow.AddMinutes(-2);$process=[pscustomobject]@{ProcessId=4242;CreationDate=$born}
     function Get-VrResourceGovernorProcesses {$script:vrGovernorInventoryComplete=$true;return @($process)}
     $retained=[pscustomobject]@{Handle=1;StartTime=$born;Path=$powershellExecutable;Killed=$false}
