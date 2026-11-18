@@ -340,3 +340,21 @@ test('Disconnect releases room-local microphone testing without claiming to mute
     assert.equal(localStops,1,'an already stopped local microphone must not be reactivated or stopped again');
   }
 });
+
+// A transient Quest/native frame decoding error must never certify a frame
+// as painted or allow a pointer to act against an unpainted crop.
+test('failed centre frame paint retains the input fence and retries the same revision',()=>{
+  const h=fixture();h.screen.render();h.screen.action('zoom-in');
+  const ctx=h.contexts[0],draw=ctx.drawImage;let tries=0;
+  ctx.drawImage=function(...args){tries++;if(tries===1)throw Error('Transient native frame failure');return draw.apply(this,args);};
+  assert.throws(()=>h.screen.render(),/Transient native frame failure/);
+  assert.equal(h.screen.getState().keyboardEnabled,false,'unpainted crop cannot accept native input');
+  h.screen.point(.5,.5,true);
+  assert.deepEqual(h.inputs,[],'a failed paint cannot forward a pointer');
+  h.screen.render();
+  assert.equal(tries,2,'unchanged revision must still repaint after a draw failure');
+  assert.equal(h.screen.getState().keyboardEnabled,true,'only a completed frame releases the paint fence');
+  h.screen.point(.5,.5,true);
+  assert.equal(h.inputs.length,1);
+  assert.equal(h.inputs[0].kind,'click');
+});
