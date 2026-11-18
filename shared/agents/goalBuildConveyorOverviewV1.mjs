@@ -473,6 +473,30 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     const independentLive = independent?.freshness === 'CURRENT'
       && fresh(independent?.observedAtUtc, nowMs, maxAgeMs);
     const independentLight = String(independent?.trafficLight || '').toUpperCase();
+    // A fresh independent GREEN cannot conceal a later or co-timed, source-matched
+    // explicit negative from the canonical native service observer.
+    const independentHead = /^[a-f0-9]{40}$/.test(String(independent?.sourceHead || ''))
+      ? independent.sourceHead : coreLive ? core.sourceHead : '';
+    const canonicalNegativeVeto = independentLive && independentLight === 'GREEN'
+      && /^[a-f0-9]{40}$/.test(independentHead) && (
+        (index === 1 && watchdog?.statusId === 'battle-bridge-worker-watchdog-current'
+          && workerProof?.healthy === false
+          && workerProof?.sourceHead === independentHead
+          && fresh(watchdog.timestampUtc, nowMs, serviceProofAgeMs)
+          && time(watchdog.timestampUtc) >= time(independent.observedAtUtc))
+        || (index === 2 && refresh?.statusId === 'post-sync-runtime-refresh-current'
+          && refresh?.safeRefreshesCompleted === false
+          && backendTargets.length === 1 && backendProof?.ok === false
+          && refresh.afterHead === independentHead
+          && backendProof?.sourceHead === independentHead
+          && fresh(refresh.timestampUtc, nowMs, serviceProofAgeMs)
+          && time(refresh.timestampUtc) >= time(independent.observedAtUtc))
+      );
+    if (canonicalNegativeVeto) return {
+      id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+      state: 'UNKNOWN', observedAtUtc: '', expiresAtUtc: '',
+      evidenceSource: 'NEWER_CANONICAL_NEGATIVE_VETO',
+    };
     if (independentLive && ['GREEN', 'RED', 'AMBER'].includes(independentLight)) {
       return {
         id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],

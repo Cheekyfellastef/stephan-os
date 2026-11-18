@@ -396,3 +396,68 @@ test('Goal #2961: newer canonical negatives veto older healthy Core aggregates w
     assert.deepEqual(records, untouched, 'read-only projection cannot change native receipts');
   }
 });
+
+test('Goal #2961: independent GREEN cannot mask a newer canonical negative', () => {
+  const head = 'a'.repeat(40);
+  const foreign = 'b'.repeat(40);
+  const core = {
+    statusId: 'stephanos-core-daemon-current', timestampUtc: at(-90000),
+    sourceHead: head, missionWorkerHealthy: true, backendHealthy: true,
+  };
+  const service = (id, observed = -45000, sourceHead = head, trafficLight = 'GREEN') => ({
+    serviceId: id, freshness: 'CURRENT', observedAtUtc: at(observed),
+    sourceHead, trafficLight,
+  });
+  const watchdog = (observed = -1000, sourceHead = head) => ({
+    statusId: 'battle-bridge-worker-watchdog-current', timestampUtc: at(observed),
+    finalAssessment: { healthy: false, sourceHead },
+  });
+  const refresh = (observed = -1000, sourceHead = head, afterHead = head) => ({
+    statusId: 'post-sync-runtime-refresh-current', timestampUtc: at(observed),
+    safeRefreshesCompleted: false, afterHead,
+    resultTargets: [{ targetId: 'stephanos-backend-8787', ok: false, sourceHead }],
+  });
+  const cases = [
+    ['later worker negative', service('mission-worker'), [core, watchdog()],
+      'missionWorkerHealthy', 'UNKNOWN'],
+    ['co-timed worker negative', service('mission-worker'), [core, watchdog(-45000)],
+      'missionWorkerHealthy', 'UNKNOWN'],
+    ['later backend negative', service('backend'), [core, refresh()],
+      'backendHealthy', 'UNKNOWN'],
+    ['co-timed backend negative', service('backend'), [core, refresh(-45000)],
+      'backendHealthy', 'UNKNOWN'],
+    ['older worker negative', service('mission-worker', -1000), [core, watchdog(-45000)],
+      'missionWorkerHealthy', 'HEALTHY'],
+    ['older backend negative', service('backend', -1000), [core, refresh(-45000)],
+      'backendHealthy', 'HEALTHY'],
+    ['foreign worker head', service('mission-worker'), [core, watchdog(-1000, foreign)],
+      'missionWorkerHealthy', 'HEALTHY'],
+    ['foreign backend head', service('backend'), [core, refresh(-1000, foreign, foreign)],
+      'backendHealthy', 'HEALTHY'],
+    ['stale native negative', service('mission-worker'), [core, watchdog(-180000)],
+      'missionWorkerHealthy', 'HEALTHY'],
+    ['future native negative', service('mission-worker'), [core, watchdog(1000)],
+      'missionWorkerHealthy', 'HEALTHY'],
+    ['newer independent positive', service('mission-worker', -1000), [core, watchdog(-45000)],
+      'missionWorkerHealthy', 'HEALTHY'],
+    ['independent RED remains RED', service('mission-worker', -45000, head, 'RED'),
+      [core, watchdog()], 'missionWorkerHealthy', 'UNHEALTHY'],
+    ['no native negative', service('mission-worker'), [core],
+      'missionWorkerHealthy', 'HEALTHY'],
+    ['source-head fallback from Core', service('mission-worker', -45000, ''),
+      [core, watchdog()], 'missionWorkerHealthy', 'UNKNOWN'],
+  ];
+  for (const [label, independent, statusRecords, id, expectedState] of cases) {
+    const projection = { captainsBridge: { runtimeHealth: { services: [independent] } } };
+    const originalProjection = structuredClone(projection);
+    const originalRecords = structuredClone(statusRecords);
+    const actual = overview(projection, { nowMs: NOW, statusRecords }).health.find(row => row.id === id);
+    assert.equal(actual.state, expectedState, label);
+    if (expectedState === 'UNKNOWN') {
+      assert.equal(actual.evidenceSource, 'NEWER_CANONICAL_NEGATIVE_VETO', label);
+      assert.equal(actual.expiresAtUtc, '', 'no contradictory proof expiry: ' + label);
+    }
+    assert.deepEqual(projection, originalProjection, 'pure projection: ' + label);
+    assert.deepEqual(statusRecords, originalRecords, 'canonical receipts unchanged: ' + label);
+  }
+});
