@@ -239,6 +239,8 @@ test('consented native editor replies are shown as editor readback, not ChatGPT 
     [{kind:'text',text:'x'},'editor-update-unverified',/did not confirm.*do not retry/],
     [{kind:'click',x:.5,y:.5},'app-control-invoked',/selected app control was invoked/],
     [{kind:'click',x:.5,y:.5},'app-control-outcome-unverified',/no second click was sent/],
+    // A button click is not an editor selection: reselect the composer before Enter is admitted.
+    [{kind:'click',x:.5,y:.5},'editor-accessibility-selected',/Editable field located/],
     [{kind:'key',key:'Enter'},'editor-key-focus-unverified',/explicit button rather than Enter/],
     [{kind:'click',x:.5,y:.5},'input-posted',/Windows queued.*not confirmed/],
   ];
