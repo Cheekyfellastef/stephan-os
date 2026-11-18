@@ -2411,6 +2411,7 @@ function mailboxReceiptResultParts(receipt = {}) {
   // READ_MAILBOX_RECEIPT returns this allowlisted shape. Reprojection must retain
   // the selected original's identity, not borrow the later READ command's head.
   const projectedOriginal = (receipt?.operation === 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE'
+    || receipt?.operation === STARFIELD_VR_NATIVE_BUILD_OPERATION
     || (receipt?.operation === SOVEREIGN_COMMANDER_REMOTE_OPERATION
       && receipt?.operationResult?.remoteAction === 'status-stephanos-core-daemon'))
     && !Object.prototype.hasOwnProperty.call(receipt, 'result')
