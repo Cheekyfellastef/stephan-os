@@ -1,0 +1,3 @@
+* text eol=lf
+# Preserve the exact legacy Windows fixture; CR is its line terminator.
+test-scoped-eye-ledger.cpp -text whitespace=cr-at-eol
