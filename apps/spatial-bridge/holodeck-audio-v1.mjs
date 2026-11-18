@@ -81,6 +81,19 @@ export function createHolodeckAudioControls({
       microphonePending:false,status:message});
     return {ok:false,inputs:[],outputs:[],reason:message};
   }
+  // A headset/device hot-plug invalidates local test ownership immediately.
+  // Never silently switch an audio route or confuse a test with ChatGPT Voice.
+  const deviceService=navigatorRef?.mediaDevices;
+  let deviceChangeListener=null;
+  if(typeof deviceService?.addEventListener==='function'){
+    deviceChangeListener=()=>{
+      if(disposed)return;
+      ++listVersion; // An enumeration begun before the change must not restore old devices.
+      invalidateDevices('Audio devices changed.');
+    };
+    try{deviceService.addEventListener('devicechange',deviceChangeListener);}
+    catch{deviceChangeListener=null;}
+  }
   function setInput(id){
     id=selection(id);if(disposed||id===null)return false;
     if(id&& !state.inputs.some(device=>device.id===id))return false;
@@ -260,6 +273,7 @@ export function createHolodeckAudioControls({
   function dispose(){
     if(disposed)return;
     disposed=true;listVersion++;statusIntent++;releaseMicrophone();releaseSpeaker();
+    if(deviceChangeListener)try{deviceService?.removeEventListener?.('devicechange',deviceChangeListener);}catch{}
     publish({microphoneActive:false,microphonePending:false,status:'Audio controls closed. Local tests stopped.'});
   }
   return {getState,setInput,setOutput,listDevices,testMicrophone,stopMicrophone,microphoneLevel,testSpeakers,stopSpeakers,dispose};
