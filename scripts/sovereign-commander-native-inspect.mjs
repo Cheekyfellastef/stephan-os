@@ -24,7 +24,9 @@ const REPOSITORY = 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os';
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const GOVERNOR_PATH = 'scripts/windows/run-vr-resource-governor.ps1';
-const GOVERNOR_SOURCE_LIMIT = 65536;
+const GOVERNOR_SOURCE_LIMIT = 128 * 1024;
+// One canonical-base64 record plus its newline; read one sentinel character.
+const GOVERNOR_INPUT_CHAR_LIMIT = 4 * Math.ceil(GOVERNOR_SOURCE_LIMIT / 3) + 1;
 const GOVERNOR_INVALID = 'SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_OBSERVATION_INVALID';
 const GOVERNOR_SOURCE_UNPROVEN = 'SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_SOURCE_UNPROVEN';
 const GOVERNOR_TIMEOUT = 'SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_OBSERVATION_TIMEOUT';
@@ -201,21 +203,24 @@ try {
  foreach($module in @('Microsoft.PowerShell.Management','Microsoft.PowerShell.Utility','CimCmdlets')) {
   Import-Module ('C:\Windows\System32\WindowsPowerShell\v1.0\Modules\'+$module+'\'+$module+'.psd1') -ErrorAction Stop
  }
- $chars=[char[]]::new(87387)
+ $chars=[char[]]::new(__GOVERNOR_READ_CHAR_LIMIT__)
  $count=0
  while($count -lt $chars.Length){
   $read=[Console]::In.Read($chars,$count,$chars.Length-$count)
   if($read -eq 0){break}
   $count+=$read
  }
- if($count -gt 87386){throw 'INPUT'}
+ if($count -gt __GOVERNOR_INPUT_CHAR_LIMIT__){throw 'INPUT'}
  $wire=[string]::new($chars,0,$count)
  if($wire -notmatch '\A[A-Za-z0-9+/]+={0,2}\n\z'){throw 'INPUT'}
  $bytes=[Convert]::FromBase64String($wire.TrimEnd([char]10))
- if($bytes.Length -lt 1 -or $bytes.Length -gt 65536){throw 'INPUT'}
+ if($bytes.Length -lt 1 -or $bytes.Length -gt __GOVERNOR_SOURCE_LIMIT__){throw 'INPUT'}
  $source=[Text.UTF8Encoding]::new($false,$true).GetString($bytes)
  & ([scriptblock]::Create($source)) -Action ObserveAdmission
-} catch { exit 2 }`;
+} catch { exit 2 }`
+  .replaceAll('__GOVERNOR_READ_CHAR_LIMIT__', String(GOVERNOR_INPUT_CHAR_LIMIT + 1))
+  .replaceAll('__GOVERNOR_INPUT_CHAR_LIMIT__', String(GOVERNOR_INPUT_CHAR_LIMIT))
+  .replaceAll('__GOVERNOR_SOURCE_LIMIT__', String(GOVERNOR_SOURCE_LIMIT));
 
 // Exported for the existing source tests, not registered as a remote capability.
 // Production selects no source bytes, action, path, executable, or environment.
