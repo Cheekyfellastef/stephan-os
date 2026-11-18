@@ -558,3 +558,27 @@ test('director refuses mixed out-of-scope hints instead of silently narrowing so
   assert.deepEqual(allowed.nextSourceSlice.allowedFiles, ['src/test.mjs']);
   assert.equal(validateDirectorStatusPacket(allowed).valid, true);
 });
+
+test('Goal #2961: explicit blocker outranks historical completion triple', () => {
+  const finished = { goalId: '#root', sourceMerged: true,
+    focusedProofRecorded: true, missionStateUpdated: true };
+  assert.equal(classifyGoal(finished).state, GOAL_STATE.DONE);
+  const held = classifyGoal({ ...finished, blocker: 'Native source custody unproven' });
+  assert.equal(held.state, GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION);
+  assert.equal(held.finalVerdict, 'GOAL_BLOCKED');
+});
+
+test('Goal #2961: blocked completion cannot release a dependent source slice', () => {
+  const root = { goalId: '#root', sourceMerged: true,
+    focusedProofRecorded: true, missionStateUpdated: true,
+    blocker: 'Original installation proof missing' };
+  const child = { goalId: '#child', dependsOn: ['#root'], priority: 12,
+    allowedFiles: ['shared/agents/missionFlywheelDirectorV1.mjs'] };
+  assert.equal(selectNextGoal({ goals: [root, child] }), null);
+  const status = createDirectorStatusPacket({ goals: [root, child],
+    nextGoal: { goalId: '#child' } });
+  assert.equal(status.nextGoal, null);
+  assert.equal(status.nextSourceSlice, null);
+  assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_HELD');
+  assert.equal(validateDirectorStatusPacket(status).valid, true);
+});
