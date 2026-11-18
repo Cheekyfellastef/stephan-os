@@ -2,7 +2,10 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
 import { classifyDirt } from '../../scripts/battle-bridge-github-sync-policy.mjs';
-import { readVerifiedStephanosNativeRoutingCandidate } from './stephanosNativeCapacityRoutingAdmissionV1.mjs';
+import {
+  readVerifiedStephanosNativeRoutingCandidate,
+  readVerifiedStephanosNativeStalePublisherHeadV1,
+} from './stephanosNativeCapacityRoutingAdmissionV1.mjs';
 
 export const STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION = 'INSTALL_STEPHANOS_NATIVE_CAPACITY_PUBLISHER';
 
@@ -100,6 +103,7 @@ function lastJsonObject(stdout = '') {
 export async function proveNativePublisherSignedReadbackV1({
   expectedHead = '', repositoryRoot = '', env = process.env, notBeforeUtc = '',
   verify = readVerifiedStephanosNativeRoutingCandidate,
+  verifyStale = readVerifiedStephanosNativeStalePublisherHeadV1,
   sleep = (ms) => new Promise(resolveWait => setTimeout(resolveWait, ms)),
   now = () => new Date(),
 } = {}) {
@@ -142,8 +146,28 @@ export async function proveNativePublisherSignedReadbackV1({
         const reason = text(v?.reason);
         lastReason = /^[A-Za-z0-9][A-Za-z0-9._:-]{1,119}$/.test(reason)
           ? reason : 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_TRUST_NOT_PROVEN';
-        if (lastReason === 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID') {
-          sawAuthenticatedStaleHead = true;
+        // A source-head-invalid error does not verify the Ed25519 signature.
+        // Require separate signed old-head proof observed after StartNow.
+        try {
+          const stale = await verifyStale({
+            nowUtc: now().toISOString(),
+            repository: 'Cheekyfellastef/stephan-os',
+            sourceHead: expectedHead,
+            taskClass: 'FOCUSED_REPAIR',
+            root: resolve(env.USERPROFILE, 'Documents', 'Stephanos-openclaw-workspace'),
+            repoRoot: repositoryRoot, env,
+          });
+          const observedAtMs = Date.parse(stale?.capacityObservedAtUtc || '');
+          if (stale?.ok === true && stale?.verifiedSignedReceipt === true
+            && stale?.expectedHead === expectedHead
+            && stale?.repository === 'Cheekyfellastef/stephan-os'
+            && /^[0-9a-f]{40}$/.test(stale?.signedStaleHead || '')
+            && stale.signedStaleHead !== expectedHead
+            && Number.isFinite(observedAtMs) && observedAtMs >= notBeforeMs) {
+            sawAuthenticatedStaleHead = true;
+          }
+        } catch {
+          // No stale proof: no task-stop authority.
         }
       }
     } catch {
@@ -153,8 +177,10 @@ export async function proveNativePublisherSignedReadbackV1({
   }
   // The stale writer may clear its own status before the final sample. Only
   // preserve a witnessed stale head across MISSING, never a new trust error.
-  const reason = sawAuthenticatedStaleHead && lastReason === 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING'
-    ? 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID' : lastReason;
+  const reason = sawAuthenticatedStaleHead && (
+    lastReason === 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING'
+    || lastReason === 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:source-head-invalid'
+  ) ? 'STEPHANOS_NATIVE_PUBLISHER_AUTHENTICATED_STALE_SOURCE_HEAD' : lastReason;
   return Object.freeze({
     ok: false, attempt: 16, sourceHead: expectedHead, reason,
     finalVerdict: 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_HELD',
@@ -226,6 +252,7 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
     expectedHead: shape.expectedHead, repositoryRoot, env,
     notBeforeUtc: installRequestedAtUtc,
     verify: options.verifyCandidateFn || readVerifiedStephanosNativeRoutingCandidate,
+    verifyStale: options.verifyStaleFn || readVerifiedStephanosNativeStalePublisherHeadV1,
     sleep: options.sleepFn,
     now: options.now || (() => new Date()),
   });
@@ -235,7 +262,7 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
   // SOURCE-HEAD-INVALID verdict, after canonical main/dirt and installer
   // identity were already proved; never try a generic process kill.
   if (!signed.ok
-    && signed.reason === 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID') {
+    && signed.reason === 'STEPHANOS_NATIVE_PUBLISHER_AUTHENTICATED_STALE_SOURCE_HEAD') {
     const recovery = run(spawnSyncFn, POWERSHELL, [
       '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
       '-File', resolve(repositoryRoot, 'scripts', 'windows',
@@ -263,6 +290,7 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
       expectedHead: shape.expectedHead, repositoryRoot, env,
     notBeforeUtc: installRequestedAtUtc,
       verify: options.verifyCandidateFn || readVerifiedStephanosNativeRoutingCandidate,
+    verifyStale: options.verifyStaleFn || readVerifiedStephanosNativeStalePublisherHeadV1,
       sleep: options.sleepFn,
       now: options.now || (() => new Date()),
     });

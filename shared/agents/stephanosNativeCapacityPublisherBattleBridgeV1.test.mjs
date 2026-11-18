@@ -297,10 +297,15 @@ test('typed stale signed head triggers only one guarded fixed-task reconcile and
     env: { USERPROFILE: 'C:\\Users\\operator' },
     spawnSyncFn,
     sleepFn: async () => {},
+    verifyStaleFn: async () => ({
+      ok: true, verifiedSignedReceipt: true, expectedHead: HEAD,
+      signedStaleHead: 'a'.repeat(40), repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
+      capacityObservedAtUtc: CAPACITY_OBSERVED_AT,
+    }),
     verifyCandidateFn: async () => {
       verifications++;
       return verifications <= 16
-        ? { ok: false, reason: 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID' }
+        ? { ok: false, reason: 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:source-head-invalid' }
         : { ok: true, candidate: {
             sourceHead: HEAD, repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
             taskClass: 'FOCUSED_REPAIR', capacityObservedAtUtc: CAPACITY_OBSERVED_AT, sourceMutationAllowed: true,
@@ -331,8 +336,13 @@ test('stale signed head never becomes success when guarded restart is blocked', 
       return { status: 0, stdout: installerReceipt() };
     },
     sleepFn: async () => {},
+    verifyStaleFn: async () => ({
+      ok: true, verifiedSignedReceipt: true, expectedHead: HEAD,
+      signedStaleHead: 'a'.repeat(40), repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
+      capacityObservedAtUtc: CAPACITY_OBSERVED_AT,
+    }),
     verifyCandidateFn: async () => ({
-      ok: false, reason: 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID',
+      ok: false, reason: 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:source-head-invalid',
     }),
   });
   assert.equal(result.ok, false);
@@ -395,15 +405,20 @@ test('same-head signed capacity predating StartNow never proves new publication'
 
 test('stale publisher clears its status without losing a prior authenticated stale head', async () => {
   for (const [laterReason, expected] of [
-    ['STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING', 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID'],
+    ['STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING', 'STEPHANOS_NATIVE_PUBLISHER_AUTHENTICATED_STALE_SOURCE_HEAD'],
     ['STEPHANOS_NATIVE_SOURCE_AUTHORITY_INVALID:authority-id-binding-mismatch', 'STEPHANOS_NATIVE_SOURCE_AUTHORITY_INVALID:authority-id-binding-mismatch'],
   ]) {
-    let probes = 0;
+    let probes = 0, staleProofs = 0;
     const result = await proveNativePublisherSignedReadbackV1({
       notBeforeUtc: NOW.toISOString(), expectedHead: HEAD,
       repositoryRoot: '/repo', env: { USERPROFILE: '/operator' },
       verify: async () => ({ ok: false, reason: ++probes === 1
-        ? 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID' : laterReason }),
+        ? 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:source-head-invalid' : laterReason }),
+      verifyStale: async () => ({
+        ok: ++staleProofs === 1, verifiedSignedReceipt: true, expectedHead: HEAD,
+        signedStaleHead: 'a'.repeat(40), repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
+        capacityObservedAtUtc: CAPACITY_OBSERVED_AT,
+      }),
       sleep: async () => {},
     });
     assert.equal(result.ok, false);
@@ -506,4 +521,21 @@ test('native reconcile pins full bootstrap and complete stop/start task identity
   assert.match(recon, /\$candidateSid -ne \$callerSid/);
   assert.match(recon, /Assert-FixedPublisherTaskIdentity \(Get-ScheduledTask -TaskName \$taskName -ErrorAction Stop\)/);
   assert.match(recon, /Assert-FixedPublisherTaskIdentity \$stillRegistered/);
+});
+
+test('untrusted stale receipt mismatch never becomes task stop/start authority', async () => {
+  for (const spoofedReason of [
+    'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:source-head-invalid',
+    'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID',
+  ]) {
+    const result = await proveNativePublisherSignedReadbackV1({
+      notBeforeUtc: NOW.toISOString(), expectedHead: HEAD,
+      repositoryRoot: '/repo', env: { USERPROFILE: '/operator' },
+      verify: async () => ({ ok: false, reason: spoofedReason }),
+      verifyStale: async () => ({ ok: false, verifiedSignedReceipt: false }),
+      sleep: async () => {},
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, spoofedReason);
+  }
 });

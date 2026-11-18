@@ -274,3 +274,49 @@ export async function readVerifiedStephanosNativeRoutingCandidate(options = {}) 
     leaseSeizureAllowed: false,
   });
 }
+
+
+// A routing error alone is not proof of a stale signer. Verify the fixed
+// status through the same Ed25519 receipt + source authority validator
+// against the observed OLD source head before any bounded restart.
+export async function readVerifiedStephanosNativeStalePublisherHeadV1(options = {}) {
+  const requestedHead = text(options.sourceHead).toLowerCase();
+  const root = text(options.root);
+  const repoRoot = text(options.repoRoot);
+  const repository = text(options.repository);
+  if (!FULL_SHA.test(requestedHead) || !root || !repoRoot || !REPOSITORY.test(repository)) {
+    return frozen({ ok: false, reason: 'STEPHANOS_NATIVE_STALE_HEAD_IDENTITY_INVALID' });
+  }
+  const path = resolveSharedWorkspacePath({
+    root, repoRoot, segments: ['status', STEPHANOS_NATIVE_CAPACITY_STATUS_ID + '.json'],
+  });
+  if (!path.ok) return frozen({ ok: false, reason: 'STEPHANOS_NATIVE_STALE_HEAD_PATH_UNAVAILABLE' });
+  let status;
+  try {
+    status = JSON.parse(await readFile(path.path, 'utf8'));
+  } catch {
+    return frozen({ ok: false, reason: 'STEPHANOS_NATIVE_STALE_HEAD_STATUS_UNAVAILABLE' });
+  }
+  const oldHead = text(status?.capacityReceipt?.payload?.sourceHead).toLowerCase();
+  if (!FULL_SHA.test(oldHead) || oldHead === requestedHead) {
+    return frozen({ ok: false, reason: 'STEPHANOS_NATIVE_STALE_HEAD_NOT_DISTINCT' });
+  }
+  // No trust is transferred from the unverified first read. The second
+  // read authenticates signature, publisher attestation, authority, task
+  // capability and freshness for the precise signed previous head.
+  const verified = await readVerifiedStephanosNativeRoutingCandidate({
+    ...options, sourceHead: oldHead,
+  });
+  if (verified?.ok !== true || verified?.candidate?.sourceHead !== oldHead
+    || verified.candidate.repository !== repository
+    || verified.candidate.sourceMutationAllowed !== true
+    || verified.candidate.mergeAuthority !== false
+    || verified.candidate.leaseSeizureAllowed !== false) {
+    return frozen({ ok: false, reason: 'STEPHANOS_NATIVE_STALE_HEAD_SIGNED_PROOF_INVALID' });
+  }
+  return frozen({
+    ok: true, expectedHead: requestedHead, signedStaleHead: oldHead,
+    repository, capacityObservedAtUtc: verified.candidate.capacityObservedAtUtc,
+    verifiedSignedReceipt: true,
+  });
+}
