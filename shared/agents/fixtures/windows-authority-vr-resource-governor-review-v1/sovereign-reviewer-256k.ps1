@@ -749,7 +749,12 @@ function Read-GovernorState {
 
 function Test-ReviewerReservationBlockedByCooldown {
     param($State)
-    if (-not $State -or [string]$State.phase -ne 'COOLDOWN') { return $false }
+    if (-not $State) { return $false }
+    $phase = [string]$State.phase
+    # A just-ended game or preparation has not yet published its cooldown.
+    # Do not allow a reviewer lease to erase that pending protected transition.
+    if ($phase -in @('GAMING','PREPARING')) { return $true }
+    if ($phase -ne 'COOLDOWN') { return $false }
     $deadline = [DateTimeOffset]::MinValue
     $parsed = [DateTimeOffset]::TryParse(
         [string]$State.cooldownUntilUtc,
@@ -969,6 +974,19 @@ function Resolve-EffectiveState {
     ) {
         $protectedProfile = $profile
         if ($PriorState.profile) { $protectedProfile = $PriorState.profile }
+        $protectedUntilUtc = [string]$PriorState.cooldownUntilUtc
+        if ([string]$PriorState.phase -in @('GAMING','PREPARING')) {
+            # The watcher may not yet have observed the game exit. Start its
+            # cooldown from the original gaming profile, never the reviewer.
+            $protectedSeconds = 0
+            if (
+                -not [int]::TryParse([string]$protectedProfile.cooldownSeconds, [ref]$protectedSeconds) -or
+                $protectedSeconds -lt 30
+            ) {
+                $protectedSeconds = [Math]::Max(30, $CooldownSeconds)
+            }
+            $protectedUntilUtc = $nowUtc.AddSeconds($protectedSeconds).ToString('o')
+        }
         return [pscustomobject]@{
             phase = 'COOLDOWN'
             active = $true
@@ -976,7 +994,7 @@ function Resolve-EffectiveState {
             overrideMode = $override
             profile = $protectedProfile
             lease = $lease
-            cooldownUntilUtc = [string]$PriorState.cooldownUntilUtc
+            cooldownUntilUtc = $protectedUntilUtc
         }
     }
 

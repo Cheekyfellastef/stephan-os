@@ -24,7 +24,7 @@ const PATH = WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1[0];
 const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: 'ae71e1e79ead63efeb5a4d73f4bce6a01ee0f1d9', size: 48838 }),
   Object.freeze({ blobSha: '9513dfe995a35087e1d715ef0c4dff4ca3578295', size: 49674 }),
-  Object.freeze({ blobSha: '55832a25dadd9ec8f069ead2f8a9150681293dd7', size: 53904, reviewerReservation: true }),
+  Object.freeze({ blobSha: '771bb1f322dc802c8a5ba0698f59887550743842', size: 53904, reviewerReservation: true }),
 ]);
 
 const text = (value) => String(value ?? '').trim();
@@ -178,6 +178,14 @@ function reviewGovernor(source, findings) {
     'vr-governor-reviewer-effective-state-widened',
     'REVIEWING must remain an inactive fixed-profile reservation rather than gaming authority.',
   );
+  requireLiteral(findings, source,
+    "if ($phase -in @('GAMING','PREPARING')) { return $true }",
+    'vr-governor-reviewer-pending-game-cooldown-protection-missing',
+    'Reviewer reservation cannot displace gaming or preparation before the cooldown is published.');
+  requireLiteral(findings, source,
+    '$protectedUntilUtc = $nowUtc.AddSeconds($protectedSeconds)',
+    'vr-governor-reviewer-pending-cooldown-deadline-missing',
+    'The original gaming cooldown duration must be materialized before reviewer admission.');
   requireLiteral(findings, source,
     'Test-ReviewerReservationBlockedByCooldown -State $PriorState',
     'vr-governor-reviewer-cooldown-protection-missing',

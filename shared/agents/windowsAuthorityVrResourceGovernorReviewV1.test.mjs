@@ -102,7 +102,7 @@ function rejects(content) {
 }
 
 test('fixture preserves exact current reviewer governor source blob', () => {
-  assert.equal(blobSha(governor), '55832a25dadd9ec8f069ead2f8a9150681293dd7');
+  assert.equal(blobSha(governor), '771bb1f322dc802c8a5ba0698f59887550743842');
   assert.equal(Buffer.byteLength(governor, 'utf8'), 53904);
 });
 
@@ -382,6 +382,7 @@ test('virtual Air Link reviewer fixture requires a fresh UTC timestamp, not stal
 test('reviewer cooldown gate protects the prior phase before any reviewer lease or REVIEWING projection', () => {
   const helper = governor.split('function Test-ReviewerReservationBlockedByCooldown {')[1]
     ?.split('function Append-TelemetryEvent {')[0] || '';
+  assert.match(helper, /phase -in @\('GAMING','PREPARING'\)/);
   assert.match(helper, /phase -ne 'COOLDOWN'/);
   assert.match(helper, /DateTimeOffset\]::TryParse/);
   assert.match(helper, /-not \$parsed -or/);
@@ -391,7 +392,9 @@ test('reviewer cooldown gate protects the prior phase before any reviewer lease 
   assert.ok(cooldownCheck > -1);
   assert.ok(cooldownCheck < effective.indexOf("phase = 'REVIEWING'"));
   assert.match(effective.slice(cooldownCheck, effective.indexOf("phase = 'REVIEWING'")),
-    /phase = 'COOLDOWN'[\s\S]*active = \$true[\s\S]*cooldownUntilUtc = \[string\]\$PriorState\.cooldownUntilUtc/);
+    /phase = 'COOLDOWN'[\s\S]*active = \$true[\s\S]*cooldownUntilUtc = \$protectedUntilUtc/);
+  assert.match(effective, /\$PriorState\.phase -in @\('GAMING','PREPARING'\)[\s\S]*\$nowUtc\.AddSeconds\(\$protectedSeconds\)/);
+  assert.ok(effective.indexOf('$nowUtc.AddSeconds($protectedSeconds)') < effective.indexOf("phase = 'REVIEWING'"));
   const prepare = governor.split("if ($Action -eq 'PrepareGaming') {")[1]
     ?.split("if ($Action -eq 'CancelPrepare') {")[0] || '';
   assert.ok(prepare.indexOf('REVIEWER_RESERVATION_BLOCKED_BY_GAMING_COOLDOWN') > -1);
@@ -403,6 +406,7 @@ test('reviewer-only cooldown policy blocks active or unknown deadlines, allowing
   // Portable semantic branch model; not a native PowerShell or installed-runtime receipt.
   const now = Date.parse('2026-11-18T02:14:00.000Z');
   const blocked = (phase, deadline) => {
+    if (phase === 'GAMING' || phase === 'PREPARING') return true;
     if (phase !== 'COOLDOWN') return false;
     const parsed = Date.parse(deadline);
     return !Number.isFinite(parsed) || now < parsed;
@@ -415,7 +419,37 @@ test('reviewer-only cooldown policy blocks active or unknown deadlines, allowing
     ['COOLDOWN', 'not-a-timestamp', true],
     ['COOLDOWN', '', true],
     ['COOLDOWN', null, true],
+    ['GAMING', '', true],
+    ['PREPARING', null, true],
     ['NORMAL', '2026-11-18T02:15:00Z', false],
     ['REVIEWING', '2026-11-18T02:15:00Z', false],
   ]) assert.equal(blocked(phase, deadline), expected, phase + ': ' + String(deadline));
+});
+
+test('game exit before watcher reconciliation cannot create a reviewer lease or clear prior game cooldown', () => {
+  // Deterministic portable state model, NOT native PowerShell or installed proof.
+  const prior = { phase: 'GAMING', profile: { name: 'game-vr', parkAllModels: true, cooldownSeconds: 90 }, cooldownUntilUtc: '' };
+  const now = Date.parse('2026-11-18T03:20:00Z');
+  const blocked = (state, at) => ['GAMING', 'PREPARING'].includes(state.phase)
+    || (state.phase === 'COOLDOWN' && (!Number.isFinite(Date.parse(state.cooldownUntilUtc))
+      || at < Date.parse(state.cooldownUntilUtc)));
+  assert.equal(blocked(prior, now), true, 'reviewer lease rejected before writing any lease');
+  const afterWatcher = {
+    phase: 'COOLDOWN',
+    active: true,
+    profile: prior.profile,
+    cooldownUntilUtc: new Date(now + prior.profile.cooldownSeconds * 1000).toISOString(),
+  };
+  assert.equal(afterWatcher.profile.parkAllModels, true);
+  assert.equal(afterWatcher.profile.name, 'game-vr');
+  assert.equal(blocked(afterWatcher, now + 30000), true, 'CancelPrepare must not release protected cooldown');
+  assert.equal(blocked(afterWatcher, now + 90000), false, 'reviewer becomes eligible only after actual expiry');
+  const helper = governor.split('function Test-ReviewerReservationBlockedByCooldown {')[1]
+    ?.split('function Append-TelemetryEvent {')[0] || '';
+  const effective = governor.split('function Resolve-EffectiveState {')[1]
+    ?.split('function Invoke-Reconcile {')[0] || '';
+  assert.ok(helper.includes("if ($phase -in @('GAMING','PREPARING')) { return $true }"));
+  assert.match(effective, /\$protectedProfile = \$PriorState\.profile[\s\S]*\$protectedUntilUtc = \$nowUtc\.AddSeconds\(\$protectedSeconds\)/);
+  assert.ok(effective.indexOf('$protectedUntilUtc = $nowUtc.AddSeconds($protectedSeconds)')
+    < effective.indexOf("phase = 'REVIEWING'"));
 });
