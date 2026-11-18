@@ -69,6 +69,13 @@ $canonicalNode = 'C:\Program Files\nodejs\node.exe'
 $gitExe = 'C:\Program Files\Git\cmd\git.exe'
 $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $vrGovernorScript = Join-Path $repoRoot 'scripts\windows\run-vr-resource-governor.ps1'
+# Load the single private governor owner/recovery implementation before any
+# acquisition. Definition-only import starts no process and resets no owner.
+. $vrGovernorScript
+$stateRoot = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\vr'
+$statePath = Join-Path $stateRoot 'vr-resource-governor-current.json'
+$script:governorNativeProbeOwnedHold = $false
+$script:governorNativeAttemptDigest = ''
 $coreDaemonScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
 $coreDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
 $coreDaemonLockPath = Join-Path $(if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:USERPROFILE 'AppData\Local' }) 'Stephanos\stephanos-core-daemon.lock.json'
@@ -362,58 +369,6 @@ function Get-DesktopCommanderRemoteProcesses {
     )
 }
 
-function New-GovernorMutationMutex {
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    try { $userSid = $identity.User } finally { $identity.Dispose() }
-    if ($userSid.Value -cnotmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$') { throw 'GOVERNOR_MUTEX_IDENTITY_UNPROVEN' }
-    $security = [Security.AccessControl.MutexSecurity]::new()
-    $security.SetAccessRuleProtection($true, $false)
-    $security.SetOwner($userSid)
-    foreach ($sid in @($userSid,[Security.Principal.SecurityIdentifier]::new('S-1-5-18'))) {
-        $security.AddAccessRule([Security.AccessControl.MutexAccessRule]::new($sid,
-            [Security.AccessControl.MutexRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow))
-    }
-    $created = $false
-    $mutex = [Threading.Mutex]::new($false, ('Global\Stephanos.VrResourceGovernor.V1.' + $userSid.Value), [ref]$created, $security)
-    try {
-        $actual = $mutex.GetAccessControl()
-        $rules = @($actual.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
-        if (-not $actual.AreAccessRulesProtected -or -not $actual.AreAccessRulesCanonical -or
-            $actual.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $userSid.Value -or $rules.Count -ne 2) { throw 'GOVERNOR_MUTEX_SECURITY_UNPROVEN' }
-        foreach ($rule in $rules) {
-            if ($rule.IsInherited -or $rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
-                $rule.MutexRights -ne [Security.AccessControl.MutexRights]::FullControl -or
-                $rule.IdentityReference.Value -notin @($userSid.Value,'S-1-5-18')) { throw 'GOVERNOR_MUTEX_SECURITY_UNPROVEN' }
-        }
-        return $mutex
-    } catch { $mutex.Dispose(); throw }
-}
-
-function Enter-GovernorMutationOwner {
-    $mutex = New-GovernorMutationMutex
-    $acquired = $false; $abandoned = $false
-    try {
-        try { $acquired = $mutex.WaitOne(0) }
-        catch [Threading.AbandonedMutexException] { $acquired = $true; $abandoned = $true }
-        if (-not $acquired) { $mutex.Dispose(); return [pscustomobject]@{ acquired = $false; abandoned = $false; mutex = $null } }
-        return [pscustomobject]@{ acquired = $true; abandoned = $abandoned; mutex = $mutex }
-    } catch { $mutex.Dispose(); throw }
-}
-
-function Exit-GovernorMutationOwner {
-    param($Owner)
-    if ($Owner -and $Owner.acquired) {
-        try { $Owner.mutex.ReleaseMutex(); $Owner.acquired = $false }
-        finally { $Owner.mutex.Dispose() }
-    }
-}
-
-function Assert-GovernorMutationOwner {
-    param([switch]$AllowAbandoned)
-    if (-not $script:governorMutationOwner -or -not $script:governorMutationOwner.acquired -or
-        ($script:governorMutationOwner.abandoned -and -not $AllowAbandoned)) { throw 'GOVERNOR_MUTATION_OWNER_UNPROVEN' }
-}
-
 function Get-VrResourceGovernorProcesses {
     $script:vrGovernorInventoryComplete = $false
     try {
@@ -526,6 +481,7 @@ function Stop-VerifiedVrResourceGovernor {
             Set-VrResourceGovernorCustodyHold -Held $true
             throw 'GOVERNOR_CHILD_CUSTODY_UNPROVEN'
         }
+        $script:governorNativeProbeExitProven = $true
         Set-VrResourceGovernorCustodyHold -Held $false
     } catch {
         try { Set-VrResourceGovernorCustodyHold -Held $true } catch {}
@@ -535,15 +491,7 @@ function Stop-VerifiedVrResourceGovernor {
 
 function Set-VrResourceGovernorCustodyHold {
     param([bool]$Held)
-    Assert-GovernorMutationOwner -AllowAbandoned:$Held
-    $file = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\vr\vr-resource-governor-current.json'
-    $state = $null
-    try { $state = [IO.File]::ReadAllText($file) | ConvertFrom-Json -ErrorAction Stop } catch {}
-    if (-not $state -or $state -isnot [pscustomobject]) { $state = [pscustomobject]@{ schemaVersion = 'stephanos.vr-resource-governor.v1'; governorVersion = 3; phase = 'UNKNOWN'; active = $true } }
-    foreach ($pair in @(@('nativeProbeCustodyHeld',$Held),@('heavyModelAllowed',$false),@('localModelAllowed',$false),@('evictionHealthy',$false),@('zeroLocalModelInvariant',$false),@('dependencyObservationKnown',$false),@('ollamaLoadMode','unknown'))) {
-        $state | Add-Member -NotePropertyName $pair[0] -NotePropertyValue $pair[1] -Force
-    }
-    [IO.File]::WriteAllText($file, ($state | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+    Set-GovernorNativeCustodyHold -Held $Held -Operation GovernorRecycle
 }
 
 function Test-VrResourceGovernorProcessCurrent {
@@ -589,7 +537,13 @@ function Invoke-VrResourceGovernorLifecycle {
         $prior = Get-VrResourceGovernorProgress -Process $(if ($rows.Count -eq 1) { $rows[0] } else { $null })
         $result.baseline = $prior.updatedAtUtc
         if ($prior.custodyHeld) {
-            $result.blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_CHILD_CUSTODY_UNPROVEN'; return $result
+            # Only this existing lifecycle owner may retire a held snapshot,
+            # after complete current exclusion of the closed native probe domain.
+            if (-not (Invoke-GovernorHeldProbeRecoveryV1)) {
+                $result.blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_CHILD_CUSTODY_UNPROVEN'; return $result
+            }
+            $prior = Get-VrResourceGovernorProgress -Process $(if ($rows.Count -eq 1) { $rows[0] } else { $null })
+            if ($prior.custodyHeld) { $result.blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_CHILD_CUSTODY_UNPROVEN'; return $result }
         }
         $baseline = if ($ExpectedProgress) { [DateTimeOffset]::Parse($ExpectedProgress).UtcDateTime } else { [DateTime]::MinValue }
         $ProgressProven = $prior.fresh -and ($ProgressProven -or
