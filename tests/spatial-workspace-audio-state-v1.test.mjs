@@ -241,3 +241,46 @@ test('failed audio discovery cancels pending microphone permission and stops a l
   assert.equal((await audio.testMicrophone()).ok,false);
   audio.dispose();
 });
+
+test('audio hot-plug revokes pending microphone grant and stale discovery without silently changing devices',async()=>{
+  const listeners=new Set(),grant=deferred(),olderList=deferred(),saved=new Map();
+  const storage={getItem:key=>saved.get(key)??null,setItem:(key,value)=>saved.set(key,value)};
+  let slowList=false,requests=0,removed=0;
+  const discovered=[{kind:'audioinput',deviceId:'quest-mic',label:'Quest microphone'}];
+  const mediaDevices={
+    addEventListener(name,listener){assert.equal(name,'devicechange');listeners.add(listener);},
+    removeEventListener(name,listener){assert.equal(name,'devicechange');removed++;listeners.delete(listener);},
+    enumerateDevices(){return slowList?olderList.promise:Promise.resolve(discovered);},
+    getUserMedia(){requests++;return grant.promise;},
+  };
+  const audio=createHolodeckAudioControls({AudioContextCtor:null,navigatorRef:{mediaDevices},storageRef:storage});
+  assert.equal(listeners.size,1);
+  assert.equal((await audio.listDevices()).ok,true);
+  assert.equal(audio.setInput('quest-mic'),true);
+  const pending=audio.testMicrophone();
+  assert.equal(audio.getState().microphonePending,true);
+  assert.equal(requests,1);
+  slowList=true;
+  const stale=audio.listDevices();
+  for(const listener of listeners)listener();
+  assert.equal((await pending).cancelled,true);
+  const invalidated=audio.getState();
+  assert.deepEqual([invalidated.inputs,invalidated.outputs],[[],[]]);
+  assert.equal(invalidated.microphonePending,false);
+  assert.match(invalidated.status,/Audio devices changed/);
+  olderList.resolve(discovered);
+  assert.equal((await stale).cancelled,true);
+  assert.deepEqual(audio.getState(),invalidated,'old device enumeration cannot revive a detached headset');
+  const stream=mediaStream();
+  grant.resolve(stream);await drain();
+  assert.equal(stream.track.stops,1,'late browser microphone grant is immediately revoked');
+  assert.equal((await audio.testMicrophone()).ok,false);
+  assert.equal(requests,1,'hot-plug never silently reopens a microphone');
+  assert.deepEqual(readSpatialAudioPreferences(storage),{inputId:'quest-mic',outputId:''});
+  slowList=false;discovered.length=0;
+  assert.equal((await audio.listDevices()).ok,true);
+  assert.equal(audio.getState().inputId,'');
+  assert.equal((await audio.testMicrophone()).ok,false,'a missing remembered mic cannot fall back to default');
+  audio.dispose();
+  assert.equal(removed,1);assert.equal(listeners.size,0,'disposed room unregisters the device observer');
+});
