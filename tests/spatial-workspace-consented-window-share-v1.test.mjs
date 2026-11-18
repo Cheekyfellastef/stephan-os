@@ -544,8 +544,9 @@ function captureTransitionHarness({initialNative=false,delayStops=false,inputFai
       if(path==='/bind')return response({status:'connected'});
       if(path==='/input'){
         // The application might apply input even when its HTTP reply is lost.
-        if(inputFailure==='network')throw new Error('Response lost after possible native input');
-        if(inputFailure==='http')return {ok:false,status:503,json:async()=>({status:'unavailable'})};
+        const body=JSON.parse(options.body);
+        if(body.kind==='text'&&inputFailure==='network')throw new Error('Response lost after possible native input');
+        if(body.kind==='text'&&inputFailure==='http')return {ok:false,status:503,json:async()=>({status:'unavailable'})};
         return response({status:inputOutcome(JSON.parse(options.body))});
       }
       if(path==='/frame')return response({status:'frame',serial:calls.length,generation:1,jpeg:'fixture'});
@@ -689,15 +690,17 @@ test('virtual non-text keys require a current editor acknowledgement before any 
 
 test('lost native input acknowledgement remains unverified and never replays a key',async()=>{
   for(const inputFailure of ['network','http']){
-    const h=captureTransitionHarness({inputFailure});
+    const h=captureTransitionHarness({inputFailure,inputOutcome:body=>
+      body.kind==='click'?'editor-accessibility-selected':'input-posted'});
     try{
       await h.client.discover();
       assert.equal(await h.client.connect(17),true);
       await h.tick();
       assert.equal(h.client.getState().status,'live');
+      assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);await h.tick();
       assert.equal(h.client.input({kind:'text',text:'unsent fixture'}),true);
       await h.tick();
-      assert.equal(h.calls.filter(call=>call.path==='/input').length,1,
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,2,
         'an ambiguous transport failure must not replay its native input');
       assert.equal(h.client.getState().status,'unavailable');
       assert.match(h.client.getState().inputStatus,/may already have changed/);
@@ -705,7 +708,7 @@ test('lost native input acknowledgement remains unverified and never replays a k
       assert.match(h.client.getState().message,/original app/);
       assert.equal(h.timers.size,0,'no background replay or poll after failed input');
       assert.equal(h.client.input({kind:'text',text:'unsafe retry'}),false);
-      assert.equal(h.calls.filter(call=>call.path==='/input').length,1);
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,2);
     }finally{await h.close();}
   }
 });
@@ -743,16 +746,19 @@ test('uncertain editor changes discard queued Enter and require fresh editor sel
 
 test('native input publication is a transition boundary before fetching the next frame',async()=>{
   for(const operation of ['stop','pagehide','dispose','normal']){
-    const h=captureTransitionHarness();let revoked=false;
+    const h=captureTransitionHarness({inputOutcome:body=>
+      body.kind==='click'?'editor-accessibility-selected':'input-posted'});let revoked=false;
     try{
       await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
       assert.equal(h.client.getState().status,'live');
+      assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);await h.tick();
+      const framesBefore=h.calls.filter(call=>call.path==='/frame').length;
       h.setHook(state=>{if(!revoked&&operation!=='normal'&&state.inputStatus==='Windows queued the pointer/key event, but the app has not confirmed it.'){
         revoked=true;void h.client[operation]();
       }});
       assert.equal(h.client.input({kind:'text',text:'fixture'}),true);await h.tick();
-      assert.equal(h.calls.filter(call=>call.path==='/input').length,1);
-      assert.equal(h.calls.filter(call=>call.path==='/frame').length,operation==='normal'?2:1);
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,2);
+      assert.equal(h.calls.filter(call=>call.path==='/frame').length,framesBefore+(operation==='normal'?1:0));
       assert.equal(h.timers.size,operation==='normal'?1:0);
       assert.equal(h.client.getState().status,operation==='normal'?'live':'idle');
     }finally{await h.close();}
@@ -805,6 +811,27 @@ test('unverified native clicks discard queued draft text rather than typing into
       await h.tick();await h.tick();
       assert.equal(h.calls.filter(call=>call.path==='/input').length,3,
         'confirmed selection retains a deliberately queued text edit');
+    }finally{await h.close();}
+  }
+});
+
+test('unsolicited draft text is held until the original app editor is explicitly selected',async()=>{
+  for(const clickOutcome of ['editor-accessibility-selected','input-posted']){
+    const h=captureTransitionHarness({inputOutcome:body=>
+      body.kind==='click'?clickOutcome:'editor-value-readback'});
+    try{
+      await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
+      assert.equal(h.client.input({kind:'text',text:'unsolicited draft'}),false,
+        'binding and a live frame alone are not editor permission');
+      assert.match(h.client.getState().inputStatus,/No draft text was sent/);
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,0);
+      assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);
+      assert.equal(h.client.input({kind:'text',text:'explicitly queued draft'}),true,
+        'a pending deliberate click may own text only after native acknowledgement');
+      await h.tick();await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,
+        clickOutcome==='editor-accessibility-selected'?2:1,
+        'only an acknowledged editor may receive queued draft text');
     }finally{await h.close();}
   }
 });
