@@ -102,8 +102,8 @@ function rejects(content) {
 }
 
 test('fixture preserves exact current reviewer governor source blob', () => {
-  assert.equal(blobSha(governor), '1cbe6687741338d29caa86c7828638137eb99f24');
-  assert.equal(Buffer.byteLength(governor, 'utf8'), 57211);
+  assert.equal(blobSha(governor), 'fec5255f808f303a3c0d61de9409c7eb98ceec92');
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 57827);
 });
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
@@ -581,6 +581,11 @@ test('unreadable persisted governor record cannot look like first boot and admit
   const reader = governor.split('function Read-GovernorState {')[1]
     ?.split('function Test-InconsistentGovernorIdleState {')[0] || '';
   assert.ok(reader.includes("throw 'GOVERNOR_PERSISTED_STATE_INVALID_SHAPE'"));
+  assert.ok(reader.includes("throw 'GOVERNOR_PERSISTED_STATE_REQUIRED_FIELD_MISSING'"));
+  assert.ok(reader.includes("throw 'GOVERNOR_PERSISTED_STATE_REQUIRED_FIELD_INVALID'"));
+  assert.ok(reader.includes("foreach ($requiredName in @('phase','active','localModelAllowed'))"));
+  assert.ok(reader.includes('$state.active -isnot [bool]'));
+  assert.ok(reader.includes('$state.localModelAllowed -isnot [bool]'));
   assert.ok(reader.includes('$state -isnot [pscustomobject]'));
   assert.ok(reader.includes("phase = 'UNKNOWN'"));
   assert.ok(reader.includes('active = $true'));
@@ -598,6 +603,11 @@ test('unreadable persisted governor record cannot look like first boot and admit
     try {
       const state = JSON.parse(raw);
       if (!state || Array.isArray(state) || typeof state !== 'object') throw new Error('shape');
+      for (const key of ['phase','active','localModelAllowed']) {
+        if (!Object.prototype.hasOwnProperty.call(state,key)) throw new Error('required');
+      }
+      if (typeof state.phase !== 'string' || typeof state.active !== 'boolean' ||
+          typeof state.localModelAllowed !== 'boolean') throw new Error('type');
       return state;
     } catch {
       return { phase: 'UNKNOWN', active: true, localModelAllowed: false, cooldownUntilUtc: '' };
@@ -610,5 +620,23 @@ test('unreadable persisted governor record cannot look like first boot and admit
     assert.equal(state.active, true, raw);
     assert.equal(state.localModelAllowed, false, raw);
   }
-  assert.equal(read(true, '{"phase":"NORMAL","active":false,"localModelAllowed":true}').phase, 'NORMAL');
+  for (const raw of [
+    '{}', '{"phase":"NORMAL"}', '{"phase":"NORMAL","active":false}',
+    '{"phase":"NORMAL","localModelAllowed":true}',
+    '{"phase":"NORMAL","active":"false","localModelAllowed":true}',
+    '{"phase":"NORMAL","active":false,"localModelAllowed":"true"}',
+    '{"phase":7,"active":false,"localModelAllowed":true}',
+    '{"phase":"REVIEWING","active":null,"localModelAllowed":true}',
+    '{"phase":"COOLDOWN","active":false,"localModelAllowed":null,"cooldownUntilUtc":"2026-11-18T10:00:00Z"}',
+  ]) {
+    const state = read(true,raw);
+    assert.equal(state.phase,'UNKNOWN',raw);
+    assert.equal(state.active,true,raw);
+    assert.equal(state.localModelAllowed,false,raw);
+  }
+  for (const raw of [
+    '{"phase":"NORMAL","active":false,"localModelAllowed":true}',
+    '{"phase":"GAMING","active":true,"localModelAllowed":false}',
+    '{"phase":"COOLDOWN","active":true,"localModelAllowed":false}',
+  ]) assert.equal(read(true,raw).phase,JSON.parse(raw).phase,raw);
 });

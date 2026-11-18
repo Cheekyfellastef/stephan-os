@@ -25,6 +25,7 @@ const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: 'ae71e1e79ead63efeb5a4d73f4bce6a01ee0f1d9', size: 48838 }),
   Object.freeze({ blobSha: '9513dfe995a35087e1d715ef0c4dff4ca3578295', size: 49674 }),
   Object.freeze({ blobSha: '1cbe6687741338d29caa86c7828638137eb99f24', size: 57211, reviewerReservation: true }),
+  Object.freeze({ blobSha: 'fec5255f808f303a3c0d61de9409c7eb98ceec92', size: 57827, reviewerReservation: true }),
 ]);
 
 const text = (value) => String(value ?? '').trim();
@@ -213,6 +214,14 @@ function reviewGovernor(source, findings) {
     "if ($priorWasProtected -and ($priorInconsistent -or $cooldownUntil -eq [DateTime]::MinValue)) {",
     'vr-governor-reviewer-contradictory-expired-deadline-failclosed-missing',
     'Contradictory or unknown states must reconstruct a cooldown even when a persisted deadline parses but is expired.');
+  requireLiteral(findings, source,
+    "throw 'GOVERNOR_PERSISTED_STATE_REQUIRED_FIELD_MISSING'",
+    'vr-governor-persisted-missing-required-fields-not-rejected',
+    'Present but incomplete persisted state must not become permissive NORMAL.');
+  requireLiteral(findings, source,
+    "throw 'GOVERNOR_PERSISTED_STATE_REQUIRED_FIELD_INVALID'",
+    'vr-governor-persisted-invalid-required-types-not-rejected',
+    'Wrong-typed persisted phase or permission flags must remain protected.');
   requireLiteral(findings, source,
     "throw 'GOVERNOR_PERSISTED_STATE_INVALID_SHAPE'",
     'vr-governor-unreadable-state-shape-not-rejected',

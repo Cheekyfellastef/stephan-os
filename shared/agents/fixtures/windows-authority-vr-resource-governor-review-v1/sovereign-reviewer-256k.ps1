@@ -744,6 +744,18 @@ function Read-GovernorState {
         if ($null -eq $state -or $state -isnot [pscustomobject]) {
             throw 'GOVERNOR_PERSISTED_STATE_INVALID_SHAPE'
         }
+        # A present state with absent or wrong-typed identity flags must never
+        # inherit Normalize-GovernorState's permissive legacy defaults.
+        foreach ($requiredName in @('phase','active','localModelAllowed')) {
+            if ($null -eq $state.PSObject.Properties[$requiredName]) {
+                throw 'GOVERNOR_PERSISTED_STATE_REQUIRED_FIELD_MISSING'
+            }
+        }
+        if ($state.phase -isnot [string] -or
+            $state.active -isnot [bool] -or
+            $state.localModelAllowed -isnot [bool]) {
+            throw 'GOVERNOR_PERSISTED_STATE_REQUIRED_FIELD_INVALID'
+        }
         return Normalize-GovernorState -State $state
     } catch {
         # A present but unreadable persisted state is not the same as a clean
