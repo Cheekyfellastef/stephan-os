@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 
 import { classifyDirt } from '../../../../scripts/battle-bridge-github-sync-policy.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';
+import { missionWorkerActionGrantsMatchV1 } from '../../../../shared/agents/missionOrchestratorWorker.mjs';
 import {
   createExecutionReceipt,
   toSharedWorkspaceExecutionReceipt,
@@ -148,6 +149,11 @@ export async function validateOpenClawOc2QualificationContext(context = {}, { re
     || path.resolve(path.dirname(claim.processingPath)) !== path.resolve(text(claim?.paths?.processing))
     || path.basename(claim.processingPath) !== `${taskId}.json`) {
     return blocker('OPENCLAW_OC2_CLAIM_INVALID');
+  }
+  // The request must match the complete original worker grant persisted in
+  // this unique processing claim. Caller-controlled grant IDs cannot substitute.
+  if (!missionWorkerActionGrantsMatchV1(claim.item.actionGrant, grant)) {
+    return blocker('OPENCLAW_OC2_GRANT_CUSTODY_MISMATCH');
   }
   if (action?.schemaVersion !== 'stephanos.mission-worker-action.v1'
     || action?.actionKind !== 'agent-handoff'

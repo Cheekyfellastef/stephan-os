@@ -17,6 +17,20 @@ function grant(overrides = {}) {
   return {
     schemaVersion: 'stephanos.mission-worker-action-grant.v1',
     grantId: `grant-${TASK}`,
+    controllerId: 'oc2-existing-controller',
+    missionRevision: 1,
+    currentPhase: 'worker-execution-active',
+    providerRouteIntent: 'openclaw-standalone',
+    capacityRoute: 'openclaw-standalone',
+    capacityReceiptId: null,
+    capacityProofRefs: [],
+    workerId: null,
+    laneId: 'oc2-original-lane',
+    prNumber: null,
+    branch: 'main',
+    headSha: null,
+    engineeringMemoryPack: null,
+    engineeringMemoryPackId: null,
     sourceRevision: HEAD,
     missionId: MISSION,
     actionId: TASK,
@@ -49,6 +63,7 @@ function item() {
     missionId: MISSION,
     actionId: TASK,
     payload,
+    actionGrant: grant(),
   };
 }
 
@@ -172,4 +187,36 @@ test('OC2 gateway binds the persisted claimed item and executes the fixed plan',
   assert.equal(result.taskClass, 'OC2_DETERMINISTIC_TEST_BUILD');
   assert.equal(result.executionSurface, 'openclaw-gateway-plugin');
   assert.equal(result.result.changedFiles.length, 0);
+});
+
+test('OC2 Gateway rejects swapped or fabricated native grant before tests', async (t) => {
+  const context = {
+    executingInsideOpenClawGateway: true, pluginId: 'stephanos-builder-provider',
+    method: OPENCLAW_OC2_GATEWAY_METHOD, providerInstance: 'openclaw-gateway:4242',
+  };
+  for (const [name, corrupt] of [
+    ['missing queue grant', (persisted) => { delete persisted.actionGrant; }],
+    ['swapped queue grant id', (persisted) => { persisted.actionGrant.grantId = 'grant-competing-worker'; }],
+    ['caller-substituted grant', (_persisted, supplied) => { supplied.grantId = 'grant-different-client'; }],
+    ['changed queue grant head', (persisted) => { persisted.actionGrant.sourceRevision = 'c'.repeat(40); }],
+    ['changed queue capacity proof', (persisted) => { persisted.actionGrant.capacityProofRefs = ['competing-capacity']; }],
+  ]) {
+    await t.test(name, async () => {
+      const persisted = item(), supplied = grant();
+      corrupt(persisted, supplied);
+      let reads = 0;
+      const response = await executeOpenClawOc2GatewayRequest({
+        schemaVersion: OPENCLAW_OC2_GATEWAY_REQUEST_SCHEMA, actionGrant: supplied,
+      }, {
+        gatewayRuntimeContext: context,
+        env: { USERPROFILE: '/tmp/oc2-gateway-custody', STEPHANOS_MISSION_WORKER_QUEUE_DIR: '/tmp/oc2-gateway-custody/queue' },
+        readFileFn: async () => { reads++; return JSON.stringify(persisted); },
+        spawnSyncFn: () => { throw new Error('unbound grant must not run a fixed test'); },
+      });
+      assert.equal(response.success, false);
+      assert.equal(response.qualificationEligible, false);
+      assert.equal(response.error, 'OPENCLAW_OC2_GATEWAY_GRANT_CUSTODY_MISMATCH');
+      assert.equal(reads, 1);
+    });
+  }
 });

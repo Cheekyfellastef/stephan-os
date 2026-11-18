@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
+import { missionWorkerActionGrantsMatchV1 } from '../../../../shared/agents/missionOrchestratorWorker.mjs';
 
 import {
   OPENCLAW_OC2_ISSUE,
@@ -113,6 +114,10 @@ export async function executeOpenClawOc2GatewayRequest(request, options = {}) {
     || text(item?.payload?.repository) !== REPOSITORY
     || text(item?.payload?.operation).toLowerCase() !== OPENCLAW_OC2_OPERATION) {
     return blocked('OPENCLAW_OC2_GATEWAY_CLAIM_INVALID', { missionId, taskId, requestedSourceHead });
+  }
+  // operator.write is not authority to swap the native worker's persisted grant.
+  if (!missionWorkerActionGrantsMatchV1(item.actionGrant, grant)) {
+    return blocked('OPENCLAW_OC2_GATEWAY_GRANT_CUSTODY_MISMATCH', { missionId, taskId, requestedSourceHead });
   }
 
   const claim = Object.freeze({

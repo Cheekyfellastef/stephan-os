@@ -42,6 +42,20 @@ function fixture(overrides = {}) {
   const grant = {
     schemaVersion: 'stephanos.mission-worker-action-grant.v1',
     grantId: `grant-${TASK}`,
+    controllerId: 'oc2-existing-controller',
+    missionRevision: 1,
+    currentPhase: 'worker-execution-active',
+    providerRouteIntent: 'openclaw-standalone',
+    capacityRoute: 'openclaw-standalone',
+    capacityReceiptId: null,
+    capacityProofRefs: [],
+    workerId: null,
+    laneId: 'oc2-original-lane',
+    prNumber: null,
+    branch: 'main',
+    headSha: null,
+    engineeringMemoryPack: null,
+    engineeringMemoryPackId: null,
     sourceRevision: HEAD,
     missionId: MISSION,
     actionId: TASK,
@@ -55,6 +69,7 @@ function fixture(overrides = {}) {
     leaseSeizureAllowed: false,
     ...overrides,
   };
+  item.actionGrant = structuredClone(grant);
   return { action, item, claim, grant, ...overrides };
 }
 
@@ -266,6 +281,29 @@ test('OC2 fixed test invocation exceptions and oversized output yield typed bloc
       assert.deepEqual(result.testResults, []);
       assert.equal(nodeRuns, 1);
       assert.equal(writes, 0, 'failed invocation must never write qualifying evidence');
+    });
+  }
+});
+
+test('OC2 refuses an unbound, forged or incomplete persisted worker grant before file I/O', async (t) => {
+  for (const [name, corrupt] of [
+    ['missing persisted grant', (value) => { delete value.item.actionGrant; }],
+    ['different grant ID', (value) => { value.item.actionGrant.grantId = 'grant-competing-oc2-task'; }],
+    ['different source revision', (value) => { value.item.actionGrant.sourceRevision = 'b'.repeat(40); }],
+    ['different capacity evidence', (value) => { value.item.actionGrant.capacityProofRefs = ['competing-capacity']; }],
+    ['incomplete controller identity', (value) => { delete value.item.actionGrant.controllerId; }],
+  ]) {
+    await t.test(name, async () => {
+      const value = fixture();
+      corrupt(value);
+      let reads = 0;
+      const result = await validateOpenClawOc2QualificationContext(qualificationInput(value), {
+        readFileFn: async () => { reads++; return JSON.stringify(value.item); },
+      });
+      assert.equal(result.success, false);
+      assert.equal(result.qualificationEligible, false);
+      assert.equal(result.error, 'OPENCLAW_OC2_GRANT_CUSTODY_MISMATCH');
+      assert.equal(reads, 0, 'unbound grant must fail before persisted claim read');
     });
   }
 });
