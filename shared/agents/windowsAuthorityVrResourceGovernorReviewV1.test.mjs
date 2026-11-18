@@ -102,8 +102,8 @@ function rejects(content) {
 }
 
 test('fixture preserves exact current reviewer governor source blob', () => {
-  assert.equal(blobSha(governor), '20f73be636a139cbb02d4da580fa10a5f72c939c');
-  assert.equal(Buffer.byteLength(governor, 'utf8'), 55056);
+  assert.equal(blobSha(governor), '5103a87a9347c10dd4310c04a6bcd8394ca1fd90');
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 55952);
 });
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
@@ -483,4 +483,36 @@ test('corrupted persisted COOLDOWN cannot release gaming model protection during
     ['PREPARING', null, 45, 'COOLDOWN'],
     ['NORMAL', '', 90, 'NORMAL'],
   ]) assert.equal(resolve(phase, raw, seconds), expected, phase + ':' + String(raw));
+});
+
+
+test('unknown or contradictory persisted gaming phase cannot admit reviewer or silently release protection', () => {
+  // Exact inert fixture source and deterministic state model; no Windows runtime action.
+  const helper = governor.split('function Test-ReviewerReservationBlockedByCooldown {')[1]
+    ?.split('function Append-TelemetryEvent {')[0] || '';
+  const resolve = governor.split('function Resolve-EffectiveState {')[1]
+    ?.split('function Invoke-Reconcile {')[0] || '';
+  assert.ok(helper.includes("if ($phase -notin @('NORMAL','REVIEWING','COOLDOWN')) { return $true }"));
+  assert.ok(helper.includes("$State.active -eq $true -or $State.localModelAllowed -eq $false"));
+  assert.ok(resolve.includes("$priorPhase -notin @('NORMAL','REVIEWING')"));
+  assert.ok(resolve.includes("if ([string]$PriorState.phase -ne 'COOLDOWN' -or -not $deadlineKnown) {"));
+  const blocks = (state) => {
+    if (['GAMING','PREPARING'].includes(state.phase)) return true;
+    if (!['NORMAL','REVIEWING','COOLDOWN'].includes(state.phase)) return true;
+    if (state.phase !== 'COOLDOWN') return state.active === true || state.localModelAllowed === false;
+    const deadline = Date.parse(state.cooldownUntilUtc);
+    return !Number.isFinite(deadline) || Date.parse('2026-11-18T10:00:00Z') < deadline;
+  };
+  for (const candidate of [
+    {phase:'UNKNOWN',active:true,localModelAllowed:false},
+    {phase:'',active:true,localModelAllowed:false},
+    {phase:'NORMAL',active:true,localModelAllowed:false},
+    {phase:'REVIEWING',active:false,localModelAllowed:false},
+    {phase:'COOLDOWN',active:true,localModelAllowed:false,cooldownUntilUtc:'bad'},
+  ]) assert.equal(blocks(candidate),true,JSON.stringify(candidate));
+  for (const candidate of [
+    {phase:'NORMAL',active:false,localModelAllowed:true},
+    {phase:'REVIEWING',active:false,localModelAllowed:true},
+    {phase:'COOLDOWN',active:false,localModelAllowed:true,cooldownUntilUtc:'2026-11-18T09:59:59Z'},
+  ]) assert.equal(blocks(candidate),false,JSON.stringify(candidate));
 });

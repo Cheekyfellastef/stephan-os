@@ -24,7 +24,7 @@ const PATH = WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1[0];
 const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: 'ae71e1e79ead63efeb5a4d73f4bce6a01ee0f1d9', size: 48838 }),
   Object.freeze({ blobSha: '9513dfe995a35087e1d715ef0c4dff4ca3578295', size: 49674 }),
-  Object.freeze({ blobSha: '20f73be636a139cbb02d4da580fa10a5f72c939c', size: 55056, reviewerReservation: true }),
+  Object.freeze({ blobSha: '5103a87a9347c10dd4310c04a6bcd8394ca1fd90', size: 55952, reviewerReservation: true }),
 ]);
 
 const text = (value) => String(value ?? '').trim();
@@ -190,6 +190,14 @@ function reviewGovernor(source, findings) {
     'Test-ReviewerReservationBlockedByCooldown -State $PriorState',
     'vr-governor-reviewer-cooldown-protection-missing',
     'A reviewer lease cannot displace a prior protected gaming cooldown.');
+  requireLiteral(findings, source,
+    "if ($phase -notin @('NORMAL','REVIEWING','COOLDOWN')) { return $true }",
+    'vr-governor-reviewer-unknown-prior-state-failclosed-missing',
+    'A corrupted persisted gaming phase must not be mistaken for a safe idle state.');
+  requireLiteral(findings, source,
+    "$priorPhase -notin @('NORMAL','REVIEWING')",
+    'vr-governor-reviewer-unknown-phase-reconcile-missing',
+    'Unknown protected phases must reconstruct gaming cooldown before releasing models.');
   requireLiteral(findings, source,
     'REVIEWER_RESERVATION_BLOCKED_BY_GAMING_COOLDOWN',
     'vr-governor-reviewer-cooldown-preflight-missing',

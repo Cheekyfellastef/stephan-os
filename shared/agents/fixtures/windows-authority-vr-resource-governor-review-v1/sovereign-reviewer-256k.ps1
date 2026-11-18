@@ -754,7 +754,12 @@ function Test-ReviewerReservationBlockedByCooldown {
     # A just-ended game or preparation has not yet published its cooldown.
     # Do not allow a reviewer lease to erase that pending protected transition.
     if ($phase -in @('GAMING','PREPARING')) { return $true }
-    if ($phase -ne 'COOLDOWN') { return $false }
+    # A corrupt or unknown persisted phase may still carry a gaming model
+    # exclusion. Only an internally consistent idle state can admit a reviewer.
+    if ($phase -notin @('NORMAL','REVIEWING','COOLDOWN')) { return $true }
+    if ($phase -ne 'COOLDOWN') {
+        return [bool]($State.active -eq $true -or $State.localModelAllowed -eq $false)
+    }
     $deadline = [DateTimeOffset]::MinValue
     $parsed = [DateTimeOffset]::TryParse(
         [string]$State.cooldownUntilUtc,
@@ -975,7 +980,14 @@ function Resolve-EffectiveState {
         $protectedProfile = $profile
         if ($PriorState.profile) { $protectedProfile = $PriorState.profile }
         $protectedUntilUtc = [string]$PriorState.cooldownUntilUtc
-        if ([string]$PriorState.phase -in @('GAMING','PREPARING')) {
+        $priorDeadline = [DateTimeOffset]::MinValue
+        $deadlineKnown = [DateTimeOffset]::TryParse(
+            [string]$PriorState.cooldownUntilUtc,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::AssumeUniversal,
+            [ref]$priorDeadline
+        )
+        if ([string]$PriorState.phase -ne 'COOLDOWN' -or -not $deadlineKnown) {
             # The watcher may not yet have observed the game exit. Start its
             # cooldown from the original gaming profile, never the reviewer.
             $protectedSeconds = 0
@@ -1042,7 +1054,14 @@ function Resolve-EffectiveState {
     $cooldownUntil = [DateTime]::MinValue
     $priorWasProtected = $false
     if ($PriorState) {
-        $priorWasProtected = [string]$PriorState.phase -in @('PREPARING','GAMING','COOLDOWN')
+        $priorPhase = [string]$PriorState.phase
+        $priorWasProtected = [bool](
+            $priorPhase -in @('PREPARING','GAMING','COOLDOWN') -or
+            (
+                $priorPhase -notin @('NORMAL','REVIEWING') -and
+                ([bool]$PriorState.active -or $PriorState.localModelAllowed -eq $false)
+            )
+        )
         if ([string]$PriorState.cooldownUntilUtc) {
             [void][DateTime]::TryParse([string]$PriorState.cooldownUntilUtc, [ref]$cooldownUntil)
         }
