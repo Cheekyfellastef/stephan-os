@@ -29,6 +29,7 @@ const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: '849e0cc3f00dbcb5b3213a16f7552c21f9dde481', size: 58683, reviewerReservation: true }),
   Object.freeze({ blobSha: '69c3396479d83e0f9521958f3f4dc13671863c68', size: 59353, reviewerReservation: true }),
   Object.freeze({ blobSha: '5a6b7672c406f941d06d1fabc2f7d31636122122', size: 59840, reviewerReservation: true, corruptOverrideFailClosed: true }),
+  Object.freeze({ blobSha: 'c6ea953880d63b61d494259ccc8e8ecd423b14d0', size: 59891, reviewerReservation: true, corruptOverrideFailClosed: true, scalarOverrideSchema: true }),
 ]);
 
 const text = (value) => String(value ?? '').trim();
@@ -256,6 +257,12 @@ function reviewGovernor(source, findings) {
       "schemaVersion -eq 'stephanos.gaming-resource-override.v1'",
       'vr-governor-override-schema-not-checked',
       'A present override must validate its exact schema before granting AUTO.');
+    if (sourceContract.scalarOverrideSchema) {
+      requireLiteral(findings, overrideReader,
+        '$state.schemaVersion -is [string]',
+        'vr-governor-override-schema-type-not-checked',
+        'A collection-valued schema may not authorise FORCE_OFF or AUTO.');
+    }
     requireLiteral(findings, overrideReader,
       '$state.mode -is [string]',
       'vr-governor-override-mode-type-not-checked',

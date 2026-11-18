@@ -435,6 +435,7 @@ function Read-OverrideMode {
         $state = Get-Content -LiteralPath $overridePath -Raw | ConvertFrom-Json
         if (
             $state -is [pscustomobject] -and
+            $state.schemaVersion -is [string] -and
             $state.schemaVersion -eq 'stephanos.gaming-resource-override.v1' -and
             $state.mode -is [string] -and
             $state.mode -in @('AUTO','FORCE_ON','FORCE_OFF')

@@ -103,8 +103,8 @@ function rejects(content) {
 }
 
 test('fixture preserves exact current reviewer governor source blob', () => {
-  assert.equal(blobSha(governor), '5a6b7672c406f941d06d1fabc2f7d31636122122');
-  assert.equal(Buffer.byteLength(governor, 'utf8'), 59840);
+  assert.equal(blobSha(governor), 'c6ea953880d63b61d494259ccc8e8ecd423b14d0');
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 59891);
 });
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
@@ -688,6 +688,7 @@ test('present corrupt gaming override fails closed instead of clearing operator 
     ?.split('function Write-OverrideMode {')[0] || '';
   assert.ok(read.includes("if (-not (Test-Path -LiteralPath $overridePath -PathType Leaf)) { return 'AUTO' }"));
   assert.ok(read.includes("schemaVersion -eq 'stephanos.gaming-resource-override.v1'"));
+  assert.ok(read.includes('$state.schemaVersion -is [string]'));
   assert.ok(read.includes("$state.mode -is [string]"));
   assert.ok(read.includes("$state.mode -in @('AUTO','FORCE_ON','FORCE_OFF')"));
   assert.ok(read.trimEnd().endsWith("return 'FORCE_ON'\n}"));
@@ -707,6 +708,8 @@ test('present corrupt gaming override fails closed instead of clearing operator 
     [true,'{bad-json','FORCE_ON'],[true,'null','FORCE_ON'],
     [true,'[]','FORCE_ON'],[true,JSON.stringify({mode:'AUTO'}),'FORCE_ON'],
     [true,JSON.stringify({schemaVersion:'other',mode:'AUTO'}),'FORCE_ON'],
+    [true,JSON.stringify({schemaVersion:['stephanos.gaming-resource-override.v1','invalid'],mode:'FORCE_OFF'}),'FORCE_ON'],
+    [true,JSON.stringify({schemaVersion:{value:'stephanos.gaming-resource-override.v1'},mode:'FORCE_OFF'}),'FORCE_ON'],
     [true,JSON.stringify({schemaVersion:'stephanos.gaming-resource-override.v1',mode:0}),'FORCE_ON'],
     [true,valid('UNRECOGNISED'),'FORCE_ON'],
   ]) assert.equal(classify(exists,raw),expected,String(raw));
@@ -725,6 +728,8 @@ test('Windows PowerShell executes the isolated gaming override reader with mocke
     [true,'{bad-json','FORCE_ON'],[true,'null','FORCE_ON'],
     [true,'[]','FORCE_ON'],[true,JSON.stringify({mode:'AUTO'}),'FORCE_ON'],
     [true,JSON.stringify({schemaVersion:'wrong',mode:'AUTO'}),'FORCE_ON'],
+    [true,JSON.stringify({schemaVersion:['stephanos.gaming-resource-override.v1','invalid'],mode:'FORCE_OFF'}),'FORCE_ON'],
+    [true,JSON.stringify({schemaVersion:{value:'stephanos.gaming-resource-override.v1'},mode:'FORCE_OFF'}),'FORCE_ON'],
     [true,JSON.stringify({schemaVersion:'stephanos.gaming-resource-override.v1',mode:42}),'FORCE_ON'],
     [true,good('UNKNOWN'),'FORCE_ON'],
   ];
