@@ -221,22 +221,8 @@ test('actual Windows producer and native consumer bind one live owner and deny i
     [pscustomobject]@{released=$true}|ConvertTo-Json -Compress
   `,[governor]);
   const nativeDirectory=fileURLToPath(new URL('./windows/starfield-native-build/',import.meta.url));
-  const observe=()=>spawnSync('python',['-c',String.raw`
-import sys,json,datetime
-from pathlib import Path
-sys.path.insert(0,sys.argv[1])
-import native_build,owned_job
-workspace=Path(sys.argv[2])/'Documents'/'Stephanos-openclaw-workspace'
-state=native_build.bounded_json_file(workspace/'vr'/'vr-resource-governor-current.json')
-grant=state['cpuProbeContinuity']
-owner=owned_job.observe_parent_identity(grant['ownerProcessId'],grant['ownerCreationFileTime'])
-try:
- native_build.gaming_admitted(workspace,probe_owner_observer=owned_job.observe_parent_identity)
- admitted=True
-except native_build.BuildBlocked:
- admitted=False
-print(json.dumps({'admitted':admitted,'ownerLive':owner['ok'] and owner['alive']}))
-`,nativeDirectory,root],{encoding:'utf8',shell:false,windowsHide:true,timeout:10000});
+  const observe=()=>spawnSync('python',[join(nativeDirectory,'governor_owner_fixture.py'),root],
+    {encoding:'utf8',shell:false,windowsHide:true,timeout:10000});
   try{
     await waitForFixture(ready);
     const alive=observe();assert.equal(alive.status,0,alive.stderr);
