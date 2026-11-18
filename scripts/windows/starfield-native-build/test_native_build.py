@@ -810,7 +810,7 @@ class CpuProbeContinuityTests(unittest.TestCase):
         def changed(pid, birth):
             self.state_path.write_text(json.dumps(governor(active=True)))
             return self.owner(pid, birth)
-        with self.assertRaisesRegex(build.BuildBlocked, "GAMING_STATE_CHANGED"):
+        with self.assertRaisesRegex(build.BuildBlocked, "GAMING_PERMISSION_HELD"):
             self.admitted(self.state(), changed)
 
     def test_permission_expiry_during_native_owner_observation_is_rechecked(self):
@@ -843,6 +843,108 @@ class CpuProbeContinuityTests(unittest.TestCase):
             path = self.vr / filename;path.write_text(json.dumps(value))
             with self.subTest(filename=filename), self.assertRaises(build.BuildBlocked):self.admitted(self.state())
             path.unlink()
+
+
+class GamingObservationAcquisitionTests(unittest.TestCase):
+    setUp = CpuProbeContinuityTests.setUp
+    state = CpuProbeContinuityTests.state
+    owner = staticmethod(CpuProbeContinuityTests.owner)
+    admitted = CpuProbeContinuityTests.admitted
+
+    def test_fresh_complete_probe_transition_is_revalidated(self):
+        state = self.state();calls = []
+        def owner(pid, birth):
+            calls.append(pid)
+            if len(calls) == 1:
+                newer = copy.deepcopy(state)
+                newer["nativeProbeAttempt"]["attemptId"] = "f" * 32
+                self.state_path.write_text(json.dumps(newer))
+            return self.owner(pid, birth)
+        self.assertTrue(self.admitted(state, owner))
+        self.assertEqual(calls, [1234, 1234])
+
+    def test_raced_snapshot_revalidates_every_activity_denial(self):
+        for flag in ("active", "flatGameActive", "airLinkActive", "realAirLinkActive",
+                     "virtualAirLinkTestActive", "prepareLeaseActive"):
+            calls = []
+            def owner(pid, birth):
+                calls.append(pid)
+                self.state_path.write_text(json.dumps(governor(**{flag: True})))
+                return self.owner(pid, birth)
+            with self.subTest(flag=flag), self.assertRaisesRegex(build.BuildBlocked, "GAMING_PERMISSION_HELD"):
+                self.admitted(self.state(), owner)
+            self.assertEqual(calls, [1234])
+
+    def test_continuous_record_race_has_three_attempt_limit(self):
+        state = self.state();calls = []
+        def owner(pid, birth):
+            calls.append(pid)
+            state["nativeProbeAttempt"]["attemptId"] = format(len(calls), "032x")
+            self.state_path.write_text(json.dumps(state))
+            return self.owner(pid, birth)
+        with patch.object(build.time, "monotonic", return_value=0):
+            with self.assertRaisesRegex(build.BuildBlocked, "GAMING_STATE_CHANGED"):
+                self.admitted(state, owner)
+        self.assertEqual(len(calls), 3)
+
+    def test_snapshot_expiry_before_and_during_read_never_grants(self):
+        for mode in ("before", "during"):
+            clock = [0];reads = []
+            def now():
+                reads.append(True)
+                return 0 if mode == "before" and len(reads) == 1 else (0.1 if mode == "before" else clock[0])
+            calls = []
+            def owner(pid, birth):
+                calls.append(pid);clock[0] = 0.1
+                return self.owner(pid, birth)
+            with patch.object(build.time, "monotonic", now):
+                with self.subTest(mode=mode), self.assertRaisesRegex(build.BuildBlocked, "GAMING_STATE_CHANGED"):
+                    self.admitted(self.state(), owner)
+            self.assertEqual(len(calls), 0 if mode == "before" else 1)
+
+    def test_initial_wait_requires_full_ordinary_permission_after_probe(self):
+        self.state_path.write_text(json.dumps(self.state()))
+        now = [0];pauses = []
+        def pause(seconds):
+            pauses.append(seconds);now[0] += seconds
+            self.state_path.write_text(json.dumps(governor()))
+        with patch.object(build.time, "monotonic", lambda: now[0]), patch.object(build.time, "sleep", pause):
+            self.assertTrue(build.wait_for_ordinary_gaming_admission(self.root))
+        self.assertEqual(pauses, [0.1])
+
+    def test_initial_hold_never_becomes_permission_by_waiting(self):
+        for stopped_clock in (False, True):
+            self.state_path.write_text(json.dumps(governor(active=True)))
+            now = [0];pauses = []
+            def pause(seconds):
+                pauses.append(seconds)
+                if not stopped_clock:now[0] += seconds
+            with patch.object(build.time, "monotonic", lambda: now[0]), patch.object(build.time, "sleep", pause):
+                with self.assertRaisesRegex(build.BuildBlocked, "GAMING_PERMISSION_HELD"):
+                    build.wait_for_ordinary_gaming_admission(self.root)
+            self.assertEqual(len(pauses), 10)
+
+    def test_initial_wait_refuses_late_success_and_does_not_retry_unknown(self):
+        clock = [0]
+        def late(_workspace):
+            clock[0] = 1
+            return True
+        with patch.object(build.time, "monotonic", lambda: clock[0]), patch.object(build, "gaming_admitted", late):
+            with self.assertRaisesRegex(build.BuildBlocked, "GAMING_PERMISSION_HELD"):
+                build.wait_for_ordinary_gaming_admission(self.root)
+        for reason in ("GAMING_PREPARATION_ACTIVE", "GAMING_OVERRIDE_UNPROVEN", "GAMING_STATE_CHANGED",
+                       "GAMING_STATE_INVALID", "GAMING_CLOCK_UNPROVEN"):
+            with patch.object(build, "gaming_admitted", side_effect=build.BuildBlocked(reason)) as observed:
+                with patch.object(build.time, "sleep", side_effect=AssertionError("must not wait")):
+                    with self.subTest(reason=reason), self.assertRaisesRegex(build.BuildBlocked, reason):
+                        build.wait_for_ordinary_gaming_admission(self.root)
+                self.assertEqual(observed.call_count, 1)
+
+    def test_running_policy_denial_never_waits(self):
+        state = self.state();state["cpuProbeContinuity"]["allowed"] = False
+        with patch.object(build.time, "sleep", side_effect=AssertionError("running Job cannot wait through denial")):
+            with self.assertRaisesRegex(build.BuildBlocked, "GAMING_PERMISSION_HELD"):
+                self.admitted(state)
 
 
 if __name__ == "__main__":unittest.main()

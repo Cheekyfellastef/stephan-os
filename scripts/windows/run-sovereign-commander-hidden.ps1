@@ -583,6 +583,40 @@ function Invoke-VrResourceGovernorLifecycle {
     }
 }
 
+function Invoke-VrResourceGovernorObservedLifecycle {
+    # Periodic tasks can repeatedly coincide with short-lived opaque processes
+    # or an active Watch tick. Re-observe only these pre-mutation refusals; never
+    # turn elapsed time or a retry into ownership, custody or absence evidence.
+    $retryClock = [Diagnostics.Stopwatch]::StartNew()
+    $result = [pscustomobject]@{ blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN'; restartRequested = $false; startRequested = $false; stopped = 0; startedPid = 0; baseline = '' }
+    for ($attempt = 0; $attempt -lt 24; $attempt++) {
+        if ($retryClock.Elapsed.TotalMilliseconds -ge 12000) { return $result }
+        $vrGovernorBefore = @(Get-VrResourceGovernorProcesses)
+        $vrGovernorExpectedAbsent = $script:vrGovernorInventoryComplete -and $vrGovernorBefore.Count -eq 0
+        $vrGovernorPriorProgress = Get-VrResourceGovernorProgress -Process $(if ($vrGovernorBefore.Count -eq 1) { $vrGovernorBefore[0] } else { $null })
+        # Observation may wait for an active reconciliation to publish, but never
+        # retains the mutex while asking Watch to advance. Busy is not abandonment.
+        $vrGovernorProgressProven = $false
+        if ($script:vrGovernorInventoryComplete -and $vrGovernorBefore.Count -eq 1 -and
+            (Test-VrResourceGovernorProcessCurrent -Process $vrGovernorBefore[0])) {
+            $vrGovernorProgressProven = Wait-VrResourceGovernorProgress -Process $vrGovernorBefore[0] -After $vrGovernorPriorProgress.updatedAtUtc
+        }
+        if ($retryClock.Elapsed.TotalMilliseconds -ge 12000) { return $result }
+        $result = Invoke-VrResourceGovernorLifecycle -ExpectedProcess $(if ($vrGovernorBefore.Count -eq 1) { $vrGovernorBefore[0] } else { $null }) `
+            -ExpectedAbsent $vrGovernorExpectedAbsent -ProgressProven $vrGovernorProgressProven -ExpectedProgress $vrGovernorPriorProgress.updatedAtUtc
+
+        # Both retryable codes originate before recovery, stop or start. The
+        # explicit mutation flags are an additional boundary, not exit proof.
+        if ($result.restartRequested -ne $false -or $result.startRequested -ne $false -or
+            $result.stopped -ne 0 -or $result.startedPid -ne 0 -or
+            $result.blocker -cnotin @('SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BUSY',
+                'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN')) { return $result }
+        if ($attempt -eq 23 -or $retryClock.Elapsed.TotalMilliseconds -ge 11500) { return $result }
+        Start-Sleep -Milliseconds 500
+    }
+    return $result
+}
+
 function Get-SovereignCommanderHealth {
     try {
         $health = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:$port/health" -TimeoutSec 3
@@ -846,18 +880,7 @@ if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
 } elseif (-not (Test-Path -LiteralPath $powershellExecutable -PathType Leaf)) {
     $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_POWERSHELL_MISSING'
 } else {
-    $vrGovernorBefore = @(Get-VrResourceGovernorProcesses)
-    $vrGovernorExpectedAbsent = $script:vrGovernorInventoryComplete -and $vrGovernorBefore.Count -eq 0
-    $vrGovernorPriorProgress = Get-VrResourceGovernorProgress -Process $(if ($vrGovernorBefore.Count -eq 1) { $vrGovernorBefore[0] } else { $null })
-    # Observation may wait for an active reconciliation to publish, but never
-    # retains the mutex while asking Watch to advance. Busy is not abandonment.
-    $vrGovernorProgressProven = $false
-    if ($script:vrGovernorInventoryComplete -and $vrGovernorBefore.Count -eq 1 -and
-        (Test-VrResourceGovernorProcessCurrent -Process $vrGovernorBefore[0])) {
-        $vrGovernorProgressProven = Wait-VrResourceGovernorProgress -Process $vrGovernorBefore[0] -After $vrGovernorPriorProgress.updatedAtUtc
-    }
-    $vrGovernorLifecycle = Invoke-VrResourceGovernorLifecycle -ExpectedProcess $(if ($vrGovernorBefore.Count -eq 1) { $vrGovernorBefore[0] } else { $null }) `
-        -ExpectedAbsent $vrGovernorExpectedAbsent -ProgressProven $vrGovernorProgressProven -ExpectedProgress $vrGovernorPriorProgress.updatedAtUtc
+    $vrGovernorLifecycle = Invoke-VrResourceGovernorObservedLifecycle
     $vrGovernorBlocker = $vrGovernorLifecycle.blocker
     $vrGovernorRestartRequested = $vrGovernorLifecycle.restartRequested
     $vrGovernorStartRequested = $vrGovernorLifecycle.startRequested

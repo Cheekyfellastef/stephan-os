@@ -140,3 +140,100 @@ Reusable lesson: bound observation work before depending on a freshness budget.
 Test the classification model and the number of expensive observations in the
 actual runtime host. An over-budget, changed, unreadable or expired observation
 must still fail closed; lower latency is never authority to reuse stale truth.
+
+## Adoption convergence under transient observation failures
+
+After the discovery repair merged and canonical sync passed 192 checks, the
+existing governor process still predated the new source. Its exact identity
+was accepted, but the scheduled caretaker repeatedly returned exit 4. A bounded
+110-second read-only census found 17 complete observations among 52 samples;
+short-lived PowerShell processes made the remaining inventories opaque. At
+22:34:34Z the scheduled task coincided with an opaque inventory; complete
+observations appeared from 22:34:38Z. The next scheduled minute again coincided
+with opaque processes. This does not prove every failure's internal branch;
+it establishes that one observation per periodic invocation misses valid
+windows even while the correct owner remains available.
+
+The existing caretaker now re-observes only its two pre-mutation refusals:
+mutation-owner busy and owner unproven. Each attempt recreates the complete
+census, expected process/absence and progress evidence, then enters the same
+unchanged lifecycle gate. Retries stop after 24 attempts or a 12-second
+monotonic window, with 500 ms between attempts. Expiry is checked again after
+observation and before entering the lifecycle. A slow OS observation can finish
+after the window, but cannot then authorize lifecycle execution.
+
+The lifecycle always releases its mutex before a retry delay. No retry is
+allowed after a start/restart request, stopped process, started PID, child-custody
+uncertainty, starting state, failed replacement, exception or successful result.
+Both retryable refusal codes arise before custody recovery or process mutation;
+the mutation flags provide additional defense. Timeout does not establish
+absence, terminate a process, clear custody or authorize another owner.
+
+This changes convergence in the existing caretaker, not its authority. It adds
+no task, timer service, queue, lease, override or execution transport. The
+executable state model covers transient refusal followed by fresh ownership,
+all non-retryable terminal/mutation classes, finite attempt exhaustion and a
+real elapsed-deadline refusal before lifecycle admission. Existing native
+mutex, re-census, exact identity and retained-child tests remain mandatory.
+
+Reusable invariant: retry transient observations before mutation, using fresh
+evidence each time; never retry uncertain mutation as if it were observation.
+
+## Build observation acquisition: structural review and convergence
+
+At protected main `91fefbcf4835a7f252e02a9e644c8c9c11e70c09`, the existing
+caretaker adopted a new governor owner at 23:05:17Z on 18 November 2026.
+The fixed identity and source-age predicates passed, and that owner published
+fresh ordinary observations. This proves source adoption, not overall caretaker
+health; the scheduled task still reported an aggregate refusal.
+
+The guarded build `starfield3535-paired-observer-build-91fefbcf-v1` compiled and
+passed the first scoped-eye model test, then stopped after 5,105 ms with
+`GAMING_STATE_CHANGED`. Its authenticated terminal proved native Job zero,
+complete output, original-source preservation and released execution custody.
+The observer sampled the governor's normal probe-record transitions during
+that interval; it did not prove which of the reader's three changed-record
+branches fired. A single fresh attempt, `...-v2`, was refused by the initial
+gaming gate at 23:10:59Z while the governor published an idle native probe.
+Ordinary permission returned at 23:10:59.587Z. Both denials were correct for
+the samples read; neither is evidence of a compiler defect or an active game.
+
+This related repair requires a structural admission model, not another widened
+permission rule. The build has three distinct states:
+
+1. **Before native execution:** no native work may run on a probe continuation
+   grant. The existing ordinary predicate may be observed for at most one
+   monotonic second and eleven attempts, with 100 ms between held observations.
+   Only a fresh ordinary pass before the deadline admits progress. Unknown
+   evidence, preparation and override errors remain refusals. The JavaScript
+   adapter repeats only its canonical `permission-denied` result; the Python
+   worker repeats only `GAMING_PERMISSION_HELD`. Neither predicate is weakened.
+2. **Acquiring a snapshot:** atomic file replacement or a probe-record change
+   discards the entire sample. The Python consumer may obtain and fully validate
+   a fresh sample, at most three times within 100 ms. It rechecks every activity,
+   freshness, override, preparation, grant and live-owner condition. An actual
+   policy denial is terminal; a changed record is never treated as a pass.
+3. **Monitoring a resumed Job:** the existing bounded CPU-only probe grant may
+   continue that Job. A denied grant immediately cancels it. The one-second
+   passive initial wait is never used for a running Job. The existing polling
+   interval, expiry limits, cancellation and descendant-zero proof are intact.
+
+Both acquisition windows check their deadline after observation, so an OS read
+that finishes late cannot grant admission. Attempt limits also bound a stalled
+clock in deterministic tests. No wait extends the grant, caches a successful
+old sample, ignores a failed predicate, mutates governor state or creates a
+second owner. Initial checks before staging, before Job creation and before
+resume remain ordinary checks. Protected-main identity is still independently
+rechecked after the adapter's final wait.
+
+Executable model tests cover all 27 three-observation adapter traces over hold,
+pass and unknown, both initial gates, elapsed and attempt exhaustion, main
+movement, fresh probe transitions, each activity flag after a read race,
+continuous replacement, unknown evidence and late reads. Existing native
+custody and source tests remain required, followed by a new authenticated build.
+
+Reusable lesson: observation acquisition, permission adjudication and execution
+continuation are separate states. Bounded re-observation can improve progress
+only when it discards the failed sample and obtains all required evidence anew.
+Repeated source fixes are not programme completion; commissioning must still
+prove the complete build and later installed-game and headset outcomes.
