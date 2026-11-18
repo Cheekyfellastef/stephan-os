@@ -308,6 +308,18 @@ test('OC2 refuses an unbound, forged or incomplete persisted worker grant before
   }
 });
 
+test('OC2 rejects absent action context with a typed blocker and no persisted I/O', async () => {
+  const parts = fixture();
+  parts.action = null;
+  let reads = 0;
+  const result = await validateOpenClawOc2QualificationContext(qualificationInput(parts), {
+    readFileFn: async () => { reads++; return JSON.stringify(parts.item); },
+  });
+  assert.equal(result.success, false);
+  assert.equal(result.error, 'OPENCLAW_OC2_LINEAGE_INVALID');
+  assert.equal(reads, 0);
+});
+
 test('OC2 rejects embedded commands and privilege escalation before persisted claim I/O', async (t) => {
   const commandFields = [
     'command', 'commands', 'args', 'argv', 'script', 'shell', 'executablePath',
