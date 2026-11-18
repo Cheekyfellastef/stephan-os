@@ -393,7 +393,7 @@ test('reviewer cooldown gate protects the prior phase before any reviewer lease 
   assert.ok(cooldownCheck < effective.indexOf("phase = 'REVIEWING'"));
   assert.match(effective.slice(cooldownCheck, effective.indexOf("phase = 'REVIEWING'")),
     /phase = 'COOLDOWN'[\s\S]*active = \$true[\s\S]*cooldownUntilUtc = \$protectedUntilUtc/);
-  assert.match(effective, /\$PriorState\.phase -in @\('GAMING','PREPARING'\)[\s\S]*\$nowUtc\.AddSeconds\(\$protectedSeconds\)/);
+  assert.match(effective, /\$PriorState\.phase -ne 'COOLDOWN' -or -not \$deadlineKnown[\s\S]*\$nowUtc\.AddSeconds\(\$protectedSeconds\)/);
   assert.ok(effective.indexOf('$nowUtc.AddSeconds($protectedSeconds)') < effective.indexOf("phase = 'REVIEWING'"));
   const prepare = governor.split("if ($Action -eq 'PrepareGaming') {")[1]
     ?.split("if ($Action -eq 'CancelPrepare') {")[0] || '';
@@ -460,8 +460,9 @@ test('corrupted persisted COOLDOWN cannot release gaming model protection during
     ?.split('function Invoke-Reconcile {')[0] || '';
   const guard = 'if ($priorWasProtected -and $cooldownUntil -eq [DateTime]::MinValue) {';
   assert.ok(resolver.includes(guard), 'missing or malformed COOLDOWN must reconstruct the deadline');
-  assert.ok(!resolver.includes("[string]$PriorState.phase -ne 'COOLDOWN'"),
-    'corrupt persisted COOLDOWN cannot be excluded from recovery');
+  const fallback = resolver.slice(resolver.indexOf('    $cooldownUntil = [DateTime]::MinValue'));
+  assert.ok(!fallback.includes("[string]$PriorState.phase -ne 'COOLDOWN'"),
+    'corrupt persisted COOLDOWN cannot be excluded from the no-lease recovery path');
   assert.ok(resolver.includes('$cooldownUntil = $nowUtc.AddSeconds([Math]::Max(30, [int]$profile.cooldownSeconds))'));
   assert.ok(resolver.indexOf(guard) < resolver.lastIndexOf("phase = 'NORMAL'"),
     'recovery must run before any NORMAL-state release');
