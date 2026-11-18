@@ -183,6 +183,44 @@ class WindowsOwnedJobTests(unittest.TestCase):
         self.assertEqual(len(raw), result["output_captured_bytes"])
         self.assertIn(b"owned-job-normal", raw)
 
+    def test_running_permission_cannot_bypass_first_prelaunch_refusal(self):
+        running_calls = []
+        result = self.run_stage(cancel_requested=lambda: True,
+            running_cancel_requested=lambda: running_calls.append(True) or False)
+        self.assertTrue(result["cancelled"], result)
+        self.assertFalse(result["root_created"])
+        self.assertFalse(result["resume_confirmed"])
+        self.assertTrue(result["prelaunch_excluded"])
+        self.assertEqual(running_calls, [])
+        self.assertFalse(self.witness.exists())
+
+    def test_suspended_root_still_requires_ordinary_admission_before_resume(self):
+        suspended = [False];running_calls = []
+        def bind(proof):
+            self.bound(proof);suspended[0] = True
+            return True
+        result = self.run_stage(cancel_requested=lambda: suspended[0], on_suspended=bind,
+            running_cancel_requested=lambda: running_calls.append(True) or False)
+        self.assertTrue(result["cancelled"], result)
+        self.assertTrue(result["root_created"])
+        self.assertFalse(result["resume_confirmed"])
+        self.assertEqual(running_calls, [])
+        self.assertFalse(self.witness.exists(), "Suspended fixture executed despite ordinary admission refusal")
+        self.assert_excluded(result)
+
+    def test_running_policy_is_selected_only_after_native_resume_confirmation(self):
+        ordinary = [];running = []
+        def before():
+            ordinary.append(True)
+            return len(ordinary) > 3  # ordinary policy would withdraw after resume
+        result = self.run_stage(cancel_requested=before,
+            running_cancel_requested=lambda: running.append(True) or False)
+        self.assertTrue(result["operation_ok"], result)
+        self.assertTrue(result["resume_confirmed"])
+        self.assertEqual(len(ordinary), 3)
+        self.assertGreater(len(running), 0)
+        self.assert_excluded(result)
+
     def test_nonzero_exit_is_preserved_despite_job_zero(self):
         result = self.run_stage("failed")
         self.assertFalse(result["operation_ok"])
