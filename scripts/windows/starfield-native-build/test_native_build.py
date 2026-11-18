@@ -232,6 +232,22 @@ class FilesAndGamingTests(unittest.TestCase):
         bad = copy.deepcopy(records);bad["input0.h"]["bytes"] = True
         with self.assertRaises(build.BuildBlocked):build.source_records(types.SimpleNamespace(ORIGINAL_FILES=bad))
 
+    def test_toolchain_setup_cannot_inherit_detached_telemetry_or_compiler_hooks(self):
+        for index, inherited in enumerate(("", "0", "1", "false")):
+            stage = self.root / str(index);stage.mkdir()
+            compiler = self.root / "fixed-cl.exe"
+            external = {"SystemRoot": r"C:\Windows", "VSCMD_SKIP_SENDTELEMETRY": inherited,
+                        "VSCMD_DEBUG": "3", "CL": "/caller", "_CL_": "/caller", "NODE_OPTIONS": "caller"}
+            with patch.dict(os.environ, external, clear=True):
+                before = dict(os.environ)
+                environment = build.fixed_environment(compiler, stage)
+                self.assertEqual(dict(os.environ), before, "no user or machine setting is changed")
+            self.assertEqual(environment["VSCMD_SKIP_SENDTELEMETRY"], "1")
+            self.assertEqual(environment["STEPH_OBSERVER_EXPECTED_CL"], str(compiler))
+            self.assertTrue((stage / "compiler-temp").is_dir())
+            for name in ("VSCMD_DEBUG", "CL", "_CL_", "NODE_OPTIONS"):
+                self.assertNotIn(name, environment)
+
     def test_exact_staged_members_and_artifacts(self):
         stage = self.root / "staged";stage.mkdir();files = {}
         for index in range(5):
@@ -435,6 +451,11 @@ class PortableOrchestrationModelTests(unittest.TestCase):
                 if mode == "native_cancel":result.update(operation_ok=False, root_exit_code=79, cancelled=True, reason="CANCELLED")
                 if mode == "native_timeout":result.update(operation_ok=False, root_exit_code=79, cancelled=True, timed_out=True, reason="DEADLINE_EXCEEDED")
                 if mode == "compiler_failure":result.update(operation_ok=False, root_exit_code=1)
+                if mode == "live_descendant":result.update(operation_ok=False, root_exit_code=0,
+                    reason="ROOT_EXITED_WITH_LIVE_DESCENDANTS")
+                if mode == "live_descendant_custody":result.update(operation_ok=False, root_exit_code=0,
+                    custody_released=False, zero_active_processes_observed=False,
+                    reason="ROOT_EXITED_WITH_LIVE_DESCENDANTS")
                 if mode == "missing_artifact":(Path(arguments["cwd"]) / build.EXPECTED_ARTIFACTS[-1]).unlink()
                 return result
 
@@ -538,12 +559,21 @@ class PortableOrchestrationModelTests(unittest.TestCase):
         for mode, reason, verdict in (
             ("native_cancel", "NATIVE_BUILD_CANCELLED", "STARFIELD_VR_NATIVE_BUILD_BLOCKED"),
             ("native_timeout", "NATIVE_BUILD_DEADLINE_EXCEEDED", "STARFIELD_VR_NATIVE_BUILD_BLOCKED"),
+            ("live_descendant", "NATIVE_BUILD_CHILD_EXIT_UNPROVEN", "STARFIELD_VR_NATIVE_BUILD_BLOCKED"),
             ("compiler_failure", "COMPILER_OR_SELF_TEST_FAILED", "STARFIELD_VR_NATIVE_BUILD_FAILED")):
             with self.subTest(mode=mode):
                 receipt, saved, owner, observed = self.exercise(mode)
                 self.assertEqual((receipt["reason"], receipt["finalVerdict"]), (reason, verdict))
                 self.assertEqual(observed["privateProof"]["admissionCancellationReason"], "")
                 self.assertIsNone(owner)
+
+    def test_descendant_exit_uncertainty_keeps_custody_ahead_of_build_diagnostics(self):
+        receipt, saved, owner, observed = self.exercise("live_descendant_custody")
+        self.assertEqual(receipt["finalVerdict"], "STARFIELD_VR_NATIVE_BUILD_CUSTODY_HELD")
+        self.assertEqual(receipt["reason"], "NATIVE_JOB_TERMINAL_UNPROVEN")
+        self.assertFalse(receipt["executionCustodyReleased"])
+        self.assertIsNotNone(owner)
+        self.assertEqual(observed["privateProof"]["nativeStage"]["reason"], "ROOT_EXITED_WITH_LIVE_DESCENDANTS")
 
     def test_missing_marker_exit_and_artifact_never_pass(self):
         for mode in ("missing_marker", "unknown_exit", "boolean_exit", "float_exit", "missing_artifact"):

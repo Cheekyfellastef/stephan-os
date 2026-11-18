@@ -666,6 +666,9 @@ def fixed_environment(compiler, staging):
     temporary.mkdir()
     env.update({"PATH": r"C:\Windows\System32;C:\Windows", "PATHEXT": ".COM;.EXE;.BAT;.CMD",
                 "COMSPEC": r"C:\Windows\System32\cmd.exe", "TEMP": str(temporary), "TMP": str(temporary),
+                # VsDevCmd otherwise starts detached PowerShell telemetry. It
+                # is not build work and can outlive the fixed recipe's root.
+                "VSCMD_SKIP_SENDTELEMETRY": "1",
                 "STEPH_OBSERVER_EXPECTED_CL": str(compiler)})
     return env
 
@@ -816,6 +819,8 @@ def run_build(packet, verified):
             raise BuildBlocked("NATIVE_BUILD_DEADLINE_EXCEEDED")
         if stage_result.get("cancelled") is True:
             raise BuildBlocked("NATIVE_BUILD_CANCELLED")
+        if stage_result.get("reason") == "ROOT_EXITED_WITH_LIVE_DESCENDANTS":
+            raise BuildBlocked("NATIVE_BUILD_CHILD_EXIT_UNPROVEN")
         if (stage_result.get("operation_ok") is not True
                 or type(stage_result.get("root_exit_code")) is not int or stage_result["root_exit_code"] != 0
                 or stage_result.get("root_exited") is not True or not receipt["outputComplete"]
