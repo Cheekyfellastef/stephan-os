@@ -196,6 +196,77 @@ const cpuFixture = root => fixtureStatePaths(root) + String.raw`
     Publish-CpuFixture
 `;
 
+test('game census preserves the detection model across window, path and fallback failures', {skip:!windows},()=>{
+  const rows=run(String.raw`
+    $env:STEPHANOS_GAME_PROCESS_NAMES='CustomGame';$env:STEPHANOS_GAME_LIBRARY_ROOTS='C:\CustomGames'
+    function Get-ParentProcessInfo {param($ProcessId) [pscustomobject]@{processId=0;processName='';executablePath=''}}
+    function Test-WindowsGamePresenceActive {return $script:presence}
+    function Get-Process {param($ErrorAction) return $script:fixtureProcess}
+    $rows=@()
+    foreach($name in @('Starfield','CustomGame','Background','steam')){
+      foreach($pathMode in @('library','custom-library','outside','unreadable')){
+        foreach($windowMode in @('present','absent','unreadable')){
+          foreach($presence in @($false,$true)){
+            $script:presence=$presence;$script:pathReads=0;$script:windowReads=0
+            $script:fixturePathMode=$pathMode;$script:fixtureWindowMode=$windowMode
+            $script:fixtureProcess=[pscustomobject]@{Id=100;ProcessName=$name}
+            $script:fixtureProcess|Add-Member ScriptProperty Path {
+              $script:pathReads++
+              switch($script:fixturePathMode){
+                'library'{return 'C:\SteamLibrary\steamapps\common\Example\game.exe'}
+                'custom-library'{return 'C:\CustomGames\Example\game.exe'}
+                'outside'{return 'C:\Windows\background.exe'}
+                'unreadable'{throw 'FIXTURE_PATH_UNREADABLE'}
+              }
+            }
+            $script:fixtureProcess|Add-Member ScriptProperty MainWindowHandle {
+              $script:windowReads++
+              if($script:fixtureWindowMode -eq 'unreadable'){throw 'FIXTURE_WINDOW_UNREADABLE'}
+              if($script:fixtureWindowMode -eq 'present'){return 123};return 0
+            }
+            $signal=Get-FlatGameSignal
+            $rows+=,[pscustomobject]@{name=$name;pathMode=$pathMode;windowMode=$windowMode;presence=$presence;active=$signal.active;selected=$signal.processName;pathReads=$script:pathReads;windowReads=$script:windowReads}
+          }
+        }
+      }
+    }
+    ConvertTo-Json -InputObject $rows -Compress
+  `);
+  assert.equal(rows.length,96);
+  for(const row of rows){
+    const excluded=row.name==='steam';
+    const known=['Starfield','CustomGame'].includes(row.name);
+    const visible=row.windowMode==='present';
+    const library=['library','custom-library'].includes(row.pathMode);
+    const detected=!excluded&&(known||(visible&&library));
+    const context=JSON.stringify(row);
+    assert.equal(row.active,detected||row.presence,context);
+    assert.equal(row.selected,detected?row.name:row.presence?'GameBarPresenceWriter':'',context);
+    assert.equal(row.pathReads,!excluded&&(known||visible)?1:0,context);
+    assert.equal(row.windowReads,!excluded&&!known?1:0,context);
+  }
+});
+
+test('background census size cannot multiply expensive path observations or change first matching game', {skip:!windows},()=>{
+  const result=run(String.raw`
+    $env:STEPHANOS_GAME_PROCESS_NAMES='';$env:STEPHANOS_GAME_LIBRARY_ROOTS=''
+    $script:pathReads=0;$script:fixtureProcesses=@()
+    function Get-ParentProcessInfo {param($ProcessId) [pscustomobject]@{processId=0;processName='';executablePath=''}}
+    function Test-WindowsGamePresenceActive {return $false}
+    function Get-Process {param($ErrorAction) return $script:fixtureProcesses}
+    for($i=0;$i -lt 500;$i++){
+      $p=[pscustomobject]@{Id=($i+1);ProcessName=('background'+$i);MainWindowHandle=0}
+      $p|Add-Member ScriptProperty Path {$script:pathReads++;throw 'NON_CANDIDATE_PATH_MUST_NOT_BE_OBSERVED'}
+      $script:fixtureProcesses+=,$p
+    }
+    $script:fixtureProcesses+=,[pscustomobject]@{Id=600;ProcessName='FirstLibraryGame';MainWindowHandle=1;Path='C:\XboxGames\Example\game.exe'}
+    $script:fixtureProcesses+=,[pscustomobject]@{Id=601;ProcessName='Starfield';MainWindowHandle=0;Path='C:\games\Starfield.exe'}
+    $signal=Get-FlatGameSignal
+    [pscustomobject]@{selected=$signal.processName;active=$signal.active;unnecessaryPathReads=$script:pathReads}|ConvertTo-Json -Compress
+  `);
+  assert.deepEqual(result,{selected:'FirstLibraryGame',active:true,unnecessaryPathReads:0});
+});
+
 test('CPU continuation comes only from unchanged complete publication and closes every denial edge', {skip:normalNativeSkip}, async t=>{
   const root=await realpath(await mkdtemp(join(tmpdir(),'governor-cpu-')));
   t.after(()=>rm(root,{recursive:true,force:true}));

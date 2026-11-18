@@ -87,3 +87,56 @@ solve a false interruption by ignoring a hold, extending stale evidence, forcing
 gaming mode off, restarting another owner or treating cancelled compilation as a
 compiler failure. A successful native build still does not prove image capture,
 GPU fence correctness, OpenXR submission or headset readiness.
+
+## Structural timing review: idle census and continuation
+
+The first live build after the continuation and owner-adoption fixes still
+cancelled on main `474ebece697e4a7997acf9e45b5205c069b2c566`. The completed
+observation at 21:59:44.8856152Z was 13.951 seconds old when the next read-only
+probe began at 21:59:58.8370431Z on 18 November 2026. No game, VR or preparation
+signal was present in the sampled records, but the prior observation exceeded
+the ten-second producer limit, so no continuation grant was issued. The owned
+build exited and released custody. This is correct denial, not permission to
+raise the age limit or refresh the timestamp without observation.
+
+Review the whole path: Watch acquires the existing mutex, checks real-headset
+protection, gathers game signals, resolves effective policy, then reconciles
+when the five-second idle heartbeat is due. The three-second scan cache measures
+from scan completion. Slow discovery therefore delays both the next heartbeat
+and recognition of new activity. A fresh continuation subrecord cannot repair
+that scheduling delay. Tests that seed a fresh prior observation miss it.
+
+Read-only measurements under the actual Windows PowerShell 5.1 host showed
+4.587 seconds for flat-game discovery across 496 processes; reading their
+`Process.Path` properties alone took 4.258 seconds. The same operation under
+PowerShell 7 took 313 milliseconds, so the host is part of the proof. Framework
+process-image discovery is paid for every background process even though the
+existing predicate requires either a known game name or both a library path
+and a window.
+
+Preserve that predicate and inventory order, but observe the necessary window
+before the expensive path for unknown processes. Known game names still win
+without a window or readable path; excluded launchers remain excluded; custom
+names, custom library roots, and Windows Game Presence fallback remain intact.
+Only plausible candidates incur the path lookup. This changes observation
+cost, not gaming policy, freshness, the five-second probe budget, custody,
+initial admission, or the CPU continuation schema. No new cache, controller,
+worker or independent authority is introduced.
+
+The executable property model covers every combination of known/custom/unknown/
+excluded name, built-in/custom/non-library/unreadable path, visible/absent/
+unreadable window and presence fallback. A 500-background-process fixture proves
+that irrelevant process count does not multiply path reads or change which game
+is selected first. Real-host timing and a subsequent guarded build remain
+commissioning evidence, separate from these deterministic proofs.
+
+Three alternating read-only measurements on the same live Windows PowerShell
+5.1 host observed baseline discovery at 3,363/4,602/3,864 ms and candidate
+discovery at 188/168/170 ms, with 485–494 processes and the same inactive result.
+These measurements establish the removed cost, not an absolute scheduling
+guarantee or a successful native build.
+
+Reusable lesson: bound observation work before depending on a freshness budget.
+Test the classification model and the number of expensive observations in the
+actual runtime host. An over-budget, changed, unreadable or expired observation
+must still fail closed; lower latency is never authority to reuse stale truth.
