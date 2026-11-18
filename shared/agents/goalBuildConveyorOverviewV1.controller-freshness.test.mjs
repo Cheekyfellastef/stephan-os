@@ -520,3 +520,58 @@ test('Goal #2961: independent GREEN source-head integrity refuses unbound or con
     assert.deepEqual(statusRecords, snapshot, label + ': native receipts unchanged');
   }
 });
+
+test('Goal #2961: current Core head vetoes old-head canonical-native GREEN', () => {
+  const A = 'a'.repeat(40), B = 'b'.repeat(40);
+  const core = (sourceHead, offset, healthy = false) => ({
+    statusId: 'stephanos-core-daemon-current', timestampUtc: at(offset),
+    sourceHead, daemonHealthy: true, missionWorkerHealthy: healthy, backendHealthy: healthy,
+  });
+  const worker = (sourceHead, offset) => ({
+    statusId: 'battle-bridge-worker-watchdog-current', timestampUtc: at(offset),
+    status: 'WORKER_WATCHDOG_HEALTHY', classification: 'WORKER_WATCHDOG_HEALTHY',
+    finalAssessment: {
+      finalVerdict: 'WORKER_WATCHDOG_HEALTHY', healthy: true, processHealthy: true,
+      heartbeatFresh: true, heartbeatPidMatchesProcess: true, processLaunchIdentityValid: true,
+      heartbeatLaunchIdentityMatchesProcess: true, repositoryFromCanonicalMain: true,
+      heartbeatMatchesCanonicalRepositoryHead: true, remoteMainHeadProven: true,
+      sourceHead, canonicalRepositoryHead: sourceHead, remoteMainHead: sourceHead,
+    },
+  });
+  const backend = (sourceHead, offset) => ({
+    statusId: 'post-sync-runtime-refresh-current', timestampUtc: at(offset),
+    safeRefreshesCompleted: true, unknownPathCount: 0, unsafePathCount: 0, afterHead: sourceHead,
+    resultTargets: [{ targetId: 'stephanos-backend-8787', ok: true, exactHeadProofOk: true,
+      canonicalActionVerified: true, unrelatedTasksChanged: false,
+      proofKind: 'canonical-target-readback', blocker: '', sourceHead }],
+  });
+  const cases = [
+    ['old worker and newer negative Core','missionWorkerHealthy',[worker(A,-90000),core(B,-1000)],'UNKNOWN'],
+    ['old backend and newer negative Core','backendHealthy',[backend(A,-90000),core(B,-1000)],'UNKNOWN'],
+    ['old worker and newer positive Core','missionWorkerHealthy',[worker(A,-90000),core(B,-1000,true)],'UNKNOWN'],
+    ['old backend and newer positive Core','backendHealthy',[backend(A,-90000),core(B,-1000,true)],'UNKNOWN'],
+    ['old worker and co-timed conflicting Core','missionWorkerHealthy',[worker(A,-1000),core(B,-1000)],'UNKNOWN'],
+    ['old backend and co-timed conflicting Core','backendHealthy',[backend(A,-1000),core(B,-1000)],'UNKNOWN'],
+    ['new worker after older Core','missionWorkerHealthy',[core(A,-90000),worker(B,-1000)],'HEALTHY'],
+    ['new backend after older Core','backendHealthy',[core(A,-90000),backend(B,-1000)],'HEALTHY'],
+    ['same-head worker','missionWorkerHealthy',[worker(A,-90000),core(A,-1000)],'HEALTHY'],
+    ['same-head backend','backendHealthy',[backend(A,-90000),core(A,-1000)],'HEALTHY'],
+    ['worker with no Core','missionWorkerHealthy',[worker(A,-90000)],'HEALTHY'],
+    ['backend with no Core','backendHealthy',[backend(A,-90000)],'HEALTHY'],
+    ['worker with stale foreign Core','missionWorkerHealthy',[core(B,-700000),worker(A,-1000)],'HEALTHY'],
+    ['backend with stale foreign Core','backendHealthy',[core(B,-700000),backend(A,-1000)],'HEALTHY'],
+  ];
+  for (const [label, field, records, expected] of cases) for (const ordered of [records,[...records].reverse()]) {
+    const snapshot = structuredClone(ordered);
+    const result = overview({}, { nowMs: NOW, statusRecords: ordered });
+    const observation = result.health.find(row => row.id === field);
+    assert.equal(observation.state, expected, label);
+    if (expected === 'UNKNOWN') {
+      assert.equal(observation.evidenceSource, 'NEWER_CORE_SOURCE_HEAD_VETO', label);
+      assert.equal(observation.observedAtUtc, '', label + ' has no credited timestamp');
+      assert.equal(observation.expiresAtUtc, '', label + ' has no proof expiry');
+    }
+    assert.equal(result.buildingGoalCount, null, 'service health is never BUILD proof');
+    assert.deepEqual(ordered, snapshot, label + ' input immutable');
+  }
+});

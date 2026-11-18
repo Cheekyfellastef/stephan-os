@@ -532,6 +532,19 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     // identity, fresh PID-bound heartbeat and canonical source head. The
     // post-sync receipt proves the Backend's independently verified target,
     // even when desktop plugin-host activation remains separately blocked.
+    // A newer, source-bound Core observation supersedes an otherwise fresh
+    // native service proof from the previous protected-main head. The old
+    // process may be healthy, but it cannot certify the new source.
+    // Equal-clock cross-head evidence is ambiguous and also fails closed.
+    const nativeFallbackHead = index === 1 && workerProofValid ? workerProof.sourceHead
+      : index === 2 && backendProofValid ? backendProof.sourceHead : '';
+    const nativeFallbackAt = index === 1 ? watchdog?.timestampUtc : refresh?.timestampUtc;
+    if (nativeFallbackHead && coreLive && core.sourceHead !== nativeFallbackHead
+      && time(core.timestampUtc) >= time(nativeFallbackAt)) return {
+      id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+      state: 'UNKNOWN', observedAtUtc: '', expiresAtUtc: '',
+      evidenceSource: 'NEWER_CORE_SOURCE_HEAD_VETO',
+    };
     const fallback = index === 1 && workerProofValid
       ? { observedAtUtc: watchdog.timestampUtc, evidenceSource: 'CANONICAL_WORKER_WATCHDOG' }
       : index === 2 && backendProofValid
