@@ -89,7 +89,10 @@ struct Surface : std::enable_shared_from_this<Surface> {
   void StartTarget(HWND w){
     if(!device)InitGraphics();
     CloseCapture();
-    std::lock_guard lock(mutex);target=w;inputChild=nullptr;selectedEditor=nullptr;editorKeyboardFocusUnverified=false;jpeg.clear();closed=false;generation++;
+    // A popup capture switch clears stale pointers, NOT the keyboard-focus
+    // uncertainty left by selecting an editor via UIA. Only Stop/new Bind
+    // revokes that uncertainty after the old native session is torn down.
+    std::lock_guard lock(mutex);target=w;inputChild=nullptr;selectedEditor=nullptr;jpeg.clear();closed=false;generation++;
     auto factory=get_activation_factory<GraphicsCaptureItem,IGraphicsCaptureItemInterop>();
     check_hresult(factory->CreateForWindow(w,guid_of<GraphicsCaptureItem>(),put_abi(item)));
     const auto size=item.Size();if(!CaptureSizeValid(size.Width,size.Height))throw std::runtime_error("Invalid window size");
