@@ -503,6 +503,8 @@ test('exact-head Backend fallback requires unique verified canonical target prov
     ['canonical omitted', omitted('canonicalActionVerified')],
     ['unrelated changed', { ...canonical, unrelatedTasksChanged: true }],
     ['unrelated omitted', omitted('unrelatedTasksChanged')],
+    ['noncanonical proof kind', { ...canonical, proofKind: 'unqualified-manual-observation' }],
+    ['noncanonical whitespace proof kind', { ...canonical, proofKind: ' canonical-target-readback ' }],
     ['blank proofKind', { ...canonical, proofKind: '' }],
     ['proofKind omitted', omitted('proofKind')],
     ['nonempty blocker', { ...canonical, blocker: 'TARGET_EXECUTION_BLOCKED' }],

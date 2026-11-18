@@ -412,7 +412,7 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     && backendProof?.ok === true && backendProof?.exactHeadProofOk === true
     && backendProof?.canonicalActionVerified === true
     && backendProof?.unrelatedTasksChanged === false
-    && typeof backendProof?.proofKind === 'string' && backendProof.proofKind.trim().length > 0
+    && backendProof?.proofKind === 'canonical-target-readback'
     && (backendProof?.blocker === '' || backendProof?.blocker === null)
     && /^[a-f0-9]{40}$/.test(String(backendProof?.sourceHead || ''))
     && backendProof.sourceHead === refresh.afterHead
