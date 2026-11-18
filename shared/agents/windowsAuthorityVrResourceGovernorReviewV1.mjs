@@ -28,6 +28,7 @@ const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: 'fec5255f808f303a3c0d61de9409c7eb98ceec92', size: 57827, reviewerReservation: true }),
   Object.freeze({ blobSha: '849e0cc3f00dbcb5b3213a16f7552c21f9dde481', size: 58683, reviewerReservation: true }),
   Object.freeze({ blobSha: '69c3396479d83e0f9521958f3f4dc13671863c68', size: 59353, reviewerReservation: true }),
+  Object.freeze({ blobSha: '5a6b7672c406f941d06d1fabc2f7d31636122122', size: 59840, reviewerReservation: true, corruptOverrideFailClosed: true }),
 ]);
 
 const text = (value) => String(value ?? '').trim();
@@ -244,6 +245,26 @@ function reviewGovernor(source, findings) {
     /if \(\$recoveryProfileRequired\) \{[\s\S]{0,270}lightweightOnly = \$true[\s\S]{0,95}parkAllModels = \$true/,
     'vr-governor-recovery-park-all-contract-missing',
     'Recovered corrupt or denied state must deny heavy and all local models.');
+  if (sourceContract.corruptOverrideFailClosed) {
+    const overrideReader = source.split('function Read-OverrideMode {')[1]
+      ?.split('function Write-OverrideMode {')[0] || '';
+    requireLiteral(findings, overrideReader,
+      "if (-not (Test-Path -LiteralPath $overridePath -PathType Leaf)) { return 'AUTO' }",
+      'vr-governor-override-absent-default-not-fixed',
+      'Only a genuinely absent override may default to AUTO.');
+    requireLiteral(findings, overrideReader,
+      "schemaVersion -eq 'stephanos.gaming-resource-override.v1'",
+      'vr-governor-override-schema-not-checked',
+      'A present override must validate its exact schema before granting AUTO.');
+    requireLiteral(findings, overrideReader,
+      '$state.mode -is [string]',
+      'vr-governor-override-mode-type-not-checked',
+      'Wrong-typed persisted override must never become AUTO.');
+    requireLiteral(findings, overrideReader,
+      "return 'FORCE_ON'",
+      'vr-governor-override-corrupt-failclosed-missing',
+      'Unreadable or invalid persisted override must retain forced gaming protection.');
+  }
   requireLiteral(findings, source,
     'REVIEWER_RESERVATION_BLOCKED_BY_GAMING_COOLDOWN',
     'vr-governor-reviewer-cooldown-preflight-missing',

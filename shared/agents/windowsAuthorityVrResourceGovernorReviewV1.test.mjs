@@ -103,8 +103,8 @@ function rejects(content) {
 }
 
 test('fixture preserves exact current reviewer governor source blob', () => {
-  assert.equal(blobSha(governor), '69c3396479d83e0f9521958f3f4dc13671863c68');
-  assert.equal(Buffer.byteLength(governor, 'utf8'), 59353);
+  assert.equal(blobSha(governor), '5a6b7672c406f941d06d1fabc2f7d31636122122');
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 59840);
 });
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
@@ -680,6 +680,74 @@ test('corrupt-state cooldown carries model denial and park-all eviction intent',
   // Consistent cooldowns without prior model denial may expire normally.
   const consistent = {phase:'COOLDOWN',active:true,localModelAllowed:true,profile:{parkAllModels:false}};
   assert.equal(!consistent.localModelAllowed && !consistent.profile.parkAllModels,false);
+});
+
+
+test('present corrupt gaming override fails closed instead of clearing operator ForceOn', () => {
+  const read = governor.split('function Read-OverrideMode {')[1]
+    ?.split('function Write-OverrideMode {')[0] || '';
+  assert.ok(read.includes("if (-not (Test-Path -LiteralPath $overridePath -PathType Leaf)) { return 'AUTO' }"));
+  assert.ok(read.includes("schemaVersion -eq 'stephanos.gaming-resource-override.v1'"));
+  assert.ok(read.includes("$state.mode -is [string]"));
+  assert.ok(read.includes("$state.mode -in @('AUTO','FORCE_ON','FORCE_OFF')"));
+  assert.ok(read.trimEnd().endsWith("return 'FORCE_ON'\n}"));
+  const classify = (exists, raw) => {
+    if (!exists) return 'AUTO';
+    try {
+      const obj = JSON.parse(raw);
+      return obj && !Array.isArray(obj) && obj.schemaVersion === 'stephanos.gaming-resource-override.v1'
+        && typeof obj.mode === 'string' && ['AUTO','FORCE_ON','FORCE_OFF'].includes(obj.mode)
+        ? obj.mode : 'FORCE_ON';
+    } catch { return 'FORCE_ON'; }
+  };
+  const valid = mode => JSON.stringify({schemaVersion:'stephanos.gaming-resource-override.v1',mode});
+  for (const [exists,raw,expected] of [
+    [false,'','AUTO'],[true,valid('AUTO'),'AUTO'],
+    [true,valid('FORCE_ON'),'FORCE_ON'],[true,valid('FORCE_OFF'),'FORCE_OFF'],
+    [true,'{bad-json','FORCE_ON'],[true,'null','FORCE_ON'],
+    [true,'[]','FORCE_ON'],[true,JSON.stringify({mode:'AUTO'}),'FORCE_ON'],
+    [true,JSON.stringify({schemaVersion:'other',mode:'AUTO'}),'FORCE_ON'],
+    [true,JSON.stringify({schemaVersion:'stephanos.gaming-resource-override.v1',mode:0}),'FORCE_ON'],
+    [true,valid('UNRECOGNISED'),'FORCE_ON'],
+  ]) assert.equal(classify(exists,raw),expected,String(raw));
+});
+
+test('Windows PowerShell executes the isolated gaming override reader with mocked filesystem', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const fn = 'function Read-OverrideMode {' + (governor.split('function Read-OverrideMode {')[1]
+    ?.split('function Write-OverrideMode {')[0] || '');
+  assert.match(fn,/return 'FORCE_ON'/);
+  const good = mode => JSON.stringify({schemaVersion:'stephanos.gaming-resource-override.v1',mode});
+  const cases = [
+    [false,'','AUTO'],[true,good('AUTO'),'AUTO'],
+    [true,good('FORCE_ON'),'FORCE_ON'],[true,good('FORCE_OFF'),'FORCE_OFF'],
+    [true,'{bad-json','FORCE_ON'],[true,'null','FORCE_ON'],
+    [true,'[]','FORCE_ON'],[true,JSON.stringify({mode:'AUTO'}),'FORCE_ON'],
+    [true,JSON.stringify({schemaVersion:'wrong',mode:'AUTO'}),'FORCE_ON'],
+    [true,JSON.stringify({schemaVersion:'stephanos.gaming-resource-override.v1',mode:42}),'FORCE_ON'],
+    [true,good('UNKNOWN'),'FORCE_ON'],
+  ];
+  const quote = value => "'" + String(value).replaceAll("'","''") + "'";
+  const ps = [
+    'Set-StrictMode -Version Latest',
+    "function Test-Path { param([string]$LiteralPath,[string]$PathType) return $script:mockExists }",
+    "function Get-Content { param([string]$LiteralPath,[switch]$Raw) return $script:mockContent }",
+    "$overridePath = 'mock-override-no-filesystem'",
+    fn,
+    ...cases.map(([exists,raw,expected],i) => [
+      "$script:mockExists = $" + (exists ? "true" : "false"),
+      "$script:mockContent = " + quote(raw),
+      "$actual = Read-OverrideMode",
+      "if ($actual -ne " + quote(expected) + ") { throw " + quote("OVERRIDE_CASE_"+i+"_FAILED") + " }",
+    ].join('\n')),
+    "'OVERRIDE_MOCK_CASES_PASSED'",
+  ].join('\n');
+  const result = spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',ps],{
+    encoding:'utf8',timeout:30000,windowsHide:true,
+  });
+  assert.equal(result.status,0,String(result.stderr || result.error || 'PowerShell override evaluation failed'));
+  assert.match(result.stdout,/OVERRIDE_MOCK_CASES_PASSED/);
 });
 
 test('ForceOn never inherits retired reviewer model permissions after cancellation or expiry', () => {

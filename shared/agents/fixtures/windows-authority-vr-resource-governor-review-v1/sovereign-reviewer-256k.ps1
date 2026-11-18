@@ -426,13 +426,23 @@ function Get-GamingSignal {
 }
 
 function Read-OverrideMode {
+    # A truly absent override is a clean first boot. A PRESENT but unreadable,
+    # wrong-schema or wrong-typed override is not proof that the operator ended
+    # a forced gaming session. Keep park-all protection until an explicit
+    # SetAuto/ForceOff writes a fresh, valid override.
     if (-not (Test-Path -LiteralPath $overridePath -PathType Leaf)) { return 'AUTO' }
     try {
         $state = Get-Content -LiteralPath $overridePath -Raw | ConvertFrom-Json
-        $mode = [string]$state.mode
-        if ($mode -in @('AUTO','FORCE_ON','FORCE_OFF')) { return $mode }
+        if (
+            $state -is [pscustomobject] -and
+            $state.schemaVersion -eq 'stephanos.gaming-resource-override.v1' -and
+            $state.mode -is [string] -and
+            $state.mode -in @('AUTO','FORCE_ON','FORCE_OFF')
+        ) {
+            return [string]$state.mode
+        }
     } catch {}
-    return 'AUTO'
+    return 'FORCE_ON'
 }
 
 function Write-OverrideMode {
