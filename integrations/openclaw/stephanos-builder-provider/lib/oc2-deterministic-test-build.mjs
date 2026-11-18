@@ -406,6 +406,19 @@ export async function executeClaimedOpenClawOc2DeterministicTestBuild(action, cl
     success: true,
     error: '',
     resultId: task.taskId,
+    // Carry the claimed source, task and provider identity into the inner result.
+    // The Mission Worker must reject an outer Gateway envelope paired with
+    // evidence for a different mission, task, source revision or provider.
+    missionId: task.missionId,
+    goalId: task.goalId,
+    taskId: task.taskId,
+    taskClass: task.taskClass,
+    repository: REPOSITORY,
+    requestedSourceHead: task.requestedSourceHead,
+    observedSourceHead: sourceHead,
+    provider: OPENCLAW_OC2_PROVIDER,
+    providerVersion: OPENCLAW_OC2_PROVIDER_VERSION,
+    operation: OPENCLAW_OC2_OPERATION,
     changedFiles: Object.freeze([]),
     completedAt: timestampUtc,
     qualificationEligible: true,
