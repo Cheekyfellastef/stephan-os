@@ -783,3 +783,28 @@ test('unexpected native text replies revoke queued Enter and require fresh edito
     }finally{await h.close();}
   }
 });
+
+test('unverified native clicks discard queued draft text rather than typing into an unknown control',async()=>{
+  for(const outcome of ['input-posted','editor-not-selected','editor-reselect-required',
+    'editor-unsupported','app-control-invoked','unexpected-click-status']){
+    const h=captureTransitionHarness({inputOutcome:body=>
+      body.kind==='click'?(body.x<.5?outcome:'editor-accessibility-selected')
+      :body.kind==='text'?'editor-value-readback':'input-posted'});
+    try{
+      await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
+      assert.equal(h.client.input({kind:'click',x:.2,y:.5}),true);
+      assert.equal(h.client.input({kind:'text',text:'draft waiting for click'}),true,
+        'the draft can be queued while the helper is deciding what received the click');
+      await h.tick();await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,1,
+        outcome+' cannot deliver a queued draft into an unverified target');
+      assert.equal(h.client.input({kind:'key',key:'Enter'}),false,
+        'unverified native click cannot license sending a draft');
+      assert.equal(h.client.input({kind:'click',x:.8,y:.5}),true);
+      assert.equal(h.client.input({kind:'text',text:'draft after explicit editor selection'}),true);
+      await h.tick();await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,3,
+        'confirmed selection retains a deliberately queued text edit');
+    }finally{await h.close();}
+  }
+});
