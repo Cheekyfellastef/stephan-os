@@ -432,7 +432,9 @@ export function createHolodeckScreen({client,comfort,furniture,audio,storage,doc
     const state=projectState(true),settings=state.comfort;
     const version=JSON.stringify([revision,state.revision,settings,state.furniture,state.audio,
       state.selectedWindowId,state.status,state.windows,state.message,state.leftPage,state.windowPage]);
-    if(drawn===version)return {screen,console:consoleCanvas,revision:drawn};drawn=version;
+    if(drawn===version)return {screen,console:consoleCanvas,revision:drawn};
+    // Any interrupted paint must retain the input fence and be retried.
+    viewPending=true;
     ctx.clearRect(0,0,screen.width,screen.height);ctx.fillStyle='#03131ff5';ctx.fillRect(0,0,screen.width,screen.height);
     ctx.fillStyle='#5de6ff';ctx.fillRect(0,0,8,954);ctx.fillRect(3064,0,8,954);
     text(ctx,'STEPHANOS / SPATIAL WORKSPACE',64,65,37);
@@ -495,6 +497,7 @@ export function createHolodeckScreen({client,comfort,furniture,audio,storage,doc
     paintedWindowRows=leftPage==='console'?state.windowRows.map(window=>({...window})):[];
     paintedSelectedWindow=selectedWindow?{...selectedWindow}:null;
     viewPending=false;
+    drawn=version;
     return {screen,console:consoleCanvas,revision:drawn};
   }
   return {action,point,hitTest,selectWindow,getState,getKeycapMotion,render,comfort,hover:id=>{if(id!==hover){hover=id;changed();}}};
