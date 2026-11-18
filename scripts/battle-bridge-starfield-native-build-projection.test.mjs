@@ -101,6 +101,12 @@ test('real receipt readback and bounded publication preserve original native bui
     assert(!publishedJson.includes('PRIVATE_SOURCE_OR_LOG'));
     assert(!publishedJson.includes('C:\\\\private'));
     assert.equal(published.result.result.receipt.nativeBuild.headsetPlaytestReady, false);
+    // This response may have crossed the bounded core projection. Repeating
+    // publication must not discard the original source and artifact proof.
+    const repeated = JSON.parse(serializeBoundedReceiptJson(published));
+    assert.equal(repeated.result.result.receipt?.requestId, REQUEST);
+    assert.equal(repeated.result.result.receipt?.expectedHead, HEAD);
+    assert.equal(repeated.result.result.receipt?.operationResult?.nativeBuild?.buildPassed, true);
 
     // No request or source identity can be substituted by the later READ.
     for (const change of [

@@ -2961,8 +2961,44 @@ function compactProgrammeAuthorityForCoreReceipt(receipt, inner) {
   });
 }
 
+// The normal READ receipt serializer can exceed the 9 KiB public bound. Keep
+// the selected Starfield build's own validated request/head and both typed
+// proof surfaces through the core fallback, without retaining raw logs or
+// borrowing the later READ command's source identity.
+function compactStarfieldNativeReadbackReceipt(compactReceipt, inner) {
+  if (compactReceipt?.operation !== 'READ_MAILBOX_RECEIPT') return null;
+  const original = inner?.receipt;
+  if (!original || original.operation !== STARFIELD_VR_NATIVE_BUILD_OPERATION
+    || original.schemaVersion !== 'stephanos.battle-bridge-github-command-receipt.v1'
+    || !projectMailboxReceiptRequestId(original.requestId)
+    || original.requestId !== inner?.targetRequestId
+    || !/^[a-f0-9]{40}$/.test(original.expectedHead || '')
+    || !['DONE', 'BLOCKED'].includes(original.state)
+    || original.execution?.operation !== original.operation
+    || original.execution?.requestId !== original.requestId) return null;
+  const fromInner = projectStarfieldVrNativeBuildReceipt(
+    original.operationResult?.nativeBuild, original.expectedHead, original.requestId);
+  const fromTop = projectStarfieldVrNativeBuildReceipt(
+    original.nativeBuild, original.expectedHead, original.requestId);
+  if (!fromInner || !fromTop || JSON.stringify(fromInner) !== JSON.stringify(fromTop)) return null;
+  return Object.freeze({
+    schemaVersion: original.schemaVersion, requestId: original.requestId,
+    operation: original.operation, state: original.state, expectedHead: original.expectedHead,
+    execution: Object.freeze({ ok: original.execution?.ok !== false,
+      verdict: safeTelemetryText(original.execution?.verdict, 120).toUpperCase(),
+      operation: original.operation, requestId: original.requestId }),
+    nativeBuild: fromInner,
+    operationResult: Object.freeze({
+      ok: original.operationResult?.ok !== false,
+      finalVerdict: safeTelemetryText(original.operationResult?.finalVerdict, 160).toUpperCase(),
+      launchAllowed: false, nativeBuild: fromInner,
+    }),
+  });
+}
+
 function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24, fleetHeldLimit = 8) {
   const inner = compactReceipt?.result?.result || {};
+  const starfieldNativeReadback = compactStarfieldNativeReadbackReceipt(compactReceipt, inner);
   // Preserve only the existing typed owner failure, including its unknown exit,
   // when byte-budget compaction removes optional diagnostics. This is no grant
   // or fleet completion proof; command identities and native output stay private.
@@ -3041,6 +3077,8 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         visibilityHeadline: compactVisibilityHeadlineForCoreReceipt(inner?.visibilitySnapshot),
         nativeBuild: compactReceipt?.operation === STARFIELD_VR_NATIVE_BUILD_OPERATION
           ? projectStarfieldVrNativeBuildReceipt(inner?.nativeBuild, compactReceipt?.expectedHead, compactReceipt?.requestId) : null,
+        ...(starfieldNativeReadback ? { targetRequestId: starfieldNativeReadback.requestId,
+          receipt: starfieldNativeReadback } : {}),
         starfieldVrTelemetry: inner?.starfieldVrTelemetry ?? null,
         cpuPressure: inner?.cpuPressure ?? null,
         starfieldVrTelemetryArchive: inner?.starfieldVrTelemetryArchive ?? null,
