@@ -226,7 +226,10 @@ export async function executeStarfieldVrNativeBuild(command, paths, {
     requestId, stage: STARFIELD_VR_NATIVE_BUILD_STAGE, sourceClosureSha256: closureSha256,
     parentPid, files: records };
   const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-  if (paths.powershellExe !== powershell) return fail('STARFIELD_VR_NATIVE_BUILD_LAUNCHER_PATH_INVALID');
+  // The mailbox preserves SystemRoot casing (commonly C:\WINDOWS). Admit only
+  // that fixed Windows path, then launch the source-owned literal below.
+  if (typeof paths.powershellExe !== 'string'
+    || paths.powershellExe.toLowerCase() !== powershell.toLowerCase()) return fail('STARFIELD_VR_NATIVE_BUILD_LAUNCHER_PATH_INVALID');
   const launcher = Buffer.from(records[LAUNCHER].base64, 'base64').toString('utf8');
   const encoded = Buffer.from(launcher, 'utf16le').toString('base64');
   if (encoded.length > 32000) return fail('STARFIELD_VR_NATIVE_BUILD_LAUNCHER_BOUND');
