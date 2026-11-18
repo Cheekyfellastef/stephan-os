@@ -200,6 +200,65 @@ test('OC2 executes only fixed node test IDs and proves source state unchanged', 
   assert.ok(nodeCalls.every((call) => call.options.shell === false));
 });
 
+
+test('OC2 grant renewal and source revision cannot overwrite prior proof or receipt identity', async () => {
+  const userProfile = '/tmp/stephanos-oc2-grant-scoped-evidence';
+  const repoRoot = path.resolve(userProfile, 'Documents', 'GitHub', 'stephan-os');
+  const recorded = [];
+  for (const [grantId, sourceRevision] of [
+    ['grant-first', HEAD],
+    ['grant-second', HEAD],
+    ['grant-first', 'b'.repeat(40)],
+  ]) {
+    const parts = fixture({ grantId, sourceRevision });
+    const writes = [];
+    const spawnSyncFn = (executable, args) => {
+      if (String(executable).toLowerCase().endsWith('git.exe')) {
+        const command = args.join(' ');
+        if (command === 'rev-parse --show-toplevel') return { status: 0, stdout: repoRoot + '\\n' };
+        if (command === 'remote get-url origin') return { status: 0, stdout: 'https://github.com/Cheekyfellastef/stephan-os.git\\n' };
+        if (command === 'rev-parse --abbrev-ref HEAD') return { status: 0, stdout: 'main\\n' };
+        if (command === 'rev-parse HEAD') return { status: 0, stdout: sourceRevision + '\\n' };
+        if (command === 'status --porcelain=v1 --untracked-files=all') return { status: 0, stdout: '' };
+        return { status: 1, stderr: 'unexpected git command' };
+      }
+      return { status: 0, stdout: 'ok\\n' };
+    };
+    const result = await executeClaimedOpenClawOc2DeterministicTestBuild(parts.action, parts.claim, {
+      actionGrant: parts.grant,
+      taskClass: OPENCLAW_OC2_TASK_CLASS,
+      goalId: '#1725',
+      providerVersion: '1.0.0',
+      requestedSourceHead: sourceRevision,
+      providerInstance: 'openclaw-gateway:4242',
+      platform: 'win32',
+      env: { USERPROFILE: userProfile },
+      existsSyncFn: () => true,
+      spawnSyncFn,
+      readFileFn: async () => JSON.stringify(parts.item),
+      ensureSharedWorkspaceLayoutFn: async () => ({ ok: true }),
+      writeAtomicJsonFn: async (_root, segments, record) => {
+        writes.push({ path: segments.join('/'), record });
+        return { ok: true };
+      },
+      now: new Date('2026-08-21T00:00:00.000Z'),
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.qualificationEligible, true);
+    assert.equal(writes.length, 2);
+    assert.equal(result.evidenceReceipts[0].receiptPath, writes[0].path);
+    recorded.push({
+      proof: writes[0].path,
+      receipt: writes[1].path,
+      resultReceipt: result.receipt.receiptId,
+    });
+  }
+  for (const key of ['proof', 'receipt', 'resultReceipt']) {
+    assert.equal(new Set(recorded.map((entry) => entry[key])).size, 3,
+      key + ' must distinguish renewed grants and source revisions');
+  }
+});
+
 test('OC2 workspace I/O exceptions fail closed without a qualifying result', async (t) => {
   for (const [scenario, expectedError, expectedWrites] of [
     ['workspace layout throws', 'OPENCLAW_OC2_SHARED_WORKSPACE_UNAVAILABLE', 0],
