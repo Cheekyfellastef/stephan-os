@@ -190,14 +190,25 @@ function reviewGovernor(source, findings) {
     'Test-ReviewerReservationBlockedByCooldown -State $PriorState',
     'vr-governor-reviewer-cooldown-protection-missing',
     'A reviewer lease cannot displace a prior protected gaming cooldown.');
+  // Both admission and no-lease reconciliation must consult the *same*
+  // persisted-state consistency classifier. These are source-exact gates;
+  // the two reviewer-definition bootstrap P0 holds remain independent.
   requireLiteral(findings, source,
-    "if ($phase -notin @('NORMAL','REVIEWING','COOLDOWN')) { return $true }",
+    "if ($phase -notin @('NORMAL','REVIEWING','GAMING','PREPARING','COOLDOWN')) { return $true }",
     'vr-governor-reviewer-unknown-prior-state-failclosed-missing',
-    'A corrupted persisted gaming phase must not be mistaken for a safe idle state.');
+    'An unknown persisted gaming phase must remain protected even when stored idle flags look safe.');
   requireLiteral(findings, source,
-    "$priorPhase -notin @('NORMAL','REVIEWING')",
+    "return [bool]($State.active -eq $true -or $State.localModelAllowed -eq $false)",
+    'vr-governor-reviewer-contradictory-idle-protection-missing',
+    'Contradictory NORMAL or REVIEWING flags must not release a gaming cooldown.');
+  requireLiteral(findings, source,
+    "return (Test-InconsistentGovernorIdleState -State $State)",
+    'vr-governor-reviewer-admission-classifier-missing',
+    'Reviewer admission must use the same protected-idle predicate as watcher reconciliation.');
+  requireLiteral(findings, source,
+    "(Test-InconsistentGovernorIdleState -State $PriorState)",
     'vr-governor-reviewer-unknown-phase-reconcile-missing',
-    'Unknown protected phases must reconstruct gaming cooldown before releasing models.');
+    'Watch and cancellation must recover unknown or contradictory persisted idle states before releasing models.');
   requireLiteral(findings, source,
     'REVIEWER_RESERVATION_BLOCKED_BY_GAMING_COOLDOWN',
     'vr-governor-reviewer-cooldown-preflight-missing',
