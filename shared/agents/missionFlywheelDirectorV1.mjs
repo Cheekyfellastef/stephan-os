@@ -318,4 +318,3 @@ export function validateDirectorStatusPacket(packet = {}) {
     finalVerdict: errors.length === 0 ? 'MISSION_FLYWHEEL_DIRECTOR_STATUS_PASS' : 'MISSION_FLYWHEEL_DIRECTOR_STATUS_BLOCKED',
   };
 }
-
