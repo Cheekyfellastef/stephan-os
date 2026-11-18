@@ -76,7 +76,7 @@ function Runtime-CheckSecurity([IntPtr]$handle, [bool]$managed) {
     # ACL). Neither role permits changing this object or deleting its children.
     [uint32]$forbidden = if ($managed) { 0x500d0156 } else { 0x500d0152 }
     foreach ($ace in $security.DiscretionaryAcl) {
-      if (($ace.AceFlags -band [Security.AccessControl.AceFlags]::InheritOnly) -ne 0) { continue }
+      if ((([int]$ace.AceFlags) -band ([int][Security.AccessControl.AceFlags]::InheritOnly)) -ne 0) { continue }
       if ($ace -isnot [Security.AccessControl.CommonAce]) { Runtime-Deny }
       if ($ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessDenied) { continue }
       if ($ace.AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed -or $ace.IsCallback) { Runtime-Deny }
