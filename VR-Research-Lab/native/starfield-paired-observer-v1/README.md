@@ -34,6 +34,41 @@ The Python worker pins original and reconstructed source inputs, checks the exis
 
 Compiler logs and native process paths stay in the private experiment directory. Public receipts contain source identities, bounded result fields and artifact hashes. Changed inputs, uncertain process exclusion, incomplete output, an unresolved previous build or gaming preparation all refuse the operation. The helper does not reclaim an old lock or terminate an unrelated process. Artifact consumption requires the authenticated completed worker response; a private disk receipt alone cannot authorize it. Interrupted finalization and write failures remain held even when compiler outputs exist.
 
+### Build-tool helper lifetime
+
+The private build environment explicitly sets `VSCMD_SKIP_SENDTELEMETRY=1`
+before the fixed `vcvars64.bat` setup. The installed VS2022 `VsDevCmd.bat`
+otherwise launches a background PowerShell telemetry helper using `START /B`.
+That helper is unrelated to compilation and can outlive the recipe root. The
+setting is confined to this child environment; it changes no user or machine
+preference, and inherited values or compiler hooks cannot override it.
+
+A bounded actual Battle Bridge setup-only proof with this fixed environment
+completed in 1,018 ms: root exit zero, native Job zero, output EOF, released
+custody and no termination request. The installed setup-script hashes remained
+unchanged. This proof starts no compiler, game or observation DLL; it does not
+substitute for the complete protected native build.
+
+The 18 November build `starfield3536-paired-observer-build-92579c79-v1` completed
+all compiler/model/ABI self-test output and exited its root with code zero,
+without a gaming cancellation. The owned Job still had a live descendant after
+the existing one-second settling window, so it correctly rejected success and
+terminated its remaining members. Native zero and released custody were then
+proven. The original terminal remains failed and its artifacts are not admitted.
+Its receipt did not identify that descendant, so the installed setup's detached
+telemetry is an evidence-backed cause to test, not a retroactive success claim.
+
+The repair removes that unnecessary helper at its source. The Job boundary,
+settling interval, deadline, output drain, descendant-zero requirement and
+kill-on-close protection are unchanged. A repeated live-descendant refusal is
+reported as `NATIVE_BUILD_CHILD_EXIT_UNPROVEN`; unresolved custody still takes
+precedence as `NATIVE_JOB_TERMINAL_UNPROVEN`. Compiler failure and child-exit
+uncertainty must remain distinct. A fresh authenticated build is still required.
+
+Reusable invariant: a build recipe's completion includes every child it starts.
+Suppress optional detached setup work before execution instead of extending
+timeouts, accepting root exit alone or consuming outputs from a failed receipt.
+
 ## Qualification and result boundaries
 
 ### Terminal ownership protocol
