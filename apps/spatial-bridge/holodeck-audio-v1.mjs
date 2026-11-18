@@ -32,6 +32,8 @@ export function createHolodeckAudioControls({
       JSON.stringify({version:1,inputId:preferences.inputId,outputId:preferences.outputId}));}catch{}
   };
   let microphone=null,speaker=null,disposed=false,listVersion=0,statusIntent=0,deviceRefreshFailed=false;
+  // Device IDs may be reused after a Quest/OS hot-plug. A stored hint cannot re-authorize either route.
+  let hotplugInputNeedsSelection=false,hotplugOutputNeedsSelection=false;
   let state={inputs:[],outputs:[],inputId:'',outputId:'',status:'Audio test devices not yet selected.',
     microphoneActive:false,microphonePending:false,revision:0};
   const cancelled=Symbol('audio-test-cancelled');
@@ -89,6 +91,7 @@ export function createHolodeckAudioControls({
     deviceChangeListener=()=>{
       if(disposed)return;
       ++listVersion; // An enumeration begun before the change must not restore old devices.
+      hotplugInputNeedsSelection=true;hotplugOutputNeedsSelection=true;
       invalidateDevices('Audio devices changed.');
     };
     try{deviceService.addEventListener('devicechange',deviceChangeListener);}
@@ -99,6 +102,7 @@ export function createHolodeckAudioControls({
     if(id&& !state.inputs.some(device=>device.id===id))return false;
     // A missing remembered microphone is already shown as no current choice.
     // Explicitly selecting system default must still clear that stale hint.
+    hotplugInputNeedsSelection=false; // This is a fresh explicit operator selection, including system default.
     if(id===state.inputId&&(id!==''||!preferences.inputId))return true;
     statusIntent++;releaseMicrophone();
     saveChoice('inputId',id,state.inputs);
@@ -108,6 +112,7 @@ export function createHolodeckAudioControls({
   function setOutput(id){
     id=selection(id);if(disposed||id===null)return false;
     if(id&& !state.outputs.some(device=>device.id===id))return false;
+    hotplugOutputNeedsSelection=false;
     if(id===state.outputId&&(id!==''||!preferences.outputId))return true;
     statusIntent++;releaseSpeaker();
     saveChoice('outputId',id,state.outputs);
@@ -126,17 +131,19 @@ export function createHolodeckAudioControls({
       // A saved hint is not trusted until fresh device enumeration finds an
       // exact match. Never substitute a different microphone or speaker.
       deviceRefreshFailed=false;
-      const wantedInput=state.inputId||preferences.inputId;
-      const wantedOutput=state.outputId||preferences.outputId;
+      const wantedInput=hotplugInputNeedsSelection?'':state.inputId||preferences.inputId;
+      const wantedOutput=hotplugOutputNeedsSelection?'':state.outputId||preferences.outputId;
       const inputId=inputs.some(d=>d.id===wantedInput)?wantedInput:'';
       const outputId=outputs.some(d=>d.id===wantedOutput)?wantedOutput:'';
       if(inputId!==state.inputId)releaseMicrophone();
       if(outputId!==state.outputId)releaseSpeaker();
       const missingInput=Boolean(wantedInput&&!inputId),missingOutput=Boolean(wantedOutput&&!outputId);
-      const reason=missingInput||missingOutput
-        ?'Previous '+(missingInput&&missingOutput?'microphone and speaker':missingInput?'microphone':'speaker')+
-          ' unavailable. Re-select the intended device; no test or ChatGPT Voice session started.'
-        :'Devices listed. A test needs your explicit permission.';
+      const reason=hotplugInputNeedsSelection||hotplugOutputNeedsSelection
+        ?'Audio devices changed. Re-select the intended microphone and speaker; neither local test nor ChatGPT Voice has started.'
+        :missingInput||missingOutput
+          ?'Previous '+(missingInput&&missingOutput?'microphone and speaker':missingInput?'microphone':'speaker')+
+            ' unavailable. Re-select the intended device; no test or ChatGPT Voice session started.'
+          :'Devices listed. A test needs your explicit permission.';
       publish({inputs,outputs,inputId,outputId,
         microphoneActive:Boolean(microphone)&&state.microphoneActive,
         microphonePending:Boolean(microphone)&&state.microphonePending,
@@ -156,6 +163,7 @@ export function createHolodeckAudioControls({
   async function testMicrophone(deviceId=state.inputId){
     if(disposed)return stoppedResult('Microphone');
     if(deviceRefreshFailed)return {ok:false,reason:status('Refresh audio devices before testing the microphone.')};
+    if(hotplugInputNeedsSelection)return {ok:false,reason:status('Re-select the microphone after audio devices changed before testing.')};
     deviceId=selection(deviceId);
     if(deviceId===null)return {ok:false,reason:status('Select a valid microphone device.')};
     // A remembered headset that vanished must not quietly become the system
@@ -231,6 +239,7 @@ export function createHolodeckAudioControls({
   async function testSpeakers(deviceId=state.outputId){
     if(disposed)return stoppedResult('Speaker');
     if(deviceRefreshFailed)return {ok:false,reason:status('Refresh audio devices before testing the speakers.')};
+    if(hotplugOutputNeedsSelection)return {ok:false,reason:status('Re-select the speakers after audio devices changed before testing.')};
     deviceId=selection(deviceId);
     if(deviceId===null)return {ok:false,reason:status('Select a valid speaker device.')};
     if(!state.outputId&&preferences.outputId)return {ok:false,reason:status('Previous speaker unavailable. Re-select the intended output or explicitly choose system default before testing.')};
