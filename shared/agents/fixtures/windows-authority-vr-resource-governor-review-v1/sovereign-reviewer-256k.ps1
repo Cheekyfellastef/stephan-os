@@ -1016,6 +1016,18 @@ function Resolve-EffectiveState {
     }
 
     if ($override -eq 'FORCE_ON') {
+        # An explicit forced gaming session must not reuse a cancelled or expired
+        # SovereignReviewer profile or a custom profile that permits local models.
+        # Keep gaming-safe eviction even when no game or headset signal is live.
+        $profile = [pscustomobject]@{
+            name = 'operator-forced-gaming'
+            processName = if ($Signal.gameProcessName) { [string]$Signal.gameProcessName } else { '' }
+            minFreeVramMiB = 12288
+            lightweightOnly = $true
+            parkAllModels = $true
+            cooldownSeconds = [Math]::Min(600, [Math]::Max(30, $CooldownSeconds))
+            customProfileApplied = $false
+        }
         return [pscustomobject]@{
             phase = 'GAMING'
             active = $true

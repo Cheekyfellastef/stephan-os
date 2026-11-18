@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
 
 import {
   WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1,
@@ -102,8 +103,8 @@ function rejects(content) {
 }
 
 test('fixture preserves exact current reviewer governor source blob', () => {
-  assert.equal(blobSha(governor), '849e0cc3f00dbcb5b3213a16f7552c21f9dde481');
-  assert.equal(Buffer.byteLength(governor, 'utf8'), 58683);
+  assert.equal(blobSha(governor), '69c3396479d83e0f9521958f3f4dc13671863c68');
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 59353);
 });
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
@@ -679,4 +680,43 @@ test('corrupt-state cooldown carries model denial and park-all eviction intent',
   // Consistent cooldowns without prior model denial may expire normally.
   const consistent = {phase:'COOLDOWN',active:true,localModelAllowed:true,profile:{parkAllModels:false}};
   assert.equal(!consistent.localModelAllowed && !consistent.profile.parkAllModels,false);
+});
+
+test('ForceOn never inherits retired reviewer model permissions after cancellation or expiry', () => {
+  // Exact-source control-flow verification, not a claim of installed PowerShell runtime.
+  const resolver = governor.split('function Resolve-EffectiveState {')[1]
+    ?.split('function Invoke-Reconcile {')[0] || '';
+  const forceOn = resolver.split("if ($override -eq 'FORCE_ON') {")[1]
+    ?.split('    # A reviewer reservation may not replace an unexpired gaming cooldown.')[0] || '';
+  for (const value of ["name = 'operator-forced-gaming'",'lightweightOnly = $true',
+    'parkAllModels = $true','customProfileApplied = $false','minFreeVramMiB = 12288']) {
+    assert.ok(forceOn.includes(value), 'forced gaming must retain ' + value);
+  }
+  assert.ok(forceOn.indexOf("name = 'operator-forced-gaming'") < forceOn.indexOf("phase = 'GAMING'"));
+  const reconcile = governor.split('function Invoke-Reconcile {')[1]
+    ?.split('function Invoke-CurrentReconcile {')[0] || '';
+  assert.ok(reconcile.includes('$parkAllModels = [bool]($Effective.active -and $Effective.profile.parkAllModels)'));
+  assert.ok(reconcile.includes('$modelsToPark = if ($parkAllModels) { @($loadedBefore) } else { @($heavyBefore) }'));
+  for (const retired of ['cancelled','expired']) {
+    const prior = { leaseActive:false, profile:'review-large-context', retired };
+    const effective = { phase:'GAMING', active:true,
+      profile:{ name:'operator-forced-gaming', parkAllModels:true, lightweightOnly:true } };
+    const loaded = ['Qwen32B','Qwen3B'];
+    const parkAll = effective.active && effective.profile.parkAllModels;
+    assert.equal(parkAll,true,JSON.stringify(prior));
+    assert.deepEqual(parkAll ? loaded : ['Qwen32B'],loaded);
+    assert.equal(!effective.profile.lightweightOnly,false);
+    assert.equal(!parkAll,false);
+    assert.notEqual(effective.profile.name,prior.profile);
+  }
+});
+
+test('ForceOn source parses with Windows PowerShell AST without executing it', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const parse = "$t=$null; $e=$null; [void][System.Management.Automation.Language.Parser]::ParseInput([Console]::In.ReadToEnd(),[ref]$t,[ref]$e); if ($e.Count -ne 0) { $e | ForEach-Object { [Console]::Error.WriteLine($_.ToString()) }; exit 4 }";
+  const r = spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',parse],{
+    input:governor,encoding:'utf8',timeout:30000,
+  });
+  assert.equal(r.status,0,String(r.stderr || r.error || 'PowerShell parse failed'));
 });
