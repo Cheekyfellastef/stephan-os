@@ -885,6 +885,49 @@ test('backend missing plus UI missing does not enter browser/runtime proof and s
   assert.equal(result.status.blockerId, 'stephanos-ui-4173-missing');
 });
 
+test('cold Ignition starts backend, OpenClaw and UI before proving the served runtime', async () => {
+  const expectedHead = 'a'.repeat(40);
+  const calls = [];
+  const services = { backend: false, openclaw: false, ui: false };
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => canonicalSourceTruth(),
+    collectFactsFn: async () => factsFor(services),
+    plannerFn: facts => facts,
+    backendStartFn: async ({ expectedHead: head }) => {
+      assert.equal(head, expectedHead);
+      calls.push('backend');
+      services.backend = true;
+      return { started: true };
+    },
+    openClawStartFn: async ({ expectedHead: head }) => {
+      assert.equal(head, expectedHead);
+      calls.push('openclaw');
+      services.openclaw = true;
+      return { started: true, ready: true };
+    },
+    repairFn: async ({ expectedHead: head, stdout }) => {
+      assert.equal(head, expectedHead);
+      calls.push('ui');
+      services.ui = true;
+      stdout.write(JSON.stringify({ ready: true }));
+      return 0;
+    },
+    runtimeProofFn: async ({ currentHead }) => {
+      assert.deepEqual(services, { backend: true, openclaw: true, ui: true });
+      assert.equal(currentHead, expectedHead);
+      calls.push('served-proof');
+      return { ready: true, currentHead };
+    },
+    openClawCompanionStartFn: async () => ({ targets: [] }),
+    stdout: { write() {} },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ['backend', 'openclaw', 'ui', 'served-proof']);
+  assert.equal(result.status.services.openClaw18789.ready, true);
+});
+
 test('backend missing has deterministic backend blocker and no empty blockerId when approved start fails proof', async () => {
   const result = await runBattleBridgeIgnitionSupervisor({
     housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
