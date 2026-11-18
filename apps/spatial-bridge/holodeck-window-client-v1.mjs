@@ -253,6 +253,13 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
         if(input.kind==='click')editorClickConfirmed=result.status==='editor-accessibility-selected';
         else if(['editor-not-selected','editor-reselect-required','editor-unsupported','editor-key-focus-unverified'].includes(result.status))
           editorClickConfirmed=false;
+        // The app may have applied a mutation before returning an uncertain
+        // outcome. Never deliver a previously queued Enter/Send afterwards.
+        // App controls and non-text keys can also change the current focus.
+        if(input.kind==='key'||['editor-update-refused','editor-update-unverified',
+          'app-control-invoked','app-control-outcome-unverified','input-rejected'].includes(result.status)){
+          editorClickConfirmed=false;queue=[];
+        }
         if(!publishCurrent(current,{inputStatus:({
           'editor-accessibility-selected':'Editable field located in the selected window. Type a virtual key to test it.',
           'editor-value-readback':'Windows accessibility read back the updated editor text. Confirm the actual app reflects it before Send.',
