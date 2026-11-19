@@ -31,6 +31,7 @@ const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: '5a6b7672c406f941d06d1fabc2f7d31636122122', size: 59840, reviewerReservation: true, corruptOverrideFailClosed: true }),
   Object.freeze({ blobSha: 'c6ea953880d63b61d494259ccc8e8ecd423b14d0', size: 59891, reviewerReservation: true, corruptOverrideFailClosed: true, scalarOverrideSchema: true }),
   Object.freeze({ blobSha: '3804c153495a5f6be89eba33790b73f28854b15b', size: 62477, reviewerReservation: true, corruptOverrideFailClosed: true, scalarOverrideSchema: true, typedPrepareLease: true, dateParsedUtcLease: true }),
+  Object.freeze({ blobSha: 'b2a5411480b9f427a40d0293c2ab680be584a834', size: 63687, reviewerReservation: true, corruptOverrideFailClosed: true, scalarOverrideSchema: true, typedPrepareLease: true, dateParsedUtcLease: true }),
 ]);
 
 const text = (value) => String(value ?? '').trim();

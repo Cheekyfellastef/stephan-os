@@ -103,8 +103,8 @@ function rejects(content) {
 }
 
 test('fixture preserves exact current reviewer governor source blob', () => {
-  assert.equal(blobSha(governor), '3804c153495a5f6be89eba33790b73f28854b15b');
-  assert.equal(Buffer.byteLength(governor, 'utf8'), 62477);
+  assert.equal(blobSha(governor), 'b2a5411480b9f427a40d0293c2ab680be584a834');
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 63687);
 });
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
@@ -383,7 +383,9 @@ test('virtual Air Link reviewer fixture requires a fresh UTC timestamp, not stal
 test('PowerShell engine preserves explicit UTC synthetic Air Link readiness with mocked filesystem', () => {
   const reader = 'function Test-VirtualAirLinkTestActive {' + (governor.split('function Test-VirtualAirLinkTestActive {')[1]
     ?.split('function Get-AirLinkSignal {')[0] || '');
-  assert.match(reader, /\$timestamps\.Count -ne 1/);
+  assert.match(reader, /\$members\.Count -ne 4/);
+  assert.match(reader, /\$seen\.ContainsKey\(\$key\)/);
+  assert.match(reader, /\$inner\.Substring\(\$cursor\)/);
   assert.match(reader, /\$state\.updatedAtUtc -isnot \[datetime\]/);
   const now = Date.now();
   const good = {
@@ -405,6 +407,19 @@ test('PowerShell engine preserves explicit UTC synthetic Air Link readiness with
     [[good],false],
     ['{"schemaVersion":"stephanos.starfield-vr-sim-air-link.v1","enabled":true,"purpose":"readiness-only","updatedAtUtc":"'
       + good.updatedAtUtc + '","updatedAtUtc":"' + good.updatedAtUtc + '"}',false],
+    // Flat members are intentionally order-independent.
+    ['{"updatedAtUtc":"' + good.updatedAtUtc
+      + '","purpose":"readiness-only","enabled":true,"schemaVersion":"stephanos.starfield-vr-sim-air-link.v1"}',true],
+    // Escaped stale root key + fresh nested literal key must never satisfy age.
+    ['{"schemaVersion":"stephanos.starfield-vr-sim-air-link.v1","enabled":true,"purpose":"readiness-only","updatedAt'
+      + '\\u0055' + 'tc":"2000-01-01T00:00:00Z","extra":{"updatedAtUtc":"'
+      + good.updatedAtUtc + '"}}',false],
+    ['{"schemaVersion":"stephanos.starfield-vr-sim-air-link.v1","enabled":true,"purpose":"readiness-only","updatedAt'
+      + '\\u0055' + 'tc":"' + good.updatedAtUtc + '"}',false],
+    ['{"schemaVersion":"stephanos.starfield-vr-sim-air-link.v1","enabled":true,"purpose":"readiness-only","updatedAtUtc":"'
+      + good.updatedAtUtc + '","extra":{"payload":"not-authorized"}}',false],
+    ['{"schemaVersion":"stephanos.starfield-vr-sim-air-link.v1","enabled":true,"purpose":"readiness-only","updatedAtUtc":"'
+      + good.updatedAtUtc + '","purpose":"readiness-only"}',false],
     [null,false],
   ];
   const quote = value => "'" + String(value).replaceAll("'","''") + "'";

@@ -172,11 +172,40 @@ function Test-VirtualAirLinkTestActive {
     if (-not (Test-Path -LiteralPath $simAirLinkStatePath -PathType Leaf)) { return $false }
     try {
         $raw = Get-Content -LiteralPath $simAirLinkStatePath -Raw
-        # Check the original wire timestamp, not ConvertFrom-Json's culture-formatted DateTime.
-        # Require a single literal UTC Z field even on PowerShell 7, which parses ISO dates.
-        if ($raw -notmatch '^\s*\{') { return $false }
-        $timestamps = [regex]::Matches($raw, '"updatedAtUtc"\s*:\s*"([^"]*)"')
-        if ($timestamps.Count -ne 1) { return $false }
+        # Bind the timestamp to exactly one decoded root-level JSON member.
+        # Nested or Unicode-escaped aliases cannot substitute for trusted wire
+        # evidence. This readiness-only envelope has four scalar members; reject
+        # unknown fields rather than silently considering unrelated timestamps.
+        $wire = $raw.Trim()
+        if ($wire -notmatch '^\{[\s\S]*\}$') { return $false }
+        $inner = $wire.Substring(1, $wire.Length - 2)
+        $members = [regex]::Matches(
+            $inner,
+            '"(schemaVersion|enabled|purpose|updatedAtUtc)"\s*:\s*("(?:[^"\\]|\\.)*"|true|false)'
+        )
+        if ($members.Count -ne 4) { return $false }
+        $seen = @{}
+        $cursor = 0
+        $updatedAtUtc = ''
+        for ($i = 0; $i -lt $members.Count; $i++) {
+            $member = $members[$i]
+            $between = $inner.Substring($cursor, $member.Index - $cursor)
+            if ($i -eq 0) {
+                if ($between -notmatch '^\s*$') { return $false }
+            } elseif ($between -notmatch '^\s*,\s*$') {
+                return $false
+            }
+            $key = [string]$member.Groups[1].Value
+            if ($seen.ContainsKey($key)) { return $false }
+            $seen[$key] = $true
+            if ($key -eq 'updatedAtUtc') {
+                $quoted = [string]$member.Groups[2].Value
+                if (-not ($quoted.StartsWith('"') -and $quoted.EndsWith('"'))) { return $false }
+                $updatedAtUtc = $quoted.Substring(1, $quoted.Length - 2)
+            }
+            $cursor = $member.Index + $member.Length
+        }
+        if ($inner.Substring($cursor) -notmatch '^\s*$') { return $false }
         $state = $raw | ConvertFrom-Json
         if (
             $state -isnot [pscustomobject] -or
@@ -190,8 +219,7 @@ function Test-VirtualAirLinkTestActive {
         ) {
             return $false
         }
-        # Only the exact original JSON spelling proves a fresh explicit UTC timestamp.
-        $updatedAtUtc = [string]$timestamps[0].Groups[1].Value
+        # Only the exact decoded root member supplies the UTC timestamp.
         if ($updatedAtUtc -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?Z$') {
             return $false
         }
