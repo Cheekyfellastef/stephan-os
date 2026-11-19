@@ -141,6 +141,45 @@ function audioContextHarness({sink=null,resume=null,failAnalyser=false}={}){
   return {AudioContextCtor:FakeContext,contexts};
 }
 
+test('local audio tests cannot bypass explicitly selected headset routes',async()=>{
+  const h=microphoneHarness();await h.audio.listDevices();
+  assert.equal(h.audio.setInput('old-microphone'),true);
+  for(const unwanted of ['new-microphone','']){
+    const refused=await h.audio.testMicrophone(unwanted);
+    assert.equal(refused.ok,false);assert.match(refused.reason,/select the intended microphone/i);
+    assert.equal(h.requests.length,0,'unselected microphone must not request browser permission');
+    assert.equal(h.audio.getState().inputId,'old-microphone');
+  }
+  const permitted=h.audio.testMicrophone();
+  assert.equal(h.requests.length,1);assert.deepEqual(h.requests[0].spec,
+    {audio:{deviceId:{exact:'old-microphone'}},video:false});
+  const stream=mediaStream();h.requests[0].resolve(stream);
+  assert.equal((await permitted).ok,true);h.audio.stopMicrophone();
+  assert.equal(stream.track.stops,1);h.audio.dispose();
+
+  const context=audioContextHarness();
+  const audio=createHolodeckAudioControls({...context,navigatorRef:{mediaDevices:{
+    enumerateDevices:async()=>[
+      {kind:'audiooutput',deviceId:'quest-a',label:'Quest A'},
+      {kind:'audiooutput',deviceId:'quest-b',label:'Quest B'},
+    ],
+  }}});
+  await audio.listDevices();
+  assert.equal((await audio.testSpeakers('quest-b')).ok,false,
+    'discovering a device does not give a test permission to select it');
+  assert.equal(audio.setOutput('quest-a'),true);
+  for(const unwanted of ['quest-b','']){
+    const refused=await audio.testSpeakers(unwanted);
+    assert.equal(refused.ok,false);assert.match(refused.reason,/select the intended output/i);
+    assert.equal(context.contexts.length,0,'unselected speakers must not create an AudioContext');
+    assert.equal(audio.getState().outputId,'quest-a');
+  }
+  assert.equal((await audio.testSpeakers()).ok,true);
+  assert.equal(context.contexts.length,1);assert.equal(context.contexts[0].sink,'quest-a');
+  assert.equal(context.contexts[0].starts,1);
+  audio.stopSpeakers();assert.equal(context.contexts[0].closes,1);audio.dispose();
+});
+
 test('live microphone meter stays local and device loss closes its owned audio resources',async()=>{
   const context=audioContextHarness(),h=microphoneHarness(context),opening=h.audio.testMicrophone(),stream=mediaStream();
   h.requests[0].resolve(stream);assert.equal((await opening).ok,true);
