@@ -997,3 +997,31 @@ test('an over-budget goal-discovery callback does not trigger mailbox or mainten
   assert.equal(repairCalls, 0);
   assert.equal(pulseCalls, 0);
 });
+
+test('actual sync wrapper carries scoped Governor debt through fresh child evidence and requires covering proof', async () => {
+  for (const governorProven of [false, true]) {
+    const targetId = 'sovereign-commander';
+    const debt = pendingPostSyncRefreshDebt([{ beforeHead: A, afterHead: C }], [targetId], '',
+      { sovereignRelayRefreshRequired: false, governorRefreshRequired: true });
+    const calls = [];
+    const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths, ...nonWindowsRepairArgs(),
+      pendingReader: async () => ({ ok: true, spans: [], requiredTargetIds: [], sovereignRelayRefreshRequired: false }),
+      adapter: {
+        runSync: () => ({ ok: true, result: { ...noChange(C), facts: { ...noChange(C).facts, pendingRefresh: debt } } }),
+        runRefresh: ({ beforeHead, afterHead }) => {
+          calls.push({ beforeHead, afterHead });
+          const governorProof = { schemaVersion: 'stephanos.post-sync-governor-proof.v1', watchdogSucceeded: true,
+  normalOperatorObserved: true, healthy: true, inventoryComplete: true, processCount: 1,
+  identityVerified: true, progressVerified: true, currentSourceVerified: true,
+  sourceHead: C, sourceHeadMatchesLive: true, sourceSha256: 'a'.repeat(64), blocker: '' };
+          return { ok: true, result: { ...completedRefresh(beforeHead, afterHead), classification: 'REFRESH_COMPLETE',
+            noRuntimePathCount: 0, targetIds: [targetId], sovereignRelayRefreshRequired: false, governorRefreshRequired: governorProven,
+            resultTargets: [{ targetId, ok: true, exactHeadProofOk: true, sourceHead: C, blocker: '',
+              ...(governorProven ? { governorProof } : {}) }] } };
+        },
+      } });
+    assert.equal(result.ok, governorProven);
+    assert.deepEqual(calls, [{ beforeHead: A, afterHead: C }]);
+    if (!governorProven) assert.equal(result.blocker, 'PENDING_POST_SYNC_COMPLETION_COVERAGE_UNPROVEN');
+  }
+});
