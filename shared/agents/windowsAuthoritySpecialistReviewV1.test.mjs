@@ -452,6 +452,12 @@ test('composite review refuses contradictory typed counts and verdict before del
     });
     assert.equal(review().clean, true, 'baseline confirms registered positive proof paths');
     for (const [reason, override] of [
+      // Both composite routes must reject one-element-array coercion before child review.
+      ...[0, 1].flatMap((index) => ['severity', 'code', 'path'].map((field) => [
+        'coerced ' + field + ' in finding ' + index,
+        { findings: analysis.findings.map((entry, i) => i === index
+          ? { ...entry, [field]: [entry[field]] } : entry) },
+      ])),
       ['zero P0', { counts: { P0: 0, P1: 0, P2: 0 } }],
       ['extra P0', { counts: { P0: 3, P1: 0, P2: 0 } }],
       ['coerced P0', { counts: { P0: '2', P1: 0, P2: 0 } }],

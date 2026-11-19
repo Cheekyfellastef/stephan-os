@@ -178,6 +178,14 @@ function exactTwoP0CompositeEnvelope(analysis) {
     && analysis?.verdict === 'findings';
 }
 
+// Do not let one-element JSON arrays masquerade as scalar P0 identities.
+// This is reviewer-only source classification; it grants no game/runtime action.
+function exactCompositeFindingScalars(findings) {
+  return findings.every((item) => typeof item?.severity === 'string'
+    && typeof item?.code === 'string'
+    && typeof item?.path === 'string');
+}
+
 function rejectedCompositeEnvelope(paths) {
   return Object.freeze({
     schemaVersion: 'stephanos.windows-authority-specialist-review.v1',
@@ -198,7 +206,7 @@ function rejectedCompositeEnvelope(paths) {
 function analyzeStarfieldVrCompositeReview(input = {}) {
   const findings = starfieldVrCompositeFindings(input.analysis);
   if (!findings) return null;
-  if (!exactTwoP0CompositeEnvelope(input.analysis)) {
+  if (!exactTwoP0CompositeEnvelope(input.analysis) || !exactCompositeFindingScalars(findings)) {
     return rejectedCompositeEnvelope([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_LAUNCHER_SCRIPT_PATH]);
   }
   const splashFinding = findings.find((item) => item.path === STARFIELD_VR_SPLASH_LAUNCH_PATH);
@@ -246,7 +254,7 @@ function starfieldVrAerCompositeFindings(analysis = {}) {
 function analyzeStarfieldVrAerCompositeReview(input = {}) {
   const findings = starfieldVrAerCompositeFindings(input.analysis);
   if (!findings) return null;
-  if (!exactTwoP0CompositeEnvelope(input.analysis)) {
+  if (!exactTwoP0CompositeEnvelope(input.analysis) || !exactCompositeFindingScalars(findings)) {
     return rejectedCompositeEnvelope([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH]);
   }
   const splashFinding = findings.find((item) => item.path === STARFIELD_VR_SPLASH_LAUNCH_PATH);
