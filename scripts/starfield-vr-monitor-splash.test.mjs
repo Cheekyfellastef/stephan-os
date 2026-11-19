@@ -219,7 +219,9 @@ test('the splash exposes local meter-free cleanup reasons without touching the c
   const event = functionSource('Receive-MonitorEvent');
   assert.match(diagnostic, /'Local cleanup diagnostic \(read only, no AI service\):'/);
   assert.match(diagnostic, /paired-source-v1\\session\.json/);
-  assert.match(diagnostic, /Get-MonitorDiagnosticField -Record \$journal -Name 'cleanupError'/);
+  assert.match(diagnostic, /Get-MonitorDiagnosticField -Record \\$journal -Name 'cleanupError'/);
+  assert.match(diagnostic, /\\$journalRun -cne \\$activeRun/);
+  assert.match(diagnostic, /journal belongs to another run; not used as the current cleanup reason/);
   assert.match(diagnostic, /\$file\.Length -gt 1048576/);
   assert.match(diagnostic, /Test-MonitorCustodyPathPresent -LiteralPath \$entry\.Path/);
   assert.doesNotMatch(diagnostic, /Remove-Item|Set-Content|Stop-Process|Start-Process|Send-MonitorCommand|\.Kill\(/);
