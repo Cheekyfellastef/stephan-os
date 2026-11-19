@@ -131,9 +131,7 @@ $dnsName = $dnsName.Trim().TrimEnd('.')
 if (-not $dnsName) { throw 'TAILSCALE_DNS_NAME_REQUIRED' }
 
 if (-not $ObserveExistingOnly) {
-    # Native Serve CLI may print a banner. The caller parses stdout as an exact JSON proof.
-    # Suppress only configuration stdout; keep the native exit-code and independent status checks.
-    & $tailscale.Source serve --bg --https=$servePort $target | Out-Null
+    & $tailscale.Source serve --bg --https=$servePort $target
     if ($LASTEXITCODE -ne 0) { throw 'TAILSCALE_SERVE_CONFIGURATION_FAILED' }
 }
 
