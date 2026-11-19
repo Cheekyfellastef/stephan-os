@@ -1,78 +1,65 @@
-# Attended Core stale-lock recovery
+# Core observation and held stale-lock recovery
 
 Continues #2961 — Goal: Core Daemon Blocked-Goal Repair Steward and Proof-Gated Re-Admission.
 
-After a Windows reboot, Core can be absent while its exclusive-create JSON lock
-remains. The normal caretaker correctly refuses incomplete process inventory;
-Core correctly refuses to unlink an existing lock during acquisition. Neither
-rule is relaxed. The fixed local action is
-`scripts/windows/recover-stephanos-core-lock.ps1`.
+## Current executable boundary
 
-## Admission and operation
+The normal Core census and the maintenance-owner observer are read-only. A missing
+CIM image may be resolved only for a visible canonical command with a known birth,
+using the existing limited-query native handle. The normal Core observer checks
+the actual Windows token before reading or loading its checksum-bound owner helper.
+An administrator-enabled token receives
+`CORE_PROCESS_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN`; it cannot use that fallback.
+The shared native identity function independently refuses that token before native
+initialization. Unknown commands, births, images, ownership and lifecycle remain
+unknown and cannot admit a start or a lease release.
 
-This is an attended, high-risk recovery action. Independent Windows/security
-review, protected integration, exact installed main and separate operator
-approval for that head and observed lock SHA256 are required before live use.
-It is deliberately not added to an unattended/public mailbox or standing
-elevated task. Caller-selected paths, PIDs, commands and process observations
-are not accepted. Source-only tests do not authorise live recovery.
+`scripts/windows/recover-stephanos-core-lock.ps1` preserves its public parameters
+and `stephanos.core-lock-recovery.v1` response, but every valid argument mode now
+terminates with exit 2 and `CORE_RECOVERY_TRUSTED_BOOTSTRAP_REQUIRED`. This includes
+`-OperatorApproved`, `-AbsentLock` and `-RetireOnlyChild`. The active entry contains
+no elevation request, dependency loading, native compilation, lock access,
+retirement or process startup. It does not inspect or change the governor, source
+lease, maintenance owner, service or scheduler.
 
-From a limited user process, supply `-ExpectedHead`, `-ExpectedLockSha256` and
-`-OperatorApproved`. The entry must be the fixed canonical installed path.
-The existing canonical ignition source-truth admission must accept that exact
-main. Relevant source bytes are captured and rechecked across awaited work.
-Node loader overrides are refused; PowerShell uses only its system module path.
-Every inherited daemon path input (`USERPROFILE`, `HOME`, `LOCALAPPDATA` and
-`STEPHANOS_SHARED_AGENT_WORKSPACE`) must be absent or resolve to the same fixed
-canonical path. This is checked before elevation and on every source recheck,
-so retirement and the launched daemon cannot target different state directories.
+A writable source checkout cannot authenticate the bytes that PowerShell already
+parsed as its entry script. Checking files before reopening them, or adding
+another digest to a mutable path list, does not establish privileged load-time
+custody. The structural correction therefore removes the privileged execution
+path instead of extending those checks. A real immutable, owner-installed
+bootstrap with independently qualified entry/ACL and complete source custody is
+a separate unimplemented prerequisite. This change does not install one.
 
-The limited parent requests one UAC child. The child only retires the fixed
-Core lock. It never starts Core or alters services, scheduled tasks, source
-leases, maintenance custody, credentials or other locks. An already-elevated
-parent is refused, ensuring Core is not accidentally launched as administrator.
+## Provenance and retained negative fixtures
 
-The native adapter pins every ancestor against rename and rejects reparse
-points. It opens the exact regular, single-link, bounded lock with exclusive
-read/delete access. Another recovery, writer, rename or new lock acquisition
-cannot replace that held object. SHA256 binds the bytes to the operator's
-approval. Valid Core identity, record start time, native creation time and
-native write time must all establish a preboot lock. A complete fresh native
-process inventory must contain zero canonical Core processes, and the recorded
-PID must be absent even if it has been reused for an unrelated process.
+This is a new structural correction at the existing PR #3521 — Goal #2961: bind missing observer images to native process identity frontier, on the
+original branch `patch-escrow/issue-2961-b24ee7772ed3`. It is not a reconstruction
+of the unavailable cloud commits `e7556ac6effd8b0f6a57fb3b94a664ac199eac27` or
+`e134c7e9b8a9b0cd3a8be3dcb75f168ae4e31f5e`. The latter task reported a
+11,115-byte format-patch with SHA-256
+`24499355e7627cba5ac3f8ffff602dc7070df2173e81ae93eabf3d1c8660f80f`.
+Its bytes were not recovered, and that report is not source publication proof.
 
-The original bytes are fsynced into a create-only digest-named sibling archive.
-Source, boot and process evidence are checked again while the same lock handle
-remains held. Deletion uses Windows file disposition on that handle; it never
-reopens/unlinks a path after closing the observation handle. Disposal commits
-deletion of that original object only.
+The historical reviewed inventory fixture retains source head
+`62d659f63ada09586967882cb790b8363a0bf1a0` and blob
+`9e00ce659859b0274fce36e13cb20045b1b337b1`. Existing specialist policy pins are
+unchanged. The historical lock/policy/native fixtures exercise disposable files
+and reject competing owners, replacement, ambiguous observations and delayed
+continuations. They are negative evidence for that historical design, not an
+active recovery entry, current specialist qualification or a bootstrap installer.
 
-Only the actual successful child process exit allows the limited parent to
-request the existing canonical Core start. A writable JSON report cannot grant
-that continuation. Core's unchanged `wx` acquisition still arbitrates competing
-starts. The parent requires a fresh, non-future heartbeat matching its actual
-started PID, exact lock and expected source. Timeout, changed source or a dead
-child is blocked/uncertain, with no kill, replay, second start or further lock
-mutation. Heartbeat success is not builder pickup or overall runtime health.
+## Acceptance and remaining work
 
-## Scope and remaining acceptance
+Required evidence distinguishes real normal-token Windows observations from
+controlled token/native test seams. Recovery denial is exercised through the
+actual entry for all switch/lock combinations and alongside tampered dependencies
+and redirected state. No test requests UAC or starts Core. Source-closure guards,
+independent exact-head Windows/security review, protected integration and native
+adoption remain required.
 
-This action assumes the operator launches reviewed installed source; it is not
-a commissioned protected signing service or a defence against a malicious
-administrator. It creates no standing unattended recovery authority. A crash
-after retirement can leave Core stopped; that is an explicit uncertain result,
-not permission to remove a later lock or blindly repeat the old digest.
-
-Native fixtures exercise the real handle operations on disposable files:
-exclusive contention, denied write/rename, exact archive, digest mismatch,
-hidden/live/reused processes, source and boot changes, same-boot records,
-second-observation races, archive failure, hard links, junction ancestors and
-survival of a subsequent owner's file. Heartbeat fixtures reject stale,
-future, wrong-PID, wrong-source and malformed observations. The entry refuses
-missing approval before touching native state.
-
-After protected deployment, record the exact approved digest, terminal action
-result and independently observed current Core heartbeat. Then use existing
-fleet admission and require real same-worker source pickup/build receipts.
-The dashboard specialized-status registry repair is a separate prerequisite;
-neither repair grants source ownership or bypasses mission acceptance.
+Core stale-lock recovery remains held until the immutable-bootstrap prerequisite
+is implemented and independently qualified through its existing owner. An
+observation, a passing fixture or absence of gaming never supplies missing native
+qualification. Goal building still requires the original lease, exact worker
+grant, physical pickup, tested source, independent review and protected release;
+this correction creates no new scheduler, worker, controller or authority plane.

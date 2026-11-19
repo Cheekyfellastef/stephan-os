@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
-import { inspectSovereignControlSystemV1, parseSovereignControlSystemInspectionArgumentsV1 }
+import { inspectSovereignControlSystemV1, parseSovereignControlSystemInspectionArgumentsV1,
+  readSovereignGovernorDiagnosticV1 }
   from './sovereign-commander-native-inspect.mjs';
 import { projectSovereignControlSystemStatusV1, SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1 }
   from '../shared/agents/sovereignControlSystemStatusV1.mjs';
@@ -16,6 +18,8 @@ const SID = 'S-1-5-21-111111-222222-333333-1001';
 const nativeOwner = (extra = {}) => ({ schemaVersion: 'stephanos.maintenance-owner-native-observation.v2',
   pid: 13291, createdAtUtc: '2026-10-31T09:00:00.000Z', observedAtUtc: NOW,
   commandSha256: 'b'.repeat(64), imageSha256: 'c'.repeat(64), ...extra });
+const freshGovernor = (extra = {}) => ({ schemaVersion: 'stephanos.gaming-resource-admission-observation.v1',
+  observedAtUtc: NOW, signalActive: false, overrideMode: 'AUTO', preparePending: false, readOnly: true, ...extra });
 const ownerHealth = (extra = {}) => ({ ok: true, service: 'stephanos-sovereign-commander',
   token: 'PRIVATE_HEALTH_TOKEN', continuousRepairGuardian: {
     enabled: true, running: false, scheduled: false, maintenanceInFlight: false,
@@ -28,6 +32,7 @@ function fixture(overrides = {}) {
   return { calls, options: { expectedMain: HEAD, controlTowerRequestId: REQUEST, testOnly: true,
     dependencies: { platform: 'win32', now: () => new Date(NOW),
       readSourceHead: () => { calls.push('source'); return HEAD; },
+      readGovernor: head => { calls.push('governor'); assert.equal(head, HEAD); return freshGovernor(); },
       readCaller: () => { calls.push('caller'); return { schemaVersion: 'stephanos.sovereign-diagnostic-caller.v1',
         sid: SID, administratorEnabled: false, observedAtUtc: NOW }; },
       readOwner: () => { calls.push('owner'); return nativeOwner(); },
@@ -105,7 +110,7 @@ test('matching protocol is an owner-bracketed observation and survives bounded p
   assert.equal(report.protocol.observedVersion, SOVEREIGN_MAINTENANCE_OWNER_VERSION);
   assert.equal(report.protocol.expectedVersion, SOVEREIGN_MAINTENANCE_OWNER_VERSION);
   assert.equal(report.protocol.reason, ''); assert.equal(report.protocol.observedAtUtc, NOW);
-  assert.deepEqual(f.calls, ['source', 'caller', 'owner', 'health', 'protocol', 'owner', 'native', 'ledger', 'source']);
+  assert.deepEqual(f.calls, ['source', 'governor', 'caller', 'owner', 'health', 'protocol', 'owner', 'native', 'ledger', 'source']);
   const published = projectSovereignControlSystemStatusV1(report);
   assert.equal(published.protocol.matches, true);
   assert.deepEqual(projectSovereignControlSystemStatusV1(JSON.parse(JSON.stringify(published))), published);
@@ -171,7 +176,7 @@ test('protocol deadline bounds a stalled response body even when a reader ignore
 
 test('completed source-bound observation preserves refusal without granting repair or claiming loaded bytes', async () => {
   const { options, calls } = fixture(), report = await inspectSovereignControlSystemV1(options);
-  assert.deepEqual(calls, ['source', 'caller', 'owner', 'health', 'protocol', 'owner', 'native', 'ledger', 'source']);
+  assert.deepEqual(calls, ['source', 'governor', 'caller', 'owner', 'health', 'protocol', 'owner', 'native', 'ledger', 'source']);
   assert.equal(report.observationCompleted, true);
   assert.equal(report.owner.stable, true);
   assert.equal(report.caller.sid, SID);
@@ -191,6 +196,255 @@ test('completed source-bound observation preserves refusal without granting repa
   assert.ok(Buffer.byteLength(JSON.stringify(published)) <= SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1);
   assert.equal(JSON.stringify(published).includes(SID), false);
 });
+
+test('fresh governor diagnostics survive an unproven owner without refreshing native admission', async () => {
+  const f = fixture({
+    readOwner: () => { throw Error('MAINTENANCE_MIGRATION_OWNER_UNPROVEN'); },
+    readGovernor: () => freshGovernor({ signalActive: true, overrideMode: 'FORCE_ON', preparePending: true }),
+    inspectRuntime: () => ({ ok: false, reason: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD',
+      governorHoldCode: 'FIXED_RUNTIME_GOVERNOR_OBSERVATION_STALE' }),
+  });
+  const report = await inspectSovereignControlSystemV1(f.options);
+  assert.equal(report.owner.available, false); assert.equal(report.owner.stable, false);
+  assert.equal(report.owner.reason, 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN');
+  assert.deepEqual(report.governorObservation, { available: true, observedAtUtc: NOW,
+    signalActive: true, overrideMode: 'FORCE_ON', preparePending: true,
+    readOnly: true, diagnosticOnly: true, executionAuthority: false });
+  const published = projectSovereignControlSystemStatusV1(report);
+  assert.deepEqual(published.governorObservation, report.governorObservation);
+  assert.equal(published.guardian.available, false);
+  assert.equal(published.nativeRuntime.qualificationObserved, false);
+  assert.equal(published.nativeRuntime.governorHoldCode, 'FIXED_RUNTIME_GOVERNOR_OBSERVATION_STALE');
+  assert.equal(published.source.loadedSourceBytesProven, false);
+  assert.equal(published.source.remoteMainProven, false);
+});
+
+test('governor diagnostics reject invalid data, extra authority and out-of-capture timestamps', async () => {
+  let getterCalls = 0;
+  const accessor = freshGovernor();
+  Object.defineProperty(accessor, 'signalActive', { get() { getterCalls++; return false; } });
+  for (const value of [null, [], Object.create(freshGovernor()), accessor,
+    freshGovernor({ signalActive: 0 }), freshGovernor({ preparePending: 'false' }),
+    freshGovernor({ readOnly: false }), freshGovernor({ overrideMode: 'PRIVATE_MODE' }),
+    freshGovernor({ schemaVersion: 'PRIVATE_SCHEMA' }), freshGovernor({ executionAuthority: true }),
+    freshGovernor({ observedAtUtc: '2026-10-31T12:59:59.999Z' }),
+    freshGovernor({ observedAtUtc: '2026-10-31T13:00:00.001Z' })]) {
+    const report = await inspectSovereignControlSystemV1(fixture({ readGovernor: () => value }).options);
+    assert.deepEqual(report.governorObservation, { available: false,
+      reason: 'SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_OBSERVATION_INVALID',
+      readOnly: true, diagnosticOnly: true, executionAuthority: false });
+    assert.equal(report.observationCompleted, true);
+    assert.equal(JSON.stringify(report).includes('PRIVATE_'), false);
+  }
+  assert.equal(getterCalls, 0);
+});
+
+test('governor child time is bounded by actual capture and original inspection, never replay time', async () => {
+  let now = Date.parse(NOW);
+  const f = fixture({ now: () => new Date(now), readGovernor: () => {
+    now += 1200; return freshGovernor({ observedAtUtc: new Date(now - 300).toISOString() });
+  } });
+  const report = await inspectSovereignControlSystemV1(f.options);
+  assert.equal(report.governorObservation.available, true);
+  assert.equal(report.governorObservation.observedAtUtc, '2026-10-31T13:00:00.900Z');
+  const published = projectSovereignControlSystemStatusV1(report);
+  assert.deepEqual(projectSovereignControlSystemStatusV1(JSON.parse(JSON.stringify(published))), published);
+  now = Date.parse(NOW);
+  f.options.dependencies.readGovernor = () => {
+    now += 30001; return freshGovernor({ observedAtUtc: new Date(now).toISOString() });
+  };
+  assert.equal((await inspectSovereignControlSystemV1(f.options)).governorObservation.available, false);
+});
+
+test('governor failures stay bounded and source changes invalidate the fresh observation', async () => {
+  for (const reason of ['SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_SOURCE_UNPROVEN',
+    'SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_OBSERVATION_TIMEOUT', 'PRIVATE_PATH_OR_TOKEN']) {
+    const report = await inspectSovereignControlSystemV1(fixture({ readGovernor: () => { throw Error(reason); } }).options);
+    assert.equal(report.governorObservation.available, false);
+    assert.equal(report.governorObservation.reason, reason.startsWith('PRIVATE_')
+      ? 'SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_OBSERVATION_UNPROVEN' : reason);
+    assert.equal(Object.hasOwn(report.governorObservation, 'signalActive'), false);
+    assert.equal(Object.hasOwn(report.governorObservation, 'overrideMode'), false);
+    assert.equal(report.nativeRuntime.qualificationObserved, false);
+  }
+  let count = 0;
+  const changed = await inspectSovereignControlSystemV1(fixture({
+    readSourceHead: () => ++count === 1 ? HEAD : 'f'.repeat(40),
+  }).options);
+  assert.equal(changed.governorObservation.available, false);
+  assert.equal(changed.governorObservation.reason, 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED');
+  assert.equal(changed.observationCompleted, false);
+});
+
+function governorChildFixture({ source = Buffer.from("[CmdletBinding()]\nparam([string]$Action='Watch')\n"),
+  mode = '100644', duplicate = false, missing = false } = {}) {
+  const objects = new Map(), calls = [];
+  const object = (type, bytes) => {
+    const id = createHash('sha1').update(`${type} ${bytes.length}\0`).update(bytes).digest('hex');
+    objects.set(type + ':' + id, Buffer.from(bytes)); return id;
+  };
+  const entry = (mode, name, id) => Buffer.concat([Buffer.from(`${mode} ${name}\0`), Buffer.from(id, 'hex')]);
+  const blob = object('blob', source), leaf = entry(mode, missing ? 'other.ps1' : 'run-vr-resource-governor.ps1', blob);
+  const windows = object('tree', duplicate ? Buffer.concat([leaf, leaf]) : leaf);
+  const scripts = object('tree', entry('40000', 'windows', windows));
+  const root = object('tree', entry('40000', 'scripts', scripts));
+  const head = object('commit', Buffer.from(`tree ${root}\nauthor Fixture <fixture@example.invalid> 0 +0000\n\nfixture\n`));
+  const dependencies = { platform: 'win32', readSourceHead: () => head,
+    monotonicNow: () => 100, environment: { USERPROFILE: 'C:\\Fixture', TEMP: 'C:\\Temp',
+      NODE_OPTIONS: '--import=PRIVATE_LOADER', PSModulePath: 'PRIVATE_MODULE', SECRET: 'PRIVATE_TOKEN',
+      GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'alias.cat-file', GIT_CONFIG_VALUE_0: '!PRIVATE_COMMAND',
+      STEPHANOS_GAME_PROCESS_NAMES: 'CustomGame', STEPHANOS_GAME_LIBRARY_ROOTS: 'C:\\Games' },
+    spawnSync(executable, args, options) {
+      calls.push({ executable, args, options });
+      assert.equal(options.shell, false); assert.equal(options.windowsHide, true);
+      assert.equal(options.env.NODE_OPTIONS, undefined); assert.equal(options.env.PSModulePath, undefined);
+      assert.equal(options.env.SECRET, undefined);
+      if (args.includes('cat-file')) {
+        const [type, id] = args.slice(-2);
+        assert.equal(options.env.GIT_NO_REPLACE_OBJECTS, '1');
+        assert.equal(options.env.GIT_NO_LAZY_FETCH, '1');
+        return { status: 0, stdout: objects.get(type + ':' + id), stderr: Buffer.alloc(0) };
+      }
+      assert.equal(executable, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+      assert.deepEqual(args.slice(0, 4), ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand']);
+      assert.equal(args.length, 5); assert.ok(args[4].length < 6000);
+      const wrapper = Buffer.from(args[4], 'base64').toString('utf16le');
+      assert.match(wrapper, /-Action ObserveAdmission/);
+      assert.match(wrapper, /\$PSModuleAutoLoadingPreference='None'/);
+      assert.equal(args.includes('-File'), false);
+      assert.deepEqual(Buffer.from(options.input.trim(), 'base64'), source);
+      assert.equal(options.env.STEPHANOS_GAME_PROCESS_NAMES, 'CustomGame');
+      assert.equal(options.env.STEPHANOS_GAME_LIBRARY_ROOTS, 'C:\\Games');
+      assert.equal(options.env.GIT_CONFIG_COUNT, undefined);
+      assert.equal(options.timeout, 8000); assert.equal(options.maxBuffer, 4096);
+      return { status: 0, stdout: Buffer.from(JSON.stringify(freshGovernor())), stderr: Buffer.alloc(0) };
+    } };
+  return { head, calls, objects, dependencies, options: { testOnly: true, dependencies } };
+}
+
+test('fixed governor child captures authenticated immutable source over stdin with a bounded argv and environment', () => {
+  const f = governorChildFixture({ source: Buffer.from('#' + 'x'.repeat(50000) + '\n') });
+  assert.deepEqual(readSovereignGovernorDiagnosticV1(f.head, f.options), freshGovernor());
+  assert.equal(f.calls.filter(call => call.args.includes('cat-file')).length, 5);
+  assert.equal(f.calls.filter(call => call.args.includes('-EncodedCommand')).length, 1);
+});
+
+test('the committed governor source fits the authenticated observation path', () => {
+  const source = readFileSync(new URL('./windows/run-vr-resource-governor.ps1', import.meta.url));
+  assert.ok(source.length > 65536, 'exercise the production regression above the former byte ceiling');
+  const f = governorChildFixture({ source });
+  assert.deepEqual(readSovereignGovernorDiagnosticV1(f.head, f.options), freshGovernor());
+  assert.equal(f.calls.filter(call => call.args.includes('-EncodedCommand')).length, 1);
+});
+
+test('governor source capture accepts its exact finite budget and refuses the next byte before PowerShell', () => {
+  const maximum = 128 * 1024;
+  const allowed = governorChildFixture({ source: Buffer.alloc(maximum, 65) });
+  assert.deepEqual(readSovereignGovernorDiagnosticV1(allowed.head, allowed.options), freshGovernor());
+  const refused = governorChildFixture({ source: Buffer.alloc(maximum + 1, 65) });
+  assert.throws(() => readSovereignGovernorDiagnosticV1(refused.head, refused.options), /GOVERNOR_SOURCE_UNPROVEN/);
+  assert.equal(refused.calls.some(call => call.args.includes('-EncodedCommand')), false);
+});
+
+test('governor source authentication refuses substitution, wrong mode, duplicate membership and invalid UTF-8 before PowerShell', () => {
+  for (const options of [{ mode: '120000' }, { mode: '100755' }, { duplicate: true }, { missing: true },
+    { source: Buffer.from([255]) }, { source: Buffer.from([0]) }, { source: Buffer.alloc(128 * 1024 + 1, 65) }]) {
+    const f = governorChildFixture(options);
+    assert.throws(() => readSovereignGovernorDiagnosticV1(f.head, f.options));
+    assert.equal(f.calls.some(call => call.args.includes('-EncodedCommand')), false);
+  }
+  for (const type of ['commit', 'tree', 'blob']) {
+    const f = governorChildFixture(), run = f.dependencies.spawnSync;
+    f.dependencies.spawnSync = (exe, args, options) => {
+      const result = run(exe, args, options);
+      if (args.at(-2) === type) result.stdout = Buffer.from('PRIVATE_SUBSTITUTED_SOURCE');
+      return result;
+    };
+    assert.throws(() => readSovereignGovernorDiagnosticV1(f.head, f.options), /GOVERNOR_SOURCE_UNPROVEN/);
+    assert.equal(f.calls.some(call => call.args.includes('-EncodedCommand')), false);
+  }
+});
+
+test('governor capture closes on changed source, deadlines, failed children and bounded malformed output', () => {
+  const changed = governorChildFixture(); let reads = 0;
+  changed.dependencies.readSourceHead = () => ++reads === 1 ? changed.head : HEAD;
+  assert.throws(() => readSovereignGovernorDiagnosticV1(changed.head, changed.options), /GOVERNOR_SOURCE_UNPROVEN/);
+  assert.equal(changed.calls.some(call => call.args.includes('-EncodedCommand')), false);
+  for (const [result, code] of [
+    [{ status: null, error: { code: 'ETIMEDOUT' } }, 'OBSERVATION_TIMEOUT'],
+    [{ status: null, signal: 'SIGTERM' }, 'OBSERVATION_INVALID'],
+    [{ status: 2, stdout: Buffer.from('PRIVATE_ERROR') }, 'OBSERVATION_INVALID'],
+    [{ status: 0, stdout: Buffer.alloc(4097, 32) }, 'OBSERVATION_INVALID'],
+    [{ status: 0, stdout: Buffer.from([255]) }, 'OBSERVATION_INVALID'],
+    [{ status: 0, stdout: Buffer.from('{}'), stderr: Buffer.from('PRIVATE_ERROR') }, 'OBSERVATION_INVALID'],
+    [{ status: 0, stdout: Buffer.from('PRIVATE_ERROR') }, 'OBSERVATION_INVALID'],
+  ]) {
+    const f = governorChildFixture(), run = f.dependencies.spawnSync;
+    f.dependencies.spawnSync = (exe, args, options) => args.includes('-EncodedCommand') ? result : run(exe, args, options);
+    assert.throws(() => readSovereignGovernorDiagnosticV1(f.head, f.options), new RegExp(code));
+  }
+  const slow = governorChildFixture(); let tick = 0;
+  slow.dependencies.monotonicNow = () => tick++ * 10001;
+  assert.throws(() => readSovereignGovernorDiagnosticV1(slow.head, slow.options), /OBSERVATION_TIMEOUT/);
+  assert.equal(slow.calls.length, 0);
+});
+
+test('governor runner rejects caller commands and ambiguous detection settings', () => {
+  for (const options of [{ path: 'PRIVATE_PATH' }, { source: 'PRIVATE_CODE' }, { action: 'Reconcile' },
+    { testOnly: false, dependencies: {} }, { dependencies: {} }]) {
+    assert.throws(() => readSovereignGovernorDiagnosticV1(HEAD, options));
+  }
+  for (const extra of [{ STEPHANOS_GAME_PROCESS_NAMES: 'x'.repeat(4097) },
+    { STEPHANOS_GAME_LIBRARY_ROOTS: 'C:\\Games\nPRIVATE' }, { stephanos_game_process_names: 'Duplicate' }]) {
+    const f = governorChildFixture(); Object.assign(f.dependencies.environment, extra);
+    assert.throws(() => readSovereignGovernorDiagnosticV1(f.head, f.options), /OBSERVATION_INVALID/);
+    assert.equal(f.calls.some(call => call.args.includes('-EncodedCommand')), false);
+  }
+});
+
+function harmlessGovernorObservationSource(size) {
+  const prefix = `[CmdletBinding()]\nparam([string]$Action='Watch')\n`;
+  const suffix = `if($Action -cne 'ObserveAdmission'){exit 3}\n` +
+    `[pscustomobject]@{schemaVersion='stephanos.gaming-resource-admission-observation.v1';` +
+    `observedAtUtc=[DateTime]::UtcNow.ToString('o');signalActive=$false;overrideMode='AUTO';preparePending=$false;readOnly=$true}|ConvertTo-Json\n`;
+  const source = Buffer.from(prefix + '#' + 'x'.repeat(size - Buffer.byteLength(prefix + suffix) - 2) + '\n' + suffix);
+  assert.equal(source.length, size);
+  return source;
+}
+
+test('actual Windows stdin wrapper preserves the param block and invokes the fixed observation action',
+  { skip: process.platform !== 'win32', timeout: 15000 }, () => {
+    const source = harmlessGovernorObservationSource(128 * 1024);
+    const f = governorChildFixture({ source }), run = f.dependencies.spawnSync;
+    f.dependencies.environment = process.env;
+    f.dependencies.spawnSync = (exe, args, options) => args.includes('cat-file')
+      ? run(exe, args, options) : spawnSync(exe, args, { ...options, cwd: process.cwd() });
+    const before = Date.now(), row = readSovereignGovernorDiagnosticV1(f.head, f.options);
+    assert.equal(row.schemaVersion, freshGovernor().schemaVersion);
+    assert.equal(row.readOnly, true); assert.equal(row.signalActive, false);
+    assert.ok(Date.parse(row.observedAtUtc) >= before && Date.parse(row.observedAtUtc) <= Date.now());
+  });
+
+test('actual Windows wrapper rejects decoded and wire overflow at the same finite source budget',
+  { skip: process.platform !== 'win32', timeout: 20000 }, () => {
+    const maximum = 128 * 1024;
+    for (const extra of [1, 4]) {
+      const source = harmlessGovernorObservationSource(maximum);
+      const f = governorChildFixture({ source }), run = f.dependencies.spawnSync;
+      let wrapperCalls = 0;
+      f.dependencies.environment = process.env;
+      f.dependencies.spawnSync = (exe, args, options) => {
+        if (args.includes('cat-file')) return run(exe, args, options);
+        wrapperCalls++;
+        // +1 fits the same base64 length and must fail decoded-byte validation;
+        // +4 exceeds the wire budget and exercises the sentinel read.
+        const input = Buffer.concat([source, Buffer.alloc(extra, 32)]).toString('base64') + '\n';
+        return spawnSync(exe, args, { ...options, input, cwd: process.cwd() });
+      };
+      assert.throws(() => readSovereignGovernorDiagnosticV1(f.head, f.options), /GOVERNOR_OBSERVATION_INVALID/);
+      assert.equal(wrapperCalls, 1);
+    }
+  });
 
 test('fixed native inspection reads a comment request locator without inventing a workflow run identity', async () => {
   const id = 'control-tower-comment-700-1';
@@ -479,6 +733,18 @@ test('production process cannot enable dependency injection with only a function
   const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env, timeout: 10000 });
   assert.equal(child.error, undefined); assert.equal(child.status, 0, child.stderr);
   assert.equal(JSON.parse(child.stdout).blocker, 'SOVEREIGN_CONTROL_SYSTEM_TEST_DEPENDENCIES_FORBIDDEN');
+});
+
+test('production governor reader cannot accept test-only source or child dependencies', () => {
+  const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
+  const url = new URL('./sovereign-commander-native-inspect.mjs', import.meta.url).href;
+  const script = `const {readSovereignGovernorDiagnosticV1}=await import(${JSON.stringify(url)});` +
+    `try { readSovereignGovernorDiagnosticV1('${HEAD}',{testOnly:true,dependencies:{platform:'win32',` +
+    `spawnSync(){throw Error('INJECTED_CHILD')}}}); process.exitCode=5; }` +
+    `catch(error){process.stdout.write(error.message)}`;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env, timeout: 10000 });
+  assert.equal(child.error, undefined); assert.equal(child.status, 0, child.stderr);
+  assert.equal(child.stdout, 'SOVEREIGN_CONTROL_SYSTEM_TEST_DEPENDENCIES_FORBIDDEN');
 });
 
 test('non-Windows CLI exits with a typed refusal and performs no native inspection', { skip: process.platform === 'win32' }, () => {

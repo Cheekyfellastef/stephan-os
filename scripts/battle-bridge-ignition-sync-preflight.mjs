@@ -13,6 +13,8 @@ export const BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_RESULT_MARKER = 'BATTLE_BRIDG
 
 const SHA40 = /^[0-9a-f]{40}$/i;
 const SAFE_BLOCKER = /^[A-Z0-9_:-]{1,160}$/;
+const SAFE_SYNC_FAILURE_REASONS = new Set(['SYNC_ALREADY_RUNNING', 'LOCK_ACQUISITION_FAILED',
+  'NON_CANONICAL_REPOSITORY_PATH', 'NON_CANONICAL_WORKSPACE_PATH', 'REPOSITORY_WORKSPACE_OVERLAP']);
 const CURRENT_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 function text(value) {
@@ -40,6 +42,7 @@ function projectSyncAndRefreshResult(result = {}) {
   return Object.freeze({
     sourceHead: safeHead(result?.sourceHead),
     syncClassification: text(result?.syncClassification),
+    syncBlockerReason: SAFE_SYNC_FAILURE_REASONS.has(result?.syncBlockerReason) ? result.syncBlockerReason : '',
     refreshCount: Array.isArray(result?.refreshes) ? result.refreshes.length : 0,
     pendingRefreshObserved: result?.pendingRefreshObserved === true,
     sourceForwardedBeforeRefresh: result?.sourceForwardedBeforeRefresh === true,

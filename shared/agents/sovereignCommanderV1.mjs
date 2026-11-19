@@ -12,6 +12,7 @@ import {
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 import { executeCorePublicationDirectoryActionV1 } from '../../scripts/sovereign-core-directory-action-v1.mjs';
 import { isSovereignMaintenanceObservationV1 } from './sovereignMaintenanceAdmissionV1.mjs';
+import { captureCoreRepairContinuationV1, sameCoreRepairContinuationV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 import { SPATIAL_PREPARE_ACTION } from './sovereignSpatialWorkspaceV1.mjs';
 import { executeSovereignDirectoryCreateV1, validateSovereignDirectoryTargetV1 } from './sovereignDirectoryCreateV1.mjs';
 import { validateSovereignFileMoveArgumentsV1 } from './sovereignFileMoveV1.mjs';
@@ -624,6 +625,9 @@ function validateEnvelope(envelope = {}) {
 
 export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
   const blockers = validateEnvelope(envelope);
+  const coreDescriptor = Object.getOwnPropertyDescriptor(options, 'coreContinuation');
+  const coreContinuation = coreDescriptor && Object.hasOwn(coreDescriptor, 'value')
+    ? captureCoreRepairContinuationV1(coreDescriptor.value) : null;
   const operation = text(envelope.operation).toUpperCase();
   const targetPaths = Array.isArray(envelope.targetPaths) ? envelope.targetPaths.map(text).filter(Boolean) : [];
   const payload = envelope.payload && typeof envelope.payload === 'object' ? envelope.payload : {};
@@ -878,6 +882,7 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
     commandId: text(envelope.commandId),
     missionId: text(envelope.missionId),
+    ...(coreContinuation ? { relatedIssue: text(envelope.relatedIssue) } : {}),
     operation,
     plan,
     dispatchAllowed: blockers.length === 0,
@@ -1174,6 +1179,27 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
 
 async function executeSovereignCommanderRouteV1(envelope = {}, options = {}) {
   const command = buildSovereignCommanderCommandV1(envelope, options);
+  // Core correlation is transport metadata, never executable arguments. The
+  // original durable identity must survive both a new session and an owner
+  // response; malformed or mismatched metadata cannot fall back to legacy IDs.
+  const hasCoreContinuation = 'coreContinuation' in options;
+  const coreDescriptor = hasCoreContinuation ? Object.getOwnPropertyDescriptor(options, 'coreContinuation') : null;
+  const coreContinuation = coreDescriptor && Object.hasOwn(coreDescriptor, 'value')
+    ? captureCoreRepairContinuationV1(coreDescriptor.value) : null;
+  if (hasCoreContinuation && (!coreContinuation
+    || command.operation !== SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION
+    || command.plan?.kind !== 'fixed-process'
+    || command.plan.processId !== coreContinuation.actionId
+    || command.commandId !== coreContinuation.requestId
+    || command.missionId !== coreContinuation.missionId
+    || envelope.relatedIssue !== coreContinuation.relatedIssue
+    || !envelope.payload || Object.getPrototypeOf(envelope.payload) !== Object.prototype
+    || Reflect.ownKeys(envelope.payload).length !== 1
+    || Object.getOwnPropertyDescriptor(envelope.payload, 'actionId')?.value !== coreContinuation.actionId)) {
+    return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+      blocker: 'SOVEREIGN_CORE_REPAIR_CORRELATION_INVALID',
+      finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
+  }
   if (!command.dispatchAllowed) {
     return frozen({
       ok: false,
@@ -1209,15 +1235,23 @@ async function executeSovereignCommanderRouteV1(envelope = {}, options = {}) {
   const run = () => executeAdmittedSovereignCommandV1(command, options);
   if (command.plan.kind === 'fixed-process' && !isSovereignMaintenanceObservationV1(command.plan.processId)) {
     if (typeof options.withMaintenanceOwner === 'function') {
-      return options.withMaintenanceOwner(command, run, { signal: options.signal });
+      return options.withMaintenanceOwner(command, run, { signal: options.signal,
+        ...(coreContinuation ? { coreContinuation } : {}) });
     }
     // Local Core/stdio callers never launch beside an independently scheduled
     // guardian. The existing authenticated HTTP owner performs the operation.
     try {
       const callOwner = options.callMaintenanceOwner || (await import('./sovereignCommanderRemoteMailboxV1.mjs')).callSovereignMaintenanceOwnerV1;
       const owned = await callOwner({ actionId: command.plan.processId,
-        arguments: envelope.payload, timeoutMs: command.plan.timeoutMs });
-      if (!owned || owned.command?.plan?.processId !== command.plan.processId) {
+        arguments: envelope.payload, timeoutMs: command.plan.timeoutMs,
+        ...(coreContinuation ? { coreContinuation } : {}) });
+      const observedContinuation = coreContinuation
+        ? captureCoreRepairContinuationV1(owned?.coreContinuation) : null;
+      if (!owned || owned.command?.plan?.processId !== command.plan.processId
+        || (coreContinuation && (owned.command.commandId !== coreContinuation.requestId
+          || owned.command.missionId !== coreContinuation.missionId
+          || !observedContinuation
+          || !sameCoreRepairContinuationV1(observedContinuation, coreContinuation)))) {
         return frozen({ ok: false, command, blocker: owned?.blocker || 'SOVEREIGN_MAINTENANCE_OWNER_RECEIPT_INVALID',
           finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
       }

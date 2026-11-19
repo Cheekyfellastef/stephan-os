@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { ERROR_CODES } from '../../errors.js';
 import { sanitizeProviderConfig } from '../utils/providerUtils.js';
-import { resolveOllamaLoadGovernorPolicy } from '../../../../shared/ai/ollamaLoadGovernor.mjs';
+import { resolveOllamaLoadGovernorPolicy, projectVrGovernorExecutionPermissionsV1 } from '../../../../shared/ai/ollamaLoadGovernor.mjs';
 
 const OLLAMA_STATE = {
   CONNECTED: 'CONNECTED',
@@ -34,20 +34,26 @@ function readVrResourceGovernorState() {
   const statePath = resolve(homedir(), 'Documents', 'Stephanos-openclaw-workspace', 'vr', 'vr-resource-governor-current.json');
   try {
     const parsed = JSON.parse(readFileSync(statePath, 'utf8'));
-    if (parsed?.schemaVersion === 'stephanos.vr-resource-governor.v1' && parsed?.active === true) {
-      const heavyModelAllowed = parsed?.heavyModelAllowed === true;
-      const localModelAllowed = parsed?.localModelAllowed !== false;
+    const permission = projectVrGovernorExecutionPermissionsV1(parsed);
+    {
+      const heavyModelAllowed = permission.heavyModelAllowed;
+      const localModelAllowed = permission.localModelAllowed;
       return {
-        active: true,
+        active: parsed?.active === true,
         protectHeavy: !heavyModelAllowed,
         heavyModelAllowed,
         localModelAllowed,
-        phase: String(parsed?.phase || 'GAMING').trim() || 'GAMING',
+        phase: String(parsed?.phase || 'UNKNOWN').trim() || 'UNKNOWN',
         preferredModel: String(parsed?.preferredModel || OLLAMA_MODEL_POLICY.lightweight).trim() || OLLAMA_MODEL_POLICY.lightweight,
-        reason: String(parsed?.reason || 'gaming-resource-governor-active').trim(),
+        reason: permission.reason || String(parsed?.reason || '').trim(),
       };
     }
-  } catch {}
+  } catch (error) {
+    if (error?.code !== 'ENOENT' || process.platform === 'win32') return {
+      active: false, protectHeavy: true, heavyModelAllowed: false, localModelAllowed: false,
+      phase: 'UNKNOWN', preferredModel: OLLAMA_MODEL_POLICY.lightweight, reason: 'GOVERNOR_STATE_UNPROVEN',
+    };
+  }
   return {
     active: false,
     protectHeavy: false,
@@ -366,6 +372,10 @@ function resolveOllamaRouteDecision(baseURL, runtimeContext = {}) {
 }
 
 function classifyOllamaFailure(error) {
+  if (error?.code === 'OLLAMA_RESOURCE_GOVERNOR_HELD') return {
+    failureType: 'resource_hold', reason: 'Local inference is paused by the resource governor.',
+    governorReason: error.governorReason,
+  };
   if (error?.name === 'AbortError') {
     return { failureType: 'timeout', reason: 'Ollama took too long to respond.' };
   }
@@ -407,6 +417,11 @@ function classifyOllamaFailurePhase({ error, phase = '', abortedBy = '' } = {}) 
   const normalizedPhase = String(phase || '').trim().toLowerCase();
   const normalizedAbort = String(abortedBy || '').trim().toLowerCase();
   const base = classifyOllamaFailure(error);
+
+  if (base.failureType === 'resource_hold') return {
+    ...base, failureLayer: 'resource-governor', failureLabel: 'resource-governor-hold',
+    failurePhase: 'before-model-post', timeoutCategory: null, modelWarmupLikely: false,
+  };
 
   if (normalizedAbort === 'external-signal') {
     return {
@@ -771,6 +786,13 @@ async function runOllamaChatAttempt({
   let ollamaFetchAborted = false;
 
   try {
+    const permission = readVrResourceGovernorState();
+    const lightweight = String(modelToUse || '').trim().toLowerCase() === OLLAMA_MODEL_POLICY.lightweight;
+    if (!permission.localModelAllowed || (!permission.heavyModelAllowed && !lightweight)) {
+      throw Object.assign(new Error('Local inference is paused by the resource governor.'), {
+        code: 'OLLAMA_RESOURCE_GOVERNOR_HELD', governorReason: permission.reason,
+      });
+    }
     const { response, abortedBy } = await fetchWithTimeout(resolved.endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -956,7 +978,7 @@ export async function checkOllamaHealth(config = {}) {
 
 export async function runOllamaProvider(request, config = {}) {
   const vrResourceGovernor = readVrResourceGovernorState();
-  if (vrResourceGovernor.active && vrResourceGovernor.localModelAllowed === false) {
+  if (vrResourceGovernor.localModelAllowed === false) {
     return {
       ok: false,
       provider: 'ollama',
@@ -964,7 +986,7 @@ export async function runOllamaProvider(request, config = {}) {
       outputText: '',
       error: {
         code: ERROR_CODES.LLM_OLLAMA_UNREACHABLE,
-        message: 'Local Ollama inference is paused while the VR maximum resource profile is active.',
+        message: 'Local Ollama inference is paused by the resource governor.',
         retryable: false,
       },
       diagnostics: {
@@ -977,7 +999,7 @@ export async function runOllamaProvider(request, config = {}) {
       },
     };
   }
-  if (vrResourceGovernor.active && vrResourceGovernor.protectHeavy) {
+  if (vrResourceGovernor.protectHeavy) {
     config = { ...config, ollamaLoadMode: 'cool', forceHeavyModel: false };
   }
   const resolved = resolveOllamaConfig(config);
@@ -1136,7 +1158,9 @@ export async function runOllamaProvider(request, config = {}) {
 
     if (!finalAttempt.ok) {
       const failure = finalAttempt.failure || classifyOllamaFailure(finalAttempt.error);
-      const message = failure.failureType === 'timeout'
+      const message = failure.failureType === 'resource_hold'
+        ? 'Local inference is paused by the resource governor.'
+        : failure.failureType === 'timeout'
         ? 'Cannot connect to Ollama: it took too long to respond.'
         : failure.failureType === 'connection_refused'
           ? 'Cannot connect to Ollama: nothing answered at that address.'
@@ -1166,7 +1190,7 @@ export async function runOllamaProvider(request, config = {}) {
         error: {
           code: ERROR_CODES.LLM_OLLAMA_UNREACHABLE,
           message: `${message}${timeoutHint}`.trim(),
-          retryable: true,
+          retryable: failure.failureType !== 'resource_hold',
           details: {
             ...failure,
             timeoutMs: finalAttempt.diagnostics.timeoutMs,

@@ -47,6 +47,14 @@ async function firstHeartbeatAfterRestart(savedStatus, {
     OCTOPUS_SELF_HEAL_COOLDOWN_MS: 300_000,
     DEPENDENCY_SELF_HEAL_COOLDOWN_MS: 120_000,
     coreStatusPath: '/fixture/stephanos-core-daemon-current.json',
+    repoRoot: '/fixture/repo', workspaceRoot: '/fixture/workspace',
+    assertCoreRepairOwner: async () => true,
+    querySovereignMaintenanceRequestStatusV1() { throw new Error('Unexpected transport in parent-projection fixture'); },
+    prepareSovereignMaintenanceRequestV1() { throw new Error('Unexpected preparation in parent-projection fixture'); },
+    createCoreRepairAttemptControllerV1: () => ({
+      restore: async () => { events.push('restore-maintenance'); },
+      snapshot: () => ({ held: true, blocker: 'CORE_REPAIR_FIXTURE_HISTORY_HELD', originalOutcomeProven: false }),
+    }),
     projectStephanosCoreOnionContinuationV1,
     projectPersistentFlywheelStageWatchV1,
     summarizeOctopusBuildProductivity,
@@ -152,7 +160,7 @@ test('first heartbeat preserves the saved original outcome before background rec
   let stored = { sourceHead: 'a'.repeat(40), onionContinuation: original };
   for (const sourceHead of ['b'.repeat(40), 'c'.repeat(40)]) {
     const cycle = await firstHeartbeatAfterRestart(stored, { sourceHead });
-    assert.deepEqual(cycle.events.slice(0, 3), ['acquire-lock', 'read-status', 'publish-heartbeat']);
+    assert.deepEqual(cycle.events.slice(0, 4), ['acquire-lock', 'restore-maintenance', 'read-status', 'publish-heartbeat']);
     for (const status of [cycle.first, cycle.reconciled]) {
       assert.equal(status.onionContinuation.originalOutcomeId, original.originalOutcomeId);
       assert.equal(status.onionContinuation.blocker, original.blocker);
