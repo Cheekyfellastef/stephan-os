@@ -537,10 +537,12 @@ export async function runBattleBridgeGitHubSync({
     return resolved.ok
       ? resolved.debt ? pendingPostSyncRefreshDebt([resolved.debt], resolved.debt.requiredTargetIds, '', {
         sovereignRelayRefreshRequired: resolved.debt.sovereignRelayRefreshRequired,
+        governorRefreshRequired: resolved.debt.governorRefreshRequired,
         spatialAdoptionRequired: resolved.debt.spatialAdoptionRequired,
       }) : null
       : pendingPostSyncRefreshDebt(spans, evidence.requiredTargetIds, '', {
         sovereignRelayRefreshRequired: evidence.sovereignRelayRefreshRequired,
+        governorRefreshRequired: evidence.governorRefreshRequired,
         spatialAdoptionRequired: evidence.spatialAdoptionRequired,
       });
   };
@@ -556,6 +558,7 @@ export async function runBattleBridgeGitHubSync({
     // Establish retention before any later source/transport exception can write status.
     pendingRefresh = evidence.ok ? pendingPostSyncRefreshDebt(evidence.spans, evidence.requiredTargetIds, '', {
       sovereignRelayRefreshRequired: evidence.sovereignRelayRefreshRequired,
+      governorRefreshRequired: evidence.governorRefreshRequired,
       spatialAdoptionRequired: evidence.spatialAdoptionRequired,
     })
       : pendingPostSyncRefreshDebt([], [], evidence.blocker);
