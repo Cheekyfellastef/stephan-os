@@ -81,10 +81,13 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     }
   }
   async function revokeNativeToken(old){
-    if(old)try{
+    if(!old)return true;
+    try{
       const response=await fetchRef(endpoint+'/stop',{method:'POST',headers:{'Content-Type':'application/json','X-Spatial-Session':old},body:'{}',keepalive:true,signal:AbortSignal.timeout(10000)});
-      if(response.ok||response.status===403)try{if(sessionStore?.getItem(storageKey)===old)sessionStore.removeItem(storageKey);}catch{}
-    }catch{}
+      if(!response.ok)return false; // 403 and timeouts cannot prove native capture was released.
+      try{if(sessionStore?.getItem(storageKey)===old)sessionStore.removeItem(storageKey);}catch{}
+      return true;
+    }catch{return false;}
   }
   function beginDisconnect(keepCapture=null){
     // Bind the transition before cleanup or publication can reenter this client.
@@ -99,8 +102,18 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     if(previousCapture!==keepCapture)closeCapture(previousCapture);
     clearTimer(oldTimer);
     if(current===epoch&&capture===keepCapture)
-      publish({status:'idle',windows:[],title:'',inputStatus:'',message:'Window disconnected.'});
-    return Object.freeze({epoch:current,stopped:revokeNativeToken(old)});
+      publish({status:'idle',windows:[],title:'',inputStatus:'',
+        message:old?'Window disconnected locally; verifying native capture release.':'Window disconnected.'});
+    const stopped=revokeNativeToken(old).then(released=>{
+      // A late revocation must never overwrite a newer native bind or view.
+      if(old&&currentEpoch(current)&&capture===keepCapture&&state.status==='idle'){
+        publish({status:released?'idle':'unavailable',
+          message:released?'Window disconnected.':'Local input was revoked, but the Windows helper did not confirm capture release. Verify the native session before reconnecting.',
+          inputStatus:released?'':'Native capture release unverified. Do not assume the original app is no longer shared.'});
+      }
+      return released;
+    });
+    return Object.freeze({epoch:current,stopped});
   }
   // Local browser capture remains an explicit view-only alternative. A display
   // grant never enables native input, audio capture or a remote stream.
@@ -149,6 +162,9 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       if(!ownsCapture(owner))return false;
       const stopped=await Promise.race([transition.stopped,owner.cancelled]);
       if(stopped===captureCancelled||!ownsCapture(owner))return false;
+      if(stopped!==true)return finishCapture(owner,{status:'unavailable',
+        message:'Native window release unverified. Browser sharing was not adopted.',
+        inputStatus:'Verify the Windows helper stopped the previous capture before trying again.'});
       owner.phase='playback';
       try{
         const video=documentRef.createElement('video');owner.video=video;
@@ -194,7 +210,8 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
   function stop(){return beginDisconnect().stopped;}
   async function discover() {
     if(disposed)return;
-    const transition=beginDisconnect(),current=transition.epoch;await transition.stopped;
+    const transition=beginDisconnect(),current=transition.epoch;
+    if(!await transition.stopped)return false; // Do not allocate a new native session after an unverified stop.
     if(!publishCurrent(current,{status:'connecting',message:'Looking for open desktop windows.'}))return;
     try {
       const session=await request('/session');
