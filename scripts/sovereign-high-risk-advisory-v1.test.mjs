@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { resolveBattleBridgeGitExecution, resolveBattleBridgePhysicalPathV1, validateBattleBridgeLocalGitConfiguration } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import {
   captureHighRiskAdvisorySnapshotV1 as capture,
   localHighRiskModelV1 as localHighRiskModelActual,
@@ -429,7 +429,7 @@ test('high-risk runner preserves fixed protocol refusals and suppresses arbitrar
 test('Windows canonical high-risk snapshot uses authenticated private worktree isolation', {
   skip: process.platform !== 'win32', timeout: 60000,
 }, t => {
-  const parent = mkdtempSync(join(tmpdir(), 'stephanos-highrisk-win-git-'));
+  const parent = mkdtempSync(join(resolveBattleBridgePhysicalPathV1(tmpdir()), 'stephanos-highrisk-win-git-'));
   const root = join(parent, 'main');
   mkdirSync(root);
   t.after(() => rmSync(parent, { recursive: true, force: true }));
