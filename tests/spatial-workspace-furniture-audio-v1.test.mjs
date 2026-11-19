@@ -131,7 +131,7 @@ test('Quest grip moves furniture with inertia and release saves instead of snapp
 
 test('audio devices are real browser-local tests and do not acquire mic without user action', async () => {
   const calls=[],events=[];
-  const track={stop(){calls.push('stop');}};
+  const track={getSettings(){return {deviceId:'mic1'};},stop(){calls.push('stop');}};
   const devices={
     async enumerateDevices(){calls.push('enumerate');return [
       {kind:'audioinput',deviceId:'mic1',label:'Headset mic'},
