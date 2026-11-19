@@ -649,3 +649,36 @@ test('Goal #2961: worker watchdog positive requires owned raw proof fields', () 
     assert.equal(result.buildingGoalCount, null, 'service health is never BUILD proof');
   }
 });
+
+// A prototype-inherited diagnostic wrapper is not an authenticated producer record.
+// In particular a signed pickup cannot be GREEN unless every binding field is owned.
+test('Goal #2961: inherited signed diagnostic wrapper provenance cannot greenlight pickup', () => {
+  const valid = {
+    schemaVersion: 'stephanos.goal-build-gate-observatory.v1',
+    diagnosticOnly: true, approvalAuthority: false, mergeAuthority: false,
+    sourceHead: 'a'.repeat(40), observedAtUtc: at(-1000),
+    observationStatus: 'EVIDENCE_AVAILABLE',
+    gates: [4, 5, 7, 6, 18, 19].map(id => signedGate(id)),
+  };
+  const pickup = ledger => overview({ goalBuildGateObservatory: ledger }, {
+    nowMs: NOW, statusRecords: [sourceWitness()],
+  }).stages.find(stage => stage.id === 'pickup');
+  assert.equal(pickup(valid).state, 'PROVEN', 'own current proof remains admitted');
+  for (const field of ['schemaVersion', 'diagnosticOnly', 'approvalAuthority',
+    'mergeAuthority', 'sourceHead', 'observedAtUtc', 'observationStatus', 'gates']) {
+    const inherited = Object.assign(Object.create({ [field]: valid[field] }),
+      Object.fromEntries(Object.entries(valid).filter(([key]) => key !== field)));
+    const stage = pickup(inherited);
+    assert.equal(stage.state, 'UNKNOWN', field + ' is inherited, not producer-owned');
+    assert.equal(stage.trafficLight, 'GREY', field + ' cannot project signed GREEN');
+    assert.equal(stage.expiresAtUtc, '', field + ' has no valid signed expiry');
+  }
+  assert.equal(pickup({ ...valid, sourceHead: 'b'.repeat(40) }).state, 'UNKNOWN',
+    'own, but foreign, source head remains excluded');
+  assert.equal(pickup([]).state, 'UNKNOWN', 'an array is not a diagnostic wrapper');
+  const inheritedProofRef = Object.assign(Object.create({ proofRef: 'workspace:proof/gate-19' }),
+    { id: 19, status: 'PASS', observedAtUtc: at(-1000) });
+  const invalidGate = { ...valid, gates: [...valid.gates.filter(gate => gate.id !== 19), inheritedProofRef] };
+  assert.equal(pickup(invalidGate).state, 'UNKNOWN',
+    'an inherited gate proof is still excluded');
+});

@@ -32,7 +32,14 @@ const FLOW = [
 export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Date.now(), staleAfterMs = MAX_AGE, statusRecords } = {}) {
   const maxAgeMs = Math.max(1000, Math.min(MAX_AGE, Number(staleAfterMs) || MAX_AGE));
   const ledger = projection.goalBuildGateObservatory;
-  const admittedLedger = ledger?.schemaVersion === 'stephanos.goal-build-gate-observatory.v1'
+  // Diagnostic provenance must be producer-owned; inherited wrapper fields are not signed evidence.
+  const ledgerBindingFields = ['schemaVersion', 'diagnosticOnly', 'approvalAuthority',
+    'mergeAuthority', 'sourceHead', 'observedAtUtc', 'observationStatus', 'gates'];
+  const ledgerOwnProvenance = ledger !== null && typeof ledger === 'object'
+    && !Array.isArray(ledger)
+    && ledgerBindingFields.every(field => Object.prototype.hasOwnProperty.call(ledger, field));
+  const admittedLedger = ledgerOwnProvenance
+    && ledger.schemaVersion === 'stephanos.goal-build-gate-observatory.v1'
     && ledger.diagnosticOnly === true && ledger.approvalAuthority === false && ledger.mergeAuthority === false
     && /^[a-f0-9]{40}$/.test(ledger.sourceHead || '')
     && ['EVIDENCE_AVAILABLE', 'STALE'].includes(ledger.observationStatus);
