@@ -361,16 +361,8 @@ export async function executeClaimedOpenClawOc2DeterministicTestBuild(action, cl
   }
   if (!layout?.ok) return blocker('OPENCLAW_OC2_SHARED_WORKSPACE_UNAVAILABLE');
   const writeJson = options.writeAtomicJsonFn || writeAtomicJson;
-  let proofWrite;
-  try {
-    proofWrite = await writeJson(workspaceRoot, ['proofs', 'openclaw-oc2', `${executionId}.json`], proofRecord, { repoRoot });
-  } catch {
-    return blocker('OPENCLAW_OC2_PROOF_WRITE_FAILED');
-  }
-  if (!proofWrite?.ok) return blocker('OPENCLAW_OC2_PROOF_WRITE_FAILED');
-
   const workerId = `openclaw-${sha256(providerInstance).slice(0, 24)}`;
-  const executionReceipt = createExecutionReceipt({
+  const receiptBase = {
     receiptId,
     repository: REPOSITORY,
     issueNumber: OPENCLAW_OC2_ISSUE,
@@ -381,7 +373,6 @@ export async function executeClaimedOpenClawOc2DeterministicTestBuild(action, cl
     workerType: 'openclaw',
     executionId,
     leaseKey: `oc2-${taskHash}`,
-    state: 'completed',
     phase: OPENCLAW_OC2_TASK_CLASS,
     sequence: 1,
     predecessorReceiptId: '',
@@ -390,6 +381,32 @@ export async function executeClaimedOpenClawOc2DeterministicTestBuild(action, cl
     blocker: '',
     operatorActionRequired: false,
     proofRefs: [proofRef],
+  };
+  // A durable, nonterminal receipt must precede the completed proof.
+  // A failed proof or completion write leaves only STARTED custody, never a false DONE.
+  const pendingReceipt = toSharedWorkspaceExecutionReceipt(createExecutionReceipt({
+    ...receiptBase,
+    state: 'started',
+    expectedNextAction: 'Publish fixed-plan proof, then complete the execution receipt.',
+  }));
+  if (!pendingReceipt.ok) return blocker('OPENCLAW_OC2_EXECUTION_RECEIPT_INVALID');
+  try {
+    const pendingWrite = await writeJson(workspaceRoot, ['receipts', `${receiptId}.json`], pendingReceipt.record, { repoRoot });
+    if (!pendingWrite?.ok) return blocker('OPENCLAW_OC2_EXECUTION_RECEIPT_PREPARE_FAILED');
+  } catch {
+    return blocker('OPENCLAW_OC2_EXECUTION_RECEIPT_PREPARE_FAILED');
+  }
+  let proofWrite;
+  try {
+    proofWrite = await writeJson(workspaceRoot, ['proofs', 'openclaw-oc2', `${executionId}.json`], proofRecord, { repoRoot });
+  } catch {
+    return blocker('OPENCLAW_OC2_PROOF_WRITE_FAILED');
+  }
+  if (!proofWrite?.ok) return blocker('OPENCLAW_OC2_PROOF_WRITE_FAILED');
+
+  const executionReceipt = createExecutionReceipt({
+    ...receiptBase,
+    state: 'completed',
     expectedNextAction: 'Await independent Stephanos OC2 task-class qualification adjudication.',
   });
   const workspaceReceipt = toSharedWorkspaceExecutionReceipt(executionReceipt);

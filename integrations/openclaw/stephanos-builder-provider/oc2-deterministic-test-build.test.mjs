@@ -194,7 +194,10 @@ test('OC2 executes only fixed node test IDs and proves source state unchanged', 
   assert.deepEqual(result.changedFiles, []);
   assert.equal(result.receipt.verified, true);
   assert.equal(result.evidenceReceipts.length, 1);
-  assert.equal(writes.length, 2);
+  assert.equal(writes.length, 3);
+  assert.deepEqual(writes.map((write) => write.segments[0]), ['receipts', 'proofs', 'receipts']);
+  assert.deepEqual(writes.filter((write) => write.segments[0] === 'receipts')
+    .map((write) => write.record.executionReceipt.state), ['started', 'completed']);
   const nodeCalls = calls.filter((call) => String(call.executable).toLowerCase().endsWith('node.exe'));
   assert.deepEqual(nodeCalls.map((call) => call.args), OPENCLAW_OC2_FIXED_PLAN.map((plan) => [...plan.args]));
   assert.ok(nodeCalls.every((call) => call.options.shell === false));
@@ -245,11 +248,14 @@ test('OC2 grant renewal and source revision cannot overwrite prior proof or rece
     });
     assert.equal(result.success, true);
     assert.equal(result.qualificationEligible, true);
-    assert.equal(writes.length, 2);
-    assert.equal(result.evidenceReceipts[0].receiptPath, writes[0].path);
+    assert.equal(writes.length, 3);
+    assert.equal(result.evidenceReceipts[0].receiptPath, writes[1].path);
+    assert.equal(writes[0].path, writes[2].path, 'completion replaces the nonterminal receipt');
+    assert.deepEqual([writes[0].record.executionReceipt.state, writes[2].record.executionReceipt.state],
+      ['started', 'completed']);
     recorded.push({
-      proof: writes[0].path,
-      receipt: writes[1].path,
+      proof: writes[1].path,
+      receipt: writes[2].path,
       resultReceipt: result.receipt.receiptId,
     });
   }
@@ -262,14 +268,16 @@ test('OC2 grant renewal and source revision cannot overwrite prior proof or rece
 test('OC2 workspace I/O exceptions fail closed without a qualifying result', async (t) => {
   for (const [scenario, expectedError, expectedWrites] of [
     ['workspace layout throws', 'OPENCLAW_OC2_SHARED_WORKSPACE_UNAVAILABLE', 0],
-    ['proof write throws', 'OPENCLAW_OC2_PROOF_WRITE_FAILED', 1],
-    ['execution receipt write throws', 'OPENCLAW_OC2_EXECUTION_RECEIPT_WRITE_FAILED', 2],
+    ['provisional receipt write throws', 'OPENCLAW_OC2_EXECUTION_RECEIPT_PREPARE_FAILED', 1],
+    ['proof write throws', 'OPENCLAW_OC2_PROOF_WRITE_FAILED', 2],
+    ['execution receipt write throws', 'OPENCLAW_OC2_EXECUTION_RECEIPT_WRITE_FAILED', 3],
   ]) {
     await t.test(scenario, async () => {
       const parts = fixture();
       const userProfile = '/tmp/stephanos-oc2-workspace-failure';
       const repoRoot = path.resolve(userProfile, 'Documents', 'GitHub', 'stephan-os');
       let writes = 0;
+      const published = [];
       const spawnSyncFn = (executable, args) => {
         if (String(executable).toLowerCase().endsWith('git.exe')) {
           const key = args.join(' ');
@@ -298,10 +306,12 @@ test('OC2 workspace I/O exceptions fail closed without a qualifying result', asy
           if (scenario === 'workspace layout throws') throw new Error('simulated missing workspace');
           return { ok: true };
         },
-        writeAtomicJsonFn: async () => {
+        writeAtomicJsonFn: async (_root, segments, record) => {
           writes += 1;
-          if (scenario === 'proof write throws' && writes === 1) throw new Error('simulated proof I/O failure');
-          if (scenario === 'execution receipt write throws' && writes === 2) throw new Error('simulated receipt I/O failure');
+          if (scenario === 'provisional receipt write throws' && writes === 1) throw new Error('simulated provisional I/O failure');
+          if (scenario === 'proof write throws' && writes === 2) throw new Error('simulated proof I/O failure');
+          if (scenario === 'execution receipt write throws' && writes === 3) throw new Error('simulated completion I/O failure');
+          published.push({ segments, record });
           return { ok: true };
         },
         now: new Date('2026-08-21T00:00:00.000Z'),
@@ -313,6 +323,11 @@ test('OC2 workspace I/O exceptions fail closed without a qualifying result', asy
       assert.deepEqual(result.evidenceReceipts, []);
       assert.equal(result.receipt, undefined);
       assert.equal(writes, expectedWrites);
+      assert.ok(published.every((entry) => entry.record.executionReceipt?.state !== 'completed'),
+        'a failed OC2 publication must never leave a completed receipt');
+      if (expectedWrites >= 2) {
+        assert.equal(published[0].record.executionReceipt.state, 'started');
+      }
     });
   }
 });
