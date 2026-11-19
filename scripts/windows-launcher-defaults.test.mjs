@@ -161,7 +161,8 @@ test('ignition button path selects splash/status browser UI before launcher-root
 
 test('ignition process output is minimized and redirected instead of primary PowerShell wall UI', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
-  assert.match(script, /Start-Process -FilePath 'powershell\.exe' -WorkingDirectory \$repoRoot -WindowStyle Minimized -RedirectStandardOutput \$stdoutLog -RedirectStandardError \$stderrLog/m, 'PowerShell process must be minimized and redirected to bounded logs');
+  assert.match(script, /Start-Process -FilePath 'powershell\.exe' -WorkingDirectory \$repoRoot -WindowStyle \$childWindowStyle -RedirectStandardOutput \$stdoutLog -RedirectStandardError \$stderrLog/m, 'PowerShell process must retain bounded log redirects with the adjudicated window style');
+  assert.match(script, /\$childWindowStyle = if \(\[bool\]\$Unattended\) \{ 'Hidden' \} else \{ 'Minimized' \}/m, 'unattended helpers are hidden while interactive behavior remains minimized');
   assert.doesNotMatch(script, /Start-Process -FilePath 'powershell\.exe'[\s\S]*?'-NoExit'/m, 'launcher must not keep a visible PowerShell wall open as the primary UI');
 });
 

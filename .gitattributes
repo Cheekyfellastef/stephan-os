@@ -336,6 +336,7 @@ scripts/windows/starfield-native-monitor/splash_monitor_bridge.py text eol=lf
 scripts/windows/starfield-native-monitor/run_native_eye_output_monitor.py text eol=lf
 scripts/windows/starfield-native-monitor/start_native_eye_output_session.py text eol=lf
 scripts/windows/starfield-native-monitor/analyze_native_eye_output_session.py text eol=lf
+scripts/windows/starfield-native-monitor/analyze_paired_source_session.py text eol=lf
 scripts/windows/starfield-native-monitor/test_splash_monitor_bridge.py text eol=lf
 scripts/windows/starfield-native-monitor/test_run_native_eye_output_monitor.py text eol=lf
 scripts/windows/starfield-native-monitor/test_start_native_eye_output_session.py text eol=lf
@@ -360,3 +361,8 @@ scripts/battle-bridge-caravan-page-v1.mjs text eol=lf
 scripts/windows/battle-bridge-mobile-install-native-v1.mjs text eol=lf
 scripts/windows/observe-battle-bridge-mobile-install-v1.ps1 text eol=lf
 shared/agents/battleBridgeMobileInstallationV1.mjs text eol=lf
+
+scripts/windows/starfield-native-monitor/monitor_session_custody.py text eol=lf
+scripts/windows/starfield-native-monitor/test_monitor_session_custody.py text eol=lf
+scripts/windows/starfield-native-monitor/paired_session_adapter.py text eol=lf
+scripts/windows/starfield-native-monitor/test_paired_session_adapter.py text eol=lf

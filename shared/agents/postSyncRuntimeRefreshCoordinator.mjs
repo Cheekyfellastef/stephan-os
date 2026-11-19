@@ -102,6 +102,13 @@ const REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH = 'scripts/battle-bridge-githu
 const MISSION_WORKER_POST_SYNC_COORDINATOR_PATH = 'scripts/battle-bridge-post-sync-refresh.mjs';
 const GOAL_DISCOVERY_HEARTBEAT_RUNTIME_PATH = 'scripts/battle-bridge-goal-discovery-heartbeat.mjs';
 const REQUIRED_LOCAL_LAUNCHER_PATH = 'windows/Launch-Stephanos-Local.ps1';
+// Fresh invocation owns this complete guarded chain; no resident process is
+// restarted by these source paths. The same inventory protects removals.
+export const LOCAL_LAUNCHER_FRESH_ENTRY_PATHS = Object.freeze([
+  'windows/Launch-Stephanos-Local.cmd',
+  REQUIRED_LOCAL_LAUNCHER_PATH,
+  'windows/Invoke-Stephanos-Ignite-With-Approval.ps1',
+]);
 const TARGET_ORDER = Object.freeze([
   POST_SYNC_REFRESH_TARGETS.UI_4173,
   POST_SYNC_REFRESH_TARGETS.VR_ATLAS_BROWSER_PROOF,
@@ -232,6 +239,9 @@ const NATURAL_EXACT = new Set([
   'scripts/windows/starfield-native-monitor/run_native_eye_output_monitor.py',
   'scripts/windows/starfield-native-monitor/start_native_eye_output_session.py',
   'scripts/windows/starfield-native-monitor/analyze_native_eye_output_session.py',
+  'scripts/windows/starfield-native-monitor/analyze_paired_source_session.py',
+  'scripts/windows/starfield-native-monitor/monitor_session_custody.py',
+  'scripts/windows/starfield-native-monitor/paired_session_adapter.py',
   'scripts/windows/launch-starfield-vr.ps1',
   'scripts/windows/new-vr-telemetry-session.ps1',
   'scripts/windows/read-starfield-vr-performance-diagnosis.ps1',
@@ -333,7 +343,7 @@ const NATURAL_EXACT = new Set([
   'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
   'scripts/windows/restart-approved-stephanos-runtime.ps1',
   'scripts/windows/run-vr-virtual-airlink-acceptance.ps1',
-  REQUIRED_LOCAL_LAUNCHER_PATH,
+  ...LOCAL_LAUNCHER_FRESH_ENTRY_PATHS,
   'scripts/windows/install-forge-shadow-podman-prerequisite-v1.ps1',
   'scripts/windows/install-forge-shadow-podman-v1.ps1',
 ]);
@@ -373,6 +383,9 @@ const NO_RUNTIME_EXACT = new Set([
   'scripts/windows/starfield-native-monitor/test_run_native_eye_output_monitor.py',
   'scripts/windows/starfield-native-monitor/test_start_native_eye_output_session.py',
   'scripts/windows/starfield-native-monitor/test_analyze_native_eye_output_session.py',
+  'scripts/windows/starfield-native-monitor/test_analyze_paired_source_session.py',
+  'scripts/windows/starfield-native-monitor/test_monitor_session_custody.py',
+  'scripts/windows/starfield-native-monitor/test_paired_session_adapter.py',
   // Existing GitHub Actions job loads this fixed artifact producer from its
   // exact checkout. It is never a resident Battle Bridge process or a local
   // submission adapter; activating the native reader belongs to the relay.
@@ -575,8 +588,8 @@ export function parseGitChangedPathStatus(stdout) {
       return Object.freeze({ ok: false, blocker: 'POST_SYNC_REQUIRED_MAILBOX_WRAPPER_REMOVED', paths: Object.freeze([]) });
     }
     const removesRequiredLocalLauncher = status === 'D'
-      ? parts[0] === REQUIRED_LOCAL_LAUNCHER_PATH
-      : /^R[0-9]*$/.test(status) && parts[0] === REQUIRED_LOCAL_LAUNCHER_PATH;
+      ? LOCAL_LAUNCHER_FRESH_ENTRY_PATHS.includes(parts[0])
+      : /^R[0-9]*$/.test(status) && LOCAL_LAUNCHER_FRESH_ENTRY_PATHS.includes(parts[0]);
     if (removesRequiredLocalLauncher) {
       return Object.freeze({ ok: false, blocker: 'POST_SYNC_REQUIRED_LOCAL_LAUNCHER_REMOVED', paths: Object.freeze([]) });
     }
