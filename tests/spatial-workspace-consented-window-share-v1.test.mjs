@@ -936,3 +936,41 @@ test('browser view-only fallback never adopts a capture after an unverified nati
   assert.equal(saved.get(key),'a'.repeat(64),'unverified native session must not be forgotten');
   await client.stop();
 });
+
+test('a cancelled delayed native session grant must be released before any next native session',async()=>{
+  // A /session response can arrive after Stop. Its later /stop may fail even
+  // though no token existed when Stop ran; that is not proof of release.
+  const lateSession=captureStep(),paths=[],originalToken='d'.repeat(64);
+  let sessions=0,stopAllowed=false;
+  const answer=(data,ok=true)=>({ok,status:ok?200:403,json:async()=>data});
+  const client=createHolodeckWindowClient({
+    locationRef:{hostname:'localhost',port:'4173'},sessionStore:null,
+    setTimer:()=>1,clearTimer:()=>{},
+    fetchRef:url=>{
+      const path=new URL(url).pathname;paths.push(path);
+      if(path==='/session')return ++sessions===1
+        ?lateSession.promise:Promise.resolve(answer({token:'e'.repeat(64)}));
+      if(path==='/stop')return Promise.resolve(stopAllowed
+        ?answer({status:'stopped'}):answer({status:'refused'},false));
+      if(path==='/windows')return Promise.resolve(answer({windows:[]}));
+      throw Error('Unexpected native request '+path);
+    }
+  });
+  const opening=client.discover();
+  await drainCaptureTransitions();
+  assert.equal(sessions,1,'one pending native session is being allocated');
+  assert.equal(await client.stop(),true,'local Stop cannot know a token not yet returned');
+  assert.equal(await client.discover(),false,'second discovery must not allocate while the first grant is pending');
+  assert.equal(sessions,1);
+  lateSession.resolve(answer({token:originalToken}));
+  assert.equal(await opening,false,'cancelled grant can never be adopted');
+  assert.deepEqual(paths,['/session','/stop'],'late grant receives one bounded release attempt');
+  assert.equal(await client.discover(),false,'failed late release keeps the token as an in-memory fence');
+  assert.deepEqual(paths,['/session','/stop','/stop']);
+  assert.equal(sessions,1,'no second session may be allocated after denied release');
+  stopAllowed=true;
+  assert.equal(await client.discover(),true,'verified release admits a subsequent explicit discovery');
+  assert.deepEqual(paths.slice(3),['/stop','/session','/windows']);
+  assert.equal(sessions,2);
+  await client.stop();
+});
