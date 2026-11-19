@@ -471,7 +471,12 @@ function Read-OverrideMode {
     # SetAuto/ForceOff writes a fresh, valid override.
     if (-not (Test-Path -LiteralPath $overridePath -PathType Leaf)) { return 'AUTO' }
     try {
-        $state = Get-Content -LiteralPath $overridePath -Raw | ConvertFrom-Json
+        $raw = Get-Content -LiteralPath $overridePath -Raw
+        # Windows PowerShell 5.1 unwraps single-object JSON arrays in its pipeline.
+        # A present override must have an object wire root, never an array.
+        # Wrong roots retain FORCE_ON until an explicit valid operator override.
+        if ($raw -isnot [string] -or $raw -notmatch '^\s*\{') { return 'FORCE_ON' }
+        $state = $raw | ConvertFrom-Json
         if (
             $state -is [pscustomobject] -and
             $state.schemaVersion -is [string] -and

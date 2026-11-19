@@ -103,8 +103,8 @@ function rejects(content) {
 }
 
 test('fixture preserves exact current reviewer governor source blob', () => {
-  assert.equal(blobSha(governor), 'b2a5411480b9f427a40d0293c2ab680be584a834');
-  assert.equal(Buffer.byteLength(governor, 'utf8'), 63687);
+  assert.equal(blobSha(governor), '844e5d11b74a7fa864c0160f76fffd7addfbc221');
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 64032);
 });
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
@@ -147,7 +147,7 @@ test('revokes superseded reviewer-capable governor blobs with weak lease custody
   const reviewerSource = await readFile(new URL('./windowsAuthorityVrResourceGovernorReviewV1.mjs', import.meta.url), 'utf8');
   const registry = reviewerSource.split('const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([')[1]?.split(']);')[0] || '';
   const rows = registry.split('\n').filter(line => line.includes('Object.freeze({ blobSha:'));
-  assert.equal(rows.length, 4, 'only two historical non-reviewer plus two bounded reviewer contracts remain');
+  assert.equal(rows.length, 3, 'only two non-reviewer histories plus one current array-root-safe reviewer remain');
   for (const sha of [
     '1cbe6687741338d29caa86c7828638137eb99f24',
     'fec5255f808f303a3c0d61de9409c7eb98ceec92',
@@ -155,14 +155,16 @@ test('revokes superseded reviewer-capable governor blobs with weak lease custody
     '69c3396479d83e0f9521958f3f4dc13671863c68',
     '5a6b7672c406f941d06d1fabc2f7d31636122122',
     'c6ea953880d63b61d494259ccc8e8ecd423b14d0',
+    '3804c153495a5f6be89eba33790b73f28854b15b',
   ]) assert.equal(registry.includes(sha), false, 'unbounded legacy reviewer remains registered: ' + sha);
   const reviewerRows = rows.filter(line => line.includes('reviewerReservation: true'));
-  assert.equal(reviewerRows.length, 2);
+  assert.equal(reviewerRows.length, 1);
   for (const row of reviewerRows) {
     assert.match(row, /typedPrepareLease: true/);
     assert.match(row, /dateParsedUtcLease: true/);
+    assert.match(row, /objectRootOverride: true/);
   }
-  assert.ok(reviewerSource.includes('!sourceContract.typedPrepareLease || !sourceContract.dateParsedUtcLease'),
+  assert.ok(reviewerSource.includes('!sourceContract.typedPrepareLease || !sourceContract.dateParsedUtcLease || !sourceContract.objectRootOverride'),
     'future reviewer-capable unbounded registrations must fail closed');
   const current = analyzeWindowsAuthorityVrResourceGovernorReviewV1(input(governor));
   assert.equal(current.clean, true, 'the current bounded reviewer contract remains admissible');
@@ -808,6 +810,9 @@ test('present corrupt gaming override fails closed instead of clearing operator 
   assert.ok(read.includes("if (-not (Test-Path -LiteralPath $overridePath -PathType Leaf)) { return 'AUTO' }"));
   assert.ok(read.includes("schemaVersion -eq 'stephanos.gaming-resource-override.v1'"));
   assert.ok(read.includes('$state.schemaVersion -is [string]'));
+  assert.ok(read.includes("$raw -notmatch '^\\s*\\{'"));
+  assert.ok(read.indexOf("$raw -notmatch '^\\s*\\{'") < read.indexOf('$state = $raw | ConvertFrom-Json'),
+    'wire-root guard must execute before PowerShell can unwrap a single-item JSON array');
   assert.ok(read.includes("$state.mode -is [string]"));
   assert.ok(read.includes("$state.mode -in @('AUTO','FORCE_ON','FORCE_OFF')"));
   assert.ok(read.trimEnd().endsWith("return 'FORCE_ON'\n}"));
@@ -825,7 +830,11 @@ test('present corrupt gaming override fails closed instead of clearing operator 
     [false,'','AUTO'],[true,valid('AUTO'),'AUTO'],
     [true,valid('FORCE_ON'),'FORCE_ON'],[true,valid('FORCE_OFF'),'FORCE_OFF'],
     [true,'{bad-json','FORCE_ON'],[true,'null','FORCE_ON'],
-    [true,'[]','FORCE_ON'],[true,JSON.stringify({mode:'AUTO'}),'FORCE_ON'],
+    [true,'[]','FORCE_ON'],
+    [true,JSON.stringify([{schemaVersion:'stephanos.gaming-resource-override.v1',mode:'FORCE_OFF'}]),'FORCE_ON'],
+    [true,JSON.stringify([{schemaVersion:'stephanos.gaming-resource-override.v1',mode:'AUTO'}]),'FORCE_ON'],
+    [true,'   '+valid('AUTO'),'AUTO'],
+    [true,JSON.stringify({mode:'AUTO'}),'FORCE_ON'],
     [true,JSON.stringify({schemaVersion:'other',mode:'AUTO'}),'FORCE_ON'],
     [true,JSON.stringify({schemaVersion:['stephanos.gaming-resource-override.v1','invalid'],mode:'FORCE_OFF'}),'FORCE_ON'],
     [true,JSON.stringify({schemaVersion:{value:'stephanos.gaming-resource-override.v1'},mode:'FORCE_OFF'}),'FORCE_ON'],
@@ -845,7 +854,11 @@ test('Windows PowerShell executes the isolated gaming override reader with mocke
     [false,'','AUTO'],[true,good('AUTO'),'AUTO'],
     [true,good('FORCE_ON'),'FORCE_ON'],[true,good('FORCE_OFF'),'FORCE_OFF'],
     [true,'{bad-json','FORCE_ON'],[true,'null','FORCE_ON'],
-    [true,'[]','FORCE_ON'],[true,JSON.stringify({mode:'AUTO'}),'FORCE_ON'],
+    [true,'[]','FORCE_ON'],
+    [true,JSON.stringify([{schemaVersion:'stephanos.gaming-resource-override.v1',mode:'FORCE_OFF'}]),'FORCE_ON'],
+    [true,JSON.stringify([{schemaVersion:'stephanos.gaming-resource-override.v1',mode:'AUTO'}]),'FORCE_ON'],
+    [true,'   '+good('AUTO'),'AUTO'],
+    [true,JSON.stringify({mode:'AUTO'}),'FORCE_ON'],
     [true,JSON.stringify({schemaVersion:'wrong',mode:'AUTO'}),'FORCE_ON'],
     [true,JSON.stringify({schemaVersion:['stephanos.gaming-resource-override.v1','invalid'],mode:'FORCE_OFF'}),'FORCE_ON'],
     [true,JSON.stringify({schemaVersion:{value:'stephanos.gaming-resource-override.v1'},mode:'FORCE_OFF'}),'FORCE_ON'],

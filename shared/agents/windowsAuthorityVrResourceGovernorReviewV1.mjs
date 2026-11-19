@@ -26,8 +26,7 @@ const PATH = WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1[0];
 const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: 'ae71e1e79ead63efeb5a4d73f4bce6a01ee0f1d9', size: 48838 }),
   Object.freeze({ blobSha: '9513dfe995a35087e1d715ef0c4dff4ca3578295', size: 49674 }),
-  Object.freeze({ blobSha: '3804c153495a5f6be89eba33790b73f28854b15b', size: 62477, reviewerReservation: true, corruptOverrideFailClosed: true, scalarOverrideSchema: true, typedPrepareLease: true, dateParsedUtcLease: true }),
-  Object.freeze({ blobSha: 'b2a5411480b9f427a40d0293c2ab680be584a834', size: 63687, reviewerReservation: true, corruptOverrideFailClosed: true, scalarOverrideSchema: true, typedPrepareLease: true, dateParsedUtcLease: true }),
+  Object.freeze({ blobSha: '844e5d11b74a7fa864c0160f76fffd7addfbc221', size: 64032, reviewerReservation: true, corruptOverrideFailClosed: true, scalarOverrideSchema: true, typedPrepareLease: true, dateParsedUtcLease: true, objectRootOverride: true }),
 ]);
 
 const text = (value) => String(value ?? '').trim();
@@ -108,7 +107,7 @@ function reviewGovernor(source, findings) {
     return;
   }
   // Future reviewer-capable registrations must not reintroduce an unbounded lease.
-  if (sourceContract.reviewerReservation && (!sourceContract.typedPrepareLease || !sourceContract.dateParsedUtcLease)) {
+  if (sourceContract.reviewerReservation && (!sourceContract.typedPrepareLease || !sourceContract.dateParsedUtcLease || !sourceContract.objectRootOverride)) {
     findings.push(finding('vr-governor-reviewer-lease-contract-unqualified',
       'Reviewer-capable source requires a typed UTC creation time and a maximum two-minute prepare lease.'));
     return;
@@ -267,6 +266,16 @@ function reviewGovernor(source, findings) {
         '$state.schemaVersion -is [string]',
         'vr-governor-override-schema-type-not-checked',
         'A collection-valued schema may not authorise FORCE_OFF or AUTO.');
+    }
+    if (sourceContract.objectRootOverride) {
+      requireLiteral(findings, overrideReader,
+        "$raw -notmatch '^\\s*\\{'",
+        'vr-governor-override-wire-root-unchecked',
+        'A persisted single-element JSON array may never become a scalar FORCE_OFF or AUTO.');
+      requireLiteral(findings, overrideReader,
+        '$state = $raw | ConvertFrom-Json',
+        'vr-governor-override-wire-parse-not-bound',
+        'Parse the same root-validated raw text, not an unverified pipeline.');
     }
     requireLiteral(findings, overrideReader,
       '$state.mode -is [string]',
