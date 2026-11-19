@@ -172,7 +172,7 @@ test('synchronous subscriber cancellation cannot dispatch a queued native discov
 
 test('audio page uses the canonical device selection and mic lifecycle, without any app input',async()=>{
   let permissions=0,stops=0;
-  const track={readyState:'live',stop(){stops++;this.readyState='ended';},addEventListener(){},removeEventListener(){}};
+  const track={readyState:'live',getSettings(){return {deviceId:'quest-mic'};},stop(){stops++;this.readyState='ended';},addEventListener(){},removeEventListener(){}};
   const audio=createHolodeckAudioControls({AudioContextCtor:null,navigatorRef:{mediaDevices:{
     enumerateDevices:async()=>[{kind:'audioinput',deviceId:'quest-mic',label:'Quest mic fixture'},{kind:'audiooutput',deviceId:'quest-out',label:'Quest speakers fixture'}],
     getUserMedia:async spec=>{permissions++;assert.deepEqual(spec,{audio:{deviceId:{exact:'quest-mic'}},video:false});return {getAudioTracks:()=>[track],getTracks:()=>[track]};},
