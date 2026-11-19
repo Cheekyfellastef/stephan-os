@@ -43,6 +43,7 @@ function Initialize-EmptyVersionNative {
         $method.SetImplementationFlags([Reflection.MethodImplAttributes]::PreserveSig)
     }
     $script:emptyNative=$builder.CreateType()
+    $script:emptyDirectoryContexts=[Collections.Generic.List[object]]::new()
 }
 function Invoke-EmptyVersionNative {
     param([string]$Name,[object[]]$Arguments)
@@ -52,6 +53,12 @@ function Invoke-EmptyVersionNative {
     if($Name -cne 'CloseHandle' -and $script:emptyClock.ElapsedMilliseconds -gt 10000){throw 'EMPTY_VERSION_OBSERVATION_BUDGET'}
     $method=$script:emptyNative.GetMethod($Name,[Reflection.BindingFlags]'Public,Static,DeclaredOnly')
     if($null -eq $method){throw 'EMPTY_VERSION_NATIVE_METHOD_UNPROVEN'}
+    if($Name -ceq 'CloseHandle' -and $null -ne $script:emptyDirectoryContexts){
+        # Revoke every context before the OS can recycle its numeric handle.
+        foreach($record in $script:emptyDirectoryContexts){
+            if($record.Handle -eq $Arguments[0]){$record.Closed=$true}
+        }
+    }
     return $method.Invoke($null,$Arguments)
 }
 function Get-EmptyVersionDigest {
@@ -101,33 +108,66 @@ function Get-EmptyVersionSecurity {
         return [pscustomobject]@{descriptor=$descriptor;sha256=(Get-EmptyVersionDigest $bytes)}
     }finally{if($buffer -ne [IntPtr]::Zero){[Runtime.InteropServices.Marshal]::FreeHGlobal($buffer)};[Runtime.InteropServices.Marshal]::FreeHGlobal($size)}
 }
-function Assert-EmptyVersionProtectedSecurity {
-    param($Security,[bool]$Ancestor=$false)
+function Assert-EmptyVersionSafeAcl {
+    param($Security,[string[]]$Allowed,[int]$WriteMask,[bool]$IgnoreInheritOnly=$false)
     $sd=$Security.descriptor
-    $allowed=@('S-1-5-18','S-1-5-32-544')
-    if($Ancestor){$allowed+='S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'}
-    # Same two-ancestor mutation mask as RuntimeFixedAncestorAclV1. New siblings
-    # cannot replace a pinned route component. Protected runtime roots/versions
-    # keep the full write mask, including CreateFiles/CreateDirectories.
-    $writeMask=if($Ancestor){0x500D0150}else{0x500D0156}
-    if($sd.Owner.Value -cnotin $allowed -or $null -eq $sd.DiscretionaryAcl -or
-        -not ($sd.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclPresent) -or
-        (-not $Ancestor -and -not ($sd.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected))){throw 'EMPTY_VERSION_PROTECTION_UNPROVEN'}
+    if($null -eq $sd -or $null -eq $sd.Owner -or $sd.Owner.Value -cnotin $Allowed -or
+        $null -eq $sd.DiscretionaryAcl -or
+        -not ($sd.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclPresent)){throw 'EMPTY_VERSION_PROTECTION_UNPROVEN'}
     foreach($ace in $sd.DiscretionaryAcl){
         if($ace -isnot [Security.AccessControl.CommonAce] -or $ace.IsCallback){throw 'EMPTY_VERSION_ACL_UNPROVEN'}
-        if($Ancestor -and (([int]$ace.AceFlags -band [int][Security.AccessControl.AceFlags]::InheritOnly) -ne 0)){continue}
+        if($IgnoreInheritOnly -and (([int]$ace.AceFlags -band [int][Security.AccessControl.AceFlags]::InheritOnly) -ne 0)){continue}
         if($ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and
-            ($ace.AccessMask -band $writeMask) -ne 0 -and $ace.SecurityIdentifier.Value -cnotin $allowed){throw 'EMPTY_VERSION_WRITE_AUTHORITY_UNPROVEN'}
+            ($ace.AccessMask -band $WriteMask) -ne 0 -and $ace.SecurityIdentifier.Value -cnotin $Allowed){throw 'EMPTY_VERSION_WRITE_AUTHORITY_UNPROVEN'}
     }
+}
+function Assert-EmptyVersionProtectedSecurity {
+    param($Security,[bool]$Ancestor=$false)
+    $allowed=@('S-1-5-18','S-1-5-32-544')
+    if($Ancestor){$allowed+='S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'}
+    $writeMask=if($Ancestor){0x500D0150}else{0x500D0156}
+    Assert-EmptyVersionSafeAcl $Security $allowed $writeMask $Ancestor
+    # Directory and version protections stay strict. Only the separate fixed
+    # installed-leaf reader can accept a safe inherited file descriptor.
+    if(-not $Ancestor -and -not ($Security.descriptor.ControlFlags -band
+        [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected)){throw 'EMPTY_VERSION_PROTECTION_UNPROVEN'}
+}
+function Assert-EmptyVersionInstalledLeafSecurity {
+    param($Security)
+    Assert-EmptyVersionSafeAcl $Security @('S-1-5-18','S-1-5-32-544') 0x500D0156
 }
 function Open-EmptyVersionDirectory {
     param([string]$Path,[bool]$Rename=$false)
+    if($null -eq $script:emptyDirectoryContexts -or $script:emptyDirectoryContexts.Count -ge 32){throw 'EMPTY_VERSION_CONTEXT_BOUND'}
     $access=[uint32]0x120081
     if($Rename){$access=[uint32]0x130081}
     $handle=Invoke-EmptyVersionNative 'CreateFileW' @($Path,$access,[uint32]1,[IntPtr]::Zero,[uint32]3,[uint32]0x02200000,[IntPtr]::Zero)
     if($handle -eq [IntPtr]::Zero -or $handle -eq [IntPtr](-1)){throw 'EMPTY_VERSION_OPEN_UNPROVEN'}
     $script:emptyPins.Add($handle)
-    return [pscustomobject]@{handle=$handle;info=(Get-EmptyVersionInformation $handle $true)}
+    $info=Get-EmptyVersionInformation $handle $true
+    $context=[pscustomobject]@{handle=$handle;info=$info}
+    # Independent snapshots are never derived from the caller's visible fields.
+    $snapshot=[pscustomobject]@{identity=$info.identity;volume=$info.volume;path=$info.path;
+        created=$info.created;attributes=$info.attributes}
+    $script:emptyDirectoryContexts.Add([pscustomobject]@{Context=$context;Handle=$handle;
+        Info=$snapshot;RequestedPath=$Path;SecuritySha256=(Get-EmptyVersionSecurity $handle).sha256;Closed=$false})
+    return $context
+}
+function Get-EmptyVersionRetainedDirectory {
+    param($Context)
+    $record=$null
+    foreach($candidate in $script:emptyDirectoryContexts){
+        if([object]::ReferenceEquals($candidate.Context,$Context)){$record=$candidate;break}
+    }
+    if($null -eq $record -or $record.Closed){throw 'EMPTY_VERSION_RETAINED_PARENT_UNPROVEN'}
+    $current=Get-EmptyVersionInformation $record.Handle $true
+    foreach($key in @('identity','volume','path','created','attributes')){
+        if($current.$key -cne $record.Info.$key){throw 'EMPTY_VERSION_RETAINED_PARENT_CHANGED'}
+    }
+    $security=Get-EmptyVersionSecurity $record.Handle
+    if($security.sha256 -cne $record.SecuritySha256){throw 'EMPTY_VERSION_RETAINED_PARENT_CHANGED'}
+    Assert-EmptyVersionProtectedSecurity $security
+    return $record
 }
 function Assert-EmptyVersionDirectory {
     param([IntPtr]$Handle)
@@ -253,6 +293,76 @@ function Read-EmptyVersionPinnedFile {
     if($stream.ReadByte() -ne -1 -or $stream.Length -ne $length){throw 'EMPTY_VERSION_FILE_CHANGED'}
     return ,$bytes
 }
+function Assert-EmptyVersionInstalledFileStreams {
+    param([IntPtr]$Handle,[long]$ExpectedLength)
+    $buffer=[Runtime.InteropServices.Marshal]::AllocHGlobal(16384)
+    $iosb=[Runtime.InteropServices.Marshal]::AllocHGlobal(2*[IntPtr]::Size)
+    try{
+        $status=Invoke-EmptyVersionNative 'NtQueryInformationFile' @($Handle,$iosb,$buffer,[uint32]16384,[int32]22)
+        if($status -ne 0){throw 'EMPTY_VERSION_STREAM_ENUMERATION_UNPROVEN'}
+        $length=if([IntPtr]::Size -eq 8){[Runtime.InteropServices.Marshal]::ReadInt64($iosb,[IntPtr]::Size)}else{[Runtime.InteropServices.Marshal]::ReadInt32($iosb,[IntPtr]::Size)}
+        if($length -lt 24 -or $length -gt 16384){throw 'EMPTY_VERSION_STREAM_RECORD_INVALID'}
+        $next=[Runtime.InteropServices.Marshal]::ReadInt32($buffer,0)
+        $nameLength=[Runtime.InteropServices.Marshal]::ReadInt32($buffer,4)
+        $size=[Runtime.InteropServices.Marshal]::ReadInt64($buffer,8)
+        if($next -ne 0 -or $nameLength -lt 2 -or ($nameLength % 2) -ne 0 -or $nameLength -gt ($length-24)){
+            throw 'EMPTY_VERSION_ALTERNATE_STREAM_PRESENT'
+        }
+        $bytes=[byte[]]::new($nameLength);[Runtime.InteropServices.Marshal]::Copy([IntPtr]::Add($buffer,24),$bytes,0,$nameLength)
+        if([Text.UnicodeEncoding]::new($false,$false,$true).GetString($bytes) -cne '::$DATA' -or $size -ne $ExpectedLength){
+            throw 'EMPTY_VERSION_ALTERNATE_STREAM_PRESENT'
+        }
+    }finally{[Runtime.InteropServices.Marshal]::FreeHGlobal($buffer);[Runtime.InteropServices.Marshal]::FreeHGlobal($iosb)}
+}
+function Read-EmptyVersionInstalledLeaf {
+    param($RootContext,$ParentContext,[string]$Name)
+    # No caller-selected path, limit or inheritance override.
+    $maximum=if($Name -ceq 'pending.json'){32768}elseif($Name -ceq 'host.exe'){2097152}else{throw 'EMPTY_VERSION_INSTALLED_LEAF_REFUSED'}
+    $root=Get-EmptyVersionRetainedDirectory $RootContext
+    $parent=Get-EmptyVersionRetainedDirectory $ParentContext
+    $expectedParentPath=$root.Info.path.TrimEnd('\')+'\'+$installedVersion
+    if(-not [string]::Equals($root.RequestedPath,$protectedRoot,[StringComparison]::OrdinalIgnoreCase) -or
+        -not [string]::Equals($parent.RequestedPath,[IO.Path]::Combine($protectedRoot,$installedVersion),[StringComparison]::OrdinalIgnoreCase) -or
+        $parent.Info.volume -ne $root.Info.volume -or
+        -not [string]::Equals($parent.Info.path,$expectedParentPath,[StringComparison]::OrdinalIgnoreCase)){
+        throw 'EMPTY_VERSION_INSTALLED_PARENT_UNPROVEN'
+    }
+    $path=[IO.Path]::Combine($parent.RequestedPath,$Name)
+    $handle=Invoke-EmptyVersionNative 'CreateFileW' @($path,[uint32]0x120089,[uint32]1,[IntPtr]::Zero,[uint32]3,[uint32]0x00200000,[IntPtr]::Zero)
+    if($handle -eq [IntPtr]::Zero -or $handle -eq [IntPtr](-1)){throw 'EMPTY_VERSION_OPEN_UNPROVEN'}
+    $safe=$null;$stream=$null
+    try{
+        $safe=[Microsoft.Win32.SafeHandles.SafeFileHandle]::new($handle,$true)
+        $stream=[IO.FileStream]::new($safe,[IO.FileAccess]::Read,4096,$false)
+        $script:emptyStreams.Add($stream)
+        $info=Get-EmptyVersionInformation $handle $false
+        $expectedLeafPath=$parent.Info.path.TrimEnd('\')+'\'+$Name
+        if($info.volume -ne $parent.Info.volume -or
+            -not [string]::Equals($info.path,$expectedLeafPath,[StringComparison]::OrdinalIgnoreCase)){
+            throw 'EMPTY_VERSION_INSTALLED_LEAF_PATH_UNPROVEN'
+        }
+        $security=Get-EmptyVersionSecurity $handle
+        Assert-EmptyVersionInstalledLeafSecurity $security
+        $length=$stream.Length
+        if($length -lt 1 -or $length -gt $maximum){throw 'EMPTY_VERSION_FILE_BOUND'}
+        Assert-EmptyVersionInstalledFileStreams $handle $length
+        $bytes=[byte[]]::new([int]$length);$offset=0
+        while($offset -lt $bytes.Length){$count=$stream.Read($bytes,$offset,$bytes.Length-$offset);if($count -le 0){throw 'EMPTY_VERSION_FILE_CHANGED'};$offset+=$count}
+        if($stream.ReadByte() -ne -1 -or $stream.Length -ne $length){throw 'EMPTY_VERSION_FILE_CHANGED'}
+        $after=Get-EmptyVersionInformation $handle $false
+        foreach($key in @('identity','volume','path','created','attributes')){
+            if($after.$key -cne $info.$key){throw 'EMPTY_VERSION_INSTALLED_LEAF_CHANGED'}
+        }
+        if((Get-EmptyVersionSecurity $handle).sha256 -cne $security.sha256){throw 'EMPTY_VERSION_INSTALLED_LEAF_CHANGED'}
+        Assert-EmptyVersionInstalledFileStreams $handle $length
+        [void](Get-EmptyVersionRetainedDirectory $RootContext)
+        [void](Get-EmptyVersionRetainedDirectory $ParentContext)
+        return ,$bytes
+    }finally{
+        # Successful streams stay retained until the existing entry cleanup.
+        if($null -eq $stream){if($null -ne $safe){$safe.Dispose()}else{[void](Invoke-EmptyVersionNative 'CloseHandle' @($handle))}}
+    }
+}
 function Write-EmptyVersionReceipt {
     param([string]$Path,$Record,[string]$OperatorSid)
     $acl=[Security.AccessControl.FileSecurity]::new()
@@ -300,7 +410,7 @@ function Invoke-EmptyVersionQuarantine {
         if(-not (Invoke-EmptyVersionNative 'GetVolumeInformationByHandleW' @($root.handle,[Text.StringBuilder]::new(64),[uint32]64,[IntPtr]::Zero,[IntPtr]::Zero,[IntPtr]::Zero,$fs,[uint32]64)) -or $fs.ToString() -cne 'NTFS'){throw 'EMPTY_VERSION_NTFS_REQUIRED'}
         $installedPin=Open-EmptyVersionDirectory ([IO.Path]::Combine($protectedRoot,$installedVersion))
         Assert-EmptyVersionProtectedSecurity (Get-EmptyVersionSecurity $installedPin.handle)
-        $pending=Read-EmptyVersionPinnedFile ([IO.Path]::Combine($protectedRoot,$installedVersion,'pending.json')) 32768 $true
+        $pending=Read-EmptyVersionInstalledLeaf $root $installedPin 'pending.json'
         $p=[Text.UTF8Encoding]::new($false,$true).GetString($pending)|ConvertFrom-Json
         if((Get-EmptyVersionDigest $pending) -cne $Bootstrap.Installed.PendingSha256 -or
             $p.SchemaVersion -cne 'stephanos.fixed-runtime-pending.v1'){throw 'EMPTY_VERSION_INSTALLED_CHANGED'}
@@ -310,7 +420,7 @@ function Invoke-EmptyVersionQuarantine {
         # ManifestSha256 is an exact commitment in the protected pending record;
         # the trusted installer embeds the manifest in the PE, not a third file.
         # Loading/qualifying that PE is expressly outside this recovery artifact.
-        $bytes=Read-EmptyVersionPinnedFile ([IO.Path]::Combine($protectedRoot,$installedVersion,'host.exe')) 2097152 $true
+        $bytes=Read-EmptyVersionInstalledLeaf $root $installedPin 'host.exe'
         if((Get-EmptyVersionDigest $bytes) -cne $Bootstrap.Installed.HelperSha256){throw 'EMPTY_VERSION_INSTALLED_CHANGED'}
         # Do not execute Git or load repository code with the elevated token.
         foreach($pair in @(@('.git\HEAD','ref: refs/heads/main'),@('.git\refs\heads\main',$Bootstrap.SourceHead))){

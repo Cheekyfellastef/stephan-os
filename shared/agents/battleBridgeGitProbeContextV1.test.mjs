@@ -1,18 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createBattleBridgeGitProbeContextV1, isBattleBridgeGitProbeContextV1,
   validateBattleBridgeGitProbeConfigurationV1 } from './battleBridgeGitProbeContextV1.mjs';
-import { BATTLE_BRIDGE_CANONICAL_REMOTE_URL, resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from './battleBridgeExecutionBoundaryV1.mjs';
+import { BATTLE_BRIDGE_CANONICAL_REMOTE_URL, resolveBattleBridgeGitExecution, resolveBattleBridgePhysicalPathV1, inspectBattleBridgeGitTopology, validateBattleBridgeLocalGitConfiguration } from './battleBridgeExecutionBoundaryV1.mjs';
 import { collectCanonicalIgnitionSourceTruth } from '../../scripts/battle-bridge-ignition-supervisor.mjs';
 
 const g = resolveBattleBridgeGitExecution();
 function fixture(t) {
-  const base = mkdtempSync(path.join(tmpdir(), 'git-source-context-fixture-'));
+  const base = mkdtempSync(path.join(resolveBattleBridgePhysicalPathV1(tmpdir()), 'git-source-context-fixture-'));
   const root = path.join(base, 'main'); mkdirSync(root);
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const run = (args, context = null, allowFailure = false) => {
@@ -40,7 +40,7 @@ function contextFor(t, root) {
   const privateRoot = context.repositoryArgs()[0].slice('--git-dir='.length);
   // Explicit disposable fixture cleanup also handles intentionally damaged test
   // contexts which the production cleanup correctly refuses to delete.
-  assert.ok(path.resolve(privateRoot).startsWith(path.resolve(tmpdir()) + path.sep + 'stephanos-git-source-probe-'));
+  assert.ok(path.resolve(privateRoot).startsWith(path.resolve(resolveBattleBridgePhysicalPathV1(tmpdir())) + path.sep + 'stephanos-git-source-probe-'));
   t.after(() => { try { context.close(); } catch {} rmSync(privateRoot, { recursive: true, force: true }); });
   return { context, privateRoot };
 }
@@ -167,7 +167,7 @@ test('private configuration drift during the source frame stops before another G
   const f = fixture(t); let privateRoot, changed = false, commandsAfterDrift = 0;
   t.after(() => {
     if (privateRoot) {
-      assert.ok(path.resolve(privateRoot).startsWith(path.resolve(tmpdir()) + path.sep + 'stephanos-git-source-probe-'));
+      assert.ok(path.resolve(privateRoot).startsWith(path.resolve(resolveBattleBridgePhysicalPathV1(tmpdir())) + path.sep + 'stephanos-git-source-probe-'));
       rmSync(privateRoot, { recursive: true, force: true });
     }
   });
@@ -197,3 +197,81 @@ test('unqualified nested checkout is refused before status can enter another Git
     } });
   assert.equal(result.ok, false); assert.equal(result.blocker.code, 'CANONICAL_GIT_PROBE_SUBMODULE_UNSUPPORTED');
 });
+
+test('runtime physical adapter never falls back or caches success when native resolution is unavailable', t => {
+  const f = fixture(t), { context } = contextFor(t, f.root);
+  const originals = ['HEAD', 'index', 'config'].map(name => readFileSync(path.join(f.root, '.git', name)));
+  const native = realpathSync.native, canonical = realpathSync(f.root);
+  try {
+    for (const mode of ['unavailable', 'error']) {
+      realpathSync.native = mode === 'unavailable' ? undefined : () => { throw Object.assign(new Error('fixture native failure'), { code: 'EACCES' }); };
+      if (process.platform === 'win32') {
+        // A caller cannot opt a Windows authority read back into the old route.
+        assert.throws(() => resolveBattleBridgePhysicalPathV1(f.root, { platform: 'linux' }));
+        assert.equal(inspectBattleBridgeGitTopology(f.root).ok, false);
+        assert.equal(inspectBattleBridgeGitTopology(f.root).blocker, 'CANONICAL_GIT_TOPOLOGY_UNPROVEN');
+        assert.equal(isBattleBridgeGitProbeContextV1(context, f.root), false);
+        assert.throws(() => context.assert(), /CANONICAL_GIT_PROBE_/);
+        assert.throws(() => context.repositoryArgs(), /CANONICAL_GIT_PROBE_/);
+        assert.throws(() => createBattleBridgeGitProbeContextV1(f.root), /CANONICAL_GIT_PROBE_/);
+      } else {
+        // POSIX retains the original resolver even if a Windows selector is supplied.
+        assert.equal(resolveBattleBridgePhysicalPathV1(f.root, { platform: 'win32' }), canonical);
+        assert.equal(inspectBattleBridgeGitTopology(f.root).ok, true);
+        assert.equal(isBattleBridgeGitProbeContextV1(context, f.root), true);
+        assert.equal(context.assert(), true);
+      }
+    }
+  } finally { realpathSync.native = native; }
+  assert.equal(context.assert(), true);
+  ['HEAD', 'index', 'config'].forEach((name, i) => assert.deepEqual(readFileSync(path.join(f.root, '.git', name)), originals[i]));
+  assert.equal(context.close(), true);
+});
+
+test('private context rejects a redirected ancestor without changing the canonical index', t => {
+  const f = fixture(t), redirect = path.join(f.base, 'redirected-ancestor');
+  const index = readFileSync(path.join(f.root, '.git', 'index'));
+  symlinkSync(f.root, redirect, process.platform === 'win32' ? 'junction' : 'dir');
+  assert.throws(() => createBattleBridgeGitProbeContextV1(redirect), /CANONICAL_GIT_PROBE_DIRECTORY_UNPROVEN/);
+  const { context } = contextFor(t, f.root);
+  assert.equal(context.assert(), true); assert.deepEqual(readFileSync(path.join(f.root, '.git', 'index')), index);
+  assert.equal(context.close(), true);
+});
+
+test('actual Windows 8.3 temporary alias gets a physical private allocation while source aliases remain denied',
+  { skip: process.platform !== 'win32', concurrency: false }, t => {
+    const aliasBase = tmpdir(), physicalBase = resolveBattleBridgePhysicalPathV1(aliasBase);
+    if (!/~[0-9]/i.test(aliasBase) || path.resolve(aliasBase).toLowerCase() === path.resolve(physicalBase).toLowerCase()) {
+      t.skip('This host exposes no actual 8.3 temporary-directory alias');
+      return;
+    }
+    // The fixture is created beneath the physical base before the environment
+    // is set to the actual short alias. No mocked resolver supplies this proof.
+    const f = fixture(t), index = readFileSync(path.join(f.root, '.git', 'index'));
+    const aliasedRoot = path.join(aliasBase, path.relative(physicalBase, f.root));
+    assert.equal(resolveBattleBridgePhysicalPathV1(aliasedRoot).toLowerCase(), f.root.toLowerCase());
+    assert.notEqual(path.resolve(aliasedRoot).toLowerCase(), path.resolve(f.root).toLowerCase());
+    const saved = { TEMP: process.env.TEMP, TMP: process.env.TMP };
+    let context, privateRoot;
+    try {
+      process.env.TEMP = aliasBase; process.env.TMP = aliasBase;
+      assert.equal(tmpdir(), aliasBase);
+      context = createBattleBridgeGitProbeContextV1(f.root);
+      privateRoot = context.repositoryArgs()[0].slice('--git-dir='.length);
+      assert.equal(path.dirname(privateRoot).toLowerCase(), physicalBase.toLowerCase());
+      assert.equal(resolveBattleBridgePhysicalPathV1(privateRoot).toLowerCase(), privateRoot.toLowerCase());
+      assert.equal(context.assert(), true);
+      assert.equal(isBattleBridgeGitProbeContextV1(context, f.root), true);
+      assert.equal(isBattleBridgeGitProbeContextV1(context, aliasedRoot), false);
+      assert.throws(() => createBattleBridgeGitProbeContextV1(aliasedRoot), /CANONICAL_GIT_PROBE_DIRECTORY_UNPROVEN/);
+      const topology = inspectBattleBridgeGitTopology(aliasedRoot);
+      assert.equal(topology.ok, false); assert.equal(topology.blocker, 'CANONICAL_GIT_REPARSE_POINT_PRESENT');
+      assert.deepEqual(readFileSync(path.join(f.root, '.git', 'index')), index);
+      assert.equal(context.close(), true); assert.equal(existsSync(privateRoot), false);
+    } finally {
+      for (const key of ['TEMP', 'TMP']) {
+        if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key];
+      }
+      if (context) { try { context.close(); } catch {} }
+    }
+  });
