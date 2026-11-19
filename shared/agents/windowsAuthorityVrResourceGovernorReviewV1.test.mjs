@@ -385,6 +385,26 @@ test('one exact P0 escalation rejects inconsistent typed counts and false-clean 
   }
 });
 
+test('specialist refuses noncanonical case-modified source head even when it aliases the same Git object', () => {
+  const baseline = input();
+  const accepted = analyzeWindowsAuthorityVrResourceGovernorReviewV1(baseline);
+  assert.equal(accepted.clean, true);
+  assert.equal(accepted.proofRefs.length, 1);
+  for (const [name, sourceHead] of [
+    ['uppercase head', HEAD.toUpperCase()],
+    ['mixed case head', HEAD.slice(0, 8).toUpperCase() + HEAD.slice(8)],
+    ['padded head', ' ' + HEAD + ' '],
+  ]) {
+    const rejected = analyzeWindowsAuthorityVrResourceGovernorReviewV1(
+      input(governor, { sourceHead }));
+    assert.equal(rejected.eligible, false, name);
+    assert.equal(rejected.clean, false, name);
+    assert.deepEqual(rejected.proofRefs, [], name);
+    assert.equal(rejected.mergeAuthority, false, name);
+    assert.equal(rejected.providerQualificationAuthority, false, name);
+  }
+});
+
 test('rejects array-coerced source and escalation identities before reviewer proof', () => {
   const baseline = input();
   const finding = baseline.analysis.findings[0];

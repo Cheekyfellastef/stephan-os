@@ -372,7 +372,7 @@ function reviewGovernor(source, findings) {
 export function analyzeWindowsAuthorityVrResourceGovernorReviewV1(input = {}) {
   // Fail closed rather than coercing collection identities into trusted source claims.
   const repository = typeof input.repository === 'string' ? input.repository : '';
-  const sourceHead = typeof input.sourceHead === 'string' ? input.sourceHead.toLowerCase() : '';
+  const sourceHead = typeof input.sourceHead === 'string' ? input.sourceHead : '';
   if (repository !== REPOSITORY || !SHA.test(sourceHead) || !exactEscalation(input.analysis)) {
     return Object.freeze({
       schemaVersion: SCHEMA,
