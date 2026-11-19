@@ -157,6 +157,39 @@ export async function readVerifiedStephanosNativeRoutingCandidate(options = {}) 
     });
   }
 
+  // A publisher CHECKING/BLOCKED/STOPPED observation occupies the same fixed
+  // status slot as a signed capacity record, but conveys NO native authority.
+  // Distinguish this known producer shape from a malformed *signed* receipt.
+  // Preserve verification for every record that does claim a capacityReceipt.
+  const phase = status?.diagnostic?.phase;
+  if (status?.schemaVersion === 'shared-agent-workspace-record.v1'
+    && status?.statusId === STEPHANOS_NATIVE_CAPACITY_STATUS_ID
+    && status?.participantId === 'stephanos-native-battle-bridge'
+    && ['CHECKING', 'BLOCKED', 'STOPPED'].includes(phase)
+    && status?.status === phase
+    && status?.diagnostic?.schemaVersion === 'stephanos.native-capacity-observation.v1'
+    && status?.diagnostic?.qualificationProven === false
+    && status?.sourceMutationAllowed === false
+    && status?.arbitraryCommandAllowed === false
+    && status?.mergeAuthority === false
+    && status?.leaseSeizureAllowed === false
+    && status?.duplicateDispatchAllowed === false
+    && !Object.hasOwn(status, 'capacityReceipt')
+    && !Object.hasOwn(status, 'sourceAuthority')
+    && !Object.hasOwn(status, 'publisherAttestation')) {
+    const rawReason = text(status.diagnostic.reason);
+    return frozen({
+      schemaVersion: STEPHANOS_NATIVE_ROUTING_ADMISSION_SCHEMA,
+      ok: false,
+      reason: 'STEPHANOS_NATIVE_PUBLISHER_DIAGNOSTIC_ONLY',
+      publisherPhase: phase,
+      publisherReason: /^[a-z][a-z0-9-]{2,100}$/.test(rawReason) ? rawReason : '',
+      candidate: null,
+      mergeAuthority: false,
+      leaseSeizureAllowed: false,
+    });
+  }
+
   const receipt = status?.capacityReceipt;
   const authority = status?.sourceAuthority;
   const payload = receipt?.payload;

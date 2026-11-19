@@ -174,3 +174,58 @@ test('missing, malformed or untrusted publisher status cannot admit native capac
     assert.equal(result.leaseSeizureAllowed, false, scenario);
   }
 });
+
+test('native publisher diagnostic-only slot identifies its phase but grants no signed capacity', async () => {
+  for (const phase of ['CHECKING', 'BLOCKED', 'STOPPED']) {
+    const result = await admit((status) => {
+      delete status.capacityReceipt;
+      delete status.sourceAuthority;
+      delete status.publisherAttestation;
+      status.status = phase;
+      status.sourceMutationAllowed = false;
+      status.diagnostic = {
+        schemaVersion: 'stephanos.native-capacity-observation.v1',
+        phase,
+        reason: 'native-capacity-source-dirty',
+        sourceHead: SOURCE_HEAD,
+        expiresAtUtc: '2026-08-10T12:03:00.000Z',
+        qualificationProven: false,
+      };
+      return status;
+    });
+    assert.equal(result.ok, false, phase);
+    assert.equal(result.reason, 'STEPHANOS_NATIVE_PUBLISHER_DIAGNOSTIC_ONLY', phase);
+    assert.equal(result.publisherPhase, phase);
+    assert.equal(result.publisherReason, 'native-capacity-source-dirty');
+    assert.equal(result.candidate, null);
+    assert.equal(result.mergeAuthority, false);
+    assert.equal(result.leaseSeizureAllowed, false);
+  }
+});
+
+test('forged diagnostic wrapping a malformed receipt cannot suppress signed validator', async () => {
+  for (const variation of ['receipt-present', 'wrong-schema', 'qualification-true', 'unsafe-flag']) {
+    const result = await admit((status) => {
+      delete status.capacityReceipt;
+      delete status.sourceAuthority;
+      delete status.publisherAttestation;
+      status.status = 'BLOCKED';
+      status.sourceMutationAllowed = false;
+      status.diagnostic = {
+        schemaVersion: 'stephanos.native-capacity-observation.v1',
+        phase: 'BLOCKED', reason: 'native-capacity-source-dirty',
+        qualificationProven: false,
+      };
+      if (variation === 'receipt-present') status.capacityReceipt = {};
+      if (variation === 'wrong-schema') status.diagnostic.schemaVersion = 'untrusted';
+      if (variation === 'qualification-true') status.diagnostic.qualificationProven = true;
+      if (variation === 'unsafe-flag') status.mergeAuthority = true;
+      return status;
+    });
+    assert.equal(result.ok, false, variation);
+    assert.equal(result.reason, 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:receipt-shape-invalid', variation);
+    assert.equal(result.candidate, null, variation);
+    assert.equal(result.mergeAuthority, false, variation);
+    assert.equal(result.leaseSeizureAllowed, false, variation);
+  }
+});
