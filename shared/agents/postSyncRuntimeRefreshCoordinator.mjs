@@ -1,11 +1,15 @@
 import { types as nodeTypes } from 'node:util';
 import {
+  POST_SYNC_GOVERNOR_PROOF_SCHEMA,
+  projectPostSyncGovernorProof,
   POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
   POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
   projectPostSyncSovereignRelayObservation,
   projectPostSyncSovereignRelayProof,
 } from '../../scripts/battle-bridge-github-sync-policy.mjs';
 export {
+  POST_SYNC_GOVERNOR_PROOF_SCHEMA,
+  projectPostSyncGovernorProof,
   POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
   POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
   projectPostSyncSovereignRelayObservation,
@@ -129,7 +133,48 @@ const SOVEREIGN_RELAY_RUNTIME_EXACT = new Set([
   'scripts/sovereign-commander-native-inspect.mjs',
 ]);
 
+// Exact source-activation model. The recipe/source-capture and complete Git
+// inventories are checked independently by regressions; no directory rule or
+// runtime recipe discovery can grant a new sibling an activation owner.
+export const STARFIELD_NATIVE_BUILD_ACTIVATION = Object.freeze({
+  freshCapture: Object.freeze([
+  'scripts/windows/starfield-native-build/native_build.py',
+  'scripts/windows/starfield-native-build/owned_job.py',
+  'scripts/windows/starfield-native-build/start_native_build.ps1',
+  'scripts/windows/starfield-native-build/pinned_python_runtime.ps1',
+  'scripts/windows/starfield-native-build/python_runtime_v1.json',
+  ]),
+  offlineBuild: Object.freeze([
+  'scripts/windows/starfield-native-build/.gitattributes',
+  'scripts/windows/starfield-native-build/governor_owner_fixture.py',
+  'scripts/windows/starfield-native-build/install_pinned_python_runtime.ps1',
+  'scripts/windows/starfield-native-build/owned_job_fixture.py',
+  'scripts/windows/starfield-native-build/runtime_filtered_user_fixture.ps1',
+  'scripts/windows/starfield-native-build/test_native_build.py',
+  'scripts/windows/starfield-native-build/test_owned_job.py',
+  'scripts/windows/starfield-native-build/test_pinned_python_runtime.py',
+  'scripts/windows/starfield-native-build/test_start_native_build.py',
+  ]),
+  offlinePackage: Object.freeze([
+  'VR-Research-Lab/native/starfield-paired-observer-v1/.gitattributes',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/README.md',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/build-recipe.json',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/analyze-paired-source-observation.py',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/build-paired-source-observe.cmd',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/native-paired-source-observer.h',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/paired-observer-recipe.json',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/paired-source-observation.h',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/reconstruct_paired_observer.py',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/scoped-eye-ledger.h',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/test-paired-scoped-eye-ledger.cpp',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/test-paired-source-observation.cpp',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/test-paired-source-observer-source.py',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/test-scoped-eye-ledger.cpp',
+  ]),
+});
+const GOVERNOR_RUNTIME_PATH = 'scripts/windows/run-vr-resource-governor.ps1';
 const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
+  GOVERNOR_RUNTIME_PATH,
   ...SOVEREIGN_RELAY_RUNTIME_EXACT,
   'scripts/windows/status-stephanos-core-daemon.ps1',
   'scripts/stephanos-core-daemon.mjs',
@@ -167,6 +212,7 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
 ]);
 
 const NATURAL_EXACT = new Set([
+  ...STARFIELD_NATIVE_BUILD_ACTIVATION.freshCapture,
   // The fixed Caravan bridge rereads and hash-checks this read-only probe in
   // a fresh bounded child. Adoption checks source only; it invokes no probe,
   // native PREPARE, enrollment or installer and never qualifies the helper.
@@ -317,6 +363,8 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
 ]);
 
 const NO_RUNTIME_EXACT = new Set([
+  ...STARFIELD_NATIVE_BUILD_ACTIVATION.offlineBuild,
+  ...STARFIELD_NATIVE_BUILD_ACTIVATION.offlinePackage,
   'scripts/windows/Test-StarfieldMonitorSplash.ps1',
   'scripts/windows/starfield-native-monitor/test_splash_monitor_bridge.py',
   'scripts/windows/starfield-native-monitor/test_run_native_eye_output_monitor.py',
@@ -631,7 +679,7 @@ function isNaturalReloadPath(path) {
 }
 
 export function classifyPostSyncRefresh(changedPaths = [], {
-  sovereignRelayRefreshRequired = false, spatialAdoptionRequired = false,
+  sovereignRelayRefreshRequired = false, governorRefreshRequired = false, spatialAdoptionRequired = false,
 } = {}) {
   const safePaths = [];
   const unsafePaths = [];
@@ -694,6 +742,8 @@ export function classifyPostSyncRefresh(changedPaths = [], {
 
   const relayRequired = sovereignRelayRefreshRequired === true
     || safePaths.some((path) => SOVEREIGN_RELAY_RUNTIME_EXACT.has(path));
+  const governorRequired = governorRefreshRequired === true || safePaths.includes(GOVERNOR_RUNTIME_PATH);
+  if (governorRequired) targets.add(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER);
   const spatialRequired = spatialAdoptionRequired === true || spatialAdoptionPaths.length > 0;
   // A later revert can remove a path from the net diff without proving that an
   // earlier partially refreshed relay stopped using it. Preserve its debt.
@@ -724,6 +774,7 @@ export function classifyPostSyncRefresh(changedPaths = [], {
     // physical acceptance requirement when either manifest changed.
     pluginHostActivationRequired: safePaths.some((path) => SOVEREIGN_COMMANDER_PLUGIN_MANIFESTS.has(path)),
     sovereignRelayRefreshRequired: relayRequired,
+    governorRefreshRequired: governorRequired,
     automaticExecutionAllowed: unsafePaths.length === 0 && unknownPaths.length === 0,
     internal: Object.freeze({
       safePaths: Object.freeze([...new Set(safePaths)]),
@@ -750,9 +801,11 @@ function resultPass(result, expectedHead) {
 export function postSyncRefreshTargetResultPass(result, { targetId, plan, expectedHead } = {}) {
   if (!resultPass(result, expectedHead)) return false;
   if (result?.targetId !== undefined && result.targetId !== targetId) return false;
-  if (targetId !== POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER || plan?.sovereignRelayRefreshRequired !== true) return true;
-  return (result.blocker === undefined || result.blocker === '')
-    && projectPostSyncSovereignRelayProof(result.sovereignRelayProof, expectedHead) !== null;
+  if (targetId !== POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER) return true;
+  return (plan?.sovereignRelayRefreshRequired !== true
+      || projectPostSyncSovereignRelayProof(result.sovereignRelayProof, expectedHead) !== null)
+    && (plan?.governorRefreshRequired !== true
+      || projectPostSyncGovernorProof(result.governorProof, expectedHead) !== null);
 }
 
 export const POST_SYNC_TARGET_FAILURE_HISTORY_SCHEMA = 'stephanos.post-sync-target-failure-history.v1';
@@ -769,7 +822,7 @@ const TARGET_FAILURE_CODES = new Set([
   'SOVEREIGN_COMMANDER_STALE_CONTRACT_RECYCLE_FAILED', 'SOVEREIGN_COMMANDER_START_FAILED',
   'SOVEREIGN_COMMANDER_NOT_HEALTHY', 'SOVEREIGN_COMMANDER_REFRESH_RECEIPT_INVALID',
   'SOVEREIGN_COMMANDER_REFRESH_PROOF_INVALID', 'SOVEREIGN_COMMANDER_EXACT_HEAD_PROOF_FAILED',
-  'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN',
+  'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN', 'SOVEREIGN_GOVERNOR_REFRESH_PROOF_UNPROVEN',
   'GITHUB_MAILBOX_RESTART_FAILED', 'GITHUB_MAILBOX_RESTART_PROOF_INVALID', 'GITHUB_MAILBOX_EXACT_HEAD_PROOF_FAILED',
   'APPROVED_RUNTIME_RESTART_RESPONSE_INVALID', 'APPROVED_RUNTIME_RESTART_PROCESS_TIMEOUT',
   'UI_4173_EXACT_HEAD_PROOF_FAILED', 'VR_ATLAS_BROWSER_PROOF_RESPONSE_INVALID', 'VR_ATLAS_BROWSER_PROOF_BLOCKED',
@@ -842,7 +895,7 @@ export async function executePostSyncRefreshPlan({
   changedPaths,
   adapters = {},
   completedResults = [],
-  sovereignRelayRefreshRequired = false,
+  sovereignRelayRefreshRequired = false, governorRefreshRequired = false,
   spatialAdoptionRequired = false,
   onTargetComplete,
 } = {}) {
@@ -856,7 +909,7 @@ export async function executePostSyncRefreshPlan({
     });
   }
 
-  const plan = classifyPostSyncRefresh(changedPaths, { sovereignRelayRefreshRequired, spatialAdoptionRequired });
+  const plan = classifyPostSyncRefresh(changedPaths, { sovereignRelayRefreshRequired, governorRefreshRequired, spatialAdoptionRequired });
   if (!plan.automaticExecutionAllowed) {
     return Object.freeze({
       ok: false,
@@ -960,9 +1013,14 @@ export async function executePostSyncRefreshPlan({
     // reducing failure history. Such a result cannot clear relay refresh debt.
     if (targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER && plan.sovereignRelayRefreshRequired
       && resultPass(result, afterHead)
-      && !postSyncRefreshTargetResultPass(result, { targetId, plan, expectedHead: afterHead })) {
+      && !projectPostSyncSovereignRelayProof(result.sovereignRelayProof, afterHead)) {
       result = { ...result, ok: false, exactHeadProofOk: false, freshProcessLoaded: false,
         sovereignRelayProof: null, blocker: 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN' };
+    }
+    if (targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER && plan.governorRefreshRequired
+      && resultPass(result, afterHead) && !projectPostSyncGovernorProof(result.governorProof, afterHead)) {
+      result = { ...result, ok: false, exactHeadProofOk: false, freshProcessLoaded: false,
+        governorProof: null, blocker: 'SOVEREIGN_GOVERNOR_REFRESH_PROOF_UNPROVEN' };
     }
     const completed = Object.freeze({ ...result, targetId });
     results.push(completed);
@@ -1079,11 +1137,14 @@ export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', a
     spatialAdoptionRequired: plan.spatialAdoptionRequired === true,
     pluginHostActivationRequired: plan.pluginHostActivationRequired === true,
     sovereignRelayRefreshRequired: plan.sovereignRelayRefreshRequired === true,
+    governorRefreshRequired: plan.governorRefreshRequired === true,
     unknownPathCount: Number(plan.unknownPathCount || 0),
     unsafePathCount: Number(plan.unsafePathCount || 0),
     exactHeadProofOk: result.exactHeadProofOk === true,
     safeRefreshesCompleted: result.safeRefreshesCompleted === true,
     resultTargets: Array.isArray(result.results) ? result.results.map((entry) => {
+      const governorProof = projectPostSyncGovernorProof(entry.governorProof, afterHead);
+      const governorRequired = entry.targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER && plan.governorRefreshRequired === true;
       const relayProof = projectPostSyncSovereignRelayProof(entry.sovereignRelayProof, afterHead);
       const relayObservation = projectPostSyncSovereignRelayObservation(entry.sovereignRelayObservation, afterHead);
       const required = entry.targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER && plan.sovereignRelayRefreshRequired === true;
@@ -1096,7 +1157,9 @@ export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', a
         exactHeadProofOk: entry.exactHeadProofOk === true && qualified,
         sourceHead: validHead(entry.sourceHead) ? String(entry.sourceHead).toLowerCase() : '',
         blocker: String(entry.blocker || (qualified ? '' : missingRelayProof
-          ? 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN' : 'REFRESH_TARGET_PROOF_FAILED')),
+          ? 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN' : governorRequired && !governorProof
+            ? 'SOVEREIGN_GOVERNOR_REFRESH_PROOF_UNPROVEN' : 'REFRESH_TARGET_PROOF_FAILED')),
+        ...(governorProof ? { governorProof } : {}),
         ...(relayProof ? { sovereignRelayProof: relayProof } : {}),
         ...(relayObservation ? { sovereignRelayObservation: relayObservation } : {}),
       };

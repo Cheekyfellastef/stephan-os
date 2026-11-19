@@ -61,3 +61,42 @@ an Actions artifact, a source-only classification or a healthy Commander HTTP
 daemon alone cannot establish that the relay loaded the new reader. The full
 rollout path inventory is checked as a unit; accumulated unknown refresh debt
 must remain visible and must not be omitted to claim this package is live.
+
+## Native-build package closure and independent Governor adoption
+
+The retained 818-path range from d729d17c to db730 contained 28 unknown paths.
+Repeated incident-only lists missed the native-build package and a resident
+Governor entry. The shared classifier now keeps exact fresh-capture/offline
+groups; production classification performs no recipe discovery or directory
+scan. Completeness tests independently bind those groups to the builder's five
+literal captured helpers, recipe publicMembers with content hashes, and both
+complete 14-member package trees including dotfiles. New neighbours remain
+unknown until their owner is reviewed. The actual retained range is a fixture,
+so Spatial, plugin, relay and other existing refresh obligations remain visible.
+
+Native-build helpers are captured anew by their guarded builder; adopting their
+source does not run a build. Package inputs, tests, metadata and the attended
+Python installer require no automatic runtime action. Installation, protected
+toolchain selection, native execution custody and useful build proof retain
+their existing owners and gates.
+
+The Governor belongs to the existing Commander watchdog. A scoped retained
+Governor requirement survives checkpoints, generic completions and net reverts.
+Only the actual watchdog's normal-operator observation, complete singleton
+inventory, matching process birth/image/command, advancing fresh progress and
+post-progress current-source check at the same before/after canonical source
+head and content digest can supply its bounded source-epoch proof. The existing
+owned lifecycle now requires birth at or after the actual source write time;
+the former two-second allowance cannot leave an obsolete process permanently
+eligible. Final receipt-time re-observation follows slow Core/relay/fleet work
+and requires a fresh advancing update from that same singleton identity.
+Generic HTTP/relay health and
+watchdog exit 4 cannot pay that obligation. Unrelated Commander or relay work
+does not acquire a Governor prerequisite. This receipt proves observed source
+adoption under the strengthened source-epoch owner contract; it is not loaded-byte
+attestation or permission to bypass native qualification, gaming policy, Core
+custody, plugin activation or Spatial adoption.
+
+Changing the shared sync-policy proof/debt contract changes the fixed-runtime
+source closure. Protected source merge and test success do not commission that
+new closure: its existing attended installation and later real boot gate apply.

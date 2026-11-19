@@ -545,3 +545,42 @@ test('missing canonical repository fails before any Git command', async () => {
     assert.deepEqual(git.calls, []);
   } finally { await rm(fx.root, { recursive: true, force: true }); }
 });
+
+test('actual sync writer retains scoped Governor obligation across advance, fetch failure and generic completion', async t => {
+  const fx = await fixture(); t.after(() => rm(fx.root, { recursive: true, force: true }));
+  const C = 'c'.repeat(40), targetId = 'sovereign-commander';
+  const refreshPath = path.join(fx.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json');
+  await mkdir(path.dirname(refreshPath), { recursive: true });
+  const retained = { schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.status',
+    statusId: 'post-sync-runtime-refresh-current', beforeHead: A, afterHead: B, phase: 'blocked',
+    classification: 'BLOCKED_REFRESH_FAILED', finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED', exactHeadProofOk: false,
+    blocker: 'SOVEREIGN_GOVERNOR_REFRESH_PROOF_UNPROVEN', targetIds: [targetId], resultTargets: [],
+    changedPathCount: 1, noRuntimePathCount: 0, unknownPathCount: 0, unsafePathCount: 0,
+    openClawPathCount: 0, pluginHostActivationRequired: false, sovereignRelayRefreshRequired: false, governorRefreshRequired: true };
+  await writeFile(refreshPath, JSON.stringify(retained));
+  await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths,
+    git: fakeGit({ localBefore: B, remote: C, mergeBase: B }) });
+  const debt = (await readStatus(fx.workspaceRoot)).pendingRefresh;
+  assert.equal(debt.governorRefreshRequired, true);
+  assert.equal(debt.sovereignRelayRefreshRequired, false);
+  assert.deepEqual(debt.spans, [{ beforeHead: A, afterHead: C }]);
+  await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths,
+    git: fakeGit({ localBefore: C, remote: C, mergeBase: C, fetchOk: false }) });
+  assert.deepEqual((await readStatus(fx.workspaceRoot)).pendingRefresh, debt);
+  const generic = { ...retained, afterHead: C, phase: 'complete', classification: 'REFRESH_COMPLETE',
+    finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_PASS', exactHeadProofOk: true, blocker: '', governorRefreshRequired: false,
+    resultTargets: [{ targetId, ok: true, exactHeadProofOk: true, sourceHead: C, blocker: '' }] };
+  await writeFile(refreshPath, JSON.stringify(generic));
+  await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths,
+    git: fakeGit({ localBefore: C, remote: C, mergeBase: C }) });
+  assert.deepEqual((await readStatus(fx.workspaceRoot)).pendingRefresh, debt);
+  const governorProof = { schemaVersion: 'stephanos.post-sync-governor-proof.v1', watchdogSucceeded: true,
+  normalOperatorObserved: true, healthy: true, inventoryComplete: true, processCount: 1,
+  identityVerified: true, progressVerified: true, currentSourceVerified: true,
+  sourceHead: C, sourceHeadMatchesLive: true, sourceSha256: 'a'.repeat(64), blocker: '' };
+  await writeFile(refreshPath, JSON.stringify({ ...generic, governorRefreshRequired: true,
+    resultTargets: [{ ...generic.resultTargets[0], governorProof }] }));
+  await runBattleBridgeGitHubSync({ paths: fx.paths, expectedPaths: fx.paths,
+    git: fakeGit({ localBefore: C, remote: C, mergeBase: C }) });
+  assert.equal((await readStatus(fx.workspaceRoot)).pendingRefresh, null);
+});
