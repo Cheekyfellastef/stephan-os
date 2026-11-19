@@ -100,3 +100,41 @@ custody, plugin activation or Spatial adoption.
 Changing the shared sync-policy proof/debt contract changes the fixed-runtime
 source closure. Protected source merge and test success do not commission that
 new closure: its existing attended installation and later real boot gate apply.
+
+## Startup degradation and remaining mandatory obligations
+
+The real coordinator/projection/preflight composition exposed two instances of
+the same defect. A desktop-plugin hold could hide retained Spatial adoption
+debt, and classifying the Governor under its real owner made Commander custody
+degradation capable of hiding the new Governor proof requirement. A displayed
+blocker did not describe all unpaid obligations. The earlier PR3539 interaction
+review was superseded; merging it did not authorize commissioning this state.
+
+All three optional startup waivers now consume one closed residual-obligation
+model derived from the canonical current-head refresh projection. Every target
+needs its own exact-head result; scoped Governor and relay debt need their
+existing closed proofs. Spatial, plugin, approval, unsafe and unknown debt stay
+separate. Missing, malformed, contradictory or future unknown authority fields
+stay unproved. A waiver may cover only its one declared optional hold. An
+unexecuted trailing natural-reload target has no adoption evidence and cannot be
+silently paid. These startup decisions never manufacture REFRESH_COMPLETE or
+clear the existing retained refresh records.
+
+An auxiliary-control-plane-only waiver additionally requires the existing sync
+child's actually published same-head status and a fresh read of the canonical
+completion/debt records. The existing fixed adapter checks current HEAD before
+and after those reads. Shared consumers rerun canonical completion/debt
+inspection and resolution using only the bounded ancestry observations made by
+the existing Git adapter. A missing publication, missing completion, source
+advance or unresolved span leaves the witness unavailable. No-history cases do
+not infer authority from absent refresh output. This proves commit binding and
+settled canonical adoption debt, not atomic absence of dirty edits, loaded
+memory bytes, native qualification, interactive acceptance or new execution
+authority.
+
+Regressions compose the actual coordinator, projection and Ignition preflight
+across optional and mandatory obligations, retain the complete 818-path corpus,
+and exercise canonical witness production, stale/malformed records, source
+advance, missing publication, and positive optional-only cases. Spatial resident
+adoption remains explicitly unimplemented and held; its existing operator
+launcher and guarded preparation profile retain their separate scopes.

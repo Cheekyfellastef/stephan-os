@@ -1,5 +1,6 @@
 import { types as nodeTypes } from 'node:util';
 import {
+  inspectPostSyncRefreshCompletion, collectPostSyncRefreshDebt, resolvePostSyncRefreshDebt,
   POST_SYNC_GOVERNOR_PROOF_SCHEMA,
   projectPostSyncGovernorProof,
   POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
@@ -1172,4 +1173,153 @@ export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', a
     pathValuesPublished: false,
     finalVerdict: result.ok === true ? 'POST_SYNC_RUNTIME_REFRESH_PASS' : 'POST_SYNC_RUNTIME_REFRESH_BLOCKED',
   });
+}
+
+
+// Startup may waive one optional hold; a displayed blocker is not a complete
+// account of the canonical owner's remaining source-adoption obligations.
+export const IGNITION_REFRESH_OBLIGATION_SCHEMA_V1 = 'stephanos.ignition-refresh-obligations.v1';
+export const IGNITION_SETTLED_REFRESH_SCHEMA_V1 = 'stephanos.ignition-settled-refresh.v1';
+const IGNITION_REFRESH_COUNTS = Object.freeze(['changedPathCount', 'noRuntimePathCount', 'unknownPathCount',
+  'unsafePathCount', 'openClawPathCount', 'spatialAdoptionPathCount']);
+const IGNITION_REFRESH_REQUIREMENTS = Object.freeze(['spatialAdoptionRequired', 'pluginHostActivationRequired',
+  'sovereignRelayRefreshRequired', 'governorRefreshRequired']);
+const IGNITION_COMPLETION_KEYS = Object.freeze(['schemaVersion', 'kind', 'statusId', 'phase', 'beforeHead', 'afterHead',
+  'classification', 'finalVerdict', 'exactHeadProofOk', 'blocker', 'targetIds', 'resultTargets',
+  ...IGNITION_REFRESH_COUNTS, ...IGNITION_REFRESH_REQUIREMENTS]);
+
+function ignitionOwnData(value) {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || nodeTypes.isProxy(value)
+      || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    if (Reflect.ownKeys(descriptors).some(key => typeof key !== 'string'
+      || !Object.hasOwn(descriptors[key], 'value'))) return null;
+    const data = Object.create(null);
+    // Normalize every own data field to enumerable, including hidden future
+    // authority fields. No inherited value or getter can fill a missing field.
+    for (const [key, row] of Object.entries(descriptors)) data[key] = row.value;
+    return data;
+  } catch { return null; }
+}
+function ignitionArray(value) {
+  try {
+    if (!Array.isArray(value) || nodeTypes.isProxy(value)) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    if (Reflect.ownKeys(descriptors).length !== value.length + 1) return null;
+    const data = [];
+    for (let index = 0; index < value.length; index++) {
+      if (!Object.hasOwn(descriptors, index)) return null;
+      const descriptor = descriptors[index];
+      if (!Object.hasOwn(descriptor, 'value')) return null;
+      Object.defineProperty(data, index, { value: descriptor.value, enumerable: true, writable: true, configurable: true });
+    }
+    return data;
+  } catch { return null; }
+}
+
+export function projectPostSyncRemainingIgnitionObligationsV1(value, expectedHead) {
+  const record = ignitionOwnData(value);
+  if (!record || typeof expectedHead !== 'string' || !/^[a-f0-9]{40}$/.test(expectedHead)
+    || ![POST_SYNC_REFRESH_SCHEMA, 'shared-agent-workspace-record.v1'].includes(record.schemaVersion)
+    || (record.schemaVersion === 'shared-agent-workspace-record.v1'
+      && (record.kind !== 'stephanos.shared_workspace.status' || record.statusId !== 'post-sync-runtime-refresh-current'))
+    || record.afterHead !== expectedHead || typeof record.beforeHead !== 'string' || !/^[a-f0-9]{40}$/.test(record.beforeHead)
+    || record.beforeHead === record.afterHead
+    || !Object.values(POST_SYNC_REFRESH_CLASSIFICATIONS).includes(record.classification)
+    || typeof record.exactHeadProofOk !== 'boolean' || typeof record.blocker !== 'string'
+    || !['POST_SYNC_RUNTIME_REFRESH_PASS', 'POST_SYNC_RUNTIME_REFRESH_BLOCKED'].includes(record.finalVerdict)
+    || (record.finalVerdict === 'POST_SYNC_RUNTIME_REFRESH_PASS') !== record.exactHeadProofOk
+    || (Object.hasOwn(record, 'ok') && (typeof record.ok !== 'boolean'
+      || record.ok !== (record.finalVerdict === 'POST_SYNC_RUNTIME_REFRESH_PASS')))
+    || IGNITION_REFRESH_REQUIREMENTS.some(key => typeof record[key] !== 'boolean')
+    || Object.keys(record).some(key => key.endsWith('Required') && !IGNITION_REFRESH_REQUIREMENTS.includes(key))
+    || Object.keys(record).some(key => key.endsWith('PathCount') && !IGNITION_REFRESH_COUNTS.includes(key))
+    || IGNITION_REFRESH_COUNTS.some(key => !Number.isSafeInteger(record[key]) || record[key] < 0
+      || (key !== 'changedPathCount' && record[key] > record.changedPathCount))
+    || record.spatialAdoptionPathCount > 2 || (record.spatialAdoptionPathCount > 0 && !record.spatialAdoptionRequired)) return null;
+  const targets = ignitionArray(record.targetIds), rawResults = ignitionArray(record.resultTargets);
+  if (!targets || !rawResults || targets.length > TARGET_ORDER.length || rawResults.length > targets.length
+    || new Set(targets).size !== targets.length || targets.some((id, index) => !TARGET_ORDER.includes(id)
+      || (index > 0 && TARGET_ORDER.indexOf(targets[index - 1]) >= TARGET_ORDER.indexOf(id)))
+    || ((record.governorRefreshRequired || record.sovereignRelayRefreshRequired)
+      && !targets.includes(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER))) return null;
+  const results = rawResults.map(ignitionOwnData);
+  if (results.some((row, index) => !row || row.targetId !== targets[index]
+    || typeof row.ok !== 'boolean' || typeof row.exactHeadProofOk !== 'boolean'
+    || typeof row.blocker !== 'string' || typeof row.sourceHead !== 'string'
+    || (row.sourceHead !== '' && !/^[a-f0-9]{40}$/.test(row.sourceHead)))) return null;
+  for (const row of results) {
+    if (Object.hasOwn(row, 'governorProof') && (row.targetId !== POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER
+      || !projectPostSyncGovernorProof(row.governorProof, expectedHead))) return null;
+    if (Object.hasOwn(row, 'sovereignRelayProof') && (row.targetId !== POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER
+      || nodeTypes.isProxy(row.sovereignRelayProof || {})
+      || !projectPostSyncSovereignRelayProof(row.sovereignRelayProof, expectedHead))) return null;
+  }
+  const remaining = [];
+  const pass = row => row?.ok === true && row.exactHeadProofOk === true && row.sourceHead === expectedHead && row.blocker === '';
+  for (let index = 0; index < targets.length; index++) if (!pass(results[index])) remaining.push('target:' + targets[index]);
+  const commander = results.find(row => row.targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER);
+  if (record.governorRefreshRequired && (!pass(commander)
+    || !projectPostSyncGovernorProof(commander.governorProof, expectedHead))) remaining.push('governor');
+  if (record.sovereignRelayRefreshRequired && (!pass(commander)
+    || nodeTypes.isProxy(commander.sovereignRelayProof || {})
+    || !projectPostSyncSovereignRelayProof(commander.sovereignRelayProof, expectedHead))) remaining.push('sovereign-relay');
+  if (record.spatialAdoptionRequired) remaining.push('spatial-resident');
+  if (record.pluginHostActivationRequired) remaining.push('desktop-plugin-host');
+  if (record.openClawPathCount) remaining.push('openclaw-approval');
+  if (record.unknownPathCount) remaining.push('unclassified-path');
+  if (record.unsafePathCount) remaining.push('unsafe-path');
+  return Object.freeze({ schemaVersion: IGNITION_REFRESH_OBLIGATION_SCHEMA_V1, sourceHead: expectedHead,
+    remaining: Object.freeze(remaining) });
+}
+
+// The wrapper supplies actual published canonical records and the bounded
+// ancestry observations from its existing Git adapter. Replaying this contract
+// grants no native, source, process, custody or refresh execution authority.
+export function projectIgnitionSettledRefreshEvidenceV1(value, expectedHead) {
+  const witness = ignitionOwnData(value);
+  if (!witness || Object.keys(witness).sort().join(',') !== 'ancestry,refreshCompletionRecord,schemaVersion,sourceHead,syncStatusRecord'
+    || witness.schemaVersion !== IGNITION_SETTLED_REFRESH_SCHEMA_V1 || witness.sourceHead !== expectedHead) return null;
+  const sync = ignitionOwnData(witness.syncStatusRecord), refresh = ignitionOwnData(witness.refreshCompletionRecord);
+  const ancestry = ignitionArray(witness.ancestry);
+  if (!sync || !refresh || !ancestry || ancestry.length > 64
+    || sync.schemaVersion !== 'shared-agent-workspace-record.v1' || sync.kind !== 'stephanos.shared_workspace.status'
+    || sync.statusId !== 'battle-bridge-github-sync-current' || sync.classification !== 'SYNC_NO_CHANGE'
+    || sync.localHeadBefore !== expectedHead || sync.remoteHeadObserved !== expectedHead || sync.pendingRefresh !== null
+    || refresh.schemaVersion !== 'shared-agent-workspace-record.v1' || refresh.kind !== 'stephanos.shared_workspace.status'
+    || refresh.statusId !== 'post-sync-runtime-refresh-current' || refresh.afterHead !== expectedHead) return null;
+  const map = new Map(), rows = [];
+  for (const input of ancestry) {
+    const row = ignitionOwnData(input);
+    if (!row || Object.keys(row).sort().join(',') !== 'afterHead,ancestor,beforeHead'
+      || typeof row.beforeHead !== 'string' || typeof row.afterHead !== 'string'
+      || !/^[a-f0-9]{40}$/.test(row.beforeHead) || !/^[a-f0-9]{40}$/.test(row.afterHead)
+      || typeof row.ancestor !== 'boolean' || map.has(row.beforeHead + ':' + row.afterHead)) return null;
+    map.set(row.beforeHead + ':' + row.afterHead, row.ancestor); rows.push(Object.freeze(row));
+  }
+  const obligations = projectPostSyncRemainingIgnitionObligationsV1(refresh, expectedHead);
+  if (!obligations || obligations.remaining.length) return null;
+  const completion = inspectPostSyncRefreshCompletion(refresh);
+  const evidence = collectPostSyncRefreshDebt({ syncRecord: sync, refreshRecord: refresh });
+  if (!completion.ok || !evidence.ok) return null;
+  const resolved = resolvePostSyncRefreshDebt({ ...evidence, currentHead: expectedHead, requireCurrentCoverage: true,
+    isAncestor(beforeHead, afterHead) {
+      const key = beforeHead + ':' + afterHead;
+      return map.has(key) ? { ok: true, ancestor: map.get(key) } : { ok: false, ancestor: false };
+    } });
+  if (!resolved.ok || resolved.debt !== null) return null;
+  const resultTargets = refresh.resultTargets.map(input => {
+    const row = ignitionOwnData(input);
+    const governorProof = projectPostSyncGovernorProof(row.governorProof, expectedHead);
+    const sovereignRelayProof = projectPostSyncSovereignRelayProof(row.sovereignRelayProof, expectedHead);
+    return Object.freeze({ targetId: row.targetId, ok: row.ok, exactHeadProofOk: row.exactHeadProofOk,
+      sourceHead: row.sourceHead, blocker: row.blocker, ...(governorProof ? { governorProof } : {}),
+      ...(sovereignRelayProof ? { sovereignRelayProof } : {}) });
+  });
+  return Object.freeze({ schemaVersion: IGNITION_SETTLED_REFRESH_SCHEMA_V1, sourceHead: expectedHead,
+    syncStatusRecord: Object.freeze(Object.fromEntries(['schemaVersion', 'kind', 'statusId', 'classification',
+      'localHeadBefore', 'remoteHeadObserved', 'pendingRefresh'].map(key => [key, sync[key]]))),
+    refreshCompletionRecord: Object.freeze({ ...Object.fromEntries(IGNITION_COMPLETION_KEYS.map(key => [key, refresh[key]])), resultTargets }),
+    ancestry: Object.freeze(rows) });
 }

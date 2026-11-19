@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { resolveBattleBridgeGitExecution, battleBridgeCanonicalRepositoryArgs }
+  from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { IGNITION_SETTLED_REFRESH_SCHEMA_V1, projectIgnitionSettledRefreshEvidenceV1 }
+  from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import { performance } from 'node:perf_hooks';
@@ -215,6 +219,17 @@ function parseMarkedJson(stdout, marker) {
 export function createFixedSyncAndRefreshAdapter({ spawnSyncFn = spawnSync } = {}) {
   let ancestryBudgetMs = 5_000;
   return Object.freeze({
+    observeCurrentHead(repoRoot, { timeoutMs = 1000 } = {}) {
+      const timeout = Number.isFinite(timeoutMs) ? Math.min(1000, Math.floor(timeoutMs)) : 0;
+      if (timeout <= 0) return { ok: false, head: '' };
+      const git = resolveBattleBridgeGitExecution({ platform: process.platform, environment: process.env });
+      const result = spawnSyncFn(git.executable, [...git.fixedConfigArgs, ...battleBridgeCanonicalRepositoryArgs(repoRoot),
+        'rev-parse', '--verify', 'HEAD'], { cwd: repoRoot, shell: false, encoding: 'utf8', windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'], timeout, maxBuffer: 256, env: git.environment });
+      const valid = result?.status === 0 && !result.error && !result.signal
+        && typeof result.stdout === 'string' && /^[a-f0-9]{40}(?:\r?\n)?$/.test(result.stdout);
+      return { ok: valid, head: valid ? result.stdout.trim() : '' };
+    },
     isAncestor(beforeHead, afterHead, repoRoot) {
       if (typeof beforeHead !== 'string' || typeof afterHead !== 'string' || !/^[0-9a-f]{40}$/.test(beforeHead)
         || !/^[0-9a-f]{40}$/.test(afterHead) || ancestryBudgetMs <= 0) return { ok: false, ancestor: false };
@@ -276,7 +291,37 @@ export async function readPendingPostSyncRefresh(paths) {
     } catch (error) { records[key] = error?.code === 'ENOENT' ? null : {}; }
   }
   const evidence = collectPostSyncRefreshDebt(records);
-  return evidence.ok && !evidence.spans.length && !evidence.completion ? null : evidence;
+  return evidence.ok && !evidence.spans.length && !evidence.completion ? null : Object.freeze({ ...evidence,
+    ...(evidence.ok && evidence.completion ? { completionRecord: records.refreshRecord, syncStatusRecord: records.syncRecord } : {}),
+  });
+}
+
+// Only actual published current-head records can establish settled adoption.
+// Absence of refresh history is not a positive witness. The existing adapter's
+// before/after HEAD barrier fences a concurrent main advance during re-read.
+async function readSettledIgnitionRefreshEvidence({ paths, sourceHead, sync, pendingReader, adapter, remaining }) {
+  try {
+    const published = sync?.result?.receipt?.statusRecord;
+    if (!published || typeof adapter.observeCurrentHead !== 'function') return null;
+    const before = adapter.observeCurrentHead(paths.repoRoot, { timeoutMs: remaining() });
+    if (before?.ok !== true || before.head !== sourceHead) return null;
+    const observed = await pendingReader(paths);
+    if (observed?.ok !== true || !observed.completionRecord || !observed.syncStatusRecord) return null;
+    const syncKeys = ['schemaVersion', 'kind', 'statusId', 'classification', 'localHeadBefore', 'remoteHeadObserved', 'pendingRefresh'];
+    if (syncKeys.some(key => published[key] !== observed.syncStatusRecord[key])) return null;
+    const ancestry = [];
+    const resolved = resolvePostSyncRefreshDebt({ ...observed, currentHead: sourceHead, requireCurrentCoverage: true,
+      isAncestor(beforeHead, afterHead) {
+        const result = adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot);
+        if (result?.ok === true && typeof result.ancestor === 'boolean') ancestry.push({ beforeHead, afterHead, ancestor: result.ancestor });
+        return result;
+      } });
+    if (!resolved.ok || resolved.debt !== null) return null;
+    const after = adapter.observeCurrentHead(paths.repoRoot, { timeoutMs: remaining() });
+    if (after?.ok !== true || after.head !== sourceHead) return null;
+    return projectIgnitionSettledRefreshEvidenceV1({ schemaVersion: IGNITION_SETTLED_REFRESH_SCHEMA_V1, sourceHead,
+      syncStatusRecord: observed.syncStatusRecord, refreshCompletionRecord: observed.completionRecord, ancestry }, sourceHead);
+  } catch { return null; }
 }
 
 function refreshHeadsFromSyncResult(result = {}) {
@@ -711,7 +756,11 @@ export async function runBattleBridgeSyncAndRefresh({
       }
 
       if (!controlPlaneRepair.ok) {
+        const settledRefreshEvidence = await readSettledIgnitionRefreshEvidence({ paths, sourceHead, sync,
+          pendingReader, adapter, remaining: safeRemaining });
+        if (safeRemaining() <= 0) return budgetHeld('POST_SETTLED_REFRESH_EVIDENCE', sourceHead);
         return Object.freeze({
+          settledRefreshEvidence,
           ...capacityResult(),
           ok: false,
           blocker: controlPlaneRepair.blocker,
