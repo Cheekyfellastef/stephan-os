@@ -117,6 +117,7 @@ export async function proveNativePublisherSignedReadbackV1({
   }
   let sawAuthenticatedStaleHead = false;
   let lastReason = 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_STATUS_NOT_YET_PROVEN';
+  let lastTruthInput = '';
   for (let attempt = 1; attempt <= 16; attempt += 1) {
     try {
       const v = await verify({
@@ -142,10 +143,15 @@ export async function proveNativePublisherSignedReadbackV1({
           });
         }
         lastReason = 'STEPHANOS_NATIVE_PUBLISHER_POST_START_SIGNED_RECEIPT_UNPROVEN';
+        lastTruthInput = '';
       } else {
         const reason = text(v?.reason);
         lastReason = /^[A-Za-z0-9][A-Za-z0-9._:-]{1,119}$/.test(reason)
           ? reason : 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_TRUST_NOT_PROVEN';
+        lastTruthInput = (lastReason === 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING'
+          || lastReason === 'STEPHANOS_NATIVE_ROUTING_TRUTH_READ_FAILED')
+          && (v?.truthInput === 'STATUS' || v?.truthInput === 'PUBLIC_KEY')
+          ? v.truthInput : '';
         // A source-head-invalid error does not verify the Ed25519 signature.
         // Require separate signed old-head proof observed after StartNow.
         try {
@@ -172,6 +178,7 @@ export async function proveNativePublisherSignedReadbackV1({
       }
     } catch {
       lastReason = 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_UNAVAILABLE';
+      lastTruthInput = '';
     }
     if (attempt < 16) await sleep(10_000);
   }
@@ -183,6 +190,7 @@ export async function proveNativePublisherSignedReadbackV1({
   ) ? 'STEPHANOS_NATIVE_PUBLISHER_AUTHENTICATED_STALE_SOURCE_HEAD' : lastReason;
   return Object.freeze({
     ok: false, attempt: 16, sourceHead: expectedHead, reason,
+    truthInput: reason === lastReason ? lastTruthInput : '',
     finalVerdict: 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_HELD',
   });
 }
@@ -300,6 +308,8 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
       operation: STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION,
       sourceHead: shape.expectedHead, taskInstalled: true, startRequested: true,
       signedCapacityProven: false, signedReadbackReason: signed.reason,
+      signedReadbackTruthInput: signed.truthInput === 'STATUS'
+        || signed.truthInput === 'PUBLIC_KEY' ? signed.truthInput : '',
       boundedRestartAttempted: recoveryReceipt !== null,
       mergeAuthority: false, leaseSeizureAllowed: false,
     });

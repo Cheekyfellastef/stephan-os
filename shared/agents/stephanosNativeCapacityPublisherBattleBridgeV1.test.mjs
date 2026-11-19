@@ -253,6 +253,24 @@ test('native task install cannot falsely certify a stale signed capacity receipt
   assert.equal(slept, 15);
 });
 
+test('missing signed-routing inputs are reported as bounded non-secret diagnostics only', async () => {
+  for (const [input, expected] of [
+    ['STATUS', 'STATUS'], ['PUBLIC_KEY', 'PUBLIC_KEY'],
+    ['C:\\private\\key.pem', ''],
+  ]) {
+    const observed = await proveNativePublisherSignedReadbackV1({
+      expectedHead: HEAD, repositoryRoot: '/repo', env: { USERPROFILE: '/operator' },
+      notBeforeUtc: NOW.toISOString(),
+      verify: async () => ({ ok: false, reason: 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING', truthInput: input }),
+      verifyStale: async () => ({ ok: false }), sleep: async () => {},
+    });
+    assert.equal(observed.ok, false);
+    assert.equal(observed.reason, 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING');
+    assert.equal(observed.truthInput, expected);
+    assert.equal(observed.attempt, 16);
+  }
+});
+
 test('native task installation requires an exact signed routing candidate', async () => {
   const candidate = {
     sourceHead: HEAD, repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,

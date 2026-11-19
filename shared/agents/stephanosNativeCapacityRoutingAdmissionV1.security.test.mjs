@@ -168,6 +168,7 @@ test('missing, malformed or untrusted publisher status cannot admit native capac
     assert.equal(result.reason, scenario === 'invalid-json'
       ? 'STEPHANOS_NATIVE_ROUTING_TRUTH_READ_FAILED'
       : 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING', scenario);
+    assert.equal(result.truthInput, scenario === 'missing-key' ? 'PUBLIC_KEY' : 'STATUS', scenario);
     assert.equal(result.candidate, null, scenario);
     assert.equal(result.mergeAuthority, false, scenario);
     assert.equal(result.leaseSeizureAllowed, false, scenario);

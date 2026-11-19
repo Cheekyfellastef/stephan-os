@@ -121,10 +121,27 @@ export async function readVerifiedStephanosNativeRoutingCandidate(options = {}) 
     });
   }
 
+  // Keep the existing fail-closed reason codes and signed validator untouched,
+  // but distinguish which fixed, non-secret input could not be consumed.
+  // Never reveal the path, file contents, key material or raw OS error.
   let status;
-  let publicKeyPem;
   try {
     status = JSON.parse(await readFile(statusPath.path, 'utf8'));
+  } catch (error) {
+    return frozen({
+      schemaVersion: STEPHANOS_NATIVE_ROUTING_ADMISSION_SCHEMA,
+      ok: false,
+      reason: error?.code === 'ENOENT'
+        ? 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING'
+        : 'STEPHANOS_NATIVE_ROUTING_TRUTH_READ_FAILED',
+      truthInput: 'STATUS',
+      candidate: null,
+      mergeAuthority: false,
+      leaseSeizureAllowed: false,
+    });
+  }
+  let publicKeyPem;
+  try {
     publicKeyPem = await readFile(keyPath, 'utf8');
   } catch (error) {
     return frozen({
@@ -133,6 +150,7 @@ export async function readVerifiedStephanosNativeRoutingCandidate(options = {}) 
       reason: error?.code === 'ENOENT'
         ? 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING'
         : 'STEPHANOS_NATIVE_ROUTING_TRUTH_READ_FAILED',
+      truthInput: 'PUBLIC_KEY',
       candidate: null,
       mergeAuthority: false,
       leaseSeizureAllowed: false,
