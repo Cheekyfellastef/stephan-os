@@ -28,8 +28,8 @@ import types
 SCHEMA = "stephanos.native-eye-output.splash.v1"
 CUSTODY_SCHEMA = "stephanos.native-eye-output.provider-custody.v1"
 CORE_NAME = "run_native_eye_output_monitor.py"
-CORE_SHA256 = "ba81ae13049f875ff67abe6cc4a0a716e6135b5efa0b6bad26fbf12e858986d8"
-CUSTODY_SHA256 = "e32457ed217f5d444a8e434d8553adba45bd1cac2d1d20b44fccb62ec7185550"
+CORE_SHA256 = "81a2e4ab5c97093c4f8d25d8d33ea455d06549ac249d68c2a508625c46c73dec"
+CUSTODY_SHA256 = "48e619bcf61538e8a336813d200ce46517171d16227c0c6fcb8b01946ba44836"
 MAX_COMMAND_BYTES = 8192
 MAX_EVENT_BYTES = 32768
 MODES = {"ready", "waiting", "existing", "done", "cleanup", "blocked"}
@@ -197,6 +197,9 @@ class SplashSession:
         self.closed = False
         self.transport_broken = False
         self.release_failed = False
+        self.retirement_hold = None
+        self.runtime_retired = False
+        self.next_retirement_observation = 0.0
         self.exit_code = 0
         self.progress = queue.Queue(maxsize=64)
         self.completed = queue.Queue(maxsize=1)
@@ -266,8 +269,8 @@ class SplashSession:
         uncertain = self.monitor is not None and self.monitor.journal.write_uncertain is not False
         cleaned = state.get("cleanupComplete") is True
         custody_complete = "activeChild" in state and isinstance(state.get("childCalls"), list)
-        released = (not self.busy and not self.release_failed and not pending and not uncertain
-                    and (not self.prepare_dispatched or (cleaned and custody_complete)))
+        released = (not self.busy and not self.release_failed and self.retirement_hold is None and not pending and not uncertain
+                    and (not self.prepare_dispatched or (cleaned and custody_complete and self.runtime_retired)))
         analysis = state.get("analysis")
         analysis_ok = isinstance(analysis, dict) and analysis.get("monitorCaptureAccepted") is True
         cleanup = state.get("cleanupReceipt")
@@ -341,6 +344,7 @@ class SplashSession:
                 return {"mode": "blocked", "error": short_text(error, 800) + "; reporting: " + short_text(reporting_error, 350)}
 
     def start_operation(self, operation):
+        self.runtime_retired = False
         if self.busy:
             raise ProtocolError("A monitor operation is already active.")
         self.busy = True
@@ -416,6 +420,11 @@ class SplashSession:
                     and self.monitor.confirmation_available is True and not self.close_requested):
                 import uuid
                 self.confirmation_token = uuid.uuid4().hex
+            if self.monitor is not None:
+                try:
+                    self.runtime_retired = self.monitor.host.retirement_observation().get("retired") is True
+                except Exception:
+                    self.runtime_retired = False
             self.emit_state()
         self.advance_close()
 
@@ -429,17 +438,37 @@ class SplashSession:
             self.start_operation("finish")
             return
         if self.monitor is not None:
+            now = time.monotonic()
+            if now < self.next_retirement_observation:
+                return
+            self.next_retirement_observation = now + 1.0
+            try:
+                observation = self.monitor.host.retirement_observation()
+                if not isinstance(observation, dict) or observation.get("retired") is not True:
+                    self.runtime_retired = False
+                    reason = (observation.get("reason", "RETIREMENT_UNPROVEN")
+                              if isinstance(observation, dict) else "RETIREMENT_UNPROVEN")
+                    if self.retirement_hold != reason:
+                        self.retirement_hold = reason
+                        self.emit("progress", message="Keeping package protection until the game and helper have exited: " + short_text(reason, 120))
+                        self.emit_state()
+                    return
+                self.retirement_hold = None
+                # close independently rechecks retirement before releasing any
+                # pins. Keep the common owner lock if that recheck fails.
+                self.monitor.host.close()
+                self.runtime_retired = True
+            except Exception as error:
+                self.runtime_retired = False
+                self.last_error = short_text(error)
+                self.retirement_hold = "RETIREMENT_OR_PIN_RELEASE_UNPROVEN"
+                self.emit_state()
+                return
             try:
                 self.monitor.journal.release()
             except Exception as error:
                 self.last_error = short_text(error)
                 self.release_failed = True
-            finally:
-                try:
-                    self.monitor.host.close()
-                except Exception as error:
-                    self.last_error = short_text(error)
-                    self.release_failed = True
         if self.last_error or not self.projection()["safeToClose"]:
             self.exit_code = 2
         self.closed = True

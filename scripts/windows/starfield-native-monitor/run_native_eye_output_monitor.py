@@ -46,7 +46,7 @@ MAX_CAPTURE_BYTES = 64 * 1024 * 1024
 MAX_CHILD_BYTES = 4 * 1024 * 1024
 INTERNAL_ACTIONS = {"modules", "stock", "scene", "load"}
 CUSTODY_NAME = "monitor_session_custody.py"
-CUSTODY_SHA256 = "e32457ed217f5d444a8e434d8553adba45bd1cac2d1d20b44fccb62ec7185550"
+CUSTODY_SHA256 = "48e619bcf61538e8a336813d200ce46517171d16227c0c6fcb8b01946ba44836"
 PAIRED_ADAPTER_NAME = "paired_session_adapter.py"
 PAIRED_ADAPTER_SHA256 = "52066de6b32fa6b8522b5c6949f97fcd5c2a1dcf82ffbb2e1cb71312009f359c"
 REVIEWED_LEGACY_RUNNER_HASHES = frozenset({
@@ -1039,7 +1039,87 @@ class WindowsActions:
     monotonic = staticmethod(time.monotonic)
     sleep = staticmethod(time.sleep)
 
+    def retirement_observation(self):
+        """Observe retained handles only; never dispatch cleanup or another load.
+
+        A returned loader does not retire its remote thread. The exact game
+        must also retire before any package member or namespace pin is released.
+        Child completion may be journaled, so this is runtime-action-free, not
+        a claim that no evidence file was written.
+        """
+        def result(retired, reason):
+            return {"retired": retired, "reason": reason, "noRuntimeActionPerformed": True}
+
+        try:
+            if self.journal.write_uncertain is not False:
+                return result(False, "JOURNAL_WRITE_UNCERTAIN")
+            state = self.journal.state
+            if state is None:
+                return result(not self.children and not self.guards, "NO_SESSION_OR_RUNTIME_HANDLES")
+            if (not isinstance(state, dict) or "activeChild" not in state
+                    or not isinstance(state.get("childCalls"), list)):
+                return result(False, "CHILD_CUSTODY_UNKNOWN")
+            calls = state["childCalls"]
+            ids = set()
+            for entry in calls:
+                if (not isinstance(entry, dict) or not isinstance(entry.get("id"), str)
+                        or entry["id"] in ids or entry.get("role") not in {"start", "status", "finish", "modules", "scene", "stock", "load"}
+                        or entry.get("state") not in {"INTENT", "RUNNING", "UNRESOLVED", "RETURNED", "NOT_STARTED"}):
+                    return result(False, "CHILD_CUSTODY_UNKNOWN")
+                ids.add(entry["id"])
+            active = state["activeChild"]
+            if active is not None and (not isinstance(active, dict) or not active
+                    or active not in calls or active.get("state") not in {"RUNNING", "UNRESOLVED"}):
+                return result(False, "ACTIVE_CHILD_IDENTITY_UNKNOWN")
+            if not set(self.children).issubset(ids):
+                return result(False, "CHILD_HANDLE_WITHOUT_RECORD")
+            self._refresh_children()
+            for entry in calls:
+                if (entry["state"] not in {"RETURNED", "NOT_STARTED"}
+                        or (entry["state"] == "RETURNED" and type(entry.get("returnCode")) is not int)):
+                    return result(False, "CHILD_RETIREMENT_UNPROVEN")
+            # Check the retained Popen objects even if a record claims RETURNED.
+            if any(child.poll() is None for child in self.children.values()):
+                return result(False, "CHILD_STILL_RUNNING")
+            process = state.get("process")
+            if process is not None and not process_valid(process):
+                return result(False, "GAME_IDENTITY_UNKNOWN")
+            matching_guard = False
+            for guard in self.guards:
+                if not process_valid(guard.process):
+                    return result(False, "GAME_HANDLE_IDENTITY_UNKNOWN")
+                if guard.alive() is not False:
+                    return result(False, "GAME_STILL_RUNNING")
+                matching_guard |= same_process(guard.process, process)
+            if process is not None:
+                if matching_guard:
+                    return result(True, "RETAINED_CHILD_AND_GAME_HANDLES_RETIRED")
+                # Cleanup-only reopen has no old live handle. Admit only the
+                # exact bound terminal receipt, never a loose cleanup flag.
+                cleanup = state.get("cleanupReceipt")
+                if (isinstance(cleanup, dict) and cleanup.get("gameExitObserved") is True
+                        and cleanup.get("proxyRestored") is True
+                        and cleanup.get("stage") == "GAME_EXIT_OBSERVED_PROXY_RESTORED"
+                        and isinstance(state.get("starterSessionId"), str)
+                        and cleanup.get("sessionId") == state["starterSessionId"]
+                        and same_process(cleanup.get("process"), process)
+                        and cleanup.get("handoffSha256") == HANDOFF_SHA256
+                        and cleanup.get("reviewedDllSha256") == self.journal.dll_sha256):
+                    return result(True, "BOUND_CLEANUP_RECEIPT_PROVES_RETIREMENT")
+                return result(False, "EXACT_GAME_RETIREMENT_UNPROVEN")
+            # A returned launcher without a captured game identity can still
+            # leave a delayed Steam launch. Absence is not retirement proof.
+            if (state.get("starterSessionId") is not None or state.get("captureAttempted") is not False
+                    or any(entry["role"] in {"start", "load"} and entry["state"] != "NOT_STARTED" for entry in calls)):
+                return result(False, "UNBOUND_LAUNCH_OR_CAPTURE_UNRESOLVED")
+            return result(True, "NO_RUNTIME_DISPATCH_TO_RETIRE")
+        except Exception:
+            return result(False, "RETIREMENT_OBSERVATION_FAILED")
+
     def close(self):
+        observation = self.retirement_observation()
+        if observation["retired"] is not True:
+            raise Blocked("Package custody retained: " + observation["reason"])
         for guard in self.guards:
             guard.close()
         self.pins.close()

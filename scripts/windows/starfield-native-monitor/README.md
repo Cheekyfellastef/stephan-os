@@ -125,3 +125,13 @@ fixed successor paths. Unknown, orphaned or unresolved paired custody holds the
 provider slot. This profile records a bounded source diagnostic. It does not
 copy game images, prove GPU completion, submit OpenXR frames or establish a
 headset performance result.
+
+Closing or disconnecting the splash does not end package custody while a helper
+or the exact game process remains live or unresolved. After the existing single
+cleanup attempt, the same bridge observes its retained handles at most once per
+second. It dispatches no further runtime work and keeps the common lock and file
+and namespace pins until retirement is proven. A returned loader alone cannot
+prove that a remote loading thread has retired. Missing handles, uncertain
+journal writes and an unbound delayed Steam launch retain custody. Cleanup-only
+reopen requires an exact terminal process/session receipt. Process retirement
+never upgrades failed cleanup, proxy restoration or normal-exit evidence.

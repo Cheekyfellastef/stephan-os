@@ -241,5 +241,3 @@ def provider_custody(core, helper, host_factory=None, *, runner_hashes):
         raise CustodyError("MONITOR_CUSTODY_CHANGED_DURING_OBSERVATION")
     return {"allowed": True, "providerSlotReleased": True, "reason": "MONITOR_CUSTODY_RELEASED",
             "observationsCurrent": True, "noMutationPerformed": True}
-
-

@@ -77,8 +77,8 @@ Add-Type -AssemblyName System.Drawing
 # The third card is the attended monitor entry for the independent bridge.
 # Its protocol never admits arbitrary commands, file paths or a headset claim.
 $monitorBridgePath = Join-Path $PSScriptRoot 'starfield-native-monitor\splash_monitor_bridge.py'
-$monitorBridgeSha256 = 'e642c7ab72893801f3f95eaf0079760375c4fb8658d9c096984ead17477ef048'
-$monitorRunnerSha256 = 'ba81ae13049f875ff67abe6cc4a0a716e6135b5efa0b6bad26fbf12e858986d8'
+$monitorBridgeSha256 = '4703d73c9932aba8b498e5b0cac198f4608f07676fb0e2df934e9577ad91abce'
+$monitorRunnerSha256 = '81a2e4ab5c97093c4f8d25d8d33ea455d06549ac249d68c2a508625c46c73dec'
 $monitorProtocol = 'stephanos.native-eye-output.splash.v1'
 $monitorState = [pscustomobject]@{
     Process = $null
@@ -244,7 +244,7 @@ import hashlib,pathlib,sys,types
 p=pathlib.Path(sys.argv[1])
 raw=p.read_bytes()
 actual=hashlib.sha256(raw).hexdigest()
-if actual!='e642c7ab72893801f3f95eaf0079760375c4fb8658d9c096984ead17477ef048': raise SystemExit('Monitor bridge hash mismatch; no monitor code executed')
+if actual!='4703d73c9932aba8b498e5b0cac198f4608f07676fb0e2df934e9577ad91abce': raise SystemExit('Monitor bridge hash mismatch; no monitor code executed')
 sys.argv=[str(p)]+sys.argv[2:]
 m=types.ModuleType('__main__')
 m.__file__=str(p)
