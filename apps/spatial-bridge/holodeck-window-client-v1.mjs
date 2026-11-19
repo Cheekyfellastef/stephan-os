@@ -1,7 +1,7 @@
 // One explicit local desktop connection; images and keystrokes are never logged
 // or sent through Stephanos telemetry, GitHub, a relay, or an AI provider API.
 export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRef=globalThis.document,
-  locationRef=globalThis.location,navigatorRef=globalThis.navigator,onChange=()=>{},setTimer=setTimeout,clearTimer=clearTimeout,sessionStore=globalThis.sessionStorage}={}) {
+  locationRef=globalThis.location,navigatorRef=globalThis.navigator,onChange=()=>{},setTimer=setTimeout,clearTimer=clearTimeout,sessionStore=(()=>{try{return globalThis.sessionStorage;}catch{return null;}})()}={}) {
   const endpoint=`http://127.0.0.1:${locationRef?.port==='4174'?4184:4180}`;
   // Diagnostic only: this never starts a native service or binds a window.
   async function probeHelper(){
