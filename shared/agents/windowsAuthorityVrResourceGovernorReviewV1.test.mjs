@@ -103,8 +103,8 @@ function rejects(content) {
 }
 
 test('fixture preserves exact current reviewer governor source blob', () => {
-  assert.equal(blobSha(governor), '25d44f8d7a388a6117acbdb2c2bed145743fe852');
-  assert.equal(Buffer.byteLength(governor, 'utf8'), 61073);
+  assert.equal(blobSha(governor), '80cecb2a3621ec4180943f15aa3388468c99c636');
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 61768);
 });
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
@@ -763,6 +763,8 @@ test('persisted reviewer prepare lease must have scalar, two-minute UTC custody'
     '$lease.schemaVersion -isnot [string]', '$lease.active -isnot [bool]',
     '$lease.processName -isnot [string]', '$lease.profileName -isnot [string]',
     '$lease.createdAtUtc -isnot [string]', '$lease.expiresAtUtc -isnot [string]',
+    '$lease.createdAtUtc -isnot [datetime]', '$lease.expiresAtUtc -isnot [datetime]',
+    '$lease.createdAtUtc.ToUniversalTime().ToString', '$lease.expiresAtUtc.ToUniversalTime().ToString',
     '$created -gt $nowUtc.AddSeconds(5)', '$expiry -le $created',
     '$expiry -gt $created.AddMinutes(2)', '$nowUtc -ge $expiry', 'Clear-PrepareLease',
   ]) assert.ok(reader.includes(guard), 'missing safety guard ' + guard);

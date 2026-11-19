@@ -30,7 +30,7 @@ const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: '69c3396479d83e0f9521958f3f4dc13671863c68', size: 59353, reviewerReservation: true }),
   Object.freeze({ blobSha: '5a6b7672c406f941d06d1fabc2f7d31636122122', size: 59840, reviewerReservation: true, corruptOverrideFailClosed: true }),
   Object.freeze({ blobSha: 'c6ea953880d63b61d494259ccc8e8ecd423b14d0', size: 59891, reviewerReservation: true, corruptOverrideFailClosed: true, scalarOverrideSchema: true }),
-  Object.freeze({ blobSha: '25d44f8d7a388a6117acbdb2c2bed145743fe852', size: 61073, reviewerReservation: true, corruptOverrideFailClosed: true, scalarOverrideSchema: true, typedPrepareLease: true }),
+  Object.freeze({ blobSha: '80cecb2a3621ec4180943f15aa3388468c99c636', size: 61768, reviewerReservation: true, corruptOverrideFailClosed: true, scalarOverrideSchema: true, typedPrepareLease: true, dateParsedUtcLease: true }),
 ]);
 
 const text = (value) => String(value ?? '').trim();
@@ -290,6 +290,17 @@ function reviewGovernor(source, findings) {
       ['Clear-PrepareLease', 'vr-governor-prepare-lease-corrupt-cleanup-missing'],
     ]) requireLiteral(findings, leaseReader, required, code,
       'A persisted reviewer reservation must remain a typed, bounded two-minute lease.');
+    if (sourceContract.dateParsedUtcLease) {
+      for (const required of [
+        '$lease.createdAtUtc -isnot [datetime]',
+        '$lease.expiresAtUtc -isnot [datetime]',
+        '$lease.createdAtUtc.ToUniversalTime().ToString',
+        '$lease.expiresAtUtc.ToUniversalTime().ToString',
+        'TryParse($createdText', 'TryParse($expiryText',
+      ]) requireLiteral(findings, leaseReader, required,
+        'vr-governor-prepare-lease-date-normalization-missing',
+        'ISO UTC JSON strings parsed as DateTime must retain bounded scalar custody.');
+    }
   }
   requireLiteral(findings, source,
     'REVIEWER_RESERVATION_BLOCKED_BY_GAMING_COOLDOWN',

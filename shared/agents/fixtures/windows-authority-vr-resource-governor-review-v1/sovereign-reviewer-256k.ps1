@@ -509,16 +509,25 @@ function Read-PrepareLease {
             $lease.processName -isnot [string] -or
             [string]::IsNullOrWhiteSpace($lease.processName) -or
             $lease.profileName -isnot [string] -or
-            $lease.createdAtUtc -isnot [string] -or
-            $lease.expiresAtUtc -isnot [string]) {
+            ($lease.createdAtUtc -isnot [string] -and $lease.createdAtUtc -isnot [datetime]) -or
+            ($lease.expiresAtUtc -isnot [string] -and $lease.expiresAtUtc -isnot [datetime])) {
             throw 'GOVERNOR_PREPARE_LEASE_INVALID_SCHEMA'
         }
         $created = [DateTimeOffset]::MinValue
         $expiry = [DateTimeOffset]::MinValue
         $style = [System.Globalization.DateTimeStyles]::AssumeUniversal
         $culture = [System.Globalization.CultureInfo]::InvariantCulture
-        if (-not [DateTimeOffset]::TryParse($lease.createdAtUtc, $culture, $style, [ref]$created) -or
-            -not [DateTimeOffset]::TryParse($lease.expiresAtUtc, $culture, $style, [ref]$expiry)) {
+        # ConvertFrom-Json on modern PowerShell materialises ISO UTC JSON strings
+        # as DateTime values. Keep that scalar typed conversion, but never accept
+        # arrays, objects or date-shaped numeric values as reviewer lease authority.
+        $createdText = if ($lease.createdAtUtc -is [datetime]) {
+            $lease.createdAtUtc.ToUniversalTime().ToString('o', $culture)
+        } else { [string]$lease.createdAtUtc }
+        $expiryText = if ($lease.expiresAtUtc -is [datetime]) {
+            $lease.expiresAtUtc.ToUniversalTime().ToString('o', $culture)
+        } else { [string]$lease.expiresAtUtc }
+        if (-not [DateTimeOffset]::TryParse($createdText, $culture, $style, [ref]$created) -or
+            -not [DateTimeOffset]::TryParse($expiryText, $culture, $style, [ref]$expiry)) {
             throw 'GOVERNOR_PREPARE_LEASE_INVALID_TIME'
         }
         $nowUtc = [DateTimeOffset]::UtcNow
