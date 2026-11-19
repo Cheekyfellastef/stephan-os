@@ -142,6 +142,35 @@ test('historical transformations preserve the exact registered main and idle-rep
   assert.equal(blobSha(historicalIdleGovernor), '9513dfe995a35087e1d715ef0c4dff4ca3578295');
 });
 
+test('revokes superseded reviewer-capable governor blobs with weak lease custody', async () => {
+  // Assert real production source registration, not a synthetic policy model.
+  const reviewerSource = await readFile(new URL('./windowsAuthorityVrResourceGovernorReviewV1.mjs', import.meta.url), 'utf8');
+  const registry = reviewerSource.split('const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([')[1]?.split(']);')[0] || '';
+  const rows = registry.split('\n').filter(line => line.includes('Object.freeze({ blobSha:'));
+  assert.equal(rows.length, 4, 'only two historical non-reviewer plus two bounded reviewer contracts remain');
+  for (const sha of [
+    '1cbe6687741338d29caa86c7828638137eb99f24',
+    'fec5255f808f303a3c0d61de9409c7eb98ceec92',
+    '849e0cc3f00dbcb5b3213a16f7552c21f9dde481',
+    '69c3396479d83e0f9521958f3f4dc13671863c68',
+    '5a6b7672c406f941d06d1fabc2f7d31636122122',
+    'c6ea953880d63b61d494259ccc8e8ecd423b14d0',
+  ]) assert.equal(registry.includes(sha), false, 'unbounded legacy reviewer remains registered: ' + sha);
+  const reviewerRows = rows.filter(line => line.includes('reviewerReservation: true'));
+  assert.equal(reviewerRows.length, 2);
+  for (const row of reviewerRows) {
+    assert.match(row, /typedPrepareLease: true/);
+    assert.match(row, /dateParsedUtcLease: true/);
+  }
+  assert.ok(reviewerSource.includes('!sourceContract.typedPrepareLease || !sourceContract.dateParsedUtcLease'),
+    'future reviewer-capable unbounded registrations must fail closed');
+  const current = analyzeWindowsAuthorityVrResourceGovernorReviewV1(input(governor));
+  assert.equal(current.clean, true, 'the current bounded reviewer contract remains admissible');
+  for (const key of ['mergeAuthority','runtimeMutationAllowed','providerQualificationAuthority','sourceMutationAllowed']) {
+    assert.equal(current[key], false);
+  }
+});
+
 test('current production governor is not qualified by historical source registrations', () => {
   rejects(productionGovernor);
 });

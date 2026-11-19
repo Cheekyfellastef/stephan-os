@@ -21,15 +21,11 @@ const PATH = WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1[0];
 // Every other byte sequence requires a newly qualified source contract.
 // Changing these registrations is an approval-boundary self-change, not
 // independent review, runtime proof, or permission to merge/install.
+// Only pre-reviewer source contracts and reviewer-capable contracts with typed,
+// two-minute UTC lease proofs remain eligible. Revoked blobs are audit history only.
 const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: 'ae71e1e79ead63efeb5a4d73f4bce6a01ee0f1d9', size: 48838 }),
   Object.freeze({ blobSha: '9513dfe995a35087e1d715ef0c4dff4ca3578295', size: 49674 }),
-  Object.freeze({ blobSha: '1cbe6687741338d29caa86c7828638137eb99f24', size: 57211, reviewerReservation: true }),
-  Object.freeze({ blobSha: 'fec5255f808f303a3c0d61de9409c7eb98ceec92', size: 57827, reviewerReservation: true }),
-  Object.freeze({ blobSha: '849e0cc3f00dbcb5b3213a16f7552c21f9dde481', size: 58683, reviewerReservation: true }),
-  Object.freeze({ blobSha: '69c3396479d83e0f9521958f3f4dc13671863c68', size: 59353, reviewerReservation: true }),
-  Object.freeze({ blobSha: '5a6b7672c406f941d06d1fabc2f7d31636122122', size: 59840, reviewerReservation: true, corruptOverrideFailClosed: true }),
-  Object.freeze({ blobSha: 'c6ea953880d63b61d494259ccc8e8ecd423b14d0', size: 59891, reviewerReservation: true, corruptOverrideFailClosed: true, scalarOverrideSchema: true }),
   Object.freeze({ blobSha: '3804c153495a5f6be89eba33790b73f28854b15b', size: 62477, reviewerReservation: true, corruptOverrideFailClosed: true, scalarOverrideSchema: true, typedPrepareLease: true, dateParsedUtcLease: true }),
   Object.freeze({ blobSha: 'b2a5411480b9f427a40d0293c2ab680be584a834', size: 63687, reviewerReservation: true, corruptOverrideFailClosed: true, scalarOverrideSchema: true, typedPrepareLease: true, dateParsedUtcLease: true }),
 ]);
@@ -109,6 +105,12 @@ function reviewGovernor(source, findings) {
   if (!sourceContract) {
     findings.push(finding('vr-governor-source-contract-unregistered',
       'Governor bytes do not match a registered complete source contract; unknown variants require independent qualification.'));
+    return;
+  }
+  // Future reviewer-capable registrations must not reintroduce an unbounded lease.
+  if (sourceContract.reviewerReservation && (!sourceContract.typedPrepareLease || !sourceContract.dateParsedUtcLease)) {
+    findings.push(finding('vr-governor-reviewer-lease-contract-unqualified',
+      'Reviewer-capable source requires a typed UTC creation time and a maximum two-minute prepare lease.'));
     return;
   }
   for (const [literal, code, summary] of [
