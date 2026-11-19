@@ -239,6 +239,7 @@ const NATURAL_EXACT = new Set([
   'scripts/windows/starfield-native-monitor/run_native_eye_output_monitor.py',
   'scripts/windows/starfield-native-monitor/start_native_eye_output_session.py',
   'scripts/windows/starfield-native-monitor/analyze_native_eye_output_session.py',
+  'scripts/windows/starfield-native-monitor/analyze_paired_source_session.py',
   'scripts/windows/launch-starfield-vr.ps1',
   'scripts/windows/new-vr-telemetry-session.ps1',
   'scripts/windows/read-starfield-vr-performance-diagnosis.ps1',
@@ -380,6 +381,7 @@ const NO_RUNTIME_EXACT = new Set([
   'scripts/windows/starfield-native-monitor/test_run_native_eye_output_monitor.py',
   'scripts/windows/starfield-native-monitor/test_start_native_eye_output_session.py',
   'scripts/windows/starfield-native-monitor/test_analyze_native_eye_output_session.py',
+  'scripts/windows/starfield-native-monitor/test_analyze_paired_source_session.py',
   // Existing GitHub Actions job loads this fixed artifact producer from its
   // exact checkout. It is never a resident Battle Bridge process or a local
   // submission adapter; activating the native reader belongs to the relay.
