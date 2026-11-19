@@ -406,6 +406,7 @@ class PortableOrchestrationModelTests(unittest.TestCase):
 
             def mock_stage(**arguments):
                 observed["mockStageCalls"] += 1
+                self.assertIs(arguments["completed_helper"], helper_model)
                 self.assertEqual(arguments["executable"], r"C:\Windows\System32\cmd.exe")
                 self.assertEqual(arguments["args"], ["/d", "/s", "/c", "build-paired-source-observe.cmd"])
                 state_path = workspace / "vr" / "vr-resource-governor-current.json"
@@ -464,7 +465,13 @@ class PortableOrchestrationModelTests(unittest.TestCase):
                 if fault == "admission_exception":raise OSError("private observation failure must not be published")
                 return {"ok": True, "alive": fault != "admission_launcher", "pid": pid, "created_filetime": birth}
 
-            job = types.SimpleNamespace(observe_parent_identity=observe_parent, run_owned_stage=mock_stage)
+            helper_model = types.SimpleNamespace(sha256="f" * 64)
+            def pin_helper(_pins):
+                if mode == "helper_unqualified":raise ValueError("explicit unqualified helper fixture")
+                return helper_model
+            helper_path = root / ("elsewhere" if mode == "helper_wrong_toolchain" else "") / "fixture-vctip.exe"
+            job = types.SimpleNamespace(observe_parent_identity=observe_parent, run_owned_stage=mock_stage,
+                COMPLETED_HELPER_IMAGE=str(helper_path), pin_completed_toolchain_helper=pin_helper)
             builder = types.SimpleNamespace(ORIGINAL_FILES=records, reconstruct=reconstruct)
             real_os, real_sys, real_path_open = build.os, build.sys, Path.open
 
@@ -505,7 +512,7 @@ class PortableOrchestrationModelTests(unittest.TestCase):
             if owner is not None:
                 with self.assertRaises(build.BuildBlocked):CustodyModel(builds, packet)
             self.assertEqual(observed["nativeCalls"], 0)
-            self.assertEqual(observed["mockStageCalls"], 1)
+            self.assertEqual(observed["mockStageCalls"], 0 if mode.startswith("helper_") else 1)
             self.assertEqual(observed["postReleaseWrites"], 0)
             self.assertFalse((builds / packet["requestId"] / "build-receipt.json").exists())
             for field in build.FALSE_CLAIMS:self.assertIs(receipt[field], False)
@@ -574,6 +581,16 @@ class PortableOrchestrationModelTests(unittest.TestCase):
         self.assertFalse(receipt["executionCustodyReleased"])
         self.assertIsNotNone(owner)
         self.assertEqual(observed["privateProof"]["nativeStage"]["reason"], "ROOT_EXITED_WITH_LIVE_DESCENDANTS")
+
+    def test_unqualified_toolchain_helper_refuses_before_native_launch(self):
+        for mode in ("helper_unqualified", "helper_wrong_toolchain"):
+            with self.subTest(mode=mode):
+                receipt, _, owner, observed = self.exercise(mode)
+                self.assertEqual(receipt["reason"], "TOOLCHAIN_HELPER_PROFILE_UNQUALIFIED")
+                self.assertEqual(observed["mockStageCalls"], 0)
+                self.assertFalse(receipt["buildPassed"])
+                self.assertEqual(receipt["artifacts"], [])
+                self.assertIsNone(owner)
 
     def test_missing_marker_exit_and_artifact_never_pass(self):
         for mode in ("missing_marker", "unknown_exit", "boolean_exit", "float_exit", "missing_artifact"):
