@@ -105,6 +105,7 @@ $monitorState = [pscustomobject]@{
     Result = $null
     DetailText = ''
     FocusAttemptedRunId = ''
+    FocusAttemptCount = 0
     LastCleanupDiagnosticKey = ''
     StartedAtUtc = $null
     ExitedAtUtc = $null
@@ -616,6 +617,35 @@ function Get-MonitorCleanupDiagnostics {
     return [pscustomobject]@{ Text = ($lines -join [Environment]::NewLine); Reason = $reason }
 }
 
+function Invoke-MonitorWaitingGameFocus {
+    # The reviewed native starter reports process existence before a HWND exists.
+    # Retry *only* the exact witnessed game while the same GUI is waiting for Save loaded.
+    if ($monitorState.Mode -cne 'waiting' -or $monitorState.Busy -or -not $monitorState.Process -or
+        -not $monitorState.GameProcess -or -not $monitorState.RunId -or
+        $monitorState.FocusAttemptedRunId -cne $monitorState.RunId -or
+        $processState.CloseRequested -or $monitorState.FocusAttemptCount -ge 8) {
+        $focusRetryTimer.Stop()
+        return
+    }
+    $monitorState.FocusAttemptCount += 1
+    $result = [Stephanos.Starfield.MonitorPipe]::FocusBoundGame(
+        [int]$monitorState.GameProcess.pid, [string]$monitorState.GameProcess.createdFileTime)
+    if ($result -ceq 'game-window-not-visible' -and $monitorState.FocusAttemptCount -lt 8) {
+        $statusHint.Text = 'Waiting for the exact Starfield game window to appear before handing over focus.'
+        $focusRetryTimer.Start()
+        return
+    }
+    $focusRetryTimer.Stop()
+    Add-MonitorDetail -Message ('Starfield foreground handoff: ' + $result +
+        '; attempts: ' + [string]$monitorState.FocusAttemptCount)
+    if ($result -ceq 'focused') {
+        $statusHint.Text = 'Starfield is in front. Load your save, then return here to confirm.'
+    } else {
+        $statusHint.Text = 'Starfield could not take focus (' + $result +
+            '). Select the game from the taskbar, load your save, then return here to confirm.'
+    }
+}
+
 function Update-HybridButton {
     if ($processState.ProviderBusy) {
         $hybridButton.Enabled = $false
@@ -774,6 +804,7 @@ function Receive-MonitorEvent {
     }
     $monitorState.Mode = $event.mode
     $monitorState.Busy = $event.busy
+    if ($monitorState.Mode -cne 'waiting' -or $monitorState.Busy) { $focusRetryTimer.Stop() }
     $monitorState.AllowedActions = @($event.allowedActions)
     $monitorState.ConfirmationToken = $event.confirmationToken
     $monitorState.RunId = $event.runId
@@ -801,11 +832,8 @@ function Receive-MonitorEvent {
         $progressFill.Width = 270
         if ($event.process -and $event.runId -and $monitorState.FocusAttemptedRunId -cne $event.runId) {
             $monitorState.FocusAttemptedRunId = $event.runId
-            $focusResult = [Stephanos.Starfield.MonitorPipe]::FocusBoundGame([int]$event.process.pid, [string]$event.process.createdFileTime)
-            Add-MonitorDetail -Message ('Starfield foreground handoff: ' + $focusResult)
-            if ($focusResult -cne 'focused') {
-                $statusHint.Text = 'Windows kept Starfield behind the splash. Select Starfield from the taskbar, load your save, then return here to confirm.'
-            }
+            $monitorState.FocusAttemptCount = 0
+            Invoke-MonitorWaitingGameFocus
         }
     } elseif ($event.mode -cin @('existing', 'cleanup')) {
         $hybridCard.Status.Text = 'CLEANUP REQUIRED'
@@ -1692,6 +1720,12 @@ $processState = [pscustomobject]@{
     CloseRequested = $false
 }
 
+$focusRetryTimer = New-Object System.Windows.Forms.Timer
+$focusRetryTimer.Interval = 1200
+$focusRetryTimer.Add_Tick({
+    if ($form.IsDisposed -or $processState.CloseRequested) { $focusRetryTimer.Stop(); return }
+    Invoke-MonitorWaitingGameFocus
+})
 $monitorPollTimer = New-Object System.Windows.Forms.Timer
 $monitorPollTimer.Interval = 120
 $monitorPollTimer.Add_Tick({
@@ -1753,6 +1787,7 @@ $monitorPollTimer.Add_Tick({
 $form.Add_FormClosing({
     param($sender, $eventArgs)
     $processState.CloseRequested = $true
+    $focusRetryTimer.Stop()
     $launchDelayTimer.Stop()
     $checkTimer.Stop()
     if ($monitorState.Process -and -not $monitorState.Process.HasExited) {
@@ -2177,6 +2212,7 @@ try {
     [void]$form.ShowDialog()
 }
 finally {
+    $focusRetryTimer.Stop()
     $checkTimer.Stop()
     $slotPollTimer.Stop()
     $readinessPollTimer.Stop()
