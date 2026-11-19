@@ -104,6 +104,8 @@ $monitorState = [pscustomobject]@{
     GameProcess = $null
     Result = $null
     DetailText = ''
+    FocusAttemptedRunId = ''
+    LastCleanupDiagnosticKey = ''
     StartedAtUtc = $null
     ExitedAtUtc = $null
 }
@@ -114,6 +116,7 @@ $monitorState = [pscustomobject]@{
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -207,6 +210,68 @@ namespace Stephanos.Starfield {
         public bool PermitForeground() {
             return !child.HasExited && AllowSetForegroundWindow(checked((uint)child.Id));
         }
+
+        private delegate bool EnumWindowsCallback(IntPtr hwnd, IntPtr argument);
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr argument);
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWindowVisible(IntPtr hwnd);
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool ShowWindowAsync(IntPtr hwnd, int show);
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetForegroundWindow(IntPtr hwnd);
+
+        // UI-only focus handoff for the exact runner-witnessed game process.
+        // Never chooses an ambiguous window or authorizes the native probe.
+        public static string FocusBoundGame(int pid, string createdFileTime) {
+            if (pid <= 0 || String.IsNullOrEmpty(createdFileTime)) return "game-identity-missing";
+            try {
+                using (Process game = Process.GetProcessById(pid)) {
+                    if (game.HasExited) return "game-already-exited";
+                    string birth = game.StartTime.ToUniversalTime().ToFileTimeUtc()
+                        .ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    if (!String.Equals(birth, createdFileTime, StringComparison.Ordinal))
+                        return "game-creation-identity-changed";
+                    string image = game.MainModule.FileName;
+                    if (!String.Equals(image, @"C:\Program Files (x86)\Steam\steamapps\common\Starfield\Starfield.exe",
+                                       StringComparison.OrdinalIgnoreCase))
+                        return "game-executable-identity-changed";
+                    List<IntPtr> windows = new List<IntPtr>();
+                    EnumWindowsCallback callback = delegate(IntPtr hwnd, IntPtr argument) {
+                        uint owner;
+                        GetWindowThreadProcessId(hwnd, out owner);
+                        if (owner == (uint)pid && IsWindowVisible(hwnd)) windows.Add(hwnd);
+                        return true;
+                    };
+                    if (!EnumWindows(callback, IntPtr.Zero)) return "game-window-enumeration-failed";
+                    if (windows.Count == 0) return "game-window-not-visible";
+                    if (windows.Count != 1) return "game-window-ambiguous";
+                    IntPtr target = windows[0];
+                    if (game.HasExited) return "game-exited-before-focus";
+                    if (GetForegroundWindow() == target) return "focused";
+                    ShowWindowAsync(target, 9);
+                    SetForegroundWindow(target);
+                    for (int i = 0; i < 12; ++i) {
+                        if (game.HasExited) return "game-exited-during-focus";
+                        if (GetForegroundWindow() == target) return "focused";
+                        Thread.Sleep(100);
+                    }
+                    return "windows-denied-foreground";
+                }
+            } catch (ArgumentException) { return "game-process-unavailable"; }
+              catch (InvalidOperationException) { return "game-process-unavailable"; }
+              catch (System.ComponentModel.Win32Exception) { return "game-identity-access-denied"; }
+              catch (System.UnauthorizedAccessException) { return "game-identity-access-denied"; }
+        }
+
         public void CloseInput() {
             try { child.StandardInput.Close(); } catch (InvalidOperationException) {} catch (IOException) {}
         }
@@ -487,6 +552,61 @@ function Add-MonitorDetail {
     $detailsBox.ScrollToCaret()
 }
 
+function Get-MonitorDiagnosticField {
+    param($Record, [string]$Name)
+    if (-not $Record -or -not $Record.PSObject.Properties[$Name]) { return '' }
+    $value = $Record.PSObject.Properties[$Name].Value
+    if ($null -eq $value -or $value -is [array] -or $value -is [pscustomobject]) { return '' }
+    $safe = ([string]$value) -replace '[\x00-\x1f]+', ' '
+    return $safe.Substring(0, [Math]::Min($safe.Length, 300))
+}
+
+function Get-MonitorCleanupDiagnostics {
+    param($Event)
+    # This is a local, read-only explanation of the retained custody.
+    # It NEVER mutates a journal, deletes a lock, starts a game or releases a provider.
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add('Local cleanup diagnostic (read only, no AI service):')
+    $lines.Add(('Monitor mode: ' + (Get-MonitorDiagnosticField -Record $Event -Name 'mode')))
+    $lines.Add(('Stage: ' + (Get-MonitorDiagnosticField -Record $Event -Name 'stage')))
+    $lines.Add(('Cleanup complete: ' + [string]$Event.cleanupComplete + '; normal exit proven: ' + [string]$Event.normalExitProven))
+    $lines.Add(('Unresolved child: ' + [string]$Event.unresolvedChild + '; provider released: ' + [string]$Event.providerSlotReleased))
+    $root = Join-Path $env:USERPROFILE 'Documents\Codex\2026-11-05\starfield-vr-did-not-start-and\outputs\Starfield-VR-monitor-one-click-v1'
+    $reason = ''
+    foreach ($entry in @(
+        @{ Label = 'Original'; Path = (Join-Path $root 'session.json') },
+        @{ Label = 'Paired'; Path = (Join-Path $root 'paired-source-v1\session.json') }
+    )) {
+        try {
+            if (-not (Test-MonitorCustodyPathPresent -LiteralPath $entry.Path)) { continue }
+            $file = Get-Item -LiteralPath $entry.Path -Force -ErrorAction Stop
+            if ($file.PSIsContainer -or $file.Length -gt 1048576) { throw 'journal-not-regular-or-bounded' }
+            $journal = Get-Content -LiteralPath $entry.Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            $stage = Get-MonitorDiagnosticField -Record $journal -Name 'stage'
+            $cleanupError = Get-MonitorDiagnosticField -Record $journal -Name 'cleanupError'
+            $lines.Add(($entry.Label + ' journal stage: ' + $stage))
+            if ($cleanupError) {
+                $lines.Add(($entry.Label + ' cleanup blocker: ' + $cleanupError))
+                if (-not $reason) { $reason = $cleanupError }
+            }
+            if ($journal.PSObject.Properties['activeChild'] -and $journal.activeChild) {
+                $child = $journal.activeChild
+                $lines.Add(($entry.Label + ' active helper: ' +
+                    (Get-MonitorDiagnosticField -Record $child -Name 'role') + '/' +
+                    (Get-MonitorDiagnosticField -Record $child -Name 'state')))
+                if (-not $reason) { $reason = 'A retained helper may still be running or unresolved.' }
+            }
+        } catch {
+            $lines.Add(($entry.Label + ' journal inspection could not be completed safely.'))
+            if (-not $reason) { $reason = 'The retained cleanup journal needs inspection.' }
+        }
+    }
+    if (-not $reason -and $Event.unresolvedChild) { $reason = 'The monitor has an unresolved child process.' }
+    if (-not $reason -and -not $Event.normalExitProven) { $reason = 'Normal game exit has not yet been proven.' }
+    if (-not $reason -and -not $Event.providerSlotReleased) { $reason = 'The original proxy or runtime custody has not yet been released.' }
+    return [pscustomobject]@{ Text = ($lines -join [Environment]::NewLine); Reason = $reason }
+}
+
 function Update-HybridButton {
     if ($processState.ProviderBusy) {
         $hybridButton.Enabled = $false
@@ -670,11 +790,29 @@ function Receive-MonitorEvent {
         $statusLabel.Text = 'Load your usual Starfield save'
         $statusHint.Text = 'Leave your character still, then click My save is loaded on the third card.'
         $progressFill.Width = 270
+        if ($event.process -and $event.runId -and $monitorState.FocusAttemptedRunId -cne $event.runId) {
+            $monitorState.FocusAttemptedRunId = $event.runId
+            $focusResult = [Stephanos.Starfield.MonitorPipe]::FocusBoundGame([int]$event.process.pid, [string]$event.process.createdFileTime)
+            Add-MonitorDetail -Message ('Starfield foreground handoff: ' + $focusResult)
+            if ($focusResult -cne 'focused') {
+                $statusHint.Text = 'Windows kept Starfield behind the splash. Select Starfield from the taskbar, load your save, then return here to confirm.'
+            }
+        }
     } elseif ($event.mode -cin @('existing', 'cleanup')) {
         $hybridCard.Status.Text = 'CLEANUP REQUIRED'
         $statusLabel.Text = 'Finish the existing monitor session'
         $statusHint.Text = 'Exit Starfield through its usual menu if it is open, then click Finish cleanup.'
         $progressFill.BackColor = [System.Drawing.Color]::FromArgb(255, 172, 103)
+        $diagnostic = Get-MonitorCleanupDiagnostics -Event $event
+        if ($diagnostic.Text -cne $monitorState.LastCleanupDiagnosticKey) {
+            $monitorState.LastCleanupDiagnosticKey = $diagnostic.Text
+            Add-MonitorDetail -Message $diagnostic.Text
+        }
+        $detailsBox.Visible = $true
+        $detailsButton.Text = 'Hide details'
+        if ($diagnostic.Reason) {
+            $statusHint.Text = 'Cleanup held: ' + $diagnostic.Reason.Substring(0, [Math]::Min(140, $diagnostic.Reason.Length))
+        }
     } elseif ($event.mode -cin @('done', 'blocked')) {
         $passed = $event.outcome -ceq 'REVIEWED_MONITOR_TEST_PASSED' -and $event.analysisAccepted -and
             $event.bundleEvidenceIntegrityVerified -and $event.cleanupComplete -and $event.normalExitProven -and
